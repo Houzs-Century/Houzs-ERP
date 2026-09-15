@@ -39,6 +39,14 @@ DocTransfer exactly as it does for a DO, so the lanes read the same way:
 `HC-SI-` from a DO, `HC-PI-` from a GR. Migrated invoices carry AutoCount's own
 numbers (`I-2410-...`, `PI-00...`) and are not in these lanes.
 
+CARRIED-OVER DOCUMENTS (docs/bugs/0919). A delivery order or purchase order
+carried over from AutoCount keeps AutoCount's own number (DO-010936) and some of
+its rows reached the ERP with no key: sofa pieces the cutover split out, and
+lines added at the 2026-09-07 decomposition. An edit of one is refused whole,
+as HC-DO-010936 was on 2026-09-15. CARRIED_OVER_FILE names those documents (the
+output of list-carried-over-keyless-documents.mjs) and they are exported through
+the same DO and PO lanes, so the same pairing rule and shape checks apply.
+
 WHAT ELSE EACH LINE CARRIES (docs/bugs/0902). `qty` and `transferredOn` — how
 many DocTransfer rows take this line further (a DO line into an invoice, a GR
 line into a purchase invoice). retire-book-only-conversion-lines.mjs zeroes a
@@ -49,6 +57,7 @@ writes nothing to the book and nothing to the ERP.
 
 Env: AC_CRED_FILE (required, a file holding the sa2 password - never printed),
 AC_HOST / AC_DB / AC_USER / AC_DRIVER as for export-ac-live.py.
+CARRIED_OVER_FILE (optional): JSON {"DO": [...], "PO": [...]} of AutoCount numbers.
 """
 import gzip
 import json
@@ -81,6 +90,23 @@ del password
 cn.timeout = 15
 cur = cn.cursor()
 
+CARRIED = {"DO": [], "PO": []}
+if os.environ.get("CARRIED_OVER_FILE"):
+    with open(os.environ["CARRIED_OVER_FILE"], encoding="utf-8") as fh:
+        listed = json.load(fh)
+    for t in CARRIED:
+        CARRIED[t] = sorted({str(n) for n in listed.get(t, []) if str(n)})
+    if any(n.startswith("HC-") for t in CARRIED for n in CARRIED[t]):
+        sys.exit("CARRIED_OVER_FILE names an ERP-numbered document; it takes AutoCount's own numbers")
+
+
+def carried_clause(doc_type):
+    """`OR h.DocNo IN (...)` and its parameters, for the carried-over documents of a lane."""
+    nos = CARRIED.get(doc_type, [])
+    if not nos:
+        return "", []
+    return " OR h.DocNo IN (" + ",".join("?" * len(nos)) + ")", nos
+
 # (docType, header table, detail table, ERP number prefix, expected source type)
 LANES = (
     ("DO", "DO", "DODTL", "HC-DO-%", "SO"),
@@ -93,6 +119,7 @@ rows = []
 bad = []
 counts = {}
 for doc_type, hdr, dtl, prefix, source_type in LANES:
+    extra_sql, extra_args = carried_clause(doc_type)
     lane = cur.execute(
         f"""SELECT h.DocNo, d.DtlKey, t.FromDocDtlKey, t.FromDocType, d.ItemCode, h.Cancelled,
                    d.Qty,
@@ -101,9 +128,9 @@ for doc_type, hdr, dtl, prefix, source_type in LANES:
               FROM {hdr} h WITH (NOLOCK)
               JOIN {dtl} d WITH (NOLOCK) ON d.DocKey = h.DocKey
               LEFT JOIN DocTransfer t WITH (NOLOCK) ON t.ToDocDtlKey = d.DtlKey AND t.ToDocType = ?
-             WHERE h.DocNo LIKE ?
+             WHERE h.DocNo LIKE ?{extra_sql}
              ORDER BY h.DocNo, d.DtlKey""",
-        doc_type, doc_type, prefix).fetchall()
+        doc_type, doc_type, prefix, *extra_args).fetchall()
     seen = {}
     for doc_no, dtl_key, from_key, from_type, item_code, cancelled, qty, transferred_on in lane:
         seen[dtl_key] = seen.get(dtl_key, 0) + 1
@@ -120,15 +147,16 @@ for doc_type, hdr, dtl, prefix, source_type in LANES:
         "lines": len(seen),
         "lines_without_a_source": sum(1 for r in rows if r[0] == doc_type and r[3] is None),
     }
+po_extra_sql, po_extra_args = carried_clause("PO")
 po_lane = cur.execute(
-    """SELECT h.DocNo, d.DtlKey, d.FromSODtlKey, s.DtlKey, d.ItemCode, h.Cancelled, d.Qty,
+    f"""SELECT h.DocNo, d.DtlKey, d.FromSODtlKey, s.DtlKey, d.ItemCode, h.Cancelled, d.Qty,
               (SELECT COUNT(*) FROM DocTransfer o WITH (NOLOCK)
                 WHERE o.FromDocDtlKey = d.DtlKey AND o.FromDocType = 'PO') AS TransferredOn
          FROM PO h WITH (NOLOCK)
          JOIN PODTL d WITH (NOLOCK) ON d.DocKey = h.DocKey
          LEFT JOIN SODTL s WITH (NOLOCK) ON s.DtlKey = d.FromSODtlKey
-        WHERE h.DocNo LIKE 'HC-PO-%'
-        ORDER BY h.DocNo, d.DtlKey""").fetchall()
+        WHERE h.DocNo LIKE 'HC-PO-%'{po_extra_sql}
+        ORDER BY h.DocNo, d.DtlKey""", *po_extra_args).fetchall()
 po_seen = set()
 for doc_no, dtl_key, from_key, sales_line, item_code, cancelled, qty, transferred_on in po_lane:
     if dtl_key in po_seen:
@@ -158,6 +186,7 @@ snapshot = {
     "grain": "one row per line of an ERP-numbered DO / GR / IV / PI / PO in the book, with its source line (DocTransfer for a DO, GR, IV or PI; PODTL.FromSODtlKey for a PO)",
     "fields": ["docType", "docNo", "toDtlKey", "fromDtlKey", "itemCode", "cancelled", "qty", "transferredOn"],
     "counts": counts,
+    "carried_over": CARRIED,
     "rows": rows,
 }
 dest = os.path.join(OUT, "ac-conversion-line-keys.json.gz")
