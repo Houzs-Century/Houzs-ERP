@@ -14,10 +14,17 @@
  * every line, exactly like the bulk supplier-date action. Delivery Date,
  * Item Description 2 and Remarks are per line.
  *
- * Two byte-identical copies: backend/src/scm/shared/po-line-import.ts (what the
- * server classifies and writes by) and frontend/src/vendor/shared/po-line-import.ts
+ * Two byte-identical copies: backend/src/scm/lib/po-line-import.ts (what the
+ * server classifies and writes by) and frontend/src/vendor/scm/lib/po-line-import.ts
  * (what the import dialog reads the file with). po-line-import.canonical.test.ts
- * fails the build if they drift. No imports, so the copies can stay identical. */
+ * fails the build if they drift. The header names and which stored date is
+ * "Estimate Delivery Date N" come from the EXPORT's contract beside it,
+ * po-line-export-columns.ts, so a renamed export header is a compile error here. */
+import {
+  PO_ESTIMATE_DELIVERY_DATE_FIELDS,
+  PO_ESTIMATE_DELIVERY_DATE_LABELS,
+  type PoLineExportColumn,
+} from './po-line-export-columns';
 
 export type PoLineImportField =
   | 'deliveryDate'
@@ -30,7 +37,7 @@ export type PoLineImportField =
 export type PoLineImportFieldSpec = {
   field: PoLineImportField;
   /** The export's column header, exactly. Matched case- and space-insensitively. */
-  header: string;
+  header: PoLineExportColumn;
   kind: 'date' | 'text';
   /** 'line' = purchase_order_items.<column>; 'po' = purchase_orders.<column>, cascaded to every line. */
   level: 'line' | 'po';
@@ -41,15 +48,15 @@ export type PoLineImportFieldSpec = {
 
 export const PO_LINE_IMPORT_FIELDS: readonly PoLineImportFieldSpec[] = [
   { field: 'deliveryDate', header: 'Delivery Date', kind: 'date', level: 'line', column: 'delivery_date', slot: null },
-  { field: 'estimateDeliveryDate1', header: 'Estimate Delivery Date 1', kind: 'date', level: 'po', column: 'supplier_delivery_date_2', slot: 2 },
-  { field: 'estimateDeliveryDate2', header: 'Estimate Delivery Date 2', kind: 'date', level: 'po', column: 'supplier_delivery_date_3', slot: 3 },
-  { field: 'estimateDeliveryDate3', header: 'Estimate Delivery Date 3', kind: 'date', level: 'po', column: 'supplier_delivery_date_4', slot: 4 },
+  { field: 'estimateDeliveryDate1', header: PO_ESTIMATE_DELIVERY_DATE_LABELS[0], kind: 'date', level: 'po', column: PO_ESTIMATE_DELIVERY_DATE_FIELDS[0], slot: 2 },
+  { field: 'estimateDeliveryDate2', header: PO_ESTIMATE_DELIVERY_DATE_LABELS[1], kind: 'date', level: 'po', column: PO_ESTIMATE_DELIVERY_DATE_FIELDS[1], slot: 3 },
+  { field: 'estimateDeliveryDate3', header: PO_ESTIMATE_DELIVERY_DATE_LABELS[2], kind: 'date', level: 'po', column: PO_ESTIMATE_DELIVERY_DATE_FIELDS[2], slot: 4 },
   { field: 'description2', header: 'Item Description 2', kind: 'text', level: 'line', column: 'description2', slot: null },
   { field: 'remarks', header: 'Remarks', kind: 'text', level: 'line', column: 'notes', slot: null },
 ];
 
-export const PO_LINE_IMPORT_DOC_NO_HEADER = 'Doc No';
-export const PO_LINE_IMPORT_LINE_ID_HEADER = 'Line ID';
+export const PO_LINE_IMPORT_DOC_NO_HEADER: PoLineExportColumn = 'Doc No';
+export const PO_LINE_IMPORT_LINE_ID_HEADER: PoLineExportColumn = 'Line ID';
 
 /** Rows read from one file. An export of every open PO line is a few thousand. */
 export const PO_LINE_IMPORT_MAX_ROWS = 5000;

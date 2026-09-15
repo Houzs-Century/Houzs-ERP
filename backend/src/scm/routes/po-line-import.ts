@@ -3,7 +3,7 @@
  * Owner ruling 2026-09-15 (option A): edit the exported PO lines in Excel and
  * import the file back. Only Delivery Date, Estimate Delivery Date 1/2/3,
  * Item Description 2 and Remarks can change; qty, price and item never do
- * (shared/po-line-import.ts is the only column list, lib/po-line-import-classify.ts
+ * (lib/po-line-import.ts is the only column list, lib/po-line-import-classify.ts
  * drops every other key before anything is read).
  *
  * Mounted on the /mfg-purchase-orders prefix, so it rides the same area guard as
@@ -50,7 +50,7 @@ import {
   type PoLineImportLineChange,
   type PoLineImportPreview,
   type PoLineImportRow,
-} from '../shared/po-line-import';
+} from '../lib/po-line-import';
 
 export const poLineImport = new Hono<{ Bindings: Env; Variables: Variables }>();
 poLineImport.use('*', supabaseAuth);

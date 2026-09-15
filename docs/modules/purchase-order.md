@@ -2106,8 +2106,11 @@ lines** (`?import=1`). Offered only when `canOperatePurchaseOrders` passes. Flow
 choose file → preview → Confirm → summary. Nothing is written before Confirm.
 
 **The columns — one mapping, two byte-identical copies.**
-`backend/src/scm/shared/po-line-import.ts` = `frontend/src/vendor/shared/po-line-import.ts`
-(`po-line-import.canonical.test.ts` fails the build on drift). Rows are matched by
+`backend/src/scm/lib/po-line-import.ts` = `frontend/src/vendor/scm/lib/po-line-import.ts`
+(`po-line-import.canonical.test.ts` fails the build on drift). The header names and
+which stored date is Estimate N are imported from the export's contract beside it,
+`po-line-export-columns.ts`. An estimate cell is compared the way the export writes
+it: the line's value, else the PO header's. Rows are matched by
 **Line ID**; **Doc No** must be the line's PO (`po_number`, or the revised display
 number `<po_number>_R<n>`). Every other column in the file is listed as ignored.
 

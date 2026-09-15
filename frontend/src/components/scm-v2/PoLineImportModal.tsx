@@ -20,7 +20,7 @@ import {
   PO_LINE_IMPORT_FIELDS,
   poLineImportSpec,
   type PoLineImportPreview,
-} from "../../vendor/shared/po-line-import";
+} from "../../vendor/scm/lib/po-line-import";
 
 const blank = (v: string | null) => (v === null ? <span className="italic text-ink-muted">blank</span> : v);
 

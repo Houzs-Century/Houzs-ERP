@@ -8,7 +8,7 @@ import {
   type ImportPoRow,
   type ImportWorld,
 } from './po-line-import-classify';
-import type { PoLineImportRow } from '../shared/po-line-import';
+import type { PoLineImportRow } from './po-line-import';
 
 /* Owner ruling 2026-09-15: a PO line export comes back in; only the six columns
    move, qty / price / item never do, and every refusal says why. */
@@ -168,6 +168,17 @@ describe('Estimate Delivery Date 1/2/3 are PO-level', () => {
       row(2, L1, 'PO-000100', { estimateDeliveryDate1: null }),
       row(4, L3, 'PO-000100', { estimateDeliveryDate1: '2026-10-01' }),
     ]);
+    expect(p.poChanges).toEqual([]);
+    expect(p.poRejections).toEqual([]);
+  });
+
+  test("a blank line exported with its PO header's estimate date is NOT an edit (the export's fallback)", () => {
+    const w = world({ poA: { supplier_delivery_date_2: '2026-10-01' } });
+    const p = only([
+      row(2, L1, 'PO-000100', { estimateDeliveryDate1: '2026-10-01' }),
+      row(3, L2, 'PO-000100', { estimateDeliveryDate1: '2026-10-01' }),
+      row(4, L3, 'PO-000100', { estimateDeliveryDate1: '2026-10-01' }),
+    ], w);
     expect(p.poChanges).toEqual([]);
     expect(p.poRejections).toEqual([]);
   });

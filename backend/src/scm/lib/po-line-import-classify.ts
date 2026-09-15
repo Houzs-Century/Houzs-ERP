@@ -2,7 +2,7 @@
  *
  * routes/po-line-import.ts reads the rows this needs and hands them over; every
  * rule about what a row MEANS lives here so it can be tested row by row. The
- * columns and the parsing are the shared module's (shared/po-line-import.ts). */
+ * columns and the parsing are the shared module's (po-line-import.ts, mirrored in the frontend). */
 import {
   PO_LINE_IMPORT_FIELDS,
   PO_LINE_IMPORT_MAX_LINE_CHANGES,
@@ -24,7 +24,7 @@ import {
   type PoLineImportRejectCode,
   type PoLineImportRow,
   type PoLineImportRowResult,
-} from '../shared/po-line-import';
+} from './po-line-import';
 
 export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -133,7 +133,12 @@ export function classifyPoLineImport(rows: PoLineImportRow[], world: ImportWorld
       if (!isPoLineImportField(field)) continue;
       const spec = poLineImportSpec(field);
       const parsed = parseImportValue(field, row.values[field] as PoLineImportCell);
-      const current = storedImportValue(field, line[spec.column]);
+      /* An estimate date's cell is exported as the LINE's value, else the PO
+         header's (po-line-export-columns.ts poEstimateDeliveryDates); read it back
+         the same way, or an untouched file would look edited. */
+      const current = spec.level === 'po'
+        ? storedImportValue(field, line[spec.column]) ?? storedImportValue(field, po[spec.column])
+        : storedImportValue(field, line[spec.column]);
       if (!parsed.ok) {
         invalid.push(`${spec.header}: ${parsed.reason}`);
         if (spec.level === 'po') poLevel.push([field, { rowNumber: row.rowNumber, itemCode, value: null, current, invalid: true }]);

@@ -5,7 +5,7 @@
  * the desktop list's dialog today, and the phone if it ever grows an import menu
  * (it has none as of 2026-09-15) — R93, one logic layer.
  *
- * The column mapping and the date parsing are shared/po-line-import.ts, the
+ * The column mapping and the date parsing are po-line-import.ts, the
  * byte-identical twin of the server's copy, so the dialog and the server cannot
  * disagree about what a cell means. The SERVER re-parses every value anyway. */
 import { useCallback, useState } from 'react';
@@ -19,7 +19,7 @@ import {
   type PoLineImportConflict,
   type PoLineImportPreview,
   type PoLineImportSheet,
-} from '../../shared/po-line-import';
+} from './po-line-import';
 
 export const PO_LINE_IMPORT_ACCEPT = '.xlsx,.xls,.csv';
 

@@ -5,7 +5,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { PoLineImportPreview } from "../../vendor/shared/po-line-import";
+import type { PoLineImportPreview } from "../../vendor/scm/lib/po-line-import";
 
 const h = vi.hoisted(() => ({ authed: vi.fn() }));
 vi.mock("../../vendor/scm/lib/authed-fetch", () => ({
