@@ -222,7 +222,8 @@ module: that is now the path of least resistance, by design.
   inspection and verification cards, logistics, print and portal-link menus, cost
   tracking, customer history, and the per-item editors last.
 - **`frontend/src/pages/scm-v2/Products.tsx`** — tabbed: `SkuMasterTab`
-  (with its virtualised row list and inline price editors) occupies the first half,
+  (with its virtualised row list; the Edit Prices row, its inline editors and the
+  stage/save helpers live in `frontend/src/pages/scm-v2/products/SkuEditRow.tsx`) occupies the first half,
   `MaintenanceTab` and its left-rail sub-tabs the second, CSV import/export helpers
   at the end. The `/scm/maintenance` route renders this same file.
 - **`frontend/src/pages/Team.tsx`** — user management. `Team()` shell,
