@@ -33,6 +33,10 @@
  * be pending or sent, with Lines that name each line by a numeric DtlKey or
  * declare it new.
  *
+ * INVOICES (docs/bugs/0914). A sales or purchase invoice is looked up by its
+ * number like the others. HC-SI-2609-001's edit was dropped because it was saved
+ * before its conversion drained, and nothing could send it again by name.
+ *
  * RE-RUN: a second apply queues one more edit per document, composed from the
  * document as it is then. An edit carries the whole current state, so the book
  * ends the same; the outbox gains one row per document.
@@ -74,7 +78,13 @@ const found = await pg`
     FROM scm.delivery_orders WHERE company_id = ${CO} AND do_number IN ${pg(DOC_NOS)}
   UNION ALL
   SELECT 'GR', grn_number, id::text, status::text, linked_ac_docno
-    FROM scm.grns WHERE company_id = ${CO} AND grn_number IN ${pg(DOC_NOS)}`;
+    FROM scm.grns WHERE company_id = ${CO} AND grn_number IN ${pg(DOC_NOS)}
+  UNION ALL
+  SELECT 'IV', invoice_number, id::text, status::text, linked_ac_docno
+    FROM scm.sales_invoices WHERE company_id = ${CO} AND invoice_number IN ${pg(DOC_NOS)}
+  UNION ALL
+  SELECT 'PI', invoice_number, id::text, status::text, linked_ac_docno
+    FROM scm.purchase_invoices WHERE company_id = ${CO} AND invoice_number IN ${pg(DOC_NOS)}`;
 
 const targets = [];
 const refused = [];
