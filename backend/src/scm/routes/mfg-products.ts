@@ -32,6 +32,7 @@ import { todayMyt } from '../lib/my-time';
 import { resolveSellPriceSenAsOf, resolvePendingSellPriceAfter } from '../lib/product-pricing-history';
 import type { Env, Variables } from '../env';
 import { categorySwapAllowed } from '../shared/category-swap';
+import { PRODUCT_CODE_CASCADE } from '../lib/product-code-rename';
 import { moveModelCategory, planModelCategoryMoves, type ImportModelMove } from '../lib/model-category-move';
 import { MFG_PRODUCT_CATEGORIES, MFG_CATEGORY_LABELS, mfgCategoryLabel, parseMfgCategory } from '../shared/product-categories';
 
@@ -883,33 +884,11 @@ export const patchMfgProductHandler = async (c: AppContext) => {
       if (dup.length > 0) {
         return c.json({ error: 'duplicate_code', reason: 'Another SKU already uses that code.' }, 409);
       }
-      /* item_code tables carry material_kind (mfg_product | fabric | raw) —
-         scope those so a fabric that happens to share the string is untouched. */
-      const CASCADE: Array<{ table: string; col: string; kind?: true }> = [
-        { table: 'supplier_material_bindings', col: 'item_code', kind: true },
-        { table: 'purchase_order_items',       col: 'item_code', kind: true },
-        { table: 'grn_items',                  col: 'item_code', kind: true },
-        { table: 'purchase_invoice_items',     col: 'item_code', kind: true },
-        { table: 'purchase_return_items',      col: 'item_code', kind: true },
-        { table: 'mfg_sales_order_items',      col: 'item_code' },
-        { table: 'mfg_so_price_overrides',     col: 'item_code' },
-        { table: 'delivery_order_items',       col: 'item_code' },
-        { table: 'sales_invoice_items',        col: 'item_code' },
-        { table: 'delivery_return_items',      col: 'item_code' },
-        { table: 'pwp_codes',                  col: 'trigger_item_code' },
-        { table: 'pwp_codes',                  col: 'redeemed_item_code' },
-        { table: 'hr_item_kpi',                col: 'ref' },
-        { table: 'product_dept_configs',       col: 'item_code' },
-        { table: 'master_price_history',       col: 'item_code' },
-        { table: 'inventory_movements',        col: 'item_code' },
-        { table: 'inventory_lots',             col: 'item_code' },
-        { table: 'inventory_lot_consumptions', col: 'item_code' },
-        { table: 'stock_transfer_lines',       col: 'item_code' },
-        { table: 'stock_take_lines',           col: 'item_code' },
-        { table: 'warehouse_rack_items',       col: 'item_code' },
-        { table: 'warehouse_rack_movements',   col: 'item_code' },
-      ];
-      for (const t of CASCADE) {
+      /* The column list, and the columns that deliberately keep the old code,
+         live in lib/product-code-rename.ts, pinned against production by
+         tests/productCodeRenameCoverage.test.ts. `kind` scopes the tables that
+         also store fabrics and raw materials. */
+      for (const t of PRODUCT_CODE_CASCADE) {
         let q = scopeToCompanyId(
           supabase.from(t.table)
             .update({ [t.col]: newCode }, { count: 'exact' })

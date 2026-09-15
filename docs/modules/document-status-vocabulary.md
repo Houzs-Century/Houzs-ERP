@@ -679,7 +679,12 @@ authors and deliberately NOT on the 2990 SO mirror. See
 
 - `backend/scripts/lib/vocabulary.mjs` — the registry. A concept with a name
   worth holding belongs in it; one that is not in it will drift, and both of
-  the concepts above are the evidence.
+  the concepts above are the evidence. A file may spell a retired name only
+  when it is on that concept's `allow` list; since 2026-09-15 the item-code
+  concept allows `src/scm/lib/product-code-rename.ts` and
+  `scripts/probe-product-code-columns.mjs`, which must name the dead `public`
+  copies' `material_code` / `product_code` columns to record that a SKU rename
+  leaves them alone (`docs/modules/product-code-rename.md`).
 - `docs/modules/document-conversion.md` §9.6 — the sibling ruling that gave the
   transfer buttons one generated label instead of twenty hand-written ones.
 
