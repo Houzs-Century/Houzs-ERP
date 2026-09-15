@@ -48,7 +48,8 @@ export type BookLineItem = {
   /** True when the resolver answered (its code may be the ERP code itself, for
    *  a product opened in the book under that name). */
   resolved: boolean;
-  /** True when the book's item master knows that code. */
+  /** True when the book's item master supplied Description, Group and UOM —
+   *  for the resolved code, or (with bindings) for the unbound resolver's code. */
   inBook: boolean;
   description: string | null;
   itemGroup: string | null;
@@ -76,7 +77,19 @@ export function bookLineItem(
   const code = String(erp.itemCode ?? '').trim();
   const r = code ? resolveAcItemCode(code, { supplierCode, bindings: opts.bindings ?? null }) : null;
   const acCode = r && r.ok ? r.acItemCode : null;
-  const book = acCode ? acBookItemIndex().get(up(acCode)) : undefined;
+  let book = acCode ? acBookItemIndex().get(up(acCode)) : undefined;
+  /* A BINDING NAMES THE SUPPLIER'S SKU, which need not be a book item — a sofa
+     piece binds to e.g. 'DSL-9028 SOFA 1A(RHF)' while the book holds the piece
+     under its own code. The Item Code stays the bound answer (what the
+     write-back sends); Description, Group and UOM come from the item the
+     unbound resolver names, when THAT is in the book. Measured by the GR / PI /
+     SI exports 2026-09-15 (run 34951676357): with bindings and no such fallback
+     Item Group matched fewer lines than without — GR 730 vs 760, PI 418 vs 423,
+     IV 209 vs 221. */
+  if (!book && code && opts.bindings) {
+    const unbound = resolveAcItemCode(code, { supplierCode });
+    if (unbound.ok) book = acBookItemIndex().get(up(unbound.acItemCode));
+  }
   return {
     itemCode: acCode ?? (code || null),
     resolved: acCode !== null,
