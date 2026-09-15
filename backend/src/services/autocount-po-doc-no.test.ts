@@ -48,7 +48,7 @@ describe('a sales order: the reference is Ref, and the PO Doc No. is left to pur
     expect(body.UDF).not.toHaveProperty('ToPONo');
   });
 
-  test('a carried-over order whose reference sits only in ref still sends it as Ref', () => {
+  test('an order whose reference sits only in ref still sends it as Ref', () => {
     const body = composeCreateSo(so({ customer_so_no: null, ref: 'PG10 / IOI' }), [line()], null, null, [], opts);
     expect(body.Ref).toBe('PG10 / IOI');
   });
@@ -59,10 +59,11 @@ describe('a sales order: the reference is Ref, and the PO Doc No. is left to pur
     expect((h.UDF ?? {}) as Record<string, string>).not.toHaveProperty('ToPONo');
   });
 
-  test('clearing the typed reference clears Ref only when the imported one is empty too', () => {
+  test('ref wins over customer_so_no, and clearing one clears Ref only when the other is empty too', () => {
+    expect(soReference({ customer_so_no: 'CSO', ref: 'PG10 / IOI' })).toBe('PG10 / IOI');
+    expect(soReference({ customer_so_no: 'CSO', ref: '  ' })).toBe('CSO');
     expect(clearedAcKeys(['customer_so_no'], { customer_so_no: '', ref: null }).header).toEqual(['Ref']);
     expect(clearedAcKeys(['customer_so_no'], { customer_so_no: '', ref: 'PG10 / IOI' }).header).toEqual([]);
-    expect(soReference({ customer_so_no: '', ref: 'PG10 / IOI' })).toBe('PG10 / IOI');
   });
 });
 
@@ -75,7 +76,7 @@ describe('a purchase order names its source sales order the way the plug-in does
 
   test('one source order: Ref is its reference and UDF_SONo its book number', async () => {
     const sb = world([{ so_item_id: 'si-1' }, { so_item_id: 'si-2' }],
-      [{ doc_no: 'HC-SO-012411', ref: 'OLD', customer_so_no: 'MR LIM / PAVILION', linked_ac_docno: 'SO-012411' }],
+      [{ doc_no: 'HC-SO-012411', ref: 'MR LIM / PAVILION', customer_so_no: 'MR LIM / PAVILION', linked_ac_docno: 'SO-012411' }],
       [{ id: 'si-1', doc_no: 'HC-SO-012411' }, { id: 'si-2', doc_no: 'HC-SO-012411' }]);
     const src = await readPoSourceSo(asSb(sb), 'po-1');
     expect(src).toEqual({ ref: 'MR LIM / PAVILION', source_so_no: 'SO-012411' });
