@@ -32,19 +32,21 @@ import { postPersonalNotice } from "./personalNotice";
 
 const SOURCE = "document_cancel";
 
-export type CancelNotifyDocType = "SO" | "PO";
+export type CancelNotifyDocType = "SO" | "PO" | "DO";
 export type CancelNotifyEvent = "raised" | "level1" | "approved" | "rejected";
 
 /** MUST match scm/shared/document-cancel.ts CANCEL_APPROVE_KEY (the test below
  *  this file's sibling asserts the two agree). A Sales Order takes two
- *  signatures; a Purchase Order takes NONE since 2026-09-09 — it is cancelled
- *  on its reason alone — so it has no desk to tell and no entry here. */
+ *  signatures; a Purchase Order takes NONE since 2026-09-09 and a Delivery Order
+ *  none since 2026-09-14 — each is cancelled on its reason alone — so neither
+ *  has a desk to tell. */
 export const CANCEL_APPROVE_PERM: Record<CancelNotifyDocType, Partial<Record<1 | 2, string>>> = {
   SO: { 1: "scm.so_cancel.approve_l1", 2: "scm.so_cancel.approve_l2" },
   PO: {},
+  DO: {},
 };
 
-const NOUN: Record<CancelNotifyDocType, string> = { SO: "Sales Order", PO: "Purchase Order" };
+const NOUN: Record<CancelNotifyDocType, string> = { SO: "Sales Order", PO: "Purchase Order", DO: "Delivery Order" };
 
 const cleanIds = (ids: Array<number | null | undefined>): number[] =>
   Array.from(new Set(ids.map((v) => Number(v)).filter((n) => Number.isFinite(n) && n > 0)));

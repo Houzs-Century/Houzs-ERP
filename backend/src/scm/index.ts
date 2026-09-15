@@ -469,6 +469,14 @@ scm.use(
     },
   }),
 );
+/* Cancelling a delivery order costs a REASON (owner 2026-09-14, 「DO cancel need
+   pop out window for reason」) — the Purchase Order's rule, on the DO's status
+   route: the guard wakes only when the body asks for CANCELLED, refuses 400
+   without a reason, and records the cancellation with it
+   (routes/document-cancel-routes.ts). Mounted AFTER the area guard, unlike the PO
+   and SO guards: no approver has to be admitted past it, so a caller is asked
+   who they are before they are asked why. The DO router itself is not edited. */
+scm.use("/delivery-orders-mfg/:id/status", cancelApprovalGuard("DO"));
 /* Two routers on one prefix, like /grns and /purchase-invoices above. The
    scan-token mint is a NEW FILE because delivery-orders-mfg.ts is already past
    its file-size ceiling and a ceiling may only fall. Mounted FIRST so its one

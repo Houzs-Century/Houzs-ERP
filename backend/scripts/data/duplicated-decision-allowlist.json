@@ -87,7 +87,7 @@
     },
     {
       "check": "D1",
-      "key": "EXPECTED_AT,NOTES,SUPPLIER_ID|backend/src/scm/lib/po-revision.ts backend/src/scm/routes/po-amendments.ts frontend/src/mobile/MobilePoAmendmentDetail.tsx frontend/src/pages/scm-v2/PoAmendmentDetailV2.tsx",
+      "key": "EXPECTED_AT,NOTES,SUPPLIER_ID|backend/src/scm/lib/po-revision.ts backend/src/scm/routes/po-amendments.ts frontend/src/mobile/MobilePoAmendmentDetail.tsx frontend/src/pages/scm-v2/po-amendment-diff-card.tsx",
       "why": "THE AMENDABLE PO HEADER FIELDS — which header columns a PO amendment may carry. One home decides, three render labels for it (AMENDABLE_HEADER, HEADER_LABEL). The deciding copy is po-revision.ts; the others cannot widen it."
     },
     {
@@ -1232,6 +1232,16 @@
     },
     {
       "check": "D1",
+      "key": "DO,PO,SO|backend/src/scm/routes/document-cancel-routes.ts backend/src/scm/shared/document-cancel.ts backend/src/services/cancelRequestNotify.ts frontend/src/pages/scm-v2/CancelRequests.tsx",
+      "why": "THE DOCUMENTS WHOSE CANCEL COSTS A WRITTEN REASON (SO since 2026-09-08, PO 2026-09-09, DO 2026-09-14 — docs/modules/document-cancel-approval.md). The set only became visible to this check when the DO made it three values. ONE home answers the rule: backend/src/scm/shared/document-cancel.ts (CANCEL_DOC_TYPES, NOUN, APPROVAL_LEVELS, CANCEL_APPROVE_KEY), which is the only table the server gate reads. The other homes key something ELSE by it: document-cancel-routes.ts DOCS is per-document WIRING (table, key column, whether the cancel rides a status route, where its history row goes); services/cancelRequestNotify.ts holds CANCEL_APPROVE_PERM and a title-case NOUN as literals because a Houzs-side service must not import the SCM bundle, and cancelRequestNotify.test.ts asserts CANCEL_APPROVE_PERM equals CANCEL_APPROVE_KEY; CancelRequests.tsx DOC_LABEL / DOC_PATH are PRESENTATION of the ledger row's doc_type, typed Record<CancelRequestRow['doc_type'], ...> so a new type fails to compile there. Every record is keyed by the TypeScript union, so a document added to one and not another is a compile error, and a divergence that slips past costs a missing label or a notice to nobody — never a cancel that skips its reason, because only the shared rules decide that."
+    },
+    {
+      "check": "D2",
+      "key": "DO,GRN,PO,SO ~ DO,PO,SO",
+      "why": "TWO DIFFERENT QUESTIONS THAT SHARE THREE ANSWERS, differing by GRN. {DO,GRN,PO,SO} is the change log's documents and downstream-lock's refusal map (the entry above explains both); {DO,PO,SO} is the documents whose cancel costs a written reason (document-cancel.ts). A goods receipt has a change log but no cancel-reason rule — the owner has asked for a reason on SO, PO and DO cancels only — so GRN being absent from the second set is the absence of a ruling, not a rule enforced at N-1 of N places. If the owner rules that a GRN cancel needs a reason too, it joins CANCEL_DOC_TYPES and this entry goes."
+    },
+    {
+      "check": "D1",
       "key": "CLOSED,DELIVERED,INVOICED|backend/src/scm/shared/so-deliverable-states.ts backend/src/services/agents/cs-agent.ts frontend/src/vendor/shared/so-deliverable-states.ts",
       "why": "DELIVERED-OR-BEYOND, asked twice (the frontend copy is the byte-identical VENDORED TWIN of the shared file, refereed by frontend/src/vendor/shared/so-deliverable-states.canonical.test.ts — not a second decision): the CS agent answers \"has the customer got it\" for a chat reply; the sales side (SO_DELIVERED_OR_BEYOND in scm/shared/so-deliverable-states.ts, since docs/bugs/0832 the ONE home the Collection report and the final-invoice backlog both read) answers \"is this order at the balance stage\" for Finance. Both read the SO status enum as the same three words today. Recorded rather than collapsed: since docs/bugs/0831 the report ALSO counts an order with a live sales invoice as at the balance stage and measures the balance against the invoice's total; the status set stays for the delivered-but-uninvoiced orders, while the agent stays on delivery alone — they diverge on purpose."
     },
@@ -1279,6 +1289,11 @@
       "check": "D1",
       "key": "ARRIVAL_AT,ARRIVES_EM_WAREHOUSE_DATE,CUSTOMER_DELIVERED_DATE,DELIVERY_SUBSTATUS,DEPARTURE_AT,DRIVER_ID,DRIVER_NAME,ETA_ARRIVING_PORT,EXPECTED_DELIVERY_AT,SHIPOUT_DATE,TIME_CONFIRMED,TIME_RANGE,VEHICLE|backend/src/scm/shared/do-header-lock.ts frontend/src/vendor/shared/do-header-lock.ts",
       "why": "A VENDORED TWIN, not a second decision: the Delivery Order header columns that stay editable once a Sales Invoice or Delivery Return exists (owner ruling 2026-09-14). One home in backend/src/scm/shared/do-header-lock.ts, read by the PATCH /delivery-orders-mfg/:id refusal; the byte-identical copy under frontend/src/vendor/shared/ exists because the desktop edit form and the phone edit screen disable fields from it and the browser cannot import backend/src. Refereed by frontend/src/vendor/shared/do-header-lock.canonical.test.ts (byte compare) and backend/tests/doHeaderLockPartition.test.ts (every PATCH column classified)."
+    },
+    {
+      "check": "D1",
+      "key": "ADDRESS1,ADDRESS2,ADDRESS3,ADDRESS4,AGENT,BILL_TO_ADDRESS,BRANDING,BUILDING_TYPE,CITY,CURRENCY,CUSTOMER_ID,CUSTOMER_PO_IMAGE_B64,CUSTOMER_SO_NO,CUSTOMER_STATE,CUSTOMER_TYPE,DEBTOR_CODE,DEBTOR_NAME,EMAIL,EMERGENCY_CONTACT_NAME,EMERGENCY_CONTACT_PHONE,EMERGENCY_CONTACT_RELATIONSHIP,HUB_ID,HUB_NAME,INSTALL_TO_ADDRESS,PHONE,POSTCODE,REF,SALES_LOCATION,SHIP_TO_ADDRESS,SO_DATE,VENUE,VENUE_ID|backend/src/scm/shared/so-identity-lock.ts frontend/src/vendor/shared/so-identity-lock.ts",
+      "why": "A VENDORED TWIN, not a second decision: the Sales Order header columns a live Delivery Order / Sales Invoice snapshots and so freezes (owner 2026-05-31). One home in backend/src/scm/shared/so-identity-lock.ts, read by the header PATCH and the amendment routes; the byte-identical copy under frontend/src/vendor/shared/ exists since 2026-09-15 because a partly delivered order now opens for edit (per-line freeze) and the desktop and phone editors must grey out exactly the fields the server refuses. Refereed by frontend/src/vendor/shared/so-line-freeze.canonical.test.ts (byte compare)."
     },
     {
       "check": "D1",

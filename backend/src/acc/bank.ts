@@ -18,6 +18,7 @@ import type { BankColumnMap, BankParseConfig } from './bank-parse';
 import type { BankRecognitionRule, PayableBatch, PayoutAdviceForMatch } from './bank-match';
 import type { LedgerMovement } from './bank-reconcile';
 import { lockMonthOf, monthAsDate, monthFromDate, type MonthLock } from './bank-lock';
+import { isReversalPair } from './reversal-pairs';
 
 export type BankStatementConfig = {
   id: number;
@@ -222,10 +223,9 @@ export async function loadPayoutAdvices(
  * through, so the reconciliation cannot disagree with the general ledger — it
  * is reading the same rows.
  *
- * Reversed entries are KEPT (migration 0290, owner decision 2026-08-13: show
- * both entries and let them net). A reversal and its original sum to zero, so
- * the balance is right and the audit trail survives — which is what a
- * reconciliation needs, since the bank statement will show neither.
+ * A reversed entry and its contra are left out together — the same predicate
+ * every statement reads (acc/reversal-pairs.ts, docs/bugs/0923): they net to
+ * nothing and the bank statement will show neither.
  */
 export async function loadAccountLedger(
   sb: any, companyId: number, accountCode: string, upTo: string,
@@ -246,7 +246,7 @@ export async function loadAccountLedger(
        two bank movements: they net to nothing and no statement will ever show
        either. Both sides carry reversed_by_je; neither is the bank's business
        (docs/bugs/0802 — they were being listed, and offered, as two entries). */
-    if (r.reversed === true || r.reversed_by_je != null) continue;
+    if (isReversalPair(r)) continue;
     const jeNo = String(r.je_no ?? '');
     const at = byJe.get(jeNo);
     if (at) {

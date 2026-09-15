@@ -22,15 +22,24 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
 
-/** The two documents a cancellation request can sit on. */
+/** The two documents a cancellation REQUEST can sit on — the ones with
+ *  `/cancel-request` routes, so the only types the hooks below accept. */
 export type CancelDocType = 'so' | 'po';
 
-/** Mirrors scm.document_cancel_requests (mig 20260908T1400). */
+/** Every document a cancellation ROW can name. The Delivery Order joined on
+ *  2026-09-14 (「DO cancel need pop out window for reason」) as a reason-only
+ *  document like the Purchase Order: its rows are the EXECUTED record of a
+ *  cancel that already ran, and it has NO request routes — which is why it is in
+ *  this type and not in CancelDocType, so no hook can be pointed at one. */
+export type CancelRowDocType = CancelDocType | 'do';
+
+/** Mirrors scm.document_cancel_requests (mig 20260908T1400; 'DO' allowed since
+ *  mig 20260914T1800). */
 export type CancelRequestRow = {
   id: string;
   company_id: number;
-  doc_type: 'SO' | 'PO';
-  /** `doc_no` for the Sales Order, `id` for the Purchase Order. */
+  doc_type: 'SO' | 'PO' | 'DO';
+  /** `doc_no` for the Sales Order, `id` for the Purchase Order and the Delivery Order. */
   doc_key: string;
   doc_number: string;
   doc_status_at_request: string | null;
@@ -68,34 +77,36 @@ export type ApprovalLevel = 1 | 2;
  *  APPROVAL_LEVELS). */
 export type RequiredSignatures = 0 | 1 | 2;
 
-export const APPROVAL_LEVELS: Record<CancelDocType, RequiredSignatures> = { so: 2, po: 0 };
+export const APPROVAL_LEVELS: Record<CancelRowDocType, RequiredSignatures> = { so: 2, po: 0, do: 0 };
 
-export const levelsFor = (docType: CancelDocType): RequiredSignatures => APPROVAL_LEVELS[docType];
+export const levelsFor = (docType: CancelRowDocType): RequiredSignatures => APPROVAL_LEVELS[docType];
 
 /** The permission that signs each level. MUST match the server's table
  *  (CANCEL_APPROVE_KEY there) — the screen only decides whether to SHOW a
  *  button; the server's 403 is the real gate. */
-export const CANCEL_APPROVE_KEY: Record<CancelDocType, Partial<Record<ApprovalLevel, string>>> = {
+export const CANCEL_APPROVE_KEY: Record<CancelRowDocType, Partial<Record<ApprovalLevel, string>>> = {
   so: { 1: 'scm.so_cancel.approve_l1', 2: 'scm.so_cancel.approve_l2' },
   po: {},
+  do: {},
 };
 
 /** Every key that may sign or refuse on this document type. */
-export const approveKeysFor = (docType: CancelDocType): string[] =>
+export const approveKeysFor = (docType: CancelRowDocType): string[] =>
   Object.values(CANCEL_APPROVE_KEY[docType]).filter((k): k is string => typeof k === 'string');
 
 const BASE: Record<CancelDocType, string> = { so: 'mfg-sales-orders', po: 'mfg-purchase-orders' };
 
-export const docTypeOfRow = (row: Pick<CancelRequestRow, 'doc_type'>): CancelDocType => (row.doc_type === 'PO' ? 'po' : 'so');
+export const docTypeOfRow = (row: Pick<CancelRequestRow, 'doc_type'>): CancelRowDocType =>
+  row.doc_type === 'PO' ? 'po' : row.doc_type === 'DO' ? 'do' : 'so';
 
 /** Which signature the request is waiting for; null when none. */
 export const pendingLevel = (status: string | null | undefined): ApprovalLevel | null =>
   status === 'REQUESTED' ? 1 : status === 'L1_APPROVED' ? 2 : null;
 
 /** True when a signature at `level` is the document's last one. */
-export const isFinalLevel = (docType: CancelDocType, level: ApprovalLevel): boolean => level >= levelsFor(docType);
+export const isFinalLevel = (docType: CancelRowDocType, level: ApprovalLevel): boolean => level >= levelsFor(docType);
 
-export const signaturesGiven = (docType: CancelDocType, status: string | null | undefined): number =>
+export const signaturesGiven = (docType: CancelRowDocType, status: string | null | undefined): number =>
   status === 'L1_APPROVED' ? 1 : status === 'APPROVED' || status === 'EXECUTED' ? levelsFor(docType) : 0;
 
 export const isOpenCancelStatus = (status: string | null | undefined): boolean =>
@@ -118,7 +129,7 @@ export function cancelRequestLine(row: Pick<CancelRequestRow, 'status' | 'doc_ty
 }
 
 /** The approve button's words: names the level only where there are two. */
-export function approveLabel(docType: CancelDocType, level: ApprovalLevel): string {
+export function approveLabel(docType: CancelRowDocType, level: ApprovalLevel): string {
   if (levelsFor(docType) <= 1) return 'Approve & cancel';
   return level === 2 ? 'Approve & cancel (level 2)' : 'Approve (level 1)';
 }

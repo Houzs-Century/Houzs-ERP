@@ -34,6 +34,7 @@ import { systemTakings, postCashOverShort } from '../../acc/daily-close';
 import { resolveRoles, piLines, DEFAULT_ROLE_CODES } from '../../acc/rules';
 import { splitByItemGroup } from '../../acc/item-group-split';
 import { classifyJournal } from '../../acc/journal-class';
+import { isReversalPair } from '../../acc/reversal-pairs';
 import {
   settlementSetup, settlementSetupSave, settlementUpload, settlementBatches,
   settlementBatchDetail, settlementConfirmRow, settlementConfirmMatched, settlementRowUnconfirm,
@@ -840,11 +841,18 @@ export async function resyncPiAccounting(
    GL stream + balances + aging
    ════════════════════════════════════════════════════════════════════════ */
 
-accounting.get('/gl', async (c) => {
+/* Exported for the contract test (glStreamSkipsReversalPairs.test.ts): the
+   stream is asserted through a bare Hono app, the way controlCheckHandler is. */
+export const glStreamHandler = async (c: any) => {
   const sb = c.get('supabase');
   const accountCode = c.req.query('accountCode');
   const from = c.req.query('from');
   const to = c.req.query('to');
+  /* A reversed entry and its contra are one correction, not two movements: the
+     stream leaves both out unless the reader asks to see them (docs/bugs/0923;
+     the journal list still marks the original). The view exposes both flags
+     (mig 0290), so the rows that come back carry them for the screen's mark. */
+  const showReversed = ['1', 'true'].includes(String(c.req.query('showReversed') ?? ''));
 
   // PostgREST's 1000-row cap silently truncated the GL export — page through so
   // a wide account/date range exports every entry, not just the first 1000.
@@ -857,8 +865,10 @@ accounting.get('/gl', async (c) => {
     return q.range(pFrom, pTo);
   });
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  return c.json({ glEntries: data ?? [] });
-});
+  const rows = (data ?? []) as Array<{ reversed?: boolean | null; reversed_by_je?: string | null }>;
+  return c.json({ glEntries: showReversed ? rows : rows.filter((r) => !isReversalPair(r)) });
+};
+accounting.get('/gl', glStreamHandler);
 
 accounting.get('/balances', async (c) => {
   const sb = c.get('supabase');
@@ -1318,7 +1328,7 @@ accounting.post('/backfill/customer-payments', async (c) => {
 /* GET /daily-bank?date=YYYY-MM-DD — the owner's board (brief 3.6): where the
    money is today and how much can actually move. Live from the ledger, no
    cache (2.3) - so it can never disagree with the trial balance. */
-accounting.get('/daily-bank', async (c) => {
+export const dailyBankHandler = async (c: any) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   const dateQ = c.req.query('date') ?? todayMyt();
@@ -1384,7 +1394,7 @@ accounting.get('/daily-bank', async (c) => {
     return c.json(computeDailyBank(date, [], [], [], pending));
   }
   const { data: lines, error: lErr } = await paginateAll<Record<string, unknown>>((from, to) =>
-    sb.from('v_gl_entries').select('entry_date, je_no, source_type, source_doc_no, account_code, debit_sen, credit_sen, notes')
+    sb.from('v_gl_entries').select('entry_date, je_no, source_type, source_doc_no, account_code, debit_sen, credit_sen, notes, reversed, reversed_by_je')
       .eq('company_id', co.companyId)
       .in('account_code', allCodes)
       .lte('entry_date', date)
@@ -1392,8 +1402,12 @@ accounting.get('/daily-bank', async (c) => {
       .range(from, to));
   if (lErr) return c.json({ error: 'load_failed', reason: lErr.message }, 500);
 
-  return c.json(computeDailyBank(date, money, transitAccounts, (lines ?? []) as never, pending));
-});
+  /* The board reads the ledger the reconciliation reads: neither side of a
+     reversal pair is money that moved (docs/bugs/0923). */
+  const counted = (lines ?? []).filter((l) => !isReversalPair(l as { reversed?: boolean | null; reversed_by_je?: string | null }));
+  return c.json(computeDailyBank(date, money, transitAccounts, counted as never, pending));
+};
+accounting.get('/daily-bank', dailyBankHandler);
 
 /* ════════════════════════════════════════════════════════════════════════
    Daily close (cashup, brief 3.5 layer 2)

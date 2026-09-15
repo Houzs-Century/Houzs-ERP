@@ -273,9 +273,10 @@ export function salesOrderRowMenu<R extends StatusRow & SoChainRow & MigratedRow
    text argued a stock-reversing action must not sit two pixels from "Open"
    without the detail page's confirmation copy. The objection was to the MISSING
    CONFIRMATION, not to the entry — so the entry ships WITH one: the list's
-   `cancel` handler goes through `askConfirm` before it writes, exactly like the
-   Sales Order list's, and it is the SAME endpoint the detail page posts
-   (`PATCH /delivery-orders-mfg/:id/status`, status CANCELLED). Nothing new
+   `cancel` handler asks for the REASON before it writes (owner 2026-09-14,
+   use-do-cancel-action.ts — the detail page's own prompt), and it is the SAME
+   endpoint the detail page posts (`PATCH /delivery-orders-mfg/:id/status`,
+   status CANCELLED plus the reason the server now requires). Nothing new
    happens here; the capability is the page's, the menu only offers it.
 
    `canCancel` is the LIST's to compute and it cannot be complete, which is
