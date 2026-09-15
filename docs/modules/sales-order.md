@@ -4266,6 +4266,7 @@ and the sheet itself):
 | --- | --- | --- |
 | sofa, bedframe | inside their own configurator, not standalone | yes |
 | mattress | yes | yes |
+| fabric_accessory (Sofa Accessory) | yes — its own panel holds only the fabric picker | yes (no add-on is offered to it as of 2026-09-15, so free text in practice) |
 | accessory, others | yes | **no** — free text only, unless the line already carries a pick |
 | service | no | no |
 
