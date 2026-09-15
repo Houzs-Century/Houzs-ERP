@@ -40,11 +40,11 @@ export type FunnelAllRowsConfig<T> = {
  * column keys, passed to the fetch so it can enrich the columns being funnelled.
  */
 export function useFunnelAllRows<T>(
-  pageRows: T[] | undefined,
+  pageRows: T[] | null | undefined,
   wanted: boolean,
   funnelKeys: string[],
   config: FunnelAllRowsConfig<T> | undefined,
-): T[] | undefined {
+): T[] | null | undefined {
   const [held, setHeld] = useState<{ signature: string; rows: T[] } | null>(null);
   const [loading, setLoading] = useState(false);
   const fetchedSigRef = useRef<string | null>(null);
@@ -89,5 +89,5 @@ export function useFunnelAllRows<T>(
     onScopeChange(wanted ? { active: true, loading: !ready || loading } : null);
   }, [onScopeChange, wanted, ready, loading]);
 
-  return ready ? held.rows : pageRows;
+  return ready && held ? held.rows : pageRows;
 }
