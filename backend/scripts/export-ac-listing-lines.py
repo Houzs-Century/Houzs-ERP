@@ -26,7 +26,7 @@ tables. AutoCount is the floor's live system.
   AC_USER      default sa2
   AC_CRED_FILE path to a file containing ONLY the password. Required.
                The credential is never printed and never written to the repo.
-  AC_SINCE     documents dated on or after this day (default 2025-01-01)
+  AC_SINCE     documents dated on or after this day (default 2026-01-01)
 
   python backend/scripts/export-ac-listing-lines.py
 """
@@ -41,7 +41,7 @@ HOST = os.environ.get("AC_HOST", "10.147.17.100,55500")
 DB = os.environ.get("AC_DB", "AED_HOUZS")
 USER = os.environ.get("AC_USER", "sa2")
 CRED = os.environ.get("AC_CRED_FILE")
-SINCE = os.environ.get("AC_SINCE", "2025-01-01")
+SINCE = os.environ.get("AC_SINCE", "2026-01-01")
 if not CRED or not os.path.exists(CRED):
     sys.exit("set AC_CRED_FILE to a file containing the AutoCount password")
 DRIVER = os.environ.get("AC_DRIVER", "SQL Server Native Client 11.0")
@@ -83,7 +83,7 @@ for t, (H, D, party) in SPECS.items():
              h.CurrencyCode, h.CurrencyRate, h.InclusiveTax, h.TotalExTax, h.Tax, h.NetTotal, h.LocalNetTotal, h.Cancelled,
              d.ItemCode, d.Description, d.Desc2, d.UDF_Desc2, d.UOM, d.Location, d.ProjNo, d.Qty, d.UnitPrice,
              d.Discount, d.DiscountAmt, d.SubTotal, d.TaxCode, d.Tax DtlTax, d.SubTotalExTax, d.DeliveryDate,
-             i.ItemGroup
+             i.ItemGroup, i.Description ItemMasterDesc, i.BaseUOM ItemBaseUOM
       FROM {D} d JOIN {H} h ON h.DocKey = d.DocKey
       LEFT JOIN Item i ON i.ItemCode = d.ItemCode
       WHERE h.DocDate >= ?
