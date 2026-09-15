@@ -11,7 +11,7 @@ FOR, which trees are dead, what must be changed in pairs — lives in
 
 ## 1. Backend route inventory
 
-203 route modules (53 in `backend/src/routes`, 150 in `backend/src/scm/routes`), 1312 endpoint registrations.
+204 route modules (54 in `backend/src/routes`, 150 in `backend/src/scm/routes`), 1314 endpoint registrations.
 
 An endpoint is a `router.<method>("/…")` registration. For the per-route authorization
 boundary see the sibling artifact `docs/generated/route-capability-matrix.csv`, which
@@ -26,7 +26,7 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/assistant.ts` | 4 | 225 |
 | `backend/src/routes/assr.ts` | 64 | 3361 |
 | `backend/src/routes/assrAccess.ts` | 0 | 101 |
-| `backend/src/routes/assrFormIntake.ts` | 6 | 965 |
+| `backend/src/routes/assrFormIntake.ts` | 6 | 942 |
 | `backend/src/routes/assrPortal.ts` | 14 | 540 |
 | `backend/src/routes/assr_print.ts` | 1 | 1220 |
 | `backend/src/routes/audit.ts` | 1 | 74 |
@@ -36,6 +36,7 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/chatCallback.ts` | 1 | 282 |
 | `backend/src/routes/clientErrors.ts` | 2 | 232 |
 | `backend/src/routes/companies.ts` | 1 | 48 |
+| `backend/src/routes/deliverySheetSync.ts` | 2 | 183 |
 | `backend/src/routes/departments.ts` | 4 | 281 |
 | `backend/src/routes/documentRefs.ts` | 5 | 133 |
 | `backend/src/routes/finance.ts` | 2 | 466 |
@@ -238,7 +239,7 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (2602 files, 814586 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (2610 files, 815414 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -250,7 +251,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `frontend/src/pages/Team.tsx` | 5686 |
 | `backend/src/scm/routes/delivery-orders-mfg.ts` | 5585 |
 | `backend/src/routes/projects.ts` | 5153 |
-| `frontend/src/pages/scm-v2/Products.tsx` | 5014 |
+| `frontend/src/pages/scm-v2/Products.tsx` | 5010 |
 | `backend/src/scm/routes/scan-so.ts` | 4895 |
 | `frontend/src/mobile/MobilePMS.tsx` | 4491 |
 | `backend/src/scm/routes/mfg-purchase-orders.ts` | 4419 |
@@ -258,7 +259,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4204 |
 | `frontend/src/mobile/MobileNewSO.tsx` | 3677 |
 | `backend/src/scm/routes/grns.ts` | 3538 |
-| `frontend/src/components/DataTable.tsx` | 3453 |
+| `frontend/src/components/DataTable.tsx` | 3463 |
 | `frontend/src/mobile/MobileServiceCase.tsx` | 3381 |
 | `backend/src/routes/assr.ts` | 3361 |
 | `backend/src/services/projects.ts` | 3137 |
