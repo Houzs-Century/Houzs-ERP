@@ -20,11 +20,12 @@
 // and it is written up in the PR and the module guide rather than changed here.
 // ----------------------------------------------------------------------------
 import { describe, expect, test } from 'vitest';
-import soRoutes from '../src/scm/routes/mfg-sales-orders.ts?raw';
+import { soRouterSource } from './lib/so-router-source';
 import proceedGate from '../src/scm/lib/so-proceed-gate.ts?raw';
 import saveProblems from '../src/scm/shared/so-save-problems.ts?raw';
 import salesOrderNew from '../../frontend/src/pages/scm-v2/SalesOrderNew.tsx?raw';
 import mobileNewSo from '../../frontend/src/mobile/MobileNewSO.tsx?raw';
+const soRoutes = soRouterSource();
 
 /** Source with comments stripped — a rule named only in a comment is not a
  *  rule, and the comments here quote the very shapes this file forbids. */

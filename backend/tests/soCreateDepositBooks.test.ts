@@ -11,9 +11,11 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { soRouterSource } from './lib/so-router-source';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const read = (rel: string): string => readFileSync(path.resolve(here, '..', rel), 'utf8');
+const read = (rel: string): string =>
+  rel === 'src/scm/routes/mfg-sales-orders.ts' ? soRouterSource() : readFileSync(path.resolve(here, '..', rel), 'utf8');
 
 describe('every customer payment row insert is followed by the booking hook', () => {
   for (const file of ['src/scm/routes/mfg-sales-orders.ts', 'src/scm/lib/so-payment-row.ts']) {

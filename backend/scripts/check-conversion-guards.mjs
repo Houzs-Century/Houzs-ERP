@@ -265,10 +265,16 @@ const legacy = [];
 const inherits = [];
 const seenKeys = new Set();
 
+/* RECURSIVE: a conversion registered from routes/<router>/<topic>.ts is still a
+   conversion. `file` is the path under the route dir, subdirectory included. */
+const routeFilesUnder = (dir) =>
+  fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
+    e.isDirectory() ? routeFilesUnder(path.join(dir, e.name)).map((f) => `${e.name}/${f}`) : [e.name]);
+
 for (const dir of ROUTE_DIRS) {
   if (!fs.existsSync(dir)) continue;
   const relDir = path.relative(backendRoot, dir).split(path.sep).join("/");
-  for (const file of fs.readdirSync(dir).filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts"))) {
+  for (const file of routeFilesUnder(dir).filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts"))) {
     const raw = fs.readFileSync(path.join(dir, file), "utf8").split("\n");
     const lines = stripComments(raw);
 

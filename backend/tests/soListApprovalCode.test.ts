@@ -11,13 +11,9 @@
  * soPaymentAmendRoutes.test.ts.
  */
 import { describe, expect, test } from 'vitest';
+import { soRouterSource } from './lib/so-router-source';
 
-const sources = import.meta.glob('../src/scm/routes/mfg-sales-orders.ts', {
-  query: '?raw',
-  import: 'default',
-  eager: true,
-}) as Record<string, string>;
-const routeSource = Object.values(sources)[0] ?? '';
+const routeSource = soRouterSource();
 /* The search predicates moved into lib/so-list-read.ts on 2026-09-15 so the
    page, the money strip and the line export share ONE copy. */
 const readSources = import.meta.glob('../src/scm/lib/so-list-read.ts', { query: '?raw', import: 'default', eager: true }) as Record<string, string>;

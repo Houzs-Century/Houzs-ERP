@@ -2,7 +2,8 @@ import { describe, expect, test } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import rawRouteSource from '../src/scm/routes/mfg-sales-orders.ts?raw';
+import { soRouterFiles, soRouterSource } from './lib/so-router-source';
+const rawRouteSource = soRouterSource();
 
 /* NORMALISE LINE ENDINGS. This file's assertions are source-TEXT anchors that
    embed `\n`, and on Windows the working copy is checked out CRLF (git's
@@ -100,7 +101,9 @@ describe('every AutoCount create enqueue is gated', () => {
     expect(hits.length, 'enqueueSoCreate is called nowhere — this guard is reading the wrong tree')
       .toBeGreaterThan(0);
 
-    const unexpected = hits.filter((f) => f !== 'scm/routes/mfg-sales-orders.ts' && !(f in KNOWN_OUTSIDE_ROUTER));
+    /* "The router" is every file it is written across, not only mfg-sales-orders.ts. */
+    const routerFamily = soRouterFiles().map((file) => file.replace(/^src\//, ''));
+    const unexpected = hits.filter((f) => !routerFamily.includes(f) && !(f in KNOWN_OUTSIDE_ROUTER));
     expect(
       unexpected,
       'these files enqueue an AutoCount SO create and are covered by NO location gate and NO recorded '

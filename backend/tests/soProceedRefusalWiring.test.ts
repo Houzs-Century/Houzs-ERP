@@ -14,10 +14,11 @@
 // tests/soProceedRefusalNamesCondition.test.ts. Nothing here re-tests logic.
 // ----------------------------------------------------------------------------
 import { describe, expect, test } from 'vitest';
-import soRoutes from '../src/scm/routes/mfg-sales-orders.ts?raw';
+import { soRouterSource } from './lib/so-router-source';
 import proceedGate from '../src/scm/lib/so-proceed-gate.ts?raw';
 import orderRules from '../src/scm/shared/order-rules.ts?raw';
 import saveProblems from '../src/scm/shared/so-save-problems.ts?raw';
+const soRoutes = soRouterSource();
 
 /** Source with comments stripped. Every assertion runs on THIS: a rule named
  *  only in a comment is not a rule, and the comments below deliberately quote

@@ -6,7 +6,8 @@
  * `reason_required` on a blank one. */
 import { describe, expect, it } from 'vitest';
 /* `?raw`, not node:fs — backend/tsconfig.json types Workers only. */
-import rawRoute from './mfg-sales-orders.ts?raw';
+import { soRouterSource } from '../../../tests/lib/so-router-source';
+const rawRoute = soRouterSource();
 
 const start = rawRoute.indexOf("mfgSalesOrders.post('/:docNo/amendments'");
 const handler = start < 0 ? '' : rawRoute.slice(start, rawRoute.indexOf('\nmfgSalesOrders.', start + 10));

@@ -268,6 +268,11 @@ const MUST_GATE_MERGE = [
      check green — the script cannot see git history, so this suite is the only
      thing that notices. A boundary must stop the MERGE, not the deploy. */
   "tests/companyScopeConverted.test.mjs",
+  /* The reader every Sales Order source assertion goes through, including the
+     merge gate above. If it quietly stopped following register/mount calls, an
+     absence assertion would pass over handlers moved out of mfg-sales-orders.ts
+     and nothing would turn red. */
+  "tests/soRouterFamily.test.ts",
 ];
 
 test("every merge-gating suite is classified LIGHT, so a required job runs it", async () => {

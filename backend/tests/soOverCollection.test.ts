@@ -24,6 +24,7 @@
    of any write to lines or totals on the payment routes. */
 
 import { describe, expect, test } from 'vitest';
+import { soRouterSource } from './lib/so-router-source';
 import { soPaidSen, soBalanceSen, soOutstandingSen } from '../src/scm/shared/so-outstanding';
 
 /* Same shape the SO detail page builds via soPaidInputsOf. RM 4,000 order,
@@ -129,13 +130,7 @@ describe('the clamped rule the AutoCount write-back still uses', () => {
    re-adds without noticing. Same technique, and the same reason, as
    tests/paymentSlipAttach.test.ts. */
 
-const sources = import.meta.glob('../src/scm/routes/mfg-sales-orders.ts', {
-  query: '?raw',
-  import: 'default',
-  eager: true,
-}) as Record<string, string>;
-
-const routeSource = Object.values(sources)[0] ?? '';
+const routeSource = soRouterSource();
 
 /** Strip comments so the assertions read CODE, not the prose explaining it —
  *  the handlers' own docblocks quote the incident and name `over_payment`. */

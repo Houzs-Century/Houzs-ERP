@@ -48,10 +48,16 @@ function declaredDateColumns(): Set<string> {
   return cols;
 }
 
+/** Route files under `dir`, subdirectories included (a split router's topic files). */
+function routeFilesUnder(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
+    e.isDirectory() ? routeFilesUnder(path.join(dir, e.name)).map((f) => `${e.name}/${f}`) : [e.name]);
+}
+
 function mappedColumns(): Map<string, Set<string>> {
   const out = new Map<string, Set<string>>();
   for (const dir of ROUTE_DIRS) {
-    for (const f of readdirSync(dir)) {
+    for (const f of routeFilesUnder(dir)) {
       if (!f.endsWith('.ts') || f.includes('.test.')) continue;
       const src = readFileSync(path.join(dir, f), 'utf8');
       const pairRe = /\[\s*'([A-Za-z0-9_]+)'\s*,\s*'([a-z][a-z0-9_]*)'\s*\]/g;
