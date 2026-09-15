@@ -22,7 +22,7 @@
 // REVERSAL: UPDATE scm.autocount_outbox SET archived_at = NULL WHERE
 // doc_no = ANY(<the list>) AND company_id = <company>;
 //
-// ONLY A FINISHED DOCUMENT IS CLEARED (docs/bugs/0916). On 2026-09-10 this
+// ONLY A FINISHED DOCUMENT IS CLEARED (docs/bugs/0917). On 2026-09-10 this
 // script cleared documents whose refusal was still open, which the page's own
 // archive refuses, and the owner then read the CLEARED shelf as documents that
 // never reached AutoCount. A named document is now skipped, and says why, when

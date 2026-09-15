@@ -73,21 +73,30 @@ build 69s, retention 39s.
 | B | Deploy: run the light suite once, shard only the workers suite | each deploy shard stops re-running 811 files; backend release path 4m41s → ~3m | none — same files, same commands; `backend` asserts both jobs | **IMPLEMENTED** |
 | C | Deploy: skip the frontend release when nothing since the last successful frontend deploy can change the build | 7m40s of runner time on 17/60 merges; docs-only merge → live drops to the `changes` job; deploy runs are serial, so the next run waits less | a collapsed run hiding a frontend change — answered as the backend already answers it: base = last run whose `frontend` JOB succeeded, fail-open, `workflow_dispatch` always publishes. A skip leaves the live Pages deployment (and every chunk #3827 retains) untouched | **IMPLEMENTED** |
 | D | Merge queue skips backend/frontend half by path, like the PR run | backend-only queue run 5m44s → ~4m10s | **UNSAFE, not done.** The halves are not independent: 54 frontend test files read backend source (`backend/src/services/capabilities.ts` …), backend tests read `frontend/src`, and tests read `docs/*.md` (`moduleGuideLedger.test.ts`, `bugIndexAreas.test.ts`). The PR run's path skip is only acceptable BECAUSE the queue runs everything — it is the net under it | **REJECTED** |
-| E | Merge queue reuses the PR's green result when the tree is identical | 28/60 queue runs × 5m33s ≈ 2.6 min per PR on average | touches what a REQUIRED context means (a success reported without running); a bug in the identity test fails open. Must also refuse reuse where the PR run path-skipped a half (see D) | **PROPOSAL — owner** (§3) |
+| E | Merge queue reuses the PR's green result when the tree is identical | 28/60 queue runs × 5m33s ≈ 2.6 min per PR on average | touches what a REQUIRED context means (a success reported without running); a bug in the identity test fails open. Must also refuse reuse where the PR run path-skipped a half (see D) | **IMPLEMENTED** — owner approved 2026-09-15 (§3.1) |
 | F | Backend-only PRs skip frontend vitest; docs-only skip backend tests | — | already true on the PR run since 2026-08-18 (`ci.yml` `changes`); extending it to the queue is D | nothing to do |
 | G | Run `test:light` concurrently with the audits inside `backend-typecheck` | ≤ ~40–70s, CPU-contended | `audit:generators` REWRITES generated files that tests import (`check-generators-run.mjs` header) — a read during the rewrite is a flaky failure in a required context | **REJECTED for now** |
 | H | Deploy stops re-running tests the queue ran on the identical tree | frontend deploy −4m; backend deploy −3m | **the deploy's backend tests are the only BLOCKING run of the workers suite.** The required contexts are `backend-typecheck`, `frontend`, `company-scope-ratchet`, `completeness-claim`; the `backend` roll-up (workers shards, lint, file-size, e2e-contract) is NOT required, so a red workers shard does not stop a merge | **PROPOSAL — only after §3.2** |
 
-## 3. Needs the owner (ruleset / required-check semantics) — not implemented
+## 3. Needs the owner (ruleset / required-check semantics)
 
-1. **Queue reuse on an identical tree (E).** In `ci.yml` on `merge_group`: if the
-   group is a single entry, its base (`merge_group.base_sha`) is an ancestor of
-   the PR head, the group tree equals the tree the PR's newest `ci.yml` run
-   tested, that run concluded success, and its `changes` job ran BOTH halves —
-   then the heavy steps report success without re-running. Saves ~5.5 min on
-   ~47% of PRs. It changes what "`frontend` passed in the queue" means, so it is
-   the owner's call, and it must ship with a test that fails when any of the
-   four conditions is dropped.
+1. **Queue reuse on an identical tree (E) — APPROVED by the owner 2026-09-15
+   (「那这个解决掉」) and IMPLEMENTED.** The PR run's `changes` job uploads an
+   artifact named `ci-tree-<tree sha>`. The queue run's `changes` job looks that
+   name up and reuses a run only if it is a completed, successful `ci.yml`
+   `pull_request` run for the HEAD of the PR the queue group was built from, and
+   `backend-typecheck`, `file-size`, `e2e-contract` and both `lint` legs
+   succeeded in it. Those four jobs are then skipped in the queue; a half
+   (backend tests / frontend tests) is skipped only if the PR run actually ran
+   it green, otherwise the queue runs it. A lookup error writes nothing and
+   everything runs. Rules and their tests: `scripts/lib/ci-queue-reuse.mjs`,
+   `scripts/ci-queue-reuse.test.mjs` (each proof condition dropped on its own
+   turns the reuse off; the test also pins which jobs ci.yml gates).
+   A job skipped by `if:` reports success to a required check (GitHub docs,
+   *Using conditions to control job execution*), so a skip caused by a FAILED
+   `changes` would read green: the gated jobs run whenever `changes` did not
+   succeed, and both roll-ups require `changes` to succeed. That also closes
+   item 3 below.
 2. **Make the `backend` roll-up required, or move the workers suite under a
    required context.** Today a failing money/stock DB test in `backend-tests (n)`
    does not block a merge; it blocks the NEXT DEPLOY (every later merge then
@@ -96,10 +105,7 @@ build 69s, retention 39s.
    triggered workflow reports as passing to a required check; the "pending
    forever" failure is a WORKFLOW that never triggers. Verify on a scratch
    ruleset before believing either sentence. Only after this is H safe.
-3. **`changes` failing silently greens `frontend`.** Every frontend job needs
-   `changes`; if `changes` itself fails they are all `skipped`, which the roll-up
-   accepts. Pre-existing, not introduced here; a one-line fix (`ok changes`)
-   belongs in its own PR.
+3. **`changes` failing silently greened `frontend`** — CLOSED with item 1: both roll-ups now require `changes` to succeed.
 
 ## 4. Before / after (filled from the PR run and the next real PRs)
 

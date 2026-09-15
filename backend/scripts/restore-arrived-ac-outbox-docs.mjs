@@ -7,7 +7,7 @@
  * 后来确实进了 AutoCount」的单放回正常列表（它们会显示为已进 AutoCount）；
  * 人手在页面上清的单不动；还没进的单不动，只列出来。
  *
- * ── WHY (docs/bugs/0916) ───────────────────────────────────────────────────
+ * ── WHY (docs/bugs/0917) ───────────────────────────────────────────────────
  * `archive-ac-outbox-docs.mjs` archived by document number with no verdict, and
  * on 2026-09-10 it cleared documents whose refusal was still open. The page's
  * own archive refuses exactly that (`acArchiveVerdict`). Those documents were

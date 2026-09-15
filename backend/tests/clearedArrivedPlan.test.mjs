@@ -1,4 +1,4 @@
-/* docs/bugs/0916 — which cleared AutoCount Sync documents have since reached
+/* docs/bugs/0917 — which cleared AutoCount Sync documents have since reached
  * AutoCount and go back on the list, and which a clear must refuse. Shapes are
  * the production rows of 2026-09-15. */
 import { describe, expect, test } from "vitest";

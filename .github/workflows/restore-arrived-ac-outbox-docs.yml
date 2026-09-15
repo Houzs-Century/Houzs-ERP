@@ -3,7 +3,7 @@ name: Put cleared AutoCount documents that arrived back on the list (plan / appl
 # The AutoCount Sync page's CLEARED shelf held documents a script had cleared
 # with their refusal still open, and which reached AutoCount later, so they read
 # as never sent (backend/scripts/restore-arrived-ac-outbox-docs.mjs,
-# docs/bugs/0916). This puts back on the list every script-cleared document that
+# docs/bugs/0917). This puts back on the list every script-cleared document that
 # has since arrived, by the page's own judgement, re-filing refusals that were
 # filed under a row id. Documents a person cleared on the page, and documents not
 # in AutoCount, stay cleared and are listed.

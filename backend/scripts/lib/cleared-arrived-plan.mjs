@@ -6,7 +6,7 @@
  * 这里决定哪些单可以放回正常列表：只放「后来确实进了 AutoCount」的单，
  * 并且只动脚本清的，不动人手在页面上清的。
  *
- * docs/bugs/0916. The judgement is the page's own: a document needs attention when
+ * docs/bugs/0917. The judgement is the page's own: a document needs attention when
  * its newest refusal is not predated by its newest arrival
  * (`acRefusalPredatesArrival`), with every row's state read by `acOutboxState`,
  * so a re-queued refusal is history. Both are imported, never restated.
