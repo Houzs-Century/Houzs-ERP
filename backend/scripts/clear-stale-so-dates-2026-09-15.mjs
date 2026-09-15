@@ -15,7 +15,9 @@
    again. Nothing is cancelled; quantities, prices and lines stay.
 
    PER ORDER (company 1):
-     - header processing_date -> NULL, customer_delivery_date -> NULL
+     - header processing_date -> NULL, customer_delivery_date -> NULL, and
+       `version` + 1 (the concurrency token, as clear-so-dates does) so a form
+       left open in a browser cannot save the old dates back
      - every line that has NOT been delivered: line_delivery_date -> NULL,
        line_delivery_date_overridden -> false
      - a line already on a live delivery order (any DO that is not CANCELLED or
@@ -69,7 +71,7 @@ async function plan(tx) {
       FROM scm.mfg_sales_order_items i WHERE i.doc_no = ${doc} ORDER BY i.line_no NULLS LAST, i.created_at`;
     say(`\n${doc} · ${h.debtor_name} · ${h.st} · processing ${d(h.proc)} · delivery ${d(h.cdd)}`);
     if (h.proc || h.cdd) {
-      await tx`UPDATE scm.mfg_sales_orders SET processing_date = NULL, customer_delivery_date = NULL WHERE doc_no = ${doc} AND company_id = ${COMPANY}`;
+      await tx`UPDATE scm.mfg_sales_orders SET processing_date = NULL, customer_delivery_date = NULL, version = version + 1 WHERE doc_no = ${doc} AND company_id = ${COMPANY}`;
       headers++;
     }
     const kept = [];

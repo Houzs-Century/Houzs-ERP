@@ -209,6 +209,7 @@ on 2026-08-13 (BUG-HISTORY). Verified by reading each handler, not by grep.
 
 ## See also
 
+- `docs/line-export-columns.md` — the proposed one-row-per-line export columns for every transaction document, and which columns the import may change
 - `docs/modules/purchase-order.md` — the owned-stock original this clones
 - `docs/hard-delete-inventory.md` — every SCM delete, classified
 - `BUG-HISTORY.md` 2026-08-11, "Two more document-level hard deletes"

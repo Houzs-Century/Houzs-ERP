@@ -37,6 +37,7 @@ import {
 } from './bank-queries';
 import { ICON, fmt, btn, softText, danger, good, panel, refusalText } from './settlement-ui';
 import { ReconciliationPanel, OpenLines, DoneLine, BooksNotOnBank } from './BankStatementTab';
+import { ReconcilePickProvider, byDateThenLine } from './bank-reconcile-pick';
 import { BankAccountTabs, currentAccount } from './BankAccountTabs';
 import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
 import grid from './MerchantRecon.module.css';
@@ -208,16 +209,13 @@ const MonthView = ({ picked, onBack }: { picked: Picked; onBack: () => void }) =
   const lines = q.data?.lines ?? [];
   const open = lines.filter((l) => l.state === 'OPEN');
   const done = lines.filter((l) => l.state !== 'OPEN');
-  /* Most consequential first, then biggest — the file screen's own order, for
-     the same reason: a card payout books money, a plain movement is
-     bookkeeping. */
-  const ordered = [...open].sort((a, b) => {
-    const rank = (l: BankLine) => (l.kind === 'PAYOUT' ? 0 : l.kind === 'PAYOUT_SPLIT' ? 1
-      : l.kind === 'PAYOUT_UNSURE' ? 2 : l.kind === 'PAYOUT_NO_BATCH' ? 3 : 4);
-    return rank(a) - rank(b) || Math.abs(b.amount_sen) - Math.abs(a.amount_sen);
-  });
+  /* In the order the statement reads — by the day the bank booked it, then
+     the line — the file screen's own order (docs/bugs/0918). */
+  const ordered = byDateThenLine(open);
+  const entries = q.data?.unmatchedEntries ?? [];
 
   return (
+    <ReconcilePickProvider lines={ordered} entries={entries}>
     <section className="space-y-3">
       <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'baseline', flexWrap: 'wrap' }}>
         <button type="button" style={btn()} onClick={onBack}><ArrowLeft {...ICON} /> All months</button>
@@ -301,7 +299,7 @@ const MonthView = ({ picked, onBack }: { picked: Picked; onBack: () => void }) =
           assembly={q.data.assembly} balances={q.data.balances} picked={picked} />
       )}
 
-      {open.length > 0 && <OpenLines lines={ordered} entries={q.data?.unmatchedEntries ?? []} />}
+      {open.length > 0 && <OpenLines lines={ordered} />}
 
       {done.length > 0 && (
         <div style={softText}>
@@ -328,6 +326,7 @@ const MonthView = ({ picked, onBack }: { picked: Picked; onBack: () => void }) =
 
       {q.data && q.data.statements.length > 0 && <TheFiles data={q.data} />}
     </section>
+    </ReconcilePickProvider>
   );
 };
 

@@ -1929,11 +1929,19 @@ endpoint and tab. The header view is untouched.
   `DesktopOnly` on mobile, so there is no mobile chasing screen (and no
   desktop/mobile pair to keep in sync — §8).
 
-- The AutoCount supplier dates are the three **Estimate Delivery Date 1 / 2 / 3**
-  columns (2026-09-15), in the positions the owner kept on 2026-09-12. The route
-  resolves each per row — the line's `supplier_delivery_date_2/3/4`, else the PO
-  header's — through `resolvePoEstimateDates` (`lib/po-line-export.ts`), the same
-  rule and the same names as the PO line export (`estimate_delivery_date_1..3` on
+- The AutoCount UDF dates are HEADER fields in the book, repeated on every line
+  of its report. Mapping, proven against the live book 2026-09-15
+  (`docs/bugs/0918-autocount-supplier-delivery-dates-never-reached-the-erp-purc.md`):
+  Estimate Delivery Date = `PO.UDF_EDate` -> `supplier_delivery_date_2`;
+  Supplier Delivery Date 2 = `UDF_EDate2` -> `_3`; Supplier Delivery Date 3 =
+  `UDF_EDate3` -> `_4`. The migrated POs got them once, through
+  `fill-po-supplier-dates-from-autocount.yml`. NO ongoing sync exists in either
+  direction: the PO write-back sends `UDF: {}` and no pull writes `scm`. Owner
+  2026-09-12: keep the column positions.
+- Since 2026-09-15 the tab shows them as **Estimate Delivery Date 1 / 2 / 3**. The
+  route resolves each per row — the line's `supplier_delivery_date_2/3/4`, else
+  the PO header's — through `resolvePoEstimateDates` (`lib/po-line-export.ts`),
+  the same rule and names as the PO line export (`estimate_delivery_date_1..3` on
   each row). The view itself is unchanged.
 
 ## Exports — every page the filters match (2026-09-15)

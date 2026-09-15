@@ -35,6 +35,7 @@ import {
   loadLiveMonthLock, loadLineMonth, loadClaimedElsewhere, claimedSetFor, jeNosOf } from '../../acc/bank';
 import { lockedRefusal, lockMonthOf } from '../../acc/bank-lock';
 import { postBatchReceipt, undoBatchReceipt } from '../../acc/settlement';
+import { withJournalRefs } from '../../acc/journal-refs';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 
@@ -728,6 +729,12 @@ export const bankStatementDetail = guard(async (c) => {
   if (!elsewhere.ok) return c.json({ error: 'load_failed', reason: elsewhere.reason }, 500);
   if (!rules.ok) return c.json({ error: 'load_failed', reason: rules.reason }, 500);
   if (!payouts.ok) return c.json({ error: 'load_failed', reason: payouts.reason }, 500);
+  /* Every entry named the way a person knows it — the document's number and
+     the customer, payee or merchant (docs/bugs/0918) — so the candidates and
+     the outstanding list below read the same. */
+  const named = await withJournalRefs(sb, co.companyId, ledger.movements);
+  if (!named.ok) return c.json({ error: 'load_failed', reason: named.reason }, 500);
+  ledger.movements = named.entries;
   const claimedElsewhere = claimedSetFor(elsewhere, ledger.movements);
 
   const stored = (linesRes.data ?? []) as Array<Record<string, any>>;
@@ -1097,6 +1104,67 @@ export const bankLineIgnore = guard(async (c) => {
   return c.json({ ok: true, status: 'ignored' });
 });
 
+/* ── One entry, one claim per bank account (docs/bugs/0917) ─────────────────
+   Owner, 2026-09-15, on the Maybank side of 2990-JE-2607-0088 — the July
+   transfer Maybank → HLBB, already matched on the HLB statement: 这个要做. An
+   internal transfer is ONE journal with a leg on each bank; each bank's
+   statement shows its own movement, and each may claim the entry once. What
+   stays refused is a second claim on the SAME bank. */
+
+type Claim = { id: number; jeNo: string; bankLineId: number; accountCode: string };
+
+/** Every match row on these entries, split into the live claims (a POSTED
+    line's) and the rows an older undo left behind; each live claim names the
+    bank account its line sits on. */
+async function liveClaimsOn(sb: any, companyId: number, jeNos: string[]): Promise<{ ok: true; live: Claim[]; dead: Claim[] } | { ok: false; reason: string }> {
+  const { data: rowsRaw, error } = await sb.from('acc_bank_statement_matches')
+    .select('id, je_no, bank_line_id').eq('company_id', companyId).in('je_no', jeNos);
+  if (error) return { ok: false, reason: error.message };
+  const rows = (Array.isArray(rowsRaw) ? rowsRaw : []) as Array<{ id: number; je_no: string; bank_line_id: number }>;
+  if (rows.length === 0) return { ok: true, live: [], dead: [] };
+  const { data: linesRaw, error: lErr } = await sb.from('acc_bank_statement_lines')
+    .select('id, state, statement_id').eq('company_id', companyId).in('id', [...new Set(rows.map((m) => Number(m.bank_line_id)))]);
+  if (lErr) return { ok: false, reason: lErr.message };
+  const lines = new Map(((Array.isArray(linesRaw) ? linesRaw : []) as Array<{ id: number; state: string; statement_id: number }>).map((l) => [Number(l.id), l]));
+  const stmtIds = [...new Set([...lines.values()].map((l) => Number(l.statement_id)))];
+  const accountOf = new Map<number, string>();
+  if (stmtIds.length > 0) {
+    const { data: stmtsRaw, error: sErr } = await sb.from('acc_bank_statements')
+      .select('id, account_code').eq('company_id', companyId).in('id', stmtIds);
+    if (sErr) return { ok: false, reason: sErr.message };
+    for (const s of (Array.isArray(stmtsRaw) ? stmtsRaw : []) as Array<{ id: number; account_code: string }>) accountOf.set(Number(s.id), String(s.account_code));
+  }
+  const live: Claim[] = [];
+  const dead: Claim[] = [];
+  for (const m of rows) {
+    const line = lines.get(Number(m.bank_line_id));
+    const claim: Claim = { id: Number(m.id), jeNo: String(m.je_no), bankLineId: Number(m.bank_line_id), accountCode: line ? (accountOf.get(Number(line.statement_id)) ?? '') : '' };
+    if (line && String(line.state) === 'POSTED') live.push(claim); else dead.push(claim);
+  }
+  return { ok: true, live, dead };
+}
+
+/** The bank account a statement belongs to. */
+async function accountOfStatement(sb: any, companyId: number, statementId: number): Promise<{ ok: true; accountCode: string } | { ok: false; reason: string }> {
+  const { data, error } = await sb.from('acc_bank_statements').select('account_code').eq('company_id', companyId).eq('id', statementId).maybeSingle();
+  if (error) return { ok: false, reason: error.message };
+  return { ok: true, accountCode: String((data as { account_code?: string } | null)?.account_code ?? '') };
+}
+
+/** Does this entry have a leg on this bank account? (Its other bank has
+    already claimed it; this bank may claim only the leg that is its own.) */
+async function entryOnAccount(sb: any, companyId: number, accountCode: string, jeNo: string): Promise<{ ok: true; found: boolean } | { ok: false; reason: string }> {
+  const { data, error } = await sb.from('v_gl_entries')
+    .select('je_no').eq('company_id', companyId).eq('account_code', accountCode).eq('je_no', jeNo).limit(1);
+  if (error) return { ok: false, reason: error.message };
+  return { ok: true, found: (Array.isArray(data) ? data : []).length > 0 };
+}
+
+const claimedHere = (jeNo: string, accountCode: string): string =>
+  `${jeNo} is already reconciled against another movement on ${accountCode}'s statements. One entry cannot account for two movements of the same bank.`;
+const noLegHere = (jeNo: string, accountCode: string): string =>
+  `${jeNo} has no line on ${accountCode}, so no movement of this bank can be it — it is reconciled on the bank it does touch.`;
+
 /* ── POST /bank/lines/:id/match — this movement is that entry ─────────────── */
 
 export const bankLineMatch = guard(async (c) => {
@@ -1119,38 +1187,37 @@ export const bankLineMatch = guard(async (c) => {
   const sb = c.get('supabase');
 
   const { data: lineRaw, error } = await sb.from('acc_bank_statement_lines')
-    .select('id, amount_sen, state').eq('id', lineId).eq('company_id', co.companyId).maybeSingle();
+    .select('id, statement_id, amount_sen, state').eq('id', lineId).eq('company_id', co.companyId).maybeSingle();
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   if (!lineRaw) return c.json({ error: 'not_found' }, 404);
   const line = lineRaw as Record<string, any>;
+  const account = await accountOfStatement(sb, co.companyId, Number(line.statement_id));
+  if (!account.ok) return c.json({ error: 'load_failed', reason: account.reason }, 500);
 
   /* ROWS AN OLDER UNDO LEFT BEHIND (docs/bugs/0802). A match on a line that is
      no longer POSTED is nobody's claim, and it must not be the reason this
      entry "cannot account for two". Cleared here, by what the line says now,
      before the unique index is asked. */
   {
-    const { data: staleRaw, error: sErr } = await sb.from('acc_bank_statement_matches')
-      .select('id, bank_line_id').eq('company_id', co.companyId).eq('je_no', jeNo);
-    if (sErr) return c.json({ error: 'load_failed', reason: sErr.message }, 500);
-    const stale = (Array.isArray(staleRaw) ? staleRaw : []) as Array<{ id: number; bank_line_id: number }>;
-    if (stale.length > 0) {
-      const { data: theirLines, error: lErr } = await sb.from('acc_bank_statement_lines')
-        .select('id, state').eq('company_id', co.companyId).in('id', stale.map((m) => Number(m.bank_line_id)));
-      if (lErr) return c.json({ error: 'load_failed', reason: lErr.message }, 500);
-      const posted = new Set(((Array.isArray(theirLines) ? theirLines : []) as Array<{ id: number; state: string }>).filter((l) => String(l.state) === 'POSTED').map((l) => Number(l.id)));
-      /* A live claim by another movement: one entry cannot account for two.
-         Since docs/bugs/0803 the index no longer says this; the route does. */
-      if (stale.some((m) => posted.has(Number(m.bank_line_id)) && Number(m.bank_line_id) !== lineId)) {
-        return c.json({
-          error: 'already_matched',
-          message: `${jeNo} is already reconciled against another movement on a bank statement. One entry cannot account for two.`,
-        }, 409);
-      }
-      const dead = stale.filter((m) => !posted.has(Number(m.bank_line_id)) || Number(m.bank_line_id) === lineId).map((m) => Number(m.id));
-      if (dead.length > 0) {
-        const { error: dErr } = await sb.from('acc_bank_statement_matches').delete().eq('company_id', co.companyId).in('id', dead);
-        if (dErr) return c.json({ error: 'save_failed', reason: dErr.message }, 500);
-      }
+    const held = await liveClaimsOn(sb, co.companyId, [jeNo]);
+    if (!held.ok) return c.json({ error: 'load_failed', reason: held.reason }, 500);
+    /* A live claim by another movement ON THIS BANK: one entry cannot account
+       for two of its movements. Since docs/bugs/0803 the index no longer says
+       this; the route does. A claim on ANOTHER bank is the entry's other leg
+       (docs/bugs/0917 — an internal transfer is one journal, two statements),
+       and this bank may still claim the leg that is its own. */
+    const other = held.live.find((m) => m.bankLineId !== lineId && m.accountCode === account.accountCode);
+    if (other) return c.json({ error: 'already_matched', message: claimedHere(jeNo, account.accountCode) }, 409);
+    if (held.live.some((m) => m.accountCode !== account.accountCode)) {
+      const leg = await entryOnAccount(sb, co.companyId, account.accountCode, jeNo);
+      if (!leg.ok) return c.json({ error: 'load_failed', reason: leg.reason }, 500);
+      if (!leg.found) return c.json({ error: 'not_this_account', message: noLegHere(jeNo, account.accountCode) }, 409);
+    }
+    /* Rows an older undo left behind, and this line's own earlier claim (a re-match). */
+    const dead = [...held.dead, ...held.live.filter((m) => m.bankLineId === lineId)].map((m) => m.id);
+    if (dead.length > 0) {
+      const { error: dErr } = await sb.from('acc_bank_statement_matches').delete().eq('company_id', co.companyId).in('id', dead);
+      if (dErr) return c.json({ error: 'save_failed', reason: dErr.message }, 500);
     }
   }
 
@@ -1238,25 +1305,17 @@ export const bankLinesMatchGroup = guard(async (c) => {
   }
   const found = entries as Array<NonNullable<typeof entries[number]>>;
 
-  /* An entry a POSTED movement already accounts for. */
-  const { data: heldRaw, error: hErr } = await sb.from('acc_bank_statement_matches')
-    .select('je_no, bank_line_id').eq('company_id', co.companyId).in('je_no', jeNos);
-  if (hErr) return c.json({ error: 'load_failed', reason: hErr.message }, 500);
-  const held = (Array.isArray(heldRaw) ? heldRaw : []) as Array<{ je_no: string; bank_line_id: number }>;
-  if (held.length > 0) {
-    const { data: heldLines, error: hlErr } = await sb.from('acc_bank_statement_lines')
-      .select('id, state').eq('company_id', co.companyId).in('id', held.map((m) => Number(m.bank_line_id)));
-    if (hlErr) return c.json({ error: 'load_failed', reason: hlErr.message }, 500);
-    const posted = new Set(((Array.isArray(heldLines) ? heldLines : []) as Array<{ id: number; state: string }>).filter((l) => String(l.state) === 'POSTED').map((l) => Number(l.id)));
-    const live = held.find((m) => posted.has(Number(m.bank_line_id)));
-    if (live) {
-      return c.json({
-        error: 'already_matched',
-        message: `${live.je_no} is already reconciled against another movement on a bank statement. One entry cannot account for two.`,
-      }, 409);
-    }
-    /* The rest are rows an older undo left behind (docs/bugs/0802). */
-    const { error: dErr } = await sb.from('acc_bank_statement_matches').delete().eq('company_id', co.companyId).in('je_no', jeNos);
+  /* An entry a POSTED movement of THIS bank already accounts for is refused
+     by name; a claim on another bank is the entry's other leg (docs/bugs/0917)
+     and stands. The entries here all come off this account's ledger, so the
+     leg is known to exist. */
+  const held = await liveClaimsOn(sb, co.companyId, jeNos);
+  if (!held.ok) return c.json({ error: 'load_failed', reason: held.reason }, 500);
+  const here = held.live.find((m) => m.accountCode === accountCode);
+  if (here) return c.json({ error: 'already_matched', message: claimedHere(here.jeNo, accountCode) }, 409);
+  if (held.dead.length > 0) {
+    /* Rows an older undo left behind (docs/bugs/0802). */
+    const { error: dErr } = await sb.from('acc_bank_statement_matches').delete().eq('company_id', co.companyId).in('id', held.dead.map((m) => m.id));
     if (dErr) return c.json({ error: 'save_failed', reason: dErr.message }, 500);
   }
 

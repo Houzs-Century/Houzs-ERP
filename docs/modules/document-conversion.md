@@ -1292,6 +1292,7 @@ exactly what the migration wrote.
 
 ## See also
 
+- `docs/line-export-columns.md` — the proposed one-row-per-line export columns for every transaction document, and which columns the import may change
 - `docs/transfer-from-to-vocabulary.md` — the lineage-column survey and its
   three rename options; §9 above is the layered cost view and corrects its
   liveness claims

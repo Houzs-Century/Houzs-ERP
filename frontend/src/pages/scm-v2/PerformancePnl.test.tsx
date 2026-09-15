@@ -63,6 +63,11 @@ vi.mock('../../vendor/scm/lib/performance-report-queries', async (importOriginal
 vi.mock('../../vendor/scm/lib/performance-pnl-pdf', () => ({ generatePerformancePdf: pdfMock }));
 vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ can: () => true }) }));
 vi.mock('./ReportLayoutEditor', () => ({ ReportLayoutEditor: () => <div role="dialog" aria-label="Layout · Performance P&L">editor</div> }));
+/* The monthly view has its own contract (MonthlyReport.test.tsx); here it only has to be reached. */
+vi.mock('./MonthlyReport', () => ({
+  MonthlyReport: (p: { title: string; withCumulative: boolean }) => <div role="region" aria-label={`Monthly · ${p.title}`}>{p.withCumulative ? 'with 累计' : 'no 累计'}</div>,
+  ByMonthButton: ({ on, onToggle }: { on: boolean; onToggle: () => void }) => <button type="button" aria-pressed={on} onClick={onToggle}>By month</button>,
+}));
 
 const { PerformanceTab, performanceCsv } = await import('./PerformancePnl');
 
@@ -148,6 +153,15 @@ describe('the Performance P&L tab', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Layout' }));
     expect(screen.getByRole('dialog', { name: 'Layout · Performance P&L' })).toBeTruthy();
+  });
+
+  test('By month opens the monthly view with 累计 and puts the groups table away (docs/bugs/0916)', () => {
+    render(<PerformanceTab />);
+    fireEvent.click(screen.getByRole('button', { name: 'By month' }));
+    expect(screen.getByRole('region', { name: 'Monthly · Performance P&L' }).textContent).toBe('with 累计');
+    expect(screen.queryByText('NET PERFORMANCE')).toBeNull();
+    /* The settings strip stays — the rate applies to every month. */
+    expect(screen.getByLabelText('Performance settings')).toBeTruthy();
   });
 
   test('the CSV carries the groups, the summary — indented by level — and the notes', () => {
