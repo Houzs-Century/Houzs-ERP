@@ -60,7 +60,7 @@ All in schema `scm`, all carrying `company_id`.
 
 Ten of these were added 2026-09-15 — the two amendment columns, the six
 consignment tables, `mfg_product_price_history` and `addons.service_sku`:
-`docs/bugs/0937-renaming-a-sku-code-left-pending-amendments-consignment-line.md`.
+`docs/bugs/0938-renaming-a-sku-code-left-pending-amendments-consignment-line.md`.
 
 ## 4. Columns that KEEP the old code, and why
 
@@ -103,8 +103,9 @@ what they printed.
 Refresh the snapshot: on a branch, point a manual read-only workflow step at
 `node scripts/probe-product-code-columns.mjs` with `DATABASE_URL` (the 2026-09-15
 capture ran it as a temporary step of `probe-category-constraints.yml`, run
-34970682915, removed before merge), upload `backend/product-code-columns.snapshot.json`
-as an artifact, and copy it over the fixture. The run log also prints each column's row count and how many
+34970682915, removed before merge), upload the file it writes on the runner,
+`backend/product-code-columns.snapshot.json` [external], as an artifact, and copy
+it over the fixture. The run log also prints each column's row count and how many
 rows hold a live SKU code, which is the evidence for deciding a new column.
 
 `backend/tests/destructiveGuardsRefuseUnreadableProbe.test.ts` drives the real
