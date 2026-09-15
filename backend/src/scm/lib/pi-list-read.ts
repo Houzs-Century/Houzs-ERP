@@ -1,10 +1,10 @@
 // ----------------------------------------------------------------------------
 // pi-list-read — what the Purchase Invoices LIST matches, in one place.
 //
-// The list (GET /purchase-invoices?page=) and its two exports
-// (GET /purchase-invoices/export/headers, /export/lines) must match the SAME
+// The list (GET /purchase-invoices?page=) and its export
+// (GET /purchase-invoices/export/rows) must match the SAME
 // invoices for the same tab, search and sort. Every reader builds its query
-// through these functions, so a filter added here reaches all three. Same shape
+// through these functions, so a filter added here reaches both. Same shape
 // as lib/po-list-read.ts (docs/bugs/0916 has the defect this replaces).
 //
 // Lives here, not in routes/purchase-invoices.ts, because that router is kept

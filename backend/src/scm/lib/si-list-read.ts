@@ -1,8 +1,8 @@
 // ----------------------------------------------------------------------------
 // si-list-read — what the Sales Invoices LIST matches, in one place.
 //
-// The list (GET /sales-invoices?page=) and its two exports
-// (GET /sales-invoices/export/headers, /export/lines) must match the SAME
+// The list (GET /sales-invoices?page=) and its export
+// (GET /sales-invoices/export/rows) must match the SAME
 // invoices for the same tab, search and sort — and for the same SALES SCOPE:
 // a seller who sees only their own and their downline's invoices on the list
 // must get exactly those in the file. Every reader builds its query through

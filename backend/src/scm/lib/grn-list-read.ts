@@ -1,12 +1,12 @@
 // ----------------------------------------------------------------------------
 // grn-list-read — what the Goods Received LIST matches, in one place.
 //
-// The list (GET /grns?page=) and its two exports (GET /grns/export/headers,
-// /grns/export/lines) must match the SAME receipts for the same tab, search and
+// The list (GET /grns?page=) and its export (GET /grns/export/rows)
+// must match the SAME receipts for the same tab, search and
 // sort. While the filter lived only inside the list handler, the only export
 // there was could not reach it and wrote one screen page instead (the Purchase
 // Order list had the same defect, docs/bugs/0916). Every reader builds its
-// query through these functions, so a filter added here reaches all three.
+// query through these functions, so a filter added here reaches both.
 //
 // Same shape as lib/po-list-read.ts. Lives here, not in routes/grns.ts, because
 // that router is over its file-size ceiling.
