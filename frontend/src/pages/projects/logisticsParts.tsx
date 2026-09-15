@@ -1,5 +1,4 @@
 import { useState, useEffect } from "react";
-import { formatPhone } from "../../vendor/shared/phone";
 import { formatDateTime } from "../../lib/utils";
 import { DateField } from "../../vendor/scm/components/DateField";
 
@@ -129,41 +128,6 @@ export function GrabHelperBox({
   );
 }
 
-// Small reusable select for helper rows inside LogisticsScheduleSection.
-export function HelperSelect({
-  label,
-  value,
-  helpers,
-  onChange,
-}: {
-  label: string;
-  value: number | null;
-  helpers: CrewMember[];
-  onChange: (id: number | null) => void;
-}) {
-  const selected = helpers.find((u) => u.id === value) ?? null;
-  return (
-    <div>
-      <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-ink-muted">
-        {label}
-      </div>
-      <select
-        className="w-full appearance-none rounded-md border border-border bg-surface px-3 py-2 text-[13px]"
-        value={value ?? ""}
-        onChange={(e) => onChange(e.target.value ? parseInt(e.target.value, 10) : null)}
-      >
-        <option value="">— none —</option>
-        {helpers.map((u) => (
-          <option key={u.id} value={u.id}>
-            {u.name}
-          </option>
-        ))}
-      </select>
-      {selected && <CrewInfoCard member={selected} />}
-    </div>
-  );
-}
-
 // Driver / helper profile surfaced when one is picked in the Logistics
 // Schedule. Fields come straight from /api/fleet/staff (set up in the
 // Driver App or Logistics > Fleet > Driver). Pay rates and IC are
@@ -176,45 +140,3 @@ export type CrewMember = {
   user_type: string | null;
   role_name: string | null;
 };
-
-export function CrewInfoCard({ member }: { member: CrewMember }) {
-  return (
-    <div className="mt-1.5 rounded-md border border-border bg-paper px-3 py-2">
-      <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px]">
-        <InfoBit
-          label="Phone"
-          value={formatPhone(member.phone)}
-          href={member.phone ? `tel:${member.phone}` : undefined}
-        />
-      </div>
-    </div>
-  );
-}
-
-function InfoBit({
-  label,
-  value,
-  href,
-}: {
-  label: string;
-  value: string | null | undefined;
-  href?: string;
-}) {
-  return (
-    <div className="flex items-baseline gap-1.5">
-      <span className="text-[10px] font-semibold uppercase tracking-wider text-ink-muted">
-        {label}
-      </span>
-      {href && value ? (
-        <a
-          href={href}
-          className="font-medium text-ink underline-offset-2 hover:underline"
-        >
-          {value}
-        </a>
-      ) : (
-        <span className="font-medium text-ink">{value || "—"}</span>
-      )}
-    </div>
-  );
-}

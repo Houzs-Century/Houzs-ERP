@@ -246,9 +246,10 @@ describe("reference reads surface their failures", () => {
 
   test("Projects.tsx renders the reference-read failure rather than an empty picker", () => {
     const text = feSrc("pages/Projects.tsx");
-    // Two independent crew/lorry readers, each with its own surfaced error.
-    expect((text.match(/setRefError\(/g) ?? []).length).toBeGreaterThanOrEqual(2);
-    expect((text.match(/\{refError && \(/g) ?? []).length).toBe(2);
+    // The crew/lorry reader (LogisticsCrewSection) surfaces its own error. The
+    // second reader, LogisticsScheduleSection, was never rendered and is deleted.
+    expect((text.match(/setRefError\(/g) ?? []).length).toBeGreaterThanOrEqual(1);
+    expect((text.match(/\{refError && \(/g) ?? []).length).toBe(1);
   });
 
   test("the ServiceCases lightbox no longer sits on Loading forever", () => {
