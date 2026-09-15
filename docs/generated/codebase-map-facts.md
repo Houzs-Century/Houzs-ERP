@@ -118,7 +118,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/delivery-order-scan-token.ts` | 1 | 53 |
 | `backend/src/scm/routes/delivery-orders-mfg.ts` | 16 | 5585 |
 | `backend/src/scm/routes/delivery-planning-regions.ts` | 7 | 356 |
-| `backend/src/scm/routes/delivery-planning.ts` | 5 | 2904 |
+| `backend/src/scm/routes/delivery-planning.ts` | 5 | 2906 |
 | `backend/src/scm/routes/delivery-rate-cards.ts` | 11 | 689 |
 | `backend/src/scm/routes/delivery-residence-rules.ts` | 4 | 227 |
 | `backend/src/scm/routes/delivery-return-exports.ts` | 1 | 42 |
@@ -199,7 +199,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/scan-so.ts` | 11 | 4895 |
 | `backend/src/scm/routes/sg-postcode.ts` | 1 | 35 |
 | `backend/src/scm/routes/slips.ts` | 3 | 246 |
-| `backend/src/scm/routes/so-amendments.ts` | 10 | 1435 |
+| `backend/src/scm/routes/so-amendments.ts` | 10 | 1447 |
 | `backend/src/scm/routes/so-dropdown-options.ts` | 4 | 318 |
 | `backend/src/scm/routes/so-handover.ts` | 4 | 487 |
 | `backend/src/scm/routes/so-mirror.ts` | 1 | 333 |
@@ -240,7 +240,7 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (2615 files, 815930 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (2622 files, 816562 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -258,7 +258,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `backend/src/scm/routes/mfg-purchase-orders.ts` | 4419 |
 | `frontend/src/pages/scm-v2/SupplierDetail.tsx` | 4342 |
 | `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4205 |
-| `frontend/src/mobile/MobileNewSO.tsx` | 3680 |
+| `frontend/src/mobile/MobileNewSO.tsx` | 3718 |
 | `backend/src/scm/routes/grns.ts` | 3538 |
 | `frontend/src/components/DataTable.tsx` | 3463 |
 | `frontend/src/mobile/MobileServiceCase.tsx` | 3381 |
@@ -451,7 +451,7 @@ Page files by directory:
 
 ## 5. Mobile screen inventory
 
-62 screen/component modules in `frontend/src/mobile`.
+63 screen/component modules in `frontend/src/mobile`.
 
 | file | lines |
 |---|---|
@@ -460,7 +460,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileAnnouncementMedia.tsx` | 171 |
 | `frontend/src/mobile/MobileAnnouncementPopup.tsx` | 152 |
 | `frontend/src/mobile/MobileAnnouncements.tsx` | 1741 |
-| `frontend/src/mobile/MobileApp.tsx` | 1212 |
+| `frontend/src/mobile/MobileApp.tsx` | 1213 |
 | `frontend/src/mobile/MobileAssistant.tsx` | 295 |
 | `frontend/src/mobile/MobileAssrCategoryChips.tsx` | 76 |
 | `frontend/src/mobile/MobileAssrSoField.tsx` | 76 |
@@ -472,7 +472,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileConvertWizard.tsx` | 1206 |
 | `frontend/src/mobile/MobileCrashBoundary.tsx` | 39 |
 | `frontend/src/mobile/MobileDeliveryFieldsCard.tsx` | 524 |
-| `frontend/src/mobile/MobileDeliveryPlanning.tsx` | 2224 |
+| `frontend/src/mobile/MobileDeliveryPlanning.tsx` | 2230 |
 | `frontend/src/mobile/MobileDoHeaderEdit.tsx` | 307 |
 | `frontend/src/mobile/MobileFabricPicker.tsx` | 109 |
 | `frontend/src/mobile/MobileFairReport.tsx` | 749 |
@@ -491,7 +491,8 @@ Page files by directory:
 | `frontend/src/mobile/MobileModuleList.tsx` | 2105 |
 | `frontend/src/mobile/MobileMyCaseDetail.tsx` | 326 |
 | `frontend/src/mobile/MobileNewProject.tsx` | 196 |
-| `frontend/src/mobile/MobileNewSO.tsx` | 3680 |
+| `frontend/src/mobile/MobileNewSO.tsx` | 3718 |
+| `frontend/src/mobile/MobileOrderMoney.tsx` | 75 |
 | `frontend/src/mobile/MobilePMS.tsx` | 4490 |
 | `frontend/src/mobile/MobilePOD.tsx` | 558 |
 | `frontend/src/mobile/MobilePmsDefectActions.tsx` | 109 |
@@ -503,7 +504,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileRacks.tsx` | 306 |
 | `frontend/src/mobile/MobileRelationshipMap.tsx` | 275 |
 | `frontend/src/mobile/MobileRoles.tsx` | 409 |
-| `frontend/src/mobile/MobileSODetail.tsx` | 2116 |
+| `frontend/src/mobile/MobileSODetail.tsx` | 2118 |
 | `frontend/src/mobile/MobileSalesOrders.tsx` | 818 |
 | `frontend/src/mobile/MobileSavedPhotoThumb.tsx` | 82 |
 | `frontend/src/mobile/MobileScan.tsx` | 1467 |

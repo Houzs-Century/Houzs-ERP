@@ -38,10 +38,13 @@ export type RecordedPaymentLike = {
   merchantProvider?: string | null;
   installmentMonths?: number | null;
   onlineType?: string | null;
+  /* Money moved from a cancelled order (docs/bugs/0933): the order it came from. */
+  converted_from_so_doc_no?: string | null;
+  convertedFromSoDocNo?: string | null;
 };
 
 const METHOD_LABELS: Record<string, string> = {
-  cash: 'Cash', transfer: 'Online', merchant: 'Merchant', installment: 'Installment',
+  cash: 'Cash', transfer: 'Online', merchant: 'Merchant', installment: 'Installment', converted: 'Convert from cancelled SO',
 };
 const methodLabel = (m: string | null): string => (m ? METHOD_LABELS[m] ?? m : '—');
 
@@ -72,6 +75,9 @@ export function PaymentInfoBlock({ payment }: { payment: RecordedPaymentLike }) 
             .join(' · ')}
         </div>
       )}
+      {p.method === 'converted' ? (
+        <div className="money" style={{ fontSize: 10, color: 'var(--mut2)' }}>from {p.convertedFromSoDocNo ?? p.converted_from_so_doc_no ?? '—'}</div>
+      ) : null}
       {p.method === 'transfer' && online ? (
         <div className="money" style={{ fontSize: 10, color: 'var(--mut2)' }}>{online}</div>
       ) : null}

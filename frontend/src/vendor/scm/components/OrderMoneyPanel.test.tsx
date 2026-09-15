@@ -102,6 +102,16 @@ describe('OrderMoneyPanel', () => {
     expect(navigateSpy).toHaveBeenCalledWith(`/scm/sales-orders/new?copyFrom=${encodeURIComponent(OLD)}&convert=${encodeURIComponent(`${OLD}:40000,2990-SO-2607-024:30000`)}`);
   });
 
+  it('on the phone (docs/bugs/0933) the same ticks are handed to the screen router instead of a URL', () => {
+    const onOpen = vi.fn();
+    render(wrap(<OrderMoneyPanel docNo={OLD} onOpenNewOrder={onOpen} />));
+    fireEvent.click(screen.getByRole('button', { name: 'Convert' }));
+    fireEvent.click(screen.getByLabelText('Take from 2990-SO-2607-024'));
+    fireEvent.click(screen.getByRole('button', { name: /Open a new order with RM 1,000\.00/ }));
+    expect(onOpen).toHaveBeenCalledWith(OLD, [{ docNo: OLD, amountSen: 70_000 }, { docNo: '2990-SO-2607-024', amountSen: 30_000 }]);
+    expect(navigateSpy).not.toHaveBeenCalled();
+  });
+
   it('more than what is left on an order is refused before the page opens', () => {
     render(wrap(<OrderMoneyPanel docNo={OLD} />));
     fireEvent.click(screen.getByRole('button', { name: 'Convert' }));
