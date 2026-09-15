@@ -70,7 +70,7 @@ const ratePct = (bp: number): string => `${(bp / 100).toFixed(2)}%`;
     when there were no sales), and how deep it sits on the report's tree —
     0 for the fixed lines (gross profit, the totals, net), 1 and deeper for
     the categories and accounts of the layout. */
-export type PerformanceSummaryLine = { kind: 'total' | 'category' | 'row' | 'net'; label: string; amountSen: number; pct: number | null; depth: number };
+export type PerformanceSummaryLine = { id: string; kind: 'total' | 'category' | 'row' | 'net'; label: string; amountSen: number; pct: number | null; depth: number };
 
 /** The lines under the groups — gross profit, the other income on its tree,
     the expenses on theirs (the computed operating expense standing where
@@ -89,15 +89,15 @@ export type PerformanceSummaryLine = { kind: 'total' | 'category' | 'row' | 'net
 export const performanceSummaryLines = (r: PerformanceReport): PerformanceSummaryLine[] => {
   const ofSales = (sen: number): number | null => (r.totals.salesSen > 0 ? Math.round((sen / r.totals.salesSen) * 1000) / 10 : null);
   const tree = (nodes: LaidNode[]): PerformanceSummaryLine[] =>
-    flattenLaid(nodes).map(({ node, depth }) => ({ kind: node.kind === 'account' ? 'row' : 'category', label: node.label, amountSen: node.amountSen, pct: node.pct, depth }));
+    flattenLaid(nodes).map(({ node, depth }) => ({ id: node.id, kind: node.kind === 'account' ? 'row' : 'category', label: node.label, amountSen: node.amountSen, pct: node.pct, depth }));
   const expensesSen = r.operatingExpense.amountSen + r.otherExpensesSen;
   return [
-    { kind: 'total', label: 'Gross profit', amountSen: r.totals.gpSen, pct: r.totals.gpPct, depth: 0 },
+    { id: 'sum:gross', kind: 'total', label: 'Gross profit', amountSen: r.totals.gpSen, pct: r.totals.gpPct, depth: 0 },
     ...tree(r.layout.otherIncome),
-    { kind: 'total', label: 'Total other income (as booked)', amountSen: r.otherIncomeSen, pct: ofSales(r.otherIncomeSen), depth: 0 },
+    { id: 'sum:otherIncome', kind: 'total', label: 'Total other income (as booked)', amountSen: r.otherIncomeSen, pct: ofSales(r.otherIncomeSen), depth: 0 },
     ...tree(r.layout.expenses),
-    { kind: 'total', label: `Total expenses (operating expense at ${ratePct(r.operatingExpense.rateBp)} + as booked)`, amountSen: expensesSen, pct: ofSales(expensesSen), depth: 0 },
-    { kind: 'net', label: 'NET PERFORMANCE', amountSen: r.netSen, pct: r.netPct, depth: 0 },
+    { id: 'sum:expenses', kind: 'total', label: `Total expenses (operating expense at ${ratePct(r.operatingExpense.rateBp)} + as booked)`, amountSen: expensesSen, pct: ofSales(expensesSen), depth: 0 },
+    { id: 'sum:net', kind: 'net', label: 'NET PERFORMANCE', amountSen: r.netSen, pct: r.netPct, depth: 0 },
   ];
 };
 

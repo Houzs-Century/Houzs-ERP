@@ -369,6 +369,7 @@ DB type is the `scm.delivery_return_status` ENUM; column default is `PENDING`.
 
 ## See also
 
+- `docs/line-export-columns.md` — the proposed one-row-per-line export columns for every transaction document, and which columns the import may change
 - `docs/modules/purchase-return.md` — the mirror module, same shape
 - `docs/unlinked-line-duplicate-coe.md` — why the guard exists
 - `BUG-HISTORY.md` 2026-08-04, "The two RETURN chains had the same nullable-link

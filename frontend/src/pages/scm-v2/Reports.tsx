@@ -21,6 +21,11 @@
 // editor (ReportLayoutEditor) for whoever may read the statements. The
 // Balance Sheet draws the same way on its own tree (docs/bugs/0912), every
 // line's % of TOTAL ASSETS, both sides (owner: balance sheet 也需要).
+//
+// BY MONTH (docs/bugs/0916, owner: 能看每个月的): the By month button swaps
+// the single period for MonthlyReport — the same endpoint asked once per
+// column, 累计 leftmost then newest → oldest, a % toggle; the balance sheet's
+// columns are month-end balances and it has no cumulative column.
 // ----------------------------------------------------------------------------
 
 import { useState } from 'react';
@@ -33,6 +38,8 @@ import { useAuth } from '../../auth/AuthContext';
 import { fmtPct, laidDepth, pctOf, type LaidNode } from '../../vendor/scm/lib/report-layout';
 import { LaidBlock, LaidTotalRow, LevelButtons, type Level } from './ReportLayoutTree';
 import { ReportLayoutEditor } from './ReportLayoutEditor';
+import { ByMonthButton, MonthlyReport } from './MonthlyReport';
+import { balanceSheetLines, pnlLines, type MonthColumn } from '../../vendor/scm/lib/report-monthly';
 
 const card: React.CSSProperties = {
   padding: 'var(--space-4)',
@@ -55,28 +62,32 @@ type PnlLayout = {
   baseSen: number | null;
   tradingIncome: LaidNode[]; costOfSales: LaidNode[]; otherIncome: LaidNode[]; expenses: LaidNode[]; taxation: LaidNode[];
 };
+type PnlResponse = {
+  tradingIncome: Line[]; costOfSales: Line[]; otherIncome: Line[]; expenses: Line[];
+  /** TAXATION section rows — a profit-before-tax line appears when any posted. */
+  taxation?: Line[];
+  /** The same figures on the report's layout. */
+  layout: PnlLayout;
+  totals: {
+    tradingIncomeSen: number; costOfSalesSen: number; grossProfitSen: number; otherIncomeSen: number; expensesSen: number;
+    profitBeforeTaxSen?: number; taxationSen?: number; netProfitSen: number;
+  };
+};
+const fetchPnl = (from: string, to: string) => authedFetch<PnlResponse>(`/accounting/reports/pnl?from=${from}&to=${to}`);
+const fetchPnlColumn = (col: MonthColumn) => fetchPnl(col.from, col.to);
 
 export const PnLTab = () => {
   const [from, setFrom] = useState(monthStart());
   const [to, setTo] = useState(myt());
   const [level, setLevel] = useState<Level>('all');
   const [editing, setEditing] = useState(false);
+  const [monthly, setMonthly] = useState(false);
   const { can } = useAuth();
   const canArrange = can('scm.payment_voucher.post');
   const q = useQuery({
     queryKey: ['report-pnl', from, to],
-    queryFn: () => authedFetch<{
-      tradingIncome: Line[]; costOfSales: Line[]; otherIncome: Line[]; expenses: Line[];
-      /** TAXATION section rows — a profit-before-tax line appears when any posted. */
-      taxation?: Line[];
-      /** The same figures on the report's layout. */
-      layout: PnlLayout;
-      totals: {
-        tradingIncomeSen: number; costOfSalesSen: number; grossProfitSen: number; otherIncomeSen: number; expensesSen: number;
-        profitBeforeTaxSen?: number; taxationSen?: number; netProfitSen: number;
-      };
-    }>(`/accounting/reports/pnl?from=${from}&to=${to}`),
-    enabled: Boolean(from && to),
+    queryFn: () => fetchPnl(from, to),
+    enabled: Boolean(from && to) && !monthly,
     staleTime: 30_000,
   });
 
@@ -87,17 +98,23 @@ export const PnLTab = () => {
   return (
     <div className="space-y-3">
       <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
-        <span style={soft}>From</span><DateField value={from} onChange={setFrom} aria-label="P&L from" />
-        <span style={soft}>To</span><DateField value={to} onChange={setTo} aria-label="P&L to" />
-        <LevelButtons depth={depth} level={level} onLevel={setLevel} />
+        {!monthly && (
+          <>
+            <span style={soft}>From</span><DateField value={from} onChange={setFrom} aria-label="P&L from" />
+            <span style={soft}>To</span><DateField value={to} onChange={setTo} aria-label="P&L to" />
+            <LevelButtons depth={depth} level={level} onLevel={setLevel} />
+          </>
+        )}
+        <ByMonthButton on={monthly} onToggle={() => setMonthly((v) => !v)} />
         {canArrange && (
           <Button variant="ghost" size="sm" onClick={() => setEditing((v) => !v)} aria-pressed={editing}>Layout</Button>
         )}
       </div>
       {editing && <ReportLayoutEditor report="pnl" onClose={() => setEditing(false)} />}
-      {q.isLoading && <div style={soft}>Working the period out…</div>}
-      {q.isError && <div style={{ fontSize: 'var(--fs-13)', color: 'var(--c-danger, #a33)' }}>The statement did not load — adjust the dates to retry.</div>}
-      {q.data && lay && (
+      {monthly && <MonthlyReport<PnlResponse> report="pnl" title="P&L" withCumulative fetchColumn={fetchPnlColumn} linesOf={pnlLines} fmt={fmtSenParen} pctTitle="% of sales" />}
+      {!monthly && q.isLoading && <div style={soft}>Working the period out…</div>}
+      {!monthly && q.isError && <div style={{ fontSize: 'var(--fs-13)', color: 'var(--c-danger, #a33)' }}>The statement did not load — adjust the dates to retry.</div>}
+      {!monthly && q.data && lay && (
         <div style={{ ...card, padding: 0, overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
             <thead>
@@ -138,22 +155,27 @@ type BsLayout = {
   baseSen: number | null;
   assets: LaidNode[]; liabilities: LaidNode[]; equity: LaidNode[];
 };
+type BsResponse = {
+  assets: Line[]; liabilities: Line[]; equity: Line[];
+  /** The same figures on the report's layout. */
+  layout: BsLayout;
+  totals: { assetsSen: number; liabilitiesSen: number; equitySen: number; earningsSen: number; checkSen: number };
+};
+const fetchBalanceSheet = (asOf: string) => authedFetch<BsResponse>(`/accounting/reports/balance-sheet?asOf=${asOf}`);
+/** A month's column is the balance as at that month's END. */
+const fetchBsColumn = (col: MonthColumn) => fetchBalanceSheet(col.to);
 
 export const BalanceSheetTab = () => {
   const [asOf, setAsOf] = useState(myt());
   const [level, setLevel] = useState<Level>('all');
   const [editing, setEditing] = useState(false);
+  const [monthly, setMonthly] = useState(false);
   const { can } = useAuth();
   const canArrange = can('scm.payment_voucher.post');
   const q = useQuery({
     queryKey: ['report-bs', asOf],
-    queryFn: () => authedFetch<{
-      assets: Line[]; liabilities: Line[]; equity: Line[];
-      /** The same figures on the report's layout. */
-      layout: BsLayout;
-      totals: { assetsSen: number; liabilitiesSen: number; equitySen: number; earningsSen: number; checkSen: number };
-    }>(`/accounting/reports/balance-sheet?asOf=${asOf}`),
-    enabled: Boolean(asOf),
+    queryFn: () => fetchBalanceSheet(asOf),
+    enabled: Boolean(asOf) && !monthly,
     staleTime: 30_000,
   });
 
@@ -164,16 +186,22 @@ export const BalanceSheetTab = () => {
   return (
     <div className="space-y-3">
       <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
-        <span style={soft}>As of</span><DateField value={asOf} onChange={setAsOf} aria-label="Balance sheet as of" />
-        <LevelButtons depth={depth} level={level} onLevel={setLevel} />
+        {!monthly && (
+          <>
+            <span style={soft}>As of</span><DateField value={asOf} onChange={setAsOf} aria-label="Balance sheet as of" />
+            <LevelButtons depth={depth} level={level} onLevel={setLevel} />
+          </>
+        )}
+        <ByMonthButton on={monthly} onToggle={() => setMonthly((v) => !v)} />
         {canArrange && (
           <Button variant="ghost" size="sm" onClick={() => setEditing((v) => !v)} aria-pressed={editing}>Layout</Button>
         )}
       </div>
       {editing && <ReportLayoutEditor report="balance_sheet" onClose={() => setEditing(false)} />}
-      {q.isLoading && <div style={soft}>Adding the ledger up…</div>}
-      {q.isError && <div style={{ fontSize: 'var(--fs-13)', color: 'var(--c-danger, #a33)' }}>The statement did not load — pick the date again to retry.</div>}
-      {q.data && lay && (
+      {monthly && <MonthlyReport<BsResponse> report="balance-sheet" title="Balance Sheet (as at month end)" withCumulative={false} fetchColumn={fetchBsColumn} linesOf={balanceSheetLines} fmt={fmtSenParen} pctTitle="% of total assets" />}
+      {!monthly && q.isLoading && <div style={soft}>Adding the ledger up…</div>}
+      {!monthly && q.isError && <div style={{ fontSize: 'var(--fs-13)', color: 'var(--c-danger, #a33)' }}>The statement did not load — pick the date again to retry.</div>}
+      {!monthly && q.data && lay && (
         <div style={{ ...card, padding: 0, overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
             <thead>

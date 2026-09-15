@@ -20,14 +20,17 @@ import { Button } from '@2990s/design-system';
 import { DateField } from '../../vendor/scm/components/DateField';
 import { downloadCSV, toCSV } from '../../lib/csv';
 import { useAuth } from '../../auth/AuthContext';
+import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import {
-  fmtPerf, fmtPerfPct, performanceNotes, performanceSummaryLines, summaryLinesAtLevel, usePerformanceReport, useSavePerformanceSettings,
+  fmtPerf, fmtPerfPct, performanceNotes, performanceReportPath, performanceSummaryLines, summaryLinesAtLevel, usePerformanceReport, useSavePerformanceSettings,
   type PerformanceReport,
 } from '../../vendor/scm/lib/performance-report-queries';
 import { generatePerformancePdf } from '../../vendor/scm/lib/performance-pnl-pdf';
 import { laidDepth } from '../../vendor/scm/lib/report-layout';
+import { performanceLines, type MonthColumn } from '../../vendor/scm/lib/report-monthly';
 import { LevelButtons, type Level } from './ReportLayoutTree';
 import { ReportLayoutEditor } from './ReportLayoutEditor';
+import { ByMonthButton, MonthlyReport } from './MonthlyReport';
 
 const myt = (): string => new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
 const monthStart = (): string => `${myt().slice(0, 7)}-01`;
@@ -76,9 +79,14 @@ export const PerformanceTab = () => {
   const v = draft ?? { ratePct: r ? (r.settings.rateBp / 100).toFixed(2) : '', account: r?.settings.account ?? '' };
   const [level, setLevel] = useState<Level>('all');
   const [editing, setEditing] = useState(false);
+  const [monthly, setMonthly] = useState(false);
   const { can } = useAuth();
   const canArrange = can('scm.payment_voucher.post');
   const treeDepth = r ? Math.max(laidDepth(r.layout.otherIncome), laidDepth(r.layout.expenses)) : 0;
+  /* By month: one request per column to the same endpoint; the lines are the
+     groups' sales, cost and gross profit, then the summary the screen draws. */
+  const fetchColumn = (col: MonthColumn) => authedFetch<PerformanceReport>(performanceReportPath(col.from, col.to));
+  const linesOf = (rep: PerformanceReport) => performanceLines(rep, performanceSummaryLines(rep));
 
   const saveSettings = () => {
     const rateBp = Math.round(Number(v.ratePct) * 100);
@@ -96,6 +104,7 @@ export const PerformanceTab = () => {
         <span style={soft}>SO date from</span><DateField value={from} onChange={setFrom} aria-label="Performance from" />
         <span style={soft}>to</span><DateField value={to} onChange={setTo} aria-label="Performance to" />
         <LevelButtons depth={treeDepth} level={level} onLevel={setLevel} />
+        <ByMonthButton on={monthly} onToggle={() => setMonthly((v) => !v)} />
         {canArrange && (
           <Button variant="ghost" size="sm" onClick={() => setEditing((e) => !e)} aria-pressed={editing}>Layout</Button>
         )}
@@ -122,9 +131,10 @@ export const PerformanceTab = () => {
       </section>
 
       {editing && <ReportLayoutEditor report="performance" onClose={() => setEditing(false)} />}
-      {q.isLoading && <div style={soft}>Working the period out…</div>}
-      {q.isError && <div style={{ fontSize: 'var(--fs-13)', color: danger }}>The report did not load — {errText(q.error)}</div>}
-      {r && (
+      {monthly && <MonthlyReport<PerformanceReport> report="performance" title="Performance P&L" withCumulative fetchColumn={fetchColumn} linesOf={linesOf} fmt={fmtPerf} pctTitle="% of sales" />}
+      {!monthly && q.isLoading && <div style={soft}>Working the period out…</div>}
+      {!monthly && q.isError && <div style={{ fontSize: 'var(--fs-13)', color: danger }}>The report did not load — {errText(q.error)}</div>}
+      {!monthly && r && (
         <div style={{ ...card, padding: 0, overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>

@@ -65,6 +65,11 @@ vi.mock('../../vendor/scm/lib/authed-fetch', () => ({ authedFetch: vi.fn() }));
 vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ can: () => true }) }));
 /* The editor has its own contract (ReportLayoutEditor.test.tsx); here it only has to open. */
 vi.mock('./ReportLayoutEditor', () => ({ ReportLayoutEditor: () => <div role="dialog" aria-label="Layout · P&L">editor</div> }));
+/* The monthly view has its own contract (MonthlyReport.test.tsx); here it only has to be reached. */
+vi.mock('./MonthlyReport', () => ({
+  MonthlyReport: (p: { title: string; withCumulative: boolean }) => <div role="region" aria-label={`Monthly · ${p.title}`}>{p.withCumulative ? 'with 累计' : 'no 累计'}</div>,
+  ByMonthButton: ({ on, onToggle }: { on: boolean; onToggle: () => void }) => <button type="button" aria-pressed={on} onClick={onToggle}>By month</button>,
+}));
 
 import { PnLTab, BalanceSheetTab } from './Reports';
 
@@ -132,6 +137,28 @@ describe('the standard statements', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Layout' }));
     expect(screen.getByRole('dialog', { name: 'Layout · P&L' })).toBeTruthy();
+  });
+
+  /* BY MONTH (docs/bugs/0916): the switch swaps the period for the monthly
+     view — the P&L with a 累计 column, the balance sheet without one. */
+  test('By month: the P&L opens the monthly view with 累计; the balance sheet without; the period controls step aside', () => {
+    render(<PnLTab />);
+    expect(screen.queryByRole('region')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'By month' }));
+    expect(screen.getByRole('region', { name: 'Monthly · P&L' }).textContent).toBe('with 累计');
+    expect(screen.queryByLabelText('P&L from')).toBeNull();
+    expect(screen.queryByText('GROSS PROFIT')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'By month' }));
+    expect(screen.queryByRole('region')).toBeNull();
+    expect(screen.getByLabelText('P&L from')).toBeTruthy();
+    expect(screen.getByText('GROSS PROFIT')).toBeTruthy();
+  });
+
+  test('Balance sheet: By month has no 累计 column', () => {
+    render(<BalanceSheetTab />);
+    fireEvent.click(screen.getByRole('button', { name: 'By month' }));
+    expect(screen.getByRole('region', { name: 'Monthly · Balance Sheet (as at month end)' }).textContent).toBe('no 累计');
+    expect(screen.queryByText('BALANCED')).toBeNull();
   });
 
   test('Balance sheet: earnings inside equity and BALANCED at zero check', () => {
