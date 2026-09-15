@@ -3,8 +3,11 @@
 //
 // WHY. The export must hold EVERY line of every order the list's filter matches,
 // across every page. The unit tests prove the paging against a fake; this runs
-// the export's OWN server code — buildPoExportRows, the function the route calls —
-// over the real database and compares the lines it attaches with a direct SQL
+// the export's OWN server code — the list's filter + sort (po-list-read.ts) and
+// attachPoLines, the functions GET /export/rows and the list page call — over
+// the real database. The header read selects only what attachPoLines needs: the
+// list's full select carries an FK-hinted embed the read-only stand-in cannot
+// run, and the header shape is proven by the route tests and compares the lines it attaches with a direct SQL
 // read of the same rows, line id by line id. There is no service login to call
 // the Worker from Actions, so the transport is the repo's read-only PostgREST
 // stand-in (lib/pgrest-shim.mjs, CLAUDE.md R88) over DATABASE_URL; any query
@@ -53,7 +56,18 @@ try {
   const [{ db, ro }] = await pg`SELECT current_database() AS db, current_setting('default_transaction_read_only') AS ro`;
   notice(`database: ${db}; session read-only: ${ro}; tab: ${STATUS}`);
 
-  const { buildPoExportRows } = await import("../src/scm/lib/po-line-export.ts");
+  const { attachPoLines } = await import("../src/scm/lib/po-line-export.ts");
+  const { filterPoList, orderPoList } = await import("../src/scm/lib/po-list-read.ts");
+  const { pageWithTruncation } = await import("../src/scm/lib/outstanding-po-lines.ts");
+  const buildPoExportRows = async (sbx, ctx, filters, validStatuses) => {
+    const read = await pageWithTruncation((from, to) =>
+      orderPoList(filterPoList(sbx.from("purchase_orders").select("id, po_number, purchase_location_id, supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4"), filters, ctx, validStatuses), filters.sort)
+        .range(from, to));
+    if (read.error) return { error: read.error.message };
+    const withLines = await attachPoLines(sbx, ctx, read.data ?? []);
+    if (withLines.error) return { error: withLines.error };
+    return { error: null, purchaseOrders: withLines.rows, lineCount: withLines.lineCount, truncated: read.truncated };
+  };
   const { PO_STATUS_BUCKETS } = await import("../src/scm/lib/po-status-buckets.ts");
   const { pgrestShim } = await import("./lib/pgrest-shim.mjs");
   const sb = pgrestShim(pg, "scm");
