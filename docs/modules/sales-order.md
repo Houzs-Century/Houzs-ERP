@@ -1429,7 +1429,11 @@ decided by whether the line is a SERVICE line (`shared/amendment-lane.ts`
 `classifyLine` → `isServiceLine`: item_group / category / SVC- code, NOT the
 SVC- prefix alone — so a bare-code DISPOSE / STORAGE / TRANSPORTATION CHARGES
 routes right too; owner 2026-09-11, docs/bugs): a service line waits on
-**Logistics**, a product-line discount on Purchasing.
+**Logistics**, a product-line discount on Purchasing. A line ADDED by the
+amendment has no row and so no item_group: the submit route reads its code's
+catalogue category instead (`catalogCategoriesByCode`), which is what sends an
+added TRANSPORTATION CHARGES to Logistics
+(`docs/bugs/0895-an-amendment-that-added-a-service-line-went-to-the-purchaser.md`).
 Fields still without a channel: `lineDeliveryDate`, `description`, `uom`,
 `itemGroup`, cost fields — an edit to those on a locked SO still goes nowhere.
 
