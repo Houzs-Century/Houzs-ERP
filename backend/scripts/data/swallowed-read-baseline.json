@@ -314,8 +314,16 @@
       "catches": 0
     },
     "backend/src/scm/routes/mfg-sales-orders.ts": {
-      "reads": 79,
+      "reads": 75,
       "catches": 2
+    },
+    "backend/src/scm/routes/mfg-sales-orders/cross-category.ts": {
+      "reads": 2,
+      "catches": 0
+    },
+    "backend/src/scm/routes/mfg-sales-orders/mine.ts": {
+      "reads": 2,
+      "catches": 0
     },
     "backend/src/scm/routes/mrp.ts": {
       "reads": 1,

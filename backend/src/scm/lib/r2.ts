@@ -15,6 +15,17 @@ export function extensionFromMime(mime: SlipMime): string {
   return ext;
 }
 
+export function mimeFromKey(key: string): SlipMime {
+  const ext = key.split('.').pop()?.toLowerCase();
+  switch (ext) {
+    case 'jpg': case 'jpeg': return 'image/jpeg';
+    case 'png': return 'image/png';
+    case 'webp': return 'image/webp';
+    case 'pdf': return 'application/pdf';
+    default: throw new Error(`unknown slip extension: ${key}`);
+  }
+}
+
 export function buildSlipKey(uploadSessionId: string, mime: SlipMime, now = new Date()): string {
   const yyyy = now.getUTCFullYear();
   const mm = String(now.getUTCMonth() + 1).padStart(2, '0');
