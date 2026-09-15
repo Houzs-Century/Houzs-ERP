@@ -21,6 +21,7 @@ import type {
   MfgFabricTier,
 } from '@2990s/shared/mfg-pricing';
 import { MFG_PRODUCT_CATEGORIES, mfgCategoryLabel, type MfgProductCategory } from '../../shared/product-categories';
+import { fmtSen } from '../../shared/format';
 
 /* HOUZS VENDOR — Products wave. The Maintenance editor reads/writes priced
    pool options ({ value, priceSen, costSen?, sellingPriceSen?, active? }). The
@@ -480,7 +481,7 @@ export function useUpdateMfgProductPrices() {
         throw new Error(friendlySaveMessage(result, {
           noun: 'change',
           fieldNames: { base_price_sen: 'Base price', price1_sen: 'Price 1', cost_price_sen: 'Cost price', name: 'Description', code: 'Product code' },
-          fmt: (v) => (v == null ? '(blank)' : `RM${(Number(v) / 100).toFixed(2)}`),
+          fmt: (v) => (v == null ? '(blank)' : fmtSen(Number(v))),
         }));
       }
       return { ok: true as const, changed: 1 };

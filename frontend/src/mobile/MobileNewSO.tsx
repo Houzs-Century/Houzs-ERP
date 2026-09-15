@@ -106,6 +106,7 @@ import { computeTotalHeight, isTotalHeightCategory, parseInches } from "../vendo
 import { lineIdentity } from "@2990s/shared";
 import { normalizePhone } from "../vendor/shared/phone";
 import { PhoneInput } from "../vendor/scm/components/PhoneInput";
+import { fmtSen as fmtSharedSen } from "../vendor/shared/format";
 import "./mobile.css";
 
 /* ---------------------------------------------------------------------------
@@ -3431,7 +3432,7 @@ function SpecialOrderSheet({ line, pools, showPrices, onChange, onClose }: {
                 <span style={{ flex: 1, minWidth: 0, color: "#11140f", fontWeight: 600 }}>{a.label}</span>
                 {/* Role gate — non-admin sales sees the NAME only (owner). */}
                 {showPrices && a.sellingPriceSen !== 0 && (
-                  <span className="money" style={{ fontSize: 12, color: "#767b6e", flex: "none" }}>+RM {(a.sellingPriceSen / 100).toFixed(2)}</span>
+                  <span className="money" style={{ fontSize: 12, color: "#767b6e", flex: "none" }}>+{fmtSharedSen(a.sellingPriceSen)}</span>
                 )}
               </label>
             );
@@ -3462,7 +3463,7 @@ function SpecialOrderSheet({ line, pools, showPrices, onChange, onClose }: {
                   {g.required && <option value="" disabled>Select{"…"}</option>}
                   {g.choices.map((c) => (
                     <option key={c.label} value={c.label}>
-                      {c.label}{showPrices && c.extraSen !== 0 ? ` (${c.extraSen > 0 ? "+" : "−"}RM ${(Math.abs(c.extraSen) / 100).toFixed(2)})` : ""}
+                      {c.label}{showPrices && c.extraSen !== 0 ? ` (${c.extraSen > 0 ? "+" : "−"}${fmtSharedSen(Math.abs(c.extraSen))})` : ""}
                     </option>
                   ))}
                 </select>
