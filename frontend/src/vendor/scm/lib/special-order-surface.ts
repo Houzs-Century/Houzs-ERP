@@ -42,8 +42,15 @@ import { useSkuCategoryByCode } from './mfg-products-queries';
 /** Categories whose stock pools by item code — a special must not re-key them. */
 const POOLED = new Set(['accessory', 'others']);
 
-/** Categories that own a standalone Special Order panel. */
-const STANDALONE = new Set(['mattress', 'accessory', 'others']);
+/** Categories that own a standalone Special Order panel.
+ *
+ *  fabric_accessory (Sofa Accessory, owner 2026-09-14) is here because its own
+ *  panel holds the fabric picker and nothing else. Its lines were `accessory`
+ *  until that day and kept their special-order text in `extraAddonNote`; left
+ *  out of this set, the panel vanished on both surfaces while the PDF went on
+ *  printing the note (HC-SO-2609-071, owner 2026-09-15). It is not POOLED: it
+ *  keys stock by colour and binds per order, like the sofa it rides with. */
+const STANDALONE = new Set(['mattress', 'accessory', 'fabric_accessory', 'others']);
 
 export type SpecialOrderSurface = {
   /** Render the standalone Special Order panel. */

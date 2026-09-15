@@ -19,9 +19,10 @@
 // ----------------------------------------------------------------------------
 
 import { postJournal, reverseJournal, validateJournal, type ReverseJournalResult } from './engine';
-import { resolveRoles, customerPaymentLines, type RuleLine } from './rules';
+import { resolveRoles, customerPaymentLines, orderMoneyTransferLines, type RuleLine } from './rules';
 import { accMastersCompanyId } from './masters-company';
 import { paymentEntryDrift, type EntryFact, type PaymentDrift, type PaymentFact } from './payment-drift';
+import { mytDateOf } from '../scm/lib/my-time';
 
 export type SoPaymentRow = {
   id: string;
@@ -31,7 +32,16 @@ export type SoPaymentRow = {
   merchant_provider: string | null;
   amount_sen: number;
   company_id: number | null;
+  /** A converted row (method `converted`): the cancelled order it moved money from (docs/bugs/0927). */
+  converted_from_so_doc_no?: string | null;
+  /** When the row was keyed — for a converted row, the day the money was moved, which dates the transfer; the row keeps the ORIGINAL paid_at. */
+  created_at?: string | null;
 };
+
+/** The method of a row that moved money from a cancelled order (docs/bugs/0927). */
+export const CONVERTED_METHOD = 'converted';
+/** The transfer's own source type — one entry per converted row, keyed on the row's id like SOPAY. */
+export const CONVERT_SOURCE = 'SOCONV';
 
 export type PostPaymentResult =
   | { ok: true; status: 'posted' | 'already_posted'; jeNo: string; jeId: string }
@@ -89,6 +99,9 @@ const paymentDate = (paidAt: string | null): string | null => {
 
 export async function postSoPayment(sb: any, p: SoPaymentRow, opts: { dryRun?: boolean } = {}): Promise<PostPaymentResult> {
   if (p.method === 'imported') return { ok: true, status: 'skipped_imported' };
+  /* Money moved from a cancelled order is not money received: it books the
+     transfer between the two customers' AR, never a bank (docs/bugs/0927). */
+  if (p.method === CONVERTED_METHOD) return postConvertedPayment(sb, p, opts);
   const amountSen = Number(p.amount_sen);
   if (!Number.isInteger(amountSen) || amountSen <= 0) return { ok: true, status: 'skipped_zero' };
   const entryDate = paymentDate(p.paid_at);
@@ -149,17 +162,79 @@ export async function postSoPayment(sb: any, p: SoPaymentRow, opts: { dryRun?: b
   return { ok: false, status: r.status, reason: r.reason };
 }
 
-/** Void the ledger entry for a DELETED payment row. Idempotent; nothing to
-    reverse (an imported/never-posted row) is a success. */
+/** The order's customer, the way every AR leg names them (docs/bugs/0655): the
+    company, the name, and the party code by the one rule. */
+async function orderCustomer(sb: any, docNo: string): Promise<{ ok: true; companyId: number | null; code: string | null; name: string | null } | { ok: false; reason: string }> {
+  const { data, error } = await sb
+    .from('mfg_sales_orders')
+    .select('company_id, debtor_name, customer_id, debtor_code')
+    .eq('doc_no', docNo)
+    .maybeSingle();
+  if (error) return { ok: false, reason: error.message };
+  const o = data as { company_id?: number | null; debtor_name?: string | null; customer_id?: string | null; debtor_code?: string | null } | null;
+  if (!o) return { ok: false, reason: `${docNo} not found` };
+  return { ok: true, companyId: o.company_id ?? null, code: customerPartyCode(o.debtor_code, o.customer_id), name: o.debtor_name ?? null };
+}
+
+/**
+ * A converted row's entry: Dr AR of the cancelled order's customer / Cr AR of
+ * the new order's customer, dated the day the money was moved (docs/bugs/0927).
+ * Keyed (SOCONV, the converted row's id), so a retry echoes. The row names
+ * the cancelled order; that order names the customer released.
+ */
+async function postConvertedPayment(sb: any, p: SoPaymentRow, opts: { dryRun?: boolean }): Promise<PostPaymentResult> {
+  const amountSen = Number(p.amount_sen);
+  if (!Number.isInteger(amountSen) || amountSen <= 0) return { ok: true, status: 'skipped_zero' };
+  const fromDocNo = String(p.converted_from_so_doc_no ?? '').trim();
+  if (!fromDocNo) return { ok: false, status: 'no_source_order', reason: `converted payment ${p.id} names no order it moved money from` };
+  const [from, to] = await Promise.all([orderCustomer(sb, fromDocNo), orderCustomer(sb, p.so_doc_no)]);
+  if (!from.ok) return { ok: false, status: 'so_read_failed', reason: from.reason };
+  if (!to.ok) return { ok: false, status: 'so_read_failed', reason: to.reason };
+  const companyId = to.companyId ?? p.company_id ?? null;
+  /* The transfer is dated the day it was made; a converted row keeps the
+     original paid_at for the screen, so the entry date rides beside it. */
+  const entryDate = (p.created_at ? mytDateOf(p.created_at) : null) ?? paymentDate(p.paid_at);
+  if (!entryDate) return { ok: false, status: 'bad_paid_at', reason: `converted payment ${p.id} has no usable date` };
+  const roles = await resolveRoles(sb, companyId);
+  const input = {
+    companyId,
+    entryDate,
+    sourceType: CONVERT_SOURCE,
+    sourceDocNo: p.id,
+    narration: `Money on ${fromDocNo} moved to ${p.so_doc_no}${to.name ? ` — ${to.name}` : ''}`,
+    lines: orderMoneyTransferLines(roles, { fromDocNo, toDocNo: p.so_doc_no, from: { code: from.code, name: from.name }, to: { code: to.code, name: to.name } }, amountSen),
+  };
+  if (opts.dryRun) {
+    const v = await validateJournal(sb, input);
+    if (!v.ok) return { ok: false, status: v.status, reason: v.reason };
+    return { ok: true, status: 'would_post', entryDate, lines: input.lines };
+  }
+  const r = await postJournal(sb, input);
+  if (r.ok) {
+    if (r.status === 'already_posted') return { ok: true, status: 'already_posted', jeNo: r.jeNo, jeId: r.jeId };
+    return { ok: true, status: 'posted', jeNo: r.jeNo, jeId: r.jeId };
+  }
+  return { ok: false, status: r.status, reason: r.reason };
+}
+
+/** Void the ledger entry for a DELETED payment row — the payment's own
+    (SOPAY), or the transfer a converted row booked (SOCONV; docs/bugs/0927).
+    Idempotent; nothing to reverse (an imported/never-posted row) is a success. */
 export async function reverseSoPayment(
   sb: any,
   paymentId: string,
   soDocNo: string,
 ): Promise<ReverseJournalResult> {
-  return reverseJournal(sb, {
+  const own = await reverseJournal(sb, {
     sourceType: 'SOPAY',
     sourceDocNo: paymentId,
     narration: (orig) => `Reversal of ${orig.je_no} — payment on ${soDocNo} deleted`,
+  });
+  if (!own.ok || own.status !== 'nothing_to_reverse') return own;
+  return reverseJournal(sb, {
+    sourceType: CONVERT_SOURCE,
+    sourceDocNo: paymentId,
+    narration: (orig) => `Reversal of ${orig.je_no} — money moved to ${soDocNo} moved back`,
   });
 }
 
@@ -263,7 +338,7 @@ export async function backfillSoPayments(
     for (;;) {
       const { data, error } = await sb
         .from('mfg_sales_order_payments')
-        .select('id, so_doc_no, paid_at, method, merchant_provider, amount_sen, company_id')
+        .select('id, so_doc_no, paid_at, method, merchant_provider, amount_sen, company_id, converted_from_so_doc_no, created_at')
         .neq('method', 'imported')
         .order('paid_at')
         .order('id')
@@ -436,7 +511,8 @@ export async function unbookedPayments(
       const { data, error } = await sb.from('journal_entries')
         .select('source_doc_no, entry_date, reversed, source_type')
         .eq('company_id', companyId)
-        .in('source_type', ['SOPAY', 'SIPAY'])
+        /* A converted row's entry is the transfer (docs/bugs/0927) — booked, by its own name. */
+        .in('source_type', ['SOPAY', 'SIPAY', CONVERT_SOURCE])
         .range(from, from + page - 1);
       if (error) return { ok: false, reason: `journal scan: ${error.message}` };
       const rows = (data ?? []) as Array<{ source_doc_no: string | null; entry_date: string | null; reversed: boolean | null }>;

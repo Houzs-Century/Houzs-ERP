@@ -313,7 +313,7 @@ Sending the reference there overwrote 92 PO numbers and filled 376 blank fields
 with the reference between 2026-09-07 and 09-15. ERP-made orders reached the book
 with `Ref` blank.
 
-Since docs/bugs/0926 the reference (`customer_so_no`, falling back to `ref`)
+Since docs/bugs/0926 the reference (`ref`, falling back to `customer_so_no`)
 goes out as `Ref`, and nothing composes `ToPONo` from it.
 
 ## 8. `InvAddr3` / `InvAddr4` — the customer's town and postcode never arrive [FIXED]

@@ -25,7 +25,7 @@ import { ArrowLeft, ImagePlus, Save, Store, Trash2, Wand2, X, Power, PowerOff } 
 import { LazySlot } from '../../components/LazySlot';
 import { Button } from '../../components/Button';
 import { PageHeader } from '../../components/Layout';
-import { maintActiveValues } from '@2990s/shared';
+import { maintActiveValues, fmtSen } from '@2990s/shared';
 import {
   useProductModel, useUpdateProductModel, useDeleteProductModel, useGenerateModelSkus,
   useActivateOneShot, useBrandingPool, useUploadProductModelPhoto,
@@ -1447,7 +1447,5 @@ function OptionGroup({
 }
 
 function formatRM(sen: number | null | undefined): string {
-  if (sen == null) return '—';
-  const ringgit = sen / 100;
-  return `RM ${ringgit.toFixed(2)}`;
+  return fmtSen(sen);
 }

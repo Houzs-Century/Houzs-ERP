@@ -29,6 +29,12 @@
 //   • Money on the order no deposit invoice covers (a payment after the
 //     final invoice, or before the switch) needs no note: the refund's own
 //     Dr AR already answers that payment's Cr AR. It is reported, not hidden.
+//   • A CONVERSION (owner 2026-09-15; docs/bugs/0927) takes money off the
+//     cancelled order's deposit invoices the same way — a note per invoice,
+//     oldest first, for the amount moved, carrying converted_payment_id
+//     instead of refund_pv_id — and the new order's own deposit invoice is
+//     issued beside it. Un-converting (the converted row deleted) cancels
+//     the notes by contra, the way a cancelled refund voucher does.
 //
 // This file does not import deposit-invoices.ts — that file imports this one
 // for the close-out — so it reads the invoice with its own column list.
@@ -54,16 +60,22 @@ type DiRow = {
   invoice_date: string; amount_sen: number; status: string; credit_note_id: string | null;
 };
 
-/** One refund note, as the page and the close-out read it. */
+/** One partial taker of a deposit invoice — a refund's note or a
+    conversion's — as the page and the close-out read it. */
 export type RefundNote = {
-  id: string; noteNumber: string; diNumber: string; totalSen: number; status: string; refundPvId: string; noteDate: string;
+  id: string; noteNumber: string; diNumber: string; totalSen: number; status: string;
+  /** The refund voucher that raised it, or null for a conversion's note. */
+  refundPvId: string | null;
+  /** The converted payment row that raised it, or null for a refund's note. */
+  convertedPaymentId: string | null;
+  noteDate: string;
 };
 
 /**
- * What refund notes have already taken off each deposit invoice, by invoice
- * number: every non-cancelled CN that names the invoice AND carries a refund
- * voucher id. The close-out note (sales_invoice_id set, no voucher) and a
- * note Finance raised by hand are not among them.
+ * What has already been taken off each deposit invoice, by invoice number:
+ * every non-cancelled CN that names the invoice AND carries a refund voucher
+ * id or a converted payment id. The close-out note (sales_invoice_id set,
+ * neither) and a note Finance raised by hand are not among them.
  */
 export async function refundedByInvoice(
   sb: Db, companyId: number, diNumbers: string[],
@@ -73,16 +85,18 @@ export async function refundedByInvoice(
   const wanted = [...new Set(diNumbers.filter(Boolean))];
   for (let i = 0; i < wanted.length; i += 200) {
     const { data, error } = await sb.from('acc_credit_notes')
-      .select('id, note_number, source_doc_no, total_sen, status, refund_pv_id, note_date')
+      .select('id, note_number, source_doc_no, total_sen, status, refund_pv_id, converted_payment_id, note_date')
       .eq('company_id', companyId).eq('kind', 'CN').neq('status', 'CANCELLED')
       .in('source_doc_no', wanted.slice(i, i + 200));
     if (error) return { ok: false, reason: `refund notes: ${error.message}` };
     for (const r of (data ?? []) as Row[]) {
-      if (r.refund_pv_id == null) continue;
+      if (r.refund_pv_id == null && r.converted_payment_id == null) continue;
       const di = String(r.source_doc_no);
       const n: RefundNote = {
         id: String(r.id), noteNumber: String(r.note_number), diNumber: di, totalSen: Number(r.total_sen ?? 0),
-        status: String(r.status), refundPvId: String(r.refund_pv_id), noteDate: String(r.note_date ?? '').slice(0, 10),
+        status: String(r.status), refundPvId: r.refund_pv_id == null ? null : String(r.refund_pv_id),
+        convertedPaymentId: r.converted_payment_id == null ? null : String(r.converted_payment_id),
+        noteDate: String(r.note_date ?? '').slice(0, 10),
       };
       sen.set(di, (sen.get(di) ?? 0) + n.totalSen);
       const at = notes.get(di);
@@ -127,6 +141,25 @@ export type RefundResult =
   | { ok: true; raised: RaisedRefundNote[]; uncoveredSen: number }
   | { ok: false; reason: string };
 
+/** Who takes the money off the invoice: the refund voucher, or the converted
+    payment row that moved it to another order (docs/bugs/0927). */
+export type DepositTaker =
+  | { kind: 'refund'; pvId: string; pvNumber: string }
+  | { kind: 'convert'; paymentId: string; toDocNo: string };
+
+export type TakeInput = {
+  companyId: number;
+  /** The day the notes are dated with — the voucher's day, or the day of the move. */
+  noteDate: string;
+  soDocNo: string;
+  amountSen: number;
+  actor: string | null;
+  taker: DepositTaker;
+};
+
+const takerOf = (n: RefundNote, t: DepositTaker): boolean =>
+  t.kind === 'refund' ? n.refundPvId === t.pvId : n.convertedPaymentId === t.paymentId;
+
 /**
  * The notes for one posted refund voucher: oldest deposit invoice first, each
  * for what still stands on it, until the refund is covered. Idempotent on
@@ -134,6 +167,19 @@ export type RefundResult =
  * invoice answers for.
  */
 export async function refundDepositInvoices(sb: Db, p: RefundInput): Promise<RefundResult> {
+  return takeFromDepositInvoices(sb, {
+    companyId: p.companyId, noteDate: p.voucherDate, soDocNo: p.soDocNo, amountSen: p.amountSen, actor: p.actor,
+    taker: { kind: 'refund', pvId: p.pvId, pvNumber: p.pvNumber },
+  });
+}
+
+/**
+ * The notes that take an amount off an order's deposit invoices — for a
+ * refund voucher or for a conversion: oldest invoice first, each for what
+ * still stands on it, until the amount is covered. Idempotent on (taker,
+ * invoice). `uncoveredSen` is the part no deposit invoice answers for.
+ */
+export async function takeFromDepositInvoices(sb: Db, p: TakeInput): Promise<RefundResult> {
   const amount = Number(p.amountSen);
   if (!Number.isInteger(amount) || amount <= 0) return { ok: true, raised: [], uncoveredSen: 0 };
   const { data, error } = await sb.from('acc_deposit_invoices')
@@ -146,9 +192,10 @@ export async function refundDepositInvoices(sb: Db, p: RefundInput): Promise<Ref
 
   const taken = await refundedByInvoice(sb, p.companyId, invoices.map((d) => d.di_number));
   if (!taken.ok) return taken;
-  /* This voucher's own notes — the retry finds them rather than raising beside. */
+  /* This taker's own notes — the retry finds them rather than raising beside. */
   const mine = new Map<string, RefundNote>();
-  for (const list of taken.notes.values()) for (const n of list) if (n.refundPvId === p.pvId) mine.set(n.diNumber, n);
+  for (const list of taken.notes.values()) for (const n of list) if (takerOf(n, p.taker)) mine.set(n.diNumber, n);
+  const label = p.taker.kind === 'refund' ? `Refund ${p.taker.pvNumber}` : `Moved to ${p.taker.toDocNo}`;
 
   const code = await companyCodeById(sb, p.companyId);
   if (!code) return { ok: false, reason: `company ${p.companyId} has no code to number under` };
@@ -183,17 +230,18 @@ export async function refundDepositInvoices(sb: Db, p: RefundInput): Promise<Ref
         party: { code: di.party_code, name: di.party_name },
         soDocNo: di.so_doc_no,
         sourceDocNo: di.di_number,
-        refundPvId: p.pvId,
-        noteDate: p.voucherDate,
-        reason: `Refund ${p.pvNumber} — ${part >= remaining ? 'closes' : 'part of'} deposit invoice ${di.di_number}`,
-        lines: [{ description: `Refund ${p.pvNumber} against deposit invoice ${di.di_number}`, code: roles.DEPOSIT_INCOME, amountSen: part }],
+        refundPvId: p.taker.kind === 'refund' ? p.taker.pvId : null,
+        convertedPaymentId: p.taker.kind === 'convert' ? p.taker.paymentId : null,
+        noteDate: p.noteDate,
+        reason: `${label} — ${part >= remaining ? 'closes' : 'part of'} deposit invoice ${di.di_number}`,
+        lines: [{ description: `${label} against deposit invoice ${di.di_number}`, code: roles.DEPOSIT_INCOME, amountSen: part }],
         createdBy: p.actor,
       });
       if (!ins.ok) return { ok: false, reason: `${di.di_number}: note not raised: ${ins.reason}` };
       note = ins.note;
     }
     const posted = await postCreditNote(sb, { companyId: p.companyId, note, actor: p.actor });
-    if (!posted.ok) log(`refund ${p.pvNumber}: ${String(note.note_number)} raised for ${di.di_number} but not posted:`, posted.status, posted.reason);
+    if (!posted.ok) log(`${label}: ${String(note.note_number)} raised for ${di.di_number} but not posted:`, posted.status, posted.reason);
     /* Refunded in full: the note closes the invoice, the way the final
        invoice's note would have. The link is written even when the posting
        was refused, so the note is found (and posted from the notes page)
@@ -219,9 +267,23 @@ export async function refundDepositInvoices(sb: Db, p: RefundInput): Promise<Ref
 export async function releaseRefundNotes(
   sb: Db, p: { companyId: number; pvId: string; actor: string | null; entryDate?: string },
 ): Promise<{ ok: true; released: string[] } | { ok: false; reason: string }> {
-  const { data, error } = await sb.from('acc_credit_notes')
-    .select(CREDIT_NOTE_HEADER)
-    .eq('company_id', p.companyId).eq('refund_pv_id', p.pvId).neq('status', 'CANCELLED');
+  return releaseTakerNotes(sb, { companyId: p.companyId, actor: p.actor, entryDate: p.entryDate, taker: { kind: 'refund', pvId: p.pvId, pvNumber: '' } });
+}
+
+/** When a converted row is deleted (the money moved back; docs/bugs/0927):
+    the notes its move raised are cancelled by contra and the invoices stand again. */
+export async function releaseConversionNotes(
+  sb: Db, p: { companyId: number; paymentId: string; actor: string | null; entryDate?: string },
+): Promise<{ ok: true; released: string[] } | { ok: false; reason: string }> {
+  return releaseTakerNotes(sb, { companyId: p.companyId, actor: p.actor, entryDate: p.entryDate, taker: { kind: 'convert', paymentId: p.paymentId, toDocNo: '' } });
+}
+
+async function releaseTakerNotes(
+  sb: Db, p: { companyId: number; actor: string | null; entryDate?: string; taker: DepositTaker },
+): Promise<{ ok: true; released: string[] } | { ok: false; reason: string }> {
+  let q = sb.from('acc_credit_notes').select(CREDIT_NOTE_HEADER).eq('company_id', p.companyId).neq('status', 'CANCELLED');
+  q = p.taker.kind === 'refund' ? q.eq('refund_pv_id', p.taker.pvId) : q.eq('converted_payment_id', p.taker.paymentId);
+  const { data, error } = await q;
   if (error) return { ok: false, reason: `refund notes: ${error.message}` };
   const released: string[] = [];
   for (const note of (data ?? []) as Row[]) {

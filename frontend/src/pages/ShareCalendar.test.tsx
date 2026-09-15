@@ -139,7 +139,7 @@ describe("ShareCalendar", () => {
     expect(await screen.findByText("MV plan.pdf")).toBeTruthy();
     expect(screen.getByText("Display floorplan")).toBeTruthy();
     expect(screen.getByText("72 sqm")).toBeTruthy();
-    expect(screen.getByText("RM 125,000")).toBeTruthy();
+    expect(screen.getByText("RM 125,000.00")).toBeTruthy();
     const urls = fetchMock.mock.calls.map((c) => String(c[0]));
     expect(urls.every((u) => u.includes("/brand-calendar/"))).toBe(true);
   });
