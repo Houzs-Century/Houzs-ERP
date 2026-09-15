@@ -282,18 +282,17 @@ export function Team() {
     { value: "directory", label: "Directory", show: canSeeMembers },
     { value: "orgchart2", label: "Org Chart", show: canSeeMembers },
     { value: "departments2", label: "Departments", show: canSeeMembers },
+    // Back in the strip 2026-09-15 (owner, after 0923: a Title could be created
+    // nowhere once #744 switched the tab off on every surface). It creates,
+    // renames, moves and deletes Titles; page access per Title is edited on
+    // Roles & Permissions, and this tab's old matrix is a read-only note
+    // (docs/bugs/0931-a-new-title-could-not-be-created-anywhere-the-positions-tab.md).
+    { value: "positions", label: "Titles", show: canManageUsers },
     { value: "mail2", label: "Mailboxes", show: canManageMail },
     { value: "permissions", label: "Roles & Permissions", show: canRoles },
     // Classic tabs (members / orgchart / departments / mail) are out of the
     // strip but still URL-reachable while the redesign is reviewed — see
     // canViewTab below. Cutover removes them.
-    // Positions tab removed from the strip (owner: "那個team的矩陣拆掉") — the
-    // same treatment the Roles tab got, which is why neither is in the strip.
-    // A positioned user's page access is resolved from position defaults
-    // (services/positionPolicy.ts, read at login), NOT from the 4-level
-    // position_page_access matrix this tab edited — that table is no longer read
-    // for them, so removing the tab changes no one's access. Re-add this line to
-    // restore the tab in the strip (it is also gated off in canViewTab below).
     // Roles tab removed (owner: "删了role") — Position governs page access; a
     // baseline role is auto-assigned on invite. Re-add this line to restore.
   ];
@@ -318,19 +317,11 @@ export function Team() {
     mail2: canManageMail,
     permissions: canRoles,
     members: canSeeMembers,
-    // Positions is turned off entirely (owner: "整個關掉先") — #740 only pulled
-    // it from the nav but left it URL-reachable at /team?tab=positions for a
-    // full admin. Forcing this to `false` closes that escape hatch: a requested
-    // `positions` tab now fails the canViewTab gate below and falls through to
-    // the user's first real tab (or the same Forbidden safe-landing #722 gives
-    // any admitted-but-empty user), so `active` can never resolve to "positions"
-    // and PositionsTab never mounts — its data query never fires. Enforcement is
-    // untouched: a positioned user's access is resolved from position defaults
-    // (services/positionPolicy.ts), which this gate does not affect. The former
-    // writer PATCH /api/positions/:id/page-access is now DISABLED (it short-
-    // circuits without writing); its route and the position_page_access table
-    // are kept for a future rework, and the tab's page-access editor is read-only.
-    positions: false,
+    // Off from #744 ("整個關掉先") to 2026-09-15; see the strip entry above. The
+    // per-position page-access writer stays DISABLED (PATCH
+    // /api/positions/:id/page-access answers 409) and the tab shows a read-only
+    // note in its place, so reopening it changes no one's access.
+    positions: canManageUsers,
     orgchart: canSeeMembers,
     departments: canSeeMembers,
     roles: canRoles,
@@ -399,10 +390,10 @@ export function Team() {
       description: "Manage who can access this workspace and what they can do.",
     },
     positions: {
-      eyebrow: "Workspace · Access by Position",
-      title: "Positions",
+      eyebrow: "Workspace · Titles",
+      title: "Titles",
       description:
-        "Set which pages each position can see (none / view / edit / full) — this drives the menu and blocks direct-URL access.",
+        "The titles a member can hold, grouped by department. A member's title decides the pages they see; edit that on Roles & Permissions.",
     },
     orgchart: {
       eyebrow: "Workspace · Hierarchy",
@@ -528,10 +519,6 @@ export function Team() {
           salesDirScoped={salesDirScoped}
         />
       )}
-      {/* Unreachable by design: canViewTab.positions is false, so `active` can
-          never resolve to "positions" and this never mounts. Kept (not deleted)
-          so the editor is one line from being restored if the owner turns it
-          back on — flip canViewTab.positions to canManageUsers. */}
       {active === "positions" && canManageUsers && <PositionsTab />}
       {active === "orgchart" && canSeeMembers && <OrgChartTab />}
       {active === "departments" && canSeeMembers && (

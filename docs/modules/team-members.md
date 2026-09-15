@@ -103,6 +103,19 @@ Team page shell are separate concerns and are only referenced here.
 > PERMISSIONS — see the permission-architecture note; nothing in this module
 > grants SCM capabilities.
 
+> **Titles tab (2026-09-15).** A Title is a `positions` row (`users.position_id`,
+> the profile's Title picker). The strip shows **Titles** (`frontend/src/pages/Positions.tsx`,
+> `?tab=positions`) to `users.manage` again: create, rename, move between
+> departments, reorder, delete (`POST` / `PATCH` / `DELETE /api/positions`). It was
+> switched off on every surface by #744 (owner 「整個關掉先」, because its page-access
+> matrix wrote a table login no longer read), which left NO screen that creates a
+> Title — the owner made a role instead (0923, and
+> `docs/bugs/0931-a-new-title-could-not-be-created-anywhere-the-positions-tab.md`).
+> Page access per Title is still edited on Roles & Permissions; the tab's matrix is a
+> read-only note and `PATCH /api/positions/:id/page-access` answers 409. The phone
+> menu still has no Positions row (`mobileMenuGates.test.ts`); no sidebar leaf either,
+> the tab is reached from the Team strip. Pinned by `frontend/src/pages/teamTitlesTab.test.tsx`.
+
 ---
 
 ## 1. Frontend
