@@ -74,6 +74,9 @@ import {
 } from "./dataTableLineExport";
 import { SearchScopeHint } from "./SearchScopeHint";
 import { MobileVirtualList } from "../mobile/MobileVirtualList";
+import { useFunnelAllRows, type FunnelAllRowsConfig, type FunnelAllRowsScope } from "./useFunnelAllRows";
+
+export type { FunnelAllRowsConfig, FunnelAllRowsScope };
 
 export interface Column<T, L = never> {
   key: string;
@@ -186,11 +189,6 @@ export interface ColumnLayoutPreset {
   isDefault?: boolean;
 }
 
-/** Reported by `funnelAllRows.onScopeChange`. `active` = a funnel is widening to
- *  the whole filtered set (the page hides its server pager); `loading` = that
- *  set is still in flight (the loaded page shows meanwhile). `null` = page-local. */
-export type FunnelAllRowsScope = { active: boolean; loading: boolean };
-
 interface Props<T, L = never> {
   /** Stable identifier used for persisting column visibility, order, sort,
    *  and density per page (localStorage). */
@@ -253,15 +251,8 @@ interface Props<T, L = never> {
    *  pages unreached. When wired and a funnel is active, `fetchRows` reads every
    *  row the server filters match (all pages — the line export's read) and the
    *  funnels run over that; row windowing bounds the DOM, so the page just hides
-   *  its server pager while `onScopeChange` reports active. `signature` is the
-   *  server-filter identity (tab + search + sort) and refetches on change; a
-   *  fetch failure reverts to page-local funnels via `onError`. */
-  funnelAllRows?: {
-    fetchRows: (need: { exportKeys: string[]; filterKeys: string[] }) => Promise<T[]>;
-    signature: string;
-    onScopeChange: (scope: FunnelAllRowsScope | null) => void;
-    onError: (error: Error) => void;
-  };
+   *  its server pager while `onScopeChange` reports active. See useFunnelAllRows. */
+  funnelAllRows?: FunnelAllRowsConfig<T>;
   /** If provided, an Import button is shown that calls this with the parsed File. */
   onImport?: (file: File) => void;
   /** Optional eyebrow rendered next to the row count. */
@@ -954,59 +945,20 @@ function DataTableInner<T, L>({
     resetFilters?.onReset();
   }
 
-  /* Whole-filtered-set funnels (owner 2026-09-16), opt-in via `funnelAllRows`:
-     while a funnel is active, fetch every row the server filters match and run
-     the funnels over that, not just the loaded page. Keyed on the server-filter
-     signature — ticking values re-filters the held set client-side without
-     refetching; only a tab/search/sort change refetches. `fetchedSigRef` holds
-     the signature we have or are fetching, so the inline `funnelAllRows` object
-     being new each render does not re-fire the read. */
-  const funnelScopeWanted = Boolean(funnelAllRows) && colFiltersActive;
-  const [allRows, setAllRows] = useState<{ signature: string; rows: T[] } | null>(null);
-  const [allRowsLoading, setAllRowsLoading] = useState(false);
-  const fetchedSigRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (!funnelAllRows || !funnelScopeWanted) {
-      fetchedSigRef.current = null;
-      setAllRows((cur) => (cur === null ? cur : null));
-      setAllRowsLoading((l) => (l ? false : l));
-      return;
-    }
-    const { signature, fetchRows, onError } = funnelAllRows;
-    if (fetchedSigRef.current === signature) return; // held or already in flight
-    fetchedSigRef.current = signature;
-    const filterKeys = Object.entries(colFilters).filter(([, v]) => v.length > 0).map(([k]) => k);
-    let cancelled = false;
-    setAllRowsLoading(true);
-    fetchRows({ exportKeys: filterKeys, filterKeys })
-      .then((fetched) => { if (!cancelled) setAllRows({ signature, rows: fetched }); })
-      .catch((e) => {
-        if (cancelled) return;
-        // A failed read (incl. "too many to hold") reverts to page-local funnels
-        // rather than showing a set that looks complete but is not.
-        fetchedSigRef.current = null;
-        setAllRows(null);
-        onError(e instanceof Error ? e : new Error(String(e)));
-      })
-      .finally(() => { if (!cancelled) setAllRowsLoading(false); });
-    return () => { cancelled = true; };
-  }, [funnelAllRows, funnelScopeWanted, colFilters]);
-
-  /* The rows the funnels run over: the whole matching set once it has arrived,
-     else the loaded page (and always so when the feature is not wired). */
-  const funnelSignature = funnelAllRows?.signature ?? null;
-  const funnelScopeReady =
-    funnelScopeWanted && allRows !== null && allRows.signature === funnelSignature;
-  const baseRows = funnelScopeReady ? allRows.rows : rows;
-
-  // Tell the page to hide its server pager while a scope is active.
-  const onFunnelScopeChange = funnelAllRows?.onScopeChange;
-  useEffect(() => {
-    if (!onFunnelScopeChange) return;
-    onFunnelScopeChange(
-      funnelScopeWanted ? { active: true, loading: !funnelScopeReady } : null,
-    );
-  }, [onFunnelScopeChange, funnelScopeWanted, funnelScopeReady]);
+  /* Whole-filtered-set funnels (owner 2026-09-16): when `funnelAllRows` is wired
+     and a funnel is active, `baseRows` is the whole matching set (all pages),
+     not just the loaded page — so a funnel narrows the WHOLE list. See
+     useFunnelAllRows. */
+  const funnelKeys = useMemo(
+    () => Object.entries(colFilters).filter(([, v]) => v.length > 0).map(([k]) => k),
+    [colFilters],
+  );
+  const baseRows = useFunnelAllRows(
+    rows,
+    Boolean(funnelAllRows) && colFiltersActive,
+    funnelKeys,
+    funnelAllRows,
+  );
 
   // Expanded drill-down rows (opt-in `expandable`). Transient — a Set of
   // expansion ids so the chevron toggle is O(1) and reloads start collapsed.
