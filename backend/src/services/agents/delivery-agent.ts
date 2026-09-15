@@ -63,6 +63,7 @@ import {
   type Region,
   type RegionConfig,
 } from './delivery-agent-geo';
+import { fmtSen } from '../../scm/shared/format';
 
 // ── Config (app_settings['agents.delivery']) ─────────────────────────────────
 
@@ -121,7 +122,7 @@ function n(v: unknown): number {
   return Number.isFinite(x) ? x : 0;
 }
 function rm(centi: number): string {
-  return `RM ${(centi / 100).toFixed(2)}`;
+  return `${fmtSen(centi)}`;
 }
 
 /** Whole days from a YMD/ISO to todayYmd (>= 0). */
