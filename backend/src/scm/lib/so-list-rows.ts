@@ -38,12 +38,17 @@ import { soDeliverableRemaining, computeSoLifecycle, soCurrentDocNo, soLineShipp
 import { derivePlanningState } from '../routes/delivery-planning';
 
 export type SoListRow = { doc_no?: string } & Record<string, unknown>;
+export type SoDeliverableMap = Awaited<ReturnType<typeof soDeliverableRemaining>>;
 
 export async function buildSoListRows(
   sb: Variables['supabase'],
   c: Context<{ Bindings: Env; Variables: Variables }>,
   rows: SoListRow[],
-): Promise<void> {
+): Promise<SoDeliverableMap | null> {
+  /* Returned so the line attach (lib/so-list-lines.ts) reuses the delivered /
+     returned / remaining reading this builder already made, instead of a second
+     identical read. */
+  let deliverable: SoDeliverableMap | null = null;
   const docNos = rows.map((r) => r.doc_no).filter((x): x is string => !!x);
   if (docNos.length > 0) {
     /* PERF: every per-doc_no enrichment read below only needs `docNos`, so they
@@ -287,6 +292,7 @@ export async function buildSoListRows(
     const fullyShippedItemIds = new Set<string>();
     {
       const deliverableMap = await deliverableProm;
+      deliverable = deliverableMap;
       for (const [itemId, line] of deliverableMap.entries()) {
         if (line.remaining > 0) hasUndelivered.add(line.docNo);
         else if (line.delivered > 0) fullyShippedItemIds.add(itemId);
@@ -448,4 +454,5 @@ export async function buildSoListRows(
       for (const k of SO_FINANCE_KEYS) delete (r as Record<string, unknown>)[k];
     }
   }
+  return deliverable;
 }

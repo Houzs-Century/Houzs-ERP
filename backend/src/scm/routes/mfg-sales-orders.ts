@@ -127,6 +127,7 @@ import { escapeForOr } from '../lib/postgrest-search';
 import { effectiveStatusFilter, isRangeNotSatisfiable } from '../lib/so-list-filters';
 import { fromSoList, orderSoList, prepareSoListRead, readSoListParams } from '../lib/so-list-read';
 import { buildSoListRows } from '../lib/so-list-rows';
+import { attachSoLines } from '../lib/so-list-lines';
 import { SO_TAB_STATUSES, soStatusesForTab } from '../lib/so-tab-statuses';
 import { chunkIn, paginateAll } from '../lib/paginate-all';
 import { tallyStatusRows, type StatusTally } from '../lib/status-counts';
@@ -903,6 +904,9 @@ const HEADER =
      separately (mig 0325); a base-table column the view does not enumerate is
      invisible to the list. */
   HOLD_COLUMNS;
+/* The LIST projection (the customer_po_image_b64 note is in GET /): the page and
+   the export (routes/sales-order-exports.ts) select exactly these columns. */
+export const SO_LIST_COLS = `${HEADER.replace(/,\s*customer_po_image_b64/, '')}, paid_total_sen, balance_sen_live`;
 /* FINANCE-GATED keys — cost / margin / per-category revenue+cost subtotals +
    deposit (header) and unit/line cost+margin (line). The lists moved to
    lib/finance-keys.ts so /reports shares this EXACT vocabulary: it had no copy
@@ -1172,7 +1176,7 @@ mfgSalesOrders.get('/', async (c) => {
      POS-origin SO that carries one. Strip it from the LIST projection only; the
      detail select (~L2241) still reads full HEADER, so nothing the detail shows
      changes. Dropping a column from a SELECT is always VIEW-TRAP safe. */
-  const LIST_COLS = `${HEADER.replace(/,\s*customer_po_image_b64/, '')}, paid_total_sen, balance_sen_live`;
+  const LIST_COLS = SO_LIST_COLS;
 
   /* Opt-in server-side pagination + search + sort + status-counts.
      WHY: keep this endpoint flat as the SO table grows — the legacy path streams
@@ -1358,7 +1362,15 @@ mfgSalesOrders.get('/', async (c) => {
   /* Every per-row field the list shows — ONE builder the list and the line
      export share (lib/so-list-rows.ts), so a screen cell and a file cell come
      from the same reads. The finance gate runs inside it. */
-  await buildSoListRows(sb, c, rows);
+  const deliverable = await buildSoListRows(sb, c, rows);
+  if (paginate) {
+    /* The page's lines and AutoCount header spellings, for the grid's line
+       columns — the same read the export uses (lib/so-list-lines.ts), so the
+       screen and the file agree cell for cell. The legacy unpaged path does not
+       carry them: its callers never render a line column. */
+    const withLines = await attachSoLines(sb, c, rows, deliverable);
+    if (withLines.error) return c.json({ error: 'lines_read_failed', reason: withLines.error }, 500);
+  }
 
   if (paginate) return c.json({ salesOrders: rows, total, page, pageSize, statusCounts, aggregates });
   return c.json({ salesOrders: rows });

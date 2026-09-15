@@ -1,74 +1,129 @@
-/* The Sales Order LINE export — one row per sales order line (owner
-   2026-09-15), the column design in docs/line-export-columns.md §1.
+/* The Sales Order LINE values — what one line of a sales order shows and
+   exports, owner 2026-09-15.
 
-   THIS FILE IS A CONTRACT, not a formatting detail. The export's header names
-   and its "Line ID" column are what a future import reads back: rows are
-   matched by Line ID and only Delivery Date, Item Description 2 and Remarks
-   are written. Rename one of those here and every file already exported stops
-   importing.
+   The SO list's ONE Export follows the grid: one row per SO line, the columns
+   the operator has visible, in their order, under their labels (DataTable
+   `exportLines`). The labels are AutoCount's own captions, read out of the saved
+   grid layouts of the live book (table Layout, form
+   FormSalesOrderPrintDetailListing; where two AutoCount listings caption one
+   field differently, the Detail Listing's caption is used). The server's line
+   shape is named here too, so the list endpoint and the export agree on every
+   name.
 
-   MIRRORED, byte for byte, at frontend/src/vendor/scm/lib/so-line-export-columns.ts
-   (the server builds the rows; the browser labels and writes them). Refereed by
-   frontend/src/vendor/scm/lib/so-line-export-columns.canonical.test.ts and by
-   backend/scripts/check-shared-mirrors.mjs. No imports, so the two copies can
+   THE LABELS ARE AN IMPORT CONTRACT for a future SO line import, which reads a
+   file back by header name and matches rows by Line ID.
+
+   MIRRORED, byte for byte, at frontend/src/vendor/scm/lib/so-line-export-columns.ts.
+   Refereed by frontend/src/vendor/scm/lib/so-line-export-columns.canonical.test.ts
+   and backend/scripts/check-shared-mirrors.mjs. No imports, so the two copies can
    stay identical. */
 
-export const SO_LINE_EXPORT_COLUMNS = [
-  'Doc No',
-  'AutoCount Doc No',
-  'Doc Date',
-  'Status',
-  'Customer Code',
-  'Customer Name',
-  'Customer Ref',
-  'Item Code',
-  'Item Description',
-  'Item Description 2',
-  'Remarks',
-  'Category',
-  'Location',
-  'UOM',
-  'Qty',
-  'Delivered Qty',
-  'Returned Qty',
-  'Remaining Qty',
-  'On Delivery Order Qty',
-  'Stock Status',
-  'Unit Price',
-  'Discount',
-  'Line Total',
-  'Doc Balance',
-  'Delivery Date',
-  'Processing Date',
-  'Salesperson',
-  'Branding',
-  'Venue',
-  'Sales Location',
-  'Phone',
-  'Delivery Address',
-  'State',
-  'DO No.',
-  'PO No.',
-  'PO Delivery Date',
-  'Line ID',
+/** The grid's column labels. `SO_DEFAULT_COLUMNS` names the AutoCount layout
+ *  the grid opens with; the rest are what the chooser offers. */
+export const SO_LABELS = {
+  /* Header — AutoCount captions. */
+  docNo: 'Doc. No.',
+  date: 'Date',
+  ref: 'Ref.',
+  agent: 'Agent',
+  debtorCode: 'Debtor Code',
+  debtorName: 'Debtor Name',
+  branding: 'BRANDING',
+  currency: 'Curr. Code',
+  total: 'Total',
+  localTotal: 'Local Total',
+  balance: 'BALANCE',
+  processingDate: 'Processing Date',
+  salesExemptionExpiryDate: 'Sales Exemption Expiry Date',
+  venue: 'VENUE',
+  remark2: 'Remark 2',
+  remark4: 'Remark 4',
+  note: 'Note',
+  phone: 'Phone',
+  cancelled: 'Cancelled',
+  payment: 'PAYEMENT',
+  /* Line — AutoCount captions. */
+  itemGroup: 'Item Group',
+  itemCode: 'Item Code',
+  detailDescription: 'Detail Description',
+  detailDescription2: 'Detail Description 2',
+  uom: 'UOM',
+  location: 'Location',
+  qty: 'Qty',
+  unitPrice: 'Unit Price',
+  discount: 'Discount',
+  lineTotal: 'Total (Inc)',
+  deliveryDate: 'Delivery Date',
+  poDocNo: 'PO Doc No.',
+  /* Line — the ERP's own, no AutoCount caption. */
+  deliveredQty: 'Delivered Qty',
+  returnedQty: 'Returned Qty',
+  remainingQty: 'Remaining Qty',
+  onDeliveryOrderQty: 'On Delivery Order Qty',
+  stockStatus: 'Stock Status',
+  doNo: 'DO No.',
+  poDeliveryDate: 'PO Delivery Date',
+  remarks: 'Remarks',
+  erpDocNo: 'ERP Doc No',
+  erpItemCode: 'ERP Item Code',
+  lineId: 'Line ID',
+} as const;
+
+/** AutoCount layout "SALES ORDER DETAILS-SALES" (owner 2026-09-15: the SO list's
+ *  default), in AutoCount's order. The grid opens with these columns visible. */
+export const SO_DEFAULT_COLUMNS = [
+  SO_LABELS.date, SO_LABELS.docNo, SO_LABELS.ref, SO_LABELS.agent, SO_LABELS.debtorName, SO_LABELS.branding,
+  SO_LABELS.currency, SO_LABELS.total, SO_LABELS.location, SO_LABELS.balance, SO_LABELS.processingDate,
+  SO_LABELS.salesExemptionExpiryDate, SO_LABELS.itemGroup, SO_LABELS.itemCode, SO_LABELS.detailDescription,
+  SO_LABELS.detailDescription2, SO_LABELS.uom, SO_LABELS.unitPrice, SO_LABELS.qty, SO_LABELS.venue,
 ] as const;
 
-export type SoLineExportColumn = (typeof SO_LINE_EXPORT_COLUMNS)[number];
-export type SoLineExportCell = string | number | null;
-
-/* A money cell is a NUMBER in ringgit, so the sheet can sum it; the format only
-   controls how many decimals show. A unit price is a rate and keeps up to four. */
-export const SO_LINE_EXPORT_NUMBER_FORMATS: Partial<Record<SoLineExportColumn, string>> = {
-  'Qty': '0.##',
-  'Delivered Qty': '0.##',
-  'Returned Qty': '0.##',
-  'Remaining Qty': '0.##',
-  'On Delivery Order Qty': '0.##',
-  'Unit Price': '#,##0.00##',
-  'Discount': '#,##0.00',
-  'Line Total': '#,##0.00',
-  'Doc Balance': '#,##0.00',
+/** One SO line as the list endpoint and the export send it. Money stays in sen
+ *  on the wire; the grid converts at the cell (`senToRinggit`). Where the order is
+ *  in AutoCount, the item fields are spelled as the book holds them. */
+export type SoListLine = {
+  id: string;
+  line_no: number | null;
+  item_code: string | null;
+  erp_item_code: string | null;
+  description: string | null;
+  description2: string | null;
+  item_group: string | null;
+  uom: string | null;
+  location: string | null;
+  qty: number;
+  unit_price_sen: number | null;
+  discount_sen: number | null;
+  total_sen: number | null;
+  delivery_date: string | null;
+  remark: string | null;
+  stock_status: string | null;
+  delivered_qty: number | null;
+  returned_qty: number | null;
+  remaining_qty: number | null;
+  on_delivery_order_qty: number;
+  do_nos: string[];
+  po_nos: string[];
+  po_delivery_date: string | null;
 };
+
+/** The order's header values as AutoCount holds them, stamped on the row beside
+ *  the ERP's own. For an order that is not in AutoCount (2990) these are the
+ *  ERP's own values. */
+export type SoBookHeader = {
+  ac_doc_no: string | null;
+  ac_debtor_code: string | null;
+  ac_agent: string | null;
+  ac_venue: string | null;
+  ac_branding: string | null;
+};
+
+/** Sen to ringgit, rounded to `places` so float noise never shows. */
+export function senToRinggit(sen: number | string | null | undefined, places: number): number | null {
+  if (sen === null || sen === undefined || sen === '') return null;
+  const n = Number(sen);
+  return Number.isFinite(n) ? Number((n / 100).toFixed(places)) : null;
+}
 
 /* The word the Sales Orders LIST pill shows for each stored status — the label
    half of STATUS_TONE in frontend/src/pages/scm-v2/so-list-status.ts, keyed by
@@ -122,177 +177,4 @@ export function soListStatusWord(
     else if (deliveryState === 'full') word = 'Delivered';
   }
   return onHold === true && raw.toUpperCase() !== 'ON_HOLD' ? `${word} (On Hold)` : word;
-}
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-/**
- * The Salesperson cell, by the list's own rule (useStaffLookup nameOf): the
- * header's `agent` text when it is a name, else the staff row the salesperson
- * id names, else the staff row an `agent` that holds a uuid names.
- */
-export function soSalespersonName(
-  agent: string | null | undefined,
-  salespersonId: string | null | undefined,
-  staffName: (id: string) => string | null,
-): string | null {
-  const a = (agent ?? '').trim();
-  if (a && !UUID_RE.test(a)) return a;
-  if (salespersonId) {
-    const n = (staffName(salespersonId) ?? '').trim();
-    if (n) return n;
-  }
-  if (a) {
-    const n = (staffName(a) ?? '').trim();
-    if (n) return n;
-  }
-  return null;
-}
-
-export type SoExportHeader = {
-  doc_no: string;
-  so_date: string | null;
-  status: string | null;
-  on_hold?: boolean | null;
-  debtor_code: string | null;
-  debtor_name: string | null;
-  ref?: string | null;
-  customer_so_no?: string | null;
-  branding?: string | null;
-  venue?: string | null;
-  sales_location?: string | null;
-  phone?: string | null;
-  address1?: string | null;
-  address2?: string | null;
-  address3?: string | null;
-  address4?: string | null;
-  customer_state?: string | null;
-  customer_delivery_date?: string | null;
-  processing_date?: string | null;
-  balance_sen_live?: number | string | null;
-  balance_sen?: number | string | null;
-};
-
-export type SoExportLine = {
-  id: string;
-  item_code: string | null;
-  description: string | null;
-  description2?: string | null;
-  remark?: string | null;
-  item_group?: string | null;
-  uom?: string | null;
-  qty: number | string | null;
-  stock_status?: string | null;
-  unit_price_sen?: number | string | null;
-  discount_sen?: number | string | null;
-  total_sen?: number | string | null;
-  line_delivery_date?: string | null;
-};
-
-export type SoExportLineContext = {
-  /** The AutoCount document number — a base-table column the list's view does not carry. */
-  acDocNo: string | null;
-  /** delivery_address1..4 — base-table columns the list's view does not carry. */
-  deliveryAddress: [string | null, string | null, string | null, string | null];
-  /** The status word, resolved by the server with soListStatusWord. */
-  statusWord: string | null;
-  /** AutoCount's short location code (`KL`) for the line's warehouse. */
-  location: string | null;
-  salesperson: string | null;
-  /** The app's own delivery reading (soDeliverableRemaining). Null when the
-   *  line is not in it — a cancelled line owes nothing and is not measured. */
-  delivered: number | null;
-  returned: number | null;
-  remaining: number | null;
-  /** Σ qty on delivery orders not yet shipped (a DRAFT), linked to this line. */
-  onDeliveryOrder: number;
-  doNos: string[];
-  poNos: string[];
-  poDeliveryDate: string | null;
-};
-
-const text = (v: string | null | undefined): string | null => {
-  const s = (v ?? '').trim();
-  return s === '' ? null : s;
-};
-
-const num = (v: number | string | null | undefined): number | null => {
-  if (v === null || v === undefined || v === '') return null;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : null;
-};
-
-/* The storage shape (YYYY-MM-DD) — a spreadsheet sorts it, and it imports back
-   without a day/month guess. A timestamp keeps only its date. */
-const isoDate = (v: string | null | undefined): string | null => {
-  const s = text(v);
-  if (!s) return null;
-  const m = /^(\d{4}-\d{2}-\d{2})/.exec(s);
-  return m ? m[1]! : s;
-};
-
-/* Stored in sen; exported in ringgit. `places` rounds away float noise only. */
-const ringgit = (sen: number | string | null | undefined, places: number): number | null => {
-  const n = num(sen);
-  if (n === null) return null;
-  return Number((n / 100).toFixed(places));
-};
-
-const joined = (parts: ReadonlyArray<string | null | undefined>): string | null =>
-  text(parts.map((p) => text(p)).filter((p): p is string => !!p).join(', '));
-
-/** The customer's own reference, by the screens' rule (lib/customer-ref.ts):
- *  `ref` leads, `customer_so_no` is the fallback. */
-export function soCustomerRef(h: { ref?: string | null; customer_so_no?: string | null }): string | null {
-  return text(h.ref) ?? text(h.customer_so_no);
-}
-
-export function soLineExportCells(
-  header: SoExportHeader,
-  line: SoExportLine,
-  ctx: SoExportLineContext,
-): SoLineExportCell[] {
-  const byColumn: Record<SoLineExportColumn, SoLineExportCell> = {
-    'Doc No': text(header.doc_no),
-    'AutoCount Doc No': text(ctx.acDocNo),
-    'Doc Date': isoDate(header.so_date),
-    'Status': ctx.statusWord,
-    'Customer Code': text(header.debtor_code),
-    'Customer Name': text(header.debtor_name),
-    'Customer Ref': soCustomerRef(header),
-    'Item Code': text(line.item_code),
-    'Item Description': text(line.description),
-    'Item Description 2': text(line.description2),
-    'Remarks': text(line.remark),
-    'Category': text(line.item_group),
-    'Location': text(ctx.location),
-    'UOM': text(line.uom),
-    'Qty': num(line.qty) ?? 0,
-    'Delivered Qty': ctx.delivered,
-    'Returned Qty': ctx.returned,
-    'Remaining Qty': ctx.remaining,
-    'On Delivery Order Qty': ctx.onDeliveryOrder,
-    'Stock Status': text(line.stock_status),
-    'Unit Price': ringgit(line.unit_price_sen, 4),
-    'Discount': ringgit(line.discount_sen, 2),
-    'Line Total': ringgit(line.total_sen, 2),
-    /* The list's Balance: the view's live balance (total − Σ payments). The
-       stored balance_sen is the gross total, rewritten on every edit, and is
-       only the fallback for a row the view could not compute. */
-    'Doc Balance': ringgit(header.balance_sen_live ?? header.balance_sen, 2),
-    'Delivery Date': isoDate(line.line_delivery_date) ?? isoDate(header.customer_delivery_date),
-    'Processing Date': isoDate(header.processing_date),
-    'Salesperson': text(ctx.salesperson),
-    'Branding': text(header.branding),
-    'Venue': text(header.venue),
-    'Sales Location': text(header.sales_location),
-    'Phone': text(header.phone),
-    'Delivery Address': joined(ctx.deliveryAddress) ?? joined([header.address1, header.address2, header.address3, header.address4]),
-    'State': text(header.customer_state),
-    'DO No.': text(ctx.doNos.join(', ')),
-    'PO No.': text(ctx.poNos.join(', ')),
-    'PO Delivery Date': isoDate(ctx.poDeliveryDate),
-    'Line ID': line.id,
-  };
-  return SO_LINE_EXPORT_COLUMNS.map((col) => byColumn[col]);
 }
