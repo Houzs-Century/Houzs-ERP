@@ -1461,7 +1461,7 @@ sales-order line** (`.github/workflows/realign-po-line-to-so-line.yml`): no `po`
 read-only list; `po` + `line` + `expect_code` = plan (rolls back) / apply behind
 `REALIGN THIS PO LINE`, refusing a received line. It never tells AutoCount: an
 AutoCount edit does not change the item on a line the book already holds
-(`composeEdit`, owner 2026-08-13). `docs/bugs/0936`.
+(`composeEdit`, owner 2026-08-13). `docs/bugs/0937`.
 
 ---
 
