@@ -52,6 +52,9 @@ export async function recordAmendmentRequested(
     headerChanges: Record<string, string | null>;
     oldHeaderSnapshot: Record<string, string | null>;
     columnOf: Record<string, string>;
+    /** The requester's note that the computed approver looked wrong (owner
+     *  2026-09-15, option B). Audited so the doubt outlives the row's column. */
+    laneFlagNote?: string | null;
   },
 ): Promise<void> {
   await recordSoAudit(sb, {
@@ -62,6 +65,7 @@ export async function recordAmendmentRequested(
     fieldChanges: [
       { field: 'amendment', from: null, to: args.amendmentNo },
       { field: 'lane', to: args.lane },
+      ...(args.laneFlagNote ? [{ field: 'lane_flag_note', to: args.laneFlagNote }] : []),
       ...args.headerKeys.map((k) => ({
         field: `requested_${args.columnOf[k]}`,
         from:  args.oldHeaderSnapshot[k],
@@ -86,6 +90,7 @@ export async function notifyAmendmentsRaised(
     docNo: string;
     salespersonStaffId: string | null | undefined;
     reason?: string | null;
+    laneFlagNote?: string | null;
     created: Array<{ amendment_no: string; lane: SoAmendmentLane }>;
   },
 ): Promise<void> {
@@ -97,6 +102,7 @@ export async function notifyAmendmentsRaised(
       lane: a.lane,
       companyId: activeCompanyId(c),
       reason: args.reason ?? null,
+      laneFlagNote: args.laneFlagNote ?? null,
       requesterName: c.get('houzsUser')?.name ?? null,
       requesterUserId: c.get('houzsUser')?.id ?? null,
       salespersonUserId,

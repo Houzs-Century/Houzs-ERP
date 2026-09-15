@@ -20,7 +20,7 @@ State machine (a lane row lives inside the existing status enum): `REQUESTED -> 
 
 ## Permissions
 
-- `POST .../amendments` — `scm.amendment.create`, OR the salesperson on their own order, OR a lane approver. A reason is required before the SO is even read.
+- `POST .../amendments` — `scm.amendment.create`, OR the salesperson on their own order, OR a lane approver. A reason is required before the SO is even read. The lane is COMPUTED, not chosen; the submit dialog shows the requester which desk it goes to and lets them flag it with a note (`so_amendments.lane_flag_note`, trimmed, ≤500 chars) when the computed approver looks wrong — the request still goes where the rule says, the note travels with it.
 - `PATCH .../approve-so` and `/reject` — the row's own lane key (`approve_lines` or `approve_delivery`; legacy rows use `approve_so`/`approve_po`).
 - `PATCH .../withdraw` — the requester, or anyone who could reject it.
 - `GET .../pending-count` asks the lane keys LITERALLY — a `*` wildcard holder gets 0 unless their role was separately granted the literal keys (done for the Owner's shared login so it gets both the badge and the notice). This is deliberate and is the one place in the SCM routes that does not honour the wildcard for visibility; a wildcard holder can still see and approve every row.
