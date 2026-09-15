@@ -1,0 +1,159 @@
+/* OrderMoneyPanel — the money on a CANCELLED Sales Order and its two exits,
+   side by side (owner 2026-09-15: 他应该是 convert or refund，所以功能要做一起 …
+   这个按钮我觉得挨着一起; docs/bugs/0927 the backend, docs/bugs/0931 this).
+
+   Under the payments table of a saved order, only when the order is
+   cancelled and collected something: paid · refunded (the vouchers, with
+   their status) · moved (to which orders) · REMAINING. Two buttons when
+   something is left:
+
+     [Refund]   an amount (part or all) and a note → a Customer Refund
+                voucher DRAFT for Finance, on the salesperson's behalf; only
+                Finance approves, and the draft already counts against what
+                is left.
+     [Convert]  this order and the customer's other cancelled orders with
+                money, each with a tick and an amount (part or all) → the New
+                SO page opens with the customer and lines copied and one
+                converted row per tick (owner: 这个是可以选多张一起 convert? — 可以).
+
+   Renders nothing for a live order, and nothing on a failed read: the
+   payments above are the money truth. */
+import { useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { MoneyInput } from './MoneyInput';
+import { fmtDate } from '../../shared/format';
+import { useNotify } from './NotifyDialog';
+import {
+  convertParamOf, newOrderWithMoneyHref, useOrderMoney, useRequestRefund,
+  type ConvertPick, type ConvertSource, type OrderMoney,
+} from '../lib/so-money-queries';
+
+const fmtRm = (sen: number): string =>
+  `RM ${(sen / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const panel: React.CSSProperties = {
+  marginTop: 8, padding: '10px 12px', borderRadius: 8,
+  border: '1px solid var(--c-line, rgba(34,31,32,0.12))', background: 'var(--c-cream, #faf7f0)',
+  fontSize: 'var(--fs-12)', display: 'flex', flexDirection: 'column', gap: 8,
+};
+const btn: React.CSSProperties = {
+  padding: '4px 12px', borderRadius: 6, border: '1px solid var(--c-line, rgba(34,31,32,0.2))',
+  background: 'var(--c-paper, #fff)', cursor: 'pointer', fontSize: 'var(--fs-12)', fontWeight: 600,
+};
+const primary: React.CSSProperties = { ...btn, background: 'var(--c-ink, #221f20)', color: 'var(--c-paper, #fff)', borderColor: 'var(--c-ink, #221f20)' };
+const muted: React.CSSProperties = { color: 'var(--fg-muted)' };
+
+/** The figures line — pure, so a test reads it without the buttons. */
+export function moneySummary(m: OrderMoney): string {
+  const parts = [`Paid ${fmtRm(m.bookedSen)}`];
+  if (m.refundedSen > 0) parts.push(`Refunded ${fmtRm(m.refundedSen)}`);
+  if (m.convertedSen > 0) parts.push(`Moved ${fmtRm(m.convertedSen)}`);
+  parts.push(`Remaining ${fmtRm(m.remainingSen)}`);
+  return parts.join(' · ');
+}
+
+function RefundForm({ docNo, remainingSen, onDone }: { docNo: string; remainingSen: number; onDone: () => void }) {
+  const [amountSen, setAmountSen] = useState(remainingSen);
+  const [note, setNote] = useState('');
+  const request = useRequestRefund(docNo);
+  const notify = useNotify();
+  const over = amountSen > remainingSen;
+  const submit = async () => {
+    try {
+      const r = await request.mutateAsync({ amountSen, note: note.trim() || null });
+      void notify({ title: `Refund draft ${r.pvNumber} raised for Finance`, body: `${fmtRm(amountSen)} on ${docNo}. Finance approves it on the Payment Vouchers page.` });
+      onDone();
+    } catch (e) {
+      void notify({ title: 'The refund was not raised', body: e instanceof Error ? e.message : String(e), tone: 'error' });
+    }
+  };
+  return (
+    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }} data-testid="refund-form">
+      <span>Refund</span>
+      <MoneyInput valueSen={amountSen} onCommit={(sen) => setAmountSen(sen ?? 0)} aria-label="Refund amount" />
+      <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Why (optional)" aria-label="Refund note"
+        style={{ flex: 1, minWidth: 160, padding: '4px 8px', border: '1px solid var(--c-line, rgba(34,31,32,0.2))', borderRadius: 6 }} />
+      <button type="button" style={primary} disabled={amountSen <= 0 || over || request.isPending} onClick={() => void submit()}>Raise refund draft</button>
+      <button type="button" style={btn} onClick={onDone}>Cancel</button>
+      {over && <span style={{ color: 'var(--c-danger, #a33)' }}>Only {fmtRm(remainingSen)} is left.</span>}
+    </div>
+  );
+}
+
+function ConvertForm({ money, others, onDone }: { money: OrderMoney; others: ConvertSource[]; onDone: () => void }) {
+  const navigate = useNavigate();
+  /* This order first, ticked, for what is left; the customer's other cancelled
+     orders beneath, unticked, each for what is left on it. */
+  const rows = useMemo<Array<ConvertSource & { self: boolean }>>(() => [
+    { docNo: money.docNo, customer: money.customer.name, cancelledOn: null, remainingSen: money.remainingSen, bookedSen: money.bookedSen, self: true },
+    ...others.map((o) => ({ ...o, self: false })),
+  ], [money, others]);
+  const [ticked, setTicked] = useState<Set<string>>(() => new Set([money.docNo]));
+  const [amounts, setAmounts] = useState<Record<string, number>>(() => Object.fromEntries(rows.map((r) => [r.docNo, r.remainingSen])));
+  const picks: ConvertPick[] = rows.filter((r) => ticked.has(r.docNo)).map((r) => ({ docNo: r.docNo, amountSen: amounts[r.docNo] ?? 0 }));
+  const bad = rows.find((r) => ticked.has(r.docNo) && ((amounts[r.docNo] ?? 0) <= 0 || (amounts[r.docNo] ?? 0) > r.remainingSen));
+  const total = picks.reduce((s, p) => s + p.amountSen, 0);
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }} data-testid="convert-form">
+      <span>Move to a new order — tick the cancelled orders to take money from, and how much of each:</span>
+      {rows.map((r) => (
+        <label key={r.docNo} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <input type="checkbox" checked={ticked.has(r.docNo)} aria-label={`Take from ${r.docNo}`}
+            onChange={(e) => setTicked((s) => { const n = new Set(s); if (e.target.checked) n.add(r.docNo); else n.delete(r.docNo); return n; })} />
+          <span style={{ fontFamily: 'var(--font-mono)' }}>{r.docNo}</span>
+          {!r.self && r.customer && <span style={muted}>{r.customer}</span>}
+          <span style={muted}>{fmtRm(r.remainingSen)} left</span>
+          <MoneyInput valueSen={amounts[r.docNo] ?? 0} onCommit={(sen) => setAmounts((a) => ({ ...a, [r.docNo]: sen ?? 0 }))} aria-label={`Amount from ${r.docNo}`} />
+        </label>
+      ))}
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <button type="button" style={primary} disabled={picks.length === 0 || Boolean(bad)}
+          onClick={() => navigate(newOrderWithMoneyHref(money.docNo, picks))}>
+          Open a new order with {fmtRm(total)}
+        </button>
+        <button type="button" style={btn} onClick={onDone}>Cancel</button>
+        {bad && <span style={{ color: 'var(--c-danger, #a33)' }}>{bad.docNo}: between RM 0.01 and {fmtRm(bad.remainingSen)}.</span>}
+        <span style={muted}>The new order opens with this customer and the cancelled order's lines; one payment row per ticked order, dated the day the money was first paid.</span>
+      </div>
+      <span hidden data-testid="convert-param">{convertParamOf(picks)}</span>
+    </div>
+  );
+}
+
+export function OrderMoneyPanel({ docNo }: { docNo: string }) {
+  const q = useOrderMoney(docNo);
+  const [mode, setMode] = useState<'idle' | 'refund' | 'convert'>('idle');
+  const m = q.data?.money;
+  if (q.isError || !m || !m.cancelled || m.bookedSen === 0) return null;
+  const others = q.data?.others ?? [];
+  return (
+    <div style={panel} data-testid="order-money-panel" aria-label="Money on this cancelled order">
+      <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+        <span style={{ fontWeight: 700 }}>Money on this cancelled order</span>
+        <span>{moneySummary(m)}</span>
+      </div>
+      {(m.refunds.length > 0 || m.conversions.length > 0) && (
+        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', ...muted }}>
+          {m.refunds.map((r) => (
+            <a key={r.id} href={`/scm/payment-vouchers/${r.id}`} style={{ color: 'var(--c-orange)', fontFamily: 'var(--font-mono)' }}>
+              {r.pvNumber} · {fmtRm(r.totalSen)}{r.status === 'POSTED' ? '' : ` (${r.status.toLowerCase()})`}
+            </a>
+          ))}
+          {m.conversions.map((c) => (
+            <a key={c.paymentId} href={`/scm/sales-orders/${encodeURIComponent(c.toDocNo)}`} style={{ color: 'var(--c-orange)', fontFamily: 'var(--font-mono)' }}>
+              → {c.toDocNo} · {fmtRm(c.amountSen)}{c.convertedOn ? ` (${fmtDate(c.convertedOn)})` : ''}
+            </a>
+          ))}
+        </div>
+      )}
+      {m.open && mode === 'idle' && (
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button type="button" style={btn} onClick={() => setMode('refund')}>Refund</button>
+          <button type="button" style={btn} onClick={() => setMode('convert')}>Convert</button>
+        </div>
+      )}
+      {!m.open && m.reason && <span style={muted}>{m.reason}</span>}
+      {mode === 'refund' && <RefundForm docNo={docNo} remainingSen={m.remainingSen} onDone={() => setMode('idle')} />}
+      {mode === 'convert' && <ConvertForm money={m} others={others} onDone={() => setMode('idle')} />}
+    </div>
+  );
+}

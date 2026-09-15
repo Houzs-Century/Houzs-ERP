@@ -319,3 +319,17 @@ describe('the order create takes a converted row too', () => {
     expect(rawSo).toContain("select('id, so_doc_no, paid_at, method, merchant_provider, amount_sen, company_id, converted_from_so_doc_no, created_at, created_by').single();");
   });
 });
+
+describe('Finance\'s list, narrowed to one customer', () => {
+  test('?phone= lists only that customer\'s cancelled orders with money — the New SO page has no order yet (docs/bugs/0931)', async () => {
+    const { app } = harness({
+      mfg_sales_orders: [order(OLD, 'CANCELLED'), order(OLD2, 'CANCELLED', { debtor_name: 'Someone Else', customer_id: 'cust-2', phone: '0999' }), order(NEW, 'CONFIRMED')],
+    });
+    const mine = await (await app.request('/mfg-sales-orders/cancelled-with-money?phone=0123')).json() as { orders: Array<Record<string, any>> };
+    expect(mine.orders.map((o) => o.docNo)).toEqual([OLD]);
+    const theirs = await (await app.request('/mfg-sales-orders/cancelled-with-money?phone=0999')).json() as { orders: Array<Record<string, any>> };
+    expect(theirs.orders.map((o) => [o.docNo, o.remainingSen])).toEqual([[OLD2, 30_000]]);
+    const nobody = await (await app.request('/mfg-sales-orders/cancelled-with-money?phone=0000')).json() as { orders: Row[] };
+    expect(nobody.orders).toEqual([]);
+  });
+});

@@ -35,6 +35,8 @@ import { SlipUploadField } from './SlipUploadField';
 import { MoneyInput } from './MoneyInput';
 import { DateField } from './DateField';
 import { RefundsLine } from './RefundsLine';
+import { OrderMoneyPanel } from './OrderMoneyPanel';
+import { CONVERT_LABEL, CONVERTED_METHOD, convertPicksFrom, useConvertSources, type ConvertSource } from '../lib/so-money-queries';
 import { useNotify } from './NotifyDialog';
 import { useConfirm } from './ConfirmDialog';
 import { todayMyt, mytDayOf } from '../lib/dates';
@@ -93,7 +95,9 @@ const ONE_SHOT_PLAN = 'One Shot';
    so the Detail page's ledger semantics don't change).
    ════════════════════════════════════════════════════════════════════════ */
 
-export type PaymentMethod = PaymentMethodCode;
+/* Plus `converted` — money moved from a cancelled order (docs/bugs/0927/0931):
+   a Sales-Order-only method that names the order it comes from. */
+export type PaymentMethod = PaymentMethodCode | typeof CONVERTED_METHOD;
 /* Bank provider name (now open-ended — sourced from
    so_dropdown_options('payment_merchant'), no longer constrained to the
    legacy 4-bank enum). */
@@ -136,6 +140,7 @@ export const labelToApi = (label: PaymentMethodLabel): {
   method: PaymentMethod;
   merchantProvider: MerchantProvider | null;
 } => {
+  if (label === CONVERT_LABEL) return { method: CONVERTED_METHOD, merchantProvider: null };
   const method = VALUE_TO_CODE[label] ?? paymentMethodCodeForValue(label);
   if (method) return { method, merchantProvider: null };
   throw new UnknownPaymentMethodError(label);
@@ -146,7 +151,8 @@ export const labelToApi = (label: PaymentMethodLabel): {
    the screen does not know opens under its own name (the select shows it as
    an extra option) so the row cannot be saved as anything else by accident. */
 const apiToValue = (p: SoPayment): string =>
-  (PAYMENT_METHOD_CODE_TO_VALUE as Partial<Record<string, string>>)[p.method] ?? String(p.method);
+  p.method === CONVERTED_METHOD ? CONVERT_LABEL
+  : ((PAYMENT_METHOD_CODE_TO_VALUE as Partial<Record<string, string>>)[p.method] ?? String(p.method));
 
 /* The edit draft, seeded VERBATIM from the persisted row (owner 2026-09-12: 我按
    edit 时默认会已输入的资料，我只会 edit 我想要 edit 的东西; docs/bugs/0838) —
@@ -162,6 +168,7 @@ export const editDraftOf = (p: SoPayment, planLabel: (months: number | null) => 
     (p.method === 'merchant' || p.method === 'installment')
       ? planLabel(p.installment_months) : '',
   onlineType: p.online_type ?? '',
+  convertedFromDocNo: p.converted_from_so_doc_no ?? '',
   amountSen: p.amount_sen,
   accountSheet: p.account_sheet ?? '',
   approvalCode: p.approval_code ?? '',
@@ -175,11 +182,13 @@ const methodPillStyle = (m: PaymentMethod): CSSProperties => {
     m === 'merchant'    ? 'rgba(232, 107, 58, 0.12)' :
     m === 'transfer'    ? 'rgba(47, 93, 79, 0.12)'   :
     m === 'installment' ? 'rgba(34, 31, 32, 0.08)'   :
+    m === 'converted'   ? 'rgba(99, 91, 255, 0.12)'  :
                           'rgba(0, 0, 0, 0.06)';
   const fg =
     m === 'merchant'    ? 'var(--c-burnt)' :
     m === 'transfer'    ? 'var(--c-secondary-a, #2F5D4F)' :
     m === 'installment' ? 'var(--c-ink)' :
+    m === 'converted'   ? 'var(--c-ink)' :
                           'var(--fg-muted)';
   return {
     display: 'inline-block',
@@ -224,6 +233,9 @@ export type PaymentDraft = {
   merchantProvider:         string;             // L2 bank pick (Merchant + Installment)
   installmentMonthsLabel:   string;             // L2 plan pick (Merchant + Installment)
   onlineType:               string;             // L2 sub-type (Online only)
+  /* Money moved from a cancelled order (docs/bugs/0931): the order it comes
+     from — the L2 pick under "Convert from cancelled SO". */
+  convertedFromDocNo?:      string;
   amountSen:              number;
   accountSheet:             string;
   approvalCode:             string;
@@ -266,12 +278,20 @@ export const newPaymentDraft = (defaultStaffId = ''): PaymentDraft => ({
   merchantProvider:       '',
   installmentMonthsLabel: '',
   onlineType:             '',
+  convertedFromDocNo:     '',
   amountSen: 0,
   accountSheet: '',
   approvalCode: '',
   collectedBy: defaultStaffId,
   slipUploadSessionId: null,
 });
+
+/** The rows the cancelled order's Convert button hands the New SO page
+    (`?convert=SO-a:sen,SO-b:sen`; docs/bugs/0931): one converted draft per
+    pick, the amount as ticked, the day and collector left to the server (it
+    takes the cancelled order's first payment's). */
+export const convertDraftsFrom = (param: string | null | undefined, defaultStaffId = ''): PaymentDraft[] =>
+  convertPicksFrom(param).map((p) => ({ ...newPaymentDraft(defaultStaffId), methodLabel: CONVERT_LABEL, convertedFromDocNo: p.docNo, amountSen: p.amountSen }));
 
 /* Parse an installment-plan label like 'One Shot' / 'One-off' / '3 months' /
    '12 months' into an integer term in months. The one-shot labels and any
@@ -298,8 +318,10 @@ export const parseInstallmentMonths = (label: string): number | null => {
    cash fallback. Shared by the per-row commit gate (SAVED mode) and the New SO
    batch-save guard (DRAFT mode) so both pages enforce the same rule. */
 export const missingMethodSubField = (
-  d: Pick<PaymentDraft, 'methodLabel' | 'merchantProvider' | 'installmentMonthsLabel' | 'onlineType'>,
+  d: Pick<PaymentDraft, 'methodLabel' | 'merchantProvider' | 'installmentMonthsLabel' | 'onlineType' | 'convertedFromDocNo'>,
 ): string | null => {
+  /* Money moved from a cancelled order needs the order it comes from. */
+  if (d.methodLabel === CONVERT_LABEL) return d.convertedFromDocNo ? null : 'cancelled order';
   if (d.methodLabel === 'Merchant') {
     if (!d.merchantProvider) return 'Bank';
     if (!d.installmentMonthsLabel) return 'Plan';
@@ -318,8 +340,9 @@ export const missingMethodSubField = (
    one place. */
 export const draftMethodFields = (
   method: PaymentMethod,
-  d: Pick<PaymentDraft, 'merchantProvider' | 'installmentMonthsLabel' | 'onlineType'>,
+  d: Pick<PaymentDraft, 'merchantProvider' | 'installmentMonthsLabel' | 'onlineType' | 'convertedFromDocNo'>,
 ): Record<string, unknown> => {
+  if (method === CONVERTED_METHOD) return { convertedFromDocNo: d.convertedFromDocNo || null };
   if (method === 'merchant') {
     return {
       merchantProvider:  d.merchantProvider || null,
@@ -434,6 +457,10 @@ type DraftModeProps = {
    *  (`persistedIds`) — the SI detail seeds its drafts from the API rows and
    *  keeps `uid = row id`, which is exactly the key the ensure endpoint takes. */
   receiptFor?: ReceiptSource;
+  /** The cancelled orders a draft row may draw on (docs/bugs/0931) — the New SO
+   *  page reads them by the customer's phone, having no order yet. Absent or
+   *  empty, the "Convert from cancelled SO" method is not offered. */
+  convertSources?: ConvertSource[];
 };
 
 /** Which payment book the rows belong to, in the receipts table's own key. */
@@ -562,6 +589,11 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
      under Merchant / Online / Installment. */
   const methodOptsQ      = useSoDropdownOptions('payment_method');
   const methodOpts       = optionsOrFallback('payment_method', methodOptsQ.data);
+  /* Money moved from a cancelled order (docs/bugs/0931): a saved order asks the
+     server for its customer's cancelled orders with money; the New SO page
+     hands them in. */
+  const convertSourcesQ  = useConvertSources(props.docNo);
+  const convertSources: ConvertSource[] = props.docNo ? (convertSourcesQ.data?.sources ?? []) : ((props as DraftModeProps).convertSources ?? []);
   const merchantOptsQ    = useSoDropdownOptions('payment_merchant');
   const merchantOpts     = optionsOrFallback('payment_merchant', merchantOptsQ.data);
   const onlineOptsQ      = useSoDropdownOptions('online_type');
@@ -1278,6 +1310,11 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                       {p.installment_months ? `${p.installment_months}m` : ''}
                     </span>
                   )}
+                  {p.method === CONVERTED_METHOD && p.converted_from_so_doc_no && (
+                    <span style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>
+                      from <a href={`/scm/sales-orders/${encodeURIComponent(p.converted_from_so_doc_no)}`} style={{ color: 'var(--c-orange)', fontFamily: 'var(--font-mono)' }}>{p.converted_from_so_doc_no}</a>
+                    </span>
+                  )}
                   {/* NO approval code here — desktop renders it in its own
                       "Approval Code" COLUMN below. Mobile's PaymentInfoBlock
                       does print it inline, and that is correct FOR MOBILE: the
@@ -1352,7 +1389,9 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                           recorded today; after MYT midnight it locks (no pencil).
                           A DRAFT SO (draftUnlocked) is never same-day-locked, so
                           every persisted row keeps its pencil while unconfirmed. */}
-                      {rowMutable(p.created_at) && (
+                      {/* Money moved from a cancelled order is moved back by
+                          deleting the row, never edited in place (docs/bugs/0931). */}
+                      {rowMutable(p.created_at) && p.method !== CONVERTED_METHOD && (
                         <button
                           type="button"
                           disabled={editPayment.isPending}
@@ -1453,12 +1492,18 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                         installmentMonthsLabel: next === 'Merchant' || next === 'Installment'
                           ? d.installmentMonthsLabel : '',
                         onlineType:             next === 'Online'   ? d.onlineType       : '',
+                        convertedFromDocNo:     next === CONVERT_LABEL ? (d.convertedFromDocNo ?? '') : '',
                       });
                     }}
                   >
                     {methodOpts.map((m) => (
                       <option key={m.id} value={m.value}>{m.label}</option>
                     ))}
+                    {/* Money moved from a cancelled order (docs/bugs/0931) — offered
+                        only when this customer has a cancelled order with money. */}
+                    {(convertSources.length > 0 || d.methodLabel === CONVERT_LABEL) && (
+                      <option value={CONVERT_LABEL}>{CONVERT_LABEL}</option>
+                    )}
                     {/* Persist labels that are no longer active in the
                         list so existing drafts (rehydrated from
                         somewhere) still render their selection. */}
@@ -1467,6 +1512,31 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                     )}
                   </select>
 
+                  {/* L2 — the cancelled order the money comes from; picking one
+                      fills the amount with what is left on it when the row is
+                      still empty (docs/bugs/0931). */}
+                  {d.methodLabel === CONVERT_LABEL && (
+                    <select
+                      className={paymentsStyles.inlineSelect}
+                      style={{ fontSize: 'var(--fs-11)' }}
+                      value={d.convertedFromDocNo ?? ''}
+                      disabled={locked}
+                      onChange={(e) => {
+                        const from = e.target.value;
+                        const src = convertSources.find((s) => s.docNo === from);
+                        patchDraft(d.uid, { convertedFromDocNo: from, ...(src && d.amountSen <= 0 ? { amountSen: src.remainingSen } : {}) });
+                      }}
+                      aria-label="Cancelled order"
+                    >
+                      <option value="">— Cancelled order —</option>
+                      {convertSources.map((s) => (
+                        <option key={s.docNo} value={s.docNo}>{s.docNo} · {fmtRm(s.remainingSen, currency)} left</option>
+                      ))}
+                      {d.convertedFromDocNo && !convertSources.some((s) => s.docNo === d.convertedFromDocNo) && (
+                        <option value={d.convertedFromDocNo}>{d.convertedFromDocNo}</option>
+                      )}
+                    </select>
+                  )}
                   {/* L2 — Merchant cascade: pick the Bank + Installment plan. */}
                   {d.methodLabel === 'Merchant' && (
                     <>
@@ -1775,6 +1845,9 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
           {/* Money that went BACK (§14) — every refund voucher on a saved
               order, linked by number; nothing when there is none. */}
           {isSaved && <RefundsLine docNo={(props as SavedModeProps).docNo} />}
+          {/* A CANCELLED order's money and its two exits — refund or convert
+              (docs/bugs/0931); the panel decides for itself whether to show. */}
+          {isSaved && <OrderMoneyPanel docNo={(props as SavedModeProps).docNo} />}
         </div>
       </div>
     </section>

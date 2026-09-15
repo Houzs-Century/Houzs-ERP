@@ -259,10 +259,15 @@ export async function convertSources(
 }
 
 /**
- * Every cancelled order of the company still holding money — Finance's list.
+ * Every cancelled order of the company still holding money — Finance's list;
+ * narrowed to one customer's by phone for a page that has no order yet (the
+ * New SO page picking "Convert from cancelled SO"; docs/bugs/0931).
  */
-export async function cancelledOrdersWithMoney(sb: Db, companyId: number): Promise<{ ok: true; rows: ConvertSource[] } | { ok: false; reason: string }> {
-  const { data, error } = await sb.from('mfg_sales_orders').select('doc_no, debtor_name, updated_at').eq('company_id', companyId).eq('status', 'CANCELLED');
+export async function cancelledOrdersWithMoney(sb: Db, companyId: number, p: { phone?: string | null } = {}): Promise<{ ok: true; rows: ConvertSource[] } | { ok: false; reason: string }> {
+  let q = sb.from('mfg_sales_orders').select('doc_no, debtor_name, updated_at').eq('company_id', companyId).eq('status', 'CANCELLED');
+  const phone = String(p.phone ?? '').trim();
+  if (phone) q = q.eq('phone', phone);
+  const { data, error } = await q;
   if (error) return { ok: false, reason: error.message };
   const rows: ConvertSource[] = [];
   for (const r of ((data ?? []) as Row[]).sort((a, b) => String(a.doc_no).localeCompare(String(b.doc_no)))) {

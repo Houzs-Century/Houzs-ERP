@@ -202,7 +202,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/so-dropdown-options.ts` | 4 | 318 |
 | `backend/src/scm/routes/so-handover.ts` | 4 | 487 |
 | `backend/src/scm/routes/so-mirror.ts` | 1 | 333 |
-| `backend/src/scm/routes/so-money-routes.ts` | 0 | 93 |
+| `backend/src/scm/routes/so-money-routes.ts` | 0 | 94 |
 | `backend/src/scm/routes/so-settings.ts` | 2 | 61 |
 | `backend/src/scm/routes/sofa-combos.ts` | 7 | 795 |
 | `backend/src/scm/routes/sofa-compartment-photos.ts` | 3 | 308 |
@@ -239,7 +239,7 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (2604 files, 814721 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (2610 files, 815414 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -443,7 +443,7 @@ Page files by directory:
 | `frontend/src/pages/MailCenter` | 3 |
 | `frontend/src/pages/announcements` | 5 |
 | `frontend/src/pages/roles` | 2 |
-| `frontend/src/pages/scm-v2` | 175 |
+| `frontend/src/pages/scm-v2` | 176 |
 | `frontend/src/pages/scm-v2/products` | 2 |
 | `frontend/src/pages/settings` | 1 |
 | `frontend/src/pages/team` | 11 |
