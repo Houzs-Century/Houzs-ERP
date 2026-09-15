@@ -27,3 +27,7 @@ jobs:
       - run: node scripts/probe-fabric-accessory-population.mjs
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      # TEMPORARY (branch run only)
+      - run: npx tsx scripts/check-hard-bound-coverage.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
