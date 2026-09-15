@@ -75,7 +75,7 @@ QR scan and paper
 
 POD, money, AutoCount
 - POD evidence columns are written only when present; Mobile POD sends `signatureData` only after the customer actually drew.
-- The DO shows its sales order's payments read-only (`useSalesOrderPayments`; `error` is a required prop). The `delivery_order_payments` endpoints exist but are unused by choice — money is taken on the SO.
+- The DO shows its sales order's payments read-only (`useSalesOrderPayments`; `error` is a required prop). There is no separate DO payment ledger — money is taken on the SO (the removed `delivery_order_payments` endpoints served a table production never had, #3835).
 - The DO reaches AutoCount by transfer: the create returns `acNotSent` and the New screen calls `notifyAcNotSent`; it never blocks.
 - The status handler's only AutoCount call is `enqueueCancel` on CANCELLED, after the downstream check; a sign-off never reaches AutoCount (its DO has no such field).
 - A line added to a DO that AutoCount already holds is declared through `newLineIds`.
