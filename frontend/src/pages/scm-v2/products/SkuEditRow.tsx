@@ -115,6 +115,26 @@ export async function saveStagedEdits(
   return { savedIds, failures };
 }
 
+/* The rows the grid is SHOWING — its funnels and sort applied — as the latest
+   copies from `rows`. The edit table renders these, so pressing Edit Prices
+   never moves or drops a row the operator was looking at (owner 2026-09-15).
+   `null` = the grid has not reported yet: fall back to the loaded order. */
+export function rowsInGridOrder<R extends { id: string }>(rows: R[], gridRows: R[] | null): R[] {
+  if (!gridRows) return rows;
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  return gridRows.flatMap((g) => byId.get(g.id) ?? []);
+}
+
+/* SKU Master grid-order state: the grid stays mounted (hidden) in edit mode and
+   reports the rows it shows via `setGridRows`; `shownRows` renders them in that
+   order. `bumpGridEpoch` remounts the grid unfiltered after a Save (0917). */
+export function useSkuGridOrder(rows: MfgProductRow[]) {
+  const [gridRows, setGridRows] = useState<MfgProductRow[] | null>(null);
+  const [gridEpoch, setGridEpoch] = useState(0);
+  const shownRows = useMemo(() => rowsInGridOrder(rows, gridRows), [rows, gridRows]);
+  return { setGridRows, gridEpoch, bumpGridEpoch: () => setGridEpoch((n) => n + 1), shownRows };
+}
+
 export const ProductRow = memo(({
   row, editMode, isSofaView, isMattressView, sofaSizes, tier, onOpenSuppliers,
   selected, onToggleSelected, patch, onStage, brandingPool,
