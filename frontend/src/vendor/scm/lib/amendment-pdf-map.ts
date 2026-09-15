@@ -23,9 +23,10 @@ import { amendmentLineChangedFields, amendmentVariantSummaries } from './so-amen
 /* The printed Status comes from the one home for the amendment vocabulary, not
    from a caller-supplied word. See PRINTED STATUS below. */
 import { simplifiedAmendmentPill } from './status-pill';
+import { fmtSen } from '../../shared/format';
 
 const money = (centi: number | null | undefined): string =>
-  centi == null ? '—' : `RM ${(Number(centi) / 100).toFixed(2)}`;
+  centi == null ? '—' : fmtSen(Number(centi));
 
 const str = (v: unknown): string => (v == null || v === '' ? '—' : String(v));
 

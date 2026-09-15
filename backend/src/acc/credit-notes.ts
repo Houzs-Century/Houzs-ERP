@@ -30,7 +30,7 @@ export type NoteKind = 'CN' | 'DN' | 'SCN';
 export const NOTE_KINDS: ReadonlySet<string> = new Set(['CN', 'DN', 'SCN']);
 export const NOTE_KIND_WORD: Record<NoteKind, string> = { CN: 'Credit note', DN: 'Debit note', SCN: 'Supplier credit note' };
 
-export const CREDIT_NOTE_HEADER = 'id, company_id, note_number, kind, party_type, party_code, party_name, supplier_id, so_doc_no, sales_invoice_id, ap_invoice_id, purchase_invoice_id, source_doc_no, note_date, total_sen, reason, notes, status, je_no, created_at, created_by, updated_at, posted_at, posted_by, cancelled_at, cancelled_by, refund_pv_id';
+export const CREDIT_NOTE_HEADER = 'id, company_id, note_number, kind, party_type, party_code, party_name, supplier_id, so_doc_no, sales_invoice_id, ap_invoice_id, purchase_invoice_id, source_doc_no, note_date, total_sen, reason, notes, status, je_no, created_at, created_by, updated_at, posted_at, posted_by, cancelled_at, cancelled_by, refund_pv_id, converted_payment_id';
 export const CREDIT_NOTE_LINE = 'id, line_no, description, account_code, amount_sen';
 
 export type CreditNoteLineInput = { description: string | null; code: string; amountSen: number };
@@ -51,6 +51,9 @@ export type InsertCreditNoteInput = {
       note against a deposit invoice for money refunded. Null for every
       other note. */
   refundPvId?: string | null;
+  /** The converted payment row whose move this note took off a deposit
+      invoice (docs/bugs/0927) — the other partial taker beside a refund. */
+  convertedPaymentId?: string | null;
   noteDate: string;
   reason?: string | null;
   notes?: string | null;
@@ -79,6 +82,7 @@ export async function insertCreditNote(sb: Db, p: InsertCreditNoteInput): Promis
     purchase_invoice_id: p.purchaseInvoiceId ?? null,
     source_doc_no: p.sourceDocNo ?? null,
     refund_pv_id: p.refundPvId ?? null,
+    converted_payment_id: p.convertedPaymentId ?? null,
     note_date: p.noteDate,
     total_sen: total,
     reason: p.reason ?? null,

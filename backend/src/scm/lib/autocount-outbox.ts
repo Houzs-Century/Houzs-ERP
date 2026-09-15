@@ -113,6 +113,7 @@ import { lineIdentityGap, persistNewLineKeys, newLineTargetOf } from './autocoun
 import { attachPhotos } from './autocount-photo-attach';
 import { readPoSourceSo } from './autocount-po-source-so';
 import { resendHeldEdits } from './autocount-held-edit-resend';
+import { queueSoPoDocNos } from './autocount-so-po-doc-no';
 import { readMfgProductBindings } from './supplier-bindings';
 import {
   soLine,
@@ -1884,6 +1885,7 @@ export async function dispatchOne(
     /* An edit refused while this row was on its way goes out now (docs/bugs/0924).
        doc_type is one of the six by the table's CHECK (migration 0277). */
     await resendHeldEdits(sb, { ...row, doc_type: row.doc_type as AcDocType }, (o) => enqueueEdit(sb, o));
+    await queueSoPoDocNos(sb, row, (i) => enqueueAcOp(sb, i));  // PO Doc No. of the source orders - docs/bugs/0926
     return 'sent';
   }
 

@@ -18,6 +18,7 @@ const world = (over: Record<string, Row[]> = {}) => fakeSb({
   mfg_sales_order_payments: [
     { id: 'pay-1', company_id: CO, so_doc_no: '2990-SO-2606-014' },
     { id: 'pay-2', company_id: CO, so_doc_no: '2990-SO-2608-067' },
+    { id: 'pay-conv', company_id: CO, so_doc_no: '2990-SO-2608-067', converted_from_so_doc_no: '2990-SO-2607-010' },
     { id: 'pay-9', company_id: 1, so_doc_no: 'HOUZS-SO-1' },   // another company's
   ],
   mfg_sales_orders: [
@@ -64,6 +65,8 @@ const DOCS = [
   { jeNo: 'D-CHG', sourceType: 'SETTLECHARGE', sourceDocNo: 'SETTLECHARGE-4', partyName: null, notes: 'PBB bank charge' },
   { jeNo: 'D-STK', sourceType: 'STOCKADJ', sourceDocNo: 'STOCKADJ-2-2026-07', partyName: null, notes: 'Closing stock 2026-07' },
   { jeNo: 'D-STKR', sourceType: 'STOCKADJ', sourceDocNo: 'STOCKADJ-REV-2-2026-08', partyName: null, notes: null },
+  /* Money moved from a cancelled order (docs/bugs/0927): the new order and the one it came from. */
+  { jeNo: 'D-CONV', sourceType: 'SOCONV', sourceDocNo: 'pay-conv', partyName: null, notes: 'Money on 2990-SO-2607-010 moved to 2990-SO-2608-067' },
 ];
 
 describe('resolveJournalRefs', () => {
@@ -103,6 +106,8 @@ describe('resolveJournalRefs', () => {
     expect(at('D-CHG')).toEqual(['GHL charge 06/06/2026', null, 'GHL']);
     expect(at('D-STK')).toEqual(['Stock 07/2026', null, 'Closing stock 2026-07']);
     expect(at('D-STKR')).toEqual(['Stock 08/2026', null, null]);
+    expect(at('D-CONV')).toEqual(['2990-SO-2608-067', '2990-SO-2607-010', 'NG KAH YEE']);
+    expect(r.refs.get('D-CONV')?.reference).toBe('2990-SO-2608-067 ← 2990-SO-2607-010');
   });
 
   test('reads only inside the company; nothing to resolve means no read at all', async () => {
