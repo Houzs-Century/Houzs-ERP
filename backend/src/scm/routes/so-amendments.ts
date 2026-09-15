@@ -893,7 +893,7 @@ export async function approveSoCommandHandler(c: any, sb: any): Promise<Response
   /* Apply the revision. A hard failure leaves the amendment status unchanged (we
      only advance status AFTER a clean apply) so the operator can retry — the
      snapshot upsert is idempotent on (so_doc_no, revision). */
-  let applied: { soDocNo: string; revision: number };
+  let applied: { soDocNo: string; revision: number; addedLineIds: string[] };
   try {
     /* The sixth argument is this gate's RECEIPT, and it is what lets the apply
        persist the unit prices the amendment requested instead of re-pricing them
@@ -987,6 +987,11 @@ export async function approveSoCommandHandler(c: any, sb: any): Promise<Response
     docType: 'SO',
     docNo: amendment.so_doc_no,
     createdBy: c.get('houzsUser')?.id ?? null,
+    /* Lines this amendment ADDED carry no AutoCount key yet; declare them NEW so
+       composeEdit appends them instead of refusing the whole document as keyless
+       (docs/bugs/0942). Existing lines already carry keys, which is the condition
+       composeEdit requires before it honours a new line. */
+    newLineIds: applied.addedLineIds,
   });
 
   /* Notices (owner 2026-09-02). AFTER COMMIT — an approval that rolls back

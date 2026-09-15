@@ -6,8 +6,8 @@ without GitHub Actions. It exists for one scenario: **Actions cannot run**
 else, merge to main — `deploy.yml` is the release pipeline.
 
 Never run bare `wrangler deploy` / `wrangler pages deploy` against prod. Four
-separate incidents (see `deploy-watchdog.yml`'s header and
-`docs/deploy-collision-coe.md`) came from exactly that: ambient credentials +
+separate incidents (see `deploy-watchdog.yml`'s header and the
+2026-07-17 entry in `docs/LESSONS.md`) came from exactly that: ambient credentials +
 a stale clone + no trail. The watchdog now treats any unstamped Worker as a
 rogue deploy and redeploys over it.
 

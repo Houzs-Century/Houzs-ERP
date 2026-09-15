@@ -18,12 +18,19 @@
  * server classifies and writes by) and frontend/src/vendor/scm/lib/po-line-import.ts
  * (what the import dialog reads the file with). po-line-import.canonical.test.ts
  * fails the build if they drift. The header names and which stored date is
- * "Estimate Delivery Date N" come from the EXPORT's contract beside it,
- * po-line-export-columns.ts, so a renamed export header is a compile error here. */
+ * "Estimate Delivery Date" / "Supplier Delivery Date 2/3" come from the grid's
+ * column labels beside it, po-line-export-columns.ts, so a renamed column is a
+ * compile error here.
+ *
+ * THE FILE IS WHATEVER THE GRID EXPORTED (owner 2026-09-15: the export follows
+ * the columns the operator shows). So every editable column is OPTIONAL: an
+ * absent column changes nothing, and the preview names it. Only Doc No (or ERP
+ * Doc No) and Line ID are required — without them a row cannot be tied to a
+ * line safely. */
 import {
   PO_ESTIMATE_DELIVERY_DATE_FIELDS,
-  PO_ESTIMATE_DELIVERY_DATE_LABELS,
-  type PoLineExportColumn,
+  PO_LINE_LABELS,
+  type PoLineLabel,
 } from './po-line-export-columns';
 
 export type PoLineImportField =
@@ -36,8 +43,11 @@ export type PoLineImportField =
 
 export type PoLineImportFieldSpec = {
   field: PoLineImportField;
-  /** The export's column header, exactly. Matched case- and space-insensitively. */
-  header: PoLineExportColumn;
+  /** The grid's column label, exactly. Matched case- and space-insensitively. */
+  header: PoLineLabel;
+  /** Headers an earlier export wrote for the same field (2026-09-15, before the
+   *  AutoCount captions), still read so a file already exported imports. */
+  legacyHeaders: readonly string[];
   kind: 'date' | 'text';
   /** 'line' = purchase_order_items.<column>; 'po' = purchase_orders.<column>, cascaded to every line. */
   level: 'line' | 'po';
@@ -47,16 +57,19 @@ export type PoLineImportFieldSpec = {
 };
 
 export const PO_LINE_IMPORT_FIELDS: readonly PoLineImportFieldSpec[] = [
-  { field: 'deliveryDate', header: 'Delivery Date', kind: 'date', level: 'line', column: 'delivery_date', slot: null },
-  { field: 'estimateDeliveryDate1', header: PO_ESTIMATE_DELIVERY_DATE_LABELS[0], kind: 'date', level: 'po', column: PO_ESTIMATE_DELIVERY_DATE_FIELDS[0], slot: 2 },
-  { field: 'estimateDeliveryDate2', header: PO_ESTIMATE_DELIVERY_DATE_LABELS[1], kind: 'date', level: 'po', column: PO_ESTIMATE_DELIVERY_DATE_FIELDS[1], slot: 3 },
-  { field: 'estimateDeliveryDate3', header: PO_ESTIMATE_DELIVERY_DATE_LABELS[2], kind: 'date', level: 'po', column: PO_ESTIMATE_DELIVERY_DATE_FIELDS[2], slot: 4 },
-  { field: 'description2', header: 'Item Description 2', kind: 'text', level: 'line', column: 'description2', slot: null },
-  { field: 'remarks', header: 'Remarks', kind: 'text', level: 'line', column: 'notes', slot: null },
+  { field: 'deliveryDate', header: PO_LINE_LABELS.deliveryDate, legacyHeaders: [], kind: 'date', level: 'line', column: 'delivery_date', slot: null },
+  { field: 'estimateDeliveryDate1', header: PO_LINE_LABELS.estimate1, legacyHeaders: ['Estimate Delivery Date 1'], kind: 'date', level: 'po', column: PO_ESTIMATE_DELIVERY_DATE_FIELDS[0], slot: 2 },
+  { field: 'estimateDeliveryDate2', header: PO_LINE_LABELS.estimate2, legacyHeaders: ['Estimate Delivery Date 2'], kind: 'date', level: 'po', column: PO_ESTIMATE_DELIVERY_DATE_FIELDS[1], slot: 3 },
+  { field: 'estimateDeliveryDate3', header: PO_LINE_LABELS.estimate3, legacyHeaders: ['Estimate Delivery Date 3'], kind: 'date', level: 'po', column: PO_ESTIMATE_DELIVERY_DATE_FIELDS[2], slot: 4 },
+  { field: 'description2', header: PO_LINE_LABELS.itemDescription2, legacyHeaders: [], kind: 'text', level: 'line', column: 'description2', slot: null },
+  { field: 'remarks', header: PO_LINE_LABELS.remarks, legacyHeaders: [], kind: 'text', level: 'line', column: 'notes', slot: null },
 ];
 
-export const PO_LINE_IMPORT_DOC_NO_HEADER: PoLineExportColumn = 'Doc No';
-export const PO_LINE_IMPORT_LINE_ID_HEADER: PoLineExportColumn = 'Line ID';
+/** Doc No (AutoCount's number when the PO is linked, else the ERP's) and ERP Doc
+ *  No; a file may carry either or both. */
+export const PO_LINE_IMPORT_DOC_NO_HEADER: PoLineLabel = PO_LINE_LABELS.docNo;
+export const PO_LINE_IMPORT_ERP_DOC_NO_HEADER: PoLineLabel = PO_LINE_LABELS.erpDocNo;
+export const PO_LINE_IMPORT_LINE_ID_HEADER: PoLineLabel = PO_LINE_LABELS.lineId;
 
 /** Rows read from one file. An export of every open PO line is a few thousand. */
 export const PO_LINE_IMPORT_MAX_ROWS = 5000;
@@ -183,32 +196,39 @@ export function storedImportValue(field: PoLineImportField, v: unknown): string 
 }
 
 export type PoLineImportSheet =
-  | { ok: true; rows: PoLineImportRow[]; fields: PoLineImportField[]; ignoredHeaders: string[] }
+  | { ok: true; rows: PoLineImportRow[]; fields: PoLineImportField[]; ignoredHeaders: string[]; missingHeaders: string[] }
   | { ok: false; error: string };
 
 /**
  * Read a sheet given as rows of cells (SheetJS `sheet_to_json(ws, { header: 1 })`).
  * The header row is the first of the top ten that names a Line ID column. Every
- * column that is not Doc No, Line ID or one of the six fields is ignored.
+ * column that is not Doc No, ERP Doc No, Line ID or one of the six fields is
+ * ignored; an editable column the file does not carry is reported in
+ * `missingHeaders` and changes nothing.
  */
 export function readPoLineImportSheet(matrix: unknown[][]): PoLineImportSheet {
   const lineIdKey = normHeader(PO_LINE_IMPORT_LINE_ID_HEADER);
   const docNoKey = normHeader(PO_LINE_IMPORT_DOC_NO_HEADER);
   const headerIdx = matrix.slice(0, 10).findIndex((r) => Array.isArray(r) && r.some((c) => normHeader(c) === lineIdKey));
   if (headerIdx < 0) {
-    return { ok: false, error: `This file has no "${PO_LINE_IMPORT_LINE_ID_HEADER}" column. Import a file exported from the Purchase Order lines.` };
+    return { ok: false, error: `This file has no "${PO_LINE_IMPORT_LINE_ID_HEADER}" column. Show the ${PO_LINE_IMPORT_LINE_ID_HEADER} column on the Purchase Orders list (Columns), export again, and import that file.` };
   }
   const header = matrix[headerIdx] as unknown[];
   const colOf = (key: string): number => header.findIndex((c) => normHeader(c) === key);
   const lineIdCol = colOf(lineIdKey);
-  const docNoCol = colOf(docNoKey);
+  const acDocNoCol = colOf(docNoKey);
+  const erpDocNoCol = colOf(normHeader(PO_LINE_IMPORT_ERP_DOC_NO_HEADER));
+  const docNoCol = acDocNoCol >= 0 ? acDocNoCol : erpDocNoCol;
   if (docNoCol < 0) {
-    return { ok: false, error: `This file has no "${PO_LINE_IMPORT_DOC_NO_HEADER}" column. Import a file exported from the Purchase Order lines.` };
+    return { ok: false, error: `This file has no "${PO_LINE_IMPORT_DOC_NO_HEADER}" or "${PO_LINE_IMPORT_ERP_DOC_NO_HEADER}" column. Show one of them on the Purchase Orders list (Columns), export again, and import that file.` };
   }
   const fieldCols: Array<[PoLineImportField, number]> = [];
+  const missingHeaders: string[] = [];
   for (const spec of PO_LINE_IMPORT_FIELDS) {
-    const col = colOf(normHeader(spec.header));
+    let col = colOf(normHeader(spec.header));
+    for (const legacy of spec.legacyHeaders) if (col < 0) col = colOf(normHeader(legacy));
     if (col >= 0) fieldCols.push([spec.field, col]);
+    else missingHeaders.push(spec.header);
   }
   if (fieldCols.length === 0) {
     return {
@@ -216,7 +236,7 @@ export function readPoLineImportSheet(matrix: unknown[][]): PoLineImportSheet {
       error: `This file has none of the columns an import can change: ${PO_LINE_IMPORT_FIELDS.map((f) => f.header).join(', ')}.`,
     };
   }
-  const used = new Set<number>([lineIdCol, docNoCol, ...fieldCols.map(([, c]) => c)]);
+  const used = new Set<number>([lineIdCol, docNoCol, erpDocNoCol, ...fieldCols.map(([, c]) => c)]);
   const ignoredHeaders = header
     .map((c, i) => (used.has(i) ? '' : String(c ?? '').trim()))
     .filter((h) => h !== '');
@@ -239,7 +259,7 @@ export function readPoLineImportSheet(matrix: unknown[][]): PoLineImportSheet {
   if (rows.length > PO_LINE_IMPORT_MAX_ROWS) {
     return { ok: false, error: `This file has ${rows.length} rows; one import takes up to ${PO_LINE_IMPORT_MAX_ROWS}. Split the file.` };
   }
-  return { ok: true, rows, fields: fieldCols.map(([f]) => f), ignoredHeaders };
+  return { ok: true, rows, fields: fieldCols.map(([f]) => f), ignoredHeaders, missingHeaders };
 }
 
 /* ── The preview / apply wire contract ───────────────────────────────────── */

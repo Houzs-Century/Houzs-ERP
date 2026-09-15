@@ -1,113 +1,39 @@
-# Document reference numbers
+# Document Reference Numbers
 
-> Owner decision 2026-09-06 (「标准化编号与文档管理」, plan A): a company-wide
-> reference number for **new document families only**. SCM documents keep
-> their `HC-SO-2609-001` numbers — those are in AutoCount and on paper and a
-> document number cannot change once it exists (`docs/doc-number-reissue-coe.md`).
+Company-wide reference numbering for NEW document families (memos, SOPs, warnings, notices, announcements) — not a replacement for SCM's own document numbers (`HC-SO-2609-001` etc.), which keep their existing scheme since they're already in AutoCount and on paper.
 
-## 1. The number
+## Statuses and flow
 
-`[DEPT]-[TYPE]-[YYMM]-[NNNN]`, e.g. `OPS-ANN-2609-0001`.
+The number is `[DEPT]-[TYPE]-[YYMM]-[NNNN]` (e.g. `OPS-ANN-2609-0001`): `DEPT` from `departments.code`, `TYPE` from `document_types.code`, `YYMM` the Malaysia-time month at mint, `NNNN` a running number per `(DEPT, TYPE, YYMM)` starting at `0001` each month.
 
-| Segment | Source |
-|---|---|
-| `DEPT` | `departments.code` — 2–4 capital letters, set by an admin on the Team → Departments card (Team module guide, `docs/modules/team-members.md`). A department without a code cannot mint. |
-| `TYPE` | `document_types.code` — 2–4 capital letters; the registry seeds `ANN` (Announcement). Managed through `POST` / `PATCH /api/document-types` (`settings.manage`). |
-| `YYMM` | The month **in Malaysia time** (`yymmFor`, UTC+8) the number was minted. |
-| `NNNN` | Running number per `(DEPT, TYPE, YYMM)`, 4 digits, starts at `0001` each month. |
+Minting is not a route — the module that owns a record calls `mintDocumentRef(env, {deptCode, typeCode, entityType, entityId, createdBy})` when the record reaches the state that deserves a number:
+- **Announcement approval** mints on the `PENDING_APPROVAL -> APPROVED` transition (`typeCode: "ANN"`) and stores the number on the announcement; a submitter with no department, or a department with no code, BLOCKS the approval (409) rather than publish an unnumbered notice.
+- **The document register** (`docs/modules/memos.md`) mints AT CREATION with whatever type the registrar picked (MEMO/SOP/WARN/NTC) — on the SAME `<DEPT>-<TYPE>-<YYMM>` series a notice of that type would get on approval, so a registered document and an approved notice of the same type count together.
 
-## 2. How it is minted — `backend/src/services/documentRefs.ts`
+A record that already holds a number gets it back rather than minting twice (`document_refs` is unique on `(entity_type, entity_id)`). `voidDocumentRef` sets the row `VOID` and stamps who/when/why — the number keeps its place in the sequence and is never re-issued. `peekNextRefNo` (`GET /api/document-refs/next?typeCode=&deptCode=`) answers what the NEXT mint on a series would produce, claiming nothing — this is what feeds both the announcement composer's "Number on approval" line and the register's "Next number".
 
-`mintDocumentRef(env, { deptCode, typeCode, entityType, entityId, createdBy })`:
+## Permissions
 
-1. A record that already holds a number gets it back (`document_refs` is
-   unique on `(entity_type, entity_id)`), so a retried save never mints twice.
-2. The series key is `DEPT-TYPE-YYMM`. The floor is the registry's highest
-   `seq` for that series.
-3. The number comes from **the same counter the SCM documents use** —
-   `scm.next_doc_no_n(series, floor)` on `scm.doc_number_counters` (mig
-   `0316`): one `INSERT … ON CONFLICT DO UPDATE … RETURNING` per series, so
-   two simultaneous saves serialise on the row lock and can never share a
-   number; the counter only ever rises, so a voided number is never re-issued
-   and a gap is expected. Because the month is inside the series, a new month
-   starts at `0001` by construction.
-4. When the counter function is **absent** (the D1 test mirror; the window
-   between a merge and `pg-migrate`) the mint falls back to `floor + 1`
-   guarded by the registry's primary key, retrying up to 8 times on a unique
-   violation. Any other counter error throws — a fallback taken on a real
-   error would mint against a database that just refused the atomic path.
-5. The registry row is written: `ref_no, series, dept_code, type_code, yymm,
-   seq, entity_type, entity_id, status ACTIVE, created_by, created_at`.
+- `GET /api/document-refs/:refNo`, `GET /api/document-types` — any signed-in user; the resolved record itself stays behind its own module's gate.
+- `POST`/`PATCH /api/document-types` — `settings.manage`.
 
-`voidDocumentRef(env, refNo, by, reason)` sets `status VOID` + `voided_by /
-voided_at / void_reason`; the number keeps its place. `findRef(env, refNo)` and
-`findRefForEntity(env, type, id)` resolve either way round.
+## Rules that must not break
 
-Minting is not a route: the module that owns the record mints when the
-record reaches the state that deserves a number. **Second consumer
-(2026-09-09):** the document register (`docs/modules/memos.md`,
-`routes/memos.ts`) mints `entityType: "memo"` with the type the registrar
-picked — MEMO, SOP, WARN or NTC (mig `20260909T0800` seeds the last three) —
-AT CREATION, on the same `<DEPT>-<TYPE>-<YYMM>` series a notice of that type
-gets on approval, so the two count together. **The peek (2026-09-09, owner:
-需要显示目前档案号码):** `peekNextRefNo(env, { deptCode, typeCode, now? })` in
-`backend/src/services/documentRefs.ts` answers the number the next mint on a
-series would produce — the registry's floor or the shared counter's
-`next_n`, whichever is higher — claiming nothing; `GET
-/api/document-refs/next?typeCode=&deptCode=` (`backend/src/routes/documentRefs.ts`,
-the caller's own department when `deptCode` is omitted; `data: null` + a
-`reason` when that department has no code) serves it to the composer's
-"Number on approval" line and the register's "Next number". **First consumer (2026-09-06,
-mig `20260906T1509`):** the announcement approval —
-`backend/src/services/announcementApproval.ts` `approveAnnouncement()` mints
-`mintDocumentRef(env, { deptCode: <submitter's department code>, typeCode:
-"ANN", entityType: "announcement", entityId: <announcement id> })` on the
-PENDING_APPROVAL → APPROVED transition and stores the number in
-`announcements.ref_no` as well; a submitter without a department, or in a
-department without a code, blocks the approval (409 naming what to set) rather
-than publishing an un-numbered notice. See `docs/modules/announcements.md`
-§3 "Approval workflow".
+- The atomic number allocation goes through the SAME counter function the SCM documents use (`scm.next_doc_no_n`) — one `INSERT ... ON CONFLICT DO UPDATE ... RETURNING` per series, so two simultaneous mints on the same series serialise on the row lock and can never share a number.
+- The counter only ever rises — a voided number is never re-issued, and a gap in the sequence is expected, not a bug.
+- When the counter function is unavailable (test environment, or the window between a merge and running the migration), the fallback is `floor + 1` guarded by the registry's primary key, retried up to 8 times on a unique violation — any OTHER counter error must throw rather than silently falling back, since a fallback taken on a real error would mint against a database that just refused the atomic path.
+- A department without a code, or a document type that is not ACTIVE, must block minting rather than produce a malformed or silently-defaulted number.
+- Adding or changing an active document type is a real change to what a department can number — every consumer (the register, the announcement composer) lists whatever is currently active.
 
-## 3. API — `backend/src/routes/documentRefs.ts` (mounted at `/api`)
+## Gotchas
 
-| Method | Path | Gate | Notes |
-|---|---|---|---|
-| GET | `/api/document-refs/:refNo` | signed-in | resolves a number to `{ entityType, entityId, status, … }`; the record itself stays behind its own module's gate |
-| GET | `/api/document-types` | signed-in | active types; `?all=1` includes inactive |
-| POST | `/api/document-types` | `settings.manage` | `{ code, label, attachmentRequired? }` → 201; 409 on a duplicate code |
-| PATCH | `/api/document-types/:code` | `settings.manage` | `{ label?, attachmentRequired?, isActive? }` |
+- `attachment_required` is a per-type policy edited once in Settings → Documents and read by every consumer (`announcementFiles.ts`) — don't hardcode an attachment requirement per document family elsewhere.
+- The department code on a minted reference (`dept_code`) is a snapshot taken at mint time — a later department rename does not retroactively change numbers already issued.
+- `findRef`/`findRefForEntity` resolve a reference either direction (number → entity, entity → number) — use these rather than querying `document_refs` directly from a new consumer.
 
-`attachment_required` is the per-type policy the "attachment required before
-submit" rule reads. Since 2026-09-07 it is EDITED under Settings → Documents
-(`frontend/src/pages/settings/DocumentTypesTab.tsx`: the registry table, the
-Required / Optional switch, Active, New type) and ENFORCED for the ANN type by
-`backend/src/services/announcementFiles.ts` on the two doors into the
-announcement approval queue (docs/modules/announcements.md §3 "Attachments").
-Other families pick it up as they join the scheme. **Since 2026-09-08 the
-registry is also the composer's Type row**: every ACTIVE type is offered when
-composing a notice (`docType` on POST /api/announcements; mig
-`20260908T0300` seeds `MEMO` beside `ANN`), the pick becomes the [TYPE]
-segment when the approval mints (`OPS-MEMO-2609-0001`, its own sequence per
-department and month) and the type's own `attachment_required` is what the
-submit gate reads. Adding a type here is therefore a real change to what a
-department can number — see docs/modules/announcements.md §3 "Document type".
+## Where the code is
 
-## 4. Database — mig `backend/src/db/migrations-pg/20260906T1417_departments_code_document_refs.sql`
-
-| Object | Shape |
-|---|---|
-| `departments.code` | text, nullable; `idx_departments_code_upper` unique on `upper(code)` where set |
-| `document_types` | `code` PK, `label`, `attachment_required` int 0/1, `is_active` int 0/1, `created_at`, `updated_at`; seeded `ANN` |
-| `document_refs` | `ref_no` PK, `series`, `dept_code`, `type_code`, `yymm`, `seq`, `entity_type`, `entity_id` (unique pair), `status` ACTIVE/VOID, `created_by`, `created_at`, `voided_by`, `voided_at`, `void_reason`; index `(series, seq)` |
-
-Reversal is in the migration header. Prepared SQL only — no `--` comments
-inside a statement (d1-compat).
-
-## 5. Files that change together
-
-| Concern | File |
-|---|---|
-| Mint / void / resolve | `backend/src/services/documentRefs.ts` |
-| Routes | `backend/src/routes/documentRefs.ts` (+ regenerate the route-capability matrix) |
-| Department code | `backend/src/routes/departments.ts`, `backend/src/db/schema.pg.ts`, `frontend/src/pages/team/TeamDepartmentsV2.tsx`, `frontend/src/types.ts` |
-| Tests | `backend/tests/documentRefs.test.ts` (fallback path on the D1 mirror; the counter path is pinned by the SCM suites) |
+- `backend/src/services/documentRefs.ts` — mint, void, resolve, peek.
+- `backend/src/routes/documentRefs.ts` — API surface.
+- `backend/src/db/migrations-pg/20260906T1417_departments_code_document_refs.sql` — schema.
+- `frontend/src/pages/settings/DocumentTypesTab.tsx` — the document-type registry editor.

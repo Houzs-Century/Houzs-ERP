@@ -38,11 +38,8 @@ import {
   RotateCcw,
   ArrowRightLeft,
 } from "lucide-react";
-import { ExportLinesButton, useListExportRunner } from "./list-export-controls";
-import { downloadCSV, toCSV, type CSVColumn } from "../../lib/csv";
-import { todayMyt } from "../../vendor/scm/lib/dates";
-import { fetchAllSiListRows, fetchSiLineExport, writeSiLineExportXlsx } from "../../vendor/scm/lib/si-list-export";
-import { siStatusWord } from "../../vendor/scm/lib/si-line-export-columns";
+import { fetchSiExportRows, type SiListLine } from "../../vendor/scm/lib/si-list-export";
+import { siGridColumns } from "./si-list-columns";
 import { PageHeader } from "../../components/Layout";
 import { StatCard } from "../../components/StatCard";
 import { FilterPills } from "../../components/FilterPills";
@@ -95,6 +92,12 @@ import { customerRefOf } from '../../lib/customer-ref';
 type SiRow = {
   id: string;
   invoice_number: string;
+  linked_ac_docno?: string | null; // the AutoCount invoice number
+  ac_agent?: string | null; // resolveAcAgent, the agent master's spelling
+  /** Every line, AutoCount-spelled (GET /sales-invoices?page= and /export/rows). */
+  lines?: SiListLine[];
+  subtotal_sen?: number | null;
+  tax_sen?: number | null;
   so_doc_no: string | null;
   delivery_order_id: string | null;
   /** Convert-from relation (display-only, audit R8): the readable DO number the
@@ -987,20 +990,19 @@ export function SalesInvoicesListV2() {
     await queryClient.invalidateQueries({ queryKey: ["sales-invoices"] });
   };
 
-  /* Both exports read EVERY invoice the list's tab + search + sort match, not the
-     page on screen (owner 2026-09-15), under the same sales scope the list has.
-     The filter is the one the list request is built from — the settled search
-     term, the same as the rows shown. */
+  /* The ONE Export (owner 2026-09-15): every invoice the list's tab + search +
+     sort match, under the caller's sales scope — not the page on screen — one
+     row per line, with the grid's visible columns, funnels and sort (DataTable
+     `exportLines`). The filter is the one the list request is built from. */
   const exportFilters = { status: apiStatus, q: debouncedSearch, sort };
-  const { exporting, run: runExport } = useListExportRunner(notify);
-  const exportLines = () => runExport("Export lines", async () => {
-    const body = await fetchSiLineExport(exportFilters);
-    await writeSiLineExportXlsx(body, `sales-invoice-lines-${todayMyt()}.xlsx`);
-  });
-  const exportHeaders = (cols: CSVColumn<SiRow>[]) => runExport("Export", async () => {
-    const allRows = await fetchAllSiListRows<SiRow>(exportFilters);
-    downloadCSV(`sales-invoices-${todayMyt()}.csv`, toCSV(allRows, cols));
-  });
+  const exportLines = {
+    fetchRows: (need: { exportKeys: string[]; filterKeys: string[] }) => fetchSiExportRows<SiRow>(exportFilters, need),
+    linesOf: (r: SiRow): readonly SiListLine[] => r.lines ?? [],
+    sheetName: "Sales Invoices",
+    onError: (e: Error) => {
+      void notify({ title: "Export failed", body: e.message || "The export could not be completed.", tone: "error" });
+    },
+  };
 
   const goNewSi = () => navigate("/scm/sales-invoices/new");
   const goFromDo = () => navigate("/scm/sales-invoices/from-do");
@@ -1137,7 +1139,7 @@ export function SalesInvoicesListV2() {
     );
   };
 
-  const columns: Column<SiRow>[] = [
+  const erpColumns: Column<SiRow>[] = [
     {
       key: "invoice_number",
       label: "SI No.",
@@ -1261,7 +1263,7 @@ export function SalesInvoicesListV2() {
       // Exempt from the cancelled-row fade — the pill is WHY the row is grey.
       className: "dt-cancel-keep",
       // The export writes the word on screen (owner 2026-09-15).
-      getValue: (r) => siStatusWord(r.status) ?? "",
+      getValue: (r) => statusFor(r.status).label,
       render: (r) => {
         const st = statusFor(r.status);
         return (
@@ -1687,6 +1689,9 @@ export function SalesInvoicesListV2() {
       : ([] satisfies Column<SiRow>[])),
   ];
 
+  // AutoCount's Detail Listing columns lead, in its order (si-list-columns.tsx).
+  const columns = siGridColumns<SiRow>(erpColumns);
+
   const statusPillOptions: Array<{ value: StatusTab; label: string }> = [
     { value: "all", label: `All · ${counts.all}` },
     { value: "sent", label: `Sent · ${counts.sent}` },
@@ -1729,7 +1734,6 @@ export function SalesInvoicesListV2() {
               /* Export lines is a READ under the caller's sales scope, so a
                  reader without write access gets it too. */
               <div className="flex items-stretch gap-2">
-                <ExportLinesButton exporting={exporting} onClick={() => void exportLines()} />
                 {canWriteSi ? (
                   <>
                     <Button
@@ -1880,7 +1884,7 @@ export function SalesInvoicesListV2() {
                 </Button>
               </div>
             )}
-            <DataTable<SiRow>
+            <DataTable<SiRow, SiListLine>
               tableId="sales-invoices-v2"
               rows={rows}
               /* Feeds the stat strip so the tiles describe what is on screen. */
@@ -1904,7 +1908,7 @@ export function SalesInvoicesListV2() {
               }}
               contextMenu={siContextMenu}
               exportName="sales-invoices"
-              onExport={(cols) => void exportHeaders(cols)}
+              exportLines={exportLines}
               serverSort
               onSortChange={setSortAndReset}
               emptyLabel={

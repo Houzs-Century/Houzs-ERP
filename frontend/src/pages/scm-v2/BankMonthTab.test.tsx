@@ -80,6 +80,10 @@ const state = vi.hoisted(() => ({
   typeClosing: vi.fn(),
 }));
 
+/* The failed-print notice needs the app's notify; the tab is mounted without
+   the provider here, so the hook is a spy. */
+vi.mock('../../vendor/scm/components/NotifyDialog', () => ({ useNotify: () => vi.fn() }));
+
 vi.mock('./bank-queries', () => ({
   useBankMonths: () => ({ data: { months: state.months }, isLoading: false }),
   useBankMonth: () => ({

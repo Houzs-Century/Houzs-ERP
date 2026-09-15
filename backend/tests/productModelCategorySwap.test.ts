@@ -70,6 +70,16 @@ describe('PATCH /product-models/:id — category change', () => {
     expect(data.mfg_products[1].category).toBe('SOFA');
   });
 
+  test('a name and a category saved together both land, and the reply shows the new category', async () => {
+    const { data, patch } = setup('ACCESSORY');
+    const res = await patch({ name: 'BACK CUSHION 04 NEW', category: 'SOFA' });
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { model: Row }).model).toMatchObject({ name: 'BACK CUSHION 04 NEW', category: 'SOFA' });
+    expect(data.product_models[0]).toMatchObject({ name: 'BACK CUSHION 04 NEW', category: 'SOFA' });
+    expect(data.mfg_products[0].category).toBe('SOFA');
+    expect(data.product_models[1]).toMatchObject({ name: 'other company', category: 'ACCESSORY' });
+  });
+
   test('a value that is not a category is refused and nothing is written', async () => {
     const { data, patch } = setup('ACCESSORY');
     const res = await patch({ category: 'CHAIR' });

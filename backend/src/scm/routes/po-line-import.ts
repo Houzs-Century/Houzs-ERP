@@ -56,10 +56,10 @@ export const poLineImport = new Hono<{ Bindings: Env; Variables: Variables }>();
 poLineImport.use('*', supabaseAuth);
 
 const LINE_COLS =
-  'id, purchase_order_id, item_code, delivery_date, description2, notes, '
+  'id, purchase_order_id, item_code, item_group, variants, delivery_date, description2, notes, '
   + 'supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4';
 const PO_COLS =
-  'id, po_number, revision, status, company_id, '
+  'id, po_number, linked_ac_docno, revision, status, company_id, '
   + 'supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4';
 
 /* PostgREST puts an `in` list in the URL; 150 uuids stay well under its limit. */

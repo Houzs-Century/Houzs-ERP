@@ -40,6 +40,7 @@ import { ReconciliationPanel, OpenLines, DoneLine, BooksNotOnBank } from './Bank
 import { ReconcilePickProvider, byDateThenLine } from './bank-reconcile-pick';
 import { BankAccountTabs, currentAccount } from './BankAccountTabs';
 import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
+import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import grid from './MerchantRecon.module.css';
 
 /** 2026-09 → 09/2026 — a month in the house's own numeric, unambiguous shape,
@@ -193,17 +194,22 @@ const MonthView = ({ picked, onBack }: { picked: Picked; onBack: () => void }) =
      disagree. The document refuses to call itself filable when its own walk
      does not arrive; that judgement is in the report, not here. */
   const data = q.data;
+  const notify = useNotify();
   const print = usePrintPreview(async (action) => {
     if (!data) return;
-    const { generateBankReconciliationPdf } = await import('../../vendor/scm/lib/bank-reconciliation-pdf');
-    await generateBankReconciliationPdf({
-      accountCode: data.accountCode,
-      month: data.month,
-      assembly: data.assembly,
-      reconciliation: data.reconciliation,
-      lines: data.lines,
-      unmatchedEntries: data.unmatchedEntries,
-    }, { action });
+    try {
+      const { generateBankReconciliationPdf } = await import('../../vendor/scm/lib/bank-reconciliation-pdf');
+      await generateBankReconciliationPdf({
+        accountCode: data.accountCode,
+        month: data.month,
+        assembly: data.assembly,
+        reconciliation: data.reconciliation,
+        lines: data.lines,
+        unmatchedEntries: data.unmatchedEntries,
+      }, { action });
+    } catch (e) {
+      void notify({ title: 'PDF generation failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
+    }
   });
 
   const lines = q.data?.lines ?? [];
