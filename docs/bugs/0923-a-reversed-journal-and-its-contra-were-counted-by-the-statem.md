@@ -65,7 +65,8 @@ voucher was a receipt and a row), `backend/tests/glStreamSkipsReversalPairs.test
 pair); `backend/tests-pg/accountBalancesCountTheBooks.pg.test.ts` seeds a
 pair and a draft, proves 0306's view counts them, applies the migration on
 top and proves the column shape unchanged and the totals right;
-`frontend/src/pages/scm-v2/GlTabReversed.test.tsx` and
+`frontend/src/pages/scm-v2/GeneralLedger.test.tsx` (the tab's test, moved with
+the tab when it became the ledger of docs/bugs/0924) and
 `frontend/src/vendor/scm/lib/accounting-queries-gl.test.tsx` (the tick,
 the mark, the wire). Green after.
 

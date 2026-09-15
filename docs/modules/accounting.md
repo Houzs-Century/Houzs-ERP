@@ -2520,8 +2520,41 @@ Contracts: `backend/tests/accountingReports.test.ts`,
 `backend/tests/rpReport.test.ts`,
 `backend/tests/glStreamSkipsReversalPairs.test.ts`,
 `backend/tests-pg/accountBalancesCountTheBooks.pg.test.ts`,
-`frontend/src/pages/scm-v2/GlTabReversed.test.tsx`,
+`frontend/src/pages/scm-v2/GeneralLedger.test.tsx` (the tick — the tab became the ledger of docs/bugs/0924),
 `frontend/src/vendor/scm/lib/accounting-queries-gl.test.tsx`.
+
+**The General Ledger the AutoCount way (2026-09-15, docs/bugs/0924; owner:
+点开看明细其实就是看 general ledger … gl 显示的资料也要优化).** `GET
+/accounting/gl/ledger` (`backend/src/scm/routes/accounting-ledger.ts`, the
+statements' permission) prints one block per account in code order: BALANCE
+B/F — the counted lines before `from`, on the account's natural side (debit
+for assets and expenses, credit for the rest) — the period's lines in date
+order with a running balance, the block's totals, the grand totals. A line
+carries its journal type (`classifyJournal`), its other side (`counterOf`:
+the one other account, else the largest opposite account and how many more),
+Ref. 1 / Ref. 2 and the who (`doc` / `doc2` / `who` from
+`backend/src/acc/journal-refs.ts` — the receipt or the order, the voucher and
+what a refund refunds, the invoice and the supplier's ref, "<acquirer>
+settlement dd/mm/yyyy" and the merchant's ref, "<acquirer> payout dd/mm/yyyy"
+and the bank ref, "Stock mm/yyyy"), and the description off the line's note
+or the entry's narration. A reversal pair is neither listed nor counted
+(docs/bugs/0923); with `showReversed=1` its lines are listed and marked but
+move no balance and no total. The tab `frontend/src/pages/scm-v2/GeneralLedger.tsx`
+(`/scm/accounting?tab=gl`) keeps its filters in the URL — period, picked
+accounts as chips or a code range, Show reversed entries — prints the code
+over the name (`AccountCell`), and has Export (`ledgerCsv` in
+`frontend/src/vendor/scm/lib/ledger-queries.ts`) and Print (`ledgerTable`,
+`generateLedgerPdf` in `frontend/src/vendor/scm/lib/ledger-pdf.ts`), both
+the rows the screen shows. 点开明细: a figure on the P&L or the balance sheet
+(`frontend/src/pages/scm-v2/Reports.tsx`, `LaidBlock` `onPick`) opens the
+ledger on the row's accounts for the period (`leafCodes`, `ledgerHref` in
+`frontend/src/vendor/scm/lib/report-layout.ts`); the balance sheet opens the
+month of its as-of day. The flat `GET /accounting/gl` stream stays.
+Contracts: `backend/tests/glLedger.test.ts`,
+`backend/src/acc/journal-refs.test.ts`,
+`frontend/src/pages/scm-v2/GeneralLedger.test.tsx`,
+`frontend/src/vendor/scm/lib/ledger-queries.test.ts`,
+`frontend/src/pages/scm-v2/Reports.test.tsx`.
 
 **Document numbers follow the document date (owner 2026-09-07: 要根据文件日期,
 而不是文件几时 create 的日期).** Six finance series take their YYMM from the
