@@ -37,7 +37,7 @@ import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import { DateField } from '../../vendor/scm/components/DateField';
 import { useAuth } from '../../auth/AuthContext';
 import { fmtPct, laidDepth, leafCodes, ledgerHref, pctOf, type LaidNode } from '../../vendor/scm/lib/report-layout';
-import { LaidBlock, LaidTotalRow, LevelButtons, type Level } from './ReportLayoutTree';
+import { LaidBlock, LaidTotalRow, LevelButtons, useReportTree, type Level } from './ReportLayoutTree';
 import { ReportLayoutEditor } from './ReportLayoutEditor';
 import { ByMonthButton, MonthlyReport } from './MonthlyReport';
 import { balanceSheetLines, pnlLines, type MonthColumn } from '../../vendor/scm/lib/report-monthly';
@@ -96,6 +96,8 @@ export const PnLTab = () => {
   const { can } = useAuth();
   const canArrange = can('scm.payment_voucher.post');
   const openLedger = useOpenLedger(() => from, () => to);
+  const tree = useReportTree(level);
+  const drill = { from, to };
   const q = useQuery({
     queryKey: ['report-pnl', from, to],
     queryFn: () => fetchPnl(from, to),
@@ -137,18 +139,18 @@ export const PnLTab = () => {
               </tr>
             </thead>
             <tbody>
-              <LaidBlock title="Trading income" nodes={lay.tradingIncome} level={level} totalLabel="Total income" totalSen={q.data.totals.tradingIncomeSen} baseSen={base} onPick={openLedger} />
-              <LaidBlock title="Cost of sales (purchases + opening − closing)" nodes={lay.costOfSales} level={level} totalLabel="Total cost of sales" totalSen={q.data.totals.costOfSalesSen} baseSen={base} onPick={openLedger} />
+              <LaidBlock title="Trading income" nodes={lay.tradingIncome} level={level} totalLabel="Total income" totalSen={q.data.totals.tradingIncomeSen} baseSen={base} onPick={openLedger} tree={tree} drill={drill} />
+              <LaidBlock title="Cost of sales (purchases + opening − closing)" nodes={lay.costOfSales} level={level} totalLabel="Total cost of sales" totalSen={q.data.totals.costOfSalesSen} baseSen={base} onPick={openLedger} tree={tree} drill={drill} />
               <LaidTotalRow label="GROSS PROFIT" amountSen={q.data.totals.grossProfitSen} baseSen={base} />
-              <LaidBlock title="Other income" nodes={lay.otherIncome} level={level} totalLabel="Total other income" totalSen={q.data.totals.otherIncomeSen} baseSen={base} onPick={openLedger} />
-              <LaidBlock title="Expenses" nodes={lay.expenses} level={level} totalLabel="Total expenses" totalSen={q.data.totals.expensesSen} baseSen={base} onPick={openLedger} />
+              <LaidBlock title="Other income" nodes={lay.otherIncome} level={level} totalLabel="Total other income" totalSen={q.data.totals.otherIncomeSen} baseSen={base} onPick={openLedger} tree={tree} drill={drill} />
+              <LaidBlock title="Expenses" nodes={lay.expenses} level={level} totalLabel="Total expenses" totalSen={q.data.totals.expensesSen} baseSen={base} onPick={openLedger} tree={tree} drill={drill} />
               {/* The TAXATION section (AutoCount's own line) only when
                   something posted there — the layout stays as the owner
                   left it otherwise (版式先这样). */}
               {(q.data.taxation?.length ?? 0) > 0 && (
                 <>
                   <LaidTotalRow label="PROFIT BEFORE TAX" amountSen={q.data.totals.profitBeforeTaxSen ?? q.data.totals.netProfitSen} baseSen={base} />
-                  <LaidBlock title="Taxation" nodes={lay.taxation} level={level} totalLabel="Total taxation" totalSen={q.data.totals.taxationSen ?? 0} baseSen={base} onPick={openLedger} />
+                  <LaidBlock title="Taxation" nodes={lay.taxation} level={level} totalLabel="Total taxation" totalSen={q.data.totals.taxationSen ?? 0} baseSen={base} onPick={openLedger} tree={tree} drill={drill} />
                 </>
               )}
               <LaidTotalRow label="NET PROFIT" amountSen={q.data.totals.netProfitSen} baseSen={base} strong />
@@ -185,6 +187,8 @@ export const BalanceSheetTab = () => {
   const { can } = useAuth();
   const canArrange = can('scm.payment_voucher.post');
   const openLedger = useOpenLedger(() => `${asOf.slice(0, 7)}-01`, () => asOf);
+  const tree = useReportTree(level);
+  const drill = { from: `${asOf.slice(0, 7)}-01`, to: asOf };
   const q = useQuery({
     queryKey: ['report-bs', asOf],
     queryFn: () => fetchBalanceSheet(asOf),
@@ -225,9 +229,9 @@ export const BalanceSheetTab = () => {
               </tr>
             </thead>
             <tbody>
-              <LaidBlock title="Assets" nodes={lay.assets} level={level} totalLabel="Total assets" totalSen={q.data.totals.assetsSen} baseSen={base} onPick={openLedger} />
-              <LaidBlock title="Liabilities" nodes={lay.liabilities} level={level} totalLabel="Total liabilities" totalSen={q.data.totals.liabilitiesSen} baseSen={base} onPick={openLedger} />
-              <LaidBlock title="Equity" nodes={lay.equity} level={level} totalLabel="Total equity" totalSen={q.data.totals.equitySen} baseSen={base} onPick={openLedger} />
+              <LaidBlock title="Assets" nodes={lay.assets} level={level} totalLabel="Total assets" totalSen={q.data.totals.assetsSen} baseSen={base} onPick={openLedger} tree={tree} drill={drill} />
+              <LaidBlock title="Liabilities" nodes={lay.liabilities} level={level} totalLabel="Total liabilities" totalSen={q.data.totals.liabilitiesSen} baseSen={base} onPick={openLedger} tree={tree} drill={drill} />
+              <LaidBlock title="Equity" nodes={lay.equity} level={level} totalLabel="Total equity" totalSen={q.data.totals.equitySen} baseSen={base} onPick={openLedger} tree={tree} drill={drill} />
               <tr>
                 <td style={{ padding: '4px 10px' }}>Current period earnings</td>
                 <td style={{ padding: '4px 10px', textAlign: 'right', whiteSpace: 'nowrap' }}>{fmtSenParen(q.data.totals.earningsSen)}</td>

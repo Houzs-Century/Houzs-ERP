@@ -48,13 +48,13 @@ describe('performanceTables', () => {
     expect(t.summary.map((l) => [l.kind, l.depth])).toEqual([['total', 0], ['category', 1], ['row', 2], ['total', 0], ['row', 1], ['row', 1], ['total', 0], ['net', 0]]);
     expect(t.summary[0]!).toEqual({ id: 'sum:gross', kind: 'total', label: 'Gross profit', amountSen: 161000, pct: 43.2, depth: 0 });
     expect(t.summary[1]!).toEqual({ id: 'sec:OTHER INCOMES', kind: 'category', label: 'OTHER INCOMES', amountSen: 50000, pct: 13.4, depth: 1 });
-    expect(t.summary[2]!).toEqual({ id: 'acc:590-0000', kind: 'row', label: '590-0000 — RENT RECEIVED', amountSen: 50000, pct: 13.4, depth: 2 });
+    expect(t.summary[2]!).toEqual({ id: 'acc:590-0000', kind: 'row', label: '590-0000 — RENT RECEIVED', amountSen: 50000, pct: 13.4, depth: 2, code: '590-0000' });
     expect(t.summary[3]!).toEqual({ id: 'sum:otherIncome', kind: 'total', label: 'Total other income (as booked)', amountSen: 50000, pct: 13.4, depth: 0 });
     expect(t.summary[4]!.label).toBe('Operating expense — 16.00% of sales excluding service (3,500.00), in place of 900-O001 OPERATIING EXPENSE');
     /* SIGNS (docs/bugs/0910): an expense is the positive figure it is. */
     expect(t.summary[4]!.amountSen).toBe(56000);
     expect(t.summary[4]!.pct).toBe(15);
-    expect(t.summary[5]!).toEqual({ id: 'acc:900-R048', kind: 'row', label: '900-R048 — RENTAL OF SHOWROOM', amountSen: 4500000, pct: 1206.4, depth: 1 });
+    expect(t.summary[5]!).toEqual({ id: 'acc:900-R048', kind: 'row', label: '900-R048 — RENTAL OF SHOWROOM', amountSen: 4500000, pct: 1206.4, depth: 1, code: '900-R048' });
     expect(t.summary[6]!).toEqual({ id: 'sum:expenses', kind: 'total', label: 'Total expenses (operating expense at 16.00% + as booked)', amountSen: 4556000, pct: 1221.4, depth: 0 });
     expect(t.summary[7]!).toEqual({ id: 'sum:net', kind: 'net', label: 'NET PERFORMANCE', amountSen: -4345000, pct: -1164.9, depth: 0 });
   });
