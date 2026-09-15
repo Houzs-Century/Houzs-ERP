@@ -85,6 +85,8 @@ type BoardRow = {
   // HC SO-context: the customer's referral / reference tag and the possession
   // ("move") date — both surfaced on the stop detail when present.
   referral: string | null;
+  // PO No. — purchase orders raised from the SO (SO rows only).
+  po_nos?: string[];
   possession_date: string | null;
   region: string | null;
   regions?: string[];
@@ -1853,6 +1855,10 @@ function StopDetail({
           {/* Reference — HC referral tag; dropped when the feed carries none. */}
           {referral
             ? pdRow("Reference", <span className="tnum">{referral}</span>, false)
+            : null}
+          {/* PO No. — the purchase orders raised from the SO (desktop board parity). */}
+          {order.po_nos?.length
+            ? pdRow("PO No.", <span className="tnum">{order.po_nos.join(", ")}</span>, false)
             : null}
           {pdRow(
             "Branding",
