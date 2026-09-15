@@ -61,7 +61,7 @@ export function siGridColumns<T extends SiColumnRow>(erpColumns: Column<T>[]): C
   };
   const byKey: Record<string, Column<T, SiListLine>> = {};
   for (const col of erpColumns as Column<T, SiListLine>[]) {
-    const ac = acOverrides[col.key];
+    const ac = acOverrides[col.key] as (typeof acOverrides)[string] | undefined;
     const money = SEN_COLUMN_KEYS.has(col.key) && col.getValue
       ? { exportValue: (r: T) => senToRinggit(Number(col.getValue!(r) ?? 0), 2), exportFormat: "money" as const }
       : {};
