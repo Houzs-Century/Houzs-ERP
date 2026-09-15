@@ -7,9 +7,9 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PoLineImportPreview } from "../../vendor/shared/po-line-import";
 
-const h = vi.hoisted(() => ({ fetch: vi.fn() }));
+const h = vi.hoisted(() => ({ authed: vi.fn() }));
 vi.mock("../../vendor/scm/lib/authed-fetch", () => ({
-  authedFetch: (...a: unknown[]) => h.fetch(...a),
+  authedFetch: (...a: unknown[]) => h.authed(...a),
   humanApiError: (_s: number, b: string) => b,
 }));
 
@@ -39,7 +39,7 @@ const preview: PoLineImportPreview = {
 
 afterEach(cleanup);
 /* A block body: a hook that RETURNS the mock hands vitest a teardown to call. */
-beforeEach(() => { h.fetch.mockReset(); });
+beforeEach(() => { h.authed.mockReset(); });
 
 describe("PoLineImportPreviewView", () => {
   it("lists each change as doc, line, field, old, new, highlighted; refused rows carry their reason", () => {
@@ -102,7 +102,7 @@ describe("PoLineImportModal — file to preview to confirm", () => {
     );
 
   it("parses the xlsx, previews ONLY the import columns, and applies nothing before Confirm", async () => {
-    h.fetch.mockImplementation(async (path: string) => {
+    h.authed.mockImplementation(async (path: string) => {
       if (path.endsWith("/preview")) return preview;
       return { ok: true, linesUpdated: 1, purchaseOrdersUpdated: 1, poLevelChanges: 1, autocountEditsQueued: 1 };
     });
@@ -114,15 +114,15 @@ describe("PoLineImportModal — file to preview to confirm", () => {
     fireEvent.change(screen.getByLabelText("Choose the edited PO lines file"), { target: { files: [file] } });
 
     await waitFor(() => expect(screen.getByRole("region", { name: "Lines" })).toBeTruthy());
-    expect(h.fetch).toHaveBeenCalledTimes(1);
-    const [path, init] = h.fetch.mock.calls[0] as [string, RequestInit];
+    expect(h.authed).toHaveBeenCalledTimes(1);
+    const [path, init] = h.authed.mock.calls[0] as [string, RequestInit];
     expect(path).toBe("/mfg-purchase-orders/line-import/preview");
     const sent = JSON.parse(String(init.body)) as { rows: Array<{ rowNumber: number; lineId: string; values: Record<string, unknown> }> };
     expect(sent.rows).toEqual([{ rowNumber: 2, docNo: "PO-000100", lineId: L1, values: { deliveryDate: 46285, remarks: "chase supplier" } }]);
 
     fireEvent.click(screen.getByRole("button", { name: "Confirm 3 changes" }));
     await waitFor(() => expect(screen.getByRole("status").textContent).toContain("1 line updated"));
-    const [applyPath, applyInit] = h.fetch.mock.calls[1] as [string, RequestInit];
+    const [applyPath, applyInit] = h.authed.mock.calls[1] as [string, RequestInit];
     expect(applyPath).toBe("/mfg-purchase-orders/line-import/apply");
     const body = JSON.parse(String(applyInit.body)) as { lineChanges: unknown[]; poChanges: Array<Record<string, unknown>> };
     expect(body.lineChanges).toEqual(preview.lineChanges);
@@ -130,7 +130,7 @@ describe("PoLineImportModal — file to preview to confirm", () => {
   });
 
   it("a conflict at Confirm stays on the preview and lists what moved", async () => {
-    h.fetch.mockImplementation(async (path: string) => {
+    h.authed.mockImplementation(async (path: string) => {
       if (path.endsWith("/preview")) return preview;
       throw Object.assign(new Error("conflict"), {
         status: 409,
@@ -154,6 +154,6 @@ describe("PoLineImportModal — file to preview to confirm", () => {
       target: { files: [xlsxFile([["Customer", "Phone"], ["A", "1"]])] },
     });
     expect((await screen.findByRole("alert")).textContent).toContain('no "Line ID" column');
-    expect(h.fetch).not.toHaveBeenCalled();
+    expect(h.authed).not.toHaveBeenCalled();
   });
 });
