@@ -108,7 +108,7 @@ import { isCrewScopedUser } from "../auth/crewScope";
 import { PMS_STAGE_LABEL, pmsStageVariant } from "../vendor/scm/lib/pms-status";
 import { LEDGER_COST_CATS, LEDGER_INCOME_CATS, ledgerCategoryLabel } from "../vendor/scm/lib/pms-ledger-categories";
 import { isReviewableTitle } from "../vendor/scm/lib/pms-reviewable-titles";
-import { PROJECT_STATUS_OPTIONS, paymentPillOptions } from "../vendor/scm/lib/pms-project-status";
+import { paymentPillOptions } from "../vendor/scm/lib/pms-project-status";
 import { Forbidden } from "./Forbidden";
 import { useNotifications } from "../hooks/useNotifications";
 import { api, buildQuery, humanHttpMessage, tokenStore } from "../api/client";
@@ -149,6 +149,8 @@ import type {
   EventType,
   Paginated,
 } from "./projects/types";
+import { composeDefaultProjectName, upcaseLeadingState, viewableMime, googleCalendarUrl } from "./projects/projectHelpers";
+import { STATUS_OPTIONS, STATUS_BY_VALUE, statusBarStyle, ProjectStatusSelect } from "./projects/projectStatus";
 
 interface ProjectDetail {
   project: ProjectRow & {
@@ -525,70 +527,6 @@ function composeEventName(p: {
   return parts.join(" - ");
 }
 
-// Default project-name format used by the create form.
-//   "{state} [{brand}] {organizer | SOLO} @ {venue}"
-// A picked organizer always fills the slot — solo events included (owner
-// 2026-08-17, IOI Mall Damansara: the calendar said SOLO while the Excel
-// organizer column said MALL MGMT). "SOLO" appears only when no organizer is
-// chosen. Mirrors deriveProjectName in backend/src/services/project-naming.ts.
-function composeDefaultProjectName(p: {
-  state?: string | null;
-  brand?: string | null;
-  organizer?: string | null;
-  venue?: string | null;
-  event_type_slug?: string | null;
-}): string {
-  const state = (p.state || "").trim();
-  const brand = (p.brand || "").trim();
-  const organizer = (p.organizer || "").trim();
-  const venue = (p.venue || "").trim();
-  const isSolo = (p.event_type_slug || "").toLowerCase() === "solo";
-  const orgSlot = organizer || (isSolo ? "SOLO" : "");
-
-  const head: string[] = [];
-  // State leads the name UPPERCASE (owner 2026-07-24): the 2026-07-22 canonical
-  // migration stores states Title Case ("Selangor"), but the event-name/bar
-  // convention is all-caps ("SELANGOR [AKEMI] SOLO @ …") to match the older
-  // UPPERCASE-stored names still on non-solo projects.
-  if (state) head.push(state.toUpperCase());
-  if (brand) head.push(`[${brand}]`);
-  if (orgSlot) head.push(orgSlot);
-  const left = head.join(" ");
-  if (!venue) return left;
-  if (!left) return `@ ${venue}`;
-  return `${left} @ ${venue}`;
-}
-
-// Event labels show the STATE in all-caps ("KUALA LUMPUR [AKEMI] …", owner
-// 2026-07-29). Stored names composed after the 2026-07-22 canonical-state
-// migration lead with a Title-Case state ("Kuala Lumpur"), so uppercase that
-// leading state on render. No-op when the name doesn't begin with the state.
-function upcaseLeadingState(name: string, state?: string | null): string {
-  const s = (state || "").trim();
-  if (s && name.toLowerCase().startsWith(s.toLowerCase())) {
-    return s.toUpperCase() + name.slice(s.length);
-  }
-  return name;
-}
-
-// The browser MIME for a file the user should be able to VIEW inline (PDF,
-// image, video). Used to re-type octet-stream blobs before window.open so a
-// "View" actually renders instead of downloading. Returns null for types the
-// browser can't render inline (docx/xlsx) — those fall through to download.
-function viewableMime(name: string): string | null {
-  const m = /\.([a-z0-9]+)$/i.exec(name || "");
-  if (!m) return null;
-  const ext = m[1].toLowerCase();
-  if (["png", "jpg", "jpeg", "webp", "gif", "heic", "bmp"].includes(ext)) {
-    return `image/${ext === "jpg" ? "jpeg" : ext}`;
-  }
-  if (ext === "svg") return "image/svg+xml";
-  if (ext === "pdf") return "application/pdf";
-  if (ext === "mp4" || ext === "webm") return `video/${ext}`;
-  if (ext === "mov") return "video/quicktime";
-  return null;
-}
-
 // Owner 2026-08-04: in the project EXPORT only (not the on-screen table), these
 // named event organisers — individual people, not companies — are anonymised to
 // "EO". Everything else (retailer organisers like Megahome/Bighome, MALL MGMT,
@@ -642,75 +580,6 @@ const STAGE_OPTIONS: { value: "ALL" | ProjectStage; label: string }[] = [
 // desktop + mobile can't drift on the stage vocabulary.
 const STAGE_LABEL: Record<string, string> = PMS_STAGE_LABEL;
 const stageVariant = pmsStageVariant;
-
-// Project status palette — drives the calendar tint, the spec strip
-// pill, and the header dropdown.
-// Premium earth-tone status palette — pine / brass / clay — tuned for the
-// cream canvas + Nature Black brand. Replaces the generic primary
-// blue/amber/red. `hex` drives the calendar bar tint+rail and legend dots;
-// `chip`/`ring` are the matching pill tints used by the list view + the
-// status dropdown.
-// WHICH statuses exist and what they are CALLED live in pms-project-status.ts,
-// shared with mobile. Only the palette is desktop's — mobile styles inline, so
-// the value->label contract is the part that must not drift (the same split
-// pms-status.ts uses for stages).
-const STATUS_TINT: Record<ProjectStatus, { hex: string; chip: string; ring: string }> = {
-  confirmed: { hex: "#3f6b53", chip: "bg-[#e8efe9] text-[#2f5341]", ring: "ring-[#3f6b53]/30" },
-  pending:   { hex: "#c2740f", chip: "bg-[#f7e8d2] text-[#8a4e0e]", ring: "ring-[#c2740f]/30" },
-  cancelled: { hex: "#b23b3b", chip: "bg-[#f4dede] text-[#8a2f2f]", ring: "ring-[#b23b3b]/30" },
-};
-const STATUS_OPTIONS = PROJECT_STATUS_OPTIONS.map((o) => ({ ...o, ...STATUS_TINT[o.value] }));
-
-const STATUS_BY_VALUE: Record<ProjectStatus, typeof STATUS_OPTIONS[number]> = STATUS_OPTIONS.reduce(
-  (acc, s) => ({ ...acc, [s.value]: s }),
-  {} as Record<ProjectStatus, typeof STATUS_OPTIONS[number]>
-);
-
-function statusBarStyle(status: ProjectStatus | null | undefined): React.CSSProperties {
-  const opt = STATUS_BY_VALUE[status ?? "pending"] ?? STATUS_BY_VALUE.pending;
-  // Colour is driven by the `.cal-bar` class off this `--bar` custom
-  // property: a soft tint + status rail + ink text at rest, deepening to
-  // the solid status fill on hover. Keeps the month grid calm/scannable
-  // while preserving the bold colour on the bar you're pointing at.
-  return { ["--bar" as string]: opt.hex } as React.CSSProperties;
-}
-
-function ProjectStatusSelect({
-  value,
-  onChange,
-  disabled,
-}: {
-  value: ProjectStatus;
-  onChange: (next: ProjectStatus) => void;
-  disabled?: boolean;
-}) {
-  const cur = STATUS_BY_VALUE[value] ?? STATUS_BY_VALUE.pending;
-  return (
-    <div className="relative inline-flex">
-      <span
-        className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2"
-        style={{ background: cur.hex, width: 8, height: 8, borderRadius: 999 }}
-        aria-hidden
-      />
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value as ProjectStatus)}
-        disabled={disabled}
-        className={cn(
-          "appearance-none rounded-md border border-border bg-surface py-1.5 pl-6 pr-7 text-[12px] font-semibold uppercase tracking-wide text-ink outline-none transition-colors focus:border-primary focus:ring-1 focus:ring-primary/30 disabled:cursor-not-allowed disabled:opacity-60",
-          cur.chip
-        )}
-      >
-        {STATUS_OPTIONS.map((o) => (
-          <option key={o.value} value={o.value}>
-            {o.label}
-          </option>
-        ))}
-      </select>
-      <ChevronDown size={12} className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-ink-muted" />
-    </div>
-  );
-}
 
 // ── Main page ────────────────────────────────────────────────
 
@@ -14724,44 +14593,6 @@ function AttachmentTile({
       </div>
     </div>
   );
-}
-
-// ── Google Calendar URL ──────────────────────────────────────
-// Uses the public /calendar/render?action=TEMPLATE endpoint — no OAuth,
-// opens Google Calendar with the event pre-filled. User still has to
-// click "Save" in Google.
-
-function googleCalendarUrl(p: {
-  name: string;
-  code: string;
-  start_date: string | null;
-  end_date: string | null;
-  venue: string | null;
-  venue_address: string | null;
-  organizer: string | null;
-}): string {
-  const fmt = (d: string) => d.replace(/-/g, "");
-  const start = p.start_date ? fmt(p.start_date) : "";
-  // Google wants end date exclusive for all-day events, so +1 day
-  const endRaw = p.end_date || p.start_date || "";
-  const endDate = endRaw ? new Date(endRaw) : null;
-  if (endDate) endDate.setUTCDate(endDate.getUTCDate() + 1);
-  const end = endDate ? endDate.toISOString().slice(0, 10).replace(/-/g, "") : start;
-  const dates = `${start}/${end}`;
-  const details = [
-    `Project: ${p.code}`,
-    p.organizer && `Organizer: ${p.organizer}`,
-  ]
-    .filter(Boolean)
-    .join("\n");
-  const params = new URLSearchParams({
-    action: "TEMPLATE",
-    text: p.name,
-    dates,
-    details,
-    location: [p.venue, p.venue_address].filter(Boolean).join(", "),
-  });
-  return `https://calendar.google.com/calendar/render?${params.toString()}`;
 }
 
 // ── Import CSV panel ─────────────────────────────────────────
