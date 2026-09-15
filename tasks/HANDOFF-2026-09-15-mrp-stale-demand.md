@@ -76,7 +76,7 @@ Reading the table:
 - The MRP page hides them by default (`includeUndated`). **But the engine still allocates on-hand stock to them after the dated lines:** 2,843 units read as "assigned" in the stock-assigned / dead-stock view.
 - This is the same class as the 122: the book never closes its sales orders, and the go-live import took "outstanding in the book" literally.
 
-## 3. 给老板的选项（未选）
+## 3. 给老板的选项（已选，见 3b）
 
 Rule the owner already stated: **a line that went onto a DO needs no more goods; only real outstanding SO lines, ordered by delivery date, are MRP demand.**
 
@@ -97,16 +97,43 @@ Rule the owner already stated: **a line that went onto a DO needs no more goods;
 
 **Recommendation: A + B now (B buckets 1-3 without asking further — they match his stated rule; bucket 4 and the undated cut-off as a list for his pick), then decide C.** "MRP 几时正常" = after B's apply. The tool build is about half a day including plan run.
 
+## 3b. 老板的决定（2026-09-15 ~13:45Z，覆盖第 3 节的建议）
+
+Written down in memory `owner-rulings-2026-09-15-mrp-processing-gate`.
+
+- **C accepted.** Owner: 「MRP 可以添加只算有 Processing date 单的功能吗？不过需求的顺序排给谁，是根据 Delivery Date 来排的。也就是说，没有 Processing date 的单子就不进来。」
+  - An SO with no processing date is not MRP demand at all: no allocation, no stock claim, no shortage.
+  - Priority among processed orders stays by delivery date.
+  - For what ENTERS MRP, this supersedes "gate on DELIVERY date".
+  - In flight: agent on branch `feat/mrp-processing-date-gate`. It will put one shared rule behind every consumer, with tests RED→GREEN and before/after production counts.
+- **A rejected.** Owner: 「这个 0 其实就是代表没送货的意思，是对的，之前也都是对的」.
+  - A DO line at qty 0 = NOT delivered. The engine stays as it is.
+  - Bucket 2 of B is therefore only counted, never closed.
+- **B: 「可以跑看」 — PLAN only.** Agent on branch `chore/close-stale-sales-orders`.
+  - Tool: `close-stale-sales-orders.mjs` / `.yml`.
+  - Buckets 1 / 3 / 4 are planned. Bucket 2 is counted only. Bucket 5 is counted by SO month.
+  - First the agent researches what setting an order to CLOSED touches: AutoCount write-back, commission, payments, the per-line freeze, the header version and `mfg_so_audit_log`.
+  - The Excel file 结单模拟清单20260915.xlsx goes in the owner's Downloads folder.
+  - **No apply without the owner's yes.**
+- **Still open, and the owner insists on an answer.** Owner: 「那为什么之前我没有看到这些订单呢？…现在突然跑出来 100 多张单，是什么问题呢？」
+  - "They were imported on 08-28" was NOT accepted as the answer.
+  - An investigator agent is tracing WHEN the 122 orders became dated MRP demand. Candidates:
+    1. dates filled later by backfill runs, or by the AutoCount line-delivery-date pull (#3633 / #3636, 09-11);
+    2. status changes;
+    3. MRP UI or engine changes;
+    4. the header `updated_at` spikes on 09-08, 09-10 and 09-12.
+  - The answer must be a timeline with evidence for each step.
+
 ## 4. 当天其它事项的状态
 
 | 事项 | 状态 | 证据 / 下一步 |
 |---|---|---|
 | HC-SO-011045 STOOL 1 x2 拆成 1 MEKA-04 + 1 MEKA-06 | **DONE** | split-colour-lines apply run 34970795351, VERIFY OK (5 rows split) |
 | HC-PO-010086 第 2 行改回 AMN-SOFA PILLOW | **DONE** | PR #3974 merged; realign apply run 34973159743 wrote 1 line + 1 audit row. Supplier code was CLEARED (no supplier code for that item): set it before sending the PO. The LIST run 34973345241 says 3 live PO lines differ in code from their SO line — not reviewed. |
-| Import SKUs 改分类连型号一起换 | PR **#3976** open | agent resumed; watch CI, merge, confirm Deploy |
-| Edit 时行顺序乱 + MRP 颜色 | PR **#3978** open, BEHIND | merge origin/main locally (never "Update branch"), CI, merge, Deploy; agent stopped while waiting on CI |
-| 改 SKU 代码没跟着改的地方 | PR **#3980** open (bug 0938) | agent resumed; note #3976 also claims 0938, so one must renumber at merge |
-| MRP stale-demand check tool | branch `chore/mrp-stale-demand-audit` | this doc + the tool; open PR, merge; re-dispatch from main once |
+| Import SKUs 改分类连型号一起换 | **MERGED** PR #3976 (`b0019929`, bug 0938); Deploy 34975887931 backend success | live import UNTESTED. OPEN owner question: a full export with one SKU's category edited is REFUSED for that model (conflict rule). Recommended: the changed row wins and rows repeating the old category count as unchanged. Awaiting his pick. |
+| Edit 时行顺序乱 + MRP 颜色 | PR **#3978** open | merge origin/main locally (never "Update branch"), CI, merge, confirm Deploy. The agent stopped while waiting on CI. |
+| 改 SKU 代码没跟着改的地方 | **MERGED** PR #3980 (bug 0939) | confirm its Deploy run; the colour-printed-twice / Description 2 over 100 characters finding is not yet reported to the owner |
+| MRP stale-demand check tool | **MERGED** PR #3981 (`9ccc59f2`) | dispatch `check-mrp-stale-demand.yml` from main once (R50) |
 | HC-PO-010041 key repair | waiting | needs an AutoCount snapshot <= 2 days old |
 | HC-SO-012046 / 013224 supplier code; PO lines without SO (HC-PO-009630, 009940) | open | owner decision 3 (stock adjustment) |
 | Shared-bucket refusals (per-lot moves), HC-PO-010170 follow-up | open | — |
