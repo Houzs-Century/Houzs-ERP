@@ -24,7 +24,7 @@ const line = (over: Partial<ErpLine> = {}): ErpLine => ({
 });
 const po = (over: Partial<ErpPoHeader> = {}): ErpPoHeader => ({
   po_number: 'HC-PO-1', po_date: '2026-09-01', creditor_code: '400-H004',
-  creditor_name: 'Supplier Sdn Bhd', agent: null, ref: null, notes: 'N',
+  creditor_name: 'Supplier Sdn Bhd', agent: null, ref: null, source_so_no: null, notes: 'N',
   purchase_location: 'KL', linked_ac_docno: 'PO-009950',
   supplier_delivery_date_2: null, supplier_delivery_date_3: null, supplier_delivery_date_4: null,
   ...over,
