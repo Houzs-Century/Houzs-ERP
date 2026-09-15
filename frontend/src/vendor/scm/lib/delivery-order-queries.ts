@@ -310,18 +310,41 @@ export const useUpdateMfgDeliveryOrderStatus = () => {
       authedFetch(`/delivery-orders-mfg/${id}/status`, {
         method: 'PATCH', body: JSON.stringify({ status, ...(evidence ?? {}) }),
       }),
-    onSuccess: (_, vars) => {
-      qc.invalidateQueries({ queryKey: ['mfg-delivery-orders'] });
-      qc.invalidateQueries({ queryKey: ['mfg-delivery-order-detail', vars.id] });
-      /* A status advance into a shipped state deducts inventory — refresh
-         the inventory queries so the on-hand drilldown reflects the OUT. */
-      qc.invalidateQueries({ queryKey: ['inventory'] });
-      /* CANCEL releases the delivered qty back to the SO. */
-      releaseSoSideQueries(qc);
-    },
+    onSuccess: (_, vars) => refreshAfterDoStatus(qc, vars.id),
     onError: (err) => {
       serviceNotify({ title: 'Status update failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' });
     },
+  });
+};
+
+function refreshAfterDoStatus(qc: ReturnType<typeof useQueryClient>, id: string) {
+  void qc.invalidateQueries({ queryKey: ['mfg-delivery-orders'] });
+  void qc.invalidateQueries({ queryKey: ['mfg-delivery-order-detail', id] });
+  /* A status advance into a shipped state deducts inventory — refresh
+     the inventory queries so the on-hand drilldown reflects the OUT. */
+  void qc.invalidateQueries({ queryKey: ['inventory'] });
+  /* CANCEL releases the delivered qty back to the SO. */
+  releaseSoSideQueries(qc);
+}
+
+/* CANCEL a delivery order — the same status route, with the REASON the server
+   now refuses a cancel without (400 `reason_required`, owner 2026-09-14:
+   「DO cancel need pop out window for reason」; the guard is
+   backend/src/scm/routes/document-cancel-routes.ts). Its own hook so `reason`
+   is REQUIRED by the type rather than an optional field on the status hook a
+   caller could forget. No onError: the one caller
+   (pages/scm-v2/use-do-cancel-action.ts) reports the refusal itself, and a
+   second notice here would say it twice. */
+export const useCancelMfgDeliveryOrder = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason: string }) =>
+      /* `movementErrors` is in-band: the cancel stands when returning the stock
+         partly failed, and the caller must say so rather than claim it is back. */
+      authedFetch<{ deliveryOrder: { id: string; status: string }; movementErrors?: string[] }>(`/delivery-orders-mfg/${id}/status`, {
+        method: 'PATCH', body: JSON.stringify({ status: 'CANCELLED', reason }),
+      }),
+    onSuccess: (_, vars) => refreshAfterDoStatus(qc, vars.id),
   });
 };
 
