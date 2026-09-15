@@ -93,6 +93,7 @@ import {
 /* Re-exported so a route can name the shape it passes to enqueueEdit without
    also importing the composer module. */
 export type { AcRetiredLine } from '../../services/autocount-writeback';
+import { poEditHeader } from '../../services/autocount-po-supplier-dates';
 
 import { mastersOf } from './autocount-masters';
 import { soEditHeader } from './so-edit-header';
@@ -114,7 +115,6 @@ import { attachPhotos } from './autocount-photo-attach';
 import { readMfgProductBindings } from './supplier-bindings';
 import {
   soLine,
-  present,
   DOWNSTREAM,
   CONVERT_TARGET,
   readConvertSourceKeys,
@@ -389,7 +389,7 @@ const SO_ITEM_COLS =
    the same header field and the ERP had never sent one, so the book defaulted it
    on every purchase order it has written. Guide §7c3b-ii. */
 const PO_HEADER_COLS =
-  'id, company_id, po_number, po_date, supplier_id, notes, purchase_location_id, linked_ac_docno';
+  'id, company_id, po_number, po_date, supplier_id, notes, purchase_location_id, linked_ac_docno, supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4';
 /* description2 is NOT optional here. The PO importer wrote the AutoCount sofa
    Desc2 verbatim onto every compartment row, and that stored text is what the
    D9 collapse echoes back. Leaving the column out of this list is what made the
@@ -650,6 +650,9 @@ async function readPoHeader(sb: Sb, poId: string) {
     notes: (h.notes as string | null) ?? null,
     purchase_location: purchaseLocation,
     linked_ac_docno: (h.linked_ac_docno as string | null) ?? null,
+    supplier_delivery_date_2: (h.supplier_delivery_date_2 as string | null) ?? null,
+    supplier_delivery_date_3: (h.supplier_delivery_date_3 as string | null) ?? null,
+    supplier_delivery_date_4: (h.supplier_delivery_date_4 as string | null) ?? null,
   };
 }
 
@@ -1474,10 +1477,7 @@ async function composePoState(sb: Sb, poId: string, retired: AcRetiredLine[] = [
     /* No Ref: the ERP has no such field on a purchase order, and /edit applies
        only the keys it is GIVEN (AcSyncService.cs:369 `h.ContainsKey`). Sending
        null would blank whatever the account book has there. */
-    edit: () => composeEdit('PO', String(header.linked_ac_docno ?? header.po_number), present({
-      CreditorName: header.creditor_name,
-      Description: header.notes,
-    }), lines, {
+    edit: () => composeEdit('PO', String(header.linked_ac_docno ?? header.po_number), poEditHeader(header), lines, {
       supplierCode: header.creditor_code,
       bindings: poBindings,
       /* Add-a-line, same contract as the sales order's: the ROUTE names the row

@@ -179,6 +179,7 @@ import { baseKeyOf, deleteThumbFor, putOptionalThumb, thumbKeyFor } from '../../
 import { photoProxyPath, proxyFallbackPayload, warnSigningFailedOnce, type PhotoUrlPayload } from '../lib/photoProxyFallback';
 import { slipBindings } from '../lib/slip';
 import { amendmentMixRefusal, createMixRefusal, lineMixRefusal } from '../lib/main-mix';
+import { refuseWithoutWriting } from '../lib/no-write-refusal';
 import {
   loadMaintenanceConfig,
   loadSpecialAddons,
@@ -464,14 +465,14 @@ async function requireSoLineWriteLease(sb: any, docNo: string, c: any): Promise<
     .select('edit_lease_token, edit_lease_expires_at, edit_lease_user_id')
     .eq('doc_no', docNo)
     .maybeSingle();
-  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  if (!data) return c.json({ error: 'not_found' }, 404);
+  if (error) return refuseWithoutWriting(c, { error: 'load_failed', reason: error.message }, 500);
+  if (!data) return refuseWithoutWriting(c, { error: 'not_found' }, 404);
   if (!soLineWriteLeaseMatches(data as SoEditLeaseRow, supplied)) {
     const live = activeSoEditLease(data as SoEditLeaseRow);
     const holder = (data as { edit_lease_user_id?: number | string | null }).edit_lease_user_id;
     // The same person takes their own lock back - 0348, as the composite path does.
     if (live && supplied && soEditLeaseTakeoverAllowed(holder, soCallerUserId(c))) return null;
-    return c.json(soEditLeaseRefusal(!supplied ? 'missing' : live ? 'held' : 'expired'), 409);
+    return refuseWithoutWriting(c, soEditLeaseRefusal(!supplied ? 'missing' : live ? 'held' : 'expired'), 409);
   }
   return null;
 }
@@ -7542,26 +7543,26 @@ export async function recomputeTotals(sb: any, docNo: string, c: any) {
 mfgSalesOrders.post('/:docNo/items', async (c) => {
   const sb = c.get('supabase'); const docNo = c.req.param('docNo'); const user = c.get('user');
   let it: Record<string, unknown>;
-  try { it = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
+  try { it = (await c.req.json()) as Record<string, unknown>; } catch { return refuseWithoutWriting(c, { error: 'invalid_json' }, 400); }
   /* Trimmed — a whitespace-only code used to pass this truthy check and then
      slide through validateItemCodes' skip-as-no-op (owner 2026-08-08: every
      line is a catalog SKU, so an add-line ALWAYS names one). */
-  if (!String(it.itemCode ?? '').trim()) return c.json({ error: 'item_code_required' }, 400);
+  if (!String(it.itemCode ?? '').trim()) return refuseWithoutWriting(c, { error: 'item_code_required' }, 400);
 
   /* Edge #4 — itemCode catalog guard. requireActive: an add-line is a NEW
      pick, and the picker only offers ACTIVE products. */
   {
     const codeCheck = await validateItemCodes(sb, [it.itemCode as string], activeCompanyId(c), { requireActive: true });
-    if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown, codeCheck.inactive), 409);
+    if (!codeCheck.ok) return refuseWithoutWriting(c, unknownItemCodeResponse(codeCheck.unknown, codeCheck.inactive), 409);
   }
 
   /* Tier 2 downstream-lock — line-add is blocked once a DO / SI exists. */
   const childLock = await soHasDownstream(sb, docNo);
-  if (childLock) return c.json(childLock, 409);
+  if (childLock) return refuseWithoutWriting(c, childLock, 409);
 
   /* TBC fill-in (Loo 2026-06-11) — self-scoped selling roles only touch
      their own SO. */
-  if (await selfScopedSalesBlocked(c, docNo)) return c.json({ error: 'not_found' }, 404);
+  if (await selfScopedSalesBlocked(c, docNo)) return refuseWithoutWriting(c, { error: 'not_found' }, 404);
   /* AUTHZ BEFORE CONCURRENCY (2026-07-22) — the self-scope gate above now runs
      BEFORE the edit lease. A caller who may not touch this order at all used to
      be told "This order is being saved on another screen; wait a moment and try
@@ -7577,23 +7578,23 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
      editable (grandfathered). */
   {
     const mainMix = await lineMixRefusal(sb, 'mfg_sales_order_items', docNo, null, it.itemCode as string, activeCompanyId(c));
-    if (mainMix) return c.json(mainMix.body, mainMix.status);
+    if (mainMix) return refuseWithoutWriting(c, mainMix.body, mainMix.status);
   }
 
   /* PR-E — pull customer_delivery_date alongside debtor/agent/venue so a
      line added later still inherits the SO header's delivery date by
      default. Client can override by sending lineDeliveryDate explicitly. */
   const { data: header } = await sb.from('mfg_sales_orders').select('debtor_code, debtor_name, agent, branding, venue, customer_delivery_date, customer_state, sales_location, processing_date, status, customer_id').eq('doc_no', docNo).maybeSingle();
-  if (!header) return c.json({ error: 'not_found' }, 404);
+  if (!header) return refuseWithoutWriting(c, { error: 'not_found' }, 404);
   /* Owner 2026-06-12 — processing-date lock: no line ADD once a CONFIRMED-or-later
      SO's processing day has passed (already PO'd to the supplier). Owner
      2026-08-12 — nor once a live PO actually exists (2990), which is the case
      this rule was always describing and only sometimes catching. */
   if (soProcessingLocked(header as { processing_date?: string | null; status: string | null })) {
-    return c.json(SO_PROCESSING_LOCKED_RESPONSE, 409);
+    return refuseWithoutWriting(c, SO_PROCESSING_LOCKED_RESPONSE, 409);
   }
   if (await soPoLocked(sb, docNo)) {
-    return c.json(SO_PO_LOCKED_RESPONSE, 409);
+    return refuseWithoutWriting(c, SO_PO_LOCKED_RESPONSE, 409);
   }
   /* Commander 2026-05-31 — a line added later inherits the SO state's warehouse
      by default (migration 0118). Explicit it.warehouseId override wins. */
@@ -7613,12 +7614,12 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
   /* POS line quantity (Loo 2026-06-12) — same 422 gate as POST / (review
      found the create-only gate left qty 0 free-line inserts open here). */
   const badQty = invalidQtyResponse(it.qty, it.itemCode);
-  if (badQty) return c.json(badQty, 422);
+  if (badQty) return refuseWithoutWriting(c, badQty, 422);
   /* Owner 2026-07-17 — see unexplainedExtraAddonResponse. Gating create only
      would leave the same unexplained charge reachable one click later via
      "add line", which is exactly how the qty gate above was found short. */
   const badExtra = unexplainedExtraAddonResponse(it.variants, it.itemCode);
-  if (badExtra) return c.json(badExtra, 422);
+  if (badExtra) return refuseWithoutWriting(c, badExtra, 422);
   const qty = Number(it.qty ?? 1);
   const discount = Number(it.discountSen ?? 0);
   // MFG-PRICING-ENGINE — Recompute unit price server-side. Same path as
@@ -7630,13 +7631,13 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
   {
     const { product, model, lookupError } = await loadProductAndModel(sb, itemCodeStr, activeCompanyId(c));
     // A failed catalog read is ignorance, not permission — refuse, don't skip the gate.
-    if (lookupError) return c.json(variantCheckUnavailableResponse(lookupError), 409);
+    if (lookupError) return refuseWithoutWriting(c, variantCheckUnavailableResponse(lookupError), 409);
     const aoErr = checkAllowedOptions(
       product,
       model,
       variantsObj as Parameters<typeof checkAllowedOptions>[2],
     );
-    if (aoErr) return c.json({ ...aoErr, itemCode: itemCodeStr }, 400);
+    if (aoErr) return refuseWithoutWriting(c, { ...aoErr, itemCode: itemCodeStr }, 400);
   }
   /* Go-live review #6 — variant completeness on the LINE routes. The header
      POST/PATCH already blocks setting a Processing Date while any line has
@@ -7653,7 +7654,7 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
     }];
     const offenders = findIncompleteVariantLines(addedLine);
     if (offenders.length > 0) {
-      return c.json({
+      return refuseWithoutWriting(c, {
         error: 'variants_incomplete',
         message: 'Processing Date requires all category-mandatory variants on every line.',
         offenders,
@@ -7665,7 +7666,7 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
        shape as the variants gate above. */
     const kiv = findColourKivLines(addedLine);
     if (kiv.length > 0) {
-      return c.json({
+      return refuseWithoutWriting(c, {
         error: 'fabric_colour_kiv',
         message: `${itemCodeStr} — fabric colour is still KIV. This order already has a Processing Date, so confirm the colour before adding the line.`,
         offenders: kiv,
@@ -7703,7 +7704,7 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
   const addLineFreeItemCampaignId = String((it.freeItemCampaignId as string | null | undefined) ?? '').trim();
   const addLinePwpCodeEarly = String((variantsObj as { pwpCode?: string | null } | null)?.pwpCode ?? '').trim();
   if (addLineFreeItemCampaignId && addLinePwpCodeEarly) {
-    return c.json({ error: 'free_and_pwp_exclusive', reason: 'A line cannot be both a free-item and a PWP reward.' }, 400);
+    return refuseWithoutWriting(c, { error: 'free_and_pwp_exclusive', reason: 'A line cannot be both a free-item and a PWP reward.' }, 400);
   }
   // Resolved after validation below — { campaignId, campaignName } or null.
   let addLineFreeItem: { campaignId: string; campaignName: string } | null = null;
@@ -7722,7 +7723,7 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
        unit; the claim helper enforces this too, but a fast 422 mirrors the
        create-path pattern so the error shape is consistent. */
     if (qty !== 1) {
-      return c.json({
+      return refuseWithoutWriting(c, {
         error: 'invalid_qty',
         reason: 'A PWP reward line must have quantity 1.',
         itemCode: itemCodeStr,
@@ -7742,7 +7743,7 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
        BURNS the voucher. */
     const pwpCompanyId = activeCompanyId(c);
     if (pwpCompanyId == null) {
-      return c.json({
+      return refuseWithoutWriting(c, {
         error: 'company_unresolved',
         message: 'Cannot tell which company this order belongs to right now. Reload and try again.',
       }, 409);

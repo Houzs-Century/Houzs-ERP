@@ -1935,8 +1935,14 @@ endpoint and tab. The header view is untouched.
   Estimate Delivery Date = `PO.UDF_EDate` -> `supplier_delivery_date_2`;
   Supplier Delivery Date 2 = `UDF_EDate2` -> `_3`; Supplier Delivery Date 3 =
   `UDF_EDate3` -> `_4`. The migrated POs got them once, through
-  `fill-po-supplier-dates-from-autocount.yml`. NO ongoing sync exists in either
-  direction: the PO write-back sends `UDF: {}` and no pull writes `scm`. Owner
+  `fill-po-supplier-dates-from-autocount.yml`. From then on the ERP -> book
+  direction carries them (owner 2026-09-15, option A,
+  `docs/bugs/0919-a-supplier-delivery-date-entered-in-the-erp-never-reached-au.md`):
+  `/create-po`, `/so-to-po` and the PO `/edit` send `UDF: {EDate, EDate2, EDate3}`
+  from the HEADER slots (`services/autocount-po-supplier-dates.ts`). A blank slot
+  is OMITTED, never sent null, so clearing a date in the ERP does not clear the
+  book's. Per-line slots are not sent; the book has no line field for them.
+  Nothing pulls book dates into `scm`; the book is closed to staff. Owner
   2026-09-12: keep the column positions.
 - Since 2026-09-15 the tab shows them as **Estimate Delivery Date 1 / 2 / 3**. The
   route resolves each per row — the line's `supplier_delivery_date_2/3/4`, else

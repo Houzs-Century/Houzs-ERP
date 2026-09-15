@@ -65,7 +65,7 @@ export const PurchaseInvoiceFromGrn = () => {
     [searchParams],
   );
 
-  const allItems = useMemo(() => itemsQ.data ?? [], [itemsQ.data]);
+  const allItems = useMemo(() => itemsQ.data?.items ?? [], [itemsQ.data]);
   const items = useMemo(
     () => (scope.keys.size === 0 ? allItems : allItems.filter((it) => scope.keys.has(it.grnId))),
     [allItems, scope.keys],
@@ -269,6 +269,14 @@ export const PurchaseInvoiceFromGrn = () => {
         <div style={{ padding: '0 var(--space-4)' }}>
           <UnrecognisedScopeNotice unknown={scope.unknown} />
         </div>
+        {/* The server reads every note that still has something to bill, up to a
+            runaway ceiling. When it stops there it says so, and so must the page:
+            a short list that looks whole is the silence this read used to have. */}
+        {itemsQ.data?.truncated && (
+          <p role="alert" style={{ color: 'var(--c-burnt)', fontSize: 'var(--fs-12)', padding: '0 var(--space-4) var(--space-2)' }}>
+            This list is not complete: the server stopped reading goods-received notes at its limit, so some notes with lines still to bill are missing here and from the search.
+          </p>
+        )}
         {scope.keys.size > 0 && (
           <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-12)', padding: '0 var(--space-4) var(--space-2)' }}>
             Showing{' '}

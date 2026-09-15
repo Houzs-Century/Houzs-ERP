@@ -104,6 +104,7 @@ const norm = (s: string | null | undefined): string =>
    every caller and test keeps one import site (docs/repo-hygiene.md: this file
    is at its ceiling and a ceiling only moves down). */
 import { tidy, soInvoiceAddress } from './autocount-address-fit';
+import { poSupplierDateUdf, type PoSupplierDates } from './autocount-po-supplier-dates';
 export { AC_ADDRESS_LINE_MAX, AC_ADDRESS_LINES, fitAddressLines, tidy, soInvoiceAddress } from './autocount-address-fit';
 
 
@@ -242,7 +243,7 @@ export interface ErpSoHeader {
  * `readPoHeader` (scm/lib/autocount-outbox.ts) is what assembles this — reading
  * these names off the table is the bug in BUG-HISTORY, 2026-08-10.
  */
-export interface ErpPoHeader {
+export interface ErpPoHeader extends PoSupplierDates {
   po_number: string;
   po_date: string | null;
   creditor_code: string | null;
@@ -1324,7 +1325,7 @@ export function composeCreatePo(
        key error rather than an empty field — the same rule the line-level
        `Location` key follows in composeDetails. */
     ...(purchaseLocation ? { PurchaseLocation: purchaseLocation } : {}),
-    UDF: {},
+    UDF: poSupplierDateUdf(header),   // EDate/EDate2/EDate3, blanks omitted - docs/bugs/0918
     /* The creditor is the D10 disambiguator, and a PO always has one. Defaulted
        from the header so no caller can forget it. */
     Details: composeDetails(live(lines), {
