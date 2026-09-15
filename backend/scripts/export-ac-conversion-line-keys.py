@@ -1,5 +1,6 @@
 """Export the book's source line for every line of the ERP-numbered delivery
-orders, goods receipts and purchase orders, for stamp-conversion-line-keys.mjs.
+orders, goods receipts, invoices and purchase orders, for
+stamp-conversion-line-keys.mjs.
 
 WHY THIS FILE EXISTS (docs/bugs/0897). A delivery order or goods receipt the
 write-back creates in AutoCount comes back as DtlKey, ItemCode and Desc2 per
@@ -28,6 +29,15 @@ purchase line itself, `PODTL.FromSODtlKey`, and writes no DocTransfer row for
 it. Each `HC-PO-` line is exported with that key as its source; a key that names
 no sales line in the book refuses the snapshot. Lines of a purchase order the
 write-back CREATED carry no source and are exported with none.
+
+THE INVOICE LANES (docs/bugs/0912). A sales invoice the write-back converts
+from a delivery order, and a purchase invoice from a goods receipt, keep no line
+key for the same reason a delivery order did (0897): HC-SI-2609-001 reached the
+book whole on 2026-09-10 and all eight of its ERP lines are still keyless, so
+its later edit could never be sent. The book names each invoice line's source in
+DocTransfer exactly as it does for a DO, so the lanes read the same way:
+`HC-SI-` from a DO, `HC-PI-` from a GR. Migrated invoices carry AutoCount's own
+numbers (`I-2410-...`, `PI-00...`) and are not in these lanes.
 
 WHAT ELSE EACH LINE CARRIES (docs/bugs/0902). `qty` and `transferredOn` — how
 many DocTransfer rows take this line further (a DO line into an invoice, a GR
@@ -75,6 +85,8 @@ cur = cn.cursor()
 LANES = (
     ("DO", "DO", "DODTL", "HC-DO-%", "SO"),
     ("GR", "GR", "GRDTL", "HC-GRN-%", "PO"),
+    ("IV", "IV", "IVDTL", "HC-SI-%", "DO"),
+    ("PI", "PI", "PIDTL", "HC-PI-%", "GR"),
 )
 
 rows = []
@@ -143,7 +155,7 @@ if bad:
 snapshot = {
     "exported_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     "source": f"{DB} live (read-only)",
-    "grain": "one row per line of an ERP-numbered DO / GR / PO in the book, with its source line (DocTransfer for a DO or GR, PODTL.FromSODtlKey for a PO)",
+    "grain": "one row per line of an ERP-numbered DO / GR / IV / PI / PO in the book, with its source line (DocTransfer for a DO, GR, IV or PI; PODTL.FromSODtlKey for a PO)",
     "fields": ["docType", "docNo", "toDtlKey", "fromDtlKey", "itemCode", "cancelled", "qty", "transferredOn"],
     "counts": counts,
     "rows": rows,

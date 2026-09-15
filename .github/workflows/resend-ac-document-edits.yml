@@ -1,8 +1,9 @@
 name: Send named documents to AutoCount again (plan / apply)
 
 # Queues, through the Worker's own enqueueEdit, a keyed edit of each named
-# sales order, purchase order, delivery order or goods receipt as it is in the
-# ERP now (backend/scripts/resend-ac-document-edits.mjs, docs/bugs/0903). For a
+# sales order, purchase order, delivery order, goods receipt, sales invoice or
+# purchase invoice as it is in the ERP now
+# (backend/scripts/resend-ac-document-edits.mjs, docs/bugs/0903, 0912). For a
 # document AutoCount holds with values that differ from ours, or whose last
 # edit was refused for a cause since fixed. Default 'plan' composes each edit
 # and rolls it back; 'apply' queues and verifies.

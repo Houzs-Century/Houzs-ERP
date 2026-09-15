@@ -68,6 +68,47 @@ describe("planDocumentKeys", () => {
   test("the outcome sets are consistent and the tally names every outcome", () => {
     for (const o of [...IS_WRITE, ...IS_REFUSAL]) expect(KEY_OUTCOMES).toContain(o);
     const t = tallyOutcomes([{ outcome: "stamp" }, { outcome: "stamp" }, { outcome: "disagrees" }]);
-    expect(t).toEqual({ stamp: 2, already_correct: 0, disagrees: 1, no_source_key: 0, source_not_in_book: 0, ambiguous_in_book: 0 });
+    expect(t).toEqual({ stamp: 2, already_correct: 0, disagrees: 1, no_source_key: 0, source_not_in_book: 0, ambiguous_in_book: 0, stamp_merged: 0 });
+  });
+});
+
+/* docs/bugs/0913 — HC-GRN-2609-008 as production held it on 2026-09-15. The ERP
+   receives DSL-SQUARE PILLOW x3 as ONE row from purchase line 907143; the book
+   split that transfer over 928497 x2 and 928499 x1, and holds 928501 x2 from
+   907145 beside them. */
+const GRN008 = [
+  { toDtlKey: 928497, fromDtlKey: 907143, qty: 2, transferredOn: 0 },
+  { toDtlKey: 928499, fromDtlKey: 907143, qty: 1, transferredOn: 0 },
+  { toDtlKey: 928501, fromDtlKey: 907145, qty: 2, transferredOn: 0 },
+];
+
+describe("one ERP row over a transfer the book split", () => {
+  test("HC-GRN-2609-008: the x3 row takes the first line, and the x1 line is left unclaimed to be zeroed", () => {
+    const { rows, unclaimedBookLines } = planDocumentKeys([
+      { id: "pillow-3", linkedKey: null, sourceKey: 907143, qty: 3 },
+      { id: "pillow-2", linkedKey: 928501, sourceKey: 907145, qty: 2 },
+    ], GRN008);
+    expect(rows).toEqual([
+      { id: "pillow-3", outcome: "stamp_merged", dtlKey: 928497, sourceKey: 907143 },
+      { id: "pillow-2", outcome: "already_correct", dtlKey: 928501, sourceKey: 907145 },
+    ]);
+    expect(IS_WRITE.has("stamp_merged")).toBe(true);
+    expect(unclaimedBookLines).toEqual([928499]);
+  });
+
+  test("CONTROL: without quantities (the drain passes none) the split is refused as before", () => {
+    const { rows } = planDocumentKeys([{ id: "pillow-3", linkedKey: null, sourceKey: 907143 }], GRN008.map(({ toDtlKey, fromDtlKey }) => ({ toDtlKey, fromDtlKey })));
+    expect(rows[0].outcome).toBe("ambiguous_in_book");
+  });
+
+  test("CONTROL: quantities that do not add up, two rows on the source, or a line held downstream still refuse", () => {
+    const short = planDocumentKeys([{ id: "a", linkedKey: null, sourceKey: 907143, qty: 2 }], GRN008).rows[0].outcome;
+    const two = planDocumentKeys([
+      { id: "a", linkedKey: null, sourceKey: 907143, qty: 2 },
+      { id: "b", linkedKey: null, sourceKey: 907143, qty: 1 },
+    ], GRN008).rows.map((r) => r.outcome);
+    const held = planDocumentKeys([{ id: "a", linkedKey: null, sourceKey: 907143, qty: 3 }],
+      GRN008.map((b) => (b.toDtlKey === 928499 ? { ...b, transferredOn: 1 } : b))).rows[0].outcome;
+    expect([short, ...two, held]).toEqual(["ambiguous_in_book", "ambiguous_in_book", "ambiguous_in_book", "ambiguous_in_book"]);
   });
 });

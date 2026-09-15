@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-/* stamp-conversion-line-keys — give our delivery order, goods receipt and
- * purchase order lines the AutoCount line key the book itself pairs them with.
+/* stamp-conversion-line-keys — give our delivery order, goods receipt, invoice
+ * and purchase order lines the AutoCount line key the book itself pairs them with.
  *
  * 白话. 我们开的 DO / GR 已经进了 AutoCount，可是 ERP 没记下每一行对应账本的哪一行，
  * 所以之后一改，整张单就被拦住不送。账本的 DocTransfer 表写着每一行是从 SO / PO 的哪一行
@@ -17,6 +17,13 @@
  * (244 lines) in the book with at least one keyless line, and an edit of any of
  * them is refused whole (KeylessLineError).
  *
+ * INVOICES (docs/bugs/0912). A sales invoice converted from a delivery order and
+ * a purchase invoice converted from a goods receipt keep no keys for the same
+ * reason: HC-SI-2609-001 reached the book whole on 2026-09-10, all eight ERP
+ * lines keyless, and its edit was never sent. Their source is the DO / GR line
+ * (`sales_invoice_items.do_item_id`, `purchase_invoice_items.grn_item_id`),
+ * paired against the book's DocTransfer exactly like a DO against its SO.
+ *
  * PURCHASE ORDERS (docs/bugs/0903). A purchase order raised from a sales order
  * kept no keys either (0890), and some were sent with each line's quantity and
  * cost under another line's key (0889). Their values can only be corrected by an
@@ -30,28 +37,37 @@
  * `purchase_order_items.so_item_id` -> that sales line's, against the book's
  * `PODTL.FromSODtlKey`).
  * No position, no item code. A source key feeding two lines of the document is
- * refused. A row already carrying a different key is reported and left.
+ * refused — unless ONE row carries that source and the book lines add up to its
+ * quantity with nothing downstream holding them (docs/bugs/0913): the row takes
+ * the first line, and the rest are named for retire-book-only-conversion-lines.
+ * A row already carrying a different key is reported and left.
  *
  * ── WHAT IT WRITES, AND WHAT IT CANNOT TOUCH ───────────────────────────────
- * One column on three tables, only where it is NULL:
+ * One column on five tables, only where it is NULL:
  *     scm.delivery_order_items.linked_ac_dtlkey
  *     scm.grn_items.linked_ac_dtlkey
+ *     scm.sales_invoice_items.linked_ac_dtlkey
+ *     scm.purchase_invoice_items.linked_ac_dtlkey
  *     scm.purchase_order_items.linked_ac_dtlkey
  * No quantity, price, cost, status or stock, and no outbox row — nothing is
  * sent to AutoCount. Triggers were READ on production 2026-09-14 (`pg_trigger`):
  * `delivery_order_items` fires only on DELETE or `UPDATE OF delivery_order_id`,
  * `grn_items` carries no user trigger, and the one trigger on
  * `purchase_order_items`, `trg_po_item_qty_guard`, fires only on `UPDATE OF qty`
- * (read the same way, 2026-09-14), so this UPDATE fires none.
+ * (read the same way, 2026-09-14), so this UPDATE fires none. Neither
+ * `sales_invoice_items` nor `purchase_invoice_items` carries a user trigger
+ * (`pg_trigger`, read 2026-09-15).
  *
  * ── THE SNAPSHOT ───────────────────────────────────────────────────────────
  * `data/ac-conversion-line-keys.json.gz`, written by
  * `export-ac-conversion-line-keys.py` on a machine that reaches the office
  * network (the Actions runner cannot). Refused when older than
  * MAX_SNAPSHOT_AGE_DAYS: a key paired from a stale book is not proved.
- * Only book documents numbered `HC-DO-` / `HC-GRN-` / `HC-PO-` are in it, and a
- * document is planned only when a SENT so_to_do / po_to_gr / so_to_po outbox row
- * names it; a purchase order the write-back CREATED has no source to pair by.
+ * Only book documents numbered `HC-DO-` / `HC-GRN-` / `HC-SI-` / `HC-PI-` /
+ * `HC-PO-` are in it, and a document is planned only when a SENT so_to_do /
+ * po_to_gr / do_to_iv / gr_to_pi / so_to_po outbox row names it; a purchase
+ * order the write-back CREATED has no source to pair by. A snapshot cut before
+ * the invoice lanes existed simply holds no invoice lines.
  *
  * ── SAFETY ─────────────────────────────────────────────────────────────────
  * MODE defaults to plan and writes nothing. Apply needs CONFIRM and the
@@ -75,14 +91,14 @@ import path from "node:path";
 import zlib from "node:zlib";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
-import { IS_REFUSAL, planDocumentKeys, runSelfTest, tallyOutcomes } from "./lib/conversion-line-key-plan.mjs";
+import { IS_REFUSAL, IS_WRITE, planDocumentKeys, runSelfTest, tallyOutcomes } from "./lib/conversion-line-key-plan.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
 const MODE = (process.env.MODE || "plan").trim().toLowerCase();
 const APPLY = MODE === "apply";
-const CONFIRM_PHRASE = "stamp the book line keys on our purchase orders, delivery orders and receipts";
+const CONFIRM_PHRASE = "stamp the book line keys on our purchase orders, delivery orders, receipts and invoices";
 const CONFIRM = (process.env.CONFIRM || "").trim();
 const CO = Number(process.env.COMPANY_ID || 1);
 const MAXAGE = Number(process.env.MAX_SNAPSHOT_AGE_DAYS || 2);
@@ -122,7 +138,7 @@ const bookByDoc = new Map();
 for (const r of snap.rows) {
   const k = `${r[F.docType]}|${r[F.docNo]}`;
   const list = bookByDoc.get(k) ?? [];
-  list.push({ toDtlKey: r[F.toDtlKey], fromDtlKey: r[F.fromDtlKey] });
+  list.push({ toDtlKey: r[F.toDtlKey], fromDtlKey: r[F.fromDtlKey], qty: "qty" in F ? r[F.qty] : null, transferredOn: "transferredOn" in F ? r[F.transferredOn] : null });
   bookByDoc.set(k, list);
 }
 const docNos = (t) => [...bookByDoc.keys()].filter((k) => k.startsWith(`${t}|`)).map((k) => k.slice(t.length + 1));
@@ -131,27 +147,43 @@ const docNos = (t) => [...bookByDoc.keys()].filter((k) => k.startsWith(`${t}|`))
 const LANES = {
   DO: { table: "delivery_order_items", sourceCol: "so_item_id", op: "so_to_do" },
   GR: { table: "grn_items", sourceCol: "purchase_order_item_id", op: "po_to_gr" },
+  IV: { table: "sales_invoice_items", sourceCol: "do_item_id", op: "do_to_iv" },
+  PI: { table: "purchase_invoice_items", sourceCol: "grn_item_id", op: "gr_to_pi" },
   PO: { table: "purchase_order_items", sourceCol: "so_item_id", op: "so_to_po" },
 };
 const TYPES = Object.keys(LANES);
 
 async function readLanes(sql) {
   const doRows = await sql`
-    SELECT d.do_number AS doc_no, i.id::text AS id, i.linked_ac_dtlkey, i.so_item_id::text AS source_row,
+    SELECT d.do_number AS doc_no, i.id::text AS id, i.linked_ac_dtlkey, i.qty::float AS qty, i.so_item_id::text AS source_row,
            s.linked_ac_dtlkey AS source_key
       FROM scm.delivery_orders d
       JOIN scm.delivery_order_items i ON i.delivery_order_id = d.id
       LEFT JOIN scm.mfg_sales_order_items s ON s.id = i.so_item_id
      WHERE d.company_id = ${CO} AND d.do_number IN ${sql(docNos("DO"))}`;
   const grRows = await sql`
-    SELECT g.grn_number AS doc_no, i.id::text AS id, i.linked_ac_dtlkey, i.purchase_order_item_id::text AS source_row,
+    SELECT g.grn_number AS doc_no, i.id::text AS id, i.linked_ac_dtlkey, i.qty_accepted::float AS qty, i.purchase_order_item_id::text AS source_row,
            p.linked_ac_dtlkey AS source_key
       FROM scm.grns g
       JOIN scm.grn_items i ON i.grn_id = g.id
       LEFT JOIN scm.purchase_order_items p ON p.id = i.purchase_order_item_id
      WHERE g.company_id = ${CO} AND g.grn_number IN ${sql(docNos("GR"))}`;
+  const ivRows = docNos("IV").length ? await sql`
+    SELECT s.invoice_number AS doc_no, i.id::text AS id, i.linked_ac_dtlkey, i.qty::float AS qty, i.do_item_id::text AS source_row,
+           d.linked_ac_dtlkey AS source_key
+      FROM scm.sales_invoices s
+      JOIN scm.sales_invoice_items i ON i.sales_invoice_id = s.id
+      LEFT JOIN scm.delivery_order_items d ON d.id = i.do_item_id
+     WHERE s.company_id = ${CO} AND s.invoice_number IN ${sql(docNos("IV"))}` : [];
+  const piRows = docNos("PI").length ? await sql`
+    SELECT p.invoice_number AS doc_no, i.id::text AS id, i.linked_ac_dtlkey, i.qty::float AS qty, i.grn_item_id::text AS source_row,
+           g.linked_ac_dtlkey AS source_key
+      FROM scm.purchase_invoices p
+      JOIN scm.purchase_invoice_items i ON i.purchase_invoice_id = p.id
+      LEFT JOIN scm.grn_items g ON g.id = i.grn_item_id
+     WHERE p.company_id = ${CO} AND p.invoice_number IN ${sql(docNos("PI"))}` : [];
   const poRows = await sql`
-    SELECT p.po_number AS doc_no, i.id::text AS id, i.linked_ac_dtlkey, i.so_item_id::text AS source_row,
+    SELECT p.po_number AS doc_no, i.id::text AS id, i.linked_ac_dtlkey, i.qty::float AS qty, i.so_item_id::text AS source_row,
            s.linked_ac_dtlkey AS source_key
       FROM scm.purchase_orders p
       JOIN scm.purchase_order_items i ON i.purchase_order_id = p.id
@@ -159,9 +191,9 @@ async function readLanes(sql) {
      WHERE p.company_id = ${CO} AND p.po_number IN ${sql(docNos("PO"))}`;
   const sent = await sql`
     SELECT op, ac_doc_no FROM scm.autocount_outbox
-     WHERE company_id = ${CO} AND status = 'sent' AND op IN ('so_to_do', 'po_to_gr', 'so_to_po')
-       AND ac_doc_no IN ${sql([...docNos("DO"), ...docNos("GR"), ...docNos("PO")])}`;
-  return { DO: doRows, GR: grRows, PO: poRows, sent: new Set(sent.map((s) => `${s.op}|${s.ac_doc_no}`)) };
+     WHERE company_id = ${CO} AND status = 'sent' AND op IN ('so_to_do', 'po_to_gr', 'do_to_iv', 'gr_to_pi', 'so_to_po')
+       AND ac_doc_no IN ${sql(TYPES.flatMap(docNos))}`;
+  return { DO: doRows, GR: grRows, IV: ivRows, PI: piRows, PO: poRows, sent: new Set(sent.map((s) => `${s.op}|${s.ac_doc_no}`)) };
 }
 
 function plan(lanes) {
@@ -170,6 +202,7 @@ function plan(lanes) {
   const docs = { planned: 0, not_in_erp: [], not_sent_by_writeback: [] };
   const refusals = [];
   let unclaimed = 0;
+  const merged = [];
   for (const type of TYPES) {
     const lane = LANES[type];
     const byDoc = new Map();
@@ -184,14 +217,17 @@ function plan(lanes) {
       if (!lanes.sent.has(`${lane.op}|${docNo}`)) { docs.not_sent_by_writeback.push(`${type} ${docNo}`); continue; }
       docs.planned += 1;
       const result = planDocumentKeys(
-        rows.map((r) => ({ id: r.id, linkedKey: r.linked_ac_dtlkey, sourceKey: r.source_key })),
+        rows.map((r) => ({ id: r.id, linkedKey: r.linked_ac_dtlkey, sourceKey: r.source_key, qty: r.qty })),
         bookByDoc.get(`${type}|${docNo}`),
       );
       unclaimed += result.unclaimedBookLines.length;
+      if (result.rows.some((x) => x.outcome === "stamp_merged")) {
+        merged.push(`${type} ${docNo}: book line(s) ${result.unclaimedBookLines.join(", ")} left for retire-book-only-conversion-lines once stamped`);
+      }
       const sourceRowOf = new Map(rows.map((r) => [r.id, r.source_row]));
       for (const p of result.rows) {
         planned.push({ ...p, type });
-        if (p.outcome === "stamp") writes.push({ type, table: lane.table, sourceCol: lane.sourceCol, id: p.id, dtlKey: p.dtlKey, sourceRow: sourceRowOf.get(p.id) ?? null, docNo });
+        if (IS_WRITE.has(p.outcome)) writes.push({ type, table: lane.table, sourceCol: lane.sourceCol, id: p.id, dtlKey: p.dtlKey, sourceRow: sourceRowOf.get(p.id) ?? null, docNo });
         if (IS_REFUSAL.has(p.outcome)) refusals.push(`${type} ${docNo}: ${p.outcome} (source key ${p.sourceKey ?? "-"})`);
       }
     }
@@ -200,7 +236,7 @@ function plan(lanes) {
   const digest = writes.length
     ? crypto.createHash("sha256").update(writes.map((w) => `${w.table}:${w.id}:${w.dtlKey}:${w.sourceRow}`).join("\n")).digest("hex").slice(0, 16)
     : "";
-  return { writes, planned, docs, refusals, unclaimed, digest };
+  return { writes, planned, docs, refusals, unclaimed, merged, digest };
 }
 
 function report(p) {
@@ -212,6 +248,7 @@ function report(p) {
   for (const d of p.docs.not_in_erp.slice(0, SHOW)) say(`  not in the ERP: ${d}`);
   for (const d of p.docs.not_sent_by_writeback.slice(0, SHOW)) say(`  no sent conversion row: ${d}`);
   for (const r of p.refusals.slice(0, SHOW)) say(`  refused: ${r}`);
+  for (const m of p.merged.slice(0, SHOW)) say(`  split in the book: ${m}`);
   const byDoc = new Map();
   for (const w of p.writes) byDoc.set(`${w.type} ${w.docNo}`, (byDoc.get(`${w.type} ${w.docNo}`) ?? 0) + 1);
   for (const [d, n] of [...byDoc.entries()].slice(0, SHOW)) say(`  would stamp: ${d} — ${n} line(s)`);
@@ -238,17 +275,11 @@ if ((process.env.PLAN_DIGEST || "").trim() !== p.digest) {
 try {
   await sql.begin(async (tx) => {
     for (const w of p.writes) {
-      const res = w.type === "DO"
-        ? await tx`UPDATE scm.delivery_order_items SET linked_ac_dtlkey = ${w.dtlKey}
+      /* Table and column names come from LANES, a constant of this file, never
+         from the snapshot or the database; every value is bound. */
+      const res = await tx`UPDATE ${tx("scm." + LANES[w.type].table)} SET linked_ac_dtlkey = ${w.dtlKey}
                     WHERE id = ${w.id} AND company_id = ${CO} AND linked_ac_dtlkey IS NULL
-                      AND so_item_id::text IS NOT DISTINCT FROM ${w.sourceRow}`
-        : w.type === "GR"
-          ? await tx`UPDATE scm.grn_items SET linked_ac_dtlkey = ${w.dtlKey}
-                      WHERE id = ${w.id} AND company_id = ${CO} AND linked_ac_dtlkey IS NULL
-                        AND purchase_order_item_id::text IS NOT DISTINCT FROM ${w.sourceRow}`
-          : await tx`UPDATE scm.purchase_order_items SET linked_ac_dtlkey = ${w.dtlKey}
-                      WHERE id = ${w.id} AND company_id = ${CO} AND linked_ac_dtlkey IS NULL
-                        AND so_item_id::text IS NOT DISTINCT FROM ${w.sourceRow}`;
+                      AND ${tx(LANES[w.type].sourceCol)}::text IS NOT DISTINCT FROM ${w.sourceRow}`;
       if (res.count !== 1) throw new Error(`${w.type} ${w.docNo} row ${w.id} matched ${res.count} rows — it moved since the plan; nothing is kept`);
     }
   });
@@ -264,14 +295,13 @@ await sql.end();
    while a wrong key sat on one of them. */
 const verify = postgres(DST, { ssl: "require", prepare: false, max: 1 });
 const ids = (t) => p.writes.filter((w) => w.type === t).map((w) => w.id);
-const doBack = ids("DO").length
-  ? await verify`SELECT id::text AS id, linked_ac_dtlkey FROM scm.delivery_order_items WHERE id::text IN ${verify(ids("DO"))}` : [];
-const grBack = ids("GR").length
-  ? await verify`SELECT id::text AS id, linked_ac_dtlkey FROM scm.grn_items WHERE id::text IN ${verify(ids("GR"))}` : [];
-const poBack = ids("PO").length
-  ? await verify`SELECT id::text AS id, linked_ac_dtlkey FROM scm.purchase_order_items WHERE id::text IN ${verify(ids("PO"))}` : [];
+const back = [];
+for (const t of TYPES) {
+  if (!ids(t).length) continue;
+  back.push(...await verify`SELECT id::text AS id, linked_ac_dtlkey FROM ${verify("scm." + LANES[t].table)} WHERE id::text IN ${verify(ids(t))}`);
+}
 await verify.end();
-const now = new Map([...doBack, ...grBack, ...poBack].map((r) => [r.id, r.linked_ac_dtlkey]));
+const now = new Map(back.map((r) => [r.id, r.linked_ac_dtlkey]));
 const wrong = p.writes.filter((w) => typeof now.get(w.id) === "undefined" || Number(now.get(w.id)) !== Number(w.dtlKey));
 if (wrong.length) {
   console.error(`verify FAILED on ${wrong.length} row(s), e.g. ${JSON.stringify(wrong.slice(0, 3))}`);

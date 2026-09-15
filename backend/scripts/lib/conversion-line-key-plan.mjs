@@ -31,6 +31,19 @@
  * documented shape (docs/modules/autocount-writeback.md, "Several ERP lines can
  * share ONE book line").
  *
+ * ONE ROW, SEVERAL BOOK LINES (docs/bugs/0913). HC-GRN-2609-008 receives
+ * DSL-SQUARE PILLOW x3 as one ERP row from purchase line 907143, while the book
+ * split that transfer over two lines, 928497 x2 and 928499 x1. "One source on two
+ * lines" refused it, correctly, because the rule had no way to tell a split from
+ * two different rows. It does now, from quantities, and only when the caller
+ * gives them: exactly ONE row of the document carries that source, the book
+ * lines add up to that row's quantity, and nothing downstream holds any of them.
+ * The row then takes the FIRST book line (the lowest key, the line the transfer
+ * made first), and the others are left unclaimed for
+ * retire-book-only-conversion-lines.mjs to zero — after which the book holds the
+ * one line the ERP holds. A caller that passes no quantities (the drain) gets
+ * the refusal exactly as before.
+ *
  * PURE. No filesystem, no database, no clock, no printing.
  * NO SHEBANG: a test imports this module.
  */
@@ -51,9 +64,12 @@ export const KEY_OUTCOMES = Object.freeze([
   "source_not_in_book",
   /* the source key names two or more lines of this document — refused */
   "ambiguous_in_book",
+  /* the ONE row with this source takes the first of the book lines it was split
+     over; they add up to its quantity and nothing downstream holds them */
+  "stamp_merged",
 ]);
 
-export const IS_WRITE = Object.freeze(new Set(["stamp"]));
+export const IS_WRITE = Object.freeze(new Set(["stamp", "stamp_merged"]));
 export const IS_REFUSAL = Object.freeze(new Set(["disagrees", "source_not_in_book", "ambiguous_in_book"]));
 
 const keyOf = (v) => {
@@ -63,14 +79,16 @@ const keyOf = (v) => {
 };
 
 /**
- * @param {Array<{ id: string, linkedKey: unknown, sourceKey: unknown }>} rows
+ * @param {Array<{ id: string, linkedKey: unknown, sourceKey: unknown, qty?: unknown }>} rows
  *   the ERP rows of ONE delivery order or goods receipt
- * @param {Array<{ toDtlKey: unknown, fromDtlKey: unknown }>} bookLines
- *   that SAME document's lines in the book, each with its DocTransfer source
+ * @param {Array<{ toDtlKey: unknown, fromDtlKey: unknown, qty?: unknown, transferredOn?: unknown }>} bookLines
+ *   that SAME document's lines in the book, each with its DocTransfer source.
+ *   Quantities are optional; without them a split transfer stays refused.
  * @returns {{ rows: Array<{ id: string, outcome: string, dtlKey: number | null, sourceKey: number | null }>, unclaimedBookLines: number[] }}
  */
 export function planDocumentKeys(rows, bookLines) {
   const targetsBySource = new Map();
+  const linesBySource = new Map();
   for (const b of bookLines) {
     const from = keyOf(b.fromDtlKey);
     const to = keyOf(b.toDtlKey);
@@ -78,7 +96,22 @@ export function planDocumentKeys(rows, bookLines) {
     const set = targetsBySource.get(from) ?? new Set();
     set.add(to);
     targetsBySource.set(from, set);
+    linesBySource.set(from, [...(linesBySource.get(from) ?? []), { to, qty: Number(b.qty), transferredOn: Number(b.transferredOn) }]);
   }
+  const rowsBySource = new Map();
+  for (const r of rows) {
+    const k = keyOf(r.sourceKey);
+    if (k != null) rowsBySource.set(k, (rowsBySource.get(k) ?? 0) + 1);
+  }
+  /* The first book line of a split transfer, or null when this is not one. */
+  const mergeTarget = (sourceKey, qty) => {
+    if (rowsBySource.get(sourceKey) !== 1) return null;
+    const lines = linesBySource.get(sourceKey) ?? [];
+    if (!lines.every((l) => l.qty > 0 && l.transferredOn === 0)) return null;
+    const total = lines.reduce((sum, l) => sum + l.qty, 0);
+    if (!(Math.abs(total - Number(qty)) < 1e-9)) return null;
+    return Math.min(...lines.map((l) => l.to));
+  };
 
   const claimed = new Set();
   const out = [];
@@ -95,7 +128,14 @@ export function planDocumentKeys(rows, bookLines) {
       continue;
     }
     if (targets.size > 1) {
-      out.push({ id: r.id, outcome: "ambiguous_in_book", dtlKey: null, sourceKey });
+      const first = mergeTarget(sourceKey, r.qty);
+      if (first == null) out.push({ id: r.id, outcome: "ambiguous_in_book", dtlKey: null, sourceKey });
+      else {
+        claimed.add(first);
+        if (linked == null) out.push({ id: r.id, outcome: "stamp_merged", dtlKey: first, sourceKey });
+        else if (linked === first) out.push({ id: r.id, outcome: "already_correct", dtlKey: first, sourceKey });
+        else out.push({ id: r.id, outcome: "disagrees", dtlKey: first, sourceKey });
+      }
       continue;
     }
     const [to] = targets;
@@ -133,6 +173,8 @@ function selfTestCases() {
     { name: "no source key, nothing to pair", rows: [{ id: "a", linkedKey: null, sourceKey: null }], book, want: ["no_source_key"] },
     { name: "a source the document does not hold", rows: [{ id: "a", linkedKey: null, sourceKey: 1 }], book, want: ["source_not_in_book"] },
     { name: "one source on two lines refuses", rows: [{ id: "a", linkedKey: null, sourceKey: 758395 }], book: [...book, { toDtlKey: 930290, fromDtlKey: 758395 }], want: ["ambiguous_in_book"] },
+    { name: "one row over a split whose quantities add up takes the first line", rows: [{ id: "a", linkedKey: null, sourceKey: 907143, qty: 3 }], book: [{ toDtlKey: 928497, fromDtlKey: 907143, qty: 2, transferredOn: 0 }, { toDtlKey: 928499, fromDtlKey: 907143, qty: 1, transferredOn: 0 }], want: ["stamp_merged"] },
+    { name: "a split whose quantities do not add up still refuses", rows: [{ id: "a", linkedKey: null, sourceKey: 907143, qty: 4 }], book: [{ toDtlKey: 928497, fromDtlKey: 907143, qty: 2, transferredOn: 0 }, { toDtlKey: 928499, fromDtlKey: 907143, qty: 1, transferredOn: 0 }], want: ["ambiguous_in_book"] },
   ];
 }
 

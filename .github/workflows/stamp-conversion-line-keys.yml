@@ -1,9 +1,9 @@
-name: Stamp AutoCount line keys on our DOs, GRs and POs (plan / apply)
+name: Stamp AutoCount line keys on our DOs, GRs, invoices and POs (plan / apply)
 
-# Gives the delivery orders, goods receipts and purchase orders the write-back
-# created in AutoCount by transfer the line keys the book pairs them with:
-# DocTransfer for a DO or GR, PODTL.FromSODtlKey for a PO
-# (backend/scripts/stamp-conversion-line-keys.mjs, docs/bugs/0897, 0903).
+# Gives the delivery orders, goods receipts, invoices and purchase orders the
+# write-back created in AutoCount by transfer the line keys the book pairs them
+# with: DocTransfer for a DO, GR, IV or PI, PODTL.FromSODtlKey for a PO
+# (backend/scripts/stamp-conversion-line-keys.mjs, docs/bugs/0897, 0903, 0912).
 # Without a key on every line, an edit of the document is refused whole.
 #
 # Reads a committed snapshot of the book (data/ac-conversion-line-keys.json.gz,
@@ -25,7 +25,7 @@ on:
         type: choice
         options: ["plan", "apply"]
       confirm:
-        description: "Required for apply: stamp the book line keys on our purchase orders, delivery orders and receipts"
+        description: "Required for apply: stamp the book line keys on our purchase orders, delivery orders, receipts and invoices"
         required: false
         default: ""
       plan_digest:
