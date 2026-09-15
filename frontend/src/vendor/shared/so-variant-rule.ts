@@ -67,6 +67,12 @@ export const REQUIRED_VARIANT_AXES_BY_CATEGORY: Record<string, readonly VariantA
     { key: 'legHeight',   label: 'Leg Height',   aliases: ['legHeight', 'sofaLegHeight'], required: false },
     { key: 'fabricCode',  label: 'Fabrics',      aliases: ['fabricCode', 'colorCode', 'colourCode', 'fabricColor'] },
   ],
+  /* SOFA ACCESSORIES (owner 2026-09-14): 「它只需要选颜色」 - the fabric colour and
+     nothing else. Same aliases as the sofa fabric axis, because the same pickers
+     and the same GRN-family editors write it. */
+  fabric_accessory: [
+    { key: 'fabricCode',  label: 'Fabrics',      aliases: ['fabricCode', 'colorCode', 'colourCode', 'fabricColor'] },
+  ],
 };
 
 /** Resolve a raw item group / category to the MAIN bucket the server's sofa

@@ -187,6 +187,16 @@ movement under the EMPTY key. The goods are then in the warehouse, at the right
 value, with their `variants` jsonb fully intact — and invisible to every sofa
 order, which looks up `fabriccode=…|seatheight=…|legheight=…`.
 
+**The Sofa Accessory group (`fabric_accessory`, owner 2026-09-14)** is the third
+group whose key composes an attribute: the **fabric colour only**
+(`fabriccode=…`), so two colours of the same custom pillow are two buckets. Its PO
+line shows the variant editor with just the Fabrics picker (`PcVariantEditor`, and
+the inline fabric box in `PurchaseOrderNew.tsx`). Which categories get that editor
+on every PO / PC form lives in ONE place —
+`vendor/scm/lib/variant-editor-groups.ts` (`showsVariantEditor`), used by
+`PurchaseOrderNew`, `PurchaseConsignmentOrderNew`, `PoLineCard` and `PcLineCard`;
+add a category there, not in a form. `tasks/PLAN-sofa-accessories-category.md`.
+
 **The variants are never the thing that goes missing.** `description2` is built
 from the jsonb alone and prints correctly the whole time, which is exactly why
 this reads as impossible from the screen: the specs are right there on the PO.
@@ -313,7 +323,7 @@ with no per-area level consulted.
 | POST | `/:id/items/:itemId/photos` | | Upload a PO-authored add-on photo (owner 2026-08-28; multipart `file` + optional client `thumb`). Key minted under `po-items/<poId>/<itemId>/`. Refused on a CANCELLED PO. Lives in `purchase-order-item-photos.ts` (the main router is at its size ceiling), mounted in `backend/src/scm/index.ts` on the SAME `/mfg-purchase-orders` prefix as the main router — the separate-router-same-prefix construction the DO scan token uses. |
 | DELETE | `/:id/items/:itemId/photos/:photoKey` | | Delete a PO-OWNED (`po-items/...`) key + its R2 object/thumb. A carried `so-items/...` key is refused 403 `carried_photo_readonly` — same R2 object as the SO's photo; manage it on the Sales Order. |
 | POST | `/` | `:911` | Create (`asDraft: true` → DRAFT, else SUBMITTED). SO-sourced lines (carrying `soItemId`, e.g. the desktop New-PO-from-SO flow) are capped at the SO line's remaining (`qty - po_qty_picked`): over-convert → 409 `qty_exceeds_remaining` unless `confirmOverConvert: true` (pre-write guard, marks idempotency no-write). Manual lines (no `soItemId`) unaffected. |
-| POST | `/from-sos` | `:2139` | Batch convert whole SOs, emitting N POs. The bucket key is per-CATEGORY (owner RE-SPEC 2026-09-11, `po-grouping.ts` `groupKeyFor`). PER-SO: every `(warehouse, supplier, SO, category)` is its own PO — a sofa order's accessories split off. COMBINE: sofa per `(warehouse, supplier, SO)` with NO category tag so the SO's accessories (passed via `sofaSoDocNos`) merge onto it; bedframe per `(warehouse, supplier, SO)` regardless of toggle; mattress per `(warehouse, supplier, 7-day delivery window)`; standalone accessory per `(warehouse, supplier)` across SOs. Warehouse is always in the key, which keeps the header's `purchase_location_id` unambiguous, and a key only merges one supplier's lines so a different-supplier cover cannot land on the sofa's PO. |
+| POST | `/from-sos` | `:2139` | Batch convert whole SOs, emitting N POs. The bucket key is per-CATEGORY (owner RE-SPEC 2026-09-11, `po-grouping.ts` `groupKeyFor`). PER-SO: every `(warehouse, supplier, SO, category)` is its own PO — a sofa order's accessories split off. COMBINE: sofa per `(warehouse, supplier, SO)` with NO category tag so the SO's accessories (passed via `sofaSoDocNos`) merge onto it; bedframe per `(warehouse, supplier, SO)` regardless of toggle; mattress per `(warehouse, supplier, 7-day delivery window)`; standalone accessory per `(warehouse, supplier)` across SOs. A Sofa Accessory (`fabric_accessory`, 2026-09-14) is keyed AS a sofa in both modes, so it always lands on its own SO's sofa PO. Warehouse is always in the key, which keeps the header's `purchase_location_id` unambiguous, and a key only merges one supplier's lines so a different-supplier cover cannot land on the sofa's PO. |
 | POST | `/:id/convert-from-so` | `:2694` | Append SO lines onto an existing PO. |
 | PATCH | `/:id` | `:2219` | Header edit. |
 | POST/PATCH/DELETE | `/:id/items[/:itemId]` | `:2400` / `:2504` / `:2619` | Line CRUD. A line carrying `soItemId` is capped at the SO line's remaining exactly like `POST /` — over-convert → 409 `qty_exceeds_remaining` unless `confirmOverConvert: true` (2026-08-11; see *Binding a PO line to its source SO line*). |
@@ -540,6 +550,10 @@ day it is added.
 > `so_item_id` (the applier now links it after every build is written, through
 > `scripts/lib/added-po-compartment-link.mjs`), and a PO that holds FEWER
 > compartments than its SO, which has no line to link at all.
+>
+> Its bound-line predicate is a hand copy of `isHardBoundLine` and binds the
+> `fabric_accessory` (Sofa Accessory) group since 2026-09-14 — the same category
+> rule as MRP, no per-SKU pillow list (bug 0906).
 > `docs/bugs/0873-a-purchase-compartment-the-sofa-correction-added-was-never-l.md`.
 
 `so_item_id` is what lets a shipment resolve its incoming PO: `dropship-batch.ts`
@@ -809,6 +823,15 @@ Live-count, not arithmetic: it re-sums `purchase_order_items.qty` per
 matter: lines with `from_mrp === true` never lock the SO line (`:2372`), and
 POs whose status is `CANCELLED` **or `DRAFT`** are excluded (`:2384`). Best-effort
 throughout — it logs and skips, because the primary write already committed.
+
+**A company-1 BOUND line does not rely on this counter (2026-09-14).** Because
+MRP-origin lines are left out, `po_qty_picked` could read 0 on a line already on
+an MRP-origin purchase order, and MRP-origin converts skipped the cap entirely —
+that is how five custom pillow lines were ordered twice (bug 0890). For a line
+`isHardBoundLine` names, on company 1, both the bulk convert (`convertSosToPosCore`,
+MRP or not) and the generic create's over-convert check use
+`boundAwarePicked` = max(`po_qty_picked`, qty on every live PO line carrying that
+`so_item_id`) from `lib/bound-line-ordered.ts`. Pooled lines are unchanged.
 
 ---
 
@@ -1904,9 +1927,20 @@ endpoint and tab. The header view is untouched.
   `DesktopOnly` on mobile, so there is no mobile chasing screen (and no
   desktop/mobile pair to keep in sync — §8).
 
-- The AutoCount UDF dates — Estimate Delivery Date and Supplier Delivery Date
-  2 / 3 — are columns on the report but the ERP does not sync them yet
-  (`supplier_delivery_date_2/3` are 0% populated), so they render blank. Owner
+- The AutoCount UDF dates are HEADER fields in the book, repeated on every line
+  of its report. Mapping, proven against the live book 2026-09-15
+  (`docs/bugs/0918-autocount-supplier-delivery-dates-never-reached-the-erp-purc.md`):
+  Estimate Delivery Date = `PO.UDF_EDate` -> `supplier_delivery_date_2`;
+  Supplier Delivery Date 2 = `UDF_EDate2` -> `_3`; Supplier Delivery Date 3 =
+  `UDF_EDate3` -> `_4`. The migrated POs got them once, through
+  `fill-po-supplier-dates-from-autocount.yml`. From then on the ERP -> book
+  direction carries them (owner 2026-09-15, option A,
+  `docs/bugs/0919-a-supplier-delivery-date-entered-in-the-erp-never-reached-au.md`):
+  `/create-po`, `/so-to-po` and the PO `/edit` send `UDF: {EDate, EDate2, EDate3}`
+  from the HEADER slots (`services/autocount-po-supplier-dates.ts`). A blank slot
+  is OMITTED, never sent null, so clearing a date in the ERP does not clear the
+  book's. Per-line slots are not sent; the book has no line field for them.
+  Nothing pulls book dates into `scm`; the book is closed to staff. Owner
   2026-09-12: keep the column positions.
 
 ---
@@ -1976,3 +2010,27 @@ PLACE (the phone has no separate editor for this document). It is offered when
 `useAddPurchaseOrderItem` with the desktop add row's body. A refusal stays inline beside the row,
 which keeps what was typed; the unit price starts blank. Trace:
 `docs/bugs/0873-the-phone-could-not-add-a-line-to-any-document.md`.
+
+---
+
+## Print all goes through the Print preview (2026-09-14)
+
+Owner, over the Delivery Order list's merged-PDF preview: 「PO打印没有这个」. Ticking
+orders on `frontend/src/pages/scm-v2/PurchaseOrdersListV2.tsx` and pressing
+**Print all** went straight to a combined-or-separate prompt and a download. It now
+opens the same `PrintPreviewBatchModal` as the Goods Received, Delivery Order and
+Purchase Invoice lists (`usePrintPreview(deliverSelectedPos)`):
+
+- the card names the stack: company, "Purchase Orders", the count, and the PO
+  numbers as the list shows them (a revised order reads `_R1`);
+- **Print now** and **View full PDF** render ONE merged file with the chosen
+  `action`, without asking;
+- **Download PDF** still asks "One combined PDF / Separate files".
+
+One ticked order prints on its own. The generator is unchanged: the list still
+passes no `sofaPhotos` map, which `po-print-paths-draw-the-sofa.test.ts` requires.
+The Sales Invoice list had the same gap and was fixed with it. Pinned by
+`frontend/src/pages/scm-v2/PurchaseOrdersListV2.printPreview.test.tsx` and
+`frontend/src/pages/scm-v2/batchPrintGoesThroughPreview.test.ts`, which fails any
+list that calls a `generateCombined...Pdf` function without the preview. Trace:
+`docs/bugs/0890-print-all-on-the-purchase-order-and-sales-invoice-lists-skip.md`.

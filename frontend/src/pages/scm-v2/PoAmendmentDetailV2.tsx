@@ -44,6 +44,7 @@ import {
   resolveStatusPill,
   type StatusTone,
 } from "../../vendor/scm/lib/status-pill";
+import { AMENDMENT_APPROVER_LABEL, PO_AMENDMENT_APPROVER } from "../../vendor/scm/lib/amendment-approver";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { usePrompt } from "../../vendor/scm/components/PromptDialog";
@@ -863,7 +864,7 @@ export function PoAmendmentDetailV2() {
                   )}
                   {!canApprove && !canWithdraw && (
                     <p className="text-[12px] text-ink-muted">
-                      Awaiting approval.
+                      Awaiting {AMENDMENT_APPROVER_LABEL[PO_AMENDMENT_APPROVER]} approval.
                     </p>
                   )}
                 </div>

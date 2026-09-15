@@ -10,9 +10,11 @@ permissions are IDENTICAL on phone and desktop — 「Frontend、backend、datab
 **Audited tree:** `main` at `081a3fe72`. Every line number below is at that commit.
 Main has moved since; re-grep before trusting a line.
 
-**Status of this document:** findings + options. One defect is already fixed
-(§5, PR #3831, open at the time of writing). Nothing else has been changed. The
-owner decisions it needs are in §7.
+**Status of this document:** findings + options, written 2026-09-14 at
+`081a3fe72`. **Updated later the same day:** the owner answered §7 (answers in
+that section: option C, and "follow the latest version" for D3-D5). Defects are
+being fixed one PR each; §5 carries each one's state. The §4 rows still describe
+`081a3fe72` and are not rewritten as they close.
 
 ---
 
@@ -50,10 +52,11 @@ owner decisions it needs are in §7.
    entry the phone borrows).
 6. **Defects found in passing** (§5): a Sales Director could create a Super Admin
    from the phone (fixed, #3831); the phone's Purchase Invoice "Record payment"
-   bypasses the finance payment-voucher approval and writes no GL entry; the
-   phone's convert-from-Sales-Order picker lists only DELIVERED orders; the phone
-   fabric list ignores the Model's allowed fabrics; a service-case sub-status that
-   can never save.
+   bypasses the finance payment-voucher approval and writes no GL entry, while the
+   desktop's two payment buttons on the same invoice did nothing (B-15, found
+   while fixing B-2); the phone's convert-from-Sales-Order picker lists only
+   DELIVERED orders; the phone fabric list ignores the Model's allowed fabrics; a
+   service-case sub-status that can never save.
 
 ## 1. Method and honest limits
 
@@ -273,20 +276,21 @@ M = `frontend/src/mobile/`, P = `frontend/src/pages/scm-v2/`, B = `backend/src/`
 
 | id | defect | evidence | status |
 |---|---|---|---|
-| B-1 | **A Sales Director could invite an account into Super Admin** (and activate it with a password) from the phone | `backend/src/routes/users.ts` invite scoped branch defaulted the role only when absent; `backend/src/routes/roles.ts:29-41` | **FIXED in PR #3831** (open at writing; bug ledger entry 0887 ships with it) |
-| B-2 | Phone PI "Record payment" bypasses Payment Vouchers (Finance check + approve) and the GL; also skips the hold check | DOC-10 | open — owner decision §7 |
-| B-3 | Phone convert-from-SO picker lists only DELIVERED SOs | DOC-4, `MobileConvertWizard.tsx:307-317` | open |
-| B-4 | Phone fabric picker ignores the Model's allowed fabrics — the 0836 class the owner asked to close permanently | SO-13 | open |
-| B-5 | Service-case sub-status "Pending Customer Pickup" can never save: offered on both surfaces, missing from the PATCH allowlist | `backend/src/routes/assr.ts:1863-1868`; `frontend/src/vendor/scm/lib/assr/stages.ts:143`; desktop swallows the 400 | open (L) |
+| B-1 | **A Sales Director could invite an account into Super Admin** (and activate it with a password) from the phone | `backend/src/routes/users.ts` invite scoped branch defaulted the role only when absent; `backend/src/routes/roles.ts:29-41` | **FIXED, #3831 merged 2026-09-14 08:19Z**; production Worker `/health` reported sha `ba8a8642` (its merge commit) when re-checked the same afternoon. Ledger: `docs/bugs/0887-a-sales-director-could-invite-a-new-account-straight-into-su.md` |
+| B-2 | Phone PI "Record payment" bypasses Payment Vouchers (Finance check + approve) and the GL; also skips the hold check | DOC-10 | **FIXED, #3841 merged 2026-09-14 09:59Z and in production** (the Worker's `/health` sha `b9d05153` contains its merge commit `10fd908b`). The route refuses every call; both surfaces send the operator to the AP Payment. Ledger: `docs/bugs/0889-supplier-invoice-payments-could-skip-the-payment-voucher-and.md`. Payments recorded through it before: **0 entries, RM 0.00** across the 53 purchase-invoice audit rows since 2026-07-23 (read-only run 34833260858); before 2026-07-23 UNKNOWN, no audit row exists |
+| B-3 | Phone convert-from-SO picker lists only DELIVERED SOs | DOC-4, `MobileConvertWizard.tsx:307-317` | **FIXED, #3836 merged 2026-09-14 09:13Z and in production** |
+| B-4 | Phone fabric picker ignores the Model's allowed fabrics — the 0836 class the owner asked to close permanently | SO-13 | **FIXED, #3838 merged 2026-09-14 09:13Z and in production.** The owner then reported fabrics repeatedly could not be picked at all; that root cause was the search cap applied before the retired / pool filters: **FIXED, #3856 merged 12:40Z, in production** (the live bundle's `fabric-queries` chunk sends `&itemCode=`), ledger `docs/bugs/0893-the-fabric-search-capped-at-50-before-hiding-retired-and-dis.md` |
+| B-5 | Service-case sub-status "Pending Customer Pickup" can never save: offered on both surfaces, missing from the PATCH allowlist | `backend/src/routes/assr.ts:1863-1868`; `frontend/src/vendor/scm/lib/assr/stages.ts:143`; desktop swallows the 400 | **FIXED, #3843 merged 2026-09-14 09:59Z and in production**; the sub-status list has one home (`backend/src/scm/shared/assr-sub-statuses.ts`). Ledger: `docs/bugs/0890-a-service-case-could-never-be-switched-back-to-pending-custo.md` |
 | B-6 | Global search returns service-case number, customer and complaint to any signed-in user of the company, no visibility rule | `backend/src/routes/search.ts:183-190, 268-272` | open (L) |
 | B-7 | Driver POD is allowed by the server and finished by no screen | DOC-3 | open |
 | B-8 | Desktop "Override" on a locked SO collects a reason that is never sent; the same-status PATCH writes no audit row | `SalesOrderDetail.tsx:2079-2090`; `mfg-sales-orders.ts:5757-5759` | open (A) |
-| B-9 | `audit-permission-grants.mjs` classifier is stale (Managing Director, Warehouse Crew KL, Calendar Viewer) | §2 | open (L) |
+| B-9 | `audit-permission-grants.mjs` classifier is stale (Managing Director, Warehouse Crew KL, Calendar Viewer) | §2 | **FIXED, #3858 merged 2026-09-14 12:27Z**: the classifier asks the policy modules (`docs/bugs/0894-...`). The same work found both diagnostics printing staff names into the public Actions log; they print user ids now (`docs/bugs/0895-...`). Earlier runs' logs still hold names — deleting them is a repository admin's call |
 | B-10 | Line remarks stored inconsistently (create reads `variants.remark`, line edit reads top-level `remark`, add-line writes none for non-sofa) — phone and desktop each lose one side | `mfg-sales-orders.ts:4232-4235, 7954-8007, 8517-8523` | UNVERIFIED — needs a live test |
 | B-11 | Phone line edits stop following the header delivery date (override flag never sent) | `MobileNewSO.tsx:1591-1601` vs `SalesOrderDetail.tsx:1487-1488` | open (A) |
 | B-12 | `positionPolicy.ts:429` matches "Sales Director" by word boundary while capabilities use the exact name | `backend/src/services/positionPolicy.ts:429` | open (A) |
 | B-13 | Desktop CSV export of service cases includes PO amounts for anyone who can open the list | `backend/src/routes/assr.ts:1205-1244` | open (A) |
 | B-14 | `/api/scm/entity-audit-log` has no area guard | `backend/src/scm/index.ts:597-606` — its comment names narrowing an OWNER call | known, owner call |
+| B-15 | Desktop PI payment buttons did nothing: **Record payment** navigated to `?tab=payments&record=1` on the same page, which reads neither; **Mark paid** showed only at RM0 owed and sent RM0, which the route refuses. Found while fixing B-2. Row DOC-10 was right that the desktop's working path is Payment Vouchers; it did not record that the invoice's own two buttons were dead | `PurchaseInvoiceDetailV2.tsx`, `PurchaseInvoicesListV2.tsx` at `ba8a86428` | **FIXED with B-2**: Record payment opens the AP Payment with the invoice ticked; Mark paid removed |
 
 ## 6. Options
 
@@ -313,6 +317,16 @@ first, one PR each.
 
 Default for every row not listed in §7: **follow the server** — where the server
 accepts, both surfaces allow; where the server refuses, both surfaces hide.
+
+**The owner's answers (2026-09-14).**
+
+| # | answer | what it means here |
+|---|---|---|
+| D1 | chose 「现在上线（推荐）」 | #3831 merged and deployed (§5 B-1) |
+| D2 | chose 「C 服务器决定（推荐）」, then 「那就跟c」 | option C, staged, Sales Orders first |
+| D3 | 「7月？几时的时候呢？要根据最新的啊」 | the latest rulings supersede the July phone-only project rules: 2026-08-19 made project visibility company-only, and 2026-09-12 made permissions identical on phone and desktop. The phone follows the desktop and the server. A BD-only edit rule, if still wanted, returns as a grantable permission under option C, never as phone-only code |
+| D4 | 「根据最新的version」 | **Projects:** archived projects stay editable on both surfaces, as the desktop and the server do — the phone's lock was removed by #3851 (merged 10:32Z, in production). **Service cases: CORRECTED.** The premise was wrong: the desktop has shown "read-only. Use Restore to reactivate." on an archived case since 2026-04-20, yet still lets resolution, supplier and the supplier status update be edited, while the phone locks those and leaves items and notes editable (SC-1, SC-7), and the server locks nothing. Asked again, the owner could not place the question; measured instead (read-only, 2026-09-14): **0 of 904 service cases are archived** (company 1: 0 of 886; company 2: 0 of 18). Nothing is changed while no case uses it; if archiving starts, align both surfaces to the desktop banner's rule |
+| D5 | 「根据最新的version」 | supplier payments go through payment vouchers (the 2026-09-02 flow): §5 B-2 and B-15 |
 
 ## 8. Re-running the evidence
 

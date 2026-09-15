@@ -38,7 +38,7 @@ import { resolvePoSoCoveragePerSkuForPos, resolveDeliveredByCodeForPos, summariz
 import { enqueueConvert, recordParentlessCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
 import { sourceGrnIdsForPi } from '../lib/convert-parent';
 import { refuseMigratedSources } from '../lib/migrated-chain';
-import { attachGrnLineFacts, withPoPriceSnapshot } from '../lib/pi-po-price';
+import { attachGrnLineFacts, withPoPriceSnapshot } from '../lib/pi-po-price'; import { loadOutstandingGrnLines } from '../lib/outstanding-grn-lines';
 import { refuseWithoutWriting } from '../lib/no-write-refusal';
 /* The create's refusal bodies and the two rules its exits follow (2026-08-19). */
 import { insertFailed, loadFailed, rollbackPi, committedAnyway } from '../lib/pi-create-refusals';
@@ -410,12 +410,13 @@ purchaseInvoices.get('/', async (c) => {
 });
 
 /* ── GET /outstanding-grn-items ─────────────────────────────────────────
-   Returns GRN LINES eligible for invoicing. Migration 0106 added
-   grn_items.invoiced_qty, so this now tracks PER-LINE remaining (Commander
-   2026-05-30 unified consumption model): for each grn_item from a POSTED GRN
-   we return remaining = qty_accepted - invoiced_qty and include only lines
-   with remaining > 0. A GRN line can be invoiced across MULTIPLE PIs until
-   fully consumed (replaces the old header-level all-or-nothing dedupe).
+   The Bill a Goods-Received Note picker: every line still to bill (accepted -
+   invoiced - returned > 0, per line since mig 0106, so a note can be billed
+   across several invoices) on POSTED, not-held notes. The read lives in
+   lib/outstanding-grn-lines.ts: driven by the notes that still have something
+   to bill, paged, company-scoped. It used to take the newest 500 posted notes
+   FIRST and filter afterwards, so an older unbilled note fell out of the
+   picker in silence.
 
    IMPORTANT (route ordering): this STATIC path MUST be registered before
    the `/:id` param route below — otherwise Hono matches `/:id` first and
@@ -423,85 +424,8 @@ purchaseInvoices.get('/', async (c) => {
    2026-05-28, same class as the PO-from-SO shadowing.) */
 purchaseInvoices.get('/outstanding-grn-items', async (c) => {
   const sb = c.get('supabase');
-  // Pull every POSTED GRN with its supplier + parent PO so we can group
-  // and present in the picker.
-  const { data: grnHeaders, error: hErr } = await scopeToCompany(
-    sb
-      .from('grns')
-      .select(`
-      id, grn_number, received_at, supplier_id, purchase_order_id, currency, exchange_rate,
-      supplier:suppliers ( code, name ),
-      purchase_order:purchase_orders ( po_number )
-    `),
-    c,
-  )
-    .eq('status', 'POSTED').eq('on_hold', false) // mig 0324: a held GRN now reads POSTED — the block stopped being free
-    .order('received_at', { ascending: false })
-    .limit(500);
-  if (hErr) return c.json({ error: 'load_failed', reason: hErr.message }, 500);
-  const headers = (grnHeaders ?? []) as unknown as Array<{
-    id: string; grn_number: string; received_at: string; supplier_id: string;
-    purchase_order_id: string | null;
-    currency?: string | null; exchange_rate?: string | number | null;
-    supplier: { code: string; name: string } | null;
-    purchase_order: { po_number: string } | null;
-  }>;
-  if (headers.length === 0) return c.json({ items: [] });
-
-  // Load the GRN items for every POSTED GRN. Per-line remaining tracking
-  // (migration 0106) replaces the header-level dedupe — a partially-invoiced
-  // GRN keeps surfacing its lines that still have remaining > 0.
-  const grnIds = headers.map((h) => h.id);
-  const { data: items, error: iErr } = await sb
-    .from('grn_items')
-    .select(`
-      id, grn_id, material_kind, item_code, material_name, item_group,
-      description, qty_accepted, qty_rejected, invoiced_qty, returned_qty, unit_price_sen, variants
-    `)
-    .in('grn_id', grnIds);
-  if (iErr) return c.json({ error: 'load_failed', reason: iErr.message }, 500);
-
-  const headerById = new Map(headers.map((h) => [h.id, h]));
-  const out = ((items ?? []) as Array<{
-    id: string; grn_id: string; material_kind: string; item_code: string;
-    material_name: string; item_group: string | null; description: string | null;
-    qty_accepted: number; qty_rejected: number; invoiced_qty: number; returned_qty: number;
-    unit_price_sen: number; variants: unknown;
-  }>)
-    .map((r) => {
-      const invoiced = r.invoiced_qty ?? 0;
-      const returned = r.returned_qty ?? 0;
-      const remaining = (r.qty_accepted ?? 0) - invoiced - returned;
-      return { ...r, _remaining: remaining };
-    })
-    .filter((r) => r._remaining > 0)
-    .map((r) => {
-      const h = headerById.get(r.grn_id)!;
-      return {
-        grnItemId:      r.id,
-        grnId:          r.grn_id,
-        grnDocNo:       h.grn_number,
-        receivedAt:     h.received_at,
-        supplierId:     h.supplier_id,
-        supplierCode:   h.supplier?.code ?? '',
-        supplierName:   h.supplier?.name ?? '',
-        purchaseOrderId: h.purchase_order_id,
-        poDocNo:        h.purchase_order?.po_number ?? null,
-        itemCode:       r.item_code,
-        description:    r.description ?? r.material_name,
-        itemGroup:      r.item_group ?? '',
-        qtyAccepted:    r.qty_accepted,
-        invoicedQty:    r.invoiced_qty ?? 0,
-        remaining:      r._remaining,
-        unitPriceSen: r.unit_price_sen,
-        variants:       r.variants,
-        /* Multi-note invoices (owner 2026-08-06) — the picker may combine
-           several of a supplier's notes into ONE invoice, but a PI header
-           carries ONE currency + rate, so the picker locks on these too. */
-        currency:       normalizeCurrency(h.currency),
-        exchangeRate:   normalizeExchangeRate(h.exchange_rate, normalizeCurrency(h.currency)),
-      };
-    });
+  const loaded = await loadOutstandingGrnLines({ sb, scopeQuery: (q) => scopeToCompany(q, c) });
+  if (loaded.error !== null) return c.json({ error: 'load_failed', reason: loaded.error }, 500);
 
   /* Owner 2026-08-06 — re-resolve each line's SUPPLIER fabric code from the
      live fabric_trackings row, exactly as the GRN / PO / SI details already do
@@ -511,9 +435,9 @@ purchaseInvoices.get('/outstanding-grn-items', async (c) => {
      current one — the same GRN line read two different ways (found on
      2990-GRN-2608-006: detail KN390-1, picker KN390-2). One batched read,
      fail-soft. */
-  await enrichLinesWithFabricSupplierCode(sb, c, out);
+  await enrichLinesWithFabricSupplierCode(sb, c, loaded.items);
 
-  return c.json({ items: out });
+  return c.json({ items: loaded.items, truncated: loaded.truncated });
 });
 
 purchaseInvoices.get('/:id', async (c) => {
@@ -1137,76 +1061,20 @@ export const postPurchaseInvoiceHandler = async (c: any) => {
 };
 purchaseInvoices.patch('/:id/post', postPurchaseInvoiceHandler);
 
-// Record a payment against the PI. Adds to paid_sen and auto-transitions
-// status: paid_sen == total → PAID, paid_sen > 0 && < total → PARTIALLY_PAID.
-purchaseInvoices.patch('/:id/payment', async (c) => {
-  const sb = c.get('supabase'); const id = c.req.param('id');
-  /* company-scope: this records MONEY PAID. The concurrency loop below guards
-     two payments racing on the same PI, never whose PI it is. */
-  const { data: own, error: ownErr } = await scopeToCompany(sb.from('purchase_invoices').select('id').eq('id', id), c).maybeSingle();
-  if (ownErr) return c.json({ error: 'lookup_failed', reason: ownErr.message }, 500);
-  if (!own) return c.json({ error: 'not_found' }, 404);
-  let body: { amountSen?: number; notes?: string };
-  try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
-  const amount = Number(body.amountSen ?? 0);
-  if (!Number.isFinite(amount) || amount <= 0) return c.json({ error: 'invalid_amount' }, 400);
-
-  // Optimistic-concurrency loop (Bug#5, ported from 2990 1355332c). The old code
-  // did read-modify-write — two payments hitting the SAME PI at once both read X
-  // and both wrote X+amount, silently LOSING one. PI has no payment ledger to
-  // re-sum (unlike SI's recomputePaid), and PostgREST can't do `col = col + x`,
-  // so we gate the UPDATE on `paid_sen = <the value we just read>`: if a
-  // concurrent payment moved it, the update matches 0 rows and we retry with a
-  // fresh read.
-  for (let attempt = 0; attempt < 6; attempt += 1) {
-    const { data: cur } = await sb.from('purchase_invoices')
-      .select('paid_sen, total_sen, status, invoice_number, company_id').eq('id', id).maybeSingle();
-    if (!cur) return c.json({ error: 'not_found' }, 404);
-    const c0 = cur as {
-      paid_sen: number; total_sen: number; status: string;
-      invoice_number?: string | null; company_id?: number | null;
-    };
-    // LEAK GUARD (DRAFT) — a DRAFT PI is not yet a real liability; reject payment
-    // until it's confirmed. (Re-added with the DRAFT lifecycle — see POST/.)
-    if (c0.status === 'DRAFT') return c.json({ error: 'not_payable', message: 'PI is a draft — confirm it before recording payment' }, 409);
-    if (c0.status === 'CANCELLED') return c.json({ error: 'not_payable', message: 'PI is cancelled' }, 409);
-
-    const newPaid = c0.paid_sen + amount;
-    const newStatus = newPaid >= c0.total_sen ? 'PAID' : 'PARTIALLY_PAID';
-
-    const { data, error } = await sb.from('purchase_invoices').update({
-      paid_sen: newPaid, status: newStatus, updated_at: new Date().toISOString(),
-    })
-      .eq('id', id)
-      .eq('paid_sen', c0.paid_sen) // only if nobody else moved it since the read
-      .select('id, paid_sen, status');
-    if (error) return c.json({ error: 'payment_failed', reason: error.message }, 500);
-    if (data && data.length > 0) {
-      /* Written only by the attempt whose compare-and-set actually landed, so a
-         retry loop cannot produce two rows for one payment. The from-value is
-         the paid_sen that guard matched, which makes the pair exact rather
-         than approximate. All three figures are INTEGER SEN. */
-      await recordEntityAudit(sb, {
-        entityType: 'PURCHASE_INVOICE',
-        entityId: id,
-        entityDocNo: c0.invoice_number ?? null,
-        action: 'UPDATE',
-        actor: c.get('houzsUser'),
-        companyId: c0.company_id ?? activeCompanyId(c),
-        statusSnapshot: newStatus,
-        note: 'Payment recorded',
-        fieldChanges: compactChanges([
-          fieldChange('paidSen', c0.paid_sen, newPaid),
-          fieldChange('paymentAmountSen', null, amount),
-          ...statusChange(c0.status, newStatus),
-        ]),
-      });
-      return c.json({ purchaseInvoice: data[0] });
-    }
-    // 0 rows updated → a concurrent payment changed paid_sen; loop re-reads + retries.
-  }
-  return c.json({ error: 'payment_conflict', message: 'Another payment was recorded at the same moment — please check the balance and retry.' }, 409);
-});
+/* RETIRED (docs/bugs/0889-supplier-invoice-payments-could-skip-the-payment-voucher-and.md).
+   This added a typed amount straight onto paid_sen: no payment voucher, no
+   journal entry, no hold check, no approval, and no clamp to what was owed. A
+   supplier invoice is paid with an AP Payment voucher, which settles it through
+   scm.settle_pi_paid_sen when the voucher posts (routes/payment-vouchers.ts).
+   Its only working caller was the phone's Record Payment sheet; the desktop's
+   Mark paid sent RM0, which this refused. Kept as a refusal rather than deleted
+   so a browser tab still running the old screen gets a sentence, not a 404. */
+export const retiredPiPaymentHandler = (c: any) =>
+  c.json({
+    error: 'payment_voucher_required',
+    message: 'Supplier invoices are paid with an AP Payment: Finance, Money out, Payment Vouchers.',
+  }, 409);
+purchaseInvoices.patch('/:id/payment', retiredPiPaymentHandler);
 
 // Exported for the scope tests: supabaseAuth cannot run in the vitest harness.
 export const cancelPurchaseInvoiceHandler = async (c: any) => {

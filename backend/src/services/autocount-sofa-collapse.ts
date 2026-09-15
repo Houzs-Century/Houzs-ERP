@@ -265,6 +265,41 @@ function sameMultiset(a: string[], b: string[]): boolean {
   return true;
 }
 
+/* AN ARMED END IS AN END (docs/bugs/0906). The book's decoder reads a plain
+   armed end — 1EL / 2EL / 1ER / 2ER — as the end of the sofa its hand names
+   whatever position the token takes: `CT + 2EL + 1ER` decodes to
+   [2A(LHF), Console, 1A(RHF)]. The ERP lists pieces in the order they were
+   typed, so HC-SO-012736 holds [Console, 2A(LHF), 1A(RHF)] and the composed text
+   was refused for decoding into the only arrangement those pieces can take.
+
+   Returns the decoded arrangement only when it is the ERP's pieces with nothing
+   moved except armed ends, each now at the end its hand names: at most one left
+   and one right armed end, every other piece in the ERP's relative order, the
+   left end first and the right end last. Anything else — two sofas' worth of
+   ends, a middle piece moved, a chaise, a recliner arm — returns null and the
+   exact comparison stands. Handedness is never changed, so this cannot write
+   the mirror. */
+const ARMED_END = /^[12]A\((LHF|RHF)\)$/;
+function armedEndsPlaced(text: string, model: string, erp: string[]): string[] | null {
+  const e = erp.map(up);
+  const lefts = e.filter((p) => ARMED_END.test(p) && p.endsWith('(LHF)'));
+  const rights = e.filter((p) => ARMED_END.test(p) && p.endsWith('(RHF)'));
+  if (lefts.length > 1 || rights.length > 1 || lefts.length + rights.length === 0) return null;
+  let decoded: string[];
+  try {
+    decoded = parseSofa(text, model, hasMechanism(erp)).pieces;
+  } catch {
+    return null;
+  }
+  const d = decoded.map(up);
+  if (!sameMultiset(d, e) || sameSeq(d, e)) return null;
+  const middle = (xs: string[]) => xs.filter((p) => !ARMED_END.test(p));
+  if (!sameSeq(middle(d), middle(e))) return null;
+  if (lefts.length && d[0] !== lefts[0]) return null;
+  if (rights.length && d[d.length - 1] !== rights[0]) return null;
+  return decoded;
+}
+
 function sameSpecials(a: string[], b: string[]): boolean {
   const A = new Set(a.map(specialKey).filter(Boolean));
   const B = new Set(b.map(specialKey).filter(Boolean));
@@ -379,8 +414,14 @@ function collapseRun(
      while the book's text says exactly that. Defaulting it either way makes one
      of the two callers silently wrong (CLAUDE.md, BUG CLASS optional-param-noop). */
   bookGrouped: boolean,
+  /* Pieces of ANOTHER model the book holds on this line, as `CNR 8069`
+     (docs/bugs/0913). Every one is written into the text and must be present in
+     whatever is sent; `[]` for a build of one model. Required, so a caller that
+     gathers a mixed build cannot forget to say so. */
+  foreign: string[],
 ): { lines: CollapsedLine[] } | { refusal: string } {
   const codes = run.map((r) => r.line.item_code);
+  const namesForeign = (text: string) => foreign.every((f) => text.includes(f));
   const desc2 = String(run[0].line.description2 ?? '').trim();
   if (!desc2) {
     return { refusal: 'no Desc2 on the compartment lines — nothing to carry the build into AutoCount' };
@@ -504,6 +545,7 @@ function collapseRun(
      either spells the build inside the column or refuses it visibly. */
   if ((reps > 0 || pieces !== compartments)
     && desc2.length <= AC_DESC2_MAX
+    && namesForeign(desc2)
     && decodesTo(desc2, model, build, { size, colour, specials }).ok) {
     /* A gathered run is ONE build by the book's own key, so it emits one line;
        the repeat arithmetic below is for a run that holds N identical sofas. */
@@ -539,7 +581,11 @@ function collapseRun(
      diagnosis is what went wrong with the document as it stands, not with a
      rewrite of it. */
   const attempt = (sp: string[]): { text: string } | { why: string } => {
-    const t = composeSofaDesc2(pieces, { size, colour, specials: sp });
+    const spelled = composeSofaDesc2(pieces, { size, colour, specials: sp });
+    /* The decoder skips a segment it has no word for, so a foreign piece's name
+       rides after the specials without changing what the text decodes to; the
+       gate below still reads the pieces, size, colour and specials exactly. */
+    const t = spelled == null ? null : [spelled, ...foreign].join(' / ');
     if (!t) {
       return {
         why: `cannot spell [${pieces.join(', ')}] in the AutoCount Desc2 grammar `
@@ -555,8 +601,14 @@ function collapseRun(
     /* The gate is asked about the text that is ACTUALLY SENT, with the specials
        that are actually in it. Comparing pointed text against the full special
        list would fail every time and make the second attempt dead code. */
-    const g = decodesTo(t, model, pieces, { size, colour, specials: sp });
+    let g = decodesTo(t, model, pieces, { size, colour, specials: sp });
+    /* The one reordering the gate accepts: armed ends read to their own ends,
+       nothing else moved. Size, colour and specials are then compared exactly
+       against that arrangement, by the same gate. */
+    const placed = g.ok ? null : armedEndsPlaced(t, model, pieces);
+    if (placed) g = decodesTo(t, model, placed, { size, colour, specials: sp });
     if (!g.ok) return { why: `composed Desc2 does not survive a decode: ${g.why}` };
+    if (!namesForeign(t)) return { why: `composed Desc2 does not name the piece(s) of another model: ${foreign.join(', ')}` };
     return { text: t };
   };
 
@@ -589,6 +641,7 @@ function collapseRun(
      reach the book at all. Size, colour and specials are still compared
      EXACTLY, by the same decodesTo the composer answers to. */
   if (desc2.length <= AC_DESC2_MAX && sameMultiset(build, compartments)
+    && namesForeign(desc2)
     && decodesTo(desc2, model, build, { size, colour, specials }).ok) {
     return { lines: [mkLine(run, desc2, 'echo')] };
   }
@@ -616,17 +669,26 @@ function collapseRun(
  * more documents are the same shape (HC-SO-001255, HC-SO-002315, HC-SO-004716,
  * HC-SO-012016), measured on production 2026-09-10.
  *
- * NON-CONTIGUOUS ONLY, deliberately. A run the adjacency rule already forms is
- * left to it, so this can only change the documents that are broken today.
+ * NON-CONTIGUOUS ONLY, deliberately — or contiguous with DIFFERENT Desc2, which
+ * the adjacency rule splits just the same. A run the adjacency rule already
+ * forms is left to it, so this can only change the documents that are broken
+ * today.
  *
- * SAME MODEL AS WELL AS SAME KEY. A key is the book's line, and two different
- * models cannot be one build; disagreeing models mean something is wrong with
- * the data, and gathering them would hide it behind a composed line.
+ * A PIECE OF ANOTHER MODEL (docs/bugs/0913). A key is the book's line, so pieces
+ * of two models under one key are one sofa the book already holds — HC-SO-002861
+ * is DSL-8060 SOFA 184398, whose amendment turned one piece into an 8069 corner.
+ * Grouping by model as well as key split that sofa in two, and the lone 8069
+ * corner was refused ("cannot spell [CNR]"), so the document could never reach
+ * the book. Now the pieces are gathered under the model that holds a STRICT
+ * majority of them, and every other piece is NAMED in the text (`CNR 8069`), so
+ * the difference is written into the book rather than hidden behind a composed
+ * line. With no majority the models are grouped apart as before, and refused.
  */
-function scatteredByBookLine(
-  lines: CollapsibleLine[],
-): Map<number, { line: CollapsibleLine; index: number; compartment: string }[]> {
-  const byKey = new Map<string, { line: CollapsibleLine; index: number; compartment: string }[]>();
+type Piece = { line: CollapsibleLine; index: number; compartment: string };
+type BookGroup = { pieces: Piece[]; model: string; foreign: string[] };
+
+function scatteredByBookLine(lines: CollapsibleLine[]): Map<number, BookGroup> {
+  const byKey = new Map<string, (Piece & { model: string })[]>();
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
     const split = splitSofaCode(line.item_code);
@@ -634,17 +696,44 @@ function scatteredByBookLine(
     if (line.item_group != null && up(line.item_group) !== 'SOFA') continue;
     const key = line.linked_ac_dtlkey;
     if (key == null) continue;
-    const k = `${up(split.model)}::${String(key)}`;
-    const bucket = byKey.get(k) ?? [];
-    bucket.push({ line, index, compartment: split.compartment });
-    byKey.set(k, bucket);
+    const bucket = byKey.get(String(key)) ?? [];
+    bucket.push({ line, index, compartment: split.compartment, model: split.model });
+    byKey.set(String(key), bucket);
   }
-  const out = new Map<number, { line: CollapsibleLine; index: number; compartment: string }[]>();
-  for (const group of byKey.values()) {
+  const groups: BookGroup[] = [];
+  for (const bucket of byKey.values()) {
+    const perModel = new Map<string, (Piece & { model: string })[]>();
+    for (const p of bucket) perModel.set(up(p.model), [...(perModel.get(up(p.model)) ?? []), p]);
+    const ranked = [...perModel.values()].sort((a, b) => b.length - a.length);
+    const majority = ranked.length > 1 && ranked[0].length > bucket.length - ranked[0].length;
+    if (majority) {
+      const model = ranked[0][0].model;
+      groups.push({
+        pieces: bucket.map(({ line, index, compartment }) => ({ line, index, compartment })),
+        model,
+        foreign: bucket.filter((p) => up(p.model) !== up(model)).map((p) => `${p.compartment} ${p.model}`),
+      });
+      continue;
+    }
+    for (const same of perModel.values()) {
+      groups.push({ pieces: same.map(({ line, index, compartment }) => ({ line, index, compartment })), model: same[0].model, foreign: [] });
+    }
+  }
+  const out = new Map<number, BookGroup>();
+  for (const g of groups) {
+    const group = g.pieces;
     if (group.length < 2) continue;
+    if (g.foreign.length) { out.set(group[0].index, g); continue; }
     const contiguous = group.every((x, i) => i === 0 || x.index === group[i - 1].index + 1);
-    if (contiguous) continue;
-    out.set(group[0].index, group);
+    /* Left to the adjacency rule only when that rule WILL form the run — and it
+       also breaks a run on a Desc2 change. Adjacent pieces of ONE book line whose
+       texts differ were therefore collapsed one piece at a time and refused:
+       HC-SO-013320 / HC-PO-010008, whose two 8069 pieces carry different special
+       orders after an amendment re-derived their Desc2 ("cannot spell [1A(LHF)]",
+       "cannot spell [1B(RHF)]", requeue plan run 34823021667). */
+    const oneText = new Set(group.map((x) => String(x.line.description2 ?? '').trim())).size === 1;
+    if (contiguous && oneText) continue;
+    out.set(group[0].index, g);
   }
   return out;
 }
@@ -654,7 +743,7 @@ export function collapseSofaLines(lines: CollapsibleLine[]): CollapseResult {
   const refusals: SofaRefusal[] = [];
   const scattered = scatteredByBookLine(lines);
   const consumed = new Set<number>();
-  for (const group of scattered.values()) for (const x of group) consumed.add(x.index);
+  for (const g of scattered.values()) for (const x of g.pieces) consumed.add(x.index);
   let run: { line: CollapsibleLine; index: number; compartment: string }[] = [];
   let runModel: string | null = null;
   let runDesc2: string | null = null;
@@ -695,7 +784,24 @@ export function collapseSofaLines(lines: CollapsibleLine[]): CollapseResult {
     const alreadySeparate = keys.length > 1
       && keys.every((k) => k != null)
       && new Set(keys.map(String)).size === keys.length;
-    if (neverSent || alreadySeparate) {
+    /* A PIECE LINE, NOT A ONE-PIECE BUILD (docs/bugs/0909). A single keyed
+       compartment folds because a folded build of one piece is a real shape.
+       It is not a real shape for a piece the book's grammar has no solo word
+       for — an armed end, a corner, a chaise — while the SAME document holds
+       another piece of that model under a DIFFERENT key: that document stores
+       its pieces as separate book lines. HC-PO-2609-063 carries 8030 1A(LHF)
+       and 1A(RHF) as book lines 929346 and 929348 with a pillow between them,
+       HC-PO-2609-047 carries 9028 L(LHF) and 2A(RHF) as 928220 and 928221 with
+       different specials, and each piece was folded alone and refused
+       ("cannot spell [2A(RHF)]"). Such a piece goes through as itself. */
+    const pieceLine = run.length === 1 && keys[0] != null && !tokenFor(run[0].compartment, 0, 1)
+      && lines.some((l, i) => {
+        if (i === run[0].index || l.linked_ac_dtlkey == null) return false;
+        if (l.item_group != null && up(l.item_group) !== 'SOFA') return false;
+        const sp = splitSofaCode(l.item_code);
+        return sp != null && up(sp.model) === up(runModel) && String(l.linked_ac_dtlkey) !== String(keys[0]);
+      });
+    if (neverSent || alreadySeparate || pieceLine) {
       for (const x of run) out.push({ ...x.line, sourceIndexes: [x.index], via: 'passthrough' });
       run = [];
       runModel = null;
@@ -703,7 +809,7 @@ export function collapseSofaLines(lines: CollapsibleLine[]): CollapseResult {
       return;
     }
 
-    const r = collapseRun(run, runModel, false);
+    const r = collapseRun(run, runModel, false, []);
     if ('refusal' in r) {
       refusals.push({
         sourceIndexes: run.map((x) => x.index),
@@ -723,11 +829,12 @@ export function collapseSofaLines(lines: CollapsibleLine[]): CollapseResult {
        position of its FIRST piece so the document's line order is preserved;
        the others are skipped, because they are already in that run. */
     if (consumed.has(index)) {
-      const group = scattered.get(index);
-      if (!group) return;
+      const g = scattered.get(index);
+      if (!g) return;
       flush();
-      const gModel = splitSofaCode(group[0].line.item_code)?.model ?? '';
-      const gr = collapseRun(group, gModel, true);
+      const group = g.pieces;
+      const gModel = g.model;
+      const gr = collapseRun(group, gModel, true, g.foreign);
       if ('refusal' in gr) {
         refusals.push({
           sourceIndexes: group.map((x) => x.index),

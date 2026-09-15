@@ -81,6 +81,11 @@ anything either), but worth knowing before you tell a user to just cancel it.
 | Desktop new | `frontend/src/pages/scm-v2/PurchaseConsignmentOrderNew.tsx` |
 | Query hooks | `frontend/src/vendor/scm/lib/purchase-consignment-order-queries.ts` |
 
+**Which lines show the fabric / seat / leg editor** on the new-PC form and the
+line card is decided in ONE place shared with the owned-stock PO forms:
+`vendor/scm/lib/variant-editor-groups.ts` — sofa, bedframe, and since 2026-09-14
+the Sofa Accessory group `fabric_accessory` (fabric colour only).
+
 **No dedicated mobile screen** — the generic `MobileModuleList` /
 `MobileModuleDetail` render it under module key `purchase-consignment-orders`.
 It is not in `statusActionsFor`, so mobile offers **no** status actions for it:
@@ -204,6 +209,7 @@ on 2026-08-13 (BUG-HISTORY). Verified by reading each handler, not by grep.
 
 ## See also
 
+- `docs/line-export-columns.md` — the proposed one-row-per-line export columns for every transaction document, and which columns the import may change
 - `docs/modules/purchase-order.md` — the owned-stock original this clones
 - `docs/hard-delete-inventory.md` — every SCM delete, classified
 - `BUG-HISTORY.md` 2026-08-11, "Two more document-level hard deletes"

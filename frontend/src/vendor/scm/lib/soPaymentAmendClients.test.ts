@@ -12,7 +12,7 @@
 import { describe, expect, test } from 'vitest';
 
 const sources = import.meta.glob(
-  ['../components/PaymentsTable.tsx', '../../../mobile/RecordedPayments.tsx'],
+  ['../components/PaymentsTable.tsx', '../../../mobile/RecordedPayments.tsx', './payment-reason.ts'],
   { query: '?raw', import: 'default', eager: true },
 ) as Record<string, string>;
 
@@ -65,19 +65,22 @@ describe('the payment screens and the amend right', () => {
    and both have to hand the answer to the mutation — a screen that asked and
    then dropped the text would make the server refuse every Finance edit. */
 describe('the payment screens ask for a reason on the amend right', () => {
-  test('both read WHY the row may change, not only whether', () => {
+  test('both read WHY the row may change, not only whether, and hand it to the one rule', () => {
     for (const [name, suffix] of SCREENS) {
       expect(fileEnding(suffix), `${name} never reads via`).toMatch(/\.via;/);
-      expect(fileEnding(suffix), `${name} does not branch on the amend right`).toMatch(/=== ['"]amend['"]/);
+      expect(fileEnding(suffix), `${name} does not ask the shared rule why a reason is owed`).toContain('reasonWhyFor(');
     }
+    /* The branch on the amend right lives in the rule, once. */
+    expect(fileEnding('payment-reason.ts')).toMatch(/=== ['"]amend['"]/);
   });
 
-  test('both ask through the shared prompt, with a REQUIRED input', () => {
+  test('both ask through the shared prompt, with the shared words and a REQUIRED input', () => {
     for (const [name, suffix] of SCREENS) {
       const text = fileEnding(suffix);
       expect(text, `${name} does not use the shared prompt`).toContain('usePrompt');
-      expect(text, `${name} asks without requiring an answer`).toMatch(/required:\s*true/);
+      expect(text, `${name} asks in its own words`).toContain('paymentReasonAsk(');
     }
+    expect(fileEnding('payment-reason.ts'), 'the shared ask does not require an answer').toMatch(/required:\s*true/);
   });
 
   test('both send the reason with the write, and abandon the write when the ask is dismissed', () => {
@@ -86,5 +89,43 @@ describe('the payment screens ask for a reason on the amend right', () => {
       expect(text, `${name} drops the reason on the floor`).toMatch(/\{ reason \}/);
       expect(text, `${name} writes even when the ask was cancelled`).toContain('reason === null) return');
     }
+  });
+});
+
+/* EVERY payment action by a role holding the right asks (owner 2026-09-14,
+   docs/bugs/0888). Both screens read the key LITERALLY through the shared
+   helper — `can()` would make the Owner's wildcard a holder — and ask on the
+   add and on the proof attach, which the amend rule never reached. */
+describe('the payment screens and a role that holds the right', () => {
+  test('both read the literal holding through the shared helper, never through can()', () => {
+    for (const [name, suffix] of SCREENS) {
+      expect(fileEnding(suffix), `${name} does not read the literal holding`).toContain('owesPaymentReason(');
+    }
+    expect(fileEnding('payment-reason.ts')).toContain('holdsPermissionLiterally(user, SO_PAYMENT_AMEND)');
+  });
+
+  test('both ask on the add, with the holder wording', () => {
+    for (const [name, suffix] of SCREENS) {
+      expect(fileEnding(suffix), `${name} does not ask on the add`)
+        .toMatch(/paymentReasonAsk\((["']add["']|isEdit \? ["']edit["'] : ["']add["'])/);
+    }
+  });
+
+  test('both ask on the proof attach, and tell a replacement from an attach', () => {
+    for (const [name, suffix] of SCREENS) {
+      expect(fileEnding(suffix), `${name} does not ask on the proof`)
+        .toMatch(/["']proof-replace["'] : ["']proof["'], ["']holder["']\)/);
+    }
+  });
+
+  test('both send the reason with the add and the proof attach', () => {
+    for (const [name, suffix] of SCREENS) {
+      const spreads = fileEnding(suffix).match(/\.\.\.\(reason \? \{ reason \} : \{\}\)/g) ?? [];
+      expect(spreads.length, `${name} drops the reason on the add or the proof`).toBeGreaterThanOrEqual(2);
+    }
+  });
+
+  test("the holder's sentence, in the one module, names where the action will be listed", () => {
+    expect(fileEnding('payment-reason.ts')).toContain('Accounting › Corrections');
   });
 });

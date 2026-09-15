@@ -1,0 +1,58 @@
+name: Zero AutoCount DO / GR lines the ERP removed (plan / apply)
+
+# Zeroes, through the Worker's own enqueueEdit, a delivery order or goods
+# receipt line the account book still holds after the ERP removed it — a line
+# moved onto a new document while the old one's rows carried no key
+# (backend/scripts/retire-book-only-conversion-lines.mjs, docs/bugs/0902).
+# Reads the committed book snapshot written by export-ac-conversion-line-keys.py,
+# which must be at most two days old. Default 'plan' composes each edit and
+# rolls it back; 'apply' queues and verifies.
+#
+# Manual only, own concurrency group.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (default, queues NOTHING) or apply"
+        required: true
+        default: "plan"
+        type: choice
+        options: ["plan", "apply"]
+      confirm:
+        description: "Required for apply: zero the lines the ERP removed from these delivery orders and receipts"
+        required: false
+        default: ""
+      doc_nos:
+        description: "Optional: only these document numbers, comma separated (HC-DO-2609-044)"
+        required: false
+        default: ""
+
+concurrency:
+  group: retire-book-only-conversion-lines
+  cancel-in-progress: false
+
+jobs:
+  retire:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      # tsx: the script imports the Worker's enqueueEdit from src/.
+      - run: npx tsx scripts/retire-book-only-conversion-lines.mjs
+        env:
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          DOC_NOS: ${{ inputs.doc_nos }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
+          NODE_OPTIONS: --dns-result-order=ipv4first

@@ -113,7 +113,14 @@ run has failed with the same network error. That is luck, not a guard.
   the merge. Population asserted non-empty (7 files today); 0084 and 0189
   grandfathered with the reason in the file.
 
-**Still open — owner action.** The repo-level `STAGING_DATABASE_URL` secret
+**CLOSED 2026-09-12 — the repo-level secret is gone** (deleted that day, recorded
+in `tasks/HANDOFF-2026-09-12-foundation-and-rehearsal.md` §0). Re-checked
+2026-09-14 with `gh secret list -R Houzs-Century/Houzs-ERP`: the repository scope
+has no `STAGING_DATABASE_URL`; only `gh secret list --env Staging` lists it. The
+paragraph below is the original finding, kept as history. (The staging Worker's
+anon key, the other half of this entry, is a separate owner action.)
+
+~~**Still open — owner action.**~~ The repo-level `STAGING_DATABASE_URL` secret
 must be DELETED (or repointed at staging's pooler) in GitHub → Settings →
 Secrets; only the Staging environment should carry that name. Until then the
 96 workflows above are one reachable host away from writing production.

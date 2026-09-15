@@ -735,9 +735,11 @@ export const useEditSalesOrderPayment = () => {
 export const useAttachSalesOrderPaymentSlip = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ docNo, id, uploadSessionId }: { docNo: string; id: string; uploadSessionId: string }) =>
+    /* `reason` — owed by a role holding the correction right (docs/bugs/0888);
+       the server refuses such a caller's attach without one. */
+    mutationFn: ({ docNo, id, uploadSessionId, reason }: { docNo: string; id: string; uploadSessionId: string; reason?: string }) =>
       authedFetch<{ payment: SoPayment }>(`/mfg-sales-orders/${docNo}/payments/${id}/slip`, {
-        method: 'POST', body: JSON.stringify({ uploadSessionId }),
+        method: 'POST', body: JSON.stringify({ uploadSessionId, ...(reason ? { reason } : {}) }),
       }),
     onSuccess: (_data, vars) => {
       /* The per-row slip image is cached under its OWN key by the thumbnail

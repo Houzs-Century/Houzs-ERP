@@ -22,6 +22,19 @@
        supplier. That is the disambiguation the resolver already performs with
        `supplierCode`, written down instead of recomputed per document.
 
+   R4  it maps to several, none is recorded against THIS supplier, and exactly
+       ONE is recorded against a supplier the owner has said is the SAME
+       factory. Company 1 only (the book's creditor codes; 2990 does not sync).
+       The owner answered the business fact R3 refused to infer:
+       「Ohana 跟 Hookka，所以跟 Hookka Manufacturing 其实是一样的」 (2026-09-12),
+       after binding the HOK series to both Hookka and Ohana on 2026-08-28
+       (docs/ac-reimport-2026-08-28-ledger.md, ①). So for a Hookka binding,
+       `CODY-(K)` is `HOK-1007 (K)` (Ohana, 400-O002) and not `NB-KHJ57(K)`
+       (NB Furniture, 400-N002) — the candidate outside the factory is another
+       company, not a tie. Plan run 2026-09-14 against production: R4 decides
+       104 bindings of 400-H003 and 400-H004; purchase orders HC-PO-2609-068 and
+       HC-PO-2609-086 were refused for three of them (docs/bugs/0901).
+
    ANYTHING ELSE IS LEFT NULL AND LISTED. The 139 refusals measured on
    2026-08-25 are `ambiguous: … none belongs to supplier` — e.g. `CODY-(K)`
    maps to `HOK-1007 (K)` (supplier 400-O002) and `NB-KHJ57(K)` (400-N002)
@@ -49,6 +62,12 @@ const MODE = (process.env.MODE ?? 'plan').toLowerCase();
 const CONFIRM = process.env.CONFIRM ?? '';
 const PHRASE = 'SEED AUTOCOUNT ITEM CODES';
 const SHOW = Number(process.env.ROWS_PER_RULE ?? 6);
+/* R4's groups: AutoCount creditor codes (company 1) the owner has said are one
+   factory. Only add a group on the owner's word, cited beside it. */
+const SAME_FACTORY = [
+  ['400-H003', '400-H004', '400-O002'],   // Hookka Manufacturing, Hookka (ERP) / Hao Hua (book name), Ohana — owner 2026-09-12
+];
+const factoryOf = (code) => SAME_FACTORY.find((g) => g.includes(up(code))) ?? null;
 
 const notice = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 const fail = (m) => { console.log(process.env.GITHUB_ACTIONS ? `::error::${m}` : m); process.exitCode = 1; };
@@ -65,7 +84,7 @@ try {
   notice(`account-book snapshot: ${index.rows} item(s)`);
 
   const rows = await pg`
-    SELECT b.id, b.item_code, b.supplier_sku, b.ac_item_code,
+    SELECT b.id, b.item_code, b.supplier_sku, b.ac_item_code, b.company_id,
            s.code AS supplier_code, s.name AS supplier_name
       FROM scm.supplier_material_bindings b
       JOIN scm.suppliers s ON s.id = b.supplier_id
@@ -87,7 +106,10 @@ try {
     else if (candidates.length === 1) { rule = 'R2 one candidate'; value = candidates[0].ac; }
     else if (candidates.length > 1) {
       const mine = candidates.filter((c) => up(c.supplier) === up(r.supplier_code));
+      const group = Number(r.company_id) === 1 ? factoryOf(r.supplier_code) : null;
+      const sameFactory = group ? candidates.filter((c) => group.includes(up(c.supplier))) : [];
       if (mine.length === 1) { rule = 'R3 one candidate is this supplier'; value = mine[0].ac; }
+      else if (mine.length === 0 && sameFactory.length === 1) { rule = 'R4 one candidate is the same factory (owner 2026-09-12)'; value = sameFactory[0].ac; }
     }
 
     if (value) {

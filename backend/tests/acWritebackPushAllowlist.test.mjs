@@ -46,6 +46,15 @@ const MAY_PUSH = [
   // Re-queues the edits approved amendments never queued
   // (docs/bugs/0888-approved-so-and-po-amendments-queued-no-autocount-edit-from.md).
   'requeue-amendment-ac-edits.mjs',
+  // Re-sends a DO / GR edit refused for a keyless line once its keys are in
+  // (docs/bugs/0900) — its purpose is the send; it writes no ERP value.
+  'requeue-keyed-conversion-edits.mjs',
+  // Zeroes a DO / GR line the ERP removed but the book still holds
+  // (docs/bugs/0902) — the send IS the repair; it writes no ERP value.
+  'retire-book-only-conversion-lines.mjs',
+  // Sends named documents' current state as a keyed edit (docs/bugs/0903) -
+  // its purpose is the send; it writes no ERP value.
+  'resend-ac-document-edits.mjs',
   // Re-pushes a sales order's corrected balance after a direct SQL repair left
   // the book stale (docs/bugs/0785, the orphan scan-deposit fix).
   'enqueue-so-writeback.mts',

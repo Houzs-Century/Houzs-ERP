@@ -273,6 +273,7 @@ Unlike Delivery Return, there is **no sales-scope row filter** here — procurem
 
 ## See also
 
+- `docs/line-export-columns.md` — the proposed one-row-per-line export columns for every transaction document, and which columns the import may change
 - `docs/modules/delivery-return.md` — the mirror module, same shape
 - `docs/unlinked-line-duplicate-coe.md` — why the guard exists
 - `BUG-HISTORY.md` 2026-08-04, "The two RETURN chains had the same nullable-link

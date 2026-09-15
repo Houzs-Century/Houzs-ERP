@@ -10,7 +10,10 @@
 //   • reversed/unposted lines never count;
 //   • the balance sheet balances THROUGH current earnings, and its self-check
 //     is zero on a clean ledger;
-//   • bad dates are 400 sentences.
+//   • bad dates are 400 sentences;
+//   • the P&L hands the same figures back on the report's layout — the
+//     chart's own tree when nothing is stored — with % of sales on every line
+//     (docs/bugs/0911; the layout routes themselves: reportLayouts.test.ts).
 
 import { Hono } from 'hono';
 import { describe, expect, test } from 'vitest';
@@ -43,13 +46,14 @@ const gl = (code: string, type: string, dr: number, cr: number, over: Row = {}):
 });
 
 function harness(glRows: Row[]) {
-  const sb = fakeSb({ v_gl_entries: glRows, accounts: ACCOUNTS.map((r) => ({ ...r })) });
+  const sb = fakeSb({ v_gl_entries: glRows, accounts: ACCOUNTS.map((r) => ({ ...r })), acc_report_layouts: [] });
   const app = new Hono();
   app.use('*', async (c, next) => {
     c.set('supabase' as never, sb as never);
     c.set('companyId' as never, CO as never);
     c.set('houzsUser' as never, { name: 'T', permissions_set: ['scm.payment_voucher.post'] } as never);
     c.set('allowedCompanyIds' as never, [CO] as never);
+    c.set('companies' as never, [{ id: CO, code: '2990', name: '2990 Home' }] as never);
     await next();
   });
   app.get('/accounting/reports/pnl', pnlReport as never);
@@ -119,6 +123,28 @@ describe('GET /accounting/reports/pnl', () => {
       netProfitSen: 41_000,
     });
   });
+
+  test('hands the same figures back on the layout — the chart\'s tree, % of sales on every line, totals unchanged', async () => {
+    const { app } = harness(WORLD);
+    const res = await app.request('/accounting/reports/pnl?from=2026-08-01&to=2026-08-31');
+    type Laid = { kind: string; label: string; amountSen: number; pct: number | null; children: Laid[] };
+    const b = await res.json() as { layout: { stored: boolean; baseSen: number; tradingIncome: Laid[]; costOfSales: Laid[]; otherIncome: Laid[]; expenses: Laid[]; taxation: Laid[] }; totals: Record<string, number> };
+    const flat = (nodes: Laid[]): unknown[] => nodes.map((n) => [n.label, n.amountSen, n.pct, ...(n.children.length > 0 ? [flat(n.children)] : [])]);
+    expect(b.layout.stored).toBe(false);
+    expect(b.layout.baseSen).toBe(100_000);
+    /* Two sections in the block → a category per section; 700-0000 is a header → a category with a subtotal. */
+    expect(flat(b.layout.tradingIncome)).toEqual([['SALES', 100_000, 100, [['501-0000 — 501-0000', 100_000, 100]]]]);
+    expect(flat(b.layout.otherIncome)).toEqual([['OTHER INCOMES', 7_000, 7, [
+      ['530-0000 — 530-0000', 2_000, 2],
+      ['Other Income', 5_000, 5, [['590-0000 — 590-0000', 5_000, 5]]],
+    ]]]);
+    /* 900-A001's header (900-0000) is not on this chart → it is a root line. */
+    expect(flat(b.layout.expenses)).toEqual([['900-A001 — 900-A001', 12_000, 12]]);
+    expect(flat(b.layout.costOfSales)).toEqual([['601-0003 — 601-0003', 60_000, 60], ['615-0000 — 615-0000', 1_000, 1], ['620-0000 — 620-0000', -10_000, -10]]);
+    for (const [block, key] of [['costOfSales', 'costOfSalesSen'], ['expenses', 'expensesSen'], ['otherIncome', 'otherIncomeSen'], ['taxation', 'taxationSen']] as const) {
+      expect(b.layout[block].reduce((s, n) => s + n.amountSen, 0)).toBe(b.totals[key]);
+    }
+  });
 });
 
 describe('GET /accounting/reports/balance-sheet', () => {
@@ -138,5 +164,18 @@ describe('GET /accounting/reports/balance-sheet', () => {
       earningsSen: 41_000,
       checkSen: 0,
     });
+  });
+
+  test('hands the same figures back on the layout — a section layer, % of TOTAL ASSETS on every line of both sides (docs/bugs/0912)', async () => {
+    const { app } = harness(WORLD);
+    type Laid = { kind: string; label: string; amountSen: number; pct: number | null; children: Laid[] };
+    const b = await (await app.request('/accounting/reports/balance-sheet?asOf=2026-08-31')).json() as { layout: { stored: boolean; baseSen: number; assets: Laid[]; liabilities: Laid[]; equity: Laid[] } };
+    const flat = (nodes: Laid[]): unknown[] => nodes.map((n) => [n.label, n.amountSen, n.pct, ...(n.children.length > 0 ? [flat(n.children)] : [])]);
+    expect(b.layout.stored).toBe(false);
+    expect(b.layout.baseSen).toBe(101_000);
+    expect(flat(b.layout.assets)).toEqual([['CURRENT ASSETS', 101_000, 100, [['310-0010 — 310-0010', 91_000, 90.1], ['330-0000 — 330-0000', 10_000, 9.9]]]]);
+    /* The liability's % is of total assets too — 60,000 / 101,000. */
+    expect(flat(b.layout.liabilities)).toEqual([['CURRENT LIABILITIES', 60_000, 59.4, [['400-0000 — 400-0000', 60_000, 59.4]]]]);
+    expect(b.layout.equity).toEqual([]);
   });
 });

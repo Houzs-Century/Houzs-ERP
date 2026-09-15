@@ -93,6 +93,7 @@ import {
 /* Re-exported so a route can name the shape it passes to enqueueEdit without
    also importing the composer module. */
 export type { AcRetiredLine } from '../../services/autocount-writeback';
+import { poEditHeader } from '../../services/autocount-po-supplier-dates';
 
 import { mastersOf } from './autocount-masters';
 import { soEditHeader } from './so-edit-header';
@@ -110,10 +111,10 @@ import { acParentlessCreateReason, acNotCarriedReason } from './autocount-outbox
 /* Line identity, split out 2026-08-17 for the same cap reason as the two
    imports above. Same function, same call site in dispatchOne. */
 import { lineIdentityGap, persistNewLineKeys, newLineTargetOf } from './autocount-line-keys';
+import { attachPhotos } from './autocount-photo-attach';
 import { readMfgProductBindings } from './supplier-bindings';
 import {
   soLine,
-  present,
   DOWNSTREAM,
   CONVERT_TARGET,
   readConvertSourceKeys,
@@ -388,7 +389,7 @@ const SO_ITEM_COLS =
    the same header field and the ERP had never sent one, so the book defaulted it
    on every purchase order it has written. Guide §7c3b-ii. */
 const PO_HEADER_COLS =
-  'id, company_id, po_number, po_date, supplier_id, notes, purchase_location_id, linked_ac_docno';
+  'id, company_id, po_number, po_date, supplier_id, notes, purchase_location_id, linked_ac_docno, supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4';
 /* description2 is NOT optional here. The PO importer wrote the AutoCount sofa
    Desc2 verbatim onto every compartment row, and that stored text is what the
    D9 collapse echoes back. Leaving the column out of this list is what made the
@@ -649,6 +650,9 @@ async function readPoHeader(sb: Sb, poId: string) {
     notes: (h.notes as string | null) ?? null,
     purchase_location: purchaseLocation,
     linked_ac_docno: (h.linked_ac_docno as string | null) ?? null,
+    supplier_delivery_date_2: (h.supplier_delivery_date_2 as string | null) ?? null,
+    supplier_delivery_date_3: (h.supplier_delivery_date_3 as string | null) ?? null,
+    supplier_delivery_date_4: (h.supplier_delivery_date_4 as string | null) ?? null,
   };
 }
 
@@ -1473,10 +1477,7 @@ async function composePoState(sb: Sb, poId: string, retired: AcRetiredLine[] = [
     /* No Ref: the ERP has no such field on a purchase order, and /edit applies
        only the keys it is GIVEN (AcSyncService.cs:369 `h.ContainsKey`). Sending
        null would blank whatever the account book has there. */
-    edit: () => composeEdit('PO', String(header.linked_ac_docno ?? header.po_number), present({
-      CreditorName: header.creditor_name,
-      Description: header.notes,
-    }), lines, {
+    edit: () => composeEdit('PO', String(header.linked_ac_docno ?? header.po_number), poEditHeader(header), lines, {
       supplierCode: header.creditor_code,
       bindings: poBindings,
       /* Add-a-line, same contract as the sales order's: the ROUTE names the row
@@ -1658,16 +1659,6 @@ function photosOf(rows: Record<string, unknown>[]): AcOutboxPayload['photos'] {
  * through String.fromCharCode in chunks — whole-array spread blows the call
  * stack on anything of photograph size, which is the entire input class.
  */
-function b64(buf: ArrayBuffer): string {
-  const bytes = new Uint8Array(buf);
-  let out = '';
-  const CHUNK = 0x8000;
-  for (let i = 0; i < bytes.length; i += CHUNK) {
-    out += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
-  }
-  return btoa(out);
-}
-
 async function mark(sb: Sb, id: string, patch: Record<string, unknown>): Promise<void> {
   await sb.from('autocount_outbox')
     /* THE CLAIM COMES OFF HERE, on every outcome, because this is the one place
@@ -1817,38 +1808,14 @@ export async function dispatchOne(
     if (creditor) Object.assign(body, creditor);
   }
 
-  /* THE PHOTOGRAPHS, fetched in the moment they are sent.
-     `payload.photos` names R2 keys; the bytes live in the SO_ITEM_PHOTOS
-     bucket and are turned into base64 here rather than stored in the outbox —
-     see the field's own note for why an append-only table must not carry them.
-
-     BEST-EFFORT PER PICTURE, FATAL FOR NONE. A photograph is not the document:
-     an unreadable object must not stop a price change reaching the account
-     book. What it must not do either is lie — a line whose pictures could not
-     be read sends NO `Photos` key at all, and the service leaves whatever
-     `FurtherDescription` the book already holds. Sending a SHORT list would
-     overwrite five pictures with three. */
-  if (row.op === 'edit' && payload.photos?.length) {
-    const lines = Array.isArray(body.Lines) ? (body.Lines as Array<Record<string, unknown>>) : [];
-    for (const want of payload.photos) {
-      const line = lines.find((l) => Number(l.DtlKey) === want.dtlKey);
-      if (!line || !want.keys.length) continue;
-      try {
-        const jpegs: Array<{ Jpeg: string }> = [];
-        for (const key of want.keys) {
-          const obj = await (env as unknown as { SO_ITEM_PHOTOS?: R2Bucket }).SO_ITEM_PHOTOS?.get(key);
-          if (!obj) throw new Error(`photo not in the bucket: ${key}`);
-          jpegs.push({ Jpeg: b64(await obj.arrayBuffer()) });
-        }
-        if (jpegs.length === want.keys.length) line.Photos = jpegs;
-      } catch (e) {
-        console.warn(
-          `photos not attached to ${row.doc_type} ${row.doc_no} line ${want.dtlKey}: `
-          + (e instanceof Error ? e.message : String(e)),
-        );
-      }
-    }
-  }
+  /* THE PHOTOGRAPHS, fetched in the moment they are sent — keys in the payload,
+     bytes from SO_ITEM_PHOTOS. Per line all or none, an unreadable picture never
+     stops the document, and since docs/bugs/0899 a line whose pictures would
+     take the body past the host's 2 MiB limit is sent without them and the row
+     says so (autocount-photo-attach.ts). */
+  const photoNote = row.op === 'edit' && payload.photos?.length
+    ? await attachPhotos(env, body, payload.photos, `${row.doc_type} ${row.doc_no}`)
+    : null;
 
   const attempts = (row.attempts ?? 0) + 1;
 
@@ -1892,13 +1859,13 @@ export async function dispatchOne(
     /* Line identity is a second question and this file does not own it:
        docs/bugs/0813, and `lineIdentityGap` in autocount-line-keys.ts. Recorded
        BEFORE the mark so the two facts arrive together. */
-    const identityGap = await lineIdentityGap(sb, row, payload, result.lines);
+    const identityGap = await lineIdentityGap(sb, row, payload, result.lines, body);
 
     await mark(sb, row.id, {
       ...stamp,
       status: 'sent',
       attempts,
-      last_error: identityGap,
+      last_error: [identityGap, photoNote].filter(Boolean).join(' | ') || null,
       ac_doc_no: result.docNo,
       sent_at: new Date().toISOString(),
     });

@@ -349,10 +349,31 @@ soAmendments.get('/', async (c) => {
       }
     }
   }
-  const amendments = rows.map((r) => ({
-    ...r,
-    bound_pos: r.so_doc_no ? (boundBySo.get(r.so_doc_no) ?? []) : [],
-  }));
+  /* The queue's Reference column (owner 2026-09-14: 「要加上reference number」) —
+     the SO header's own customer reference. Sent RAW (`ref`, `customer_so_no`):
+     the frontend resolves the cell with customerRefOf, the one display rule the
+     Sales Order list already uses, so the two screens cannot show different
+     references for one order. One bounded read over the page's doc_nos. A
+     failed read fails the list like the main read does: a blank column would
+     say "this order has no reference", which a failed read does not know. */
+  const refBySo = new Map<string, { ref: string | null; customer_so_no: string | null }>();
+  if (allDocNos.length > 0) {
+    const { data: soRefRows, error: soRefErr } = await scopeToCompany(sb.from('mfg_sales_orders')
+      .select('doc_no, ref, customer_so_no').in('doc_no', allDocNos), c);
+    if (soRefErr) return c.json({ error: 'load_failed', reason: soRefErr.message }, 500);
+    for (const so of (soRefRows ?? []) as Array<{ doc_no: string; ref: string | null; customer_so_no: string | null }>) {
+      refBySo.set(so.doc_no, so);
+    }
+  }
+  const amendments = rows.map((r) => {
+    const so = r.so_doc_no ? refBySo.get(r.so_doc_no) : undefined;
+    return {
+      ...r,
+      bound_pos: r.so_doc_no ? (boundBySo.get(r.so_doc_no) ?? []) : [],
+      so_ref: so?.ref ?? null,
+      so_customer_so_no: so?.customer_so_no ?? null,
+    };
+  });
   return c.json({ amendments });
 });
 

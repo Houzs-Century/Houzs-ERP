@@ -488,21 +488,91 @@ try {
      and NOT alarmed, for the reason the header gives about skips: it is a
      statement about the document's shape, it does not change on its own, and
      the remedy is a person pressing "Match up lines". */
-  const identityGaps = await pg`
+  /* A sent row's last_error now carries one of two facts, joined with " | "
+     when both apply: a line-identity gap, or photographs left behind for size
+     (scm/lib/autocount-photo-attach.ts, docs/bugs/0899). They need different
+     people, so they are listed apart. */
+  const identityRows = await pg`
+    SELECT company_id, doc_type, doc_no, op, last_error, sent_at
+      FROM scm.autocount_outbox
+     WHERE status = 'sent' AND last_error IS NOT NULL AND last_error NOT LIKE 'PHOTOS NOT SENT:%'
+     ORDER BY sent_at DESC
+     LIMIT 400`;
+  /* THE ROW IS HISTORY; THE DOCUMENT IS NOW (docs/bugs/0905). The note on a sent
+     row is what the drain could not store THEN. Keys arrive afterwards by other
+     roads — the DocTransfer stamp, the relink sweep, a rebuild — and the note
+     stays. On 2026-09-14 this section listed 40 documents while the stamp had
+     already keyed most of them, so a reader chased work that was done. Each
+     document is now looked up as it is today: listed only while a row of it
+     still has no key, and counted apart once every row has one. A document this
+     lookup cannot find (a row filed under an id, docs/bugs/0774) stays listed,
+     the conservative direction. */
+  const docsOf = (t) => [...new Set(identityRows.filter((r) => r.doc_type === t).map((r) => String(r.doc_no)))];
+  const keylessNow = identityRows.length ? await pg`
+    SELECT 'SO' AS doc_type, i.company_id, i.doc_no, count(*) FILTER (WHERE i.linked_ac_dtlkey IS NULL)::int AS keyless
+      FROM scm.mfg_sales_order_items i WHERE i.doc_no = ANY(${docsOf("SO")}) GROUP BY 1, 2, 3
+    UNION ALL
+    SELECT 'PO', h.company_id, h.po_number, count(*) FILTER (WHERE i.linked_ac_dtlkey IS NULL)::int
+      FROM scm.purchase_orders h JOIN scm.purchase_order_items i ON i.purchase_order_id = h.id
+     WHERE h.po_number = ANY(${docsOf("PO")}) GROUP BY 1, 2, 3
+    UNION ALL
+    SELECT 'DO', h.company_id, h.do_number, count(*) FILTER (WHERE i.linked_ac_dtlkey IS NULL)::int
+      FROM scm.delivery_orders h JOIN scm.delivery_order_items i ON i.delivery_order_id = h.id
+     WHERE h.do_number = ANY(${docsOf("DO")}) GROUP BY 1, 2, 3
+    UNION ALL
+    SELECT 'GR', h.company_id, h.grn_number, count(*) FILTER (WHERE i.linked_ac_dtlkey IS NULL)::int
+      FROM scm.grns h JOIN scm.grn_items i ON i.grn_id = h.id
+     WHERE h.grn_number = ANY(${docsOf("GR")}) GROUP BY 1, 2, 3
+    UNION ALL
+    SELECT 'IV', h.company_id, h.invoice_number, count(*) FILTER (WHERE i.linked_ac_dtlkey IS NULL)::int
+      FROM scm.sales_invoices h JOIN scm.sales_invoice_items i ON i.sales_invoice_id = h.id
+     WHERE h.invoice_number = ANY(${docsOf("IV")}) GROUP BY 1, 2, 3
+    UNION ALL
+    SELECT 'PI', h.company_id, h.invoice_number, count(*) FILTER (WHERE i.linked_ac_dtlkey IS NULL)::int
+      FROM scm.purchase_invoices h JOIN scm.purchase_invoice_items i ON i.purchase_invoice_id = h.id
+     WHERE h.invoice_number = ANY(${docsOf("PI")}) GROUP BY 1, 2, 3` : [];
+  const keylessOf = new Map(keylessNow.map((k) => [`${k.company_id}|${k.doc_type}|${k.doc_no}`, Number(k.keyless)]));
+  const seenGapDoc = new Set();
+  const identityGaps = [];
+  const keyedSince = [];
+  for (const r of identityRows) {
+    const k = `${r.company_id}|${r.doc_type}|${r.doc_no}`;
+    if (seenGapDoc.has(k)) continue;
+    seenGapDoc.add(k);
+    if (keylessOf.get(k) === 0) keyedSince.push(r);
+    else identityGaps.push(r);
+  }
+  const photosLeftBehind = await pg`
     SELECT doc_type, doc_no, op, last_error, sent_at
       FROM scm.autocount_outbox
-     WHERE status = 'sent' AND last_error IS NOT NULL
+     WHERE status = 'sent' AND last_error LIKE '%PHOTOS NOT SENT:%'
      ORDER BY sent_at DESC
      LIMIT 40`;
+  if (photosLeftBehind.length) {
+    notice(
+      `IN AUTOCOUNT, SENT WITHOUT SOME PHOTOGRAPHS: ${photosLeftBehind.length}. A picture was too large for the ` +
+        "service to accept in one request, so the document went without it and the book kept the pictures it had.",
+    );
+    for (const r of photosLeftBehind) {
+      notice(`  ${r.doc_type} ${r.doc_no} (${r.op}): ${String(r.last_error).slice(String(r.last_error).indexOf('PHOTOS NOT SENT:'))}`);
+    }
+  }
   if (identityGaps.length) {
     notice(
-      `IN AUTOCOUNT, BUT WITH NO LINE IDENTITY: ${identityGaps.length}. The document arrived; its ` +
+      `IN AUTOCOUNT, BUT WITH NO LINE IDENTITY: ${identityGaps.length} document(s) with a row still keyless today. The document arrived; its ` +
         "lines did not keep the account book's keys, so its next edit will be refused whole. " +
         'Press "Match up lines" on each, then save it again.',
     );
     for (const r of identityGaps) {
-      notice(`  ${r.doc_type} ${r.doc_no} (${r.op}): ${r.last_error}`);
+      const k = keylessOf.get(`${r.company_id}|${r.doc_type}|${r.doc_no}`);
+      notice(`  ${r.doc_type} ${r.doc_no} (${r.op}${k == null ? ", not found by number" : `, ${k} row(s) keyless now`}): ${r.last_error}`);
     }
+  }
+  if (keyedSince.length) {
+    notice(
+      `KEYED SINCE: ${keyedSince.length} document(s) whose send could not store line keys, and whose rows all carry one today. ` +
+        "The note on the sent row is history; nothing to do.",
+    );
   }
 
   if (oldest.length) {

@@ -189,3 +189,117 @@ phone shows the notice on the invoice screen instead.
 lives in `pi-po-price-rule.ts`, byte-identical in `backend/src/scm/lib/` and
 `frontend/src/vendor/scm/lib/`, refereed by
 `frontend/src/vendor/scm/lib/pi-po-price-rule.canonical.test.ts`.
+
+---
+
+## Paying a purchase invoice (2026-09-14)
+
+A purchase invoice is paid with an **AP Payment**, the payment voucher whose
+purpose is `SUPPLIER_PAYMENT`, and in no other way. Finance ticks the invoice,
+the voucher goes through its approval cycle, and posting books the journal entry
+and settles the invoice through `scm.settle_pi_paid_sen` (clamped to what is
+owed; a held invoice is refused). The voucher side is
+`docs/modules/payment-voucher.md`.
+
+**The rule** is `frontend/src/vendor/scm/lib/pi-payment-path.ts`, read by both
+surfaces:
+- `piAwaitsPayment` — POSTED or PARTIALLY_PAID, something owed, not held. The
+  same list the AP Payment page offers, so a button never leads to a page where
+  the invoice is missing.
+- `apPaymentHrefFor` — `/scm/payment-vouchers/new?type=ap&supplier=<id>&pi=<id>`;
+  the page chooses the supplier and ticks the invoice in full.
+- `canOpenApPayment` — the two doors `ScmGuard` opens for that route:
+  `scm.access` (which `*` satisfies) or the `scm.finance.accounting` page grant.
+  A purchasing clerk with only `scm.procurement.pi` is not offered the button.
+
+**Desktop.** Record payment, on `PurchaseInvoiceDetailV2` and in the
+`PurchaseInvoicesListV2` drawer, opens that AP Payment. There is no Mark paid.
+
+**Phone.** No payment sheet on a purchase invoice. While the invoice still takes
+a payment, the footer names where it is recorded (`piPaymentHint` in
+`frontend/src/mobile/doc-payment.ts`). The phone has no voucher screen yet, which
+is a parity gap of its own, not something this screen can close.
+
+**`PATCH /purchase-invoices/:id/payment` is retired.** It answers 409
+`payment_voucher_required` and reads nothing. It used to add a typed amount
+straight onto `paid_sen`: no voucher, no journal entry, no hold check, no
+approval. Payments it recorded are counted by the read-only Actions workflow
+probe-pi-direct-payments (`backend/scripts/probe-pi-direct-payments.mjs`).
+Trace: `docs/bugs/0889-supplier-invoice-payments-could-skip-the-payment-voucher-and.md`.
+
+---
+
+## Searching the "Bill a Goods-Received Note" picker (2026-09-14)
+
+Owner, 2026-09-14: 「需要加上search button」. The picker at
+`/scm/purchase-invoices/from-grn` (`frontend/src/pages/scm-v2/PurchaseInvoiceFromGrn.tsx`)
+listed 494 outstanding lines across 197 notes, and scrolling was the only way to
+find one.
+
+**What it matches.** A search box sits above the note cards. A line stays on screen
+when each word typed appears in what its card shows: note number, supplier name or
+code, PO number, received date as printed (`dd/mm/yyyy`), item code, description,
+Description 2. The rule is `filterOutstandingGrnLines` in
+`frontend/src/vendor/scm/lib/outstanding-grn-search.ts`. A note number or a supplier
+keeps that note's lines; an item word keeps only the lines carrying it.
+
+**Loaded lines only, no new endpoint.** It filters in the browser over what
+`GET /purchase-invoices/outstanding-grn-items` returned. Since 2026-09-14 that is
+every line still to bill, however old its note (next section); until then the read
+took the newest 500 POSTED notes first, and an older note past that window was in
+neither the list nor the search. The box says "Searches loaded rows only", which
+stays true: if the server ever stops at its ceiling, the page says the list is not
+complete.
+
+**It narrows what is shown, nothing else.**
+- The supplier and currency locks, the primary note and the Continue count read the
+  loaded lines, not the visible ones. A tick the search hides still goes to the
+  review screen, and the page prints how many are hidden.
+- A note's own tick box ticks only the lines the search shows — what the operator
+  can see, the rule `SalesInvoiceFromDo` adopted for its Select all.
+
+**URL.** The term is `?q=`, declared in `readConvertScope('grnToPi', …, ['q'])` so it is
+not reported as an unrecognised parameter. Back from the review screen returns to the
+same narrowed list.
+
+Desktop only: the phone has no PI-from-GRN picker (see *Creating one on the phone*).
+Pinned by `frontend/src/pages/scm-v2/PurchaseInvoiceFromGrn.search.test.tsx`.
+
+---
+
+## What the "Bill a Goods-Received Note" picker reads (2026-09-14)
+
+`GET /purchase-invoices/outstanding-grn-items` answers `{ items, truncated }`: one
+item per GRN line still to bill (`qty_accepted - invoiced_qty - returned_qty > 0`)
+on a POSTED, not-held note of the active company. The read is
+`loadOutstandingGrnLines` in `backend/src/scm/lib/outstanding-grn-lines.ts`; the
+handler only scopes it, stamps the supplier fabric code, and returns it.
+
+| step | reads | why this way |
+| --- | --- | --- |
+| 1 | note ids from `scm.v_grn_outstanding` (mig 0267): `status = POSTED`, `is_outstanding` | asks which notes still have something to bill, not which are newest. Paged; `truncated` is set when it stops at 20 pages of 1,000 |
+| 2 | those notes' headers, in URL-sized batches | status and `on_hold` re-checked on the row: the view carries no hold |
+| 3 | their lines, in URL-sized batches, each batch paged | no single `.in()` list and no single response carries the whole answer |
+
+- **Company predicate on all three reads** (`scopeToCompany`). On the lines it is
+  also the create path's rule (`assertSourceLinesInCompany` over `grn_items`), so
+  the picker offers no line the create would refuse.
+- **A failed read is 500 `load_failed`**, never an empty list.
+- **Order:** newest note first (received date, then note number), a note's lines in
+  entry order. The page groups cards in the order lines arrive.
+- **`truncated`** is read by `useOutstandingGrnItems`
+  (`frontend/src/vendor/scm/lib/suppliers-queries.ts`); the picker then shows "This
+  list is not complete".
+
+**Why it changed.** The read used to take the newest 500 posted notes FIRST and
+filter afterwards, and read their lines in one unpaged call. Measured read-only on
+2026-09-14 (run 34831539272): HOUZS held 541 posted, not-held notes, 201 of them with
+509 unbilled lines. None was outside the window yet, but the unpaged line read asked
+for 1,018 rows, above the 1,000-row response ceiling this tree assumes (unmeasured,
+`docs/bugs/0447`). Trace: `docs/bugs/0890-the-bill-a-goods-received-note-picker-spent-its-500-note-win.md`.
+
+**To re-measure on production:** Actions -> *Bill-a-GRN picker window check
+(read-only)* (`.github/workflows/pi-grn-picker-window-check.yml`, script
+`backend/scripts/check-pi-grn-picker-window.mjs`). It prints counts per company and
+still replays the OLD window, so after this change its "outside the newest 500"
+figure is what the old read would have hidden, not what the picker hides.

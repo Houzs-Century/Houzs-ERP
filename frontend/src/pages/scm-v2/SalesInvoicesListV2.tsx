@@ -79,6 +79,8 @@ import { useAuth } from "../../auth/AuthContext";
 import { buildVariantSummary, fmtSen, fmtDate, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import { usePrintDocument } from "../../components/scm-v2/PrintChainProvider";
+import { PrintPreviewBatchModal, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
+import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { salesInvoicePrintChain } from "../../lib/printChain";
 import { customerRefOf } from '../../lib/customer-ref';
 
@@ -1017,9 +1019,9 @@ export function SalesInvoicesListV2() {
     return { header: json.salesInvoice, items: json.items };
   };
 
-  // Batch "Print all" — one ticked SI downloads straight; several prompt
-  // combined-vs-separate.
-  const printSelectedSis = async () => {
+  // Batch "Print all" — through the same Print preview as the other lists; only
+  // the Download exit still prompts combined-vs-separate.
+  const deliverSelectedSis = async (action: PdfAction) => {
     if (printingDocs) return;
     const chosen = rows.filter((r) => selectedIds.has(r.id));
     if (chosen.length === 0) return;
@@ -1029,11 +1031,11 @@ export function SalesInvoicesListV2() {
       if (chosen.length === 1) {
         setPrintingDocs(true);
         const b = await fetchSiBundle(chosen[0]!);
-        await generateSalesInvoicePdf(b.header as never, b.items as never);
+        await generateSalesInvoicePdf(b.header as never, b.items as never, { action });
         clearSelection();
         return;
       }
-      const how = await askChoice({
+      const how = action !== "save" ? "one" : await askChoice({
         title: `Print ${chosen.length} sales invoices`,
         options: [
           { value: "one", label: "One combined PDF" },
@@ -1047,10 +1049,11 @@ export function SalesInvoicesListV2() {
       if (how === "one") {
         await generateCombinedSalesInvoicePdf(bundles as never, {
           fileName: `sales-invoices-${new Date().toISOString().slice(0, 10)}.pdf`,
+          action,
         });
       } else {
         for (const b of bundles)
-          await generateSalesInvoicePdf(b.header as never, b.items as never);
+          await generateSalesInvoicePdf(b.header as never, b.items as never, { action });
       }
       clearSelection();
     } catch (e) {
@@ -1063,6 +1066,7 @@ export function SalesInvoicesListV2() {
       setPrintingDocs(false);
     }
   };
+  const batchPrint = usePrintPreview(deliverSelectedSis);
   /* A cancelled or draft invoice takes no payment — the server refuses both
      with `not_payable`, and the menu simply does not offer what it would
      refuse. */
@@ -1834,10 +1838,17 @@ export function SalesInvoicesListV2() {
                   variant="primary"
                   icon={<Printer size={14} />}
                   disabled={printingDocs}
-                  onClick={() => void printSelectedSis()}
+                  onClick={batchPrint.openPreview}
                 >
                   {printingDocs ? "Printing…" : `Print all (${selectedIds.size})`}
                 </Button>
+                <PrintPreviewBatchModal
+                  open={batchPrint.open}
+                  onClose={batchPrint.close}
+                  docTitle="Sales Invoices"
+                  docNos={rows.filter((r) => selectedIds.has(r.id)).map((r) => r.invoice_number)}
+                  {...batchPrint.handlers}
+                />
                 <Button variant="ghost" disabled={printingDocs} onClick={clearSelection}>
                   Clear
                 </Button>

@@ -92,6 +92,7 @@ import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { usePrompt } from '../../vendor/scm/components/PromptDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { StatusPill } from '../../vendor/scm/components/StatusPill';
+import { AMENDMENT_APPROVER_LABEL, soAmendmentApprover } from '../../vendor/scm/lib/amendment-approver';
 import {
   useCreateAmendment,
   useSupplierConfirm,
@@ -2138,9 +2139,7 @@ export const SalesOrderDetail = () => {
             <StatusPill docType={oa.lane ? 'soAmendmentLane' : 'soAmendment'} status={oa.status} />
             {/* Two-lane rework: say WHO it is waiting on. */}
             {(oa.lane === 'LINES' || oa.lane === 'DELIVERY') && (
-              <span style={{ color: 'var(--fg-muted)' }}>
-                waiting for {oa.lane === 'LINES' ? 'Purchasing' : 'Logistics'}
-              </span>
+              <span style={{ color: 'var(--fg-muted)' }}>waiting for {AMENDMENT_APPROVER_LABEL[soAmendmentApprover(oa.lane)]}</span>
             )}
             <button type="button"
               onClick={() => setViewingAmendmentId(oa.id)}

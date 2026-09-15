@@ -59,6 +59,7 @@ import { itemGroupsList, itemGroupCreate, itemGroupBind, itemGroupPatch } from '
 import { piPeriodicBackfill } from './accounting-pi-backfill';
 import { stockCloseStatus, stockCloseRun } from './accounting-stock-close';
 import { pnlReport, balanceSheetReport } from './accounting-reports';
+import { reportLayoutGet, reportLayoutPut, reportLayoutReset } from './accounting-report-layouts';
 import { receiptsPaymentsReport } from './accounting-rp';
 import { collectionReport } from './accounting-collection';
 import { merchantChargesReport } from './accounting-merchant-charges';
@@ -160,6 +161,12 @@ accounting.get('/reports/collection', collectionReport);
 /* What each acquirer charged against the gross, per month and per merchant (owner 2026-09-12; docs/bugs/0826). */
 accounting.get('/reports/merchant-charges', merchantChargesReport);
 accounting.get('/reports/balance-sheet', balanceSheetReport);
+/* The layout a statement is drawn on — one tree of categories per report,
+   shared by every company, ticked per company (owner 2026-09-14; docs/bugs/0911).
+   Handlers in accounting-report-layouts.ts. */
+accounting.get('/reports/layout', reportLayoutGet);
+accounting.put('/reports/layout', reportLayoutPut);
+accounting.delete('/reports/layout', reportLayoutReset);
 /* The Performance P&L — the month's orders per group, a budgeted operating
    expense in place of one ledger account, the rest as booked (owner
    2026-09-12; docs/bugs/0835). Handlers in accounting-performance.ts. */

@@ -92,6 +92,7 @@ function summariseReadiness(lines) {
 const ATTRS_BY_GROUP = {
   sofa: ['fabricCode', 'seatHeight', 'legHeight'],
   bedframe: ['fabricCode', 'gap', 'divanHeight', 'legHeight', 'totalHeight'],
+  fabric_accessory: ['fabricCode'],
   mattress: [], accessory: [], others: [], service: [],
 };
 const norm = (v) => (v == null ? '' : String(v).trim().toLowerCase());

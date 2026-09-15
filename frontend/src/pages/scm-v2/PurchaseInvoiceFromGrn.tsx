@@ -25,17 +25,20 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { writeScmHandoff } from '../../lib/scmHandoffStorage';
 import { readConvertScope, UnrecognisedScopeNotice } from '../../lib/convertScope';
-import { ArrowRight, X } from 'lucide-react';
+import { ArrowRight, Search, X } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { fmtDateOrDash } from '../../vendor/shared/format';
 import {
   useOutstandingGrnItems,
   type OutstandingGrnItem,
 } from '../../vendor/scm/lib/suppliers-queries';
+import { filterOutstandingGrnLines } from '../../vendor/scm/lib/outstanding-grn-search';
 import { VariantDescription } from '../../vendor/scm/components/VariantDescription';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
+import { SearchInput } from '../../components/Button';
+import { SearchScopeHint } from '../../components/SearchScopeHint';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -56,28 +59,41 @@ export const PurchaseInvoiceFromGrn = () => {
      company. The parameter was being constructed by both callers and dropped
      here until 2026-08-16. No parameter → the full picker, which is what the
      list toolbar's "From GRN" button wants. */
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const scope = useMemo(
-    () => readConvertScope('grnToPi', searchParams, []),
+    () => readConvertScope('grnToPi', searchParams, ['q']),
     [searchParams],
   );
 
-  const allItems = useMemo(() => itemsQ.data ?? [], [itemsQ.data]);
+  const allItems = useMemo(() => itemsQ.data?.items ?? [], [itemsQ.data]);
   const items = useMemo(
     () => (scope.keys.size === 0 ? allItems : allItems.filter((it) => scope.keys.has(it.grnId))),
     [allItems, scope.keys],
   );
 
+  /* Search (owner 2026-09-14) narrows what is SHOWN, nothing else. The supplier
+     and currency locks, the primary note and the Continue count still read
+     `items`, so a ticked line the search hides is still carried forward — the
+     hint under the box says so. `q` is in the URL like every list's search, so
+     Back from the review screen returns to the same narrowed list. */
+  const query = searchParams.get('q') ?? '';
+  const setQuery = (q: string) => {
+    const next = new URLSearchParams(searchParams);
+    if (q.trim()) next.set('q', q); else next.delete('q');
+    setSearchParams(next, { replace: true });
+  };
+  const visibleItems = useMemo(() => filterOutstandingGrnLines(items, query), [items, query]);
+
   // Group by GRN doc no so the UI renders one card per GRN.
   const grouped = useMemo(() => {
     const byDoc = new Map<string, { meta: OutstandingGrnItem; lines: OutstandingGrnItem[] }>();
-    for (const it of items) {
+    for (const it of visibleItems) {
       const cur = byDoc.get(it.grnDocNo);
       if (cur) cur.lines.push(it);
       else byDoc.set(it.grnDocNo, { meta: it, lines: [it] });
     }
     return [...byDoc.entries()].map(([docNo, { meta, lines }]) => ({ docNo, meta, lines }));
-  }, [items]);
+  }, [visibleItems]);
 
   /* The SUPPLIER currently being billed = the supplier of the first ticked
      line. One supplier invoice may cover SEVERAL of that supplier's notes
@@ -176,6 +192,8 @@ export const PurchaseInvoiceFromGrn = () => {
 
   const picked = Object.entries(picks).filter(([, v]) => v.picked && v.qty > 0);
   const pickedCount = picked.length;
+  const visibleIds = new Set(visibleItems.map((it) => it.grnItemId));
+  const hiddenPickCount = picked.filter(([grnItemId]) => !visibleIds.has(grnItemId)).length;
 
   const onContinue = () => {
     if (pickedCount === 0 || !activeGrnId) { notify({ title: 'Tick at least one line first.', tone: 'error' }); return; }
@@ -244,19 +262,27 @@ export const PurchaseInvoiceFromGrn = () => {
                 : items.length === 0 ? (allItems.length > 0
                     ? `None of the ${allItems.length} outstanding line(s) that loaded belong to the note you came from — use “Show all outstanding notes” to see the rest.`
                     : 'This search came back with no outstanding GRN lines. That is not the same as every posted note having been billed — the list only covers the company you are working in, and notes it cannot see look identical to notes that are done. Open the goods-received note and check its invoiced balance before treating this as nothing left to bill.')
-                : `${items.length} line${items.length === 1 ? '' : 's'} across ${grouped.length} GRN${grouped.length === 1 ? '' : 's'}`}
+                : `${visibleItems.length === items.length ? '' : `${visibleItems.length} of `}${items.length} line${items.length === 1 ? '' : 's'} across ${grouped.length} GRN${grouped.length === 1 ? '' : 's'}`}
             </span>
           </div>
         </div>
         <div style={{ padding: '0 var(--space-4)' }}>
           <UnrecognisedScopeNotice unknown={scope.unknown} />
         </div>
+        {/* The server reads every note that still has something to bill, up to a
+            runaway ceiling. When it stops there it says so, and so must the page:
+            a short list that looks whole is the silence this read used to have. */}
+        {itemsQ.data?.truncated && (
+          <p role="alert" style={{ color: 'var(--c-burnt)', fontSize: 'var(--fs-12)', padding: '0 var(--space-4) var(--space-2)' }}>
+            This list is not complete: the server stopped reading goods-received notes at its limit, so some notes with lines still to bill are missing here and from the search.
+          </p>
+        )}
         {scope.keys.size > 0 && (
           <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-12)', padding: '0 var(--space-4) var(--space-2)' }}>
             Showing{' '}
             <strong>
               {scope.keys.size === 1
-                ? (grouped[0]?.docNo ?? 'this note')
+                ? (items.length > 0 ? items[0].grnDocNo : 'this note')
                 : `${scope.keys.size} notes`}
             </strong>{' '}
             only.{' '}
@@ -272,12 +298,39 @@ export const PurchaseInvoiceFromGrn = () => {
             <strong style={{ color: 'var(--c-burnt)' }}> Billing {pickedGrnIds.length} notes as one invoice.</strong>
           )}
         </p>
+        <div style={{ padding: 'var(--space-2) var(--space-4) 0' }}>
+          <SearchInput
+            value={query}
+            onChange={setQuery}
+            placeholder="Search GRN, supplier, PO, item…"
+            aria-label="Search outstanding GRN lines"
+            leadingIcon={<Search size={14} strokeWidth={1.75} />}
+            inputClassName="!pl-8"
+          />
+          <SearchScopeHint scope="loaded" className="mt-1 px-1" />
+          {hiddenPickCount > 0 && (
+            <p style={{ margin: 'var(--space-1) 0 0', fontSize: 'var(--fs-12)', color: 'var(--c-burnt)' }}>
+              {`${hiddenPickCount} ticked line${hiddenPickCount === 1 ? '' : 's'} hidden by this search will still go forward when you Continue.`}
+            </p>
+          )}
+        </div>
         <div className={styles.cardBody} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-          {grouped.length === 0 && !itemsQ.isLoading && (
+          {grouped.length === 0 && !itemsQ.isLoading && (items.length > 0 ? (
+            <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-13)' }}>
+              No outstanding line matches &ldquo;{query.trim()}&rdquo;.{' '}
+              <button
+                type="button"
+                onClick={() => setQuery('')}
+                style={{ background: 'none', border: 0, padding: 0, font: 'inherit', cursor: 'pointer', color: 'var(--c-burnt)', textDecoration: 'underline' }}
+              >
+                Clear the search
+              </button>
+            </p>
+          ) : (
             <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-13)' }}>
               Once a GRN is posted (and not yet fully invoiced), its lines will show up here.
             </p>
-          )}
+          ))}
           {grouped.map(({ docNo, meta, lines }) => {
             /* Locked only when the note can't share the document: a DIFFERENT
                supplier, or the same supplier under a different currency/rate

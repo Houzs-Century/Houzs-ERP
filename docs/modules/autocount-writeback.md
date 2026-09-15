@@ -426,15 +426,18 @@ than a convention: a request body, query string and header can only produce
 string keys, and JSON has no symbols. It is non-enumerable, so it cannot leak
 into a payload either.
 
-**The seven tools that may push** are pinned by
-`backend/tests/acWritebackPushAllowlist.test.mjs`, so an eighth cannot join by
+**The tools that may push** are pinned by
+`backend/tests/acWritebackPushAllowlist.test.mjs`, so a new one cannot join by
 copying a neighbour: `rebuild-ac-document.mjs`, `requeue-autocount-skipped.mjs`,
 `recompose-autocount-transfer.mjs`, `reraise-hc-po-2608-001.mjs`,
 `sync-ac-delta.mjs` under `LANES=push` only, `requeue-amendment-ac-edits.mjs`
 (`docs/bugs/0888-approved-so-and-po-amendments-queued-no-autocount-edit-from.md`),
-and `enqueue-so-writeback.mts` (below). The pin read only `.mjs` and `.ts` until
-2026-09-14, so that last one — a `.mts` — carried the opt-in for four days
-without the test seeing it
+`requeue-keyed-conversion-edits.mjs` (`docs/bugs/0900`),
+`retire-book-only-conversion-lines.mjs` (`docs/bugs/0902`),
+`resend-ac-document-edits.mjs` (`docs/bugs/0903`), and `enqueue-so-writeback.mts`
+(below). Read the list in that test rather than counting here — it grows. The pin
+read only `.mjs` and `.ts` until 2026-09-14, so the `.mts` one carried the opt-in
+for four days without the test seeing it
 (`docs/bugs/0888-the-account-book-push-allowlist-could-not-see-a-mts-script.md`).
 
 The drain is not gated this way and does not need to be: `drainAutoCountOutbox`
@@ -539,7 +542,7 @@ Each hook sits at the point the document becomes permanent — after the
 | PI cancel | `purchase-invoices.ts` | `PATCH /:id/cancel`, after the atomic ACTIVE->CANCELLED flip won |
 | SO edit | `mfg-sales-orders.ts` | `queueAcSoEdit` from the header PATCH, line add/edit/delete, `tbc-update` / `tbc-swap` / `tbc-swap-sofa`, the admin price `override`, and `so-amendments.ts` approve-so |
 | SO edit (salesperson HANDOVER) | `so-handover.ts` | `enqueueEdit({ touchedFields: ['agent'] })` once per order that actually moved, inside the loop and after every `continue` — so a skipped order queues nothing. `agent` is the AutoCount rep NAME and it follows a reassigned salesperson, so without this the account book keeps naming the departed rep. See `so-handover.md` |
-| SO edit (a PAYMENT moved the balance) | `mfg-sales-orders.ts` | `enqueueEdit` inside `recordSoPaymentRow` — the insert CORE, so `scan-so.ts`'s background receipt booking is covered as well as `POST /:docNo/payments`; plus `queueAcSoEdit` in `PATCH` and `DELETE /:docNo/payments/:id`. **Not** on `POST /:docNo/payments/:id/slip`, which attaches proof and moves no money |
+| SO edit (a PAYMENT moved the balance) | `mfg-sales-orders.ts` | `enqueueSoPaymentEdit` (`scm/lib/ac-so-payment-edit.ts`) inside `recordSoPaymentRow` — the insert CORE, so `scan-so.ts`'s background receipt booking is covered as well as `POST /:docNo/payments`; plus the same call in `PATCH` and `DELETE /:docNo/payments/:id`. **HEADER-ONLY since 2026-09-14** — see "A payment sends only BALANCE and PAYEMENT" below. **Not** on `POST /:docNo/payments/:id/slip`, which attaches proof and moves no money |
 | PO edit | `mfg-purchase-orders.ts` | `queueAcPoEdit` from the header PATCH, line add/edit/delete, `bulk-supplier-date` (per PO that moved), `convert-from-so`, and `po-amendments.ts` approve |
 | DO edit | `delivery-orders-mfg.ts` | `queueAcDoEdit` from the header PATCH and line add/edit/delete |
 | GRN edit | `grns.ts` | `queueAcGrnEdit` from the header PATCH and line add/edit/delete |
@@ -814,7 +817,7 @@ number. `docs/modules/grn.md` section 4d has the full shape.
 |---|---|
 | SO header | `scm.mfg_sales_orders` — `debtor_name`, `agent` + `salesperson_id` (§7n), `sales_location`, `ref`, `phone`, `address1-4`, and `branding` / `venue` / `po_doc_no` into UDF |
 | SO lines | `scm.mfg_sales_order_items`, including `linked_ac_dtlkey` (migration 0273) — the AutoCount line an edit addresses |
-| PO header | `scm.purchase_orders` — `po_number`, `po_date`, `notes`. **The creditor is a JOIN**: the table is supplier-keyed, so `CreditorCode` / `CreditorName` come from `scm.suppliers.code` / `.name` through `supplier_id`. It has no `agent` and no `ref` at all, so a create sends null for both and an edit omits `Ref` entirely rather than blanking AutoCount's |
+| PO header | `scm.purchase_orders` — `po_number`, `po_date`, `notes`. **The creditor is a JOIN**: the table is supplier-keyed, so `CreditorCode` / `CreditorName` come from `scm.suppliers.code` / `.name` through `supplier_id`. It has no `agent` and no `ref` at all, so a create sends null for both and an edit omits `Ref` entirely rather than blanking AutoCount's. The supplier delivery dates `supplier_delivery_date_2/3/4` go into UDF as `EDate` / `EDate2` / `EDate3` on create, transfer and edit, a blank slot omitted (since 2026-09-15, `docs/bugs/0919-a-supplier-delivery-date-entered-in-the-erp-never-reached-au.md`) |
 | PO lines | `scm.purchase_order_items`, same `linked_ac_dtlkey` |
 
 Every column these reads name is listed once at the top of
@@ -2931,10 +2934,12 @@ Three rules the composer keeps:
   `GREATEST`, the detail route's `Math.max`) and keeps an overpayment as customer
   credit instead. The write-back sends what the ERP holds.
 
-**IT GOES STALE ON A PAYMENT, and that is the open half.** Recording a payment is
-not one of §6's enqueue anchors, so the balance in AutoCount is the one the
-document last carried when something else was edited. Sending it is strictly
-better than never sending it; keeping it live needs a payment-side hook.
+**A payment is an enqueue anchor (since 2026-08-15), and since 2026-09-14 it
+sends only these fields.** Recording, amending or deleting a payment queues a
+header-only edit carrying `UDF.BALANCE` and `UDF.PAYEMENT` — see "A payment
+sends only BALANCE and PAYEMENT" at the end of this guide. (This paragraph said
+the balance went stale on a payment; that stopped being true when the hook
+landed.)
 
 ### Which PAYMENTS the book can learn about — one table, and it is not the only one that takes money
 
@@ -3980,6 +3985,33 @@ purchase order is a second rollout that needs its own.
 > targeted re-export of those DtlKeys with
 > `export-ac-line-photos.py`'s `DTLKEY_FILE` mode, then upload, then attach.
 
+### A picture too large for one request is left behind, not the document (2026-09-14)
+
+AcSyncService refuses any request over `MaxBody` — 2 MiB — with HTTP 413
+`body too large`, and a 4xx is not retried, so the row fails at once. The drain
+attaches every line photograph of an edit as base64, and uploads allow 10 MB
+with no resize, so **one phone photo refused the whole edit**: price, dates and
+the balance with it. Measured 2026-09-14 on the three orders refused that way —
+HC-SO-2609-063, HC-SO-012388, HC-SO-013496 — each carries exactly one
+photograph, of 2.19, 2.30 and 4.20 MB (R2 object sizes).
+
+The attachment now lives in `backend/src/scm/lib/autocount-photo-attach.ts`
+(moved out of the drain, which is at its size cap) and sizes the body before it
+sends: `planPhotoBudget` attaches lines in payload order while the encoded body
+stays under the host's limit, and a line that would cross it is sent with **no
+`Photos` key** — the book keeps the pictures it had on that line, the same rule
+as an unreadable picture. The sent row carries
+`PHOTOS NOT SENT: <n> line(s) … line <DtlKey> (<MB> MB)`, joined with ` | ` to
+any line-identity sentence, and the health check lists those rows under their
+own heading instead of calling them identity gaps. Tests:
+`backend/src/scm/lib/autocount-photo-attach.test.ts` and the drain case in
+`backend/src/scm/lib/autocount-drain.test.ts`. Ledger:
+`docs/bugs/0899-one-large-phone-photo-made-autocount-refuse-a-whole-sales-or.md`.
+
+**Still open:** the large picture itself does not reach AutoCount. That needs
+the picture made smaller — at upload, or by the host before it builds the RTF,
+which also means raising `MaxBody` — and neither is done here.
+
 ## 8. Configuration
 
 | Name | Kind | Notes |
@@ -4071,7 +4103,7 @@ words. The owner reviewed a mockup and asked for five changes; all five live in
 | **The reason, in three parts** | A headline, one sentence, and a **To fix** line, keyed by the server's `reason_kind` (`AC_REASON_COPY`). The headline is never behind a click — that was the owner's specific complaint. A `failed` row gets `AC_FAILED_COPY`, because the server deliberately does not classify those. *(The sentence and the To fix line moved behind opening the row the same day — see the section below.)* |
 | **Who was asked** | `acReplySource` labels the quote **AutoCount replied** (the row went through `dispatchOne`), **AutoCount was not asked** (every `skipped` row — all of them are decided at enqueue time or before `callAcService`, so no held-back document has ever reached the account book), or **The last send attempt reported** for a `pending` row, where the note may be either and nothing the server sends tells them apart. |
 | **The queue report's two summary sentences are TESTED** | They live in `backend/scripts/lib/ac-queue-report-lines.mjs`, not inline in the reporter, because both were wrong for months and only a person ever noticed. The totals clause names the set the re-queued rows sit INSIDE and calls them history — it used to append "(3 of those have been re-queued)" to "skipped 3", counting the same rows as outstanding and as history in one sentence. The FAILED heading reads the OPS of the rows it covers — a create means the document is not in the book, an edit or convert means it IS there and the change did not land — where it used to assert the create's meaning over every failure, and was printed over a failed EDIT of a document the owner had open in AutoCount at the time. `docs/bugs/0632-the-queue-report-contradicted-itself-and-blamed-the-wrong-sh.md`. |
-| **A rebuild teaches the ERP the keys it reissued** | A rebuild clears the details and re-adds them, so every key the host returns is NEW. `newLineTargetOf` used to decide what to store back from `IsNewLine` — which only the declared-new branch sets — and to treat the payload's own `DtlKey`s as already known, so on a rebuild it stored nothing and the ERP went on holding dead keys. The next ordinary edit of that document would then send `EditDetail(<dead key>)`. It now reads `Rebuild`: every line is new, no key is known, and `erpLineIdsOf` names the ERP rows on BOTH mapper branches — the keyless one returns the raw detail and was skipping the stamp. An ordinary edit is unchanged and still stores only what the route DECLARED. `docs/bugs/0621-a-rebuild-left-the-erp-holding-line-keys-that-no-longer-exis.md`. |
+| **A rebuild teaches the ERP the keys it reissued** | A rebuild clears the details and re-adds them, so every key the host returns is NEW. `newLineTargetOf` used to decide what to store back from `IsNewLine` — which only the declared-new branch sets — and to treat the payload's own `DtlKey`s as already known, so on a rebuild it stored nothing and the ERP went on holding dead keys. The next ordinary edit of that document would then send `EditDetail(<dead key>)`. It now reads `Rebuild`: every line is new, no key is known, and `erpLineIdsOf` names the ERP rows on BOTH mapper branches — the keyless one returns the raw detail and was skipping the stamp. An ordinary edit is unchanged and still stores only what the route DECLARED. A `Retire: true` line on a rebuild is skipped, as the host skips it: counting it refused the whole batch and left HC-SO-001463 and HC-SO-013209 holding dead keys. `docs/bugs/0621-a-rebuild-left-the-erp-holding-line-keys-that-no-longer-exis.md`, `docs/bugs/0904-a-rebuild-that-also-retired-a-line-stored-none-of-the-new-au.md`. A repeated item code with no Desc2 is stored by position on a rebuild too, where payload order IS the book's order (`docs/bugs/0907-a-rebuild-of-a-document-that-repeats-an-item-code-without-de.md`); an ordinary edit keeps the refusal. |
 | **The held-back report counts OPEN rows only** | `backend/scripts/check-autocount-held-back.mjs` printed "[already re-queued - history, not an open item]" against a row and then counted that same row in its DISTINCT DOCUMENTS HELD BACK total, so it reported a document as stuck while the document was demonstrably fine. Re-queued rows are excluded from the count and reported separately as history. Same entry. |
 | **A REBUILT line carries its ItemCode; an edited one never does** | The keyed edit path strips `ItemCode` from every line on purpose, and that must not change: the ERP's answer for the collapsed sofa codes is a POLICY, so sending it would silently re-point the 194 real book lines those two brand items hold. A REBUILD is not an edit — it clears the details and ADDS the lines — so stripping it there adds a line with a BLANK item code. That reached the live book on 2026-09-02: seven of eight lines on `SO-013394` came back with `ItemCode = ''`, and nothing failed, because the host wrapped the assignment in `Set()`, which swallows. Now: `effOpts.rebuild` is DERIVED and authoritative (a caller may ask, it may not decide), the mapper puts the code back on a rebuild only, and the host THROWS on a new line with no item code rather than adding a blank one. `docs/bugs/0615-a-rebuild-added-lines-with-a-blank-item-code.md`. |
 | **Send again on a held-back EDIT** | Rebuilds the document rather than re-composing a keyed edit — `docs/bugs/0614`. An `edit` used to be refused by the ladder AND carry no button, so a document whose keyless line can never be matched had no way through at all. A rebuild clears the book's details and lays the ERP's lines down, so it needs none of the `retire` list a skipped row cannot recover — which was the whole reason for the old refusal. **Never automatic**: an ordinary save with a keyless line still refuses (`docs/bugs/0613`), because a rebuild reissues every line key. `rebuildAllowed` still refuses a converted document (`docs/bugs/0611`) and one whose keys a purchase order holds (`docs/bugs/0609`), and the host still refuses one its own tables say was transferred. |
@@ -5208,6 +5240,25 @@ writes nothing wrong. A blank on either side falls back too.
 `readPoTransferFacts` adds `item_code` to the two selects it was already taking,
 so the check costs no extra round trip.
 
+**`readPoTransferFacts` reads in `inAcLineOrder` since 2026-09-14, and that is a
+money rule.** Its keys become `DtlKeys`, which `composeSoToPo` zips BY INDEX with
+the details composed from `inAcLineOrder` rows, and the host applies each
+Detail's Qty / UnitPrice / Location / DeliveryDate to the line transferred from
+THAT Detail's DtlKey. The read had no ORDER BY: 15 of 27 multi-line transfers
+since go-live were sent with keys and values from different lines, and on
+`HC-PO-2609-032` / `HC-PO-2609-063` the quantity itself differs (probe run
+34827560743, section 7d). `docs/bugs/0889-a-multi-line-so-to-po-transfer-sent-each-line-s-quantity-and.md`.
+
+**A transfer stores its line keys by SOURCE KEY, not by ItemCode.**
+`AddSOToPOTransferDetail` copies the sales line's item, so the book's ItemCode on a
+transferred purchase line is the SALES item (`HOK-2038 (A) (Q)`) while the ERP
+composed its own (`CELENE (A)-(Q)`); `persistLineKeys`' ItemCode check could never
+pass and 52 of 74 transfers kept no keys. It now proves line N against the ERP
+row whose sales line IS `DtlKeys[N]` (the wire body's, after the drain's
+backfill), reading both tables before it writes. A CREATE skips the Desc2 and
+repeated-code refusals, which exist for conversions whose order is only presumed.
+`docs/bugs/0890-transferred-and-newly-created-purchase-orders-kept-no-autoco.md`.
+
 ## 12b. Clearing a FINISHED document off the page (2026-09-08)
 
 The owner asked twice for three old test documents to stop appearing on
@@ -5453,6 +5504,54 @@ Tests: `scripts/lib/variant-reconcile.test.mjs` — the ruled build, the
 not-folded-into-agree property, the unwritten ruling that stays `DIFFER`, the
 no-ruling control, and the assertion that a ruling cannot rescue an ERP carrying
 no compartments at all.
+
+## Every piece of a corrected build carries the build's colour and leg (2026-09-14)
+
+New SURFACE on `backend/scripts/apply-sofa-compartment-corrections.mjs`. Every
+piece's variants, whether kept or added, now go through
+`lib/sofa-build-axes.mjs`. Blank fabric fields and a blank `legHeight` are
+filled from the same sofa's other rows. The dry-run prints a
+`fill <piece>: <keys> from the build` line for each piece it fills.
+
+Before this, an ADDED piece got `{seatHeight}` and nothing else: its variants
+were built from a row it did not have. HC-SO-013346's added `8030-1A(RHF)`
+carried no colour on the sales order or the purchase order, while its
+`8030-1A(LHF)` sibling carried `CH141-11`.
+
+The rule is the one `fill-sofa-sibling-fabric-2026-09-09.mjs` was approved on:
+
+- fill blanks only;
+- fill fabric only when the build carries exactly one (a two-tone build is left
+  alone);
+- never copy specials, because they carry money.
+
+Trace in docs/bugs/0896-a-piece-the-sofa-corrections-applier-added-carried-no-colour.md.
+
+## The applier's MAIN path carries the supplier code too (2026-09-14)
+
+Correction to the section below: its claim that the corrections applier "aligns
+EVERY column that can state a sofa piece" held for ONE of its two paths. Only the
+downstream-document path (`applyDownstreamDoc`) called `alignPieceColumns`. The
+main sales-order / purchase-order path moved `item_code` and the name and left
+`supplier_sku` on the old piece. It also INSERTed an added purchase piece with
+**no** supplier code, which the shown-vs-code sweep cannot repair: an empty
+column is not a disagreement. Found before any write, applying the owner's
+HC-PO-010086 build (`8030-2S` → `1A(LHF)+1A(RHF)`, supplier code
+`HOK-5540 SOFA 2S`).
+
+New SURFACE on `backend/scripts/apply-sofa-compartment-corrections.mjs`:
+
+- every purchase and receipt row the applier moves is aligned: the purchase-line
+  update and insert (inside the transaction), and the purchase/receipt rows a
+  carry follows. An `ALIGNED <col>: "<from>" -> "<to>"` line is printed per value;
+- an added purchase piece COPIES `supplier_sku` from the row it is built from,
+  and then its piece token is moved (`HOK-5540 SOFA 2S` → `HOK-5540 SOFA 1A(RHF)`);
+- the fresh-connection VERIFY reads `supplier_sku` + `material_name` on each
+  purchase line, prints the supplier codes on its `OK` line, FAILS a row that
+  names another piece, and prints a `NOTE` for an empty supplier code.
+
+Pinned by `backend/tests/sofaCorrectionsSupplierCode.test.mjs`. Trace in
+docs/bugs/0894-the-sofa-corrections-applier-moved-a-purchase-line-s-code-bu.md.
 
 ## A corrected code carries its SUPPLIER code too (2026-09-11)
 
@@ -5781,6 +5880,15 @@ SINCE`. Both are printed and neither is counted: the row is the record of an
 attempt, and discounting it does not unsay it. The two discounts are now taken
 over EVERY outstanding failure rather than over the 25 the log prints, which was
 correct only while there were fewer than 25.
+
+**The identity section reads the document, not only the note (2026-09-14).**
+*IN AUTOCOUNT, BUT WITH NO LINE IDENTITY* used to list every `sent` row carrying
+the drain's identity note (0813). Keys filled later by the DocTransfer stamp,
+the relink sweep or a rebuild left the note in place, so 40 documents were
+listed while most were keyed. Each document is now looked up by number in its
+item table: listed with its keyless count while any row lacks a key, counted
+under *KEYED SINCE* once none does, and kept listed when the lookup cannot find
+it. `docs/bugs/0905-the-outbox-health-check-kept-listing-documents-as-having-no.md`.
 
 **This has now been fixed three times at the trigger and once at the shape.**
 Twice the trigger was the re-queue marker (#2220, then the counts block); the
@@ -6228,6 +6336,15 @@ to a single SEAT, not a left arm. Four more documents are the same shape.
 only**, so a run the adjacency rule already forms is left to it and nothing that
 works today moves.
 
+**Corrected 2026-09-14 — "contiguous" was not the same as "already formed".** The
+adjacency rule also breaks a run where the stored Desc2 changes. `HC-SO-013320`
+and `HC-PO-010008` hold two adjacent 8069 pieces under ONE book key (910573 /
+910869) whose Desc2 differ, because an amendment re-derived each piece's text
+from its own special order; each piece was collapsed alone and refused
+(`cannot spell [1A(LHF)]`, `cannot spell [1B(RHF)]`). A contiguous group is now
+left to the adjacency rule only when its pieces share one Desc2
+(`docs/bugs/0891-two-adjacent-pieces-of-one-sofa-book-line-with-different-des.md`).
+
 **THE HAZARD, and why `bookGrouped` exists.** A gathered run arrives in the ERP's
 INSERTION order, which states nothing about how the sofa is built. Composing from
 it round-trips perfectly and writes the **MIRROR** of the sofa the book records —
@@ -6240,3 +6357,252 @@ the ERP rows; size, colour and specials are still compared exactly.
 fail and the stored text decodes to the same multiset — `HC-SO-000814` and
 `HC-SO-001112`, whose pieces match and whose order does not. Reached only after
 the composer has failed, so it cannot hide an edit.
+
+## A payment sends only BALANCE and PAYEMENT (2026-09-14)
+
+**What changed.** `recordSoPaymentRow` and the payment `PATCH` / `DELETE`
+routes queue `enqueueSoPaymentEdit` (`backend/src/scm/lib/ac-so-payment-edit.ts`)
+instead of the whole-document edit. The body is
+`{ DocType: 'SO', DocNo: <linked_ac_docno>, Header: { UDF: { BALANCE, PAYEMENT } }, Lines: [] }`
+— no line, no photograph, never `Rebuild`.
+
+**Why.** A payment moves two header fields and no line, but the whole-document
+edit composed every line, and that is where an edit is refused: a keyless line
+(`KeylessLineError`), a sofa the book's one line cannot spell
+(`SofaCollapseError`), or a body over the host's 2 MB limit once the drain has
+attached every line photograph. The money was refused with the lines. Measured
+on production 2026-09-14: of the 137 payments staff recorded since go-live, 133
+were carried by a later successful send and 4 (HC-SO-012025, HC-SO-012736,
+HC-SO-2609-063) were stranded that way; on the 124 orders checked, AutoCount's
+`SO.UDF_BALANCE` equalled the value the ERP last sent.
+
+**Why it is safe in the book.** `AcSyncService.Edit()` applies the `Header` keys
+it is given, then runs its key pre-flight and line loop over `Lines`; an empty
+list runs neither, and only `Rebuild: true` calls `ClearDetails`. Lines, keys
+and FurtherDescription stay as the book has them.
+
+**What it does not change.** An order with no `linked_ac_docno` still goes
+through `enqueueEdit`, which folds the payment into a pending create or queues
+nothing. A failed header read falls back to `enqueueEdit`, so this path is never
+worse than the one it replaced. Every other edit of the order still sends the
+whole document. The same two rules as the full header hold: a settled order
+sends `"0.00"`, and no reference omits `PAYEMENT` rather than blanking the
+cutover's text.
+
+Tests: `backend/src/scm/routes/soPaymentQueuesAcEdit.test.ts` (the body, a
+keyless line, the pending-create fold, `composeSoPaymentEdit`) and
+`backend/tests/autocountWritebackWiring.test.ts` (all three payment paths call
+it). Ledger: `docs/bugs/0896-a-payment-on-a-sales-order-whose-lines-autocount-refused-nev.md`.
+
+## A converted document's line keys, from the book's DocTransfer (2026-09-14)
+
+**The gap.** `persistLineKeys` cannot prove which ERP row a DELIVERY ORDER or
+GOODS RECEIPT line is: the host's `CreatedLines` returns `DtlKey`, `ItemCode`
+and `Desc2` and no source line, and a conversion copies the SOURCE line's item
+code (the book's supplier spelling), so the item-code and line-count checks
+refuse. Measured 2026-09-14: 82 ERP-created delivery orders (417 lines) and 64
+goods receipts (244 lines) sat in the book with a keyless line, and an edit of
+any of them is refused whole (`KeylessLineError`).
+
+**Where the answer is.** Not in `DODTL.FromDocDtlKey` / `GRDTL.FromDocDtlKey`
+(NULL) but in `DocTransfer`, which names one source line per transferred line —
+the same table docs/bugs/0746 found for the migrated chain.
+
+**The stamp.** Two scripts and one workflow, for the documents already in the
+book:
+
+| step | where | what |
+| --- | --- | --- |
+| export (office network, read-only) | `backend/scripts/export-ac-conversion-line-keys.py` | every line of an `HC-DO-` / `HC-GRN-` document with its DocTransfer source key, into `backend/scripts/data/ac-conversion-line-keys.json.gz`; refuses a book whose lines have more than one transfer row or a source of the wrong type |
+| plan / apply (Actions) | `backend/scripts/stamp-conversion-line-keys.mjs`, workflow *Stamp AutoCount line keys on our DOs and GRs* | inside one document, our row's source key (`so_item_id` / `purchase_order_item_id` -> that line's `linked_ac_dtlkey`) meets the book line it fed (`backend/scripts/lib/conversion-line-key-plan.mjs`); writes `linked_ac_dtlkey` only where NULL, one transaction, PLAN_DIGEST-bound, verified on a fresh connection; refuses a snapshot older than two days |
+
+It sends nothing to AutoCount. A refused edit of a stamped document still has to
+be re-queued.
+
+**Plan measured locally against production 2026-09-14:** delivery orders stamp
+417, 66 existing keys agree, 0 disagree; goods receipts stamp 216, 7 agree,
+0 disagree, 26 lines with no source (added on the receipt), 2 whose source the
+receipt does not hold, 1 ambiguous.
+
+**The lasting half — at the drain (docs/bugs/0898).** `CreatedLines` in
+`AcSyncService.cs` now returns each line's `FromDocDtlKey` from `DocTransfer`
+(only when exactly one transfer row names it), `parseCreatedLines`
+(`backend/src/services/autocount-created-lines.ts`) keeps it, and
+`persistLineKeys` pairs a `so_to_do` / `po_to_gr` / `do_to_iv` / `gr_to_pi`
+by that link when every line carries it, with the same
+`conversion-line-key-plan.mjs` rule as the stamp. **It takes effect only once the
+office host is rebuilt**; until then the host sends no link, the old count and
+code checks decide, and the export and the stamp are re-runnable for whatever
+drains in between. Ledger: `docs/bugs/0897-delivery-orders-and-goods-receipts-the-write-back-created-ke.md`,
+`docs/bugs/0898-the-drain-could-not-pair-a-converted-document-s-lines-with-t.md`.
+
+## Sending a refused DO / GR edit again once its lines are keyed (2026-09-14)
+
+A delivery order or goods receipt edit refused for a keyless line is a `skipped`
+row with an empty body, and nothing re-sends it: the re-queue ladder does not
+take edits (`autocount-requeue.ts`, "fix the cause, save the document again"),
+and the relink sweep queues the keyed edit only on the run that itself closed
+the last gap. A document keyed some other way — the DocTransfer stamp — is
+already complete when the sweep reaches it.
+
+`backend/scripts/requeue-keyed-conversion-edits.mjs` (workflow *Re-send refused
+DO / GR edits once every line is keyed*, run under `tsx`) does that one save for
+the documents that need it: a keyless-line refusal not followed by any pending
+or sent edit, and no keyless line left. It calls the Worker's own `enqueueEdit`
+over `pgrest-shim`, so the composer's guards all apply, and verifies on a fresh
+connection that each queued body names every line by DtlKey. Plan by default.
+
+**Its limit:** the refused edit's payload is empty, so a line hard-deleted in
+that save is not retired by the edit sent now — the same limit as the sweep's
+queued edit. Plan runs against production 2026-09-14: before any stamp, 15
+documents with an unanswered keyless refusal, 1 fully keyed (HC-DO-2609-039),
+14 held. After the relink sweep's one apply run (13:05Z: 30 lines stamped, 12
+edits queued, all 12 sent) and the DocTransfer stamp (run 34847683795: 603 keys,
+verified), 3 remain: HC-DO-2609-039, fully keyed; HC-GRN-2609-006 (a STOOL) and
+HC-GRN-2609-028 (10 AK-SLEEP ESSENTIAL 7 HOLES pillows), each with one row added
+on the receipt with no purchase line behind it. The book's copy of each receipt
+has every line claimed, so those rows are sent as `IsNewLine` — the same
+declaration the relink sweep makes (docs/bugs/0817) — and are held instead when
+there is no fresh book snapshot for the document. `DOC_NOS` plans named documents by the same rule
+whether or not a refusal exists: HC-GRN-2609-060 to -068 hold pillows received
+beside the purchase lines that no refusal ever recorded
+(`docs/bugs/0908-receipt-rows-the-book-never-had-were-picked-up-by-no-tool-once-the-receipt-was-keyed.md`).
+
+## A line the ERP removed, still live in the book (2026-09-14)
+
+When a person removes a line from a delivery order or goods receipt, the delete
+route names it for AutoCount by its key (`retiredLineOf`). A row with no key is
+not named, and every later edit carries the document as it is now, so the book
+keeps the line live and its source stays transferred. On 2026-09-14 two bolster
+lines moved onto new delivery orders were delivered twice in the book
+(HC-DO-2609-044 and -102), and HC-DO-2609-103 could not be created at all.
+
+`backend/scripts/retire-book-only-conversion-lines.mjs` (workflow *Zero
+AutoCount DO / GR lines the ERP removed*, run under `tsx`) compares the committed
+book snapshot with the ERP and sends `enqueueEdit` with `retire` for a book line
+no ERP row claims. It sends only when every ERP row of the document is keyed,
+the line still has a quantity, and nothing downstream (an invoice) was
+transferred from it; everything else is printed as held. A DO or GR is never
+rebuilt, so the host zeroes the line, marks it not transferable and prefixes
+`[ERP-CANCELLED]`. The plan composes each edit and rolls it back; apply verifies
+on a fresh connection that each planned key is sent with `Retire: true`. The
+snapshot must be at most two days old and carry `qty` and `transferredOn`, both
+added to `export-ac-conversion-line-keys.py` for this. Ledger:
+`docs/bugs/0902-moving-a-line-to-a-new-delivery-order-left-it-on-the-old-one.md`.
+
+## Purchase order line keys from the book, and sending a document again by name (2026-09-14)
+
+A purchase order the write-back raised from a sales order is a transfer, but
+AutoCount keeps the link on the purchase line itself, `PODTL.FromSODtlKey`, not
+in `DocTransfer`. `export-ac-conversion-line-keys.py` exports that lane and
+`stamp-conversion-line-keys.mjs` pairs it: `purchase_order_items.so_item_id` ->
+that sales line's `linked_ac_dtlkey`, for a purchase order a sent `so_to_po`
+row names. Same rule, digest, confirm and verify as the DO / GR lanes.
+
+`backend/scripts/resend-ac-document-edits.mjs` (workflow *Send named documents
+to AutoCount again*) is the named "save it again": `enqueueEdit` for each SO / PO
+/ DO / GR in `DOC_NOS`, composed from the document as it is now, plan rolled back,
+apply verified. It is how a purchase order sent with swapped values (0889) gets
+its own values back once keyed, and how an edit refused for a cause since fixed
+is sent. It never asks for a rebuild. Ledger:
+`docs/bugs/0903-purchase-orders-raised-from-a-sales-order-kept-swapped-value.md`.
+
+## A sofa's armed ends may be typed anywhere (2026-09-14)
+
+The ERP lists sofa pieces in the order they were typed, and the book's decoder
+reads a plain armed end (`1EL` / `2EL` / `1ER` / `2ER`) as the end its hand
+names. The compose gate in `autocount-sofa-collapse.ts` therefore accepts one
+reordering on top of the exact sequence. The decoded pieces must be the ERP's,
+with only plain armed ends moved: at most one per hand, left first, right last,
+everything else in typed order. Size, colour and specials are still compared
+exactly. The echo rungs are unchanged and stay exact. HC-SO-012736
+[Console, 2A(LHF), 1A(RHF)] and HC-GRN-2609-006 had been refused on this.
+`docs/bugs/0906-a-sofa-typed-with-its-armed-end-out-of-place-was-refused-tho.md`.
+
+## A sofa piece kept as its own book line goes through as itself (2026-09-14)
+
+A single keyed compartment folds, since a folded build of one piece is a real
+shape. The exception: a piece with no solo spelling (an armed end, a corner, a
+chaise) goes through as itself when the same document holds another piece of
+that model under a different key. Such a document keeps its pieces as separate
+book lines. HC-PO-2609-063 and HC-PO-2609-047 had been refused on this.
+`docs/bugs/0909-a-sofa-piece-kept-as-its-own-book-line-was-folded-alone-and-refused.md`.
+
+## A piece of another model inside one book line (2026-09-15)
+
+Pieces that share one book key are one sofa, even when their models differ.
+They are gathered under the model that holds a strict majority, and every
+other piece is named at the end of the text (`CNR 8069`). The decoder skips that
+segment, and the gate requires it to be present. With no majority the models
+are grouped apart and refused as before. HC-SO-002861 / HC-PO-009827, whose
+amendment turned one 8060 piece into an 8069 corner, had been refused on this.
+`docs/bugs/0913-a-sofa-whose-book-line-holds-a-piece-of-another-model-was-re.md`.
+
+## Invoice line keys, and one receipt row over a split transfer (2026-09-15)
+
+`export-ac-conversion-line-keys.py` and `stamp-conversion-line-keys.mjs` carry
+two more lanes, read from `DocTransfer` like a DO:
+
+- **IV**: `HC-SI-` invoices, sourced from `sales_invoice_items.do_item_id`, for
+  a sent `do_to_iv`;
+- **PI**: `HC-PI-` invoices, sourced from `purchase_invoice_items.grn_item_id`,
+  for a sent `gr_to_pi`.
+
+`resend-ac-document-edits.mjs` also takes sales and purchase invoices by number.
+`docs/bugs/0914-invoices-the-write-back-converted-kept-no-autocount-line-key.md`.
+
+When the book split one transfer over several lines, the pairing rule stamps a
+row only if all of these hold:
+
+- exactly one row of the document carries that source;
+- the book lines add up to that row's quantity;
+- none of those lines is transferred onward.
+
+The row then takes the lowest-keyed line (outcome `stamp_merged`), and
+`retire-book-only-conversion-lines.mjs` zeroes the rest. The drain passes no
+quantities and refuses as before.
+`docs/bugs/0915-a-receipt-line-the-book-split-over-two-lines-could-not-be-gi.md`.
+
+## Cleared documents that reached AutoCount go back on the list (2026-09-15)
+
+`archive-ac-outbox-docs.mjs` cleared documents by number with no verdict, and
+on 2026-09-10 it cleared documents whose refusal was still open. They reached
+AutoCount later under live rows, but their old refusals stayed on the
+**Cleared** shelf with a refused badge. Six of those refusals were filed under
+a row id rather than the number (0774), so the page could never join them to
+the later arrival.
+
+The archive script now skips, and names, a document with a waiting send or
+with a refusal that no arrival came after. That judgement is `clearVerdict` in
+`backend/scripts/lib/cleared-arrived-plan.mjs`, over the page's own
+`acOutboxState` and `acRefusalPredatesArrival`; the script therefore runs
+under tsx.
+
+`restore-arrived-ac-outbox-docs.mjs` (workflow *Put cleared AutoCount documents
+that arrived back on the list*) handles the ones already cleared:
+
+- it clears `archived_at` on every script-cleared document that has since
+  arrived;
+- it first re-files each id-filed refusal under the document's number;
+- documents a person cleared on the page (`archived_by` set) stay cleared.
+
+`docs/bugs/0917-cleared-documents-that-reached-autocount-still-read-as-not-s.md`.
+
+## Carried-over delivery and purchase orders get their line keys too (2026-09-15)
+
+A delivery order or purchase order carried over from AutoCount keeps
+AutoCount's number (`DO-010936`) and is held in the ERP as `HC-` + that number.
+Rows the cutover split out or the 2026-09-07 decomposition added carried no key,
+so a staff edit was refused whole.
+
+- `list-carried-over-keyless-documents.mjs` (read-only) lists those documents.
+- `export-ac-conversion-line-keys.py` exports them through the DO and PO lanes
+  when given `CARRIED_OVER_FILE`.
+- `stamp-conversion-line-keys.mjs` requires the ERP document to link that
+  AutoCount number (and a delivery order to be flagged carried over) in place of
+  a sent conversion.
+
+A book line at quantity 0 is retired and no longer counts as a pairing target
+when quantities are given. Carried-over goods receipts are not covered: most
+link no book receipt number.
+`docs/bugs/0919-delivery-and-purchase-orders-carried-over-from-autocount-had.md`.

@@ -30,6 +30,7 @@
 
 import { isDeliveryFeeServiceCode, isServiceLine } from '../scm/shared/service-sku';
 import { SO_DELIVERED_OR_BEYOND, SO_NOT_AN_ORDER } from '../scm/shared/so-deliverable-states';
+import { layOutBlock, type LaidLine, type LaidNode, type Layout, type LayoutItem } from './report-layout';
 
 type Db = any;
 
@@ -216,5 +217,50 @@ export function buildPerformanceReport(p: {
     otherExpenses, otherExpensesSen,
     netSen, netPct: pct(netSen, salesSen),
     settings: p.settings,
+  };
+}
+
+/* ── The account part on the report's layout (docs/bugs/0912) ──────────── */
+
+export type PerformanceLayout = {
+  stored: boolean;
+  /** Sales of the period — what every % is of; null when nothing sold. */
+  baseSen: number | null;
+  otherIncome: LaidNode[];
+  expenses: LaidNode[];
+};
+
+const fmtRm2 = (sen: number): string =>
+  new Intl.NumberFormat('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Math.abs(sen) / 100);
+const ratePct = (bp: number): string => `${(bp / 100).toFixed(2)}%`;
+
+/** The sentence the computed operating expense line prints under — what it
+    is, what it stands in for (owner: 在 performance P&L 要注明). ONE home: the
+    screen, the CSV and the PDF all read the laid line's label. */
+export const operatingExpenseLabel = (o: PerformanceReport['operatingExpense']): string => {
+  const standsFor = o.accountFound
+    ? `in place of ${o.account}${o.accountName ? ` ${o.accountName}` : ''}`
+    : `${o.account} not in the chart — nothing replaced`;
+  return `Operating expense — ${ratePct(o.rateBp)} of sales excluding service (${fmtRm2(o.baseSen)}), ${standsFor}`;
+};
+
+/**
+ * The lower part of the Performance P&L — the other income as booked, the
+ * computed operating expense, every other expense as booked — on the
+ * report's tree. The computed line carries the CODE of the account it
+ * replaces, so it prints exactly where the owner placed that account (and
+ * under Unassigned when the chart does not carry the code — the report then
+ * says so in the line's own label). % of sales on every line.
+ */
+export function performanceLayout(r: PerformanceReport, layout: Layout, companyId: number, stored: boolean): PerformanceLayout {
+  const baseSen = r.totals.salesSen > 0 ? r.totals.salesSen : null;
+  const o = r.operatingExpense;
+  const opex: LaidLine = { code: o.account, name: o.accountName ?? o.account, label: operatingExpenseLabel(o), amountSen: o.amountSen };
+  const block = (key: string): LayoutItem[] => layout.blocks[key] ?? [];
+  return {
+    stored,
+    baseSen,
+    otherIncome: layOutBlock(block('otherIncome'), r.otherIncome, companyId, baseSen),
+    expenses: layOutBlock(block('expenses'), [opex, ...r.otherExpenses], companyId, baseSen),
   };
 }

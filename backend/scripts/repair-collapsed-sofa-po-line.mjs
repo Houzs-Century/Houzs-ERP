@@ -145,7 +145,7 @@ const TERMINAL = new Set(["CANCELLED", "CLOSED", "SHIPPED", "DELIVERED", "INVOIC
 /* isHardBoundLine, src/scm/lib/so-stock-allocation.ts, in SQL-free form - the
    same shape probe-staff-reported-flow.mjs carries, and for the same reason:
    two copies of this predicate drift and the readiness answer drifts with them. */
-const HARD_BOUND_GROUPS = new Set(["bedframe", "sofa"]);
+const HARD_BOUND_GROUPS = new Set(["bedframe", "sofa", "fabric_accessory"]);
 const isHardBound = (group, code) => {
   const g = (group ?? "").toLowerCase();
   if (HARD_BOUND_GROUPS.has(g)) return true;

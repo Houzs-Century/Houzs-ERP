@@ -427,18 +427,25 @@ export const useFabricColoursActive = () =>
    (mirrors the SKU picker's useMfgProducts gate in SoLineCard). Selection shape
    is unchanged — the combobox hands back a full FabricColourRow, identical to a
    row from useFabricColoursActive(). */
+/* `itemCode` is REQUIRED (null when the line has none yet): with it, the server
+   applies the Model's fabric pool BEFORE the 50-row cap, so an allowed colour is
+   never crowded out by disallowed ones ahead of it (docs/bugs/0893, the
+   fabric-search entry). A caller that forgot it would silently get the old,
+   short answer, which is the optional-parameter trap this repo bans. */
 export const useFabricColoursSearch = (
   q: string,
-  opts?: { enabled?: boolean },
+  opts: { enabled: boolean; itemCode: string | null },
 ) => {
   const trimmed = q.trim();
+  const item = (opts.itemCode ?? '').trim();
   return useQuery({
-    queryKey: ['fabric-colours', 'search', trimmed],
+    queryKey: ['fabric-colours', 'search', trimmed, item],
     staleTime: 60_000,
-    enabled: (opts?.enabled ?? true) && trimmed.length >= 2,
+    enabled: opts.enabled && trimmed.length >= 2,
     queryFn: async ({ signal }): Promise<FabricColourRow[]> => {
+      const itemParam = item ? `&itemCode=${encodeURIComponent(item)}` : '';
       const res = await authedFetch<{ colours: FabricColourRow[] }>(
-        `/fabric-colours?q=${encodeURIComponent(trimmed)}&limit=50`,
+        `/fabric-colours?q=${encodeURIComponent(trimmed)}&limit=50${itemParam}`,
         { signal },
       );
       return res.colours ?? [];
