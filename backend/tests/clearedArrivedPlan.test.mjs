@@ -69,6 +69,17 @@ describe("clearVerdict", () => {
     expect(clearVerdict([row({ status: "pending" })])).toBe(HELD.sending);
     expect(clearVerdict([])).toBe("no rows");
   });
+
+  test("a cancelled-before-send document is finished, so it may be cleared (0917 held it wrongly)", () => {
+    const CANCEL = "cancelled in the ERP before it was written to AutoCount";
+    // the full reason, and the left(...,40) truncation the archive script passes
+    expect(clearVerdict([row({ status: "skipped", error_head: CANCEL, created_at: "2026-09-15T08:37:00.000Z" })])).toBeNull();
+    expect(clearVerdict([row({ status: "skipped", error_head: CANCEL.slice(0, 40), created_at: "2026-09-15T08:37:00.000Z" })])).toBeNull();
+    // a non-cancel never-arrived refusal (a keyless line) is still held
+    expect(clearVerdict([row({ status: "skipped", error_head: "refused, nothing sent (KeylessLineError)", created_at: "2026-09-15T08:37:00.000Z" })])).toMatch(/refusal/);
+    // a pending send still wins over a cancel row
+    expect(clearVerdict([row({ status: "pending" }), row({ status: "skipped", error_head: CANCEL })])).toBe(HELD.sending);
+  });
 });
 
 describe("documents a person cleared, named by the operator", () => {
