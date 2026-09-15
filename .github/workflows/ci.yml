@@ -798,8 +798,63 @@ jobs:
   # same pattern as `backend` above, and for the same reason.
 
 
-  frontend-checks:
+  # The frontend vitest suite, instrumented, sliced across three runners.
+  #
+  # WHY SHARDED (2026-09-15, docs/ci-fast-lane.md). The comment that used to sit
+  # on this step said "18s bare, 20s instrumented" (measured 2026-08-13). By
+  # 2026-09-15 the suite was 484 files / 4,986 tests and `npm run test:coverage`
+  # took 236-302s on one runner, which made `frontend-checks` the slowest job in
+  # the run: median 5m12s over the last 60 merged PRs, and the job that decided
+  # how long a frontend or mixed PR waited — TWICE, once on the PR and once again
+  # in the merge queue.
+  #
+  # NOTHING IS SKIPPED. Same files, same `--coverage`, same config; `--shard`
+  # only decides which runner executes which file. Each shard writes a vitest
+  # BLOB report (results + raw coverage), and `frontend-checks` below merges the
+  # three with `vitest run --merge-reports --coverage` into the same
+  # coverage/coverage-final.json the ratchet always read. The ratchet refuses a
+  # report that is missing a file on disk, so a shard that silently dropped
+  # files cannot turn into a false green.
+  #
+  # A failing test fails its shard; `frontend-checks` then never runs and the
+  # `frontend` roll-up asserts THIS job's result as well, so the red reaches the
+  # required context.
+  frontend-tests:
     needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      # Every shard finishes, so one run shows every failing file, not the first
+      # shard's worth.
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      # `default` keeps the per-test log a failing shard needs; `blob` is what
+      # the merge step reads. Written with `npx`, not `npm run`, on purpose:
+      # backend/tests/scaleRealSchemaContract.test.mjs finds the BACKEND shard
+      # command by the `npm run <script> -- --shard=` shape.
+      - run: npx vitest run --coverage --reporter=default --reporter=blob --shard=${{ matrix.shard }}/${{ strategy.job-total }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: frontend-vitest-blob-${{ matrix.shard }}
+          path: frontend/.vitest-reports/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 1
+
+  frontend-checks:
+    needs: [changes, frontend-tests]
     if: needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
     defaults:
@@ -813,10 +868,24 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
-      # `test:coverage` and not `test`: the SAME suite with the v8 provider on.
-      # Measured 2026-08-13 on this machine: 18s bare, 20s instrumented. Running
-      # both would pay for the suite twice for 2s of information.
-      - run: npm run test:coverage
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: frontend-vitest-blob-*
+          merge-multiple: true
+          path: frontend/.vitest-reports
+      # Refuse to merge fewer blobs than there were shards: a missing blob is a
+      # third of the suite that would otherwise read as "not run" rather than
+      # as a failure.
+      - name: Every shard delivered its blob
+        run: |
+          set -euo pipefail
+          ls -la .vitest-reports
+          n=$(find .vitest-reports -name 'blob-*.json' | wc -l)
+          echo "blob reports: $n (expected 3)"
+          [ "$n" -eq 3 ]
+      # The merged report: test totals across the shards, and the SAME
+      # coverage/coverage-final.json a single `npm run test:coverage` writes.
+      - run: npx vitest run --merge-reports --coverage
       # frontend/src may only go UP, and its count of files with NO test may only
       # go DOWN. Checked here rather than only in the merged `coverage-ratchet`
       # job because THIS job is the one the ruleset requires, so a frontend
@@ -1085,7 +1154,7 @@ jobs:
   # `if: always()` plus explicit result assertions, for the reason spelled out
   # on the `backend` roll-up: a skipped check is not a failed check.
   frontend:
-    needs: [frontend-checks, frontend-typecheck, frontend-build, frontend-perf, lint]
+    needs: [frontend-tests, frontend-checks, frontend-typecheck, frontend-build, frontend-perf, lint]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -1105,10 +1174,15 @@ jobs:
               *) echo "::error::$1 = ${2:-<empty>}"; exit 1 ;;
             esac
           }
+          echo "frontend-tests:     ${{ needs.frontend-tests.result }}"
           echo "frontend-checks:    ${{ needs.frontend-checks.result }}"
           echo "frontend-typecheck: ${{ needs.frontend-typecheck.result }}"
           echo "frontend-build:     ${{ needs.frontend-build.result }}"
           echo "frontend-perf:      ${{ needs.frontend-perf.result }}"
+          # The sharded suite (2026-09-15). A failing shard SKIPS frontend-checks
+          # (its dependency failed), and skipped passes the line below — so the
+          # shards' own result is what carries a test failure to this context.
+          ok frontend-tests "${{ needs.frontend-tests.result }}"
           ok frontend-checks "${{ needs.frontend-checks.result }}"
           ok frontend-typecheck "${{ needs.frontend-typecheck.result }}"
           ok frontend-build "${{ needs.frontend-build.result }}"
