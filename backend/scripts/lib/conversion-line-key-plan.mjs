@@ -31,7 +31,7 @@
  * documented shape (docs/modules/autocount-writeback.md, "Several ERP lines can
  * share ONE book line").
  *
- * ONE ROW, SEVERAL BOOK LINES (docs/bugs/0913). HC-GRN-2609-008 receives
+ * ONE ROW, SEVERAL BOOK LINES (docs/bugs/0915). HC-GRN-2609-008 receives
  * DSL-SQUARE PILLOW x3 as one ERP row from purchase line 907143, while the book
  * split that transfer over two lines, 928497 x2 and 928499 x1. "One source on two
  * lines" refused it, correctly, because the rule had no way to tell a split from

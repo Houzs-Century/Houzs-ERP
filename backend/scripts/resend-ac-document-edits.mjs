@@ -33,7 +33,7 @@
  * be pending or sent, with Lines that name each line by a numeric DtlKey or
  * declare it new.
  *
- * INVOICES (docs/bugs/0912). A sales or purchase invoice is looked up by its
+ * INVOICES (docs/bugs/0914). A sales or purchase invoice is looked up by its
  * number like the others. HC-SI-2609-001's edit was dropped because it was saved
  * before its conversion drained, and nothing could send it again by name.
  *

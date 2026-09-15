@@ -3,7 +3,7 @@ name: Stamp AutoCount line keys on our DOs, GRs, invoices and POs (plan / apply)
 # Gives the delivery orders, goods receipts, invoices and purchase orders the
 # write-back created in AutoCount by transfer the line keys the book pairs them
 # with: DocTransfer for a DO, GR, IV or PI, PODTL.FromSODtlKey for a PO
-# (backend/scripts/stamp-conversion-line-keys.mjs, docs/bugs/0897, 0903, 0912).
+# (backend/scripts/stamp-conversion-line-keys.mjs, docs/bugs/0897, 0903, 0914).
 # Without a key on every line, an edit of the document is refused whole.
 #
 # Reads a committed snapshot of the book (data/ac-conversion-line-keys.json.gz,

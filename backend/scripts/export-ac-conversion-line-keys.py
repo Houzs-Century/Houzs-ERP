@@ -30,7 +30,7 @@ it. Each `HC-PO-` line is exported with that key as its source; a key that names
 no sales line in the book refuses the snapshot. Lines of a purchase order the
 write-back CREATED carry no source and are exported with none.
 
-THE INVOICE LANES (docs/bugs/0912). A sales invoice the write-back converts
+THE INVOICE LANES (docs/bugs/0914). A sales invoice the write-back converts
 from a delivery order, and a purchase invoice from a goods receipt, keep no line
 key for the same reason a delivery order did (0897): HC-SI-2609-001 reached the
 book whole on 2026-09-10 and all eight of its ERP lines are still keyless, so

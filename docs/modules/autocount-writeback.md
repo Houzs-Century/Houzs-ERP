@@ -6473,3 +6473,38 @@ chaise) goes through as itself when the same document holds another piece of
 that model under a different key. Such a document keeps its pieces as separate
 book lines. HC-PO-2609-063 and HC-PO-2609-047 had been refused on this.
 `docs/bugs/0909-a-sofa-piece-kept-as-its-own-book-line-was-folded-alone-and-refused.md`.
+
+## A piece of another model inside one book line (2026-09-15)
+
+Pieces that share one book key are one sofa, even when their models differ.
+They are gathered under the model that holds a strict majority, and every
+other piece is named at the end of the text (`CNR 8069`). The decoder skips that
+segment, and the gate requires it to be present. With no majority the models
+are grouped apart and refused as before. HC-SO-002861 / HC-PO-009827, whose
+amendment turned one 8060 piece into an 8069 corner, had been refused on this.
+`docs/bugs/0913-a-sofa-whose-book-line-holds-a-piece-of-another-model-was-re.md`.
+
+## Invoice line keys, and one receipt row over a split transfer (2026-09-15)
+
+`export-ac-conversion-line-keys.py` and `stamp-conversion-line-keys.mjs` carry
+two more lanes, read from `DocTransfer` like a DO:
+
+- **IV**: `HC-SI-` invoices, sourced from `sales_invoice_items.do_item_id`, for
+  a sent `do_to_iv`;
+- **PI**: `HC-PI-` invoices, sourced from `purchase_invoice_items.grn_item_id`,
+  for a sent `gr_to_pi`.
+
+`resend-ac-document-edits.mjs` also takes sales and purchase invoices by number.
+`docs/bugs/0914-invoices-the-write-back-converted-kept-no-autocount-line-key.md`.
+
+When the book split one transfer over several lines, the pairing rule stamps a
+row only if all of these hold:
+
+- exactly one row of the document carries that source;
+- the book lines add up to that row's quantity;
+- none of those lines is transferred onward.
+
+The row then takes the lowest-keyed line (outcome `stamp_merged`), and
+`retire-book-only-conversion-lines.mjs` zeroes the rest. The drain passes no
+quantities and refuses as before.
+`docs/bugs/0915-a-receipt-line-the-book-split-over-two-lines-could-not-be-gi.md`.

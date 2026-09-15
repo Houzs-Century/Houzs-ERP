@@ -415,7 +415,7 @@ function collapseRun(
      of the two callers silently wrong (CLAUDE.md, BUG CLASS optional-param-noop). */
   bookGrouped: boolean,
   /* Pieces of ANOTHER model the book holds on this line, as `CNR 8069`
-     (docs/bugs/0911). Every one is written into the text and must be present in
+     (docs/bugs/0913). Every one is written into the text and must be present in
      whatever is sent; `[]` for a build of one model. Required, so a caller that
      gathers a mixed build cannot forget to say so. */
   foreign: string[],
@@ -674,7 +674,7 @@ function collapseRun(
  * forms is left to it, so this can only change the documents that are broken
  * today.
  *
- * A PIECE OF ANOTHER MODEL (docs/bugs/0911). A key is the book's line, so pieces
+ * A PIECE OF ANOTHER MODEL (docs/bugs/0913). A key is the book's line, so pieces
  * of two models under one key are one sofa the book already holds — HC-SO-002861
  * is DSL-8060 SOFA 184398, whose amendment turned one piece into an 8069 corner.
  * Grouping by model as well as key split that sofa in two, and the lone 8069

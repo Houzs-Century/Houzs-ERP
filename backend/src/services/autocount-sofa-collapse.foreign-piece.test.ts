@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { collapseSofaLines } from './autocount-sofa-collapse';
+import { collapseSofaLines, type CollapsibleLine } from './autocount-sofa-collapse';
 import { parseSofa } from '../../scripts/lib/parse-sofa.mjs';
 
-/* A PIECE OF ANOTHER MODEL INSIDE ONE BOOK LINE (docs/bugs/0911).
+/* A PIECE OF ANOTHER MODEL INSIDE ONE BOOK LINE (docs/bugs/0913).
  * Rows below are HC-SO-002861 as production held them on 2026-09-15, in ERP line
  * order (identity fields, Desc2 and variants only). The book holds the sofa as
  * ONE line, DSL-8060 SOFA 184398; an amendment approved 2026-09-14 turned one of
@@ -13,11 +13,11 @@ const variants = (over: Record<string, unknown>) => ({
   colourId: 'MODENZA-01', fabricId: 'MODENZA', legHeight: 'Default', fabricCode: 'MODENZA-01',
   seatHeight: '28', colourLabel: 'MODENZA-01 HOUSTON CREAM', fabricLabel: 'MODENZA', ...over,
 });
-const row = (over: Record<string, unknown>): Record<string, unknown> => ({
+const row = (over: Partial<CollapsibleLine> & { item_code: string }): CollapsibleLine => ({
   item_group: 'sofa', qty: 1, unit_price_sen: 0, location: null, delivery_date: null, linked_ac_dtlkey: 184398, ...over,
 });
 
-const so2861 = () => [
+const so2861 = (): CollapsibleLine[] => [
   row({ item_code: '8060-1A(LHF)', description: 'SOFA ZANO 1A(LHF)', unit_price_sen: 808800, description2: `${MOD} Nylon Fabric + +WOODEN ARM`, variants: variants({ specials: ['Nylon Fabric'], extraAddonNote: '+WOODEN ARM' }) }),
   row({ item_code: '8069-CNR', description: 'SOFA SOLANO CNR', description2: `${MOD} Bottom wrap nylon`, variants: variants({ extraAddonNote: 'Bottom wrap nylon' }) }),
   row({ item_code: '8060-1NA', description: 'SOFA ZANO 1NA', description2: `${MOD} Nylon Fabric + Bottom wrap nylon`, variants: variants({ specials: ['Nylon Fabric'], extraAddonNote: 'Bottom wrap nylon' }) }),
@@ -27,7 +27,7 @@ const so2861 = () => [
 
 describe('a sofa whose book line holds a piece of another model', () => {
   it('HC-SO-002861: the build is one line under its own key, and the foreign corner is named in the text', () => {
-    const { lines, refusals } = collapseSofaLines(so2861() as never);
+    const { lines, refusals } = collapseSofaLines(so2861());
     expect(refusals).toEqual([]);
     expect(lines).toHaveLength(1);
     const [l] = lines;
@@ -40,7 +40,7 @@ describe('a sofa whose book line holds a piece of another model', () => {
 
   it('CONTROL: the same build with its own model corner carries no note', () => {
     const rows = so2861().map((r) => (r.item_code === '8069-CNR' ? { ...r, item_code: '8060-CNR' } : r));
-    const { lines, refusals } = collapseSofaLines(rows as never);
+    const { lines, refusals } = collapseSofaLines(rows);
     expect(refusals).toEqual([]);
     expect(lines).toHaveLength(1);
     expect(lines[0].description2).not.toMatch(/8069/);
@@ -51,13 +51,13 @@ describe('a sofa whose book line holds a piece of another model', () => {
       row({ item_code: '8060-1A(LHF)', description2: `${MOD} Bottom wrap nylon`, variants: variants({}), unit_price_sen: 100 }),
       row({ item_code: '8069-1A(RHF)', description2: `${MOD} Bottom wrap nylon`, variants: variants({}) }),
     ];
-    const { refusals } = collapseSofaLines(rows as never);
+    const { refusals } = collapseSofaLines(rows);
     expect(refusals.length).toBeGreaterThan(0);
   });
 
   it('CONTROL: pieces of another model under a DIFFERENT key are not gathered', () => {
     const rows = so2861().map((r) => (r.item_code === '8069-CNR' ? { ...r, linked_ac_dtlkey: 184399 } : r));
-    const { lines } = collapseSofaLines(rows as never);
+    const { lines } = collapseSofaLines(rows);
     expect(lines.some((l) => String(l.description2 ?? '').includes('CNR 8069'))).toBe(false);
   });
 });

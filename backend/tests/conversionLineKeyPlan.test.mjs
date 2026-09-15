@@ -72,7 +72,7 @@ describe("planDocumentKeys", () => {
   });
 });
 
-/* docs/bugs/0913 — HC-GRN-2609-008 as production held it on 2026-09-15. The ERP
+/* docs/bugs/0915 — HC-GRN-2609-008 as production held it on 2026-09-15. The ERP
    receives DSL-SQUARE PILLOW x3 as ONE row from purchase line 907143; the book
    split that transfer over 928497 x2 and 928499 x1, and holds 928501 x2 from
    907145 beside them. */

@@ -17,7 +17,7 @@
  * (244 lines) in the book with at least one keyless line, and an edit of any of
  * them is refused whole (KeylessLineError).
  *
- * INVOICES (docs/bugs/0912). A sales invoice converted from a delivery order and
+ * INVOICES (docs/bugs/0914). A sales invoice converted from a delivery order and
  * a purchase invoice converted from a goods receipt keep no keys for the same
  * reason: HC-SI-2609-001 reached the book whole on 2026-09-10, all eight ERP
  * lines keyless, and its edit was never sent. Their source is the DO / GR line
@@ -38,7 +38,7 @@
  * `PODTL.FromSODtlKey`).
  * No position, no item code. A source key feeding two lines of the document is
  * refused — unless ONE row carries that source and the book lines add up to its
- * quantity with nothing downstream holding them (docs/bugs/0913): the row takes
+ * quantity with nothing downstream holding them (docs/bugs/0915): the row takes
  * the first line, and the rest are named for retire-book-only-conversion-lines.
  * A row already carrying a different key is reported and left.
  *
