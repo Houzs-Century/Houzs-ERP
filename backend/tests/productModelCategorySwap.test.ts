@@ -2,10 +2,10 @@ import { Hono } from 'hono';
 import { describe, expect, test } from 'vitest';
 import { patchProductModelHandler } from '../src/scm/routes/product-models';
 
-/* A model's category can be swapped between Accessory and Sofa Accessory from
-   the edit dialog (owner 2026-09-14: 「我不能自己更换category吗？」), its SKUs
-   move with it, and every other move is refused — on the server, not only in
-   the screen. */
+/* A model's category can be changed to any other category from the edit dialog
+   (owner 2026-09-15: every category can move to a different one; it was only
+   Accessory <-> Sofa Accessory on 2026-09-14), its SKUs move with it, in this
+   company only — on the server, not only in the screen. */
 
 type Row = Record<string, unknown>;
 class Q {
@@ -50,7 +50,7 @@ function setup(category: string) {
   return { data, patch };
 }
 
-describe('PATCH /product-models/:id — category swap', () => {
+describe('PATCH /product-models/:id — category change', () => {
   test('Accessory -> Sofa Accessory moves the model and its SKUs in this company only', async () => {
     const { data, patch } = setup('ACCESSORY');
     const res = await patch({ category: 'FABRIC_ACCESSORY' });
@@ -61,19 +61,20 @@ describe('PATCH /product-models/:id — category swap', () => {
     expect(data.mfg_products[1].category).toBe('ACCESSORY');
   });
 
-  test('a sofa cannot be moved, and nothing is written', async () => {
+  test('a sofa can become a mattress, and its SKUs follow', async () => {
     const { data, patch } = setup('SOFA');
-    const res = await patch({ category: 'FABRIC_ACCESSORY' });
-    expect(res.status).toBe(409);
-    expect(((await res.json()) as { error: string }).error).toBe('category_change_not_allowed');
-    expect(data.product_models[0].category).toBe('SOFA');
-    expect(data.mfg_products[0].category).toBe('SOFA');
+    const res = await patch({ category: 'MATTRESS' });
+    expect(res.status).toBe(200);
+    expect(data.product_models[0].category).toBe('MATTRESS');
+    expect(data.mfg_products[0].category).toBe('MATTRESS');
+    expect(data.mfg_products[1].category).toBe('SOFA');
   });
 
-  test('an accessory cannot be moved into a main category', async () => {
+  test('a value that is not a category is refused and nothing is written', async () => {
     const { data, patch } = setup('ACCESSORY');
-    const res = await patch({ category: 'MATTRESS' });
-    expect(res.status).toBe(409);
+    const res = await patch({ category: 'CHAIR' });
+    expect(res.status).toBe(400);
+    expect(data.product_models[0].category).toBe('ACCESSORY');
     expect(data.mfg_products[0].category).toBe('ACCESSORY');
   });
 });

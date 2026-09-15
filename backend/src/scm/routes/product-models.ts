@@ -169,7 +169,7 @@ const PatchBody = z.object({
   branding:       z.string().trim().max(80).nullable().optional(),
   modelCode:      z.string().trim().min(1).max(32).optional(),
   name:           z.string().trim().min(1).max(200).optional(),
-  // category: only an Accessory <-> Sofa Accessory swap, and it moves the
+  // category: any other category (shared/category-swap.ts), and it moves the
   // model's SKUs with it so none is orphaned in the other category.
   category:       z.enum(CATEGORIES).optional(),
   description:    z.string().trim().max(500).nullable().optional(),
@@ -513,7 +513,7 @@ export const patchProductModelHandler = async (c: Context<{ Bindings: Env; Varia
   if (u.category !== undefined && !categorySwapAllowed(beforeCategory, String(u.category))) {
     return c.json({
       error: 'category_change_not_allowed',
-      reason: `A model can only be moved between Accessory and Sofa Accessory (this one is ${beforeCategory ?? 'unknown'}).`,
+      reason: `"${String(u.category)}" is not a product category.`,
     }, 409);
   }
   if (Object.keys(u).length === 0) return c.json({ error: 'empty_patch' }, 400);
