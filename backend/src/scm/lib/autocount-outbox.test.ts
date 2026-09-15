@@ -780,7 +780,9 @@ describe('an edit carries the fields a create carries', () => {
     const sb = withFlag('1', { mfg_sales_orders: [{ ...so }], mfg_sales_order_items: [{ ...item }] });
     await enqueueEdit(sb as never, { companyId: 1, docType: 'SO', docNo: 'HC-SO-9' });
     const h = outbox(sb)[0].payload.body.Header as Record<string, Record<string, string>>;
-    expect(h.UDF).toEqual({ BRANDING: 'AKEMI', VENUE: 'KSL CITY MALL JOHOR SOLO', ToPONo: 'CUST-PO-7' });
+    expect(h.UDF).toEqual({ BRANDING: 'AKEMI', VENUE: 'KSL CITY MALL JOHOR SOLO' });
+    /* The typed reference is the book's Ref; ToPONo is its PO Doc No. (docs/bugs/0926). */
+    expect((h as Record<string, unknown>).Ref).toBe('CUST-PO-7');
   });
 
   test('a field the ERP does not have is OMITTED, never sent as null that would blank the book', async () => {
@@ -1226,8 +1228,9 @@ describe('the columns the write-back reads are the columns the ERP writes', () =
     expect((await enqueueSoCreate(client(sb), { companyId: 1, docNo: 'HC-SO-A' })).queued).toBe(true);
     const body = outbox(sb)[0].payload.body as Record<string, unknown>;
     expect(body.UDF).toEqual({
-      VENUE: '2990s PJ', BRANDING: 'DUNLOPILLO', ToPONo: 'THEIR-SO-88',
+      VENUE: '2990s PJ', BRANDING: 'DUNLOPILLO',
     });
+    expect(body.Ref, 'the reference, in Ref and not in the PO Doc No. (docs/bugs/0926)').toBe('THEIR-SO-88');
     expect(body.InvAddr1).toBe('No 1, Jalan Besar');
     expect(body.InvAddr2).toBe('Taman Sentosa');
     expect(body.InvAddr3).toBe('43300 Seri Kembangan');
@@ -1272,7 +1275,7 @@ describe('the columns the write-back reads are the columns the ERP writes', () =
     const sb = withFlag('1', {
       mfg_sales_orders: [{
         ...so, linked_ac_docno: 'SO-000021',
-        debtor_name: null, phone: null, ref: null,
+        debtor_name: null, phone: null, ref: null, customer_so_no: null,
         address1: null, address2: null, city: null, postcode: null, customer_state: null,
       }],
       mfg_sales_order_items: [{ ...item, linked_ac_dtlkey: 991 }],
@@ -1295,8 +1298,9 @@ describe('the columns the write-back reads are the columns the ERP writes', () =
     expect(h.InvAddr3).toBe('43300 Seri Kembangan');
     expect(h.InvAddr4).toBe('Selangor');
     expect(h.UDF).toEqual({
-      VENUE: '2990s PJ', BRANDING: 'DUNLOPILLO', ToPONo: 'THEIR-SO-88',
+      VENUE: '2990s PJ', BRANDING: 'DUNLOPILLO',
     });
+    expect(h.Ref).toBe('THEIR-SO-88');
   });
 });
 
