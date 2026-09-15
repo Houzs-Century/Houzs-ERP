@@ -329,7 +329,10 @@ export type SoPayment = {
   id: string;
   so_doc_no: string;
   paid_at: string;
-  method: 'merchant' | 'transfer' | 'cash' | 'installment';
+  /* `converted` = money moved from a cancelled order (docs/bugs/0927/0931). */
+  method: 'merchant' | 'transfer' | 'cash' | 'installment' | 'converted';
+  /** A converted row: the cancelled order the money came from. */
+  converted_from_so_doc_no?: string | null;
   merchant_provider: string | null;
   installment_months: number | null;
   online_type: string | null;

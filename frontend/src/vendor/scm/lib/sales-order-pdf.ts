@@ -178,8 +178,10 @@ type SoItem = {
    accepted so callers can pass the row verbatim. */
 type SoPayment = {
   paid_at: string;
-  /* 2026-06-06 payment-method unify — 'installment' is first-class. */
-  method: 'merchant' | 'transfer' | 'cash' | 'installment';
+  /* 2026-06-06 payment-method unify — 'installment' is first-class;
+     'converted' = money moved from a cancelled order (docs/bugs/0931). */
+  method: 'merchant' | 'transfer' | 'cash' | 'installment' | 'converted';
+  converted_from_so_doc_no?: string | null;
   /* Task #122 (cascade) — merchant_provider / installment_months are now
      open string + integer (driven by the so_dropdown_options cascade
      categories). online_type is the new Online sub-type column. */
@@ -294,6 +296,8 @@ const methodLabel = (p: SoPayment): string => {
     const base = p.merchant_provider ? `Installment (${p.merchant_provider})` : 'Installment';
     return p.installment_months ? `${base} · ${p.installment_months}m` : base;
   }
+  /* Money moved from a cancelled order (docs/bugs/0931): the order it came from. */
+  if (p.method === 'converted') return p.converted_from_so_doc_no ? `Moved from ${p.converted_from_so_doc_no}` : 'Moved from a cancelled order';
   return 'Cash';
 };
 

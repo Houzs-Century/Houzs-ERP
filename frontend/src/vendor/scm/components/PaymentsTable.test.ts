@@ -6,7 +6,9 @@ import {
   missingMethodSubField,
   parseInstallmentMonths,
   UnknownPaymentMethodError,
+  convertDraftsFrom,
 } from "./PaymentsTable";
+import { CONVERT_LABEL } from "../lib/so-money-queries";
 
 /* docs/bugs/0838 (owner 2026-09-12: 用 finance 权限改资料时 payment method 会跳掉
    去 cash … 我按 edit 时默认会已输入的资料，我只会 edit 我想要 edit 的东西). An
@@ -145,5 +147,47 @@ describe("parseInstallmentMonths", () => {
     expect(parseInstallmentMonths("One Shot")).toBeNull();
     expect(parseInstallmentMonths("One-off")).toBeNull();
     expect(parseInstallmentMonths("")).toBeNull();
+  });
+});
+
+/* Money moved from a cancelled order (owner 2026-09-15; docs/bugs/0927 the
+   backend, 0931 these screens): "Convert from cancelled SO" is a method of its
+   own on the desktop — resolved to the ledger code `converted`, carrying the
+   order it comes from, refused without one; a stored converted row opens
+   under that label with its source; a ?convert= parameter seeds the rows. */
+describe("Convert from cancelled SO — the desktop's fifth method", () => {
+  it("resolves to `converted` and carries the cancelled order; nothing else rides along", () => {
+    const { method } = labelToApi(CONVERT_LABEL);
+    expect(method).toBe("converted");
+    expect(draftMethodFields(method, { merchantProvider: "MBB", installmentMonthsLabel: "6 months", onlineType: "TNG", convertedFromDocNo: "2990-SO-2607-010" }))
+      .toEqual({ convertedFromDocNo: "2990-SO-2607-010" });
+    expect(draftMethodFields(method, { merchantProvider: "", installmentMonthsLabel: "", onlineType: "", convertedFromDocNo: "" }))
+      .toEqual({ convertedFromDocNo: null });
+  });
+
+  it("the gate wants the cancelled order picked; the other methods are unchanged", () => {
+    expect(missingMethodSubField({ methodLabel: CONVERT_LABEL, merchantProvider: "", installmentMonthsLabel: "", onlineType: "", convertedFromDocNo: "" })).toBe("cancelled order");
+    expect(missingMethodSubField({ methodLabel: CONVERT_LABEL, merchantProvider: "", installmentMonthsLabel: "", onlineType: "", convertedFromDocNo: "2990-SO-2607-010" })).toBeNull();
+    expect(missingMethodSubField({ methodLabel: "Cash", merchantProvider: "", installmentMonthsLabel: "", onlineType: "" })).toBeNull();
+  });
+
+  it("a stored converted row opens under the label with its source", () => {
+    const row = {
+      id: "p9", version: 1, paid_at: "2026-07-01", method: "converted", merchant_provider: null, installment_months: null, online_type: null,
+      amount_sen: 30000, account_sheet: "Converted from 2990-SO-2607-010", approval_code: null, collected_by: "staff-1",
+      created_at: "2026-09-15T08:00:00Z", converted_from_so_doc_no: "2990-SO-2607-010",
+    } as unknown as Parameters<typeof editDraftOf>[0];
+    const d = editDraftOf(row, () => "");
+    expect(d).toMatchObject({ methodLabel: CONVERT_LABEL, convertedFromDocNo: "2990-SO-2607-010", amountSen: 30000 });
+    expect(labelToApi(d.methodLabel).method).toBe("converted");
+  });
+
+  it("?convert=SO-a:sen,SO-b:sen seeds one converted draft per pick", () => {
+    const drafts = convertDraftsFrom("2990-SO-2607-010:40000,2990-SO-2607-024:30000,junk,2990-SO-0:0", "staff-1");
+    expect(drafts.map((d) => [d.methodLabel, d.convertedFromDocNo, d.amountSen, d.collectedBy])).toEqual([
+      [CONVERT_LABEL, "2990-SO-2607-010", 40000, "staff-1"],
+      [CONVERT_LABEL, "2990-SO-2607-024", 30000, "staff-1"],
+    ]);
+    expect(convertDraftsFrom(null)).toEqual([]);
   });
 });

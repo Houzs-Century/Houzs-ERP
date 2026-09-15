@@ -14,7 +14,8 @@
 //   GET  /:docNo/convert-sources   the cancelled orders THIS order may draw
 //                                  on (?also=SO-a,SO-b names orders outright)
 //   GET  /cancelled-with-money     Finance's list: cancelled orders still
-//                                  holding money
+//                                  holding money (?phone= narrows it to one
+//                                  customer's, for a page with no order yet)
 //
 // The CONVERSION itself is not a door here: it is a payment row with method
 // `converted` on the new order, through POST /:docNo/payments and the
@@ -87,7 +88,7 @@ export const soConvertSourcesHandler = async (c: Ctx): Promise<Response> => {
 export const cancelledWithMoneyHandler = async (c: Ctx): Promise<Response> => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
-  const r = await cancelledOrdersWithMoney(c.get('supabase'), co.companyId);
+  const r = await cancelledOrdersWithMoney(c.get('supabase'), co.companyId, { phone: String(c.req.query('phone') ?? '').trim() || null });
   if (!r.ok) return c.json({ error: 'load_failed', reason: r.reason }, 500);
   return c.json({ orders: r.rows, totalRemainingSen: r.rows.reduce((s, x) => s + x.remainingSen, 0) });
 };
