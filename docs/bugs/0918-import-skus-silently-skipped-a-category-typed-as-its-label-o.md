@@ -1,6 +1,6 @@
 ## Import SKUs silently skipped a category typed as its label or in lower case [medium]
 
-<!-- area: Products + SKU master -->
+<!-- area: Sofa, fabric, variants -->
 
 **Symptom.** Owner, 2026-09-15:
 「我 import 的话肯定可以把 SKU 改成分类啊，要不然我怎么去 batch edit 呢？」

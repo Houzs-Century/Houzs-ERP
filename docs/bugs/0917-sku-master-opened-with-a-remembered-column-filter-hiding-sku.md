@@ -1,6 +1,6 @@
 ## SKU Master opened with a remembered column filter, hiding SKUs and the row just renamed [high]
 
-<!-- area: Products + SKU master -->
+<!-- area: Frontend + mobile -->
 
 **Symptom.** Owner, 2026-09-15:
 「我现在一点进去它就会带 filter，导致我以为自己的东西怎么少了那么多…每一次打开应该默认都是全部展开的。」

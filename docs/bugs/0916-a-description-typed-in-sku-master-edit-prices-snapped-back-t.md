@@ -1,6 +1,6 @@
 ## A description typed in SKU Master Edit Prices snapped back to the old text when the cell was left [high]
 
-<!-- area: Products + SKU master -->
+<!-- area: Frontend + mobile -->
 
 **Symptom.** Owner, 2026-09-15, Products -> SKU Master -> Edit Prices. He changed
 the description of `810 BOLSTER` from "RDS BOLSTER 810" to "BOLSTER 810". A moment

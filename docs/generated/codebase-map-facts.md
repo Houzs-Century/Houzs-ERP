@@ -147,7 +147,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/lorry-capacity.ts` | 3 | 493 |
 | `backend/src/scm/routes/lorry-service-records.ts` | 6 | 327 |
 | `backend/src/scm/routes/maintenance-config.ts` | 5 | 410 |
-| `backend/src/scm/routes/mfg-products.ts` | 11 | 1269 |
+| `backend/src/scm/routes/mfg-products.ts` | 11 | 1284 |
 | `backend/src/scm/routes/mfg-purchase-orders-list-enrichment.ts` | 1 | 82 |
 | `backend/src/scm/routes/mfg-purchase-orders.ts` | 24 | 4518 |
 | `backend/src/scm/routes/mfg-sales-orders-list-enrichment.ts` | 2 | 327 |
@@ -229,7 +229,7 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (2463 files, 791818 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (2467 files, 792280 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -240,16 +240,16 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `backend/src/services/autocount-sofa-corpus.ts` | 8581 |
 | `frontend/src/pages/Team.tsx` | 5686 |
 | `backend/src/scm/routes/delivery-orders-mfg.ts` | 5585 |
-| `frontend/src/pages/scm-v2/Products.tsx` | 5448 |
 | `backend/src/routes/projects.ts` | 5153 |
+| `frontend/src/pages/scm-v2/Products.tsx` | 5014 |
 | `backend/src/scm/routes/scan-so.ts` | 4895 |
 | `backend/src/scm/routes/mfg-purchase-orders.ts` | 4518 |
-| `frontend/src/mobile/MobilePMS.tsx` | 4488 |
+| `frontend/src/mobile/MobilePMS.tsx` | 4491 |
 | `frontend/src/pages/scm-v2/SupplierDetail.tsx` | 4342 |
 | `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4205 |
 | `frontend/src/mobile/MobileNewSO.tsx` | 3666 |
 | `backend/src/scm/routes/grns.ts` | 3564 |
-| `frontend/src/components/DataTable.tsx` | 3456 |
+| `frontend/src/components/DataTable.tsx` | 3481 |
 | `frontend/src/mobile/MobileServiceCase.tsx` | 3381 |
 | `backend/src/routes/assr.ts` | 3361 |
 | `backend/src/services/projects.ts` | 3137 |
@@ -434,7 +434,7 @@ Page files by directory:
 | `frontend/src/pages/announcements` | 5 |
 | `frontend/src/pages/roles` | 2 |
 | `frontend/src/pages/scm-v2` | 168 |
-| `frontend/src/pages/scm-v2/products` | 1 |
+| `frontend/src/pages/scm-v2/products` | 2 |
 | `frontend/src/pages/settings` | 1 |
 | `frontend/src/pages/team` | 10 |
 
@@ -481,7 +481,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileMyCaseDetail.tsx` | 326 |
 | `frontend/src/mobile/MobileNewProject.tsx` | 196 |
 | `frontend/src/mobile/MobileNewSO.tsx` | 3666 |
-| `frontend/src/mobile/MobilePMS.tsx` | 4488 |
+| `frontend/src/mobile/MobilePMS.tsx` | 4491 |
 | `frontend/src/mobile/MobilePOD.tsx` | 558 |
 | `frontend/src/mobile/MobilePmsDefectActions.tsx` | 109 |
 | `frontend/src/mobile/MobilePmsPlanFileChips.tsx` | 96 |
