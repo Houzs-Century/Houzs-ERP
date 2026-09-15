@@ -2086,14 +2086,18 @@ History; `recomputePoExpectedAt` per touched PO. No amendment is involved: the
 line PATCH has none on a SUBMITTED PO either.
 
 **AutoCount.** ONE `enqueueEdit` per purchase order, after all its writes, and
-only when Delivery Date or Item Description 2 moved — the only two import fields
-the write-back sends. The estimate dates do NOT reach AutoCount from any ERP edit
+only when a Delivery Date moved. Owner 2026-09-15: an imported Item Description 2
+is NOT pushed to AutoCount (AutoCount is no longer operated), so a Description 2
+change alone queues nothing. The write-back sends the whole document, so when the
+same PO's delivery date also moved, that one edit carries the line's current
+Description 2 with it. Import MAY overwrite a remark holding the book's original
+text (`账本原文:`); the preview shows the old value (owner 2026-09-15). The estimate dates do NOT reach AutoCount from any ERP edit
 today: `composePoState` (`autocount-outbox.ts`) gives the edit header only
 `CreditorName` and `Description`, and the data check of 2026-09-15 saw the live PO
 payloads carry `UDF: {}`. Sending them is a separate change. Line remarks are not
 in `PO_ITEM_COLS`.
 
-**What AutoCount shows for an imported Description 2** is `composeDescription2`
+**When an edit does go out**, its Desc2 is `composeDescription2`
 (`backend/src/services/autocount-writeback.ts`): the STORED text when there is one,
 shortened to AutoCount's 100 characters by `abbreviateDesc2`. A CLEARED Description 2
 is not sent as a blank: the composer falls back to the spec summary, or omits

@@ -129,10 +129,13 @@ describe('apply', () => {
     expect(enqueueEdit).toHaveBeenCalledWith(sb, { companyId: 1, docType: 'PO', docId: PO_A, createdBy: 7 });
   });
 
-  test('remarks alone queue no AutoCount edit: the write-back does not carry line notes', async () => {
+  test('remarks and Description 2 alone queue no AutoCount edit (owner 2026-09-15: an imported Description 2 is not pushed)', async () => {
     const { sb } = fakeSb(seed());
     const res = await applyPoLineImport(ctx, sb, 1, null, {
-      lineChanges: [{ lineId: L1, docNo: 'PO-000100', field: 'remarks', old: null, new: 'chase' }],
+      lineChanges: [
+        { lineId: L1, docNo: 'PO-000100', field: 'remarks', old: null, new: 'chase' },
+        { lineId: L1, docNo: 'PO-000100', field: 'description2', old: 'old', new: 'new text' },
+      ],
       poChanges: [],
     });
     expect(res.status).toBe(200);
