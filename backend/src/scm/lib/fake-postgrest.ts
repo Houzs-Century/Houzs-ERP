@@ -182,8 +182,14 @@ export function fakeSb(
         return { data: null, error: null };
       }
       if (pendingDelete) {
-        const doomed = new Set(rows());
+        const doomedRows = rows();
+        const doomed = new Set(doomedRows);
         tables[table] = tables[table].filter((r) => !doomed.has(r));
+        /* DELETE … RETURNING: a chain that asks (.select().maybeSingle()) is
+           handed what was removed, the way an update is — the payment DELETE
+           reads the returned row to tell a version clash from a delete
+           (docs/bugs/0927). The bare await keeps its null body. */
+        updated = doomedRows;
         return { data: null, error: null };
       }
       if (pendingUpdate) {

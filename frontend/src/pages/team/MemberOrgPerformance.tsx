@@ -68,19 +68,11 @@ export type LeaderboardRow = {
   avatar_initials?: string;
 };
 
-const fmtRm = (sen: number | null | undefined, { compact = false } = {}): string => {
+const fmtRm = (sen: number | null | undefined): string => {
   // An absent/non-finite amount reads as "—", never "RM NaN" (owner's plain-
   // language rule: a number the ERP does not have must not render as broken).
+  // Always the full amount — no "RM 15.0k" (owner 2026-09-15, docs/bugs/0926-money-on-some-screens-read-as-whole-ringgit-as-rm-15-0k-or-w.md).
   if (sen == null || !Number.isFinite(sen)) return "—";
-  if (compact) {
-    const k = sen / 1000 / 100;
-    if (Math.abs(k) >= 1) {
-      return `RM ${k.toLocaleString("en-MY", {
-        minimumFractionDigits: 1,
-        maximumFractionDigits: 1,
-      })}k`;
-    }
-  }
   return fmtSen(sen);
 };
 
@@ -459,7 +451,7 @@ function AttainmentHero({
             Sales MTD
           </div>
           <div className="mt-1 font-money text-[18px] font-extrabold">
-            {fmtRm(perf.mtd_sen, { compact: true })}
+            {fmtRm(perf.mtd_sen)}
           </div>
           {Number.isFinite(perf.mom_delta) && perf.mom_delta !== 0 && (
             <div
@@ -492,12 +484,12 @@ function AttainmentHero({
         )}
       </div>
       <div className="mt-2 flex justify-between font-money text-[9.5px] text-sidebar-ink-muted">
-        <span>Actual {fmtRm(perf.mtd_sen, { compact: true })}</span>
-        <span>Target {fmtRm(perf.target_sen, { compact: true })}</span>
+        <span>Actual {fmtRm(perf.mtd_sen)}</span>
+        <span>Target {fmtRm(perf.target_sen)}</span>
       </div>
       <div className="mt-4 flex flex-wrap gap-5 border-t border-sidebar-border pt-3">
         <KpiSlot label="Conv. rate" value={fmtPct(perf.conversion)} />
-        <KpiSlot label="Avg deal" value={fmtRm(perf.avg_deal_sen, { compact: true })} />
+        <KpiSlot label="Avg deal" value={fmtRm(perf.avg_deal_sen)} />
         <KpiSlot
           label="Team rank"
           value={`#${perf.rank} / ${perf.total_ranked}`}
@@ -665,11 +657,12 @@ function MonthlySalesCard({
             >
               <span
                 className={cn(
-                  "font-money text-[9px] font-bold",
+                  "max-w-full truncate font-money text-[9px] font-bold",
                   i === lastIdx ? "text-primary" : "text-ink-secondary",
                 )}
+                title={fmtRm(m.sen)}
               >
-                {fmtRm(m.sen, { compact: true })}
+                {fmtRm(m.sen)}
               </span>
               <div
                 className={cn(

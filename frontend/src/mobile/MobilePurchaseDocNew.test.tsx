@@ -225,7 +225,7 @@ describe("MobilePurchaseDocNew — refusals reach the operator", () => {
     await userEvent.click(screen.getByRole("button", { name: "Receive & post" }));
     expect(await screen.findByText("Goods receipt not saved")).toBeTruthy();
     expect(screen.getByText(/PILLOW-STD x1/)).toBeTruthy();
-    expect(screen.getByText(/normally about RM15\.00 each/)).toBeTruthy();
+    expect(screen.getByText(/normally about RM 15\.00 each/)).toBeTruthy();
     expect(writes().map((w) => w.url)).toEqual(["/grns"]);
     expect(onCreated).not.toHaveBeenCalled();
   });

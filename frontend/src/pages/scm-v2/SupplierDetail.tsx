@@ -3967,7 +3967,7 @@ const MultiSkuPickerDialog = ({
                           <td>{p.name}</td>
                           <td className={styles.muted}>{p.category}</td>
                           <td className={styles.muted}>{p.size_label ?? '—'}</td>
-                          <td className={styles.priceCell}>{p.base_price_sen ? `RM ${(p.base_price_sen / 100).toFixed(2)}` : '—'}</td>
+                          <td className={styles.priceCell}>{p.base_price_sen ? fmtSen(p.base_price_sen) : '—'}</td>
                         </tr>
                       );
                     })}

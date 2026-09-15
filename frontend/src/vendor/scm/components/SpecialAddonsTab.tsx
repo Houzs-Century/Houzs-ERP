@@ -65,6 +65,7 @@ import {
   type SpecialAddonRow, type SpecialAddonGroup, type SpecialAddonInput, type AdminAddonRow,
 } from '../lib/mfg-products-queries';
 import { DataGrid, type DataGridColumn } from './DataGrid';
+import { fmtSen } from '../../shared/format';
 import { useConfirm } from './ConfirmDialog';
 import { sortByText } from '../lib/sort-options';
 /* The host app's capability reader — the same import ScanOrderModal already
@@ -673,7 +674,7 @@ const OrderAddonsManager = () => {
                   else commitField(row, { price: n });
                 }} />
             ) : (
-              <span style={{ fontSize: 'var(--fs-13)' }}>RM {(isFloors ? row.perFloorItem ?? 0 : row.price).toLocaleString('en-MY')}</span>
+              <span style={{ fontSize: 'var(--fs-13)' }}>{fmtSen(Math.round((isFloors ? row.perFloorItem ?? 0 : row.price) * 100))}</span>
             )}
             <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)', marginLeft: 6 }}>{isFloors ? `per floor·${row.unit ?? 'item'}` : row.kind === 'flat' ? 'charged once' : `per ${row.unit ?? 'piece'}`}</span>
           </span>
