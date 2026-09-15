@@ -1,6 +1,6 @@
 # Houzs ERP — Threat Model
 
-Written 2026-07-23 alongside `docs/SECURITY-AUDIT-2026-07-23.md`. The audit answers
+Written 2026-07-23 alongside a code-level security audit (removed 2026-09-15, in git history). The audit answered
 "what is broken in the code". This answers the broader question the owner actually
 asked: **"how could a hacker still get in and destroy or take our data, and what is
 already stopping them?"**
