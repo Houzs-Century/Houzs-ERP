@@ -992,9 +992,12 @@ converted row. Converted rows are left alone by the drawer count
 `backend/src/scm/lib/pv-refund.ts` subtracts what was moved; the journal
 references name the new order and the cancelled one
 (`backend/src/acc/journal-refs.ts`); SOCONV files under GENERAL
-(`backend/src/acc/journal-class.ts`). The screens (the panel with [Refund]
-[Convert], the "Convert from cancelled SO" method in New SO and Add payment,
-Finance's list) follow in their own PR. Contract:
+(`backend/src/acc/journal-class.ts`). The desktop screens are docs/bugs/0931
+(`docs/modules/sales-order.md`): the panel with [Refund] [Convert], the
+"Convert from cancelled SO" method in New SO and Add payment, and Finance's
+list `frontend/src/pages/scm-v2/CancelledWithMoneyCard.tsx` on the Self-check
+tab of `frontend/src/pages/scm-v2/Accounting.tsx`; `GET /cancelled-with-money`
+takes `?phone=` for a page with no order yet. Contract:
 `backend/tests/soMoneyConvert.test.ts`.
 
 **Deposit invoices (2026-09-12, docs/bugs/0828; owner: e-invoice 好像是根据收钱
