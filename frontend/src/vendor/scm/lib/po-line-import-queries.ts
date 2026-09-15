@@ -72,7 +72,7 @@ const errorOf = (e: unknown): { message: string; conflicts: PoLineImportConflict
 export type PoLineImportState =
   | { step: 'pick'; error: string | null }
   | { step: 'reading'; fileName: string }
-  | { step: 'preview'; fileName: string; ignoredHeaders: string[]; preview: PoLineImportPreview; applying: boolean; error: string | null; conflicts: PoLineImportConflict[] }
+  | { step: 'preview'; fileName: string; ignoredHeaders: string[]; missingHeaders: string[]; preview: PoLineImportPreview; applying: boolean; error: string | null; conflicts: PoLineImportConflict[] }
   | { step: 'done'; fileName: string; result: PoLineImportApplyResult };
 
 export function usePoLineImport() {
@@ -91,7 +91,7 @@ export function usePoLineImport() {
         method: 'POST',
         body: JSON.stringify({ rows: sheet.rows }),
       });
-      setState({ step: 'preview', fileName: file.name, ignoredHeaders: sheet.ignoredHeaders, preview, applying: false, error: null, conflicts: [] });
+      setState({ step: 'preview', fileName: file.name, ignoredHeaders: sheet.ignoredHeaders, missingHeaders: sheet.missingHeaders, preview, applying: false, error: null, conflicts: [] });
     } catch (e) {
       setState({ step: 'pick', error: `${errorOf(e).message} Nothing was changed.` });
     }

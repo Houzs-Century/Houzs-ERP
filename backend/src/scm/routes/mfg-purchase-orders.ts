@@ -20,6 +20,7 @@ import { Hono } from 'hono';
 import { PO_STATUS_BUCKETS } from '../lib/po-status-buckets';
 import { HELD_OR_TERM, isDocumentHeld } from '../lib/document-hold';
 import { PO_HEADER_COLS, PO_LIST_SELECT, filterPoList, orderPoList, readPoListFilters, stampPoListGrns } from '../lib/po-list-read';
+import { attachPoLines } from '../lib/po-line-export';
 import { firstUnorderableSo, soNotOrderableResponse } from '../lib/source-document-gates';
 import { soLinkItemMismatch, type SoSourceLine } from '../lib/so-link-item-identity';
 import { mountHoldRoute } from './document-hold-routes';
@@ -464,15 +465,23 @@ mfgPurchaseOrders.get('/', async (c) => {
   if (countError) return c.json({ error: 'status_counts_failed', reason: countError }, 500);
 
   /* has_children (the downstream lock) + transfer_to_grns (the "GRN No" column)
-     — one GRN read, shared with the header export (lib/po-list-read.ts).
+     — one GRN read, shared with the export (lib/po-list-read.ts).
      Assigned SO / Delivered columns (owner 2026-07-31) are MRP-DERIVED and
      OMITTED here — not blanked (C16). The client heals them a beat after render
      via GET /mfg-purchase-orders/list-mrp-enrichment
      (routes/mfg-purchase-orders-list-enrichment.ts + lib/listMrpEnrichment.ts). */
   const stamped = await stampPoListGrns(supabase, (data ?? []) as Array<{ id: string } & Record<string, unknown>>);
   if (stamped.error) return c.json({ error: 'grn_read_failed', reason: stamped.error }, 500);
+  if (paginate) {
+    /* The page's lines, for the grid's line columns (Item Code, Qty, Delivery
+       Date, ...) — the same read the export uses (lib/po-line-export.ts), so the
+       screen and the file agree cell for cell. The legacy unpaged path does not
+       carry them: its callers never render a line column. */
+    const withLines = await attachPoLines(supabase, c, stamped.rows);
+    if (withLines.error) return c.json({ error: 'lines_read_failed', reason: withLines.error }, 500);
+    return c.json({ purchaseOrders: withLines.rows, total, page, pageSize, statusCounts });
+  }
   const purchaseOrders = stamped.rows;
-  if (paginate) return c.json({ purchaseOrders, total, page, pageSize, statusCounts });
   return c.json({ purchaseOrders });
 });
 
