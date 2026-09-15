@@ -282,9 +282,6 @@
       "@typescript-eslint/no-unnecessary-condition": 9,
       "no-restricted-syntax": 2
     },
-    "src/mobile/MobilePoAmendments.tsx": {
-      "@typescript-eslint/no-unnecessary-condition": 1
-    },
     "src/mobile/MobileProfile.tsx": {
       "@typescript-eslint/no-explicit-any": 2,
       "@typescript-eslint/no-floating-promises": 1
@@ -650,9 +647,6 @@
       "@typescript-eslint/no-floating-promises": 5,
       "@typescript-eslint/no-unnecessary-condition": 4,
       "no-restricted-syntax": 2
-    },
-    "src/pages/scm-v2/PoAmendments.tsx": {
-      "@typescript-eslint/no-unnecessary-condition": 1
     },
     "src/pages/scm-v2/ProductModelDetail.tsx": {
       "@typescript-eslint/no-floating-promises": 3,

@@ -323,6 +323,16 @@ gate invalidates the amendment list/detail + the PO list/detail keys
 
 **Desktop**
 - `pages/scm-v2/PoAmendments.tsx` — the queue (DataGrid), route `/scm/po-amendments`.
+  It lists two kinds of row:
+  - every direct PO amendment;
+  - every SO amendment that revises a bound PO — `bound_pos` non-empty and the lane
+    not DELIVERY, shown with Source "From SO amendment".
+
+  That rule lives in `frontend/src/vendor/scm/lib/po-amendment-inbox.ts`
+  (`buildPoAmendmentInbox`), which the phone queue reads too. Until 2026-09-15 the
+  rule sat inside this page, so the phone never got the second kind
+  (`docs/bugs/0924-the-phone-po-amendments-queue-left-out-every-so-amendment-th.md`).
+
   Since 2026-09-14 a **single click** opens the quick-view drawer
   (`pages/scm-v2/AmendmentQuickView.tsx`, owner 「SO / PO amendment需要单击打开 弹窗
   像SO这样」): a direct PO amendment shows its PO, status, Purchaser badge, requester,
@@ -348,7 +358,18 @@ gate invalidates the amendment list/detail + the PO list/detail keys
 
 **Mobile**
 - `mobile/MobilePoAmendments.tsx` — the queue, screen `po-amendments`, menu row
-  under Procurement & MRP.
+  under Procurement & MRP. It shows the same two kinds of row as desktop, from
+  `buildPoAmendmentInbox`.
+  - A direct card opens the job card below.
+  - An SO-driven card reads "From SO amendment ·" followed by the SO number, and
+    opens that Sales Order: screen `so-detail`, wired as `onOpenSo` in
+    `frontend/src/mobile/MobileApp.tsx`. The phone SO Amendments queue sends the
+    same row there, because `MobileSODetail` hosts the SO amendment gates.
+  - Limit: that page shows only the NEWEST open amendment (`open_amendment`). When
+    an order has both lanes open and the delivery-lane one is newer, the banner
+    shows that one, not the row that was tapped.
+  - If one of the two lists fails to load, the other list's cards stay under the
+    error line.
 - `mobile/MobilePoAmendmentDetail.tsx` — the job card: diff + gate actions +
   Print. Screen `po-amendment-detail`, reached by tapping a queue row.
 - Mobile CREATE is deferred: the PO has no mobile detail/editor surface to host
@@ -393,7 +414,7 @@ Both queues carry a coloured **Approver** badge from
 granted to. On this queue a direct PO amendment is always Purchaser (one key,
 `scm.po_amendment.approve`); an SO-driven row follows its lane — in practice
 Purchaser or Legacy, since DELIVERY rows are filtered out of this queue. The phone
-PO queue shows the Purchaser badge on each card. The SO side is in
+PO queue shows the same badge on each card. The SO side is in
 [`so-amendment.md`](./so-amendment.md) §7.
 
 ### Relationship map — SHIPPED (localized; concurrent-edit overlap flagged)

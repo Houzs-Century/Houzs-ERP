@@ -175,23 +175,35 @@ export function feedLinesSql(docCount: number): string {
 }
 
 /**
- * The write leg. Binds: ?1 remark4 (or null = keep), ?2 delivery date
- * (yyyy-mm-dd, or null = keep), ?3 company_id, ?4 the sheet's Doc. No.
+ * The write leg — ONE statement for a whole batch. Bare `?` binds, in order:
+ * for each row `(sheet doc no, remark4 or null = keep, yyyy-mm-dd or null =
+ * keep)`, then the company_id last.
+ *
+ * One statement, not one per row: the sheet's Apps Script calls from Google's
+ * US servers, so the Worker runs there and every database round trip crosses
+ * to Singapore. Measured 2026-09-15 on the first seed: 300 single-row updates
+ * took 116 s (~400 ms each), which puts a 4,000-row seed past Apps Script's
+ * 6-minute limit. A VALUES join makes a batch one round trip.
  *
  * The sheet keys its rows on the AutoCount number — `SO-013495` for a migrated
  * order, whose ERP number is `HC-SO-013495` and whose `linked_ac_docno` is the
  * sheet's key; a native order carries the same number on both. So the row is
- * found by EITHER column, within the secret's company.
+ * found by EITHER column, within the secret's company. RETURNING carries the
+ * sheet's key back so the caller can answer per row.
  */
-export const UPDATE_FROM_SHEET_SQL = `
-UPDATE scm.mfg_sales_orders
-   SET remark4 = COALESCE(?1, remark4),
-       customer_delivery_date = COALESCE(?2::date, customer_delivery_date),
+export function updateFromSheetSql(rowCount: number): string {
+  const values = Array.from({ length: rowCount }, () => "(?::text, ?::text, ?::date)").join(", ");
+  return `
+UPDATE scm.mfg_sales_orders so
+   SET remark4 = COALESCE(v.remark4, so.remark4),
+       customer_delivery_date = COALESCE(v.delivery_date, so.customer_delivery_date),
        updated_at = now()
- WHERE company_id = ?3
-   AND (linked_ac_docno = ?4 OR doc_no = ?4)
-   AND status::text NOT IN ('DRAFT', 'CANCELLED')
- RETURNING doc_no`;
+  FROM (VALUES ${values}) AS v(sheet_doc_no, remark4, delivery_date)
+ WHERE so.company_id = ?
+   AND (so.linked_ac_docno = v.sheet_doc_no OR so.doc_no = v.sheet_doc_no)
+   AND so.status::text NOT IN ('DRAFT', 'CANCELLED')
+ RETURNING so.doc_no, v.sheet_doc_no`;
+}
 
 const senToAmount = (sen: number | null | undefined): number =>
   Number((Number(sen ?? 0) / 100).toFixed(2));

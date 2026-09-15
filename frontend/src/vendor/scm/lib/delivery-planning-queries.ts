@@ -111,6 +111,9 @@ export type PlanningOrder = {
   house_type: string | null;
   replacement_disposal: string | null;
   referral: string | null;
+  /* PO No. (owner 2026-09-15) — the purchase orders RAISED from this SO, the
+     SO list's raised-PO chips. SO rows only; absent on ASSR / DP / project rows. */
+  po_nos?: string[];
   /* HC DO-execution raw-data fields (migration 0197), from the latest DO;
      null when this SO has no DO yet (editable only once a DO exists). */
   time_range: string | null;

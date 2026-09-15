@@ -95,6 +95,9 @@ import { RecordedPaymentsList, type RecordedPayment } from "./RecordedPayments";
    below), so it is the one surface a rule landing on the shared/detail ledger
    keeps missing (#583, then again in fix/b3-pay). */
 import { missingMethodSubField } from "../vendor/scm/components/PaymentsTable";
+/* Money moved from a cancelled order (docs/bugs/0933): the method option, its pick, the body, the seed. */
+import { ConvertSourceField, convertedBody, rmInput, useMobileConvertSources, withConvertOption, type MobileConvertPrefill } from "./MobileOrderMoney";
+import { CONVERT_LABEL, type ConvertSource } from "../vendor/scm/lib/so-money-queries";
 import { useFabricLibrary } from "../vendor/scm/lib/queries";
 import { activeOptions, maintPickerValues, restrictPricedToPool, restrictStringsToPool } from "../vendor/shared/maintenance-pools";
 import { missingVariantAxes, sofaMixIntroduced, SOFA_MIX_MESSAGE } from "../vendor/shared/so-variant-rule";
@@ -173,7 +176,8 @@ type Payment = {
    *  recordNewPayments has two call sites and the rows survive a failed
    *  submit, which is exactly the double-fire this closes. */
   idempotencyKey: string;
-  method: string; // Cash / Merchant / Online / Installment
+  method: string; // Cash / Merchant / Online / Installment / Convert from cancelled SO
+  convertedFromDocNo?: string; // the cancelled order a converted row draws on
   date: string;
   amount: string; // RM as typed
   account: string; // account sheet ref
@@ -587,6 +591,7 @@ export function MobileNewSO({
   mode,
   docNo,
   scanPrefill,
+  convertFrom,
   onBack,
   onSaved,
   openAddLine,
@@ -594,6 +599,8 @@ export function MobileNewSO({
   mode: Mode;
   docNo?: string;
   scanPrefill?: MobileScanPrefill;
+  /** Convert on a cancelled order: its customer and lines copied, one converted row per pick. */
+  convertFrom?: MobileConvertPrefill;
   onBack: () => void;
   onSaved?: (docNo: string) => void;
   openAddLine: boolean;
@@ -728,7 +735,7 @@ export function MobileNewSO({
       })
     : scanPrefill?.payment
       ? [{ ...newPayment(), method: scanPrefill.payment.method, amount: scanPrefill.payment.amount || "0.00", approval: scanPrefill.payment.approval ?? "" }]
-      : [];
+      : (convertFrom?.picks ?? []).map((p) => ({ ...newPayment(), method: CONVERT_LABEL, amount: rmInput(p.amountSen), convertedFromDocNo: p.docNo }));
 
   // Customer
   const [name, setName] = useState(scanPrefill?.name ?? "");
@@ -785,6 +792,8 @@ export function MobileNewSO({
     scanLines.length > 0 ? scanLines.map((s) => s.line) : [newLine()],
   );
   const [pays, setPays] = useState<Payment[]>(() => seededPays);
+  /* This customer's cancelled orders with money — what a converted row may draw on; read by phone, there is no order yet. */
+  const convertSources = useMobileConvertSources({ phone });
   /* FIX D1(b) — line keys whose Item Delivery Date was MANUALLY changed. The
      header Delivery Date cascades onto every line's ddate, re-syncing when the
      header changes, EXCEPT lines in this set (manual-override-wins — same
@@ -1044,6 +1053,25 @@ export function MobileNewSO({
       cancelled = true;
     };
   }, [isEdit, docNo]);
+
+  /* Convert (docs/bugs/0933): the cancelled order's customer and lines seed a NEW order — fresh lines, no photos. */
+  useEffect(() => {
+    const from = convertFrom?.copyFrom;
+    if (isEdit || !from) return;
+    let gone = false;
+    setLoading(true);
+    authedFetch<DetailResp>(`/mfg-sales-orders/${encodeURIComponent(from)}`).then((d) => {
+      if (gone) return;
+      const h = d.salesOrder;
+      setName(h.debtor_name ?? ""); setCustRef(h.customer_so_no ?? h.ref ?? ""); setPhone(toE164(h.phone)); setEmail(h.email ?? ""); setCustType(h.customer_type ?? "");
+      setBuildingType(h.building_type ?? ""); setAddr1(h.address1 ?? ""); setAddr2(h.address2 ?? ""); setState(h.customer_state ?? ""); setCity(h.city ?? ""); setPostcode(h.postcode ?? "");
+      setSalespersonId(h.salesperson_id != null ? String(h.salesperson_id) : "");
+      const copied = d.items.filter((it) => !it.cancelled).map((it) => ({ ...lineFromItem(it), itemId: "", photoKeys: [] }));
+      if (copied.length) setLines(copied);
+    }).catch((e: unknown) => { if (!gone) setError(e instanceof Error ? e.message : "Couldn't load the cancelled order."); })
+      .finally(() => { if (!gone) setLoading(false); });
+    return () => { gone = true; };
+  }, [isEdit, convertFrom?.copyFrom]);
 
   /* ── Pre-upload scan-seeded payment slips (new-from-scan only) ─────────── */
   useEffect(() => {
@@ -1530,9 +1558,11 @@ export function MobileNewSO({
       if (code === "merchant") { body.merchantProvider = p.bank || null; body.installmentMonths = planToMonths(p.plan); }
       else if (code === "installment") { body.merchantProvider = p.bank || null; body.installmentMonths = planToMonths(p.plan); }
       else if (code === "transfer") { body.onlineType = p.online || null; }
+      /* A converted row posts only its source and amount — the server fixes the day and the collector. */
+      const posted = p.method === CONVERT_LABEL ? convertedBody(p.convertedFromDocNo ?? "", toSen(p.amount)) : body;
       try {
         await authedFetch(`/mfg-sales-orders/${encodeURIComponent(createdDocNo)}/payments`,
-          idempotentInit(p.idempotencyKey, { method: "POST", body: JSON.stringify(body) }));
+          idempotentInit(p.idempotencyKey, { method: "POST", body: JSON.stringify(posted) }));
       } catch (e) {
         failed += 1;
         if (!firstError && e instanceof Error && e.message) firstError = e.message;
@@ -1905,6 +1935,7 @@ export function MobileNewSO({
               merchantProvider: p.bank,
               installmentMonthsLabel: p.plan,
               onlineType: p.online,
+              convertedFromDocNo: p.convertedFromDocNo ?? "",
             })
           : null,
       }))
@@ -2615,6 +2646,7 @@ export function MobileNewSO({
                       key={p.key}
                       pay={p}
                       staff={pickableStaffQ.data ?? []}
+                      convertSources={convertSources}
                       onChange={(patch) => setPays((prev) => prev.map((x) => (x.key === p.key ? { ...x, ...patch } : x)))}
                       onRemove={() => setPays((prev) => prev.filter((x) => x.key !== p.key))}
                     />
@@ -3557,12 +3589,13 @@ function SpecSel({ label, value, opts, onChange, required = false, invalid = fal
   );
 }
 
-function PayCard({ pay, staff, onChange, onRemove }: { pay: Payment; staff: Array<{ id: string; name: string }>; onChange: (patch: Partial<Payment>) => void; onRemove: () => void }) {
+function PayCard({ pay, staff, convertSources, onChange, onRemove }: { pay: Payment; staff: Array<{ id: string; name: string }>; convertSources: ConvertSource[]; onChange: (patch: Partial<Payment>) => void; onRemove: () => void }) {
   const fileRef = useRef<HTMLInputElement | null>(null);
   /* Live payment dropdowns from the maintenance catalog (same API the desktop
      SalesOrderNew uses); FALLBACK_OPTIONS only backs an offline load. Was
      hardcoded ("Maybank"/"One Shot") and never hit the API — that was the drift. */
-  const methodOpts = optionsOrFallback("payment_method", useSoDropdownOptions("payment_method").data);
+  /* "Convert from cancelled SO" joins the list while the customer has a cancelled order with money (docs/bugs/0933). */
+  const methodOpts = withConvertOption(optionsOrFallback("payment_method", useSoDropdownOptions("payment_method").data), convertSources.length > 0 || pay.method === CONVERT_LABEL);
   const bankOpts = optionsOrFallback("payment_merchant", useSoDropdownOptions("payment_merchant").data);
   const planOpts = optionsOrFallback("installment_plan", useSoDropdownOptions("installment_plan").data);
   const onlineOpts = optionsOrFallback("online_type", useSoDropdownOptions("online_type").data);
@@ -3614,6 +3647,11 @@ function PayCard({ pay, staff, onChange, onRemove }: { pay: Payment; staff: Arra
         )}
         {pay.method === "Online" && (
           <SpecSel label="Sub-type" required value={pay.online} opts={onlineOpts} onChange={(vv) => onChange({ online: vv })} />
+        )}
+        {/* Which cancelled order the money comes from; picking one fills an empty amount with what is left there. */}
+        {pay.method === CONVERT_LABEL && (
+          <ConvertSourceField sources={convertSources} value={pay.convertedFromDocNo ?? ""}
+            onChange={(d, left) => onChange({ convertedFromDocNo: d, ...(toSen(pay.amount) > 0 ? {} : { amount: rmInput(left) }) })} />
         )}
         <div style={{ display: "flex", gap: 9 }}>
           <Field label="Account Sheet" style={{ flex: 1 }}>

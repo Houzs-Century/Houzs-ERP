@@ -9,6 +9,12 @@
 // keyed every month (salary, rent) opens the draft form with its lines
 // already there, dated today, for the month's figures to be edited and the
 // draft posted. Copy never posts; it drafts.
+//
+// And to EDIT it (owner 2026-09-15, on a posted one: 我无法 edit): the same
+// form, opened on the entry's own date, lines and narration. Saving a posted
+// entry reverses it on its own day and posts the corrected entry under a new
+// number — one step, the server's (PUT /journal-entries/:id); a draft is
+// rewritten in place. Unlike Copy, an edit keeps the party on each line.
 // ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
@@ -16,7 +22,7 @@ import {
   useJournalEntryDetail, useCreateJournalEntry, usePostJournalEntry, useAccounts, leafAccounts,
   type JournalEntry, type JournalEntryLine, type JeLineIn,
 } from '../../vendor/scm/lib/accounting-queries';
-import { useReverseJournalEntry } from './accounting-phase1-queries';
+import { useEditJournalEntry, useReverseJournalEntry } from './accounting-phase1-queries';
 import { fmtSen, fmtDateOrDash } from '../../vendor/shared/format';
 import { byText } from '../../vendor/scm/lib/sort-options';
 import { DateField } from '../../vendor/scm/components/DateField';
@@ -65,7 +71,12 @@ export const rmToSen = (raw: string): number | null => {
 /** Sen → the RM the form's boxes hold ("19206.98"); nothing for nothing. */
 export const senToRm = (sen: number): string => (sen > 0 ? (sen / 100).toFixed(2) : '');
 
-export type DraftLine = { accountCode: string; debit: string; credit: string; notes: string };
+export type DraftLine = {
+  accountCode: string; debit: string; credit: string; notes: string;
+  /* Carried by an EDIT only — the form has no party boxes, and a copy drops
+     the party on purpose; an edit must not lose it. */
+  partyType?: string | null; partyCode?: string | null; partyName?: string | null;
+};
 const EMPTY_LINE: DraftLine = { accountCode: '', debit: '', credit: '', notes: '' };
 
 /** What a copy carries into the draft form: the narration and the lines,
@@ -78,6 +89,23 @@ export const seedFromEntry = (je: JournalEntry, lines: JournalEntryLine[]): Draf
   lines: lines.map((l) => ({ accountCode: l.account_code, debit: senToRm(l.debit_sen), credit: senToRm(l.credit_sen), notes: l.notes ?? '' })),
 });
 
+/** What an EDIT opens the form with: the entry itself (its number decides the
+    title, its date the date box, posted decides what Save does) and its lines
+    with their parties kept. */
+export type EditSeed = DraftSeed & { id: string; jeNo: string; posted: boolean; entryDate: string };
+
+export const editSeedFromEntry = (je: JournalEntry, lines: JournalEntryLine[]): EditSeed => ({
+  id: je.id,
+  jeNo: je.je_no,
+  posted: je.posted,
+  entryDate: String(je.entry_date).slice(0, 10),
+  narration: je.narration ?? '',
+  lines: lines.map((l) => ({
+    accountCode: l.account_code, debit: senToRm(l.debit_sen), credit: senToRm(l.credit_sen), notes: l.notes ?? '',
+    partyType: l.party_type, partyCode: l.party_code, partyName: l.party_name,
+  })),
+});
+
 /** Code on one line, name on the next — how an account reads on every screen
     from 2026-09-15 on (owner: code 一行，name 一行). */
 export const AccountCell = ({ code, name }: { code: string; name: string | null | undefined }) => (
@@ -87,10 +115,15 @@ export const AccountCell = ({ code, name }: { code: string; name: string | null 
   </span>
 );
 
-export const NewJournalForm = ({ onDone, initial }: { onDone: () => void; initial?: DraftSeed | null }) => {
+/* One form for a new journal, a copy and an edit. `editing` names the entry
+   being edited: Save then goes to PUT /journal-entries/:id — a posted entry
+   is reversed and the corrected one posted in the same step, a draft is
+   rewritten in place — and the date box opens on the entry's own day. */
+export const NewJournalForm = ({ onDone, initial, editing }: { onDone: () => void; initial?: DraftSeed | null; editing?: EditSeed | null }) => {
   const accounts = useAccounts();
   const createM = useCreateJournalEntry();
-  const [entryDate, setEntryDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const editM = useEditJournalEntry();
+  const [entryDate, setEntryDate] = useState(() => editing?.entryDate ?? new Date().toISOString().slice(0, 10));
   const [narration, setNarration] = useState(initial?.narration ?? '');
   const [lines, setLines] = useState<DraftLine[]>(initial && initial.lines.length > 0 ? initial.lines.map((l) => ({ ...l })) : [{ ...EMPTY_LINE }, { ...EMPTY_LINE }]);
 
@@ -123,6 +156,7 @@ export const NewJournalForm = ({ onDone, initial }: { onDone: () => void; initia
   const setLine = (i: number, patch: Partial<DraftLine>) =>
     setLines((ls) => ls.map((l, j) => (j === i ? { ...l, ...patch } : l)));
 
+  const pending = createM.isPending || editM.isPending;
   const submit = () => {
     const body = {
       entryDate,
@@ -134,16 +168,33 @@ export const NewJournalForm = ({ onDone, initial }: { onDone: () => void; initia
           debitSen: rmToSen(l.debit) ?? 0,
           creditSen: rmToSen(l.credit) ?? 0,
           notes: l.notes.trim() || null,
+          ...(l.partyType || l.partyCode || l.partyName
+            ? { partyType: l.partyType ?? null, partyCode: l.partyCode ?? null, partyName: l.partyName ?? null }
+            : {}),
         })),
     };
-    createM.mutate(body, { onSuccess: onDone });
+    if (editing) editM.mutate({ id: editing.id, ...body }, { onSuccess: onDone });
+    else createM.mutate(body, { onSuccess: onDone });
   };
 
   return (
     <div style={cardStyle} className="space-y-3">
       <div style={{ fontWeight: 700 }}>
-        New manual journal (draft — posting is a separate step)
-        {initial && <span style={{ fontWeight: 400, fontSize: 'var(--fs-13)', color: 'var(--c-ink-soft, #555)' }}> · copied — check the date, the figures and the notes before saving</span>}
+        {editing ? (
+          <>
+            Edit {editing.jeNo}
+            <span style={{ fontWeight: 400, fontSize: 'var(--fs-13)', color: 'var(--c-ink-soft, #555)' }}>
+              {editing.posted
+                ? ' · posted — saving reverses it on its own day and posts the corrected entry under a new number'
+                : ' · draft — saving rewrites it in place'}
+            </span>
+          </>
+        ) : (
+          <>
+            New manual journal (draft — posting is a separate step)
+            {initial && <span style={{ fontWeight: 400, fontSize: 'var(--fs-13)', color: 'var(--c-ink-soft, #555)' }}> · copied — check the date, the figures and the notes before saving</span>}
+          </>
+        )}
       </div>
       <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
         <DateField style={fieldStyle} value={entryDate} onChange={(iso) => setEntryDate(iso)}/>
@@ -177,15 +228,15 @@ export const NewJournalForm = ({ onDone, initial }: { onDone: () => void; initia
             ? <b style={{ color: 'var(--c-secondary-a, #2F5D4F)' }}>balanced</b>
             : <b style={{ color: 'var(--c-festive-b, #B8331F)' }}>{totals.bad ? 'invalid amounts' : 'not balanced'}</b>}
         </span>
-        <button type="button" style={btnStyle(true)} disabled={!canSave || createM.isPending} onClick={submit}>
-          {createM.isPending ? 'Saving…' : 'Save draft'}
+        <button type="button" style={btnStyle(true)} disabled={!canSave || pending} onClick={submit}>
+          {pending ? 'Saving…' : editing?.posted ? 'Save & post' : 'Save draft'}
         </button>
       </div>
     </div>
   );
 };
 
-export const JeDetailCard = ({ id, onClose, onCopy }: { id: string; onClose: () => void; onCopy?: (seed: DraftSeed) => void }) => {
+export const JeDetailCard = ({ id, onClose, onCopy, onEdit }: { id: string; onClose: () => void; onCopy?: (seed: DraftSeed) => void; onEdit?: (seed: EditSeed) => void }) => {
   const q = useJournalEntryDetail(id);
   const postM = usePostJournalEntry();
   const reverseM = useReverseJournalEntry();
@@ -211,6 +262,14 @@ export const JeDetailCard = ({ id, onClose, onCopy }: { id: string; onClose: () 
                 onClick={() => postM.mutate(id)}>
                 {postM.isPending ? 'Posting…' : 'Post'}
               </button>
+            )}
+            {/* A manual journal not yet reversed opens in the form on its own
+                date and lines (owner: 我无法 edit) — a posted one is reversed
+                and re-posted by the save, a draft rewritten. A document's
+                entry is corrected through its document; a reversed one is
+                history, to copy. */}
+            {je.source_type === 'MANUAL' && !je.reversed && onEdit && lines.length > 0 && (
+              <button type="button" style={btnStyle()} onClick={() => onEdit(editSeedFromEntry(je, lines))}>Edit</button>
             )}
             {je.source_type === 'MANUAL' && je.posted && !je.reversed && (
               <button type="button" style={btnStyle()} disabled={reverseM.isPending}

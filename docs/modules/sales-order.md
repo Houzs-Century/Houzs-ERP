@@ -4926,12 +4926,38 @@ resolves to `converted` with `convertedFromDocNo`, and a stored converted row
 has no pencil (moved back by delete). A converted draft survives the retry
 handoff (`frontend/src/lib/paymentRetryHandoff.ts`). Finance's list of cancelled
 orders still holding money is `frontend/src/pages/scm-v2/CancelledWithMoneyCard.tsx`
-on the Accounting Self-check tab. Mobile follows in its own PR. Contracts:
+on the Accounting Self-check tab. The phone is the next paragraph. Contracts:
 `frontend/src/vendor/scm/components/OrderMoneyPanel.test.tsx`,
 `frontend/src/vendor/scm/components/PaymentsTable.test.ts`,
 `frontend/src/vendor/scm/lib/so-money-queries.test.tsx`,
 `frontend/src/pages/scm-v2/CancelledWithMoneyCard.test.tsx`,
 `frontend/src/lib/paymentRetryHandoff.test.ts`.
+
+The phone (2026-09-15, docs/bugs/0933) mounts the SAME panel — the desktop's
+`frontend/src/vendor/scm/components/OrderMoneyPanel.tsx` under the Payments
+card of `frontend/src/mobile/MobileSODetail.tsx`, which renders nothing unless
+the order is cancelled with money; only "open the new order" differs: the phone
+has no URL to navigate to, so the panel's `onOpenNewOrder` hands the ticks to
+the screen router (`frontend/src/mobile/MobileApp.tsx`, `convertFrom` on the
+`new-so` screen) and `frontend/src/mobile/MobileNewSO.tsx` opens with the
+cancelled order's customer and lines copied (fresh lines, no photos) and one
+"Convert from cancelled SO" row per pick. The phone's own pieces live in
+`frontend/src/mobile/MobileOrderMoney.tsx`: `withConvertOption` adds the
+method to the picker only while the customer has a cancelled order with money
+(`useMobileConvertSources` — a saved order by its number, the New SO screen by
+phone), `ConvertSourceField` is the L2 pick (which cancelled order; picking
+fills an empty amount with what is left), and `convertedBody` is what a
+converted row posts — its source and amount alone, the server fixing the paid
+day and the collector. Both phone editors use them: the pre-create PayCard in
+`frontend/src/mobile/MobileNewSO.tsx` and the Add payment sheet in
+`frontend/src/mobile/RecordedPayments.tsx` (never on an edit). A stored
+converted row reads "Convert from cancelled SO · from SO-x"
+(`frontend/src/mobile/PaymentInfoBlock.tsx`) and has no pencil — the trash
+stays, deleting it is how the money goes back. Contracts:
+`frontend/src/mobile/MobileOrderMoney.test.tsx`,
+`frontend/src/mobile/RecordedPayments.convert.test.tsx`,
+`frontend/src/mobile/MobileNewSO.convert.test.tsx`, and the phone case in
+`frontend/src/vendor/scm/components/OrderMoneyPanel.test.tsx`.
 
 #### Editing a payment now reaches the GENERAL LEDGER too (2026-09-10, docs/bugs/0778)
 
