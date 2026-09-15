@@ -27,11 +27,3 @@ jobs:
       - run: node scripts/probe-fabric-accessory-population.mjs
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-      - run: node scripts/report-expired-so.mjs
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          OUT_FILE: ${{ runner.temp }}/expired-so.json
-      - uses: actions/upload-artifact@v4
-        with:
-          name: expired-so
-          path: ${{ runner.temp }}/expired-so.json
