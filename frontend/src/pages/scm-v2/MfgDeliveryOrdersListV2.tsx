@@ -1287,8 +1287,8 @@ export function MfgDeliveryOrdersListV2() {
     moneyColumn<DoRow, DoListLine>({ key: "amount", label: "Amount", width: "128px", defaultHidden: true, strong: true, sen: (r) => r.local_total_sen }),
     {
       key: "currency", label: DO_LABELS.currency, width: "96px", defaultHidden: true, disableSort: true,
-      getValue: (r) => r.currency ?? "MYR",
-      render: (r) => <span className="text-[12.5px] text-ink-secondary">{r.currency ?? "MYR"}</span>,
+      getValue: (r) => r.currency,
+      render: (r) => <span className="text-[12.5px] text-ink-secondary">{r.currency}</span>,
     },
     // ── Re-added columns (Phase 1) — data already on the DoRow payload, ported
     //    from the legacy MfgDeliveryOrdersList buildColumns (labels/widths). All
