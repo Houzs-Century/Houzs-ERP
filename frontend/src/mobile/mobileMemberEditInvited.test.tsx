@@ -121,7 +121,7 @@ describe("Edit Member on the phone, an invited member", () => {
   it("the Status select does not read Active for someone who is not", () => {
     openEdit(FORM_MEMBERS_EDIT, { ...MEMBER, status: "invited" });
     expect(statusSelect().value).toBe("");
-    expect(statusSelect().selectedOptions[0]?.textContent).toBe("No change");
+    expect(statusSelect().selectedOptions[0].textContent).toBe("No change");
   });
 
   it("choosing Disabled still sends it", async () => {
