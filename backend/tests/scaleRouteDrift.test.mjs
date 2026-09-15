@@ -73,9 +73,13 @@ test("scale contract remains attached to current production route surfaces", asy
   ]);
 
   assert.match(soRoute, /mfg_sales_orders_with_payment_totals/);
-  assert.match(soRoute, /\.order\(sortCol, \{ ascending: sortAsc \}\)/);
+  /* The list's filter + sort live in lib/so-list-read.ts since 2026-09-15 and
+     the page query is built through them. */
+  const soListRead = await readRoute("../src/scm/lib/so-list-read.ts");
+  assert.match(soRoute, /let q = read\.header\(orderSoList\(fromSoList\(sb, LIST_COLS, \{ count: 'exact' \}\)/);
+  assert.match(soListRead, /\.order\(col, \{ ascending: asc \}\)/);
   assert.match(soRoute, /q = q\.range\(page \* pageSize, page \* pageSize \+ pageSize - 1\)/);
-  assert.match(soRoute, /\.from\('mfg_sales_order_items'\)/);
+  assert.match(soRoute + (await readRoute("../src/scm/lib/so-list-rows.ts")), /\.from\('mfg_sales_order_items'\)/);
   assert.match(productRoute, /\.from\('mfg_products'\)/);
   assert.match(productRoute, /model:product_models\(allowed_options\)/);
   assert.match(productRoute, /return q\.range\(from, to\)/);

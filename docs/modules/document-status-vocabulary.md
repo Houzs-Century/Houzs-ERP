@@ -111,6 +111,7 @@ document's own guide, e.g. `payment-voucher.md`, `service-case.md`).
   category — it is not reliable for an arbitrary brand name (e.g. "ZANOTTI"
   resolves to OTHER). The real fix is adding the line category to those
   payloads, not extending the text bridge further.
+- The item-code concept's `allow` list includes `src/scm/lib/product-code-rename.ts` and `scripts/probe-product-code-columns.mjs`: they must name the dead `public` copies' `material_code` / `product_code` columns.
 
 ## Where the code is
 

@@ -150,6 +150,7 @@ Process and UI
 - Header detection that read only active children let a header take postings — count retired children too.
 - `fetchMonthlyDocNos` reading whole rows minted -001 twice — read the named column.
 - DateField on touch: `showPicker()` from onClick is dead on iOS and a full-field overlay blocks typing — keep the native date input on the icon only.
+- A card settlement confirm moves money keyed under no bank or the wrong bank: one `SETTLEMOVE` line per clearing account the payment debited, into the merchant's own clearing account (`clearingMoveLinesFrom`, `backend/src/acc/rules.ts`), and it corrects the payment's `merchant_provider` with an `UPDATE_PAYMENT` history line.
 
 ## Where the code is
 

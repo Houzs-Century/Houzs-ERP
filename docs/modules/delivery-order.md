@@ -115,6 +115,7 @@ Migrated documents
 - `delivery_state` means three things (SO detail quantity rollup, board derivation, stored manual override) — do not read across them.
 - Copying the SO's `customer_delivery_date` or the DO's `do_date` as a migrated DO's delivery date was wrong — dates come from the AutoCount line export (`backend/scripts/repair-delivery-dates-from-book.mjs`).
 - `delivery-orders-mfg.ts` is over its size ceiling — add new routes as a separate router on the same prefix (as scan token, photos and revert did).
+- The list export `GET /delivery-orders-mfg/export/rows` returns windows of at most 500 delivery orders matching the list's tab, search and sort, one row per line, with no price or amount on a line (the file goes to drivers, 3PLs and customers); money columns are hidden by default.
 
 ## Where the code is
 
