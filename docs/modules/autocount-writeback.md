@@ -764,7 +764,7 @@ number. `docs/modules/grn.md` section 4d has the full shape.
 |---|---|
 | SO header | `scm.mfg_sales_orders` — `debtor_name`, `agent` + `salesperson_id` (§7n), `sales_location`, `ref`, `phone`, `address1-4`, and `branding` / `venue` / `po_doc_no` into UDF |
 | SO lines | `scm.mfg_sales_order_items`, including `linked_ac_dtlkey` (migration 0273) — the AutoCount line an edit addresses |
-| PO header | `scm.purchase_orders` — `po_number`, `po_date`, `notes`. **The creditor is a JOIN**: the table is supplier-keyed, so `CreditorCode` / `CreditorName` come from `scm.suppliers.code` / `.name` through `supplier_id`. It has no `agent` and no `ref` at all, so a create sends null for both and an edit omits `Ref` entirely rather than blanking AutoCount's |
+| PO header | `scm.purchase_orders` — `po_number`, `po_date`, `notes`. **The creditor is a JOIN**: the table is supplier-keyed, so `CreditorCode` / `CreditorName` come from `scm.suppliers.code` / `.name` through `supplier_id`. It has no `agent` and no `ref` at all, so a create sends null for both and an edit omits `Ref` entirely rather than blanking AutoCount's. The supplier delivery dates `supplier_delivery_date_2/3/4` go into UDF as `EDate` / `EDate2` / `EDate3` on create, transfer and edit, a blank slot omitted (since 2026-09-15, `docs/bugs/0919-a-supplier-delivery-date-entered-in-the-erp-never-reached-au.md`) |
 | PO lines | `scm.purchase_order_items`, same `linked_ac_dtlkey` |
 
 Every column these reads name is listed once at the top of
@@ -6534,3 +6534,34 @@ that arrived back on the list*) handles the ones already cleared:
 - documents a person cleared on the page (`archived_by` set) stay cleared.
 
 `docs/bugs/0917-cleared-documents-that-reached-autocount-still-read-as-not-s.md`.
+
+## Carried-over delivery and purchase orders get their line keys too (2026-09-15)
+
+A delivery order or purchase order carried over from AutoCount keeps
+AutoCount's number (`DO-010936`) and is held in the ERP as `HC-` + that number.
+Rows the cutover split out or the 2026-09-07 decomposition added carried no key,
+so a staff edit was refused whole.
+
+- `list-carried-over-keyless-documents.mjs` (read-only) lists those documents.
+- `export-ac-conversion-line-keys.py` exports them through the DO and PO lanes
+  when given `CARRIED_OVER_FILE`.
+- `stamp-conversion-line-keys.mjs` requires the ERP document to link that
+  AutoCount number (and a delivery order to be flagged carried over) in place of
+  a sent conversion.
+
+A book line at quantity 0 is retired and no longer counts as a pairing target
+when quantities are given. Carried-over goods receipts are not covered: most
+link no book receipt number.
+`docs/bugs/0919-delivery-and-purchase-orders-carried-over-from-autocount-had.md`.
+
+## A sofa's pieces are spelled in the document's line order (2026-09-15)
+
+A build's pieces are spelled in `line_no` order when every piece carries a
+distinct one. Otherwise they keep the order they were read in (`created_at`,
+then row id). `SO_ITEM_COLS` and `PO_ITEM_COLS` select `line_no` for this. Only
+the spelling of one build changes: the payload's line order and the key zip do
+not.
+
+The reason: an amendment re-derives pieces in one statement, so their read order
+fell to the row ids, and one sofa was spelled two ways on its SO and PO.
+`docs/bugs/0920-a-sofa-s-pieces-were-spelled-in-the-order-the-queue-read-the.md`.

@@ -19,23 +19,17 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { ACCOUNTING_TAB_TITLES, accountingTabFromSearch, type AccountingTab } from './accounting-tabs';
 import {
   useJournalEntries,
-  useJournalEntryDetail,
-  useCreateJournalEntry,
-  usePostJournalEntry,
   useGlEntries,
   useAccountBalances,
   useArAging,
   useApAging,
   useAccounts,
-  leafAccounts,
   type Account,
   type ArAgingRow,
   type ApAgingRow,
   type JournalEntry,
-  type JeLineIn,
 } from '../../vendor/scm/lib/accounting-queries';
 import {
-  useReverseJournalEntry,
   useControlCheck,
   usePaymentBookingDryRun,
   useBookUnbookedPayments,
@@ -54,6 +48,7 @@ import { PaymentCorrectionsTab } from './PaymentCorrectionsTab';
 import { CollectionTab } from './CollectionReport';
 import { MerchantChargesTab } from './MerchantChargesReport';
 import { PerformanceTab } from './PerformancePnl';
+import { NewJournalForm, JeDetailCard, jeStatus, cardStyle, fieldStyle, btnStyle, type DraftSeed } from './JournalEntryCards';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { fmtSen } from '../../vendor/shared/format';
 import { byText } from '../../vendor/scm/lib/sort-options';
@@ -107,31 +102,6 @@ export const Accounting = () => {
     </div>
   );
 };
-
-/* Small shared form styling for the phase-1 cards. */
-const cardStyle: React.CSSProperties = {
-  padding: 'var(--space-4)',
-  background: 'var(--c-cream)',
-  border: '1px solid var(--c-line, rgba(34,31,32,0.12))',
-  borderRadius: 'var(--radius-md)',
-};
-const fieldStyle: React.CSSProperties = {
-  padding: '6px 10px',
-  border: '1px solid var(--c-line, rgba(34,31,32,0.2))',
-  borderRadius: 'var(--radius-sm, 6px)',
-  fontSize: 'var(--fs-13)',
-  background: 'white',
-};
-const btnStyle = (primary?: boolean): React.CSSProperties => ({
-  padding: '6px 14px',
-  border: '1px solid var(--c-ink)',
-  borderRadius: 'var(--radius-md)',
-  background: primary ? 'var(--c-ink)' : 'transparent',
-  color: primary ? 'var(--c-cream)' : 'var(--c-ink)',
-  fontSize: 'var(--fs-13)',
-  fontWeight: 600,
-  cursor: 'pointer',
-});
 
 /* ── Chart of Accounts ───────────────────────────────────────────────── */
 const ACCOUNT_TYPE_ORDER = ['ASSET', 'LIABILITY', 'EQUITY', 'INCOME', 'EXPENSE'];
@@ -243,10 +213,6 @@ const CoaTab = () => {
 
 /* ── Journal Entries ─────────────────────────────────────────────────── */
 
-/* JE status label — REVERSED wins over POSTED, then DRAFT. */
-const jeStatus = (r: JournalEntry): string =>
-  r.reversed ? 'REVERSED' : r.posted ? 'POSTED' : 'DRAFT';
-
 /* The five journals (GL redesign item 7) — the AutoCount way the owner reads
    his books. The class arrives on each row from the server (derived from the
    source type and, for money documents, from which money account the lines
@@ -262,6 +228,9 @@ const JeTab = () => {
   const rows = useMemo(() => q.data?.journalEntries ?? [], [q.data]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  /* A copy of an opened manual journal: the seed the draft form opens with,
+     and a fresh key so a second Copy starts a fresh form (docs/bugs/0920). */
+  const [seed, setSeed] = useState<{ key: number; draft: DraftSeed } | null>(null);
 
   const [search, setSearch] = useState('');
   const visible = useMemo(() => {
@@ -278,7 +247,7 @@ const JeTab = () => {
   return (
     <div className="space-y-3">
       <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
-        <button type="button" style={btnStyle(true)} onClick={() => { setCreating((v) => !v); setSelectedId(null); }}>
+        <button type="button" style={btnStyle(true)} onClick={() => { setCreating((v) => !v); setSelectedId(null); setSeed(null); }}>
           {creating ? 'Close journal form' : 'New manual journal'}
         </button>
         <select
@@ -305,8 +274,11 @@ const JeTab = () => {
         ))}
       </div>
 
-      {creating && <NewJournalForm onDone={() => setCreating(false)} />}
-      {selectedId && <JeDetailCard id={selectedId} onClose={() => setSelectedId(null)} />}
+      {creating && <NewJournalForm key={seed?.key ?? 0} initial={seed?.draft ?? null} onDone={() => { setCreating(false); setSeed(null); }} />}
+      {selectedId && (
+        <JeDetailCard id={selectedId} onClose={() => setSelectedId(null)}
+          onCopy={(draft) => { setSeed({ key: Date.now(), draft }); setCreating(true); setSelectedId(null); }} />
+      )}
 
       <DataTable<JournalEntry>
         tableId="accounting-je"
@@ -345,173 +317,6 @@ const JeTab = () => {
           },
         ] satisfies Column<JournalEntry>[]}
       />
-    </div>
-  );
-};
-
-/* RM string → integer sen; null when the input is not money. */
-const rmToSen = (raw: string): number | null => {
-  const t = raw.trim();
-  if (!t) return 0;
-  const n = Number(t);
-  if (!Number.isFinite(n) || n < 0) return null;
-  return Math.round(n * 100);
-};
-
-type DraftLine = { accountCode: string; debit: string; credit: string; notes: string };
-const EMPTY_LINE: DraftLine = { accountCode: '', debit: '', credit: '', notes: '' };
-
-const NewJournalForm = ({ onDone }: { onDone: () => void }) => {
-  const accounts = useAccounts();
-  const createM = useCreateJournalEntry();
-  const [entryDate, setEntryDate] = useState(() => new Date().toISOString().slice(0, 10));
-  const [narration, setNarration] = useState('');
-  const [lines, setLines] = useState<DraftLine[]>([{ ...EMPTY_LINE }, { ...EMPTY_LINE }]);
-
-  const all = accounts.data?.accounts ?? [];
-  // Postable = active and not a header (retired children count, docs/bugs/0693)
-  // — the engine's own rule from its one screen-side home, applied here so the
-  // picker cannot offer an account the post will refuse.
-  const postable = useMemo(() => leafAccounts(all), [all]);
-
-  const totals = useMemo(() => {
-    let dr = 0; let cr = 0; let bad = false;
-    for (const l of lines) {
-      const d = rmToSen(l.debit); const c = rmToSen(l.credit);
-      if (d == null || c == null) { bad = true; continue; }
-      dr += d; cr += c;
-      if (d > 0 && c > 0) bad = true;
-    }
-    return { dr, cr, bad };
-  }, [lines]);
-
-  const canSave = !totals.bad && totals.dr === totals.cr && totals.dr > 0
-    && lines.every((l) => l.accountCode || (!l.debit && !l.credit));
-
-  const setLine = (i: number, patch: Partial<DraftLine>) =>
-    setLines((ls) => ls.map((l, j) => (j === i ? { ...l, ...patch } : l)));
-
-  const submit = () => {
-    const body = {
-      entryDate,
-      narration: narration.trim() || null,
-      lines: lines
-        .filter((l) => l.accountCode)
-        .map((l): JeLineIn => ({
-          accountCode: l.accountCode,
-          debitSen: rmToSen(l.debit) ?? 0,
-          creditSen: rmToSen(l.credit) ?? 0,
-          notes: l.notes.trim() || null,
-        })),
-    };
-    createM.mutate(body, { onSuccess: onDone });
-  };
-
-  return (
-    <div style={cardStyle} className="space-y-3">
-      <div style={{ fontWeight: 700 }}>New manual journal (draft — posting is a separate step)</div>
-      <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
-        <DateField style={fieldStyle} value={entryDate} onChange={(iso) => setEntryDate(iso)}/>
-        <input style={{ ...fieldStyle, flex: 1, minWidth: 240 }} placeholder="Narration (what is this entry?)"
-          value={narration} onChange={(e) => setNarration(e.target.value)} />
-      </div>
-
-      {lines.map((l, i) => (
-        <div key={i} style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap', alignItems: 'center' }}>
-          <select style={{ ...fieldStyle, minWidth: 260 }} value={l.accountCode} onChange={(e) => setLine(i, { accountCode: e.target.value })}>
-            <option value="">Select account…</option>
-            {[...postable].sort((a, b) => byText(a.account_code, b.account_code)).map((a) => (
-              <option key={a.account_code} value={a.account_code}>{a.account_code} — {a.account_name}</option>
-            ))}
-          </select>
-          <input style={{ ...fieldStyle, width: 120 }} placeholder="Debit RM" inputMode="decimal"
-            value={l.debit} onChange={(e) => setLine(i, { debit: e.target.value, credit: e.target.value ? '' : l.credit })} />
-          <input style={{ ...fieldStyle, width: 120 }} placeholder="Credit RM" inputMode="decimal"
-            value={l.credit} onChange={(e) => setLine(i, { credit: e.target.value, debit: e.target.value ? '' : l.debit })} />
-          <input style={{ ...fieldStyle, flex: 1, minWidth: 160 }} placeholder="Line note"
-            value={l.notes} onChange={(e) => setLine(i, { notes: e.target.value })} />
-          {lines.length > 2 && (
-            <button type="button" style={btnStyle()} onClick={() => setLines((ls) => ls.filter((_, j) => j !== i))}>Remove</button>
-          )}
-        </div>
-      ))}
-
-      <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap' }}>
-        <button type="button" style={btnStyle()} onClick={() => setLines((ls) => [...ls, { ...EMPTY_LINE }])}>Add line</button>
-        <span style={{ fontSize: 'var(--fs-13)' }}>
-          Dr {fmt(totals.dr)} · Cr {fmt(totals.cr)} ·{' '}
-          {totals.dr === totals.cr && totals.dr > 0 && !totals.bad
-            ? <b style={{ color: 'var(--c-secondary-a, #2F5D4F)' }}>balanced</b>
-            : <b style={{ color: 'var(--c-festive-b, #B8331F)' }}>{totals.bad ? 'invalid amounts' : 'not balanced'}</b>}
-        </span>
-        <button type="button" style={btnStyle(true)} disabled={!canSave || createM.isPending} onClick={submit}>
-          {createM.isPending ? 'Saving…' : 'Save draft'}
-        </button>
-      </div>
-    </div>
-  );
-};
-
-const JeDetailCard = ({ id, onClose }: { id: string; onClose: () => void }) => {
-  const q = useJournalEntryDetail(id);
-  const postM = usePostJournalEntry();
-  const reverseM = useReverseJournalEntry();
-  const je = q.data?.journalEntry;
-  const lines = q.data?.lines ?? [];
-
-  return (
-    <div style={cardStyle} className="space-y-3">
-      {!je ? (
-        <div style={{ fontSize: 'var(--fs-13)' }}>{q.isLoading ? 'Loading…' : 'Entry not found.'}</div>
-      ) : (
-        <>
-          <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap' }}>
-            <span className={styles.codeChip}>{je.je_no}</span>
-            <span>{fmtDateOrDash(je.entry_date)}</span>
-            <span>{je.source_type}{je.source_doc_no ? ` · ${je.source_doc_no}` : ''}</span>
-            <span className={`${styles.statusPill} ${je.posted ? styles.statusActive : styles.statusInactive}`}>{jeStatus(je)}</span>
-            <span style={{ flex: 1 }} />
-            {je.source_type === 'MANUAL' && !je.posted && !je.reversed && (
-              <button type="button" style={btnStyle(true)} disabled={postM.isPending}
-                onClick={() => postM.mutate(id)}>
-                {postM.isPending ? 'Posting…' : 'Post'}
-              </button>
-            )}
-            {je.source_type === 'MANUAL' && je.posted && !je.reversed && (
-              <button type="button" style={btnStyle()} disabled={reverseM.isPending}
-                onClick={() => reverseM.mutate(id)}>
-                {reverseM.isPending ? 'Reversing…' : 'Reverse'}
-              </button>
-            )}
-            <button type="button" style={btnStyle()} onClick={onClose}>Close</button>
-          </div>
-          {je.narration && <div style={{ fontSize: 'var(--fs-13)', color: 'var(--c-ink-soft, #555)' }}>{je.narration}</div>}
-          <table style={{ width: '100%', fontSize: 'var(--fs-13)', borderCollapse: 'collapse' }}>
-            <thead>
-              <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--c-line, rgba(34,31,32,0.12))' }}>
-                <th style={{ padding: '4px 8px' }}>#</th>
-                <th style={{ padding: '4px 8px' }}>Account</th>
-                <th style={{ padding: '4px 8px', textAlign: 'right' }}>Debit</th>
-                <th style={{ padding: '4px 8px', textAlign: 'right' }}>Credit</th>
-                <th style={{ padding: '4px 8px' }}>Party</th>
-                <th style={{ padding: '4px 8px' }}>Note</th>
-              </tr>
-            </thead>
-            <tbody>
-              {lines.map((l) => (
-                <tr key={l.id} style={{ borderBottom: '1px solid var(--c-line, rgba(34,31,32,0.06))' }}>
-                  <td style={{ padding: '4px 8px' }}>{l.line_no}</td>
-                  <td style={{ padding: '4px 8px' }}>{l.account_code}</td>
-                  <td style={{ padding: '4px 8px', textAlign: 'right' }}>{l.debit_sen > 0 ? fmt(l.debit_sen) : '—'}</td>
-                  <td style={{ padding: '4px 8px', textAlign: 'right' }}>{l.credit_sen > 0 ? fmt(l.credit_sen) : '—'}</td>
-                  <td style={{ padding: '4px 8px' }}>{l.party_name ?? l.party_code ?? '—'}</td>
-                  <td style={{ padding: '4px 8px' }}>{l.notes ?? '—'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </>
-      )}
     </div>
   );
 };
