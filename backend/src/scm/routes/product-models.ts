@@ -549,11 +549,12 @@ export const patchProductModelHandler = async (c: Context<{ Bindings: Env; Varia
     if (data) {
       data = { ...data, category: newCategory };
     } else {
-      const { data: reread } = await scopeToCompanyId(supabase
+      const { data: reread, error: rereadErr } = await scopeToCompanyId(supabase
         .from('product_models')
         .select(COLS)
         .eq('id', id), co.companyId)
         .maybeSingle();
+      if (rereadErr) return c.json({ error: 'load_failed', reason: rereadErr.message }, 500);
       data = (reread as Record<string, unknown> | null) ?? { id, category: newCategory };
     }
   }
