@@ -192,7 +192,7 @@ describe('soHeaderLeaseIntent — what a header PATCH means for the lock', () =>
     edit_lease_user_id: holder,
   });
 
-  test('a token with nothing left to write ENDS the save, flag or no flag', () => {
+  test('a token beside no field change ENDS the save, flag or no flag', () => {
     expect(soHeaderLeaseIntent({ lineWriteLeaseToken: T }, live(T, 7), false, 7))
       .toMatchObject({ complete: true, refusal: null, takeover: null });
     expect(soHeaderLeaseIntent({ lineWriteLeaseToken: T, completeLineWrites: true }, live(T, 7), false, 7))
