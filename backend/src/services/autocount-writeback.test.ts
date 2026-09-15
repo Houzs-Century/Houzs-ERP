@@ -26,7 +26,7 @@ import {
   bookSpelling,
   bookSpellingOrOwn,
   soBranding,
-  soCustomerRef,
+  soReference,
   soInvoiceAddress,
   callAcService,
   acServiceConfig,
@@ -168,7 +168,6 @@ describe('composeCreateSo', () => {
     expect(payload.UDF).toEqual({
       BRANDING: 'AKEMI',
       VENUE: 'KSL CITY MALL JOHOR SOLO',
-      ToPONo: 'CUST-PO-7',
     });
   });
 
@@ -422,7 +421,7 @@ describe('ItemCode resolution (D10) — no silent fallback to item_code', () => 
 describe('composeSoToPo', () => {
   const master = () => composeCreatePo({
     po_number: 'HC-PO-1', po_date: '2026-08-10', creditor_code: '400-H004',
-    creditor_name: 'Supplier Sdn Bhd', agent: null, ref: 'R', notes: 'N',
+    creditor_name: 'Supplier Sdn Bhd', agent: null, ref: 'R', source_so_no: null, notes: 'N',
     purchase_location: 'KL',
   }, [line({ unit_price_sen: 5000, location: 'KL' })], opts);
 
@@ -476,7 +475,7 @@ describe('composeSoToPo', () => {
 describe('composeCreatePo', () => {
   const po = (over: Partial<ErpPoHeader> = {}) => composeCreatePo({
     po_number: 'HC-PO-1', po_date: '2026-08-10', creditor_code: '400-H004',
-    creditor_name: 'Supplier Sdn Bhd', agent: null, ref: 'R', notes: 'N',
+    creditor_name: 'Supplier Sdn Bhd', agent: null, ref: 'R', source_so_no: null, notes: 'N',
     purchase_location: null, ...over,
   }, [line({ unit_price_sen: 5000, location: 'KL' })], opts);
 
@@ -627,27 +626,18 @@ describe('ToPONo — the customer reference now lives only in customer_so_no', (
   /* po_doc_no and customer_po held it once; both were 0%-filled and DROPPED from
      scm.mfg_sales_orders by migration 0310. The operator's reference lands in
      customer_so_no, which is the only column SO_HEADER_COLS still selects. */
-  test('reads the customer reference from customer_so_no', () => {
-    const at = (over: Partial<ErpSoHeader>) =>
-      createSo({ ...header, ...over }, [line()], SALESPERSON, opts).UDF.ToPONo;
-    expect(at({ customer_so_no: 'CSO-1' })).toBe('CSO-1');
-    expect(at({ customer_so_no: null })).toBeUndefined();
-  });
-
-  test('soCustomerRef resolves to customer_so_no', () => {
-    expect(soCustomerRef({ customer_so_no: 'CSO' })).toBe('CSO');
-    expect(soCustomerRef({ customer_so_no: null })).toBeNull();
-  });
-
-  /* `ref` goes out as the document's Ref. Sending it here too would put the
-     same string in two AutoCount fields. */
-  test('the document Ref is NOT reused as the customer reference', () => {
-    const p = createSo(
-      { ...header, customer_so_no: null, ref: 'REF' },
-      [line()], SALESPERSON, opts,
-    );
-    expect(p.Ref).toBe('REF');
+  /* docs/bugs/0926: ToPONo is the book's "PO Doc No.", where the office plug-in
+     writes purchase order numbers. The reference belongs in Ref. */
+  test('the reference the operator typed goes out as Ref, and never as the PO Doc No.', () => {
+    const p = createSo({ ...header, customer_so_no: 'MR TAN / SUNWAY', ref: null }, [line()], SALESPERSON, opts);
+    expect(p.Ref).toBe('MR TAN / SUNWAY');
     expect(p.UDF.ToPONo).toBeUndefined();
+  });
+
+  test('soReference: ref first, customer_so_no as the fallback (owner ruling #2429)', () => {
+    expect(soReference({ customer_so_no: 'CSO', ref: 'REF' })).toBe('REF');
+    expect(soReference({ customer_so_no: 'CSO', ref: null })).toBe('CSO');
+    expect(soReference({ customer_so_no: '  ', ref: null })).toBeNull();
   });
 });
 
@@ -992,14 +982,14 @@ describe('a stock location is mandatory on a CREATE and untouched on an EDIT', (
   test('a warehouse-less line on a warehouse-less PO is still refused — nobody said where the goods go', () => {
     expect(() => composeCreatePo({
       po_number: 'HC-PO-1', po_date: null, creditor_code: '400-H004',
-      creditor_name: 'S', agent: null, ref: null, notes: null, purchase_location: null,
+      creditor_name: 'S', agent: null, ref: null, source_so_no: null, notes: null, purchase_location: null,
     }, [line()], opts)).toThrow(MissingLocationError);
   });
 
   test('a warehouse-less line INHERITS the PO header\'s purchase location', () => {
     const p = composeCreatePo({
       po_number: 'HC-PO-1', po_date: null, creditor_code: '400-H004',
-      creditor_name: 'S', agent: null, ref: null, notes: null, purchase_location: 'KL',
+      creditor_name: 'S', agent: null, ref: null, source_so_no: null, notes: null, purchase_location: 'KL',
     }, [line()], opts);
     expect(p.PurchaseLocation, 'the header field AutoCount defaults when we send none').toBe('KL');
     expect(p.Details[0].Location, 'the ERP default fans out to the line').toBe('KL');
@@ -1008,7 +998,7 @@ describe('a stock location is mandatory on a CREATE and untouched on an EDIT', (
   test('a line\'s OWN warehouse beats the header\'s, which is the ERP\'s own precedence', () => {
     const p = composeCreatePo({
       po_number: 'HC-PO-1', po_date: null, creditor_code: '400-H004',
-      creditor_name: 'S', agent: null, ref: null, notes: null, purchase_location: 'KL',
+      creditor_name: 'S', agent: null, ref: null, source_so_no: null, notes: null, purchase_location: 'KL',
     }, [line({ location: 'PG' })], opts);
     expect(p.PurchaseLocation).toBe('KL');
     expect(p.Details[0].Location).toBe('PG');
@@ -1021,7 +1011,7 @@ describe('a stock location is mandatory on a CREATE and untouched on an EDIT', (
        present-null would reach it through Str() as exactly that blank. */
     const p = composeCreatePo({
       po_number: 'HC-PO-1', po_date: null, creditor_code: '400-H004',
-      creditor_name: 'S', agent: null, ref: null, notes: null, purchase_location: null,
+      creditor_name: 'S', agent: null, ref: null, source_so_no: null, notes: null, purchase_location: null,
     }, [line({ location: 'KL' })], opts);
     expect(p).not.toHaveProperty('PurchaseLocation');
   });

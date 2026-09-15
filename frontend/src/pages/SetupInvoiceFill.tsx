@@ -8,12 +8,13 @@
 
 import { useMemo, useState } from "react";
 import { api } from "../api/client";
+import { formatCurrency } from "../lib/utils";
 
 type Item = { description: string; amountRM: number };
 type Proj = { id: number; code: string; name: string; startDate: string | null };
 type Scan = { vendor: string | null; currency: string; totalRM: number; items: Item[]; projects: Proj[] };
 
-const rm = (n: number) => `RM ${Math.round(n).toLocaleString()}`;
+const rm = (n: number) => formatCurrency(n);
 
 export function SetupInvoiceFill() {
   const [fileName, setFileName] = useState("");

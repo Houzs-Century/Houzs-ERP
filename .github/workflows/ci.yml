@@ -267,6 +267,9 @@ jobs:
       # against last month's account book while the suite stayed green.
       - run: npm run audit:ac-item-map
       - run: npm run audit:ac-sofa-corpus
+      # The AutoCount item master (Description, Item Group, UOM per book item) the
+      # document list exports print, from export-ac-item-master.py (autocount-book-item.ts).
+      - run: npm run audit:ac-item-master
       # And a THIRD since 2026-08-14: the four master-data spelling maps
       # (agent / location / venue / branding) are compiled from
       # autocount-so-writeback-mappings.json, so that CONFIRMING a binding is an

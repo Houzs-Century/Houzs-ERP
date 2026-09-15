@@ -302,18 +302,19 @@ and `DUNLOP` exist in the book's history and `BRANDING_MAP` drops both.
 **Fix** — fall back to the lines' branding, the same derivation the UI already
 trusts; and pass unknown values through so `ensure-masters` opens the option.
 
-## 7. `ToPONo` — reads a column PR #140 stopped writing [FIXED]
+## 7. `ToPONo` — WRONG FIELD, corrected by docs/bugs/0926
 
-**Fixed:** `soCustomerRef` reads `po_doc_no ?? customer_po ?? customer_so_no`,
-newest-writer last so a cutover-imported order keeps AutoCount's own text; both
-new columns joined `SO_HEADER_COLS`. `ref` is deliberately NOT in the chain —
-it goes out as the document's `Ref`, and sending it twice would put the same
-string in two AutoCount fields. **3 of 115.**
+This section's premise was wrong and its fix did damage. `SO.UDF_ToPONo` is the
+book's **"PO Doc No."**: the numbers of the purchase orders made from the order,
+comma-joined (the migration record says so, `autocount-migration-record.md`, and
+the office plug-in fills it that way). It is not the customer's reference.
 
-`composeCreateSo` sends `ToPONo: header.po_doc_no`. `frontend/src/pages/scm-v2/so-relationship-map.ts:42-48` states it plainly: PR #140 dropped the Customer PO card, **no Houzs surface writes `po_doc_no` or `customer_po`**, and the value the operator types lands in `customer_so_no` — which `SO_HEADER_COLS` does not even select. The cutover import never wrote `po_doc_no` either. SILENT-DROP, ~100%.
+Sending the reference there overwrote 92 PO numbers and filled 376 blank fields
+with the reference between 2026-09-07 and 09-15. ERP-made orders reached the book
+with `Ref` blank.
 
-**Fix** — `po_doc_no ?? customer_po ?? customer_so_no`, mirroring the desktop
-detail page's own `refOf` precedence.
+Since docs/bugs/0926 the reference (`ref`, falling back to `customer_so_no`)
+goes out as `Ref`, and nothing composes `ToPONo` from it.
 
 ## 8. `InvAddr3` / `InvAddr4` — the customer's town and postcode never arrive [FIXED]
 

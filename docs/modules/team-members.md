@@ -241,15 +241,33 @@ card shows `active / target` when a target is set.
   NOT cover this — it fires only on disable / role change. See the announcements
   guide §6 and `configCache.ts`.
 - **Both surfaces or neither.** Invite/edit/action semantics changed on
-  desktop must land in the mobile pair (`MobileModuleList` config +
+  desktop must land in the mobile pair (`MobileModuleList` config, the per-caller
+  form rules in `frontend/src/mobile/member-invite-form.ts`, and
   `MemberActions`) in the same PR.
-- **A scoped Sales Director never picks a role — on invite as on edit.**
-  `POST /invite` stores the baseline role (`resolveDefaultRoleId`) for every
-  scoped caller, whatever `role_id` the body carries; `PATCH /:id` deletes
-  `role_id`. The phone invite form drops its Role field for that caller
-  (`frontend/src/mobile/member-invite-form.ts`). Until 2026-09-14 the invite
-  defaulted only a MISSING role, so the phone's Role picker let a Sales
-  Director create a Super Admin (`docs/bugs/0887-a-sales-director-could-invite-a-new-account-straight-into-su.md`).
+- **A scoped Sales Director never picks a role — on invite as on edit — and
+  their member edit applies only name, phone and status.** `POST /invite` stores
+  the baseline role (`resolveDefaultRoleId`) for every scoped caller, whatever
+  `role_id` the body carries. `PATCH /:id` deletes `role_id`, `position_id`,
+  `department_id`, `department_ids`, `manager_id`, `company_ids`, `password`,
+  `email` and `email_alias` for that caller and still answers ok, so any form
+  offering one of those reports a save that changed nothing. The phone follows
+  one rule for both member forms, in `frontend/src/mobile/member-invite-form.ts`:
+  the invite drops its Role field (`memberInviteFormFor`), and the edit keeps
+  only `SCOPED_DIRECTOR_EDITABLE_MEMBER_FIELDS` (`memberEditFormFor`) — name,
+  phone, status, status_reason, division, of which the form carries the first
+  three. `frontend/src/mobile/member-invite-form.test.ts` derives that list from
+  the handler and fails when the two disagree. The desktop decides "scoped" from
+  the same two facts (`Team.tsx` `salesDirScoped` = Sales Director position
+  without `users.manage`) and the redesigned profile is locked for it. Until
+  2026-09-14 the invite defaulted only a MISSING role, so the phone's Role picker
+  let a Sales Director create a Super Admin
+  (`docs/bugs/0887-a-sales-director-could-invite-a-new-account-straight-into-su.md`);
+  until 2026-09-15 the phone edit offered Role, Department, Position and Email,
+  answered ok and changed nothing
+  (`docs/bugs/0924-a-sales-director-s-phone-edit-of-a-member-s-role-department.md`).
+  **Still open:** the classic desktop panel (`/team?tab=members`,
+  `EditMemberPanel` in `frontend/src/pages/Team.tsx`) offers that caller the
+  stripped fields.
 - **Impersonation is registered TWICE, and the second one is dead.** See
   section 4 below before changing either.
 - **Writing `users.name` or `users.status` fires a trigger into `scm.staff`.**
