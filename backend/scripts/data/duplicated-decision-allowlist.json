@@ -547,8 +547,8 @@
     },
     {
       "check": "D1",
-      "key": "JOHOR,KEDAH,KELANTAN,KUALA LUMPUR,LABUAN,MELAKA,NEGERI SEMBILAN,PAHANG,PERAK,PERLIS,PULAU PINANG,PUTRAJAYA,SABAH,SARAWAK,SELANGOR,TERENGGANU|backend/src/scm/lib/canonical-state.ts frontend/src/pages/Projects.tsx",
-      "why": "THE CANONICAL MALAYSIAN STATES. canonical-state.ts is the authored home (mig 0175 canonicalises Penang to Pulau Pinang) and Projects.tsx re-types the list for its picker. D2 shows three further spellings of this list elsewhere that do NOT agree — KL vs KUALA LUMPUR, PENANG vs PULAU PINANG, an extra IPOH. Those are the ones worth fixing; this pair is the one that is already correct."
+      "key": "JOHOR,KEDAH,KELANTAN,KUALA LUMPUR,LABUAN,MELAKA,NEGERI SEMBILAN,PAHANG,PERAK,PERLIS,PULAU PINANG,PUTRAJAYA,SABAH,SARAWAK,SELANGOR,TERENGGANU|backend/src/scm/lib/canonical-state.ts frontend/src/pages/projects/CreateProjectPanel.tsx",
+      "why": "THE CANONICAL MALAYSIAN STATES. canonical-state.ts is the authored home (mig 0175 canonicalises Penang to Pulau Pinang) and pages/projects/CreateProjectPanel.tsx re-types the list for its picker. D2 shows three further spellings of this list elsewhere that do NOT agree — KL vs KUALA LUMPUR, PENANG vs PULAU PINANG, an extra IPOH. Those are the ones worth fixing; this pair is the one that is already correct."
     },
     {
       "check": "D1",
