@@ -51,6 +51,7 @@ export const receiptEnsure = async (c: any): Promise<Response> => {
     return c.json({ error: 'bad_key', message: 'source (SOPAY/SIPAY) and paymentId are required.' }, 400);
   }
   const sb = c.get('supabase');
+  // company-scope: ensureReceiptForPayment reads the receipt and the payment with co.companyId
   const r = await ensureReceiptForPayment(sb, source as 'SOPAY' | 'SIPAY', paymentId, co.companyId);
   if (!r.ok) return c.json({ error: 'ensure_failed', reason: r.reason }, r.reason.endsWith('not found') ? 404 : 500);
   /* The caller is about to PRINT: hand back the whole row (customer, method,
