@@ -6,7 +6,7 @@ it reading **"MID VALLEY"** —
 
 > 「这个 agent 过去看这一个东西，这个东西应该是我的 file 或者我的 value 吗？怎么会换这一个东西呢？查完之前的 Bug History 跟之前的 PR，找出管理这一个东西，解决回去这个问题？」
 
-His ruling on what the field should be, the same day (2026-09-15), verbatim:
+The owner's ruling on what the field should be, the same day (2026-09-15), verbatim:
 **「应该是venue的」** — the field shows the order's venue, and "Others" is the wrong
 state.
 
