@@ -53,6 +53,7 @@ import styles from './Suppliers.module.css';
 import { GeneralLedger } from './GeneralLedger';
 import { JournalTab } from './JournalEntries';
 import { CancelledWithMoneyCard } from './CancelledWithMoneyCard';
+import { ReceiptBackfillCard } from './ReceiptBackfillCard';
 import { PageHeader } from '../../components/Layout';
 import { fmtDateOrDash } from '../../vendor/shared/format';
 import { DateField } from "../../vendor/scm/components/DateField";
@@ -334,6 +335,7 @@ const SelfCheckTab = () => {
       {q.data?.paymentDrift && <PaymentDriftCard d={q.data.paymentDrift} />}
       {/* Money on cancelled orders with no exit taken yet (docs/bugs/0931). */}
       <CancelledWithMoneyCard />
+      <ReceiptBackfillCard />
     </div>
   );
 };

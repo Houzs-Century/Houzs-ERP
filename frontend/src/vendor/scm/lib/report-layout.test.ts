@@ -4,7 +4,7 @@
 
 import { describe, expect, test } from 'vitest';
 import {
-  accountKey, addCategory, blockOfKey, categoryIds, flattenLaid, fmtPct, laidDepth, leafKeys, moveWithinSiblings, newCategoryId, pctOf, placeItem,
+  accountKey, addCategory, blockOfKey, categoryIds, flattenLaid, fmtPct, foldsChildren, folderOpen, laidDepth, leafKeys, linesVisible, moveWithinSiblings, newCategoryId, pctOf, placeItem,
   removeCategory, renameCategory, setCategoryTick, unplaceAccount, unplacedAccounts,
   type LaidNode, type Layout, type LayoutAccountRow, type LayoutItem,
 } from './report-layout';
@@ -179,5 +179,39 @@ describe('figures and ids', () => {
     expect(id).not.toMatch(/^\d{3}-/);
     expect(newCategoryId(1_700_000_000_000, 5)).toBe(id);
     expect(newCategoryId(1_700_000_000_001, 5)).not.toBe(id);
+  });
+});
+
+/* Folding a flattened tree: the level opens categories to a depth; a person
+   opens or closes any one of them past that. */
+describe('linesVisible', () => {
+  const lines = [
+    { id: 'blk', depth: 0 },
+    { id: 'opex', depth: 1 },
+    { id: 'advert', depth: 2 },
+    { id: 'fb', depth: 3 },
+    { id: 'rent', depth: 2 },
+    { id: 'total', depth: 0 },
+  ];
+  const ids = (level: number | 'all', open: Record<string, boolean> = {}) => linesVisible(lines, level, open).map((l) => l.id);
+
+  test('folders are the lines with a deeper line under them', () => {
+    expect(lines.map((_, i) => foldsChildren(lines, i))).toEqual([true, true, true, false, false, false]);
+  });
+
+  test('All shows everything; L1 keeps the categories folded; L2 opens one more', () => {
+    expect(ids('all')).toEqual(['blk', 'opex', 'advert', 'fb', 'rent', 'total']);
+    expect(ids(1)).toEqual(['blk', 'opex', 'total']);
+    expect(ids(2)).toEqual(['blk', 'opex', 'advert', 'rent', 'total']);
+  });
+
+  test('a person opens a folder the level closed, or closes one it opened; a closed parent hides the lot', () => {
+    expect(ids(1, { opex: true })).toEqual(['blk', 'opex', 'advert', 'rent', 'total']);
+    expect(ids(1, { opex: true, advert: true })).toEqual(['blk', 'opex', 'advert', 'fb', 'rent', 'total']);
+    expect(ids('all', { advert: false })).toEqual(['blk', 'opex', 'advert', 'rent', 'total']);
+    expect(ids('all', { opex: false, advert: true })).toEqual(['blk', 'opex', 'total']);
+    expect(folderOpen({ id: 'opex', depth: 1 }, 1, {})).toBe(false);
+    expect(folderOpen({ id: 'opex', depth: 1 }, 2, {})).toBe(true);
+    expect(folderOpen({ id: 'opex', depth: 1 }, 1, { opex: true })).toBe(true);
   });
 });

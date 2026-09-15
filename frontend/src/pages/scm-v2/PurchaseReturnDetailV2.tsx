@@ -546,7 +546,7 @@ export function PurchaseReturnDetailV2() {
             <Section title={`Returned items · ${items.length}`}>
               <DataTable<PrItem>
                 tableId={`pr-lines-${id}`}
-                layoutFamily={DATA_TABLE_LAYOUT_FAMILIES.purchaseReturnLines}
+                layoutFamily={DATA_TABLE_LAYOUT_FAMILIES.purchaseReturnLines} persistSort={false} persistFilters={false}
                 rows={items}
                 loading={false}
                 columns={lineColumns}
