@@ -154,6 +154,13 @@ to decide what to buy, and read by SO/PO/GRN/PI/Inventory screens as
   `hard-bound-group.mjs`, `undated-demand-queries.mjs`.
 - Desktop: `frontend/src/pages/scm-v2/Mrp.tsx` (page), `mrp-views.ts` (tab
   list, derived from the server's category set), `mrp-sofa-accessory.ts`,
-  `mrp-export-lines.ts` (Export lines CSV); data hooks
-  `frontend/src/vendor/scm/lib/mrp-queries.ts`; lead-time editor
-  `frontend/src/pages/scm-v2/SupplierLeadTimes.tsx`.
+  `mrp-model-pipeline.ts` (the ONE funnel + grouping — `computeTabModels` — that
+  both the page and the export run, so the export can never disagree with the
+  screen), `mrp-export-workbook.ts` (the Export button's .xlsx: one styled sheet
+  per category tab, v7 layout, fetched per-tab so each sheet's coverage matches
+  that tab); data hooks `frontend/src/vendor/scm/lib/mrp-queries.ts`; lead-time
+  editor `frontend/src/pages/scm-v2/SupplierLeadTimes.tsx`.
+- Export follows the on-screen filters (tab, warehouse, date window, only-
+  shortages, search); the Status column is derived from the coverage source
+  (stock -> READY, PO -> IN PRODUCTION, shortage -> CONFIRMED) as the MRP plan
+  carries no separate SO workflow status.
