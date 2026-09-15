@@ -157,6 +157,7 @@ Baseline tables from the 2990 dump; grown by:
 
 ## 6. See also
 
+- `docs/line-export-columns.md` — the proposed one-row-per-line export columns for every transaction document, and which columns the import may change
 - `docs/modules/warehouses.md` — the warehouse master + the R3 cost rule.
 - `BUG-HISTORY.md` — 2026-08-08 "Performed by: Unknown user"; 2026-07-25 R3
   cost-less lot; audit #826 item 5 tenancy fixes.

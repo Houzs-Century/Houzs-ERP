@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { siDepositAppliedSen, siOutstandingSen } from "../vendor/scm/lib/si-outstanding";
+import { offersRecordPayment, piPaymentHint } from "./doc-payment";
 import { visibleFields, canOperateDeliveryOrders, canOperateSalesInvoices } from "../auth/salesAccess";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { lineIdentity, orderLineIdentity } from "@2990s/shared";
@@ -32,6 +33,7 @@ import { formatDate } from "../lib/utils";
 import { PAYMENT_METHOD_CODES, PAYMENT_METHOD_DEFAULT_LABELS } from "../vendor/scm/lib/payment-methods";
 import { PrintPreviewModal, usePrintPreview } from "../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../vendor/scm/lib/pdf-common";
+import { humaniseStatusKey, statusLabel, type StatusDocType } from "../vendor/scm/lib/status-pill";
 import "./mobile.css";
 
 // ---------------------------------------------------------------------------
@@ -139,7 +141,7 @@ function CancelledRibbon({ header }: { header: any }) {
   );
 }
 
-function StatusPill({ status }: { status: unknown }) {
+function StatusPill({ status, statusDoc }: { status: unknown; statusDoc: StatusDocType | null }) {
   const raw = s(status).trim();
   if (!raw) return null;
   const p = phase(status);
@@ -151,10 +153,9 @@ function StatusPill({ status }: { status: unknown }) {
     cancelled: ["#f8eaea", "#b23a3a", "none"],
   };
   const [bg, fg, border] = map[p];
-  const label = raw
-    .replace(/_/g, " ")
-    .toLowerCase()
-    .replace(/\b\w/g, (m) => m.toUpperCase());
+  /* Word from status-pill.ts; title-casing the stored value made a LOADED delivery order read "Loaded"
+     (docs/bugs/0868). null = no canonical map: humaniseStatusKey is that same old title-casing. */
+  const label = statusDoc ? statusLabel(statusDoc, raw) : humaniseStatusKey(raw);
   return (
     <span className="spill" style={{ background: bg, color: fg, border }}>
       {label}
@@ -290,8 +291,8 @@ function LineItem({ name, sub, remark, qty, unitSen, amountSen, assigned, source
 }
 
 // ── Header card (shared by every module) ────────────────────────────────────
-function DetailHeader({ eyebrow, title, subtitle, status, onBack, onEdit, onPdf, onMap }: {
-  eyebrow: string; title: string; subtitle?: string; status?: unknown; onBack: () => void; onEdit?: () => void; onPdf?: () => void;
+function DetailHeader({ eyebrow, title, subtitle, status, statusDoc, onBack, onEdit, onPdf, onMap }: {
+  eyebrow: string; title: string; subtitle?: string; status?: unknown; statusDoc: StatusDocType | null; onBack: () => void; onEdit?: () => void; onPdf?: () => void;
   /** Opens the mobile Relationship Map (document modules with a flow anchor). */
   onMap?: () => void;
 }) {
@@ -302,7 +303,7 @@ function DetailHeader({ eyebrow, title, subtitle, status, onBack, onEdit, onPdf,
           <span style={{ fontSize: 17, lineHeight: 1 }}>{"‹"}</span> Back
         </span>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <StatusPill status={status} />
+          <StatusPill status={status} statusDoc={statusDoc} />
           {onMap && (
             <button className="tinybtn" onClick={onMap} style={{ background: "#f4f6f3", border: "1px solid var(--line2)", color: "var(--ink)" }}>
               Map
@@ -343,6 +344,8 @@ type DocMap = {
   title: (h: any) => string;
   subtitle?: (h: any) => string;
   status: (h: any) => unknown;
+  /** status-pill.ts vocabulary for the header pill. REQUIRED - null is a decision (humanise the stored value). */
+  statusDoc: StatusDocType | null;
   /** KV grid rows: [label, value]. */
   meta: (h: any) => Array<[string, string]>;
   /** [Total, Secondary, Tertiary] stats — each [label, value, color] or null. */
@@ -363,7 +366,7 @@ const DOC_MODULES: Record<string, DocMap> = {
     eyebrow: (h) => firstOf(h.do_number),
     title: (h) => firstOf(h.debtor_name, h.debtor_code),
     subtitle: (h) => (s(h.so_doc_no).trim() ? `SO ${s(h.so_doc_no)}` : ""),
-    status: (h) => h.status,
+    status: (h) => h.status, statusDoc: "do",
     meta: (h) => [
       ["DO Date", dmy(h.do_date)],
       ["Delivery", dmy(h.customer_delivery_date ?? h.expected_delivery_at)],
@@ -397,7 +400,7 @@ const DOC_MODULES: Record<string, DocMap> = {
     eyebrow: (h) => firstOf(h.invoice_number),
     title: (h) => firstOf(h.debtor_name, h.debtor_code),
     subtitle: (h) => (s(h.so_doc_no).trim() ? `SO ${s(h.so_doc_no)}` : ""),
-    status: (h) => h.status,
+    status: (h) => h.status, statusDoc: "si",
     meta: (h) => [
       ["Invoice Date", dmy(h.invoice_date)],
       ["Due Date", dmy(h.due_date)],
@@ -449,7 +452,7 @@ const DOC_MODULES: Record<string, DocMap> = {
       const po = s(nested(h.purchase_order)?.po_number).trim();
       return join(code, po ? `PO ${po}` : "");
     },
-    status: (h) => h.status,
+    status: (h) => h.status, statusDoc: "grn",
     meta: (h) => [
       ["Received", dmy(h.received_at)],
       ["Delivery Note", firstOf(h.delivery_note_ref)],
@@ -476,7 +479,7 @@ const DOC_MODULES: Record<string, DocMap> = {
     eyebrow: (h) => firstOf(h.po_number),
     title: (h) => firstOf(nested(h.supplier)?.name, h.po_number),
     subtitle: (h) => firstOf(nested(h.supplier)?.code) === "—" ? "" : firstOf(nested(h.supplier)?.code),
-    status: (h) => h.status,
+    status: (h) => h.status, statusDoc: "po",
     meta: (h) => [
       ["PO Date", dmy(h.po_date)],
       ["Expected", dmy(h.expected_at)],
@@ -528,7 +531,7 @@ const DOC_MODULES: Record<string, DocMap> = {
       s(h.supplier_invoice_ref).trim() ? `Ref ${s(h.supplier_invoice_ref)}` : "",
     ),
     notice: (_h, items) => mobilePiPoPriceNotice(items), // PO price vs PI price, reference only (owner 2026-09-14)
-    status: (h) => h.status,
+    status: (h) => h.status, statusDoc: "pi",
     meta: (h) => [
       ["Invoice Date", dmy(h.invoice_date)],
       ["Due Date", dmy(h.due_date)],
@@ -580,7 +583,7 @@ const DOC_MODULES: Record<string, DocMap> = {
       const po = s(nested(h.purchase_order)?.po_number).trim();
       return join(grn ? `GRN ${grn}` : "", po ? `PO ${po}` : "");
     },
-    status: (h) => h.status,
+    status: (h) => h.status, statusDoc: "pr",
     meta: (h) => [
       ["Return Date", dmy(h.return_date)],
       ["Reason", firstOf(h.reason)],
@@ -622,7 +625,7 @@ const DOC_MODULES: Record<string, DocMap> = {
     eyebrow: (h) => firstOf(h.return_number),
     title: (h) => firstOf(h.debtor_name, h.return_number),
     subtitle: (h) => (s(h.do_doc_no).trim() ? `DO ${s(h.do_doc_no)}` : ""),
-    status: (h) => h.status,
+    status: (h) => h.status, statusDoc: "dr",
     meta: (h) => [
       ["Return Date", dmy(h.return_date)],
       ["Reason", firstOf(h.reason)],
@@ -671,7 +674,7 @@ const DOC_MODULES: Record<string, DocMap> = {
       s(h.ref).trim() ? `Ref ${s(h.ref)}` : "",
       s(h.po_doc_no).trim() ? `PO ${s(h.po_doc_no)}` : "",
     ),
-    status: (h) => h.status,
+    status: (h) => h.status, statusDoc: null,
     meta: (h) => [
       ["Order Date", dmy(h.so_date)],
       ["Delivery", dmy(h.customer_delivery_date ?? h.processing_date)],
@@ -715,7 +718,7 @@ const DOC_MODULES: Record<string, DocMap> = {
     eyebrow: (h) => firstOf(h.do_number),
     title: (h) => firstOf(h.debtor_name, h.do_number),
     subtitle: (h) => (s(h.consignment_so_doc_no).trim() ? `CO ${s(h.consignment_so_doc_no)}` : ""),
-    status: (h) => h.status,
+    status: (h) => h.status, statusDoc: null,
     meta: (h) => [
       ["Note Date", dmy(h.do_date)],
       ["Delivery", dmy(h.customer_delivery_date ?? h.expected_delivery_at)],
@@ -755,7 +758,7 @@ const DOC_MODULES: Record<string, DocMap> = {
     eyebrow: (h) => firstOf(h.return_number),
     title: (h) => firstOf(h.debtor_name, h.return_number),
     subtitle: (h) => (s(h.do_doc_no).trim() ? `CN ${s(h.do_doc_no)}` : ""),
-    status: (h) => h.status,
+    status: (h) => h.status, statusDoc: null,
     meta: (h) => [
       ["Return Date", dmy(h.return_date)],
       ["Reason", firstOf(h.reason)],
@@ -797,7 +800,7 @@ const DOC_MODULES: Record<string, DocMap> = {
     eyebrow: (h) => firstOf(h.pc_number),
     title: (h) => firstOf(nested(h.supplier)?.name, h.pc_number),
     subtitle: (h) => firstOf(nested(h.supplier)?.code) === "—" ? "" : firstOf(nested(h.supplier)?.code),
-    status: (h) => h.status,
+    status: (h) => h.status, statusDoc: null,
     meta: (h) => [
       ["PC Date", dmy(h.po_date)],
       ["Expected", dmy(h.expected_at)],
@@ -843,7 +846,7 @@ const DOC_MODULES: Record<string, DocMap> = {
       const pc = s(nested(h.purchase_consignment_order)?.pc_number ?? h.pc_order_no).trim();
       return join(code, pc ? `PC ${pc}` : "");
     },
-    status: (h) => h.status,
+    status: (h) => h.status, statusDoc: null,
     meta: (h) => [
       ["Received", dmy(h.received_at)],
       ["Delivery Note", firstOf(h.delivery_note_ref)],
@@ -889,7 +892,7 @@ const DOC_MODULES: Record<string, DocMap> = {
       const recv = s(nested(h.pc_receive)?.receive_number).trim();
       return join(pc ? `PC ${pc}` : "", recv ? `Receive ${recv}` : "");
     },
-    status: (h) => h.status,
+    status: (h) => h.status, statusDoc: null,
     meta: (h) => [
       ["Return Date", dmy(h.return_date)],
       ["Reason", firstOf(h.reason)],
@@ -945,28 +948,6 @@ function docId(row: any): string {
 // VALID from the doc's CURRENT status are offered, so no button ever 409s.
 // Destructive actions (Cancel / Void) go through the in-app confirm (danger).
 // ---------------------------------------------------------------------------
-
-/** true when total − paid still leaves a balance (Record Payment worth offering). */
-function hasBalance(h: any): boolean {
-  const total = Number(h?.total_sen ?? h?.local_total_sen ?? 0);
-  const paid = Number(h?.paid_sen ?? 0);
-  const t = Number.isFinite(total) ? total : 0;
-  const p = Number.isFinite(paid) ? paid : 0;
-  return t > 0 && t - p > 0;
-}
-
-/** Whether a module's Record Payment sheet should be offered for `status`, and
- *  which payment endpoint + payload shape it uses. Returns null when payments
- *  don't apply (module has no payment route, or status/balance forbids it). */
-type PayKind = "si" | "pi";
-function paymentKind(moduleKey: string, header: any): PayKind | null {
-  const st = s(header?.status).toUpperCase();
-  if (st === "CANCELLED" || st === "DRAFT") return null;
-  if (!hasBalance(header)) return null;
-  if (moduleKey === "sales-invoices") return "si";
-  if (moduleKey === "purchase-invoices") return "pi";
-  return null;
-}
 
 /**
  * May this user OPERATE the document behind `moduleKey` (advance its status,
@@ -1106,7 +1087,7 @@ function statusActionsFor(moduleKey: string, id: string, header: any, mayOperate
     }
 
     // Purchase Invoice — /post (DRAFT→POSTED), /cancel (blocked once paid).
-    // Payment is a separate action (see paymentKind → PI sheet).
+    // Payment is an AP Payment voucher, not an action here (see piPaymentHint).
     case "purchase-invoices": {
       if (st === "CANCELLED" || st === "PAID") return out;
       if (st === "DRAFT") {
@@ -1148,17 +1129,15 @@ function actSkin(variant: ActVariant, disabled: boolean): React.CSSProperties {
   return { flex: 1, padding: 12, borderRadius: 11, fontSize: 13.5, whiteSpace: "nowrap", ...skin, opacity: disabled ? 0.55 : 1 };
 }
 
-/** Record-Payment bottom sheet. `kind` picks the endpoint + payload:
- *  si → POST /sales-invoices/:id/payments { paidAt, method, amountSen, ... }
- *  pi → PATCH /purchase-invoices/:id/payment { amountSen, notes }. */
-function PaymentSheet({ kind, id, header, onClose, onDone }: {
-  kind: PayKind; id: string; header: any; onClose: () => void; onDone: () => void;
+/** Record-Payment bottom sheet for a Sales Invoice:
+ *  POST /sales-invoices/:id/payments { paidAt, method, amountSen, ... }. */
+function PaymentSheet({ id, header, onClose, onDone }: {
+  id: string; header: any; onClose: () => void; onDone: () => void;
 }) {
   const notify = useNotify();
   const total = Number(header?.total_sen ?? header?.local_total_sen ?? 0);
   const paid = Number(header?.paid_sen ?? 0);
-  // Gated on `kind`, not on the key being absent: this pre-fills an amount to COLLECT.
-  const balance = siOutstandingSen(total, paid, kind === "si" ? siDepositAppliedSen(header) : 0);
+  const balance = siOutstandingSen(total, paid, siDepositAppliedSen(header));
 
   const [amount, setAmount] = useState(() => (balance > 0 ? (balance / 100).toFixed(2) : ""));
   const [method, setMethod] = useState("cash");
@@ -1175,22 +1154,10 @@ function PaymentSheet({ kind, id, header, onClose, onDone }: {
     mutationFn: async () => {
       const amountSen = Math.round(Number(amount) * 100);
       if (!Number.isFinite(amountSen) || amountSen <= 0) throw new Error("Enter a valid amount greater than zero.");
-      if (kind === "si") {
-        const body: Record<string, unknown> = { paidAt: date, method, amountSen };
-        if (ref.trim()) body.approvalCode = ref.trim();
-        await authedFetch(`/sales-invoices/${encodeURIComponent(id)}/payments`,
-          idempotentInit(idemKey, { method: "POST", body: JSON.stringify(body) }));
-      } else {
-        const body: Record<string, unknown> = { amountSen };
-        if (ref.trim()) body.notes = ref.trim();
-        /* The PI payment PATCH is ADDITIVE — purchase-invoices.ts:644 computes
-           `newPaid = c0.paid_sen + amount`, so a double-fire pays the supplier
-           twice on paper. Its optimistic-concurrency loop gates on the paid_sen
-           it just read, which stops a concurrent write from being LOST; it does
-           nothing about the same payment arriving twice. Hence the key. */
-        await authedFetch(`/purchase-invoices/${encodeURIComponent(id)}/payment`,
-          idempotentInit(idemKey, { method: "PATCH", body: JSON.stringify(body) }));
-      }
+      const body: Record<string, unknown> = { paidAt: date, method, amountSen };
+      if (ref.trim()) body.approvalCode = ref.trim();
+      await authedFetch(`/sales-invoices/${encodeURIComponent(id)}/payments`,
+        idempotentInit(idemKey, { method: "POST", body: JSON.stringify(body) }));
     },
     onSuccess: () => { onDone(); onClose(); void notify({ title: "Payment recorded" }); },
     onError: (e) => setError(e instanceof Error ? e.message : "Couldn't record the payment. Please try again."),
@@ -1221,25 +1188,21 @@ function PaymentSheet({ kind, id, header, onClose, onDone }: {
           <input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00" style={inputStyle} />
         </div>
 
-        {kind === "si" && (
-          <div style={{ marginBottom: 12 }}>
-            <label style={labelStyle}>Method</label>
-            <select value={method} onChange={(e) => setMethod(e.target.value)} style={{ ...inputStyle, appearance: "none", WebkitAppearance: "none" }}>
-              {SI_METHODS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
-            </select>
-          </div>
-        )}
+        <div style={{ marginBottom: 12 }}>
+          <label style={labelStyle}>Method</label>
+          <select value={method} onChange={(e) => setMethod(e.target.value)} style={{ ...inputStyle, appearance: "none", WebkitAppearance: "none" }}>
+            {SI_METHODS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+          </select>
+        </div>
 
-        {kind === "si" && (
-          <div style={{ marginBottom: 12 }}>
-            <label style={labelStyle}>Date</label>
-            <DateField value={date} onChange={(iso) => setDate(iso)} style={inputStyle}/>
-          </div>
-        )}
+        <div style={{ marginBottom: 12 }}>
+          <label style={labelStyle}>Date</label>
+          <DateField value={date} onChange={(iso) => setDate(iso)} style={inputStyle}/>
+        </div>
 
         <div style={{ marginBottom: 14 }}>
-          <label style={labelStyle}>{kind === "si" ? "Reference" : "Note"}</label>
-          <input value={ref} onChange={(e) => setRef(e.target.value)} placeholder={kind === "si" ? "Approval / reference" : "Optional note"} style={inputStyle} />
+          <label style={labelStyle}>Reference</label>
+          <input value={ref} onChange={(e) => setRef(e.target.value)} placeholder="Approval / reference" style={inputStyle} />
         </div>
 
         {error && <div style={{ fontSize: 11.5, color: "#b23a3a", marginBottom: 12, textAlign: "center" }}>{error}</div>}
@@ -1258,7 +1221,7 @@ function PaymentSheet({ kind, id, header, onClose, onDone }: {
 }
 
 /** Sticky action footer for a document detail: status transition buttons +
- *  (for SI/PI) a Record Payment action opening the PaymentSheet. Invalidates
+ *  (for SI) a Record Payment action opening the PaymentSheet. Invalidates
  *  the detail + list queries on success; surfaces errors inline. Renders
  *  nothing when there is no valid action from the current status. */
 function DocActionFooter({ moduleKey, id, header, invalidate, onPOD, onDeleted }: {
@@ -1285,7 +1248,7 @@ function DocActionFooter({ moduleKey, id, header, invalidate, onPOD, onDeleted }
      scroll padding all agree. */
   const podEnabled = !!onPOD && mayOperate;
   const statusActions = useMemo(() => statusActionsFor(moduleKey, id, header, mayOperate), [moduleKey, id, header, mayOperate]);
-  const payKind = paymentKind(moduleKey, header);
+  const canPay = offersRecordPayment(moduleKey, header);
 
   const refresh = () => {
     invalidate();
@@ -1370,9 +1333,10 @@ function DocActionFooter({ moduleKey, id, header, invalidate, onPOD, onDeleted }
     moduleKey === "delivery-orders-mfg" && mayOperate && s(header?.status)
       ? (siTransferBlockReason(header?.status) ?? SI_TRANSFER_MOBILE_ROUTE_HINT)
       : null;
+  const footNote = doNextStepNote ?? piPaymentHint(moduleKey, header);
 
-  const hasRow = statusActions.length > 0 || !!payKind;
-  if (!hasRow && !podEnabled && !doNextStepNote) return null;
+  const hasRow = statusActions.length > 0 || canPay;
+  if (!hasRow && !podEnabled && !footNote) return null;
   const busy = mutation.isPending;
 
   return (
@@ -1381,9 +1345,9 @@ function DocActionFooter({ moduleKey, id, header, invalidate, onPOD, onDeleted }
         <div style={{ position: "absolute", left: 0, right: 0, bottom: hasRow && podEnabled ? 130 : 76, padding: "0 16px", textAlign: "center", fontSize: 11.5, color: "#b23a3a", zIndex: 1, maxWidth: "calc(100% - 32px)" }}>{error}</div>
       )}
       <footer className="actbar" style={{ position: "absolute", left: 0, right: 0, bottom: 0 }}>
-        {doNextStepNote && (
+        {footNote && (
           <p style={{ margin: "0 0 8px", fontSize: 11.5, lineHeight: 1.35, color: "#6b7280" }}>
-            {doNextStepNote}
+            {footNote}
           </p>
         )}
         {podEnabled && (
@@ -1391,7 +1355,7 @@ function DocActionFooter({ moduleKey, id, header, invalidate, onPOD, onDeleted }
         )}
         {hasRow && (
           <div style={{ display: "flex", gap: 9 }}>
-            {payKind && (
+            {canPay && (
               <button className="btn" disabled={busy} onClick={() => { setError(null); setPayOpen(true); }} style={actSkin("solid", busy)}>Record Payment</button>
             )}
             {statusActions.map((a) => (
@@ -1400,8 +1364,8 @@ function DocActionFooter({ moduleKey, id, header, invalidate, onPOD, onDeleted }
           </div>
         )}
       </footer>
-      {payOpen && payKind && (
-        <PaymentSheet kind={payKind} id={id} header={header} onClose={() => setPayOpen(false)} onDone={refresh} />
+      {payOpen && canPay && (
+        <PaymentSheet id={id} header={header} onClose={() => setPayOpen(false)} onDone={refresh} />
       )}
       {zeroCost.sheet}
     </>
@@ -1513,7 +1477,7 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD, flowNav }:
   // POD entry is gated on the operate helper (same as DocActionFooter) so a
   // view-only user gets no POD button — and the footer/scroll padding agree.
   const podEnabled = !!onPOD && mayOperate;
-  const hasStatusActions = !!id && (statusActionsFor(moduleKey, id, header, mayOperate).length > 0 || paymentKind(moduleKey, header) !== null);
+  const hasStatusActions = !!id && (statusActionsFor(moduleKey, id, header, mayOperate).length > 0 || offersRecordPayment(moduleKey, header) || piPaymentHint(moduleKey, header) !== null);
   const hasFooter = hasStatusActions || podEnabled;
   const invalidate = () => { void qc.invalidateQueries({ queryKey: ["mobile-module-detail", map.path, id] }); };
 
@@ -1524,6 +1488,7 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD, flowNav }:
         title={map.title(header)}
         subtitle={map.subtitle?.(header)}
         status={map.status(header)}
+        statusDoc={map.statusDoc}
         onBack={onBack}
         onEdit={onEdit}
         onPdf={onPdf}
@@ -1910,7 +1875,7 @@ function SimpleDetail({ moduleKey, row, title, onBack, onEdit }: { moduleKey: st
   const actionRow = row ?? {};
   const actionId = s(row?.id);
   const mayOperate = useMayOperateDoc(moduleKey);
-  const hasFooter = !!actionId && (statusActionsFor(moduleKey, actionId, actionRow, mayOperate).length > 0 || paymentKind(moduleKey, actionRow) !== null);
+  const hasFooter = !!actionId && (statusActionsFor(moduleKey, actionId, actionRow, mayOperate).length > 0 || offersRecordPayment(moduleKey, actionRow) || piPaymentHint(moduleKey, actionRow) !== null);
   const invalidate = () => { void qc.invalidateQueries({ queryKey: ["mobile-module"] }); };
 
   return (
@@ -1919,6 +1884,7 @@ function SimpleDetail({ moduleKey, row, title, onBack, onEdit }: { moduleKey: st
         eyebrow={eyebrow === "—" ? "" : eyebrow}
         title={heading}
         status={status}
+        statusDoc={null}
         onBack={onBack}
         onEdit={onEdit}
       />

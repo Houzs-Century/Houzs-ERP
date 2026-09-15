@@ -189,3 +189,76 @@ phone shows the notice on the invoice screen instead.
 lives in `pi-po-price-rule.ts`, byte-identical in `backend/src/scm/lib/` and
 `frontend/src/vendor/scm/lib/`, refereed by
 `frontend/src/vendor/scm/lib/pi-po-price-rule.canonical.test.ts`.
+
+---
+
+## Paying a purchase invoice (2026-09-14)
+
+A purchase invoice is paid with an **AP Payment**, the payment voucher whose
+purpose is `SUPPLIER_PAYMENT`, and in no other way. Finance ticks the invoice,
+the voucher goes through its approval cycle, and posting books the journal entry
+and settles the invoice through `scm.settle_pi_paid_sen` (clamped to what is
+owed; a held invoice is refused). The voucher side is
+`docs/modules/payment-voucher.md`.
+
+**The rule** is `frontend/src/vendor/scm/lib/pi-payment-path.ts`, read by both
+surfaces:
+- `piAwaitsPayment` — POSTED or PARTIALLY_PAID, something owed, not held. The
+  same list the AP Payment page offers, so a button never leads to a page where
+  the invoice is missing.
+- `apPaymentHrefFor` — `/scm/payment-vouchers/new?type=ap&supplier=<id>&pi=<id>`;
+  the page chooses the supplier and ticks the invoice in full.
+- `canOpenApPayment` — the two doors `ScmGuard` opens for that route:
+  `scm.access` (which `*` satisfies) or the `scm.finance.accounting` page grant.
+  A purchasing clerk with only `scm.procurement.pi` is not offered the button.
+
+**Desktop.** Record payment, on `PurchaseInvoiceDetailV2` and in the
+`PurchaseInvoicesListV2` drawer, opens that AP Payment. There is no Mark paid.
+
+**Phone.** No payment sheet on a purchase invoice. While the invoice still takes
+a payment, the footer names where it is recorded (`piPaymentHint` in
+`frontend/src/mobile/doc-payment.ts`). The phone has no voucher screen yet, which
+is a parity gap of its own, not something this screen can close.
+
+**`PATCH /purchase-invoices/:id/payment` is retired.** It answers 409
+`payment_voucher_required` and reads nothing. It used to add a typed amount
+straight onto `paid_sen`: no voucher, no journal entry, no hold check, no
+approval. Payments it recorded are counted by the read-only Actions workflow
+probe-pi-direct-payments (`backend/scripts/probe-pi-direct-payments.mjs`).
+Trace: `docs/bugs/0889-supplier-invoice-payments-could-skip-the-payment-voucher-and.md`.
+
+---
+
+## Searching the "Bill a Goods-Received Note" picker (2026-09-14)
+
+Owner, 2026-09-14: 「需要加上search button」. The picker at
+`/scm/purchase-invoices/from-grn` (`frontend/src/pages/scm-v2/PurchaseInvoiceFromGrn.tsx`)
+listed 494 outstanding lines across 197 notes, and scrolling was the only way to
+find one.
+
+**What it matches.** A search box sits above the note cards. A line stays on screen
+when each word typed appears in what its card shows: note number, supplier name or
+code, PO number, received date as printed (`dd/mm/yyyy`), item code, description,
+Description 2. The rule is `filterOutstandingGrnLines` in
+`frontend/src/vendor/scm/lib/outstanding-grn-search.ts`. A note number or a supplier
+keeps that note's lines; an item word keeps only the lines carrying it.
+
+**Loaded lines only, no new endpoint.** It filters in the browser over what
+`GET /purchase-invoices/outstanding-grn-items` returned. That read takes the newest
+500 POSTED notes (`.limit(500)` on the header read in
+`backend/src/scm/routes/purchase-invoices.ts`), so past 500 posted notes the older
+ones are in neither the list nor the search. The box says "Searches loaded rows only".
+
+**It narrows what is shown, nothing else.**
+- The supplier and currency locks, the primary note and the Continue count read the
+  loaded lines, not the visible ones. A tick the search hides still goes to the
+  review screen, and the page prints how many are hidden.
+- A note's own tick box ticks only the lines the search shows — what the operator
+  can see, the rule `SalesInvoiceFromDo` adopted for its Select all.
+
+**URL.** The term is `?q=`, declared in `readConvertScope('grnToPi', …, ['q'])` so it is
+not reported as an unrecognised parameter. Back from the review screen returns to the
+same narrowed list.
+
+Desktop only: the phone has no PI-from-GRN picker (see *Creating one on the phone*).
+Pinned by `frontend/src/pages/scm-v2/PurchaseInvoiceFromGrn.search.test.tsx`.

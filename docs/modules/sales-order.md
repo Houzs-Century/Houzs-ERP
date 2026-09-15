@@ -242,7 +242,11 @@ version CAS mismatch (409 + `428` when the client sent no version at all), an
 active edit lease held by another human (409), and — for `CANCELLED` only — the
 downstream lock (§0.7). `DRAFT → CONFIRMED` additionally runs the confirm gate
 (salesperson + venue + every line a real catalog SKU with its required variant
-axes) and returns an aggregated `422 validation_failed`.
+axes) and returns an aggregated `422 validation_failed`. Required axes per group
+live in `REQUIRED_VARIANT_AXES_BY_CATEGORY` (`shared/so-variant-rule.ts`): bedframe
+divan/leg/gap/fabric, sofa seat/fabric, and since 2026-09-14 **Sofa Accessory
+(`fabric_accessory`) fabric only** — desktop `SoLineCard` and mobile `MobileNewSO`
+render a colour-only fabric picker for it.
 
 ### 0.1a What the LIST offers on each status (2026-08-21)
 
@@ -431,7 +435,7 @@ line already READY.** The per-line PILL was never wrong — `soLineStockPill` an
 bug `docs/bugs/0572-a-company-1-bound-line-with-no-receipt-fell-through-to-the-p.md`).**
 `HARD_BOUND_COMPANY_ID = 1` in `so-stock-allocation.ts`:
 
-| company | bedframe / sofa / `(SP)` mattress (`isHardBoundLine`) | everything else |
+| company | bedframe / sofa / `(SP)` mattress / Sofa Accessory group (`fabric_accessory` — every SKU in that product-master category, since 2026-09-14, bugs 0893 / 0906; `isHardBoundLine`) | everything else |
 |---|---|---|
 | 1 (Houzs) | **exclusively PO-bound**: lights `min(received, need)` from its OWN dedicated PO (sofa: covering dye-lot batch first, then dedication). The pooled walk force-stamps PENDING — the pool is never its evidence, however well the bucket matches | pooled FIFO by (warehouse, code, variant_key) |
 | 2 (2990) | dedication lights first if present, then the pooled walk — the soft model | pooled FIFO |
@@ -1159,15 +1163,14 @@ Per-SKU `allowed_options` (Modular ON/OFF) filter every pool via
 per category are the shared `so-variant-rule`; Save is blocked when any line is
 missing a required axis.
 
-**EMPTY IS THE DEFAULT FOR EVERY OPTION AXIS SINCE 2026-09-12** (owner:
-「全部都是啊」) — `sizes`, `compartments`, `specials`, `divan_heights`,
-`leg_heights`, `total_heights`, `gaps` and `mattress_thickness_cm` were cleared
-the same way `fabrics` was, with a restorable backup in
-`scm.app_config['scm.model_allowed_options_backup']`
-(`backend/scripts/open-model-option-pools.mjs`,
-`docs/bugs/0845-every-model-carried-an-option-list-nobody-chose-so-a-new-opt.md`).
-The paragraph below is the fabric half of the same rule and still applies to all
-of them.
+**THE OTHER OPTION AXES ARE CONFIGURATION AGAIN, AND THEY RESTRICT.** On
+2026-09-12 `sizes`, `compartments`, `specials`, `divan_heights`, `leg_heights`,
+`total_heights`, `gaps` and `mattress_thickness_cm` were cleared the way
+`fabrics` was; on 2026-09-13 that clear was reverted on all 421 Models from its
+backup, because for MATTRESS and BEDFRAME `sizes` IS the record of which sizes a
+Model comes in (`docs/option-pool-clear-coe.md`). Read 2026-09-15: 123 of 123
+BEDFRAME Models carry a non-empty `total_heights` pool, so the allowed-options
+gate refuses a total outside it. The paragraph below is the fabric half only.
 
 **EMPTY IS THE DEFAULT FOR FABRICS SINCE 2026-09-12, and that is a RULE, not
 a leftover.** `hasRestriction` is `Array.isArray(pool) && pool.length > 0`, so a
@@ -1201,6 +1204,14 @@ before touching a pool (docs/bugs/0814-one-option-field-two-vocabularies-the-fab
    11-20 inch were invisible on both surfaces while the server accepted them.
    **`SoLineCard` must call the shared helpers, never a private copy** — it had
    one, which is exactly why the fold reached mobile and not the desktop.
+   **The FABRIC question has its own module since 2026-09-14:**
+   `backend/src/scm/shared/fabric-pool.ts` (`fabricAllowedByPool`, colour OR
+   series, folded) with the byte-identical browser copy
+   `frontend/src/vendor/shared/fabric-pool.ts`. The save gate, the desktop
+   `FabricColourCombobox` and the phone sheet
+   `frontend/src/mobile/MobileFabricPicker.tsx` all call it. The phone sheet had
+   NO pool filter before that and offered colours the save refused
+   (`docs/bugs/0889-the-phone-s-fabric-sheet-offered-colours-the-model-does-not.md`).
 
 `backend/scripts/check-allowed-options-vocabulary.mjs` (Actions -> **Check
 option-pool vocabulary**) resolves every pool value against the table its gate
@@ -1230,6 +1241,19 @@ reads and names what matches nothing. Run it after filling a pool.
    `fabric_trackings` and `fabric_library`. Do NOT delete the tombstones: they
    carry no unique data and they are somebody's deliberate record.
    docs/bugs/0818-a-retired-tombstone-row-hid-the-live-fabric-it-had-been-merg.md.
+
+5. **Every rule runs BEFORE the 50-row cap** (2026-09-14). `GET /fabric-colours?q=`
+   used to cap the query at 50 and then drop retired colours, and the pickers then
+   dropped colours outside the Model's pool — so a search whose first 50 matches
+   were hidden came back short or empty while sellable colours further down were
+   never read. `coloursOnOffer` (in `backend/src/scm/routes/fabric-colours.ts`)
+   now applies retired series, retired codes and, when the search carries
+   `?itemCode=`, the Model's pool (read with the save gate's own
+   `loadProductAndModel`), and caps last; the query reads the PostgREST page
+   (`OFFER_SCAN_ROWS`, 1000). Both pickers send `itemCode`: it is a required
+   option of `useFabricColoursSearch` (`frontend/src/vendor/scm/lib/fabric-queries.ts`).
+   A failed Model lookup degrades to no pool filter, never an empty picker.
+   docs/bugs/0893-the-fabric-search-capped-at-50-before-hiding-retired-and-dis.md.
 
 **Sofa follower-line cascade — ONE module, and the master's LATEST change
 wins.** The rule is `frontend/src/vendor/scm/lib/so-variant-cascade.ts`, imported
@@ -1413,6 +1437,14 @@ The amendment-mode banner and the two-lane "submitted" notice also live in that
 module. They were duplicated per surface and had drifted in both wording and
 truth — both told operators that address lines "save straight away" for three
 weeks after 2026-07-27 moved addresses under Logistics approval.
+
+Who a lane waits on is worded by ROLE since 2026-09-14 — **Purchaser** / **Logistic**,
+from `frontend/src/vendor/scm/lib/amendment-approver.ts`: the submitted notice, the
+pending-amendment banner on `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` and on
+`frontend/src/mobile/MobileSODetail.tsx`, the job card, and the coloured Approver
+badge on the amendment queues (owner: 「那个是归类purchaser哪个是归类Logistic」). Before,
+each site typed "Purchasing" / "Logistics" itself. Details in
+[`so-amendment.md`](./so-amendment.md) §7.
 
 #### Line photos on the read-only detail
 
@@ -3544,7 +3576,7 @@ source can fix. Three exemptions, all keyed on the ITEM CODE, all in
 
 | Exemption | Matches | Drops | Owner |
 |---|---|---|---|
-| `isDivanOnly` | `\bDIVAN\s*ONLY\b` anywhere in the code | `gap` | 2026-08-09, *"divan only 不需要 gap"* — a divan sold without a mattress has no mattress gap |
+| `isDivanOnly` | `\bDIVAN\s*ONLY\b` anywhere in the code | `gap` — and the Model's `total_heights` pool in `scm/lib/allowed-options-check.ts` | 2026-08-09, *"divan only 不需要 gap"* — a divan sold without a mattress has no mattress gap. Its computed total is divan + leg alone, so the pool refused an 8" divan with No Leg until 2026-09-15 (`docs/bugs/0918-a-divan-only-line-was-refused-for-its-total-height-so-a-gap.md`) |
 | `isDivanlessFrame` | `ADJUSTABLE`, `(S+S)` / `(SS+S)`, `DOUBLE DECKER` / `DACKER`, `DDB` | `divanHeight`, `legHeight`, `gap` | 2026-08-10, *"电动床/抽拉床…像 DIVAN ONLY 一样豁免 — 要"* — no divan base at all |
 | `isSeatlessPiece` | `^(CONSOLE\|CT)\b` on the **compartment** (after the first hyphen) | `seatHeight` | 2026-08-11, *"有些 sku 是没有的"*; AutoCount PO-009553 leaves the console box blank while both seat boxes carry a figure |
 
@@ -4929,6 +4961,33 @@ parent through `reasonRequired`, because the permission and the draft flag live
 with the list. Finance reads the result on the Accounting page's
 **Corrections** tab (docs/modules/accounting.md).
 
+**A role that holds the key owes a reason on EVERY payment action
+(2026-09-14, docs/bugs/0888; owner: 只要是有关 collection payment 的，我或有权限
+的用户做的动作都要记录写 reason).** The rule above stays for everybody else;
+for a ROLE that carries `scm.so_payment.amend` in its own list — read
+LITERALLY by `holdsHouzsPermLiterally` inside the one rule the four payment
+routes ask, `paymentReasonRule` (`scm/lib/so-payment-reason.ts`), so the
+Owner's `*` alone is not a holder — the routes ask: the add (`paymentCreateSchema.reason`),
+the edit and the delete (`via === 'amend' || keyHolder`), and the proof
+attach (`paymentSlipAttachSchema.reason`), refusing without one
+(`KEY_HOLDER_REASON_REQUIRED`). The WINDOW does not move: `mayAmend` still
+reads `hasHouzsPerm`, a reconciled payment stays shut, Sales positions are as
+they were. Every such row is audited `source = 'amend'` with the reason in
+`note` and, since migration `20260914T1700`, the `payment_id` it concerns
+(`recordSoAudit`'s `paymentId`, set by the add, the edit, the delete, the
+proof and both SO-create deposit rows) — which is how Corrections names who
+first recorded a corrected payment. On the screens the reading is
+`owesPaymentReason` (`frontend/src/auth/literalPermission.ts`) and the words
+are `paymentReasonAsk` (`vendor/scm/lib/payment-reason.ts`): desktop
+`PaymentsTable` asks on the row's Save, the page's Save (a dismissed ask
+leaves the row and reports it blocked), the edit, the delete and the proof;
+mobile `RecordedPayments` the same, the sheet told `reasonWhy` by its
+parent. Contracts: `tests/soPaymentAmendRoutes.test.ts`,
+`scm/lib/so-payment-reason.test.ts`, `soPaymentAmendClients.test.ts`. In the
+same change the CAS rollout grace window and `paymentVersionGuard` moved
+unchanged to `scm/lib/so-cas.ts` (the route file may only shrink), re-exported
+from `routes/mfg-sales-orders.ts` for the two suites that import them there.
+
 ### The BALANCE a human is shown — which total it subtracts from (2026-09-08)
 
 The order total lives in TWO columns and the balance rule reads whichever one is
@@ -4947,6 +5006,7 @@ cutover importer's header column list (`HCOLS` in
 | Where it is served | `GET /mfg-sales-orders/:docNo` stamps it as `balance_sen` on the response, over the header column of the same name — which is NOT a balance (see `so-outstanding.ts`'s own header for the three candidates) |
 | The shared client half | `deriveBalance` (`frontend/src/vendor/scm/lib/so-detail-gates.ts`), consumed by the mobile detail KPI and the desktop print-preview card. A server balance of **0** does not outrank a computable `total - paid`; a NON-zero one does, because only the server applies the legacy header-deposit rule |
 | The write-back's rule (changed 2026-09-12) | `soOutstandingSen` stays clamped at 0 (a licensed ledger takes no negative), but `readSoOutstandingSen` (`backend/src/scm/lib/autocount-read.ts`) now takes the SAME `local_total_sen` fallback the screen does — owner 2026-09-12 made AutoCount PUSH-ONLY, so the book must learn a migrated order's balance from the ERP. It previously REFUSED a `total_revenue_sen` not greater than zero and omitted the key, which left a balance collected in the ERP unable to reach the book — `docs/bugs/0842`, `docs/migrated-so-lock-lifted-coe.md`. Residual: an order paid directly in AutoCount not reaching the ERP (`docs/bugs/0678`) can be overstated, so the backfill holds partials. Earlier history: `docs/bugs/0726` |
+| What a payment SENDS to AutoCount (2026-09-14) | Only `UDF.BALANCE` and `UDF.PAYEMENT`, as a header-only edit with an empty line list: `recordSoPaymentRow` (`backend/src/scm/lib/so-payment-row.ts`) and `PATCH` / `DELETE /:docNo/payments/:id` in `backend/src/scm/routes/mfg-sales-orders.ts` call `enqueueSoPaymentEdit` (`backend/src/scm/lib/ac-so-payment-edit.ts`). A payment used to queue the whole order, so a line AutoCount refused (keyless, an unspellable sofa, a photo over the host's 2 MB) held the new balance back with it — `docs/bugs/0896`. An order not in the book yet still goes through `enqueueEdit`. Details: `docs/modules/autocount-writeback.md`, "A payment sends only BALANCE and PAYEMENT" |
 
 Until 2026-09-08 the rule read `total_revenue_sen` alone, so the detail page
 answered Balance 0.00 for every migrated order while the LIST beside it (reading
@@ -5439,6 +5499,30 @@ was added to the search; `po_doc_no` is a 0%-filled dead column not projected on
 this list and is intentionally not searched. Entry
 `docs/bugs/0755-so-list-search-ignored-customer-so-no-so-a-shown-reference-c.md`.
 
+**Approval code: a column, and a way in (2026-09-15, docs/bugs/0909; owner:
+sales order 这边我可以加一个 column 是显示 approval code 的吗 … 我要的就是这个
+payment 的 approval code).** The code lives on each PAYMENT
+(`mfg_sales_order_payments.approval_code`, what the detail's Payments card
+prints), never on the header's legacy `approval_code`. The list's payments
+read (the one that feeds `payment_methods_summary`) now carries
+`approval_code, paid_at, created_at`, and `approvalCodesByOrder`
+(`backend/src/scm/lib/so-list-approval-codes.ts`) turns it into
+`approval_codes_summary` per row: every code of the order in the order the
+money was paid, " + " joined, '' when none. The desktop list shows it as
+**Approval Code** beside Payment Method (hidden by default like that column;
+the Columns drawer shows it; the column lives in
+`frontend/src/pages/scm-v2/so-list-approval-code.tsx` because the list file
+may only shrink). The search finds an order
+by a code too: `approvalCodeOrPart` reads the orders whose payments carry
+EXACTLY the typed code (an `eq`, not a substring, so no trigram index is
+owed; this company, capped at 500; a failed read refuses the list) and adds
+ONE `doc_no.in.(…)` term to
+the `.or()` — to the page query AND the money-KPI aggregate, which must
+filter the same set — and adds nothing when no payment matched, because an
+empty in-list is a PostgREST syntax error. Contracts:
+`so-list-approval-codes.test.ts`, `tests/soListApprovalCode.test.ts`,
+`frontend/src/pages/scm-v2/soListApprovalCode.test.ts`.
+
 ### Second-level filters (`?f=`, owner 2026-09-14)
 
 The status tab is the FIRST filter. Below it (phone: the Filter sheet's
@@ -5480,12 +5564,65 @@ Deposit only = something paid and balance > 0, Fully paid = balance <= 0);
 Overdue = `amended_delivery_date` (else `customer_delivery_date`) before today in
 KL and status not SHIPPED / DELIVERED / INVOICED / CLOSED / CANCELLED.
 
-**Not offered yet, shown disabled in the picker:** Warehouse, Branding, Item
-category, Has pending amendment — each is a fact about the order's LINES (or the
-amendments table), and the list reads a header view. Also not built: Stock
-readiness (computed after the page renders by the deferred MRP enrichment, so it
-cannot filter a server page), Item code contains, IC No and Cancel date (no such
-column on the SO header).
+**Line-level fields (added 2026-09-14, follow-up PR).** Warehouse, Item category
+and Pending amendment are facts about an order's LINES or AMENDMENTS while the
+list reads the header view, so each is a PostgREST computed field — a function
+taking the view's row — created by
+`backend/src/db/migrations-pg/20260914T1600_scm_so_list_line_filter_fields.sql`:
+
+| filter | predicate the list sends | function |
+| --- | --- | --- |
+| Warehouse is X | `so_line_warehouse_ids=ov.{X}` | `scm.so_line_warehouse_ids(view row)` — distinct warehouses of the order's live lines |
+| Item category Sofa / Bedframe / Mattress / Accessory | `so_line_categories=ov.{SOFA}` | `scm.so_line_categories(view row)` — the list handler's own normCategory buckets |
+| Pending amendment yes / no | `so_has_open_amendment=is.true` / `is.false` | `scm.so_has_open_amendment(view row)` — the SO detail's `has_open_amendment` rule: status not SENT / REJECTED and (legacy row or REQUESTED) |
+
+Each function reads only child rows carrying the order's own `company_id` and
+only live (non-cancelled) lines; `backend/tests-pg/soListLineFilterFields.pg.test.ts`
+replays the migration against Postgres and pins which orders each selects. The
+Warehouse picker lists the company's warehouses (inactive included) from
+`GET /inventory/warehouses`. `.github/workflows/postgrest-contract-so-list-filters.yml`
+runs these filters through a real PostgREST 14.5 (the version staging reports)
+with postgrest-js and `prepareSoListFilters`. Cost on staging, one full read over
+2,943 Houzs orders (probe run 34819831872): warehouse ~95ms, item category ~160ms,
+pending amendment ~45ms, all three 231ms, against 2-7ms unfiltered; the list
+runs its page, count, status and money reads concurrently, so a request pays
+roughly one of those in wall time. **A DROP of the payment-totals view must CASCADE
+these three functions and re-run that migration's bodies after the recreate** —
+they depend on the view's row type.
+
+Branding reads the header `branding` column. An order whose header is a
+placeholder (`NONE` / blank) shows a label derived from its first line but is not
+matched by the filter. Production 2026-09-14 (read-only plan run 34830280390):
+HOUZS 177 of 2,957 (`NONE` x169 and NULL x3 imported from AutoCount's
+`UDF_BRANDING`, NULL x5 ERP-created), 2990 6 of 175. Two changes close it:
+
+- **Backfill** — `backend/scripts/backfill-so-header-branding.mjs`, workflow
+  *Backfill SO header branding (plan / apply)*, `COMPANY` HOUZS or 2990, plan by
+  default, apply needs `confirm=backfill-so-header-branding`. It writes
+  `brandingLabel(deriveListFirstItemBranding(...))` — the list's own functions,
+  imported — and only when `brandForHeader` finds that label in the company's
+  active `project_brands` ("Bedframe" is written as Houzs's `BEDFRAME`). A label
+  that is a category noun ("Accessory", "Mattress", "Other", "No Items") is left
+  and listed. The UPDATE queues NO AutoCount edit (no trigger on the table does;
+  the plan prints `pg_trigger`), but the next save of such an order sends the
+  brand to AutoCount's BRANDING instead of `NONE`. It DOES fire
+  `trg_vp_outbox_so`, so the Venture Portal receives each filled order again
+  while its feed is on for that company. `sync-ac-delta`'s `hdr` lane (off by
+  default) would copy AutoCount's `NONE` back over a filled header, because a
+  script is not a person in the audit trail.
+- **Create stamp** — `deriveHeaderBrandingFromLines` falls back to the same
+  label-if-it-is-a-brand when the representative SKU has no branding, so a Houzs
+  `8211-*` sofa (SKU branding blank) is created as ZANOTTI instead of NULL.
+  Entry `docs/bugs/0890-a-sales-order-whose-header-branding-is-none-or-blank-could-n.md`.
+
+The list's `first_item_category` / `first_item_branding` rule lives in
+`backend/src/scm/lib/so-list-first-item-branding.ts` since 2026-09-14 (the
+handler calls it). `so-display-branding.ts` is still a separate, slightly
+different copy used by the detail page and the Sales report.
+
+**Still not built:** Stock readiness (computed after the page renders by the
+deferred MRP enrichment, so it cannot filter a server page), Item code contains,
+IC No and Cancel date (no such column on the SO header).
 
 ---
 

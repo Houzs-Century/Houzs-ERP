@@ -20,6 +20,7 @@ import {
   soFilterSummary,
   soMoneyToSen,
   soTodayYmd,
+  soCategoryBucket,
   type SoListFilter,
 } from './so-list-filter-model';
 
@@ -160,15 +161,56 @@ describe('money and summaries', () => {
   });
 
   it('summarises a row in the words the phone row shows', () => {
-    const nameOf = (id: string) => (id === 'c115a11d-5a53-40c1-820a-c64cc4d9b4fb' ? 'Wei Siang' : '');
-    expect(soFilterSummary({ field: 'createdBy', op: 'me', value: '' }, nameOf)).toBe('is me');
-    expect(soFilterSummary({ field: 'salesperson', op: 'is', value: 'c115a11d-5a53-40c1-820a-c64cc4d9b4fb' }, nameOf)).toBe('is Wei Siang');
-    expect(soFilterSummary({ field: 'deliveryDate', op: 'between', value: '2026-09-01~2026-09-30' }, nameOf)).toBe('01/09/2026 – 30/09/2026');
-    expect(soFilterSummary({ field: 'deliveryDate', op: 'preset', value: 'this_week' }, nameOf)).toBe('This week');
-    expect(soFilterSummary({ field: 'balance', op: 'gt', value: '100' }, nameOf)).toBe('> RM 100.00');
-    expect(soFilterSummary({ field: 'balance', op: 'positive', value: '' }, nameOf)).toBe('has balance');
-    expect(soFilterSummary({ field: 'docNo', op: 'between', value: 'HC-SO-013000~' }, nameOf)).toBe('from HC-SO-013000');
-    expect(soFilterSummary(soFilterDefaultRow('name'), nameOf)).toBe('Choose…');
+    const labels = {
+      staff: (id: string) => (id === 'c115a11d-5a53-40c1-820a-c64cc4d9b4fb' ? 'Wei Siang' : ''),
+      warehouse: (id: string) => (id === 'e309c399-697c-4174-967f-ae2c888ad999' ? 'KL WAREHOUSE' : ''),
+    };
+    expect(soFilterSummary({ field: 'createdBy', op: 'me', value: '' }, labels)).toBe('is me');
+    expect(soFilterSummary({ field: 'salesperson', op: 'is', value: 'c115a11d-5a53-40c1-820a-c64cc4d9b4fb' }, labels)).toBe('is Wei Siang');
+    expect(soFilterSummary({ field: 'deliveryDate', op: 'between', value: '2026-09-01~2026-09-30' }, labels)).toBe('01/09/2026 – 30/09/2026');
+    expect(soFilterSummary({ field: 'deliveryDate', op: 'preset', value: 'this_week' }, labels)).toBe('This week');
+    expect(soFilterSummary({ field: 'balance', op: 'gt', value: '100' }, labels)).toBe('> RM 100.00');
+    expect(soFilterSummary({ field: 'balance', op: 'positive', value: '' }, labels)).toBe('has balance');
+    expect(soFilterSummary({ field: 'docNo', op: 'between', value: 'HC-SO-013000~' }, labels)).toBe('from HC-SO-013000');
+    expect(soFilterSummary(soFilterDefaultRow('name'), labels)).toBe('Choose…');
+    expect(soFilterSummary({ field: 'warehouse', op: 'is', value: 'e309c399-697c-4174-967f-ae2c888ad999' }, labels)).toBe('is KL WAREHOUSE');
+    expect(soFilterSummary({ field: 'itemCategory', op: 'is', value: 'sofa' }, labels)).toBe('Sofa');
+    expect(soFilterSummary({ field: 'pendingAmendment', op: 'is', value: 'no' }, labels)).toBe('No pending amendment');
     expect(soFilterField('balance')?.label).toBe('Balance');
+  });
+});
+
+describe('line-level and branding fields (owner 2026-09-14 follow-up)', () => {
+  it('Warehouse and Branding lead the WHERE group; Item category and Pending amendment sit in ORDER AND MONEY', () => {
+    const where = SO_FILTER_FIELDS.filter((f) => f.group === 'where').map((f) => f.key);
+    expect(where.slice(0, 3)).toEqual(['warehouse', 'branding', 'venue']);
+    const order = SO_FILTER_FIELDS.filter((f) => f.group === 'order').map((f) => f.key);
+    expect(order).toContain('itemCategory');
+    expect(order).toContain('pendingAmendment');
+  });
+
+  it('round-trips and validates the four new fields', () => {
+    const ok = [
+      'warehouse:is:e309c399-697c-4174-967f-ae2c888ad999',
+      'branding:contains:akemi',
+      'branding:is:ZANOTTI',
+      'itemCategory:is:sofa',
+      'itemCategory:is:accessory',
+      'pendingAmendment:is:yes',
+      'pendingAmendment:is:no',
+    ];
+    for (const raw of ok) expect(serializeSoListFilter(parseSoListFilter(raw)!)).toBe(raw);
+    for (const raw of ['warehouse:is:KL', 'warehouse:contains:e309c399-697c-4174-967f-ae2c888ad999', 'itemCategory:is:dining',
+      'itemCategory:is:SOFA', 'pendingAmendment:is:maybe', 'branding:contains:']) {
+      expect(parseSoListFilter(raw)).toBeNull();
+    }
+  });
+
+  it('maps an item category choice to the bucket the list itself uses', () => {
+    expect(soCategoryBucket('sofa')).toBe('SOFA');
+    expect(soCategoryBucket('bedframe')).toBe('BEDFRAME');
+    expect(soCategoryBucket('mattress')).toBe('MATTRESS');
+    expect(soCategoryBucket('accessory')).toBe('ACCESSORY');
+    expect(soCategoryBucket('dining')).toBeNull();
   });
 });

@@ -34,6 +34,7 @@ import { useAuth, isAdminLevel } from '../../vendor/scm/lib/auth';
 import { useCreatePosFromSoItems } from '../../vendor/scm/lib/suppliers-queries';
 import { newIdempotencyKey } from '../../lib/idempotency';
 import { mrpViews, mrpCategoryOf, rowBelongsToView } from './mrp-views';
+import { sofaAccessoryRowsPerSo } from './mrp-sofa-accessory';
 import { flattenMrpExportLines, MRP_EXPORT_LINE_COLUMNS } from './mrp-export-lines';
 import { downloadCSV, toCSV } from '../../lib/csv';
 import { fmtDate, fmtDateTime } from '../../vendor/shared/format';
@@ -585,7 +586,7 @@ export const Mrp = () => {
      only form that cannot leave a row homeless. */
   const activeView = views.find((v) => v.value === view) ?? views[0]!;
   const tabSkus = view === 'sofa'
-    ? sofaSetsToSkus(data?.sofaSets ?? [])
+    ? [...sofaSetsToSkus(data?.sofaSets ?? []), ...sofaAccessoryRowsPerSo(data?.skus ?? [])]
     : (data?.skus ?? []).filter((s) => rowBelongsToView(activeView, s.category));
 
   /* Delivery-date window: filter child lines + recompute the parent's Qty

@@ -22,6 +22,9 @@ export const REQUIRED_VARIANT_AXES_BY_CATEGORY = {
     { key: "legHeight", label: "Leg Height", aliases: ["legHeight", "sofaLegHeight"], required: false },
     { key: "fabricCode", label: "Fabrics", aliases: ["fabricCode", "colorCode", "colourCode", "fabricColor"] },
   ],
+  fabric_accessory: [
+    { key: "fabricCode", label: "Fabrics", aliases: ["fabricCode", "colorCode", "colourCode", "fabricColor"] },
+  ],
 };
 
 export const isDivanOnly = (itemCode) => /\bDIVAN\s*ONLY\b/i.test(itemCode ?? "");

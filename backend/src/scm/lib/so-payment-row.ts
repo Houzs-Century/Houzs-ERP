@@ -13,7 +13,7 @@
 // is over its size ceiling and may only shrink; this is the split the ratchet
 // asks for, not a redesign.
 // ----------------------------------------------------------------------------
-import { enqueueEdit } from './autocount-outbox';
+import { enqueueSoPaymentEdit } from './ac-so-payment-edit';
 import { recordSoAudit, type FieldChange } from './so-audit';
 import { postSoPayment, reverseSoPayment, type SoPaymentRow } from '../../acc/payments';
 import { ledgerFactsOf, repostSoPaymentEdit } from '../../acc/payment-repost';
@@ -276,6 +276,9 @@ export async function recordSoPaymentRow(
     action: 'ADD_PAYMENT',
     actorId: p.createdBy,
     actorName: p.actorName ?? null,
+    /* The payment this row is about (docs/bugs/0888) — what lets a later
+       correction's report say who recorded it first. */
+    paymentId: String((data as { id?: unknown } | null)?.id ?? '') || null,
     ...(p.auditSource ? { source: p.auditSource } : {}),
     ...(p.auditNote ? { note: p.auditNote } : {}),
     fieldChanges: [
@@ -300,12 +303,13 @@ export async function recordSoPaymentRow(
      would cover the payments a human typed and silently miss every receipt the
      scan job books — this module's recurring shape.
 
-     enqueueEdit never throws and returns false when the write-back is off or
-     the order has no AutoCount counterpart, so the payment's own success does
-     not depend on it. */
-  await enqueueEdit(sb, {
+     HEADER-ONLY since 2026-09-14 (docs/bugs/0896): a payment moves BALANCE and
+     PAYEMENT and no line, and composing the lines is where an edit is refused.
+     It never throws and returns false when the write-back is off or the order
+     has no AutoCount counterpart, so the payment's own success does not depend
+     on it. */
+  await enqueueSoPaymentEdit(sb, {
     companyId,
-    docType: 'SO',
     docNo: p.docNo,
     /* p.createdBy is a Supabase auth uuid; the outbox's created_by is the
        numeric houzs user id, and there is no mapping to hand here. Provenance

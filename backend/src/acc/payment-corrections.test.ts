@@ -8,8 +8,8 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
-  AMEND_SOURCE, LEDGER_FIELD, LEDGER_REVERSAL_FIELD, REASON_REQUIRED,
-  ledgerFieldChange, paymentCorrectionsReport, type CorrectionAuditRow,
+  AMEND_SOURCE, KEY_HOLDER_REASON_REQUIRED, LEDGER_FIELD, LEDGER_REVERSAL_FIELD, REASON_REQUIRED, SLIP_FIELD,
+  addedAmountOf, ledgerFieldChange, paymentCorrectionsReport, type CorrectionAuditRow, type RecorderLookup,
 } from './payment-corrections';
 
 const audit = (over: Partial<CorrectionAuditRow> = {}): CorrectionAuditRow => ({
@@ -24,6 +24,8 @@ const audit = (over: Partial<CorrectionAuditRow> = {}): CorrectionAuditRow => ({
   ],
   note: 'Sales keyed RM 1,990 — receipt shows RM 1,991',
   created_at: '2026-09-10T02:15:00Z',
+  payment_id: 'pay-1',
+  source: AMEND_SOURCE,
   ...over,
 });
 
@@ -64,6 +66,16 @@ describe('the constants the routes and the report share', () => {
     expect(AMEND_SOURCE).toBe('amend');
     expect(REASON_REQUIRED.error).toBe('reason_required');
     expect(REASON_REQUIRED.reason).not.toMatch(/[{}]|\bnull\b|reason_required/);
+  });
+
+  /* The holder's refusal is shown to the operator, so it must survive the
+     client's sentence filter (under 200 characters, docs/bugs/0821) and say
+     where the action will be listed. */
+  it("the holder's refusal is one plain sentence under the client's ceiling, naming the report", () => {
+    expect(KEY_HOLDER_REASON_REQUIRED.error).toBe('reason_required');
+    expect(KEY_HOLDER_REASON_REQUIRED.reason.length).toBeLessThan(200);
+    expect(KEY_HOLDER_REASON_REQUIRED.reason).not.toMatch(/[{}]|\bnull\b|reason_required/);
+    expect(KEY_HOLDER_REASON_REQUIRED.reason).toContain('Corrections');
   });
 });
 
@@ -157,11 +169,174 @@ describe('paymentCorrectionsReport', () => {
       audit({ id: 'c', field_changes: [{ field: 'method', from: 'cash', to: 'transfer' }] }),  // no amount
       audit({ id: 'd', action: 'DELETE_PAYMENT', field_changes: [{ field: 'amountSen', from: 50_000, to: null }] }), // −50,000
     ], customers);
-    expect(summary).toEqual({ corrections: 4, edited: 3, deleted: 1, netMovedSen: 100 - 40_000 - 50_000, deletedSen: 50_000 });
+    expect(summary).toEqual({
+      corrections: 4, added: 0, edited: 3, deleted: 1, proof: 0,
+      netMovedSen: 100 - 40_000 - 50_000, addedSen: 0, deletedSen: 50_000,
+    });
   });
 
   it('an empty month is an empty report, not a crash', () => {
     expect(paymentCorrectionsReport([], customers))
-      .toEqual({ rows: [], summary: { corrections: 0, edited: 0, deleted: 0, netMovedSen: 0, deletedSen: 0 } });
+      .toEqual({ rows: [], summary: { corrections: 0, added: 0, edited: 0, deleted: 0, proof: 0, netMovedSen: 0, addedSen: 0, deletedSen: 0 } });
+  });
+});
+
+/* EVERY payment action by a role holding the right (owner 2026-09-14,
+   docs/bugs/0888): an add and a proof attach are rows of their own kind, a row
+   from before the rule carries no reason and says so, and each row names who
+   FIRST recorded the payment it concerns. */
+const added = (over: Partial<CorrectionAuditRow> = {}): CorrectionAuditRow => audit({
+  id: 'add-1', action: 'ADD_PAYMENT', note: 'Balance collected on delivery',
+  field_changes: [
+    { field: 'paidAt', from: null, to: '2026-09-14' },
+    { field: 'method', from: null, to: 'cash' },
+    { field: 'amountSen', from: null, to: 150_000 },
+    { field: LEDGER_FIELD, from: null, to: 'JE-2609-0090' },
+  ],
+  created_at: '2026-09-14T03:00:00Z',
+  ...over,
+});
+
+describe('the kinds a row can be', () => {
+  it('an ADD_PAYMENT row is an add: the money recorded, the entry booked, the recorder is itself', () => {
+    const { rows, summary } = paymentCorrectionsReport([added()], customers);
+    expect(rows[0]).toMatchObject({
+      kind: 'added', amountFromSen: null, amountToSen: 150_000, reason: 'Balance collected on delivery',
+      beforeRule: false, recordedBy: 'Chew', recordedOn: '2026-09-14T03:00:00Z',
+      originalJeNo: null, contraJeNo: null, jeNo: 'JE-2609-0090',
+    });
+    expect(rows[0].changes.map((c) => c.field)).toEqual(['paidAt', 'method', 'amountSen']);
+    expect(summary).toMatchObject({ added: 1, addedSen: 150_000, netMovedSen: 150_000 });
+  });
+
+  it('an UPDATE_PAYMENT row that moved only the proof is a proof attach, and counts as neither an edit nor money', () => {
+    const { rows, summary } = paymentCorrectionsReport([audit({
+      field_changes: [{ field: SLIP_FIELD, from: null, to: 'slips/abc.jpg' }], note: 'Slip came in by WhatsApp',
+    })], customers);
+    expect(rows[0]).toMatchObject({ kind: 'proof', amountFromSen: null, amountToSen: null, reason: 'Slip came in by WhatsApp' });
+    expect(summary).toMatchObject({ proof: 1, edited: 0, netMovedSen: 0 });
+  });
+
+  it('an edit that touched the proof AND the money is still an edit', () => {
+    const { rows } = paymentCorrectionsReport([audit({
+      field_changes: [{ field: SLIP_FIELD, from: null, to: 'slips/abc.jpg' }, { field: 'amountSen', from: 1, to: 2 }],
+    })], customers);
+    expect(rows[0].kind).toBe('edited');
+  });
+
+  it('the summary adds an add, an edit, a delete and a proof up separately, and nets the money', () => {
+    const { summary } = paymentCorrectionsReport([
+      added({ id: 'a' }),                                                                                        // +150,000
+      audit({ id: 'b' }),                                                                                        // +100
+      audit({ id: 'c', action: 'DELETE_PAYMENT', field_changes: [{ field: 'amountSen', from: 50_000, to: null }] }), // −50,000
+      audit({ id: 'd', field_changes: [{ field: SLIP_FIELD, from: null, to: 'k' }] }),
+    ], customers);
+    expect(summary).toEqual({
+      corrections: 4, added: 1, edited: 1, deleted: 1, proof: 1,
+      netMovedSen: 150_000 + 100 - 50_000, addedSen: 150_000, deletedSen: 50_000,
+    });
+  });
+});
+
+describe('a row from before the rule', () => {
+  /* The owner's own two adds of 2026-09-14, recorded before this shipped: a
+     role that holds the right today, a row nothing asked a reason for. Listed,
+     marked, and its own note — "Payment proof attached" on a proof row — is
+     NOT presented as a reason. */
+  it('carries no reason, says it predates the rule, and does not pass its own note off as one', () => {
+    const { rows } = paymentCorrectionsReport([
+      added({ id: 'early', source: 'web', note: null }),
+      audit({ id: 'early-proof', source: 'web', note: 'Payment proof attached', field_changes: [{ field: SLIP_FIELD, from: null, to: 'k' }] }),
+    ], customers);
+    expect(rows.find((r) => r.id === 'early')).toMatchObject({ kind: 'added', reason: '', beforeRule: true });
+    expect(rows.find((r) => r.id === 'early-proof')).toMatchObject({ kind: 'proof', reason: '', beforeRule: true });
+  });
+
+  it('a row made on the right is not from before the rule', () => {
+    expect(paymentCorrectionsReport([audit()], customers).rows[0].beforeRule).toBe(false);
+  });
+});
+
+describe('who first recorded the payment', () => {
+  const lookup = (over: Partial<RecorderLookup> = {}): RecorderLookup => ({
+    addsByPayment: new Map(), paymentsById: new Map(), addsByDoc: new Map(), ...over,
+  });
+
+  it('a tagged correction names the actor of the payment\'s ADD row, and the day it was keyed', () => {
+    const { rows } = paymentCorrectionsReport([audit()], customers, lookup({
+      addsByPayment: new Map([['pay-1', { by: 'Rachael', on: '2026-08-29T06:00:00Z' }]]),
+      paymentsById: new Map([['pay-1', { by: 'Somebody else', on: '2026-08-29T06:00:01Z' }]]),
+    }));
+    expect(rows[0]).toMatchObject({ recordedBy: 'Rachael', recordedOn: '2026-08-29T06:00:00Z' });
+  });
+
+  /* The scan job's ADD row snapshots no actor ("Auto: payment recorded from
+     scanned receipt"); the person is the collector named on the payment. */
+  it('an ADD row that names nobody defers to the collector on the payment row, keeping the ADD row\'s day', () => {
+    const { rows } = paymentCorrectionsReport([audit()], customers, lookup({
+      addsByPayment: new Map([['pay-1', { by: null, on: '2026-08-29T06:00:00Z' }]]),
+      paymentsById: new Map([['pay-1', { by: 'Wei How', on: '2026-08-29T06:00:01Z' }]]),
+    }));
+    expect(rows[0]).toMatchObject({ recordedBy: 'Wei How', recordedOn: '2026-08-29T06:00:00Z' });
+  });
+
+  it('a payment whose ADD row predates the tagging is read off the payment row itself', () => {
+    const { rows } = paymentCorrectionsReport([audit()], customers, lookup({
+      paymentsById: new Map([['pay-1', { by: 'Wei How', on: '2026-08-29T06:00:01Z' }]]),
+    }));
+    expect(rows[0]).toMatchObject({ recordedBy: 'Wei How', recordedOn: '2026-08-29T06:00:01Z' });
+  });
+
+  it('a tagged row nothing can be read for is recorder unknown, never a guess', () => {
+    const { rows } = paymentCorrectionsReport([audit()], customers, lookup());
+    expect(rows[0]).toMatchObject({ recordedBy: null, recordedOn: null });
+  });
+
+  /* The corrections written before payments were tagged — the owner's nine of
+     2026-09-10 to 2026-09-14 — carry no id. The order's own ADD rows are the
+     only trail: one add before the correction is that payment; two adds are
+     told apart by the amount the correction started from; two that cannot be
+     told apart stay blank, because naming the wrong salesperson is worse. */
+  it('an untagged correction on an order with exactly one earlier add names that add', () => {
+    const { rows } = paymentCorrectionsReport([audit({ payment_id: null })], customers, lookup({
+      addsByDoc: new Map([['2990-SO-2606-043', [
+        { by: 'Rachael', on: '2026-08-29T06:00:00Z', amountSen: 199_000 },
+        { by: 'Later', on: '2026-09-11T06:00:00Z', amountSen: 10 }, // after the correction: not this one
+      ]]]),
+    }));
+    expect(rows[0]).toMatchObject({ recordedBy: 'Rachael', recordedOn: '2026-08-29T06:00:00Z' });
+  });
+
+  it('two earlier adds are told apart by the amount the correction started from', () => {
+    const { rows } = paymentCorrectionsReport([audit({ payment_id: null })], customers, lookup({
+      addsByDoc: new Map([['2990-SO-2606-043', [
+        { by: 'Rachael', on: '2026-08-29T06:00:00Z', amountSen: 50_000 },
+        { by: 'Zack', on: '2026-09-01T06:00:00Z', amountSen: 199_000 },
+      ]]]),
+    }));
+    expect(rows[0]).toMatchObject({ recordedBy: 'Zack', recordedOn: '2026-09-01T06:00:00Z' });
+  });
+
+  it('two earlier adds it cannot tell apart leave the recorder blank', () => {
+    const { rows } = paymentCorrectionsReport([audit({ payment_id: null, field_changes: [{ field: 'method', from: 'cash', to: 'transfer' }] })], customers, lookup({
+      addsByDoc: new Map([['2990-SO-2606-043', [
+        { by: 'Rachael', on: '2026-08-29T06:00:00Z', amountSen: 50_000 },
+        { by: 'Zack', on: '2026-09-01T06:00:00Z', amountSen: 199_000 },
+      ]]]),
+    }));
+    expect(rows[0]).toMatchObject({ recordedBy: null, recordedOn: null });
+  });
+
+  it('an add names itself, whatever the lookups say', () => {
+    const { rows } = paymentCorrectionsReport([added()], customers, lookup({
+      addsByPayment: new Map([['pay-1', { by: 'Rachael', on: '2026-08-29T06:00:00Z' }]]),
+    }));
+    expect(rows[0]).toMatchObject({ recordedBy: 'Chew', recordedOn: '2026-09-14T03:00:00Z' });
+  });
+
+  it('addedAmountOf reads the amount an ADD row recorded, and nothing when there is none', () => {
+    expect(addedAmountOf([{ field: 'amountSen', from: null, to: 150_000 }])).toBe(150_000);
+    expect(addedAmountOf([{ field: 'method', from: null, to: 'cash' }])).toBeNull();
+    expect(addedAmountOf('garbage')).toBeNull();
   });
 });

@@ -124,12 +124,11 @@ const EFFECTIVE_TONE: Record<Effective, { tone: "success" | "warning" | "error" 
 
 const effectiveLabel = (eff: Effective): string => statusLabel("pr", eff.toUpperCase());
 
-const STAGE_LABEL: Record<string, string> = {
-  DRAFT: "Draft",
-  POSTED: "Posted",
-  COMPLETED: "Completed",
-  CANCELLED: "Cancelled",
-};
+/* The header BADGE reads its word from vendor/scm/lib/status-pill.ts. It used to
+   read a hand-written STAGE_LABEL here, which said "Posted" for POSTED - contradicting the
+   owner's ruling that this rung reads one word on every surface, and invisible to
+   localStatusMapsAgree because a flat map is not the { label } shape it parsed.
+   docs/bugs/0868. The guard now scans that shape too. */
 
 const initialsOf = (name: string | null | undefined): string => {
   if (!name) return "—";
@@ -260,9 +259,7 @@ export function PurchaseReturnDetailV2() {
   ]);
 
   const eff = purchaseReturn ? effectiveOf(purchaseReturn) : null;
-  const stageLabel = purchaseReturn
-    ? STAGE_LABEL[(purchaseReturn.status || "").toUpperCase()] ?? purchaseReturn.status
-    : "";
+  const stageLabel = purchaseReturn ? statusLabel("pr", purchaseReturn.status) : "";
   const badgeTone = eff ? EFFECTIVE_TONE[eff].tone : "neutral";
   const refund = purchaseReturn ? refundOf(purchaseReturn) : 0;
 

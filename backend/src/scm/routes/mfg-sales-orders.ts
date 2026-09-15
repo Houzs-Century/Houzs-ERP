@@ -51,6 +51,7 @@ import { signalNullWarehouseRows } from '../lib/null-warehouse-signal';
    without importing a 12,000-line router. Re-exported below for the callers
    that still name this module. */
 import { deriveAccountSheet, PAYMENT_COLS, recordSoPaymentRow, afterSoPaymentRemoved, bookSoPaymentBestEffort, repostSoPaymentBestEffort, soPaymentFieldChanges, type SoPaymentRowInput } from '../lib/so-payment-row';
+import { enqueueSoPaymentEdit } from '../lib/ac-so-payment-edit';
 import { recomputeSiPaidForOrder } from '../lib/si-order-deposit';
 export { recordSoPaymentRow };
 export type { SoPaymentRowInput };
@@ -70,7 +71,10 @@ import {
   PAYMENT_WINDOW_CLOSED_ERROR,
 } from '../shared/so-field-policy';
 import { paymentMayChange, SO_PAYMENT_AMEND } from '../../acc/payment-reconciled';
-import { AMEND_SOURCE, ledgerFieldChange, REASON_REQUIRED } from '../../acc/payment-corrections';
+import { AMEND_SOURCE, ledgerFieldChange } from '../../acc/payment-corrections';
+import { APPROVAL_CODE_SEARCH_CAP, approvalCodeOrPart, approvalCodesByOrder } from '../lib/so-list-approval-codes';
+import { paymentReasonRule } from '../lib/so-payment-reason';
+import { paymentVersionGuard, soCasGrace, soCasGraceOpen } from '../lib/so-cas';
 /* SO-SKU spec P2 — every charge is a SKU line. Predicates from P1; the
    fee/addon → SERVICE-line decomposition builders are pure + shared. */
 import {
@@ -113,6 +117,7 @@ import { resolveCreateWarehouseDefaults } from '../lib/so-create-warehouse-defau
 import { planStateRebindForDoc, stateChangeConflictBody } from '../lib/so-state-warehouse-rebind';
 import { canonicalizeMyState } from '../lib/canonical-state';
 import { deriveLineBrandingFromProduct, deriveHeaderBrandingFromLines } from '../lib/derive-line-branding';
+import { deriveListFirstItemBranding, type ListBrandingLine } from '../lib/so-list-first-item-branding';
 import { resolveBrandLetterheadKey } from '../lib/brand-letterhead';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { correctedSizeDescription, loadSizeSkuMap } from '../lib/size-variant-description';
@@ -174,6 +179,7 @@ import { baseKeyOf, deleteThumbFor, putOptionalThumb, thumbKeyFor } from '../../
 import { photoProxyPath, proxyFallbackPayload, warnSigningFailedOnce, type PhotoUrlPayload } from '../lib/photoProxyFallback';
 import { slipBindings } from '../lib/slip';
 import { amendmentMixRefusal, createMixRefusal, lineMixRefusal } from '../lib/main-mix';
+import { refuseWithoutWriting } from '../lib/no-write-refusal';
 import {
   loadMaintenanceConfig,
   loadSpecialAddons,
@@ -436,41 +442,11 @@ const soVersionConflict = (currentVersion: number) => ({
   currentVersion,
 });
 
-/* ── ROLLOUT GRACE WINDOW for mandatory CAS (2026-07-22) ───────────────────────
-   Making `version` mandatory is a BREAKING wire change for every browser tab
-   that is ALREADY OPEN when this deploys. Those tabs run the previous JS
-   bundle, which never sends a version, so without a grace path the first Save
-   after deploy 428s for every single person mid-edit, all at once, with no way
-   to recover except a reload they have not been told to do. A correctness fix
-   that interrupts the whole shop the moment it lands is not a fix yet.
-
-   MECHANISM: a bounded, opt-in, self-closing window driven by the
-   `SO_CAS_GRACE_UNTIL` Worker variable (an ISO-8601 instant).
-     • unset  → strict from the first request (the safe default, and the
-                permanent steady state; nothing to remember to turn off)
-     • set and in the FUTURE → a request that omits the version is accepted with
-                the PRE-CAS semantics (server-current version, last-writer-wins,
-                exactly today's production behaviour) and flagged `casGrace`
-     • set and in the PAST → strict again, automatically
-
-   A STALE version is ALWAYS a 409, in or out of the window: the grace only
-   covers clients that cannot speak the protocol at all, never a client that
-   spoke it and lost. Set it to deploy time + 30 minutes at rollout and delete
-   the variable afterwards — see docs/IDEMPOTENCY-PHASE2-RUNBOOK.md. */
-export type SoCasGraceWindow = { until?: string | null; now?: number };
-
-export function soCasGraceOpen(window?: SoCasGraceWindow): boolean {
-  const raw = window?.until;
-  if (!raw) return false;
-  const until = Date.parse(String(raw));
-  if (!Number.isFinite(until)) return false;
-  return (window?.now ?? Date.now()) < until;
-}
-
-/** Read the window off the Worker env. One place, so no route invents its own. */
-export const soCasGrace = (c: any): SoCasGraceWindow => ({
-  until: (c?.env?.SO_CAS_GRACE_UNTIL as string | undefined) ?? null,
-});
+/* The CAS rollout grace window and the payment version guard live in
+   scm/lib/so-cas.ts (moved 2026-09-14 — this file may only shrink);
+   re-exported because two suites import them from here. */
+export { paymentVersionGuard, soCasGrace, soCasGraceOpen } from '../lib/so-cas';
+export type { PaymentVersionGuard, SoCasGraceWindow } from '../lib/so-cas';
 
 /* 'held' is all its two callers can be in: both read a LIVE lease first. The
    three-way lives in requireSoLineWriteLease below - docs/bugs/0630. */
@@ -489,14 +465,14 @@ async function requireSoLineWriteLease(sb: any, docNo: string, c: any): Promise<
     .select('edit_lease_token, edit_lease_expires_at, edit_lease_user_id')
     .eq('doc_no', docNo)
     .maybeSingle();
-  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  if (!data) return c.json({ error: 'not_found' }, 404);
+  if (error) return refuseWithoutWriting(c, { error: 'load_failed', reason: error.message }, 500);
+  if (!data) return refuseWithoutWriting(c, { error: 'not_found' }, 404);
   if (!soLineWriteLeaseMatches(data as SoEditLeaseRow, supplied)) {
     const live = activeSoEditLease(data as SoEditLeaseRow);
     const holder = (data as { edit_lease_user_id?: number | string | null }).edit_lease_user_id;
     // The same person takes their own lock back - 0348, as the composite path does.
     if (live && supplied && soEditLeaseTakeoverAllowed(holder, soCallerUserId(c))) return null;
-    return c.json(soEditLeaseRefusal(!supplied ? 'missing' : live ? 'held' : 'expired'), 409);
+    return refuseWithoutWriting(c, soEditLeaseRefusal(!supplied ? 'missing' : live ? 'held' : 'expired'), 409);
   }
   return null;
 }
@@ -1260,6 +1236,26 @@ mfgSalesOrders.get('/', async (c) => {
     const sortCol = SORT_COLS.has(rawCol) ? rawCol : 'so_date';
     const sortAsc = rawDir === 'asc';
 
+    /* An order is also found by a card payment's APPROVAL CODE (owner
+       2026-09-15, docs/bugs/0909) — Finance reads one off a merchant report and
+       wants the order. The code lives on the payment rows, which the header
+       `.or()` below cannot see, so the orders whose payments carry EXACTLY the
+       typed code are read first — before the list builder, so the header
+       search stays the header's, and an exact match rather than a substring,
+       so no trigram index is owed — and admitted as ONE in-list term on BOTH
+       queries. A read that fails refuses the list: a search that silently
+       dropped its matches would be a wrong answer, not an empty one. */
+    let codePart: string | null = null;
+    {
+      const code = String(c.req.query('q') ?? '').trim();
+      if (code) {
+        const { data, error } = await scopeToCompany(sb.from('mfg_sales_order_payments')
+          .select('so_doc_no').eq('approval_code', code).limit(APPROVAL_CODE_SEARCH_CAP), c);
+        if (error) return c.json({ error: 'load_failed', reason: `approval codes: ${error.message}` }, 500);
+        codePart = approvalCodeOrPart(((data ?? []) as Array<{ so_doc_no: string }>).map((p) => p.so_doc_no));
+      }
+    }
+
     let q = sb.from('mfg_sales_orders_with_payment_totals').select(LIST_COLS, { count: 'exact' }).order(sortCol, { ascending: sortAsc });
     /* unique tiebreaker so range paging can't skip/repeat rows sharing the sort key */
     if (sortCol !== 'doc_no') q = q.order('doc_no', { ascending: sortAsc });
@@ -1285,6 +1281,7 @@ mfgSalesOrders.get('/', async (c) => {
         `agent.ilike.%${s}%`, `sales_location.ilike.%${s}%`, `ref.ilike.%${s}%`,
         `customer_so_no.ilike.%${s}%`, `branding.ilike.%${s}%`,
         ...phoneSearchOrParts(s, search, normalizePhone),
+        ...(codePart ? [codePart] : []),
       ].join(','));
     }
     /* Optional so_date window (ISO yyyy-mm-dd, inclusive). The mobile list's
@@ -1360,7 +1357,8 @@ mfgSalesOrders.get('/', async (c) => {
       else if (status) { const vals = soStatusesForTab(status); moneyQ = status === 'OTHER' ? moneyQ.or(otherStatusOr) : (vals.length === 1 ? moneyQ.eq('status', vals[0]) : moneyQ.in('status', vals)); }
       if (search) {
         const ms = escapeForOr(search);
-        if (ms) moneyQ = moneyQ.or(`doc_no.ilike.%${ms}%,debtor_name.ilike.%${ms}%,debtor_code.ilike.%${ms}%,agent.ilike.%${ms}%,sales_location.ilike.%${ms}%,ref.ilike.%${ms}%,customer_so_no.ilike.%${ms}%,branding.ilike.%${ms}%`);
+        /* The SAME term as the page query — the strip must count what the rows show. */
+        if (ms) moneyQ = moneyQ.or(`doc_no.ilike.%${ms}%,debtor_name.ilike.%${ms}%,debtor_code.ilike.%${ms}%,agent.ilike.%${ms}%,sales_location.ilike.%${ms}%,ref.ilike.%${ms}%,customer_so_no.ilike.%${ms}%,branding.ilike.%${ms}%${codePart ? `,${codePart}` : ''}`);
       }
       if (from) moneyQ = moneyQ.gte('so_date', from);
       if (to) moneyQ = moneyQ.lte('so_date', to);
@@ -1448,7 +1446,7 @@ mfgSalesOrders.get('/', async (c) => {
     /* chunkIn on every `docNos` read below — the LEGACY arm reads `.limit(500)`, so each URL carried 500 doc numbers (~9.5KB). All feed doc-keyed maps. */
     const payRowsProm = (async () =>
       (await chunkIn(docNos, (batch, from, to) => sb.from('mfg_sales_order_payments')
-        .select('so_doc_no, method, online_type').in('so_doc_no', batch).order('so_doc_no').range(from, to))).data)();
+        .select('so_doc_no, method, online_type, approval_code, paid_at, created_at').in('so_doc_no', batch).order('so_doc_no').range(from, to))).data)();
     // DO No. rides this read rather than a query of its own — the list's cost
     // is round-trips, not rows (see so-delivery-order-nos.ts).
     const downstreamProm = Promise.all([
@@ -1523,9 +1521,6 @@ mfgSalesOrders.get('/', async (c) => {
        (resolved SKU-first below), falling back to "Mattress" when the SKU
        carries none; everything else names its category. */
     const cats = new Map<string, Set<string>>();
-    const firstCat = new Map<string, string>();
-    const firstBranding = new Map<string, string | null>();
-    const firstItemCode = new Map<string, string | null>();
     /* Primary warehouse per SO — the FIRST non-null line warehouse_id (mirrors
        the Delivery Planning board's primaryWh = warehouseIds[0]). Drives the
        mobile Orders-list card's warehouse_name. */
@@ -1558,14 +1553,6 @@ mfgSalesOrders.get('/', async (c) => {
       if (it.warehouse_id && !firstWarehouseByDoc.has(it.doc_no)) {
         firstWarehouseByDoc.set(it.doc_no, it.warehouse_id);
       }
-
-      /* Rows arrive ordered by (doc_no, created_at ASC) so the first time we
-         see a doc_no IS its earliest line — record it once. */
-      if (!firstCat.has(it.doc_no)) {
-        firstCat.set(it.doc_no, normCategory(it.item_group));
-        firstBranding.set(it.doc_no, it.branding ?? null);
-        firstItemCode.set(it.doc_no, it.item_code ?? null);
-      }
     }
 
     /* Resolve each line's category from the CATALOG (mfg_products.category),
@@ -1594,43 +1581,15 @@ mfgSalesOrders.get('/', async (c) => {
         if (p.branding && p.branding.trim()) productBranding.set(p.code, p.branding);
       }
     }
-    const resolveLineCat = (code: string | null, group: string): string =>
-      (code ? productCategory.get(code) : undefined) ?? normCategory(group);
-    const MAIN_CATS = new Set(['SOFA', 'BEDFRAME', 'MATTRESS']);
-    /* First MAIN line per doc (catalog-resolved), re-iterating the already
-       (doc_no, line_no, created_at)-ordered itemRows. Falls back to the earliest
-       line captured above when an SO has no sofa/bedframe/mattress line. */
-    const repCat = new Map<string, string>();
-    const repBranding = new Map<string, string | null>();
-    const repCode = new Map<string, string | null>();
-    for (const it of itemRows as unknown as Array<{ doc_no: string; item_group: string; branding: string | null; item_code: string | null }>) {
-      if (repCat.has(it.doc_no)) continue;
-      const cat = resolveLineCat(it.item_code, it.item_group);
-      if (MAIN_CATS.has(cat)) {
-        repCat.set(it.doc_no, cat);
-        repBranding.set(it.doc_no, it.branding ?? null);
-        repCode.set(it.doc_no, it.item_code ?? null);
-      }
-    }
-
-    /* Bedframe-only branding (Commander 2026-07-16): "如果 BEDFRAME only 的话
-       branding 就放 BEDFRAME". When an SO's lines are ALL bedframe — at least
-       one BEDFRAME line and NO branded MATTRESS/SOFA line — its Branding pill
-       reads "BEDFRAME" instead of a blank dash. Built from the SAME catalog-
-       resolved per-line category (resolveLineCat), so a sofa-module line mis-
-       saved with item_group 'others' can't fool it into hiding an AKEMI/2990
-       brand. Non-branded ACCESSORY / SERVICE / OTHERS lines carry no brand and
-       may legitimately ride along, so they don't disqualify. */
-    const resolvedCatsByDoc = new Map<string, Set<string>>();
-    for (const it of itemRows as unknown as Array<{ doc_no: string; item_group: string; item_code: string | null }>) {
-      let s = resolvedCatsByDoc.get(it.doc_no);
-      if (!s) { s = new Set(); resolvedCatsByDoc.set(it.doc_no, s); }
-      s.add(resolveLineCat(it.item_code, it.item_group));
-    }
-    const isBedframeOnly = (docNo: string): boolean => {
-      const s = resolvedCatsByDoc.get(docNo);
-      return !!s && s.has('BEDFRAME') && !s.has('MATTRESS') && !s.has('SOFA');
-    };
+    /* First-item branding inputs — rep MAIN line (catalog-resolved), else the
+       earliest line; mattress SKU-first; bedframe-only -> 'BEDFRAME' (Commander
+       2026-07-16). ONE home since 2026-09-14 so the header-branding backfill
+       writes exactly what this list shows: scm/lib/so-list-first-item-branding.ts. */
+    const firstItemBrandingByDoc = deriveListFirstItemBranding(
+      itemRows as unknown as ListBrandingLine[],
+      productCategory,
+      productBranding,
+    );
 
     /* Commander 2026-05-29 (#19) — Payment Method column summarises the
        payments LEDGER, not just the header's single payment_method field. A
@@ -1643,8 +1602,12 @@ mfgSalesOrders.get('/', async (c) => {
        silently dropped from the summary before).
        One cheap batched read over the same doc_no set already in play. */
     const paymentMethods = new Map<string, Set<string>>();
+    /* The Approval Code column (docs/bugs/0909): each payment's code, by
+       payment date, " + " joined — off the same read. */
+    let approvalCodes = new Map<string, string>();
     {
       const payRows = await payRowsProm;
+      approvalCodes = approvalCodesByOrder((payRows ?? []) as unknown as Array<{ so_doc_no: string; approval_code: string | null; paid_at: string | null; created_at: string | null }>);
       for (const p of payRows as unknown as Array<{ so_doc_no: string; method: string | null; online_type: string | null }>) {
         const m = (p.method ?? '').trim().toLowerCase();
         let label: string;
@@ -1841,33 +1804,15 @@ mfgSalesOrders.get('/', async (c) => {
         today: planningToday,
       });
       /* First-item branding source (PR #266; catalog-resolved + mains-first). */
-      const hasRep = repCat.has(docNo);
-      const fCat = (hasRep ? repCat.get(docNo) : firstCat.get(docNo)) ?? null;
-      (r as Record<string, unknown>).first_item_category = fCat ?? null;
-      let fBranding = (hasRep ? repBranding.get(docNo) : firstBranding.get(docNo)) ?? null;
-      /* MATTRESS reads the SKU FIRST, not just as a fallback (owner 2026-08-18:
-         «mattress follow SKU branding»). The line's own text only survives when
-         the catalog has none. Six live 2990 lines carry the loose spellings
-         "2990" / "2990s" while their SKU says "2990s Mattress"; under the old
-         blank-only borrow they kept the loose text and the label rule needed a
-         normalisation regex to recover from it. Reading the catalog first makes
-         that regex unnecessary — and it is deleted, not left dormant. */
-      if (fCat === 'MATTRESS') {
-        const code = hasRep ? repCode.get(docNo) : firstItemCode.get(docNo);
-        const skuBrand = code ? productBranding.get(code) : undefined;
-        if (skuBrand && skuBrand.trim()) fBranding = skuBrand;
-      }
-      /* Bedframe-only SO → "BEDFRAME" pill (only when no explicit brand text
-         is present, so an AKEMI/2990 line always wins). */
-      if ((!fBranding || !fBranding.trim()) && isBedframeOnly(docNo)) {
-        fBranding = 'BEDFRAME';
-      }
-      (r as Record<string, unknown>).first_item_branding = fBranding;
+      const firstItem = firstItemBrandingByDoc.get(docNo);
+      (r as Record<string, unknown>).first_item_category = firstItem?.category ?? null;
+      (r as Record<string, unknown>).first_item_branding = firstItem?.branding ?? null;
       /* #19 — distinct ledger payment methods, sorted + joined ("Cash + Card").
          Empty string when no payments recorded yet (UI falls back to the
          header payment_method field). */
       const pm = paymentMethods.get(docNo);
       (r as Record<string, unknown>).payment_methods_summary = pm ? [...pm].sort().join(' + ') : '';
+      (r as Record<string, unknown>).approval_codes_summary = approvalCodes.get(docNo) ?? '';
       if (!perGroup) {
         (r as Record<string, unknown>).ready_categories = [];
         (r as Record<string, unknown>).is_fully_ready = false;
@@ -5218,6 +5163,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
         actorName: (user.user_metadata as { name?: string } | undefined)?.name ?? null,
         source: 'automation',
         note: 'Auto: POS split payment recorded at SO create',
+        paymentId: String((depRow as { id?: unknown } | null)?.id ?? '') || null,
         fieldChanges: [
           { field: 'paidAt',      from: null, to: paidAt },
           { field: 'method',      from: null, to: p.method },
@@ -5275,6 +5221,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
           actorName: (user.user_metadata as { name?: string } | undefined)?.name ?? null,
           source: 'automation',
           note: 'Auto: POS deposit recorded at SO create',
+          paymentId: String((depRow as { id?: unknown } | null)?.id ?? '') || null,
           fieldChanges: [
             { field: 'paidAt',      from: null, to: paidAt },
             { field: 'method',      from: null, to: depositMethod },
@@ -5363,10 +5310,24 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
        decision and is not second-guessed. A null result leaves it blank rather
        than inventing one. */
     if (String((body.branding as string | null | undefined) ?? '').trim() === '') {
+      /* The company's maintained brands, so a sofa whose SKU carries no brand is
+         stamped with what the list shows (ZANOTTI) instead of NULL. An
+         unreadable pool is null and leaves the SKU-only answer. */
+      let listFallback: { companyCode: string | null; brands: string[] } | null = null;
+      try {
+        const brandRows = await c.env.DB.prepare(
+          `SELECT name FROM project_brands WHERE active = 1${activeCompanySql(c)}`
+        ).all<{ name: string }>();
+        listFallback = {
+          companyCode: c.get('companyCode') ?? null,
+          brands: (brandRows.results ?? []).map((b) => String(b.name ?? '').trim()).filter(Boolean),
+        };
+      } catch { listFallback = null; }
       const headerBrand = await deriveHeaderBrandingFromLines(
         sb,
-        rowsWithDoc as unknown as Array<{ item_code?: string | null; branding?: string | null; company_id?: number | null }>,
+        rowsWithDoc as unknown as Array<{ item_code?: string | null; item_group?: string | null; branding?: string | null; company_id?: number | null }>,
         activeCompanyId(c) ?? null,
+        listFallback,
       );
       if (headerBrand) {
         effectiveBrand = headerBrand;
@@ -7582,26 +7543,26 @@ export async function recomputeTotals(sb: any, docNo: string, c: any) {
 mfgSalesOrders.post('/:docNo/items', async (c) => {
   const sb = c.get('supabase'); const docNo = c.req.param('docNo'); const user = c.get('user');
   let it: Record<string, unknown>;
-  try { it = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
+  try { it = (await c.req.json()) as Record<string, unknown>; } catch { return refuseWithoutWriting(c, { error: 'invalid_json' }, 400); }
   /* Trimmed — a whitespace-only code used to pass this truthy check and then
      slide through validateItemCodes' skip-as-no-op (owner 2026-08-08: every
      line is a catalog SKU, so an add-line ALWAYS names one). */
-  if (!String(it.itemCode ?? '').trim()) return c.json({ error: 'item_code_required' }, 400);
+  if (!String(it.itemCode ?? '').trim()) return refuseWithoutWriting(c, { error: 'item_code_required' }, 400);
 
   /* Edge #4 — itemCode catalog guard. requireActive: an add-line is a NEW
      pick, and the picker only offers ACTIVE products. */
   {
     const codeCheck = await validateItemCodes(sb, [it.itemCode as string], activeCompanyId(c), { requireActive: true });
-    if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown, codeCheck.inactive), 409);
+    if (!codeCheck.ok) return refuseWithoutWriting(c, unknownItemCodeResponse(codeCheck.unknown, codeCheck.inactive), 409);
   }
 
   /* Tier 2 downstream-lock — line-add is blocked once a DO / SI exists. */
   const childLock = await soHasDownstream(sb, docNo);
-  if (childLock) return c.json(childLock, 409);
+  if (childLock) return refuseWithoutWriting(c, childLock, 409);
 
   /* TBC fill-in (Loo 2026-06-11) — self-scoped selling roles only touch
      their own SO. */
-  if (await selfScopedSalesBlocked(c, docNo)) return c.json({ error: 'not_found' }, 404);
+  if (await selfScopedSalesBlocked(c, docNo)) return refuseWithoutWriting(c, { error: 'not_found' }, 404);
   /* AUTHZ BEFORE CONCURRENCY (2026-07-22) — the self-scope gate above now runs
      BEFORE the edit lease. A caller who may not touch this order at all used to
      be told "This order is being saved on another screen; wait a moment and try
@@ -7617,23 +7578,23 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
      editable (grandfathered). */
   {
     const mainMix = await lineMixRefusal(sb, 'mfg_sales_order_items', docNo, null, it.itemCode as string, activeCompanyId(c));
-    if (mainMix) return c.json(mainMix.body, mainMix.status);
+    if (mainMix) return refuseWithoutWriting(c, mainMix.body, mainMix.status);
   }
 
   /* PR-E — pull customer_delivery_date alongside debtor/agent/venue so a
      line added later still inherits the SO header's delivery date by
      default. Client can override by sending lineDeliveryDate explicitly. */
   const { data: header } = await sb.from('mfg_sales_orders').select('debtor_code, debtor_name, agent, branding, venue, customer_delivery_date, customer_state, sales_location, processing_date, status, customer_id').eq('doc_no', docNo).maybeSingle();
-  if (!header) return c.json({ error: 'not_found' }, 404);
+  if (!header) return refuseWithoutWriting(c, { error: 'not_found' }, 404);
   /* Owner 2026-06-12 — processing-date lock: no line ADD once a CONFIRMED-or-later
      SO's processing day has passed (already PO'd to the supplier). Owner
      2026-08-12 — nor once a live PO actually exists (2990), which is the case
      this rule was always describing and only sometimes catching. */
   if (soProcessingLocked(header as { processing_date?: string | null; status: string | null })) {
-    return c.json(SO_PROCESSING_LOCKED_RESPONSE, 409);
+    return refuseWithoutWriting(c, SO_PROCESSING_LOCKED_RESPONSE, 409);
   }
   if (await soPoLocked(sb, docNo)) {
-    return c.json(SO_PO_LOCKED_RESPONSE, 409);
+    return refuseWithoutWriting(c, SO_PO_LOCKED_RESPONSE, 409);
   }
   /* Commander 2026-05-31 — a line added later inherits the SO state's warehouse
      by default (migration 0118). Explicit it.warehouseId override wins. */
@@ -7653,12 +7614,12 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
   /* POS line quantity (Loo 2026-06-12) — same 422 gate as POST / (review
      found the create-only gate left qty 0 free-line inserts open here). */
   const badQty = invalidQtyResponse(it.qty, it.itemCode);
-  if (badQty) return c.json(badQty, 422);
+  if (badQty) return refuseWithoutWriting(c, badQty, 422);
   /* Owner 2026-07-17 — see unexplainedExtraAddonResponse. Gating create only
      would leave the same unexplained charge reachable one click later via
      "add line", which is exactly how the qty gate above was found short. */
   const badExtra = unexplainedExtraAddonResponse(it.variants, it.itemCode);
-  if (badExtra) return c.json(badExtra, 422);
+  if (badExtra) return refuseWithoutWriting(c, badExtra, 422);
   const qty = Number(it.qty ?? 1);
   const discount = Number(it.discountSen ?? 0);
   // MFG-PRICING-ENGINE — Recompute unit price server-side. Same path as
@@ -7670,13 +7631,13 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
   {
     const { product, model, lookupError } = await loadProductAndModel(sb, itemCodeStr, activeCompanyId(c));
     // A failed catalog read is ignorance, not permission — refuse, don't skip the gate.
-    if (lookupError) return c.json(variantCheckUnavailableResponse(lookupError), 409);
+    if (lookupError) return refuseWithoutWriting(c, variantCheckUnavailableResponse(lookupError), 409);
     const aoErr = checkAllowedOptions(
       product,
       model,
       variantsObj as Parameters<typeof checkAllowedOptions>[2],
     );
-    if (aoErr) return c.json({ ...aoErr, itemCode: itemCodeStr }, 400);
+    if (aoErr) return refuseWithoutWriting(c, { ...aoErr, itemCode: itemCodeStr }, 400);
   }
   /* Go-live review #6 — variant completeness on the LINE routes. The header
      POST/PATCH already blocks setting a Processing Date while any line has
@@ -7693,7 +7654,7 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
     }];
     const offenders = findIncompleteVariantLines(addedLine);
     if (offenders.length > 0) {
-      return c.json({
+      return refuseWithoutWriting(c, {
         error: 'variants_incomplete',
         message: 'Processing Date requires all category-mandatory variants on every line.',
         offenders,
@@ -7705,7 +7666,7 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
        shape as the variants gate above. */
     const kiv = findColourKivLines(addedLine);
     if (kiv.length > 0) {
-      return c.json({
+      return refuseWithoutWriting(c, {
         error: 'fabric_colour_kiv',
         message: `${itemCodeStr} — fabric colour is still KIV. This order already has a Processing Date, so confirm the colour before adding the line.`,
         offenders: kiv,
@@ -7743,7 +7704,7 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
   const addLineFreeItemCampaignId = String((it.freeItemCampaignId as string | null | undefined) ?? '').trim();
   const addLinePwpCodeEarly = String((variantsObj as { pwpCode?: string | null } | null)?.pwpCode ?? '').trim();
   if (addLineFreeItemCampaignId && addLinePwpCodeEarly) {
-    return c.json({ error: 'free_and_pwp_exclusive', reason: 'A line cannot be both a free-item and a PWP reward.' }, 400);
+    return refuseWithoutWriting(c, { error: 'free_and_pwp_exclusive', reason: 'A line cannot be both a free-item and a PWP reward.' }, 400);
   }
   // Resolved after validation below — { campaignId, campaignName } or null.
   let addLineFreeItem: { campaignId: string; campaignName: string } | null = null;
@@ -7762,7 +7723,7 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
        unit; the claim helper enforces this too, but a fast 422 mirrors the
        create-path pattern so the error shape is consistent. */
     if (qty !== 1) {
-      return c.json({
+      return refuseWithoutWriting(c, {
         error: 'invalid_qty',
         reason: 'A PWP reward line must have quantity 1.',
         itemCode: itemCodeStr,
@@ -7782,7 +7743,7 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
        BURNS the voucher. */
     const pwpCompanyId = activeCompanyId(c);
     if (pwpCompanyId == null) {
-      return c.json({
+      return refuseWithoutWriting(c, {
         error: 'company_unresolved',
         message: 'Cannot tell which company this order belongs to right now. Reload and try again.',
       }, 409);
@@ -10726,6 +10687,8 @@ const paymentCreateSchema = z.object({
      slip-less (slip_key NULL, same as a scan-job first receipt). Previously
      `.min(1)` (required). */
   uploadSessionId:    z.string().min(1).optional().nullable(),
+  /* Owed by a role holding the correction right (docs/bugs/0888). */
+  reason:             z.string().trim().max(500).optional(),
 });
 
 mfgSalesOrders.post('/:docNo/payments', async (c) => {
@@ -10742,6 +10705,11 @@ mfgSalesOrders.post('/:docNo/payments', async (c) => {
   const parsed = paymentCreateSchema.safeParse(body);
   if (!parsed.success) return c.json({ error: 'invalid_body', issues: parsed.error.issues }, 400);
   const p = parsed.data;
+
+  /* A role holding the correction right says why it records money, too
+     (docs/bugs/0888) — the rule in lib/so-payment-reason; never a window gate. */
+  const owed = paymentReasonRule(c, { reason: p.reason });
+  if (owed.refusal) return c.json(owed.refusal, 400);
 
   /* FIX 3 (2026-07-16) — method ⇒ bank/account mapping, enforced server-side.
      The desktop New-SO / Payments cascade blocks saving a Merchant payment with
@@ -10834,6 +10802,7 @@ mfgSalesOrders.post('/:docNo/payments', async (c) => {
     note:              p.note,
     createdBy:         user.id,
     actorName:         (user.user_metadata as { name?: string } | undefined)?.name ?? null,
+    ...(owed.owed ? { auditSource: AMEND_SOURCE, auditNote: p.reason } : {}),
   });
   if (errorMessage) return c.json({ error: 'insert_failed', reason: errorMessage }, 500);
 
@@ -10892,35 +10861,6 @@ const paymentPatchSchema = z.object({
   reason:            z.string().trim().max(500).optional(),
 });
 
-export type PaymentVersionGuard =
-  | { ok: true; version: number; grace?: true }
-  | { ok: false; status: 409 | 428; body: { error: string; currentVersion: number } };
-
-/** Shared PATCH/DELETE payment CAS contract. Missing is 428, stale is 409. */
-export function paymentVersionGuard(
-  candidate: unknown,
-  currentVersion: number,
-  grace?: SoCasGraceWindow,
-): PaymentVersionGuard {
-  const version = Number(candidate);
-  if (!Number.isInteger(version) || version < 1) {
-    if (soCasGraceOpen(grace)) return { ok: true, version: currentVersion, grace: true };
-    return {
-      ok: false,
-      status: 428,
-      body: { error: 'payment_version_required', currentVersion },
-    };
-  }
-  if (version !== currentVersion) {
-    return {
-      ok: false,
-      status: 409,
-      body: { error: 'payment_version_conflict', currentVersion },
-    };
-  }
-  return { ok: true, version };
-}
-
 mfgSalesOrders.patch('/:docNo/payments/:id', async (c) => {
   // WRITE: the company must RESOLVE (companyScope.ts strict rule) - a payment
   // edit is a books change, so an unknown company refuses rather than widens.
@@ -10974,8 +10914,8 @@ mfgSalesOrders.patch('/:docNo/payments/:id', async (c) => {
   const parsed = paymentPatchSchema.safeParse(body);
   if (!parsed.success) return c.json({ error: 'invalid_body', issues: parsed.error.issues }, 400);
   const p = parsed.data;
-  const amended = editWindow.via === 'amend';
-  if (amended && !p.reason) return c.json(REASON_REQUIRED, 400);
+  const owed = paymentReasonRule(c, { reason: p.reason, viaAmend: editWindow.via === 'amend' }); // docs/bugs/0785, 0888
+  if (owed.refusal) return c.json(owed.refusal, 400);
   const versionCheck = paymentVersionGuard(p.version, Number(before.version ?? 1), soCasGrace(c));
   if (!versionCheck.ok) return c.json(versionCheck.body, versionCheck.status);
   const expectedPaymentVersion = versionCheck.version;
@@ -11102,10 +11042,11 @@ mfgSalesOrders.patch('/:docNo/payments/:id', async (c) => {
     action: 'UPDATE_PAYMENT',
     actorId: user.id,
     actorName: (user.user_metadata as { name?: string } | undefined)?.name ?? null,
+    paymentId: id,
     fieldChanges: [...soPaymentFieldChanges(before, next), ...ledgerFieldChange(ledger)],
     /* A correction made on the amend right is a FINANCE event: it carries the
        typed reason and is what the corrections report lists (docs/bugs/0785). */
-    ...(amended ? { source: AMEND_SOURCE, note: p.reason } : {}),
+    ...owed.audit,
   });
 
   /* Same reason as the insert: an edited amount moves the outstanding balance,
@@ -11113,8 +11054,9 @@ mfgSalesOrders.patch('/:docNo/payments/:id', async (c) => {
      route, because the UPDATE above is the route's own and has no shared core.
      Fires even when only the method changed — recomposing an unchanged BALANCE
      costs one queued edit, while deciding here which fields matter would put a
-     second opinion about the balance rule next to so-outstanding.ts. */
-  await queueAcSoEdit(c, docNo);
+     second opinion about the balance rule next to so-outstanding.ts. HEADER-ONLY,
+     as the insert (docs/bugs/0896): a line AutoCount refuses must not hold the money back. */
+  await enqueueSoPaymentEdit(c.get('supabase'), { companyId: activeCompanyId(c), docNo, createdBy: c.get('houzsUser')?.id ?? null });
 
   // An edited amount also moves what the invoices off this order have settled.
   await recomputeSiPaidForOrder(sb, docNo, co.companyId);
@@ -11180,9 +11122,8 @@ mfgSalesOrders.delete('/:docNo/payments/:id', async (c) => {
   }
   /* A DELETE carries no body here — version already rides the query, so the
      reason does too. Required on the amend right, same as the PATCH. */
-  const delAmended = windowCheck.via === 'amend';
-  const delReason = String(c.req.query('reason') ?? '').trim().slice(0, 500);
-  if (delAmended && !delReason) return c.json(REASON_REQUIRED, 400);
+  const owed = paymentReasonRule(c, { reason: c.req.query('reason'), viaAmend: windowCheck.via === 'amend' });
+  if (owed.refusal) return c.json(owed.refusal, 400);
 
   const { data: deleted, error } = await scopeToCompanyId(sb.from('mfg_sales_order_payments').delete()
     .eq('id', id)
@@ -11208,6 +11149,7 @@ mfgSalesOrders.delete('/:docNo/payments/:id', async (c) => {
     action: 'DELETE_PAYMENT',
     actorId: user.id,
     actorName: (user.user_metadata as { name?: string } | undefined)?.name ?? null,
+    paymentId: id,
     fieldChanges: [
       { field: 'paidAt',       from: rowTyped.paid_at,       to: null },
       { field: 'method',       from: rowTyped.method,        to: null },
@@ -11215,14 +11157,14 @@ mfgSalesOrders.delete('/:docNo/payments/:id', async (c) => {
       ...(rowTyped.approval_code ? [{ field: 'approvalCode', from: rowTyped.approval_code, to: null } satisfies FieldChange] : []),
       ...ledgerFieldChange(delLedger),
     ],
-    ...(delAmended ? { source: AMEND_SOURCE, note: delReason } : {}),
+    ...owed.audit,
   });
 
   /* A deleted payment raises the outstanding balance, so the account book has
      to be told in the same way an added one does. This is the direction that
      matters most: a book left showing a settled order after the payment was
-     reversed understates what the customer owes. */
-  await queueAcSoEdit(c, docNo);
+     reversed understates what the customer owes. Header-only, as the insert (docs/bugs/0896). */
+  await enqueueSoPaymentEdit(c.get('supabase'), { companyId: activeCompanyId(c), docNo, createdBy: c.get('houzsUser')?.id ?? null });
 
   return c.json({ ok: true });
 });
@@ -11283,6 +11225,8 @@ mfgSalesOrders.get('/:docNo/payments/:id/slip-url', async (c) => {
    rather than silent. */
 const paymentSlipAttachSchema = z.object({
   uploadSessionId: z.string().min(1),
+  /* Owed by a role holding the correction right (docs/bugs/0888). */
+  reason:          z.string().trim().max(500).optional(),
 });
 
 mfgSalesOrders.post('/:docNo/payments/:id/slip', async (c) => {
@@ -11309,7 +11253,9 @@ mfgSalesOrders.post('/:docNo/payments/:id/slip', async (c) => {
   try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
   const parsed = paymentSlipAttachSchema.safeParse(body);
   if (!parsed.success) return c.json({ error: 'invalid_body', issues: parsed.error.issues }, 400);
-  const { uploadSessionId } = parsed.data;
+  const { uploadSessionId, reason } = parsed.data;
+  const owed = paymentReasonRule(c, { reason }); // not a window gate — see above; docs/bugs/0888
+  if (owed.refusal) return c.json(owed.refusal, 400);
 
   /* Resolve the upload session → committed R2 key. Same contract as the POST
      route: only a session that finished its PUT ('uploaded') resolves, so a
@@ -11373,7 +11319,8 @@ mfgSalesOrders.post('/:docNo/payments/:id/slip', async (c) => {
     action: 'UPDATE_PAYMENT',
     actorId: user.id,
     actorName: (user.user_metadata as { name?: string } | undefined)?.name ?? null,
-    note: before.slip_key ? 'Payment proof replaced' : 'Payment proof attached',
+    paymentId: id,
+    ...(owed.owed ? owed.audit : { note: before.slip_key ? 'Payment proof replaced' : 'Payment proof attached' }),
     fieldChanges: [{ field: 'slipKey', from: before.slip_key, to: nextSlipKey }],
   });
 

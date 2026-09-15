@@ -162,6 +162,18 @@ Payment. So the New page is TWO documents on one route:
   a supplier payment can never be mis-booked to an expense account. Purpose
   `SUPPLIER_PAYMENT`; same table, same PV number series, same approval cycle.
 
+**Opened from a purchase invoice (2026-09-14).** `?type=ap&supplier=<id>&pi=<id>`
+arrives with the supplier chosen and that invoice ticked in full. It is where a
+purchase invoice's Record payment goes, because the AP Payment is now the only
+way a supplier invoice is paid: the old `PATCH /purchase-invoices/:id/payment`
+refuses every call (`docs/modules/purchase-invoice.md`, "Paying a purchase
+invoice"). The tick is applied once, after the supplier's list has the invoice,
+so an operator who unticks it is not overruled; an invoice the list does not
+offer (paid since, reserved by another voucher) is simply not ticked. Without
+`type=ap` both parameters are ignored. Pinned in
+`frontend/src/pages/scm-v2/PaymentVoucherNew.test.tsx`; trace
+`docs/bugs/0889-supplier-invoice-payments-could-skip-the-payment-voucher-and.md`.
+
 **Apply to PI shows each invoice's date, oldest first** (owner 2026-09-02:
 我也要看invoice 的日期) — the settle order, not the browse order. **Every
 account picker types-to-search** (同日: 我无法快速打关键字眼搜索account):

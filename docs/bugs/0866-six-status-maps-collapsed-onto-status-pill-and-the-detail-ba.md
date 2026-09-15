@@ -1,9 +1,11 @@
 ## Six status maps collapsed onto status-pill, and the detail badges a second family both guards were blind to [medium]
-<!-- status: open -->
+<!-- status: fixed -->
 <!-- area: Frontend + mobile -->
 
-`open` because of the BADGE finding below, which is unfixed. The collapse itself
-changes nothing on screen and needs no production step.
+Was `open` because of the BADGE finding below. That finding is fixed by
+`docs/bugs/0868-the-detail-header-badge-said-posted-and-sent-where-the-owner.md`
+(2026-09-14), which also found and fixed the same fault on the phone. The collapse
+itself changes nothing on screen and needs no production step.
 
 **Symptom.** Nothing new on screen — this entry is the ROOT FIX behind two
 defects that already shipped and were patched on 2026-09-13: a Purchase Orders

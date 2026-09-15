@@ -1,0 +1,74 @@
+name: Fill a PO line's colour from its sales-order line (PLAN by default)
+
+# Owner 2026-09-14: 「有一张枕头采购单没写颜色，找不出吗」. HC-PO-2609-056 was raised
+# from the MRP page on 2026-09-10 03:20Z, before #3526 copied the book's colour
+# into the sales-order line's Special note, so its PO line holds an empty note.
+#
+# WHAT IT WRITES, on each NAMED purchase-order line whose note is empty and whose
+# linked sales-order line (same item code) carries one: variants.extraAddonNote
+# (jsonb MERGE) and description2 recomputed by buildVariantSummary, exactly as the
+# PO line editor does. Plus one entity_audit_log row per line. Never qty, price,
+# item code, remark, status, header, or AutoCount.
+#
+# PLAN (default) rolls back and re-reads on a fresh connection. mode=apply also
+# needs the CONFIRM phrase typed into the dispatch, and refuses unless the plan
+# writes exactly expect_rows lines. Manual trigger only, own concurrency group.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (rolls back) or apply (commits)"
+        required: false
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      po_numbers:
+        description: "comma-separated purchase-order numbers (required)"
+        required: true
+        default: "HC-PO-2609-056"
+        type: string
+      expect_rows:
+        description: "number of lines the reviewed plan writes (required)"
+        required: true
+        default: "1"
+        type: string
+      company:
+        description: "company id (1 = Houzs Century)"
+        required: false
+        default: "1"
+        type: string
+      confirm:
+        description: 'apply ONLY: type I HAVE REVIEWED THE DRY-RUN'
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: fill-po-line-colour-from-so-line
+  cancel-in-progress: false
+
+jobs:
+  fill:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npx tsx scripts/fill-po-line-colour-from-so-line.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          PO_NUMBERS: ${{ inputs.po_numbers }}
+          EXPECT_ROWS: ${{ inputs.expect_rows }}
+          COMPANY: ${{ inputs.company }}
+          CONFIRM: ${{ inputs.confirm }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

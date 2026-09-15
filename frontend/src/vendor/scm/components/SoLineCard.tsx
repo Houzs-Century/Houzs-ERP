@@ -36,6 +36,7 @@ import {
 import { missingVariantAxes } from '@2990s/shared/so-variant-rule';
 import { computeTotalHeight, totalHeightPatch } from '../../shared/total-height';
 import { restrictPricedToPool, restrictStringsToPool } from '../../shared/maintenance-pools';
+import { fabricAllowedByPool } from '../../shared/fabric-pool';
 import { activeOptions, isColourKiv, isDeliveryFeeServiceCode, lineIdentity, maintPickerValues, fmtMoneySen } from '@2990s/shared';
 import {
   useMfgProducts,
@@ -402,7 +403,7 @@ const SoLineCardInner = ({
   useEffect(() => {
     if (!isEditing || !draft.itemCode) return;
     const patch: Partial<SoLineDraft> = {};
-    if ((category === 'sofa' || category === 'bedframe')
+    if ((category === 'sofa' || category === 'bedframe' || category === 'fabric_accessory')
         && draft.itemGroup.toLowerCase() !== category) {
       patch.itemGroup = category;
     }
@@ -739,7 +740,10 @@ const SoLineCardInner = ({
      itemGroup came in generic still renders its fabric/seat/leg configurator and
      requires those variants, exactly like a manually-picked line (owner
      2026-07-13). */
-  const hasVariants = Boolean(draft.itemCode) && Boolean(maint) && (category === 'bedframe' || category === 'sofa');
+  /* fabric_accessory = "Sofa Accessory" (owner 2026-09-14): colour ONLY, from the same
+     fabric master and the same picker as a sofa. tasks/PLAN-sofa-accessories-category.md */
+  const hasVariants = Boolean(draft.itemCode) && Boolean(maint)
+    && (category === 'bedframe' || category === 'sofa' || category === 'fabric_accessory');
   const specials = specialsList(draft.variants.specials ?? draft.variants.special);
   /* SO-parity (Loo 2026-06-06) — mattress lines can carry Special Add-ons too
      (POS prices MATTRESS specials since PR #456). Render JUST the accordion for
@@ -1076,6 +1080,7 @@ const SoLineCardInner = ({
               disabled={!isEditing}
               pool={allowOpts?.fabrics ?? null}
               inactiveCodes={inactiveFabricCodes}
+              itemCode={draft.itemCode || null}
               onSelect={pickFabricColour}
             />
             <VariantSelect
@@ -1128,6 +1133,22 @@ const SoLineCardInner = ({
         </div>
       )}
 
+      {hasVariants && category === 'fabric_accessory' && (
+        <div className={styles.variants}>
+          <div className={styles.variantsHead}>SOFA ACCESSORY FABRIC</div>
+          <div className={styles.variantsGrid}>
+            <FabricColourCombobox
+              label="Fabrics" required={variantsRequired}
+              value={String(draft.variants.fabricCode ?? '')}
+              disabled={!isEditing}
+              pool={allowOpts?.fabrics ?? null}
+              inactiveCodes={inactiveFabricCodes}
+              itemCode={draft.itemCode || null}
+              onSelect={pickFabricColour}
+            />
+          </div>
+        </div>
+      )}
       {hasVariants && category === 'sofa' && (
         <div className={styles.variants}>
           <div className={styles.variantsHead}>SOFA VARIANTS</div>
@@ -1138,6 +1159,7 @@ const SoLineCardInner = ({
               disabled={!isEditing}
               pool={allowOpts?.fabrics ?? null}
               inactiveCodes={inactiveFabricCodes}
+              itemCode={draft.itemCode || null}
               onSelect={pickFabricColour}
             />
             <VariantSelect
@@ -1481,9 +1503,11 @@ const VariantSelect = ({
    ────────────────────────────────────────────────────────────────────── */
 
 const FabricColourCombobox = ({
-  label, value, onSelect, disabled = false, required = false, pool, inactiveCodes,
+  label, value, onSelect, disabled = false, required = false, pool, inactiveCodes, itemCode,
 }: {
   label:    string;
+  /** The line's SKU — the server applies its Model's pool before the 50 cap. */
+  itemCode: string | null;
   /** Selected colour code (draft.variants.fabricCode). Shown verbatim when closed. */
   value:    string;
   /** Non-empty = restrict to these colour codes (Model allowed_options.fabrics). */
@@ -1502,22 +1526,19 @@ const FabricColourCombobox = ({
      only fires while the operator is actively picking. */
   const debounced = useDebouncedValue(search, 200);
   const trimmed   = debounced.trim();
-  const coloursQ  = useFabricColoursSearch(trimmed, { enabled: open && trimmed.length >= 2 });
+  const coloursQ  = useFabricColoursSearch(trimmed, { enabled: open && trimmed.length >= 2, itemCode });
 
   /* Apply the pool + inactive gates to the SERVER results (the old option-list
      prune, moved server-side of the fetch). Cap at 50 like the SKU picker. */
   const results = useMemo(() => {
     const rows = coloursQ.data ?? [];
-    const restricted = Array.isArray(pool) && pool.length > 0;
-    const allow = new Set(pool ?? []);
     return rows
       .filter((c) => !inactiveCodes.has(c.colourId))
-      /* A row passes if the pool names its COLOUR or its SERIES. The pool is
-         filled by ProductModelDetail's Modular drawer, which offers SERIES
-         (fabric_library ids) - so matching colours only made this picker show 3
-         of 851 active colours and is what the owner reported. Same rule as the
-         server gate in allowed-options-check.ts. docs/bugs/0814. */
-      .filter((c) => !restricted || allow.has(c.colourId) || allow.has(c.fabricId))
+      /* A row passes if the pool names its COLOUR or its SERIES (docs/bugs/0814),
+         asked through the SAME module the save gate and the phone sheet read,
+         so the folding of stray spaces and quote glyphs agrees too
+         (docs/bugs/0889). */
+      .filter((c) => fabricAllowedByPool(pool, c.colourId, c.fabricId))
       .slice(0, 50);
   }, [coloursQ.data, pool, inactiveCodes]);
 

@@ -17,7 +17,6 @@ import {
   CircleDot,
   Phone as PhoneIcon,
   MoreHorizontal,
-  CheckCircle2,
   Wallet,
   AlertTriangle,
   Send,
@@ -37,8 +36,9 @@ import {
   usePurchaseInvoiceDetail,
   useCancelPurchaseInvoice,
   usePostPurchaseInvoice,
-  useRecordPiPayment,
 } from "../../vendor/scm/lib/purchase-invoice-queries";
+import { useAuth as useHouzsAuth } from "../../auth/AuthContext";
+import { apPaymentHrefFor, canOpenApPayment, piAwaitsPayment } from "../../vendor/scm/lib/pi-payment-path";
 import { useSupplierDetail } from "../../vendor/scm/lib/suppliers-queries";
 import { skuMapFromBindings, supplierCodeFor } from "../../vendor/scm/lib/supplier-doc-data";
 import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
@@ -46,6 +46,7 @@ import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
+import { statusLabel } from "../../vendor/scm/lib/status-pill";
 import { cn } from "../../lib/utils";
 import { resolveFxRate } from "./fx-rate";
 import { HoldChip, type HoldFields } from "../../vendor/scm/components/HoldChip";
@@ -181,13 +182,11 @@ const EFFECTIVE_TONE: Record<
   cancelled: { tone: "error", label: "Cancelled", blurb: "Cancelled · no further action" },
 };
 
-const STAGE_LABEL: Record<string, string> = {
-  DRAFT: "Draft",
-  POSTED: "Posted",
-  PARTIALLY_PAID: "Partially paid",
-  PAID: "Paid",
-  CANCELLED: "Cancelled",
-};
+/* The header BADGE reads its word from vendor/scm/lib/status-pill.ts. It used to
+   read a hand-written STAGE_LABEL here, which said "Posted" for POSTED - contradicting the
+   owner's ruling that this rung reads one word on every surface, and invisible to
+   localStatusMapsAgree because a flat map is not the { label } shape it parsed.
+   docs/bugs/0868. The guard now scans that shape too. */
 
 const initialsOf = (name: string | null | undefined): string => {
   if (!name) return "—";
@@ -387,7 +386,7 @@ function PurchaseInvoiceDetailV2ReadOnly() {
   const detail = usePurchaseInvoiceDetail(id ?? null);
   const cancelPi = useCancelPurchaseInvoice();
   const postPi = usePostPurchaseInvoice();
-  const recordPayment = useRecordPiPayment();
+  const { can, pageAccess } = useHouzsAuth();
   const notify = useNotify();
   const askConfirm = useConfirm();
 
@@ -434,10 +433,7 @@ function PurchaseInvoiceDetailV2ReadOnly() {
   );
 
   const eff = purchaseInvoice ? effectiveOf(purchaseInvoice) : null;
-  const stageLabel = purchaseInvoice
-    ? STAGE_LABEL[(purchaseInvoice.status || "").toUpperCase()] ??
-      purchaseInvoice.status
-    : "";
+  const stageLabel = purchaseInvoice ? statusLabel("pi", purchaseInvoice.status) : "";
   const badgeTone = eff ? EFFECTIVE_TONE[eff].tone : "neutral";
 
   const outstanding = purchaseInvoice ? outstandingOf(purchaseInvoice) : 0;
@@ -478,8 +474,12 @@ function PurchaseInvoiceDetailV2ReadOnly() {
   };
   const print = usePrintPreview(deliverPrintPdf);
   useOpenPrintPreviewFromUrl(print.openPreview, !!purchaseInvoice);
-  const goRecordPayment = () =>
-    id && navigate(`/scm/purchase-invoices/${id}?tab=payments&record=1`);
+  /* A supplier invoice is paid with an AP Payment voucher, opened with this
+     invoice already ticked (docs/bugs/0889). This used to navigate to
+     `?tab=payments&record=1` on this same page, which reads neither. */
+  const goRecordPayment = () => {
+    if (purchaseInvoice) navigate(apPaymentHrefFor(purchaseInvoice));
+  };
   const doPost = async () => {
     if (!id) return;
     if (await askConfirm({
@@ -501,11 +501,6 @@ function PurchaseInvoiceDetailV2ReadOnly() {
       cancelPi.mutate(purchaseInvoice.id);
     }
   };
-  const doMarkPaid = () => {
-    if (!purchaseInvoice) return;
-    recordPayment.mutate({ id: purchaseInvoice.id, amountSen: outstanding });
-  };
-
   const lineColumns: Column<PiItem>[] = [
     {
       key: "item",
@@ -689,10 +684,8 @@ function PurchaseInvoiceDetailV2ReadOnly() {
 
   const rawStatus = (purchaseInvoice.status || "").toUpperCase();
   const isCancelled = rawStatus === "CANCELLED";
-  const isTerminal = isCancelled || rawStatus === "PAID";
   const canPost = rawStatus === "DRAFT";
-  const canRecordPayment = !isTerminal && outstanding > 0 && rawStatus !== "DRAFT";
-  const canMarkPaid = !isTerminal && outstanding === 0 && rawStatus !== "DRAFT";
+  const canRecordPayment = piAwaitsPayment(purchaseInvoice) && canOpenApPayment(can, pageAccess);
 
   return (
     <div className="pb-24 md:pb-0">
@@ -789,9 +782,6 @@ function PurchaseInvoiceDetailV2ReadOnly() {
             )}
             {canRecordPayment && (
               <Button variant="secondary" icon={<Wallet size={14} />} onClick={goRecordPayment}>Record payment</Button>
-            )}
-            {canMarkPaid && (
-              <Button variant="secondary" icon={<CheckCircle2 size={14} />} onClick={doMarkPaid}>Mark paid</Button>
             )}
             <Button variant="secondary" icon={<Plus size={14} />} onClick={goAddLine}>{ADD_LINE_LABEL}</Button>
             <Button variant="primary" icon={<Edit3 size={14} />} onClick={goEdit}>Edit</Button>

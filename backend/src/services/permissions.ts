@@ -168,8 +168,18 @@ export const PERMISSIONS: PermissionDef[] = [
   // matched on a merchant report, claimed by a bank statement, or sitting in a
   // closed month is refused to everybody, this key included, because by then
   // the figure is evidence somebody has signed off. Nobody holds it by default
-  // except '*'; grant the finance positions via Team > Positions.
-  { key: "scm.so_payment.amend", resource: "Supply Chain", verb: "manage", label: "Correct a recorded payment", description: "Change or remove a customer payment after the day it was keyed in — the journal entry is reversed and re-booked with it. Refused once the payment has been reconciled." },
+  // except '*'; grant it to a ROLE under Team > Roles & Permissions (the Roles
+  // section — it is a flat key, not a position capability).
+  //
+  // HOLDING IT LITERALLY MEANS OWING A REASON (owner 2026-09-14, docs/bugs/0888:
+  // 只要是有关 collection payment 的，我或有权限的用户做的动作都要记录写 reason). A
+  // role that carries this key in its own list — hasPermissionLiterally, the
+  // wildcard alone does not count — gives a reason for EVERY payment action on
+  // a sales order (record, change, remove, attach proof), same day or not, and
+  // every such action is listed on Accounting › Corrections beside who first
+  // recorded the payment. A role without it is as before: same-day fixes free,
+  // a correction after the day only through this key or '*', with a reason.
+  { key: "scm.so_payment.amend", resource: "Supply Chain", verb: "manage", label: "Correct a recorded payment", description: "Change or remove a customer payment after the day it was keyed in — the journal entry is reversed and re-booked with it. Refused once the payment has been reconciled. A role that holds this key gives a reason for EVERY payment it records, changes, removes or attaches proof to, and those actions are listed on Accounting › Corrections." },
 
   // Stock take supervision (owner-approved phase 1, 2026-08-08). A stock take
   // carries an ASSIGNEE (scm.stock_takes.assignee_staff_id — the person

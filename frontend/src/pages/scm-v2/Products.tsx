@@ -84,8 +84,9 @@ import {
   type SpecialAddonRow,
   type SpecialAddonInput,
   type SpecialAddonGroup,
-  type SpecialAddonsHistoryRow,
+  type SpecialAddonsHistoryRow, mfgCategoryLabel,
 } from '../../vendor/scm/lib/mfg-products-queries';
+import { CategorySwapSelect } from '../../vendor/scm/components/CategorySwapSelect';
 import { useStaffLookup } from '../../hooks/useStaffLookup';
 import { useFabricTrackings } from '../../vendor/scm/lib/fabric-queries';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
@@ -219,6 +220,7 @@ export const Products = () => {
 const CATEGORIES: { value: MfgCategory | 'all'; label: string }[] = [
   { value: 'all', label: 'All' },
   { value: 'ACCESSORY', label: 'Accessory' },
+  { value: 'FABRIC_ACCESSORY', label: 'Sofa Accessory' },
   { value: 'BEDFRAME', label: 'Bedframe' },
   { value: 'SOFA', label: 'Sofa' },
   { value: 'MATTRESS', label: 'Mattress' },
@@ -740,7 +742,7 @@ const SkuMasterTab = () => {
           label: 'Category',
           width: '110px',
           getValue: (r) => r.category,
-          render: (r) => <span className={styles.catPill}>{r.category}</span>,
+          render: (r) => <span className={styles.catPill}>{mfgCategoryLabel(r.category)}</span>,
         },
         {
           key: 'size',
@@ -1298,7 +1300,7 @@ const ProductRow = memo(({
         </>
       ) : (
         <>
-          <td><span className={styles.catPill}>{row.category}</span></td>
+          <td><span className={styles.catPill}>{mfgCategoryLabel(row.category)}</span></td>
           <td>{row.size_label ?? '—'}</td>
           <td className={baseSen ? styles.price : styles.priceEmpty}>
             {editMode ? (
@@ -3910,7 +3912,7 @@ const NewSkuDrawer = ({ onClose }: { onClose: () => void }) => {
   // Branding datalist — maintenance pool first, DISTINCT fallback. Free text
   // stays possible (datalist, not a hard select) so legacy values aren't blocked.
   const brandingPool = useBrandingPool();
-  type Cat = 'BEDFRAME' | 'SOFA' | 'ACCESSORY' | 'MATTRESS' | 'BEDLINES' | 'DINING' | 'DIFFUSER' | 'CARPET' | 'SERVICE';
+  type Cat = MfgCategory;
   /* 2990 is a trading company — no in-house manufacturing. Production-time
      tracking dropped (was HOOKKA legacy). DB column production_time_minutes
      stays for now but the UI no longer collects it. */
@@ -3981,11 +3983,7 @@ const NewSkuDrawer = ({ onClose }: { onClose: () => void }) => {
               <span className={styles.fieldLabel}>Category *</span>
               <select className={styles.fieldSelect} value={form.category}
                 onChange={(e) => set('category', e.target.value as Cat)}>
-                <option value="BEDFRAME">Bedframe</option>
-                <option value="SOFA">Sofa</option>
-                <option value="MATTRESS">Mattress</option>
-                <option value="ACCESSORY">Accessory</option>
-                <option value="SERVICE">Service</option>
+                {CATEGORIES.filter((c) => c.value !== 'all').map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
               </select>
             </label>
             <Field label="Size Label" value={form.sizeLabel} onChange={(v) => set('sizeLabel', v)} />
@@ -4252,6 +4250,7 @@ const ProductSuppliersDrawer = ({
             <p style={{ marginTop: 4, fontSize: 'var(--fs-13)', color: '#767b6e' }}>
               {row.name}{row.description ? ` — ${row.description}` : ''}
             </p>
+            {!row.model_id && <CategorySwapSelect kind="sku" id={row.id} category={row.category} />}
             {/* 0166 — barcode lives on the SKU detail drawer (the SKU Master
                 grid column is read-only + default-hidden). Saves on Enter. */}
             <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 6 }}>

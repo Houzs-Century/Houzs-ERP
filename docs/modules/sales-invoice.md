@@ -649,12 +649,30 @@ The **quantity** an SI consumes is the DO line's remaining invoiceable pool
 
 ---
 
-## 5a. Carried-over deliveries cannot be invoiced by hand
+## 5a. Carried-over deliveries AutoCount invoiced cannot be invoiced by hand
 
 A delivery order flagged `migrated_no_stock` (migration 0276) was carried over
-from AutoCount at the 2026-08 cutover, and AutoCount already raised its sales
-invoice. Every path that can attach one to an invoice refuses it with **409
-`migrated_source_document`**:
+from AutoCount at the 2026-08 cutover. When AutoCount already raised its sales
+invoice, every path that can attach it to an invoice refuses it with **409
+`migrated_source_document`**.
+
+**A carried-over delivery AutoCount NEVER invoiced is invoiced like any other**
+(since 2026-09-15, `docs/bugs/0918-delivery-orders-carried-over-from-autocount-could-not-be-inv.md`).
+The ERP raises the invoices since go-live, and on 2026-09-15 AutoCount had
+invoiced 52 of the 172 carried-over deliveries and never invoiced 120. Those 120
+were being refused, so delivered orders could not be billed.
+
+- Which deliveries AutoCount never invoiced is measured in the book and
+  committed as `backend/src/scm/lib/migrated-deliveries-not-invoiced.generated.ts`.
+  Regenerate it with `list-migrated-deliveries.mjs` then
+  `export-migrated-deliveries-not-invoiced.py`.
+- `deliveryMustMirrorAutoCount` (`scm/lib/migrated-chain.ts`) refuses a
+  migrated delivery unless it is on that list. A delivery the measurement does
+  not name keeps the refusal.
+- A delivery on the list gets an ordinary invoice: an ERP number, its revenue
+  journal, and a `do_to_iv` transfer that raises the invoice in AutoCount.
+
+The refusal covers these paths:
 
 | path | how it reaches the delivery |
 |---|---|
@@ -1029,6 +1047,18 @@ every report, export and AutoCount read still goes to it. One of the five
 documents in the owner's ruling. Trace:
 `docs/bugs/0851-one-rung-three-words-the-filter-tab-said-submitted-while-the.md`.
 
+> **CORRECTED AGAIN 2026-09-14 — the header BADGE and the phone still said "Sent".**
+> The detail page's header `<Badge>` read a separate flat `STAGE_LABEL` map, a shape
+> neither `localStatusMapsAgree.test.ts` nor `confirmRungReadsSubmitted.test.ts`
+> parsed, and the phone header (`frontend/src/mobile/MobileModuleDetail.tsx`)
+> title-cased the stored value. Both now read `statusLabel("si", …)`, so a SENT
+> invoice shows **Submitted** in the badge and on the phone. The same badge also
+> changes `PARTIALLY_PAID` from "Partially paid" to "Partially Paid" and `VOID` from
+> the raw key to "Void". Pinned on the rendered page by
+> `frontend/src/pages/scm-v2/markPaidRecordsTheMoney.test.tsx` (*the header badge
+> reads the canonical word*). Trace:
+> `docs/bugs/0868-the-detail-header-badge-said-posted-and-sent-where-the-owner.md`.
+
 ---
 
 ## Add line — opens IN PLACE, draft only (2026-09-13)
@@ -1068,3 +1098,16 @@ sales invoice and has no add-line affordance (nor for the four 0853 documents).
 
 Tests: `frontend/src/pages/scm-v2/salesInvoiceAddLine.test.tsx` (mounts the real
 page). Trace: `docs/bugs/0870-the-sales-invoice-could-not-add-a-line-on-any-surface-the-en.md`.
+
+---
+
+## Print all goes through the Print preview (2026-09-14)
+
+**Print all** on `frontend/src/pages/scm-v2/SalesInvoicesListV2.tsx` used to go
+straight to "One combined PDF / Separate files" and a download. It now opens the
+shared `PrintPreviewBatchModal` (`usePrintPreview(deliverSelectedSis)`), like the
+other document lists: **Print now** and **View full PDF** render one merged file,
+and only **Download PDF** still asks combined-or-separate. Found beside the
+Purchase Order list's identical gap (owner: 「PO打印没有这个」). Pinned by
+`frontend/src/pages/scm-v2/batchPrintGoesThroughPreview.test.ts`. Trace:
+`docs/bugs/0890-print-all-on-the-purchase-order-and-sales-invoice-lists-skip.md`.

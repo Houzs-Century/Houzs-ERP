@@ -61,7 +61,7 @@ message rather than a company-mismatch 404.
 | Desktop detail | `frontend/src/pages/scm-v2/PurchaseReturnDetailV2.tsx` |
 | Desktop new | `frontend/src/pages/scm-v2/PurchaseReturnNew.tsx` |
 
-> **Status WORDS come from `frontend/src/vendor/scm/lib/status-pill.ts` (2026-09-13).** The list gets its label through `withStatusLabels("pr", …)` and the detail through `statusLabel("pr", …)`; each keeps its own tone, bucket and blurb. `DRAFT` is not in the canonical `pr` map and resolves to "Draft" through its humanise fallback. Nothing on screen changed. The detail header BADGE still reads a separate `STAGE_LABEL` that says Posted where the canonical word is Confirmed — recorded, not fixed, in `docs/bugs/0866-six-status-maps-collapsed-onto-status-pill-and-the-detail-ba.md`.
+> **Status WORDS come from `frontend/src/vendor/scm/lib/status-pill.ts` (2026-09-13).** The list gets its label through `withStatusLabels("pr", …)` and the detail through `statusLabel("pr", …)`; each keeps its own tone, bucket and blurb. `DRAFT` is not in the canonical `pr` map and resolves to "Draft" through its humanise fallback. Nothing on screen changed. The detail header BADGE read a separate `STAGE_LABEL` that said Posted where the canonical word is Confirmed; since 2026-09-14 it calls `statusLabel("pr", …)`, and the phone header reads Confirmed too — `docs/bugs/0868-the-detail-header-badge-said-posted-and-sent-where-the-owner.md`.
 
 ### The desktop list has a right-click menu (2026-08-22)
 
@@ -273,6 +273,7 @@ Unlike Delivery Return, there is **no sales-scope row filter** here — procurem
 
 ## See also
 
+- `docs/line-export-columns.md` — the proposed one-row-per-line export columns for every transaction document, and which columns the import may change
 - `docs/modules/delivery-return.md` — the mirror module, same shape
 - `docs/unlinked-line-duplicate-coe.md` — why the guard exists
 - `BUG-HISTORY.md` 2026-08-04, "The two RETURN chains had the same nullable-link

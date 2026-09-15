@@ -6,6 +6,10 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, test, vi } from 'vitest';
 import type { RpReport } from '../../vendor/scm/lib/rp-report-queries';
+import type { LaidNode } from '../../vendor/scm/lib/report-layout';
+
+const line = (key: string, code: string, label: string, cells: Record<string, number>, pct: number): LaidNode =>
+  ({ kind: 'account', id: `acc:${key}`, label, code, key, amountSen: Object.values(cells).reduce((s, v) => s + v, 0), pct, cells, children: [] });
 
 const report: RpReport = {
   from: '2026-07-01', to: '2026-07-31', byParty: false,
@@ -29,6 +33,24 @@ const report: RpReport = {
     { jeNo: 'JE-3', entryDate: '2026-07-15', sourceType: 'PV', sourceDocNo: 'PV-3', narration: null, party: 'FOSHAN CHAIRS', side: 'P', rowKey: '601-0003', column: '310-0010', sen: 40000 },
     { jeNo: 'JE-3', entryDate: '2026-07-15', sourceType: 'PV', sourceDocNo: 'PV-3', narration: null, party: 'FOSHAN CHAIRS', side: 'P', rowKey: 'ADV', column: '310-0010', sen: 30000 },
   ],
+  /* The rows on the tree (docs/bugs/0912): the owner's "Purchases" holds the
+     sofa row; the advance follows the tree. */
+  layout: {
+    stored: true,
+    receipts: [
+      { kind: 'category', id: 'sec:CURRENT ASSETS', label: 'CURRENT ASSETS', amountSen: 70000, pct: 100, cells: { '310-0010': 50000, '320-0000': 20000 }, children: [
+        line('300-0000', '300-0000', '300-0000 · ACCOUNT RECEIVEABLE', { '310-0010': 50000 }, 71.4),
+        line('XFER:310-0010', '310-0010', 'Transfer from 310-0010 · CASH AT BANK - MAYBANK', { '320-0000': 20000 }, 28.6),
+      ] },
+    ],
+    payments: [
+      { kind: 'category', id: 'cat:purchases', label: 'Purchases', amountSen: 40000, pct: 52.6, cells: { '310-0010': 40000 }, children: [
+        line('601-0003', '601-0003', '601-0003 · PURCHASE OF SOFA', { '310-0010': 40000 }, 52.6),
+      ] },
+      line('910-0000', '910-0000', '910-0000 · UTILITIES', { '320-0000': 6000 }, 7.9),
+      line('ADV', 'ADV', 'Supplier advances (预付)', { '310-0010': 30000 }, 39.5),
+    ],
+  },
 };
 const lastPath = { value: '' };
 
@@ -50,6 +72,13 @@ vi.mock('../../vendor/scm/lib/rp-report-pdf', async (importOriginal) => ({
   ...(await importOriginal() as object),
   generateRpPdf: vi.fn(async () => undefined),
 }));
+vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ can: () => true }) }));
+vi.mock('./ReportLayoutEditor', () => ({ ReportLayoutEditor: () => <div role="dialog" aria-label="Layout · Receipts & Payments">editor</div> }));
+/* The monthly view has its own contract (MonthlyReport.test.tsx); here it only has to be reached. */
+vi.mock('./MonthlyReport', () => ({
+  MonthlyReport: (p: { title: string; withCumulative: boolean }) => <div role="region" aria-label={`Monthly · ${p.title}`}>{p.withCumulative ? 'with 累计' : 'no 累计'}</div>,
+  ByMonthButton: ({ on, onToggle }: { on: boolean; onToggle: () => void }) => <button type="button" aria-pressed={on} onClick={onToggle}>By month</button>,
+}));
 
 import { ReceiptsPaymentsTab } from './ReceiptsPayments';
 import { generateRpPdf } from '../../vendor/scm/lib/rp-report-pdf';
@@ -64,17 +93,30 @@ describe('the Receipts & Payments tab', () => {
     expect(screen.getByText('Total receipts').closest('tr')!.textContent).toContain('700.00');
     expect(screen.getByText('Total payments').closest('tr')!.textContent).toContain('760.00');
     expect(screen.getByText('Closing balance').closest('tr')!.textContent).toContain('(160.00)');
-    /* A coded row renders "code · name" in two nodes — match the name node. */
-    expect(screen.getByText(/PURCHASE OF SOFA/)).toBeTruthy();
+    expect(screen.getByText('601-0003 · PURCHASE OF SOFA')).toBeTruthy();
     expect(screen.getByText('Supplier advances (预付)')).toBeTruthy();
+    /* The tree (docs/bugs/0912): the category with its per-column subtotal
+       and its % of the side's total; every row its %; the balance lines
+       carry the side's 100%. */
+    const purchases = screen.getByText('Purchases').closest('tr')!;
+    expect(purchases.getAttribute('data-kind')).toBe('category');
+    expect(purchases.textContent).toContain('400.00');
+    expect(purchases.textContent).toContain('52.6%');
+    expect(screen.getByText('601-0003 · PURCHASE OF SOFA').closest('tr')!.getAttribute('data-depth')).toBe('2');
+    expect(screen.getByText('Supplier advances (预付)').closest('tr')!.textContent).toContain('39.5%');
+    expect(screen.getByText('Total payments').closest('tr')!.textContent).toContain('100.0%');
+    expect(screen.getByText('%', { selector: 'th' })).toBeTruthy();
   });
 
-  test('a figure opens the entries behind it; the toggle and the account ticks change the read', () => {
+  test('a figure opens the entries behind it — a category\'s figure, every row under it; the toggle and the account ticks change the read', () => {
     render(<ReceiptsPaymentsTab />);
-    fireEvent.click(screen.getByLabelText('PURCHASE OF SOFA 310-0010'));
-    expect(screen.getByText(/PURCHASE OF SOFA · 310-0010 — 1 entry/)).toBeTruthy();
+    fireEvent.click(screen.getByLabelText('601-0003 · PURCHASE OF SOFA 310-0010'));
+    expect(screen.getByText(/601-0003 · PURCHASE OF SOFA · 310-0010 — 1 entry/)).toBeTruthy();
     expect(screen.getByText('FOSHAN CHAIRS')).toBeTruthy();
     expect(screen.getByText(/Payment voucher PV-3/)).toBeTruthy();
+    /* The category's total: the sofa row's entry, and it alone here. */
+    fireEvent.click(screen.getByLabelText('Purchases total'));
+    expect(screen.getByText(/Purchases — 1 entry/)).toBeTruthy();
 
     fireEvent.click(screen.getByLabelText('Show debtor and creditor names'));
     expect(lastPath.value.endsWith('|true')).toBe(true);
@@ -86,5 +128,27 @@ describe('the Receipts & Payments tab', () => {
     render(<ReceiptsPaymentsTab />);
     fireEvent.click(screen.getByText('Print'));
     expect(vi.mocked(generateRpPdf)).toHaveBeenCalledWith(report);
+  });
+
+  test('By month opens the monthly view with 累计; Print steps aside; the account ticks still narrow the read (docs/bugs/0916)', () => {
+    render(<ReceiptsPaymentsTab />);
+    fireEvent.click(screen.getByRole('button', { name: 'By month' }));
+    expect(screen.getByRole('region', { name: /Monthly · Receipts & Payments/ }).textContent).toBe('with 累计');
+    expect(screen.queryByText('Closing balance')).toBeNull();
+    expect((screen.getByText('Print').closest('button') as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByLabelText('Column 310-0010')).toBeTruthy();
+  });
+
+  test('L1 folds the rows to their categories; the Layout button opens the editor', () => {
+    render(<ReceiptsPaymentsTab />);
+    fireEvent.click(screen.getByRole('button', { name: 'L1' }));
+    expect(screen.queryByText('601-0003 · PURCHASE OF SOFA')).toBeNull();
+    expect(screen.getByText('Purchases').closest('tr')!.textContent).toContain('400.00');
+    /* A row at the top level stays. */
+    expect(screen.getByText('910-0000 · UTILITIES')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'All' }));
+    expect(screen.getByText('601-0003 · PURCHASE OF SOFA')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Layout' }));
+    expect(screen.getByRole('dialog', { name: 'Layout · Receipts & Payments' })).toBeTruthy();
   });
 });
