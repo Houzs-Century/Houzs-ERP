@@ -22,7 +22,7 @@ export const PI_HEADER_COLS =
 /* Supplier CONTACT fields ride the list embed — the quick-view drawer's
    SUPPLIER panel renders off the list row (owner 2026-07-24: all "—"). */
 export const PI_LIST_SELECT =
-  `${PI_HEADER_COLS}, supplier:suppliers(id, code, name, contact_person, phone, email, address), purchase_order:purchase_orders(id, po_number), grn:grns(id, grn_number, delivery_note_ref)`;
+  `${PI_HEADER_COLS}, supplier:suppliers(id, code, name, contact_person, phone, email, address), purchase_order:purchase_orders(id, po_number), grn:grns(id, grn_number, delivery_note_ref), linked_ac_docno`;
 
 /** The list's filter contract, as the query string carries it. */
 export type PiListFilters = {

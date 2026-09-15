@@ -5,6 +5,7 @@ import { poPriceByPoItemId, poRefByPoItemId, stampGrnLinePoRefs, type LinePoRef 
 import { Hono } from 'hono';
 import { GRN_STATUS_BUCKETS } from '../lib/grn-status-buckets';
 import { GRN_HEADER_COLS, GRN_LIST_SELECT, filterGrnList, orderGrnList, readGrnListFilters } from '../lib/grn-list-read';
+import { attachGrnLines } from '../lib/grn-export-rows';
 import { HELD_OR_TERM, isDocumentHeld } from '../lib/document-hold';
 import { isReceivablePo } from '../lib/source-document-gates'; import { mountHoldRoute } from './document-hold-routes';
 import type { Context } from 'hono';
@@ -1101,7 +1102,15 @@ grns.get('/', async (c) => {
     downstream: [...(downstreamByGrn.get(g.id)?.values() ?? [])],
     ...computeGrnFlags(linesByGrn.get(g.id) ?? []),
   }));
-  if (paginate) return c.json({ grns, total, page, pageSize, statusCounts });
+  /* The page's LINES, in AutoCount's spelling — the same attach the export
+     uses (lib/grn-export-rows.ts), so a line column shows on screen exactly
+     what the file holds. The legacy unpaged path does not carry them: its
+     callers never render a line column. */
+  if (paginate) {
+    const withLines = await attachGrnLines(sb, c, grns);
+    if (withLines.error !== null) return c.json({ error: 'lines_read_failed', reason: withLines.error }, 500);
+    return c.json({ grns: withLines.rows, total, page, pageSize, statusCounts });
+  }
   return c.json({ grns });
 });
 

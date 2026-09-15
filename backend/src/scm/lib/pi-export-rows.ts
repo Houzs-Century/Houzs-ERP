@@ -16,7 +16,9 @@
 // ----------------------------------------------------------------------------
 
 import { activeCompanyId, scopeToCompany, type CompanyScopeCtx } from './companyScope';
-import { readDocumentsWithLines, lookupByIds } from './document-line-export';
+import { lookupByIds } from './document-line-export';
+import { pageWithTruncation } from './outstanding-po-lines';
+import { chunkIn } from './paginate-all';
 import { PI_LIST_SELECT, filterPiList, orderPiList, type PiListFilters } from './pi-list-read';
 import { lineExportDescription2 } from './line-export-description2';
 import { warehouseLabel } from './warehouse-label';
@@ -26,7 +28,7 @@ import { LOCATION_MAP } from '../../services/autocount-master-maps';
 import { bookLineItem, type BookLineItem } from '../../services/autocount-book-item';
 import { orderSofaModuleRowsWithinBuilds, sortSoLinesByGroupRank, type RawSoDisplayLine } from '../shared/so-line-display';
 
-export const PI_EXPORT_ROWS_SELECT = `${PI_LIST_SELECT}, linked_ac_docno`;
+export const PI_EXPORT_ROWS_SELECT = PI_LIST_SELECT;
 
 const LINE_COLS =
   'id, purchase_invoice_id, created_at, grn_item_id, item_code, material_name, description, description2, notes, ' +
@@ -123,25 +125,32 @@ function inDetailOrder(lines: RawLine[]): RawLine[] {
   return orderSofaModuleRowsWithinBuilds(ranked as unknown as RawSoDisplayLine[]) as unknown as RawLine[];
 }
 
-export type PiExportRows =
+export type PiRowsWithLines<H> =
   | { error: string }
-  | { error: null; rows: Array<HeaderRow & { lines: PiExportLine[] }>; lineCount: number; truncated: boolean };
+  | { error: null; rows: Array<H & { lines: PiExportLine[] }>; lineCount: number };
 
-export async function readPiExportRows(sbIn: unknown, c: CompanyScopeCtx, filters: PiListFilters): Promise<PiExportRows> {
+/**
+ * Attach every line of the given purchase_invoices rows, each value in AutoCount's spelling
+ * where the ERP can know it. ONE function for the list page (GET / with `page`)
+ * and GET /export/rows, so a line column shows on screen exactly what the file
+ * holds. Lines by header id in URL-sized batches, company predicate on the LINE
+ * read and on every lookup (R105).
+ */
+export async function attachPiLines<H extends HeaderRow>(sbIn: unknown, c: CompanyScopeCtx, headers: H[]): Promise<PiRowsWithLines<H>> {
   const sb = sbIn as Sb;
-  const read = await readDocumentsWithLines<HeaderRow, RawLine>({
-    headers: (from, to) =>
-      orderPiList(filterPiList(sb.from('purchase_invoices').select(PI_EXPORT_ROWS_SELECT), filters, c), filters.sort).range(from, to),
-    lines: (batch, from, to) =>
-      scopeToCompany(sb.from('purchase_invoice_items').select(LINE_COLS), c)
-        .in('purchase_invoice_id', batch)
-        .order('purchase_invoice_id', { ascending: true })
-        .order('id', { ascending: true })
-        .range(from, to) as Rows<RawLine>,
-    parentOf: (l) => l.purchase_invoice_id,
-  });
-  if (read.error !== null) return { error: read.error };
-  const allLines = [...read.linesByHeader.values()].flat();
+  const lineRead = await chunkIn<RawLine>([...new Set(headers.map((h) => h.id))], (batch, from, to) =>
+    scopeToCompany(sb.from('purchase_invoice_items').select(LINE_COLS), c)
+      .in('purchase_invoice_id', batch)
+      .order('purchase_invoice_id', { ascending: true })
+      .order('id', { ascending: true })
+      .range(from, to) as Rows<RawLine>);
+  if (lineRead.error) return { error: `lines: ${lineRead.error.message}` };
+  const allLines = lineRead.data;
+  const linesByHeader = new Map<string, RawLine[]>();
+  for (const l of allLines) {
+    const group = linesByHeader.get(l.purchase_invoice_id);
+    if (group) group.push(l); else linesByHeader.set(l.purchase_invoice_id, [l]);
+  }
 
   type GrnLine = { id: string; grn_id: string | null; supplier_sku: string | null; purchase_order_item_id: string | null };
   const grnLines = await lookupByIds<GrnLine>(allLines.map((l) => l.grn_item_id), (batch, from, to) =>
@@ -178,7 +187,7 @@ export async function readPiExportRows(sbIn: unknown, c: CompanyScopeCtx, filter
   if (wh.error) return { error: `warehouses: ${wh.error}` };
 
   const companyId = activeCompanyId(c) ?? null;
-  const headerOf = new Map(read.headers.map((h) => [h.id, h]));
+  const headerOf = new Map(headers.map((h) => [h.id, h]));
   const bySupplier = new Map<string, RawLine[]>();
   for (const l of allLines) {
     const k = String(headerOf.get(l.purchase_invoice_id)?.supplier_id ?? '');
@@ -198,9 +207,9 @@ export async function readPiExportRows(sbIn: unknown, c: CompanyScopeCtx, filter
     return { error: `item code bindings: ${(e as Error).message}` };
   }
 
-  const rows = read.headers.map((h) => ({
+  const rows = headers.map((h) => ({
     ...h,
-    lines: inDetailOrder(read.linesByHeader.get(h.id) ?? []).map((l): PiExportLine => {
+    lines: inDetailOrder(linesByHeader.get(h.id) ?? []).map((l): PiExportLine => {
       const g = l.grn_item_id ? grnLines.byId.get(l.grn_item_id) : undefined;
       const receipt = g?.grn_id ? grns.byId.get(g.grn_id) : undefined;
       const poLine = g?.purchase_order_item_id ? poLines.byId.get(g.purchase_order_item_id) : undefined;
@@ -229,5 +238,25 @@ export async function readPiExportRows(sbIn: unknown, c: CompanyScopeCtx, filter
     }),
   }));
 
-  return { error: null, rows, lineCount: allLines.length, truncated: read.truncated };
+  return { error: null, rows, lineCount: allLines.length };
+}
+
+export type PiExportRows =
+  | { error: string }
+  | { error: null; rows: Array<HeaderRow & { lines: PiExportLine[] }>; lineCount: number; truncated: boolean };
+
+/** Every purchase_invoices row the list's filter matches (all pages, stopped at the
+ *  ceiling with `truncated`), each with its lines — GET /export/rows. */
+export async function readPiExportRows(
+  sbIn: unknown,
+  c: CompanyScopeCtx,
+  filters: PiListFilters,
+): Promise<PiExportRows> {
+  const sb = sbIn as Sb;
+  const head = await pageWithTruncation<HeaderRow>((from, to) =>
+    orderPiList(filterPiList(sb.from('purchase_invoices').select(PI_EXPORT_ROWS_SELECT), filters, c), filters.sort).range(from, to));
+  if (head.error) return { error: `headers: ${head.error.message}` };
+  const out = await attachPiLines(sb, c, head.data ?? []);
+  if (out.error !== null) return { error: out.error };
+  return { error: null, rows: out.rows, lineCount: out.lineCount, truncated: head.truncated };
 }

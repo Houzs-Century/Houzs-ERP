@@ -28,6 +28,9 @@ export const SI_HEADER_COLS =
   'local_total_sen, total_cost_sen, total_margin_sen, margin_pct_basis, line_count, ' +
   'status, notes, sent_at, paid_at, confirmed_at, created_at, created_by, updated_at';
 
+/* The list's select: the header and the AutoCount invoice number. */
+export const SI_LIST_SELECT = `${SI_HEADER_COLS}, linked_ac_docno`;
+
 /** The list's filter contract, as the query string carries it. */
 export type SiListFilters = {
   status: string | null;

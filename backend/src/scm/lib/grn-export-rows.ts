@@ -26,7 +26,8 @@
 // ----------------------------------------------------------------------------
 
 import { activeCompanyId, scopeToCompany, type CompanyScopeCtx } from './companyScope';
-import { readDocumentsWithLines, lookupByIds } from './document-line-export';
+import { lookupByIds } from './document-line-export';
+import { pageWithTruncation } from './outstanding-po-lines';
 import { chunkIn } from './paginate-all';
 import { GRN_HEADER_COLS, filterGrnList, orderGrnList, type GrnListFilters } from './grn-list-read';
 import { bookLineItem, type BookLineItem } from '../../services/autocount-book-item';
@@ -172,25 +173,32 @@ function inDetailOrder(lines: RawLine[]): RawLine[] {
   return orderSofaModuleRowsWithinBuilds(ranked as unknown as RawSoDisplayLine[]) as unknown as RawLine[];
 }
 
-export type GrnExportRows =
+export type GrnRowsWithLines<H> =
   | { error: string }
-  | { error: null; rows: Array<HeaderRow & { ac_doc_no: string | null; lines: GrnExportLine[] }>; lineCount: number; truncated: boolean };
+  | { error: null; rows: Array<H & { ac_doc_no: string | null; lines: GrnExportLine[] }>; lineCount: number };
 
-export async function readGrnExportRows(sbIn: unknown, c: CompanyScopeCtx, filters: GrnListFilters): Promise<GrnExportRows> {
+/**
+ * Attach every line of the given grns rows, each value in AutoCount's spelling
+ * where the ERP can know it. ONE function for the list page (GET / with `page`)
+ * and GET /export/rows, so a line column shows on screen exactly what the file
+ * holds. Lines by header id in URL-sized batches, company predicate on the LINE
+ * read and on every lookup (R105).
+ */
+export async function attachGrnLines<H extends HeaderRow>(sbIn: unknown, c: CompanyScopeCtx, headers: H[]): Promise<GrnRowsWithLines<H>> {
   const sb = sbIn as Sb;
-  const read = await readDocumentsWithLines<HeaderRow, RawLine>({
-    headers: (from, to) =>
-      orderGrnList(filterGrnList(sb.from('grns').select(GRN_EXPORT_ROWS_SELECT), filters, c), filters.sort).range(from, to),
-    lines: (batch, from, to) =>
-      scopeToCompany(sb.from('grn_items').select(LINE_COLS), c)
-        .in('grn_id', batch)
-        .order('grn_id', { ascending: true })
-        .order('id', { ascending: true })
-        .range(from, to) as Rows<RawLine>,
-    parentOf: (l) => l.grn_id,
-  });
-  if (read.error !== null) return { error: read.error };
-  const allLines = [...read.linesByHeader.values()].flat();
+  const lineRead = await chunkIn<RawLine>([...new Set(headers.map((h) => h.id))], (batch, from, to) =>
+    scopeToCompany(sb.from('grn_items').select(LINE_COLS), c)
+      .in('grn_id', batch)
+      .order('grn_id', { ascending: true })
+      .order('id', { ascending: true })
+      .range(from, to) as Rows<RawLine>);
+  if (lineRead.error) return { error: `lines: ${lineRead.error.message}` };
+  const allLines = lineRead.data;
+  const linesByHeader = new Map<string, RawLine[]>();
+  for (const l of allLines) {
+    const group = linesByHeader.get(l.grn_id);
+    if (group) group.push(l); else linesByHeader.set(l.grn_id, [l]);
+  }
 
   type PoLine = { id: string; purchase_order_id: string | null; so_item_id: string | null };
   const poLines = await lookupByIds<PoLine>(allLines.map((l) => l.purchase_order_item_id), (batch, from, to) =>
@@ -233,7 +241,7 @@ export async function readGrnExportRows(sbIn: unknown, c: CompanyScopeCtx, filte
     billed.set(pl.grn_item_id, acc);
   }
 
-  const wh = await lookupByIds<{ id: string; code: string | null; name: string | null }>(read.headers.map((h) => h.warehouse_id), (batch, from, to) =>
+  const wh = await lookupByIds<{ id: string; code: string | null; name: string | null }>(headers.map((h) => h.warehouse_id), (batch, from, to) =>
     sb.from('warehouses').select('id, code, name')
       .in('id', batch).order('id', { ascending: true }).range(from, to) as Rows<{ id: string; code: string | null; name: string | null }>);
   if (wh.error) return { error: `warehouses: ${wh.error}` };
@@ -244,7 +252,7 @@ export async function readGrnExportRows(sbIn: unknown, c: CompanyScopeCtx, filte
   const bookItem = new Map<string, BookLineItem>();
   const bySupplier = new Map<string, RawLine[]>();
   const supplierOf = new Map<string, HeaderRow>();
-  for (const h of read.headers) supplierOf.set(h.id, h);
+  for (const h of headers) supplierOf.set(h.id, h);
   for (const l of allLines) {
     const k = String(supplierOf.get(l.grn_id)?.supplier_id ?? '');
     const group = bySupplier.get(k);
@@ -262,9 +270,9 @@ export async function readGrnExportRows(sbIn: unknown, c: CompanyScopeCtx, filte
     return { error: `item code bindings: ${(e as Error).message}` };
   }
 
-  const rows = read.headers.map((h) => {
+  const rows = headers.map((h) => {
     const location = bookSpellingOrOwn(warehouseLabel(h.warehouse_id ? wh.byId.get(h.warehouse_id) : null), LOCATION_MAP);
-    const lines = inDetailOrder(read.linesByHeader.get(h.id) ?? []).map((l): GrnExportLine => {
+    const lines = inDetailOrder(linesByHeader.get(h.id) ?? []).map((l): GrnExportLine => {
       const poLine = l.purchase_order_item_id ? poLines.byId.get(l.purchase_order_item_id) : undefined;
       const po = poLine?.purchase_order_id ? pos.byId.get(poLine.purchase_order_id) : undefined;
       const bill = billed.get(l.id);
@@ -301,5 +309,25 @@ export async function readGrnExportRows(sbIn: unknown, c: CompanyScopeCtx, filte
     return { ...h, ac_doc_no: grnAcDocNo(h), lines };
   });
 
-  return { error: null, rows, lineCount: allLines.length, truncated: read.truncated };
+  return { error: null, rows, lineCount: allLines.length };
+}
+
+export type GrnExportRows =
+  | { error: string }
+  | { error: null; rows: Array<HeaderRow & { ac_doc_no: string | null; lines: GrnExportLine[] }>; lineCount: number; truncated: boolean };
+
+/** Every grns row the list's filter matches (all pages, stopped at the
+ *  ceiling with `truncated`), each with its lines — GET /export/rows. */
+export async function readGrnExportRows(
+  sbIn: unknown,
+  c: CompanyScopeCtx,
+  filters: GrnListFilters,
+): Promise<GrnExportRows> {
+  const sb = sbIn as Sb;
+  const head = await pageWithTruncation<HeaderRow>((from, to) =>
+    orderGrnList(filterGrnList(sb.from('grns').select(GRN_EXPORT_ROWS_SELECT), filters, c), filters.sort).range(from, to));
+  if (head.error) return { error: `headers: ${head.error.message}` };
+  const out = await attachGrnLines(sb, c, head.data ?? []);
+  if (out.error !== null) return { error: out.error };
+  return { error: null, rows: out.rows, lineCount: out.lineCount, truncated: head.truncated };
 }

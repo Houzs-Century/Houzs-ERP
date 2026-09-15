@@ -18,8 +18,10 @@
 // ----------------------------------------------------------------------------
 
 import { activeCompanyId, scopeToCompany, type CompanyScopeCtx } from './companyScope';
-import { readDocumentsWithLines, lookupByIds } from './document-line-export';
-import { SI_HEADER_COLS, filterSiList, orderSiList, type SiListFilters } from './si-list-read';
+import { lookupByIds } from './document-line-export';
+import { pageWithTruncation } from './outstanding-po-lines';
+import { chunkIn } from './paginate-all';
+import { SI_LIST_SELECT, filterSiList, orderSiList, type SiListFilters } from './si-list-read';
 import { lineExportDescription2 } from './line-export-description2';
 import { warehouseLabel } from './warehouse-label';
 import { bindingsFor } from './autocount-outbox';
@@ -27,7 +29,7 @@ import { bookSpellingOrOwn, resolveAcAgent } from '../../services/autocount-writ
 import { LOCATION_MAP } from '../../services/autocount-master-maps';
 import { bookLineItem, type BookLineItem } from '../../services/autocount-book-item';
 
-export const SI_EXPORT_ROWS_SELECT = `${SI_HEADER_COLS}, linked_ac_docno`;
+export const SI_EXPORT_ROWS_SELECT = SI_LIST_SELECT;
 
 const LINE_COLS =
   'id, sales_invoice_id, line_no, created_at, do_item_id, item_code, item_group, description, description2, notes, ' +
@@ -132,30 +134,32 @@ export function siExportAgent(agent: string | null | undefined, salespersonName:
   return resolveAcAgent(agent, salespersonName);
 }
 
-export type SiExportRows =
+export type SiRowsWithLines<H> =
   | { error: string }
-  | { error: null; rows: Array<HeaderRow & { ac_agent: string | null; lines: SiExportLine[] }>; lineCount: number; truncated: boolean };
+  | { error: null; rows: Array<H & { ac_agent: string | null; lines: SiExportLine[] }>; lineCount: number };
 
-export async function readSiExportRows(
-  sbIn: unknown,
-  c: CompanyScopeCtx,
-  filters: SiListFilters,
-  scopeIds: string[] | null,
-): Promise<SiExportRows> {
+/**
+ * Attach every line of the given sales_invoices rows, each value in AutoCount's spelling
+ * where the ERP can know it. ONE function for the list page (GET / with `page`)
+ * and GET /export/rows, so a line column shows on screen exactly what the file
+ * holds. Lines by header id in URL-sized batches, company predicate on the LINE
+ * read and on every lookup (R105).
+ */
+export async function attachSiLines<H extends HeaderRow>(sbIn: unknown, c: CompanyScopeCtx, headers: H[]): Promise<SiRowsWithLines<H>> {
   const sb = sbIn as Sb;
-  const read = await readDocumentsWithLines<HeaderRow, RawLine>({
-    headers: (from, to) =>
-      orderSiList(filterSiList(sb.from('sales_invoices').select(SI_EXPORT_ROWS_SELECT), filters, c, scopeIds), filters.sort).range(from, to),
-    lines: (batch, from, to) =>
-      scopeToCompany(sb.from('sales_invoice_items').select(LINE_COLS), c)
-        .in('sales_invoice_id', batch)
-        .order('sales_invoice_id', { ascending: true })
-        .order('id', { ascending: true })
-        .range(from, to) as Rows<RawLine>,
-    parentOf: (l) => l.sales_invoice_id,
-  });
-  if (read.error !== null) return { error: read.error };
-  const allLines = [...read.linesByHeader.values()].flat();
+  const lineRead = await chunkIn<RawLine>([...new Set(headers.map((h) => h.id))], (batch, from, to) =>
+    scopeToCompany(sb.from('sales_invoice_items').select(LINE_COLS), c)
+      .in('sales_invoice_id', batch)
+      .order('sales_invoice_id', { ascending: true })
+      .order('id', { ascending: true })
+      .range(from, to) as Rows<RawLine>);
+  if (lineRead.error) return { error: `lines: ${lineRead.error.message}` };
+  const allLines = lineRead.data;
+  const linesByHeader = new Map<string, RawLine[]>();
+  for (const l of allLines) {
+    const group = linesByHeader.get(l.sales_invoice_id);
+    if (group) group.push(l); else linesByHeader.set(l.sales_invoice_id, [l]);
+  }
 
   type DoLine = { id: string; delivery_order_id: string | null };
   const doLines = await lookupByIds<DoLine>(allLines.map((l) => l.do_item_id), (batch, from, to) =>
@@ -176,7 +180,7 @@ export async function readSiExportRows(
 
   /* Salesperson names, by ids of invoices already read under the company and
      sales scope — the staff read the Sales Invoice Detail Listing makes. */
-  const staff = await lookupByIds<{ id: string; name: string | null }>(read.headers.map((h) => h.salesperson_id), (batch, from, to) =>
+  const staff = await lookupByIds<{ id: string; name: string | null }>(headers.map((h) => h.salesperson_id), (batch, from, to) =>
     sb.from('staff').select('id, name')
       .in('id', batch).order('id', { ascending: true }).range(from, to) as Rows<{ id: string; name: string | null }>);
   if (staff.error) return { error: `salespeople: ${staff.error}` };
@@ -193,10 +197,10 @@ export async function readSiExportRows(
     return { error: `item code bindings: ${(e as Error).message}` };
   }
 
-  const rows = read.headers.map((h) => ({
+  const rows = headers.map((h) => ({
     ...h,
     ac_agent: siExportAgent(h.agent, h.salesperson_id ? staff.byId.get(h.salesperson_id)?.name ?? null : null),
-    lines: [...(read.linesByHeader.get(h.id) ?? [])].sort(byLinePosition).map((l): SiExportLine => {
+    lines: [...(linesByHeader.get(h.id) ?? [])].sort(byLinePosition).map((l): SiExportLine => {
       const doLine = l.do_item_id ? doLines.byId.get(l.do_item_id) : undefined;
       const delivery = doLine?.delivery_order_id ? dos.byId.get(doLine.delivery_order_id) : undefined;
       /* Where the goods shipped from: the delivery order's warehouse, else the
@@ -224,5 +228,26 @@ export async function readSiExportRows(
     }),
   }));
 
-  return { error: null, rows, lineCount: allLines.length, truncated: read.truncated };
+  return { error: null, rows, lineCount: allLines.length };
+}
+
+export type SiExportRows =
+  | { error: string }
+  | { error: null; rows: Array<HeaderRow & { ac_agent: string | null; lines: SiExportLine[] }>; lineCount: number; truncated: boolean };
+
+/** Every sales_invoices row the list's filter matches (all pages, stopped at the
+ *  ceiling with `truncated`), each with its lines — GET /export/rows. */
+export async function readSiExportRows(
+  sbIn: unknown,
+  c: CompanyScopeCtx,
+  filters: SiListFilters,
+  scopeIds: string[] | null,
+): Promise<SiExportRows> {
+  const sb = sbIn as Sb;
+  const head = await pageWithTruncation<HeaderRow>((from, to) =>
+    orderSiList(filterSiList(sb.from('sales_invoices').select(SI_EXPORT_ROWS_SELECT), filters, c, scopeIds), filters.sort).range(from, to));
+  if (head.error) return { error: `headers: ${head.error.message}` };
+  const out = await attachSiLines(sb, c, head.data ?? []);
+  if (out.error !== null) return { error: out.error };
+  return { error: null, rows: out.rows, lineCount: out.lineCount, truncated: head.truncated };
 }
