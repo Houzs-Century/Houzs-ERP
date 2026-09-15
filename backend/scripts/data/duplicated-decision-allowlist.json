@@ -497,11 +497,6 @@
     },
     {
       "check": "D1",
-      "key": "DWG,JPEG,JPG,MP4,PDF,PNG,SKP,WEBP|backend/src/routes/projects.ts frontend/src/pages/Projects.tsx",
-      "why": "AN UPLOAD WHITELIST, per endpoint, and deliberately not one list: each surface decides what IT accepts (portal vs staff vs mail vs OCR). 2 homes: PROJECT_ATTACH_ALLOWED, ALLOWED. Divergence costs a refused upload, never money or stock."
-    },
-    {
-      "check": "D1",
       "key": "EAST,JOHOR,KAJANG,KEDAH,KL,KLANG,MELAKA,NS,PAHANG,PENANG,PERAK,PJ,PUCHONG,RAWANG|backend/src/scm/lib/zone-classify.ts frontend/src/vendor/scm/lib/delivery-map-model.ts",
       "why": "THE DELIVERY ZONE NAMES. zone-classify.ts assigns a stop to a zone; delivery-map-model.ts colours it. Same vocabulary, two jobs — but a zone added to one and not the other renders an uncoloured stop, so it is recorded rather than waved through."
     },
