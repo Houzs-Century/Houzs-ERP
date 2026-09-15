@@ -5520,8 +5520,11 @@ buckets) — do not fully-hydrate 500 rows for a count.
 
 ### List free-text search (`?q=`)
 
-The paginated list's `?q=` runs ONE PostgREST `.or()` — built identically in the
-page-rows query and the money-KPI aggregate query, which must filter the same set
+The paginated list's `?q=` runs ONE PostgREST `.or()` — built ONCE in
+`backend/src/scm/lib/so-list-read.ts` (`prepareSoListRead` → `header`) and applied to the
+page-rows query, the money-KPI aggregate and the line export, which must filter the
+same set (until 2026-09-15 the money aggregate carried a hand copy without the phone
+arm — `docs/bugs/0925-the-sales-order-list-money-strip-ignored-a-customer-phone-se.md`)
 — over `doc_no / debtor_name / debtor_code / agent / sales_location / ref /
 customer_so_no / branding` + phone. It must cover the fields `customerRefOf`
 (`ref || customer_so_no || po_doc_no`, `frontend/src/lib/customer-ref.ts`) can
@@ -5551,8 +5554,8 @@ by a code too: `approvalCodeOrPart` reads the orders whose payments carry
 EXACTLY the typed code (an `eq`, not a substring, so no trigram index is
 owed; this company, capped at 500; a failed read refuses the list) and adds
 ONE `doc_no.in.(…)` term to
-the `.or()` — to the page query AND the money-KPI aggregate, which must
-filter the same set — and adds nothing when no payment matched, because an
+the `.or()` built by `so-list-read.ts` — so the page query, the money-KPI
+aggregate and the line export all admit it — and adds nothing when no payment matched, because an
 empty in-list is a PostgREST syntax error. Contracts:
 `so-list-approval-codes.test.ts`, `tests/soListApprovalCode.test.ts`,
 `frontend/src/pages/scm-v2/soListApprovalCode.test.ts`.
@@ -6610,3 +6613,62 @@ two words on one screen. Both are his, from different days; he picked.
 The stored value is unchanged, as always with a relabel. Guarded by
 `frontend/src/pages/scm-v2/localStatusMapsAgree.test.ts`. Trace:
 `docs/bugs/0864-the-sales-order-tab-said-in-production-and-the-pill-said-pro.md`.
+
+## Exports — every page the filters match (2026-09-15)
+
+Owner 2026-09-15: every document list exports **one row per line item**, holding
+**every row the list's current filter, tab and search match** across all pages,
+never the screen page. Column design: `docs/line-export-columns.md` §1, with the
+rulings and the differences listed there. Same build as the Purchase Order export
+(`docs/modules/purchase-order.md` *Exports*). Entry:
+`docs/bugs/0924-the-sales-order-and-delivery-order-list-export-held-one-scre.md`.
+
+- **One predicate set.** `backend/src/scm/lib/so-list-read.ts` is the list's filter:
+  sales scope (`applySoScope`), company, the second-level `f` rows
+  (`prepareSoListFilters`), the tab (`soStatusesForTab`; ON_HOLD reads the marker,
+  OTHER the out-of-vocabulary rows), the search (phone and approval code included) and
+  the `from`/`to` window. `GET /` (page and money strip; the counts take its
+  `scoped` half) and the export build their reads through it, so an export cannot
+  match other orders than the list.
+- `GET /mfg-sales-orders/export/lines?status=&q=&sort=&from=&to=&f=…`
+  (`routes/sales-order-exports.ts` → `lib/so-line-export.ts`, on the shared reader
+  `lib/document-line-export.ts`) → `{ columns, rows, soCount, lineCount, truncated }`.
+  Mounted before the main router; same area guard as the list; a refused `f` row is a
+  400, as on the list. Columns are `SO_LINE_EXPORT_COLUMNS` in
+  `lib/so-line-export-columns.ts`, a MIRROR of
+  `frontend/src/vendor/scm/lib/so-line-export-columns.ts` refereed by
+  `so-line-export-columns.canonical.test.ts`. **Header names and Line ID are an import
+  contract** (Delivery Date, Item Description 2, Remarks; matched by Line ID).
+- Header and lines join on **doc_no + company** (there is no header uuid); every line,
+  DO, PO and base-header read carries the company predicate.
+- **Delivered / Returned / Remaining Qty** are the app's own reading,
+  `soDeliverableRemaining` (routes/delivery-orders-mfg.ts) — the numbers the list's
+  Delivered column, the SO→DO picker and MRP use. **On Delivery Order Qty** is the qty
+  on linked delivery orders that are not cancelled and do not yet count as delivered by
+  `doCountsAsDelivered` — a DRAFT, since LOADED counts as delivered (2026-08-22).
+- **Status** is the list pill's word: `soListStatusWord` = `soRowStatus` over
+  `soStatusDisplay` (Partially Delivered / Delivered / Invoiced / Delivery Return when
+  the order's own delivery records say so), ` (On Hold)` after it; the canonical test
+  runs every status × delivery state × lifecycle against the list's functions. The
+  toolbar CSV's Status column prints the same word. Cancelled orders follow the tab.
+- **Location** is AutoCount's short code (`KL`) of the line's warehouse through
+  `bookSpellingOrOwn(code ?? name, LOCATION_MAP)`; a line with no warehouse keeps its
+  stored `location` text. **No estimate delivery dates** (owner 2026-09-15).
+- The header facts the list's VIEW does not carry — `linked_ac_docno`,
+  `delivery_address1..4` — are read off the base table.
+- A large export (over 1,000 lines) reads the company's DO / PO lines that link to any
+  SO line once and keeps the ones it needs, instead of one read per ~70 line ids (a
+  Worker caps subrequests per request). Measured 2026-09-15 over the read-only shim on
+  the full Houzs Century list (2,959 orders, 15,618 lines): 437 reads, 212 of them
+  inside `soDeliverableRemaining`; 845 before this change.
+- **The toolbar Export** pages `GET /mfg-sales-orders?page=` itself with the list's own
+  parameters (`frontend/src/vendor/scm/lib/sales-list-export.ts` `fetchAllSoListRows`),
+  heals the MRP-derived columns through `/list-mrp-enrichment` when Stock Status or
+  PO No. is shown, and refuses to write when the order count moved while the pages were
+  read. Wiring: `frontend/src/pages/scm-v2/use-sales-list-exports.ts`.
+- Read-only production check: `.github/workflows/po-line-export-check.yml` with
+  `document: so-do` (`backend/scripts/check-so-do-line-export.mjs`).
+- **Mobile**: the phone Sales Orders list (`mobile/MobileSalesOrders.tsx`) has no export
+  of any kind, so there is nothing to keep in step. Import is desktop-only by the
+  owner's decision (「手机不需要导入」, 2026-09-15) — a deliberate exception to
+  desktop/mobile parity.

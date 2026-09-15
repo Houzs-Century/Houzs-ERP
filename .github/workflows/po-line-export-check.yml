@@ -7,6 +7,11 @@ name: PO line export check (read-only)
 # estimate-date line/header split and the three POs the owner compared.
 # backend/scripts/check-po-line-export.mjs has the detail.
 #
+# document: so-do runs the SAME comparison for the Sales Order and Delivery
+# Order line exports instead (backend/scripts/check-so-do-line-export.mjs): the
+# SO Submitted tab, All with a second-level filter row (f=orderDate:between),
+# All; the DO Delivered tab, Confirmed tab, All — per company, line id by line id.
+#
 # Manual trigger only, own concurrency group, read-only session. Exit 0 for every
 # answer; non-zero only when the database cannot be reached.
 on:
@@ -20,9 +25,17 @@ on:
         options:
           - production
           - staging
+      document:
+        description: "Which export"
+        required: true
+        default: "po"
+        type: choice
+        options:
+          - po
+          - so-do
 
 concurrency:
-  group: po-line-export-check-${{ inputs.target }}
+  group: po-line-export-check-${{ inputs.document }}-${{ inputs.target }}
   cancel-in-progress: false
 
 jobs:
@@ -41,7 +54,7 @@ jobs:
           cache: npm
           cache-dependency-path: backend/package-lock.json
       - run: npm ci
-      - run: npx tsx scripts/check-po-line-export.mjs
+      - run: npx tsx scripts/check-${{ inputs.document == 'so-do' && 'so-do' || 'po' }}-line-export.mjs
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           NODE_OPTIONS: --dns-result-order=ipv4first
@@ -68,7 +81,7 @@ jobs:
           cache: npm
           cache-dependency-path: backend/package-lock.json
       - run: npm ci
-      - run: npx tsx scripts/check-po-line-export.mjs
+      - run: npx tsx scripts/check-${{ inputs.document == 'so-do' && 'so-do' || 'po' }}-line-export.mjs
         env:
           DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
           NODE_OPTIONS: --dns-result-order=ipv4first

@@ -13,7 +13,10 @@ Order one, and its columns are the template everything below follows.
 
 > **Built since** (2026-09-15): Goods Receipt (§5), Purchase Invoice (§6) and
 > Sales Invoice (§3), with the owner's rulings below and the differences listed
-> in [§ What the GR / PI / SI builds changed](#what-the-gr--pi--si-builds-changed).
+> in [§ What the GR / PI / SI builds changed](#what-the-gr--pi--si-builds-changed);
+> Sales Order (§1) and Delivery Order (§2), differences in
+> [§ What the SO / DO builds changed](#what-the-so--do-builds-changed)
+> (`docs/modules/sales-order.md`, `delivery-order.md`, *Exports*).
 > Their column contracts are `backend/src/scm/lib/{grn,pi,si}-line-export-columns.ts`;
 > the module guides (`docs/modules/grn.md`, `purchase-invoice.md`,
 > `sales-invoice.md`, *Exports*) describe them.
@@ -568,6 +571,36 @@ line tables or none, and were not in the owner's request. See Q12.
     payment vouchers and receipts — do these need a line export too?
 
 ---
+
+## What the SO / DO builds changed
+
+Owner rulings 2026-09-15 applied: the Delivery Order file has **no Unit Price,
+Discount or Line Total** (§2 rows 20–22 removed); **Driver and Vehicle stay**; no
+estimate dates on either. Where the build differs from the tables above, and why —
+each is the reading of the screen the export stands beside:
+
+- **SO Customer Ref / DO Customer Ref** is `ref`, else `customer_so_no` — the screens'
+  `customerRefOf` (the tables above said `customer_so_no` first).
+- **SO Doc Balance** is the view's live `balance_sen_live` (total − Σ payments), the
+  list's Balance column; the stored `balance_sen` is the gross total rewritten on every
+  edit and is only the fallback.
+- **SO Status** is the list pill, which is DERIVED: Partially Delivered / Delivered /
+  Invoiced / Delivery Return when the order's delivery records say so, not only the
+  stored word (`CONFIRMED` → Submitted).
+- **SO On Delivery Order Qty** counts linked delivery orders that have not shipped by
+  the app's rule today, `doCountsAsDelivered`: DRAFT only. The table above said
+  DRAFT/LOADED; LOADED (Confirmed) has counted as delivered since 2026-08-22, so a
+  LOADED order's lines are in Delivered Qty.
+- **SO Salesperson** follows the list: the header `agent` text when it is a name, else
+  the staff row of `salesperson_id`. **DO Salesperson** is the staff row of
+  `salesperson_id`, else `agent`.
+- **SO Location**: a line with no warehouse keeps its stored `location` text (already
+  the book's code). **DO Location** falls back to the header `sales_location`.
+- **SO lines**: every line of a matched order is exported; a line the deliverable
+  reading does not cover (a cancelled line — 0 of 16,229 in production on 2026-09-15)
+  prints blank Delivered / Returned / Remaining.
+- **DO Uninvoiced Qty** is the app's Pending (qty − invoiced − returned), blank on a
+  DRAFT or CANCELLED delivery order. **DO Delivered On** is the Malaysian calendar day.
 
 ## What the GR / PI / SI builds changed
 
