@@ -246,7 +246,7 @@ describe("Delivery Orders list: the ONE Export", () => {
   it("refuses to hand over a short file past the export's document limit", async () => {
     // A full 20,000-document window that still says there is more.
     const many = Array.from({ length: 20000 }, (_, i) => ({ id: `d-many-${i}`, do_number: `HC-DO-${i}`, status: "DELIVERED", lines: [] }));
-    h.authed.mockImplementation(async () => ({ deliveryOrders: many, total: 20000, lineCount: 0, next: 20000, truncated: true }));
+    h.authed.mockImplementation(async () => ({ deliveryOrders: many, total: 20000, lineCount: 0, next: 20000 }));
     mount("/scm/delivery-orders");
     fireEvent.click(screen.getByRole("button", { name: "Export" }));
     await waitFor(() => expect(h.notify).toHaveBeenCalled());
