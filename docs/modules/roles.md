@@ -20,7 +20,7 @@ Positions, Org Chart, Departments, Mailboxes) are separate concerns — see
 |---|---|---|
 | Role | `roles` table (`backend/src/db/schema.ts`) | `{ id, name, description, permissions (JSON string[]), is_system 0/1, scope_to_pic 0/1, created_at }`. No department/group column. |
 | Permission catalogue | `backend/src/services/permissions.ts` → `PERMISSIONS[]` | Flat `{ key, resource, verb, label, description }`, `verb ∈ read|create|write|manage`. `"*"` = wildcard, reserved for the Owner role. ~60 keys across ~12 `resource` groups. |
-| Members | `users.role_id` | Only a `COUNT(*)` is exposed (`member_count`). There is no per-role members endpoint. |
+| Members | `users.role_id` | Only a `COUNT(*)` is exposed (`member_count`). There is no per-role members endpoint. A member's role is SET elsewhere: the Role field on the desktop member profile (`frontend/src/pages/team/TeamMemberProfile.tsx`, since 2026-09-15) or the phone's member edit form, both through `PATCH /api/users/:id` — never from this screen, and never from a member's Title (see [`team-members.md`](./team-members.md) §3). |
 | Page access | `role_page_access` + `backend/src/services/pageAccess.ts` (`PAGES`) | 3-level (`none|partial|full`), backfilled from `permissions` for positionless users. The second matrix; edited in the Role-settings drawer. |
 
 There is **no** role `group`, **no** per-grant "last changed by" (actor lives
