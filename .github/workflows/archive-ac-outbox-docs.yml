@@ -4,6 +4,8 @@ name: Archive AutoCount outbox rows for named documents (DRY-RUN gated)
 # they leave the AutoCount Sync "Not accepted" list. archived_at only — never
 # DELETE, never touch status/last_error, reversible by clearing the column.
 # Only the doc_nos you name are touched; it never sweeps by status or age.
+# A named document that has not reached AutoCount is skipped, with the reason
+# (docs/bugs/0916).
 #
 # DRY-RUN by default. CONFIRM=ARCHIVE-THESE-AC-DOCS to write.
 
@@ -49,7 +51,8 @@ jobs:
           cache: npm
           cache-dependency-path: backend/package-lock.json
       - run: npm ci
-      - run: node scripts/archive-ac-outbox-docs.mjs
+      # tsx: the finished-document judgement is the page's own, imported from src/.
+      - run: npx tsx scripts/archive-ac-outbox-docs.mjs
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           DOC_NOS: ${{ inputs.doc_nos }}

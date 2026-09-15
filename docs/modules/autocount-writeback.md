@@ -6473,3 +6473,28 @@ chaise) goes through as itself when the same document holds another piece of
 that model under a different key. Such a document keeps its pieces as separate
 book lines. HC-PO-2609-063 and HC-PO-2609-047 had been refused on this.
 `docs/bugs/0909-a-sofa-piece-kept-as-its-own-book-line-was-folded-alone-and-refused.md`.
+
+## Cleared documents that reached AutoCount go back on the list (2026-09-15)
+
+`archive-ac-outbox-docs.mjs` cleared documents by number with no verdict, and
+on 2026-09-10 it cleared documents whose refusal was still open. They reached
+AutoCount later under live rows, but their old refusals stayed on the
+**Cleared** shelf with a refused badge. Six of those refusals were filed under
+a row id rather than the number (0774), so the page could never join them to
+the later arrival.
+
+The archive script now skips, and names, a document with a waiting send or
+with a refusal that no arrival came after. That judgement is `clearVerdict` in
+`backend/scripts/lib/cleared-arrived-plan.mjs`, over the page's own
+`acOutboxState` and `acRefusalPredatesArrival`; the script therefore runs
+under tsx.
+
+`restore-arrived-ac-outbox-docs.mjs` (workflow *Put cleared AutoCount documents
+that arrived back on the list*) handles the ones already cleared:
+
+- it clears `archived_at` on every script-cleared document that has since
+  arrived;
+- it first re-files each id-filed refusal under the document's number;
+- documents a person cleared on the page (`archived_by` set) stay cleared.
+
+`docs/bugs/0916-cleared-documents-that-reached-autocount-still-read-as-not-sent.md`.
