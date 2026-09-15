@@ -106,8 +106,7 @@ SOs; writes need `edit` on `scm.sales.invoices`.
 | Method | Path | Line | Purpose |
 |--------|------|------|---------|
 | GET | `/` | `:651` | List. `?page=` opts into pagination + `statusCounts`. The paginated path's sales scope / tab / company / search / date filter and its sort are built by `lib/si-list-read.ts` (`filterSiList`, `orderSiList`); the tab buckets live in `lib/si-status-buckets.ts`. |
-| GET | `/export/headers` | `backend/src/scm/routes/sales-invoice-exports.ts` | EVERY invoice the list's filter AND the caller's sales scope match (no `page`), in the list's row shape — the same stamps (SO dates, DO number, source POs, order deposit) and the same finance-key strip as `GET /`. `{ salesInvoices, total, truncated }`. |
-| GET | `/export/lines` | `backend/src/scm/routes/sales-invoice-exports.ts` | One row per invoice LINE of every matching invoice. `{ columns, rows, siCount, lineCount, truncated }`; `columns` is the contract in `lib/si-line-export-columns.ts`. See *Exports* below. |
+| GET | `/export/rows` | `backend/src/scm/routes/sales-invoice-exports.ts` | EVERY invoice the list's filter AND the caller's sales scope match (no `page`), in the list's row shape — the same stamps and finance strip as `GET /` — each with `lines` (`attachSiLines`). `{ salesInvoices, total, lineCount, truncated }`. The paged `GET /` carries the same `lines`. |
 | GET | `/invoiceable-do-lines` | `:749` | DO lines with `remaining > 0`. |
 | GET | `/:id` | `:759` | Header + items. Sales-scoped, finance-gated. |
 | POST | `/` | `:797` | Create. `asDraft: true` → DRAFT (no GL); else posts revenue at `:946`. |
@@ -799,7 +798,7 @@ a warning, not a block.
 | List columns / filters / buckets | `pages/scm-v2/SalesInvoicesListV2.tsx` | `mobile/MobileModuleList.tsx` config `:1113` |
 | Balance display (`total − paid`) | `SalesInvoicesListV2.tsx` / `SalesInvoiceDetailV2.tsx` | `mobile/MobileModuleList.tsx` `balanceCenti` (`:287`) — a duplicated computation, so a change to how balance is derived must land on both |
 | Server pagination opt-in | `useSalesInvoicesPaged` | `mobile/MobileModuleList.tsx` `SERVER_PAGINATED` (`:326`) |
-| List exports (Export lines + whole-listing Export, 2026-09-15) | `SalesInvoicesListV2.tsx` over `vendor/scm/lib/si-list-export.ts` | none — the phone list has no export of any kind; import is desktop-only by owner decision |
+| The one Export (AutoCount Detail Listing, one row per line, 2026-09-15) | `SalesInvoicesListV2.tsx` `exportLines` over `vendor/scm/lib/si-list-export.ts` + `pages/scm-v2/si-list-columns.tsx` | none — the phone list has no export of any kind; import is desktop-only by owner decision |
 | Detail fields | `pages/scm-v2/SalesInvoiceDetailV2.tsx` | `mobile/MobileModuleDetail.tsx` config `:275` |
 | Add line (DRAFT only) | `pages/scm-v2/SalesInvoiceAddLine.tsx`, mounted by `SalesInvoiceDetailV2.tsx` | `mobile/MobileAddLine.tsx`, mounted by `mobile/MobileModuleDetail.tsx` (since 2026-09-13); same `useAddSalesInvoiceItem`, same body, DRAFT via the shared `salesInvoiceLinesOpen`; see *Add line* above |
 | Confirm / Cancel / Reopen | `SalesInvoiceDetailV2.tsx:1130-1150` | `mobile/MobileModuleDetail.tsx:498-511`, gated by `useMayOperateDoc` (`:454`) → `canOperateSalesInvoices` (`frontend/src/auth/salesAccess.ts:210`) — the SAME helper the desktop uses |
@@ -1117,53 +1116,54 @@ Purchase Order list's identical gap (owner: 「PO打印没有这个」). Pinned 
 
 ---
 
-## Exports — every page the filters match (2026-09-15)
+## The one Export — AutoCount's Detail Listing, one row per line (2026-09-15)
 
-Owner 2026-09-15: every document list exports **one row per line item**, holding
-**every row the list's current filter matches**. Column design:
-`docs/line-export-columns.md` §3. Same build as the Purchase Order export.
+Owner 2026-09-15: every list's Excel export is **AutoCount's listing format**
+— the same captions and values — **one row per line**, holding **every row the
+list's tab / search / sort match** across all pages, with the grid's **visible
+columns**, funnels and sort. **Unlike GR and PI, a fresh Sales Invoices grid
+keeps its own columns** (owner 2026-09-15, 「默认跟我的data grid啊」):
+AutoCount's Sales Invoice Detail Listing columns — AutoCount Doc No, Agent,
+Curr. Code / Rate, Inclusive?, SubTotal (ex), Tax, Local Total, Cancelled and the
+line columns — follow in the chooser, **hidden**, in AutoCount's order
+(`SI_AC_COLUMN_KEYS`, one constant; captions `SI_LABELS` in
+`frontend/src/vendor/scm/lib/si-list-export.ts`). Ticking them on exports
+AutoCount's shape; a saved layout wins. The list screen stays one row per
+invoice.
 
-- `GET /export/lines` (`routes/sales-invoice-exports.ts` → `lib/si-line-export.ts`).
-  Columns are `SI_LINE_EXPORT_COLUMNS` in `backend/src/scm/lib/si-line-export-columns.ts`,
-  MIRRORED at `frontend/src/vendor/scm/lib/si-line-export-columns.ts` (refereed by its
-  canonical test). Header names and Line ID are an import contract (Delivery Date,
-  Item Description 2, Remarks).
-- **Sales scope**: both exports resolve `resolveSalesScopeIds` exactly as the list
-  and pass it to `filterSiList`, whose `scopeIds` parameter is REQUIRED — a seller's
-  file holds only the invoices their list shows.
-- **DO No. and Location come through the DO LINE** (`do_item_id` →
-  `delivery_order_items` → `delivery_orders`): `sales_invoice_items.so_item_id` is
-  empty on every production line. Location = the delivery order's warehouse, else
-  that order's `sales_location`, else the invoice's own `sales_location`, as
-  AutoCount's short code through `LOCATION_MAP`.
-- **Balance is net of the SO deposit**: `max(total − paid − deposit slice, 0)`, the
-  list's Outstanding rule (`vendor/scm/lib/si-outstanding.ts`); the slice is
-  stamped by the list's own `stampOrderDeposit`. That stamp fails soft on a
-  screen; the exports REFUSE (500) when it could not read, rather than write an
-  over-stated balance.
-- **Due Date is the stored value only** (owner 2026-09-15: never derived from a
-  credit term). Overdue Days = today (MYT) − Due Date while Balance > 0; blank
-  with no due date. Customer Ref follows the list's `customerRefOf` (ref, then
-  customer_so_no, then po_doc_no). Status is the list's word (`SI_STATUS_WORDS`).
-  Cancelled invoices follow the tab.
-- Cost and margin are never in the line file.
-- Read-only production check: `.github/workflows/grn-pi-si-line-export-check.yml`;
-  run 34941927326 (2026-09-15) matched Line ID by Line ID for both companies,
-  including one seller's scope (company 1: 3 invoices / 16 lines).
-- **On the list (desktop)**: an **Export lines** button beside *Transfer from*
-  (`SalesInvoicesListV2.tsx`, shared `pages/scm-v2/list-export-controls.tsx`) writes
-  `sales-invoice-lines-YYYY-MM-DD.xlsx` (sheet *SI Lines*) through `vendor/scm/lib/si-list-export.ts`; the toolbar
-  **Export** now calls `/export/headers` for the whole filtered set with the grid's
-  visible columns (`DataTable.onExport`); the header rows arrive stamped and finance-gated by the server. Both send the list's own tab,
-  settled search and sort — the paged hook builds its request from the same params
-  function. A `truncated` answer is refused, never written. The toolbar Export's
-  Status column writes the list's word. Bug ledger:
-  `docs/bugs/0925-the-goods-received-purchase-invoice-and-sales-invoice-list-e.md`.
-- NOT applied: the grid's per-column funnels (they filter only the loaded page).
-- Import is desktop-only by the owner's decision (「手机不需要导入」, 2026-09-15); no
-  SI line import exists yet on either surface.
-- Export lines is shown to a reader without write access too: it is a read under
-  the caller's sales scope.
-- **Mobile**: the phone Sales Invoice list (`mobile/MobileModuleList.tsx`) has no
-  export of any kind, so there is nothing to keep in step (§8).
-
+- **Server:** `GET /export/rows` → every document through the list's own filter
+  (paged past the ceiling; `truncated` refuses the file), each carrying
+  `lines` from `lib/si-export-rows.ts attachSiLines` — the SAME attach the paged list endpoint uses, so a
+  line column shows on screen what the file holds. Company predicate on every
+  line and lookup read.
+- **Grid:** DataTable `exportLines` (`frontend/src/components/dataTableLineExport.ts`).
+  Line columns come from `frontend/src/pages/scm-v2/si-list-line-columns.tsx` over the shared
+  `components/dataTableLineCells.tsx` (one value, or first + "+N" on screen; one
+  cell per line in the file). Money columns export ringgit (`exportValue`,
+  `exportFormat` money / rate); dates are real Excel dates yyyy/mm/dd.
+- **Values in AutoCount's spelling** (measured against the live book 2026-09-15,
+  snapshot `backend/scripts/data/ac-listing-lines.json.gz`, check
+  `backend/scripts/check-ac-listing-parity.mjs`): Doc No = the AutoCount
+  number, else ours; Item Code / Detail Description / Item Group / UOM from
+  `bookLineItem` (services/autocount-book-item.ts) with the write-back's
+  bindings; Location = AutoCount's short code; Detail Description 2 =
+  `lib/line-export-description2.ts` (the owner's variant rule). **A sofa is one
+  row per ERP piece** where the book holds one set line, so its Item Code, Unit
+  Price and Line Total differ from the book's by design.
+- Columns AutoCount has and this ERP keeps no value for (Proj No, Tax Code, line
+  Tax, the Desc2 UDF, Inclusive?) print blank — never pulled from AutoCount.
+- SI specifics: both the list and the export apply the caller's **sales
+  scope**; the server stamps the list's derived headers and strips finance keys.
+  DO No. and Location come through the **DO line** (the SI line's `so_item_id`
+  is empty). **Agent** = `resolveAcAgent` in the agent master's spelling (145 /
+  223 paired lines equal the book case-insensitively; 78 are migrated invoices
+  with no agent — a data gap not filled). The column assembly lives in
+  `pages/scm-v2/si-list-columns.tsx` (the page sits at the line cap).
+- Read-only production checks: `.github/workflows/grn-pi-si-line-export-check.yml`
+  (`/export/rows` line ids vs SQL per company and filter, and the AutoCount
+  parity columns).
+- **Mobile:** the phone list (`mobile/MobileModuleList.tsx`) has no export.
+  Import is desktop-only by the owner's decision (「手机不需要导入」).
+- Earlier the same day #3930 put a separate "Export lines" button on this list
+  and made the toolbar Export CSV write every row with money in sen; both are
+  replaced by this (`docs/bugs/0925-…`, `docs/bugs/0936-the-goods-received-purchase-invoice-and-sales-invoice-export.md`).
