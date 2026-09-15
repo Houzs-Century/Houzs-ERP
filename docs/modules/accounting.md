@@ -2252,6 +2252,37 @@ docs/bugs/0803 — only the two routes counted the entry once across every
 bank. Contract: the four "an internal transfer is one entry on two
 statements" tests in `backend/tests/bankMatchPerAccount.test.ts`.
 
+**The reconciliation screen reads like the statement, ticks on one list,
+and names entries by their documents (2026-09-15, docs/bugs/0918; owner: 日期
+一行，description 一行 … 打勾 match 时为什么还要跳出来？下面不是有 list 了吗 … 我需要
+看到 customer name，source 改成 reference，就是 or number, pv number … so number
+我还是需要 … 不是根据日期往下排的).** Four changes on one screen. The movements
+still to decide run by the bank's day then the line (`byDateThenLine`), and
+each reads date (dd/mm/yyyy) · line, then its reference, then its
+description. The tick state lives in `ReconcilePickProvider`
+(`frontend/src/pages/scm-v2/bank-reconcile-pick.tsx`), which both tables
+read — a movement is ticked in its own table, the entry it is in the
+outstanding list below (the list the screen already had; the second
+"Choose the entry" table is gone) — and a bar FIXED to the foot of the
+window carries the two totals, the refusal and "These are that entry", so
+nothing is scrolled to; the statement view and the month view wrap the same
+provider. The outstanding list's columns are Entry · Date · Reference ·
+Customer / payee · Debit · Credit, off two names the server writes on every
+ledger entry: `backend/src/acc/journal-refs.ts` (`resolveJournalRefs`,
+`withJournalRefs`) names a batch of entries in a handful of reads — a
+sales-order payment by its official receipt number when one exists and
+ALWAYS its order number (OR · SO), who = the order's customer; a voucher by
+its number, who = the payee; a payout by "<acquirer> payout dd/mm/yyyy",
+who = the acquirer; a reversal as its original; anything else by its
+document number and its party or note — and `bankStatementDetail`
+(`backend/src/scm/routes/accounting-bank.ts`) and the month detail
+(`backend/src/scm/routes/accounting-bank-months.ts`) name the account's
+ledger before the candidates and the outstanding list are cut from it, so
+a candidate under a movement carries the same reference and who. The
+general ledger page (next in the owner's queue) will name its lines through
+the same resolver. Contracts: `backend/src/acc/journal-refs.test.ts`,
+`frontend/src/pages/scm-v2/BankStatementTab.test.tsx`.
+
 **The lock reads what the screen reads (2026-09-11, docs/bugs/0818; owner,
 on June refusing to close at "RM 45,000.00 apart" under a panel that said ✓
 Tallies: 什么意思？).** `loadMonthForLock` (`accounting-bank-months.ts`) and
