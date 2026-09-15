@@ -1929,7 +1929,7 @@ endpoint and tab. The header view is untouched.
 
 - The AutoCount UDF dates are HEADER fields in the book, repeated on every line
   of its report. Mapping, proven against the live book 2026-09-15
-  (`docs/bugs/0916-autocount-supplier-delivery-dates-never-reached-the-erp-purc.md`):
+  (`docs/bugs/0918-autocount-supplier-delivery-dates-never-reached-the-erp-purc.md`):
   Estimate Delivery Date = `PO.UDF_EDate` -> `supplier_delivery_date_2`;
   Supplier Delivery Date 2 = `UDF_EDate2` -> `_3`; Supplier Delivery Date 3 =
   `UDF_EDate3` -> `_4`. The migrated POs got them once, through
