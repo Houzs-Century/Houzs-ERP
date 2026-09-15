@@ -17,7 +17,16 @@ describe('SO -> PO carries a Sofa Accessory colour', () => {
     expect(row.item_group).toBe('fabric_accessory');
     expect(row.so_item_id).toBe('so-line-1');
     expect(row.variants).toEqual(variants);
-    expect(String(row.description2)).toContain('NICCA-07');
-    expect(String(row.description2)).toContain('SPECIAL: Col:Nicca-07');
+    /* The note only repeats the colour, so it prints once (docs/bugs/0934). */
+    expect(row.description2).toBe('NICCA-07');
+  });
+
+  test('a Special Order note that says more than the colour still rides along', () => {
+    const variants = { fabricCode: 'BO315-28', extraAddonNote: 'BO315-28 SKY x2' };
+    const row = poConvertLineRow('po-1', {
+      itemCode: 'SQUARE PILLOW', itemName: 'SQUARE PILLOW', qty: 1, supplierSku: 'SQUARE PILLOW', unitPriceSen: 0, warehouseId: null,
+      deliveryDate: null, itemGroup: 'fabric_accessory', variants, soItemId: 'so-line-1', photoUrls: [],
+    }, true, 'fabric_accessory');
+    expect(row.description2).toBe('BO315-28 / SPECIAL: BO315-28 SKY x2');
   });
 });
