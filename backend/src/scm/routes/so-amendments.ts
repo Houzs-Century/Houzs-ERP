@@ -25,6 +25,7 @@ import {
   canLaneTransition, LANE_APPROVE_KEY, LANE_LABEL, type AmendmentLane,
 } from '../shared';
 import { applySoAmendment, reviseBoundPo, ReceivedFloorError } from '../lib/so-revision';
+import { chunkIn } from '../lib/paginate-all';
 import { raisePoFollowUps } from '../lib/amendment-po-followup';
 import { hasHouzsPerm, holdsHouzsPermLiterally, canViewAllSales, canWriteScmConfig } from '../lib/houzs-perms';
 import { resolveSalesScopeIds, applySoScope, soDocOutOfScope, resolveCallerStaffId, resolveUserIdByStaffId } from '../lib/salesScope';
@@ -313,22 +314,30 @@ soAmendments.get('/', async (c) => {
      detail's light bound-PO summary resolves (purchase_order_items.so_item_id →
      mfg_sales_order_items.id). The PO Amendments inbox merges the SO amendments
      that revise a bound PO alongside the direct po_amendments, so the purchasing
-     team sees the whole revision queue in one place. Three bounded queries over
-     the ≤500-row page, never per-row. Fail-soft: enrichment errors leave
-     bound_pos empty rather than failing the list. */
+     team sees the whole revision queue in one place. Three reads over the
+     ≤500-row page, never per-row, each batched by URL budget and paged
+     (chunkIn), because the id lists ride in the request line: on 2026-09-15
+     HOUZS's PO-line read already sent 10.6KB against the tree's 4KB budget,
+     with ~19.5KB known to be refused. A failed read fails the list: both PO
+     Amendments queues list an SO amendment only when bound_pos is non-empty, so
+     an empty field from a failed read looked exactly like "never purchased" and
+     the row left purchasing's queue with nothing to say why
+     (docs/bugs/0930-an-so-amendment-left-the-po-amendments-queue-when-a-bound-po.md). */
   const boundBySo = new Map<string, Array<{ id: string; po_number: string; status: string }>>();
   const allDocNos = [...new Set(rows.map((r) => r.so_doc_no).filter((x): x is string => !!x))];
   if (allDocNos.length > 0) {
-    const { data: soItemRows } = await sb.from('mfg_sales_order_items')
-      .select('id, doc_no').in('doc_no', allDocNos);
+    const { data: soItemRows, error: soItemErr } = await chunkIn(allDocNos, (batch, from, to) =>
+      sb.from('mfg_sales_order_items').select('id, doc_no').in('doc_no', batch).range(from, to));
+    if (soItemErr) return c.json({ error: 'load_failed', reason: soItemErr.message }, 500);
     const soItemToDoc = new Map<string, string>();
-    for (const r of (soItemRows ?? []) as Array<{ id: string; doc_no: string }>) soItemToDoc.set(r.id, r.doc_no);
+    for (const r of soItemRows as Array<{ id: string; doc_no: string }>) soItemToDoc.set(r.id, r.doc_no);
     const soItemIds = [...soItemToDoc.keys()];
     if (soItemIds.length > 0) {
-      const { data: poItemRows } = await sb.from('purchase_order_items')
-        .select('purchase_order_id, so_item_id').in('so_item_id', soItemIds);
+      const { data: poItemRows, error: poItemErr } = await chunkIn(soItemIds, (batch, from, to) =>
+        sb.from('purchase_order_items').select('purchase_order_id, so_item_id').in('so_item_id', batch).range(from, to));
+      if (poItemErr) return c.json({ error: 'load_failed', reason: poItemErr.message }, 500);
       const poToDocs = new Map<string, Set<string>>();
-      for (const r of (poItemRows ?? []) as Array<{ purchase_order_id: string | null; so_item_id: string | null }>) {
+      for (const r of poItemRows as Array<{ purchase_order_id: string | null; so_item_id: string | null }>) {
         const doc = r.so_item_id ? soItemToDoc.get(r.so_item_id) : undefined;
         if (!r.purchase_order_id || !doc) continue;
         const set = poToDocs.get(r.purchase_order_id) ?? new Set<string>();
@@ -337,9 +346,10 @@ soAmendments.get('/', async (c) => {
       }
       const poIds = [...poToDocs.keys()];
       if (poIds.length > 0) {
-        const { data: poRows } = await sb.from('purchase_orders')
-          .select('id, po_number, status').in('id', poIds);
-        for (const po of (poRows ?? []) as Array<{ id: string; po_number: string; status: string }>) {
+        const { data: poRows, error: poErr } = await chunkIn(poIds, (batch, from, to) =>
+          sb.from('purchase_orders').select('id, po_number, status').in('id', batch).range(from, to));
+        if (poErr) return c.json({ error: 'load_failed', reason: poErr.message }, 500);
+        for (const po of poRows as Array<{ id: string; po_number: string; status: string }>) {
           for (const doc of poToDocs.get(po.id) ?? []) {
             const list = boundBySo.get(doc) ?? [];
             list.push(po);
@@ -353,15 +363,17 @@ soAmendments.get('/', async (c) => {
      the SO header's own customer reference. Sent RAW (`ref`, `customer_so_no`):
      the frontend resolves the cell with customerRefOf, the one display rule the
      Sales Order list already uses, so the two screens cannot show different
-     references for one order. One bounded read over the page's doc_nos. A
-     failed read fails the list like the main read does: a blank column would
-     say "this order has no reference", which a failed read does not know. */
+     references for one order. One read over the page's doc_nos, batched like
+     the three above. A failed read fails the list like the main read does: a
+     blank column would say "this order has no reference", which a failed read
+     does not know. */
   const refBySo = new Map<string, { ref: string | null; customer_so_no: string | null }>();
   if (allDocNos.length > 0) {
-    const { data: soRefRows, error: soRefErr } = await scopeToCompany(sb.from('mfg_sales_orders')
-      .select('doc_no, ref, customer_so_no').in('doc_no', allDocNos), c);
+    const { data: soRefRows, error: soRefErr } = await chunkIn(allDocNos, (batch, from, to) =>
+      scopeToCompany(sb.from('mfg_sales_orders').select('doc_no, ref, customer_so_no').in('doc_no', batch), c)
+        .range(from, to));
     if (soRefErr) return c.json({ error: 'load_failed', reason: soRefErr.message }, 500);
-    for (const so of (soRefRows ?? []) as Array<{ doc_no: string; ref: string | null; customer_so_no: string | null }>) {
+    for (const so of soRefRows as Array<{ doc_no: string; ref: string | null; customer_so_no: string | null }>) {
       refBySo.set(so.doc_no, so);
     }
   }
