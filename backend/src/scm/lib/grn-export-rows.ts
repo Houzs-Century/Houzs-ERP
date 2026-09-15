@@ -28,7 +28,8 @@
 import { activeCompanyId, scopeToCompany, type CompanyScopeCtx } from './companyScope';
 import { readDocumentsWithLines, lookupByIds } from './document-line-export';
 import { chunkIn } from './paginate-all';
-import { GRN_LIST_SELECT, filterGrnList, orderGrnList, type GrnListFilters } from './grn-list-read';
+import { GRN_HEADER_COLS, filterGrnList, orderGrnList, type GrnListFilters } from './grn-list-read';
+import { bookLineItem } from '../../services/autocount-book-item';
 import { lineExportDescription2 } from './line-export-description2';
 import { warehouseLabel } from './warehouse-label';
 import { bindingsFor } from './autocount-outbox';
@@ -43,7 +44,13 @@ import { orderSofaModuleRowsWithinBuilds, sortSoLinesByGroupRank, type RawSoDisp
    its quantity back. */
 export const GRN_INVOICED_EXCLUDED_PI_STATUSES: ReadonlySet<string> = new Set(['DRAFT', 'CANCELLED']);
 
-export const GRN_EXPORT_ROWS_SELECT = `${GRN_LIST_SELECT}, linked_ac_docno, linked_ac_gr_docno, migrated_no_stock`;
+/* The list's header columns and the two embeds its grid reads (supplier, PO),
+   plus the AutoCount number columns. NOT the list's FK-hinted warehouse embed:
+   no grid column reads it (Location comes per line, below), and the read-only
+   production check's PostgREST stand-in cannot run an FK hint. */
+export const GRN_EXPORT_ROWS_SELECT =
+  `${GRN_HEADER_COLS}, supplier:suppliers(id, code, name, contact_person, phone, email, address), purchase_order:purchase_orders(id, po_number), ` +
+  'linked_ac_docno, linked_ac_gr_docno, migrated_no_stock';
 
 const LINE_COLS =
   'id, grn_id, created_at, purchase_order_item_id, item_code, supplier_sku, material_name, description, description2, ' +
@@ -52,6 +59,12 @@ const LINE_COLS =
 
 export type GrnExportLine = {
   id: string;
+  /** The book's Item Description / Item Group / UOM for this line's item
+   *  (services/autocount-book-item.ts), the ERP's own values where the book has
+   *  no item for the code. */
+  book_description: string | null;
+  book_item_group: string | null;
+  book_uom: string | null;
   item_code: string | null;
   ac_item_code: string | null;
   supplier_sku: string | null;
@@ -117,6 +130,11 @@ type Q = {
 };
 type Sb = { from(table: string): Q };
 
+const bookFieldsOf = (b: { description: string | null; itemGroup: string | null; uom: string | null }) => ({
+  book_description: b.description,
+  book_item_group: b.itemGroup,
+  book_uom: b.uom,
+});
 const num = (v: unknown): number | null => {
   if (v === null || v === undefined || v === '') return null;
   const n = Number(v);
@@ -258,6 +276,7 @@ export async function readGrnExportRows(sbIn: unknown, c: CompanyScopeCtx, filte
         id: l.id,
         item_code: text(l.item_code),
         ac_item_code: acCode.get(l.id) ?? null,
+        ...bookFieldsOf(bookLineItem({ itemCode: l.item_code, description: text(l.material_name) ?? text(l.description), category: l.item_group, uom: l.uom }, supplierOf.get(l.grn_id)?.supplier?.code ?? null)),
         supplier_sku: text(l.supplier_sku),
         description: text(l.material_name) ?? text(l.description),
         description2: lineExportDescription2(l.item_group, l.variants, l.description2),

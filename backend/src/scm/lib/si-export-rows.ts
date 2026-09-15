@@ -26,6 +26,7 @@ import { bindingsFor } from './autocount-outbox';
 import { bookSpellingOrOwn, resolveAcAgent } from '../../services/autocount-writeback';
 import { LOCATION_MAP } from '../../services/autocount-master-maps';
 import { resolveAcItemCode } from '../../services/autocount-item-code';
+import { bookLineItem } from '../../services/autocount-book-item';
 
 export const SI_EXPORT_ROWS_SELECT = `${SI_HEADER_COLS}, linked_ac_docno`;
 
@@ -35,6 +36,12 @@ const LINE_COLS =
 
 export type SiExportLine = {
   id: string;
+  /** The book's Item Description / Item Group / UOM for this line's item
+   *  (services/autocount-book-item.ts), the ERP's own values where the book has
+   *  no item for the code. */
+  book_description: string | null;
+  book_item_group: string | null;
+  book_uom: string | null;
   item_code: string | null;
   ac_item_code: string | null;
   description: string | null;
@@ -86,6 +93,11 @@ type Q = {
 };
 type Sb = { from(table: string): Q };
 
+const bookFieldsOf = (b: { description: string | null; itemGroup: string | null; uom: string | null }) => ({
+  book_description: b.description,
+  book_item_group: b.itemGroup,
+  book_uom: b.uom,
+});
 const num = (v: unknown): number | null => {
   if (v === null || v === undefined || v === '') return null;
   const n = Number(v);
@@ -191,6 +203,7 @@ export async function readSiExportRows(
         id: l.id,
         item_code: text(l.item_code),
         ac_item_code: acCode.get(l.id) ?? null,
+        ...bookFieldsOf(bookLineItem({ itemCode: l.item_code, description: text(l.description), category: l.item_group, uom: l.uom }, null)),
         description: text(l.description),
         description2: lineExportDescription2(l.item_group, l.variants, l.description2),
         remarks: text(l.notes),
