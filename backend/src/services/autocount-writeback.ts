@@ -1162,6 +1162,9 @@ const cleanPayemenPart = (v: string | null | undefined): string | null => {
  * is not sending a blank: `Str` turns a present-null into `""`, which would
  * ERASE the cutover's own text on an order whose payments predate the ERP.
  */
+/** `SO.UDF_PAYEMENT` is nvarchar(50) in the live book (INFORMATION_SCHEMA, 2026-09-15). */
+export const AC_PAYEMENT_MAX = 50;
+
 export function composePaymentUdf(payments: readonly ErpPaymentRef[]): string | null {
   const groups: string[] = [];
   for (const p of payments) {
@@ -1172,7 +1175,22 @@ export function composePaymentUdf(payments: readonly ErpPaymentRef[]): string | 
     if (!acct && !appr) continue;
     groups.push(`(${acct ?? ''}/${appr ?? ''})`);
   }
-  return groups.length ? groups.join(' ') : null;
+  if (!groups.length) return null;
+  const spaced = groups.join(' ');
+  if (spaced.length <= AC_PAYEMENT_MAX) return spaced;
+  /* OVER THE FIELD (docs/bugs/0921). AutoCount refuses a longer value and the
+     host swallows the refusal, so the field stayed EMPTY: HC-SO-2609-011's three
+     payments came to 63 characters and three sends wrote nothing. The book's own
+     long texts run the references together and stop at fifty, oldest first, so
+     this does the same with WHOLE references, and the parser still reads the
+     first pair. A single reference too long for the field is not cut in half:
+     nothing is sent and the book keeps what it has. */
+  let text = '';
+  for (const g of groups) {
+    if (text.length + g.length > AC_PAYEMENT_MAX) break;
+    text += g;
+  }
+  return text || null;
 }
 
 export function composeCreateSo(
