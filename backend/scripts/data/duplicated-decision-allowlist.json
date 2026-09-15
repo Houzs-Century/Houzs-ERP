@@ -112,7 +112,7 @@
     },
     {
       "check": "D1",
-      "key": "ACCESSORIES_COST_SEN,ACCESSORIES_SEN,BEDFRAME_COST_SEN,BEDFRAME_SEN,MARGIN_PCT_BASIS,MATTRESS_SOFA_COST_SEN,MATTRESS_SOFA_SEN,OTHERS_COST_SEN,OTHERS_SEN,TOTAL_COST_SEN,TOTAL_MARGIN_SEN|backend/src/scm/routes/consignment-notes.ts backend/src/scm/routes/consignment-returns.ts backend/src/scm/routes/delivery-returns.ts",
+      "key": "ACCESSORIES_COST_SEN,ACCESSORIES_SEN,BEDFRAME_COST_SEN,BEDFRAME_SEN,MARGIN_PCT_BASIS,MATTRESS_SOFA_COST_SEN,MATTRESS_SOFA_SEN,OTHERS_COST_SEN,OTHERS_SEN,TOTAL_COST_SEN,TOTAL_MARGIN_SEN|backend/src/scm/lib/delivery-return-list-read.ts backend/src/scm/routes/consignment-notes.ts backend/src/scm/routes/consignment-returns.ts",
       "why": "THE MONEY-COLUMN KEY LIST for a document family. Each document type carries the columns it actually has (SO has deposit_sen, DO/SI have service_sen), so these are meant to differ; D2 reports the exact differences and they line up with the schema. 3 homes: CN_FINANCE_KEYS, CRN_FINANCE_KEYS, DR_FINANCE_KEYS."
     },
     {
