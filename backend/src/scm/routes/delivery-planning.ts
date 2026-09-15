@@ -1081,6 +1081,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         assrOrders.push({
           row_type: 'assr',
           ref: assrNo,
+          so_ref: null,
           job_kind: leg.jobKind,
           dp_job_type: null,
           dp_no: null,
@@ -1255,6 +1256,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
       dpBoardRows.push({
         row_type: 'dp',
         ref: (d.dp_no as string | null) ?? null,
+        so_ref: null,
         job_kind: null,
         dp_job_type: (d.job_type as string | null) ?? null,
         dp_no: (d.dp_no as string | null) ?? null,
@@ -1390,6 +1392,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         projectOrders.push({
           row_type: 'project',
           ref: p.code ?? null,
+          so_ref: null,
           job_kind: null,
           dp_job_type: leg.jobType,
           dp_no: null,
