@@ -309,8 +309,8 @@ with no per-area level consulted.
 | Method | Path | Line | Purpose |
 |--------|------|------|---------|
 | GET | `/` | `:374` | List. `?page=` opts into pagination + `statusCounts`; without it the legacy `{ purchaseOrders }` array. The paginated path's tab / supplier / company / search / date filter and its sort are built by `lib/po-list-read.ts` (`filterPoList`, `orderPoList`) — the same functions the two exports below use. |
-| GET | `/export/headers` | `routes/purchase-order-exports.ts` | The toolbar **Export**: EVERY PO the list's `status` / `q` / `sort` / `supplierId` / `from` / `to` match (no `page`), in the list's row shape incl. `has_children` + `transfer_to_grns`. `{ purchaseOrders, total, truncated }`. Paged past the PostgREST ceiling; stops at 20,000 orders and says `truncated: true`, which the page refuses to write. See *Exports* below. |
-| GET | `/export/lines` | `routes/purchase-order-exports.ts` | **Export lines**: one row per PO LINE of every matching PO, the AutoCount chasing-list shape. `{ columns, rows, poCount, lineCount, truncated }`; `columns` is the contract in `lib/po-line-export-columns.ts`. Company predicate on the header, line and sales-order reads. See *Exports* below. |
+| GET | `/export/headers` | `backend/src/scm/routes/purchase-order-exports.ts` | The toolbar **Export**: EVERY PO the list's `status` / `q` / `sort` / `supplierId` / `from` / `to` match (no `page`), in the list's row shape incl. `has_children` + `transfer_to_grns`. `{ purchaseOrders, total, truncated }`. Paged past the PostgREST ceiling; stops at 20,000 orders and says `truncated: true`, which the page refuses to write. See *Exports* below. |
+| GET | `/export/lines` | `backend/src/scm/routes/purchase-order-exports.ts` | **Export lines**: one row per PO LINE of every matching PO, the AutoCount chasing-list shape. `{ columns, rows, poCount, lineCount, truncated }`; `columns` is the contract in `lib/po-line-export-columns.ts`. Company predicate on the header, line and sales-order reads. See *Exports* below. |
 | GET | `/outstanding-so-items` | `:537` | SO lines carrying an uncovered POOLED shortage — `computeMrp` runs and a line shows only when `shortageQty > 0`, so a line covered by stock or an open PO drops off and returns when that cover is consumed. `qty - po_qty_picked` is the FALLBACK, used only when the MRP compute throws. Excludes CANCELLED / DRAFT / ON_HOLD. The From-SO picker. |
 | GET | `/:id` | `:693` | Header + items + `has_children`. |
 | GET | `/:id/linked` | `:859` | Downstream GRNs / PIs / PRs (three parallel reads). |
@@ -1960,7 +1960,7 @@ the grid held (`docs/bugs/0916-the-purchase-order-list-export-held-one-screen-pa
 
 - **Export lines** (button beside *Transfer from SO*, desktop) →
   `GET /export/lines` → `.xlsx`, sheet *PO Lines*. Columns, in order, are
-  `PO_LINE_EXPORT_COLUMNS` in `lib/po-line-export-columns.ts` — a MIRROR
+  `PO_LINE_EXPORT_COLUMNS` in `backend/src/scm/lib/po-line-export-columns.ts` — a MIRROR of `frontend/src/vendor/scm/lib/po-line-export-columns.ts`
   (backend `scm/lib` ↔ frontend `vendor/scm/lib`, refereed by
   `po-line-export-columns.canonical.test.ts`). **The header names and Line ID are
   an import contract**: an import matches rows by `Line ID` and edits Delivery
@@ -1977,7 +1977,7 @@ the grid held (`docs/bugs/0916-the-purchase-order-list-export-held-one-screen-pa
   **Location** is AutoCount's SHORT code (`KL`, not `KL WAREHOUSE`) — the line's
   warehouse, else the PO header's ship-to, through the write-back's own
   `bookSpellingOrOwn(code ?? name, LOCATION_MAP)`. **Status** is the word the list
-  shows (`PO_STATUS_WORDS`, which the list's `STATUS_TONE` now reads), with
+  shows (`PO_STATUS_WORDS`, pinned to the list's `STATUS_TONE` labels by the canonical test), with
   ` (On Hold)` after it for a held order; the toolbar Export's Status column
   writes the same. **Cancelled** orders are in the file only when the tab
   includes them (All / Cancelled) — the export has no status rule of its own.

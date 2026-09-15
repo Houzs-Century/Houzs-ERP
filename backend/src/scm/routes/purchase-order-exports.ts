@@ -47,7 +47,9 @@ export async function poHeaderExportHandler(c: Ctx) {
     orderPoList(filterPoList(sb.from('purchase_orders').select(PO_LIST_SELECT), filters, c, VALID_STATUSES), filters.sort)
       .range(from, to));
   if (read.error) return c.json({ error: 'export_failed', reason: read.error.message }, 500);
-  const purchaseOrders = await stampPoListGrns(sb, read.data ?? []);
+  const stamped = await stampPoListGrns(sb, read.data ?? []);
+  if (stamped.error) return c.json({ error: 'export_failed', reason: `GRNs: ${stamped.error}` }, 500);
+  const purchaseOrders = stamped.rows;
   return c.json({ purchaseOrders, total: purchaseOrders.length, truncated: read.truncated });
 }
 

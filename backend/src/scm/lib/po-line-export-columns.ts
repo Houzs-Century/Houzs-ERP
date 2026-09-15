@@ -59,8 +59,9 @@ export function poEstimateDeliveryDates(
 }
 
 /* The word the Purchase Orders LIST shows for each stored status — the export
-   prints the same word (owner 2026-09-15), and the list reads its labels from
-   here so the two cannot drift. A held order keeps its real status and carries
+   prints the same word (owner 2026-09-15). The list keeps its own map (watched
+   by localStatusMapsAgree.test.ts); this file's canonical test asserts the two
+   say the same words. A held order keeps its real status and carries
    the hold MARKER beside it (mig 0324), which the list draws as a chip; the
    export writes it after the word. */
 export const PO_STATUS_WORDS: Readonly<Record<string, string>> = {

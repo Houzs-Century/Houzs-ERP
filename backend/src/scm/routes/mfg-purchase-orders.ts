@@ -466,7 +466,9 @@ mfgPurchaseOrders.get('/', async (c) => {
      OMITTED here — not blanked (C16). The client heals them a beat after render
      via GET /mfg-purchase-orders/list-mrp-enrichment
      (routes/mfg-purchase-orders-list-enrichment.ts + lib/listMrpEnrichment.ts). */
-  const purchaseOrders = await stampPoListGrns(supabase, (data ?? []) as Array<{ id: string } & Record<string, unknown>>);
+  const stamped = await stampPoListGrns(supabase, (data ?? []) as Array<{ id: string } & Record<string, unknown>>);
+  if (stamped.error) return c.json({ error: 'grn_read_failed', reason: stamped.error }, 500);
+  const purchaseOrders = stamped.rows;
   if (paginate) return c.json({ purchaseOrders, total, page, pageSize, statusCounts });
   return c.json({ purchaseOrders });
 });

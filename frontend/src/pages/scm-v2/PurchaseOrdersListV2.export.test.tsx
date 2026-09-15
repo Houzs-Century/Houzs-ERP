@@ -15,7 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PO_LINE_EXPORT_COLUMNS } from "../../vendor/scm/lib/po-line-export-columns";
 
 const h = vi.hoisted(() => ({
-  fetch: vi.fn(async (_path: string, _init?: unknown): Promise<unknown> => ({})),
+  authed: vi.fn(async (_path: string, _init?: unknown): Promise<unknown> => ({})),
   aoa: [] as unknown[][],
   written: [] as string[],
   csv: [] as Array<{ name: string; text: string }>,
@@ -25,7 +25,7 @@ const h = vi.hoisted(() => ({
 
 vi.mock("../../vendor/scm/lib/authed-fetch", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../vendor/scm/lib/authed-fetch")>()),
-  authedFetch: h.fetch,
+  authedFetch: h.authed,
 }));
 vi.mock("../../lib/xlsx-runtime", () => ({
   utils: {
@@ -120,8 +120,8 @@ beforeEach(() => {
   h.written = [];
   h.csv = [];
   h.notify.mockClear();
-  h.fetch.mockReset();
-  h.fetch.mockImplementation(async (path: string) => {
+  h.authed.mockReset();
+  h.authed.mockImplementation(async (path: string) => {
     if (path.startsWith("/mfg-purchase-orders/export/lines")) {
       return {
         columns: [...PO_LINE_EXPORT_COLUMNS],
@@ -146,7 +146,7 @@ afterEach(() => {
   localStorage.clear();
 });
 
-const calledPaths = () => h.fetch.mock.calls.map((c) => String(c[0]));
+const calledPaths = () => h.authed.mock.calls.map((c) => String(c[0]));
 
 describe("Purchase Order list: Export lines", () => {
   it("asks the server for every line under the list's current tab and search", async () => {
@@ -173,7 +173,7 @@ describe("Purchase Order list: Export lines", () => {
   });
 
   it("refuses to hand over a short file when the server stopped reading", async () => {
-    h.fetch.mockImplementation(async () => ({ columns: [...PO_LINE_EXPORT_COLUMNS], rows: [], poCount: 20000, lineCount: 0, truncated: true }));
+    h.authed.mockImplementation(async () => ({ columns: [...PO_LINE_EXPORT_COLUMNS], rows: [], poCount: 20000, lineCount: 0, truncated: true }));
     mount("/scm/purchase-orders");
     fireEvent.click(screen.getByRole("button", { name: "Export lines" }));
     await waitFor(() => expect(h.notify).toHaveBeenCalled());

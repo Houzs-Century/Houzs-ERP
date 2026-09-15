@@ -19,6 +19,7 @@ import { describe, expect, test } from 'vitest';
 import {
   PO_ESTIMATE_DELIVERY_DATE_FIELDS,
   PO_LINE_EXPORT_COLUMNS,
+  PO_STATUS_WORDS,
   poEstimateDeliveryDates,
   poLineExportCells,
   poStatusWord,
@@ -101,6 +102,19 @@ describe('the Status word', () => {
   test('a held order keeps its status and says it is held — once', () => {
     expect(poStatusWord('SUBMITTED', true)).toBe('Submitted (On Hold)');
     expect(poStatusWord('ON_HOLD', true)).toBe('On Hold');
+  });
+
+  test('says exactly what the Purchase Orders list says, status by status', () => {
+    /* The list keeps its own STATUS_TONE map (localStatusMapsAgree.test.ts
+       watches it against status-pill.ts). The export must print the words that
+       map puts on screen, so read them out of the page itself. */
+    const page = readFileSync(resolve(process.cwd(), 'src/pages/scm-v2/PurchaseOrdersListV2.tsx'), 'utf8');
+    const block = /const STATUS_TONE[\s\S]*?\n};/.exec(page)?.[0] ?? '';
+    const onScreen = Object.fromEntries(
+      [...block.matchAll(/^\s*([A-Z_]+):\s*\{[^}]*label:\s*"([^"]+)"/gm)].map((m) => [m[1], m[2]]),
+    );
+    expect(Object.keys(onScreen).length, 'the scan read no labels from the page').toBeGreaterThanOrEqual(6);
+    expect(onScreen).toEqual({ ...PO_STATUS_WORDS });
   });
 
   test('an unknown status prints as stored; none is null', () => {

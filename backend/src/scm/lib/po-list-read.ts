@@ -160,11 +160,14 @@ type GrnReader = {
 export async function stampPoListGrns<R extends { id: string }>(
   sb: unknown,
   rows: R[],
-): Promise<Array<R & { has_children: boolean; transfer_to_grns: Array<{ id: string; grnNumber: string }> }>> {
+): Promise<{
+  error: string | null;
+  rows: Array<R & { has_children: boolean; transfer_to_grns: Array<{ id: string; grnNumber: string }> }>;
+}> {
   const childIds = new Set<string>();
   const grnsByPo = new Map<string, Array<{ id: string; grnNumber: string }>>();
   if (rows.length > 0) {
-    const { data: grnRows } = await chunkIn<GrnRow>(rows.map((r) => r.id), (batch, from, to) =>
+    const { data: grnRows, error } = await chunkIn<GrnRow>(rows.map((r) => r.id), (batch, from, to) =>
       (sb as GrnReader)
         .from('grns')
         .select('id, purchase_order_id, grn_number')
@@ -173,6 +176,10 @@ export async function stampPoListGrns<R extends { id: string }>(
         .order('grn_number', { ascending: true })
         .order('id', { ascending: true })
         .range(from, to));
+    /* A failed read is REPORTED, never served as "no GRNs": has_children is the
+       downstream lock, and reading it as false would offer Edit / Cancel on a
+       received order. */
+    if (error) return { error: error.message, rows: [] };
     for (const g of grnRows) {
       if (!g.purchase_order_id) continue;
       childIds.add(g.purchase_order_id);
@@ -182,5 +189,5 @@ export async function stampPoListGrns<R extends { id: string }>(
       grnsByPo.set(g.purchase_order_id, arr);
     }
   }
-  return rows.map((r) => ({ ...r, has_children: childIds.has(r.id), transfer_to_grns: grnsByPo.get(r.id) ?? [] }));
+  return { error: null, rows: rows.map((r) => ({ ...r, has_children: childIds.has(r.id), transfer_to_grns: grnsByPo.get(r.id) ?? [] })) };
 }
