@@ -210,6 +210,9 @@ export async function ensureReceiptForPayment(
   if (payErr) return { ok: false, reason: payErr.message };
   if (!payRaw) return { ok: false, reason: `payment ${source}:${paymentId} not found` };
   const pay = payRaw as Record<string, unknown>;
+  /* Money moved from a cancelled order (docs/bugs/0927) was receipted when it
+     was received; the moved row gets no receipt of its own. */
+  if (String(pay.method ?? '') === 'converted') return { ok: false, reason: `payment ${source}:${paymentId} is money moved from a cancelled order — its receipt is on that order` };
   const companyId = Number(pay.company_id ?? 0);
   if (!companyId) return { ok: false, reason: `payment ${source}:${paymentId} carries no company` };
 

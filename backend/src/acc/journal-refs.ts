@@ -12,6 +12,8 @@
 //   SOPAY / SIPAY   the payment's official receipt number when one exists,
 //                   and ALWAYS the sales order number (OR · SO); who = the
 //                   order's customer
+//   SOCONV          money moved from a cancelled order (docs/bugs/0927): the
+//                   new order, and the cancelled one it came from
 //   PV              the voucher number; who = the payee
 //   PI / API        the invoice number; who = the supplier
 //   RCT / ODR       the receipt number; who = the debtor
@@ -99,14 +101,18 @@ export async function resolveJournalRefs(sb: Db, companyId: number, entries: Jou
     [...new Set(entries.filter((e) => types.includes(baseTypeOf(e.sourceType)) && e.sourceDocNo).map((e) => String(e.sourceDocNo)))];
 
   /* ── Sales-order payments: the payment → its order and its receipt ─────── */
-  const paymentIds = docsOf(['SOPAY', 'SIPAY']);
+  const paymentIds = docsOf(['SOPAY', 'SIPAY', 'SOCONV']);
   const orderOfPayment = new Map<string, string>();
+  const movedFrom = new Map<string, string>();
   const receiptOfPayment = new Map<string, string>();
   const customerOfOrder = new Map<string, string>();
   for (const ids of chunks(paymentIds)) {
-    const { data, error } = await sb.from('mfg_sales_order_payments').select('id, so_doc_no').eq('company_id', companyId).in('id', ids);
+    const { data, error } = await sb.from('mfg_sales_order_payments').select('id, so_doc_no, converted_from_so_doc_no').eq('company_id', companyId).in('id', ids);
     if (error) return { ok: false, reason: `payments: ${String(error.message ?? error)}` };
-    for (const p of (Array.isArray(data) ? data : []) as Array<{ id: string; so_doc_no: string }>) orderOfPayment.set(String(p.id), String(p.so_doc_no));
+    for (const p of (Array.isArray(data) ? data : []) as Array<{ id: string; so_doc_no: string; converted_from_so_doc_no?: string | null }>) {
+      orderOfPayment.set(String(p.id), String(p.so_doc_no));
+      if (p.converted_from_so_doc_no) movedFrom.set(String(p.id), String(p.converted_from_so_doc_no));
+    }
     const { data: ors, error: oErr } = await sb.from('acc_official_receipts').select('payment_id, or_number').eq('company_id', companyId).in('payment_id', ids);
     if (oErr) return { ok: false, reason: `receipts: ${String(oErr.message ?? oErr)}` };
     for (const r of (Array.isArray(ors) ? ors : []) as Array<{ payment_id: string; or_number: string }>) receiptOfPayment.set(String(r.payment_id), String(r.or_number));
@@ -174,7 +180,16 @@ export async function resolveJournalRefs(sb: Db, companyId: number, entries: Jou
     const party = e.partyName ? String(e.partyName) : null;
     const note = e.notes ? String(e.notes) : null;
     let ref: JournalRef;
-    if ((base === 'SOPAY' || base === 'SIPAY') && doc) {
+    if (base === 'SOCONV' && doc) {
+      const so = orderOfPayment.get(doc) ?? null;
+      const from = movedFrom.get(doc) ?? null;
+      ref = {
+        reference: so ? (from ? `${so} ← ${from}` : so) : doc,
+        who: (so ? customerOfOrder.get(so) : null) || party || note,
+        doc: so ?? doc,
+        doc2: from,
+      };
+    } else if ((base === 'SOPAY' || base === 'SIPAY') && doc) {
       const so = orderOfPayment.get(doc) ?? null;
       const or = receiptOfPayment.get(doc) ?? null;
       ref = {

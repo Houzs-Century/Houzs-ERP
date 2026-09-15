@@ -4877,6 +4877,31 @@ Best-effort throughout, exactly like the AutoCount enqueue and the GL posting
 beside them — a failure never fails the operator's save, and the next roll
 self-heals.
 
+#### Money on a cancelled order: refund or convert (2026-09-15, docs/bugs/0927)
+
+Cancelling still touches neither the payments nor the deposit invoices; what
+is left on the order is READ, never stored — `orderMoney` in
+`backend/src/scm/lib/so-money.ts`: booked payments − refund vouchers on the
+order (draft or posted) − converted rows on other orders naming it. Two
+exits, side by side (owner: 他应该是 convert or refund，所以功能要做一起 … 这个按钮
+我觉得挨着一起): `POST /:docNo/money/refund` raises the Customer Refund voucher
+as a DRAFT for Finance on the salesperson's behalf; a CONVERSION is a payment
+row on the NEW order with method `converted` and `convertedFromDocNo` —
+through `POST /:docNo/payments` (`postSoPaymentHandler`) or the order create's
+`payments[]` (`backend/src/scm/lib/so-create-payment-slips.ts`) — checked by
+`convertGuard` against the cancelled order's remaining BEFORE anything is
+written (on create, before the header exists; a refusal rolls the PWP claims
+back like a slip that does not resolve), carrying the cancelled order's first
+payment day and collector (owner: 原本当天，collected by 不影响), the sheet
+"Converted from SO-x", no receipt, and the transfer between the two customers'
+AR (`backend/src/scm/routes/mfg-sales-orders.ts`; the doors in
+`backend/src/scm/routes/so-money-routes.ts`: `GET /:docNo/money`, `GET
+/:docNo/convert-sources`, `GET /cancelled-with-money`). `PATCH` refuses a
+converted row — it is moved back by DELETE (`deleteSoPaymentHandler`, the
+same-day / amend gate as any payment), which reverses the transfer and the
+paper with it. The accounting side is in `docs/modules/accounting.md`. The
+screens follow in their own PR. Contract: `backend/tests/soMoneyConvert.test.ts`.
+
 #### Editing a payment now reaches the GENERAL LEDGER too (2026-09-10, docs/bugs/0778)
 
 The table above is about the invoices. The BOOKS were a separate gap, and only
