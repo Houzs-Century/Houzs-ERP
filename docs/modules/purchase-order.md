@@ -1475,7 +1475,8 @@ lines: **923 carry the book's wording in `notes`** (891 byte-identical to
 **Why `notes` and not `description2`.** `description2` is server-owned on a PO
 line — the item PATCH re-derives it from `buildVariantSummary` whenever the line's
 `item_group` or `variants` changes (only then, since 2026-09-15:
-`lib/po-line-description2.ts`, `docs/bugs/0919-*`) — and it IS on the AutoCount
+`lib/po-line-description2.ts`,
+`docs/bugs/0920-saving-a-po-line-s-delivery-date-rewrote-its-description-2-a.md`) — and it IS on the AutoCount
 write-back path. `notes` is neither: `PO_ITEM_COLS`
 (`backend/src/scm/lib/autocount-outbox.ts`) does not select it, and the only
 `notes` the write-back sends is the HEADER's (`purchase_orders.notes` →
@@ -2092,9 +2093,18 @@ today: `composePoState` (`autocount-outbox.ts`) gives the edit header only
 payloads carry `UDF: {}`. Sending them is a separate change. Line remarks are not
 in `PO_ITEM_COLS`.
 
+**What AutoCount shows for an imported Description 2** is `composeDescription2`
+(`backend/src/services/autocount-writeback.ts`): the STORED text when there is one,
+shortened to AutoCount's 100 characters by `abbreviateDesc2`. A CLEARED Description 2
+is not sent as a blank: the composer falls back to the spec summary, or omits
+`Desc2` when there is none, so the book keeps a value. On a sofa line the text also
+goes through the D9 collapse gate, which refuses the whole document when the text no
+longer decodes to the compartments (a `skipped` outbox row, not a silent loss).
+
 **Permission.** Both endpoints ride the `/mfg-purchase-orders/*` area guard: `edit`
 on `scm.procurement.po` (a POST, so the preview needs `edit` too), under the guard's
 usual no-lockout fallthrough for users with no L2 configuration.
 
 **Not built.** The phone PO list has no import menu (§8). The dead *Import from
-file* item on the other lists is still dead — `docs/bugs/0918-*`.
+file* item on the other lists is still dead —
+`docs/bugs/0919-the-purchase-order-list-s-import-from-file-opened-nothing.md`.
