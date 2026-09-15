@@ -2,16 +2,18 @@
 //
 // THE OWNER, 2026-09-08: 「SO 和 PO 取消的话需要 approval 2 层 — 已经输入原因」,
 // then the same day: 「只有 SO 需要 sales director approval, PO 不需要 … PO 只要
-// Purchaser 一个审批」, and on 2026-09-09: 「PO cancelled 不需要审批，只需要 remark
-// 原因取消」. So the depth is PER DOCUMENT:
+// Purchaser 一个审批」, on 2026-09-09: 「PO cancelled 不需要审批，只需要 remark
+// 原因取消」, and on 2026-09-14: 「DO cancel need pop out window for reason」.
+// So the depth is PER DOCUMENT:
 //
 //   Sales Order      reason → level 1 (Sales Director) → level 2 (Purchaser) → cancel
 //   Purchase Order   reason → cancel                        (NO signature at all)
+//   Delivery Order   reason → cancel                        (NO signature at all)
 //
-// A Purchase Order is therefore a REASON-ONLY document: the cancel runs on the
-// spot, and what the flow still guarantees is that it cannot run without the
-// buyer saying why. That reason is no weaker for having no approver — it is
-// mandatory on the cancel call itself (the guard in
+// A Purchase Order and a Delivery Order are therefore REASON-ONLY documents: the
+// cancel runs on the spot, and what the flow still guarantees is that it cannot
+// run without the person saying why. That reason is no weaker for having no
+// approver — it is mandatory on the cancel call itself (the guard in
 // routes/document-cancel-routes.ts), so no surface can skip it, and it is
 // recorded in the same ledger the Sales Order's approvals write to.
 //
@@ -33,7 +35,29 @@
 // A request is a row in scm.document_cancel_requests; the document's status is
 // never touched until the cancel itself runs.
 
-export type CancelDocType = 'SO' | 'PO';
+export const CANCEL_DOC_TYPES = ['SO', 'PO', 'DO'] as const;
+export type CancelDocType = (typeof CANCEL_DOC_TYPES)[number];
+
+export const isCancelDocType = (v: unknown): v is CancelDocType =>
+  (CANCEL_DOC_TYPES as readonly unknown[]).includes(v);
+
+const NOUN: Record<CancelDocType, string> = { SO: 'sales order', PO: 'purchase order', DO: 'delivery order' };
+
+/** What a person calls the document, lower case; "document" for a doc_type that
+ *  is not one of ours, so an unknown row still reads as a sentence. */
+export const cancelDocNoun = (docType: string): string => (isCancelDocType(docType) ? NOUN[docType] : 'document');
+
+/** Does a STATUS-route body ask for the cancel? Read exactly the way both status
+ *  handlers normalise it — `String(body.status).trim().toUpperCase()` in
+ *  patchMfgSalesOrderStatusHandler and patchDeliveryOrderStatusHandler — because
+ *  the guard and the handler must agree on what a cancel IS. The guard used to
+ *  upper-case without trimming, so "CANCELLED " passed it as some other
+ *  transition and the handler then cancelled the Sales Order with no signature
+ *  (docs/bugs/0893-a-sales-order-cancel-with-a-space-after-cancelled-skipped-bo.md).
+ *  `String()` and not a typeof check for the same reason: the handlers coerce,
+ *  so `["CANCELLED"]` is a cancel to them too. */
+export const asksToCancel = (status: unknown): boolean =>
+  String(status ?? '').trim().toUpperCase() === 'CANCELLED';
 
 export type CancelRequestStatus =
   | 'REQUESTED'    // raised, waiting for the first signature
@@ -52,12 +76,12 @@ export const isOpenCancelStatus = (s: string | null | undefined): boolean =>
 export type ApprovalLevel = 1 | 2;
 
 /** How many signatures each document needs. ZERO is a real answer: the Purchase
- *  Order takes none (owner 2026-09-09) and is gated on its reason alone. Kept
- *  separate from ApprovalLevel, which is the level a signature SIGNS and can
- *  never be 0. */
+ *  Order takes none (owner 2026-09-09) and neither does the Delivery Order (owner
+ *  2026-09-14) — each is gated on its reason alone. Kept separate from
+ *  ApprovalLevel, which is the level a signature SIGNS and can never be 0. */
 export type RequiredSignatures = 0 | 1 | 2;
 
-export const APPROVAL_LEVELS: Record<CancelDocType, RequiredSignatures> = { SO: 2, PO: 0 };
+export const APPROVAL_LEVELS: Record<CancelDocType, RequiredSignatures> = { SO: 2, PO: 0, DO: 0 };
 
 export const levelsFor = (docType: CancelDocType): RequiredSignatures => APPROVAL_LEVELS[docType];
 
@@ -68,20 +92,21 @@ export const isReasonOnly = (docType: CancelDocType): boolean => levelsFor(docTy
 
 /** The permission key that signs each level, per document. Declared in
  *  services/permissions.ts; Owner + IT Admin + Managing Director pass via `*`,
- *  everyone else through the Roles matrix. The Purchase Order signs nothing, so
- *  it has NO key — `approveKeysFor('PO')` is empty, and every approve / reject
- *  path on a PO row fails closed through that rather than through a second
- *  rule that could disagree with APPROVAL_LEVELS. */
+ *  everyone else through the Roles matrix. The Purchase Order and the Delivery
+ *  Order sign nothing, so they have NO key — `approveKeysFor('PO')` is empty,
+ *  and every approve / reject path on such a row fails closed through that
+ *  rather than through a second rule that could disagree with APPROVAL_LEVELS. */
 export const CANCEL_APPROVE_KEY: Record<CancelDocType, Partial<Record<ApprovalLevel, string>>> = {
   SO: { 1: 'scm.so_cancel.approve_l1', 2: 'scm.so_cancel.approve_l2' },
   PO: {},
+  DO: {},
 };
 
 /** The key for a level, or null when that document has no such level (or
  *  `docType` is not one of ours) — a row with an unknown doc_type must fail
  *  closed, not index past the table. */
 export function approveKeyFor(docType: string, level: ApprovalLevel): string | null {
-  if (docType !== 'SO' && docType !== 'PO') return null;
+  if (!isCancelDocType(docType)) return null;
   return CANCEL_APPROVE_KEY[docType][level] ?? null;
 }
 
@@ -151,7 +176,7 @@ export function cancelNeedsApproval(docType: CancelDocType, docStatus: string | 
  *  document has no request to raise at all — its cancel carries the reason — so
  *  it refuses first, whatever the status. */
 export function cancelRequestRefusal(docType: CancelDocType, docStatus: string | null | undefined): Refusal | null {
-  const noun = docType === 'SO' ? 'sales order' : 'purchase order';
+  const noun = NOUN[docType];
   if (isReasonOnly(docType)) {
     return { error: 'no_approval_needed', message: `A ${noun} is cancelled directly — give the reason on the cancel itself.` };
   }
@@ -202,10 +227,10 @@ export function approvalRefusal(req: CancelRequestLike, signer: Signer): { level
   }
   const key = approveKeyFor(req.doc_type, level);
   if (!key) {
-    return { refusal: { httpStatus: 409, error: 'not_pending', message: `This ${req.doc_type === 'PO' ? 'purchase order' : 'document'} has no level-${level} approval.` } };
+    return { refusal: { httpStatus: 409, error: 'not_pending', message: `This ${cancelDocNoun(req.doc_type)} has no level-${level} approval.` } };
   }
   if (!signer.holds(key)) {
-    const noun = req.doc_type === 'SO' ? 'sales order' : 'purchase order';
+    const noun = cancelDocNoun(req.doc_type);
     const message = levelsFor(req.doc_type as CancelDocType) > 1
       ? `You do not have permission to give the level-${level} approval for cancelling this ${noun}.`
       : `You do not have permission to approve cancelling this ${noun}.`;

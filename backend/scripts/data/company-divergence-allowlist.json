@@ -483,6 +483,12 @@
       "text": "if (code === '2990') return SOFA_BRAND_2990;",
       "why": "A sofa's house brand IS the company - the owner's own rule, given 2026-08-08 and restated 2026-08-18 as an equation: \"houzs sofa=zanotti / 2990 sofa=2990s sofa\". Per-company DATA the owner stated, not a capability that diverged by accident. MOVED here from brandingLabel on 2026-08-21 so the SO PDF letterhead resolves the same equation instead of hardcoding 'ZANOTTI' - a 2990 Sales Order was printing Houzs's mark. One rule, one home, two callers. Frontend twin is byte-identical and pinned by check-shared-mirrors.mjs --strict.",
       "whoSetIt": "the owner (2026-08-08, restated 2026-08-18 - see #2402; moved to houseSofaBrandName by #2599)"
+    },
+    {
+      "file": "backend/src/scm/lib/return-line-book-facts.ts",
+      "text": "return typeof code === 'string' && code.trim().toUpperCase() === BASE_COMPANY_CODE;",
+      "why": "Which company's return lines export with the AutoCount account book's item code, description, group, UOM, agent, branding and venue spellings. Only HOUZS has an AutoCount book (AED_HOUZS); 2990 has none, so its lines keep the ERP's own words. Data of the book, not a capability.",
+      "whoSetIt": "Owner, 2026-09-09: 2990's documents do not go into AutoCount (「2990 的单不要进」)."
     }
   ]
 }

@@ -14,7 +14,7 @@ const CLEARED = "2026-09-10 14:06:00+00";
 describe("planClearedArrivals", () => {
   test("HC-SO-000814: a script cleared its refusal, a later live edit arrived — back on the list", () => {
     const refusal = row({ status: "failed", created_at: "2026-09-10T09:27:00.000Z", archived_at: CLEARED });
-    const { restore, held } = planClearedArrivals([refusal, row({ created_at: "2026-09-14T15:23:00.000Z" })], new Map());
+    const { restore, held } = planClearedArrivals([refusal, row({ created_at: "2026-09-14T15:23:00.000Z" })], new Map(), new Set());
     expect(held).toEqual([]);
     expect(restore).toEqual([{ docType: "SO", docNo: "HC-SO-000814", rowIds: [refusal.id], refile: [] }]);
   });
@@ -23,7 +23,7 @@ describe("planClearedArrivals", () => {
     const uuid = "21924489-8e6d-4ff2-843b-bb33c92bc284";
     const refusal = row({ doc_type: "DO", doc_no: uuid, status: "skipped", created_at: "2026-09-10T04:40:00.000Z", archived_at: CLEARED });
     const arrival = row({ doc_type: "DO", doc_no: "HC-DO-2609-028", created_at: "2026-09-14T15:30:00.000Z" });
-    const { restore } = planClearedArrivals([refusal, arrival], new Map([[`DO|${uuid}`, "HC-DO-2609-028"]]));
+    const { restore } = planClearedArrivals([refusal, arrival], new Map([[`DO|${uuid}`, "HC-DO-2609-028"]]), new Set());
     expect(restore).toEqual([{ docType: "DO", docNo: "HC-DO-2609-028", rowIds: [refusal.id], refile: [{ id: refusal.id, from: uuid, to: "HC-DO-2609-028" }] }]);
   });
 
@@ -32,13 +32,13 @@ describe("planClearedArrivals", () => {
       row({ doc_type: "GR", doc_no: "HC-GRN-2609-008", created_at: "2026-09-10T06:48:00.000Z", archived_at: CLEARED }),
       row({ doc_type: "GR", doc_no: "HC-GRN-2609-008", status: "skipped", created_at: "2026-09-10T06:51:00.000Z", archived_at: CLEARED }),
     ];
-    const { restore, held } = planClearedArrivals(rows, new Map());
+    const { restore, held } = planClearedArrivals(rows, new Map(), new Set());
     expect(restore).toEqual([]);
     expect(held).toEqual([{ docType: "GR", docNo: "HC-GRN-2609-008", reason: HELD.refusedSince }]);
   });
 
   test("a document a person cleared on the page is left alone, even though it arrived", () => {
-    const { restore, held } = planClearedArrivals([row({ doc_no: "HC-SO-013361", archived_at: "2026-09-08 07:33:00+00", archived_by: 7 })], new Map());
+    const { restore, held } = planClearedArrivals([row({ doc_no: "HC-SO-013361", archived_at: "2026-09-08 07:33:00+00", archived_by: 7 })], new Map(), new Set());
     expect(restore).toEqual([]);
     expect(held[0].reason).toBe(HELD.person);
   });
@@ -48,7 +48,7 @@ describe("planClearedArrivals", () => {
       row({ doc_no: "HC-SO-A", status: "pending", archived_at: CLEARED }),
       row({ doc_no: "HC-SO-B", status: "skipped", archived_at: CLEARED }),
       row({ doc_type: "PO", doc_no: "044f73de-c197-4e0d-a3f3-27fa0ab77724", status: "skipped", archived_at: CLEARED }),
-    ], new Map());
+    ], new Map(), new Set());
     expect(restore).toEqual([]);
     expect(held.map((h) => h.reason).sort()).toEqual([HELD.neverArrived, HELD.sending, HELD.unresolvedId].sort());
   });
@@ -58,7 +58,7 @@ describe("planClearedArrivals", () => {
       row({ created_at: "2026-09-10T06:03:00.000Z", archived_at: CLEARED }),
       row({ status: "failed", error_head: "[re-queued 2026-09-10T14:32", created_at: "2026-09-10T09:29:00.000Z", archived_at: CLEARED }),
     ];
-    expect(planClearedArrivals(rows, new Map()).restore).toHaveLength(1);
+    expect(planClearedArrivals(rows, new Map(), new Set()).restore).toHaveLength(1);
   });
 });
 
@@ -68,5 +68,30 @@ describe("clearVerdict", () => {
     expect(clearVerdict([row({ created_at: "2026-09-10T01:00:00.000Z" }), row({ status: "skipped", created_at: "2026-09-10T02:00:00.000Z" })])).toMatch(/refusal/);
     expect(clearVerdict([row({ status: "pending" })])).toBe(HELD.sending);
     expect(clearVerdict([])).toBe("no rows");
+  });
+});
+
+describe("documents a person cleared, named by the operator", () => {
+  const personCleared = (docNo) => [
+    row({ doc_no: docNo, created_at: "2026-09-04T06:51:00.000Z", archived_at: "2026-09-08 07:33:00+00", archived_by: 4 }),
+  ];
+
+  test("HC-SO-013361, named, is restored and its person stamp cleared with it", () => {
+    const { restore, held } = planClearedArrivals(personCleared("HC-SO-013361"), new Map(), new Set(["HC-SO-013361"]));
+    expect(held).toEqual([]);
+    expect(restore.map((r) => r.docNo)).toEqual(["HC-SO-013361"]);
+  });
+
+  test("CONTROL: not named, it stays cleared", () => {
+    const { restore, held } = planClearedArrivals(personCleared("HC-SO-013361"), new Map(), new Set());
+    expect(restore).toEqual([]);
+    expect(held[0].reason).toBe(HELD.person);
+  });
+
+  test("a named document that never arrived still stays cleared", () => {
+    const rows = [row({ doc_no: "HC-SO-X", status: "skipped", archived_at: "2026-09-08 07:33:00+00", archived_by: 4 })];
+    const { restore, held } = planClearedArrivals(rows, new Map(), new Set(["HC-SO-X"]));
+    expect(restore).toEqual([]);
+    expect(held[0].reason).toBe(HELD.neverArrived);
   });
 });

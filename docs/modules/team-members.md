@@ -61,6 +61,18 @@
 > * Member profile / invite: `TeamMemberProfile.tsx` (drawer, inline
 >   assignment editing, activity log) and `TeamInviteModal.tsx` (assignment +
 >   position set before send; company toggle chips).
+> * **The profile sets the Role too (2026-09-15).** Its Assignment grid reads
+>   Company | Department, Title | **Role**, Team | Reports to. Role writes
+>   `users.role_id` in the same `PATCH /api/users/:id` as the other fields, only
+>   when it changed; options come from `roleOptions` (`teamShared.tsx`: every
+>   role by name, plus the member's own role if the list lacks it). Locked
+>   without `users.manage` (so for a scoped Sales Director, whose PATCH strips
+>   `role_id`) and while `/api/roles` has returned nothing. The redesign had
+>   dropped it: from #2650 until then a role could be changed only on the phone
+>   form or the URL-only classic panel
+>   (`docs/bugs/0923-the-desktop-member-profile-had-no-role-field-so-a-new-role-c.md`).
+>   The invite modal still has no Role picker; an invite gets the baseline role
+>   (`defaultRoleId`) and the profile changes it afterwards.
 >
 > The CLASSIC tabs (`members` / `orgchart` / `departments` / `mail` / `roles`)
 > left the strip but stay URL-reachable during the transition; the sections
@@ -90,6 +102,19 @@ Team page shell are separate concerns and are only referenced here.
 > `users.manage` for every mutation. Positions gate MENUS, roles gate
 > PERMISSIONS — see the permission-architecture note; nothing in this module
 > grants SCM capabilities.
+
+> **Titles tab (2026-09-15).** A Title is a `positions` row (`users.position_id`,
+> the profile's Title picker). The strip shows **Titles** (`frontend/src/pages/Positions.tsx`,
+> `?tab=positions`) to `users.manage` again: create, rename, move between
+> departments, reorder, delete (`POST` / `PATCH` / `DELETE /api/positions`). It was
+> switched off on every surface by #744 (owner 「整個關掉先」, because its page-access
+> matrix wrote a table login no longer read), which left NO screen that creates a
+> Title — the owner made a role instead (0923, and
+> `docs/bugs/0931-a-new-title-could-not-be-created-anywhere-the-positions-tab.md`).
+> Page access per Title is still edited on Roles & Permissions; the tab's matrix is a
+> read-only note and `PATCH /api/positions/:id/page-access` answers 409. The phone
+> menu still has no Positions row (`mobileMenuGates.test.ts`); no sidebar leaf either,
+> the tab is reached from the Team strip. Pinned by `frontend/src/pages/teamTitlesTab.test.tsx`.
 
 ---
 
@@ -203,10 +228,26 @@ card shows `active / target` when a target is set.
 
 ## 3. Traps
 
+- **Title is not Role, and a new role never shows under Title.** Title is
+  `users.position_id` (a `positions` row: the pages a member sees); Role is
+  `users.role_id` (a `roles` row: what they may do). A role created in Roles &
+  Permissions is only a `roles` row, so the Title picker answers "No match" for
+  it — pick it in the profile's Role field instead (owner 2026-09-14,
+  `docs/bugs/0923-the-desktop-member-profile-had-no-role-field-so-a-new-role-c.md`).
 - **Users vs invitation rows.** A pending person exists twice: a
   `status='invited'` user AND an `invitations` row. The stat card counts the
   former; the Pending Invitations table lists the latter (expired ones
   included, hence the counts differ). Revoking removes both.
+- **An edit never sets `invited`, and never re-sends it.** Only the invite
+  writes it; `PATCH /:id` refuses any status but `active` or `disabled`. Desktop
+  edits send only the fields that changed and move a status only through
+  Enable / Disable. The phone form re-sends every field it shows, so its Status
+  select must not start on a value it has no option for: `seedValue`
+  (`frontend/src/mobile/MobileModuleForm.tsx`) starts a fixed-option select
+  blank instead, the member form's blank entry reads "No change", and a blank
+  select is left out of an edit. Until 2026-09-15 it started on `invited`,
+  showed "Active", and every phone Save on an invited member failed
+  (`docs/bugs/0929-a-phone-edit-of-an-invited-member-could-never-be-saved-the-f.md`).
 - **Invite links are live credentials.** `token` / `invite_url` must never get
   a `getValue` (CSV export) and are never rendered — Copy Link goes straight
   to the clipboard, preferring the server-built `invite_url`.
@@ -223,15 +264,37 @@ card shows `active / target` when a target is set.
   NOT cover this — it fires only on disable / role change. See the announcements
   guide §6 and `configCache.ts`.
 - **Both surfaces or neither.** Invite/edit/action semantics changed on
-  desktop must land in the mobile pair (`MobileModuleList` config +
+  desktop must land in the mobile pair (`MobileModuleList` config, the per-caller
+  form rules in `frontend/src/mobile/member-invite-form.ts`, and
   `MemberActions`) in the same PR.
-- **A scoped Sales Director never picks a role — on invite as on edit.**
-  `POST /invite` stores the baseline role (`resolveDefaultRoleId`) for every
-  scoped caller, whatever `role_id` the body carries; `PATCH /:id` deletes
-  `role_id`. The phone invite form drops its Role field for that caller
-  (`frontend/src/mobile/member-invite-form.ts`). Until 2026-09-14 the invite
-  defaulted only a MISSING role, so the phone's Role picker let a Sales
-  Director create a Super Admin (`docs/bugs/0887-a-sales-director-could-invite-a-new-account-straight-into-su.md`).
+- **A scoped Sales Director never picks a role — on invite as on edit — and
+  their member edit applies only name, phone and status.** `POST /invite` stores
+  the baseline role (`resolveDefaultRoleId`) for every scoped caller, whatever
+  `role_id` the body carries. `PATCH /:id` deletes `role_id`, `position_id`,
+  `department_id`, `department_ids`, `manager_id`, `company_ids`, `password`,
+  `email` and `email_alias` for that caller and still answers ok, so any form
+  offering one of those reports a save that changed nothing. The phone follows
+  one rule for both member forms, in `frontend/src/mobile/member-invite-form.ts`:
+  the invite drops its Role field (`memberInviteFormFor`), and the edit keeps
+  only `SCOPED_DIRECTOR_EDITABLE_MEMBER_FIELDS` (`memberEditFormFor`) — name,
+  phone, status, status_reason, division, of which the form carries the first
+  three. `frontend/src/mobile/member-invite-form.test.ts` derives that list from
+  the handler and fails when the two disagree. The desktop decides "scoped" from
+  the same two facts (`Team.tsx` `salesDirScoped` = Sales Director position
+  without `users.manage`) and the redesigned profile is locked for it. Until
+  2026-09-14 the invite defaulted only a MISSING role, so the phone's Role picker
+  let a Sales Director create a Super Admin
+  (`docs/bugs/0887-a-sales-director-could-invite-a-new-account-straight-into-su.md`);
+  until 2026-09-15 the phone edit offered Role, Department, Position and Email,
+  answered ok and changed nothing
+  (`docs/bugs/0924-a-sales-director-s-phone-edit-of-a-member-s-role-department.md`).
+  The classic desktop panel (`/team?tab=members`, `EditMemberPanel` in
+  `frontend/src/pages/Team.tsx`) offered that caller the same stripped fields
+  and every account action until 2026-09-15
+  (`docs/bugs/0928-a-sales-director-s-desktop-classic-edit-member-panel-offered.md`);
+  `frontend/src/pages/team/editMemberScope.tsx` now offers it Name, Phone,
+  Division and Enable/Disable only, from the same list, and filters the PATCH
+  body to those keys.
 - **Impersonation is registered TWICE, and the second one is dead.** See
   section 4 below before changing either.
 - **Writing `users.name` or `users.status` fires a trigger into `scm.staff`.**

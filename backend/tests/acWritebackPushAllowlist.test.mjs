@@ -58,6 +58,10 @@ const MAY_PUSH = [
   // Re-pushes a sales order's corrected balance after a direct SQL repair left
   // the book stale (docs/bugs/0785, the orphan scan-deposit fix).
   'enqueue-so-writeback.mts',
+  // Puts our purchase order numbers back in the book's PO Doc No. where the
+  // write-back had written the order's reference (docs/bugs/0926, 0927) - the
+  // send IS the repair; it writes no ERP value.
+  'repair-ac-po-doc-no.mjs',
 ];
 
 test('only the deliberate push tools opt out of repair suppression', () => {

@@ -41,6 +41,7 @@ import { todayMyt } from '../scm/lib/my-time';
 import { CREDIT_NOTE_HEADER, cancelCreditNote, insertCreditNote, postCreditNote } from './credit-notes';
 import { refundedByInvoice } from './deposit-refunds';
 import { SO_NOT_AN_ORDER } from '../scm/shared/so-deliverable-states';
+import { fmtSen } from '../scm/shared/format';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- PostgREST client, untyped throughout the acc layer */
 type Db = any;
@@ -534,7 +535,7 @@ export async function applyDepositInvoicesToInvoice(
         reason: `Deposit invoice ${di.di_number} closed by final invoice ${p.siNumber}`,
         lines: [{
           description: `Deposit invoice ${di.di_number} applied to ${p.siNumber}`
-            + (refundedSen > 0 ? ` (after RM ${(refundedSen / 100).toFixed(2)} refunded)` : ''),
+            + (refundedSen > 0 ? ` (after ${fmtSen(refundedSen)} refunded)` : ''),
           code: roles.DEPOSIT_INCOME,
           amountSen: remaining,
         }],

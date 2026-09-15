@@ -35,6 +35,9 @@ import { requireActiveCompanyId, scopeToCompanyId } from './companyScope';
 import { resolveRoles } from '../../acc/rules';
 import { addCustomerCredit } from './customer-credits';
 import { standingDeposits, type RefundInput } from '../../acc/deposit-refunds';
+import { conversionsFrom } from './so-money';
+import { CONVERT_SOURCE } from '../../acc/payments';
+import { fmtSen } from '../shared/format';
 
 export type RefundSourceType = 'SO' | 'SI';
 
@@ -61,6 +64,8 @@ export type RefundSource = {
   /** Every non-cancelled refund voucher on the document, draft or posted. */
   refunds: RefundVoucherRow[];
   refundedSen: number;
+  /** Money already moved to other orders (docs/bugs/0927) — spoken for, like a voucher. */
+  convertedSen: number;
   refundableSen: number;
   /** Deposit invoices still standing on the order (none closed them), and
       what is left on them after earlier refunds — posting the refund raises
@@ -75,13 +80,15 @@ const normType = (raw: unknown): RefundSourceType | null => {
   return v === 'SO' || v === 'SI' ? v : null;
 };
 
-/** Which payment ids carry an ACTIVE journal of the given source type. */
+/** Which payment ids carry an ACTIVE journal of the given source type — for
+    an order, the transfer a converted row booked counts as its booking too
+    (docs/bugs/0927): money moved onto this order is refundable from it. */
 async function bookedIds(sb: any, companyId: number, sourceType: 'SOPAY' | 'SIPAY', ids: string[]): Promise<{ ok: true; ids: Set<string> } | { ok: false; reason: string }> {
   const out = new Set<string>();
   if (ids.length === 0) return { ok: true, ids: out };
   const { data, error } = await sb.from('journal_entries')
     .select('source_doc_no, reversed')
-    .eq('company_id', companyId).eq('source_type', sourceType).in('source_doc_no', ids);
+    .eq('company_id', companyId).in('source_type', sourceType === 'SOPAY' ? ['SOPAY', CONVERT_SOURCE] : [sourceType]).in('source_doc_no', ids);
   if (error) return { ok: false, reason: error.message };
   for (const r of (data ?? []) as Array<{ source_doc_no: string; reversed: boolean | null }>) if (!r.reversed) out.add(r.source_doc_no);
   return { ok: true, ids: out };
@@ -176,7 +183,13 @@ export async function loadRefundSource(
   const prior = await refundsOn(sb, companyId, docNo, excludePvId);
   if (!prior.ok) return { ok: false, status: 500, error: 'load_failed', message: prior.reason };
   const refundedSen = prior.rows.reduce((s, r) => s + r.totalSen, 0);
-  const refundableSen = Math.max(0, bookedSen - refundedSen);
+  let convertedSen = 0;
+  if (type === 'SO') {
+    const moved = await conversionsFrom(sb, companyId, docNo);
+    if (!moved.ok) return { ok: false, status: 500, error: 'load_failed', message: moved.reason };
+    convertedSen = moved.rows.reduce((s, r) => s + r.amountSen, 0);
+  }
+  const refundableSen = Math.max(0, bookedSen - refundedSen - convertedSen);
   if (!ineligible && bookedSen === 0) {
     ineligible = payments.length === 0
       ? `${docNo} collected nothing — there is no money to refund.`
@@ -186,7 +199,7 @@ export async function loadRefundSource(
     ok: true,
     source: {
       type, docNo, status, customer, payments, bookedSen,
-      refunds: prior.rows, refundedSen, refundableSen, deposits,
+      refunds: prior.rows, refundedSen, convertedSen, refundableSen, deposits,
       eligible: ineligible == null && refundableSen > 0,
       reason: ineligible ?? (refundableSen > 0 ? null : `${docNo} is refunded in full already.`),
     },
@@ -234,8 +247,8 @@ export async function refundCreateGuard(
       ok: false,
       resp: c.json({
         error: 'refund_exceeds_booked',
-        message: `${s.docNo} has ${(s.refundableSen / 100).toFixed(2)} left to refund (${(s.bookedSen / 100).toFixed(2)} booked, ${(s.refundedSen / 100).toFixed(2)} already on refund vouchers) — not ${(amount / 100).toFixed(2)}.`,
-        bookedSen: s.bookedSen, refundedSen: s.refundedSen, refundableSen: s.refundableSen,
+        message: `${s.docNo} has ${fmtSen(s.refundableSen)} left to refund (${fmtSen(s.bookedSen)} booked, ${fmtSen(s.refundedSen)} already on refund vouchers${s.convertedSen > 0 ? `, ${fmtSen(s.convertedSen)} moved to other orders` : ''}) — not ${fmtSen(amount)}.`,
+        bookedSen: s.bookedSen, refundedSen: s.refundedSen, convertedSen: s.convertedSen, refundableSen: s.refundableSen,
       }, 409),
     };
   }

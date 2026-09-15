@@ -16,8 +16,12 @@ import { hasPermission } from "./permissions";
 // only events they're crewed on (setup/dismantle FK slots or the per-lorry
 // crew JSON). Matched on the EXACT position name (never \b substrings —
 // position names are owner-editable free text; see the pmsAccess note).
-// Drivers intentionally stay unscoped (owner kept them see-all).
-const CREW_SCOPED_POSITIONS = new Set(["helper", "storekeeper", "storekeeper supervisor"]);
+// Drivers intentionally stay unscoped (owner kept them see-all), and so does
+// Storekeeper Supervisor since 2026-09-15: that position is the defect
+// reviewer for the non-region states, and the owner opened ALL events to him
+// ("he need to see defect list") — the review work spans events he is never
+// crewed on.
+const CREW_SCOPED_POSITIONS = new Set(["helper", "storekeeper"]);
 
 // Two-warehouse defect-review split (owner 2026-08-11). Projects in these
 // (canonical, Title-Case) states go to Nancy (Ops Exec) for clean-or-replace;

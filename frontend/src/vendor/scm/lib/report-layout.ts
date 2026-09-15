@@ -68,6 +68,15 @@ export type LaidNode = {
 export const leafKeys = (n: LaidNode): string[] =>
   n.children.length === 0 ? (n.key ? [n.key] : []) : n.children.flatMap(leafKeys);
 
+/** The account codes a node stands for — its own when it is an account, else
+    every account beneath it (the general ledger opens on them; docs/bugs/0924). */
+export const leafCodes = (n: LaidNode): string[] =>
+  n.kind === 'account' && n.code ? [n.code] : n.children.flatMap(leafCodes);
+
+/** Where the general ledger opens for these accounts and this period. */
+export const ledgerHref = (codes: string[], from: string, to: string): string =>
+  `/scm/accounting?tab=gl&accounts=${encodeURIComponent(codes.join(','))}&from=${from}&to=${to}`;
+
 /** A laid tree as a flat list with each node's depth — for a CSV, a PDF, or
     a screen that folds by level (a node prints while its depth ≤ the level). */
 export type FlatLaid = { node: LaidNode; depth: number };

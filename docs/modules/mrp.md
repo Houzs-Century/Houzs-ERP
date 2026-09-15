@@ -327,8 +327,10 @@ typed its own list of four while the catalogue could hold nine
 
 `public.mfg_product_category` and its `scm` twin carry NINE members: the five in
 the baseline DDL plus DINING / BEDLINES / DIFFUSER / CARPET, added by migrations
-`0258`-`0261` and `0262`-`0265`. `backend/src/scm/routes/mfg-products.ts` lists
-all nine as `MFG_PRODUCT_CATEGORIES` and rejects a product create outside them.
+`0258`-`0261` and `0262`-`0265`. `backend/src/scm/shared/product-categories.ts`
+lists them as `MFG_PRODUCT_CATEGORIES` (with the one label per category, mirrored
+to `frontend/src/vendor/shared/`; `routes/mfg-products.ts` re-exports it) and
+product create rejects anything outside them.
 A line on any of the four newer ones was dropped TWICE — by the section-6 filter
 because the page only ever sends one of its four tab values as `?category=`, and
 again by the page's own equality — and neither drop was counted. Measured from
@@ -543,6 +545,12 @@ Two consequences worth knowing before you touch this:
   so `computeMrp` itself runs over the shim — `check-so-po-line-links.mjs` uses
   it to print the engine's real per-line PO instead of a hand-ported replica
   (`docs/bugs/0874-the-pgrest-shim-could-not-run-the-mrp-engine-quoted-not-in-l.md`).
+- **A delete that asks is answered.** Since 2026-09-15 the shared fake
+  `backend/src/scm/lib/fake-postgrest.ts` hands a `.delete().select().maybeSingle()`
+  chain the row it removed, the way PostgREST's `DELETE … RETURNING` does —
+  the payment DELETE reads that row to tell a version clash from a delete
+  (`docs/bugs/0927-money-on-a-cancelled-sales-order-had-no-exit-but-a-hand-rais.md`).
+  The bare `await sb.from(t).delete()` keeps its null body, as before.
 - **A test fake's comparison operators must compare by the column's type**,
   NULL matching nothing — the way `fake-postgrest`'s `gte`/`lte` do, and the
   way `lt` does since 2026-09-10 (docs/bugs/0785). Before that `lt` was
@@ -550,6 +558,11 @@ Two consequences worth knowing before you touch this:
   month window — `gte(first) + lt(next-first)` — returned nothing against the
   fake while the real database returned the rows. A fake that silently drops
   rows on a string compare reports a clean run for the wrong reason.
+- **`fake-postgrest`'s `.or()` understands only the terms the list readers send**
+  (2026-09-15, for the PO list exports): `col.ilike.pattern`, `col.eq.value` and
+  `col.is.true|false|null`. Any other term THROWS, for the same reason `not()`
+  does — a fake that answered an unimplemented filter with every row would make
+  a scope test pass for the wrong reason. MRP reads send no `.or()` through it.
 - **The other reads in this tree still use `.in()` on an item code** — 67 of
   them outside these two as of 2026-09-10, counted by the enumeration block in
   the PR — so any of them can lose the same two codes. Unfixed, deliberately;
@@ -667,10 +680,17 @@ mobile card, because `source === 'po'` now guarantees a number. Trace:
   ordered on the sofa's PO. Before it, custom pillows were `accessory`, keyed on
   the code alone, and one colour's stock covered another colour's order.
   `tasks/PLAN-sofa-accessories-category.md`. A model (with its SKUs) or a
-  model-less SKU can be swapped between Accessory and Sofa Accessory from its
-  edit screen — `shared/category-swap.ts`, enforced by `PATCH /product-models/:id`
-  and `PATCH /mfg-products/:id` (409 `category_change_not_allowed` for any other
-  move, `category_on_model` for a modelled SKU). The swap moves the PRODUCT only:
+  model-less SKU can be moved to ANY other category from its edit screen (owner
+  2026-09-15; it was Accessory <-> Sofa Accessory only on 2026-09-14) —
+  `shared/category-swap.ts`, enforced by `PATCH /product-models/:id` (400 for a
+  value that is not a category) and `PATCH /mfg-products/:id` (409
+  `category_change_not_allowed` for a value that is not a category,
+  `category_on_model` for a modelled SKU, which moves only with its model). The
+  picker (`CategorySwapSelect`) asks first and says open orders keep the old
+  category. Import SKUs (`POST /mfg-products/batch-import`) also changes an
+  existing SKU's category, including a modelled SKU's, and reads the label or any
+  case (`parseMfgCategory`); an unreadable category is reported per row. The move
+  changes the PRODUCT only:
   lines already on orders keep their old group until a data run moves them —
   `backend/scripts/recategorise-fabric-accessory.mjs` (plan/apply workflow),
   which also writes the colour a line's own text names into `fabricCode`
@@ -787,6 +807,21 @@ mobile card, because `source === 'po'` now guarantees a number. Trace:
   (read-only)*, which now measures the whole category). Company 2 has no Sofa
   Accessory SKU; its pillows are Accessory and pool.
   `docs/bugs/0890-mrp-pooled-custom-pillows-by-sku-so-one-customer-s-colour-co.md`.
+- **A LINK IS DEDICATED WHEN EITHER SIDE IS BOUND (2026-09-15).** `isDedicated`
+  read the PO line's group alone, while `so-stock-allocation.ts` binds by the
+  SALES line's group. A link whose two lines disagree on category therefore read
+  SHORT with its own PO open — a bound PO on an unbound sales line was withheld
+  from the pool that line reads; an unbound PO on a bound line sat in a pool the
+  line never reads. Now a linked PO line is dedicated when its own group OR its
+  sales line's group is bound (the sales line must be in the open demand set), and
+  section 7 hands an unbound line its own dedicated queue before the pool. Live
+  case: `HC-PO-010086` SQUARE PILLOW `fabric_accessory` linked to `HC-SO-013346`
+  `accessory` (probe run 34944608976; the only company-1 link of either shape).
+  The write paths refuse new cross-category links to a bound line
+  (`purchase-order.md` *Binding a PO line*), and
+  `backend/scripts/repair-mrp-po-line-links.mjs` now plans Sofa Accessory lines
+  through `scripts/lib/hard-bound-group.mjs`, the mirror of `isHardBoundLine`.
+  `docs/bugs/0927`.
 - **Ordering a bound line twice is refused on every convert path, MRP included
   (2026-09-14).** An MRP-origin convert skips the per-line cap for a POOLED line
   (the MRP shortage is the guard there). For a company-1 bound line the server now

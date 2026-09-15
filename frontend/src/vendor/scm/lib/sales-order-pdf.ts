@@ -23,6 +23,7 @@ import {
   type PdfAction,
 } from './pdf-common';
 import { billToBlock } from './pdf-party-blocks';
+import { mfgCategoryLabel } from '../../shared/product-categories';
 import { loadFabricDescriptionMap, loadFabricSupplierMap } from './supplier-doc-data';
 import { composeSoLineDescription } from './so-line-description';
 import {
@@ -177,8 +178,10 @@ type SoItem = {
    accepted so callers can pass the row verbatim. */
 type SoPayment = {
   paid_at: string;
-  /* 2026-06-06 payment-method unify — 'installment' is first-class. */
-  method: 'merchant' | 'transfer' | 'cash' | 'installment';
+  /* 2026-06-06 payment-method unify — 'installment' is first-class;
+     'converted' = money moved from a cancelled order (docs/bugs/0931). */
+  method: 'merchant' | 'transfer' | 'cash' | 'installment' | 'converted';
+  converted_from_so_doc_no?: string | null;
   /* Task #122 (cascade) — merchant_provider / installment_months are now
      open string + integer (driven by the so_dropdown_options cascade
      categories). online_type is the new Online sub-type column. */
@@ -293,6 +296,8 @@ const methodLabel = (p: SoPayment): string => {
     const base = p.merchant_provider ? `Installment (${p.merchant_provider})` : 'Installment';
     return p.installment_months ? `${base} · ${p.installment_months}m` : base;
   }
+  /* Money moved from a cancelled order (docs/bugs/0931): the order it came from. */
+  if (p.method === 'converted') return p.converted_from_so_doc_no ? `Moved from ${p.converted_from_so_doc_no}` : 'Moved from a cancelled order';
   return 'Cash';
 };
 
@@ -602,7 +607,10 @@ export async function renderSalesOrderInto(
     const grp = (it.item_group || 'OTHER').toUpperCase();
     if (grp !== lastGroup) {
       bodyRows.push([{
-        content: grp, colSpan: 7,
+        /* The category's NAME, not its code: `fabric_accessory` printed as
+           FABRIC_ACCESSORY on HC-SO-2609-071 while every screen says Sofa
+           Accessory (owner 2026-09-15). An unknown group still prints as stored. */
+        content: mfgCategoryLabel(grp).toUpperCase(), colSpan: 7,
         styles: { fontStyle: 'bold', textColor: 40, halign: 'left', lineWidth: { top: 0.4 } as never },
       }]);
       lastGroup = grp;

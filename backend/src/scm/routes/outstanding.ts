@@ -31,6 +31,7 @@ import { Hono } from "hono";
 import { supabaseAuth } from "../middleware/auth";
 import type { Env, Variables } from "../env";
 import { paginateAll } from "../lib/paginate-all";
+import { resolvePoEstimateDates } from "../lib/po-line-export";
 import {
   scopeToCompany,
   activeCompanyId,
@@ -170,10 +171,21 @@ outstanding.get("/po-lines", async (c) => {
     }
     return c.json({ error: "load_failed", reason: error.message }, 500);
   }
+  /* Estimate Delivery Date 1/2/3 (owner 2026-09-15) — line value, else the PO
+     header's, through the one rule the PO line export also uses
+     (lib/po-line-export-columns.ts). The view carries neither the header dates
+     nor slot 4, so they are read beside it rather than widening the view. */
+  const viewRows = (data ?? []) as Array<Record<string, unknown>>;
+  const est = await resolvePoEstimateDates(sb, (q) => scopeToAllowedCompanies(q, c), viewRows);
+  if (est.error) return c.json({ error: "load_failed", reason: est.error }, 500);
   const codes = companyCodeMap(c);
-  const rows = (data ?? []).map((r) =>
-    withCompanyCode(r as Record<string, unknown>, codes),
-  );
+  const rows = viewRows.map((r) => {
+    const [d1, d2, d3] = est.byLineId.get(String(r.po_item_id ?? "")) ?? [null, null, null];
+    return withCompanyCode(
+      { ...r, estimate_delivery_date_1: d1, estimate_delivery_date_2: d2, estimate_delivery_date_3: d3 },
+      codes,
+    );
+  });
   return c.json({ rows });
 });
 

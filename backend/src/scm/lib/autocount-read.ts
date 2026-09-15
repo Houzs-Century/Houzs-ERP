@@ -11,7 +11,7 @@
 // MONEY — which is precisely the read worth being able to find.
 // ----------------------------------------------------------------------------
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { poSourceRef, poTransferShape, type PoTransferShape } from '../shared/po-transfer-shape';
+import { poTransferShape, type PoTransferShape } from '../shared/po-transfer-shape';
 import { soOutstandingSen } from '../shared/so-outstanding';
 import { bookSpellingOrOwn, type ErpLine } from '../../services/autocount-writeback';
 import { LOCATION_MAP } from '../../services/autocount-master-maps';
@@ -355,35 +355,18 @@ export async function readPoTransferFacts(
   });
 }
 
-/** The sales orders a purchase order was raised for, for its `Ref`. */
-export async function readPoSourceSoDocNos(sb: Sb, poId: string): Promise<string[]> {
-  const rows = ((await readOrThrow('purchase_order_items',
-    sb.from('purchase_order_items').select('so_item_id').eq('purchase_order_id', poId))) ?? []) as Array<Record<string, unknown>>;
-  const ids = [...new Set(rows.map((r) => (r.so_item_id == null ? null : String(r.so_item_id)))
-    .filter((v): v is string => v !== null))];
-  if (!ids.length) return [];
-  const soLines = ((await readOrThrow('mfg_sales_order_items',
-    sb.from('mfg_sales_order_items').select('doc_no').in('id', ids))) ?? []) as Array<Record<string, unknown>>;
-  return soLines.map((l) => String(l.doc_no ?? '')).filter((d) => d !== '');
-}
-
 /**
- * The SO-to-PO decision, and the `Ref` that goes with the answer.
+ * The SO-to-PO decision.
  *
- * Both reads and the rule in ONE call, because they are one question and
- * autocount-outbox.ts is at its size cap — the same reason `mastersOf` and the
- * reads above left that file. The rule itself stays pure in
- * `scm/shared/po-transfer-shape.ts`; this is the IO around it.
+ * The read and the rule in ONE call, because autocount-outbox.ts is at its size
+ * cap — the same reason `mastersOf` and the reads above left that file. The rule
+ * itself stays pure in `scm/shared/po-transfer-shape.ts`; this is the IO around
+ * it. The source orders' numbers and reference no longer ride on the answer:
+ * both arms carry them from `readPoHeader` (docs/bugs/0926).
  */
 export async function readPoEnqueueShape(
   sb: Sb,
   poId: string,
-): Promise<{ shape: PoTransferShape; sourceRef: string | null }> {
-  const shape = poTransferShape(await readPoTransferFacts(sb, poId));
-  /* Only on the create path: a transfer needs no reference, because AutoCount's
-     own DocTransfer link is a stronger one. */
-  const sourceRef = shape.kind === 'transfer'
-    ? null
-    : poSourceRef(await readPoSourceSoDocNos(sb, poId));
-  return { shape, sourceRef };
+): Promise<{ shape: PoTransferShape }> {
+  return { shape: poTransferShape(await readPoTransferFacts(sb, poId)) };
 }

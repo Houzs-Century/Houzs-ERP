@@ -12,11 +12,14 @@
 // Double-clicking a row opens its job card: a direct amendment opens
 // PoAmendmentDetailV2 (/scm/po-amendments/:id); an SO-driven row opens the SO
 // amendment job card (/scm/amendments/:id) — the before/after diff + revision
-// stepper + "Revise the bound PO" gate the owner pointed at.
+// stepper + "Revise the bound PO" gate the owner pointed at. A SINGLE click opens
+// the quick view drawer (AmendmentQuickView) for the same row, like the Sales
+// Order list (owner 2026-09-14).
 // ----------------------------------------------------------------------------
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { AmendmentQuickView, amendmentJobCardPath, type AmendmentQuickViewTarget } from './AmendmentQuickView';
 import { fmtDateTime } from '../../vendor/shared/format';
 import { usePoAmendments, type PoAmendmentRow } from '../../vendor/scm/lib/po-amendment-queries';
 import { useAmendments, type AmendmentRow } from '../../vendor/scm/lib/so-amendment-queries';
@@ -225,11 +228,12 @@ export const PoAmendments = () => {
   /* A direct amendment opens its own job card; an SO-driven row opens the SO
      amendment job card (diff + stepper + "Revise the bound PO" gate). */
   const openRow = (a: InboxRow) => {
-    navigate(a.kind === 'so' ? `/scm/amendments/${a.id}` : `/scm/po-amendments/${a.id}`);
+    navigate(amendmentJobCardPath(a));
   };
+  const [quick, setQuick] = useState<AmendmentQuickViewTarget | null>(null);
 
   return (
-    <div>
+    <div className={quick ? 'md:pr-[540px]' : undefined}>
       <PageHeader
         eyebrow="Revision inbox"
         title="PO Amendments"
@@ -275,6 +279,8 @@ export const PoAmendments = () => {
           groupBanner={false}
           defaultSort={OPEN_ORDER}
           sortForSessionOnly
+          /* Single click: the quick view. Double-click: the job card. */
+          onRowClick={(a) => setQuick({ kind: a.kind, id: a.id, label: a.amendmentNo || a.poLabel })}
           onRowDoubleClick={(a) => openRow(a)}
           /* Closed amendments (REJECTED / withdrawn) grey out so they read as
              dead — mirrors the SO amendment queue + the GRN cancelled treatment. */
@@ -285,6 +291,7 @@ export const PoAmendments = () => {
           emptyMessage="No amendments yet — raise one from a Purchase Order, or revise a Sales Order with a bound PO."
         />
       </div>
+      <AmendmentQuickView target={quick} onClose={() => setQuick(null)} />
     </div>
   );
 };

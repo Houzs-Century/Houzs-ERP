@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { useState } from "react";
 import { DataTable, type Column } from "./DataTable";
 import { downloadCSV } from "../lib/csv";
 
@@ -86,6 +87,26 @@ describe("DataTable onFilteredRowsChange", () => {
       />,
     );
     expect(seen.at(-1)).toHaveLength(rows.length);
+  });
+
+  /* docs/bugs 2026-09-15: a saved funnel made a fresh filtered array on every
+     render, and a page that stores the report and rebuilds its columns on each
+     render (every list page) looped forever — the vitest worker crashed. */
+  it("settles when a funnel is saved and the parent stores the report and rebuilds its columns", () => {
+    setViewport(1280);
+    localStorage.setItem("dt:filters:orders-loop", JSON.stringify({ status: ["Open"] }));
+    function Parent() {
+      const [seen, setSeen] = useState<Row[]>([]);
+      const fresh = columns.map((c) => ({ ...c }));
+      return (
+        <>
+          <span data-testid="seen">{seen.length}</span>
+          <DataTable tableId="orders-loop" rows={rows} columns={fresh} getRowKey={(row) => row.id} onFilteredRowsChange={setSeen} />
+        </>
+      );
+    }
+    render(<Parent />);
+    expect(screen.getByTestId("seen").textContent).toBe(String(rows.filter((r) => r.status === "Open").length));
   });
 
   it("reports only the rows a persisted column filter leaves visible", () => {
@@ -1204,6 +1225,31 @@ describe("DataTable header filter + sort menu", () => {
     fireEvent.click(screen.getByText("Clear"));
     expect(rowCount(second.container)).toBe(6);
     expect(JSON.parse(localStorage.getItem("dt:filters:filter-persist") ?? "null")).toEqual({});
+  });
+
+  /* SKU Master (owner 2026-09-15): a remembered funnel made his catalogue look
+     short and hid the row he had just renamed. persistFilters={false} opens with
+     no filter every time and erases the one an earlier visit saved. */
+  it("persistFilters={false} filters for this visit only and erases a saved filter", () => {
+    setViewport(1280);
+    localStorage.setItem("dt:filters:filter-session", JSON.stringify({ status: ["Open"] }));
+    const first = render(
+      <DataTable tableId="filter-session" persistFilters={false} rows={rows.slice(0, 6)} columns={columns} getRowKey={(r) => r.id} />,
+    );
+    // The old saved filter does not apply, and is gone from storage.
+    expect(rowCount(first.container)).toBe(6);
+    expect(localStorage.getItem("dt:filters:filter-session")).toBeNull();
+
+    openFunnel("Status");
+    fireEvent.click(screen.getByRole("checkbox", { name: /Open/ }));
+    expect(rowCount(first.container)).toBe(3);
+    expect(localStorage.getItem("dt:filters:filter-session")).toBeNull();
+
+    first.unmount();
+    const second = render(
+      <DataTable tableId="filter-session" persistFilters={false} rows={rows.slice(0, 6)} columns={columns} getRowKey={(r) => r.id} />,
+    );
+    expect(rowCount(second.container)).toBe(6);
   });
 
   /* The sticky funnel is the one filter with no representation outside the

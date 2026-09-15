@@ -14,7 +14,10 @@
 > reference is `ref` (owner ruling #2429; `customer_so_no` is a transitional
 > fallback and the dead `po_doc_no` / `customer_po` / `customer_po_id` /
 > `customer_po_date` columns — 0%-filled, census-verified — are DROPPED from the
-> SO header by migration 0310).
+> SO header by migration 0310). The AutoCount write-back sends this reference as
+> the book's `Ref` (`soReference`, `ref` then `customer_so_no`), never as
+> `UDF_ToPONo`, which is the book's "PO Doc No."
+> (`docs/bugs/0926-the-order-s-reference-was-written-into-autocount-s-po-doc-no.md`).
 > No column was renamed in this registration — the two renames are reviewed
 > follow-ups because they need a backfill / a view-guarded drop.
 
@@ -780,7 +783,9 @@ Four distinct locks. Only one of them keys off the status column.
 
 | Lock | Keys off | Blocks | The message |
 |---|---|---|---|
-| **Downstream (HARD)** — `scm/lib/downstream-lock.ts` | the EXISTENCE of a live (non-CANCELLED) DO or SI, **not** any status | header/line MUTATION and CANCEL. Raising the NEXT document is deliberately still allowed | `SO has a Delivery Order / Sales Invoice — delete or cancel it first to edit` (409) |
+| **Downstream, per LINE (HARD)** — rule `scm/shared/so-line-freeze.ts`, read `readSoLineFreeze` in `scm/lib/downstream-lock.ts` | a live (non-CANCELLED, **DRAFT counts**) DO line or SI line that NAMES the SO line (`so_item_id`) — **not** any status, not the order | a change / delete / TBC fill-in / price override of THAT line, and a CHANGE / REMOVE of it by amendment. Its unfrozen siblings, new lines and the date pair stay open | `This line is already on a Delivery Order or Sales Invoice, so it is locked…` (409 `so_line_frozen`) |
+| **Downstream, whole order (HARD)** — same module | every live line is frozen (nothing left to convert), or any live DO/SI line names NO SO line | a new line, and the editors lock as before | `Everything on this Sales Order is already on a Delivery Order or Sales Invoice…` (409 `so_has_downstream`); amendment submit `so_hard_locked` |
+| **Downstream, header identity + cancel (HARD)** — `soHasDownstream` + `shared/so-identity-lock.ts` | the EXISTENCE of any live DO or SI on the order | CANCEL, and a change to the 32 columns a DO/SI snapshots (customer, addresses, contact, currency…). Dates, note, payments, salesperson (with `scm.so.attribute_other`) stay open | `SO has a Delivery Order / Sales Invoice — delete or cancel it first to edit` (409) / `so_identity_locked` |
 | **Processing-date (SOFT)** — `soProcessingLocked` | `processing_date` strictly BEFORE today in MYT (UTC+8), and status not DRAFT/CANCELLED | direct edit — routes the change through the amendment flow | `Processing date has passed — this Sales Order is locked. (Locked orders are what we PO to the supplier.)` (409) |
 | **PO-raised (SOFT)** — `scm/lib/so-po-lock.ts` | a live (non-CANCELLED, **DRAFT counts**) PO claims any of the SO's lines | direct edit — routes to amendment | `A Purchase Order has already been raised for this order — submit an amendment so purchasing can re-send it to the supplier.` (409) |
 | **Cancel-final** | `status === 'CANCELLED'` | any move off CANCELLED | `A cancelled Sales Order cannot be reactivated…` / `cancel_is_final` when AutoCount also holds it (409) |
@@ -793,9 +798,35 @@ Four distinct locks. Only one of them keys off the status column.
 > flipped a two-year backlog to amendment-only, so the owner scoped it. Do not
 > read the lock's existence as covering Houzs.
 
+> **The per-line freeze (owner 2026-09-15).** 「如果已经送货了的，你就 remain 着，
+> 可能要放灰色之类的，设置成不可以被 edit」 / 「它为什么可以 edit 的原理，是因为它还有
+> 东西可以被 convert」. Until then ONE live DO anywhere locked every line, so the
+> undelivered half of a partly delivered order could not be touched
+> (`docs/bugs/0921-a-partly-delivered-sales-order-locked-every-line-so-its-unde.md`).
+> - A partly delivered line (ordered 3, delivered 1) is WHOLLY frozen; so is a line
+>   on a DRAFT DO and a line on an SI.
+> - The detail payload stamps `downstream_frozen` on each line and
+>   `downstream_fully_frozen` on the header. Desktop (`SalesOrderDetail.tsx`) and
+>   phone (`MobileNewSO.tsx`) grey the frozen line (`vendor/scm/lib/so-frozen-line-style.ts`)
+>   and disable it; the page-level lock (`isLocked` in `so-detail-gates.ts`) reads
+>   `soDownstreamHardLocked(header)`, which falls back to `has_children` for a
+>   payload without the new flag. `amendment_eligible` likewise uses the fully-frozen
+>   verdict, so a partly delivered processing-locked order can still amend.
+> - The header Delivery Date / State cascades skip frozen lines: `apply_so_header_cas`
+>   (migration `20260915T1200_scm_so_header_cas_skip_frozen_lines.sql`, rules 1 and 3
+>   restated in SQL), `applySoAmendment`, and the desktop / phone client cascades.
+> - Server-side followers leave frozen lines alone: the free-gift reconciler does
+>   not delete a frozen gift line, and the delivery-fee rebuild does not run while
+>   a fee line is frozen (adding a line to a partly delivered order does not
+>   re-price a delivered delivery fee).
+> - Decided without a ruling, flagged for the owner: the header identity fields
+>   still freeze on the FIRST live DO/SI (the 2026-05-31 rule is unchanged), and a
+>   live DO/SI line that names no SO line freezes the whole order (3 such DO lines
+>   on 3 orders in production, 2026-09-15).
+
 Both soft locks fail CLOSED on a read error, and so does the downstream lock — an
-unreadable count refuses with `downstream_check_failed` rather than being spent
-as a zero.
+unreadable count or line read refuses with `downstream_check_failed` rather than
+being spent as a zero.
 
 A discard (`DELETE /:docNo`) needs MORE than `status === 'DRAFT'`: `soDiscardBlocked`
 also refuses when any live downstream document exists, and when the order carries
@@ -1429,7 +1460,11 @@ decided by whether the line is a SERVICE line (`shared/amendment-lane.ts`
 `classifyLine` → `isServiceLine`: item_group / category / SVC- code, NOT the
 SVC- prefix alone — so a bare-code DISPOSE / STORAGE / TRANSPORTATION CHARGES
 routes right too; owner 2026-09-11, docs/bugs): a service line waits on
-**Logistics**, a product-line discount on Purchasing.
+**Logistics**, a product-line discount on Purchasing. A line ADDED by the
+amendment has no row and so no item_group: the submit route reads its code's
+catalogue category instead (`catalogCategoriesByCode`), which is what sends an
+added TRANSPORTATION CHARGES to Logistics
+(`docs/bugs/0895-an-amendment-that-added-a-service-line-went-to-the-purchaser.md`).
 Fields still without a channel: `lineDeliveryDate`, `description`, `uom`,
 `itemGroup`, cost fields — an edit to those on a locked SO still goes nowhere.
 
@@ -1804,6 +1839,7 @@ Invalidation always wins over all three (mutation → invalidate → forced refe
 | GET | `/api/scm/mfg-sales-orders/my-mtd` | MTD scoreboard | Mobile Profile tiles |
 | GET | `/api/scm/mfg-sales-orders/mine` | POS board | Salesperson's own orders |
 | PATCH/POST | `…/:docNo/*` | mutations | proceed / cancel / amend / payments / etc. |
+| POST | `…/:docNo/amendments` | amendment submit | **Reason required** since 2026-09-15 (owner: 「SO amendment reason 换成一定 fill in」) — 400 `reason_required` before the SO is read; the desktop (`SalesOrderDetail.tsx`) and phone (`MobileNewSO.tsx`) submit prompts validate it. A stored lane is moved only by the *Relane SO amendment* workflow. Full surface: [`so-amendment.md`](./so-amendment.md) §1–2 |
 
 All under `backend/src/scm/routes/mfg-sales-orders.ts`, except the deferred
 `list-mrp-enrichment` endpoint, which lives in its own thin router
@@ -3116,9 +3152,11 @@ customer's vouchers on an order that is still live. So a cancel needs
 ### The downstream lock — and why AutoCount cares
 
 An SO with any non-cancelled Delivery Order or Sales Invoice against it cannot
-be cancelled and its lines cannot be edited (`soHasDownstream`, 409
-`so_has_downstream`). Emitting the NEXT DO is still allowed — only mutation and
-cancel are blocked.
+be cancelled and its identity fields cannot change (`soHasDownstream`). Since
+2026-09-15 its LINES lock one by one: a line a live DO / SI line names is frozen
+(409 `so_line_frozen`), its siblings stay editable, and only an order with nothing
+left to convert refuses a new line (409 `so_has_downstream`) — see §0.7.
+Emitting the NEXT DO is still allowed.
 
 Owner, 2026-08-10, on the AutoCount cutover:
 *"已经转到下游的单据, AutoCount 不许取消/改动 ... 是的 我们也是要这样"*.
@@ -4232,6 +4270,7 @@ and the sheet itself):
 | --- | --- | --- |
 | sofa, bedframe | inside their own configurator, not standalone | yes |
 | mattress | yes | yes |
+| fabric_accessory (Sofa Accessory) | yes — its own panel holds only the fabric picker | yes (no add-on is offered to it as of 2026-09-15, so free text in practice) |
 | accessory, others | yes | **no** — free text only, unless the line already carries a pick |
 | service | no | no |
 
@@ -4842,6 +4881,82 @@ fall behind.
 Best-effort throughout, exactly like the AutoCount enqueue and the GL posting
 beside them — a failure never fails the operator's save, and the next roll
 self-heals.
+
+#### Money on a cancelled order: refund or convert (2026-09-15, docs/bugs/0927)
+
+Cancelling still touches neither the payments nor the deposit invoices; what
+is left on the order is READ, never stored — `orderMoney` in
+`backend/src/scm/lib/so-money.ts`: booked payments − refund vouchers on the
+order (draft or posted) − converted rows on other orders naming it. Two
+exits, side by side (owner: 他应该是 convert or refund，所以功能要做一起 … 这个按钮
+我觉得挨着一起): `POST /:docNo/money/refund` raises the Customer Refund voucher
+as a DRAFT for Finance on the salesperson's behalf; a CONVERSION is a payment
+row on the NEW order with method `converted` and `convertedFromDocNo` —
+through `POST /:docNo/payments` (`postSoPaymentHandler`) or the order create's
+`payments[]` (`backend/src/scm/lib/so-create-payment-slips.ts`) — checked by
+`convertGuard` against the cancelled order's remaining BEFORE anything is
+written (on create, before the header exists; a refusal rolls the PWP claims
+back like a slip that does not resolve), carrying the cancelled order's first
+payment day and collector (owner: 原本当天，collected by 不影响), the sheet
+"Converted from SO-x", no receipt, and the transfer between the two customers'
+AR (`backend/src/scm/routes/mfg-sales-orders.ts`; the doors in
+`backend/src/scm/routes/so-money-routes.ts`: `GET /:docNo/money`, `GET
+/:docNo/convert-sources`, `GET /cancelled-with-money`). `PATCH` refuses a
+converted row — it is moved back by DELETE (`deleteSoPaymentHandler`, the
+same-day / amend gate as any payment), which reverses the transfer and the
+paper with it. The accounting side is in `docs/modules/accounting.md`. The
+desktop screens are the next paragraph. Contract: `backend/tests/soMoneyConvert.test.ts`.
+
+The desktop screens (2026-09-15, docs/bugs/0931): under a CANCELLED order's
+payments, `frontend/src/vendor/scm/components/OrderMoneyPanel.tsx` prints paid ·
+refunded (the vouchers, with status) · moved (to which orders) · remaining, with
+**[Refund] [Convert]** side by side — Refund raises the voucher draft for
+Finance (an amount, part or all, and a note); Convert lists this order (ticked)
+and the customer's other cancelled orders with money (tick to add), each for
+what is left, and opens the New SO page with the customer and lines copied and
+one converted row per tick (`?copyFrom=…&convert=SO-a:sen,SO-b:sen`;
+`frontend/src/vendor/scm/lib/so-money-queries.ts`). In
+`frontend/src/vendor/scm/components/PaymentsTable.tsx` "Convert from cancelled
+SO" is a method of its own, offered when the customer has a cancelled order with
+money — a saved order asks the server (`GET /:docNo/convert-sources`), the New
+SO page (`frontend/src/pages/scm-v2/SalesOrderNew.tsx`) hands them in by phone
+(`GET /cancelled-with-money?phone=`) — its L2 pick is the cancelled order, it
+resolves to `converted` with `convertedFromDocNo`, and a stored converted row
+has no pencil (moved back by delete). A converted draft survives the retry
+handoff (`frontend/src/lib/paymentRetryHandoff.ts`). Finance's list of cancelled
+orders still holding money is `frontend/src/pages/scm-v2/CancelledWithMoneyCard.tsx`
+on the Accounting Self-check tab. The phone is the next paragraph. Contracts:
+`frontend/src/vendor/scm/components/OrderMoneyPanel.test.tsx`,
+`frontend/src/vendor/scm/components/PaymentsTable.test.ts`,
+`frontend/src/vendor/scm/lib/so-money-queries.test.tsx`,
+`frontend/src/pages/scm-v2/CancelledWithMoneyCard.test.tsx`,
+`frontend/src/lib/paymentRetryHandoff.test.ts`.
+
+The phone (2026-09-15, docs/bugs/0933) mounts the SAME panel — the desktop's
+`frontend/src/vendor/scm/components/OrderMoneyPanel.tsx` under the Payments
+card of `frontend/src/mobile/MobileSODetail.tsx`, which renders nothing unless
+the order is cancelled with money; only "open the new order" differs: the phone
+has no URL to navigate to, so the panel's `onOpenNewOrder` hands the ticks to
+the screen router (`frontend/src/mobile/MobileApp.tsx`, `convertFrom` on the
+`new-so` screen) and `frontend/src/mobile/MobileNewSO.tsx` opens with the
+cancelled order's customer and lines copied (fresh lines, no photos) and one
+"Convert from cancelled SO" row per pick. The phone's own pieces live in
+`frontend/src/mobile/MobileOrderMoney.tsx`: `withConvertOption` adds the
+method to the picker only while the customer has a cancelled order with money
+(`useMobileConvertSources` — a saved order by its number, the New SO screen by
+phone), `ConvertSourceField` is the L2 pick (which cancelled order; picking
+fills an empty amount with what is left), and `convertedBody` is what a
+converted row posts — its source and amount alone, the server fixing the paid
+day and the collector. Both phone editors use them: the pre-create PayCard in
+`frontend/src/mobile/MobileNewSO.tsx` and the Add payment sheet in
+`frontend/src/mobile/RecordedPayments.tsx` (never on an edit). A stored
+converted row reads "Convert from cancelled SO · from SO-x"
+(`frontend/src/mobile/PaymentInfoBlock.tsx`) and has no pencil — the trash
+stays, deleting it is how the money goes back. Contracts:
+`frontend/src/mobile/MobileOrderMoney.test.tsx`,
+`frontend/src/mobile/RecordedPayments.convert.test.tsx`,
+`frontend/src/mobile/MobileNewSO.convert.test.tsx`, and the phone case in
+`frontend/src/vendor/scm/components/OrderMoneyPanel.test.tsx`.
 
 #### Editing a payment now reaches the GENERAL LEDGER too (2026-09-10, docs/bugs/0778)
 

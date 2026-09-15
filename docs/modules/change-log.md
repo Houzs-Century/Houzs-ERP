@@ -290,6 +290,11 @@ under the SAME keys as header changes — the line's identity is in the entry NO
 ("Line edited: HZ-SOFA-01"), not in the field name — so one dictionary per
 document covers both.
 
+The PO line import (2026-09-15, `docs/modules/purchase-order.md`) writes the same
+shape with the note "Line imported from file: <item>", and is the first writer to
+record `description2` on a purchase order line. `LINE_FIELDS` carries its label,
+"Description 2"; before it the key would have printed raw.
+
 ### A drawer that cannot load must never say "No history yet"
 
 Found on staging 2026-09-13 and fixed in the same PR

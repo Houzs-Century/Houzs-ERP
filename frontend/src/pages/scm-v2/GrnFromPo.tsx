@@ -454,6 +454,8 @@ export const GrnFromPo = () => {
           </span>
         );
       },
+      exportValue: (r) => ((Object.hasOwn(picks, r.poItemId) && picks[r.poItemId].picked ? picks[r.poItemId].qty : effRemaining(r)) * r.unitPriceSen) / 100,
+      exportFormat: 'money',
       sortFn: (a, b) => a.remainingQty * a.unitPriceSen - b.remainingQty * b.unitPriceSen,
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps -- column accessors derive from the pick/qty state already in deps; listing the helpers would only rebuild the columns for no behavioural change

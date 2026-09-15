@@ -182,8 +182,14 @@ export function fakeSb(
         return { data: null, error: null };
       }
       if (pendingDelete) {
-        const doomed = new Set(rows());
+        const doomedRows = rows();
+        const doomed = new Set(doomedRows);
         tables[table] = tables[table].filter((r) => !doomed.has(r));
+        /* DELETE … RETURNING: a chain that asks (.select().maybeSingle()) is
+           handed what was removed, the way an update is — the payment DELETE
+           reads the returned row to tell a version clash from a delete
+           (docs/bugs/0927). The bare await keeps its null body. */
+        updated = doomedRows;
         return { data: null, error: null };
       }
       if (pendingUpdate) {
@@ -320,6 +326,26 @@ export function fakeSb(
       ilike(col: string, pattern: string) {
         const rx = new RegExp(`^${String(pattern).replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/%/g, '.*')}$`, 'i');
         filters.push((r) => rx.test(String(r[col] ?? '')));
+        return builder;
+      },
+      /* PostgREST `or=(a.op.v,b.op.v)`: the row passes when ANY term does. Only
+         the term shapes the list readers send are understood — `ilike` (the
+         search box), `eq` and `is.true|false|null` (the hold marker); anything
+         else THROWS, for the reason `not()` above gives. */
+      or(expr: string) {
+        const terms = String(expr).split(',').map((t) => {
+          const [col, op, ...rest] = t.split('.');
+          const val = rest.join('.');
+          if (op === 'ilike') {
+            const rx = new RegExp(`^${val.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/%/g, '.*')}$`, 'i');
+            return (r: Row) => rx.test(String(r[col!] ?? ''));
+          }
+          if (op === 'eq') return (r: Row) => String(r[col!]) === val;
+          if (op === 'is' && (val === 'true' || val === 'false')) return (r: Row) => r[col!] === (val === 'true');
+          if (op === 'is' && val === 'null') return (r: Row) => r[col!] === null || r[col!] === undefined;
+          throw new Error(`fake-postgrest: or(${t}) is not implemented`);
+        });
+        filters.push((r) => terms.some((f) => f(r)));
         return builder;
       },
       order(col?: string, opts?: { ascending?: boolean }) {

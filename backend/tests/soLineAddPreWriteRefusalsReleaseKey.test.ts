@@ -68,7 +68,7 @@ describe('POST /:docNo/items — refusals before the first write release the ide
   it('covers the refusal the owner hit, not only the handful anyone listed', () => {
     const released = preWrite.map((e) => e.text).join('\n');
     expect(released).toContain('return refuseWithoutWriting(c, { ...aoErr, itemCode: itemCodeStr }, 400);');
-    for (const exit of ['SO_PROCESSING_LOCKED_RESPONSE', 'SO_PO_LOCKED_RESPONSE', 'badQty', 'childLock', 'mainMix.body']) {
+    for (const exit of ['SO_PROCESSING_LOCKED_RESPONSE', 'SO_PO_LOCKED_RESPONSE', 'badQty', 'SO_FULLY_FROZEN_REFUSAL', 'mainMix.body']) {
       expect(released).toContain(exit);
     }
   });

@@ -499,7 +499,8 @@ already moved.
 
 | Function | Locks on |
 |---|---|
-| `soHasDownstream(sb, soDocNo)` | any non-CANCELLED `delivery_orders` or `sales_invoices` on that SO |
+| `soHasDownstream(sb, soDocNo)` | any non-CANCELLED `delivery_orders` or `sales_invoices` on that SO — gates CANCEL and the header identity fields |
+| `readSoLineFreeze(sb, soDocNo)` | per SO LINE (owner 2026-09-15): a non-CANCELLED DO line or SI line naming it. Gates line writes; an edit to an untransferred sibling still queues an ERP -> AutoCount edit. Whether AutoCount accepts the edit of a PARTLY transferred SO is UNTESTED against the live book |
 | `poHasDownstream(sb, poId)` | any non-CANCELLED `grns` on that PO |
 | `doHasDownstream(sb, doId)` | any non-CANCELLED `delivery_returns` or `sales_invoices` on that DO |
 | `grnHasDownstream(sb, grnId)` | any `grn_items` with `invoiced_qty > 0` or `returned_qty > 0` |
@@ -6584,7 +6585,9 @@ that arrived back on the list*) handles the ones already cleared:
 - it clears `archived_at` on every script-cleared document that has since
   arrived;
 - it first re-files each id-filed refusal under the document's number;
-- documents a person cleared on the page (`archived_by` set) stay cleared.
+- documents a person cleared on the page (`archived_by` set) stay cleared,
+  unless named in the workflow's `doc_nos` (since 2026-09-15); a named document
+  must still have arrived, and its person stamp is cleared with it.
 
 `docs/bugs/0917-cleared-documents-that-reached-autocount-still-read-as-not-s.md`.
 
@@ -6606,3 +6609,108 @@ A book line at quantity 0 is retired and no longer counts as a pairing target
 when quantities are given. Carried-over goods receipts are not covered: most
 link no book receipt number.
 `docs/bugs/0919-delivery-and-purchase-orders-carried-over-from-autocount-had.md`.
+
+## A sofa's pieces are spelled in the document's line order (2026-09-15)
+
+A build's pieces are spelled in `line_no` order when every piece carries a
+distinct one. Otherwise they keep the order they were read in (`created_at`,
+then row id). `SO_ITEM_COLS` and `PO_ITEM_COLS` select `line_no` for this. Only
+the spelling of one build changes: the payload's line order and the key zip do
+not.
+
+The reason: an amendment re-derives pieces in one statement, so their read order
+fell to the row ids, and one sofa was spelled two ways on its SO and PO.
+`docs/bugs/0920-a-sofa-s-pieces-were-spelled-in-the-order-the-queue-read-the.md`.
+
+## The payment text fits AutoCount's fifty characters (2026-09-15)
+
+`SO.UDF_PAYEMENT` is `nvarchar(50)`. AutoCount refuses a longer value, and the
+host swallows that refusal, so the field stayed empty with the row reading
+`sent`. HC-SO-2609-011 is the example: 63 characters across three payments.
+
+`composePaymentUdf` now sends a fitting text unchanged. A text that would
+exceed the field is sent as whole references run together, from the first,
+stopping before the field would overflow. That is how the book's own long texts
+read, and the cutover parser still reads the same first pair. The script-side
+mirror in `scripts/lib/ac-payment-udf.mjs` matches.
+`docs/bugs/0921-a-payment-text-longer-than-autocount-s-fifty-character-field.md`.
+
+## An edit refused for timing goes out by itself (2026-09-15)
+
+Two refusals are about timing, not about the document:
+
+- a line added a moment ago has no AutoCount key until the edit that added it
+  drains (`KeylessLineError`);
+- the document's own conversion is still queued ("edited before its AutoCount
+  counterpart existed").
+
+Both are `skipped` rows with nothing to retry, and until now nothing sent them
+again (HC-SO-011153 and HC-SI-2609-001).
+
+After `dispatchOne` marks any row sent, `resendHeldEdits`
+(`scm/lib/autocount-held-edit-resend.ts`) looks for such a refusal of the same
+document. When no edit is pending and none has gone since, it composes the
+document as it is now through `enqueueEdit` and marks the refusal re-queued.
+
+- A composer refusal is written down again rather than guessed.
+- Conversions that arrive without keys before the office host swap still need
+  the stamp and `requeue-keyed-conversion-edits.mjs`.
+
+`docs/bugs/0924-an-edit-refused-because-a-line-added-a-moment-earlier-had-no.md`.
+
+## The reference is Ref; PO Doc No. and SO Doc No. name documents (2026-09-15)
+
+`SO.UDF_ToPONo` is the book's "PO Doc No.": the purchase orders made from the
+order, ", "-joined. The ERP was sending the order's reference into it.
+
+- The sales order create and edit now send the reference (`ref`, falling back
+  to `customer_so_no`) as `Ref`.
+- Nothing composes `ToPONo` from the reference any more.
+- A cleared reference clears `Ref` only when both columns are empty.
+
+A purchase order now carries its source the way the plug-in does
+(`readPoSourceSo`):
+
+- `UDF_SONo` holds the source orders' book numbers, ", "-joined;
+- `Ref` holds the order's reference when the purchase order has exactly one
+  source order;
+- a purchase order for stock sends neither, and the book keeps its own.
+
+Before this, a create put our own SO numbers in `Ref`, and a transfer sent
+nothing.
+`docs/bugs/0926-the-order-s-reference-was-written-into-autocount-s-po-doc-no.md`.
+
+**Filling PO Doc No.** After a purchase order's `create_po`, `so_to_po` or
+`cancel` is marked sent, `queueSoPoDocNos` (`scm/lib/autocount-so-po-doc-no.ts`)
+queues each source order a header-only edit
+`{ Header: { UDF: { ToPONo } }, Lines: [] }`:
+
+- the value is the order's purchase orders that are in the book and not
+  cancelled, sorted and ", "-joined;
+- after a cancel that leaves none, the field is cleared.
+
+The orders the write-back had damaged are repaired by
+`scripts/repair-ac-po-doc-no.mjs` (plan / apply, `LIMIT` per run, since the drain
+sends 20 rows a sweep).
+`docs/bugs/0927-our-purchase-order-numbers-never-reached-the-sales-order-s-p.md`.
+
+## The sales line names the purchase order made from it (2026-09-15)
+
+The office's plug-in writes `SODTL.UDF_PONo`, `UDF_PODocKey` and `UDF_Creditor` on
+every sales line it buys; a purchase order made by `/so-to-po` left them blank
+(563 of 564 plug-in lines filled against 1 of 164 of ours).
+
+Remark 2 in the book is kept by a program inside AutoCount. It does recognise
+our receipts: 33 of 37 groups received on 2026-09-10 gained their group. Whether
+it needs `UDF_PONo` is UNKNOWN, since none of our purchase orders had been
+received yet.
+
+The host now fills the three fields after `/so-to-po` and after an `/edit` of
+a purchase order (`PointSalesLinesAtPurchase`):
+
+- only blanks are filled, so a line naming another purchase order keeps it;
+- the step is wrapped, and cannot cost the purchase order;
+- orders already in the book fill on their next edit or a re-send.
+
+INERT until the office host is swapped; the run-time write is UNTESTED.
+`docs/bugs/0923-a-purchase-order-made-from-a-sales-order-left-the-sales-line.md`.

@@ -3,7 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { canOperateDeliveryOrders, canDriverCompleteDelivery, canOperateSalesInvoices, canOperateGoodsReceipts, canOperatePurchaseOrders, canViewFairReport, isSalesDirectorUser } from "../auth/salesAccess";
-import { memberInviteFormFor } from "./member-invite-form";
+import { memberEditFormFor, memberInviteFormFor } from "./member-invite-form";
 import { capability, type CapabilityKey } from "../auth/capabilities";
 import { NAV_TABS, type NavTab } from "../components/Sidebar";
 import { makeNavVisible } from "../components/navFilter";
@@ -31,6 +31,7 @@ import { mobileDestinationMatches, resolveMobileRoute, type MobileRoute } from "
 import type { FlowDocNav, FlowNav } from "./relationship-map-model";
 import type { SearchNav } from "./MobileSearch";
 import type { MobileScanPrefill } from "./MobileScan";
+import type { MobileConvertPrefill } from "./MobileOrderMoney";
 import type { ConvertTarget } from "./MobileConvertWizard";
 import { MODULE_TO_PURCHASE_DOC, convertInsteadFor, mayCreatePurchaseDoc, type PurchaseDocKind } from "./mobile-purchase-doc";
 const MobileSalesOrders = lazy(() => import("./MobileSalesOrders").then((m) => ({ default: m.MobileSalesOrders })));
@@ -111,7 +112,7 @@ type Screen =
   | { t: "autocount-sync" }
   | { t: "venture-portal-feed" }
   | { t: "change-log" }
-  | { t: "new-so"; mode: "new" | "edit" | "edit-draft"; docNo?: string; scanPrefill?: MobileScanPrefill; addLine?: boolean }
+  | { t: "new-so"; mode: "new" | "edit" | "edit-draft"; docNo?: string; scanPrefill?: MobileScanPrefill; addLine?: boolean; convertFrom?: MobileConvertPrefill }
   | { t: "scan" }
   | { t: "module"; key: string; title: string }
   | { t: "module-detail"; key: string; row: any; title: string }
@@ -780,7 +781,7 @@ function MobileAppInner() {
   // boundary (full-screen fallback — an overlay owns the whole viewport anyway).
   let overlay: ReactNode = null;
   if (screen.t === "search") overlay = <MobileSearch onBack={back} onNavigate={onSearchNavigate} />;
-  else if (screen.t === "so-detail") overlay = <MobileSODetail docNo={screen.docNo} onBack={back} onEdit={(d) => setScreen({ t: "new-so", mode: "edit", docNo: d })} onAddLine={(d) => setScreen({ t: "new-so", mode: "edit", docNo: d, addLine: true })} flowNav={flowNav} />;
+  else if (screen.t === "so-detail") overlay = <MobileSODetail docNo={screen.docNo} onBack={back} onEdit={(d) => setScreen({ t: "new-so", mode: "edit", docNo: d })} onAddLine={(d) => setScreen({ t: "new-so", mode: "edit", docNo: d, addLine: true })} flowNav={flowNav} onConvert={(convertFrom) => setScreen({ t: "new-so", mode: "new", convertFrom })} />;
   else if (screen.t === "amendments") overlay = <MobileAmendments onBack={back} onOpen={(doc) => setScreen({ t: "so-detail", docNo: doc })} />;
   else if (screen.t === "po-amendments") overlay = <MobilePoAmendments onBack={back} onOpen={(id) => setScreen({ t: "po-amendment-detail", id })} />;
   else if (screen.t === "po-amendment-detail") overlay = <MobilePoAmendmentDetail amendmentId={screen.id} onBack={() => setScreen({ t: "po-amendments" })} />;
@@ -836,7 +837,7 @@ function MobileAppInner() {
     const mayRead = can("*") || can("scm.venture_portal.read") || can("settings.manage");
     overlay = !mayRead ? <TabLocked title="Venture Portal Feed" /> : <MobileVenturePortalFeed onBack={back} />;
   }
-  else if (screen.t === "new-so") overlay = <MobileNewSO mode={screen.mode} docNo={screen.docNo} scanPrefill={screen.scanPrefill} openAddLine={screen.addLine === true} onBack={back} onSaved={(d) => setScreen({ t: "so-detail", docNo: d })} />;
+  else if (screen.t === "new-so") overlay = <MobileNewSO mode={screen.mode} docNo={screen.docNo} scanPrefill={screen.scanPrefill} convertFrom={screen.convertFrom} openAddLine={screen.addLine === true} onBack={back} onSaved={(d) => setScreen({ t: "so-detail", docNo: d })} />;
   else if (screen.t === "scan") overlay = <MobileScan onBack={back} onDrafted={onScanDrafted} onOpenSo={(docNo) => setScreen({ t: "so-detail", docNo })} />;
   else if (screen.t === "module") {
     const k = screen.key;
@@ -943,13 +944,16 @@ function MobileAppInner() {
   }
   else if (screen.t === "module-form") {
     const cfg = MODULE_CONFIGS[screen.key];
-    /* A scoped Sales Director's invite is stored with the baseline role whatever
-       it carries (docs/bugs/0887), so the create form drops its Role picker. */
+    /* A scoped Sales Director's member saves ignore fields: the invite stores the
+       baseline role (docs/bugs/0887), the edit strips role, department, position
+       and email (docs/bugs/0924-a-sales-director-s-phone-edit-of-a-member-s-role-department.md).
+       Each form shows only what its save applies. */
     const baseForm = cfg?.form;
+    const scopedSalesDirector = isSalesDirectorUser(user) && !can("users.manage");
     const schema = screen.mode === "edit" && screen.key === "members"
-      ? FORM_MEMBERS_EDIT
+      ? memberEditFormFor(FORM_MEMBERS_EDIT, scopedSalesDirector)
       : screen.key === "members" && baseForm
-        ? memberInviteFormFor(baseForm, isSalesDirectorUser(user) && !can("users.manage"))
+        ? memberInviteFormFor(baseForm, scopedSalesDirector)
         : baseForm;
     const title = cfg?.title ?? screen.key;
     overlay = !schema ? <Stub title={title} onBack={back} /> : (

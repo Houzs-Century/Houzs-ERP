@@ -21,6 +21,7 @@
 // ---------------------------------------------------------------------------
 
 import type { DataQuality } from './governance';
+import { fmtSen } from '../../scm/shared/format';
 
 export type ReleaseDecision =
   /** Nothing outstanding — dispatch is clear. */
@@ -120,6 +121,6 @@ export function computeReleaseGate(input: ReleaseGateInput): ReleaseGate {
   return {
     totalSen, paidSen, remainingSen, paidFraction,
     decision: 'RELEASE_WITH_COLLECTION', collectOnDeliverySen: remainingSen, needsEscalation: false,
-    reason: `clear to dispatch; POD to collect the ${(remainingSen / 100).toFixed(2)} balance on delivery`,
+    reason: `clear to dispatch; POD to collect the ${fmtSen(remainingSen)} balance on delivery`,
   };
 }

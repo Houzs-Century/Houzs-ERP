@@ -271,6 +271,26 @@ Unlike Delivery Return, there is **no sales-scope row filter** here — procurem
 - **Consignment returns are a different module.**
 - **No mobile twin.**
 
+## Export (owner 2026-09-15): ONE button, AutoCount's Purchase Return Detail Listing
+
+The list's toolbar **Export** writes an `.xlsx` with one row per return LINE, the
+grid's visible columns in on-screen order, for EVERY return the tab and search match —
+not the 300 the screen read holds. The grid's default columns are AutoCount's own
+"Print Purchase Return Detail Listing" columns in AutoCount's order; the ERP-only
+columns are in the chooser, hidden by default. Money is ringgit in the file.
+
+- `GET /purchase-returns/export/rows?status=&supplierId=` ->
+  `{ purchaseReturns: Array<ListRow & { lines }>, total, lineCount, truncated }`
+  (`backend/src/scm/routes/purchase-return-exports.ts`), mounted before the main
+  router, same `scm.procurement.pr` area guard.
+- `GET /` now carries `lines` on each row too, through the same
+  `attachPurchaseReturnLines` (`backend/src/scm/lib/purchase-return-list-read.ts`),
+  and orders by `return_date` then `return_number`.
+- Column contract, AutoCount evidence and value rules: `docs/line-export-columns.md` §7.
+- Read-only production check: `backend/scripts/check-return-line-export.mjs`
+  (workflow "Return line export check (read-only)").
+- Trace: `docs/bugs/0928-the-purchase-and-delivery-return-lists-exported-the-loaded-r.md`.
+
 ## See also
 
 - `docs/line-export-columns.md` — the proposed one-row-per-line export columns for every transaction document, and which columns the import may change

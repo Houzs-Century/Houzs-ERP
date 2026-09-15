@@ -35,7 +35,7 @@ The owner's 2026-07-27 rework split approval in two
 | Lane | Covers | Signed by | Touches a PO? |
 |---|---|---|---|
 | `LINES` | SKU/spec, colour/fabric, qty, sell price, added/removed product lines, **Processing Date** | `scm.amendment.approve_lines` (role Purchaser) | yes — approving auto-raises a follow-up PO Amendment |
-| `DELIVERY` | schedule Delivery Date, State/Postcode/City, the address block, disposal, customer contact, **service lines** (disposal / storage / transport — identified by `item_group='service'`, not the `SVC-` prefix alone) | `scm.amendment.approve_delivery` (role Logistic) | never |
+| `DELIVERY` | schedule Delivery Date, State/Postcode/City, the address block, disposal, customer contact, **service lines** (disposal / storage / transport — identified by `item_group='service'` on an existing line, or the catalogue category `SERVICE` on an ADDED one, not the `SVC-` prefix alone) | `scm.amendment.approve_delivery` (role Logistic) | never |
 
 Two rules that are easy to get wrong:
 
@@ -54,6 +54,29 @@ Two rules that are easy to get wrong:
   identity defaults to `LINES` — a product change mis-routed to purchasing is
   reviewable noise; mis-routed *away* from purchasing it is an unreviewed spec
   change.
+- **An ADDED line is judged by its code's CATALOGUE category**, because it has
+  no SO row and so no `item_group`. The 2026-09-11 fix covered existing lines
+  only; on 2026-09-14 HC-SO-012757/A1 added `TRANSPORTATION CHARGES` × 1
+  (RM150, catalogue category `SERVICE`) and still landed on `LINES` — the owner:
+  「为什么Service line item还是purchaser approve?」. The submit route now reads
+  `catalogCategoriesByCode` (`backend/src/scm/lib/validate-item-codes.ts`, the
+  order's company) for every line with no `salesOrderItemId` and passes the
+  category into the lane split, refusing the submit 500 if that read fails
+  rather than classifying on nothing. The PO follow-up uses the same read, so
+  approving such an ADD raises no PO amendment. The lane is still stored ONCE at
+  submit: an amendment raised before the fix keeps the lane it got
+  (`docs/bugs/0895-an-amendment-that-added-a-service-line-went-to-the-purchaser.md`).
+- **A stored lane can be MOVED only by the repair workflow**, never from a
+  screen. Actions → *Relane SO amendment (DRY-RUN gated)* runs
+  `backend/scripts/relane-so-amendment.mjs` with an amendment number and a
+  target lane; it refuses anything but a `REQUESTED`, lane-bearing, line-only
+  amendment whose lines ALL agree with the target lane by today's service-line
+  signal, and on apply (`apply=1` + the confirm phrase) writes the lane plus one
+  `AMENDMENT_RELANED` history row, then re-reads both on a fresh connection.
+  Built for HC-SO-012757/A1 (owner 2026-09-15, 「那就把这张 A1 改到 Logistic」,
+  `docs/bugs/0928-an-amendment-raised-before-the-service-line-fix-stayed-on-th.md`).
+  It posts no notice — the target desk's inbox reads by lane, so the row is on
+  it the moment the update commits.
 
 **Legacy rows** (`lane IS NULL`, raised before the rework) keep the original
 supplier-confirm two-gate chain and its original keys
@@ -69,8 +92,8 @@ on `/api/scm/so-amendments`.
 
 | Method + path | Gate | Notes |
 |---|---|---|
-| `POST /mfg-sales-orders/:docNo/amendments` | `scm.amendment.create`, OR a salesperson on their OWN order, OR a lane approver | Splits by lane, one insert per lane |
-| `GET /so-amendments` | read | Row-scoped like the SO list (own + downline for a scoped rep). Each row also carries `bound_pos` and, since 2026-09-14, the order's raw `so_ref` + `so_customer_so_no` (§7) |
+| `POST /mfg-sales-orders/:docNo/amendments` | `scm.amendment.create`, OR a salesperson on their OWN order, OR a lane approver | **Reason required** (400 `reason_required`, checked before the SO is read — owner 2026-09-15, 「SO amendment reason 换成一定 fill in」; both submit prompts validate it client-side). Splits by lane, one insert per lane |
+| `GET /so-amendments` | read | Row-scoped like the SO list (own + downline for a scoped rep). Each row also carries `bound_pos` and, since 2026-09-14, the order's raw `so_ref` + `so_customer_so_no` (§7). Since 2026-09-15 the `bound_pos` reads are batched (`chunkIn`) and a failed one fails the list with `load_failed` instead of an empty field (`docs/bugs/0930-an-so-amendment-left-the-po-amendments-queue-when-a-bound-po.md`) |
 | `GET /so-amendments/:id` | read | |
 | `GET /so-amendments/pending-count` | lane keys, asked LITERALLY (`*` excluded) | **Per-signer** count of `REQUESTED` rows in the lanes THIS caller can sign; 0 for everyone else, the Owner account included. Feeds the sidebar badge (§5). Registered BEFORE `/:id` — Hono matches in order |
 | `PATCH /so-amendments/:id/approve-so` | the row's lane key (legacy: `approve_so`) | Applies the SO revision; LINES also raises PO follow-ups |
@@ -209,9 +232,9 @@ The colours are deliberately not status tones: Requested / Approved / Rejected
 already own burnt, green and red on the same row.
 
 **Reference column.** `GET /so-amendments` reads `ref, customer_so_no` from
-`mfg_sales_orders` for the page's doc_nos (company-scoped, one bounded read; a
-failed read fails the list with `load_failed` like the main read, because a blank
-column would claim the order has no reference) and sends them RAW as `so_ref` /
+`mfg_sales_orders` for the page's doc_nos (company-scoped, batched by URL budget
+like the `bound_pos` reads; a failed read fails the list with `load_failed` like
+the main read, because a blank column would claim the order has no reference) and sends them RAW as `so_ref` /
 `so_customer_so_no`. The queue resolves the cell with
 `customerRefOf` (`frontend/src/lib/customer-ref.ts`), the rule the Sales Order
 list's **Reference** column already uses, so one order cannot show two different
@@ -223,3 +246,35 @@ exported. Phone: a "Ref …" line on the card. Pinned by
 **Open order.** Requested stays on top every time the desktop queue opens — see
 [`purchase-order-amendment.md`](./purchase-order-amendment.md), *Status
 simplification*, for `sortForSessionOnly`.
+
+## 8. One click opens a quick view (2026-09-14)
+
+Owner: 「SO / PO amendment需要单击打开 弹窗 像SO这样」 — the Sales Order list opens a
+side drawer on a single click, and the amendment queues should too.
+
+- **Single click** on a desktop queue row opens
+  `frontend/src/pages/scm-v2/AmendmentQuickView.tsx` in the shared
+  `ResizableDetailDrawer` (the SO / PO / DO list drawers' chrome, same resizable
+  width). **Double-click** still opens the job card (`/scm/amendments/:id`);
+  `amendmentJobCardPath` is the one place both answers come from, and the
+  drawer's **Open full page** goes there too.
+- **Read-only**: the amendment number, the Sales Order, the status pill, the
+  approver badge, who asked and when, the bound POs, the reason, a withdrawn or
+  rejected request's words, the order (header) changes, and the line changes.
+  Approve, reject and withdraw stay on the job card, where their permission
+  checks and confirmations are.
+- **The line cards are the job card's own.** `SoAmendmentDiffCard` now lives in
+  `frontend/src/pages/scm-v2/so-amendment-diff-card.tsx` (moved verbatim out of
+  `AmendmentDetailV2.tsx`) so the drawer cannot show a change differently from the
+  page an approver signs on — and without pulling the job card's PDF generator
+  into the queue route. Header rows come from the same `amendmentHeaderDiffRows`.
+- **"Remark cleared" / "Discount cleared" on an added line was wrong** and is
+  fixed in the one shared rule (`amendmentLineChangedFields`): on an ADD the remark
+  and the discount count as changed only when the new line carries one, on a
+  REMOVE only when the removed line had one. Before, all 7 lines ever added read
+  "Discount cleared" on the job card, the desktop amendment modal and the phone
+  sheet (`docs/bugs/0919-an-added-amendment-line-said-remark-cleared-and-discount-cle.md`).
+- The phone queue already opened on a tap and is unchanged.
+- Pinned by `AmendmentQuickView.test.tsx` and
+  `amendment-queue-quick-view.test.tsx` (single click opens it, double-click
+  navigates, on both queues).

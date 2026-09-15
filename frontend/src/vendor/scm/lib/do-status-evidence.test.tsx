@@ -37,7 +37,7 @@ import { renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 
-import { useUpdateMfgDeliveryOrderStatus } from "./delivery-order-queries";
+import { useCancelMfgDeliveryOrder, useUpdateMfgDeliveryOrderStatus } from "./delivery-order-queries";
 
 vi.mock("./dialog-service", () => ({ serviceNotify: vi.fn() }));
 
@@ -117,10 +117,27 @@ describe("useUpdateMfgDeliveryOrderStatus carries proof of delivery", () => {
   test("no evidence sends no evidence keys — a status change never blanks a POD", async () => {
     const { result } = renderHook(() => useUpdateMfgDeliveryOrderStatus(), { wrapper });
 
-    await result.current.mutateAsync({ id: "do-1", status: "CANCELLED" });
+    await result.current.mutateAsync({ id: "do-1", status: "IN_TRANSIT" });
 
     await waitFor(() => expect(authedFetch).toHaveBeenCalled());
-    expect(sentBody()).toEqual({ status: "CANCELLED" });
+    expect(sentBody()).toEqual({ status: "IN_TRANSIT" });
+  });
+});
+
+/* Owner 2026-09-14 (「DO cancel need pop out window for reason」): the server
+   refuses a cancel without a reason, so the cancel hook's type REQUIRES one and
+   sends it beside status CANCELLED, on the same endpoint as every other move. */
+describe("useCancelMfgDeliveryOrder carries the reason", () => {
+  test("status CANCELLED and the reason reach the status endpoint", async () => {
+    const { result } = renderHook(() => useCancelMfgDeliveryOrder(), { wrapper });
+
+    await result.current.mutateAsync({ id: "do-1", reason: "Customer postponed the delivery" });
+
+    await waitFor(() => expect(authedFetch).toHaveBeenCalled());
+    const [url, init] = authedFetch.mock.calls.at(-1) as [string, RequestInit];
+    expect(url).toBe("/delivery-orders-mfg/do-1/status");
+    expect(init.method).toBe("PATCH");
+    expect(sentBody()).toEqual({ status: "CANCELLED", reason: "Customer postponed the delivery" });
   });
 });
 

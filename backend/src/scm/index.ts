@@ -29,7 +29,9 @@ import { fabricTracking } from "./routes/fabric-tracking";
 import { suppliers } from "./routes/suppliers";
 import { mfgPurchaseOrders } from "./routes/mfg-purchase-orders";
 import { mfgPurchaseOrdersListEnrichment } from "./routes/mfg-purchase-orders-list-enrichment";
+import { poLineImport } from "./routes/po-line-import";
 import { purchaseOrderItemPhotos } from "./routes/purchase-order-item-photos";
+import { purchaseOrderExports } from "./routes/purchase-order-exports";
 import {
   CANCEL_REQUEST_OPEN_READ_PATH,
   cancelApprovalGuard,
@@ -40,8 +42,10 @@ import {
 } from "./routes/document-cancel-routes";
 import { grns } from "./routes/grns";
 import { grnsListEnrichment } from "./routes/grns-list-enrichment";
+import { grnExports } from "./routes/grn-exports";
 import { purchaseInvoices } from "./routes/purchase-invoices";
 import { purchaseInvoicesListEnrichment } from "./routes/purchase-invoices-list-enrichment";
+import { purchaseInvoiceExports } from "./routes/purchase-invoice-exports";
 import { paymentVouchers } from "./routes/payment-vouchers";
 import { otherDebtors } from "./routes/other-debtors";
 import { apInvoices } from "./routes/ap-invoices";
@@ -64,8 +68,11 @@ import { deliveryOrdersMfg } from "./routes/delivery-orders-mfg";
 import { deliveryOrderScanToken } from "./routes/delivery-order-scan-token";
 import { deliveryOrderItemPhotos } from "./routes/delivery-order-item-photos";
 import { salesInvoices } from "./routes/sales-invoices";
+import { salesInvoiceExports } from "./routes/sales-invoice-exports";
 import { deliveryReturns } from "./routes/delivery-returns";
 import { purchaseReturns } from "./routes/purchase-returns";
+import { deliveryReturnExports } from "./routes/delivery-return-exports";
+import { purchaseReturnExports } from "./routes/purchase-return-exports";
 import { consignmentOrders } from "./routes/consignment-orders";
 import { consignmentNotes } from "./routes/consignment-notes";
 import { consignmentReturns } from "./routes/consignment-returns";
@@ -326,6 +333,12 @@ scm.use("/mfg-purchase-orders/*", scmAreaGuard("scm.procurement.po", {
 // the main router so its static `/list-mrp-enrichment` path resolves ahead of
 // `/:id`. Shares the guard above via the path prefix.
 scm.route("/mfg-purchase-orders", mfgPurchaseOrdersListEnrichment);
+// PO line import (owner 2026-09-15): POST /line-import/preview + /apply. Static
+// paths, mounted ahead of the main router's `/:id` routes; same area guard.
+scm.route("/mfg-purchase-orders", poLineImport);
+// The list's two exports (every page the filters match) — static /export/...
+// paths, so also BEFORE the main router's `/:id`.
+scm.route("/mfg-purchase-orders", purchaseOrderExports);
 // Cancellation needs a reason + the PO's one approval (owner 2026-09-08). The
 // request routes ride this prefix's area guard; the guard in front of
 // PATCH /:id/cancel is mounted above, ahead of the area guard.
@@ -346,6 +359,9 @@ scm.use("/grns/*", scmAreaGuard("scm.procurement.grn"));
 // the main router so its static `/list-mrp-enrichment` path resolves ahead of
 // `/:id`. Shares the guard above via the path prefix.
 scm.route("/grns", grnsListEnrichment);
+// The list's two exports (every page the filters match) — static /export/...
+// paths, so also BEFORE the main router's `/:id`.
+scm.route("/grns", grnExports);
 scm.route("/grns", grns);
 scm.use("/purchase-invoices/*", scmAreaGuard("scm.procurement.pi"));
 // Deferred list enrichment — the MRP-derived PI-list columns (Assigned SO /
@@ -353,6 +369,8 @@ scm.use("/purchase-invoices/*", scmAreaGuard("scm.procurement.pi"));
 // the main router so its static `/list-mrp-enrichment` path resolves ahead of
 // `/:id`. Shares the guard above via the path prefix.
 scm.route("/purchase-invoices", purchaseInvoicesListEnrichment);
+// The list's two exports — static /export/... paths, BEFORE the main router.
+scm.route("/purchase-invoices", purchaseInvoiceExports);
 scm.route("/purchase-invoices", purchaseInvoices);
 // ── Sales Orders (scm.sales.orders) ─────────────────────────────────────────
 // Same key-not-area admission as the PO mount above: the Purchaser signs
@@ -453,6 +471,14 @@ scm.use(
     },
   }),
 );
+/* Cancelling a delivery order costs a REASON (owner 2026-09-14, 「DO cancel need
+   pop out window for reason」) — the Purchase Order's rule, on the DO's status
+   route: the guard wakes only when the body asks for CANCELLED, refuses 400
+   without a reason, and records the cancellation with it
+   (routes/document-cancel-routes.ts). Mounted AFTER the area guard, unlike the PO
+   and SO guards: no approver has to be admitted past it, so a caller is asked
+   who they are before they are asked why. The DO router itself is not edited. */
+scm.use("/delivery-orders-mfg/:id/status", cancelApprovalGuard("DO"));
 /* Two routers on one prefix, like /grns and /purchase-invoices above. The
    scan-token mint is a NEW FILE because delivery-orders-mfg.ts is already past
    its file-size ceiling and a ceiling may only fall. Mounted FIRST so its one
@@ -472,10 +498,16 @@ scm.route("/delivery-orders-mfg", deliveryOrdersMfg);
 // invoice). Row-scoped own+downline; cost/margin stripped for non-finance.
 // Writes still require edit on scm.sales.invoices.
 scm.use("/sales-invoices/*", scmAreaGuard("scm.sales.invoices", { readInheritsFrom: "scm.sales.orders" }));
+// The list's two exports — static /export/... paths, BEFORE the main router.
+scm.route("/sales-invoices", salesInvoiceExports);
 scm.route("/sales-invoices", salesInvoices);
 scm.use("/delivery-returns/*", scmAreaGuard("scm.sales.returns"));
+// The list's ONE export (every return the filters match) — a static
+// /export/rows path, so BEFORE the main router's `/:id`; same area guard.
+scm.route("/delivery-returns", deliveryReturnExports);
 scm.route("/delivery-returns", deliveryReturns);
 scm.use("/purchase-returns/*", scmAreaGuard("scm.procurement.pr"));
+scm.route("/purchase-returns", purchaseReturnExports);
 scm.route("/purchase-returns", purchaseReturns);
 // ── Consignment (scm.consignment.*) ─────────────────────────────────────────
 scm.use("/consignment-orders/*", scmAreaGuard("scm.consignment.orders"));

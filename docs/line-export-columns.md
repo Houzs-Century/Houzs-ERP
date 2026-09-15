@@ -11,6 +11,20 @@ each value comes from, and says which columns the future import may change. It i
 a **design**, not a build: the only export being built today is the Purchase
 Order one, and its columns are the template everything below follows.
 
+> **Built since** (2026-09-15): Delivery Return (§4) and Purchase Return (§7), on the
+> grid-driven mechanism, with AutoCount's own Detail Listing columns — read-only
+> production proof in `backend/scripts/check-return-line-export.mjs`.
+
+> **Built since** (2026-09-15): Goods Receipt (§5), Purchase Invoice (§6) and
+> Sales Invoice (§3), with the owner's rulings below and the differences listed
+> in [§ What the GR / PI / SI builds changed](#what-the-gr--pi--si-builds-changed).
+> Their column contracts are `backend/src/scm/lib/{grn,pi,si}-line-export-columns.ts`;
+> the module guides (`docs/modules/grn.md`, `purchase-invoice.md`,
+> `sales-invoice.md`, *Exports*) describe them.
+> Read-only production proof: run 34941927326 (every tab / All / date-window /
+> seller-scope case MATCH, Line ID by Line ID). Import is desktop-only by the
+> owner's decision (「手机不需要导入」, 2026-09-15).
+
 > Status of the facts in here: every count was measured on **production**
 > (Supabase project `anogrigyjbduyzclzjgn`) through a **read-only transaction**
 > on 2026-09-15 between 04:04 and 04:15 UTC. The data is live and moves while
@@ -20,6 +34,38 @@ Order one, and its columns are the template everything below follows.
 > schema; **LIKELY** = read in code, not observed; **UNKNOWN** = not settled.
 
 ---
+
+## The grid-driven mechanism (2026-09-15) — how every list exports by line
+
+Owner 2026-09-15: ONE Export per list, one row per line, the columns the grid
+shows (hidden columns are not exported), following the grid's filter and view.
+Built once in `DataTable`; each list plugs in.
+
+- **Column** (`frontend/src/components/DataTable.tsx`, `Column<T, L>`):
+  `lineValue(row, line)` is the cell for one line (blank on a document with no
+  lines); `exportValue(row)` is a document value for the file when it differs
+  from `getValue` (money in ringgit where `getValue` holds sen for sorting);
+  `exportFormat` is `text | number | money | rate | date` (date = a real Excel
+  date cell shown yyyy/mm/dd; money #,##0.00; rate up to 4 decimals). A column
+  with neither `lineValue` nor `exportValue` repeats its `getValue` on each line.
+- **DataTable prop** `exportLines = { fetchRows({ exportKeys, filterKeys }),
+  linesOf(row), sheetName, onError }`. `fetchRows` returns EVERY row the list's
+  server filter matches (all pages), each with its lines, and throws to refuse
+  (for example when the server says `truncated`). The toolbar Export then
+  applies the grid's funnels and sort with the SAME functions the grid uses
+  (`frontend/src/components/dataTableRows.ts`: `applyColumnFilters`,
+  `sortTableRows`) and writes `<exportName>-YYYY-MM-DD.xlsx` through
+  `frontend/src/components/dataTableLineExport.ts`. A line column should give
+  `getFilterValues` every line's value, so a funnel keeps a document when ANY
+  line matches.
+- **Server contract** per document: `GET /<doc-route>/export/rows` with the list's
+  query parameters and no `page`, answering
+  `{ <docs>: Array<ListRow & { lines }>, total, lineCount, truncated }`. Read
+  through the list's own filter and sort, page headers past the PostgREST
+  ceiling, read lines by header id with the company predicate on the line read
+  too, and attach them with the SAME function the list page endpoint uses.
+- Without `exportLines`, the CSV export is unchanged except that `exportValue` is
+  honoured.
 
 ## 0. Rules that apply to every document
 
@@ -36,13 +82,25 @@ Order one, and its columns are the template everything below follows.
    finance-only columns on the screens (unit cost, line cost, margin) stay off.
 6. **Line ID is always the last column.** It is the line table's `id` (a uuid).
    The import matches rows by it and nothing else.
-7. **Location** is the warehouse's code from `scm.warehouses.code`
-   (e.g. `KL WAREHOUSE`), as on the PO export. See open question Q2.
+7. **Location** is AutoCount's SHORT code (`KL`, not the ERP's `KL WAREHOUSE`) —
+   owner 2026-09-15 (Q2). The PO export resolves it through the write-back's own
+   `bookSpellingOrOwn(code ?? name, LOCATION_MAP)`.
 8. **2990's Home (company 2) never syncs to AutoCount**, so its
    "AutoCount Doc No" is blank by design — PROVEN: 175 of 175 of its sales orders,
    65 of 65 delivery orders, 110 of 110 purchase orders, 68 of 68 goods receipts,
    56 of 56 purchase invoices and 10 of 10 sales invoices have none.
    Every Houzs Century (company 1) document of those six types has one.
+9. **Item Code, Item Description, Item Group and UOM as the book holds them**
+   (2026-09-15): `bookLineItem` in `backend/src/services/autocount-book-item.ts`,
+   shared by every document export. Item Code is the write-back's
+   `resolveAcItemCode`; Description, Item Group and UOM come from the AutoCount
+   item master snapshot (`backend/scripts/data/ac-item-master.tsv`, written
+   read-only by `export-ac-item-master.py`, compiled by
+   `gen-autocount-item-master.mjs`, CI `audit:ac-item-master`), falling back to the
+   ERP's own values. PROVEN on the live book 2026-09-15 by AutoCount item code:
+   Item.ItemGroup equals the listed group on 61,818 / 61,818 SO lines and
+   47,928 / 47,928 DO lines; BaseUOM equals the line UOM on 61,795 / 61,818 and
+   47,906 / 47,928. Re-export when items are opened in AutoCount.
 
 ### 0.1 The Purchase Order template (not changed here)
 
@@ -293,43 +351,82 @@ Description 2**, **Remarks** (`notes`). No estimate dates.
 
 ## 4. Delivery Return (sales return)
 
-Tables: `scm.delivery_returns` + `scm.delivery_return_items`
-(`delivery_return_id`). Production: **1 return (CANCELLED), 2 lines** — the
-document is practically unused. **No AutoCount mapping exists** for it
-(the outbox accepts SO, PO, DO, IV, GR, PI only).
+> **BUILT 2026-09-15** on the grid-driven mechanism above. `GET /delivery-returns/export/rows`
+> (`backend/src/scm/routes/delivery-return-exports.ts`, builder
+> `buildDeliveryReturnExportRows` in `backend/src/scm/lib/delivery-return-list-read.ts`),
+> the list `frontend/src/pages/scm-v2/DeliveryReturnsListV2.tsx`, the column contract
+> `backend/src/scm/lib/return-line-export-columns.ts` (`DR_LINE_COLUMNS`, mirrored in
+> `frontend/src/vendor/scm/lib/`). This section replaces the proposal that stood here.
 
-| # | Group | Column | Source | Notes |
+Tables: `scm.delivery_returns` + `scm.delivery_return_items` (`delivery_return_id`).
+Production, read-only at 2026-09-15 09:25 UTC: **company 1 HOUZS 0 returns; company 2
+2990 1 return (CANCELLED) with 2 lines** (PROVEN, `backend/scripts/check-return-line-export.mjs`).
+
+**AutoCount HAS this document, and the ERP does not sync it.** The earlier line here
+("no AutoCount mapping exists") is right about the ERP — the outbox accepts SO, PO,
+DO, IV, GR and PI only — but the book itself holds Delivery Returns: `DR` / `DRDTL` in
+AED_HOUZS, **87 documents / 113 lines, 2024-09-03 .. 2026-08-21** (PROVEN, read-only
+2026-09-15 16:12 MYT). None is in the ERP (company 1 has 0 returns).
+
+**The columns ARE AutoCount's.** AutoCount Accounting 2.2's own "Print Delivery Return
+Detail Listing" grid, read from the installed program's embedded form resources
+(`AutoCount.Sales.dll`, `AutoCount.Invoicing.Sales.DeliveryReturn.FormDeliveryReturnPrintDetailListing.resources`:
+each column's `Caption` and `VisibleIndex`). The book's `Layout` table holds no saved
+layout for that form, so every AutoCount user sees these defaults (PROVEN). They are the
+grid's DEFAULT visible columns, in this order:
+
+| # | Label (AutoCount caption) | Level | ERP value | AutoCount's own values on its 113 DR lines |
 |---|---|---|---|---|
-| 1 | identity | Doc No | `h.return_number` | |
-| 2 | identity | Doc Date | `h.return_date` | |
-| 3 | identity | Status | `h.status` | |
-| 4 | identity | Customer Code | `h.debtor_code` | |
-| 5 | identity | Customer Name | `h.debtor_name` | |
-| 6 | identity | Reason | `h.reason` | |
-| 7 | line | Item Code | `i.item_code` | |
-| 8 | line | Item Description | `i.description` | |
-| 9 | line | Item Description 2 | `i.description2` | |
-| 10 | line | Remarks | `i.notes` | |
-| 11 | line | Category | `i.item_group` | |
-| 12 | line | Condition | `i.condition` | |
-| 13 | line | Location | `warehouses.code` via `h.warehouse_id` | |
-| 14 | line | UOM | `i.uom` | |
-| 15 | line | Qty Returned | `i.qty_returned` | |
-| 16 | money | Unit Price | `i.unit_price_sen` ÷ 100 | |
-| 17 | money | Line Refund | `i.line_total_sen` ÷ 100 | the Detail Listing reads `refund_sen`; both columns exist on the line |
-| 18 | money | Pending Refund | `h.refund_sen` ÷ 100 unless status is REFUNDED, CREDIT_NOTED or REJECTED | the Detail Listing's rule |
-| 19 | follow-up | Received On | `h.received_at` | |
-| 20 | follow-up | Refunded On | `h.refunded_at` | |
-| 21 | people/place | Salesperson | `staff.name` via `h.salesperson_id`, else `h.agent` | |
-| 22 | people/place | Venue | `h.venue` | |
-| 23 | people/place | Phone | `h.phone` | |
-| 24 | links | DO No. | `h.do_doc_no` | |
-| 25 | links | SO Doc No. | the SO number of the DO line, via `i.do_item_id` | |
-| 26 | links | Invoice No. | `sales_invoices.invoice_number` via `h.sales_invoice_id` | |
-| 27 | | Line ID | `i.id` | |
+| 1 | Doc No | doc | `return_number` | |
+| 2 | Doc Date | doc | `return_date` (Excel date, yyyy/mm/dd) | |
+| 3 | Debtor Code | doc | `debtor_code` | |
+| 4 | Debtor Name | doc | `debtor_name` | |
+| 5 | Agent | doc | HOUZS: the write-back's `resolveAcAgent(agent, salesperson name)`; 2990: salesperson name, else `agent` | |
+| 6 | Curr. Code | doc | `currency` | MYR on 113 |
+| 7 | Curr. Rate | doc | 1 when MYR, else blank (a return stores no rate) | 1 |
+| 8 | Inclusive? | doc | blank — the ERP holds no tax setting | T on 110 of 113 |
+| 9 | SubTotal (Ex) | doc | `local_total_sen` ÷ 100 | |
+| 10 | Tax | doc | 0 — a return carries no tax in the ERP | 0 on 113 |
+| 11 | Total | doc | `local_total_sen` ÷ 100 | |
+| 12 | Local Total | doc | `local_total_sen` ÷ 100 | |
+| 13 | Cancelled | doc | Yes / No from `status` | F on 113 |
+| 14 | Item Code | line | HOUZS: `bookLineItem` (the write-back's item resolver + the book's item master); 2990: `item_code` | |
+| 15 | Detail Description | line | HOUZS: the book item's description, else `description`; 2990: `description` | |
+| 16 | UOM | line | HOUZS: the book item's base UOM, else `uom`; 2990: `uom` | |
+| 17 | Location | line | the warehouse the line went back into, by the stock rule (SO line's warehouse via the DO line, else the DO's, else the return's) as AutoCount's short code (`LOCATION_MAP`) | KL 80, PG 28, SRW 4, SBH 1 |
+| 18 | Proj No | line | blank | blank on 113 |
+| 19 | Dept No | line | blank | blank on 113 |
+| 20 | Batch No. | line | blank | blank on 113 |
+| 21 | Qty | line | `qty_returned` | |
+| 22 | Unit Price | line | `unit_price_sen` ÷ 100 (rate) | |
+| 23 | Discount | line | `discount_sen` ÷ 100 | blank on 113 |
+| 24 | Total | line | `line_total_sen` ÷ 100 | |
+| 25 | Tax Code | line | blank | blank on 113 |
+| 26 | Tax | line | 0 | 0 on 113 |
+| 27 | Total (Ex) | line | `line_total_sen` ÷ 100 | |
+| 28 | Total (Inc) | line | `line_total_sen` ÷ 100 | |
+| 29 | Serial No. List | line | blank | blank on 113 |
 
-Import-editable here: **Item Description 2**, **Remarks** (`notes`). No delivery
-or estimate date on a return line.
+AutoCount itself captions the document total and the line total both "Total", and the
+document tax and the line tax both "Tax"; the file keeps its captions.
+
+In the chooser, hidden by default (ERP facts; AutoCount captions where the same form has
+one): Status (the word on screen), Ref (the list's customer ref), Reason, Note, DO No.
+(`do_doc_no`), SO Doc No. (the DO line's SO line, else the DO's), Detail Description 2
+(composed from the line's variants by `buildVariantSummary`, the stored `description2`
+only when the variants compose nothing), Remarks (`notes`), Item Group (the book item's,
+2990: `item_group`), Condition, Line ID; and the list's own columns: Salesperson, Sales
+Location, Branding / Venue (HOUZS: `BRANDING_MAP` / `VENUE_MAP` in the file), Phone,
+Email, Address 1/2, City, Postcode, State, Customer Type, Building Type, and for a
+finance viewer the category and cost columns (ringgit in the file).
+
+A sofa is one row per ERP line (owner 2026-09-15), not AutoCount's one collapsed line:
+2990-DR-2608-001 exports XAMMAR-L(LHF) and XAMMAR-2A(RHF) as two rows (PROVEN).
+
+Filters: the list's server read is company + SALES SCOPE + `status`; the tab and search
+filter in the browser, and the export applies the same predicate
+(`deliveryReturnsInView`) to every row the server returns. The screen read stops at 500;
+the export does not.
 
 ---
 
@@ -430,19 +527,65 @@ estimate date on an invoice line.
 
 ## 7. Purchase Return
 
-Tables: `scm.purchase_returns` + `scm.purchase_return_items`
-(`purchase_return_id`). Production: **0 returns, 0 lines**. Not synced to
-AutoCount.
+> **BUILT 2026-09-15** on the grid-driven mechanism above. `GET /purchase-returns/export/rows`
+> (`backend/src/scm/routes/purchase-return-exports.ts`, builder
+> `buildPurchaseReturnExportRows` in `backend/src/scm/lib/purchase-return-list-read.ts`),
+> the list `frontend/src/pages/scm-v2/PurchaseReturnsListV2.tsx`, the column contract
+> `PR_LINE_COLUMNS` in `return-line-export-columns.ts`. This section replaces the
+> proposal that stood here.
 
-Doc No (`return_number`) · Doc Date (`return_date`) · Status · Supplier Code ·
-Supplier Name · Credit Note Ref (`credit_note_ref`) · Item Code · Item Description
-(`material_name`) · Item Description 2 (`description2`) · Remarks (`notes`) ·
-Reason (`i.reason`, else `h.reason`) · Category (`item_group`) · Location (the GRN
-header's warehouse via `grn_item_id`) · UOM · Qty Returned (`qty_returned`) ·
-Unit Price · Line Refund (`line_refund_sen`) · GRN No. (via `grn_item_id`) ·
-PO No. (`h.purchase_order_id`) · Line ID.
+Tables: `scm.purchase_returns` + `scm.purchase_return_items` (`purchase_return_id`).
+Production, read-only at 2026-09-15 09:25 UTC: **0 returns, 0 lines in both companies**
+(PROVEN; the export and SQL both answer 0). Not synced to AutoCount by the ERP; the book
+holds its own: `PR` / `PRDTL` in AED_HOUZS, **4 documents / 5 lines, 2024-01-27 ..
+2025-10-28** (PROVEN, read-only 2026-09-15 16:12 MYT).
 
-Import-editable here: **Item Description 2**, **Remarks**.
+The columns are AutoCount Accounting 2.2's "Print Purchase Return Detail Listing"
+(`AutoCount.Purchase.dll`, `FormPurchaseReturnPrintDetailListing.resources`; no saved
+layout in the book), the grid's DEFAULT visible columns in this order:
+
+| # | Label | Level | ERP value | AutoCount's own values on its 5 PR lines |
+|---|---|---|---|---|
+| 1 | Doc No | doc | `return_number` | |
+| 2 | Doc Date | doc | `return_date` | |
+| 3 | Creditor Code | doc | `suppliers.code` | |
+| 4 | Creditor Name | doc | `suppliers.name` | |
+| 5 | Agent | doc | blank — a purchase return has no agent in the ERP | blank on 4 |
+| 6 | Curr. Code | doc | the source GRN's `currency` | MYR |
+| 7 | Curr. Rate | doc | 1 when MYR, else blank | 1 |
+| 8 | Inclusive? | doc | blank | F on 4 |
+| 9 | SubTotal (Ex) | doc | `refund_sen` ÷ 100 | |
+| 10 | Tax | doc | 0 | 0 |
+| 11 | Total | doc | `refund_sen` ÷ 100 | |
+| 12 | Local Total | doc | `refund_sen` ÷ 100 when MYR, else blank | |
+| 13 | Rounding Adj. | doc | 0 | 0 |
+| 14 | Final Total | doc | `refund_sen` ÷ 100 | |
+| 15 | Cancelled | doc | Yes / No | F |
+| 16 | Item Code | line | HOUZS: `bookLineItem(…, supplier code)`; 2990: `item_code` | |
+| 17 | Detail Description | line | HOUZS: the book item's, else `material_name`, else `description` | |
+| 18 | UOM | line | HOUZS: the book item's base UOM, else `uom` | |
+| 19 | Location | line | the source GRN line's receipt warehouse, else the return's GRN's, short code | PG, KL, HQ |
+| 20–22 | Proj No · Dept No · Batch No. | line | blank | blank |
+| 23 | Qty | line | `qty_returned` | |
+| 24 | Unit Price | line | `unit_price_sen` ÷ 100 (rate) | |
+| 25 | Discount | line | blank — a return line has no discount | "5%" on 2 of 5 |
+| 26 | Total | line | `line_refund_sen` ÷ 100 | |
+| 27 | Local Total | line | `line_refund_sen` ÷ 100 when MYR, else blank | |
+| 28 | Tax Code | line | blank | blank |
+| 29 | Tax | line | 0 | 0 |
+| 30 | Total (Ex) | line | `line_refund_sen` ÷ 100 | |
+| 31 | Total (Inc) | line | `line_refund_sen` ÷ 100 | |
+| 32 | Serial No. List | line | blank | blank |
+| 33 | Is Rounding Adj. | doc | No | F |
+
+Hidden by default: Status (the word on screen), Supplier C/N No. (`credit_note_ref`),
+Reason (the line's, else the return's), GRN No. (via `grn_item_id`, else the return's GRN),
+Our PO No. (the GRN line's PO, else the return's), Detail Description 2 (from the
+variants, else stored), Remarks (`notes`), Item Group, Line ID.
+
+Filters: company + `status` + `supplierId` on the server; the tab and search in the
+browser, applied by the export to every row (`purchaseReturnsInView`). The screen read
+stops at 300; the export does not.
 
 ---
 
@@ -525,8 +668,7 @@ line tables or none, and were not in the owner's request. See Q12.
    `Desc2` from the item's options (fabric, size…), not from the text in the
    ERP's Item Description 2. If staff change Item Description 2 through the
    import, should AutoCount receive the typed text, or keep the built one?
-2. **Location wording.** Export the ERP warehouse code (`KL WAREHOUSE`) as the PO
-   file does, or AutoCount's short code (`KL`) that the account book uses?
+2. **Location wording.** ANSWERED 2026-09-15: AutoCount's short code (`KL`).
 3. **Prices on delivery lists.** A Delivery Order file often goes to a driver, a
    3PL or a customer. Keep Unit Price / Discount / Line Total in it, or leave
    money out of the DO export?
@@ -537,23 +679,23 @@ line tables or none, and were not in the owner's request. See Q12.
    per line and per order. The import proposal changes the LINE date only. On a
    Delivery Order a later change of the order's date overwrites every line's.
    Is line-only right?
-6. **Status word.** Export the word on screen ("Submitted") or the stored value
-   (`CONFIRMED`)? The PO export's in-progress code (read 2026-09-15, not yet merged) writes the
-   stored value. All
-   documents should make the same choice.
+6. **Status word.** ANSWERED 2026-09-15: the word on screen ("Submitted"), for
+   every document. The PO export writes it (`PO_STATUS_WORDS`).
 7. **Sales order remarks hold the account book's words.** 4,323 of the 4,560
    sales-order line remarks start with `账本原文:` — the text copied from the
    book at go-live. An imported remark would replace it. Allow that, append
    instead of replace, or lock remarks that carry the book text?
 8. **Driver and Vehicle are empty on every delivery order (343 of 343).** Keep
    the two columns (blank until the delivery module fills them), or drop them?
-9. **Cancelled documents.** Proposed: the export follows the list's filter — if
-   the list shows cancelled documents, so does the file. Agree?
-10. **Due dates are mostly empty.** Sales invoices: 359 of 367 live lines have no
+9. **Cancelled documents.** ANSWERED 2026-09-15: the export follows the list's
+   filter — cancelled documents are in the file only when the tab includes them.
+10. ANSWERED 2026-09-15: export the STORED due date only; never derive one from a
+    credit term. **Due dates are mostly empty.** Sales invoices: 359 of 367 live lines have no
     due date. Purchase invoices: 520 of 653. A collection chase list cannot sort by
     due date until these are filled. Fill them from the customer's / supplier's
     credit term, or leave blank?
-11. **Goods receipt "invoiced" figure.** On 69 migrated receipt lines the stored
+11. ANSWERED 2026-09-15: the ERP's own SUM of purchase invoice lines, not the
+    stored figure. **Goods receipt "invoiced" figure.** On 69 migrated receipt lines the stored
     invoiced quantity is larger than what the purchase invoices in the ERP add up
     to (the rest was LIKELY invoiced in AutoCount before go-live — UNKNOWN until
     checked against the book). Export the ERP's own sum, or the stored figure?
@@ -561,6 +703,27 @@ line tables or none, and were not in the owner's request. See Q12.
     payment vouchers and receipts — do these need a line export too?
 
 ---
+
+## What the GR / PI / SI builds changed
+
+Where a build differs from the tables above, and why. Each is a reading of the
+screen the export stands beside, not a new rule.
+
+- **GR Invoiced Qty** excludes DRAFT as well as CANCELLED purchase invoices — the
+  rule `recomputeGrnInvoiced` (routes/purchase-invoices.ts) recounts the stored
+  counter by. VOID is not a `purchase_invoice_status` member.
+- **GR / PI Item Description** is `material_name`, else `description`.
+- **SI Customer Ref** is the list's `customerRefOf`: `ref`, else `customer_so_no`,
+  else `po_doc_no` (the table above said `customer_so_no` first).
+- **SI Location** is the delivery order's warehouse, else that delivery order's
+  `sales_location`, else the invoice's own `sales_location` — so an invoice with no
+  delivery line still names a place.
+- **Overdue Days** is 0 while a due date has not arrived, blank with no due date
+  or no balance.
+- **SI Balance** refuses the file when the order deposit could not be read; the
+  list shows the un-netted figure in that case.
+- **Line order** follows each detail page: GR / PI by creation, category rank and
+  sofa module; SI by `line_no` then creation.
 
 ## How the counts were measured
 

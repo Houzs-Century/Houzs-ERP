@@ -1,18 +1,17 @@
-/* Which product categories an owner may swap a model or SKU between from the
-   edit screens (owner 2026-09-14: 「我不能自己更换category吗？」).
+/* Which category a model or a model-less SKU may be moved to from the edit
+   screens.
 
-   Only ACCESSORY <-> FABRIC_ACCESSORY (Sofa Accessory). Both are non-main,
-   single-price categories, so a swap changes how stock is keyed (by fabric
-   colour or not) and nothing about pricing or the sofa rules. Any other move —
-   a mattress into a sofa — changes pricing, required variants and the main-
-   product rules for every open order, and stays refused.
+   ANY valid category, other than the one it has (owner 2026-09-15: 「by right
+   它应该是每一个 category 我都可以换去不一样的 category」). This replaced the
+   2026-09-14 rule that allowed only Accessory <-> Sofa Accessory.
 
-   Orders already on the books keep the category they were written with; moving
-   them is a separate, audited data run. */
-export const SWAPPABLE_CATEGORIES: readonly string[] = ['ACCESSORY', 'FABRIC_ACCESSORY'];
+   What a move does NOT do: orders already on the books keep the category their
+   lines were written with (moving those is a separate, audited data run), and a
+   SKU that belongs to a model moves only with its model. */
+import { isMfgProductCategory } from './product-categories';
 
 export function categorySwapAllowed(from: string | null | undefined, to: string | null | undefined): boolean {
   const a = String(from ?? '').toUpperCase();
   const b = String(to ?? '').toUpperCase();
-  return a !== b && SWAPPABLE_CATEGORIES.includes(a) && SWAPPABLE_CATEGORIES.includes(b);
+  return a !== b && isMfgProductCategory(b);
 }
