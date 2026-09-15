@@ -36,7 +36,6 @@ import {
   Paperclip,
   Eye,
   EyeOff,
-  Play,
   UserCircle2,
   Users,
   Phone,
@@ -109,7 +108,7 @@ import { api, buildQuery } from "../api/client";
 import { formatPhone } from "../vendor/shared/phone";
 import { MediaLightbox } from "../components/MediaLightbox";
 import { PrintPreviewModal, usePrintPreview } from "../components/scm-v2/PrintPreviewModal";
-import { formatDate, formatDateTime, formatTimestamp, formatCurrency, cn, relativeTime, todayInAppTz } from "../lib/utils";
+import { formatDate, formatDateTime, formatCurrency, cn, relativeTime, todayInAppTz } from "../lib/utils";
 import { DateField } from "../vendor/scm/components/DateField";
 import { DateTimeField } from "../vendor/scm/components/DateTimeField";
 import type {
@@ -140,6 +139,8 @@ import { DateRangeFilter, MultiSelectFilter, SectionTaskBadges, ImportCsvPanel }
 import { ProjectsCalendarView } from "./projects/ProjectsCalendarView";
 export { buildCalendarWindow, buildProjectsCalendarModel } from "./projects/calendarModel";
 import { SPEC_INPUT_CLASS, QuickRentalField, SpecTextField, SpecCell, SpecValue } from "./projects/specFields";
+import { LogisticsDateTimeField, GrabHelperBox, HelperSelect, type CrewMember, CrewInfoCard } from "./projects/logisticsParts";
+import { type PhasePhoto, PhasePhotosSection, PhotoGroup } from "./projects/phasePhotos";
 
 interface ProjectDetail {
   project: ProjectRow & {
@@ -7444,92 +7445,6 @@ function AddChecklistItem({
   );
 }
 
-// ── Datetime field (inline commit on blur) ───────────────────
-// InlineEdit supports only text/date/number; this is the logistics analog, and
-// NOT the shared DateTimeField also imported here — they differ in CONTRACT.
-
-function LogisticsDateTimeField({
-  label,
-  value,
-  onSave,
-  readOnly = false,
-}: {
-  label: string;
-  value: string | null | undefined;
-  onSave: (next: string | null) => Promise<void> | void;
-  /** View-only for Sales (owner 2026-07): disable inputs, no commit. */
-  readOnly?: boolean;
-}) {
-  // Split into a separate date + time input — the native datetime-local
-  // control is too wide for the Logistics 2-col grid (browser locale +
-  // AM/PM stretches it on Windows). Two narrow controls side-by-side
-  // pack tighter and the unambiguous DD/MM/YYYY HH:mm caption sits
-  // below for confirmation.
-  const initial = toLocalInput(value);
-  const [datePart, setDatePart] = useState(initial.slice(0, 10));
-  const [timePart, setTimePart] = useState(initial.slice(11, 16));
-  useEffect(() => {
-    const v = toLocalInput(value);
-    setDatePart(v.slice(0, 10));
-    setTimePart(v.slice(11, 16));
-  }, [value]);
-
-  const draft = datePart && timePart ? `${datePart}T${timePart}` : datePart;
-
-  async function commit() {
-    // Treat "date only" as midnight-local so the user can still tap a
-    // date and hit save; without this, half-filled inputs would never
-    // persist.
-    const normalized =
-      datePart && !timePart
-        ? `${datePart}T00:00`
-        : datePart && timePart
-          ? `${datePart}T${timePart}`
-          : null;
-    if ((normalized ?? "") === (toLocalInput(value) || "")) return;
-    await onSave(normalized);
-  }
-
-  return (
-    <div>
-      <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-ink-muted">
-        {label}
-      </div>
-      <div className="flex gap-1.5">
-        <DateField
-          fullWidth
-          value={datePart}
-          disabled={readOnly}
-          onChange={(iso) => setDatePart(iso)}
-          onBlur={readOnly ? undefined : commit}
-          className="flex-1 min-w-0 rounded-md border border-border bg-surface px-2 py-1.5 text-[12px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:bg-bg/40 disabled:opacity-70"
-        />
-        <input
-          type="time"
-          value={timePart}
-          disabled={readOnly}
-          onChange={(e) => setTimePart(e.target.value)}
-          onBlur={readOnly ? undefined : commit}
-          className="w-[88px] rounded-md border border-border bg-surface px-2 py-1.5 text-[12px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:bg-bg/40 disabled:opacity-70"
-        />
-      </div>
-      <div className="mt-1 font-mono text-[10px] text-ink-muted">
-        {formatDateTime(draft)}
-      </div>
-    </div>
-  );
-}
-
-// datetime-local inputs expect "YYYY-MM-DDTHH:mm" (no seconds, no Z).
-// Our backend stores ISO strings like "2025-08-25T23:00:00.000Z" OR
-// "2025-08-25T23:00". Strip to the first 16 chars after normalization.
-function toLocalInput(v: string | null | undefined): string {
-  if (!v) return "";
-  // Drop any trailing "Z" or ms — we treat stored values as already
-  // local-ish since the user enters them in local time.
-  return v.slice(0, 16);
-}
-
 // ── Project banner ───────────────────────────────────────────
 // Optional warning/info strip shown above every section.
 
@@ -8069,46 +7984,6 @@ function OutsourcedBox({
           if (!d.name.trim() && !d.plate.trim()) return;
           onAdd(d);
           setD({ name: "", phone: "", plate: "" });
-        }}
-        className="rounded-md bg-synced/90 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-synced"
-      >
-        + Add
-      </button>
-    </div>
-  );
-}
-
-// Grab trip (owner 2026-07-23): instead of a manual name/phone/plate, a Grab
-// trip is two staff helpers riding together, picked from the full helper list.
-function GrabHelperBox({
-  helpers,
-  onAdd,
-}: {
-  helpers: CrewMember[];
-  onAdd: (o: { helper1: string; helper2: string }) => void;
-}) {
-  const [h, setH] = useState({ helper1: "", helper2: "" });
-  const HelperSelect = ({ which, label }: { which: "helper1" | "helper2"; label: string }) => (
-    <select
-      value={h[which]}
-      onChange={(e) => setH({ ...h, [which]: e.target.value })}
-      className="w-full rounded-md border border-border bg-surface px-2 py-1.5 text-[12px]"
-    >
-      <option value="">{label}…</option>
-      {helpers.map((o) => (
-        <option key={o.id} value={o.name}>{o.name}</option>
-      ))}
-    </select>
-  );
-  return (
-    <div className="space-y-2 rounded-md border border-dashed border-border bg-bg/40 p-2">
-      <HelperSelect which="helper1" label="Helper 1" />
-      <HelperSelect which="helper2" label="Helper 2" />
-      <button
-        onClick={() => {
-          if (!h.helper1 && !h.helper2) return;
-          onAdd(h);
-          setH({ helper1: "", helper2: "" });
         }}
         className="rounded-md bg-synced/90 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-synced"
       >
@@ -8864,128 +8739,6 @@ function LogisticsScheduleSection({
   );
 }
 
-// Small reusable select for helper rows inside LogisticsScheduleSection.
-function HelperSelect({
-  label,
-  value,
-  helpers,
-  onChange,
-}: {
-  label: string;
-  value: number | null;
-  helpers: CrewMember[];
-  onChange: (id: number | null) => void;
-}) {
-  const selected = helpers.find((u) => u.id === value) ?? null;
-  return (
-    <div>
-      <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-ink-muted">
-        {label}
-      </div>
-      <select
-        className="w-full appearance-none rounded-md border border-border bg-surface px-3 py-2 text-[13px]"
-        value={value ?? ""}
-        onChange={(e) => onChange(e.target.value ? parseInt(e.target.value, 10) : null)}
-      >
-        <option value="">— none —</option>
-        {helpers.map((u) => (
-          <option key={u.id} value={u.id}>
-            {u.name}
-          </option>
-        ))}
-      </select>
-      {selected && <CrewInfoCard member={selected} />}
-    </div>
-  );
-}
-
-// Driver / helper profile surfaced when one is picked in the Logistics
-// Schedule. Fields come straight from /api/fleet/staff (set up in the
-// Driver App or Logistics > Fleet > Driver). Pay rates and IC are
-// intentionally omitted — they don't belong in the project view, and the
-// endpoint no longer serves them to this page's wide Sales-view gate.
-type CrewMember = {
-  id: number;
-  name: string;
-  phone: string | null;
-  user_type: string | null;
-  role_name: string | null;
-};
-
-function CrewInfoCard({ member }: { member: CrewMember }) {
-  return (
-    <div className="mt-1.5 rounded-md border border-border bg-paper px-3 py-2">
-      <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px]">
-        <InfoBit
-          label="Phone"
-          value={formatPhone(member.phone)}
-          href={member.phone ? `tel:${member.phone}` : undefined}
-        />
-      </div>
-    </div>
-  );
-}
-
-function InfoBit({
-  label,
-  value,
-  href,
-}: {
-  label: string;
-  value: string | null | undefined;
-  href?: string;
-}) {
-  return (
-    <div className="flex items-baseline gap-1.5">
-      <span className="text-[10px] font-semibold uppercase tracking-wider text-ink-muted">
-        {label}
-      </span>
-      {href && value ? (
-        <a
-          href={href}
-          className="font-medium text-ink underline-offset-2 hover:underline"
-        >
-          {value}
-        </a>
-      ) : (
-        <span className="font-medium text-ink">{value || "—"}</span>
-      )}
-    </div>
-  );
-}
-
-// ── Phase Photos — crew-uploaded evidence panel (read-only office side) ──
-
-interface PhasePhoto {
-  id: number;
-  phase: "setup" | "dismantle" | "service" | "schedule";
-  r2_key: string;
-  content_type: string | null;
-  caption: string | null;
-  uploaded_by: number | null;
-  uploaded_by_name: string | null;
-  uploaded_at: string;
-}
-
-function PhasePhotosSection({ projectId }: { projectId: number }) {
-  const photos = useQuery<{ photos: PhasePhoto[] }>("/api/projects/:/phase-photos",
-    () => api.get(`/api/projects/${projectId}/phase-photos`),
-    [projectId]
-  );
-  const setup = (photos.data?.photos ?? []).filter((p) => p.phase === "setup");
-  const dismantle = (photos.data?.photos ?? []).filter((p) => p.phase === "dismantle");
-
-  return (
-    <PanelSection title="Phase Photos" muted>
-      <div className="text-[11px] text-ink-muted">
-        Uploaded by setup / dismantle crew from the Driver App.
-      </div>
-      <PhotoGroup label="Setup" photos={setup} onChange={() => photos.reload()} />
-      <PhotoGroup label="Dismantle" photos={dismantle} onChange={() => photos.reload()} />
-    </PanelSection>
-  );
-}
-
 // Schedule reference (owner 2026-07-23) — the mall handbook's official event
 // schedule screenshot, so logistics can read setup/dismantle dates + times off
 // it. Also on mobile since 2026-07-23 (MobilePMS SetupDismantle, same
@@ -9241,192 +8994,6 @@ function ServicePhotos({ projectId, readOnly = false }: { projectId: number; rea
         </div>
       )}
       <PhotoGroup label="Service" photos={service} onChange={() => photos.reload()} />
-    </div>
-  );
-}
-
-function PhotoGroup({
-  label,
-  photos,
-  onChange,
-}: {
-  label: string;
-  photos: PhasePhoto[];
-  onChange: () => void;
-}) {
-  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
-  return (
-    <div className="mt-3">
-      <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-ink-muted">
-        {label} · {photos.length}
-      </div>
-      {photos.length === 0 ? (
-        <div className="text-[12px] text-ink-muted">No {label.toLowerCase()} photos yet.</div>
-      ) : (
-        <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8">
-          {photos.map((p, i) => (
-            <PhasePhotoThumb
-              key={p.id}
-              photo={p}
-              onOpen={() => setLightboxIndex(i)}
-              onDeleted={onChange}
-            />
-          ))}
-        </div>
-      )}
-      {lightboxIndex !== null && (
-        <MediaLightbox
-          items={photos}
-          index={lightboxIndex}
-          onChange={setLightboxIndex}
-          onClose={() => setLightboxIndex(null)}
-          baseUrl="/api/projects/attachments"
-          badge={label}
-        />
-      )}
-    </div>
-  );
-}
-
-function PhasePhotoThumb({
-  photo,
-  onOpen,
-  onDeleted,
-}: {
-  photo: PhasePhoto;
-  onOpen: () => void;
-  onDeleted: () => void;
-}) {
-  const dialog = useDialog();
-  const toast = useToast();
-  const isImage = (photo.content_type || "").startsWith("image/");
-  const isVideo = (photo.content_type || "").startsWith("video/");
-  const [url, setUrl] = useState<string | null>(null);
-  // A thumbnail that fails to load used to render an empty grey square,
-  // indistinguishable from one still loading and from a photo that isn't there.
-  // Keep the reason: the tile shows a broken-image state and the tooltip carries
-  // the plain-language message (api.client throws HttpError whose `.message` is
-  // already humanHttpMessage — a 403 reads "You don't have permission to do
-  // that", not a status dump).
-  const [loadError, setLoadError] = useState<string | null>(null);
-  useEffect(() => {
-    if (!isImage) return;
-    let revoke: string | null = null;
-    setLoadError(null);
-    api
-      .fetchBlobUrl(`/api/projects/attachments/${photo.r2_key}`)
-      .then((u) => {
-        revoke = u;
-        setUrl(u);
-      })
-      .catch((e: unknown) => {
-        setLoadError(
-          e instanceof Error && e.message ? e.message : "This preview couldn't be loaded.",
-        );
-      });
-    return () => {
-      if (revoke) URL.revokeObjectURL(revoke);
-    };
-  }, [photo.r2_key, isImage]);
-
-  const extLabel = (() => {
-    const m = photo.r2_key.match(/\.([a-z0-9]+)$/i);
-    return m ? m[1].toUpperCase() : "FILE";
-  })();
-
-  // Compact card: thumb fills the cell; uploader + delete sit in a tiny
-  // hover-revealed strip so the grid reads as a dense gallery rather
-  // than a stack of metadata cards. Lightbox surfaces the full caption
-  // + uploader, so this surface stays terse on purpose.
-  return (
-    <div className="group relative overflow-hidden rounded-md border border-border bg-surface">
-      <button
-        type="button"
-        onClick={onOpen}
-        aria-label="Open preview"
-        title={
-          [photo.caption, photo.uploaded_by_name, formatTimestamp(photo.uploaded_at)]
-            .filter(Boolean)
-            .join(" · ")
-        }
-        className="block w-full"
-      >
-        <div className="aspect-square bg-bg">
-          {isImage ? (
-            url ? (
-              <img src={url} alt={photo.caption || ""} className="h-full w-full object-cover" />
-            ) : loadError ? (
-              <div
-                className="flex h-full w-full flex-col items-center justify-center gap-0.5 p-1 text-center"
-                title={loadError}
-              >
-                <ImageOff size={18} className="text-err" />
-                <div className="text-[8px] font-semibold uppercase tracking-wide text-err">
-                  Failed
-                </div>
-              </div>
-            ) : (
-              <div className="h-full w-full" />
-            )
-          ) : isVideo ? (
-            <div className="relative flex h-full w-full items-center justify-center bg-ink/90">
-              <div className="flex h-7 w-7 items-center justify-center rounded-full bg-white/90 shadow-md">
-                <Play size={13} className="ml-0.5 text-ink" fill="currentColor" />
-              </div>
-              <span className="absolute bottom-1 right-1 rounded bg-black/70 px-1 text-[7px] font-bold uppercase tracking-wider text-white">
-                {extLabel}
-              </span>
-            </div>
-          ) : (
-            <div className="flex h-full w-full flex-col items-center justify-center gap-0.5 p-1 text-center">
-              <FileText size={18} className="text-ink-secondary" />
-              <div className="text-[8px] font-semibold uppercase tracking-wide text-ink-muted">
-                {extLabel}
-              </div>
-            </div>
-          )}
-        </div>
-      </button>
-      {/* Uploader strip — single line at the bottom edge, very small.
-          Stays visible (not hover-gated) so a glance reads "who took
-          this" without opening the lightbox. */}
-      <div className="flex items-center justify-between gap-1 border-t border-border-subtle bg-bg/40 px-1.5 py-0.5">
-        <span className="truncate text-[9px] text-ink-secondary" title={photo.uploaded_by_name || "Unknown"}>
-          {photo.uploaded_by_name || "—"}
-        </span>
-        <button
-          className="rounded p-0.5 text-ink-muted opacity-0 transition-opacity hover:bg-err/10 hover:text-err group-hover:opacity-100"
-          title="Delete"
-          onClick={async (e) => {
-            e.stopPropagation();
-            const ok = await dialog.confirm({
-              title: "Delete this file?",
-              message:
-                photo.caption ||
-                photo.uploaded_by_name
-                  ? `Uploaded by ${photo.uploaded_by_name || "Unknown"}. This can't be undone.`
-                  : "This can't be undone.",
-              confirmLabel: "Delete",
-              danger: true,
-            });
-            if (!ok) return;
-            // The refresh must not run unless the delete actually happened.
-            // It used to be `.catch(() => {})` followed by an unconditional
-            // onDeleted(): a denied or failed delete re-rendered the grid with
-            // the file still in it and said nothing, so the operator read the
-            // reappearing tile as the UI being slow and clicked again.
-            try {
-              await api.del(`/api/projects/phase-photos/${photo.id}`);
-            } catch (e: any) {
-              toast.error(e?.message || "Couldn't delete this file. It is still there — please try again.");
-              return;
-            }
-            onDeleted();
-          }}
-        >
-          <Trash2 size={10} />
-        </button>
-      </div>
     </div>
   );
 }
