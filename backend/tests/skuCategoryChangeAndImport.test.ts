@@ -27,6 +27,7 @@ class FakeQuery {
   update(p: Row) { this.op = 'update'; this.patch = p; return this; }
   insert(p: Row | Row[]) { this.op = 'insert'; this.inserted = Array.isArray(p) ? p : [p]; return this; }
   eq(col: string, val: unknown) { this.preds.push((r) => String(r[col]) === String(val)); return this; }
+  in(col: string, vals: unknown[]) { const s = new Set(vals.map(String)); this.preds.push((r) => s.has(String(r[col]))); return this; }
   neq(col: string, val: unknown) { this.preds.push((r) => String(r[col]) !== String(val)); return this; }
   private run(): Row[] {
     if (this.op === 'insert') { this.rows.push(...this.inserted); return this.inserted; }
@@ -47,7 +48,16 @@ function harness() {
       { id: 'p-1', company_id: CO, code: '810 BOLSTER', name: 'RDS BOLSTER 810', category: 'ACCESSORY', model_id: null, description: null },
       { id: 'p-2', company_id: CO, code: 'SOFA-1', name: 'SOFA ONE', category: 'SOFA', model_id: null },
       { id: 'p-3', company_id: CO, code: 'BC04', name: 'BACK CUSHION 04', category: 'ACCESSORY', model_id: 'm-1' },
+      { id: 'p-4', company_id: CO, code: 'BC04-L', name: 'BACK CUSHION 04 L', category: 'ACCESSORY', model_id: 'm-1' },
+      { id: 'p-5', company_id: CO, code: 'BC04-XL', name: 'BACK CUSHION 04 XL', category: 'ACCESSORY', model_id: 'm-1' },
       { id: 'p-9', company_id: 2, code: '810 BOLSTER', name: 'other company', category: 'ACCESSORY', model_id: null },
+      // Another company: the same codes, its own model, and one row that even names m-1.
+      { id: 'p-20', company_id: 2, code: 'BC04', name: 'other company BC04', category: 'ACCESSORY', model_id: 'm-9' },
+      { id: 'p-21', company_id: 2, code: 'BC04-L', name: 'other company BC04 L', category: 'ACCESSORY', model_id: 'm-1' },
+    ],
+    product_models: [
+      { id: 'm-1', company_id: CO, model_code: 'BC04', name: 'BACK CUSHION 04', category: 'ACCESSORY' },
+      { id: 'm-9', company_id: 2, model_code: 'BC04', name: 'other company BC04', category: 'ACCESSORY' },
     ],
     master_price_history: [],
   };
@@ -65,8 +75,16 @@ function harness() {
     method, body: JSON.stringify(body), headers: { 'content-type': 'application/json' },
   });
   const sku = (id: string) => tables.mfg_products.find((r) => r.id === id)!;
-  return { send, sku };
+  const model = (id: string) => tables.product_models.find((r) => r.id === id)!;
+  return { send, sku, model };
 }
+
+type ImportOut = {
+  upserted: number;
+  failed: number;
+  failures: Array<{ code: string; reason: string }>;
+  modelsMoved: Array<{ modelCode: string; from: string; to: string; skuCount: number }>;
+};
 
 describe('PATCH /mfg-products/:id — category', () => {
   test('an accessory can become a sofa, and a sofa a mattress', async () => {
@@ -132,5 +150,86 @@ describe('POST /mfg-products/batch-import — editing existing SKUs', () => {
     const { send, sku } = harness();
     await send('POST', '/mfg-products/batch-import', { rows: [{ code: '810 BOLSTER', name: '', category: '', base_price_sen: 12300 }] });
     expect(sku('p-1')).toMatchObject({ name: 'RDS BOLSTER 810', category: 'ACCESSORY', base_price_sen: 12300 });
+  });
+});
+
+/* Owner 2026-09-15: 「导入时如果改到有型号的 SKU 的分类，就连型号和它底下所有 SKU
+   一起换，保持一致」 — an import that changes a modelled SKU's category moves the
+   model and every SKU of it, the way PATCH /product-models/:id does. */
+describe('POST /mfg-products/batch-import — a SKU on a model moves with its model', () => {
+  test('one row changing a modelled SKU moves the model and all its SKUs, and says so', async () => {
+    const { send, sku, model } = harness();
+    const res = await send('POST', '/mfg-products/batch-import', {
+      rows: [{ code: 'BC04', category: 'Sofa Accessory', base_price_sen: 4500 }],
+    });
+    const out = (await res.json()) as ImportOut;
+    expect(out).toMatchObject({ upserted: 1, failed: 0 });
+    expect(model('m-1').category).toBe('FABRIC_ACCESSORY');
+    expect([sku('p-3'), sku('p-4'), sku('p-5')].map((s) => s.category)).toEqual(['FABRIC_ACCESSORY', 'FABRIC_ACCESSORY', 'FABRIC_ACCESSORY']);
+    expect(sku('p-3').base_price_sen).toBe(4500);
+    expect(out.modelsMoved).toEqual([
+      expect.objectContaining({ modelCode: 'BC04', from: 'ACCESSORY', to: 'FABRIC_ACCESSORY', skuCount: 3 }),
+    ]);
+  });
+
+  test('rows that agree move the model once', async () => {
+    const { send, model } = harness();
+    const out = (await (await send('POST', '/mfg-products/batch-import', {
+      rows: [{ code: 'BC04', category: 'FABRIC_ACCESSORY' }, { code: 'BC04-XL', category: 'fabric_accessory' }],
+    })).json()) as ImportOut;
+    expect(out.upserted).toBe(2);
+    expect(out.modelsMoved).toHaveLength(1);
+    expect(model('m-1').category).toBe('FABRIC_ACCESSORY');
+  });
+
+  test('rows giving one model DIFFERENT categories are refused, each with the reason, and nothing moves', async () => {
+    const { send, sku, model } = harness();
+    const out = (await (await send('POST', '/mfg-products/batch-import', {
+      rows: [
+        { code: 'BC04', category: 'Sofa Accessory', base_price_sen: 4500 },
+        { code: 'BC04-L', category: 'Sofa' },
+        { code: '810 BOLSTER', category: 'Mattress' },
+      ],
+    })).json()) as ImportOut;
+    expect(out.upserted).toBe(1);
+    expect(out.failed).toBe(2);
+    expect(out.failures.map((f) => f.code).sort()).toEqual(['BC04', 'BC04-L']);
+    for (const f of out.failures) expect(f.reason).toMatch(/model BC04.*different categories/);
+    expect(out.modelsMoved).toEqual([]);
+    expect(model('m-1').category).toBe('ACCESSORY');
+    expect([sku('p-3'), sku('p-4'), sku('p-5')].map((s) => s.category)).toEqual(['ACCESSORY', 'ACCESSORY', 'ACCESSORY']);
+    expect(sku('p-3').base_price_sen).toBeUndefined();
+    expect(sku('p-1').category).toBe('MATTRESS');
+  });
+
+  test('a row restating the old category beside a row changing it is a disagreement too', async () => {
+    const { send, model } = harness();
+    const out = (await (await send('POST', '/mfg-products/batch-import', {
+      rows: [{ code: 'BC04', category: 'Sofa Accessory' }, { code: 'BC04-L', category: 'Accessory' }],
+    })).json()) as ImportOut;
+    expect(out.failed).toBe(2);
+    expect(model('m-1').category).toBe('ACCESSORY');
+  });
+
+  test('a model-less SKU still moves alone', async () => {
+    const { send, sku, model } = harness();
+    const out = (await (await send('POST', '/mfg-products/batch-import', {
+      rows: [{ code: '810 BOLSTER', category: 'Sofa' }],
+    })).json()) as ImportOut;
+    expect(out).toMatchObject({ upserted: 1, failed: 0, modelsMoved: [] });
+    expect(sku('p-1').category).toBe('SOFA');
+    expect(sku('p-2').category).toBe('SOFA');
+    expect(model('m-1').category).toBe('ACCESSORY');
+    expect(sku('p-3').category).toBe('ACCESSORY');
+  });
+
+  test("another company's model and SKUs with the same codes are untouched", async () => {
+    const { send, sku, model } = harness();
+    await send('POST', '/mfg-products/batch-import', { rows: [{ code: 'BC04', category: 'Sofa Accessory' }] });
+    expect(model('m-1').category).toBe('FABRIC_ACCESSORY');
+    expect(sku('p-4').category).toBe('FABRIC_ACCESSORY');
+    expect(model('m-9').category).toBe('ACCESSORY');
+    expect(sku('p-20')).toMatchObject({ category: 'ACCESSORY', name: 'other company BC04' });
+    expect(sku('p-21').category).toBe('ACCESSORY');
   });
 });

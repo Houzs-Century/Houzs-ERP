@@ -32,7 +32,8 @@ import { todayMyt } from '../lib/my-time';
 import { resolveSellPriceSenAsOf, resolvePendingSellPriceAfter } from '../lib/product-pricing-history';
 import type { Env, Variables } from '../env';
 import { categorySwapAllowed } from '../shared/category-swap';
-import { MFG_PRODUCT_CATEGORIES, MFG_CATEGORY_LABELS, parseMfgCategory } from '../shared/product-categories';
+import { moveModelCategory, planModelCategoryMoves, type ImportModelMove } from '../lib/model-category-move';
+import { MFG_PRODUCT_CATEGORIES, MFG_CATEGORY_LABELS, mfgCategoryLabel, parseMfgCategory } from '../shared/product-categories';
 
 export const mfgProducts = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -308,9 +309,16 @@ export const batchImportMfgProductsHandler = async (c: AppContext) => {
   if (list.length === 0) return c.json({ error: 'rows_required' }, 400);
   if (list.length > 500) return c.json({ error: 'too_many', message: 'Max 500 rows per import' }, 400);
 
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
   const supabase = c.get('supabase');
   let upserted = 0;
   const failures: Array<{ code: string; reason: string }> = [];
+
+  const plan = await planModelCategoryMoves(supabase, co.companyId, list);
+  if (!plan.ok) return c.json({ error: 'load_failed', reason: plan.reason }, 500);
+  const modelsMoved: ImportModelMove[] = [];
+  const moveFailed = new Map<string, string>();
 
   // Data-loss-safe upsert (Wei Siang). Only fields PRESENT and non-empty in
   // the body row are written. On an ON CONFLICT update that means a column the
@@ -355,6 +363,11 @@ export const batchImportMfgProductsHandler = async (c: AppContext) => {
         code,
         reason: `category "${categoryCell}" is not a category — use one of: ${MFG_PRODUCT_CATEGORIES.map((c) => MFG_CATEGORY_LABELS[c]).join(', ')}.`,
       });
+      continue;
+    }
+    const conflict = category ? plan.conflicts.get(code) : undefined;
+    if (conflict) {
+      failures.push({ code, reason: conflict });
       continue;
     }
     if (!existing && (!name || !category)) {
@@ -408,6 +421,26 @@ export const batchImportMfgProductsHandler = async (c: AppContext) => {
     // Never rewrite the PK id on re-import: UPDATE an existing SKU by code (id +
     // any omitted column left untouched), INSERT a brand-new SKU with a fresh id.
     // `existing` was read above, where it also decides create-vs-edit.
+    /* A SKU on a model changes category only with its model: the model and every
+       SKU of it move first, once per model, and a failed move writes nothing for
+       this row (owner 2026-09-15). */
+    const move = existing && category ? plan.moves.get(code) : undefined;
+    if (move) {
+      let moveError = moveFailed.get(move.modelId);
+      if (moveError === undefined && !modelsMoved.some((m) => m.modelId === move.modelId)) {
+        const moved = await moveModelCategory(supabase, co.companyId, move.modelId, move.to);
+        if (moved.ok) {
+          modelsMoved.push({ ...move, skuCount: moved.skuCodes.length });
+        } else {
+          moveError = `model ${move.modelCode} could not be moved to ${mfgCategoryLabel(move.to)} (${moved.reason}), so this row was not saved.`;
+          moveFailed.set(move.modelId, moveError);
+        }
+      }
+      if (moveError !== undefined) {
+        failures.push({ code, reason: moveError });
+        continue;
+      }
+    }
     let error;
     if (existing) {
       // Merge sofa prices BY TIER: the export ships one tier at a time, so an
@@ -437,7 +470,7 @@ export const batchImportMfgProductsHandler = async (c: AppContext) => {
     }
   }
 
-  return c.json({ upserted, failed: failures.length, failures: failures.slice(0, 50) });
+  return c.json({ upserted, failed: failures.length, failures: failures.slice(0, 50), modelsMoved });
 };
 mfgProducts.post('/batch-import', batchImportMfgProductsHandler);
 
