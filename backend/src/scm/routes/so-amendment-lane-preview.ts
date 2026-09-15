@@ -18,6 +18,7 @@
 
 import { Hono } from 'hono';
 import type { Env, Variables } from '../env';
+import { supabaseAuth } from '../middleware/auth';
 import { hasHouzsPerm, isSalesCaller } from '../lib/houzs-perms';
 import { activeCompanyId } from '../lib/companyScope';
 import { soAmendableHeaderFields } from '../shared/so-field-policy';
@@ -27,6 +28,10 @@ import { LINE_BUILD_ERRORS } from '../lib/amendment-lines';
 const AMENDABLE_HEADER_FIELDS: Record<string, string> = soAmendableHeaderFields();
 
 export const soAmendmentLanePreview = new Hono<{ Bindings: Env; Variables: Variables }>();
+
+// Every SCM sub-router mounts its own auth bridge (scmRouterBridge.test.ts); the
+// route reads c.get('supabase'), which this middleware sets.
+soAmendmentLanePreview.use('*', supabaseAuth);
 
 soAmendmentLanePreview.post('/:docNo/amendments/lane-preview', async (c) => {
   const sb = c.get('supabase');
