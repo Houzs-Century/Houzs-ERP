@@ -1,6 +1,6 @@
 ## AutoCount supplier delivery dates never reached the ERP purchase orders [medium]
 
-<!-- area: Purchase orders + AutoCount sync -->
+<!-- area: AutoCount sync + write-back -->
 
 **Symptom.** The owner, 2026-09-15, comparing AutoCount's PO chasing list with
 the ERP: AutoCount shows supplier delivery dates on purchase orders where the
@@ -56,13 +56,23 @@ direction:
    `services/autocount-writeback.ts` composes the PO header with `UDF: {}`. So a
    supplier date typed into the ERP never reaches AutoCount either.
 
-**It WILL keep happening (PROVEN).** Staff are still typing supplier dates into
-AutoCount on migrated POs. The 38 lines above were blank in the 09-04 export and
-are set in the live book on 09-15. Nothing brings those in, so every date typed
-in the book from now on is missing from the ERP, and every date typed in the ERP
-is missing from the book.
-At 2026-09-15 no ERP-written PO (`HC-PO-*`, 135 in the book) carries a book-side
-supplier date.
+**Will book-side dates keep appearing? No (PROVEN, book read 2026-09-15 12:23
+book time).** The owner: 「autocount 完全不能操作了啊」.
+
+- The 38 lines that were blank in the 09-04 export and are set now sit on 18
+  POs. Every one was last modified by `ADMIN` between 2026-09-04 12:05 and
+  2026-09-07 15:57 (`PO.LastModified` / `LastModifiedUserID`), which is before
+  go-live.
+- Since 2026-09-08 the only user that has modified any PO in the book is
+  `MASTER`, the write-back account (145 POs).
+- Three dated POs were modified by `MASTER` on 09-14/15 (PO-009827, PO-009880,
+  PO-009517). Their dates were already in the 09-04 export, and the ERP edits
+  that touched them carried no `UDF` key, so a write-back edit leaves the book's
+  UDFs as they are.
+
+What DOES keep going wrong is the other direction. A supplier date entered in
+the ERP, now the only editing surface, never reaches the book, because the PO
+write-back sends `UDF: {}`.
 
 **Fix.** A one-off fill of blanks from a committed live snapshot.
 
@@ -96,13 +106,10 @@ supplier date.
     a touched PO after the transaction starts.
 - Plan / apply / re-plan run ids are recorded in the follow-up to this entry.
 
-**Root fix: NOT BUILT, options owed to main before any build.** The one-off fill
-does not stop recurrence. The candidates:
-
-- (a) send `UDF_EDate/2/3` from `supplier_delivery_date_2/3/4` in the PO
-  write-back, so the ERP, as the editing surface, owns the dates;
-- (b) pull them from the book into `scm`;
-- (c) both, with a last-modified rule.
+**Root fix: the owner chose option A (2026-09-15), shipped in its own PR.** The
+PO write-back will send `supplier_delivery_date_2/3/4` as the book's
+`EDate/EDate2/EDate3` UDFs. The rejected options were a book-to-ERP pull and
+both directions together.
 
 Residual risk: the PO header PATCH has no stale-version guard. A PO edit form
 opened before the apply and saved after it sends its blank `supplierDeliveryDate2..4`
