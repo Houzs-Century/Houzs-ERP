@@ -97,6 +97,8 @@ The pitfalls that recurred most, one line each.
 - Transfers must carry header fields, debtor/creditor, warehouse and source line keys; the SDK's FullTransfer/PartialTransfer are inherited members, so reflect with FlattenHierarchy.
 - A sofa is one book line and several ERP rows: fold by build (`backend/src/services/autocount-sofa-collapse.ts`), never by position or adjacency.
 - Reconcilers compare one population, one cut, one currency and one field; "cannot be compared" is never counted as "differs" or "matches".
+- A stored edit refused because the ERP re-keyed the line never cleared itself: the drain must recompose once from the current lines (`backend/src/scm/lib/autocount-stale-key-recompose.ts`), not replay the old payload.
+- An approved SO amendment that added a line never reached AutoCount: `applySoAmendment` must capture the inserted row id and enqueue it like any other line edit.
 
 ### Cutover and migrated data
 
