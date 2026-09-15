@@ -19,7 +19,6 @@
     "resolveJsonModule": true,
     "baseUrl": ".",
     "paths": {
-      "zod": ["./node_modules/zod"],
       "@2990s/design-system": ["./src/vendor/design-system/index.ts"],
       "@2990s/shared/phone": ["./src/vendor/shared/phone.ts"],
       "@2990s/shared/mfg-pricing": ["./src/vendor/shared/mfg-pricing.ts"],
