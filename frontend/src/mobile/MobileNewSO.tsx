@@ -98,6 +98,7 @@ import { missingMethodSubField } from "../vendor/scm/components/PaymentsTable";
 import { useFabricLibrary } from "../vendor/scm/lib/queries";
 import { activeOptions, maintPickerValues, restrictPricedToPool, restrictStringsToPool } from "../vendor/shared/maintenance-pools";
 import { missingVariantAxes, sofaMixIntroduced, SOFA_MIX_MESSAGE } from "../vendor/shared/so-variant-rule";
+import { MFG_CATEGORY_LABELS } from "../vendor/shared/product-categories";
 import { isColourKiv } from "../vendor/shared/variant-summary";
 /* parseInches is imported, not redeclared: this file's private copy also served
    sortNumeric below, and a shared parser serves both readers. */
@@ -306,6 +307,8 @@ const LINE_CATS: Array<{ value: LineCat; label: string }> = [
   { value: "sofa", label: "Sofa" },
   { value: "bedframe", label: "Bedframe" },
   { value: "mattress", label: "Mattress" },
+  // Without it a Sofa Accessory line was labelled "General item".
+  { value: "fabric_accessory", label: MFG_CATEGORY_LABELS.FABRIC_ACCESSORY },
 ];
 /* The BANK_OPTS / PLAN_OPTS / ONLINE_OPTS lists that used to live here existed
    ONLY to seed a new payment row's L2 picks, which is exactly what invented a
