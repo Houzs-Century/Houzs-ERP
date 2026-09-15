@@ -24,6 +24,7 @@ import {
 } from '../../vendor/scm/lib/product-models-queries';
 import { useMaintenanceConfig, useMfgProducts, mfgCategoryLabel, type MfgCategory, type MfgProductRow } from '../../vendor/scm/lib/mfg-products-queries';
 import { CategorySwapSelect } from '../../vendor/scm/components/CategorySwapSelect';
+import { MFG_PRODUCT_CATEGORIES } from '../../vendor/shared/product-categories';
 import {
   useSuppliers, useCreateBindingsBatch,
   type Currency, type MaterialKind, type NewBinding, type SupplierRow,
@@ -47,7 +48,8 @@ const ICON = { size: 14, strokeWidth: 1.75 } as const;
 const BANNER_ERR =
   'rounded-lg border border-err/40 bg-err/10 px-4 py-3 text-[13px] text-err';
 
-const CATEGORIES: MfgCategory[] = ['SOFA', 'BEDFRAME', 'MATTRESS', 'ACCESSORY', 'BEDLINES', 'DINING', 'DIFFUSER', 'CARPET', 'SERVICE', 'FABRIC_ACCESSORY'];
+// The ONE category list (shared/product-categories.ts), labelled by mfgCategoryLabel.
+const CATEGORIES: readonly MfgCategory[] = MFG_PRODUCT_CATEGORIES;
 
 /* DataGrid layout key for the Models list. The legacy page rendered one
    table per category — to keep that read on first visit we seed a default

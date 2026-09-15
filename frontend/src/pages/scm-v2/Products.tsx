@@ -87,6 +87,7 @@ import {
   type SpecialAddonsHistoryRow, mfgCategoryLabel,
 } from '../../vendor/scm/lib/mfg-products-queries';
 import { CategorySwapSelect } from '../../vendor/scm/components/CategorySwapSelect';
+import { MFG_CATEGORY_LABELS, MFG_PRODUCT_CATEGORIES } from '../../vendor/shared/product-categories';
 import { useStaffLookup } from '../../hooks/useStaffLookup';
 import { useFabricTrackings } from '../../vendor/scm/lib/fabric-queries';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
@@ -218,18 +219,10 @@ export const Products = () => {
    SKU Master tab
    ════════════════════════════════════════════════════════════════════════ */
 
+// The tabs are the ONE category list, under the ONE label map (shared/product-categories.ts).
 const CATEGORIES: { value: MfgCategory | 'all'; label: string }[] = [
   { value: 'all', label: 'All' },
-  { value: 'ACCESSORY', label: 'Accessory' },
-  { value: 'FABRIC_ACCESSORY', label: 'Sofa Accessory' },
-  { value: 'BEDFRAME', label: 'Bedframe' },
-  { value: 'SOFA', label: 'Sofa' },
-  { value: 'MATTRESS', label: 'Mattress' },
-  { value: 'BEDLINES', label: 'Bedlines' },
-  { value: 'DINING', label: 'Dining' },
-  { value: 'DIFFUSER', label: 'Diffuser' },
-  { value: 'CARPET', label: 'Carpet' },
-  { value: 'SERVICE', label: 'Service' },
+  ...MFG_PRODUCT_CATEGORIES.map((c) => ({ value: c, label: MFG_CATEGORY_LABELS[c] })),
 ];
 
 
@@ -664,7 +657,7 @@ const SkuMasterTab = () => {
         label: 'category',
         width: '110px',
         getValue: (r) => r.category,
-        render: (r) => r.category,
+        render: (r) => mfgCategoryLabel(r.category),
       });
       cols.push({
         key: 'price_tier',
@@ -3917,7 +3910,13 @@ const ProductSuppliersDrawer = ({
             <p style={{ marginTop: 4, fontSize: 'var(--fs-13)', color: '#767b6e' }}>
               {row.name}{row.description ? ` — ${row.description}` : ''}
             </p>
-            {!row.model_id && <CategorySwapSelect kind="sku" id={row.id} category={row.category} />}
+            {!row.model_id
+              ? <CategorySwapSelect kind="sku" id={row.id} category={row.category} />
+              : (
+                <p style={{ marginTop: 4, fontSize: 'var(--fs-12)', color: '#767b6e' }}>
+                  Category: {mfgCategoryLabel(row.category)} — this SKU belongs to model {row.base_model ?? ''}; change the category on the model (Modular tab) and its SKUs move with it.
+                </p>
+              )}
             {/* 0166 — barcode lives on the SKU detail drawer (the SKU Master
                 grid column is read-only + default-hidden). Saves on Enter. */}
             <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 6 }}>

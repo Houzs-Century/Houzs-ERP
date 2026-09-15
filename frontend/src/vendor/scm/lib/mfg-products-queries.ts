@@ -20,6 +20,7 @@ import type {
   MfgPricedOption,
   MfgFabricTier,
 } from '@2990s/shared/mfg-pricing';
+import { mfgCategoryLabel, type MfgProductCategory } from '../../shared/product-categories';
 
 /* HOUZS VENDOR — Products wave. The Maintenance editor reads/writes priced
    pool options ({ value, priceSen, costSen?, sellingPriceSen?, active? }). The
@@ -136,11 +137,10 @@ export function useMaintenanceConfig(
 /* FABRIC_ACCESSORY is shown as "Sofa Accessory" (owner 2026-09-14). The code has no
    'sofa' in it on purpose: 41 readers test a group with includes('sofa'), and a pillow
    would become a SOFA main product to all of them. tasks/PLAN-sofa-accessories-category.md */
-export type MfgCategory = 'BEDFRAME' | 'SOFA' | 'ACCESSORY' | 'FABRIC_ACCESSORY' | 'MATTRESS' | 'SERVICE' | 'BEDLINES' | 'DINING' | 'DIFFUSER' | 'CARPET';
-/** The name people see for a category. Only FABRIC_ACCESSORY differs from its
- *  enum value — it is shown as Sofa Accessory (owner 2026-09-14). */
-export const mfgCategoryLabel = (c: string | null | undefined): string =>
-  String(c ?? '').toUpperCase() === 'FABRIC_ACCESSORY' ? 'Sofa Accessory' : String(c ?? '');
+export type MfgCategory = MfgProductCategory;
+/* The category list and the one label per category live in
+   vendor/shared/product-categories.ts (mirror of the backend's). */
+export { mfgCategoryLabel };
 
 /** MfgProductRow — the PO New form only reads id/code/name/category off each
     SKU. The ProductModels wave reads a few more SKU columns (size_code for the
