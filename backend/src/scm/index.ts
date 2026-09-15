@@ -42,8 +42,10 @@ import {
 } from "./routes/document-cancel-routes";
 import { grns } from "./routes/grns";
 import { grnsListEnrichment } from "./routes/grns-list-enrichment";
+import { grnExports } from "./routes/grn-exports";
 import { purchaseInvoices } from "./routes/purchase-invoices";
 import { purchaseInvoicesListEnrichment } from "./routes/purchase-invoices-list-enrichment";
+import { purchaseInvoiceExports } from "./routes/purchase-invoice-exports";
 import { paymentVouchers } from "./routes/payment-vouchers";
 import { otherDebtors } from "./routes/other-debtors";
 import { apInvoices } from "./routes/ap-invoices";
@@ -66,6 +68,7 @@ import { deliveryOrdersMfg } from "./routes/delivery-orders-mfg";
 import { deliveryOrderScanToken } from "./routes/delivery-order-scan-token";
 import { deliveryOrderItemPhotos } from "./routes/delivery-order-item-photos";
 import { salesInvoices } from "./routes/sales-invoices";
+import { salesInvoiceExports } from "./routes/sales-invoice-exports";
 import { deliveryReturns } from "./routes/delivery-returns";
 import { purchaseReturns } from "./routes/purchase-returns";
 import { consignmentOrders } from "./routes/consignment-orders";
@@ -354,6 +357,9 @@ scm.use("/grns/*", scmAreaGuard("scm.procurement.grn"));
 // the main router so its static `/list-mrp-enrichment` path resolves ahead of
 // `/:id`. Shares the guard above via the path prefix.
 scm.route("/grns", grnsListEnrichment);
+// The list's two exports (every page the filters match) — static /export/...
+// paths, so also BEFORE the main router's `/:id`.
+scm.route("/grns", grnExports);
 scm.route("/grns", grns);
 scm.use("/purchase-invoices/*", scmAreaGuard("scm.procurement.pi"));
 // Deferred list enrichment — the MRP-derived PI-list columns (Assigned SO /
@@ -361,6 +367,8 @@ scm.use("/purchase-invoices/*", scmAreaGuard("scm.procurement.pi"));
 // the main router so its static `/list-mrp-enrichment` path resolves ahead of
 // `/:id`. Shares the guard above via the path prefix.
 scm.route("/purchase-invoices", purchaseInvoicesListEnrichment);
+// The list's two exports — static /export/... paths, BEFORE the main router.
+scm.route("/purchase-invoices", purchaseInvoiceExports);
 scm.route("/purchase-invoices", purchaseInvoices);
 // ── Sales Orders (scm.sales.orders) ─────────────────────────────────────────
 // Same key-not-area admission as the PO mount above: the Purchaser signs
@@ -480,6 +488,8 @@ scm.route("/delivery-orders-mfg", deliveryOrdersMfg);
 // invoice). Row-scoped own+downline; cost/margin stripped for non-finance.
 // Writes still require edit on scm.sales.invoices.
 scm.use("/sales-invoices/*", scmAreaGuard("scm.sales.invoices", { readInheritsFrom: "scm.sales.orders" }));
+// The list's two exports — static /export/... paths, BEFORE the main router.
+scm.route("/sales-invoices", salesInvoiceExports);
 scm.route("/sales-invoices", salesInvoices);
 scm.use("/delivery-returns/*", scmAreaGuard("scm.sales.returns"));
 scm.route("/delivery-returns", deliveryReturns);

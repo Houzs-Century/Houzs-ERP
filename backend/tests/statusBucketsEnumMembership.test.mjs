@@ -100,7 +100,9 @@ const BUCKET_OWNERS = {
      at their new addresses; the routes import them. */
   "src/scm/lib/po-status-buckets.ts": "po_status",
   "src/scm/lib/pi-status-buckets.ts": "purchase_invoice_status",
-  "src/scm/routes/sales-invoices.ts": "sales_invoice_status",
+  /* MOVED 2026-09-15 out of routes/sales-invoices.ts with the list filter
+     (lib/si-list-read.ts), for the list exports. */
+  "src/scm/lib/si-status-buckets.ts": "sales_invoice_status",
   "src/scm/lib/grn-status-buckets.ts": "grn_status",
   /* MOVED 2026-08-21 out of routes/delivery-orders-mfg.ts, which is 225 lines
      over its size ceiling, when the four buckets became one-per-status. The map
