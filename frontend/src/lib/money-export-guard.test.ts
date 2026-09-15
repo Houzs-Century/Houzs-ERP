@@ -62,7 +62,7 @@ function gridColumns(file: string): Col[] {
 /* A column whose cell mentions money but whose VALUE is not an amount. Each entry
    says why; a stale entry fails the test below. */
 const NOT_A_MONEY_COLUMN: Record<string, string> = {
-  "src/pages/scm-v2/PaymentVouchers.tsx|'status'":'the status pill; the open-advance amount is a sub-caption, and the export is the queue word',
+  "src/pages/scm-v2/PaymentVouchers.tsx|'status'": 'the status pill; the open-advance amount is a sub-caption, and the export is the queue word',
 };
 
 const all = walk(ROOT).flatMap(gridColumns);
