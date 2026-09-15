@@ -1319,19 +1319,13 @@ describe('/so-to-po carries the whole master', () => {
        disguise — `Description: null` on a purchase order the ERP describes is
        exactly what the owner saw.
 
-       `Ref` and `UDF.SONo` name the SOURCE sales order (readPoSourceSo,
-       docs/bugs/0926). The transfer fixture has one and the create control has
-       none — that is what sends them down different arms — so those two are
-       compared without it. The KEY must still be carried; the parity test above
-       enforces that. */
-    const withoutSource = (udf: unknown) => {
-      const { SONo: _sono, ...rest } = (udf ?? {}) as Record<string, unknown>;
-      return rest;
-    };
+       `Ref` and `UDF.SONo` name the SOURCE order (docs/bugs/0926); the transfer
+       fixture has one and the create control none, so they are left out. */
+    const sans = (u: unknown) => ({ ...(u as Record<string, unknown>), SONo: undefined });
     for (const key of ['DocNo', 'DocDate', 'CreditorCode', 'CreditorName', 'Agent', 'Description']) {
       expect(transferred[key], `${key} on the transfer`).toEqual(created[key]);
     }
-    expect(withoutSource(transferred.UDF), 'UDF on the transfer').toEqual(withoutSource(created.UDF));
+    expect(sans(transferred.UDF), 'UDF on the transfer').toEqual(sans(created.UDF));
   });
 
   test('the header PURCHASE LOCATION reaches both arms — AutoCount has one and the ERP has one', async () => {
