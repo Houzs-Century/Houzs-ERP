@@ -14,8 +14,8 @@
 
 import { describe, expect, test } from 'vitest';
 import {
-  defaultLayout, laidDepth, layOutBlock, pctOf, validateLayout,
-  type ChartAccount, type LaidNode, type Layout, type LayoutItem,
+  REPORT_BLOCKS, defaultLayout, laidDepth, laidLineNode, layOutBlock, pctOf, validateLayout,
+  type ChartAccount, type LaidLine, type LaidNode, type Layout, type LayoutItem,
 } from './report-layout';
 
 const acc = (code: string, name: string, type: string, parentCode: string | null, section: string | null): ChartAccount =>
@@ -83,6 +83,57 @@ describe('defaultLayout — the chart as a tree', () => {
     expect(Object.keys(empty.blocks).sort()).toEqual(['costOfSales', 'expenses', 'otherIncome', 'taxation', 'tradingIncome']);
     expect(Object.values(empty.blocks).every((b) => b.length === 0)).toBe(true);
   });
+
+  /* The other three reports (docs/bugs/0912). */
+  const BS_CHART: ChartAccount[] = [
+    acc('200-0000', 'MOTOR VEHICLES', 'ASSET', null, 'FIXED ASSETS'),
+    acc('310-0000', 'CASH AT BANK', 'ASSET', null, 'CURRENT ASSETS'),
+    acc('310-0010', 'CASH AT BANK - MAYBANK', 'ASSET', '310-0000', 'CURRENT ASSETS'),
+    acc('400-0000', 'ACCOUNT PAYABLE', 'LIABILITY', null, 'CURRENT LIABILITIES'),
+    acc('460-0001', 'LOAN - MAYBANK', 'LIABILITY', null, 'LONG TERM LIABILITIES'),
+    acc('100-0000', 'SHARE CAPITAL', 'EQUITY', null, 'CAPITAL'),
+    acc('150-0000', 'RETAINED EARNINGS', 'EQUITY', null, 'RETAINED EARNING'),
+    ...CHART,
+  ];
+
+  test('the balance sheet blocks by the section\'s TYPE, a section layer inside each', () => {
+    const bs = defaultLayout('balance_sheet', BS_CHART);
+    expect(Object.keys(bs.blocks)).toEqual(['assets', 'liabilities', 'equity']);
+    expect(shape(bs.blocks.assets!)).toEqual([
+      { 'sec:FIXED ASSETS': ['200-0000'] },
+      { 'sec:CURRENT ASSETS': [{ 'acc:310-0000': ['310-0010'] }] },
+    ]);
+    expect(shape(bs.blocks.liabilities!)).toEqual([{ 'sec:CURRENT LIABILITIES': ['400-0000'] }, { 'sec:LONG TERM LIABILITIES': ['460-0001'] }]);
+    expect(shape(bs.blocks.equity!)).toEqual([{ 'sec:CAPITAL': ['100-0000'] }, { 'sec:RETAINED EARNING': ['150-0000'] }]);
+    /* No income or expense account anywhere on it. */
+    expect(JSON.stringify(bs)).not.toMatch(/500-0000|900-A001/);
+  });
+
+  test('the performance layout has the P&L\'s other income and expenses blocks and nothing else', () => {
+    const perf = defaultLayout('performance', CHART);
+    expect(Object.keys(perf.blocks)).toEqual(['otherIncome', 'expenses']);
+    expect(shape(perf.blocks.expenses!)).toEqual(defaultLayout('pnl', CHART).blocks.expenses!.map((it) => (it.kind === 'account' ? it.code : { [it.id]: shape(it.children) })));
+  });
+
+  test('receipts & payments: ONE block, the whole chart with a section layer, in the chart\'s order', () => {
+    const rp = defaultLayout('rp', BS_CHART);
+    expect(Object.keys(rp.blocks)).toEqual(['accounts']);
+    expect(REPORT_BLOCKS.rp[0]!.sections.length).toBe(16);
+    const sections = rp.blocks.accounts!.map((it) => (it.kind === 'category' ? it.id : it.code));
+    expect(sections).toEqual([
+      'sec:CAPITAL', 'sec:RETAINED EARNING', 'sec:FIXED ASSETS', 'sec:CURRENT ASSETS', 'sec:CURRENT LIABILITIES', 'sec:LONG TERM LIABILITIES',
+      'sec:SALES', 'sec:SALES ADJUSTMENTS', 'sec:COST OF GOODS SOLD', 'sec:OTHER INCOMES', 'sec:EXPENSES', 'sec:TAXATION',
+    ]);
+  });
+
+  test('a tree the chart built always validates — section names carry spaces and a slash', () => {
+    const chart = [...BS_CHART, acc('180-0000', 'DIVIDEND', 'EQUITY', null, 'APPROPRIATION A/C')];
+    for (const report of ['pnl', 'balance_sheet', 'performance', 'rp'] as const) {
+      const r = validateLayout(report, defaultLayout(report, chart));
+      expect(r.ok, report).toBe(true);
+    }
+    expect(JSON.stringify(defaultLayout('rp', chart))).toContain('sec:APPROPRIATION A/C');
+  });
 });
 
 describe('validateLayout — what a saved tree must be', () => {
@@ -135,7 +186,7 @@ describe('validateLayout — what a saved tree must be', () => {
     expect(validateLayout('pnl', nameless)).toEqual({ ok: false, reason: 'Category cat:mkt has no name.' });
 
     const oddId = good();
-    (oddId.blocks.expenses![0] as { id: string }).id = 'has space';
+    (oddId.blocks.expenses![0] as { id: string }).id = 'has|pipe';
     expect(validateLayout('pnl', oddId)).toMatchObject({ ok: false, reason: expect.stringContaining('needs an id') });
   });
 
@@ -216,5 +267,33 @@ describe('layOutBlock — the period on the tree', () => {
   test('nothing booked is nothing printed — and no Unassigned either', () => {
     expect(layOutBlock(tree, [], 1, 100)).toEqual([]);
     expect(laidDepth([])).toBe(0);
+  });
+
+  /* Rows that share a code, a label of the row's own, a figure per column
+     (docs/bugs/0912 — Receipts & Payments by party, transfers, the
+     Performance P&L's computed operating expense). */
+  test('several rows under one code print where the code sits, each by its own key and label; cells sum up the tree', () => {
+    const byParty: LaidLine[] = [
+      { code: '900-A001', key: '900-A001:Ah Meng', name: 'ACCOUNTING FEE', label: 'Ah Meng · ACCOUNTING FEE', amountSen: 7_000, cells: { '310-0010': 7_000 } },
+      { code: '900-A001', key: '900-A001:Bee', name: 'ACCOUNTING FEE', label: 'Bee · ACCOUNTING FEE', amountSen: 3_000, cells: { '320-0000': 3_000 } },
+      { code: '900-O001', name: 'OPERATIING EXPENSE', label: 'Operating expense — 16.00% of sales', amountSen: 50_000, cells: { '310-0010': 50_000 } },
+    ];
+    const laid = layOutBlock(tree, byParty, 1, 100_000);
+    const op = laid[0]!;
+    expect(op.children.map((n) => [n.id, n.key, n.label, n.amountSen])).toEqual([
+      ['acc:900-A001:Ah Meng', '900-A001:Ah Meng', 'Ah Meng · ACCOUNTING FEE', 7_000],
+      ['acc:900-A001:Bee', '900-A001:Bee', 'Bee · ACCOUNTING FEE', 3_000],
+    ]);
+    expect(op.amountSen).toBe(10_000);
+    expect(op.cells).toEqual({ '310-0010': 7_000, '320-0000': 3_000 });
+    expect(laid[1]).toMatchObject({ kind: 'account', key: '900-O001', label: 'Operating expense — 16.00% of sales', amountSen: 50_000, pct: 50, cells: { '310-0010': 50_000 } });
+    /* A tree with no cells on its lines carries none. */
+    expect(layOutBlock(tree, lines, 1, null)[0]!.cells).toBeUndefined();
+  });
+
+  test('laidLineNode — a line as a leaf, keyed by its own key', () => {
+    const n = laidLineNode({ code: 'ADV', key: 'ADV', name: 'Supplier advances (预付)', label: 'Supplier advances (预付)', amountSen: 30_000, cells: { '310-0010': 30_000 } }, 120_000);
+    expect(n).toEqual({ kind: 'account', id: 'acc:ADV', label: 'Supplier advances (预付)', code: 'ADV', key: 'ADV', amountSen: 30_000, pct: 25, cells: { '310-0010': 30_000 }, children: [] });
+    expect(laidLineNode({ code: '900-A001', name: 'ACCOUNTING FEE', amountSen: 1 }, null)).toMatchObject({ id: 'acc:900-A001', key: '900-A001', label: '900-A001 — ACCOUNTING FEE', pct: null });
   });
 });

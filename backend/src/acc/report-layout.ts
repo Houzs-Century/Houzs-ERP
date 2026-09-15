@@ -18,19 +18,27 @@
 // tree does not place — a code created after it was saved, one moved to
 // another section on the chart page, one under a category this company
 // unticked — prints under "Unassigned" at the block's foot, never vanishes.
+//
+// Four reports draw on it (docs/bugs/0912 added the last three): the P&L
+// (% of sales), the Balance Sheet (% of total assets, both sides), the
+// Performance P&L's account part — its other income and its expenses, the
+// computed operating expense standing where the account it replaces sits —
+// and Receipts & Payments, whose one block is the whole chart laid out twice,
+// receipts and payments, each row carrying a figure per money column.
 // ----------------------------------------------------------------------------
 
 import { ACCOUNT_SECTIONS, defaultSectionFor } from '../scm/lib/account-sections';
 
-export type ReportKey = 'pnl';
+export type ReportKey = 'pnl' | 'balance_sheet' | 'performance' | 'rp';
 
 export type BlockDef = { key: string; title: string; sections: string[] };
 
+const sectionsOfType = (type: string): string[] => ACCOUNT_SECTIONS.filter((s) => s.type === type).map((s) => s.section);
+const ALL_SECTIONS: string[] = ACCOUNT_SECTIONS.map((s) => s.section);
+
 /* The blocks a report is made of — the arithmetic's own skeleton, never
    editable. The layout arranges categories INSIDE a block; the sections say
-   which accounts' money a block reads. The Balance Sheet, the Performance
-   P&L and Receipts & Payments join this table when they move onto the
-   layout engine. */
+   which accounts' money a block reads. */
 export const REPORT_BLOCKS: Record<ReportKey, BlockDef[]> = {
   pnl: [
     { key: 'tradingIncome', title: 'Trading income', sections: ['SALES', 'SALES ADJUSTMENTS'] },
@@ -38,6 +46,20 @@ export const REPORT_BLOCKS: Record<ReportKey, BlockDef[]> = {
     { key: 'otherIncome', title: 'Other income', sections: ['OTHER INCOMES', 'EXTRA-ORDINARY INCOME'] },
     { key: 'expenses', title: 'Expenses', sections: ['EXPENSES'] },
     { key: 'taxation', title: 'Taxation', sections: ['TAXATION'] },
+  ],
+  balance_sheet: [
+    { key: 'assets', title: 'Assets', sections: sectionsOfType('ASSET') },
+    { key: 'liabilities', title: 'Liabilities', sections: sectionsOfType('LIABILITY') },
+    { key: 'equity', title: 'Equity', sections: sectionsOfType('EQUITY') },
+  ],
+  performance: [
+    { key: 'otherIncome', title: 'Other income', sections: ['OTHER INCOMES', 'EXTRA-ORDINARY INCOME'] },
+    { key: 'expenses', title: 'Expenses', sections: ['EXPENSES'] },
+  ],
+  /* One tree for both sides: a receipt and a payment on the same account
+     sit under the same category, whichever way the money moved. */
+  rp: [
+    { key: 'accounts', title: 'Accounts — receipts and payments', sections: ALL_SECTIONS },
   ],
 };
 
@@ -111,7 +133,10 @@ export function defaultLayout(report: ReportKey, accounts: ChartAccount[]): Layo
 /* ── A tree somebody sent, checked and normalised ───────────────────────── */
 export type LayoutCheck = { ok: true; layout: Layout } | { ok: false; reason: string };
 
-const ID_RE = /^[A-Za-z0-9:_-]{1,64}$/;
+/* A category id: the default tree names its section layer after the section
+   itself ("sec:SALES ADJUSTMENTS", "sec:APPROPRIATION A/C"), so spaces, dots
+   and slashes are in — a tree the chart built must always be savable. */
+const ID_RE = /^[A-Za-z0-9:_./ -]{1,64}$/;
 
 export function validateLayout(report: ReportKey, raw: unknown): LayoutCheck {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { ok: false, reason: 'The layout must be an object.' };
@@ -142,7 +167,7 @@ export function validateLayout(report: ReportKey, raw: unknown): LayoutCheck {
         out.push({ kind: 'account', code });
       } else if (o.kind === 'category') {
         const id = typeof o.id === 'string' ? o.id.trim() : '';
-        if (!ID_RE.test(id)) return `${where}: a category needs an id (letters, digits, : _ -).`;
+        if (!ID_RE.test(id)) return `${where}: a category needs an id (letters, digits, spaces, : _ . / -).`;
         if (ids.has(id)) return `Category id ${id} is used twice.`;
         ids.add(id);
         const label = typeof o.label === 'string' ? o.label.trim() : '';
@@ -176,15 +201,30 @@ export function validateLayout(report: ReportKey, raw: unknown): LayoutCheck {
 }
 
 /* ── The period's figures, arranged on the tree ─────────────────────────── */
-export type LaidLine = { code: string; name: string; amountSen: number };
+export type LaidLine = {
+  code: string;
+  name: string;
+  amountSen: number;
+  /** The row's own key where one code carries several rows (a control
+      account by party, a transfer) — the code when absent. */
+  key?: string;
+  /** What to print instead of "code — name". */
+  label?: string;
+  /** A figure per money column (Receipts & Payments); amountSen is their total. */
+  cells?: Record<string, number>;
+};
 export type LaidNode = {
   kind: 'category' | 'account' | 'unassigned';
   id: string;
   label: string;
   code?: string;
+  /** The row's key on a line (the drill-down's handle). */
+  key?: string;
   amountSen: number;
-  /** % of the report's base (the P&L: sales), one decimal; null when there is no base. */
+  /** % of the report's base (the P&L: sales; the Balance Sheet: total assets), one decimal; null when there is no base. */
   pct: number | null;
+  /** Per-column figures, summed on a category, where the lines carry them. */
+  cells?: Record<string, number>;
   children: LaidNode[];
 };
 
@@ -193,8 +233,37 @@ export type LaidNode = {
 export const pctOf = (sen: number, baseSen: number | null): number | null =>
   baseSen === null || baseSen === 0 ? null : Math.round((sen / baseSen) * 1000) / 10;
 
-const accountNode = (l: LaidLine, baseSen: number | null): LaidNode =>
-  ({ kind: 'account', id: `acc:${l.code}`, label: `${l.code} — ${l.name}`, code: l.code, amountSen: l.amountSen, pct: pctOf(l.amountSen, baseSen), children: [] });
+const keyOf = (l: LaidLine): string => l.key ?? l.code;
+
+/** One line as a leaf of the tree. */
+export const laidLineNode = (l: LaidLine, baseSen: number | null): LaidNode => {
+  const key = keyOf(l);
+  const node: LaidNode = {
+    kind: 'account', id: `acc:${key}`, label: l.label ?? `${l.code} — ${l.name}`, code: l.code, key,
+    amountSen: l.amountSen, pct: pctOf(l.amountSen, baseSen), children: [],
+  };
+  if (l.cells) node.cells = { ...l.cells };
+  return node;
+};
+
+const sumCells = (nodes: LaidNode[]): Record<string, number> | undefined => {
+  let any = false;
+  const out: Record<string, number> = {};
+  for (const n of nodes) {
+    if (!n.cells) continue;
+    any = true;
+    for (const [k, v] of Object.entries(n.cells)) out[k] = (out[k] ?? 0) + v;
+  }
+  return any ? out : undefined;
+};
+
+const groupNode = (kind: 'category' | 'unassigned', id: string, label: string, kids: LaidNode[], baseSen: number | null): LaidNode => {
+  const amountSen = kids.reduce((s, n) => s + n.amountSen, 0);
+  const node: LaidNode = { kind, id, label, amountSen, pct: pctOf(amountSen, baseSen), children: kids };
+  const cells = sumCells(kids);
+  if (cells) node.cells = cells;
+  return node;
+};
 
 /**
  * Lay one block's lines (the flat, sectioned figures the report computed)
@@ -203,48 +272,41 @@ const accountNode = (l: LaidLine, baseSen: number | null): LaidNode =>
  * AutoCount's statements); a category this company unticked is skipped
  * with its subtree; every line the tree did not place — new code, moved
  * section, unticked category — goes under "Unassigned" at the foot, so the
- * block's total is always the sum of what is printed.
+ * block's total is always the sum of what is printed. A code that carries
+ * several rows (a control account by party, a transfer) prints them all
+ * where the code sits.
  */
 export function layOutBlock(items: LayoutItem[], lines: LaidLine[], companyId: number, baseSen: number | null): LaidNode[] {
-  const byCode = new Map(lines.map((l) => [l.code, l]));
+  const byCode = new Map<string, LaidLine[]>();
+  for (const l of lines) byCode.set(l.code, [...(byCode.get(l.code) ?? []), l]);
   const placed = new Set<string>();
-  const take = (code: string | undefined): LaidNode | null => {
-    if (!code || placed.has(code)) return null;
-    const l = byCode.get(code);
-    if (!l) return null;
-    placed.add(code);
-    return accountNode(l, baseSen);
+  const take = (code: string | undefined): LaidNode[] => {
+    if (!code) return [];
+    const ls = (byCode.get(code) ?? []).filter((l) => !placed.has(keyOf(l)));
+    for (const l of ls) placed.add(keyOf(l));
+    return ls.map((l) => laidLineNode(l, baseSen));
   };
-  const sum = (nodes: LaidNode[]): number => nodes.reduce((s, n) => s + n.amountSen, 0);
   const walk = (list: LayoutItem[]): LaidNode[] => {
     const out: LaidNode[] = [];
     for (const it of list) {
       if (it.kind === 'account') {
-        const n = take(it.code);
-        if (n) out.push(n);
+        out.push(...take(it.code));
         continue;
       }
       if (it.hiddenFor?.includes(companyId)) continue;
-      const kids: LaidNode[] = [];
       /* A header that booked something itself (older than 父户不记账) prints
          first inside its own category. */
-      const own = take(it.code);
-      if (own) kids.push(own);
-      kids.push(...walk(it.children));
+      const kids: LaidNode[] = [...take(it.code), ...walk(it.children)];
       if (kids.length === 0) continue;
-      const amountSen = sum(kids);
-      const node: LaidNode = { kind: 'category', id: it.id, label: it.label, amountSen, pct: pctOf(amountSen, baseSen), children: kids };
+      const node = groupNode('category', it.id, it.label, kids, baseSen);
       if (it.code) node.code = it.code;
       out.push(node);
     }
     return out;
   };
   const nodes = walk(items);
-  const rest = lines.filter((l) => !placed.has(l.code)).map((l) => accountNode(l, baseSen));
-  if (rest.length > 0) {
-    const amountSen = sum(rest);
-    nodes.push({ kind: 'unassigned', id: 'unassigned', label: 'Unassigned', amountSen, pct: pctOf(amountSen, baseSen), children: rest });
-  }
+  const rest = lines.filter((l) => !placed.has(keyOf(l))).map((l) => laidLineNode(l, baseSen));
+  if (rest.length > 0) nodes.push(groupNode('unassigned', 'unassigned', 'Unassigned', rest, baseSen));
   return nodes;
 }
 

@@ -18,7 +18,9 @@
 // owner's tree of categories (one tree, shared by every company, ticked per
 // company) — with a subtotal on every category, % of sales on every row, and
 // L1..Ln buttons to open the tree to a depth. The Layout button opens the
-// editor (ReportLayoutEditor) for whoever may read the statements.
+// editor (ReportLayoutEditor) for whoever may read the statements. The
+// Balance Sheet draws the same way on its own tree (docs/bugs/0912), every
+// line's % of TOTAL ASSETS, both sides (owner: balance sheet 也需要).
 // ----------------------------------------------------------------------------
 
 import { useState } from 'react';
@@ -28,7 +30,7 @@ import { fmtSenParen } from '../../vendor/shared/format';
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import { DateField } from '../../vendor/scm/components/DateField';
 import { useAuth } from '../../auth/AuthContext';
-import { laidDepth, type LaidNode } from '../../vendor/scm/lib/report-layout';
+import { fmtPct, laidDepth, pctOf, type LaidNode } from '../../vendor/scm/lib/report-layout';
 import { LaidBlock, LaidTotalRow, LevelButtons, type Level } from './ReportLayoutTree';
 import { ReportLayoutEditor } from './ReportLayoutEditor';
 
@@ -45,25 +47,6 @@ type Line = { code: string; name: string; amountSen: number };
 
 const myt = (): string => new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
 const monthStart = (): string => `${myt().slice(0, 7)}-01`;
-
-const Section = ({ title, rows, totalLabel, totalSen }: {
-  title: string; rows: Line[]; totalLabel: string; totalSen: number;
-}) => (
-  <>
-    <tr><td colSpan={2} style={{ padding: '10px 10px 4px', fontWeight: 700 }}>{title}</td></tr>
-    {rows.map((l) => (
-      <tr key={l.code}>
-        <td style={{ padding: '2px 10px 2px 24px' }}>{l.code} — {l.name}</td>
-        <td style={{ padding: '2px 10px', textAlign: 'right', whiteSpace: 'nowrap' }}>{fmtSenParen(l.amountSen)}</td>
-      </tr>
-    ))}
-    {rows.length === 0 && <tr><td colSpan={2} style={{ padding: '2px 10px 2px 24px', ...soft }}>—</td></tr>}
-    <tr style={{ borderTop: '1px solid var(--border-weak, #e3e1da)' }}>
-      <td style={{ padding: '4px 10px', fontWeight: 600 }}>{totalLabel}</td>
-      <td style={{ padding: '4px 10px', textAlign: 'right', fontWeight: 700, whiteSpace: 'nowrap' }}>{fmtSenParen(totalSen)}</td>
-    </tr>
-  </>
-);
 
 /* ── P&L ──────────────────────────────────────────────────────────────────── */
 type PnlLayout = {
@@ -149,43 +132,74 @@ export const PnLTab = () => {
 };
 
 /* ── Balance sheet ────────────────────────────────────────────────────────── */
+type BsLayout = {
+  stored: boolean;
+  /** Total assets — what every % is of, both sides; null when there are none. */
+  baseSen: number | null;
+  assets: LaidNode[]; liabilities: LaidNode[]; equity: LaidNode[];
+};
+
 export const BalanceSheetTab = () => {
   const [asOf, setAsOf] = useState(myt());
+  const [level, setLevel] = useState<Level>('all');
+  const [editing, setEditing] = useState(false);
+  const { can } = useAuth();
+  const canArrange = can('scm.payment_voucher.post');
   const q = useQuery({
     queryKey: ['report-bs', asOf],
     queryFn: () => authedFetch<{
       assets: Line[]; liabilities: Line[]; equity: Line[];
+      /** The same figures on the report's layout. */
+      layout: BsLayout;
       totals: { assetsSen: number; liabilitiesSen: number; equitySen: number; earningsSen: number; checkSen: number };
     }>(`/accounting/reports/balance-sheet?asOf=${asOf}`),
     enabled: Boolean(asOf),
     staleTime: 30_000,
   });
 
+  const lay = q.data?.layout;
+  const depth = lay ? Math.max(laidDepth(lay.assets), laidDepth(lay.liabilities), laidDepth(lay.equity)) : 0;
+  const base = lay ? lay.baseSen : null;
+
   return (
     <div className="space-y-3">
-      <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center' }}>
+      <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
         <span style={soft}>As of</span><DateField value={asOf} onChange={setAsOf} aria-label="Balance sheet as of" />
+        <LevelButtons depth={depth} level={level} onLevel={setLevel} />
+        {canArrange && (
+          <Button variant="ghost" size="sm" onClick={() => setEditing((v) => !v)} aria-pressed={editing}>Layout</Button>
+        )}
       </div>
+      {editing && <ReportLayoutEditor report="balance_sheet" onClose={() => setEditing(false)} />}
       {q.isLoading && <div style={soft}>Adding the ledger up…</div>}
       {q.isError && <div style={{ fontSize: 'var(--fs-13)', color: 'var(--c-danger, #a33)' }}>The statement did not load — pick the date again to retry.</div>}
-      {q.data && (
+      {q.data && lay && (
         <div style={{ ...card, padding: 0, overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
+            <thead>
+              <tr style={{ borderBottom: '1px solid var(--border-weak, #e3e1da)' }}>
+                <th style={{ padding: '6px 10px', textAlign: 'left', ...soft }}>{lay.stored ? 'On the saved layout' : 'On the chart\'s own tree'}</th>
+                <th style={{ padding: '6px 10px', textAlign: 'right', ...soft }}>Amount</th>
+                <th style={{ padding: '6px 10px', textAlign: 'right', ...soft }}>% of total assets</th>
+              </tr>
+            </thead>
             <tbody>
-              <Section title="Assets" rows={q.data.assets} totalLabel="Total assets" totalSen={q.data.totals.assetsSen} />
-              <Section title="Liabilities" rows={q.data.liabilities} totalLabel="Total liabilities" totalSen={q.data.totals.liabilitiesSen} />
-              <Section title="Equity" rows={q.data.equity} totalLabel="Total equity" totalSen={q.data.totals.equitySen} />
+              <LaidBlock title="Assets" nodes={lay.assets} level={level} totalLabel="Total assets" totalSen={q.data.totals.assetsSen} baseSen={base} />
+              <LaidBlock title="Liabilities" nodes={lay.liabilities} level={level} totalLabel="Total liabilities" totalSen={q.data.totals.liabilitiesSen} baseSen={base} />
+              <LaidBlock title="Equity" nodes={lay.equity} level={level} totalLabel="Total equity" totalSen={q.data.totals.equitySen} baseSen={base} />
               <tr>
                 <td style={{ padding: '4px 10px' }}>Current period earnings</td>
-                <td style={{ padding: '4px 10px', textAlign: 'right' }}>{fmtSenParen(q.data.totals.earningsSen)}</td>
+                <td style={{ padding: '4px 10px', textAlign: 'right', whiteSpace: 'nowrap' }}>{fmtSenParen(q.data.totals.earningsSen)}</td>
+                <td style={{ padding: '4px 10px', textAlign: 'right', whiteSpace: 'nowrap', ...soft }}>{fmtPct(pctOf(q.data.totals.earningsSen, base))}</td>
               </tr>
               <tr style={{ borderTop: '2px solid var(--c-ink, #221f20)' }}>
                 <td style={{ padding: '8px 10px', fontWeight: 700 }}>
                   {q.data.totals.checkSen === 0 ? 'BALANCED' : 'OUT OF BALANCE'}
                 </td>
-                <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 700, color: q.data.totals.checkSen === 0 ? 'var(--c-good, #2f5d4f)' : 'var(--c-danger, #a33)' }}>
+                <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 700, whiteSpace: 'nowrap', color: q.data.totals.checkSen === 0 ? 'var(--c-good, #2f5d4f)' : 'var(--c-danger, #a33)' }}>
                   {q.data.totals.checkSen === 0 ? fmtSenParen(q.data.totals.assetsSen) : fmtSenParen(q.data.totals.checkSen)}
                 </td>
+                <td style={{ padding: '8px 10px', textAlign: 'right', whiteSpace: 'nowrap', ...soft }}>{q.data.totals.checkSen === 0 ? fmtPct(pctOf(q.data.totals.assetsSen, base)) : ''}</td>
               </tr>
             </tbody>
           </table>

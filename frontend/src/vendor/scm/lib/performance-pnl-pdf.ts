@@ -60,7 +60,7 @@ export async function generatePerformancePdf(r: PerformanceReport, opts?: { acti
   autoTable(doc, {
     startY: afterGroups,
     head: [['', 'Amount', '% of sales']],
-    body: t.summary.map((l) => [l.label, fmtPerf(l.amountSen), fmtPerfPct(l.pct)]),
+    body: t.summary.map((l) => [`${'   '.repeat(Math.max(0, l.depth - 1))}${l.label}`, fmtPerf(l.amountSen), fmtPerfPct(l.pct)]),
     theme: 'plain',
     rowPageBreak: 'avoid',
     styles: { ...DOC_TABLE_STYLES, fontSize: 8.5 },
@@ -71,6 +71,7 @@ export async function generatePerformancePdf(r: PerformanceReport, opts?: { acti
       const line = t.summary.at(data.row.index);
       if (data.section !== 'body' || !line) return;
       if (line.kind === 'total') { data.cell.styles.fontStyle = 'bold'; data.cell.styles.lineWidth = { top: 0.2, bottom: 0, left: 0, right: 0 }; }
+      if (line.kind === 'category') data.cell.styles.fontStyle = 'bold';
       if (line.kind === 'net') { data.cell.styles.fontStyle = 'bold'; data.cell.styles.lineWidth = { top: 0.4, bottom: 0.4, left: 0, right: 0 }; }
     },
   });

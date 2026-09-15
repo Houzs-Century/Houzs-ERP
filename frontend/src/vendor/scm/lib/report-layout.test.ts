@@ -4,7 +4,7 @@
 
 import { describe, expect, test } from 'vitest';
 import {
-  accountKey, addCategory, blockOfKey, fmtPct, laidDepth, moveWithinSiblings, newCategoryId, pctOf, placeItem,
+  accountKey, addCategory, blockOfKey, categoryIds, flattenLaid, fmtPct, laidDepth, leafKeys, moveWithinSiblings, newCategoryId, pctOf, placeItem,
   removeCategory, renameCategory, setCategoryTick, unplaceAccount, unplacedAccounts,
   type LaidNode, type Layout, type LayoutAccountRow, type LayoutItem,
 } from './report-layout';
@@ -157,6 +157,20 @@ describe('figures and ids', () => {
     expect(laidDepth([])).toBe(0);
     expect(laidDepth([acc('a')])).toBe(1);
     expect(laidDepth([cat('c', [acc('a'), cat('d', [acc('b')])]), acc('e')])).toBe(3);
+  });
+
+  test('leafKeys gathers every row under a node; flattenLaid lists the tree with depths (docs/bugs/0912)', () => {
+    const acc = (key: string): LaidNode => ({ kind: 'account', id: `acc:${key}`, key, label: key, amountSen: 1, pct: null, children: [] });
+    const cat = (id: string, children: LaidNode[]): LaidNode => ({ kind: 'category', id, label: id, amountSen: 1, pct: null, children });
+    const tree = [cat('c', [acc('a'), cat('d', [acc('b'), acc('x:y')])]), acc('e')];
+    expect(leafKeys(tree[0]!)).toEqual(['a', 'b', 'x:y']);
+    expect(leafKeys(tree[1]!)).toEqual(['e']);
+    expect(flattenLaid(tree).map(({ node, depth }) => [node.id, depth])).toEqual([['c', 1], ['acc:a', 2], ['d', 2], ['acc:b', 3], ['acc:x:y', 3], ['acc:e', 1]]);
+  });
+
+  test('categoryIds lists every category of a layout, every block, every depth', () => {
+    expect(categoryIds(layout())).toEqual(['acc:900-0000', 'acc:900-A002']);
+    expect(categoryIds(addCategory(layout(), 'tradingIncome', null, 'Sales', 'cat:s'))).toEqual(['cat:s', 'acc:900-0000', 'acc:900-A002']);
   });
 
   test('a new category id never looks like a chart code and is unique per call', () => {

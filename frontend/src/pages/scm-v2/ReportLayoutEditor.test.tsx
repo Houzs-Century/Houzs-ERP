@@ -137,6 +137,18 @@ describe('the layout editor', () => {
     expect(items[1]).toMatchObject({ kind: 'category', label: 'New category' });
   });
 
+  test('Fold all hides every category\'s rows, Unfold all shows them again (docs/bugs/0912)', () => {
+    draw();
+    expect(screen.getByText('900-A001 — ACCOUNTING FEE')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Fold all' }));
+    expect(screen.queryByText('900-A001 — ACCOUNTING FEE')).toBeNull();
+    expect(screen.queryByText('ADVERTISEMENT')).toBeNull();
+    expect(screen.getByText('Operating Expense')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Unfold all' }));
+    expect(screen.getByText('900-A001 — ACCOUNTING FEE')).toBeTruthy();
+    expect(screen.getByText('ADVERTISEMENT')).toBeTruthy();
+  });
+
   test('Reset asks first, then calls the reset; a refusal calls nothing', async () => {
     resetAsync.mockClear();
     confirmFn.mockResolvedValueOnce(false);

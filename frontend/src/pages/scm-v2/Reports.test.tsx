@@ -44,6 +44,12 @@ const bsData = {
   assets: [{ code: '310-0010', name: 'BANK', amountSen: 93_000 }, { code: '330-0000', name: 'STOCK', amountSen: 10_000 }],
   liabilities: [{ code: '400-0000', name: 'AP', amountSen: 60_000 }, { code: '410-0010', name: 'ACCRUAL - SALARIES', amountSen: -2_000 }],
   equity: [],
+  layout: {
+    stored: false, baseSen: 103_000,
+    assets: [{ kind: 'category' as const, id: 'sec:CURRENT ASSETS', label: 'CURRENT ASSETS', amountSen: 103_000, pct: 100, children: [acc('310-0010', 'BANK', 93_000, 90.3), acc('330-0000', 'STOCK', 10_000, 9.7)] }],
+    liabilities: [{ kind: 'category' as const, id: 'sec:CURRENT LIABILITIES', label: 'CURRENT LIABILITIES', amountSen: 58_000, pct: 56.3, children: [acc('400-0000', 'AP', 60_000, 58.3), acc('410-0010', 'ACCRUAL - SALARIES', -2_000, -1.9)] }],
+    equity: [],
+  },
   totals: { assetsSen: 103_000, liabilitiesSen: 60_000, equitySen: 0, earningsSen: 43_000, checkSen: 0 },
 };
 
@@ -136,5 +142,29 @@ describe('the standard statements', () => {
     /* A credit-side balance on the wrong side prints in parentheses, not "RM -". */
     expect(screen.getByText(/410-0010/).closest('tr')!.textContent).toContain('(RM 20.00)');
     expect(document.body.textContent).not.toMatch(/RM -/);
+  });
+
+  /* LAYOUT (docs/bugs/0912): the balance sheet on its tree, every line's %
+     of TOTAL ASSETS — on the liability side too. */
+  test('Balance sheet: the tree with % of total assets on both sides, L1 folds it, the Layout button opens the editor', () => {
+    render(<BalanceSheetTab />);
+    expect(screen.getByText('% of total assets')).toBeTruthy();
+    const assets = screen.getByText('CURRENT ASSETS').closest('tr')!;
+    expect(assets.getAttribute('data-kind')).toBe('category');
+    expect(assets.textContent).toContain('RM 1,030.00');
+    expect(assets.textContent).toContain('100.0%');
+    expect(screen.getByText(/330-0000/).closest('tr')!.textContent).toContain('9.7%');
+    /* A liability's % is of total assets. */
+    expect(screen.getByText(/400-0000/).closest('tr')!.textContent).toContain('58.3%');
+    expect(screen.getByText('Total liabilities').closest('tr')!.textContent).toContain('58.3%');
+    expect(screen.getByText('Current period earnings').closest('tr')!.textContent).toContain('41.7%');
+    expect(screen.getByText('BALANCED').closest('tr')!.textContent).toContain('100.0%');
+    fireEvent.click(screen.getByRole('button', { name: 'L1' }));
+    expect(screen.queryByText(/330-0000/)).toBeNull();
+    expect(screen.getByText('CURRENT ASSETS').closest('tr')!.textContent).toContain('RM 1,030.00');
+    fireEvent.click(screen.getByRole('button', { name: 'All' }));
+    expect(screen.getByText(/330-0000/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Layout' }));
+    expect(screen.getByRole('dialog', { name: 'Layout · P&L' })).toBeTruthy();
   });
 });

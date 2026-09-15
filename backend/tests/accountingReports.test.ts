@@ -165,4 +165,17 @@ describe('GET /accounting/reports/balance-sheet', () => {
       checkSen: 0,
     });
   });
+
+  test('hands the same figures back on the layout — a section layer, % of TOTAL ASSETS on every line of both sides (docs/bugs/0912)', async () => {
+    const { app } = harness(WORLD);
+    type Laid = { kind: string; label: string; amountSen: number; pct: number | null; children: Laid[] };
+    const b = await (await app.request('/accounting/reports/balance-sheet?asOf=2026-08-31')).json() as { layout: { stored: boolean; baseSen: number; assets: Laid[]; liabilities: Laid[]; equity: Laid[] } };
+    const flat = (nodes: Laid[]): unknown[] => nodes.map((n) => [n.label, n.amountSen, n.pct, ...(n.children.length > 0 ? [flat(n.children)] : [])]);
+    expect(b.layout.stored).toBe(false);
+    expect(b.layout.baseSen).toBe(101_000);
+    expect(flat(b.layout.assets)).toEqual([['CURRENT ASSETS', 101_000, 100, [['310-0010 — 310-0010', 91_000, 90.1], ['330-0000 — 330-0000', 10_000, 9.9]]]]);
+    /* The liability's % is of total assets too — 60,000 / 101,000. */
+    expect(flat(b.layout.liabilities)).toEqual([['CURRENT LIABILITIES', 60_000, 59.4, [['400-0000 — 400-0000', 60_000, 59.4]]]]);
+    expect(b.layout.equity).toEqual([]);
+  });
 });
