@@ -9,23 +9,28 @@
 // the single-period screen for the same month. Nothing is stored.
 // ----------------------------------------------------------------------------
 
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import { useQueries } from '@tanstack/react-query';
 import { Download } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { downloadCSV } from '../../lib/csv';
-import { fmtPct } from '../../vendor/scm/lib/report-layout';
+import { fmtPct, foldsChildren, folderOpen, linesVisible } from '../../vendor/scm/lib/report-layout';
 import {
-  mergeColumns, monthColumns, monthlyCsv, monthlyDepth, monthlyLinesAtLevel,
+  mergeColumns, monthColumns, monthlyCsv, monthlyDepth,
   type FlatLine, type MonthColumn, type MonthlyLine,
 } from '../../vendor/scm/lib/report-monthly';
-import { LevelButtons, type Level } from './ReportLayoutTree';
+import { LevelButtons, useReportTree, type Level } from './ReportLayoutTree';
+import { AccountLinesRow } from './AccountLinesRow';
 
 const soft: React.CSSProperties = { fontSize: 'var(--fs-13)', color: 'var(--text-soft, #8a8578)' };
 const card: React.CSSProperties = {
   background: 'var(--c-cream)', border: '1px solid var(--c-line, rgba(34,31,32,0.12))', borderRadius: 'var(--radius-md)',
 };
 const num: React.CSSProperties = { textAlign: 'right', whiteSpace: 'nowrap', padding: '2px 10px', fontVariantNumeric: 'tabular-nums' };
+/* The % under an amount — the same figure the % toggle prints alone. */
+const pctLine: React.CSSProperties = { fontSize: 'var(--fs-11, 11px)', color: 'var(--text-soft, #8a8578)', fontWeight: 400, lineHeight: 1.1 };
+const chevron: React.CSSProperties = { background: 'none', border: 'none', padding: '0 4px 0 0', cursor: 'pointer', font: 'inherit', color: 'var(--text-soft, #8a8578)', width: 18, display: 'inline-block', textAlign: 'left' };
+const nameBtn: React.CSSProperties = { background: 'none', border: 'none', padding: 0, cursor: 'pointer', font: 'inherit', color: 'inherit' };
 const btn = (active: boolean): React.CSSProperties => ({
   padding: '2px 8px', fontSize: 'var(--fs-12, 12px)', borderRadius: 'var(--radius-sm, 4px)',
   border: '1px solid var(--c-line, rgba(34,31,32,0.2))', background: active ? 'var(--c-ink, #221f20)' : 'transparent',
@@ -62,6 +67,7 @@ export function MonthlyReport<T>({ report, title, withCumulative, fetchColumn, l
   const [count, setCount] = useState<number>(6);
   const [showPct, setShowPct] = useState(false);
   const [level, setLevel] = useState<Level>('all');
+  const tree = useReportTree(level);
   const columns = useMemo(() => monthColumns(latest, count, withCumulative), [latest, count, withCumulative]);
 
   const results = useQueries({
@@ -80,7 +86,9 @@ export function MonthlyReport<T>({ report, title, withCumulative, fetchColumn, l
     }),
   ), [columns, results, linesOf]);
   const depth = monthlyDepth(lines);
-  const shown = monthlyLinesAtLevel(lines, level);
+  const shown = linesVisible(lines, level, tree.open);
+  /* An account's lines open for the whole range on screen. */
+  const range = { from: columns.reduce((a, c) => (c.from < a ? c.from : a), columns[0]?.from ?? ''), to: columns.reduce((a, c) => (c.to > a ? c.to : a), columns[0]?.to ?? '') };
 
   const style = (l: MonthlyLine): React.CSSProperties =>
     l.kind === 'block' ? { fontWeight: 700, paddingTop: 10 }
@@ -124,16 +132,37 @@ export function MonthlyReport<T>({ report, title, withCumulative, fetchColumn, l
               </tr>
             </thead>
             <tbody>
-              {shown.map((l) => (
-                <tr key={l.id} data-kind={l.kind} data-depth={l.depth} style={l.kind === 'net' || l.kind === 'total' ? { borderTop: l.kind === 'net' ? '2px solid var(--c-ink, #221f20)' : '1px solid var(--border-weak, #e3e1da)' } : undefined}>
-                  <td style={{ padding: `2px 10px 2px ${10 + 14 * Math.max(0, l.depth)}px`, position: 'sticky', left: 0, background: 'var(--c-cream)', whiteSpace: 'nowrap', ...style(l) }}>{l.label}</td>
-                  {columns.map((c) => {
-                    const cell = l.cells[c.key];
-                    const text = !cell || l.kind === 'block' ? '' : showPct ? fmtPct(cell.pct) : fmt(cell.amountSen);
-                    return <td key={c.key} style={{ ...num, ...style(l), ...(c.cumulative ? { borderRight: '2px solid var(--c-ink, #221f20)' } : {}) }}>{text || (l.kind === 'block' ? '' : <span style={soft}>—</span>)}</td>;
-                  })}
-                </tr>
-              ))}
+              {shown.map((l) => {
+                const i = lines.indexOf(l);
+                const folder = l.kind === 'category' && foldsChildren(lines, i);
+                const open = folder && folderOpen(l, level, tree.open);
+                const drillable = l.kind === 'row' && Boolean(l.code);
+                const drilled = drillable && Boolean(tree.drilled[l.id]);
+                return (
+                  <Fragment key={l.id}>
+                    <tr data-kind={l.kind} data-depth={l.depth} style={l.kind === 'net' || l.kind === 'total' ? { borderTop: l.kind === 'net' ? '2px solid var(--c-ink, #221f20)' : '1px solid var(--border-weak, #e3e1da)' } : undefined}>
+                      <td style={{ padding: `2px 10px 2px ${10 + 14 * Math.max(0, l.depth)}px`, position: 'sticky', left: 0, background: 'var(--c-cream)', whiteSpace: 'nowrap', ...style(l) }}>
+                        {folder && <button type="button" style={chevron} aria-label={`${open ? 'Collapse' : 'Expand'} ${l.label}`} aria-expanded={open} onClick={() => tree.toggle(l.id, open)}>{open ? '▾' : '▸'}</button>}
+                        {drillable
+                          ? <button type="button" style={nameBtn} aria-label={`Lines of ${l.label}`} aria-expanded={drilled} onClick={() => tree.toggleDrill(l.id)}>{l.label}</button>
+                          : l.label}
+                      </td>
+                      {columns.map((c) => {
+                        const cell = l.cells[c.key];
+                        const blank = !cell || l.kind === 'block';
+                        return (
+                          <td key={c.key} style={{ ...num, ...style(l), ...(c.cumulative ? { borderRight: '2px solid var(--c-ink, #221f20)' } : {}) }}>
+                            {blank ? (l.kind === 'block' ? '' : <span style={soft}>—</span>)
+                              : showPct ? fmtPct(cell.pct)
+                                : <>{fmt(cell.amountSen)}<div style={pctLine}>{fmtPct(cell.pct)}</div></>}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                    {drilled && l.code && <AccountLinesRow code={l.code} from={range.from} to={range.to} colSpan={1 + columns.length} />}
+                  </Fragment>
+                );
+              })}
             </tbody>
           </table>
         </div>
