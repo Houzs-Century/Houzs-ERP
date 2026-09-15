@@ -63,4 +63,18 @@ describe('bookLineItem', () => {
     expect(bound.inBook).toBe(true);
     expect(bookLineItem(erp, null, { bindings: null })).toEqual(without);
   });
+
+  it('a sofa piece bound to a supplier SKU the book does not hold keeps the bound code but reads the book item of its own code', () => {
+    const piece = { itemCode: '9028-1A(RHF)', description: 'our words', category: 'sofa', uom: 'unit' };
+    const unbound = resolveAcItemCode('9028-1A(RHF)', {});
+    expect(unbound.ok).toBe(true);
+    const book = unbound.ok ? acBookItemIndex().get(unbound.acItemCode.toUpperCase()) : undefined;
+    expect(book, 'the fixture needs the piece to be a book item').toBeDefined();
+    const r = bookLineItem(piece, null, { bindings: new Map([['9028-1A(RHF)', 'DSL-9028 SOFA 1A(RHF)']]) });
+    expect(r.itemCode).toBe('DSL-9028 SOFA 1A(RHF)');
+    expect(r.inBook).toBe(true);
+    expect(r.itemGroup).toBe(book!.itemGroup);
+    expect(r.description).toBe(book!.description);
+    expect(r.uom).toBe(book!.baseUom);
+  });
 });
