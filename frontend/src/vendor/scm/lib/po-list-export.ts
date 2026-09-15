@@ -93,7 +93,7 @@ export async function fetchAllPoListRows<T extends EnrichableMrpRow & { id: stri
   f: PoListFilterParams,
   withMrpColumns: boolean,
 ): Promise<T[]> {
-  const body = await authedFetch<{ purchaseOrders: T[]; total: number; truncated: boolean }>(
+  const body = await authedFetch<{ purchaseOrders?: T[]; total: number; truncated: boolean }>(
     withQuery('/mfg-purchase-orders/export/headers', poListParams(f)),
   );
   if (body.truncated) throw new ExportTruncatedError('purchase orders');
@@ -108,7 +108,7 @@ export async function fetchAllPoListRows<T extends EnrichableMrpRow & { id: stri
   const worker = async () => {
     while (next < chunks.length) {
       const chunk = chunks[next++]!;
-      const res = await authedFetch<{ enrichment: Record<string, ListMrpEnrichment> }>(
+      const res = await authedFetch<{ enrichment?: Record<string, ListMrpEnrichment> }>(
         `/mfg-purchase-orders/list-mrp-enrichment?poIds=${encodeURIComponent(chunk.join(','))}`,
       );
       for (const [k, v] of Object.entries(res.enrichment ?? {})) byId.set(k, v);
