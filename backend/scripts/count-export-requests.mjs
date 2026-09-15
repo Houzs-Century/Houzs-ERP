@@ -67,7 +67,21 @@ function counting(sb) {
 try {
   await pg`SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY`;
   const { pgrestShim } = await import("./lib/pgrest-shim.mjs");
-  const { buildPoExportRows } = await import("../src/scm/lib/po-line-export.ts");
+  /* PO: the same reads as buildPoExportRows, with the header select stripped of
+     its FK-hinted warehouse embed the shim cannot parse (as check-po-line-export.mjs
+     does). An embed rides inside the header request, so the COUNT is unchanged. */
+  const { attachPoLines } = await import("../src/scm/lib/po-line-export.ts");
+  const { filterPoList, orderPoList } = await import("../src/scm/lib/po-list-read.ts");
+  const { pageWithTruncation } = await import("../src/scm/lib/outstanding-po-lines.ts");
+  const buildPoExportRows = async (sbx, ctx, filters, validStatuses) => {
+    const read = await pageWithTruncation((from, to) =>
+      orderPoList(filterPoList(sbx.from("purchase_orders").select("id, po_number, purchase_location_id, supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4"), filters, ctx, validStatuses), filters.sort)
+        .range(from, to));
+    if (read.error) return { error: read.error.message };
+    const withLines = await attachPoLines(sbx, ctx, read.data ?? []);
+    if (withLines.error) return { error: withLines.error };
+    return { error: null, purchaseOrders: withLines.rows, lineCount: withLines.lineCount, truncated: read.truncated };
+  };
   const { readGrnExportRows } = await import("../src/scm/lib/grn-export-rows.ts");
   const { readPiExportRows } = await import("../src/scm/lib/pi-export-rows.ts");
   const { readSiExportRows } = await import("../src/scm/lib/si-export-rows.ts");
