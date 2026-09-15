@@ -801,6 +801,21 @@ mobile card, because `source === 'po'` now guarantees a number. Trace:
   (read-only)*, which now measures the whole category). Company 2 has no Sofa
   Accessory SKU; its pillows are Accessory and pool.
   `docs/bugs/0890-mrp-pooled-custom-pillows-by-sku-so-one-customer-s-colour-co.md`.
+- **A LINK IS DEDICATED WHEN EITHER SIDE IS BOUND (2026-09-15).** `isDedicated`
+  read the PO line's group alone, while `so-stock-allocation.ts` binds by the
+  SALES line's group. A link whose two lines disagree on category therefore read
+  SHORT with its own PO open — a bound PO on an unbound sales line was withheld
+  from the pool that line reads; an unbound PO on a bound line sat in a pool the
+  line never reads. Now a linked PO line is dedicated when its own group OR its
+  sales line's group is bound (the sales line must be in the open demand set), and
+  section 7 hands an unbound line its own dedicated queue before the pool. Live
+  case: `HC-PO-010086` SQUARE PILLOW `fabric_accessory` linked to `HC-SO-013346`
+  `accessory` (probe run 34944608976; the only company-1 link of either shape).
+  The write paths refuse new cross-category links to a bound line
+  (`purchase-order.md` *Binding a PO line*), and
+  `backend/scripts/repair-mrp-po-line-links.mjs` now plans Sofa Accessory lines
+  through `scripts/lib/hard-bound-group.mjs`, the mirror of `isHardBoundLine`.
+  `docs/bugs/0925`.
 - **Ordering a bound line twice is refused on every convert path, MRP included
   (2026-09-14).** An MRP-origin convert skips the per-line cap for a POOLED line
   (the MRP shortage is the guard there). For a company-1 bound line the server now

@@ -228,14 +228,14 @@ leave the next client free to lose it again. Trace:
 >
 > What that costs is a second failure the 2026-08-22 section does not mention,
 > because it post-dates it: `item_group` is also what `isHardBoundLine`
-> (`scm/lib/so-stock-allocation.ts`) reads. Since 2026-09-09 a company-1 sofa /
-> bedframe / `(SP)` mattress line is covered ONLY by a PO line that carries its
-> `so_item_id` **and** sits on a hard-bound group (`isDedicated` in
-> `scm/routes/mrp.ts`, then section 8's `boundSofa` walk). A sofa PO line written
-> `others` therefore fails the second half and is invisible to the set: MRP calls
-> the sales-order line SHORT while the purchase order sits open, and the buyer is
-> told to order goods already on order. Owner-reported on `HC-PO-010087` /
-> `HC-SO-013389`, 2026-09-11.
+> (`scm/lib/so-stock-allocation.ts`) reads. A sofa PO line written `others` on a
+> sofa sales line was invisible to MRP's set, so MRP called the sales-order line
+> SHORT while the purchase order sat open. Owner-reported on `HC-PO-010087` /
+> `HC-SO-013389`, 2026-09-11. **Since 2026-09-15 MRP dedicates a linked PO line
+> when EITHER side is bound** (`isDedicated` in `scm/routes/mrp.ts`, matching the
+> stored allocator, which binds by the sales line's group), and every write path
+> refuses a cross-category link to a bound line — see *Binding a PO line* below
+> and `docs/bugs/0925`.
 >
 > **Now:** `poConvertLineRow` takes the resolved group as a REQUIRED fourth
 > parameter (the same doctrine `fromMrp` follows there — a decision that changes
@@ -317,8 +317,8 @@ with no per-area level consulted.
 | GET | `/:id/revisions` | `:896` | `po_revisions` snapshots for the Revisions tab. |
 | GET | `/so-line-candidates?code=&poId=&itemId=` | (static, pre-`/:id`) | SO lines carrying this item code AND — when `poId`+`itemId` are given — the same SPEC as that PO line (fabric + colour + SEAT/LEG/SPECIAL via `specSignature`/`buildVariantSummary`; dye-lot excluded, owner 2026-08-08). INCLUDING picked/delivered ones (historical consolidated POs are the point). Excludes cancelled lines + cancelled/draft SOs. Omitting `poId`/`itemId` -> code-only (back-compat). |
 | GET | `/:id/items/:itemId/allocations` | | The line's allocations + `lineQty` + `poNumber` (mig 0235). |
-| POST | `/:id/items/:itemId/allocations` | | Add one slice `{ qty, soItemId\|null }` (null = STOCK; STOCK skips the SO gate, qty-capped insert). A non-null `soItemId` must be the same code AND same SPEC as the PO line — `soLinkTargetRefusal` returns 409 `so_link_material_mismatch` / `so_link_spec_mismatch` (owner 2026-08-08). seq auto-assigned dense. |
-| PATCH | `/:id/items/:itemId/allocations/:allocationId` | | Edit a slice (`qty?`, `soItemId?` — explicit null → STOCK; absent keeps). |
+| POST | `/:id/items/:itemId/allocations` | | Add one slice `{ qty, soItemId\|null }` (null = STOCK; STOCK skips the SO gate, qty-capped insert). A non-null `soItemId` must be the same code AND same SPEC as the PO line — `soLinkTargetRefusal` returns 409 `so_link_material_mismatch` / `so_link_category_mismatch` / `so_link_spec_mismatch` (owner 2026-08-08). seq auto-assigned dense. **Refused 409 `hard_bound_line_not_splittable` on a company-1 sofa / bedframe / Sofa Accessory / `(SP)` line** (2026-09-15, `docs/bugs/0925`). |
+| PATCH | `/:id/items/:itemId/allocations/:allocationId` | | Edit a slice (`qty?`, `soItemId?` — explicit null → STOCK; absent keeps). Same company-1 bound-line refusal as POST. |
 | DELETE | `/:id/items/:itemId/allocations/:allocationId` | | Remove a slice + resequence the survivors dense 1..n. |
 | GET | `/:id/items/:itemId/photos/:photoKey/signed` | | Trade one key from the line's `photo_urls` for a short-lived signed R2 GET URL (`{ mode:'signed', signedUrl, thumbUrl, expiresAt }`). Falls back to `{ mode:'proxy', proxyPath, … }` — never 500 — when signing is impossible. READ-ONLY — see §4 *Line photos*. |
 | GET | `/:id/items/:itemId/photos/:photoKey` | | PROXY: streams the object from the R2 binding, no S3 credential needed. Same authz as `/signed`, company scoping included. Behind the auth gate, so NOT usable as a bare `<img src>` — see §4 *Line photos*. |
@@ -579,6 +579,29 @@ it, but a hand-typed line never could.
   active company**, must not be cancelled, and its `item_code` must equal the PO
   line's `item_code`. Otherwise `404 so_line_not_found`,
   `409 so_line_cancelled` or `409 so_link_material_mismatch`.
+- **Category must agree when either side is bound (2026-09-15).**
+  `soLinkTargetRefusal` (add-line, line PATCH, both allocation paths) and `POST /`
+  (`firstSoLinkCategoryMismatch`) refuse `409 so_link_category_mismatch` when the
+  PO line's SKU-resolved group differs from the SO line's and either is
+  hard-bound (`isHardBoundLine`). Both groups are stamped from the SKU, so a
+  disagreement means one side predates a category move — live example
+  `HC-PO-010086` `fabric_accessory` on `HC-SO-013346` `accessory`. Fix the
+  category, then link. Rule home: `backend/src/scm/lib/hard-bound-po-line.ts`.
+- **The line PATCH stores the SKU's group (2026-09-15).** A sent `itemGroup`, or a
+  changed `itemCode`, is resolved through `editedLineGroup` (SKU wins, the rule
+  create and add-line already followed); an uncatalogued SKU keeps the sent value.
+  A kept link is re-checked when the code or group under it moves.
+- **Clearing the link on a company-1 bound line is refused (2026-09-15)**, `409
+  hard_bound_unlink_refused`: in company 1 a bound line never draws from the pool,
+  so an unlinked sofa / bedframe / Sofa Accessory / `(SP)` purchase line counts for
+  no order. Re-point it at another SO line, or delete the line. A received line
+  cannot reach this — the line PATCH is locked once a GRN exists. The unbind
+  semantics above still hold for every other line (stock replenishment).
+- **PO amendment ADD / SPEC (`lib/po-revision.ts`, 2026-09-15)** resolve the group
+  from the SKU instead of `new_variants.itemGroup` / `others`. A manual PO
+  amendment has no SO line to link (0 ever raised on prod, probe 2026-09-15); a
+  follow-up of an SO amendment applies through `reviseBoundPo`, which links every
+  added line, and `applyPoAmendment` now throws if handed one.
 - **`POST /` (bare create) is company-scoped too (2026-08-19).** The desktop
   "New PO from SO" / MRP-convert path feeds SO-sourced lines through this generic
   create. It now reads each line's `soItemId` **scoped to the active company** and
@@ -641,7 +664,14 @@ revisions included):
   (`line_qty_below_allocated`).
 - an SO target passes the SAME `soLinkTargetRefusal` gate as the line-level
   bind (company-owned, not cancelled, `item_code` = the line's
-  `item_code`).
+  `item_code`, category agreeing where either side is bound).
+- **a company-1 bound line (sofa / bedframe / Sofa Accessory / `(SP)`) cannot be
+  split at all** — create and edit answer `409 hard_bound_line_not_splittable`,
+  delete stays allowed (2026-09-15). MRP and the stored allocator read only
+  `so_item_id`, so a split bound line covers one SO line at most and the rest read
+  SHORT. Chosen over teaching both engines the allocations because prod held
+  **0** allocation rows in total (probe run 34944608976); the desktop Split
+  button still reaches such a line and shows the refusal.
 - `seq` is auto-assigned dense 1..n; DELETE resequences survivors (ascending,
   so the UNIQUE `(item, seq)` can never collide mid-move).
 
