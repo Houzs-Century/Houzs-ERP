@@ -1,6 +1,5 @@
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { describe, expect, test } from 'vitest';
+import { soRouterSource } from './lib/so-router-source';
 
 /*
  * Six SO child reads in mfg-sales-orders.ts were keyed on the document number
@@ -28,10 +27,7 @@ import { describe, expect, test } from 'vitest';
  * for the right reason is worse than no test.
  */
 
-const SRC = readFileSync(
-  fileURLToPath(new URL('../src/scm/routes/mfg-sales-orders.ts', import.meta.url)),
-  'utf8',
-).replace(/\r\n/g, '\n');
+const SRC = soRouterSource().replace(/\r\n/g, '\n');
 
 /** Source from this route's registration up to the next `mfgSalesOrders.<verb>(`. */
 function handlerSlice(registration: string): string {

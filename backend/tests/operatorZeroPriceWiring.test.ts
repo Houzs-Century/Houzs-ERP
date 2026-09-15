@@ -14,10 +14,11 @@
 //      documented "not provided" case the drift gate already carves out.
 // ----------------------------------------------------------------------------
 import { describe, expect, test } from 'vitest';
-import soRoutes from '../src/scm/routes/mfg-sales-orders.ts?raw';
+import { soRouterSource } from './lib/so-router-source';
 import recompute from '../src/scm/lib/mfg-pricing-recompute.ts?raw';
 import salesOrderDetail from '../../frontend/src/pages/scm-v2/SalesOrderDetail.tsx?raw';
 import zeroPriceClaimSrc from '../../frontend/src/vendor/scm/lib/zeroPriceClaim.ts?raw';
+const soRoutes = soRouterSource();
 
 /** Source with comments stripped — the comments deliberately quote the shapes
  *  this file forbids in code. */

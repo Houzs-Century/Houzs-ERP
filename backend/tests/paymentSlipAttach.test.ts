@@ -15,20 +15,15 @@
 
    WHY A SOURCE TEST: the correct behaviour here is the ABSENCE of a call, and
    the handler is Supabase/Postgres (`c.get('supabase')`), which this suite's
-   environment does not bind. WHY import.meta.glob AND NOT readFileSync: this
+   environment does not bind. WHY `?raw` (tests/lib/so-router-source.ts) AND NOT readFileSync: this
    suite runs in workerd, where fs is not implemented; `?raw` is expanded by
    Vite at TRANSFORM time, in Node. Same technique, and same reasons, as
    tests/scheduleScopeRuling.test.ts. */
 
 import { describe, expect, test } from 'vitest';
+import { soRouterSource } from './lib/so-router-source';
 
-const sources = import.meta.glob('../src/scm/routes/mfg-sales-orders.ts', {
-  query: '?raw',
-  import: 'default',
-  eager: true,
-}) as Record<string, string>;
-
-const routeSource = Object.values(sources)[0] ?? '';
+const routeSource = soRouterSource();
 
 /** Strip comments so the assertions read CODE, not prose — the slip handler's
  *  own docblock explains the ruling and names the routes it differs from. */

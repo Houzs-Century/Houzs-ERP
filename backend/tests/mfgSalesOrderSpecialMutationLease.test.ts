@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest';
-import routeSource from '../src/scm/routes/mfg-sales-orders.ts?raw';
+import { soRouterSource } from './lib/so-router-source';
 import { soLineWriteLeaseMatches } from '../src/scm/routes/mfg-sales-orders';
+const routeSource = soRouterSource();
 
 const routes = [
   "post('/:docNo/items/:itemId/override'",

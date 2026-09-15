@@ -10,7 +10,7 @@
 // src/scm/lib/autocount-outbox.test.ts; this makes sure a refactor cannot
 // quietly unhook it.
 import { describe, expect, test } from 'vitest';
-import soRouteRaw from '../src/scm/routes/mfg-sales-orders.ts?raw';
+import { soRouterSource } from './lib/so-router-source';
 import poRouteRaw from '../src/scm/routes/mfg-purchase-orders.ts?raw';
 import outboxRaw from '../src/scm/lib/autocount-outbox.ts?raw';
 import gateRaw from '../src/scm/lib/so-confirm-gate.ts?raw';
@@ -35,6 +35,7 @@ import feDoRaw from '../../frontend/src/pages/scm-v2/DeliveryOrderNewV2.tsx?raw'
 import feGrnRaw from '../../frontend/src/pages/scm-v2/GrnNew.tsx?raw';
 import fePiRaw from '../../frontend/src/pages/scm-v2/PurchaseInvoiceNew.tsx?raw';
 import feSiRaw from '../../frontend/src/pages/scm-v2/SalesInvoiceNew.tsx?raw';
+const soRouteRaw = soRouterSource();
 
 /* Line endings, for the reason soLocationGateWiring.test.ts records: these are
    source-TEXT anchors and a CRLF checkout must not turn a wired-up repo red. */

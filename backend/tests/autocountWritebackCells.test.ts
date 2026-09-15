@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import rawSo from '../src/scm/routes/mfg-sales-orders.ts?raw';
+import { soRouterSource } from './lib/so-router-source';
 import rawPo from '../src/scm/routes/mfg-purchase-orders.ts?raw';
 import rawDo from '../src/scm/routes/delivery-orders-mfg.ts?raw';
 import rawGrn from '../src/scm/routes/grns.ts?raw';
@@ -18,6 +18,7 @@ import rawOutbox from '../src/scm/lib/autocount-outbox.ts?raw';
 import rawSiSource from '../src/scm/lib/si-autocount-source.ts?raw';
 import rawWriteback from '../src/services/autocount-writeback.ts?raw';
 import rawService from '../scripts/autocount-service/AcSyncService.cs?raw';
+const rawSo = soRouterSource();
 
 /* ERP -> AutoCount: THE CELLS THE MATRIX FOUND EMPTY.
  *

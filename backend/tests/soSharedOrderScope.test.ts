@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { applySoScope, soDocOutOfScope } from '../src/scm/lib/salesScope';
-import mfgSalesOrders from '../src/scm/routes/mfg-sales-orders.ts?raw';
+import { soRouterSource } from './lib/so-router-source';
 import listEnrichment from '../src/scm/routes/mfg-sales-orders-list-enrichment.ts?raw';
 import soAmendments from '../src/scm/routes/so-amendments.ts?raw';
 import deliveryOrders from '../src/scm/routes/delivery-orders-mfg.ts?raw';
@@ -10,6 +10,7 @@ import consignmentOrders from '../src/scm/routes/consignment-orders.ts?raw';
 import reports from '../src/scm/routes/reports.ts?raw';
 import arReconciliation from '../src/scm/routes/ar-reconciliation.ts?raw';
 import unbilledDeliveries from '../src/scm/routes/unbilled-deliveries.ts?raw';
+const mfgSalesOrders = soRouterSource();
 
 /* SHARED SALES ORDERS — the REACH ruling, pinned to the source.
  *
