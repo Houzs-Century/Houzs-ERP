@@ -112,3 +112,24 @@ describe("one ERP row over a transfer the book split", () => {
     expect([short, ...two, held]).toEqual(["ambiguous_in_book", "ambiguous_in_book", "ambiguous_in_book", "ambiguous_in_book"]);
   });
 });
+
+/* docs/bugs/0919 — after retire-book-only-conversion-lines zeroed 928499, the
+   book holds HC-GRN-2609-008's pillows as 928497 x3 and 928499 x0. */
+describe("a book line retired to zero", () => {
+  test("HC-GRN-2609-008 after the retire: the keyed row reads as already correct, not ambiguous", () => {
+    const { rows, unclaimedBookLines } = planDocumentKeys([{ id: "pillow-3", linkedKey: 928497, sourceKey: 907143, qty: 3 }], [
+      { toDtlKey: 928497, fromDtlKey: 907143, qty: 3, transferredOn: 0 },
+      { toDtlKey: 928499, fromDtlKey: 907143, qty: 0, transferredOn: 0 },
+    ]);
+    expect(rows).toEqual([{ id: "pillow-3", outcome: "already_correct", dtlKey: 928497, sourceKey: 907143 }]);
+    expect(unclaimedBookLines).toEqual([]);
+  });
+
+  test("CONTROL: without quantities a zero line is not recognised, and the split is refused as before", () => {
+    const { rows } = planDocumentKeys([{ id: "pillow-3", linkedKey: 928497, sourceKey: 907143 }], [
+      { toDtlKey: 928497, fromDtlKey: 907143 },
+      { toDtlKey: 928499, fromDtlKey: 907143 },
+    ]);
+    expect(rows[0].outcome).toBe("ambiguous_in_book");
+  });
+});
