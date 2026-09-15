@@ -1,7 +1,7 @@
 // /mfg-sales-orders — B2B sales orders (HOUZS pattern).
 // Separate from retail `orders` (POS) — different lifecycle, different ID format.
 
-import { activeSoEditLease, soCallerUserId, soLineWriteLeaseMatches, soEditLeaseExpiryIso, soEditLeaseRefusal, soEditLeaseTakeoverAllowed, type SoEditLeaseRow } from '../lib/so-edit-lease';
+import { activeSoEditLease, soCallerUserId, soHeaderLeaseIntent, soLineWriteLeaseMatches, soEditLeaseExpiryIso, soEditLeaseRefusal, soEditLeaseTakeoverAllowed, type SoEditLeaseRow } from '../lib/so-edit-lease';
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { z } from 'zod';
@@ -6684,7 +6684,7 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
      follower side effect. `reserveLineWrites` is the one explicit exception:
      the desktop composite-save uses it to acquire a CAS token before lines. */
   const beforeCols = map.map(([, snake]) => snake)
-    .concat(['status', 'version', 'edit_lease_token', 'edit_lease_expires_at'])
+    .concat(['status', 'version', 'edit_lease_token', 'edit_lease_expires_at', 'edit_lease_user_id'])
     .join(', ');
   const { data: before, error: beforeError } = await sb.from('mfg_sales_orders').select(beforeCols).eq('doc_no', docNo).maybeSingle();
   if (beforeError) return c.json({ error: 'load_failed', reason: beforeError.message }, 500);
@@ -6696,25 +6696,22 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
     delete body[from];
   }
 
-  const reserveForLineWrites = body['reserveLineWrites'] === true;
-  const completeLineWrites = body['completeLineWrites'] === true;
-  const requestedLeaseToken = typeof body['lineWriteLeaseToken'] === 'string'
-    ? (body['lineWriteLeaseToken'] as string).trim()
-    : '';
-  const activeLeaseToken = activeSoEditLease(before as SoEditLeaseRow);
-  if ((reserveForLineWrites || completeLineWrites) && requestedLeaseToken.length < 16) {
+  /* Token, flags, the end of a save and taking your own lock back: one rule in
+     soHeaderLeaseIntent in scm/lib/so-edit-lease.ts. */
+  const hasHeaderFieldChanges = Object.keys(updates).length > 0;
+  const lease = soHeaderLeaseIntent(body, before as SoEditLeaseRow, hasHeaderFieldChanges, soCallerUserId(c));
+  const { reserve: reserveForLineWrites, complete: completeLineWrites, token: requestedLeaseToken } = lease;
+  if (lease.refusal === 'invalid') {
     return c.json({ error: 'so_edit_lease_invalid', message: 'The save lease is invalid. Refresh the order and try again.' }, 400);
   }
-  const hasHeaderFieldChanges = Object.keys(updates).length > 0;
-  if (!hasHeaderFieldChanges && !reserveForLineWrites && !completeLineWrites) {
-    return c.json({ ok: true, changed: 0 });
-  }
-  if (activeLeaseToken && activeLeaseToken !== requestedLeaseToken) {
-    return c.json(SO_EDIT_LEASE_CONFLICT, 409);
-  }
-
   const currentVersion = Number((before as unknown as { version?: number | string }).version ?? 1);
-  if (reserveForLineWrites && activeLeaseToken === requestedLeaseToken) {
+  // The version rides even here: a screen adopting `result.version` must never read undefined.
+  if (!hasHeaderFieldChanges && !reserveForLineWrites && !completeLineWrites) {
+    return c.json({ ok: true, changed: 0, version: currentVersion });
+  }
+  if (lease.refusal === 'held') return c.json(SO_EDIT_LEASE_CONFLICT, 409);
+
+  if (reserveForLineWrites && lease.active === requestedLeaseToken) {
     return c.json({ ok: true, docNo, version: currentVersion, reserved: true, leaseToken: requestedLeaseToken });
   }
 
@@ -7175,7 +7172,7 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
   const { data: casRows, error: casError } = await sb.rpc('apply_so_header_cas', {
     p_doc_no: docNo,
     p_expected_version: clientVersion,
-    p_required_lease: requestedLeaseToken && !reserveForLineWrites ? requestedLeaseToken : null,
+    p_required_lease: lease.takeover ?? (requestedLeaseToken && !reserveForLineWrites ? requestedLeaseToken : null),
     p_patch: updates,
     p_recustomer: customerIdentityChanged,
     p_customer_name: reNewName || null,
