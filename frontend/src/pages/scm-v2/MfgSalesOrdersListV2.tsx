@@ -62,6 +62,9 @@ import {
   type Column,
   type ColumnLayoutPreset,
 } from "../../components/DataTable";
+import { financeColumns, moneyColumn, soLineColumns } from "./so-do-list-columns";
+import { SO_LABELS, senToRinggit, soListStatusWord, type SoBookHeader, type SoListLine } from "../../vendor/scm/lib/so-line-export-columns";
+import { fetchSoExportRows } from "../../vendor/scm/lib/so-list-export";
 import { approvalCodeColumn } from "./so-list-approval-code";
 import { ListPager } from "../../components/ListPager";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
@@ -201,7 +204,11 @@ type SoRow = HoldFields & {
   total_margin_sen?: number;
   margin_pct_basis?: number;
   deposit_sen?: number;
-};
+  currency?: string | null;
+  sales_exemption_expiry?: string | null;
+  /** The order's lines, and its AutoCount spellings (so-list-lines.ts). */
+  lines?: SoListLine[];
+} & Partial<SoBookHeader>;
 
 
 
@@ -209,9 +216,13 @@ type SoRow = HoldFields & {
 
 const fmtRm = (centi: number): string => fmtSen(centi);
 
-// margin_pct_basis is basis points (margin/total x 10000) → percent string.
-const fmtPctBasis = (basis: number | null | undefined): string =>
-  basis == null ? "—" : `${(basis / 100).toFixed(1)}%`;
+/* AutoCount's "SALES ORDER DETAILS-SALES" (SO_DEFAULT_COLUMNS) as grid keys, in
+   its order; Doc No. is always visible and pinned first. */
+const SO_AUTOCOUNT_KEYS = [
+  "so_date", "reference", "salesperson", "debtor_name", "branding", "currency", "amount", "line_location",
+  "balance", "processing_date", "sales_exemption_expiry", "item_group", "item_code", "detail_description",
+  "detail_description_2", "uom", "unit_price", "qty", "venue",
+];
 
 // Customer's PO / Ref number — spec: "Every list must show the customer SO
 // Ref number". Resolution order is the ONE rule in lib/customer-ref.ts.
@@ -1342,16 +1353,20 @@ export function MfgSalesOrdersListV2() {
      the flat scroll the grouping exists to end. Custom fields is automatic
      (every UDF column joins it). Finance columns are only DECLARED for a
      finance viewer, so that group simply doesn't exist for anyone else. */
-  const columns: Column<SoRow>[] = [
+  /* Labels are AutoCount's captions and Doc No / Agent / Debtor Code / Venue /
+     Branding are the book's spellings where the order is in AutoCount (the
+     server stamps ac_*; 2990 prints its own). The ERP number stays on ERP Doc No. */
+  const soLineColumnList = Object.values(soLineColumns<SoRow>());
+  const columns: Column<SoRow, SoListLine>[] = [
     {
       key: "doc_no",
       group: "Basic",
-      label: "Doc No.",
+      label: SO_LABELS.docNo,
       // 156 + font-docno (owner 2026-07-31): 132 clipped a full doc no by a
       // couple of px — see the measured DO No. note in MfgDeliveryOrdersListV2.
       width: "156px",
       alwaysVisible: true,
-      getValue: (r) => r.doc_no,
+      getValue: (r) => r.ac_doc_no ?? r.doc_no,
       render: (r) => (
         <span
           className={cn(
@@ -1359,15 +1374,21 @@ export function MfgSalesOrdersListV2() {
             isCancelledDocStatus(r.status) && "dt-cancel-strike",
           )}
         >
-          {r.doc_no}
+          {r.ac_doc_no ?? r.doc_no}
         </span>
       ),
     },
     {
+      key: "erp_doc_no", group: "Basic", label: SO_LABELS.erpDocNo, width: "156px", defaultHidden: true, disableSort: true,
+      getValue: (r) => r.doc_no,
+      render: (r) => <span className="font-docno text-[12.5px] text-ink-secondary">{r.doc_no}</span>,
+    },
+    {
       key: "so_date",
       group: "Basic",
-      label: "Date",
+      label: SO_LABELS.date,
       width: "108px",
+      exportFormat: "date",
       getValue: (r) => r.so_date,
       render: (r) => (
         <span className="text-[12.5px] text-ink-secondary">{fmtDate(r.so_date)}</span>
@@ -1376,7 +1397,7 @@ export function MfgSalesOrdersListV2() {
     {
       key: "debtor_name",
       group: "Basic",
-      label: "Customer",
+      label: SO_LABELS.debtorName,
       getValue: (r) => r.debtor_name,
       render: (r) => (
         <span className="text-[13px] font-semibold text-ink">
@@ -1387,22 +1408,32 @@ export function MfgSalesOrdersListV2() {
     {
       key: "salesperson",
       group: "Basic",
-      label: "Salesperson",
+      label: SO_LABELS.agent,
       width: "148px",
       // Not in the backend sort whitelist — keep getValue for CSV export but
       // disable the header sort so we never send an unsupported sort key.
       disableSort: true,
-      getValue: (r) => salespersonNameOf(r.agent, r.salesperson_id, ""),
+      getValue: (r) => r.ac_agent ?? salespersonNameOf(r.agent, r.salesperson_id, ""),
       render: (r) => (
         <span className="text-[12.5px] text-ink-secondary">
-          {salespersonNameOf(r.agent, r.salesperson_id, "—")}
+          {r.ac_agent ?? salespersonNameOf(r.agent, r.salesperson_id, "—")}
         </span>
       ),
     },
     {
+      key: "currency", group: "Amounts", label: SO_LABELS.currency, width: "96px", defaultHidden: true, disableSort: true,
+      getValue: (r) => r.currency ?? "MYR",
+      render: (r) => <span className="text-[12.5px] text-ink-secondary">{r.currency ?? "MYR"}</span>,
+    },
+    {
+      key: "sales_exemption_expiry", group: "Basic", label: SO_LABELS.salesExemptionExpiryDate, width: "150px", defaultHidden: true, disableSort: true, exportFormat: "date",
+      getValue: (r) => r.sales_exemption_expiry ?? "",
+      render: (r) => <span className="text-[12.5px] text-ink-secondary">{fmtDate(r.sales_exemption_expiry)}</span>,
+    },
+    {
       key: "sales_location",
       group: "Logistics",
-      label: "Location",
+      label: "Sales Location",
       width: "132px",
       disableSort: true,
       getValue: (r) => resolveSoLocation(r).label ?? "",
@@ -1411,7 +1442,7 @@ export function MfgSalesOrdersListV2() {
     {
       key: "reference",
       group: "Basic",
-      label: "Reference",
+      label: SO_LABELS.ref,
       width: "132px",
       disableSort: true,
       getValue: (r) => refOf(r),
@@ -1422,12 +1453,12 @@ export function MfgSalesOrdersListV2() {
     {
       key: "branding",
       group: "Basic",
-      label: "Branding",
+      label: SO_LABELS.branding,
       width: "112px",
       disableSort: true,
-      getValue: (r) => brandOf(r),
+      getValue: (r) => r.ac_branding ?? brandOf(r),
       render: (r) => {
-        const b = brandOf(r);
+        const b = r.ac_branding ?? brandOf(r);
         return (
           <Badge tone={brandTone(r)} variant="soft" size="xs">
             {b}
@@ -1443,15 +1474,18 @@ export function MfgSalesOrdersListV2() {
       // Exempt from the cancelled-row fade — the pill is WHY the row is grey.
       className: "dt-cancel-keep",
       getValue: (r) => r.status,
+      exportValue: (r) => soListStatusWord(r.status, r.delivery_state ?? null, r.lifecycle_state ?? null, r.on_hold ?? null),
       render: (r) => <SoListStatusCell row={r} />,
     },
     {
       key: "amount",
       group: "Amounts",
-      label: "Amount",
+      label: SO_LABELS.total,
       width: "128px",
       align: "right",
       getValue: (r) => r.local_total_sen,
+      exportValue: (r) => senToRinggit(r.local_total_sen, 2),
+      exportFormat: "money",
       render: (r) => (
         <span className="font-money text-[13px] font-semibold text-ink">
           {fmtRm(r.local_total_sen)}
@@ -1492,10 +1526,11 @@ export function MfgSalesOrdersListV2() {
            A tooltip is not an answer: if a link exists, a chip must show. */
       key: "po_doc_no",
       group: "Logistics",
-      label: "PO No.",
+      label: SO_LABELS.poDocNo,
       width: "150px",
       disableSort: true,
       getValue: (r) => poCellChips(r).all.join(", "),
+      lineValue: (_r, l) => l.po_nos.join(", ") || null, // the file: the POs raised for THIS line
       render: (r) => <SoListPoCell row={r} />,
     },
     {
@@ -1525,13 +1560,13 @@ export function MfgSalesOrdersListV2() {
     {
       key: "debtor_code",
       group: "Customer",
-      label: "Customer Code",
+      label: SO_LABELS.debtorCode,
       width: "120px",
       defaultHidden: true,
       disableSort: true,
-      getValue: (r) => r.debtor_code ?? "",
+      getValue: (r) => r.ac_debtor_code ?? r.debtor_code ?? "",
       render: (r) => (
-        <span className="font-mono text-[12px] text-ink-secondary">{r.debtor_code || "—"}</span>
+        <span className="font-mono text-[12px] text-ink-secondary">{r.ac_debtor_code ?? r.debtor_code ?? "—"}</span>
       ),
     },
     {
@@ -1612,28 +1647,18 @@ export function MfgSalesOrdersListV2() {
       },
     },
     approvalCodeColumn, // docs/bugs/0909 — its own module: this file may only shrink
-    {
-      key: "paid",
-      group: "Amounts",
-      label: "Paid",
-      width: "110px",
-      align: "right",
-      defaultHidden: true,
-      disableSort: true,
-      getValue: (r) => r.paid_total_sen ?? r.paid_sen ?? 0,
-      render: (r) => (
-        <span className="font-money text-[13px] text-ink">{fmtRm(r.paid_total_sen ?? r.paid_sen ?? 0)}</span>
-      ),
-    },
+    moneyColumn<SoRow, SoListLine>({ key: "paid", group: "Amounts", label: "Paid", width: "110px", defaultHidden: true, sen: (r) => r.paid_total_sen ?? r.paid_sen ?? 0 }),
     {
       key: "balance",
       group: "Amounts",
-      label: "Balance",
+      label: SO_LABELS.balance,
       width: "110px",
       align: "right",
       defaultHidden: true,
       disableSort: true,
       getValue: (r) => r.balance_sen_live ?? r.balance_sen, // `?? 0` was dead: balance_sen is `number`, never nullish
+      exportValue: (r) => senToRinggit(r.balance_sen_live ?? r.balance_sen, 2),
+      exportFormat: "money",
       render: (r) => ( // negative = over-collected → text-err, the app's negative-money convention (owner 2026-08-16)
         <span className={cn("font-money text-[13px]", (r.balance_sen_live ?? r.balance_sen) < 0 ? "text-err" : "text-ink")}>{fmtRm(r.balance_sen_live ?? r.balance_sen)}</span>
       ),
@@ -1651,18 +1676,19 @@ export function MfgSalesOrdersListV2() {
       defaultHidden: true,
       disableSort: true,
       getValue: (r) => (r.do_nos ?? []).join(", "),
+      lineValue: (_r, l) => l.do_nos.join(", ") || null,
       render: (r) => <SoListDoCell doNos={r.do_nos} />,
     },
     {
       key: "venue",
       group: "Logistics",
-      label: "Venue",
+      label: SO_LABELS.venue,
       width: "150px",
       defaultHidden: true,
       disableSort: true,
-      getValue: (r) => r.venue ?? "",
+      getValue: (r) => r.ac_venue ?? r.venue ?? "",
       render: (r) => (
-        <span className="text-[12.5px] text-ink-secondary">{r.venue || "—"}</span>
+        <span className="text-[12.5px] text-ink-secondary">{r.ac_venue ?? r.venue ?? "—"}</span>
       ),
     },
     {
@@ -1673,6 +1699,7 @@ export function MfgSalesOrdersListV2() {
       defaultHidden: true,
       disableSort: true,                       // client-side; sortValue orders it
       getValue: (r) => r.stock_remark ?? "",   // raw remark for CSV + the funnel
+      lineValue: (_r, l) => l.stock_status,
       sortValue: (r) => stockRemarkSortScore(r.stock_remark),  // fullest first
       render: (r) => <StockRemarkPill remark={r.stock_remark} />,  // was grey text
     },
@@ -1680,10 +1707,11 @@ export function MfgSalesOrdersListV2() {
     {
       key: "processing_date",
       group: "Logistics",
-      label: "Processing Date",
+      label: SO_LABELS.processingDate,
       width: "140px",
       defaultHidden: true,
       disableSort: true,
+      exportFormat: "date",
       getValue: (r) => r.processing_date ?? "",
       render: (r) => (
         <span className="text-[12.5px] text-ink-secondary">
@@ -1694,11 +1722,13 @@ export function MfgSalesOrdersListV2() {
     {
       key: "customer_delivery_date",
       group: "Logistics",
-      label: "Delivery Date",
+      label: SO_LABELS.deliveryDate,
       width: "160px",
       defaultHidden: true,
       disableSort: true,
+      exportFormat: "date",
       getValue: (r) => r.customer_delivery_date ?? "",
+      lineValue: (_r, l) => l.delivery_date, // the file: the line's own date, else the order's
       render: (r) => (
         <span className="text-[12.5px] text-ink-secondary">
           {fmtDate(r.customer_delivery_date)}
@@ -1708,7 +1738,7 @@ export function MfgSalesOrdersListV2() {
     {
       key: "note",
       group: "Basic",
-      label: "Note",
+      label: SO_LABELS.note,
       width: "200px",
       defaultHidden: true,
       disableSort: true,
@@ -1758,191 +1788,12 @@ export function MfgSalesOrdersListV2() {
     //    lists an always-empty finance column for a non-finance user; the
     //    backend also omits these keys from the payload (canViewScmFinance).
     ...(canFinance
-      ? ([
-          {
-            key: "mattress_sofa_sen",
-            group: "Finance",
-            label: "Mattress/Sofa",
-            width: "120px",
-            align: "right",
-            defaultHidden: true,
-            disableSort: true,
-            getValue: (r) => r.mattress_sofa_sen ?? 0,
-            render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.mattress_sofa_sen ?? 0)}</span>
-            ),
-          },
-          {
-            key: "bedframe_sen",
-            group: "Finance",
-            label: "Bedframe",
-            width: "110px",
-            align: "right",
-            defaultHidden: true,
-            disableSort: true,
-            getValue: (r) => r.bedframe_sen ?? 0,
-            render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.bedframe_sen ?? 0)}</span>
-            ),
-          },
-          {
-            key: "accessories_sen",
-            group: "Finance",
-            label: "Accessories",
-            width: "110px",
-            align: "right",
-            defaultHidden: true,
-            disableSort: true,
-            getValue: (r) => r.accessories_sen ?? 0,
-            render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.accessories_sen ?? 0)}</span>
-            ),
-          },
-          {
-            key: "others_sen",
-            group: "Finance",
-            label: "Others",
-            width: "110px",
-            align: "right",
-            defaultHidden: true,
-            disableSort: true,
-            getValue: (r) => r.others_sen ?? 0,
-            render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.others_sen ?? 0)}</span>
-            ),
-          },
-          {
-            key: "service_sen",
-            group: "Finance",
-            label: "Service",
-            width: "110px",
-            align: "right",
-            defaultHidden: true,
-            disableSort: true,
-            getValue: (r) => r.service_sen ?? 0,
-            render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.service_sen ?? 0)}</span>
-            ),
-          },
-          {
-            key: "mattress_sofa_cost_sen",
-            group: "Finance",
-            label: "Mattress/Sofa Cost",
-            width: "140px",
-            align: "right",
-            defaultHidden: true,
-            disableSort: true,
-            getValue: (r) => r.mattress_sofa_cost_sen ?? 0,
-            render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.mattress_sofa_cost_sen ?? 0)}</span>
-            ),
-          },
-          {
-            key: "bedframe_cost_sen",
-            group: "Finance",
-            label: "Bedframe Cost",
-            width: "130px",
-            align: "right",
-            defaultHidden: true,
-            disableSort: true,
-            getValue: (r) => r.bedframe_cost_sen ?? 0,
-            render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.bedframe_cost_sen ?? 0)}</span>
-            ),
-          },
-          {
-            key: "accessories_cost_sen",
-            group: "Finance",
-            label: "Accessories Cost",
-            width: "140px",
-            align: "right",
-            defaultHidden: true,
-            disableSort: true,
-            getValue: (r) => r.accessories_cost_sen ?? 0,
-            render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.accessories_cost_sen ?? 0)}</span>
-            ),
-          },
-          {
-            key: "others_cost_sen",
-            group: "Finance",
-            label: "Others Cost",
-            width: "130px",
-            align: "right",
-            defaultHidden: true,
-            disableSort: true,
-            getValue: (r) => r.others_cost_sen ?? 0,
-            render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.others_cost_sen ?? 0)}</span>
-            ),
-          },
-          {
-            key: "service_cost_sen",
-            group: "Finance",
-            label: "Service Cost",
-            width: "130px",
-            align: "right",
-            defaultHidden: true,
-            disableSort: true,
-            getValue: (r) => r.service_cost_sen ?? 0,
-            render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.service_cost_sen ?? 0)}</span>
-            ),
-          },
-          {
-            key: "total_cost_sen",
-            group: "Finance",
-            label: "Total Cost",
-            width: "120px",
-            align: "right",
-            defaultHidden: true,
-            disableSort: true,
-            getValue: (r) => r.total_cost_sen ?? 0,
-            render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.total_cost_sen ?? 0)}</span>
-            ),
-          },
-          {
-            key: "total_margin_sen",
-            group: "Finance",
-            label: "Margin",
-            width: "120px",
-            align: "right",
-            defaultHidden: true,
-            disableSort: true,
-            getValue: (r) => r.total_margin_sen ?? 0,
-            render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.total_margin_sen ?? 0)}</span>
-            ),
-          },
-          {
-            key: "margin_pct_basis",
-            group: "Finance",
-            label: "Margin %",
-            width: "100px",
-            align: "right",
-            defaultHidden: true,
-            disableSort: true,
-            getValue: (r) => r.margin_pct_basis ?? 0,
-            render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtPctBasis(r.margin_pct_basis)}</span>
-            ),
-          },
-          {
-            key: "deposit_sen",
-            group: "Amounts",
-            label: "Deposit",
-            width: "110px",
-            align: "right",
-            defaultHidden: true,
-            disableSort: true,
-            getValue: (r) => r.deposit_sen ?? 0,
-            render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.deposit_sen ?? 0)}</span>
-            ),
-          },
-        ] satisfies Column<SoRow>[])
-      : ([] satisfies Column<SoRow>[])),
+      ? [
+          ...financeColumns<SoRow, SoListLine>("Finance"),
+          moneyColumn<SoRow, SoListLine>({ key: "deposit_sen", group: "Amounts", label: "Deposit", width: "110px", defaultHidden: true, sen: (r) => r.deposit_sen }),
+        ]
+      : []),
+    ...soLineColumnList,
   ];
 
   /* ── Column layouts ──────────────────────────────────────────────────────
@@ -1982,24 +1833,18 @@ export function MfgSalesOrdersListV2() {
           "customer_delivery_date",
         ],
       },
+      /* Owner 2026-09-15: the Houzs default is AutoCount's layout "SALES ORDER
+         DETAILS-SALES", one row per line in the Export. A company default an
+         admin saved from the Columns panel still takes this seed's place. */
       {
         id: "so-houzs",
         label: "Houzs Layout",
-        hint: "Sales desk",
+        hint: "AutoCount: SALES ORDER DETAILS-SALES",
         companyCode: "HOUZS",
         isDefault: !is2990,
-        columns: [
-          "so_date",
-          "debtor_name",
-          "salesperson",
-          "sales_location",
-          "reference",
-          "branding",
-          "status",
-          "amount",
-          "po_doc_no",
-        ],
+        columns: SO_AUTOCOUNT_KEYS,
       },
+      { id: "so-autocount", label: "AutoCount: SALES ORDER DETAILS-SALES", hint: "One row per line in the Export", columns: SO_AUTOCOUNT_KEYS },
     ];
   }, [branding.companyCode]);
 
@@ -2224,7 +2069,16 @@ export function MfgSalesOrdersListV2() {
               </Button>
             </div>
           )}
-          <DataTable<SoRow>
+          <DataTable<SoRow, SoListLine>
+            /* The ONE Export (owner 2026-09-15): every order the tab, search,
+               filters and sort match, not the page; one row per line; the
+               visible columns, funnels and sort (DataTable exportLines). */
+            exportLines={{
+              fetchRows: () => fetchSoExportRows<SoRow>({ status, q: debouncedSearch, sort, filters: soFilters }),
+              linesOf: (r) => r.lines ?? [],
+              sheetName: "Sales Orders",
+              onError: (e) => void notify({ title: "Export failed", body: e.message || "The export could not be completed.", tone: "error" }),
+            }}
             tableId="sales-orders-v2"
             documentLabel="Sales Orders"
             layoutPresets={layoutPresets}

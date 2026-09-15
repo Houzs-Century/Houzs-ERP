@@ -42,6 +42,8 @@ import { PageHeader } from "../../components/Layout";
 import { StatCard } from "../../components/StatCard";
 import { FilterPills } from "../../components/FilterPills";
 import { DataTable, type Column } from "../../components/DataTable";
+import { doLineColumns, financeColumns, moneyColumn } from "./so-do-list-columns";
+import { DO_LABELS, doStatusWord, type DoBookHeader, type DoListLine } from "../../vendor/scm/lib/do-line-export-columns";
 import {
   DocumentLinesExpansion,
   sourcePoTitle,
@@ -164,16 +166,15 @@ type DoRow = HoldFields & {
   total_cost_sen?: number;
   total_margin_sen?: number;
   margin_pct_basis?: number;
-};
+  /** The delivery order's lines (no money), and its AutoCount spellings (do-list-lines.ts). */
+  lines?: DoListLine[];
+} & Partial<DoBookHeader>;
 
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 const fmtRm = (centi: number): string => fmtSen(centi);
 
-// margin_pct_basis is basis points (margin/total x 10000) → percent string.
-const fmtPctBasis = (basis: number | null | undefined): string =>
-  basis == null ? "—" : `${(basis / 100).toFixed(1)}%`;
 
 // Customer's PO / Ref. Same fallback chain as the SO V2 template.
 const refOf = (r: DoRow): string => customerRefOf(r) || "—";
@@ -1060,10 +1061,12 @@ export function MfgDeliveryOrdersListV2() {
   const batchPrint = usePrintPreview(deliverSelectedDos);
 
   // Table columns
-  const columns: Column<DoRow>[] = [
+  /* Labels are AutoCount's captions; Doc No / Debtor Code / Agent are the book's
+     spellings where the delivery order is in AutoCount (server-stamped ac_*). */
+  const columns: Column<DoRow, DoListLine>[] = [
     {
       key: "do_number",
-      label: "DO No.",
+      label: DO_LABELS.docNo,
       // 156, not 132 (owner 2026-07-31, "每次都看不完整"). A px width is a
       // hard cap here — DataTable pins min/max to it and clips with an
       // ellipsis — and "2990-DO-2607-001" measured 109.6px at the old
@@ -1077,7 +1080,7 @@ export function MfgDeliveryOrdersListV2() {
       // prefix is the worst case.
       width: "156px",
       alwaysVisible: true,
-      getValue: (r) => r.do_number,
+      getValue: (r) => r.ac_doc_no ?? r.do_number,
       render: (r) => (
         <span
           className={cn(
@@ -1085,14 +1088,20 @@ export function MfgDeliveryOrdersListV2() {
             isCancelledDocStatus(r.status) && "dt-cancel-strike",
           )}
         >
-          {r.do_number}
+          {r.ac_doc_no ?? r.do_number}
         </span>
       ),
     },
     {
+      key: "erp_doc_no", label: DO_LABELS.erpDocNo, width: "156px", defaultHidden: true, disableSort: true,
+      getValue: (r) => r.do_number,
+      render: (r) => <span className="font-docno text-[12.5px] text-ink-secondary">{r.do_number}</span>,
+    },
+    {
       key: "do_date",
-      label: "Date",
+      label: DO_LABELS.docDate,
       width: "108px",
+      exportFormat: "date",
       getValue: (r) => r.do_date,
       render: (r) => (
         <span className="text-[12.5px] text-ink-secondary">{fmtDate(r.do_date)}</span>
@@ -1117,6 +1126,7 @@ export function MfgDeliveryOrdersListV2() {
          Falls back to the header label when a DO has no linked lines (an ad-hoc
          DO legitimately has only the header), so no cell goes blank. */
       getValue: (r) => (r.source_sos?.length ? r.source_sos.join(" ") : r.so_doc_no ?? ""),
+      lineValue: (_r, l) => l.so_doc_no, // the file: the SO THIS line was delivered from
       render: (r) => {
         const sos = r.source_sos?.length ? r.source_sos : (r.so_doc_no ? [r.so_doc_no] : []);
         return sos.length > 0 ? (
@@ -1183,6 +1193,7 @@ export function MfgDeliveryOrdersListV2() {
       width: "150px",
       disableSort: true,
       getValue: (r) => (r.invoiced_si_nos ?? []).join(", "),
+      lineValue: (_r, l) => l.invoice_nos.join(", ") || null,
       render: (r) => {
         const sis = r.invoiced_si_nos ?? [];
         const returns = r.return_nos ?? [];
@@ -1213,7 +1224,7 @@ export function MfgDeliveryOrdersListV2() {
     },
     {
       key: "debtor_name",
-      label: "Customer",
+      label: DO_LABELS.debtorName,
       getValue: (r) => r.debtor_name,
       render: (r) => (
         <span className="text-[13px] font-semibold text-ink">
@@ -1223,9 +1234,11 @@ export function MfgDeliveryOrdersListV2() {
     },
     {
       key: "delivery_date",
-      label: "Delivery Date",
+      label: DO_LABELS.deliveryDate,
       width: "128px",
+      exportFormat: "date",
       getValue: (r) => r.customer_delivery_date ?? "",
+      lineValue: (_r, l) => l.delivery_date, // the file: the line's own date, else the order's
       render: (r) => (
         <span className="text-[12.5px] text-ink-secondary">
           {fmtDate(r.customer_delivery_date)}
@@ -1261,26 +1274,21 @@ export function MfgDeliveryOrdersListV2() {
       // Exempt from the cancelled-row fade — the pill is WHY the row is grey.
       className: "dt-cancel-keep",
       getValue: (r) => r.status,
+      exportValue: (r) => doStatusWord(r.status, r.on_hold ?? null),
       render: (r) => {
         const st = statusFor(r.status);
         /* mig 0324 — the Hold marker sits BESIDE the real status pill. */
         return <StatusWithHold tone={st.tone} label={st.label} row={r} />;
       },
     },
+    /* Hidden by default: a delivery order file goes to drivers, 3PLs and
+       customers, so it carries no amount unless someone picks the column
+       (owner 2026-09-15). */
+    moneyColumn<DoRow, DoListLine>({ key: "amount", label: "Amount", width: "128px", defaultHidden: true, strong: true, sen: (r) => r.local_total_sen }),
     {
-      key: "amount",
-      label: "Amount",
-      width: "128px",
-      align: "right",
-      // DO backend sort whitelist has no total column — keep for CSV export but
-      // disable the header sort so we never send an unsupported sort key.
-      disableSort: true,
-      getValue: (r) => r.local_total_sen,
-      render: (r) => (
-        <span className="font-money text-[13px] font-semibold text-ink">
-          {fmtRm(r.local_total_sen)}
-        </span>
-      ),
+      key: "currency", label: DO_LABELS.currency, width: "96px", defaultHidden: true, disableSort: true,
+      getValue: (r) => r.currency,
+      render: (r) => <span className="text-[12.5px] text-ink-secondary">{r.currency}</span>,
     },
     // ── Re-added columns (Phase 1) — data already on the DoRow payload, ported
     //    from the legacy MfgDeliveryOrdersList buildColumns (labels/widths). All
@@ -1289,20 +1297,20 @@ export function MfgDeliveryOrdersListV2() {
     //    these keys aren't in the backend sort whitelist.
     {
       key: "salesperson",
-      label: "Salesperson",
+      label: DO_LABELS.agent,
       width: "148px",
       defaultHidden: true,
       disableSort: true,
-      getValue: (r) => salespersonNameOf(null, r.salesperson_id, ""),
+      getValue: (r) => r.ac_agent ?? salespersonNameOf(null, r.salesperson_id, ""),
       render: (r) => (
         <span className="text-[12.5px] text-ink-secondary">
-          {salespersonNameOf(null, r.salesperson_id, "—")}
+          {r.ac_agent ?? salespersonNameOf(null, r.salesperson_id, "—")}
         </span>
       ),
     },
     {
       key: "sales_location",
-      label: "Location",
+      label: "Sales Location",
       width: "120px",
       defaultHidden: true,
       disableSort: true,
@@ -1375,13 +1383,13 @@ export function MfgDeliveryOrdersListV2() {
     },
     {
       key: "debtor_code",
-      label: "Customer Code",
+      label: DO_LABELS.debtorCode,
       width: "120px",
       defaultHidden: true,
       disableSort: true,
-      getValue: (r) => r.debtor_code ?? "",
+      getValue: (r) => r.ac_debtor_code ?? r.debtor_code ?? "",
       render: (r) => (
-        <span className="font-mono text-[12px] text-ink-secondary">{r.debtor_code || "—"}</span>
+        <span className="font-mono text-[12px] text-ink-secondary">{r.ac_debtor_code ?? r.debtor_code ?? "—"}</span>
       ),
     },
     {
@@ -1487,166 +1495,8 @@ export function MfgDeliveryOrdersListV2() {
     },
     // ── Phase 2 FINANCE columns — cost / margin / per-category subtotals.
     //    DECLARED ONLY for a finance-viewer (backend also omits the keys).
-    ...(canFinance
-      ? ([
-          {
-            key: "mattress_sofa_sen",
-            label: "Mattress/Sofa",
-            width: "120px",
-            align: "right",
-            defaultHidden: true,
-            disableSort: true,
-            getValue: (r) => r.mattress_sofa_sen ?? 0,
-            render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.mattress_sofa_sen ?? 0)}</span>
-            ),
-          },
-          {
-            key: "bedframe_sen",
-            label: "Bedframe",
-            width: "110px",
-            align: "right",
-            defaultHidden: true,
-            disableSort: true,
-            getValue: (r) => r.bedframe_sen ?? 0,
-            render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.bedframe_sen ?? 0)}</span>
-            ),
-          },
-          {
-            key: "accessories_sen",
-            label: "Accessories",
-            width: "110px",
-            align: "right",
-            defaultHidden: true,
-            disableSort: true,
-            getValue: (r) => r.accessories_sen ?? 0,
-            render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.accessories_sen ?? 0)}</span>
-            ),
-          },
-          {
-            key: "others_sen",
-            label: "Others",
-            width: "110px",
-            align: "right",
-            defaultHidden: true,
-            disableSort: true,
-            getValue: (r) => r.others_sen ?? 0,
-            render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.others_sen ?? 0)}</span>
-            ),
-          },
-          {
-            key: "service_sen",
-            label: "Service",
-            width: "110px",
-            align: "right",
-            defaultHidden: true,
-            disableSort: true,
-            getValue: (r) => r.service_sen ?? 0,
-            render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.service_sen ?? 0)}</span>
-            ),
-          },
-          {
-            key: "mattress_sofa_cost_sen",
-            label: "Mattress/Sofa Cost",
-            width: "140px",
-            align: "right",
-            defaultHidden: true,
-            disableSort: true,
-            getValue: (r) => r.mattress_sofa_cost_sen ?? 0,
-            render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.mattress_sofa_cost_sen ?? 0)}</span>
-            ),
-          },
-          {
-            key: "bedframe_cost_sen",
-            label: "Bedframe Cost",
-            width: "130px",
-            align: "right",
-            defaultHidden: true,
-            disableSort: true,
-            getValue: (r) => r.bedframe_cost_sen ?? 0,
-            render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.bedframe_cost_sen ?? 0)}</span>
-            ),
-          },
-          {
-            key: "accessories_cost_sen",
-            label: "Accessories Cost",
-            width: "140px",
-            align: "right",
-            defaultHidden: true,
-            disableSort: true,
-            getValue: (r) => r.accessories_cost_sen ?? 0,
-            render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.accessories_cost_sen ?? 0)}</span>
-            ),
-          },
-          {
-            key: "others_cost_sen",
-            label: "Others Cost",
-            width: "130px",
-            align: "right",
-            defaultHidden: true,
-            disableSort: true,
-            getValue: (r) => r.others_cost_sen ?? 0,
-            render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.others_cost_sen ?? 0)}</span>
-            ),
-          },
-          {
-            key: "service_cost_sen",
-            label: "Service Cost",
-            width: "130px",
-            align: "right",
-            defaultHidden: true,
-            disableSort: true,
-            getValue: (r) => r.service_cost_sen ?? 0,
-            render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.service_cost_sen ?? 0)}</span>
-            ),
-          },
-          {
-            key: "total_cost_sen",
-            label: "Total Cost",
-            width: "120px",
-            align: "right",
-            defaultHidden: true,
-            disableSort: true,
-            getValue: (r) => r.total_cost_sen ?? 0,
-            render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.total_cost_sen ?? 0)}</span>
-            ),
-          },
-          {
-            key: "total_margin_sen",
-            label: "Margin",
-            width: "120px",
-            align: "right",
-            defaultHidden: true,
-            disableSort: true,
-            getValue: (r) => r.total_margin_sen ?? 0,
-            render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.total_margin_sen ?? 0)}</span>
-            ),
-          },
-          {
-            key: "margin_pct_basis",
-            label: "Margin %",
-            width: "100px",
-            align: "right",
-            defaultHidden: true,
-            disableSort: true,
-            getValue: (r) => r.margin_pct_basis ?? 0,
-            render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtPctBasis(r.margin_pct_basis)}</span>
-            ),
-          },
-        ] satisfies Column<DoRow>[])
-      : ([] satisfies Column<DoRow>[])),
+    ...(canFinance ? financeColumns<DoRow, DoListLine>(undefined) : []),
+    ...Object.values(doLineColumns<DoRow>()),
   ];
 
   const statusPillOptions: Array<{ value: StatusTab; label: string }> = (
@@ -1865,7 +1715,7 @@ export function MfgDeliveryOrdersListV2() {
                 </Button>
               </div>
             )}
-            <DataTable<DoRow>
+            <DataTable<DoRow, DoListLine>
               tableId="delivery-orders-v2"
               rows={rows}
               /* Feeds the stat strip so the tiles describe what is on screen. */

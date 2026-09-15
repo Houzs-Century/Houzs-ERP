@@ -59,6 +59,7 @@ import { venturePortalFeed } from "./routes/venture-portal-feed";
 import { currencies } from "./routes/currencies";
 import { mfgSalesOrders } from "./routes/mfg-sales-orders";
 import { mfgSalesOrdersListEnrichment } from "./routes/mfg-sales-orders-list-enrichment";
+import { salesOrderExports } from "./routes/sales-order-exports";
 import { mfgSoFairs } from "./routes/mfg-so-fairs";
 import { soAmendmentLanePreview } from "./routes/so-amendment-lane-preview";
 import { soAmendments } from "./routes/so-amendments";
@@ -66,6 +67,7 @@ import { soHandover } from "./routes/so-handover";
 import { poAmendments } from "./routes/po-amendments";
 import { stateWarehouseMappings } from "./routes/state-warehouse-mappings";
 import { deliveryOrdersMfg } from "./routes/delivery-orders-mfg";
+import { deliveryOrderExports } from "./routes/delivery-order-exports";
 import { deliveryOrderScanToken } from "./routes/delivery-order-scan-token";
 import { deliveryOrderItemPhotos } from "./routes/delivery-order-item-photos";
 import { salesInvoices } from "./routes/sales-invoices";
@@ -403,6 +405,9 @@ scm.use("/mfg-sales-orders/*", migratedSoReadonly());
 // verdicts). Mounted BEFORE the main router so its static `/list-mrp-enrichment`
 // path resolves ahead of `/:docNo`. Shares the guard above via the path prefix.
 scm.route("/mfg-sales-orders", mfgSalesOrdersListEnrichment);
+// The list's line export (every page the filters match) — a static /export/...
+// path, so also BEFORE the main router's `/:docNo`.
+scm.route("/mfg-sales-orders", salesOrderExports);
 // Cancellation needs a reason + TWO approvals (owner 2026-09-08). Request routes
 // on this prefix (behind the area guard AND the migrated-SO lock); the guard on
 // the status route — which only wakes when the body says CANCELLED — is mounted
@@ -494,6 +499,9 @@ scm.route("/delivery-orders-mfg", deliveryOrderScanToken);
 // reasoning as the scan token directly above. Shares the DO area guard via the
 // path prefix, so GET here needs exactly what the DO detail GET needs.
 scm.route("/delivery-orders-mfg", deliveryOrderItemPhotos);
+// The list's line export (every page the filters match) — a static /export/...
+// path, so also BEFORE the main router's `/:id`.
+scm.route("/delivery-orders-mfg", deliveryOrderExports);
 scm.route("/delivery-orders-mfg", deliveryOrdersMfg);
 // Ported 2026-06-20 — SI backend (skipped in the earlier sync; the vendored SI
 // pages 404'd on /sales-invoices). NEEDS scm.sales_invoice_payments +

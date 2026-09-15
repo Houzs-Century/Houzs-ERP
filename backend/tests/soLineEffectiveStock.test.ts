@@ -14,6 +14,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import mfgSalesOrders from '../src/scm/routes/mfg-sales-orders.ts?raw';
+import soListRows from '../src/scm/lib/so-list-rows.ts?raw';
 import listEnrichmentRoute from '../src/scm/routes/mfg-sales-orders-list-enrichment.ts?raw';
 import listEnrichmentLib from '../src/scm/lib/so-list-mrp-enrichment.ts?raw';
 import { effectiveLineStockStatus } from '../src/scm/lib/so-line-effective-stock';
@@ -196,12 +197,15 @@ describe('the SO list rolls up the shared rule, not a raw stored column', () => 
        here — the first paint runs no extra reads, and the STORED status it
        rolls up was already gated by the allocator. The enrichment call below
        passes the real set, which is where the live promotion can fire. */
-    expect(mfgSalesOrders).toContain('readinessLinesByDoc(itemRows, null, null, null)');
+    /* The list's row builder lives in lib/so-list-rows.ts since 2026-09-15. */
+    expect(soListRows).toContain('readinessLinesByDoc(itemRows, null, null, null)');
     /* The pre-fix shape: the handler building ReadinessLine rows itself off the
        raw stored column. If any of these comes back the board has its own
        opinion again, which is the whole defect. */
-    expect(mfgSalesOrders).not.toContain('stock_status: it.stock_status, cancelled:');
-    expect(mfgSalesOrders).not.toContain('stock_status: it.stock_status });');
+    for (const src of [mfgSalesOrders, soListRows]) {
+      expect(src).not.toContain('stock_status: it.stock_status, cancelled:');
+      expect(src).not.toContain('stock_status: it.stock_status });');
+    }
   });
 
   it('the deferred enrichment feeds the SAME shared rule the LIVE coverage', () => {

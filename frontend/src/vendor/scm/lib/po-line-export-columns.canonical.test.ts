@@ -1,5 +1,5 @@
 /* The Purchase Order line export's column CONTRACT, and the one rule for
- * "Estimate Delivery Date 1/2/3".
+ * AutoCount supplier dates (Estimate Delivery Date, Supplier Delivery Date 2 / 3).
  *
  * WHY A MIRROR. The server builds the rows (backend/src/scm/lib/po-line-export.ts)
  * and the browser writes the sheet and reads the names (po-list-export.ts,
@@ -18,11 +18,13 @@ import { resolve } from 'node:path';
 import { describe, expect, test } from 'vitest';
 import {
   PO_ESTIMATE_DELIVERY_DATE_FIELDS,
-  PO_LINE_EXPORT_COLUMNS,
+  PO_LINE_LABELS,
   PO_STATUS_WORDS,
+  acItemGroup,
   poEstimateDeliveryDates,
-  poLineExportCells,
   poStatusWord,
+  senToRinggit,
+  toPoListLine,
 } from './po-line-export-columns';
 
 describe('the two copies of this module are the same file', () => {
@@ -34,43 +36,29 @@ describe('the two copies of this module are the same file', () => {
   });
 });
 
-describe('the column contract', () => {
-  test('the header names and their order', () => {
-    expect([...PO_LINE_EXPORT_COLUMNS]).toEqual([
-      'Doc No',
-      'AutoCount Doc No',
-      'Doc Date',
-      'Status',
-      'Supplier Code',
-      'Supplier Name',
-      'SO Doc No.',
-      'Item Code',
-      'Supplier SKU',
-      'Item Description',
-      'Item Description 2',
-      'Remarks',
-      'Category',
-      'Location',
-      'Qty',
-      'Received Qty',
-      'Remaining Qty',
-      'Unit Price',
-      'Line Total',
-      'Delivery Date',
-      'Estimate Delivery Date 1',
-      'Estimate Delivery Date 2',
-      'Estimate Delivery Date 3',
-      'Line ID',
+describe('the column labels (the import contract)', () => {
+  test("AutoCount's PO listing columns, in AutoCount's order, then the extras", () => {
+    expect(Object.values(PO_LINE_LABELS)).toEqual([
+      'Doc No', 'SO Doc No.', 'Creditor Code', 'Creditor Name', 'Item Code', 'Item Description',
+      'Item Description 2', 'Location', 'Item Group', 'Doc Date', 'Remaining Qty', 'Delivery Date',
+      'Estimate Delivery Date', 'Supplier Delivery Date 2', 'Supplier Delivery Date 3',
+      'ERP Doc No', 'ERP Item Code', 'Remarks', 'Qty', 'Received Qty', 'Unit Price', 'Line Total', 'Line ID',
     ]);
-  });
-
-  test('Remarks sits right after Item Description 2', () => {
-    const i = PO_LINE_EXPORT_COLUMNS.indexOf('Item Description 2');
-    expect(PO_LINE_EXPORT_COLUMNS[i + 1]).toBe('Remarks');
   });
 });
 
-describe('Estimate Delivery Date 1/2/3', () => {
+describe("AutoCount's Item Group", () => {
+  test('the groups measured against the AutoCount listing', () => {
+    expect(acItemGroup('accessory')).toBe('ACC');
+    expect(acItemGroup('fabric_accessory')).toBe('SOFA');
+    expect(acItemGroup('sofa')).toBe('SOFA');
+    expect(acItemGroup('mattress')).toBe('MATTRESS');
+    expect(acItemGroup('bedframe')).toBe('BEDFRAME');
+    expect(acItemGroup('  ')).toBeNull();
+  });
+});
+
+describe('Estimate Delivery Date / Supplier Delivery Date 2 / 3', () => {
   test('are supplier_delivery_date_2, _3 and _4', () => {
     expect([...PO_ESTIMATE_DELIVERY_DATE_FIELDS]).toEqual([
       'supplier_delivery_date_2',
@@ -123,19 +111,18 @@ describe('the Status word', () => {
   });
 });
 
-describe('one line as cells', () => {
-  test('money leaves sen as ringgit, a unit price keeps four decimals', () => {
-    const cells = poLineExportCells(
-      { po_number: 'HC-PO-009951', po_date: '2026-09-04', status: 'SUBMITTED' },
-      { id: 'line-1', item_code: 'CODY-(K)', material_name: 'CODY KING', qty: '600', received_qty: null, unit_price_sen: 5.5, line_total_sen: 3300 },
-      { soDocNo: null, location: null },
+describe('one line', () => {
+  test('quantities are numbers; remaining = qty - received; money helper leaves sen as ringgit', () => {
+    const l = toPoListLine(
+      { supplier_delivery_date_2: '2026-09-12' },
+      { id: 'line-1', item_code: 'CODY-(K)', qty: '600', received_qty: null, unit_price_sen: 5.5, line_total_sen: 3300 },
+      { soDocNo: null, location: 'KL', book: null },
     );
-    const row = Object.fromEntries(PO_LINE_EXPORT_COLUMNS.map((c, i) => [c, cells[i]]));
-    expect(row['Unit Price']).toBe(0.055);
-    expect(row['Line Total']).toBe(33);
-    expect(row['Qty']).toBe(600);
-    expect(row['Remaining Qty']).toBe(600);
-    expect(row['Line ID']).toBe('line-1');
-    expect(cells).toHaveLength(PO_LINE_EXPORT_COLUMNS.length);
+    expect(l.qty).toBe(600);
+    expect(l.remaining_qty).toBe(600);
+    expect(l.estimate_delivery_date_1).toBe('2026-09-12');
+    expect(senToRinggit(l.unit_price_sen, 4)).toBe(0.055);
+    expect(senToRinggit(l.line_total_sen, 2)).toBe(33);
+    expect(senToRinggit(1_500_000, 2)).toBe(15000);
   });
 });

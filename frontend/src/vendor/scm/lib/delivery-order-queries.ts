@@ -213,14 +213,21 @@ export const useMfgDeliveryOrders = (status?: string) => useQuery({
 // the caller maps its compressed filter-pill bucket to a DB status first, and
 // passes undefined for multi-status buckets the single-status filter can't
 // express (open/in_transit/delivered), so those show all rows still counted.
+/** The Delivery Order list's filter as query parameters, no paging: the list
+ *  request and the list's export (do-list-export.ts) send exactly these. */
+export function doListSearchParams(f: { status?: string; q?: string; sort?: string }): URLSearchParams {
+  const usp = new URLSearchParams();
+  if (f.status) usp.set('status', f.status);
+  if (f.q && f.q.trim()) usp.set('q', f.q.trim());
+  if (f.sort) usp.set('sort', f.sort);
+  return usp;
+}
+
 export function useMfgDeliveryOrdersPaged(params: { page: number; pageSize: number; status?: string; q?: string; sort?: string }) {
   const { page, pageSize, status, q, sort } = params;
-  const usp = new URLSearchParams();
+  const usp = doListSearchParams({ status, q, sort });
   usp.set('page', String(page));
   usp.set('pageSize', String(pageSize));
-  if (status) usp.set('status', status);
-  if (q && q.trim()) usp.set('q', q.trim());
-  if (sort) usp.set('sort', sort);
   return useQuery({
     queryKey: ['mfg-delivery-orders-paged', page, pageSize, status ?? '', q ?? '', sort ?? ''],
     queryFn: ({ signal }) => authedFetch<{ deliveryOrders: any[]; total: number; page: number; pageSize: number; statusCounts: { all: number; open: number; in_transit: number; delivered: number; cancelled: number } }>(`/delivery-orders-mfg?${usp.toString()}`, { signal }),

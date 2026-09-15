@@ -14,7 +14,7 @@ covers the staging path; prod stays as today (push-to-`main` → `deploy.yml`).
 | Supabase project | prod | minnapsemfzjmtvnnvdd (per wrangler comment) |
 | R2 buckets | `houzs-erp` (POD_BUCKET / SO_ITEM_PHOTOS / PUBLIC_ASSETS, key-prefixed) | same — `houzs-erp` reused, key prefixes isolate |
 | Crons | enabled | `crons = []` (must never run prod jobs) |
-| Deploy workflow | `.github/workflows/deploy.yml` (push to `main`) | `.github/workflows/deploy-staging.yml` (push to `staging`) |
+| Deploy workflow | `.github/workflows/deploy.yml` (push to `main`) | `.github/workflows/deploy-staging.yml` (push to `main` or `staging`) |
 | GitHub Environment | `Production` | `Staging` |
 
 ## One-time setup (per repo)

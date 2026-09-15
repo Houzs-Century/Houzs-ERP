@@ -29,14 +29,22 @@
 //     the system within a week of opening and 13 of 114 arrived after they had
 //     already started. Those orders go through Others and the nightly reconcile
 //     links them once the fair exists.
+//  5. A PLACE ALREADY ON THE ORDER IS THE VALUE (owner, 2026-09-15, looking at
+//     HC-SO-2609-071 in edit mode: 「应该是venue的」). No order stores an
+//     organizer, so the edit form, mobile edit and every auto-filled default all
+//     arrive here as a place with no organizer — which this control used to
+//     render as the "Others" sentinel with the place pushed into a second box,
+//     on every order that has a venue. "Others" is an ACTION the operator takes
+//     to open the venue master, never the resting state of a saved answer.
 // ----------------------------------------------------------------------------
 
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useFairOptions, fairLabel, type FairOption } from '../vendor/scm/lib/fair-options-queries';
 
-/** What the SO form stores. `organizer` is null when the operator came through
- *  Others and picked a place only — which is a different statement from "an
- *  organizer I could not find", and the server treats it as one. */
+/** What the SO form stores. `organizer` is null whenever the form holds a place
+ *  but no fair row: a pick through Others, an order opened for edit (no order
+ *  stores an organizer), or an auto-filled default. The server resolves a null
+ *  organizer from venue + date + brand; the picker shows that place as itself. */
 export type FairPickValue = { venue: string | null; organizer: string | null };
 
 export type FairPickerProps = {
@@ -57,6 +65,7 @@ export type FairPickerProps = {
 };
 
 const OTHERS = '__others__';
+const PLACE = '__place__';
 
 function optionValue(o: FairOption): string {
   return `fair:${o.key}`;
@@ -80,31 +89,45 @@ export function FairPicker(props: FairPickerProps) {
 
   const all = [...running, ...month];
   const picked = all.find((o) => matches(o, value)) ?? null;
-  /* A venue with no organizer is the Others path. So is a venue that no longer
-     appears in the list — an order written at a fair that has since been
-     cancelled or re-dated must keep showing its venue rather than silently
-     reading as blank. */
-  const onOthers = !picked && !!(value.venue ?? '').trim();
-  const selected = picked ? optionValue(picked) : onOthers ? OTHERS : '';
+  const place = (value.venue ?? '').trim();
+  /* Opening the venue master is the operator's move in THIS session, so it is
+     local state, not something inferred from the value. Inferring it was the
+     bug: "a place with no organizer" is also what every saved order looks like,
+     and "Others with no place yet" is indistinguishable from a blank form, so the
+     list could neither stay shut on a saved order nor open on an empty one. */
+  const [choosingPlace, setChoosingPlace] = useState(false);
+  /* A place that matches no row — the saved venue on an order, an auto-filled
+     default, or an order written at a fair since cancelled or re-dated — is shown
+     AS the value. It is never re-read as a fair: picking the row from the venue
+     alone could name a fair that was not running on the order's date. */
+  const selected = picked ? optionValue(picked) : place ? PLACE : choosingPlace ? OTHERS : '';
+  const placeLabel = value.organizer ? `${place} — ${value.organizer}` : place;
+  const showPlaceList = !picked && choosingPlace;
 
   /* An order can carry a venue the master no longer lists (renamed, deactivated,
      or imported from AutoCount). Offer it as its own row rather than dropping
-     the operator's saved answer on the floor the moment they open the form. */
-  const knownVenue = venues.some(
-    (v) => v.name.trim().toLowerCase() === (value.venue ?? '').trim().toLowerCase(),
-  );
-  const strayVenue = onOthers && !knownVenue ? (value.venue as string).trim() : null;
+     the operator's saved answer on the floor the moment they open the list. */
+  const knownVenue = venues.some((v) => v.name.trim().toLowerCase() === place.toLowerCase());
+  const strayVenue = place && !knownVenue ? place : null;
 
   function handleTop(next: string) {
-    if (next === '') return onChange({ venue: null, organizer: null });
+    if (next === PLACE) return setChoosingPlace(false);
+    if (next === '') {
+      setChoosingPlace(false);
+      return onChange({ venue: null, organizer: null });
+    }
     if (next === OTHERS) {
+      setChoosingPlace(true);
       /* Keep whatever place is already on the order — switching to Others is
          "the list did not have my fair", not "clear the venue". */
       return onChange({ venue: value.venue ?? null, organizer: null });
     }
     const key = next.slice('fair:'.length);
     const hit = all.find((o) => o.key === key);
-    if (hit) onChange({ venue: hit.venue, organizer: hit.organizer });
+    if (hit) {
+      setChoosingPlace(false);
+      onChange({ venue: hit.venue, organizer: hit.organizer });
+    }
   }
 
   return (
@@ -118,6 +141,11 @@ export function FairPicker(props: FairPickerProps) {
         aria-label="Fair"
       >
         <option value="">—</option>
+        {selected === PLACE && (
+          <optgroup label="Place on this order">
+            <option value={PLACE}>{placeLabel}</option>
+          </optgroup>
+        )}
         {running.length > 0 && (
           <optgroup label="Running now">
             {running.map((o) => (
@@ -126,7 +154,9 @@ export function FairPicker(props: FairPickerProps) {
           </optgroup>
         )}
         {month.length > 0 && (
-          <optgroup label="Later this month">
+          /* Not "later": this group is every fair in the month that is not running
+             on the order date, the ones already over included. */
+          <optgroup label="Other fairs this month">
             {month.map((o) => (
               <option key={o.key} value={optionValue(o)}>{fairLabel(o)}</option>
             ))}
@@ -137,11 +167,11 @@ export function FairPicker(props: FairPickerProps) {
         </optgroup>
       </select>
 
-      {onOthers && (
+      {showPlaceList && (
         <select
           id={id ? `${id}-venue` : undefined}
           className={selectClassName}
-          value={value.venue ?? ''}
+          value={place}
           disabled={disabled}
           onChange={(e) => onChange({ venue: e.target.value || null, organizer: null })}
           aria-label="Place"

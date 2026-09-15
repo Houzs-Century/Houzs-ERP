@@ -35,6 +35,7 @@ import { resolveRoles, piLines, DEFAULT_ROLE_CODES } from '../../acc/rules';
 import { splitByItemGroup } from '../../acc/item-group-split';
 import { classifyJournal } from '../../acc/journal-class';
 import { isReversalPair } from '../../acc/reversal-pairs';
+import { resolveJournalRefs } from '../../acc/journal-refs';
 import { ledgerReport } from './accounting-ledger';
 import {
   settlementSetup, settlementSetupSave, settlementUpload, settlementBatches,
@@ -69,6 +70,7 @@ import { merchantChargesReport } from './accounting-merchant-charges';
 import { performanceReport, savePerformanceSettingsHandler } from './accounting-performance';
 import { numberingGet, numberingPut } from './accounting-numbering';
 import { receiptsList, receiptEnsure, receiptFormalise } from './accounting-receipts';
+import { receiptsBackfillPlan, receiptsBackfillRun } from './accounting-receipts-backfill';
 import { ACCOUNT_SECTIONS, defaultSectionFor } from '../lib/account-sections';
 import { dateOrNull } from '../lib/date-coerce';
 
@@ -183,6 +185,8 @@ accounting.put('/numbering', numberingPut);
    money-confirmed button. Handlers in accounting-receipts.ts. */
 accounting.get('/receipts', receiptsList);
 accounting.post('/receipts/ensure', receiptEnsure);
+accounting.get('/receipts/backfill', receiptsBackfillPlan);
+accounting.post('/receipts/backfill', receiptsBackfillRun);
 accounting.post('/receipts/:id/formalise', receiptFormalise);
 accounting.post('/item-groups', itemGroupCreate);
 accounting.put('/item-groups/:code/accounts', itemGroupBind);
@@ -355,27 +359,51 @@ export const journalEntriesList = async (c: any): Promise<Response> => {
      for the whole page, never one per entry. */
   const rows = (data ?? []) as Array<Record<string, unknown>>;
   const jeIds = rows.map((r) => r.id);
+  /* ?withLines=1 — the Journal page grouped per entry (docs/bugs/0935): the
+     same one lines read, carrying the whole line, and the entry's references
+     (Ref. 1 / Ref. 2 / who — acc/journal-refs, the GL page's own) so the page
+     prints an entry the way the ledger prints its lines. */
+  const withLines = ['1', 'true'].includes(String(c.req.query('withLines') ?? ''));
+  type LineOut = { line_no: number; account_code: string; debit_sen: number; credit_sen: number; party_name: string | null; notes: string | null };
   const codesByJe = new Map<unknown, string[]>();
+  const linesByJe = new Map<unknown, LineOut[]>();
   if (jeIds.length > 0) {
     const { data: lineRows, error: lnErr } = await sb
       .from('journal_entry_lines')
-      .select('journal_entry_id, account_code')
+      .select(withLines ? 'journal_entry_id, line_no, account_code, debit_sen, credit_sen, party_name, notes' : 'journal_entry_id, account_code')
       .in('journal_entry_id', jeIds);
     if (lnErr) return c.json({ error: 'load_failed', reason: lnErr.message }, 500);
-    for (const l of (lineRows ?? []) as Array<{ journal_entry_id: unknown; account_code: string }>) {
+    for (const l of (lineRows ?? []) as Array<{ journal_entry_id: unknown; account_code: string } & Partial<LineOut>>) {
       const list = codesByJe.get(l.journal_entry_id) ?? [];
       list.push(l.account_code);
       codesByJe.set(l.journal_entry_id, list);
+      if (withLines) {
+        const full = linesByJe.get(l.journal_entry_id) ?? [];
+        full.push({ line_no: Number(l.line_no ?? 0), account_code: l.account_code, debit_sen: Number(l.debit_sen ?? 0), credit_sen: Number(l.credit_sen ?? 0), party_name: l.party_name ?? null, notes: l.notes ?? null });
+        linesByJe.set(l.journal_entry_id, full);
+      }
     }
   }
-  const roles = await resolveRoles(sb, activeCompanyId(c) ?? null);
-  const classed = rows.map((r) => ({
+  const companyId = activeCompanyId(c) ?? null;
+  const roles = await resolveRoles(sb, companyId);
+  const classed = rows.map((r): Record<string, unknown> => ({
     ...r,
     journal_class: classifyJournal(String(r.source_type ?? ''), codesByJe.get(r.id) ?? [], roles.CASH),
   }));
   const journal = String(c.req.query('journal') ?? '').trim().toUpperCase();
+  const page = journal ? classed.filter((r) => r.journal_class === journal) : classed;
+  if (!withLines || companyId == null) return c.json({ journalEntries: page });
+
+  const refs = await resolveJournalRefs(sb, companyId, page.map((r) => {
+    const ls = (linesByJe.get(r.id) ?? []).sort((a, b) => a.line_no - b.line_no);
+    return { jeNo: String(r.je_no), sourceType: r.source_type == null ? null : String(r.source_type), sourceDocNo: r.source_doc_no == null ? null : String(r.source_doc_no), partyName: ls.map((l) => l.party_name).find((p) => p != null && p !== '') ?? null, notes: r.narration == null ? null : String(r.narration) };
+  }));
+  if (!refs.ok) return c.json({ error: 'load_failed', reason: refs.reason }, 500);
   return c.json({
-    journalEntries: journal ? classed.filter((r) => r.journal_class === journal) : classed,
+    journalEntries: page.map((r) => {
+      const ref = refs.refs.get(String(r.je_no));
+      return { ...r, lines: (linesByJe.get(r.id) ?? []).sort((a, b) => a.line_no - b.line_no), doc: ref?.doc ?? r.source_doc_no ?? null, doc2: ref?.doc2 ?? null, who: ref?.who ?? null, reference: ref?.reference ?? null };
+    }),
   });
 };
 accounting.get('/journal-entries', journalEntriesList);

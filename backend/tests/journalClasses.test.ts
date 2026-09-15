@@ -3,7 +3,10 @@
 //     their originals;
 //   • the money-side documents split CASH vs BANK by the LINES they touch,
 //     using the company's own CASH role — never a guess;
-//   • the list endpoint labels every row and ?journal= filters on the label.
+//   • the list endpoint labels every row and ?journal= filters on the label;
+//   • ?withLines=1 (docs/bugs/0935) hands each entry its lines in order and
+//     the references the GL page prints (Ref. 1 / Ref. 2), the plain list
+//     staying as it was.
 
 import { Hono } from 'hono';
 import { describe, expect, test } from 'vitest';
@@ -44,12 +47,13 @@ describe('GET /accounting/journal-entries — labelled and filterable', () => {
         { id: 'j2', je_no: 'JE-2', entry_date: '2026-08-02', source_type: 'SOPAY', source_doc_no: 'p1', total_debit_sen: 200, total_credit_sen: 200, posted: true, reversed: false, company_id: CO },
       ],
       journal_entry_lines: [
-        { journal_entry_id: 'j1', account_code: '601-0003', company_id: CO },
-        { journal_entry_id: 'j1', account_code: '400-0000', company_id: CO },
-        { journal_entry_id: 'j2', account_code: '320-0000', company_id: CO },
-        { journal_entry_id: 'j2', account_code: '300-0000', company_id: CO },
+        { journal_entry_id: 'j1', line_no: 2, account_code: '400-0000', debit_sen: 0, credit_sen: 100, party_name: 'ACME SDN BHD', notes: null, company_id: CO },
+        { journal_entry_id: 'j1', line_no: 1, account_code: '601-0003', debit_sen: 100, credit_sen: 0, party_name: null, notes: 'Sofa fabric', company_id: CO },
+        { journal_entry_id: 'j2', line_no: 1, account_code: '320-0000', debit_sen: 200, credit_sen: 0, party_name: null, notes: null, company_id: CO },
+        { journal_entry_id: 'j2', line_no: 2, account_code: '300-0000', debit_sen: 0, credit_sen: 200, party_name: 'Ah Meng', notes: null, company_id: CO },
       ],
       acc_account_roles: [],
+      purchase_invoices: [{ invoice_number: 'PI-1', company_id: CO, supplier_invoice_ref: 'INV-77' }],
     });
     const { journalEntriesList } = await import('../src/scm/routes/accounting');
     const app = new Hono();
@@ -72,6 +76,25 @@ describe('GET /accounting/journal-entries — labelled and filterable', () => {
     const byNo = new Map(body.journalEntries.map((r) => [r.je_no, r.journal_class]));
     expect(byNo.get('JE-1')).toBe('PURCHASE');
     expect(byNo.get('JE-2')).toBe('CASH'); // a collection into the drawer
+  });
+
+  test('?withLines=1 groups: each entry carries its lines in line order and its references; the plain list carries neither', async () => {
+    const { app } = await harness();
+    const plain = await (await app.request('/accounting/journal-entries')).json() as { journalEntries: Array<Record<string, unknown>> };
+    expect(plain.journalEntries[0]).not.toHaveProperty('lines');
+    const res = await app.request('/accounting/journal-entries?withLines=1');
+    expect(res.status).toBe(200);
+    const body = await res.json() as { journalEntries: Array<{ je_no: string; doc: string | null; doc2: string | null; lines: Array<{ line_no: number; account_code: string; debit_sen: number; credit_sen: number; party_name: string | null; notes: string | null }> }> };
+    const j1 = body.journalEntries.find((r) => r.je_no === 'JE-1')!;
+    expect(j1.lines.map((l) => [l.line_no, l.account_code, l.debit_sen, l.credit_sen, l.party_name, l.notes])).toEqual([
+      [1, '601-0003', 100, 0, null, 'Sofa fabric'], [2, '400-0000', 0, 100, 'ACME SDN BHD', null],
+    ]);
+    /* Ref. 1 is the document, Ref. 2 the supplier's own number — the GL page's rule, not a second one. */
+    expect(j1.doc).toBe('PI-1');
+    expect(j1.doc2).toBe('INV-77');
+    const j2 = body.journalEntries.find((r) => r.je_no === 'JE-2')!;
+    expect(j2.lines).toHaveLength(2);
+    expect(j2.doc).toBeTruthy();
   });
 
   test('?journal= filters on the label', async () => {
