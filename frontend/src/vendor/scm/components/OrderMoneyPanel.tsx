@@ -79,7 +79,11 @@ function RefundForm({ docNo, remainingSen, onDone }: { docNo: string; remainingS
   );
 }
 
-function ConvertForm({ money, others, onDone }: { money: OrderMoney; others: ConvertSource[]; onDone: () => void }) {
+/** `onOpen` — the phone's screen router (docs/bugs/0933) opens the New SO
+    screen itself; the desktop navigates to the page. */
+type OpenNewOrder = (copyFrom: string, picks: ConvertPick[]) => void;
+
+function ConvertForm({ money, others, onDone, onOpen }: { money: OrderMoney; others: ConvertSource[]; onDone: () => void; onOpen?: OpenNewOrder }) {
   const navigate = useNavigate();
   /* This order first, ticked, for what is left; the customer's other cancelled
      orders beneath, unticked, each for what is left on it. */
@@ -107,7 +111,7 @@ function ConvertForm({ money, others, onDone }: { money: OrderMoney; others: Con
       ))}
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <button type="button" style={primary} disabled={picks.length === 0 || Boolean(bad)}
-          onClick={() => navigate(newOrderWithMoneyHref(money.docNo, picks))}>
+          onClick={() => (onOpen ? onOpen(money.docNo, picks) : navigate(newOrderWithMoneyHref(money.docNo, picks)))}>
           Open a new order with {fmtRm(total)}
         </button>
         <button type="button" style={btn} onClick={onDone}>Cancel</button>
@@ -119,7 +123,7 @@ function ConvertForm({ money, others, onDone }: { money: OrderMoney; others: Con
   );
 }
 
-export function OrderMoneyPanel({ docNo }: { docNo: string }) {
+export function OrderMoneyPanel({ docNo, onOpenNewOrder }: { docNo: string; onOpenNewOrder?: OpenNewOrder }) {
   const q = useOrderMoney(docNo);
   const [mode, setMode] = useState<'idle' | 'refund' | 'convert'>('idle');
   const m = q.data?.money;
@@ -153,7 +157,7 @@ export function OrderMoneyPanel({ docNo }: { docNo: string }) {
       )}
       {!m.open && m.reason && <span style={muted}>{m.reason}</span>}
       {mode === 'refund' && <RefundForm docNo={docNo} remainingSen={m.remainingSen} onDone={() => setMode('idle')} />}
-      {mode === 'convert' && <ConvertForm money={m} others={others} onDone={() => setMode('idle')} />}
+      {mode === 'convert' && <ConvertForm money={m} others={others} onDone={() => setMode('idle')} onOpen={onOpenNewOrder} />}
     </div>
   );
 }

@@ -927,16 +927,16 @@ Total: 1298 route registrations across 173 files.
 - L713  PATCH  /:id/cancel
 
 ## backend/src/scm/routes/so-amendments.ts  (10)
-- L287  GET    /
-- L402  GET    /pending-count
-- L452  GET    /command-diag
-- L477  GET    /:id
-- L569  PATCH  /:id/supplier-confirm
-- L1026  PATCH  /:id/approve-so
-- L1147  PATCH  /:id/approve-po
-- L1159  PATCH  /:id/send
-- L1241  PATCH  /:id/reject
-- L1357  PATCH  /:id/withdraw
+- L288  GET    /
+- L414  GET    /pending-count
+- L464  GET    /command-diag
+- L489  GET    /:id
+- L581  PATCH  /:id/supplier-confirm
+- L1038  PATCH  /:id/approve-so
+- L1159  PATCH  /:id/approve-po
+- L1171  PATCH  /:id/send
+- L1253  PATCH  /:id/reject
+- L1369  PATCH  /:id/withdraw
 
 ## backend/src/scm/routes/venture-portal-feed.ts  (10)
 - L153  GET    /status
@@ -1210,11 +1210,11 @@ Total: 1298 route registrations across 173 files.
 - L224  DELETE /special/:id
 
 ## backend/src/scm/routes/delivery-planning.ts  (5)
-- L1502  GET    /
-- L1531  GET    /geo
-- L1832  GET    /:docNo/lines
-- L1936  PATCH  /:type/:id/fields
-- L2240  PATCH  /:type/:id/schedule
+- L1504  GET    /
+- L1533  GET    /geo
+- L1834  GET    /:docNo/lines
+- L1938  PATCH  /:type/:id/fields
+- L2242  PATCH  /:type/:id/schedule
 
 ## backend/src/scm/routes/dp-orders.ts  (5)
 - L258  POST   /
