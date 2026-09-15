@@ -100,6 +100,7 @@ import { eager } from '../lib/concurrency';
 import { provenanceNote } from '../shared/transfer-vocabulary';
 import type { Env, Variables } from '../env';
 import { skuCategoryResolver, lineIdentityFields } from '../lib/sku-category';
+import { firstSoLinkCategoryMismatch, soLinkCategoryMismatch, hardBoundUnlinkRefusal, hardBoundSplitRefusal, editedLineGroup } from '../lib/hard-bound-po-line';
 import { pgrestIn } from '../lib/pgrest-in-list';
 
 /* ── Supplier sofa-combo auto-pricing (Commander 2026-05-29) ─────────────────
@@ -1048,6 +1049,7 @@ export const createMfgPurchaseOrderHandler = async (c: any) => {
      SO line → its doc_no and reject if any source SO is not orderable. Purely
      manual lines (no soItemId) skip this — a PO can be raised with no SO link,
      unchanged. Mirror of the DO create-gate. */
+  const groupOf = await skuCategoryResolver(supabase, items, activeCompanyId(c) ?? null); // SKU wins — lib/sku-category.ts
   {
     const lineSoItemIds = items
       .map((it) => it.soItemId as string | undefined)
@@ -1062,6 +1064,8 @@ export const createMfgPurchaseOrderHandler = async (c: any) => {
       // ... and the IDENTITY half of soLinkTargetRefusal, which this path was missing (lib/so-link-item-identity.ts, docs/bugs/0672).
       const badSoLink = soLinkItemMismatch(items, soRows);
       if (badSoLink) return c.json(badSoLink, 409);
+      const badCategory = firstSoLinkCategoryMismatch(items, soRows, groupOf);
+      if (badCategory) return c.json(badCategory, 409);
       const offender = await firstUnorderableSo(
         supabase,
         soRows.map((r) => r.doc_no),
@@ -1126,7 +1130,6 @@ export const createMfgPurchaseOrderHandler = async (c: any) => {
       return c.json({ ...b, reason: `Line ${i + 1}: ${b.reason}` }, 400);
     }
   }
-  const groupOf = await skuCategoryResolver(supabase, items, activeCompanyId(c) ?? null); // SKU wins — lib/sku-category.ts
   const itemRows = items.map((it) => {
     const kind = it.materialKind as string;
     if (!VALID_KINDS.has(kind)) throw new Error(`invalid material_kind: ${kind}`);
@@ -2769,6 +2772,8 @@ async function soLinkTargetRefusal(
   c: any,
   soItemId: string | null,
   itemCode: string,
+  /* The group the PO line will STORE (SKU-resolved) — refused when it disagrees with a bound SO line's (lib/hard-bound-po-line.ts). */
+  poGroup: string | null,
   /* The PO line's spec signature (specSignature of its item_group+variants).
      When provided, the SO line must match it, not just the item code. Null =
      spec gate skipped (the code check still applies). */
@@ -2807,6 +2812,8 @@ async function soLinkTargetRefusal(
       status: 409,
     };
   }
+  const badCategory = soLinkCategoryMismatch({ itemCode, itemGroup: poGroup }, row);
+  if (badCategory) return { body: badCategory, status: 409 };
   /* SPEC GATE (owner 2026-08-08). Same code is not enough — the SO line must be
      the SAME PRODUCT (fabric + colour + SEAT/LEG/SPECIAL). poSpec is the PO
      line's summary, resolved by the caller; when absent (forward-compat) the
@@ -2905,7 +2912,7 @@ mfgPurchaseOrders.post('/:id/items', async (c) => {
      keeps offering an already-covered line. Dual-read camelCase??snake_case. */
   const soItemId = (((it.soItemId ?? it.so_item_id) as string | null | undefined) || null);
   {
-    const refusal = await soLinkTargetRefusal(sb, c, soItemId, String(it.itemCode ?? ''));
+    const refusal = await soLinkTargetRefusal(sb, c, soItemId, String(it.itemCode ?? ''), addGroupOf(it));
     if (refusal) return c.json(refusal.body, refusal.status);
   }
   /* Remaining-qty cap — a NEW line contributes nothing to po_qty_picked yet, so
@@ -3006,7 +3013,7 @@ mfgPurchaseOrders.patch('/:id/items/:itemId', async (c) => {
      PO_LINE_AUDIT_FIELDS — variants render into description2, which is
      server-owned and derived, not an operator edit. */
   const { data: prevRow } = await scopeToCompanyId(sb.from('purchase_order_items')
-    .select(PO_LINE_AUDIT_SELECT + ', variants, so_item_id')
+    .select(PO_LINE_AUDIT_SELECT + ', variants, so_item_id, material_kind')
     .eq('id', itemId), co.companyId).maybeSingle();
   if (!prevRow) return c.json(NOT_THIS_COMPANY, 404);
   /* Cast through `unknown`: a .select() built from a concatenated string infers
@@ -3054,6 +3061,9 @@ mfgPurchaseOrders.patch('/:id/items/:itemId', async (c) => {
     } catch { /* table absent pre-0235 — nothing to guard */ }
   }
 
+  /* SKU wins on edit too (create + add-line already do): a sent group, or a moved code, stores the SKU's category. */
+  const editedGroup = await editedLineGroup(sb, co.companyId ?? null, prev, it);
+  if (editedGroup !== undefined) it.itemGroup = editedGroup;
   const updates: Record<string, unknown> = {
     qty, unit_price_sen: unit, discount_sen: discount, line_total_sen: lineTotal,
   };
@@ -3094,13 +3104,17 @@ mfgPurchaseOrders.patch('/:id/items/:itemId', async (c) => {
   const prevSoItemId = ((prev as { so_item_id?: string | null }).so_item_id) ?? null;
   let nextSoItemId = prevSoItemId;
   const soItemKeySent = it.soItemId !== undefined || it.so_item_id !== undefined;
-  if (soItemKeySent) {
-    nextSoItemId = (((it.soItemId ?? it.so_item_id) as string | null | undefined) || null);
-    const effCode = String((it.itemCode ?? (prev as { item_code?: string }).item_code) ?? '');
-    const refusal = await soLinkTargetRefusal(sb, c, nextSoItemId, effCode);
+  const effCode = String((it.itemCode ?? (prev as { item_code?: string }).item_code) ?? '');
+  const effGroup = (editedGroup !== undefined ? editedGroup : prev.item_group ?? null) as string | null;
+  if (soItemKeySent) nextSoItemId = (((it.soItemId ?? it.so_item_id) as string | null | undefined) || null);
+  /* A kept link is re-checked when the code or category under it moves, or a sofa link could turn into a cross-category one. */
+  if (soItemKeySent || effCode !== String(prev.item_code ?? '') || effGroup !== (prev.item_group ?? null)) {
+    const refusal = await soLinkTargetRefusal(sb, c, nextSoItemId, effCode, effGroup);
     if (refusal) return c.json(refusal.body, refusal.status);
-    updates['so_item_id'] = nextSoItemId;
+    if (soItemKeySent) updates['so_item_id'] = nextSoItemId;
   }
+  const unlinkRefusal = hardBoundUnlinkRefusal(co.companyId ?? null, { item_group: effGroup, item_code: effCode }, prevSoItemId, nextSoItemId);
+  if (unlinkRefusal) return c.json(unlinkRefusal, 409);
 
   /* Remaining-qty cap — runs even when the bind key is ABSENT, because raising
      qty on an ALREADY-bound line over-orders just as surely as binding a new
@@ -3352,11 +3366,13 @@ mfgPurchaseOrders.post('/:id/items/:itemId/allocations', async (c) => {
   const user = c.get('user');
   const parent = await resolveAllocationParent(sb, c, poId, itemId);
   if (!parent.ok) return c.json(parent.body, parent.status);
+  const splitRefusal = hardBoundSplitRefusal(parent.companyId, parent.item);
+  if (splitRefusal) return c.json(splitRefusal, 409);
 
   const soItemId = (((body.soItemId ?? body.so_item_id) as string | null | undefined) || null);
   if (soItemId) {
     const poSpec = specSignature(parent.item.item_group, parent.item.variants);
-    const refusal = await soLinkTargetRefusal(sb, c, soItemId, parent.item.item_code, poSpec);
+    const refusal = await soLinkTargetRefusal(sb, c, soItemId, parent.item.item_code, parent.item.item_group, poSpec);
     if (refusal) return c.json(refusal.body, refusal.status);
   }
   const existing = await currentAllocations(sb, itemId);
@@ -3404,6 +3420,8 @@ mfgPurchaseOrders.patch('/:id/items/:itemId/allocations/:allocationId', async (c
   const sb = c.get('supabase');
   const parent = await resolveAllocationParent(sb, c, poId, itemId);
   if (!parent.ok) return c.json(parent.body, parent.status);
+  const splitRefusal = hardBoundSplitRefusal(parent.companyId, parent.item);
+  if (splitRefusal) return c.json(splitRefusal, 409);
 
   const existing = await currentAllocations(sb, itemId);
   const prev = existing.find((a) => a.id === allocationId);
@@ -3420,7 +3438,7 @@ mfgPurchaseOrders.patch('/:id/items/:itemId/allocations/:allocationId', async (c
     nextSoItemId = (((body.soItemId ?? body.so_item_id) as string | null | undefined) || null);
     if (nextSoItemId) {
       const poSpec = specSignature(parent.item.item_group, parent.item.variants);
-      const refusal = await soLinkTargetRefusal(sb, c, nextSoItemId, parent.item.item_code, poSpec);
+      const refusal = await soLinkTargetRefusal(sb, c, nextSoItemId, parent.item.item_code, parent.item.item_group, poSpec);
       if (refusal) return c.json(refusal.body, refusal.status);
     }
     updates.so_item_id = nextSoItemId;

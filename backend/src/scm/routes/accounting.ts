@@ -35,6 +35,7 @@ import { resolveRoles, piLines, DEFAULT_ROLE_CODES } from '../../acc/rules';
 import { splitByItemGroup } from '../../acc/item-group-split';
 import { classifyJournal } from '../../acc/journal-class';
 import { isReversalPair } from '../../acc/reversal-pairs';
+import { ledgerReport } from './accounting-ledger';
 import {
   settlementSetup, settlementSetupSave, settlementUpload, settlementBatches,
   settlementBatchDetail, settlementConfirmRow, settlementConfirmMatched, settlementRowUnconfirm,
@@ -869,6 +870,10 @@ export const glStreamHandler = async (c: any) => {
   return c.json({ glEntries: showReversed ? rows : rows.filter((r) => !isReversalPair(r)) });
 };
 accounting.get('/gl', glStreamHandler);
+/* The General Ledger the AutoCount way — per-account blocks, balance b/f,
+   running balance, the journal's references (docs/bugs/0924). Handler in
+   accounting-ledger.ts. */
+accounting.get('/gl/ledger', ledgerReport);
 
 accounting.get('/balances', async (c) => {
   const sb = c.get('supabase');

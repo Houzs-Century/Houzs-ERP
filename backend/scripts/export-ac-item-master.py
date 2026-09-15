@@ -1,8 +1,10 @@
-"""Export the LIVE AutoCount item master's Item Group and UOM into the committed
-snapshot backend/scripts/data/ac-item-master.tsv.
+"""Export the LIVE AutoCount item master's Description, Item Group and base UOM
+into the committed snapshot backend/scripts/data/ac-item-master.tsv.
 
 WHY. The document list exports print each line the way the account book holds
-it (owner 2026-09-15). AutoCount's listing "Item Group" and "UOM" are properties
+it (owner 2026-09-15). AutoCount's listing Item Description, Item Group and UOM
+come from the book's ITEM, and the ERP's own values do not always spell them the
+same way; "Item Group" and "UOM" in particular are properties
 of the AutoCount ITEM, not of the line, and the ERP's own item_group / uom do not
 spell them the same way (bedframe vs BEDFRAME, accessory vs ACC, UNIT vs SET).
 A Worker cannot reach the book, so the item master is snapshotted here and
@@ -43,7 +45,7 @@ cn = pyodbc.connect(
     % (DRIVER, HOST, DB, USER, open(CRED).read().strip()), timeout=180, readonly=True)
 cur = cn.cursor()
 cur.execute(
-    "SELECT ItemCode, ItemGroup, SalesUOM, BaseUOM FROM Item "
+    "SELECT ItemCode, Description, ItemGroup, BaseUOM FROM Item "
     "WHERE ItemCode IS NOT NULL ORDER BY ItemCode")
 rows = cur.fetchall()
 cn.close()
@@ -58,7 +60,7 @@ def clean(v):
 
 out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "ac-item-master.tsv")
 with open(out, "w", encoding="utf-8", newline="\n") as f:
-    f.write("ac_code\titem_group\tsales_uom\tbase_uom\n")
-    for code, group, sales_uom, base_uom in rows:
-        f.write("\t".join([clean(code), clean(group), clean(sales_uom), clean(base_uom)]) + "\n")
+    f.write("ac_code\tdescription\titem_group\tbase_uom\n")
+    for code, description, group, base_uom in rows:
+        f.write("\t".join([clean(code), clean(description), clean(group), clean(base_uom)]) + "\n")
 print("wrote %s (%d items)" % (out, len(rows)))

@@ -1,7 +1,7 @@
 // Generate src/services/autocount-item-master.ts from the live-book snapshot
 // backend/scripts/data/ac-item-master.tsv (written by export-ac-item-master.py).
 //
-// The snapshot is AutoCount's own Item Group and UOM per AutoCount ItemCode —
+// The snapshot is AutoCount's own Description, Item Group and UOM per AutoCount ItemCode —
 // what the account book's listings print for a line of that item. The Worker
 // cannot read a file off disk, so it is emitted as one TAB-separated string
 // constant and indexed at first use (the autocount-item-map.ts pattern).
@@ -18,7 +18,7 @@ const TSV = path.join(here, "data", "ac-item-master.tsv");
 const OUT = path.join(here, "..", "src", "services", "autocount-item-master.ts");
 
 const raw = fs.readFileSync(TSV, "utf8").trim().split(/\r?\n/);
-const want = ["ac_code", "item_group", "sales_uom", "base_uom"];
+const want = ["ac_code", "description", "item_group", "base_uom"];
 if (raw[0].split("\t").join("|") !== want.join("|")) throw new Error(`unexpected TSV header: ${raw[0]}`);
 
 const rows = [];
@@ -27,15 +27,15 @@ for (const line of raw.slice(1)) {
   if (!line.trim()) continue;
   const p = line.split("\t");
   if (p.length !== 4) throw new Error(`row is not 4 fields, refusing to guess: ${line}`);
-  const [ac, group, salesUom, baseUom] = p.map((s) => s.trim());
+  const [ac, description, group, baseUom] = p.map((s) => s.trim());
   if (!ac) throw new Error(`row has a blank item code: ${line}`);
   const key = ac.toUpperCase();
   if (seen.has(key)) throw new Error(`duplicate ac_code ${ac}`);
   seen.add(key);
-  if ([ac, group, salesUom, baseUom].some((v) => v.includes("`") || v.includes("\\") || v.includes("${"))) {
+  if ([ac, description, group, baseUom].some((v) => v.includes("`") || v.includes("\\") || v.includes("${"))) {
     throw new Error(`a field carries a template-literal character, refusing to emit: ${line}`);
   }
-  rows.push([ac, group, salesUom, baseUom]);
+  rows.push([ac, description, group, baseUom]);
 }
 
 const text = `// GENERATED FILE — do not edit by hand.
@@ -43,7 +43,7 @@ const text = `// GENERATED FILE — do not edit by hand.
 // Regenerate: node scripts/gen-autocount-item-master.mjs
 // CI guard:   node scripts/gen-autocount-item-master.mjs --check
 //
-// One record per line: ac_code <TAB> item_group <TAB> sales_uom <TAB> base_uom.
+// One record per line: ac_code <TAB> description <TAB> item_group <TAB> base_uom.
 export const AC_ITEM_MASTER_ROWS = ${rows.length};
 export const AC_ITEM_MASTER_TSV = \`${rows.map((r) => r.join("\t")).join("\n")}\`;
 `;

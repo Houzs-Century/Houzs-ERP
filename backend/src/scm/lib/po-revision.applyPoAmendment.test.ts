@@ -282,6 +282,60 @@ describe('applyPoAmendment — the supplier code follows a changed item code', (
   });
 });
 
+/* The SKU decides an amended line's category (2026-09-15). An added line took
+   `new_variants.itemGroup` or `others`; a SPEC-moved code kept the old group. On a
+   company-1 sofa / Sofa Accessory line that group decides whether MRP counts the
+   purchase order at all. */
+describe('applyPoAmendment — the category comes from the SKU', () => {
+  const products = (): Row[] => [
+    { code: 'SQUARE PILLOW', category: 'FABRIC_ACCESSORY', company_id: 1 },
+    { code: '9058-CNR', category: 'SOFA', company_id: 1 },
+  ];
+
+  it('ADD stamps the SKU\'s category, not `others`', async () => {
+    const store = baseStore();
+    store.mfg_products = products();
+    store.po_amendment_lines = [
+      { id: 'AL-1', amendment_id: AMD, purchase_order_item_id: null, change_type: 'ADD', new_qty: 1, new_unit_price_sen: 500, new_item_code: 'SQUARE PILLOW', new_material_name: 'Square Pillow', new_variants: { fabricCode: 'PC151-12' }, new_delivery_date: null, old_snapshot: null },
+    ];
+    await applyPoAmendment(fakeSb(store), AMD, 'user-1');
+    const added = store.purchase_order_items.find((i) => i.item_code === 'SQUARE PILLOW')!;
+    expect(added.item_group).toBe('fabric_accessory');
+    expect(added.description2).toContain('PC151-12');
+  });
+
+  it('ADD of an uncatalogued code keeps the line\'s own group', async () => {
+    const store = baseStore();
+    store.mfg_products = products();
+    store.po_amendment_lines = [
+      { id: 'AL-1', amendment_id: AMD, purchase_order_item_id: null, change_type: 'ADD', new_qty: 1, new_unit_price_sen: 500, new_item_code: 'NEW-THING', new_material_name: 'New', new_variants: { itemGroup: 'mattress' }, new_delivery_date: null, old_snapshot: null },
+    ];
+    await applyPoAmendment(fakeSb(store), AMD, 'user-1');
+    expect(store.purchase_order_items.find((i) => i.item_code === 'NEW-THING')!.item_group).toBe('mattress');
+  });
+
+  it('SPEC moving the code re-reads the category', async () => {
+    const store = baseStore();
+    store.mfg_products = products();
+    store.purchase_order_items[0].item_group = 'others';
+    store.po_amendment_lines = [
+      { id: 'AL-1', amendment_id: AMD, purchase_order_item_id: 'POI-1', change_type: 'SPEC', new_qty: null, new_unit_price_sen: null, new_item_code: '9058-CNR', new_material_name: 'SOFA CNR', new_variants: null, new_delivery_date: null, old_snapshot: {} },
+    ];
+    await applyPoAmendment(fakeSb(store), AMD, 'user-1');
+    expect(store.purchase_order_items.find((i) => i.id === 'POI-1')!.item_group).toBe('sofa');
+  });
+
+  it('refuses a sales-order follow-up, which must apply through reviseBoundPo and its line links', async () => {
+    const store = baseStore();
+    store.po_amendments[0].source_so_amendment_id = 'soamd-1';
+    store.po_amendment_lines = [
+      { id: 'AL-1', amendment_id: AMD, purchase_order_item_id: null, change_type: 'ADD', new_qty: 1, new_unit_price_sen: 500, new_item_code: 'SQUARE PILLOW', new_material_name: 'Square Pillow', new_variants: null, new_delivery_date: null, old_snapshot: null },
+    ];
+    await expect(applyPoAmendment(fakeSb(store), AMD, 'user-1')).rejects.toThrow(/reviseBoundPo/);
+    expect(store.purchase_order_items.some((i) => i.item_code === 'SQUARE PILLOW')).toBe(false);
+  });
+});
+
 describe('applyPoAmendment — a header supplier change decides whose code a moved line takes', () => {
   it('looks the code up for the supplier the PO has AFTER the amendment', async () => {
     const store = baseStore();
