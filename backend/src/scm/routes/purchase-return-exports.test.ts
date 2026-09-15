@@ -223,6 +223,16 @@ describe('each line in the list shape', () => {
     expect(out.grn_no).toBe('HC-GRN-000001');
   });
 
+  it("a live binding for the return supplier's own wins over the cutover snapshot, as on the write-back", async () => {
+    const h = pr();
+    const l = line(h, { item_code: 'Y04-(K)' });
+    const bindings = [
+      { id: 'b1', company_id: 1, material_kind: 'mfg_product', item_code: 'Y04-(K)', supplier_id: 'sup-1', supplier_sku: 'AERO-Y04-RENAMED', ac_item_code: null, is_main_supplier: true },
+    ];
+    const { body } = await getRows(harness({ prs: [h], lines: [l], bindings }));
+    expect(body.purchaseReturns[0]!.lines[0]!.item_code).toBe('AERO-Y04-RENAMED');
+  });
+
   it('refuses the file when a lookup fails, rather than exporting blank links', async () => {
     const h = pr();
     const sbTables = { prs: [h], lines: [line(h, { grn_item_id: 'gi-1' })] };

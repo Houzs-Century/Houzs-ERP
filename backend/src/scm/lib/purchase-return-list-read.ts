@@ -22,7 +22,7 @@ import { warehouseLabel } from './warehouse-label';
 import { bookSpellingOrOwn } from '../../services/autocount-writeback';
 import { LOCATION_MAP } from '../../services/autocount-master-maps';
 import { toPrListLine, type PrListLine } from './return-line-export-columns';
-import { companyHasAutoCountBook, returnLineBookFacts } from './return-line-book-facts';
+import { readReturnBookContext, returnLineBookFacts } from './return-line-book-facts';
 
 export const PR_HEADER_COLS =
   'id, return_number, purchase_order_id, grn_id, supplier_id, return_date, ' +
@@ -162,7 +162,9 @@ export async function attachPurchaseReturnLines<H extends PrLineHeader>(
   );
   if (wh.error) return fail(`warehouses: ${wh.error}`);
 
-  const inBook = companyHasAutoCountBook(c);
+  const supplierOf = new Map(headers.map((h) => [h.id, h.supplier_id ?? null]));
+  const book = await readReturnBookContext(sb, c, all.map((l) => ({ code: l.item_code, supplierId: supplierOf.get(l.purchase_return_id) ?? null })));
+  if (book.error) return fail(book.error);
 
   const byReturn = new Map<string, LineRow[]>();
   for (const l of all) {
@@ -177,7 +179,7 @@ export async function attachPurchaseReturnLines<H extends PrLineHeader>(
       const pl = gl?.purchase_order_item_id ? poLines.byId.get(gl.purchase_order_item_id) : undefined;
       const lineWh = g?.warehouse_id ?? h.grn?.warehouse_id ?? null;
       return toPrListLine(l, {
-        ...returnLineBookFacts(inBook, { ...l, description: l.material_name ?? l.description }, h.supplier?.code ?? null),
+        ...returnLineBookFacts(book.ctx, { ...l, description: l.material_name ?? l.description }, { id: h.supplier_id ?? null, code: h.supplier?.code ?? null }),
         location: bookSpellingOrOwn(warehouseLabel(lineWh ? wh.byId.get(lineWh) : null), LOCATION_MAP),
         grnNo: g?.grn_number ?? h.grn?.grn_number ?? null,
         poNo: (pl?.purchase_order_id ? pos.byId.get(pl.purchase_order_id)?.po_number : null) ?? h.purchase_order?.po_number ?? null,
