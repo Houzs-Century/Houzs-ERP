@@ -36,4 +36,4 @@ One line per open item: what — waiting on — since. Delete the line when it i
 - Six documents (SO/PO/GR/PI/SI/DO): effective status SUBMITTED (DO keeps DRAFT/LOADED/DISPATCHED); cancel approval on SO only; every document gets line delivery date, line remark, FOC, per-line warehouse and a change log; discount typed as amount or %.
 
 ## Handoffs still in tasks/
-The 2026-09-14/15 handoff files stay only until other sessions finish that work (PRs #3972, #3977, the Fair/venue fix, the MRP decision). Delete each when its work lands. No new handoff files.
+Two remain until their work lands: `HANDOFF-exports-import-money-2026-09-15.md` (PR #3972, Delivery Orders export) and `HANDOFF-2026-09-15-mrp-stale-demand.md` (the owner's MRP close-out decision). Delete each when done. No new handoff files.

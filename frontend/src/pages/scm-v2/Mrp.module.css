@@ -282,11 +282,18 @@
 .supplierSelect:hover { border-color: #16695f; }
 
 /* Shortage rows in the report table (now DataTable) — the actionable ones.
-   Owner 2026-08-03 wanted them obvious; a deep-petrol left bar carries the
-   signal without a solid fill (rejected 2026-05-29). Painted on the row's first
-   cell rather than the <tr>, because a DataTable row is border-separate and a
-   tr-level inset bar is unreliable. The Shortage number is deepened by .shortNum. */
-.rowShort > td:first-child { box-shadow: inset 3px 0 0 #08352e; }
+   The same light petrol wash + deep-petrol left bar .skuRowShort gave them on
+   the hand-built table (owner 2026-08-03: obvious, but no solid fill — rejected
+   2026-05-29). #3696 kept only the bar and every row read plain (owner
+   2026-09-15). Both are painted per CELL as inset shadows: a shadow sits above
+   the DataTable zebra, its hover green and a pinned column's inline opaque
+   background, so the wash shows on every cell without making a pinned cell see-
+   through. [data-vrow] = the data row only; DataTable copies this class onto the
+   expanded drill-down row too, which keeps its own grey ground. */
+.rowShort[data-vrow] > td { box-shadow: inset 0 0 0 9999px rgba(22, 105, 95, 0.08); }
+.rowShort[data-vrow] > td:first-child { box-shadow: inset 3px 0 0 #08352e, inset 0 0 0 9999px rgba(22, 105, 95, 0.08); }
+/* The same row as a phone card (DataTable's stacked cards below `sm`). */
+.rowShort[data-mobile-card] { box-shadow: inset 3px 0 0 #08352e, inset 0 0 0 9999px rgba(22, 105, 95, 0.08); }
 
 /* ── Child detail (drilldown) ──────────────────────────────────────── */
 /* The expanded body sits inside DataTable's full-width expanded cell; give it

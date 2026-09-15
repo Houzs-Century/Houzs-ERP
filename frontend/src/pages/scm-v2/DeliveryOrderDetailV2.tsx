@@ -1466,7 +1466,7 @@ export function DeliveryOrderDetailV2() {
             >
               <DataTable<DoItem>
                 tableId={`do-lines-${id}`}
-                layoutFamily={DATA_TABLE_LAYOUT_FAMILIES.deliveryOrderLines}
+                layoutFamily={DATA_TABLE_LAYOUT_FAMILIES.deliveryOrderLines} persistSort={false} persistFilters={false}
                 rows={items}
                 loading={false}
                 columns={lineColumns}
