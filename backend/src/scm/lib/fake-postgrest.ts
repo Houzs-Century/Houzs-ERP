@@ -322,6 +322,26 @@ export function fakeSb(
         filters.push((r) => rx.test(String(r[col] ?? '')));
         return builder;
       },
+      /* PostgREST `or=(a.op.v,b.op.v)`: the row passes when ANY term does. Only
+         the term shapes the list readers send are understood — `ilike` (the
+         search box), `eq` and `is.true|false|null` (the hold marker); anything
+         else THROWS, for the reason `not()` above gives. */
+      or(expr: string) {
+        const terms = String(expr).split(',').map((t) => {
+          const [col, op, ...rest] = t.split('.');
+          const val = rest.join('.');
+          if (op === 'ilike') {
+            const rx = new RegExp(`^${val.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/%/g, '.*')}$`, 'i');
+            return (r: Row) => rx.test(String(r[col!] ?? ''));
+          }
+          if (op === 'eq') return (r: Row) => String(r[col!]) === val;
+          if (op === 'is' && (val === 'true' || val === 'false')) return (r: Row) => r[col!] === (val === 'true');
+          if (op === 'is' && val === 'null') return (r: Row) => r[col!] === null || r[col!] === undefined;
+          throw new Error(`fake-postgrest: or(${t}) is not implemented`);
+        });
+        filters.push((r) => terms.some((f) => f(r)));
+        return builder;
+      },
       order(col?: string, opts?: { ascending?: boolean }) {
         if (col) sorts.push({ col, asc: opts?.ascending !== false });
         return builder;
