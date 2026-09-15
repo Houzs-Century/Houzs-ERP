@@ -248,13 +248,45 @@ try {
     ["Total (header)", [["total_sen/100", (a, e) => [a.NetTotal, sen(e.total_sen)], eqNum]]],
     ["Cancelled", [["status = CANCELLED", (a, e) => [a.Cancelled === "T", String(e.status).toUpperCase() === "CANCELLED"], (x, y) => x === y]]],
     ...lineCols("line_total_sen/100", [["qty", (a, e) => [a.Qty, e.qty], eqNum]]).filter(([c]) => c !== "Item Code"),
-    ["Item Code", [["item_code", (a, e) => [a.ItemCode, e.item_code], eqText]]],
+    ["Item Code", [["item_code", (a, e) => [a.ItemCode, e.item_code], eqText], ["resolveAcItemCode(+bindings)", (a, e) => [a.ItemCode, e.ac_item_code], eqText]]],
     ["Location", [
       ["DO warehouse, else DO sales_location, else SI sales_location (short)", (a, e) => [a.Location, short(e.wh_code, e.wh_name) || short(e.do_location) || short(e.sales_location)], eqText],
       ["SI sales_location (short)", (a, e) => [a.Location, short(e.sales_location)], eqText],
     ]],
     ["Delivery Date", [["line_delivery_date", (a, e) => [a.DeliveryDate, e.delivery_date], eqDay]]],
   ]);
+  for (const [label, rows] of [["GR", gr], ["PI", pi], ["IV", iv]]) {
+    const paired = rows.filter((e) => acBy[label].has(String(e.dtlkey)));
+    const nonSofa = paired.filter((e) => !splitSofaCode(txt(e.item_code)));
+    const ok = nonSofa.filter((e) => eqText(acBy[label].get(String(e.dtlkey)).ItemCode, e.ac_item_code)).length;
+    const bad = nonSofa.filter((e) => !eqText(acBy[label].get(String(e.dtlkey)).ItemCode, e.ac_item_code)).slice(0, 5)
+      .map((e) => `${acBy[label].get(String(e.dtlkey)).DocNo}: AC=${JSON.stringify(acBy[label].get(String(e.dtlkey)).ItemCode)} ERP=${JSON.stringify(e.ac_item_code)} (erp code ${JSON.stringify(e.item_code)})`);
+    notice(`${label} "Item Code" NON-SOFA lines: resolveAcItemCode(+bindings) ${ok}/${nonSofa.length} (${nonSofa.length ? ((100 * ok) / nonSofa.length).toFixed(1) : "n/a"}%); sofa pieces excluded ${paired.length - nonSofa.length}${bad.length ? ` e.g. ${bad.join(" | ")}` : ""}`);
+  }
+  {
+    const { AGENT_MAP } = await import("../src/services/autocount-master-maps.ts");
+    const mapKeys = new Set(Object.keys(AGENT_MAP).map((k) => k.trim().toUpperCase()));
+    const mapVals = new Set(Object.values(AGENT_MAP).map((k) => String(k).trim().toUpperCase()));
+    const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-/i;
+    const classes = new Map();
+    const add = (k, ex) => { const c = classes.get(k) ?? { n: 0, ex: [] }; c.n += 1; if (c.ex.length < 3) c.ex.push(ex); classes.set(k, c); };
+    let hit = 0;
+    for (const e of iv.filter((x) => acBy.IV.has(String(x.dtlkey)))) {
+      const a = acBy.IV.get(String(e.dtlkey));
+      const got = resolveAcAgent(e.agent, e.staff_name);
+      if (eqText(a.Agent, got)) { hit += 1; continue; }
+      const ex = `${a.DocNo}: AC=${JSON.stringify(a.Agent)} ERP agent=${JSON.stringify(e.agent)} staff=${JSON.stringify(e.staff_name)} resolved=${JSON.stringify(got)}`;
+      if (!txt(a.Agent)) add("AutoCount agent blank", ex);
+      else if (got && txt(got).toUpperCase() === txt(a.Agent).toUpperCase()) add("same name, different letter case", ex);
+      else if (!txt(e.agent) && !txt(e.staff_name)) add("ERP has no agent text and no salesperson", ex);
+      else if (UUID.test(txt(e.agent)) && !txt(e.staff_name)) add("agent text is a staff uuid with no salesperson link", ex);
+      else if (!got) add("nothing resolved", ex);
+      else if (!mapKeys.has(txt(e.agent).toUpperCase()) && !mapKeys.has(txt(e.staff_name).toUpperCase()) && !mapVals.has(txt(got).toUpperCase())) add("salesperson name not in AGENT_MAP (sent as itself)", ex);
+      else add("mapped to a DIFFERENT AutoCount agent than the book holds", ex);
+    }
+    notice(`IV Agent: resolveAcAgent matches ${hit}; misses by class: ${[...classes].map(([k, c]) => `${k} ${c.n}`).join("; ")}`);
+    for (const [k, c] of classes) notice(`IV Agent miss "${k}" examples: ${c.ex.join(" | ")}`);
+  }
   /* Owner ruling 2026-09-15: Item Description 2 exports the variant summary,
      the stored text only as the fallback. How many lines would change? */
   for (const [table, parent, fk] of [["grn_items", "grns", "grn_id"], ["purchase_invoice_items", "purchase_invoices", "purchase_invoice_id"], ["sales_invoice_items", "sales_invoices", "sales_invoice_id"]]) {
