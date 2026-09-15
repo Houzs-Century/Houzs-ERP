@@ -2,7 +2,7 @@
 
 <!-- area: Frontend + mobile -->
 
-**Symptom.** Found while auditing 0937 for other pages whose row colours never
+**Symptom.** Found while auditing 0941 for other pages whose row colours never
 appear. Three row colours never painted:
 
 - **Every table with selection.** A ticked row did not highlight.
@@ -55,6 +55,6 @@ after.
 
 **Not covered.** A pinned (sticky) column cell keeps its inline opaque zebra
 colour, which it needs to hide the cells that scroll under it. A toned row's
-pinned cells stay white. MRP's wash (0937) avoids this by painting a shadow.
+pinned cells stay white. MRP's wash (0941) avoids this by painting a shadow.
 
 **Ref.** fix/edit-order-and-mrp-colours, 2026-09-15.

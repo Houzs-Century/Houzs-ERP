@@ -2,7 +2,7 @@
 
 <!-- area: Frontend + mobile -->
 
-**Symptom.** Owner, 2026-09-15, asking whether the SKU Master jump (0936) happens
+**Symptom.** Owner, 2026-09-15, asking whether the SKU Master jump (0940) happens
 elsewhere:
 「全套系统会不会有这种问题呢？我看到的东西，我要去 edit 的时候，突然它位置不见了。」
 
