@@ -30,6 +30,7 @@
 import type { Context } from 'hono';
 import { isServiceLine } from '../shared/service-sku';
 import { activeCompanyId, stampCompany } from './companyScope';
+import { catalogCategoriesByCode } from './validate-item-codes';
 
 type Sb = any;
 
@@ -75,16 +76,25 @@ export type SoLineIdentity = { item_code?: string | null; item_group?: string | 
    service-only when it was service BEFORE and (if the code moved) still is
    AFTER, so a SPEC edit that swaps a service SKU for real goods still
    escalates. Unknown identity is NOT service — an extra follow-up the
-   purchaser withdraws beats a supplier never hearing about a real change. */
+   purchaser withdraws beats a supplier never hearing about a real change.
+
+   The AFTER side reads the new code's CATALOGUE category as well as the code:
+   an ADD of a bare service code (TRANSPORTATION CHARGES on HC-SO-012757/A1)
+   has no SVC- prefix and no row, so by code alone it read as goods and would
+   have raised an amendment against every PO bound to the order
+   (docs/bugs/0895-an-amendment-that-added-a-service-line-went-to-the-purchaser.md). */
 const serviceOnlyChange = (
   l: SoAmendLine,
   identityOf: (soItemId: string) => SoLineIdentity | undefined,
+  categoryOf: (itemCode: string) => string | null,
 ): boolean => {
   const base = l.sales_order_item_id ? identityOf(l.sales_order_item_id) : undefined;
   const before = base
     ? isServiceLine({ itemGroup: base.item_group ?? null, itemCode: base.item_code ?? null })
     : null;
-  const after = l.new_item_code != null ? isServiceLine({ itemCode: l.new_item_code }) : null;
+  const after = l.new_item_code != null
+    ? isServiceLine({ itemCode: l.new_item_code, category: categoryOf(l.new_item_code) })
+    : null;
   if (before == null && after == null) return false;   // no identity to judge — escalate
   if (before == null) return after === true;           // ADD: the new code decides
   if (after == null) return before;                    // QTY / REMOVE / variant-only SPEC
@@ -152,7 +162,11 @@ export async function raisePoFollowUps(
     if (r.id) identityById.set(String(r.id), { item_code: r.item_code, item_group: r.item_group });
   }
   for (const r of soItemRowsTyped) identityById.set(r.id, { item_code: r.item_code, item_group: r.item_group });
-  const soLines = changedLines.filter((l) => !serviceOnlyChange(l, (id) => identityById.get(id)));
+  const categoryByCode = await catalogCategoriesByCode(sb, changedLines.map((l) => l.new_item_code), activeCompanyId(c));
+  if (!categoryByCode) throw new Error('raisePoFollowUps: catalogue categories load failed');
+  const soLines = changedLines.filter((l) => !serviceOnlyChange(
+    l, (id) => identityById.get(id), (code) => categoryByCode.get(code.trim()) ?? null,
+  ));
   if (soLines.length === 0) return none;
 
   type PoItem = {

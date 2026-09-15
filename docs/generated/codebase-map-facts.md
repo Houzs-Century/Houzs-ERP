@@ -87,11 +87,11 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/accounting-pi-backfill.ts` | 0 | 149 |
 | `backend/src/scm/routes/accounting-receipts.ts` | 0 | 88 |
 | `backend/src/scm/routes/accounting-report-layouts.ts` | 0 | 205 |
-| `backend/src/scm/routes/accounting-reports.ts` | 0 | 233 |
-| `backend/src/scm/routes/accounting-rp.ts` | 0 | 353 |
+| `backend/src/scm/routes/accounting-reports.ts` | 0 | 237 |
+| `backend/src/scm/routes/accounting-rp.ts` | 0 | 356 |
 | `backend/src/scm/routes/accounting-settlement.ts` | 0 | 1585 |
 | `backend/src/scm/routes/accounting-stock-close.ts` | 0 | 53 |
-| `backend/src/scm/routes/accounting.ts` | 97 | 1534 |
+| `backend/src/scm/routes/accounting.ts` | 97 | 1548 |
 | `backend/src/scm/routes/addons.ts` | 4 | 215 |
 | `backend/src/scm/routes/amendment-mirror.ts` | 1 | 126 |
 | `backend/src/scm/routes/ap-invoice-files.ts` | 0 | 50 |
@@ -225,13 +225,13 @@ scripts, never assumed: each runner declares its own directory, and
 | tree | runner | *.sql | highest | applied to PRODUCTION by deploy.yml | read by backend vitest |
 |---|---|---|---|---|---|
 | `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 153 | `154_assr_case_access.sql` (154) | no | yes |
-| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 428 | `0352_acc_pv_files.sql` (0352) | YES | no |
+| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 429 | `0352_acc_pv_files.sql` (0352) | YES | no |
 
 Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its number): `0136_capture_compat_views_trips_lorries.sql.TEMPLATE`
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (2508 files, 798607 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (2516 files, 799503 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -435,7 +435,7 @@ Page files by directory:
 | `frontend/src/pages/MailCenter` | 3 |
 | `frontend/src/pages/announcements` | 5 |
 | `frontend/src/pages/roles` | 2 |
-| `frontend/src/pages/scm-v2` | 169 |
+| `frontend/src/pages/scm-v2` | 172 |
 | `frontend/src/pages/scm-v2/products` | 2 |
 | `frontend/src/pages/settings` | 1 |
 | `frontend/src/pages/team` | 10 |

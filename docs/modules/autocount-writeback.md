@@ -6580,3 +6580,24 @@ stopping before the field would overflow. That is how the book's own long texts
 read, and the cutover parser still reads the same first pair. The script-side
 mirror in `scripts/lib/ac-payment-udf.mjs` matches.
 `docs/bugs/0921-a-payment-text-longer-than-autocount-s-fifty-character-field.md`.
+
+## The sales line names the purchase order made from it (2026-09-15)
+
+The office's plug-in writes `SODTL.UDF_PONo`, `UDF_PODocKey` and `UDF_Creditor` on
+every sales line it buys; a purchase order made by `/so-to-po` left them blank
+(563 of 564 plug-in lines filled against 1 of 164 of ours).
+
+Remark 2 in the book is kept by a program inside AutoCount. It does recognise
+our receipts: 33 of 37 groups received on 2026-09-10 gained their group. Whether
+it needs `UDF_PONo` is UNKNOWN, since none of our purchase orders had been
+received yet.
+
+The host now fills the three fields after `/so-to-po` and after an `/edit` of
+a purchase order (`PointSalesLinesAtPurchase`):
+
+- only blanks are filled, so a line naming another purchase order keeps it;
+- the step is wrapped, and cannot cost the purchase order;
+- orders already in the book fill on their next edit or a re-send.
+
+INERT until the office host is swapped; the run-time write is UNTESTED.
+`docs/bugs/0923-a-purchase-order-made-from-a-sales-order-left-the-sales-line.md`.

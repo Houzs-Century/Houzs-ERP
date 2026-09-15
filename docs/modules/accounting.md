@@ -2490,6 +2490,39 @@ account box is `SearchCombo` (the voucher and bill forms' own): every word
 typed must match the code or the name. Contract:
 `frontend/src/pages/scm-v2/JournalEntryCards.test.tsx`.
 
+**A reversal pair is nothing, everywhere (2026-09-15, docs/bugs/0923; owner:
+照理就是对冲掉，所以都不应该显示，je 可以留记录就好).** A reversed journal and the
+contra that undid it are one correction: the journal keeps both (the list
+still marks the original REVERSED, both still open), and no reader counts
+either side, whatever month either is dated in — a contra dated in a later
+month is not that month's movement. One predicate,
+`backend/src/acc/reversal-pairs.ts` (`isReversalPair`: `reversed` or
+`reversed_by_je` set — the engine links both sides; `countsInTheBooks`:
+posted and on neither side), read by `loadSums` in
+`backend/src/scm/routes/accounting-reports.ts` (P&L, balance sheet,
+Performance), `live()` in `backend/src/scm/routes/accounting-rp.ts`,
+`glStreamHandler` and `dailyBankHandler` in
+`backend/src/scm/routes/accounting.ts`, and `loadAccountLedger` in
+`backend/src/acc/bank.ts` (which had the rule since docs/bugs/0802). The
+General Ledger tab asks for the pair only when "Show reversed entries" is
+ticked (`showReversed=1`), and then marks each row `reversed` or `contra`
+(`reversalSideOf`, `frontend/src/vendor/scm/lib/accounting-queries.ts`).
+The Trial Balance reads `scm.v_account_balances`, which until this had put
+`posted AND NOT reversed` in the ON of a LEFT JOIN over the lines and so
+summed both sides of every pair AND every unposted draft (0290 and 0306 both
+recorded it); migration
+`backend/src/db/migrations-pg/20260915T1400_acc_account_balances_count_the_books.sql`
+chooses the lines before the join — posted, `reversed = false`,
+`reversed_by_je IS NULL` — with the columns unchanged. Before this, the
+statements skipped only the flagged original and counted the contra in its
+own month, the ledger printed both, and the trial balance summed both.
+Contracts: `backend/tests/accountingReports.test.ts`,
+`backend/tests/rpReport.test.ts`,
+`backend/tests/glStreamSkipsReversalPairs.test.ts`,
+`backend/tests-pg/accountBalancesCountTheBooks.pg.test.ts`,
+`frontend/src/pages/scm-v2/GlTabReversed.test.tsx`,
+`frontend/src/vendor/scm/lib/accounting-queries-gl.test.tsx`.
+
 **Document numbers follow the document date (owner 2026-09-07: 要根据文件日期,
 而不是文件几时 create 的日期).** Six finance series take their YYMM from the
 paper's own date — the AP invoice from `invoice_date`, the payment voucher

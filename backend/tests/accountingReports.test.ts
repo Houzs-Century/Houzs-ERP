@@ -7,7 +7,9 @@
 //     profit-before-tax line; the section wins over the code and the tree;
 //   • a row the chart has not sectioned takes the default shelf for its
 //     type — the migration's own rule, one home;
-//   • reversed/unposted lines never count;
+//   • reversed/unposted lines never count — and a reversal PAIR is nothing in
+//     either month: the contra dated later is not that month's movement
+//     (docs/bugs/0923);
 //   • the balance sheet balances THROUGH current earnings, and its self-check
 //     is zero on a clean ledger;
 //   • bad dates are 400 sentences;
@@ -89,6 +91,17 @@ const WORLD: Row[] = [
 
 type Line = { code: string; section: string; amountSen: number };
 
+/* An RM 1,610 sale keyed twice on 15 August: the original flagged reversed and
+   pointing at its contra, the contra dated 15 September pointing back (the
+   shape acc/engine.ts reverseJournal writes). Owner 2026-09-15 (docs/bugs/
+   0923): 照理就是对冲掉，所以都不应该显示 — neither side is a movement of any month. */
+const PAIR: Row[] = [
+  gl('501-0000', 'INCOME', 0, 161_000, { reversed: true, reversed_by_je: 'je-contra' }),
+  gl('310-0010', 'ASSET', 161_000, 0, { reversed: true, reversed_by_je: 'je-contra' }),
+  gl('501-0000', 'INCOME', 161_000, 0, { entry_date: '2026-09-15', reversed_by_je: 'je-original' }),
+  gl('310-0010', 'ASSET', 0, 161_000, { entry_date: '2026-09-15', reversed_by_je: 'je-original' }),
+];
+
 describe('GET /accounting/reports/pnl', () => {
   test('bad range is a 400', async () => {
     const { app } = harness([]);
@@ -144,6 +157,26 @@ describe('GET /accounting/reports/pnl', () => {
     for (const [block, key] of [['costOfSales', 'costOfSalesSen'], ['expenses', 'expensesSen'], ['otherIncome', 'otherIncomeSen'], ['taxation', 'taxationSen']] as const) {
       expect(b.layout[block].reduce((s, n) => s + n.amountSen, 0)).toBe(b.totals[key]);
     }
+  });
+});
+
+describe('a reversal pair is nothing in either month (docs/bugs/0923)', () => {
+  test('the P&L: the September contra is not September\'s sales, and August keeps no trace of the original', async () => {
+    const { app } = harness([...WORLD, ...PAIR]);
+    const sep = await (await app.request('/accounting/reports/pnl?from=2026-09-01&to=2026-09-30')).json() as { tradingIncome: Line[]; totals: Record<string, number> };
+    expect(sep.tradingIncome).toEqual([]);
+    expect(sep.totals.tradingIncomeSen).toBe(0);
+    expect(sep.totals.netProfitSen).toBe(0);
+    const aug = await (await app.request('/accounting/reports/pnl?from=2026-08-01&to=2026-08-31')).json() as { tradingIncome: Line[]; totals: Record<string, number> };
+    expect(aug.tradingIncome.map((l) => [l.code, l.amountSen])).toEqual([['501-0000', 100_000]]);
+    expect(aug.totals.netProfitSen).toBe(41_000);
+  });
+
+  test('the balance sheet as at 30 September carries neither leg on the bank', async () => {
+    const { app } = harness([...WORLD, ...PAIR]);
+    const b = await (await app.request('/accounting/reports/balance-sheet?asOf=2026-09-30')).json() as { assets: Line[]; totals: Record<string, number> };
+    expect(b.assets.map((l) => [l.code, l.amountSen])).toEqual([['310-0010', 91_000], ['330-0000', 10_000]]);
+    expect(b.totals).toMatchObject({ assetsSen: 101_000, earningsSen: 41_000, checkSen: 0 });
   });
 });
 

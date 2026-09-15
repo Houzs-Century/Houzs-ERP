@@ -91,6 +91,43 @@ export async function validateItemCodes(
     : { ok: false, unknown, inactive };
 }
 
+/**
+ * The catalogue CATEGORY of each code, within one company — keyed by the
+ * trimmed code, absent for a code the catalogue does not hold.
+ *
+ * It exists for a line that has no row of its own yet: an SO amendment ADD. An
+ * existing line carries item_group, but an added one carries only the code it
+ * asks for, and isServiceLine cannot tell a BARE service code (TRANSPORTATION
+ * CHARGES, DISPOSE, STORAGE) from goods without the category — so the lane
+ * split sent HC-SO-012757/A1 to the Purchaser (owner 2026-09-14,
+ * docs/bugs/0895-an-amendment-that-added-a-service-line-went-to-the-purchaser.md).
+ *
+ * Same company predicate and in-list escaping as validateItemCodes, for the
+ * same reasons. `null` when the read FAILED, so the caller refuses instead of
+ * classifying on nothing — an empty map would read as "none of these is a
+ * service", which is the mis-route this exists to stop.
+ */
+export async function catalogCategoriesByCode(
+  sb: any,
+  codes: Array<string | null | undefined>,
+  companyId: number | null | undefined,
+): Promise<Map<string, string | null> | null> {
+  const unique = [...new Set(codes.map((c) => (c ?? '').trim()).filter(Boolean))];
+  const out = new Map<string, string | null>();
+  if (unique.length === 0) return out;
+  let q = sb.from('mfg_products').select('code, category');
+  q = unique.some((code) => /["\\]/.test(code))
+    ? q.filter('code', 'in', pgrestInList(unique))
+    : q.in('code', unique);
+  if (companyId != null) q = q.eq('company_id', companyId);
+  const { data, error } = await q;
+  if (error) return null;
+  for (const r of (data ?? []) as Array<{ code: string; category?: string | null }>) {
+    if (!out.has(r.code) || out.get(r.code) == null) out.set(r.code, r.category ?? null);
+  }
+  return out;
+}
+
 /** Canonical 409 response body for unknown-code rejections. Callers should
  *  return c.json(unknownItemCodeResponse(check.unknown, check.inactive), 409). */
 export const unknownItemCodeResponse = (unknown: string[], inactive: string[] = []) => {

@@ -3,7 +3,8 @@
 // 2026-09-05: 你可以做一个 standard P&L 先…balance sheet 同理; layout will be
 // iterated with him later, the NUMBERS ship now).
 //
-// Both read ONE source — v_gl_entries (posted, not reversed) — so they can
+// Both read ONE source — v_gl_entries (posted, on neither side of a reversal
+// pair; acc/reversal-pairs.ts) — so they can
 // never disagree with the Journal/GL/TB tabs beside them, and both CLASSIFY
 // BY SECTION (owner 2026-09-06, the AutoCount tree stored on scm.accounts —
 // 你先帮我分类,然后我自己还能调动: drag an account on the chart page and the
@@ -45,6 +46,7 @@ import { requireActiveCompanyId } from '../lib/companyScope';
 import { paginateAll } from '../lib/paginate-all';
 import { ACCOUNT_SECTIONS, defaultSectionFor } from '../lib/account-sections';
 import { layOutBlock, type LaidNode } from '../../acc/report-layout';
+import { countsInTheBooks } from '../../acc/reversal-pairs';
 import { allowedIds, resolveLayout } from './accounting-report-layouts';
 
 const requirePerm = (c: any): boolean => hasHouzsPerm(c, 'scm.payment_voucher.post');
@@ -53,9 +55,11 @@ const NO_PERM = { error: "You don't have permission to read the financial statem
 export type AccountRow = { account_code: string; account_type: string; section: string | null };
 export type SumRow = { code: string; name: string; type: string; drSen: number; crSen: number };
 
-/** Sum posted, non-reversed GL lines per account inside [from, to]. Shared
-    with the Performance P&L (accounting-performance.ts), whose expense side
-    is this read cut to the EXPENSES section. */
+/** Sum the GL lines the books count per account inside [from, to] — posted,
+    and on neither side of a reversal pair (docs/bugs/0923: a contra dated in
+    a later month is not that month's movement). Shared with the Performance
+    P&L (accounting-performance.ts), whose expense side is this read cut to
+    the EXPENSES section. */
 export async function loadSums(
   sb: any,
   companyId: number,
@@ -64,7 +68,7 @@ export async function loadSums(
 ): Promise<{ ok: true; sums: SumRow[] } | { ok: false; reason: string }> {
   const { data, error } = await paginateAll((f, t) => {
     let q = sb.from('v_gl_entries')
-      .select('account_code, account_name, account_type, debit_sen, credit_sen, posted, reversed')
+      .select('account_code, account_name, account_type, debit_sen, credit_sen, posted, reversed, reversed_by_je')
       .eq('company_id', companyId);
     if (from) q = q.gte('entry_date', from);
     if (to) q = q.lte('entry_date', to);
@@ -73,7 +77,7 @@ export async function loadSums(
   if (error) return { ok: false, reason: (error as { message?: string }).message ?? String(error) };
   const at = new Map<string, SumRow>();
   for (const r of (data ?? []) as Array<Record<string, unknown>>) {
-    if (r.posted !== true || r.reversed === true) continue;
+    if (!countsInTheBooks(r as { posted?: boolean | null; reversed?: boolean | null; reversed_by_je?: string | null })) continue;
     const code = String(r.account_code);
     const cur = at.get(code) ?? { code, name: String(r.account_name ?? code), type: String(r.account_type ?? ''), drSen: 0, crSen: 0 };
     cur.drSen += Number(r.debit_sen ?? 0);

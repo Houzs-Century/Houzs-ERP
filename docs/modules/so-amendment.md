@@ -35,7 +35,7 @@ The owner's 2026-07-27 rework split approval in two
 | Lane | Covers | Signed by | Touches a PO? |
 |---|---|---|---|
 | `LINES` | SKU/spec, colour/fabric, qty, sell price, added/removed product lines, **Processing Date** | `scm.amendment.approve_lines` (role Purchaser) | yes — approving auto-raises a follow-up PO Amendment |
-| `DELIVERY` | schedule Delivery Date, State/Postcode/City, the address block, disposal, customer contact, **service lines** (disposal / storage / transport — identified by `item_group='service'`, not the `SVC-` prefix alone) | `scm.amendment.approve_delivery` (role Logistic) | never |
+| `DELIVERY` | schedule Delivery Date, State/Postcode/City, the address block, disposal, customer contact, **service lines** (disposal / storage / transport — identified by `item_group='service'` on an existing line, or the catalogue category `SERVICE` on an ADDED one, not the `SVC-` prefix alone) | `scm.amendment.approve_delivery` (role Logistic) | never |
 
 Two rules that are easy to get wrong:
 
@@ -54,6 +54,18 @@ Two rules that are easy to get wrong:
   identity defaults to `LINES` — a product change mis-routed to purchasing is
   reviewable noise; mis-routed *away* from purchasing it is an unreviewed spec
   change.
+- **An ADDED line is judged by its code's CATALOGUE category**, because it has
+  no SO row and so no `item_group`. The 2026-09-11 fix covered existing lines
+  only; on 2026-09-14 HC-SO-012757/A1 added `TRANSPORTATION CHARGES` × 1
+  (RM150, catalogue category `SERVICE`) and still landed on `LINES` — the owner:
+  「为什么Service line item还是purchaser approve?」. The submit route now reads
+  `catalogCategoriesByCode` (`backend/src/scm/lib/validate-item-codes.ts`, the
+  order's company) for every line with no `salesOrderItemId` and passes the
+  category into the lane split, refusing the submit 500 if that read fails
+  rather than classifying on nothing. The PO follow-up uses the same read, so
+  approving such an ADD raises no PO amendment. The lane is still stored ONCE at
+  submit: an amendment raised before the fix keeps the lane it got
+  (`docs/bugs/0895-an-amendment-that-added-a-service-line-went-to-the-purchaser.md`).
 
 **Legacy rows** (`lane IS NULL`, raised before the rework) keep the original
 supplier-confirm two-gate chain and its original keys
