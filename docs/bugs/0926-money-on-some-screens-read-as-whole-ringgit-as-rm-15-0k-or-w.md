@@ -1,6 +1,6 @@
 ## Money on some screens read as whole ringgit, as RM 15.0K, or without thousands separators instead of AutoCount's 15,000.00 [medium]
 
-<!-- area: Money display -->
+<!-- area: Frontend + mobile -->
 
 **Symptom.** Owner, 2026-09-15: 「我看到amount是那种150000，全部amount需要跟Autocount 的一样」.
 The first report was an export: the Purchase Order list CSV held `1500000` for
