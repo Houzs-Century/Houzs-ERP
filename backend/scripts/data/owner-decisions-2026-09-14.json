@@ -41,6 +41,11 @@
           "when": "2026-09-14, later the same day",
           "means": "HC-PO-010086 (and its sales order HC-SO-013346) is 1A(LHF)+1A(RHF), two separate single-arm pieces at 35\" - which is also what the supplier export states. The 「那就根据amendment的」 answer above is SUPERSEDED: the amendment never changed the build (probe-po-amendment-content run 34800542371: A1 re-stated 8030-2S; only the pillow code moved), so there was no amended build to follow. Evidence he showed: purchasing \"PO10086 we stated 2s / Supplier 1A+1A can double check\", the customer chat \"separate 1+1\" / \"Singapore lift\", and the slip (two 35\" boxes, arm on each outer end, TV below). Written as a build in sofa-compartment-corrections-owner-not-in-file.json."
         }
+      },
+      "carriedOut": {
+        "words": "「HC-PO-2609-051 改成跟工厂一样；HC-PO-010041 删掉重复的两行（9058-1A(RHF)、9058-1NA）。这个做掉」",
+        "when": "2026-09-15",
+        "means": "Two of the four, done. HC-PO-2609-051 (with HC-SO-013475): the 35-inch 8030-2S becomes 1A(LHF) + 1A(RHF), the factory's SO-2609-109 build; entries in sofa-compartment-corrections-owner-not-in-file.json. HC-PO-010041: its build already matched the factory (L(LHF)+1NA+1A(RHF)); what differed was two DUPLICATE rows, a second 9058-1A(RHF) and a second 9058-1NA with no sales link, removed by remove-duplicate-sofa-po-rows-2026-09-15.mjs. HC-PO-010086 was done 2026-09-14. HC-PO-010087 is NOT covered by this instruction."
       }
     },
     {

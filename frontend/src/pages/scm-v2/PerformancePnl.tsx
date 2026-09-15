@@ -8,7 +8,10 @@
 // GET /accounting/reports/performance, computed live on every read; the rate
 // and the account it stands in for are the company's settings, edited here.
 // Export writes the CSV, PDF the printable — both off the same pure lines
-// the screen draws.
+// the screen draws. The account part below the groups sits on the report's
+// own layout (docs/bugs/0912): categories with subtotals, L1..Ln buttons,
+// the Layout button for whoever may read the statements; the product-group
+// table above stays as it is.
 // ----------------------------------------------------------------------------
 
 import { useState } from 'react';
@@ -16,11 +19,15 @@ import { Download, Printer } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { DateField } from '../../vendor/scm/components/DateField';
 import { downloadCSV, toCSV } from '../../lib/csv';
+import { useAuth } from '../../auth/AuthContext';
 import {
-  fmtPerf, fmtPerfPct, performanceNotes, performanceSummaryLines, usePerformanceReport, useSavePerformanceSettings,
+  fmtPerf, fmtPerfPct, performanceNotes, performanceSummaryLines, summaryLinesAtLevel, usePerformanceReport, useSavePerformanceSettings,
   type PerformanceReport,
 } from '../../vendor/scm/lib/performance-report-queries';
 import { generatePerformancePdf } from '../../vendor/scm/lib/performance-pnl-pdf';
+import { laidDepth } from '../../vendor/scm/lib/report-layout';
+import { LevelButtons, type Level } from './ReportLayoutTree';
+import { ReportLayoutEditor } from './ReportLayoutEditor';
 
 const myt = (): string => new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
 const monthStart = (): string => `${myt().slice(0, 7)}-01`;
@@ -50,7 +57,7 @@ export const performanceCsv = (r: PerformanceReport): string => {
     { key: 'pct', label: 'GP %', getValue: (x) => fmtPerfPct(x.gpPct) },
   ]);
   const summary = toCSV(performanceSummaryLines(r), [
-    { key: 'line', label: 'Line', getValue: (l) => l.label },
+    { key: 'line', label: 'Line', getValue: (l) => `${'  '.repeat(Math.max(0, l.depth - 1))}${l.label}` },
     { key: 'amount', label: 'Amount', getValue: (l) => fmtPerf(l.amountSen) },
     { key: 'pct', label: '% of sales', getValue: (l) => fmtPerfPct(l.pct) },
   ]);
@@ -67,6 +74,11 @@ export const PerformanceTab = () => {
   const [draft, setDraft] = useState<{ ratePct: string; account: string } | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const v = draft ?? { ratePct: r ? (r.settings.rateBp / 100).toFixed(2) : '', account: r?.settings.account ?? '' };
+  const [level, setLevel] = useState<Level>('all');
+  const [editing, setEditing] = useState(false);
+  const { can } = useAuth();
+  const canArrange = can('scm.payment_voucher.post');
+  const treeDepth = r ? Math.max(laidDepth(r.layout.otherIncome), laidDepth(r.layout.expenses)) : 0;
 
   const saveSettings = () => {
     const rateBp = Math.round(Number(v.ratePct) * 100);
@@ -83,6 +95,10 @@ export const PerformanceTab = () => {
       <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap' }}>
         <span style={soft}>SO date from</span><DateField value={from} onChange={setFrom} aria-label="Performance from" />
         <span style={soft}>to</span><DateField value={to} onChange={setTo} aria-label="Performance to" />
+        <LevelButtons depth={treeDepth} level={level} onLevel={setLevel} />
+        {canArrange && (
+          <Button variant="ghost" size="sm" onClick={() => setEditing((e) => !e)} aria-pressed={editing}>Layout</Button>
+        )}
         <span style={{ flex: 1 }} />
         <Button variant="ghost" size="sm" onClick={() => { if (r) downloadCSV(`performance-pnl-${from}-${to}.csv`, performanceCsv(r)); }} disabled={!r}>
           <Download size={16} strokeWidth={1.75} /> Export
@@ -105,6 +121,7 @@ export const PerformanceTab = () => {
         {note && <span style={{ ...soft, color: note.startsWith('Saved') ? good : danger }}>{note}</span>}
       </section>
 
+      {editing && <ReportLayoutEditor report="performance" onClose={() => setEditing(false)} />}
       {q.isLoading && <div style={soft}>Working the period out…</div>}
       {q.isError && <div style={{ fontSize: 'var(--fs-13)', color: danger }}>The report did not load — {errText(q.error)}</div>}
       {r && (
@@ -137,10 +154,12 @@ export const PerformanceTab = () => {
                   2026-09-14, docs/bugs/0910: 弄整齐，expense 的 column 和 gp 同一排，
                   percentage 也是): the amount under Gross profit, its % of sales
                   under GP %. Expenses print plain; parentheses only for a line
-                  whose credits beat its debits, and for a loss. */}
-              {performanceSummaryLines(r).map((l, i) => (
-                <tr key={i} data-summary={l.kind} style={l.kind === 'net' ? { fontWeight: 700, borderTop: '2px solid var(--c-ink, #221f20)' } : l.kind === 'total' ? { fontWeight: 600 } : undefined}>
-                  <td colSpan={3} style={{ ...td, paddingLeft: l.kind === 'row' ? 24 : 10 }}>{l.label}</td>
+                  whose credits beat its debits, and for a loss. The account
+                  lines come off the report's tree, indented by depth and
+                  folded by the level chosen above (docs/bugs/0912). */}
+              {summaryLinesAtLevel(performanceSummaryLines(r), level).map((l, i) => (
+                <tr key={i} data-summary={l.kind} data-depth={l.depth} style={l.kind === 'net' ? { fontWeight: 700, borderTop: '2px solid var(--c-ink, #221f20)' } : l.kind === 'total' || l.kind === 'category' ? { fontWeight: 600 } : undefined}>
+                  <td colSpan={3} style={{ ...td, paddingLeft: 10 + 14 * l.depth }}>{l.label}</td>
                   <td style={{ ...td, ...num, color: l.amountSen < 0 ? danger : undefined }}>{fmtPerf(l.amountSen)}</td>
                   <td style={{ ...td, ...num }}>{fmtPerfPct(l.pct)}</td>
                 </tr>

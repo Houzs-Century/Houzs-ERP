@@ -11,7 +11,8 @@ import {
   DOC_TABLE_HEAD_STYLES, DOC_TABLE_STYLES, deliverPdf, drawHeader, ensurePdfCjkFont,
   fmtDocDate, fmtDocStamp, type PdfAction,
 } from './pdf-common';
-import type { RpReport, RpRow } from './rp-report-queries';
+import type { RpReport } from './rp-report-queries';
+import { flattenLaid, fmtPct, pctOf, type LaidNode } from './report-layout';
 
 /** 1,234.56 with a bracketed negative — the report's own money dress. */
 export const fmtRp = (sen: number): string => {
@@ -20,35 +21,39 @@ export const fmtRp = (sen: number): string => {
   return sen < 0 ? `(${s})` : s;
 };
 
-type Line = { kind: 'section' | 'row' | 'total' | 'balance'; label: string; cells: string[] };
+type Line = { kind: 'section' | 'row' | 'category' | 'balance'; label: string; cells: string[] };
 
-/** The table exactly as drawn — pure, so a test reads it without a PDF. */
+/** The table exactly as drawn — pure, so a test reads it without a PDF. The
+    rows are the report's tree (docs/bugs/0912): a category with its
+    per-column subtotal, its rows indented beneath, % of the side's total
+    last; the balance lines carry the side's own %. */
 export function rpTable(r: RpReport): { head: string[]; lines: Line[] } {
   const codes = r.columns.map((c) => c.code);
-  const head = ['', ...r.columns.map((c) => `${c.code}\n${c.name}`), 'Total'];
-  const rowLine = (row: RpRow): Line => ({
-    kind: 'row',
-    label: row.code && row.name !== row.code ? `${row.code} · ${row.name}` : row.name,
-    cells: [...codes.map((c) => fmtRp(row.cells[c] ?? 0)), fmtRp(row.totalSen)],
-  });
-  const balance = (label: string, per: Record<string, number>, total: number): Line =>
-    ({ kind: 'balance', label, cells: [...codes.map((c) => fmtRp(per[c] ?? 0)), fmtRp(total)] });
+  const head = ['', ...r.columns.map((c) => `${c.code}\n${c.name}`), 'Total', '%'];
+  const treeLines = (nodes: LaidNode[]): Line[] => flattenLaid(nodes).map(({ node, depth }) => ({
+    kind: node.kind === 'account' ? 'row' : 'category',
+    label: `${'   '.repeat(Math.max(0, depth - 1))}${node.label}`,
+    cells: [...codes.map((c) => fmtRp(node.cells?.[c] ?? 0)), fmtRp(node.amountSen), fmtPct(node.pct)],
+  }));
+  const balance = (label: string, per: Record<string, number>, total: number, pct: string): Line =>
+    ({ kind: 'balance', label, cells: [...codes.map((c) => fmtRp(per[c] ?? 0)), fmtRp(total), pct] });
+  const blank = codes.map(() => '').concat('', '');
   const lines: Line[] = [
-    balance('Opening balance', r.opening, r.totals.openingTotalSen),
-    { kind: 'section', label: 'RECEIPTS', cells: codes.map(() => '').concat('') },
-    ...r.receipts.map(rowLine),
-    balance('Total receipts', r.totals.receipts, r.totals.receiptsTotalSen),
-    { kind: 'section', label: 'PAYMENTS', cells: codes.map(() => '').concat('') },
-    ...r.payments.map(rowLine),
-    balance('Total payments', r.totals.payments, r.totals.paymentsTotalSen),
-    balance('Closing balance', r.totals.closing, r.totals.closingTotalSen),
+    balance('Opening balance', r.opening, r.totals.openingTotalSen, ''),
+    { kind: 'section', label: 'RECEIPTS', cells: blank },
+    ...treeLines(r.layout.receipts),
+    balance('Total receipts', r.totals.receipts, r.totals.receiptsTotalSen, fmtPct(pctOf(r.totals.receiptsTotalSen, r.totals.receiptsTotalSen || null))),
+    { kind: 'section', label: 'PAYMENTS', cells: blank },
+    ...treeLines(r.layout.payments),
+    balance('Total payments', r.totals.payments, r.totals.paymentsTotalSen, fmtPct(pctOf(r.totals.paymentsTotalSen, r.totals.paymentsTotalSen || null))),
+    balance('Closing balance', r.totals.closing, r.totals.closingTotalSen, ''),
   ];
   return { head, lines };
 }
 
 export async function generateRpPdf(r: RpReport, opts?: { action?: PdfAction }): Promise<void> {
   const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'landscape' });
-  await ensurePdfCjkFont(doc, [...r.receipts, ...r.payments]);
+  await ensurePdfCjkFont(doc, [...r.receipts, ...r.payments, ...flattenLaid(r.layout.receipts).map((x) => x.node), ...flattenLaid(r.layout.payments).map((x) => x.node)]);
   const y = drawHeader(doc, {
     docTitle: 'RECEIPTS & PAYMENTS',
     rightMeta: [
@@ -71,7 +76,7 @@ export async function generateRpPdf(r: RpReport, opts?: { action?: PdfAction }):
     didParseCell: (data) => {
       const line = t.lines.at(data.row.index);
       if (data.section !== 'body' || !line) return;
-      if (line.kind === 'section') data.cell.styles.fontStyle = 'bold';
+      if (line.kind === 'section' || line.kind === 'category') data.cell.styles.fontStyle = 'bold';
       if (line.kind === 'balance') { data.cell.styles.fontStyle = 'bold'; data.cell.styles.lineWidth = { top: 0.2, bottom: 0, left: 0, right: 0 }; }
     },
   });
