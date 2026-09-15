@@ -105,7 +105,9 @@ SOs; writes need `edit` on `scm.sales.invoices`.
 
 | Method | Path | Line | Purpose |
 |--------|------|------|---------|
-| GET | `/` | `:651` | List. `?page=` opts into pagination + `statusCounts`. |
+| GET | `/` | `:651` | List. `?page=` opts into pagination + `statusCounts`. The paginated path's sales scope / tab / company / search / date filter and its sort are built by `lib/si-list-read.ts` (`filterSiList`, `orderSiList`); the tab buckets live in `lib/si-status-buckets.ts`. |
+| GET | `/export/headers` | `backend/src/scm/routes/sales-invoice-exports.ts` | EVERY invoice the list's filter AND the caller's sales scope match (no `page`), in the list's row shape — the same stamps (SO dates, DO number, source POs, order deposit) and the same finance-key strip as `GET /`. `{ salesInvoices, total, truncated }`. |
+| GET | `/export/lines` | `backend/src/scm/routes/sales-invoice-exports.ts` | One row per invoice LINE of every matching invoice. `{ columns, rows, siCount, lineCount, truncated }`; `columns` is the contract in `lib/si-line-export-columns.ts`. See *Exports* below. |
 | GET | `/invoiceable-do-lines` | `:749` | DO lines with `remaining > 0`. |
 | GET | `/:id` | `:759` | Header + items. Sales-scoped, finance-gated. |
 | POST | `/` | `:797` | Create. `asDraft: true` → DRAFT (no GL); else posts revenue at `:946`. |
@@ -1111,3 +1113,40 @@ and only **Download PDF** still asks combined-or-separate. Found beside the
 Purchase Order list's identical gap (owner: 「PO打印没有这个」). Pinned by
 `frontend/src/pages/scm-v2/batchPrintGoesThroughPreview.test.ts`. Trace:
 `docs/bugs/0890-print-all-on-the-purchase-order-and-sales-invoice-lists-skip.md`.
+
+---
+
+## Exports — every page the filters match (2026-09-15)
+
+Owner 2026-09-15: every document list exports **one row per line item**, holding
+**every row the list's current filter matches**. Column design:
+`docs/line-export-columns.md` §3. Same build as the Purchase Order export.
+
+- `GET /export/lines` (`routes/sales-invoice-exports.ts` → `lib/si-line-export.ts`).
+  Columns are `SI_LINE_EXPORT_COLUMNS` in `backend/src/scm/lib/si-line-export-columns.ts`,
+  MIRRORED at `frontend/src/vendor/scm/lib/si-line-export-columns.ts` (refereed by its
+  canonical test). Header names and Line ID are an import contract (Delivery Date,
+  Item Description 2, Remarks).
+- **Sales scope**: both exports resolve `resolveSalesScopeIds` exactly as the list
+  and pass it to `filterSiList`, whose `scopeIds` parameter is REQUIRED — a seller's
+  file holds only the invoices their list shows.
+- **DO No. and Location come through the DO LINE** (`do_item_id` →
+  `delivery_order_items` → `delivery_orders`): `sales_invoice_items.so_item_id` is
+  empty on every production line. Location = the delivery order's warehouse, else
+  that order's `sales_location`, else the invoice's own `sales_location`, as
+  AutoCount's short code through `LOCATION_MAP`.
+- **Balance is net of the SO deposit**: `max(total − paid − deposit slice, 0)`, the
+  list's Outstanding rule (`vendor/scm/lib/si-outstanding.ts`); the slice is
+  stamped by the list's own `stampOrderDeposit`. That stamp fails soft on a
+  screen; the exports REFUSE (500) when it could not read, rather than write an
+  over-stated balance.
+- **Due Date is the stored value only** (owner 2026-09-15: never derived from a
+  credit term). Overdue Days = today (MYT) − Due Date while Balance > 0; blank
+  with no due date. Customer Ref follows the list's `customerRefOf` (ref, then
+  customer_so_no, then po_doc_no). Status is the list's word (`SI_STATUS_WORDS`).
+  Cancelled invoices follow the tab.
+- Cost and margin are never in the line file.
+- Read-only production check: `.github/workflows/grn-pi-si-line-export-check.yml`.
+- **Mobile**: the phone Sales Invoice list (`mobile/MobileModuleList.tsx`) has no
+  export of any kind, so there is nothing to keep in step (§8).
+
