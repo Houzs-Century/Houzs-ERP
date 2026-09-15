@@ -728,6 +728,18 @@ Two things happen here that are easy to miss:
      is reviewer/admin-only (a purchaser cannot re-escalate). Both stages, both
      surfaces (`Projects.tsx` `TaskAttachmentRow` + `mobile/MobilePMS.tsx`
      `DefectFileActions`), gate the buttons on the attachment's latest status.
+   - **The reviewer gets a dedicated mobile "Defect list" card** (owner
+     2026-09-15, `mobile/MobilePMS.tsx` `DEFECT_REVIEW_TILES`): mounted when
+     `DefectActionsCtx.canReview`, it pulls the two Defect Item tiles out into
+     their own card (readOnly — the reviewer stamps, never uploads; the
+     `isDefectTile` carve-out still renders the file list + actions). A crew
+     member who IS the reviewer (Shukor) has the defect tiles filtered OUT of
+     the crew "Event documents" card so the items don't render twice.
+   - ⚠️ The reviewer key is the position NAME `Storekeeper Supervisor` (plus
+     Nancy's role `Ops Exec`). Bulk-moving Shukor onto another position (as the
+     2026-08-28 "Warehouse Crew KL" reorg did) silently strips his reviewer
+     status on all three gates (My Pending lane, action route, `canReview`) —
+     his account must stay on the Storekeeper Supervisor position.
 
 ### Setup & Dismantle crew editor — outsourced providers
 
