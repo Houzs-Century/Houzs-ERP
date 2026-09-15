@@ -6604,6 +6604,29 @@ document as it is now through `enqueueEdit` and marks the refusal re-queued.
 
 `docs/bugs/0924-an-edit-refused-because-a-line-added-a-moment-earlier-had-no.md`.
 
+## The reference is Ref; PO Doc No. and SO Doc No. name documents (2026-09-15)
+
+`SO.UDF_ToPONo` is the book's "PO Doc No.": the purchase orders made from the
+order, ", "-joined. The ERP was sending the order's reference into it.
+
+- The sales order create and edit now send the reference (`customer_so_no`,
+  falling back to `ref`) as `Ref`.
+- Nothing composes `ToPONo` from the reference any more.
+- A cleared reference clears `Ref` only when both columns are empty.
+
+A purchase order now carries its source the way the plug-in does
+(`readPoSourceSo`):
+
+- `UDF_SONo` holds the source orders' book numbers, ", "-joined;
+- `Ref` holds the order's reference when the purchase order has exactly one
+  source order;
+- a purchase order for stock sends neither, and the book keeps its own.
+
+Before this, a create put our own SO numbers in `Ref`, and a transfer sent
+nothing. Filling `ToPONo` with our PO numbers, and repairing the orders already
+changed, are separate steps.
+`docs/bugs/0926-the-order-s-reference-was-written-into-autocount-s-po-doc-no.md`.
+
 ## The sales line names the purchase order made from it (2026-09-15)
 
 The office's plug-in writes `SODTL.UDF_PONo`, `UDF_PODocKey` and `UDF_Creditor` on
