@@ -27,3 +27,7 @@ jobs:
       - run: node scripts/probe-fabric-accessory-population.mjs
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      # TEMPORARY (hard-bound PO link sources) - removed before merge.
+      - run: node scripts/probe-hard-bound-link-sources.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
