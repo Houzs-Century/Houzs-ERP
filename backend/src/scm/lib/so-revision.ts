@@ -346,7 +346,7 @@ export async function applySoAmendment(
      keeps the header cascades below off the frozen lines. */
   const freezeRead = await readSoLineFreeze(sb, docNo);
   const frozenRefusal = soLineWriteRefusal(freezeRead, amendmentLines
-    .filter((l) => String(l.change_type ?? '').toUpperCase() !== 'ADD' && l.sales_order_item_id)
+    .filter((l) => String(l.change_type).toUpperCase() !== 'ADD' && l.sales_order_item_id)
     .map((l) => String(l.sales_order_item_id)));
   if (frozenRefusal) throw new Error(frozenRefusal.message);
   if (freezeRead.ok && freezeRead.freeze.hasLiveDownstream) {

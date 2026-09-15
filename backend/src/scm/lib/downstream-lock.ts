@@ -219,15 +219,15 @@ export async function readSoLineFreeze(sb: Sb, soDocNo: string): Promise<SoLineF
   if (ownDosRes.error) return fail(`delivery_orders: ${ownDosRes.error.message}`);
   if (ownSisRes.error) return fail(`sales_invoices: ${ownSisRes.error.message}`);
 
-  const lines = ((linesRes.data ?? []) as Array<{ id: string; cancelled: boolean | null; variants: Record<string, unknown> | null }>)
+  const lines = ((linesRes.data as unknown as Array<{ id: string; cancelled: boolean | null; variants: Record<string, unknown> | null }> | null) ?? [])
     .map((l) => ({
       id: l.id,
       cancelled: l.cancelled === true,
       buildKey: typeof l.variants?.buildKey === 'string' && l.variants.buildKey ? l.variants.buildKey : null,
     }));
   const lineIds = lines.map((l) => l.id);
-  const ownDos = (ownDosRes.data ?? []) as Array<{ id: string; status: string | null }>;
-  const ownSis = (ownSisRes.data ?? []) as Array<{ id: string; status: string | null }>;
+  const ownDos = (ownDosRes.data as unknown as Array<{ id: string; status: string | null }> | null) ?? [];
+  const ownSis = (ownSisRes.data as unknown as Array<{ id: string; status: string | null }> | null) ?? [];
   const isLive = (s: string | null) => String(s ?? '').trim().toUpperCase() !== 'CANCELLED';
   const liveDocumentCount = ownDos.filter((d) => isLive(d.status)).length + ownSis.filter((s) => isLive(s.status)).length;
 

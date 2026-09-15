@@ -19,7 +19,7 @@ function fakeSb(tables: Record<string, Row[]>) {
     };
     return builder;
   };
-  return { from } as never;
+  return { from } as unknown as Parameters<typeof readSoLineFreeze>[0];
 }
 
 describe('readSoLineFreeze', () => {
