@@ -56,7 +56,7 @@ async function call(method: string, path: string, body: Record<string, unknown>)
   app.use('*', async (c, next) => {
     c.set('user', CALLER);
     c.set('companyId', 1);
-    c.set('supabase', sb as never);
+    c.set('supabase', sb as unknown as Variables['supabase']);
     await next();
   });
   app.route('/', mfgPurchaseOrders);
