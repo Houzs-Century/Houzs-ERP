@@ -42,7 +42,8 @@ describe("memberInviteFormFor", () => {
   });
 });
 
-/* docs/bugs/0924 — the phone's Edit Member form offered a scoped Sales Director
+/* docs/bugs/0924-a-sales-director-s-phone-edit-of-a-member-s-role-department.md
+   — the phone's Edit Member form offered a scoped Sales Director
    Role, Department, Position and Email. PATCH /api/users/:id deletes all four for
    that caller and still answers ok, so the edit "saved" and nothing changed. */
 describe("memberEditFormFor", () => {

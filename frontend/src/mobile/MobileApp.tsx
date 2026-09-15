@@ -945,7 +945,8 @@ function MobileAppInner() {
     const cfg = MODULE_CONFIGS[screen.key];
     /* A scoped Sales Director's member saves ignore fields: the invite stores the
        baseline role (docs/bugs/0887), the edit strips role, department, position
-       and email (docs/bugs/0924). Each form shows only what its save applies. */
+       and email (docs/bugs/0924-a-sales-director-s-phone-edit-of-a-member-s-role-department.md).
+       Each form shows only what its save applies. */
     const baseForm = cfg?.form;
     const scopedSalesDirector = isSalesDirectorUser(user) && !can("users.manage");
     const schema = screen.mode === "edit" && screen.key === "members"

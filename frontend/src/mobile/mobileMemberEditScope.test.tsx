@@ -1,4 +1,5 @@
-/* docs/bugs/0924 — the phone's Edit Member Save sends every field the form shows
+/* docs/bugs/0924-a-sales-director-s-phone-edit-of-a-member-s-role-department.md
+ * — the phone's Edit Member Save sends every field the form shows
  * (MobileModuleForm buildBody), while PATCH /api/users/:id deletes role,
  * department, position and email for a department-scoped Sales Director and
  * still answers ok. The form that caller sees must therefore hold only what that

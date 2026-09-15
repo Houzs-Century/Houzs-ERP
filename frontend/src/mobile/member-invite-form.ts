@@ -20,8 +20,10 @@ export function memberInviteFormFor(form: FormSchema, scopedSalesDirector: boole
  * Sales Director. The handler deletes everything else that caller sends (role,
  * position, department, manager, companies, password, email, email alias) and
  * still answers ok, so any other field would save nothing while the phone
- * reported success (docs/bugs/0924). member-invite-form.test.ts derives this
- * list from the handler and fails when the two disagree.
+ * reported success
+ * (docs/bugs/0924-a-sales-director-s-phone-edit-of-a-member-s-role-department.md).
+ * member-invite-form.test.ts derives this list from the handler and fails when
+ * the two disagree.
  */
 export const SCOPED_DIRECTOR_EDITABLE_MEMBER_FIELDS: readonly string[] = [
   "name",
