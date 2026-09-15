@@ -83,6 +83,32 @@ export type FlatLaid = { node: LaidNode; depth: number };
 export const flattenLaid = (nodes: LaidNode[], depth = 1): FlatLaid[] =>
   nodes.flatMap((node) => [{ node, depth }, ...flattenLaid(node.children, depth + 1)]);
 
+/** A line of a flattened tree, as the fold rule reads it. */
+export type FoldableLine = { id: string; depth: number };
+
+/** Whether the line at `i` folds lines under it (the next line sits deeper). */
+export const foldsChildren = (lines: FoldableLine[], i: number): boolean => {
+  return i + 1 < lines.length && lines[i + 1]!.depth > lines[i]!.depth;
+};
+
+/** Whether a folder is open: the person's own choice first, else the level
+    (L1 shows depth-1 rows folded, All shows everything). */
+export const folderOpen = (line: FoldableLine, level: number | 'all', open: Record<string, boolean>): boolean =>
+  open[line.id] ?? (level === 'all' || line.depth < level);
+
+/** The lines a screen shows: a line shows while every folder above it is
+    open. Depth 0 lines (block titles, totals) are never folded away. */
+export const linesVisible = <L extends FoldableLine>(lines: L[], level: number | 'all', open: Record<string, boolean>): L[] => {
+  const shown: L[] = [];
+  const stack: Array<{ depth: number; open: boolean }> = [];
+  lines.forEach((l, i) => {
+    while (stack.length > 0 && stack[stack.length - 1]!.depth >= l.depth) stack.pop();
+    if (stack.every((s) => s.open)) shown.push(l);
+    if (foldsChildren(lines, i)) stack.push({ depth: l.depth, open: folderOpen(l, level, open) });
+  });
+  return shown;
+};
+
 /* ── reads and writes ─────────────────────────────────────────────────────── */
 
 export const useReportLayout = (report: ReportKey, enabled = true) => useQuery({
