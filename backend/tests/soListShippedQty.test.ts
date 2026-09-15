@@ -14,8 +14,12 @@
 // ----------------------------------------------------------------------------
 import { describe, expect, test } from 'vitest';
 import routes from '../src/scm/routes/mfg-sales-orders.ts?raw';
+/* The LIST's row builder moved out of the route into lib/so-list-rows.ts on
+   2026-09-15 (the export shares it), so the list's half is read there. */
+import listRows from '../src/scm/lib/so-list-rows.ts?raw';
 
-const SRC = routes.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+const strip = (src: string) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+const SRC = `${strip(routes)}\n${strip(listRows)}`;
 
 describe('the shipping figures are emitted on both surfaces', () => {
   test('the LIST emits both numbers beside its verdict', () => {

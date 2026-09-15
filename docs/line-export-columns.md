@@ -22,6 +22,11 @@ Order one, and its columns are the template everything below follows.
 > tables stay as the source map for the ERP's own columns, which sit hidden in
 > each grid's chooser. What differs is listed in
 > [§ What the GR / PI / SI builds changed](#what-the-gr--pi--si-builds-changed);
+> Sales Order (§1) and Delivery Order (§2) export through the same grid-level Export
+> (`GET /<doc>/export/rows`, read in windows of 500; the Sales Orders list is wired, the
+> Delivery Orders list in its own PR) — differences in
+> [§ What the SO / DO builds changed](#what-the-so--do-builds-changed)
+> (`docs/modules/sales-order.md`, `delivery-order.md`, *Exports*). For GR / PI / SI
 > the module guides (`docs/modules/grn.md`, `purchase-invoice.md`,
 > `sales-invoice.md`, *The one Export*) describe the build. Import is
 > desktop-only by the owner's decision (「手机不需要导入」, 2026-09-15).
@@ -704,6 +709,44 @@ line tables or none, and were not in the owner's request. See Q12.
     payment vouchers and receipts — do these need a line export too?
 
 ---
+
+## What the SO / DO builds changed
+
+Owner rulings 2026-09-15 applied: the Delivery Order lines carry **no Unit Price,
+Discount or Line Total** (§2 rows 20–22 removed); **Driver and Vehicle stay**; no
+estimate dates on either. The file is no longer a fixed column list: it is the grid's
+visible columns under **AutoCount's captions** (`SO_LABELS` / `DO_LABELS`; the Detail
+Listing's caption where two listings differ), opening on AutoCount's layouts
+"SALES ORDER DETAILS-SALES" and "LISTING ITEM DETAIL" without prices. Header values are
+the book's spelling where the document is in AutoCount (Doc No, Agent, Debtor Code, Venue,
+Branding; line Item Code / Description / Item Group / UOM through `bookLineItem`); 2990
+prints its own. **Item Description 2 follows the variant summary** by owner decision
+2026-09-15, so it deliberately differs from AutoCount's typed Desc2 on older documents.
+Money is ringgit. Where the build differs from the tables above, and why — each is the
+reading of the screen the export stands beside:
+
+- **SO Customer Ref / DO Customer Ref** is `ref`, else `customer_so_no` — the screens'
+  `customerRefOf` (the tables above said `customer_so_no` first).
+- **SO Doc Balance** is the view's live `balance_sen_live` (total − Σ payments), the
+  list's Balance column; the stored `balance_sen` is the gross total rewritten on every
+  edit and is only the fallback.
+- **SO Status** is the list pill, which is DERIVED: Partially Delivered / Delivered /
+  Invoiced / Delivery Return when the order's delivery records say so, not only the
+  stored word (`CONFIRMED` → Submitted).
+- **SO On Delivery Order Qty** counts linked delivery orders that have not shipped by
+  the app's rule today, `doCountsAsDelivered`: DRAFT only. The table above said
+  DRAFT/LOADED; LOADED (Confirmed) has counted as delivered since 2026-08-22, so a
+  LOADED order's lines are in Delivered Qty.
+- **SO Salesperson** follows the list: the header `agent` text when it is a name, else
+  the staff row of `salesperson_id`. **DO Salesperson** is the staff row of
+  `salesperson_id`, else `agent`.
+- **SO Location**: a line with no warehouse keeps its stored `location` text (already
+  the book's code). **DO Location** falls back to the header `sales_location`.
+- **SO lines**: every line of a matched order is exported; a line the deliverable
+  reading does not cover (a cancelled line — 0 of 16,229 in production on 2026-09-15)
+  prints blank Delivered / Returned / Remaining.
+- **DO Uninvoiced Qty** is the app's Pending (qty − invoiced − returned), blank on a
+  DRAFT or CANCELLED delivery order. **DO Delivered On** is the Malaysian calendar day.
 
 ## What the GR / PI / SI builds changed
 

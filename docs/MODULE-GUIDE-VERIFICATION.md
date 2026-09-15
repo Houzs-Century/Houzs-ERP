@@ -102,6 +102,7 @@ hard to check.
 | `purchase-invoice.md` | not verified | — | — |
 | `purchase-order-amendment.md` | not verified | — | — |
 | `purchase-order.md` | not verified | — | — |
+| `product-code-rename.md` | not verified | — | — |
 | `purchase-return.md` | not verified | — | — |
 | `quote.md` | not verified | — | — |
 | `roles.md` | not verified | — | NEW guide, 2026-09-10 — written with the Roles & Permissions rebuild (PR #3553): the redesigned Team > Roles editor (resource x verb matrix, staged save, three system-role guards) adapted to the flat catalogue. Distinct from `roles-permissions.md` (the permission catalogue itself). Not read back by anyone but its author, which is what `not verified` means. |

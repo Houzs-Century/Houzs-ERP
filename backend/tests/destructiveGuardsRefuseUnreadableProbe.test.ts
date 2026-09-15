@@ -242,6 +242,39 @@ describe('SKU rename refuses when the duplicate probe could not run', () => {
     expect(t.supplier_material_bindings[0]!.item_code).toBe('OLD-1');
   });
 
+  /* Rename cascade gaps (2026-09-15, lib/product-code-rename.ts): these columns
+     hold the SKU's code on production and were left on the old code. The kept
+     columns must NOT follow, and the consignment tables rename SKUs only. */
+  test('a rename re-points amendments, consignment lines, price history and service add-ons, and leaves the kept columns', async () => {
+    const t: Record<string, Row[]> = {
+      ...tables(),
+      so_amendment_lines: [{ new_item_code: 'OLD-1', company_id: CO }],
+      po_amendment_lines: [{ new_item_code: 'OLD-1', company_id: CO }],
+      purchase_consignment_receive_items: [
+        { item_code: 'OLD-1', material_kind: 'mfg_product', supplier_sku: 'OLD-1', company_id: CO },
+        { item_code: 'OLD-1', material_kind: 'fabric', company_id: CO },
+      ],
+      consignment_sales_order_items: [{ item_code: 'OLD-1', company_id: CO }],
+      mfg_product_price_history: [{ item_code: 'OLD-1', company_id: CO }],
+      addons: [{ service_sku: 'OLD-1', company_id: CO }],
+      mfg_so_item_deletions: [{ item_code: 'OLD-1', company_id: CO }],
+      mfg_sales_order_items: [{ item_code: 'OLD-1', company_id: CO + 1 }],
+    };
+    t.supplier_material_bindings[0]!.ac_item_code = 'OLD-1';
+    const res = await rename(t, 'NEW-1');
+    expect(res.status).toBe(200);
+    expect(t.so_amendment_lines[0]!.new_item_code).toBe('NEW-1');
+    expect(t.po_amendment_lines[0]!.new_item_code).toBe('NEW-1');
+    expect(t.purchase_consignment_receive_items.map((r) => r.item_code)).toEqual(['NEW-1', 'OLD-1']);
+    expect(t.purchase_consignment_receive_items[0]!.supplier_sku).toBe('OLD-1');
+    expect(t.consignment_sales_order_items[0]!.item_code).toBe('NEW-1');
+    expect(t.mfg_product_price_history[0]!.item_code).toBe('NEW-1');
+    expect(t.addons[0]!.service_sku).toBe('NEW-1');
+    expect(t.mfg_so_item_deletions[0]!.item_code).toBe('OLD-1');
+    expect(t.supplier_material_bindings[0]!.ac_item_code).toBe('OLD-1');
+    expect(t.mfg_sales_order_items[0]!.item_code).toBe('OLD-1');
+  });
+
   /* THE REGRESSION. An unreadable probe used to read as "no duplicate", and the
      cascade renamed the referencing tables BEFORE mfg_products — so the stock
      and bindings below would already be merged under TAKEN-1. */
