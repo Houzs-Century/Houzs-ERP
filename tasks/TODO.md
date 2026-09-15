@@ -20,7 +20,6 @@ One line per open item: what — waiting on — since. Delete the line when it i
 - Warehouse: 239 SQUARE + 14 LONG custom pillows have no colour (stock-take by colour) — 2026-09-14
 
 ## Dev
-- Accounting queue (owner-confirmed 2026-09-15, one PR each, pause after each): OR backfill for 2990 (180 receipts; show the number ranges first); report screens (% under By month, chevrons on every row, amount → GL, account row → inline lines); SO list CANCELLED tab [Refund] [Convert] bar + panel "add another cancelled order" — waiting on owner's 做 per item — 2026-09-15
 - AutoCount PO Doc No. repair: verify batch 3, then the last 243 rows, out of office hours — 2026-09-15
 - AutoCount: an edit composed before a rebuild is refused "line not found"; recompose once — 2026-09-15
 - AutoCount: size changes on 6 carried-over lines (4 orders) never reached the book; trace, then repair — 2026-09-15
