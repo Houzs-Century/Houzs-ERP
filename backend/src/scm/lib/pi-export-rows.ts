@@ -23,8 +23,7 @@ import { warehouseLabel } from './warehouse-label';
 import { bindingsFor } from './autocount-outbox';
 import { bookSpellingOrOwn } from '../../services/autocount-writeback';
 import { LOCATION_MAP } from '../../services/autocount-master-maps';
-import { resolveAcItemCode } from '../../services/autocount-item-code';
-import { bookLineItem } from '../../services/autocount-book-item';
+import { bookLineItem, type BookLineItem } from '../../services/autocount-book-item';
 import { orderSofaModuleRowsWithinBuilds, sortSoLinesByGroupRank, type RawSoDisplayLine } from '../shared/so-line-display';
 
 export const PI_EXPORT_ROWS_SELECT = `${PI_LIST_SELECT}, linked_ac_docno`;
@@ -96,10 +95,11 @@ type Q = {
 };
 type Sb = { from(table: string): Q };
 
-const bookFieldsOf = (b: { description: string | null; itemGroup: string | null; uom: string | null }) => ({
-  book_description: b.description,
-  book_item_group: b.itemGroup,
-  book_uom: b.uom,
+const bookFieldsOf = (b: BookLineItem | undefined) => ({
+  ac_item_code: b?.itemCode ?? null,
+  book_description: b?.description ?? null,
+  book_item_group: b?.itemGroup ?? null,
+  book_uom: b?.uom ?? null,
 });
 const num = (v: unknown): number | null => {
   if (v === null || v === undefined || v === '') return null;
@@ -185,14 +185,13 @@ export async function readPiExportRows(sbIn: unknown, c: CompanyScopeCtx, filter
     const group = bySupplier.get(k);
     if (group) group.push(l); else bySupplier.set(k, [l]);
   }
-  const acCode = new Map<string, string | null>();
+  const bookItem = new Map<string, BookLineItem>();
   try {
     for (const [supplierId, group] of bySupplier) {
       const bindings = await bindingsFor(sb as never, companyId, group.map((l) => l.item_code ?? ''), supplierId || null);
       for (const l of group) {
         const supplierCode = headerOf.get(l.purchase_invoice_id)?.supplier?.code ?? null;
-        const res = l.item_code ? resolveAcItemCode(l.item_code, { supplierCode, bindings }) : null;
-        acCode.set(l.id, res && res.ok ? res.acItemCode : null);
+        bookItem.set(l.id, bookLineItem({ itemCode: l.item_code, description: text(l.material_name) ?? text(l.description), category: l.item_group, uom: l.uom }, supplierCode, { bindings }));
       }
     }
   } catch (e) {
@@ -209,8 +208,7 @@ export async function readPiExportRows(sbIn: unknown, c: CompanyScopeCtx, filter
       return {
         id: l.id,
         item_code: text(l.item_code),
-        ac_item_code: acCode.get(l.id) ?? null,
-        ...bookFieldsOf(bookLineItem({ itemCode: l.item_code, description: text(l.material_name) ?? text(l.description), category: l.item_group, uom: l.uom }, h.supplier?.code ?? null)),
+        ...bookFieldsOf(bookItem.get(l.id)),
         supplier_sku: text(g?.supplier_sku),
         description: text(l.material_name) ?? text(l.description),
         description2: lineExportDescription2(l.item_group, l.variants, l.description2),

@@ -86,7 +86,14 @@ try {
       uom: txt(b?.baseUom) || txt(e.uom).toUpperCase() || null,
     };
   };
+  const bookWith = (e, descOf) => bookLineItem({ itemCode: e.item_code, description: descOf(e), category: e.item_group, uom: e.uom }, e.supplier_code_for_book ?? null, { bindings: e.bindings });
   const bookCols = (supplierCodeOf, descOf) => [
+    ["EXPORT: bookLineItem WITH bindings", [
+      ["Item Code", (a, e) => [a.ItemCode, bookWith(e, descOf).itemCode], eqText],
+      ["Detail Description", (a, e) => [a.Description, bookWith(e, descOf).description], eqText],
+      ["Item Group", (a, e) => [a.ItemGroup, bookWith(e, descOf).itemGroup], eqText],
+      ["UOM", (a, e) => [a.UOM, bookWith(e, descOf).uom], eqText],
+    ]],
     ["Item Code (book)", [
       ["bookLineItem.itemCode (no bindings)", (a, e) => [a.ItemCode, bookOf(e, supplierCodeOf(e), descOf(e)).itemCode], eqText],
       ["resolveAcItemCode+bindings", (a, e) => [a.ItemCode, e.ac_item_code], eqText],
@@ -122,6 +129,8 @@ try {
       for (const r of group) {
         const res = r.item_code ? resolveAcItemCode(r.item_code, { supplierCode: supplierCodeOf(r), bindings }) : null;
         r.ac_item_code = res && res.ok ? res.acItemCode : null;
+        r.bindings = bindings;
+        r.supplier_code_for_book = supplierCodeOf(r);
       }
     }
     if (sb.__gaps.length) notice(`GAP in bindings read: ${sb.__gaps.join(" | ")}`);

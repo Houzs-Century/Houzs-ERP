@@ -25,8 +25,7 @@ import { warehouseLabel } from './warehouse-label';
 import { bindingsFor } from './autocount-outbox';
 import { bookSpellingOrOwn, resolveAcAgent } from '../../services/autocount-writeback';
 import { LOCATION_MAP } from '../../services/autocount-master-maps';
-import { resolveAcItemCode } from '../../services/autocount-item-code';
-import { bookLineItem } from '../../services/autocount-book-item';
+import { bookLineItem, type BookLineItem } from '../../services/autocount-book-item';
 
 export const SI_EXPORT_ROWS_SELECT = `${SI_HEADER_COLS}, linked_ac_docno`;
 
@@ -93,10 +92,11 @@ type Q = {
 };
 type Sb = { from(table: string): Q };
 
-const bookFieldsOf = (b: { description: string | null; itemGroup: string | null; uom: string | null }) => ({
-  book_description: b.description,
-  book_item_group: b.itemGroup,
-  book_uom: b.uom,
+const bookFieldsOf = (b: BookLineItem | undefined) => ({
+  ac_item_code: b?.itemCode ?? null,
+  book_description: b?.description ?? null,
+  book_item_group: b?.itemGroup ?? null,
+  book_uom: b?.uom ?? null,
 });
 const num = (v: unknown): number | null => {
   if (v === null || v === undefined || v === '') return null;
@@ -183,12 +183,11 @@ export async function readSiExportRows(
 
   /* A sales invoice has no supplier to narrow an item code by, exactly as the
      write-back resolves an IV line. */
-  const acCode = new Map<string, string | null>();
+  const bookItem = new Map<string, BookLineItem>();
   try {
     const bindings = await bindingsFor(sb as never, activeCompanyId(c) ?? null, allLines.map((l) => l.item_code ?? ''));
     for (const l of allLines) {
-      const res = l.item_code ? resolveAcItemCode(l.item_code, { bindings }) : null;
-      acCode.set(l.id, res && res.ok ? res.acItemCode : null);
+      bookItem.set(l.id, bookLineItem({ itemCode: l.item_code, description: text(l.description), category: l.item_group, uom: l.uom }, null, { bindings }));
     }
   } catch (e) {
     return { error: `item code bindings: ${(e as Error).message}` };
@@ -208,8 +207,7 @@ export async function readSiExportRows(
       return {
         id: l.id,
         item_code: text(l.item_code),
-        ac_item_code: acCode.get(l.id) ?? null,
-        ...bookFieldsOf(bookLineItem({ itemCode: l.item_code, description: text(l.description), category: l.item_group, uom: l.uom }, null)),
+        ...bookFieldsOf(bookItem.get(l.id)),
         description: text(l.description),
         description2: lineExportDescription2(l.item_group, l.variants, l.description2),
         remarks: text(l.notes),
