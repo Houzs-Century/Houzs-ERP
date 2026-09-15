@@ -212,6 +212,11 @@ it shows:
 - the desktop queue's **Approver** column, as a coloured pill
   (`frontend/src/vendor/scm/components/AmendmentApproverBadge.tsx`);
 - each card of the phone queue (`frontend/src/mobile/MobileAmendments.tsx`);
+- the PO Amendments queues, on each SO amendment that revises a bound PO. The
+  queues take those rows from `frontend/src/vendor/scm/lib/po-amendment-inbox.ts`
+  (lane not DELIVERY). The phone queue (`frontend/src/mobile/MobilePoAmendments.tsx`)
+  has listed them only since 2026-09-15, and a tap opens the Sales Order — see
+  [`purchase-order-amendment.md`](./purchase-order-amendment.md), *Mobile*;
 - the words, not the pill, on the amendment job card
   (`frontend/src/pages/scm-v2/AmendmentDetailV2.tsx`: the lane chip, "Purchaser
   approval", "Awaiting Logistic approval"), the SO page's pending banner on both
