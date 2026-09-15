@@ -331,7 +331,21 @@ Owner 2026-09-15: every document list exports **one row per line item**, holding
   Overdue Days counts from it while Balance > 0, blank without it. **Status** is the
   list's word (`PI_STATUS_WORDS`, pinned to the list's `STATUS_TONE`), ` (On Hold)`
   after it for a held invoice. Cancelled invoices follow the tab.
-- Read-only production check: `.github/workflows/grn-pi-si-line-export-check.yml`.
+- Read-only production check: `.github/workflows/grn-pi-si-line-export-check.yml`;
+  run 34941927326 (2026-09-15) matched Line ID by Line ID for both companies
+  (company 2 posted tab 37 invoices / 89 lines of All 56 / 133).
+- **On the list (desktop)**: an **Export lines** button beside *Transfer from*
+  (`PurchaseInvoicesListV2.tsx`, shared `pages/scm-v2/list-export-controls.tsx`) writes
+  `purchase-invoice-lines-YYYY-MM-DD.xlsx` (sheet *PI Lines*) through `vendor/scm/lib/pi-list-export.ts`; the toolbar
+  **Export** now calls `/export/headers` for the whole filtered set with the grid's
+  visible columns (`DataTable.onExport`); Assigned SO / Delivered and the "vs PO price" marker are fetched for every exported invoice (`/list-mrp-enrichment`, `/list-po-price`, chunks of 200) when those columns are visible. Both send the list's own tab,
+  settled search and sort — the paged hook builds its request from the same params
+  function. A `truncated` answer is refused, never written. The toolbar Export's
+  Status column writes the list's word. Bug ledger:
+  `docs/bugs/0924-the-goods-received-purchase-invoice-and-sales-invoice-list-e.md`.
+- NOT applied: the grid's per-column funnels (they filter only the loaded page).
+- Import is desktop-only by the owner's decision (「手机不需要导入」, 2026-09-15); no
+  PI line import exists yet on either surface.
 - **Mobile**: the phone Purchase Invoice list (`mobile/MobileModuleList.tsx`) has no
   export of any kind, so there is nothing to keep in step.
 

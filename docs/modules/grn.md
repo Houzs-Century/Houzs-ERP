@@ -1270,6 +1270,7 @@ deliberately last because it is the largest handler in the file. One PR each.
 |---------|---------|--------|
 | List columns / filters | `pages/scm-v2/GoodsReceivedListV2.tsx` | `mobile/MobileModuleList.tsx` config `:1159` |
 | Server pagination opt-in | `useGrnsPaged` | `mobile/MobileModuleList.tsx` `SERVER_PAGINATED` (`:327`) |
+| List exports (Export lines + whole-listing Export, 2026-09-15) | `GoodsReceivedListV2.tsx` over `vendor/scm/lib/grn-list-export.ts` | none — the phone list has no export of any kind; import is desktop-only by owner decision |
 | Detail fields | `pages/scm-v2/GoodsReceivedDetailV2.tsx` (read) + `GoodsReceivedDetail.tsx` (edit) | `mobile/MobileModuleDetail.tsx` config `:324` |
 | Per-line source PO (#26) | `vendor/scm/components/LinePoRefLink.tsx` in both desktop files | `mobile/MobileLinePoRef.tsx`, both over `vendor/scm/lib/line-po-link.ts` |
 | Post / Cancel actions | `GoodsReceivedDetail.tsx:416-459` | `mobile/MobileModuleDetail.tsx:535-542` |
@@ -1630,7 +1631,22 @@ export (`docs/modules/purchase-order.md` *Exports*).
 - Lines are in the detail page's order (creation, category rank, sofa modules).
 - `GET /export/headers` pages the list's own select through the list's filter.
 - Read-only production check: `.github/workflows/grn-pi-si-line-export-check.yml`
-  (`backend/scripts/check-grn-pi-si-line-export.mjs`).
+  (`backend/scripts/check-grn-pi-si-line-export.mjs`); run 34941927326 (2026-09-15)
+  matched Line ID by Line ID for both companies (company 1 All: 542 receipts /
+  1,077 lines; Invoiced Qty equal to the SQL sum on 1,077 / 1,077 lines, the
+  stored figure differing on 69).
+- **On the list (desktop)**: an **Export lines** button beside *Transfer from*
+  (`GoodsReceivedListV2.tsx`, shared `pages/scm-v2/list-export-controls.tsx`) writes
+  `goods-received-lines-YYYY-MM-DD.xlsx` (sheet *GRN Lines*) through `vendor/scm/lib/grn-list-export.ts`; the toolbar
+  **Export** now calls `/export/headers` for the whole filtered set with the grid's
+  visible columns (`DataTable.onExport`); Assigned SO / Delivered are healed through `/list-mrp-enrichment` in chunks of 200, two at a time, when visible. Both send the list's own tab,
+  settled search and sort — the paged hook builds its request from the same params
+  function. A `truncated` answer is refused, never written. The toolbar Export's
+  Status column writes the list's word. Bug ledger:
+  `docs/bugs/0924-the-goods-received-purchase-invoice-and-sales-invoice-list-e.md`.
+- NOT applied: the grid's per-column funnels (they filter only the loaded page).
+- Import is desktop-only by the owner's decision (「手机不需要导入」, 2026-09-15); no
+  GRN line import exists yet on either surface.
 - **Mobile**: the phone GRN list (`mobile/MobileModuleList.tsx`) has no export of
   any kind, so there is nothing to keep in step (§8).
 
