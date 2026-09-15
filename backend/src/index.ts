@@ -70,6 +70,7 @@ import search from "./routes/search";
 import assrPrint from "./routes/assr_print";
 import assrPortal from "./routes/assrPortal";
 import assrFormIntake from "./routes/assrFormIntake";
+import deliverySheetSync from "./routes/deliverySheetSync";
 import chatCallback from "./routes/chatCallback";
 import survey from "./routes/survey";
 import track from "./routes/track";
@@ -326,6 +327,12 @@ app.route("/api/pos", pos);
 // below the gate at first, so every call 401'd at the gate before the
 // route's own key check ever ran.
 app.route("/api/assr-form-intake", assrFormIntake);
+
+// HC Delivery sheet ERP sync — PRE-AUTH for the same reason as the form intake:
+// the sheet-bound Apps Script calls it with no staff session, self-guarded by
+// SHEET_SYNC_KEY (X-Intake-Key), HOUZS only. Replaces the sheet's AutoCount pull
+// and push (owner 2026-09-15). See routes/deliverySheetSync.ts.
+app.route("/api/delivery-sheet", deliverySheetSync);
 
 // Houzs Chat (Connect) delivery callback — PRE-AUTH for the same reason as
 // the form intake above: chat.houzscentury.com's servers call it with no staff

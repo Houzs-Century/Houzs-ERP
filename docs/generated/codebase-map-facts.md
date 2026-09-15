@@ -11,7 +11,7 @@ FOR, which trees are dead, what must be changed in pairs — lives in
 
 ## 1. Backend route inventory
 
-201 route modules (53 in `backend/src/routes`, 148 in `backend/src/scm/routes`), 1310 endpoint registrations.
+202 route modules (54 in `backend/src/routes`, 148 in `backend/src/scm/routes`), 1312 endpoint registrations.
 
 An endpoint is a `router.<method>("/…")` registration. For the per-route authorization
 boundary see the sibling artifact `docs/generated/route-capability-matrix.csv`, which
@@ -26,7 +26,7 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/assistant.ts` | 4 | 225 |
 | `backend/src/routes/assr.ts` | 64 | 3361 |
 | `backend/src/routes/assrAccess.ts` | 0 | 101 |
-| `backend/src/routes/assrFormIntake.ts` | 6 | 965 |
+| `backend/src/routes/assrFormIntake.ts` | 6 | 942 |
 | `backend/src/routes/assrPortal.ts` | 14 | 540 |
 | `backend/src/routes/assr_print.ts` | 1 | 1220 |
 | `backend/src/routes/audit.ts` | 1 | 74 |
@@ -36,6 +36,7 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/chatCallback.ts` | 1 | 282 |
 | `backend/src/routes/clientErrors.ts` | 2 | 232 |
 | `backend/src/routes/companies.ts` | 1 | 48 |
+| `backend/src/routes/deliverySheetSync.ts` | 2 | 183 |
 | `backend/src/routes/departments.ts` | 4 | 281 |
 | `backend/src/routes/documentRefs.ts` | 5 | 133 |
 | `backend/src/routes/finance.ts` | 2 | 466 |
@@ -236,7 +237,7 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (2567 files, 809317 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (2582 files, 811240 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -254,9 +255,9 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `backend/src/scm/routes/mfg-purchase-orders.ts` | 4419 |
 | `frontend/src/pages/scm-v2/SupplierDetail.tsx` | 4342 |
 | `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4204 |
-| `frontend/src/mobile/MobileNewSO.tsx` | 3673 |
+| `frontend/src/mobile/MobileNewSO.tsx` | 3677 |
 | `backend/src/scm/routes/grns.ts` | 3538 |
-| `frontend/src/components/DataTable.tsx` | 3480 |
+| `frontend/src/components/DataTable.tsx` | 3453 |
 | `frontend/src/mobile/MobileServiceCase.tsx` | 3381 |
 | `backend/src/routes/assr.ts` | 3361 |
 | `backend/src/services/projects.ts` | 3137 |
@@ -456,7 +457,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileAnnouncementMedia.tsx` | 171 |
 | `frontend/src/mobile/MobileAnnouncementPopup.tsx` | 152 |
 | `frontend/src/mobile/MobileAnnouncements.tsx` | 1741 |
-| `frontend/src/mobile/MobileApp.tsx` | 1209 |
+| `frontend/src/mobile/MobileApp.tsx` | 1212 |
 | `frontend/src/mobile/MobileAssistant.tsx` | 295 |
 | `frontend/src/mobile/MobileAssrCategoryChips.tsx` | 76 |
 | `frontend/src/mobile/MobileAssrSoField.tsx` | 76 |
@@ -473,7 +474,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileFabricPicker.tsx` | 109 |
 | `frontend/src/mobile/MobileFairReport.tsx` | 749 |
 | `frontend/src/mobile/MobileGantt.tsx` | 230 |
-| `frontend/src/mobile/MobileGrnZeroCost.tsx` | 246 |
+| `frontend/src/mobile/MobileGrnZeroCost.tsx` | 247 |
 | `frontend/src/mobile/MobileInbox.tsx` | 261 |
 | `frontend/src/mobile/MobileInvitations.tsx` | 301 |
 | `frontend/src/mobile/MobileLinePhotos.tsx` | 143 |
@@ -487,7 +488,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileModuleList.tsx` | 2105 |
 | `frontend/src/mobile/MobileMyCaseDetail.tsx` | 326 |
 | `frontend/src/mobile/MobileNewProject.tsx` | 196 |
-| `frontend/src/mobile/MobileNewSO.tsx` | 3673 |
+| `frontend/src/mobile/MobileNewSO.tsx` | 3677 |
 | `frontend/src/mobile/MobilePMS.tsx` | 4491 |
 | `frontend/src/mobile/MobilePOD.tsx` | 558 |
 | `frontend/src/mobile/MobilePmsDefectActions.tsx` | 109 |
