@@ -27,6 +27,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 
 import { enqueueAcOp, enqueueEdit } from './autocount-outbox';
 import { readSoOutstandingSen, readSoPaymentRefs } from './autocount-read';
+import { erpOwnsPaymentText } from './ac-payement-owner';
 import { isWritebackEnabled } from './autocount-writeback-flag';
 import { acUdfMoney, composePaymentUdf, type ErpPaymentRef } from '../../services/autocount-writeback';
 
@@ -106,7 +107,8 @@ export async function enqueueSoPaymentEdit(
       readSoOutstandingSen(sb, h),
       readSoPaymentRefs(sb, opts.docNo),
     ]);
-    const body = composeSoPaymentEdit(String(h.linked_ac_docno), outstandingSen, paymentRefs);
+    /* A carried-over order's payment text is the office's; BALANCE alone goes (docs/bugs/0934). */
+    const body = composeSoPaymentEdit(String(h.linked_ac_docno), outstandingSen, erpOwnsPaymentText(h.linked_ac_docno) ? paymentRefs : []);
     if (!body) return false;
 
     return await enqueueAcOp(sb, {

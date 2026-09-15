@@ -70,6 +70,31 @@ export const useEditJournalEntry = () => {
   });
 };
 
+/** The Journal page grouped per entry (docs/bugs/0935): every entry of the
+    period with its lines in order and the references the GL page prints. */
+export type JournalLineLite = { line_no: number; account_code: string; debit_sen: number; credit_sen: number; party_name: string | null; notes: string | null };
+export type JournalEntryGrouped = JournalEntry & {
+  journal_class: string;
+  lines: JournalLineLite[];
+  doc: string | null;
+  doc2: string | null;
+  who: string | null;
+  reference: string | null;
+};
+export type JournalGroupedFilters = { from: string; to: string; sourceType?: string };
+export const useJournalEntriesGrouped = (f: JournalGroupedFilters, enabled = true) => {
+  const params = new URLSearchParams({ withLines: '1', from: f.from, to: f.to });
+  if (f.sourceType) params.set('sourceType', f.sourceType);
+  const qs = params.toString();
+  return useQuery({
+    queryKey: ['journal-entries', 'grouped', qs],
+    queryFn: () => authedFetch<{ journalEntries: JournalEntryGrouped[] }>(`/accounting/journal-entries?${qs}`),
+    enabled: enabled && Boolean(f.from && f.to),
+    staleTime: 30_000,
+    retry: retryUnlessClientError,
+  });
+};
+
 export type ControlDrift = { docNo: string; docTotalSen: number; jeTotalSen: number; diffSen: number; note: string };
 export type ControlForeign = { jeNo: string; sourceType: string; debitSen: number; creditSen: number };
 export type ControlCheckRow =

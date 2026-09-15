@@ -2541,6 +2541,28 @@ account box is `SearchCombo` (the voucher and bill forms' own): every word
 typed must match the code or the name. Contract:
 `frontend/src/pages/scm-v2/JournalEntryCards.test.tsx`.
 
+**The Journal page grouped per entry (2026-09-15, docs/bugs/0935; owner
+2026-09-14: group the lines under their JE).** `GET /accounting/journal-entries?withLines=1`
+(`journalEntriesList` in `backend/src/scm/routes/accounting.ts`) hands each
+entry its lines in line order — account, debit, credit, party, note — and the
+references the GL page prints (`doc` / `doc2` / `who` from
+`backend/src/acc/journal-refs.ts`), off the same one lines read the journal
+class already needed; the plain list is unchanged. The page is
+`frontend/src/pages/scm-v2/JournalEntries.tsx` (`JournalTab`, mounted by
+`frontend/src/pages/scm-v2/Accounting.tsx` in place of the old flat table;
+the hook `useJournalEntriesGrouped` in
+`frontend/src/pages/scm-v2/accounting-phase1-queries.ts`): one group per
+entry — its head row once (date, number, journal, Ref. 1, Ref. 2, narration
+with the party, the totals, the status), then one row per line with the
+account as code over name (`AccountCell`), the party, the note, debit or
+credit. Reversed entries and their contras stay listed and are marked (the
+journal keeps the record; the GL page leaves them out). The filters live in
+the URL (`from`, `to`, `source`, `journal`; default this month), the five
+journal chips narrow by class, the search box reads the lines too, Export is
+a CSV with one row per line. Tapping a head opens the entry's card — Post /
+Reverse / Copy / Edit as before. Contracts: `backend/tests/journalClasses.test.ts`,
+`frontend/src/pages/scm-v2/JournalEntries.test.tsx`.
+
 **A manual journal edited in one step (2026-09-15, docs/bugs/0932; owner,
 on a posted one: 我无法 edit … 要做).** A posted entry stays immutable; what
 changed is that the three moves a correction took by hand — Copy, post the
@@ -2701,7 +2723,13 @@ after verifying a slip (客户催收据). Channel letters are the PV letter tabl
 it for banks) so a bank is one letter on voucher and receipt alike; formal
 order per channel = the order money was confirmed, and a slow recon never
 scrambles the cash run. No approvals (his call). Born inside the payment
-writers (so-payment-row.ts hook, the SI payment route) with
+writers — for a sales-order payment in `bookSoPaymentBestEffort`
+(`backend/src/scm/lib/so-payment-row.ts`), the one hook every row reaches,
+beside the booking and the deposit invoice (since docs/bugs/0935; it had
+been born in `recordSoPaymentRow` alone, so the two SO-create inserts —
+the POS deposit and the split rows — recorded money with no receipt: 12
+payments from 2026-09-05; pinned by `backend/tests/receiptBornInHook.test.ts`),
+and in the SI payment route — with
 `ensureReceiptForPayment` healing history and unhooked paths on demand.
 Surface: `GET /accounting/receipts`, `POST /accounting/receipts/ensure`
 (returns the WHOLE row — the print button's one round trip),

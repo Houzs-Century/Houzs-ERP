@@ -164,6 +164,26 @@ export function liveColour(v: string): string {
   return successor || v.replace(SUPERSEDED_NOTE, '').trim();
 }
 
+/* Words that label a colour rather than name one: "Col : cove 13", "Fabric : Cove-03". */
+const COLOUR_LABEL_WORD = /^(?:COL|COLOU?R|CLR|FABRIC|FAB|CODE)$/;
+
+/* Upper-cased word tokens, split at letter/digit boundaries and with leading
+   zeros dropped, so "cove 13", "Cove-13" and "COVE-013" read as one colour. */
+function colourTokens(text: string): string[] {
+  return text.toUpperCase()
+    .replace(/([A-Z])(?=\d)|(\d)(?=[A-Z])/g, '$1$2 ')
+    .split(/[^A-Z0-9]+/)
+    .filter(Boolean)
+    .map((t) => (/^\d+$/.test(t) ? String(Number(t)) : t));
+}
+
+/** True when every non-label word of `note` already appears in `printed`. */
+function noteOnlyRestates(note: string, printed: string): boolean {
+  const have = new Set(colourTokens(printed));
+  const words = colourTokens(note).filter((t) => !COLOUR_LABEL_WORD.test(t));
+  return words.length > 0 && words.every((t) => have.has(t));
+}
+
 /**
  * Build a one-line human summary of a line's variants.
  *
@@ -327,7 +347,15 @@ export function buildVariantSummary(
   // add-on stays visible — only the RM figure is dropped.
   const extraRM = Math.round(Number(variants.extraAddonAmountRM ?? 0));
   const noteText = str(variants.extraAddonNote);
-  if (noteText || extraRM > 0) {
+  /* A note that only restates the printed colour is not a second instruction
+     (2026-09-15: the Sofa Accessory data run wrote fabricCode from the note, so
+     HC-SO-013503 read "COVE-13 / SPECIAL: Col : cove 13"). Dropped only when
+     EVERY word of it is already in the fabric segment and nothing is charged
+     for it; a note with anything more prints whole, so a disagreeing code is
+     never hidden. docs/bugs/0934-a-special-order-note-that-only-repeats-the-line-s-colour-pri.md. */
+  const noteRestatesFabric = noteText !== '' && extraRM <= 0 && fabric !== ''
+    && noteOnlyRestates(noteText, fabric);
+  if ((noteText && !noteRestatesFabric) || extraRM > 0) {
     specialBits.push(noteText || 'Extra add-on');
   }
   if (specialBits.length) segments.push(`SPECIAL: ${specialBits.join(' + ')}`);

@@ -4293,6 +4293,19 @@ attribute branch, not inside it, so a category contributing no attributes still
 carries its note — and `description2` on a purchase order is exactly this
 string. Pinned in `backend/src/scm/shared/variantSummarySuperseded.test.ts`.
 
+**A note that only repeats the colour prints once (2026-09-15).** The Sofa
+Accessory data run wrote `variants.fabricCode` from the colour each line already
+named in its note, so HC-SO-013503 printed `COVE-13 / SPECIAL: Col : cove 13`
+on every document composed from variants. `buildVariantSummary` now drops the
+note when EVERY word of it (ignoring `Col` / `Colour` / `Fabric` labels,
+punctuation, case and leading zeros) is already in the fabric segment and the
+add-on carries no charge. Anything more — `BO315-28 SKY x2`, or a typed code
+that disagrees with the fabric (`CH151-5 (PEARL)` beside `CH141-05`) — prints
+whole. A STORED `description2` is not re-derived: AutoCount still echoes it
+verbatim (`composeDescription2`), so a line whose stored text already holds the
+repeat changes only when its variants are next saved.
+`docs/bugs/0934-a-special-order-note-that-only-repeats-the-line-s-colour-pri.md`.
+
 **And it is visible on the cost documents, since 2026-09-10.** The owner: 「POGR
 是不是也是要能看得到这些数据？…全部都是要带过去的哦」. Every cost document used to
 gate its editor on bedframe/sofa, so the text reached the supplier's PDF and
