@@ -146,6 +146,12 @@ const printTally = (title, keyFn) => {
   notice(title);
   for (const [k, t] of tally(keyFn)) say(`   ${pad(k, 58)} lines ${pad(t.lines, 6)} orders ${pad(t.orders.size, 5)} units ${pad(t.units, 6)} holding stock ${t.stock}`);
 };
+/* Owner 2026-09-15: 「没有 Processing date 的单子就不进来」 — an order with no
+   processing date is not MRP demand (shared/mrp-demand-gate.ts). Once that rule
+   is live, NO_PROCESSING must read 0 lines here; a non-zero count means the
+   engine this script ran is not on the rule. */
+printTally("A0. by processing date (NO_PROCESSING must be 0 once the gate is live)", (r) => (r.processing ? "HAS_PROCESSING" : "NO_PROCESSING"));
+printTally("A1. by delivery date x processing date", (r) => `${r.date_state} · ${r.processing ? "HAS_PROCESSING" : "NO_PROCESSING"}`);
 printTally("A. by delivery date", (r) => r.date_state);
 printTally("B. by delivery date x AutoCount book", (r) => `${r.date_state} · ${r.book}`);
 printTally("C. by delivery date x ERP delivery order", (r) => `${r.date_state} · ${r.erp}`);
