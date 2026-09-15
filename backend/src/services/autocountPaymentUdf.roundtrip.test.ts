@@ -117,3 +117,31 @@ describe('the scripts/lib mirror agrees with the shipped composer', () => {
     expect(cutover.composePaymentUdf(payments)).toBe(composePaymentUdf(payments as never));
   });
 });
+
+/* THE FIELD HOLDS FIFTY CHARACTERS (docs/bugs/0921). `SO.UDF_PAYEMENT` is
+   nvarchar(50) in the live book (INFORMATION_SCHEMA, 2026-09-15). A longer value
+   was refused by AutoCount and the host swallowed the refusal, so HC-SO-2609-011
+   (63 characters, three payments) kept an empty field through three sends. */
+describe('a payment text longer than the field', () => {
+  const three = [
+    { account_sheet: 'PUBLIC BANK', approval_code: '474367' },
+    { account_sheet: 'Bank Transfer', approval_code: '470709' },
+    { account_sheet: 'Bank Transfer', approval_code: '478704' },
+  ];
+
+  test('three payments over the field, as on HC-SO-2609-011: the text fits, keeps whole references from the first, and parses to the first pair', () => {
+    const udf = composePaymentUdf(three);
+    expect(udf).not.toBeNull();
+    expect((udf as string).length).toBeLessThanOrEqual(50);
+    expect(udf).toBe('(PUBLIC BANK/474367)(Bank Transfer/470709)');
+    expect(cutover.parsePayment(udf)).toMatchObject({ acct: 'PUBLIC BANK', appr: '474367' });
+  });
+
+  test('CONTROL: a text that already fits is sent exactly as before', () => {
+    expect(composePaymentUdf(three.slice(0, 2))).toBe('(PUBLIC BANK/474367) (Bank Transfer/470709)');
+  });
+
+  test('a single reference longer than the field sends nothing rather than half of it', () => {
+    expect(composePaymentUdf([{ account_sheet: 'A'.repeat(40), approval_code: 'B'.repeat(20) }])).toBeNull();
+  });
+});
