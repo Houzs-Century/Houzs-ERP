@@ -4,7 +4,7 @@
 import { poPriceByPoItemId, poRefByPoItemId, stampGrnLinePoRefs, type LinePoRef } from '../lib/line-po-ref';
 import { Hono } from 'hono';
 import { GRN_STATUS_BUCKETS } from '../lib/grn-status-buckets';
-import { GRN_HEADER_COLS, GRN_LIST_SELECT, filterGrnList, orderGrnList, readGrnListFilters } from '../lib/grn-list-read';
+import { GRN_HEADER_COLS, GRN_LIST_SELECT, filterGrnList, orderGrnList, readGrnListFilters } from '../lib/grn-list-read'; import { attachGrnLines } from '../lib/grn-export-rows';
 import { HELD_OR_TERM, isDocumentHeld } from '../lib/document-hold';
 import { isReceivablePo } from '../lib/source-document-gates'; import { mountHoldRoute } from './document-hold-routes';
 import type { Context } from 'hono';
@@ -1096,13 +1096,13 @@ grns.get('/', async (c) => {
      non-MRP). */
   const grns = rows.map((g) => ({
     ...g,
-    // Stored header total (= Σ qty*unit − discount). Falls back to 0 if unset.
-    total_sen: (g.total_sen as number | null | undefined) ?? 0,
+    total_sen: (g.total_sen as number | null | undefined) ?? 0, // stored header total (Σ qty*unit − discount), 0 if unset
     downstream: [...(downstreamByGrn.get(g.id)?.values() ?? [])],
     ...computeGrnFlags(linesByGrn.get(g.id) ?? []),
   }));
-  if (paginate) return c.json({ grns, total, page, pageSize, statusCounts });
-  return c.json({ grns });
+  if (!paginate) return c.json({ grns }); // lines (the export's own attach, lib/grn-export-rows.ts) only on the paged grid
+  const withLines = await attachGrnLines(sb, c, grns); if (withLines.error !== null) return c.json({ error: 'lines_read_failed', reason: withLines.error }, 500);
+  return c.json({ grns: withLines.rows, total, page, pageSize, statusCounts });
 });
 
 /* ── GET /outstanding-po-items ──────────────────────────────────────────
