@@ -225,6 +225,16 @@ card shows `active / target` when a target is set.
   `status='invited'` user AND an `invitations` row. The stat card counts the
   former; the Pending Invitations table lists the latter (expired ones
   included, hence the counts differ). Revoking removes both.
+- **An edit never sets `invited`, and never re-sends it.** Only the invite
+  writes it; `PATCH /:id` refuses any status but `active` or `disabled`. Desktop
+  edits send only the fields that changed and move a status only through
+  Enable / Disable. The phone form re-sends every field it shows, so its Status
+  select must not start on a value it has no option for: `seedValue`
+  (`frontend/src/mobile/MobileModuleForm.tsx`) starts a fixed-option select
+  blank instead, the member form's blank entry reads "No change", and a blank
+  select is left out of an edit. Until 2026-09-15 it started on `invited`,
+  showed "Active", and every phone Save on an invited member failed
+  (`docs/bugs/0926-a-phone-edit-of-an-invited-member-could-never-be-saved-the-f.md`).
 - **Invite links are live credentials.** `token` / `invite_url` must never get
   a `getValue` (CSV export) and are never rendered — Copy Link goes straight
   to the clipboard, preferring the server-built `invite_url`.
