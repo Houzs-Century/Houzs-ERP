@@ -17,6 +17,11 @@ on:
         required: false
         default: ""
         type: string
+      docs:
+        description: "Comma-separated SO numbers (blank = the 2026-09-15 list of 28)"
+        required: false
+        default: ""
+        type: string
 
 concurrency:
   group: clear-stale-so-dates-2026-09-15
@@ -29,10 +34,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
-        with: { node-version: 22 }
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
       - run: npm ci
       - run: node scripts/clear-stale-so-dates-2026-09-15.mjs
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           MODE: ${{ inputs.mode }}
           CONFIRM: ${{ inputs.confirm }}
+          DOCS: ${{ inputs.docs }}
