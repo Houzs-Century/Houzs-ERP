@@ -310,6 +310,9 @@ export interface ErpLine {
    * the column (see docs/autocount-line-retirement-plan.md).
    */
   cancelled?: boolean | null;
+  /** The line's place on the document, on the tables that have one and select it
+   *  (sales and purchase order lines); the sofa fold spells pieces in that order. */
+  line_no?: number | null;
 }
 
 /** A line the ERP removed, named by the AutoCount key it still points at. */
