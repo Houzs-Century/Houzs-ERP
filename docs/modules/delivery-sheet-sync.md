@@ -42,7 +42,7 @@ key → 401 after a 250 ms penalty, 429 after 10 failures per IP in 15 min
 | Route | What |
 |---|---|
 | `GET /so-since?since=<ts>&limit=<n>` | Orders whose `LastModified` is **strictly after** `since`, oldest first, `limit` ≤ 1000 (default 300). Returns `{count, since, next_since, has_more, records[]}`. `next_since` is the last record's `LastModified` — store it once every row of the page is written. `since` accepts the old script's `yyyy-MM-dd HH:mm:ss` or Postgres's own `timestamptz::text`; anything else is 400. |
-| `POST /updates` `{updates:[{DocNo, Remark4?, ExpiryDate?}]}` | ≤ 300 per call (413 over). Per row: `{DocNo, ErpDocNo, ok}` or `{DocNo, skipped: no_order \| nothing_to_write \| bad_date}`. A **present** `Remark4` is written as sent, blank included (clearing col A is an edit); an **absent** one keeps the ERP's. A **blank** `ExpiryDate` keeps the ERP's date (the old daily PO sync nulled text dates; this leg must not). |
+| `POST /updates` `{updates:[{DocNo, Remark4?, ExpiryDate?}]}` | ≤ 300 per call (413 over). Per row: `{DocNo, ErpDocNo, ok}` or `{DocNo, skipped: no_order \| nothing_to_write \| bad_date}`. A **present** `Remark4` is written as sent, blank included (clearing col A is an edit); an **absent** one keeps the ERP's. A **blank** `ExpiryDate` keeps the ERP's date (the old daily PO sync nulled text dates; this leg must not). The whole batch is ONE `UPDATE … FROM (VALUES …)` statement: the Worker serves Google's US servers, so each database round trip crosses to Singapore (~400 ms; 300 single-row updates took 116 s on the first seed, 2026-09-15). |
 
 Pure logic in `backend/src/lib/delivery-sheet-feed.ts` (SQL, mapper, parsers).
 `intakeCompany` moved to `backend/src/lib/intake-company.ts` and is shared with

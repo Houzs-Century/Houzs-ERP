@@ -21,8 +21,8 @@ import { toPgPlaceholders } from '../src/db/d1-compat';
 import {
   FEED_EPOCH,
   FEED_SINCE_SQL,
-  UPDATE_FROM_SHEET_SQL,
   feedLinesSql,
+  updateFromSheetSql,
   toSheetRecord,
   type FeedHeadRow,
   type FeedLineRow,
@@ -190,19 +190,19 @@ describePg('HC Delivery sheet feed SQL — real Postgres', () => {
 
   test('the write leg: found by the AutoCount number, keeps what the sheet did not send, moves the order forward', async () => {
     const before = (await page(1, FEED_EPOCH, 10))[1]!.last_modified_text;
-    const upd = toPgPlaceholders(UPDATE_FROM_SHEET_SQL);
-    const hit = await sql.unsafe(upd, ['Done Scheduling', '2026-10-01', 1, 'SO-013495'] as never[]);
-    expect(hit.map((r) => r.doc_no)).toEqual(['HC-SO-013495']);
+    const upd1 = toPgPlaceholders(updateFromSheetSql(1));
+    const hit = await sql.unsafe(upd1, ['SO-013495', 'Done Scheduling', '2026-10-01', 1] as never[]);
+    expect(hit.map((r) => [r.doc_no, r.sheet_doc_no])).toEqual([['HC-SO-013495', 'SO-013495']]);
     const [row1] = await sql`SELECT remark4, customer_delivery_date::text AS d FROM scm.mfg_sales_orders WHERE doc_no = 'HC-SO-013495'`;
     expect(row1).toEqual({ remark4: 'Done Scheduling', d: '2026-10-01' });
 
     // Only the date this time (Remark4 absent) — by the ERP number.
-    await sql.unsafe(upd, [null, '2026-10-02', 1, 'HC-SO-013495'] as never[]);
+    await sql.unsafe(upd1, ['HC-SO-013495', null, '2026-10-02', 1] as never[]);
     const [row2] = await sql`SELECT remark4, customer_delivery_date::text AS d FROM scm.mfg_sales_orders WHERE doc_no = 'HC-SO-013495'`;
     expect(row2).toEqual({ remark4: 'Done Scheduling', d: '2026-10-02' });
 
     // Only the remark, blank on purpose (col A cleared) — the date stays.
-    await sql.unsafe(upd, ['', null, 1, 'SO-013495'] as never[]);
+    await sql.unsafe(upd1, ['SO-013495', '', null, 1] as never[]);
     const [row3] = await sql`SELECT remark4, customer_delivery_date::text AS d FROM scm.mfg_sales_orders WHERE doc_no = 'HC-SO-013495'`;
     expect(row3).toEqual({ remark4: '', d: '2026-10-02' });
 
@@ -210,9 +210,29 @@ describePg('HC Delivery sheet feed SQL — real Postgres', () => {
     const after = await page(1, before, 10);
     expect(after.map((r) => r.doc_no)).toEqual(['HC-SO-013495']);
 
+    // A batch: two live orders and two misses in ONE statement — only the
+    // hits come back, each with the sheet's own key. Nulls in every column of
+    // a VALUES row still type-check (the casts carry the types).
+    const upd4 = toPgPlaceholders(updateFromSheetSql(4));
+    const batch = await sql.unsafe(upd4, [
+      'SO-013495', 'Done Delivered', null,
+      'HC-SO-2609-078', null, '2026-10-05',
+      '2990-SO-2609-001', 'x', null,
+      'SO-999999', null, null,
+      1,
+    ] as never[]);
+    expect(batch.map((r) => [r.doc_no, r.sheet_doc_no]).sort()).toEqual([
+      ['HC-SO-013495', 'SO-013495'],
+      ['HC-SO-2609-078', 'HC-SO-2609-078'],
+    ]);
+    const [b1] = await sql`SELECT remark4, customer_delivery_date::text AS d FROM scm.mfg_sales_orders WHERE doc_no = 'HC-SO-013495'`;
+    expect(b1).toEqual({ remark4: 'Done Delivered', d: '2026-10-02' });
+    const [b2] = await sql`SELECT customer_delivery_date::text AS d FROM scm.mfg_sales_orders WHERE doc_no = 'HC-SO-2609-078'`;
+    expect(b2).toEqual({ d: '2026-10-05' });
+
     // Other company, DRAFT, CANCELLED, unknown: nothing written.
     for (const key of ['2990-SO-2609-001', 'SO-000001', 'SO-000002', 'SO-999999']) {
-      expect(await sql.unsafe(upd, ['x', null, 1, key] as never[])).toHaveLength(0);
+      expect(await sql.unsafe(upd1, [key, 'x', null, 1] as never[])).toHaveLength(0);
     }
   });
 });
