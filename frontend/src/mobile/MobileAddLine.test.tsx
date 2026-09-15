@@ -147,6 +147,6 @@ describe("MobileAddLine — a refusal stays on screen", () => {
     await userEvent.click(screen.getByRole("button", { name: "Add" }));
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain("PILLOW-STD x1");
-    expect(alert.textContent).toContain("normally about RM15.00 each");
+    expect(alert.textContent).toContain("normally about RM 15.00 each");
   });
 });

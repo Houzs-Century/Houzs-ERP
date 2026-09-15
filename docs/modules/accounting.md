@@ -950,7 +950,52 @@ much; the Deposit Invoices page shows what each was refunded, note by note,
 with the voucher. This is the e-invoice shape as well: a Refund Note
 referencing the original document, never a cancel past 72 hours. Two things
 deliberately NOT done here, both with management (owner 2026-09-13): the
-closed-invoice cancel guard, and converting payments to a new order.
+closed-invoice cancel guard, and converting payments to a new order — the second built on 2026-09-15 (next paragraph).
+
+**Money on a cancelled order: refund or convert, side by side (2026-09-15,
+docs/bugs/0927; owner: 他应该是 convert or refund，所以功能要做一起 … 这个按钮我觉得挨
+着一起 … 原本当天，collected by 不影响).** One pool, read off the ledger every
+time by `orderMoney` in `backend/src/scm/lib/so-money.ts`: booked payments −
+refund vouchers on the order (draft or posted) − converted rows on other
+orders naming it = remaining; a refund and a conversion can never together
+move more than there is. The doors are `backend/src/scm/routes/so-money-routes.ts`
+(registered in `backend/src/scm/routes/mfg-sales-orders.ts` behind the
+per-order guard): `GET /:docNo/money` (the panel, and the customer's other
+cancelled orders with money), `POST /:docNo/money/refund` (a Customer Refund
+voucher DRAFT for Finance on the salesperson's behalf — the voucher door's
+own core, `createPaymentVoucherCore` in
+`backend/src/scm/routes/payment-vouchers.ts`, the customer as payee, the
+default bank as Paid From, only Finance approves), `GET
+/:docNo/convert-sources` and `GET /cancelled-with-money` (Finance's list).
+A CONVERSION is a payment row on the new order with method `converted`
+(`CONVERTED_METHOD`, `backend/src/acc/payments.ts`) — through `POST
+/:docNo/payments` or the order create (`backend/src/scm/lib/so-create-payment-slips.ts`)
+with `convertedFromDocNo` — checked by `convertGuard`, carrying the
+cancelled order's first payment day and collector, the sheet "Converted from
+SO-x", no receipt, and the transfer Dr AR (cancelled order's customer) / Cr AR
+(new order's customer) dated the day of the move (`orderMoneyTransferLines`
+in `backend/src/acc/rules.ts`, source type `SOCONV`, `postConvertedPayment`).
+Under the deposit-invoice switch the moved amount comes off the cancelled
+order's invoices by credit note (`takeFromDepositInvoices` in
+`backend/src/acc/deposit-refunds.ts`, the note carrying
+`converted_payment_id` — migration
+`backend/src/db/migrations-pg/20260915T1800_so_payment_conversions.sql`)
+and the new order gets its own invoice dated the day of the move
+(`afterConvertedRowBooked`): sales stands once — old invoice +X, note −X, new
+invoice +X. Un-convert = delete the row: the transfer reversed
+(`reverseSoPayment` tries SOPAY then SOCONV), the notes contra'd
+(`releaseConversionNotes`), the invoice cancelled; the PATCH door refuses a
+converted row. Converted rows are left alone by the drawer count
+(`backend/src/acc/daily-close.ts`), the drift check
+(`backend/src/acc/payment-drift.ts`) and receipt healing
+(`backend/src/acc/receipts.ts`); the refund headroom in
+`backend/src/scm/lib/pv-refund.ts` subtracts what was moved; the journal
+references name the new order and the cancelled one
+(`backend/src/acc/journal-refs.ts`); SOCONV files under GENERAL
+(`backend/src/acc/journal-class.ts`). The screens (the panel with [Refund]
+[Convert], the "Convert from cancelled SO" method in New SO and Add payment,
+Finance's list) follow in their own PR. Contract:
+`backend/tests/soMoneyConvert.test.ts`.
 
 **Deposit invoices (2026-09-12, docs/bugs/0828; owner: e-invoice 好像是根据收钱
 就认 sales 了 … 每个顾客不是有自己本身的 account code 吗 … 做成开关 … 可以自己选
@@ -2520,8 +2565,41 @@ Contracts: `backend/tests/accountingReports.test.ts`,
 `backend/tests/rpReport.test.ts`,
 `backend/tests/glStreamSkipsReversalPairs.test.ts`,
 `backend/tests-pg/accountBalancesCountTheBooks.pg.test.ts`,
-`frontend/src/pages/scm-v2/GlTabReversed.test.tsx`,
+`frontend/src/pages/scm-v2/GeneralLedger.test.tsx` (the tick — the tab became the ledger of docs/bugs/0924),
 `frontend/src/vendor/scm/lib/accounting-queries-gl.test.tsx`.
+
+**The General Ledger the AutoCount way (2026-09-15, docs/bugs/0924; owner:
+点开看明细其实就是看 general ledger … gl 显示的资料也要优化).** `GET
+/accounting/gl/ledger` (`backend/src/scm/routes/accounting-ledger.ts`, the
+statements' permission) prints one block per account in code order: BALANCE
+B/F — the counted lines before `from`, on the account's natural side (debit
+for assets and expenses, credit for the rest) — the period's lines in date
+order with a running balance, the block's totals, the grand totals. A line
+carries its journal type (`classifyJournal`), its other side (`counterOf`:
+the one other account, else the largest opposite account and how many more),
+Ref. 1 / Ref. 2 and the who (`doc` / `doc2` / `who` from
+`backend/src/acc/journal-refs.ts` — the receipt or the order, the voucher and
+what a refund refunds, the invoice and the supplier's ref, "<acquirer>
+settlement dd/mm/yyyy" and the merchant's ref, "<acquirer> payout dd/mm/yyyy"
+and the bank ref, "Stock mm/yyyy"), and the description off the line's note
+or the entry's narration. A reversal pair is neither listed nor counted
+(docs/bugs/0923); with `showReversed=1` its lines are listed and marked but
+move no balance and no total. The tab `frontend/src/pages/scm-v2/GeneralLedger.tsx`
+(`/scm/accounting?tab=gl`) keeps its filters in the URL — period, picked
+accounts as chips or a code range, Show reversed entries — prints the code
+over the name (`AccountCell`), and has Export (`ledgerCsv` in
+`frontend/src/vendor/scm/lib/ledger-queries.ts`) and Print (`ledgerTable`,
+`generateLedgerPdf` in `frontend/src/vendor/scm/lib/ledger-pdf.ts`), both
+the rows the screen shows. 点开明细: a figure on the P&L or the balance sheet
+(`frontend/src/pages/scm-v2/Reports.tsx`, `LaidBlock` `onPick`) opens the
+ledger on the row's accounts for the period (`leafCodes`, `ledgerHref` in
+`frontend/src/vendor/scm/lib/report-layout.ts`); the balance sheet opens the
+month of its as-of day. The flat `GET /accounting/gl` stream stays.
+Contracts: `backend/tests/glLedger.test.ts`,
+`backend/src/acc/journal-refs.test.ts`,
+`frontend/src/pages/scm-v2/GeneralLedger.test.tsx`,
+`frontend/src/vendor/scm/lib/ledger-queries.test.ts`,
+`frontend/src/pages/scm-v2/Reports.test.tsx`.
 
 **Document numbers follow the document date (owner 2026-09-07: 要根据文件日期,
 而不是文件几时 create 的日期).** Six finance series take their YYMM from the

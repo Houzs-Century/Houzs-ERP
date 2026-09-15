@@ -31,6 +31,38 @@ Order one, and its columns are the template everything below follows.
 
 ---
 
+## The grid-driven mechanism (2026-09-15) — how every list exports by line
+
+Owner 2026-09-15: ONE Export per list, one row per line, the columns the grid
+shows (hidden columns are not exported), following the grid's filter and view.
+Built once in `DataTable`; each list plugs in.
+
+- **Column** (`frontend/src/components/DataTable.tsx`, `Column<T, L>`):
+  `lineValue(row, line)` is the cell for one line (blank on a document with no
+  lines); `exportValue(row)` is a document value for the file when it differs
+  from `getValue` (money in ringgit where `getValue` holds sen for sorting);
+  `exportFormat` is `text | number | money | rate | date` (date = a real Excel
+  date cell shown yyyy/mm/dd; money #,##0.00; rate up to 4 decimals). A column
+  with neither `lineValue` nor `exportValue` repeats its `getValue` on each line.
+- **DataTable prop** `exportLines = { fetchRows({ exportKeys, filterKeys }),
+  linesOf(row), sheetName, onError }`. `fetchRows` returns EVERY row the list's
+  server filter matches (all pages), each with its lines, and throws to refuse
+  (for example when the server says `truncated`). The toolbar Export then
+  applies the grid's funnels and sort with the SAME functions the grid uses
+  (`frontend/src/components/dataTableRows.ts`: `applyColumnFilters`,
+  `sortTableRows`) and writes `<exportName>-YYYY-MM-DD.xlsx` through
+  `frontend/src/components/dataTableLineExport.ts`. A line column should give
+  `getFilterValues` every line's value, so a funnel keeps a document when ANY
+  line matches.
+- **Server contract** per document: `GET /<doc-route>/export/rows` with the list's
+  query parameters and no `page`, answering
+  `{ <docs>: Array<ListRow & { lines }>, total, lineCount, truncated }`. Read
+  through the list's own filter and sort, page headers past the PostgREST
+  ceiling, read lines by header id with the company predicate on the line read
+  too, and attach them with the SAME function the list page endpoint uses.
+- Without `exportLines`, the CSV export is unchanged except that `exportValue` is
+  honoured.
+
 ## 0. Rules that apply to every document
 
 1. **One row per line.** The document's header values (number, date, party,
@@ -54,6 +86,17 @@ Order one, and its columns are the template everything below follows.
    65 of 65 delivery orders, 110 of 110 purchase orders, 68 of 68 goods receipts,
    56 of 56 purchase invoices and 10 of 10 sales invoices have none.
    Every Houzs Century (company 1) document of those six types has one.
+9. **Item Code, Item Description, Item Group and UOM as the book holds them**
+   (2026-09-15): `bookLineItem` in `backend/src/services/autocount-book-item.ts`,
+   shared by every document export. Item Code is the write-back's
+   `resolveAcItemCode`; Description, Item Group and UOM come from the AutoCount
+   item master snapshot (`backend/scripts/data/ac-item-master.tsv`, written
+   read-only by `export-ac-item-master.py`, compiled by
+   `gen-autocount-item-master.mjs`, CI `audit:ac-item-master`), falling back to the
+   ERP's own values. PROVEN on the live book 2026-09-15 by AutoCount item code:
+   Item.ItemGroup equals the listed group on 61,818 / 61,818 SO lines and
+   47,928 / 47,928 DO lines; BaseUOM equals the line UOM on 61,795 / 61,818 and
+   47,906 / 47,928. Re-export when items are opened in AutoCount.
 
 ### 0.1 The Purchase Order template (not changed here)
 

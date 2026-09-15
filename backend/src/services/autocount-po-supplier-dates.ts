@@ -49,20 +49,36 @@ export function poSupplierDateUdf(header: PoSupplierDates): Record<string, strin
 }
 
 /**
+ * The source sales order's number, as the book's `UDF_SONo` ("SO Doc No."), the
+ * field the office plug-in fills on every purchase order it makes: 908 of 910
+ * plug-in pairs since 2026-06-01 (live book, 2026-09-15), where the ERP's own
+ * purchase orders carried none (docs/bugs/0926). Omitted when the ERP cannot
+ * name ONE order, so the book keeps its own.
+ */
+export function poSourceSoUdf(header: { source_so_no: string | null }): Record<string, string> {
+  const no = (header.source_so_no ?? '').trim();
+  return no ? { SONo: no } : {};
+}
+
+/**
  * The header a PO EDIT sends. /edit applies only the keys it is given
  * (AcSyncService.cs `Edit`: `h.ContainsKey`, then `ApplyUdf(h, ...)` reads
- * `Header.UDF`), so a blank CreditorName / Description is dropped, as before,
- * and `UDF` is present only when there is a date to say.
+ * `Header.UDF`), so a blank CreditorName / Description / Ref is dropped and the
+ * book keeps its own, and `UDF` is present only when there is something to say.
+ * Ref is the source order's reference, which is what the plug-in copies onto its
+ * purchase orders (897 of 910 pairs).
  */
 export function poEditHeader(
-  header: { creditor_name: string | null; notes: string | null } & PoSupplierDates,
+  header: { creditor_name: string | null; notes: string | null; ref: string | null; source_so_no: string | null } & PoSupplierDates,
 ): Record<string, string | Record<string, string>> {
   const out: Record<string, string | Record<string, string>> = {};
   const creditor = (header.creditor_name ?? '').trim();
   const notes = (header.notes ?? '').trim();
+  const ref = (header.ref ?? '').trim();
   if (creditor) out.CreditorName = creditor;
   if (notes) out.Description = notes;
-  const udf = poSupplierDateUdf(header);
+  if (ref) out.Ref = ref;
+  const udf = { ...poSupplierDateUdf(header), ...poSourceSoUdf(header) };
   if (Object.keys(udf).length) out.UDF = udf;
   return out;
 }

@@ -6604,6 +6604,42 @@ document as it is now through `enqueueEdit` and marks the refusal re-queued.
 
 `docs/bugs/0924-an-edit-refused-because-a-line-added-a-moment-earlier-had-no.md`.
 
+## The reference is Ref; PO Doc No. and SO Doc No. name documents (2026-09-15)
+
+`SO.UDF_ToPONo` is the book's "PO Doc No.": the purchase orders made from the
+order, ", "-joined. The ERP was sending the order's reference into it.
+
+- The sales order create and edit now send the reference (`ref`, falling back
+  to `customer_so_no`) as `Ref`.
+- Nothing composes `ToPONo` from the reference any more.
+- A cleared reference clears `Ref` only when both columns are empty.
+
+A purchase order now carries its source the way the plug-in does
+(`readPoSourceSo`):
+
+- `UDF_SONo` holds the source orders' book numbers, ", "-joined;
+- `Ref` holds the order's reference when the purchase order has exactly one
+  source order;
+- a purchase order for stock sends neither, and the book keeps its own.
+
+Before this, a create put our own SO numbers in `Ref`, and a transfer sent
+nothing.
+`docs/bugs/0926-the-order-s-reference-was-written-into-autocount-s-po-doc-no.md`.
+
+**Filling PO Doc No.** After a purchase order's `create_po`, `so_to_po` or
+`cancel` is marked sent, `queueSoPoDocNos` (`scm/lib/autocount-so-po-doc-no.ts`)
+queues each source order a header-only edit
+`{ Header: { UDF: { ToPONo } }, Lines: [] }`:
+
+- the value is the order's purchase orders that are in the book and not
+  cancelled, sorted and ", "-joined;
+- after a cancel that leaves none, the field is cleared.
+
+The orders the write-back had damaged are repaired by
+`scripts/repair-ac-po-doc-no.mjs` (plan / apply, `LIMIT` per run, since the drain
+sends 20 rows a sweep).
+`docs/bugs/0927-our-purchase-order-numbers-never-reached-the-sales-order-s-p.md`.
+
 ## The sales line names the purchase order made from it (2026-09-15)
 
 The office's plug-in writes `SODTL.UDF_PONo`, `UDF_PODocKey` and `UDF_Creditor` on

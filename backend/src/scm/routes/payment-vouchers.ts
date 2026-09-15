@@ -577,7 +577,10 @@ export const createPaymentVoucherHandler = async (c: any) => {
   }
   let body: Record<string, unknown>;
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
-
+  return createPaymentVoucherCore(c, body);
+};
+/** The voucher raised from a body already in hand — the door above, and lib/so-money's refund draft (docs/bugs/0927). */
+export const createPaymentVoucherCore = async (c: any, body: Record<string, unknown>) => {
   const payeeName = (body.payeeName as string | undefined)?.trim();
   if (!payeeName) return c.json({ error: 'payee_required' }, 400);
   const creditAccountCode = (body.creditAccountCode as string | undefined)?.trim();

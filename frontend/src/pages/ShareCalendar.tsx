@@ -30,7 +30,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { correlatedFetch } from "../lib/requestCorrelation";
-import { fmtDate, fmtDateTime, fmtRM } from "../vendor/shared/format";
+import { fmtDate, fmtDateTime } from "../vendor/shared/format";
+import { formatCurrency } from "../lib/utils";
 
 export type ShareMode = "contractor" | "brand";
 
@@ -704,7 +705,7 @@ function EventPanel({
           {mode === "brand" ? (
             <div>
               <dt className="text-[11px] uppercase tracking-wide text-gray-500">Total sales</dt>
-              <dd className="font-semibold text-gray-900">{figures?.totalSales != null ? fmtRM(figures.totalSales) : "—"}</dd>
+              <dd className="font-semibold text-gray-900">{figures?.totalSales != null ? formatCurrency(figures.totalSales) : "—"}</dd>
             </div>
           ) : null}
         </dl>

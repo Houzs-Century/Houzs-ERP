@@ -60,7 +60,6 @@ import {
   bookSpellingOrOwn,
   resolveAcAgent,
   soBranding,
-  soCustomerRef,
   soInvoiceAddress,
   composeCreatePo,
   composeCreateSo,
@@ -112,7 +111,9 @@ import { acParentlessCreateReason, acNotCarriedReason } from './autocount-outbox
    imports above. Same function, same call site in dispatchOne. */
 import { lineIdentityGap, persistNewLineKeys, newLineTargetOf } from './autocount-line-keys';
 import { attachPhotos } from './autocount-photo-attach';
+import { readPoSourceSo } from './autocount-po-source-so';
 import { resendHeldEdits } from './autocount-held-edit-resend';
+import { queueSoPoDocNos } from './autocount-so-po-doc-no';
 import { readMfgProductBindings } from './supplier-bindings';
 import {
   soLine,
@@ -356,7 +357,7 @@ export async function enqueueAcOp(sb: Sb, input: EnqueueInput): Promise<boolean>
    customer_so_no is the customer's own reference; po_doc_no / customer_po were
    the other two columns that once held it, both 0%-filled and DROPPED from
    scm.mfg_sales_orders by migration 0310 — `customer_so_no` is the only one any
-   surface still writes, and it is what ToPONo reads (soCustomerRef). */
+   surface still writes, and it is what Ref reads (soReference, docs/bugs/0926). */
 /* emergency_contact_phone is AutoCount's DeliverPhone1 and `phone` is its
    Phone1 — two contacts, two columns (owner 2026-08-15). The cutover decided
    the pairing in this direction already: import-ac-outstanding-so.mjs:302 takes
@@ -647,7 +648,7 @@ async function readPoHeader(sb: Sb, poId: string) {
     creditor_code: s?.code ?? null,
     creditor_name: s?.name ?? null,
     agent: AC_PURCHASE_AGENT,
-    ref: null,
+    ...(await readPoSourceSo(sb, String(h.id ?? poId))),  // ref + source_so_no - docs/bugs/0926
     notes: (h.notes as string | null) ?? null,
     purchase_location: purchaseLocation,
     linked_ac_docno: (h.linked_ac_docno as string | null) ?? null,
@@ -681,11 +682,10 @@ export async function enqueuePoCreate(
     /* TRANSFER OR CREATE — po-transfer-shape.ts falls back on ANY doubt. READ
        BEFORE COMPOSING: the shape decides whether an ItemCode is even sent
        (docs/bugs/0541). */
-    const { shape, sourceRef } = await readPoEnqueueShape(sb, opts.poId);
+    const { shape } = await readPoEnqueueShape(sb, opts.poId);
     const forTransfer = shape.kind === 'transfer';
     const { collapsed, details } = composeDetails(lines, { supplierCode: header.creditor_code, bindings, forTransfer });
     const body = composeCreatePo(header, lines, { bindings, forTransfer });
-    if (sourceRef) (body as unknown as Record<string, unknown>).Ref = sourceRef;
 
     return { queued: await enqueueAcOp(sb, {
       companyId: opts.companyId,
@@ -1475,9 +1475,8 @@ async function composePoState(sb: Sb, poId: string, retired: AcRetiredLine[] = [
     photos: photosOf(poRows),
     self: { table: 'purchase_orders', keyCol: 'id', key: poId } as AcDocRef,
     create: () => composeCreatePo(header, lines, { bindings: poBindings }) as unknown as Record<string, unknown>,
-    /* No Ref: the ERP has no such field on a purchase order, and /edit applies
-       only the keys it is GIVEN (AcSyncService.cs:369 `h.ContainsKey`). Sending
-       null would blank whatever the account book has there. */
+    /* Ref and SONo come from the source order (readPoSourceSo); /edit applies
+       only the keys it is GIVEN, so a PO with no single source sends neither. */
     edit: () => composeEdit('PO', String(header.linked_ac_docno ?? header.po_number), poEditHeader(header), lines, {
       supplierCode: header.creditor_code,
       bindings: poBindings,
@@ -1886,6 +1885,7 @@ export async function dispatchOne(
     /* An edit refused while this row was on its way goes out now (docs/bugs/0924).
        doc_type is one of the six by the table's CHECK (migration 0277). */
     await resendHeldEdits(sb, { ...row, doc_type: row.doc_type as AcDocType }, (o) => enqueueEdit(sb, o));
+    await queueSoPoDocNos(sb, row, (i) => enqueueAcOp(sb, i));  // PO Doc No. of the source orders - docs/bugs/0926
     return 'sent';
   }
 

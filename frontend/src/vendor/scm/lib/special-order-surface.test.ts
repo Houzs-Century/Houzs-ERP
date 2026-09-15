@@ -34,6 +34,14 @@ describe('specialOrderSurface', () => {
       .toEqual({ block: true, optionPicker: false });
   });
 
+  it('gives a Sofa Accessory line the panel — its own panel holds only the fabric picker', () => {
+    /* HC-SO-2609-071 (owner 2026-09-15): five pillow / cushion lines carried
+       "Special Fabric-GD526-16 (BEETEX Chenille)" in extraAddonNote, the PDF
+       printed it, and the edit screen showed no Special Order panel at all. */
+    expect(specialOrderSurface({ category: 'fabric_accessory', hasItemCode: true, pickedSpecialCount: 0 }))
+      .toEqual({ block: true, optionPicker: true });
+  });
+
   it('gives sofa and bedframe NO standalone panel — theirs renders inside the configurator', () => {
     for (const category of ['sofa', 'bedframe']) {
       expect(specialOrderSurface({ category, hasItemCode: true, pickedSpecialCount: 0 }))
