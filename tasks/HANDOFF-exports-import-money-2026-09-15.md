@@ -156,7 +156,7 @@ The full wording is in the session memory note
 
 - The SO and DO PRs (see Start here).
 - **List page load cost:** the list endpoints now attach lines. The effect on list open time was not measured: UNKNOWN. If staff say a list got slower, measure this first.
-- **Request-counting script:** `backend/scripts/count-export-requests.mjs` sits on remote branch `chore/export-request-count`, unmerged by decision.
+- **Request-counting script:** the script count-export-requests.mjs sits (not on main) on remote branch `chore/export-request-count`, unmerged by decision.
 - **Mobile:** no list export and no import, by the owner's decision.
 - **Remaining Qty / Estimate Delivery Date differences** against the 09-04 AutoCount file were not traced line by line.
 - **Delivery Return** has no AutoCount mapping. Purchase Return has 0 production rows.
