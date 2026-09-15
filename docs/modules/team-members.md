@@ -61,6 +61,18 @@
 > * Member profile / invite: `TeamMemberProfile.tsx` (drawer, inline
 >   assignment editing, activity log) and `TeamInviteModal.tsx` (assignment +
 >   position set before send; company toggle chips).
+> * **The profile sets the Role too (2026-09-15).** Its Assignment grid reads
+>   Company | Department, Title | **Role**, Team | Reports to. Role writes
+>   `users.role_id` in the same `PATCH /api/users/:id` as the other fields, only
+>   when it changed; options come from `roleOptions` (`teamShared.tsx`: every
+>   role by name, plus the member's own role if the list lacks it). Locked
+>   without `users.manage` (so for a scoped Sales Director, whose PATCH strips
+>   `role_id`) and while `/api/roles` has returned nothing. The redesign had
+>   dropped it: from #2650 until then a role could be changed only on the phone
+>   form or the URL-only classic panel
+>   (`docs/bugs/0923-the-desktop-member-profile-had-no-role-field-so-a-new-role-c.md`).
+>   The invite modal still has no Role picker; an invite gets the baseline role
+>   (`defaultRoleId`) and the profile changes it afterwards.
 >
 > The CLASSIC tabs (`members` / `orgchart` / `departments` / `mail` / `roles`)
 > left the strip but stay URL-reachable during the transition; the sections
@@ -203,6 +215,12 @@ card shows `active / target` when a target is set.
 
 ## 3. Traps
 
+- **Title is not Role, and a new role never shows under Title.** Title is
+  `users.position_id` (a `positions` row: the pages a member sees); Role is
+  `users.role_id` (a `roles` row: what they may do). A role created in Roles &
+  Permissions is only a `roles` row, so the Title picker answers "No match" for
+  it — pick it in the profile's Role field instead (owner 2026-09-14,
+  `docs/bugs/0923-the-desktop-member-profile-had-no-role-field-so-a-new-role-c.md`).
 - **Users vs invitation rows.** A pending person exists twice: a
   `status='invited'` user AND an `invitations` row. The stat card counts the
   former; the Pending Invitations table lists the latter (expired ones
