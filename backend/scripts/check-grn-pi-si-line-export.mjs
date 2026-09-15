@@ -110,6 +110,12 @@ try {
   const { SI_LINE_EXPORT_COLUMNS } = await import("../src/scm/lib/si-line-export-columns.ts");
   const { SI_STATUS_BUCKETS } = await import("../src/scm/lib/si-status-buckets.ts");
   const sb = pgrestShim(pg, "scm");
+  const { readGrnExportRows } = await import("../src/scm/lib/grn-export-rows.ts");
+  const { readPiExportRows } = await import("../src/scm/lib/pi-export-rows.ts");
+  const { readSiExportRows } = await import("../src/scm/lib/si-export-rows.ts");
+  /* The /export/rows readers hold the same documents and lines: flatten their
+     lines to the Line-ID-per-row shape compare() reads. */
+  const asRows = (out, countKey) => out.error !== null ? out : { error: null, [countKey]: out.rows.length, lineCount: out.lineCount, truncated: out.truncated, rows: out.rows.flatMap((d) => d.lines.map((l) => [l.id])) };
 
   const noFilter = { status: null, supplierId: null, q: null, from: null, to: null, sort: null };
   const companies = await pg`SELECT id, code FROM public.companies ORDER BY id`;
@@ -132,6 +138,8 @@ try {
         if (!out) continue;
         const want = await sqlSet("grns", "grn_items", "grn_id", cid, where, params);
         compare(`GRN ${tag} ${name}`, out, "grnCount", want, lineId);
+        const rowsOut = await run(sb, `GRN rows ${tag} ${name}`, async () => asRows(await readGrnExportRows(sb, ctx, filters), "grnCount"));
+        if (rowsOut) compare(`GRN /export/rows ${tag} ${name}`, rowsOut, "grnCount", want, 0);
 
         if (name === "All") {
           const col = (n) => GRN_LINE_EXPORT_COLUMNS.indexOf(n);
@@ -180,6 +188,8 @@ try {
         if (!out) continue;
         const want = await sqlSet("purchase_invoices", "purchase_invoice_items", "purchase_invoice_id", cid, where, params);
         compare(`PI ${tag} ${name}`, out, "piCount", want, lineId);
+        const rowsOut = await run(sb, `PI rows ${tag} ${name}`, async () => asRows(await readPiExportRows(sb, ctx, filters), "piCount"));
+        if (rowsOut) compare(`PI /export/rows ${tag} ${name}`, rowsOut, "piCount", want, 0);
         if (name === "All") {
           const col = (n) => PI_LINE_EXPORT_COLUMNS.indexOf(n);
           const [link] = await pg`
@@ -213,6 +223,8 @@ try {
         if (!out) continue;
         const want = await sqlSet("sales_invoices", "sales_invoice_items", "sales_invoice_id", cid, where, params);
         compare(`SI ${tag} ${name}`, out, "siCount", want, lineId);
+        const rowsOut = await run(sb, `SI rows ${tag} ${name}`, async () => asRows(await readSiExportRows(sb, ctx, filters, scopeIds), "siCount"));
+        if (rowsOut) compare(`SI /export/rows ${tag} ${name}`, rowsOut, "siCount", want, 0);
         if (name === "All") {
           const col = (n) => SI_LINE_EXPORT_COLUMNS.indexOf(n);
           const [link] = await pg`

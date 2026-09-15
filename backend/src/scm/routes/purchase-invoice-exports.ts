@@ -26,6 +26,7 @@ import { supabaseAuth } from '../middleware/auth';
 import { pageWithTruncation } from '../lib/outstanding-po-lines';
 import { PI_LIST_SELECT, filterPiList, orderPiList, readPiListFilters } from '../lib/pi-list-read';
 import { buildPiLineExport } from '../lib/pi-line-export';
+import { readPiExportRows } from '../lib/pi-export-rows';
 import { todayMyt } from '../lib/my-time';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
@@ -47,7 +48,18 @@ export async function piHeaderExportHandler(c: Ctx) {
   return c.json({ purchaseInvoices, total: purchaseInvoices.length, truncated: read.truncated });
 }
 
+/* GET /purchase-invoices/export/rows — every invoice the list's filter matches,
+   each carrying its lines (lib/pi-export-rows.ts), for the grid-driven export.
+   `{ purchaseInvoices, total, lineCount, truncated }`. */
+export async function piExportRowsHandler(c: Ctx) {
+  const filters = readPiListFilters((k) => c.req.query(k));
+  const out = await readPiExportRows(c.get('supabase'), c, filters);
+  if (out.error !== null) return c.json({ error: 'export_failed', reason: out.error }, 500);
+  return c.json({ purchaseInvoices: out.rows, total: out.rows.length, lineCount: out.lineCount, truncated: out.truncated });
+}
+
 export const purchaseInvoiceExports = new Hono<{ Bindings: Env; Variables: Variables }>();
 purchaseInvoiceExports.use('*', supabaseAuth);
 purchaseInvoiceExports.get('/export/lines', piLineExportHandler);
 purchaseInvoiceExports.get('/export/headers', piHeaderExportHandler);
+purchaseInvoiceExports.get('/export/rows', piExportRowsHandler);

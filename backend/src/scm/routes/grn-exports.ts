@@ -30,6 +30,7 @@ import { supabaseAuth } from '../middleware/auth';
 import { pageWithTruncation } from '../lib/outstanding-po-lines';
 import { GRN_LIST_SELECT, filterGrnList, orderGrnList, readGrnListFilters } from '../lib/grn-list-read';
 import { buildGrnLineExport } from '../lib/grn-line-export';
+import { readGrnExportRows } from '../lib/grn-export-rows';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 
@@ -50,7 +51,18 @@ export async function grnHeaderExportHandler(c: Ctx) {
   return c.json({ grns, total: grns.length, truncated: read.truncated });
 }
 
+/* GET /grns/export/rows — every receipt the list's filter matches, each
+   carrying its lines (lib/grn-export-rows.ts), for the grid-driven export.
+   `{ grns, total, lineCount, truncated }`. */
+export async function grnExportRowsHandler(c: Ctx) {
+  const filters = readGrnListFilters((k) => c.req.query(k));
+  const out = await readGrnExportRows(c.get('supabase'), c, filters);
+  if (out.error !== null) return c.json({ error: 'export_failed', reason: out.error }, 500);
+  return c.json({ grns: out.rows, total: out.rows.length, lineCount: out.lineCount, truncated: out.truncated });
+}
+
 export const grnExports = new Hono<{ Bindings: Env; Variables: Variables }>();
 grnExports.use('*', supabaseAuth);
 grnExports.get('/export/lines', grnLineExportHandler);
 grnExports.get('/export/headers', grnHeaderExportHandler);
+grnExports.get('/export/rows', grnExportRowsHandler);

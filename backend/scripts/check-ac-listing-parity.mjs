@@ -69,6 +69,7 @@ try {
   const short = (code, name) => bookSpellingOrOwn(txt(code) || txt(name) || null, LOCATION_MAP) ?? "";
   const { resolveAcItemCode } = await import("../src/services/autocount-item-code.ts");
   const { resolveAcAgent } = await import("../src/services/autocount-writeback.ts");
+  const { siExportAgent } = await import("../src/scm/lib/si-export-rows.ts");
   const { bindingsFor } = await import("../src/scm/lib/autocount-outbox.ts");
   const { buildVariantSummary } = await import("../src/scm/shared/variant-summary.ts");
   const { pgrestShim } = await import("./lib/pgrest-shim.mjs");
@@ -241,7 +242,7 @@ try {
     ["Doc Date", [["invoice_date", (a, e) => [a.DocDate, e.invoice_date], eqDay]]],
     ["Debtor Code", [["debtor_code", (a, e) => [a.PartyCode, e.debtor_code], eqText]]],
     ["Debtor Name (hashed)", [["debtor_name", (a, e) => [a.PartyName ? "hash" : "", a.PartyName === hash(e.debtor_name) ? "hash" : "differs"], eqText]]],
-    ["Agent (SalesAgent)", [["agent", (a, e) => [a.Agent, e.agent], eqText], ["staff.name", (a, e) => [a.Agent, e.staff_name], eqText], ["resolveAcAgent(agent, staff.name)", (a, e) => [a.Agent, resolveAcAgent(e.agent, e.staff_name)], eqText]]],
+    ["Agent (SalesAgent)", [["agent", (a, e) => [a.Agent, e.agent], eqText], ["staff.name", (a, e) => [a.Agent, e.staff_name], eqText], ["resolveAcAgent(agent, staff.name)", (a, e) => [a.Agent, resolveAcAgent(e.agent, e.staff_name)], eqText], ["siExportAgent (upper-cased)", (a, e) => [a.Agent, siExportAgent(e.agent, e.staff_name)], eqText]]],
     ["Ref.", [["ref", (a, e) => [a.DocRef, e.ref], eqText]]],
     ["Curr. Code", [["currency", (a, e) => [a.CurrencyCode, e.currency], eqText]]],
     ["SubTotal (Ex)", [["subtotal_sen/100", (a, e) => [a.TotalExTax, sen(e.subtotal_sen)], eqNum], ["total_sen/100", (a, e) => [a.TotalExTax, sen(e.total_sen)], eqNum]]],
