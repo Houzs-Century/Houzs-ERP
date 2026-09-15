@@ -381,7 +381,7 @@ const SO_HEADER_COLS =
    (owner 2026-08-15). It also holds the BLANK the book itself carries on 11,886
    of its 60,939 lines. */
 const SO_ITEM_COLS =
-  'id, item_code, item_group, branding, description, description2, qty, unit_price_sen, variants, linked_ac_dtlkey, cancelled, warehouse_id, line_delivery_date, photo_urls';
+  'id, item_code, item_group, branding, description, description2, qty, unit_price_sen, variants, linked_ac_dtlkey, cancelled, warehouse_id, line_delivery_date, photo_urls, line_no';
 /* scm.purchase_orders is SUPPLIER-keyed. It has no creditor_code, creditor_name,
    agent or ref: the creditor is scm.suppliers.code / .name behind supplier_id,
    and the other two do not exist at all on the ERP side. */
@@ -395,7 +395,7 @@ const PO_HEADER_COLS =
    D9 collapse echoes back. Leaving the column out of this list is what made the
    PO side fall back to a variants blob and throw the original build away. */
 const PO_ITEM_COLS =
-  'id, item_code, item_group, description, description2, qty, unit_price_sen, variants, linked_ac_dtlkey, warehouse_id, delivery_date, photo_urls';
+  'id, item_code, item_group, description, description2, qty, unit_price_sen, variants, linked_ac_dtlkey, warehouse_id, delivery_date, photo_urls, line_no';
 
 /**
  * The four DOWNSTREAM document types, described once.

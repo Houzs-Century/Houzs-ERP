@@ -6552,3 +6552,15 @@ A book line at quantity 0 is retired and no longer counts as a pairing target
 when quantities are given. Carried-over goods receipts are not covered: most
 link no book receipt number.
 `docs/bugs/0919-delivery-and-purchase-orders-carried-over-from-autocount-had.md`.
+
+## A sofa's pieces are spelled in the document's line order (2026-09-15)
+
+A build's pieces are spelled in `line_no` order when every piece carries a
+distinct one. Otherwise they keep the order they were read in (`created_at`,
+then row id). `SO_ITEM_COLS` and `PO_ITEM_COLS` select `line_no` for this. Only
+the spelling of one build changes: the payload's line order and the key zip do
+not.
+
+The reason: an amendment re-derives pieces in one statement, so their read order
+fell to the row ids, and one sofa was spelled two ways on its SO and PO.
+`docs/bugs/0920-a-sofa-s-pieces-were-spelled-in-the-order-the-queue-read-the.md`.
