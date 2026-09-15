@@ -52,6 +52,7 @@ import {
   type ExtractedPayment,
 } from '../lib/scan-receipt-plan';
 import { safeScanDepositSen } from '../lib/scan-header-deposit';
+import { fmtSen } from '../shared/format';
 
 // The scm-scoped service client (getSupabaseService, db:{schema:'scm'}) and the
 // middleware-attached c.get('supabase') are both schema-parameterised clients.
@@ -4069,7 +4070,7 @@ async function runScanJob(
     });
     if (safeDepositSen !== originalDepositSen) {
       console.warn(
-        `[scan-job] dropping unbacked header deposit ${originalDepositSen} sen -> ${safeDepositSen} on ${job.id} `
+        `[scan-job] dropping unbacked header deposit ${fmtSen(originalDepositSen)} -> ${fmtSen(safeDepositSen)} on ${job.id} `
         + '(no classified receipt to book an is_deposit row); operator adds the payment on the draft',
       );
       body.depositSen = safeDepositSen;

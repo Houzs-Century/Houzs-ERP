@@ -38,6 +38,7 @@ import { CREDIT_NOTE_HEADER, cancelCreditNote, insertCreditNote, postCreditNote 
 import { resolveRoles } from './rules';
 import { companyCodeById } from '../scm/lib/doc-no';
 import { docPrefixForCode } from '../scm/lib/companyScope';
+import { fmtSen } from '../scm/shared/format';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- PostgREST client, untyped throughout the acc layer */
 type Db = any;
@@ -244,7 +245,7 @@ export async function refundDepositInvoicesBestEffort(sb: Db, p: RefundInput | n
   try {
     const r = await refundDepositInvoices(sb, p);
     if (!r.ok) log(`refund ${p.pvNumber}: deposit invoices not credited —`, r.reason);
-    else if (r.uncoveredSen > 0 && r.raised.length > 0) log(`refund ${p.pvNumber}: ${r.uncoveredSen} sen beyond the deposit invoices — the refund's own Dr AR answers it.`);
+    else if (r.uncoveredSen > 0 && r.raised.length > 0) log(`refund ${p.pvNumber}: ${fmtSen(r.uncoveredSen)} beyond the deposit invoices — the refund's own Dr AR answers it.`);
   } catch (e) {
     log(`refund ${p.pvNumber}: hook threw:`, e);
   }

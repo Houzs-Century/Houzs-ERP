@@ -71,6 +71,7 @@ import { extractOneBill, matchSupplier, normalizeVendor, BILL_IMAGE_MIMES, MAX_B
 import { requireLeafAccount } from './accounting-chart';
 import { planPvRateAdoption, isRateRetainedFromPv, roundRate6 } from '../lib/pv-rate-adoption';
 import { recostFromGrn } from '../lib/recost';
+import { fmtSen } from '../shared/format';
 
 export const paymentVouchers = new Hono<{ Bindings: Env; Variables: Variables }>();
 paymentVouchers.use('*', supabaseAuth);
@@ -1131,7 +1132,7 @@ export const postPaymentVoucherHandler = async (c: any) => {
       if (a.ap_invoice_id) {
         const settledApi = await settleApInvoicePaidSen(sb, a.ap_invoice_id, want);
         await sb.from('pv_allocations').update({ applied_sen: settledApi.appliedSen }).eq('id', a.id);
-        if (settledApi.clampedSen > 0) overAllocated.push(`AP invoice ${a.ap_invoice_id}: ${(settledApi.clampedSen / 100).toFixed(2)} refused`);
+        if (settledApi.clampedSen > 0) overAllocated.push(`AP invoice ${a.ap_invoice_id}: ${fmtSen(settledApi.clampedSen)} refused`);
         continue;
       }
       if (!a.pi_id) continue;
@@ -1162,7 +1163,7 @@ export const postPaymentVoucherHandler = async (c: any) => {
         /* eslint-disable-next-line no-console */
         console.error('[pv-settle-pi] allocation exceeded the invoice outstanding — clamped:',
           pv.pv_number, 'pi', a.pi_id, 'requested', want, 'applied', settled.appliedSen);
-        overAllocated.push(`${a.pi_id}: asked ${want} sen, applied ${settled.appliedSen} sen`);
+        overAllocated.push(`${a.pi_id}: asked ${fmtSen(want)}, applied ${fmtSen(settled.appliedSen)}`);
       }
       if (!settled.ok) {
         /* eslint-disable-next-line no-console */
@@ -1333,7 +1334,7 @@ export const postPaymentVoucherHandler = async (c: any) => {
               entityType: 'PAYMENT_VOUCHER', entityId: id, entityDocNo: pv.pv_number,
               action: 'UPDATE', actor: c.get('houzsUser'), companyId,
               statusSnapshot: 'POSTED',
-              note: `Paid ${(advanceSen / 100).toFixed(2)} ahead of any invoice — recorded as this supplier's advance, to knock off against invoices to come`,
+              note: `Paid ${fmtSen(advanceSen)} ahead of any invoice — recorded as this supplier's advance, to knock off against invoices to come`,
               fieldChanges: compactChanges([fieldChange('supplierAdvanceSen', null, advanceSen)]),
             });
           }
@@ -1583,7 +1584,7 @@ export const cancelPaymentVoucherHandler = async (c: any) => {
     if (a && Number(a.applied_sen) > 0) {
       return c.json({
         error: 'advance_applied',
-        message: `This voucher's advance has already knocked off ${(Number(a.applied_sen) / 100).toFixed(2)} of invoices. A payment whose value now lives inside other documents cannot be cancelled.`,
+        message: `This voucher's advance has already knocked off ${fmtSen(Number(a.applied_sen))} of invoices. A payment whose value now lives inside other documents cannot be cancelled.`,
       }, 409);
     }
   }
@@ -1812,7 +1813,7 @@ export const applyAdvanceHandler = async (c: any) => {
   if (askedSen > remaining) {
     return c.json({
       error: 'exceeds_advance',
-      message: `That applies ${(askedSen / 100).toFixed(2)} but only ${(remaining / 100).toFixed(2)} of this advance remains.`,
+      message: `That applies ${fmtSen(askedSen)} but only ${fmtSen(remaining)} of this advance remains.`,
     }, 409);
   }
 
@@ -1862,7 +1863,7 @@ export const applyAdvanceHandler = async (c: any) => {
     await recordEntityAudit(sb, {
       entityType: 'PAYMENT_VOUCHER', entityId: id, entityDocNo: adv.pv_number,
       action: 'UPDATE', actor: c.get('houzsUser'), companyId: co.companyId,
-      note: `Advance knocked off ${(appliedSen / 100).toFixed(2)} against ${results.filter((r) => r.appliedSen > 0).length} invoice(s) — no money moved, both legs were already in AP`,
+      note: `Advance knocked off ${fmtSen(appliedSen)} against ${results.filter((r) => r.appliedSen > 0).length} invoice(s) — no money moved, both legs were already in AP`,
       fieldChanges: compactChanges([
         fieldChange('advanceAppliedSen', adv.applied_sen, Number(adv.applied_sen) + appliedSen),
       ]),

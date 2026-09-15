@@ -35,6 +35,7 @@ import { requireActiveCompanyId, scopeToCompanyId } from './companyScope';
 import { resolveRoles } from '../../acc/rules';
 import { addCustomerCredit } from './customer-credits';
 import { standingDeposits, type RefundInput } from '../../acc/deposit-refunds';
+import { fmtSen } from '../shared/format';
 
 export type RefundSourceType = 'SO' | 'SI';
 
@@ -234,7 +235,7 @@ export async function refundCreateGuard(
       ok: false,
       resp: c.json({
         error: 'refund_exceeds_booked',
-        message: `${s.docNo} has ${(s.refundableSen / 100).toFixed(2)} left to refund (${(s.bookedSen / 100).toFixed(2)} booked, ${(s.refundedSen / 100).toFixed(2)} already on refund vouchers) — not ${(amount / 100).toFixed(2)}.`,
+        message: `${s.docNo} has ${fmtSen(s.refundableSen)} left to refund (${fmtSen(s.bookedSen)} booked, ${fmtSen(s.refundedSen)} already on refund vouchers) — not ${fmtSen(amount)}.`,
         bookedSen: s.bookedSen, refundedSen: s.refundedSen, refundableSen: s.refundableSen,
       }, 409),
     };
