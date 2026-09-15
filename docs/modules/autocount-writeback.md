@@ -6530,7 +6530,9 @@ that arrived back on the list*) handles the ones already cleared:
 - it clears `archived_at` on every script-cleared document that has since
   arrived;
 - it first re-files each id-filed refusal under the document's number;
-- documents a person cleared on the page (`archived_by` set) stay cleared.
+- documents a person cleared on the page (`archived_by` set) stay cleared,
+  unless named in the workflow's `doc_nos` (since 2026-09-15); a named document
+  must still have arrived, and its person stamp is cleared with it.
 
 `docs/bugs/0917-cleared-documents-that-reached-autocount-still-read-as-not-s.md`.
 
