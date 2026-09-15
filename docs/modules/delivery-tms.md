@@ -757,7 +757,7 @@ these routers is gated by `scmAreaGuard('scm.transportation.drivers')`** — see
 
 | Method | Path | Handler | Purpose |
 |---|---|---|---|
-| GET | `/delivery-planning` | `scm/routes/delivery-planning.ts:409` | **The board.** `?region=ALL\|<code>&state=ALL\|<delivery_state>` → `{ orders, counts, regions }`. SO rows also carry `po_nos: string[]` (since 2026-09-15 — the POs raised from the SO, `lib/planning-po-nos.ts`; absent on ASSR / DP / project rows) |
+| GET | `/delivery-planning` | `scm/routes/delivery-planning.ts:409` | **The board.** `?region=ALL\|<code>&state=ALL\|<delivery_state>` → `{ orders, counts, regions }`. SO rows also carry `po_nos: string[]` (since 2026-09-15 — the POs raised from the SO, `lib/planning-po-nos.ts`) and `so_ref` (`mfg_sales_orders.ref`); both absent on ASSR / DP / project rows |
 | GET | `/delivery-planning/:docNo/lines` | `:1389` | Expand-row line items, scoped to the caller's ALLOWED companies (not the active one) |
 | GET | `/delivery-planning/geo` | `delivery-planning.ts` (registered BEFORE `/:docNo/lines` — 'geo' would parse as a docNo) | **Option B side map (2026-08-08).** `?date=YYYY-MM-DD&region=<r>` → `{ date, region, configured, points[], depot\|null, depotReason, ungeocoded[] }` — one point per SO whose EFFECTIVE delivery date (amended ?? customer) is the picked day. Allowed-companies scoped + region-filtered with the board's own config classification + per-assignee row scope (latest-DO assignment rule). lat/lng resolve CACHE-FIRST through `scm.geocode_cache` (ONE batched read, then at most one Google call per never-seen address — cached forever; no `GOOGLE_MAPS_API_KEY` → only cached addresses pin, nothing bills). A point carries `zone` (postcode-zone via the delivery-zones map), `region`, `sets` (the packer's `deriveSetCount`), `revenueCenti`, `customer`, `address`; unlocatable orders return in `ungeocoded` with a reason, never dropped. Depot = the day's MAJORITY line-warehouse (ties to first seen), geocoded the same way; `depotReason` says why when null. READ-only, no polling — the frontend fetches once per (date, region) |
 | PATCH | `/delivery-planning/:type/:id/fields` | `:1493` | HC delivery fields, in two groups. **SO-context** (`possessionDate`, `houseType`, `referral`, `replacementDisposal`) writes the SO header and needs no DO; **DO-execution** (`timeRange`, `timeConfirmed`, `arrivalAt`, `departureAt`, `shipoutDate`, `customerDeliveredDate`, `etaArrivingPort`, `deliverySubstatus`) writes the latest DO and answers `no_do_hint` when there is none. **`replacementDisposal` is the exception:** a GENUINE change to it on a processing- or PO-locked SO is refused **409 `so_locked_processing`** — it must arrive as an SO Amendment instead (§1, "`replacement_disposal` has TWO lanes"). The other three SO-context fields are free |
@@ -863,17 +863,19 @@ mirror is never dressed up as a processing date.
 
 **Owner column additions, 2026-09-15** (`DeliveryPlanningBoard.tsx`, both
 default-HIDDEN — they return to the Columns panel, not to the default view, so
-no saved layout moves): **Reference** (`referral`, the SO header's HC referral
-tag — the value the mobile stop detail already labels "Reference"; it was one
-of the five columns removed in the 2026-08-04 pass, and the owner asked for it
-back: 「delivery planning 没有 reference number 选项」 — the panel searched "ref"
-and found nothing) and **PO No.** (`po_nos`, the purchase orders RAISED from
+no saved layout moves): **Reference** (`so_ref` = `mfg_sales_orders.ref`, the
+order's own reference — AutoCount `Ref`, e.g. `pg0791` on HC-SO-004574, the
+same value the delivery sheet's Ref column carries; the owner asked for it:
+「delivery planning 没有 reference number 选项」 — the panel searched "ref" and
+found nothing. **Not `referral`**: that is the HC referral CHANNEL from the
+fields drawer, NULL on all 3,129 active orders, and #3961 first wired the
+column to it, so it rendered blank — docs/bugs/0934) and **PO No.** (`po_nos`, the purchase orders RAISED from
 the SO — the SO list's raised-PO chips, same walk `lib/so-converted-po.ts`,
 adapted to the shared cross-company queue by `lib/planning-po-nos.ts`, which
 walks once PER company so a doc_no both books carry never chips the other
 company's PO; SO rows only, a dash on the synthetic kinds). Mobile parity: the
-stop detail shows a "PO No." row under "Reference" when the feed carries any.
-Ledger: docs/bugs/0932.
+stop detail shows a "PO No." row under "Reference" (which now also reads
+`so_ref`) when the feed carries any. Ledger: docs/bugs/0932, 0934.
 
 **Owner column additions, 2026-08-19** (`DeliveryPlanningBoard.tsx`, all
 default-VISIBLE): **Salesperson** (`agent` / `salesperson_id`, resolved to a

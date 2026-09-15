@@ -35,4 +35,4 @@ with no company is never walked unscoped. The mobile stop detail gains a
 "PO No." row under "Reference" (one product, two surfaces). Default-hidden on
 purpose: the owner asked for the OPTION, and a saved layout must not move.
 
-**Ref.** feat/dp-board-reference-column, 2026-09-15.
+**Ref.** feat/dp-board-reference-column, #3961, 2026-09-15. **Corrected the same day by 0934:** the Reference column had been wired to `referral`, which is empty on every order; it reads `ref` now.
