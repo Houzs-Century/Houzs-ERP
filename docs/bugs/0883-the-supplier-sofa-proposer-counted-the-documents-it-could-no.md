@@ -30,6 +30,17 @@ two duplicate pieces (`9058-1A(RHF)`, `9058-1NA`, added 2026-09-10 with no key
 and no sales link) while its own correction entry reported nothing to do,
 because the three keyed rows already matched.
 
+> **CORRECTED 2026-09-15 — the two sentences above name the wrong pair.** Read-only
+> probe run 34878571364: the rows added 2026-09-10 17:44Z (`line_no` NULL,
+> `so_item_id` NULL) DO carry key `914330`; the KEYLESS pair is lines 2 and 3,
+> added 2026-09-07, and those are the ones dedicated to `HC-SO-013312`. The
+> mechanism is the reverse of "never removed": the key selected line 1 alone,
+> so apply run 34507126629 read 1NA and 1A(RHF) as missing and INSERTED the
+> duplicates. Deleting "the keyless rows" as written here would have removed the
+> dedicated lines. The duplicates were removed by
+> `remove-duplicate-sofa-po-rows-2026-09-15.mjs`, and the kept pair given the
+> build's key, so a key-addressed re-run cannot add them again.
+
 **Fix.** Every skip bucket keeps and prints its documents with the reason — the
 amended PO with its amendment number, status and date; each "not identified by
 one key" PO with ours and the supplier's pieces side by side and why it could not
