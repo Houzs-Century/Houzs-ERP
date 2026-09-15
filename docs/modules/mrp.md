@@ -688,9 +688,16 @@ mobile card, because `source === 'po'` now guarantees a number. Trace:
   `category_on_model` for a modelled SKU, which moves only with its model). The
   picker (`CategorySwapSelect`) asks first and says open orders keep the old
   category. Import SKUs (`POST /mfg-products/batch-import`) also changes an
-  existing SKU's category, including a modelled SKU's, and reads the label or any
-  case (`parseMfgCategory`); an unreadable category is reported per row. The move
-  changes the PRODUCT only:
+  existing SKU's category and reads the label or any case (`parseMfgCategory`);
+  an unreadable category is reported per row. A row that changes a MODELLED
+  SKU's category moves the model and every SKU of it in this company, through the
+  same helper `PATCH /product-models/:id` uses (`moveModelCategory` in
+  `scm/lib/model-category-move.ts`; owner 2026-09-15). Before writing,
+  `planModelCategoryMoves` refuses, per row, every row of a model the file gives
+  more than one category — a row restating the old category beside a row changing
+  it counts, so nothing is picked silently; leave the category blank on rows not
+  being changed. The response carries `modelsMoved` (model, from, to, SKU count)
+  and the import dialog lists it. The move changes the PRODUCT only:
   lines already on orders keep their old group until a data run moves them —
   `backend/scripts/recategorise-fabric-accessory.mjs` (plan/apply workflow),
   which also writes the colour a line's own text names into `fabricCode`

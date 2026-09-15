@@ -69,25 +69,25 @@ describe("the grid opens with AutoCount's columns", () => {
 
 describe("the export reads every window of the list's filter, or refuses", () => {
   test("sends the list's own parameters, follows next until there is none, and drops a repeat", async () => {
-    const fetch = vi.mocked(authedFetch);
-    fetch.mockReset();
-    fetch.mockResolvedValueOnce({ salesOrders: [{ doc_no: "A" }, { doc_no: "B" }], total: 2, lineCount: 0, next: 2 });
-    fetch.mockResolvedValueOnce({ salesOrders: [{ doc_no: "B" }, { doc_no: "C" }], total: 2, lineCount: 0, next: null });
+    const mockedFetch = vi.mocked(authedFetch);
+    mockedFetch.mockReset();
+    mockedFetch.mockResolvedValueOnce({ salesOrders: [{ doc_no: "A" }, { doc_no: "B" }], total: 2, lineCount: 0, next: 2 });
+    mockedFetch.mockResolvedValueOnce({ salesOrders: [{ doc_no: "B" }, { doc_no: "C" }], total: 2, lineCount: 0, next: null });
     expect(await fetchSoExportRows({ status: "confirmed", q: " bob ", sort: "so_date:desc" })).toEqual([{ doc_no: "A" }, { doc_no: "B" }, { doc_no: "C" }]);
-    expect(fetch.mock.calls.map((c) => c[0])).toEqual([
+    expect(mockedFetch.mock.calls.map((c) => c[0])).toEqual([
       "/mfg-sales-orders/export/rows?status=CONFIRMED&q=bob&sort=so_date%3Adesc&offset=0",
       "/mfg-sales-orders/export/rows?status=CONFIRMED&q=bob&sort=so_date%3Adesc&offset=2",
     ]);
   });
 
   test("refuses a listing larger than one export holds, and a server that does not move forward", async () => {
-    const fetch = vi.mocked(authedFetch);
-    fetch.mockReset();
+    const mockedFetch = vi.mocked(authedFetch);
+    mockedFetch.mockReset();
     const big = Array.from({ length: 20_000 }, (_, i) => ({ id: `d-${i}` }));
-    fetch.mockResolvedValueOnce({ deliveryOrders: big, total: 20_000, lineCount: 0, next: 20_000 });
+    mockedFetch.mockResolvedValueOnce({ deliveryOrders: big, total: 20_000, lineCount: 0, next: 20_000 });
     await expect(fetchDoExportRows({ status: "DELIVERED" })).rejects.toThrow(/no file was written/);
-    expect(fetch.mock.calls[0]![0]).toBe("/delivery-orders-mfg/export/rows?status=DELIVERED&offset=0");
-    fetch.mockResolvedValueOnce({ salesOrders: [{ doc_no: "A" }], total: 1, lineCount: 0, next: 0 });
+    expect(mockedFetch.mock.calls[0]![0]).toBe("/delivery-orders-mfg/export/rows?status=DELIVERED&offset=0");
+    mockedFetch.mockResolvedValueOnce({ salesOrders: [{ doc_no: "A" }], total: 1, lineCount: 0, next: 0 });
     await expect(fetchSoExportRows({})).rejects.toThrow(/out of order/);
   });
 });

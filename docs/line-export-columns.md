@@ -23,8 +23,10 @@ Order one, and its columns are the template everything below follows.
 > each grid's chooser. What differs is listed in
 > [§ What the GR / PI / SI builds changed](#what-the-gr--pi--si-builds-changed);
 > Sales Order (§1) and Delivery Order (§2) export through the same grid-level Export
-> (`GET /<doc>/export/rows`, read in windows of 500; both lists wired) — differences in [§ What the SO / DO builds changed](#what-the-so--do-builds-changed)
-> (`docs/modules/sales-order.md`, `delivery-order.md`, *Exports*);
+> (`GET /<doc>/export/rows`, read in windows of 500; the Sales Orders list is wired, the
+> Delivery Orders list in its own PR) — differences in
+> [§ What the SO / DO builds changed](#what-the-so--do-builds-changed)
+> (`docs/modules/sales-order.md`, `delivery-order.md`, *Exports*). For GR / PI / SI
 > the module guides (`docs/modules/grn.md`, `purchase-invoice.md`,
 > `sales-invoice.md`, *The one Export*) describe the build. Import is
 > desktop-only by the owner's decision (「手机不需要导入」, 2026-09-15).
