@@ -2961,9 +2961,14 @@ is already banked is the expensive direction of that mistake.
 
 Owner 2026-09-15: every document list exports **one row per line item**, holding
 **every row the list's current filter, tab and search match**, never the screen page.
-The UI is ONE grid-level Export whose columns are the grid's visible columns, being
-built separately; **no Delivery Order screen calls the reader below yet**, and the
-toolbar Export still writes the loaded page. Column design: `docs/line-export-columns.md`
+The UI is ONE grid-level Export on the Delivery Orders list (`MfgDeliveryOrdersListV2`,
+DataTable `exportLines` → `fetchDoExportRows` in `vendor/scm/lib/so-list-export.ts`,
+`GET /delivery-orders-mfg/export/rows`): one sheet row per line of every delivery order the
+tab, search and sort match, the grid's visible columns in on-screen order, its funnels
+applied, money columns in ringgit, a `truncated` read refused. The Columns panel offers
+the layout **AutoCount: LISTING ITEM DETAIL** (no prices); it is NOT the default — the
+company default saved for `delivery-orders-v2` decides. Pinned by
+`MfgDeliveryOrdersListV2.export.test.tsx`. Column design: `docs/line-export-columns.md`
 §2 with the rulings: **no price or amount columns** (the file goes to drivers, 3PLs and
 customers), **Driver and Vehicle stay** although empty on every delivery order today, no
 estimate dates.

@@ -41,7 +41,8 @@ import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { PageHeader } from "../../components/Layout";
 import { StatCard } from "../../components/StatCard";
 import { FilterPills } from "../../components/FilterPills";
-import { DataTable, type Column } from "../../components/DataTable";
+import { DataTable, type Column, type ColumnLayoutPreset } from "../../components/DataTable";
+import { fetchDoExportRows } from "../../vendor/scm/lib/so-list-export";
 import { doLineColumns, financeColumns, moneyColumn } from "./so-do-list-columns";
 import { DO_LABELS, doStatusWord, type DoBookHeader, type DoListLine } from "../../vendor/scm/lib/do-line-export-columns";
 import {
@@ -707,6 +708,23 @@ function TotalRow({
 const SORT_COL_MAP: Record<string, string> = {
   delivery_date: "customer_delivery_date",
 };
+
+/* AutoCount's Delivery Order Detail Listing, layout "LISTING ITEM DETAIL", in
+   its order, without its prices (a delivery order file carries none). Offered
+   in the Columns panel only: NOT a default — the company default an admin saved
+   for this table decides what people see (owner 2026-09-15). Doc No is
+   alwaysVisible, so it is implicit here. */
+const DO_LAYOUT_PRESETS: ColumnLayoutPreset[] = [
+  {
+    id: "do-autocount",
+    label: "AutoCount: LISTING ITEM DETAIL",
+    hint: "One row per line in the Export",
+    columns: [
+      "do_date", "debtor_code", "debtor_name", "salesperson", "currency", "item_code", "detail_description",
+      "detail_description_2", "uom", "line_location", "qty", "po_doc_no", "item_group",
+    ],
+  },
+];
 
 // ─── Row drill-down (DataTable `expandable`) ──────────────────────────────────
 // Inline per-line breakdown for one DO under its parent row when the chevron is
@@ -1750,7 +1768,18 @@ export function MfgDeliveryOrdersListV2() {
                   }),
               }}
               contextMenu={doContextMenu}
-            exportName="delivery-orders"
+              documentLabel="Delivery Orders"
+              layoutPresets={DO_LAYOUT_PRESETS}
+              /* The ONE Export (owner 2026-09-15): every delivery order the tab,
+                 search and sort match, not the page; one row per line; the
+                 visible columns, funnels and sort. */
+              exportLines={{
+                fetchRows: () => fetchDoExportRows<DoRow>({ status: apiStatus, q: debouncedSearch, sort }),
+                linesOf: (r) => r.lines ?? [],
+                sheetName: "Delivery Orders",
+                onError: (e) => void notify({ title: "Export failed", body: e.message || "The export could not be completed.", tone: "error" }),
+              }}
+              exportName="delivery-orders"
               serverSort
               onSortChange={setSortAndReset}
               emptyLabel={
