@@ -1410,7 +1410,12 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
                 tasklist rows (hidden above). */}
             {(isDriverCrew || isStorekeeper) && (
               <SalesDocsCard
-                tiles={CREW_DOC_TILES}
+                /* A crew member who IS the reviewer (Shukor) gets the dedicated
+                   Defect list card below — drop the defect tiles here so the
+                   same items don't render twice. */
+                tiles={defectActionsValue.canReview
+                  ? CREW_DOC_TILES.filter((t) => !/^defect/i.test(t.label))
+                  : CREW_DOC_TILES}
                 title="Event documents"
                 checklist={data.checklist}
                 attachments={data.checklist_attachments}
@@ -1421,6 +1426,25 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
                 prompt={prompt}
                 confirm={confirm}
                 reload={reload}
+              />
+            )}
+
+            {/* Defect list — the REVIEWER's own card (owner 2026-09-15,
+                "add card for defect list"): the two Defect Item tiles pulled
+                out into a dedicated card so the triage work (per-photo
+                Done / Replace via DefectFileActions) is front-and-centre for
+                the state's reviewer (Shukor / Nancy / admin) instead of
+                buried in the cohort document card. readOnly — the reviewer
+                stamps, the crew/sales upload; isDefectTile still renders the
+                file list + actions on readOnly defect tiles. */}
+            {defectActionsValue.canReview && (
+              <SalesDocsCard
+                tiles={DEFECT_REVIEW_TILES}
+                title="Defect list"
+                checklist={data.checklist}
+                attachments={data.checklist_attachments}
+                canTick={canTick}
+                busy={busy} setBusy={setBusy} notify={notify} prompt={prompt} confirm={confirm} reload={reload}
               />
             )}
 
@@ -3192,6 +3216,14 @@ const SALES_DOC_TILES: ReadonlyArray<DocTile> = [
 // defect matcher and the backend.
 const isDefectTile = (t: { item?: ChecklistItem | null }): boolean =>
   /^defect (list|item)/i.test((t.item?.title ?? "").trim());
+
+// The reviewer's dedicated Defect-list card (owner 2026-09-15). readOnly:
+// reviewers stamp Done/Replace, they don't upload — the isDefectTile carve-out
+// in the tile card still renders the per-file list + DefectFileActions.
+const DEFECT_REVIEW_TILES: ReadonlyArray<DocTile> = [
+  { label: "Defect Item Setup", match: /^defect (list|item) setup/i, readOnly: true },
+  { label: "Defect Item Dismantle", match: /^defect (list|item) dismantle/i, readOnly: true },
+];
 
 const CREW_DOC_TILES: ReadonlyArray<DocTile> = [
   // Owner 2026-07-22: Stock Out Transfer Record + Blank Floorplan tiles
