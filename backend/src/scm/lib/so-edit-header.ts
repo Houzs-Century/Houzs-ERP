@@ -24,7 +24,7 @@ import {
   composePaymentUdf,
   resolveAcAgent,
   soBranding,
-  soCustomerRef,
+  soReference,
   soInvoiceAddress,
   type ErpLine,
   type ErpPaymentRef,
@@ -111,7 +111,7 @@ export function soEditHeader(
   const out: Record<string, string | null | Record<string, string>> = present({
     DebtorName: (h.debtor_name as string) ?? null,
     Attention: (h.debtor_name as string) ?? null,
-    Ref: (h.ref as string) ?? null,
+    Ref: soReference(h),
     Phone1: (h.phone as string) ?? null,
     /* The DELIVERY contact, which is not `phone`. On a CREATE the service falls
        back to Phone when this is absent; on an EDIT nothing falls back, so a
@@ -154,8 +154,6 @@ export function soEditHeader(
   if (branding) udf.BRANDING = branding;
   const venue = bookSpellingOrOwn((h.venue as string) ?? null, VENUE_MAP);
   if (venue) udf.VENUE = venue;
-  const customerRef = soCustomerRef(h);
-  if (customerRef) udf.ToPONo = customerRef;
   /* The SO's "Processing date" — the date this order is RELEASED for purchasing
      to order goods (owner 2026-08-18; also the owner's 账目日期). Owner
      2026-08-12: editing it in the ERP must reach AutoCount. Same omit-when-absent

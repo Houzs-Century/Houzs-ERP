@@ -64,8 +64,8 @@ describe('zeroCostRefusalText — the sentence every surface already showed', ()
     const text = zeroCostRefusalText(parseZeroCostRefusal(BODY));
     expect(text).toContain('purchased at a real price before');
     expect(text).toContain('• AKEMI-QD x2');
-    expect(text).toContain('normally about RM450.00 each');
-    expect(text).toContain('normally about RM1200.50 each');
+    expect(text).toContain('normally about RM 450.00 each');
+    expect(text).toContain('normally about RM 1,200.50 each');
     expect(text).toContain('— Enter the unit price; or');
   });
 

@@ -54,6 +54,17 @@ Order one, and its columns are the template everything below follows.
    65 of 65 delivery orders, 110 of 110 purchase orders, 68 of 68 goods receipts,
    56 of 56 purchase invoices and 10 of 10 sales invoices have none.
    Every Houzs Century (company 1) document of those six types has one.
+9. **Item Code, Item Description, Item Group and UOM as the book holds them**
+   (2026-09-15): `bookLineItem` in `backend/src/services/autocount-book-item.ts`,
+   shared by every document export. Item Code is the write-back's
+   `resolveAcItemCode`; Description, Item Group and UOM come from the AutoCount
+   item master snapshot (`backend/scripts/data/ac-item-master.tsv`, written
+   read-only by `export-ac-item-master.py`, compiled by
+   `gen-autocount-item-master.mjs`, CI `audit:ac-item-master`), falling back to the
+   ERP's own values. PROVEN on the live book 2026-09-15 by AutoCount item code:
+   Item.ItemGroup equals the listed group on 61,818 / 61,818 SO lines and
+   47,928 / 47,928 DO lines; BaseUOM equals the line UOM on 61,795 / 61,818 and
+   47,906 / 47,928. Re-export when items are opened in AutoCount.
 
 ### 0.1 The Purchase Order template (not changed here)
 

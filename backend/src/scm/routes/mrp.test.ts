@@ -1264,6 +1264,46 @@ describe('company 1: a bound line is planned from its own purchase order only', 
     expect(row.poOutstanding).toBe(5);           // and the PO is still REPORTED as supply
   });
 
+  /* THE TWO CATEGORY-DISAGREEMENT SHAPES (2026-09-15, owner 「我们明明已经开了
+     PO，可是它又显示着 shortage」). A link whose PO line and sales line disagree
+     on category used to go SHORT with its own purchase order open. Live on prod
+     the day this was written: HC-PO-010086 SQUARE PILLOW `fabric_accessory`
+     linked to HC-SO-013346 `accessory`. */
+  test('a BOUND PO line linked to an UNBOUND sales line covers that line', async () => {
+    const pillowDemand: Row = {
+      ...demandRed(2), id: 'si-pillow', item_code: 'SQUARE PILLOW', item_group: 'accessory', variants: {},
+    };
+    const pillowPo: Row = {
+      ...boundPo('PO-PILLOW', 2, 0, 'si-pillow', { fabricCode: 'RED' }, '2026-10-01'),
+      item_code: 'SQUARE PILLOW', item_group: 'fabric_accessory',
+    };
+    const sb = world({
+      mfg_sales_order_items: [pillowDemand],
+      purchase_order_items: [pillowPo],
+      mfg_products: [{ id: 'p2', code: 'SQUARE PILLOW', name: 'Square Pillow', category: 'ACCESSORY' }],
+    });
+
+    const res = await computeMrp(asSb(sb), co1);
+
+    const line = res.skus.flatMap((s) => s.lines).find((l) => l.soItemId === 'si-pillow')!;
+    expect(line.poNumber).toBe('PO-PILLOW');
+    expect(line.shortageQty).toBe(0);
+  });
+
+  test('an UNBOUND PO line linked to a BOUND sales line covers that line', async () => {
+    const othersPo: Row = { ...boundPo('PO-OTHERS', 5, 0, 'si-red', { fabricCode: 'RED' }, '2026-10-01'), item_group: 'others' };
+    const sb = world({
+      mfg_sales_order_items: [demandRed(5)],
+      purchase_order_items: [othersPo],
+    });
+
+    const res = await computeMrp(asSb(sb), co1);
+
+    const row = res.skus.find((s) => s.variantKey === 'fabriccode=red')!;
+    expect(row.lines[0]!.poNumber).toBe('PO-OTHERS');
+    expect(row.shortage).toBe(0);
+  });
+
   test('company 2 keeps the pooled model — the rule is company-1 only, for now', async () => {
     const sb = world({
       mfg_sales_order_items: [demandRed(5)],
