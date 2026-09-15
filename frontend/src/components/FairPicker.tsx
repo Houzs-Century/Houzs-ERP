@@ -18,6 +18,12 @@
 //  1. A row is a PLACE plus an ORGANIZER, no dates. *"我觉得不需要日期啦…只需要
 //     选 event 和 organizer 就好了"*. The server sets `showDates` on the one case
 //     that needs them (same venue + organizer twice in a month).
+//     BOTH HALVES ARE ON SCREEN. The organizer was hidden from the label on
+//     2026-09-15 (#3999) and the owner reversed it the next morning: 「我是写
+//     venue，然后旁边还有 organizer 的名字的，它不是单纯就是 venue only」. Venue
+//     alone is not a fair — 15 venue-months in 2026 carry two or more organizers
+//     at one venue, so 31 rows would read identically. `fairLabel`'s comment
+//     carries the measurement and how it was taken.
 //  2. NOBODY TYPES. *"dont let them write in manual, third option just pick
 //     others"* — Others opens a second PICK over the company's 92-row venue
 //     master, which covers every venue any 2026 fair uses. Free text is what
@@ -39,7 +45,7 @@
 // ----------------------------------------------------------------------------
 
 import { useState, type ReactNode } from 'react';
-import { useFairOptions, fairVenueLabel, type FairOption } from '../vendor/scm/lib/fair-options-queries';
+import { useFairOptions, fairLabel, type FairOption } from '../vendor/scm/lib/fair-options-queries';
 
 /** What the SO form stores. `organizer` is null whenever the form holds a place
  *  but no fair row: a pick through Others, an order opened for edit (no order
@@ -149,7 +155,7 @@ export function FairPicker(props: FairPickerProps) {
         {running.length > 0 && (
           <optgroup label="Running now">
             {running.map((o) => (
-              <option key={o.key} value={optionValue(o)}>{fairVenueLabel(o)}</option>
+              <option key={o.key} value={optionValue(o)}>{fairLabel(o)}</option>
             ))}
           </optgroup>
         )}
@@ -158,7 +164,7 @@ export function FairPicker(props: FairPickerProps) {
              on the order date, the ones already over included. */
           <optgroup label="Other fairs this month">
             {month.map((o) => (
-              <option key={o.key} value={optionValue(o)}>{fairVenueLabel(o)}</option>
+              <option key={o.key} value={optionValue(o)}>{fairLabel(o)}</option>
             ))}
           </optgroup>
         )}

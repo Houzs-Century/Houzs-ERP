@@ -58,6 +58,26 @@ const DATA_2026_09_14: FairOptionsResponse = {
   ],
 };
 
+/* Three DIFFERENT fairs at ONE venue in one month, from production: MID VALLEY in
+   October 2026, projects 363 (BIGHOME, 10-02), 2260 (HOMELOVE, 10-15) and
+   313/314/316 (MLE, 10-23 — three brand booths that collapse to one row). This is
+   the shape a venue-only label erases: `showDates` is false on all three, because
+   the server sets it only when the venue AND the organizer repeat, so the
+   organizer is the only thing that tells them apart. Read on 2026-09-16 with
+   `select venue, organizer, start_date from public.projects where company_id = 1`.
+   Ordered as buildFairOptions returns them for an order dated 2026-10-08: nothing
+   is running that day, so all three sit in `month`, sorted by start date. */
+const DATA_2026_10_MID_VALLEY: FairOptionsResponse = {
+  date: '2026-10-08',
+  running: [],
+  month: [
+    { key: 'mid valley|bighome|2026-10-02|2026-10-04', venue: 'MID VALLEY', organizer: 'BIGHOME', startDate: '2026-10-02', endDate: '2026-10-04', showDates: false, projectIds: [363] },
+    { key: 'mid valley|homelove|2026-10-15|2026-10-18', venue: 'MID VALLEY', organizer: 'HOMELOVE', startDate: '2026-10-15', endDate: '2026-10-18', showDates: false, projectIds: [2260] },
+    { key: 'mid valley|mle|2026-10-23|2026-10-25', venue: 'MID VALLEY', organizer: 'MLE', startDate: '2026-10-23', endDate: '2026-10-25', showDates: false, projectIds: [313, 314, 316] },
+  ],
+  venues: [{ id: '1', name: 'MID VALLEY' }],
+};
+
 vi.mock('../vendor/scm/lib/fair-options-queries', async (orig) => ({
   ...(await orig<typeof import('../vendor/scm/lib/fair-options-queries')>()),
   useFairOptions: () => ({ data: fixture.data ?? DATA, isLoading: false, isError: false }),
@@ -78,21 +98,37 @@ const shownText = (s: HTMLSelectElement) => s.selectedOptions.item(0)?.textConte
 const fairOptionLabels = () => [...fairSelect().options].map((o) => o.textContent);
 
 describe('FairPicker — a row is a place plus an organizer', () => {
-  it('labels rows with the VENUE ONLY — the organizer is never shown (owner 2026-09-16)', () => {
+  it('labels every row VENUE — ORGANIZER, with no dates (owner 2026-09-16)', () => {
+    /* The organizer was hidden from these labels on 2026-09-15 (#3999) and the
+       owner reversed it the next morning: 「我是写 venue，然后旁边还有 organizer
+       的名字的，它不是单纯就是 venue only」. */
     renderPicker({ venue: null, organizer: null });
-    const labels = fairOptionLabels();
-    expect(labels).toContain('MID VALLEY');
-    expect(labels).toContain('THE COMMUNE KULAI');
-    /* The organizer still rides on the value and is saved (fair P&L / commission),
-       but it must not appear in any label the salesperson reads. */
-    expect(labels.some((l) => l.includes('REX'))).toBe(false);
-    expect(labels.some((l) => l.includes('INHOME'))).toBe(false);
-    /* The one row the server flags because another in the month would otherwise
-       read identically keeps its dates — venue only, still no organizer. */
-    expect(labels).toContain('MVEC SOUTHKEY (2026-09-18 ~ 2026-09-20)');
+    expect(screen.getByText('MID VALLEY — REX')).toBeTruthy();
+    expect(screen.getByText('THE COMMUNE KULAI — INHOME')).toBeTruthy();
+    /* The one exception: the server flagged this row because another row in the
+       same month would read identically. */
+    expect(screen.getByText('MVEC SOUTHKEY — REX (2026-09-18 ~ 2026-09-20)')).toBeTruthy();
   });
 
-  it('sends the venue AND the organizer when a fair is picked (organizer hidden but saved)', () => {
+  it('keeps two fairs at ONE venue apart — the case venue-only labels erased', () => {
+    /* Production, 2026-10 at MID VALLEY: three fairs, three organizers (project
+       363 BIGHOME 10-02, 2260 HOMELOVE 10-15, 313/314/316 MLE 10-23). `showDates`
+       is false on all three because the server only sets it when the venue AND
+       the organizer repeat, so the organizer is the ONLY thing telling them
+       apart. Labelled by venue alone they were three identical "MID VALLEY" rows
+       and the sale landed in whichever fair's P&L the rep happened to hit. */
+    fixture.data = DATA_2026_10_MID_VALLEY;
+    renderPicker({ venue: null, organizer: null }, '2026-10-08');
+    const fairs = fairOptionLabels().filter((l) => l.startsWith('MID VALLEY'));
+    expect(fairs).toEqual([
+      'MID VALLEY — BIGHOME',
+      'MID VALLEY — HOMELOVE',
+      'MID VALLEY — MLE',
+    ]);
+    expect(new Set(fairs).size).toBe(3);
+  });
+
+  it('sends the venue AND the organizer when a fair is picked', () => {
     const { onChange } = renderPicker({ venue: null, organizer: null });
     fireEvent.change(fairSelect(), { target: { value: 'fair:mid valley|rex|2026-09-11|2026-09-13' } });
     expect(onChange).toHaveBeenCalledWith({ venue: 'MID VALLEY', organizer: 'REX' });
