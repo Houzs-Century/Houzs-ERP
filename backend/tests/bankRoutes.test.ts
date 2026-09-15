@@ -1397,8 +1397,8 @@ describe('splitting one credit across several statements', () => {
     expect(res.status).toBe(400);
     const body = await res.json() as any;
     expect(body.error).toBe('amount_mismatch');
-    expect(body.message).toMatch(/7284\.48/);
-    expect(body.message).toMatch(/8155\.54/);
+    expect(body.message).toMatch(/RM 7,284\.48/);
+    expect(body.message).toMatch(/RM 8,155\.54/);
     /* And nothing was booked on the way to refusing. */
     expect(sb.tables.acc_settlement_receipts).toHaveLength(0);
   });

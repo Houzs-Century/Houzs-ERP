@@ -1,4 +1,5 @@
 import type { PaymentDraft } from "../vendor/scm/components/PaymentsTable";
+import { CONVERT_LABEL } from "../vendor/scm/lib/so-money-queries";
 import {
   listScmHandoffInstances,
   removeScmHandoff,
@@ -32,7 +33,10 @@ function sanitizeDraft(value: unknown): PaymentDraft | null {
   ) return null;
   const text = (input: unknown) => typeof input === "string" ? input : "";
   const method = draft.methodLabel;
-  if (!(["Cash", "Merchant", "Online", "Installment"] as const).includes(method as never)) return null;
+  /* The four maintenance values, plus money moved from a cancelled order
+     (docs/bugs/0931) — a converted row that failed to book must survive the
+     handoff like any other, or the money it moves is lost on the way back. */
+  if (!(["Cash", "Merchant", "Online", "Installment", CONVERT_LABEL] as const).includes(method as never)) return null;
   return {
     uid: draft.uid,
     idempotencyKey: draft.idempotencyKey,
@@ -41,6 +45,7 @@ function sanitizeDraft(value: unknown): PaymentDraft | null {
     merchantProvider: text(draft.merchantProvider),
     installmentMonthsLabel: text(draft.installmentMonthsLabel),
     onlineType: text(draft.onlineType),
+    convertedFromDocNo: text(draft.convertedFromDocNo),
     amountSen: draft.amountSen,
     accountSheet: text(draft.accountSheet),
     approvalCode: text(draft.approvalCode),

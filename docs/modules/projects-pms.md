@@ -1336,7 +1336,7 @@ type into it and duplicate lines the same way.
 | Defect-file action timeline (Done / Replace + remark) | `pages/Projects.tsx` `TaskAttachmentRow` `saveAction` | `mobile/MobilePmsDefectActions.tsx` — extracted from `MobilePMS.tsx` 2026-08-21 so the save path is renderable in a test; both surfaces must SURFACE a refusal |
 | Calendar | `pages/Projects.tsx:3034` | `mobile/MobileCalendar.tsx` |
 | Finances profitability analytics (group tables, rental column, drill-down) | `pages/Projects.tsx` `ProjectsAnalyticsView` / `BreakdownCard` | **no mobile counterpart** (mobile PMS is single-project detail only) |
-| Gantt | `components/ProjectGantt.tsx` | `mobile/MobileGantt.tsx` (rendered from `MobilePMS.tsx:1603`) |
+| "Floor plans & layout" tiles per cohort | **no desktop counterpart** (the PC lists Display / 3D / 2D / Blank / Filled as tasklist rows) | `mobile/MobilePmsFloorPlanTiles.ts` — ONE test-pinned rule read by `MobilePMS.tsx` `FloorPlans`: crew (driver / helper / storekeeper, `crewPlanView`) see the **Display tile only** + the stock-transfer records under it (owner 2026-09-15, `docs/bugs/0928`); ops/office + purchaser (`hidePlanTiles`) lose Unfilled + Filled (owner 2026-07-23); sales / mgt / BD see all five |
 | Fair / Sales Report | `pages/scm-v2/FairReport.tsx` | `mobile/MobileFairReport.tsx` |
 | Activity / read-marking | `components/ProjectChat.tsx` | `mobile/MobileInbox.tsx` (`POST /:id/read` at `:115`) |
 | Maintenance masters (brands, event types, organizers, venues) | `pages/ProjectMaintenance.tsx` | **no mobile counterpart** |

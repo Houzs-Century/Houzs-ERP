@@ -11,6 +11,10 @@ each value comes from, and says which columns the future import may change. It i
 a **design**, not a build: the only export being built today is the Purchase
 Order one, and its columns are the template everything below follows.
 
+> **Built since** (2026-09-15): Delivery Return (§4) and Purchase Return (§7), on the
+> grid-driven mechanism, with AutoCount's own Detail Listing columns — read-only
+> production proof in `backend/scripts/check-return-line-export.mjs`.
+
 > **Built since** (2026-09-15): Goods Receipt (§5), Purchase Invoice (§6) and
 > Sales Invoice (§3), with the owner's rulings below and the differences listed
 > in [§ What the GR / PI / SI builds changed](#what-the-gr--pi--si-builds-changed).
@@ -347,43 +351,82 @@ Description 2**, **Remarks** (`notes`). No estimate dates.
 
 ## 4. Delivery Return (sales return)
 
-Tables: `scm.delivery_returns` + `scm.delivery_return_items`
-(`delivery_return_id`). Production: **1 return (CANCELLED), 2 lines** — the
-document is practically unused. **No AutoCount mapping exists** for it
-(the outbox accepts SO, PO, DO, IV, GR, PI only).
+> **BUILT 2026-09-15** on the grid-driven mechanism above. `GET /delivery-returns/export/rows`
+> (`backend/src/scm/routes/delivery-return-exports.ts`, builder
+> `buildDeliveryReturnExportRows` in `backend/src/scm/lib/delivery-return-list-read.ts`),
+> the list `frontend/src/pages/scm-v2/DeliveryReturnsListV2.tsx`, the column contract
+> `backend/src/scm/lib/return-line-export-columns.ts` (`DR_LINE_COLUMNS`, mirrored in
+> `frontend/src/vendor/scm/lib/`). This section replaces the proposal that stood here.
 
-| # | Group | Column | Source | Notes |
+Tables: `scm.delivery_returns` + `scm.delivery_return_items` (`delivery_return_id`).
+Production, read-only at 2026-09-15 09:25 UTC: **company 1 HOUZS 0 returns; company 2
+2990 1 return (CANCELLED) with 2 lines** (PROVEN, `backend/scripts/check-return-line-export.mjs`).
+
+**AutoCount HAS this document, and the ERP does not sync it.** The earlier line here
+("no AutoCount mapping exists") is right about the ERP — the outbox accepts SO, PO,
+DO, IV, GR and PI only — but the book itself holds Delivery Returns: `DR` / `DRDTL` in
+AED_HOUZS, **87 documents / 113 lines, 2024-09-03 .. 2026-08-21** (PROVEN, read-only
+2026-09-15 16:12 MYT). None is in the ERP (company 1 has 0 returns).
+
+**The columns ARE AutoCount's.** AutoCount Accounting 2.2's own "Print Delivery Return
+Detail Listing" grid, read from the installed program's embedded form resources
+(`AutoCount.Sales.dll`, `AutoCount.Invoicing.Sales.DeliveryReturn.FormDeliveryReturnPrintDetailListing.resources`:
+each column's `Caption` and `VisibleIndex`). The book's `Layout` table holds no saved
+layout for that form, so every AutoCount user sees these defaults (PROVEN). They are the
+grid's DEFAULT visible columns, in this order:
+
+| # | Label (AutoCount caption) | Level | ERP value | AutoCount's own values on its 113 DR lines |
 |---|---|---|---|---|
-| 1 | identity | Doc No | `h.return_number` | |
-| 2 | identity | Doc Date | `h.return_date` | |
-| 3 | identity | Status | `h.status` | |
-| 4 | identity | Customer Code | `h.debtor_code` | |
-| 5 | identity | Customer Name | `h.debtor_name` | |
-| 6 | identity | Reason | `h.reason` | |
-| 7 | line | Item Code | `i.item_code` | |
-| 8 | line | Item Description | `i.description` | |
-| 9 | line | Item Description 2 | `i.description2` | |
-| 10 | line | Remarks | `i.notes` | |
-| 11 | line | Category | `i.item_group` | |
-| 12 | line | Condition | `i.condition` | |
-| 13 | line | Location | `warehouses.code` via `h.warehouse_id` | |
-| 14 | line | UOM | `i.uom` | |
-| 15 | line | Qty Returned | `i.qty_returned` | |
-| 16 | money | Unit Price | `i.unit_price_sen` ÷ 100 | |
-| 17 | money | Line Refund | `i.line_total_sen` ÷ 100 | the Detail Listing reads `refund_sen`; both columns exist on the line |
-| 18 | money | Pending Refund | `h.refund_sen` ÷ 100 unless status is REFUNDED, CREDIT_NOTED or REJECTED | the Detail Listing's rule |
-| 19 | follow-up | Received On | `h.received_at` | |
-| 20 | follow-up | Refunded On | `h.refunded_at` | |
-| 21 | people/place | Salesperson | `staff.name` via `h.salesperson_id`, else `h.agent` | |
-| 22 | people/place | Venue | `h.venue` | |
-| 23 | people/place | Phone | `h.phone` | |
-| 24 | links | DO No. | `h.do_doc_no` | |
-| 25 | links | SO Doc No. | the SO number of the DO line, via `i.do_item_id` | |
-| 26 | links | Invoice No. | `sales_invoices.invoice_number` via `h.sales_invoice_id` | |
-| 27 | | Line ID | `i.id` | |
+| 1 | Doc No | doc | `return_number` | |
+| 2 | Doc Date | doc | `return_date` (Excel date, yyyy/mm/dd) | |
+| 3 | Debtor Code | doc | `debtor_code` | |
+| 4 | Debtor Name | doc | `debtor_name` | |
+| 5 | Agent | doc | HOUZS: the write-back's `resolveAcAgent(agent, salesperson name)`; 2990: salesperson name, else `agent` | |
+| 6 | Curr. Code | doc | `currency` | MYR on 113 |
+| 7 | Curr. Rate | doc | 1 when MYR, else blank (a return stores no rate) | 1 |
+| 8 | Inclusive? | doc | blank — the ERP holds no tax setting | T on 110 of 113 |
+| 9 | SubTotal (Ex) | doc | `local_total_sen` ÷ 100 | |
+| 10 | Tax | doc | 0 — a return carries no tax in the ERP | 0 on 113 |
+| 11 | Total | doc | `local_total_sen` ÷ 100 | |
+| 12 | Local Total | doc | `local_total_sen` ÷ 100 | |
+| 13 | Cancelled | doc | Yes / No from `status` | F on 113 |
+| 14 | Item Code | line | HOUZS: `bookLineItem` (the write-back's item resolver + the book's item master); 2990: `item_code` | |
+| 15 | Detail Description | line | HOUZS: the book item's description, else `description`; 2990: `description` | |
+| 16 | UOM | line | HOUZS: the book item's base UOM, else `uom`; 2990: `uom` | |
+| 17 | Location | line | the warehouse the line went back into, by the stock rule (SO line's warehouse via the DO line, else the DO's, else the return's) as AutoCount's short code (`LOCATION_MAP`) | KL 80, PG 28, SRW 4, SBH 1 |
+| 18 | Proj No | line | blank | blank on 113 |
+| 19 | Dept No | line | blank | blank on 113 |
+| 20 | Batch No. | line | blank | blank on 113 |
+| 21 | Qty | line | `qty_returned` | |
+| 22 | Unit Price | line | `unit_price_sen` ÷ 100 (rate) | |
+| 23 | Discount | line | `discount_sen` ÷ 100 | blank on 113 |
+| 24 | Total | line | `line_total_sen` ÷ 100 | |
+| 25 | Tax Code | line | blank | blank on 113 |
+| 26 | Tax | line | 0 | 0 on 113 |
+| 27 | Total (Ex) | line | `line_total_sen` ÷ 100 | |
+| 28 | Total (Inc) | line | `line_total_sen` ÷ 100 | |
+| 29 | Serial No. List | line | blank | blank on 113 |
 
-Import-editable here: **Item Description 2**, **Remarks** (`notes`). No delivery
-or estimate date on a return line.
+AutoCount itself captions the document total and the line total both "Total", and the
+document tax and the line tax both "Tax"; the file keeps its captions.
+
+In the chooser, hidden by default (ERP facts; AutoCount captions where the same form has
+one): Status (the word on screen), Ref (the list's customer ref), Reason, Note, DO No.
+(`do_doc_no`), SO Doc No. (the DO line's SO line, else the DO's), Detail Description 2
+(composed from the line's variants by `buildVariantSummary`, the stored `description2`
+only when the variants compose nothing), Remarks (`notes`), Item Group (the book item's,
+2990: `item_group`), Condition, Line ID; and the list's own columns: Salesperson, Sales
+Location, Branding / Venue (HOUZS: `BRANDING_MAP` / `VENUE_MAP` in the file), Phone,
+Email, Address 1/2, City, Postcode, State, Customer Type, Building Type, and for a
+finance viewer the category and cost columns (ringgit in the file).
+
+A sofa is one row per ERP line (owner 2026-09-15), not AutoCount's one collapsed line:
+2990-DR-2608-001 exports XAMMAR-L(LHF) and XAMMAR-2A(RHF) as two rows (PROVEN).
+
+Filters: the list's server read is company + SALES SCOPE + `status`; the tab and search
+filter in the browser, and the export applies the same predicate
+(`deliveryReturnsInView`) to every row the server returns. The screen read stops at 500;
+the export does not.
 
 ---
 
@@ -484,19 +527,65 @@ estimate date on an invoice line.
 
 ## 7. Purchase Return
 
-Tables: `scm.purchase_returns` + `scm.purchase_return_items`
-(`purchase_return_id`). Production: **0 returns, 0 lines**. Not synced to
-AutoCount.
+> **BUILT 2026-09-15** on the grid-driven mechanism above. `GET /purchase-returns/export/rows`
+> (`backend/src/scm/routes/purchase-return-exports.ts`, builder
+> `buildPurchaseReturnExportRows` in `backend/src/scm/lib/purchase-return-list-read.ts`),
+> the list `frontend/src/pages/scm-v2/PurchaseReturnsListV2.tsx`, the column contract
+> `PR_LINE_COLUMNS` in `return-line-export-columns.ts`. This section replaces the
+> proposal that stood here.
 
-Doc No (`return_number`) · Doc Date (`return_date`) · Status · Supplier Code ·
-Supplier Name · Credit Note Ref (`credit_note_ref`) · Item Code · Item Description
-(`material_name`) · Item Description 2 (`description2`) · Remarks (`notes`) ·
-Reason (`i.reason`, else `h.reason`) · Category (`item_group`) · Location (the GRN
-header's warehouse via `grn_item_id`) · UOM · Qty Returned (`qty_returned`) ·
-Unit Price · Line Refund (`line_refund_sen`) · GRN No. (via `grn_item_id`) ·
-PO No. (`h.purchase_order_id`) · Line ID.
+Tables: `scm.purchase_returns` + `scm.purchase_return_items` (`purchase_return_id`).
+Production, read-only at 2026-09-15 09:25 UTC: **0 returns, 0 lines in both companies**
+(PROVEN; the export and SQL both answer 0). Not synced to AutoCount by the ERP; the book
+holds its own: `PR` / `PRDTL` in AED_HOUZS, **4 documents / 5 lines, 2024-01-27 ..
+2025-10-28** (PROVEN, read-only 2026-09-15 16:12 MYT).
 
-Import-editable here: **Item Description 2**, **Remarks**.
+The columns are AutoCount Accounting 2.2's "Print Purchase Return Detail Listing"
+(`AutoCount.Purchase.dll`, `FormPurchaseReturnPrintDetailListing.resources`; no saved
+layout in the book), the grid's DEFAULT visible columns in this order:
+
+| # | Label | Level | ERP value | AutoCount's own values on its 5 PR lines |
+|---|---|---|---|---|
+| 1 | Doc No | doc | `return_number` | |
+| 2 | Doc Date | doc | `return_date` | |
+| 3 | Creditor Code | doc | `suppliers.code` | |
+| 4 | Creditor Name | doc | `suppliers.name` | |
+| 5 | Agent | doc | blank — a purchase return has no agent in the ERP | blank on 4 |
+| 6 | Curr. Code | doc | the source GRN's `currency` | MYR |
+| 7 | Curr. Rate | doc | 1 when MYR, else blank | 1 |
+| 8 | Inclusive? | doc | blank | F on 4 |
+| 9 | SubTotal (Ex) | doc | `refund_sen` ÷ 100 | |
+| 10 | Tax | doc | 0 | 0 |
+| 11 | Total | doc | `refund_sen` ÷ 100 | |
+| 12 | Local Total | doc | `refund_sen` ÷ 100 when MYR, else blank | |
+| 13 | Rounding Adj. | doc | 0 | 0 |
+| 14 | Final Total | doc | `refund_sen` ÷ 100 | |
+| 15 | Cancelled | doc | Yes / No | F |
+| 16 | Item Code | line | HOUZS: `bookLineItem(…, supplier code)`; 2990: `item_code` | |
+| 17 | Detail Description | line | HOUZS: the book item's, else `material_name`, else `description` | |
+| 18 | UOM | line | HOUZS: the book item's base UOM, else `uom` | |
+| 19 | Location | line | the source GRN line's receipt warehouse, else the return's GRN's, short code | PG, KL, HQ |
+| 20–22 | Proj No · Dept No · Batch No. | line | blank | blank |
+| 23 | Qty | line | `qty_returned` | |
+| 24 | Unit Price | line | `unit_price_sen` ÷ 100 (rate) | |
+| 25 | Discount | line | blank — a return line has no discount | "5%" on 2 of 5 |
+| 26 | Total | line | `line_refund_sen` ÷ 100 | |
+| 27 | Local Total | line | `line_refund_sen` ÷ 100 when MYR, else blank | |
+| 28 | Tax Code | line | blank | blank |
+| 29 | Tax | line | 0 | 0 |
+| 30 | Total (Ex) | line | `line_refund_sen` ÷ 100 | |
+| 31 | Total (Inc) | line | `line_refund_sen` ÷ 100 | |
+| 32 | Serial No. List | line | blank | blank |
+| 33 | Is Rounding Adj. | doc | No | F |
+
+Hidden by default: Status (the word on screen), Supplier C/N No. (`credit_note_ref`),
+Reason (the line's, else the return's), GRN No. (via `grn_item_id`, else the return's GRN),
+Our PO No. (the GRN line's PO, else the return's), Detail Description 2 (from the
+variants, else stored), Remarks (`notes`), Item Group, Line ID.
+
+Filters: company + `status` + `supplierId` on the server; the tab and search in the
+browser, applied by the export to every row (`purchaseReturnsInView`). The screen read
+stops at 300; the export does not.
 
 ---
 

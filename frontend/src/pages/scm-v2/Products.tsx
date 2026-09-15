@@ -4572,19 +4572,15 @@ const normalizeHeight = (h: unknown): string => String(h ?? '').replace('"', '')
 
 /** Fixed leading + trailing columns. The per-size price columns are spliced
  *  in between, derived from the live sofaSizes config at export time. */
-// CSV money columns are written in plain RINGGIT (e.g. 1535, or 1535.50 when
-// there are cents) — never raw sen (153500 reads like "RM153,500") and never a
-// forced ".00" tail (the operator types whole-ringgit prices and doesn't want
-// to add decimals every time — Wei Siang 2026-06-09). Round-trip stays exact
-// because money is 2dp: import multiplies by 100 back to sen.
+// CSV money columns are written in plain RINGGIT with two decimals (1535.00) —
+// never raw sen (153500 reads like "RM153,500"). The owner's rule of 2026-09-15
+// (every amount reads the way AutoCount prints it) replaces the earlier
+// no-".00" choice (Wei Siang 2026-06-09); typing "1535" back in still imports.
+// Round-trip stays exact because money is 2dp: import multiplies by 100 back to sen.
 const priceColForSize = (size: string) => `price_${size}`;
-/** sen → "1535" / "1535.50" (blank when unset, no trailing .00). */
-const senToRm = (sen: number | null | undefined): string => {
-  if (sen == null) return '';
-  const ringgit = Math.trunc(sen / 100);
-  const cents = Math.abs(sen % 100);
-  return cents === 0 ? String(ringgit) : `${ringgit}.${String(cents).padStart(2, '0')}`;
-};
+/** sen → "1535.00" / "1535.50" (blank when unset). */
+export const priceSheetRinggit = (sen: number | null | undefined): string =>
+  sen == null ? '' : (sen / 100).toFixed(2);
 
 function exportSkusCsv(rows: MfgProductRow[], sofaSizes: string[], tier: SofaPriceTier, category: MfgCategory | 'all'): void {
   // Columns are TAILORED to the category being exported, so an operator only
@@ -4638,14 +4634,14 @@ function exportSkusCsv(rows: MfgProductRow[], sofaSizes: string[], tier: SofaPri
       }
       const sizeCells: Record<string, unknown> = {};
       for (const size of sofaSizes) {
-        sizeCells[priceColForSize(size)] = senToRm(m.get(normalizeHeight(size)));
+        sizeCells[priceColForSize(size)] = priceSheetRinggit(m.get(normalizeHeight(size)));
       }
       emit({ price_tier: tier, ...sizeCells });
     } else {
       // Bedframe / mattress / accessory / service — flat base + price1.
       emit({
-        base_price: senToRm(r.base_price_sen),
-        price1:     senToRm(r.price1_sen),
+        base_price: priceSheetRinggit(r.base_price_sen),
+        price1:     priceSheetRinggit(r.price1_sen),
       });
     }
   }

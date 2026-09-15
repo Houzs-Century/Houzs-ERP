@@ -21,8 +21,13 @@ import { useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { AmendmentQuickView, amendmentJobCardPath, type AmendmentQuickViewTarget } from './AmendmentQuickView';
 import { fmtDateTime } from '../../vendor/shared/format';
-import { usePoAmendments, type PoAmendmentRow } from '../../vendor/scm/lib/po-amendment-queries';
-import { useAmendments, type AmendmentRow } from '../../vendor/scm/lib/so-amendment-queries';
+import { usePoAmendments } from '../../vendor/scm/lib/po-amendment-queries';
+import { useAmendments } from '../../vendor/scm/lib/so-amendment-queries';
+import {
+  buildPoAmendmentInbox,
+  PO_AMENDMENT_INBOX_SOURCE_LABEL as SOURCE_LABEL,
+  type PoAmendmentInboxRow as InboxRow,
+} from '../../vendor/scm/lib/po-amendment-inbox';
 import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
 import { AmendmentStatusPill } from '../../vendor/scm/components/StatusPill';
 import {
@@ -34,12 +39,7 @@ import {
   compareAmendmentsForList,
 } from '../../vendor/scm/lib/status-pill';
 import { AmendmentApproverBadge } from '../../vendor/scm/components/AmendmentApproverBadge';
-import {
-  AMENDMENT_APPROVER_LABEL,
-  PO_AMENDMENT_APPROVER,
-  soAmendmentApprover,
-  type AmendmentApprover,
-} from '../../vendor/scm/lib/amendment-approver';
+import { AMENDMENT_APPROVER_LABEL } from '../../vendor/scm/lib/amendment-approver';
 import { PageHeader } from '../../components/Layout';
 import { FilterPills } from '../../components/FilterPills';
 import { useStaffLookup } from '../../hooks/useStaffLookup';
@@ -54,31 +54,10 @@ const STATUS_CHIPS = AMENDMENT_LIST_CHIPS;
    two-source inbox replaced the po_amendments-only grid; new column set.) */
 const PO_AMENDMENT_LIST_STORAGE_KEY = 'po-amendment-list.layout.v2';
 
-/* One flattened row shape for both sources, so the columns stay dumb. `id`
-   navigates within the row's OWN module (see openRow); `key` is unique across
-   the merged set. */
-type InboxRow = {
-  key: string;
-  kind: 'po' | 'so';
-  id: string;
-  poLabel: string;
-  amendmentNo: string;
-  approver: AmendmentApprover;
-  requestedBy: string | null;
-  reason: string | null;
-  status: string;
-  createdAt: string | null;
-};
-
 /* Opens with Requested on top across both sources (status-pill.ts owns the
    order), EVERY time: the grid is sortForSessionOnly, so a header click sorts
    this visit and is not remembered (owner 2026-09-14). */
 const OPEN_ORDER = compareAmendmentsForList<InboxRow>((a) => a.status, (a) => a.createdAt);
-
-const SOURCE_LABEL: Record<InboxRow['kind'], string> = {
-  po: 'PO amendment',
-  so: 'From SO amendment',
-};
 
 /* `requestedBy` is a bare scm.staff uuid on both sources — resolve through the
    shared staff roster exactly as the SO amendment / PO lists resolve their
@@ -123,7 +102,8 @@ const buildColumns = (
   {
     /* Who signs it (owner 2026-09-14) — the same badge as the SO queue. A
        direct PO amendment has one approve key, Purchaser's; an SO-driven row
-       follows its lane (DELIVERY rows never reach this queue, see allRows). */
+       follows its lane (DELIVERY rows never reach this queue, see
+       po-amendment-inbox.ts). */
     key: 'approver', label: 'Approver', width: 130, sortable: true, groupable: true,
     accessor: (a) => <AmendmentApproverBadge approver={a.approver} />,
     searchValue: (a) => AMENDMENT_APPROVER_LABEL[a.approver],
@@ -179,45 +159,10 @@ export const PoAmendments = () => {
   const isLoading = poQ.isLoading || soQ.isLoading;
   const error = poQ.error ?? soQ.error;
 
-  const allRows = useMemo<InboxRow[]>(() => {
-    const direct: InboxRow[] = ((poQ.data?.amendments ?? []) as PoAmendmentRow[]).map((a) => ({
-      key: `po:${a.id}`,
-      kind: 'po',
-      id: a.id,
-      poLabel: a.po_number ?? '',
-      amendmentNo: String(a.amendment_no ?? ''),
-      approver: PO_AMENDMENT_APPROVER,
-      requestedBy: a.requested_by ?? null,
-      reason: a.reason ?? null,
-      status: a.status,
-      createdAt: a.created_at ?? null,
-    }));
-    /* SO-driven rows = SO amendments with a bound PO (the list endpoint
-       resolves bound_pos through purchase_order_items.so_item_id). Pure-sales
-       amendments (no purchase leg) stay in the SO queue only.
-
-       EXCLUDE the DELIVERY lane: a delivery/customer-side change (schedule,
-       address, or a service line — disposal / storage / transport) never
-       revises a PO, so it must not show in the PO revision inbox even though its
-       SO happens to have a bound PO for its product lines (owner 2026-09-11,
-       docs/bugs). Legacy rows (lane null — pre two-lane rework) keep the old PO
-       leg and still appear. */
-    const soDriven: InboxRow[] = ((soQ.data?.amendments ?? []) as AmendmentRow[])
-      .filter((a) => (a.bound_pos?.length ?? 0) > 0 && a.lane !== 'DELIVERY')
-      .map((a) => ({
-        key: `so:${a.id}`,
-        kind: 'so',
-        id: a.id,
-        poLabel: (a.bound_pos ?? []).map((p) => p.po_number).join(', '),
-        amendmentNo: String(a.amendment_no ?? ''),
-        approver: soAmendmentApprover(a.lane),
-        requestedBy: a.requested_by ?? null,
-        reason: a.reason ?? null,
-        status: a.status,
-        createdAt: a.created_at ?? null,
-      }));
-    return [...direct, ...soDriven];
-  }, [poQ.data, soQ.data]);
+  const allRows = useMemo<InboxRow[]>(
+    () => buildPoAmendmentInbox(poQ.data?.amendments ?? [], soQ.data?.amendments ?? []),
+    [poQ.data, soQ.data],
+  );
 
   const rows = useMemo<InboxRow[]>(
     () => (statusChip === 'all' ? allRows : allRows.filter((a) => amendmentBucketOf(a.status) === statusChip)),

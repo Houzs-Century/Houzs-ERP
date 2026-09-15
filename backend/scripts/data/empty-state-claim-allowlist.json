@@ -283,7 +283,7 @@
     },
     {
       "file": "backend/src/acc/settlement.ts",
-      "text": "reason: `This statement is already fully received — ${(payableSen / 100).toFixed(2)} across ${already.receipts.length} credit(s). If the bank shows more, it belongs to another statement.`,",
+      "text": "reason: `This statement is already fully received — ${fmtSen(payableSen)} across ${already.receipts.length} credit(s). If the bank shows more, it belongs to another statement.`,",
       "why": "A refusal spoken over receipts that were read and summed to the statement payable - the amount and credit count in the sentence are that evidence; an empty receipts read cannot reach it, since nothing sums to a non-zero payable."
     },
     {

@@ -9,6 +9,7 @@
 
 // computeSofaPrice lives in sofa-build.ts (re-exported via index). Types only:
 import type { Cell, Depth, SofaPriceResult, SofaProductPricing } from './sofa-build';
+import { fmtSen } from './format';
 
 /* ─── Sofa ─────────────────────────────────────────────────────────── */
 // Real implementation lives in sofa-build.ts; re-exported via index.ts. Aliased
@@ -58,11 +59,11 @@ export const computeMattressPrice = (
   const pillowExtra = Math.max(0, extraPillows) * pricePerExtra;
   const total = base + pillowExtra;
   const breakdown = [
-    `Mattress · ${sizeId}: RM ${base.toLocaleString('en-MY')}`,
+    `Mattress · ${sizeId}: ${fmtSen(Math.round(base * 100))}`,
   ];
-  if (freePillows > 0) breakdown.push(`Free pillows × ${freePillows}: RM 0`);
+  if (freePillows > 0) breakdown.push(`Free pillows × ${freePillows}: ${fmtSen(0)}`);
   if (extraPillows > 0) {
-    breakdown.push(`Extra pillows × ${extraPillows} @ RM ${pricePerExtra}: RM ${pillowExtra.toLocaleString('en-MY')}`);
+    breakdown.push(`Extra pillows × ${extraPillows} @ ${fmtSen(Math.round(pricePerExtra * 100))}: ${fmtSen(Math.round(pillowExtra * 100))}`);
   }
   return { base, pillowExtra, total, breakdown };
 };
@@ -83,7 +84,7 @@ export const computeBedframePrice = (
   }
   return {
     total: variant.price,
-    breakdown: [`Bedframe · ${sizeId}: RM ${variant.price.toLocaleString('en-MY')}`],
+    breakdown: [`Bedframe · ${sizeId}: ${fmtSen(Math.round(variant.price * 100))}`],
   };
 };
 

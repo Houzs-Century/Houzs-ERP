@@ -95,6 +95,7 @@ import {
    owns any payment-row markup: that second, read-only copy is exactly what made
    Edit Draft offer LESS than the screen it was opened from. */
 import { AddPaymentSheet, RecordedPaymentsList, type RecordedPayment } from "./RecordedPayments";
+import { OrderMoneyPanel } from "../vendor/scm/components/OrderMoneyPanel"; import type { MobileConvertPrefill } from "./MobileOrderMoney"; // money on a cancelled order (docs/bugs/0933)
 import { owesPaymentReason } from "../vendor/scm/lib/payment-reason";
 import { MobileLineRemark } from "./MobileLineRemark";
 import "./mobile.css";
@@ -272,9 +273,11 @@ const total = (h: SoHeader) => h.local_total_sen ?? h.total_revenue_sen ?? 0;
  *  (`#so-detail` + `renderSoDetail`/`openSO`), wired to the real
  *  /mfg-sales-orders/:docNo (header + line items) and /:docNo/payments.
  *  Draft/Submitted actions PATCH /:docNo/status. Design classes only. */
-export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav }: { docNo: string; onBack: () => void; onEdit?: (docNo: string) => void; onAddLine: ((docNo: string) => void) | null;
+export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onConvert }: { docNo: string; onBack: () => void; onEdit?: (docNo: string) => void; onAddLine: ((docNo: string) => void) | null;
   /** Relationship-Map node navigation (MobileApp). Absent → map nodes inert. */
   flowNav?: FlowNav;
+  /** Convert on a cancelled order's money panel: open New SO with this seed (docs/bugs/0933). */
+  onConvert?: (seed: MobileConvertPrefill) => void;
 }) {
   const qc = useQueryClient();
   const confirm = useConfirm();
@@ -1228,6 +1231,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav }: { 
                   onChanged={refreshAfterPayment}
                 />
               )}
+              <OrderMoneyPanel docNo={docNo} onOpenNewOrder={(copyFrom, picks) => onConvert?.({ copyFrom, picks })} />
             </div>
 
             {/* History — owner requirement (Inistate-style audit timeline): WHO
@@ -1247,12 +1251,10 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav }: { 
         )}
       </div>
 
-      {/* Standalone ADD-Payment sheet (the card-header "+ Add Payment"). Editing
-          an EXISTING row is owned by RecordedPaymentsList, which mounts the same
-          sheet in edit mode — so the affordance exists wherever the ledger is
-          rendered, including inside Edit Sales Order. Reachable even when the SO
-          is edit-locked, because payment is never lock-gated (only
-          status/downstream via canAddPayment). */}
+      {/* Standalone ADD-Payment sheet (the card-header "+ Add Payment"). Editing an EXISTING row is owned by
+          RecordedPaymentsList, which mounts the same sheet in edit mode — so the affordance exists wherever the ledger
+          is rendered, including inside Edit Sales Order. Reachable even when the SO is edit-locked, because payment is
+          never lock-gated (only status/downstream via canAddPayment). */}
       {payOpen && h && (
         <AddPaymentSheet
           docNo={docNo}

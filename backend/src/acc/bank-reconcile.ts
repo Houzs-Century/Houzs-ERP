@@ -29,6 +29,8 @@
 
 /** One posted ledger movement on the bank account, as scm.v_gl_entries gives
     it. Debit is money INTO a bank account, credit is money out. */
+import { fmtSen } from '../scm/shared/format';
+
 export type LedgerMovement = {
   jeNo: string;
   entryDate: string;
@@ -236,9 +238,9 @@ export function reconcileBankStatement(input: ReconcileInput): Reconciliation {
     if (expected !== differenceSen) {
       consistent = false;
       inconsistency =
-        `The difference of ${differenceSen} sen does not equal what is unmatched on either side `
-        + `(${bankNotInBooks.sen} on the bank, ${booksNotOnBank.sen} in the books, `
-        + `${broughtForwardSen} brought forward${clearedFromBeforeSen !== 0 ? `, ${clearedFromBeforeSen} cleared from earlier months` : ''} = ${expected}). `
+        `The difference of ${fmtSen(differenceSen)} does not equal what is unmatched on either side `
+        + `(${fmtSen(bankNotInBooks.sen)} on the bank, ${fmtSen(booksNotOnBank.sen)} in the books, `
+        + `${fmtSen(broughtForwardSen)} brought forward${clearedFromBeforeSen !== 0 ? `, ${fmtSen(clearedFromBeforeSen)} cleared from earlier months` : ''} = ${fmtSen(expected)}). `
         + 'The statement balances and the lines under them disagree — check the file before trusting either.';
     }
   }

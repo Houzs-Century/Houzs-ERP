@@ -21,6 +21,7 @@
 
 import { AC_ITEM_MASTER_TSV } from './autocount-item-master';
 import { resolveAcItemCode } from './autocount-item-code';
+import { splitSofaCode } from './autocount-sofa-collapse';
 
 export type AcBookItem = { description: string; itemGroup: string; baseUom: string };
 
@@ -49,7 +50,8 @@ export type BookLineItem = {
    *  a product opened in the book under that name). */
   resolved: boolean;
   /** True when the book's item master supplied Description, Group and UOM —
-   *  for the resolved code, or (with bindings) for the unbound resolver's code. */
+   *  for the resolved code, (with bindings) for the unbound resolver's code, or
+   *  for a sofa piece the model's set item. */
   inBook: boolean;
   description: string | null;
   itemGroup: string | null;
@@ -89,6 +91,22 @@ export function bookLineItem(
   if (!book && code && opts.bindings) {
     const unbound = resolveAcItemCode(code, { supplierCode });
     if (unbound.ok) book = acBookItemIndex().get(up(unbound.acItemCode));
+  }
+  /* A SOFA PIECE is listed by the book under the model's SET item (group SOFA,
+     UOM SET): the book holds a sofa as one line (sofa-is-one-book-line). The
+     book's own piece items (5530-2A(LHF), 9028-1A(RHF), AMN-SF9050 SOFA
+     1A(LHF) ...) are group OTHER — 34 of the 37 piece-shaped items in the item
+     master, 2026-09-15 — and printing their group mis-lists every sofa line.
+     So for a piece: never an OTHER item; the set item `{model}-1S` resolved
+     exactly as the line was (same supplier, same bindings) when it is a SOFA
+     item; otherwise our own values. Measured on the GR/PI/SI lines
+     GR-004037#128 ... HC-SI-2609-007#16 (PR body). */
+  const piece = code ? splitSofaCode(code) : null;
+  if (piece && book?.itemGroup.toUpperCase() === 'OTHER') book = undefined;
+  if (piece && !book) {
+    const set = resolveAcItemCode(`${piece.model}-1S`, { supplierCode, bindings: opts.bindings ?? null });
+    const setItem = set.ok ? acBookItemIndex().get(up(set.acItemCode)) : undefined;
+    if (setItem?.itemGroup.toUpperCase() === 'SOFA') book = setItem;
   }
   return {
     itemCode: acCode ?? (code || null),

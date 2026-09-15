@@ -5,7 +5,10 @@
        next — and the header prints the date once;
      · Copy, on a manual journal, hands the form the lines, the notes and the
        narration (never the date), and Save draft sends them again;
-     · the account is typed to, every word matching the code or the name. */
+     · the account is typed to, every word matching the code or the name;
+     · Edit (owner 2026-09-15: 我无法 edit) opens the form on the entry's own
+       date, number and lines — the parties kept — and Save goes to the edit,
+       "Save & post" on a posted entry, never to a create. */
 
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, test, vi } from 'vitest';
@@ -27,6 +30,7 @@ const ACCOUNTS = [
 const createMutate = vi.fn();
 const postMutate = vi.fn();
 const reverseMutate = vi.fn();
+const editMutate = vi.fn();
 let detail: { journalEntry: JournalEntry; lines: JournalEntryLine[] } = { journalEntry: JE, lines: LINES };
 
 vi.mock('../../vendor/scm/lib/accounting-queries', async (importOriginal) => ({
@@ -36,9 +40,12 @@ vi.mock('../../vendor/scm/lib/accounting-queries', async (importOriginal) => ({
   useCreateJournalEntry: () => ({ mutate: createMutate, isPending: false }),
   usePostJournalEntry: () => ({ mutate: postMutate, isPending: false }),
 }));
-vi.mock('./accounting-phase1-queries', () => ({ useReverseJournalEntry: () => ({ mutate: reverseMutate, isPending: false }) }));
+vi.mock('./accounting-phase1-queries', () => ({
+  useReverseJournalEntry: () => ({ mutate: reverseMutate, isPending: false }),
+  useEditJournalEntry: () => ({ mutate: editMutate, isPending: false }),
+}));
 
-import { JeDetailCard, NewJournalForm, seedFromEntry, senToRm, type DraftSeed } from './JournalEntryCards';
+import { JeDetailCard, NewJournalForm, seedFromEntry, editSeedFromEntry, senToRm, type DraftSeed, type EditSeed } from './JournalEntryCards';
 
 describe('an entry opened', () => {
   test('every line names its account: the code on one line, the name on the next; the date once', () => {
@@ -74,6 +81,71 @@ describe('an entry opened', () => {
     render(<JeDetailCard id="je-9" onClose={() => {}} onCopy={onCopy} />);
     expect(screen.getAllByText('Copy')).toHaveLength(1);
     detail = { journalEntry: JE, lines: LINES };
+  });
+});
+
+describe('an entry edited', () => {
+  const PARTY_LINES: JournalEntryLine[] = [
+    { ...LINES[0]!, party_type: 'STAFF', party_code: 'S-07', party_name: 'Aina' },
+    LINES[1]!,
+  ];
+
+  test('Edit hands over the entry — id, number, date, posted — and the lines with their parties; not on a system or a reversed entry', () => {
+    const onEdit = vi.fn();
+    detail = { journalEntry: JE, lines: PARTY_LINES };
+    render(<JeDetailCard id="je-163" onClose={() => {}} onEdit={onEdit} />);
+    fireEvent.click(screen.getByText('Edit'));
+    const seed = onEdit.mock.calls[0]![0] as EditSeed;
+    expect(seed).toEqual({
+      id: 'je-163', jeNo: '2990-JE-2606-0163', posted: true, entryDate: '2026-06-30', narration: "Salary - Jun'26",
+      lines: [
+        { accountCode: '900-S100', debit: '19206.98', credit: '', notes: "Gross Salary - Jun'26", partyType: 'STAFF', partyCode: 'S-07', partyName: 'Aina' },
+        { accountCode: '410-0010', debit: '', credit: '19206.98', notes: "Net Salary - Jun'26", partyType: null, partyCode: null, partyName: null },
+      ],
+    });
+    expect(editSeedFromEntry(JE, PARTY_LINES)).toEqual(seed);
+    /* Copy still drops the party — a new month's salary line names a new person. */
+    expect(seedFromEntry(JE, PARTY_LINES).lines[0]).toEqual({ accountCode: '900-S100', debit: '19206.98', credit: '', notes: "Gross Salary - Jun'26" });
+
+    detail = { journalEntry: { ...JE, id: 'je-9', source_type: 'SOPAY' }, lines: LINES };
+    render(<JeDetailCard id="je-9" onClose={() => {}} onEdit={onEdit} />);
+    expect(screen.getAllByText('Edit')).toHaveLength(1);
+    detail = { journalEntry: { ...JE, id: 'je-8', reversed: true }, lines: LINES };
+    render(<JeDetailCard id="je-8" onClose={() => {}} onEdit={onEdit} />);
+    expect(screen.getAllByText('Edit')).toHaveLength(1);
+    detail = { journalEntry: JE, lines: LINES };
+  });
+
+  test('opened for an edit: titled by the number, dated the entry\'s own day, and Save & post sends the id and the lines to the edit, never to a create', () => {
+    createMutate.mockClear(); editMutate.mockClear();
+    const seed = editSeedFromEntry(JE, PARTY_LINES);
+    render(<NewJournalForm onDone={() => {}} initial={seed} editing={seed} />);
+    expect(screen.getByText('Edit 2990-JE-2606-0163')).toBeTruthy();
+    expect(screen.getByText(/posted — saving reverses it on its own day/)).toBeTruthy();
+    expect(screen.queryByText(/copied — check the date/)).toBeNull();
+    expect((screen.getByLabelText('Line 1 debit') as HTMLInputElement).value).toBe('19206.98');
+    fireEvent.change(screen.getByLabelText('Line 1 debit'), { target: { value: '19000.00' } });
+    fireEvent.change(screen.getByLabelText('Line 2 credit'), { target: { value: '19000.00' } });
+    expect(screen.getByText('balanced')).toBeTruthy();
+    fireEvent.click(screen.getByText('Save & post'));
+    expect(createMutate).not.toHaveBeenCalled();
+    expect(editMutate).toHaveBeenCalledTimes(1);
+    const body = editMutate.mock.calls[0]![0] as { id: string; entryDate: string; narration: string | null; lines: unknown[] };
+    expect(body.id).toBe('je-163');
+    expect(body.entryDate).toBe('2026-06-30');
+    expect(body.narration).toBe("Salary - Jun'26");
+    expect(body.lines).toEqual([
+      { accountCode: '900-S100', debitSen: 1900000, creditSen: 0, notes: "Gross Salary - Jun'26", partyType: 'STAFF', partyCode: 'S-07', partyName: 'Aina' },
+      { accountCode: '410-0010', debitSen: 0, creditSen: 1900000, notes: "Net Salary - Jun'26" },
+    ]);
+  });
+
+  test('a draft edited says so and saves as a draft', () => {
+    const seed = editSeedFromEntry({ ...JE, posted: false }, LINES);
+    render(<NewJournalForm onDone={() => {}} initial={seed} editing={seed} />);
+    expect(screen.getByText(/draft — saving rewrites it in place/)).toBeTruthy();
+    expect(screen.getByText('Save draft')).toBeTruthy();
+    expect(screen.queryByText('Save & post')).toBeNull();
   });
 });
 
