@@ -1106,7 +1106,7 @@ export function DeliveryReturnDetailV2() {
             <Section title={`Returned items · ${items.length}`}>
               <DataTable<DrItem>
                 tableId={`dr-lines-${id}`}
-                layoutFamily={DATA_TABLE_LAYOUT_FAMILIES.deliveryReturnLines}
+                layoutFamily={DATA_TABLE_LAYOUT_FAMILIES.deliveryReturnLines} persistSort={false} persistFilters={false}
                 rows={items}
                 loading={false}
                 columns={lineColumns}

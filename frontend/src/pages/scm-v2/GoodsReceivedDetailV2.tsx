@@ -723,7 +723,7 @@ function GoodsReceivedDetailV2ReadOnly() {
             <Section title={`Received items · ${items.length}`}>
               <DataTable<GrnItem>
                 tableId={`grn-lines-${id}`}
-                layoutFamily={DATA_TABLE_LAYOUT_FAMILIES.goodsReceivedLines}
+                layoutFamily={DATA_TABLE_LAYOUT_FAMILIES.goodsReceivedLines} persistSort={false} persistFilters={false}
                 rows={items}
                 loading={false}
                 columns={lineColumns}
