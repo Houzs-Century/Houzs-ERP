@@ -124,7 +124,7 @@ describe('the line export follows the list filters', () => {
     const { status, body } = await getLines(app, '?status=open');
     expect(status).toBe(200);
     expect(col(body, 'Doc No')).toEqual([open.po_number]);
-    expect(col(body, 'Status')).toEqual(['SUBMITTED']);
+    expect(col(body, 'Status')).toEqual(['Submitted']);
   });
 
   it('applies the search box to the PO number and notes', async () => {
@@ -242,7 +242,7 @@ describe('one row per line, in the contract order', () => {
       'Doc No': 'HC-PO-009950',
       'AutoCount Doc No': 'PO-2609-011',
       'Doc Date': '2026-09-01',
-      'Status': 'SUBMITTED',
+      'Status': 'Submitted',
       'Supplier Code': '400-D001',
       'Supplier Name': 'DIGLANT MANUFACTURING SDN BHD.',
       'SO Doc No.': 'HC-SO-013389',
@@ -252,7 +252,7 @@ describe('one row per line, in the contract order', () => {
       'Item Description 2': 'FABRIC KN-12 / SEAT 18',
       'Remarks': 'call before delivery',
       'Category': 'sofa',
-      'Location': 'PG WAREHOUSE',
+      'Location': 'PG', // AutoCount's short code, as the book spells it
       'Qty': 3,
       'Received Qty': 1,
       'Remaining Qty': 2,
@@ -266,10 +266,29 @@ describe('one row per line, in the contract order', () => {
     });
   });
 
-  it('prints the PO header warehouse when the line has none', async () => {
+  it('prints the PO header warehouse when the line has none, as the short code', async () => {
     const p = po({ purchase_location_id: 'wh-kl' });
     const { body } = await getLines(harness({ pos: [p], lines: [line(p, { warehouse_id: null })] }));
-    expect(col(body, 'Location')).toEqual(['KL WAREHOUSE']);
+    expect(col(body, 'Location')).toEqual(['KL']);
+  });
+
+  it('writes the word the list shows, with the hold marker after it', async () => {
+    const held = po({ status: 'SUBMITTED', on_hold: true });
+    const partial = po({ status: 'PARTIALLY_RECEIVED', po_number: 'HC-PO-ZZZZZZ' });
+    const { body } = await getLines(harness({ pos: [held, partial], lines: [line(held), line(partial)] }), '?sort=po_number:asc');
+    expect(col(body, 'Status')).toEqual(['Submitted (On Hold)', 'Partially received']);
+  });
+
+  it('carries cancelled orders only when the tab includes them', async () => {
+    const live = po({ status: 'SUBMITTED' });
+    const cancelled = po({ status: 'CANCELLED' });
+    const tables = { pos: [live, cancelled], lines: [line(live), line(cancelled)] };
+    const all = await getLines(harness(tables));
+    expect(new Set(col(all.body, 'Status'))).toEqual(new Set(['Submitted', 'Cancelled']));
+    const open = await getLines(harness(tables), '?status=open');
+    expect(col(open.body, 'Status')).toEqual(['Submitted']);
+    const outstanding = await getLines(harness(tables), '?status=outstanding');
+    expect(col(outstanding.body, 'Status')).not.toContain('Cancelled');
   });
 });
 

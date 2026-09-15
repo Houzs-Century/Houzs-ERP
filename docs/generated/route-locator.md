@@ -353,30 +353,30 @@ Total: 1280 route registrations across 166 files.
 - L1225  GET    /${base}/brief
 
 ## backend/src/scm/routes/mfg-purchase-orders.ts  (24)
-- L371  GET    /
-- L481  GET    /outstanding-so-items
-- L606  GET    /so-line-candidates
-- L753  GET    /:id
-- L928  GET    /:id/linked
-- L973  GET    /:id/revisions
-- L1301  POST   /
-- L2341  POST   /from-sos
-- L2421  PATCH  /:id
-- L2584  POST   /bulk-supplier-date
-- L2883  POST   /:id/items
-- L3006  PATCH  /:id/items/:itemId
-- L3181  DELETE /:id/items/:itemId
-- L3351  GET    /:id/items/:itemId/allocations
-- L3361  POST   /:id/items/:itemId/allocations
-- L3414  PATCH  /:id/items/:itemId/allocations/:allocationId
-- L3463  DELETE /:id/items/:itemId/allocations/:allocationId
-- L3554  GET    /:id/items/:itemId/photos/:photoKey/signed
-- L3612  GET    /:id/items/:itemId/photos/:photoKey
-- L3626  POST   /:id/convert-from-so
-- L3978  PATCH  /:id/confirm
-- L3999  POST   /:id/send-to-supplier
-- L4277  PATCH  /:id/cancel
-- L4289  PATCH  /:id/reopen
+- L378  GET    /
+- L489  GET    /outstanding-so-items
+- L614  GET    /so-line-candidates
+- L761  GET    /:id
+- L936  GET    /:id/linked
+- L981  GET    /:id/revisions
+- L1309  POST   /
+- L2349  POST   /from-sos
+- L2429  PATCH  /:id
+- L2592  POST   /bulk-supplier-date
+- L2891  POST   /:id/items
+- L3014  PATCH  /:id/items/:itemId
+- L3189  DELETE /:id/items/:itemId
+- L3359  GET    /:id/items/:itemId/allocations
+- L3369  POST   /:id/items/:itemId/allocations
+- L3422  PATCH  /:id/items/:itemId/allocations/:allocationId
+- L3471  DELETE /:id/items/:itemId/allocations/:allocationId
+- L3562  GET    /:id/items/:itemId/photos/:photoKey/signed
+- L3620  GET    /:id/items/:itemId/photos/:photoKey
+- L3634  POST   /:id/convert-from-so
+- L3986  PATCH  /:id/confirm
+- L4007  POST   /:id/send-to-supplier
+- L4285  PATCH  /:id/cancel
+- L4297  PATCH  /:id/reopen
 
 ## backend/src/scm/routes/fleet-maintenance.ts  (23)
 - L569  GET    /dashboard
@@ -1503,8 +1503,8 @@ Total: 1280 route registrations across 166 files.
 - L86  GET    /list-po-price
 
 ## backend/src/scm/routes/purchase-order-exports.ts  (2)
-- L55  GET    /export/lines
-- L56  GET    /export/headers
+- L56  GET    /export/lines
+- L57  GET    /export/headers
 
 ## backend/src/scm/routes/purchase-order-item-photos.ts  (2)
 - L103  POST   /:id/items/:itemId/photos

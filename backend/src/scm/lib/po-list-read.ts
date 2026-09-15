@@ -67,11 +67,14 @@ export function readPoListFilters(query: (key: string) => string | undefined): P
   };
 }
 
+/* Indexed by a caller's string, so an unknown key is `undefined` — say so. */
+const BUCKETS: Readonly<Record<string, string[] | undefined>> = PO_STATUS_BUCKETS;
+
 const SORT_COLS = new Set(['po_date', 'po_number', 'status', 'total_sen']);
 
 export function poListSort(sort: string | null): { col: string; asc: boolean } {
   const [rawCol, rawDir] = (sort ?? 'po_date:desc').split(':');
-  return { col: SORT_COLS.has(rawCol ?? '') ? rawCol! : 'po_date', asc: rawDir === 'asc' };
+  return { col: rawCol !== undefined && SORT_COLS.has(rawCol) ? rawCol : 'po_date', asc: rawDir === 'asc' };
 }
 
 /* The PostgREST builder surface these functions use. The functions take and
@@ -109,7 +112,7 @@ export function filterPoList<Q>(q: Q, f: PoListFilters, c: CompanyScopeCtx, vali
      do not sum to `all`, exactly as `outstanding` already does not. */
   if (f.status && f.status !== 'all') {
     if (f.status === 'on_hold') out = out.or(HELD_OR_TERM);
-    else if (PO_STATUS_BUCKETS[f.status]) out = out.in('status', PO_STATUS_BUCKETS[f.status]!);
+    else if (BUCKETS[f.status]) out = out.in('status', BUCKETS[f.status]!);
     else if (validStatuses.has(f.status)) out = out.eq('status', f.status);
   }
   if (f.supplierId) out = out.eq('supplier_id', f.supplierId);

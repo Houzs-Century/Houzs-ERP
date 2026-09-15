@@ -31,6 +31,7 @@ import {
 import { downloadCSV, toCSV, type CSVColumn } from "../../lib/csv";
 import { todayMyt } from "../../vendor/scm/lib/dates";
 import { fetchAllPoListRows, fetchPoLineExport, writePoLineExportXlsx } from "../../vendor/scm/lib/po-list-export";
+import { PO_STATUS_WORDS, poStatusWord } from "../../vendor/scm/lib/po-line-export-columns";
 import {
   PoBulkSupplierDateModal,
   type BulkSupplierDateResult,
@@ -131,6 +132,8 @@ const supplierSkusOf = (r: PoHeaderRow): string =>
 const totalOf = (r: PoHeaderRow): number =>
   r.total_sen ?? r.subtotal_sen ?? 0;
 
+// The words come from PO_STATUS_WORDS (po-line-export-columns.ts), which the
+// line export prints too — the file says what the screen says (owner 2026-09-15).
 // PO lifecycle: DRAFT → SUBMITTED → PARTIALLY_RECEIVED → RECEIVED, plus
 // CANCELLED. Bucket them for the pills; the raw status still surfaces in
 // the row Badge.
@@ -138,15 +141,15 @@ const STATUS_TONE: Record<
   string,
   { tone: "success" | "warning" | "error" | "neutral"; label: string; bucket: StatusTab }
 > = {
-  DRAFT:              { tone: "warning", label: "Draft",              bucket: "draft" },
-  SUBMITTED:          { tone: "warning", label: "Submitted",          bucket: "open" },
-  PARTIALLY_RECEIVED: { tone: "warning", label: "Partially received", bucket: "partial" },
-  RECEIVED:           { tone: "success", label: "Received",           bucket: "received" },
-  CANCELLED:          { tone: "error",   label: "Cancelled",          bucket: "cancelled" },
+  DRAFT:              { tone: "warning", label: PO_STATUS_WORDS.DRAFT!,              bucket: "draft" },
+  SUBMITTED:          { tone: "warning", label: PO_STATUS_WORDS.SUBMITTED!,          bucket: "open" },
+  PARTIALLY_RECEIVED: { tone: "warning", label: PO_STATUS_WORDS.PARTIALLY_RECEIVED!, bucket: "partial" },
+  RECEIVED:           { tone: "success", label: PO_STATUS_WORDS.RECEIVED!,           bucket: "received" },
+  CANCELLED:          { tone: "error",   label: PO_STATUS_WORDS.CANCELLED!,          bucket: "cancelled" },
   /* ON_HOLD (mig 0318, owner 2026-08-21) — the REVERSIBLE stop the purchase
      side never had. A held PO is not receivable: grns.ts filters receivable
      POs through an allow-list, so the block needs no code here. */
-  ON_HOLD:            { tone: "warning", label: "On Hold",            bucket: "on_hold" },
+  ON_HOLD:            { tone: "warning", label: PO_STATUS_WORDS.ON_HOLD!,            bucket: "on_hold" },
 };
 
 const statusFor = (
@@ -1246,7 +1249,8 @@ export function PurchaseOrdersListV2() {
       width: "144px",
       // Exempt from the cancelled-row fade — the pill is WHY the row is grey.
       className: "dt-cancel-keep",
-      getValue: (r) => r.status,
+      // The export writes the word on screen, hold included (owner 2026-09-15).
+      getValue: (r) => poStatusWord(r.status, rowIsHeld(r)) ?? "",
       render: (r) => {
         const st = statusFor(r.status);
         /* mig 0324 — the Hold marker sits BESIDE the real status pill. */

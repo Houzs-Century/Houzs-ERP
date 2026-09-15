@@ -21,6 +21,7 @@ import {
   PO_LINE_EXPORT_COLUMNS,
   poEstimateDeliveryDates,
   poLineExportCells,
+  poStatusWord,
 } from './po-line-export-columns';
 
 describe('the two copies of this module are the same file', () => {
@@ -87,6 +88,24 @@ describe('Estimate Delivery Date 1/2/3', () => {
   test('a timestamp keeps its date; blank is null', () => {
     expect(poEstimateDeliveryDates({ supplier_delivery_date_2: '2026-09-12T00:00:00+08:00', supplier_delivery_date_3: '  ' }, null))
       .toEqual(['2026-09-12', null, null]);
+  });
+});
+
+describe('the Status word', () => {
+  test('is the word the list shows, never the stored enum', () => {
+    expect(poStatusWord('SUBMITTED', false)).toBe('Submitted');
+    expect(poStatusWord('PARTIALLY_RECEIVED', null)).toBe('Partially received');
+    expect(poStatusWord('CANCELLED', false)).toBe('Cancelled');
+  });
+
+  test('a held order keeps its status and says it is held — once', () => {
+    expect(poStatusWord('SUBMITTED', true)).toBe('Submitted (On Hold)');
+    expect(poStatusWord('ON_HOLD', true)).toBe('On Hold');
+  });
+
+  test('an unknown status prints as stored; none is null', () => {
+    expect(poStatusWord('SOMETHING_NEW', false)).toBe('SOMETHING_NEW');
+    expect(poStatusWord(null, false)).toBeNull();
   });
 });
 

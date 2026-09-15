@@ -1966,8 +1966,15 @@ the grid held (`docs/bugs/0916-the-purchase-order-list-export-held-one-screen-pa
   ERP holds them on the header AND each line (the `/bulk-supplier-date` cascade).
   The LINE value wins; the header fills a blank line.
 - Money leaves sen as ringgit numbers: Line Total 2 decimals, Unit Price up to 4.
-  Location = the line's warehouse code, else the PO header's ship-to. SO Doc No.
-  comes from `so_item_id`, read under the company predicate.
+  SO Doc No. comes from `so_item_id`, read under the company predicate.
+- Owner rulings 2026-09-15 (`docs/line-export-columns.md` Q2/Q6/Q9):
+  **Location** is AutoCount's SHORT code (`KL`, not `KL WAREHOUSE`) — the line's
+  warehouse, else the PO header's ship-to, through the write-back's own
+  `bookSpellingOrOwn(code ?? name, LOCATION_MAP)`. **Status** is the word the list
+  shows (`PO_STATUS_WORDS`, which the list's `STATUS_TONE` now reads), with
+  ` (On Hold)` after it for a held order; the toolbar Export's Status column
+  writes the same. **Cancelled** orders are in the file only when the tab
+  includes them (All / Cancelled) — the export has no status rule of its own.
 - **Toolbar Export** → `GET /export/headers` → CSV with the grid's visible
   columns (`DataTable.onExport` receives them). When Assigned SO or Delivered is
   visible, the page heals them through `/list-mrp-enrichment` in chunks of 200,

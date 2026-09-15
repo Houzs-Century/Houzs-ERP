@@ -10,6 +10,8 @@ import { scopeToCompany, type CompanyScopeCtx } from './companyScope';
 import { readDocumentsWithLines, lookupByIds } from './document-line-export';
 import { filterPoList, orderPoList, type PoListFilters } from './po-list-read';
 import { warehouseLabel } from './warehouse-label';
+import { bookSpellingOrOwn } from '../../services/autocount-writeback';
+import { LOCATION_MAP } from '../../services/autocount-master-maps';
 import {
   PO_ESTIMATE_DELIVERY_DATE_FIELDS,
   PO_LINE_EXPORT_COLUMNS,
@@ -24,7 +26,7 @@ import {
 const ESTIMATE_COLS = PO_ESTIMATE_DELIVERY_DATE_FIELDS.join(', ');
 
 export const PO_EXPORT_HEADER_COLS =
-  `id, po_number, linked_ac_docno, po_date, status, purchase_location_id, ${ESTIMATE_COLS}, supplier:suppliers(code, name)`;
+  `id, po_number, linked_ac_docno, po_date, status, on_hold, purchase_location_id, ${ESTIMATE_COLS}, supplier:suppliers(code, name)`;
 
 export const PO_EXPORT_LINE_COLS =
   'id, purchase_order_id, line_no, created_at, item_code, supplier_sku, material_name, description2, notes, ' +
@@ -146,8 +148,12 @@ export async function buildPoLineExport(
   if (so.error) return { error: `sales order numbers: ${so.error}` };
 
   /* The line's warehouse, else the PO header's — the line OVERRIDES the header
-     (lib/outstanding-po-lines.ts toOutstandingPoItems). Warehouses are read by
-     the ids of rows already read under the company scope. */
+     (lib/outstanding-po-lines.ts toOutstandingPoItems) — printed as AutoCount's
+     SHORT code (`KL`, not `KL WAREHOUSE`; owner 2026-09-15). The short code
+     is the write-back's own rule, code-or-name through LOCATION_MAP
+     (lib/autocount-convert-lines.ts readConvertHeaderFacts), so the file names a
+     warehouse exactly as the account book does. Warehouses are read by the ids
+     of rows already read under the company scope. */
   const wh = await lookupByIds<{ id: string; code: string | null; name: string | null }>(
     [...allLines.map((l) => l.warehouse_id), ...read.headers.map((h) => h.purchase_location_id)],
     (batch, from, to) =>
@@ -166,7 +172,7 @@ export async function buildPoLineExport(
       const lineWarehouse = line.warehouse_id ? wh.byId.get(line.warehouse_id) : null;
       rows.push(poLineExportCells(header, line, {
         soDocNo: line.so_item_id ? so.byId.get(line.so_item_id)?.doc_no ?? null : null,
-        location: warehouseLabel(lineWarehouse) ?? warehouseLabel(headerWarehouse),
+        location: bookSpellingOrOwn(warehouseLabel(lineWarehouse) ?? warehouseLabel(headerWarehouse), LOCATION_MAP),
       }));
     }
   }

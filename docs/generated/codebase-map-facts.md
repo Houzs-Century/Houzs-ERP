@@ -74,8 +74,8 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/users.ts` | 22 | 2328 |
 | `backend/src/scm/routes/accounting-bank-config.ts` | 0 | 126 |
 | `backend/src/scm/routes/accounting-bank-locks.ts` | 0 | 230 |
-| `backend/src/scm/routes/accounting-bank-months.ts` | 0 | 673 |
-| `backend/src/scm/routes/accounting-bank.ts` | 0 | 1396 |
+| `backend/src/scm/routes/accounting-bank-months.ts` | 0 | 678 |
+| `backend/src/scm/routes/accounting-bank.ts` | 0 | 1455 |
 | `backend/src/scm/routes/accounting-chart.ts` | 0 | 787 |
 | `backend/src/scm/routes/accounting-collection.ts` | 0 | 184 |
 | `backend/src/scm/routes/accounting-item-groups.ts` | 0 | 259 |
@@ -149,7 +149,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/maintenance-config.ts` | 5 | 410 |
 | `backend/src/scm/routes/mfg-products.ts` | 11 | 1269 |
 | `backend/src/scm/routes/mfg-purchase-orders-list-enrichment.ts` | 1 | 82 |
-| `backend/src/scm/routes/mfg-purchase-orders.ts` | 24 | 4415 |
+| `backend/src/scm/routes/mfg-purchase-orders.ts` | 24 | 4423 |
 | `backend/src/scm/routes/mfg-sales-orders-list-enrichment.ts` | 2 | 327 |
 | `backend/src/scm/routes/mfg-sales-orders.ts` | 41 | 11871 |
 | `backend/src/scm/routes/mfg-so-fairs.ts` | 4 | 299 |
@@ -174,7 +174,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/purchase-consignment-returns.ts` | 14 | 1151 |
 | `backend/src/scm/routes/purchase-invoices-list-enrichment.ts` | 2 | 108 |
 | `backend/src/scm/routes/purchase-invoices.ts` | 14 | 2348 |
-| `backend/src/scm/routes/purchase-order-exports.ts` | 2 | 56 |
+| `backend/src/scm/routes/purchase-order-exports.ts` | 2 | 57 |
 | `backend/src/scm/routes/purchase-order-item-photos.ts` | 2 | 227 |
 | `backend/src/scm/routes/purchase-returns.ts` | 14 | 1843 |
 | `backend/src/scm/routes/pv-files.ts` | 0 | 140 |
@@ -230,7 +230,7 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (2466 files, 792283 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (2474 files, 793719 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -244,8 +244,8 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `frontend/src/pages/scm-v2/Products.tsx` | 5448 |
 | `backend/src/routes/projects.ts` | 5153 |
 | `backend/src/scm/routes/scan-so.ts` | 4895 |
-| `frontend/src/mobile/MobilePMS.tsx` | 4488 |
-| `backend/src/scm/routes/mfg-purchase-orders.ts` | 4415 |
+| `frontend/src/mobile/MobilePMS.tsx` | 4491 |
+| `backend/src/scm/routes/mfg-purchase-orders.ts` | 4423 |
 | `frontend/src/pages/scm-v2/SupplierDetail.tsx` | 4342 |
 | `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4205 |
 | `frontend/src/mobile/MobileNewSO.tsx` | 3666 |
@@ -434,7 +434,7 @@ Page files by directory:
 | `frontend/src/pages/MailCenter` | 3 |
 | `frontend/src/pages/announcements` | 5 |
 | `frontend/src/pages/roles` | 2 |
-| `frontend/src/pages/scm-v2` | 166 |
+| `frontend/src/pages/scm-v2` | 168 |
 | `frontend/src/pages/scm-v2/products` | 1 |
 | `frontend/src/pages/settings` | 1 |
 | `frontend/src/pages/team` | 10 |
@@ -482,7 +482,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileMyCaseDetail.tsx` | 326 |
 | `frontend/src/mobile/MobileNewProject.tsx` | 196 |
 | `frontend/src/mobile/MobileNewSO.tsx` | 3666 |
-| `frontend/src/mobile/MobilePMS.tsx` | 4488 |
+| `frontend/src/mobile/MobilePMS.tsx` | 4491 |
 | `frontend/src/mobile/MobilePOD.tsx` | 558 |
 | `frontend/src/mobile/MobilePmsDefectActions.tsx` | 109 |
 | `frontend/src/mobile/MobilePmsPlanFileChips.tsx` | 96 |

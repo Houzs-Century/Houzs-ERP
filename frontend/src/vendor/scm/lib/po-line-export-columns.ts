@@ -58,6 +58,27 @@ export function poEstimateDeliveryDates(
   return [pick(0), pick(1), pick(2)];
 }
 
+/* The word the Purchase Orders LIST shows for each stored status — the export
+   prints the same word (owner 2026-09-15), and the list reads its labels from
+   here so the two cannot drift. A held order keeps its real status and carries
+   the hold MARKER beside it (mig 0324), which the list draws as a chip; the
+   export writes it after the word. */
+export const PO_STATUS_WORDS: Readonly<Record<string, string>> = {
+  DRAFT: 'Draft',
+  SUBMITTED: 'Submitted',
+  PARTIALLY_RECEIVED: 'Partially received',
+  RECEIVED: 'Received',
+  CANCELLED: 'Cancelled',
+  ON_HOLD: 'On Hold',
+};
+
+export function poStatusWord(status: string | null | undefined, onHold: boolean | null | undefined): string | null {
+  const raw = (status ?? '').trim();
+  if (!raw) return null;
+  const word = PO_STATUS_WORDS[raw.toUpperCase()] ?? raw;
+  return onHold === true && raw.toUpperCase() !== 'ON_HOLD' ? `${word} (On Hold)` : word;
+}
+
 export const PO_LINE_EXPORT_COLUMNS = [
   'Doc No',
   'AutoCount Doc No',
@@ -102,6 +123,7 @@ export type PoExportHeader = PoEstimateDates & {
   linked_ac_docno?: string | null;
   po_date: string | null;
   status: string | null;
+  on_hold?: boolean | null;
   supplier?: { code?: string | null; name?: string | null } | null;
 };
 
@@ -123,7 +145,9 @@ export type PoExportLine = PoEstimateDates & {
 export type PoExportLineContext = {
   /** The Sales Order the line was raised for (via so_item_id), or null. */
   soDocNo: string | null;
-  /** The line's ship-to warehouse label, falling back to the PO header's. */
+  /** AutoCount's short location code (`KL`) for the line's warehouse, falling
+   *  back to the PO header's — resolved by the server through the write-back's
+   *  own LOCATION_MAP, so the file names a warehouse the way the book does. */
   location: string | null;
 };
 
@@ -167,7 +191,7 @@ export function poLineExportCells(
     'Doc No': text(header.po_number),
     'AutoCount Doc No': text(header.linked_ac_docno),
     'Doc Date': isoDate(header.po_date),
-    'Status': text(header.status),
+    'Status': poStatusWord(header.status, header.on_hold),
     'Supplier Code': text(header.supplier?.code),
     'Supplier Name': text(header.supplier?.name),
     'SO Doc No.': text(ctx.soDocNo),
