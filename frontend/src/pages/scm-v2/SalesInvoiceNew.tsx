@@ -6,9 +6,10 @@
 // PaymentsTable in DRAFT mode.
 //
 // Prefill: when navigated with ?fromDo=<DO id>, it fetches the DO header +
-// items + payments and seeds EVERY field (debtor, salesperson/agent, address,
-// phone, line items with variants + prices, AND payment records) so the
-// operator can review/edit before Saving to create the invoice. Without
+// items and seeds every field (debtor, salesperson/agent, address, phone, line
+// items with variants + prices) so the operator can review/edit before Saving
+// to create the invoice. Payments are NOT copied: the sales order is the one
+// place money is taken, and its ledger is shown read-only below. Without
 // ?fromDo it is a blank Create-Invoice form.
 //
 // On Save: POST /sales-invoices (header + items) — the server records revenue
@@ -19,7 +20,7 @@
 
 import { transferFromLabel } from '../../lib/convertScope';
 import { todayMyt } from '../../vendor/scm/lib/dates';
-import { newIdempotencyKey, useIdempotencyKey } from '../../lib/idempotency';
+import { useIdempotencyKey } from '../../lib/idempotency';
 import { readScmHandoff, removeScmHandoff } from '../../lib/scmHandoffStorage';
 import { completePaymentRetryDraft, paymentRetryNavigationState, writePaymentRetryHandoff } from '../../lib/paymentRetryHandoff';
 import { useEffect, useMemo, useState } from 'react';
@@ -32,7 +33,7 @@ import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { notifyAcNotSent } from '../../vendor/scm/lib/ac-not-sent';
 import {
   useCreateSalesInvoice, useAddSalesInvoicePayment,
-  useMfgDeliveryOrderDetail, useDeliveryOrderPayments,
+  useMfgDeliveryOrderDetail,
 } from '../../vendor/scm/lib/sales-invoice-queries';
 import { usePickableStaff } from '../../vendor/scm/lib/admin-queries';
 import { useLocalities } from '../../vendor/scm/lib/localities-queries';
@@ -98,7 +99,6 @@ export const SalesInvoiceNew = () => {
     onlySales: true,
     include: [(doDetail.data?.deliveryOrder as Record<string, unknown> | undefined)?.salesperson_id as string | undefined],
   });
-  const doPayments = useDeliveryOrderPayments(fromDo);
 
   const customerTypeOptsQ = useSoDropdownOptions('customer_type');
   const buildingTypeOptsQ = useSoDropdownOptions('building_type');
@@ -154,7 +154,7 @@ export const SalesInvoiceNew = () => {
   const soPaymentsQ = useSalesOrderPayments(soDocNo || null);
   const [createdInvoice, setCreatedInvoice] = useState<{ id: string; number: string } | null>(null);
 
-  /* Prefill from the DO once its detail + payments load. Guarded so we only
+  /* Prefill from the DO once its detail loads. Guarded so we only
      seed once (when the form is still pristine) — re-fetches don't clobber
      the operator's edits. */
   const [prefilled, setPrefilled] = useState(false);
@@ -242,37 +242,8 @@ export const SalesInvoiceNew = () => {
       })));
     }
 
-    // Payment records — map DO payments to PaymentsTable drafts. Skip when we
-    // arrived from the line picker: a partial invoice must not re-record the DO's
-    // full deposits. The operator adds any payment for this invoice by hand.
-    const pays = fromPicks ? [] : (doPayments.data ?? []);
-    if (pays.length > 0) {
-      setPaymentDrafts(pays.map((p) => {
-        const methodLabel = p.method === 'cash' ? 'Cash' : p.method === 'transfer' ? 'Online' : 'Merchant';
-        const installmentLabel = p.installment_months && p.installment_months > 0 ? `${p.installment_months} months` : '';
-        return {
-          uid: `do-${p.id}`,
-          paidAt: p.paid_at,
-          methodLabel,
-          merchantProvider: p.merchant_provider ?? '',
-          installmentMonthsLabel: installmentLabel,
-          onlineType: p.online_type ?? '',
-          amountSen: p.amount_sen,
-          accountSheet: p.account_sheet ?? '',
-          approvalCode: p.approval_code ?? '',
-          collectedBy: p.collected_by ?? '',
-          // Copied DO payments become fresh SI drafts; SI route needs no slip.
-          slipUploadSessionId: null,
-          /* These drafts are built here rather than by newPaymentDraft, so mint
-             their key here or they would post with no protection. The `prefilled`
-             guard makes this effect run once, so the key is stable from then on. */
-          idempotencyKey: newIdempotencyKey(),
-        };
-      }));
-    }
-
     setPrefilled(true);
-  }, [fromDo, fromPicks, prefilled, doDetail.data, doPayments.data]);
+  }, [fromDo, fromPicks, prefilled, doDetail.data]);
 
   const staffList = useMemo(() => (staffQ.data ?? []).filter((s) => s.active), [staffQ.data]);
 
@@ -472,7 +443,7 @@ export const SalesInvoiceNew = () => {
     );
   };
 
-  const loadingPrefill = Boolean(fromDo) && !prefilled && (doDetail.isLoading || doPayments.isLoading);
+  const loadingPrefill = Boolean(fromDo) && !prefilled && doDetail.isLoading;
 
   return (
     <div className="space-y-4">

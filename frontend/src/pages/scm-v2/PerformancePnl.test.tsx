@@ -148,6 +148,11 @@ describe('the Performance P&L tab', () => {
     expect(screen.getByText('Fixed costs').closest('tr')!.textContent).toContain('45,800.00');
     expect(screen.getByText('900-A014 — ADVERTISEMENT - SHOWROOM')).toBeTruthy();
     expect(screen.getByText('NET PERFORMANCE')).toBeTruthy();
+    /* At L1 the category still opens by its own chevron (owner: 按 Level 1 后我无法点开看子 account). */
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Fixed costs' }));
+    expect(screen.getByText('900-R048 — RENTAL OF SHOWROOM')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse Fixed costs' }));
+    expect(screen.queryByText('900-R048 — RENTAL OF SHOWROOM')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'All' }));
     expect(screen.getByText(/^Operating expense — 16/)).toBeTruthy();
     expect(screen.queryByRole('dialog')).toBeNull();

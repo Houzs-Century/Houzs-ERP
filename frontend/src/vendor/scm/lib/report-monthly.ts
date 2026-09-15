@@ -26,6 +26,8 @@ export type FlatLine = {
   depth: number;
   amountSen: number;
   pct: number | null;
+  /** An account row's code — what its lines are read by. */
+  code?: string;
 };
 
 export type MonthlyCell = { amountSen: number; pct: number | null };
@@ -81,6 +83,7 @@ export const monthColumns = (latest: string, count: number, withCumulative: bool
 export const treeLines = (nodes: LaidNode[], depth = 1): FlatLine[] =>
   flattenLaid(nodes, depth).map(({ node, depth: d }) => ({
     id: node.id, label: node.label, kind: node.kind === 'account' ? 'row' : node.kind, depth: d, amountSen: node.amountSen, pct: node.pct,
+    ...(node.code ? { code: node.code } : {}),
   }));
 
 export const fixedLine = (id: string, label: string, kind: FlatLine['kind'], amountSen: number, pct: number | null): FlatLine =>
@@ -101,7 +104,7 @@ export function mergeColumns(columns: Array<{ key: string; lines: FlatLine[] }>)
     for (const l of col.lines) {
       let line = at.get(l.id);
       if (!line) {
-        line = { id: l.id, label: l.label, kind: l.kind, depth: l.depth, cells: {} };
+        line = { id: l.id, label: l.label, kind: l.kind, depth: l.depth, cells: {}, ...(l.code ? { code: l.code } : {}) };
         at.set(l.id, line);
         const after = prevId ? out.findIndex((x) => x.id === prevId) : -1;
         out.splice(after + 1, 0, line);

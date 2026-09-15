@@ -70,7 +70,7 @@ const ratePct = (bp: number): string => `${(bp / 100).toFixed(2)}%`;
     when there were no sales), and how deep it sits on the report's tree —
     0 for the fixed lines (gross profit, the totals, net), 1 and deeper for
     the categories and accounts of the layout. */
-export type PerformanceSummaryLine = { id: string; kind: 'total' | 'category' | 'row' | 'net'; label: string; amountSen: number; pct: number | null; depth: number };
+export type PerformanceSummaryLine = { id: string; kind: 'total' | 'category' | 'row' | 'net'; label: string; amountSen: number; pct: number | null; depth: number; code?: string };
 
 /** The lines under the groups — gross profit, the other income on its tree,
     the expenses on theirs (the computed operating expense standing where
@@ -89,7 +89,7 @@ export type PerformanceSummaryLine = { id: string; kind: 'total' | 'category' | 
 export const performanceSummaryLines = (r: PerformanceReport): PerformanceSummaryLine[] => {
   const ofSales = (sen: number): number | null => (r.totals.salesSen > 0 ? Math.round((sen / r.totals.salesSen) * 1000) / 10 : null);
   const tree = (nodes: LaidNode[]): PerformanceSummaryLine[] =>
-    flattenLaid(nodes).map(({ node, depth }) => ({ id: node.id, kind: node.kind === 'account' ? 'row' : 'category', label: node.label, amountSen: node.amountSen, pct: node.pct, depth }));
+    flattenLaid(nodes).map(({ node, depth }) => ({ id: node.id, kind: node.kind === 'account' ? 'row' : 'category', label: node.label, amountSen: node.amountSen, pct: node.pct, depth, ...(node.code ? { code: node.code } : {}) }));
   const expensesSen = r.operatingExpense.amountSen + r.otherExpensesSen;
   return [
     { id: 'sum:gross', kind: 'total', label: 'Gross profit', amountSen: r.totals.gpSen, pct: r.totals.gpPct, depth: 0 },

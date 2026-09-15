@@ -1,8 +1,8 @@
-/* Logistics pickers on the project detail page: the split date + time field,
- * the helper select with its contact card, and the Grab two-helper box. */
+/* Logistics pickers on the project detail page: the split date + time field and
+ * the Grab two-helper box. */
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
-import { GrabHelperBox, HelperSelect, LogisticsDateTimeField, type CrewMember } from "./logisticsParts";
+import { GrabHelperBox, LogisticsDateTimeField, type CrewMember } from "./logisticsParts";
 
 const CREW: CrewMember[] = [
   { id: 11, name: "Ali", phone: "0123456789", user_type: "helper", role_name: null },
@@ -28,21 +28,6 @@ describe("LogisticsDateTimeField", () => {
     expect(time.disabled).toBe(true);
     fireEvent.blur(time);
     expect(onSave).not.toHaveBeenCalled();
-  });
-});
-
-describe("HelperSelect", () => {
-  it("reports the picked helper and shows the picked one's phone as a tel: link", () => {
-    const onChange = vi.fn();
-    const { rerender } = render(<HelperSelect label="Helper 1" value={null} helpers={CREW} onChange={onChange} />);
-    fireEvent.change(screen.getByRole("combobox"), { target: { value: "11" } });
-    expect(onChange).toHaveBeenCalledWith(11);
-
-    rerender(<HelperSelect label="Helper 1" value={11} helpers={CREW} onChange={onChange} />);
-    expect(screen.getByRole("link").getAttribute("href")).toBe("tel:0123456789");
-
-    rerender(<HelperSelect label="Helper 1" value={12} helpers={CREW} onChange={onChange} />);
-    expect(screen.queryByRole("link")).toBeNull();
   });
 });
 

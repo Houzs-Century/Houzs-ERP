@@ -8,10 +8,9 @@
 //     hard-block live inside authedFetch (mirrors the source).
 //   - serviceNotify (the non-React error toast bridge) maps to the vendored
 //     dialog-service serviceNotify (used by the status-update onError).
-//   - useMfgDeliveryOrderDetail + useDeliveryOrderPayments are NOT re-defined
-//     here: the New-SI prefill imports them, but they already live in the
-//     vendored delivery-order-queries slice — re-exported below so the page's
-//     single import site keeps working.
+//   - useMfgDeliveryOrderDetail is NOT re-defined here: the New-SI prefill
+//     imports it, but it already lives in the vendored delivery-order-queries
+//     slice — re-exported below so the page's single import site keeps working.
 //   - DoRemainingLine + the invoiceable-line picker are SI-side here; the DR
 //     slice re-exports the type from here to stay a single source of truth.
 
@@ -23,9 +22,9 @@ import { idempotentInit } from '../../../lib/idempotency';
 import { serviceNotify } from './dialog-service';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
 
-// Re-export the DO-side prefill hooks the New-SI page pulls from this module in
-// the source (they live in the vendored DO slice — single source of truth).
-export { useMfgDeliveryOrderDetail, useDeliveryOrderPayments } from './delivery-order-queries';
+// Re-export the DO-side prefill hook the New-SI page pulls from this module in
+// the source (it lives in the vendored DO slice — single source of truth).
+export { useMfgDeliveryOrderDetail } from './delivery-order-queries';
 
 /* ── Sales Invoice ───────────────────────────────────────────────────── */
 export const useSalesInvoices = (status?: string) =>

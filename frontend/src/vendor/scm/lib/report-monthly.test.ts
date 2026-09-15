@@ -85,7 +85,7 @@ describe('each report as lines', () => {
     const lines = treeLines([cat('c', 'C', [acc('900-A001', 5, 1.5)])]);
     expect(lines).toEqual([
       { id: 'c', label: 'C', kind: 'category', depth: 1, amountSen: 5, pct: null },
-      { id: 'acc:900-A001', label: '900-A001 — 900-A001', kind: 'row', depth: 2, amountSen: 5, pct: 1.5 },
+      { id: 'acc:900-A001', label: '900-A001 — 900-A001', kind: 'row', depth: 2, amountSen: 5, pct: 1.5, code: '900-A001' },
     ]);
   });
 
