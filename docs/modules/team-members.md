@@ -103,6 +103,19 @@ Team page shell are separate concerns and are only referenced here.
 > PERMISSIONS — see the permission-architecture note; nothing in this module
 > grants SCM capabilities.
 
+> **Titles tab (2026-09-15).** A Title is a `positions` row (`users.position_id`,
+> the profile's Title picker). The strip shows **Titles** (`frontend/src/pages/Positions.tsx`,
+> `?tab=positions`) to `users.manage` again: create, rename, move between
+> departments, reorder, delete (`POST` / `PATCH` / `DELETE /api/positions`). It was
+> switched off on every surface by #744 (owner 「整個關掉先」, because its page-access
+> matrix wrote a table login no longer read), which left NO screen that creates a
+> Title — the owner made a role instead (0923, and
+> `docs/bugs/0931-a-new-title-could-not-be-created-anywhere-the-positions-tab.md`).
+> Page access per Title is still edited on Roles & Permissions; the tab's matrix is a
+> read-only note and `PATCH /api/positions/:id/page-access` answers 409. The phone
+> menu still has no Positions row (`mobileMenuGates.test.ts`); no sidebar leaf either,
+> the tab is reached from the Team strip. Pinned by `frontend/src/pages/teamTitlesTab.test.tsx`.
+
 ---
 
 ## 1. Frontend
@@ -225,6 +238,16 @@ card shows `active / target` when a target is set.
   `status='invited'` user AND an `invitations` row. The stat card counts the
   former; the Pending Invitations table lists the latter (expired ones
   included, hence the counts differ). Revoking removes both.
+- **An edit never sets `invited`, and never re-sends it.** Only the invite
+  writes it; `PATCH /:id` refuses any status but `active` or `disabled`. Desktop
+  edits send only the fields that changed and move a status only through
+  Enable / Disable. The phone form re-sends every field it shows, so its Status
+  select must not start on a value it has no option for: `seedValue`
+  (`frontend/src/mobile/MobileModuleForm.tsx`) starts a fixed-option select
+  blank instead, the member form's blank entry reads "No change", and a blank
+  select is left out of an edit. Until 2026-09-15 it started on `invited`,
+  showed "Active", and every phone Save on an invited member failed
+  (`docs/bugs/0929-a-phone-edit-of-an-invited-member-could-never-be-saved-the-f.md`).
 - **Invite links are live credentials.** `token` / `invite_url` must never get
   a `getValue` (CSV export) and are never rendered — Copy Link goes straight
   to the clipboard, preferring the server-built `invite_url`.
@@ -265,9 +288,13 @@ card shows `active / target` when a target is set.
   until 2026-09-15 the phone edit offered Role, Department, Position and Email,
   answered ok and changed nothing
   (`docs/bugs/0924-a-sales-director-s-phone-edit-of-a-member-s-role-department.md`).
-  **Still open:** the classic desktop panel (`/team?tab=members`,
-  `EditMemberPanel` in `frontend/src/pages/Team.tsx`) offers that caller the
-  stripped fields.
+  The classic desktop panel (`/team?tab=members`, `EditMemberPanel` in
+  `frontend/src/pages/Team.tsx`) offered that caller the same stripped fields
+  and every account action until 2026-09-15
+  (`docs/bugs/0928-a-sales-director-s-desktop-classic-edit-member-panel-offered.md`);
+  `frontend/src/pages/team/editMemberScope.tsx` now offers it Name, Phone,
+  Division and Enable/Disable only, from the same list, and filters the PATCH
+  body to those keys.
 - **Impersonation is registered TWICE, and the second one is dead.** See
   section 4 below before changing either.
 - **Writing `users.name` or `users.status` fires a trigger into `scm.staff`.**

@@ -29,6 +29,7 @@ import { fmtTime } from "../vendor/shared/format";
 import { DateField } from "../vendor/scm/components/DateField";
 import { DefectActionsCtx, DefectFileActions, type AttachmentAction } from "./MobilePmsDefectActions";
 import { PlanFileChips } from "./MobilePmsPlanFileChips";
+import { floorPlanTileVisible } from "./MobilePmsFloorPlanTiles";
 
 /* ------------------------------------------------------------------ *
  * Mobile Project (PMS) — list + detail.
@@ -1014,10 +1015,10 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
     return false;
   };
   const visibleChecklist = (data?.checklist ?? []).filter((it) => !itemHidden(it));
-  // Owner 2026-07-21 (re-reversed): the Filled floorplan tile is hidden from
-  // crew again — their Floor Plans card keeps Display (tile), Unfilled
-  // (view/download) and the stock-transfer records (view/download).
-  const hideFilledPlan = isDriverCrew || isStorekeeper;
+  // Owner 2026-09-15 ("nk ada display floorplan and stock out saja"): crew —
+  // driver/helper/storekeeper — keep ONLY the Display tile + stock records;
+  // 3D/2D/Unfilled/Filled all go (supersedes the 2026-07-21 Filled-only hide).
+  const crewPlanView = isDriverCrew || isStorekeeper;
   // Owner 2026-07-23: the Unfilled/Filled floorplan tiles are for sales,
   // sales director, management and BD only — the ops/office cohort keeps the
   // card (Display tile, 3D/2D design, stock records) without them.
@@ -1554,7 +1555,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
               checklist={data.checklist}
               checklistAttachments={data.checklist_attachments}
               canWrite={canWrite}
-              hideFilledPlan={hideFilledPlan}
+              crewPlanView={crewPlanView}
               hidePlanTiles={hidePlanTiles}
               canStockEdit={isPurchaserView && canTick}
               confirm={confirm}
@@ -3697,7 +3698,7 @@ function SalesDocsCard({
 // record is uploaded via PUT /:id/stock-transfers/upload → POST
 // /:id/stock-transfers. Existing rows are listed read-only.
 function FloorPlans({
-  projectId, stockTransfers, attachments, checklist, checklistAttachments, canWrite, hideFilledPlan, hidePlanTiles, canStockEdit, confirm, busy, setBusy, notify, reload,
+  projectId, stockTransfers, attachments, checklist, checklistAttachments, canWrite, crewPlanView, hidePlanTiles, canStockEdit, confirm, busy, setBusy, notify, reload,
 }: {
   projectId: number;
   stockTransfers?: StockTransfer[];
@@ -3705,7 +3706,8 @@ function FloorPlans({
   checklist?: ChecklistItem[];
   checklistAttachments?: TaskAttachment[];
   canWrite: boolean;
-  hideFilledPlan?: boolean;
+  /** Owner 2026-09-15: crew see ONLY the Display tile (+ stock records). */
+  crewPlanView?: boolean;
   /** Owner 2026-07-23: hide the Unfilled+Filled plan tiles (ops/office cohort
    *  — floorplans are for sales/SD/mgt/BD only); 3D/2D/banner/stock stay. */
   hidePlanTiles?: boolean;
@@ -3924,9 +3926,9 @@ function FloorPlans({
             black banner is gone and it shows its own preview like every other
             tile. Order is Display → 3D + 2D → Unfilled + Filled; Display spans
             the full width so the two design tiles stay paired on their own row.
-            Filled plan is hidden from driver/helper/storekeeper (owner
-            2026-07-16); BOTH plan tiles are hidden from the ops/office cohort
-            (owner 2026-07-23: sales/SD/mgt/BD only). */}
+            Which tiles a cohort sees is ONE rule in MobilePmsFloorPlanTiles.ts:
+            crew = Display only (owner 2026-09-15); ops/office lose the two
+            plan tiles (owner 2026-07-23: sales/SD/mgt/BD only). */}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 9 }}>
           {([
             { key: "Display", label: "Display floor plan", files: displayPlanFiles, atts: displayPlanAtts, badge: "PLAN", bg: "#f3ece0", col: "#a16a2e", item: displayItem, full: true, mediaH: 140 },
@@ -3934,10 +3936,7 @@ function FloorPlans({
             { key: "2D Design", label: "2D Design", files: twoDFiles, atts: twoDAtts, badge: "2D", bg: "#e2ecf5", col: "#2f5c8a", item: twoDItem, full: false, mediaH: 80 },
             { key: "Unfilled", label: "Unfilled plan", files: unfilledFiles, atts: unfilledAtts, badge: "DRAFT", bg: "#f6efd9", col: "#6e4d12", item: undefined, full: false, mediaH: 80 },
             { key: "Filled", label: "Filled plan", files: filledFiles, atts: filledAtts, badge: "PLACED", bg: "#e2f0e9", col: "#2f8a5b", item: undefined, full: false, mediaH: 80 },
-          ] as const).filter((t) =>
-            !(hideFilledPlan && t.key === "Filled") &&
-            !(hidePlanTiles && (t.key === "Unfilled" || t.key === "Filled"))
-          ).map((t) => {
+          ] as const).filter((t) => floorPlanTileVisible(t.key, { crewPlanView, hidePlanTiles })).map((t) => {
             const files = t.files;
             // Cover = newest IMAGE (owner 2026-08-28): a PDF uploaded after the
             // photos must not blank the thumbnail into the hatched placeholder.

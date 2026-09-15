@@ -93,12 +93,16 @@ export const DeliveryReturnDetailListing = () => {
     {
       key: 'unit_price', label: 'Unit Price', width: 110, align: 'right', sortable: true,
       accessor: (r) => fmtRm(r.unit_price_sen),
+      exportValue: (r) => Number(r.unit_price_sen ?? 0) / 100,
+      exportFormat: 'rate',
       searchValue: (r) => fmtRm(r.unit_price_sen),
       sortFn: (a, b) => Number(a.unit_price_sen ?? 0) - Number(b.unit_price_sen ?? 0),
     },
     {
       key: 'line_refund', label: 'Line Refund', width: 120, align: 'right', sortable: true,
       accessor: (r) => fmtRm(r.line_refund_sen ?? r.total_sen),
+      exportValue: (r) => Number(r.line_refund_sen ?? r.total_sen) / 100,
+      exportFormat: 'money',
       searchValue: (r) => fmtRm(r.line_refund_sen ?? r.total_sen),
       sortFn: (a, b) => Number(a.line_refund_sen ?? a.total_sen ?? 0) - Number(b.line_refund_sen ?? b.total_sen ?? 0),
     },
@@ -117,6 +121,8 @@ export const DeliveryReturnDetailListing = () => {
     {
       key: 'balance', label: 'Pending Refund', width: 130, align: 'right', sortable: true,
       accessor: (r) => fmtRm(r.balance_sen),
+      exportValue: (r) => Number(r.balance_sen ?? 0) / 100,
+      exportFormat: 'money',
       searchValue: (r) => fmtRm(r.balance_sen),
       sortFn: (a, b) => Number(a.balance_sen ?? 0) - Number(b.balance_sen ?? 0),
     },

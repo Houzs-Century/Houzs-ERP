@@ -1080,7 +1080,7 @@ export const FORM_MEMBERS_EDIT: FormSchema = {
     { key: "phone", label: "Phone", type: "tel" },
     { key: "status", label: "Status", type: "select", options: [
       { value: "active", label: "Active" }, { value: "disabled", label: "Disabled" },
-    ], placeholder: "Active" },
+    ], placeholder: "No change" },
   ],
 };
 

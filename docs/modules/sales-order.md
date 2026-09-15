@@ -4906,7 +4906,32 @@ AR (`backend/src/scm/routes/mfg-sales-orders.ts`; the doors in
 converted row — it is moved back by DELETE (`deleteSoPaymentHandler`, the
 same-day / amend gate as any payment), which reverses the transfer and the
 paper with it. The accounting side is in `docs/modules/accounting.md`. The
-screens follow in their own PR. Contract: `backend/tests/soMoneyConvert.test.ts`.
+desktop screens are the next paragraph. Contract: `backend/tests/soMoneyConvert.test.ts`.
+
+The desktop screens (2026-09-15, docs/bugs/0931): under a CANCELLED order's
+payments, `frontend/src/vendor/scm/components/OrderMoneyPanel.tsx` prints paid ·
+refunded (the vouchers, with status) · moved (to which orders) · remaining, with
+**[Refund] [Convert]** side by side — Refund raises the voucher draft for
+Finance (an amount, part or all, and a note); Convert lists this order (ticked)
+and the customer's other cancelled orders with money (tick to add), each for
+what is left, and opens the New SO page with the customer and lines copied and
+one converted row per tick (`?copyFrom=…&convert=SO-a:sen,SO-b:sen`;
+`frontend/src/vendor/scm/lib/so-money-queries.ts`). In
+`frontend/src/vendor/scm/components/PaymentsTable.tsx` "Convert from cancelled
+SO" is a method of its own, offered when the customer has a cancelled order with
+money — a saved order asks the server (`GET /:docNo/convert-sources`), the New
+SO page (`frontend/src/pages/scm-v2/SalesOrderNew.tsx`) hands them in by phone
+(`GET /cancelled-with-money?phone=`) — its L2 pick is the cancelled order, it
+resolves to `converted` with `convertedFromDocNo`, and a stored converted row
+has no pencil (moved back by delete). A converted draft survives the retry
+handoff (`frontend/src/lib/paymentRetryHandoff.ts`). Finance's list of cancelled
+orders still holding money is `frontend/src/pages/scm-v2/CancelledWithMoneyCard.tsx`
+on the Accounting Self-check tab. Mobile follows in its own PR. Contracts:
+`frontend/src/vendor/scm/components/OrderMoneyPanel.test.tsx`,
+`frontend/src/vendor/scm/components/PaymentsTable.test.ts`,
+`frontend/src/vendor/scm/lib/so-money-queries.test.tsx`,
+`frontend/src/pages/scm-v2/CancelledWithMoneyCard.test.tsx`,
+`frontend/src/lib/paymentRetryHandoff.test.ts`.
 
 #### Editing a payment now reaches the GENERAL LEDGER too (2026-09-10, docs/bugs/0778)
 

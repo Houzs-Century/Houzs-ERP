@@ -53,6 +53,7 @@ import { fmtSen } from '../../vendor/shared/format';
 import { byText } from '../../vendor/scm/lib/sort-options';
 import styles from './Suppliers.module.css';
 import { GeneralLedger } from './GeneralLedger';
+import { CancelledWithMoneyCard } from './CancelledWithMoneyCard';
 import { PageHeader } from '../../components/Layout';
 import { fmtDateOrDash } from '../../vendor/shared/format';
 import { DateField } from "../../vendor/scm/components/DateField";
@@ -436,6 +437,8 @@ const SelfCheckTab = () => {
       {checks.map((check) => <ControlCheckCard key={check.role} check={check} />)}
       {q.data?.payments && <UnbookedPaymentsCard p={q.data.payments} />}
       {q.data?.paymentDrift && <PaymentDriftCard d={q.data.paymentDrift} />}
+      {/* Money on cancelled orders with no exit taken yet (docs/bugs/0931). */}
+      <CancelledWithMoneyCard />
     </div>
   );
 };

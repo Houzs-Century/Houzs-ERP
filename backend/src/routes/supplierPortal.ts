@@ -34,6 +34,7 @@ import { Hono } from "hono";
 import type { Env } from "../types";
 import { checkRateLimit } from "../middleware/rateLimit";
 import { assrAttachmentKey, saveAttachment } from "../services/assr";
+import { fmtSen } from '../scm/shared/format';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -237,7 +238,7 @@ app.post("/quote", async (c) => {
   )
     .bind(
       assr_id,
-      `Supplier quote: labour RM ${labour.toFixed(2)} + materials RM ${materials.toFixed(2)} = RM ${(labour + materials).toFixed(2)}`
+      `Supplier quote: labour ${fmtSen(Math.round(labour * 100))} + materials ${fmtSen(Math.round(materials * 100))} = ${fmtSen(Math.round((labour + materials) * 100))}`
     )
     .run();
   return c.json({ ok: true });

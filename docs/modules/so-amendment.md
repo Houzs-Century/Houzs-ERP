@@ -248,9 +248,9 @@ The colours are deliberately not status tones: Requested / Approved / Rejected
 already own burnt, green and red on the same row.
 
 **Reference column.** `GET /so-amendments` reads `ref, customer_so_no` from
-`mfg_sales_orders` for the page's doc_nos (company-scoped, one bounded read; a
-failed read fails the list with `load_failed` like the main read, because a blank
-column would claim the order has no reference) and sends them RAW as `so_ref` /
+`mfg_sales_orders` for the page's doc_nos (company-scoped, batched by URL budget
+like the `bound_pos` reads; a failed read fails the list with `load_failed` like
+the main read, because a blank column would claim the order has no reference) and sends them RAW as `so_ref` /
 `so_customer_so_no`. The queue resolves the cell with
 `customerRefOf` (`frontend/src/lib/customer-ref.ts`), the rule the Sales Order
 list's **Reference** column already uses, so one order cannot show two different

@@ -46,6 +46,7 @@ import { issueDepositInvoice } from '../../acc/deposit-invoices';
 import { releaseConversionNotes, takeFromDepositInvoices } from '../../acc/deposit-refunds';
 import { resolveRoles } from '../../acc/rules';
 import { mytDateOf, todayMyt } from './my-time';
+import { fmtSen } from '../shared/format';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- PostgREST client, untyped throughout the acc layer */
 type Db = any;
@@ -208,7 +209,7 @@ export async function convertGuard(
   if (amount > money.remainingSen) {
     return {
       ok: false, status: 409, error: 'convert_exceeds_remaining',
-      message: `${fromDocNo} has ${(money.remainingSen / 100).toFixed(2)} left to move (${(money.bookedSen / 100).toFixed(2)} paid, ${(money.refundedSen / 100).toFixed(2)} on refund vouchers, ${(money.convertedSen / 100).toFixed(2)} moved already) — not ${(amount / 100).toFixed(2)}.`,
+      message: `${fromDocNo} has ${fmtSen(money.remainingSen)} left to move (${fmtSen(money.bookedSen)} paid, ${fmtSen(money.refundedSen)} on refund vouchers, ${fmtSen(money.convertedSen)} moved already) — not ${fmtSen(amount)}.`,
     };
   }
   const first = money.payments.find((x) => x.booked && x.amountSen > 0) ?? money.payments[0] ?? null;
@@ -258,10 +259,15 @@ export async function convertSources(
 }
 
 /**
- * Every cancelled order of the company still holding money — Finance's list.
+ * Every cancelled order of the company still holding money — Finance's list;
+ * narrowed to one customer's by phone for a page that has no order yet (the
+ * New SO page picking "Convert from cancelled SO"; docs/bugs/0931).
  */
-export async function cancelledOrdersWithMoney(sb: Db, companyId: number): Promise<{ ok: true; rows: ConvertSource[] } | { ok: false; reason: string }> {
-  const { data, error } = await sb.from('mfg_sales_orders').select('doc_no, debtor_name, updated_at').eq('company_id', companyId).eq('status', 'CANCELLED');
+export async function cancelledOrdersWithMoney(sb: Db, companyId: number, p: { phone?: string | null } = {}): Promise<{ ok: true; rows: ConvertSource[] } | { ok: false; reason: string }> {
+  let q = sb.from('mfg_sales_orders').select('doc_no, debtor_name, updated_at').eq('company_id', companyId).eq('status', 'CANCELLED');
+  const phone = String(p.phone ?? '').trim();
+  if (phone) q = q.eq('phone', phone);
+  const { data, error } = await q;
   if (error) return { ok: false, reason: error.message };
   const rows: ConvertSource[] = [];
   for (const r of ((data ?? []) as Row[]).sort((a, b) => String(a.doc_no).localeCompare(String(b.doc_no)))) {

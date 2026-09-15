@@ -48,6 +48,7 @@
 // ----------------------------------------------------------------------------
 
 import type { StatementMovement } from './bank-reconcile';
+import { fmtSen } from '../scm/shared/format';
 
 /** One uploaded statement, as far as assembling a month cares. */
 export type MonthStatement = {
@@ -300,7 +301,7 @@ export function assembleMonth(
   for (const b of breaks) {
     gaps.push(
       `${b.beforeFile} closes on ${b.beforeTo} and ${b.afterFile} opens on ${b.afterFrom} at a different figure`
-      + ` — ${Math.abs(b.gapSen)} sen moved on days between them that have not been uploaded.`,
+      + ` — ${fmtSen(Math.abs(b.gapSen))} moved on days between them that have not been uploaded.`,
     );
   }
   if (spanningIds.length > 0) {

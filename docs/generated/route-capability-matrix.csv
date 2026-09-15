@@ -187,6 +187,8 @@ POST,/api/chat-callback,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,YES,MU
 POST,/api/client-errors,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/clientErrors.ts
 GET,/api/client-errors/summary,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""*"")",,NO,DECLARED_GATE,backend/src/routes/clientErrors.ts
 GET,/api/companies,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/companies.ts
+GET,/api/delivery-sheet/so-since,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,NO,INHERITED_ONLY,backend/src/routes/deliverySheetSync.ts
+POST,/api/delivery-sheet/updates,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/deliverySheetSync.ts
 GET,/api/departments,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermissionOrSalesDirector(""users.read"")",,NO,DECLARED_GATE,backend/src/routes/departments.ts
 POST,/api/departments,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""users.manage"")",,YES,DECLARED_GATE,backend/src/routes/departments.ts
 DELETE,/api/departments/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""users.manage"")",,YES,DECLARED_GATE,backend/src/routes/departments.ts
@@ -681,6 +683,7 @@ POST,/api/scm/delivery-returns/:id/items,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEX
 DELETE,/api/scm/delivery-returns/:id/items/:itemId,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.sales.returns"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/delivery-returns.ts
 PATCH,/api/scm/delivery-returns/:id/items/:itemId,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.sales.returns"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/delivery-returns.ts
 PATCH,/api/scm/delivery-returns/:id/status,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.sales.returns"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/delivery-returns.ts
+GET,/api/scm/delivery-returns/export/rows,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.sales.returns"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/delivery-return-exports.ts
 POST,/api/scm/delivery-returns/from-do,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.sales.returns"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/delivery-returns.ts
 POST,/api/scm/delivery-returns/from-dos,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.sales.returns"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/delivery-returns.ts
 GET,/api/scm/delivery-returns/returnable-do-lines,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.sales.returns"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/delivery-returns.ts
@@ -1085,6 +1088,7 @@ DELETE,/api/scm/purchase-returns/:id/items/:itemId,AUTHENTICATED_MIDDLEWARE,COMP
 PATCH,/api/scm/purchase-returns/:id/items/:itemId,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.pr"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/purchase-returns.ts
 GET,/api/scm/purchase-returns/:id/linked,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.pr"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/purchase-returns.ts
 PATCH,/api/scm/purchase-returns/:id/post,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.pr"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/purchase-returns.ts
+GET,/api/scm/purchase-returns/export/rows,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.pr"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/purchase-return-exports.ts
 POST,/api/scm/purchase-returns/from-grn,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.pr"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/purchase-returns.ts
 POST,/api/scm/purchase-returns/from-grns,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.pr"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/purchase-returns.ts
 GET,/api/scm/purchase-returns/returnable-grn-lines,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.pr"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/purchase-returns.ts
