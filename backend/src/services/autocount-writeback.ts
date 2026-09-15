@@ -104,6 +104,7 @@ const norm = (s: string | null | undefined): string =>
    every caller and test keeps one import site (docs/repo-hygiene.md: this file
    is at its ceiling and a ceiling only moves down). */
 import { tidy, soInvoiceAddress } from './autocount-address-fit';
+import { poSupplierDateUdf, type PoSupplierDates } from './autocount-po-supplier-dates';
 export { AC_ADDRESS_LINE_MAX, AC_ADDRESS_LINES, fitAddressLines, tidy, soInvoiceAddress } from './autocount-address-fit';
 
 
@@ -242,7 +243,7 @@ export interface ErpSoHeader {
  * `readPoHeader` (scm/lib/autocount-outbox.ts) is what assembles this — reading
  * these names off the table is the bug in BUG-HISTORY, 2026-08-10.
  */
-export interface ErpPoHeader {
+export interface ErpPoHeader extends PoSupplierDates {
   po_number: string;
   po_date: string | null;
   creditor_code: string | null;
@@ -310,6 +311,9 @@ export interface ErpLine {
    * the column (see docs/autocount-line-retirement-plan.md).
    */
   cancelled?: boolean | null;
+  /** The line's place on the document, on the tables that have one and select it
+   *  (sales and purchase order lines); the sofa fold spells pieces in that order. */
+  line_no?: number | null;
 }
 
 /** A line the ERP removed, named by the AutoCount key it still points at. */
@@ -458,19 +462,10 @@ export interface AcEditPayload {
   Lines: AcEditLine[];
 }
 
-/**
- * One line AutoCount created, as the create and convert routes now report them.
- * Ordered by DtlKey, which is creation order. ItemCode travels with the key so
- * the caller can ASSERT its index-zip before storing anything: a wrong DtlKey
- * silently edits a different line in a live book, which is strictly worse than
- * no DtlKey (no key is refused loudly by composeEdit).
- */
-export interface AcCreatedLine {
-  Seq: number;
-  DtlKey: number;
-  ItemCode: string;
-  Desc2?: string | null;
-}
+/* The lines the host reports a document holds, and their parser, live in
+   ./autocount-created-lines (moved 2026-09-14 for FromDocDtlKey, docs/bugs/0898). */
+import { parseCreatedLines, type AcCreatedLine } from './autocount-created-lines';
+export { parseCreatedLines, type AcCreatedLine } from './autocount-created-lines';
 
 /**
  * Thrown when an edit cannot be expressed without risking a duplicate line in
@@ -1170,6 +1165,9 @@ const cleanPayemenPart = (v: string | null | undefined): string | null => {
  * is not sending a blank: `Str` turns a present-null into `""`, which would
  * ERASE the cutover's own text on an order whose payments predate the ERP.
  */
+/** `SO.UDF_PAYEMENT` is nvarchar(50) in the live book (INFORMATION_SCHEMA, 2026-09-15). */
+export const AC_PAYEMENT_MAX = 50;
+
 export function composePaymentUdf(payments: readonly ErpPaymentRef[]): string | null {
   const groups: string[] = [];
   for (const p of payments) {
@@ -1180,7 +1178,22 @@ export function composePaymentUdf(payments: readonly ErpPaymentRef[]): string | 
     if (!acct && !appr) continue;
     groups.push(`(${acct ?? ''}/${appr ?? ''})`);
   }
-  return groups.length ? groups.join(' ') : null;
+  if (!groups.length) return null;
+  const spaced = groups.join(' ');
+  if (spaced.length <= AC_PAYEMENT_MAX) return spaced;
+  /* OVER THE FIELD (docs/bugs/0921). AutoCount refuses a longer value and the
+     host swallows the refusal, so the field stayed EMPTY: HC-SO-2609-011's three
+     payments came to 63 characters and three sends wrote nothing. The book's own
+     long texts run the references together and stop at fifty, oldest first, so
+     this does the same with WHOLE references, and the parser still reads the
+     first pair. A single reference too long for the field is not cut in half:
+     nothing is sent and the book keeps what it has. */
+  let text = '';
+  for (const g of groups) {
+    if (text.length + g.length > AC_PAYEMENT_MAX) break;
+    text += g;
+  }
+  return text || null;
 }
 
 export function composeCreateSo(
@@ -1333,7 +1346,7 @@ export function composeCreatePo(
        key error rather than an empty field — the same rule the line-level
        `Location` key follows in composeDetails. */
     ...(purchaseLocation ? { PurchaseLocation: purchaseLocation } : {}),
-    UDF: {},
+    UDF: poSupplierDateUdf(header),   // EDate/EDate2/EDate3, blanks omitted - docs/bugs/0918
     /* The creditor is the D10 disambiguator, and a PO always has one. Defaulted
        from the header so no caller can forget it. */
     Details: composeDetails(live(lines), {
@@ -1656,34 +1669,9 @@ export interface AcCallResult {
 }
 
 /**
- * Read the `lines` array off a service response, keeping only entries that are
- * completely usable. A half-parsed entry is dropped rather than coerced: a
- * DtlKey guessed from a malformed row would be stored as line identity and used
- * to edit a live document.
- */
-export function parseCreatedLines(raw: unknown): AcCreatedLine[] {
-  if (!Array.isArray(raw)) return [];
-  const out: AcCreatedLine[] = [];
-  raw.forEach((entry, i) => {
-    if (!entry || typeof entry !== 'object') return;
-    const r = entry as Record<string, unknown>;
-    const key = Number(r.DtlKey);
-    if (!Number.isFinite(key) || key <= 0) return;
-    const seq = Number(r.Seq);
-    out.push({
-      Seq: Number.isFinite(seq) ? seq : i,
-      DtlKey: key,
-      ItemCode: typeof r.ItemCode === 'string' ? r.ItemCode : '',
-      Desc2: typeof r.Desc2 === 'string' ? r.Desc2 : null,
-    });
-  });
-  return out;
-}
-
-/**
  * Read the `mismatched` array off an `/ensure-masters` response, keeping only
  * entries that carry all three strings. A half-parsed entry is DROPPED rather
- * than coerced — the same rule `parseCreatedLines` follows one function up, and
+ * than coerced — the same rule `parseCreatedLines` follows (./autocount-created-lines), and
  * for a sharper reason here: a mismatch line with a blank `book` would read as
  * "the account book calls this supplier nothing", which is a claim about the
  * book that nobody measured.

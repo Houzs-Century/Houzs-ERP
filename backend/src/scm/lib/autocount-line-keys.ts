@@ -20,7 +20,9 @@ import type { AcLineTable } from './autocount-outbox';
 /* VALUE import, not type-only: the four downstream item tables are read off it
    rather than re-listed. No cycle — autocount-convert-lines imports types from
    services/autocount-writeback, never from this file. */
-import { DOWNSTREAM } from './autocount-convert-lines';
+import { CONVERT_TARGET, DOWNSTREAM, type AcDownstreamSpec } from './autocount-convert-lines';
+// @ts-expect-error - plain .mjs, shared with stamp-conversion-line-keys.mjs so the drain and the backlog stamp hold one pairing rule
+import { planDocumentKeys } from '../../../scripts/lib/conversion-line-key-plan.mjs';
 
 /**
  * The payload and row fields this function reads, named structurally rather than
@@ -129,6 +131,17 @@ export async function persistLineKeys(
       return 'AutoCount reported no lines for this document, so no line identity could be stored. '
         + 'A service built before 2026-08-11 does not report them, and the service also returns an '
         + 'empty list rather than losing the DocNo when its own read-back fails.';
+    }
+
+    /* A TRANSFER THE BOOK ITSELF LINKED IS PAIRED BY THAT LINK (docs/bugs/0898).
+       When every line carries the source key AutoCount's DocTransfer names, no
+       count, position or item code is consulted — those are exactly what a
+       conversion does not preserve (a sofa is one book line; the book spells a
+       supplier's code). Absent on a host built before 2026-09-14, and then the
+       checks below run as they always have. */
+    const linkedSpec = transferLinkedSpec(row.op);
+    if (linkedSpec && lines.every((l) => l.FromDocDtlKey != null)) {
+      return await persistByTransferLink(sb, label, target, lines, linkedSpec);
     }
 
     if (lines.length !== target.ids.length) {
@@ -282,6 +295,68 @@ export async function persistLineKeys(
   }
 }
 
+/** The conversions whose created lines AutoCount links in DocTransfer are the
+ *  four in CONVERT_TARGET, read off it rather than listed again; the spec says
+ *  where each ERP row names its source line. `so_to_po` is not one of them: the
+ *  book records that edge on PODTL, and its source keys travel in the request
+ *  (`sourceDtlKeys`, above). */
+const transferLinkedSpec = (op: string): AcDownstreamSpec | undefined =>
+  Object.hasOwn(CONVERT_TARGET, op) ? DOWNSTREAM[CONVERT_TARGET[op as keyof typeof CONVERT_TARGET]] : undefined;
+
+/**
+ * Pair a converted document's rows with the book's lines by SOURCE line: our
+ * row's `sourceFk` names a source row, that row's `linked_ac_dtlkey` is the
+ * book's source line, and the book line whose `FromDocDtlKey` equals it is ours.
+ * The rule is `conversion-line-key-plan.mjs`, the same one the backlog stamp
+ * runs. Stores only what it proves; a row it cannot prove keeps NULL and is
+ * named in the returned sentence, because composeEdit refuses a document with
+ * any keyless line and the operator has to know why.
+ */
+async function persistByTransferLink(
+  sb: Sb,
+  label: string,
+  target: LineKeyTarget,
+  lines: AcCreatedLine[],
+  spec: AcDownstreamSpec,
+): Promise<string | null> {
+  const ids = [...new Set(target.ids.flat())];
+  const { data: rowData, error: rowErr } = await sb.from(target.table)
+    .select(`id, linked_ac_dtlkey, ${spec.sourceFk}`).in('id', ids);
+  if (rowErr) return `No line identity was stored: the document's own lines could not be read (${rowErr.message}).`;
+  const rows = (rowData ?? []) as Array<Record<string, unknown>>;
+  const sourceIds = [...new Set(rows.map((r) => r[spec.sourceFk]).filter((v): v is string => typeof v === 'string' && !!v))];
+  const { data: srcData, error: srcErr } = sourceIds.length
+    ? await sb.from(spec.sourceItemTable).select('id, linked_ac_dtlkey').in('id', sourceIds)
+    : { data: [], error: null };
+  if (srcErr) return `No line identity was stored: the source lines could not be read (${srcErr.message}).`;
+  const sourceKeyOf = new Map(((srcData ?? []) as Array<Record<string, unknown>>).map((r) => [String(r.id), r.linked_ac_dtlkey]));
+
+  const planned = (planDocumentKeys(
+    rows.map((r) => ({ id: String(r.id), linkedKey: r.linked_ac_dtlkey, sourceKey: sourceKeyOf.get(String(r[spec.sourceFk])) ?? null })),
+    lines.map((l) => ({ toDtlKey: l.DtlKey, fromDtlKey: l.FromDocDtlKey })),
+  ) as { rows: Array<{ id: string; outcome: string; dtlKey: number | null }> }).rows;
+
+  let failed = 0;
+  for (const p of planned) {
+    if (p.outcome !== 'stamp') continue;
+    const { error } = await sb.from(target.table).update({ linked_ac_dtlkey: p.dtlKey }).eq('id', p.id).is('linked_ac_dtlkey', null);
+    if (error) {
+      failed += 1;
+      // eslint-disable-next-line no-console
+      console.error(`${label}: row ${p.id} failed: ${error.message}`);
+    }
+  }
+  const unproved = planned.filter((p) => p.outcome !== 'stamp' && p.outcome !== 'already_correct');
+  const missing = ids.length - planned.length;
+  if (!unproved.length && !failed && !missing) return null;
+  const why = [...new Set(unproved.map((p) => p.outcome))].join(', ');
+  return `Line identity was stored from AutoCount's transfer links for ${planned.length - unproved.length - failed} of ${ids.length} row(s)`
+    + (unproved.length ? `; ${unproved.length} could not be proved (${why})` : '')
+    + (failed ? `; ${failed} could not be written` : '')
+    + (missing ? `; ${missing} could not be read` : '')
+    + '. Its next edit will still be refused until they are matched up.';
+}
+
 /**
  * Store the key AutoCount assigned to a line the ERP ADDED on an edit.
  *
@@ -322,6 +397,11 @@ export interface NewLineKeyTarget {
   newDesc2: string[];
   /** Every DtlKey the payload already carried — the book lines we did NOT add. */
   knownKeys: number[];
+  /** The edit cleared the document and laid every line down in payload order,
+   *  so the book's new keys ascend in that order and position IS identity — the
+   *  reasoning 0890 applied to a create. Decides whether a repeated item code
+   *  with no Desc2 may be stored by position (docs/bugs/0907). */
+  rebuilt: boolean;
 }
 
 export async function persistNewLineKeys(
@@ -400,7 +480,12 @@ export async function persistNewLineKeys(
       /* Two added lines of the SAME code — one sofa model in two fabrics is the
          ordinary case — cannot be told apart by code, so the zip is a coin flip
          unless Desc2 is present on both sides to break the tie. */
-      if (dupes.has(want) && !(gotD && wantD)) {
+      /* NOT on a rebuild: the document was cleared and laid down in payload order,
+         so position is identity and the repeat is no coin flip. Refusing it left
+         HC-SO-2609-071 (A01 twice) and HC-PO-2609-098 (four repeated mattress
+         codes) keyless for good, since only a rebuild could key them. The code
+         at each position is still compared above. docs/bugs/0907. */
+      if (!target.rebuilt && dupes.has(want) && !(gotD && wantD)) {
         // eslint-disable-next-line no-console
         console.error(
           `${label}: NOT STORED — ItemCode '${target.newCodes[i]}' was added on more than one `
@@ -471,6 +556,11 @@ export function newLineTargetOf(docType: string, payload: { body?: unknown }): N
   const newDesc2: string[] = [];
   const knownKeys: number[] = [];
   for (const l of lines) {
+    /* A retired line is not laid down by a rebuild — the host skips it before
+       AddDetail — so it has no book line to pair with and no ERP row to store
+       on. Counting it refused the whole batch and left the dead keys in place:
+       HC-SO-001463 and HC-SO-013209, docs/bugs/0904. */
+    if (rebuilt && l.Retire === true) continue;
     const key = Number(l.DtlKey);
     if (!rebuilt && Number.isFinite(key) && key > 0) knownKeys.push(key);
     if (!rebuilt && l.IsNewLine !== true) continue;
@@ -484,5 +574,5 @@ export function newLineTargetOf(docType: string, payload: { body?: unknown }): N
     newCodes.push(String(l.ItemCode ?? ''));
     newDesc2.push(String(l.Desc2 ?? ''));
   }
-  return newIds.length ? { table, newIds, newCodes, newDesc2, knownKeys } : null;
+  return newIds.length ? { table, newIds, newCodes, newDesc2, knownKeys, rebuilt } : null;
 }

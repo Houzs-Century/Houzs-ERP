@@ -728,6 +728,18 @@ Two things happen here that are easy to miss:
      is reviewer/admin-only (a purchaser cannot re-escalate). Both stages, both
      surfaces (`Projects.tsx` `TaskAttachmentRow` + `mobile/MobilePMS.tsx`
      `DefectFileActions`), gate the buttons on the attachment's latest status.
+   - **The reviewer gets a dedicated mobile "Defect list" card** (owner
+     2026-09-15, `mobile/MobilePMS.tsx` `DEFECT_REVIEW_TILES`): mounted when
+     `DefectActionsCtx.canReview`, it pulls the two Defect Item tiles out into
+     their own card (readOnly — the reviewer stamps, never uploads; the
+     `isDefectTile` carve-out still renders the file list + actions). A crew
+     member who IS the reviewer (Shukor) has the defect tiles filtered OUT of
+     the crew "Event documents" card so the items don't render twice.
+   - ⚠️ The reviewer key is the position NAME `Storekeeper Supervisor` (plus
+     Nancy's role `Ops Exec`). Bulk-moving Shukor onto another position (as the
+     2026-08-28 "Warehouse Crew KL" reorg did) silently strips his reviewer
+     status on all three gates (My Pending lane, action route, `canReview`) —
+     his account must stay on the Storekeeper Supervisor position.
 
 ### Setup & Dismantle crew editor — outsourced providers
 
@@ -1268,6 +1280,15 @@ and the two composite predicates live once, in `frontend/src/auth/salesAccess.ts
 | Status dropdown | `PATCH /:id` | `projects.write` | `can("projects.write") && canEditDetail` | `canWrite && access.canEdit` |
 | + Total Sales | `PATCH /:id/finance` | `projects.write` + `denyFinance` | `canWriteProjectFinance(user, can)` | `canWrite`, inside the finance-visible snapshot |
 | + Quick Log / + New Sale | `POST /api/sales/entries` | `requirePageAccess("sales")` | `canLogSalesEntry(salesLevel)` | same helper |
+
+**An archived project withholds only the status dropdown, on both surfaces
+(owner 2026-09-14, D4).** The server checks no `archived_at` before an edit, and
+the desktop hides only `ProjectStatusSelect`. The phone used to AND `!archived`
+into 24 gates (ticks, uploads, schedule, crew photos, assignment, header Edit, Log
+sale, P&L), so a closed event with late costs could not be finished from a phone.
+It now gates the status select alone; every other control keeps its permission
+terms. Pinned in `frontend/src/auth/projectActionGates.test.ts`; trace
+`docs/bugs/0893-an-archived-project-was-locked-on-the-phone-but-editable-on.md`.
 
 Three traps this table exists to stop:
 

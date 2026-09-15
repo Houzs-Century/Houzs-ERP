@@ -24,6 +24,7 @@
 import { normalizeCompartmentCode } from '../shared/sofa-build';
 import { normaliseTypographicQuotes } from '../shared/mfg-pricing';
 import { fabricAllowedByPool } from '../shared/fabric-pool';
+import { isDivanOnly } from '../shared/so-variant-rule';
 import { pgrestIn } from './pgrest-in-list';
 
 export type AllowedOptionsLite = {
@@ -281,8 +282,17 @@ export function checkAllowedOptions(
      not refused, it is simply not checked. Before the sixteen private copies of
      that rule were unified, two of them left a STALE height on a cleared line
      instead — and a stale height is exactly what this gate then refuses, naming
-     a field the operator cannot edit. */
+     a field the operator cannot edit.
+
+     A DIVAN ONLY LINE IS NOT CHECKED HERE (owner 2026-08-09 "divan only 不需要
+     gap", asked again 2026-09-15). It has no mattress, so its gap is left blank,
+     and divan + leg + nothing is a height the pool was never written for: the
+     one DIVAN ONLY Model on prod lists totals 10"-28", so an 8" divan with No Leg
+     summed to 8" and was refused (HC-SO-011153, 2026-09-15 12:18 MYT). The only
+     way past was to pick a Gap the product does not have. Its divan and leg
+     picks are still held to their own pools just above and below. */
   if (v.totalHeight && hasRestriction(opts.total_heights)
+      && !isDivanOnly(product.code)
       && !inPool(opts.total_heights, v.totalHeight)) {
     return {
       error: 'variant_not_allowed',

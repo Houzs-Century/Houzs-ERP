@@ -29,7 +29,9 @@ import { fabricTracking } from "./routes/fabric-tracking";
 import { suppliers } from "./routes/suppliers";
 import { mfgPurchaseOrders } from "./routes/mfg-purchase-orders";
 import { mfgPurchaseOrdersListEnrichment } from "./routes/mfg-purchase-orders-list-enrichment";
+import { poLineImport } from "./routes/po-line-import";
 import { purchaseOrderItemPhotos } from "./routes/purchase-order-item-photos";
+import { purchaseOrderExports } from "./routes/purchase-order-exports";
 import {
   CANCEL_REQUEST_OPEN_READ_PATH,
   cancelApprovalGuard,
@@ -326,6 +328,12 @@ scm.use("/mfg-purchase-orders/*", scmAreaGuard("scm.procurement.po", {
 // the main router so its static `/list-mrp-enrichment` path resolves ahead of
 // `/:id`. Shares the guard above via the path prefix.
 scm.route("/mfg-purchase-orders", mfgPurchaseOrdersListEnrichment);
+// PO line import (owner 2026-09-15): POST /line-import/preview + /apply. Static
+// paths, mounted ahead of the main router's `/:id` routes; same area guard.
+scm.route("/mfg-purchase-orders", poLineImport);
+// The list's two exports (every page the filters match) — static /export/...
+// paths, so also BEFORE the main router's `/:id`.
+scm.route("/mfg-purchase-orders", purchaseOrderExports);
 // Cancellation needs a reason + the PO's one approval (owner 2026-09-08). The
 // request routes ride this prefix's area guard; the guard in front of
 // PATCH /:id/cancel is mounted above, ahead of the area guard.

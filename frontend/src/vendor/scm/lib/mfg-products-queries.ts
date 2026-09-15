@@ -20,6 +20,7 @@ import type {
   MfgPricedOption,
   MfgFabricTier,
 } from '@2990s/shared/mfg-pricing';
+import { MFG_PRODUCT_CATEGORIES, mfgCategoryLabel, type MfgProductCategory } from '../../shared/product-categories';
 
 /* HOUZS VENDOR — Products wave. The Maintenance editor reads/writes priced
    pool options ({ value, priceSen, costSen?, sellingPriceSen?, active? }). The
@@ -133,7 +134,13 @@ export function useMaintenanceConfig(
    these two read hooks, so it is intentionally left out.
    ═══════════════════════════════════════════════════════════════════════════ */
 
-export type MfgCategory = 'BEDFRAME' | 'SOFA' | 'ACCESSORY' | 'MATTRESS' | 'SERVICE' | 'BEDLINES' | 'DINING' | 'DIFFUSER' | 'CARPET';
+/* FABRIC_ACCESSORY is shown as "Sofa Accessory" (owner 2026-09-14). The code has no
+   'sofa' in it on purpose: 41 readers test a group with includes('sofa'), and a pillow
+   would become a SOFA main product to all of them. tasks/PLAN-sofa-accessories-category.md */
+export type MfgCategory = MfgProductCategory;
+/* The category list and the one label per category live in
+   vendor/shared/product-categories.ts (mirror of the backend's). */
+export { MFG_PRODUCT_CATEGORIES, mfgCategoryLabel };
 
 /** MfgProductRow — the PO New form only reads id/code/name/category off each
     SKU. The ProductModels wave reads a few more SKU columns (size_code for the
@@ -455,6 +462,10 @@ export function useUpdateMfgProductPrices() {
       if (body.price1Sen    !== undefined) expect.price1_sen     = body.price1Sen;
       if (body.costPriceSen !== undefined) expect.cost_price_sen = body.costPriceSen;
       if (body.barcode      !== undefined) expect.barcode        = body.barcode;
+      // SKU Master edits the code and description too; read those back as well
+      // (the server stores them trimmed).
+      if (body.code         !== undefined) expect.code           = body.code.trim();
+      if (body.name         !== undefined) expect.name           = body.name.trim();
 
       const result = await verifiedSave<{ product: Record<string, unknown> }>({
         endpoint: `/mfg-products/${id}`,
@@ -467,8 +478,8 @@ export function useUpdateMfgProductPrices() {
 
       if (!result.ok) {
         throw new Error(friendlySaveMessage(result, {
-          noun: 'price',
-          fieldNames: { base_price_sen: 'Base price', price1_sen: 'Price 1', cost_price_sen: 'Cost price' },
+          noun: 'change',
+          fieldNames: { base_price_sen: 'Base price', price1_sen: 'Price 1', cost_price_sen: 'Cost price', name: 'Description', code: 'Product code' },
           fmt: (v) => (v == null ? '(blank)' : `RM${(Number(v) / 100).toFixed(2)}`),
         }));
       }

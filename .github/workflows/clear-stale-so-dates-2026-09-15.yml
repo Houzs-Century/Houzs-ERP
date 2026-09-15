@@ -1,0 +1,47 @@
+name: Clear stale SO dates 2026-09-15 (plan / apply)
+
+# Owner 2026-09-15: the 20 orders on MRP垃圾单清单20260911 (groups A + B) lose
+# their Processing Date, header delivery date and undelivered line delivery
+# dates so they leave MRP and can be proceeded again. Delivered lines are kept.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (rolled back) or apply"
+        required: true
+        default: plan
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: "For apply only — type: CLEAR STALE SO DATES"
+        required: false
+        default: ""
+        type: string
+      docs:
+        description: "Comma-separated SO numbers (blank = the 2026-09-15 list of 28)"
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: clear-stale-so-dates-2026-09-15
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/clear-stale-so-dates-2026-09-15.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          DOCS: ${{ inputs.docs }}

@@ -448,8 +448,8 @@ const LATER_MIGRATIONS: Record<string, string[]> = {
     'revision', 'company_id', 'po_email_sent_at', 'po_email_sent_to',
     'linked_ac_grn_docnos', 'linked_ac_pinv_docnos', 'linked_ac_docno',
   ],
-  // 0083 (company_id), 0273 (linked_ac_dtlkey — PR #1819), 0274 (photo_urls)
-  purchase_order_items: ['company_id', 'linked_ac_dtlkey', 'photo_urls'],
+  // 0083 (company_id), 0273 (linked_ac_dtlkey — PR #1819), 0274 (photo_urls), 20260910T0547 (line_no)
+  purchase_order_items: ['company_id', 'linked_ac_dtlkey', 'photo_urls', 'line_no'],
   suppliers: ['company_id'],
 };
 

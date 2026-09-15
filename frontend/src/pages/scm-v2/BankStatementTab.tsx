@@ -32,6 +32,8 @@ import { ICON, fmt, btn, softText, danger, good, panel, refusalText } from './se
 import styles from './Suppliers.module.css';
 import grid from './MerchantRecon.module.css';
 import { BankAccountTabs, currentAccount } from './BankAccountTabs';
+import { fmtDateOrDash } from '../../vendor/shared/format';
+import { ReconcilePickProvider, byDateThenLine, useReconcilePick } from './bank-reconcile-pick';
 
 export const BankStatementTab = () => {
   const [statementId, setStatementId] = useState<number | null>(null);
@@ -308,14 +310,13 @@ const StatementView = ({ id, onBack }: { id: number; onBack: () => void }) => {
   const lines = q.data?.lines ?? [];
   const open = lines.filter((l) => l.state === 'OPEN');
   const done = lines.filter((l) => l.state !== 'OPEN');
-  /* Most consequential first: a card payout books money, a plain movement is
-     bookkeeping. Within each, biggest first. */
-  const ordered = [...open].sort((a, b) => {
-    const rank = (l: BankLine) => (l.kind === 'PAYOUT' ? 0 : l.kind === 'PAYOUT_SPLIT' ? 1 : l.kind === 'PAYOUT_UNSURE' ? 2 : l.kind === 'PAYOUT_NO_BATCH' ? 3 : 4);
-    return rank(a) - rank(b) || Math.abs(b.amount_sen) - Math.abs(a.amount_sen);
-  });
+  /* In the order the statement reads — by the day the bank booked it, then
+     the line (owner 2026-09-15: 我发现不是根据日期往下排的; docs/bugs/0918). */
+  const ordered = byDateThenLine(open);
+  const entries = q.data?.unmatchedEntries ?? [];
 
   return (
+    <ReconcilePickProvider lines={ordered} entries={entries}>
     <section className="space-y-3">
       <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'baseline', flexWrap: 'wrap' }}>
         <button type="button" style={btn()} onClick={onBack}><ArrowLeft {...ICON} /> All statements</button>
@@ -329,7 +330,7 @@ const StatementView = ({ id, onBack }: { id: number; onBack: () => void }) => {
       {statement && <WhereItIsSaved statement={statement} openCount={open.length} lineCount={lines.length} />}
 
       {open.length > 0 && <AutoMatchNow id={id} />}
-      {open.length > 0 && <OpenLines lines={ordered} entries={q.data?.unmatchedEntries ?? []} />}
+      {open.length > 0 && <OpenLines lines={ordered} />}
 
       {done.length > 0 && (
         <div style={softText}>
@@ -354,6 +355,7 @@ const StatementView = ({ id, onBack }: { id: number; onBack: () => void }) => {
 
       {q.data && <BooksNotOnBank entries={q.data.unmatchedEntries} />}
     </section>
+    </ReconcilePickProvider>
   );
 };
 
@@ -383,28 +385,37 @@ export const DepWd = ({ amountSen, children }: { amountSen: number; children?: R
    recognise on a bank statement and a name is. Shared by the file view and the
    month view so the two cannot drift. */
 export const BooksNotOnBank = ({ entries }: { entries: LedgerEntry[] }) => {
+  const pick = useReconcilePick();
   if (entries.length === 0) return null;
   /* ONE TABLE (owner 2026-09-11: 全部就是 outstanding items，一张表列完): this
-     period's and the earlier ones' alike, each named by who. */
+     period's and the earlier ones' alike. Since docs/bugs/0918 each row is
+     named by the document a person holds (Reference — the OR and the SO, the
+     PV number, the payout) and by the customer or payee, and carries the tick
+     that matches it to the movements ticked above — the list the screen
+     already had, not a second one. */
   return (
     <section className="space-y-2">
       <b>{`Outstanding items — in the books, not yet on the bank (${entries.length})`}</b>
       <div style={softText}>
         Posted and the bank has not shown it yet: a payment not yet paid, a receipt not yet credited, or an
         entry belonging to a statement not uploaded yet. Each stays here, month after month, until the bank
-        shows it and it is matched.
+        shows it and it is matched. Tick a movement above and the entry here that it is — the totals must agree.
       </div>
       <table className={grid.grid}>
         <thead>
-          <tr><th>Entry</th><th>Date</th><th>Source</th><th>Who</th><th className={grid.num}>Debit</th><th className={grid.num}>Credit</th></tr>
+          <tr><th /><th>Entry</th><th>Date</th><th>Reference</th><th>Customer / payee</th><th className={grid.num}>Debit</th><th className={grid.num}>Credit</th></tr>
         </thead>
         <tbody>
           {entries.map((e) => (
-            <tr key={e.jeNo}>
-              <td>{e.jeNo}</td>
-              <td>{e.entryDate}</td>
-              <td>{[e.sourceType, e.sourceDocNo].filter(Boolean).join(' · ') || '—'}</td>
-              <td>{e.partyName ?? e.notes ?? '—'}</td>
+            <tr key={e.jeNo} style={pick.pickedEntries.includes(e.jeNo) ? { background: 'var(--c-cream, #faf7f0)' } : undefined}>
+              <td>
+                <input type="checkbox" checked={pick.pickedEntries.includes(e.jeNo)} onChange={() => pick.toggleEntry(e.jeNo)}
+                  aria-label={`Entry ${e.jeNo} for the picked movements`} />
+              </td>
+              <td>{e.jeNo}{e.carried ? <span className={grid.sub}> · earlier month</span> : null}</td>
+              <td>{fmtDateOrDash(e.entryDate)}</td>
+              <td>{e.reference ?? ([e.sourceType, e.sourceDocNo].filter(Boolean).join(' · ') || '—')}</td>
+              <td>{e.who ?? e.partyName ?? e.notes ?? '—'}</td>
               <DrCr debitSen={e.debitSen} creditSen={e.creditSen} />
             </tr>
           ))}
@@ -646,74 +657,19 @@ const BookAllMatched = ({ lines }: { lines: BankLine[] }) => {
   );
 };
 
-export const OpenLines = ({ lines, entries }: { lines: BankLine[]; entries: LedgerEntry[] }) => {
-  const group = useMatchBankGroup();
-  const [pickedLines, setPickedLines] = useState<number[]>([]);
-  const [pickedEntries, setPickedEntries] = useState<string[]>([]);
-  const toggleLine = (id: number) => setPickedLines((was) => (was.includes(id) ? was.filter((x) => x !== id) : [...was, id]));
-  const toggleEntry = (je: string) => setPickedEntries((was) => (was.includes(je) ? was.filter((x) => x !== je) : [...was, je]));
-
-  const chosenLines = lines.filter((l) => pickedLines.includes(l.id));
-  const linesSen = chosenLines.reduce((s, l) => s + l.amount_sen, 0);
-  const chosenEntries = entries.filter((e) => pickedEntries.includes(e.jeNo));
-  const entriesSen = chosenEntries.reduce((s, e) => s + (e.debitSen - e.creditSen), 0);
-  const oneSide = chosenLines.length <= 1 || chosenEntries.length <= 1;
-  const agrees = chosenLines.length > 0 && chosenEntries.length > 0 && linesSen === entriesSen && oneSide;
+export const OpenLines = ({ lines }: { lines: BankLine[] }) => {
+  /* The ticks live in the provider (bank-reconcile-pick.tsx): a movement is
+     ticked here, the entry it is in the outstanding list below, and the bar
+     at the foot of the window carries the totals and the button — no second
+     list, nothing scrolled to (owner 2026-09-15; docs/bugs/0918). */
+  const pick = useReconcilePick();
+  const pickedLines = pick.pickedLines;
+  const toggleLine = pick.toggleLine;
 
   return (
     <section className="space-y-2">
       <b>{`Still to decide (${lines.length})`}</b>
       <BookAllMatched lines={lines} />
-      {pickedLines.length > 0 && (
-        <section className="space-y-2" style={{ padding: 'var(--space-3)', border: '1px solid var(--c-line, rgba(34,31,32,0.15))', borderRadius: 'var(--radius-md)' }}>
-          <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'baseline', flexWrap: 'wrap' }}>
-            <b>Choose the entry these movements are</b>
-            <span>{pickedLines.length} movement{pickedLines.length === 1 ? '' : 's'} picked · <b>{fmt(linesSen)}</b></span>
-            <button type="button" style={{ ...btn(), padding: '2px 8px' }} onClick={() => { setPickedLines([]); setPickedEntries([]); }}>Clear</button>
-          </div>
-          <div style={softText}>
-            Every entry the books still hold for this account — this period's and the earlier months' still
-            waiting. Tick the one they are (or, for one movement, the several it paid); the totals must agree.
-          </div>
-          {entries.length === 0 && <div style={softText}>The books hold no entry that is not already on a statement.</div>}
-          {entries.length > 0 && (
-            <table className={grid.grid}>
-              <thead>
-                <tr><th /><th>Entry</th><th>Date</th><th>Source</th><th>Who</th><th className={grid.num}>Debit</th><th className={grid.num}>Credit</th></tr>
-              </thead>
-              <tbody>
-                {entries.map((e) => (
-                  <tr key={e.jeNo}>
-                    <td>
-                      <input type="checkbox" checked={pickedEntries.includes(e.jeNo)} onChange={() => toggleEntry(e.jeNo)}
-                        aria-label={`Entry ${e.jeNo} for the picked movements`} />
-                    </td>
-                    <td>{e.jeNo}{e.carried ? <span className={grid.sub}> · earlier month</span> : null}</td>
-                    <td>{e.entryDate}</td>
-                    <td>{[e.sourceType, e.sourceDocNo].filter(Boolean).join(' · ') || '—'}</td>
-                    <td>{e.partyName ?? e.notes ?? '—'}</td>
-                    <DrCr debitSen={e.debitSen} creditSen={e.creditSen} />
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-          <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap' }}>
-            <span style={{ fontSize: 'var(--fs-13)', color: agrees ? good : danger }}>
-              Movements {fmt(linesSen)} · entries {fmt(entriesSen)}
-              {chosenEntries.length > 0 && linesSen !== entriesSen && ` — ${fmt(linesSen - entriesSen)} out`}
-              {!oneSide && ' — several movements to several entries is two matches; do one side at a time'}
-            </span>
-            <button type="button" style={btn(true, !agrees || group.isPending)} disabled={!agrees || group.isPending}
-              onClick={() => group.mutate({ lineIds: pickedLines, jeNos: pickedEntries }, { onSuccess: () => { setPickedLines([]); setPickedEntries([]); } })}>
-              <Link2 {...ICON} /> {group.isPending ? 'Matching…' : 'These are that entry'}
-            </button>
-          </div>
-          {group.isError && (
-            <div style={{ fontSize: 'var(--fs-12)', color: danger }}>{refusalText(group.error, 'That was not accepted.')}</div>
-          )}
-        </section>
-      )}
       <table className={grid.grid}>
         <thead>
           <tr>
@@ -795,9 +751,11 @@ export const OpenLine = ({ line, isPicked = false, onPick }: { line: BankLine; i
         )}
       </td>
       <td>
-        <div>{line.booked_on}{line.reference ? <> · ref <b>{line.reference}</b></> : null}</div>
+        {/* Date, reference, description — one line each (owner 2026-09-15:
+            日期一行，description 一行; docs/bugs/0918). */}
+        <div>{fmtDateOrDash(line.booked_on)}<span className={grid.sub}> · line {line.line_no}</span></div>
+        {line.reference && <div style={{ wordBreak: 'break-word' }}><b>{line.reference}</b></div>}
         <div className={grid.sub} style={{ wordBreak: 'break-word' }}>{line.description}</div>
-        <div className={grid.sub}>line {line.line_no}</div>
       </td>
       <DepWd amountSen={line.amount_sen}>
         {/* The gross the bank actually credited, when it split the payout —
@@ -887,10 +845,13 @@ export const OpenLine = ({ line, isPicked = false, onPick }: { line: BankLine; i
                   onChange={() => setEntry(e.jeNo)}
                   aria-label={`Entry ${e.jeNo} for line ${line.line_no}`} />
                 <span>
-                  <b>{e.jeNo}</b> · {e.entryDate}
+                  <b>{e.jeNo}</b> · {fmtDateOrDash(e.entryDate)}
                   {e.daysApart > 0 && <span className={grid.sub}> ({e.daysApart}d apart)</span>}
-                  {(e.sourceType ?? e.sourceDocNo ?? e.partyName) && (
-                    <div className={grid.sub}>{[e.sourceType, e.sourceDocNo, e.partyName].filter(Boolean).join(' · ')}</div>
+                  {(e.reference ?? e.who ?? e.sourceType ?? e.sourceDocNo ?? e.partyName) && (
+                    <div className={grid.sub}>
+                      {e.reference ?? [e.sourceType, e.sourceDocNo].filter(Boolean).join(' · ')}
+                      {(e.who ?? e.partyName) ? ` · ${e.who ?? e.partyName}` : ''}
+                    </div>
                   )}
                 </span>
               </label>
@@ -937,7 +898,8 @@ export const DoneLine = ({ line }: { line: BankLine }) => {
   return (
     <tr>
       <td>
-        <div>{line.booked_on}{line.reference ? <> · ref <b>{line.reference}</b></> : null}</div>
+        <div>{fmtDateOrDash(line.booked_on)}<span className={grid.sub}> · line {line.line_no}</span></div>
+        {line.reference && <div style={{ wordBreak: 'break-word' }}><b>{line.reference}</b></div>}
         <div className={grid.sub} style={{ wordBreak: 'break-word' }}>{line.description}</div>
       </td>
       <DepWd amountSen={line.amount_sen} />

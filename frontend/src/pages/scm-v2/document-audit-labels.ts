@@ -27,7 +27,7 @@ const LINE_FIELDS: Record<string, string> = {
   qty: 'Quantity', unitPriceSen: 'Unit price', discountSen: 'Discount',
   unitCostSen: 'Unit cost', lineTotalSen: 'Line total',
   itemCode: 'Item code', itemGroup: 'Item group', materialName: 'Material',
-  supplierSku: 'Supplier SKU', description: 'Description', uom: 'UOM',
+  supplierSku: 'Supplier SKU', description: 'Description', description2: 'Description 2', uom: 'UOM',
   notes: 'Remark', deliveryDate: 'Line delivery date',
   lineDeliveryDate: 'Line delivery date', warehouseId: 'Warehouse',
   rackId: 'Rack', taxSen: 'Tax', lineCostSen: 'Line cost',

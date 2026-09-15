@@ -34,6 +34,8 @@ import { todayMyt } from '../lib/my-time';
 import { baseKeyOf, deleteThumbFor, putOptionalThumb } from '../../services/photoThumbs';
 import type { Env, Variables } from '../env';
 import { pgrestIn } from '../lib/pgrest-in-list';
+import { categorySwapAllowed } from '../shared/category-swap';
+import { MFG_PRODUCT_CATEGORIES } from './mfg-products';
 
 export const productModels = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -143,7 +145,9 @@ productModels.get('/:id/photo-gallery/:key', async (c) => {
 
 productModels.use('*', supabaseAuth);
 
-const CATEGORIES = ['SOFA', 'BEDFRAME', 'MATTRESS', 'ACCESSORY', 'SERVICE'] as const;
+/* Every category the column can hold (the product page offers them all); the
+   one home is MFG_PRODUCT_CATEGORIES. */
+const CATEGORIES = MFG_PRODUCT_CATEGORIES;
 
 const CreateBody = z.object({
   // PR #69 — Branding is OPTIONAL across all categories per commander
@@ -165,7 +169,9 @@ const PatchBody = z.object({
   branding:       z.string().trim().max(80).nullable().optional(),
   modelCode:      z.string().trim().min(1).max(32).optional(),
   name:           z.string().trim().min(1).max(200).optional(),
-  // category cannot be patched once set — it would orphan SKUs in the other category.
+  // category: any other category (shared/category-swap.ts), and it moves the
+  // model's SKUs with it so none is orphaned in the other category.
+  category:       z.enum(CATEGORIES).optional(),
   description:    z.string().trim().max(500).nullable().optional(),
   photoUrl:       z.string().trim().url().nullable().optional(),
   allowedOptions: z.record(z.unknown()).optional(),
@@ -467,7 +473,7 @@ productModels.post('/', async (c) => {
 });
 
 // ── PATCH /:id ─────────────────────────────────────────────────────────────
-productModels.patch('/:id', async (c) => {
+export const patchProductModelHandler = async (c: Context<{ Bindings: Env; Variables: Variables }>) => {
   const id = c.req.param('id');
   let raw: unknown;
   try { raw = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
@@ -484,6 +490,7 @@ productModels.patch('/:id', async (c) => {
   if (parsed.data.photoUrl !== undefined)       u.photo_url       = parsed.data.photoUrl;
   if (parsed.data.allowedOptions !== undefined) u.allowed_options = parsed.data.allowedOptions;
   if (parsed.data.active !== undefined)         u.active          = parsed.data.active;
+  if (parsed.data.category !== undefined)       u.category        = parsed.data.category;
 
   if (Object.keys(u).length === 0) {
     return c.json({ error: 'empty_patch' }, 400);
@@ -498,9 +505,18 @@ productModels.patch('/:id', async (c) => {
   // just ACTIVATED (sofa auto-SKU rule below — Chairman 2026-06-02).
   const { data: before } = await scopeToCompanyId(supabase
     .from('product_models')
-    .select('allowed_options')
+    .select('allowed_options, category')
     .eq('id', id), co.companyId)
     .maybeSingle();
+  const beforeCategory = (before as { category?: string } | null)?.category ?? null;
+  if (u.category !== undefined && u.category === beforeCategory) delete u.category;
+  if (u.category !== undefined && !categorySwapAllowed(beforeCategory, String(u.category))) {
+    return c.json({
+      error: 'category_change_not_allowed',
+      reason: `"${String(u.category)}" is not a product category.`,
+    }, 409);
+  }
+  if (Object.keys(u).length === 0) return c.json({ error: 'empty_patch' }, 400);
   const { data, error } = await scopeToCompanyId(supabase
     .from('product_models')
     .update(u)
@@ -514,6 +530,14 @@ productModels.patch('/:id', async (c) => {
     return c.json({ error: 'update_failed', reason: error.message }, 500);
   }
   if (!data) return c.json(NOT_THIS_COMPANY, 404);
+
+  if (u.category !== undefined) {
+    const { error: skuCatErr } = await scopeToCompanyId(supabase
+      .from('mfg_products')
+      .update({ category: u.category, updated_at: new Date().toISOString() })
+      .eq('model_id', id), co.companyId);
+    if (skuCatErr) return c.json({ error: 'sku_category_update_failed', reason: skuCatErr.message }, 500);
+  }
 
   // Chairman 2026-06-01: Modular's allowed_options is the SINGLE source of truth
   // for ON/OFF — there is no separate per-SKU "Visible" toggle anymore. For
@@ -615,7 +639,8 @@ productModels.patch('/:id', async (c) => {
   }
 
   return c.json({ model: data, autoCreatedSkus });
-});
+};
+productModels.patch('/:id', patchProductModelHandler);
 
 // ── POST /:id/generate-skus ───────────────────────────────────────────────
 // "Open a code, don't open it 20 times" — bulk-INSERT one mfg_products row per

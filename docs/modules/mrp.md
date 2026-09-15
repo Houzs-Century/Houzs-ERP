@@ -327,8 +327,10 @@ typed its own list of four while the catalogue could hold nine
 
 `public.mfg_product_category` and its `scm` twin carry NINE members: the five in
 the baseline DDL plus DINING / BEDLINES / DIFFUSER / CARPET, added by migrations
-`0258`-`0261` and `0262`-`0265`. `backend/src/scm/routes/mfg-products.ts` lists
-all nine as `MFG_PRODUCT_CATEGORIES` and rejects a product create outside them.
+`0258`-`0261` and `0262`-`0265`. `backend/src/scm/shared/product-categories.ts`
+lists them as `MFG_PRODUCT_CATEGORIES` (with the one label per category, mirrored
+to `frontend/src/vendor/shared/`; `routes/mfg-products.ts` re-exports it) and
+product create rejects anything outside them.
 A line on any of the four newer ones was dropped TWICE — by the section-6 filter
 because the page only ever sends one of its four tab values as `?category=`, and
 again by the page's own equality — and neither drop was counted. Measured from
@@ -550,6 +552,11 @@ Two consequences worth knowing before you touch this:
   month window — `gte(first) + lt(next-first)` — returned nothing against the
   fake while the real database returned the rows. A fake that silently drops
   rows on a string compare reports a clean run for the wrong reason.
+- **`fake-postgrest`'s `.or()` understands only the terms the list readers send**
+  (2026-09-15, for the PO list exports): `col.ilike.pattern`, `col.eq.value` and
+  `col.is.true|false|null`. Any other term THROWS, for the same reason `not()`
+  does — a fake that answered an unimplemented filter with every row would make
+  a scope test pass for the wrong reason. MRP reads send no `.or()` through it.
 - **The other reads in this tree still use `.in()` on an item code** — 67 of
   them outside these two as of 2026-09-10, counted by the enumeration block in
   the PR — so any of them can lose the same two codes. Unfixed, deliberately;
@@ -644,12 +651,45 @@ mobile card, because `source === 'po'` now guarantees a number. Trace:
   (2026-08-30,
   `docs/bugs/0572-a-company-1-bound-line-with-no-receipt-fell-through-to-the-p.md`).**
   `HARD_BOUND_COMPANY_ID = 1` in `lib/so-stock-allocation.ts`: a company-1
-  bedframe / sofa / `(SP)` mattress line (`isHardBoundLine`) lights only from
+  bedframe / sofa / **Sofa Accessory** (`fabric_accessory`) / `(SP)` mattress line (`isHardBoundLine`) lights only from
   its own received PO — the pooled walk force-stamps it PENDING, never reads
   its bucket. Company 2 keeps the soft pooled model. The display union's
   promotion gate (`so-line-effective-stock.ts`) refuses to promote bound lines
   on MRP's say-so; see sales-order.md §0.3 for the company-split table and the
   `check-bound-exclusivity.mjs` census that re-measures the rule.
+- **Sofa Accessory parks under the sofa and rides on its PO (2026-09-14).** Owner:
+  「sofa accessory 就 park under sofa 在 MRP 的地方 然后 under same SO 的 这样就可以开一样
+  PO 了」. On the MRP page a FABRIC_ACCESSORY SKU has no tab and is not in Others:
+  `mrp-sofa-accessory.ts` cuts it per SO and adds it to the Sofa tab, where
+  `groupBySo` puts it under its order's row (selecting the order selects it; a
+  pillow-only order gets its own row). `groupKeyFor` in `scm/lib/po-grouping.ts`
+  keys `fabric_accessory` AS `sofa` in both modes, so it lands on the sofa's PO
+  (same SO, same supplier, same warehouse) — Per-SO no longer splits it off the
+  way it still splits a plain accessory.
+- **Sofa Accessory binds per order and keys by colour (2026-09-14).** Group
+  `fabric_accessory` (shown as "Sofa Accessory"; the code has no `sofa` in it
+  because 41 readers test a group with `includes('sofa')`) composes
+  `fabricCode` into `computeVariantKey`, is in `HARD_BOUND_GROUPS`, and takes the
+  sofa row's base lead days (`leadCategoryOf` in `lib/lead-time.ts`) because it is
+  ordered on the sofa's PO. Before it, custom pillows were `accessory`, keyed on
+  the code alone, and one colour's stock covered another colour's order.
+  `tasks/PLAN-sofa-accessories-category.md`. A model (with its SKUs) or a
+  model-less SKU can be moved to ANY other category from its edit screen (owner
+  2026-09-15; it was Accessory <-> Sofa Accessory only on 2026-09-14) —
+  `shared/category-swap.ts`, enforced by `PATCH /product-models/:id` (400 for a
+  value that is not a category) and `PATCH /mfg-products/:id` (409
+  `category_change_not_allowed` for a value that is not a category,
+  `category_on_model` for a modelled SKU, which moves only with its model). The
+  picker (`CategorySwapSelect`) asks first and says open orders keep the old
+  category. Import SKUs (`POST /mfg-products/batch-import`) also changes an
+  existing SKU's category, including a modelled SKU's, and reads the label or any
+  case (`parseMfgCategory`); an unreadable category is reported per row. The move
+  changes the PRODUCT only:
+  lines already on orders keep their old group until a data run moves them —
+  `backend/scripts/recategorise-fabric-accessory.mjs` (plan/apply workflow),
+  which also writes the colour a line's own text names into `fabricCode`
+  (the one matcher, via `scripts/lib/line-colour-verdict.mjs`) and relabels
+  received stock per lot.
 - **A SOFA'S BINDING CAN BE UNWRITABLE, and that is a separate failure from an
   absent purchase order.** The book records the SO -> PO edge at LINE grain in
   `PODTL.FromSODtlKey`, and `backend/scripts/repair-po-so-link-from-book.mjs`
@@ -737,6 +777,36 @@ mobile card, because `source === 'po'` now guarantees a number. Trace:
   has named sofa bound since 2026-08-10, and on prod **zero** of 1,240 open
   company-1 sofa lines read READY without their own purchase order. Company 2
   keeps the pooled sofa model.
+
+- **AND THE SOFA ACCESSORY CATEGORY JOINED IT ON 2026-09-14** — every SKU whose
+  product-master category is `FABRIC_ACCESSORY` (line group `fabric_accessory`,
+  `HARD_BOUND_GROUPS` in `lib/so-stock-allocation.ts`, read by `isHardBoundLine`,
+  so section 7 and the stored allocator both follow). On prod that is SB02, BC04,
+  BC04-MF, BC05, BC05-MF, AR01, AR02, SQUARE PILLOW and LONG PILLOW (owner:
+  「这些sku全部都要处理」). The CATEGORY decides: a line's group is stamped from its
+  SKU's category when written, so a SKU created in the category binds with no code
+  change, and one moved back to Accessory pools. The two-code list that bound the
+  pillows by name before they were re-categorised was removed the same day
+  (`docs/bugs/0906-the-pillow-binding-list-ignored-the-category.md`). The random /
+  free-gift pillows (AMN-SOFA PILLOW, SOFA PILLOW (FOC)) are Accessory and pool.
+  **Not automatic:** moving an EXISTING Accessory SKU into the category moves the
+  product only; its open lines keep `accessory` (and pool) until a data run like
+  #3864 moves them. Owner, for the pillows:
+  「因为它是 accessories，你也是 still 要根据它的规格来分配的」. The colour is Special
+  Order text, which is not in the bucket key, so every custom pillow of one SKU
+  shared one bucket and FIFO handed a purchase order raised for one customer's
+  colour to whichever order was due first — on prod 34 of 222 live company-1
+  custom pillow lines named somebody else's PO and 7 read short with their own
+  open (`probe-custom-pillow-binding.mjs`, workflow *Probe custom pillow binding
+  (read-only)*, which now measures the whole category). Company 2 has no Sofa
+  Accessory SKU; its pillows are Accessory and pool.
+  `docs/bugs/0890-mrp-pooled-custom-pillows-by-sku-so-one-customer-s-colour-co.md`.
+- **Ordering a bound line twice is refused on every convert path, MRP included
+  (2026-09-14).** An MRP-origin convert skips the per-line cap for a POOLED line
+  (the MRP shortage is the guard there). For a company-1 bound line the server now
+  counts every live PO on that line, MRP-origin included, and answers
+  `qty_exceeds_remaining` past its quantity (`lib/bound-line-ordered.ts`). The
+  page's existing "Already ordered" dialog handles it.
 
 ### "If the variants are different, will it still match my goods?" (owner, 2026-08-16)
 

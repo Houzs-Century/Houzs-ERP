@@ -10,6 +10,7 @@
 // ----------------------------------------------------------------------------
 
 import { todayMyt } from '../../vendor/scm/lib/dates';
+import { PO_ESTIMATE_DELIVERY_DATE_LABELS } from '../../vendor/scm/lib/po-line-export-columns';
 import { fmtSen } from '../../vendor/shared/format';
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -440,11 +441,14 @@ const PoChasingView = ({ rows, isLoading }: { rows: PoOutstandingLineRow[]; isLo
     { key: 'po_date',    label: 'Doc Date', kind: 'date', get: (r) => String(r.po_date ?? '') },
     { key: 'remaining_qty', label: 'Remaining Qty', align: 'right', kind: 'qty', get: (r) => Number(r.remaining_qty ?? 0) },
     { key: 'delivery_date', label: 'Delivery Date', kind: 'date', get: (r) => String(r.delivery_date ?? '') },
-    // The AutoCount UDF dates — kept as columns per owner (2026-09-12) though
-    // the ERP does not sync them yet, so they read blank for now.
-    { key: 'est_delivery_date',        label: 'Estimate Delivery Date', kind: 'date', get: () => '' },
-    { key: 'supplier_delivery_date_2', label: 'Supplier Delivery Date 2', kind: 'date', get: (r) => String(r.supplier_delivery_date_2 ?? '') },
-    { key: 'supplier_delivery_date_3', label: 'Supplier Delivery Date 3', kind: 'date', get: (r) => String(r.supplier_delivery_date_3 ?? '') },
+    // AutoCount's three supplier dates (UDF_EDate/2/3), in the positions the
+    // owner kept on 2026-09-12. The server resolves each one (line, else PO
+    // header) through the same rule as the PO line export; the names come from
+    // that rule too (po-line-export-columns.ts).
+    ...PO_ESTIMATE_DELIVERY_DATE_LABELS.map((label, i) => {
+      const key = `estimate_delivery_date_${i + 1}` as const;
+      return { key, label, kind: 'date' as const, get: (r: PoOutstandingLineRow) => String(r[key] ?? '') };
+    }),
   ], [granularity]);
 
   type KeyedRow = PoOutstandingLineRow & { __rk: string };

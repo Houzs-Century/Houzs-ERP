@@ -52,8 +52,13 @@
     },
     {
       "check": "D1",
-      "key": "ACCESSORY,BEDFRAME,BEDLINES,CARPET,DIFFUSER,DINING,MATTRESS,SERVICE,SOFA|backend/src/scm/routes/mfg-products.ts backend/src/scm/shared/so-branding-label.ts frontend/src/pages/scm-v2/ItemGroups.tsx frontend/src/pages/scm-v2/ProductModels.tsx frontend/src/vendor/shared/so-branding-label.ts",
-      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 5 homes: MFG_PRODUCT_CATEGORIES, CATEGORIES, and ItemGroups' SUGGESTED — a per-category map of DEFAULT account bindings (values are accounts, keys just happen to be the vocabulary; the registry itself lives in scm.acc_item_groups seeded from the same enum). Cost of divergence is a blank chip or an unsuggested row, not a wrong number."
+      "key": "BEDFRAME,FABRIC_ACCESSORY,SOFA|backend/src/scm/lib/so-stock-allocation.ts frontend/src/vendor/scm/lib/variant-editor-groups.ts",
+      "why": "TWO QUESTIONS that today have the same answer: HARD_BOUND_GROUPS decides which sales lines MRP binds per order (backend allocation); VARIANT_EDITOR_GROUPS decides which purchase-form lines show the fabric/seat/leg pickers (frontend). The Sofa Accessory category (2026-09-14) joined both because a custom pillow is both made per order and picks a fabric, but a group could be one without the other (a mattress with a size editor need not bind). Each is already one home for its own question; the four PO/PC form copies were collapsed into VARIANT_EDITOR_GROUPS."
+    },
+    {
+      "check": "D1",
+      "key": "ACCESSORY,BEDFRAME,BEDLINES,CARPET,DIFFUSER,DINING,FABRIC_ACCESSORY,MATTRESS,SERVICE,SOFA|backend/src/scm/shared/product-categories.ts backend/src/scm/shared/so-branding-label.ts frontend/src/pages/scm-v2/ItemGroups.tsx frontend/src/vendor/shared/product-categories.ts frontend/src/vendor/shared/so-branding-label.ts",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 5 homes: MFG_PRODUCT_CATEGORIES + MFG_CATEGORY_LABELS (shared/product-categories.ts, the ONE list and label map since 2026-09-15, mirrored byte-identical to the frontend and read by the SKU Master tabs and the Modular page, which used to carry their own CATEGORIES copies), so-branding-label's productEnum, and ItemGroups' SUGGESTED — a per-category map of DEFAULT account bindings (values are accounts, keys just happen to be the vocabulary; the registry itself lives in scm.acc_item_groups seeded from the same enum). Cost of divergence is a blank chip or an unsuggested row, not a wrong number."
     },
     {
       "check": "D1",
@@ -1092,8 +1097,8 @@
     },
     {
       "check": "D1",
-      "key": "CANCELLED,DRAFT,ON_HOLD,PARTIALLY_RECEIVED,RECEIVED,SUBMITTED|backend/src/scm/routes/mfg-purchase-orders.ts frontend/src/pages/scm-v2/PurchaseOrderDetailV2.tsx frontend/src/vendor/scm/lib/status-pill.ts",
-      "why": "THE PURCHASE ORDER'S STATUS VOCABULARY, in its write home and its TWO display homes. VALID_STATUSES is what the PATCH accepts; status-pill's PO map is what a value reads as on a list; STAGE_LABEL is what it reads as on the detail page. Three homes, one vocabulary, and they must agree — a value the route accepts and a map cannot name renders as a raw slug, which is how ASSR printed the word \"voided\" on the customer portal. They became identical on 2026-08-21 when ON_HOLD (mig 0318) was added to all three. THE DIVERGENCE THAT MATTERS IS A DISPLAY MAP FALLING BEHIND THE ROUTE, and the detail page carries a THIRD thing to update alongside them: effectiveOf, whose fall-through answered CANCELLED, so a held purchase order told the buyer it was cancelled until this change named ON_HOLD there too."
+      "key": "CANCELLED,DRAFT,ON_HOLD,PARTIALLY_RECEIVED,RECEIVED,SUBMITTED|backend/src/scm/lib/po-line-export-columns.ts backend/src/scm/routes/mfg-purchase-orders.ts frontend/src/pages/scm-v2/PurchaseOrderDetailV2.tsx frontend/src/vendor/scm/lib/po-line-export-columns.ts frontend/src/vendor/scm/lib/status-pill.ts",
+      "why": "THE PURCHASE ORDER'S STATUS VOCABULARY, in its write home and its TWO display homes. VALID_STATUSES is what the PATCH accepts; status-pill's PO map is what a value reads as on a list; STAGE_LABEL is what it reads as on the detail page. Three homes, one vocabulary, and they must agree — a value the route accepts and a map cannot name renders as a raw slug, which is how ASSR printed the word \"voided\" on the customer portal. They became identical on 2026-08-21 when ON_HOLD (mig 0318) was added to all three. THE DIVERGENCE THAT MATTERS IS A DISPLAY MAP FALLING BEHIND THE ROUTE, and the detail page carries a THIRD thing to update alongside them: effectiveOf, whose fall-through answered CANCELLED, so a held purchase order told the buyer it was cancelled until this change named ON_HOLD there too. THIRD DISPLAY HOME, 2026-09-15: PO_STATUS_WORDS in lib/po-line-export-columns.ts (backend) and its byte-identical vendored twin (frontend, refereed by po-line-export-columns.canonical.test.ts). It is the word the Purchase Orders LIST shows — po-line-export-columns.canonical.test.ts asserts it says exactly what the STATUS_TONE map in PurchaseOrdersListV2 says — and the word the PO line export prints, owner 2026-09-15: export the word on screen, not the stored value. It lives in the mirror because the SERVER builds the export rows and cannot import a frontend map. Same divergence risk as the other display maps: a status the route accepts and this map cannot name prints as the raw value."
     },
     {
       "check": "D2",
@@ -1287,6 +1292,11 @@
     },
     {
       "check": "D1",
+      "key": "ADDRESS1,ADDRESS2,ADDRESS3,ADDRESS4,AGENT,BILL_TO_ADDRESS,BRANDING,BUILDING_TYPE,CITY,CURRENCY,CUSTOMER_ID,CUSTOMER_PO_IMAGE_B64,CUSTOMER_SO_NO,CUSTOMER_STATE,CUSTOMER_TYPE,DEBTOR_CODE,DEBTOR_NAME,EMAIL,EMERGENCY_CONTACT_NAME,EMERGENCY_CONTACT_PHONE,EMERGENCY_CONTACT_RELATIONSHIP,HUB_ID,HUB_NAME,INSTALL_TO_ADDRESS,PHONE,POSTCODE,REF,SALES_LOCATION,SHIP_TO_ADDRESS,SO_DATE,VENUE,VENUE_ID|backend/src/scm/shared/so-identity-lock.ts frontend/src/vendor/shared/so-identity-lock.ts",
+      "why": "A VENDORED TWIN, not a second decision: the Sales Order header columns a live Delivery Order / Sales Invoice snapshots and so freezes (owner 2026-05-31). One home in backend/src/scm/shared/so-identity-lock.ts, read by the header PATCH and the amendment routes; the byte-identical copy under frontend/src/vendor/shared/ exists since 2026-09-15 because a partly delivered order now opens for edit (per-line freeze) and the desktop and phone editors must grey out exactly the fields the server refuses. Refereed by frontend/src/vendor/shared/so-line-freeze.canonical.test.ts (byte compare)."
+    },
+    {
+      "check": "D1",
       "key": "AFTER,BEFORE,BETWEEN,ON,PRESET|backend/src/scm/shared/so-list-filter-model.ts frontend/src/vendor/shared/so-list-filter-model.ts",
       "why": "THE SO LIST DATE-FILTER OPERATORS. ONE module with two byte-identical homes: the SO list endpoint parses the second-level filters with the backend copy and the phone sheet / desktop bar build them with the vendored copy (the browser cannot import backend/src). Refereed by frontend/src/vendor/shared/so-list-filter-model.canonical.test.ts (byte compare), so the two cannot diverge."
     },
@@ -1304,6 +1314,16 @@
       "check": "D2",
       "key": "BETWEEN,EQ,GT,LT ~ BETWEEN,EQ,GT,LT,POSITIVE",
       "why": "THE SO LIST TOTAL vs BALANCE FILTER OPERATORS, differing by POSITIVE (\"has balance\"). Deliberate: an order always has a positive total, so \"has total\" is not a question anyone asks; \"has balance\" is the owner-named one. Same field-definition table, one file."
+    },
+    {
+      "check": "D1",
+      "key": "ESTIMATE DELIVERY DATE 1,ESTIMATE DELIVERY DATE 2,ESTIMATE DELIVERY DATE 3|backend/src/scm/lib/po-line-export-columns.ts frontend/src/vendor/scm/lib/po-line-export-columns.ts",
+      "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it (the server builds the PO line export rows, the browser writes the sheet and labels the Outstanding tab). frontend/src/vendor/scm/lib/po-line-export-columns.canonical.test.ts asserts the two files are byte-identical and check-shared-mirrors.mjs compares the pair. Symbols: PO_ESTIMATE_DELIVERY_DATE_LABELS."
+    },
+    {
+      "check": "D1",
+      "key": "SUPPLIER_DELIVERY_DATE_2,SUPPLIER_DELIVERY_DATE_3,SUPPLIER_DELIVERY_DATE_4|backend/src/scm/lib/po-line-export-columns.ts frontend/src/vendor/scm/lib/po-line-export-columns.ts",
+      "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it (the server builds the PO line export rows, the browser writes the sheet and labels the Outstanding tab). frontend/src/vendor/scm/lib/po-line-export-columns.canonical.test.ts asserts the two files are byte-identical and check-shared-mirrors.mjs compares the pair. Symbols: PO_ESTIMATE_DELIVERY_DATE_FIELDS."
     }
   ]
 }

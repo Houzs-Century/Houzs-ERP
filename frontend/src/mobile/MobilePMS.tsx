@@ -827,16 +827,14 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
   };
   const reloadPhotos = () => qc.invalidateQueries({ queryKey: ["mobile-pms-phase-photos", id] });
 
-  // Defect action timeline (owner 2026-07-29) — who may stamp Ongoing/Done on
-  // defect uploads: the purchaser (Sim), BD, and wildcard/manage admins.
+  // Two-stage defect triage (owner 2026-08-07; state split 2026-08-11):
+  // canReview = THIS project's state reviewer — Nancy (Ops Exec role) for the
+  // region states, Shukor (Storekeeper Supervisor position) for the rest;
+  // admin always. canPurchase = purchaser (Sim/Farra) / BD / admin closes an
+  // escalated (Replace) defect. Mirrors desktop.
   const defectActionsValue = useMemo(
     () => ({
       actions: (((data as any)?.checklist_attachment_actions ?? []) as AttachmentAction[]),
-      // Two-stage defect triage (owner 2026-08-07; two-warehouse split
-      // 2026-08-11): canReview = the reviewer for THIS project's state — Nancy
-      // (Ops Exec role) for the region states, Shukor (Storekeeper Supervisor)
-      // for every other state; admin always. canPurchase = purchaser (Sim /
-      // Farra) / BD or admin closes an escalated (Replace) defect. Mirrors desktop.
       canReview: (() => {
         if (!user) return false;
         const perms = user.permissions ?? [];
@@ -1026,9 +1024,8 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
   const hidePlanTiles = cohortOps || isPurchaserView;
 
   // ── Owner 2026-07-23 card respec — tile sets for the two new cohorts ──
-  // Ops/office cohort: view & download only, except purchasers who keep edit
-  // on their two deliverables. Contract + Payment cards are NOT rendered for
-  // this cohort at all; License / Weekend Activity / Stamp Duty are absent.
+  // Ops/office: view & download only (no Contract/Payment cards, no License /
+  // Weekend Activity / Stamp Duty); purchasers keep edit on their two docs.
   const opsOperationTiles: DocTile[] = [
     { label: "Permit", match: /permit/i, readOnly: true },
     { label: "Decoration", match: /^deco/i, readOnly: true, remarkWithFiles: true },
@@ -1041,22 +1038,19 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
     { label: "Event Complete Image", match: /^event complete image/i, readOnly: true },
     { label: "Dismantle Image", match: /^dismantle image/i, readOnly: true },
   ];
-  // Purchaser view (Sim, Farra): exactly three S&D tiles — Defect List to
-  // consult, their own two deliverables to edit.
+  // Purchaser view (Sim, Farra): Defect tiles to consult + their two docs.
   const purchaserSdTiles: DocTile[] = [
     { label: "Defect Item Setup", match: /^defect (list|item) setup/i, readOnly: true },
     { label: "Defect Item Dismantle", match: /^defect (list|item) dismantle/i, readOnly: true },
     { label: "Exchange List", match: /^exchange list/i },
     { label: "Stock In Transfer Record", match: /^stock in transfer/i },
   ];
-  // Management cohort (mgt / sales director / BD / owner): everything view &
-  // download; the BD tier (owner/BD/weisiang) edits, Kingsley additionally
-  // edits the contract. License shows only to the BD tier.
+  // Management cohort: everything view & download; the BD tier edits, Kingsley
+  // additionally edits the contract. License shows only to the BD tier.
   const mgmtContractTiles: DocTile[] = [
     { label: "Agreement / Quotation", match: /^agreement/i, readOnly: !canContractEdit, fullWidth: true },
   ];
-  // Arrangement per the owner's 2026-07-23 sketch: License + Stamp Duty row,
-  // Permit full-width ("big"), then Weekend Activity + Decoration row.
+  // Arrangement per the owner's 2026-07-23 sketch.
   const mgmtOperationTiles: DocTile[] = [
     ...(canBdEdit ? [{ label: "License", match: /^license/i }] : []),
     // Owner 2026-07-28: Stamp Duty is hidden from the Sales Director view
@@ -1078,10 +1072,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
     { label: "Exchange List", match: /^exchange list/i, readOnly: !canBdEdit },
     { label: "Event Complete Image", match: /^event complete image/i, readOnly: !canBdEdit },
     { label: "Dismantle Image", match: /^dismantle image/i, readOnly: !canBdEdit },
-    // Owner 2026-07-31: a HALF tile again, so it sits beside Dismantle Image.
-    // It was pinned full-width on 2026-07-23 when it was the odd 7th tile;
-    // splitting Defect List into Setup + Dismantle made the count even (8), so
-    // full-width now strands Dismantle Image alone with a gap next to it.
+    // Owner 2026-07-31: HALF tile (8 tiles = even count), beside Dismantle Image.
     { label: "Stock In Transfer Record", match: /^stock in transfer/i, readOnly: !canBdEdit },
   ];
   // Owner 2026-07-18: PIC assignment AND Sales-Attending assignment are open to
@@ -1097,8 +1088,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
   const canAssignPeople = canWrite;
   const canEditTeam = canAssignPeople;
   const canEditAttending = canAssignPeople;
-  // PIC's phone from the project detail (backend populates pic_phone) — shown
-  // on the mobile Team card for everyone, not just editors.
+  // PIC's phone (backend pic_phone) — on the mobile Team card for everyone.
   const picPhone = formatPhone(p?.pic_phone);
 
   return (
@@ -1141,7 +1131,8 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
             )}
             {/* Owner 2026-07-20: project-level edits (status + Edit here)
                 require the PMS EDIT section — sales roles (pms.canEdit=false)
-                get the read-only badge instead. */}
+                get the read-only badge instead. The status is the ONE control an
+                archived project withholds, as on the desktop (docs/bugs/0893). */}
             {p && canWrite && access.canEdit && !archived && (
               <select
                 value={p.status ?? ""}
@@ -1159,7 +1150,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
             {/* Edit lived on the (removed) Project card's summary — the card
                 is gone (owner 2026-07-22: header carries all its info), so the
                 sequential-prompt editor moved up here. Same flow, same gate. */}
-            {p && canWrite && access.canEdit && !archived && (
+            {p && canWrite && access.canEdit && (
               <button
                 className="tinybtn"
                 disabled={busy}
@@ -1278,7 +1269,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
                 <svg className="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="m9 6 6 6-6 6" /></svg>
               </summary>
               <div className="pbody">
-                {canEditTeam && !archived ? (
+                {canEditTeam ? (
                   <>
                     <label className="fld" style={{ marginBottom: picPhone ? 4 : 10 }}>
                       <span className="fld-l">PIC</span>
@@ -1319,7 +1310,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
                   projectId={id}
                   attendees={data.sales_attendees ?? []}
                   options={salesReps}
-                  canWrite={canEditAttending && !archived}
+                  canWrite={canEditAttending}
                   busy={busy}
                   setBusy={setBusy}
                   notify={notify}
@@ -1342,7 +1333,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
               attachments={data.checklist_attachments}
               projectStart={p.start_date}
               projectEnd={p.end_date}
-              canTick={canTick && !archived}
+              canTick={canTick}
               can={can}
               busy={busy}
               setBusy={setBusy}
@@ -1367,15 +1358,15 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
                 lorries={lorries}
                 /* `canEdit !== false` treated BOTH an absent pms block and an
                    omitted flag as writable. Now the server's answer, fail-closed. */
-                canWrite={canWrite && access.canEdit && !archived}
+                canWrite={canWrite && access.canEdit}
                 /* Crew manage the setup/dismantle photos (owner 2026-07-21);
                    the backend re-gates on being crewed on the phase. */
-                canPhoto={(isDriverCrew || isStorekeeper) && !archived}
+                canPhoto={(isDriverCrew || isStorekeeper)}
                 /* Schedule reference (owner 2026-07-29): hidden from all —
                    logistic views/downloads, the BD/owner tier (canBdEdit:
                    owner/BD/weisiang) uploads/removes. */
                 canScheduleView={isLogistic || canBdEdit}
-                canScheduleEdit={canBdEdit && !archived}
+                canScheduleEdit={canBdEdit}
                 busy={busy}
                 setBusy={setBusy}
                 patchProject={patchProject}
@@ -1393,7 +1384,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
               <SalesDocsCard
                 checklist={data.checklist}
                 attachments={data.checklist_attachments}
-                canTick={canTick && !archived}
+                canTick={canTick}
                 busy={busy}
                 setBusy={setBusy}
                 notify={notify}
@@ -1403,23 +1394,38 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
               />
             )}
 
-            {/* Crew (driver/helper/storekeeper) doc tiles (owner 2026-07-21 v2)
-                — same card style as sales, ALL view/download-only (their photo
-                work lives in Setup & Dismantle's phase photos). Replaces their
-                tasklist rows (hidden above). */}
+            {/* Crew doc tiles (owner 2026-07-21 v2) — replaces the crew's
+                tasklist rows; photo work lives in Setup & Dismantle. */}
             {(isDriverCrew || isStorekeeper) && (
               <SalesDocsCard
-                tiles={CREW_DOC_TILES}
+                /* A crew reviewer (Shukor) has the dedicated Defect list card —
+                   drop the defect tiles here so they don't render twice. */
+                tiles={defectActionsValue.canReview
+                  ? CREW_DOC_TILES.filter((t) => !/^defect/i.test(t.label))
+                  : CREW_DOC_TILES}
                 title="Event documents"
                 checklist={data.checklist}
                 attachments={data.checklist_attachments}
-                canTick={canTick && !archived}
+                canTick={canTick}
                 busy={busy}
                 setBusy={setBusy}
                 notify={notify}
                 prompt={prompt}
                 confirm={confirm}
                 reload={reload}
+              />
+            )}
+
+            {/* Defect list — the state reviewer's own card (owner 2026-09-15):
+                per-photo Done/Replace for Shukor / Nancy / admin. See the guide. */}
+            {defectActionsValue.canReview && (
+              <SalesDocsCard
+                tiles={DEFECT_REVIEW_TILES}
+                title="Defect list"
+                checklist={data.checklist}
+                attachments={data.checklist_attachments}
+                canTick={canTick}
+                busy={busy} setBusy={setBusy} notify={notify} prompt={prompt} confirm={confirm} reload={reload}
               />
             )}
 
@@ -1431,7 +1437,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
                 title="Setup & Dismantle documents"
                 checklist={data.checklist}
                 attachments={data.checklist_attachments}
-                canTick={canTick && !archived}
+                canTick={canTick}
                 busy={busy} setBusy={setBusy} notify={notify} prompt={prompt} confirm={confirm} reload={reload}
               />
             )}
@@ -1448,7 +1454,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
                     title="Contract"
                     checklist={data.checklist}
                     attachments={data.checklist_attachments}
-                    canTick={canTick && !archived}
+                    canTick={canTick}
                     busy={busy} setBusy={setBusy} notify={notify} prompt={prompt} confirm={confirm} reload={reload}
                   />
                 )}
@@ -1461,7 +1467,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
                     title="Payment"
                     checklist={data.checklist}
                     attachments={data.checklist_attachments}
-                    canTick={canTick && !archived}
+                    canTick={canTick}
                     busy={busy} setBusy={setBusy} notify={notify} prompt={prompt} confirm={confirm} reload={reload}
                   />
                 )}
@@ -1471,7 +1477,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
                   title="Operation"
                   checklist={data.checklist}
                   attachments={data.checklist_attachments}
-                  canTick={canTick && !archived}
+                  canTick={canTick}
                   busy={busy} setBusy={setBusy} notify={notify} prompt={prompt} confirm={confirm} reload={reload}
                 />
               </>
@@ -1483,7 +1489,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
                 showRoleTags={isLogistic}
                 checklist={data.checklist}
                 attachments={data.checklist_attachments}
-                canTick={canTick && !archived}
+                canTick={canTick}
                 busy={busy} setBusy={setBusy} notify={notify} prompt={prompt} confirm={confirm} reload={reload}
               />
             )}
@@ -1500,13 +1506,13 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
                 photos={photos}
                 drivers={drivers}
                 lorries={lorries}
-                canWrite={canWrite && access.canEdit && !archived}
-                canPhoto={(isDriverCrew || isStorekeeper) && !archived}
+                canWrite={canWrite && access.canEdit}
+                canPhoto={(isDriverCrew || isStorekeeper)}
                 /* Schedule reference (owner 2026-07-29): hidden from all —
                    logistic views/downloads, the BD/owner tier (canBdEdit:
                    owner/BD/weisiang) uploads/removes. */
                 canScheduleView={isLogistic || canBdEdit}
-                canScheduleEdit={canBdEdit && !archived}
+                canScheduleEdit={canBdEdit}
                 busy={busy}
                 setBusy={setBusy}
                 patchProject={patchProject}
@@ -1524,7 +1530,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
                 showRoleTags={isLogistic}
                 checklist={data.checklist}
                 attachments={data.checklist_attachments}
-                canTick={canTick && !archived}
+                canTick={canTick}
                 busy={busy} setBusy={setBusy} notify={notify} prompt={prompt} confirm={confirm} reload={reload}
               />
             )}
@@ -1535,7 +1541,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
                 title="Setup & Dismantle documents"
                 checklist={data.checklist}
                 attachments={data.checklist_attachments}
-                canTick={canTick && !archived}
+                canTick={canTick}
                 busy={busy} setBusy={setBusy} notify={notify} prompt={prompt} confirm={confirm} reload={reload}
               />
             )}
@@ -1547,10 +1553,10 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
               attachments={data.attachments}
               checklist={data.checklist}
               checklistAttachments={data.checklist_attachments}
-              canWrite={canWrite && !archived}
+              canWrite={canWrite}
               hideFilledPlan={hideFilledPlan}
               hidePlanTiles={hidePlanTiles}
-              canStockEdit={isPurchaserView && canTick && !archived}
+              canStockEdit={isPurchaserView && canTick}
               confirm={confirm}
               busy={busy}
               setBusy={setBusy}
@@ -1573,7 +1579,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
               <SalesPanel
                 projectId={id}
                 incomeLines={data.finance_lines}
-                canLogSale={canLogSale && !archived}
+                canLogSale={canLogSale}
                 busy={busy}
                 setBusy={setBusy}
                 prompt={prompt}
@@ -1590,7 +1596,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
               <FinancialSnapshot
                 finance={data.finance!}
                 lines={data.finance_lines}
-                canWrite={canWrite && !archived && financeCanEdit}
+                canWrite={canWrite && financeCanEdit}
                 busy={busy}
                 setBusy={setBusy}
                 notify={notify}
@@ -2200,8 +2206,9 @@ function TaskRow({
   // (`canAttach && can("projects.manage")`), which had left crew and sales able
   // to upload a wrong photo they could not then take off. Delete now follows
   // ATTACH on both surfaces: canAttach is already scoped to the row the caller
-  // may work on (tick-only roles to their own badge) and folds in the row-edit +
-  // !archived gate, so a locked row still refuses.
+  // may work on (tick-only roles to their own badge) and folds in the row-edit
+  // gate, so a row the caller may not work on still refuses. An archived project
+  // no longer locks it (docs/bugs/0893), exactly as on the desktop.
   const canRemoveFile = canAttach;
 
   const cycle = async () => {
@@ -3178,28 +3185,26 @@ const SALES_DOC_TILES: ReadonlyArray<DocTile> = [
 ];
 
 // ── Crew (driver/helper/storekeeper) tile set (owner 2026-07-21 v2) ──
-// Same card style as sales, ALL view/download-only — crew's own photo work
-// (setup/dismantle) moved to the Setup & Dismantle section's phase photos.
-// Decoration shows its remark AND its files (view remark + download).
-// Defect tiles carry the per-file Ongoing/Done timeline + the N/A button
-// (owner 2026-07-29). Matched off the resolved checklist item title.
-// Live task titles are "Defect Item Setup/Dismantle" (there are no "Defect
-// List" rows in prod), so the old /^defect list/i matched nothing here and the
-// tile path never showed the action buttons or the no-defect N/A control
-// (BUG-HISTORY 2026-08-07). Widen to match both families, like every other
-// defect matcher and the backend.
+// Same card style as sales; crew's own photo work lives in Setup & Dismantle's
+// phase photos. Defect tiles carry the per-file action timeline (owner
+// 2026-07-29). Match BOTH title families — live rows are "Defect Item …", not
+// "Defect List …" (BUG-HISTORY 2026-08-07: the narrow match hid the buttons).
 const isDefectTile = (t: { item?: ChecklistItem | null }): boolean =>
   /^defect (list|item)/i.test((t.item?.title ?? "").trim());
 
+// Reviewer's Defect-list card (owner 2026-09-15). readOnly — reviewers stamp,
+// never upload; isDefectTile still renders the file list + actions.
+const DEFECT_REVIEW_TILES: ReadonlyArray<DocTile> = [
+  { label: "Defect Item Setup", match: /^defect (list|item) setup/i, readOnly: true },
+  { label: "Defect Item Dismantle", match: /^defect (list|item) dismantle/i, readOnly: true },
+];
+
 const CREW_DOC_TILES: ReadonlyArray<DocTile> = [
-  // Owner 2026-07-22: Stock Out Transfer Record + Blank Floorplan tiles
-  // removed from the crew card — the floorplan already lives in the
-  // Floor plans & layout card below, so the Event documents card carries
-  // just the permit + decoration brief.
+  // Owner 2026-07-22: Stock Out + Blank Floorplan tiles removed (floorplan
+  // lives in the Floor plans & layout card below).
   { label: "Permit", match: /permit/i, readOnly: true },
   { label: "Decoration", match: /^deco/i, readOnly: true, remarkWithFiles: true },
-  // Defect List pair (owner 2026-07-29): shared sales+driver deliverables
-  // ("SALES PIC & DRIVER") — crew EDIT them here, compulsory remark per photo.
+  // Defect pair (owner 2026-07-29): crew EDIT, compulsory remark per photo.
   { label: "Defect Item Setup", match: /^defect (list|item) setup/i, requirePhotoRemark: true },
   { label: "Defect Item Dismantle", match: /^defect (list|item) dismantle/i, requirePhotoRemark: true },
 ];
@@ -3363,9 +3368,9 @@ function SalesDocsCard({
   // (shared checklistReviewVisible / ReviewButtons); user drives the perm check.
   const { user, can } = useAuth();
   // Owner 2026-09-03: every user may remove a file from THEIR OWN task, so this
-  // follows the tile's own edit right instead of projects.manage. canTick folds
-  // in !archived, and each use site already ANDs `!t.readOnly`, which is what
-  // marks a tile as not this cohort's to work on.
+  // follows the tile's own edit right instead of projects.manage. Each use site
+  // already ANDs `!t.readOnly`, which is what marks a tile as not this cohort's
+  // to work on.
   const canDeleteFiles = canTick;
 
   const tiles = tileDefs.map((t) => {

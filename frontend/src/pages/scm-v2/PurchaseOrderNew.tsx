@@ -58,6 +58,7 @@ import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { computeTotalHeight, isTotalHeightCategory, isTotalHeightPart } from '../../vendor/shared/total-height';
 import { DateField } from "../../vendor/scm/components/DateField";
+import { showsVariantEditor } from '../../vendor/scm/lib/variant-editor-groups';
 
 const ICON    = { size: 16, strokeWidth: 1.75 } as const;
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
@@ -1013,7 +1014,7 @@ export const PurchaseOrderNew = () => {
             // 出来呢？不需要带出来啊". For mattress SKUs the size + branding
             // are already encoded in the SKU code itself (e.g. "HAPPI.S
             // DEWCOOL MATT (S)"), so the editor was just visual noise.
-            const showVariants  = l.category && ['sofa', 'bedframe'].includes(l.category) && maint;
+            const showVariants  = showsVariantEditor(l.category) && maint;
             /* THE SPECIAL ORDER IS A SEPARATE QUESTION FROM THE VARIANT GRID,
                and the comment directly above is why this had to be said out
                loud: the owner removed the MATTRESS VARIANT editor in 2026-05
@@ -1319,6 +1320,24 @@ export const PurchaseOrderNew = () => {
                       </>
                     )}
 
+                    {/* SOFA ACCESSORY (owner 2026-09-14): colour only. */}
+                    {l.category === 'fabric_accessory' && (
+                      <div className={styles.formGrid4}>
+                        <label className={styles.field}>
+                          <span className={styles.fieldLabel}>Fabrics</span>
+                          <select
+                            className={styles.fieldSelect}
+                            value={String(l.variants.fabricCode ?? '')}
+                            onChange={(e) => setVariant(l.rid, 'fabricCode', e.target.value)}
+                          >
+                            <option value="" disabled>Select…</option>
+                            {[...fabrics.filter((f) => f.is_active !== false || f.fabric_code === String(l.variants.fabricCode ?? ''))].sort((a, b) => byText(fabricOptionLabel(a), fabricOptionLabel(b))).map((f) => (
+                              <option key={f.id} value={f.fabric_code}>{fabricOptionLabel(f)}</option>
+                            ))}
+                          </select>
+                        </label>
+                      </div>
+                    )}
                     {/* SOFA — Commander 2026-05-28: mirror the SO editor —
                         Fabrics · Seat · Leg + Special Orders. Dropped free-text
                         Color. */}

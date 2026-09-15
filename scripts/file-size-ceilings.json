@@ -41,7 +41,7 @@
     "frontend/src/pages/scm-v2/MfgDeliveryOrdersListV2.tsx": 2004,
     "frontend/src/pages/scm-v2/MfgSalesOrdersListV2.tsx": 2348,
     "frontend/src/pages/scm-v2/ProductModels.tsx": 2255,
-    "frontend/src/pages/scm-v2/Products.tsx": 5450,
+    "frontend/src/pages/scm-v2/Products.tsx": 5014,
     "frontend/src/pages/scm-v2/SalesOrderDetail.tsx": 4206,
     "frontend/src/pages/scm-v2/SalesOrderNew.tsx": 2317,
     "frontend/src/pages/scm-v2/SupplierDetail.tsx": 4328,

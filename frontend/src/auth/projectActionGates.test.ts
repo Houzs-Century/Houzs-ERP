@@ -293,3 +293,33 @@ describe("Projects.tsx — every list filter param is sticky", () => {
     }
   });
 });
+
+/* docs/bugs/0893 — owner 2026-09-14 (D4, 「根据最新的version」): an archived
+   project stays editable on BOTH surfaces, which is what the desktop and the
+   server already did. The phone had ANDed `!archived` into 23 edit, tick,
+   upload, assign and P&L gates, so an event closed with late costs or a missing
+   photo could not be finished from a phone. The status dropdown is the one
+   control both surfaces withhold on an archived project. */
+describe("an archived project withholds only its status, on both surfaces", () => {
+  const code = (rel: string) =>
+    src(rel)
+      .split(/\r?\n/)
+      .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
+      .join("\n");
+
+  it("the phone gates exactly one control on archived — the status select", () => {
+    const mobile = code("mobile/MobilePMS.tsx");
+    const gates = mobile.match(/!archived\b/g) ?? [];
+    expect(gates.length, "the phone re-locked something on an archived project").toBe(1);
+    const at = mobile.indexOf("!archived");
+    expect(mobile.slice(at, at + 400)).toContain('aria-label="Change status"');
+  });
+
+  it("the desktop gates the same one control", () => {
+    const desk = code("pages/Projects.tsx");
+    const gates = desk.match(/&& !p\.archived_at/g) ?? [];
+    expect(gates.length).toBe(1);
+    const at = desk.indexOf("&& !p.archived_at");
+    expect(desk.slice(at, at + 200)).toContain("<ProjectStatusSelect");
+  });
+});

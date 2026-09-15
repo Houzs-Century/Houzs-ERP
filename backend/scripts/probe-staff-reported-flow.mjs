@@ -84,7 +84,7 @@ const TERMINAL = new Set(["CANCELLED", "CLOSED", "SHIPPED", "DELIVERED", "INVOIC
    as ONE predicate here for the same reason the TypeScript keeps it as one
    function: two copies of this rule drift and the readiness answer changes
    with them. */
-const HARD_BOUND_GROUPS = new Set(["bedframe", "sofa"]);
+const HARD_BOUND_GROUPS = new Set(["bedframe", "sofa", "fabric_accessory"]);
 const isHardBound = (group, code) => {
   const g = (group ?? "").toLowerCase();
   if (HARD_BOUND_GROUPS.has(g)) return true;

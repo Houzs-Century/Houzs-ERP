@@ -8,42 +8,47 @@ Owner-facing thread: 「去查看houzs erp的RBAC和限制 我发现电脑电话
 
 ## 1. What LANDED
 
-| item | PR | proof |
+All merged on 2026-09-14 and in production: the Worker's `/health` answered sha
+`b9d05153` when checked at about 13:03Z, and each merge commit below is its ancestor
+(`git merge-base --is-ancestor`).
+
+| item | PR | merged (UTC) |
 |---|---|---|
-| Sales Director invite always stores the baseline role (security, B-1) | #3831 | merged 2026-09-14 08:19Z; production Worker `/health` answered sha `ba8a8642` (the merge commit) when re-checked that afternoon |
-| The audit document + this handoff | #3832 | merged 2026-09-14 08:13Z |
+| Sales Director invite always stores the baseline role (security, B-1) | #3831 | 08:19 |
+| The audit document + this handoff | #3832 | 08:13 |
+| Phone convert-from-SO picker lists every deliverable order (B-3) | #3836 | 09:13 |
+| Phone fabric sheet honours the Model's fabric pool (B-4) | #3838 | 09:13 |
+| Supplier invoices are paid only with an AP Payment (B-2 + B-15); probe run 34833260858: 0 direct payments, RM 0.00, in the 53 purchase-invoice audit rows since 2026-07-23 | #3841 | 09:59 |
+| Service-case sub-status list has one home, "Pending Customer Pickup" saves (B-5) | #3843 | 09:59 |
+| Archived projects editable on the phone as on the desktop (D4, projects half) | #3851 | 10:32 |
+| Permission audit asks the policy; diagnostics print user ids, not names (B-9 + 0895) | #3858 | 12:27 |
+| Fabric search applies retired and pool rules BEFORE the 50-row cap — the recurring "cannot pick a fabric" (owner report on #3838) | #3856 | 12:40; live bundle's `fabric-queries` chunk carries `&itemCode=` |
 
 ## 2. What is OPEN
 
-| item | where | state at writing (2026-09-14, afternoon) |
-|---|---|---|
-| Phone convert-from-SO picker lists every deliverable order (B-3) | #3836, `fix/mobile-convert-so-picker` | green, in the merge queue. After deploy: read-only look at the phone convert wizard's Sales Order list on production, creating nothing |
-| Phone fabric sheet honours the Model's fabric pool (B-4) | #3838, `fix/mobile-fabric-pool` | green, in the merge queue. After deploy: read-only look at the phone fabric sheet on production |
-| Supplier invoices are paid only with an AP Payment (B-2 + B-15) | `fix/pi-payment-via-vouchers` | this PR. After merge: dispatch Actions → probe-pi-direct-payments once (read-only) and report how many payments the retired route recorded, per company |
-
-Staging cannot walk any Sales Order list flow while the staging Worker holds the
-anon key (owner action pending), so these are checked read-only on production.
+| item | state |
+|---|---|
+| D4, service-case half | the desktop banner (since 2026-04-20) and the phone disagree field by field (SC-1, SC-7). The owner could not place the question twice; measured read-only: **0 of 904 cases archived**. No change while unused — align both to the desktop banner's rule if archiving starts |
+| Staff names in the logs of earlier *Diag role permissions* runs (13 runs, 2026-07-27 to 2026-09-14) | deleting run logs is permanent: a repository admin's call, not done here |
+| B-6, B-8, B-10 to B-14, MD-3 | open as the audit §5 lists them |
+| B-7 driver POD | a feature to build rather than a permission to flip; re-trace the backend path before building |
 
 ## 3. The owner's answers (§7 of the audit)
 
-D1 merge now; D2 option C, staged, Sales Orders first; D3-D5 「根据最新的version」:
-the July phone-only project rules are superseded (phone follows desktop and
-server), archived projects and service cases stay editable on both, supplier
-payments go through vouchers. Nothing is blocked on the owner in this thread.
+D1 merge now; D2 option C, staged, Sales Orders first; D3 and D5
+「根据最新的version」: the July phone-only project rules are superseded (phone
+follows desktop and server), supplier payments go through vouchers. D4: see §2 —
+projects done, service cases corrected and deferred.
 
 ## 4. NEXT, in order
 
-1. Remaining defects, one PR each: B-5 service-case sub-status allowlist
-   (`pending_customer_pickup`; the desktop swallows the 400), B-7 driver POD dead
-   end (verify the backend path first), B-9 stale classifier in
-   `backend/scripts/audit-permission-grants.mjs`, and MD-3 (the driver mileage
-   photo upload rides `/slips`, gated on `scm.sales.orders`).
-2. Apply D3/D4 on the phone: drop the July phone-only project cohort rules so the
+1. Apply D3 on the phone: drop the July phone-only project cohort rules so the
    phone follows the desktop and server permissions.
-3. Option C, phase 1 — Sales Orders: a design doc first, then the SO read returns
+2. Option C, phase 1 — Sales Orders: a design doc first, then the SO read returns
    `actions` computed by the same guards the write routes enforce, both screens
    render from it, and a check fails a screen that computes its own. Then service
    cases, projects, the downstream documents.
+3. The remaining §5 defects, one PR each.
 4. Before each module PR: re-grep the cited lines — §4 of the audit is at
    `081a3fe72`.
 

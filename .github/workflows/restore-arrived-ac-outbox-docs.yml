@@ -1,0 +1,61 @@
+name: Put cleared AutoCount documents that arrived back on the list (plan / apply)
+
+# The AutoCount Sync page's CLEARED shelf held documents a script had cleared
+# with their refusal still open, and which reached AutoCount later, so they read
+# as never sent (backend/scripts/restore-arrived-ac-outbox-docs.mjs,
+# docs/bugs/0917). This puts back on the list every script-cleared document that
+# has since arrived, by the page's own judgement, re-filing refusals that were
+# filed under a row id. Documents a person cleared on the page, and documents not
+# in AutoCount, stay cleared and are listed.
+#
+# Default 'plan' writes nothing. 'apply' needs the confirm phrase, writes in one
+# transaction, and verifies on a fresh connection.
+#
+# Manual only, own concurrency group.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (default, writes NOTHING) or apply"
+        required: true
+        default: "plan"
+        type: choice
+        options: ["plan", "apply"]
+      confirm:
+        description: "Required for apply: put the cleared documents that reached AutoCount back on the list"
+        required: false
+        default: ""
+      doc_nos:
+        description: "Optional: documents a person cleared that should come back too, comma separated"
+        required: false
+        default: ""
+
+concurrency:
+  group: restore-arrived-ac-outbox-docs
+  cancel-in-progress: false
+
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      # tsx: the judgement is the page's own, imported from src/.
+      - run: npx tsx scripts/restore-arrived-ac-outbox-docs.mjs
+        env:
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          DOC_NOS: ${{ inputs.doc_nos }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
+          NODE_OPTIONS: --dns-result-order=ipv4first

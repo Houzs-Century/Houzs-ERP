@@ -1206,6 +1206,31 @@ describe("DataTable header filter + sort menu", () => {
     expect(JSON.parse(localStorage.getItem("dt:filters:filter-persist") ?? "null")).toEqual({});
   });
 
+  /* SKU Master (owner 2026-09-15): a remembered funnel made his catalogue look
+     short and hid the row he had just renamed. persistFilters={false} opens with
+     no filter every time and erases the one an earlier visit saved. */
+  it("persistFilters={false} filters for this visit only and erases a saved filter", () => {
+    setViewport(1280);
+    localStorage.setItem("dt:filters:filter-session", JSON.stringify({ status: ["Open"] }));
+    const first = render(
+      <DataTable tableId="filter-session" persistFilters={false} rows={rows.slice(0, 6)} columns={columns} getRowKey={(r) => r.id} />,
+    );
+    // The old saved filter does not apply, and is gone from storage.
+    expect(rowCount(first.container)).toBe(6);
+    expect(localStorage.getItem("dt:filters:filter-session")).toBeNull();
+
+    openFunnel("Status");
+    fireEvent.click(screen.getByRole("checkbox", { name: /Open/ }));
+    expect(rowCount(first.container)).toBe(3);
+    expect(localStorage.getItem("dt:filters:filter-session")).toBeNull();
+
+    first.unmount();
+    const second = render(
+      <DataTable tableId="filter-session" persistFilters={false} rows={rows.slice(0, 6)} columns={columns} getRowKey={(r) => r.id} />,
+    );
+    expect(rowCount(second.container)).toBe(6);
+  });
+
   /* The sticky funnel is the one filter with no representation outside the
      header that set it: owner 2026-08-14, a Purchaser reported 5 of 60 POs
      missing — his own funnel, months old, on a machine whose localStorage the

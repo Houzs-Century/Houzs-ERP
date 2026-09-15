@@ -248,6 +248,11 @@ const MUST_GATE_MERGE = [
      not the deploy. */
   "tests/idempotencyRefusalRelease.test.ts",
   "tests/grnPreWriteRefusalsReleaseKey.test.ts",
+  /* The same pair of properties for adding a sales-order line: a pre-write
+     refusal left on a bare c.json locks the phone's Save on that line until a
+     reload, and a release moved past the PWP claim lets a corrected resubmit
+     add the line twice. */
+  "tests/soLineAddPreWriteRefusalsReleaseKey.test.ts",
   /* The blank-date gate. Its whole reason to exist is that the previous
      version of it passed on an unfixed tree, so a merge that reintroduces an
      uncoerced date write has to be STOPPED, not reported after the fact. */

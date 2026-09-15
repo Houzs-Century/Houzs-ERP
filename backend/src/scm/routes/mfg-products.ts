@@ -31,6 +31,8 @@ import { scopeToCompany, activeCompanyId,
 import { todayMyt } from '../lib/my-time';
 import { resolveSellPriceSenAsOf, resolvePendingSellPriceAfter } from '../lib/product-pricing-history';
 import type { Env, Variables } from '../env';
+import { categorySwapAllowed } from '../shared/category-swap';
+import { MFG_PRODUCT_CATEGORIES, MFG_CATEGORY_LABELS, parseMfgCategory } from '../shared/product-categories';
 
 export const mfgProducts = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -226,11 +228,10 @@ mfgProducts.get('/', listMfgProductsHandler);
 // ── POST / ─────────────────────────────────────────────────────────────
 // Create a new mfg_product. id is text PK — we generate a short uuid-ish
 // id since the existing import uses Excel-style ids like 'mfg-xxxxxxx'.
-/* The `mfg_product_category` PG enum, in declaration order. This is the ONE
-   in-repo statement of that taxonomy — the HR item-KPI category picker imports
-   it rather than re-listing the values, so a rule can never offer a category the
-   column cannot hold. Keep in step with the enum if it ever gains a member. */
-export const MFG_PRODUCT_CATEGORIES = ['SOFA', 'BEDFRAME', 'ACCESSORY', 'MATTRESS', 'BEDLINES', 'DINING', 'DIFFUSER', 'CARPET', 'SERVICE'] as const;
+/* The `mfg_product_category` enum list lives in shared/product-categories.ts
+   (one home, mirrored to the frontend); re-exported here for the routes that
+   have always imported it from this file. */
+export { MFG_PRODUCT_CATEGORIES };
 const VALID_CATEGORIES = new Set<string>(MFG_PRODUCT_CATEGORIES);
 mfgProducts.post('/', async (c) => {
   const gate = await requireRole(c);
@@ -296,7 +297,9 @@ mfgProducts.post('/', async (c) => {
 // ── POST /batch-import ─────────────────────────────────────────────────
 // Bulk upsert from a CSV import. Body: { rows: [{ code, name, category, ... }] }.
 // Upserts by code (ON CONFLICT DO UPDATE). Returns count inserted/updated.
-mfgProducts.post('/batch-import', async (c) => {
+/* Exported so the import's field rules (what an existing SKU takes from a
+   sheet) can be driven by a test. */
+export const batchImportMfgProductsHandler = async (c: AppContext) => {
   const gate = await requireRole(c);
   if (!gate.ok) return gate.res;
   let body: { rows?: Array<Record<string, unknown>> };
@@ -318,7 +321,12 @@ mfgProducts.post('/batch-import', async (c) => {
   for (const r of list) {
     const code = String(r.code ?? '').trim();
     const name = String(r.name ?? '').trim();
-    const category = String(r.category ?? '').trim();
+    const categoryCell = String(r.category ?? '').trim();
+    /* Read as a person types it (any case, or the label "Sofa Accessory").
+       A filled cell that is not a category is REPORTED: it used to be dropped
+       without a word, so a batch category edit could save everything except
+       the category and still say "updated" (owner 2026-09-15). */
+    const category = parseMfgCategory(categoryCell);
     if (!code) {
       failures.push({ code, reason: 'missing code' });
       continue;
@@ -342,7 +350,14 @@ mfgProducts.post('/batch-import', async (c) => {
     const { data: existing } = await supabase.from('mfg_products')
       .select('id, seat_height_prices').eq('code', code).eq('company_id', activeCompanyId(c)).maybeSingle();
 
-    if (!existing && (!name || !VALID_CATEGORIES.has(category))) {
+    if (categoryCell && !category) {
+      failures.push({
+        code,
+        reason: `category "${categoryCell}" is not a category — use one of: ${MFG_PRODUCT_CATEGORIES.map((c) => MFG_CATEGORY_LABELS[c]).join(', ')}.`,
+      });
+      continue;
+    }
+    if (!existing && (!name || !category)) {
       failures.push({
         code,
         reason: `${code} is not in the system, so this row would CREATE it — a new SKU needs a name and a valid category (${[...VALID_CATEGORIES].join(', ')}).`,
@@ -354,7 +369,7 @@ mfgProducts.post('/batch-import', async (c) => {
     /* Present-and-non-empty only, exactly like every other column. On a create
        the guard above has already proved both are there. */
     if (name) row.name = name;
-    if (VALID_CATEGORIES.has(category)) row.category = category;
+    if (category) row.category = category;
 
     // String fields — include only when the cell actually has a value.
     if (hasVal(r.status))      row.status = String(r.status);
@@ -423,7 +438,8 @@ mfgProducts.post('/batch-import', async (c) => {
   }
 
   return c.json({ upserted, failed: failures.length, failures: failures.slice(0, 50) });
-});
+};
+mfgProducts.post('/batch-import', batchImportMfgProductsHandler);
 
 // ── DELETE /:id ────────────────────────────────────────────────────────
 // PR #82 (Commander 2026-05-26) — SKU Master multi-select delete needs a
@@ -617,6 +633,9 @@ export const patchMfgProductHandler = async (c: AppContext) => {
     name?: string;
     /** 0166 — free-text SKU barcode. Empty string clears to NULL. */
     barcode?: string | null;
+    /** Any other valid category (shared/category-swap.ts), and only on a SKU
+        with no model — a modelled SKU moves with its model. */
+    category?: string;
   };
   try {
     body = (await c.req.json()) as typeof body;
@@ -635,7 +654,7 @@ export const patchMfgProductHandler = async (c: AppContext) => {
 
   const { data: current, error: loadErr } = await scopeToCompanyId(supabase
     .from('mfg_products')
-    .select('code, base_price_sen, price1_sen, cost_price_sen, sell_price_sen, pwp_price_sen, default_variants, seat_height_prices')
+    .select('code, category, model_id, base_price_sen, price1_sen, cost_price_sen, sell_price_sen, pwp_price_sen, default_variants, seat_height_prices')
     .eq('id', id), co.companyId)
     .maybeSingle();
   if (loadErr) return c.json({ error: 'load_failed', reason: loadErr.message }, 500);
@@ -682,6 +701,15 @@ export const patchMfgProductHandler = async (c: AppContext) => {
   if (body.barcode !== undefined) {
     const trimmed = typeof body.barcode === 'string' ? body.barcode.trim() : null;
     updates.barcode = trimmed ? trimmed : null;
+  }
+  if (body.category !== undefined && String(body.category).toUpperCase() !== String(current.category ?? '').toUpperCase()) {
+    if (current.model_id) {
+      return c.json({ error: 'category_on_model', reason: 'This SKU belongs to a model — change the category on the model, and its SKUs move with it.' }, 409);
+    }
+    if (!categorySwapAllowed(current.category, body.category)) {
+      return c.json({ error: 'category_change_not_allowed', reason: `"${String(body.category)}" is not a product category.` }, 409);
+    }
+    updates.category = String(body.category).toUpperCase();
   }
   // PR #87 — per-SKU active toggle. Stored as 'ACTIVE' | 'INACTIVE' to match
   // the rest of the schema (matches mfg_products.status default in inserts).
