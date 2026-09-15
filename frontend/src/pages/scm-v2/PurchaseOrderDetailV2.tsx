@@ -1423,7 +1423,7 @@ function PurchaseOrderDetailV2ReadOnly() {
               )}
               <DataTable<PoItemRow>
                 tableId={`po-lines-${id}`}
-                layoutFamily={DATA_TABLE_LAYOUT_FAMILIES.purchaseOrderLines}
+                layoutFamily={DATA_TABLE_LAYOUT_FAMILIES.purchaseOrderLines} persistSort={false} persistFilters={false}
                 rows={items}
                 loading={false}
                 columns={lineColumns}

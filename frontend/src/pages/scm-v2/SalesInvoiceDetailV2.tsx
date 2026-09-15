@@ -1626,7 +1626,7 @@ export function SalesInvoiceDetailV2() {
             <Section title={`Line items · ${items.length}`} actions={addLine.action}>
               <DataTable<SiItem>
                 tableId={`si-lines-${id}`}
-                layoutFamily={DATA_TABLE_LAYOUT_FAMILIES.salesInvoiceLines}
+                layoutFamily={DATA_TABLE_LAYOUT_FAMILIES.salesInvoiceLines} persistSort={false} persistFilters={false}
                 rows={items}
                 loading={false}
                 columns={lineColumns}

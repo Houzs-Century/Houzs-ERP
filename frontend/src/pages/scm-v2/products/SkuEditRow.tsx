@@ -115,6 +115,16 @@ export async function saveStagedEdits(
   return { savedIds, failures };
 }
 
+/* The rows the grid is SHOWING — its funnels and sort applied — as the latest
+   copies from `rows`. The edit table renders these, so pressing Edit Prices
+   never moves or drops a row the operator was looking at (owner 2026-09-15).
+   `null` = the grid has not reported yet: fall back to the loaded order. */
+export function rowsInGridOrder<R extends { id: string }>(rows: R[], gridRows: R[] | null): R[] {
+  if (!gridRows) return rows;
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  return gridRows.flatMap((g) => byId.get(g.id) ?? []);
+}
+
 export const ProductRow = memo(({
   row, editMode, isSofaView, isMattressView, sofaSizes, tier, onOpenSuppliers,
   selected, onToggleSelected, patch, onStage, brandingPool,
