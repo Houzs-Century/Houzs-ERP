@@ -21,6 +21,7 @@ import { PO_LIST_SELECT, filterPoList, orderPoList, stampPoListGrns, type PoList
 import { warehouseLabel } from './warehouse-label';
 import { bookSpellingOrOwn } from '../../services/autocount-writeback';
 import { LOCATION_MAP } from '../../services/autocount-master-maps';
+import { poLineDescription2 } from './po-line-description2';
 import {
   PO_ESTIMATE_DELIVERY_DATE_FIELDS,
   poEstimateDeliveryDates,
@@ -34,13 +35,14 @@ const ESTIMATE_COLS = PO_ESTIMATE_DELIVERY_DATE_FIELDS.join(', ');
 
 export const PO_LINE_READ_COLS =
   'id, purchase_order_id, line_no, created_at, item_code, supplier_sku, material_name, description2, notes, ' +
-  `item_group, warehouse_id, qty, received_qty, unit_price_sen, line_total_sen, delivery_date, ${ESTIMATE_COLS}, so_item_id`;
+  `item_group, variants, warehouse_id, qty, received_qty, unit_price_sen, line_total_sen, delivery_date, ${ESTIMATE_COLS}, so_item_id`;
 
 type LineRow = PoLineSource & {
   purchase_order_id: string;
   created_at: string | null;
   warehouse_id: string | null;
   so_item_id: string | null;
+  variants: unknown;
 };
 
 /* The builder surface the reads below use — structural, so the test fake and
@@ -129,7 +131,7 @@ export async function attachPoLines<H extends PoLineHeader>(
   }
   const rows = headers.map((h) => {
     const headerWarehouse = h.purchase_location_id ? wh.byId.get(h.purchase_location_id) : null;
-    const lines = [...(byPo.get(h.id) ?? [])].sort(byLinePosition).map((l) => toPoListLine(h, l, {
+    const lines = [...(byPo.get(h.id) ?? [])].sort(byLinePosition).map((l) => toPoListLine(h, { ...l, description2: poLineDescription2(l.item_group, l.variants, l.description2) }, {
       soDocNo: l.so_item_id ? so.byId.get(l.so_item_id)?.doc_no ?? null : null,
       location: bookSpellingOrOwn(
         warehouseLabel(l.warehouse_id ? wh.byId.get(l.warehouse_id) : null) ?? warehouseLabel(headerWarehouse),

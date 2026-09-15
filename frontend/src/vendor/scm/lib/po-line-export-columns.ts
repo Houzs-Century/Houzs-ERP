@@ -37,11 +37,12 @@ export const PO_ESTIMATE_DELIVERY_DATE_FIELDS = [
   'supplier_delivery_date_4',
 ] as const;
 
-/** What the three are called, on every screen and in every export. */
+/** What the three are called, on every screen and in every export — AutoCount's
+ *  own PO listing captions, exactly (owner 2026-09-15: "100% like AutoCount"). */
 export const PO_ESTIMATE_DELIVERY_DATE_LABELS = [
-  'Estimate Delivery Date 1',
-  'Estimate Delivery Date 2',
-  'Estimate Delivery Date 3',
+  'Estimate Delivery Date',
+  'Supplier Delivery Date 2',
+  'Supplier Delivery Date 3',
 ] as const;
 
 export type PoEstimateDates = {
@@ -85,30 +86,54 @@ export function poStatusWord(status: string | null | undefined, onHold: boolean 
   return onHold === true && raw.toUpperCase() !== 'ON_HOLD' ? `${word} (On Hold)` : word;
 }
 
-/** The grid's labels for the line columns, and the PO number column's. */
+/** The grid's column labels. The first fifteen are AutoCount's PO listing
+ *  columns, in AutoCount's order (the grid's default view); the rest are extra
+ *  columns the chooser offers. A grid export writes these labels as headers, and
+ *  the PO line import reads a file back by them. */
 export const PO_LINE_LABELS = {
-  docNo: 'PO No.',
-  autoCountDocNo: 'AutoCount Doc No',
-  supplierCode: 'Supplier Code',
+  docNo: 'Doc No',
+  soDocNo: 'SO Doc No.',
+  creditorCode: 'Creditor Code',
+  creditorName: 'Creditor Name',
   itemCode: 'Item Code',
   itemDescription: 'Item Description',
   itemDescription2: 'Item Description 2',
-  remarks: 'Remarks',
-  category: 'Category',
   location: 'Location',
-  qty: 'Qty',
-  receivedQty: 'Received Qty',
+  itemGroup: 'Item Group',
+  docDate: 'Doc Date',
   remainingQty: 'Remaining Qty',
-  unitPrice: 'Unit Price',
-  lineTotal: 'Line Total',
   deliveryDate: 'Delivery Date',
   estimate1: PO_ESTIMATE_DELIVERY_DATE_LABELS[0],
   estimate2: PO_ESTIMATE_DELIVERY_DATE_LABELS[1],
   estimate3: PO_ESTIMATE_DELIVERY_DATE_LABELS[2],
+  erpDocNo: 'ERP Doc No',
+  erpItemCode: 'ERP Item Code',
+  remarks: 'Remarks',
+  qty: 'Qty',
+  receivedQty: 'Received Qty',
+  unitPrice: 'Unit Price',
+  lineTotal: 'Line Total',
   lineId: 'Line ID',
 } as const;
 
 export type PoLineLabel = (typeof PO_LINE_LABELS)[keyof typeof PO_LINE_LABELS];
+
+/* AutoCount's Item Group for an ERP item_group. Measured 2026-09-15 on the 240
+   lines of the owner's AutoCount "PO chasing list" (20260904) that match an ERP
+   line by AutoCount doc no + supplier item code: sofa -> SOFA (13),
+   fabric_accessory -> SOFA (35; the book files a sofa's pillows under the sofa),
+   accessory -> ACC (11), mattress -> MATTRESS (90), bedframe -> BEDFRAME (91).
+   A group the book was not seen using prints upper-cased. */
+const AC_ITEM_GROUP: Readonly<Record<string, string>> = {
+  accessory: 'ACC',
+  fabric_accessory: 'SOFA',
+};
+
+export function acItemGroup(itemGroup: string | null | undefined): string | null {
+  const g = (itemGroup ?? '').trim();
+  if (!g) return null;
+  return AC_ITEM_GROUP[g.toLowerCase()] ?? g.toUpperCase();
+}
 
 /** One PO line as the list endpoint and the export send it. Money stays in sen
  *  on the wire; the grid converts at the cell (`senToRinggit`). */
