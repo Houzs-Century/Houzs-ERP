@@ -1487,8 +1487,8 @@ Total: 1280 route registrations across 166 files.
 - L1855  POST   /regenerate
 
 ## backend/src/scm/routes/po-line-import.ts  (2)
-- L251  POST   /line-import/preview
-- L265  POST   /line-import/apply
+- L253  POST   /line-import/preview
+- L267  POST   /line-import/apply
 
 ## backend/src/scm/routes/pos-cart.ts  (2)
 - L60  GET    /

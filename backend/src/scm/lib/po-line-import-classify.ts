@@ -69,7 +69,7 @@ const docNoMatches = (fileDocNo: string, po: ImportPoRow): boolean => {
 export function poEditRefusal(po: ImportPoRow, lock: string | null): { code: PoLineImportRejectCode; reason: string } | null {
   const s = String(po.status ?? '').toUpperCase();
   if (s === 'CANCELLED') return { code: 'po_cancelled', reason: `${po.po_number} is cancelled.` };
-  if (s === 'RECEIVED') return { code: 'po_received', reason: `${po.po_number} is fully received; its lines are locked.` };
+  if (s === 'RECEIVED') return { code: 'po_received', reason: `${po.po_number} has status RECEIVED (everything ordered came in); its lines are locked.` };
   if (s !== 'DRAFT' && s !== 'SUBMITTED' && s !== 'PARTIALLY_RECEIVED') {
     return { code: 'po_locked', reason: `${po.po_number} is ${s || 'in an unknown status'}; its lines cannot be edited.` };
   }

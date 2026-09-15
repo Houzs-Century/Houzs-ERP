@@ -11,6 +11,7 @@
 import { useCallback, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { authedFetch, humanApiError } from './authed-fetch';
+import { invalidateModuleShared } from '../../../mobile/sharedInvalidate';
 import {
   readPoLineImportSheet,
   type PoLineImportApplyBody,
@@ -105,9 +106,8 @@ export function usePoLineImport() {
         method: 'POST',
         body: JSON.stringify(applyBodyOf(current.preview)),
       });
-      for (const root of ['mfg-purchase-orders', 'mfg-purchase-orders-paged', 'mfg-purchase-order-detail']) {
-        void qc.invalidateQueries({ queryKey: [root] });
-      }
+      /* The one list of PO cache roots both surfaces refresh after a PO write. */
+      invalidateModuleShared(qc, 'mfg-purchase-orders');
       setState({ step: 'done', fileName: current.fileName, result });
     } catch (e) {
       const { message, conflicts } = errorOf(e);
