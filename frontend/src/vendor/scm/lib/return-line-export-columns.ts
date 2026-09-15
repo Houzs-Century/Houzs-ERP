@@ -140,7 +140,8 @@ export const PR_LINE_COLUMNS: readonly ReturnLineColumn[] = [
  *  stays in SEN on the wire; the grid converts at the cell (`senToRinggit`). */
 export type DrListLine = {
   id: string;
-  /** AutoCount's spelling of the item code (the ERP's own where the book has none). */
+  /** Item Code, Description, Item Group and UOM are the account book's for a
+   *  HOUZS line (bookLineItem), the ERP's own where the book has no such item. */
   item_code: string | null;
   description: string | null;
   /** Composed from the variants, else the stored text. */
@@ -163,10 +164,12 @@ export type DrListLine = {
 /** One Purchase Return line as the list endpoint and the export send it. */
 export type PrListLine = {
   id: string;
-  /** AutoCount's spelling of the item code (the ERP's own where the book has none). */
+  /** As on DrListLine: the book's item facts for a HOUZS line. `description` is
+   *  the book's, else material_name, else description; `material_name` is raw. */
   item_code: string | null;
   material_name: string | null;
   description: string | null;
+  /** Composed from the variants, else the stored text. */
   description2: string | null;
   notes: string | null;
   reason: string | null;
@@ -213,10 +216,17 @@ export type PrLineSource = {
   line_refund_sen?: number | string | null;
 };
 
-/** What the server works out for a line before shaping it: the Item Code as
- *  AutoCount spells it (the write-back's resolveAcItemCode) and Item
- *  Description 2 composed from the line's variants (owner 2026-09-15). */
-export type ReturnLineBookFacts = { itemCode: string | null; description2: string | null };
+/** What the server works out for a line before shaping it: the item as the
+ *  account book lists it (Item Code, Description, Item Group, UOM — the shared
+ *  bookLineItem) and Item Description 2 composed from the line's variants
+ *  (owner 2026-09-15). */
+export type ReturnLineBookFacts = {
+  itemCode: string | null;
+  description: string | null;
+  itemGroup: string | null;
+  uom: string | null;
+  description2: string | null;
+};
 
 export function toDrListLine(
   line: DrLineSource,
@@ -225,12 +235,12 @@ export function toDrListLine(
   return {
     id: line.id,
     item_code: text(ctx.itemCode),
-    description: text(line.description),
+    description: text(ctx.description),
     description2: text(ctx.description2),
     notes: text(line.notes),
-    item_group: text(line.item_group),
+    item_group: text(ctx.itemGroup),
     condition: text(line.condition),
-    uom: text(line.uom),
+    uom: text(ctx.uom),
     qty_returned: num(line.qty_returned) ?? 0,
     unit_price_sen: num(line.unit_price_sen),
     discount_sen: num(line.discount_sen),
@@ -248,12 +258,12 @@ export function toPrListLine(
     id: line.id,
     item_code: text(ctx.itemCode),
     material_name: text(line.material_name),
-    description: text(line.description),
+    description: text(ctx.description),
     description2: text(ctx.description2),
     notes: text(line.notes),
     reason: text(line.reason),
-    item_group: text(line.item_group),
-    uom: text(line.uom),
+    item_group: text(ctx.itemGroup),
+    uom: text(ctx.uom),
     qty_returned: num(line.qty_returned) ?? 0,
     unit_price_sen: num(line.unit_price_sen),
     line_refund_sen: num(line.line_refund_sen),

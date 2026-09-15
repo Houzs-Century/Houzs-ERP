@@ -22,6 +22,7 @@ import { fakeSb } from '../lib/fake-postgrest';
 import { purchaseReturnExportRowsHandler } from './purchase-return-exports';
 import { purchaseReturnListHandler } from './purchase-returns';
 import { buildVariantSummary } from '../shared';
+import { bookLineItem } from '../../services/autocount-book-item';
 
 type Row = Record<string, unknown>;
 
@@ -193,6 +194,8 @@ describe('each line in the list shape', () => {
       id: l.id,
       item_code: 'AERO-Y04 (K)',
       material_name: 'ANNEX DINING CHAIR',
+      description: bookLineItem({ itemCode: 'Y04-(K)', description: 'ANNEX DINING CHAIR', category: 'bedframe', uom: 'UNIT' }, '400-A003').description,
+      item_group: bookLineItem({ itemCode: 'Y04-(K)', description: null, category: 'bedframe', uom: 'UNIT' }, '400-A003').itemGroup,
       notes: 'torn cover',
       reason: 'damaged',
       qty_returned: 2,
@@ -207,25 +210,17 @@ describe('each line in the list shape', () => {
     expect(out.description2).toBe(composed);
   });
 
-  it('keeps the stored Description 2 when the variants compose nothing, and the ERP code outside the book company', async () => {
+  it('keeps the stored Description 2 when the variants compose nothing, and the ERP item outside the book company', async () => {
     const h = pr({ company_id: 2, return_number: '2990-PRT-2609-0001' });
     const l = line(h, { item_code: 'Y04-(K)', variants: null, description2: 'refer PO4322/PI3835' });
     const { body } = await getRows(harness({ prs: [h], lines: [l] }, { companyId: 2, companyCode: '2990' }));
     const out = body.purchaseReturns[0]!.lines[0]!;
     expect(out.item_code).toBe('Y04-(K)');
+    expect(out.item_group).toBe('dining');
+    expect(out.description).toBe('ANNEX DINING CHAIR');
     expect(out.description2).toBe('refer PO4322/PI3835');
     expect(out.location).toBe('KL');
     expect(out.grn_no).toBe('HC-GRN-000001');
-  });
-
-  it('a live binding for the return\'s own supplier wins over the cutover snapshot', async () => {
-    const h = pr();
-    const l = line(h, { item_code: 'Y04-(K)' });
-    const bindings = [
-      { id: 'b1', company_id: 1, material_kind: 'mfg_product', item_code: 'Y04-(K)', supplier_id: 'sup-1', supplier_sku: 'AERO-Y04-RENAMED', ac_item_code: null, is_main_supplier: true },
-    ];
-    const { body } = await getRows(harness({ prs: [h], lines: [l], bindings }));
-    expect(body.purchaseReturns[0]!.lines[0]!.item_code).toBe('AERO-Y04-RENAMED');
   });
 
   it('refuses the file when a lookup fails, rather than exporting blank links', async () => {

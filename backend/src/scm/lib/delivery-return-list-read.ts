@@ -21,7 +21,7 @@ import { warehouseLabel } from './warehouse-label';
 import { bookSpellingOrOwn, resolveAcAgent } from '../../services/autocount-writeback';
 import { BRANDING_MAP, LOCATION_MAP, VENUE_MAP } from '../../services/autocount-master-maps';
 import { toDrListLine, type DrListLine } from './return-line-export-columns';
-import { companyHasAutoCountBook, composedDescription2, readItemCodeSpeller } from './return-line-book-facts';
+import { companyHasAutoCountBook, returnLineBookFacts } from './return-line-book-facts';
 
 /* FINANCE-GATED header keys — cost / margin / per-category revenue+cost
    subtotals. All are in DR_HEADER_COLS (so they travel in the DR list payload)
@@ -253,8 +253,7 @@ export async function attachDeliveryReturnLines<H extends DrLineHeader>(
   );
   if (wh.error) return fail(`warehouses: ${wh.error}`);
 
-  const speller = await readItemCodeSpeller(sb, c, all.map((l) => ({ code: l.item_code, supplierId: null })));
-  if (speller.error) return fail(speller.error);
+  const inBook = companyHasAutoCountBook(c);
 
   const byReturn = new Map<string, LineRow[]>();
   for (const l of all) {
@@ -269,8 +268,7 @@ export async function attachDeliveryReturnLines<H extends DrLineHeader>(
       const doWh = dl?.delivery_order_id ? doHeads.byId.get(dl.delivery_order_id)?.warehouse_id ?? null : null;
       const lineWh = so?.warehouse_id ?? doWh ?? h.warehouse_id ?? null;
       return toDrListLine(l, {
-        itemCode: speller.spell(l.item_code, null, null),
-        description2: composedDescription2(l.item_group, l.variants, l.description2),
+        ...returnLineBookFacts(inBook, l, null),
         location: bookSpellingOrOwn(warehouseLabel(lineWh ? wh.byId.get(lineWh) : null), LOCATION_MAP),
         soDocNo: so?.doc_no ?? null,
       });

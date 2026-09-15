@@ -19,6 +19,7 @@ import type { Env, Variables } from '../env';
 import { fakeSb } from '../lib/fake-postgrest';
 import { filterDeliveryReturnList } from '../lib/delivery-return-list-read';
 import { buildVariantSummary } from '../shared';
+import { bookLineItem } from '../../services/autocount-book-item';
 import { deliveryReturnExportRowsHandler } from './delivery-return-exports';
 import { deliveryReturnListHandler } from './delivery-returns';
 
@@ -208,13 +209,18 @@ describe('each row and line in the list shape', () => {
     };
     const { body } = await getRows(harness(tables));
     const row = body.deliveryReturns[0]!;
+    /* The account book's item, through the one shared reader. */
+    const book = bookLineItem({ itemCode: 'Y04-(K)', description: l.description as string, category: 'bedframe', uom: 'UNIT' }, null);
+    expect(book.inBook).toBe(true);
     expect(row.so_doc_no).toBe('HC-SO-013389');
     expect(typeof row.ac_agent).toBe('string');
     expect(row.ac_agent).toBeTruthy();
     expect(row.lines[0]).toMatchObject({
       id: l.id,
       item_code: 'AERO-Y04 (K)',
-      description: 'AKEMI IMMORTAL MATTRESS (153x190x36CM)',
+      description: book.description,
+      item_group: book.itemGroup,
+      uom: book.uom,
       description2: buildVariantSummary('bedframe', variants),
       location: 'SRW',
       so_doc_no: 'HC-SO-013389',
