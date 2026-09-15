@@ -367,6 +367,27 @@ DB type is the `scm.delivery_return_status` ENUM; column default is `PENDING`.
 - **`houzsUser.id`, not `user.id`**, for anything scope-related.
 - **No mobile twin.** Do not go looking for one.
 
+## Export (owner 2026-09-15): ONE button, AutoCount's Delivery Return Detail Listing
+
+The list's toolbar **Export** writes an `.xlsx` with one row per return LINE, the
+grid's visible columns in on-screen order, for EVERY return the tab and search match —
+not the 500 the screen read holds. The grid's default columns are AutoCount's own
+"Print Delivery Return Detail Listing" columns in AutoCount's order; the ERP-only
+columns are in the chooser, hidden by default. Money is ringgit in the file.
+
+- `GET /delivery-returns/export/rows?status=` ->
+  `{ deliveryReturns: Array<ListRow & { lines }>, total, lineCount, truncated }`
+  (`backend/src/scm/routes/delivery-return-exports.ts`), mounted before the main
+  router, same `scm.sales.returns` area guard, the SAME sales scope as the list.
+- `GET /` now carries `lines` on each row, plus `ac_agent` / `ac_branding` /
+  `ac_venue` (the book's spellings), through the functions in
+  `backend/src/scm/lib/delivery-return-list-read.ts`; its SO-number read is now
+  company-scoped; it orders by `return_date` then `return_number`.
+- Column contract, AutoCount evidence and value rules: `docs/line-export-columns.md` §4.
+- Read-only production check: `backend/scripts/check-return-line-export.mjs`
+  (workflow "Return line export check (read-only)").
+- Trace: `docs/bugs/0928-the-purchase-and-delivery-return-lists-exported-the-loaded-r.md`.
+
 ## See also
 
 - `docs/line-export-columns.md` — the proposed one-row-per-line export columns for every transaction document, and which columns the import may change

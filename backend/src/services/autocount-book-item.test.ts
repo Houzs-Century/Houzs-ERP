@@ -5,6 +5,7 @@ import { AC_ITEM_MASTER_ROWS, AC_ITEM_MASTER_TSV } from './autocount-item-master
 import { acBookItemIndex, bookLineItem } from './autocount-book-item';
 import { AC_ITEM_MAP_TSV } from './autocount-item-map';
 import { resolveAcItemCode } from './autocount-item-code';
+import { splitSofaCode } from './autocount-sofa-collapse';
 
 describe('the item master snapshot', () => {
   it('parses: every record has four fields, a code, a group and a UOM, and no code repeats', () => {
@@ -62,5 +63,52 @@ describe('bookLineItem', () => {
     expect(bound.itemCode).not.toBe(without.itemCode);
     expect(bound.inBook).toBe(true);
     expect(bookLineItem(erp, null, { bindings: null })).toEqual(without);
+  });
+
+  it('a line bound to a supplier SKU the book does not hold keeps the bound code but reads the book item of its own code', () => {
+    /* Not a sofa piece: the #3945 rule stands. */
+    const [ac, erp] = AC_ITEM_MAP_TSV.split('\n').find((l) => l.startsWith('AERO-Y04 (K)\t'))!.split('\t');
+    const book = acBookItemIndex().get(ac!.toUpperCase())!;
+    const r = bookLineItem({ itemCode: erp, description: 'our words', category: 'bedframe', uom: 'unit' }, '400-A001', { bindings: new Map([[erp!.toUpperCase(), 'SUPPLIER SKU NOT IN THE BOOK']]) });
+    expect(r).toMatchObject({ itemCode: 'SUPPLIER SKU NOT IN THE BOOK', inBook: true, itemGroup: book.itemGroup, uom: book.baseUom });
+  });
+});
+
+describe('bookLineItem — a sofa piece is listed under the model set item, never an OTHER piece item', () => {
+  const piece = (itemCode: string) => ({ itemCode, description: 'our words', category: 'sofa', uom: 'unit' });
+
+  it('the fixtures: the bound piece codes are OTHER items in the master, and 9028-1S resolves to a SOFA set for 400-D004 only', () => {
+    expect(acBookItemIndex().get('5530-1A(RHF)')?.itemGroup).toBe('OTHER');
+    expect(acBookItemIndex().get('5530-2A(LHF)')?.itemGroup).toBe('OTHER');
+    expect(acBookItemIndex().get('9028-1A(RHF)')?.itemGroup).toBe('OTHER');
+    expect(resolveAcItemCode('9028-1S', { supplierCode: '400-D004' })).toMatchObject({ ok: true, acItemCode: 'DSL-9028 SOFA' });
+    expect(resolveAcItemCode('9028-1S', { supplierCode: '400-O002' }).ok).toBe(false);
+    expect(acBookItemIndex().get('DSL-9028 SOFA')).toMatchObject({ itemGroup: 'SOFA', baseUom: 'SET' });
+  });
+
+  it('a bound piece code that is OTHER in the master gets the set item: group SOFA, UOM SET, the set description; the Item Code stays the bound answer', () => {
+    const set = acBookItemIndex().get('DSL-9028 SOFA')!;
+    const r = bookLineItem(piece('9028-1A(RHF)'), '400-D004', { bindings: new Map([['9028-1A(RHF)', '5530-1A(RHF)']]) });
+    expect(r).toEqual({ itemCode: '5530-1A(RHF)', resolved: true, inBook: true, description: set.description, itemGroup: 'SOFA', uom: 'SET' });
+  });
+
+  it('when the set item does not resolve, a bound OTHER piece falls back to our values: SOFA from the category, our UOM, our description', () => {
+    const r = bookLineItem(piece('9028-2A(LHF)'), '400-O002', { bindings: new Map([['9028-2A(LHF)', '5530-2A(LHF)']]) });
+    expect(r).toEqual({ itemCode: '5530-2A(LHF)', resolved: true, inBook: false, description: 'our words', itemGroup: 'SOFA', uom: 'UNIT' });
+  });
+
+  it('an unbound piece whose own code is an OTHER book item is not read either', () => {
+    const r = bookLineItem(piece('9028-1A(RHF)'), null, { bindings: new Map([['9028-1A(RHF)', 'DSL-9028 SOFA 1A(RHF)']]) });
+    expect(r.itemCode).toBe('DSL-9028 SOFA 1A(RHF)');
+    expect(r.itemGroup).toBe('SOFA');
+    expect(bookLineItem(piece('9028-1A(RHF)'), null).itemGroup).toBe('SOFA');
+  });
+
+  it('a line that is not a sofa piece still reads an OTHER book item', () => {
+    const other = [...acBookItemIndex()].find(([code, item]) => item.itemGroup === 'OTHER'
+      && resolveAcItemCode(code, {}).ok && (resolveAcItemCode(code, {}) as { acItemCode: string }).acItemCode.toUpperCase() === code
+      && splitSofaCode(code) === null);
+    expect(other, 'the fixture needs a non-piece OTHER item').toBeDefined();
+    expect(bookLineItem({ itemCode: other![0], description: null, category: 'service', uom: 'unit' }, null).itemGroup).toBe('OTHER');
   });
 });

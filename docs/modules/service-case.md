@@ -1051,3 +1051,12 @@ the tab's frozen-column freezebar renders as an extra cell, so counting cells
 by eye shifts every letter from G on by one; and `Sales Exemption Expiry Date`
 deliberately carries `customer_delivery_date` — that field is NULL on all 126
 SCM orders, so the column was free and dispatch reads the requested date there.
+
+## The Delivery sheet's SO rows now come from the ERP too (2026-09-15)
+
+The same sheet's three regional tabs (Delivery Details / EM Order / SG Order) stopped
+pulling AutoCount: `GET /api/delivery-sheet/so-since` and `POST /api/delivery-sheet/updates`
+(`backend/src/routes/deliverySheetSync.ts`, `SHEET_SYNC_KEY`, HOUZS only) replace
+`/SalesOrder/getSince` and `/SalesOrder/updateFromSheet`. The whole surface, the
+column rulings and the cutover steps are in `docs/modules/delivery-sheet-sync.md`.
+`intakeCompany` now lives in `backend/src/lib/intake-company.ts`, shared by both routers.

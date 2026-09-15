@@ -74,7 +74,7 @@ import {
 } from '../../vendor/scm/lib/so-amendment-header';
 import { diffHeaderPayload, hasHeaderChanges } from '../../vendor/scm/lib/so-header-diff';
 import { planAmendmentSubmit, amendmentSubmittedNotice, AMENDMENT_MODE_BANNER,
-  AMENDMENT_NOTHING_TO_SUBMIT } from '../../vendor/scm/lib/so-amendment-submit';
+  AMENDMENT_NOTHING_TO_SUBMIT, AMENDMENT_REASON_REQUIRED } from '../../vendor/scm/lib/so-amendment-submit';
 import { todayMyt } from '../../vendor/scm/lib/dates';
 import { addressLineProps } from '../../lib/acColumnWidths';
 /* lib/utils formatDate (NOT the vendored fmtDate) for the amendment's header
@@ -1172,15 +1172,16 @@ export const SalesOrderDetail = () => {
       hasDirectHeaderChanges: handle.hasDirectHeaderChanges(),
     });
     if (plan === 'NOTHING') { setSaveError(AMENDMENT_NOTHING_TO_SUBMIT); return; }
-    // DIRECT_ONLY needs no reason: nothing is going for approval.
+    // DIRECT_ONLY needs no reason: nothing is going for approval. Otherwise the reason is REQUIRED (owner 2026-09-15).
     const reason = plan === 'AMENDMENT' ? await askPrompt({
       title: `Submit amendment for ${header.doc_no}?`,
       body: 'This Sales Order is already ordered from the supplier, so your changes go out as an '
         + 'amendment request. Coordinator + supplier confirm it before the order is revised. '
-        + 'Add a short reason (optional).',
+        + 'Say why — the approver reads the reason first.',
       placeholder: 'e.g. customer changed the fabric colour',
       multiline: true,
       confirmLabel: 'Submit amendment',
+      validate: (v) => (v.trim() ? null : AMENDMENT_REASON_REQUIRED),
     }) : '';
     if (reason == null) return; // cancelled the prompt
     setSavingOrder(true);
@@ -1201,7 +1202,7 @@ export const SalesOrderDetail = () => {
         amendKeyRef.current ??= newIdempotencyKey();
         createdRes = await createAmendment.mutateAsync({
           docNo: header.doc_no,
-          reason: reason.trim() || undefined,
+          reason: reason.trim(),
           lines,
           headerChanges,
           idempotencyKey: amendKeyRef.current,

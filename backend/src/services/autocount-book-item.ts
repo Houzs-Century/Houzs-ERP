@@ -21,6 +21,7 @@
 
 import { AC_ITEM_MASTER_TSV } from './autocount-item-master';
 import { resolveAcItemCode } from './autocount-item-code';
+import { splitSofaCode } from './autocount-sofa-collapse';
 
 export type AcBookItem = { description: string; itemGroup: string; baseUom: string };
 
@@ -48,7 +49,9 @@ export type BookLineItem = {
   /** True when the resolver answered (its code may be the ERP code itself, for
    *  a product opened in the book under that name). */
   resolved: boolean;
-  /** True when the book's item master knows that code. */
+  /** True when the book's item master supplied Description, Group and UOM —
+   *  for the resolved code, (with bindings) for the unbound resolver's code, or
+   *  for a sofa piece the model's set item. */
   inBook: boolean;
   description: string | null;
   itemGroup: string | null;
@@ -76,7 +79,35 @@ export function bookLineItem(
   const code = String(erp.itemCode ?? '').trim();
   const r = code ? resolveAcItemCode(code, { supplierCode, bindings: opts.bindings ?? null }) : null;
   const acCode = r && r.ok ? r.acItemCode : null;
-  const book = acCode ? acBookItemIndex().get(up(acCode)) : undefined;
+  let book = acCode ? acBookItemIndex().get(up(acCode)) : undefined;
+  /* A BINDING NAMES THE SUPPLIER'S SKU, which need not be a book item — a sofa
+     piece binds to e.g. 'DSL-9028 SOFA 1A(RHF)' while the book holds the piece
+     under its own code. The Item Code stays the bound answer (what the
+     write-back sends); Description, Group and UOM come from the item the
+     unbound resolver names, when THAT is in the book. Measured by the GR / PI /
+     SI exports 2026-09-15 (run 34951676357): with bindings and no such fallback
+     Item Group matched fewer lines than without — GR 730 vs 760, PI 418 vs 423,
+     IV 209 vs 221. */
+  if (!book && code && opts.bindings) {
+    const unbound = resolveAcItemCode(code, { supplierCode });
+    if (unbound.ok) book = acBookItemIndex().get(up(unbound.acItemCode));
+  }
+  /* A SOFA PIECE is listed by the book under the model's SET item (group SOFA,
+     UOM SET): the book holds a sofa as one line (sofa-is-one-book-line). The
+     book's own piece items (5530-2A(LHF), 9028-1A(RHF), AMN-SF9050 SOFA
+     1A(LHF) ...) are group OTHER — 34 of the 37 piece-shaped items in the item
+     master, 2026-09-15 — and printing their group mis-lists every sofa line.
+     So for a piece: never an OTHER item; the set item `{model}-1S` resolved
+     exactly as the line was (same supplier, same bindings) when it is a SOFA
+     item; otherwise our own values. Measured on the GR/PI/SI lines
+     GR-004037#128 ... HC-SI-2609-007#16 (PR body). */
+  const piece = code ? splitSofaCode(code) : null;
+  if (piece && book?.itemGroup.toUpperCase() === 'OTHER') book = undefined;
+  if (piece && !book) {
+    const set = resolveAcItemCode(`${piece.model}-1S`, { supplierCode, bindings: opts.bindings ?? null });
+    const setItem = set.ok ? acBookItemIndex().get(up(set.acItemCode)) : undefined;
+    if (setItem?.itemGroup.toUpperCase() === 'SOFA') book = setItem;
+  }
   return {
     itemCode: acCode ?? (code || null),
     resolved: acCode !== null,
