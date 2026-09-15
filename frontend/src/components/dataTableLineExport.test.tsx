@@ -6,6 +6,7 @@
  * DataTable, with the sheet writer mocked so the written matrix can be read. */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { useState } from "react";
 
 const h = vi.hoisted(() => ({
   aoa: [] as unknown[][],
@@ -95,6 +96,33 @@ describe("applyColumnFilters / sortTableRows — the grid's own rules", () => {
   it("a server-sorted column is left in server order; a disableSort column sorts here", () => {
     expect(sortTableRows(docs, { key: "no", dir: "desc" }, columns, true).map((d) => d.id)).toEqual(["a", "b", "c"]);
     expect(sortTableRows(docs, { key: "no", dir: "desc" }, columns, false).map((d) => d.id)).toEqual(["c", "b", "a"]);
+  });
+});
+
+describe("the grid keeps its rows' identity when nothing filters or sorts", () => {
+  /* Found by CI 2026-09-15 (run 34947720029): a copy per call made DataTable
+     report a NEW rows array on every render, and a parent that stores that
+     report and re-renders with freshly built columns (the list pages do both)
+     looped — every frontend test shard hung. */
+  it("returns the same array for no funnel and no sort", () => {
+    expect(applyColumnFilters(docs, {}, columns)).toBe(docs);
+    expect(sortTableRows(docs, null, columns, false)).toBe(docs);
+    expect(sortTableRows(docs, { key: "no", dir: "asc" }, columns, true)).toBe(docs);
+  });
+
+  it("a parent that stores the reported rows and rebuilds its columns settles", () => {
+    function Parent() {
+      const [seen, setSeen] = useState<Doc[]>([]);
+      const cols = columns.map((c) => ({ ...c }));
+      return (
+        <>
+          <span data-testid="seen">{seen.length}</span>
+          <DataTable<Doc, Line> tableId="loop-guard" rows={docs} columns={cols} getRowKey={(d) => d.id} onFilteredRowsChange={setSeen} />
+        </>
+      );
+    }
+    render(<Parent />);
+    expect(screen.getByTestId("seen").textContent).toBe("3");
   });
 });
 
