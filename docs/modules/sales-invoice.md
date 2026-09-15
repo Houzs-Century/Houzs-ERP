@@ -649,12 +649,30 @@ The **quantity** an SI consumes is the DO line's remaining invoiceable pool
 
 ---
 
-## 5a. Carried-over deliveries cannot be invoiced by hand
+## 5a. Carried-over deliveries AutoCount invoiced cannot be invoiced by hand
 
 A delivery order flagged `migrated_no_stock` (migration 0276) was carried over
-from AutoCount at the 2026-08 cutover, and AutoCount already raised its sales
-invoice. Every path that can attach one to an invoice refuses it with **409
-`migrated_source_document`**:
+from AutoCount at the 2026-08 cutover. When AutoCount already raised its sales
+invoice, every path that can attach it to an invoice refuses it with **409
+`migrated_source_document`**.
+
+**A carried-over delivery AutoCount NEVER invoiced is invoiced like any other**
+(since 2026-09-15, `docs/bugs/0918-delivery-orders-carried-over-from-autocount-could-not-be-inv.md`).
+The ERP raises the invoices since go-live, and on 2026-09-15 AutoCount had
+invoiced 52 of the 172 carried-over deliveries and never invoiced 120. Those 120
+were being refused, so delivered orders could not be billed.
+
+- Which deliveries AutoCount never invoiced is measured in the book and
+  committed as `backend/src/scm/lib/migrated-deliveries-not-invoiced.generated.ts`.
+  Regenerate it with `list-migrated-deliveries.mjs` then
+  `export-migrated-deliveries-not-invoiced.py`.
+- `deliveryMustMirrorAutoCount` (`scm/lib/migrated-chain.ts`) refuses a
+  migrated delivery unless it is on that list. A delivery the measurement does
+  not name keeps the refusal.
+- A delivery on the list gets an ordinary invoice: an ERP number, its revenue
+  journal, and a `do_to_iv` transfer that raises the invoice in AutoCount.
+
+The refusal covers these paths:
 
 | path | how it reaches the delivery |
 |---|---|
