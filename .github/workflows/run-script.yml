@@ -78,4 +78,10 @@ jobs:
             fi
             export "$key=$value"
           done
-          node "scripts/$SCRIPT"
+          # tsx, not node: a backend script imports the app's TypeScript
+          # (autocount-outbox.ts and its ../../db/supabase chain), which plain
+          # node cannot resolve (ERR_MODULE_NOT_FOUND on the extensionless .ts
+          # import). tsx runs .mjs and .ts alike, so pure-.mjs scripts are
+          # unaffected. Before the workflow consolidation these scripts had
+          # their own tsx workflows; this restores that for the shared runner.
+          npx tsx "scripts/$SCRIPT"
