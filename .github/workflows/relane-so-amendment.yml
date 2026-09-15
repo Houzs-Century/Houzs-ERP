@@ -9,7 +9,9 @@ name: Relane SO amendment (DRY-RUN gated)
 #
 # The script refuses anything but a REQUESTED, lane-bearing, line-only
 # amendment whose lines all agree with the target lane by today's service-line
-# signal. Run with apply=0 first and read the PLAN line; then apply=1.
+# signal. Run with apply=0 first and read the PLAN line; then apply=1 with the
+# confirm phrase. The apply re-reads the row on a fresh connection and fails the
+# job if the lane, status or history row is not what it should be.
 #
 # Same shape as repair-lorry-plates.yml: Actions holds secrets.DATABASE_URL, so
 # nobody handles the credential. Own concurrency group — never the deploy's.
@@ -32,6 +34,11 @@ on:
         description: "1 to write, anything else DRY-RUN"
         required: false
         default: "0"
+        type: string
+      confirm:
+        description: "Type I HAVE REVIEWED THE DRY-RUN to apply (ignored on a dry run)"
+        required: false
+        default: ""
         type: string
 
 concurrency:
@@ -59,5 +66,6 @@ jobs:
           AMENDMENT_NO: ${{ inputs.amendment_no }}
           TO_LANE: ${{ inputs.to_lane }}
           APPLY: ${{ inputs.apply }}
+          CONFIRM: ${{ inputs.confirm }}
           # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
           NODE_OPTIONS: --dns-result-order=ipv4first

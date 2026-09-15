@@ -71,7 +71,8 @@ Two rules that are easy to get wrong:
   `backend/scripts/relane-so-amendment.mjs` with an amendment number and a
   target lane; it refuses anything but a `REQUESTED`, lane-bearing, line-only
   amendment whose lines ALL agree with the target lane by today's service-line
-  signal, and on apply writes the lane plus one `AMENDMENT_RELANED` history row.
+  signal, and on apply (`apply=1` + the confirm phrase) writes the lane plus one
+  `AMENDMENT_RELANED` history row, then re-reads both on a fresh connection.
   Built for HC-SO-012757/A1 (owner 2026-09-15, 「那就把这张 A1 改到 Logistic」,
   `docs/bugs/0928-an-amendment-raised-before-the-service-line-fix-stayed-on-th.md`).
   It posts no notice — the target desk's inbox reads by lane, so the row is on

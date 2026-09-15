@@ -39,6 +39,11 @@
 //   AMENDMENT_NO    e.g. HC-SO-012757/A1
 //   TO_LANE         LINES | DELIVERY
 //   APPLY=1         write. Anything else is a dry run.
+//   CONFIRM         "I HAVE REVIEWED THE DRY-RUN" — required with APPLY=1.
+//
+// After the write it re-reads the row on a FRESH connection and asserts the
+// SHAPE: lane = TO_LANE, status still REQUESTED, exactly one AMENDMENT_RELANED
+// history row naming this amendment.
 //
 // RE-RUN: inert — a row already on TO_LANE is reported and left alone.
 
@@ -48,6 +53,7 @@ import postgres from "postgres";
 const AMENDMENT_NO = (process.env.AMENDMENT_NO || "").trim();
 const TO_LANE = (process.env.TO_LANE || "").trim().toUpperCase();
 const APPLY = process.env.APPLY === "1";
+const CONFIRM_PHRASE = "I HAVE REVIEWED THE DRY-RUN";
 
 if (!AMENDMENT_NO) {
   console.error("AMENDMENT_NO is required (e.g. HC-SO-012757/A1). Aborting.");
@@ -55,6 +61,10 @@ if (!AMENDMENT_NO) {
 }
 if (TO_LANE !== "LINES" && TO_LANE !== "DELIVERY") {
   console.error(`TO_LANE must be LINES or DELIVERY (got "${TO_LANE}"). Aborting.`);
+  process.exit(2);
+}
+if (APPLY && process.env.CONFIRM !== CONFIRM_PHRASE) {
+  console.error(`APPLY=1 requires CONFIRM="${CONFIRM_PHRASE}". Aborting.`);
   process.exit(2);
 }
 
@@ -162,7 +172,7 @@ async function main() {
 
   log(`PLAN: ${AMENDMENT_NO} lane ${row.lane} -> ${TO_LANE}, plus one AMENDMENT_RELANED history row on ${row.so_doc_no}.`);
   if (!APPLY) {
-    log("DRY RUN — nothing was written. Re-run with APPLY=1 to apply.");
+    log(`DRY RUN — nothing was written. Re-run with APPLY=1 CONFIRM="${CONFIRM_PHRASE}" to apply.`);
     return;
   }
 
@@ -189,13 +199,40 @@ async function main() {
          'repair',
          ${`Approval lane moved ${row.lane} -> ${TO_LANE}: the amendment was raised before the rule that routes an added service line to Logistic (docs/bugs/0895) and kept the lane it was stored with.`})`;
   });
-  log(`APPLIED: ${AMENDMENT_NO} is now on ${TO_LANE}. It appears in that desk's Amendments inbox at once; no notice was posted.`);
+  log(`APPLIED: ${AMENDMENT_NO} lane ${row.lane} -> ${TO_LANE}.`);
+
+  /* The session that wrote is the worst witness that the write landed: verify
+     on a FRESH connection, asserting what the row now IS, not how many rows the
+     UPDATE claimed. */
+  await pg.end({ timeout: 5 });
+  const check = postgres(url, { ssl: "require", prepare: false, max: 1 });
+  try {
+    log("=== VERIFIED ON A FRESH CONNECTION ===");
+    const [after] = await check`
+      SELECT lane, status::text AS status
+        FROM scm.so_amendments
+       WHERE id = ${row.id}::uuid`;
+    const [{ n: historyRows }] = await check`
+      SELECT count(*)::int AS n
+        FROM scm.mfg_so_audit_log
+       WHERE so_doc_no = ${row.so_doc_no}
+         AND action = 'AMENDMENT_RELANED'
+         AND field_changes::text LIKE ${"%" + AMENDMENT_NO + "%"}`;
+    const shapeOk = after?.lane === TO_LANE && after?.status === "REQUESTED" && historyRows === 1;
+    log(`  lane is ${after?.lane ?? "(row gone)"}, status ${after?.status ?? "-"}, AMENDMENT_RELANED history rows for this amendment: ${historyRows}`);
+    if (!shapeOk) {
+      throw new Error(`verification FAILED: expected lane ${TO_LANE}, status REQUESTED, 1 history row`);
+    }
+    log(`VERIFIED: ${AMENDMENT_NO} is on ${TO_LANE}. It appears in that desk's Amendments inbox at once; no notice was posted.`);
+  } finally {
+    await check.end({ timeout: 5 });
+  }
 }
 
 main()
-  .then(() => pg.end())
+  .then(() => pg.end({ timeout: 5 }))
   .catch(async (e) => {
     console.error(e);
-    await pg.end();
+    try { await pg.end({ timeout: 5 }); } catch { /* already closed */ }
     process.exit(1);
   });
