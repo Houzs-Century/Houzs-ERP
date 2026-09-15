@@ -1,0 +1,651 @@
+# Line export columns — one row per line item, for every transaction document
+
+**What this is for.** The owner, 2026-09-15: every document list must export
+**one row per line item**, the way AutoCount's exports do, and the file must hold
+**every row the list's filters match** — never just the page on screen. Staff send
+these files to suppliers, customers and others, and use them to chase deliveries,
+collections and pending work.
+
+This document proposes the columns, in order, for each document type, says where
+each value comes from, and says which columns the future import may change. It is
+a **design**, not a build: the only export being built today is the Purchase
+Order one, and its columns are the template everything below follows.
+
+> Status of the facts in here: every count was measured on **production**
+> (Supabase project `anogrigyjbduyzclzjgn`) through a **read-only transaction**
+> on 2026-09-15 between 04:04 and 04:15 UTC. The data is live and moves while
+> you read it — two delivery orders received their AutoCount number between two
+> of the reads. Re-run the queries in [§ How the counts were measured](#how-the-counts-were-measured)
+> before quoting a number. Labels: **PROVEN** = measured or read in the running
+> schema; **LIKELY** = read in code, not observed; **UNKNOWN** = not settled.
+
+---
+
+## 0. Rules that apply to every document
+
+1. **One row per line.** The document's header values (number, date, party,
+   salesperson…) repeat on every line of that document.
+2. **Every matched row.** The export reads every document the list's current
+   filters and tab match, then every line of those documents. Today's list
+   exports do not do this (see §0.2).
+3. **Money** is a number in ringgit, so Excel can add it up (stored as sen ÷ 100).
+   A unit price keeps up to 4 decimals, a total 2 — the same as the PO export.
+4. **Dates** are written `YYYY-MM-DD`, so the sheet sorts them and the import
+   reads them back without guessing day/month — the same as the PO export.
+5. **Cost and margin are never exported.** These files go to outsiders. The
+   finance-only columns on the screens (unit cost, line cost, margin) stay off.
+6. **Line ID is always the last column.** It is the line table's `id` (a uuid).
+   The import matches rows by it and nothing else.
+7. **Location** is the warehouse's code from `scm.warehouses.code`
+   (e.g. `KL WAREHOUSE`), as on the PO export. See open question Q2.
+8. **2990's Home (company 2) never syncs to AutoCount**, so its
+   "AutoCount Doc No" is blank by design — PROVEN: 175 of 175 of its sales orders,
+   65 of 65 delivery orders, 110 of 110 purchase orders, 68 of 68 goods receipts,
+   56 of 56 purchase invoices and 10 of 10 sales invoices have none.
+   Every Houzs Century (company 1) document of those six types has one.
+
+### 0.1 The Purchase Order template (not changed here)
+
+Doc No, AutoCount Doc No, Doc Date, Status, Supplier Code, Supplier Name,
+SO Doc No., Item Code, Supplier SKU, Item Description, Item Description 2,
+Remarks, Category, Location, Qty, Received Qty, Remaining Qty, Unit Price,
+Line Total, Delivery Date, Estimate Delivery Date 1, Estimate Delivery Date 2,
+Estimate Delivery Date 3, Line ID.
+
+It matches the one line-level AutoCount export this repo records:
+`reference/PO_Outstanding.gs` pulls AutoCount's outstanding PO lines as
+Doc No, SO Doc No, Creditor Code/Name, Item Code, Item Description,
+Item Description 2, Location, Item Group, Doc Date, Remaining Qty, Delivery Date,
+Supplier Delivery Date 1–3 (LIKELY — read in the script, not run).
+
+The names below reuse the PO header words wherever the meaning is the same
+(`Category` for the item group, `Remarks` for the line remark), so a person who
+knows one file can read all of them. On sales documents the party columns are
+`Customer Code` / `Customer Name` instead of `Supplier …`.
+
+### 0.2 What the list exports do today (why this is needed)
+
+LIKELY (read in code, not clicked):
+
+- The main lists export through `frontend/src/components/DataTable.tsx`
+  (`handleExport`): a **CSV of the header rows on the loaded page only**, visible
+  columns only. The Sales Order, Delivery Order, Sales Invoice, Delivery Return,
+  Purchase Order, Goods Receipt and Purchase Invoice lists are paged on the
+  server (default 50 per page), so the file holds one page.
+- The purchase-return list reads at most the newest **300** returns
+  (`backend/src/scm/routes/purchase-returns.ts`, `.limit(300)`); the stock
+  adjustment list asks for no limit and gets the server default of **200**
+  (`backend/src/scm/routes/inventory.ts`). An export built on those reads would
+  inherit the cap.
+- Four line-level **Detail Listing** reports already exist —
+  `frontend/src/pages/scm-v2/SalesOrderDetailListing.tsx`,
+  `DeliveryOrderDetailListing.tsx`, `SalesInvoiceDetailListing.tsx`,
+  `DeliveryReturnDetailListing.tsx` — backed by
+  `backend/src/scm/routes/reports.ts`. They read **all** matching lines and export
+  an `.xlsx` of what is filtered. They are the closest thing to what the owner
+  asked for, but they are separate report pages (not the lists), they carry no
+  Line ID and no delivered/remaining quantities, and several columns are
+  AutoCount placeholders that always print a constant (Inclusive? "Yes",
+  Detail Tax Code "SR", Creditor Code "—").
+- The six consignment lists export `.xlsx` through
+  `frontend/src/vendor/scm/components/DataGrid.tsx`, one row per document.
+
+### 0.3 Which columns the import may change (owner's ruling)
+
+Only **Delivery Date**, **Estimate Delivery Date 1/2/3**, **Item Description 2**
+and **Remarks**, matched by **Line ID**, with a preview before anything is saved.
+Every document section ends with which of those four exist on that document.
+Summary:
+
+| Document | Delivery Date | Estimate Dates 1–3 | Item Description 2 | Remarks |
+|---|---|---|---|---|
+| Purchase Order (template) | yes | yes | yes | yes |
+| Sales Order | yes | **no column** | yes | yes (see Q7) |
+| Delivery Order | yes | no column | yes | yes |
+| Sales Invoice | yes | no column | yes | yes |
+| Delivery Return | no column | no column | yes | yes |
+| Goods Receipt | yes | no column | yes | yes |
+| Purchase Invoice | no column | no column | yes | yes |
+| Purchase Return | no column | no column | yes | yes |
+| Consignment Order / Note | yes | no column | yes | yes |
+| Consignment Return | no column | no column | yes | yes |
+| Purchase Consignment Order | yes | yes | yes | yes |
+| Purchase Consignment Receive | yes | no column | yes | yes |
+| Purchase Consignment Return | no column | no column | yes | yes |
+| Stock Transfer / Take / Adjustment | **proposed read-only** — posted stock records | | | |
+
+Two cautions that apply to every AutoCount-synced document (SO, PO, DO, SI, GR,
+PI): an edited line is sent to AutoCount again, and the write-back sends the
+whole document, not one field. And the write-back composes AutoCount's
+`Desc2` from the line's variants (`composeDescription2` in
+`backend/src/services/autocount-writeback.ts`), so an imported Item Description 2
+may not be what AutoCount shows (LIKELY; see Q1).
+
+---
+
+## 1. Sales Order
+
+Tables: `scm.mfg_sales_orders` (header, keyed by `doc_no` + `company_id`) and
+`scm.mfg_sales_order_items` (lines, joined by `doc_no` + `company_id` — there is
+no header uuid). Production: **3,132 orders, 16,219 lines**; 16,208 lines sit on
+an order that is not cancelled (PROVEN).
+
+Screens: the list (`MfgSalesOrdersListV2.tsx`), the Sales Order Detail Listing,
+and the detail page line grid (Item, Qty, Unit price, Disc, Amount, Remark,
+Stock, Incoming PO). AutoCount: `SO` header `DocNo, DocDate, DebtorCode,
+DebtorName, SalesAgent, SalesLocation, Ref, UDF_BRANDING, UDF_VENUE, UDF_PDate`;
+lines `ItemCode, Description, Desc2, Qty, UnitPrice, Location, DeliveryDate`.
+
+| # | Group | Column | Source | Notes (PROVEN counts unless marked) |
+|---|---|---|---|---|
+| 1 | identity | Doc No | `h.doc_no` | |
+| 2 | identity | AutoCount Doc No | `h.linked_ac_docno` | set on 2,957 / 2,957 Houzs orders |
+| 3 | identity | Doc Date | `h.so_date` | |
+| 4 | identity | Status | `h.status`, shown with the screen word (`CONFIRMED` → Submitted) | see Q9 |
+| 5 | identity | Customer Code | `h.debtor_code` | |
+| 6 | identity | Customer Name | `h.debtor_name` — the **header**, never the line copy | the line copy differs from the header on 36 lines |
+| 7 | identity | Customer Ref | `h.customer_so_no`, else `h.ref` (the screen's `refOf`) | |
+| 8 | line | Item Code | `i.item_code` | |
+| 9 | line | Item Description | `i.description` | |
+| 10 | line | Item Description 2 | `i.description2` | empty on 10,688 of the 15,284 lines still to deliver; for 128 lines in all the screen can build a text from the variants, the other empties have nothing to build from |
+| 11 | line | Remarks | `i.remark` | 4,323 of the 4,560 non-empty remarks hold the account book's words (`账本原文: …`) — Q7 |
+| 12 | line | Category | `i.item_group` | accessory, mattress, bedframe, sofa, service, fabric_accessory, others, dining |
+| 13 | line | Location | `warehouses.code` via `i.warehouse_id`, else `i.location` | `i.location` holds AutoCount's short code (`KL`) and never equals the warehouse code (`KL WAREHOUSE`) on 15,217 lines where both are set; 138 live lines have no warehouse |
+| 14 | line | UOM | `i.uom` | |
+| 15 | line | Qty | `i.qty` | |
+| 16 | line | Delivered Qty | Σ `delivery_order_items.qty` linked by `so_item_id`, on delivery orders that have **shipped** (not DRAFT, LOADED or CANCELLED), plus unlinked delivery lines attributed by item code | the app's own reading: `soDeliverableRemaining` → `netDeliveredBySoItem` (`backend/src/scm/lib/do-unlinked-coverage.ts`) |
+| 17 | line | Returned Qty | Σ `delivery_return_items.qty_returned` on non-cancelled returns, traced through the delivery line | 0 today (the only return is cancelled) |
+| 18 | line | Remaining Qty | Qty − Delivered + Returned | 15,284 of 16,208 live lines > 0 (linked lines only; the app's unlinked attribution can only lower this); 8 lines < 0 |
+| 19 | line | On Delivery Order Qty | Σ qty on DRAFT/LOADED delivery orders — loaded, not yet shipped | 554 lines |
+| 20 | line | Stock Status | `i.stock_status` | PENDING 13,129 · READY 3,078 · PARTIAL 12 (all lines) |
+| 21 | money | Unit Price | `i.unit_price_sen` ÷ 100 | 0 on 12,335 of 16,219 lines — the price sits on some lines of a set; lines add up to the header total on 3,132 / 3,132 orders |
+| 22 | money | Discount | `i.discount_sen` ÷ 100 | |
+| 23 | money | Line Total | `i.total_sen` ÷ 100 | |
+| 24 | money | Doc Balance | `h.balance_sen` ÷ 100 (repeats per line) | **not** `i.balance_sen`: that column equals the line total on 16,219 / 16,219 lines, so it is not a balance |
+| 25 | follow-up | Delivery Date | `i.line_delivery_date`, else `h.customer_delivery_date` | of the 15,284 lines still to deliver: 11,892 have no line date and 11,882 have no date on either — the chase list will be mostly blank here |
+| 26 | follow-up | Processing Date | `h.processing_date` | empty for 11,862 of those 15,284 lines |
+| 27 | people/place | Salesperson | `staff.name` via `h.salesperson_id`, else `h.agent` | resolves on 3,129 / 3,132 orders |
+| 28 | people/place | Branding | `h.branding` | line copy differs on 273 lines — use the header |
+| 29 | people/place | Venue | `h.venue` | line copy differs on 282 lines — use the header |
+| 30 | people/place | Sales Location | `h.sales_location` | |
+| 31 | people/place | Phone | `h.phone` | |
+| 32 | people/place | Delivery Address | `h.delivery_address1..4`, else `h.address1..4`, joined | |
+| 33 | people/place | State | `h.customer_state` | |
+| 34 | links | DO No. | distinct `delivery_orders.do_number` of non-cancelled delivery lines linked to this line, joined `, ` | |
+| 35 | links | PO No. | distinct `purchase_orders.po_number` of non-cancelled PO lines with `so_item_id` = this line | 1,435 lines have one |
+| 36 | links | PO Delivery Date | earliest `purchase_order_items.delivery_date` of those PO lines | set for 1,404 of the 1,435 |
+| 37 | | Line ID | `i.id` | |
+
+Import-editable here: **Delivery Date** (`line_delivery_date`),
+**Item Description 2**, **Remarks**. There are **no estimate delivery dates** on a
+sales order (Q4).
+
+---
+
+## 2. Delivery Order
+
+Tables: `scm.delivery_orders` + `scm.delivery_order_items`
+(`delivery_order_id`). Production: **343 delivery orders** (DELIVERED 213,
+LOADED 126, CANCELLED 4) and **1,525 lines**, 1,507 on a non-cancelled order.
+
+Screens: the list, the Delivery Order Detail Listing (DO No., Date, Transfer From
+(SO), Customer, Driver, Vehicle, City, State, Expected, Item Code, Description,
+Item Group, UOM, Qty, m³, Unit Price, Discount, Line Total, Status), the detail
+grid (Item, Type, Qty to deliver, Delivery date). AutoCount: converted from the SO
+(`/so-to-do`); same line fields as the SO.
+
+| # | Group | Column | Source | Notes |
+|---|---|---|---|---|
+| 1 | identity | Doc No | `h.do_number` | |
+| 2 | identity | AutoCount Doc No | `h.linked_ac_docno` | set on 278 / 278 Houzs orders |
+| 3 | identity | Doc Date | `h.do_date` | |
+| 4 | identity | Status | `h.status` with the screen word (`LOADED` → Confirmed, `DISPATCHED` → Loaded) | |
+| 5 | identity | Customer Code | `h.debtor_code` | |
+| 6 | identity | Customer Name | `h.debtor_name` | |
+| 7 | identity | Customer Ref | `h.customer_so_no`, else `h.ref` | |
+| 8 | line | Item Code | `i.item_code` | |
+| 9 | line | Item Description | `i.description` | |
+| 10 | line | Item Description 2 | `i.description2` | empty on 979 of 1,507 live lines |
+| 11 | line | Remarks | `i.notes` | empty on 1,501 of 1,507; not shown on any DO screen today |
+| 12 | line | Category | `i.item_group` | |
+| 13 | line | Location | `warehouses.code` via `h.warehouse_id`, else `h.sales_location` | the delivery warehouse lives on the DO header; 170 of 343 headers have no warehouse, `sales_location` is set on all 343 |
+| 14 | line | UOM | `i.uom` | |
+| 15 | line | Qty | `i.qty` | |
+| 16 | line | Invoiced Qty | Σ `sales_invoice_items.qty` by `do_item_id`, non-cancelled invoices | |
+| 17 | line | Returned Qty | Σ `delivery_return_items.qty_returned` by `do_item_id`, non-cancelled returns | 0 today |
+| 18 | line | Uninvoiced Qty | Qty − Invoiced | > 0 on 735 of 953 lines of DELIVERED orders, 388 of 554 of LOADED |
+| 19 | line | m³ | `i.m3_milli` ÷ 1000 | on the Detail Listing today; useful for lorry planning |
+| 20 | money | Unit Price | `i.unit_price_sen` ÷ 100 | the DO detail page shows no price — Q3 |
+| 21 | money | Discount | `i.discount_sen` ÷ 100 | |
+| 22 | money | Line Total | `i.line_total_sen` ÷ 100 | |
+| 23 | follow-up | Delivery Date | `i.line_delivery_date`, else `h.customer_delivery_date` | line empty on 454 of 1,507 live lines; empty on both for 5 |
+| 24 | follow-up | Expected Delivery | `h.expected_delivery_at` | |
+| 25 | follow-up | Delivered On | `h.delivered_at` (date part) | set on 41 of 213 DELIVERED orders |
+| 26 | people/place | Salesperson | `staff.name` via `h.salesperson_id`, else `h.agent` | resolves on 343 / 343 |
+| 27 | people/place | Branding | `h.branding` | |
+| 28 | people/place | Venue | `h.venue` | |
+| 29 | people/place | Driver | `h.driver_name` | **empty on 343 / 343**; `scm.delivery_order_crew` has 0 rows and no trip stop names a DO — Q8 |
+| 30 | people/place | Vehicle | `h.vehicle` | **empty on 343 / 343** — Q8 |
+| 31 | people/place | Phone | `h.phone` | |
+| 32 | people/place | Delivery Address | `h.address1`, `h.address2`, `h.city`, `h.postcode` joined | |
+| 33 | people/place | State | `h.state` | |
+| 34 | links | SO Doc No. | the SO line's `doc_no` via `i.so_item_id`, else `h.so_doc_no` | only 3 live lines lack the link |
+| 35 | links | Invoice No. | distinct `sales_invoices.invoice_number` via `do_item_id` | |
+| 36 | | Line ID | `i.id` | |
+
+Import-editable here: **Delivery Date** (`line_delivery_date`), **Item
+Description 2**, **Remarks** (`notes`). No estimate dates. Note: the header
+delivery date cascades to the lines (`docs/modules/delivery-order.md`, "The header
+delivery date CASCADES to the lines"), so a line date imported here can be
+overwritten by a later header edit.
+
+---
+
+## 3. Sales Invoice
+
+Tables: `scm.sales_invoices` + `scm.sales_invoice_items` (`sales_invoice_id`).
+Production: **82 invoices** (SENT 78, PAID 3, CANCELLED 1), **371 lines**.
+
+Screens: the list, the Sales Invoice Detail Listing (Invoice No., Date, Due,
+Transfer From (SO), Customer, Item Code, Description, Item Group, UOM, Qty, Unit
+Price, Discount, Line Total, Invoice Total, Paid, Balance, Status), the detail grid
+(Item, Delivery, Qty, Unit price, Disc, Amount). AutoCount: `IV`, converted from
+the DO (`/do-to-iv`).
+
+| # | Group | Column | Source | Notes |
+|---|---|---|---|---|
+| 1 | identity | Doc No | `h.invoice_number` | |
+| 2 | identity | AutoCount Doc No | `h.linked_ac_docno` | set on 72 / 72 Houzs invoices |
+| 3 | identity | Doc Date | `h.invoice_date` | |
+| 4 | identity | Status | `h.status` with the screen word (`SENT` → Submitted) | |
+| 5 | identity | Customer Code | `h.debtor_code` | |
+| 6 | identity | Customer Name | `h.debtor_name` | |
+| 7 | identity | Customer Ref | `h.customer_so_no`, else `h.ref` | |
+| 8 | line | Item Code | `i.item_code` | |
+| 9 | line | Item Description | `i.description` | |
+| 10 | line | Item Description 2 | `i.description2` | empty on 236 of 367 live lines |
+| 11 | line | Remarks | `i.notes` | empty on all 371; not on any SI screen |
+| 12 | line | Category | `i.item_group` | |
+| 13 | line | Location | the DO header's warehouse code, via `i.do_item_id` | the invoice has no warehouse of its own |
+| 14 | line | UOM | `i.uom` | |
+| 15 | line | Qty | `i.qty` | |
+| 16 | money | Unit Price | `i.unit_price_sen` ÷ 100 | |
+| 17 | money | Discount | `i.discount_sen` ÷ 100 | |
+| 18 | money | Line Total | `i.line_total_sen` ÷ 100 | |
+| 19 | money | Invoice Total | `h.total_sen` ÷ 100 (repeats) | |
+| 20 | money | Paid | `h.paid_sen` ÷ 100 (repeats) | |
+| 21 | money | Balance | max(total − paid − SO deposit applied, 0), per invoice | the Detail Listing's rule (`reports.ts`, `stampOrderDeposit`); 348 of 367 live lines sit on an invoice with total > paid |
+| 22 | follow-up | Delivery Date | `i.line_delivery_date` | empty on 202 of 367 live lines |
+| 23 | follow-up | Due Date | `h.due_date` | **empty for 359 of 367 live lines** — a collection chase has no due date to sort on (Q10) |
+| 24 | follow-up | Overdue Days | today − Due Date, when Balance > 0 | blank while Due Date is blank |
+| 25 | people/place | Salesperson | `staff.name` via `h.salesperson_id`, else `h.agent` | `salesperson_id` set on 177 of 371 lines' invoices |
+| 26 | people/place | Branding | `h.branding` | |
+| 27 | people/place | Venue | `h.venue` | |
+| 28 | people/place | Phone | `h.phone` | |
+| 29 | links | SO Doc No. | `h.so_doc_no` | |
+| 30 | links | DO No. | `delivery_orders.do_number` via `i.do_item_id` | resolves on 371 / 371; `i.so_item_id` is empty on all 371, so go through the DO line |
+| 31 | | Line ID | `i.id` | |
+
+Import-editable here: **Delivery Date** (`line_delivery_date`), **Item
+Description 2**, **Remarks** (`notes`). No estimate dates.
+
+---
+
+## 4. Delivery Return (sales return)
+
+Tables: `scm.delivery_returns` + `scm.delivery_return_items`
+(`delivery_return_id`). Production: **1 return (CANCELLED), 2 lines** — the
+document is practically unused. **No AutoCount mapping exists** for it
+(the outbox accepts SO, PO, DO, IV, GR, PI only).
+
+| # | Group | Column | Source | Notes |
+|---|---|---|---|---|
+| 1 | identity | Doc No | `h.return_number` | |
+| 2 | identity | Doc Date | `h.return_date` | |
+| 3 | identity | Status | `h.status` | |
+| 4 | identity | Customer Code | `h.debtor_code` | |
+| 5 | identity | Customer Name | `h.debtor_name` | |
+| 6 | identity | Reason | `h.reason` | |
+| 7 | line | Item Code | `i.item_code` | |
+| 8 | line | Item Description | `i.description` | |
+| 9 | line | Item Description 2 | `i.description2` | |
+| 10 | line | Remarks | `i.notes` | |
+| 11 | line | Category | `i.item_group` | |
+| 12 | line | Condition | `i.condition` | |
+| 13 | line | Location | `warehouses.code` via `h.warehouse_id` | |
+| 14 | line | UOM | `i.uom` | |
+| 15 | line | Qty Returned | `i.qty_returned` | |
+| 16 | money | Unit Price | `i.unit_price_sen` ÷ 100 | |
+| 17 | money | Line Refund | `i.line_total_sen` ÷ 100 | the Detail Listing reads `refund_sen`; both columns exist on the line |
+| 18 | money | Pending Refund | `h.refund_sen` ÷ 100 unless status is REFUNDED, CREDIT_NOTED or REJECTED | the Detail Listing's rule |
+| 19 | follow-up | Received On | `h.received_at` | |
+| 20 | follow-up | Refunded On | `h.refunded_at` | |
+| 21 | people/place | Salesperson | `staff.name` via `h.salesperson_id`, else `h.agent` | |
+| 22 | people/place | Venue | `h.venue` | |
+| 23 | people/place | Phone | `h.phone` | |
+| 24 | links | DO No. | `h.do_doc_no` | |
+| 25 | links | SO Doc No. | the SO number of the DO line, via `i.do_item_id` | |
+| 26 | links | Invoice No. | `sales_invoices.invoice_number` via `h.sales_invoice_id` | |
+| 27 | | Line ID | `i.id` | |
+
+Import-editable here: **Item Description 2**, **Remarks** (`notes`). No delivery
+or estimate date on a return line.
+
+---
+
+## 5. Goods Receipt (GRN)
+
+Tables: `scm.grns` + `scm.grn_items` (`grn_id`). Production: **610 receipts**
+(all POSTED), **1,226 lines**.
+
+Screens: the list (GRN No., Received, Transfer From (PO), Assigned SO, Delivered,
+Supplier, Code, Delivery note, Status, Value); the detail grid (Item, Supplier SKU,
+PO, Ordered, Received, Remark, ETA, Unit cost, Amount). AutoCount: `GR`, converted
+from the PO (`/po-to-gr`); header `DocNo, DocDate, SupplierDONo, PurchaseLocation`;
+line `ItemCode, Description, Desc2, Qty (= accepted qty), UnitPrice, Location`.
+
+| # | Group | Column | Source | Notes |
+|---|---|---|---|---|
+| 1 | identity | Doc No | `h.grn_number` | |
+| 2 | identity | AutoCount Doc No | on a migrated receipt (`h.migrated_no_stock`): `h.linked_ac_gr_docno`; otherwise `h.linked_ac_docno` | **`linked_ac_docno` holds the AutoCount PURCHASE ORDER number on every migrated receipt** (migration `20260907T2345_grn_linked_ac_gr_docno.sql`). PROVEN by prefix: 473 migrated receipts carry `PO-…` there; 400 of them have the GR number in `linked_ac_gr_docno`, **73 have no GR number anywhere**; the 69 receipts the ERP created carry `HC-GRN-…` in `linked_ac_docno` |
+| 3 | identity | Doc Date | `h.received_at` | |
+| 4 | identity | Status | `h.status` with the screen word (`POSTED` → Submitted) | |
+| 5 | identity | Supplier Code | `suppliers.code` via `h.supplier_id` | |
+| 6 | identity | Supplier Name | `suppliers.name` | |
+| 7 | identity | Supplier DO No. | `h.delivery_note_ref` | empty for 853 of 1,226 lines |
+| 8 | line | Item Code | `i.item_code` | |
+| 9 | line | Supplier SKU | `i.supplier_sku` | empty on 282 |
+| 10 | line | Item Description | `i.material_name` (as the PO export), `i.description` is empty on 1,207 of 1,226 | |
+| 11 | line | Item Description 2 | `i.description2` | empty on 490 |
+| 12 | line | Remarks | `i.notes` | empty on 1,139 |
+| 13 | line | Category | `i.item_group` | empty on 59 |
+| 14 | line | Location | `warehouses.code` via `h.warehouse_id` | set on 610 / 610 |
+| 15 | line | UOM | `i.uom` | |
+| 16 | line | Received Qty | `i.qty_accepted` | AutoCount's GR Qty is the accepted qty; received = accepted on 1,226 / 1,226 today, rejected is 0 |
+| 17 | line | Invoiced Qty | Σ `purchase_invoice_items.qty` by `grn_item_id`, invoices not CANCELLED/VOID | the stored `i.invoiced_qty` disagrees with that sum on 69 lines, all on migrated receipts, the stored value always the larger — Q11 |
+| 18 | line | Returned Qty | `i.returned_qty` | 0 on all 1,226 |
+| 19 | line | Uninvoiced Qty | Received − Invoiced − Returned | > 0 on 602 lines by the sum, 533 by the stored column |
+| 20 | money | Currency | `h.currency` | |
+| 21 | money | Unit Price | `i.unit_price_sen` ÷ 100 | |
+| 22 | money | Discount | `i.discount_sen` ÷ 100 | |
+| 23 | money | Line Total | `i.line_total_sen` ÷ 100 | |
+| 24 | follow-up | Delivery Date | `i.delivery_date` (the screen calls it ETA) | empty on 1,204 of 1,226 |
+| 25 | links | PO No. | `purchase_orders.po_number` via `i.purchase_order_item_id` | 1,139 of 1,226 lines link |
+| 26 | links | SO Doc No. | the SO number of that PO line's `so_item_id` | 905 of 1,226 |
+| 27 | links | Invoice No. | distinct `purchase_invoices.invoice_number` by `grn_item_id` | |
+| 28 | | Line ID | `i.id` | |
+
+Import-editable here: **Delivery Date** (`delivery_date`), **Item Description 2**,
+**Remarks** (`notes`). No estimate dates on a receipt line (they live on the PO).
+
+---
+
+## 6. Purchase Invoice
+
+Tables: `scm.purchase_invoices` + `scm.purchase_invoice_items`
+(`purchase_invoice_id`). Production: **252 invoices** (POSTED 233, PAID 19),
+**653 lines**.
+
+Screens: the list (PI No., Date, Due, Source, Assigned SO, Delivered, Supplier,
+Code, Status, Owed, vs PO price, Total); the detail grid (Item, Supplier SKU, PO,
+Qty, Remark, PO price, PI price, Amount). AutoCount: `PI`, converted from the GR
+(`/gr-to-pi`); header `DocDate, SupplierInvoiceNo`.
+
+| # | Group | Column | Source | Notes |
+|---|---|---|---|---|
+| 1 | identity | Doc No | `h.invoice_number` | |
+| 2 | identity | AutoCount Doc No | `h.linked_ac_docno` | set on 196 / 196 Houzs invoices |
+| 3 | identity | Doc Date | `h.invoice_date` | |
+| 4 | identity | Status | `h.status` with the screen word | |
+| 5 | identity | Supplier Code | `suppliers.code` | |
+| 6 | identity | Supplier Name | `suppliers.name` | |
+| 7 | identity | Supplier Invoice No. | `h.supplier_invoice_ref` | **empty for 524 of 653 lines** |
+| 8 | line | Item Code | `i.item_code` | |
+| 9 | line | Supplier SKU | the GRN line's `supplier_sku` via `i.grn_item_id` | the invoice line has no SKU column |
+| 10 | line | Item Description | `i.material_name` | `i.description` is empty on all 653 |
+| 11 | line | Item Description 2 | `i.description2` | empty on 340 |
+| 12 | line | Remarks | `i.notes` | empty on all 653 |
+| 13 | line | Category | `i.item_group` | |
+| 14 | line | Location | the GRN header's warehouse code via `i.grn_item_id` | the invoice has no warehouse |
+| 15 | line | UOM | `i.uom` | |
+| 16 | line | Qty | `i.qty` | |
+| 17 | money | Currency | `h.currency` | |
+| 18 | money | PO Unit Price | `i.po_unit_price_sen` ÷ 100 | empty on 29 |
+| 19 | money | Unit Price | `i.unit_price_sen` ÷ 100 | |
+| 20 | money | Discount | `i.discount_sen` ÷ 100 | |
+| 21 | money | Line Total | `i.line_total_sen` ÷ 100 | |
+| 22 | money | Invoice Total | `h.total_sen` ÷ 100 | |
+| 23 | money | Balance | (`h.total_sen` − `h.paid_sen`) ÷ 100 | 609 of 653 lines on an invoice with a balance |
+| 24 | follow-up | Due Date | `h.due_date` | **empty for 520 of 653 lines** (Q10) |
+| 25 | follow-up | Overdue Days | today − Due Date, when Balance > 0 | |
+| 26 | links | GRN No. | `grns.grn_number` via `i.grn_item_id` | 624 of 653 link |
+| 27 | links | PO No. | via the GRN line's `purchase_order_item_id` | 624 of 653 |
+| 28 | links | SO Doc No. | via that PO line's `so_item_id` | |
+| 29 | | Line ID | `i.id` | |
+
+Import-editable here: **Item Description 2**, **Remarks** (`notes`). No delivery or
+estimate date on an invoice line.
+
+---
+
+## 7. Purchase Return
+
+Tables: `scm.purchase_returns` + `scm.purchase_return_items`
+(`purchase_return_id`). Production: **0 returns, 0 lines**. Not synced to
+AutoCount.
+
+Doc No (`return_number`) · Doc Date (`return_date`) · Status · Supplier Code ·
+Supplier Name · Credit Note Ref (`credit_note_ref`) · Item Code · Item Description
+(`material_name`) · Item Description 2 (`description2`) · Remarks (`notes`) ·
+Reason (`i.reason`, else `h.reason`) · Category (`item_group`) · Location (the GRN
+header's warehouse via `grn_item_id`) · UOM · Qty Returned (`qty_returned`) ·
+Unit Price · Line Refund (`line_refund_sen`) · GRN No. (via `grn_item_id`) ·
+PO No. (`h.purchase_order_id`) · Line ID.
+
+Import-editable here: **Item Description 2**, **Remarks**.
+
+---
+
+## 8. Consignment documents
+
+None of the six syncs to AutoCount. They are copies of the owned-stock documents,
+so each export is the owned-stock export with the differences below.
+
+| Document | Tables | Production | Export = | Differences |
+|---|---|---|---|---|
+| Consignment Order | `consignment_sales_orders` / `consignment_sales_order_items` (by `doc_no`) | 0 / 0 | §1 Sales Order | Delivered Qty = Σ `consignment_delivery_order_items.qty` by `consignment_so_item_id`, notes not cancelled; no invoice; no AutoCount Doc No; Customer PO (`customer_po`) added |
+| Consignment Note | `consignment_delivery_orders` / `consignment_delivery_order_items` | 0 / 0 | §2 Delivery Order | Returned Qty = Σ `consignment_delivery_return_items.qty_returned` by `consignment_do_item_id`; no Invoiced Qty; link = CO number (`consignment_so_doc_no`) |
+| Consignment Return | `consignment_delivery_returns` / `consignment_delivery_return_items` | 0 / 0 | §4 Delivery Return | link = note number (`do_doc_no`) |
+| Purchase Consignment Order | `purchase_consignment_orders` / `purchase_consignment_order_items` | 0 / 0 | the PO template | Doc No = `pc_number`; Received Qty = stored `received_qty` (net of returns, recomputed by `recomputePcoReceived`); **has Delivery Date and Estimate Dates 1–3** (`delivery_date`, `supplier_delivery_date_2..4`); no SO link |
+| Purchase Consignment Receive | `purchase_consignment_receives` / `purchase_consignment_receive_items` | 4 / 10 | §5 Goods Receipt | Doc No = `receive_number`; Returned Qty = `returned_qty`; no invoice; link = `pc_order_no` (empty on 4 / 4 and `pc_order_item_id` empty on 10 / 10) |
+| Purchase Consignment Return | `purchase_consignment_returns` / `purchase_consignment_return_items` | 0 / 0 | §7 Purchase Return | link = receive number via `pc_receive_item_id` |
+
+---
+
+## 9. Stock documents
+
+These move stock and are posted on save. **Proposed: export yes, import no** —
+a posted stock record is a ledger entry, and none of them carries a delivery
+date or an estimate date anyway. No money columns (their only money is cost).
+
+### 9a. Stock Transfer
+
+`scm.stock_transfers` + `scm.stock_transfer_lines`. Production: 5 transfers
+(all POSTED), 22 lines.
+
+Doc No (`transfer_no`) · Doc Date (`transfer_date`) · Status · From Location
+(`from_warehouse_id` → code) · To Location (`to_warehouse_id` → code) · Item Code ·
+Item Description (`product_name`) · Variant (`variant_key` — empty on 22 / 22) ·
+Remarks (`notes` — empty on 22 / 22) · Qty · Created By (`created_by` → name) ·
+Line ID.
+
+There is **no Item Description 2 column** on a transfer line; the detail page
+shows one but the table cannot hold it (LIKELY always blank on screen).
+
+### 9b. Stock Take
+
+`scm.stock_takes` + `scm.stock_take_lines`. Production: 1 take (OPEN), 344 lines,
+`counted_qty` empty on 344 / 344 (nobody has counted yet).
+
+Doc No (`take_no`) · Doc Date (`take_date`) · Status · Location · Scope
+(`scope_type` / `scope_value`) · Assignee (`assignee_staff_id` → name) · Item Code ·
+Item Description (`product_name`) · Variant (`variant_label`) · System Qty
+(`system_qty` — **left blank on a blind take**, as the screen hides it) · Counted Qty ·
+Variance · Counted By · Counted On · Remarks (`notes`) · Line ID.
+
+### 9c. Stock Adjustment
+
+**Not a header-and-lines document.** Each adjustment is one row in
+`scm.inventory_movements` with `source_doc_type = 'ADJUSTMENT'` (there is no
+stock-adjustment table). Production: 12 rows (10 ADJUSTMENT, 2 OUT). The export
+row is the movement row:
+
+Doc No (`source_doc_no`) · Doc Date (`movement_date`, else `created_at` — date empty
+on 5 of the 10 ADJUSTMENT rows) · Location · Item Code · Item Description
+(`product_name`) · Item Description 2 (`description2`) · Variant (`variant_key`) ·
+Batch No (`batch_no`) · Qty Change (`qty`, signed) · Reason (`reason_code` — empty
+on 12 / 12) · Remarks (`notes`) · Performed By · Line ID (the movement `id`).
+
+The 3,478 `AC_CUTOVER` adjustment rows are the go-live opening balances, not
+adjustments staff made; the list filters on `ADJUSTMENT` and so should the export.
+
+---
+
+## 10. Not covered here
+
+Quotes, amendments (SO / PO), cancel requests and the Finance documents (credit
+notes, deposit invoices, payment vouchers, receipts, AP invoices) have their own
+line tables or none, and were not in the owner's request. See Q12.
+
+---
+
+## Open questions for the owner
+
+1. **Item Description 2 vs AutoCount.** The write-back builds AutoCount's
+   `Desc2` from the item's options (fabric, size…), not from the text in the
+   ERP's Item Description 2. If staff change Item Description 2 through the
+   import, should AutoCount receive the typed text, or keep the built one?
+2. **Location wording.** Export the ERP warehouse code (`KL WAREHOUSE`) as the PO
+   file does, or AutoCount's short code (`KL`) that the account book uses?
+3. **Prices on delivery lists.** A Delivery Order file often goes to a driver, a
+   3PL or a customer. Keep Unit Price / Discount / Line Total in it, or leave
+   money out of the DO export?
+4. **Estimate delivery dates on sales documents.** Only the PO (and the
+   consignment PO) has Estimate Delivery Date 1–3. Does he want them on the Sales
+   Order too? That needs new columns — it is not an export change.
+5. **Delivery date: line or document?** A sales order's delivery date is stored
+   per line and per order. The import proposal changes the LINE date only. On a
+   Delivery Order a later change of the order's date overwrites every line's.
+   Is line-only right?
+6. **Status word.** Export the word on screen ("Submitted") or the stored value
+   (`CONFIRMED`)? The PO export's in-progress code (read 2026-09-15, not yet merged) writes the
+   stored value. All
+   documents should make the same choice.
+7. **Sales order remarks hold the account book's words.** 4,323 of the 4,560
+   sales-order line remarks start with `账本原文:` — the text copied from the
+   book at go-live. An imported remark would replace it. Allow that, append
+   instead of replace, or lock remarks that carry the book text?
+8. **Driver and Vehicle are empty on every delivery order (343 of 343).** Keep
+   the two columns (blank until the delivery module fills them), or drop them?
+9. **Cancelled documents.** Proposed: the export follows the list's filter — if
+   the list shows cancelled documents, so does the file. Agree?
+10. **Due dates are mostly empty.** Sales invoices: 359 of 367 live lines have no
+    due date. Purchase invoices: 520 of 653. A collection chase list cannot sort by
+    due date until these are filled. Fill them from the customer's / supplier's
+    credit term, or leave blank?
+11. **Goods receipt "invoiced" figure.** On 69 migrated receipt lines the stored
+    invoiced quantity is larger than what the purchase invoices in the ERP add up
+    to (the rest was LIKELY invoiced in AutoCount before go-live — UNKNOWN until
+    checked against the book). Export the ERP's own sum, or the stored figure?
+12. **Other documents.** Quotes, amendments, credit notes, deposit invoices,
+    payment vouchers and receipts — do these need a line export too?
+
+---
+
+## How the counts were measured
+
+All counts above came from one read-only runner: it opens a transaction,
+runs `SET TRANSACTION READ ONLY`, confirms `transaction_read_only = on` and
+aborts otherwise (a `CREATE TEMP TABLE` probe was refused with "cannot execute
+CREATE TABLE in a read-only transaction"). The connection string was read from a
+local file outside any repository and never printed. To reproduce without a local
+credential, the repo's pattern is a `workflow_dispatch` check on
+`secrets.DATABASE_URL` (see `backend/scripts/check-soak-gate.mjs`).
+
+Empty means `NULL`, a blank string, an empty JSON object/array, or an empty array.
+The per-column empty counts were one `count(*) FILTER (WHERE <col> IS NULL OR
+btrim(<col>) = '')` per column of each table. The derived figures:
+
+```sql
+-- SO remaining (linked delivery lines only; shipped = not DRAFT/LOADED/CANCELLED)
+WITH d AS (
+  SELECT di.so_item_id,
+         sum(di.qty) FILTER (WHERE upper(o.status::text) NOT IN ('DRAFT','LOADED','CANCELLED')) AS shipped,
+         sum(di.qty) FILTER (WHERE upper(o.status::text) IN ('DRAFT','LOADED')) AS preship
+  FROM scm.delivery_order_items di JOIN scm.delivery_orders o ON o.id = di.delivery_order_id
+  WHERE di.so_item_id IS NOT NULL GROUP BY 1
+), r AS (
+  SELECT di.so_item_id, sum(ri.qty_returned) AS q
+  FROM scm.delivery_return_items ri
+  JOIN scm.delivery_returns dr ON dr.id = ri.delivery_return_id
+  JOIN scm.delivery_order_items di ON di.id = ri.do_item_id
+  WHERE upper(dr.status::text) <> 'CANCELLED' GROUP BY 1
+)
+SELECT count(*) AS live_lines,
+       count(*) FILTER (WHERE i.qty - coalesce(d.shipped,0) + coalesce(r.q,0) > 0) AS remaining_pos,
+       count(*) FILTER (WHERE coalesce(d.preship,0) > 0) AS on_loaded_do
+FROM scm.mfg_sales_order_items i
+JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no AND h.company_id = i.company_id
+LEFT JOIN d ON d.so_item_id = i.id LEFT JOIN r ON r.so_item_id = i.id
+WHERE NOT i.cancelled AND h.status <> 'CANCELLED';
+-- 2026-09-15: 16208 | 15284 | 554
+
+-- SO line balance_sen is the line total, not a balance
+SELECT count(*), count(*) FILTER (WHERE i.balance_sen = i.total_sen)
+FROM scm.mfg_sales_order_items i;
+-- 16219 | 16219
+
+-- Remarks carrying the book's words
+SELECT count(*) FILTER (WHERE remark LIKE '%账本原文%'),
+       count(*) FILTER (WHERE coalesce(btrim(remark),'') <> '')
+FROM scm.mfg_sales_order_items;
+-- 4323 | 4560
+
+-- Goods receipt: which column holds the AutoCount GR number
+SELECT linked_ac_gr_docno IS NOT NULL AS has_gr_no,
+       regexp_replace(coalesce(linked_ac_docno,'(null)'), '[0-9].*$', '') AS prefix,
+       migrated_no_stock, count(*)
+FROM scm.grns GROUP BY 1,2,3;
+-- f | (null) | f | 68 ;  f | HC-GRN- | f | 69 ;  f | PO- | t | 73 ;  t | PO- | t | 400
+
+-- Goods receipt invoiced: stored column vs purchase invoice lines
+WITH pi AS (
+  SELECT pii.grn_item_id, sum(pii.qty) AS q
+  FROM scm.purchase_invoice_items pii JOIN scm.purchase_invoices p ON p.id = pii.purchase_invoice_id
+  WHERE p.status NOT IN ('CANCELLED','VOID') AND pii.grn_item_id IS NOT NULL GROUP BY 1
+)
+SELECT g.migrated_no_stock, count(*)
+FROM scm.grn_items gi JOIN scm.grns g ON g.id = gi.grn_id LEFT JOIN pi ON pi.grn_item_id = gi.id
+WHERE coalesce(pi.q,0) <> gi.invoiced_qty GROUP BY 1;
+-- t | 69   (stored value larger on all 69)
+
+-- Delivery order driver / vehicle / crew
+SELECT count(*) FILTER (WHERE coalesce(driver_name,'') = '' AND driver_id IS NULL),
+       count(*) FILTER (WHERE coalesce(vehicle,'') = ''), count(*)
+FROM scm.delivery_orders;
+-- 343 | 343 | 343   (scm.delivery_order_crew: 0 rows)
+
+-- Due dates on live invoice lines
+SELECT count(*) FILTER (WHERE s.status <> 'CANCELLED'),
+       count(*) FILTER (WHERE s.status <> 'CANCELLED' AND s.due_date IS NULL)
+FROM scm.sales_invoice_items si JOIN scm.sales_invoices s ON s.id = si.sales_invoice_id;
+-- 367 | 359
+```
+
+## See also
+
+- `docs/modules/purchase-order.md` — the template document
+- `docs/modules/document-status-vocabulary.md` — the words shown for each status
+- `docs/modules/document-conversion.md` — how each document is made from the one before it (the links above)
+- `docs/modules/sales-order.md` §0 — what moves a sales order's status
+- `docs/autocount-integration-map.md` — which documents reach AutoCount
