@@ -1639,7 +1639,7 @@ Total: 1299 route registrations across 176 files.
 - L23  GET    /:code
 
 ## backend/src/scm/routes/so-amendment-lane-preview.ts  (1)
-- L31  POST   /:docNo/amendments/lane-preview
+- L36  POST   /:docNo/amendments/lane-preview
 
 ## backend/src/scm/routes/so-mirror.ts  (1)
 - L240  POST   /
