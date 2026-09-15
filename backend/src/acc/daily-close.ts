@@ -32,6 +32,7 @@ export function bucketPayments(
   const buckets = new Map<string, number>();
   for (const r of rows) {
     if (r.method === 'imported') continue; // migration-era, never part of a day's takings
+    if (r.method === 'converted') continue; // moved from a cancelled order — no money passed the till (docs/bugs/0927)
     const key =
       r.method === 'cash' ? 'cash'
       : r.method === 'transfer' ? 'transfer'

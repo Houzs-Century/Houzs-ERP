@@ -463,6 +463,48 @@ export function customerPaymentLines(
 }
 
 /**
+ * Money moved from a cancelled order to a new one (owner 2026-09-15; docs/bugs/
+ * 0927) — no money moves in the bank, so no money account moves in the books:
+ *
+ *     Dr AR (the cancelled order's customer)   the amount   releases the credit
+ *         Cr AR (the new order's customer)     the amount   the new order is paid
+ *
+ * The same customer on both sides nets to nothing on the control and still
+ * writes the trail — which order the money left and which it reached.
+ */
+export function orderMoneyTransferLines(
+  roles: RoleCodes,
+  p: {
+    fromDocNo: string;
+    toDocNo: string;
+    from: { code: string | null; name: string | null };
+    to: { code: string | null; name: string | null };
+  },
+  amountSen: number,
+): RuleLine[] {
+  return [
+    {
+      accountCode: roles.AR,
+      debitSen: amountSen,
+      creditSen: 0,
+      partyType: 'CUSTOMER',
+      partyCode: p.from.code ?? null,
+      partyName: p.from.name ?? null,
+      notes: `Money on ${p.fromDocNo} moved to ${p.toDocNo}`,
+    },
+    {
+      accountCode: roles.AR,
+      debitSen: 0,
+      creditSen: amountSen,
+      partyType: 'CUSTOMER',
+      partyCode: p.to.code ?? null,
+      partyName: p.to.name ?? null,
+      notes: `Settles ${p.toDocNo} with money from ${p.fromDocNo}`,
+    },
+  ];
+}
+
+/**
  * Acquirer settlement confirmed (brief §3.5 layer 3) — THE entry 系统3 never
  * wrote, which is why card fees never reached its P&L:
  *

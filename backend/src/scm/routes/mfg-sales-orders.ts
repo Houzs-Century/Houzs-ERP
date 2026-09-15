@@ -263,6 +263,8 @@ import {
   type SoCreatePayment,
 } from '../lib/so-create-payment-slips';
 import { pickCrossCategoryMatch, type AutoMatchCandidate } from '../lib/cross-category-match';
+import { convertGuard, type ConvertPlan } from '../lib/so-money';
+import { cancelledWithMoneyHandler, soConvertSourcesHandler, soMoneyHandler, soMoneyRefundHandler } from './so-money-routes';
 import { recomputeSoStockAllocation, isHardBoundLine } from '../lib/so-stock-allocation';
 import { snapshotSoLineLinks, planSoLineRelink, applySoLineRelink, soLineVariantSig } from '../lib/so-line-relink';
 import { advanceSoGeneration } from '../lib/so-generation';
@@ -2367,6 +2369,12 @@ mfgSalesOrders.get('/cross-category-match', async (c) => {
    phone is exactly how sales tell two same-name customers apart.
    Read-only: never mints a customer row. Registered before /:docNo so the
    static path isn't captured as a docNo. */
+/* The money on a cancelled order — refund or convert (docs/bugs/0927); handlers in so-money-routes.ts. */
+mfgSalesOrders.get('/cancelled-with-money', cancelledWithMoneyHandler);
+const guarded = (h: (c: any) => Promise<Response>) => async (c: any) => ((await selfScopedSalesBlocked(c, c.req.param('docNo'))) ? c.json({ error: 'not_found' }, 404) : h(c));
+mfgSalesOrders.get('/:docNo/money', guarded(soMoneyHandler));
+mfgSalesOrders.post('/:docNo/money/refund', guarded(soMoneyRefundHandler));
+mfgSalesOrders.get('/:docNo/convert-sources', guarded(soConvertSourcesHandler));
 mfgSalesOrders.get('/customer-search', async (c) => {
   const sb = c.get('supabase');
   const q = (c.req.query('name') ?? '').trim();
@@ -4742,6 +4750,14 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
   const posPaymentsTotalSen = posPayments
     ? posPayments.reduce((acc, p) => acc + p.amountSen, 0)
     : null;
+  /* Money moved from a cancelled order (docs/bugs/0927): each converted row must fit that order's remaining, BEFORE the header exists. */
+  const convertPlans = new Map<number, ConvertPlan>();
+  for (const [i, p] of (posPayments ?? []).entries()) {
+    if (p.method !== 'converted') continue;
+    const g = await convertGuard(sb, Number(companyId), { fromDocNo: p.convertedFromDocNo, toDocNo: '', amountSen: p.amountSen });
+    if (!g.ok) { await rollbackPwpClaims(); return c.json({ error: g.error, message: g.message }, g.status); }
+    convertPlans.set(i, g.plan);
+  }
 
   /* Resolve each split payment's slip session → R2 key up front, for the rows
      that CLAIM one. A slip-less row resolves to null and books slip-less — the
@@ -5101,11 +5117,13 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
       const installmentMonths = merchantLike
         && typeof p.installmentMonths === 'number' && p.installmentMonths > 0
         ? p.installmentMonths : null;
+      const plan = convertPlans.get(i) ?? null;
       const { data: depRow, error: depErr } = await sb.from('mfg_sales_order_payments').insert({
         company_id:         companyId, // multi-company: match the SO's company
         so_doc_no:          docNo,
-        paid_at:            paidAt,
+        paid_at:            plan ? plan.paidAt : paidAt,
         method:             p.method,
+        ...(plan ? { converted_from_so_doc_no: plan.fromDocNo } : {}),
         merchant_provider:  merchantProvider,
         installment_months: installmentMonths,
         approval_code:      p.approvalCode ?? null,
@@ -5117,18 +5135,18 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
         slip_key:           posPaymentSlipKeys![i] ?? null,
         /* Account Sheet auto-fill (Loo 2026-06-07) — split rows carry no
            onlineType, so transfer falls back to 'Bank transfer'. */
-        account_sheet:      deriveAccountSheet(p.method, merchantProvider, null),
+        account_sheet:      plan ? `Converted from ${plan.fromDocNo}` : deriveAccountSheet(p.method, merchantProvider, null),
         amount_sen:       p.amountSen,
         /* Who took the money. The fallback was the bridge's pinned system uuid,
            so an unnamed collector recorded as "System" on the money ledger; the
            column is a NULLABLE FK to staff (the /payments writer stamps null
            freely), so the real caller — or an honest blank — is always better.
            Precedence is unchanged: an explicit salespersonId still wins. */
-        collected_by:       (body.salespersonId as string) ?? callerStaffId,
+        collected_by:       plan ? plan.collectedBy : ((body.salespersonId as string) ?? callerStaffId),
         created_by:         user.id,
         is_deposit:         true,
-        note:               'POS split payment (auto-recorded at SO create)',
-      }).select('id, so_doc_no, paid_at, method, merchant_provider, amount_sen, company_id').single();
+        note:               plan ? `Converted from ${plan.fromDocNo} at SO create` : 'POS split payment (auto-recorded at SO create)',
+      }).select('id, so_doc_no, paid_at, method, merchant_provider, amount_sen, company_id, converted_from_so_doc_no, created_at, created_by').single();
       if (depErr) {
         // eslint-disable-next-line no-console
         console.error('[so-create] split-payment ledger insert failed:', depErr.message);
@@ -10688,7 +10706,8 @@ const paymentCreateSchema = z.object({
      from scm/shared/payment-methods.ts — "kept in sync with" was a promise
      seven route files had to keep by hand, pointing at a packages/shared/
      path that no longer exists in this repo. */
-  method:             z.enum(PAYMENT_METHOD_CODES),
+  method:             z.enum([...PAYMENT_METHOD_CODES, 'converted']), // + money moved from a cancelled order (docs/bugs/0927)
+  convertedFromDocNo: z.string().trim().min(1).optional().nullable(),
   merchantProvider:   z.string().trim().min(1).optional().nullable(),
   installmentMonths:  z.number().int().min(0).max(60).optional().nullable(),
   onlineType:         z.string().trim().min(1).optional().nullable(),
@@ -10707,7 +10726,8 @@ const paymentCreateSchema = z.object({
   reason:             z.string().trim().max(500).optional(),
 });
 
-mfgSalesOrders.post('/:docNo/payments', async (c) => {
+/* Exported for the contract tests (soMoneyConvert.test.ts), the way the header and status handlers are. */
+export const postSoPaymentHandler = async (c: any) => {
   const sb = c.get('supabase'); const docNo = c.req.param('docNo'); const user = c.get('user');
   // Audit 2026-06-20 — self-scoped sales may only touch their OWN SO (mirror the line/header guards).
   if (await selfScopedSalesBlocked(c, docNo)) return c.json({ error: 'not_found' }, 404);
@@ -10800,13 +10820,21 @@ mfgSalesOrders.post('/:docNo/payments', async (c) => {
     paymentSlipKey = slipRowT.r2_key;
   }
 
+  /* Money moved from a cancelled order (docs/bugs/0927): the cancelled order's remaining is the ceiling; the row takes its first payment's day and collector. */
+  let plan: ConvertPlan | null = null;
+  if (p.method === 'converted') {
+    const g = await convertGuard(sb, Number(activeCompanyId(c)), { fromDocNo: p.convertedFromDocNo, toDocNo: docNo, amountSen: p.amountSen });
+    if (!g.ok) return c.json({ error: g.error, message: g.message }, g.status);
+    plan = g.plan;
+  }
   /* Insert + ADD_PAYMENT audit — the factored recordSoPaymentRow core (shared
      with the background scan job). Same derivation, same insert, same audit
      shape as the pre-factoring inline code. */
   const { payment, errorMessage } = await recordSoPaymentRow(sb, {
     docNo,
-    paidAt:            p.paidAt,
+    paidAt:            plan ? plan.paidAt : p.paidAt,
     method:            p.method,
+    ...(plan ? { convertedFromDocNo: plan.fromDocNo } : {}),
     merchantProvider:  p.merchantProvider,
     installmentMonths: p.installmentMonths,
     onlineType:        p.onlineType,
@@ -10814,8 +10842,8 @@ mfgSalesOrders.post('/:docNo/payments', async (c) => {
     amountSen:       p.amountSen,
     accountSheet:      p.accountSheet,
     slipKey:           paymentSlipKey,
-    collectedBy:       p.collectedBy,
-    note:              p.note,
+    collectedBy:       plan ? plan.collectedBy : p.collectedBy,
+    note:              p.note ?? (plan ? `Converted from ${plan.fromDocNo}` : null),
     createdBy:         user.id,
     actorName:         (user.user_metadata as { name?: string } | undefined)?.name ?? null,
     ...(owed.owed ? { auditSource: AMEND_SOURCE, auditNote: p.reason } : {}),
@@ -10848,7 +10876,8 @@ mfgSalesOrders.post('/:docNo/payments', async (c) => {
 
   /* ADD_PAYMENT audit already appended inside recordSoPaymentRow. */
   return c.json({ payment }, 201);
-});
+};
+mfgSalesOrders.post('/:docNo/payments', postSoPaymentHandler);
 
 /* Owner 2026-07-13 — SAME-DAY payment EDIT. A payment recorded TODAY can be
    corrected within the same Malaysia (UTC+8) calendar day; after MYT midnight it
@@ -10899,6 +10928,8 @@ mfgSalesOrders.patch('/:docNo/payments/:id', async (c) => {
     amount_sen: number; account_sheet: string | null; collected_by: string | null;
   };
   if (before.so_doc_no !== docNo) return c.json({ error: 'payment_doc_mismatch' }, 400);
+  /* Money moved from a cancelled order is moved back by deleting the row, never edited in place (docs/bugs/0927). */
+  if (String(before.method) === 'converted') return c.json({ error: 'converted_row_not_editable', reason: 'This row is money moved from a cancelled order. Delete it to move the money back, then move it again.' }, 409);
 
   /* WHO MAY CHANGE THIS ROW, AND WHY — one predicate for the PATCH, the DELETE
      and both screens (scm/shared/so-field-policy.ts, paymentRowMutable): DRAFT
@@ -11081,7 +11112,7 @@ mfgSalesOrders.patch('/:docNo/payments/:id', async (c) => {
   return c.json({ payment: { ...rest, collected_by_name: staff?.name ?? null } });
 });
 
-mfgSalesOrders.delete('/:docNo/payments/:id', async (c) => {
+export const deleteSoPaymentHandler = async (c: any) => {
   const sb = c.get('supabase'); const docNo = c.req.param('docNo'); const id = c.req.param('id');
   const user = c.get('user');
   // Audit 2026-06-20 — self-scoped sales may only touch their OWN SO (mirror the line/header guards).
@@ -11183,7 +11214,8 @@ mfgSalesOrders.delete('/:docNo/payments/:id', async (c) => {
   await enqueueSoPaymentEdit(c.get('supabase'), { companyId: activeCompanyId(c), docNo, createdBy: c.get('houzsUser')?.id ?? null });
 
   return c.json({ ok: true });
-});
+};
+mfgSalesOrders.delete('/:docNo/payments/:id', deleteSoPaymentHandler);
 
 /* Spec D4 — per-payment slip view. Same binding-served proxy + vocabulary as
    the order-level /:docNo/slip-url route (converted from presign 2026-07-04,

@@ -189,7 +189,7 @@ export function poTransferShape(lines: readonly PoLineShape[]): PoTransferShape 
   /* ONE source document. The drain waits on the parent's AutoCount number and
      has exactly one anchor to wait on, so a purchase order drawing on several
      sales orders cannot be expressed as a transfer at all — it becomes a create
-     whose Ref names every one of them. */
+     whose UDF_SONo names every one of them. */
   const sources = [...new Set(lines.map((l) => String(l.sourceSoDocNo ?? '').trim()))];
   if (sources.length !== 1 || sources[0] === '') {
     return {
@@ -204,17 +204,18 @@ export function poTransferShape(lines: readonly PoLineShape[]): PoTransferShape 
 }
 
 /**
- * The `Ref` a CREATED purchase order carries: the sales orders it was raised
- * for.
+ * The sales orders a purchase order was made from, as the book's `UDF_SONo`
+ * ("SO Doc No."), in the ", " form the office plug-in uses for several numbers.
  *
- * Only reached on the create path — a transfer needs no reference because
- * AutoCount's own DocTransfer link is the reference, and a stronger one.
+ * It was the purchase order's `Ref` until docs/bugs/0926. The plug-in keeps the
+ * order's REFERENCE in Ref and the order's number in UDF_SONo, so the book
+ * showed an SO number where staff read the customer's reference.
  *
  * De-duplicated and sorted so the same purchase order produces the same string
- * on every edit; an unstable Ref would rewrite the account book's field for no
+ * on every edit; an unstable value would rewrite the account book's field for no
  * reason each time a line moved.
  */
-export function poSourceRef(soDocNos: readonly (string | null | undefined)[]): string | null {
+export function poSourceSoNos(soDocNos: readonly (string | null | undefined)[]): string | null {
   const seen = [...new Set(
     soDocNos.map((d) => String(d ?? '').trim()).filter((d) => d !== ''),
   )].sort();

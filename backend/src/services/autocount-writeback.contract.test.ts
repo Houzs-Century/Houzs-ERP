@@ -1319,15 +1319,13 @@ describe('/so-to-po carries the whole master', () => {
        disguise — `Description: null` on a purchase order the ERP describes is
        exactly what the owner saw.
 
-       `Ref` IS ABSENT FROM THIS LIST ON PURPOSE, and it is the only one:
-       `readPoEnqueueShape` (autocount-read.ts:201-203) puts the source sales
-       order numbers in a CREATE's Ref because AutoCount has no DocTransfer
-       link to carry them, and leaves a transfer's null because it does. The
-       KEY must still be carried — the parity test above enforces that — but
-       the two documents legitimately hold different values there. */
-    for (const key of ['DocNo', 'DocDate', 'CreditorCode', 'CreditorName', 'Agent', 'Description', 'UDF']) {
+       `Ref` and `UDF.SONo` name the SOURCE order (docs/bugs/0926); the transfer
+       fixture has one and the create control none, so they are left out. */
+    const sans = (u: unknown) => ({ ...(u as Record<string, unknown>), SONo: undefined });
+    for (const key of ['DocNo', 'DocDate', 'CreditorCode', 'CreditorName', 'Agent', 'Description']) {
       expect(transferred[key], `${key} on the transfer`).toEqual(created[key]);
     }
+    expect(sans(transferred.UDF), 'UDF on the transfer').toEqual(sans(created.UDF));
   });
 
   test('the header PURCHASE LOCATION reaches both arms — AutoCount has one and the ERP has one', async () => {

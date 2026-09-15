@@ -34,6 +34,7 @@ const FIXED: Record<string, JournalClass> = {
   SETTLEBANK: 'BANK',
   STOCKADJ: 'GENERAL',
   MANUAL: 'GENERAL',
+  SOCONV: 'GENERAL', // money moved from a cancelled order to a new one (docs/bugs/0927)
 };
 
 const MONEY_SIDE = new Set(['SOPAY', 'SIPAY', 'PV']);
