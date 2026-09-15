@@ -17,6 +17,7 @@
 import { scopeToCompany, type CompanyScopeCtx } from './companyScope';
 import { lookupByIds } from './document-line-export';
 import { chunkIn } from './paginate-all';
+import { pageWithTruncation } from './outstanding-po-lines';
 import { warehouseLabel } from './warehouse-label';
 import { bookSpellingOrOwn } from '../../services/autocount-writeback';
 import { LOCATION_MAP } from '../../services/autocount-master-maps';
@@ -185,4 +186,25 @@ export async function attachPurchaseReturnLines<H extends PrLineHeader>(
     return { ...h, lines };
   });
   return { error: null, rows, lineCount: all.length };
+}
+
+export type PurchaseReturnExportRows =
+  | { error: string }
+  | { error: null; purchaseReturns: Array<PrLineHeader & Record<string, unknown> & { lines: PrListLine[] }>; total: number; lineCount: number; truncated: boolean };
+
+/** Every return the list's filter matches (no screen cap, paged to exhaustion)
+ *  in the list's row shape, each with its lines. GET /purchase-returns/export/rows. */
+export async function buildPurchaseReturnExportRows(
+  sbIn: unknown,
+  c: CompanyScopeCtx,
+  filters: PurchaseReturnListFilters,
+): Promise<PurchaseReturnExportRows> {
+  const sb = sbIn as Sb;
+  const read = await pageWithTruncation<PrLineHeader & Record<string, unknown>>((from, to) =>
+    orderPurchaseReturnList(filterPurchaseReturnList(sb.from('purchase_returns').select(PR_LIST_SELECT), filters, c))
+      .range(from, to));
+  if (read.error) return { error: `headers: ${read.error.message}` };
+  const attached = await attachPurchaseReturnLines(sb, c, read.data ?? []);
+  if (attached.error !== null) return { error: attached.error };
+  return { error: null, purchaseReturns: attached.rows, total: attached.rows.length, lineCount: attached.lineCount, truncated: read.truncated };
 }

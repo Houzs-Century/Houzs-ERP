@@ -21,20 +21,9 @@
 import { Hono, type Context } from 'hono';
 import type { Env, Variables } from '../env';
 import { supabaseAuth } from '../middleware/auth';
-import { pageWithTruncation } from '../lib/outstanding-po-lines';
 import { resolveSalesScopeIds } from '../lib/salesScope';
 import { canViewAllSales, canViewScmFinance } from '../lib/houzs-perms';
-import {
-  DR_HEADER_COLS,
-  attachDeliveryReturnLines,
-  filterDeliveryReturnList,
-  gateDrListFinance,
-  orderDeliveryReturnList,
-  readDeliveryReturnListFilters,
-  stampDrListBookSpellings,
-  stampDrListSoDocNo,
-  type DrLineHeader,
-} from '../lib/delivery-return-list-read';
+import { buildDeliveryReturnExportRows, readDeliveryReturnListFilters } from '../lib/delivery-return-list-read';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 
@@ -43,24 +32,9 @@ export async function deliveryReturnExportRowsHandler(c: Ctx) {
   // The REAL Houzs user id, as the list passes it (lib/salesScope.ts).
   const scopeIds = await resolveSalesScopeIds(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c));
   const filters = readDeliveryReturnListFilters((k) => c.req.query(k));
-  const read = await pageWithTruncation<DrLineHeader & Record<string, unknown>>((from, to) =>
-    orderDeliveryReturnList(filterDeliveryReturnList(sb.from('delivery_returns').select(DR_HEADER_COLS), filters, c, scopeIds))
-      .range(from, to));
-  if (read.error) return c.json({ error: 'export_failed', reason: `headers: ${read.error.message}` }, 500);
-  const headers = read.data ?? [];
-  const stamped = await stampDrListSoDocNo(sb, c, headers);
-  if (stamped.error) return c.json({ error: 'export_failed', reason: stamped.error }, 500);
-  const agents = await stampDrListBookSpellings(sb, c, headers);
-  if (agents.error) return c.json({ error: 'export_failed', reason: agents.error }, 500);
-  gateDrListFinance(headers, canViewScmFinance(c));
-  const attached = await attachDeliveryReturnLines(sb, c, headers);
-  if (attached.error !== null) return c.json({ error: 'export_failed', reason: attached.error }, 500);
-  return c.json({
-    deliveryReturns: attached.rows,
-    total: attached.rows.length,
-    lineCount: attached.lineCount,
-    truncated: read.truncated,
-  });
+  const out = await buildDeliveryReturnExportRows(sb, c, filters, scopeIds, canViewScmFinance(c));
+  if (out.error !== null) return c.json({ error: 'export_failed', reason: out.error }, 500);
+  return c.json(out);
 }
 
 export const deliveryReturnExports = new Hono<{ Bindings: Env; Variables: Variables }>();

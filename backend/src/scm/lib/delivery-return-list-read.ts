@@ -17,6 +17,7 @@
 import { scopeToCompany, type CompanyScopeCtx } from './companyScope';
 import { lookupByIds } from './document-line-export';
 import { chunkIn } from './paginate-all';
+import { pageWithTruncation } from './outstanding-po-lines';
 import { warehouseLabel } from './warehouse-label';
 import { bookSpellingOrOwn, resolveAcAgent } from '../../services/autocount-writeback';
 import { BRANDING_MAP, LOCATION_MAP, VENUE_MAP } from '../../services/autocount-master-maps';
@@ -39,11 +40,15 @@ import { companyHasAutoCountBook, returnLineBookFacts } from './return-line-book
    it, the same line #625 drew and #632 kept. The per-LINE keys ARE shared: they
    are byte-identical across all seven sales documents, so they live in
    lib/finance-keys (SO_ITEM_FINANCE_KEYS). */
+/* A per-document subset (see above): the four DR categories and their costs,
+   no service_* and no deposit_*, which SO_FINANCE_KEYS carries. */
+/* eslint-disable no-restricted-syntax -- the delivery return's own header columns, a subset of the shared SO list */
 export const DR_FINANCE_KEYS = [
   'mattress_sofa_sen', 'bedframe_sen', 'accessories_sen', 'others_sen',
   'mattress_sofa_cost_sen', 'bedframe_cost_sen', 'accessories_cost_sen', 'others_cost_sen',
   'total_cost_sen', 'total_margin_sen', 'margin_pct_basis',
 ] as const;
+/* eslint-enable no-restricted-syntax */
 
 /* Full DR header — mirrors the editable DO header shape. The pre-rebuild
    columns (delivery_order_id / sales_invoice_id / reason / received-inspected-
@@ -276,4 +281,35 @@ export async function attachDeliveryReturnLines<H extends DrLineHeader>(
     return { ...h, lines };
   });
   return { error: null, rows, lineCount: all.length };
+}
+
+export type DeliveryReturnExportRows =
+  | { error: string }
+  | { error: null; deliveryReturns: Array<DrLineHeader & Record<string, unknown> & { lines: DrListLine[] }>; total: number; lineCount: number; truncated: boolean };
+
+/** Every return the list's filter and the caller's sales scope match (no screen
+ *  cap, paged to exhaustion) in the list's row shape — SO number and book
+ *  spellings stamped, finance keys stripped for a non-finance caller — each with
+ *  its lines. GET /delivery-returns/export/rows. */
+export async function buildDeliveryReturnExportRows(
+  sbIn: unknown,
+  c: CompanyScopeCtx,
+  filters: DeliveryReturnListFilters,
+  scopeIds: string[] | null,
+  canViewFinance: boolean,
+): Promise<DeliveryReturnExportRows> {
+  const sb = sbIn as Sb;
+  const read = await pageWithTruncation<DrLineHeader & Record<string, unknown>>((from, to) =>
+    orderDeliveryReturnList(filterDeliveryReturnList(sb.from('delivery_returns').select(DR_HEADER_COLS), filters, c, scopeIds))
+      .range(from, to));
+  if (read.error) return { error: `headers: ${read.error.message}` };
+  const headers = read.data ?? [];
+  const stamped = await stampDrListSoDocNo(sb, c, headers);
+  if (stamped.error) return { error: stamped.error };
+  const spelled = await stampDrListBookSpellings(sb, c, headers);
+  if (spelled.error) return { error: spelled.error };
+  gateDrListFinance(headers, canViewFinance);
+  const attached = await attachDeliveryReturnLines(sb, c, headers);
+  if (attached.error !== null) return { error: attached.error };
+  return { error: null, deliveryReturns: attached.rows, total: attached.rows.length, lineCount: attached.lineCount, truncated: read.truncated };
 }

@@ -134,7 +134,7 @@ const exportNow = async (url: string) => {
   await waitFor(() => expect(h.written).toHaveLength(1));
   const [header, ...body] = h.aoa as [string[], ...unknown[][]];
   const cell = (row: unknown[], label: string, nth = 0) => {
-    const idx = header.map((l, i) => (l === label ? i : -1)).filter((i) => i >= 0)[nth];
+    const idx = header.map((l, i) => (l === label ? i : -1)).filter((i) => i >= 0).at(nth);
     if (idx === undefined) throw new Error(`no column ${label}`);
     return row[idx];
   };

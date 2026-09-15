@@ -1087,7 +1087,7 @@ export function DeliveryReturnsListV2() {
       width: "156px",
       render: (r) => <span className="font-docno text-[12.5px] font-semibold text-ink">{r.return_number}</span>,
     },
-    doc_date: { doc: (r) => r.return_date ?? null, width: "108px" },
+    doc_date: { doc: (r) => r.return_date || null, width: "108px" },
     debtor_code: { doc: (r) => r.debtor_code || null, width: "120px", mono: true },
     debtor_name: {
       doc: (r) => r.debtor_name || null,

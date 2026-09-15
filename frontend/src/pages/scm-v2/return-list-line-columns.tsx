@@ -71,7 +71,7 @@ export function returnGridColumns<R, L>(
   alwaysVisibleKey: string,
 ): Column<R, L>[] {
   return contract.map((spec) => {
-    const v = values[spec.key];
+    const v = values[spec.key] as ReturnColumnValues<R, L> | undefined;
     if (!v || (spec.level === "document" ? !v.doc : !v.line)) {
       throw new Error(`return grid: no ${spec.level} value for column "${spec.key}"`);
     }
