@@ -11,7 +11,7 @@ const fetchMock = vi.fn(async (_path: string, _init?: RequestInit) => ({}) as un
 vi.mock('./authed-fetch', () => ({ authedFetch: (p: string, i?: RequestInit) => fetchMock(p, i) }));
 
 const {
-  CANCEL_APPROVE_KEY, approveLabel, cancelRequestLine, isFinalLevel, pendingLevel, signaturesGiven, isOpenCancelStatus,
+  CANCEL_APPROVE_KEY, approveLabel, cancelRequestLine, docTypeOfRow, isFinalLevel, pendingLevel, signaturesGiven, isOpenCancelStatus,
   viewerCanApprove, viewerCanReject, viewerCanWithdraw,
   useCancelRequest, useCancelRequests, useRaiseCancelRequest, useApproveCancelRequest,
   useRejectCancelRequest, useWithdrawCancelRequest,
@@ -47,6 +47,14 @@ describe('display rules', () => {
     expect(approveLabel('so', 2)).toBe('Approve & cancel (level 2)');
     expect(isFinalLevel('po', 1)).toBe(true);
     expect(isFinalLevel('so', 1)).toBe(false);
+    /* A delivery order signs nothing either (owner 2026-09-14): its row is the
+       record of a cancel that already ran on its reason. */
+    expect(docTypeOfRow(row({ doc_type: 'DO' }))).toBe('do');
+    expect(signaturesGiven('do', 'EXECUTED')).toBe(0);
+    expect(cancelRequestLine(row({ doc_type: 'DO', status: 'EXECUTED' }))).toBe('Cancelled');
+    expect(viewerCanApprove(row({ doc_type: 'DO' }), viewer(21, ['*']))).toBe(false);
+    expect(viewerCanReject(row({ doc_type: 'DO' }), viewer(21, ['*']))).toBe(false);
+    expect(CANCEL_APPROVE_KEY.do).toEqual({});
     expect(cancelRequestLine(row({ status: 'EXECUTED' }))).toBe('Cancelled');
     expect(isOpenCancelStatus('WITHDRAWN')).toBe(false);
   });

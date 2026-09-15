@@ -1232,6 +1232,16 @@
     },
     {
       "check": "D1",
+      "key": "DO,PO,SO|backend/src/scm/routes/document-cancel-routes.ts backend/src/scm/shared/document-cancel.ts backend/src/services/cancelRequestNotify.ts frontend/src/pages/scm-v2/CancelRequests.tsx",
+      "why": "THE DOCUMENTS WHOSE CANCEL COSTS A WRITTEN REASON (SO since 2026-09-08, PO 2026-09-09, DO 2026-09-14 — docs/modules/document-cancel-approval.md). The set only became visible to this check when the DO made it three values. ONE home answers the rule: backend/src/scm/shared/document-cancel.ts (CANCEL_DOC_TYPES, NOUN, APPROVAL_LEVELS, CANCEL_APPROVE_KEY), which is the only table the server gate reads. The other homes key something ELSE by it: document-cancel-routes.ts DOCS is per-document WIRING (table, key column, whether the cancel rides a status route, where its history row goes); services/cancelRequestNotify.ts holds CANCEL_APPROVE_PERM and a title-case NOUN as literals because a Houzs-side service must not import the SCM bundle, and cancelRequestNotify.test.ts asserts CANCEL_APPROVE_PERM equals CANCEL_APPROVE_KEY; CancelRequests.tsx DOC_LABEL / DOC_PATH are PRESENTATION of the ledger row's doc_type, typed Record<CancelRequestRow['doc_type'], ...> so a new type fails to compile there. Every record is keyed by the TypeScript union, so a document added to one and not another is a compile error, and a divergence that slips past costs a missing label or a notice to nobody — never a cancel that skips its reason, because only the shared rules decide that."
+    },
+    {
+      "check": "D2",
+      "key": "DO,GRN,PO,SO ~ DO,PO,SO",
+      "why": "TWO DIFFERENT QUESTIONS THAT SHARE THREE ANSWERS, differing by GRN. {DO,GRN,PO,SO} is the change log's documents and downstream-lock's refusal map (the entry above explains both); {DO,PO,SO} is the documents whose cancel costs a written reason (document-cancel.ts). A goods receipt has a change log but no cancel-reason rule — the owner has asked for a reason on SO, PO and DO cancels only — so GRN being absent from the second set is the absence of a ruling, not a rule enforced at N-1 of N places. If the owner rules that a GRN cancel needs a reason too, it joins CANCEL_DOC_TYPES and this entry goes."
+    },
+    {
+      "check": "D1",
       "key": "CLOSED,DELIVERED,INVOICED|backend/src/scm/shared/so-deliverable-states.ts backend/src/services/agents/cs-agent.ts frontend/src/vendor/shared/so-deliverable-states.ts",
       "why": "DELIVERED-OR-BEYOND, asked twice (the frontend copy is the byte-identical VENDORED TWIN of the shared file, refereed by frontend/src/vendor/shared/so-deliverable-states.canonical.test.ts — not a second decision): the CS agent answers \"has the customer got it\" for a chat reply; the sales side (SO_DELIVERED_OR_BEYOND in scm/shared/so-deliverable-states.ts, since docs/bugs/0832 the ONE home the Collection report and the final-invoice backlog both read) answers \"is this order at the balance stage\" for Finance. Both read the SO status enum as the same three words today. Recorded rather than collapsed: since docs/bugs/0831 the report ALSO counts an order with a live sales invoice as at the balance stage and measures the balance against the invoice's total; the status set stays for the delivered-but-uninvoiced orders, while the agent stays on delivery alone — they diverge on purpose."
     },
@@ -1314,6 +1324,36 @@
       "check": "D1",
       "key": "SUPPLIER_DELIVERY_DATE_2,SUPPLIER_DELIVERY_DATE_3,SUPPLIER_DELIVERY_DATE_4|backend/src/scm/lib/po-line-export-columns.ts frontend/src/vendor/scm/lib/po-line-export-columns.ts",
       "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it (the server builds the PO line export rows, the browser writes the sheet and labels the Outstanding tab). frontend/src/vendor/scm/lib/po-line-export-columns.canonical.test.ts asserts the two files are byte-identical and check-shared-mirrors.mjs compares the pair. Symbols: PO_ESTIMATE_DELIVERY_DATE_FIELDS."
+    },
+    {
+      "check": "D1",
+      "key": "CANCELLED,CLOSED,DRAFT,ON_HOLD,POSTED|backend/src/scm/lib/grn-line-export-columns.ts frontend/src/vendor/scm/lib/grn-line-export-columns.ts frontend/src/vendor/scm/lib/status-pill.ts",
+      "why": "THE GOODS RECEIVED STATUS WORDS, in their display home and the line export. status-pill.ts GRN is what the list shows (GoodsReceivedListV2 withStatusLabels(\"grn\")); GRN_STATUS_WORDS in grn-line-export-columns.ts (backend + its byte-identical frontend twin) is the word the GRN line export prints, owner 2026-09-15: export the word on screen. It lives in the mirror because the SERVER builds the export rows and cannot import a frontend map. grn-line-export-columns.canonical.test.ts reads status-pill.ts GRN block and asserts the two maps say the same words, so they cannot drift silently."
+    },
+    {
+      "check": "D1",
+      "key": "AUTOCOUNT DOC NO,BALANCE,BRANDING,CATEGORY,CUSTOMER CODE,CUSTOMER NAME,CUSTOMER REF,DELIVERY DATE,DISCOUNT,DO NO.,DOC DATE,DOC NO,DUE DATE,INVOICE TOTAL,ITEM CODE,ITEM DESCRIPTION,ITEM DESCRIPTION 2,LINE ID,LINE TOTAL,LOCATION,OVERDUE DAYS,PAID,PHONE,QTY,REMARKS,SALESPERSON,SO DOC NO.,STATUS,UNIT PRICE,UOM,VENUE|backend/src/scm/lib/si-line-export-columns.ts frontend/src/vendor/scm/lib/si-line-export-columns.ts",
+      "why": "A VENDORED TWIN, not a second decision: the Sales Invoice line export column contract, authored in backend/src/scm/lib/si-line-export-columns.ts and copied byte-identical into frontend/src/vendor/scm/lib so the browser can write the sheet the server builds the rows for (owner 2026-09-15: every list exports one row per line). frontend/src/vendor/scm/lib/si-line-export-columns.canonical.test.ts asserts the two files are identical and pins the header names an import will read; check-shared-mirrors.mjs compares the pair. Symbols: SI_LINE_EXPORT_COLUMNS."
+    },
+    {
+      "check": "D1",
+      "key": "AUTOCOUNT DOC NO,BALANCE,CATEGORY,CURRENCY,DISCOUNT,DOC DATE,DOC NO,DUE DATE,GRN NO.,INVOICE TOTAL,ITEM CODE,ITEM DESCRIPTION,ITEM DESCRIPTION 2,LINE ID,LINE TOTAL,LOCATION,OVERDUE DAYS,PO NO.,PO UNIT PRICE,QTY,REMARKS,SO DOC NO.,STATUS,SUPPLIER CODE,SUPPLIER INVOICE NO.,SUPPLIER NAME,SUPPLIER SKU,UNIT PRICE,UOM|backend/src/scm/lib/pi-line-export-columns.ts frontend/src/vendor/scm/lib/pi-line-export-columns.ts",
+      "why": "A VENDORED TWIN, not a second decision: the Purchase Invoice line export column contract, authored in backend/src/scm/lib/pi-line-export-columns.ts and copied byte-identical into frontend/src/vendor/scm/lib so the browser can write the sheet the server builds the rows for (owner 2026-09-15: every list exports one row per line). frontend/src/vendor/scm/lib/pi-line-export-columns.canonical.test.ts asserts the two files are identical and pins the header names an import will read; check-shared-mirrors.mjs compares the pair. Symbols: PI_LINE_EXPORT_COLUMNS."
+    },
+    {
+      "check": "D1",
+      "key": "AUTOCOUNT DOC NO,CATEGORY,CURRENCY,DELIVERY DATE,DISCOUNT,DOC DATE,DOC NO,INVOICE NO.,INVOICED QTY,ITEM CODE,ITEM DESCRIPTION,ITEM DESCRIPTION 2,LINE ID,LINE TOTAL,LOCATION,PO NO.,RECEIVED QTY,REMARKS,RETURNED QTY,SO DOC NO.,STATUS,SUPPLIER CODE,SUPPLIER DO NO.,SUPPLIER NAME,SUPPLIER SKU,UNINVOICED QTY,UNIT PRICE,UOM|backend/src/scm/lib/grn-line-export-columns.ts frontend/src/vendor/scm/lib/grn-line-export-columns.ts",
+      "why": "A VENDORED TWIN, not a second decision: the Goods Received line export column contract, authored in backend/src/scm/lib/grn-line-export-columns.ts and copied byte-identical into frontend/src/vendor/scm/lib so the browser can write the sheet the server builds the rows for (owner 2026-09-15: every list exports one row per line). frontend/src/vendor/scm/lib/grn-line-export-columns.canonical.test.ts asserts the two files are identical and pins the header names an import will read; check-shared-mirrors.mjs compares the pair. Symbols: GRN_LINE_EXPORT_COLUMNS."
+    },
+    {
+      "check": "D1",
+      "key": "CANCELLED,DRAFT,ON_HOLD,PAID,PARTIALLY_PAID,POSTED|backend/src/scm/lib/pi-line-export-columns.ts frontend/src/vendor/scm/lib/pi-line-export-columns.ts",
+      "why": "A VENDORED TWIN, not a second decision: the Purchase Invoice line export column contract, authored in backend/src/scm/lib/pi-line-export-columns.ts and copied byte-identical into frontend/src/vendor/scm/lib so the browser can write the sheet the server builds the rows for (owner 2026-09-15: every list exports one row per line). frontend/src/vendor/scm/lib/pi-line-export-columns.canonical.test.ts asserts the two files are identical and pins the header names an import will read; check-shared-mirrors.mjs compares the pair. Symbols: PI_STATUS_WORDS — the words the Purchase Invoices LIST shows (its own STATUS_TONE map, which pi-line-export-columns.canonical.test.ts reads out of PurchaseInvoicesListV2.tsx and compares), owner 2026-09-15: export the word on screen."
+    },
+    {
+      "check": "D2",
+      "key": "CANCELLED,DRAFT,ON_HOLD,PAID,PARTIALLY_PAID,POSTED ~ CANCELLED,DRAFT,ON_HOLD,PAID,PARTIALLY_PAID,POSTED,VOID",
+      "why": "THE PURCHASE INVOICE STATUS WORDS differing by VOID. status-pill.ts PI names VOID for surfaces that read it; the Purchase Invoices LIST (STATUS_TONE) and so the PI line export (PI_STATUS_WORDS, pinned to that list by pi-line-export-columns.canonical.test.ts) do not, because VOID is not a member of purchase_invoice_status (pi-status-buckets.ts: every member is in a bucket, pinned by statusBucketsEnumMembership.test.mjs). An unmapped value prints as stored in both, never blank."
     }
   ]
 }

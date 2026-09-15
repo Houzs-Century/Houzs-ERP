@@ -23,10 +23,10 @@ export type DocAction = {
   /** In-app danger confirm before firing (Cancel / Void). */
   confirm?: { title: string; body?: string; confirmLabel: string };
   /** Ask for a mandatory REASON and send it as `reason` in the body. The server
-   *  refuses a Purchase Order cancel that carries none, so a phone that only
-   *  confirmed would collect a 400 the operator cannot act on. Used INSTEAD of
-   *  `confirm`: the prompt is the confirmation, and asking twice for one
-   *  decision is exactly what the desktop copy was cut down to avoid. */
+   *  refuses a Purchase Order or Delivery Order cancel that carries none, so a
+   *  phone that only confirmed would collect a 400 the operator cannot act on.
+   *  Used INSTEAD of `confirm`: the prompt is the confirmation, and asking twice
+   *  for one decision is exactly what the desktop copy was cut down to avoid. */
   reasonPrompt?: ReasonPrompt;
   /** When true, the record no longer exists after this action → navigate back
    *  to the list instead of staying on a now-deleted detail.
@@ -59,6 +59,19 @@ export const PO_CANCEL_PROMPT: ReasonPrompt = {
   body: "Say why. It is cancelled as soon as you confirm — no approval is needed — and this reason is kept on the PO. Its sales-order lines go back to the picker.",
   placeholder: "e.g. supplier cannot meet the delivery date",
   confirmLabel: "Cancel PO",
+  minChars: 5,
+};
+
+/** The words the phone shows before cancelling a Delivery Order.
+ *
+ *  Owner, 2026-09-14:「DO cancel need pop out window for reason」. MUST stay the
+ *  sentence the desktop shows (pages/scm-v2/use-do-cancel-action.ts
+ *  `doCancelPrompt`), for the same reason as the PO's copy above. */
+export const DO_CANCEL_PROMPT: ReasonPrompt = {
+  title: "Cancel this delivery order?",
+  body: "Say why. It is cancelled as soon as you confirm — no approval is needed: its stock goes back and its lines are released to the Sales Order. A cancelled delivery order cannot be reactivated, and this reason is kept on its History.",
+  placeholder: "e.g. customer postponed the delivery",
+  confirmLabel: "Cancel DO",
   minChars: 5,
 };
 

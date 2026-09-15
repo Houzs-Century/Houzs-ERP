@@ -303,3 +303,35 @@ for 1,018 rows, above the 1,000-row response ceiling this tree assumes (unmeasur
 `backend/scripts/check-pi-grn-picker-window.mjs`). It prints counts per company and
 still replays the OLD window, so after this change its "outside the newest 500"
 figure is what the old read would have hidden, not what the picker hides.
+
+---
+
+## Exports — every page the filters match (2026-09-15)
+
+Owner 2026-09-15: every document list exports **one row per line item**, holding
+**every row the list's current filter matches**. Column design:
+`docs/line-export-columns.md` §6. Same build as the Purchase Order export.
+
+| Method | Path | File | Purpose |
+|---|---|---|---|
+| GET | `/purchase-invoices` (paged) | `routes/purchase-invoices.ts` | The list. Its tab / company / search / date filter and sort are built by `lib/pi-list-read.ts` (`filterPiList`, `orderPiList`) — the same functions both exports use. |
+| GET | `/purchase-invoices/export/headers` | `routes/purchase-invoice-exports.ts` | EVERY invoice the filter matches (no `page`), list row shape. `{ purchaseInvoices, total, truncated }`. |
+| GET | `/purchase-invoices/export/lines` | `routes/purchase-invoice-exports.ts` → `lib/pi-line-export.ts` | One row per invoice LINE. `{ columns, rows, piCount, lineCount, truncated }`. |
+
+- Columns are `PI_LINE_EXPORT_COLUMNS` in `backend/src/scm/lib/pi-line-export-columns.ts`,
+  MIRRORED at `frontend/src/vendor/scm/lib/pi-line-export-columns.ts` (refereed by its
+  canonical test). Header names and Line ID are an import contract (Item
+  Description 2, Remarks — an invoice line has no delivery date).
+- The invoice line has no SKU, warehouse or PO of its own: **Supplier SKU**, **GRN
+  No.**, **Location** (the GRN's warehouse as AutoCount's short code, `LOCATION_MAP`),
+  **PO No.** and **SO Doc No.** all come through `grn_item_id` → the GRN line → its
+  PO line. Every hop carries the company predicate.
+- **Balance** = the list's Owed, `max(total − paid, 0)`. **Due Date is the stored
+  value only** (owner 2026-09-15: never derived from the supplier's credit term);
+  Overdue Days counts from it while Balance > 0, blank without it. **Status** is the
+  list's word (`PI_STATUS_WORDS`, pinned to the list's `STATUS_TONE`), ` (On Hold)`
+  after it for a held invoice. Cancelled invoices follow the tab.
+- Read-only production check: `.github/workflows/grn-pi-si-line-export-check.yml`.
+- **Mobile**: the phone Purchase Invoice list (`mobile/MobileModuleList.tsx`) has no
+  export of any kind, so there is nothing to keep in step.
+

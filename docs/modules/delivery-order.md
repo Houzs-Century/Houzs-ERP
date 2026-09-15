@@ -168,18 +168,19 @@ sits at its size ceiling.
 | Transfer to Sales Invoice | `doCountsAsInvoiceable(status)` | `convertToLink('doToSi', id)` |
 | Transfer to Delivery Return | `doCountsAsDelivered(status)` | `convertToLink('doToDr', id)` |
 | Confirm | `doAdvanceStep(status)` is non-null, i.e. DRAFT | `PATCH /:id/status` → `LOADED` (it wrote `DISPATCHED` until 2026-08-22 — the target was the wrong half of the control) |
-| Cancel Delivery Order | status is neither `CANCELLED` nor `INVOICED` | in-app confirm, then `PATCH /:id/status` → `CANCELLED` |
+| Cancel Delivery Order | status is neither `CANCELLED` nor `INVOICED` | asks for the REASON (`use-do-cancel-action.ts`), then `PATCH /:id/status` → `CANCELLED` with `{ reason }` |
 
 Everything above additionally requires `canWriteDo`
 (`canOperateDeliveryOrders`).
 
-**Cancel asks first because it reverses stock.** `doCancelDo` goes through
-`useConfirm` — the same shape the Sales Order list uses — and posts the DETAIL
-page's endpoint, not a new one. What the list CANNOT see is the route's second
-refusal: `doHasDownstream` blocks a cancel once a live Sales Invoice or Delivery
-Return points at this DO, and no list row carries that fact. That refusal
-therefore arrives as the mutation's error notice
-(`useUpdateMfgDeliveryOrderStatus`'s `onError`) rather than as a missing entry.
+**Cancel asks first because it reverses stock — and since 2026-09-14 what it
+asks is WHY.** `doCancelDo` opens the detail page's own prompt
+(`useDoCancelAction`, below) and posts the DETAIL page's endpoint, not a new one.
+What the list CANNOT see is the route's second refusal: `doHasDownstream` blocks
+a cancel once a live Sales Invoice or Delivery Return points at this DO, and no
+list row carries that fact. That refusal therefore arrives as the prompt hook's
+error notice ("Could not cancel this delivery order" with the server's words)
+rather than as a missing entry.
 
 **Which returnable statuses.** `doCountsAsDelivered` is the SHARED predicate,
 the same one `resolveCandidateDoIds(…, 'delivered')` applies server-side
@@ -192,6 +193,45 @@ the one document where a status move writes inventory OUT, and `DELIVERED`
 belongs to the driver's Proof-of-Delivery screen, which closes it with a
 signature. `Reopen` is absent for a harder reason — see "Who moves the DO status"
 below; every transition out of `CANCELLED` is refused.
+
+### Cancelling costs a REASON (owner, 2026-09-14)
+
+His words: 「DO cancel need pop out window for reason」. The Purchase Order has
+had exactly this rule since 2026-09-09 (「PO cancelled 不需要审批，只需要 remark
+原因取消」), so the delivery order took the SAME mechanism rather than a second
+copy of it — the full module is `docs/modules/document-cancel-approval.md`.
+
+- **No approval.** The cancel still runs the moment the person confirms. The
+  prompt IS the confirmation; nothing is asked twice.
+- **The reason is mandatory at the server, not at the screen.**
+  `cancelApprovalGuard("DO")` is mounted in `backend/src/scm/index.ts` on
+  `/delivery-orders-mfg/:id/status`, after the DO area guard and before the
+  router. It wakes only when the body asks for `CANCELLED` (`asksToCancel` —
+  read exactly the way the handler normalises: trimmed, upper-cased, coerced),
+  refuses **400 `reason_required`** under 5 characters (the SO request's
+  `readReason`), and lets every other transition through untouched. The status
+  handler itself is NOT edited (it is past its size ceiling).
+- **Where the reason goes.** Only after the handler answered 2xx, the guard
+  writes (1) a `CANCEL` row on the DO's own History (`scm.entity_audit_log`,
+  `DELIVERY_ORDER`) carrying `Cancellation: <reason>` AND the status change
+  `<old> → CANCELLED` — the status handler writes no history of its own, so this
+  row is the whole record — and (2) an `EXECUTED` row in
+  `scm.document_cancel_requests` with `doc_type = 'DO'` (allowed by
+  `backend/src/db/migrations-pg/20260914T1800_scm_document_cancel_requests_do.sql`), which is what
+  Procurement → Cancellation Requests → All lists. A cancel the handler refused
+  (an invoice or return on the DO) records nothing; neither does a cancel of a
+  DO that was ALREADY cancelled, which the handler answers 200 without doing
+  anything.
+- **The three controls, one sentence.** Desktop detail (`Cancel DO`) and the
+  list row menu both call `useDoCancelAction` in
+  `frontend/src/pages/scm-v2/use-do-cancel-action.ts` (`doCancelPrompt`, the
+  `useCancelMfgDeliveryOrder` hook — `reason` is REQUIRED by its type). The
+  phone's Cancel on `MobileModuleDetail.tsx` carries `reasonPrompt:
+  DO_CANCEL_PROMPT` from `frontend/src/mobile/doc-actions.ts`, whose copy must
+  not drift from the desktop's (a test compares the clauses).
+- **What the notice says.** "Its stock is back" only when the response carried
+  no `movementErrors`; a cancel whose stock return partly failed still stands,
+  and the notice says so and names the errors.
 
 ### Data hooks
 `frontend/src/vendor/scm/lib/delivery-order-queries.ts`
@@ -1295,6 +1335,7 @@ Refusals the operator sees, in the order they fire:
 
 | Guard | Message |
 |---|---|
+| cancel with no reason, or under 5 characters (the guard at the mount, before the handler — 2026-09-14) | `Give a reason the approvers can act on — at least 5 characters.` (400 `reason_required`) |
 | unknown target (input upper-cased first) | `"<x>" is not a valid Delivery Order status.` (400 `invalid_status`) |
 | shipped → pre-ship | `This Delivery Order has already shipped, so it cannot be moved back to a not-shipped status. Cancel it and create a new Delivery Order instead.` (409) |
 | over-delivery re-check on first ship (linked AND unlinked lines — PR #2522) | `This delivery would ship more than the Sales Order ordered — another DO already covers it. Refresh and check the Sales Order.` (409 `over_delivery`) — and until 2026-08-20 a LOADED DO tripped this against ITSELF, see below |
@@ -2101,6 +2142,7 @@ into a duplicate line.
 | Status ladder / who may advance it | `DeliveryOrderDetailV2.tsx` action bar | `mobile/MobileModuleDetail.tsx:480-494`, gated by `useMayOperateDoc` (`:454`) → `canOperateDeliveryOrders` (`frontend/src/auth/salesAccess.ts:200`) — the SAME helper the desktop uses |
 | SO→DO conversion | `pages/scm-v2/DeliveryOrderFromSo.tsx` (picker → `DeliveryOrderNewV2.tsx`, which owns the "Save as draft" toggle) | `mobile/MobileConvertWizard.tsx` (`target: "do"`) — one screen, always `asDraft: true` |
 | Convert-to-DO from the planning board | `vendor/scm/lib/delivery-planning-queries.ts` `useConvertSosToDo` | `mobile/MobileDeliveryPlanning.tsx` — **both** carry an `Idempotency-Key`; desktop keys per SO doc_no (one mount converts many), mobile per mount (one mount is one stop) |
+| Cancel asks for the reason | `pages/scm-v2/use-do-cancel-action.ts` (`doCancelPrompt`), used by the detail page and the list row menu | `mobile/doc-actions.ts` `DO_CANCEL_PROMPT` on `MobileModuleDetail.tsx`'s Cancel — same clauses, pinned by `use-do-cancel-action.test.tsx` |
 | Proof of delivery / collect payment | `DeliveryOrderDetailV2.tsx` payments panel | `mobile/MobilePOD.tsx` |
 | Cache invalidation after a write | the hooks in `vendor/scm/lib/delivery-order-queries.ts` | `mobile/sharedInvalidate.ts:69` (`DO_ROOTS` + `STOCK_ROOTS`) |
 

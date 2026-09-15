@@ -65,6 +65,16 @@ describe('cancelRequestNotify', () => {
     expect(posted).not.toHaveBeenCalled();
   });
 
+  /* Owner 2026-09-14 — a Delivery Order cancel asks for its reason, not for
+     anybody's approval, exactly like the Purchase Order. */
+  it('a Delivery Order tells nobody, at any step', async () => {
+    for (const event of ['raised', 'level1', 'approved'] as const) {
+      await notifyCancelRequest(env, event, { ...base, docType: 'DO', docNumber: 'DO-7', actorUserId: 11 });
+    }
+    expect(holders).not.toHaveBeenCalled();
+    expect(posted).not.toHaveBeenCalled();
+  });
+
   it('approved / rejected → the requester only, never about their own action', async () => {
     await notifyCancelRequest(env, 'approved', { ...base, actorUserId: 31, actorName: 'Cara' });
     expect(posted.mock.calls[0]![1]).toMatchObject({ userIds: [11], title: expect.stringContaining('approved') });
