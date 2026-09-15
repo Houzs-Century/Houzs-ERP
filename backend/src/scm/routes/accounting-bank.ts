@@ -35,6 +35,7 @@ import {
   loadLiveMonthLock, loadLineMonth, loadClaimedElsewhere, claimedSetFor, jeNosOf } from '../../acc/bank';
 import { lockedRefusal, lockMonthOf } from '../../acc/bank-lock';
 import { postBatchReceipt, undoBatchReceipt } from '../../acc/settlement';
+import { withJournalRefs } from '../../acc/journal-refs';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 
@@ -728,6 +729,12 @@ export const bankStatementDetail = guard(async (c) => {
   if (!elsewhere.ok) return c.json({ error: 'load_failed', reason: elsewhere.reason }, 500);
   if (!rules.ok) return c.json({ error: 'load_failed', reason: rules.reason }, 500);
   if (!payouts.ok) return c.json({ error: 'load_failed', reason: payouts.reason }, 500);
+  /* Every entry named the way a person knows it — the document's number and
+     the customer, payee or merchant (docs/bugs/0918) — so the candidates and
+     the outstanding list below read the same. */
+  const named = await withJournalRefs(sb, co.companyId, ledger.movements);
+  if (!named.ok) return c.json({ error: 'load_failed', reason: named.reason }, 500);
+  ledger.movements = named.entries;
   const claimedElsewhere = claimedSetFor(elsewhere, ledger.movements);
 
   const stored = (linesRes.data ?? []) as Array<Record<string, any>>;

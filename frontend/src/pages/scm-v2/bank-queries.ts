@@ -68,6 +68,10 @@ export type BankEntryCandidate = {
   daysApart: number;
   /** Who was paid / who paid, off the entry. */
   partyName?: string | null;
+  /** The document a person holds — OR · SO, the PV number, "HLB payout dd/mm/yyyy" (docs/bugs/0918). */
+  reference?: string | null;
+  /** The customer, the payee or the merchant (docs/bugs/0918). */
+  who?: string | null;
 };
 
 export type BankLine = {
@@ -141,6 +145,10 @@ export type LedgerEntry = {
   /** Who was paid / who paid (owner 2026-09-11: 例如 pay to who). */
   partyName?: string | null;
   notes?: string | null;
+  /** The document a person holds — OR · SO, the PV number, "HLB payout dd/mm/yyyy" (docs/bugs/0918). */
+  reference?: string | null;
+  /** The customer, the payee or the merchant (docs/bugs/0918). */
+  who?: string | null;
   /** Posted before this period and still not on any statement — carried
       (owner: 之前 in book 还没有 recon 的也要带下来，因为可能下个月才过钱). */
   carried?: boolean;

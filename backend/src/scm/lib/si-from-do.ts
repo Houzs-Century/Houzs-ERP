@@ -29,7 +29,8 @@ import { dateOrNull } from './date-coerce';
 import {
   doLineRemaining, doRemainingByItemId, findOverInvoicedDoItems, custKeyOf, remainingUnavailableResponse, siTransferRefusal,
 } from './do-line-remaining';
-import { refuseMigratedSources } from './migrated-chain';
+import { deliveryMustMirrorAutoCount, refuseMigratedSources } from './migrated-chain';
+import { MIGRATED_DELIVERIES_NOT_INVOICED_IN_AUTOCOUNT } from './migrated-deliveries-not-invoiced.generated';
 import { postSiRevenue } from './post-si-revenue';
 import { applyCustomerCreditToSi } from './customer-credits';
 import { recomputeSiPaid } from './si-order-deposit';
@@ -254,6 +255,8 @@ export function buildItemRow(salesInvoiceId: string, it: Record<string, unknown>
 }
 
 /* The migrated refusal for every path that can attach a DELIVERY to an invoice.
+   It refuses only a delivery AutoCount INVOICED; one AutoCount never invoiced is
+   billed here like any other (docs/bugs/0918, `deliveryMustMirrorAutoCount`).
    `/from-dos` resolves its own delivery ids and calls refuseMigratedSources
    directly; the rest arrive holding either a do_item_id (POST /, POST
    /:id/items) or a delivery id (POST /:id/items/from-do/:doId), so the delivery
@@ -287,7 +290,13 @@ export async function migratedRefusalForDeliveries(
     ok: true,
     refusal: refuseMigratedSources(
       ((data ?? []) as Array<{ do_number: string; migrated_no_stock: boolean | null }>)
-        .map((r) => ({ docNo: r.do_number, migrated: r.migrated_no_stock === true })),
+        .map((r) => ({
+          docNo: r.do_number,
+          migrated: deliveryMustMirrorAutoCount(
+            { docNo: r.do_number, migrated: r.migrated_no_stock === true },
+            MIGRATED_DELIVERIES_NOT_INVOICED_IN_AUTOCOUNT,
+          ),
+        })),
     ),
   };
 }
