@@ -70,6 +70,7 @@ import { merchantChargesReport } from './accounting-merchant-charges';
 import { performanceReport, savePerformanceSettingsHandler } from './accounting-performance';
 import { numberingGet, numberingPut } from './accounting-numbering';
 import { receiptsList, receiptEnsure, receiptFormalise } from './accounting-receipts';
+import { receiptsBackfillPlan, receiptsBackfillRun } from './accounting-receipts-backfill';
 import { ACCOUNT_SECTIONS, defaultSectionFor } from '../lib/account-sections';
 import { dateOrNull } from '../lib/date-coerce';
 
@@ -184,6 +185,8 @@ accounting.put('/numbering', numberingPut);
    money-confirmed button. Handlers in accounting-receipts.ts. */
 accounting.get('/receipts', receiptsList);
 accounting.post('/receipts/ensure', receiptEnsure);
+accounting.get('/receipts/backfill', receiptsBackfillPlan);
+accounting.post('/receipts/backfill', receiptsBackfillRun);
 accounting.post('/receipts/:id/formalise', receiptFormalise);
 accounting.post('/item-groups', itemGroupCreate);
 accounting.put('/item-groups/:code/accounts', itemGroupBind);
