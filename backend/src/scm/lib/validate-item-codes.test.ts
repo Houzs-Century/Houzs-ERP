@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  validateItemCodes, unknownItemCodeResponse,
+  validateItemCodes, unknownItemCodeResponse, catalogCategoriesByCode,
   findFreeTextSoLines, freeTextSoLineResponse,
 } from './validate-item-codes';
 import { parsePgrestInList } from './pgrest-in-list';
@@ -131,5 +131,52 @@ describe('findFreeTextSoLines — the square-pillow shape', () => {
     expect(body.message).toContain('"Square pillow"');
     expect(body.message).toContain('"Round pillow"');
     expect(body.lines).toEqual(['Square pillow', 'Round pillow']);
+  });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   catalogCategoriesByCode (owner 2026-09-14, 「为什么Service line item还是
+   purchaser approve?」): an amendment ADD has no SO line, so the catalogue's
+   CATEGORY is the only thing that says TRANSPORTATION CHARGES is a service.
+   Same company predicate and in-list escaping as validateItemCodes.
+   ═══════════════════════════════════════════════════════════════════════════ */
+describe('catalogCategoriesByCode', () => {
+  const rows = (): Row[] => [
+    { _table: 'mfg_products', code: 'TRANSPORTATION CHARGES', company_id: 1, category: 'SERVICE' },
+    { _table: 'mfg_products', code: 'TRANSPORTATION CHARGES', company_id: 2, category: 'OTHERS' },
+    { _table: 'mfg_products', code: 'CODY-(K)', company_id: 1, category: 'BEDFRAME' },
+    { _table: 'mfg_products', code: '24" PILLOW', company_id: 1, category: 'ACCESSORY' },
+  ];
+
+  it('answers each code\'s category inside the given company, trimmed keys', async () => {
+    const got = await catalogCategoriesByCode(makeSb(rows()), [' TRANSPORTATION CHARGES ', 'CODY-(K)', 'NOPE'], 1);
+    expect(got).not.toBeNull();
+    expect(got!.get('TRANSPORTATION CHARGES')).toBe('SERVICE');
+    expect(got!.get('CODY-(K)')).toBe('BEDFRAME');
+    expect(got!.has('NOPE')).toBe(false);
+  });
+
+  it('never reads another company\'s row', async () => {
+    const got = await catalogCategoriesByCode(makeSb(rows()), ['TRANSPORTATION CHARGES'], 2);
+    expect(got!.get('TRANSPORTATION CHARGES')).toBe('OTHERS');
+  });
+
+  it('keeps a code carrying an inch mark in the list (docs/bugs/0780)', async () => {
+    const got = await catalogCategoriesByCode(makeSb(rows()), ['24" PILLOW', 'TRANSPORTATION CHARGES'], 1);
+    expect(got!.get('24" PILLOW')).toBe('ACCESSORY');
+    expect(got!.get('TRANSPORTATION CHARGES')).toBe('SERVICE');
+  });
+
+  it('asks nothing for no codes, and answers null when the read fails', async () => {
+    const never = { from: () => { throw new Error('must not read'); } };
+    expect((await catalogCategoriesByCode(never, ['', '  '], 1))!.size).toBe(0);
+    const failing = {
+      from: () => {
+        const b: any = { select: () => b, in: () => b, eq: () => b, filter: () => b,
+          then: (resolve: (v: { data: null; error: { message: string } }) => void) => resolve({ data: null, error: { message: 'boom' } }) };
+        return b;
+      },
+    };
+    expect(await catalogCategoriesByCode(failing, ['CODY-(K)'], 1)).toBeNull();
   });
 });
