@@ -74,6 +74,11 @@ vi.mock('../../vendor/scm/lib/rp-report-pdf', async (importOriginal) => ({
 }));
 vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ can: () => true }) }));
 vi.mock('./ReportLayoutEditor', () => ({ ReportLayoutEditor: () => <div role="dialog" aria-label="Layout · Receipts & Payments">editor</div> }));
+/* The monthly view has its own contract (MonthlyReport.test.tsx); here it only has to be reached. */
+vi.mock('./MonthlyReport', () => ({
+  MonthlyReport: (p: { title: string; withCumulative: boolean }) => <div role="region" aria-label={`Monthly · ${p.title}`}>{p.withCumulative ? 'with 累计' : 'no 累计'}</div>,
+  ByMonthButton: ({ on, onToggle }: { on: boolean; onToggle: () => void }) => <button type="button" aria-pressed={on} onClick={onToggle}>By month</button>,
+}));
 
 import { ReceiptsPaymentsTab } from './ReceiptsPayments';
 import { generateRpPdf } from '../../vendor/scm/lib/rp-report-pdf';
@@ -123,6 +128,15 @@ describe('the Receipts & Payments tab', () => {
     render(<ReceiptsPaymentsTab />);
     fireEvent.click(screen.getByText('Print'));
     expect(vi.mocked(generateRpPdf)).toHaveBeenCalledWith(report);
+  });
+
+  test('By month opens the monthly view with 累计; Print steps aside; the account ticks still narrow the read (docs/bugs/0916)', () => {
+    render(<ReceiptsPaymentsTab />);
+    fireEvent.click(screen.getByRole('button', { name: 'By month' }));
+    expect(screen.getByRole('region', { name: /Monthly · Receipts & Payments/ }).textContent).toBe('with 累计');
+    expect(screen.queryByText('Closing balance')).toBeNull();
+    expect((screen.getByText('Print').closest('button') as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByLabelText('Column 310-0010')).toBeTruthy();
   });
 
   test('L1 folds the rows to their categories; the Layout button opens the editor', () => {

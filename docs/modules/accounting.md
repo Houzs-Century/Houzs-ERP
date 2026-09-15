@@ -1835,12 +1835,40 @@ the four has L1..Ln buttons and the Layout button; the editor names them all
 and gained Fold all / Unfold all for the chart-sized R&P tree. A category id
 accepts spaces, dots and slashes — the default tree names its section layer
 after the section ("sec:SALES ADJUSTMENTS", "sec:APPROPRIATION A/C") and
-must always be savable. The month-by-month view is next in the owner's
-queue. Contracts: the six above plus `backend/tests/performanceReport.test.ts`,
+must always be savable. Contracts: the six above plus `backend/tests/performanceReport.test.ts`,
 `backend/tests/rpReport.test.ts`, `frontend/src/pages/scm-v2/PerformancePnl.test.tsx`,
 `frontend/src/vendor/scm/lib/performance-pnl-pdf.test.ts`,
 `frontend/src/pages/scm-v2/ReceiptsPayments.test.tsx`,
 `frontend/src/vendor/scm/lib/rp-report-pdf.test.ts`.
+
+**The four reports month by month (2026-09-15, docs/bugs/0916; owner
+2026-09-14: 能看每个月的, his sample: 累计 leftmost, the newest month on the
+left and older months to the right, a % switch).** Every report page wears a
+By month button (`ByMonthButton` in `frontend/src/pages/scm-v2/MonthlyReport.tsx`)
+that swaps the single period for `MonthlyReport`: latest month, 3 / 6 / 12
+months, RM / % (each cell as its % of that column's own base — sales, total
+assets, the side's total), L1..Ln, Export. Nothing new is computed: a
+column is ONE request to the report's own endpoint for that period (the
+cumulative range first, then each month), so a month can never disagree
+with the single-period screen for the same month, and nothing is stored.
+`frontend/src/vendor/scm/lib/report-monthly.ts` turns each answer into the
+lines its screen prints (`pnlLines`, `balanceSheetLines`, `performanceLines`,
+`rpLines` — block titles, the laid tree by its node ids, totals, net) and
+`mergeColumns` unions the columns by line id, each line kept where its own
+column first had it, a cell empty where a column never printed the line (a
+category prints only when something under it did, so the trees differ
+month to month). The balance sheet has no 累计 column — a month's column is
+the balance as at that month's end (`asOf` = the month's last day); the
+Performance P&L's lines are the groups' sales, cost and gross profit with
+their totals, then the summary lines the single-period screen draws (they
+carry an `id` now); Receipts & Payments shows the Total column of the ticked
+accounts, the ticks and the party toggle applying to every month, and Print
+steps aside while the view is on. Contracts:
+`frontend/src/vendor/scm/lib/report-monthly.test.ts`,
+`frontend/src/pages/scm-v2/MonthlyReport.test.tsx`, and the By month tests in
+`frontend/src/pages/scm-v2/Reports.test.tsx`,
+`frontend/src/pages/scm-v2/PerformancePnl.test.tsx`,
+`frontend/src/pages/scm-v2/ReceiptsPayments.test.tsx`.
 
 **Every payment action by a role holding the correction right owes a reason,
 and Corrections names who first recorded the payment (2026-09-14,
