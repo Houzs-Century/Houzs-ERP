@@ -73,6 +73,7 @@ import {
   type SoAmendmentHeaderChanges,
 } from '../../vendor/scm/lib/so-amendment-header';
 import { diffHeaderPayload, hasHeaderChanges } from '../../vendor/scm/lib/so-header-diff';
+import { soSaveEndFields, soVersionAfter } from '../../vendor/scm/lib/so-save-lease';
 import { planAmendmentSubmit, amendmentSubmittedNotice, AMENDMENT_MODE_BANNER,
   AMENDMENT_NOTHING_TO_SUBMIT, AMENDMENT_REASON_REQUIRED } from '../../vendor/scm/lib/so-amendment-submit';
 import { todayMyt } from '../../vendor/scm/lib/dates';
@@ -947,7 +948,7 @@ export const SalesOrderDetail = () => {
           reserveLineWrites: true,
           lineWriteLeaseToken: leaseToken,
           version: loadedVersionRef.current,
-        }).then((result) => { loadedVersionRef.current = result.version; })
+        }).then((result) => { loadedVersionRef.current = soVersionAfter(result, loadedVersionRef.current); })
       : Promise.resolve();
 
     /* The version reservation is the first persisted operation. A stale
@@ -1272,10 +1273,7 @@ export const SalesOrderDetail = () => {
         {
           docNo: stableDocNo,
           ...patch,
-          ...(lineLease ? {
-            lineWriteLeaseToken: lineLease,
-            ...(Object.keys(patch).length === 0 ? { completeLineWrites: true } : {}),
-          } : {}),
+          ...soSaveEndFields(lineLease), // ends the save even when the patch is not empty - so-save-lease.ts
           // The route rejects a real header mutation without this loaded token.
           // The detail response is migration-backed, so absence is a load defect,
           // not permission to fall back to last-writer-wins.
@@ -1284,7 +1282,7 @@ export const SalesOrderDetail = () => {
         },
         {
           onSuccess: (result) => {
-            loadedVersionRef.current = result.version;
+            loadedVersionRef.current = soVersionAfter(result, loadedVersionRef.current);
             if (lineLease) activeLineLeaseRef.current = null;
             cb?.onSuccess?.();
           },

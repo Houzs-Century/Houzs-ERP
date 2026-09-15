@@ -3020,7 +3020,9 @@ told him the order was being saved on another screen. He was working alone.
 | what changed | now |
 | --- | --- |
 | lifetime | **60s** — `SO_EDIT_LEASE_MS` in `backend/src/scm/lib/so-edit-lease.ts`, the one place that owns it |
-| holder | recorded (`edit_lease_user_id`, mig 0348). **The same person takes their own lock back** rather than waiting it out. A lock with NO holder — pre-0348, or a path with no authenticated user — is never taken over |
+| holder | recorded (`edit_lease_user_id`, mig 0348). **The same person takes their own lock back** rather than waiting it out — on a line write, a command transaction, and (since 2026-09-15) the header PATCH when it STARTS a save: the reservation, or a header-only save. A lock with NO holder — pre-0348, or a path with no authenticated user — is never taken over. NOT taken back: the end of a save the same person has since superseded (that lock is their newer save's), and status change / draft discard / amendment apply, which still refuse any live lock |
+| the end of a save | any header PATCH carrying the save's lease token that is not a reservation and has nothing left to write releases the lock and answers with `version` — with or without `completeLineWrites` (`soHeaderLeaseIntent`). Both screens always send the flag too (`soSaveEndFields`, `frontend/src/vendor/scm/lib/so-save-lease.ts`). The "nothing changed" answer carries `version` as well |
+| after Save | the desktop Save waits for the order's re-read before it returns to the detail page (`useUpdateMfgSalesOrderHeader` returns the invalidation), so an Edit pressed at once opens on the saved order, not the copy from before it |
 | the refusal | says WHICH of three: `held` (somebody else), `expired` (the lock lapsed), `missing` (this screen never took one). Only `held` may name another person, and since the holder is recorded that is the one case where it is true |
 
 **It is NOT a liveness check and never was.** Nothing confirms the other screen
@@ -3033,6 +3035,15 @@ requests — reserve, line writes, header commit — and version CAS alone canno
 a half-applied set of line writes. Dropping the lock and relying on CAS alone was
 offered as an option and NOT taken. Full trace:
 `docs/bugs/0630-one-person-editing-alone-was-locked-out-of-their-own-order-f.md`.
+
+**2026-09-15, the same complaint again (HC-SO-2609-071)** — 「我 save 了就 save 了啊，
+然后如果我要一瞬间再 edit 第二次也是可以的啊」. A save that REPORTED SUCCESS left its
+lock on the row: its last request carried one header field the screen thought
+dirty (a venue id that is not a uuid) and so no end flag, the route dropped the
+field and took the "nothing changed" exit without releasing. And the 0630
+takeover had never reached the reservation, so that lock refused the owner's own
+next Saves for its minute. Trace and what is still open:
+`docs/bugs/0936-a-save-that-reported-success-left-the-order-s-lock-behind-so.md`.
 ## The Processing Date decides IN_PRODUCTION — both ways
 
 Owner's rule: 「只要有 Processing Date, 就代表他 Proceed 了」, sharpened on
