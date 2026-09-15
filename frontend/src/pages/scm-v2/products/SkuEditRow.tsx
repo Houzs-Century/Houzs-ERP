@@ -60,6 +60,61 @@ export type ProductEditPatch = {
   price1Sen?: number | null;
 };
 
+/* One seat-height price list compared by content, not by array order: staging
+   a cell re-inserts its slot at the end, and a list that only moved is not an
+   edit. */
+const seatKey = (arr: SeatHeightPrice[] | null | undefined): string =>
+  JSON.stringify((arr ?? [])
+    .map((p) => [String(p.height), p.tier ?? 'PRICE_2', p.priceSen] as const)
+    .sort((a, b) => `${a[0]}|${a[1]}`.localeCompare(`${b[0]}|${b[1]}`)));
+
+/* Fold one cell's change into the staged edits. A field staged back to what
+   is stored is DROPPED, and a row with nothing left leaves the list, so
+   tabbing through a price, or typing a description back to what it was, is
+   not an unsaved change and the Save count means what it says. `row` is the
+   stored SKU; without it the change is kept as typed. */
+export function stageRowEdit(
+  prev: Record<string, ProductEditPatch>,
+  row: MfgProductRow | null,
+  id: string,
+  change: ProductEditPatch,
+): Record<string, ProductEditPatch> {
+  const next: ProductEditPatch = { ...prev[id], ...change };
+  if (row) {
+    if (next.code !== undefined && next.code === row.code) delete next.code;
+    if (next.name !== undefined && next.name === row.name) delete next.name;
+    if ('branding' in next && (next.branding ?? null) === (row.branding ?? null)) delete next.branding;
+    if ('basePriceSen' in next && (next.basePriceSen ?? null) === row.base_price_sen) delete next.basePriceSen;
+    if ('price1Sen' in next && (next.price1Sen ?? null) === row.price1_sen) delete next.price1Sen;
+    if (next.seatHeightPrices && seatKey(next.seatHeightPrices) === seatKey(row.seat_height_prices)) delete next.seatHeightPrices;
+  }
+  const out = { ...prev };
+  if (Object.keys(next).length === 0) delete out[id];
+  else out[id] = next;
+  return out;
+}
+
+/* Send every staged row, one PATCH each, and report which went through. A
+   failure does not stop the others and is never thrown past the caller: the
+   page keeps the failed rows staged and on screen so the operator can retry,
+   and drops only the ones the server accepted. */
+export async function saveStagedEdits(
+  pending: Record<string, ProductEditPatch>,
+  save: (id: string, patch: ProductEditPatch) => Promise<unknown>,
+): Promise<{ savedIds: string[]; failures: Array<{ id: string; message: string }> }> {
+  const savedIds: string[] = [];
+  const failures: Array<{ id: string; message: string }> = [];
+  for (const [id, patch] of Object.entries(pending)) {
+    try {
+      await save(id, patch);
+      savedIds.push(id);
+    } catch (e) {
+      failures.push({ id, message: e instanceof Error ? e.message : 'Something went wrong.' });
+    }
+  }
+  return { savedIds, failures };
+}
+
 export const ProductRow = memo(({
   row, editMode, isSofaView, isMattressView, sofaSizes, tier, onOpenSuppliers,
   selected, onToggleSelected, patch, onStage, brandingPool,
@@ -90,7 +145,14 @@ export const ProductRow = memo(({
   // not nullishness, before falling back to the stored value.
   const baseSen = patch && 'basePriceSen' in patch ? patch.basePriceSen ?? null : row.base_price_sen;
   const p1Sen = patch && 'price1Sen' in patch ? patch.price1Sen ?? null : row.price1_sen;
-  const brandingVal = patch?.branding ?? row.branding ?? '';
+  // Same key-presence rule: a branding staged as null is a clear, not "unchanged".
+  const brandingVal = patch && 'branding' in patch ? patch.branding ?? '' : row.branding ?? '';
+  /* The code and description cells show the STAGED text once a change is
+     staged. They showed the stored text, so a typed description snapped back to
+     the old one the moment the cell was left, while Save still sent the new one
+     (owner 2026-09-15, 810 BOLSTER). */
+  const codeVal = patch?.code ?? row.code;
+  const nameVal = patch?.name ?? row.name;
 
   const updateSofaCell = (size: string, newPriceSen: number | null) => {
     onStage(row.id, { seatHeightPrices: upsertHeightTier(seatArr, size, tier, newPriceSen) });
@@ -149,7 +211,7 @@ export const ProductRow = memo(({
             <Truck size={13} strokeWidth={1.75} />
           </button>
           <EditableTextCell
-            value={row.code}
+            value={codeVal}
             chipClassName={styles.codeChip}
             ariaLabel="Edit product code"
             editable={editMode}
@@ -163,7 +225,7 @@ export const ProductRow = memo(({
       <td onClick={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
           <EditableTextCell
-            value={row.name}
+            value={nameVal}
             chipClassName={styles.nameCompact}
             inline
             ariaLabel="Edit description"
@@ -198,6 +260,7 @@ export const ProductRow = memo(({
               <td key={s} className={sen ? styles.price : styles.priceEmpty}>
                 {editMode ? (
                   <PriceInput
+                    key={tier}
                     valueSen={sen}
                     baselineSen={baselineSen}
                     onCommit={(v) => updateSofaCell(s, v)}

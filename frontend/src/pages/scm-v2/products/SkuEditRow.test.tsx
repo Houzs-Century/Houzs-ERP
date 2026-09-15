@@ -7,7 +7,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { useCallback, useState } from 'react';
 import { describe, expect, it } from 'vitest';
 import type { MfgProductRow } from '../../../vendor/scm/lib/mfg-products-queries';
-import { ProductRow, type ProductEditPatch } from './SkuEditRow';
+import { ProductRow, stageRowEdit, type ProductEditPatch } from './SkuEditRow';
 
 const baseRow: MfgProductRow = {
   id: 'mfg-1',
@@ -97,5 +97,36 @@ describe('SKU Master edit row keeps the typed value until Save', () => {
     rerender(<Harness view="sofa" tier="PRICE_1" />);
     expect(screen.getByDisplayValue('900.00')).toBeTruthy();
     expect(screen.queryByDisplayValue('1000.00')).toBeNull();
+  });
+});
+
+describe('stageRowEdit — the Save count means real changes', () => {
+  it('keeps a real change', () => {
+    expect(stageRowEdit({}, baseRow, 'mfg-1', { name: 'BOLSTER 810' })).toEqual({ 'mfg-1': { name: 'BOLSTER 810' } });
+  });
+
+  it('drops a field typed back to the stored value, and the row with it', () => {
+    const once = stageRowEdit({}, baseRow, 'mfg-1', { name: 'BOLSTER 810' });
+    expect(stageRowEdit(once, baseRow, 'mfg-1', { name: 'RDS BOLSTER 810' })).toEqual({});
+  });
+
+  it('tabbing through an unchanged price stages nothing', () => {
+    expect(stageRowEdit({}, baseRow, 'mfg-1', { basePriceSen: 5000 })).toEqual({});
+    expect(stageRowEdit({}, baseRow, 'mfg-1', { price1Sen: null })).toEqual({});
+  });
+
+  it('a cleared price or branding is a change', () => {
+    expect(stageRowEdit({}, baseRow, 'mfg-1', { basePriceSen: null })).toEqual({ 'mfg-1': { basePriceSen: null } });
+    expect(stageRowEdit({}, baseRow, 'mfg-1', { branding: null })).toEqual({ 'mfg-1': { branding: null } });
+  });
+
+  it('a seat price list that only changed order is not a change', () => {
+    const reordered = [...(baseRow.seat_height_prices ?? [])].reverse();
+    expect(stageRowEdit({}, baseRow, 'mfg-1', { seatHeightPrices: reordered })).toEqual({});
+  });
+
+  it('other rows are untouched', () => {
+    const prev = { other: { name: 'X' } };
+    expect(stageRowEdit(prev, baseRow, 'mfg-1', { name: 'BOLSTER 810' })).toEqual({ other: { name: 'X' }, 'mfg-1': { name: 'BOLSTER 810' } });
   });
 });

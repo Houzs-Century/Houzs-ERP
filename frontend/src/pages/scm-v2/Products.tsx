@@ -111,7 +111,7 @@ import { parseMoneyToSen } from '../../lib/money';
 import styles from './Products.module.css';
 import { DateField } from "../../vendor/scm/components/DateField";
 import { normalizeImportHeader, looksLikeGridExport, mapGridHeaders, isGridNoPrice, importFailureMessage } from './products-import-headers';
-import { ProductRow, fmtRm, fmtUnit, priceForHeightTier, type ProductEditPatch } from './products/SkuEditRow';
+import { ProductRow, fmtRm, fmtUnit, priceForHeightTier, saveStagedEdits, stageRowEdit, type ProductEditPatch } from './products/SkuEditRow';
 
 const ICON_PROPS = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -263,25 +263,52 @@ const SkuMasterTab = () => {
   const updatePrices = useUpdateMfgProductPrices();
   const notify = useNotify();
   const askConfirm = useConfirm();
+  // The stored rows, so a change typed back to what is saved un-stages itself.
+  const rowsByIdRef = useRef(new Map<string, MfgProductRow>());
   const stageEdit = useCallback((id: string, patch: ProductEditPatch) => {
-    setPendingEdits((prev) => ({ ...prev, [id]: { ...prev[id], ...patch } }));
+    setPendingEdits((prev) => stageRowEdit(prev, rowsByIdRef.current.get(id) ?? null, id, patch));
   }, []);
   const dirtyCount = Object.keys(pendingEdits).length;
+  /* Save sends every staged row, then WAITS for the list to reload before
+     leaving edit mode — otherwise the grid repaints from the old cache and the
+     saved text looks lost until the refetch lands. A failed row stays staged
+     and on screen with the reason; only accepted rows are dropped. */
   const saveEdits = async () => {
-    const entries = Object.entries(pendingEdits);
-    if (entries.length === 0) { setEditMode(false); return; }
+    const snapshot = pendingEdits;
+    const total = Object.keys(snapshot).length;
+    if (total === 0) { setEditMode(false); return; }
     setSavingEdits(true);
-    try {
-      for (const [id, patch] of entries) {
-        await updatePrices.mutateAsync({ id, ...patch });
-      }
-      setPendingEdits({});
+    const { savedIds, failures } = await saveStagedEdits(snapshot, (id, patch) => updatePrices.mutateAsync({ id, ...patch }));
+    setPendingEdits((prev) => {
+      const out = { ...prev };
+      for (const id of savedIds) if (out[id] === snapshot[id]) delete out[id];
+      return out;
+    });
+    if (savedIds.length > 0) await qc.refetchQueries({ queryKey: ['mfg-products'], type: 'active' });
+    setSavingEdits(false);
+    const plural = (n: number) => `${n} SKU${n === 1 ? '' : 's'}`;
+    if (failures.length === 0) {
       setEditMode(false);
-    } finally {
-      setSavingEdits(false);
+      void notify({ title: `Saved ${plural(savedIds.length)}.` });
+      return;
     }
+    void notify({
+      title: `Saved ${savedIds.length} of ${plural(total)}. ${failures.length} not saved.`,
+      body: failures.slice(0, 5).map((f) => `· ${rowsByIdRef.current.get(f.id)?.code ?? f.id}: ${f.message.slice(0, 160)}`).join('\n')
+        + '\n\nThe changes that did not save are still on screen. Fix them and press Save again, or Cancel to drop them.',
+      tone: 'error',
+    });
   };
-  const exitEdit = () => { setPendingEdits({}); setEditMode(false); };
+  const exitEdit = async () => {
+    if (dirtyCount > 0 && !(await askConfirm({
+      title: `Discard ${dirtyCount} unsaved change${dirtyCount === 1 ? '' : 's'}?`,
+      body: 'The edited rows go back to their saved values.',
+      confirmLabel: 'Discard',
+      danger: true,
+    }))) return;
+    setPendingEdits({});
+    setEditMode(false);
+  };
   const [tier, setTier] = useState<Tier>('PRICE_2');
   // PR #39 — Model filter chip row (visible only on Sofa view).
   // Distinct base_model values pulled from current rows. 'all' = no filter.
@@ -306,6 +333,7 @@ const SkuMasterTab = () => {
   const brandingPool = useBrandingPool();
 
   const allRows = useMemo(() => products ?? [], [products]);
+  useEffect(() => { rowsByIdRef.current = new Map(allRows.map((r) => [r.id, r])); }, [allRows]);
   const isSofaView = category === 'SOFA';
   const isMattressView = category === 'MATTRESS';
   // Memoized so its reference is stable across renders — otherwise the fallback
@@ -841,11 +869,11 @@ const SkuMasterTab = () => {
           )}
           {editMode ? (
             <>
-              <Button variant="secondary" onClick={exitEdit} disabled={savingEdits}>
+              <Button variant="secondary" onClick={() => void exitEdit()} disabled={savingEdits}>
                 <X {...ICON_PROPS} />
                 <span>Cancel</span>
               </Button>
-              <Button variant="primary" onClick={saveEdits} disabled={savingEdits || dirtyCount === 0}>
+              <Button variant="primary" onClick={() => void saveEdits()} disabled={savingEdits || dirtyCount === 0}>
                 <Save {...ICON_PROPS} />
                 <span>{savingEdits ? 'Saving…' : dirtyCount > 0 ? `Save (${dirtyCount})` : 'Save'}</span>
               </Button>
@@ -927,6 +955,9 @@ const SkuMasterTab = () => {
         <DataTable<MfgProductRow>
           tableId={gridTableId}
           layoutFamily={gridTableId}
+          /* Opens with NO column filter, every time (owner 2026-09-15: a remembered
+             funnel made his SKUs look missing, and hid the row he had just renamed). */
+          persistFilters={false}
           exportName="sku-master"
           rows={isLoading || searching ? null : rows}
           loading={isLoading || searching}

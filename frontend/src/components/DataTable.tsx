@@ -180,6 +180,14 @@ interface Props<T> {
    */
   layoutFamily?: string;
   /**
+   * `false` keeps the column funnels for this visit only: the table opens with
+   * no filter every time, and any funnel an earlier version saved for it is
+   * erased. Absent = the saved-view behaviour every other table has had since
+   * 2026-07-29, so no existing table changes (SKU Master, owner 2026-09-15:
+   * "每一次打开应该默认都是全部展开的").
+   */
+  persistFilters?: boolean;
+  /**
    * Named column layouts offered at the top of the Columns panel. The preset
    * flagged `isDefault` is also the BASELINE this table renders with until the
    * user stores prefs of their own — so a page can hand each company its own
@@ -619,6 +627,7 @@ export function DataTable<T>(props: Props<T>) {
 function DataTableInner<T>({
   tableId,
   layoutFamily,
+  persistFilters = true,
   layoutPresets,
   documentLabel,
   columns,
@@ -807,12 +816,28 @@ function DataTableInner<T>({
   // allowed values; absent/empty = no filter on that column. The funnel icon
   // stays highlighted on restored filters, and each column's popover Clear
   // (or the page's reset control) drops its entry.
-  const [colFilters, setColFilters] = useLocalStorage<Record<string, string[]>>(
+  const storedColFilters = useLocalStorage<Record<string, string[]>>(
     `dt:filters:${idKey}`,
     {},
     legacyStorageKey("filters"),
     sanitizeColFilters,
   );
+  const sessionColFilters = useState<Record<string, string[]>>({});
+  const [colFilters, setColFilters] = persistFilters ? storedColFilters : sessionColFilters;
+  /* Not persisting: erase what the stored hook holds. Keyed on its value too,
+     because that hook re-reads and re-writes the key when the company resolves
+     after mount, which would otherwise bring an old filter back. */
+  const storedFilterValue = storedColFilters[0];
+  const legacyFilterKey = legacyStorageKey("filters");
+  useEffect(() => {
+    if (persistFilters) return;
+    try {
+      localStorage.removeItem(`dt:filters:${idKey}`);
+      if (legacyFilterKey) localStorage.removeItem(legacyFilterKey);
+    } catch {
+      // storage unavailable: nothing was persisted to erase
+    }
+  }, [persistFilters, idKey, legacyFilterKey, storedFilterValue]);
   // The filter BUTTON's rect, not a click point: the positioner needs both edges.
   const [filterMenu, setFilterMenu] = useState<{ left: number; top: number; bottom: number; colKey: string } | null>(null);
   const [filterQuery, setFilterQuery] = useState("");
