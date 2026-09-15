@@ -125,6 +125,16 @@ export function rowsInGridOrder<R extends { id: string }>(rows: R[], gridRows: R
   return gridRows.flatMap((g) => byId.get(g.id) ?? []);
 }
 
+/* SKU Master grid-order state: the grid stays mounted (hidden) in edit mode and
+   reports the rows it shows via `setGridRows`; `shownRows` renders them in that
+   order. `bumpGridEpoch` remounts the grid unfiltered after a Save (0917). */
+export function useSkuGridOrder(rows: MfgProductRow[]) {
+  const [gridRows, setGridRows] = useState<MfgProductRow[] | null>(null);
+  const [gridEpoch, setGridEpoch] = useState(0);
+  const shownRows = useMemo(() => rowsInGridOrder(rows, gridRows), [rows, gridRows]);
+  return { setGridRows, gridEpoch, bumpGridEpoch: () => setGridEpoch((n) => n + 1), shownRows };
+}
+
 export const ProductRow = memo(({
   row, editMode, isSofaView, isMattressView, sofaSizes, tier, onOpenSuppliers,
   selected, onToggleSelected, patch, onStage, brandingPool,

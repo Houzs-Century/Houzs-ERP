@@ -113,7 +113,7 @@ import { parseMoneyToSen } from '../../lib/money';
 import styles from './Products.module.css';
 import { DateField } from "../../vendor/scm/components/DateField";
 import { normalizeImportHeader, looksLikeGridExport, mapGridHeaders, isGridNoPrice, importFailureMessage } from './products-import-headers';
-import { ProductRow, fmtRm, fmtUnit, priceForHeightTier, rowsInGridOrder, saveStagedEdits, stageRowEdit, type ProductEditPatch } from './products/SkuEditRow';
+import { ProductRow, fmtRm, fmtUnit, priceForHeightTier, useSkuGridOrder, saveStagedEdits, stageRowEdit, type ProductEditPatch } from './products/SkuEditRow';
 
 const ICON_PROPS = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -282,7 +282,7 @@ const SkuMasterTab = () => {
     setSavingEdits(false);
     const plural = (n: number) => `${n} SKU${n === 1 ? '' : 's'}`;
     if (failures.length === 0) {
-      setEditMode(false); if (savedIds.length > 0) setGridEpoch((n) => n + 1);
+      setEditMode(false); if (savedIds.length > 0) bumpGridEpoch();
       void notify({ title: `Saved ${plural(savedIds.length)}.` });
       return;
     }
@@ -365,10 +365,7 @@ const SkuMasterTab = () => {
     }
     return base;
   }, [allRows, supportsModelFilter, modelFilter, oneShotOnly]);
-  // What the grid shows (funnels + sort); it stays mounted in edit mode. A Save remounts it unfiltered (0917).
-  const [gridRows, setGridRows] = useState<MfgProductRow[] | null>(null);
-  const [gridEpoch, setGridEpoch] = useState(0);
-  const shownRows = useMemo(() => rowsInGridOrder(rows, gridRows), [rows, gridRows]);
+  const { setGridRows, gridEpoch, bumpGridEpoch, shownRows } = useSkuGridOrder(rows);
 
   // Reset Model filter when leaving a category that doesn't support it
   useEffect(() => {
