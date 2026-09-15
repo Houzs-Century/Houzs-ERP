@@ -1,0 +1,45 @@
+name: Set line colour (plan / apply)
+
+# Reusable: write a library fabric colour onto sales-order lines and their whole
+# chain (PO, GRN, PI, DO, SI). Input SETS = "DOC:LINE_NO:COLOUR;...".
+on:
+  workflow_dispatch:
+    inputs:
+      sets:
+        description: "DOC:LINE_NO:COLOUR entries separated by ; e.g. HC-SO-011114:3:BO315-22"
+        required: true
+        type: string
+      mode:
+        description: "plan (rolled back) or apply"
+        required: true
+        default: plan
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: "For apply only — type: SET LINE COLOUR"
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: set-line-colour
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/set-line-colour.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SETS: ${{ inputs.sets }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}

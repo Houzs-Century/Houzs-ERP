@@ -9,7 +9,7 @@
 > 7. POST /:id/read (a write) is gated by requirePageAccess only (projects.ts:2576).
 > 8. Fair Report has FOUR stages — pnl added, management-only (fair-report.ts:25-26); management = isFinanceViewer && !salesDirector (:58).
 > 9. Defect review is region-split since 2026-08-11: Ops Exec for {Pulau Pinang, Kelantan, Terengganu, Perak} (projects.ts:1072-1087,:3709), Shukor the complement; both lanes time-boxed to events ended within 30 days.
-> 10. CREW_SCOPED_POSITIONS = {helper, storekeeper, storekeeper supervisor} — Driver is NOT list-crew-scoped (projects.ts:3703); drivers are caged only on the calendar (:4863-4869).
+> 10. CREW_SCOPED_POSITIONS = {helper, storekeeper} — Driver is NOT list-crew-scoped (projects.ts:3703); drivers are caged only on the calendar (:4863-4869). Storekeeper Supervisor left the set 2026-09-15 (owner: the defect reviewer sees ALL events); the frontend mirror is auth/crewScope.ts, refereed by duplicatedDecisionPins.test.ts.
 > 11. idx_pfl_occurred is mig 0221/133, not 0213/132.
 
 # Module: Projects / PMS

@@ -43,9 +43,10 @@
  *  claim "Assistant Storekeeper", "Warehouse Storekeeper" and anything else an
  *  admin types. Mirrors CREW_SCOPED_POSITIONS in backend projectGates.ts. */
 export const CREW_SCOPED_POSITIONS: readonly string[] = [
+  // "storekeeper supervisor" left the set 2026-09-15: the position is the
+  // defect reviewer, and the owner opened all events to it. Mirrors backend.
   "helper",
   "storekeeper",
-  "storekeeper supervisor",
 ];
 
 export type CrewScopeCarrier = {
