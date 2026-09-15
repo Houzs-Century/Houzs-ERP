@@ -20,6 +20,7 @@ import { Link } from 'react-router-dom';
 import { Printer } from 'lucide-react';
 import { fmtSen, fmtDateOrDash } from '../../vendor/shared/format';
 import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
+import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { usePaymentCorrections, type PaymentCorrectionRow } from './accounting-phase1-queries';
 import { emptyText, ledgerText, monthText, whatChanged } from '../../vendor/scm/lib/payment-corrections-pdf';
 
@@ -55,10 +56,15 @@ export const PaymentCorrectionsTab = () => {
   const shown = who ? rows.filter((r) => r.by === who) : rows;
   const summary = q.data?.summary;
 
+  const notify = useNotify();
   const print = usePrintPreview(async (action) => {
     if (!q.data) return;
-    const { generatePaymentCorrectionsPdf } = await import('../../vendor/scm/lib/payment-corrections-pdf');
-    await generatePaymentCorrectionsPdf({ month: q.data.month, rows: shown, summary: q.data.summary }, { action });
+    try {
+      const { generatePaymentCorrectionsPdf } = await import('../../vendor/scm/lib/payment-corrections-pdf');
+      await generatePaymentCorrectionsPdf({ month: q.data.month, rows: shown, summary: q.data.summary }, { action });
+    } catch (e) {
+      void notify({ title: 'PDF generation failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
+    }
   });
 
   return (

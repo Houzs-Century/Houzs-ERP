@@ -4,7 +4,8 @@
    payment, and a row from before the rule; an empty month says so in a
    sentence rather than showing an empty table; a read that fails says it
    failed instead of reading as an empty month; and the person filter narrows
-   the table without touching the month's summary. */
+   the table without touching the month's summary; a print that fails says
+   so — the generator's refusal reaches the operator as a notice. */
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
@@ -12,9 +13,23 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, test, vi } from 'vitest';
 
 vi.mock('../../vendor/scm/lib/authed-fetch', () => ({ authedFetch: vi.fn() }));
+/* The deliver the tab hands the preview is caught here so a test can run it. */
+const { deliverRef, notifySpy, generateSpy } = vi.hoisted(() => ({
+  deliverRef: { current: null as null | ((action: 'save' | 'print' | 'preview') => void | Promise<void>) },
+  notifySpy: vi.fn(),
+  generateSpy: vi.fn(),
+}));
 vi.mock('../../components/scm-v2/PrintPreviewModal', () => ({
-  usePrintPreview: () => ({ open: false, openPreview: () => {}, close: () => {}, handlers: {} }),
+  usePrintPreview: (deliver: (action: 'save' | 'print' | 'preview') => void | Promise<void>) => {
+    deliverRef.current = deliver;
+    return { open: false, openPreview: () => {}, close: () => {}, handlers: {} };
+  },
   PrintPreviewModal: () => null,
+}));
+vi.mock('../../vendor/scm/components/NotifyDialog', () => ({ useNotify: () => notifySpy }));
+vi.mock('../../vendor/scm/lib/payment-corrections-pdf', async (orig) => ({
+  ...(await orig<Record<string, unknown>>()),
+  generatePaymentCorrectionsPdf: generateSpy,
 }));
 
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
@@ -117,6 +132,26 @@ describe('the corrections tab', () => {
     draw();
     await waitFor(() => expect(screen.getByText(/No payment action on the correction right was found for/)).toBeTruthy());
     expect(screen.queryByRole('table')).toBeNull();
+  });
+
+  test('a print that fails says so — the notice carries the reason, the page stays', async () => {
+    mockedFetch.mockReset();
+    mockedFetch.mockResolvedValue(REPORT);
+    generateSpy.mockReset();
+    notifySpy.mockReset();
+    generateSpy.mockRejectedValue(new Error('The Chinese font could not be fetched.'));
+    draw();
+    await waitFor(() => expect(screen.getByRole('table')).toBeTruthy());
+    expect(deliverRef.current).toBeTruthy();
+    await deliverRef.current!('print');
+    expect(generateSpy).toHaveBeenCalledWith(expect.objectContaining({ month: '2026-09' }), { action: 'print' });
+    expect(notifySpy).toHaveBeenCalledWith({ title: 'PDF generation failed', body: 'The Chinese font could not be fetched.', tone: 'error' });
+    expect(screen.getByRole('table')).toBeTruthy();
+    /* And a print that works raises no notice. */
+    generateSpy.mockResolvedValue(undefined);
+    notifySpy.mockReset();
+    await deliverRef.current!('print');
+    expect(notifySpy).not.toHaveBeenCalled();
   });
 
   test('a read that fails says so rather than reading as an empty month', async () => {

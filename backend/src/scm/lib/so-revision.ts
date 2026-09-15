@@ -318,7 +318,7 @@ export async function applySoAmendment(
   c: Context<any> | undefined,
   concurrency: { soVersion: number; leaseToken: string } | null,
   approval: SoAmendmentApproval | null,
-): Promise<{ soDocNo: string; revision: number }> {
+): Promise<{ soDocNo: string; revision: number; addedLineIds: string[] }> {
   // (1) Load amendment + lines + SO header.
   const { data: amdRow, error: amdErr } = await sb
     .from('so_amendments')
@@ -497,6 +497,11 @@ export async function applySoAmendment(
      that changes/adds a priced line is followed by (4) the honest-pricing
      recompute so unit/cost/margin/breakdown columns stay authoritative. */
   const touched: Array<{ change: string; itemCode: string; qty: number }> = [];
+  /* Row ids of the lines this apply INSERTED (an ADD diff). They carry no
+     AutoCount DtlKey yet, so the write-back edit queued after this must declare
+     them NEW — otherwise composeEdit refuses the whole document as keyless and
+     the amendment never reaches the account book (docs/bugs/0942). */
+  const addedLineIds: string[] = [];
 
   /* Per-field from -> to for the SO's OWN audit trail (Owner 2026-07-19: every
      edit anywhere in the system must show who, when, and what changed from ->
@@ -603,7 +608,7 @@ export async function applySoAmendment(
       // Multi-company (mig 0083/0091): company_id is NOT NULL with a HOUZS
       // DEFAULT — an unstamped insert silently books the line to HOUZS, so the
       // ADD line explicitly inherits the SO header's company.
-      const { error: insErr } = await sb.from('mfg_sales_order_items').insert({
+      const { data: insRow, error: insErr } = await sb.from('mfg_sales_order_items').insert({
         ...(soCompanyId != null ? { company_id: soCompanyId } : {}),
         doc_no:                  docNo,
         line_date:              todayMyt(),
@@ -644,8 +649,9 @@ export async function applySoAmendment(
            landed as an RM0 line saying nothing, and the person meant to execute
            it had no way to read the job. NULL stays NULL. */
         remark:                 diff.new_remark,
-      });
+      }).select('id').single();
       if (insErr) throw new Error(`applySoAmendment: ADD insert failed: ${insErr.message}`);
+      if (insRow?.id) addedLineIds.push(String(insRow.id));
       lineChanges.push({ field: `line_added_${itemCode}`, from: null, to: `qty ${qty}` });
       /* The remark is its OWN audit row — an added line's note is the request in
          a service line's case, so "qty 1" alone would not say what was approved. */
@@ -981,7 +987,7 @@ export async function applySoAmendment(
     ].filter(Boolean).join('; ') || 'no diffs'}`,
   });
 
-  return { soDocNo: docNo, revision: nextRevision };
+  return { soDocNo: docNo, revision: nextRevision, addedLineIds };
 }
 
 /* ── snapshotPo ─────────────────────────────────────────────────────────────

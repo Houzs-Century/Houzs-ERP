@@ -114,6 +114,7 @@ import { attachPhotos } from './autocount-photo-attach';
 import { erpOwnsPaymentText } from './ac-payement-owner';
 import { readPoSourceSo } from './autocount-po-source-so';
 import { resendHeldEdits } from './autocount-held-edit-resend';
+import { isStaleKeyRefusal, recomposeStaleKeyedEdit, liveLineKeys, staleKeyReplacedNote } from './autocount-stale-key-recompose';
 import { queueSoPoDocNos } from './autocount-so-po-doc-no';
 import { readMfgProductBindings } from './supplier-bindings';
 import {
@@ -1889,6 +1890,31 @@ export async function dispatchOne(
     await resendHeldEdits(sb, { ...row, doc_type: row.doc_type as AcDocType }, (o) => enqueueEdit(sb, o));
     await queueSoPoDocNos(sb, row, (i) => enqueueAcOp(sb, i));  // PO Doc No. of the source orders - docs/bugs/0926
     return 'sent';
+  }
+
+  /* A KEYED EDIT THE BOOK REFUSED AS LINE-NOT-FOUND never succeeds on retry: the
+     drain replays the stored payload and it still names the same key. Decide it
+     now instead of burning six attempts. When the ERP has RE-KEYED the line (a
+     Rebuild), compose the document as it now stands, once, and fold this row as
+     Replaced; when the ERP STILL carries the key, the account book lost the line
+     and it is left failing for a person to see. docs/bugs/0941. */
+  if (row.op === 'edit' && isStaleKeyRefusal(result.error)) {
+    const outcome = await recomposeStaleKeyedEdit(
+      sb,
+      { id: row.id, company_id: row.company_id, doc_type: row.doc_type as AcDocType,
+        doc_no: row.doc_no, doc_id: row.doc_id, op: row.op, last_error: result.error ?? null },
+      (o) => enqueueEdit(sb, o),
+      (docType, docNo, docId) => liveLineKeys(sb, docType, docNo, docId),
+    );
+    if (outcome.kind !== 'none') {
+      await mark(sb, row.id, {
+        ...stamp,
+        attempts,
+        status: 'failed',
+        last_error: (outcome.kind === 'queued' ? staleKeyReplacedNote(outcome.key) : '') + (result.error ?? ''),
+      });
+      return 'failed';
+    }
   }
 
   const giveUp = !result.retryable || attempts >= MAX_ATTEMPTS;

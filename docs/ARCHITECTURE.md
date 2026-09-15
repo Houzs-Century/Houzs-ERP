@@ -1,15 +1,15 @@
 # Houzs ERP — Architecture & Data Model (system map)
 
 Written 2026-06-13 from a full read of the codebase. This is the human map of the
-system. Pair with `UPGRADE-PLAN.md` (what to improve) and `FOUNDATION-PLAN.md`
-(Hookka audit).
+system; `CODEBASE-MAP.md` is the more current orientation and wins where the two
+disagree.
 
 **No counts live in this file.** File counts, LOC and migration numbers are in
 [`docs/generated/codebase-map-facts.md`](./generated/codebase-map-facts.md),
 computed from the tree. This file carried them until 2026-08-02 and they had
 drifted badly — it still said "92 numbered migrations" when the live tree held
-well over twice that. Per `docs/KNOWLEDGE-SYSTEM.md`, a number that moves on
-every merge must be generated, never typed.
+well over twice that. A number that moves on every merge must be generated,
+never typed.
 
 Stack: Cloudflare Workers + Hono (backend) · Supabase Postgres via Hyperdrive
 (data, migrated off D1) · R2 (files) · React 18 + Vite + TS + Tailwind (SPA on
@@ -160,7 +160,7 @@ Tailwind brand theme (cream/brass, Manrope + Plus Jakarta Sans).
 
 ---
 
-## 4. Cross-cutting strengths & weaknesses (see UPGRADE-PLAN.md for fixes)
+## 4. Cross-cutting strengths & weaknesses (as assessed 2026-06-13)
 
 **Strengths**: clean cutover shim; layered authz (perm + page + row scope); cron
 orchestration; mature ASSR + projects domains; reusable DataTable; permission-driven

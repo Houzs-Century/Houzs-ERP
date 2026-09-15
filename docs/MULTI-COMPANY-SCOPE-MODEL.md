@@ -71,8 +71,7 @@ Two worth knowing:
   「共用的，因为 TMS 是共用的。这个东西 TMS 就像我们的运输公司一样」. Twelve by-id
   handlers had been scoping them while `GET /dashboard` did not, so the dashboard
   listed rows that PATCH/DELETE then 404'd; the twelve went.
-  `backend/tests/fleetMaintenanceUnifiedScope.test.ts` enforces it, and
-  `docs/MULTICOMPANY-MODULE-MAP.md` no longer says the opposite. `scm.workshops`
+  `backend/tests/fleetMaintenanceUnifiedScope.test.ts` enforces it. `scm.workshops`
   is the exception and IS per-company (mig 0241) — the repair-shop master, not a
   maintenance record.
 - **address-cascade** — postcodes are the same for every caller.
@@ -81,8 +80,7 @@ Two worth knowing:
 **But the TMS's CONFIGURATION is per-company.** Post-mig-0176 each company holds
 its own regions, zones, residence rules, 3PL master and driver leave
 (`delivery-planning-regions.ts:71-78`). The function is central; its settings are
-not. `docs/MULTICOMPANY-MODULE-MAP.md` still says regions are unified and is stale
-on that point.
+not.
 
 ### C — CENTRALISED WITH ONE SCOPED AXIS (4)
 
