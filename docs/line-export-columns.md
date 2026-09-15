@@ -12,14 +12,15 @@ a **design**, not a build: the only export being built today is the Purchase
 Order one, and its columns are the template everything below follows.
 
 > **Built since** (2026-09-15): Goods Receipt (§5), Purchase Invoice (§6) and
-> Sales Invoice (§3), with the owner's rulings below and the differences listed
-> in [§ What the GR / PI / SI builds changed](#what-the-gr--pi--si-builds-changed).
-> Their column contracts are `backend/src/scm/lib/{grn,pi,si}-line-export-columns.ts`;
+> Sales Invoice (§3) export through the grid-driven mechanism below, with a
+> later owner ruling on top: the columns and values are **AutoCount's Detail
+> Listing** (captions, order and spellings), not the tables in §3 / §5 / §6. The
+> tables stay as the source map for the ERP's own columns, which sit hidden in
+> each grid's chooser. What differs is listed in
+> [§ What the GR / PI / SI builds changed](#what-the-gr--pi--si-builds-changed);
 > the module guides (`docs/modules/grn.md`, `purchase-invoice.md`,
-> `sales-invoice.md`, *Exports*) describe them.
-> Read-only production proof: run 34941927326 (every tab / All / date-window /
-> seller-scope case MATCH, Line ID by Line ID). Import is desktop-only by the
-> owner's decision (「手机不需要导入」, 2026-09-15).
+> `sales-invoice.md`, *The one Export*) describe the build. Import is
+> desktop-only by the owner's decision (「手机不需要导入」, 2026-09-15).
 
 > Status of the facts in here: every count was measured on **production**
 > (Supabase project `anogrigyjbduyzclzjgn`) through a **read-only transaction**
@@ -617,22 +618,31 @@ line tables or none, and were not in the owner's request. See Q12.
 
 ## What the GR / PI / SI builds changed
 
-Where a build differs from the tables above, and why. Each is a reading of the
-screen the export stands beside, not a new rule.
+Where the build differs from the tables above, and why.
 
-- **GR Invoiced Qty** excludes DRAFT as well as CANCELLED purchase invoices — the
-  rule `recomputeGrnInvoiced` (routes/purchase-invoices.ts) recounts the stored
-  counter by. VOID is not a `purchase_invoice_status` member.
-- **GR / PI Item Description** is `material_name`, else `description`.
-- **SI Customer Ref** is the list's `customerRefOf`: `ref`, else `customer_so_no`,
-  else `po_doc_no` (the table above said `customer_so_no` first).
-- **SI Location** is the delivery order's warehouse, else that delivery order's
-  `sales_location`, else the invoice's own `sales_location` — so an invoice with no
-  delivery line still names a place.
-- **Overdue Days** is 0 while a due date has not arrived, blank with no due date
-  or no balance.
-- **SI Balance** refuses the file when the order deposit could not be read; the
-  list shows the un-netted figure in that case.
+- **Columns follow AutoCount's Detail Listing.** GR = the book's saved layout
+  "S", PI = layout "SS" (read from AutoCount's `Layout` table, 2026-09-15); the
+  book keeps no default Sales Invoice listing layout, so the SI set follows the
+  same shape (LIKELY AutoCount's factory default). Each is one constant
+  (`GRN_DEFAULT_COLUMN_KEYS`, `PI_DEFAULT_COLUMN_KEYS`, `SI_DEFAULT_COLUMN_KEYS`).
+- **Doc No** is the AutoCount number (a migrated GR's `linked_ac_gr_docno`, never
+  the PO number in `linked_ac_docno`), else ours.
+- **Item Code, Detail Description, Item Group, UOM** come from `bookLineItem` with
+  the write-back's supplier bindings; **Location** is AutoCount's short code;
+  **Detail Description 2** is the owner's variant rule
+  (`lib/line-export-description2.ts`), the stored text only when the rule
+  composes nothing; **SI Agent** is `resolveAcAgent`.
+- **A sofa is one row per ERP piece**; the book holds one set line, so Item Code,
+  Unit Price and Line Total differ there by design. Header SubTotal / Total print
+  the ERP's own totals, which hold only the lines brought into the ERP.
+- **Values the ERP does not hold print blank or the ERP's value**, never pulled from
+  AutoCount: Proj No, Tax Code, line Tax, the Desc2 UDF, Inclusive?, PI Supplier
+  Invoice No., GR Supplier DO No. and Delivery Date.
+- **GR Invoiced Qty** (chooser) excludes DRAFT as well as CANCELLED purchase
+  invoices — the rule `recomputeGrnInvoiced` (routes/purchase-invoices.ts) recounts
+  the stored counter by.
+- **Money** is written in ringgit (unit price to 4 decimals); dates are real
+  Excel dates.
 - **Line order** follows each detail page: GR / PI by creation, category rank and
   sofa module; SI by `line_no` then creation.
 

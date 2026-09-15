@@ -845,11 +845,8 @@ export function GoodsReceivedListV2() {
       key: "exchange_rate", label: GRN_LABELS.currRate, width: "90px", disableSort: true, exportFormat: "number",
       getValue: (r) => rateOf(r), render: (r) => <span className="text-[12.5px] text-ink-secondary">{rateOf(r)}</span>,
     },
-    /* Every receipt price in this ERP is tax-exclusive (tax_sen is separate). */
-    inclusive: {
-      key: "inclusive", label: GRN_LABELS.inclusive, width: "90px", disableSort: true,
-      getValue: () => false, render: () => <span className="text-[12.5px] text-ink-secondary">No</span>,
-    },
+    /* This ERP keeps no tax-inclusive flag on the document: blank, never a guess. */
+    inclusive: blankCol("inclusive", GRN_LABELS.inclusive),
     subtotal: {
       key: "subtotal", label: GRN_LABELS.subTotalEx, width: "128px", align: "right", disableSort: true,
       getValue: (r) => r.subtotal_sen ?? 0, exportValue: (r) => senToRinggit(r.subtotal_sen ?? 0, 2), exportFormat: "money",

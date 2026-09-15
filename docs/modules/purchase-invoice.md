@@ -306,46 +306,46 @@ figure is what the old read would have hidden, not what the picker hides.
 
 ---
 
-## Exports — every page the filters match (2026-09-15)
+## The one Export — AutoCount's Detail Listing, one row per line (2026-09-15)
 
-Owner 2026-09-15: every document list exports **one row per line item**, holding
-**every row the list's current filter matches**. Column design:
-`docs/line-export-columns.md` §6. Same build as the Purchase Order export.
+Owner 2026-09-15: every list's Excel export is **AutoCount's listing format**
+— the same captions and values — **one row per line**, holding **every row the
+list's tab / search / sort match** across all pages, with the grid's **visible
+columns**, funnels and sort. A fresh grid's default columns ARE AutoCount's
+Purchase Invoice Detail Listing layout "SS", in its order (`PI_DEFAULT_COLUMN_KEYS`, one constant; captions
+`PI_LABELS` in `frontend/src/vendor/scm/lib/pi-list-export.ts`). Every other column
+(the ERP's own) sits in the chooser, hidden; a saved layout wins.
 
-| Method | Path | File | Purpose |
-|---|---|---|---|
-| GET | `/purchase-invoices` (paged) | `routes/purchase-invoices.ts` | The list. Its tab / company / search / date filter and sort are built by `lib/pi-list-read.ts` (`filterPiList`, `orderPiList`) — the same functions both exports use. |
-| GET | `/purchase-invoices/export/headers` | `routes/purchase-invoice-exports.ts` | EVERY invoice the filter matches (no `page`), list row shape. `{ purchaseInvoices, total, truncated }`. |
-| GET | `/purchase-invoices/export/lines` | `routes/purchase-invoice-exports.ts` → `lib/pi-line-export.ts` | One row per invoice LINE. `{ columns, rows, piCount, lineCount, truncated }`. |
-
-- Columns are `PI_LINE_EXPORT_COLUMNS` in `backend/src/scm/lib/pi-line-export-columns.ts`,
-  MIRRORED at `frontend/src/vendor/scm/lib/pi-line-export-columns.ts` (refereed by its
-  canonical test). Header names and Line ID are an import contract (Item
-  Description 2, Remarks — an invoice line has no delivery date).
-- The invoice line has no SKU, warehouse or PO of its own: **Supplier SKU**, **GRN
-  No.**, **Location** (the GRN's warehouse as AutoCount's short code, `LOCATION_MAP`),
-  **PO No.** and **SO Doc No.** all come through `grn_item_id` → the GRN line → its
-  PO line. Every hop carries the company predicate.
-- **Balance** = the list's Owed, `max(total − paid, 0)`. **Due Date is the stored
-  value only** (owner 2026-09-15: never derived from the supplier's credit term);
-  Overdue Days counts from it while Balance > 0, blank without it. **Status** is the
-  list's word (`PI_STATUS_WORDS`, pinned to the list's `STATUS_TONE`), ` (On Hold)`
-  after it for a held invoice. Cancelled invoices follow the tab.
-- Read-only production check: `.github/workflows/grn-pi-si-line-export-check.yml`;
-  run 34941927326 (2026-09-15) matched Line ID by Line ID for both companies
-  (company 2 posted tab 37 invoices / 89 lines of All 56 / 133).
-- **On the list (desktop)**: an **Export lines** button beside *Transfer from*
-  (`PurchaseInvoicesListV2.tsx`, shared `pages/scm-v2/list-export-controls.tsx`) writes
-  `purchase-invoice-lines-YYYY-MM-DD.xlsx` (sheet *PI Lines*) through `vendor/scm/lib/pi-list-export.ts`; the toolbar
-  **Export** now calls `/export/headers` for the whole filtered set with the grid's
-  visible columns (`DataTable.onExport`); Assigned SO / Delivered and the "vs PO price" marker are fetched for every exported invoice (`/list-mrp-enrichment`, `/list-po-price`, chunks of 200) when those columns are visible. Both send the list's own tab,
-  settled search and sort — the paged hook builds its request from the same params
-  function. A `truncated` answer is refused, never written. The toolbar Export's
-  Status column writes the list's word. Bug ledger:
-  `docs/bugs/0925-the-goods-received-purchase-invoice-and-sales-invoice-list-e.md`.
-- NOT applied: the grid's per-column funnels (they filter only the loaded page).
-- Import is desktop-only by the owner's decision (「手机不需要导入」, 2026-09-15); no
-  PI line import exists yet on either surface.
-- **Mobile**: the phone Purchase Invoice list (`mobile/MobileModuleList.tsx`) has no
-  export of any kind, so there is nothing to keep in step.
-
+- **Server:** `GET /export/rows` → every document through the list's own filter
+  (paged past the ceiling; `truncated` refuses the file), each carrying
+  `lines` from `lib/pi-export-rows.ts attachPiLines` — the SAME attach the paged list endpoint uses, so a
+  line column shows on screen what the file holds. Company predicate on every
+  line and lookup read.
+- **Grid:** DataTable `exportLines` (`frontend/src/components/dataTableLineExport.ts`).
+  Line columns come from `frontend/src/pages/scm-v2/pi-list-line-columns.tsx` over the shared
+  `components/dataTableLineCells.tsx` (one value, or first + "+N" on screen; one
+  cell per line in the file). Money columns export ringgit (`exportValue`,
+  `exportFormat` money / rate); dates are real Excel dates yyyy/mm/dd.
+- **Values in AutoCount's spelling** (measured against the live book 2026-09-15,
+  snapshot `backend/scripts/data/ac-listing-lines.json.gz`, check
+  `backend/scripts/check-ac-listing-parity.mjs`): Doc No = the AutoCount
+  number, else ours; Item Code / Detail Description / Item Group / UOM from
+  `bookLineItem` (services/autocount-book-item.ts) with the write-back's
+  bindings; Location = AutoCount's short code; Detail Description 2 =
+  `lib/line-export-description2.ts` (the owner's variant rule). **A sofa is one
+  row per ERP piece** where the book holds one set line, so its Item Code, Unit
+  Price and Line Total differ from the book's by design.
+- Columns AutoCount has and this ERP keeps no value for (Proj No, Tax Code, line
+  Tax, the Desc2 UDF, Inclusive?) print blank — never pulled from AutoCount.
+- PI specifics: the invoice line has no SKU, warehouse or PO of its own — they
+  come through its GRN line. Supplier Invoice No. prints what the ERP holds
+  (blank on every paired migrated line, 2026-09-15). "vs PO price" and the MRP
+  columns are fetched for the file only when shown or funnelled.
+- Read-only production checks: `.github/workflows/grn-pi-si-line-export-check.yml`
+  (`/export/rows` line ids vs SQL per company and filter, and the AutoCount
+  parity columns).
+- **Mobile:** the phone list (`mobile/MobileModuleList.tsx`) has no export.
+  Import is desktop-only by the owner's decision (「手机不需要导入」).
+- Earlier the same day #3930 put a separate "Export lines" button on this list
+  and made the toolbar Export CSV write every row with money in sen; both are
+  replaced by this (`docs/bugs/0925-…`, `docs/bugs/0928-…`).
