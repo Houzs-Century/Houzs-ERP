@@ -40,13 +40,28 @@ export type FairOptionsResponse = {
   venues: VenueMasterRow[];
 };
 
-/** Label for one row. Exported so the picker, the pending screen and any future
- *  reader all print an event the same way. */
-export function fairLabel(o: Pick<FairOption, 'venue' | 'organizer' | 'startDate' | 'endDate' | 'showDates'>): string {
-  const base = `${o.venue} — ${o.organizer}`;
+function withDates(
+  o: Pick<FairOption, 'startDate' | 'endDate' | 'showDates'>,
+  base: string,
+): string {
   if (!o.showDates) return base;
   const end = o.endDate && o.endDate !== o.startDate ? ` ~ ${o.endDate}` : '';
   return `${base} (${o.startDate}${end})`;
+}
+
+/** Label for one row, venue AND organizer. Used where the reader needs to tell
+ *  two booths at one venue apart — the fair-pending assignment screen. */
+export function fairLabel(o: Pick<FairOption, 'venue' | 'organizer' | 'startDate' | 'endDate' | 'showDates'>): string {
+  return withDates(o, `${o.venue} — ${o.organizer}`);
+}
+
+/** The SO fair picker's label: VENUE ONLY (owner, 2026-09-16). The organizer is
+ *  NOT shown to the salesperson, but it still rides on the picked value and is
+ *  saved on the order — it feeds fair P&L / commission. Only the displayed text
+ *  drops it. The date suffix the server flags for the one collision case (same
+ *  venue + organizer twice in a month) is kept so those two rows stay distinct. */
+export function fairVenueLabel(o: Pick<FairOption, 'venue' | 'startDate' | 'endDate' | 'showDates'>): string {
+  return withDates(o, o.venue);
 }
 
 /**
