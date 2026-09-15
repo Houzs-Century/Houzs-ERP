@@ -36,6 +36,8 @@ vi.mock("../../lib/xlsx-runtime", () => ({
   },
   writeFileXLSX: (_wb: unknown, name: string) => { h.written.push(name); },
 }));
+/* The list reads the signed-in user for the Import lines permission (PO line import). */
+vi.mock("../../auth/AuthContext", () => ({ useAuth: () => ({ can: () => true, pageAccess: () => "edit" }) }));
 vi.mock("../../lib/csv", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../lib/csv")>()),
   downloadCSV: (name: string, text: string) => { h.csv.push({ name, text }); },

@@ -337,7 +337,9 @@ with no per-area level consulted.
 | POST | `/:id/send-to-supplier` | `:3019` | Email the PO PDF. Fail-closed on the `purchase_order` email channel (`:3032`). |
 | PATCH | `/:id/cancel` | `:3182` | → CANCELLED; releases SO quota AND clears the line's mig-0235 allocation sub-lines (a cancelled PO attributes nothing — 2026-08-02). **Since 2026-09-09 the body must carry a `reason` (owner:「PO cancelled 不需要审批，只需要 remark 原因取消」)** — `cancelApprovalGuard('PO')` at the mount refuses 400 `reason_required` otherwise, at every status including DRAFT, and records the cancellation with its reason in `scm.document_cancel_requests` (`docs/modules/document-cancel-approval.md`). No approval: the one Purchaser signature the 2026-09-08 rule added lasted a day. |
 | PATCH | `/:id/reopen` | `:3276` | CANCELLED → SUBMITTED; re-claims SO quota. Allocation sub-lines are NOT restored (they were cleared on cancel); the coarse `so_item_id` link remains, re-split via the allocation editor if needed. **Since 2026-08-13 it also runs `poWarehouseGap` and stamps `submitted_at`** — reopen was the third door to SUBMITTED and the only one with no warehouse gate, so cancel-then-reopen turned a warehouse-less DRAFT into a live, GR-receivable PO. |
-| POST | `/bulk-supplier-date` | — | **Was missing from this table until 2026-08-13.** Sets ONE supplier-REVISED delivery-date slot (`slot` 2/3/4 → `supplier_delivery_date_2..4`) across up to 100 POs. It never touches `supplier_id` and never touches `expected_at`. `applyToLines` **defaults to TRUE**, so unless the caller opts out it cascades onto every line's date as well. A downstream-locked or foreign-company PO is reported in `skipped`, never written; each updated PO still gets its own audit row. |
+| POST | `/bulk-supplier-date` | — | **Was missing from this table until 2026-08-13.** Sets ONE supplier-REVISED delivery-date slot (`slot` 2/3/4 → `supplier_delivery_date_2..4`) across up to 100 POs. It never touches `supplier_id` and never touches `expected_at`. `applyToLines` **defaults to TRUE**, so unless the caller opts out it cascades onto every line's date as well. A downstream-locked or foreign-company PO is reported in `skipped`, never written; each updated PO still gets its own audit row. The per-PO write (header + lines + audit) is `cascadePoSupplierDate` in `backend/src/scm/lib/po-supplier-date-cascade.ts`, shared with the line import below. |
+| POST | `/line-import/preview` | `po-line-import.ts` | PO line import, read-only (owner 2026-09-15). Body `{ rows: [{ rowNumber, docNo, lineId, values }] }` parsed from the exported file in the browser; every value is re-parsed here and every key other than the six import fields is dropped. Returns per-row `changes` / `unchanged` / `rejected` (with `code` + `reason`), PO-level `poChanges` / `poRejections`, the `lineChanges` a Confirm sends back, and `counts`. See *PO line import* below. |
+| POST | `/line-import/apply` | `po-line-import.ts` | Applies a confirmed `{ lineChanges, poChanges }` in ONE transaction (`runScmPgCommand`). Re-reads every row; any value that moved since the preview, a PO that locked, or a line that left the company refuses the whole import 409 `import_conflict` with a `conflicts` list, nothing written. Audit pre-flight refuses 409 `audit_trail_unavailable`. Up to 500 line changes and 200 PO date changes per call. |
 
 **There is no document-level DELETE.** `DELETE /:id` existed until 2026-08-11 and
 hard-purged a CANCELLED PO. It was removed under the owner's rule
@@ -1454,6 +1456,7 @@ A rule change to the PO touches both surfaces. The pairs:
 | Line allocations (mig 0235) | `PurchaseOrderDetailV2.tsx` Allocations column + `components/scm-v2/PoLineAllocationsModal.tsx` (editor) | `mobile/MobileModuleDetail.tsx` `LineItem` chips — DISPLAY-ONLY (the phone PO surface has no per-line editor, same precedent as the SO-link picker) |
 | Cache invalidation after a write | the mutation hooks in `vendor/scm/lib/suppliers-queries.ts` | `mobile/sharedInvalidate.ts:71` |
 | **Line remarks (`notes`)** | text under the item on `PurchaseOrderDetailV2.tsx` + a `defaultHidden` **Remark** column (search / filter / export); an editable **Remarks** box on `PurchaseOrderDetail.tsx` (Edit, via `PoLineCard`'s `showRemarks`) and on `PurchaseOrderNew.tsx` (Create) | text under the item on `mobile/MobileModuleDetail.tsx` — rendered through the shared `mobile/MobileLineRemark.tsx`, DISPLAY-ONLY (the phone PO surface still has no per-line editor) |
+| Line import from an edited export (2026-09-15) | **Import lines** in the list's New-PO menu, `?import=1` → `components/scm-v2/PoLineImportModal.tsx` | NOT BUILT — the phone PO list (`MobileModuleList`) has no import menu to hang it on. The logic is already shared (`vendor/scm/lib/po-line-import-queries.ts` `usePoLineImport`), so a phone screen only needs presentation |
 | Line photos (mig 0274) | Photos column on `PurchaseOrderDetailV2.tsx` (read-only strip, since 2026-08-28) | NOT BUILT — the mobile PO detail surface DOES exist (`MobileModuleDetail` config, Submit/Cancel/Reopen actions, a line list already rendering the mig-0235 allocation chips); it renders no photos, and there is no per-line editor to hang an uploader on |
 
 ### Line remarks — `purchase_order_items.notes`, surfaced 2026-09-04
@@ -1472,8 +1475,11 @@ lines: **923 carry the book's wording in `notes`** (891 byte-identical to
 `col:PC-151-03/m.gap:12inch/divan:8inch+2inchleg`.
 
 **Why `notes` and not `description2`.** `description2` is server-owned on a PO
-line — the item PATCH recomputes it from `buildVariantSummary` on every write —
-and it IS on the AutoCount write-back path. `notes` is neither: `PO_ITEM_COLS`
+line — the item PATCH re-derives it from `buildVariantSummary` whenever the line's
+`item_group` or `variants` changes (only then, since 2026-09-15:
+`lib/po-line-description2.ts`,
+`docs/bugs/0922-saving-a-po-line-s-delivery-date-rewrote-its-description-2-a.md`) — and it IS on the AutoCount
+write-back path. `notes` is neither: `PO_ITEM_COLS`
 (`backend/src/scm/lib/autocount-outbox.ts`) does not select it, and the only
 `notes` the write-back sends is the HEADER's (`purchase_orders.notes` →
 `Description`). So a line remark survives every save and never reaches the book.
@@ -2087,3 +2093,85 @@ The Sales Invoice list had the same gap and was fixed with it. Pinned by
 `frontend/src/pages/scm-v2/batchPrintGoesThroughPreview.test.ts`, which fails any
 list that calls a `generateCombined...Pdf` function without the preview. Trace:
 `docs/bugs/0890-print-all-on-the-purchase-order-and-sales-invoice-lists-skip.md`.
+
+## PO line import (owner ruling, 2026-09-15)
+
+Owner, choosing option A: staff export the PO lines, edit them in Excel, and import
+the file back — 「基本上就是改交货日期、预计交货的东西吧，就像你说的 description 2
+跟备注这些」. Quantity, price and item are never changed by an import; those go
+through the amendment flow.
+
+**Where.** Purchase Orders list → the arrow beside *New Purchase Order* → **Import
+lines** (`?import=1`). Offered only when `canOperatePurchaseOrders` passes. Flow:
+choose file → preview → Confirm → summary. Nothing is written before Confirm.
+
+**The columns — one mapping, two byte-identical copies.**
+`backend/src/scm/lib/po-line-import.ts` = `frontend/src/vendor/scm/lib/po-line-import.ts`
+(`po-line-import.canonical.test.ts` fails the build on drift). The header names and
+which stored date is Estimate N are imported from the export's contract beside it,
+`po-line-export-columns.ts`. An estimate cell is compared the way the export writes
+it: the line's value, else the PO header's. Rows are matched by
+**Line ID**; **Doc No** must be the line's PO (`po_number`, or the revised display
+number `<po_number>_R<n>`). Every other column in the file is listed as ignored.
+
+| File header | Level | Written to |
+| --- | --- | --- |
+| Delivery Date | line | `purchase_order_items.delivery_date` (AutoCount `DeliveryDate`) |
+| Estimate Delivery Date 1 | **PO** | `purchase_orders.supplier_delivery_date_2` + every line (AutoCount header `UDF_EDate`) |
+| Estimate Delivery Date 2 | **PO** | `supplier_delivery_date_3` + every line (`UDF_EDate2`) |
+| Estimate Delivery Date 3 | **PO** | `supplier_delivery_date_4` + every line (`UDF_EDate3`) |
+| Item Description 2 | line | `purchase_order_items.description2` (AutoCount `Desc2`) |
+| Remarks | line | `purchase_order_items.notes` — the field the PO editor's line **Remarks** box saves (not the header `purchase_orders.notes`) |
+
+Dates are read as ISO `yyyy-mm-dd`, an Excel date serial, or `dd/mm/yyyy`. A blank
+cell is a value: blank that was blank is unchanged, a deleted value clears it. A
+column missing from the file is not read at all.
+
+**Estimate dates are PO-level** (mapping settled 2026-09-15 against live AutoCount:
+they are header UDFs). If the rows of one PO disagree on an estimate date the file
+EDITED, that PO's estimate change is refused with the rows and item codes named;
+the rows' line fields still apply. An untouched export whose lines already differ
+is not a conflict. A PO change is shown once per PO with how many lines it sets,
+and is written through `cascadePoSupplierDate` — the bulk supplier-date writer.
+
+**Refusal codes** (`lib/po-line-import-classify.ts`): `unknown_line`,
+`other_company`, `po_cancelled`, `po_received`, `po_locked` (a live Goods Receipt
+— the same lock the PO editor and the line PATCH apply; a DRAFT / SUBMITTED PO
+with no GRN is the only editable case), `invalid_value`, `doc_no_mismatch`,
+`duplicate_line`.
+
+**Apply behaves like the PO editor's own save**, in one transaction:
+per line the same columns the line PATCH writes, company-scoped; one
+`PURCHASE_ORDER` `UPDATE` audit row per line (note *Line imported from file:
+<item>*) and one per PO date (note *Imported from file*), visible in the PO's
+History; `recomputePoExpectedAt` per touched PO. No amendment is involved: the
+line PATCH has none on a SUBMITTED PO either.
+
+**AutoCount.** ONE `enqueueEdit` per purchase order, after all its writes, and
+only when a line Delivery Date or an estimate date moved. The estimate dates go out
+as the header UDFs `EDate/EDate2/EDate3` since #3907
+(`docs/bugs/0919-a-supplier-delivery-date-entered-in-the-erp-never-reached-au.md`);
+a CLEARED estimate date is omitted, so clearing one in the file does not clear it
+in the book. Owner 2026-09-15: an imported Item Description 2 is NOT pushed to
+AutoCount (AutoCount is no longer operated), so a Description 2 change alone queues
+nothing; line remarks are not in `PO_ITEM_COLS` either. The write-back sends the
+whole document, so when the same PO also queues an edit, that edit carries the
+line's current Description 2 with it. Import MAY overwrite a remark holding the
+book's original text (`账本原文:`); the preview shows the old value (owner
+2026-09-15).
+
+**When an edit does go out**, its Desc2 is `composeDescription2`
+(`backend/src/services/autocount-writeback.ts`): the STORED text when there is one,
+shortened to AutoCount's 100 characters by `abbreviateDesc2`. A CLEARED Description 2
+is not sent as a blank: the composer falls back to the spec summary, or omits
+`Desc2` when there is none, so the book keeps a value. On a sofa line the text also
+goes through the D9 collapse gate, which refuses the whole document when the text no
+longer decodes to the compartments (a `skipped` outbox row, not a silent loss).
+
+**Permission.** Both endpoints ride the `/mfg-purchase-orders/*` area guard: `edit`
+on `scm.procurement.po` (a POST, so the preview needs `edit` too), under the guard's
+usual no-lockout fallthrough for users with no L2 configuration.
+
+**Not built.** The phone PO list has no import menu (§8). The dead *Import from
+file* item on the other lists is still dead —
+`docs/bugs/0921-the-purchase-order-list-s-import-from-file-opened-nothing.md`.

@@ -45,6 +45,8 @@ import { resolveMaintenanceConfigForSupplier, poVariantPricingInput } from '../l
 import { readMfgProductBindings } from '../lib/supplier-bindings';
 import { loadOutstandingSoLines } from '../lib/outstanding-so-lines';
 import { poHasDownstream } from '../lib/downstream-lock';
+import { cascadePoSupplierDate, SUPPLIER_DATE_SLOT_COL, type SupplierDateSlot } from '../lib/po-supplier-date-cascade';
+import { description2InputsChanged } from '../lib/po-line-description2';
 import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { todayMyt } from '../lib/my-time';
 import { enqueuePoCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
@@ -2522,12 +2524,6 @@ mfgPurchaseOrders.patch('/:id', async (c) => {
    the active company, is REPORTED and skipped — one bad pick never costs the
    operator the rest of the batch. Every updated PO still writes its own audit
    row, exactly as the single PATCH does. */
-const SUPPLIER_DATE_SLOT_COL = {
-  2: 'supplier_delivery_date_2',
-  3: 'supplier_delivery_date_3',
-  4: 'supplier_delivery_date_4',
-} as const;
-type SupplierDateSlot = keyof typeof SUPPLIER_DATE_SLOT_COL;
 
 /* Cap the batch. The handler walks POs sequentially (each needs its own lock
    check + audit row), so an unbounded list is a request that never returns. */
@@ -2600,7 +2596,7 @@ mfgPurchaseOrders.post('/bulk-supplier-date', async (c) => {
 
   const parsed = parseBulkSupplierDateBody(body);
   if (!parsed.ok) return c.json(parsed.payload, parsed.status);
-  const { slot, col, date, poIds, applyToLines } = parsed.req;
+  const { slot, date, poIds, applyToLines } = parsed.req;
 
   const updated: Array<{ id: string; poNumber: string | null }> = [];
   const skipped: Array<{ id: string; poNumber: string | null; reason: string }> = [];
@@ -2616,33 +2612,12 @@ mfgPurchaseOrders.post('/bulk-supplier-date', async (c) => {
     const childLock = await poHasDownstream(sb, id);
     if (childLock) { skipped.push({ id, poNumber, reason: childLock.message }); continue; }
 
-    const { error } = await scopeToCompanyId(
-      sb.from('purchase_orders').update({ [col]: date, updated_at: new Date().toISOString() }).eq('id', id),
-      co.companyId,
-    );
-    if (error) { skipped.push({ id, poNumber, reason: error.message }); continue; }
-
-    if (applyToLines) {
-      // Unconditional on purpose — see the header note above.
-      const { error: lineErr } = await scopeToCompanyId(
-        sb.from('purchase_order_items').update({ [col]: date }).eq('purchase_order_id', id),
-        co.companyId,
-      );
-      /* The header already moved, so a line failure is reported rather than
-         swallowed: the operator has to know this PO is half-applied. */
-      if (lineErr) { skipped.push({ id, poNumber, reason: `Header updated but lines failed: ${lineErr.message}` }); continue; }
-    }
-
-    await recordEntityAudit(sb, {
-      entityType: 'PURCHASE_ORDER',
-      entityId: id,
-      entityDocNo: poNumber,
-      action: 'UPDATE',
-      actor: c.get('houzsUser'),
-      companyId: (before.company_id as number | null) ?? activeCompanyId(c),
-      statusSnapshot: (before.status as string | null) ?? null,
-      fieldChanges: diffFields(before, { [`supplierDeliveryDate${slot}`]: date }, PO_AUDIT_FIELDS),
+    /* Header + every line + the audit row, in lib/po-supplier-date-cascade.ts —
+       the one writer the PO line import's estimate dates share. */
+    const written = await cascadePoSupplierDate(sb, {
+      companyId: co.companyId, poId: id, before, slot, date, applyToLines, actor: c.get('houzsUser') ?? null, note: null,
     });
+    if (!written.ok) { skipped.push({ id, poNumber, reason: written.reason }); continue; }
     /* ERP -> AutoCount edit, ONE PER PO THAT ACTUALLY MOVED — inside the loop
        and after `continue`s, so a PO that was skipped (not found, downstream-
        locked, or a failed write) queues nothing. A bulk route that queued one
@@ -2695,7 +2670,7 @@ async function recomputePoTotals(sb: any, poId: string) {
    delivery_date, else null. Mirrors the PO-create rule so a per-line Delivery
    Date edit shows on the PO list + PDF (both read the header expected_at).
    Best-effort: never fail the line write on this. (Commander 2026-06-18 #2/#3) */
-async function recomputePoExpectedAt(sb: any, poId: string) {
+export async function recomputePoExpectedAt(sb: any, poId: string) {
   try {
     const { data: lines } = await sb.from('purchase_order_items')
       .select('delivery_date')
@@ -3101,8 +3076,9 @@ mfgPurchaseOrders.patch('/:id/items/:itemId', async (c) => {
     if (it[from] !== undefined) updates[to] = it[from];
   }
   /* Commander 2026-05-28 — Description 2 is server-owned: recompute from the
-     effective itemGroup + variants (incoming patch, else stored row). */
-  {
+     effective itemGroup + variants, but ONLY when one of them moves
+     (lib/po-line-description2.ts says why a date save must not rebuild it). */
+  if (description2InputsChanged(prev, it)) {
     const effGroup = (it.itemGroup ?? (prev as { item_group?: string }).item_group) as string | null | undefined;
     const effVariants = (it.variants ?? (prev as { variants?: unknown }).variants) as Record<string, unknown> | null | undefined;
     updates['description2'] = buildVariantSummary(String(effGroup ?? ''), effVariants ?? null) || null;
