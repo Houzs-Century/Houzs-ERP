@@ -20,7 +20,7 @@ import type {
   MfgPricedOption,
   MfgFabricTier,
 } from '@2990s/shared/mfg-pricing';
-import { mfgCategoryLabel, type MfgProductCategory } from '../../shared/product-categories';
+import { MFG_PRODUCT_CATEGORIES, mfgCategoryLabel, type MfgProductCategory } from '../../shared/product-categories';
 
 /* HOUZS VENDOR — Products wave. The Maintenance editor reads/writes priced
    pool options ({ value, priceSen, costSen?, sellingPriceSen?, active? }). The
@@ -140,7 +140,7 @@ export function useMaintenanceConfig(
 export type MfgCategory = MfgProductCategory;
 /* The category list and the one label per category live in
    vendor/shared/product-categories.ts (mirror of the backend's). */
-export { mfgCategoryLabel };
+export { MFG_PRODUCT_CATEGORIES, mfgCategoryLabel };
 
 /** MfgProductRow — the PO New form only reads id/code/name/category off each
     SKU. The ProductModels wave reads a few more SKU columns (size_code for the
