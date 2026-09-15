@@ -1448,6 +1448,22 @@ tab. There is no "Revised" badge: the revision rides the DOC NUMBER itself —
 `poDisplayNumber()` (`vendor/scm/lib/po-status.ts:37-44`) renders
 `<po_number>_R<revision-1>` when `revision > 1`, on screen and on every print.
 
+**What a re-derived line carries (2026-09-15).** Each surviving bound line is
+rewritten by `rederivePoLineFromSoLine` (`backend/src/scm/lib/po-line-rederive.ts`),
+the one derivation `reviseBoundPo` step 12a calls: qty, item code, name, cost,
+category, variants, Description 2, warehouse, date, photos from the revised SO
+line — and, only when the item code MOVED, the supplier code (from this supplier's
+binding, cleared with a warning when there is none) and the line `description`
+(the SO line's description; what the detail page shows under a no-variant code and
+what the AutoCount edit sends as Description). The item code itself was not written
+before PR #3629 (2026-09-11, `docs/bugs/0808`), so a follow-up confirmed before then
+can still order the old item. Find and fix those with **Realign a PO line to its
+sales-order line** (`.github/workflows/realign-po-line-to-so-line.yml`): no `po` =
+read-only list; `po` + `line` + `expect_code` = plan (rolls back) / apply behind
+`REALIGN THIS PO LINE`, refusing a received line. It never tells AutoCount: an
+AutoCount edit does not change the item on a line the book already holds
+(`composeEdit`, owner 2026-08-13). `docs/bugs/0936`.
+
 ---
 
 ## 7. The cost / money columns

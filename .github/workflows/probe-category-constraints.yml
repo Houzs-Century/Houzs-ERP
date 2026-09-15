@@ -27,20 +27,3 @@ jobs:
       - run: node scripts/probe-fabric-accessory-population.mjs
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-      # TEMPORARY (fix/po-line-realign-to-so-line) — read-only LIST + READ_ONLY derivation. Removed before merge.
-      - run: npx tsx scripts/realign-po-line-to-so-line.mjs
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          NODE_OPTIONS: --dns-result-order=ipv4first
-      - run: npx tsx scripts/realign-po-line-to-so-line.mjs
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          PO: HC-PO-010086
-          LINE: SQUARE PILLOW
-          EXPECT_CODE: AMN-SOFA PILLOW
-          READ_ONLY: "1"
-          NODE_OPTIONS: --dns-result-order=ipv4first
-      - run: node scripts/tmp-probe-sofa-pillow-binding.mjs
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          NODE_OPTIONS: --dns-result-order=ipv4first
