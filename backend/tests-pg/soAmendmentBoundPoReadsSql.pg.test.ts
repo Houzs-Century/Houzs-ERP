@@ -74,7 +74,7 @@ function fixture() {
 
   // Company 1: past the 500-row page, and past the assumed row ceiling on read A.
   const c1Orders: string[][] = [];
-  for (let k = 0; k < 400; k++) c1Orders.push(addOrder(1, `HC-SO-${String(k).padStart(6, '0')}`, 1 + Math.floor(rnd() * 5)));
+  for (let k = 0; k < 400; k++) c1Orders.push(addOrder(1, `HC-SO-${String(k).padStart(6, "0")}`, 3 + Math.floor(rnd() * 5)));
   // Two of every three orders are purchased, over POs of about five lines, some
   // of which span two orders so one PO serves both.
   let pending: string[] = [];
@@ -221,9 +221,11 @@ async function resetSchema(db: Sql) {
     DROP TABLE IF EXISTS scm.mfg_sales_orders CASCADE;
     DO $$ BEGIN CREATE TYPE scm.so_amendment_status AS ENUM ('REQUESTED','SUPPLIER_PENDING','SO_APPROVED','PO_APPROVED','SENT','REJECTED');
     EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-    -- (id, code) only: other suites leave this table behind in two shapes, and
-    -- these are the two columns both of them have.
-    CREATE TABLE IF NOT EXISTS public.companies (id bigint PRIMARY KEY, code text);
+    -- The widest shape any pg suite gives this table, because the suites share
+    -- one database and run in cache order: a narrower table left here failed
+    -- probeTransferCensusSql's insert of name and is_active (CI run 34948309132).
+    -- The insert below uses the two columns every suite's shape has.
+    CREATE TABLE IF NOT EXISTS public.companies (id bigint PRIMARY KEY, code text, name text, is_active int);
     INSERT INTO public.companies (id, code) VALUES (1, 'HOUZS'), (2, '2990') ON CONFLICT (id) DO NOTHING;
 
     CREATE TABLE scm.mfg_sales_orders (doc_no text PRIMARY KEY, company_id bigint);

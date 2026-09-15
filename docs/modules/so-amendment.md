@@ -82,7 +82,7 @@ on `/api/scm/so-amendments`.
 | Method + path | Gate | Notes |
 |---|---|---|
 | `POST /mfg-sales-orders/:docNo/amendments` | `scm.amendment.create`, OR a salesperson on their OWN order, OR a lane approver | Splits by lane, one insert per lane |
-| `GET /so-amendments` | read | Row-scoped like the SO list (own + downline for a scoped rep). Each row also carries `bound_pos` and, since 2026-09-14, the order's raw `so_ref` + `so_customer_so_no` (§7) |
+| `GET /so-amendments` | read | Row-scoped like the SO list (own + downline for a scoped rep). Each row also carries `bound_pos` and, since 2026-09-14, the order's raw `so_ref` + `so_customer_so_no` (§7). Since 2026-09-15 the `bound_pos` reads are batched (`chunkIn`) and a failed one fails the list with `load_failed` instead of an empty field (`docs/bugs/0930-an-so-amendment-left-the-po-amendments-queue-when-a-bound-po.md`) |
 | `GET /so-amendments/:id` | read | |
 | `GET /so-amendments/pending-count` | lane keys, asked LITERALLY (`*` excluded) | **Per-signer** count of `REQUESTED` rows in the lanes THIS caller can sign; 0 for everyone else, the Owner account included. Feeds the sidebar badge (§5). Registered BEFORE `/:id` — Hono matches in order |
 | `PATCH /so-amendments/:id/approve-so` | the row's lane key (legacy: `approve_so`) | Applies the SO revision; LINES also raises PO follow-ups |
@@ -221,9 +221,9 @@ The colours are deliberately not status tones: Requested / Approved / Rejected
 already own burnt, green and red on the same row.
 
 **Reference column.** `GET /so-amendments` reads `ref, customer_so_no` from
-`mfg_sales_orders` for the page's doc_nos (company-scoped, one bounded read; a
-failed read fails the list with `load_failed` like the main read, because a blank
-column would claim the order has no reference) and sends them RAW as `so_ref` /
+`mfg_sales_orders` for the page's doc_nos (company-scoped, batched by URL budget
+like the `bound_pos` reads; a failed read fails the list with `load_failed` like
+the main read, because a blank column would claim the order has no reference) and sends them RAW as `so_ref` /
 `so_customer_so_no`. The queue resolves the cell with
 `customerRefOf` (`frontend/src/lib/customer-ref.ts`), the rule the Sales Order
 list's **Reference** column already uses, so one order cannot show two different
