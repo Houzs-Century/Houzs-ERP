@@ -21,7 +21,7 @@ const outboxRow = (over: Row): Row => ({
   payload: { body: {} }, attempts: 0, dedupe_key: null, archived_at: null, ...over,
 });
 
-const sentRow = { company_id: 1, doc_type: 'SO', doc_no: SO_DOC, doc_id: null, op: 'edit' };
+const sentRow = { company_id: 1, doc_type: 'SO' as const, doc_no: SO_DOC, doc_id: null, op: 'edit' };
 
 const rows = (sb: { tables: Record<string, Row[]> }) => sb.tables.autocount_outbox;
 const byId = (sb: { tables: Record<string, Row[]> }, id: string) => rows(sb).find((r) => r.id === id);
@@ -134,7 +134,7 @@ describe('resendHeldEdits', () => {
     ]);
     const enqueue = vi.fn<HeldEditEnqueue>(async () => true);
 
-    const sent = { company_id: 1, doc_type: 'IV', doc_no: 'HC-SI-2609-001', doc_id: 'iv-1', op: 'do_to_iv' };
+    const sent = { company_id: 1, doc_type: 'IV' as const, doc_no: 'HC-SI-2609-001', doc_id: 'iv-1', op: 'do_to_iv' };
     expect(await resendHeldEdits(asSb(sb), sent, enqueue)).toBe('queued');
     expect(enqueue).toHaveBeenCalledWith({ companyId: 1, docType: 'IV', docNo: 'HC-SI-2609-001', docId: 'iv-1', createdBy: null });
   });
@@ -143,7 +143,7 @@ describe('resendHeldEdits', () => {
     const sb = world([outboxRow({ id: 'ob-po', doc_type: 'PO', doc_no: 'HC-PO-1', status: 'skipped', last_error: KEYLESS, created_at: '2026-09-15T06:14:35.000Z' })]);
     const enqueue = vi.fn<HeldEditEnqueue>(async () => true);
 
-    const sent = { company_id: 1, doc_type: 'PO', doc_no: 'HC-PO-1', doc_id: null, op: 'edit' };
+    const sent = { company_id: 1, doc_type: 'PO' as const, doc_no: 'HC-PO-1', doc_id: null, op: 'edit' };
     expect(await resendHeldEdits(asSb(sb), sent, enqueue)).toBe('not_queued');
     expect(enqueue).not.toHaveBeenCalled();
   });

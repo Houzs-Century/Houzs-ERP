@@ -35,8 +35,6 @@ export const HELD_EDIT_REASONS = [
   'edited before its AutoCount counterpart existed:',
 ] as const;
 
-const DOC_TYPES: readonly AcDocType[] = ['SO', 'PO', 'DO', 'GR', 'IV', 'PI'];
-
 /** enqueueEdit, passed in: this module is called FROM the outbox module, and a
  *  runtime import back into it would make the two load each other. */
 export type HeldEditEnqueue = (opts: {
@@ -70,11 +68,11 @@ export const isHeldEditRefusal = (lastError: string | null | undefined): boolean
 
 export async function resendHeldEdits(
   sb: Sb,
-  sent: { company_id: number; doc_type: string; doc_no: string; doc_id: string | null; op: string },
+  sent: { company_id: number; doc_type: AcDocType; doc_no: string; doc_id: string | null; op: string },
   enqueue: HeldEditEnqueue,
 ): Promise<HeldEditOutcome> {
-  const docType = DOC_TYPES.find((t) => t === sent.doc_type);
-  if (!docType || sent.op === 'cancel' || !sent.doc_no) return 'none';
+  const docType = sent.doc_type;
+  if (sent.op === 'cancel' || !sent.doc_no) return 'none';
   try {
     const { data, error } = await sb.from('autocount_outbox')
       .select('id, status, doc_id, last_error, created_at, payload')
