@@ -20,7 +20,7 @@ describe("DataTable document-family layout manifest", () => {
       .filter((f) => f.endsWith(".tsx"))
       .flatMap((f) =>
         [...readFileSync(`${dir}/${f}`, "utf8").matchAll(/layoutFamily=\{DATA_TABLE_LAYOUT_FAMILIES\.(\w+)\}([^\n]*)/g)]
-          .map((m) => ({ file: f, family: m[1], rest: m[2] ?? "" })),
+          .map((m) => ({ file: f, family: m[1], rest: m[2] })),
       );
     expect(uses.map((u) => u.family).sort()).toEqual(Object.keys(DATA_TABLE_LAYOUT_FAMILIES).sort());
     for (const u of uses) {
