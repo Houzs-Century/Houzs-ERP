@@ -220,6 +220,38 @@ describe('ADD and REMOVE are unaffected', () => {
     const remove = colourOnlyLine({ change_type: 'REMOVE', new_variants: undefined });
     expect(amendmentLineIsChange(remove)).toBe(true);
   });
+
+  /* HC-SO-012757/A1 (2026-09-15): an added TRANSPORTATION CHARGES line with no
+     discount read "Discount cleared" on the job card, the SO amendment modal and
+     the phone sheet — all seven lines ever added carried no discount, five no
+     remark. A remark and a discount are optional on a line: on a whole-line
+     change they count only when the line actually carries one. */
+  it('an ADD with no remark and no discount does not flag either as changed', () => {
+    const add: DiffableAmendmentLine = {
+      change_type: 'ADD', new_item_code: 'TRANSPORTATION CHARGES', new_qty: 1, new_unit_price_sen: 15000,
+      new_remark: null, new_discount_sen: null,
+    };
+    expect(amendmentLineChangedFields(add)).toEqual({
+      itemCode: true, qty: true, unitPrice: true, variants: true, remark: false, discount: false,
+    });
+    expect(amendmentLineIsChange(add)).toBe(true);
+    expect(amendmentLineChangedFields({ ...add, new_remark: '   ' }).remark).toBe(false);
+    expect(amendmentLineChangedFields({ ...add, new_discount_sen: 0 }).discount).toBe(false);
+  });
+
+  it('an ADD that does carry a discount flags it', () => {
+    expect(amendmentLineChangedFields({ change_type: 'ADD', new_item_code: 'SVC-DELIVERY', new_discount_sen: 5000 }).discount).toBe(true);
+  });
+
+  it('a REMOVE flags a remark or discount only when the removed line had one', () => {
+    const bare = colourOnlyLine({ change_type: 'REMOVE', new_variants: undefined });
+    expect(amendmentLineChangedFields(bare).remark).toBe(false);
+    expect(amendmentLineChangedFields(bare).discount).toBe(false);
+    const dressed = colourOnlyLine({ change_type: 'REMOVE', new_variants: undefined }, { remark: 'Deliver before 5pm', discountSen: 2000 });
+    expect(amendmentLineChangedFields(dressed).remark).toBe(true);
+    expect(amendmentLineChangedFields(dressed).discount).toBe(true);
+    expect(amendmentLineIsChange(bare)).toBe(true);
+  });
 });
 
 /* ── REMARK (mig 0280) — owner 2026-08-11, 2990-SO-2608-016 ────────────────

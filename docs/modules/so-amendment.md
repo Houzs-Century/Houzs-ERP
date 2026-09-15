@@ -223,3 +223,35 @@ exported. Phone: a "Ref …" line on the card. Pinned by
 **Open order.** Requested stays on top every time the desktop queue opens — see
 [`purchase-order-amendment.md`](./purchase-order-amendment.md), *Status
 simplification*, for `sortForSessionOnly`.
+
+## 8. One click opens a quick view (2026-09-14)
+
+Owner: 「SO / PO amendment需要单击打开 弹窗 像SO这样」 — the Sales Order list opens a
+side drawer on a single click, and the amendment queues should too.
+
+- **Single click** on a desktop queue row opens
+  `frontend/src/pages/scm-v2/AmendmentQuickView.tsx` in the shared
+  `ResizableDetailDrawer` (the SO / PO / DO list drawers' chrome, same resizable
+  width). **Double-click** still opens the job card (`/scm/amendments/:id`);
+  `amendmentJobCardPath` is the one place both answers come from, and the
+  drawer's **Open full page** goes there too.
+- **Read-only**: the amendment number, the Sales Order, the status pill, the
+  approver badge, who asked and when, the bound POs, the reason, a withdrawn or
+  rejected request's words, the order (header) changes, and the line changes.
+  Approve, reject and withdraw stay on the job card, where their permission
+  checks and confirmations are.
+- **The line cards are the job card's own.** `SoAmendmentDiffCard` now lives in
+  `frontend/src/pages/scm-v2/so-amendment-diff-card.tsx` (moved verbatim out of
+  `AmendmentDetailV2.tsx`) so the drawer cannot show a change differently from the
+  page an approver signs on — and without pulling the job card's PDF generator
+  into the queue route. Header rows come from the same `amendmentHeaderDiffRows`.
+- **"Remark cleared" / "Discount cleared" on an added line was wrong** and is
+  fixed in the one shared rule (`amendmentLineChangedFields`): on an ADD the remark
+  and the discount count as changed only when the new line carries one, on a
+  REMOVE only when the removed line had one. Before, all 7 lines ever added read
+  "Discount cleared" on the job card, the desktop amendment modal and the phone
+  sheet (`docs/bugs/0919-an-added-amendment-line-said-remark-cleared-and-discount-cle.md`).
+- The phone queue already opened on a tap and is unchanged.
+- Pinned by `AmendmentQuickView.test.tsx` and
+  `amendment-queue-quick-view.test.tsx` (single click opens it, double-click
+  navigates, on both queues).

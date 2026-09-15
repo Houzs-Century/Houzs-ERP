@@ -87,7 +87,7 @@
     },
     {
       "check": "D1",
-      "key": "EXPECTED_AT,NOTES,SUPPLIER_ID|backend/src/scm/lib/po-revision.ts backend/src/scm/routes/po-amendments.ts frontend/src/mobile/MobilePoAmendmentDetail.tsx frontend/src/pages/scm-v2/PoAmendmentDetailV2.tsx",
+      "key": "EXPECTED_AT,NOTES,SUPPLIER_ID|backend/src/scm/lib/po-revision.ts backend/src/scm/routes/po-amendments.ts frontend/src/mobile/MobilePoAmendmentDetail.tsx frontend/src/pages/scm-v2/po-amendment-diff-card.tsx",
       "why": "THE AMENDABLE PO HEADER FIELDS — which header columns a PO amendment may carry. One home decides, three render labels for it (AMENDABLE_HEADER, HEADER_LABEL). The deciding copy is po-revision.ts; the others cannot widen it."
     },
     {
