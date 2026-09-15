@@ -5524,7 +5524,7 @@ The paginated list's `?q=` runs ONE PostgREST `.or()` — built ONCE in
 `backend/src/scm/lib/so-list-read.ts` (`prepareSoListRead` → `header`) and applied to the
 page-rows query, the money-KPI aggregate and the line export, which must filter the
 same set (until 2026-09-15 the money aggregate carried a hand copy without the phone
-arm — `docs/bugs/0925-the-sales-order-list-money-strip-ignored-a-customer-phone-se.md`)
+arm — `docs/bugs/0926-the-sales-order-list-money-strip-ignored-a-customer-phone-se.md`)
 — over `doc_no / debtor_name / debtor_code / agent / sales_location / ref /
 customer_so_no / branding` + phone. It must cover the fields `customerRefOf`
 (`ref || customer_so_no || po_doc_no`, `frontend/src/lib/customer-ref.ts`) can
