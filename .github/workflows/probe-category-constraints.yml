@@ -20,14 +20,10 @@ jobs:
       - uses: actions/setup-node@v6
         with: { node-version: 22 }
       - run: npm ci
-      - run: npx tsx scripts/check-mrp-stale-demand.mjs
+      - run: node scripts/probe-category-constraints.mjs
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          SHOW: "40"
-          OUT_FILE: ${{ runner.temp }}/mrp-stale-demand.json
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: mrp-stale-demand
-          path: ${{ runner.temp }}/mrp-stale-demand.json
-          if-no-files-found: ignore
+      # What moves when models / SKUs change to FABRIC_ACCESSORY (owner 2026-09-14).
+      - run: node scripts/probe-fabric-accessory-population.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
