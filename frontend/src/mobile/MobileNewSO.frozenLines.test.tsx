@@ -79,7 +79,7 @@ describe("phone SO editor — a partly delivered order", () => {
     expect((screen.getByDisplayValue("1 Jalan") as HTMLInputElement).disabled).toBe(true);
   });
 
-  it("an order with nothing left to convert shows every line read-only, as before", async () => {
+  it("an order whose every line is on a DO or invoice shows every line read-only, as before", async () => {
     const { container } = mount({ ...header, downstream_fully_frozen: true }, [item("line-delivered", "BF-QUEEN", true)]);
     await waitFor(() => expect(screen.getByText(/line items can no longer be changed/i)).toBeTruthy());
     expect(screen.queryByRole("button", { name: /add line/i })).toBeNull();

@@ -151,7 +151,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/mfg-purchase-orders-list-enrichment.ts` | 1 | 82 |
 | `backend/src/scm/routes/mfg-purchase-orders.ts` | 24 | 4518 |
 | `backend/src/scm/routes/mfg-sales-orders-list-enrichment.ts` | 2 | 327 |
-| `backend/src/scm/routes/mfg-sales-orders.ts` | 41 | 11871 |
+| `backend/src/scm/routes/mfg-sales-orders.ts` | 41 | 11897 |
 | `backend/src/scm/routes/mfg-so-fairs.ts` | 4 | 299 |
 | `backend/src/scm/routes/model-free-gifts.ts` | 3 | 147 |
 | `backend/src/scm/routes/mrp-lead-times.ts` | 2 | 95 |
@@ -223,19 +223,19 @@ scripts, never assumed: each runner declares its own directory, and
 | tree | runner | *.sql | highest | applied to PRODUCTION by deploy.yml | read by backend vitest |
 |---|---|---|---|---|---|
 | `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 153 | `154_assr_case_access.sql` (154) | no | yes |
-| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 427 | `0352_acc_pv_files.sql` (0352) | YES | no |
+| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 428 | `0352_acc_pv_files.sql` (0352) | YES | no |
 
 Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its number): `0136_capture_compat_views_trips_lorries.sql.TEMPLATE`
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (2455 files, 790589 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (2465 files, 791695 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
 |---|---|
 | `frontend/src/pages/Projects.tsx` | 15144 |
-| `backend/src/scm/routes/mfg-sales-orders.ts` | 11871 |
+| `backend/src/scm/routes/mfg-sales-orders.ts` | 11897 |
 | `frontend/src/pages/ServiceCases.tsx` | 8850 |
 | `backend/src/services/autocount-sofa-corpus.ts` | 8581 |
 | `frontend/src/pages/Team.tsx` | 5686 |
@@ -246,8 +246,8 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `backend/src/scm/routes/mfg-purchase-orders.ts` | 4518 |
 | `frontend/src/mobile/MobilePMS.tsx` | 4488 |
 | `frontend/src/pages/scm-v2/SupplierDetail.tsx` | 4342 |
-| `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4205 |
-| `frontend/src/mobile/MobileNewSO.tsx` | 3666 |
+| `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4204 |
+| `frontend/src/mobile/MobileNewSO.tsx` | 3673 |
 | `backend/src/scm/routes/grns.ts` | 3564 |
 | `frontend/src/components/DataTable.tsx` | 3456 |
 | `frontend/src/mobile/MobileServiceCase.tsx` | 3381 |
@@ -480,7 +480,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileModuleList.tsx` | 2105 |
 | `frontend/src/mobile/MobileMyCaseDetail.tsx` | 326 |
 | `frontend/src/mobile/MobileNewProject.tsx` | 196 |
-| `frontend/src/mobile/MobileNewSO.tsx` | 3666 |
+| `frontend/src/mobile/MobileNewSO.tsx` | 3673 |
 | `frontend/src/mobile/MobilePMS.tsx` | 4488 |
 | `frontend/src/mobile/MobilePOD.tsx` | 558 |
 | `frontend/src/mobile/MobilePmsDefectActions.tsx` | 109 |
