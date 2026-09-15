@@ -25,6 +25,15 @@ import {
   type PoLineImportRow,
   type PoLineImportRowResult,
 } from './po-line-import';
+import { poLineDescription2 } from './po-line-description2';
+
+/** What the exported file showed for a LINE field: Item Description 2 is the
+ *  variant summary, else the stored text (po-line-description2.ts); every other
+ *  line field is its stored column. */
+const lineFieldNow = (field: PoLineImportField, line: ImportLineRow): string | null =>
+  field === 'description2'
+    ? storedImportValue(field, poLineDescription2(line.item_group as string | null, line.variants, line.description2 as string | null))
+    : storedImportValue(field, line[poLineImportSpec(field).column]);
 
 export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -56,9 +65,13 @@ export type ImportWorld = {
 };
 
 /* The number staff see. A revised PO prints as <po_number>_R<revision-1>
-   (vendor/scm/lib/po-status.ts poDisplayNumber), so an export may carry either. */
+   (vendor/scm/lib/po-status.ts poDisplayNumber), and the grid's Doc No column is
+   AutoCount's number when the PO is linked (owner 2026-09-15), so an export may
+   carry any of the three. */
 const docNoMatches = (fileDocNo: string, po: ImportPoRow): boolean => {
   const f = fileDocNo.trim().toUpperCase();
+  const ac = String(po.linked_ac_docno ?? '').trim().toUpperCase();
+  if (ac !== '' && f === ac) return true;
   const base = String(po.po_number ?? '').trim().toUpperCase();
   if (f === base) return true;
   const rev = Number(po.revision ?? 1);
@@ -138,7 +151,7 @@ export function classifyPoLineImport(rows: PoLineImportRow[], world: ImportWorld
          the same way, or an untouched file would look edited. */
       const current = spec.level === 'po'
         ? storedImportValue(field, line[spec.column]) ?? storedImportValue(field, po[spec.column])
-        : storedImportValue(field, line[spec.column]);
+        : lineFieldNow(field, line);
       if (!parsed.ok) {
         invalid.push(`${spec.header}: ${parsed.reason}`);
         if (spec.level === 'po') poLevel.push([field, { rowNumber: row.rowNumber, itemCode, value: null, current, invalid: true }]);
@@ -315,7 +328,7 @@ export function recheckApply(req: PoLineImportApplyBody, world: ImportWorld): Po
     const po = line ? world.pos.get(line.purchase_order_id) : undefined;
     if (!line || !po) { conflicts.push({ docNo: ch.docNo || null, lineId: ch.lineId, field: ch.field, reason: 'This line is no longer in this company.' }); continue; }
     refuse(po);
-    const now = storedImportValue(ch.field, line[poLineImportSpec(ch.field).column]);
+    const now = lineFieldNow(ch.field, line);
     if (now !== ch.old) {
       conflicts.push({
         docNo: po.po_number, lineId: ch.lineId, field: ch.field,
