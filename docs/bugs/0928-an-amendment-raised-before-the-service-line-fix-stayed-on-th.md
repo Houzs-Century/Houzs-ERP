@@ -47,6 +47,15 @@ validate it with the shared `AMENDMENT_REASON_REQUIRED` message. Pinned by
 `routes/amendment-submit-reason.test.ts` (source pin on the handler; RED on the
 unfixed tree — the `?? null` fallback and the absent guard both fail it).
 
-**Ref.** `fix/relane-so-amendment-0895`, 2026-09-15. Module guide:
-`docs/modules/so-amendment.md` §1 (the relane workflow) and §2 (reason required).
-Production run of the workflow on HC-SO-012757/A1: see the PR's merge comment.
+**Ref.** `fix/relane-so-amendment-0895`, PR #3950, merged 2026-09-15 10:40Z. Module
+guide: `docs/modules/so-amendment.md` §1 (the relane workflow) and §2 (reason
+required).
+
+**Production run (2026-09-15 10:43Z, dry run, Actions run 34959398513).** The tool
+REFUSED: `Found: status=REJECTED lane=LINES` → `only a REQUESTED amendment can move
+lanes`. Read-only on `anogrigyjbduyzclzjgn`: staff had already withdrawn A1 at 09:47Z
+(`resolution=WITHDRAWN`, reason "assigned to wrong approver") and re-raised the same
+RM150 charge after #3916 deployed — A2 (ADD `MISC`, 09:21Z, lane DELIVERY), A3 (SPEC →
+`TRANSPORTATION CHARGES`, price 0), A4 (SPEC price RM150), all three `SO_APPROVED` on
+the DELIVERY lane by 09:55Z. So A1 needed no relane; the refusal is the tool doing
+its job. It stays for the next amendment stored on a stale lane.
