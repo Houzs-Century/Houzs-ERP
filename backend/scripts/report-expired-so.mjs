@@ -51,5 +51,6 @@ const rows = await sql`
    ORDER BY days_overdue DESC, h.doc_no`;
 console.log(`::notice::expired sales orders still owing goods, company ${COMPANY}: ${rows.length}`);
 for (const r of rows) console.log("ROW " + JSON.stringify(r));
+if (process.env.OUT_FILE) { const fs = await import("node:fs"); fs.writeFileSync(process.env.OUT_FILE, JSON.stringify(rows)); }
 console.log("::notice::READ-ONLY — nothing was written.");
 await sql.end();
