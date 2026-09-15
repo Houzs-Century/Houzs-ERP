@@ -20,10 +20,9 @@ jobs:
       - uses: actions/setup-node@v6
         with: { node-version: 22 }
       - run: npm ci
-      - run: node scripts/probe-category-constraints.mjs
+      # TEMPORARY (feat/mrp-processing-date-gate) - removed before merge.
+      - run: npx tsx scripts/check-mrp-stale-demand.mjs
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-      # What moves when models / SKUs change to FABRIC_ACCESSORY (owner 2026-09-14).
-      - run: node scripts/probe-fabric-accessory-population.mjs
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMPANY: "1"
+          SHOW: "5"
