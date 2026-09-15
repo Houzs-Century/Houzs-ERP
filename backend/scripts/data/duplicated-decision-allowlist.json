@@ -47,8 +47,8 @@
     },
     {
       "check": "D1",
-      "key": "BANK,CASH,GENERAL,PURCHASE,SALES|backend/src/acc/journal-class.ts frontend/src/pages/scm-v2/Accounting.tsx",
-      "why": "ONE vocabulary, one definition and one PRESENTATION of it — classifyJournal (journal-class.ts) is the rule; JOURNAL_CHIPS is the chip strip's render order over labels the SERVER already stamped on each row (journal_class). The frontend cannot import backend/src/acc (the shared package here is a pair of vendored copies, not a workspace import), and a chip the backend stopped emitting filters to an empty list — a blank chip, not a wrong number."
+      "key": "BANK,CASH,GENERAL,PURCHASE,SALES|backend/src/acc/journal-class.ts frontend/src/pages/scm-v2/JournalEntries.tsx",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — classifyJournal (journal-class.ts) is the rule; JOURNALS (JournalEntries.tsx, once JOURNAL_CHIPS in Accounting.tsx) is the chip strip's render order over labels the SERVER already stamped on each row (journal_class). The frontend cannot import backend/src/acc (the shared package here is a pair of vendored copies, not a workspace import), and a chip the backend stopped emitting filters to an empty list — a blank chip, not a wrong number."
     },
     {
       "check": "D1",
@@ -1317,7 +1317,7 @@
     },
     {
       "check": "D1",
-      "key": "ESTIMATE DELIVERY DATE 1,ESTIMATE DELIVERY DATE 2,ESTIMATE DELIVERY DATE 3|backend/src/scm/lib/po-line-export-columns.ts frontend/src/vendor/scm/lib/po-line-export-columns.ts",
+      "key": "ESTIMATE DELIVERY DATE,SUPPLIER DELIVERY DATE 2,SUPPLIER DELIVERY DATE 3|backend/src/scm/lib/po-line-export-columns.ts frontend/src/vendor/scm/lib/po-line-export-columns.ts",
       "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it (the server builds the PO line export rows, the browser writes the sheet and labels the Outstanding tab). frontend/src/vendor/scm/lib/po-line-export-columns.canonical.test.ts asserts the two files are byte-identical and check-shared-mirrors.mjs compares the pair. Symbols: PO_ESTIMATE_DELIVERY_DATE_LABELS."
     },
     {

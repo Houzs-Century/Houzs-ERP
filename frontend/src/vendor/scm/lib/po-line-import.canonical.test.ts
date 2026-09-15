@@ -23,7 +23,7 @@ describe('the two copies of po-line-import are the same file', () => {
       expect(t).toContain('PO_ESTIMATE_DELIVERY_DATE_FIELDS');
     }
     expect(PO_LINE_IMPORT_FIELDS.map((f) => f.header)).toEqual([
-      'Delivery Date', 'Estimate Delivery Date 1', 'Estimate Delivery Date 2', 'Estimate Delivery Date 3',
+      'Delivery Date', 'Estimate Delivery Date', 'Supplier Delivery Date 2', 'Supplier Delivery Date 3',
       'Item Description 2', 'Remarks',
     ]);
   });
