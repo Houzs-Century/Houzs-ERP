@@ -207,6 +207,14 @@ interface Props<T, L = never> {
    */
   persistFilters?: boolean;
   /**
+   * `false` keeps a header sort for this visit only and erases one an earlier
+   * version saved. For document LINE tables: their layout is shared by every
+   * document of the kind, so a saved sort re-ordered the lines of every order
+   * opened after it — away from the document order its editor shows (owner
+   * 2026-09-15). Absent = the saved sort every other table keeps.
+   */
+  persistSort?: boolean;
+  /**
    * Named column layouts offered at the top of the Columns panel. The preset
    * flagged `isDefault` is also the BASELINE this table renders with until the
    * user stores prefs of their own — so a page can hand each company its own
@@ -651,6 +659,7 @@ function DataTableInner<T, L>({
   tableId,
   layoutFamily,
   persistFilters = true,
+  persistSort = true,
   layoutPresets,
   documentLabel,
   columns,
@@ -740,12 +749,26 @@ function DataTableInner<T, L>({
     legacyStorageKey("order"),
     sanitizeStringList,
   );
-  const [sort, setSort] = useLocalStorage<SortState | null>(
+  const storedSort = useLocalStorage<SortState | null>(
     `dt:sort:${idKey}`,
     null,
     legacyStorageKey("sort"),
     sanitizeSortState,
   );
+  const sessionSort = useState<SortState | null>(null);
+  const [sort, setSort] = persistSort ? storedSort : sessionSort;
+  // Same erase as the non-persisted funnels below, for the same reason.
+  const storedSortValue = storedSort[0];
+  const legacySortKey = legacyStorageKey("sort");
+  useEffect(() => {
+    if (persistSort) return;
+    try {
+      localStorage.removeItem(`dt:sort:${idKey}`);
+      if (legacySortKey) localStorage.removeItem(legacySortKey);
+    } catch {
+      // storage unavailable: nothing was persisted to erase
+    }
+  }, [persistSort, idKey, legacySortKey, storedSortValue]);
   // Mobile-only view preference. "cards" renders the stacked cards
   // (default for `<sm`); "table" forces the desktop table with a
   // horizontal scroll. Persisted per-table so each list page
@@ -2769,8 +2792,12 @@ function DataTableInner<T, L>({
                         }
                         className={cn(
                           "group transition-colors",
-                          rowIdx % 2 === 0 ? "bg-surface" : "bg-surface-dim/35",
-                          isRowSelected && "bg-primary/10",
+                          /* The zebra only where the row has no colour of its own: the built
+                             CSS emits .bg-surface AFTER .bg-primary/10 / .bg-err-bg, so on one
+                             <tr> the zebra won and a ticked or toned row never painted. */
+                          isRowSelected ? "bg-primary/10"
+                            : customClass && /(^|\s)!?bg-/.test(customClass) ? null
+                            : rowIdx % 2 === 0 ? "bg-surface" : "bg-surface-dim/35",
                           onRowClick && "cursor-pointer",
                           customClass
                         )}
@@ -3016,7 +3043,9 @@ function DataTableInner<T, L>({
                       : undefined
                   }
                   className={cn(
-                    "relative overflow-hidden rounded-lg border border-border bg-surface shadow-stone transition-colors",
+                    "relative overflow-hidden rounded-lg border border-border shadow-stone transition-colors",
+                    // Same rule as the table row: a card's own background replaces the default.
+                    !(customClass && /(^|\s)!?bg-/.test(customClass)) && "bg-surface",
                     onRowClick &&
                       "cursor-pointer active:bg-primary/15 hover:border-primary/40",
                     customClass,

@@ -789,9 +789,8 @@ export default function App() {
             所以我都不需要多一个 driver"). Its page is now the Drivers section of
             /scm/fleet, which carries the same scm.transportation.drivers gate.
             Route deliberately NOT mounted — "off, not hide": no nav entry, no
-            route, no prefetch, so nothing mounts and no query fires. The file
-            pages/scm-v2/Drivers.tsx is KEPT on disk (vendored 2990 tree shape)
-            but has no importer. Do not re-add this route. */}
+            route, no prefetch, so nothing mounts and no query fires. Do not
+            re-add this route. */}
         {/* Delivery Planning + TMS Stage 3 — all under the existing scm.transportation.drivers area. */}
         <Route path="/scm/delivery-planning"         element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmDeliveryPlanningV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/dp-orders"                 element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmDpOrdersV2 /></Scm2990Shell></ScmGuard>} />

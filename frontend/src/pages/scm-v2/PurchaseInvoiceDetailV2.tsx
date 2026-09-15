@@ -894,7 +894,7 @@ function PurchaseInvoiceDetailV2ReadOnly() {
             <Section title={`Line items · ${items.length}`}>
               <DataTable<PiItem>
                 tableId={`pi-lines-${id}`}
-                layoutFamily={DATA_TABLE_LAYOUT_FAMILIES.purchaseInvoiceLines}
+                layoutFamily={DATA_TABLE_LAYOUT_FAMILIES.purchaseInvoiceLines} persistSort={false} persistFilters={false}
                 rows={items}
                 loading={false}
                 columns={lineColumns}

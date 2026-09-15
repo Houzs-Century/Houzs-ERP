@@ -393,9 +393,9 @@
       "@typescript-eslint/no-unnecessary-condition": 24
     },
     "src/pages/Projects.tsx": {
-      "@typescript-eslint/no-explicit-any": 87,
-      "@typescript-eslint/no-floating-promises": 17,
-      "@typescript-eslint/no-unnecessary-condition": 78
+      "@typescript-eslint/no-explicit-any": 76,
+      "@typescript-eslint/no-floating-promises": 15,
+      "@typescript-eslint/no-unnecessary-condition": 57
     },
     "src/pages/ResetPassword.tsx": {
       "@typescript-eslint/no-explicit-any": 1
@@ -555,10 +555,6 @@
     },
     "src/pages/scm-v2/DriverLeave.tsx": {
       "@typescript-eslint/no-floating-promises": 4
-    },
-    "src/pages/scm-v2/Drivers.tsx": {
-      "@typescript-eslint/no-floating-promises": 3,
-      "@typescript-eslint/no-unnecessary-condition": 4
     },
     "src/pages/scm-v2/FabricTracking.tsx": {
       "@typescript-eslint/no-floating-promises": 2
@@ -961,9 +957,6 @@
     "src/vendor/scm/components/SofaComboTab.tsx": {
       "@typescript-eslint/no-floating-promises": 4,
       "@typescript-eslint/no-unnecessary-condition": 15
-    },
-    "src/vendor/scm/components/SpecialAddonsTab.tsx": {
-      "@typescript-eslint/no-unnecessary-condition": 5
     },
     "src/vendor/scm/components/StatePicker.tsx": {
       "@typescript-eslint/no-unnecessary-condition": 1

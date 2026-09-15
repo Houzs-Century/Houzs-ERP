@@ -780,7 +780,7 @@ export function DeliveryPlanningBoard({
       // Execution times — filled in as the day happens, not while planning it
       'time_range', 'time_confirmed', 'arrival_at', 'departure_at',
       // Customer detail
-      'house_type', 'replacement_disposal', 'referral', 'branding',
+      'house_type', 'replacement_disposal', 'so_ref', 'branding',
       // Crew detail — the Driver / Lorry columns above carry the summary
       'driver_ic', 'driver_contact', 'driver_2', 'helper_1', 'helper_2',
       // Document + money
@@ -914,16 +914,16 @@ export function DeliveryPlanningBoard({
       searchValue: (o) => o.replacement_disposal ?? '',
     },
     {
-      /* Reference — the SO header's `referral` tag, the same value the mobile
-         stop detail labels "Reference". Dropped in the 2026-08-04 pass; the
-         owner asked for it back on 2026-09-15 ("delivery planning 没有 reference
-         number 选项") — the Columns panel searched "ref" and found nothing.
-         Default-HIDDEN: it returns to the panel, not to the default view. The
-         label is "Reference", not "Referral", so that search finds it. */
-      key: 'referral', label: 'Reference', width: 140, groupable: true, defaultHidden: true,
-      accessor: (o) => o.referral ?? '—',
-      searchValue: (o) => o.referral ?? '',
-      groupValue: (o) => o.referral ?? '(none)',
+      /* Reference — the order's own reference, `mfg_sales_orders.ref` (AutoCount
+         Ref, e.g. pg0791 on HC-SO-004574; the delivery sheet's Ref column).
+         Owner 2026-09-15 ("delivery planning 没有 reference number 选项"). First
+         shipped reading `referral` (#3961) — the HC referral CHANNEL, empty on
+         every order — so the column was blank; docs/bugs/0934. Default-HIDDEN:
+         it lives in the Columns panel, not the default view. SO rows only. */
+      key: 'so_ref', label: 'Reference', width: 140, groupable: true, defaultHidden: true,
+      accessor: (o) => o.so_ref ?? '—',
+      searchValue: (o) => o.so_ref ?? '',
+      groupValue: (o) => o.so_ref ?? '(none)',
     },
     {
       /* The order's ACTUAL customer state (Kuala Lumpur / Selangor / Johor …).
