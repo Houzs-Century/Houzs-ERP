@@ -50,6 +50,8 @@ export const soLine = (r: Record<string, unknown>): ErpLine => ({
   unit_price_sen: Number(r.unit_price_sen ?? 0),
   variants: (r.variants as Record<string, unknown> | null) ?? null,
   linked_ac_dtlkey: (r.linked_ac_dtlkey as number | null) ?? null,
+  /* Null on the tables whose column lists do not select it. */
+  line_no: r.line_no == null ? null : Number(r.line_no),
   /* `line_delivery_date` on a sales-order line, `delivery_date` on a purchase
      one — the same fact under two column names. Null on the four DOWNSTREAM
      tables, whose column lists select neither, and that costs them nothing:

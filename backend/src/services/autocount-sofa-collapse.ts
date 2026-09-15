@@ -77,6 +77,9 @@ export interface CollapsibleLine {
   delivery_date?: string | null;
   variants?: Record<string, unknown> | null;
   linked_ac_dtlkey?: number | string | null;
+  /** The line's place on the ERP document, when its table has one. It states the
+   *  order the pieces were typed; the read order does not (docs/bugs/0920). */
+  line_no?: number | null;
 }
 
 export interface CollapsedLine extends CollapsibleLine {
@@ -420,6 +423,16 @@ function collapseRun(
      gathers a mixed build cannot forget to say so. */
   foreign: string[],
 ): { lines: CollapsedLine[] } | { refusal: string } {
+  /* THE DOCUMENT'S LINE ORDER, NOT THE READ ORDER (docs/bugs/0920). The queue
+     reads rows by created_at then row id, and an amendment re-derives a build's
+     pieces at one instant, so their read order is the ids'. HC-SO-002861 was sent
+     `1EL + C + 1B + CT + 1NA` while its lines read 1A(LHF), CNR, 1NA, Console,
+     1B(RHF). Where every piece has a line number, the pieces are spelled in that
+     order; otherwise they stay as they came. */
+  const lineNos = run.map((r) => r.line.line_no);
+  if (lineNos.every((n) => typeof n === 'number' && Number.isFinite(n)) && new Set(lineNos).size === run.length) {
+    run = [...run].sort((a, b) => Number(a.line.line_no) - Number(b.line.line_no));
+  }
   const codes = run.map((r) => r.line.item_code);
   const namesForeign = (text: string) => foreign.every((f) => text.includes(f));
   const desc2 = String(run[0].line.description2 ?? '').trim();
