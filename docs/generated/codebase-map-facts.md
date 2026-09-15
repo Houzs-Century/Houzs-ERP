@@ -11,7 +11,7 @@ FOR, which trees are dead, what must be changed in pairs — lives in
 
 ## 1. Backend route inventory
 
-195 route modules (53 in `backend/src/routes`, 142 in `backend/src/scm/routes`), 1297 endpoint registrations.
+196 route modules (53 in `backend/src/routes`, 143 in `backend/src/scm/routes`), 1299 endpoint registrations.
 
 An endpoint is a `router.<method>("/…")` registration. For the per-route authorization
 boundary see the sibling artifact `docs/generated/route-capability-matrix.csv`, which
@@ -149,7 +149,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/maintenance-config.ts` | 5 | 410 |
 | `backend/src/scm/routes/mfg-products.ts` | 11 | 1284 |
 | `backend/src/scm/routes/mfg-purchase-orders-list-enrichment.ts` | 1 | 82 |
-| `backend/src/scm/routes/mfg-purchase-orders.ts` | 24 | 4425 |
+| `backend/src/scm/routes/mfg-purchase-orders.ts` | 24 | 4401 |
 | `backend/src/scm/routes/mfg-sales-orders-list-enrichment.ts` | 2 | 327 |
 | `backend/src/scm/routes/mfg-sales-orders.ts` | 41 | 11898 |
 | `backend/src/scm/routes/mfg-so-fairs.ts` | 4 | 299 |
@@ -163,6 +163,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/personal-quick-picks.ts` | 3 | 212 |
 | `backend/src/scm/routes/po-amendments.ts` | 7 | 763 |
 | `backend/src/scm/routes/po-gates.ts` | 0 | 90 |
+| `backend/src/scm/routes/po-line-import.ts` | 2 | 277 |
 | `backend/src/scm/routes/po-so-coverage.ts` | 1 | 1140 |
 | `backend/src/scm/routes/pos-cart.ts` | 2 | 157 |
 | `backend/src/scm/routes/pos-pools.ts` | 10 | 378 |
@@ -230,7 +231,7 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (2494 files, 796087 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (2508 files, 798607 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -245,7 +246,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `frontend/src/pages/scm-v2/Products.tsx` | 5014 |
 | `backend/src/scm/routes/scan-so.ts` | 4895 |
 | `frontend/src/mobile/MobilePMS.tsx` | 4491 |
-| `backend/src/scm/routes/mfg-purchase-orders.ts` | 4425 |
+| `backend/src/scm/routes/mfg-purchase-orders.ts` | 4401 |
 | `frontend/src/pages/scm-v2/SupplierDetail.tsx` | 4342 |
 | `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4204 |
 | `frontend/src/mobile/MobileNewSO.tsx` | 3673 |
