@@ -314,19 +314,24 @@ soAmendments.get('/', async (c) => {
      mfg_sales_order_items.id). The PO Amendments inbox merges the SO amendments
      that revise a bound PO alongside the direct po_amendments, so the purchasing
      team sees the whole revision queue in one place. Three bounded queries over
-     the ≤500-row page, never per-row. Fail-soft: enrichment errors leave
-     bound_pos empty rather than failing the list. */
+     the ≤500-row page, never per-row. A failed read fails the list: both PO
+     Amendments queues list an SO amendment only when bound_pos is non-empty, so
+     an empty field from a failed read looked exactly like "never purchased" and
+     the row left purchasing's queue with nothing to say why
+     (docs/bugs/0930-an-so-amendment-left-the-po-amendments-queue-when-a-bound-po.md). */
   const boundBySo = new Map<string, Array<{ id: string; po_number: string; status: string }>>();
   const allDocNos = [...new Set(rows.map((r) => r.so_doc_no).filter((x): x is string => !!x))];
   if (allDocNos.length > 0) {
-    const { data: soItemRows } = await sb.from('mfg_sales_order_items')
+    const { data: soItemRows, error: soItemErr } = await sb.from('mfg_sales_order_items')
       .select('id, doc_no').in('doc_no', allDocNos);
+    if (soItemErr) return c.json({ error: 'load_failed', reason: soItemErr.message }, 500);
     const soItemToDoc = new Map<string, string>();
     for (const r of (soItemRows ?? []) as Array<{ id: string; doc_no: string }>) soItemToDoc.set(r.id, r.doc_no);
     const soItemIds = [...soItemToDoc.keys()];
     if (soItemIds.length > 0) {
-      const { data: poItemRows } = await sb.from('purchase_order_items')
+      const { data: poItemRows, error: poItemErr } = await sb.from('purchase_order_items')
         .select('purchase_order_id, so_item_id').in('so_item_id', soItemIds);
+      if (poItemErr) return c.json({ error: 'load_failed', reason: poItemErr.message }, 500);
       const poToDocs = new Map<string, Set<string>>();
       for (const r of (poItemRows ?? []) as Array<{ purchase_order_id: string | null; so_item_id: string | null }>) {
         const doc = r.so_item_id ? soItemToDoc.get(r.so_item_id) : undefined;
@@ -337,8 +342,9 @@ soAmendments.get('/', async (c) => {
       }
       const poIds = [...poToDocs.keys()];
       if (poIds.length > 0) {
-        const { data: poRows } = await sb.from('purchase_orders')
+        const { data: poRows, error: poErr } = await sb.from('purchase_orders')
           .select('id, po_number, status').in('id', poIds);
+        if (poErr) return c.json({ error: 'load_failed', reason: poErr.message }, 500);
         for (const po of (poRows ?? []) as Array<{ id: string; po_number: string; status: string }>) {
           for (const doc of poToDocs.get(po.id) ?? []) {
             const list = boundBySo.get(doc) ?? [];
