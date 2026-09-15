@@ -308,7 +308,9 @@ with no per-area level consulted.
 
 | Method | Path | Line | Purpose |
 |--------|------|------|---------|
-| GET | `/` | `:374` | List. `?page=` opts into pagination + `statusCounts`; without it the legacy `{ purchaseOrders }` array. |
+| GET | `/` | `:374` | List. `?page=` opts into pagination + `statusCounts`; without it the legacy `{ purchaseOrders }` array. The paginated path's tab / supplier / company / search / date filter and its sort are built by `lib/po-list-read.ts` (`filterPoList`, `orderPoList`) — the same functions the two exports below use. |
+| GET | `/export/headers` | `routes/purchase-order-exports.ts` | The toolbar **Export**: EVERY PO the list's `status` / `q` / `sort` / `supplierId` / `from` / `to` match (no `page`), in the list's row shape incl. `has_children` + `transfer_to_grns`. `{ purchaseOrders, total, truncated }`. Paged past the PostgREST ceiling; stops at 20,000 orders and says `truncated: true`, which the page refuses to write. See *Exports* below. |
+| GET | `/export/lines` | `routes/purchase-order-exports.ts` | **Export lines**: one row per PO LINE of every matching PO, the AutoCount chasing-list shape. `{ columns, rows, poCount, lineCount, truncated }`; `columns` is the contract in `lib/po-line-export-columns.ts`. Company predicate on the header, line and sales-order reads. See *Exports* below. |
 | GET | `/outstanding-so-items` | `:537` | SO lines carrying an uncovered POOLED shortage — `computeMrp` runs and a line shows only when `shortageQty > 0`, so a line covered by stock or an open PO drops off and returns when that cover is consumed. `qty - po_qty_picked` is the FALLBACK, used only when the MRP compute throws. Excludes CANCELLED / DRAFT / ON_HOLD. The From-SO picker. |
 | GET | `/:id` | `:693` | Header + items + `has_children`. |
 | GET | `/:id/linked` | `:859` | Downstream GRNs / PIs / PRs (three parallel reads). |
@@ -1927,10 +1929,51 @@ endpoint and tab. The header view is untouched.
   `DesktopOnly` on mobile, so there is no mobile chasing screen (and no
   desktop/mobile pair to keep in sync — §8).
 
-- The AutoCount UDF dates — Estimate Delivery Date and Supplier Delivery Date
-  2 / 3 — are columns on the report but the ERP does not sync them yet
-  (`supplier_delivery_date_2/3` are 0% populated), so they render blank. Owner
-  2026-09-12: keep the column positions.
+- The AutoCount supplier dates are the three **Estimate Delivery Date 1 / 2 / 3**
+  columns (2026-09-15), in the positions the owner kept on 2026-09-12. The route
+  resolves each per row — the line's `supplier_delivery_date_2/3/4`, else the PO
+  header's — through `resolvePoEstimateDates` (`lib/po-line-export.ts`), the same
+  rule and the same names as the PO line export (`estimate_delivery_date_1..3` on
+  each row). The view itself is unchanged.
+
+## Exports — every page the filters match (2026-09-15)
+
+Owner 2026-09-15, comparing our export with AutoCount's "PO chasing list": one
+row per LINE, with category, location, doc date, delivery date, the three
+estimate dates and Item Description 2. Both exports on the desktop list now read
+the WHOLE filtered set on the server — the old toolbar Export wrote the one page
+the grid held (`docs/bugs/0916-the-purchase-order-list-export-held-one-screen-page-not-ever.md`).
+
+- **Export lines** (button beside *Transfer from SO*, desktop) →
+  `GET /export/lines` → `.xlsx`, sheet *PO Lines*. Columns, in order, are
+  `PO_LINE_EXPORT_COLUMNS` in `lib/po-line-export-columns.ts` — a MIRROR
+  (backend `scm/lib` ↔ frontend `vendor/scm/lib`, refereed by
+  `po-line-export-columns.canonical.test.ts`). **The header names and Line ID are
+  an import contract**: an import matches rows by `Line ID` and edits Delivery
+  Date, Estimate Delivery Date 1/2/3, Item Description 2 and Remarks. Rename a
+  header and every exported file stops importing.
+- **Estimate Delivery Date 1/2/3 = `supplier_delivery_date_2/3/4`**
+  (`PO_ESTIMATE_DELIVERY_DATE_FIELDS`, the one place it is decided). AutoCount
+  holds them on the PO header as `UDF_EDate` / `UDF_EDate2` / `UDF_EDate3`; the
+  ERP holds them on the header AND each line (the `/bulk-supplier-date` cascade).
+  The LINE value wins; the header fills a blank line.
+- Money leaves sen as ringgit numbers: Line Total 2 decimals, Unit Price up to 4.
+  Location = the line's warehouse code, else the PO header's ship-to. SO Doc No.
+  comes from `so_item_id`, read under the company predicate.
+- **Toolbar Export** → `GET /export/headers` → CSV with the grid's visible
+  columns (`DataTable.onExport` receives them). When Assigned SO or Delivered is
+  visible, the page heals them through `/list-mrp-enrichment` in chunks of 200,
+  two at a time — each chunk runs one company-wide MRP, so a very large tab
+  exports slowly.
+- NOT applied: the grid's per-column funnels. They filter only the loaded page
+  in the browser, so the server never sees them.
+- The shared read is `lib/document-line-export.ts` (headers through the list's
+  filter, paged; lines by header id in URL-sized batches; lookups by id). SO / DO
+  / GR / PI / SI line exports plug in there; only PO is built.
+- **Mobile**: the phone PO list (`MobileModuleList`) has no export of any kind,
+  so there is nothing to keep in step (§8).
+- The list's **Import from file** menu item navigates to `?import=1`, which
+  nothing reads. Unchanged.
 
 ---
 

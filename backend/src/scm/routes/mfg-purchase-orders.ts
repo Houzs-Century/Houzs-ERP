@@ -18,7 +18,8 @@
 
 import { Hono } from 'hono';
 import { PO_STATUS_BUCKETS } from '../lib/po-status-buckets';
-import { HELD_OR_TERM, HOLD_COLUMNS, isDocumentHeld } from '../lib/document-hold';
+import { HELD_OR_TERM, isDocumentHeld } from '../lib/document-hold';
+import { PO_HEADER_COLS, PO_LIST_SELECT, filterPoList, orderPoList, readPoListFilters, stampPoListGrns } from '../lib/po-list-read';
 import { firstUnorderableSo, soNotOrderableResponse } from '../lib/source-document-gates';
 import { soLinkItemMismatch, type SoSourceLine } from '../lib/so-link-item-identity';
 import { mountHoldRoute } from './document-hold-routes';
@@ -48,7 +49,6 @@ import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { todayMyt } from '../lib/my-time';
 import { enqueuePoCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
-import { escapeForOr } from '../lib/postgrest-search';
 import { readStatusCounts } from '../lib/status-counts';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
@@ -332,42 +332,24 @@ async function poHasOutstandingDropshipOut(
 /* ON_HOLD added 2026-08-21 (owner: "PO 加 hold"). It is the REVERSIBLE answer
    the purchase side never had — CANCELLED is final and reaches AutoCount, where
    it cannot be un-cancelled. A held PO is not receivable, because
-   RECEIVABLE_PO_STATUSES in grns.ts is an ALLOW-list. */
-const VALID_STATUSES = new Set(['DRAFT', 'SUBMITTED', 'PARTIALLY_RECEIVED', 'RECEIVED', 'CANCELLED', 'ON_HOLD']);
-/* Filter-pill bucket → the raw purchase_orders.status values it covers. Single
-   source of truth for BOTH the status-count queries and the list `status`
-   filter. Five buckets are 1:1, but their KEYS differ from the raw status
-   (open→SUBMITTED, partial→PARTIALLY_RECEIVED, received→RECEIVED). The FE sends
-   the BUCKET NAME as `status`; a raw DB status still works (backward-compatible
-   fallback via VALID_STATUSES).
+   RECEIVABLE_PO_STATUSES in grns.ts is an ALLOW-list. Exported because the
+   list's exports (routes/purchase-order-exports.ts) filter through it too. */
+export const VALID_STATUSES = new Set(['DRAFT', 'SUBMITTED', 'PARTIALLY_RECEIVED', 'RECEIVED', 'CANCELLED', 'ON_HOLD']);
+/* The header column list and the list's filter + sort live in
+   lib/po-list-read.ts since 2026-09-15, so the two exports
+   (routes/purchase-order-exports.ts) match exactly what this list matches.
 
-   `outstanding` (owner 2026-07-31) is the one ROLL-UP bucket: raised to a
-   supplier but not yet received in full — i.e. exactly the money the
-   Outstanding stat card sums. It deliberately OVERLAPS open + partial rather
-   than replacing them, so the counts across the pills no longer add up to
-   `all`; that's the point of a roll-up and why it sits right after All. */
+   Filter-pill bucket → the raw purchase_orders.status values it covers: see
+   lib/po-status-buckets.ts. `outstanding` (owner 2026-07-31) is the one ROLL-UP
+   bucket and deliberately OVERLAPS open + partial, so the pill counts do not add
+   up to `all`. */
 
 /* THE SO-MUST-BE-ORDERABLE GATE MOVED to lib/source-document-gates.ts on
    2026-08-22 (mig 0324), beside the SO -> DO and PO -> GRN gates that ask the
    same question of the same row. All three had to learn to read the hold
    MARKER. Behaviour unchanged; that module's header has the trace. */
 
-const HEADER_COLS =
-  'id, po_number, supplier_id, status, po_date, expected_at, currency, ' +
-  'subtotal_sen, tax_sen, total_sen, notes, submitted_at, received_at, ' +
-  'cancelled_at, created_at, created_by, updated_at, ' +
-  /* SO-amendment / revision workflow (2026-07-03) — bumped in place when a
-     supplier-confirmed amendment revises this PO; prior versions snapshot to
-     po_revisions. The PO Detail header shows a "Revised · rev N" badge when > 1. */
-  'revision, ' +
-  /* PR #77 — default ship-to warehouse for every line on this PO */
-  'purchase_location_id, ' +
-  /* Migration 0180 — supplier-revised delivery dates (header). The EFFECTIVE
-     delivery date readers use = MAX over non-null of [expected_at, _2, _3, _4]
-     (effectiveDelivery). expected_at keeps meaning the original earliest date. */
-  'supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4, ' +
-  /* Mig 0324 — the HOLD MARKER, rendered BESIDE the status pill. */
-  HOLD_COLUMNS;
+const HEADER_COLS = PO_HEADER_COLS;
 
 const ITEM_COLS =
   // line_no (mig 20260910T0547) — the printed order; the PDF re-sorts on it.
@@ -398,22 +380,6 @@ mfgPurchaseOrders.get('/', async (c) => {
   const supplierId = c.req.query('supplierId');
   const supabase = c.get('supabase');
 
-  // PR — Commander 2026-05-27: PO list rows now surface a per-row items
-  // summary (AutoCount-style) so the buyer can see at a glance what's
-  // inside each PO without drilling in. Nested select keeps it to one
-  // query — Postgres / Supabase joins purchase_order_items on
-  // purchase_order_id for every row.
-  // purchase_location embeds the warehouse the PO ships to (PR #77 — the
-  // column is an FK → warehouses.id); the list needs its NAME, not just the
-  // id, for the "Purchase Location" column (Owner 2026-07-02).
-  // Supplier CONTACT fields ride the list embed because the quick-view drawer
-  // renders its SUPPLIER panel straight off the list row (owner 2026-07-24:
-  // the panel showed "—" for contact/phone/email/address — the row simply
-  // never carried them).
-  // supplier_sku rides the items embed (owner 2026-08-05) — the list's
-  // "Supplier SKU" column / Excel export shows the supplier's own codes.
-  const SELECT = `${HEADER_COLS}, supplier:suppliers(id, code, name, contact_person, phone, email, address), items:purchase_order_items(item_code, material_name, qty, supplier_sku), purchase_location:warehouses!purchase_location_id(id, code, name)`;
-
   /* Opt-in server-side pagination + search + sort + status-counts (mirrors the
      SO list in mfg-sales-orders.ts). The PRESENCE of `page` switches paging on;
      when it is absent/empty the query below is BYTE-IDENTICAL to the historical
@@ -434,7 +400,7 @@ mfgPurchaseOrders.get('/', async (c) => {
     /* --- LEGACY PATH (unchanged) --- */
     let q = supabase
       .from('purchase_orders')
-      .select(SELECT)
+      .select(PO_LIST_SELECT)
       .order('po_date', { ascending: false })
       .order('created_at', { ascending: false })
       // Bound the result so PostgREST's default 1000-row cap can't silently
@@ -452,37 +418,13 @@ mfgPurchaseOrders.get('/', async (c) => {
     const psRaw = Number(c.req.query('pageSize'));
     pageSize = Number.isFinite(psRaw) && psRaw > 0 ? Math.min(100, Math.max(1, Math.trunc(psRaw))) : 50;
 
-    const SORT_COLS = new Set(['po_date', 'po_number', 'status', 'total_sen']);
-    const [rawCol, rawDir] = (c.req.query('sort') ?? 'po_date:desc').split(':');
-    const sortCol = SORT_COLS.has(rawCol) ? rawCol : 'po_date';
-    const sortAsc = rawDir === 'asc';
-
-    let q = supabase.from('purchase_orders').select(SELECT, { count: 'exact' }).order(sortCol, { ascending: sortAsc });
-    /* unique tiebreaker so range paging can't skip/repeat rows sharing the sort key */
-    if (sortCol !== 'po_number') q = q.order('po_number', { ascending: sortAsc });
-    /* Resolve the incoming `status`: a known bucket key → all its raw statuses;
-       'all'/empty → no filter; otherwise a raw DB status (VALID_STATUSES guard). */
-    /* The `on_hold` tab reads the MARKER (mig 0324). A held order appears under
-       BOTH its real status and On Hold — the point of a marker — so the counts
-       do not sum to `all`, exactly as `outstanding` already does not. */
-    if (status && status !== 'all') {
-      if (status === 'on_hold') q = q.or(HELD_OR_TERM);
-      else if (PO_STATUS_BUCKETS[status]) q = q.in('status', PO_STATUS_BUCKETS[status]);
-      else if (VALID_STATUSES.has(status)) q = q.eq('status', status);
-    }
-    if (supplierId) q = q.eq('supplier_id', supplierId);
-    q = scopeToCompany(q, c); // multi-company: isolate to the active company
-    /* free-text search over the base-table text columns the FE searches
-       (PurchaseOrdersListV2 hay). Supplier name / code are embedded resources,
-       not base purchase_orders columns, so they can't be ilike'd here. */
-    const search = c.req.query('q');
-    if (search) {
-      const s = escapeForOr(search);
-      if (s) q = q.or(`po_number.ilike.%${s}%,notes.ilike.%${s}%`);
-    }
-    const from = c.req.query('from'); if (from) q = q.gte('po_date', from);
-    const to = c.req.query('to'); if (to) q = q.lte('po_date', to);
-    q = q.range(page * pageSize, page * pageSize + pageSize - 1);
+    const filters = readPoListFilters((k) => c.req.query(k));
+    const q = filterPoList(
+      orderPoList(supabase.from('purchase_orders').select(PO_LIST_SELECT, { count: 'exact' }), filters.sort),
+      filters,
+      c,
+      VALID_STATUSES,
+    ).range(page * pageSize, page * pageSize + pageSize - 1);
 
     /* Status counts mirror the FE filter-pill buckets (draft / outstanding /
        open / partial / received / cancelled) over the SAME company + supplier
@@ -518,50 +460,13 @@ mfgPurchaseOrders.get('/', async (c) => {
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   if (countError) return c.json({ error: 'status_counts_failed', reason: countError }, 500);
 
-  /* Tier 2 downstream-lock (mirror computeGrnFlags in lib/grn-consumption-flags) — one
-     extra query: pull the distinct purchase_order_ids that have any non-
-     cancelled GRN, then stamp has_children on every PO row. The list grid uses
-     this to hide Edit / Cancel from POs that are downstream-locked. */
-  const rows = (data ?? []) as Array<{ id: string } & Record<string, unknown>>;
-  const childIds = new Set<string>();
-  // Owner 2026-07-02 — "GRN No" list column: collect the non-cancelled GRNs each
-  // PO was received into, deduped + stable-ordered. Same one extra query that
-  // already powers has_children — just carry the GRN identity too.
-  //
-  // Owner 2026-07-31 — carries `id` alongside `grnNumber` now: GRN detail routes
-  // by UUID (/scm/grns/:id), so a number alone can't be linked. Shape widened
-  // rather than duplicated into a parallel id array — nothing consumed the
-  // string[] form.
-  const grnsByPo = new Map<string, Array<{ id: string; grnNumber: string }>>();
-  if (rows.length > 0) {
-    const ids = rows.map((r) => r.id);
-    const { data: grnRows } = await supabase
-      .from('grns')
-      .select('id, purchase_order_id, grn_number')
-      .in('purchase_order_id', ids)
-      .neq('status', 'CANCELLED')
-      .order('grn_number', { ascending: true });
-    for (const g of (grnRows ?? []) as Array<{ id: string; purchase_order_id: string | null; grn_number: string | null }>) {
-      if (!g.purchase_order_id) continue;
-      childIds.add(g.purchase_order_id);
-      if (!g.grn_number) continue;
-      const arr = grnsByPo.get(g.purchase_order_id) ?? [];
-      if (!arr.some((x) => x.grnNumber === g.grn_number)) arr.push({ id: g.id, grnNumber: g.grn_number });
-      grnsByPo.set(g.purchase_order_id, arr);
-    }
-  }
-  /* Assigned SO / Delivered columns (owner 2026-07-31) are MRP-DERIVED and now
-     OMITTED here — not blanked (C16). Resolving them ran a company-wide
-     computeMrp on this critical path (resolvePoSoCoverageForPos +
-     resolveDeliveredDosForPos), the list's dominant cost (~4s). The client heals
-     them a beat after render via GET /mfg-purchase-orders/list-mrp-enrichment
-     (routes/mfg-purchase-orders-list-enrichment.ts + lib/listMrpEnrichment.ts).
-     has_children + transfer_to_grns stay inline (cheap, non-MRP). */
-  const purchaseOrders = rows.map((r) => ({
-    ...r,
-    has_children: childIds.has(r.id),
-    transfer_to_grns: grnsByPo.get(r.id) ?? [],
-  }));
+  /* has_children (the downstream lock) + transfer_to_grns (the "GRN No" column)
+     — one GRN read, shared with the header export (lib/po-list-read.ts).
+     Assigned SO / Delivered columns (owner 2026-07-31) are MRP-DERIVED and
+     OMITTED here — not blanked (C16). The client heals them a beat after render
+     via GET /mfg-purchase-orders/list-mrp-enrichment
+     (routes/mfg-purchase-orders-list-enrichment.ts + lib/listMrpEnrichment.ts). */
+  const purchaseOrders = await stampPoListGrns(supabase, (data ?? []) as Array<{ id: string } & Record<string, unknown>>);
   if (paginate) return c.json({ purchaseOrders, total, page, pageSize, statusCounts });
   return c.json({ purchaseOrders });
 });

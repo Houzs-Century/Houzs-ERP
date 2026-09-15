@@ -26,7 +26,11 @@ import {
   Package,
   ArrowRightLeft,
   CalendarClock,
+  FileSpreadsheet,
 } from "lucide-react";
+import { downloadCSV, toCSV, type CSVColumn } from "../../lib/csv";
+import { todayMyt } from "../../vendor/scm/lib/dates";
+import { fetchAllPoListRows, fetchPoLineExport, writePoLineExportXlsx } from "../../vendor/scm/lib/po-list-export";
 import {
   PoBulkSupplierDateModal,
   type BulkSupplierDateResult,
@@ -865,6 +869,32 @@ export function PurchaseOrdersListV2() {
     await queryClient.invalidateQueries({ queryKey: ["mfg-purchase-orders"] });
   };
 
+  /* Both exports read EVERY order the list's tab + search + sort match, not the
+     page on screen (owner 2026-09-15). The filter is the one the list request is
+     built from — the settled search term, the same as the rows shown. */
+  const exportFilters = { status: apiStatus, q: debouncedSearch, sort };
+  const [exporting, setExporting] = useState(false);
+  const runExport = async (what: string, work: () => Promise<void>) => {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      await work();
+    } catch (e) {
+      await notify({ title: `${what} failed`, body: (e as Error).message || "The export could not be completed.", tone: "error" });
+    } finally {
+      setExporting(false);
+    }
+  };
+  const exportLines = () => runExport("Export lines", async () => {
+    const body = await fetchPoLineExport(exportFilters);
+    await writePoLineExportXlsx(body, `purchase-order-lines-${todayMyt()}.xlsx`);
+  });
+  const exportHeaders = (cols: CSVColumn<PoHeaderRow>[]) => runExport("Export", async () => {
+    const withMrp = cols.some((c) => c.key === "assigned_so" || c.key === "delivered");
+    const all = await fetchAllPoListRows<PoHeaderRow>(exportFilters, withMrp);
+    downloadCSV(`purchase-orders-${todayMyt()}.csv`, toCSV(all, cols));
+  });
+
   const goNewPo = () => navigate("/scm/purchase-orders/new");
   const goFromSo = () => navigate("/scm/purchase-orders/from-so");
   const goImport = () => navigate("/scm/purchase-orders?import=1");
@@ -1286,6 +1316,15 @@ export function PurchaseOrdersListV2() {
               <div className="flex items-stretch gap-2">
                 <Button
                   variant="secondary"
+                  icon={<FileSpreadsheet size={14} />}
+                  onClick={() => void exportLines()}
+                  disabled={exporting}
+                  className="hidden md:inline-flex"
+                >
+                  {exporting ? "Exporting…" : "Export lines"}
+                </Button>
+                <Button
+                  variant="secondary"
                   icon={<ArrowRightLeft size={14} />}
                   onClick={goFromSo}
                 >
@@ -1468,7 +1507,8 @@ export function PurchaseOrdersListV2() {
                   onToggleAll: toggleSelectAll,
                 }}
                 contextMenu={poContextMenu}
-            exportName="purchase-orders"
+                exportName="purchase-orders"
+                onExport={(cols) => void exportHeaders(cols)}
                 serverSort
                 onSortChange={setSortAndReset}
                 emptyLabel={
