@@ -27,3 +27,7 @@ jobs:
       - run: node scripts/probe-fabric-accessory-population.mjs
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      # TEMPORARY (remove before merge): split-colour-lines chain probe.
+      - run: node scripts/probe-split-line-chain.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
