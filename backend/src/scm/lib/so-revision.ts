@@ -46,7 +46,7 @@ import {
 import { recordSoAudit, type FieldChange } from './so-audit';
 import { deriveMfgPoUnitCost } from './po-pricing';
 import { readMfgProductBindings } from './supplier-bindings';
-import { supplierSkuFor } from './po-line-supplier-sku';
+import { rederivePoLineFromSoLine, type RevisedSoLine } from './po-line-rederive';
 import {
   rederiveDeliveryFee,
   deriveCountryFromState,
@@ -1284,14 +1284,7 @@ export async function reviseBoundPo(
     .select('id, item_code, item_group, qty, variants, warehouse_id, line_delivery_date, description, photo_urls')
     .in('id', soItemIds);
   if (revErr) throw new Error(`reviseBoundPo: revised SO lines load failed: ${revErr.message}`);
-  type RevisedLine = {
-    item_code: string | null; item_group: string | null; qty: number | null;
-    variants: Record<string, unknown> | null; warehouse_id: string | null;
-    line_delivery_date: string | null; description: string | null;
-    // Owner 2026-08-10 (migration 0274) — an SO line's photos follow it onto the
-    // PO line, the same on this amendment path as on the convert paths.
-    photo_urls: string[] | null;
-  };
+  type RevisedLine = RevisedSoLine;
   const revisedById = new Map<string, RevisedLine>();
   for (const r of (revisedSoRows ?? []) as Array<Record<string, unknown>>) {
     revisedById.set(String(r.id), {
@@ -1422,89 +1415,15 @@ export async function reviseBoundPo(
     let linesRemoved = 0;
     let linesAdded = 0;
 
-    // (12a) RE-DERIVE each surviving line in place from its revised SO line.
+    // (12a) RE-DERIVE each surviving line in place from its revised SO line —
+    //       lib/po-line-rederive.ts, the one derivation the realign repair runs too.
     for (const pi of matchedByPo.get(po.id) ?? []) {
       const revised = revisedById.get(pi.so_item_id as string)!;
-      // Read the existing PO line's discount + item_code (the SKU the
-      // supplier binding is keyed on).
-      const { data: existing, error: exErr } = await sb
-        .from('purchase_order_items')
-        .select('item_code, material_name, discount_sen, photo_urls, supplier_sku')
-        .eq('id', pi.id)
-        .maybeSingle();
-      if (exErr) throw new Error(`reviseBoundPo: PO line load failed: ${exErr.message}`);
-      const discountSen = Number((existing as { discount_sen?: number } | null)?.discount_sen ?? 0);
-      const qty = revised.qty != null ? Math.max(1, revised.qty) : Number(pi.qty ?? 1);
-      const itemGroup = revised.item_group;
-      const variants = revised.variants;
-      // Re-derive the revised PO line's supplier cost from the NOW-REVISED SO
-      // line's spec (SAME cost-anchor "Create PO from SO" runs). The SKU the cost
-      // is keyed on = the revised SO line's item_code (a SPEC change may swap it),
-      // falling back to the PO line's existing item_code.
-      const itemCode = (revised.item_code || '').trim()
-        || String((existing as { item_code?: string } | null)?.item_code ?? '');
-      // Persist the revised SKU + name onto the PO line, not just use them for
-      // costing (docs/bugs). Before this, reviseBoundPo re-derived cost/variants
-      // but left item_code untouched, so an SO SPEC swap (e.g. an LHF->RHF sofa
-      // swap that swaps the code) left the PO ordering -- and PRINTING (the PDF
-      // derives the sofa orientation from item_code) -- the OLD SKU, and its
-      // so_drift never cleared. material_name follows the SO description like the
-      // convert / ADD paths, never downgrading to the bare code when the revised
-      // SO line has no description.
-      const itemName =
-        (revised.description || '').trim()
-        || String((existing as { material_name?: string } | null)?.material_name ?? '').trim()
-        || itemCode;
-      const unitPriceSen = await deriveMfgPoUnitCost(sb, {
-        supplierId: po.supplier_id ?? '',
-        itemCode:   itemCode,
-        itemGroup,
-        variants:   variants ?? null,
+      const { patch, warnings: lineWarnings } = await rederivePoLineFromSoLine(sb, {
+        poLineId: pi.id, currentQty: pi.qty, po, soCompanyId, revised,
       });
-
-      /* Re-carry the SO line's CURRENT photos, preserving the PO's OWN uploads
-         (`po-items/...`). The INSERT below already carries an ADDED line's photos
-         (mig 0274); a SURVIVING line re-derived here used to keep its STALE
-         snapshot, so a code-swap that REPLACED the SO line left the PO showing a
-         dead `so-items/<old>/...` key whose R2 object is gone (docs/bugs/0789). */
-      const poOwnedPhotos = ((existing as { photo_urls?: string[] | null } | null)?.photo_urls ?? [])
-        .filter((k) => String(k).startsWith('po-items/'));
-      const rederivedPhotos: string[] = [];
-      for (const k of [...poOwnedPhotos, ...(revised.photo_urls ?? [])]) {
-        if (!rederivedPhotos.includes(k)) rederivedPhotos.push(k);
-      }
-
-      /* The SUPPLIER CODE follows a changed item code, derived exactly as the
-         convert path derives it (lib/po-line-supplier-sku.ts). Left alone when
-         the code did not move, so a supplier code keyed on the PO by hand
-         survives an unrelated amendment. docs/bugs/0887: HC-PO-2609-064 kept
-         `5536-L(LHF)` under `9058-1A(LHF)` because this write moved the code and
-         the name and never this column. */
-      const priorCode = String((existing as { item_code?: string } | null)?.item_code ?? '').trim();
-      const skuPatch: { supplier_sku?: string | null } = {};
-      if (itemCode !== priorCode) {
-        skuPatch.supplier_sku = await supplierSkuFor(sb, {
-          supplierId: po.supplier_id, itemCode, companyId: po.company_id ?? soCompanyId,
-        });
-        if (skuPatch.supplier_sku == null) {
-          warnings.push(`${itemName} on purchase order ${po.po_number} changed to an item this supplier has no code for, so its supplier code was cleared. Set the supplier's code for it before sending the purchase order.`);
-        }
-      }
-
-      const { error: updErr } = await sb.from('purchase_order_items').update({
-        qty,
-        item_code:        itemCode,
-        material_name:    itemName,
-        ...skuPatch,
-        unit_price_sen: unitPriceSen,
-        line_total_sen: qty * unitPriceSen - discountSen,
-        item_group:       itemGroup,
-        variants,
-        description2:     buildVariantSummary(String(itemGroup ?? ''), variants ?? null) || null,
-        warehouse_id:     revised.warehouse_id,
-        delivery_date:    revised.line_delivery_date,
-        photo_urls:       rederivedPhotos,
-      }).eq('id', pi.id);
+      warnings.push(...lineWarnings);
+      const { error: updErr } = await sb.from('purchase_order_items').update(patch).eq('id', pi.id);
       if (updErr) throw new Error(`reviseBoundPo: PO line update failed for ${pi.id}: ${updErr.message}`);
       linesRederived += 1;
     }
