@@ -85,9 +85,29 @@ committed book and each refusal. Proved RED by mutating the planner on
 2026-09-14: a write-off rule that ignores AutoCount failed 2 of its tests, and a
 refused pair that kept its plan failed 3.
 
-Production: UNTESTED at the time this entry was written - the workflow cannot be
-dispatched before it is on `main`. The plan and apply runs are recorded here when
-they have run.
+**Production, as run.** The owner confirmed both parts and the recompute in
+writing on 2026-09-15.
+
+| run (UTC) | what | result, from the run's own log |
+| --- | --- | --- |
+| 34831706513, 2026-09-14 10:09 | plan | 9 pairs, 0 refused; part lines 6 lines on 6 orders + 6 rows; part writeoff 3 units, RM 3026.00, + 3 rows |
+| 34932893347, 2026-09-15 05:28 | apply `lines` | 6 lines re-keyed, 6 rows INACTIVE, 6 of 6 pairs committed. Fresh-connection verify: the King long name carries the 6 lines and PG WAREHOUSE 2 (AutoCount 2); the truncated code 0 |
+| 34933070592, 2026-09-15 05:31 | apply `writeoff` | 3 units written off, 3 rows INACTIVE, 3 of 3 committed, movement cost equal to the plan. Winter Sleep (Q) now PG DISPLAY 1 + PG WAREHOUSE 4 (AutoCount 1 + 4); GERALD KL DISPLAY 1 (AutoCount 1); Winter Dream (K) none (AutoCount 0) |
+| 34933239234, 05:33 | allocation recompute, global dry-run | 3 lines would flip, 1 order advanced, 0 regressed |
+| 34933439014, 05:36 | allocation recompute, global apply | the same 3 flips committed and read back on a fresh connection: HC-SO-002331 Winter Sleep (K) PENDING -> READY, header IN_PRODUCTION -> READY_TO_SHIP; two unrelated STOOL lines READY -> PENDING by the allocator's own rules |
+
+The recompute had to be GLOBAL. A doc-scoped run deducts every order's
+outstanding quantity from the bucket before allocating
+(`recomputeSoStockAllocation`'s `scopeToDocNo` note), so with 8 ordered against
+2 on hand no scoped order could have been given a unit. Only one of the two
+units went READY: the allocator gives stock only to an order with a processing
+date, and HC-SO-002331 is the one order of the six in production. That the
+other five carry no processing date is inferred from their CONFIRMED status and
+was not queried.
+
+After the retire, searching Inventory for the book code
+(`DL-CS2 NN-WINTER SLEEP`) finds nothing, because the long name does not contain
+it; "WINTER SLEEP" finds the row.
 
 **Ref.** fix/truncated-ac-code-merge, 2026-09-14. Owner ruling the same day: keep
 the mapping sheet's name, move the lines, switch the truncated rows off, take the

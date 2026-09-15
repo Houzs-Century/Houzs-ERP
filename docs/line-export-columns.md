@@ -36,8 +36,9 @@ Order one, and its columns are the template everything below follows.
    finance-only columns on the screens (unit cost, line cost, margin) stay off.
 6. **Line ID is always the last column.** It is the line table's `id` (a uuid).
    The import matches rows by it and nothing else.
-7. **Location** is the warehouse's code from `scm.warehouses.code`
-   (e.g. `KL WAREHOUSE`), as on the PO export. See open question Q2.
+7. **Location** is AutoCount's SHORT code (`KL`, not the ERP's `KL WAREHOUSE`) —
+   owner 2026-09-15 (Q2). The PO export resolves it through the write-back's own
+   `bookSpellingOrOwn(code ?? name, LOCATION_MAP)`.
 8. **2990's Home (company 2) never syncs to AutoCount**, so its
    "AutoCount Doc No" is blank by design — PROVEN: 175 of 175 of its sales orders,
    65 of 65 delivery orders, 110 of 110 purchase orders, 68 of 68 goods receipts,
@@ -525,8 +526,7 @@ line tables or none, and were not in the owner's request. See Q12.
    `Desc2` from the item's options (fabric, size…), not from the text in the
    ERP's Item Description 2. If staff change Item Description 2 through the
    import, should AutoCount receive the typed text, or keep the built one?
-2. **Location wording.** Export the ERP warehouse code (`KL WAREHOUSE`) as the PO
-   file does, or AutoCount's short code (`KL`) that the account book uses?
+2. **Location wording.** ANSWERED 2026-09-15: AutoCount's short code (`KL`).
 3. **Prices on delivery lists.** A Delivery Order file often goes to a driver, a
    3PL or a customer. Keep Unit Price / Discount / Line Total in it, or leave
    money out of the DO export?
@@ -537,18 +537,16 @@ line tables or none, and were not in the owner's request. See Q12.
    per line and per order. The import proposal changes the LINE date only. On a
    Delivery Order a later change of the order's date overwrites every line's.
    Is line-only right?
-6. **Status word.** Export the word on screen ("Submitted") or the stored value
-   (`CONFIRMED`)? The PO export's in-progress code (read 2026-09-15, not yet merged) writes the
-   stored value. All
-   documents should make the same choice.
+6. **Status word.** ANSWERED 2026-09-15: the word on screen ("Submitted"), for
+   every document. The PO export writes it (`PO_STATUS_WORDS`).
 7. **Sales order remarks hold the account book's words.** 4,323 of the 4,560
    sales-order line remarks start with `账本原文:` — the text copied from the
    book at go-live. An imported remark would replace it. Allow that, append
    instead of replace, or lock remarks that carry the book text?
 8. **Driver and Vehicle are empty on every delivery order (343 of 343).** Keep
    the two columns (blank until the delivery module fills them), or drop them?
-9. **Cancelled documents.** Proposed: the export follows the list's filter — if
-   the list shows cancelled documents, so does the file. Agree?
+9. **Cancelled documents.** ANSWERED 2026-09-15: the export follows the list's
+   filter — cancelled documents are in the file only when the tab includes them.
 10. **Due dates are mostly empty.** Sales invoices: 359 of 367 live lines have no
     due date. Purchase invoices: 520 of 653. A collection chase list cannot sort by
     due date until these are filled. Fill them from the customer's / supplier's

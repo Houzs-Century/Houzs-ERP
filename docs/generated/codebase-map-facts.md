@@ -151,7 +151,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/mfg-purchase-orders-list-enrichment.ts` | 1 | 82 |
 | `backend/src/scm/routes/mfg-purchase-orders.ts` | 24 | 4494 |
 | `backend/src/scm/routes/mfg-sales-orders-list-enrichment.ts` | 2 | 327 |
-| `backend/src/scm/routes/mfg-sales-orders.ts` | 41 | 11871 |
+| `backend/src/scm/routes/mfg-sales-orders.ts` | 41 | 11872 |
 | `backend/src/scm/routes/mfg-so-fairs.ts` | 4 | 299 |
 | `backend/src/scm/routes/model-free-gifts.ts` | 3 | 147 |
 | `backend/src/scm/routes/mrp-lead-times.ts` | 2 | 95 |
@@ -163,7 +163,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/personal-quick-picks.ts` | 3 | 212 |
 | `backend/src/scm/routes/po-amendments.ts` | 7 | 763 |
 | `backend/src/scm/routes/po-gates.ts` | 0 | 90 |
-| `backend/src/scm/routes/po-line-import.ts` | 2 | 276 |
+| `backend/src/scm/routes/po-line-import.ts` | 2 | 277 |
 | `backend/src/scm/routes/po-so-coverage.ts` | 1 | 1140 |
 | `backend/src/scm/routes/pos-cart.ts` | 2 | 157 |
 | `backend/src/scm/routes/pos-pools.ts` | 10 | 378 |
@@ -174,7 +174,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/purchase-consignment-receives.ts` | 13 | 1426 |
 | `backend/src/scm/routes/purchase-consignment-returns.ts` | 14 | 1151 |
 | `backend/src/scm/routes/purchase-invoices-list-enrichment.ts` | 2 | 108 |
-| `backend/src/scm/routes/purchase-invoices.ts` | 14 | 2348 |
+| `backend/src/scm/routes/purchase-invoices.ts` | 14 | 2272 |
 | `backend/src/scm/routes/purchase-order-item-photos.ts` | 2 | 227 |
 | `backend/src/scm/routes/purchase-returns.ts` | 14 | 1843 |
 | `backend/src/scm/routes/pv-files.ts` | 0 | 140 |
@@ -230,13 +230,13 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (2478 files, 794506 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (2485 files, 795343 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
 |---|---|
 | `frontend/src/pages/Projects.tsx` | 15144 |
-| `backend/src/scm/routes/mfg-sales-orders.ts` | 11871 |
+| `backend/src/scm/routes/mfg-sales-orders.ts` | 11872 |
 | `frontend/src/pages/ServiceCases.tsx` | 8850 |
 | `backend/src/services/autocount-sofa-corpus.ts` | 8581 |
 | `frontend/src/pages/Team.tsx` | 5686 |
@@ -434,7 +434,7 @@ Page files by directory:
 | `frontend/src/pages/MailCenter` | 3 |
 | `frontend/src/pages/announcements` | 5 |
 | `frontend/src/pages/roles` | 2 |
-| `frontend/src/pages/scm-v2` | 168 |
+| `frontend/src/pages/scm-v2` | 169 |
 | `frontend/src/pages/scm-v2/products` | 1 |
 | `frontend/src/pages/settings` | 1 |
 | `frontend/src/pages/team` | 10 |

@@ -9,6 +9,7 @@
 import { useMemo } from 'react';
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
+import { poListParams } from './po-list-export';
 import { applyListMrpEnrichment, type EnrichableMrpRow, type ListMrpEnrichment } from '../../../lib/listMrpEnrichment';
 import { writeFailed, writeFailedAs } from './mutation-error';
 import { idempotentInit } from '../../../lib/idempotency';
@@ -624,13 +625,11 @@ export type PoStatusCounts = {
 };
 export function usePurchaseOrdersPaged(params: { page: number; pageSize: number; status?: string; supplierId?: string; q?: string; sort?: string }) {
   const { page, pageSize, status, supplierId, q, sort } = params;
-  const usp = new URLSearchParams();
+  // The filter half is shared with the two exports (po-list-export.ts), so an
+  // export can never be sent a different filter than the list it was pressed on.
+  const usp = poListParams({ status, supplierId, q, sort });
   usp.set('page', String(page));
   usp.set('pageSize', String(pageSize));
-  if (status) usp.set('status', status);
-  if (supplierId) usp.set('supplierId', supplierId);
-  if (q && q.trim()) usp.set('q', q.trim());
-  if (sort) usp.set('sort', sort);
   return useQuery({
     queryKey: ['mfg-purchase-orders-paged', page, pageSize, status ?? '', supplierId ?? '', q ?? '', sort ?? ''],
     queryFn: ({ signal }) => authedFetch<{ purchaseOrders: PoHeaderRow[]; total: number; page: number; pageSize: number; statusCounts: PoStatusCounts }>(`/mfg-purchase-orders?${usp.toString()}`, { signal }),
