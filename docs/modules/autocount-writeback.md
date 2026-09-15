@@ -6609,8 +6609,8 @@ document as it is now through `enqueueEdit` and marks the refusal re-queued.
 `SO.UDF_ToPONo` is the book's "PO Doc No.": the purchase orders made from the
 order, ", "-joined. The ERP was sending the order's reference into it.
 
-- The sales order create and edit now send the reference (`customer_so_no`,
-  falling back to `ref`) as `Ref`.
+- The sales order create and edit now send the reference (`ref`, falling back
+  to `customer_so_no`) as `Ref`.
 - Nothing composes `ToPONo` from the reference any more.
 - A cleared reference clears `Ref` only when both columns are empty.
 

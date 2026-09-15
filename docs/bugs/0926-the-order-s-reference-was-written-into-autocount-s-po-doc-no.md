@@ -51,8 +51,9 @@ for an ERP-made order. For a carried-over order it sends
 
 **Fix.**
 
-- **Sales order.** A new `soReference` returns `customer_so_no`, falling back to
-  `ref`. The create and the edit send it as `Ref`, and nothing composes
+- **Sales order.** A new `soReference` returns `ref`, falling back to
+  `customer_so_no`: the precedence of owner ruling #2429 and of the screens'
+  `customerRefOf`. The create and the edit send it as `Ref`, and nothing composes
   `ToPONo` any more, so the book keeps its own. `clearedAcKeys` clears `Ref` only
   when both columns are empty.
 - **Purchase order.** A new `backend/src/scm/lib/autocount-po-source-so.ts`
