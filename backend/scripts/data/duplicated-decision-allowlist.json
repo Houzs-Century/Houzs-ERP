@@ -177,7 +177,7 @@
     },
     {
       "check": "D1",
-      "key": "FRI,MON,SAT,SUN,THU,TUE,WED|frontend/src/mobile/MobileCalendar.tsx frontend/src/pages/Projects.tsx frontend/src/pages/ServiceCases.tsx",
+      "key": "FRI,MON,SAT,SUN,THU,TUE,WED|frontend/src/mobile/MobileCalendar.tsx frontend/src/pages/ServiceCases.tsx frontend/src/pages/projects/ProjectsCalendarView.tsx",
       "why": "A CALENDAR/LOCALE vocabulary (months, weekdays, languages) — fixed by the world, not by this business, and it cannot drift into a wrong answer. 3 homes: WEEKDAYS."
     },
     {
