@@ -47,8 +47,8 @@
     },
     {
       "check": "D1",
-      "key": "BANK,CASH,GENERAL,PURCHASE,SALES|backend/src/acc/journal-class.ts frontend/src/pages/scm-v2/Accounting.tsx",
-      "why": "ONE vocabulary, one definition and one PRESENTATION of it — classifyJournal (journal-class.ts) is the rule; JOURNAL_CHIPS is the chip strip's render order over labels the SERVER already stamped on each row (journal_class). The frontend cannot import backend/src/acc (the shared package here is a pair of vendored copies, not a workspace import), and a chip the backend stopped emitting filters to an empty list — a blank chip, not a wrong number."
+      "key": "BANK,CASH,GENERAL,PURCHASE,SALES|backend/src/acc/journal-class.ts frontend/src/pages/scm-v2/JournalEntries.tsx",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — classifyJournal (journal-class.ts) is the rule; JOURNALS (JournalEntries.tsx, once JOURNAL_CHIPS in Accounting.tsx) is the chip strip's render order over labels the SERVER already stamped on each row (journal_class). The frontend cannot import backend/src/acc (the shared package here is a pair of vendored copies, not a workspace import), and a chip the backend stopped emitting filters to an empty list — a blank chip, not a wrong number."
     },
     {
       "check": "D1",
