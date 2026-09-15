@@ -43,3 +43,27 @@ export function coveringEdit(target, edits) {
   mine.sort((a, b) => b.created_at.getTime() - a.created_at.getTime());
   return mine[0] ?? null;
 }
+
+/**
+ * The ids of a document's still-keyless lines that an ADD amendment introduced —
+ * the lines the write-back edit must declare NEW (docs/bugs/0943), or composeEdit
+ * refuses the whole document as keyless and the amendment never reaches the book.
+ *
+ * A keyless line on an amended SO is either one an ADD amendment appended or a
+ * backfill gap, and only the first is safe to declare new (declaring a
+ * backfill-gap line new would APPEND a duplicate into a licensed book). So this
+ * matches on the ADD amendment's own item codes and NEVER guesses from
+ * keylessness alone. Item code, not row id, because so_amendment_lines does not
+ * store the id of the mfg_sales_order_items row its ADD inserted.
+ *
+ * @param {Array<{ id: string, item_code: string | null }>} keylessLines live lines with no linked_ac_dtlkey
+ * @param {Iterable<string | null>} addItemCodes new_item_code of the doc's ADD amendment lines
+ * @returns {string[]} ids to pass to enqueueEdit as newLineIds
+ */
+export function keylessAddedLineIds(keylessLines, addItemCodes) {
+  const codes = new Set([...addItemCodes].map((c) => String(c ?? "").trim()).filter(Boolean));
+  if (codes.size === 0) return [];
+  return keylessLines
+    .filter((l) => codes.has(String(l.item_code ?? "").trim()))
+    .map((l) => String(l.id));
+}
