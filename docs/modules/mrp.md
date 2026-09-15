@@ -545,6 +545,12 @@ Two consequences worth knowing before you touch this:
   so `computeMrp` itself runs over the shim — `check-so-po-line-links.mjs` uses
   it to print the engine's real per-line PO instead of a hand-ported replica
   (`docs/bugs/0874-the-pgrest-shim-could-not-run-the-mrp-engine-quoted-not-in-l.md`).
+- **A delete that asks is answered.** Since 2026-09-15 the shared fake
+  `backend/src/scm/lib/fake-postgrest.ts` hands a `.delete().select().maybeSingle()`
+  chain the row it removed, the way PostgREST's `DELETE … RETURNING` does —
+  the payment DELETE reads that row to tell a version clash from a delete
+  (`docs/bugs/0927-money-on-a-cancelled-sales-order-had-no-exit-but-a-hand-rais.md`).
+  The bare `await sb.from(t).delete()` keeps its null body, as before.
 - **A test fake's comparison operators must compare by the column's type**,
   NULL matching nothing — the way `fake-postgrest`'s `gte`/`lte` do, and the
   way `lt` does since 2026-09-10 (docs/bugs/0785). Before that `lt` was

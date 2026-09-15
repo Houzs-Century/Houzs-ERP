@@ -152,7 +152,19 @@ const handlerBody = (method: string, path: string): string => {
   expect(start, `${method.toUpperCase()} ${path} is not registered`).toBeGreaterThan(-1);
   const rest = routeSource.slice(start + 1);
   const next = rest.search(/\nmfgSalesOrders\.(get|post|patch|put|delete)\(/);
-  return stripComments(next === -1 ? rest : rest.slice(0, next));
+  const registration = next === -1 ? rest : rest.slice(0, next);
+  /* A route registered by NAME — `mfgSalesOrders.post(path, someHandler)`,
+     the exported-handler shape the contract tests drive (docs/bugs/0927) —
+     has its body under `export const someHandler = async`, not here. */
+  const named = /^[^\n]*',\s*([A-Za-z0-9_]+)\);/.exec(registration);
+  if (named) {
+    const at = routeSource.indexOf(`export const ${named[1]} = async`);
+    expect(at, `${method.toUpperCase()} ${path}: handler ${named[1]} is not defined in the route file`).toBeGreaterThan(-1);
+    const tail = routeSource.slice(at + 1);
+    const end = tail.search(/\n(export const [A-Za-z0-9_]+ = async|mfgSalesOrders\.(get|post|patch|put|delete)\()/);
+    return stripComments(end === -1 ? tail : tail.slice(0, end));
+  }
+  return stripComments(registration);
 };
 
 const PAYMENT_ROUTES: ReadonlyArray<[string, string]> = [

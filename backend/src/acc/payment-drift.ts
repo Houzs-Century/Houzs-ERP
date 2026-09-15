@@ -81,6 +81,9 @@ export function paymentEntryDrift(payments: PaymentFact[], entries: EntryFact[])
     /* The poster skips imported rows outright, so an entry beside one was not
        written from this row and must not be measured against it. */
     if (p.method === 'imported') continue;
+    /* A converted row (docs/bugs/0927) keeps the original paid_at while its
+       transfer is dated the day of the move — the difference is by design. */
+    if (p.method === 'converted') continue;
 
     const e = byPayment.get(keyOf(p.source, p.id));
     /* No active entry is the UNBOOKED check's finding, not this one. Reporting
