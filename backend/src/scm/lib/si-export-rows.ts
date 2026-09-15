@@ -7,8 +7,8 @@
 // Owner 2026-09-15: ONE Export, one spreadsheet row per line, the grid's
 // visible columns, AutoCount's Detail Listing labels and values. Measured
 // against the book the same day (runs 34946202589, 34947753794):
-//   - ac_agent      resolveAcAgent(agent, salesperson name), UPPER-CASED — the
-//                   book stores agent codes in capitals ("CHEA HUAN"); 78 of 223
+//   - ac_agent      resolveAcAgent(agent, salesperson name); an unmapped name
+//                   upper-cased as the book holds it ("CHEA HUAN"); 78 of 223
 //                   paired lines are migrated invoices with no agent at all, a
 //                   data gap this does not fill
 //   - ac_item_code  resolveAcItemCode + bindings (193 / 198 non-sofa lines)
@@ -24,7 +24,7 @@ import { lineExportDescription2 } from './line-export-description2';
 import { warehouseLabel } from './warehouse-label';
 import { bindingsFor } from './autocount-outbox';
 import { bookSpellingOrOwn, resolveAcAgent } from '../../services/autocount-writeback';
-import { LOCATION_MAP } from '../../services/autocount-master-maps';
+import { AGENT_MAP, LOCATION_MAP } from '../../services/autocount-master-maps';
 import { resolveAcItemCode } from '../../services/autocount-item-code';
 import { bookLineItem } from '../../services/autocount-book-item';
 
@@ -119,11 +119,20 @@ const byLinePosition = (a: RawLine, b: RawLine): number => {
   return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 };
 
+/* The book's own spellings of the agents AGENT_MAP knows (`Zack`,
+   `Lim Yau Wei`) — kept exactly. */
+const BOOK_AGENT_SPELLINGS: ReadonlySet<string> = new Set(Object.values(AGENT_MAP));
+
 /** AutoCount's Sales Agent as the book spells it: the write-back's own
- *  resolution, in capitals. */
+ *  resolution (resolveAcAgent). A name AGENT_MAP spells is printed as mapped;
+ *  a salesperson the map does not know was opened in the book under their name
+ *  and the book holds it in capitals ("CHEA HUAN"), so it prints upper-cased.
+ *  Measured 2026-09-15 (run 34950050232): upper-casing every name broke the 18
+ *  mapped mixed-case ones, leaving only the unmapped ones to capitalise. */
 export function siExportAgent(agent: string | null | undefined, salespersonName: string | null): string | null {
   const resolved = resolveAcAgent(agent, salespersonName);
-  return resolved ? resolved.toUpperCase() : null;
+  if (!resolved) return null;
+  return BOOK_AGENT_SPELLINGS.has(resolved) ? resolved : resolved.toUpperCase();
 }
 
 export type SiExportRows =

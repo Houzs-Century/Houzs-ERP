@@ -94,7 +94,8 @@ describe('GET /sales-invoices/export/rows', () => {
     expect(out.rows.map((r) => r.id)).toEqual([mine.id]);
   });
 
-  it('upper-cases the resolved agent, and has none when the invoice names nobody', () => {
+  it('keeps a name the agent map spells, capitalises one it does not, and has none when nobody is named', () => {
+    expect(siExportAgent(null, 'Zack')).toBe('Zack');
     expect(siExportAgent(null, 'Chea Huan')).toBe('CHEA HUAN');
     expect(siExportAgent(null, null)).toBeNull();
   });
