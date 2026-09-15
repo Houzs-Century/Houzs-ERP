@@ -462,6 +462,10 @@ export function useUpdateMfgProductPrices() {
       if (body.price1Sen    !== undefined) expect.price1_sen     = body.price1Sen;
       if (body.costPriceSen !== undefined) expect.cost_price_sen = body.costPriceSen;
       if (body.barcode      !== undefined) expect.barcode        = body.barcode;
+      // SKU Master edits the code and description too; read those back as well
+      // (the server stores them trimmed).
+      if (body.code         !== undefined) expect.code           = body.code.trim();
+      if (body.name         !== undefined) expect.name           = body.name.trim();
 
       const result = await verifiedSave<{ product: Record<string, unknown> }>({
         endpoint: `/mfg-products/${id}`,
@@ -474,8 +478,8 @@ export function useUpdateMfgProductPrices() {
 
       if (!result.ok) {
         throw new Error(friendlySaveMessage(result, {
-          noun: 'price',
-          fieldNames: { base_price_sen: 'Base price', price1_sen: 'Price 1', cost_price_sen: 'Cost price' },
+          noun: 'change',
+          fieldNames: { base_price_sen: 'Base price', price1_sen: 'Price 1', cost_price_sen: 'Cost price', name: 'Description', code: 'Product code' },
           fmt: (v) => (v == null ? '(blank)' : `RM${(Number(v) / 100).toFixed(2)}`),
         }));
       }

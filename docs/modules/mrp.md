@@ -327,8 +327,10 @@ typed its own list of four while the catalogue could hold nine
 
 `public.mfg_product_category` and its `scm` twin carry NINE members: the five in
 the baseline DDL plus DINING / BEDLINES / DIFFUSER / CARPET, added by migrations
-`0258`-`0261` and `0262`-`0265`. `backend/src/scm/routes/mfg-products.ts` lists
-all nine as `MFG_PRODUCT_CATEGORIES` and rejects a product create outside them.
+`0258`-`0261` and `0262`-`0265`. `backend/src/scm/shared/product-categories.ts`
+lists them as `MFG_PRODUCT_CATEGORIES` (with the one label per category, mirrored
+to `frontend/src/vendor/shared/`; `routes/mfg-products.ts` re-exports it) and
+product create rejects anything outside them.
 A line on any of the four newer ones was dropped TWICE — by the section-6 filter
 because the page only ever sends one of its four tab values as `?category=`, and
 again by the page's own equality — and neither drop was counted. Measured from
@@ -667,10 +669,17 @@ mobile card, because `source === 'po'` now guarantees a number. Trace:
   ordered on the sofa's PO. Before it, custom pillows were `accessory`, keyed on
   the code alone, and one colour's stock covered another colour's order.
   `tasks/PLAN-sofa-accessories-category.md`. A model (with its SKUs) or a
-  model-less SKU can be swapped between Accessory and Sofa Accessory from its
-  edit screen — `shared/category-swap.ts`, enforced by `PATCH /product-models/:id`
-  and `PATCH /mfg-products/:id` (409 `category_change_not_allowed` for any other
-  move, `category_on_model` for a modelled SKU). The swap moves the PRODUCT only:
+  model-less SKU can be moved to ANY other category from its edit screen (owner
+  2026-09-15; it was Accessory <-> Sofa Accessory only on 2026-09-14) —
+  `shared/category-swap.ts`, enforced by `PATCH /product-models/:id` (400 for a
+  value that is not a category) and `PATCH /mfg-products/:id` (409
+  `category_change_not_allowed` for a value that is not a category,
+  `category_on_model` for a modelled SKU, which moves only with its model). The
+  picker (`CategorySwapSelect`) asks first and says open orders keep the old
+  category. Import SKUs (`POST /mfg-products/batch-import`) also changes an
+  existing SKU's category, including a modelled SKU's, and reads the label or any
+  case (`parseMfgCategory`); an unreadable category is reported per row. The move
+  changes the PRODUCT only:
   lines already on orders keep their old group until a data run moves them —
   `backend/scripts/recategorise-fabric-accessory.mjs` (plan/apply workflow),
   which also writes the colour a line's own text names into `fabricCode`
