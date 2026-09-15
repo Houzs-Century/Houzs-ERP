@@ -2,7 +2,8 @@
 
 import { Hono } from 'hono';
 import { PI_STATUS_BUCKETS } from '../lib/pi-status-buckets';
-import { HELD_OR_TERM, HOLD_COLUMNS } from '../lib/document-hold'; import { grnNotBillableRefusal } from '../lib/source-document-gates'; import { mountHoldRoute } from './document-hold-routes';
+import { PI_HEADER_COLS, PI_LIST_SELECT, filterPiList, orderPiList, readPiListFilters } from '../lib/pi-list-read';
+import { HELD_OR_TERM } from '../lib/document-hold'; import { grnNotBillableRefusal } from '../lib/source-document-gates'; import { mountHoldRoute } from './document-hold-routes';
 import type { Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
@@ -20,7 +21,6 @@ import { normalizeCurrency, normalizeExchangeRate, masterRateForCurrency } from 
 import { assertForeignRatePostable, assertForeignRatePatchable } from '../lib/fx-guard';
 import { parseLineNumbers, invalidLineNumberBody } from '../shared/line-numbers';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
-import { escapeForOr } from '../lib/postgrest-search';
 import {
   coveredGrnIds, findUnlinkedPiLines, unlinkedInvoiceResponse, unlinkedCheckFailedResponse,
 } from '../lib/return-unlinked-lines';
@@ -66,8 +66,8 @@ purchaseInvoices.use('*', supabaseAuth);
 
 /* CREATE joined the post/payment/cancel/header pass late; recorded the same way. */
 
-const HEADER =
-  'id, invoice_number, supplier_invoice_ref, supplier_id, purchase_order_id, grn_id, invoice_date, due_date, currency, exchange_rate, subtotal_sen, tax_sen, total_sen, paid_sen, status, notes, posted_at, created_at, created_by, updated_at, ' + HOLD_COLUMNS; // HOLD_COLUMNS = mig 0324's marker, BESIDE the status pill
+/* The header columns live with the list's filter (lib/pi-list-read.ts). */
+const HEADER = PI_HEADER_COLS;
 const ITEM =
   'id, purchase_invoice_id, grn_item_id, material_kind, item_code, material_name, qty, unit_price_sen, line_total_sen, notes, ' +
   /* PR #42 — variant fields (migration 0057) */
@@ -323,9 +323,8 @@ async function migratedRefusalForGrnItems(
 
 purchaseInvoices.get('/', async (c) => {
   const sb = c.get('supabase');
-  // Supplier CONTACT fields ride the list embed — the quick-view drawer's
-  // SUPPLIER panel renders off the list row (owner 2026-07-24: all "—").
-  const SELECT = `${HEADER}, supplier:suppliers(id, code, name, contact_person, phone, email, address), purchase_order:purchase_orders(id, po_number), grn:grns(id, grn_number, delivery_note_ref)`;
+  // The list select + filter live in lib/pi-list-read.ts, shared with the exports.
+  const SELECT = PI_LIST_SELECT;
 
   /* Opt-in server-side pagination + search + sort + status-counts (mirrors the
      SO list in mfg-sales-orders.ts). The PRESENCE of `page` switches paging on;
@@ -356,32 +355,11 @@ purchaseInvoices.get('/', async (c) => {
   const psRaw = Number(c.req.query('pageSize'));
   const pageSize = Number.isFinite(psRaw) && psRaw > 0 ? Math.min(100, Math.max(1, Math.trunc(psRaw))) : 50;
 
-  const SORT_COLS = new Set(['invoice_date', 'invoice_number', 'status', 'total_sen']);
-  const [rawCol, rawDir] = (c.req.query('sort') ?? 'invoice_date:desc').split(':');
-  const sortCol = SORT_COLS.has(rawCol) ? rawCol : 'invoice_date';
-  const sortAsc = rawDir === 'asc';
-
-  let q = sb.from('purchase_invoices').select(SELECT, { count: 'exact' }).order(sortCol, { ascending: sortAsc });
-  /* unique tiebreaker so range paging can't skip/repeat rows sharing the sort key */
-  if (sortCol !== 'invoice_number') q = q.order('invoice_number', { ascending: sortAsc });
-  /* Resolve the incoming `status`: a known bucket key → all its raw statuses;
-     'all'/empty → no filter; otherwise treat it as a raw DB status. */
-  const status = c.req.query('status');
-  if (status && status !== 'all') {
-    if (status === 'on_hold') q = q.or(HELD_OR_TERM); /* the MARKER (mig 0324) */ else if (PI_STATUS_BUCKETS[status]) q = q.in('status', PI_STATUS_BUCKETS[status]);
-    else q = q.eq('status', status);
-  }
-  q = scopeToCompany(q, c); // multi-company: isolate to the active company
-  /* free-text search over the base-table text columns the FE searches
-     (PurchaseInvoicesListV2 hay). Supplier name / PO / GRN source are embedded
-     resources, not base purchase_invoices columns, so they can't be ilike'd here. */
-  const search = c.req.query('q');
-  if (search) {
-    const s = escapeForOr(search);
-    if (s) q = q.or(`invoice_number.ilike.%${s}%,supplier_invoice_ref.ilike.%${s}%,notes.ilike.%${s}%`);
-  }
-  const from = c.req.query('from'); if (from) q = q.gte('invoice_date', from);
-  const to = c.req.query('to'); if (to) q = q.lte('invoice_date', to);
+  /* Tab + company + search + date range + sort: the SAME read the two exports
+     build (lib/pi-list-read.ts), so an export can never match different
+     invoices than the tab it was pressed on. */
+  const filters = readPiListFilters((k) => c.req.query(k));
+  let q = orderPiList(filterPiList(sb.from('purchase_invoices').select(SELECT, { count: 'exact' }), filters, c), filters.sort);
   q = q.range(page * pageSize, page * pageSize + pageSize - 1);
   const { data, error, count } = await q;
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);

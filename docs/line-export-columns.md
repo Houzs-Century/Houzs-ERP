@@ -11,6 +11,16 @@ each value comes from, and says which columns the future import may change. It i
 a **design**, not a build: the only export being built today is the Purchase
 Order one, and its columns are the template everything below follows.
 
+> **Built since** (2026-09-15): Goods Receipt (§5), Purchase Invoice (§6) and
+> Sales Invoice (§3), with the owner's rulings below and the differences listed
+> in [§ What the GR / PI / SI builds changed](#what-the-gr--pi--si-builds-changed).
+> Their column contracts are `backend/src/scm/lib/{grn,pi,si}-line-export-columns.ts`;
+> the module guides (`docs/modules/grn.md`, `purchase-invoice.md`,
+> `sales-invoice.md`, *Exports*) describe them.
+> Read-only production proof: run 34941927326 (every tab / All / date-window /
+> seller-scope case MATCH, Line ID by Line ID). Import is desktop-only by the
+> owner's decision (「手机不需要导入」, 2026-09-15).
+
 > Status of the facts in here: every count was measured on **production**
 > (Supabase project `anogrigyjbduyzclzjgn`) through a **read-only transaction**
 > on 2026-09-15 between 04:04 and 04:15 UTC. The data is live and moves while
@@ -547,11 +557,13 @@ line tables or none, and were not in the owner's request. See Q12.
    the two columns (blank until the delivery module fills them), or drop them?
 9. **Cancelled documents.** ANSWERED 2026-09-15: the export follows the list's
    filter — cancelled documents are in the file only when the tab includes them.
-10. **Due dates are mostly empty.** Sales invoices: 359 of 367 live lines have no
+10. ANSWERED 2026-09-15: export the STORED due date only; never derive one from a
+    credit term. **Due dates are mostly empty.** Sales invoices: 359 of 367 live lines have no
     due date. Purchase invoices: 520 of 653. A collection chase list cannot sort by
     due date until these are filled. Fill them from the customer's / supplier's
     credit term, or leave blank?
-11. **Goods receipt "invoiced" figure.** On 69 migrated receipt lines the stored
+11. ANSWERED 2026-09-15: the ERP's own SUM of purchase invoice lines, not the
+    stored figure. **Goods receipt "invoiced" figure.** On 69 migrated receipt lines the stored
     invoiced quantity is larger than what the purchase invoices in the ERP add up
     to (the rest was LIKELY invoiced in AutoCount before go-live — UNKNOWN until
     checked against the book). Export the ERP's own sum, or the stored figure?
@@ -559,6 +571,27 @@ line tables or none, and were not in the owner's request. See Q12.
     payment vouchers and receipts — do these need a line export too?
 
 ---
+
+## What the GR / PI / SI builds changed
+
+Where a build differs from the tables above, and why. Each is a reading of the
+screen the export stands beside, not a new rule.
+
+- **GR Invoiced Qty** excludes DRAFT as well as CANCELLED purchase invoices — the
+  rule `recomputeGrnInvoiced` (routes/purchase-invoices.ts) recounts the stored
+  counter by. VOID is not a `purchase_invoice_status` member.
+- **GR / PI Item Description** is `material_name`, else `description`.
+- **SI Customer Ref** is the list's `customerRefOf`: `ref`, else `customer_so_no`,
+  else `po_doc_no` (the table above said `customer_so_no` first).
+- **SI Location** is the delivery order's warehouse, else that delivery order's
+  `sales_location`, else the invoice's own `sales_location` — so an invoice with no
+  delivery line still names a place.
+- **Overdue Days** is 0 while a due date has not arrived, blank with no due date
+  or no balance.
+- **SI Balance** refuses the file when the order deposit could not be read; the
+  list shows the un-netted figure in that case.
+- **Line order** follows each detail page: GR / PI by creation, category rank and
+  sofa module; SI by `line_no` then creation.
 
 ## How the counts were measured
 

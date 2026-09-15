@@ -165,7 +165,9 @@ Three layers as in `docs/modules/sales-order.md` §1. GRN specifics:
 
 | Method | Path | Line | Purpose |
 |--------|------|------|---------|
-| GET | `/` | `:833` | List. `?page=` opts into pagination + `statusCounts`. |
+| GET | `/` | `:833` | List. `?page=` opts into pagination + `statusCounts`. The paginated path's tab / supplier / company / search / date filter and its sort are built by `lib/grn-list-read.ts` (`filterGrnList`, `orderGrnList`) — the same functions the two exports below use. |
+| GET | `/export/headers` | `backend/src/scm/routes/grn-exports.ts` | EVERY receipt the list's `status` / `q` / `sort` / `supplierId` / `from` / `to` match (no `page`), in the list's row shape. `{ grns, total, truncated }`. See *Exports* below. |
+| GET | `/export/lines` | `backend/src/scm/routes/grn-exports.ts` | One row per receipt LINE of every matching receipt. `{ columns, rows, grnCount, lineCount, truncated }`; `columns` is the contract in `lib/grn-line-export-columns.ts`. See *Exports* below. |
 | GET | `/outstanding-po-items` | `:1283` | PO lines with `qty - received_qty > 0` on SUBMITTED / PARTIALLY_RECEIVED POs; the from-PO picker. **Reads the FULL set** since 2026-08-17. Takes **`?poId=a,b,c`** (server-side scope) and returns **`scope`** beside `items` — see §2a. |
 | GET | `/:id` | `:1173` | Header + items + convert/lock flags + per-line source PO + per-line downstream. |
 | GET | `/:id/linked` | `:1229` | Parent PO + downstream PIs + PRs. |
@@ -1268,6 +1270,7 @@ deliberately last because it is the largest handler in the file. One PR each.
 |---------|---------|--------|
 | List columns / filters | `pages/scm-v2/GoodsReceivedListV2.tsx` | `mobile/MobileModuleList.tsx` config `:1159` |
 | Server pagination opt-in | `useGrnsPaged` | `mobile/MobileModuleList.tsx` `SERVER_PAGINATED` (`:327`) |
+| List exports (Export lines + whole-listing Export, 2026-09-15) | `GoodsReceivedListV2.tsx` over `vendor/scm/lib/grn-list-export.ts` | none — the phone list has no export of any kind; import is desktop-only by owner decision |
 | Detail fields | `pages/scm-v2/GoodsReceivedDetailV2.tsx` (read) + `GoodsReceivedDetail.tsx` (edit) | `mobile/MobileModuleDetail.tsx` config `:324` |
 | Per-line source PO (#26) | `vendor/scm/components/LinePoRefLink.tsx` in both desktop files | `mobile/MobileLinePoRef.tsx`, both over `vendor/scm/lib/line-po-link.ts` |
 | Post / Cancel actions | `GoodsReceivedDetail.tsx:416-459` | `mobile/MobileModuleDetail.tsx:535-542` |
@@ -1592,3 +1595,58 @@ PLACE (the phone has no separate editor for this document). It is offered when
 `useAddGrnItem` with the desktop add row's body. A refusal stays inline beside the row,
 which keeps what was typed; the unit price starts blank. Trace:
 `docs/bugs/0873-the-phone-could-not-add-a-line-to-any-document.md`.
+
+---
+
+## Exports — every page the filters match (2026-09-15)
+
+Owner 2026-09-15: every document list exports **one row per line item**, holding
+**every row the list's current filter matches**, never the screen page. Column
+design: `docs/line-export-columns.md` §5. Same build as the Purchase Order
+export (`docs/modules/purchase-order.md` *Exports*).
+
+- `GET /export/lines` (`routes/grn-exports.ts` → `lib/grn-line-export.ts`, on the
+  shared reader `lib/document-line-export.ts`). Columns, in order, are
+  `GRN_LINE_EXPORT_COLUMNS` in `backend/src/scm/lib/grn-line-export-columns.ts` —
+  a MIRROR of `frontend/src/vendor/scm/lib/grn-line-export-columns.ts`, refereed by
+  `grn-line-export-columns.canonical.test.ts`. **Header names and Line ID are an
+  import contract** (Delivery Date, Item Description 2, Remarks; matched by Line ID).
+- **AutoCount Doc No** reads the column that holds the GR number:
+  `linked_ac_gr_docno` on a migrated receipt (`migrated_no_stock`), whose
+  `linked_ac_docno` holds the AutoCount PO number; `linked_ac_docno` otherwise. A
+  migrated receipt with no GR number prints blank, never the PO number (§4d).
+- **Invoiced Qty** is the ERP's own sum of purchase invoice line qty by
+  `grn_item_id`, over invoices that are not DRAFT or CANCELLED — the rule
+  `recomputeGrnInvoiced` recounts the stored counter by
+  (`GRN_INVOICED_EXCLUDED_PI_STATUSES`). NOT the stored `grn_items.invoiced_qty`,
+  which carries pre-go-live AutoCount billing on migrated receipts (owner
+  2026-09-15). Uninvoiced = Received (`qty_accepted`) − Invoiced − Returned.
+- **Location** is AutoCount's short code (`KL`) of the receipt's warehouse, through
+  `bookSpellingOrOwn(code ?? name, LOCATION_MAP)` — the rule
+  `readConvertHeaderFacts` sends a GR's Location by. **Status** is the list's word
+  (`GRN_STATUS_WORDS`, pinned to status-pill's GRN map), ` (On Hold)` after it for
+  a held receipt. Cancelled receipts follow the tab.
+- PO No. / SO Doc No. come through `purchase_order_item_id` → the PO line →
+  `so_item_id`; every hop and the invoice read carry the company predicate.
+- Lines are in the detail page's order (creation, category rank, sofa modules).
+- `GET /export/headers` pages the list's own select through the list's filter.
+- Read-only production check: `.github/workflows/grn-pi-si-line-export-check.yml`
+  (`backend/scripts/check-grn-pi-si-line-export.mjs`); run 34941927326 (2026-09-15)
+  matched Line ID by Line ID for both companies (company 1 All: 542 receipts /
+  1,077 lines; Invoiced Qty equal to the SQL sum on 1,077 / 1,077 lines, the
+  stored figure differing on 69).
+- **On the list (desktop)**: an **Export lines** button beside *Transfer from*
+  (`GoodsReceivedListV2.tsx`, shared `pages/scm-v2/list-export-controls.tsx`) writes
+  `goods-received-lines-YYYY-MM-DD.xlsx` (sheet *GRN Lines*) through `vendor/scm/lib/grn-list-export.ts`; the toolbar
+  **Export** now calls `/export/headers` for the whole filtered set with the grid's
+  visible columns (`DataTable.onExport`); Assigned SO / Delivered are healed through `/list-mrp-enrichment` in chunks of 200, two at a time, when visible. Both send the list's own tab,
+  settled search and sort — the paged hook builds its request from the same params
+  function. A `truncated` answer is refused, never written. The toolbar Export's
+  Status column writes the list's word. Bug ledger:
+  `docs/bugs/0925-the-goods-received-purchase-invoice-and-sales-invoice-list-e.md`.
+- NOT applied: the grid's per-column funnels (they filter only the loaded page).
+- Import is desktop-only by the owner's decision (「手机不需要导入」, 2026-09-15); no
+  GRN line import exists yet on either surface.
+- **Mobile**: the phone GRN list (`mobile/MobileModuleList.tsx`) has no export of
+  any kind, so there is nothing to keep in step (§8).
+

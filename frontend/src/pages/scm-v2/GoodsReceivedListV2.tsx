@@ -25,6 +25,11 @@ import {
   Send,
   ArrowRightLeft,
 } from "lucide-react";
+import { ExportLinesButton, useListExportRunner } from "./list-export-controls";
+import { downloadCSV, toCSV, type CSVColumn } from "../../lib/csv";
+import { todayMyt } from "../../vendor/scm/lib/dates";
+import { fetchAllGrnListRows, fetchGrnLineExport, writeGrnLineExportXlsx } from "../../vendor/scm/lib/grn-list-export";
+import { grnStatusWord } from "../../vendor/scm/lib/grn-line-export-columns";
 import { PrintPreviewBatchModal, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { PageHeader } from "../../components/Layout";
@@ -625,6 +630,21 @@ export function GoodsReceivedListV2() {
     await queryClient.invalidateQueries({ queryKey: ["grns"] });
   };
 
+  /* Both exports read EVERY receipt the list's tab + search + sort match, not the
+     page on screen (owner 2026-09-15). The filter is the one the list request is
+     built from — the settled search term, the same as the rows shown. */
+  const exportFilters = { status: apiStatus, q: debouncedSearch, sort };
+  const { exporting, run: runExport } = useListExportRunner(notify);
+  const exportLines = () => runExport("Export lines", async () => {
+    const body = await fetchGrnLineExport(exportFilters);
+    await writeGrnLineExportXlsx(body, `goods-received-lines-${todayMyt()}.xlsx`);
+  });
+  const exportHeaders = (cols: CSVColumn<GrnRow>[]) => runExport("Export", async () => {
+    const withMrp = cols.some((c) => c.key === "assigned_so" || c.key === "delivered");
+    const allRows = await fetchAllGrnListRows<GrnRow>(exportFilters, withMrp);
+    downloadCSV(`grns-${todayMyt()}.csv`, toCSV(allRows, cols));
+  });
+
   const goNewGrn = () => navigate("/scm/grns/new");
   const goFromPo = () => navigate("/scm/grns/from-po");
   const goPos = () => navigate("/scm/purchase-orders");
@@ -861,7 +881,8 @@ export function GoodsReceivedListV2() {
       width: "120px",
       // Exempt from the cancelled-row fade — the pill is WHY the row is grey.
       className: "dt-cancel-keep",
-      getValue: (r) => r.status,
+      // The export writes the word on screen, hold included (owner 2026-09-15).
+      getValue: (r) => grnStatusWord(r.status, rowIsHeld(r)) ?? "",
       render: (r) => {
         const st = statusFor(r.status);
         /* mig 0324 — the Hold marker sits BESIDE the real status pill. */
@@ -905,6 +926,7 @@ export function GoodsReceivedListV2() {
             description="Every GRN raised on incoming supplier shipments — Draft through Posted. Click any row for the quick view."
             primaryAction={
               <div className="flex items-stretch gap-2">
+                <ExportLinesButton exporting={exporting} onClick={() => void exportLines()} />
                 <Button variant="secondary" icon={<ArrowRightLeft size={14} />} onClick={goFromPo}>
                   {transferFromLabel('po')}
                 </Button>
@@ -1015,7 +1037,8 @@ export function GoodsReceivedListV2() {
                   onToggleAll: toggleSelectAll,
                 }}
                 contextMenu={grnContextMenu}
-            exportName="grns"
+                exportName="grns"
+                onExport={(cols) => void exportHeaders(cols)}
                 serverSort
                 onSortChange={setSortAndReset}
                 emptyLabel={filtersActive ? "No GRNs match — try Reset layout to clear filters." : "No GRNs yet."}

@@ -17,6 +17,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
+import { siListParams } from './si-list-export';
 import { writeFailed, writeFailedAs } from './mutation-error';
 import { idempotentInit } from '../../../lib/idempotency';
 import { serviceNotify } from './dialog-service';
@@ -46,12 +47,11 @@ export const useSalesInvoices = (status?: string) =>
 // express (sent/partial/paid), so those show all rows still counted.
 export function useSalesInvoicesPaged(params: { page: number; pageSize: number; status?: string; q?: string; sort?: string }) {
   const { page, pageSize, status, q, sort } = params;
-  const usp = new URLSearchParams();
+  // The filter half is shared with the two exports (si-list-export.ts), so an
+  // export can never be sent a different filter than the list it was pressed on.
+  const usp = siListParams({ status, q, sort });
   usp.set('page', String(page));
   usp.set('pageSize', String(pageSize));
-  if (status) usp.set('status', status);
-  if (q && q.trim()) usp.set('q', q.trim());
-  if (sort) usp.set('sort', sort);
   return useQuery({
     queryKey: ['sales-invoices-paged', page, pageSize, status ?? '', q ?? '', sort ?? ''],
     queryFn: ({ signal }) => authedFetch<{ salesInvoices: any[]; total: number; page: number; pageSize: number; statusCounts: { all: number; sent: number; partial: number; paid: number; cancelled: number } }>(`/sales-invoices?${usp.toString()}`, { signal }),

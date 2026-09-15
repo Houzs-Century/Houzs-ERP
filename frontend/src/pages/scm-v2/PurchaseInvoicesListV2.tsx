@@ -20,6 +20,11 @@ import {
   Wallet,
   ArrowRightLeft,
 } from "lucide-react";
+import { ExportLinesButton, useListExportRunner } from "./list-export-controls";
+import { downloadCSV, toCSV, type CSVColumn } from "../../lib/csv";
+import { todayMyt } from "../../vendor/scm/lib/dates";
+import { fetchAllPiListRows, fetchPiLineExport, writePiLineExportXlsx } from "../../vendor/scm/lib/pi-list-export";
+import { piStatusWord } from "../../vendor/scm/lib/pi-line-export-columns";
 import { transferFromLabel } from '../../lib/convertScope';
 import { PrintPreviewBatchModal, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
@@ -65,7 +70,7 @@ import { isCancelledDocStatus } from "../../lib/scm";
 import { purchaseInvoiceRowMenu } from "./row-menus";
 import { useHoldAction } from "./use-hold-action";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
-import { StatusWithHold, type HoldFields } from "../../vendor/scm/components/HoldChip";
+import { StatusWithHold, rowIsHeld, type HoldFields } from "../../vendor/scm/components/HoldChip";
 import { usePrintDocument } from "../../components/scm-v2/PrintChainProvider";
 import { purchaseInvoicePrintChain } from "../../lib/printChain";
 
@@ -722,6 +727,28 @@ export function PurchaseInvoicesListV2() {
     await queryClient.invalidateQueries({ queryKey: ["purchase-invoices"] });
   };
 
+  /* Both exports read EVERY invoice the list's tab + search + sort match, not the
+     page on screen (owner 2026-09-15). The filter is the one the list request is
+     built from — the settled search term, the same as the rows shown. */
+  const exportFilters = { status: apiStatus, q: debouncedSearch, sort };
+  const { exporting, run: runExport } = useListExportRunner(notify);
+  const exportLines = () => runExport("Export lines", async () => {
+    const body = await fetchPiLineExport(exportFilters);
+    await writePiLineExportXlsx(body, `purchase-invoice-lines-${todayMyt()}.xlsx`);
+  });
+  const exportHeaders = (cols: CSVColumn<PiRow>[]) => runExport("Export", async () => {
+    const { rows: allRows, poPriceById: allPoPrices } = await fetchAllPiListRows<PiRow>(exportFilters, {
+      mrpColumns: cols.some((c) => c.key === "assigned_so" || c.key === "delivered"),
+      poPrice: cols.some((c) => c.key === "vs_po"),
+    });
+    /* "vs PO price" reads the page's own summaries by id; the file carries
+       every invoice, so that one column reads the summaries fetched for all. */
+    const fileCols = cols.map((c) => (c.key === "vs_po"
+      ? { ...c, getValue: (r: PiRow) => poPriceMarker(allPoPrices.get(String(r.id)))?.label ?? "" }
+      : c));
+    downloadCSV(`purchase-invoices-${todayMyt()}.csv`, toCSV(allRows, fileCols));
+  });
+
   const goNewPi = () => navigate("/scm/purchase-invoices/new");
   const goFromGrn = () => navigate("/scm/purchase-invoices/from-grn");
   const goImport = () => navigate("/scm/purchase-invoices?import=1");
@@ -986,7 +1013,8 @@ export function PurchaseInvoicesListV2() {
       width: "132px",
       // Exempt from the cancelled-row fade — the pill is WHY the row is grey.
       className: "dt-cancel-keep",
-      getValue: (r) => r.status,
+      // The export writes the word on screen, hold included (owner 2026-09-15).
+      getValue: (r) => piStatusWord(r.status, rowIsHeld(r)) ?? "",
       render: (r) => {
         const st = statusFor(r.status);
         /* mig 0324 — the Hold marker sits BESIDE the real status pill. */
@@ -1077,6 +1105,7 @@ export function PurchaseInvoicesListV2() {
             description="Every invoice raised by a supplier — Draft through Paid. Click any row for the quick view; open the full page to edit or record a payment."
             primaryAction={
               <div className="flex items-stretch gap-2">
+                <ExportLinesButton exporting={exporting} onClick={() => void exportLines()} />
                 <Button variant="secondary" icon={<ArrowRightLeft size={14} />} onClick={goFromGrn}>
                   {transferFromLabel('grn')}
                 </Button>
@@ -1230,6 +1259,7 @@ export function PurchaseInvoicesListV2() {
                   onToggleAll: toggleSelectAll,
                 }}
                 exportName="purchase-invoices"
+                onExport={(cols) => void exportHeaders(cols)}
                 serverSort
                 onSortChange={setSortAndReset}
                 emptyLabel={
