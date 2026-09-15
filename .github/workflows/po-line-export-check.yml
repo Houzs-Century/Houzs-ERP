@@ -7,6 +7,11 @@ name: PO line export check (read-only)
 # prints the AutoCount-listing facts (PROBE lines) the column mapping rests on.
 # backend/scripts/check-po-line-export.mjs has the detail.
 #
+# document: so-do runs the SAME comparison for the Sales Order and Delivery
+# Order line exports instead (backend/scripts/check-so-do-line-export.mjs): the
+# SO Submitted tab, All with a second-level filter row (f=orderDate:between),
+# All; the DO Delivered tab, Confirmed tab, All — per company, line id by line id.
+#
 # Manual trigger only, own concurrency group, read-only session. Exit 0 for every
 # answer; non-zero only when the database cannot be reached.
 on:
@@ -20,6 +25,14 @@ on:
         options:
           - production
           - staging
+      document:
+        description: "Which export"
+        required: true
+        default: "po"
+        type: choice
+        options:
+          - po
+          - so-do
       status:
         description: "List tab to check (all, open, outstanding, partial, received, cancelled, draft, on_hold)"
         required: false
@@ -27,7 +40,7 @@ on:
         type: string
 
 concurrency:
-  group: po-line-export-check-${{ inputs.target }}
+  group: po-line-export-check-${{ inputs.document }}-${{ inputs.target }}
   cancel-in-progress: false
 
 jobs:
@@ -46,7 +59,7 @@ jobs:
           cache: npm
           cache-dependency-path: backend/package-lock.json
       - run: npm ci
-      - run: npx tsx scripts/check-po-line-export.mjs
+      - run: npx tsx scripts/check-${{ inputs.document == 'so-do' && 'so-do' || 'po' }}-line-export.mjs
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           STATUS: ${{ inputs.status }}
@@ -74,7 +87,7 @@ jobs:
           cache: npm
           cache-dependency-path: backend/package-lock.json
       - run: npm ci
-      - run: npx tsx scripts/check-po-line-export.mjs
+      - run: npx tsx scripts/check-${{ inputs.document == 'so-do' && 'so-do' || 'po' }}-line-export.mjs
         env:
           DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
           STATUS: ${{ inputs.status }}
