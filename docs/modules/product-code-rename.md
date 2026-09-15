@@ -60,7 +60,7 @@ All in schema `scm`, all carrying `company_id`.
 
 Ten of these were added 2026-09-15 — the two amendment columns, the six
 consignment tables, `mfg_product_price_history` and `addons.service_sku`:
-`docs/bugs/0938-renaming-a-sku-code-left-pending-amendments-consignment-line.md`.
+`docs/bugs/0939-renaming-a-sku-code-left-pending-amendments-consignment-line.md`.
 
 ## 4. Columns that KEEP the old code, and why
 
