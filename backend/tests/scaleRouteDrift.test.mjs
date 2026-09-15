@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { test } from 'vitest';
 import ts from "typescript";
 import { SO_LIST_COLUMNS } from "../scripts/scale-pg-real-schema.mjs";
+import { soRouterSource } from "./lib/so-router-source";
 
 const readRoute = (path) => readFile(new URL(path, import.meta.url), "utf8");
 
@@ -67,7 +68,7 @@ const productionSoListColumns = (source, constants) => {
 
 test("scale contract remains attached to current production route surfaces", async () => {
   const [soRoute, productRoute, usersRoute] = await Promise.all([
-    readRoute("../src/scm/routes/mfg-sales-orders.ts"),
+    soRouterSource(),
     readRoute("../src/scm/routes/mfg-products.ts"),
     readRoute("../src/routes/users.ts"),
   ]);

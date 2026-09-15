@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { soProcessingLocked } from '../src/scm/routes/mfg-sales-orders';
+import { soRouterSource } from './lib/so-router-source';
 
 /* ONE STORAGE FOR THE PROCESSING DATE — the source pin.
  *
@@ -25,14 +26,17 @@ import { soProcessingLocked } from '../src/scm/routes/mfg-sales-orders';
  * precondition that makes the drop a one-liner. See "RETIRING THE SECOND
  * STORAGE" in shared/so-processing-date.ts. */
 
-const sources = import.meta.glob(
-  [
-    '../src/scm/routes/mfg-sales-orders.ts',
-    '../src/scm/routes/delivery-planning.ts',
-    '../src/scm/lib/so-stock-allocation.ts',
-  ],
-  { query: '?raw', import: 'default', eager: true },
-) as Record<string, string>;
+const sources: Record<string, string> = {
+  /* The Sales Order router is read with every file its register calls reach. */
+  'mfg-sales-orders.ts': soRouterSource(),
+  ...(import.meta.glob(
+    [
+      '../src/scm/routes/delivery-planning.ts',
+      '../src/scm/lib/so-stock-allocation.ts',
+    ],
+    { query: '?raw', import: 'default', eager: true },
+  ) as Record<string, string>),
+};
 
 const srcOf = (suffix: string): string => {
   const hit = Object.entries(sources).find(([k]) => k.endsWith(suffix));

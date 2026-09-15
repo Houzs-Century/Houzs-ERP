@@ -38,7 +38,7 @@ import {
 import consignmentShapeSrc from '../lib/consignment-order-shape.ts?raw';
 import soEditHeaderSrc from '../lib/so-edit-header.ts?raw';
 import consignmentRoutesSrc from '../routes/consignment-orders.ts?raw';
-import mfgSoSrc from '../routes/mfg-sales-orders.ts?raw';
+import { soRouterSource } from '../../../tests/lib/so-router-source';
 import reportsSrc from '../routes/reports.ts?raw';
 import orderRulesSrc from './order-rules.ts?raw';
 import orderRulesTestSrc from './order-rules.test.ts?raw';
@@ -54,6 +54,7 @@ import feConsignmentOrdersSrc from '../../../../frontend/src/pages/scm-v2/Consig
 import feSoAuditLabelsSrc from '../../../../frontend/src/pages/scm-v2/so-audit-labels.ts?raw';
 import feSoDetailSrc from '../../../../frontend/src/pages/scm-v2/SalesOrderDetail.tsx?raw';
 import feSoDetailGatesSrc from '../../../../frontend/src/vendor/scm/lib/so-detail-gates.ts?raw';
+const mfgSoSrc = soRouterSource();
 
 /**
  * `target_date` IS LIVE, and every one of these files must keep saying so.

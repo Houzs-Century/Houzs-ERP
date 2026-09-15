@@ -11,15 +11,16 @@
  * tests/soOverCollection.test.ts.
  */
 import { describe, expect, test } from 'vitest';
+import { soRouterSource } from './lib/so-router-source';
 
-const sources = import.meta.glob(['../src/scm/routes/mfg-sales-orders.ts', '../src/scm/lib/so-payment-reason.ts'], {
+const sources = import.meta.glob(['../src/scm/lib/so-payment-reason.ts'], {
   query: '?raw',
   import: 'default',
   eager: true,
 }) as Record<string, string>;
 
 const sourceEnding = (suffix: string): string => Object.entries(sources).find(([p]) => p.endsWith(suffix))?.[1] ?? '';
-const routeSource = sourceEnding('mfg-sales-orders.ts');
+const routeSource = soRouterSource();
 /* The one rule the four routes ask (docs/bugs/0888) — pinned by its own unit
    test; read here only to prove the routes reach it and that it reads the key. */
 const ruleSource = sourceEnding('so-payment-reason.ts');

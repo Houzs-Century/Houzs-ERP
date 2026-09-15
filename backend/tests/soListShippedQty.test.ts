@@ -13,10 +13,11 @@
 // meaning under that prefix is how the next reader picks the wrong one.
 // ----------------------------------------------------------------------------
 import { describe, expect, test } from 'vitest';
-import routes from '../src/scm/routes/mfg-sales-orders.ts?raw';
+import { soRouterSource } from './lib/so-router-source';
 /* The LIST's row builder moved out of the route into lib/so-list-rows.ts on
    2026-09-15 (the export shares it), so the list's half is read there. */
 import listRows from '../src/scm/lib/so-list-rows.ts?raw';
+const routes = soRouterSource();
 
 const strip = (src: string) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 const SRC = `${strip(routes)}\n${strip(listRows)}`;

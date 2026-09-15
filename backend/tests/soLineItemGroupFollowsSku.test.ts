@@ -17,7 +17,8 @@
    spellings must be gone. The resolver's own behaviour is pinned in
    sku-category's tests; this file pins that the SO doors USE it. */
 import { describe, expect, test } from 'vitest';
-import routeSource from '../src/scm/routes/mfg-sales-orders.ts?raw';
+import { soRouterSource } from './lib/so-router-source';
+const routeSource = soRouterSource();
 
 const slice = (from: string, to: string) => {
   const a = routeSource.indexOf(from);

@@ -1,7 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, resolve } from 'node:path';
+import { soRouterLineOrigin, soRouterSource } from './lib/so-router-source';
 
 /* ── pwp_codes is keyed on (company_id, code). Half a key is not a key. ──────
  *
@@ -43,9 +41,7 @@ import { dirname, resolve } from 'node:path';
  * LIGHT project on purpose (no cloudflare:test, no env.DB) so it runs inside
  * `npm run test:light`, which backend-typecheck runs — a REQUIRED context. */
 
-const HERE = dirname(fileURLToPath(import.meta.url));
-const FILE = resolve(HERE, '..', 'src', 'scm', 'routes', 'mfg-sales-orders.ts');
-const SRC = readFileSync(FILE, 'utf8');
+const SRC = soRouterSource();
 
 /** Every `from('pwp_codes')` chain, sliced to its whole STATEMENT — back to the
  *  nearest preceding `;`/`{`/`}` and forward to the `;` that ends it.
@@ -97,14 +93,14 @@ describe('pwp_codes writes carry BOTH halves of the (company_id, code) key', () 
 
   test('every code-keyed pwp_codes statement also filters on company_id', () => {
     const offenders = ALL.filter((s) => keysOnCode(s.text) && !carriesCompany(s.text)).map(
-      (s) => `mfg-sales-orders.ts:${s.line}`,
+      (s) => soRouterLineOrigin(s.line),
     );
     expect(offenders).toEqual([]);
   });
 
   test('every pwp_codes INSERT stamps company_id', () => {
     const offenders = ALL.filter((s) => /\.insert\(/.test(s.text) && !carriesCompany(s.text)).map(
-      (s) => `mfg-sales-orders.ts:${s.line}`,
+      (s) => soRouterLineOrigin(s.line),
     );
     expect(offenders).toEqual([]);
   });
@@ -116,7 +112,7 @@ describe('pwp_codes writes carry BOTH halves of the (company_id, code) key', () 
     expect(deletes.length).toBeGreaterThanOrEqual(2);
     for (const d of deletes) {
       if (!keysOnCode(d.text)) continue; // the cart-line-key reserve sweep, see header
-      expect(carriesCompany(d.text), `mfg-sales-orders.ts:${d.line}`).toBe(true);
+      expect(carriesCompany(d.text), soRouterLineOrigin(d.line)).toBe(true);
     }
   });
 });

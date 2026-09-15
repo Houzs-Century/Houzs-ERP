@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest';
-import routeSource from '../src/scm/routes/mfg-sales-orders.ts?raw';
+import { soRouterSource } from './lib/so-router-source';
+const routeSource = soRouterSource();
 
 /* 2026-08-13, the day the AutoCount write-back went live: two re-queued sales
    orders came back `Foreign Key Error (Constraint Name=FK_SO_SalesAgent)`.

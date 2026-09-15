@@ -10,14 +10,9 @@
  * stopped. Same technique, same reason, as tests/soOverCollection.test.ts.
  */
 import { describe, expect, test } from 'vitest';
+import { soRouterSource } from './lib/so-router-source';
 
-const sources = import.meta.glob('../src/scm/routes/mfg-sales-orders.ts', {
-  query: '?raw',
-  import: 'default',
-  eager: true,
-}) as Record<string, string>;
-
-const routeSource = Object.values(sources)[0] ?? '';
+const routeSource = soRouterSource();
 
 const stripComments = (s: string): string =>
   s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');

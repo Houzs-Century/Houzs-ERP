@@ -17,8 +17,9 @@
 // refusal disappearing, which no unit test over one handler would notice.
 // ----------------------------------------------------------------------------
 import { describe, expect, test } from 'vitest';
-import soRoutes from '../src/scm/routes/mfg-sales-orders.ts?raw';
+import { soRouterSource } from './lib/so-router-source';
 import recomputeSrc from '../src/scm/lib/mfg-pricing-recompute.ts?raw';
+const soRoutes = soRouterSource();
 const RECOMPUTE_SRC = recomputeSrc;
 
 /** Source with comments stripped — the comments below deliberately name the

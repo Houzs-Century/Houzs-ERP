@@ -24,7 +24,8 @@ import { describe, expect, test } from 'vitest';
 import { fakeSb, type Row } from '../src/scm/lib/fake-postgrest';
 import { deleteSoPaymentHandler, postSoPaymentHandler } from '../src/scm/routes/mfg-sales-orders';
 import { cancelledWithMoneyHandler, soConvertSourcesHandler, soMoneyHandler, soMoneyRefundHandler } from '../src/scm/routes/so-money-routes';
-import rawSo from '../src/scm/routes/mfg-sales-orders.ts?raw';
+import { soRouterSource } from './lib/so-router-source';
+const rawSo = soRouterSource();
 
 const CO = 2;
 const OLD = '2990-SO-2607-010';

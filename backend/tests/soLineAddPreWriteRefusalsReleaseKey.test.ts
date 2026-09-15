@@ -20,8 +20,9 @@
  * at or past the first write releases a claim. */
 import { describe, it, expect } from 'vitest';
 // ?raw so the assertion reads the real source, in any test runtime.
-import routeSource from '../src/scm/routes/mfg-sales-orders.ts?raw';
+import { soRouterLineOrigin, soRouterSource } from './lib/so-router-source';
 import { stripComments } from '../scripts/lib/classify-tests.mjs';
+const routeSource = soRouterSource();
 
 /* A return inside a COMMENT is not an exit, and a write mentioned in one is not a write. */
 const lines: string[] = stripComments(routeSource).split('\n');
@@ -61,7 +62,7 @@ describe('POST /:docNo/items — refusals before the first write release the ide
       .filter((e) => !/return refuseWithoutWriting\(c, /.test(e.text))
       // The lease guard builds its own Response; the next test pins that it releases.
       .filter((e) => e.text !== 'if (leaseBlocked) return leaseBlocked;')
-      .map((e) => `mfg-sales-orders.ts:${e.lineNo} ${e.text}`);
+      .map((e) => `${soRouterLineOrigin(e.lineNo)} ${e.text}`);
     expect(missed).toEqual([]);
   });
 

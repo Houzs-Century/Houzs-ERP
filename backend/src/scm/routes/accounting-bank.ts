@@ -1447,6 +1447,7 @@ export const bankRuleUpdate = guard(async (c) => {
   if (body.sortOrder !== undefined) updates.sort_order = Math.round(Number(body.sortOrder));
   if (body.isActive !== undefined) updates.is_active = body.isActive === true;
 
+  // company-scope: acc_bank_recognition_rules has no company_id column — one global rule set (mig 0336).
   const { data, error } = await sb.from('acc_bank_recognition_rules')
     .update(updates).eq('id', ruleId).select(RULE_FIELDS).maybeSingle();
   if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);

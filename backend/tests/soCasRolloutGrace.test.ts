@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest';
-import routeSource from '../src/scm/routes/mfg-sales-orders.ts?raw';
+import { soRouterSource } from './lib/so-router-source';
 import { soCasGraceOpen, soCasGrace, paymentVersionGuard } from '../src/scm/routes/mfg-sales-orders';
+const routeSource = soRouterSource();
 
 /* REGRESSION — mandatory CAS must not 428 every already-open tab the instant it
    deploys (defect 5, 2026-07-22).

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import rawSo from '../src/scm/routes/mfg-sales-orders.ts?raw';
+import { soRouterSource } from './lib/so-router-source';
 /* The payment insert core lives below the route layer, because scan-so.ts
    writes through it with no request context. Its anchor has to be read from
    there or this test pins a function that is no longer in the file. */
@@ -15,6 +15,7 @@ import rawGrn from '../src/scm/routes/grns.ts?raw';
 import rawSiFromDo from '../src/scm/lib/si-from-do.ts?raw';
 import rawPi from '../src/scm/routes/purchase-invoices.ts?raw';
 import rawCron from '../src/index.ts?raw';
+const rawSo = soRouterSource();
 
 /* ?raw hands back the WORKING TREE bytes, and on Windows (core.autocrlf=true)
    that is CRLF while git stores LF. Any anchor below containing a newline then

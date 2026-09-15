@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest';
-import routeSource from '../src/scm/routes/mfg-sales-orders.ts?raw';
+import { soRouterSource } from './lib/so-router-source';
+const routeSource = soRouterSource();
 
 /* REGRESSION — a permission refusal must never be reported as a concurrency
    conflict (defect 4, 2026-07-22).
