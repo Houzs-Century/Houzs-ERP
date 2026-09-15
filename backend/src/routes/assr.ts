@@ -1246,7 +1246,7 @@ app.get("/export.csv", requireServiceCaseAccess(), async (c) => {
     // Hand-entered DO wins; the live SCM merge (do_numbers) fills the rest —
     // same precedence as the list's DO No column.
     r.delivery_order = r.delivery_order || r.do_numbers || null;
-    lines.push(fields.map((f) => esc(r[f])).join(","));
+    lines.push(fields.map((f) => esc(f === "po_amount" && r[f] != null && Number.isFinite(Number(r[f])) ? Number(r[f]).toFixed(2) : r[f])).join(","));
   }
   const csv = "\uFEFF" + lines.join("\r\n");
   const date = new Date().toISOString().slice(0, 10);

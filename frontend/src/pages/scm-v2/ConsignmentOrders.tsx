@@ -519,12 +519,16 @@ const buildDrilldownColumns = (paymentRefs: string, canFinance: boolean): DataGr
   {
     key: 'unit_price', label: 'Unit Price', width: 100, align: 'right',
     accessor: (it) => fmtRm(Number(it.unit_price_sen ?? 0)),
+    exportValue: (it) => Number(it.unit_price_sen ?? 0) / 100,
+    exportFormat: 'rate',
     searchValue: (it) => String(it.unit_price_sen ?? 0),
     sortFn: (a, b) => Number(a.unit_price_sen ?? 0) - Number(b.unit_price_sen ?? 0),
   },
   {
     key: 'total', label: 'Total', width: 100, align: 'right',
     accessor: (it) => <span style={{ fontWeight: 700, color: '#16695f' }}>{fmtRm(Number(it.total_sen ?? 0))}</span>,
+    exportValue: (it) => Number(it.total_sen ?? 0) / 100,
+    exportFormat: 'money',
     searchValue: (it) => String(it.total_sen ?? 0),
     sortFn: (a, b) => Number(a.total_sen ?? 0) - Number(b.total_sen ?? 0),
   },
@@ -533,12 +537,16 @@ const buildDrilldownColumns = (paymentRefs: string, canFinance: boolean): DataGr
         {
           key: 'unit_cost', label: 'Unit Cost', width: 100, align: 'right',
           accessor: (it) => fmtRm(Number(it.unit_cost_sen ?? 0)),
+          exportValue: (it) => Number(it.unit_cost_sen ?? 0) / 100,
+          exportFormat: 'rate',
           searchValue: (it) => String(it.unit_cost_sen ?? 0),
           sortFn: (a, b) => Number(a.unit_cost_sen ?? 0) - Number(b.unit_cost_sen ?? 0),
         },
         {
           key: 'line_cost', label: 'Line Cost', width: 100, align: 'right',
           accessor: (it) => fmtRm(lineCostOf(it)),
+          exportValue: (it) => lineCostOf(it) / 100,
+          exportFormat: 'money',
           searchValue: (it) => String(lineCostOf(it)),
           sortFn: (a, b) => lineCostOf(a) - lineCostOf(b),
         },
@@ -549,6 +557,8 @@ const buildDrilldownColumns = (paymentRefs: string, canFinance: boolean): DataGr
             const c = m > 0 ? 'var(--c-secondary-a, #2F5D4F)' : m < 0 ? 'var(--c-festive-b, #B8331F)' : 'var(--fg-muted)';
             return <span style={{ color: c, fontWeight: 600 }}>{fmtRm(m)}</span>;
           },
+          exportValue: (it) => lineMarginOf(it) / 100,
+          exportFormat: 'money',
           searchValue: (it) => String(lineMarginOf(it)),
           sortFn: (a, b) => lineMarginOf(a) - lineMarginOf(b),
         },
@@ -1290,6 +1300,7 @@ const buildAllColumns = (
     searchValue: (r) => fmtRm(r.local_total_sen),
     /* Export the NUMBER in ringgit (not "1,234.00") so Excel can SUM it. */
     exportValue: (r) => (r.local_total_sen ?? 0) / 100,
+    exportFormat: 'money',
     sortFn: (a, b) => a.local_total_sen - b.local_total_sen,
     filterType: 'number', numberValue: (r) => r.local_total_sen,
   },
@@ -1330,6 +1341,7 @@ const buildAllColumns = (
     },
     searchValue: (r) => fmtRm(r.mattress_sofa_sen ?? 0),
     exportValue: (r) => (r.mattress_sofa_sen ?? 0) / 100,
+    exportFormat: 'money',
     sortFn: (a, b) => (a.mattress_sofa_sen ?? 0) - (b.mattress_sofa_sen ?? 0),
   },
   {
@@ -1344,6 +1356,7 @@ const buildAllColumns = (
     },
     searchValue: (r) => fmtRm(r.bedframe_sen ?? 0),
     exportValue: (r) => (r.bedframe_sen ?? 0) / 100,
+    exportFormat: 'money',
     sortFn: (a, b) => (a.bedframe_sen ?? 0) - (b.bedframe_sen ?? 0),
   },
   {
@@ -1358,6 +1371,7 @@ const buildAllColumns = (
     },
     searchValue: (r) => fmtRm(r.accessories_sen ?? 0),
     exportValue: (r) => (r.accessories_sen ?? 0) / 100,
+    exportFormat: 'money',
     sortFn: (a, b) => (a.accessories_sen ?? 0) - (b.accessories_sen ?? 0),
   },
   {
@@ -1365,6 +1379,7 @@ const buildAllColumns = (
     accessor: (r) => <span className={styles.money}>{fmtRm(r.mattress_sofa_cost_sen ?? 0)}</span>,
     searchValue: (r) => fmtRm(r.mattress_sofa_cost_sen ?? 0),
     exportValue: (r) => (r.mattress_sofa_cost_sen ?? 0) / 100,
+    exportFormat: 'money',
     sortFn: (a, b) => (a.mattress_sofa_cost_sen ?? 0) - (b.mattress_sofa_cost_sen ?? 0),
   },
   {
@@ -1372,6 +1387,7 @@ const buildAllColumns = (
     accessor: (r) => <span className={styles.money}>{fmtRm(r.bedframe_cost_sen ?? 0)}</span>,
     searchValue: (r) => fmtRm(r.bedframe_cost_sen ?? 0),
     exportValue: (r) => (r.bedframe_cost_sen ?? 0) / 100,
+    exportFormat: 'money',
     sortFn: (a, b) => (a.bedframe_cost_sen ?? 0) - (b.bedframe_cost_sen ?? 0),
   },
   {
@@ -1379,6 +1395,7 @@ const buildAllColumns = (
     accessor: (r) => <span className={styles.money}>{fmtRm(r.accessories_cost_sen ?? 0)}</span>,
     searchValue: (r) => fmtRm(r.accessories_cost_sen ?? 0),
     exportValue: (r) => (r.accessories_cost_sen ?? 0) / 100,
+    exportFormat: 'money',
     sortFn: (a, b) => (a.accessories_cost_sen ?? 0) - (b.accessories_cost_sen ?? 0),
   },
   {
@@ -1515,6 +1532,7 @@ const buildAllColumns = (
     accessor: (r) => <span className={styles.money}>{fmtRm(r.others_sen ?? 0)}</span>,
     searchValue: (r) => fmtRm(r.others_sen ?? 0),
     exportValue: (r) => (r.others_sen ?? 0) / 100,
+    exportFormat: 'money',
     sortFn: (a, b) => (a.others_sen ?? 0) - (b.others_sen ?? 0),
   },
   {
@@ -1523,6 +1541,7 @@ const buildAllColumns = (
     accessor: (r) => <span className={styles.money}>{fmtRm(r.others_cost_sen ?? 0)}</span>,
     searchValue: (r) => fmtRm(r.others_cost_sen ?? 0),
     exportValue: (r) => (r.others_cost_sen ?? 0) / 100,
+    exportFormat: 'money',
     sortFn: (a, b) => (a.others_cost_sen ?? 0) - (b.others_cost_sen ?? 0),
   },
   /* Task #114 — Overall cost / margin / margin% on the SO header. */
@@ -1532,6 +1551,7 @@ const buildAllColumns = (
     accessor: (r) => <span className={styles.money}>{fmtRm(r.total_cost_sen ?? 0)}</span>,
     searchValue: (r) => fmtRm(r.total_cost_sen ?? 0),
     exportValue: (r) => (r.total_cost_sen ?? 0) / 100,
+    exportFormat: 'money',
     sortFn: (a, b) => (a.total_cost_sen ?? 0) - (b.total_cost_sen ?? 0),
   },
   {
@@ -1545,6 +1565,7 @@ const buildAllColumns = (
     },
     searchValue: (r) => fmtRm(r.total_margin_sen ?? 0),
     exportValue: (r) => (r.total_margin_sen ?? 0) / 100,
+    exportFormat: 'money',
     sortFn: (a, b) => (a.total_margin_sen ?? 0) - (b.total_margin_sen ?? 0),
   },
   {
@@ -1572,6 +1593,7 @@ const buildAllColumns = (
     accessor: (r) => <span className={styles.money}>{fmtRm(r.deposit_sen ?? 0)}</span>,
     searchValue: (r) => fmtRm(r.deposit_sen ?? 0),
     exportValue: (r) => (r.deposit_sen ?? 0) / 100,
+    exportFormat: 'money',
     sortFn: (a, b) => (a.deposit_sen ?? 0) - (b.deposit_sen ?? 0),
   },
   {
@@ -1580,6 +1602,7 @@ const buildAllColumns = (
     accessor: (r) => <span className={styles.money}>{fmtRm(r.paid_total_sen ?? r.paid_sen ?? 0)}</span>,
     searchValue: (r) => fmtRm(r.paid_total_sen ?? r.paid_sen ?? 0),
     exportValue: (r) => (r.paid_total_sen ?? r.paid_sen ?? 0) / 100,
+    exportFormat: 'money',
     sortFn: (a, b) => (a.paid_total_sen ?? a.paid_sen ?? 0) - (b.paid_total_sen ?? b.paid_sen ?? 0),
   },
   {
@@ -1589,6 +1612,7 @@ const buildAllColumns = (
     accessor: (r) => <span className={styles.money}>{fmtRm(liveBalance(r))}</span>,
     searchValue: (r) => fmtRm(liveBalance(r)),
     exportValue: (r) => liveBalance(r) / 100,
+    exportFormat: 'money',
     sortFn: (a, b) => liveBalance(a) - liveBalance(b),
   },
   {

@@ -61,6 +61,7 @@ import { itemGroupsList, itemGroupCreate, itemGroupBind, itemGroupPatch } from '
 import { piPeriodicBackfill } from './accounting-pi-backfill';
 import { stockCloseStatus, stockCloseRun } from './accounting-stock-close';
 import { pnlReport, balanceSheetReport } from './accounting-reports';
+import { journalEntryEdit } from './accounting-journal-edit';
 import { reportLayoutGet, reportLayoutPut, reportLayoutReset } from './accounting-report-layouts';
 import { receiptsPaymentsReport } from './accounting-rp';
 import { collectionReport } from './accounting-collection';
@@ -525,6 +526,9 @@ export const postJournalEntryHandler = async (c: any) => {
 };
 
 accounting.post('/journal-entries/:id/post', postJournalEntryHandler);
+/* A manual journal edited in one step — validate, draft, reverse the old on its
+   own day, post the new (owner 2026-09-15: 我无法 edit). Lives next door. */
+accounting.put('/journal-entries/:id', journalEntryEdit);
 
 /* ════════════════════════════════════════════════════════════════════════
    Auto-post helpers — SI / PI confirm

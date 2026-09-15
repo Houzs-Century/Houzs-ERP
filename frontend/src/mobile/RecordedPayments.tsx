@@ -53,6 +53,10 @@ import { missingMethodSubField } from "../vendor/scm/components/PaymentsTable";
 import { fmtSen } from "../lib/scm";
 import { useIdempotencyKey } from "../lib/idempotency";
 import { PaymentInfoBlock, type RecordedPaymentLike } from "./PaymentInfoBlock";
+/* Money moved from a cancelled order (docs/bugs/0933): the method option, its
+   pick, and the body it posts — the phone's pieces of the desktop's rule. */
+import { ConvertSourceField, convertedBody, rmInput, useMobileConvertSources, withConvertOption } from "./MobileOrderMoney";
+import { CONVERT_LABEL, CONVERTED_METHOD } from "../vendor/scm/lib/so-money-queries";
 import { DateField } from "../vendor/scm/components/DateField";
 
 /* A persisted payment as either mobile surface holds it. Superset of
@@ -293,6 +297,11 @@ export function AddPaymentSheet({
   const [method, setMethod] = useState<string>(
     () => (editPayment ? CODE_TO_PAY_METHOD[editPayment.method ?? "cash"] ?? "Cash" : "Cash"),
   );
+  /* The cancelled orders this order's customer still has money on — the
+     method is offered only while there is one, and never on an edit (a
+     converted row is not edited; it is deleted to move the money back). */
+  const convertSources = useMobileConvertSources({ docNo: isEdit ? null : docNo });
+  const [convertFrom, setConvertFrom] = useState("");
   const [date, setDate] = useState<string>(
     () => (editPayment?.paid_at ?? "").slice(0, 10) || todayMyt(),
   );
@@ -335,7 +344,7 @@ export function AddPaymentSheet({
      'Installment', which mig 0037 retired as an L1 method, and it could not
      offer anything maintenance added. withStoredOption keeps a grandfathered
      stored value selectable for the same reason the Bank picker needs it. */
-  const methodOpts = withStoredOption(optionsOrFallback("payment_method", useSoDropdownOptions("payment_method").data), method);
+  const methodOpts = withConvertOption(withStoredOption(optionsOrFallback("payment_method", useSoDropdownOptions("payment_method").data), method), !isEdit && convertSources.length > 0);
   const [slipName, setSlipName] = useState("");
   const [slipSession, setSlipSession] = useState("");
   const [slipPhase, setSlipPhase] = useState<"" | "uploading" | "done" | "error">("");
@@ -365,6 +374,7 @@ export function AddPaymentSheet({
         merchantProvider: bank,
         installmentMonthsLabel: plan,
         onlineType: online,
+        convertedFromDocNo: convertFrom,
       })
     : null;
   /* Owner 2026-07-13 — the slip is OPTIONAL now; recording needs only an
@@ -379,8 +389,8 @@ export function AddPaymentSheet({
     /* Same body MobileNewSO.recordNewPayments POSTs — do NOT reimplement
        pricing; the backend recomputes the balance. In EDIT mode the same fields
        PATCH the existing row (slip untouched). */
-    const code = paymentMethodCodeForValue(method) ?? "cash";
-    const body: Record<string, unknown> = {
+    const code = method === CONVERT_LABEL ? CONVERTED_METHOD : paymentMethodCodeForValue(method) ?? "cash";
+    const body: Record<string, unknown> = code === CONVERTED_METHOD ? convertedBody(convertFrom, toSen(amount)) : {
       paidAt: date,
       method: code,
       amountSen: toSen(amount),
@@ -389,7 +399,7 @@ export function AddPaymentSheet({
       collectedBy: collectedBy || null,
     };
     // Slip is optional — only send the session when one was actually uploaded.
-    if (!isEdit && slipSession) body.uploadSessionId = slipSession;
+    if (!isEdit && slipSession && code !== CONVERTED_METHOD) body.uploadSessionId = slipSession;
     if (code === "merchant") { body.merchantProvider = bank || null; body.installmentMonths = planToMonths(plan); }
     else if (code === "installment") { body.merchantProvider = bank || null; body.installmentMonths = planToMonths(plan); }
     else if (code === "transfer") { body.onlineType = online || null; }
@@ -482,6 +492,12 @@ export function AddPaymentSheet({
                 </div>
               </div>
             )}
+            {/* Money moved from a cancelled order: which one. Picking it fills an
+                empty amount with what is left there (desktop parity). */}
+            {method === CONVERT_LABEL && (
+              <ConvertSourceField sources={convertSources} value={convertFrom}
+                onChange={(d, left) => { setConvertFrom(d); if (toSen(amount) <= 0) setAmount(rmInput(left)); }} />
+            )}
             {method === "Online" && (
               <div className="fld">
                 <span className="fld-l">Sub-type</span>
@@ -550,7 +566,7 @@ export function AddPaymentSheet({
                 missing instead of only greying Save out. */}
             {missingSubField && (
               <div style={{ fontSize: 11.5, color: "#a16a2e", textAlign: "center" }}>
-                Choose the {missingSubField} for this {method.toLowerCase()} payment.
+                {method === CONVERT_LABEL ? "Pick the cancelled order the money comes from." : `Choose the ${missingSubField} for this ${method.toLowerCase()} payment.`}
               </div>
             )}
             {error && <div style={{ fontSize: 11.5, color: "var(--red)", textAlign: "center" }}>{error}</div>}
@@ -768,7 +784,9 @@ export function RecordedPaymentsList({
                 MYT midnight it locks). A DRAFT's rows are never same-day-locked
                 (draftUnlocked), matching the server, which exempts DRAFT from the
                 same-day PATCH lock. */}
-            {canEdit && rowMutable(p) && (
+            {/* A converted row has no pencil (the server refuses the edit): the
+                money goes back by deleting it — the trash beside stays. */}
+            {canEdit && rowMutable(p) && p.method !== CONVERTED_METHOD && (
               <button
                 type="button"
                 onClick={() => setEditPay(p)}

@@ -22,6 +22,7 @@
 // ----------------------------------------------------------------------------
 
 import type { ParsedRow } from './settlement-parse';
+import { fmtSen } from '../scm/shared/format';
 
 export type PaymentCandidate = {
   source: 'SOPAY' | 'SIPAY';
@@ -308,7 +309,7 @@ export function matchStatement(
              this line is either a mis-keyed code or a document missing from the
              swipe, and the difference is the clue to which. */
           clue: `${hits.length} payments carry reference ${row.ref}, but no combination of them makes `
-            + `${(row.grossSen / 100).toFixed(2)} (they come to ${(together / 100).toFixed(2)})`
+            + `${fmtSen(row.grossSen)} (they come to ${fmtSen(together)})`
             + ' — pick the ones that belong to it.',
         });
         continue;

@@ -31,6 +31,7 @@
 import { postJournal, reverseJournal } from './engine';
 import { resolveRoles } from './rules';
 import { paginateAll } from '../scm/lib/paginate-all';
+import { fmtSen } from '../scm/shared/format';
 
 const isoDay = (v: unknown): string => String(v ?? '').slice(0, 10);
 
@@ -242,7 +243,7 @@ export async function closeStockMonth(
     entryDate: edges.lastDay,
     sourceType: 'STOCKADJ',
     sourceDocNo: adjDoc,
-    narration: `Closing stock ${month} — ${(val.valueSen / 100).toFixed(2)}`,
+    narration: `Closing stock ${month} — ${fmtSen(val.valueSen)}`,
     lines: [
       { accountCode: roles.INVENTORY, debitSen: val.valueSen, creditSen: 0, notes: `Closing stock ${month}` },
       { accountCode: roles.CLOSING_STOCK, debitSen: 0, creditSen: val.valueSen, notes: `Closing stock ${month}` },

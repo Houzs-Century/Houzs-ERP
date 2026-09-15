@@ -44,7 +44,7 @@ import { postPersonalNotice } from '../../services/personalNotice';
 import { createDraftSalesOrder, recordSoPaymentRow } from './mfg-sales-orders';
 import { todayMyt } from '../lib/my-time';
 import { activeCompanyId } from '../lib/companyScope';
-import { normalizePhone } from '../shared/phone';
+import { normalizePhone, fmtSen } from '../shared';
 import { resolveCallerStaffId } from '../lib/salesScope';
 import {
   planReceiptPayments,
@@ -4069,7 +4069,7 @@ async function runScanJob(
     });
     if (safeDepositSen !== originalDepositSen) {
       console.warn(
-        `[scan-job] dropping unbacked header deposit ${originalDepositSen} sen -> ${safeDepositSen} on ${job.id} `
+        `[scan-job] dropping unbacked header deposit ${fmtSen(originalDepositSen)} -> ${fmtSen(safeDepositSen)} on ${job.id} `
         + '(no classified receipt to book an is_deposit row); operator adds the payment on the draft',
       );
       body.depositSen = safeDepositSen;

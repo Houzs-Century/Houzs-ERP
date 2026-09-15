@@ -171,7 +171,7 @@ async function resetSchema(db: Sql) {
     DROP TYPE IF EXISTS scm.grn_status CASCADE;
     -- (id, code) only: other suites leave this table behind in two shapes, and
     -- these are the two columns both of them have.
-    CREATE TABLE IF NOT EXISTS public.companies (id bigint PRIMARY KEY, code text);
+    CREATE TABLE IF NOT EXISTS public.companies (id bigint PRIMARY KEY, code text, name text, is_active int);
     INSERT INTO public.companies (id, code) VALUES (1, 'HOUZS'), (2, '2990')
     ON CONFLICT (id) DO NOTHING;
     CREATE TYPE scm.grn_status AS ENUM ('DRAFT', 'POSTED', 'CANCELLED', 'CLOSED');

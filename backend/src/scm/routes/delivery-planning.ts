@@ -101,6 +101,7 @@ import { deriveSetCount, type SetLine } from '../lib/set-count';
 import { composeAddress, geocodeAddressCached, normalizeAddress } from '../lib/geocode';
 import { dateOrNull } from '../lib/date-coerce';
 import { pgrestIn } from '../lib/pgrest-in-list';
+import { planningPoNosByDoc } from '../lib/planning-po-nos';
 
 export const deliveryPlanning = new Hono<{ Bindings: Env; Variables: Variables }>();
 deliveryPlanning.use('*', supabaseAuth);
@@ -1471,7 +1472,8 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
     console.warn(`[delivery-planning] project union skipped: ${String((e as Error).message).slice(0, 120)}`);
   }
 
-  const allOrders = [...orders, ...assrOrders, ...dpBoardRows, ...projectOrders];
+  const poNosByDoc = await planningPoNosByDoc(sb, soRows); // "PO No." column: POs raised from the SO, walked per company (lib/planning-po-nos.ts)
+  const allOrders = [...orders.map((o) => ({ ...o, po_nos: poNosByDoc.get(o.so_doc_no) ?? [] })), ...assrOrders, ...dpBoardRows, ...projectOrders];
 
   /* 7c. PER-ASSIGNEE ROW SCOPE. For a self-scoped caller (Driver/Helper), keep
         ONLY the rows assigned to them; unassigned rows and other crews' jobs drop

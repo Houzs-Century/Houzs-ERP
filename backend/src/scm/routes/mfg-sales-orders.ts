@@ -288,6 +288,7 @@ import {
 import { deferAllocationRecompute, scheduleStockAllocationAfterCommand } from '../lib/stock-allocation-job';
 import { pgrestIn } from '../lib/pgrest-in-list';
 import { skuCategoryResolver } from '../lib/sku-category';
+import { fmtSen } from '../shared/format';
 
 export const mfgSalesOrders = new Hono<{ Bindings: Env; Variables: Variables }>();
 mfgSalesOrders.use('*', supabaseAuth);
@@ -8462,8 +8463,8 @@ export async function tbcUpdateCommandHandler(c: any, sb: any): Promise<Response
     return c.json({
       error: 'discount_exceeds_new_price',
       message:
-        `This change lowers the unit price to ${(newUnit / 100).toFixed(2)}, and the line already carries a ` +
-        `${(prevDiscount / 100).toFixed(2)} discount — which no longer fits. Reduce the discount first, then re-apply this change.`,
+        `This change lowers the unit price to ${fmtSen(newUnit)}, and the line already carries a ` +
+        `${fmtSen(prevDiscount)} discount — which no longer fits. Reduce the discount first, then re-apply this change.`,
       discount: prevDiscount,
       max: qty * newUnit,
     }, 422);
@@ -8795,7 +8796,7 @@ export async function tbcSwapCommandHandler(c: any, sb: any): Promise<Response> 
     return c.json({
       error: 'discount_exceeds_new_price',
       message:
-        `That product is cheaper than the line's ${(discount / 100).toFixed(2)} discount allows. ` +
+        `That product is cheaper than the line's ${fmtSen(discount)} discount allows. ` +
         `Reduce the discount first, then swap the product.`,
       discount,
       max: qty * unitSen,
@@ -9330,7 +9331,7 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
     return c.json({
       error: 'discount_exceeds_new_price',
       message:
-        `That build is cheaper than the line's ${(discount / 100).toFixed(2)} discount allows. ` +
+        `That build is cheaper than the line's ${fmtSen(discount)} discount allows. ` +
         `Reduce the discount first, then exchange the sofa.`,
       discount,
       max: qty * unit,
@@ -11117,6 +11118,17 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
   };
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
 
+  /* Guard 0 (owner 2026-09-15, 「SO amendment reason 换成一定 fill in」) — the
+     reason is REQUIRED. The approver reads it before the lines, and the notice
+     to their desk quotes it; a blank one used to be accepted and stored NULL. */
+  body.reason = typeof body.reason === 'string' ? body.reason.trim() : '';
+  if (!body.reason) {
+    return c.json({
+      error: 'reason_required',
+      reason: 'Say why this amendment is needed — the approver reads the reason before the changes.',
+    }, 400);
+  }
+
   // Guard 1 — SO exists. Pull the lock columns (processing_date + status) plus
   // salesperson_id for the ownership scope check below, plus the amendable
   // header columns for the header-change snapshot / date checks.
@@ -11400,7 +11412,7 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
       amendment_no: amendmentNo,
       status:       'REQUESTED',
       lane:         laneKey,
-      reason:       body.reason ?? null,
+      reason:       body.reason,
       requested_by: requesterStaffId,
       company_id:   activeCompanyId(c),
       header_changes:      laneHasHeader ? half.headerChanges : null,
