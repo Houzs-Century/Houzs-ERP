@@ -104,7 +104,7 @@ const norm = (s: string | null | undefined): string =>
    every caller and test keeps one import site (docs/repo-hygiene.md: this file
    is at its ceiling and a ceiling only moves down). */
 import { tidy, soInvoiceAddress } from './autocount-address-fit';
-import { poSupplierDateUdf, type PoSupplierDates } from './autocount-po-supplier-dates';
+import { poSupplierDateUdf, poSourceSoUdf, type PoSupplierDates } from './autocount-po-supplier-dates';
 export { AC_ADDRESS_LINE_MAX, AC_ADDRESS_LINES, fitAddressLines, tidy, soInvoiceAddress } from './autocount-address-fit';
 
 
@@ -249,7 +249,10 @@ export interface ErpPoHeader extends PoSupplierDates {
   creditor_code: string | null;
   creditor_name: string | null;
   agent: string | null;
+  /** The source sales order's reference, when the PO's sold lines come from ONE order (readPoSourceSo). */
   ref: string | null;
+  /** The source orders' book numbers for `UDF_SONo`, ", "-joined; null keeps the book's own. */
+  source_so_no: string | null;
   notes: string | null;
   /**
    * The PURCHASE ORDER'S OWN ship-to warehouse, as a `dbo.Location` code.
@@ -792,26 +795,21 @@ export function resolveAcAgent(
 export const AC_PURCHASE_AGENT = 'OTHERS';
 
 /**
- * The customer's own reference for this sales order, as AutoCount's `ToPONo`.
+ * The order's reference, as AutoCount's `Ref`.
  *
- * THREE ERP COLUMNS HELD IT AND ONLY `customer_so_no` SURVIVES. PR #140
- * ("customer PO 不需要") dropped the Customer PO card, so no Houzs surface fills
- * `po_doc_no` or `customer_po` any more — `frontend/src/pages/scm-v2/so-relationship-map.ts`
- * states it plainly — and both were 0%-filled and DROPPED from
- * scm.mfg_sales_orders by migration 0310. The reference the operator types lands
- * in `customer_so_no`, which is what goes out as `ToPONo`.
+ * NOT `ToPONo`. That UDF is the book's "PO Doc No." (its EventLog label). The
+ * office plug-in writes there the numbers of the purchase orders made from the
+ * order, ", "-separated, and keeps the reference in `Ref`. Composing the
+ * reference into `ToPONo` overwrote 92 PO numbers and filled 376 blank ones
+ * between 2026-09-07 and 09-15, and ERP-made orders reached the book with `Ref`
+ * blank (docs/bugs/0926-the-order-s-reference-was-written-into-autocount-s-po-doc-no.md).
  *
- * `ref` is deliberately absent: it goes out as the document's `Ref`, and sending
- * it twice would put the same string in two AutoCount fields.
+ * The operator types it into `customer_so_no`; a carried-over order holds the
+ * book's own Ref in both columns, so `ref` is the fallback. `unknown` so a typed
+ * header and a bare PostgREST row both pass without a cast.
  */
-export function soCustomerRef(h: {
-  /* `unknown` and optional, so the two callers can both pass what they have
-     without a cast: the composer has a typed ErpSoHeader, `soEditHeader` has a
-     bare `Record<string, unknown>` off PostgREST. `tidy` reads either. A cast
-     at the call site would be the thing that stops the compiler helping. */
-  customer_so_no?: unknown;
-}): string | null {
-  return tidy(h.customer_so_no);
+export function soReference(h: { customer_so_no?: unknown; ref?: unknown }): string | null {
+  return tidy(h.customer_so_no) ?? tidy(h.ref);
 }
 
 /**
@@ -1257,7 +1255,7 @@ export function composeCreateSo(
     DebtorName: header.debtor_name,
     Agent: agent,
     SalesLocation: salesLocation,
-    Ref: header.ref,
+    Ref: soReference(header),
     Phone: header.phone,
     /* TWO CONTACTS, TWO COLUMNS (owner 2026-08-15: "应该是有一个 Delivery
        Contact，一个是 Contact"). `phone` is the customer's; the delivery-day
@@ -1272,7 +1270,6 @@ export function composeCreateSo(
     UDF: udf({
       BRANDING: bookSpellingOrOwn(soBranding(header.branding, lines), BRANDING_MAP),
       VENUE: bookSpellingOrOwn(header.venue, VENUE_MAP),
-      ToPONo: soCustomerRef(header),
       /* `PDate` IS AUTOCOUNT'S OWN NAME, NOT OURS — DO NOT "UNIFY" IT.
          The ERP calls this date `processing_date` everywhere it owns; this key
          is the UDF spelling on AutoCount's sales-order document
@@ -1346,7 +1343,7 @@ export function composeCreatePo(
        key error rather than an empty field — the same rule the line-level
        `Location` key follows in composeDetails. */
     ...(purchaseLocation ? { PurchaseLocation: purchaseLocation } : {}),
-    UDF: poSupplierDateUdf(header),   // EDate/EDate2/EDate3, blanks omitted - docs/bugs/0918
+    UDF: { ...poSupplierDateUdf(header), ...poSourceSoUdf(header) },   // EDate/2/3 (0918), SONo (0926); blanks omitted
     /* The creditor is the D10 disambiguator, and a PO always has one. Defaulted
        from the header so no caller can forget it. */
     Details: composeDetails(live(lines), {
@@ -1841,6 +1838,7 @@ export async function callAcService(
  */
 export const CLEARABLE_SO_HEADER_FIELDS: Readonly<Record<string, string>> = {
   ref: 'Ref',
+  customer_so_no: 'Ref',
   phone: 'Phone1',
   emergency_contact_phone: 'DeliverPhone1',
 };
@@ -1889,7 +1887,9 @@ export function clearedAcKeys(
   const isBlank = (col: string) => String(saved[col] ?? '').trim() === '';
   const header: string[] = [];
   for (const [col, key] of Object.entries(CLEARABLE_SO_HEADER_FIELDS)) {
-    if (touched.has(col) && isBlank(col)) header.push(key);
+    /* Ref is composed from two columns: it clears only when both are empty. */
+    if (key === 'Ref' && soReference(saved) != null) continue;
+    if (touched.has(col) && isBlank(col) && !header.includes(key)) header.push(key);
   }
   for (const [col, key] of Object.entries(CLEARABLE_SO_DATE_FIELDS)) {
     if (touched.has(col) && isBlank(col)) header.push(key);
