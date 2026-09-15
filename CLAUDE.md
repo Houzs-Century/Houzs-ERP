@@ -18,7 +18,7 @@ Loaded into every session, so it stays short. Adding a rule means removing or me
 
 ## Documentation — keep it small
 - Bug fixed: add a regression test, and write Symptom / Cause / Fix in 3 lines in the PR body. No per-bug file. Only a NEW recurring bug class gets one line in `docs/bugs/README.md`.
-- Module guide: current rules only (statuses, permissions, locks, required fields, gotchas), at most 300 lines. Edit the line when a rule changes; never append history, dates or measurements.
+- Module guide: current rules only (statuses, permissions, locks, required fields, gotchas), at most 300 lines. Edit the line when a rule changes; never append history, dates or measurements. `scripts/check-docs-size.mjs` fails a PR past the limits.
 - No handoff documents and no incident essays. Open items live in `tasks/TODO.md`, one line each (what, waiting on whom, since when). A real outage gets one short entry in `docs/LESSONS.md`.
 - Don't regenerate or commit `docs/generated/*` unless a check asks for it. Generate locally when you need one (`npm --prefix backend run gen:route-locator`).
 - Obsidian wiki: only when the owner asks.
@@ -29,7 +29,8 @@ Loaded into every session, so it stays short. Adding a rule means removing or me
 
 ## Production data
 - Read-only questions: use the Supabase MCP. Production project `anogrigyjbduyzclzjgn`, staging `minnapsemfzjmtvnnvdd`; `ctbaifabbzghtsrmpirm` is an OLD copy. Check the id. No script and no PR for a one-off question.
-- A check that must run again and again: script + `workflow_dispatch` on `secrets.DATABASE_URL` (copy `backend/scripts/check-soak-gate.mjs` + `.github/workflows/soak-gate-check.yml`). Read-only, manual trigger, own concurrency group, exit 0 for every real answer.
+- Run a `backend/scripts` tool on production with the one runner: Actions → "Run a backend script on production" (script, plan/apply, CONFIRM, `KEY=VALUE;…`). Do not add a new workflow file per script; a script on the release-discipline grandfather list is refused there until fixed.
+- A read-only check, when a script is really needed: exit 0 for every real answer (copy `backend/scripts/check-soak-gate.mjs`).
 - Never ask the owner to run SQL. Never accept or print a credential. Never add `SUPABASE_SERVICE_ROLE_KEY` to GitHub Actions.
 - AutoCount pull backlog: `?since=YYYY-MM-DD` windows; `?mode=all` dies with HTTP 503.
 

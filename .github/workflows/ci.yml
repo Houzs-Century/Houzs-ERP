@@ -288,6 +288,8 @@ jobs:
       # the backlog it found was judged in the same PR (15 waived at the site
       # with a reason, 8 fixed) rather than left as a number nobody reads.
       - run: node ../frontend/scripts/check-silent-writes.mjs --strict
+      # CLAUDE.md, module guides, the bug summary and TODO stay short (line limits).
+      - run: node ../scripts/check-docs-size.mjs
 
       # One word per concept. The registry drives the guard AND the glossary, so
       # a concept is registered once instead of needing a fourth hand-written
