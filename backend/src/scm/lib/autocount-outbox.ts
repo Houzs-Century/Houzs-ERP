@@ -112,6 +112,7 @@ import { acParentlessCreateReason, acNotCarriedReason } from './autocount-outbox
    imports above. Same function, same call site in dispatchOne. */
 import { lineIdentityGap, persistNewLineKeys, newLineTargetOf } from './autocount-line-keys';
 import { attachPhotos } from './autocount-photo-attach';
+import { resendHeldEdits } from './autocount-held-edit-resend';
 import { readMfgProductBindings } from './supplier-bindings';
 import {
   soLine,
@@ -1882,6 +1883,9 @@ export async function dispatchOne(
       const target = newLineTargetOf(row.doc_type, payload);
       if (target) await persistNewLineKeys(sb, row, target, result.lines);
     }
+    /* An edit refused while this row was on its way goes out now (docs/bugs/0924).
+       doc_type is one of the six by the table's CHECK (migration 0277). */
+    await resendHeldEdits(sb, { ...row, doc_type: row.doc_type as AcDocType }, (o) => enqueueEdit(sb, o));
     return 'sent';
   }
 
