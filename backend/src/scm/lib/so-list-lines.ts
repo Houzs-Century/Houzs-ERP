@@ -19,7 +19,7 @@
 import type { Context } from 'hono';
 import type { Env, Variables } from '../env';
 import { scopeToCompany, type CompanyScopeCtx } from './companyScope';
-import { lookupByIds } from './document-line-export';
+import { lookupByIds, type ExportWindow } from './document-line-export';
 import { chunkIn } from './paginate-all';
 import { pageWithTruncation } from './outstanding-po-lines';
 import { fromSoList, orderSoList, type SoListRead } from './so-list-read';
@@ -292,11 +292,12 @@ const ROW_PAGE = 100;
 
 export type SoExportRows =
   | { error: string }
-  | { error: null; salesOrders: SoListRow[]; total: number; lineCount: number; truncated: boolean };
+  | { error: null; salesOrders: SoListRow[]; total: number; lineCount: number; next: number | null };
 
 /**
- * EVERY sales order the list's filter matches (all pages), in the list's own row
- * shape — buildSoListRows, the list handler's builder — each carrying `lines`.
+ * One WINDOW of the sales orders the list's filter matches, in the list's own
+ * row shape — buildSoListRows, the list handler's builder — each carrying
+ * `lines`. `next` is the offset of the following window, null after the last.
  */
 export async function buildSoExportRows(
   sb: Variables['supabase'],
@@ -304,11 +305,12 @@ export async function buildSoExportRows(
   read: Extract<SoListRead, { ok: true }>,
   sort: string | null,
   listCols: string,
+  window: ExportWindow,
 ): Promise<SoExportRows> {
-  const head = await pageWithTruncation<SoListRow>((from, to) =>
-    orderSoList(read.header(fromSoList(sb, listCols)), sort).range(from, to));
+  const head = await orderSoList(read.header(fromSoList(sb, listCols)), sort)
+    .range(window.offset, window.offset + window.limit - 1);
   if (head.error) return { error: `sales orders: ${head.error.message}` };
-  const rows = head.data ?? [];
+  const rows = (head.data ?? []) as unknown as SoListRow[];
   let lineCount = 0;
   for (let i = 0; i < rows.length; i += ROW_PAGE) {
     const page = rows.slice(i, i + ROW_PAGE);
@@ -317,5 +319,5 @@ export async function buildSoExportRows(
     if (attached.error) return { error: attached.error };
     lineCount += attached.lineCount;
   }
-  return { error: null, salesOrders: rows, total: rows.length, lineCount, truncated: head.truncated };
+  return { error: null, salesOrders: rows, total: rows.length, lineCount, next: rows.length === window.limit ? window.offset + window.limit : null };
 }

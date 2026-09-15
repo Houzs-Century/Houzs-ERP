@@ -18,8 +18,9 @@ Order one, and its columns are the template everything below follows.
 > **Built since** (2026-09-15): Goods Receipt (§5), Purchase Invoice (§6) and
 > Sales Invoice (§3), with the owner's rulings below and the differences listed
 > in [§ What the GR / PI / SI builds changed](#what-the-gr--pi--si-builds-changed);
-> Sales Order (§1) and Delivery Order (§2) have their SERVER reader only — no screen
-> calls it yet, pending the grid-level Export — differences in
+> Sales Order (§1) and Delivery Order (§2) export through the grid-level Export
+> (`GET /<doc>/export/rows`, read in windows of 500; the Sales Orders list is wired, the
+> Delivery Orders list in its own PR) — differences in
 > [§ What the SO / DO builds changed](#what-the-so--do-builds-changed)
 > (`docs/modules/sales-order.md`, `delivery-order.md`, *Exports*).
 > Their column contracts are `backend/src/scm/lib/{grn,pi,si}-line-export-columns.ts`;
@@ -710,10 +711,18 @@ line tables or none, and were not in the owner's request. See Q12.
 
 ## What the SO / DO builds changed
 
-Owner rulings 2026-09-15 applied: the Delivery Order file has **no Unit Price,
+Owner rulings 2026-09-15 applied: the Delivery Order lines carry **no Unit Price,
 Discount or Line Total** (§2 rows 20–22 removed); **Driver and Vehicle stay**; no
-estimate dates on either. Where the build differs from the tables above, and why —
-each is the reading of the screen the export stands beside:
+estimate dates on either. The file is no longer a fixed column list: it is the grid's
+visible columns under **AutoCount's captions** (`SO_LABELS` / `DO_LABELS`; the Detail
+Listing's caption where two listings differ), opening on AutoCount's layouts
+"SALES ORDER DETAILS-SALES" and "LISTING ITEM DETAIL" without prices. Header values are
+the book's spelling where the document is in AutoCount (Doc No, Agent, Debtor Code, Venue,
+Branding; line Item Code / Description / Item Group / UOM through `bookLineItem`); 2990
+prints its own. **Item Description 2 follows the variant summary** by owner decision
+2026-09-15, so it deliberately differs from AutoCount's typed Desc2 on older documents.
+Money is ringgit. Where the build differs from the tables above, and why — each is the
+reading of the screen the export stands beside:
 
 - **SO Customer Ref / DO Customer Ref** is `ref`, else `customer_so_no` — the screens'
   `customerRefOf` (the tables above said `customer_so_no` first).

@@ -2,9 +2,11 @@
 // delivery-order-exports — the Delivery Order list's ONE export, over EVERY
 // page the list's filters match (owner 2026-09-15).
 //
-//   GET /delivery-orders-mfg/export/rows?status=&q=&sort=&from=&to=
-//     -> { deliveryOrders, total, lineCount, truncated }
-//        Every matching delivery order in the list's own row shape
+//   GET /delivery-orders-mfg/export/rows?status=&q=&sort=&from=&to=&offset=&limit=
+//     -> { deliveryOrders, total, lineCount, next }
+//        One WINDOW (at most EXPORT_WINDOW, lib/document-line-export.ts) of the
+//        matching delivery orders; `next` is the offset to ask for next, null
+//        after the last. Every matching delivery order in the list's own row shape
 //        (lib/do-list-rows.ts, the list handler's builder), each with `lines`
 //        and the AutoCount header spellings (lib/do-list-lines.ts attachDoLines
 //        — the same read the list page uses). The lines carry NO price or amount
@@ -26,6 +28,7 @@ import type { Env, Variables } from '../env';
 import { supabaseAuth } from '../middleware/auth';
 import { readDoListParams } from '../lib/do-list-read';
 import { buildDoExportRows } from '../lib/do-list-lines';
+import { readExportWindow } from '../lib/document-line-export';
 import { resolveSalesScopeIds } from '../lib/salesScope';
 import { canViewAllSales } from '../lib/houzs-perms';
 import { DO_LIST_HEADER, DO_LIST_ROW_DEPS } from './delivery-orders-mfg';
@@ -42,7 +45,7 @@ export async function doExportRowsHandler(c: Ctx) {
     return c.json({ error: 'Your account is not linked to a Houzs user, so delivery orders cannot be shown — please contact IT.' }, 403);
   }
   const scopeIds = await resolveSalesScopeIds(sb, c.env, houzsUserId, canViewAll);
-  const out = await buildDoExportRows(sb, c, readDoListParams((k) => c.req.query(k)), scopeIds, DO_LIST_HEADER, DO_LIST_ROW_DEPS);
+  const out = await buildDoExportRows(sb, c, readDoListParams((k) => c.req.query(k)), scopeIds, DO_LIST_HEADER, DO_LIST_ROW_DEPS, readExportWindow((k) => c.req.query(k)));
   if (out.error !== null) return c.json({ error: 'export_failed', reason: out.error }, 500);
   return c.json(out);
 }

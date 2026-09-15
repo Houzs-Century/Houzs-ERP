@@ -1833,6 +1833,7 @@ Invalidation always wins over all three (mutation → invalidate → forced refe
 | Method | Path | Handler | Purpose |
 |--------|------|---------|---------|
 | GET | `/api/scm/mfg-sales-orders` | list handler | Grid rows (+ `?summary=1` lightweight bucket mode, `?status=`, `?debtor=`; `?page=` opts into the paginated contract, which also takes repeated `?f=field:op[:value]` second-level filters, see §3; an invalid row answers `400 invalid_filter`) |
+| GET | `/api/scm/mfg-sales-orders/export/rows` | `sales-order-exports.ts` | The list's ONE Export: one window (`offset`, at most 500) of the orders the list's `status` / `q` / `sort` / `from` / `to` / `f` match (no `page`), in the list's row shape with `lines` → `{ salesOrders, total, lineCount, next }`. Its own router mounted before the main one, same area guard. See *Exports*. |
 | GET | `/api/scm/mfg-sales-orders/list-mrp-enrichment` | `mfg-sales-orders-list-enrichment.ts` | `?docNos=A,B,C` → `{ enrichment: { [docNo]: { sourcePoReady, sourcePoAdj, stockRemark, isMainReady, planningState } } }`. The deferred, MRP-derived half of the list (see §"why the list opens instantly"). Read-only, company + sales scoped, fail-soft. Registered before `/:docNo` so the static path is not captured as a doc number. |
 | GET | `/api/scm/mfg-sales-orders/:docNo` | detail | One SO header + lines. FAST — does NOT run MRP inline (2026-09-01); MRP-derived line fields (`stock_state`, `coverage_po`/`coverage_eta`, `ready_source_pos`, live `stock_status_effective`) return their no-MRP defaults and the client heals them from `/:docNo/coverage` |
 | GET | `/api/scm/mfg-sales-orders/:docNo/coverage` | detail | The DEFERRED live Stock column: runs the global `computeMrp` + `soLineReadySourcePos` (the code `/:docNo` stopped running inline) → `{ coverage: [{ id, stock_state, coverage_po, coverage_eta, ready_source_pos, stock_status_effective }] }`, one entry per line. Same company + self-scoped-sales 404 guard as the detail. Read-only, fail-soft. Client calls it after the doc renders |
@@ -6695,53 +6696,73 @@ The stored value is unchanged, as always with a relabel. Guarded by
 `frontend/src/pages/scm-v2/localStatusMapsAgree.test.ts`. Trace:
 `docs/bugs/0864-the-sales-order-tab-said-in-production-and-the-pill-said-pro.md`.
 
-## Exports — the server reader for every filtered line (2026-09-15)
+## Exports — the ONE Export, one row per line (2026-09-15)
 
-Owner 2026-09-15: every document list exports **one row per line item**, holding
-**every row the list's current filter, tab and search match** across all pages,
-never the screen page. The owner has since ruled the UI shape: ONE Export per list,
-its columns the grid's visible columns (line-level columns added to the chooser,
-hidden by default), following the grid's funnels too. That grid-level mechanism is
-being built separately; **no Sales Order screen calls the reader below yet**, and the
-list's toolbar Export still writes the loaded page. Column design:
-`docs/line-export-columns.md` §1, with the differences listed there.
+Owner 2026-09-15: the Sales Orders list has **one Export**. It holds **every order the
+list's current tab, search, second-level filters and sort match** across all pages —
+never the screen page — writes **one row per line**, with the grid's **visible columns**
+in their on-screen order and the grid's funnels applied, labels and values as
+AutoCount's listing has them, amounts in **ringgit** and dates as real Excel dates
+(`yyyy/mm/dd`). Column design: `docs/line-export-columns.md` §1.
 
-- **One predicate set.** `backend/src/scm/lib/so-list-read.ts` is the list's filter:
-  sales scope (`applySoScope`), company, the second-level `f` rows
-  (`prepareSoListFilters`), the tab (`soStatusesForTab`; ON_HOLD reads the marker,
-  OTHER the out-of-vocabulary rows), the search (phone and approval code included) and
-  the `from`/`to` window. `GET /` (page and money strip; the counts take its
-  `scoped` half) and the reader build their reads through it, so the reader cannot
-  match other orders than the list.
-- `GET /mfg-sales-orders/export/lines?status=&q=&sort=&from=&to=&f=…`
-  (`routes/sales-order-exports.ts` → `lib/so-line-export.ts`, on the shared reader
-  `lib/document-line-export.ts`) → `{ columns, rows, soCount, lineCount, truncated }`.
-  Mounted before the main router; same area guard as the list; a refused `f` row is a
-  400, as on the list. `columns` is `SO_LINE_EXPORT_COLUMNS` in
-  `lib/so-line-export-columns.ts` (mirrored at `frontend/src/vendor/scm/lib/`, refereed by
-  `so-line-export-columns.canonical.test.ts`); every row ends with the line's **Line ID**.
-- Header and lines join on **doc_no + company** (there is no header uuid); every line,
-  DO, PO and base-header read carries the company predicate.
-- **Delivered / Returned / Remaining Qty** are the app's own reading,
-  `soDeliverableRemaining` (routes/delivery-orders-mfg.ts) — the numbers the list's
-  Delivered column, the SO→DO picker and MRP use. **On Delivery Order Qty** is the qty
-  on linked delivery orders that are not cancelled and do not yet count as delivered by
-  `doCountsAsDelivered` — a DRAFT, since LOADED counts as delivered (2026-08-22).
-- **Status** is the list pill's word: `soListStatusWord` = `soRowStatus` over
-  `soStatusDisplay` (Partially Delivered / Delivered / Invoiced / Delivery Return when
-  the order's own delivery records say so), ` (On Hold)` after it; the canonical test
-  runs every status × delivery state × lifecycle against the list's functions.
-  Cancelled orders follow the tab.
-- **Location** is AutoCount's short code (`KL`) of the line's warehouse through
-  `bookSpellingOrOwn(code ?? name, LOCATION_MAP)`; a line with no warehouse keeps its
-  stored `location` text. **No estimate delivery dates** (owner 2026-09-15).
-- The header facts the list's VIEW does not carry — `linked_ac_docno`,
-  `delivery_address1..4` — are read off the base table.
-- A large read (over 1,000 lines) takes the company's DO / PO lines that link to any SO
-  line once and keeps the ones it needs, instead of one read per ~70 line ids (a Worker
-  caps subrequests per request). Measured 2026-09-15 over the read-only shim on the full
-  Houzs Century list (2,959 orders, 15,618 lines): 437 reads, 212 of them inside
-  `soDeliverableRemaining`; 845 before this change. Not measured inside a Worker.
+- **The screen.** `MfgSalesOrdersListV2.tsx` passes DataTable `exportLines`
+  (`components/dataTableLineExport.ts`): `fetchSoExportRows` (`vendor/scm/lib/so-list-export.ts`)
+  asks the server with `soListSearchParams` — the SAME parameters `useMfgSalesOrdersPaged`
+  sends — and DataTable applies the funnels and sort and writes the `.xlsx`. The line
+  columns and money columns are `pages/scm-v2/so-do-list-columns.tsx`, built on
+  `components/dataTableLineCells.tsx`: compact on a row (first value, then "+N"), each
+  line's own value in the file. Header columns that differ per line carry a `lineValue`
+  (PO Doc No., DO No., Stock Status, Delivery Date = the line's date, else the order's).
+- **Labels** are AutoCount's captions (`SO_LABELS`, `lib/so-line-export-columns.ts`,
+  mirrored at `frontend/src/vendor/scm/lib/`, refereed by
+  `so-line-export-columns.canonical.test.ts`). Where two AutoCount listings caption one
+  field differently, the Detail Listing's caption wins. The header Location column is
+  labelled **Sales Location**; **Location** is the line's AutoCount short code (`KL`).
+- **Default layout.** AutoCount's "SALES ORDER DETAILS-SALES" (`SO_DEFAULT_COLUMNS`) is
+  the Houzs seed layout and is offered as its own entry, **AutoCount: SALES ORDER
+  DETAILS-SALES**, in the Columns panel. A company default an admin saved from the
+  Columns panel takes the seed's place: as of 2026-09-15 Houzs Century has one
+  (`public.table_layouts` id 3), so the AutoCount layout reaches Houzs users by picking it
+  (owner: "the default follows my data grid"). Doc. No. is always visible and pinned
+  first, so it leads the file ahead of Date.
+- **Values in the book's spelling** where the order is in AutoCount (`linked_ac_docno`
+  set): Doc. No. = the book's number (the ERP number stays on **ERP Doc No**), Agent =
+  `resolveAcAgent`, Debtor Code = the order's code else `AC_DEBTOR_CODE`, VENUE / BRANDING
+  through the write-back maps, and each line's Item Code / Detail Description / Item Group
+  / UOM through `bookLineItem` (`services/autocount-book-item.ts`). 2990 prints its own.
+- **Item Description 2 follows the variant summary** (`buildVariantSummary`), the stored
+  text only when there is no summary — owner decision 2026-09-15, so it deliberately
+  differs from AutoCount's typed Desc2 on older documents.
+- **Money** exports in ringgit (`exportValue` + `exportFormat` `money`; Unit Price `rate`,
+  up to 4 places): Total, BALANCE, Paid, Deposit, the 12 finance category / cost / margin
+  columns (finance viewers only) and the line Discount / Total (Inc). Margin % exports as
+  a percent number. Pinned by `MfgSalesOrdersListV2.export.test.tsx` and
+  `so-do-list-columns.test.tsx` ("no sen").
+- **Status** exports the list pill's word: `soListStatusWord` = `soRowStatus` over
+  `soStatusDisplay`, ` (On Hold)` after it; the canonical test runs every status ×
+  delivery state × lifecycle. Cancelled orders follow the tab.
+- **Server.** `GET /mfg-sales-orders/export/rows?status=&q=&sort=&from=&to=&f=…&offset=&limit=`
+  (`routes/sales-order-exports.ts`, mounted before the main router, same area guard; a
+  refused `f` row is a 400) → `{ salesOrders, total, lineCount, next }`. One **window** of
+  at most 500 orders (`readExportWindow`, `lib/document-line-export.ts`); `next` is the
+  offset to ask for next, null after the last. Rows are the list's own shape
+  (`buildSoListRows`, `lib/so-list-rows.ts` — the list handler's builder) with `lines`
+  attached by `attachSoLines` (`lib/so-list-lines.ts`), the SAME function the paginated
+  `GET /` uses. The read goes through the list's own predicate set
+  (`lib/so-list-read.ts`: sales scope, company, `f` rows, tab, search, `from`/`to`), so it
+  cannot match other orders than the list. The browser refuses a listing over 20,000
+  orders rather than write a short file.
+- **Why windows (PROVEN 2026-09-15, `check-so-do-line-export.mjs` over production).** One
+  request for the Houzs "All" tab (2,959 orders) made 1,923 PostgREST reads — over a
+  Worker invocation's subrequest cap; windows of 500 made at most 332 each. The rows
+  matched a direct SQL read, line id by line id, for every case, both companies.
+- Header and lines join on **doc_no + company**; every line, DO, PO and base-header read
+  carries the company predicate.
+- **Delivered / Returned / Remaining Qty** are `soDeliverableRemaining`
+  (routes/delivery-orders-mfg.ts) — the numbers the Delivered column, the SO→DO picker
+  and MRP use. **On Delivery Order Qty** is the qty on linked delivery orders not
+  cancelled and not yet counted as delivered by `doCountsAsDelivered` (a DRAFT).
+- **No estimate delivery dates** on a sales document (owner 2026-09-15).
 - Read-only production check: `.github/workflows/po-line-export-check.yml` with
   `document: so-do` (`backend/scripts/check-so-do-line-export.mjs`).
 - **Mobile**: the phone Sales Orders list (`mobile/MobileSalesOrders.tsx`) has no export

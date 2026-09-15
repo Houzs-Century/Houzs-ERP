@@ -88,7 +88,7 @@ function harness(t: Tables, companyId = 1, maxRows: number | null = null) {
   return app;
 }
 
-type Body = { salesOrders: Array<Row & { lines: Array<Row> }>; total: number; lineCount: number; truncated: boolean };
+type Body = { salesOrders: Array<Row & { lines: Array<Row> }>; total: number; lineCount: number; next: number | null };
 const get = async (app: Hono<{ Bindings: Env; Variables: Variables }>, qs = '') => {
   const res = await app.request(`/export/rows${qs}`);
   return { status: res.status, body: (await res.json()) as Body };
@@ -112,15 +112,26 @@ describe('the export follows the list filters, every page, one company', () => {
     expect((await get(harness({ sos: [h], lines: [soLine(h)] }), '?f=nonsense:is:x')).status).toBe(400);
   });
 
-  it('returns every order and line past the PostgREST response ceiling', async () => {
+  it('serves every order and line in windows of at most 500, past the PostgREST response ceiling, none twice', async () => {
     const sos: Row[] = [];
     const lines: Row[] = [];
     for (let i = 0; i < 1_105; i += 1) { const h = so(); sos.push(h); lines.push(soLine(h)); }
-    const { status, body } = await get(harness({ sos, lines }, 1, 1_000));
-    expect(status).toBe(200);
-    expect(body.total).toBe(1_105);
-    expect(body.lineCount).toBe(1_105);
-    expect(body.truncated).toBe(false);
+    const app = harness({ sos, lines }, 1, 1_000);
+    const seen: string[] = [];
+    const nexts: Array<number | null> = [];
+    let lineCount = 0;
+    for (let offset: number | null = 0, guard = 0; offset !== null && guard < 10; guard += 1) {
+      const { status, body } = await get(app, `?sort=doc_no:asc&offset=${offset}&limit=9999`);
+      expect(status).toBe(200);
+      expect(body.total).toBeLessThanOrEqual(500);
+      seen.push(...body.salesOrders.map((r) => String(r.doc_no)));
+      lineCount += body.lineCount;
+      nexts.push(body.next);
+      offset = body.next;
+    }
+    expect(nexts).toEqual([500, 1_000, null]);
+    expect(new Set(seen).size).toBe(1_105);
+    expect(lineCount).toBe(1_105);
   });
 
   it('never exports another company\'s orders or lines', async () => {
