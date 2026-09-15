@@ -1163,15 +1163,14 @@ Per-SKU `allowed_options` (Modular ON/OFF) filter every pool via
 per category are the shared `so-variant-rule`; Save is blocked when any line is
 missing a required axis.
 
-**EMPTY IS THE DEFAULT FOR EVERY OPTION AXIS SINCE 2026-09-12** (owner:
-「全部都是啊」) — `sizes`, `compartments`, `specials`, `divan_heights`,
-`leg_heights`, `total_heights`, `gaps` and `mattress_thickness_cm` were cleared
-the same way `fabrics` was, with a restorable backup in
-`scm.app_config['scm.model_allowed_options_backup']`
-(`backend/scripts/open-model-option-pools.mjs`,
-`docs/bugs/0845-every-model-carried-an-option-list-nobody-chose-so-a-new-opt.md`).
-The paragraph below is the fabric half of the same rule and still applies to all
-of them.
+**THE OTHER OPTION AXES ARE CONFIGURATION AGAIN, AND THEY RESTRICT.** On
+2026-09-12 `sizes`, `compartments`, `specials`, `divan_heights`, `leg_heights`,
+`total_heights`, `gaps` and `mattress_thickness_cm` were cleared the way
+`fabrics` was; on 2026-09-13 that clear was reverted on all 421 Models from its
+backup, because for MATTRESS and BEDFRAME `sizes` IS the record of which sizes a
+Model comes in (`docs/option-pool-clear-coe.md`). Read 2026-09-15: 123 of 123
+BEDFRAME Models carry a non-empty `total_heights` pool, so the allowed-options
+gate refuses a total outside it. The paragraph below is the fabric half only.
 
 **EMPTY IS THE DEFAULT FOR FABRICS SINCE 2026-09-12, and that is a RULE, not
 a leftover.** `hasRestriction` is `Array.isArray(pool) && pool.length > 0`, so a
@@ -3577,7 +3576,7 @@ source can fix. Three exemptions, all keyed on the ITEM CODE, all in
 
 | Exemption | Matches | Drops | Owner |
 |---|---|---|---|
-| `isDivanOnly` | `\bDIVAN\s*ONLY\b` anywhere in the code | `gap` | 2026-08-09, *"divan only 不需要 gap"* — a divan sold without a mattress has no mattress gap |
+| `isDivanOnly` | `\bDIVAN\s*ONLY\b` anywhere in the code | `gap` — and the Model's `total_heights` pool in `scm/lib/allowed-options-check.ts` | 2026-08-09, *"divan only 不需要 gap"* — a divan sold without a mattress has no mattress gap. Its computed total is divan + leg alone, so the pool refused an 8" divan with No Leg until 2026-09-15 (`docs/bugs/0918-a-divan-only-line-was-refused-for-its-total-height-so-a-gap.md`) |
 | `isDivanlessFrame` | `ADJUSTABLE`, `(S+S)` / `(SS+S)`, `DOUBLE DECKER` / `DACKER`, `DDB` | `divanHeight`, `legHeight`, `gap` | 2026-08-10, *"电动床/抽拉床…像 DIVAN ONLY 一样豁免 — 要"* — no divan base at all |
 | `isSeatlessPiece` | `^(CONSOLE\|CT)\b` on the **compartment** (after the first hyphen) | `seatHeight` | 2026-08-11, *"有些 sku 是没有的"*; AutoCount PO-009553 leaves the console box blank while both seat boxes carry a figure |
 
