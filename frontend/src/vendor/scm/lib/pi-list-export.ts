@@ -1,18 +1,23 @@
-/* The Purchase Invoices list's two exports — every invoice the list's CURRENT
-   tab, search and sort match, across all pages (owner 2026-09-15).
+/* The Purchase Invoices list's ONE export — every invoice the list's CURRENT
+   tab, search and sort match, across all pages, one row per line with the
+   grid's visible columns (owner 2026-09-15: "exactly like AutoCount").
 
-   The server does the reading (GET /purchase-invoices/export/lines and
-   /export/headers, backend routes/purchase-invoice-exports.ts) through the
-   list's own filter. This module sends the SAME parameters the list sends
-   (piListParams is also what usePurchaseInvoicesPaged builds its request from)
-   and writes the file. */
+   The server reads (GET /purchase-invoices/export/rows, backend
+   routes/purchase-invoice-exports.ts) through the list's own filter and
+   attaches each invoice's lines with the same function the list page uses
+   (lib/pi-export-rows.ts attachPiLines). DataTable `exportLines` applies the
+   grid's funnels and sort and writes the file. This module owns the request —
+   the SAME parameters the list sends (piListParams is also what
+   usePurchaseInvoicesPaged builds from) — the line shape, and AutoCount's
+   labels. */
 
 import { authedFetch } from './authed-fetch';
 import { ExportTruncatedError } from './po-list-export';
-import { checkLineExportBody, fetchByIdChunks, writeLineExportXlsx, type LineExportBody } from './line-export-file';
 import { applyPiListMrpEnrichment, type EnrichablePiRow, type PiListMrpEnrichment } from '../../../lib/piListEnrichment';
 import type { PiPoPriceSummary } from './pi-list-po-price';
-import { PI_LINE_EXPORT_COLUMNS, PI_LINE_EXPORT_NUMBER_FORMATS } from './pi-line-export-columns';
+import { senToRinggit } from './grn-list-export';
+
+export { senToRinggit };
 
 export type PiListFilterParams = { status?: string; q?: string; sort?: string };
 
@@ -27,51 +32,136 @@ export function piListParams(f: PiListFilterParams): URLSearchParams {
 
 const withQuery = (path: string, usp: URLSearchParams) => (usp.toString() ? `${path}?${usp.toString()}` : path);
 
-export type PiLineExportBody = LineExportBody & { piCount: number };
+/** One invoice line as GET /purchase-invoices (paged) and /export/rows carry it. Money in sen. */
+export type PiListLine = {
+  id: string;
+  item_code: string | null;
+  ac_item_code: string | null;
+  book_description: string | null;
+  book_item_group: string | null;
+  book_uom: string | null;
+  supplier_sku: string | null;
+  description: string | null;
+  description2: string | null;
+  remarks: string | null;
+  item_group: string | null;
+  uom: string | null;
+  location: string | null;
+  qty: number;
+  po_unit_price_sen: number | null;
+  unit_price_sen: number | null;
+  discount_sen: number | null;
+  line_total_sen: number | null;
+  grn_no: string | null;
+  po_no: string | null;
+  our_po_no: string | null;
+  so_doc_no: string | null;
+};
 
-export async function fetchPiLineExport(f: PiListFilterParams): Promise<PiLineExportBody> {
-  const body = await authedFetch<PiLineExportBody>(withQuery('/purchase-invoices/export/lines', piListParams(f)));
-  return checkLineExportBody(body, PI_LINE_EXPORT_COLUMNS, 'purchase invoices');
-}
+/* AutoCount's Purchase Invoice Detail Listing captions, read from the company's
+   saved default layout "SS" (FormPurchaseInvoicePrintDetailListing) on
+   2026-09-15. The extras after them are this ERP's own columns. */
+export const PI_LABELS = {
+  docNo: 'Doc No',
+  supplierInvoiceNo: 'Supplier Invoice No.',
+  docDate: 'Doc Date',
+  creditorCode: 'Creditor Code',
+  creditorName: 'Creditor Name',
+  agent: 'Agent',
+  currCode: 'Curr. Code',
+  currRate: 'Curr. Rate',
+  inclusive: 'Inclusive?',
+  subTotalEx: 'SubTotal (Ex)',
+  tax: 'Tax',
+  total: 'Total',
+  localTotal: 'Local Total',
+  cancelled: 'Cancelled',
+  itemCode: 'Item Code',
+  detailDescription: 'Detail Description',
+  detailDescription2: 'Detail Description 2',
+  uom: 'UOM',
+  location: 'Location',
+  projNo: 'Proj No',
+  qty: 'Qty',
+  unitPrice: 'Unit Price',
+  discount: 'Discount',
+  lineTotal: 'Total',
+  taxCode: 'Detail Tax Code',
+  lineTax: 'Tax',
+  totalEx: 'Total (Ex)',
+  totalInc: 'Total (Inc)',
+  desc2: 'Desc2',
+  itemGroup: 'Item Group',
+  ourPoNo: 'Our PO No.',
+  erpDocNo: 'ERP Doc No',
+  erpItemCode: 'ERP Item Code',
+  supplierSku: 'Supplier SKU',
+  poUnitPrice: 'PO Unit Price',
+  grnNo: 'GRN No.',
+  poNo: 'PO No.',
+  soDocNo: 'SO Doc No.',
+  remarks: 'Remarks',
+  lineId: 'Line ID',
+} as const;
 
-export function writePiLineExportXlsx(body: PiLineExportBody, fileName: string): Promise<void> {
-  return writeLineExportXlsx(PI_LINE_EXPORT_COLUMNS, PI_LINE_EXPORT_NUMBER_FORMATS, body.rows, 'PI Lines', fileName);
-}
+/** The grid's default visible columns: AutoCount layout "SS", in its order.
+ *  ONE constant, so the owner changing the default is a one-line change. */
+export const PI_DEFAULT_COLUMN_KEYS = [
+  'invoice_number', 'supplier_invoice_ref', 'invoice_date', 'supplier_code', 'supplier', 'agent', 'currency', 'exchange_rate',
+  'inclusive', 'subtotal', 'tax', 'total', 'local_total', 'cancelled', 'item_code', 'detail_description', 'detail_description_2',
+  'uom', 'location', 'proj_no', 'qty', 'unit_price', 'discount', 'line_total', 'tax_code', 'line_tax', 'total_ex', 'total_inc', 'desc2',
+] as const;
 
-/* The server's cap on ids per request (MAX_IDS in
-   routes/purchase-invoices-list-enrichment.ts, both endpoints). The MRP
-   enrichment runs one company-wide MRP per request, so two at a time. */
 const CHUNK = 200;
 const CONCURRENCY = 2;
+const MRP_COLUMNS = new Set(['assigned_so', 'delivered']);
+
+async function byIdChunks<V>(ids: string[], fetchChunk: (chunk: string[]) => Promise<Record<string, V> | undefined>): Promise<Map<string, V>> {
+  const chunks: string[][] = [];
+  for (let i = 0; i < ids.length; i += CHUNK) chunks.push(ids.slice(i, i + CHUNK));
+  const out = new Map<string, V>();
+  let next = 0;
+  const worker = async () => {
+    while (next < chunks.length) {
+      const chunk = chunks[next++]!;
+      for (const [k, v] of Object.entries((await fetchChunk(chunk)) ?? {})) out.set(k, v);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, chunks.length) }, worker));
+  return out;
+}
 
 /**
- * Every invoice the list's filters match, in the list's own row shape, plus the
- * "vs PO price" summaries the grid reads by id. The MRP columns and the price
- * summaries are fetched only when their column is being exported, exactly as
- * the screen fetches them.
+ * Every invoice the list's filters match, in the list's row shape, each with its
+ * `lines`. The MRP columns and the "vs PO price" marker are fetched only when
+ * the file or a funnel needs them, exactly as the screen fetches them; the
+ * marker rides on each row as `po_price_summary`. THROWS on a stopped read.
  */
-export async function fetchAllPiListRows<T extends EnrichablePiRow & { id: string }>(
+export async function fetchPiExportRows<T extends EnrichablePiRow & { id: string; lines?: PiListLine[]; po_price_summary?: PiPoPriceSummary }>(
   f: PiListFilterParams,
-  want: { mrpColumns: boolean; poPrice: boolean },
-): Promise<{ rows: T[]; poPriceById: Map<string, PiPoPriceSummary> }> {
+  need: { exportKeys: string[]; filterKeys: string[] },
+): Promise<T[]> {
   const body = await authedFetch<{ purchaseInvoices?: T[]; total: number; truncated: boolean }>(
-    withQuery('/purchase-invoices/export/headers', piListParams(f)),
+    withQuery('/purchase-invoices/export/rows', piListParams(f)),
   );
   if (body.truncated) throw new ExportTruncatedError('purchase invoices');
   let rows = body.purchaseInvoices ?? [];
+  if (rows.length === 0) return rows;
+  const keys = new Set([...need.exportKeys, ...need.filterKeys]);
   const ids = rows.map((r) => r.id);
-  if (want.mrpColumns && ids.length > 0) {
-    const byId = await fetchByIdChunks<PiListMrpEnrichment>(ids, CHUNK, CONCURRENCY, async (chunk) =>
+  if ([...keys].some((k) => MRP_COLUMNS.has(k))) {
+    const byId = await byIdChunks<PiListMrpEnrichment>(ids, async (chunk) =>
       (await authedFetch<{ enrichment?: Record<string, PiListMrpEnrichment> }>(
         `/purchase-invoices/list-mrp-enrichment?piIds=${encodeURIComponent(chunk.join(','))}`,
       )).enrichment);
     rows = rows.map((r) => applyPiListMrpEnrichment(r, byId.get(r.id)));
   }
-  const poPriceById = want.poPrice && ids.length > 0
-    ? await fetchByIdChunks<PiPoPriceSummary>(ids, CHUNK, CONCURRENCY, async (chunk) =>
+  if (keys.has('vs_po')) {
+    const byId = await byIdChunks<PiPoPriceSummary>(ids, async (chunk) =>
       (await authedFetch<{ summary?: Record<string, PiPoPriceSummary> }>(
         `/purchase-invoices/list-po-price?piIds=${encodeURIComponent(chunk.join(','))}`,
-      )).summary)
-    : new Map<string, PiPoPriceSummary>();
-  return { rows, poPriceById };
+      )).summary);
+    rows = rows.map((r) => ({ ...r, po_price_summary: byId.get(r.id) }));
+  }
+  return rows;
 }

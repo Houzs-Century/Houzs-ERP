@@ -47,8 +47,8 @@
     },
     {
       "check": "D1",
-      "key": "BANK,CASH,GENERAL,PURCHASE,SALES|backend/src/acc/journal-class.ts frontend/src/pages/scm-v2/Accounting.tsx",
-      "why": "ONE vocabulary, one definition and one PRESENTATION of it — classifyJournal (journal-class.ts) is the rule; JOURNAL_CHIPS is the chip strip's render order over labels the SERVER already stamped on each row (journal_class). The frontend cannot import backend/src/acc (the shared package here is a pair of vendored copies, not a workspace import), and a chip the backend stopped emitting filters to an empty list — a blank chip, not a wrong number."
+      "key": "BANK,CASH,GENERAL,PURCHASE,SALES|backend/src/acc/journal-class.ts frontend/src/pages/scm-v2/JournalEntries.tsx",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — classifyJournal (journal-class.ts) is the rule; JOURNALS (JournalEntries.tsx, once JOURNAL_CHIPS in Accounting.tsx) is the chip strip's render order over labels the SERVER already stamped on each row (journal_class). The frontend cannot import backend/src/acc (the shared package here is a pair of vendored copies, not a workspace import), and a chip the backend stopped emitting filters to an empty list — a blank chip, not a wrong number."
     },
     {
       "check": "D1",
@@ -1317,7 +1317,7 @@
     },
     {
       "check": "D1",
-      "key": "ESTIMATE DELIVERY DATE 1,ESTIMATE DELIVERY DATE 2,ESTIMATE DELIVERY DATE 3|backend/src/scm/lib/po-line-export-columns.ts frontend/src/vendor/scm/lib/po-line-export-columns.ts",
+      "key": "ESTIMATE DELIVERY DATE,SUPPLIER DELIVERY DATE 2,SUPPLIER DELIVERY DATE 3|backend/src/scm/lib/po-line-export-columns.ts frontend/src/vendor/scm/lib/po-line-export-columns.ts",
       "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it (the server builds the PO line export rows, the browser writes the sheet and labels the Outstanding tab). frontend/src/vendor/scm/lib/po-line-export-columns.canonical.test.ts asserts the two files are byte-identical and check-shared-mirrors.mjs compares the pair. Symbols: PO_ESTIMATE_DELIVERY_DATE_LABELS."
     },
     {
@@ -1371,34 +1371,9 @@
       "why": "DO_STATUS_WORDS (do-line-export-columns.ts, 2026-09-15) is the LABEL half of the Delivery Orders list's STATUS_TONE map (pages/scm-v2/do-list-status.ts), keyed by stored value, carried in a mirror because the server builds the line export. It holds exactly the keys that map holds, the legacy spellings CANCEL and COMPLETED included, so a row carrying either prints the list's word; do-line-export-columns.canonical.test.ts asserts every entry equals statusFor(key).label. status-pill.ts's DO map is a different display home that does not carry the legacy spellings."
     },
     {
-      "check": "D1",
-      "key": "CANCELLED,CLOSED,DRAFT,ON_HOLD,POSTED|backend/src/scm/lib/grn-line-export-columns.ts frontend/src/vendor/scm/lib/grn-line-export-columns.ts frontend/src/vendor/scm/lib/status-pill.ts",
-      "why": "THE GOODS RECEIVED STATUS WORDS, in their display home and the line export. status-pill.ts GRN is what the list shows (GoodsReceivedListV2 withStatusLabels(\"grn\")); GRN_STATUS_WORDS in grn-line-export-columns.ts (backend + its byte-identical frontend twin) is the word the GRN line export prints, owner 2026-09-15: export the word on screen. It lives in the mirror because the SERVER builds the export rows and cannot import a frontend map. grn-line-export-columns.canonical.test.ts reads status-pill.ts GRN block and asserts the two maps say the same words, so they cannot drift silently."
-    },
-    {
-      "check": "D1",
-      "key": "AUTOCOUNT DOC NO,BALANCE,BRANDING,CATEGORY,CUSTOMER CODE,CUSTOMER NAME,CUSTOMER REF,DELIVERY DATE,DISCOUNT,DO NO.,DOC DATE,DOC NO,DUE DATE,INVOICE TOTAL,ITEM CODE,ITEM DESCRIPTION,ITEM DESCRIPTION 2,LINE ID,LINE TOTAL,LOCATION,OVERDUE DAYS,PAID,PHONE,QTY,REMARKS,SALESPERSON,SO DOC NO.,STATUS,UNIT PRICE,UOM,VENUE|backend/src/scm/lib/si-line-export-columns.ts frontend/src/vendor/scm/lib/si-line-export-columns.ts",
-      "why": "A VENDORED TWIN, not a second decision: the Sales Invoice line export column contract, authored in backend/src/scm/lib/si-line-export-columns.ts and copied byte-identical into frontend/src/vendor/scm/lib so the browser can write the sheet the server builds the rows for (owner 2026-09-15: every list exports one row per line). frontend/src/vendor/scm/lib/si-line-export-columns.canonical.test.ts asserts the two files are identical and pins the header names an import will read; check-shared-mirrors.mjs compares the pair. Symbols: SI_LINE_EXPORT_COLUMNS."
-    },
-    {
-      "check": "D1",
-      "key": "AUTOCOUNT DOC NO,BALANCE,CATEGORY,CURRENCY,DISCOUNT,DOC DATE,DOC NO,DUE DATE,GRN NO.,INVOICE TOTAL,ITEM CODE,ITEM DESCRIPTION,ITEM DESCRIPTION 2,LINE ID,LINE TOTAL,LOCATION,OVERDUE DAYS,PO NO.,PO UNIT PRICE,QTY,REMARKS,SO DOC NO.,STATUS,SUPPLIER CODE,SUPPLIER INVOICE NO.,SUPPLIER NAME,SUPPLIER SKU,UNIT PRICE,UOM|backend/src/scm/lib/pi-line-export-columns.ts frontend/src/vendor/scm/lib/pi-line-export-columns.ts",
-      "why": "A VENDORED TWIN, not a second decision: the Purchase Invoice line export column contract, authored in backend/src/scm/lib/pi-line-export-columns.ts and copied byte-identical into frontend/src/vendor/scm/lib so the browser can write the sheet the server builds the rows for (owner 2026-09-15: every list exports one row per line). frontend/src/vendor/scm/lib/pi-line-export-columns.canonical.test.ts asserts the two files are identical and pins the header names an import will read; check-shared-mirrors.mjs compares the pair. Symbols: PI_LINE_EXPORT_COLUMNS."
-    },
-    {
-      "check": "D1",
-      "key": "AUTOCOUNT DOC NO,CATEGORY,CURRENCY,DELIVERY DATE,DISCOUNT,DOC DATE,DOC NO,INVOICE NO.,INVOICED QTY,ITEM CODE,ITEM DESCRIPTION,ITEM DESCRIPTION 2,LINE ID,LINE TOTAL,LOCATION,PO NO.,RECEIVED QTY,REMARKS,RETURNED QTY,SO DOC NO.,STATUS,SUPPLIER CODE,SUPPLIER DO NO.,SUPPLIER NAME,SUPPLIER SKU,UNINVOICED QTY,UNIT PRICE,UOM|backend/src/scm/lib/grn-line-export-columns.ts frontend/src/vendor/scm/lib/grn-line-export-columns.ts",
-      "why": "A VENDORED TWIN, not a second decision: the Goods Received line export column contract, authored in backend/src/scm/lib/grn-line-export-columns.ts and copied byte-identical into frontend/src/vendor/scm/lib so the browser can write the sheet the server builds the rows for (owner 2026-09-15: every list exports one row per line). frontend/src/vendor/scm/lib/grn-line-export-columns.canonical.test.ts asserts the two files are identical and pins the header names an import will read; check-shared-mirrors.mjs compares the pair. Symbols: GRN_LINE_EXPORT_COLUMNS."
-    },
-    {
-      "check": "D1",
-      "key": "CANCELLED,DRAFT,ON_HOLD,PAID,PARTIALLY_PAID,POSTED|backend/src/scm/lib/pi-line-export-columns.ts frontend/src/vendor/scm/lib/pi-line-export-columns.ts",
-      "why": "A VENDORED TWIN, not a second decision: the Purchase Invoice line export column contract, authored in backend/src/scm/lib/pi-line-export-columns.ts and copied byte-identical into frontend/src/vendor/scm/lib so the browser can write the sheet the server builds the rows for (owner 2026-09-15: every list exports one row per line). frontend/src/vendor/scm/lib/pi-line-export-columns.canonical.test.ts asserts the two files are identical and pins the header names an import will read; check-shared-mirrors.mjs compares the pair. Symbols: PI_STATUS_WORDS — the words the Purchase Invoices LIST shows (its own STATUS_TONE map, which pi-line-export-columns.canonical.test.ts reads out of PurchaseInvoicesListV2.tsx and compares), owner 2026-09-15: export the word on screen."
-    },
-    {
       "check": "D2",
-      "key": "CANCELLED,DRAFT,ON_HOLD,PAID,PARTIALLY_PAID,POSTED ~ CANCELLED,DRAFT,ON_HOLD,PAID,PARTIALLY_PAID,POSTED,VOID",
-      "why": "THE PURCHASE INVOICE STATUS WORDS differing by VOID. status-pill.ts PI names VOID for surfaces that read it; the Purchase Invoices LIST (STATUS_TONE) and so the PI line export (PI_STATUS_WORDS, pinned to that list by pi-line-export-columns.canonical.test.ts) do not, because VOID is not a member of purchase_invoice_status (pi-status-buckets.ts: every member is in a bucket, pinned by statusBucketsEnumMembership.test.mjs). An unmapped value prints as stored in both, never blank."
+      "key": "AGENT,CANCELLED,CURRENCY,DESC2,DETAIL_DESCRIPTION,DETAIL_DESCRIPTION_2,DISCOUNT,DN,EXCHANGE_RATE,GRN_NUMBER,INCLUSIVE,ITEM_CODE,LINE_TAX,LINE_TOTAL,LOCAL_TOTAL,LOCATION,OUR_PO_NO,PROJ_NO,QTY,RECEIVED_AT,SUBTOTAL,SUPPLIER,SUPPLIER_CODE,TAX,TAX_CODE,TOTAL,TOTAL_EX,TOTAL_INC,UNIT_PRICE,UOM ~ AGENT,CANCELLED,CURRENCY,DESC2,DETAIL_DESCRIPTION,DETAIL_DESCRIPTION_2,DISCOUNT,EXCHANGE_RATE,INCLUSIVE,INVOICE_DATE,INVOICE_NUMBER,ITEM_CODE,LINE_TAX,LINE_TOTAL,LOCAL_TOTAL,LOCATION,PROJ_NO,QTY,SUBTOTAL,SUPPLIER,SUPPLIER_CODE,SUPPLIER_INVOICE_REF,TAX,TAX_CODE,TOTAL,TOTAL_EX,TOTAL_INC,UNIT_PRICE,UOM",
+      "why": "TWO LISTS' DEFAULT COLUMN SETS (GRN_DEFAULT_COLUMN_KEYS, PI_DEFAULT_COLUMN_KEYS), not one decision in two homes: each is AutoCount's OWN Detail Listing layout for that document (GR layout S and PI layout SS read from the book's Layout table 2026-09-15). They share most keys because AutoCount's two listings do, and they differ exactly where the documents do: the document reference (Supplier DO No / Supplier Invoice No.), the document date and number columns, and GR's Our PO No. Owner 2026-09-15: each list's default view is AutoCount's columns in AutoCount's order; each is ONE constant so a change stays one line. (The Sales Invoices list keeps its own grid as the default by owner ruling; its AutoCount set SI_AC_COLUMN_KEYS only orders the chooser.)"
     }
   ]
 }

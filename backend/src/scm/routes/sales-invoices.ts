@@ -49,7 +49,8 @@ import { postUnpostedSiPayments, reverseSiPayment } from '../../acc/payments';
 import { insertSiPaymentRow } from '../lib/si-payment-row';
 import { recomputeSiPaid as recomputePaid, readOrderDepositForInvoice } from '../lib/si-order-deposit';
 import { stampSoDates, stampDoNumber, stampOrderDeposit } from '../lib/si-list-stamps';
-import { SI_HEADER_COLS, filterSiList, orderSiList, readSiListFilters } from '../lib/si-list-read';
+import { SI_HEADER_COLS, SI_LIST_SELECT, filterSiList, orderSiList, readSiListFilters } from '../lib/si-list-read';
+import { attachSiLines } from '../lib/si-export-rows';
 import { SI_STATUS_BUCKETS } from '../lib/si-status-buckets';
 import { postSiRevenue, reverseSiRevenue, resyncSiRevenue } from '../lib/post-si-revenue';
 import { buildItemRow, createSalesInvoiceFromDoLines, migratedRefusalForDeliveries, nextSiNumber, recomputeTotals, recordSiCreate } from '../lib/si-from-do';
@@ -469,7 +470,7 @@ salesInvoices.get('/', async (c) => {
      two exports build (lib/si-list-read.ts), so an export can never match
      different invoices than the tab it was pressed on. */
   const filters = readSiListFilters((k) => c.req.query(k));
-  let q = orderSiList(filterSiList(sb.from('sales_invoices').select(HEADER, { count: 'exact' }), filters, c, scopeIds), filters.sort);
+  let q = orderSiList(filterSiList(sb.from('sales_invoices').select(SI_LIST_SELECT, { count: 'exact' }), filters, c, scopeIds), filters.sort);
   q = q.range(page * pageSize, page * pageSize + pageSize - 1);
   const { data, error, count } = await q;
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
@@ -501,7 +502,13 @@ salesInvoices.get('/', async (c) => {
   await stampSourcePos(sb, data);
   await stampOrderDeposit(sb, data, activeCompanyId(c) ?? null);
   gateSiFinance(data, canViewScmFinance(c));
-  return c.json({ salesInvoices: data ?? [], total, page, pageSize, statusCounts });
+  /* The page's LINES, in AutoCount's spelling — the same attach the export
+     uses (lib/si-export-rows.ts), so a line column shows on screen exactly
+     what the file holds. The legacy unpaged path does not carry them: its
+     callers never render a line column. */
+  const withLines = await attachSiLines(sb, c, (data ?? []) as Array<{ id: string } & Record<string, unknown>>);
+  if (withLines.error !== null) return c.json({ error: 'lines_read_failed', reason: withLines.error }, 500);
+  return c.json({ salesInvoices: withLines.rows, total, page, pageSize, statusCounts });
 });
 
 // ── Invoiceable DO lines (line-level partial-invoice picker) ──────────────

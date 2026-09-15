@@ -14,17 +14,24 @@ After go-live the ERP is master and every document it creates must appear in
 AutoCount. This is the ERP half. The AutoCount half already exists and was
 proven against the live `AED_HOUZS` book on 2026-08-07.
 
-> **It ships OFF — but on ONE gate now, not two.** `scm.app_config` key
-> `scm.autocount_writeback` is seeded `'off'` by migration 0277, and while it is
-> off nothing is queued and nothing is drained.
+> **It is LIVE in production for company 1, and has been since 2026-08-13.**
+> `scm.app_config` key `scm.autocount_writeback` is seeded `'off'` by migration
+> 0277 — a fresh database, and staging, start with nothing queued and nothing
+> drained — but production was set to `'1'` (company 1 only, grammar in §4) on
+> 2026-08-13 02:48 UTC by Actions → `set-autocount-writeback` (run 31661923475,
+> `"off" -> "1"`). Read back on production 2026-09-14: value `1`, `updated_at`
+> 2026-08-13 02:48:27Z, and 148 `sent` outbox rows for company 1 in the 24 hours
+> before. **Every save of a company-1 document goes to the licensed book.**
 >
-> **`AC_SYNC_URL` is NO LONGER unset.** It was SET on 2026-08-11
-> (`backend/wrangler.toml:42` = `https://autocount.houzscentury.com`, in the
-> top-level `[vars]` block) after the Cloudflare tunnel was repointed at
-> AcSyncService and the service answered `{"ok":true,"book":"AED_HOUZS"}` on
-> `/health`. So the URL gate is OPEN and the DB toggle is the only thing between
-> the ERP and the live licensed account book. Both must be on for a document to
-> reach it; today exactly one is.
+> This callout said "It ships OFF … today exactly one [gate] is [on]" for a month
+> after the switch was thrown, while the line-photographs section (§7p) already
+> carried the correction. Do not repeat either state from a note — read the row:
+> `SELECT value FROM scm.app_config WHERE key = 'scm.autocount_writeback'`.
+>
+> **`AC_SYNC_URL`** was SET on 2026-08-11 (`backend/wrangler.toml:42` =
+> `https://autocount.houzscentury.com`, in the top-level `[vars]` block) after
+> the Cloudflare tunnel was repointed at AcSyncService and the service answered
+> `{"ok":true,"book":"AED_HOUZS"}` on `/health`.
 >
 > **The two gates are not symmetric.** The DB toggle stops ENQUEUEING —
 > `enqueueAcOp` returns false before the insert (`autocount-outbox.ts:172-175`).
@@ -32,9 +39,9 @@ proven against the live `AED_HOUZS` book on 2026-08-07.
 > path takes no `Env` and never reads it. So clearing the URL would leave rows
 > piling up in the outbox, whereas the toggle keeps the queue empty.
 >
-> The third gate is the `AC_SYNC_KEY` SECRET. `wrangler.toml:232-236` records it
-> as not set, but a comment is not the secret store — whether prod actually holds
-> it is UNVERIFIED as of 2026-08-13 and needs a `wrangler secret list`.
+> The third gate is the `AC_SYNC_KEY` SECRET. `wrangler.toml:231-236` describes
+> it; the production Worker's secret list (`wrangler secret list`, names only,
+> 2026-09-14) holds it. All three gates are open.
 
 **Do not describe either direction as "the sync".** There are THREE independent
 switches and they are in different states — reading one as the whole gives a
@@ -44,11 +51,15 @@ wrong answer:
 |---|---|---|
 | **Inbound PULL** (AutoCount -> ERP, recurring cron SO/PO/overdue/creditors/stock + manual `/api/sync/pull`) | `AUTOCOUNT_SYNC_DISABLED` (`wrangler.toml:24`, prod `[vars]`) | **`"false"` — LIVE.** Disabled 2026-06-13 at owner request, RE-ENABLED 2026-07-14. Staging is `"true"` (`:302`) |
 | **Legacy outbound writes** (the old `services/autocount.ts` push, not this outbox) | `AUTOCOUNT_WRITES_DISABLED`, a hard-coded `const … = true` (`autocount.ts:28`) | **OFF**, returns `skipped: AUTOCOUNT_WRITES_DISABLED` (`:138-143`). Not env-driven — flipping it is a code change |
-| **This module** (ERP -> AutoCount outbox write-back) | `scm.app_config` `scm.autocount_writeback` | **`'off'`** (above) |
+| **This module** (ERP -> AutoCount outbox write-back) | `scm.app_config` `scm.autocount_writeback` | **`'1'` — LIVE for company 1** since 2026-08-13 (above). Company 2 is not in the list |
 
 The one-time cutover IMPORT is a fourth, separate thing — a finished historical
 migration, recorded in `docs/autocount-cutover-ledger.md`. It is not the
 recurring inbound pull in the table above.
+
+**A direct database write never writes back** — not SQL, not a repair script.
+When the ERP is right and the book is now stale, re-push it: see §4b, *When a
+repair SHOULD reach the book*.
 
 ---
 
@@ -415,11 +426,19 @@ than a convention: a request body, query string and header can only produce
 string keys, and JSON has no symbols. It is non-enumerable, so it cannot leak
 into a payload either.
 
-**The five tools that may push** are pinned by
-`backend/tests/acWritebackPushAllowlist.test.mjs`, so a sixth cannot join by
+**The tools that may push** are pinned by
+`backend/tests/acWritebackPushAllowlist.test.mjs`, so a new one cannot join by
 copying a neighbour: `rebuild-ac-document.mjs`, `requeue-autocount-skipped.mjs`,
-`recompose-autocount-transfer.mjs`, `reraise-hc-po-2608-001.mjs`, and
-`sync-ac-delta.mjs` under `LANES=push` only.
+`recompose-autocount-transfer.mjs`, `reraise-hc-po-2608-001.mjs`,
+`sync-ac-delta.mjs` under `LANES=push` only, `requeue-amendment-ac-edits.mjs`
+(`docs/bugs/0888-approved-so-and-po-amendments-queued-no-autocount-edit-from.md`),
+`requeue-keyed-conversion-edits.mjs` (`docs/bugs/0900`),
+`retire-book-only-conversion-lines.mjs` (`docs/bugs/0902`),
+`resend-ac-document-edits.mjs` (`docs/bugs/0903`), and `enqueue-so-writeback.mts`
+(below). Read the list in that test rather than counting here — it grows. The pin
+read only `.mjs` and `.ts` until 2026-09-14, so the `.mts` one carried the opt-in
+for four days without the test seeing it
+(`docs/bugs/0888-the-account-book-push-allowlist-could-not-see-a-mts-script.md`).
 
 The drain is not gated this way and does not need to be: `drainAutoCountOutbox`
 builds its own client from `env` and can never receive a shim client.
@@ -428,6 +447,41 @@ See `docs/bugs/0753-cutover-repairs-queue-an-autocount-write-back-and-overwrite.
 — including what is still **UNKNOWN**: the gate closes the class, but the path
 that queued 454 edit rows on 2026-09-09 was outside GitHub Actions and has not
 been identified.
+
+### When a repair SHOULD reach the book (2026-09-14)
+
+The gate above is right for a repair that copies a value OUT of the book. The
+other kind exists too: the ERP was wrong, the correction is the ERP's own, and
+the book still holds a figure the ERP pushed earlier — typically an order the ERP
+created (`HC-SO-2609-…`), whose balance the ERP computes. That change has to
+travel, and nothing will carry it on its own:
+
+- **Nothing in the database enqueues.** Read on production 2026-09-14: no function
+  body names `autocount_outbox`, and the triggers on `scm.mfg_sales_orders` /
+  `mfg_sales_order_items` / `mfg_sales_order_payments` are the item-delete audit,
+  venue canonicalisation, the access-list sync and the Venture Portal outbox
+  (`trg_vp_outbox_*`). Raw SQL reaches no enqueue path.
+- **A repair script is suppressed by default** (above).
+
+The worked case is the 2026-09-10 orphan scan-deposit repair
+(`docs/bugs/0785-a-receiptless-scan-draft-double-counted-its-deposit-so-the-s.md`).
+It corrected two ERP-created orders in SQL, and the book kept `HC-SO-2609-011` at
+288 against the ERP's 2,488 and `HC-SO-2609-049` at 1,500 against 2,900.
+
+**Re-push each order the repair touched:** Actions → **Enqueue SO write-back**
+(`.github/workflows/enqueue-so-writeback.yml` →
+`backend/scripts/enqueue-so-writeback.mts`). It builds its client with
+`writeback: "enqueue"` and calls the application's own `enqueueEdit`, so the
+payload is the one a header save would compose, carrying the live outstanding.
+`dry-run` (the default) prints the balance it would push; `apply` enqueues; the
+~5-minute drain sends. The two orders above went this way on 2026-09-10 (run
+34493463716); read back 2026-09-14, both `edit` rows are `sent`, carrying
+`2488.00` and `2900.00`.
+
+**Decide which kind of repair it was BEFORE pushing.** If the corrected value
+came from the book, pushing it is the 2026-09-09 mistake again. The workflow
+covers sales orders only; for any other document, §9's Send again is the tool —
+read there what it re-sends before relying on it after a repair.
 
 ---
 
@@ -6639,6 +6693,25 @@ The orders the write-back had damaged are repaired by
 `scripts/repair-ac-po-doc-no.mjs` (plan / apply, `LIMIT` per run, since the drain
 sends 20 rows a sweep).
 `docs/bugs/0927-our-purchase-order-numbers-never-reached-the-sales-order-s-p.md`.
+
+## A carried-over order's payment text is the office's (2026-09-15, stopgap)
+
+`SO.UDF_PAYEMENT` on an order carried over from AutoCount holds the office's
+payment references. The ERP holds them only in part: one cutover row per order.
+Composing the text from the ERP rows dropped references from 69 orders, with 415
+more at risk.
+
+`erpOwnsPaymentText` (`scm/lib/ac-payement-owner.ts`) now decides who writes it:
+
+- **The ERP owns it** on a create, or on an order in the book under an ERP
+  number (`HC-`). Both edit paths send the text as before.
+- **The office owns it** on an order in the book under the book's own number.
+  The full sales order edit and the payment-only edit send `BALANCE` and no
+  `PAYEMENT`.
+
+A STOPGAP. The root fix keeps the book's text in the ERP and appends new ERP
+references; it waits for the owner.
+`docs/bugs/0934-erp-edits-dropped-the-office-s-payment-references-from-autoc.md`.
 
 ## The sales line names the purchase order made from it (2026-09-15)
 

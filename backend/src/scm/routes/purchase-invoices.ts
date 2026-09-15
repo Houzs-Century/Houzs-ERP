@@ -3,6 +3,7 @@
 import { Hono } from 'hono';
 import { PI_STATUS_BUCKETS } from '../lib/pi-status-buckets';
 import { PI_HEADER_COLS, PI_LIST_SELECT, filterPiList, orderPiList, readPiListFilters } from '../lib/pi-list-read';
+import { attachPiLines } from '../lib/pi-export-rows';
 import { HELD_OR_TERM } from '../lib/document-hold'; import { grnNotBillableRefusal } from '../lib/source-document-gates'; import { mountHoldRoute } from './document-hold-routes';
 import type { Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
@@ -384,7 +385,13 @@ purchaseInvoices.get('/', async (c) => {
   const statusCounts = counted.counts;
 
   const purchaseInvoices = (data ?? []) as Array<Record<string, unknown>>; // MRP columns OMITTED (C16); healed by GET /list-mrp-enrichment — see BUG-HISTORY
-  return c.json({ purchaseInvoices, total, page, pageSize, statusCounts });
+  /* The page's LINES, in AutoCount's spelling — the same attach the export
+     uses (lib/pi-export-rows.ts), so a line column shows on screen exactly
+     what the file holds. The legacy unpaged path does not carry them: its
+     callers never render a line column. */
+  const withLines = await attachPiLines(sb, c, purchaseInvoices as Array<{ id: string } & Record<string, unknown>>);
+  if (withLines.error !== null) return c.json({ error: 'lines_read_failed', reason: withLines.error }, 500);
+  return c.json({ purchaseInvoices: withLines.rows, total, page, pageSize, statusCounts });
 });
 
 /* ── GET /outstanding-grn-items ─────────────────────────────────────────

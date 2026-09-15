@@ -10,6 +10,7 @@ import { useMemo } from 'react';
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
 import { poListParams } from './po-list-export';
+import type { PoListLine } from './po-line-export-columns';
 import { applyListMrpEnrichment, type EnrichableMrpRow, type ListMrpEnrichment } from '../../../lib/listMrpEnrichment';
 import { writeFailed, writeFailedAs } from './mutation-error';
 import { idempotentInit } from '../../../lib/idempotency';
@@ -145,6 +146,10 @@ export type PoHoldFields = {
 export type PoHeaderRow = PoHoldFields & {
   id: string;
   po_number: string;
+  /** AutoCount's document number when the PO is in the book (2990 has none). */
+  linked_ac_docno?: string | null;
+  /** Every line, attached by the paged list and the export (lib/po-line-export.ts). */
+  lines?: PoListLine[];
   supplier_id: string;
   status: PoStatus;
   po_date: string;

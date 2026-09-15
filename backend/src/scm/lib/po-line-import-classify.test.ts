@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'vitest';
+import { poLineDescription2 } from './po-line-description2';
 import {
   classifyPoLineImport,
   parseApplyBody,
@@ -114,6 +115,24 @@ describe('classifyPoLineImport — one row, one verdict', () => {
     expect(rejected(only([row(2, L1, null, { remarks: 'x' })])).code).toBe('doc_no_mismatch');
     expect(only([row(2, LB, 'po-000200_r2', { remarks: 'x' })]).rows[0]!.status).toBe('changes');
     expect(rejected(only([row(2, LB, 'PO-000200_R1', { remarks: 'x' })])).code).toBe('doc_no_mismatch');
+  });
+
+  test("the grid's Doc No is AutoCount's number when the PO is linked; that number is accepted too", () => {
+    const w = world({ poA: { linked_ac_docno: 'PO-009304' } });
+    expect(only([row(2, L1, 'PO-009304', { remarks: 'x' })], w).rows[0]!.status).toBe('changes');
+    expect(only([row(2, L1, 'PO-000100', { remarks: 'x' })], w).rows[0]!.status).toBe('changes');
+    expect(rejected(only([row(2, L1, 'PO-009999', { remarks: 'x' })], w)).code).toBe('doc_no_mismatch');
+  });
+
+  test('Item Description 2 compares against the exported variant summary, so an untouched file is unchanged', () => {
+    const variants = { fabricCode: 'PC151-04' };
+    const w = world();
+    const l1 = w.lines.get(L1)!;
+    Object.assign(l1, { item_group: 'bedframe', variants, description2: 'OLD TYPED TEXT' });
+    const exported = poLineDescription2('bedframe', variants, 'OLD TYPED TEXT');
+    expect(exported).not.toBe('OLD TYPED TEXT');
+    expect(only([row(2, L1, 'PO-000100', { description2: exported })], w).rows[0]!.status).toBe('unchanged');
+    expect(only([row(2, L1, 'PO-000100', { description2: 'NEW' })], w).rows[0]!.status).toBe('changes');
   });
 
   test('the same Line ID twice: the first row counts, the second is refused', () => {
