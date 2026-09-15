@@ -382,8 +382,8 @@
     },
     {
       "check": "D1",
-      "key": "CANCELLED,CLOSED,ON_HOLD|frontend/src/pages/scm-v2/ConsignmentOrders.tsx frontend/src/vendor/scm/lib/so-status.ts",
-      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 2 homes: TERMINAL. Cost of divergence is a blank chip, not a wrong number."
+      "key": "CANCELLED,CLOSED,ON_HOLD|backend/src/scm/lib/so-line-export-columns.ts frontend/src/pages/scm-v2/ConsignmentOrders.tsx frontend/src/vendor/scm/lib/so-line-export-columns.ts frontend/src/vendor/scm/lib/so-status.ts",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 2 homes: TERMINAL. Cost of divergence is a blank chip, not a wrong number. NEW HOME 2026-09-15: SO_TERMINAL in so-line-export-columns.ts (backend + its byte-identical vendored twin) — the server-side copy of soStatusDisplay's TERMINAL set, so the Sales Order line export prints the word the list pill shows. Not a second decision: so-line-export-columns.canonical.test.ts runs soListStatusWord against soRowStatus(row, soStatusDisplay) for every status x delivery state x lifecycle, so the copy cannot drift from so-status.ts without failing."
     },
     {
       "check": "D1",
@@ -1309,6 +1309,51 @@
       "check": "D1",
       "key": "SUPPLIER_DELIVERY_DATE_2,SUPPLIER_DELIVERY_DATE_3,SUPPLIER_DELIVERY_DATE_4|backend/src/scm/lib/po-line-export-columns.ts frontend/src/vendor/scm/lib/po-line-export-columns.ts",
       "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it (the server builds the PO line export rows, the browser writes the sheet and labels the Outstanding tab). frontend/src/vendor/scm/lib/po-line-export-columns.canonical.test.ts asserts the two files are byte-identical and check-shared-mirrors.mjs compares the pair. Symbols: PO_ESTIMATE_DELIVERY_DATE_FIELDS."
+    },
+    {
+      "check": "D1",
+      "key": "AUTOCOUNT DOC NO,BRANDING,CATEGORY,CUSTOMER CODE,CUSTOMER NAME,CUSTOMER REF,DELIVERED ON,DELIVERY ADDRESS,DELIVERY DATE,DOC DATE,DOC NO,DRIVER,EXPECTED DELIVERY,INVOICE NO.,INVOICED QTY,ITEM CODE,ITEM DESCRIPTION,ITEM DESCRIPTION 2,LINE ID,LOCATION,M³,PHONE,QTY,REMARKS,RETURNED QTY,SALESPERSON,SO DOC NO.,STATE,STATUS,UNINVOICED QTY,UOM,VEHICLE,VENUE|backend/src/scm/lib/do-line-export-columns.ts frontend/src/vendor/scm/lib/do-line-export-columns.ts",
+      "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it (the server builds the line export rows, the browser writes the sheet). The frontend canonical test asserts the two files are byte-identical and check-shared-mirrors.mjs compares the pair. Symbols: DO_LINE_EXPORT_COLUMNS (do-line-export-columns.canonical.test.ts)."
+    },
+    {
+      "check": "D1",
+      "key": "AUTOCOUNT DOC NO,BRANDING,CATEGORY,CUSTOMER CODE,CUSTOMER NAME,CUSTOMER REF,DELIVERED QTY,DELIVERY ADDRESS,DELIVERY DATE,DISCOUNT,DO NO.,DOC BALANCE,DOC DATE,DOC NO,ITEM CODE,ITEM DESCRIPTION,ITEM DESCRIPTION 2,LINE ID,LINE TOTAL,LOCATION,ON DELIVERY ORDER QTY,PHONE,PO DELIVERY DATE,PO NO.,PROCESSING DATE,QTY,REMAINING QTY,REMARKS,RETURNED QTY,SALES LOCATION,SALESPERSON,STATE,STATUS,STOCK STATUS,UNIT PRICE,UOM,VENUE|backend/src/scm/lib/so-line-export-columns.ts frontend/src/vendor/scm/lib/so-line-export-columns.ts",
+      "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it (the server builds the line export rows, the browser writes the sheet). The frontend canonical test asserts the two files are byte-identical and check-shared-mirrors.mjs compares the pair. Symbols: SO_LINE_EXPORT_COLUMNS (so-line-export-columns.canonical.test.ts)."
+    },
+    {
+      "check": "D1",
+      "key": "CANCEL,CANCELLED,CLOSED,COMPLETED,CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,ON_HOLD,READY_TO_SHIP,SHIPPED|backend/src/scm/lib/so-line-export-columns.ts frontend/src/vendor/scm/lib/so-line-export-columns.ts",
+      "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it (the server builds the line export rows, the browser writes the sheet). The frontend canonical test asserts the two files are byte-identical and check-shared-mirrors.mjs compares the pair. Symbols: SO_STATUS_WORDS (so-line-export-columns.canonical.test.ts)."
+    },
+    {
+      "check": "D1",
+      "key": "CANCEL,CANCELLED,COMPLETED,DELIVERED,DISPATCHED,DRAFT,INVOICED,IN_TRANSIT,LOADED,SIGNED|backend/src/scm/lib/do-line-export-columns.ts frontend/src/vendor/scm/lib/do-line-export-columns.ts",
+      "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it (the server builds the line export rows, the browser writes the sheet). The frontend canonical test asserts the two files are byte-identical and check-shared-mirrors.mjs compares the pair. Symbols: DO_STATUS_WORDS (do-line-export-columns.canonical.test.ts)."
+    },
+    {
+      "check": "D2",
+      "key": "CANCEL,CANCELLED,CLOSED,COMPLETED,CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,ON_HOLD,READY_TO_SHIP,SHIPPED ~ CANCELLED,CLOSED,CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,ON_HOLD,READY_TO_SHIP,SHIPPED",
+      "why": "SO_STATUS_WORDS (so-line-export-columns.ts, 2026-09-15) is the LABEL half of the Sales Orders list's STATUS_TONE map (pages/scm-v2/so-list-status.ts), keyed by stored value, carried in a mirror because the server builds the line export and cannot import a page map. It deliberately holds exactly the keys that map holds — including the legacy spellings CANCEL and COMPLETED, and SHIPPED which has no tab — because its job is to print the word the list prints for any value a row can carry. so-line-export-columns.canonical.test.ts asserts every entry equals statusFor(key).label. It is a DISPLAY map, so it is not meant to equal SO_STATUSES (the write vocabulary) or the detail page's SO_STATUS_LABEL; the difference is the two legacy spellings a stored row can still carry."
+    },
+    {
+      "check": "D2",
+      "key": "CANCEL,CANCELLED,CLOSED,COMPLETED,CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,ON_HOLD,READY_TO_SHIP,SHIPPED ~ CANCELLED,CLOSED,CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,ON_HOLD,READY_TO_SHIP,RETURNED,SHIPPED",
+      "why": "SO_STATUS_WORDS (so-line-export-columns.ts, 2026-09-15) is the LABEL half of the Sales Orders list's STATUS_TONE map (pages/scm-v2/so-list-status.ts), keyed by stored value, carried in a mirror because the server builds the line export and cannot import a page map. It deliberately holds exactly the keys that map holds — including the legacy spellings CANCEL and COMPLETED, and SHIPPED which has no tab — because its job is to print the word the list prints for any value a row can carry. so-line-export-columns.canonical.test.ts asserts every entry equals statusFor(key).label. It is a DISPLAY map, so it is not meant to equal status-pill.ts's SO map, which names RETURNED (never stored on a column) and not the legacy spellings; the export follows the LIST, and the list follows so-list-status.ts."
+    },
+    {
+      "check": "D2",
+      "key": "CANCEL,CANCELLED,CLOSED,COMPLETED,CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,ON_HOLD,READY_TO_SHIP,SHIPPED ~ CANCELLED,CLOSED,CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,ON_HOLD,READY_TO_SHIP",
+      "why": "SO_STATUS_WORDS (so-line-export-columns.ts, 2026-09-15) is the LABEL half of the Sales Orders list's STATUS_TONE map (pages/scm-v2/so-list-status.ts), keyed by stored value, carried in a mirror because the server builds the line export and cannot import a page map. It deliberately holds exactly the keys that map holds — including the legacy spellings CANCEL and COMPLETED, and SHIPPED which has no tab — because its job is to print the word the list prints for any value a row can carry. so-line-export-columns.canonical.test.ts asserts every entry equals statusFor(key).label. It is a DISPLAY map, so it is not meant to equal SO_TAB_STATUSES, which is WHICH TAB a status is counted under (SHIPPED folds into Delivered), a different question from what word a row prints."
+    },
+    {
+      "check": "D2",
+      "key": "CANCEL,CANCELLED,CLOSED,COMPLETED,CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,ON_HOLD,READY_TO_SHIP,SHIPPED ~ CANCELLED,CLOSED,CONFIRMED,DELIVERED,INVOICED,IN_PRODUCTION,ON_HOLD,READY_TO_SHIP,SHIPPED",
+      "why": "SO_STATUS_WORDS (so-line-export-columns.ts, 2026-09-15) is the LABEL half of the Sales Orders list's STATUS_TONE map (pages/scm-v2/so-list-status.ts), keyed by stored value, carried in a mirror because the server builds the line export and cannot import a page map. It deliberately holds exactly the keys that map holds — including the legacy spellings CANCEL and COMPLETED, and SHIPPED which has no tab — because its job is to print the word the list prints for any value a row can carry. so-line-export-columns.canonical.test.ts asserts every entry equals statusFor(key).label. It is a DISPLAY map, so it is not meant to equal ConsignmentOrders.tsx STATUS_LABEL, a different document's screen."
+    },
+    {
+      "check": "D2",
+      "key": "CANCEL,CANCELLED,COMPLETED,DELIVERED,DISPATCHED,DRAFT,INVOICED,IN_TRANSIT,LOADED,SIGNED ~ CANCELLED,DELIVERED,DISPATCHED,DRAFT,INVOICED,IN_TRANSIT,LOADED,SIGNED",
+      "why": "DO_STATUS_WORDS (do-line-export-columns.ts, 2026-09-15) is the LABEL half of the Delivery Orders list's STATUS_TONE map (pages/scm-v2/do-list-status.ts), keyed by stored value, carried in a mirror because the server builds the line export. It holds exactly the keys that map holds, the legacy spellings CANCEL and COMPLETED included, so a row carrying either prints the list's word; do-line-export-columns.canonical.test.ts asserts every entry equals statusFor(key).label. status-pill.ts's DO map is a different display home that does not carry the legacy spellings."
     }
   ]
 }

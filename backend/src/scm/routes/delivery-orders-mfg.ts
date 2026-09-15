@@ -80,7 +80,7 @@ import {
   soLineShippedSourcePosImpl,
 } from '../lib/source-po-trace';
 export { soLineShippedSources, resolveDoSources } from '../lib/source-po-trace';
-import { escapeForOr, phoneSearchOrParts } from '../lib/postgrest-search';
+import { filterDoList, fromDoList, orderDoList, readDoListParams } from '../lib/do-list-read';
 import { readStatusCounts } from '../lib/status-counts';
 import { resolveSalesScopeIds, salesDocOutOfScope } from '../lib/salesScope';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
@@ -2704,42 +2704,11 @@ deliveryOrdersMfg.get('/', async (c) => {
     const psRaw = Number(c.req.query('pageSize'));
     pageSize = Number.isFinite(psRaw) && psRaw > 0 ? Math.min(100, Math.max(1, Math.trunc(psRaw))) : 50;
 
-    const SORT_COLS = new Set(['do_date', 'do_number', 'debtor_name', 'status', 'customer_delivery_date']);
-    const [rawCol, rawDir] = (c.req.query('sort') ?? 'do_date:desc').split(':');
-    const sortCol = SORT_COLS.has(rawCol) ? rawCol : 'do_date';
-    const sortAsc = rawDir === 'asc';
-
-    let q = sb.from('delivery_orders').select(HEADER, { count: 'exact' }).order(sortCol, { ascending: sortAsc });
-    /* unique tiebreaker so range paging can't skip/repeat rows sharing the sort key */
-    if (sortCol !== 'do_number') q = q.order('do_number', { ascending: sortAsc });
-    q = scopeToCompany(q, c); // per-company document — scope the paginated list too.
-    if (scopeIds) q = q.in('salesperson_id', scopeIds);
-    /* Resolve the incoming `status`: a known bucket key → all its raw statuses;
-       'all'/empty → no filter; otherwise treat it as a raw DB status. */
-    const status = c.req.query('status');
-    /* The `on_hold` tab reads the MARKER (mig 0324) ONLY — never HELD_OR_TERM,
-       whose `status.eq.ON_HOLD` arm 22P02s a do_status that has no such label. */
-    if (status && status !== 'all') {
-      if (status === 'on_hold') q = q.eq('on_hold', true);
-      else if (DO_STATUS_BUCKETS[status]) q = q.in('status', DO_STATUS_BUCKETS[status]);
-      else q = q.eq('status', status);
-    }
-    /* free-text search over the columns the FE list's client-side search matches
-       (MfgDeliveryOrdersListV2 hay) that live on this base table. */
-    const search = c.req.query('q');
-    if (search) {
-      const s = escapeForOr(search);
-      // Match customer NAME (debtor_name), PHONE, and the linked SO REFERENCE
-      // (ref, snapshotted onto the DO) — plus the doc numbers it already covered.
-      if (s) q = q.or([
-        `do_number.ilike.%${s}%`, `so_doc_no.ilike.%${s}%`, `debtor_name.ilike.%${s}%`,
-        `debtor_code.ilike.%${s}%`, `ref.ilike.%${s}%`, `branding.ilike.%${s}%`,
-        `sales_location.ilike.%${s}%`, `driver_name.ilike.%${s}%`,
-        ...phoneSearchOrParts(s, search, normalizePhone),
-      ].join(','));
-    }
-    const from = c.req.query('from'); if (from) q = q.gte('do_date', from);
-    const to = c.req.query('to'); if (to) q = q.lte('do_date', to);
+    /* Tab + search + sort + company + sales scope: the ONE filter the list and
+       the line export share (lib/do-list-read.ts), so the two cannot match
+       different delivery orders. */
+    const listParams = readDoListParams((k) => c.req.query(k));
+    let q = filterDoList(orderDoList(fromDoList(sb, HEADER, { count: 'exact' }), listParams.sort), listParams, c, scopeIds);
     q = q.range(page * pageSize, page * pageSize + pageSize - 1);
     const res = await q;
     data = res.data;

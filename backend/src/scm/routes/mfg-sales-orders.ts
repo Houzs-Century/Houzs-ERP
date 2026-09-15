@@ -39,7 +39,7 @@ import { doNosBySalesOrder, type DeliveryOrderNoRow } from '../lib/so-delivery-o
 import { soDownstreamRefs, NO_SO_DOWNSTREAM_REFS } from '../lib/downstream-doc-refs';
 /* Status-transition table + the discard guards — lifted out of this file, which
    may only shrink. See lib/so-lifecycle-guards.ts. */
-import { SO_STATUSES, SO_STATUS_RANK, soStatusTransitionError, soDiscardBlocked } from '../lib/so-lifecycle-guards';
+import { SO_STATUS_RANK, soStatusTransitionError, soDiscardBlocked } from '../lib/so-lifecycle-guards';
 import { HELD_OR_TERM, HOLD_COLUMNS, isDocumentHeld } from '../lib/document-hold';
 import { mountHoldRoute } from './document-hold-routes';
 import { enqueueSoCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
@@ -72,7 +72,7 @@ import {
 } from '../shared/so-field-policy';
 import { paymentMayChange, SO_PAYMENT_AMEND } from '../../acc/payment-reconciled';
 import { AMEND_SOURCE, ledgerFieldChange } from '../../acc/payment-corrections';
-import { APPROVAL_CODE_SEARCH_CAP, approvalCodeOrPart, approvalCodesByOrder } from '../lib/so-list-approval-codes';
+import { approvalCodesByOrder } from '../lib/so-list-approval-codes';
 import { paymentReasonRule } from '../lib/so-payment-reason';
 import { paymentVersionGuard, soCasGrace, soCasGraceOpen } from '../lib/so-cas';
 /* SO-SKU spec P2 — every charge is a SKU line. Predicates from P1; the
@@ -128,9 +128,9 @@ import {
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY,
 } from '../lib/companyScope';
 import { supabaseAuth } from '../middleware/auth';
-import { escapeForOr, phoneSearchOrParts } from '../lib/postgrest-search';
+import { escapeForOr } from '../lib/postgrest-search';
 import { effectiveStatusFilter, isRangeNotSatisfiable } from '../lib/so-list-filters';
-import { prepareSoListFilters } from '../lib/so-list-query-filters';
+import { fromSoList, orderSoList, prepareSoListRead, readSoListParams } from '../lib/so-list-read';
 import { SO_TAB_STATUSES, soStatusesForTab } from '../lib/so-tab-statuses';
 import { chunkIn, paginateAll } from '../lib/paginate-all';
 import { tallyStatusRows, type StatusTally } from '../lib/status-counts';
@@ -1226,70 +1226,13 @@ mfgSalesOrders.get('/', async (c) => {
     page = Math.max(0, Math.trunc(Number(pageRaw)) || 0);
     const psRaw = Number(c.req.query('pageSize'));
     pageSize = Number.isFinite(psRaw) && psRaw > 0 ? Math.min(100, Math.max(1, Math.trunc(psRaw))) : 50;
-    /* Second-level filters (owner 2026-09-14) — ONE prepared predicate set for the page, money and count reads (lib/so-list-query-filters.ts). */
-    const soFilter = await prepareSoListFilters(sb, c.req.queries('f') ?? [], c.get('houzsUser')?.id ?? null, new Date());
-    if (!soFilter.ok) return c.json(soFilter.body, soFilter.status);
-
-    /* sort whitelist — map to the view's columns; anything else → so_date. */
-    const SORT_COLS = new Set(['so_date', 'doc_no', 'debtor_name', 'status', 'local_total_sen', 'customer_delivery_date']);
-    const [rawCol, rawDir] = (c.req.query('sort') ?? 'so_date:desc').split(':');
-    const sortCol = SORT_COLS.has(rawCol) ? rawCol : 'so_date';
-    const sortAsc = rawDir === 'asc';
-
-    /* An order is also found by a card payment's APPROVAL CODE (owner
-       2026-09-15, docs/bugs/0909) — Finance reads one off a merchant report and
-       wants the order. The code lives on the payment rows, which the header
-       `.or()` below cannot see, so the orders whose payments carry EXACTLY the
-       typed code are read first — before the list builder, so the header
-       search stays the header's, and an exact match rather than a substring,
-       so no trigram index is owed — and admitted as ONE in-list term on BOTH
-       queries. A read that fails refuses the list: a search that silently
-       dropped its matches would be a wrong answer, not an empty one. */
-    let codePart: string | null = null;
-    {
-      const code = String(c.req.query('q') ?? '').trim();
-      if (code) {
-        const { data, error } = await scopeToCompany(sb.from('mfg_sales_order_payments')
-          .select('so_doc_no').eq('approval_code', code).limit(APPROVAL_CODE_SEARCH_CAP), c);
-        if (error) return c.json({ error: 'load_failed', reason: `approval codes: ${error.message}` }, 500);
-        codePart = approvalCodeOrPart(((data ?? []) as Array<{ so_doc_no: string }>).map((p) => p.so_doc_no));
-      }
-    }
-
-    let q = sb.from('mfg_sales_orders_with_payment_totals').select(LIST_COLS, { count: 'exact' }).order(sortCol, { ascending: sortAsc });
-    /* unique tiebreaker so range paging can't skip/repeat rows sharing the sort key */
-    if (sortCol !== 'doc_no') q = q.order('doc_no', { ascending: sortAsc });
-    q = applySoScope(q, scopeIds);
-    q = soFilter.apply(scopeToCompany(q, c)); // multi-company: isolate to the active company, then the second-level filters
-    /* status=OTHER → rows whose status is OUTSIDE the known vocabulary (legacy
-       spellings / blanks). It exists so the list's "Other" pill — shown only
-       when such rows exist — can actually be opened; every real status stays
-       the exact-match it always was. */
-    const status = effectiveStatusFilter(c.req.query('status'));
-    const otherStatusOr = `status.is.null,status.not.in.(${[...SO_STATUSES].join(',')})`;
-    if (status === 'ON_HOLD') q = q.or(HELD_OR_TERM);
-    else if (status) { const vals = soStatusesForTab(status); q = status === 'OTHER' ? q.or(otherStatusOr) : (vals.length === 1 ? q.eq('status', vals[0]) : q.in('status', vals)); }
-    /* free-text search over the reference the list DISPLAYS: customerRefOf is
-       `ref || customer_so_no`, so BOTH are searched — an order whose `ref` is
-       null shows its reference from `customer_so_no` yet was unsearchable
-       before (bug 0755). Plus doc_no / debtor_code / agent / location / branding. */
-    const search = c.req.query('q');
-    if (search) {
-      const s = escapeForOr(search);
-      if (s) q = q.or([
-        `doc_no.ilike.%${s}%`, `debtor_name.ilike.%${s}%`, `debtor_code.ilike.%${s}%`,
-        `agent.ilike.%${s}%`, `sales_location.ilike.%${s}%`, `ref.ilike.%${s}%`,
-        `customer_so_no.ilike.%${s}%`, `branding.ilike.%${s}%`,
-        ...phoneSearchOrParts(s, search, normalizePhone),
-        ...(codePart ? [codePart] : []),
-      ].join(','));
-    }
-    /* Optional so_date window (ISO yyyy-mm-dd, inclusive). The mobile list's
-       period chips (this-month / last-month / next-month / this-year) send a
-       from/to so the range filter runs server-side across the whole table, not
-       just the current page. Absent → no date bound. */
-    const from = c.req.query('from'); if (from) q = q.gte('so_date', from);
-    const to = c.req.query('to'); if (to) q = q.lte('so_date', to);
+    /* ONE predicate set — sales scope, company, second-level filters (owner
+       2026-09-14), tab, search (approval codes and phone included) and date
+       window — for the page, the money strip and the line export
+       (lib/so-list-read.ts). The status counts take its `scoped` half. */
+    const read = await prepareSoListRead(sb, c, readSoListParams((k) => c.req.query(k), (k) => c.req.queries(k)), scopeIds, c.get('houzsUser')?.id ?? null, new Date());
+    if (!read.ok) return c.json(read.body, read.status);
+    let q = read.header(orderSoList(fromSoList(sb, LIST_COLS, { count: 'exact' }), c.req.query('sort') ?? null));
     q = q.range(page * pageSize, page * pageSize + pageSize - 1);
 
     /* Status counts over the SAME scope + company + second-level filters, WITHOUT the status
@@ -1303,24 +1246,23 @@ mfgSalesOrders.get('/', async (c) => {
        was dropped and `fb.data ?? []` read as zero rows, so every pill — and
        `all`, which is their SUM — served 0 beside a full page of orders. That is
        a 500 now, as on the other five SCM lists (scm/lib/status-counts.ts). */
-    const scopedCountQ = (q0: any): any =>
-      soFilter.apply(scopeToCompany(applySoScope(q0, scopeIds), c));
+    const scopedCountQ = (q0: any): any => read.scoped(q0);
     /* The held count is its own head-only read because the marker is a COLUMN,
        not a status, so the grouped status aggregate above cannot produce it.
        Same scope + company predicates, no status filter, no search, no paging —
        the strip's other numbers are computed the same way. */
     const heldProm = (async (): Promise<{ ok: true; n: number } | { ok: false; reason: string }> => {
       const r = await scopedCountQ(
-        sb.from(soFilter.countFrom).select('*', { count: 'exact', head: true }),
+        sb.from(read.countFrom).select('*', { count: 'exact', head: true }),
       ).or(HELD_OR_TERM);
       if (r.error) return { ok: false, reason: `on-hold count failed: ${r.error.message}` };
       return { ok: true, n: r.count ?? 0 };
     })();
     const countsProm = (async (): Promise<StatusTally> => {
-      const agg = await scopedCountQ(sb.from(soFilter.countFrom).select('status, cnt:doc_no.count()'));
+      const agg = await scopedCountQ(sb.from(read.countFrom).select('status, cnt:doc_no.count()'));
       if (!agg.error) return tallyStatusRows<{ status: string | null; cnt: number }>(agg, (r) => Number(r.cnt ?? 0));
       const fb = await paginateAll<{ status: string | null }>((cfrom, cto) =>
-        scopedCountQ(sb.from(soFilter.countFrom).select('status')).range(cfrom, cto));
+        scopedCountQ(sb.from(read.countFrom).select('status')).range(cfrom, cto));
       /* Named separately from tallyStatusRows' own error branch so the 500 says
          which of the TWO reads died, not just that the second one did. */
       if (fb.error) return { ok: false, reason: `status counts failed: aggregate ${agg.error.message}; fallback ${fb.error.message}` };
@@ -1349,21 +1291,7 @@ mfgSalesOrders.get('/', async (c) => {
        view-COMPUTED columns, so this stays VIEW-TRAP safe (see
        backend/docs/scm-view-trap-coe.md). */
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the shared closure is applied to both the aggregate `.select('...sum()')` builder and the paged builder; the aggregate select defeats supabase-js's column-type inference (same reason as outstanding.ts /summary)
-    const applyMoneyFilters = (moneyQ0: any): any => {
-      let moneyQ = moneyQ0;
-      moneyQ = applySoScope(moneyQ, scopeIds);
-      moneyQ = soFilter.apply(scopeToCompany(moneyQ, c));
-      if (status === 'ON_HOLD') moneyQ = moneyQ.or(HELD_OR_TERM);
-      else if (status) { const vals = soStatusesForTab(status); moneyQ = status === 'OTHER' ? moneyQ.or(otherStatusOr) : (vals.length === 1 ? moneyQ.eq('status', vals[0]) : moneyQ.in('status', vals)); }
-      if (search) {
-        const ms = escapeForOr(search);
-        /* The SAME term as the page query — the strip must count what the rows show. */
-        if (ms) moneyQ = moneyQ.or(`doc_no.ilike.%${ms}%,debtor_name.ilike.%${ms}%,debtor_code.ilike.%${ms}%,agent.ilike.%${ms}%,sales_location.ilike.%${ms}%,ref.ilike.%${ms}%,customer_so_no.ilike.%${ms}%,branding.ilike.%${ms}%${codePart ? `,${codePart}` : ''}`);
-      }
-      if (from) moneyQ = moneyQ.gte('so_date', from);
-      if (to) moneyQ = moneyQ.lte('so_date', to);
-      return moneyQ;
-    };
+    const applyMoneyFilters = (moneyQ0: any): any => read.header(moneyQ0);
     const moneyProm = soListMoneyKpis(sb, applyMoneyFilters);
 
     /* One concurrent wave. The page rows, the grouped status counts and the

@@ -11,11 +11,6 @@
 //     narrow the same data the old grid uses. Status mutations still route
 //     through useUpdateMfgSalesOrderStatus.
 //
-// Follow-ups (separate PRs):
-//   · Full Detail page (DetailLayout + two-col grid + sticky aside)
-//   · Phone card list + FAB + PullToRefresh
-//   · iPad 340px master-detail rail
-//
 // The old ledger-style page (MfgSalesOrdersList.tsx, DataGrid-based) stays in
 // the tree; App.tsx route swap decides which one users see.
 
@@ -23,6 +18,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { shippedProgressColumn, ShippedProgressPill } from "./so-list-shipped-column";
 import { SO_STATUS_TABS, statusFor, type StatusTab } from "./so-list-status";
 import { SoListStatusCell } from "./SoListStatusCell";
+import { soListStatusWord, useSoListExports } from "./use-sales-list-exports";
 import { SoListFilterBar } from "./SoListFilterBar";
 import { useSoListFilters } from "../../vendor/scm/lib/so-list-filter-state";
 import { salesOrderRowMenu } from "./row-menus";
@@ -81,7 +77,7 @@ import { useSetDocumentHold } from "../../vendor/scm/lib/document-hold-queries";
 import { holdPrompt } from "./use-hold-action";
 import { useCancelRequestAction } from "./use-cancel-request-action";
 import { makeCloseAction } from "./use-close-action";
-import { StatusWithHold, type HoldFields } from "../../vendor/scm/components/HoldChip";
+import { StatusWithHold, rowIsHeld, type HoldFields } from "../../vendor/scm/components/HoldChip";
 import { ScanOrderModal } from "../../vendor/scm/components/ScanOrderModal";
 import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
@@ -1063,6 +1059,7 @@ export function MfgSalesOrdersListV2() {
     filters: soFilters,
     enabled: sortReady,
   });
+  const soExports = useSoListExports<SoRow>({ status, q: debouncedSearch, sort, filters: soFilters }); // both exports read the WHOLE filtered listing (owner 2026-09-15)
   const searchTransition = useSearchResultTransition({
     inputTerm: search,
     requestTerm: debouncedSearch,
@@ -1442,7 +1439,7 @@ export function MfgSalesOrdersListV2() {
       width: "108px",
       // Exempt from the cancelled-row fade — the pill is WHY the row is grey.
       className: "dt-cancel-keep",
-      getValue: (r) => r.status,
+      getValue: (r) => soListStatusWord(r.status, r.delivery_state ?? null, r.lifecycle_state ?? null, rowIsHeld(r)) ?? "", // the word on screen (owner 2026-09-15)
       render: (r) => <SoListStatusCell row={r} />,
     },
     {
@@ -2084,6 +2081,7 @@ export function MfgSalesOrdersListV2() {
               </div>
             }
             secondaryActions={[
+              soExports.linesAction,
               { label: "Scan Order", icon: ScanLine, onClick: goScanOrder },
               ...(canMaintain
                 ? [{ label: "SO Maintenance", icon: Wrench, onClick: goSoMaintenance }]
@@ -2248,6 +2246,7 @@ export function MfgSalesOrdersListV2() {
             }}
             contextMenu={soContextMenu}
             exportName="sales-orders"
+            onExport={soExports.exportHeaders}
             serverSort
             onSortChange={setSortAndReset}
             emptyLabel={

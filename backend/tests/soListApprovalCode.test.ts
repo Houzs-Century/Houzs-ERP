@@ -18,6 +18,17 @@ const sources = import.meta.glob('../src/scm/routes/mfg-sales-orders.ts', {
   eager: true,
 }) as Record<string, string>;
 const routeSource = Object.values(sources)[0] ?? '';
+/* The search predicates moved into lib/so-list-read.ts on 2026-09-15 so the
+   page, the money strip and the line export share ONE copy. */
+const readSources = import.meta.glob('../src/scm/lib/so-list-read.ts', { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
+const readSource = Object.values(readSources)[0] ?? '';
+const betweenIn = (src: string, from: string, to: string): string => {
+  const a = src.indexOf(from);
+  expect(a, `${from} is not in the source`).toBeGreaterThan(-1);
+  const b = src.indexOf(to, a);
+  expect(b, `${to} does not follow ${from}`).toBeGreaterThan(a);
+  return src.slice(a, b);
+};
 
 const between = (from: string, to: string): string => {
   const a = routeSource.indexOf(from);
@@ -30,6 +41,7 @@ const between = (from: string, to: string): string => {
 describe('the Sales Order list and the approval codes', () => {
   test('the source loaded (a silent empty glob must not pass)', () => {
     expect(routeSource.length).toBeGreaterThan(1000);
+    expect(readSource.length).toBeGreaterThan(1000);
   });
 
   test('the payments read the list already makes carries the code and the dates the column is ordered by', () => {
@@ -45,23 +57,21 @@ describe('the Sales Order list and the approval codes', () => {
   /* The search term is built ONCE and added to BOTH queries. A term on only
      the page query would list orders the KPI strip does not count. */
   test('the code search term rides the page query AND the money-KPI aggregate', () => {
-    expect(routeSource).toContain('approvalCodeOrPart(');
-    const page = between("const search = c.req.query('q');", "const from = c.req.query('from')");
-    expect(page, 'the page query does not admit orders found by approval code').toContain('codePart');
-    const money = between('const applyMoneyFilters', 'const moneyProm');
-    expect(money, 'the money aggregate does not admit the same orders').toContain('codePart');
+    expect(readSource).toContain('approvalCodeOrPart(');
+    const search = betweenIn(readSource, 'if (search) {', 'if (p.from)');
+    expect(search, 'the list search does not admit orders found by approval code').toContain('codePart');
+    const arm = betweenIn(routeSource, 'PAGINATED PATH', 'const moneyProm');
+    expect(arm, 'the page query does not read through the shared header').toContain('let q = read.header(');
+    expect(arm, 'the money aggregate does not admit the same orders').toContain('const applyMoneyFilters = (moneyQ0: any): any => read.header(moneyQ0)');
   });
 
-  /* Before the list builder, so the header search's own `.or()` still sits
-     under the header table; an EXACT match, so no trigram index is owed; and
-     its failure refuses the list rather than dropping the matches. */
   test('the lookup runs before the list builder, matches the code exactly, is scoped to the company, capped, and refuses on a failed read', () => {
-    const lookup = between('let codePart', "let q = sb.from('mfg_sales_orders_with_payment_totals').select(LIST_COLS, { count: 'exact' })");
+    const lookup = betweenIn(readSource, 'let codePart', 'const scoped =');
     expect(lookup).toContain("from('mfg_sales_order_payments')");
     expect(lookup).toContain("eq('approval_code', code)");
     expect(lookup).not.toContain("ilike('approval_code'");
     expect(lookup).toContain('scopeToCompany(');
     expect(lookup).toContain('APPROVAL_CODE_SEARCH_CAP');
-    expect(lookup).toContain('if (error) return c.json(');
+    expect(lookup).toContain('if (error) return { ok: false, status: 500');
   });
 });
