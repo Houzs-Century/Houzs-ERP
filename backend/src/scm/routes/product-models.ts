@@ -35,6 +35,7 @@ import { baseKeyOf, deleteThumbFor, putOptionalThumb } from '../../services/phot
 import type { Env, Variables } from '../env';
 import { pgrestIn } from '../lib/pgrest-in-list';
 import { categorySwapAllowed } from '../shared/category-swap';
+import { moveModelCategory } from '../lib/model-category-move';
 import { MFG_PRODUCT_CATEGORIES } from './mfg-products';
 
 export const productModels = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -517,27 +518,46 @@ export const patchProductModelHandler = async (c: Context<{ Bindings: Env; Varia
     }, 409);
   }
   if (Object.keys(u).length === 0) return c.json({ error: 'empty_patch' }, 400);
-  const { data, error } = await scopeToCompanyId(supabase
-    .from('product_models')
-    .update(u)
-    .eq('id', id), co.companyId)
-    .select(COLS)
-    .maybeSingle();
-  if (error) {
-    if (error.code === '23505') {
-      return c.json({ error: 'duplicate_code', reason: error.message }, 409);
+  // The category moves through the helper Import SKUs also uses, so the model's SKUs always follow it.
+  const newCategory = u.category === undefined ? undefined : String(u.category);
+  delete u.category;
+  let data: Record<string, unknown> | null = null;
+  if (Object.keys(u).length > 0) {
+    const { data: updated, error } = await scopeToCompanyId(supabase
+      .from('product_models')
+      .update(u)
+      .eq('id', id), co.companyId)
+      .select(COLS)
+      .maybeSingle();
+    if (error) {
+      if (error.code === '23505') {
+        return c.json({ error: 'duplicate_code', reason: error.message }, 409);
+      }
+      return c.json({ error: 'update_failed', reason: error.message }, 500);
     }
-    return c.json({ error: 'update_failed', reason: error.message }, 500);
+    if (!updated) return c.json(NOT_THIS_COMPANY, 404);
+    data = updated as Record<string, unknown>;
+  }
+
+  if (newCategory !== undefined) {
+    const moved = await moveModelCategory(supabase, co.companyId, String(id), newCategory);
+    if (!moved.ok) {
+      return moved.error === 'model_not_found'
+        ? c.json(NOT_THIS_COMPANY, 404)
+        : c.json({ error: moved.error, reason: moved.reason }, 500);
+    }
+    if (data) {
+      data = { ...data, category: newCategory };
+    } else {
+      const { data: reread } = await scopeToCompanyId(supabase
+        .from('product_models')
+        .select(COLS)
+        .eq('id', id), co.companyId)
+        .maybeSingle();
+      data = (reread as Record<string, unknown> | null) ?? { id, category: newCategory };
+    }
   }
   if (!data) return c.json(NOT_THIS_COMPANY, 404);
-
-  if (u.category !== undefined) {
-    const { error: skuCatErr } = await scopeToCompanyId(supabase
-      .from('mfg_products')
-      .update({ category: u.category, updated_at: new Date().toISOString() })
-      .eq('model_id', id), co.companyId);
-    if (skuCatErr) return c.json({ error: 'sku_category_update_failed', reason: skuCatErr.message }, 500);
-  }
 
   // Chairman 2026-06-01: Modular's allowed_options is the SINGLE source of truth
   // for ON/OFF — there is no separate per-SKU "Visible" toggle anymore. For
