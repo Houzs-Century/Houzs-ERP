@@ -240,3 +240,43 @@ describe('checkAllowedOptions — the pool is typed by a person, so it trims too
     expect(checkAllowedOptions(product(), model({ gaps: [' 11” '] }), { gap: '12"' })).not.toBeNull();
   });
 });
+
+describe('checkAllowedOptions — a DIVAN ONLY line has no gap, so no total-height pool', () => {
+  /* The one DIVAN ONLY Model on prod (model_code 'DIVAN ONLY', read 2026-09-15),
+     its pools verbatim. HC-SO-011153 added DIVAN ONLY-(SS) with an 8" divan,
+     No Leg and no gap: the editor summed that to 8", this pool starts at 10",
+     and the line was refused — the owner's "divan only 不需要 gap" (2026-08-09)
+     undone by arithmetic. */
+  const divanOnlyModel = model({
+    divan_heights: ['4"', '5"', '6"', '8"', '10"', '11"', '12"', '13"', '14"', '16"'],
+    leg_heights: ['No Leg', '1"', '2"', '4"', '6"', '7"', '5"'],
+    gaps: ['4"', '5"', '6"', '7"', '8"', '9"', '10"', '11"', '12"', '13"', '14"', '15"', '16"', '17"', '18"', '19"', '20"', '21"'],
+    total_heights: ['10"', '12"', '14"', '16"', '17"', '18"', '19"', '20"', '21"', '22"', '23"', '24"', '25"', '26"', '27"', '28"'],
+    sizes: ['K', 'Q', 'S', 'SS', 'SK', 'SP'],
+  });
+  const divanOnly = (code: string) => product({ code, size_code: 'SS' });
+  const eightInchNoLegNoGap = { divanHeight: '8"', legHeight: 'No Leg', totalHeight: '8"' };
+
+  it('accepts the refused HC-SO-011153 line: 8" divan, No Leg, no gap', () => {
+    expect(checkAllowedOptions(divanOnly('DIVAN ONLY-(SS)'), divanOnlyModel, eightInchNoLegNoGap)).toBeNull();
+  });
+
+  it('holds for every spelling the catalogue and the book use', () => {
+    for (const code of ['DIVAN ONLY', 'DIVAN ONLY-(K)', 'HOK-DIVAN ONLY (K)', 'NB- DIVAN ONLY (SS)']) {
+      expect(checkAllowedOptions(divanOnly(code), divanOnlyModel, eightInchNoLegNoGap), code).toBeNull();
+    }
+  });
+
+  it('DOES NOT weaken the gate for a bedframe with a mattress — the same 8" is still refused there', () => {
+    const err = checkAllowedOptions(product(), divanOnlyModel, eightInchNoLegNoGap);
+    expect(err).not.toBeNull();
+    expect(err!.field).toBe('total_height');
+  });
+
+  it('still holds a DIVAN ONLY divan and leg to their own pools', () => {
+    expect(checkAllowedOptions(divanOnly('DIVAN ONLY-(SS)'), divanOnlyModel, { divanHeight: '7"', totalHeight: '7"' })!.field)
+      .toBe('divan_height');
+    expect(checkAllowedOptions(divanOnly('DIVAN ONLY-(SS)'), divanOnlyModel, { divanHeight: '8"', legHeight: '3"', totalHeight: '11"' })!.field)
+      .toBe('leg_height');
+  });
+});

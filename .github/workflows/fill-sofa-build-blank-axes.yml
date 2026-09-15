@@ -1,0 +1,65 @@
+name: Fill a sofa piece's blank colour from its own sofa (named documents)
+
+# docs/bugs/0896: a piece the sofa corrections applier ADDED carried no colour or
+# leg. This fills ONLY blank colour / leg keys inside `variants`, on the documents
+# named in `docs`, from the same sofa's other pieces (or, for a purchase line, the
+# sales-order line it is dedicated to), and carries a filled sales-order line's
+# values onto its blank dedicated purchase lines. It prints, per piece, the value
+# and where it came from, and lists CANNOT FIND where nothing can be copied.
+#
+# No item code, qty, price, total, status, receipt, delivery or invoice line is
+# written. DEFAULT IS PLAN; apply needs the confirm phrase; the run ends with a
+# fresh-connection check that every other key and column is unchanged.
+#
+# REVERSAL - the apply log prints each row and the keys it filled:
+#   UPDATE <table> SET variants = variants - '<key>' ... WHERE id = '<id>';
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (default, writes nothing) or apply"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      docs:
+        description: "Document numbers, comma separated (required)"
+        required: true
+        default: ""
+      company_id:
+        description: "Company id"
+        required: false
+        default: "1"
+      confirm:
+        description: "Required for apply: FILL THE SOFA'S OWN COLOUR"
+        required: false
+        default: ""
+
+concurrency:
+  group: fill-sofa-build-blank-axes
+  cancel-in-progress: false
+
+jobs:
+  fill:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/fill-sofa-build-blank-axes.mjs
+        env:
+          MODE: ${{ inputs.mode }}
+          DOCS: ${{ inputs.docs }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          CONFIRM: ${{ inputs.confirm }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

@@ -1,0 +1,62 @@
+name: Stamp AutoCount line keys on our DOs, GRs, invoices and POs (plan / apply)
+
+# Gives the delivery orders, goods receipts, invoices and purchase orders the
+# write-back created in AutoCount by transfer the line keys the book pairs them
+# with: DocTransfer for a DO, GR, IV or PI, PODTL.FromSODtlKey for a PO
+# (backend/scripts/stamp-conversion-line-keys.mjs, docs/bugs/0897, 0903, 0914).
+# Without a key on every line, an edit of the document is refused whole.
+#
+# Reads a committed snapshot of the book (data/ac-conversion-line-keys.json.gz,
+# refreshed by export-ac-conversion-line-keys.py on a machine that reaches the
+# office network) and refuses one older than two days. Default is a dry run:
+# 'plan' writes nothing and prints the PLAN DIGEST that 'apply' requires.
+# Writes one column and sends nothing to AutoCount.
+#
+# Manual only, and its own concurrency group so it never queues behind or
+# displaces a release.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (default, writes NOTHING) or apply"
+        required: true
+        default: "plan"
+        type: choice
+        options: ["plan", "apply"]
+      confirm:
+        description: "Required for apply: stamp the book line keys on our purchase orders, delivery orders, receipts and invoices"
+        required: false
+        default: ""
+      plan_digest:
+        description: "Required for apply: the PLAN DIGEST the plan run printed"
+        required: false
+        default: ""
+
+concurrency:
+  group: stamp-conversion-line-keys
+  cancel-in-progress: false
+
+jobs:
+  stamp:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/stamp-conversion-line-keys.mjs
+        env:
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          PLAN_DIGEST: ${{ inputs.plan_digest }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
+          NODE_OPTIONS: --dns-result-order=ipv4first

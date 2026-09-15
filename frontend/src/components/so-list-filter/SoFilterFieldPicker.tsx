@@ -48,8 +48,11 @@ export function SoFilterFieldPicker({
           {fields.map((f) => (
             <button key={f.key} type="button" className={k.option(false)} onClick={() => onPick(f.key)}
               style={{ flexDirection: "column", alignItems: "flex-start", gap: 2 }}>
-              <span style={{ fontWeight: 700 }}>{f.label}</span>
-              {f.hint && <span style={{ fontSize: 11, color: "#8a8f84", fontWeight: 400 }}>{f.hint}</span>}
+              {/* The phone's .mcard sets no font size, so an unclassed label rendered at the
+                  browser default - twice the size of the status rows above it. `ml` is the
+                  class those rows use. */}
+              <span className={skin === "mobile" ? "ml" : undefined} style={skin === "mobile" ? undefined : { fontWeight: 700 }}>{f.label}</span>
+              {f.hint && <span style={{ fontSize: skin === "mobile" ? 10.5 : 11, color: "#8a8f84", fontWeight: 400, lineHeight: 1.3 }}>{f.hint}</span>}
             </button>
           ))}
         </div>

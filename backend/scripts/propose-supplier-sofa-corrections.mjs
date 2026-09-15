@@ -260,8 +260,10 @@ try {
     }
     /* A row with NO book key sitting beside keyed rows of the same build is
        invisible to a correction addressed by that key - it is never selected, so
-       it is never matched and never removed. HC-PO-010041 carried two such
-       duplicate pieces for four days while its entry reported nothing to do. */
+       it is never matched. Worse, the correction reads those pieces as MISSING
+       and adds them again: on HC-PO-010041 the dedicated 1NA and 1A(RHF) were
+       the keyless pair, and apply run 34507126629 inserted a second, unlinked
+       copy of each beside them (removed 2026-09-15). */
     if (keyless) {
       stats.keylessBeside = (stats.keylessBeside ?? 0) + 1;
       keylessBesideList.push({ po: po.po_number, keyless,

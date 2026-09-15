@@ -215,6 +215,7 @@ PROVED by removing it and watching a test go red:
 
 ## 6. See also
 
+- `docs/line-export-columns.md` — the proposed one-row-per-line export columns for every transaction document, and which columns the import may change
 - `docs/modules/warehouses.md` — the warehouse master.
 - `docs/modules/stock-take.md` — the other warehouse document, and the other
   one that could not be printed until 2026-08-22.

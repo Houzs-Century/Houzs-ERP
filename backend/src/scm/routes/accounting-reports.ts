@@ -25,6 +25,13 @@
 //   Taxation         TAXATION (shown only when something posted there)
 //   Net profit
 //
+// Since 2026-09-15 (docs/bugs/0911) the P&L ALSO hands the same figures
+// back arranged on the report's LAYOUT — the owner's tree of categories
+// (acc/report-layout.ts; one tree per report, shared by every company,
+// ticked per company), each line and subtotal with its % of sales. The flat
+// section lists stay as they were: the layout only groups, orders and names;
+// the section still decides the block, so the totals are the same money.
+//
 // The balance sheet is the same read cut at a date, grouped by the section's
 // type (assets / liabilities / equity — every line still names its section,
 // in AutoCount order, for the layout round to come), with the cumulative P&L
@@ -37,6 +44,8 @@ import { hasHouzsPerm } from '../lib/houzs-perms';
 import { requireActiveCompanyId } from '../lib/companyScope';
 import { paginateAll } from '../lib/paginate-all';
 import { ACCOUNT_SECTIONS, defaultSectionFor } from '../lib/account-sections';
+import { layOutBlock, type LaidNode } from '../../acc/report-layout';
+import { allowedIds, resolveLayout } from './accounting-report-layouts';
 
 const requirePerm = (c: any): boolean => hasHouzsPerm(c, 'scm.payment_voucher.post');
 const NO_PERM = { error: "You don't have permission to read the financial statements." };
@@ -116,9 +125,14 @@ export const pnlReport = async (c: any): Promise<Response> => {
     return c.json({ error: 'bad_range', message: 'from and to must be YYYY-MM-DD.' }, 400);
   }
   const sb = c.get('supabase');
-  const [sums, accs] = await Promise.all([loadSums(sb, co.companyId, from, to), loadAccounts(sb, co.companyId)]);
+  const [sums, accs, laid] = await Promise.all([
+    loadSums(sb, co.companyId, from, to),
+    loadAccounts(sb, co.companyId),
+    resolveLayout(sb, allowedIds(c), 'pnl'),
+  ]);
   if (!sums.ok) return c.json({ error: 'load_failed', reason: sums.reason }, 500);
   if (!accs.ok) return c.json({ error: 'load_failed', reason: accs.reason }, 500);
+  if (!laid.ok) return c.json({ error: 'load_failed', reason: laid.reason }, 500);
   const secOf = sectionResolver(accs.accounts);
   const rows: Sectioned[] = sums.sums.map((r) => ({ r, section: secOf(r) }));
 
@@ -132,9 +146,23 @@ export const pnlReport = async (c: any): Promise<Response> => {
   const profitBeforeTaxSen = grossProfitSen + total(otherIncome) - total(expenses);
   const netProfitSen = profitBeforeTaxSen - total(taxation);
 
+  /* Every % on the P&L is of sales — nothing to divide by means no %. */
+  const baseSen = total(tradingIncome) !== 0 ? total(tradingIncome) : null;
+  const onTree = (block: string, ls: ReportLine[]): LaidNode[] =>
+    layOutBlock(laid.layout.blocks[block] ?? [], ls, co.companyId, baseSen);
+
   return c.json({
     from, to,
     tradingIncome, costOfSales, otherIncome, expenses, taxation,
+    layout: {
+      stored: laid.stored,
+      baseSen,
+      tradingIncome: onTree('tradingIncome', tradingIncome),
+      costOfSales: onTree('costOfSales', costOfSales),
+      otherIncome: onTree('otherIncome', otherIncome),
+      expenses: onTree('expenses', expenses),
+      taxation: onTree('taxation', taxation),
+    },
     totals: {
       tradingIncomeSen: total(tradingIncome),
       costOfSalesSen: total(costOfSales),
@@ -158,9 +186,14 @@ export const balanceSheetReport = async (c: any): Promise<Response> => {
     return c.json({ error: 'bad_date', message: 'asOf must be YYYY-MM-DD.' }, 400);
   }
   const sb = c.get('supabase');
-  const [sums, accs] = await Promise.all([loadSums(sb, co.companyId, null, asOf), loadAccounts(sb, co.companyId)]);
+  const [sums, accs, laid] = await Promise.all([
+    loadSums(sb, co.companyId, null, asOf),
+    loadAccounts(sb, co.companyId),
+    resolveLayout(sb, allowedIds(c), 'balance_sheet'),
+  ]);
   if (!sums.ok) return c.json({ error: 'load_failed', reason: sums.reason }, 500);
   if (!accs.ok) return c.json({ error: 'load_failed', reason: accs.reason }, 500);
+  if (!laid.ok) return c.json({ error: 'load_failed', reason: laid.reason }, 500);
   const secOf = sectionResolver(accs.accounts);
   const rows: Sectioned[] = sums.sums.map((r) => ({ r, section: secOf(r) }));
 
@@ -176,9 +209,21 @@ export const balanceSheetReport = async (c: any): Promise<Response> => {
   const assetsSen = total(assets);
   const liabilitiesSen = total(liabilities);
   const equitySen = total(equity);
+  /* Every % on the balance sheet is of total assets, both sides (owner
+     2026-09-14: balance sheet 也需要) — nothing to divide by means no %. */
+  const baseSen = assetsSen !== 0 ? assetsSen : null;
+  const onTree = (block: string, ls: ReportLine[]): LaidNode[] =>
+    layOutBlock(laid.layout.blocks[block] ?? [], ls, co.companyId, baseSen);
   return c.json({
     asOf,
     assets, liabilities, equity,
+    layout: {
+      stored: laid.stored,
+      baseSen,
+      assets: onTree('assets', assets),
+      liabilities: onTree('liabilities', liabilities),
+      equity: onTree('equity', equity),
+    },
     totals: {
       assetsSen, liabilitiesSen, equitySen, earningsSen,
       /* 0 or the ledger is broken — shown, never absorbed. */

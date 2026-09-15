@@ -1,0 +1,58 @@
+name: Send named documents to AutoCount again (plan / apply)
+
+# Queues, through the Worker's own enqueueEdit, a keyed edit of each named
+# sales order, purchase order, delivery order, goods receipt, sales invoice or
+# purchase invoice as it is in the ERP now
+# (backend/scripts/resend-ac-document-edits.mjs, docs/bugs/0903, 0914). For a
+# document AutoCount holds with values that differ from ours, or whose last
+# edit was refused for a cause since fixed. Default 'plan' composes each edit
+# and rolls it back; 'apply' queues and verifies.
+#
+# Manual only, own concurrency group.
+
+on:
+  workflow_dispatch:
+    inputs:
+      doc_nos:
+        description: "Document numbers, comma separated (HC-PO-2609-032,HC-SO-004928). At most 30"
+        required: true
+        type: string
+      mode:
+        description: "plan (default, queues NOTHING) or apply"
+        required: true
+        default: "plan"
+        type: choice
+        options: ["plan", "apply"]
+      confirm:
+        description: "Required for apply: send these documents to AutoCount as they are now"
+        required: false
+        default: ""
+
+concurrency:
+  group: resend-ac-document-edits
+  cancel-in-progress: false
+
+jobs:
+  resend:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      # tsx: the script imports the Worker's enqueueEdit from src/.
+      - run: npx tsx scripts/resend-ac-document-edits.mjs
+        env:
+          DOC_NOS: ${{ inputs.doc_nos }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
+          NODE_OPTIONS: --dns-result-order=ipv4first

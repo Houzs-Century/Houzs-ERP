@@ -17,8 +17,9 @@ import { requireActiveCompanyId } from '../lib/companyScope';
 import { paginateAll } from '../lib/paginate-all';
 import { SO_NOT_AN_ORDER } from '../shared/so-deliverable-states';
 import { loadAccounts, loadSums, sectionResolver } from './accounting-reports';
+import { allowedIds, resolveLayout } from './accounting-report-layouts';
 import {
-  buildPerformanceReport, loadPerformanceSettings, savePerformanceSettings,
+  buildPerformanceReport, loadPerformanceSettings, performanceLayout, savePerformanceSettings,
   type PerfExpense, type PerfLine, type PerfOrder,
 } from '../../acc/performance-pnl';
 
@@ -92,7 +93,11 @@ export const performanceReport = async (c: Ctx): Promise<Response> => {
   if (acctErr) return c.json({ error: 'load_failed', reason: failed(acctErr) }, 500);
   const account = acct ? { code: String((acct as { account_code: string }).account_code), name: String((acct as { account_name?: string | null }).account_name ?? '') } : null;
 
-  return c.json(buildPerformanceReport({ from, to, orders, lines, expenses, otherIncome, settings: st.settings, account }));
+  /* The account part on the report's own layout (docs/bugs/0912). */
+  const laid = await resolveLayout(sb, allowedIds(c), 'performance');
+  if (!laid.ok) return c.json({ error: 'load_failed', reason: laid.reason }, 500);
+  const report = buildPerformanceReport({ from, to, orders, lines, expenses, otherIncome, settings: st.settings, account });
+  return c.json({ ...report, layout: performanceLayout(report, laid.layout, companyId, laid.stored) });
 };
 
 /* ── POST /accounting/reports/performance/settings {rateBp, account} ─────── */
