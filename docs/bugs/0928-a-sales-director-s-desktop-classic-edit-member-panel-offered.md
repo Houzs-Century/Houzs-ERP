@@ -62,7 +62,8 @@ resend or delete; a Save sends only applied keys, and a differing hidden alias
 stays out of the body; a full admin still gets every field and action and a
 changed email still goes out; and `Team.tsx` hands `salesDirScoped` to both the
 tab and the panel. Proved RED: with the offer rule disabled (every write
-offered), the scoped-director tests fail on the offered Email field, the
-offered Change photo button and a Save body carrying `email_alias: null`.
+offered), 6 of 11 failed: the three offered-fields and offered-actions tests,
+the hidden-alias Save whose body carried `email_alias: null`, and the two
+helper tests.
 
 **Ref.** fix/team-classic-edit-member-scoped-director, 2026-09-15.
