@@ -1282,6 +1282,11 @@
     },
     {
       "check": "D1",
+      "key": "ADDRESS1,ADDRESS2,ADDRESS3,ADDRESS4,AGENT,BILL_TO_ADDRESS,BRANDING,BUILDING_TYPE,CITY,CURRENCY,CUSTOMER_ID,CUSTOMER_PO_IMAGE_B64,CUSTOMER_SO_NO,CUSTOMER_STATE,CUSTOMER_TYPE,DEBTOR_CODE,DEBTOR_NAME,EMAIL,EMERGENCY_CONTACT_NAME,EMERGENCY_CONTACT_PHONE,EMERGENCY_CONTACT_RELATIONSHIP,HUB_ID,HUB_NAME,INSTALL_TO_ADDRESS,PHONE,POSTCODE,REF,SALES_LOCATION,SHIP_TO_ADDRESS,SO_DATE,VENUE,VENUE_ID|backend/src/scm/shared/so-identity-lock.ts frontend/src/vendor/shared/so-identity-lock.ts",
+      "why": "A VENDORED TWIN, not a second decision: the Sales Order header columns a live Delivery Order / Sales Invoice snapshots and so freezes (owner 2026-05-31). One home in backend/src/scm/shared/so-identity-lock.ts, read by the header PATCH and the amendment routes; the byte-identical copy under frontend/src/vendor/shared/ exists since 2026-09-15 because a partly delivered order now opens for edit (per-line freeze) and the desktop and phone editors must grey out exactly the fields the server refuses. Refereed by frontend/src/vendor/shared/so-line-freeze.canonical.test.ts (byte compare)."
+    },
+    {
+      "check": "D1",
       "key": "AFTER,BEFORE,BETWEEN,ON,PRESET|backend/src/scm/shared/so-list-filter-model.ts frontend/src/vendor/shared/so-list-filter-model.ts",
       "why": "THE SO LIST DATE-FILTER OPERATORS. ONE module with two byte-identical homes: the SO list endpoint parses the second-level filters with the backend copy and the phone sheet / desktop bar build them with the vendored copy (the browser cannot import backend/src). Refereed by frontend/src/vendor/shared/so-list-filter-model.canonical.test.ts (byte compare), so the two cannot diverge."
     },

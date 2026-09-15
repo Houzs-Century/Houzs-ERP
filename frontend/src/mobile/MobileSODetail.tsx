@@ -34,7 +34,7 @@ import { formatPhone } from "../vendor/shared/phone";
 import { orderLineIdentity } from "@2990s/shared";
 import {
   CANCELLABLE_STATUSES,
-  isLocked as isSoLocked,
+  isLocked as isSoLocked, soDownstreamHardLocked,
   procLockActive as soProcLockActive,
   amendmentEligible as soAmendmentEligible, migratedReadonly as soMigratedReadonly, migratedReadonlyReason as soMigratedReason,
   deriveBalance,
@@ -155,9 +155,9 @@ type SoHeader = {
   paid_sen_total: number | null;
   balance_sen: number | null;
   /* Tier 2 downstream-lock + delivery progress — stamped by the detail GET
-     (same fields the desktop SO Detail / list read). has_children = a
-     non-cancelled DO/SI references this SO (locks Edit + Cancel). */
-  has_children: boolean | null;
+     (same fields the desktop SO Detail / list read). has_children = a live DO/SI
+     references this SO (locks Cancel); downstream_fully_frozen = every line is on one (locks Edit). */
+  has_children: boolean | null; downstream_fully_frozen?: boolean | null;
   delivery_state: string | null;
   /* SO-amendment gate flags (Phase 1-C, read-only) — the GET /:docNo endpoint
      derives these (backend mfg-sales-orders.ts). amendment_eligible = the SO is
@@ -447,10 +447,10 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav }: { 
      - Cancel is offered only on in-flight statuses (CONFIRMED / IN_PRODUCTION /
        READY_TO_SHIP), never once SHIPPED+ / INVOICED / CLOSED — those carry
        downstream docs (CANCELLABLE_STATUSES).
-     - isLocked = SHIPPED+ terminal status OR a non-cancelled DO/SI references it
-       (has_children). Mirrors SalesOrderDetail.isLocked. */
+     - isLocked = SHIPPED+ terminal status OR every line is on a live DO/SI
+       (soDownstreamHardLocked, owner 2026-09-15). Mirrors SalesOrderDetail.isLocked. */
   const rawStatus = (h?.status ?? "").toUpperCase();
-  const hasChildren = Boolean(h?.has_children);
+  const hasChildren = soDownstreamHardLocked(h);
   const migratedLocked = soMigratedReadonly(h), canCancel = !migratedLocked && CANCELLABLE_STATUSES.includes(rawStatus);
   const isLocked = migratedLocked || isSoLocked(h?.status, hasChildren); // migrated sits OUTSIDE: there is no override or amendment route out of it
 
@@ -839,7 +839,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav }: { 
                 {migratedLocked ? soMigratedReason(h)
                   : processingLocked ? "Locked — the processing date has passed and this order was proceeded. Line items can't be edited."
                   : hasChildren
-                  ? "Locked — a delivery order or invoice references this SO. Line items can't be edited."
+                  ? "Locked — every line is already on a delivery order or invoice. Line items can't be edited."
                   : "Locked — this order has moved past editing. Line items can't be edited."}
               </div>
             ) : amendmentEligible ? (

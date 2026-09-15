@@ -62,6 +62,8 @@ import { soIsMigratedShape } from './so-is-migrated';
 import { routingNote, type AmendmentFieldKind } from '../shared/amendment-routing';
 import { soAmendableHeaderFields } from '../shared/so-field-policy';
 import { canonicaliseSoHeaderChanges } from '../shared/so-processing-date';
+import { readSoLineFreeze, soLineWriteRefusal } from './downstream-lock';
+import { SO_IDENTITY_LOCK_COLS } from '../shared/so-identity-lock';
 
 /* The routable field atoms an SO amendment moves — lines + header — for the audit
    routing note. Mirrors the frontend amendmentLineFieldKinds / soHeaderFieldKind
@@ -336,6 +338,30 @@ export async function applySoAmendment(
     .eq('amendment_id', amendmentId);
   if (lineErr) throw new Error(`applySoAmendment: amendment lines load failed: ${lineErr.message}`);
   const amendmentLines = (lineRows ?? []) as AmendmentLineRow[];
+
+  /* (1b) FROZEN LINES (owner 2026-09-15, shared/so-line-freeze.ts). A line a live
+     Delivery Order / Sales Invoice carries cannot be changed or removed — and a
+     delivery order raised between SUBMIT and APPROVE freezes it just the same,
+     so the verdict is re-read here, before anything is written. The same read
+     keeps the header cascades below off the frozen lines. */
+  const freezeRead = await readSoLineFreeze(sb, docNo);
+  const frozenRefusal = soLineWriteRefusal(freezeRead, amendmentLines
+    .filter((l) => String(l.change_type ?? '').toUpperCase() !== 'ADD' && l.sales_order_item_id)
+    .map((l) => String(l.sales_order_item_id)));
+  if (frozenRefusal) throw new Error(frozenRefusal.message);
+  if (freezeRead.ok && freezeRead.freeze.hasLiveDownstream) {
+    const lockedCols = Object.keys(canonicaliseSoHeaderChanges(amendment.header_changes ?? null) ?? {})
+      .map((k) => AMENDABLE_HEADER_FIELDS[k]).filter((col) => col && SO_IDENTITY_LOCK_COLS.has(col));
+    if (lockedCols.length > 0) {
+      throw new Error(`This Sales Order now has a Delivery Order / Sales Invoice, so customer, address and contact changes can no longer be applied (${lockedCols.join(', ')}).`);
+    }
+  }
+  /* `null` = every line is frozen (a downstream line names no SO line): no cascade at all. */
+  const frozenLineFilter: string | null = !freezeRead.ok || freezeRead.freeze.unlinked
+    ? null
+    : `(${[...freezeRead.freeze.frozenLineIds].map((id) => `"${id}"`).join(',')})`;
+  const skipFrozen = <Q extends { not: (col: string, op: string, v: string) => Q }>(q: Q): Q =>
+    frozenLineFilter && frozenLineFilter !== '()' ? q.not('id', 'in', frozenLineFilter) : q;
 
   // (2) Snapshot the CURRENT SO before touching a single line. Returns the next
   //     revision to stamp once the diffs land.
@@ -836,8 +862,8 @@ export async function applySoAmendment(
        its per-line override flag clears, so MRP's order-by derivation (which
        reads line_delivery_date) stays accurate. Without this an approved date
        amendment would move the header but leave every line on the old date. */
-    if ('customerDeliveryDate' in headerChanges) {
-      const { error: cascErr } = await sb.from('mfg_sales_order_items')
+    if ('customerDeliveryDate' in headerChanges && frozenLineFilter !== null) {
+      const { error: cascErr } = await skipFrozen(sb.from('mfg_sales_order_items')
         .update({
           /* Coerced, not `?? null`: the header loop twenty lines up already
              assumes a stored change can be blank (`value === '' ? null : value`),
@@ -848,7 +874,7 @@ export async function applySoAmendment(
           line_delivery_date: dateOrNull(headerChanges['customerDeliveryDate']),
           line_delivery_date_overridden: false,
         })
-        .eq('doc_no', docNo);
+        .eq('doc_no', docNo));
       if (cascErr) {
         if ((sb as unknown as { __atomicCommand?: boolean }).__atomicCommand === true) {
           throw new Error(`applySoAmendment: delivery-date cascade failed: ${cascErr.message}`);
@@ -870,14 +896,14 @@ export async function applySoAmendment(
        per-line override during a routine edit). Here the change has passed a
        supplier confirmation + an explicit approval, so every non-cancelled line
        follows the approved address. FLAGGED in BUG-HISTORY for owner review. */
-    if ('customerState' in headerChanges && c) {
+    if ('customerState' in headerChanges && c && frozenLineFilter !== null) {
       const reboundWh = await deriveWarehouseIdFromState(sb, headerChanges['customerState'] ?? null, c);
       if (reboundWh) {
-        const { error: whErr } = await sb
+        const { error: whErr } = await skipFrozen(sb
           .from('mfg_sales_order_items')
           .update({ warehouse_id: reboundWh })
           .eq('doc_no', docNo)
-          .eq('cancelled', false);
+          .eq('cancelled', false));
         if (whErr) {
           if ((sb as unknown as { __atomicCommand?: boolean }).__atomicCommand === true) {
             throw new Error(`applySoAmendment: warehouse rebind failed: ${whErr.message}`);

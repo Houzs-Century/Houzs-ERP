@@ -780,7 +780,9 @@ Four distinct locks. Only one of them keys off the status column.
 
 | Lock | Keys off | Blocks | The message |
 |---|---|---|---|
-| **Downstream (HARD)** — `scm/lib/downstream-lock.ts` | the EXISTENCE of a live (non-CANCELLED) DO or SI, **not** any status | header/line MUTATION and CANCEL. Raising the NEXT document is deliberately still allowed | `SO has a Delivery Order / Sales Invoice — delete or cancel it first to edit` (409) |
+| **Downstream, per LINE (HARD)** — rule `scm/shared/so-line-freeze.ts`, read `readSoLineFreeze` in `scm/lib/downstream-lock.ts` | a live (non-CANCELLED, **DRAFT counts**) DO line or SI line that NAMES the SO line (`so_item_id`) — **not** any status, not the order | a change / delete / TBC fill-in / price override of THAT line, and a CHANGE / REMOVE of it by amendment. Its unfrozen siblings, new lines and the date pair stay open | `This line is already on a Delivery Order or Sales Invoice, so it is locked…` (409 `so_line_frozen`) |
+| **Downstream, whole order (HARD)** — same module | every live line is frozen (nothing left to convert), or any live DO/SI line names NO SO line | a new line, and the editors lock as before | `Everything on this Sales Order is already on a Delivery Order or Sales Invoice…` (409 `so_has_downstream`); amendment submit `so_hard_locked` |
+| **Downstream, header identity + cancel (HARD)** — `soHasDownstream` + `shared/so-identity-lock.ts` | the EXISTENCE of any live DO or SI on the order | CANCEL, and a change to the 32 columns a DO/SI snapshots (customer, addresses, contact, currency…). Dates, note, payments, salesperson (with `scm.so.attribute_other`) stay open | `SO has a Delivery Order / Sales Invoice — delete or cancel it first to edit` (409) / `so_identity_locked` |
 | **Processing-date (SOFT)** — `soProcessingLocked` | `processing_date` strictly BEFORE today in MYT (UTC+8), and status not DRAFT/CANCELLED | direct edit — routes the change through the amendment flow | `Processing date has passed — this Sales Order is locked. (Locked orders are what we PO to the supplier.)` (409) |
 | **PO-raised (SOFT)** — `scm/lib/so-po-lock.ts` | a live (non-CANCELLED, **DRAFT counts**) PO claims any of the SO's lines | direct edit — routes to amendment | `A Purchase Order has already been raised for this order — submit an amendment so purchasing can re-send it to the supplier.` (409) |
 | **Cancel-final** | `status === 'CANCELLED'` | any move off CANCELLED | `A cancelled Sales Order cannot be reactivated…` / `cancel_is_final` when AutoCount also holds it (409) |
@@ -793,9 +795,35 @@ Four distinct locks. Only one of them keys off the status column.
 > flipped a two-year backlog to amendment-only, so the owner scoped it. Do not
 > read the lock's existence as covering Houzs.
 
+> **The per-line freeze (owner 2026-09-15).** 「如果已经送货了的，你就 remain 着，
+> 可能要放灰色之类的，设置成不可以被 edit」 / 「它为什么可以 edit 的原理，是因为它还有
+> 东西可以被 convert」. Until then ONE live DO anywhere locked every line, so the
+> undelivered half of a partly delivered order could not be touched
+> (`docs/bugs/0916-a-partly-delivered-sales-order-locked-every-line-so-its-unde.md`).
+> - A partly delivered line (ordered 3, delivered 1) is WHOLLY frozen; so is a line
+>   on a DRAFT DO and a line on an SI.
+> - The detail payload stamps `downstream_frozen` on each line and
+>   `downstream_fully_frozen` on the header. Desktop (`SalesOrderDetail.tsx`) and
+>   phone (`MobileNewSO.tsx`) grey the frozen line (`vendor/scm/lib/so-frozen-line-style.ts`)
+>   and disable it; the page-level lock (`isLocked` in `so-detail-gates.ts`) reads
+>   `soDownstreamHardLocked(header)`, which falls back to `has_children` for a
+>   payload without the new flag. `amendment_eligible` likewise uses the fully-frozen
+>   verdict, so a partly delivered processing-locked order can still amend.
+> - The header Delivery Date / State cascades skip frozen lines: `apply_so_header_cas`
+>   (migration `20260915T1200_scm_so_header_cas_skip_frozen_lines.sql`, rules 1 and 3
+>   restated in SQL), `applySoAmendment`, and the desktop / phone client cascades.
+> - Server-side followers leave frozen lines alone: the free-gift reconciler does
+>   not delete a frozen gift line, and the delivery-fee rebuild does not run while
+>   a fee line is frozen (adding a line to a partly delivered order does not
+>   re-price a delivered delivery fee).
+> - Decided without a ruling, flagged for the owner: the header identity fields
+>   still freeze on the FIRST live DO/SI (the 2026-05-31 rule is unchanged), and a
+>   live DO/SI line that names no SO line freezes the whole order (3 such DO lines
+>   on 3 orders in production, 2026-09-15).
+
 Both soft locks fail CLOSED on a read error, and so does the downstream lock — an
-unreadable count refuses with `downstream_check_failed` rather than being spent
-as a zero.
+unreadable count or line read refuses with `downstream_check_failed` rather than
+being spent as a zero.
 
 A discard (`DELETE /:docNo`) needs MORE than `status === 'DRAFT'`: `soDiscardBlocked`
 also refuses when any live downstream document exists, and when the order carries
@@ -3117,9 +3145,11 @@ customer's vouchers on an order that is still live. So a cancel needs
 ### The downstream lock — and why AutoCount cares
 
 An SO with any non-cancelled Delivery Order or Sales Invoice against it cannot
-be cancelled and its lines cannot be edited (`soHasDownstream`, 409
-`so_has_downstream`). Emitting the NEXT DO is still allowed — only mutation and
-cancel are blocked.
+be cancelled and its identity fields cannot change (`soHasDownstream`). Since
+2026-09-15 its LINES lock one by one: a line a live DO / SI line names is frozen
+(409 `so_line_frozen`), its siblings stay editable, and only an order with nothing
+left to convert refuses a new line (409 `so_has_downstream`) — see §0.7.
+Emitting the NEXT DO is still allowed.
 
 Owner, 2026-08-10, on the AutoCount cutover:
 *"已经转到下游的单据, AutoCount 不许取消/改动 ... 是的 我们也是要这样"*.

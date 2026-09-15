@@ -92,6 +92,7 @@ import {
   deriveBalance as soDeriveBalance,
   migratedReadonly as soMigratedReadonly,
   migratedReadonlyReason as soMigratedReadonlyReason,
+  soDownstreamHardLocked,
 } from "../../vendor/scm/lib/so-detail-gates";
 import { MigratedReadonlyBanner } from "../../vendor/scm/components/MigratedReadonlyBanner";
 import { customerRefOf } from '../../lib/customer-ref';
@@ -146,10 +147,12 @@ type SoHeader = {
   // finally the same word (mig 0284 renamed it from internal_expected_dd).
   processing_date?: string | null;
   // Server-derived SO-lock / amendment flags (see the /:docNo detail handler).
-  // has_children = a non-cancelled DO/SI references this SO (hard lock);
+  // has_children = a non-cancelled DO/SI references this SO; downstream_fully_frozen =
+  // every line is on one, the hard lock (a partly delivered order stays editable, owner 2026-09-15);
   // amendment_eligible = processing-locked but still amendable; has_open_amendment
   // = an in-flight amendment already exists.
   has_children?: boolean | null;
+  downstream_fully_frozen?: boolean | null;
   amendment_eligible?: boolean | null;
   has_open_amendment?: boolean | null;
   customer_delivery_date: string | null;
@@ -644,7 +647,7 @@ function SalesOrderDetailV2ReadOnly() {
   // flow (or is disabled when the SO is hard-locked by a downstream DO/SI)
   // instead of always presenting a plain "Edit" that opens editable fields.
   const hardLocked = salesOrder
-    ? isSoLocked(salesOrder.status, Boolean(salesOrder.has_children))
+    ? isSoLocked(salesOrder.status, soDownstreamHardLocked(salesOrder))
     : false;
   const canAmend = salesOrder ? soAmendmentEligible(salesOrder, hardLocked) : false;
   const hasOpenAmend = Boolean(salesOrder?.has_open_amendment);

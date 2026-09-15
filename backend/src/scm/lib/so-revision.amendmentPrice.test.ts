@@ -55,6 +55,11 @@ class Query {
   in(col: string, val: unknown[]) { this.filters.push({ kind: 'in', col, val }); return this; }
   or() { return this; }
   lte() { return this; }
+  /* The frozen-line read (downstream-lock.readSoLineFreeze) pages with range and
+     the header cascades exclude frozen ids with not(); these stores carry no
+     delivery order, so neither changes a result. */
+  range() { return this; }
+  not() { return this; }
   order(col: string, opts?: { ascending?: boolean }) { this.orders.push({ col, asc: opts?.ascending !== false }); return this; }
   limit(n: number) { this.limitN = n; return this; }
   maybeSingle() { this.wantSingle = true; return this; }
