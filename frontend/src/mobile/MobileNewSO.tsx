@@ -128,7 +128,9 @@ type ScanLineMetaSeed = { rawText: string; suggestedCode: string; confidence: nu
 /* Line category — drives which variant panel shows (matches the desktop
    SoLineCard). Only sofa/bedframe have mandatory variant panels; every other
    group (mattress/accessory/others) is a plain line. */
-type LineCat = "" | "sofa" | "bedframe" | "mattress";
+/* fabric_accessory = "Sofa Accessory" (owner 2026-09-14): colour only, same fabric
+   picker as a sofa. Must match desktop SoLineCard. tasks/PLAN-sofa-accessories-category.md */
+type LineCat = "" | "sofa" | "bedframe" | "mattress" | "fabric_accessory";
 
 type LineItem = {
   key: string;
@@ -342,7 +344,8 @@ function newLine(): LineItem {
 /* item_group (catalog category, lowercase) → the line's `cat` axis. */
 function catForGroup(group: string | null | undefined): LineCat {
   const g = (group ?? "").toLowerCase();
-  return g === "sofa" ? "sofa" : g === "bedframe" ? "bedframe" : g === "mattress" ? "mattress" : "";
+  return g === "sofa" ? "sofa" : g === "bedframe" ? "bedframe" : g === "mattress" ? "mattress"
+    : g === "fabric_accessory" ? "fabric_accessory" : "";
 }
 
 const isBlankVar = (v: unknown): boolean =>
@@ -2977,7 +2980,7 @@ function LineCard({
     if (!picked) return;
     const resolved = String(skuCategoryQ.data ?? "").toLowerCase();
     const patch: Partial<LineItem> = {};
-    if ((resolved === "sofa" || resolved === "bedframe" || resolved === "mattress")
+    if ((resolved === "sofa" || resolved === "bedframe" || resolved === "mattress" || resolved === "fabric_accessory")
         && line.cat !== resolved) {
       patch.cat = resolved as LineCat;
       patch.itemGroup = resolved;
@@ -3113,6 +3116,13 @@ function LineCard({
         {/* Category-aware variant panels — REAL hooks. */}
         {picked && !pools.ready && (
           <div style={{ fontSize: 10.5, color: "#9aa093", padding: "4px 0" }}>Loading options{"…"}</div>
+        )}
+
+        {picked && pools.ready && line.cat === "fabric_accessory" && (
+          <FabricField
+            value={fabVal} colourLabel={fabColourLabel}
+            invalid={showErrors && missing.has("fabricCode")} onOpen={onOpenFabricPicker}
+          />
         )}
 
         {picked && pools.ready && line.cat === "sofa" && (

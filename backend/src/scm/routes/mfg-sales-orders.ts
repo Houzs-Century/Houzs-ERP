@@ -51,6 +51,7 @@ import { signalNullWarehouseRows } from '../lib/null-warehouse-signal';
    without importing a 12,000-line router. Re-exported below for the callers
    that still name this module. */
 import { deriveAccountSheet, PAYMENT_COLS, recordSoPaymentRow, afterSoPaymentRemoved, bookSoPaymentBestEffort, repostSoPaymentBestEffort, soPaymentFieldChanges, type SoPaymentRowInput } from '../lib/so-payment-row';
+import { enqueueSoPaymentEdit } from '../lib/ac-so-payment-edit';
 import { recomputeSiPaidForOrder } from '../lib/si-order-deposit';
 export { recordSoPaymentRow };
 export type { SoPaymentRowInput };
@@ -71,6 +72,7 @@ import {
 } from '../shared/so-field-policy';
 import { paymentMayChange, SO_PAYMENT_AMEND } from '../../acc/payment-reconciled';
 import { AMEND_SOURCE, ledgerFieldChange } from '../../acc/payment-corrections';
+import { APPROVAL_CODE_SEARCH_CAP, approvalCodeOrPart, approvalCodesByOrder } from '../lib/so-list-approval-codes';
 import { paymentReasonRule } from '../lib/so-payment-reason';
 import { paymentVersionGuard, soCasGrace, soCasGraceOpen } from '../lib/so-cas';
 /* SO-SKU spec P2 — every charge is a SKU line. Predicates from P1; the
@@ -115,6 +117,7 @@ import { resolveCreateWarehouseDefaults } from '../lib/so-create-warehouse-defau
 import { planStateRebindForDoc, stateChangeConflictBody } from '../lib/so-state-warehouse-rebind';
 import { canonicalizeMyState } from '../lib/canonical-state';
 import { deriveLineBrandingFromProduct, deriveHeaderBrandingFromLines } from '../lib/derive-line-branding';
+import { deriveListFirstItemBranding, type ListBrandingLine } from '../lib/so-list-first-item-branding';
 import { resolveBrandLetterheadKey } from '../lib/brand-letterhead';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { correctedSizeDescription, loadSizeSkuMap } from '../lib/size-variant-description';
@@ -1232,6 +1235,26 @@ mfgSalesOrders.get('/', async (c) => {
     const sortCol = SORT_COLS.has(rawCol) ? rawCol : 'so_date';
     const sortAsc = rawDir === 'asc';
 
+    /* An order is also found by a card payment's APPROVAL CODE (owner
+       2026-09-15, docs/bugs/0909) — Finance reads one off a merchant report and
+       wants the order. The code lives on the payment rows, which the header
+       `.or()` below cannot see, so the orders whose payments carry EXACTLY the
+       typed code are read first — before the list builder, so the header
+       search stays the header's, and an exact match rather than a substring,
+       so no trigram index is owed — and admitted as ONE in-list term on BOTH
+       queries. A read that fails refuses the list: a search that silently
+       dropped its matches would be a wrong answer, not an empty one. */
+    let codePart: string | null = null;
+    {
+      const code = String(c.req.query('q') ?? '').trim();
+      if (code) {
+        const { data, error } = await scopeToCompany(sb.from('mfg_sales_order_payments')
+          .select('so_doc_no').eq('approval_code', code).limit(APPROVAL_CODE_SEARCH_CAP), c);
+        if (error) return c.json({ error: 'load_failed', reason: `approval codes: ${error.message}` }, 500);
+        codePart = approvalCodeOrPart(((data ?? []) as Array<{ so_doc_no: string }>).map((p) => p.so_doc_no));
+      }
+    }
+
     let q = sb.from('mfg_sales_orders_with_payment_totals').select(LIST_COLS, { count: 'exact' }).order(sortCol, { ascending: sortAsc });
     /* unique tiebreaker so range paging can't skip/repeat rows sharing the sort key */
     if (sortCol !== 'doc_no') q = q.order('doc_no', { ascending: sortAsc });
@@ -1257,6 +1280,7 @@ mfgSalesOrders.get('/', async (c) => {
         `agent.ilike.%${s}%`, `sales_location.ilike.%${s}%`, `ref.ilike.%${s}%`,
         `customer_so_no.ilike.%${s}%`, `branding.ilike.%${s}%`,
         ...phoneSearchOrParts(s, search, normalizePhone),
+        ...(codePart ? [codePart] : []),
       ].join(','));
     }
     /* Optional so_date window (ISO yyyy-mm-dd, inclusive). The mobile list's
@@ -1332,7 +1356,8 @@ mfgSalesOrders.get('/', async (c) => {
       else if (status) { const vals = soStatusesForTab(status); moneyQ = status === 'OTHER' ? moneyQ.or(otherStatusOr) : (vals.length === 1 ? moneyQ.eq('status', vals[0]) : moneyQ.in('status', vals)); }
       if (search) {
         const ms = escapeForOr(search);
-        if (ms) moneyQ = moneyQ.or(`doc_no.ilike.%${ms}%,debtor_name.ilike.%${ms}%,debtor_code.ilike.%${ms}%,agent.ilike.%${ms}%,sales_location.ilike.%${ms}%,ref.ilike.%${ms}%,customer_so_no.ilike.%${ms}%,branding.ilike.%${ms}%`);
+        /* The SAME term as the page query — the strip must count what the rows show. */
+        if (ms) moneyQ = moneyQ.or(`doc_no.ilike.%${ms}%,debtor_name.ilike.%${ms}%,debtor_code.ilike.%${ms}%,agent.ilike.%${ms}%,sales_location.ilike.%${ms}%,ref.ilike.%${ms}%,customer_so_no.ilike.%${ms}%,branding.ilike.%${ms}%${codePart ? `,${codePart}` : ''}`);
       }
       if (from) moneyQ = moneyQ.gte('so_date', from);
       if (to) moneyQ = moneyQ.lte('so_date', to);
@@ -1420,7 +1445,7 @@ mfgSalesOrders.get('/', async (c) => {
     /* chunkIn on every `docNos` read below — the LEGACY arm reads `.limit(500)`, so each URL carried 500 doc numbers (~9.5KB). All feed doc-keyed maps. */
     const payRowsProm = (async () =>
       (await chunkIn(docNos, (batch, from, to) => sb.from('mfg_sales_order_payments')
-        .select('so_doc_no, method, online_type').in('so_doc_no', batch).order('so_doc_no').range(from, to))).data)();
+        .select('so_doc_no, method, online_type, approval_code, paid_at, created_at').in('so_doc_no', batch).order('so_doc_no').range(from, to))).data)();
     // DO No. rides this read rather than a query of its own — the list's cost
     // is round-trips, not rows (see so-delivery-order-nos.ts).
     const downstreamProm = Promise.all([
@@ -1495,9 +1520,6 @@ mfgSalesOrders.get('/', async (c) => {
        (resolved SKU-first below), falling back to "Mattress" when the SKU
        carries none; everything else names its category. */
     const cats = new Map<string, Set<string>>();
-    const firstCat = new Map<string, string>();
-    const firstBranding = new Map<string, string | null>();
-    const firstItemCode = new Map<string, string | null>();
     /* Primary warehouse per SO — the FIRST non-null line warehouse_id (mirrors
        the Delivery Planning board's primaryWh = warehouseIds[0]). Drives the
        mobile Orders-list card's warehouse_name. */
@@ -1530,14 +1552,6 @@ mfgSalesOrders.get('/', async (c) => {
       if (it.warehouse_id && !firstWarehouseByDoc.has(it.doc_no)) {
         firstWarehouseByDoc.set(it.doc_no, it.warehouse_id);
       }
-
-      /* Rows arrive ordered by (doc_no, created_at ASC) so the first time we
-         see a doc_no IS its earliest line — record it once. */
-      if (!firstCat.has(it.doc_no)) {
-        firstCat.set(it.doc_no, normCategory(it.item_group));
-        firstBranding.set(it.doc_no, it.branding ?? null);
-        firstItemCode.set(it.doc_no, it.item_code ?? null);
-      }
     }
 
     /* Resolve each line's category from the CATALOG (mfg_products.category),
@@ -1566,43 +1580,15 @@ mfgSalesOrders.get('/', async (c) => {
         if (p.branding && p.branding.trim()) productBranding.set(p.code, p.branding);
       }
     }
-    const resolveLineCat = (code: string | null, group: string): string =>
-      (code ? productCategory.get(code) : undefined) ?? normCategory(group);
-    const MAIN_CATS = new Set(['SOFA', 'BEDFRAME', 'MATTRESS']);
-    /* First MAIN line per doc (catalog-resolved), re-iterating the already
-       (doc_no, line_no, created_at)-ordered itemRows. Falls back to the earliest
-       line captured above when an SO has no sofa/bedframe/mattress line. */
-    const repCat = new Map<string, string>();
-    const repBranding = new Map<string, string | null>();
-    const repCode = new Map<string, string | null>();
-    for (const it of itemRows as unknown as Array<{ doc_no: string; item_group: string; branding: string | null; item_code: string | null }>) {
-      if (repCat.has(it.doc_no)) continue;
-      const cat = resolveLineCat(it.item_code, it.item_group);
-      if (MAIN_CATS.has(cat)) {
-        repCat.set(it.doc_no, cat);
-        repBranding.set(it.doc_no, it.branding ?? null);
-        repCode.set(it.doc_no, it.item_code ?? null);
-      }
-    }
-
-    /* Bedframe-only branding (Commander 2026-07-16): "如果 BEDFRAME only 的话
-       branding 就放 BEDFRAME". When an SO's lines are ALL bedframe — at least
-       one BEDFRAME line and NO branded MATTRESS/SOFA line — its Branding pill
-       reads "BEDFRAME" instead of a blank dash. Built from the SAME catalog-
-       resolved per-line category (resolveLineCat), so a sofa-module line mis-
-       saved with item_group 'others' can't fool it into hiding an AKEMI/2990
-       brand. Non-branded ACCESSORY / SERVICE / OTHERS lines carry no brand and
-       may legitimately ride along, so they don't disqualify. */
-    const resolvedCatsByDoc = new Map<string, Set<string>>();
-    for (const it of itemRows as unknown as Array<{ doc_no: string; item_group: string; item_code: string | null }>) {
-      let s = resolvedCatsByDoc.get(it.doc_no);
-      if (!s) { s = new Set(); resolvedCatsByDoc.set(it.doc_no, s); }
-      s.add(resolveLineCat(it.item_code, it.item_group));
-    }
-    const isBedframeOnly = (docNo: string): boolean => {
-      const s = resolvedCatsByDoc.get(docNo);
-      return !!s && s.has('BEDFRAME') && !s.has('MATTRESS') && !s.has('SOFA');
-    };
+    /* First-item branding inputs — rep MAIN line (catalog-resolved), else the
+       earliest line; mattress SKU-first; bedframe-only -> 'BEDFRAME' (Commander
+       2026-07-16). ONE home since 2026-09-14 so the header-branding backfill
+       writes exactly what this list shows: scm/lib/so-list-first-item-branding.ts. */
+    const firstItemBrandingByDoc = deriveListFirstItemBranding(
+      itemRows as unknown as ListBrandingLine[],
+      productCategory,
+      productBranding,
+    );
 
     /* Commander 2026-05-29 (#19) — Payment Method column summarises the
        payments LEDGER, not just the header's single payment_method field. A
@@ -1615,8 +1601,12 @@ mfgSalesOrders.get('/', async (c) => {
        silently dropped from the summary before).
        One cheap batched read over the same doc_no set already in play. */
     const paymentMethods = new Map<string, Set<string>>();
+    /* The Approval Code column (docs/bugs/0909): each payment's code, by
+       payment date, " + " joined — off the same read. */
+    let approvalCodes = new Map<string, string>();
     {
       const payRows = await payRowsProm;
+      approvalCodes = approvalCodesByOrder((payRows ?? []) as unknown as Array<{ so_doc_no: string; approval_code: string | null; paid_at: string | null; created_at: string | null }>);
       for (const p of payRows as unknown as Array<{ so_doc_no: string; method: string | null; online_type: string | null }>) {
         const m = (p.method ?? '').trim().toLowerCase();
         let label: string;
@@ -1813,33 +1803,15 @@ mfgSalesOrders.get('/', async (c) => {
         today: planningToday,
       });
       /* First-item branding source (PR #266; catalog-resolved + mains-first). */
-      const hasRep = repCat.has(docNo);
-      const fCat = (hasRep ? repCat.get(docNo) : firstCat.get(docNo)) ?? null;
-      (r as Record<string, unknown>).first_item_category = fCat ?? null;
-      let fBranding = (hasRep ? repBranding.get(docNo) : firstBranding.get(docNo)) ?? null;
-      /* MATTRESS reads the SKU FIRST, not just as a fallback (owner 2026-08-18:
-         «mattress follow SKU branding»). The line's own text only survives when
-         the catalog has none. Six live 2990 lines carry the loose spellings
-         "2990" / "2990s" while their SKU says "2990s Mattress"; under the old
-         blank-only borrow they kept the loose text and the label rule needed a
-         normalisation regex to recover from it. Reading the catalog first makes
-         that regex unnecessary — and it is deleted, not left dormant. */
-      if (fCat === 'MATTRESS') {
-        const code = hasRep ? repCode.get(docNo) : firstItemCode.get(docNo);
-        const skuBrand = code ? productBranding.get(code) : undefined;
-        if (skuBrand && skuBrand.trim()) fBranding = skuBrand;
-      }
-      /* Bedframe-only SO → "BEDFRAME" pill (only when no explicit brand text
-         is present, so an AKEMI/2990 line always wins). */
-      if ((!fBranding || !fBranding.trim()) && isBedframeOnly(docNo)) {
-        fBranding = 'BEDFRAME';
-      }
-      (r as Record<string, unknown>).first_item_branding = fBranding;
+      const firstItem = firstItemBrandingByDoc.get(docNo);
+      (r as Record<string, unknown>).first_item_category = firstItem?.category ?? null;
+      (r as Record<string, unknown>).first_item_branding = firstItem?.branding ?? null;
       /* #19 — distinct ledger payment methods, sorted + joined ("Cash + Card").
          Empty string when no payments recorded yet (UI falls back to the
          header payment_method field). */
       const pm = paymentMethods.get(docNo);
       (r as Record<string, unknown>).payment_methods_summary = pm ? [...pm].sort().join(' + ') : '';
+      (r as Record<string, unknown>).approval_codes_summary = approvalCodes.get(docNo) ?? '';
       if (!perGroup) {
         (r as Record<string, unknown>).ready_categories = [];
         (r as Record<string, unknown>).is_fully_ready = false;
@@ -5337,10 +5309,24 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
        decision and is not second-guessed. A null result leaves it blank rather
        than inventing one. */
     if (String((body.branding as string | null | undefined) ?? '').trim() === '') {
+      /* The company's maintained brands, so a sofa whose SKU carries no brand is
+         stamped with what the list shows (ZANOTTI) instead of NULL. An
+         unreadable pool is null and leaves the SKU-only answer. */
+      let listFallback: { companyCode: string | null; brands: string[] } | null = null;
+      try {
+        const brandRows = await c.env.DB.prepare(
+          `SELECT name FROM project_brands WHERE active = 1${activeCompanySql(c)}`
+        ).all<{ name: string }>();
+        listFallback = {
+          companyCode: c.get('companyCode') ?? null,
+          brands: (brandRows.results ?? []).map((b) => String(b.name ?? '').trim()).filter(Boolean),
+        };
+      } catch { listFallback = null; }
       const headerBrand = await deriveHeaderBrandingFromLines(
         sb,
-        rowsWithDoc as unknown as Array<{ item_code?: string | null; branding?: string | null; company_id?: number | null }>,
+        rowsWithDoc as unknown as Array<{ item_code?: string | null; item_group?: string | null; branding?: string | null; company_id?: number | null }>,
         activeCompanyId(c) ?? null,
+        listFallback,
       );
       if (headerBrand) {
         effectiveBrand = headerBrand;
@@ -11067,8 +11053,9 @@ mfgSalesOrders.patch('/:docNo/payments/:id', async (c) => {
      route, because the UPDATE above is the route's own and has no shared core.
      Fires even when only the method changed — recomposing an unchanged BALANCE
      costs one queued edit, while deciding here which fields matter would put a
-     second opinion about the balance rule next to so-outstanding.ts. */
-  await queueAcSoEdit(c, docNo);
+     second opinion about the balance rule next to so-outstanding.ts. HEADER-ONLY,
+     as the insert (docs/bugs/0896): a line AutoCount refuses must not hold the money back. */
+  await enqueueSoPaymentEdit(c.get('supabase'), { companyId: activeCompanyId(c), docNo, createdBy: c.get('houzsUser')?.id ?? null });
 
   // An edited amount also moves what the invoices off this order have settled.
   await recomputeSiPaidForOrder(sb, docNo, co.companyId);
@@ -11175,8 +11162,8 @@ mfgSalesOrders.delete('/:docNo/payments/:id', async (c) => {
   /* A deleted payment raises the outstanding balance, so the account book has
      to be told in the same way an added one does. This is the direction that
      matters most: a book left showing a settled order after the payment was
-     reversed understates what the customer owes. */
-  await queueAcSoEdit(c, docNo);
+     reversed understates what the customer owes. Header-only, as the insert (docs/bugs/0896). */
+  await enqueueSoPaymentEdit(c.get('supabase'), { companyId: activeCompanyId(c), docNo, createdBy: c.get('houzsUser')?.id ?? null });
 
   return c.json({ ok: true });
 });

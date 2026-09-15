@@ -13,6 +13,10 @@
 // fromMrp case here.
 // ----------------------------------------------------------------------------
 
+/* A company-1 bound line's cap also counts MRP-origin purchase orders; re-exported
+   so the PO router (over its size ceiling) keeps one import line. */
+export { loadBoundOrderedQty, boundAwarePicked, isBoundForCompany } from './bound-line-ordered';
+
 export type OverConvertOffender = { soItemId: string; requested: number; remaining: number };
 
 /** Headroom for ONE PO line binding to one SO line, i.e. the largest qty that

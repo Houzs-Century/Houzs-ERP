@@ -110,6 +110,7 @@ import { acParentlessCreateReason, acNotCarriedReason } from './autocount-outbox
 /* Line identity, split out 2026-08-17 for the same cap reason as the two
    imports above. Same function, same call site in dispatchOne. */
 import { lineIdentityGap, persistNewLineKeys, newLineTargetOf } from './autocount-line-keys';
+import { attachPhotos } from './autocount-photo-attach';
 import { readMfgProductBindings } from './supplier-bindings';
 import {
   soLine,
@@ -1658,16 +1659,6 @@ function photosOf(rows: Record<string, unknown>[]): AcOutboxPayload['photos'] {
  * through String.fromCharCode in chunks — whole-array spread blows the call
  * stack on anything of photograph size, which is the entire input class.
  */
-function b64(buf: ArrayBuffer): string {
-  const bytes = new Uint8Array(buf);
-  let out = '';
-  const CHUNK = 0x8000;
-  for (let i = 0; i < bytes.length; i += CHUNK) {
-    out += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
-  }
-  return btoa(out);
-}
-
 async function mark(sb: Sb, id: string, patch: Record<string, unknown>): Promise<void> {
   await sb.from('autocount_outbox')
     /* THE CLAIM COMES OFF HERE, on every outcome, because this is the one place
@@ -1817,38 +1808,14 @@ export async function dispatchOne(
     if (creditor) Object.assign(body, creditor);
   }
 
-  /* THE PHOTOGRAPHS, fetched in the moment they are sent.
-     `payload.photos` names R2 keys; the bytes live in the SO_ITEM_PHOTOS
-     bucket and are turned into base64 here rather than stored in the outbox —
-     see the field's own note for why an append-only table must not carry them.
-
-     BEST-EFFORT PER PICTURE, FATAL FOR NONE. A photograph is not the document:
-     an unreadable object must not stop a price change reaching the account
-     book. What it must not do either is lie — a line whose pictures could not
-     be read sends NO `Photos` key at all, and the service leaves whatever
-     `FurtherDescription` the book already holds. Sending a SHORT list would
-     overwrite five pictures with three. */
-  if (row.op === 'edit' && payload.photos?.length) {
-    const lines = Array.isArray(body.Lines) ? (body.Lines as Array<Record<string, unknown>>) : [];
-    for (const want of payload.photos) {
-      const line = lines.find((l) => Number(l.DtlKey) === want.dtlKey);
-      if (!line || !want.keys.length) continue;
-      try {
-        const jpegs: Array<{ Jpeg: string }> = [];
-        for (const key of want.keys) {
-          const obj = await (env as unknown as { SO_ITEM_PHOTOS?: R2Bucket }).SO_ITEM_PHOTOS?.get(key);
-          if (!obj) throw new Error(`photo not in the bucket: ${key}`);
-          jpegs.push({ Jpeg: b64(await obj.arrayBuffer()) });
-        }
-        if (jpegs.length === want.keys.length) line.Photos = jpegs;
-      } catch (e) {
-        console.warn(
-          `photos not attached to ${row.doc_type} ${row.doc_no} line ${want.dtlKey}: `
-          + (e instanceof Error ? e.message : String(e)),
-        );
-      }
-    }
-  }
+  /* THE PHOTOGRAPHS, fetched in the moment they are sent — keys in the payload,
+     bytes from SO_ITEM_PHOTOS. Per line all or none, an unreadable picture never
+     stops the document, and since docs/bugs/0899 a line whose pictures would
+     take the body past the host's 2 MiB limit is sent without them and the row
+     says so (autocount-photo-attach.ts). */
+  const photoNote = row.op === 'edit' && payload.photos?.length
+    ? await attachPhotos(env, body, payload.photos, `${row.doc_type} ${row.doc_no}`)
+    : null;
 
   const attempts = (row.attempts ?? 0) + 1;
 
@@ -1898,7 +1865,7 @@ export async function dispatchOne(
       ...stamp,
       status: 'sent',
       attempts,
-      last_error: identityGap,
+      last_error: [identityGap, photoNote].filter(Boolean).join(' | ') || null,
       ac_doc_no: result.docNo,
       sent_at: new Date().toISOString(),
     });

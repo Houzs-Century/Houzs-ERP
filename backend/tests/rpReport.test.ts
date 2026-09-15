@@ -26,15 +26,15 @@ const gl = (jeNo: string, date: string, source: string, doc: string | null, code
 
 const world = () => fakeSb({
   accounts: [
-    { company_id: CO, account_code: '310-0010', account_name: 'CASH AT BANK - MAYBANK', acc_money: true, is_active: true },
-    { company_id: CO, account_code: '320-0000', account_name: 'CASH IN HAND', acc_money: true, is_active: true },
-    { company_id: CO, account_code: '300-0000', account_name: 'ACCOUNT RECEIVEABLE', acc_money: false, is_active: true },
-    { company_id: CO, account_code: '400-0000', account_name: 'ACCOUNT PAYABLE', acc_money: false, is_active: true },
-    { company_id: CO, account_code: '405-0000', account_name: 'OTHER CREDITORS', acc_money: false, is_active: true },
-    { company_id: CO, account_code: '900-A001', account_name: 'RENTAL', acc_money: false, is_active: true },
-    { company_id: CO, account_code: '910-0000', account_name: 'UTILITIES', acc_money: false, is_active: true },
-    { company_id: CO, account_code: '601-0003', account_name: 'PURCHASE OF SOFA', acc_money: false, is_active: true },
-    { company_id: CO, account_code: '601-0001', account_name: 'PURCHASE OF BEDDING', acc_money: false, is_active: true },
+    { company_id: CO, account_code: '310-0010', account_name: 'CASH AT BANK - MAYBANK', acc_money: true, is_active: true, account_type: 'ASSET', section: 'CURRENT ASSETS' },
+    { company_id: CO, account_code: '320-0000', account_name: 'CASH IN HAND', acc_money: true, is_active: true, account_type: 'ASSET', section: 'CURRENT ASSETS' },
+    { company_id: CO, account_code: '300-0000', account_name: 'ACCOUNT RECEIVEABLE', acc_money: false, is_active: true, account_type: 'ASSET', section: 'CURRENT ASSETS' },
+    { company_id: CO, account_code: '400-0000', account_name: 'ACCOUNT PAYABLE', acc_money: false, is_active: true, account_type: 'LIABILITY', section: 'CURRENT LIABILITIES' },
+    { company_id: CO, account_code: '405-0000', account_name: 'OTHER CREDITORS', acc_money: false, is_active: true, account_type: 'LIABILITY', section: 'CURRENT LIABILITIES' },
+    { company_id: CO, account_code: '900-A001', account_name: 'RENTAL', acc_money: false, is_active: true, account_type: 'EXPENSE', section: 'EXPENSES' },
+    { company_id: CO, account_code: '910-0000', account_name: 'UTILITIES', acc_money: false, is_active: true, account_type: 'EXPENSE', section: 'EXPENSES' },
+    { company_id: CO, account_code: '601-0003', account_name: 'PURCHASE OF SOFA', acc_money: false, is_active: true, account_type: 'EXPENSE', section: 'COST OF GOODS SOLD' },
+    { company_id: CO, account_code: '601-0001', account_name: 'PURCHASE OF BEDDING', acc_money: false, is_active: true, account_type: 'EXPENSE', section: 'COST OF GOODS SOLD' },
   ],
   acc_account_roles: [],
   v_gl_entries: [
@@ -75,6 +75,7 @@ const world = () => fakeSb({
   purchase_invoices: [{ id: 'pi-1', company_id: CO, invoice_number: 'PI-1' }],
   ap_invoices: [{ id: 'api-1', company_id: CO, invoice_number: 'API-1' }],
   ap_invoice_lines: [{ id: 'l1', company_id: CO, invoice_id: 'api-1', debit_account_code: '900-A001', amount_sen: 5000 }],
+  acc_report_layouts: [],
 });
 
 function harness(sb: ReturnType<typeof fakeSb>) {
@@ -154,4 +155,50 @@ describe('Receipts & Payments — columns per money account, rows in the owner\'
     const res = await harness(world()).request('/accounting/reports/receipts-payments?from=2026-07-31&to=2026-07-01');
     expect(res.status).toBe(400);
   });
+
+  /* The rows on the report's tree (docs/bugs/0912): the chart's own — one
+     section layer over the codes. What is pinned: a coded row sits where
+     its code sits with its figure per column, a transfer where the OTHER
+     money account sits, a category sums per column, the supplier-advance
+     row follows the tree, % of the side's total. */
+  test('the rows come back on the tree, per column, both sides', async () => {
+    const r = await fetchReport(harness(world()), 'from=2026-07-01&to=2026-07-31') as Report & {
+      layout: { stored: boolean; receipts: Laid[]; payments: Laid[] };
+    };
+    expect(r.layout.stored).toBe(false);
+    const flat = (nodes: Laid[]): unknown[] => nodes.map((n) => [n.kind, n.key ?? n.label, n.amountSen, n.pct, n.cells, ...(n.children.length > 0 ? [flat(n.children)] : [])]);
+    /* Receipts: AR 500 into the bank, the transfer 200 into the drawer — total 700. */
+    expect(flat(r.layout.receipts)).toEqual([
+      ['category', 'CURRENT ASSETS', 70000, 100, { '310-0010': 50000, '320-0000': 20000 }, [
+        ['account', '300-0000', 50000, 71.4, { '310-0010': 50000 }],
+        ['account', 'XFER:310-0010', 20000, 28.6, { '320-0000': 20000 }],
+      ]],
+    ]);
+    const xfer = r.layout.receipts[0]!.children[1]!;
+    expect(xfer.label).toBe('Transfer from 310-0010 · CASH AT BANK - MAYBANK');
+    expect(r.layout.receipts[0]!.children[0]!.label).toBe('300-0000 · ACCOUNT RECEIVEABLE');
+    /* Payments: the coded rows under their sections in the chart's order, the advance after the tree. */
+    const pay = r.layout.payments;
+    expect(pay.map((n) => [n.kind, n.key ?? n.label, n.amountSen])).toEqual([
+      ['category', 'CURRENT ASSETS', 20000], ['category', 'COST OF GOODS SOLD', 70000], ['category', 'EXPENSES', 11000], ['account', 'ADV', 30000],
+    ]);
+    expect(pay[0]!.children.map((n) => n.key)).toEqual(['XFER:320-0000']);
+    expect(pay[1]!.children.map((n) => n.key)).toEqual(['601-0001', '601-0003']);
+    expect(pay[2]!.children.map((n) => n.key)).toEqual(['900-A001', '910-0000']);
+    expect(pay[1]!.cells).toEqual({ '310-0010': 70000 });
+    expect(pay[2]!.cells).toEqual({ '310-0010': 5000, '320-0000': 6000 });
+    expect(pay[3]).toMatchObject({ label: 'Supplier advances (预付)', pct: 22.9, cells: { '310-0010': 30000 } });
+    const sum = (nodes: Laid[]) => nodes.reduce((s, n) => s + n.amountSen, 0);
+    expect(sum(pay)).toBe(r.totals.paymentsTotalSen);
+    expect(sum(r.layout.receipts)).toBe(r.totals.receiptsTotalSen);
+  });
+
+  test('by party, the control account\'s rows print together where the control sits', async () => {
+    const r = await fetchReport(harness(world()), 'from=2026-07-01&to=2026-07-31&party=1') as Report & { layout: { payments: Laid[] } };
+    const liabilities = r.layout.payments.find((n) => n.label === 'CURRENT LIABILITIES')!;
+    const keys = liabilities.children.map((n) => [n.key, n.label]);
+    expect(keys).toContainEqual(['400-0000:FOSHAN CHAIRS', 'FOSHAN CHAIRS · ACCOUNT PAYABLE']);
+    expect(keys).toContainEqual(['405-0000:HOUZS VENTURE', 'HOUZS VENTURE · OTHER CREDITORS']);
+  });
 });
+type Laid = { kind: string; key?: string; label: string; amountSen: number; pct: number | null; cells?: Record<string, number>; children: Laid[] };

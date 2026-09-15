@@ -8,6 +8,11 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, test, vi } from 'vitest';
 import type { PerformanceReport } from '../../vendor/scm/lib/performance-report-queries';
+import type { LaidNode } from '../../vendor/scm/lib/report-layout';
+
+const acc = (code: string, label: string, amountSen: number, pct: number | null): LaidNode =>
+  ({ kind: 'account', id: `acc:${code}`, label, code, key: code, amountSen, pct, children: [] });
+const OPEX_LABEL = 'Operating expense — 16.00% of sales excluding service (5,000.00), in place of 900-O001 OPERATIING EXPENSE';
 
 const report: PerformanceReport = {
   from: '2026-07-01', to: '2026-07-31',
@@ -32,6 +37,19 @@ const report: PerformanceReport = {
   otherExpensesSen: 4600000,
   netSen: -4408000, netPct: -842.8,
   settings: { rateBp: 1600, account: '900-O001' },
+  /* The account part on the tree (docs/bugs/0912): the computed operating
+     expense sits where 900-O001 sits — inside the owner's "Fixed costs". */
+  layout: {
+    stored: true, baseSen: 523000,
+    otherIncome: [acc('590-0000', '590-0000 — RENT RECEIVED', 50000, 9.6)],
+    expenses: [
+      { kind: 'category', id: 'cat:fixed', label: 'Fixed costs', amountSen: 4580000, pct: 875.7, children: [
+        acc('900-R048', '900-R048 — RENTAL OF SHOWROOM', 4500000, 860.4),
+        acc('900-O001', OPEX_LABEL, 80000, 15.3),
+      ] },
+      acc('900-A014', '900-A014 — ADVERTISEMENT - SHOWROOM', 100000, 19.1),
+    ],
+  },
 };
 const lastPath = { value: '' };
 const saveMutate = vi.fn();
@@ -43,6 +61,13 @@ vi.mock('../../vendor/scm/lib/performance-report-queries', async (importOriginal
   useSavePerformanceSettings: () => ({ mutate: saveMutate, isPending: false }),
 }));
 vi.mock('../../vendor/scm/lib/performance-pnl-pdf', () => ({ generatePerformancePdf: pdfMock }));
+vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ can: () => true }) }));
+vi.mock('./ReportLayoutEditor', () => ({ ReportLayoutEditor: () => <div role="dialog" aria-label="Layout · Performance P&L">editor</div> }));
+/* The monthly view has its own contract (MonthlyReport.test.tsx); here it only has to be reached. */
+vi.mock('./MonthlyReport', () => ({
+  MonthlyReport: (p: { title: string; withCumulative: boolean }) => <div role="region" aria-label={`Monthly · ${p.title}`}>{p.withCumulative ? 'with 累计' : 'no 累计'}</div>,
+  ByMonthButton: ({ on, onToggle }: { on: boolean; onToggle: () => void }) => <button type="button" aria-pressed={on} onClick={onToggle}>By month</button>,
+}));
 
 const { PerformanceTab, performanceCsv } = await import('./PerformancePnl');
 
@@ -65,14 +90,33 @@ describe('the Performance P&L tab', () => {
     expect(within(total).getByText('42.4%')).toBeTruthy();
     const opex = rows.find((r) => within(r).queryByText(/Operating expense/))!;
     expect(opex.textContent).toContain('16.00% of sales excluding service (5,000.00), in place of 900-O001 OPERATIING EXPENSE');
-    expect(within(opex).getByText('(800.00)')).toBeTruthy();
-    expect(screen.getByText('900-R048 · RENTAL OF SHOWROOM')).toBeTruthy();
-    const rent = rows.find((r) => within(r).queryByText('590-0000 · RENT RECEIVED'))!;
+    /* SIGNS (docs/bugs/0910): an expense prints plain, with its % of sales
+       in the GP % column; only a loss, or a line whose credits beat its
+       debits, wears parentheses. */
+    expect(within(opex).getByText('800.00')).toBeTruthy();
+    expect(within(opex).getByText('15.3%')).toBeTruthy();
+    expect(opex.querySelectorAll('td')).toHaveLength(3);   // label across the three group columns, then amount, then %
+    expect(opex.querySelector('td')!.getAttribute('colspan')).toBe('3');
+    /* LEVELS (docs/bugs/0912): the computed line sits INSIDE the owner's
+       category, two deep; the category carries its subtotal and %. */
+    expect(opex.getAttribute('data-depth')).toBe('2');
+    const fixed = rows.find((r) => within(r).queryByText('Fixed costs'))!;
+    expect(fixed.getAttribute('data-summary')).toBe('category');
+    expect(within(fixed).getByText('45,800.00')).toBeTruthy();
+    expect(within(fixed).getByText('875.7%')).toBeTruthy();
+    expect(screen.getByText('900-R048 — RENTAL OF SHOWROOM')).toBeTruthy();
+    const rent = rows.find((r) => within(r).queryByText('590-0000 — RENT RECEIVED'))!;
     expect(within(rent).getByText('500.00')).toBeTruthy();
+    expect(within(rent).getByText('9.6%')).toBeTruthy();
     expect(screen.getByText('Total other income (as booked)')).toBeTruthy();
+    /* The expenses total covers the tree — the computed line included. */
+    const expenses = rows.find((r) => within(r).queryByText(/^Total expenses/))!;
+    expect(expenses.textContent).toContain('operating expense at 16.00%');
+    expect(within(expenses).getByText('46,800.00')).toBeTruthy();
+    expect(within(expenses).getByText('894.8%')).toBeTruthy();
     const net = rows.find((r) => within(r).queryByText('NET PERFORMANCE'))!;
     expect(within(net).getByText('(44,080.00)')).toBeTruthy();
-    expect(within(net).getByText('-842.8% of sales')).toBeTruthy();
+    expect(within(net).getByText('-842.8%')).toBeTruthy();
     const notes = screen.getByLabelText('Performance notes');
     expect(notes.textContent).toContain('in place of account 900-O001 OPERATIING EXPENSE; the 2,435.50 booked on that account in the period is left out');
     expect(notes.textContent).toContain('free gifts');
@@ -94,16 +138,45 @@ describe('the Performance P&L tab', () => {
     expect(pdfMock).toHaveBeenCalledWith(report);
   });
 
-  test('the CSV carries the groups, the summary and the notes', () => {
+  test('L1 folds the account part to its categories, All opens it; the Layout button opens the editor', () => {
+    render(<PerformanceTab />);
+    expect(screen.getByRole('group', { name: 'Levels' }).textContent).toContain('L2');
+    fireEvent.click(screen.getByRole('button', { name: 'L1' }));
+    expect(screen.queryByText(/^Operating expense — 16/)).toBeNull();
+    expect(screen.queryByText('900-R048 — RENTAL OF SHOWROOM')).toBeNull();
+    /* The category keeps its subtotal while folded; the fixed lines stay. */
+    expect(screen.getByText('Fixed costs').closest('tr')!.textContent).toContain('45,800.00');
+    expect(screen.getByText('900-A014 — ADVERTISEMENT - SHOWROOM')).toBeTruthy();
+    expect(screen.getByText('NET PERFORMANCE')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'All' }));
+    expect(screen.getByText(/^Operating expense — 16/)).toBeTruthy();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Layout' }));
+    expect(screen.getByRole('dialog', { name: 'Layout · Performance P&L' })).toBeTruthy();
+  });
+
+  test('By month opens the monthly view with 累计 and puts the groups table away (docs/bugs/0916)', () => {
+    render(<PerformanceTab />);
+    fireEvent.click(screen.getByRole('button', { name: 'By month' }));
+    expect(screen.getByRole('region', { name: 'Monthly · Performance P&L' }).textContent).toBe('with 累计');
+    expect(screen.queryByText('NET PERFORMANCE')).toBeNull();
+    /* The settings strip stays — the rate applies to every month. */
+    expect(screen.getByLabelText('Performance settings')).toBeTruthy();
+  });
+
+  test('the CSV carries the groups, the summary — indented by level — and the notes', () => {
     const csv = performanceCsv(report);
     expect(csv).toContain('Group,Sales,Cost of sales,Gross profit,GP %');
     expect(csv).toContain('Sofa,"3,000.00","1,800.00","1,200.00",40.0%');
     expect(csv).toContain('Accessory,0.00,120.00,(120.00),—');
     expect(csv).toContain('Total,"5,230.00","3,010.00","2,220.00",42.4%');
-    expect(csv).toContain('"Operating expense — 16.00% of sales excluding service (5,000.00), in place of 900-O001 OPERATIING EXPENSE",(800.00)');
-    expect(csv).toContain('590-0000 · RENT RECEIVED,500.00,');
-    expect(csv).toContain('Total other income (as booked),500.00,');
-    expect(csv).toContain('NET PERFORMANCE,"(44,080.00)",-842.8% of sales');
+    expect(csv).toContain('Line,Amount,% of sales');
+    expect(csv).toContain('Fixed costs,"45,800.00",875.7%');
+    expect(csv).toContain('"  Operating expense — 16.00% of sales excluding service (5,000.00), in place of 900-O001 OPERATIING EXPENSE",800.00,15.3%');
+    expect(csv).toContain('590-0000 — RENT RECEIVED,500.00,9.6%');
+    expect(csv).toContain('Total other income (as booked),500.00,9.6%');
+    expect(csv).toContain('Total expenses (operating expense at 16.00% + as booked),"46,800.00",894.8%');
+    expect(csv).toContain('NET PERFORMANCE,"(44,080.00)",-842.8%');
     expect(csv).toContain('Notes');
     expect(csv).toContain('in place of account 900-O001');
   });

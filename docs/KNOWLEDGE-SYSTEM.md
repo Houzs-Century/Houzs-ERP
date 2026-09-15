@@ -17,6 +17,7 @@ Read this once. Then you will know where to look, and where to write.
 | Layer | File | Its job | Rots? |
 |---|---|---|---|
 | Agent entry point | `CLAUDE.md` | Rules, conventions, traps. Auto-loaded into every session. | **Yes — keep it thin** |
+| Why each rule exists | `docs/working-agreement-history.md` | The incidents, owner quotes and corrections behind each `CLAUDE.md` rule, verbatim, under the same headings. Split out 2026-09-15 so the auto-loaded file stays small; `docs/working-agreement-rule-inventory.md` maps each rule id. | No — append-only |
 | Navigation, judgement | `docs/CODEBASE-MAP.md` | What each area is FOR. Which trees are dead. What must change in pairs. | Yes — hand-written |
 | Navigation, facts | `docs/generated/` | Route inventory, migration trees, largest files, desktop/mobile pairing. | **Yes, except `route-capability-matrix`** — only that one is CI-gated, see §6 |
 | Per-module guide | `docs/modules/<module>.md` | Everything needed to work in ONE module without reading the others. | Yes — hand-written |
@@ -100,7 +101,7 @@ places nothing forced anyone to revisit. Hence the rule above, and hence
 | A bug's root cause | `BUG-HISTORY.md`, same PR as the fix. Mandatory. |
 | Why an approach was rejected | The module guide, or the map's Traps section |
 | A new module's shape | `docs/modules/<module>.md` |
-| A rule every session must obey | `CLAUDE.md` — but only if it is short and stable |
+| A rule every session must obey | `CLAUDE.md` — one short bullet with an id, and only if it is stable. The story behind it goes in `docs/working-agreement-history.md`; add a row to the inventory. |
 | A number, count, or inventory | Nowhere. Teach the generator to emit it. |
 | A per-area coverage number | Nowhere by hand. `node scripts/coverage-ratchet.mjs --sync-docs` writes it into `docs/TESTING-RATCHET.md` from `coverage-baseline.json`, and ci.yml fails if the two disagree. |
 | Business reasoning for people | Obsidian |

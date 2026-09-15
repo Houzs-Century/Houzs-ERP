@@ -1292,6 +1292,7 @@ exactly what the migration wrote.
 
 ## See also
 
+- `docs/line-export-columns.md` — the proposed one-row-per-line export columns for every transaction document, and which columns the import may change
 - `docs/transfer-from-to-vocabulary.md` — the lineage-column survey and its
   three rename options; §9 above is the layered cost view and corrects its
   liveness claims
@@ -1398,6 +1399,8 @@ shape** — and it is the same shape every ERP below converged on.
 | 6 | GRN → PI | `grn_items.invoiced_qty` | stored | `qtyCapRefusal` | yes | **NO** | no |
 | 7 | GRN → PR | `grn_items.returned_qty` | stored | `qtyCapRefusal` + `qty_exceeds_remaining` | yes | **yes** | yes |
 | 8 | Consignment Order → Note *(uncapped by ruling)* | `ordered − delivered`, picker only | derived | **none** | **no** | **no** | — |
+
+Row 1 has a second consumption record for a company-1 **bound** line (sofa / bedframe / `(SP)` mattress / custom pillow, `isHardBoundLine`), since 2026-09-14: `po_qty_picked` leaves MRP-origin PO lines out and an MRP-origin convert skipped the cap, which is how five custom pillow lines were ordered twice (bug 0890). For those lines both SO → PO caps use `boundAwarePicked` = max(`po_qty_picked`, qty on live PO lines carrying the `so_item_id`), MRP-origin included — `backend/src/scm/lib/bound-line-ordered.ts`, wiring pinned in `convert-ceilings.test.ts`. Pooled lines keep the row-1 rule unchanged.
 | 9 | Note → Consignment Return | `delivered − Σ qty_returned` | derived | `checkCrOverRemaining` | **no** | **no** | yes |
 | 10 | PC Order → PC Receive | `purchase_consignment_order_items.received_qty` | stored | `qtyCapRefusal` | yes | **no** | yes |
 | 11 | PC Receive → PC Return | `purchase_consignment_receive_items.returned_qty` | stored | `qtyCapRefusal` | yes | **no** | yes |

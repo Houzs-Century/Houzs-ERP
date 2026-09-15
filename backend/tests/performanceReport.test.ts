@@ -92,6 +92,7 @@ function world(settings: Row[] = []) {
     ],
     accounts: CHART.map((r) => ({ ...r })),
     acc_company_settings: settings.map((r) => ({ ...r })),
+    acc_report_layouts: [],
   });
 }
 
@@ -147,6 +148,45 @@ describe('the Performance P&L', () => {
     expect(body.netSen).toBe(222000 + 50000 - 80000 - 4600000);
     expect(body.netPct).toBe(-842.8);
     expect(body.settings).toEqual({ rateBp: 1600, account: '900-O001' });
+    /* The account part on the report's tree (docs/bugs/0912): the chart's
+       own — every expense at the root here — the computed operating expense
+       standing where 900-O001 sits, under its own sentence, % of SALES on
+       every line. */
+    type Laid = { kind: string; key?: string; label: string; amountSen: number; pct: number | null; children: Laid[] };
+    const flat = (nodes: Laid[]): unknown[] => nodes.map((n) => [n.key, n.label, n.amountSen, n.pct, ...(n.children.length > 0 ? [flat(n.children)] : [])]);
+    expect(body.layout.stored).toBe(false);
+    expect(body.layout.baseSen).toBe(523000);
+    expect(flat(body.layout.otherIncome)).toEqual([[undefined, 'OTHER INCOMES', 50000, 9.6, [['590-0000', '590-0000 — RENT RECEIVED', 50000, 9.6]]]]);
+    expect(flat(body.layout.expenses)).toEqual([
+      ['900-A014', '900-A014 — ADVERTISEMENT - SHOWROOM', 100000, 19.1],
+      ['900-O001', 'Operating expense — 16.00% of sales excluding service (5,000.00), in place of 900-O001 OPERATIING EXPENSE', 80000, 15.3],
+      ['900-R048', '900-R048 — RENTAL OF SHOWROOM', 4500000, 860.4],
+    ]);
+  });
+
+  test('the account part follows a SAVED performance tree; the computed line goes where its account was placed; an unknown account lands under Unassigned', async () => {
+    const tree = { version: 1, blocks: { otherIncome: [], expenses: [
+      { kind: 'category', id: 'cat:fixed', label: 'Fixed costs', children: [{ kind: 'account', code: '900-R048' }, { kind: 'account', code: '900-O001' }] },
+    ] } };
+    const { app, sb } = harness();
+    sb.tables.acc_report_layouts.push({ report: 'performance', tree, updated_at: null, updated_by: 'T' });
+    const { body } = await read(app, 'from=2026-07-01&to=2026-07-31');
+    type Laid = { kind: string; key?: string; label: string; amountSen: number; children: Laid[] };
+    const flat = (nodes: Laid[]): unknown[] => nodes.map((n) => [n.kind, n.key ?? n.label, n.amountSen, ...(n.children.length > 0 ? [flat(n.children)] : [])]);
+    expect(body.layout.stored).toBe(true);
+    expect(flat(body.layout.expenses)).toEqual([
+      ['category', 'Fixed costs', 4580000, [['account', '900-R048', 4500000], ['account', '900-O001', 80000]]],
+      ['unassigned', 'Unassigned', 100000, [['account', '900-A014', 100000]]],
+    ]);
+    /* An account the chart does not carry: nothing replaced, the computed
+       line still prints — under Unassigned, saying so. */
+    const { app: odd } = harness([GL_PERM], [{ company_id: CO, performance_opex_rate_bp: 2000, performance_opex_account: '900-Z999' }]);
+    const { body: b2 } = await read(odd, 'from=2026-07-01&to=2026-07-31');
+    const un = (b2.layout.expenses as Laid[]).find((n) => n.kind === 'unassigned')!;
+    expect(un.children.find((n) => n.key === '900-Z999')!.label).toBe('Operating expense — 20.00% of sales excluding service (5,000.00), 900-Z999 not in the chart — nothing replaced');
+    /* Only the unknown code is unplaced — the chart's own tree places the three booked accounts, the booked 900-O001 now an ordinary expense. */
+    expect(un.children.map((n) => n.key)).toEqual(['900-Z999']);
+    expect((b2.layout.expenses as Laid[]).map((n) => n.key ?? n.kind)).toEqual(['900-A014', '900-O001', '900-R048', 'unassigned']);
   });
 
   test('the rate follows the settings, and an account the chart does not carry replaces nothing — said, not swallowed', async () => {

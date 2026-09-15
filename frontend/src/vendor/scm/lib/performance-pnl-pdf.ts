@@ -59,18 +59,19 @@ export async function generatePerformancePdf(r: PerformanceReport, opts?: { acti
   const afterGroups = ((doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? y) + 6;
   autoTable(doc, {
     startY: afterGroups,
-    head: [['', 'Amount', '']],
-    body: t.summary.map((l) => [l.label, fmtPerf(l.amountSen), l.note ?? '']),
+    head: [['', 'Amount', '% of sales']],
+    body: t.summary.map((l) => [`${'   '.repeat(Math.max(0, l.depth - 1))}${l.label}`, fmtPerf(l.amountSen), fmtPerfPct(l.pct)]),
     theme: 'plain',
     rowPageBreak: 'avoid',
     styles: { ...DOC_TABLE_STYLES, fontSize: 8.5 },
     headStyles: DOC_TABLE_HEAD_STYLES,
-    columnStyles: { 0: { cellWidth: 118 }, 1: { halign: 'right', cellWidth: 34 }, 2: { cellWidth: 30 } },
+    columnStyles: { 0: { cellWidth: 118 }, 1: { halign: 'right', cellWidth: 34 }, 2: { halign: 'right', cellWidth: 30 } },
     margin: { left: margin, right: margin },
     didParseCell: (data) => {
       const line = t.summary.at(data.row.index);
       if (data.section !== 'body' || !line) return;
       if (line.kind === 'total') { data.cell.styles.fontStyle = 'bold'; data.cell.styles.lineWidth = { top: 0.2, bottom: 0, left: 0, right: 0 }; }
+      if (line.kind === 'category') data.cell.styles.fontStyle = 'bold';
       if (line.kind === 'net') { data.cell.styles.fontStyle = 'bold'; data.cell.styles.lineWidth = { top: 0.4, bottom: 0.4, left: 0, right: 0 }; }
     },
   });

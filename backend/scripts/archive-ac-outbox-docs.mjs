@@ -22,10 +22,18 @@
 // REVERSAL: UPDATE scm.autocount_outbox SET archived_at = NULL WHERE
 // doc_no = ANY(<the list>) AND company_id = <company>;
 //
+// ONLY A FINISHED DOCUMENT IS CLEARED (docs/bugs/0917). On 2026-09-10 this
+// script cleared documents whose refusal was still open, which the page's own
+// archive refuses, and the owner then read the CLEARED shelf as documents that
+// never reached AutoCount. A named document is now skipped, and says why, when
+// a send is still waiting or its newest refusal is not predated by an arrival:
+// the page's own judgement, from lib/cleared-arrived-plan.mjs.
+//
 // RE-RUN: idempotent. Rows already archived are left alone; a doc_no with no
-// rows is reported, not an error.
+// rows is reported, not an error; an unfinished document is skipped every time.
 import { readFileSync } from 'node:fs';
 import postgres from 'postgres';
+import { clearVerdict } from './lib/cleared-arrived-plan.mjs';
 
 const MODE = process.env.MODE ?? 'plan';
 const CONFIRM = process.env.CONFIRM ?? '';
@@ -64,11 +72,14 @@ if (!url) {
 
 console.log(`docs: ${DOC_NOS.join(', ')}  company: ${COMPANY_ID}  mode: ${MODE}`);
 
+/* The documents this run may archive; the post-check below asserts only these. */
+let finishedDocs = [];
 const pg = postgres(url, { ssl: 'require', prepare: false, max: 1 });
 
 try {
   const rows = await pg`
-    SELECT doc_no, id, op, status, archived_at
+    SELECT doc_no, id, op, status, archived_at, left(coalesce(last_error, ''), 40) AS error_head,
+           to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS created_at
       FROM scm.autocount_outbox
      WHERE doc_no = ANY(${DOC_NOS})
        AND company_id = ${COMPANY_ID}`;
@@ -87,7 +98,14 @@ try {
       + (items.length === 0 ? '  (no outbox row for this doc)' : ''));
   }
 
-  const totalLive = rows.filter((r) => r.archived_at === null).length;
+  const unfinished = new Map();
+  for (const d of DOC_NOS) {
+    const why = clearVerdict(perDoc.get(d) ?? []);
+    if (why && why !== 'no rows') unfinished.set(d, why);
+  }
+  for (const [d, why] of unfinished) console.log(`  SKIPPED ${d}: ${why}`);
+  finishedDocs = DOC_NOS.filter((d) => !unfinished.has(d));
+  const totalLive = rows.filter((r) => r.archived_at === null && finishedDocs.includes(r.doc_no)).length;
   console.log(`TOTAL live to archive: ${totalLive}`);
 
   if (totalLive === 0) {
@@ -104,7 +122,7 @@ try {
   const written = await pg`
     UPDATE scm.autocount_outbox
        SET archived_at = now()
-     WHERE doc_no = ANY(${DOC_NOS})
+     WHERE doc_no = ANY(${finishedDocs})
        AND company_id = ${COMPANY_ID}
        AND archived_at IS NULL
      RETURNING id`;
@@ -119,7 +137,7 @@ try {
   const after = await pg2`
     SELECT doc_no, count(*) FILTER (WHERE archived_at IS NULL)::int AS still_live
       FROM scm.autocount_outbox
-     WHERE doc_no = ANY(${DOC_NOS})
+     WHERE doc_no = ANY(${finishedDocs})
        AND company_id = ${COMPANY_ID}
      GROUP BY doc_no`;
   console.log('AFTER:', JSON.stringify(after));
@@ -131,7 +149,7 @@ try {
     console.error(`POST-CHECK FAILED — ${stillLive} row(s) still not archived`);
     process.exit(1);
   }
-  console.log(`OK — ${DOC_NOS.length} document(s) archived off Not Accepted.`);
+  console.log(`OK — ${finishedDocs.length} document(s) archived off Not Accepted; ${DOC_NOS.length - finishedDocs.length} skipped as unfinished.`);
 } finally {
   await pg2.end();
 }

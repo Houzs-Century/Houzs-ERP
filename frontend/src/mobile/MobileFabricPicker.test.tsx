@@ -67,3 +67,16 @@ describe("MobileFabricPicker — the Model's fabric pool", () => {
     expect(screen.queryByText(/No fabrics match/i)).toBeNull();
   });
 });
+
+/* docs/bugs/0893 (the fabric-search entry): the server applies the Model's pool
+   BEFORE its 50-row cap only when the search names the item, so the sheet must
+   send its line's SKU with every search. */
+describe("the phone fabric search names its line's item", () => {
+  it("asks the server with the item code, not a bare search", () => {
+    open(["BO315"]);
+    const calls = search.mock.calls as Array<[string, { enabled: boolean; itemCode: string | null }]>;
+    const last = calls[calls.length - 1];
+    expect(last[0]).toBe("fab");
+    expect(last[1]).toEqual({ enabled: true, itemCode: "5530-1A" });
+  });
+});

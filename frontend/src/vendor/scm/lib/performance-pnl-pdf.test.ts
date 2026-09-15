@@ -3,6 +3,10 @@
 import { describe, expect, it } from 'vitest';
 import { performanceTables } from './performance-pnl-pdf';
 import { fmtPerf, performanceNotes, type PerformanceReport } from './performance-report-queries';
+import type { LaidNode } from './report-layout';
+
+const acc = (code: string, label: string, amountSen: number, pct: number | null): LaidNode =>
+  ({ kind: 'account', id: `acc:${code}`, label, code, key: code, amountSen, pct, children: [] });
 
 const r: PerformanceReport = {
   from: '2026-07-01', to: '2026-07-31',
@@ -21,6 +25,14 @@ const r: PerformanceReport = {
   otherExpensesSen: 4500000,
   netSen: 161000 + 50000 - 56000 - 4500000, netPct: -1164.9,
   settings: { rateBp: 1600, account: '900-O001' },
+  layout: {
+    stored: false, baseSen: 373000,
+    otherIncome: [{ kind: 'category', id: 'sec:OTHER INCOMES', label: 'OTHER INCOMES', amountSen: 50000, pct: 13.4, children: [acc('590-0000', '590-0000 — RENT RECEIVED', 50000, 13.4)] }],
+    expenses: [
+      acc('900-O001', 'Operating expense — 16.00% of sales excluding service (3,500.00), in place of 900-O001 OPERATIING EXPENSE', 56000, 15),
+      acc('900-R048', '900-R048 — RENTAL OF SHOWROOM', 4500000, 1206.4),
+    ],
+  },
 };
 
 describe('performanceTables', () => {
@@ -31,13 +43,20 @@ describe('performanceTables', () => {
     expect(t.groups[1]!.cells).toEqual(['Sofa', '3,000.00', '1,800.00', '1,200.00', '40.0%']);
     expect(t.groups[2]!.cells).toEqual(['Accessory', '0.00', '120.00', '(120.00)', '—']);
     expect(t.groups[4]!).toEqual({ kind: 'total', cells: ['Total', '3,730.00', '2,120.00', '1,610.00', '43.2%'] });
-    expect(t.summary.map((l) => l.kind)).toEqual(['total', 'row', 'total', 'row', 'row', 'total', 'net']);
-    expect(t.summary[1]!).toEqual({ kind: 'row', label: '590-0000 · RENT RECEIVED', amountSen: 50000 });
-    expect(t.summary[2]!).toEqual({ kind: 'total', label: 'Total other income (as booked)', amountSen: 50000 });
-    expect(t.summary[3]!.label).toBe('Operating expense — 16.00% of sales excluding service (3,500.00), in place of 900-O001 OPERATIING EXPENSE');
-    expect(t.summary[3]!.amountSen).toBe(-56000);
-    expect(t.summary[4]!.label).toBe('900-R048 · RENTAL OF SHOWROOM');
-    expect(t.summary[6]!).toEqual({ kind: 'net', label: 'NET PERFORMANCE', amountSen: -4345000, note: '-1164.9% of sales' });
+    /* The account part is the report's tree (docs/bugs/0912): a category
+       with its subtotal, its rows a level deeper. */
+    expect(t.summary.map((l) => [l.kind, l.depth])).toEqual([['total', 0], ['category', 1], ['row', 2], ['total', 0], ['row', 1], ['row', 1], ['total', 0], ['net', 0]]);
+    expect(t.summary[0]!).toEqual({ id: 'sum:gross', kind: 'total', label: 'Gross profit', amountSen: 161000, pct: 43.2, depth: 0 });
+    expect(t.summary[1]!).toEqual({ id: 'sec:OTHER INCOMES', kind: 'category', label: 'OTHER INCOMES', amountSen: 50000, pct: 13.4, depth: 1 });
+    expect(t.summary[2]!).toEqual({ id: 'acc:590-0000', kind: 'row', label: '590-0000 — RENT RECEIVED', amountSen: 50000, pct: 13.4, depth: 2 });
+    expect(t.summary[3]!).toEqual({ id: 'sum:otherIncome', kind: 'total', label: 'Total other income (as booked)', amountSen: 50000, pct: 13.4, depth: 0 });
+    expect(t.summary[4]!.label).toBe('Operating expense — 16.00% of sales excluding service (3,500.00), in place of 900-O001 OPERATIING EXPENSE');
+    /* SIGNS (docs/bugs/0910): an expense is the positive figure it is. */
+    expect(t.summary[4]!.amountSen).toBe(56000);
+    expect(t.summary[4]!.pct).toBe(15);
+    expect(t.summary[5]!).toEqual({ id: 'acc:900-R048', kind: 'row', label: '900-R048 — RENTAL OF SHOWROOM', amountSen: 4500000, pct: 1206.4, depth: 1 });
+    expect(t.summary[6]!).toEqual({ id: 'sum:expenses', kind: 'total', label: 'Total expenses (operating expense at 16.00% + as booked)', amountSen: 4556000, pct: 1221.4, depth: 0 });
+    expect(t.summary[7]!).toEqual({ id: 'sum:net', kind: 'net', label: 'NET PERFORMANCE', amountSen: -4345000, pct: -1164.9, depth: 0 });
   });
 
   it('the notes say where each side came from and what the rate replaced', () => {

@@ -1140,6 +1140,30 @@ filter, the confirmed-only tick and an Export of the table as CSV.
 Contracts: `backend/tests/merchantChargesReport.test.ts`,
 `frontend/src/pages/scm-v2/MerchantChargesReport.test.tsx`.
 
+**Cash and Online are rows of the Merchant charges report too (2026-09-14,
+docs/bugs/0900; owner: 这个 merchant charge 其实会包括 cash online，只是 % 是 0
+percent).** The report answers "of the money received, what did each channel
+cost", and cash at the counter and online transfers cost nothing — so the
+route also reads the payments keyed on sales orders
+(`mfg_sales_order_payments`, method `cash` / `transfer`, this company, by
+the day the payment was made, a cancelled order's money left out) and lists
+them under each month as **CASH** and **ONLINE** after the acquirers, at 0.0%
+(lines = payments, gross = net = the amount), opening to the payments
+themselves (order, day, sub-type) rather than to report files. They count in
+the month's line and the grand total, so Charge % reads against everything
+received. `acquirer=CASH` / `ONLINE` keeps one channel and a merchant filter
+leaves both out; `confirmed=1` does not reach them (a keyed payment has
+nothing to confirm). `merchant` and `installment` payments are never
+counted here — the acquirers' reports carry them. Two calendars, on purpose:
+a merchant row is dated by the report's trading day and a keyed payment by
+its own date, so a month's card figure and the ledger's card total differ by
+a report that straddles the month end (June 2026 ties exactly; July and
+August do not while reports are still being uploaded). The tab labels the
+rows Cash and Online, names them in the merchant filter, and Export writes
+them with their payments. Contracts: the Cash-and-Online cases in
+`backend/tests/merchantChargesReport.test.ts` and
+`frontend/src/pages/scm-v2/MerchantChargesReport.test.tsx`.
+
 **The Collection report (2026-09-12, docs/bugs/0825; owner: collection
 report … salesman 开了多少单，deposit 收了多少%，below 50% 的我也需要知道; 分主要看
 两个，deposit / sales order amount，一个是看 balance paid).** `GET
@@ -1422,7 +1446,11 @@ binding row is UNBOUND and the posting rules refuse it by name (owner: 挡下来
 提醒我去绑,不要静默丢进 OTHERS). New groups are born only through
 `scm.acc_register_item_group` (SECURITY DEFINER) which extends BOTH enums and
 registers the row in one call — so the taxonomy and the registry cannot drift
-— and the API forces the four bindings at create (born bound). Discounts stay
+— and the API forces the four bindings at create (born bound). **Sofa Accessory
+(`FABRIC_ACCESSORY`, 2026-09-14) is the one exception to "born through the
+function"**: its enum value came from a plain migration, so the registry row and
+bindings were added afterwards by `20260914T2000_acc_item_group_fabric_accessory.sql`,
+copying each company's ACCESSORY accounts (`docs/bugs/0894-sofa-accessory-lines-would-refuse-to-post-the-category-had-n.md`). Discounts stay
 company-level (520-0000 / 610-0001), never per-group. Maintenance UI: the
 **Item Groups** tab on /scm/accounting — unbound groups arrive pre-filled with
 the SUGGESTED defaults marked 建议·unsaved, and nothing writes until the owner
@@ -1698,6 +1726,149 @@ report-layout form each sit in their own frame with their fields in fixed
 rows of equal width and the actions to the right. Every hook, label, button
 and refusal is unchanged — `frontend/src/pages/scm-v2/SettlementSetup.test.tsx`
 passes as it was.
+
+**Signs on the four Finance reports, and the Performance summary in its
+columns (2026-09-14/15, docs/bugs/0910; owner: 弄整齐可能 expense 的 column 和
+gp 同一排，percentage 也是。然后 expense 可以不用（）吗？因为本身就是费用，除非他当月是
+ct 大过 debit 才（）).** One rule for P&L, Balance Sheet, Performance P&L and
+Receipts & Payments: a figure is the positive amount it is — an expense is a
+cost, not a negative — and only a line whose credits beat its debits in the
+period (a reversal, the closing-stock credit) prints in parentheses; a loss
+is a negative net and reads the same way; never a minus inside the brackets
+("(RM -1,139.19)" was the P&L's rendering of a reversed expense). The shared
+`fmtSenParen` (`frontend/src/vendor/shared/format.ts`) carries it on the standard
+statements (`Reports.tsx` lost its `negate` sections), `fmtPerf` on the
+Performance P&L, and R&P already printed that way. On the Performance P&L
+the summary lines (gross profit, other income, the computed operating
+expense, the expenses as booked, net) now sit in the SAME table as the
+groups — the label across the first three columns, the amount under Gross
+profit, the line's % of sales under GP % — and `performanceSummaryLines`
+carries `pct` on every line (expenses as their positive amounts; the CSV and
+the PDF print `% of sales` as their third column). Contracts:
+`Reports.test.tsx`, `PerformancePnl.test.tsx`, `performance-pnl-pdf.test.ts`.
+
+**A report's layout — levels, the owner's own categories, % on every line
+(2026-09-15, docs/bugs/0911; owner 2026-09-14: 我想要有 level，父子 account 分层 …
+我要能自己调动排版，然后能自己加大 categories … 做公用然后选要不要，类似 chart of
+account).** A layout is a tree of categories arranged over the chart —
+nestable, renamed in place, reordered by drag or ↑ ↓, accounts as its
+leaves — ONE tree per report, SHARED by every company, each category
+carrying the ids of the companies that unticked it (`hiddenFor`). It is
+presentation only: the chart's SECTION still decides which block of the
+statement an account's money belongs to, so a layout can group, order and
+name but never move a ringgit between gross profit and net. The tree lives
+in `scm.acc_report_layouts` (one row per report, JSONB, no company column by
+design; migration `backend/src/db/migrations-pg/20260915T0900_acc_report_layouts.sql`).
+`backend/src/acc/report-layout.ts` builds the chart's own tree when nothing
+is saved (`defaultLayout`: a header account with children becomes a category
+named after it, leaves are lines, a block spanning two sections gets a
+category per section, a child whose parent sits in another section files as
+a root of its own section's block, an unsectioned row takes its type's
+default shelf), checks and normalises a saved one (`validateLayout`: version
+1, the report's blocks only, unique ids and codes, names, depth ≤ 8, the
+refusal names what is wrong) and lays a block's figures on it for one
+company (`layOutBlock`: a subtotal on every category, % of the base on every
+line, an empty category never prints, a category the company unticked is
+skipped with its subtree, and whatever the tree does not place — a code
+created since the save, one moved to another section on the chart page, one
+under an unticked category — prints under Unassigned at the block's foot,
+so a block's total is always the sum of what is printed). Routes in
+`backend/src/scm/routes/accounting-report-layouts.ts`, registered beside the
+statements in `backend/src/scm/routes/accounting.ts`:
+`GET /accounting/reports/layout?report=pnl` (the stored tree or the chart's,
+with the chart union the editor arranges — an unsectioned row already on
+its default shelf — and the companies the ticks name), `PUT` (checks, saves
+one row; a tick of a company outside the caller's grants rides through
+untouched and cannot be set from outside), `DELETE` (back to the chart's
+tree); editors are whoever may read the statements
+(`scm.payment_voucher.post`). `GET /accounting/reports/pnl`
+(`backend/src/scm/routes/accounting-reports.ts`) returns `layout` beside its
+flat lists, which are unchanged — each block on the tree for the active
+company, `baseSen` = sales, % of sales on every row, `stored`. The screen:
+`frontend/src/pages/scm-v2/Reports.tsx` draws the P&L on the tree through
+`frontend/src/pages/scm-v2/ReportLayoutTree.tsx` (category subtotals, % of
+sales on every row and total, L1..Ln buttons and All), and the Layout button
+opens `frontend/src/pages/scm-v2/ReportLayoutEditor.tsx` (rename, add at
+the top of a block or under another category, delete — what it held moves
+up a level, drag or ↑ ↓, a tick per company, the block's unplaced accounts
+under Unassigned with Place, Save, Reset to chart; nothing reaches the
+server until Save); hooks and the editor's pure operations in
+`frontend/src/vendor/scm/lib/report-layout.ts`. Contracts:
+`backend/src/acc/report-layout.test.ts`,
+`backend/tests/reportLayouts.test.ts`, `backend/tests/accountingReports.test.ts`,
+`frontend/src/vendor/scm/lib/report-layout.test.ts`,
+`frontend/src/pages/scm-v2/ReportLayoutEditor.test.tsx`,
+`frontend/src/pages/scm-v2/Reports.test.tsx`.
+
+**The other three reports on the layout engine (2026-09-15, docs/bugs/0912;
+owner: P&L, Balance Sheet, Performance P&L, Receipt & Payment 都需要 … balance
+sheet 也需要).** Four report keys, each with its own tree and its own row in
+`scm.acc_report_layouts`: `balance_sheet` — assets / liabilities / equity by
+the section's TYPE, a section layer inside each, `baseSen` = total assets and
+every line's % of it on BOTH sides (`balanceSheetReport` returns `layout`;
+the screen in `frontend/src/pages/scm-v2/Reports.tsx` prints "% of total
+assets"); `performance` — the P&L's otherIncome and expenses blocks for the
+account part under the product groups (`performanceLayout` in
+`backend/src/acc/performance-pnl.ts`): the computed operating expense is a
+line carrying the CODE of the account it replaces, so it prints exactly
+where the owner placed that account — under Unassigned, saying so, when the
+chart does not carry the code — and its sentence (`operatingExpenseLabel`)
+has one home that the screen, the CSV and the PDF read; the screen
+(`frontend/src/pages/scm-v2/PerformancePnl.tsx`) draws its summary from the
+tree through `performanceSummaryLines` (every line with a `depth`, a
+`category` kind, `summaryLinesAtLevel` folding by level) and the total under
+the tree reads "Total expenses (operating expense at N% + as booked)" since
+the computed line now sits inside it; the CSV and the PDF
+(`frontend/src/vendor/scm/lib/performance-pnl-pdf.ts`) indent by depth;
+`rp` — ONE block over every section, the whole chart laid out twice by
+`rowsOnTree` (`backend/src/scm/routes/accounting-rp.ts`): a coded row where
+its code sits (a control account's party rows together — a line carries its
+own `key` when several rows share a code — a transfer where the OTHER money
+account sits), the supplier-advance row after the tree, every row and
+category with a figure per money column (`cells`, summed on a category) and
+% of the side's total; the screen (`frontend/src/pages/scm-v2/ReceiptsPayments.tsx`)
+draws `LaidRows` with a figure per column (`ReportLayoutTree.tsx`: `columns`,
+`fmt`, `onPick`), a category's figure opening every row under it
+(`leafKeys`), a % column, and the printed table
+(`frontend/src/vendor/scm/lib/rp-report-pdf.ts`) is the tree. Every one of
+the four has L1..Ln buttons and the Layout button; the editor names them all
+and gained Fold all / Unfold all for the chart-sized R&P tree. A category id
+accepts spaces, dots and slashes — the default tree names its section layer
+after the section ("sec:SALES ADJUSTMENTS", "sec:APPROPRIATION A/C") and
+must always be savable. Contracts: the six above plus `backend/tests/performanceReport.test.ts`,
+`backend/tests/rpReport.test.ts`, `frontend/src/pages/scm-v2/PerformancePnl.test.tsx`,
+`frontend/src/vendor/scm/lib/performance-pnl-pdf.test.ts`,
+`frontend/src/pages/scm-v2/ReceiptsPayments.test.tsx`,
+`frontend/src/vendor/scm/lib/rp-report-pdf.test.ts`.
+
+**The four reports month by month (2026-09-15, docs/bugs/0916; owner
+2026-09-14: 能看每个月的, his sample: 累计 leftmost, the newest month on the
+left and older months to the right, a % switch).** Every report page wears a
+By month button (`ByMonthButton` in `frontend/src/pages/scm-v2/MonthlyReport.tsx`)
+that swaps the single period for `MonthlyReport`: latest month, 3 / 6 / 12
+months, RM / % (each cell as its % of that column's own base — sales, total
+assets, the side's total), L1..Ln, Export. Nothing new is computed: a
+column is ONE request to the report's own endpoint for that period (the
+cumulative range first, then each month), so a month can never disagree
+with the single-period screen for the same month, and nothing is stored.
+`frontend/src/vendor/scm/lib/report-monthly.ts` turns each answer into the
+lines its screen prints (`pnlLines`, `balanceSheetLines`, `performanceLines`,
+`rpLines` — block titles, the laid tree by its node ids, totals, net) and
+`mergeColumns` unions the columns by line id, each line kept where its own
+column first had it, a cell empty where a column never printed the line (a
+category prints only when something under it did, so the trees differ
+month to month). The balance sheet has no 累计 column — a month's column is
+the balance as at that month's end (`asOf` = the month's last day); the
+Performance P&L's lines are the groups' sales, cost and gross profit with
+their totals, then the summary lines the single-period screen draws (they
+carry an `id` now); Receipts & Payments shows the Total column of the ticked
+accounts, the ticks and the party toggle applying to every month, and Print
+steps aside while the view is on. Contracts:
+`frontend/src/vendor/scm/lib/report-monthly.test.ts`,
+`frontend/src/pages/scm-v2/MonthlyReport.test.tsx`, and the By month tests in
+`frontend/src/pages/scm-v2/Reports.test.tsx`,
+`frontend/src/pages/scm-v2/PerformancePnl.test.tsx`,
+`frontend/src/pages/scm-v2/ReceiptsPayments.test.tsx`.
 
 **Every payment action by a role holding the correction right owes a reason,
 and Corrections names who first recorded the payment (2026-09-14,
@@ -2061,6 +2232,56 @@ earlier months', named by who), and "These are that entry" fires only when the
 totals agree. Contracts: `backend/tests/bankRoutes.test.ts` (whose harness no
 longer carries the je_no unique — the route's refusal is what "only once"
 exercises), `bank-reconcile.test.ts`, `BankStatementTab.test.tsx`.
+
+**One entry, one claim per bank account (2026-09-15, docs/bugs/0917; owner,
+on the Maybank side of 2990-JE-2607-0088, the July transfer Maybank → HLBB
+already matched on the HLB statement: 这个要做).** An internal transfer is
+ONE journal with a leg on each bank, and each bank's statement shows its own
+movement — so "one entry cannot account for two" means two movements of the
+SAME bank, never one on each. `liveClaimsOn`
+(`backend/src/scm/routes/accounting-bank.ts`) reads an entry's match rows
+with the bank account each claiming line sits on; `bankLineMatch` refuses a
+live claim by another movement of this bank by the bank's name
+(`already_matched`), lets a claim on another bank stand as the entry's other
+leg, and then requires the entry to have a line on this bank
+(`entryOnAccount`, `not_this_account`) so a bank the entry never touches
+cannot claim it; `bankLinesMatchGroup` follows the same rule. The
+reconciliation and the lock already reasoned per account
+(`loadClaimedElsewhere`), and the unique index has allowed it since
+docs/bugs/0803 — only the two routes counted the entry once across every
+bank. Contract: the four "an internal transfer is one entry on two
+statements" tests in `backend/tests/bankMatchPerAccount.test.ts`.
+
+**The reconciliation screen reads like the statement, ticks on one list,
+and names entries by their documents (2026-09-15, docs/bugs/0918; owner: 日期
+一行，description 一行 … 打勾 match 时为什么还要跳出来？下面不是有 list 了吗 … 我需要
+看到 customer name，source 改成 reference，就是 or number, pv number … so number
+我还是需要 … 不是根据日期往下排的).** Four changes on one screen. The movements
+still to decide run by the bank's day then the line (`byDateThenLine`), and
+each reads date (dd/mm/yyyy) · line, then its reference, then its
+description. The tick state lives in `ReconcilePickProvider`
+(`frontend/src/pages/scm-v2/bank-reconcile-pick.tsx`), which both tables
+read — a movement is ticked in its own table, the entry it is in the
+outstanding list below (the list the screen already had; the second
+"Choose the entry" table is gone) — and a bar FIXED to the foot of the
+window carries the two totals, the refusal and "These are that entry", so
+nothing is scrolled to; the statement view and the month view wrap the same
+provider. The outstanding list's columns are Entry · Date · Reference ·
+Customer / payee · Debit · Credit, off two names the server writes on every
+ledger entry: `backend/src/acc/journal-refs.ts` (`resolveJournalRefs`,
+`withJournalRefs`) names a batch of entries in a handful of reads — a
+sales-order payment by its official receipt number when one exists and
+ALWAYS its order number (OR · SO), who = the order's customer; a voucher by
+its number, who = the payee; a payout by "<acquirer> payout dd/mm/yyyy",
+who = the acquirer; a reversal as its original; anything else by its
+document number and its party or note — and `bankStatementDetail`
+(`backend/src/scm/routes/accounting-bank.ts`) and the month detail
+(`backend/src/scm/routes/accounting-bank-months.ts`) name the account's
+ledger before the candidates and the outstanding list are cut from it, so
+a candidate under a movement carries the same reference and who. The
+general ledger page (next in the owner's queue) will name its lines through
+the same resolver. Contracts: `backend/src/acc/journal-refs.test.ts`,
+`frontend/src/pages/scm-v2/BankStatementTab.test.tsx`.
 
 **The lock reads what the screen reads (2026-09-11, docs/bugs/0818; owner,
 on June refusing to close at "RM 45,000.00 apart" under a panel that said ✓

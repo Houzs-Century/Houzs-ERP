@@ -75,7 +75,22 @@ import { pgrestIn } from './pgrest-in-list';
    this engine's bound-needs filter, and the display union's promotion gate
    (so-line-effective-stock.ts) — a hard-bound line's live-MRP 'stock' verdict
    is variant-blind and must never promote it (HC-SO-013367, 2026-08-30). */
-const HARD_BOUND_GROUPS = new Set(['bedframe', 'sofa']);
+/* Owner 2026-09-14: the Sofa Accessory category (fabric_accessory) binds per order
+   like a sofa - 「这个会需要像 sofa 那样 hardbinding 的」, and for EVERY SKU in it -
+   「这些sku全部都要处理」 (SB02, BC04, BC04-MF, BC05, BC05-MF, AR01, AR02, SQUARE
+   PILLOW, LONG PILLOW on the Products page). Each is made in the customer's fabric,
+   so pooled stock of another colour is never its evidence.
+
+   THE CATEGORY IS THE RULE, READ FROM THE PRODUCT MASTER: a line's item_group is
+   stamped from its SKU's category whenever it is written ("SKU wins",
+   docs/bugs/0514), so a SKU put into the category binds with nobody editing this
+   file. The two-code list (SQUARE PILLOW / LONG PILLOW) that bound the pillows by
+   name while they were still `accessory` was REMOVED once the data run (#3864)
+   moved their lines: it kept binding a pillow moved back to Accessory, and it bound
+   company 2's pillows, which are Accessory there. The random / free-gift pillows
+   (AMN-SOFA PILLOW, SOFA PILLOW (FOC)) are Accessory and pool. docs/bugs/0890. */
+const HARD_BOUND_GROUPS = new Set(['bedframe', 'sofa', 'fabric_accessory']);
+
 export function isHardBoundLine(
   itemGroup: string | null | undefined,
   itemCode: string | null | undefined,

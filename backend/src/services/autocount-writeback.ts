@@ -458,19 +458,10 @@ export interface AcEditPayload {
   Lines: AcEditLine[];
 }
 
-/**
- * One line AutoCount created, as the create and convert routes now report them.
- * Ordered by DtlKey, which is creation order. ItemCode travels with the key so
- * the caller can ASSERT its index-zip before storing anything: a wrong DtlKey
- * silently edits a different line in a live book, which is strictly worse than
- * no DtlKey (no key is refused loudly by composeEdit).
- */
-export interface AcCreatedLine {
-  Seq: number;
-  DtlKey: number;
-  ItemCode: string;
-  Desc2?: string | null;
-}
+/* The lines the host reports a document holds, and their parser, live in
+   ./autocount-created-lines (moved 2026-09-14 for FromDocDtlKey, docs/bugs/0898). */
+import { parseCreatedLines, type AcCreatedLine } from './autocount-created-lines';
+export { parseCreatedLines, type AcCreatedLine } from './autocount-created-lines';
 
 /**
  * Thrown when an edit cannot be expressed without risking a duplicate line in
@@ -1656,34 +1647,9 @@ export interface AcCallResult {
 }
 
 /**
- * Read the `lines` array off a service response, keeping only entries that are
- * completely usable. A half-parsed entry is dropped rather than coerced: a
- * DtlKey guessed from a malformed row would be stored as line identity and used
- * to edit a live document.
- */
-export function parseCreatedLines(raw: unknown): AcCreatedLine[] {
-  if (!Array.isArray(raw)) return [];
-  const out: AcCreatedLine[] = [];
-  raw.forEach((entry, i) => {
-    if (!entry || typeof entry !== 'object') return;
-    const r = entry as Record<string, unknown>;
-    const key = Number(r.DtlKey);
-    if (!Number.isFinite(key) || key <= 0) return;
-    const seq = Number(r.Seq);
-    out.push({
-      Seq: Number.isFinite(seq) ? seq : i,
-      DtlKey: key,
-      ItemCode: typeof r.ItemCode === 'string' ? r.ItemCode : '',
-      Desc2: typeof r.Desc2 === 'string' ? r.Desc2 : null,
-    });
-  });
-  return out;
-}
-
-/**
  * Read the `mismatched` array off an `/ensure-masters` response, keeping only
  * entries that carry all three strings. A half-parsed entry is DROPPED rather
- * than coerced — the same rule `parseCreatedLines` follows one function up, and
+ * than coerced — the same rule `parseCreatedLines` follows (./autocount-created-lines), and
  * for a sharper reason here: a mismatch line with a blank `book` would read as
  * "the account book calls this supplier nothing", which is a claim about the
  * book that nobody measured.
