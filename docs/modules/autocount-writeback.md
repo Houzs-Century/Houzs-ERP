@@ -6531,7 +6531,9 @@ that arrived back on the list*) handles the ones already cleared:
 - it clears `archived_at` on every script-cleared document that has since
   arrived;
 - it first re-files each id-filed refusal under the document's number;
-- documents a person cleared on the page (`archived_by` set) stay cleared.
+- documents a person cleared on the page (`archived_by` set) stay cleared,
+  unless named in the workflow's `doc_nos` (since 2026-09-15); a named document
+  must still have arrived, and its person stamp is cleared with it.
 
 `docs/bugs/0917-cleared-documents-that-reached-autocount-still-read-as-not-s.md`.
 
@@ -6565,3 +6567,16 @@ not.
 The reason: an amendment re-derives pieces in one statement, so their read order
 fell to the row ids, and one sofa was spelled two ways on its SO and PO.
 `docs/bugs/0920-a-sofa-s-pieces-were-spelled-in-the-order-the-queue-read-the.md`.
+
+## The payment text fits AutoCount's fifty characters (2026-09-15)
+
+`SO.UDF_PAYEMENT` is `nvarchar(50)`. AutoCount refuses a longer value, and the
+host swallows that refusal, so the field stayed empty with the row reading
+`sent`. HC-SO-2609-011 is the example: 63 characters across three payments.
+
+`composePaymentUdf` now sends a fitting text unchanged. A text that would
+exceed the field is sent as whole references run together, from the first,
+stopping before the field would overflow. That is how the book's own long texts
+read, and the cutover parser still reads the same first pair. The script-side
+mirror in `scripts/lib/ac-payment-udf.mjs` matches.
+`docs/bugs/0921-a-payment-text-longer-than-autocount-s-fifty-character-field.md`.
