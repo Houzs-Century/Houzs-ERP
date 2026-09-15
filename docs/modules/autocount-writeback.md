@@ -445,7 +445,8 @@ already moved.
 
 | Function | Locks on |
 |---|---|
-| `soHasDownstream(sb, soDocNo)` | any non-CANCELLED `delivery_orders` or `sales_invoices` on that SO |
+| `soHasDownstream(sb, soDocNo)` | any non-CANCELLED `delivery_orders` or `sales_invoices` on that SO — gates CANCEL and the header identity fields |
+| `readSoLineFreeze(sb, soDocNo)` | per SO LINE (owner 2026-09-15): a non-CANCELLED DO line or SI line naming it. Gates line writes; an edit to an untransferred sibling still queues an ERP -> AutoCount edit. Whether AutoCount accepts the edit of a PARTLY transferred SO is UNTESTED against the live book |
 | `poHasDownstream(sb, poId)` | any non-CANCELLED `grns` on that PO |
 | `doHasDownstream(sb, doId)` | any non-CANCELLED `delivery_returns` or `sales_invoices` on that DO |
 | `grnHasDownstream(sb, grnId)` | any `grn_items` with `invoiced_qty > 0` or `returned_qty > 0` |

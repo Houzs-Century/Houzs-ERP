@@ -11,6 +11,11 @@
 // ----------------------------------------------------------------------------
 
 import { todayMyt } from './dates';
+/* The per-line downstream freeze (owner 2026-09-15). isLocked's `hasChildren`
+   argument is now `soDownstreamHardLocked(header)` — the whole order locks only
+   when nothing is left to convert; a partly delivered order freezes line by line
+   (`soItemFrozen(item)`). */
+export { soDownstreamHardLocked, soItemFrozen } from '../../shared/so-line-freeze';
 
 /* Terminal / downstream-carrying statuses — once the SO reaches one of these
    its header + line items are no longer ours to edit (SHIPPED onward once goods
@@ -31,6 +36,10 @@ export const CANCELLABLE_STATUSES: readonly string[] = [
 export type SoDetailGateHeader = {
   status?: string | null;
   has_children?: boolean | null;
+  /* Server-computed (owner 2026-09-15): a live DO/SI carries EVERY live line, so
+     nothing is left to convert. Absent = a pre-deploy payload; read through
+     soDownstreamHardLocked, which falls back to has_children. */
+  downstream_fully_frozen?: boolean | null;
   processing_date?: string | null;
   /* Server-computed: a live (non-cancelled) Purchase Order already claims one of
      this SO's lines — 2990 only (owner 2026-08-12). NOT derivable client-side —
@@ -62,15 +71,15 @@ export type SoDetailGateHeader = {
 const upper = (s: string | null | undefined): string => (s ?? '').toUpperCase();
 
 /* isLocked — the SO header/lines are frozen when the status is terminal
-   (SHIPPED+/CANCELLED, unless an explicit unlock override is active) OR a
-   non-cancelled DO/SI references this SO (hasChildren; never overridable — the
-   child must be cancelled first). Mirrors the desktop `isLocked`. */
+   (SHIPPED+/CANCELLED, unless an explicit unlock override is active) OR every
+   line is already on a live DO/SI (`downstreamLocked` = soDownstreamHardLocked;
+   never overridable — the child must be cancelled first). */
 export function isLocked(
   status: string | null | undefined,
-  hasChildren: boolean,
+  downstreamLocked: boolean,
   unlockOverride = false,
 ): boolean {
-  return (LOCKED_STATUSES.includes(upper(status)) && !unlockOverride) || hasChildren;
+  return (LOCKED_STATUSES.includes(upper(status)) && !unlockOverride) || downstreamLocked;
 }
 
 /* migratedReadonly — this order came across from AutoCount and the cutover lock
