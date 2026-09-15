@@ -645,6 +645,16 @@ export type BatchImportResult = {
   upserted: number;
   failed: number;
   failures: Array<{ code: string; reason: string }>;
+  /* A category change on a SKU that belongs to a model moves the model and all its SKUs. */
+  modelsMoved?: ImportModelMove[];
+};
+
+export type ImportModelMove = {
+  modelCode: string;
+  modelName: string | null;
+  from: string;
+  to: string;
+  skuCount: number;
 };
 
 export function useBatchImportMfgProducts() {

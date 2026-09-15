@@ -87,6 +87,7 @@ import {
   type SpecialAddonsHistoryRow, mfgCategoryLabel,
 } from '../../vendor/scm/lib/mfg-products-queries';
 import { CategorySwapSelect } from '../../vendor/scm/components/CategorySwapSelect';
+import { ImportModelsMoved } from '../../vendor/scm/components/ImportModelsMoved';
 import { MFG_CATEGORY_LABELS, MFG_PRODUCT_CATEGORIES } from '../../vendor/shared/product-categories';
 import { useStaffLookup } from '../../hooks/useStaffLookup';
 import { useFabricTrackings } from '../../vendor/scm/lib/fabric-queries';
@@ -4901,6 +4902,7 @@ const ImportSkusDialog = ({ sofaSizes, onClose }: { sofaSizes: string[]; onClose
             upserted: res.upserted,
             failed: res.failed + staged.tierErrors.length,
             failures: [...staged.tierErrors, ...(res.failures ?? [])],
+            modelsMoved: res.modelsMoved,
           }
         : res);
       setStaged(null);
@@ -4931,7 +4933,7 @@ const ImportSkusDialog = ({ sofaSizes, onClose }: { sofaSizes: string[]; onClose
         <p style={{ fontSize: 'var(--fs-13)', color: '#767b6e' }}>
           Pick a CSV or Excel file exported from this page. Edit the prices in Excel,
           save, and import it back. A blank cell is left as it was — it never clears a price.
-          Up to 500 SKUs per file.
+          Up to 500 SKUs per file. A new category on a SKU that belongs to a model moves the model and all its SKUs.
         </p>
         <input
           type="file"
@@ -5001,6 +5003,7 @@ const ImportSkusDialog = ({ sofaSizes, onClose }: { sofaSizes: string[]; onClose
                 {result.failures.length > 5 && <li>…and {result.failures.length - 5} more.</li>}
               </ul>
             )}
+            <ImportModelsMoved moves={result.modelsMoved} />
           </div>
         )}
 

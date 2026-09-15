@@ -2,7 +2,7 @@
 
 > 目的:账本安静后,把 AutoCount 期间的全部变化**更新式**同步进 ERP,并验证到
 > 三个 0(库存 0 差、字段 0 差、状态真嫌疑 0)。首次全程见
-> `docs/ac-reimport-2026-08-28-ledger.md` §4j–4l;本手册是它的可执行蒸馏。
+> 2026-08-28 重导流水账(§4j–4l,已删除,见 git 历史);本手册是它的可执行蒸馏。
 > 预计时长:1–2 小时(首轮 12 小时的教训已全部内化:行键/日期/状态出生自带、
 > 快照只认内部日期、生成物跟着快照重生成、确认句裸调、卡队先查自己单)。
 >
@@ -57,7 +57,7 @@ run-prod`)。少数 workflow 不收 target(如 `refresh-so-tail-from-book.yml`�
 | 7 | `create-migrated-invoices.yml` | `mode=apply` + 同上确认句;金额一分不差才开,DIFFERS 名单呈 owner |
 
 ⚠️ **两路 PO 导入现在会「拒绝写不存在的件号」**(2026-08-31,
-`docs/bugs/0577-a-purchase-order-carried-an-internal-sofa-code-no-product-ro.md`)。
+bug 0577)。
 从前对照表指到一个产品清单里没有的件号时,它会**默默照写**——`5540-1S` 就是这样进了
 31 行单据,那张采购单因此接不回它自己的销售单。现在遇到这种行,它会把每一行连单号
 一起列出来,然后 **exit 2,一行都不写**。
@@ -103,7 +103,7 @@ node backend/scripts/check-ac-gap-attribution.mjs
 ZeroTier,只有这里连得到);后两步是已有的 workflow。
 
 > **为什么这轮要新写导出器**:第一轮(2026-08-09~12)的提取脚本**没留下来**
-> (`docs/autocount-further-description-photos.md` §2.1),照片再也拿不出来。
+> (FurtherDescription 照片调查 §2.1,已删除,见 git 历史),照片再也拿不出来。
 > `backend/scripts/export-ac-line-photos.py` 就是补回来的那一半。
 >
 > 账本实测(2026-08-31,只读):**SO 2,723 行、PO 2,392 行**带照片,**全部是
@@ -270,7 +270,7 @@ resolve 再跑一趟,`already attached` 应该等于上一趟的 `photo keys pla
 > 导出器按 `_1`/`_2` 全部拿,不会只取第一张;但**回写**(ERP → AutoCount)那条路
 > 是整个 `FurtherDescription` 字段覆盖式重写,所以在回写这类行之前必须先读回账本
 > 现有的值,否则第二张会被**抹掉**。详见
-> `docs/autocount-further-description-photos.md` §7 问题 8。
+> FurtherDescription 照片调查 §7 问题 8(已删除,见 git 历史)。
 
 #### 完成实录 — 2026-09-07 上线日,照片这一段收尾
 

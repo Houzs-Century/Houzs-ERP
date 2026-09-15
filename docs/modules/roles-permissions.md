@@ -1,245 +1,45 @@
-# Module: Roles and the flat permission catalogue
+# Roles and Permissions
 
-Per-module technical doc for the **flat permission** system — the `x.y` strings
-like `projects.read` that `requirePermission()` gates on, where they are
-declared, how a role grant becomes a session capability, and the one failure
-mode this system keeps producing.
+Two separate authorization systems live under Team > Roles. Flat permissions (`x.y` keys like `projects.read`) gate API capability (`requirePermission()`) and are granted per ROLE. Page access (`orders.balance` at level V/E/F) gates which menus and pages exist, and is granted per POSITION — edited from the same Roles screen (the settings drawer) but resolved separately (`docs/PERMISSION-MATRIX.md`). This page covers the flat-permission system and the Team > Roles admin surface together.
 
-Written 2026-08-20 because it did not exist. `docs/modules/team-members.md`
-covers System > Team > **Members** and says explicitly that the Roles tab is a
-separate concern; nothing covered that concern, which is part of how the defect
-below survived. `docs/PERMISSION-MATRIX.md` is a different system again — it is
-the PAGE catalogue (`services/pageAccess.ts` `PAGES[]`, granted per POSITION),
-not this one.
+## Statuses and flow
 
-> **Line numbers here are INDICATIVE, not authoritative.** Resolve a route to
-> its current line with the generated artifact, which cannot go stale:
-> ```bash
-> npm --prefix backend run gen:route-locator   # then grep docs/generated/route-locator.md
-> ```
+- `PERMISSIONS[]` (`backend/src/services/permissions.ts`) is the only thing that makes a flat key real. A key absent from it cannot be granted through the UI (`Roles.tsx` renders no checkbox), cannot be stored through the API (`POST`/`PATCH /api/roles` filters with `isValidPermission`), and is silently dropped from session hydration (`parsePermissions`) — none of the three produces a log or error.
+- The admin matrix (`frontend/src/pages/Roles.tsx` desktop, `MobileRoles.tsx` phone, shared model `lib/rolesPermissionModel.ts`) is DERIVED from that catalogue, not hand-authored: module strip = `resource`, columns = the five real verbs (`read`/`create`/`write`/`manage`/`approve`), rows = keys grouped by stem; a (row, verb) with no real key renders N/A.
+- Edits are staged client-side (a `GrantMap` diffed against a baseline) — Save issues one `PATCH /api/roles/:id` per changed role; Discard reverts to baseline.
+- Bulk edit writes a toggled cell to every selected EDITABLE role at once. System roles (`is_system` OR holding `"*"`) are never written to — filtered out of the staged set at three separate points in the model, and shown as an "All permissions" empty state instead of a matrix. "Duplicate as editable role" is the only way to get a custom, editable copy of one.
+- `GET /api/roles` returns `unknown_permissions` per role (the complement of what session hydration keeps) so a role holding a since-undeclared key is visibly flagged in the UI rather than silently thinned on the next save.
 
----
+## Permissions
 
-## 1. The two systems, and which is which
+- `roles.read` (or the Sales Director carve-out, read-only) to open the tab; `roles.manage` for every mutation, including page-access edits.
+- `"*"` (wildcard) is reserved for god positions (Super Admin, Owner, Managing Director) and satisfies every flat key automatically via `hasPermission`.
+- Several high-value keys are declared but granted to **no seed role** on purpose — only `*` holds them until the owner explicitly assigns them: `scm.payment_voucher.check` / `.approve` (the two-yes voucher gate), `scm.so_payment.amend` (correcting a payment after its same-day window, never past a RECONCILED one), `memos.manage` (cross-department memo authority), `announcements.approve` (the publish gate for every notice).
+- `hasPermission` (honours `*`) is what every access gate must use. `hasPermissionLiterally` (ignores `*`, checks only what a role explicitly lists) is a separate reading used ONLY for deciding whose desk work belongs on — amendment notice audiences and sidebar pending-approval counts — never for permitting an action. Holding a key literally can also carry an obligation (e.g. `scm.so_payment.amend` requires a reason on every action once a role names it, even for the Owner via a custom role).
 
-| | flat permissions (THIS doc) | page access |
-|---|---|---|
-| looks like | `projects.read`, `scm.access` | `orders.balance` at level `V`/`E`/`F` |
-| declared in | `backend/src/services/permissions.ts` `PERMISSIONS[]` | `backend/src/services/pageAccess.ts` `PAGES[]` |
-| granted per | **ROLE** (`roles.permissions`, a JSON array) | **POSITION** (`position_page_access`) |
-| gates | API capability — `requirePermission("x")` | which MENUS and pages exist |
-| admin UI | Team > **Roles & Permissions** > **Roles** section (`frontend/src/pages/Roles.tsx` embedded by `pages/team/TeamRolesV2.tsx` since 2026-09-07; `/team?tab=roles` still opens it alone) | Team > **Positions** |
-| spec doc | this file | `docs/PERMISSION-MATRIX.md` |
+## Rules that must not break
 
-Positions gate menus, roles gate permissions. A position grant is **not**
-backfilled into a flat key, which is why several routes carry an
-`OrSalesDirector` / `OrSalesView` carve-out — see `team-members.md`.
+- A key with a live `requirePermission`/`can()` gate must be in `PERMISSIONS[]` — leaving it only in `UNDECLARED_ROLE_KEYS` makes it a permission nobody can ever grant, with no error anywhere (`service_cases.approve` did exactly this for weeks, silently Owner/IT-only).
+- `UNDECLARED_ROLE_KEYS` is a ledger, not an allow-list — listing a key there does not grant it; it still gets dropped exactly as before. A `legacy-closed` entry means a real gate exists and is deliberately left ungrantable — declaring it OPENS access that is currently shut, so never "fix" one by moving it into `PERMISSIONS[]` without confirming that's intended.
+- The ledger is a ratchet: a key that later gains a real gate must be declared in `PERMISSIONS[]` AND removed from the ledger in the same change — a drift test fails if a key is in both.
+- `sales_orders.write` and `delivery_orders.write` need extra care if ever declared — their `.read` twins are deliberately `legacy-closed`, so a write key with no closed read counterpart would be a bigger opening than it looks.
+- Two scripts (`census-service-case-visibility.mjs`, `backfill-role-page-access.mjs`) parse role permissions with their own parser that skips the `isValidPermission` filter — their model of a user's permissions is WIDER than the running system's; never read their output as what a user actually holds.
 
-## 2. `PERMISSIONS[]` is the only thing that makes a key real
+## Gotchas
 
-`backend/src/services/permissions.ts`:
+- The inverse of the missing-catalogue bug also happens and is harder to notice: a key granted in a stored role row that gates nothing anywhere (dozens of these exist) — don't assume every checked box in the matrix corresponds to a live gate.
+- A `*` (wildcard) holder passes every gate via `hasPermission` and so can never reproduce a missing-catalogue-entry bug by testing as themselves — test as a role holding the specific key, not as Owner/IT Admin.
+- There is no frontend permission registry and must not be one — the client only holds booleans the server already decided (`frontend/src/auth/capabilities.ts`); don't add a second source of truth for what a role can do.
+- A role's flat `permissions` only decides what it can DO — page access (what it can SEE) is a separate table (`role_page_access`) resolved from `positionPolicy.ts` at login for positioned users; editing the matrix here never touches menu visibility.
+- There is no per-grant audit trail — `audit_events` records once per `role.update`, not per permission key; don't expect to find who flipped one specific checkbox.
 
-```
-PERMISSIONS[]  ->  PERMISSION_KEYS (a Set)  ->  isValidPermission(key)
-```
+## Where the code is
 
-`isValidPermission` returns true for `"*"` (the Owner wildcard) or a member of
-that Set. `"*"` is also conferred by POSITION: `positionGrantsWildcard()` in
-`backend/src/services/positionPolicy.ts` (`GOD_POSITIONS` = Super Admin, Owner,
-and — owner 2026-09-07, "和 super admin 同等级，通权限" — Managing Director; exact
-normalised name, never substring), read by `hydrateAuthUser` which adds `*` to the
-session. The Team matrix mirrors the list by slug (`GOD_SLUGS` in
-`pages/team/TeamRolesV2.tsx`) to show those positions locked-on. **Three separate things depend on it, and all three fail silently for
-a key that is not declared:**
-
-| where | what it does with an undeclared key |
-|---|---|
-| `parsePermissions()` (session hydration, `services/auth.ts::hydrateAuthUser`) | filters it OUT of the user's capability set |
-| `POST /api/roles` `:86` and `PATCH /api/roles/:id` `:169` | `.filter(isValidPermission)` — refuses to store it |
-| `GET /api/roles/permissions` -> `Roles.tsx` | never renders a checkbox for it |
-
-So an undeclared key cannot be granted through the UI, cannot be stored through
-the API, and is thrown away if it is already in the row. **None of those three
-produces a log, an error, or anything a human sees.**
-
-**`scm.payment_voucher.check`** (the owner's four layers, 2026-09-02) is the
-FIRST of the two yeses — checking a prepared voucher locks it and reserves it
-against Daily Bank's available money; a checker may also reject back to
-draft (docs/modules/payment-voucher.md §0b). Separate key from approve on
-purpose (可以同一个人，可以不同人): the owner may hand the first yes to the
-finance manager and keep the second. Granted to **no** seed role.
-
-**`scm.payment_voucher.approve`** (phase 3, 2026-08-28; re-scoped by the four
-layers 2026-09-02) is the SECOND yes — and since the four layers it POSTS the
-GL in the same request, so this key also opens the standalone post door
-(docs/modules/payment-voucher.md §0b). Declared like every key, deliberately granted to **no** seed role: only
-`*` (Owner / IT Admin) can approve until the owner assigns it to a position.
-
-**`scm.so_payment.amend`** (owner + management 2026-09-10:
-「让权限在finance 这里更改」) lets FINANCE correct or remove a customer payment
-after the day it was keyed in — sales records the money and may fix it the same
-day, and from the next day only a holder of this key can. The edit reverses and
-re-books the payment's journal entry as it goes (`acc/payment-repost.ts`), so
-the books follow the correction. **It does not reach past a RECONCILED
-payment**: matched on a merchant settlement report, claimed by a bank statement,
-or sitting in a closed month is refused to everybody, this key included, because
-by then the figure is evidence somebody has signed off. Declared like every key
-and granted to **no** seed role: only `*` (Owner / IT Admin) holds it until the
-owner assigns it to the finance ROLES (Team > Roles & Permissions, the Roles
-section — this is a flat key, not a position capability). Contract:
-docs/modules/sales-order.md (*Who may correct an old payment*) and
-docs/bugs/0780.
-
-**Holding it LITERALLY means owing a reason** (owner 2026-09-14,
-docs/bugs/0888: 只要是有关 collection payment 的，我或有权限的用户做的动作都要记录
-写 reason). A role that carries this key in its own list — `hasPermissionLiterally`,
-the `*` wildcard alone does not count — gives a reason for EVERY payment
-action on a sales order (record, change, remove, attach proof), same day or
-not, and every such action is listed on Accounting › Corrections beside who
-first recorded the payment. A god position on a role that names the key holds
-it literally AND keeps its wildcard, which is how the owner puts himself under
-the rule from a custom role while HOUZS CENTURY (the Owner role: `*` plus
-approvals) stays outside it. Prod 2026-09-14: the "Finance" role already
-names the key; the system "Super Admin" role is `["*"]` and locked, so the
-owner's own account joins through a custom role.
-
-**`memos.manage`** (the department memo register, owner 2026-09-08, mig
-`20260909T0500`): the register is own-department for any signed-in user; this
-key registers a memo for ANY department and voids anyone's memo. Conferred by
-`*`. Granted to **no** seed role. Contract: docs/modules/memos.md.
-
-**`announcements.approve`** (approval workflow, owner 2026-09-06, mig
-`20260906T1509`) is the announcements approval desk: every notice — the MD's
-own included — is published by this holder's Approve click (`POST
-/api/announcements/:id/approve` / `:id/reject`), which also mints the
-`[DEPT]-ANN-[YYMM]-[NNNN]` reference number. The verb value is `approve` (the
-catalogue's `verb` union gained it). Conferred by `*` like any other key, but
-the approval-needed bell notice goes only to roles that LIST the key
-(`usersHoldingPermission` excludes the wildcard) — so give it to the MD's role
-rather than relying on Owner. Granted to **no** seed role. Contract:
-docs/modules/announcements.md §3 "Approval workflow".
-
-`EXPLICIT_APPROVAL_KEYS` is a separate rule on top: the four checklist-approval
-keys are NOT conferred by `*`. `holdsChecklistApproval()` is the reader; the
-Owner role carries them explicitly instead.
-
-## 3. The failure mode this system produces
-
-**A key with a live gate but no catalogue entry is a permission nobody can
-grant, and nothing says so.**
-
-That is not hypothetical. `routes/assr.ts` gated `POST /api/assr/:id/approve` on
-`service_cases.approve` while the key was absent from `PERMISSIONS[]`. Result:
-cost approval was accidentally Owner/IT-only (only `*` got through), and no
-amount of clicking in Team > Positions could change it. Declared 2026-08-13;
-the comment above that entry is the trace.
-
-**The inverse also happens:** a key granted in a stored role row that gates
-nothing. Twenty-two of those existed as of 2026-08-20.
-
-## 4. `UNDECLARED_ROLE_KEYS` — the ledger, and the two ways to be undeclared
-
-Every key granted by a role in this repo but absent from `PERMISSIONS[]` is
-listed in `UNDECLARED_ROLE_KEYS` with a `status` and a `why`.
-
-**It is a ledger, not an allow-list. Nothing reads it to decide access** — a key
-listed there is still dropped exactly as before. It exists so the drop is a
-written decision rather than silence, and so a gate can fail on an unclassified
-key.
-
-| status | meaning | count at 2026-08-20 |
-|---|---|---|
-| `legacy-closed` | a REAL gate exists and the key is left ungrantable ON PURPOSE. **Declaring one OPENS access that is currently shut.** | 5 |
-| `retired` | the key gates nothing anywhere; the module it belonged to is gone. Declaring one adds a checkbox that grants nothing. | 17 |
-
-The five `legacy-closed` keys are the AutoCount UDF read keys — `sales_orders.read`,
-`delivery_orders.read`, `purchase_orders.read`, `balance.read`, `overdue.read` —
-each a live `requirePermission` in `backend/src/routes/udf.ts:26-32`, whose header
-states the closure is deliberate.
-
-The 17 `retired` keys come from the dead D1 role seeds (`db/schema.sql`,
-`db/migrations/009_roles_fleet.sql`, `db/migrations/014_qms_roles.sql`) and belong
-to modules that no longer exist: there is no `/api/trips`, no `/api/planner` and no
-top-level `/api/reports` mount in `src/index.ts`, `public.trips` was dropped by
-mig 0055, and the customer/supplier portals that DO exist are gated by CAPABILITY
-TOKENS (`middleware/supplierTrack.ts`), never by a session permission.
-
-### Deciding a NEW undeclared key
-
-```bash
-grep -rF '"<key>"' backend/src frontend/src --include=*.ts --include=*.tsx
-```
-
-- **Any `requirePermission` / `requireAnyPermission` / `can()` hit** -> the key
-  has a live gate. It belongs in `PERMISSIONS[]`. Adding it to the ledger instead
-  leaves the gate ungrantable, which is the `service_cases.approve` bug.
-- **Hits only in a role-seed `INSERT` or a comment** -> it gates nothing. Ledger,
-  with the evidence in its `why`.
-
-Two keys need extra care: `sales_orders.write` and `delivery_orders.write`. Their
-`.read` twins are `legacy-closed`, so declaring a `.write` would create a grantable
-write key whose read counterpart is deliberately shut.
-
-## 5. How the drop is made visible
-
-Three layers, because the silence had three places to hide.
-
-| layer | mechanism | catches |
-|---|---|---|
-| **build** | `backend/tests/permissionCatalogueDrift.test.ts` re-derives the dropped set from every role grant in the tree and fails when a key is in neither `PERMISSIONS[]` nor the ledger | a new grant landing in a seed. LIGHT project, so it runs in `test:light` under `backend-typecheck` — a REQUIRED context, so it blocks the merge and not just the deploy |
-| **API** | `droppedPermissions()` is the complement of `parsePermissions()`; `GET /api/roles` returns it as `unknown_permissions` per role | a key present in the LIVE DB that is in no file — the case the build gate structurally cannot see |
-| **UI** | `frontend/src/pages/Roles.tsx` renders that array under the role's permission count | an admin reading Team > Roles, who previously saw a clean row |
-
-`unknown_permissions` is **optional** on the `Role` type: absent means "this
-server did not say", never "there are none".
-
-## 6. Surface
-
-| method | path | gate |
-|---|---|---|
-| GET | `/api/roles/permissions` | `roles.read` — returns `PERMISSIONS[]`, the checkbox source |
-| GET | `/api/roles` | `roles.read` or Sales Director — returns `permissions` + **`unknown_permissions`** + `member_count` |
-| POST | `/api/roles` | `roles.manage` — body permissions are `.filter(isValidPermission)`d |
-| PATCH | `/api/roles/:id` | `roles.manage` — same filter |
-| DELETE | `/api/roles/:id` | `roles.manage` |
-
-Tables: `roles` (`permissions` is a JSON string array), `users.role_id`,
-`role_page_access` (the OTHER system, page level per role).
-
-## 7. Traps
-
-1. **There is NO frontend permission registry, and there must not be one.**
-   `frontend/src/auth/capabilities.ts` states the rule: the client holds
-   booleans the server already decided. `permissions.ts`'s header pointed at a
-   "frontend permission registry" until 2026-08-20 — a pointer at something that
-   has never existed, which invites exactly the second copy the ruling forbids.
-2. **Two scripts parse role permissions with their OWN parser and therefore SEE
-   what the app drops.** `census-service-case-visibility.mjs:78-90` deliberately
-   omits the `isValidPermission` filter, so its model of a user's permissions is
-   WIDER than the running system's — do not read its output as what a user
-   actually holds. `backfill-role-page-access.mjs` (`parsePerms`) does the same,
-   and it is the reason "dropped" must not be read as "never had an effect": mig
-   073's `role_page_access` rows were DERIVED from these keys, so `trips.manage`
-   / `planner.run` handed a role FULL logistics, `sales_orders.write` FULL
-   orders and `delivery_orders.write` FULL delivery orders. That script is
-   one-shot and has already run, so those page grants are now stored rows
-   standing on keys nothing else honours.
-3. **A `*` holder is not a normal user.** `hasPermission` short-circuits on `*`,
-   so a wildcard caller passes every gate and can never reproduce a
-   missing-catalogue-entry bug. `service_cases.approve` went unnoticed for weeks
-   for exactly this reason.
-
-   There is now a second reading of the same permission set —
-   **`hasPermissionLiterally`**, which does NOT honour `*` — and the line between
-   them is worth holding: `hasPermission` answers *may this caller DO it*, and
-   every access gate must keep using it. `hasPermissionLiterally` answers *is
-   this person's desk the one this work sits on*, and only two surfaces ask it:
-   the amendment notice audience (`services/permissionHolders.ts` applies the
-   same exclusion when resolving holders from the roles table) and the sidebar's
-   pending-approval counts. Owner ruling 2026-09-09, after the two disagreed in
-   production — the bell was silent for the Owner account while its menu carried
-   every desk's backlog. Reach for it ONLY when addressing work, never when
-   permitting it.
-4. **The ledger is a ratchet.** A key that later gains a real gate must be
-   DECLARED and REMOVED from the ledger in the same change; the drift test fails
-   on a ledger entry that is also in `PERMISSIONS[]`.
+- `backend/src/services/permissions.ts` — `PERMISSIONS[]`, the catalogue, `UNDECLARED_ROLE_KEYS`.
+- `backend/src/services/pageAccess.ts` — the separate page-access catalogue (`PAGES[]`).
+- `backend/src/services/positionPolicy.ts` — `positionGrantsWildcard`, god positions.
+- `backend/src/routes/roles.ts` — API surface.
+- `backend/tests/permissionCatalogueDrift.test.ts` — the build-time ledger/catalogue drift gate.
+- `frontend/src/pages/Roles.tsx`, `frontend/src/mobile/MobileRoles.tsx` — desktop/mobile admin surfaces.
+- `frontend/src/lib/rolesPermissionModel.ts` — the shared matrix/staging model.
+- `frontend/src/pages/roles/RoleSettingsDrawer.tsx`, `RolesModals.tsx` — page-access editor, create/apply/copy modals.

@@ -1,205 +1,35 @@
-# Module: Address cascade (State / City / Postcode)
+# Address Cascade (State / City / Postcode)
 
-> **Line numbers here are INDICATIVE.** Resolve a symbol with
-> `git grep -n "<symbol>" -- frontend/src` rather than trusting a `:NNN`.
+Every form that captures a Malaysian-style address picks State, City and Postcode off the same reference table, `scm.my_localities`. This module holds the shared cascade rules — what each field offers, and what happens when one is picked — so the logic isn't hand-copied (and drifted) per form. Both top-down and bottom-up picking must work.
 
-Every form in this app that captures an address picks the same three fields off
-the same reference table, `scm.my_localities`. This guide covers the rules that
-decide **what each field offers** and **what happens when one is picked** — the
-part that used to be hand-copied into each form, and drifted.
+## Statuses and flow
 
-The owner's rule, 2026-08-15: *"它可以由上往下，也可以由下往上，双边启动都是可以的"* —
-top-down and bottom-up both have to work.
+- **Top-down:** picking State narrows City and Postcode to that state; picking City further narrows Postcode to that city.
+- **Bottom-up:** picking City back-fills State (only when the city is unambiguous across states); a Postcode set by scan or prefill (not by the picker) back-fills both State and City.
+- **Postcode is State-first:** the Postcode field's option pool is empty with no State picked — its placeholder reads "Select State first" and interacting with it pops an explanatory dialog. City-first bottom-up still works (it back-fills State, which then opens Postcode).
+- The reference table also carries China and Singapore rows (`country` is a real dimension for country-first surfaces like Warehouse/Supplier/Venue). Singapore postcodes are LIVE-resolved through Singapore's OneMap API (`GET /api/scm/sg-postcode/:code`) rather than fully seeded — only 55 representative planning-area rows exist locally. The live lookup is INERT until the `ONEMAP_EMAIL`/`ONEMAP_PASSWORD` Worker secrets are configured, returning `{configured: false}`; callers must degrade to the seeded picker in that case. A successful SG lookup also best-effort fills City + State from the resolved planning area; a failed planning-area lookup fills the address only.
 
----
+## Rules that must not break
 
-## 1. Where the code is
+- A back-filled State must never be routed through the State picker's own handler (`pickState`) — that handler always clears City and Postcode by design (a city under the old state may be invalid under the new one). A bottom-up resolve must write the whole `{state, city, postcode}` triple in one update, never call `pickState` with just the new state.
+- Ambiguity is refused, never guessed — `resolveCityState`/`resolvePostcode` return `null` (leaving State untouched for the operator) rather than pick a side when rows disagree. A wrong auto-picked State would silently re-route the delivery and, through the state→warehouse mapping, the Sales Location on the supplier PO.
+- The top-down leg must narrow Postcode by State (`postcodesInState`), never fall back to the nationwide postcode pool when City is blank — otherwise picking a postcode from another state silently flips the State just chosen.
+- `scm.my_localities` has a UNIQUE index on `(country, state, city, postcode)` — `POST /localities` must 409 on a duplicate rather than silently create one.
+- There is no free-text fallback on any cascade-using document form — a state, city or postcode missing from the table must be added there first (via SO Maintenance → Localities), not typed around.
 
-| File | What it holds |
-|---|---|
-| `frontend/src/vendor/scm/lib/localities-queries.ts` | `useLocalities` (the query) and the pure derivations over its rows |
-| `frontend/src/vendor/scm/lib/address-cascade.ts` | **the cascade rules** — option pools, pick handlers, placeholders, `useAddressCascade` |
-| `frontend/src/vendor/scm/components/StatePicker.tsx` | the State control (grouped by country, type-to-search, no free-text escape) |
-| `frontend/src/vendor/scm/lib/address-cascade.test.ts` | the cascade contract |
-| `frontend/src/vendor/scm/lib/localities-reverse-resolve.test.ts` | the resolver contract underneath it |
+## Gotchas
 
-`useLocalities` reads `GET /api/scm/localities` and is cached for 24h
-(`queryKey: ['my_localities']`) — the table is maintained, not transactional.
-Rows are maintained through **SO Maintenance → Localities**
-(`frontend/src/pages/scm-v2/SalesOrderMaintenance.tsx`), which is the only write
-surface. There is no free-text fallback on any document form: a state, city or
-postcode that is not in the table must be added there first.
+- The `pick*` functions (`pickState`/`pickCity`/`pickPostcode`) are pure and return the WHOLE triple, not just the changed field — write handlers must spread the entire result back into form state (or three `useState` atoms), never merge just one key.
+- A city or postcode that legibly spans multiple areas still resolves to exactly one stored row per state (the unique index forces this) — don't expect the table to disambiguate a real-world postcode that covers several neighbourhoods.
+- Supplier, Warehouse and Venue address forms deliberately do NOT use this cascade — they pick Country first (with State filtered by country) because they capture a different kind of address; this is a design difference, not a bug to unify.
+- `DeliveryOrderNewV2.tsx`'s address fields are still plain free-text inputs styled as pickers — the only editable delivery address in the tree that isn't catalog-validated. Converting it needs the owner's decision first, since a currently-saved value that isn't in the table would go blank on open.
+- Re-derive which forms use the cascade with `git grep -l "lib/address-cascade" -- frontend/src` rather than trusting a written list — it changes as forms are added.
 
-Since 2026-09-11 the table carries a UNIQUE index on `(country, state, city,
-postcode)` (mig `20260911T1730`), so the same locality cannot exist twice —
-`POST /localities` returns **409** on a duplicate instead of silently creating
-one. The index was added after the MY set was found seeded twice (every postcode
-held two identical rows; `docs/bugs/0816-scm-my-localities-was-seeded-twice-so-every-malaysian-postco.md`).
-A city/postcode carries at most one row per state now, so a postcode that legibly
-spans several neighbourhoods (53300 = Wangsa Maju / Danau Kota / Setapak Jaya)
-still resolves to a single stored `city` until the set is enriched.
+## Where the code is
 
-(That page also hosts the Salesperson Handover section since 2026-08-17 — an
-unrelated tool behind `scm.so.attribute_other`, documented in `so-handover.md`.
-It touches no locality data.)
-
-The table is **not Malaysia-only** — mig 0181 seeded CN and SG rows, so
-`country` is a real dimension and `statesInCountry` / `distinctCountries` exist
-for the country-first surfaces (Warehouse, Supplier, Venue).
-
-**Singapore postcodes are LIVE-resolved, not seeded (2026-09-11).** The 55 SG
-rows are one representative code per URA planning area; Singapore's real ~150k
-per-building 6-digit postcodes are NOT in the table, so a real SG postcode shows
-"No match" against the seeded set. `GET /api/scm/sg-postcode/:code`
-(`backend/src/scm/routes/sg-postcode.ts`; testable logic in
-`backend/src/scm/lib/onemap-sg.ts`) resolves a real SG code to its address via
-Singapore's official OneMap API. It is **INERT until configured**: with no
-`ONEMAP_EMAIL` / `ONEMAP_PASSWORD` Worker secret it returns
-`{ configured: false }` and the SG address forms keep the seeded 55-area picker —
-the same no-op contract `RESEND_API_KEY` uses. Front-end callers must degrade on
-`configured: false`, never assume a live lookup.
-
-**A real SG postcode also fills City + State, not just the address (2026-09-12).**
-After the address search, the backend calls OneMap's `getPlanningarea` with the
-result's coordinates to get the URA planning area (`pln_area_n`) and returns it as
-`planningArea` on each result. That planning area is exactly one of the 55 seeded
-SG cities (mig 0181 stores the planning area as `city` and the URA region as
-`state`), so `resolveSgPlanningArea(rows, planningArea)` in `sg-postcode-queries.ts`
-maps it back to the seeded `{ state, city }` and the field fills all three — a real
-SG postcode behaves like a Malaysian one (postcode → address + City + State).
-`getPlanningarea` is **best-effort**: if it fails for any reason the backend leaves
-`planningArea: ""`, `resolveSgPlanningArea` returns `null`, and the field fills the
-address only (the pre-2026-09-12 behaviour). The `getPlanningarea` round trip is
-auth-gated (Worker token) and cannot be exercised in CI, so the parse + the
-planning-area→{state,city} match are unit-tested while the live call itself is not.
-
-The front-end field is `vendor/scm/components/SgPostcodeField.tsx` (hook
-`sg-postcode-queries.ts`); `AddressPostcodeField.tsx` chooses it over the cascade
-dropdown when `country === 'Singapore'`. Its one-tap offer calls
-`onResolve({ address, state, city })` — `state`/`city` are `null` when the planning
-area did not resolve, and each host writes State + City in a single set that leaves
-the typed Postcode untouched (the same "never route a back-filled State through the
-State picker" rule as trap #1 below). Wired into `SupplierDetail` and the Sales
-Order delivery address — `SalesOrderNew` / `SalesOrderDetail` (desktop) and
-`MobileNewSO` (`bare` mode, inside the mobile `<Field>`). Country on the SO forms
-is DERIVED from the picked State, so a SG address is reached by picking a Singapore
-region as State; because the resolved State is always a SG region, the country
-stays Singapore and the field does not disappear mid-fill.
-
-## 2. The two directions
-
-**Top-down** (`由上往下`) — each pick narrows the next field:
-
-```
-State  ──> cityOptionsFor(rows, state)          = citiesInState
-       ──> postcodeOptionsFor(rows, state, '')  = postcodesInState
-City   ──> postcodeOptionsFor(rows, state, city) = postcodesInCity
-```
-
-**Bottom-up** (`由下往上`) — a pick back-fills what sits above it:
-
-```
-City     ──> resolveCityState ──> state          (only when unambiguous)
-Postcode ──> resolvePostcode  ──> { state, city }   (scan / prefill only, see below)
-```
-
-With no State picked, **City** offers the cross-state pool (`allCities`) and can
-start the cascade. **Postcode cannot** — see the State-first rule below.
-
-### Postcode is State-first (owner 2026-09-12: "一定要选 state 才填写 postcode")
-
-`postcodeOptionsFor` returns **empty** with no State, so the Postcode field on
-every cascade form is blocked until a State exists: the placeholder reads "Select
-State first" and interacting with it pops `POSTCODE_NEEDS_STATE` via the app
-dialog. This removed the old bottom-up-from-a-bare-postcode entry (the reason the
-pool is no longer `allPostcodes`/`postcodesForCity` when State is blank).
-City-first still works — it back-fills State, which then opens Postcode — so
-`由下往上` survives via City. `resolvePostcode` itself is unchanged and still
-back-fills State + City for a postcode set by SCAN or PREFILL, where the value
-does not come through the picker. The block is enforced per render style:
-`SearchableSelect` takes `blockedReason` (inert-but-clickable, pops the reason);
-the native `<select>` forms guard `onMouseDown`; both are fed by the same empty
-option pool. Pinned OFF in `address-cascade.test.ts`.
-
-## 3. The API a form uses
-
-```ts
-const { states, cities, postcodes } = useAddressCascade(rows, state, city);
-
-pickState(next)                       // -> { state: next, city: '', postcode: '' }
-pickCity(rows, current, nextCity)     // -> full triple, State back-filled
-pickPostcode(rows, current, nextPc)   // -> full triple, State + City back-filled
-
-cityPlaceholder(state)                // "Pick city — State fills in"
-postcodePlaceholder(state, city)      // "Select State first" when no State (else "Pick postcode…")
-POSTCODE_NEEDS_STATE                  // the popup body when Postcode is used before State
-```
-
-The `pick*` functions are **pure and return the whole triple**. That is not
-style — it is what lets both call-site shapes work:
-
-```ts
-// object-shaped form (the Detail pages) — ONE setForm
-setForm((s) => ({ ...s, ...pickPostcode(rows, s, next) }));
-
-// three useState atoms (the New pages, mobile)
-const t = pickPostcode(rows, { state, city, postcode }, next);
-setState(t.state); setCity(t.city); setPostcode(t.postcode);
-```
-
-## 4. Three traps this module exists to hold
-
-**A back-filled State must NEVER go through the State picker's own handler.**
-That handler is `pickState`, and `pickState` clears City and Postcode by
-design — a city chosen under the old state is not valid under the new one. Route
-a reverse-resolved State through it and the operator watches the postcode they
-just picked vanish. This is why an object-shaped form writes the triple in one
-`setForm` (PR #2117; regression pinned in `address-cascade.test.ts`).
-
-**Ambiguity is REFUSED, never guessed.** `resolveCityState` returns `null` for a
-city that sits under more than one state, and `resolvePostcode` returns `null`
-rather than pick a side when its rows disagree. `pickCity` / `pickPostcode`
-leave State untouched in that case, so the operator resolves it. Do not
-"improve" either into a best guess — a wrong State silently re-routes the
-delivery and, through the state→warehouse mapping, the Sales Location on the
-supplier PO.
-
-**Narrowing is not optional on the top-down leg.** Before 2026-08-15 every form
-fell back to the nationwide postcode pool whenever City was blank, so a picked
-State narrowed City but not Postcode — and picking a postcode from another state
-silently flipped the State just chosen. `postcodesInState` is what closes it.
-
-## 5. Who calls it
-
-Re-run this rather than trusting a list:
-
-```bash
-git grep -l "lib/address-cascade" -- frontend/src
-```
-
-As of 2026-08-15 that is eleven document forms — the SO New/Detail pair,
-`MobileNewSO`, `SalesInvoiceNew`, `DeliveryReturnNew`, and the Consignment
-Note / Order / Return New+Detail pairs — plus the module itself.
-
-## 6. Address surfaces that deliberately do NOT use it
-
-These capture a **supplier, warehouse or venue** address, not a customer
-delivery address, and they pick **Country first** with State filtered by
-country. Reversing them means back-filling Country as well as State, and in the
-Warehouse drawer the City and Postcode fields are not rendered at all until
-State and City exist. That is a redesign, not a wiring change, and none of them
-sits on an operator throughput path.
-
-| Surface | Shape |
-|---|---|
-| `pages/scm-v2/SupplierDetail.tsx` | Country → State → City → Postcode. Its `PostcodeSelect` calls `postcodesInState` for the city-blank case. |
-| `pages/scm-v2/Suppliers.tsx` (quick-add) | `StatePicker` + free-text Area / Postcode / City, so non-MY suppliers can be entered. |
-| `vendor/scm/components/WarehouseFormDrawer.tsx` | Country first; City/Postcode conditionally rendered. |
-| `pages/ProjectMaintenance.tsx` (VenueManager) | State + City dropdowns, free-text Postcode, in a compact row-add grid. |
-
-**`pages/scm-v2/DeliveryOrderNewV2.tsx` is an open gap, not a decision.** Its
-State / City / Postcode are three plain `TextInput`s whose placeholders read
-"Pick state / city / postcode" — text boxes dressed as pickers, and the only
-editable delivery address in the tree that is not catalog-validated. Converting
-it changes what production can SAVE (a prefilled value the table lacks would
-blank on open), so it needs the owner's call first.
+- `frontend/src/vendor/scm/lib/address-cascade.ts` — the cascade rules, option pools, pick handlers, `useAddressCascade`.
+- `frontend/src/vendor/scm/lib/localities-queries.ts` — `useLocalities` and pure derivations over its rows.
+- `frontend/src/vendor/scm/components/StatePicker.tsx` — the State control.
+- `frontend/src/vendor/scm/components/SgPostcodeField.tsx`, `frontend/src/vendor/scm/lib/sg-postcode-queries.ts` — the Singapore live-lookup field.
+- `backend/src/scm/routes/sg-postcode.ts`, `backend/src/scm/lib/onemap-sg.ts` — the OneMap SG resolver.
+- `frontend/src/pages/scm-v2/SalesOrderMaintenance.tsx` — the only write surface for `my_localities` rows.

@@ -682,12 +682,15 @@ export const safeName = (s: string, maxLen = 32): string => {
 //
 //   'save'    → download it (the historical default; keep it the fallback so an
 //               un-migrated caller behaves exactly as before)
-//   'print'   → blob → hidden iframe → the browser's print dialog. NOTE this is
-//               the ONLY correct way to print a document from this app: the
-//               global @media print block (index.css) hides `body *` and shows
-//               only `.org-print-area`, so window.print() on a detail page
-//               prints a BLANK sheet. The DO preview's "Print now" did exactly
-//               that until 2026-08-06.
+//   'print'   → blob → a new tab showing the document full-size, and the
+//               browser's print dialog opened on it once the viewer has loaded.
+//               A 0×0 hidden iframe's contentWindow.print() is answered by
+//               Chrome's PDF viewer with nothing at all (no dialog, no error)
+//               often enough that it is now only the popup-blocked fallback.
+//               A tab of our OWN pages is never the answer: the global @media
+//               print block (index.css) hides `body *` and shows only
+//               `.org-print-area`, so window.print() on a detail page prints a
+//               BLANK sheet.
 //   'preview' → blob → new tab, i.e. the "View full PDF" escape hatch from the
 //               summary card when the operator wants to see every line first.
 export type PdfAction = 'save' | 'print' | 'preview';
@@ -761,7 +764,20 @@ export function deliverPdfBlob(
     openPdfPreviewTab(blob, blobUrl, filename);
     return;
   }
-  renderViaIframe(blobUrl, true);
+  openPdfPrintTab(blobUrl, filename);
+}
+
+/* 'print' — the named wrapper page (route 2), never the service-worker path:
+   the viewer sits in a VISIBLE iframe there, the shape Chrome prints reliably,
+   and the page carries a Print button for a second go. Opened synchronously
+   for the same reason the preview's tab is. */
+function openPdfPrintTab(blobUrl: string, filename: string): void {
+  const tab = window.open('', '_blank');
+  if (!tab) {
+    renderViaIframe(blobUrl, true);
+    return;
+  }
+  writeNamedPdfTab(tab, blobUrl, filename, { print: true });
 }
 
 /* ── The preview tab ──────────────────────────────────────────────────────────
@@ -849,7 +865,12 @@ async function putPrintPreview(
    two documents open side by side are indistinguishable and Save proposes the
    GUID. This wrapper cannot fix the address bar (only the service-worker route
    above can) but it does name the tab, the window title and the download. */
-function writeNamedPdfTab(tab: Window, blobUrl: string, filename: string): void {
+/** How long the viewer gets after its load event before the print dialog is
+    asked for — Chrome fires load before the PDF is laid out, and a dialog
+    asked for too early prints a blank sheet. */
+const PRINT_SETTLE_MS = 400;
+
+function writeNamedPdfTab(tab: Window, blobUrl: string, filename: string, opts: { print?: boolean } = {}): void {
   const title = filename.replace(/\.pdf$/i, '');
   const esc = (s: string) =>
     s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -858,14 +879,30 @@ function writeNamedPdfTab(tab: Window, blobUrl: string, filename: string): void 
       `<title>${esc(title)}</title>` +
       `<style>html,body{margin:0;height:100%;background:#3a3a3a}` +
       `iframe{border:0;width:100%;height:100%;display:block}` +
-      `a.dl{position:fixed;right:14px;top:10px;z-index:2;font:600 12px/1 system-ui,sans-serif;` +
-      `background:#0f766e;color:#fff;padding:8px 12px;border-radius:6px;text-decoration:none}</style>` +
+      `.bar{position:fixed;right:14px;top:10px;z-index:2;display:flex;gap:8px}` +
+      `.bar a,.bar button{font:600 12px/1 system-ui,sans-serif;background:#0f766e;color:#fff;padding:8px 12px;border-radius:6px;text-decoration:none;border:0;cursor:pointer}</style>` +
       `</head><body>` +
-      `<a class="dl" href="${esc(blobUrl)}" download="${esc(filename)}">Download PDF</a>` +
+      `<div class="bar"><button type="button" data-print>Print</button>` +
+      `<a href="${esc(blobUrl)}" download="${esc(filename)}">Download PDF</a></div>` +
       `<iframe src="${esc(blobUrl)}" title="${esc(title)}"></iframe>` +
       `</body></html>`,
   );
   tab.document.close();
+  /* Wired from this side: the tab is an about:blank of our origin, so no inline
+     script has to survive whatever policy the page is served under. */
+  const frame = tab.document.querySelector('iframe');
+  const printFrame = () => {
+    try {
+      frame?.contentWindow?.focus();
+      frame?.contentWindow?.print();
+    } catch {
+      /* The viewer refused — the operator still has the button and the download. */
+    }
+  };
+  tab.document.querySelector('[data-print]')?.addEventListener('click', printFrame);
+  if (opts.print && frame) {
+    frame.addEventListener('load', () => { tab.setTimeout(printFrame, PRINT_SETTLE_MS); });
+  }
   /* No revoke timer. The old code revoked after 60 s, which was safe when the
      tab was the blob itself (already loaded) but would quietly break this page's
      Download link the moment the operator took longer than a minute to decide.

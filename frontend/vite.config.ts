@@ -53,13 +53,6 @@ export default defineConfig(({ mode }) => {
       // Array form (find/replacement) — required because the react-router
       // entry uses a regex find; Vite forbids mixing object-map + array forms.
       alias: [
-        // Pin the bare `zod` import to this app's own copy so Rollup resolves
-        // it deterministically on a clean CI build. Exact-match so it doesn't
-        // also rewrite e.g. "zod/lib".
-        {
-          find: /^zod$/,
-          replacement: fileURLToPath(new URL("./node_modules/zod", import.meta.url)),
-        },
         // ── Vendored 2990's SCM slice (Suppliers proof of concept) ──
         // The wholesale-copied 2990 pages/components import these bare
         // specifiers; map them onto the vendored copies under src/vendor.
@@ -222,11 +215,6 @@ export default defineConfig(({ mode }) => {
               {
                 name: "react-vendor",
                 test: /[\\/]node_modules[\\/](?:@tanstack[\\/]|react(?:-dom|-router|-router-dom)?[\\/]|scheduler[\\/])/,
-                priority: 30,
-              },
-              {
-                name: "leaflet",
-                test: /[\\/]node_modules[\\/]leaflet[\\/]/,
                 priority: 30,
               },
               {
