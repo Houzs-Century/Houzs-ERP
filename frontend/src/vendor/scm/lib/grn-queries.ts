@@ -18,6 +18,7 @@
 import { useMemo } from 'react';
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
+import { grnListParams } from './grn-list-export';
 import { applyListMrpEnrichment, type EnrichableMrpRow, type ListMrpEnrichment } from '../../../lib/listMrpEnrichment';
 import { idempotentInit } from '../../../lib/idempotency';
 import { serviceNotify } from './dialog-service';
@@ -100,12 +101,11 @@ export const useGrns = (status?: string) =>
 // to be dropped here.
 export function useGrnsPaged(params: { page: number; pageSize: number; status?: string; q?: string; sort?: string }) {
   const { page, pageSize, status, q, sort } = params;
-  const usp = new URLSearchParams();
+  // The filter half is shared with the two exports (grn-list-export.ts), so an
+  // export can never be sent a different filter than the list it was pressed on.
+  const usp = grnListParams({ status, q, sort });
   usp.set('page', String(page));
   usp.set('pageSize', String(pageSize));
-  if (status) usp.set('status', status);
-  if (q && q.trim()) usp.set('q', q.trim());
-  if (sort) usp.set('sort', sort);
   return useQuery({
     queryKey: ['grns-paged', page, pageSize, status ?? '', q ?? '', sort ?? ''],
     queryFn: ({ signal }) => authedFetch<{ grns: any[]; total: number; page: number; pageSize: number; statusCounts: { all: number; draft: number; posted: number; cancelled: number } & Partial<Record<'on_hold', number>> }>(`/grns?${usp.toString()}`, { signal }),
