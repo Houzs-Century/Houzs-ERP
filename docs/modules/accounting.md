@@ -107,7 +107,10 @@ all company-scoped, all paginated past PostgREST's 1000-row cap.
 Writes: `POST /journal-entries` (manual JV **draft** through the gate; source
 type is FORCED to MANUAL and the chart is validated), `POST
 /journal-entries/:id/post`, `POST /journal-entries/:id/reverse` (MANUAL only
-— documents reverse through their own cancel flows), `POST /post/si/:inv`,
+— documents reverse through their own cancel flows), `PUT
+/journal-entries/:id` (a manual journal edited in one step, docs/bugs/0932:
+validate, draft, reverse the old on its own day, post — a draft rewritten in
+place), `POST /post/si/:inv`,
 `POST /post/pi/:inv` (manual re-post endpoints; DRAFT guarded), `POST
 /accounts` + `PATCH /accounts/:code` (chart management: code immutable,
 parent must share the type, deactivation refused for parents-with-children
@@ -2536,6 +2539,34 @@ never the date, and the form opens as a new draft dated today, marked
 copied, saved through the same call as any draft — Copy never posts. The
 account box is `SearchCombo` (the voucher and bill forms' own): every word
 typed must match the code or the name. Contract:
+`frontend/src/pages/scm-v2/JournalEntryCards.test.tsx`.
+
+**A manual journal edited in one step (2026-09-15, docs/bugs/0932; owner,
+on a posted one: 我无法 edit … 要做).** A posted entry stays immutable; what
+changed is that the three moves a correction took by hand — Copy, post the
+draft, Reverse the old — are one call, `PUT /accounting/journal-entries/:id`
+(`backend/src/scm/routes/accounting-journal-edit.ts`, registered in
+`backend/src/scm/routes/accounting.ts` under the same GL key as create, post
+and reverse). Order matters and is fixed: the corrected entry is VALIDATED
+through `validateJournal` before anything is written (a bad edit reverses
+nothing); it is written as a DRAFT; the old entry is REVERSED by a contra
+dated the OLD entry's own day (its month nets to zero — the payment
+re-post's rule in `backend/src/acc/payment-repost.ts`) whose narration
+names the successor ("Reversal of X — edited, replaced by Y"); the draft is
+POSTED. A reversal that fails deletes the draft and leaves the books as they
+were; a final post that fails answers with the draft's number, and its own
+Post button finishes. A DRAFT is rewritten in place — same number, no
+contra. A document's entry is `not_manual` (correct the document); a
+reversed one is `already_reversed` (copy it). On the card
+(`frontend/src/pages/scm-v2/JournalEntryCards.tsx`) **Edit** sits beside
+Reverse and Copy on a manual journal not yet reversed: `editSeedFromEntry`
+opens the same form on the entry's own date, number, narration and lines —
+the party on each line kept, which Copy drops on purpose — titled "Edit
+2990-JE-…" with what saving does, the button **Save & post** on a posted
+entry and Save draft on a draft, saving through `useEditJournalEntry`
+(`frontend/src/pages/scm-v2/accounting-phase1-queries.ts`), never a create;
+`frontend/src/pages/scm-v2/Accounting.tsx` carries the entry from the card
+to the form. Contracts: `backend/tests/journalEntryEdit.test.ts`,
 `frontend/src/pages/scm-v2/JournalEntryCards.test.tsx`.
 
 **A reversal pair is nothing, everywhere (2026-09-15, docs/bugs/0923; owner:
