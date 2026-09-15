@@ -31,7 +31,7 @@ books which entry":
 | Customer payment collected | Dr CASH/BANK/transit / Cr AR | `SOPAY` / `SIPAY` | `*_REVERSAL` |
 | Daily cash close | Dr/Cr OVER_SHORT / Cr/Dr CASH | `CASHUP` | (correct by JV) |
 | Acquirer settlement confirmed | Dr fee / Cr transit | `SETTLE` | `SETTLE_REVERSAL` |
-| Untagged card money named by a settlement | Dr the merchant's own clearing / Cr generic clearing | `SETTLEMOVE` | `SETTLEMOVE_REVERSAL` |
+| Card money named by a settlement while sitting on another clearing account (keyed without a bank, or under the wrong one) | Dr the merchant's own clearing / Cr the clearing account(s) it sat on | `SETTLEMOVE` | `SETTLEMOVE_REVERSAL` |
 | Statement charge with no transaction | Dr fee / Cr transit | `SETTLEADJ` | `SETTLEADJ_REVERSAL` |
 | Acquirer payout received | Dr bank / Cr transit | `SETTLEBANK` | `SETTLEBANK_REVERSAL` |
 
@@ -1634,6 +1634,37 @@ reached the ledger. The move that fails after the fee posted says so and asks
 for a second press, which resumes through the gate's idempotency. Undo reverses
 the move alongside the fee. Contract: `backend/src/acc/settlement.test.ts`
 ("money keyed in without a bank moves to the merchant's own clearing account").
+
+**Money keyed under the WRONG bank moves the same way, and the payment is
+corrected (2026-09-15, docs/bugs/0940; owner, from the balance sheet as at
+31/08: card machine clearing 看起来不太对 … 这个要做 … 要).** A payment keyed
+as PBB sits on PBB's clearing account (326-0010 on 2990); when HLB's statement
+names it, the confirm used to leave it there — only the generic account was
+read — so PBB read RM 3,240 too high and HLB the same too low (SO-2608-013).
+Now `moveUntaggedBooking` reads EVERY clearing account of the company (the
+generic one and each acquirer's `transit_account_code` from `acc_acquirers`)
+and posts one `SETTLEMOVE` per line for whatever the chosen payments debited on
+any of them but the merchant's own — one debit on the merchant's account, one
+credit per account the money leaves (`clearingMoveLinesFrom`,
+`backend/src/acc/rules.ts`; the narration names each: "keyed in without a
+bank: moved from 326-0000 to 326-0040; keyed on 326-0010: moved from
+326-0010 to 326-0040"). The stamp step now corrects the payment too: the
+merchant's statement outranks the till, so a payment keyed under another bank
+gets `merchant_provider` set to the acquirer, its `account_sheet` following
+when it was the bank's own name (a hand-typed sheet is kept), and one
+`UPDATE_PAYMENT` line in the order's history (source `automation`, "Bank
+corrected by the HLB settlement match: PBB → HLB"); an untagged payment is
+stamped as before with no line, a right one is left alone. The two 2990
+entries the old rule owed are written by
+`backend/src/db/migrations-pg/20260915T2200_acc_2990_clearing_repairs.sql`:
+SETTLEMOVE-67 dated 2026-08-10 Dr 326-0040 / Cr 326-0010 RM 3,240.00
+(SO-2608-013), and the owner's own MANUAL entry dated 2026-08-24 Dr 326-0040 /
+Cr 350-0010 RM 1,499.00 (THE CONTS SDN BHD's loan repaid by card at the HLB
+terminal, payout received 26/08; source_doc_no REPAIR-THECONTS-1499) — both
+idempotent on their source_doc_no, numbered next in the 2990-JE-2608 series.
+Contract: `backend/src/acc/settlement.test.ts` ("moves money keyed on another
+bank's clearing account too", "corrects a wrongly tagged one with a history
+line").
 
 **And the way back out (2026-08-29, the owner's 上传了能cancel 掉? made the gap
 loud): POST /settlement/rows/:id/unconfirm** — the door the ignore refusal has
