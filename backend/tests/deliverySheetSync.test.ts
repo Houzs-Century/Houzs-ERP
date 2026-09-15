@@ -217,28 +217,44 @@ describe("POST /updates — col A → remark4, col O → customer_delivery_date"
   test("writes both columns, scoped to the secret's company, found by the sheet's AutoCount number", async () => {
     const { res, body, seen } = await post(
       { updates: [{ DocNo: "SO-013495", Remark4: "Done Scheduling", ExpiryDate: "2026/10/01" }] },
-      (sql) => (/FROM companies/i.test(sql) ? { id: HOUZS } : /UPDATE scm\.mfg_sales_orders/.test(sql) ? [{ doc_no: "HC-SO-013495" }] : []),
+      (sql) =>
+        /FROM companies/i.test(sql)
+          ? { id: HOUZS }
+          : /UPDATE scm\.mfg_sales_orders/.test(sql)
+            ? [{ doc_no: "HC-SO-013495", sheet_doc_no: "SO-013495" }]
+            : [],
     );
     expect(res.status).toBe(200);
     expect(body.written).toBe(1);
     expect(body.results[0]).toMatchObject({ DocNo: "SO-013495", ErpDocNo: "HC-SO-013495", ok: true, delivery_date: "2026-10-01" });
     const upd = seen.find((s) => /UPDATE scm\.mfg_sales_orders/.test(s.sql))!;
-    expect(upd.binds).toEqual(["Done Scheduling", "2026-10-01", HOUZS, "SO-013495"]);
-    expect(upd.sql).toContain("company_id = ?3");
-    expect(upd.sql).toContain("linked_ac_docno = ?4 OR doc_no = ?4");
+    expect(upd.binds).toEqual(["SO-013495", "Done Scheduling", "2026-10-01", HOUZS]);
+    expect(upd.sql).toContain("so.company_id = ?");
+    expect(upd.sql).toContain("so.linked_ac_docno = v.sheet_doc_no OR so.doc_no = v.sheet_doc_no");
   });
 
-  test("a blank date keeps the ERP's date; an absent Remark4 keeps the ERP's remark; a row with neither is skipped", async () => {
+  test("one statement per batch: a blank date keeps the ERP's date, an absent Remark4 keeps the remark, a row with neither is skipped, a repeated Doc. No. is sent once (last wins)", async () => {
     const { body, seen } = await post(
-      { updates: [{ DocNo: "SO-1", Remark4: "", ExpiryDate: "" }, { DocNo: "SO-2", ExpiryDate: "2026-10-02" }, { DocNo: "SO-3" }] },
-      (sql) => (/FROM companies/i.test(sql) ? { id: HOUZS } : /UPDATE/.test(sql) ? [{ doc_no: "X" }] : []),
+      {
+        updates: [
+          { DocNo: "SO-1", Remark4: "", ExpiryDate: "" },
+          { DocNo: "SO-2", ExpiryDate: "2026-10-02" },
+          { DocNo: "SO-3" },
+          { DocNo: "SO-1", Remark4: "Done Scheduling" },
+        ],
+      },
+      (sql) => (/FROM companies/i.test(sql) ? { id: HOUZS } : /UPDATE/.test(sql) ? [{ doc_no: "HC-SO-1", sheet_doc_no: "SO-1" }] : []),
     );
     const upds = seen.filter((s) => /UPDATE scm\.mfg_sales_orders/.test(s.sql));
-    expect(upds.map((u) => u.binds)).toEqual([
-      ["", null, HOUZS, "SO-1"],
-      [null, "2026-10-02", HOUZS, "SO-2"],
-    ]);
+    expect(upds).toHaveLength(1);
+    expect(upds[0]!.binds).toEqual(["SO-1", "Done Scheduling", null, "SO-2", null, "2026-10-02", HOUZS]);
+    expect(upds[0]!.sql).toContain("(VALUES (?::text, ?::text, ?::date), (?::text, ?::text, ?::date))");
     expect(body.results[2]).toMatchObject({ DocNo: "SO-3", skipped: "nothing_to_write" });
+    // Both SO-1 rows report the write; SO-2 found no order.
+    expect(body.results[0]).toMatchObject({ DocNo: "SO-1", ok: true });
+    expect(body.results[3]).toMatchObject({ DocNo: "SO-1", ok: true });
+    expect(body.results[1]).toMatchObject({ DocNo: "SO-2", skipped: "no_order" });
+    expect(body.written).toBe(2);
   });
 
   test("an unknown or other-company Doc. No. writes nothing and says so", async () => {

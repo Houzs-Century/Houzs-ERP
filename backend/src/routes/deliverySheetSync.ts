@@ -33,8 +33,8 @@ import { checkRateLimit, clientIp } from "../middleware/rateLimit";
 import { intakeCompany } from "../lib/intake-company";
 import {
   FEED_SINCE_SQL,
-  UPDATE_FROM_SHEET_SQL,
   UPDATES_MAX,
+  updateFromSheetSql,
   feedLinesSql,
   normSheetDate,
   parseLimit,
@@ -143,12 +143,15 @@ app.post("/updates", async (c) => {
   const co = await sheetCompanyId(c);
   if ("refusal" in co) return co.refusal;
 
-  const results: Array<Record<string, unknown>> = [];
-  for (const u of updates) {
+  // Validate every row first; the writable ones go to the database as ONE
+  // statement (see updateFromSheetSql for why one round trip matters here).
+  const results: Array<Record<string, unknown>> = updates.map(() => ({}));
+  const rows: Array<{ i: number; docNo: string; remark4: string | null; expiry: string | null }> = [];
+  updates.forEach((u, i) => {
     const docNo = String(u.DocNo ?? "").trim();
     if (!docNo) {
-      results.push({ DocNo: null, skipped: "no_doc_no" });
-      continue;
+      results[i] = { DocNo: null, skipped: "no_doc_no" };
+      return;
     }
     // A Remark4 that is PRESENT is written as-is, blank included — clearing
     // col A is a real edit. An ABSENT Remark4 keeps the ERP's value.
@@ -157,23 +160,40 @@ app.post("/updates", async (c) => {
     // stored as text, and this leg must not repeat that.
     const expiry = normSheetDate(u.ExpiryDate);
     if (u.ExpiryDate != null && String(u.ExpiryDate).trim() && !expiry) {
-      results.push({ DocNo: docNo, skipped: "bad_date" });
-      continue;
+      results[i] = { DocNo: docNo, skipped: "bad_date" };
+      return;
     }
     if (remark4 == null && !expiry) {
-      results.push({ DocNo: docNo, skipped: "nothing_to_write" });
-      continue;
+      results[i] = { DocNo: docNo, skipped: "nothing_to_write" };
+      return;
     }
+    results[i] = { DocNo: docNo, skipped: "no_order" };
+    rows.push({ i, docNo, remark4, expiry });
+  });
+
+  if (rows.length) {
+    // The same Doc. No. twice in one batch would update one row twice in a
+    // single statement; the LAST occurrence wins, as it would row by row.
+    const byDoc = new Map<string, (typeof rows)[number]>();
+    for (const r of rows) byDoc.set(r.docNo, r);
+    const batch = [...byDoc.values()];
+    const binds: unknown[] = [];
+    for (const r of batch) binds.push(r.docNo, r.remark4, r.expiry);
+    binds.push(co.id);
     try {
-      // company-scope: ?3 is the secret's company id; the row is found by the sheet's AutoCount number OR the ERP number within it.
-      const res = await c.env.DB.prepare(UPDATE_FROM_SHEET_SQL)
-        .bind(remark4, expiry, co.id, docNo)
-        .all<{ doc_no: string }>();
-      const hit = res.results?.[0];
-      if (!hit) results.push({ DocNo: docNo, skipped: "no_order" });
-      else results.push({ DocNo: docNo, ErpDocNo: hit.doc_no, ok: true, remark4, delivery_date: expiry });
+      // company-scope: the last bind is the secret's company id; each row is found by the sheet's AutoCount number OR the ERP number within it.
+      const res = await c.env.DB.prepare(updateFromSheetSql(batch.length))
+        .bind(...binds)
+        .all<{ doc_no: string; sheet_doc_no: string }>();
+      const hitBySheetDoc = new Map<string, string>();
+      for (const h of res.results ?? []) hitBySheetDoc.set(h.sheet_doc_no, h.doc_no);
+      for (const r of rows) {
+        const erpDocNo = hitBySheetDoc.get(r.docNo);
+        if (erpDocNo) results[r.i] = { DocNo: r.docNo, ErpDocNo: erpDocNo, ok: true, remark4: r.remark4, delivery_date: r.expiry };
+      }
     } catch (e) {
-      results.push({ DocNo: docNo, error: e instanceof Error ? e.message : String(e) });
+      const message = e instanceof Error ? e.message : String(e);
+      for (const r of rows) results[r.i] = { DocNo: r.docNo, error: message };
     }
   }
   const written = results.filter((r) => r.ok === true).length;
