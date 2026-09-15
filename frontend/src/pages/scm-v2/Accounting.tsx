@@ -18,7 +18,6 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { ACCOUNTING_TAB_TITLES, accountingTabFromSearch, type AccountingTab } from './accounting-tabs';
 import {
-  useJournalEntries,
   useAccountBalances,
   useArAging,
   useApAging,
@@ -26,7 +25,6 @@ import {
   type Account,
   type ArAgingRow,
   type ApAgingRow,
-  type JournalEntry,
 } from '../../vendor/scm/lib/accounting-queries';
 import {
   useControlCheck,
@@ -47,12 +45,13 @@ import { PaymentCorrectionsTab } from './PaymentCorrectionsTab';
 import { CollectionTab } from './CollectionReport';
 import { MerchantChargesTab } from './MerchantChargesReport';
 import { PerformanceTab } from './PerformancePnl';
-import { NewJournalForm, JeDetailCard, jeStatus, cardStyle, fieldStyle, btnStyle, type DraftSeed, type EditSeed } from './JournalEntryCards';
+import { cardStyle, fieldStyle, btnStyle } from './JournalEntryCards';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { fmtSen } from '../../vendor/shared/format';
 import { byText } from '../../vendor/scm/lib/sort-options';
 import styles from './Suppliers.module.css';
 import { GeneralLedger } from './GeneralLedger';
+import { JournalTab } from './JournalEntries';
 import { CancelledWithMoneyCard } from './CancelledWithMoneyCard';
 import { PageHeader } from '../../components/Layout';
 import { fmtDateOrDash } from '../../vendor/shared/format';
@@ -214,115 +213,9 @@ const CoaTab = () => {
 
 /* ── Journal Entries ─────────────────────────────────────────────────── */
 
-/* The five journals (GL redesign item 7) — the AutoCount way the owner reads
-   his books. The class arrives on each row from the server (derived from the
-   source type and, for money documents, from which money account the lines
-   touch); the chips are a client filter over the loaded page. */
-const JOURNAL_CHIPS = ['SALES', 'PURCHASE', 'BANK', 'CASH', 'GENERAL'] as const;
-const journalClassOf = (r: JournalEntry): string =>
-  String((r as { journal_class?: string }).journal_class ?? 'GENERAL');
-
-const JeTab = () => {
-  const [sourceType, setSourceType] = useState<string>('');
-  const [journal, setJournal] = useState<string>('');
-  const q = useJournalEntries(sourceType ? { sourceType } : undefined);
-  const rows = useMemo(() => q.data?.journalEntries ?? [], [q.data]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
-  /* A copy of an opened manual journal: the seed the draft form opens with,
-     and a fresh key so a second Copy starts a fresh form (docs/bugs/0920).
-     An EDIT carries the entry as well — the form then saves to it. */
-  const [seed, setSeed] = useState<{ key: number; draft: DraftSeed; editing?: EditSeed } | null>(null);
-
-  const [search, setSearch] = useState('');
-  const visible = useMemo(() => {
-    const inJournal = journal ? rows.filter((r) => journalClassOf(r) === journal) : rows;
-    const term = search.trim().toLowerCase();
-    if (!term) return inJournal;
-    return inJournal.filter((r) =>
-      `${r.je_no} ${r.entry_date} ${r.source_type} ${r.source_doc_no ?? ''} ${journalClassOf(r)} ${jeStatus(r)}`
-        .toLowerCase()
-        .includes(term),
-    );
-  }, [rows, search, journal]);
-
-  return (
-    <div className="space-y-3">
-      <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
-        <button type="button" style={btnStyle(true)} onClick={() => { setCreating((v) => !v); setSelectedId(null); setSeed(null); }}>
-          {creating ? 'Close journal form' : 'New manual journal'}
-        </button>
-        <select
-          value={sourceType}
-          onChange={(e) => setSourceType(e.target.value)}
-          className={styles.searchInput}
-          style={{ maxWidth: 220 }}>
-          <option value="">All sources</option>
-          <option value="SI">SI — Sales Invoice</option>
-          <option value="SI_REVERSAL">SI Reversal</option>
-          <option value="PI">PI — Purchase Invoice</option>
-          <option value="PI_REVERSAL">PI Reversal</option>
-          <option value="PV">PV — Payment Voucher</option>
-          <option value="PV_REVERSAL">PV Reversal</option>
-          <option value="MANUAL">Manual</option>
-          <option value="MANUAL_REVERSAL">Manual Reversal</option>
-        </select>
-        {/* The five journals, AutoCount's own vocabulary. */}
-        <button type="button" style={btnStyle(journal === '')} onClick={() => setJournal('')}>All journals</button>
-        {JOURNAL_CHIPS.map((jc) => (
-          <button key={jc} type="button" style={btnStyle(journal === jc)} onClick={() => setJournal(journal === jc ? '' : jc)}>
-            {jc}
-          </button>
-        ))}
-      </div>
-
-      {creating && <NewJournalForm key={seed?.key ?? 0} initial={seed?.draft ?? null} editing={seed?.editing ?? null} onDone={() => { setCreating(false); setSeed(null); }} />}
-      {selectedId && (
-        <JeDetailCard id={selectedId} onClose={() => setSelectedId(null)}
-          onCopy={(draft) => { setSeed({ key: Date.now(), draft }); setCreating(true); setSelectedId(null); }}
-          onEdit={(editing) => { setSeed({ key: Date.now(), draft: editing, editing }); setCreating(true); setSelectedId(null); }} />
-      )}
-
-      <DataTable<JournalEntry>
-        tableId="accounting-je"
-        layoutFamily="accounting-je"
-        exportName="journal-entries"
-        rows={q.isLoading ? null : visible}
-        loading={q.isLoading}
-        emptyLabel="No entries."
-        getRowKey={(r) => r.id}
-        onRowClick={(r) => { setSelectedId(r.id); setCreating(false); }}
-        /* Search is loaded-only (the JE query caps at 500 — searchScope
-           contract): DataTable renders the box + scope hint, the page owns
-           the actual filtering, per the DeliveryReturnsListV2 convention. */
-        search={{
-          value: search,
-          onChange: setSearch,
-          placeholder: 'Filter visible entries…',
-          loadedLimit: 500,
-        }}
-        columns={[
-          { key: 'je_no', label: 'JE No', width: '140px', getValue: (r) => r.je_no, render: (r) => <span className={styles.codeChip}>{r.je_no}</span> },
-          { key: 'entry_date', label: 'Date', width: '110px', getValue: (r) => r.entry_date, render: (r) => fmtDateOrDash(r.entry_date) },
-          { key: 'journal', label: 'Journal', width: '100px', getValue: (r) => journalClassOf(r), render: (r) => journalClassOf(r) },
-          { key: 'source', label: 'Source', width: '110px', getValue: (r) => r.source_type, render: (r) => r.source_type },
-          { key: 'doc', label: 'Doc', width: '140px', getValue: (r) => r.source_doc_no ?? '', render: (r) => r.source_doc_no ?? '—' },
-          { key: 'debit', label: 'Debit', align: 'right', width: '130px', getValue: (r) => r.total_debit_sen / 100, render: (r) => fmt(r.total_debit_sen) },
-          { key: 'credit', label: 'Credit', align: 'right', width: '130px', getValue: (r) => r.total_credit_sen / 100, render: (r) => fmt(r.total_credit_sen) },
-          {
-            key: 'status', label: 'Status', width: '110px',
-            getValue: (r) => jeStatus(r),
-            render: (r) => (
-              <span className={`${styles.statusPill} ${r.posted ? styles.statusActive : styles.statusInactive}`}>
-                {jeStatus(r)}
-              </span>
-            ),
-          },
-        ] satisfies Column<JournalEntry>[]}
-      />
-    </div>
-  );
-};
+/* The Journal page grouped per entry — the AutoCount way (docs/bugs/0935).
+   Its filters live in the URL; the entry card and the draft form ride with it. */
+const JeTab = () => <JournalTab />;
 
 /* ── GL ──────────────────────────────────────────────────────────────── */
 /* The General Ledger the AutoCount way — per-account blocks, BALANCE B/F, a

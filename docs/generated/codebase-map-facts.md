@@ -36,7 +36,7 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/chatCallback.ts` | 1 | 282 |
 | `backend/src/routes/clientErrors.ts` | 2 | 232 |
 | `backend/src/routes/companies.ts` | 1 | 48 |
-| `backend/src/routes/deliverySheetSync.ts` | 2 | 183 |
+| `backend/src/routes/deliverySheetSync.ts` | 2 | 203 |
 | `backend/src/routes/departments.ts` | 4 | 281 |
 | `backend/src/routes/documentRefs.ts` | 5 | 133 |
 | `backend/src/routes/finance.ts` | 2 | 466 |
@@ -94,7 +94,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/accounting-rp.ts` | 0 | 356 |
 | `backend/src/scm/routes/accounting-settlement.ts` | 0 | 1585 |
 | `backend/src/scm/routes/accounting-stock-close.ts` | 0 | 53 |
-| `backend/src/scm/routes/accounting.ts` | 99 | 1557 |
+| `backend/src/scm/routes/accounting.ts` | 99 | 1582 |
 | `backend/src/scm/routes/addons.ts` | 4 | 215 |
 | `backend/src/scm/routes/amendment-mirror.ts` | 1 | 126 |
 | `backend/src/scm/routes/ap-invoice-files.ts` | 0 | 50 |
@@ -240,7 +240,7 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (2622 files, 816562 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (2627 files, 817196 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -444,7 +444,7 @@ Page files by directory:
 | `frontend/src/pages/MailCenter` | 3 |
 | `frontend/src/pages/announcements` | 5 |
 | `frontend/src/pages/roles` | 2 |
-| `frontend/src/pages/scm-v2` | 176 |
+| `frontend/src/pages/scm-v2` | 177 |
 | `frontend/src/pages/scm-v2/products` | 2 |
 | `frontend/src/pages/settings` | 1 |
 | `frontend/src/pages/team` | 11 |
@@ -498,7 +498,7 @@ Page files by directory:
 | `frontend/src/mobile/MobilePmsDefectActions.tsx` | 109 |
 | `frontend/src/mobile/MobilePmsPlanFileChips.tsx` | 96 |
 | `frontend/src/mobile/MobilePoAmendmentDetail.tsx` | 466 |
-| `frontend/src/mobile/MobilePoAmendments.tsx` | 157 |
+| `frontend/src/mobile/MobilePoAmendments.tsx` | 182 |
 | `frontend/src/mobile/MobileProfile.tsx` | 1002 |
 | `frontend/src/mobile/MobilePurchaseDocNew.tsx` | 387 |
 | `frontend/src/mobile/MobileRacks.tsx` | 306 |

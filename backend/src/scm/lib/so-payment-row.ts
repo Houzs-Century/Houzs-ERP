@@ -101,11 +101,21 @@ export async function bookSoPaymentBestEffort(sb: any, row: Record<string, unkno
   }
   /* A converted row's paper is its own (docs/bugs/0927): the moved amount
      comes off the cancelled order's deposit invoices by credit note, and the
-     new order's deposit invoice is dated the day of the move. */
+     new order's deposit invoice is dated the day of the move — and it was
+     receipted when the money was first received, so no receipt here. */
   if ((row as { method?: string }).method === CONVERTED_METHOD) {
     await afterConvertedRowBooked(sb, row, where);
     return;
   }
+  /* THE OFFICIAL RECEIPT IS BORN HERE (GL redesign item 9) — DRAFT for
+     card/transfer, formal at once for cash. It used to be born in
+     recordSoPaymentRow alone, so the two SO-create inserts (the POS deposit,
+     the split rows) recorded money with no receipt — 12 payments since
+     2026-09-05 (docs/bugs/0935). Every row reaches this hook, so the rule is
+     written once, beside the deposit invoice's. BEST-EFFORT: the money is
+     recorded; a receipt hiccup must never un-record it, and
+     ensureReceiptForPayment heals the gap at the next print. */
+  await draftReceiptBestEffort(sb, row, where);
   /* THE DEPOSIT INVOICE IS BORN HERE TOO (docs/bugs/0828) — every payment
      row reaches this hook (the panel, the scan job, both SO-create deposit
      inserts), so the rule "a deposit gets its invoice" is written once. It
@@ -113,6 +123,26 @@ export async function bookSoPaymentBestEffort(sb: any, row: Record<string, unkno
      after the start, and the order has no final invoice yet. Best-effort like
      the booking above: the money is recorded either way. */
   await issueDepositInvoiceBestEffort(sb, row, where);
+}
+
+/** The receipt a booked SO payment row is owed, from the row as stored —
+    what `recordSoPaymentRow` used to do from its input, now for every path. */
+async function draftReceiptBestEffort(sb: any, row: Record<string, unknown>, where: string): Promise<void> {
+  try {
+    const r = row as { id?: unknown; company_id?: unknown; so_doc_no?: unknown; method?: unknown; amount_sen?: unknown; paid_at?: unknown; created_by?: unknown };
+    const paymentId = String(r.id ?? '');
+    const companyId = r.company_id == null ? null : Number(r.company_id);
+    const code = companyId != null && Number.isFinite(companyId) ? await companyCodeById(sb, companyId) : null;
+    if (!paymentId || companyId == null || !code) return;
+    await createReceiptForPayment(sb, {
+      source: 'SOPAY', paymentId, companyId, companyCode: code,
+      docNo: String(r.so_doc_no ?? ''), method: String(r.method ?? ''), amountSen: Number(r.amount_sen ?? 0),
+      paidAt: String(r.paid_at ?? '').slice(0, 10) || null, createdBy: r.created_by == null ? null : String(r.created_by),
+    });
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error(`[receipts] draft OR not created for SO ${where}:`, e);
+  }
 }
 
 /** Every column of a payment row an edit may move. `before` is the stored row;
@@ -262,25 +292,8 @@ export async function recordSoPaymentRow(
   }).select(PAYMENT_COLS).single();
   if (error) return { payment: null, errorMessage: error.message };
 
-  /* The Official Receipt is born with the payment (GL redesign item 9) —
-     DRAFT for card/transfer, formal at once for cash. BEST-EFFORT: the money
-     is recorded; a receipt hiccup must never un-record it, and
-     ensureReceiptForPayment heals the gap at the next print. Money moved from
-     a cancelled order was receipted when it was received (docs/bugs/0927). */
-  try {
-    const paymentId = String((data as { id?: unknown } | null)?.id ?? '');
-    const code = companyId != null && !converted ? await companyCodeById(sb, companyId) : null;
-    if (paymentId && companyId != null && code) {
-      await createReceiptForPayment(sb, {
-        source: 'SOPAY', paymentId, companyId, companyCode: code,
-        docNo: p.docNo, method: p.method, amountSen: p.amountSen,
-        paidAt: String(p.paidAt ?? '').slice(0, 10) || null, createdBy: p.createdBy ?? null,
-      });
-    }
-  } catch (e) {
-    // eslint-disable-next-line no-console
-    console.error('[receipts] draft OR not created for SO payment:', e);
-  }
+  /* The Official Receipt is born in bookSoPaymentBestEffort below, with the
+     booking and the deposit invoice — one hook for every path (docs/bugs/0935). */
 
   /* Post-merge stitch — wire ADD_PAYMENT into the PR-D audit ledger.
      Field-changes list mirrors what the user typed so the History panel
