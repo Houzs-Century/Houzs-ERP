@@ -29,7 +29,6 @@
     "backend/src/scm/routes/scan-so.ts :: GET /jobs/:id"
   ],
   "unscopedByReference": [
-    "backend/src/scm/routes/accounting.ts :: POST /receipts/ensure",
     "backend/src/scm/routes/public-images.ts :: GET /product-models/:id/photo/:key"
   ]
 }
