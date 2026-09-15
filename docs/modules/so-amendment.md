@@ -77,6 +77,21 @@ Two rules that are easy to get wrong:
   `docs/bugs/0928-an-amendment-raised-before-the-service-line-fix-stayed-on-th.md`).
   It posts no notice — the target desk's inbox reads by lane, so the row is on
   it the moment the update commits.
+- **The requester SEES the lane before submitting, and may FLAG it — never
+  choose it** (owner 2026-09-15, option B of 「后期再发生可以给我选项选择
+  approver?」). Both submit surfaces (desktop `SalesOrderDetail.tsx`, phone
+  `MobileNewSO.tsx`) open the shared `vendor/scm/components/AmendmentSubmitDialog`,
+  which asks `POST /mfg-sales-orders/:docNo/amendments/lane-preview` and shows
+  "Purchaser approves N line changes / Logistic approves Delivery Date". The
+  preview answers from `lib/amendment-lane-resolve.ts`, the SAME resolver the
+  submit route stores from — a second copy would be the drift the lane table
+  exists to prevent. Ticking *The approver looks wrong* requires a note; the
+  request still lands on the rule's lane, the note is stored in
+  `so_amendments.lane_flag_note` (mig `20260915T1900`), audited on the
+  `AMENDMENT_REQUESTED` row (`lane_flag_note`), quoted in the assigned desk's
+  notice, and the OTHER lane's approvers get a separate "may be on the wrong
+  desk" card. The detail page, the quick view and the phone list show the note.
+  Moving the row is still the relane workflow's job.
 
 **Legacy rows** (`lane IS NULL`, raised before the rework) keep the original
 supplier-confirm two-gate chain and its original keys
@@ -92,7 +107,8 @@ on `/api/scm/so-amendments`.
 
 | Method + path | Gate | Notes |
 |---|---|---|
-| `POST /mfg-sales-orders/:docNo/amendments` | `scm.amendment.create`, OR a salesperson on their OWN order, OR a lane approver | **Reason required** (400 `reason_required`, checked before the SO is read — owner 2026-09-15, 「SO amendment reason 换成一定 fill in」; both submit prompts validate it client-side). Splits by lane, one insert per lane |
+| `POST /mfg-sales-orders/:docNo/amendments` | `scm.amendment.create`, OR a salesperson on their OWN order, OR a lane approver | **Reason required** (400 `reason_required`, checked before the SO is read — owner 2026-09-15, 「SO amendment reason 换成一定 fill in」; both submit prompts validate it client-side). Optional `laneFlagNote` (trimmed, 500 chars) — the requester's doubt about the approver (§1). Splits by lane, one insert per lane |
+| `POST /mfg-sales-orders/:docNo/amendments/lane-preview` | same gate as the create | **Read-only.** Body `{ lines, headerChanges }` → `{ lanes, perLane: { LINES, DELIVERY: { lineCount, headerKeys } } }`, from the same resolver the create stores from (`routes/so-amendment-lane-preview.ts`; option B, 2026-09-15) |
 | `GET /so-amendments` | read | Row-scoped like the SO list (own + downline for a scoped rep). Each row also carries `bound_pos` and, since 2026-09-14, the order's raw `so_ref` + `so_customer_so_no` (§7) |
 | `GET /so-amendments/:id` | read | |
 | `GET /so-amendments/pending-count` | lane keys, asked LITERALLY (`*` excluded) | **Per-signer** count of `REQUESTED` rows in the lanes THIS caller can sign; 0 for everyone else, the Owner account included. Feeds the sidebar badge (§5). Registered BEFORE `/:id` — Hono matches in order |

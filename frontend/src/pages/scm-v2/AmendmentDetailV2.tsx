@@ -933,6 +933,17 @@ export function AmendmentDetailV2() {
                 <p className="text-[13px] leading-relaxed text-ink-secondary">{reason}</p>
               </Section>
             )}
+            {/* Option B (owner 2026-09-15): the requester doubted the computed approver.
+                The row still sits on its lane; an administrator moves it with the
+                relane workflow. Shown to both desks so neither signs blind. */}
+            {asStr(amendment.lane_flag_note) && (
+              <Section title="Approver flagged by requester">
+                <p className="text-[13px] leading-relaxed text-ink-secondary">“{asStr(amendment.lane_flag_note)}”</p>
+                <p className="mt-1 text-[12px] text-ink-muted">
+                  The request stays with the approver shown until an administrator moves it.
+                </p>
+              </Section>
+            )}
           </DetailMain>
 
           <DetailAside>

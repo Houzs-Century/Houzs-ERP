@@ -74,7 +74,8 @@ import {
 } from '../../vendor/scm/lib/so-amendment-header';
 import { diffHeaderPayload, hasHeaderChanges } from '../../vendor/scm/lib/so-header-diff';
 import { planAmendmentSubmit, amendmentSubmittedNotice, AMENDMENT_MODE_BANNER,
-  AMENDMENT_NOTHING_TO_SUBMIT, AMENDMENT_REASON_REQUIRED } from '../../vendor/scm/lib/so-amendment-submit';
+  AMENDMENT_NOTHING_TO_SUBMIT } from '../../vendor/scm/lib/so-amendment-submit';
+import { useAmendmentSubmitDialog } from '../../vendor/scm/components/AmendmentSubmitDialog';
 import { todayMyt } from '../../vendor/scm/lib/dates';
 import { addressLineProps } from '../../lib/acColumnWidths';
 /* lib/utils formatDate (NOT the vendored fmtDate) for the amendment's header
@@ -499,6 +500,7 @@ export const SalesOrderDetail = () => {
   const deleteDraft = useDeleteMfgSalesOrder();
   const askConfirm = useConfirm();
   const askPrompt = usePrompt();
+  const submitDialog = useAmendmentSubmitDialog();
   const notify = useNotify();
   const addItem = useAddMfgSalesOrderItem();
   const updateItem = useUpdateMfgSalesOrderItem();
@@ -1172,18 +1174,13 @@ export const SalesOrderDetail = () => {
       hasDirectHeaderChanges: handle.hasDirectHeaderChanges(),
     });
     if (plan === 'NOTHING') { setSaveError(AMENDMENT_NOTHING_TO_SUBMIT); return; }
-    // DIRECT_ONLY needs no reason: nothing is going for approval. Otherwise the reason is REQUIRED (owner 2026-09-15).
-    const reason = plan === 'AMENDMENT' ? await askPrompt({
-      title: `Submit amendment for ${header.doc_no}?`,
-      body: 'This Sales Order is already ordered from the supplier, so your changes go out as an '
-        + 'amendment request. Coordinator + supplier confirm it before the order is revised. '
-        + 'Say why — the approver reads the reason first.',
-      placeholder: 'e.g. customer changed the fabric colour',
-      multiline: true,
-      confirmLabel: 'Submit amendment',
-      validate: (v) => (v.trim() ? null : AMENDMENT_REASON_REQUIRED),
-    }) : '';
-    if (reason == null) return; // cancelled the prompt
+    /* DIRECT_ONLY needs no ask: nothing is going for approval. Otherwise the shared
+       dialog shows WHO approves, takes the required reason, and lets the requester
+       flag the approver (owner 2026-09-15; vendor/scm/components/AmendmentSubmitDialog). */
+    const answer = plan === 'AMENDMENT'
+      ? await submitDialog.ask({ docNo: header.doc_no, lines, headerChanges })
+      : { reason: '', laneFlagNote: null };
+    if (answer == null) return; // cancelled the dialog
     setSavingOrder(true);
     try {
       /* 1. The directly-editable half. keepLockedColsAsOriginal DROPS every
@@ -1202,7 +1199,8 @@ export const SalesOrderDetail = () => {
         amendKeyRef.current ??= newIdempotencyKey();
         createdRes = await createAmendment.mutateAsync({
           docNo: header.doc_no,
-          reason: reason.trim(),
+          reason: answer.reason,
+          laneFlagNote: answer.laneFlagNote,
           lines,
           headerChanges,
           idempotencyKey: amendKeyRef.current,
@@ -2700,6 +2698,7 @@ export const SalesOrderDetail = () => {
           pickChainChoice(d);
         }}
       />
+      {submitDialog.element}
     </div>
   );
 };
