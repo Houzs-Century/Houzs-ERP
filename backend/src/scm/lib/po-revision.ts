@@ -34,6 +34,8 @@ import { poReceivedFloorViolation } from '../shared/po-amendment';
 import { routingNote, type AmendmentFieldKind } from '../shared/amendment-routing';
 import { nextPoLineNo } from './po-line-order';
 import { supplierSkuFor } from './po-line-supplier-sku';
+import { skuCategoryResolver, lineIdentityFields } from './sku-category';
+import { buildVariantSummary } from '../shared';
 
 /* The routable field atoms a PO amendment moves — lines + header. Mirrors the
    frontend poLineFieldKinds / poHeaderFieldKind so the audit routing note matches
@@ -106,11 +108,20 @@ export async function applyPoAmendment(
   // (1) Load amendment + its lines + the PO header it targets.
   const { data: amdRow, error: amdErr } = await sb
     .from('po_amendments')
-    .select('id, po_id, po_number, header_changes, old_header_snapshot')
+    .select('id, po_id, po_number, header_changes, old_header_snapshot, source_so_amendment_id')
     .eq('id', amendmentId)
     .maybeSingle();
   if (amdErr) throw new Error(`applyPoAmendment: amendment load failed: ${amdErr.message}`);
   if (!amdRow) throw new Error('applyPoAmendment: amendment not found');
+  /* A follow-up of a SALES-ORDER amendment applies through reviseBoundPo, which
+     links each added purchase line to the sales line it was added for. This engine
+     has no sales line to link, so an added line written here would be an unlinked
+     purchase of a customer's piece: a company-1 sofa or pillow the MRP page then
+     reports SHORT with the purchase order open. The route already branches; this
+     makes the other door impossible rather than merely unused. */
+  if (amdRow.source_so_amendment_id) {
+    throw new Error('applyPoAmendment: a sales-order follow-up amendment applies through reviseBoundPo');
+  }
   const poId = String(amdRow.po_id);
   const poNumber = String(amdRow.po_number);
   const headerChanges = (amdRow.header_changes ?? null) as Record<string, unknown> | null;
@@ -183,6 +194,16 @@ export async function applyPoAmendment(
   let linesUpdated = 0, linesAdded = 0, linesRemoved = 0;
   const warnings: string[] = [];
   const lineFieldChanges: Array<{ field: string; from: unknown; to: unknown }> = [];
+  /* THE SKU DECIDES THE CATEGORY here too (docs/bugs/0514, 0813). An added line
+     used to take `new_variants.itemGroup` or fall to `others`, and a code moved by
+     SPEC kept the old line's group. The group composes the stock key and decides
+     `isHardBoundLine`, so either one could file a sofa as `others`. */
+  const kindOf = (d: PoAmendmentLine) => String((d.new_variants?.materialKind as string | undefined) ?? 'mfg_product');
+  const groupOf = await skuCategoryResolver(
+    sb,
+    amendmentLines.filter((d) => d.new_item_code).map((d) => ({ materialKind: kindOf(d), itemCode: d.new_item_code })),
+    companyId,
+  );
 
   for (const diff of amendmentLines) {
     const change = String(diff.change_type ?? '').toUpperCase();
@@ -231,7 +252,7 @@ export async function applyPoAmendment(
         ...(companyId != null ? { company_id: companyId } : {}),
         purchase_order_id: poId,
         line_no: lineNo,
-        material_kind:     String((diff.new_variants?.materialKind as string | undefined) ?? 'mfg_product'),
+        material_kind:     kindOf(diff),
         item_code:     itemCode,
         material_name:     diff.new_material_name ?? itemCode,
         supplier_sku:      supplierSku,
@@ -242,7 +263,10 @@ export async function applyPoAmendment(
         unit_cost_sen:   unit,
         received_qty:      0,
         variants:          diff.new_variants ?? null,
-        item_group:        String((diff.new_variants?.itemGroup as string | undefined) ?? 'others'),
+        ...lineIdentityFields(groupOf, {
+          materialKind: kindOf(diff), itemCode, variants: diff.new_variants,
+          itemGroup: (diff.new_variants?.itemGroup as string | undefined) ?? 'others',
+        }, buildVariantSummary),
         uom:               'UNIT',
         delivery_date:     diff.new_delivery_date ?? null,
         from_mrp:          false,
@@ -280,6 +304,12 @@ export async function applyPoAmendment(
          goes on ordering the old piece (docs/bugs/0887). */
       const priorCode = String(row.item_code ?? '').trim();
       if (typeof patch.item_code === 'string' && patch.item_code !== priorCode) {
+        const skuGroup = groupOf({ materialKind: kindOf(diff), itemCode: patch.item_code });
+        if (skuGroup != null) {
+          patch.item_group = skuGroup;
+          const v = (patch.variants ?? row.variants ?? null) as Record<string, unknown> | null;
+          patch.description2 = buildVariantSummary(skuGroup, v) || null;
+        }
         const sku = await supplierSkuFor(sb, { supplierId: supplierAfter, itemCode: patch.item_code, companyId });
         patch.supplier_sku = sku;
         if (sku == null) {

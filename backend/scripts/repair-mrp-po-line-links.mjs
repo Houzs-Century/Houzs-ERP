@@ -1,10 +1,15 @@
-// Repair the two data defects that make a company-1 sofa / bedframe sales-order
-// line read SHORT on the MRP page even though its purchase order exists.
+// Repair the two data defects that make a company-1 sofa / bedframe / Sofa
+// Accessory sales-order line read SHORT on the MRP page even though its purchase
+// order exists.
 //
 // WHY THIS SCRIPT EXISTS. Since 2026-09-09 a company-1 hard-bound line (sofa,
-// bedframe, (SP) mattress) is covered ONLY by a purchase-order line that is
+// bedframe, Sofa Accessory since 2026-09-14, (SP) mattress) is covered ONLY by a
+// purchase-order line that is
 //   (a) linked to that very sales-order line (`so_item_id`), and
-//   (b) itself on a hard-bound `item_group`.
+//   (b) until 2026-09-15, itself on a hard-bound `item_group`. MRP now dedicates a
+//       link when EITHER side is bound, so (b) no longer hides the purchase order
+//       from MRP; class B below is still repaired because the group composes the
+//       stock key the receipt will be filed under.
 // See `isHardBoundLine` / `HARD_BOUND_COMPANY_ID` in scm/lib/so-stock-allocation.ts
 // and the `isDedicated` branch in scm/routes/mrp.ts. The rule is the owner's,
 // ruled three times, and it is right. What it exposed is that a handful of
@@ -50,6 +55,7 @@
 // ENUM TRAP (house rule): status columns are enums — `::text` before comparing,
 // never COALESCE(col,'').
 import postgres from "postgres";
+import { HARD_BOUND_GROUPS, isHardBound, planCategoryRepairs } from "./lib/hard-bound-group.mjs";
 
 const DSN = process.env.DATABASE_URL;
 if (!DSN) { console.error("DATABASE_URL missing"); process.exit(1); }
@@ -77,13 +83,13 @@ const sql = postgres(DSN, { ssl: "require", max: 1, idle_timeout: 20, connect_ti
 const notice = (m) => console.log(`::notice::${m}`);
 const pad = (s, n) => String(s ?? "").slice(0, n).padEnd(n);
 
-/* Ported from scm/lib/so-stock-allocation.ts `isHardBoundLine` — held as one
-   SQL predicate so the plan and the engine cannot disagree about which lines
-   the rule covers. Change one, change the other. */
-const PO_HARD_BOUND = sql`(lower(coalesce(it.item_group,'')) in ('sofa','bedframe')
-  or (lower(coalesce(it.item_group,'')) = 'mattress' and it.item_code ~* '\(SP\)\s*$'))`;
-const SO_HARD_BOUND = sql`(lower(coalesce(i.item_group,'')) in ('sofa','bedframe')
-  or (lower(coalesce(i.item_group,'')) = 'mattress' and i.item_code ~* '\(SP\)\s*$'))`;
+/* WHICH LINES ARE HARD-BOUND is `isHardBound` from scripts/lib/hard-bound-group.mjs,
+   the mirror of `isHardBoundLine` its test referees. The SQL only NARROWS to the
+   groups that could be bound (the mirror's list, plus mattress for `(SP)`); the
+   decision is made in JS over those rows. The SQL copy that stood here read
+   `in ('sofa','bedframe')` after Sofa Accessory joined the rule (2026-09-14), and
+   its `(SP)` regex lost its backslashes inside the tagged template. */
+const MAYBE_BOUND = (t) => sql`lower(coalesce(${sql(t)}.item_group,'')) in ${sql([...HARD_BOUND_GROUPS, "mattress"])}`;
 /* A cancelled purchase order proves nothing and must never be linked to. */
 const PO_ALIVE = sql`p.status::text <> 'CANCELLED'`;
 
@@ -96,7 +102,7 @@ async function planClassA() {
       join scm.purchase_orders p on p.id = it.purchase_order_id
       where it.company_id::text = ${COMPANY}
         and it.so_item_id is null
-        and ${PO_HARD_BOUND}
+        and ${MAYBE_BOUND("it")}
         and ${PO_ALIVE}
     ),
     sibling as (
@@ -118,7 +124,7 @@ async function planClassA() {
     order by u.po_number, u.item_code`;
 
   const out = [];
-  for (const r of rows) {
+  for (const r of rows.filter((x) => isHardBound(x.item_group, x.item_code))) {
     const base = {
       poItemId: r.id, poNumber: r.po_number, poStatus: r.po_status,
       itemCode: r.item_code, itemGroup: r.item_group, qty: r.qty,
@@ -173,19 +179,10 @@ async function planClassB() {
     where it.company_id::text = ${COMPANY}
       and ${PO_ALIVE}
       and i.cancelled = false
-      and ${SO_HARD_BOUND}
-      and not ${PO_HARD_BOUND}
+      and ${MAYBE_BOUND("i")}
+      and lower(coalesce(it.item_group,'')) <> lower(coalesce(i.item_group,''))
     order by p.po_number, it.item_code`;
-  return rows.map((r) => ({
-    poItemId: r.po_item_id, poNumber: r.po_number, poStatus: r.po_status,
-    itemCode: r.item_code, fromGroup: r.po_group, toGroup: r.so_group,
-    soDocNo: r.so_doc_no, soLineNo: r.so_line_no, qty: r.qty, receivedQty: r.received_qty,
-    /* item_group feeds the variant key. Rewriting it under goods already
-       received would move the receipt's bucket out from under it. */
-    verdict: Number(r.received_qty ?? 0) === 0 ? "REPAIR" : "SKIP",
-    reason: Number(r.received_qty ?? 0) === 0 ? null
-      : `${r.received_qty} unit(s) already received under item_group "${r.po_group}" — changing the group would move the receipt's variant bucket; needs a human`,
-  }));
+  return planCategoryRepairs(rows);
 }
 
 const a = await planClassA();

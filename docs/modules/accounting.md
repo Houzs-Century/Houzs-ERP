@@ -950,7 +950,52 @@ much; the Deposit Invoices page shows what each was refunded, note by note,
 with the voucher. This is the e-invoice shape as well: a Refund Note
 referencing the original document, never a cancel past 72 hours. Two things
 deliberately NOT done here, both with management (owner 2026-09-13): the
-closed-invoice cancel guard, and converting payments to a new order.
+closed-invoice cancel guard, and converting payments to a new order — the second built on 2026-09-15 (next paragraph).
+
+**Money on a cancelled order: refund or convert, side by side (2026-09-15,
+docs/bugs/0927; owner: 他应该是 convert or refund，所以功能要做一起 … 这个按钮我觉得挨
+着一起 … 原本当天，collected by 不影响).** One pool, read off the ledger every
+time by `orderMoney` in `backend/src/scm/lib/so-money.ts`: booked payments −
+refund vouchers on the order (draft or posted) − converted rows on other
+orders naming it = remaining; a refund and a conversion can never together
+move more than there is. The doors are `backend/src/scm/routes/so-money-routes.ts`
+(registered in `backend/src/scm/routes/mfg-sales-orders.ts` behind the
+per-order guard): `GET /:docNo/money` (the panel, and the customer's other
+cancelled orders with money), `POST /:docNo/money/refund` (a Customer Refund
+voucher DRAFT for Finance on the salesperson's behalf — the voucher door's
+own core, `createPaymentVoucherCore` in
+`backend/src/scm/routes/payment-vouchers.ts`, the customer as payee, the
+default bank as Paid From, only Finance approves), `GET
+/:docNo/convert-sources` and `GET /cancelled-with-money` (Finance's list).
+A CONVERSION is a payment row on the new order with method `converted`
+(`CONVERTED_METHOD`, `backend/src/acc/payments.ts`) — through `POST
+/:docNo/payments` or the order create (`backend/src/scm/lib/so-create-payment-slips.ts`)
+with `convertedFromDocNo` — checked by `convertGuard`, carrying the
+cancelled order's first payment day and collector, the sheet "Converted from
+SO-x", no receipt, and the transfer Dr AR (cancelled order's customer) / Cr AR
+(new order's customer) dated the day of the move (`orderMoneyTransferLines`
+in `backend/src/acc/rules.ts`, source type `SOCONV`, `postConvertedPayment`).
+Under the deposit-invoice switch the moved amount comes off the cancelled
+order's invoices by credit note (`takeFromDepositInvoices` in
+`backend/src/acc/deposit-refunds.ts`, the note carrying
+`converted_payment_id` — migration
+`backend/src/db/migrations-pg/20260915T1800_so_payment_conversions.sql`)
+and the new order gets its own invoice dated the day of the move
+(`afterConvertedRowBooked`): sales stands once — old invoice +X, note −X, new
+invoice +X. Un-convert = delete the row: the transfer reversed
+(`reverseSoPayment` tries SOPAY then SOCONV), the notes contra'd
+(`releaseConversionNotes`), the invoice cancelled; the PATCH door refuses a
+converted row. Converted rows are left alone by the drawer count
+(`backend/src/acc/daily-close.ts`), the drift check
+(`backend/src/acc/payment-drift.ts`) and receipt healing
+(`backend/src/acc/receipts.ts`); the refund headroom in
+`backend/src/scm/lib/pv-refund.ts` subtracts what was moved; the journal
+references name the new order and the cancelled one
+(`backend/src/acc/journal-refs.ts`); SOCONV files under GENERAL
+(`backend/src/acc/journal-class.ts`). The screens (the panel with [Refund]
+[Convert], the "Convert from cancelled SO" method in New SO and Add payment,
+Finance's list) follow in their own PR. Contract:
+`backend/tests/soMoneyConvert.test.ts`.
 
 **Deposit invoices (2026-09-12, docs/bugs/0828; owner: e-invoice 好像是根据收钱
 就认 sales 了 … 每个顾客不是有自己本身的 account code 吗 … 做成开关 … 可以自己选

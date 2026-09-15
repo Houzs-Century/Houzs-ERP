@@ -73,7 +73,7 @@ async function withNoteNumbers(c: Ctx, rows: Row[]): Promise<{ rows: Row[] } | {
   }
   const refunded = await refundedByInvoice(sb, co.companyId, rows.map((r) => String(r.di_number ?? '')));
   if (!refunded.ok) return { resp: c.json({ error: 'load_failed', reason: refunded.reason }, 500) };
-  const pvIds = [...new Set([...refunded.notes.values()].flat().map((n) => n.refundPvId))];
+  const pvIds = [...new Set([...refunded.notes.values()].flat().flatMap((n) => (n.refundPvId ? [n.refundPvId] : [])))];
   const pvNumberOf = new Map<string, string>();
   if (pvIds.length > 0) {
     const { data, error } = await sb.from('payment_vouchers').select('id, pv_number').eq('company_id', co.companyId).in('id', pvIds);
@@ -88,7 +88,10 @@ async function withNoteNumbers(c: Ctx, rows: Row[]): Promise<{ rows: Row[] } | {
         credit_note_number: typeof r.credit_note_id === 'string' ? numberOf.get(r.credit_note_id) ?? null : null,
         refunded_sen: refunded.sen.get(di) ?? 0,
         refund_notes: (refunded.notes.get(di) ?? []).map((n) => ({
-          note_number: n.noteNumber, total_sen: n.totalSen, status: n.status, note_date: n.noteDate, pv_number: pvNumberOf.get(n.refundPvId) ?? null,
+          note_number: n.noteNumber, total_sen: n.totalSen, status: n.status, note_date: n.noteDate,
+          pv_number: n.refundPvId ? (pvNumberOf.get(n.refundPvId) ?? null) : null,
+          /* A conversion's note (docs/bugs/0927): the money moved to another order. */
+          converted_payment_id: n.convertedPaymentId,
         })),
       };
     }),

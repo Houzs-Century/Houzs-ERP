@@ -50,4 +50,17 @@ describe('bookLineItem', () => {
     expect(bookLineItem({ itemCode: null, description: null, category: null, uom: null }, null))
       .toEqual({ itemCode: null, resolved: false, inBook: false, description: null, itemGroup: null, uom: null });
   });
+
+  it('forwards the write-back binding: where the map is ambiguous, a binding naming a book item decides the code', () => {
+    /* 9028-1S has several book items in the cutover map; with no supplier the
+       resolver answers the ERP code (autocount-item-code.test.ts). A binding to
+       one of those items is the tie-breaker the write-back uses. */
+    const erp = { itemCode: '9028-1S', description: null, category: 'sofa', uom: 'unit' };
+    const without = bookLineItem(erp, null);
+    const bound = bookLineItem(erp, null, { bindings: new Map([['9028-1S', 'AMN-SF9028 SOFA']]) });
+    expect(bound.itemCode).toBe('AMN-SF9028 SOFA');
+    expect(bound.itemCode).not.toBe(without.itemCode);
+    expect(bound.inBook).toBe(true);
+    expect(bookLineItem(erp, null, { bindings: null })).toEqual(without);
+  });
 });

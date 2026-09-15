@@ -98,6 +98,7 @@ import { missingMethodSubField } from "../vendor/scm/components/PaymentsTable";
 import { useFabricLibrary } from "../vendor/scm/lib/queries";
 import { activeOptions, maintPickerValues, restrictPricedToPool, restrictStringsToPool } from "../vendor/shared/maintenance-pools";
 import { missingVariantAxes, sofaMixIntroduced, SOFA_MIX_MESSAGE } from "../vendor/shared/so-variant-rule";
+import { MFG_CATEGORY_LABELS } from "../vendor/shared/product-categories";
 import { isColourKiv } from "../vendor/shared/variant-summary";
 /* parseInches is imported, not redeclared: this file's private copy also served
    sortNumeric below, and a shared parser serves both readers. */
@@ -105,6 +106,7 @@ import { computeTotalHeight, isTotalHeightCategory, parseInches } from "../vendo
 import { lineIdentity } from "@2990s/shared";
 import { normalizePhone } from "../vendor/shared/phone";
 import { PhoneInput } from "../vendor/scm/components/PhoneInput";
+import { fmtSen as fmtSharedSen } from "../vendor/shared/format";
 import "./mobile.css";
 
 /* ---------------------------------------------------------------------------
@@ -306,6 +308,8 @@ const LINE_CATS: Array<{ value: LineCat; label: string }> = [
   { value: "sofa", label: "Sofa" },
   { value: "bedframe", label: "Bedframe" },
   { value: "mattress", label: "Mattress" },
+  // Without it a Sofa Accessory line was labelled "General item".
+  { value: "fabric_accessory", label: MFG_CATEGORY_LABELS.FABRIC_ACCESSORY },
 ];
 /* The BANK_OPTS / PLAN_OPTS / ONLINE_OPTS lists that used to live here existed
    ONLY to seed a new payment row's L2 picks, which is exactly what invented a
@@ -3428,7 +3432,7 @@ function SpecialOrderSheet({ line, pools, showPrices, onChange, onClose }: {
                 <span style={{ flex: 1, minWidth: 0, color: "#11140f", fontWeight: 600 }}>{a.label}</span>
                 {/* Role gate — non-admin sales sees the NAME only (owner). */}
                 {showPrices && a.sellingPriceSen !== 0 && (
-                  <span className="money" style={{ fontSize: 12, color: "#767b6e", flex: "none" }}>+RM {(a.sellingPriceSen / 100).toFixed(2)}</span>
+                  <span className="money" style={{ fontSize: 12, color: "#767b6e", flex: "none" }}>+{fmtSharedSen(a.sellingPriceSen)}</span>
                 )}
               </label>
             );
@@ -3459,7 +3463,7 @@ function SpecialOrderSheet({ line, pools, showPrices, onChange, onClose }: {
                   {g.required && <option value="" disabled>Select{"…"}</option>}
                   {g.choices.map((c) => (
                     <option key={c.label} value={c.label}>
-                      {c.label}{showPrices && c.extraSen !== 0 ? ` (${c.extraSen > 0 ? "+" : "−"}RM ${(Math.abs(c.extraSen) / 100).toFixed(2)})` : ""}
+                      {c.label}{showPrices && c.extraSen !== 0 ? ` (${c.extraSen > 0 ? "+" : "−"}${fmtSharedSen(Math.abs(c.extraSen))})` : ""}
                     </option>
                   ))}
                 </select>

@@ -925,10 +925,22 @@ export async function computeMrp(
   const dedicatedReceivedByLine = new Map<string, number>();
   const dedicatedOpenByLine = new Map<string, PoSupply[]>();
   const boundCompany = companyId === HARD_BOUND_COMPANY_ID;
+  /* EITHER SIDE BEING BOUND DEDICATES THE LINK (2026-09-15, owner 「我们明明已经开了
+     PO，可是它又显示着 shortage」). This read the PO line's group alone, while the
+     stored allocator binds by the SALES line's group and never looks at the PO's.
+     So a link whose two lines disagree on category went SHORT here with the PO
+     open: a bound PO on an unbound sales line was withheld from the pool the line
+     reads (live: HC-PO-010086 SQUARE PILLOW `fabric_accessory` on HC-SO-013346
+     `accessory`, the day after the pillows changed category), and an unbound PO on
+     a bound sales line sat in a pool the line never reads. Every linked line now
+     reads its own dedicated queue first (section 7), whichever side is bound. */
+  const demandBoundById = new Set(
+    demandActive.filter((d) => isHardBoundLine(d.item_group, d.item_code)).map((d) => d.id),
+  );
   const isDedicated = (r: PoLineRow): boolean =>
     boundCompany
     && !!r.so_item_id
-    && isHardBoundLine(r.item_group, r.item_code);
+    && (isHardBoundLine(r.item_group, r.item_code) || demandBoundById.has(String(r.so_item_id)));
   for (const r of (poRaw ?? []) as unknown as PoLineRow[]) {
     if (!r.po || PO_DEAD.has(r.po.status)) continue;
     /* Migration 0180 — ETA is the EFFECTIVE (latest revised) delivery date: the
@@ -1270,7 +1282,12 @@ export async function computeMrp(
       let poNumber: string | null = null;
       let poEta: string | null = null;
       let poSupplierId: string | null = null;
-      const queues = bound ? [dedicatedOpenByLine.get(r.id) ?? []] : [poQueue];
+      /* An unbound line still takes its OWN linked purchase order first: that PO
+         left the pool because the PO side is bound (see `isDedicated`), and nothing
+         else can draw it. Company 2 dedicates nothing, so its own queue is empty. */
+      const queues = bound
+        ? [dedicatedOpenByLine.get(r.id) ?? []]
+        : [dedicatedOpenByLine.get(r.id) ?? [], poQueue];
       for (const queue of queues) {
         while (need > 0 && queue.length > 0) {
           const front = queue[0];

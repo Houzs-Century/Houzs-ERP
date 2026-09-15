@@ -58,6 +58,10 @@ export type BookLineItem = {
 /**
  * One ERP line's item as the book lists it. `supplierCode` disambiguates a
  * purchase line; a sales line names no supplier, so it passes null.
+ * `opts.bindings` is the write-back's live binding map (`bindingsFor`, keyed by
+ * UPPERCASED ERP code), forwarded to resolveAcItemCode so an export resolves a
+ * line exactly as the write-back does. Absent, the resolver runs without it —
+ * the answer the caller got before the option existed.
  */
 export function bookLineItem(
   erp: {
@@ -67,9 +71,10 @@ export function bookLineItem(
     uom: string | null | undefined;
   },
   supplierCode: string | null,
+  opts: { bindings?: Map<string, string> | null } = {},
 ): BookLineItem {
   const code = String(erp.itemCode ?? '').trim();
-  const r = code ? resolveAcItemCode(code, { supplierCode }) : null;
+  const r = code ? resolveAcItemCode(code, { supplierCode, bindings: opts.bindings ?? null }) : null;
   const acCode = r && r.ok ? r.acItemCode : null;
   const book = acCode ? acBookItemIndex().get(up(acCode)) : undefined;
   return {

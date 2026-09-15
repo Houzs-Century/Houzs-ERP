@@ -13,6 +13,7 @@
 // ----------------------------------------------------------------------------
 
 import type { CSSProperties, ReactNode } from 'react';
+import { MFG_CATEGORY_LABELS } from '../../shared/product-categories';
 
 export type CategoryBadgeSpec = {
   bg: string;
@@ -33,6 +34,9 @@ const OTHERS_BADGE: CategoryBadgeSpec = {
 
 export const CATEGORY_BADGE: Record<string, CategoryBadgeSpec> = {
   sofa:      { bg: 'rgba(166, 71, 30, 0.12)',  fg: 'var(--c-burnt)',                 label: 'SOFA' },
+  /* Sofa Accessory (owner 2026-09-14) rides with the sofa, so it takes the sofa
+     swatch. Without an entry it fell to OTHERS on every line card and list. */
+  fabric_accessory: { bg: 'rgba(166, 71, 30, 0.12)', fg: 'var(--c-burnt)', label: MFG_CATEGORY_LABELS.FABRIC_ACCESSORY.toUpperCase() },
   bedframe:  { bg: 'rgba(47, 93, 79, 0.12)',   fg: 'var(--c-secondary-a, #2F5D4F)',  label: 'BEDFRAME' },
   mattress:  { bg: 'rgba(199, 127, 62, 0.16)', fg: 'var(--c-festive-a, #C77F3E)',    label: 'MATTRESS' },
   accessory: { bg: 'rgba(34, 31, 32, 0.10)',   fg: 'var(--fg-muted)',                label: 'ACC' },
