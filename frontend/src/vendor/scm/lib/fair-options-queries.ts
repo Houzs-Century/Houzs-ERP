@@ -40,28 +40,26 @@ export type FairOptionsResponse = {
   venues: VenueMasterRow[];
 };
 
-function withDates(
-  o: Pick<FairOption, 'startDate' | 'endDate' | 'showDates'>,
-  base: string,
-): string {
+/** Label for one row: the VENUE, with the ORGANIZER beside it. ONE label, shared
+ *  by the SO fair picker and the fair-pending screen so the two can never
+ *  describe the same event differently.
+ *
+ *  THE ORGANIZER IS PART OF THE LABEL — do not drop it again. It was dropped on
+ *  2026-09-15 (#3999, a second `fairVenueLabel` the picker used instead) and the
+ *  owner reversed it the next morning: 「我是写 venue，然后旁边还有 organizer 的名
+ *  字的，它不是单纯就是 venue only」. A venue does not identify a fair, which is
+ *  the whole reason this control replaced a venue text box. Measured on
+ *  production 2026-09-16: of Houzs Century's 163 venue-months in 2026, 15 hold
+ *  two or more organizers at the SAME venue — 31 dropdown rows that read
+ *  identically on the venue alone. October 2026 at MID VALLEY is three of them
+ *  (BIGHOME 10-02, HOMELOVE 10-15, MLE 10-23), and `showDates` does not rescue
+ *  those: the server sets it only when the venue AND the organizer repeat inside
+ *  one month. */
+export function fairLabel(o: Pick<FairOption, 'venue' | 'organizer' | 'startDate' | 'endDate' | 'showDates'>): string {
+  const base = `${o.venue} — ${o.organizer}`;
   if (!o.showDates) return base;
   const end = o.endDate && o.endDate !== o.startDate ? ` ~ ${o.endDate}` : '';
   return `${base} (${o.startDate}${end})`;
-}
-
-/** Label for one row, venue AND organizer. Used where the reader needs to tell
- *  two booths at one venue apart — the fair-pending assignment screen. */
-export function fairLabel(o: Pick<FairOption, 'venue' | 'organizer' | 'startDate' | 'endDate' | 'showDates'>): string {
-  return withDates(o, `${o.venue} — ${o.organizer}`);
-}
-
-/** The SO fair picker's label: VENUE ONLY (owner, 2026-09-16). The organizer is
- *  NOT shown to the salesperson, but it still rides on the picked value and is
- *  saved on the order — it feeds fair P&L / commission. Only the displayed text
- *  drops it. The date suffix the server flags for the one collision case (same
- *  venue + organizer twice in a month) is kept so those two rows stay distinct. */
-export function fairVenueLabel(o: Pick<FairOption, 'venue' | 'startDate' | 'endDate' | 'showDates'>): string {
-  return withDates(o, o.venue);
 }
 
 /**
