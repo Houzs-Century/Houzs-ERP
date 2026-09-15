@@ -32,11 +32,16 @@ const ERP_PAGE_LIMIT = 300;
 const ERP_MAX_PAGES_PER_RUN = 4;
 const ERP_PUSH_BATCH = 300;
 
+// The live project already holds the ERP origin and the HC sheet key for the
+// ASSR sync (ERPMain.gs: ASSR_SYNC_URL / ASSR_SYNC_KEY), so those are the
+// defaults; a Script Property of the same purpose overrides either.
+const ERP_DEFAULT_BASE_URL = "https://erp.houzscentury.com";
+
 function erpConfig_() {
   const props = PropertiesService.getScriptProperties();
-  const base = (props.getProperty("ERP_BASE_URL") || "").replace(/\/+$/, "");
-  const key = props.getProperty("SHEET_SYNC_KEY") || "";
-  if (!base || !key) throw new Error("Script properties ERP_BASE_URL and SHEET_SYNC_KEY must be set.");
+  const base = (props.getProperty("ERP_BASE_URL") || ERP_DEFAULT_BASE_URL).replace(/\/+$/, "");
+  const key = props.getProperty("SHEET_SYNC_KEY") || (typeof ASSR_SYNC_KEY !== "undefined" ? ASSR_SYNC_KEY : "");
+  if (!base || !key) throw new Error("Set Script property SHEET_SYNC_KEY (or keep ASSR_SYNC_KEY in ERPMain.gs).");
   return { base: base, key: key };
 }
 
