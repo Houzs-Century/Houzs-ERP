@@ -40,13 +40,16 @@ const { purchaseInvoices } = await import('./purchase-invoices');
 
 type Item = { grnItemId: string; grnId: string; grnDocNo: string; receivedAt: string; remaining: number; supplierCode: string; poDocNo: string | null; currency: string; exchangeRate: number };
 
-async function getPicker(sb: ReturnType<typeof fakeSb>, companyId = 1) {
+const HOUZS = { id: 1, code: 'HOUZS' };
+const CO_2990 = { id: 2, code: '2990' };
+
+async function getPicker(sb: ReturnType<typeof fakeSb>, company = HOUZS) {
   state.sb = sb;
   const app = new Hono<{ Bindings: Env; Variables: Variables }>();
   app.use('*', async (c, next) => {
     c.set('user', CALLER);
-    c.set('companyId', companyId);
-    c.set('companyCode', companyId === 1 ? 'HOUZS' : '2990');
+    c.set('companyId', company.id);
+    c.set('companyCode', company.code);
     await next();
   });
   app.route('/', purchaseInvoices);
@@ -168,7 +171,7 @@ describe('GET /purchase-invoices/outstanding-grn-items', () => {
     expect(body.items!.map((i) => i.grnDocNo)).toEqual(['GRN-00008', 'GRN-00005', 'GRN-00001']);
     expect(body.items!.filter((i) => i.grnDocNo === 'GRN-00005')).toHaveLength(1);
 
-    const other = await getPicker(sb, 2);
+    const other = await getPicker(sb, CO_2990);
     expect(other.body.items!.map((i) => i.grnDocNo)).toEqual(['GRN-00006']);
   });
 
