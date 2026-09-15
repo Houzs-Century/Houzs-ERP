@@ -63,6 +63,9 @@ vi.mock('@tanstack/react-query', () => ({
 }));
 vi.mock('../../vendor/scm/lib/authed-fetch', () => ({ authedFetch: vi.fn() }));
 vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ can: () => true }) }));
+/* A figure opens the General Ledger (docs/bugs/0924): the navigation is caught, not followed. */
+const { navigateSpy } = vi.hoisted(() => ({ navigateSpy: vi.fn() }));
+vi.mock('react-router-dom', async (orig) => ({ ...(await orig<Record<string, unknown>>()), useNavigate: () => navigateSpy }));
 /* The editor has its own contract (ReportLayoutEditor.test.tsx); here it only has to open. */
 vi.mock('./ReportLayoutEditor', () => ({ ReportLayoutEditor: () => <div role="dialog" aria-label="Layout · P&L">editor</div> }));
 /* The monthly view has its own contract (MonthlyReport.test.tsx); here it only has to be reached. */
@@ -118,6 +121,19 @@ describe('the standard statements', () => {
     expect(screen.getByText('GROSS PROFIT').closest('tr')!.textContent).toContain('50.0%');
     expect(screen.getByText('NET PROFIT').closest('tr')!.textContent).toContain('41.5%');
     expect(screen.getByText('Total expenses').closest('tr')!.textContent).toContain('10.5%');
+  });
+
+  /* 点开看明细其实就是看 general ledger (owner 2026-09-14; docs/bugs/0924): a
+     figure opens the ledger on the row's accounts for the period — an account
+     on its own, a category on every account beneath it. */
+  test('P&L: a figure opens the General Ledger on its accounts and the period', () => {
+    navigateSpy.mockClear();
+    render(<PnLTab />);
+    fireEvent.click(screen.getByRole('button', { name: '501-0000 — SALES total' }));
+    expect(navigateSpy).toHaveBeenCalledTimes(1);
+    expect(String(navigateSpy.mock.calls[0]![0])).toMatch(/^\/scm\/accounting\?tab=gl&accounts=501-0000&from=\d{4}-\d{2}-01&to=\d{4}-\d{2}-\d{2}$/);
+    fireEvent.click(screen.getByRole('button', { name: 'Operating Expense total' }));
+    expect(String(navigateSpy.mock.calls[1]![0])).toContain('accounts=900-A001%2C900-A014');
   });
 
   test('P&L: L1 folds the tree to its categories, All opens every account; the Layout button opens the editor', () => {

@@ -19,8 +19,6 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { ACCOUNTING_TAB_TITLES, accountingTabFromSearch, type AccountingTab } from './accounting-tabs';
 import {
   useJournalEntries,
-  useGlEntries,
-  reversalSideOf,
   useAccountBalances,
   useArAging,
   useApAging,
@@ -54,6 +52,7 @@ import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { fmtSen } from '../../vendor/shared/format';
 import { byText } from '../../vendor/scm/lib/sort-options';
 import styles from './Suppliers.module.css';
+import { GeneralLedger } from './GeneralLedger';
 import { PageHeader } from '../../components/Layout';
 import { fmtDateOrDash } from '../../vendor/shared/format';
 import { DateField } from "../../vendor/scm/components/DateField";
@@ -323,76 +322,10 @@ const JeTab = () => {
 };
 
 /* ── GL ──────────────────────────────────────────────────────────────── */
-/* Exported for GlTabReversed.test.tsx, the way TrialBalanceTab is. */
-export const GlTab = () => {
-  const accounts = useAccounts();
-  const [accountCode, setAccountCode] = useState<string>('');
-  /* A reversed entry and its contra are one correction: the ledger leaves both
-     out until asked (owner 2026-09-15: 照理就是对冲掉，所以都不应该显示，je 可以留
-     记录就好 — docs/bugs/0923). The journal list keeps its REVERSED mark. */
-  const [showReversed, setShowReversed] = useState(false);
-  const q = useGlEntries({ accountCode: accountCode || undefined, showReversed });
-  const rows = q.data?.glEntries ?? [];
-
-  type GlRow = (typeof rows)[number];
-  return (
-    <div className="space-y-3">
-      {/* Account scope select stays a page-level control above the table
-          (the DataTable toolbar owns search/export/columns). */}
-      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 'var(--space-3)' }}>
-        <select
-          value={accountCode}
-          onChange={(e) => setAccountCode(e.target.value)}
-          className={styles.searchInput}
-          style={{ maxWidth: 320 }}>
-          <option value="">All accounts</option>
-          {[...(accounts.data?.accounts ?? [])]
-            .sort((a, b) => byText(a.account_code, b.account_code))
-            .map((a) => (
-            <option key={a.account_code} value={a.account_code}>
-              {a.account_code} — {a.account_name}
-            </option>
-          ))}
-        </select>
-        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 'var(--fs-13)', cursor: 'pointer' }}>
-          <input
-            type="checkbox"
-            checked={showReversed}
-            onChange={(e) => setShowReversed(e.target.checked)}
-            aria-label="Show reversed entries"
-          />
-          Show reversed entries
-        </label>
-        <span className={styles.subtitle}>
-          {showReversed
-            ? 'Reversed entries and their contras are listed and marked; no statement counts them.'
-            : 'Reversed entries and their contras are left out — they undo each other. The journal list still shows both.'}
-        </span>
-      </div>
-      <DataTable<GlRow>
-        tableId="accounting-gl"
-        layoutFamily="accounting-gl"
-        exportName="general-ledger"
-        rows={q.isLoading ? null : rows}
-        loading={q.isLoading}
-        emptyLabel="No GL entries posted yet."
-        getRowKey={(r) => r.line_id}
-        columns={[
-          { key: 'entry_date', label: 'Date', width: '110px', getValue: (r) => r.entry_date, render: (r) => fmtDateOrDash(r.entry_date) },
-          { key: 'je_no', label: 'JE No', width: '130px', getValue: (r) => r.je_no, render: (r) => <span className={styles.codeChip}>{r.je_no}</span> },
-          { key: 'source', label: 'Source', width: '180px', getValue: (r) => `${r.source_type}${r.source_doc_no ? ` · ${r.source_doc_no}` : ''}`, render: (r) => `${r.source_type}${r.source_doc_no ? ` · ${r.source_doc_no}` : ''}` },
-          { key: 'account', label: 'Account', getValue: (r) => `${r.account_code} — ${r.account_name}`, render: (r) => `${r.account_code} — ${r.account_name}` },
-          { key: 'debit', label: 'Debit', align: 'right', width: '120px', getValue: (r) => r.debit_sen / 100, render: (r) => (r.debit_sen > 0 ? fmt(r.debit_sen) : '—') },
-          { key: 'credit', label: 'Credit', align: 'right', width: '120px', getValue: (r) => r.credit_sen / 100, render: (r) => (r.credit_sen > 0 ? fmt(r.credit_sen) : '—') },
-          { key: 'party', label: 'Party', width: '160px', getValue: (r) => r.party_name ?? r.party_code ?? '', render: (r) => r.party_name ?? r.party_code ?? '—' },
-          ...(showReversed
-            ? [{ key: 'reversal', label: 'Reversal', width: '110px', getValue: (r: GlRow) => reversalSideOf(r), render: (r: GlRow) => (reversalSideOf(r) ? <span className={styles.codeChip}>{reversalSideOf(r)}</span> : '—') }]
-            : []),
-        ] satisfies Column<GlRow>[]}
-      />
-    </div>
-  );
-};
+/* The General Ledger the AutoCount way — per-account blocks, BALANCE B/F, a
+   running balance, the journal's references (docs/bugs/0924). Its filters
+   live in the URL, so a figure on a statement opens it on that account. */
+const GlTab = () => <GeneralLedger />;
 
 /* ── Trial Balance ───────────────────────────────────────────────────── */
 
