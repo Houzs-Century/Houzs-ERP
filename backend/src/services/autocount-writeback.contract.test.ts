@@ -448,8 +448,8 @@ const LATER_MIGRATIONS: Record<string, string[]> = {
     'revision', 'company_id', 'po_email_sent_at', 'po_email_sent_to',
     'linked_ac_grn_docnos', 'linked_ac_pinv_docnos', 'linked_ac_docno',
   ],
-  // 0083 (company_id), 0273 (linked_ac_dtlkey — PR #1819), 0274 (photo_urls)
-  purchase_order_items: ['company_id', 'linked_ac_dtlkey', 'photo_urls'],
+  // 0083 (company_id), 0273 (linked_ac_dtlkey — PR #1819), 0274 (photo_urls), 20260910T0547 (line_no)
+  purchase_order_items: ['company_id', 'linked_ac_dtlkey', 'photo_urls', 'line_no'],
   suppliers: ['company_id'],
 };
 
@@ -1319,15 +1319,13 @@ describe('/so-to-po carries the whole master', () => {
        disguise — `Description: null` on a purchase order the ERP describes is
        exactly what the owner saw.
 
-       `Ref` IS ABSENT FROM THIS LIST ON PURPOSE, and it is the only one:
-       `readPoEnqueueShape` (autocount-read.ts:201-203) puts the source sales
-       order numbers in a CREATE's Ref because AutoCount has no DocTransfer
-       link to carry them, and leaves a transfer's null because it does. The
-       KEY must still be carried — the parity test above enforces that — but
-       the two documents legitimately hold different values there. */
-    for (const key of ['DocNo', 'DocDate', 'CreditorCode', 'CreditorName', 'Agent', 'Description', 'UDF']) {
+       `Ref` and `UDF.SONo` name the SOURCE order (docs/bugs/0926); the transfer
+       fixture has one and the create control none, so they are left out. */
+    const sans = (u: unknown) => ({ ...(u as Record<string, unknown>), SONo: undefined });
+    for (const key of ['DocNo', 'DocDate', 'CreditorCode', 'CreditorName', 'Agent', 'Description']) {
       expect(transferred[key], `${key} on the transfer`).toEqual(created[key]);
     }
+    expect(sans(transferred.UDF), 'UDF on the transfer').toEqual(sans(created.UDF));
   });
 
   test('the header PURCHASE LOCATION reaches both arms — AutoCount has one and the ERP has one', async () => {

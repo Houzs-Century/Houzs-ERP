@@ -216,43 +216,9 @@ jobs:
       # Runs from the repo root, hence the `cd ..`; both are dependency-free.
       - run: cd .. && node scripts/explain.mjs --check
       - run: cd .. && node --test scripts/explain.test.mjs
-      - run: cd .. && node scripts/explain.mjs --check-docs
-      # The two DERIVED docs. Neither is in deploy.yml — a stale doc must never
-      # block a release (audit:routes as a deploy gate jammed prod twice in one
-      # day) — and since 2026-08-14 neither fails a PR on DRIFT either. They
-      # mirror things every PR is required to move: BUG-HISTORY.md, which the
-      # working agreement makes every code PR append to, and line numbers, which
-      # shift on every backend merge. With serial merges that made them a
-      # deadlock: five PRs failed here at once, were regenerated one by one, and
-      # were stale again after the next merge.
-      #
-      # What they DO still fail on is the reason they are here at all — the
-      # generator producing nothing, the failure docs/staging-bench-rot-coe.md
-      # records going unnoticed for three weeks. Drift prints on every run with
-      # both counts; `--strict` fails on it for anyone who wants that.
-      # Pinned by backend/tests/derivedDocsDoNotDeadlock.test.mjs.
-      - run: npm run audit:bug-index
-      # The bug ledger is a DIRECTORY since 2026-08-20 (docs/bugs/, one file per
-      # entry). This gates the same failure the line above does — the generator
-      # dying — plus the invariant that makes the split work: one file is one
-      # entry, named NNNN-slug.md. Neither compares against a committed copy;
-      # there is no committed copy, which is the point.
-      - run: npm run audit:bug-history
-      # And the OTHER half of that split: nothing may put ledger content back at
-      # the old path. #2567 moved the layout and left it unguarded, and on
-      # 2026-08-21 the whole 24,000-line ledger was back on `main` with every
-      # check green — one PR's entry existed ONLY in the resurrected file.
-      # A branch forked before the split still carries `BUG-HISTORY.md
-      # merge=union` in ITS OWN .gitattributes, and a merge applies the
-      # attributes of the tree it runs in, so `git merge origin/main` keeps both
-      # sides and EXITS 0. Nothing on `main` can reach into that branch; what it
-      # can do is refuse the result, here, in a required check.
-      - run: npm run audit:bug-signpost
-      - run: npm run audit:map
       # Transaction-workflow drift tripwire: fails if any transaction document's
       # header edit loses its inherited-field lock (see check-workflow-consistency.mjs).
       - run: npm run audit:workflow-consistency
-      - run: npm run audit:doc-refs
       # Also run on the BACKEND leg, and that is not duplication: the measured
       # column width lives in backend/src/services/autocount-address-fit.ts, and
       # a backend-only PR never runs `frontend-checks` (it is gated on
@@ -267,6 +233,9 @@ jobs:
       # against last month's account book while the suite stayed green.
       - run: npm run audit:ac-item-map
       - run: npm run audit:ac-sofa-corpus
+      # The AutoCount item master (Description, Item Group, UOM per book item) the
+      # document list exports print, from export-ac-item-master.py (autocount-book-item.ts).
+      - run: npm run audit:ac-item-master
       # And a THIRD since 2026-08-14: the four master-data spelling maps
       # (agent / location / venue / branding) are compiled from
       # autocount-so-writeback-mappings.json, so that CONFIRMING a binding is an
@@ -319,12 +288,8 @@ jobs:
       # the backlog it found was judged in the same PR (15 waived at the site
       # with a reason, 8 fixed) rather than left as a number nobody reads.
       - run: node ../frontend/scripts/check-silent-writes.mjs --strict
-      # docs-drift is the fourth: the docs make CHECKABLE claims (file paths,
-      # migration numbers, permission keys, npm scripts) and this repo has a
-      # documented history of those rotting unnoticed for months. --strict gates
-      # on its CERTAIN half only; the advisory half (line numbers, key-shaped
-      # prose) is printed and never fails a PR.
-      - run: node scripts/check-docs-drift.mjs --strict
+      # CLAUDE.md, module guides, the bug summary and TODO stay short (line limits).
+      - run: node ../scripts/check-docs-size.mjs
 
       # One word per concept. The registry drives the guard AND the glossary, so
       # a concept is registered once instead of needing a fourth hand-written

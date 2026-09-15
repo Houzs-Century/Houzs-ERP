@@ -1,0 +1,75 @@
+// ----------------------------------------------------------------------------
+// MobileOrderMoney — the phone's share of money moved from a cancelled order
+// (docs/bugs/0933; the desktop screens are docs/bugs/0931, the backend 0927).
+//
+// The rules live with the desktop: the vocabulary and the reads in
+// vendor/scm/lib/so-money-queries.ts, the cancelled order's panel in
+// vendor/scm/components/OrderMoneyPanel.tsx (mounted on the phone as it is —
+// only "open the new order" is handed back to the screen router, since the
+// phone has no URL to navigate to). What this file adds is the phone's own
+// pieces: the method option and its pick in the two payment editors (the
+// pre-create PayCard and the AddPaymentSheet), the body a converted row posts,
+// and the one-shot seed the New SO screen opens with after Convert.
+// ----------------------------------------------------------------------------
+
+import {
+  CONVERT_LABEL, CONVERTED_METHOD, useCancelledWithMoney, useConvertSources,
+  type ConvertPick, type ConvertSource,
+} from "../vendor/scm/lib/so-money-queries";
+import { fmtSen } from "../vendor/shared/format";
+
+/** What Convert on a cancelled order's panel hands the New SO screen: the
+    order whose customer and lines are copied, and one converted row per pick. */
+export type MobileConvertPrefill = { copyFrom: string; picks: ConvertPick[] };
+
+type Opt = { value: string; label: string };
+
+/** The method picker's extra option — offered only while the customer has a
+    cancelled order with money (or the row already carries it), never a
+    maintenance row: the catalog lists ways money arrives, this is money that
+    was already here. */
+export const withConvertOption = (opts: readonly Opt[], offer: boolean): Opt[] =>
+  offer && !opts.some((o) => o.value === CONVERT_LABEL) ? [...opts, { value: CONVERT_LABEL, label: CONVERT_LABEL }] : [...opts];
+
+/** The body a converted row posts — the server fixes the paid day and the
+    collector from the cancelled order's own payment, so nothing else is sent. */
+export const convertedBody = (convertedFromDocNo: string, amountSen: number): Record<string, unknown> =>
+  ({ method: CONVERTED_METHOD, convertedFromDocNo: convertedFromDocNo || null, amountSen });
+
+/** Sen → the RM string the phone's amount boxes hold ("1433.00"). */
+export const rmInput = (sen: number): string => (sen / 100).toFixed(2);
+
+/** The cancelled orders a row may draw on: a saved order asks the server by
+    its number; the New SO screen, which has no order yet, asks by the
+    customer's phone once enough of it is typed. */
+export function useMobileConvertSources(p: { docNo?: string | null; phone?: string | null }): ConvertSource[] {
+  const phone = (p.phone ?? "").trim();
+  const saved = useConvertSources(p.docNo ?? null);
+  const byPhone = useCancelledWithMoney(phone || null, !p.docNo && phone.length >= 6);
+  return p.docNo ? saved.data?.sources ?? [] : byPhone.data?.orders ?? [];
+}
+
+/** The L2 pick under "Convert from cancelled SO": which cancelled order the
+    money comes from. Picking one hands back what is left on it so an empty
+    amount can be filled (desktop parity). A stored value the list no longer
+    offers stays selectable, the same courtesy the Bank picker extends. */
+export function ConvertSourceField({ sources, value, onChange }: {
+  sources: ConvertSource[];
+  value: string;
+  onChange: (docNo: string, remainingSen: number) => void;
+}) {
+  const opts = value && !sources.some((s) => s.docNo === value) ? [{ docNo: value, remainingSen: 0 } as ConvertSource, ...sources] : sources;
+  return (
+    <div className="fld">
+      <span className="fld-l">Cancelled order</span>
+      <select className="fld-i" value={value} aria-label="Cancelled order"
+        onChange={(e) => { const s = opts.find((o) => o.docNo === e.target.value); onChange(e.target.value, s?.remainingSen ?? 0); }}>
+        <option value="">— Cancelled order —</option>
+        {opts.map((s) => <option key={s.docNo} value={s.docNo}>{s.docNo} · {fmtSen(s.remainingSen)} left</option>)}
+      </select>
+      <div style={{ fontSize: 10.5, color: "var(--mut2)", marginTop: 3 }}>
+        Money already paid on that order moves here — its paid date and collector stay as they were.
+      </div>
+    </div>
+  );
+}

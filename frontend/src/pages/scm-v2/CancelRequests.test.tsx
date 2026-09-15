@@ -8,7 +8,7 @@
  * that can still be pending is a legacy one raised before that ruling; it is
  * kept as a fixture because the inbox must still be able to finish it. */
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 type Row = import('../../vendor/scm/lib/document-cancel-queries').CancelRequestRow;
@@ -88,6 +88,29 @@ describe('CancelRequests', () => {
     await waitFor(() => expect(cancelPo).toHaveBeenCalledWith({ id: 'po-7', reason: 'Supplier cannot deliver' }));
     expect(cancelSo).not.toHaveBeenCalled();
     expect(notify).toHaveBeenCalledWith(expect.objectContaining({ title: 'Purchase Order PO-7 cancelled' }));
+  });
+
+  /* Owner 2026-09-14 — a delivery order is cancelled on its reason alone, and
+     the record of it lands here beside the purchase orders'. */
+  it('lists a delivery order cancelled on its reason, with nothing to sign, and opens the DO', async () => {
+    ROWS.push(base({
+      id: 'r3', doc_type: 'DO', doc_key: 'do-uuid-9', doc_number: 'HC-DO-2609-009', reason: 'Customer postponed the delivery',
+      status: 'EXECUTED', requested_by: 13, requested_by_name: 'Wei', executed_by: 13, executed_at: '2026-09-14T02:00:00Z',
+    }));
+    render(
+      <MemoryRouter initialEntries={['/scm/cancel-requests']}>
+        <Routes>
+          <Route path="/scm/cancel-requests" element={<CancelRequests />} />
+          <Route path="/scm/delivery-orders/:id" element={<div>delivery order page</div>} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    const docNo = await screen.findByText('HC-DO-2609-009');
+    expect(screen.getByText('Customer postponed the delivery')).toBeTruthy();
+    expect(screen.getAllByText('Cancelled')).toHaveLength(2);
+    expect(screen.queryByText('Cancel now')).toBeNull();
+    fireEvent.doubleClick(docNo);
+    expect(await screen.findByText('delivery order page')).toBeTruthy();
   });
 
   it('the person who raised the SO request cannot sign it, wildcard or not', async () => {

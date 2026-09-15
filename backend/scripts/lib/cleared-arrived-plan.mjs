@@ -35,8 +35,12 @@ export const HELD = Object.freeze({
  *                 created_at: string, archived_at: string | null, archived_by: number | string | null }>} rows
  *   EVERY queue row of the company for the documents in question, cleared or not
  * @param {Map<string, string>} numberOfId  `${doc_type}|${uuid}` -> document number
+ * @param {ReadonlySet<string>} named  document numbers the operator named. A
+ *   document a PERSON cleared is restored only when named here (the owner asked
+ *   for HC-SO-013361, -013393 and -013394 on 2026-09-15); it must still have
+ *   arrived. Pass an empty set to restore only what a script cleared.
  */
-export function planClearedArrivals(rows, numberOfId) {
+export function planClearedArrivals(rows, numberOfId, named) {
   const numberOf = (r) => (UUID.test(String(r.doc_no)) ? numberOfId.get(`${r.doc_type}|${String(r.doc_no).toLowerCase()}`) ?? null : r.doc_no);
   const docs = new Map();
   const unresolved = [];
@@ -54,7 +58,7 @@ export function planClearedArrivals(rows, numberOfId) {
   const held = unresolved.map((r) => ({ docType: r.doc_type, docNo: r.doc_no, reason: HELD.unresolvedId }));
   for (const [k, list] of docs) {
     const [docType, docNo] = k.split("|");
-    const byScript = list.filter((r) => r.archived_at && r.archived_by == null);
+    const byScript = list.filter((r) => r.archived_at && (r.archived_by == null || named.has(docNo)));
     if (!byScript.length) {
       if (list.some((r) => r.archived_at)) held.push({ docType, docNo, reason: HELD.person });
       continue;

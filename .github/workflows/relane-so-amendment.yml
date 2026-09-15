@@ -1,0 +1,71 @@
+name: Relane SO amendment (DRY-RUN gated)
+
+# Moves ONE open Sales Order amendment to the other approval lane (LINES =
+# Purchaser, DELIVERY = Logistic), for a row stored with a lane the rule no
+# longer gives it. The lane is fixed at submit, so a rule fix never reaches an
+# amendment already raised: HC-SO-012757/A1 (added TRANSPORTATION CHARGES,
+# catalogue SERVICE) stayed on the Purchaser after docs/bugs/0895 deployed.
+# Owner 2026-09-15: 「那就把这张 A1 改到 Logistic」.
+#
+# The script refuses anything but a REQUESTED, lane-bearing, line-only
+# amendment whose lines all agree with the target lane by today's service-line
+# signal. Run with apply=0 first and read the PLAN line; then apply=1 with the
+# confirm phrase. The apply re-reads the row on a fresh connection and fails the
+# job if the lane, status or history row is not what it should be.
+#
+# Same shape as repair-lorry-plates.yml: Actions holds secrets.DATABASE_URL, so
+# nobody handles the credential. Own concurrency group — never the deploy's.
+on:
+  workflow_dispatch:
+    inputs:
+      amendment_no:
+        description: "Amendment number, e.g. HC-SO-012757/A1"
+        required: true
+        type: string
+      to_lane:
+        description: "Lane to move it to"
+        required: true
+        default: "DELIVERY"
+        type: choice
+        options:
+          - DELIVERY
+          - LINES
+      apply:
+        description: "1 to write, anything else DRY-RUN"
+        required: false
+        default: "0"
+        type: string
+      confirm:
+        description: "Type I HAVE REVIEWED THE DRY-RUN to apply (ignored on a dry run)"
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: relane-so-amendment
+  cancel-in-progress: false
+
+jobs:
+  relane:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/relane-so-amendment.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          AMENDMENT_NO: ${{ inputs.amendment_no }}
+          TO_LANE: ${{ inputs.to_lane }}
+          APPLY: ${{ inputs.apply }}
+          CONFIRM: ${{ inputs.confirm }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
+          NODE_OPTIONS: --dns-result-order=ipv4first

@@ -14,6 +14,7 @@
 
 import { postJournal } from './engine';
 import { resolveRoles } from './rules';
+import { fmtSen } from '../scm/shared/format';
 
 export type CloseBucketRow = {
   bucket: string; // 'cash' | 'transfer' | acquirer code
@@ -31,6 +32,7 @@ export function bucketPayments(
   const buckets = new Map<string, number>();
   for (const r of rows) {
     if (r.method === 'imported') continue; // migration-era, never part of a day's takings
+    if (r.method === 'converted') continue; // moved from a cancelled order — no money passed the till (docs/bugs/0927)
     const key =
       r.method === 'cash' ? 'cash'
       : r.method === 'transfer' ? 'transfer'
@@ -93,7 +95,7 @@ export async function postCashOverShort(
     entryDate: date,
     sourceType: 'CASHUP',
     sourceDocNo: `${companyId}-${date}-cash`,
-    narration: `Daily cash close ${date} — drawer ${short ? 'short' : 'over'} by ${(amount / 100).toFixed(2)}`,
+    narration: `Daily cash close ${date} — drawer ${short ? 'short' : 'over'} by ${fmtSen(amount)}`,
     lines: short
       ? [
           { accountCode: roles.OVER_SHORT, debitSen: amount, creditSen: 0, notes: `Cash short on ${date}` },

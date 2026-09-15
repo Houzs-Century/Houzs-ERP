@@ -18,7 +18,9 @@
 
 import { Hono } from 'hono';
 import { PO_STATUS_BUCKETS } from '../lib/po-status-buckets';
-import { HELD_OR_TERM, HOLD_COLUMNS, isDocumentHeld } from '../lib/document-hold';
+import { HELD_OR_TERM, isDocumentHeld } from '../lib/document-hold';
+import { PO_HEADER_COLS, PO_LIST_SELECT, filterPoList, orderPoList, readPoListFilters, stampPoListGrns } from '../lib/po-list-read';
+import { attachPoLines } from '../lib/po-line-export';
 import { firstUnorderableSo, soNotOrderableResponse } from '../lib/source-document-gates';
 import { soLinkItemMismatch, type SoSourceLine } from '../lib/so-link-item-identity';
 import { mountHoldRoute } from './document-hold-routes';
@@ -44,11 +46,12 @@ import { resolveMaintenanceConfigForSupplier, poVariantPricingInput } from '../l
 import { readMfgProductBindings } from '../lib/supplier-bindings';
 import { loadOutstandingSoLines } from '../lib/outstanding-so-lines';
 import { poHasDownstream } from '../lib/downstream-lock';
+import { cascadePoSupplierDate, SUPPLIER_DATE_SLOT_COL, type SupplierDateSlot } from '../lib/po-supplier-date-cascade';
+import { description2InputsChanged } from '../lib/po-line-description2';
 import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { todayMyt } from '../lib/my-time';
 import { enqueuePoCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
-import { escapeForOr } from '../lib/postgrest-search';
 import { readStatusCounts } from '../lib/status-counts';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
@@ -98,6 +101,7 @@ import { eager } from '../lib/concurrency';
 import { provenanceNote } from '../shared/transfer-vocabulary';
 import type { Env, Variables } from '../env';
 import { skuCategoryResolver, lineIdentityFields } from '../lib/sku-category';
+import { firstSoLinkCategoryMismatch, soLinkCategoryMismatch, hardBoundUnlinkRefusal, hardBoundSplitRefusal, editedLineGroup } from '../lib/hard-bound-po-line';
 import { pgrestIn } from '../lib/pgrest-in-list';
 
 /* ── Supplier sofa-combo auto-pricing (Commander 2026-05-29) ─────────────────
@@ -332,42 +336,24 @@ async function poHasOutstandingDropshipOut(
 /* ON_HOLD added 2026-08-21 (owner: "PO 加 hold"). It is the REVERSIBLE answer
    the purchase side never had — CANCELLED is final and reaches AutoCount, where
    it cannot be un-cancelled. A held PO is not receivable, because
-   RECEIVABLE_PO_STATUSES in grns.ts is an ALLOW-list. */
-const VALID_STATUSES = new Set(['DRAFT', 'SUBMITTED', 'PARTIALLY_RECEIVED', 'RECEIVED', 'CANCELLED', 'ON_HOLD']);
-/* Filter-pill bucket → the raw purchase_orders.status values it covers. Single
-   source of truth for BOTH the status-count queries and the list `status`
-   filter. Five buckets are 1:1, but their KEYS differ from the raw status
-   (open→SUBMITTED, partial→PARTIALLY_RECEIVED, received→RECEIVED). The FE sends
-   the BUCKET NAME as `status`; a raw DB status still works (backward-compatible
-   fallback via VALID_STATUSES).
+   RECEIVABLE_PO_STATUSES in grns.ts is an ALLOW-list. Exported because the
+   list's exports (routes/purchase-order-exports.ts) filter through it too. */
+export const VALID_STATUSES = new Set(['DRAFT', 'SUBMITTED', 'PARTIALLY_RECEIVED', 'RECEIVED', 'CANCELLED', 'ON_HOLD']);
+/* The header column list and the list's filter + sort live in
+   lib/po-list-read.ts since 2026-09-15, so the two exports
+   (routes/purchase-order-exports.ts) match exactly what this list matches.
 
-   `outstanding` (owner 2026-07-31) is the one ROLL-UP bucket: raised to a
-   supplier but not yet received in full — i.e. exactly the money the
-   Outstanding stat card sums. It deliberately OVERLAPS open + partial rather
-   than replacing them, so the counts across the pills no longer add up to
-   `all`; that's the point of a roll-up and why it sits right after All. */
+   Filter-pill bucket → the raw purchase_orders.status values it covers: see
+   lib/po-status-buckets.ts. `outstanding` (owner 2026-07-31) is the one ROLL-UP
+   bucket and deliberately OVERLAPS open + partial, so the pill counts do not add
+   up to `all`. */
 
 /* THE SO-MUST-BE-ORDERABLE GATE MOVED to lib/source-document-gates.ts on
    2026-08-22 (mig 0324), beside the SO -> DO and PO -> GRN gates that ask the
    same question of the same row. All three had to learn to read the hold
    MARKER. Behaviour unchanged; that module's header has the trace. */
 
-const HEADER_COLS =
-  'id, po_number, supplier_id, status, po_date, expected_at, currency, ' +
-  'subtotal_sen, tax_sen, total_sen, notes, submitted_at, received_at, ' +
-  'cancelled_at, created_at, created_by, updated_at, ' +
-  /* SO-amendment / revision workflow (2026-07-03) — bumped in place when a
-     supplier-confirmed amendment revises this PO; prior versions snapshot to
-     po_revisions. The PO Detail header shows a "Revised · rev N" badge when > 1. */
-  'revision, ' +
-  /* PR #77 — default ship-to warehouse for every line on this PO */
-  'purchase_location_id, ' +
-  /* Migration 0180 — supplier-revised delivery dates (header). The EFFECTIVE
-     delivery date readers use = MAX over non-null of [expected_at, _2, _3, _4]
-     (effectiveDelivery). expected_at keeps meaning the original earliest date. */
-  'supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4, ' +
-  /* Mig 0324 — the HOLD MARKER, rendered BESIDE the status pill. */
-  HOLD_COLUMNS;
+const HEADER_COLS = PO_HEADER_COLS;
 
 const ITEM_COLS =
   // line_no (mig 20260910T0547) — the printed order; the PDF re-sorts on it.
@@ -398,22 +384,6 @@ mfgPurchaseOrders.get('/', async (c) => {
   const supplierId = c.req.query('supplierId');
   const supabase = c.get('supabase');
 
-  // PR — Commander 2026-05-27: PO list rows now surface a per-row items
-  // summary (AutoCount-style) so the buyer can see at a glance what's
-  // inside each PO without drilling in. Nested select keeps it to one
-  // query — Postgres / Supabase joins purchase_order_items on
-  // purchase_order_id for every row.
-  // purchase_location embeds the warehouse the PO ships to (PR #77 — the
-  // column is an FK → warehouses.id); the list needs its NAME, not just the
-  // id, for the "Purchase Location" column (Owner 2026-07-02).
-  // Supplier CONTACT fields ride the list embed because the quick-view drawer
-  // renders its SUPPLIER panel straight off the list row (owner 2026-07-24:
-  // the panel showed "—" for contact/phone/email/address — the row simply
-  // never carried them).
-  // supplier_sku rides the items embed (owner 2026-08-05) — the list's
-  // "Supplier SKU" column / Excel export shows the supplier's own codes.
-  const SELECT = `${HEADER_COLS}, supplier:suppliers(id, code, name, contact_person, phone, email, address), items:purchase_order_items(item_code, material_name, qty, supplier_sku), purchase_location:warehouses!purchase_location_id(id, code, name)`;
-
   /* Opt-in server-side pagination + search + sort + status-counts (mirrors the
      SO list in mfg-sales-orders.ts). The PRESENCE of `page` switches paging on;
      when it is absent/empty the query below is BYTE-IDENTICAL to the historical
@@ -434,7 +404,7 @@ mfgPurchaseOrders.get('/', async (c) => {
     /* --- LEGACY PATH (unchanged) --- */
     let q = supabase
       .from('purchase_orders')
-      .select(SELECT)
+      .select(PO_LIST_SELECT)
       .order('po_date', { ascending: false })
       .order('created_at', { ascending: false })
       // Bound the result so PostgREST's default 1000-row cap can't silently
@@ -452,37 +422,13 @@ mfgPurchaseOrders.get('/', async (c) => {
     const psRaw = Number(c.req.query('pageSize'));
     pageSize = Number.isFinite(psRaw) && psRaw > 0 ? Math.min(100, Math.max(1, Math.trunc(psRaw))) : 50;
 
-    const SORT_COLS = new Set(['po_date', 'po_number', 'status', 'total_sen']);
-    const [rawCol, rawDir] = (c.req.query('sort') ?? 'po_date:desc').split(':');
-    const sortCol = SORT_COLS.has(rawCol) ? rawCol : 'po_date';
-    const sortAsc = rawDir === 'asc';
-
-    let q = supabase.from('purchase_orders').select(SELECT, { count: 'exact' }).order(sortCol, { ascending: sortAsc });
-    /* unique tiebreaker so range paging can't skip/repeat rows sharing the sort key */
-    if (sortCol !== 'po_number') q = q.order('po_number', { ascending: sortAsc });
-    /* Resolve the incoming `status`: a known bucket key → all its raw statuses;
-       'all'/empty → no filter; otherwise a raw DB status (VALID_STATUSES guard). */
-    /* The `on_hold` tab reads the MARKER (mig 0324). A held order appears under
-       BOTH its real status and On Hold — the point of a marker — so the counts
-       do not sum to `all`, exactly as `outstanding` already does not. */
-    if (status && status !== 'all') {
-      if (status === 'on_hold') q = q.or(HELD_OR_TERM);
-      else if (PO_STATUS_BUCKETS[status]) q = q.in('status', PO_STATUS_BUCKETS[status]);
-      else if (VALID_STATUSES.has(status)) q = q.eq('status', status);
-    }
-    if (supplierId) q = q.eq('supplier_id', supplierId);
-    q = scopeToCompany(q, c); // multi-company: isolate to the active company
-    /* free-text search over the base-table text columns the FE searches
-       (PurchaseOrdersListV2 hay). Supplier name / code are embedded resources,
-       not base purchase_orders columns, so they can't be ilike'd here. */
-    const search = c.req.query('q');
-    if (search) {
-      const s = escapeForOr(search);
-      if (s) q = q.or(`po_number.ilike.%${s}%,notes.ilike.%${s}%`);
-    }
-    const from = c.req.query('from'); if (from) q = q.gte('po_date', from);
-    const to = c.req.query('to'); if (to) q = q.lte('po_date', to);
-    q = q.range(page * pageSize, page * pageSize + pageSize - 1);
+    const filters = readPoListFilters((k) => c.req.query(k));
+    const q = filterPoList(
+      orderPoList(supabase.from('purchase_orders').select(PO_LIST_SELECT, { count: 'exact' }), filters.sort),
+      filters,
+      c,
+      VALID_STATUSES,
+    ).range(page * pageSize, page * pageSize + pageSize - 1);
 
     /* Status counts mirror the FE filter-pill buckets (draft / outstanding /
        open / partial / received / cancelled) over the SAME company + supplier
@@ -518,51 +464,24 @@ mfgPurchaseOrders.get('/', async (c) => {
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   if (countError) return c.json({ error: 'status_counts_failed', reason: countError }, 500);
 
-  /* Tier 2 downstream-lock (mirror computeGrnFlags in lib/grn-consumption-flags) — one
-     extra query: pull the distinct purchase_order_ids that have any non-
-     cancelled GRN, then stamp has_children on every PO row. The list grid uses
-     this to hide Edit / Cancel from POs that are downstream-locked. */
-  const rows = (data ?? []) as Array<{ id: string } & Record<string, unknown>>;
-  const childIds = new Set<string>();
-  // Owner 2026-07-02 — "GRN No" list column: collect the non-cancelled GRNs each
-  // PO was received into, deduped + stable-ordered. Same one extra query that
-  // already powers has_children — just carry the GRN identity too.
-  //
-  // Owner 2026-07-31 — carries `id` alongside `grnNumber` now: GRN detail routes
-  // by UUID (/scm/grns/:id), so a number alone can't be linked. Shape widened
-  // rather than duplicated into a parallel id array — nothing consumed the
-  // string[] form.
-  const grnsByPo = new Map<string, Array<{ id: string; grnNumber: string }>>();
-  if (rows.length > 0) {
-    const ids = rows.map((r) => r.id);
-    const { data: grnRows } = await supabase
-      .from('grns')
-      .select('id, purchase_order_id, grn_number')
-      .in('purchase_order_id', ids)
-      .neq('status', 'CANCELLED')
-      .order('grn_number', { ascending: true });
-    for (const g of (grnRows ?? []) as Array<{ id: string; purchase_order_id: string | null; grn_number: string | null }>) {
-      if (!g.purchase_order_id) continue;
-      childIds.add(g.purchase_order_id);
-      if (!g.grn_number) continue;
-      const arr = grnsByPo.get(g.purchase_order_id) ?? [];
-      if (!arr.some((x) => x.grnNumber === g.grn_number)) arr.push({ id: g.id, grnNumber: g.grn_number });
-      grnsByPo.set(g.purchase_order_id, arr);
-    }
+  /* has_children (the downstream lock) + transfer_to_grns (the "GRN No" column)
+     — one GRN read, shared with the export (lib/po-list-read.ts).
+     Assigned SO / Delivered columns (owner 2026-07-31) are MRP-DERIVED and
+     OMITTED here — not blanked (C16). The client heals them a beat after render
+     via GET /mfg-purchase-orders/list-mrp-enrichment
+     (routes/mfg-purchase-orders-list-enrichment.ts + lib/listMrpEnrichment.ts). */
+  const stamped = await stampPoListGrns(supabase, (data ?? []) as Array<{ id: string } & Record<string, unknown>>);
+  if (stamped.error) return c.json({ error: 'grn_read_failed', reason: stamped.error }, 500);
+  if (paginate) {
+    /* The page's lines, for the grid's line columns (Item Code, Qty, Delivery
+       Date, ...) — the same read the export uses (lib/po-line-export.ts), so the
+       screen and the file agree cell for cell. The legacy unpaged path does not
+       carry them: its callers never render a line column. */
+    const withLines = await attachPoLines(supabase, c, stamped.rows);
+    if (withLines.error) return c.json({ error: 'lines_read_failed', reason: withLines.error }, 500);
+    return c.json({ purchaseOrders: withLines.rows, total, page, pageSize, statusCounts });
   }
-  /* Assigned SO / Delivered columns (owner 2026-07-31) are MRP-DERIVED and now
-     OMITTED here — not blanked (C16). Resolving them ran a company-wide
-     computeMrp on this critical path (resolvePoSoCoverageForPos +
-     resolveDeliveredDosForPos), the list's dominant cost (~4s). The client heals
-     them a beat after render via GET /mfg-purchase-orders/list-mrp-enrichment
-     (routes/mfg-purchase-orders-list-enrichment.ts + lib/listMrpEnrichment.ts).
-     has_children + transfer_to_grns stay inline (cheap, non-MRP). */
-  const purchaseOrders = rows.map((r) => ({
-    ...r,
-    has_children: childIds.has(r.id),
-    transfer_to_grns: grnsByPo.get(r.id) ?? [],
-  }));
-  if (paginate) return c.json({ purchaseOrders, total, page, pageSize, statusCounts });
+  const purchaseOrders = stamped.rows;
   return c.json({ purchaseOrders });
 });
 
@@ -1139,6 +1058,7 @@ export const createMfgPurchaseOrderHandler = async (c: any) => {
      SO line → its doc_no and reject if any source SO is not orderable. Purely
      manual lines (no soItemId) skip this — a PO can be raised with no SO link,
      unchanged. Mirror of the DO create-gate. */
+  const groupOf = await skuCategoryResolver(supabase, items, activeCompanyId(c) ?? null); // SKU wins — lib/sku-category.ts
   {
     const lineSoItemIds = items
       .map((it) => it.soItemId as string | undefined)
@@ -1153,6 +1073,8 @@ export const createMfgPurchaseOrderHandler = async (c: any) => {
       // ... and the IDENTITY half of soLinkTargetRefusal, which this path was missing (lib/so-link-item-identity.ts, docs/bugs/0672).
       const badSoLink = soLinkItemMismatch(items, soRows);
       if (badSoLink) return c.json(badSoLink, 409);
+      const badCategory = firstSoLinkCategoryMismatch(items, soRows, groupOf);
+      if (badCategory) return c.json(badCategory, 409);
       const offender = await firstUnorderableSo(
         supabase,
         soRows.map((r) => r.doc_no),
@@ -1217,7 +1139,6 @@ export const createMfgPurchaseOrderHandler = async (c: any) => {
       return c.json({ ...b, reason: `Line ${i + 1}: ${b.reason}` }, 400);
     }
   }
-  const groupOf = await skuCategoryResolver(supabase, items, activeCompanyId(c) ?? null); // SKU wins — lib/sku-category.ts
   const itemRows = items.map((it) => {
     const kind = it.materialKind as string;
     if (!VALID_KINDS.has(kind)) throw new Error(`invalid material_kind: ${kind}`);
@@ -2615,12 +2536,6 @@ mfgPurchaseOrders.patch('/:id', async (c) => {
    the active company, is REPORTED and skipped — one bad pick never costs the
    operator the rest of the batch. Every updated PO still writes its own audit
    row, exactly as the single PATCH does. */
-const SUPPLIER_DATE_SLOT_COL = {
-  2: 'supplier_delivery_date_2',
-  3: 'supplier_delivery_date_3',
-  4: 'supplier_delivery_date_4',
-} as const;
-type SupplierDateSlot = keyof typeof SUPPLIER_DATE_SLOT_COL;
 
 /* Cap the batch. The handler walks POs sequentially (each needs its own lock
    check + audit row), so an unbounded list is a request that never returns. */
@@ -2693,7 +2608,7 @@ mfgPurchaseOrders.post('/bulk-supplier-date', async (c) => {
 
   const parsed = parseBulkSupplierDateBody(body);
   if (!parsed.ok) return c.json(parsed.payload, parsed.status);
-  const { slot, col, date, poIds, applyToLines } = parsed.req;
+  const { slot, date, poIds, applyToLines } = parsed.req;
 
   const updated: Array<{ id: string; poNumber: string | null }> = [];
   const skipped: Array<{ id: string; poNumber: string | null; reason: string }> = [];
@@ -2709,33 +2624,12 @@ mfgPurchaseOrders.post('/bulk-supplier-date', async (c) => {
     const childLock = await poHasDownstream(sb, id);
     if (childLock) { skipped.push({ id, poNumber, reason: childLock.message }); continue; }
 
-    const { error } = await scopeToCompanyId(
-      sb.from('purchase_orders').update({ [col]: date, updated_at: new Date().toISOString() }).eq('id', id),
-      co.companyId,
-    );
-    if (error) { skipped.push({ id, poNumber, reason: error.message }); continue; }
-
-    if (applyToLines) {
-      // Unconditional on purpose — see the header note above.
-      const { error: lineErr } = await scopeToCompanyId(
-        sb.from('purchase_order_items').update({ [col]: date }).eq('purchase_order_id', id),
-        co.companyId,
-      );
-      /* The header already moved, so a line failure is reported rather than
-         swallowed: the operator has to know this PO is half-applied. */
-      if (lineErr) { skipped.push({ id, poNumber, reason: `Header updated but lines failed: ${lineErr.message}` }); continue; }
-    }
-
-    await recordEntityAudit(sb, {
-      entityType: 'PURCHASE_ORDER',
-      entityId: id,
-      entityDocNo: poNumber,
-      action: 'UPDATE',
-      actor: c.get('houzsUser'),
-      companyId: (before.company_id as number | null) ?? activeCompanyId(c),
-      statusSnapshot: (before.status as string | null) ?? null,
-      fieldChanges: diffFields(before, { [`supplierDeliveryDate${slot}`]: date }, PO_AUDIT_FIELDS),
+    /* Header + every line + the audit row, in lib/po-supplier-date-cascade.ts —
+       the one writer the PO line import's estimate dates share. */
+    const written = await cascadePoSupplierDate(sb, {
+      companyId: co.companyId, poId: id, before, slot, date, applyToLines, actor: c.get('houzsUser') ?? null, note: null,
     });
+    if (!written.ok) { skipped.push({ id, poNumber, reason: written.reason }); continue; }
     /* ERP -> AutoCount edit, ONE PER PO THAT ACTUALLY MOVED — inside the loop
        and after `continue`s, so a PO that was skipped (not found, downstream-
        locked, or a failed write) queues nothing. A bulk route that queued one
@@ -2788,7 +2682,7 @@ async function recomputePoTotals(sb: any, poId: string) {
    delivery_date, else null. Mirrors the PO-create rule so a per-line Delivery
    Date edit shows on the PO list + PDF (both read the header expected_at).
    Best-effort: never fail the line write on this. (Commander 2026-06-18 #2/#3) */
-async function recomputePoExpectedAt(sb: any, poId: string) {
+export async function recomputePoExpectedAt(sb: any, poId: string) {
   try {
     const { data: lines } = await sb.from('purchase_order_items')
       .select('delivery_date')
@@ -2887,6 +2781,8 @@ async function soLinkTargetRefusal(
   c: any,
   soItemId: string | null,
   itemCode: string,
+  /* The group the PO line will STORE (SKU-resolved) — refused when it disagrees with a bound SO line's (lib/hard-bound-po-line.ts). */
+  poGroup: string | null,
   /* The PO line's spec signature (specSignature of its item_group+variants).
      When provided, the SO line must match it, not just the item code. Null =
      spec gate skipped (the code check still applies). */
@@ -2925,6 +2821,8 @@ async function soLinkTargetRefusal(
       status: 409,
     };
   }
+  const badCategory = soLinkCategoryMismatch({ itemCode, itemGroup: poGroup }, row);
+  if (badCategory) return { body: badCategory, status: 409 };
   /* SPEC GATE (owner 2026-08-08). Same code is not enough — the SO line must be
      the SAME PRODUCT (fabric + colour + SEAT/LEG/SPECIAL). poSpec is the PO
      line's summary, resolved by the caller; when absent (forward-compat) the
@@ -3023,7 +2921,7 @@ mfgPurchaseOrders.post('/:id/items', async (c) => {
      keeps offering an already-covered line. Dual-read camelCase??snake_case. */
   const soItemId = (((it.soItemId ?? it.so_item_id) as string | null | undefined) || null);
   {
-    const refusal = await soLinkTargetRefusal(sb, c, soItemId, String(it.itemCode ?? ''));
+    const refusal = await soLinkTargetRefusal(sb, c, soItemId, String(it.itemCode ?? ''), addGroupOf(it));
     if (refusal) return c.json(refusal.body, refusal.status);
   }
   /* Remaining-qty cap — a NEW line contributes nothing to po_qty_picked yet, so
@@ -3124,7 +3022,7 @@ mfgPurchaseOrders.patch('/:id/items/:itemId', async (c) => {
      PO_LINE_AUDIT_FIELDS — variants render into description2, which is
      server-owned and derived, not an operator edit. */
   const { data: prevRow } = await scopeToCompanyId(sb.from('purchase_order_items')
-    .select(PO_LINE_AUDIT_SELECT + ', variants, so_item_id')
+    .select(PO_LINE_AUDIT_SELECT + ', variants, so_item_id, material_kind')
     .eq('id', itemId), co.companyId).maybeSingle();
   if (!prevRow) return c.json(NOT_THIS_COMPANY, 404);
   /* Cast through `unknown`: a .select() built from a concatenated string infers
@@ -3172,6 +3070,9 @@ mfgPurchaseOrders.patch('/:id/items/:itemId', async (c) => {
     } catch { /* table absent pre-0235 — nothing to guard */ }
   }
 
+  /* SKU wins on edit too (create + add-line already do): a sent group, or a moved code, stores the SKU's category. */
+  const editedGroup = await editedLineGroup(sb, co.companyId ?? null, prev, it);
+  if (editedGroup !== undefined) it.itemGroup = editedGroup;
   const updates: Record<string, unknown> = {
     qty, unit_price_sen: unit, discount_sen: discount, line_total_sen: lineTotal,
   };
@@ -3194,8 +3095,9 @@ mfgPurchaseOrders.patch('/:id/items/:itemId', async (c) => {
     if (it[from] !== undefined) updates[to] = it[from];
   }
   /* Commander 2026-05-28 — Description 2 is server-owned: recompute from the
-     effective itemGroup + variants (incoming patch, else stored row). */
-  {
+     effective itemGroup + variants, but ONLY when one of them moves
+     (lib/po-line-description2.ts says why a date save must not rebuild it). */
+  if (description2InputsChanged(prev, it)) {
     const effGroup = (it.itemGroup ?? (prev as { item_group?: string }).item_group) as string | null | undefined;
     const effVariants = (it.variants ?? (prev as { variants?: unknown }).variants) as Record<string, unknown> | null | undefined;
     updates['description2'] = buildVariantSummary(String(effGroup ?? ''), effVariants ?? null) || null;
@@ -3211,13 +3113,17 @@ mfgPurchaseOrders.patch('/:id/items/:itemId', async (c) => {
   const prevSoItemId = ((prev as { so_item_id?: string | null }).so_item_id) ?? null;
   let nextSoItemId = prevSoItemId;
   const soItemKeySent = it.soItemId !== undefined || it.so_item_id !== undefined;
-  if (soItemKeySent) {
-    nextSoItemId = (((it.soItemId ?? it.so_item_id) as string | null | undefined) || null);
-    const effCode = String((it.itemCode ?? (prev as { item_code?: string }).item_code) ?? '');
-    const refusal = await soLinkTargetRefusal(sb, c, nextSoItemId, effCode);
+  const effCode = String((it.itemCode ?? (prev as { item_code?: string }).item_code) ?? '');
+  const effGroup = (editedGroup !== undefined ? editedGroup : prev.item_group ?? null) as string | null;
+  if (soItemKeySent) nextSoItemId = (((it.soItemId ?? it.so_item_id) as string | null | undefined) || null);
+  /* A kept link is re-checked when the code or category under it moves, or a sofa link could turn into a cross-category one. */
+  if (soItemKeySent || effCode !== String(prev.item_code ?? '') || effGroup !== (prev.item_group ?? null)) {
+    const refusal = await soLinkTargetRefusal(sb, c, nextSoItemId, effCode, effGroup);
     if (refusal) return c.json(refusal.body, refusal.status);
-    updates['so_item_id'] = nextSoItemId;
+    if (soItemKeySent) updates['so_item_id'] = nextSoItemId;
   }
+  const unlinkRefusal = hardBoundUnlinkRefusal(co.companyId ?? null, { item_group: effGroup, item_code: effCode }, prevSoItemId, nextSoItemId);
+  if (unlinkRefusal) return c.json(unlinkRefusal, 409);
 
   /* Remaining-qty cap — runs even when the bind key is ABSENT, because raising
      qty on an ALREADY-bound line over-orders just as surely as binding a new
@@ -3469,11 +3375,13 @@ mfgPurchaseOrders.post('/:id/items/:itemId/allocations', async (c) => {
   const user = c.get('user');
   const parent = await resolveAllocationParent(sb, c, poId, itemId);
   if (!parent.ok) return c.json(parent.body, parent.status);
+  const splitRefusal = hardBoundSplitRefusal(parent.companyId, parent.item);
+  if (splitRefusal) return c.json(splitRefusal, 409);
 
   const soItemId = (((body.soItemId ?? body.so_item_id) as string | null | undefined) || null);
   if (soItemId) {
     const poSpec = specSignature(parent.item.item_group, parent.item.variants);
-    const refusal = await soLinkTargetRefusal(sb, c, soItemId, parent.item.item_code, poSpec);
+    const refusal = await soLinkTargetRefusal(sb, c, soItemId, parent.item.item_code, parent.item.item_group, poSpec);
     if (refusal) return c.json(refusal.body, refusal.status);
   }
   const existing = await currentAllocations(sb, itemId);
@@ -3521,6 +3429,8 @@ mfgPurchaseOrders.patch('/:id/items/:itemId/allocations/:allocationId', async (c
   const sb = c.get('supabase');
   const parent = await resolveAllocationParent(sb, c, poId, itemId);
   if (!parent.ok) return c.json(parent.body, parent.status);
+  const splitRefusal = hardBoundSplitRefusal(parent.companyId, parent.item);
+  if (splitRefusal) return c.json(splitRefusal, 409);
 
   const existing = await currentAllocations(sb, itemId);
   const prev = existing.find((a) => a.id === allocationId);
@@ -3537,7 +3447,7 @@ mfgPurchaseOrders.patch('/:id/items/:itemId/allocations/:allocationId', async (c
     nextSoItemId = (((body.soItemId ?? body.so_item_id) as string | null | undefined) || null);
     if (nextSoItemId) {
       const poSpec = specSignature(parent.item.item_group, parent.item.variants);
-      const refusal = await soLinkTargetRefusal(sb, c, nextSoItemId, parent.item.item_code, poSpec);
+      const refusal = await soLinkTargetRefusal(sb, c, nextSoItemId, parent.item.item_code, parent.item.item_group, poSpec);
       if (refusal) return c.json(refusal.body, refusal.status);
     }
     updates.so_item_id = nextSoItemId;

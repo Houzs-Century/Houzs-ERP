@@ -8,7 +8,9 @@
        what it paid beyond that as "Supplier advances";
      • a transfer between two money accounts reads as Transfer to/from;
      • party=1 names the control rows by debtor/creditor and does not split;
-     • reversed journals are invisible; an account filter narrows the columns.
+     • reversed journals are invisible — the original AND the contra that undid
+       it, whichever month the contra is dated in (docs/bugs/0923); an account
+       filter narrows the columns.
    Real handler, fake PostgREST (fakeSb). */
 
 import { Hono } from 'hono';
@@ -60,9 +62,12 @@ const world = () => fakeSb({
     /* An AP-invoice payment: 50 to the other creditor for a rent bill. */
     gl('JE-5', '2026-07-25', 'PV', 'PV-5', '405-0000', 'OTHER CREDITORS', 5000, 0, { party_type: 'SUPPLIER', party_name: 'HOUZS VENTURE' }),
     gl('JE-5', '2026-07-25', 'PV', 'PV-5', '310-0010', 'CASH AT BANK - MAYBANK', 0, 5000),
-    /* A reversed voucher — invisible. */
-    gl('JE-9', '2026-07-26', 'PV', 'PV-9', '910-0000', 'UTILITIES', 99900, 0, { reversed: true }),
-    gl('JE-9', '2026-07-26', 'PV', 'PV-9', '310-0010', 'CASH AT BANK - MAYBANK', 0, 99900, { reversed: true }),
+    /* A reversed voucher — invisible — and the contra that undid it, dated in
+       the same period: not a receipt of the month (docs/bugs/0923). */
+    gl('JE-9', '2026-07-26', 'PV', 'PV-9', '910-0000', 'UTILITIES', 99900, 0, { reversed: true, reversed_by_je: 'je-9r' }),
+    gl('JE-9', '2026-07-26', 'PV', 'PV-9', '310-0010', 'CASH AT BANK - MAYBANK', 0, 99900, { reversed: true, reversed_by_je: 'je-9r' }),
+    gl('JE-9R', '2026-07-28', 'PV_REVERSAL', 'PV-9', '310-0010', 'CASH AT BANK - MAYBANK', 99900, 0, { reversed_by_je: 'je-9' }),
+    gl('JE-9R', '2026-07-28', 'PV_REVERSAL', 'PV-9', '910-0000', 'UTILITIES', 0, 99900, { reversed_by_je: 'je-9' }),
   ],
   payment_vouchers: [
     { id: 'pv-3', company_id: CO, pv_number: 'PV-3', status: 'POSTED' },
@@ -124,8 +129,10 @@ describe('Receipts & Payments — columns per money account, rows in the owner\'
     expect(cell(r.payments, 'XFER:320-0000', '310-0010')).toBe(20000);
     /* The creditor control itself never appears as a row. */
     expect(r.payments.find((x) => x.key === '400-0000')).toBeUndefined();
-    /* The reversed voucher is invisible. */
+    /* The reversed voucher is invisible, and so is the contra that undid it. */
     expect(r.entries.some((e) => e.jeNo === 'JE-9')).toBe(false);
+    expect(r.entries.some((e) => e.jeNo === 'JE-9R')).toBe(false);
+    expect(r.receipts.find((x) => x.key === '910-0000')).toBeUndefined();
 
     expect(r.totals.receipts).toEqual({ '310-0010': 50000, '320-0000': 20000 });
     expect(r.totals.payments).toEqual({ '310-0010': 125000, '320-0000': 6000 });

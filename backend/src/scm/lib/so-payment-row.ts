@@ -15,7 +15,8 @@
 // ----------------------------------------------------------------------------
 import { enqueueSoPaymentEdit } from './ac-so-payment-edit';
 import { recordSoAudit, type FieldChange } from './so-audit';
-import { postSoPayment, reverseSoPayment, type SoPaymentRow } from '../../acc/payments';
+import { CONVERTED_METHOD, postSoPayment, reverseSoPayment, type SoPaymentRow } from '../../acc/payments';
+import { afterConvertedRowBooked, afterConvertedRowRemoved } from './so-money';
 import { ledgerFactsOf, repostSoPaymentEdit } from '../../acc/payment-repost';
 import { createReceiptForPayment } from '../../acc/receipts';
 import { cancelDepositInvoiceForPaymentBestEffort, issueDepositInvoiceBestEffort, reissueDepositInvoiceBestEffort } from '../../acc/deposit-invoices';
@@ -49,7 +50,7 @@ export function deriveAccountSheet(
 export const PAYMENT_COLS =
   'id, so_doc_no, paid_at, method, merchant_provider, installment_months, ' +
   'online_type, approval_code, amount_sen, account_sheet, slip_key, collected_by, note, ' +
-  'created_at, created_by, version, updated_at';
+  'created_at, created_by, version, updated_at, company_id, converted_from_so_doc_no';
 
 /* ── recordSoPaymentRow — the factored insert+audit core of
    POST /:docNo/payments (same pattern as createSalesOrderCore). ONE place
@@ -63,7 +64,9 @@ export const PAYMENT_COLS =
 export type SoPaymentRowInput = {
   docNo: string;
   paidAt: string;
-  method: 'merchant' | 'transfer' | 'cash' | 'installment';
+  method: 'merchant' | 'transfer' | 'cash' | 'installment' | 'converted';
+  /** A converted row (docs/bugs/0927): the cancelled order the money comes from. */
+  convertedFromDocNo?: string | null;
   merchantProvider?: string | null;
   installmentMonths?: number | null;
   onlineType?: string | null;
@@ -96,6 +99,23 @@ export async function bookSoPaymentBestEffort(sb: any, row: Record<string, unkno
     /* eslint-disable-next-line no-console */
     console.error(`[acc] SO ${where} not booked:`, (row as { id?: string }).id, booked.status, booked.reason);
   }
+  /* A converted row's paper is its own (docs/bugs/0927): the moved amount
+     comes off the cancelled order's deposit invoices by credit note, and the
+     new order's deposit invoice is dated the day of the move — and it was
+     receipted when the money was first received, so no receipt here. */
+  if ((row as { method?: string }).method === CONVERTED_METHOD) {
+    await afterConvertedRowBooked(sb, row, where);
+    return;
+  }
+  /* THE OFFICIAL RECEIPT IS BORN HERE (GL redesign item 9) — DRAFT for
+     card/transfer, formal at once for cash. It used to be born in
+     recordSoPaymentRow alone, so the two SO-create inserts (the POS deposit,
+     the split rows) recorded money with no receipt — 12 payments since
+     2026-09-05 (docs/bugs/0935). Every row reaches this hook, so the rule is
+     written once, beside the deposit invoice's. BEST-EFFORT: the money is
+     recorded; a receipt hiccup must never un-record it, and
+     ensureReceiptForPayment heals the gap at the next print. */
+  await draftReceiptBestEffort(sb, row, where);
   /* THE DEPOSIT INVOICE IS BORN HERE TOO (docs/bugs/0828) — every payment
      row reaches this hook (the panel, the scan job, both SO-create deposit
      inserts), so the rule "a deposit gets its invoice" is written once. It
@@ -103,6 +123,26 @@ export async function bookSoPaymentBestEffort(sb: any, row: Record<string, unkno
      after the start, and the order has no final invoice yet. Best-effort like
      the booking above: the money is recorded either way. */
   await issueDepositInvoiceBestEffort(sb, row, where);
+}
+
+/** The receipt a booked SO payment row is owed, from the row as stored —
+    what `recordSoPaymentRow` used to do from its input, now for every path. */
+async function draftReceiptBestEffort(sb: any, row: Record<string, unknown>, where: string): Promise<void> {
+  try {
+    const r = row as { id?: unknown; company_id?: unknown; so_doc_no?: unknown; method?: unknown; amount_sen?: unknown; paid_at?: unknown; created_by?: unknown };
+    const paymentId = String(r.id ?? '');
+    const companyId = r.company_id == null ? null : Number(r.company_id);
+    const code = companyId != null && Number.isFinite(companyId) ? await companyCodeById(sb, companyId) : null;
+    if (!paymentId || companyId == null || !code) return;
+    await createReceiptForPayment(sb, {
+      source: 'SOPAY', paymentId, companyId, companyCode: code,
+      docNo: String(r.so_doc_no ?? ''), method: String(r.method ?? ''), amountSen: Number(r.amount_sen ?? 0),
+      paidAt: String(r.paid_at ?? '').slice(0, 10) || null, createdBy: r.created_by == null ? null : String(r.created_by),
+    });
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error(`[receipts] draft OR not created for SO ${where}:`, e);
+  }
 }
 
 /** Every column of a payment row an edit may move. `before` is the stored row;
@@ -226,6 +266,7 @@ export async function recordSoPaymentRow(
   }
   const companyId = (soCo as { company_id?: number | null } | null)?.company_id ?? null;
 
+  const converted = p.method === CONVERTED_METHOD;
   const { data, error } = await sb.from('mfg_sales_order_payments').insert({
     ...(companyId != null ? { company_id: companyId } : {}),
     so_doc_no:          p.docNo,
@@ -237,8 +278,10 @@ export async function recordSoPaymentRow(
     approval_code:      p.approvalCode ?? null,
     amount_sen:       p.amountSen,
     /* Account Sheet auto-fill (Loo 2026-06-07) — a hand-typed value wins;
-       blank/whitespace falls back to the method-derived default. */
-    account_sheet:      p.accountSheet?.trim() || deriveAccountSheet(p.method, merchantProvider, onlineType),
+       blank/whitespace falls back to the method-derived default. A converted
+       row's sheet names the order the money came from (docs/bugs/0927). */
+    account_sheet:      p.accountSheet?.trim() || (converted ? `Converted from ${p.convertedFromDocNo ?? '?'}` : deriveAccountSheet(p.method, merchantProvider, onlineType)),
+    ...(converted ? { converted_from_so_doc_no: p.convertedFromDocNo ?? null } : {}),
     slip_key:           p.slipKey,
     collected_by:       p.collectedBy ?? null,
     note:               p.note ?? null,
@@ -249,24 +292,8 @@ export async function recordSoPaymentRow(
   }).select(PAYMENT_COLS).single();
   if (error) return { payment: null, errorMessage: error.message };
 
-  /* The Official Receipt is born with the payment (GL redesign item 9) —
-     DRAFT for card/transfer, formal at once for cash. BEST-EFFORT: the money
-     is recorded; a receipt hiccup must never un-record it, and
-     ensureReceiptForPayment heals the gap at the next print. */
-  try {
-    const paymentId = String((data as { id?: unknown } | null)?.id ?? '');
-    const code = companyId != null ? await companyCodeById(sb, companyId) : null;
-    if (paymentId && companyId != null && code) {
-      await createReceiptForPayment(sb, {
-        source: 'SOPAY', paymentId, companyId, companyCode: code,
-        docNo: p.docNo, method: p.method, amountSen: p.amountSen,
-        paidAt: String(p.paidAt ?? '').slice(0, 10) || null, createdBy: p.createdBy ?? null,
-      });
-    }
-  } catch (e) {
-    // eslint-disable-next-line no-console
-    console.error('[receipts] draft OR not created for SO payment:', e);
-  }
+  /* The Official Receipt is born in bookSoPaymentBestEffort below, with the
+     booking and the deposit invoice — one hook for every path (docs/bugs/0935). */
 
   /* Post-merge stitch — wire ADD_PAYMENT into the PR-D audit ledger.
      Field-changes list mirrors what the user typed so the History panel
@@ -358,8 +385,11 @@ export async function afterSoPaymentRemoved(
   }
   const voided = unbooked.ok && unbooked.status === 'reversed' ? unbooked : null;
   /* Its deposit invoice goes with it — cancelled by contra, kept on file
-     (docs/bugs/0828). */
+     (docs/bugs/0828). A converted row's notes against the cancelled order's
+     invoices go the same way (docs/bugs/0927); a row that moved nothing has
+     none. */
   await cancelDepositInvoiceForPaymentBestEffort(sb, { paymentId: p.paymentId, reason: `payment on ${p.docNo} deleted` });
+  await afterConvertedRowRemoved(sb, { paymentId: p.paymentId, companyId: p.companyId, actor: null });
   /* The deposit just shrank, so an invoice it was settling may owe money again.
      This is the direction that matters: an invoice left reading PAID after the
      payment behind it was reversed tells the office to collect nothing. */

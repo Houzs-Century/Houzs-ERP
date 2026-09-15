@@ -114,9 +114,10 @@ import { useFabricLibrary } from '../../vendor/scm/lib/queries';
 import { useSpecialAddons, type MfgProductRow } from '../../vendor/scm/lib/mfg-products-queries';
 import { type ScanPrefill, type ExtractedSlip } from '../../vendor/scm/components/ScanOrderModal';
 import {
-  PaymentsTable, labelToApi, draftMethodFields, newPaymentDraft,
+  PaymentsTable, labelToApi, draftMethodFields, newPaymentDraft, convertDraftsFrom,
   missingMethodSubField, parseInstallmentMonths, type PaymentDraft,
 } from '../../vendor/scm/components/PaymentsTable';
+import { useCancelledWithMoney } from '../../vendor/scm/lib/so-money-queries';
 import { soDateGuardError, soStockLocationError, soRequiredFieldErrors, soRequiredFieldsMessage, soProceedingAddressErrors } from '../../vendor/scm/lib/so-form-validate';
 import { useBranding } from '../../hooks/useBranding';
 import styles from './SalesOrderNew.module.css';
@@ -322,11 +323,8 @@ export const SalesOrderNew = () => {
   const [scanCity, setScanCity] = useState('');
   const [scanPostcode, setScanPostcode] = useState('');
 
-  /* Copy-to-new-SO seed — runs once when the source SO finishes loading.
-     Fills customer + address + emergency + line items. Deliberately omits
-     processing/delivery dates, payments, customer SO ref, doc no and status
-     so the new order is a clean draft. Guarded so it can't re-seed and stomp
-     edits the operator has already made. */
+  /* Copy-to-new-SO seed — once, when the source loads: customer, address, emergency, lines; never dates,
+     payments, refs, doc no, status (a clean draft); guarded so it cannot re-seed over the operator's edits. */
   const [copySeeded, setCopySeeded] = useState(false);
   useEffect(() => {
     if (!copyFromDocNo || copySeeded) return;
@@ -365,6 +363,8 @@ export const SalesOrderNew = () => {
         remark:         it.remark ?? '',
       })));
     }
+    /* Money moved from cancelled orders (docs/bugs/0931): ?convert=SO-a:sen,… seeds one converted row each. */
+    if (searchParams.get('convert')) setPaymentDrafts(convertDraftsFrom(searchParams.get('convert')));
     setCopySeeded(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [copyFromDocNo, copySeeded, copySource.data]);
@@ -595,11 +595,10 @@ export const SalesOrderNew = () => {
     return current !== base ? styles.edited : '';
   };
 
-  // ── Payments draft state ───────────────────────────────────────────
-  /* Task #105 — Same Houzs PaymentsTable used on Detail, but in DRAFT mode
-     since the SO doesn't have a docNo yet. We hold the rows here, then
-     batch POST them to /:docNo/payments after create succeeds. */
+  // ── Payments draft state (Task #105: the Detail's PaymentsTable in DRAFT mode; the rows batch to /:docNo/payments after create) ──
   const [paymentDrafts, setPaymentDrafts] = useState<PaymentDraft[]>([]);
+  /* This customer's cancelled orders with money — what a "Convert from cancelled SO" row may draw on (docs/bugs/0931). */
+  const cancelledForCustomer = useCancelledWithMoney(phone.trim() || null, phone.trim().length >= 6);
   const [createdDocNo, setCreatedDocNo] = useState<string | null>(null);
 
   // ── Debtor autocomplete + warehouse lookup ─────────────────────────
@@ -2310,6 +2309,7 @@ export const SalesOrderNew = () => {
         slipUpload
         collectedByAllowedIds={paymentsCollectedByAllowedIds}
         defaultCollectedBy={selfStaffMatch?.id ?? ''}
+        convertSources={cancelledForCustomer.data?.orders ?? []}
       />
       </div>
     </div>

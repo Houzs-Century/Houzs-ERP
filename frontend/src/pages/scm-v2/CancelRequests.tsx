@@ -2,6 +2,9 @@
 // CancelRequests — the cancellation-request inbox: every request to cancel a
 // Sales Order or a Purchase Order, newest first, with the approver's actions
 // on the row (owner 2026-09-08, 「SO 和 PO 取消的话需要 approval 2 层 — 已经输入原因」).
+// Under All it is also the record of every Purchase Order and Delivery Order
+// cancelled on its reason alone (2026-09-09 / 2026-09-14) — rows with nothing
+// left to sign.
 //
 // ONE queue for BOTH documents, on purpose: the people who sign are the same
 // desks whichever document it is, and an approver should not have to open two
@@ -52,7 +55,15 @@ const CHIPS = [
   { value: 'all', label: 'All' },
 ] as const;
 
-const DOC_LABEL: Record<CancelRequestRow['doc_type'], string> = { SO: 'Sales Order', PO: 'Purchase Order' };
+const DOC_LABEL: Record<CancelRequestRow['doc_type'], string> = { SO: 'Sales Order', PO: 'Purchase Order', DO: 'Delivery Order' };
+
+/* doc_key is each document's own route key: the Sales Order's number, the
+   Purchase Order's and the Delivery Order's id. */
+const DOC_PATH: Record<CancelRequestRow['doc_type'], (key: string) => string> = {
+  SO: (key) => `/scm/sales-orders/${encodeURIComponent(key)}`,
+  PO: (key) => `/scm/purchase-orders/${key}`,
+  DO: (key) => `/scm/delivery-orders/${key}`,
+};
 
 function StatusCell({ row }: { row: CancelRequestRow }) {
   const tone = row.status === 'APPROVED' || row.status === 'EXECUTED' ? STATUS_TONES.danger
@@ -152,7 +163,7 @@ export const CancelRequests = () => {
   };
 
   const openRow = (row: CancelRequestRow) => {
-    navigate(row.doc_type === 'SO' ? `/scm/sales-orders/${encodeURIComponent(row.doc_key)}` : `/scm/purchase-orders/${row.doc_key}`);
+    navigate(DOC_PATH[row.doc_type](row.doc_key));
   };
 
   const columns = useMemo<DataGridColumn<CancelRequestRow>[]>(() => [
@@ -243,7 +254,7 @@ export const CancelRequests = () => {
         description={
           q.isLoading
             ? 'Loading requests…'
-            : `${openCount} open request${openCount === 1 ? '' : 's'} — a Sales Order is cancelled after two approvals, a Purchase Order after one`
+            : `${openCount} open request${openCount === 1 ? '' : 's'} — a Sales Order is cancelled after two approvals; a Purchase Order or Delivery Order on its reason alone`
         }
       />
 

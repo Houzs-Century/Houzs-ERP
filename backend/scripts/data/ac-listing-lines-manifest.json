@@ -1,0 +1,11 @@
+{
+  "exportedAt": "2026-09-15T16:25:52",
+  "database": "AED_HOUZS",
+  "since": "2026-01-01",
+  "rows": {
+    "GR": 6762,
+    "PI": 6438,
+    "IV": 11625
+  },
+  "producer": "backend/scripts/export-ac-listing-lines.py"
+}

@@ -300,7 +300,7 @@ describe('one swipe, one reference, several documents', () => {
   it('asks when no combination of them makes the line, naming both totals', () => {
     const d = decide(125000, [pay('a', 80000, 'A123'), pay('b', 30000, 'A123')]);
     expect(d.bucket).toBe('NEEDS_CONFIRM');
-    expect(d.clue).toMatch(/no combination of them makes 1250\.00 \(they come to 1100\.00\)/);
+    expect(d.clue).toMatch(/no combination of them makes RM 1,250\.00 \(they come to RM 1,100\.00\)/);
   });
 
   /* The claim is on all of them: a second line of the same file must not take

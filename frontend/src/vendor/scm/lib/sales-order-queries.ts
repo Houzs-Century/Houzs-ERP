@@ -68,15 +68,22 @@ export const useMfgSalesOrders = (status?: string) =>
 // useMfgSalesOrders above (no page) still returns all 500 for the dead V1 page.
 // Status tab values in the UI are lowercase (draft/confirmed/cancelled) but the
 // mfg_sales_orders.status column stores UPPERCASE — uppercase here to match.
+/** The Sales Order list's filter as query parameters, no paging: the list request
+ *  and the list's export (so-list-export.ts) send exactly these. */
+export function soListSearchParams(f: { status?: string; q?: string; sort?: string; filters?: readonly SoListFilter[] }): URLSearchParams {
+  const usp = new URLSearchParams();
+  if (f.status && f.status !== 'all') usp.set('status', f.status.toUpperCase());
+  if (f.q && f.q.trim()) usp.set('q', f.q.trim());
+  if (f.sort) usp.set('sort', f.sort);
+  appendSoListFilterParams(usp, f.filters ?? []); // second-level filters (so-list-filter-state.ts)
+  return usp;
+}
+
 export function useMfgSalesOrdersPaged(params: { page: number; pageSize: number; status?: string; q?: string; sort?: string; enabled?: boolean; filters?: readonly SoListFilter[] }) {
   const { page, pageSize, status, q, sort, enabled, filters = [] } = params;
-  const usp = new URLSearchParams();
+  const usp = soListSearchParams({ status, q, sort, filters });
   usp.set('page', String(page));
   usp.set('pageSize', String(pageSize));
-  if (status && status !== 'all') usp.set('status', status.toUpperCase());
-  if (q && q.trim()) usp.set('q', q.trim());
-  if (sort) usp.set('sort', sort);
-  appendSoListFilterParams(usp, filters); // second-level filters (so-list-filter-state.ts)
   return useQuery({
     // `enabled` (default true) lets the list page defer the FIRST fetch by one
     // render until the DataTable's one-shot mount sort-report lands, so the
@@ -329,7 +336,10 @@ export type SoPayment = {
   id: string;
   so_doc_no: string;
   paid_at: string;
-  method: 'merchant' | 'transfer' | 'cash' | 'installment';
+  /* `converted` = money moved from a cancelled order (docs/bugs/0927/0931). */
+  method: 'merchant' | 'transfer' | 'cash' | 'installment' | 'converted';
+  /** A converted row: the cancelled order the money came from. */
+  converted_from_so_doc_no?: string | null;
   merchant_provider: string | null;
   installment_months: number | null;
   online_type: string | null;
@@ -490,8 +500,12 @@ export const useUpdateMfgSalesOrderHeader = () => {
     onSuccess: (_, vars) => {
       if (vars.reserveLineWrites === true || vars.__suppressInvalidate === true) return;
       invalidateSoLists(qc);
-      qc.invalidateQueries({ queryKey: ['mfg-sales-order-detail', vars.docNo] });
       qc.invalidateQueries({ queryKey: ['mfg-sales-order-audit-log', vars.docNo] });
+      /* RETURNED, so the caller's own onSuccess waits for the order's re-read
+         (docs/bugs/0936-a-save-that-reported-success-left-the-order-s-lock-behind-so.md). Fired and forgotten, a Save reported done with the
+         pre-save copy still in the cache; Edit pressed in that window pinned its
+         superseded version and the next Save was refused as an older screen. */
+      return qc.invalidateQueries({ queryKey: ['mfg-sales-order-detail', vars.docNo] });
     },
   });
 };

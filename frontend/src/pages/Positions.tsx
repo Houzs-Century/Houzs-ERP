@@ -33,7 +33,7 @@ type PageAccessExport = {
   }>;
 };
 
-/** Embedded in the Team (User Management) page as the "Positions" tab. */
+/** Embedded in the Team page as the "Titles" tab (a Title is a `positions` row). */
 export function PositionsTab() {
   const toast = useToast();
   const dialog = useDialog();
@@ -203,10 +203,10 @@ export function PositionsTab() {
       toast.error(`${p.name} still has ${p.member_count} member(s) — reassign them first.`);
       return;
     }
-    if (!(await dialog.confirm(`Delete the position “${p.name}”?`))) return;
+    if (!(await dialog.confirm(`Delete the title “${p.name}”?`))) return;
     try {
       await api.del(`/api/positions/${p.id}`);
-      toast.success("Position deleted");
+      toast.success("Title deleted");
       if (selectedId === p.id) setSelectedId(null);
       positionsQ.reload();
     } catch (e: any) {
@@ -218,7 +218,7 @@ export function PositionsTab() {
     <div>
       <div className="mb-3 flex items-center justify-between gap-2">
         <span className="text-[10px] font-bold uppercase tracking-brand text-accent">
-          {positions.length} position{positions.length === 1 ? "" : "s"}
+          {positions.length} title{positions.length === 1 ? "" : "s"}
         </span>
         <div className="flex items-center gap-2">
           <Button
@@ -230,7 +230,7 @@ export function PositionsTab() {
             {exporting ? "Exporting…" : "Export"}
           </Button>
           <Button variant="brass" icon={<Plus size={14} />} onClick={() => setEditing("new")}>
-            New Position
+            New Title
           </Button>
         </div>
       </div>
@@ -336,7 +336,7 @@ export function PositionsTab() {
                       <button
                         type="button"
                         onClick={() => setEditing(p)}
-                        title="Edit position"
+                        title="Edit title"
                         aria-label={`Edit ${p.name}`}
                         className="rounded p-1 text-ink-muted transition-colors hover:bg-accent-soft hover:text-accent"
                       >
@@ -345,7 +345,7 @@ export function PositionsTab() {
                       <button
                         type="button"
                         onClick={() => deletePosition(p)}
-                        title="Delete position"
+                        title="Delete title"
                         aria-label={`Delete ${p.name}`}
                         className="rounded p-1 text-ink-muted transition-colors hover:bg-err/10 hover:text-err"
                       >
@@ -362,7 +362,7 @@ export function PositionsTab() {
           </div>
           {!positionsQ.loading && positions.length === 0 && (
             <div className="rounded-md border border-dashed border-border p-4 text-center text-[11px] text-ink-muted">
-              No positions yet — add one to start.
+              No titles yet — add one to start.
             </div>
           )}
         </div>
@@ -377,7 +377,7 @@ export function PositionsTab() {
             />
           ) : (
             <div className="rounded-lg border border-border bg-surface p-8 text-center text-[12px] text-ink-muted shadow-stone">
-              Select a position to see its details, or{" "}
+              Select a title to see its details, or{" "}
               <button
                 type="button"
                 onClick={() => setEditing("new")}
@@ -473,11 +473,11 @@ function PositionEditPanel({
       toast.error(`Still has ${position.member_count} member(s) — reassign them first.`);
       return;
     }
-    if (!(await dialog.confirm(`Delete the position “${position.name}”?`))) return;
+    if (!(await dialog.confirm(`Delete the title “${position.name}”?`))) return;
     setBusy(true);
     try {
       await api.del(`/api/positions/${position.id}`);
-      toast.success("Position deleted");
+      toast.success("Title deleted");
       onDeleted();
     } catch (e: any) {
       toast.error(e?.message || "Delete failed");
@@ -490,8 +490,8 @@ function PositionEditPanel({
     <Panel
       open
       onClose={onClose}
-      title={isNew ? "New Position" : position!.name}
-      subtitle={isNew ? "Create a position" : "Edit position"}
+      title={isNew ? "New Title" : position!.name}
+      subtitle={isNew ? "Create a title" : "Edit title"}
       width={420}
     >
       <PanelSection title="Details">
@@ -521,14 +521,14 @@ function PositionEditPanel({
             ))}
           </select>
           <div className="mt-1 text-[10px] text-ink-muted">
-            Groups the position under a department. The position drives which pages members can see.
+            Groups the title under a department. A member's title drives which pages they can see.
           </div>
         </div>
       </PanelSection>
 
       <div className="pb-1">
         <Button variant="brass" className="w-full" onClick={save} disabled={busy}>
-          {busy ? "Saving…" : isNew ? "Create Position" : "Save Changes"}
+          {busy ? "Saving…" : isNew ? "Create Title" : "Save Changes"}
         </Button>
       </div>
 
@@ -540,12 +540,12 @@ function PositionEditPanel({
             disabled={busy}
             className="inline-flex w-full items-center justify-center gap-1.5 rounded-md border border-err/30 bg-surface px-3 py-2 text-[12px] font-semibold text-err transition-colors hover:bg-err/10 disabled:opacity-50"
           >
-            <Trash2 size={13} /> Delete position
+            <Trash2 size={13} /> Delete title
             {position!.member_count > 0 ? ` (${position!.member_count} members)` : ""}
           </button>
           {position!.member_count > 0 && (
             <div className="text-[10px] text-ink-muted">
-              Reassign its {position!.member_count} member(s) to another position before deleting.
+              Reassign its {position!.member_count} member(s) to another title before deleting.
             </div>
           )}
         </PanelSection>
@@ -580,7 +580,7 @@ function PositionMatrixEditor({
             <button
               type="button"
               onClick={onEdit}
-              title="Edit position name / department"
+              title="Edit title name / department"
               className="rounded p-1 text-ink-muted transition-colors hover:bg-accent-soft hover:text-accent"
             >
               <Pencil size={12} />
@@ -598,11 +598,11 @@ function PositionMatrixEditor({
         </div>
         <p className="text-[12px] leading-relaxed text-ink-secondary">
           Page access is currently governed by position defaults and cannot be edited here.
-          Members of this position automatically get the pages their position is set up to see.
+          Members of this title automatically get the pages their title is set up to see.
         </p>
         <p className="mt-2 text-[11px] leading-relaxed text-ink-muted">
-          Per-page editing will return when the permissions system is reworked. You can still
-          rename this position or move it to another department with the edit button above.
+          Page access per title is edited on Roles & Permissions. You can still rename this
+          title or move it to another department with the edit button above.
         </p>
       </div>
     </div>

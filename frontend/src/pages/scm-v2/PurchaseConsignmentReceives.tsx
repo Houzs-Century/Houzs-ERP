@@ -116,6 +116,7 @@ const buildColumns = (): DataGridColumn<GrnRow>[] => [
     searchValue: (g) => fmtMoney(Number(g.total_sen ?? 0), g.currency),
     /* Accessor is JSX → export the NUMBER in ringgit so Excel can SUM it. */
     exportValue: (g) => Number(g.total_sen ?? 0) / 100,
+    exportFormat: 'money',
     sortFn: (a, b) => Number(a.total_sen ?? 0) - Number(b.total_sen ?? 0),
   },
   {
@@ -180,12 +181,16 @@ const buildDrilldownColumns = (currency: string): DataGridColumn<GrnItem>[] => [
   {
     key: 'unit_price', label: 'Unit Price', width: 110, align: 'right',
     accessor: (it) => fmtMoney(Number(it.unit_price_sen ?? 0), currency),
+    exportValue: (it) => Number(it.unit_price_sen ?? 0) / 100,
+    exportFormat: 'rate',
     searchValue: (it) => String(it.unit_price_sen ?? 0),
     sortFn: (a, b) => Number(a.unit_price_sen ?? 0) - Number(b.unit_price_sen ?? 0),
   },
   {
     key: 'line_total', label: 'Line Total', width: 120, align: 'right',
     accessor: (it) => <span style={{ fontWeight: 700, color: '#16695f' }}>{fmtMoney(Number(it.line_total_sen ?? 0), currency)}</span>,
+    exportValue: (it) => Number(it.line_total_sen ?? 0) / 100,
+    exportFormat: 'money',
     searchValue: (it) => String(it.line_total_sen ?? 0),
     sortFn: (a, b) => Number(a.line_total_sen ?? 0) - Number(b.line_total_sen ?? 0),
   },

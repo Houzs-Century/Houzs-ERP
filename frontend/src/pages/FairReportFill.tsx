@@ -10,6 +10,7 @@
 import { useMemo, useState } from "react";
 import { read, utils } from "../lib/xlsx-runtime";
 import { api } from "../api/client";
+import { formatCurrency } from "../lib/utils";
 
 type FinanceLine = { kind: "income" | "cost"; category: string; amount: number };
 type Salesperson = { name: string; sales: number };
@@ -28,7 +29,7 @@ const CAT_LABEL: Record<string, string> = {
   cogs_bedframe: "COGS · Bedframe",
   cogs_accessories: "COGS · Accessories",
 };
-const rm = (n: number) => `RM ${Math.round(n).toLocaleString()}`;
+const rm = (n: number) => formatCurrency(n);
 
 export function FairReportFill() {
   const [fileName, setFileName] = useState("");

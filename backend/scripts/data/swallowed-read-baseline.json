@@ -77,6 +77,10 @@
       "reads": 1,
       "catches": 0
     },
+    "backend/src/scm/lib/do-list-rows.ts": {
+      "reads": 1,
+      "catches": 0
+    },
     "backend/src/scm/lib/doc-no.ts": {
       "reads": 2,
       "catches": 0
@@ -173,6 +177,10 @@
       "reads": 5,
       "catches": 0
     },
+    "backend/src/scm/lib/so-list-rows.ts": {
+      "reads": 2,
+      "catches": 0
+    },
     "backend/src/scm/lib/so-location-gate.ts": {
       "reads": 1,
       "catches": 0
@@ -242,7 +250,7 @@
       "catches": 0
     },
     "backend/src/scm/routes/delivery-returns.ts": {
-      "reads": 19,
+      "reads": 18,
       "catches": 0
     },
     "backend/src/scm/routes/delivery-zones.ts": {
@@ -302,11 +310,11 @@
       "catches": 0
     },
     "backend/src/scm/routes/mfg-purchase-orders.ts": {
-      "reads": 45,
+      "reads": 44,
       "catches": 0
     },
     "backend/src/scm/routes/mfg-sales-orders.ts": {
-      "reads": 81,
+      "reads": 79,
       "catches": 2
     },
     "backend/src/scm/routes/mrp.ts": {
@@ -378,7 +386,7 @@
       "catches": 1
     },
     "backend/src/scm/routes/so-amendments.ts": {
-      "reads": 12,
+      "reads": 9,
       "catches": 0
     },
     "backend/src/scm/routes/so-dropdown-options.ts": {

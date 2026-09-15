@@ -38,6 +38,8 @@ import {
   RotateCcw,
   ArrowRightLeft,
 } from "lucide-react";
+import { fetchSiExportRows, type SiListLine } from "../../vendor/scm/lib/si-list-export";
+import { siGridColumns } from "./si-list-columns";
 import { PageHeader } from "../../components/Layout";
 import { StatCard } from "../../components/StatCard";
 import { FilterPills } from "../../components/FilterPills";
@@ -90,6 +92,12 @@ import { customerRefOf } from '../../lib/customer-ref';
 type SiRow = {
   id: string;
   invoice_number: string;
+  linked_ac_docno?: string | null; // the AutoCount invoice number
+  ac_agent?: string | null; // resolveAcAgent, the agent master's spelling
+  /** Every line, AutoCount-spelled (GET /sales-invoices?page= and /export/rows). */
+  lines?: SiListLine[];
+  subtotal_sen?: number | null;
+  tax_sen?: number | null;
   so_doc_no: string | null;
   delivery_order_id: string | null;
   /** Convert-from relation (display-only, audit R8): the readable DO number the
@@ -982,6 +990,20 @@ export function SalesInvoicesListV2() {
     await queryClient.invalidateQueries({ queryKey: ["sales-invoices"] });
   };
 
+  /* The ONE Export (owner 2026-09-15): every invoice the list's tab + search +
+     sort match, under the caller's sales scope — not the page on screen — one
+     row per line, with the grid's visible columns, funnels and sort (DataTable
+     `exportLines`). The filter is the one the list request is built from. */
+  const exportFilters = { status: apiStatus, q: debouncedSearch, sort };
+  const exportLines = {
+    fetchRows: (need: { exportKeys: string[]; filterKeys: string[] }) => fetchSiExportRows<SiRow>(exportFilters, need),
+    linesOf: (r: SiRow): readonly SiListLine[] => r.lines ?? [],
+    sheetName: "Sales Invoices",
+    onError: (e: Error) => {
+      void notify({ title: "Export failed", body: e.message || "The export could not be completed.", tone: "error" });
+    },
+  };
+
   const goNewSi = () => navigate("/scm/sales-invoices/new");
   const goFromDo = () => navigate("/scm/sales-invoices/from-do");
   const goImport = () => navigate("/scm/sales-invoices?import=1");
@@ -1117,7 +1139,7 @@ export function SalesInvoicesListV2() {
     );
   };
 
-  const columns: Column<SiRow>[] = [
+  const erpColumns: Column<SiRow>[] = [
     {
       key: "invoice_number",
       label: "SI No.",
@@ -1240,7 +1262,8 @@ export function SalesInvoicesListV2() {
       width: "116px",
       // Exempt from the cancelled-row fade — the pill is WHY the row is grey.
       className: "dt-cancel-keep",
-      getValue: (r) => r.status,
+      // The export writes the word on screen (owner 2026-09-15).
+      getValue: (r) => statusFor(r.status).label,
       render: (r) => {
         const st = statusFor(r.status);
         return (
@@ -1666,6 +1689,9 @@ export function SalesInvoicesListV2() {
       : ([] satisfies Column<SiRow>[])),
   ];
 
+  // AutoCount's Detail Listing columns lead, in its order (si-list-columns.tsx).
+  const columns = siGridColumns<SiRow>(erpColumns);
+
   const statusPillOptions: Array<{ value: StatusTab; label: string }> = [
     { value: "all", label: `All · ${counts.all}` },
     { value: "sent", label: `Sent · ${counts.sent}` },
@@ -1705,31 +1731,35 @@ export function SalesInvoicesListV2() {
             title="Sales Invoices"
             description={`Every ${shortCompanyName(branding.companyName)} sales invoice — Sent to Paid. Click any row for the quick view; open the full page to edit or record a payment.`}
             primaryAction={
-              canWriteSi ? (
-                <div className="flex items-stretch gap-2">
-                  <Button
-                    variant="secondary"
-                    icon={<ArrowRightLeft size={14} />}
-                    onClick={goFromDo}
-                  >
-                    {transferFromLabel('do')}
-                  </Button>
-                  <div className="flex items-stretch">
+              /* Export lines is a READ under the caller's sales scope, so a
+                 reader without write access gets it too. */
+              <div className="flex items-stretch gap-2">
+                {canWriteSi ? (
+                  <>
                     <Button
-                      variant="primary"
-                      icon={<Plus size={14} />}
-                      onClick={goNewSi}
-                      className="rounded-r-none"
+                      variant="secondary"
+                      icon={<ArrowRightLeft size={14} />}
+                      onClick={goFromDo}
                     >
-                      New Sales Invoice
+                      {transferFromLabel('do')}
                     </Button>
-                    <SplitDropdown
-                      onFromDo={goFromDo}
-                      onImport={goImport}
-                    />
-                  </div>
-                </div>
-              ) : undefined
+                    <div className="flex items-stretch">
+                      <Button
+                        variant="primary"
+                        icon={<Plus size={14} />}
+                        onClick={goNewSi}
+                        className="rounded-r-none"
+                      >
+                        New Sales Invoice
+                      </Button>
+                      <SplitDropdown
+                        onFromDo={goFromDo}
+                        onImport={goImport}
+                      />
+                    </div>
+                  </>
+                ) : null}
+              </div>
             }
             secondaryActions={[
               { label: "Delivery Orders", icon: Truck, onClick: goDoList },
@@ -1854,7 +1884,7 @@ export function SalesInvoicesListV2() {
                 </Button>
               </div>
             )}
-            <DataTable<SiRow>
+            <DataTable<SiRow, SiListLine>
               tableId="sales-invoices-v2"
               rows={rows}
               /* Feeds the stat strip so the tiles describe what is on screen. */
@@ -1877,7 +1907,8 @@ export function SalesInvoicesListV2() {
                 onToggleAll: toggleSelectAll,
               }}
               contextMenu={siContextMenu}
-            exportName="sales-invoices"
+              exportName="sales-invoices"
+              exportLines={exportLines}
               serverSort
               onSortChange={setSortAndReset}
               emptyLabel={

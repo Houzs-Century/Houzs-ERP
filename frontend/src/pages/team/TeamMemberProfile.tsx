@@ -17,7 +17,7 @@ import { managerOptions } from "./orgChartPickers";
 import { PosPinCard } from "./PosPinCard";
 import { showsPosPinCard } from "./posPinEligibility";
 import type { TeamMember, Department, Position, Role } from "../../types";
-import { empCode, statusBadgeProps, divisionOf, Eyebrow, SegmentedTabs, FIELD_SELECT_CLS } from "./teamShared";
+import { empCode, statusBadgeProps, divisionOf, roleOptions, Eyebrow, SegmentedTabs, FIELD_SELECT_CLS } from "./teamShared";
 
 /* Member Profile — design handoff screen 02. Right-side drawer opened from a
  * Directory row: identity card fixed left, editable Assignment + read-only
@@ -80,6 +80,7 @@ export function TeamMemberProfile({
     department_id: member.department_id,
     division: divisionOf(member) ?? "",
     position_id: member.position_id,
+    role_id: member.role_id,
     manager_id: member.manager_id,
     company_ids: member.company_ids ?? [],
   }));
@@ -88,6 +89,7 @@ export function TeamMemberProfile({
     draft.department_id !== member.department_id ||
     (draft.division.trim() || null) !== divisionOf(member) ||
     draft.position_id !== member.position_id ||
+    draft.role_id !== member.role_id ||
     draft.manager_id !== member.manager_id ||
     JSON.stringify([...draft.company_ids].sort()) !==
       JSON.stringify([...(member.company_ids ?? [])].sort());
@@ -156,6 +158,7 @@ export function TeamMemberProfile({
       if ((draft.division.trim() || null) !== divisionOf(member))
         patch.division = draft.division.trim() || null;
       if (draft.position_id !== member.position_id) patch.position_id = draft.position_id;
+      if (draft.role_id !== member.role_id) patch.role_id = draft.role_id;
       if (draft.manager_id !== member.manager_id) patch.manager_id = draft.manager_id;
       if (
         JSON.stringify([...draft.company_ids].sort()) !==
@@ -394,6 +397,36 @@ export function TeamMemberProfile({
                     disabled={!canManage}
                   />
                 </Field>
+                <Field label="Title">
+                  <SearchableSelect
+                    className={FIELD_SELECT_CLS}
+                    value={draft.position_id == null ? "none" : String(draft.position_id)}
+                    onChange={(v) =>
+                      setDraft((d) => ({ ...d, position_id: v === "none" ? null : Number(v) }))
+                    }
+                    options={[
+                      { value: "none", label: "No position" },
+                      ...deptPositions.map((p) => ({ value: String(p.id), label: p.name })),
+                    ]}
+                    disabled={!canManage}
+                  />
+                </Field>
+                {/* Beside Title because the two are separate lists: a role made in
+                    Roles & Permissions is never a Title (owner 2026-09-15 chose this
+                    over merging them). No "none" option: every member holds a role. */}
+                <Field label="Role">
+                  <SearchableSelect
+                    className={FIELD_SELECT_CLS}
+                    ariaLabel="Role"
+                    value={String(draft.role_id)}
+                    onChange={(v) => setDraft((d) => ({ ...d, role_id: Number(v) }))}
+                    options={roleOptions(roles, { id: member.role_id, name: member.role_name })}
+                    disabled={!canManage || roles.length === 0}
+                  />
+                  <div className="mt-1 text-[11px] text-ink-muted">
+                    What they can do. Title decides the pages they see.
+                  </div>
+                </Field>
                 <Field label="Team">
                   <input
                     list={`team-divisions-${member.id}`}
@@ -408,20 +441,6 @@ export function TeamMemberProfile({
                       <option key={d} value={d} />
                     ))}
                   </datalist>
-                </Field>
-                <Field label="Title">
-                  <SearchableSelect
-                    className={FIELD_SELECT_CLS}
-                    value={draft.position_id == null ? "none" : String(draft.position_id)}
-                    onChange={(v) =>
-                      setDraft((d) => ({ ...d, position_id: v === "none" ? null : Number(v) }))
-                    }
-                    options={[
-                      { value: "none", label: "No position" },
-                      ...deptPositions.map((p) => ({ value: String(p.id), label: p.name })),
-                    ]}
-                    disabled={!canManage}
-                  />
                 </Field>
                 <Field label="Reports to">
                   <div className="flex items-center gap-2">

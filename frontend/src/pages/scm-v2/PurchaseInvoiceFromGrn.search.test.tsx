@@ -38,8 +38,8 @@ const LINES = [
   grnLine({ grnItemId: "g66-3", grnId: "grn-66", grnDocNo: "HC-GRN-2609-066", poDocNo: "HC-PO-010069", itemCode: "AKEMI IMMORTAL MATT (Q)", description: "AKEMI IMMORTAL MATTRESS" }),
 ];
 
-const open = (url = "/scm/purchase-invoices/from-grn") => {
-  outstandingGrnItems.mockReturnValue({ data: LINES, isLoading: false, isError: false });
+const open = (url = "/scm/purchase-invoices/from-grn", truncated = false) => {
+  outstandingGrnItems.mockReturnValue({ data: { items: LINES, truncated }, isLoading: false, isError: false });
   return render(
     <MemoryRouter initialEntries={[url]}>
       <PurchaseInvoiceFromGrn />
@@ -60,6 +60,16 @@ describe("Bill a Goods-Received Note: search", () => {
   it("shows a search box on the full picker", () => {
     open();
     expect(screen.getByLabelText("Search outstanding GRN lines")).toBeTruthy();
+    expect(screen.getByText("4 lines across 2 GRNs")).toBeTruthy();
+    expect(screen.queryByText(/This list is not complete/)).toBeNull();
+  });
+
+  /* The server reads every note with something still to bill, up to a runaway
+     ceiling, and flags the answer when it stops there. A short list that looks
+     whole is exactly what the old newest-500 read produced in silence. */
+  it("says the list is not complete when the server stopped reading at its ceiling", () => {
+    open("/scm/purchase-invoices/from-grn", true);
+    expect(screen.getByRole("alert").textContent).toMatch(/This list is not complete/);
     expect(screen.getByText("4 lines across 2 GRNs")).toBeTruthy();
   });
 

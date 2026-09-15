@@ -44,8 +44,12 @@
  * RE-RUN: a second apply finds none of those rows cleared, plans nothing and
  * writes nothing.
  *
+ * NAMED DOCUMENTS. DOC_NOS names documents a PERSON cleared that should come
+ * back as well (the owner, 2026-09-15, on the last three: 「还有3张」). They are
+ * judged exactly like the rest and restored only once they have arrived.
+ *
  * Env: DATABASE_URL (required)  MODE=plan|apply (default plan)
- *      CONFIRM (apply)  COMPANY_ID (default 1)
+ *      CONFIRM (apply)  COMPANY_ID (default 1)  DOC_NOS (optional, comma separated)
  */
 import postgres from "postgres";
 import { acOutboxState, acRefusalPredatesArrival } from "../src/scm/lib/autocount-outbox-status.ts";
@@ -57,6 +61,7 @@ const APPLY = (process.env.MODE || "plan").trim().toLowerCase() === "apply";
 const CONFIRM_PHRASE = "put the cleared documents that reached AutoCount back on the list";
 const CONFIRM = (process.env.CONFIRM || "").trim();
 const CO = Number(process.env.COMPANY_ID || 1);
+const NAMED = new Set((process.env.DOC_NOS || "").split(",").map((s) => s.trim()).filter(Boolean));
 const notice = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 
 if (APPLY && CONFIRM !== CONFIRM_PHRASE) {
@@ -89,7 +94,7 @@ async function readPlan(sql) {
   const rows = names.length
     ? await sql`SELECT ${ROW_COLS(sql)} FROM scm.autocount_outbox WHERE company_id = ${CO} AND doc_no IN ${sql(names)}`
     : [];
-  return { plan: planClearedArrivals([...rows], numberOfId), clearedDocs: cleared.length };
+  return { plan: planClearedArrivals([...rows], numberOfId, NAMED), clearedDocs: cleared.length };
 }
 
 const sql = postgres(DST, { ssl: "require", prepare: false, max: 1 });
@@ -112,11 +117,13 @@ try {
     for (const r of plan.restore) {
       for (const f of r.refile) {
         const res = await tx`UPDATE scm.autocount_outbox SET doc_no = ${f.to}
-                              WHERE id = ${f.id} AND company_id = ${CO} AND doc_no = ${f.from} AND archived_at IS NOT NULL AND archived_by IS NULL`;
+                              WHERE id = ${f.id} AND company_id = ${CO} AND doc_no = ${f.from} AND archived_at IS NOT NULL
+                                AND (archived_by IS NULL OR ${NAMED.has(r.docNo)})`;
         if (res.count !== 1) throw new Error(`row ${f.id} (${r.docType} ${r.docNo}) moved since the plan: re-filing matched ${res.count}`);
       }
-      const res = await tx`UPDATE scm.autocount_outbox SET archived_at = NULL
-                            WHERE id::text IN ${tx(r.rowIds)} AND company_id = ${CO} AND archived_at IS NOT NULL AND archived_by IS NULL`;
+      const res = await tx`UPDATE scm.autocount_outbox SET archived_at = NULL, archived_by = NULL
+                            WHERE id::text IN ${tx(r.rowIds)} AND company_id = ${CO} AND archived_at IS NOT NULL
+                              AND (archived_by IS NULL OR ${NAMED.has(r.docNo)})`;
       if (res.count !== r.rowIds.length) throw new Error(`${r.docType} ${r.docNo} moved since the plan: restored ${res.count} of ${r.rowIds.length}`);
     }
   });

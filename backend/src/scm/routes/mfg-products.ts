@@ -32,6 +32,9 @@ import { todayMyt } from '../lib/my-time';
 import { resolveSellPriceSenAsOf, resolvePendingSellPriceAfter } from '../lib/product-pricing-history';
 import type { Env, Variables } from '../env';
 import { categorySwapAllowed } from '../shared/category-swap';
+import { PRODUCT_CODE_CASCADE } from '../lib/product-code-rename';
+import { moveModelCategory, planModelCategoryMoves, type ImportModelMove } from '../lib/model-category-move';
+import { MFG_PRODUCT_CATEGORIES, MFG_CATEGORY_LABELS, mfgCategoryLabel, parseMfgCategory } from '../shared/product-categories';
 
 export const mfgProducts = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -227,11 +230,10 @@ mfgProducts.get('/', listMfgProductsHandler);
 // ── POST / ─────────────────────────────────────────────────────────────
 // Create a new mfg_product. id is text PK — we generate a short uuid-ish
 // id since the existing import uses Excel-style ids like 'mfg-xxxxxxx'.
-/* The `mfg_product_category` PG enum, in declaration order. This is the ONE
-   in-repo statement of that taxonomy — the HR item-KPI category picker imports
-   it rather than re-listing the values, so a rule can never offer a category the
-   column cannot hold. Keep in step with the enum if it ever gains a member. */
-export const MFG_PRODUCT_CATEGORIES = ['SOFA', 'BEDFRAME', 'ACCESSORY', 'FABRIC_ACCESSORY', 'MATTRESS', 'BEDLINES', 'DINING', 'DIFFUSER', 'CARPET', 'SERVICE'] as const;
+/* The `mfg_product_category` enum list lives in shared/product-categories.ts
+   (one home, mirrored to the frontend); re-exported here for the routes that
+   have always imported it from this file. */
+export { MFG_PRODUCT_CATEGORIES };
 const VALID_CATEGORIES = new Set<string>(MFG_PRODUCT_CATEGORIES);
 mfgProducts.post('/', async (c) => {
   const gate = await requireRole(c);
@@ -297,7 +299,9 @@ mfgProducts.post('/', async (c) => {
 // ── POST /batch-import ─────────────────────────────────────────────────
 // Bulk upsert from a CSV import. Body: { rows: [{ code, name, category, ... }] }.
 // Upserts by code (ON CONFLICT DO UPDATE). Returns count inserted/updated.
-mfgProducts.post('/batch-import', async (c) => {
+/* Exported so the import's field rules (what an existing SKU takes from a
+   sheet) can be driven by a test. */
+export const batchImportMfgProductsHandler = async (c: AppContext) => {
   const gate = await requireRole(c);
   if (!gate.ok) return gate.res;
   let body: { rows?: Array<Record<string, unknown>> };
@@ -306,9 +310,16 @@ mfgProducts.post('/batch-import', async (c) => {
   if (list.length === 0) return c.json({ error: 'rows_required' }, 400);
   if (list.length > 500) return c.json({ error: 'too_many', message: 'Max 500 rows per import' }, 400);
 
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
   const supabase = c.get('supabase');
   let upserted = 0;
   const failures: Array<{ code: string; reason: string }> = [];
+
+  const plan = await planModelCategoryMoves(supabase, co.companyId, list);
+  if (!plan.ok) return c.json({ error: 'load_failed', reason: plan.reason }, 500);
+  const modelsMoved: ImportModelMove[] = [];
+  const moveFailed = new Map<string, string>();
 
   // Data-loss-safe upsert (Wei Siang). Only fields PRESENT and non-empty in
   // the body row are written. On an ON CONFLICT update that means a column the
@@ -319,7 +330,12 @@ mfgProducts.post('/batch-import', async (c) => {
   for (const r of list) {
     const code = String(r.code ?? '').trim();
     const name = String(r.name ?? '').trim();
-    const category = String(r.category ?? '').trim();
+    const categoryCell = String(r.category ?? '').trim();
+    /* Read as a person types it (any case, or the label "Sofa Accessory").
+       A filled cell that is not a category is REPORTED: it used to be dropped
+       without a word, so a batch category edit could save everything except
+       the category and still say "updated" (owner 2026-09-15). */
+    const category = parseMfgCategory(categoryCell);
     if (!code) {
       failures.push({ code, reason: 'missing code' });
       continue;
@@ -343,7 +359,19 @@ mfgProducts.post('/batch-import', async (c) => {
     const { data: existing } = await supabase.from('mfg_products')
       .select('id, seat_height_prices').eq('code', code).eq('company_id', activeCompanyId(c)).maybeSingle();
 
-    if (!existing && (!name || !VALID_CATEGORIES.has(category))) {
+    if (categoryCell && !category) {
+      failures.push({
+        code,
+        reason: `category "${categoryCell}" is not a category — use one of: ${MFG_PRODUCT_CATEGORIES.map((c) => MFG_CATEGORY_LABELS[c]).join(', ')}.`,
+      });
+      continue;
+    }
+    const conflict = category ? plan.conflicts.get(code) : undefined;
+    if (conflict) {
+      failures.push({ code, reason: conflict });
+      continue;
+    }
+    if (!existing && (!name || !category)) {
       failures.push({
         code,
         reason: `${code} is not in the system, so this row would CREATE it — a new SKU needs a name and a valid category (${[...VALID_CATEGORIES].join(', ')}).`,
@@ -355,7 +383,7 @@ mfgProducts.post('/batch-import', async (c) => {
     /* Present-and-non-empty only, exactly like every other column. On a create
        the guard above has already proved both are there. */
     if (name) row.name = name;
-    if (VALID_CATEGORIES.has(category)) row.category = category;
+    if (category) row.category = category;
 
     // String fields — include only when the cell actually has a value.
     if (hasVal(r.status))      row.status = String(r.status);
@@ -394,6 +422,26 @@ mfgProducts.post('/batch-import', async (c) => {
     // Never rewrite the PK id on re-import: UPDATE an existing SKU by code (id +
     // any omitted column left untouched), INSERT a brand-new SKU with a fresh id.
     // `existing` was read above, where it also decides create-vs-edit.
+    /* A SKU on a model changes category only with its model: the model and every
+       SKU of it move first, once per model, and a failed move writes nothing for
+       this row (owner 2026-09-15). */
+    const move = existing && category ? plan.moves.get(code) : undefined;
+    if (move) {
+      let moveError = moveFailed.get(move.modelId);
+      if (moveError === undefined && !modelsMoved.some((m) => m.modelId === move.modelId)) {
+        const moved = await moveModelCategory(supabase, co.companyId, move.modelId, move.to);
+        if (moved.ok) {
+          modelsMoved.push({ ...move, skuCount: moved.skuCodes.length });
+        } else {
+          moveError = `model ${move.modelCode} could not be moved to ${mfgCategoryLabel(move.to)} (${moved.reason}), so this row was not saved.`;
+          moveFailed.set(move.modelId, moveError);
+        }
+      }
+      if (moveError !== undefined) {
+        failures.push({ code, reason: moveError });
+        continue;
+      }
+    }
     let error;
     if (existing) {
       // Merge sofa prices BY TIER: the export ships one tier at a time, so an
@@ -423,8 +471,9 @@ mfgProducts.post('/batch-import', async (c) => {
     }
   }
 
-  return c.json({ upserted, failed: failures.length, failures: failures.slice(0, 50) });
-});
+  return c.json({ upserted, failed: failures.length, failures: failures.slice(0, 50), modelsMoved });
+};
+mfgProducts.post('/batch-import', batchImportMfgProductsHandler);
 
 // ── DELETE /:id ────────────────────────────────────────────────────────
 // PR #82 (Commander 2026-05-26) — SKU Master multi-select delete needs a
@@ -618,8 +667,8 @@ export const patchMfgProductHandler = async (c: AppContext) => {
     name?: string;
     /** 0166 — free-text SKU barcode. Empty string clears to NULL. */
     barcode?: string | null;
-    /** Accessory <-> Sofa Accessory only (shared/category-swap.ts), and only on
-        a SKU with no model — a modelled SKU moves with its model. */
+    /** Any other valid category (shared/category-swap.ts), and only on a SKU
+        with no model — a modelled SKU moves with its model. */
     category?: string;
   };
   try {
@@ -692,7 +741,7 @@ export const patchMfgProductHandler = async (c: AppContext) => {
       return c.json({ error: 'category_on_model', reason: 'This SKU belongs to a model — change the category on the model, and its SKUs move with it.' }, 409);
     }
     if (!categorySwapAllowed(current.category, body.category)) {
-      return c.json({ error: 'category_change_not_allowed', reason: `A SKU can only be moved between Accessory and Sofa Accessory (this one is ${current.category ?? 'unknown'}).` }, 409);
+      return c.json({ error: 'category_change_not_allowed', reason: `"${String(body.category)}" is not a product category.` }, 409);
     }
     updates.category = String(body.category).toUpperCase();
   }
@@ -835,33 +884,11 @@ export const patchMfgProductHandler = async (c: AppContext) => {
       if (dup.length > 0) {
         return c.json({ error: 'duplicate_code', reason: 'Another SKU already uses that code.' }, 409);
       }
-      /* item_code tables carry material_kind (mfg_product | fabric | raw) —
-         scope those so a fabric that happens to share the string is untouched. */
-      const CASCADE: Array<{ table: string; col: string; kind?: true }> = [
-        { table: 'supplier_material_bindings', col: 'item_code', kind: true },
-        { table: 'purchase_order_items',       col: 'item_code', kind: true },
-        { table: 'grn_items',                  col: 'item_code', kind: true },
-        { table: 'purchase_invoice_items',     col: 'item_code', kind: true },
-        { table: 'purchase_return_items',      col: 'item_code', kind: true },
-        { table: 'mfg_sales_order_items',      col: 'item_code' },
-        { table: 'mfg_so_price_overrides',     col: 'item_code' },
-        { table: 'delivery_order_items',       col: 'item_code' },
-        { table: 'sales_invoice_items',        col: 'item_code' },
-        { table: 'delivery_return_items',      col: 'item_code' },
-        { table: 'pwp_codes',                  col: 'trigger_item_code' },
-        { table: 'pwp_codes',                  col: 'redeemed_item_code' },
-        { table: 'hr_item_kpi',                col: 'ref' },
-        { table: 'product_dept_configs',       col: 'item_code' },
-        { table: 'master_price_history',       col: 'item_code' },
-        { table: 'inventory_movements',        col: 'item_code' },
-        { table: 'inventory_lots',             col: 'item_code' },
-        { table: 'inventory_lot_consumptions', col: 'item_code' },
-        { table: 'stock_transfer_lines',       col: 'item_code' },
-        { table: 'stock_take_lines',           col: 'item_code' },
-        { table: 'warehouse_rack_items',       col: 'item_code' },
-        { table: 'warehouse_rack_movements',   col: 'item_code' },
-      ];
-      for (const t of CASCADE) {
+      /* The column list, and the columns that deliberately keep the old code,
+         live in lib/product-code-rename.ts, pinned against production by
+         tests/productCodeRenameCoverage.test.ts. `kind` scopes the tables that
+         also store fabrics and raw materials. */
+      for (const t of PRODUCT_CODE_CASCADE) {
         let q = scopeToCompanyId(
           supabase.from(t.table)
             .update({ [t.col]: newCode }, { count: 'exact' })

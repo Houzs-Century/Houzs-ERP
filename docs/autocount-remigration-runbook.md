@@ -10,9 +10,9 @@ out of `gh run view`.
 
 **There is already an executable procedure, and it is not this file.**
 `docs/ac-resync-runbook.md` is the step-by-step dispatch order (Phase 0 to Phase
-5), written 2026-08-31 as the distillation of the round recorded in
-`docs/ac-reimport-2026-08-28-ledger.md`. **Follow that file when you actually
-run the round.**
+5), written 2026-08-31 as the distillation of the 2026-08-28 re-import round
+(its ledger was removed 2026-09-15; it is in git history). **Follow that file
+when you actually run the round.**
 
 This file is the layer underneath it, and it exists because the runbook
 deliberately does not carry it: for each importer, **what it reads, whether it
@@ -132,14 +132,14 @@ dependency argument, not as a substitute for it:
 | phase | step | why it must be here |
 |---|---|---|
 | 0 | Fresh export on the machine with the ZeroTier link; regenerate `gen:ac-sofa-corpus` and `gen:ac-item-map`; `test:light`; land it all in one PR | every later step reads these files. A snapshot that is not on `main` cannot be read by a workflow |
-| 0b | Mapping CSV rows and an `ac-newskus-<date>.json` seed for genuinely new book codes, then `align-seed-skus.yml`, then `mirror-hookka-bindings.yml` | an unmapped code makes the PO importers `exit 2` and write NOTHING (2026-08-31, `docs/bugs/0577-a-purchase-order-carried-an-internal-sofa-code-no-product-ro.md`) |
+| 0b | Mapping CSV rows and an `ac-newskus-<date>.json` seed for genuinely new book codes, then `align-seed-skus.yml`, then `mirror-hookka-bindings.yml` | an unmapped code makes the PO importers `exit 2` and write NOTHING (2026-08-31, bug 0577) |
 | 1.1 | `import-ac-outstanding-so.yml`, twice: default (non-sofa) then `sofa=yes` | every PO lane, every mirror and every link resolves an SO line. Nothing can precede it |
 | 1.2 | `import-ac-outstanding-po.yml` (lane 1) | lane 1 is "not fully received"; lane 2 overlaps it and skips what exists |
 | 1.3 | `import-ac-so-linked-pos.yml` (lane 2) | bound-mode readiness reads the line's OWN purchase order; without the already-received POs every processed line stays PENDING |
 | 1.4 | `topup-ac-po-lines.yml` | fills received quantities the two lanes could not resolve. Needs both lanes present |
 | 1.5 | `stamp-ac-grn-refs.yml` | stamps the book's GRN and PI document numbers onto the POs. Reference numbers only — no receipt, no stock |
 | 1.6 | `create-migrated-documents.yml` (`kind=both`) | GRN and DO mirrors. Must follow the POs and SOs they hang off, and writes NO movements: the balance snapshot already counts every past receipt and delivery |
-| 1.6b | `repair-migrated-do-prices.yml` (`mode=plan`, then `mode=apply` + the confirm phrase) | a delivery order created by 1.6 before 2026-09-02 carries NO money at all (`docs/bugs/0617-the-migrated-delivery-orders-carried-no-money-at-all.md`): the writer named ten columns and none of the price ones, and both are `DEFAULT 0 NOT NULL`. The zero reaches the Amount column, the Revenue tile and every Sales Invoice prefilled from that line. The price is COPIED from the delivery order line's own sales-order line; a sales-order line that is itself 0 is left alone |
+| 1.6b | `repair-migrated-do-prices.yml` (`mode=plan`, then `mode=apply` + the confirm phrase) | a delivery order created by 1.6 before 2026-09-02 carries NO money at all (bug 0617): the writer named ten columns and none of the price ones, and both are `DEFAULT 0 NOT NULL`. The zero reaches the Amount column, the Revenue tile and every Sales Invoice prefilled from that line. The price is COPIED from the delivery order line's own sales-order line; a sales-order line that is itself 0 is left alone |
 | 1.7 | `create-migrated-invoices.yml` | invoices mirror GRNs and DOs, so they follow 1.6. Opens one only where the amount matches the book to the cent |
 | 2.1 | `import-ac-stock-balance.yml` with `neg=1` | on-hand is reconciled against the book AFTER the paperwork, so the mirrors have something to hang on and the delta is computed once |
 | 2.2 | `import-ac-sofa-stock.yml` | sofa lots are driven off the already-imported SO-linked POs |
@@ -169,8 +169,8 @@ read the count. Do that once per round.
 
 ### 2.3 What the previous round actually landed
 
-Source: `docs/ac-reimport-2026-08-28-ledger.md` sections 1 to 4o, plus the bug
-ledger. Summarised, not re-derived.
+Source: the 2026-08-28 re-import ledger, sections 1 to 4o (removed 2026-09-15,
+in git history), plus the bug ledger. Summarised, not re-derived.
 
 - **Wipe (2026-08-28).** `golive-wipe-hc.yml`, plan run 33143344805, apply run
   33143464728. 93 rows over 68 tables, document counters KEPT.
@@ -179,11 +179,11 @@ ledger. Summarised, not re-derived.
 - **Sales orders.** 2,756 documents / 13,858 lines imported whole-document
   (non-sofa run 33154299948, then the sofa pass).
 - **Dates.** 551 headers plus 2,528 line delivery dates (run 33170449326), after
-  `docs/bugs/0556-imported-processing-dates-landed-in-the-retired-column-so-th.md`
+  bug 0556
   moved the write off the retired column.
 - **Purchase orders.** Lane 1 187 documents / 559 lines (run 33157041761); lane
   2 293 new documents / 511 lines, after
-  `docs/bugs/0557-the-so-linked-po-import-crashed-whole-on-one-missing-supplie.md`
+  bug 0557
   stopped a missing supplier killing the whole run.
 - **Stock.** Balance 981 cells / +9,699 units (run 33173101230), independent
   re-read 0 cells / +0 units (run 33174030232); sofa 116 lots (run 33173822826);
@@ -194,7 +194,7 @@ ledger. Summarised, not re-derived.
 - **Header text.** The five columns the first export never pulled — Remark2 to
   Remark4, the note, and the header delivery-date field — were added and
   backfilled 937/937 (run 33178979475),
-  `docs/bugs/0559-re-import-dropped-the-so-header-stock-status-and-notes-field.md`.
+  bug 0559.
 - **Mirrors.** GRN 316 documents (run 33178796412); DO 70 documents / 314 lines
   / 453 units (run 33180660876), with the stock-unchanged proof run immediately
   afterwards (run 33181084910): 0 cells and +0 units of difference.
@@ -227,7 +227,7 @@ account book, and it reads these objects: `SO` + `SODTL`, `IVDTL`, `PO` +
 `PODTL`, `Creditor`, `DO` + `DODTL`, `vItemBalQty`, `UTDStockCost`, `ItemUOM` +
 `Item`, `GR` + `GRDTL`, `PI` + `PIDTL`, and `sys.columns` (to discover the
 DO-to-SO line column rather than assume it — that assumption is
-`docs/bugs/0553-the-po-refetch-reference-sql-named-a-column-the-book-does-no.md`).
+bug 0553).
 
 So the operator does not open AutoCount at all. What the operator supplies is:
 
@@ -288,11 +288,11 @@ are the worked examples). Two traps, both paid for:
 - A book item code is capped at 30 characters and some real codes sit exactly on
   that cap with an unclosed bracket. Copy the code as the book has it; do not
   "repair" the bracket
-  (`docs/bugs/0567-seventeen-mapping-rows-carried-30-char-truncated-codes-four.md`).
+  (bug 0567).
 - A mapping row that points at an ERP code with no product row now makes both PO
   importers `exit 2` and write nothing at all. That is the guard working. Fix the
   mapping or open the product, then re-run
-  (`docs/bugs/0577-a-purchase-order-carried-an-internal-sofa-code-no-product-ro.md`).
+  (bug 0577).
 
 ### 3.5 Photographs, which need one more thing from the owner
 
@@ -331,7 +331,7 @@ bridging it, per CLAUDE.md.
 
 - The round-1 photo key set is fully attached. The resolve pass reports 602 of
   602 on the sales side and 238 of 238 on the purchase side
-  (`tasks/HANDOFF-2026-09-01.md`). Nothing attachable is unattached.
+  (the 2026-09-01 handoff, in git history). Nothing attachable is unattached.
 - The FULL book extraction has never been run. Measured on the live book
   2026-08-31: **2,723 sales-order lines and 2,392 purchase-order lines carry a
   picture**, all of them `wmetafile8`. Only a 20-line sample has ever been
@@ -356,7 +356,7 @@ the strongest single argument for doing this round now.
 Read that run beside the one two minutes before it: run 33517461629 concluded
 **success** on the same workflow, and its step was
 `node scripts/diag-mrp-false-shortage.mjs`. That is
-`docs/bugs/0597-a-workflow-named-for-the-document-link-check-was-running-an.md`
+bug 0597
 — a workflow left pointing at a borrowed script, reporting green for a check
 that never ran. The wiring is fixed on `main` now (both steps read
 `scripts/check-ac-erp-doc-links.mjs`), but the lesson is operational: **read the
@@ -389,7 +389,7 @@ why the wipe was in it.
 Its `doc_counters=reset` option is separately dangerous: the account book
 permanently holds every number the ERP has ever pushed to it, so restarting at
 001 re-issues numbers AutoCount already has and the book refuses them with a
-primary-key error. `docs/doc-number-reissue-coe.md` is that incident.
+primary-key error. That incident is the 2026-08-20 entry in `docs/LESSONS.md`.
 
 ### 5.2 Irreversible
 
@@ -408,7 +408,7 @@ been safe for months; the first use of `neg=1`, on 2026-08-29, immediately found
 a real defect — the importer computed one delta per BOOK row, while 35 ERP cells
 are fed by several book codes, so the second row deducted the cell again and
 `SQUARE PILLOW` at Balakong went to minus 161
-(`docs/bugs/0566-balance-importer-computed-one-delta-per-autocount-row-two-co.md`).
+(bug 0566).
 It is fixed and it aggregates per ERP cell now. The rule that came out of it:
 **a `neg=1` apply is always followed immediately by the zero proof**, and a zero
 proof that does not read positive 0 / negative 0 stops the round.
@@ -421,9 +421,9 @@ proof that does not read positive 0 / negative 0 stops the round.
   `Complete job name: run-prod` in the log.
 - **A file's modification time is not its content date.** Three stale-snapshot
   bugs landed in one evening
-  (`docs/bugs/0560-pure-losses-repair-trusted-a-17-day-old-snapshot-and-propose.md`,
-  `docs/bugs/0561-migrated-invoice-planner-ran-on-a-17-day-old-invoice-map-tha.md`,
-  `docs/bugs/0563-third-stale-snapshot-in-one-evening-the-pi-price-stamp-read.md`).
+  (bug 0560,
+  bug 0561,
+  bug 0563).
   Only the `exported_at` inside the manifest counts.
 - **A green badge can belong to a different script.** Section 4.2.
 - **`exit 2` with `REFUSED ... not in the catalog` is the guard working**, not a
@@ -436,8 +436,8 @@ proof that does not read positive 0 / negative 0 stops the round.
 - **Photo write-back overwrites the whole field.** A book line can carry more
   than one picture (measured: up to 2 on the sales side, 5 on the purchase side).
   The write-back path rewrites `FurtherDescription` whole, so it must read the
-  current value first or it erases the second picture.
-  `docs/autocount-further-description-photos.md` section 7 has it.
+  current value first or it erases the second picture (the FurtherDescription
+  photo study, section 7, removed 2026-09-15 and kept in git history).
 
 ### 5.5 Go / no-go checkpoints
 
@@ -468,10 +468,8 @@ proof that does not read positive 0 / negative 0 stops the round.
 ## See also
 
 - `docs/ac-resync-runbook.md` — the procedure. Start there to run a round.
-- `docs/ac-reimport-2026-08-28-ledger.md` — the full trace of the last round.
-- `docs/autocount-cutover-ledger.md` — the first round, 2026-08.
-- `docs/autocount-migration-record.md` — the field-level migration record.
-- `docs/autocount-further-description-photos.md` — the photo format and the
-  write-back hazard.
 - `docs/modules/autocount-writeback.md` — the outbound direction, which this
   document does not cover.
+- The round ledgers (2026-08 cutover, 2026-08-28 re-import), the field-level
+  migration record and the FurtherDescription photo study were removed on
+  2026-09-15; recover them from git history.

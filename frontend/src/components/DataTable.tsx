@@ -63,10 +63,19 @@ import {
 } from "../lib/tableLayouts";
 import { useUdf, type UseUdfResult } from "../hooks/useUdf";
 import { downloadCSV, isoForExport, toCSV, type CSVColumn } from "../lib/csv";
+import { applyColumnFilters, filterKeyOf, filterKeysOf, sortTableRows } from "./dataTableRows";
+import {
+  buildLineExportMatrix,
+  exportableColumns,
+  writeLineExportFile,
+  type DataTableLineExport,
+  type ExportCell,
+  type ExportFormat,
+} from "./dataTableLineExport";
 import { SearchScopeHint } from "./SearchScopeHint";
 import { MobileVirtualList } from "../mobile/MobileVirtualList";
 
-export interface Column<T> {
+export interface Column<T, L = never> {
   key: string;
   label: string;
   width?: string;
@@ -80,6 +89,16 @@ export interface Column<T> {
   /** Raw value for CSV export, the funnel and sorting; without it a column is skipped by export and cannot be sorted. `sortValue` overrides the ORDER only, where alphabetical is the wrong priority (Stock Status) — CSV and the funnel stay on `getValue`, so omitting it sorts exactly as it did before `sortValue` existed. */
   getValue?: (row: T) => string | number | boolean | null | undefined;
   sortValue?: (row: T) => string | number | boolean | null | undefined;
+  /** The value this column EXPORTS, when it differs from `getValue` (money in
+   *  ringgit where getValue holds sen for sorting). Repeats on every line of a
+   *  line export. See dataTableLineExport.ts. */
+  exportValue?: (row: T) => ExportCell;
+  /** Line export only: this column's cell for ONE line of the row. Method
+   *  syntax on purpose — it keeps a Column<T, L> assignable where Column<T> is
+   *  expected. */
+  lineValue?(row: T, line: L): ExportCell;
+  /** Line export only: the Excel cell type (date / money / rate / number). */
+  exportFormat?: ExportFormat;
   /** For cells holding SEVERAL values (Bedframe AND Mattress): the menu lists
    *  each value separately, counts it per carrying row, and a row matches when
    *  ANY ticked value hits. `getValue` still required (sort + CSV). */
@@ -167,7 +186,7 @@ export interface ColumnLayoutPreset {
   isDefault?: boolean;
 }
 
-interface Props<T> {
+interface Props<T, L = never> {
   /** Stable identifier used for persisting column visibility, order, sort,
    *  and density per page (localStorage). */
   tableId?: string;
@@ -180,6 +199,14 @@ interface Props<T> {
    */
   layoutFamily?: string;
   /**
+   * `false` keeps the column funnels for this visit only: the table opens with
+   * no filter every time, and any funnel an earlier version saved for it is
+   * erased. Absent = the saved-view behaviour every other table has had since
+   * 2026-07-29, so no existing table changes (SKU Master, owner 2026-09-15:
+   * "每一次打开应该默认都是全部展开的").
+   */
+  persistFilters?: boolean;
+  /**
    * Named column layouts offered at the top of the Columns panel. The preset
    * flagged `isDefault` is also the BASELINE this table renders with until the
    * user stores prefs of their own — so a page can hand each company its own
@@ -190,7 +217,7 @@ interface Props<T> {
   layoutPresets?: ColumnLayoutPreset[];
   /** Document name for the Columns drawer eyebrow, e.g. "Sales Orders". */
   documentLabel?: string;
-  columns: Column<T>[];
+  columns: Column<T, L>[];
   rows: T[] | null;
   loading?: boolean;
   error?: string | null;
@@ -200,9 +227,13 @@ interface Props<T> {
   getRowClassName?: (row: T) => string | undefined;
   /** Filename stem for CSV export, e.g. "orders". A date suffix is appended automatically. */
   exportName?: string;
-  /** If provided, the Export button calls this instead of exporting the on-screen
-   *  rows — lets the caller export a fuller dataset (all pages, no view-only filter). */
-  onExport?: () => void;
+  /** If provided, the Export button calls this with the visible export columns instead of
+   *  exporting the on-screen rows — so a server-paged list can export ALL pages with them. */
+  onExport?: (columns: CSVColumn<T>[]) => void;
+  /** One row per LINE over every row the server filter matches, with the grid's
+   *  visible columns, funnels and sort (dataTableLineExport.ts). When set, the
+   *  toolbar Export writes an .xlsx this way and `onExport` is not called. */
+  exportLines?: DataTableLineExport<T, L>;
   /** If provided, an Import button is shown that calls this with the parsed File. */
   onImport?: (file: File) => void;
   /** Optional eyebrow rendered next to the row count. */
@@ -607,18 +638,19 @@ function DebouncedSearchInput({
  * epoch bumps at most once per session, and only when hydration actually moved
  * something, so this is a no-op on every warm load.
  */
-export function DataTable<T>(props: Props<T>) {
+export function DataTable<T, L = never>(props: Props<T, L>) {
   const { epoch } = useSyncExternalStore(
     subscribeTableLayouts,
     getTableLayoutsSnapshot,
     getTableLayoutsSnapshot,
   );
-  return <DataTableInner<T> key={`layout-epoch:${epoch}`} {...props} />;
+  return <DataTableInner<T, L> key={`layout-epoch:${epoch}`} {...props} />;
 }
 
-function DataTableInner<T>({
+function DataTableInner<T, L>({
   tableId,
   layoutFamily,
+  persistFilters = true,
   layoutPresets,
   documentLabel,
   columns,
@@ -631,6 +663,7 @@ function DataTableInner<T>({
   getRowClassName,
   exportName,
   onExport,
+  exportLines,
   onImport,
   caption,
   udfTable,
@@ -646,7 +679,7 @@ function DataTableInner<T>({
   groupBy,
   selection,
   onFilteredRowsChange,
-}: Props<T>) {
+}: Props<T, L>) {
   const isSmallViewport = useSmallViewport();
   const [searchDraftPending, setSearchDraftPending] = useState(false);
   const searchBusy = Boolean(
@@ -807,12 +840,28 @@ function DataTableInner<T>({
   // allowed values; absent/empty = no filter on that column. The funnel icon
   // stays highlighted on restored filters, and each column's popover Clear
   // (or the page's reset control) drops its entry.
-  const [colFilters, setColFilters] = useLocalStorage<Record<string, string[]>>(
+  const storedColFilters = useLocalStorage<Record<string, string[]>>(
     `dt:filters:${idKey}`,
     {},
     legacyStorageKey("filters"),
     sanitizeColFilters,
   );
+  const sessionColFilters = useState<Record<string, string[]>>({});
+  const [colFilters, setColFilters] = persistFilters ? storedColFilters : sessionColFilters;
+  /* Not persisting: erase what the stored hook holds. Keyed on its value too,
+     because that hook re-reads and re-writes the key when the company resolves
+     after mount, which would otherwise bring an old filter back. */
+  const storedFilterValue = storedColFilters[0];
+  const legacyFilterKey = legacyStorageKey("filters");
+  useEffect(() => {
+    if (persistFilters) return;
+    try {
+      localStorage.removeItem(`dt:filters:${idKey}`);
+      if (legacyFilterKey) localStorage.removeItem(legacyFilterKey);
+    } catch {
+      // storage unavailable: nothing was persisted to erase
+    }
+  }, [persistFilters, idKey, legacyFilterKey, storedFilterValue]);
   // The filter BUTTON's rect, not a click point: the positioner needs both edges.
   const [filterMenu, setFilterMenu] = useState<{ left: number; top: number; bottom: number; colKey: string } | null>(null);
   const [filterQuery, setFilterQuery] = useState("");
@@ -1767,20 +1816,39 @@ function DataTableInner<T>({
     setDropCol(null);
   }
 
+  const [exporting, setExporting] = useState(false);
+  async function handleLineExport(spec: DataTableLineExport<T, L>) {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      const cols = exportableColumns(visibleColumns as Column<T, L>[]);
+      const filterKeys = Object.entries(colFilters).filter(([, v]) => v.length > 0).map(([k]) => k);
+      const fetched = await spec.fetchRows({ exportKeys: cols.map((c) => c.key), filterKeys });
+      const kept = sortTableRows(applyColumnFilters(fetched, colFilters, allColumns), sort, allColumns, Boolean(serverSort));
+      const matrix = buildLineExportMatrix(kept, spec.linesOf, cols);
+      const date = new Date().toISOString().slice(0, 10);
+      await writeLineExportFile(matrix, spec.sheetName, `${exportName || tableId || "export"}-${date}.xlsx`);
+    } catch (e) {
+      spec.onError(e instanceof Error ? e : new Error(String(e)));
+    } finally {
+      setExporting(false);
+    }
+  }
+
   function handleExport() {
     if (rowActionsDisabled) return;
+    if (exportLines) { void handleLineExport(exportLines); return; }
     // Optional override: the caller exports a broader/full dataset (e.g. all
-    // pages, ignoring a screen-only filter) instead of the on-screen rows.
-    if (onExport) { onExport(); return; }
-    if (!sortedRows || sortedRows.length === 0) return;
+    // pages, ignoring a screen-only filter) with the same columns.
     const csvCols: CSVColumn<T>[] = visibleColumns
-      .filter((c) => typeof c.getValue === "function")
+      .filter((c) => typeof c.getValue === "function" || typeof c.exportValue === "function")
       .map((c) => ({
         key: c.key,
         label: c.label || c.key,
-        getValue: (r: T) => isoForExport(c.getValue!(r) as string | number | null),
+        getValue: (r: T) => (c.exportValue ? c.exportValue(r) : isoForExport(c.getValue!(r) as string | number | null)),
       }));
-    if (csvCols.length === 0) return;
+    if (onExport) { onExport(csvCols); return; }
+    if (!sortedRows || sortedRows.length === 0 || csvCols.length === 0) return;
     const date = new Date().toISOString().slice(0, 10);
     downloadCSV(`${exportName || tableId || "export"}-${date}.csv`, toCSV(sortedRows, csvCols));
   }
@@ -1939,60 +2007,35 @@ function DataTableInner<T>({
   }, [rowMenu]);
 
   // Per-column filters apply first (client-side, loaded rows only), then
-  // sort. Value identity = the stringified getValue, matching what the
-  // funnel popover lists.
-  const filteredRows = useMemo(() => {
-    if (!rows) return rows;
-    const active = Object.entries(colFilters).filter(([, vals]) => vals.length > 0);
-    if (active.length === 0) return rows;
-    const getters = active
-      .map(([key, vals]) => {
-        const col = allColumns.find((c) => c.key === key);
-        if (!col?.getValue) return null;
-        // Multi-value columns match on ANY of the row's values; single-value
-        // ones keep the exact-key rule.
-        const values = col.getFilterValues
-          ? (r: T) => filterKeysOf(col.getFilterValues!(r))
-          : (r: T) => [filterKeyOf(col.getValue!(r))];
-        return { values, allowed: new Set(vals) };
-      })
-      .filter(
-        (g): g is { values: (r: T) => string[]; allowed: Set<string> } => g !== null
-      );
-    if (getters.length === 0) return rows;
-    return rows.filter((r) =>
-      getters.every((g) => g.values(r).some((v) => g.allowed.has(v)))
-    );
-  }, [rows, colFilters, allColumns]);
+  // sort — the SAME functions the line export runs over every fetched row
+  // (dataTableRows.ts).
+  const filteredRows = useMemo(
+    () => (rows ? applyColumnFilters(rows, colFilters, allColumns) : rows),
+    [rows, colFilters, allColumns],
+  );
 
-  const sortedRows = useMemo(() => {
-    if (!filteredRows) return filteredRows;
-    if (!sort) return filteredRows;
-    const col = allColumns.find((c) => c.key === sort.key);
-    if (!col || !col.getValue) return filteredRows;
-    // Server mode: a whitelisted column is already ordered by the backend
-    // across the full dataset — leave it alone. A `disableSort` column is
-    // NOT server-sortable, so sort the loaded page in memory instead.
-    if (serverSort && !col.disableSort) return filteredRows;
-    const getter = col.sortValue ?? col.getValue;  // display order != priority order
-    const mul = sort.dir === "asc" ? 1 : -1;
-    // Stable-ish copy — Array.prototype.sort is stable in modern engines.
-    const copy = filteredRows.slice();
-    copy.sort((a, b) => {
-      const av = getter(a);
-      const bv = getter(b);
-      return compareValues(av, bv) * mul;
-    });
-    return copy;
-  }, [filteredRows, sort, allColumns, serverSort]);
+  const sortedRows = useMemo(
+    () => (filteredRows ? sortTableRows(filteredRows, sort, allColumns, Boolean(serverSort)) : filteredRows),
+    [filteredRows, sort, allColumns, serverSort],
+  );
 
   /* Report what the operator can actually see (owner 2026-08-12) — see the
      onFilteredRowsChange prop doc. In an effect, not during render, so a parent
      that stores these in state cannot re-enter this render pass. `rows` is
      undefined while loading; skip rather than publish an empty set, or a
      summary card would blink to zero on every refetch. */
+  /* Published only when the rows actually CHANGED, not when the array is new.
+     A funnel yields a fresh filtered array whenever the memo recomputes, and
+     it recomputes whenever the caller passes new column objects — which every
+     list page does on every render. A parent storing the report then rendered,
+     rebuilt its columns, got a new array, stored it again: an endless render
+     loop on any list with a saved funnel (docs/bugs, 2026-09-15). */
+  const reportedRowsRef = useRef<T[] | null>(null);
   useEffect(() => {
     if (!sortedRows) return;
+    const prev = reportedRowsRef.current;
+    if (prev && prev.length === sortedRows.length && prev.every((r, i) => r === sortedRows[i])) return;
+    reportedRowsRef.current = sortedRows;
     onFilteredRowsChange?.(sortedRows);
   }, [sortedRows, onFilteredRowsChange]);
 
@@ -2264,11 +2307,11 @@ function DataTableInner<T>({
           )}
           <button
             onClick={handleExport}
-            disabled={rowActionsDisabled || !sortedRows || sortedRows.length === 0}
+            disabled={rowActionsDisabled || exporting || !sortedRows || sortedRows.length === 0}
             className={toolbarBtn}
           >
             <Download size={13} />
-            Export
+            {exporting ? "Exporting…" : "Export"}
           </button>
           {/* Density toggle removed 2026-06 — layout is permanently comfy. */}
           {/* Mobile-only: flip between cards and the desktop-style table
@@ -3418,39 +3461,3 @@ function parsePxWidth(width: string | undefined): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-// Canonical string identity for a cell value in the funnel filter —
-// what the popover lists and what row matching compares against.
-// null/undefined/"" all collapse to the em-dash bucket so blank cells
-// are filterable as one group.
-function filterKeyOf(v: unknown): string {
-  if (v == null || v === "") return "—";
-  return String(v);
-}
-
-/** Multi-value cell -> its filter keys. An empty list is still "—" (blank),
- *  so a row with no values stays tickable under the blank entry exactly like
- *  a single-value column's null. */
-function filterKeysOf(vs: readonly unknown[]): string[] {
-  const keys = vs.map(filterKeyOf).filter((k) => k !== "—");
-  return keys.length ? [...new Set(keys)] : ["—"];
-}
-
-function compareValues(
-  a: string | number | boolean | null | undefined,
-  b: string | number | boolean | null | undefined
-): number {
-  const aNull = a == null || a === "";
-  const bNull = b == null || b === "";
-  if (aNull && bNull) return 0;
-  if (aNull) return 1;   // nulls sink to the bottom regardless of direction reversal's impact
-  if (bNull) return -1;
-  if (typeof a === "number" && typeof b === "number") return a - b;
-  if (typeof a === "boolean" && typeof b === "boolean") return a === b ? 0 : a ? 1 : -1;
-  // ISO-like date strings compare fine as strings, so no special handling
-  // is needed — "2026-04-16" < "2026-04-17" under string compare.
-  const as = String(a).toLowerCase();
-  const bs = String(b).toLowerCase();
-  if (as < bs) return -1;
-  if (as > bs) return 1;
-  return 0;
-}

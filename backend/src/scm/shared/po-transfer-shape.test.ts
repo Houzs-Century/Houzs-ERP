@@ -7,7 +7,7 @@
 // the fallback is what today already does.
 import { describe, expect, test } from 'vitest';
 
-import { poSourceRef, poTransferShape, type PoLineShape } from './po-transfer-shape';
+import { poSourceSoNos, poTransferShape, type PoLineShape } from './po-transfer-shape';
 
 const line = (over: Partial<PoLineShape> = {}): PoLineShape => ({
   id: 'poi-1',
@@ -88,24 +88,24 @@ describe('everything else is CREATED, and says why', () => {
   });
 });
 
-describe('the Ref a created purchase order carries', () => {
+describe('the source order numbers a purchase order carries (UDF_SONo)', () => {
   test('the sales orders it was raised for', () => {
-    expect(poSourceRef(['HC-SO-000021', 'HC-SO-000022'])).toBe('HC-SO-000021, HC-SO-000022');
+    expect(poSourceSoNos(['HC-SO-000021', 'HC-SO-000022'])).toBe('HC-SO-000021, HC-SO-000022');
   });
 
-  /* STABLE, because an unstable Ref rewrites the account book's field on every
+  /* STABLE, because an unstable value rewrites the account book's field on every
      edit for no reason. Deduplicated and sorted, so the same purchase order
      produces the same string whatever order the rows came back in. */
   test('deduplicated and sorted, so the same order always renders the same', () => {
-    expect(poSourceRef(['HC-SO-B', 'HC-SO-A', 'HC-SO-B'])).toBe('HC-SO-A, HC-SO-B');
-    expect(poSourceRef(['HC-SO-A', 'HC-SO-B'])).toBe(poSourceRef(['HC-SO-B', 'HC-SO-A']));
+    expect(poSourceSoNos(['HC-SO-B', 'HC-SO-A', 'HC-SO-B'])).toBe('HC-SO-A, HC-SO-B');
+    expect(poSourceSoNos(['HC-SO-A', 'HC-SO-B'])).toBe(poSourceSoNos(['HC-SO-B', 'HC-SO-A']));
   });
 
   /* Nothing to say must be null, not "" — an empty string is a value and would
      blank whatever the account book holds. */
   test('nothing to say is null, never an empty string', () => {
-    expect(poSourceRef([])).toBeNull();
-    expect(poSourceRef([null, undefined, '  '])).toBeNull();
+    expect(poSourceSoNos([])).toBeNull();
+    expect(poSourceSoNos([null, undefined, '  '])).toBeNull();
   });
 });
 

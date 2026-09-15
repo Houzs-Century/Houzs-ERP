@@ -35,6 +35,7 @@ import { postJournal, reverseJournal } from '../../acc/engine';
 import { dateOrNull } from '../lib/date-coerce';
 import { resolveRoles, type RuleLine } from '../../acc/rules';
 import { requireLeafAccount } from './accounting-chart';
+import { fmtSen } from '../shared/format';
 
 type Row = Record<string, any>;
 
@@ -308,7 +309,7 @@ export const updateDebtorBillHandler = async (c: any): Promise<Response> => {
     const built = buildBillLines(body.lines);
     if ('error' in built) return c.json({ error: built.error, message: built.message }, 400);
     if (built.total < received) {
-      return c.json({ error: 'total_below_received', message: `${billNumber} already has ${(received / 100).toFixed(2)} received against it — the total cannot fall below that.` }, 409);
+      return c.json({ error: 'total_below_received', message: `${billNumber} already has ${fmtSen(received)} received against it — the total cannot fall below that.` }, 409);
     }
     for (const code of [...new Set(built.lines.map((l) => l.code))]) {
       const leafErr = await requireLeafAccount(c, coId, code);
@@ -436,7 +437,7 @@ export const createDebtorReceiptHandler = async (c: any): Promise<Response> => {
     if (b.status === 'CANCELLED') return c.json({ error: 'bad_allocation', message: 'A cancelled bill takes no money.' }, 400);
     const outstanding = Number(b.total_sen) - Number(b.received_sen ?? 0);
     if (a.amountSen > outstanding) {
-      return c.json({ error: 'over_allocation', message: `That bill has only ${outstanding} sen outstanding.` }, 400);
+      return c.json({ error: 'over_allocation', message: `That bill has only ${fmtSen(outstanding)} outstanding.` }, 400);
     }
   }
   const totalSen = allocs.reduce((s, a) => s + a.amountSen, 0);

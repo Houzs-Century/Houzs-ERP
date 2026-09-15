@@ -34,6 +34,9 @@ import { systemTakings, postCashOverShort } from '../../acc/daily-close';
 import { resolveRoles, piLines, DEFAULT_ROLE_CODES } from '../../acc/rules';
 import { splitByItemGroup } from '../../acc/item-group-split';
 import { classifyJournal } from '../../acc/journal-class';
+import { isReversalPair } from '../../acc/reversal-pairs';
+import { resolveJournalRefs } from '../../acc/journal-refs';
+import { ledgerReport } from './accounting-ledger';
 import {
   settlementSetup, settlementSetupSave, settlementUpload, settlementBatches,
   settlementBatchDetail, settlementConfirmRow, settlementConfirmMatched, settlementRowUnconfirm,
@@ -59,6 +62,7 @@ import { itemGroupsList, itemGroupCreate, itemGroupBind, itemGroupPatch } from '
 import { piPeriodicBackfill } from './accounting-pi-backfill';
 import { stockCloseStatus, stockCloseRun } from './accounting-stock-close';
 import { pnlReport, balanceSheetReport } from './accounting-reports';
+import { journalEntryEdit } from './accounting-journal-edit';
 import { reportLayoutGet, reportLayoutPut, reportLayoutReset } from './accounting-report-layouts';
 import { receiptsPaymentsReport } from './accounting-rp';
 import { collectionReport } from './accounting-collection';
@@ -66,6 +70,7 @@ import { merchantChargesReport } from './accounting-merchant-charges';
 import { performanceReport, savePerformanceSettingsHandler } from './accounting-performance';
 import { numberingGet, numberingPut } from './accounting-numbering';
 import { receiptsList, receiptEnsure, receiptFormalise } from './accounting-receipts';
+import { receiptsBackfillPlan, receiptsBackfillRun } from './accounting-receipts-backfill';
 import { ACCOUNT_SECTIONS, defaultSectionFor } from '../lib/account-sections';
 import { dateOrNull } from '../lib/date-coerce';
 
@@ -180,6 +185,8 @@ accounting.put('/numbering', numberingPut);
    money-confirmed button. Handlers in accounting-receipts.ts. */
 accounting.get('/receipts', receiptsList);
 accounting.post('/receipts/ensure', receiptEnsure);
+accounting.get('/receipts/backfill', receiptsBackfillPlan);
+accounting.post('/receipts/backfill', receiptsBackfillRun);
 accounting.post('/receipts/:id/formalise', receiptFormalise);
 accounting.post('/item-groups', itemGroupCreate);
 accounting.put('/item-groups/:code/accounts', itemGroupBind);
@@ -352,27 +359,51 @@ export const journalEntriesList = async (c: any): Promise<Response> => {
      for the whole page, never one per entry. */
   const rows = (data ?? []) as Array<Record<string, unknown>>;
   const jeIds = rows.map((r) => r.id);
+  /* ?withLines=1 — the Journal page grouped per entry (docs/bugs/0935): the
+     same one lines read, carrying the whole line, and the entry's references
+     (Ref. 1 / Ref. 2 / who — acc/journal-refs, the GL page's own) so the page
+     prints an entry the way the ledger prints its lines. */
+  const withLines = ['1', 'true'].includes(String(c.req.query('withLines') ?? ''));
+  type LineOut = { line_no: number; account_code: string; debit_sen: number; credit_sen: number; party_name: string | null; notes: string | null };
   const codesByJe = new Map<unknown, string[]>();
+  const linesByJe = new Map<unknown, LineOut[]>();
   if (jeIds.length > 0) {
     const { data: lineRows, error: lnErr } = await sb
       .from('journal_entry_lines')
-      .select('journal_entry_id, account_code')
+      .select(withLines ? 'journal_entry_id, line_no, account_code, debit_sen, credit_sen, party_name, notes' : 'journal_entry_id, account_code')
       .in('journal_entry_id', jeIds);
     if (lnErr) return c.json({ error: 'load_failed', reason: lnErr.message }, 500);
-    for (const l of (lineRows ?? []) as Array<{ journal_entry_id: unknown; account_code: string }>) {
+    for (const l of (lineRows ?? []) as Array<{ journal_entry_id: unknown; account_code: string } & Partial<LineOut>>) {
       const list = codesByJe.get(l.journal_entry_id) ?? [];
       list.push(l.account_code);
       codesByJe.set(l.journal_entry_id, list);
+      if (withLines) {
+        const full = linesByJe.get(l.journal_entry_id) ?? [];
+        full.push({ line_no: Number(l.line_no ?? 0), account_code: l.account_code, debit_sen: Number(l.debit_sen ?? 0), credit_sen: Number(l.credit_sen ?? 0), party_name: l.party_name ?? null, notes: l.notes ?? null });
+        linesByJe.set(l.journal_entry_id, full);
+      }
     }
   }
-  const roles = await resolveRoles(sb, activeCompanyId(c) ?? null);
-  const classed = rows.map((r) => ({
+  const companyId = activeCompanyId(c) ?? null;
+  const roles = await resolveRoles(sb, companyId);
+  const classed = rows.map((r): Record<string, unknown> => ({
     ...r,
     journal_class: classifyJournal(String(r.source_type ?? ''), codesByJe.get(r.id) ?? [], roles.CASH),
   }));
   const journal = String(c.req.query('journal') ?? '').trim().toUpperCase();
+  const page = journal ? classed.filter((r) => r.journal_class === journal) : classed;
+  if (!withLines || companyId == null) return c.json({ journalEntries: page });
+
+  const refs = await resolveJournalRefs(sb, companyId, page.map((r) => {
+    const ls = (linesByJe.get(r.id) ?? []).sort((a, b) => a.line_no - b.line_no);
+    return { jeNo: String(r.je_no), sourceType: r.source_type == null ? null : String(r.source_type), sourceDocNo: r.source_doc_no == null ? null : String(r.source_doc_no), partyName: ls.map((l) => l.party_name).find((p) => p != null && p !== '') ?? null, notes: r.narration == null ? null : String(r.narration) };
+  }));
+  if (!refs.ok) return c.json({ error: 'load_failed', reason: refs.reason }, 500);
   return c.json({
-    journalEntries: journal ? classed.filter((r) => r.journal_class === journal) : classed,
+    journalEntries: page.map((r) => {
+      const ref = refs.refs.get(String(r.je_no));
+      return { ...r, lines: (linesByJe.get(r.id) ?? []).sort((a, b) => a.line_no - b.line_no), doc: ref?.doc ?? r.source_doc_no ?? null, doc2: ref?.doc2 ?? null, who: ref?.who ?? null, reference: ref?.reference ?? null };
+    }),
   });
 };
 accounting.get('/journal-entries', journalEntriesList);
@@ -523,6 +554,9 @@ export const postJournalEntryHandler = async (c: any) => {
 };
 
 accounting.post('/journal-entries/:id/post', postJournalEntryHandler);
+/* A manual journal edited in one step — validate, draft, reverse the old on its
+   own day, post the new (owner 2026-09-15: 我无法 edit). Lives next door. */
+accounting.put('/journal-entries/:id', journalEntryEdit);
 
 /* ════════════════════════════════════════════════════════════════════════
    Auto-post helpers — SI / PI confirm
@@ -840,11 +874,18 @@ export async function resyncPiAccounting(
    GL stream + balances + aging
    ════════════════════════════════════════════════════════════════════════ */
 
-accounting.get('/gl', async (c) => {
+/* Exported for the contract test (glStreamSkipsReversalPairs.test.ts): the
+   stream is asserted through a bare Hono app, the way controlCheckHandler is. */
+export const glStreamHandler = async (c: any) => {
   const sb = c.get('supabase');
   const accountCode = c.req.query('accountCode');
   const from = c.req.query('from');
   const to = c.req.query('to');
+  /* A reversed entry and its contra are one correction, not two movements: the
+     stream leaves both out unless the reader asks to see them (docs/bugs/0923;
+     the journal list still marks the original). The view exposes both flags
+     (mig 0290), so the rows that come back carry them for the screen's mark. */
+  const showReversed = ['1', 'true'].includes(String(c.req.query('showReversed') ?? ''));
 
   // PostgREST's 1000-row cap silently truncated the GL export — page through so
   // a wide account/date range exports every entry, not just the first 1000.
@@ -857,8 +898,14 @@ accounting.get('/gl', async (c) => {
     return q.range(pFrom, pTo);
   });
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  return c.json({ glEntries: data ?? [] });
-});
+  const rows = (data ?? []) as Array<{ reversed?: boolean | null; reversed_by_je?: string | null }>;
+  return c.json({ glEntries: showReversed ? rows : rows.filter((r) => !isReversalPair(r)) });
+};
+accounting.get('/gl', glStreamHandler);
+/* The General Ledger the AutoCount way — per-account blocks, balance b/f,
+   running balance, the journal's references (docs/bugs/0924). Handler in
+   accounting-ledger.ts. */
+accounting.get('/gl/ledger', ledgerReport);
 
 accounting.get('/balances', async (c) => {
   const sb = c.get('supabase');
@@ -1318,7 +1365,7 @@ accounting.post('/backfill/customer-payments', async (c) => {
 /* GET /daily-bank?date=YYYY-MM-DD — the owner's board (brief 3.6): where the
    money is today and how much can actually move. Live from the ledger, no
    cache (2.3) - so it can never disagree with the trial balance. */
-accounting.get('/daily-bank', async (c) => {
+export const dailyBankHandler = async (c: any) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   const dateQ = c.req.query('date') ?? todayMyt();
@@ -1384,7 +1431,7 @@ accounting.get('/daily-bank', async (c) => {
     return c.json(computeDailyBank(date, [], [], [], pending));
   }
   const { data: lines, error: lErr } = await paginateAll<Record<string, unknown>>((from, to) =>
-    sb.from('v_gl_entries').select('entry_date, je_no, source_type, source_doc_no, account_code, debit_sen, credit_sen, notes')
+    sb.from('v_gl_entries').select('entry_date, je_no, source_type, source_doc_no, account_code, debit_sen, credit_sen, notes, reversed, reversed_by_je')
       .eq('company_id', co.companyId)
       .in('account_code', allCodes)
       .lte('entry_date', date)
@@ -1392,8 +1439,12 @@ accounting.get('/daily-bank', async (c) => {
       .range(from, to));
   if (lErr) return c.json({ error: 'load_failed', reason: lErr.message }, 500);
 
-  return c.json(computeDailyBank(date, money, transitAccounts, (lines ?? []) as never, pending));
-});
+  /* The board reads the ledger the reconciliation reads: neither side of a
+     reversal pair is money that moved (docs/bugs/0923). */
+  const counted = (lines ?? []).filter((l) => !isReversalPair(l as { reversed?: boolean | null; reversed_by_je?: string | null }));
+  return c.json(computeDailyBank(date, money, transitAccounts, counted as never, pending));
+};
+accounting.get('/daily-bank', dailyBankHandler);
 
 /* ════════════════════════════════════════════════════════════════════════
    Daily close (cashup, brief 3.5 layer 2)

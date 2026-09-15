@@ -1,13 +1,16 @@
 /* Cancelling a SALES ORDER needs a reason and two signatures (owner
  * 2026-09-08). Cancelling a PURCHASE ORDER needs the reason and nothing else
- * (owner 2026-09-09) — it carries the reason on the cancel call itself. This
- * suite drives the request routes and the guard in front of the two existing
- * cancel endpoints over the in-memory PostgREST fake, with the audit + notify +
+ * (owner 2026-09-09), and so does cancelling a DELIVERY ORDER (owner
+ * 2026-09-14) — each carries the reason on the cancel call itself. This suite
+ * drives the request routes and the guard in front of the existing cancel
+ * endpoints over the in-memory PostgREST fake, with the audit + notify +
  * downstream-lock collaborators stubbed: what is under test is the wiring — who
  * may do what, in which order, that the SO cancel stays refused until both
- * signatures are on the row, and that the PO cancel is refused until the buyer
- * has said why. */
+ * signatures are on the row, and that the PO and DO cancels are refused until
+ * somebody has said why. */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+/* `?raw`, not node:fs — backend/tsconfig.json types Workers only. */
+import rawScmIndex from '../index.ts?raw';
 import { Hono } from 'hono';
 import type { SupabaseClient, User } from '@supabase/supabase-js';
 
@@ -24,6 +27,7 @@ let downstream: { error: string; message: string } | null = null;
 vi.mock('../lib/downstream-lock', () => ({
   soHasDownstream: async () => downstream,
   poHasDownstream: async () => downstream,
+  doHasDownstream: async () => downstream,
 }));
 vi.mock('../middleware/auth', () => ({ supabaseAuth: async (_c: unknown, next: () => Promise<void>) => next() }));
 
@@ -60,12 +64,16 @@ function app(who: Who) {
   });
   a.use('/mfg-sales-orders/:docNo/status', cancelApprovalGuard('SO'));
   a.use('/mfg-purchase-orders/:id/cancel', cancelApprovalGuard('PO'));
+  a.use('/delivery-orders-mfg/:id/status', cancelApprovalGuard('DO'));
   a.route('/mfg-sales-orders', soCancelRequests);
   a.route('/mfg-purchase-orders', poCancelRequests);
   /* The stand-ins echo the flag the real area guard's writeBypass reads, so a
      test can see whether the guard admitted THIS write for an approver. */
   a.patch('/mfg-sales-orders/:docNo/status', async (c) => { reached((await c.req.json()).status); return c.json({ ok: true, admitted: c.get('cancelExecutionAdmitted') === true }); });
   a.patch('/mfg-purchase-orders/:id/cancel', (c) => { reached('po'); return c.json({ ok: true, admitted: c.get('cancelExecutionAdmitted') === true }); });
+  /* Like the real DO status handler, this answers 200 for an already-cancelled
+     delivery order too ("Already cancelled → echo back"). */
+  a.patch('/delivery-orders-mfg/:id/status', async (c) => { reached(`do:${(await c.req.json()).status}`); return c.json({ ok: true }); });
   a.route('/cancel-requests', cancelRequestsInbox);
   return a;
 }
@@ -90,6 +98,12 @@ beforeEach(() => {
     purchase_orders: [
       { id: 'po-1', po_number: 'PO-1', status: 'SUBMITTED', company_id: CO },
       { id: 'po-draft', po_number: 'PO-D', status: 'DRAFT', company_id: CO },
+    ],
+    delivery_orders: [
+      { id: 'do-1', do_number: 'DO-1', status: 'LOADED', company_id: CO },
+      { id: 'do-draft', do_number: 'DO-D', status: 'DRAFT', company_id: CO },
+      { id: 'do-gone', do_number: 'DO-G', status: 'CANCELLED', company_id: CO },
+      { id: 'do-other', do_number: 'DO-O', status: 'LOADED', company_id: 2 },
     ],
     document_cancel_requests: [],
   };
@@ -270,6 +284,19 @@ describe('the guard in front of the cancel', () => {
     expect(reached).not.toHaveBeenCalled();
   });
 
+  /* patchMfgSalesOrderStatusHandler reads `String(body.status).trim().toUpperCase()`,
+     so "CANCELLED " IS a cancel there. A guard that only upper-cased waved it
+     through as "some other transition" and the order was cancelled with no
+     signature at all. */
+  it('reads the status the way the handler does — whitespace does not dodge the approvals', async () => {
+    for (const status of ['CANCELLED ', ' cancelled', '\tCancelled\n', ['CANCELLED']]) {
+      const res = await patch(L2, '/mfg-sales-orders/SO-1/status', { status });
+      expect(res.status).toBe(403);
+      expect(await body(res)).toMatchObject({ error: 'cancel_approval_required' });
+    }
+    expect(reached).not.toHaveBeenCalled();
+  });
+
   it('lets an APPROVED request through, then stamps it EXECUTED — once', async () => {
     await post(REQUESTER, '/mfg-sales-orders/SO-1/cancel-request', { reason: 'Customer cancelled the order' });
     await post(L1, '/mfg-sales-orders/SO-1/cancel-request/approve');
@@ -310,12 +337,30 @@ describe('the guard in front of the cancel', () => {
     expect(rows()[0]?.l2_by ?? null).toBeNull();
     /* Nobody was asked to approve anything. */
     expect(notify).not.toHaveBeenCalled();
+    /* The history row carries the reason and NOT the status change: the PO's
+       own cancel handler writes that row itself. */
+    expect(poAudit).toHaveBeenCalledTimes(1);
+    const hist = poAudit.mock.calls[0]![1] as Record<string, unknown>;
+    expect(hist).toMatchObject({ entityType: 'PURCHASE_ORDER', entityId: 'po-1', action: 'CANCEL', note: 'Cancellation: Supplier cannot deliver', statusSnapshot: 'SUBMITTED' });
+    expect(hist.fieldChanges).toBeUndefined();
   });
 
   it('a DRAFT purchase order is asked why too — one rule, whatever the status', async () => {
     expect((await patch(NOBODY, '/mfg-purchase-orders/po-draft/cancel')).status).toBe(400);
     expect((await patch(NOBODY, '/mfg-purchase-orders/po-draft/cancel', { reason: 'Raised against the wrong supplier' })).status).toBe(200);
     expect(rows()[0]).toMatchObject({ doc_key: 'po-draft', status: 'EXECUTED', doc_status_at_request: 'DRAFT' });
+  });
+
+  /* The real PO cancel handler does not refuse an already-cancelled PO — it
+     answers 200 and echoes the cancelled state (cancelPurchaseOrderHandler,
+     `if (curStatus === 'CANCELLED') return c.json(...)`), which is what the
+     stand-in answers too. Nothing was cancelled by that call. */
+  it('a purchase order that is ALREADY cancelled records no second cancellation', async () => {
+    tables.purchase_orders[0]!.status = 'CANCELLED';
+    const res = await patch(NOBODY, '/mfg-purchase-orders/po-1/cancel', { reason: 'Second tab, same click' });
+    expect(res.status).toBe(200);
+    expect(rows()).toHaveLength(0);
+    expect(poAudit).not.toHaveBeenCalled();
   });
 
   it('a cancel the handler REFUSED writes no ledger row claiming it happened', async () => {
@@ -378,6 +423,128 @@ describe('the guard in front of the cancel', () => {
     const res = await patch(NOBODY, '/mfg-sales-orders/NOPE/status', { status: 'CANCELLED' });
     expect(res.status).toBe(200);
     expect(reached).toHaveBeenCalledWith('CANCELLED');
+  });
+});
+
+/* THE 2026-09-14 RULE — 「DO cancel need pop out window for reason」. The
+ * Purchase Order's shape on the delivery order's STATUS route: every other
+ * transition rides the same PATCH and must not be asked anything. */
+describe('the guard in front of a delivery order cancel', () => {
+  it('cancels on its reason alone, and not without one', async () => {
+    const bare = await patch(NOBODY, '/delivery-orders-mfg/do-1/status', { status: 'CANCELLED' });
+    expect(bare.status).toBe(400);
+    expect(await body(bare)).toMatchObject({ error: 'reason_required' });
+    expect((await patch(NOBODY, '/delivery-orders-mfg/do-1/status', { status: 'CANCELLED', reason: 'no' })).status).toBe(400);
+    expect(reached).not.toHaveBeenCalled();
+    expect(rows()).toHaveLength(0);
+
+    const ok = await patch(NOBODY, '/delivery-orders-mfg/do-1/status', { status: 'CANCELLED', reason: '  Customer   postponed the delivery ' });
+    expect(ok.status).toBe(200);
+    expect(reached).toHaveBeenCalledWith('do:CANCELLED');
+    expect(rows()).toHaveLength(1);
+    expect(rows()[0]).toMatchObject({
+      doc_type: 'DO', doc_key: 'do-1', doc_number: 'DO-1', status: 'EXECUTED',
+      reason: 'Customer postponed the delivery', requested_by: 51, requested_by_name: 'Eve',
+      executed_by: 51, doc_status_at_request: 'LOADED', company_id: CO,
+    });
+    expect(rows()[0]?.l1_by ?? null).toBeNull();
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  /* The DO status handler writes NO history of its own, so the guard's row is
+     the whole record of the cancel: who, why, and the status it left. */
+  it('writes the delivery order\'s history row with the reason AND the status change', async () => {
+    await patch(NOBODY, '/delivery-orders-mfg/do-1/status', { status: 'CANCELLED', reason: 'Customer postponed the delivery' });
+    expect(poAudit).toHaveBeenCalledTimes(1);
+    expect(poAudit.mock.calls[0]![1]).toMatchObject({
+      entityType: 'DELIVERY_ORDER', entityId: 'do-1', entityDocNo: 'DO-1', action: 'CANCEL',
+      actor: { id: 51, name: 'Eve' }, companyId: CO, statusSnapshot: 'CANCELLED',
+      note: 'Cancellation: Customer postponed the delivery',
+      fieldChanges: [{ field: 'status', from: 'LOADED', to: 'CANCELLED' }],
+    });
+    expect(soAudit).not.toHaveBeenCalled();
+  });
+
+  it('asks nothing of any other delivery-order transition', async () => {
+    for (const status of ['LOADED', 'DISPATCHED', 'in_transit', 'DELIVERED']) {
+      expect((await patch(NOBODY, '/delivery-orders-mfg/do-draft/status', { status })).status).toBe(200);
+    }
+    expect(reached).toHaveBeenCalledTimes(4);
+    expect(rows()).toHaveLength(0);
+    expect(poAudit).not.toHaveBeenCalled();
+  });
+
+  it('reads the status the way the DO handler does — case, whitespace or an array still asks why', async () => {
+    for (const status of ['cancelled', ' CANCELLED\n', ['Cancelled']]) {
+      const res = await patch(NOBODY, '/delivery-orders-mfg/do-1/status', { status });
+      expect(res.status).toBe(400);
+      expect(await body(res)).toMatchObject({ error: 'reason_required' });
+    }
+    expect(reached).not.toHaveBeenCalled();
+  });
+
+  it('a DRAFT delivery order is asked why too — one rule, whatever the status', async () => {
+    expect((await patch(NOBODY, '/delivery-orders-mfg/do-draft/status', { status: 'CANCELLED' })).status).toBe(400);
+    expect((await patch(NOBODY, '/delivery-orders-mfg/do-draft/status', { status: 'CANCELLED', reason: 'Raised for the wrong order' })).status).toBe(200);
+    expect(rows()[0]).toMatchObject({ doc_key: 'do-draft', status: 'EXECUTED', doc_status_at_request: 'DRAFT' });
+  });
+
+  it('a delivery order that is ALREADY cancelled records nothing new', async () => {
+    const res = await patch(NOBODY, '/delivery-orders-mfg/do-gone/status', { status: 'CANCELLED', reason: 'Clicked again from a stale list' });
+    expect(res.status).toBe(200);
+    expect(rows()).toHaveLength(0);
+    expect(poAudit).not.toHaveBeenCalled();
+  });
+
+  it('another company\'s delivery order is never recorded', async () => {
+    await patch(NOBODY, '/delivery-orders-mfg/do-other/status', { status: 'CANCELLED', reason: 'Wrong company entirely' });
+    expect(rows()).toHaveLength(0);
+    expect(poAudit).not.toHaveBeenCalled();
+  });
+
+  it('a cancel the DO handler REFUSED (an invoice or return on it) writes nothing', async () => {
+    const refusing = new Hono<{ Bindings: Env; Variables: Variables }>();
+    refusing.use('*', async (c, next) => {
+      c.set('user', CALLER); c.set('companyId', CO);
+      c.set('supabase', sb as unknown as SupabaseClient);
+      c.set('houzsUser', { id: NOBODY.id, name: NOBODY.name, permissions_set: new Set(NOBODY.perms), permissions: NOBODY.perms });
+      await next();
+    });
+    refusing.use('/delivery-orders-mfg/:id/status', cancelApprovalGuard('DO'));
+    refusing.patch('/delivery-orders-mfg/:id/status', (c) => c.json({ error: 'do_locked_downstream' }, 409));
+    const res = await refusing.request('/delivery-orders-mfg/do-1/status', { method: 'PATCH', ...json({ status: 'CANCELLED', reason: 'Customer postponed the delivery' }) }, ENV);
+    expect(res.status).toBe(409);
+    expect(rows()).toHaveLength(0);
+    expect(poAudit).not.toHaveBeenCalled();
+  });
+
+  /* Every test above mounts the guard itself. The rule only exists in
+     production if scm/index.ts mounts it too — after the DO area guard, and
+     before the router it guards (Hono runs handlers in registration order, so
+     a guard registered after the router would never see the request). */
+  it('is mounted on the real DO status route, between the area guard and the router', () => {
+    const src = rawScmIndex;
+    const area = src.search(/scm\.use\(\s*"\/delivery-orders-mfg\/\*",\s*scmAreaGuard\(/);
+    const guard = src.indexOf('scm.use("/delivery-orders-mfg/:id/status", cancelApprovalGuard("DO"));');
+    const router = src.indexOf('scm.route("/delivery-orders-mfg", deliveryOrdersMfg);');
+    expect(area).toBeGreaterThan(-1);
+    expect(guard).toBeGreaterThan(area);
+    expect(router).toBeGreaterThan(guard);
+  });
+
+  it('identifies the caller from `user` at its mount point, where houzsUser does not exist yet', async () => {
+    const a = new Hono<{ Bindings: Env; Variables: Variables }>();
+    a.use('*', async (c, next) => {
+      c.set('user', { id: L2.id, name: L2.name, email: 'x@houzs.test', permissions: L2.perms, permissions_set: new Set(L2.perms) } as unknown as User);
+      c.set('companyId', CO);
+      c.set('supabase', sb as unknown as SupabaseClient);
+      await next();
+    });
+    a.use('/delivery-orders-mfg/:id/status', cancelApprovalGuard('DO'));
+    a.patch('/delivery-orders-mfg/:id/status', (c) => c.json({ ok: true }));
+    const res = await a.request('/delivery-orders-mfg/do-1/status', { method: 'PATCH', ...json({ status: 'CANCELLED', reason: 'Customer postponed the delivery' }) }, ENV);
+    expect(res.status).toBe(200);
+    expect(rows()[0]).toMatchObject({ doc_type: 'DO', requested_by: 31, executed_by: 31 });
   });
 });
 

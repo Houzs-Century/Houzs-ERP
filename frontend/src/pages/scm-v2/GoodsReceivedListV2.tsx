@@ -25,6 +25,8 @@ import {
   Send,
   ArrowRightLeft,
 } from "lucide-react";
+import { fetchGrnExportRows, GRN_DEFAULT_COLUMN_KEYS, GRN_LABELS, senToRinggit, type GrnListLine } from "../../vendor/scm/lib/grn-list-export";
+import { grnLineColumns } from "./grn-list-line-columns";
 import { PrintPreviewBatchModal, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { PageHeader } from "../../components/Layout";
@@ -73,6 +75,13 @@ import { grnPrintChain } from "../../lib/printChain";
 type GrnRow = HoldFields & {
   id: string;
   grn_number: string;
+  /** The AutoCount GR number (server: lib/grn-export-rows.ts grnAcDocNo). */
+  ac_doc_no?: string | null;
+  exchange_rate?: number | string | null;
+  subtotal_sen?: number | null;
+  tax_sen?: number | null;
+  /** Every line of the receipt, AutoCount-spelled (GET /grns?page= and /export/rows). */
+  lines?: GrnListLine[];
   status: string;
   received_at: string | null;
   delivery_note_ref: string | null;
@@ -625,6 +634,20 @@ export function GoodsReceivedListV2() {
     await queryClient.invalidateQueries({ queryKey: ["grns"] });
   };
 
+  /* The ONE Export (owner 2026-09-15): every receipt the list's tab + search +
+     sort match — not the page on screen — one row per line, with the grid's
+     visible columns, funnels and sort (DataTable `exportLines`). The filter is
+     the one the list request is built from: the settled search term. */
+  const exportFilters = { status: apiStatus, q: debouncedSearch, sort };
+  const exportLines = {
+    fetchRows: (need: { exportKeys: string[]; filterKeys: string[] }) => fetchGrnExportRows<GrnRow>(exportFilters, need),
+    linesOf: (r: GrnRow): readonly GrnListLine[] => r.lines ?? [],
+    sheetName: "Goods Received",
+    onError: (e: Error) => {
+      void notify({ title: "Export failed", body: e.message || "The export could not be completed.", tone: "error" });
+    },
+  };
+
   const goNewGrn = () => navigate("/scm/grns/new");
   const goFromPo = () => navigate("/scm/grns/from-po");
   const goPos = () => navigate("/scm/purchase-orders");
@@ -754,49 +777,121 @@ export function GoodsReceivedListV2() {
     }
   };
 
-  const columns: Column<GrnRow>[] = [
-    {
+  /* Default view = AutoCount's Goods Received Detail Listing, layout "S", in its
+     order (GRN_DEFAULT_COLUMN_KEYS; owner 2026-09-15: a default export equals the
+     AutoCount file). Every other column stays in the chooser, hidden until
+     picked; the export follows whatever the operator shows. */
+  const lineCols = grnLineColumns<GrnRow>();
+  const docNoOf = (r: GrnRow): string => r.ac_doc_no?.trim() || r.grn_number;
+  const moneyCell = (sen: number | null | undefined) => <span className="font-money text-[13px] text-ink">{fmtRm(sen ?? 0)}</span>;
+  const rateOf = (r: GrnRow): number => { const n = Number(r.exchange_rate ?? 1); return Number.isFinite(n) && n > 0 ? n : 1; };
+  const blankCol = (key: string, label: string): Column<GrnRow, GrnListLine> => ({
+    key, label, width: "90px", disableSort: true, getValue: () => "", render: () => <span className="text-[12.5px] text-ink-muted">—</span>,
+  });
+  const byKey: Record<string, Column<GrnRow, GrnListLine>> = {
+    ...lineCols,
+    grn_number: {
       key: "grn_number",
-      label: "GRN No.",
-      // 166 + font-docno (owner 2026-07-31): a GRN no is one char longer than
-      // the DO/SO shape ("2990-GRN-2607-0001" = 131.5px, i.e. 155.5 with the
-      // px-3 padding), so 140 clipped it — see the
-      // measured DO No. note in MfgDeliveryOrdersListV2.
+      /* AutoCount's own GR number when the receipt is in the book, else ours —
+         the ERP number stays on ERP Doc No. */
+      label: GRN_LABELS.docNo,
       width: "166px",
       alwaysVisible: true,
-      getValue: (r) => r.grn_number,
+      getValue: (r) => docNoOf(r),
       render: (r) => (
-        <span
-          className={cn(
-            "font-docno text-[12.5px] font-semibold text-ink",
-            isCancelledDocStatus(r.status) && "dt-cancel-strike",
-          )}
-        >
-          {r.grn_number}
+        <span className={cn("font-docno text-[12.5px] font-semibold text-ink", isCancelledDocStatus(r.status) && "dt-cancel-strike")}>
+          {docNoOf(r)}
         </span>
       ),
     },
-    {
+    dn: {
+      key: "dn",
+      label: GRN_LABELS.supplierDoNo,
+      width: "128px",
+      disableSort: true,
+      getValue: (r) => r.delivery_note_ref ?? "",
+      render: (r) => <span className="font-mono text-[12px] text-ink-secondary">{r.delivery_note_ref || "—"}</span>,
+    },
+    received_at: {
       key: "received_at",
-      label: "Received",
+      label: GRN_LABELS.docDate,
       width: "108px",
       getValue: (r) => r.received_at ?? "",
+      exportFormat: "date",
       render: (r) => <span className="text-[12.5px] text-ink-secondary">{fmtDate(r.received_at)}</span>,
     },
-    {
+    supplier_code: {
+      key: "supplier_code",
+      label: GRN_LABELS.creditorCode,
+      width: "120px",
+      disableSort: true,
+      getValue: (r) => r.supplier?.code ?? "",
+      render: (r) => <span className="font-mono text-[11.5px] text-ink-secondary">{supplierCodeOf(r)}</span>,
+    },
+    supplier: {
+      key: "supplier",
+      label: GRN_LABELS.creditorName,
+      disableSort: true,
+      getValue: (r) => r.supplier?.name ?? "",
+      render: (r) => <div className="min-w-0 truncate text-[13px] font-semibold text-ink">{supplierNameOf(r)}</div>,
+    },
+    /* A goods receipt names no purchase agent in this ERP. */
+    agent: blankCol("agent", GRN_LABELS.agent),
+    currency: {
+      key: "currency", label: GRN_LABELS.currCode, width: "90px", disableSort: true,
+      getValue: (r) => r.currency ?? "", render: (r) => <span className="text-[12.5px] text-ink-secondary">{r.currency || "—"}</span>,
+    },
+    exchange_rate: {
+      key: "exchange_rate", label: GRN_LABELS.currRate, width: "90px", disableSort: true, exportFormat: "number",
+      getValue: (r) => rateOf(r), render: (r) => <span className="text-[12.5px] text-ink-secondary">{rateOf(r)}</span>,
+    },
+    /* This ERP keeps no tax-inclusive flag on the document: blank, never a guess. */
+    inclusive: blankCol("inclusive", GRN_LABELS.inclusive),
+    subtotal: {
+      key: "subtotal", label: GRN_LABELS.subTotalEx, width: "128px", align: "right", disableSort: true,
+      getValue: (r) => r.subtotal_sen ?? 0, exportValue: (r) => senToRinggit(r.subtotal_sen ?? 0, 2), exportFormat: "money",
+      render: (r) => moneyCell(r.subtotal_sen),
+    },
+    tax: {
+      key: "tax", label: GRN_LABELS.tax, width: "100px", align: "right", disableSort: true,
+      getValue: (r) => r.tax_sen ?? 0, exportValue: (r) => senToRinggit(r.tax_sen ?? 0, 2), exportFormat: "money",
+      render: (r) => moneyCell(r.tax_sen),
+    },
+    total: {
+      key: "total", label: GRN_LABELS.total, width: "128px", align: "right",
+      getValue: (r) => totalOf(r), exportValue: (r) => senToRinggit(totalOf(r), 2), exportFormat: "money",
+      render: (r) => <span className="font-money text-[13px] font-semibold text-ink">{fmtRm(totalOf(r))}</span>,
+    },
+    local_total: {
+      key: "local_total", label: GRN_LABELS.localTotal, width: "128px", align: "right", disableSort: true,
+      getValue: (r) => Math.round(totalOf(r) * rateOf(r)), exportValue: (r) => senToRinggit(totalOf(r) * rateOf(r), 2), exportFormat: "money",
+      render: (r) => moneyCell(Math.round(totalOf(r) * rateOf(r))),
+    },
+    cancelled: {
+      key: "cancelled", label: GRN_LABELS.cancelled, width: "96px", disableSort: true,
+      getValue: (r) => isCancelledDocStatus(r.status),
+      render: (r) => <span className="text-[12.5px] text-ink-secondary">{isCancelledDocStatus(r.status) ? "Yes" : "No"}</span>,
+    },
+    erp_doc_no: {
+      key: "erp_doc_no", label: GRN_LABELS.erpDocNo, width: "166px", disableSort: true, defaultHidden: true,
+      getValue: (r) => r.grn_number, render: (r) => <span className="font-docno text-[12.5px] text-ink-secondary">{r.grn_number}</span>,
+    },
+    po: {
       key: "po",
       label: transferFromColumnLabel('po'),
+      defaultHidden: true,
       width: "128px",
       disableSort: true,
       getValue: (r) => poOf(r),
       render: (r) => <span className="font-mono text-[12px] text-ink-secondary">{poOf(r)}</span>,
     },
-    {
+    assigned_so: {
       // Owner 2026-07-31: the Sales Order(s) the parent PO's supply is assigned
       // to, inherited onto the GRN. Server-resolved (one pass, same precedence
       // as the drill-down); dashed "~" chip flags an MRP guess vs a stored link.
       key: "assigned_so",
       label: "Assigned SO",
+      defaultHidden: true,
       width: "168px",
       disableSort: true,
       getValue: (r) => (r.assigned_sos ?? []).map((a) => a.soDocNo).join(", "),
@@ -810,11 +905,12 @@ export function GoodsReceivedListV2() {
         />
       ),
     },
-    {
+    delivered: {
       // Owner 2026-07-31: what has been DELIVERED against this GRN's parent PO —
       // the DO(s) that shipped its goods + qty. EVERY DO renders (no collapse).
       key: "delivered",
       label: "Delivered",
+      defaultHidden: true,
       width: "180px",
       disableSort: true,
       getValue: (r) => (r.delivered_dos ?? []).map((d) => d.doNo).join(", "),
@@ -825,57 +921,25 @@ export function GoodsReceivedListV2() {
         />
       ),
     },
-    {
-      // Owner 2026-07-24: supplier NAME and CODE are separate columns on every
-      // procurement table, not a stacked cell — code must be scannable on its
-      // own (same split as the PO list, 2026-07-23).
-      key: "supplier",
-      label: "Supplier",
-      disableSort: true,
-      getValue: (r) => supplierNameOf(r),
-      render: (r) => (
-        <div className="min-w-0 truncate text-[13px] font-semibold text-ink">{supplierNameOf(r)}</div>
-      ),
-    },
-    {
-      key: "supplier_code",
-      label: "Code",
-      width: "108px",
-      disableSort: true,
-      getValue: (r) => supplierCodeOf(r),
-      render: (r) => (
-        <span className="font-mono text-[11.5px] text-ink-secondary">{supplierCodeOf(r)}</span>
-      ),
-    },
-    {
-      key: "dn",
-      label: "Delivery note",
-      width: "128px",
-      disableSort: true,
-      getValue: (r) => r.delivery_note_ref ?? "",
-      render: (r) => <span className="font-mono text-[12px] text-ink-secondary">{r.delivery_note_ref || "—"}</span>,
-    },
-    {
+    status: {
       key: "status",
       label: "Status",
+      defaultHidden: true,
       width: "120px",
       // Exempt from the cancelled-row fade — the pill is WHY the row is grey.
       className: "dt-cancel-keep",
-      getValue: (r) => r.status,
+      // The export writes the word on screen, hold included (owner 2026-09-15).
+      getValue: (r) => { const w = statusFor(r.status).label; return rowIsHeld(r) && r.status.toUpperCase() !== "ON_HOLD" ? `${w} (On Hold)` : w; },
       render: (r) => {
         const st = statusFor(r.status);
         /* mig 0324 — the Hold marker sits BESIDE the real status pill. */
         return <StatusWithHold tone={st.tone} label={st.label} row={r} />;
       },
     },
-    {
-      key: "total",
-      label: "Value",
-      width: "128px",
-      align: "right",
-      getValue: (r) => totalOf(r),
-      render: (r) => <span className="font-money text-[13px] font-semibold text-ink">{fmtRm(totalOf(r))}</span>,
-    },
+  };
+  const columns: Column<GrnRow, GrnListLine>[] = [
+    ...GRN_DEFAULT_COLUMN_KEYS.map((k) => byKey[k]!),
+    ...Object.keys(byKey).filter((k) => !(GRN_DEFAULT_COLUMN_KEYS as readonly string[]).includes(k)).map((k) => byKey[k]!),
   ];
 
   const statusPillOptions: Array<{ value: StatusTab; label: string }> = [
@@ -994,7 +1058,7 @@ export function GoodsReceivedListV2() {
                   </Button>
                 </div>
               )}
-              <DataTable<GrnRow>
+              <DataTable<GrnRow, GrnListLine>
                 tableId="grns-v2"
                 rows={rows}
                 loading={listLoading}
@@ -1015,7 +1079,8 @@ export function GoodsReceivedListV2() {
                   onToggleAll: toggleSelectAll,
                 }}
                 contextMenu={grnContextMenu}
-            exportName="grns"
+                exportName="grns"
+                exportLines={exportLines}
                 serverSort
                 onSortChange={setSortAndReset}
                 emptyLabel={filtersActive ? "No GRNs match — try Reset layout to clear filters." : "No GRNs yet."}

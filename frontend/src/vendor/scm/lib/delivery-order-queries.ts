@@ -212,14 +212,21 @@ export const useMfgDeliveryOrders = (status?: string) => useQuery({
 // the caller maps its compressed filter-pill bucket to a DB status first, and
 // passes undefined for multi-status buckets the single-status filter can't
 // express (open/in_transit/delivered), so those show all rows still counted.
+/** The Delivery Order list's filter as query parameters, no paging: the list
+ *  request and the list's export (do-list-export.ts) send exactly these. */
+export function doListSearchParams(f: { status?: string; q?: string; sort?: string }): URLSearchParams {
+  const usp = new URLSearchParams();
+  if (f.status) usp.set('status', f.status);
+  if (f.q && f.q.trim()) usp.set('q', f.q.trim());
+  if (f.sort) usp.set('sort', f.sort);
+  return usp;
+}
+
 export function useMfgDeliveryOrdersPaged(params: { page: number; pageSize: number; status?: string; q?: string; sort?: string }) {
   const { page, pageSize, status, q, sort } = params;
-  const usp = new URLSearchParams();
+  const usp = doListSearchParams({ status, q, sort });
   usp.set('page', String(page));
   usp.set('pageSize', String(pageSize));
-  if (status) usp.set('status', status);
-  if (q && q.trim()) usp.set('q', q.trim());
-  if (sort) usp.set('sort', sort);
   return useQuery({
     queryKey: ['mfg-delivery-orders-paged', page, pageSize, status ?? '', q ?? '', sort ?? ''],
     queryFn: ({ signal }) => authedFetch<{ deliveryOrders: any[]; total: number; page: number; pageSize: number; statusCounts: { all: number; open: number; in_transit: number; delivered: number; cancelled: number } }>(`/delivery-orders-mfg?${usp.toString()}`, { signal }),
@@ -307,18 +314,41 @@ export const useUpdateMfgDeliveryOrderStatus = () => {
       authedFetch(`/delivery-orders-mfg/${id}/status`, {
         method: 'PATCH', body: JSON.stringify({ status, ...(evidence ?? {}) }),
       }),
-    onSuccess: (_, vars) => {
-      qc.invalidateQueries({ queryKey: ['mfg-delivery-orders'] });
-      qc.invalidateQueries({ queryKey: ['mfg-delivery-order-detail', vars.id] });
-      /* A status advance into a shipped state deducts inventory — refresh
-         the inventory queries so the on-hand drilldown reflects the OUT. */
-      qc.invalidateQueries({ queryKey: ['inventory'] });
-      /* CANCEL releases the delivered qty back to the SO. */
-      releaseSoSideQueries(qc);
-    },
+    onSuccess: (_, vars) => refreshAfterDoStatus(qc, vars.id),
     onError: (err) => {
       serviceNotify({ title: 'Status update failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' });
     },
+  });
+};
+
+function refreshAfterDoStatus(qc: ReturnType<typeof useQueryClient>, id: string) {
+  void qc.invalidateQueries({ queryKey: ['mfg-delivery-orders'] });
+  void qc.invalidateQueries({ queryKey: ['mfg-delivery-order-detail', id] });
+  /* A status advance into a shipped state deducts inventory — refresh
+     the inventory queries so the on-hand drilldown reflects the OUT. */
+  void qc.invalidateQueries({ queryKey: ['inventory'] });
+  /* CANCEL releases the delivered qty back to the SO. */
+  releaseSoSideQueries(qc);
+}
+
+/* CANCEL a delivery order — the same status route, with the REASON the server
+   now refuses a cancel without (400 `reason_required`, owner 2026-09-14:
+   「DO cancel need pop out window for reason」; the guard is
+   backend/src/scm/routes/document-cancel-routes.ts). Its own hook so `reason`
+   is REQUIRED by the type rather than an optional field on the status hook a
+   caller could forget. No onError: the one caller
+   (pages/scm-v2/use-do-cancel-action.ts) reports the refusal itself, and a
+   second notice here would say it twice. */
+export const useCancelMfgDeliveryOrder = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason: string }) =>
+      /* `movementErrors` is in-band: the cancel stands when returning the stock
+         partly failed, and the caller must say so rather than claim it is back. */
+      authedFetch<{ deliveryOrder: { id: string; status: string }; movementErrors?: string[] }>(`/delivery-orders-mfg/${id}/status`, {
+        method: 'PATCH', body: JSON.stringify({ status: 'CANCELLED', reason }),
+      }),
+    onSuccess: (_, vars) => refreshAfterDoStatus(qc, vars.id),
   });
 };
 

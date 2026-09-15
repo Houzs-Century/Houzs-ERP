@@ -107,7 +107,7 @@ describe('phone queues', () => {
 
   test('a PO amendment card says Purchaser', () => {
     poRows = [row('p', 14)];
-    render(<MobilePoAmendments onBack={() => {}} onOpen={() => {}} />);
+    render(<MobilePoAmendments onBack={() => {}} onOpen={() => {}} onOpenSo={() => {}} />);
     expect(document.querySelector('.amd')?.textContent).toContain('Purchaser');
   });
 });

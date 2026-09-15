@@ -36,7 +36,7 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { z } from 'zod';
-import { normalizePhone, buildVariantSummary, isServiceLine, fmtRM, computeVariantKey } from '../shared';
+import { normalizePhone, buildVariantSummary, isServiceLine, fmtSen, computeVariantKey } from '../shared';
 import { PAYMENT_METHOD_CODES } from '../shared/payment-methods';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
@@ -49,13 +49,15 @@ import { postUnpostedSiPayments, reverseSiPayment } from '../../acc/payments';
 import { insertSiPaymentRow } from '../lib/si-payment-row';
 import { recomputeSiPaid as recomputePaid, readOrderDepositForInvoice } from '../lib/si-order-deposit';
 import { stampSoDates, stampDoNumber, stampOrderDeposit } from '../lib/si-list-stamps';
+import { SI_HEADER_COLS, SI_LIST_SELECT, filterSiList, orderSiList, readSiListFilters } from '../lib/si-list-read';
+import { attachSiLines } from '../lib/si-export-rows';
+import { SI_STATUS_BUCKETS } from '../lib/si-status-buckets';
 import { postSiRevenue, reverseSiRevenue, resyncSiRevenue } from '../lib/post-si-revenue';
 import { buildItemRow, createSalesInvoiceFromDoLines, migratedRefusalForDeliveries, nextSiNumber, recomputeTotals, recordSiCreate } from '../lib/si-from-do';
 import { releaseDepositInvoicesBestEffort } from '../../acc/deposit-invoices';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { todayMyt } from '../lib/my-time';
 import { resolveSalesScopeIds, salesDocOutOfScope } from '../lib/salesScope';
-import { escapeForOr, phoneSearchOrParts } from '../lib/postgrest-search';
 import { readStatusCounts } from '../lib/status-counts';
 import { canViewAllSales, canViewScmFinance } from '../lib/houzs-perms';
 import { SO_ITEM_FINANCE_KEYS } from '../lib/finance-keys';
@@ -165,19 +167,9 @@ async function loadSiAuditMeta(
    with no request context from the delivery reconciler, and a lib may not
    import a route. */
 
-/* Full SI header — mirrors the editable DO header shape. */
-const HEADER =
-  'id, invoice_number, so_doc_no, delivery_order_id, debtor_code, debtor_name, ' +
-  'invoice_date, due_date, customer_delivery_date, currency, ' +
-  'subtotal_sen, discount_sen, tax_sen, total_sen, paid_sen, ' +
-  'salesperson_id, agent, email, customer_type, building_type, branding, venue, venue_id, ref, ' +
-  'customer_so_no, po_doc_no, sales_location, customer_state, customer_country, note, ' +
-  'address1, address2, city, state, postcode, phone, ' +
-  'emergency_contact_name, emergency_contact_phone, emergency_contact_relationship, ' +
-  'mattress_sofa_sen, bedframe_sen, accessories_sen, others_sen, service_sen, ' +
-  'mattress_sofa_cost_sen, bedframe_cost_sen, accessories_cost_sen, others_cost_sen, service_cost_sen, ' +
-  'local_total_sen, total_cost_sen, total_margin_sen, margin_pct_basis, line_count, ' +
-  'status, notes, sent_at, paid_at, confirmed_at, created_at, created_by, updated_at';
+/* Full SI header — lives with the list's filter (lib/si-list-read.ts), which
+   the list and its two exports share. */
+const HEADER = SI_HEADER_COLS;
 
 /* FINANCE-GATED header keys — cost / margin / per-category revenue+cost
    subtotals. All are in HEADER (so they travel in the SI list payload) but must
@@ -192,7 +184,7 @@ const SI_FINANCE_KEYS = [
 
 /* Strip the finance keys from every row in place unless the caller may see
    finance. Applied to both the legacy and paginated list responses. */
-function gateSiFinance(rows: unknown, showFinance: boolean): void {
+export function gateSiFinance(rows: unknown, showFinance: boolean): void {
   if (showFinance || !Array.isArray(rows)) return;
   for (const r of rows) {
     if (r && typeof r === 'object') {
@@ -290,7 +282,7 @@ async function siPriceDriftWarnings(
    under the 0.5% gate is invisible at that precision anyway. */
 function siPriceWarningMessage(warnings: SiPriceWarning[]): string {
   const parts = warnings.map(
-    (w) => `${w.itemCode} is invoiced at ${fmtRM(w.invoicedSen / 100)} but the order price is ${fmtRM(w.orderedSen / 100)}`,
+    (w) => `${w.itemCode} is invoiced at ${fmtSen(w.invoicedSen)} but the order price is ${fmtSen(w.orderedSen)}`,
   );
   return `${parts.join('; ')}. Check the price before sending this invoice.`;
 }
@@ -304,19 +296,8 @@ function withPriceWarnings<T extends object>(res: T, warnings: SiPriceWarning[])
     : { ...res, priceWarnings: warnings, priceWarningMessage: siPriceWarningMessage(warnings) };
 }
 
-/* Filter-pill bucket → the raw sales_invoices.status values it covers. Single
-   source of truth for the status-count queries AND the list `status` filter; the
-   FE sends the BUCKET NAME (a raw DB status still works). EVERY VALUE IS AN ENUM
-   MEMBER AND EVERY MEMBER IS IN A BUCKET — a non-member 500s the tab and used to
-   zero its count; a member in no bucket is a row in no tab. Pinned, with the
-   2026-08-17 prod evidence, by tests/statusBucketsEnumMembership.test.mjs: ISSUED / PARTIAL / COMPLETED
-   were never members (INPUT-only via SI_STATUS_CANON), OVERDUE was bucketless and joins `sent`, as the FE did. */
-const SI_STATUS_BUCKETS: Record<string, string[]> = {
-  sent: ['DRAFT', 'SENT', 'OVERDUE'],
-  partial: ['PARTIALLY_PAID'],
-  paid: ['PAID'],
-  cancelled: ['CANCELLED'],
-};
+/* The tab buckets live in lib/si-status-buckets.ts (moved 2026-09-15 with the
+   list filter, for the exports). */
 
 /* ── Canonical SI status set + legal /status transitions (fix/si-cancel-revenue-qty) ──
    The PATCH /:id/status write path persists ONLY the canonical UPPER-CASE values
@@ -430,7 +411,7 @@ function siTransitionReject(prev: string, next: string): string {
    DO's ledger buckets — the exact per-line rule the SI detail applies), never
    the DO's raw byDo rollup, which surfaced orphan ledger buckets as phantom
    chips and could also include DO lines this SI never invoiced. */
-async function stampSourcePos(sb: any, rows: unknown): Promise<void> {
+export async function stampSourcePos(sb: any, rows: unknown): Promise<void> {
   if (!Array.isArray(rows) || rows.length === 0) return;
   const list = rows as Array<Record<string, unknown>>;
   const bySi = await resolveSiHeaderSources(
@@ -485,38 +466,11 @@ salesInvoices.get('/', async (c) => {
   const psRaw = Number(c.req.query('pageSize'));
   const pageSize = Number.isFinite(psRaw) && psRaw > 0 ? Math.min(100, Math.max(1, Math.trunc(psRaw))) : 50;
 
-  const SORT_COLS = new Set(['invoice_date', 'invoice_number', 'debtor_name', 'status', 'total_sen']);
-  const [rawCol, rawDir] = (c.req.query('sort') ?? 'invoice_date:desc').split(':');
-  const sortCol = SORT_COLS.has(rawCol) ? rawCol : 'invoice_date';
-  const sortAsc = rawDir === 'asc';
-
-  let q = sb.from('sales_invoices').select(HEADER, { count: 'exact' }).order(sortCol, { ascending: sortAsc });
-  /* unique tiebreaker so range paging can't skip/repeat rows sharing the sort key */
-  if (sortCol !== 'invoice_number') q = q.order('invoice_number', { ascending: sortAsc });
-  if (scopeIds) q = q.in('salesperson_id', scopeIds);
-  /* Resolve the incoming `status`: a known bucket key → all its raw statuses;
-     'all'/empty → no filter; otherwise treat it as a raw DB status. */
-  const status = c.req.query('status');
-  if (status && status !== 'all') {
-    if (SI_STATUS_BUCKETS[status]) q = q.in('status', SI_STATUS_BUCKETS[status]);
-    else q = q.eq('status', status);
-  }
-  q = scopeToCompany(q, c); // multi-company: isolate to the active company
-  /* free-text search over the base-table columns the FE list's client-side
-     search matches (SalesInvoicesListV2 hay). */
-  const search = c.req.query('q');
-  if (search) {
-    const s = escapeForOr(search);
-    // Match customer NAME (debtor_name), PHONE, and the linked SO REFERENCE
-    // (ref, snapshotted onto the SI) — plus the doc numbers it already covered.
-    if (s) q = q.or([
-      `invoice_number.ilike.%${s}%`, `so_doc_no.ilike.%${s}%`, `debtor_name.ilike.%${s}%`,
-      `debtor_code.ilike.%${s}%`, `ref.ilike.%${s}%`, `branding.ilike.%${s}%`, `sales_location.ilike.%${s}%`,
-      ...phoneSearchOrParts(s, search, normalizePhone),
-    ].join(','));
-  }
-  const from = c.req.query('from'); if (from) q = q.gte('invoice_date', from);
-  const to = c.req.query('to'); if (to) q = q.lte('invoice_date', to);
+  /* Sales scope + tab + company + search + date range + sort: the SAME read the
+     two exports build (lib/si-list-read.ts), so an export can never match
+     different invoices than the tab it was pressed on. */
+  const filters = readSiListFilters((k) => c.req.query(k));
+  let q = orderSiList(filterSiList(sb.from('sales_invoices').select(SI_LIST_SELECT, { count: 'exact' }), filters, c, scopeIds), filters.sort);
   q = q.range(page * pageSize, page * pageSize + pageSize - 1);
   const { data, error, count } = await q;
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
@@ -548,7 +502,13 @@ salesInvoices.get('/', async (c) => {
   await stampSourcePos(sb, data);
   await stampOrderDeposit(sb, data, activeCompanyId(c) ?? null);
   gateSiFinance(data, canViewScmFinance(c));
-  return c.json({ salesInvoices: data ?? [], total, page, pageSize, statusCounts });
+  /* The page's LINES, in AutoCount's spelling — the same attach the export
+     uses (lib/si-export-rows.ts), so a line column shows on screen exactly
+     what the file holds. The legacy unpaged path does not carry them: its
+     callers never render a line column. */
+  const withLines = await attachSiLines(sb, c, (data ?? []) as Array<{ id: string } & Record<string, unknown>>);
+  if (withLines.error !== null) return c.json({ error: 'lines_read_failed', reason: withLines.error }, 500);
+  return c.json({ salesInvoices: withLines.rows, total, page, pageSize, statusCounts });
 });
 
 // ── Invoiceable DO lines (line-level partial-invoice picker) ──────────────

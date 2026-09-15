@@ -1,149 +1,35 @@
-# Coverage state — "still loading" is not an answer
+# Coverage State ("still loading" is not an answer)
 
-**Read this before adding a column to any document drill-down.**
+A cell whose data comes from a SECOND query (beyond the document's own lines) must never render a definite answer before that query resolves. Read this before adding a column to any document drill-down.
 
-## The rule
+## Statuses and flow
 
-A cell whose data comes from a SECOND query must never render a definite answer
-before that query resolves. Three states, never two:
+Three states, never two — `frontend/src/components/coverage-state.tsx` owns all three plus `coverageStateOf(query)`, which maps a react-query pair onto them in one place:
 
 | state | means | the cell renders |
-| --- | --- | --- |
-| `ready` | the data is here, or there was none to fetch | the answer, including the honest empty one (`STOCK`, `—`) |
-| `loading` | in flight | **WORKING…** (`PendingTag`) |
-| `unavailable` | the read failed | **NOT LOADED** (`UnavailableTag`) |
+|---|---|---|
+| `ready` | the data is here, or there was genuinely none to fetch | the answer, including the honest empty one |
+| `loading` | in flight | WORKING… |
+| `unavailable` | the read failed | NOT LOADED |
 
-`frontend/src/components/coverage-state.tsx` owns all three plus
-`coverageStateOf(query)`, which maps a react-query pair onto them in one place.
+`coverage` is a REQUIRED prop on `DocumentLinesExpansion` and `SoSourceChips` — deliberately: a parameter that decides what renders must be required, never optional, or a caller that says nothing silently keeps the old (wrong) behaviour with no compile error.
 
-`coverage` is a **REQUIRED prop** on `DocumentLinesExpansion` and
-`SoSourceChips`. That is deliberate and it is the enforcement: CLAUDE.md's rule
-that a parameter which DECIDES is required, never optional. An optional one
-means every caller that says nothing keeps the old behaviour with no compile
-error — which is exactly how four drill-downs came to share this bug while four
-others did not.
+Five surfaces currently fetch a second coverage query and must pass a real `coverageStateOf(...)` result: the Purchase Orders, Goods Received and Purchase Invoices lists (`usePoSoCoverage`), and the Sales Orders list and detail (`useSoLineCoverage`). Every other drill-down runs only one query and passes the literal `coverage="ready"` EXPLICITLY — stating it in the diff, rather than getting it by omission, is the point.
 
-## Why it exists
+This deliberately does NOT hold the whole line list back waiting on the second query — lines render the moment they arrive; only the cell that depends on the slower query shows it's still working. It also does NOT treat a failed read as an empty one — `unavailable` has its own distinct wording, since a broken connection and "genuinely nothing here" are opposite facts.
 
-The owner, 2026-09-02, sent two screenshots of the same purchase-order
-drill-down seconds apart. The first showed every line tagged **STOCK**; the
-second showed the same lines carrying **HC-SO-001162 · PENDING**. Nothing had
-changed but a second query arriving.
+## Rules that must not break
 
-> 「这样很容易误导人，人家会以为是 stop，或者以为是 bug」 · 「我以为是 bugs」
+- A value computed by an overlay must be written under the exact field name its CONSUMER reads, not just any field the overlay's own output happens to include — a healed verdict written to the wrong key is silently discarded by a `??` fallback that never fires, and the screen keeps showing the stale snapshot forever. Test the consumer's actual rendered output, not just the overlay's output shape.
+- Adding a sixth coverage-consuming surface means fetching the same shape of query, passing `coverage={coverageStateOf(...)}` (never a hard-coded `"ready"`), and letting the drift test (`coverageWiring.test.ts`) fail the PR if either rule is skipped.
 
-`STOCK` is not a blank. It is a claim — *"Stock replenishment, no open Sales
-Order demand is assigned to this line"* — so while the query was in flight the
-screen asserted that goods bought for a named customer were unassigned stock.
-The cells read the second query as `x ?? []`, collapsing "I do not know yet"
-into "I know, and the answer is none".
+## Gotchas
 
-Full trace: `docs/bugs/0603-a-drill-down-printed-stock-while-the-answer-was-still-loadin.md`.
+- Arriving at the browser is not the same as being read — check that the field the RENDERER reads actually changes when new data lands, not just that the network response looks right.
+- A `??`/nullish-fallback pattern is exactly how a correctly-computed value can be silently ignored — if the "default" side of the fallback is never actually null in practice, the "override" side never runs.
 
-## Which surfaces fetch a second query
+## Where the code is
 
-A drill-down running `usePoSoCoverage(...)` or `useSoLineCoverage(...)` fills
-its assignment columns separately from its lines, and must pass
-`coverage={coverageStateOf(q)}`:
-
-| surface | second query |
-| --- | --- |
-| `frontend/src/pages/scm-v2/PurchaseOrdersListV2.tsx` | `usePoSoCoverage("po", id)` |
-| `frontend/src/pages/scm-v2/GoodsReceivedListV2.tsx` | `usePoSoCoverage("grn", id)` |
-| `frontend/src/pages/scm-v2/PurchaseInvoicesListV2.tsx` | `usePoSoCoverage("pi", id)` |
-| `frontend/src/pages/scm-v2/MfgSalesOrdersListV2.tsx` | `useSoLineCoverage(docNo)` |
-| `frontend/src/pages/scm-v2/SalesOrderDetailV2.tsx` | `useSoLineCoverage(docNo)` |
-
-Every other drill-down runs ONE query and passes `coverage="ready"` explicitly.
-Saying it in the diff is the point — `"ready"` by omission is what this rule
-exists to prevent.
-
-## Two things it deliberately does NOT do
-
-**It does not hold the goods list back.** The lines render the moment they
-arrive; only the cell that depends on the second query says it is still working.
-The owner's instruction: 「货品清单照旧马上出来（不要拖慢），只有还没算好的那几格
-显示「计算中」」. Gating the whole expansion on both queries would trade one
-wrong answer for a slower screen.
-
-**It does not treat a failed read as an empty one.** `unavailable` has its own
-words because a broken connection and "this line has no order" are opposite
-facts — the same rule `backend/src/scm/lib/venue-binding.ts` and
-`backend/src/scm/routes/autocount-relink.ts` apply on the server.
-
-That route no longer offers a rebuild flag of its own. It carried a
-`canRebuild` field for part of 2026-09-02 so the screen could offer the
-operator a choice; `docs/bugs/0610` removed the need for the offer — a
-document whose lines cannot be matched now rebuilds on its next save,
-because refusing it was permanent rather than deferred. A flag with no
-consumer reads like a feature that exists, and that one never had one.
-
-## Arriving is not the same as being read
-
-Traced in `docs/bugs/0614-the-healed-stock-verdict-reached-the-browser-and-was-thrown.md`
-(cited by FILENAME, not by number: three unrelated entries carry `0614` — parallel
-branches pick the same next number and the one-file-per-entry layout is what lets
-them, so a bare number is ambiguous).
-
-The three states above govern whether the cell may answer yet. They say nothing
-about whether the answer, once it arrives, actually reaches the screen — and on
-2026-09-02 it did not.
-
-`overlaySoLineCoverage` applies the resolved coverage onto the lines. It wrote
-the recomputed verdict into `stock_status`, while `soLineStockPill` reads
-**`stock_status_effective` first** and only falls through to `stock_status` when
-that is nullish. The base payload always populates `stock_status_effective`
-(`effectiveLineStockStatus` returns one of three strings, never null), so the
-`??` always short-circuited and the healed verdict was fetched and discarded on
-both surfaces. The pill was permanently the stored snapshot beside a purely live
-Incoming chip.
-
-**So when you add a field to the overlay, name the field the CONSUMER reads.**
-The overlay's own field list is not the contract — the renderer's is. And pin it
-the same way: `so-coverage-overlay.test.ts` had six green assertions over the
-overlay's output fields, and every one of them passes when the right value is
-written to the wrong key. The tests that catch it assert
-`soLineStockPill(overlay(...)).label`.
-
-## Adding a sixth surface
-
-1. Fetch the coverage query as the five above do.
-2. Pass `coverage={coverageStateOf(covQ)}` — never the literal `"ready"`.
-3. `frontend/src/components/coverageWiring.test.ts` fails the PR if a file
-   running one of those hooks hard-codes `"ready"` or never calls
-   `coverageStateOf`. It also fails when its own matcher finds nothing, so a
-   verdict computed over an empty population cannot read as a pass.
-
-Behaviour lives in `frontend/src/components/coverage-state.test.tsx`.
-
-## FOC is COMPUTED, and the rule lives in one place
-
-There is no FOC column on any line table. A line is free when it charges
-nothing — and since 2026-09-12 exactly one function decides that for every
-surface: `isFocLine` in `frontend/src/vendor/scm/lib/foc-line.ts`.
-
-- unit price 0 **or absent** (absent counts as zero), **and** the line total 0 —
-  read from `total_sen` on a sales order and `line_total_sen` elsewhere;
-- **or** `variants.freeGift`, which wins over the arithmetic: a
-  promotion-with-purchase gift can hold a granted base price for costing while
-  costing the customer nothing.
-- **Discounted to zero is NOT free** — it was sold and then given away, and the
-  discount is the story the document keeps telling.
-
-Before that, four surfaces carried four different rules and two of them
-disagreed in ways nobody could see from the screen that was right: the delivery
-order checked the PRICE ONLY, so a 0-priced line still taking money read **FOC
-there and Sale on the invoice**. Do not re-derive the rule in a component —
-`docs/bugs/0846-the-same-free-line-read-foc-on-the-delivery-order-and-sale-o.md`.
-
----
-
-## Status wording on the list pages (2026-09-13)
-
-`PurchaseInvoicesListV2.tsx` and the other list pages that declare their own
-`{ tone, label }` map now read **Submitted**, not Confirmed, for the confirm rung
-of the five documents the owner named. The stored values are untouched. These
-local maps are exactly why the tab and the pill were able to disagree in the
-first place; the root fix (every page reading `status-pill.ts`) stays OPEN and is
-recorded in `docs/modules/document-status-vocabulary.md`. Trace:
-`docs/bugs/0851-one-rung-three-words-the-filter-tab-said-submitted-while-the.md`.
+- `frontend/src/components/coverage-state.tsx` — the three states, `coverageStateOf`.
+- `frontend/src/components/coverageWiring.test.ts` — the drift test enforcing the wiring rules.
+- `frontend/src/pages/scm-v2/PurchaseOrdersListV2.tsx`, `GoodsReceivedListV2.tsx`, `PurchaseInvoicesListV2.tsx`, `MfgSalesOrdersListV2.tsx`, `SalesOrderDetailV2.tsx` — the five current second-query surfaces.

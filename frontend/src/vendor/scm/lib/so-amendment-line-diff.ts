@@ -250,9 +250,26 @@ export function amendmentLineChangedFields(
   l: DiffableAmendmentLine,
 ): AmendmentLineChangedFields {
   // An ADD has no before and a REMOVE has no after — the row itself IS the
-  // change, there is nothing to compare.
-  if (l.change_type === 'ADD' || l.change_type === 'REMOVE') return EVERYTHING;
+  // change, there is nothing to compare. Except the remark and the discount:
+  // both are OPTIONAL on a line, so on a whole-line change each counts only when
+  // the line actually carries one. Flagging them always made every card say
+  // "Remark cleared" / "Discount cleared" about an added line that had neither
+  // (docs/bugs/0919-an-added-amendment-line-said-remark-cleared-and-discount-cle.md).
+  if (l.change_type === 'ADD') {
+    return {
+      ...EVERYTHING,
+      remark: (l.new_remark ?? '').trim() !== '',
+      discount: Math.round(l.new_discount_sen ?? 0) > 0,
+    };
+  }
   const old = amendmentOldSnapshot(l);
+  if (l.change_type === 'REMOVE') {
+    return {
+      ...EVERYTHING,
+      remark: (old.remark ?? '').trim() !== '',
+      discount: Math.round(old.discountSen ?? 0) > 0,
+    };
+  }
   return {
     /* `?? old` mirrors what every surface renders on the Requesting side: an
        omitted new value falls back to the old one, so it READS as unchanged and

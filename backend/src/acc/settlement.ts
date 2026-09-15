@@ -30,10 +30,13 @@
 
 import { postJournal, reverseJournal } from './engine';
 import type { ParseResult } from './settlement-parse';
-import { resolveRoles, settlementLines, settlementReceiptLines, statementChargeLines, clearingMoveLines } from './rules';
+import { resolveRoles, settlementLines, settlementReceiptLines, statementChargeLines, clearingMoveLinesFrom } from './rules';
+import { recordSoAudit } from '../scm/lib/so-audit';
+import { deriveAccountSheet } from '../scm/lib/so-payment-row';
 import { formaliseReceiptsForSettlement } from './receipts';
 import { companyCodeById } from '../scm/lib/doc-no';
 import type { PaymentCandidate } from './settlement-match';
+import { fmtSen } from '../scm/shared/format';
 
 export type AcquirerRow = {
   company_id: number;
@@ -615,7 +618,7 @@ export async function postStatementCharge(
     entryDate: isoDay(batch.period_to) || isoDay(new Date().toISOString()),
     sourceType: 'SETTLEADJ',
     sourceDocNo: `SETTLEADJ-${batchId}`,
-    narration: `${batch.acquirer_code} statement charge with no transaction behind it — ${(Math.abs(adjustment) / 100).toFixed(2)}`,
+    narration: `${batch.acquirer_code} statement charge with no transaction behind it — ${fmtSen(Math.abs(adjustment))}`,
     lines: statementChargeLines(
       { transitAccountCode: acq.acquirer.transit_account_code, feeAccountCode: acq.acquirer.fee_account_code },
       { acquirerCode: batch.acquirer_code, statementDate: isoDay(batch.period_to), adjustmentSen: adjustment },
@@ -662,9 +665,18 @@ export type ConfirmResult =
  * the payout clears it from the same account the fee left — and the generic
  * account reads zero once every untagged payment has been matched.
  *
+ * SINCE docs/bugs/0940 the same goes for money keyed under the WRONG bank:
+ * a payment keyed as PBB sits on PBB's clearing account, and when HLB's
+ * statement names it the money leaves PBB's account for HLB's — before this
+ * only the generic account was read, so PBB stayed high and HLB went
+ * negative by exactly the mis-keyed payments (2990, SO-2608-013, RM 3,240).
+ * Every clearing account of the company is read — the generic one and every
+ * acquirer's own — and one entry moves what sits on any of them that is not
+ * the merchant's own.
+ *
  * Nothing to do when the merchant sits on the generic account itself (CIMB,
  * AEON, HOUZS), when a payment was booked on the merchant's account already
- * (tagged at the till), or when it never reached the ledger. Keyed
+ * (tagged right at the till), or when it never reached the ledger. Keyed
  * SETTLEMOVE-<row id>, so a second press books once and the undo can find it.
  */
 async function moveUntaggedBooking(
@@ -691,27 +703,42 @@ async function moveUntaggedBooking(
     .filter((e) => e.reversed !== true && chosen.some((p) => p.id === e.source_doc_no && p.source === e.source_type));
   if (live.length === 0) return nothing;
 
+  /* Every clearing account money could have been keyed onto: the generic one
+     and each acquirer's own. A debit on any of them but the merchant's own is
+     money to move. */
+  const { data: acqRaw, error: acqErr } = await sb
+    .from('acc_acquirers')
+    .select('transit_account_code')
+    .eq('company_id', companyId);
+  if (acqErr) return { ok: false, status: 'booking_read_failed', reason: `Could not read the clearing accounts: ${acqErr.message}` };
+  const clearing = new Set<string>([generic, ...((acqRaw ?? []) as Array<{ transit_account_code: string | null }>).map((a) => String(a.transit_account_code ?? '')).filter(Boolean)]);
+  clearing.delete(own);
+
   const { data: lineRaw, error: lineErr } = await sb
     .from('journal_entry_lines')
     .select('journal_entry_id, account_code, debit_sen')
-    .in('journal_entry_id', live.map((e) => e.id))
-    .eq('account_code', generic);
+    .in('journal_entry_id', live.map((e) => e.id));
   if (lineErr) return { ok: false, status: 'booking_read_failed', reason: `Could not read the payments' own entries: ${lineErr.message}` };
-  const movedSen = ((lineRaw ?? []) as Array<{ debit_sen: number | null }>).reduce((s, l) => s + Number(l.debit_sen ?? 0), 0);
+  const byAccount = new Map<string, number>();
+  for (const l of (lineRaw ?? []) as Array<{ account_code: string; debit_sen: number | null }>) {
+    const sen = Number(l.debit_sen ?? 0);
+    if (sen <= 0 || !clearing.has(l.account_code)) continue;
+    byAccount.set(l.account_code, (byAccount.get(l.account_code) ?? 0) + sen);
+  }
+  const from = [...byAccount.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([code, amountSen]) => ({ code, amountSen }));
+  const movedSen = from.reduce((s, f) => s + f.amountSen, 0);
   if (movedSen <= 0) return nothing;
 
   const txnDate = isoDay(row.txn_date);
   const docs = chosen.map((p) => p.docNo).filter(Boolean).join(', ') || 'card payments';
+  const how = from.map((f) => (f.code === generic ? `keyed in without a bank: moved from ${generic} to ${own}` : `keyed on ${f.code}: moved from ${f.code} to ${own}`)).join('; ');
   const posted = await postJournal(sb, {
     companyId,
     entryDate: txnDate,
     sourceType: 'SETTLEMOVE',
     sourceDocNo: `SETTLEMOVE-${row.id}`,
-    narration: `${row.acquirer_code} settlement ${txnDate}${row.ref ? ` ref ${row.ref}` : ''} — ${docs} keyed in without a bank: moved from ${generic} to ${own}`,
-    lines: clearingMoveLines(
-      { fromCode: generic, toCode: own },
-      { acquirerCode: row.acquirer_code, txnDate, ref: row.ref, amountSen: movedSen },
-    ),
+    narration: `${row.acquirer_code} settlement ${txnDate}${row.ref ? ` ref ${row.ref}` : ''} — ${docs} ${how}`,
+    lines: clearingMoveLinesFrom(own, from, { acquirerCode: row.acquirer_code, txnDate, ref: row.ref }),
   });
   if (!posted.ok) return { ok: false, status: posted.status, reason: posted.reason ?? 'the posting gate refused the move' };
   return { ok: true, movedSen, jeNo: posted.jeNo };
@@ -765,16 +792,16 @@ export async function confirmSettlementRow(sb: any, input: ConfirmInput): Promis
      so this is where a stale list, a payment corrected since, a cash sale, or
      another company's money is refused — by what the database says, not by
      what the browser sent. */
-  const chosen: Array<{ source: 'SOPAY' | 'SIPAY'; id: string; docNo: string | null; amountSen: number }> = [];
+  const chosen: Array<{ source: 'SOPAY' | 'SIPAY'; id: string; docNo: string | null; amountSen: number; method: string; provider: string | null; sheet: string | null }> = [];
   for (const [source, table, docCol] of [['SOPAY', 'mfg_sales_order_payments', 'so_doc_no'], ['SIPAY', 'sales_invoice_payments', 'sales_invoice_id']] as const) {
     const wanted = asked.filter((p) => p.source === source);
     if (wanted.length === 0) continue;
     const { data, error } = await sb.from(table)
-      .select(`id, ${docCol}, amount_sen, method`)
+      .select(`id, ${docCol}, amount_sen, method, merchant_provider, account_sheet`)
       .eq('company_id', companyId)
       .in('id', wanted.map((p) => p.id));
     if (error) return { ok: false, status: 'load_failed', reason: `${source} payments: ${error.message}` };
-    const byId = new Map(((data ?? []) as Array<Pick<CardPaymentRow, 'id' | 'so_doc_no' | 'sales_invoice_id' | 'amount_sen' | 'method'>>).map((r) => [String(r.id), r]));
+    const byId = new Map(((data ?? []) as Array<Pick<CardPaymentRow, 'id' | 'so_doc_no' | 'sales_invoice_id' | 'amount_sen' | 'method' | 'merchant_provider'> & { account_sheet?: string | null }>).map((r) => [String(r.id), r]));
     for (const p of wanted) {
       const r = byId.get(p.id);
       if (!r) return { ok: false, status: 'payment_not_found', reason: `Payment ${p.docNo ?? p.id} is not in this company's books. Refresh the list.` };
@@ -782,43 +809,61 @@ export async function confirmSettlementRow(sb: any, input: ConfirmInput): Promis
       if (!CARD_METHODS.has(method)) {
         return { ok: false, status: 'not_card_payment', reason: `${p.docNo ?? p.id} was paid by ${method || 'an unknown method'} — a merchant report cannot be explained by it.` };
       }
-      chosen.push({ source, id: p.id, docNo: p.docNo ?? (r[docCol] == null ? null : String(r[docCol])), amountSen: Number(r.amount_sen ?? 0) });
+      chosen.push({
+        source, id: p.id, docNo: p.docNo ?? (r[docCol] == null ? null : String(r[docCol])), amountSen: Number(r.amount_sen ?? 0),
+        method, provider: r.merchant_provider == null ? null : String(r.merchant_provider), sheet: r.account_sheet == null ? null : String(r.account_sheet),
+      });
     }
   }
   /* The sum must be the gross, to the sen. A difference here IS the thing this
      layer exists to catch, so it is named and refused, never absorbed. */
   const chosenTotal = chosen.reduce((s, p) => s + Number(p.amountSen || 0), 0);
   if (chosenTotal !== Number(row.gross_sen)) {
-    const diff = (chosenTotal - Number(row.gross_sen)) / 100;
     return {
       ok: false,
       status: 'amount_mismatch',
-      reason: `The selected payments add up to ${(chosenTotal / 100).toFixed(2)}, but the statement line is ${(Number(row.gross_sen) / 100).toFixed(2)} — a difference of ${diff.toFixed(2)}. Fix the selection, or correct the payment record; do not clear a difference you cannot explain.`,
+      reason: `The selected payments add up to ${fmtSen(chosenTotal)}, but the statement line is ${fmtSen(Number(row.gross_sen))} — a difference of ${fmtSen(chosenTotal - Number(row.gross_sen))}. Fix the selection, or correct the payment record; do not clear a difference you cannot explain.`,
     };
   }
 
   const acq = await loadAcquirer(sb, companyId, row.acquirer_code);
   if (!acq.ok) return { ok: false, status: 'acquirer_unavailable', reason: acq.reason };
 
-  /* STAMP THE TAG the payment was recorded without. A migration-era payment
-     (method 'imported') carries no merchant_provider; the human confirming
-     this line has just decided whose money it is, so the answer is written
-     onto the payment — the next statement finds it as a NAMED candidate, and
-     the watchlists can group it. Only NULL is ever written over: a tag someone
-     chose at the till is not this function's to change. Done BEFORE anything
-     posts, so a failure here stops a clean confirm instead of unwinding one;
-     done twice it writes nothing, so a stamp-failed retry is safe. */
-  for (const [table, source] of [['mfg_sales_order_payments', 'SOPAY'], ['sales_invoice_payments', 'SIPAY']] as const) {
-    const ids = chosen.filter((p) => p.source === source).map((p) => p.id);
-    if (ids.length === 0) continue;
-    const { error } = await sb
-      .from(table)
-      .update({ merchant_provider: acq.acquirer.display_name })
-      .in('id', ids)
-      .eq('company_id', companyId)
-      .is('merchant_provider', null);
+  /* STAMP THE TAG. The merchant's own statement has just named whose money
+     this is, and the statement outranks the till: a payment recorded without
+     a bank (a migration-era 'imported' row) gets the tag, and — since
+     docs/bugs/0940 (owner 2026-09-15: 要) — a payment keyed under the WRONG
+     bank is corrected to the right one, its account sheet following when it
+     was the bank's own name, with a line in the order's history saying the
+     settlement match corrected it. Until then only NULL was written over, so
+     the Payments card kept saying PBB while the money had left HLB's clearing
+     account. Done BEFORE anything posts, so a failure here stops a clean
+     confirm instead of unwinding one; done twice it writes nothing. */
+  const tag = acq.acquirer.display_name;
+  for (const p of chosen) {
+    if (p.provider === tag) continue;
+    const table = p.source === 'SOPAY' ? 'mfg_sales_order_payments' : 'sales_invoice_payments';
+    const sheetWasBank = p.sheet == null || p.sheet.trim() === '' || p.sheet === deriveAccountSheet(p.method, p.provider, null);
+    const patch: Record<string, unknown> = { merchant_provider: tag };
+    if (sheetWasBank) patch.account_sheet = deriveAccountSheet(p.method, tag, null);
+    const { error } = await sb.from(table).update(patch).eq('id', p.id).eq('company_id', companyId);
     if (error) {
-      return { ok: false, status: 'provider_stamp_failed', reason: `Could not mark the payment as ${acq.acquirer.display_name}'s: ${error.message}` };
+      return { ok: false, status: 'provider_stamp_failed', reason: `Could not mark the payment as ${tag}'s: ${error.message}` };
+    }
+    if (p.provider != null && p.source === 'SOPAY' && p.docNo) {
+      await recordSoAudit(sb, {
+        docNo: p.docNo,
+        action: 'UPDATE_PAYMENT',
+        actorId: null,
+        actorName: input.userName ?? null,
+        source: 'automation',
+        note: `Bank corrected by the ${row.acquirer_code} settlement match: ${p.provider} → ${tag}`,
+        paymentId: p.id,
+        fieldChanges: [
+          { field: 'merchantProvider', from: p.provider, to: tag },
+          ...(sheetWasBank ? [{ field: 'accountSheet', from: p.sheet, to: deriveAccountSheet(p.method, tag, null) }] : []),
+        ],
+      });
     }
   }
 
@@ -1137,7 +1182,7 @@ export async function postBatchReceipt(
     return {
       ok: false,
       status: 'fully_received',
-      reason: `This statement is already fully received — ${(payableSen / 100).toFixed(2)} across ${already.receipts.length} credit(s). If the bank shows more, it belongs to another statement.`,
+      reason: `This statement is already fully received — ${fmtSen(payableSen)} across ${already.receipts.length} credit(s). If the bank shows more, it belongs to another statement.`,
     };
   }
 
@@ -1154,7 +1199,7 @@ export async function postBatchReceipt(
     return {
       ok: false,
       status: 'over_receipt',
-      reason: `${batch.acquirer_code} still owes ${(outstanding / 100).toFixed(2)} on this statement, and this credit is ${(amountSen / 100).toFixed(2)}. Record only what this statement paid — the rest belongs to another one.`,
+      reason: `${batch.acquirer_code} still owes ${fmtSen(outstanding)} on this statement, and this credit is ${fmtSen(amountSen)}. Record only what this statement paid — the rest belongs to another one.`,
     };
   }
 
@@ -1202,7 +1247,7 @@ export async function postBatchReceipt(
     entryDate: receivedOn,
     sourceType: 'SETTLEBANK',
     sourceDocNo: `SETTLEBANK-${batchId}-${receiptId}`,
-    narration: `${batch.acquirer_code} payout received ${receivedOn} — ${(Math.abs(amountSen) / 100).toFixed(2)}`,
+    narration: `${batch.acquirer_code} payout received ${receivedOn} — ${fmtSen(Math.abs(amountSen))}`,
     lines: settlementReceiptLines(
       { bankAccountCode: bankAccount, transitAccountCode: acq.acquirer.transit_account_code },
       { acquirerCode: batch.acquirer_code, receivedOn, amountSen },

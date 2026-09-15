@@ -82,12 +82,14 @@ export const LaidRows = ({ nodes, level, depth = 1, columns, fmt = fmtSenParen, 
 );
 
 /** A titled block with its rows and its total line. */
-export const LaidBlock = ({ title, nodes, level, totalLabel, totalSen, baseSen }: {
+export const LaidBlock = ({ title, nodes, level, totalLabel, totalSen, baseSen, onPick }: {
   title: string; nodes: LaidNode[]; level: Level; totalLabel: string; totalSen: number; baseSen: number | null;
+  /** A figure opens its entries — the general ledger on the node's accounts (docs/bugs/0924). */
+  onPick?: LaidPick;
 }) => (
   <>
     <tr><td colSpan={3} style={{ padding: '10px 10px 4px', fontWeight: 700 }}>{title}</td></tr>
-    <LaidRows nodes={nodes} level={level} />
+    <LaidRows nodes={nodes} level={level} onPick={onPick} />
     {nodes.length === 0 && <tr><td colSpan={3} style={{ padding: '2px 10px 2px 24px', ...soft }}>—</td></tr>}
     <tr style={{ borderTop: '1px solid var(--border-weak, #e3e1da)' }}>
       <td style={{ padding: '4px 10px', fontWeight: 600 }}>{totalLabel}</td>

@@ -11,9 +11,14 @@
    filters once, answer an invalid row, and apply the SAME prepared filter to
    the page query, the money predicate set and the count builder — and the
    counts must read the relation the prepared filter names, because Balance and
-   Payment status compare columns only the view computes. */
+   Payment status compare columns only the view computes.
+
+   Since 2026-09-15 the predicates live in lib/so-list-read.ts (the line export
+   reads through them too), so the list block is asserted to use its ONE
+   prepared read for all three, and the module to apply the filter inside it. */
 import { describe, expect, test } from 'vitest';
 import routeSource from '../src/scm/routes/mfg-sales-orders.ts?raw';
+import readSource from '../src/scm/lib/so-list-read.ts?raw';
 
 const listBlock = (): string => {
   const start = routeSource.indexOf("mfgSalesOrders.get('/',");
@@ -31,17 +36,21 @@ const pagedArm = (): string => {
 };
 
 describe('SO list second-level filter wiring', () => {
-  test('prepares the filters once from the repeated f param and returns its refusal', () => {
+  test('prepares the one read from the repeated f param and returns its refusal', () => {
     const arm = pagedArm();
-    expect(arm).toMatch(/prepareSoListFilters\(\s*sb,\s*c\.req\.queries\('f'\)/);
-    expect(arm).toMatch(/if \(!soFilter\.ok\) return c\.json\(soFilter\.body, soFilter\.status\)/);
+    expect(arm).toContain('prepareSoListRead(sb, c, readSoListParams((k) => c.req.query(k), (k) => c.req.queries(k))');
+    expect(arm).toContain('if (!read.ok) return c.json(read.body, read.status)');
+    expect(readSource).toContain('prepareSoListFilters(sb, p.f, houzsUserId, now)');
+    expect(readSource).toContain('if (!soFilter.ok) return soFilter;');
   });
 
   test('the page query, the money predicates and the count builder all apply it', () => {
     const arm = pagedArm();
-    expect(arm).toMatch(/q = soFilter\.apply\(scopeToCompany\(q, c\)\)/);
-    expect(arm).toMatch(/moneyQ = soFilter\.apply\(scopeToCompany\(moneyQ, c\)\)/);
-    expect(arm).toMatch(/soFilter\.apply\(scopeToCompany\(applySoScope\(q0, scopeIds\), c\)\)/);
+    expect(arm).toContain('let q = read.header(orderSoList(');
+    expect(arm).toContain('const applyMoneyFilters = (moneyQ0: any): any => read.header(moneyQ0)');
+    expect(arm).toContain('const scopedCountQ = (q0: any): any => read.scoped(q0)');
+    expect(readSource).toContain('soFilter.apply(scopeToCompany(applySoScope(q, scopeIds), c))');
+    expect(readSource).toContain('let q = scoped(q0)');
   });
 
   test('the status counts read the relation the prepared filter names, never a hard-coded table', () => {
@@ -51,7 +60,8 @@ describe('SO list second-level filter wiring', () => {
     expect(countsStart).toBeGreaterThan(-1);
     expect(countsEnd).toBeGreaterThan(countsStart);
     const counts = arm.slice(countsStart, countsEnd);
-    expect(counts.match(/sb\.from\(soFilter\.countFrom\)/g)?.length).toBe(3);
-    expect(counts).not.toMatch(/sb\.from\('mfg_sales_orders'\)/);
+    expect(counts.split('sb.from(read.countFrom)').length - 1).toBe(3);
+    expect(counts).not.toContain("sb.from('mfg_sales_orders')");
+    expect(readSource).toContain('countFrom: soFilter.countFrom');
   });
 });

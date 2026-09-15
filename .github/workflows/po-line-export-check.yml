@@ -1,0 +1,94 @@
+name: PO line export check (read-only)
+
+# Does the Purchase Order export hold EVERY line the list's filter matches?
+# Runs the export's own server read (buildPoExportRows) over the chosen database
+# through the read-only PostgREST stand-in, and compares its lines with a direct
+# SQL read for the tab given in `status`, per company, line id by line id. Also
+# prints the AutoCount-listing facts (PROBE lines) the column mapping rests on.
+# backend/scripts/check-po-line-export.mjs has the detail.
+#
+# document: so-do runs the SAME comparison for the Sales Order and Delivery
+# Order line exports instead (backend/scripts/check-so-do-line-export.mjs): the
+# SO Submitted tab, All with a second-level filter row (f=orderDate:between),
+# All; the DO Delivered tab, Confirmed tab, All — per company, line id by line id.
+#
+# Manual trigger only, own concurrency group, read-only session. Exit 0 for every
+# answer; non-zero only when the database cannot be reached.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which database"
+        required: true
+        default: "production"
+        type: choice
+        options:
+          - production
+          - staging
+      document:
+        description: "Which export"
+        required: true
+        default: "po"
+        type: choice
+        options:
+          - po
+          - so-do
+      status:
+        description: "List tab to check (all, open, outstanding, partial, received, cancelled, draft, on_hold)"
+        required: false
+        default: "outstanding"
+        type: string
+
+concurrency:
+  group: po-line-export-check-${{ inputs.document }}-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  production:
+    if: ${{ inputs.target == 'production' }}
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npx tsx scripts/check-${{ inputs.document == 'so-do' && 'so-do' || 'po' }}-line-export.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          STATUS: ${{ inputs.status }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+  staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - name: Assert the target is STAGING
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          case "$DATABASE_URL" in *anogrigyjbduyzclzjgn*) echo "::error::points at PRODUCTION"; exit 1;; esac
+          case "$DATABASE_URL" in *minnapsemfzjmtvnnvdd*) echo "target: staging";; *) echo "::error::not the staging project"; exit 1;; esac
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npx tsx scripts/check-${{ inputs.document == 'so-do' && 'so-do' || 'po' }}-line-export.mjs
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          STATUS: ${{ inputs.status }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
