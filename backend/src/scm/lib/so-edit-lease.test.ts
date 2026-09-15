@@ -22,6 +22,7 @@ import {
   soEditLeaseExpiryIso,
   soEditLeaseRefusal,
   soEditLeaseTakeoverAllowed,
+  soHeaderLeaseIntent,
 } from './so-edit-lease';
 import { lockSoCommandLease } from './pg-supabase-transaction';
 
@@ -177,5 +178,53 @@ describe('lockSoCommandLease honours the takeover', () => {
       'HC-SO-1', 'mine', 1, 7,
     );
     expect(r).toEqual({ ok: false, reason: 'lease', lease: 'held' });
+  });
+});
+
+/* Owner 2026-09-15, HC-SO-2609-071 — ten 409s after a save that reported
+   success (docs/bugs/0936-a-save-that-reported-success-left-the-order-s-lock-behind-so.md). The route tests in tests/mfgSalesOrderHeaderCas.test.ts
+   drive the handler; these pin the decision table it now reads. */
+describe('soHeaderLeaseIntent — what a header PATCH means for the lock', () => {
+  const T = 'lease-token-0123456789';
+  const live = (token: string, holder: number | string | null) => ({
+    edit_lease_token: token,
+    edit_lease_expires_at: new Date(Date.now() + 30_000).toISOString(),
+    edit_lease_user_id: holder,
+  });
+
+  test('a token beside no field change ENDS the save, flag or no flag', () => {
+    expect(soHeaderLeaseIntent({ lineWriteLeaseToken: T }, live(T, 7), false, 7))
+      .toMatchObject({ complete: true, refusal: null, takeover: null });
+    expect(soHeaderLeaseIntent({ lineWriteLeaseToken: T, completeLineWrites: true }, live(T, 7), false, 7))
+      .toMatchObject({ complete: true, refusal: null });
+  });
+
+  test('a token WITH real changes is the header commit, not a bare release', () => {
+    expect(soHeaderLeaseIntent({ lineWriteLeaseToken: T }, live(T, 7), true, 7))
+      .toMatchObject({ complete: false, refusal: null, takeover: null });
+  });
+
+  test('a reservation or a header-only save by the same person takes their own lock back', () => {
+    expect(soHeaderLeaseIntent({ reserveLineWrites: true, lineWriteLeaseToken: T }, live('left-behind', '7'), false, 7))
+      .toMatchObject({ reserve: true, takeover: 'left-behind', refusal: null });
+    expect(soHeaderLeaseIntent({}, live('left-behind', 7), true, 7))
+      .toMatchObject({ takeover: 'left-behind', refusal: null });
+  });
+
+  test('another person, or a holder nobody recorded, is never taken over', () => {
+    for (const holder of [8, null]) {
+      expect(soHeaderLeaseIntent({ reserveLineWrites: true, lineWriteLeaseToken: T }, live('theirs', holder), false, 7))
+        .toMatchObject({ takeover: null, refusal: 'held' });
+    }
+  });
+
+  test("the end of a save the same person has since superseded is still refused", () => {
+    expect(soHeaderLeaseIntent({ lineWriteLeaseToken: T, completeLineWrites: true }, live('my-newer-save', 7), false, 7))
+      .toMatchObject({ complete: true, takeover: null, refusal: 'held' });
+  });
+
+  test('a short token on a lease step is invalid; no token and no change is a plain no-op', () => {
+    expect(soHeaderLeaseIntent({ reserveLineWrites: true, lineWriteLeaseToken: 'short' }, null, false, 7).refusal).toBe('invalid');
+    expect(soHeaderLeaseIntent({}, null, false, 7)).toMatchObject({ reserve: false, complete: false, refusal: null });
   });
 });

@@ -153,7 +153,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/lorry-capacity.ts` | 3 | 493 |
 | `backend/src/scm/routes/lorry-service-records.ts` | 6 | 327 |
 | `backend/src/scm/routes/maintenance-config.ts` | 5 | 410 |
-| `backend/src/scm/routes/mfg-products.ts` | 11 | 1284 |
+| `backend/src/scm/routes/mfg-products.ts` | 11 | 1317 |
 | `backend/src/scm/routes/mfg-purchase-orders-list-enrichment.ts` | 1 | 82 |
 | `backend/src/scm/routes/mfg-purchase-orders.ts` | 24 | 4428 |
 | `backend/src/scm/routes/mfg-sales-orders-list-enrichment.ts` | 2 | 327 |
@@ -173,7 +173,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/po-so-coverage.ts` | 1 | 1140 |
 | `backend/src/scm/routes/pos-cart.ts` | 2 | 157 |
 | `backend/src/scm/routes/pos-pools.ts` | 10 | 378 |
-| `backend/src/scm/routes/product-models.ts` | 16 | 1492 |
+| `backend/src/scm/routes/product-models.ts` | 16 | 1513 |
 | `backend/src/scm/routes/products.ts` | 2 | 86 |
 | `backend/src/scm/routes/public-images.ts` | 2 | 47 |
 | `backend/src/scm/routes/purchase-consignment-orders.ts` | 10 | 746 |
@@ -242,7 +242,7 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (2651 files, 819133 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (2654 files, 819399 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -254,7 +254,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `frontend/src/pages/Team.tsx` | 5673 |
 | `backend/src/scm/routes/delivery-orders-mfg.ts` | 5474 |
 | `backend/src/routes/projects.ts` | 5153 |
-| `frontend/src/pages/scm-v2/Products.tsx` | 5010 |
+| `frontend/src/pages/scm-v2/Products.tsx` | 5013 |
 | `backend/src/scm/routes/scan-so.ts` | 4895 |
 | `frontend/src/mobile/MobilePMS.tsx` | 4490 |
 | `backend/src/scm/routes/mfg-purchase-orders.ts` | 4428 |
