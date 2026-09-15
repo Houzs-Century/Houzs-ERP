@@ -21,6 +21,10 @@ const routeSource = Object.values(sources)[0] ?? '';
 /* The search predicates moved into lib/so-list-read.ts on 2026-09-15 so the
    page, the money strip and the line export share ONE copy. */
 const readSources = import.meta.glob('../src/scm/lib/so-list-read.ts', { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
+/* The list's row builder (payments read, per-row summary) moved to
+   lib/so-list-rows.ts on 2026-09-15. */
+const rowSources = import.meta.glob('../src/scm/lib/so-list-rows.ts', { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
+const rowsSource = Object.values(rowSources)[0] ?? '';
 const readSource = Object.values(readSources)[0] ?? '';
 const betweenIn = (src: string, from: string, to: string): string => {
   const a = src.indexOf(from);
@@ -45,13 +49,13 @@ describe('the Sales Order list and the approval codes', () => {
   });
 
   test('the payments read the list already makes carries the code and the dates the column is ordered by', () => {
-    const read = between('const payRowsProm', 'const downstreamProm');
+    const read = betweenIn(rowsSource, 'const payRowsProm', 'const downstreamProm');
     expect(read).toContain("select('so_doc_no, method, online_type, approval_code, paid_at, created_at')");
   });
 
   test('every row carries approval_codes_summary from the one helper', () => {
-    expect(routeSource).toContain('approvalCodesByOrder(');
-    expect(routeSource).toMatch(/\.approval_codes_summary = approvalCodes\.get\(docNo\) \?\? ''/);
+    expect(rowsSource).toContain('approvalCodesByOrder(');
+    expect(rowsSource).toMatch(/\.approval_codes_summary = approvalCodes\.get\(docNo\) \?\? ''/);
   });
 
   /* The search term is built ONCE and added to BOTH queries. A term on only

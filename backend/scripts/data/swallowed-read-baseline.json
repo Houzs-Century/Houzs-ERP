@@ -173,6 +173,10 @@
       "reads": 5,
       "catches": 0
     },
+    "backend/src/scm/lib/so-list-rows.ts": {
+      "reads": 2,
+      "catches": 0
+    },
     "backend/src/scm/lib/so-location-gate.ts": {
       "reads": 1,
       "catches": 0
@@ -306,7 +310,7 @@
       "catches": 0
     },
     "backend/src/scm/routes/mfg-sales-orders.ts": {
-      "reads": 81,
+      "reads": 79,
       "catches": 2
     },
     "backend/src/scm/routes/mrp.ts": {
