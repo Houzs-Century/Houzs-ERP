@@ -799,7 +799,7 @@ Four distinct locks. Only one of them keys off the status column.
 > 可能要放灰色之类的，设置成不可以被 edit」 / 「它为什么可以 edit 的原理，是因为它还有
 > 东西可以被 convert」. Until then ONE live DO anywhere locked every line, so the
 > undelivered half of a partly delivered order could not be touched
-> (`docs/bugs/0916-a-partly-delivered-sales-order-locked-every-line-so-its-unde.md`).
+> (`docs/bugs/0919-a-partly-delivered-sales-order-locked-every-line-so-its-unde.md`).
 > - A partly delivered line (ordered 3, delivered 1) is WHOLLY frozen; so is a line
 >   on a DRAFT DO and a line on an SI.
 > - The detail payload stamps `downstream_frozen` on each line and

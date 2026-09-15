@@ -74,8 +74,8 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/users.ts` | 22 | 2328 |
 | `backend/src/scm/routes/accounting-bank-config.ts` | 0 | 126 |
 | `backend/src/scm/routes/accounting-bank-locks.ts` | 0 | 230 |
-| `backend/src/scm/routes/accounting-bank-months.ts` | 0 | 673 |
-| `backend/src/scm/routes/accounting-bank.ts` | 0 | 1396 |
+| `backend/src/scm/routes/accounting-bank-months.ts` | 0 | 678 |
+| `backend/src/scm/routes/accounting-bank.ts` | 0 | 1455 |
 | `backend/src/scm/routes/accounting-chart.ts` | 0 | 787 |
 | `backend/src/scm/routes/accounting-collection.ts` | 0 | 184 |
 | `backend/src/scm/routes/accounting-item-groups.ts` | 0 | 259 |
@@ -229,7 +229,7 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (2465 files, 791695 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (2473 files, 793023 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -244,7 +244,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `backend/src/routes/projects.ts` | 5153 |
 | `backend/src/scm/routes/scan-so.ts` | 4895 |
 | `backend/src/scm/routes/mfg-purchase-orders.ts` | 4518 |
-| `frontend/src/mobile/MobilePMS.tsx` | 4488 |
+| `frontend/src/mobile/MobilePMS.tsx` | 4491 |
 | `frontend/src/pages/scm-v2/SupplierDetail.tsx` | 4342 |
 | `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4204 |
 | `frontend/src/mobile/MobileNewSO.tsx` | 3673 |
@@ -433,7 +433,7 @@ Page files by directory:
 | `frontend/src/pages/MailCenter` | 3 |
 | `frontend/src/pages/announcements` | 5 |
 | `frontend/src/pages/roles` | 2 |
-| `frontend/src/pages/scm-v2` | 166 |
+| `frontend/src/pages/scm-v2` | 168 |
 | `frontend/src/pages/scm-v2/products` | 1 |
 | `frontend/src/pages/settings` | 1 |
 | `frontend/src/pages/team` | 10 |
@@ -481,7 +481,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileMyCaseDetail.tsx` | 326 |
 | `frontend/src/mobile/MobileNewProject.tsx` | 196 |
 | `frontend/src/mobile/MobileNewSO.tsx` | 3673 |
-| `frontend/src/mobile/MobilePMS.tsx` | 4488 |
+| `frontend/src/mobile/MobilePMS.tsx` | 4491 |
 | `frontend/src/mobile/MobilePOD.tsx` | 558 |
 | `frontend/src/mobile/MobilePmsDefectActions.tsx` | 109 |
 | `frontend/src/mobile/MobilePmsPlanFileChips.tsx` | 96 |
