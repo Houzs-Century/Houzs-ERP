@@ -1643,7 +1643,7 @@ export (`docs/modules/purchase-order.md` *Exports*).
   settled search and sort — the paged hook builds its request from the same params
   function. A `truncated` answer is refused, never written. The toolbar Export's
   Status column writes the list's word. Bug ledger:
-  `docs/bugs/0924-the-goods-received-purchase-invoice-and-sales-invoice-list-e.md`.
+  `docs/bugs/0925-the-goods-received-purchase-invoice-and-sales-invoice-list-e.md`.
 - NOT applied: the grid's per-column funnels (they filter only the loaded page).
 - Import is desktop-only by the owner's decision (「手机不需要导入」, 2026-09-15); no
   GRN line import exists yet on either surface.
