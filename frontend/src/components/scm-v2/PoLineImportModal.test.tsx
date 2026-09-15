@@ -43,7 +43,7 @@ beforeEach(() => { h.authed.mockReset(); });
 
 describe("PoLineImportPreviewView", () => {
   it("lists each change as doc, line, field, old, new, highlighted; refused rows carry their reason", () => {
-    render(<PoLineImportPreviewView preview={preview} ignoredHeaders={["Qty", "Unit Price"]} />);
+    render(<PoLineImportPreviewView preview={preview} ignoredHeaders={["Qty", "Unit Price"]} missingHeaders={[]} />);
     const lines = screen.getByRole("region", { name: "Lines" });
     const changed = lines.querySelectorAll('tr[data-status="change"]');
     expect(changed).toHaveLength(2);
@@ -58,7 +58,7 @@ describe("PoLineImportPreviewView", () => {
   });
 
   it("hides unchanged rows until asked", () => {
-    render(<PoLineImportPreviewView preview={preview} ignoredHeaders={[]} />);
+    render(<PoLineImportPreviewView preview={preview} ignoredHeaders={[]} missingHeaders={[]} />);
     const lines = screen.getByRole("region", { name: "Lines" });
     expect(lines.querySelectorAll('tr[data-status="unchanged"]')).toHaveLength(0);
     fireEvent.click(screen.getByLabelText("Show unchanged rows"));
@@ -66,17 +66,17 @@ describe("PoLineImportPreviewView", () => {
   });
 
   it("shows the estimate date once per PO, with how many lines it sets, and the PO-level refusal", () => {
-    render(<PoLineImportPreviewView preview={preview} ignoredHeaders={[]} />);
+    render(<PoLineImportPreviewView preview={preview} ignoredHeaders={[]} missingHeaders={[]} />);
     const po = screen.getByRole("region", { name: "Purchase order dates" });
     const row = po.querySelector('tr[data-status="po-change"]')!;
-    expect(row.textContent).toContain("Estimate Delivery Date 1");
+    expect(row.textContent).toContain("Estimate Delivery Date");
     expect(row.textContent).toContain("sets all 2 lines");
     expect(row.textContent).toContain("2026-10-15");
     expect(po.querySelector('tr[data-status="po-rejected"]')!.textContent).toContain("rows disagree");
   });
 
   it("shows the counts", () => {
-    render(<PoLineImportPreviewView preview={preview} ignoredHeaders={[]} />);
+    render(<PoLineImportPreviewView preview={preview} ignoredHeaders={[]} missingHeaders={[]} />);
     for (const label of ["Rows read", "Lines changing", "Unchanged", "Rows refused", "PO dates changing", "PO dates refused"]) {
       expect(screen.getByText(label)).toBeTruthy();
     }

@@ -20,7 +20,7 @@ import { scopeToCompany, type CompanyScopeCtx } from './companyScope';
 import { chunkIn } from './paginate-all';
 
 export const PO_HEADER_COLS =
-  'id, po_number, supplier_id, status, po_date, expected_at, currency, ' +
+  'id, po_number, linked_ac_docno, supplier_id, status, po_date, expected_at, currency, ' +
   'subtotal_sen, tax_sen, total_sen, notes, submitted_at, received_at, ' +
   'cancelled_at, created_at, created_by, updated_at, ' +
   /* SO-amendment / revision workflow (2026-07-03) — bumped in place when a

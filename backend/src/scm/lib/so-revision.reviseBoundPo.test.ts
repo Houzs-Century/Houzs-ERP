@@ -472,6 +472,46 @@ describe('reviseBoundPo — a SPEC change syncs the surviving PO line identity',
     expect(res.warnings).toEqual([]);
   });
 
+  /* HC-PO-010086, 2026-09-15. HC-SO-013346/A3 turned a pillow line from SQUARE
+     PILLOW (custom, a chosen colour) into AMN-SOFA PILLOW (random). The PO line's
+     `description` is what the detail page shows under the code when the variant
+     summary is empty (a pillow with no colour), and what the AutoCount edit sends
+     as Description — left alone it goes on reading "SQUARE PILLOW (CUSTOM)". */
+  it('moves the line description with a changed item code, and leaves it alone when the code stays', async () => {
+    const store = baseStore();
+    store.so_revisions = [{
+      amendment_id: AMD, revision: 1, po_id: null,
+      snapshot: { lines: [{ id: 'L1' }, { id: 'L2' }], poLinks: { L1: ['POI-1'], L2: ['POI-2'] } },
+    }];
+    store.mfg_sales_order_items = [
+      soLine({ id: 'L1', item_code: 'AMN-SOFA PILLOW', item_group: 'accessory', qty: 4, variants: {},
+               description: 'AMN-SOFA PILLOW (RANDOM) (FREE GIFT)' }),
+      soLine({ id: 'L2', item_code: 'BF-3', description: 'Bed Three' }),
+    ];
+    store.purchase_order_items = [
+      poLine({ id: 'POI-1', so_item_id: 'L1', item_code: 'SQUARE PILLOW', item_group: 'fabric_accessory', qty: 4,
+               material_name: 'AMN-SQUARE PILLOW (16"x16") (CUSTOM)', description: 'HOK- SQUARE PILLOW (16"X16") (CUSTOM)',
+               supplier_sku: 'HOK-SQUARE PILLOW' }),
+      poLine({ id: 'POI-2', so_item_id: 'L2', item_code: 'BF-3', description: 'typed by the buyer' }),
+    ];
+    store.supplier_material_bindings = [
+      binding('AMN-SOFA PILLOW', 'S1', 0, 'HOK-SOFA PILLOW'), binding('BF-3', 'S1', 1500),
+    ];
+
+    await reviseBoundPo(fakeSb(store), AMD, 'user-1');
+
+    const byId = (id: string) => store.purchase_order_items.find((i) => i.id === id)!;
+    expect(byId('POI-1')).toMatchObject({
+      item_code: 'AMN-SOFA PILLOW',
+      item_group: 'accessory',
+      material_name: 'AMN-SOFA PILLOW (RANDOM) (FREE GIFT)',
+      description: 'AMN-SOFA PILLOW (RANDOM) (FREE GIFT)',
+      supplier_sku: 'HOK-SOFA PILLOW',
+      so_item_id: 'L1',
+    });
+    expect(byId('POI-2').description).toBe('typed by the buyer');
+  });
+
   it('never downgrades material_name to the bare code when the revised SO line has no description', async () => {
     const store = swapStore(null);
 

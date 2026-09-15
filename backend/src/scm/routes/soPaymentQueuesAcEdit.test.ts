@@ -171,7 +171,7 @@ describe('a recorded payment queues the AutoCount edit that carries the new bala
    is absent (AcSyncService.cs, the pre-flight and line loops run over `Lines`). */
 describe('a payment sends only the balance and the references', () => {
   test('the body is header-only: the two UDFs, an empty line list, no rebuild, no photographs', async () => {
-    const sb = seed('1', {}, {
+    const sb = seed('1', { linked_ac_docno: 'HC-SO-P1' }, {   // an ERP-numbered order: a carried-over one gets BALANCE only (0934)
       mfg_sales_order_items: [{ ...ITEM, photo_urls: ['so-items/HC-SO-P1/a.jpg'] }],
     });
     await recordSoPaymentRow(sb, payment({ accountSheet: 'MAYBANK', approvalCode: '111' }));
@@ -180,7 +180,7 @@ describe('a payment sends only the balance and the references', () => {
     expect(row.status).toBe('pending');
     expect(row.payload.body).toEqual({
       DocType: 'SO',
-      DocNo: 'SO-000021',
+      DocNo: 'HC-SO-P1',
       Header: { UDF: { BALANCE: '200.00', PAYEMENT: '(MAYBANK/111)' } },
       Lines: [],
     });
