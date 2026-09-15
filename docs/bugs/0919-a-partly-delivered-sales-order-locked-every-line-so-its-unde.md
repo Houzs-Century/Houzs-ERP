@@ -1,6 +1,7 @@
 ## A partly delivered Sales Order locked every line, so its undelivered lines could not be edited [high]
 
-<!-- area: Sales Order -->
+<!-- area: Sales orders + pricing -->
+<!-- status: fixed -->
 
 **Symptom.** The owner, 2026-09-15, on orders that were partly delivered and then
 had their processing and delivery dates opened again:
