@@ -68,6 +68,48 @@ export const useCancelledWithMoney = (phone?: string | null, enabled = true) => 
 });
 
 /** The Refund button: a Customer Refund voucher DRAFT for Finance. */
+/** One refund draft for each of several cancelled orders (the SO list's bar). */
+export const useRequestRefunds = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (asks: Array<{ docNo: string; amountSen: number; note?: string | null }>) => {
+      const out: Array<{ docNo: string; pvNumber?: string; error?: string }> = [];
+      for (const a of asks) {
+        try {
+          const r = await authedFetch<{ id: string; pvNumber: string }>(`/mfg-sales-orders/${encodeURIComponent(a.docNo)}/money/refund`, {
+            method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ amountSen: a.amountSen, note: a.note ?? null }),
+          });
+          out.push({ docNo: a.docNo, pvNumber: r.pvNumber });
+        } catch (e) {
+          out.push({ docNo: a.docNo, error: e instanceof Error ? e.message : String(e) });
+        }
+      }
+      return out;
+    },
+    onSuccess: (out) => {
+      for (const o of out) void qc.invalidateQueries({ queryKey: ORDER_MONEY_KEY(o.docNo) });
+      void qc.invalidateQueries({ queryKey: ['refund-source'] });
+      void qc.invalidateQueries({ queryKey: ['so-cancelled-with-money'] });
+    },
+  });
+};
+
+/** A cancelled order named by number, as a source to take money from — or
+    why it cannot be one. */
+export const readConvertSource = async (docNo: string): Promise<{ ok: true; source: ConvertSource } | { ok: false; reason: string }> => {
+  const clean = docNo.trim();
+  if (!clean) return { ok: false, reason: 'Type the order number.' };
+  try {
+    const r = await authedFetch<{ money: OrderMoney }>(`/mfg-sales-orders/${encodeURIComponent(clean)}/money`);
+    const m = r.money;
+    if (!m.cancelled) return { ok: false, reason: `${m.docNo} is not cancelled.` };
+    if (m.remainingSen <= 0) return { ok: false, reason: m.reason ?? `${m.docNo} has no money left on it.` };
+    return { ok: true, source: { docNo: m.docNo, customer: m.customer.name, cancelledOn: null, remainingSen: m.remainingSen, bookedSen: m.bookedSen } };
+  } catch (e) {
+    return { ok: false, reason: e instanceof Error ? e.message : String(e) };
+  }
+};
+
 export const useRequestRefund = (docNo: string) => {
   const qc = useQueryClient();
   return useMutation({

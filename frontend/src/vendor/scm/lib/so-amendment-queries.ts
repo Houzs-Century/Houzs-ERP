@@ -54,6 +54,10 @@ export type AmendmentRow = {
      signs). NULL on rows raised before the rework — those keep the legacy
      supplier-confirmed two-gate chain. */
   lane?: 'LINES' | 'DELIVERY' | string | null;
+  /* Owner 2026-09-15 (option B) — the requester's note that the computed
+     approver looked wrong. NULL when not flagged. The row still sits on the
+     lane the rule gave it; an administrator moves it with the relane workflow. */
+  lane_flag_note?: string | null;
   /* Owner 2026-07-27 — the PO(s) this SO's lines were purchased on
      (purchase_order_items.so_item_id linkage, resolved by the list endpoint).
      The PO Amendments inbox merges rows with a bound PO alongside the direct
@@ -214,6 +218,39 @@ export const usePoRevisions = (poId: string | null) => useQuery({
   retryDelay: 800,
 });
 
+/* ── Lane preview (owner 2026-09-15, option B) ─────────────────────────────
+   POST /mfg-sales-orders/:docNo/amendments/lane-preview — which desk the
+   request WILL go to, answered by the same resolver the create stores from.
+   Read-only on the server; a POST only because the payload is the draft. Not
+   cached across drafts: the key carries the lines and header keys, so editing
+   the draft re-asks. */
+export type AmendmentLane = 'LINES' | 'DELIVERY';
+export type AmendmentLanePreview = {
+  lanes: AmendmentLane[];
+  perLane: Record<AmendmentLane, { lineCount: number; headerKeys: string[] }>;
+};
+export type AmendmentLanePreviewArgs = {
+  docNo: string;
+  lines: CreateAmendmentLine[];
+  headerChanges?: SoAmendmentHeaderChanges;
+};
+export const useAmendmentLanePreview = (args: AmendmentLanePreviewArgs | null) => useQuery({
+  queryKey: ['so-amendment-lane-preview', args?.docNo ?? null,
+    (args?.lines ?? []).map((l) => `${l.salesOrderItemId ?? ''}|${l.newItemCode ?? ''}`),
+    Object.keys(args?.headerChanges ?? {}).sort()],
+  queryFn: () => authedFetch<AmendmentLanePreview>(
+    `/mfg-sales-orders/${args!.docNo}/amendments/lane-preview`,
+    { method: 'POST', body: JSON.stringify({
+      lines: args!.lines.map((l) => ({ salesOrderItemId: l.salesOrderItemId ?? null, newItemCode: l.newItemCode ?? null })),
+      headerChanges: args!.headerChanges ?? null,
+    }) },
+  ),
+  enabled: args != null,
+  staleTime: 60_000,
+  retry: retryUnlessClientError,
+  retryDelay: 800,
+});
+
 /* ── Create (nested under the SO mount) ────────────────────────────────────
    POST /mfg-sales-orders/:docNo/amendments — the CREATE lives on the SO router
    so it can reuse the SO processing-lock / downstream guards. */
@@ -237,6 +274,8 @@ export const useCreateAmendment = () => {
       docNo: string;
       idempotencyKey?: string;
       reason?: string;
+      /** The requester's note that the previewed approver looks wrong (option B). */
+      laneFlagNote?: string | null;
       lines: CreateAmendmentLine[];
       headerChanges?: SoAmendmentHeaderChanges;
     }) =>

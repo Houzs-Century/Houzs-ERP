@@ -149,6 +149,11 @@ export function MobileAmendments({
                       {reason ? `"${reason}"` : ""}
                     </div>
                   )}
+                  {(a.lane_flag_note ?? "").trim() && (
+                    <div className="amdno" style={{ color: "var(--amber, #a66a00)" }}>
+                      Approver flagged by requester: "{a.lane_flag_note}"
+                    </div>
+                  )}
                   <div className="foot">
                     <span>Requested by {actorNameOf(a.requested_by)}</span>
                     <span className="tnum">{formatDate(a.created_at)}</span>

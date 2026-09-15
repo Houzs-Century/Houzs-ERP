@@ -28,6 +28,7 @@ import { useSoListFilters } from "../../vendor/scm/lib/so-list-filter-state";
 import { salesOrderRowMenu } from "./row-menus";
 import { brandingToneForCategory, type BrandTone } from "../../lib/brandingTone";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import { CancelledMoneyActions } from "./CancelledMoneyActions";
 import {
   Plus,
   ChevronDown,
@@ -2068,6 +2069,10 @@ export function MfgSalesOrdersListV2() {
                 Clear
               </Button>
             </div>
+          )}
+          {selectedIds.size > 0 && !searchTransition.resultsAreStale && (
+            <CancelledMoneyActions onDone={clearSelection}
+              ticked={rows.filter((r) => selectedIds.has(r.doc_no)).map((r) => ({ docNo: r.doc_no, status: r.status.toUpperCase(), customer: r.debtor_name || null }))} />
           )}
           <DataTable<SoRow, SoListLine>
             /* The ONE Export (owner 2026-09-15): every order the tab, search,
