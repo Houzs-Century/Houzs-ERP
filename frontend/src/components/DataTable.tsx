@@ -2024,8 +2024,18 @@ function DataTableInner<T, L>({
      that stores these in state cannot re-enter this render pass. `rows` is
      undefined while loading; skip rather than publish an empty set, or a
      summary card would blink to zero on every refetch. */
+  /* Published only when the rows actually CHANGED, not when the array is new.
+     A funnel yields a fresh filtered array whenever the memo recomputes, and
+     it recomputes whenever the caller passes new column objects — which every
+     list page does on every render. A parent storing the report then rendered,
+     rebuilt its columns, got a new array, stored it again: an endless render
+     loop on any list with a saved funnel (docs/bugs, 2026-09-15). */
+  const reportedRowsRef = useRef<T[] | null>(null);
   useEffect(() => {
     if (!sortedRows) return;
+    const prev = reportedRowsRef.current;
+    if (prev && prev.length === sortedRows.length && prev.every((r, i) => r === sortedRows[i])) return;
+    reportedRowsRef.current = sortedRows;
     onFilteredRowsChange?.(sortedRows);
   }, [sortedRows, onFilteredRowsChange]);
 
