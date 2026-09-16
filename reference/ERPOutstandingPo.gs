@@ -187,6 +187,7 @@ function pushPoDatesToErp(triggerType, dryRun) {
     const t = erpPushPoDates_(erpConfig_(), updates, rid, dryRun);
     const message = (dryRun ? "PREVIEW (nothing written) for " : "Pushed dates for ") + updates.length + " PO(s): " + erpPoTallyText_(t);
     Log.info(rid, message);
+    if (dryRun) Log.info(rid, "Preview details (" + t.notes.length + "):\n" + t.notes.join("\n"));
     recordExecutionLog(ss, rid, "PO_DATE_SYNC", startTime, new Date(), dryRun ? "PREVIEW" : t.failed ? "PARTIAL" : "SYNCED", message, userEmail);
     if (triggerType === "MANUAL") SpreadsheetApp.getUi().alert("Outstanding PO dates\n\n" + message);
   } catch (e) {
