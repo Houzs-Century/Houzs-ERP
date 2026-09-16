@@ -67,8 +67,21 @@ describe('the shared save-guard layer carries no slip rule', () => {
   test('the guards that did NOT change are still shared by all four', () => {
     /* Removing one rule must not quietly unhook the others from the shared
        layer — desktop and mobile diverging on a save guard is the recurring
-       bug class named in CLAUDE.md. */
-    for (const source of [desktopSource, mobileSource, guidedSource, fromProductsSource]) {
+       bug class named in CLAUDE.md.
+
+       Since 2026-09-16 the New-SO and mobile save paths reach the date + stock-
+       location guards through the ONE aggregator collectSoSaveProblems (which
+       collects every blocker into one list) rather than calling them inline, so
+       for those two the shared path is `collectSoSaveProblems`; the evaluator
+       itself still calls both guards, asserted below. SalesOrderNewGuided and
+       SalesOrderNewFromProducts have not moved and still call them directly. */
+    const evaluatorSource = read('src/vendor/scm/lib/so-save-problems-client.ts');
+    expect(evaluatorSource).toContain('soDateGuardError');
+    expect(evaluatorSource).toContain('soStockLocationError');
+    for (const source of [desktopSource, mobileSource]) {
+      expect(source).toContain('collectSoSaveProblems');
+    }
+    for (const source of [guidedSource, fromProductsSource]) {
       expect(source).toContain('soDateGuardError');
       expect(source).toContain('soStockLocationError');
     }

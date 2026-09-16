@@ -13,7 +13,8 @@ import { authedFetch } from "../vendor/scm/lib/authed-fetch";
 import { lineWriteFailure, lineWriteSaveMessage, type LineWriteFailure } from "../vendor/scm/lib/line-write-failures";
 import { photoLabel, photoUploadFailure, photoUploadFailureMessage, unmatchedLinePhotos, type PhotoUploadFailure } from "../vendor/scm/lib/photo-upload-failures";
 import { runSoVersionedMutation } from "../vendor/scm/lib/so-versioned-mutation";
-import { notifySaveProblems } from "../vendor/scm/components/SaveProblemsList";
+import { notifySaveProblems, SaveProblemsList, saveProblemsTitle } from "../vendor/scm/components/SaveProblemsList";
+import { collectSoSaveProblems } from "../vendor/scm/lib/so-save-problems-client";
 import { uploadSlipFull } from "../vendor/scm/lib/slip";
 import { usePickableStaff } from "../vendor/scm/lib/admin-queries";
 import { resolveSelfStaff } from "../vendor/scm/lib/self-staff";
@@ -26,7 +27,7 @@ import { todayMyt } from "../vendor/scm/lib/dates";
 import { addressLineProps } from "../lib/acColumnWidths";
 import { deriveProcessingDate } from "../lib/processingDate";
 import { paymentMethodCodeForValue } from "../vendor/scm/lib/payment-methods";
-import { soDateGuardError, soStockLocationError, soErrorText } from "../vendor/scm/lib/so-form-validate";
+import { companyRequiresStockLocation } from "../vendor/scm/lib/so-form-validate";
 import { useBranding } from "../hooks/useBranding";
 import { newIdempotencyKey, idempotentInit, useIdempotencyKey } from "../lib/idempotency";
 import {
@@ -1336,40 +1337,23 @@ export function MobileNewSO({
 
   /* Address-required rule — optional by default; a PROCESSING DATE makes it
      required, because that date is the proceed signal and a proceeding order
-     has to be deliverable. It used to read `procDate && delivDate`, which
-     DISAGREED with the server (required on procDate alone since 2026-07-31),
-     so the marks stayed off and the save was then refused. Do not re-add the
-     AND: docs/modules/sales-order.md, "The client-side address marks". */
+     has to be deliverable. The fields required are exactly what the DESKTOP and
+     the BACKEND require (address line 1 + postcode + a delivery date, plus the
+     State only for a company whose order ships from a State-mapped warehouse —
+     HOUZS). The phone used to ALSO require State and City for every company,
+     which refused orders the server accepts — the same client-stricter-than-
+     server fault as #4007. State + City are no longer a blanket phone rule.
+     Do not re-add `procDate && delivDate`: the server requires the address on
+     procDate alone (2026-07-31). docs/modules/sales-order.md, "address marks". */
   const addressRequired = Boolean(procDate);
+  const stateRequiredForCompany = companyRequiresStockLocation(branding.companyCode);
   const missingAddress = addressRequired
     ? [
-        !state.trim() ? "state" : null,
-        !city.trim() ? "city" : null,
-        !postcode.trim() ? "postcode" : null,
         !addr1.trim() ? "address line 1" : null,
+        !postcode.trim() ? "postcode" : null,
+        stateRequiredForCompany && !state.trim() ? "state" : null,
       ].filter(Boolean) as string[]
     : [];
-
-  /* Dynamic "missing required fields" message — names ONLY what's actually
-     missing/invalid (owner: don't say "name, phone and email" when only email
-     is empty; email is optional anyway). */
-  const missingCustomerMsg = (): string | null => {
-    const miss: string[] = [];
-    if (nameErr) miss.push("customer name");
-    if (phoneErr) miss.push("phone");
-    if (emailErr) miss.push("a valid email");
-    if (miss.length === 0) return null;
-    const joined = miss.length === 1 ? miss[0] : miss.slice(0, -1).join(", ") + " and " + miss[miss.length - 1];
-    return `Fill in ${joined}.`;
-  };
-
-  /* Address validation message — only fires when both dates are set and the
-     delivery address is incomplete. */
-  const missingAddressMsg = (): string | null => {
-    if (missingAddress.length === 0) return null;
-    const joined = missingAddress.length === 1 ? missingAddress[0] : missingAddress.slice(0, -1).join(", ") + " and " + missingAddress[missingAddress.length - 1];
-    return `Both a Processing and a Delivery date are set, so fill in the delivery ${joined}.`;
-  };
 
   const namedLines = useMemo(() => lines.filter((l) => l.name.trim() || l.itemCode.trim()), [lines]);
   const unpickedLines = useMemo(() => namedLines.filter((l) => !l.itemCode.trim()), [namedLines]);
@@ -1807,71 +1791,6 @@ export function MobileNewSO({
   // ---- Mutations ------------------------------------------------------------
   async function save(asDraft = false) {
     setTouched(true);
-    const custMsg = missingCustomerMsg();
-    if (custMsg) { setError(custMsg); return; }
-    if (namedLines.length < 1) { setError("Add at least one line item."); return; }
-    if (unpickedLines.length > 0) {
-      setError(`Pick a product from the catalog for every line (${unpickedLines.length} line${unpickedLines.length === 1 ? "" : "s"} still ha${unpickedLines.length === 1 ? "s" : "ve"} no product selected).`);
-      return;
-    }
-    /* Sofa is exclusive among main products — the server 400s
-       `so_sofa_no_other_main` when a sofa line rides with a bedframe/mattress.
-       INTRODUCED, not flat (desktop parity, #2395): this asked the flat
-       `hasSofaMixConflict`, which is the CREATE path's question, and the guard
-       sits ABOVE the edit branch so it ran on edits too. The server's line paths
-       refuse only a change that INTRODUCES the mix, so an order written before
-       the rule existed stays editable — while this refused EVERY save on one,
-       not even a phone number, blaming a rule the server grandfathers.
-       `origItems` is empty on a create, so there this IS the flat question. */
-    if (sofaMixIntroduced(origItems.map((it) => it.item_group), namedLines.map((l) => l.itemGroup))) {
-      setError(SOFA_MIX_MESSAGE);
-      return;
-    }
-    /* Variant completeness is the PROCEED rule, and only the proceed rule
-       (owner 2026-08-13: "只要是没有 proceed 这一张订单，其实都不一定是需要填写
-       的，除非它是 proceed 了"). A Processing Date IS proceed — colour-KIV also
-       blocks a date, owner 2026-07-24 — so the axes are demanded exactly when
-       a date is being set, on create and on edit alike. This briefly also ran
-       on a date-less CONFIRMED create (2026-08-08, HC-SO-2607-008); that made
-       a real order for a real customer unbookable before the customer had
-       picked a seat height, and is removed. Drafts were never gated. */
-    if (!asDraft && procDate) {
-      const missOf = (l: LineItem) => missingVariantAxes(l.itemGroup, l.variants, l.itemCode);
-      const offender = namedLines.find((l) => missOf(l).length > 0);
-      if (offender) {
-        const miss = missOf(offender).map((a) => a.label).join(", ");
-        setError(`Complete the required options (${miss}) on "${offender.name || offender.itemCode}" before setting a Processing Date.`);
-        return;
-      }
-    }
-    /* Confirm gates (owner 2026-08-08) — a NEW confirmed order needs a venue
-       and a salesperson; drafts and edits are untouched (the DRAFT→CONFIRMED
-       status transition has its own server gate). The backend enforces both
-       (validation_failed); these pre-checks just say it in one sentence before
-       the round-trip. Salesperson: a caller who CANNOT re-pick is stamped
-       server-side as themselves, so only an attribute_other caller with the
-       picker left empty is blocked here. */
-    if (!asDraft && !isEdit && !outgoingVenueName && !outgoingVenueId) {
-      setError("Pick a venue before confirming this order (drafts can be saved without one).");
-      return;
-    }
-    if (!asDraft && !isEdit && canChangeSalesperson && !outgoingSalespersonId && !selfStaffMatch) {
-      setError("Pick a salesperson before confirming this order (drafts can be saved without one).");
-      return;
-    }
-    /* Stock-location gate (owner 2026-08-13, company 1 only) — the order must
-       ship from a warehouse or AutoCount refuses the whole document. SHARED
-       with desktop via soStockLocationError. Create only: an EDIT enqueues an
-       AutoCount edit, which leaves the account book's own Location alone. */
-    const locationErr = soStockLocationError({
-      companyCode: branding.companyCode,
-      salesLocation,
-      state,
-      mappingsLoaded: !!stateWarehousesQ.data,
-      asDraft,
-      isEdit,
-    });
-    if (locationErr) { setError(soErrorText(locationErr)); return; }
     const procOut = asDraft ? "" : procDate;
     const delivOut = asDraft ? "" : delivDate;
     /* The one value bag the EDIT patch and the CREATE body are both built from
@@ -1884,66 +1803,80 @@ export function MobileNewSO({
       ecName, ecPhone, ecRel,
       salespersonId: outgoingSalespersonId,
     };
-    /* Date sanity (set-together / not-past / processing≤delivery) — SHARED with
-       desktop via soDateGuardError so the rule can't drift. Validates only what
-       will actually be saved (a draft strips both dates → procOut/delivOut "").
-       Draft skips the both-or-neither rule (mobile parity); a firm SO enforces it.
+    /* ONE consolidated "what is blocking this save" check (owner 2026-09-16,
+       after #4007). Every client-checkable blocker — the always-required fields,
+       the customer/address/postcode/delivery-date completeness a Processing Date
+       demands, EVERY line's option/size/fabric gaps (not just the first), the
+       date rules, the stock location, sofa mix and payment sub-fields — is
+       collected into ONE list by the shared collectSoSaveProblems and shown in
+       the SAME SaveProblemsList popup the desktop and the server's
+       validation_failed refusal use. That ends the phone's one-error-at-a-time
+       popping and the #4007 masking (a mattress line with empty options and a
+       bedframe with no size hidden behind the address banner). No rule changes:
+       each blocker is still the same shared helper.
 
-       The originals are passed so the not-in-past rule fires only on a date this
-       edit CHANGED. Without them this guard made the whole EDIT SHEET unusable on
-       any SO that needed an amendment: such an SO ALWAYS has a past processing
-       date, so its own unchanged date failed the not-in-past check and the submit
-       was rejected before it ever reached the amendment (Owner 2026-07-16). */
-    const dateErr = soDateGuardError({
+       Confirm gates fire on a NEW confirmed order only — an edit keeps its venue
+       / salesperson / location, so those are pre-satisfied here on isEdit. The
+       address completeness now matches the desktop and the backend exactly
+       (address line 1 + postcode + a delivery date, State via the HOUZS location
+       gate) rather than the phone's old blanket State+City rule, which refused
+       orders the server accepts — the same client-stricter-than-server fault as
+       #4007. */
+    const problems = collectSoSaveProblems({
+      required: {
+        customerName: name,
+        phone,
+        hasNamedLine: namedLines.length >= 1,
+        asDraft,
+        hasVenue: isEdit || !!outgoingVenueName || !!outgoingVenueId,
+        hasSalesperson: isEdit || !canChangeSalesperson || !!outgoingSalespersonId || !!selfStaffMatch,
+        location: { companyCode: branding.companyCode, salesLocation, state, mappingsLoaded: !!stateWarehousesQ.data, asDraft, isEdit },
+      },
+      location: { companyCode: branding.companyCode, salesLocation, state, mappingsLoaded: !!stateWarehousesQ.data, asDraft, isEdit },
       processingDate: procOut,
-      deliveryDate: delivOut,
-      today: todayMyt(),
-      requireDatesTogether: !asDraft,
-      originalProcessingDate: origProcDate,
-      originalDeliveryDate: origDelivDate,
-      canRemoveProcessingDate,
+      completeness: { customerName: name, fillAddressLater: false, address1: addr1, postcode, deliveryDate: delivOut },
+      dateGuard: {
+        processingDate: procOut,
+        deliveryDate: delivOut,
+        today: todayMyt(),
+        requireDatesTogether: !asDraft,
+        originalProcessingDate: origProcDate,
+        originalDeliveryDate: origDelivDate,
+        canRemoveProcessingDate,
+      },
+      variantOffenders: namedLines
+        .map((l) => ({ itemCode: l.itemCode, missingLabels: missingVariantAxes(l.itemGroup, l.variants, l.itemCode).map((a) => a.label) }))
+        .filter((o) => o.missingLabels.length > 0),
+      sofaMixConflict: sofaMixIntroduced(origItems.map((it) => it.item_group), namedLines.map((l) => l.itemGroup)),
+      sofaMixMessage: SOFA_MIX_MESSAGE,
+      paymentGaps: pays
+        .map((p, i) => ({
+          row: i + 1,
+          method: p.method,
+          missing: toSen(p.amount) > 0
+            ? missingMethodSubField({
+                methodLabel: p.method,
+                merchantProvider: p.bank,
+                installmentMonthsLabel: p.plan,
+                onlineType: p.online,
+                convertedFromDocNo: p.convertedFromDocNo ?? "",
+              })
+            : null,
+        }))
+        .flatMap((x) => (x.missing ? [{ row: x.row, method: x.method, missing: x.missing }] : [])),
+      extra: [
+        ...(emailErr ? [{ code: "email_invalid", message: "Enter a valid email, or leave it blank.", field: "Email" }] : []),
+        ...(unpickedLines.length > 0
+          ? [{
+              code: "line_unpicked",
+              message: `Pick a product from the catalog for every line (${unpickedLines.length} line${unpickedLines.length === 1 ? "" : "s"} still ha${unpickedLines.length === 1 ? "s" : "ve"} no product selected).`,
+              field: "Line items",
+            }]
+          : []),
+      ],
     });
-    if (dateErr) { setError(soErrorText(dateErr)); return; }
-    /* Address becomes required only when this is a firm delivery (both dates set)
-       and we're not stashing a draft. Otherwise an empty address saves empty. */
-    if (!asDraft) {
-      const addrMsg = missingAddressMsg();
-      if (addrMsg) { setError(addrMsg); return; }
-    }
-    /* NO SLIP GUARD (Owner 2026-08-13) — "SalesOrder 所有的付款都不强制".
-       The guard that used to sit here existed because `recordNewPayments` only
-       POSTed rows carrying a slipSession, so refusing the save was all that
-       stood between a cashier and a payment that silently never booked. That
-       writer now posts on AMOUNT alone, so the row lands either way and there
-       is nothing left to refuse. Removing the guard WITHOUT that change would
-       re-introduce the exact money bug it was written for. */
-    /* Cascade guard — a chosen method needs its sub-field(s): Merchant → Bank +
-       Plan, Online → Sub-Type, Cash → none. Uses the SHARED desktop rule
-       (missingMethodSubField) at the SAME point desktop runs it: BEFORE the SO is
-       created. Without it, save() passed every check, the SO was created, and
-       recordNewPayments then POSTed the incomplete row — the server 400s
-       payment_method_field_required, which is caught below and surfaced only as
-       the generic "record them again" toast, AFTER the order already exists. The
-       payment never books and the SO reads unpaid. Only amount-bearing rows are
-       checked (a zeroed row is dropped at flush), mirroring desktop. */
-    const methodGaps = pays
-      .map((p, i) => ({
-        row: i + 1,
-        method: p.method,
-        missing: toSen(p.amount) > 0
-          ? missingMethodSubField({
-              methodLabel: p.method,
-              merchantProvider: p.bank,
-              installmentMonthsLabel: p.plan,
-              onlineType: p.online,
-              convertedFromDocNo: p.convertedFromDocNo ?? "",
-            })
-          : null,
-      }))
-      .filter((x) => x.missing !== null);
-    if (methodGaps.length > 0) {
-      const g = methodGaps[0]!;
-      setError(`Payment ${g.row} (${g.method}) needs a ${g.missing}. Pick the required sub-field for each payment method before saving.`);
+    if (problems.length > 0) {
+      await notify({ title: saveProblemsTitle(problems.length), body: <SaveProblemsList problems={problems} />, tone: "error" });
       return;
     }
     setError(null);
@@ -2465,7 +2398,7 @@ export function MobileNewSO({
                         No `(legacy)` fallback option, no `<select> → <input>`
                         free-text branch — a state not in scm.my_localities
                         must be added via the Localities Maintenance UI first. */}
-                    <Field label={addressRequired ? "State *" : "State"} error={touched && addressRequired && !state.trim()} scanned={scanned("state", state)}>
+                    <Field label={addressRequired && stateRequiredForCompany ? "State *" : "State"} error={touched && addressRequired && stateRequiredForCompany && !state.trim()} scanned={scanned("state", state)}>
                       <StatePicker
                         compact
                         value={state}
@@ -2487,7 +2420,7 @@ export function MobileNewSO({
                           the operator can pick City/Postcode first and let
                           state resolve back via resolvePostcode /
                           resolveCityState. */}
-                      <Field label={addressRequired ? "City *" : "City"} style={{ flex: 1 }} error={touched && addressRequired && !city.trim()} scanned={scanned("city", city)}>
+                      <Field label="City" style={{ flex: 1 }} error={false} scanned={scanned("city", city)}>
                         <select
                           className="fld-i"
                           value={city}
