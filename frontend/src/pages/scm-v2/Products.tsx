@@ -54,6 +54,7 @@ import { SearchableSelect } from '../../vendor/scm/components/SearchableSelect';
 import { fmtSen, fmtDate, fmtDateTime, maintActiveValues, maintEntryActive, maintEntryValue, maintEntryWithActive, maintEntryWithValue, maintValues, normalizeSofaTier, resolveSofaQuickPresets, SOFA_MODULES, type MaintPoolEntry, type SofaQuickPreset } from '@2990s/shared';
 import {
   useMfgProducts,
+  useMfgProductBoundCodes,
   useUpdateMfgProductPrices,
   useCreateMfgProduct,
   useBatchImportMfgProducts,
@@ -307,19 +308,19 @@ const SkuMasterTab = () => {
   // PR #39 — Model filter chip row (visible only on Sofa view).
   // Distinct base_model values pulled from current rows. 'all' = no filter.
   const [modelFilter, setModelFilter] = useState<string>('all');
-  // One-shot filter — narrows the grid to one_shot=true rows only.
-  const [oneShotOnly, setOneShotOnly] = useState(false);
+  // "No supplier binding" filter — the gap to fill one by one.
+  const [noSupplierOnly, setNoSupplierOnly] = useState(false);
 
-  // NOTE: this fetch is unbounded — it pulls the full mfg_products set for the
-  // category/search (no limit/pagination). The DOM is now windowed below, but
-  // the payload still scales with catalog size; a server-side cap / cursor is a
-  // separate follow-up (out of scope for this DOM-virtualization change).
+  // Unbounded fetch of the full mfg_products set for this category/search; the
+  // DOM is windowed below, but a server-side cap is a separate follow-up.
   const { data: products, isLoading, isFetching, error } = useMfgProducts({
     category: category === 'all' ? undefined : category,
     search: debouncedSearch.trim() || undefined,
   });
   const searching =
     search.trim() !== debouncedSearch.trim() || (!isLoading && isFetching);
+  // Company-scoped set of item codes that already have a supplier binding.
+  const boundCodes = useMfgProductBoundCodes();
   const config = useMaintenanceConfig('master');
   // Branding datalist options for the inline Mattress branding edit — pool
   // first, DISTINCT fallback. Rendered ONCE below (datalist#branding-pool-sku-master)
@@ -340,11 +341,8 @@ const SkuMasterTab = () => {
     [config.data],
   );
 
-  // PR #39 + #107 — distinct base_model values for the current category.
-  // Commander 2026-05-26: "为什么 bedframe 没有像 sofa 那样". Extended from
-  // SOFA-only to BEDFRAME + MATTRESS too so commander can narrow the SKU
-  // list to a single Model (Hilton bedframes, Purezone mattresses, etc.).
-  // ACCESSORY + SERVICE skip the filter — they don't carry a base_model.
+  // Distinct base_model values for the Model filter. Only SOFA / BEDFRAME /
+  // MATTRESS carry a base_model; ACCESSORY + SERVICE skip it.
   const supportsModelFilter = category === 'SOFA' || category === 'BEDFRAME' || category === 'MATTRESS';
   const categoryModels = useMemo<string[]>(() => {
     if (!supportsModelFilter) return [];
@@ -353,18 +351,25 @@ const SkuMasterTab = () => {
     return Array.from(s).sort();
   }, [allRows, supportsModelFilter]);
 
-  // Apply Model filter (only when current category supports it + a specific
-  // model is picked), then apply the one-shot filter.
+  // Apply the Model filter (when supported + a specific model is picked), then
+  // the no-supplier gap filter.
   const rows = useMemo(() => {
     let base = allRows;
     if (supportsModelFilter && modelFilter !== 'all') {
       base = base.filter((r) => r.base_model === modelFilter);
     }
-    if (oneShotOnly) {
-      base = base.filter((r) => r.one_shot === true);
+    // Gap filter: only SKUs with no supplier binding (no-op until loaded).
+    if (noSupplierOnly && boundCodes.data) {
+      base = base.filter((r) => !boundCodes.data!.has(r.code));
     }
     return base;
-  }, [allRows, supportsModelFilter, modelFilter, oneShotOnly]);
+  }, [allRows, supportsModelFilter, modelFilter, noSupplierOnly, boundCodes.data]);
+
+  // How many SKUs in the current view still have no supplier — shown on the toggle.
+  const unboundInView = useMemo(
+    () => (boundCodes.data ? allRows.reduce((n, r) => n + (boundCodes.data!.has(r.code) ? 0 : 1), 0) : null),
+    [allRows, boundCodes.data],
+  );
   const { setGridRows, gridEpoch, bumpGridEpoch, shownRows } = useSkuGridOrder(rows);
 
   // Reset Model filter when leaving a category that doesn't support it
@@ -900,12 +905,7 @@ const SkuMasterTab = () => {
         </div>
       </div>
 
-      {/* PR #39 + #107 — Model filter, available on SOFA / BEDFRAME /
-          MATTRESS. ACCESSORY + SERVICE skip — no base_model on those rows.
-          Owner 2026-08-07 ("SKU side also ah"): the pill rail (12 inline +
-          "More (N)" popover) is retired for the system-standard
-          SearchableSelect — one type-to-filter control, "All models" as the
-          empty pick, same idiom as the Variants tab. */}
+      {/* Model filter — type-to-filter SearchableSelect, "All models" = no filter. */}
       {supportsModelFilter && categoryModels.length > 1 && (
         <div style={{ marginTop: 'var(--space-2)', width: 300, maxWidth: '100%' }}>
           <SearchableSelect
@@ -921,6 +921,11 @@ const SkuMasterTab = () => {
           />
         </div>
       )}
+
+      <label style={{ marginTop: 'var(--space-2)', display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 'var(--fs-13)', cursor: 'pointer' }} title="Show only SKUs with no supplier bound yet — the gap to fill">
+        <input type="checkbox" checked={noSupplierOnly} onChange={(e) => setNoSupplierOnly(e.target.checked)} />
+        Only SKUs with no supplier binding{unboundInView != null ? ` (${unboundInView})` : ''}
+      </label>
 
       <p className={styles.eyebrow}>
         {isLoading
@@ -940,17 +945,12 @@ const SkuMasterTab = () => {
       )}
 
       <div hidden={editMode}>{
-        /* Batch 2: normal viewing — shared DataTable. Row CLICK — or the truck
-           icon — opens the Suppliers drawer (was double-click on DataGrid;
-           same Inventory-Balances convention). Selection is DataTable's
-           first-class checkbox column: header select-all (indeterminate)
-           replaces the old toolbar label, per-row ticks feed the same bulk
-           Delete / status actions as Edit Prices mode. Page search stays the
-           server-backed box above — no table search. */
+        /* Normal viewing. Row click (or the truck icon) opens the Suppliers
+           drawer; the checkbox column feeds the bulk Delete / status actions.
+           Search is the server-backed box above, not a table search. */
         <DataTable<MfgProductRow>
           key={gridEpoch} tableId={gridTableId} layoutFamily={gridTableId}
-          /* Opens with NO column filter, every time (owner 2026-09-15: a remembered
-             funnel made his SKUs look missing, and hid the row he had just renamed). */
+          /* Opens with NO column filter, every time: a remembered funnel made SKUs look missing. */
           persistFilters={false}
           exportName="sku-master"
           rows={isLoading || searching ? null : rows}
