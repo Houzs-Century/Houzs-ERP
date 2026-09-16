@@ -38,8 +38,10 @@ describe('ReceiptBackfillCard', () => {
   });
 
   it('shows the count and the numbers per month, runs only after the confirmation, and reports the result', async () => {
+    /* Batched (owner 2026-09-16): two calls, the second says nothing is left. */
+    let posts = 0;
     authedFetch.mockImplementation((path: string, init?: { method?: string }) => {
-      if (init?.method === 'POST') return Promise.resolve({ created: 43, formalised: 33, failed: [], remaining: 0 });
+      if (init?.method === 'POST') { posts += 1; return Promise.resolve(posts === 1 ? { created: 30, formalised: 20, failed: [], remaining: 13 } : { created: 13, formalised: 13, failed: [], remaining: 0 }); }
       return Promise.resolve(PLAN);
     });
     confirmSpy.mockResolvedValue(true);
@@ -54,6 +56,7 @@ describe('ReceiptBackfillCard', () => {
     expect(confirmSpy).toHaveBeenCalledWith(expect.objectContaining({ title: 'Create 43 receipts now?' }));
     await waitFor(() => expect(screen.getByText(/Created 43, formal 33, refused 0/)).toBeTruthy());
     expect(screen.getByText(/every payment has one now/)).toBeTruthy();
+    expect(posts).toBe(2);
   });
 
   it('a declined confirmation runs nothing; a clean company says so; a failed read says so', async () => {
