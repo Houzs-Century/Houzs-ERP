@@ -18,6 +18,7 @@ Loaded into every session, so it stays short. Adding a rule means removing or me
 
 ## Documentation — keep it small
 - Bug fixed: add a regression test, and write Symptom / Cause / Fix in 3 lines in the PR body. No per-bug file. Only a NEW recurring bug class gets one line in `docs/bugs/README.md`.
+- The test is the memory, so it is not optional: `Fix needs a test` reports a fix PR that changed `*/src` and moved no test (label `no-test-needed` to waive, with the reason in the body).
 - Module guide: current rules only (statuses, permissions, locks, required fields, gotchas), at most 300 lines. Edit the line when a rule changes; never append history, dates or measurements. `scripts/check-docs-size.mjs` fails a PR past the limits.
 - No handoff documents and no incident essays. Open items live in `tasks/TODO.md`, one line each (what, waiting on whom, since when). A real outage gets one short entry in `docs/LESSONS.md`.
 - Don't regenerate or commit `docs/generated/*` unless a check asks for it. Generate locally when you need one (`npm --prefix backend run gen:route-locator`).
