@@ -11,7 +11,7 @@ FOR, which trees are dead, what must be changed in pairs — lives in
 
 ## 1. Backend route inventory
 
-217 route modules (55 in `backend/src/routes`, 162 in `backend/src/scm/routes`), 1320 endpoint registrations.
+217 route modules (55 in `backend/src/routes`, 162 in `backend/src/scm/routes`), 1319 endpoint registrations.
 
 An endpoint is a `router.<method>("/…")` registration. For the per-route authorization
 boundary see the sibling artifact `docs/generated/route-capability-matrix.csv`, which
@@ -51,7 +51,7 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/notifications.ts` | 1 | 218 |
 | `backend/src/routes/portal.ts` | 6 | 329 |
 | `backend/src/routes/pos.ts` | 9 | 506 |
-| `backend/src/routes/position-capabilities.ts` | 3 | 224 |
+| `backend/src/routes/position-capabilities.ts` | 2 | 123 |
 | `backend/src/routes/position-policy.ts` | 3 | 177 |
 | `backend/src/routes/positions.ts` | 9 | 571 |
 | `backend/src/routes/presence.ts` | 2 | 201 |
@@ -245,14 +245,14 @@ scripts, never assumed: each runner declares its own directory, and
 
 | tree | runner | *.sql | highest | applied to PRODUCTION by deploy.yml | read by backend vitest |
 |---|---|---|---|---|---|
-| `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 154 | `155_position_policy.sql` (155) | no | yes |
-| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 438 | `0352_acc_pv_files.sql` (0352) | YES | no |
+| `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 155 | `156_drop_position_page_overrides.sql` (156) | no | yes |
+| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 439 | `0352_acc_pv_files.sql` (0352) | YES | no |
 
 Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its number): `0136_capture_compat_views_trips_lorries.sql.TEMPLATE`
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (2736 files, 824889 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (2735 files, 824517 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
