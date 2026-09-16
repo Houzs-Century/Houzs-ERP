@@ -172,24 +172,27 @@ WHERE t.last_modified > ?2::timestamptz
 ORDER BY t.last_modified, t.doc_no
 LIMIT ?3`;
 
-/** The statuses an order can hold while its delivery is still ahead of it. */
-export const UNDELIVERED_STATUSES = ["CONFIRMED", "IN_PRODUCTION", "READY_TO_SHIP", "SHIPPED", "ON_HOLD"] as const;
-/** The statuses that mean the goods have left — the book's "fully transferred". */
+/** The statuses that mean the goods have left — the book's "fully transferred".
+ *  "Undelivered" is deliberately NOT a second list here: the base SELECT already
+ *  drops DRAFT and CANCELLED, so an undelivered order is simply one that is not
+ *  in this set (so-delivery-sync.ts's DELIVERABLE_FROM is the auto-advance rule,
+ *  a different question, and excludes ON_HOLD for its own reason). */
 export const DELIVERED_STATUSES = ["DELIVERED", "INVOICED", "CLOSED"] as const;
 
 const inList = (xs: readonly string[]) => xs.map((s) => `'${s}'`).join(", ");
 
 /**
  * The Overdue History feed (replaces AutoCount `/SalesOrder/getOverdue`,
- * owner rulings 2026-09-16): an undelivered order whose customer delivery
- * date has passed, Malaysian calendar day. Bind: ?1 company_id. Oldest date
- * first. No age cap (the >90-day ones are included on purpose).
+ * owner rulings 2026-09-16): an undelivered order (held ones included) whose
+ * customer delivery date has passed, Malaysian calendar day. Bind: ?1
+ * company_id. Oldest date first. No age cap (the >90-day ones are included on
+ * purpose).
  */
 export const FEED_OVERDUE_SQL = `
 SELECT t.*, t.last_modified::text AS last_modified_text
 FROM (${FEED_BASE_SQL}
 ) t
-WHERE t.status IN (${inList(UNDELIVERED_STATUSES)})
+WHERE t.status NOT IN (${inList(DELIVERED_STATUSES)})
   AND t.customer_delivery_date::date < (now() AT TIME ZONE 'Asia/Kuala_Lumpur')::date
 ORDER BY t.customer_delivery_date, t.doc_no`;
 

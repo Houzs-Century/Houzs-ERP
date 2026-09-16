@@ -191,8 +191,10 @@ describePg('HC Delivery sheet feed SQL — real Postgres', () => {
 
   test('balance-collection: delivered orders still owing, this company only', async () => {
     const rows = (await sql.unsafe(toPgPlaceholders(FEED_BALANCE_COLLECTION_SQL), [1] as never[])) as unknown as FeedHeadRow[];
-    // HC-SO-000011 owes 600.00; HC-SO-000012 is paid in full; the CONFIRMED ones are not delivered.
-    expect(rows.map((r) => [r.doc_no, r.balance_sen_live])).toEqual([['HC-SO-000011', 60000]]);
+    // HC-SO-000011 owes 600.00 (dated 2026-02-01); HC-SO-2609-078 is DELIVERED with
+    // nothing paid and no date, so it comes last; HC-SO-000012 is paid in full;
+    // the CONFIRMED ones are not delivered.
+    expect(rows.map((r) => [r.doc_no, r.balance_sen_live])).toEqual([['HC-SO-000011', 60000], ['HC-SO-2609-078', 300000]]);
     expect(toSheetRecord(rows[0]!, [])).toMatchObject({ DocNo: 'SO-000011', Total: 1000, SOUDF_BALANCE: 600, Status: 'DELIVERED' });
   });
 

@@ -218,7 +218,7 @@ describe("GET /overdue and /balance-collection — the two daily lists (phase 2)
     expect(body.records[0]).toMatchObject({ DocNo: "SO-013495", SalesExemptionExpiryDate: "2026-08-01", SOUDF_VENUE: "Balakong Showroom" });
     const feed = seen.find((s) => /FROM scm\.mfg_sales_orders so/.test(s.sql))!;
     expect(feed.binds).toEqual([HOUZS]);
-    expect(feed.sql).toContain("t.status IN ('CONFIRMED', 'IN_PRODUCTION', 'READY_TO_SHIP', 'SHIPPED', 'ON_HOLD')");
+    expect(feed.sql).toContain("t.status NOT IN ('DELIVERED', 'INVOICED', 'CLOSED')");
     expect(feed.sql).toContain("t.customer_delivery_date::date < (now() AT TIME ZONE 'Asia/Kuala_Lumpur')::date");
     expect(feed.sql).toContain("ORDER BY t.customer_delivery_date, t.doc_no");
     expect(feed.sql).not.toContain("LIMIT");
