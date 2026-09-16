@@ -158,44 +158,6 @@ export function useDeleteSofaCombo() {
   });
 }
 
-// ── R8 anchors ────────────────────────────────────────────────────────────
-// A base_model can be anchored to ONE supplier (sofa_combo_anchor). While
-// anchored, combo create + price edits mirror between the master (sales-side)
-// combo and that supplier's scope, keeping the Product-Maintenance cost and the
-// anchored supplier's cost in lock-step. See apps/api/src/routes/sofa-combos.ts.
-
-export type SofaComboAnchor = {
-  base_model: string;
-  supplier_id: string;
-};
-
-export function useSofaComboAnchors() {
-  return useQuery({
-    queryKey: ['sofa-combo-anchors'],
-    queryFn: () =>
-      authedFetch<{ anchors: SofaComboAnchor[] }>('/sofa-combos/anchors').then((r) => r.anchors),
-    staleTime: 30_000,
-  });
-}
-
-export function useSetSofaComboAnchor() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ baseModel, supplierId }: { baseModel: string; supplierId: string | null }) =>
-      authedFetch<{ ok: true }>(`/sofa-combos/anchors/${encodeURIComponent(baseModel)}`, {
-        method: 'PUT',
-        body: JSON.stringify({ supplierId }),
-      }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['sofa-combo-anchors'] });
-      // The mirror creates/updates combos on the other side, so the combo lists
-      // (both master + supplier-scoped) must refetch to show them.
-      qc.invalidateQueries({ queryKey: ['sofa-combos'] });
-    },
-    onError: writeFailed,
-  });
-}
-
 // Customer hooks removed 2026-05-28 — commander dropped customer scoping
 // for 2990's B2C model. The DB column stays but the UI no longer writes
 // to it; useCopyCombosToCustomer + useCustomersLite were used only here.
