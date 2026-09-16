@@ -26,6 +26,20 @@ describe('the validate route is wired to the shared collector', () => {
     expect(handler).toContain('soPaymentSubFieldGap(');
   });
 
+  it('forwards the edit context so the grandfather carve-out works on an edit', () => {
+    /* The edit surfaces send the order's ORIGINAL dates; without forwarding them
+       an untouched already-past date would wrongly block the save. */
+    expect(handler).toContain('origProcDate: str(body.origProcessingDate)');
+    expect(handler).toContain('origDelivDate: str(body.origDeliveryDate)');
+  });
+
+  it('asks the INTRODUCED-mix question on an edit, not the flat one', () => {
+    /* mixes(after) && !mixes(before): on a create origItemGroups is [] so it is
+       flat; on an edit a pre-existing mix the change does not touch must not
+       block (matches the server line-mix gate). */
+    expect(handler).toContain('!mixesSofaWithOtherMain(((body.origItemGroups');
+  });
+
   it('writes NOTHING — it is a dry run', () => {
     expect(handler).not.toMatch(/\.insert\(|\.update\(|\.delete\(/);
     expect(handler).not.toContain('nextDocNo(');
