@@ -1,6 +1,6 @@
 import { describe, expect, test, vi } from 'vitest';
 
-import { AC_HOST_MAX_BODY_BYTES, PHOTOS_NOT_SENT_PREFIX, attachPhotos, planPhotoBudget } from './autocount-photo-attach';
+import { AC_HOST_MAX_BODY_BYTES, PHOTOS_NOT_SENT_PREFIX, PHOTOS_BAD_FORMAT_PREFIX, attachPhotos, planPhotoBudget } from './autocount-photo-attach';
 
 /* docs/bugs/0899. The host refuses a body over 2 MiB, and one phone photo is
    enough: HC-SO-013496 carries a single 4.20 MB picture (5.6 MB encoded). */
@@ -65,5 +65,20 @@ describe('attachPhotos', () => {
     expect(await attachPhotos(bucket({ a: 1_000 }), body, [{ dtlKey: 5, keys: ['a', 'gone'] }], 'SO X')).toBeNull();
     expect(body.Lines[0]).not.toHaveProperty('Photos');
     warn.mockRestore();
+  });
+
+  test('a WebP picture is dropped so the whole edit is not lost to "Parameter is not valid.", and the note names it (HC-SO-2609-080)', async () => {
+    const body = { Lines: [{ DtlKey: 5 }] };
+    const note = await attachPhotos(bucket({ 'a.webp': 1_000 }), body, [{ dtlKey: 5, keys: ['a.webp'] }], 'SO X');
+    expect(body.Lines[0]).not.toHaveProperty('Photos');
+    expect(note?.startsWith(PHOTOS_BAD_FORMAT_PREFIX)).toBe(true);
+    expect(note).toContain('line 5 (webp)');
+  });
+
+  test('a JPEG beside a WebP still goes; only the WebP is dropped', async () => {
+    const body = { Lines: [{ DtlKey: 5 }] };
+    const note = await attachPhotos(bucket({ 'ok.jpg': 1_000, 'bad.webp': 1_000 }), body, [{ dtlKey: 5, keys: ['ok.jpg', 'bad.webp'] }], 'SO X');
+    expect((body.Lines[0] as { Photos?: unknown[] }).Photos).toHaveLength(1);
+    expect(note).toContain('line 5 (webp)');
   });
 });

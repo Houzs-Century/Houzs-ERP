@@ -31,6 +31,27 @@ const BODY_HEADROOM_BYTES = 64 * 1024;
  *  check keys on it to list these apart from line-identity gaps. */
 export const PHOTOS_NOT_SENT_PREFIX = 'PHOTOS NOT SENT:';
 
+/**
+ * Formats AutoCount's image service CANNOT decode. It reads the bytes with the
+ * .NET image decoder (GDI+), which supports JPEG, PNG, GIF, BMP and TIFF but
+ * NOT these — a WebP sent under the `Jpeg` key made the host throw the bare
+ * "Parameter is not valid." and take the WHOLE edit with it (HC-SO-2609-080,
+ * two .webp line photos). We drop only KNOWN-unsupported extensions and attach
+ * everything else, so a key with no extension (a test key) or a supported one
+ * is unaffected. The remedy for a dropped picture is to re-save it as JPEG.
+ */
+export const PHOTO_UNDECODABLE_EXT: ReadonlySet<string> = new Set([
+  'webp', 'heic', 'heif', 'avif', 'svg', 'jxl',
+]);
+export const PHOTOS_BAD_FORMAT_PREFIX = 'PHOTOS NOT SENT (format):';
+
+const photoExt = (key: string): string => {
+  const base = key.split('/').pop() ?? key;
+  const dot = base.lastIndexOf('.');
+  return dot >= 0 ? base.slice(dot + 1).toLowerCase() : '';
+};
+export const isUndecodablePhoto = (key: string): boolean => PHOTO_UNDECODABLE_EXT.has(photoExt(key));
+
 const base64Length = (bytes: number) => Math.ceil(bytes / 3) * 4;
 /* `{"Jpeg":""}` plus a separator, per picture. */
 const PER_PICTURE_JSON = 12;
@@ -97,12 +118,20 @@ export async function attachPhotos(
   const lines = Array.isArray(body.Lines) ? (body.Lines as Array<Record<string, unknown>>) : [];
 
   const fetched: Array<{ line: Record<string, unknown>; dtlKey: number; bufs: ArrayBuffer[] }> = [];
+  /* Pictures in a format AutoCount's image service cannot decode (WebP, HEIC …):
+     dropped so the whole edit is not lost to "Parameter is not valid.", noted so
+     the row says why. Same shape of decision as a too-large picture below. */
+  const badFormat: Array<{ dtlKey: number; exts: string[] }> = [];
   for (const want of photos) {
     const line = lines.find((l) => Number(l.DtlKey) === want.dtlKey);
     if (!line || !want.keys.length) continue;
+    const undecodable = want.keys.filter(isUndecodablePhoto);
+    if (undecodable.length) badFormat.push({ dtlKey: want.dtlKey, exts: [...new Set(undecodable.map(photoExt))] });
+    const usable = want.keys.filter((k) => !isUndecodablePhoto(k));
+    if (!usable.length) continue;
     try {
       const bufs: ArrayBuffer[] = [];
-      for (const key of want.keys) {
+      for (const key of usable) {
         const obj = await bucket?.get(key);
         if (!obj) throw new Error(`photo not in the bucket: ${key}`);
         bufs.push(await obj.arrayBuffer());
@@ -112,19 +141,29 @@ export async function attachPhotos(
       console.warn(`photos not attached to ${label} line ${want.dtlKey}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
-  if (!fetched.length) return null;
 
-  const baseBodyBytes = new TextEncoder().encode(JSON.stringify(body)).length;
-  const plan = planPhotoBudget(baseBodyBytes, fetched.map((f) => ({ dtlKey: f.dtlKey, sizes: f.bufs.map((b) => b.byteLength) })));
-  const fits = new Set(plan.attach);
-  for (const f of fetched) {
-    if (fits.has(f.dtlKey)) f.line.Photos = f.bufs.map((b) => ({ Jpeg: b64(b) }));
+  const notes: string[] = [];
+  if (badFormat.length) {
+    const which = badFormat.map((b) => `line ${b.dtlKey} (${b.exts.join('/')})`).join(', ');
+    notes.push(`${PHOTOS_BAD_FORMAT_PREFIX} ${badFormat.length} line(s) carry a picture in a format `
+      + `AutoCount's image service cannot read: ${which}. The document was sent without them; re-save the picture as JPEG to carry it.`);
   }
-  if (!plan.tooLarge.length) return null;
 
-  const mb = (n: number) => (n / 1024 / 1024).toFixed(2);
-  const which = plan.tooLarge.map((t) => `line ${t.dtlKey} (${mb(t.bytes)} MB)`).join(', ');
-  return `${PHOTOS_NOT_SENT_PREFIX} ${plan.tooLarge.length} line(s) carry photographs too large for AutoCount's service to `
-    + `accept in one request (${mb(AC_HOST_MAX_BODY_BYTES)} MB): ${which}. The document was sent without them, and the `
-    + 'book keeps the pictures it had on those lines.';
+  if (fetched.length) {
+    const baseBodyBytes = new TextEncoder().encode(JSON.stringify(body)).length;
+    const plan = planPhotoBudget(baseBodyBytes, fetched.map((f) => ({ dtlKey: f.dtlKey, sizes: f.bufs.map((b) => b.byteLength) })));
+    const fits = new Set(plan.attach);
+    for (const f of fetched) {
+      if (fits.has(f.dtlKey)) f.line.Photos = f.bufs.map((b) => ({ Jpeg: b64(b) }));
+    }
+    if (plan.tooLarge.length) {
+      const mb = (n: number) => (n / 1024 / 1024).toFixed(2);
+      const which = plan.tooLarge.map((t) => `line ${t.dtlKey} (${mb(t.bytes)} MB)`).join(', ');
+      notes.push(`${PHOTOS_NOT_SENT_PREFIX} ${plan.tooLarge.length} line(s) carry photographs too large for AutoCount's service to `
+        + `accept in one request (${mb(AC_HOST_MAX_BODY_BYTES)} MB): ${which}. The document was sent without them, and the `
+        + 'book keeps the pictures it had on those lines.');
+    }
+  }
+
+  return notes.length ? notes.join(' ') : null;
 }
