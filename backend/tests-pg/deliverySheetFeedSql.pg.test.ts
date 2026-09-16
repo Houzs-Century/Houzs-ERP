@@ -19,7 +19,9 @@ import postgres, { type Sql } from 'postgres';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import { toPgPlaceholders } from '../src/db/d1-compat';
 import {
+  FEED_BALANCE_COLLECTION_SQL,
   FEED_EPOCH,
+  FEED_OVERDUE_SQL,
   FEED_SINCE_SQL,
   feedLinesSql,
   updateFromSheetSql,
@@ -65,6 +67,7 @@ async function resetFixture(s: Sql): Promise<void> {
       remark2 text, remark3 text, remark4 text, note text,
       processing_date date, customer_delivery_date date,
       address1 text, address2 text, address3 text, address4 text, postcode text, city text, customer_state text,
+      venue text,
       status text NOT NULL, updated_at timestamptz NOT NULL DEFAULT now()
     );
     CREATE TABLE scm.mfg_sales_order_payments (
@@ -97,8 +100,21 @@ async function resetFixture(s: Sql): Promise<void> {
        100, NULL, 'CANCELLED', '2026-09-09 00:00:00+00', NULL, NULL, NULL, NULL),
       ('2990-SO-2609-001', NULL, 2, '2026-09-03', NULL, NULL, 'Other company', NULL, 'KL WAREHOUSE', NULL, NULL,
        100, NULL, 'CONFIRMED', '2026-09-10 00:00:00+00', NULL, NULL, NULL, NULL);
+    -- Phase-2 fixture: an overdue undelivered order, a delivered-but-owing
+    -- order, a delivered-and-paid one and an overdue one in the other company.
+    -- All dated 2026-07 on updated_at so the since-feed tests above keep their
+    -- order (they read from the epoch and assert who comes after whom).
+    INSERT INTO scm.mfg_sales_orders
+      (doc_no, linked_ac_docno, company_id, so_date, debtor_name, sales_location, local_total_sen, status, updated_at, customer_delivery_date, venue)
+    VALUES
+      ('HC-SO-000010', 'SO-000010', 1, '2026-01-02', 'Late', 'PG WAREHOUSE', 100000, 'CONFIRMED', '2026-07-01 00:00:00+00', '2026-01-05', 'PG Showroom'),
+      ('HC-SO-000011', 'SO-000011', 1, '2026-01-03', 'Owes', 'KL WAREHOUSE', 100000, 'DELIVERED', '2026-07-02 00:00:00+00', '2026-02-01', NULL),
+      ('HC-SO-000012', 'SO-000012', 1, '2026-01-04', 'Paid', 'KL WAREHOUSE', 100000, 'DELIVERED', '2026-07-03 00:00:00+00', '2026-02-02', NULL),
+      ('2990-SO-000013', NULL, 2, '2026-01-04', 'Other late', 'KL WAREHOUSE', 100000, 'CONFIRMED', '2026-07-04 00:00:00+00', '2026-01-05', NULL);
     INSERT INTO scm.mfg_sales_order_payments (so_doc_no, amount_sen, created_at)
-      VALUES ('HC-SO-013495', 200000, '2026-09-05 10:00:00+00');
+      VALUES ('HC-SO-013495', 200000, '2026-09-05 10:00:00+00'),
+             ('HC-SO-000011', 40000, '2026-07-02 00:00:00+00'),
+             ('HC-SO-000012', 100000, '2026-07-03 00:00:00+00');
     INSERT INTO scm.delivery_orders (do_number, so_doc_no, status, updated_at) VALUES
       ('HC-DO-2609-001', 'HC-SO-013495', 'LOADED', '2026-09-03 00:00:00+00'),
       ('HC-DO-2609-002', 'HC-SO-013495', 'CANCELLED', '2026-09-06 00:00:00+00');
@@ -131,16 +147,17 @@ describePg('HC Delivery sheet feed SQL — real Postgres', () => {
     await sql?.end();
   });
 
+  const byDoc = (rows: FeedHeadRow[], doc: string) => rows.find((r) => r.doc_no === doc)!;
+
   test('from the epoch: the company\'s live orders only, oldest change first, one row each', async () => {
     const rows = await page(1, FEED_EPOCH, 10);
-    expect(rows.map((r) => r.doc_no)).toEqual(['HC-SO-2609-078', 'HC-SO-013495']);
+    expect(rows.map((r) => r.doc_no)).toEqual(['HC-SO-000010', 'HC-SO-000011', 'HC-SO-000012', 'HC-SO-2609-078', 'HC-SO-013495']);
     expect(rows.every((r) => typeof r.last_modified_text === 'string')).toBe(true);
-    expect(await page(2, FEED_EPOCH, 10)).toHaveLength(1);
+    expect(await page(2, FEED_EPOCH, 10)).toHaveLength(2);
   });
 
   test('a payment and a delivery order newer than the header move LastModified; the cancelled DO is not named', async () => {
-    const [, so] = await page(1, FEED_EPOCH, 10);
-    expect(so!.doc_no).toBe('HC-SO-013495');
+    const so = byDoc(await page(1, FEED_EPOCH, 10), 'HC-SO-013495');
     // header 09-01, payment 09-05, cancelled DO touched 09-06 → 09-06
     expect(so!.last_modified_text.startsWith('2026-09-06')).toBe(true);
     expect(so!.balance_sen_live).toBe(300000);
@@ -152,11 +169,31 @@ describePg('HC Delivery sheet feed SQL — real Postgres', () => {
 
   test('the checkpoint is strict — a page never re-sends its own last row', async () => {
     const all = await page(1, FEED_EPOCH, 10);
-    const afterFirst = await page(1, all[0]!.last_modified_text, 10);
-    expect(afterFirst.map((r) => r.doc_no)).toEqual(['HC-SO-013495']);
-    expect(await page(1, all[1]!.last_modified_text, 10)).toHaveLength(0);
+    const afterSg = await page(1, byDoc(all, 'HC-SO-2609-078').last_modified_text, 10);
+    expect(afterSg.map((r) => r.doc_no)).toEqual(['HC-SO-013495']);
+    expect(await page(1, byDoc(all, 'HC-SO-013495').last_modified_text, 10)).toHaveLength(0);
     // The old script's checkpoint format still parses.
     expect(await page(1, '2026-09-02 00:00:00', 10)).toHaveLength(1);
+  });
+
+  test('overdue: undelivered orders past their delivery date, this company only, oldest first', async () => {
+    const rows = (await sql.unsafe(toPgPlaceholders(FEED_OVERDUE_SQL), [1] as never[])) as unknown as FeedHeadRow[];
+    // HC-SO-000010 (CONFIRMED, 2026-01-05) yes; HC-SO-000011/12 are DELIVERED;
+    // HC-SO-013495 has no date; 2990-SO-000013 is the other company.
+    expect(rows.map((r) => r.doc_no)).toEqual(['HC-SO-000010']);
+    expect(rows[0]!.venue).toBe('PG Showroom');
+    expect(toSheetRecord(rows[0]!, [])).toMatchObject({ DocNo: 'SO-000010', SalesExemptionExpiryDate: '2026-01-05', SOUDF_VENUE: 'PG Showroom', SalesLocation: 'PG' });
+    // A date pushed into the future takes the order off the list.
+    await sql`UPDATE scm.mfg_sales_orders SET customer_delivery_date = '2099-01-01' WHERE doc_no = 'HC-SO-000010'`;
+    expect(await sql.unsafe(toPgPlaceholders(FEED_OVERDUE_SQL), [1] as never[])).toHaveLength(0);
+    await sql`UPDATE scm.mfg_sales_orders SET customer_delivery_date = '2026-01-05' WHERE doc_no = 'HC-SO-000010'`;
+  });
+
+  test('balance-collection: delivered orders still owing, this company only', async () => {
+    const rows = (await sql.unsafe(toPgPlaceholders(FEED_BALANCE_COLLECTION_SQL), [1] as never[])) as unknown as FeedHeadRow[];
+    // HC-SO-000011 owes 600.00; HC-SO-000012 is paid in full; the CONFIRMED ones are not delivered.
+    expect(rows.map((r) => [r.doc_no, r.balance_sen_live])).toEqual([['HC-SO-000011', 60000]]);
+    expect(toSheetRecord(rows[0]!, [])).toMatchObject({ DocNo: 'SO-000011', Total: 1000, SOUDF_BALANCE: 600, Status: 'DELIVERED' });
   });
 
   test('limit pages, and the lines query answers the page\'s doc numbers', async () => {
@@ -168,7 +205,9 @@ describePg('HC Delivery sheet feed SQL — real Postgres', () => {
   });
 
   test('the mapped record is what the sheet writes: AutoCount key, short location, ringgit, region', async () => {
-    const [sg, so] = await page(1, FEED_EPOCH, 10);
+    const all = await page(1, FEED_EPOCH, 10);
+    const sg = byDoc(all, 'HC-SO-2609-078');
+    const so = byDoc(all, 'HC-SO-013495');
     const rec = toSheetRecord(so!, [{ doc_no: so!.doc_no, item_group: 'MATTRESS', item_code: 'M1', stock_status: 'READY', cancelled: false }]);
     expect(rec).toMatchObject({
       DocNo: 'SO-013495',
@@ -189,7 +228,7 @@ describePg('HC Delivery sheet feed SQL — real Postgres', () => {
   });
 
   test('the write leg: found by the AutoCount number, keeps what the sheet did not send, moves the order forward', async () => {
-    const before = (await page(1, FEED_EPOCH, 10))[1]!.last_modified_text;
+    const before = byDoc(await page(1, FEED_EPOCH, 10), 'HC-SO-013495').last_modified_text;
     const upd1 = toPgPlaceholders(updateFromSheetSql(1));
     const hit = await sql.unsafe(upd1, ['SO-013495', 'Done Scheduling', '2026-10-01', 1] as never[]);
     expect(hit.map((r) => [r.doc_no, r.sheet_doc_no])).toEqual([['HC-SO-013495', 'SO-013495']]);

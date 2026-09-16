@@ -32,6 +32,8 @@ import { timingSafeEqualStr } from "../services/auth";
 import { checkRateLimit, clientIp } from "../middleware/rateLimit";
 import { intakeCompany } from "../lib/intake-company";
 import {
+  FEED_BALANCE_COLLECTION_SQL,
+  FEED_OVERDUE_SQL,
   FEED_SINCE_SQL,
   UPDATES_MAX,
   updateFromSheetSql,
@@ -40,6 +42,7 @@ import {
   parseLimit,
   parseSince,
   toSheetRecord,
+  type DeliverySheetRecord,
   type FeedHeadRow,
   type FeedLineRow,
 } from "../lib/delivery-sheet-feed";
@@ -77,6 +80,41 @@ async function sheetCompanyId(c: any): Promise<{ id: number } | { refusal: Respo
   return { id: keyCo.id };
 }
 
+/**
+ * Run one feed statement and map its heads to sheet records. The lines exist
+ * only to derive Remarks 2 for orders whose header carries none; a failed read
+ * refuses the whole page rather than writing blank remarks into the sheet.
+ */
+async function loadRecords(
+  c: any,
+  sql: string,
+  binds: unknown[],
+): Promise<{ records: DeliverySheetRecord[] } | { refusal: Response }> {
+  let heads: FeedHeadRow[];
+  try {
+    const res = (await c.env.DB.prepare(sql).bind(...binds).all()) as { results?: FeedHeadRow[] };
+    heads = res.results ?? [];
+  } catch (e) {
+    return { refusal: c.json({ error: "feed_read_failed", message: e instanceof Error ? e.message : String(e) }, 502) };
+  }
+  const linesByDoc = new Map<string, FeedLineRow[]>();
+  const docNos = heads.map((h) => h.doc_no);
+  for (let i = 0; i < docNos.length; i += 100) {
+    const chunk = docNos.slice(i, i + 100);
+    try {
+      const res = (await c.env.DB.prepare(feedLinesSql(chunk.length)).bind(...chunk).all()) as { results?: FeedLineRow[] };
+      for (const l of res.results ?? []) {
+        const arr = linesByDoc.get(l.doc_no) ?? [];
+        arr.push(l);
+        linesByDoc.set(l.doc_no, arr);
+      }
+    } catch (e) {
+      return { refusal: c.json({ error: "lines_read_failed", message: e instanceof Error ? e.message : String(e) }, 502) };
+    }
+  }
+  return { records: heads.map((h) => toSheetRecord(h, linesByDoc.get(h.doc_no) ?? [])) };
+}
+
 app.get("/so-since", async (c) => {
   const denied = await badSheetKey(c);
   if (denied) return denied;
@@ -86,34 +124,10 @@ app.get("/so-since", async (c) => {
   const co = await sheetCompanyId(c);
   if ("refusal" in co) return co.refusal;
 
-  let heads: FeedHeadRow[];
-  try {
-    // company-scope: ?1 is the secret's company id, resolved from the master above.
-    const res = await c.env.DB.prepare(FEED_SINCE_SQL).bind(co.id, since, limit).all<FeedHeadRow>();
-    heads = res.results ?? [];
-  } catch (e) {
-    return c.json({ error: "feed_read_failed", message: e instanceof Error ? e.message : String(e) }, 502);
-  }
-
-  // The lines exist only to derive Remarks 2 for orders whose header carries
-  // none. A failed read refuses the page rather than writing blank remarks.
-  const linesByDoc = new Map<string, FeedLineRow[]>();
-  const docNos = heads.map((h) => h.doc_no);
-  for (let i = 0; i < docNos.length; i += 100) {
-    const chunk = docNos.slice(i, i + 100);
-    try {
-      const res = await c.env.DB.prepare(feedLinesSql(chunk.length)).bind(...chunk).all<FeedLineRow>();
-      for (const l of res.results ?? []) {
-        const arr = linesByDoc.get(l.doc_no) ?? [];
-        arr.push(l);
-        linesByDoc.set(l.doc_no, arr);
-      }
-    } catch (e) {
-      return c.json({ error: "lines_read_failed", message: e instanceof Error ? e.message : String(e) }, 502);
-    }
-  }
-
-  const records = heads.map((h) => toSheetRecord(h, linesByDoc.get(h.doc_no) ?? []));
+  // company-scope: ?1 is the secret's company id, resolved from the master above.
+  const loaded = await loadRecords(c, FEED_SINCE_SQL, [co.id, since, limit]);
+  if ("refusal" in loaded) return loaded.refusal;
+  const { records } = loaded;
   return c.json({
     count: records.length,
     limit,
@@ -124,6 +138,33 @@ app.get("/so-since", async (c) => {
     has_more: records.length >= limit,
     records,
   });
+});
+
+/* Phase 2 (owner 2026-09-16): the two daily lists that used to come from
+   AutoCount's /SalesOrder/getOverdue and /getBalanceCollection. Full state,
+   no cursor — the sheet appends (Overdue History) or rewrites (Balance
+   Collection) the whole answer each day. */
+
+app.get("/overdue", async (c) => {
+  const denied = await badSheetKey(c);
+  if (denied) return denied;
+  const co = await sheetCompanyId(c);
+  if ("refusal" in co) return co.refusal;
+  // company-scope: ?1 is the secret's company id.
+  const loaded = await loadRecords(c, FEED_OVERDUE_SQL, [co.id]);
+  if ("refusal" in loaded) return loaded.refusal;
+  return c.json({ count: loaded.records.length, records: loaded.records });
+});
+
+app.get("/balance-collection", async (c) => {
+  const denied = await badSheetKey(c);
+  if (denied) return denied;
+  const co = await sheetCompanyId(c);
+  if ("refusal" in co) return co.refusal;
+  // company-scope: ?1 is the secret's company id.
+  const loaded = await loadRecords(c, FEED_BALANCE_COLLECTION_SQL, [co.id]);
+  if ("refusal" in loaded) return loaded.refusal;
+  return c.json({ count: loaded.records.length, records: loaded.records });
 });
 
 type SheetUpdate = { DocNo?: unknown; Remark4?: unknown; ExpiryDate?: unknown };

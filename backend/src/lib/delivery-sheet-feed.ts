@@ -45,6 +45,7 @@ export type FeedHeadRow = {
   postcode: string | null;
   city: string | null;
   customer_state: string | null;
+  venue: string | null;
   status: string;
   do_numbers: string | null;
   po_numbers: string | null;
@@ -85,6 +86,7 @@ export type DeliverySheetRecord = {
   InvAddr3: string | null;
   InvAddr4: string | null;
   Attention: string | null;
+  SOUDF_VENUE: string | null;
   Status: string;
   Region: "WEST" | "EAST" | "SG" | null;
   LastModified: string;
@@ -129,9 +131,9 @@ export function parseLimit(raw: string | undefined | null): number {
  * DRAFT and CANCELLED orders are not sent, as on the delivery board. A row the
  * sheet already carries keeps its last state when its order is cancelled.
  */
-export const FEED_SINCE_SQL = `
-SELECT t.*, t.last_modified::text AS last_modified_text
-FROM (
+/** The head rows every feed reads, for ONE company (`?1`), live orders only.
+ *  Each feed wraps this and adds its own outer predicate and order. */
+const FEED_BASE_SQL = `
   SELECT so.doc_no, so.linked_ac_docno,
          so.so_date::text AS so_date, so.ref, so.branding, so.debtor_name, so.phone,
          so.sales_location, so.agent, sp.name AS salesperson_name,
@@ -141,7 +143,7 @@ FROM (
          so.processing_date::text AS processing_date,
          so.customer_delivery_date::text AS customer_delivery_date,
          so.address1, so.address2, so.address3, so.address4,
-         so.postcode, so.city, so.customer_state,
+         so.postcode, so.city, so.customer_state, so.venue,
          so.status::text AS status,
          dos.do_numbers, pos.po_numbers,
          GREATEST(so.updated_at, pay.last_paid_at, dos.last_do_at) AS last_modified
@@ -160,11 +162,51 @@ FROM (
                 GROUP BY i.doc_no) pos ON pos.doc_no = so.doc_no
     LEFT JOIN scm.staff sp ON sp.id = so.salesperson_id
    WHERE so.company_id = ?1
-     AND so.status::text NOT IN ('DRAFT', 'CANCELLED')
+     AND so.status::text NOT IN ('DRAFT', 'CANCELLED')`;
+
+export const FEED_SINCE_SQL = `
+SELECT t.*, t.last_modified::text AS last_modified_text
+FROM (${FEED_BASE_SQL}
 ) t
 WHERE t.last_modified > ?2::timestamptz
 ORDER BY t.last_modified, t.doc_no
 LIMIT ?3`;
+
+/** The statuses an order can hold while its delivery is still ahead of it. */
+export const UNDELIVERED_STATUSES = ["CONFIRMED", "IN_PRODUCTION", "READY_TO_SHIP", "SHIPPED", "ON_HOLD"] as const;
+/** The statuses that mean the goods have left — the book's "fully transferred". */
+export const DELIVERED_STATUSES = ["DELIVERED", "INVOICED", "CLOSED"] as const;
+
+const inList = (xs: readonly string[]) => xs.map((s) => `'${s}'`).join(", ");
+
+/**
+ * The Overdue History feed (replaces AutoCount `/SalesOrder/getOverdue`,
+ * owner rulings 2026-09-16): an undelivered order whose customer delivery
+ * date has passed, Malaysian calendar day. Bind: ?1 company_id. Oldest date
+ * first. No age cap (the >90-day ones are included on purpose).
+ */
+export const FEED_OVERDUE_SQL = `
+SELECT t.*, t.last_modified::text AS last_modified_text
+FROM (${FEED_BASE_SQL}
+) t
+WHERE t.status IN (${inList(UNDELIVERED_STATUSES)})
+  AND t.customer_delivery_date::date < (now() AT TIME ZONE 'Asia/Kuala_Lumpur')::date
+ORDER BY t.customer_delivery_date, t.doc_no`;
+
+/**
+ * The Balance Collection feed (replaces AutoCount `/SalesOrder/getBalanceCollection`):
+ * the goods have left but money is still owed — what the book called "fully
+ * transferred with UDF_BALANCE > 0" (every order on the old tab was absent
+ * from the ERP's outstanding import for exactly that reason). Bind: ?1
+ * company_id. Oldest delivery date first, undated last.
+ */
+export const FEED_BALANCE_COLLECTION_SQL = `
+SELECT t.*, t.last_modified::text AS last_modified_text
+FROM (${FEED_BASE_SQL}
+) t
+WHERE t.status IN (${inList(DELIVERED_STATUSES)})
+  AND t.balance_sen_live > 0
+ORDER BY t.customer_delivery_date NULLS LAST, t.doc_no`;
 
 /** The lines behind a page of heads, for the Remarks-2 readiness wording.
  *  Bare `?` per doc number; bind the doc numbers in the same order. */
@@ -256,6 +298,7 @@ export function toSheetRecord(row: FeedHeadRow, lines: ReadonlyArray<FeedLineRow
     InvAddr3: addr3,
     InvAddr4: addr4,
     Attention: null,
+    SOUDF_VENUE: blankToNull(row.venue),
     Status: row.status,
     Region: sheetRegion(salesLocation, addr3),
     LastModified: row.last_modified_text,
