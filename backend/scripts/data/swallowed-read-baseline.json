@@ -401,10 +401,6 @@
       "reads": 2,
       "catches": 0
     },
-    "backend/src/scm/routes/sofa-combos.ts": {
-      "reads": 1,
-      "catches": 0
-    },
     "backend/src/scm/routes/sofa-compartment-photos.ts": {
       "reads": 1,
       "catches": 3
