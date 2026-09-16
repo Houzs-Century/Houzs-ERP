@@ -223,7 +223,12 @@ const CEILINGS = {
   // name for the shared LinePoRefLink chunk the five purchase pages import.
   // Any PR adding a shared lazy chunk would have tripped it; the bell popover
   // body is still the diet that buys real room.
-  INITIAL_JS_GZIP: 169 * KB,
+  // 169 -> 170 on 2026-09-16: main sat AT 169.0 and the SCM server-side funnel
+  // rollout (GRN, PR #4030) added NO eager module — the entry's lazy-chunk map
+  // gained one name for the shared useServerColumnFunnels chunk the SCM list
+  // pages import. Same shared-lazy-chunk mechanism as the note above; the bell
+  // popover body is still the diet that buys real room.
+  INITIAL_JS_GZIP: 170 * KB,
   // Everything the app can lazy-load (users only fetch the routes they visit).
   // A soft guard against unbounded total growth, not a first-paint cost. Left
   // at 1800 deliberately — main is at ~99% of it and RAISING IT AGAIN IS NOT
