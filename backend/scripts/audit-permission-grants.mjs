@@ -69,13 +69,23 @@ try {
       FROM positions p
       LEFT JOIN departments d ON d.id = p.department_id
      ORDER BY p.id`;
+  // The per-Title policy rows (position_policy, Roles & Permissions › Titles):
+  // a Title with a row is classified by it, exactly as login does; a Title
+  // without one prints as policy:name so the gap is visible.
+  const policyRows = new Map();
+  for (const r of await pg`
+    SELECT position_id, cohort, profile, can_move_money, can_write_config, is_fleet FROM position_policy`)
+    policyRows.set(r.position_id, r);
+  const rowFor = (id) => policyRows.get(id) ?? null;
+  const rowByName = new Map(positions.map((p) => [p.name, rowFor(p.id)]));
+  console.log(`  position_policy rows: ${policyRows.size} of ${positions.length} Titles have one`);
 
   notice("-- (1) LIVE POSITIONS -> which code cohort each one lands in --");
   console.log(
     "  id | position                  | department            | act | policy cohort              | PMS role   | flags",
   );
   for (const p of positions) {
-    const k = classifyPosition(p.name, p.dept);
+    const k = classifyPosition(p.name, p.dept, rowFor(p.id));
     console.log(
       `  ${String(p.id).padStart(2)} | ${String(p.name).padEnd(25)} | ${String(p.dept ?? "-").padEnd(21)} | ${String(p.active_users).padStart(3)} | ${k.label.padEnd(26)} | ${k.pmsRole.padEnd(10)} | ${k.flags.join(",") || "-"}`,
     );
@@ -84,7 +94,7 @@ try {
   notice("-- (1b) each position-keyed rule -> the LIVE positions it admits (asked of the code) --");
   const admits = new Map();
   for (const p of positions) {
-    const k = classifyPosition(p.name, p.dept);
+    const k = classifyPosition(p.name, p.dept, rowFor(p.id));
     for (const f of [`cohort:${k.cohort}`, ...k.flags]) {
       if (!admits.has(f)) admits.set(f, []);
       admits.get(f).push(`${p.name} (${p.active_users})`);
@@ -95,7 +105,7 @@ try {
 
   notice("-- (1c) PMS regex misses: live positions getPmsRole falls through to OTHER --");
   for (const p of positions) {
-    if (classifyPosition(p.name, p.dept).pmsRole !== "OTHER") continue;
+    if (classifyPosition(p.name, p.dept, rowFor(p.id)).pmsRole !== "OTHER") continue;
     console.log(`  ${String(p.name).padEnd(28)} -> OTHER  (${p.active_users} active users)`);
   }
 
@@ -184,7 +194,7 @@ try {
 
   const wild = people.filter((u) => {
     let perms = []; try { perms = JSON.parse(u.role_perms || "[]"); } catch {}
-    return perms.includes("*") || classifyPosition(u.position_name, u.dept_name).cohort === "god";
+    return perms.includes("*") || classifyPosition(u.position_name, u.dept_name, rowByName.get(u.position_name) ?? null).cohort === "god";
   });
   console.log(`\n  EFFECTIVE WILDCARD "*" holders (role "*" OR god position): ${wild.length}`);
   for (const u of wild) {
@@ -197,7 +207,7 @@ try {
   const tally = new Map();
   for (const u of people) {
     let perms = []; try { perms = JSON.parse(u.role_perms || "[]"); } catch {}
-    const k = classifyPosition(u.position_name, u.dept_name);
+    const k = classifyPosition(u.position_name, u.dept_name, rowByName.get(u.position_name) ?? null);
     const c = perms.includes("*") || k.cohort === "god" ? "wildcard *" : k.label;
     tally.set(c, (tally.get(c) ?? 0) + 1);
   }
@@ -279,7 +289,7 @@ try {
   let ignoredDenies = 0;
   for (const r of ignored) {
     // Only a position the policy resolves to FULL ignores its saved rows.
-    if (classifyPosition(r.position, r.dept).cohort !== "full") continue;
+    if (classifyPosition(r.position, r.dept, rowByName.get(r.position) ?? null).cohort !== "full") continue;
     ignoredCount++;
     if (r.level === "none") ignoredDenies++;
     console.log(
@@ -354,7 +364,7 @@ try {
       LEFT JOIN user_companies g ON g.user_id = u.id
       LEFT JOIN companies c ON c.id = g.company_id
      WHERE u.status = 'active'
-     GROUP BY 1, 2, 3 ORDER BY 1, 3`).filter((r) => classifyPosition(r.position, r.dept).cohort === "full");
+     GROUP BY 1, 2, 3 ORDER BY 1, 3`).filter((r) => classifyPosition(r.position, r.dept, rowByName.get(r.position) ?? null).cohort === "full");
   for (const r of uc)
     console.log(`  ${String(r.position).padEnd(24)} ${String(r.company).padEnd(8)} ${String(r.people).padStart(3)} people`);
 
@@ -368,7 +378,7 @@ try {
       JOIN positions p ON p.id = u.position_id
       LEFT JOIN departments d ON d.id = u.department_id
      WHERE u.status = 'active'
-     GROUP BY 1, 2, 3 ORDER BY 4 DESC`).filter((a) => classifyPosition(a.position, a.dept).cohort === "full");
+     GROUP BY 1, 2, 3 ORDER BY 4 DESC`).filter((a) => classifyPosition(a.position, a.dept, rowByName.get(a.position) ?? null).cohort === "full");
   if (!acted.length) console.log("  (no audit_events rows for these people)");
   for (const a of acted)
     console.log(`  ${String(a.position).padEnd(24)} ${personRef(a.person_id)} ${String(a.events).padStart(5)} events, newest ${a.newest}`);

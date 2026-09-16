@@ -12,6 +12,7 @@ import { EmptyState } from "../../components/EmptyState";
 import { ListSkeleton } from "../../components/Skeleton";
 import type { Position } from "../../types";
 import { Eyebrow, SegmentedTabs } from "./teamShared";
+import { TeamTitlesPolicy, type TitlePolicyPayload } from "./TeamTitlesPolicy";
 
 /* Roles & Permissions — design handoff screen 06, on the REAL access model,
  * editable (owner 2026-08-22, extended the same day to 全部 SCM 模块).
@@ -44,10 +45,6 @@ type MatrixPayload = {
   overrides: Array<{ position_id: number; page_key: string; level: string }>;
   baselines: Partial<Record<string, Partial<Record<string, string>>>>;
 };
-
-// Mirrors GOD_POSITIONS in backend/src/services/positionPolicy.ts (by slug):
-// these positions hold '*' by position, so the matrix shows them locked-on.
-const GOD_SLUGS = new Set(["super_admin", "owner", "managing_director"]);
 
 const LEVEL_CYCLE = ["none", "view", "edit", "full"] as const;
 const LEVEL_CODE: Record<string, string> = {
@@ -108,6 +105,21 @@ export function TeamRolesV2() {
   const matrixQ = useQuery<MatrixPayload>("/api/position-capabilities", () =>
     api.get("/api/position-capabilities"),
   );
+  // The per-Title policy rows (Titles tab). Also the one source for "this Title
+  // is owner tier" — the matrix locks those rows on, read from the server's
+  // answer rather than a slug list kept here.
+  const policyQ = useQuery<TitlePolicyPayload>("/api/position-policy", () =>
+    api.get("/api/position-policy"),
+  );
+  const godIds = useMemo(
+    () =>
+      new Set(
+        (policyQ.data?.positions ?? [])
+          .filter((p) => p.effective.cohort === "god")
+          .map((p) => p.id),
+      ),
+    [policyQ.data],
+  );
 
   const positions = useMemo(
     () =>
@@ -135,10 +147,11 @@ export function TeamRolesV2() {
   // redesign and the only way to a role's permission checkboxes was the
   // URL ?tab=roles, which nobody finds. The other sections are the
   // POSITION matrix as before.
-  type Tab = "roles" | "actions" | (string & {});
+  type Tab = "roles" | "titles" | "actions" | (string & {});
   const [tab, setTab] = useState<Tab>("roles");
   const [creatingRole, setCreatingRole] = useState(false);
   const isRoles = tab === "roles";
+  const isTitles = tab === "titles";
 
   // Drafts — seeded from the server, edited optimistically; a failed PUT
   // rolls the row back to the last server truth.
@@ -220,7 +233,14 @@ export function TeamRolesV2() {
 
   // The Roles section has its own loading state (RolesTab); only the matrix
   // sections wait for the position + capability queries.
-  if (!isRoles && (positionsQ.loading || matrixQ.loading)) return <ListSkeleton rows={5} />;
+  if (!isRoles && (positionsQ.loading || matrixQ.loading || policyQ.loading)) return <ListSkeleton rows={5} />;
+  if (isTitles && policyQ.error)
+    return (
+      <EmptyState
+        message="The Titles policy isn't served by this backend yet"
+        description="This tab needs the position-policy API from the same release — it appears once this branch's backend is deployed."
+      />
+    );
   if (matrixQ.error)
     return (
       <EmptyState
@@ -251,6 +271,7 @@ export function TeamRolesV2() {
           onChange={setTab}
           options={[
             { value: "roles", label: "Roles" },
+            { value: "titles", label: "Titles" },
             { value: "actions", label: "Actions" },
             ...areas.map((a) => ({ value: a, label: areaLabel(a) })),
           ]}
@@ -265,7 +286,7 @@ export function TeamRolesV2() {
               New Role
             </Button>
           )
-        ) : !isActions ? (
+        ) : !isActions && !isTitles ? (
           <span className="text-[11.5px] text-ink-muted">
             Cells show the effective level — click cycles none / view / edit / full /
             inherit. Marked cells override the position policy.
@@ -275,6 +296,8 @@ export function TeamRolesV2() {
 
       {isRoles ? (
         <RolesTab creating={creatingRole} onCloseCreate={() => setCreatingRole(false)} />
+      ) : isTitles && policyQ.data ? (
+        <TeamTitlesPolicy payload={policyQ.data} canEdit={canEdit} onSaved={() => policyQ.reload()} />
       ) : (
         <>
       <div className="overflow-x-auto">
@@ -312,7 +335,7 @@ export function TeamRolesV2() {
           </div>
 
           {positions.map((p) => {
-            const god = GOD_SLUGS.has(p.slug);
+            const god = godIds.has(p.id);
             const highlight = mostPopulous?.id === p.id;
             const grants = capDraft.get(p.id) ?? new Set<string>();
             const overrides = ovrDraft.get(p.id) ?? {};

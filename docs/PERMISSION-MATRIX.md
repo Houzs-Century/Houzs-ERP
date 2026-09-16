@@ -8,6 +8,8 @@ verbatim into `position_page_access`.
 
 Levels: **-** = none, **V** = view, **E** = edit, **F** = full.
 
+> **Which cohort a Title is in is DATA now**: `position_policy` (one row per Title, keyed by position_id; Roles & Permissions › Titles). The per-position rows below describe the whitelists the `restricted` profiles and the `sales` tiers open; `full` opens every page (money writes only with the Money flag). A Title with no row falls back to the name lists in `positionPolicy.ts`.
+
 ## Cascade convention (important for the seed)
 Pages with sub-tabs are a parent + children. Parent **F** → all children F;
 parent **-** → all children -; parent **V/E** → children use their own row.
