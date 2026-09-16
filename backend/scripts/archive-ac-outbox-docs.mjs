@@ -81,6 +81,10 @@ console.log(`docs: ${DOC_NOS.join(', ')}  company: ${COMPANY_ID}  mode: ${MODE}`
 
 /* The documents this run may archive; the post-check below asserts only these. */
 let finishedDocs = [];
+/* Hoisted beside finishedDocs: the summary line below runs in a LATER scope than
+   the try that fills this, so a block-scoped `const` here read as undefined and
+   threw a ReferenceError AFTER the archive had already committed. */
+let forced = [];
 const pg = postgres(url, { ssl: 'require', prepare: false, max: 1 });
 
 try {
@@ -113,7 +117,7 @@ try {
      archive does (archived_at = NULL). */
   const FORCE = new Set((process.env.FORCE_UNFINISHED ?? '').split(/[\s,]+/).map((s) => s.trim()).filter(Boolean));
   const unfinished = new Map();
-  const forced = [];
+  forced = [];
   for (const d of DOC_NOS) {
     const why = clearVerdict(perDoc.get(d) ?? []);
     if (!why || why === 'no rows') continue;
