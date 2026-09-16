@@ -36,7 +36,7 @@ import { MoneyInput } from './MoneyInput';
 import { DateField } from './DateField';
 import { RefundsLine } from './RefundsLine';
 import { OrderMoneyPanel } from './OrderMoneyPanel';
-import { CONVERT_LABEL, CONVERTED_METHOD, convertPicksFrom, useConvertSources, type ConvertSource } from '../lib/so-money-queries';
+import { CONVERT_LABEL, CONVERTED_METHOD, convertPicksFrom, useAddedConvertSources, useConvertSources, type ConvertSource } from '../lib/so-money-queries';
 import { useNotify } from './NotifyDialog';
 import { useConfirm } from './ConfirmDialog';
 import { todayMyt, mytDayOf } from '../lib/dates';
@@ -150,6 +150,10 @@ export const labelToApi = (label: PaymentMethodLabel): {
    + the locked-set keys). Display labels resolve live from methodOpts. A code
    the screen does not know opens under its own name (the select shows it as
    an extra option) so the row cannot be saved as anything else by accident. */
+/** Money that left this order — a negative `converted` row following the
+    converted row on the other order or the refund voucher (owner 2026-09-16). */
+const isMirror = (p: SoPayment): boolean => Number(p.amount_sen) < 0;
+
 const apiToValue = (p: SoPayment): string =>
   p.method === CONVERTED_METHOD ? CONVERT_LABEL
   : ((PAYMENT_METHOD_CODE_TO_VALUE as Partial<Record<string, string>>)[p.method] ?? String(p.method));
@@ -234,7 +238,7 @@ export type PaymentDraft = {
   installmentMonthsLabel:   string;             // L2 plan pick (Merchant + Installment)
   onlineType:               string;             // L2 sub-type (Online only)
   /* Money moved from a cancelled order (docs/bugs/0931): the order it comes
-     from — the L2 pick under "Convert from cancelled SO". */
+     from — the L2 pick under "Convert from another SO". */
   convertedFromDocNo?:      string;
   amountSen:              number;
   accountSheet:             string;
@@ -321,7 +325,7 @@ export const missingMethodSubField = (
   d: Pick<PaymentDraft, 'methodLabel' | 'merchantProvider' | 'installmentMonthsLabel' | 'onlineType' | 'convertedFromDocNo'>,
 ): string | null => {
   /* Money moved from a cancelled order needs the order it comes from. */
-  if (d.methodLabel === CONVERT_LABEL) return d.convertedFromDocNo ? null : 'cancelled order';
+  if (d.methodLabel === CONVERT_LABEL) return d.convertedFromDocNo ? null : 'order the money comes from';
   if (d.methodLabel === 'Merchant') {
     if (!d.merchantProvider) return 'Bank';
     if (!d.installmentMonthsLabel) return 'Plan';
@@ -459,7 +463,7 @@ type DraftModeProps = {
   receiptFor?: ReceiptSource;
   /** The cancelled orders a draft row may draw on (docs/bugs/0931) — the New SO
    *  page reads them by the customer's phone, having no order yet. Absent or
-   *  empty, the "Convert from cancelled SO" method is not offered. */
+   *  empty, the "Convert from another SO" method is not offered. */
   convertSources?: ConvertSource[];
 };
 
@@ -593,7 +597,10 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
      server for its customer's cancelled orders with money; the New SO page
      hands them in. */
   const convertSourcesQ  = useConvertSources(props.docNo);
-  const convertSources: ConvertSource[] = props.docNo ? (convertSourcesQ.data?.sources ?? []) : ((props as DraftModeProps).convertSources ?? []);
+  const listedSources: ConvertSource[] = props.docNo ? (convertSourcesQ.data?.sources ?? []) : ((props as DraftModeProps).convertSources ?? []);
+  /* Another order by number — any customer's (owner 2026-09-16: 可能多张、不同顾客). */
+  const morePicker = useAddedConvertSources(listedSources);
+  const convertSources = morePicker.sources;
   const merchantOptsQ    = useSoDropdownOptions('payment_merchant');
   const merchantOpts     = optionsOrFallback('payment_merchant', merchantOptsQ.data);
   const onlineOptsQ      = useSoDropdownOptions('online_type');
@@ -1050,10 +1057,17 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
      the row's method (so a rename in SO Maintenance re-labels history too);
      falls back to the shared defaults. */
   const methodDisplay = (p: SoPayment): string => {
+    /* A mirror (money that LEFT; negative): what took it, not a way money arrives. */
+    if (isMirror(p)) return p.refund_pv_id ? 'Refund' : 'Moved out';
     const value = apiToValue(p);
     return methodOpts.find((m) => m.value === value)?.label
       ?? PAYMENT_METHOD_DEFAULT_LABELS[p.method as PaymentMethodCode]
       ?? value;
+  };
+
+  const addSourceTo = async (uid: string, amountSen: number): Promise<void> => {
+    const src = await morePicker.add();
+    if (src) patchDraft(uid, { convertedFromDocNo: src.docNo, ...(amountSen <= 0 ? { amountSen: src.movableSen } : {}) });
   };
 
   const totalRowCount = persistedPayments.length + drafts.length;
@@ -1310,6 +1324,11 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                       {p.installment_months ? `${p.installment_months}m` : ''}
                     </span>
                   )}
+                  {isMirror(p) && p.converted_to_so_doc_no && (
+                    <span style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>
+                      to <a href={`/scm/sales-orders/${encodeURIComponent(p.converted_to_so_doc_no)}`} style={{ color: 'var(--c-orange)', fontFamily: 'var(--font-mono)' }}>{p.converted_to_so_doc_no}</a>
+                    </span>
+                  )}
                   {p.method === CONVERTED_METHOD && p.converted_from_so_doc_no && (
                     <span style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>
                       from <a href={`/scm/sales-orders/${encodeURIComponent(p.converted_from_so_doc_no)}`} style={{ color: 'var(--c-orange)', fontFamily: 'var(--font-mono)' }}>{p.converted_from_so_doc_no}</a>
@@ -1323,7 +1342,7 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                       the VALUE, not the placement. */}
                 </span>
                 <span className={paymentsStyles.cellRight} data-label="Amount"
-                      style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>
+                      style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600, ...(isMirror(p) ? { color: 'var(--c-danger, #a33)' } : {}) }}>
                   {fmtAmt(p.amount_sen)}
                 </span>
                 <span className={paymentsStyles.cell} data-label="Account Sheet">
@@ -1369,7 +1388,7 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                   {p.collected_by_name ?? staffNameById(p.collected_by) ?? <span className={detailStyles.muted}>—</span>}
                 </span>
                 <span className={paymentsStyles.cell}>
-                  {receiptFor && (
+                  {receiptFor && p.method !== CONVERTED_METHOD && (
                     <button
                       type="button"
                       onClick={() => void printReceipt(p.id)}
@@ -1413,7 +1432,9 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                           while the pencil beside it did — so a months-old payment
                           on a delivered, invoiced SO could be hard-deleted,
                           silently flipping the order from PAID back to owing. */}
-                      {rowMutable(p.created_at) && (
+                      {/* A mirror follows its counterpart: the converted row on the
+                          other order, or the refund voucher. No hand delete. */}
+                      {rowMutable(p.created_at) && !isMirror(p) && (
                         <button
                           type="button"
                           className={paymentsStyles.trashBtn}
@@ -1499,11 +1520,9 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                     {methodOpts.map((m) => (
                       <option key={m.id} value={m.value}>{m.label}</option>
                     ))}
-                    {/* Money moved from a cancelled order (docs/bugs/0931) — offered
-                        only when this customer has a cancelled order with money. */}
-                    {(convertSources.length > 0 || d.methodLabel === CONVERT_LABEL) && (
-                      <option value={CONVERT_LABEL}>{CONVERT_LABEL}</option>
-                    )}
+                    {/* Money moved from another order (docs/bugs/0931) — always offered:
+                        the source may be any customer's, named by number below. */}
+                    <option value={CONVERT_LABEL}>{CONVERT_LABEL}</option>
                     {/* Persist labels that are no longer active in the
                         list so existing drafts (rehydrated from
                         somewhere) still render their selection. */}
@@ -1512,9 +1531,9 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                     )}
                   </select>
 
-                  {/* L2 — the cancelled order the money comes from; picking one
-                      fills the amount with what is left on it when the row is
-                      still empty (docs/bugs/0931). */}
+                  {/* L2 — the order the money comes from; picking one fills the
+                      amount with what it may give when the row is still empty
+                      (docs/bugs/0931; a live order gives what is above its floor). */}
                   {d.methodLabel === CONVERT_LABEL && (
                     <select
                       className={paymentsStyles.inlineSelect}
@@ -1524,18 +1543,28 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                       onChange={(e) => {
                         const from = e.target.value;
                         const src = convertSources.find((s) => s.docNo === from);
-                        patchDraft(d.uid, { convertedFromDocNo: from, ...(src && d.amountSen <= 0 ? { amountSen: src.remainingSen } : {}) });
+                        patchDraft(d.uid, { convertedFromDocNo: from, ...(src && d.amountSen <= 0 ? { amountSen: src.movableSen } : {}) });
                       }}
                       aria-label="Cancelled order"
                     >
-                      <option value="">— Cancelled order —</option>
+                      <option value="">— Order the money comes from —</option>
                       {convertSources.map((s) => (
-                        <option key={s.docNo} value={s.docNo}>{s.docNo} · {fmtRm(s.remainingSen, currency)} left</option>
+                        <option key={s.docNo} value={s.docNo}>{s.docNo} · {fmtRm(s.movableSen, currency)} {s.keepSen > 0 ? 'can move' : 'left'}</option>
                       ))}
                       {d.convertedFromDocNo && !convertSources.some((s) => s.docNo === d.convertedFromDocNo) && (
                         <option value={d.convertedFromDocNo}>{d.convertedFromDocNo}</option>
                       )}
                     </select>
+                  )}
+                  {d.methodLabel === CONVERT_LABEL && !locked && (
+                    <span style={{ display: 'inline-flex', gap: 4, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <input className={paymentsStyles.inlineSelect} style={{ fontSize: 'var(--fs-11)', minWidth: 170 }} value={morePicker.more}
+                        onChange={(e) => morePicker.setMore(e.target.value)} placeholder="Another order, e.g. 2990-SO-2607-024" aria-label="Another order"
+                        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void addSourceTo(d.uid, d.amountSen); } }} />
+                      <button type="button" disabled={morePicker.busy} onClick={() => void addSourceTo(d.uid, d.amountSen)}
+                        style={{ fontSize: 'var(--fs-11)', padding: '2px 8px', border: '1px solid var(--c-line, rgba(34,31,32,0.2))', borderRadius: 6, background: 'transparent', cursor: 'pointer' }}>Add</button>
+                      {morePicker.note && <span style={{ fontSize: 'var(--fs-11)', color: 'var(--c-danger, #a33)' }}>{morePicker.note}</span>}
+                    </span>
                   )}
                   {/* L2 — Merchant cascade: pick the Bank + Installment plan. */}
                   {d.methodLabel === 'Merchant' && (

@@ -14,13 +14,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
 import type { ConvertSource, OrderMoney } from '../lib/so-money-queries';
 
-const { useOrderMoney, mutateAsync, navigateSpy, notifySpy, readConvertSource } = vi.hoisted(() => ({
-  useOrderMoney: vi.fn(), mutateAsync: vi.fn(), navigateSpy: vi.fn(), notifySpy: vi.fn(), readConvertSource: vi.fn(),
+const { useOrderMoney, mutateAsync, navigateSpy, notifySpy, fetchMock } = vi.hoisted(() => ({
+  useOrderMoney: vi.fn(), mutateAsync: vi.fn(), navigateSpy: vi.fn(), notifySpy: vi.fn(), fetchMock: vi.fn(),
 }));
+vi.mock('../lib/authed-fetch', () => ({ authedFetch: (path: string) => fetchMock(path) }));
 vi.mock('../lib/so-money-queries', async (orig) => ({
   ...(await orig<Record<string, unknown>>()),
   useOrderMoney,
-  readConvertSource,
   useRequestRefund: () => ({ mutateAsync, isPending: false }),
 }));
 vi.mock('react-router-dom', async (orig) => ({ ...(await orig<Record<string, unknown>>()), useNavigate: () => navigateSpy }));
@@ -33,9 +33,10 @@ const money = (over: Partial<OrderMoney> = {}): OrderMoney => ({
   docNo: OLD, status: 'CANCELLED', cancelled: true,
   customer: { name: 'Ah Meng', phone: '0123', customerId: 'cust-1', debtorCode: null },
   payments: [], bookedSen: 70_000, refunds: [], refundedSen: 0, conversions: [], convertedSen: 0, remainingSen: 70_000,
+  totalSen: 100_000, keepFraction: 0, keepSen: 0, movableSen: over.remainingSen ?? 70_000,
   open: true, reason: null, ...over,
 });
-const OTHERS: ConvertSource[] = [{ docNo: '2990-SO-2607-024', customer: 'Ah Meng', cancelledOn: '2026-08-01', remainingSen: 30_000, bookedSen: 30_000 }];
+const OTHERS: ConvertSource[] = [{ docNo: '2990-SO-2607-024', customer: 'Ah Meng', status: 'CANCELLED', cancelledOn: '2026-08-01', remainingSen: 30_000, bookedSen: 30_000, movableSen: 30_000, keepSen: 0 }];
 
 const wrap = (ui: ReactNode) => (
   <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
@@ -44,7 +45,7 @@ const wrap = (ui: ReactNode) => (
 );
 
 beforeEach(() => {
-  mutateAsync.mockReset(); navigateSpy.mockReset(); notifySpy.mockReset(); readConvertSource.mockReset();
+  mutateAsync.mockReset(); navigateSpy.mockReset(); notifySpy.mockReset(); fetchMock.mockReset();
   useOrderMoney.mockReturnValue({ data: { money: money(), others: OTHERS }, isError: false });
 });
 afterEach(cleanup);
@@ -57,13 +58,42 @@ describe('moneySummary', () => {
 });
 
 describe('OrderMoneyPanel', () => {
-  it('renders nothing for a live order, and nothing when the read failed', () => {
-    useOrderMoney.mockReturnValue({ data: { money: money({ cancelled: false, status: 'CONFIRMED', open: false }), others: [] }, isError: false });
+  it('renders nothing for an order that collected nothing, and nothing when the read failed', () => {
+    useOrderMoney.mockReturnValue({ data: { money: money({ cancelled: false, status: 'CONFIRMED', open: false, bookedSen: 0, remainingSen: 0, movableSen: 0 }), others: [] }, isError: false });
     const { container } = render(wrap(<OrderMoneyPanel docNo={OLD} />));
     expect(container.firstChild).toBeNull();
     useOrderMoney.mockReturnValue({ data: undefined, isError: true });
     const failed = render(wrap(<OrderMoneyPanel docNo={OLD} />));
     expect(failed.container.firstChild).toBeNull();
+  });
+
+  /* A LIVE order (owner 2026-09-16): the panel shows what it keeps and what
+     may move; Convert offers only that much, Refund the whole remaining. */
+  it('a live order with money: the floor it keeps, Convert capped at what may move, Refund without a floor', () => {
+    useOrderMoney.mockReturnValue({ data: { money: money({ cancelled: false, status: 'CONFIRMED', totalSen: 150_000, bookedSen: 100_000, remainingSen: 100_000, keepFraction: 0.5, keepSen: 75_000, movableSen: 25_000 }), others: [] }, isError: false });
+    render(wrap(<OrderMoneyPanel docNo={OLD} />));
+    expect(screen.getByText('Money on this order')).toBeTruthy();
+    expect(screen.getByText('Keeps RM 750.00 (50% of RM 1,500.00) · RM 250.00 can move')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Convert' }));
+    const mine = screen.getByLabelText(`Amount from ${OLD}`) as HTMLInputElement;
+    expect(mine.value).toBe('250.00');
+    expect(screen.getByText('RM 250.00 can move (keeps RM 750.00)')).toBeTruthy();
+    fireEvent.change(mine, { target: { value: '250.01' } });
+    fireEvent.blur(mine);
+    expect(screen.getByText(/between RM 0.01 and RM 250.00/)).toBeTruthy();
+    expect((screen.getByRole('button', { name: /Open a new order/ }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Refund' }));
+    expect((screen.getByLabelText('Refund amount') as HTMLInputElement).value).toBe('1,000.00');
+  });
+
+  it('a live order at its floor: Refund stays, Convert is off and says why', () => {
+    useOrderMoney.mockReturnValue({ data: { money: money({ cancelled: false, status: 'CONFIRMED', totalSen: 150_000, bookedSen: 75_000, remainingSen: 75_000, keepFraction: 0.5, keepSen: 75_000, movableSen: 0 }), others: [] }, isError: false });
+    render(wrap(<OrderMoneyPanel docNo={OLD} />));
+    expect(screen.getByText('Keeps RM 750.00 (50% of RM 1,500.00) · nothing can move')).toBeTruthy();
+    expect((screen.getByRole('button', { name: 'Convert' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText('Nothing above the floor to move.')).toBeTruthy();
+    expect((screen.getByRole('button', { name: 'Refund' }) as HTMLButtonElement).disabled).toBe(false);
   });
 
   it('a cancelled order with money: the figures, then Refund and Convert side by side', () => {
@@ -114,21 +144,25 @@ describe('OrderMoneyPanel', () => {
   });
 
   it("another cancelled order by number — any customer's — joins the list ticked for what is left; a refused one says why", async () => {
-    readConvertSource.mockResolvedValue({ ok: true, source: { docNo: '2990-SO-2608-028', customer: 'Larding Chen', cancelledOn: null, remainingSen: 143_300, bookedSen: 143_300 } });
+    /* The number is read through the transport: the order's own money answer. */
+    fetchMock.mockImplementation(async (path: string) => {
+      if (path === '/mfg-sales-orders/2990-SO-2608-028/money') return { money: money({ docNo: '2990-SO-2608-028', customer: { name: 'Larding Chen', phone: '0999', customerId: 'cust-2', debtorCode: null }, bookedSen: 143_300, remainingSen: 143_300, movableSen: 143_300 }), others: [] };
+      if (path === '/mfg-sales-orders/2990-SO-2609-001/money') return { money: money({ docNo: '2990-SO-2609-001', cancelled: false, status: 'CONFIRMED', totalSen: 150_000, keepFraction: 0.5, keepSen: 75_000, bookedSen: 75_000, remainingSen: 75_000, movableSen: 0 }), others: [] };
+      throw new Error('unexpected ' + path);
+    });
     render(wrap(<OrderMoneyPanel docNo={OLD} />));
     fireEvent.click(screen.getByRole('button', { name: 'Convert' }));
     fireEvent.change(screen.getByLabelText('Another cancelled order'), { target: { value: ' 2990-SO-2608-028 ' } });
     fireEvent.click(screen.getByRole('button', { name: 'Add' }));
     await waitFor(() => expect(screen.getByLabelText('Take from 2990-SO-2608-028')).toBeTruthy());
-    expect(readConvertSource).toHaveBeenCalledWith(' 2990-SO-2608-028 ');
+    expect(fetchMock).toHaveBeenCalledWith('/mfg-sales-orders/2990-SO-2608-028/money');
     expect((screen.getByLabelText('Take from 2990-SO-2608-028') as HTMLInputElement).checked).toBe(true);
     expect(screen.getByText('Larding Chen')).toBeTruthy();
     expect(screen.getByTestId('convert-param').textContent).toBe(OLD + ':70000,2990-SO-2608-028:143300');
-    /* Enter adds too; a refused order says why, and stays out. */
-    readConvertSource.mockResolvedValue({ ok: false, reason: '2990-SO-2609-001 is not cancelled.' });
+    /* Enter adds too; a live order at its floor is refused with why, and stays out. */
     fireEvent.change(screen.getByLabelText('Another cancelled order'), { target: { value: '2990-SO-2609-001' } });
     fireEvent.keyDown(screen.getByLabelText('Another cancelled order'), { key: 'Enter' });
-    await waitFor(() => expect(screen.getByText('2990-SO-2609-001 is not cancelled.')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('2990-SO-2609-001 keeps RM 750.00 (50% of RM 1,500.00) while it stands — nothing can move.')).toBeTruthy());
     expect(screen.queryByLabelText('Take from 2990-SO-2609-001')).toBeNull();
   });
 

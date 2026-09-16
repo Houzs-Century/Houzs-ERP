@@ -3,12 +3,13 @@
 // draw on, the pick hands back what is left there, a converted row posts only
 // its source and amount, and the sources come by order number for a saved
 // order and by phone for the New SO screen — which has no order yet.
-import { cleanup, fireEvent, render, renderHook, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const { useConvertSources, useCancelledWithMoney } = vi.hoisted(() => ({ useConvertSources: vi.fn(), useCancelledWithMoney: vi.fn() }));
+const { useConvertSources, useOrdersWithMoney, fetchMock } = vi.hoisted(() => ({ useConvertSources: vi.fn(), useOrdersWithMoney: vi.fn(), fetchMock: vi.fn() }));
+vi.mock('../vendor/scm/lib/authed-fetch', () => ({ authedFetch: (path: string) => fetchMock(path) }));
 vi.mock('../vendor/scm/lib/so-money-queries', async (orig) => ({
-  ...(await orig<Record<string, unknown>>()), useConvertSources, useCancelledWithMoney,
+  ...(await orig<Record<string, unknown>>()), useConvertSources, useOrdersWithMoney,
 }));
 
 import { ConvertSourceField, convertedBody, rmInput, useMobileConvertSources, withConvertOption } from './MobileOrderMoney';
@@ -17,8 +18,8 @@ import { CONVERT_LABEL, type ConvertSource } from '../vendor/scm/lib/so-money-qu
 afterEach(cleanup);
 
 const SOURCES: ConvertSource[] = [
-  { docNo: '2990-SO-2607-024', customer: 'Yap Kah Heng', cancelledOn: '2026-08-01', remainingSen: 336_500, bookedSen: 336_500 },
-  { docNo: '2990-SO-2608-028', customer: 'Yap Kah Heng', cancelledOn: '2026-08-20', remainingSen: 143_300, bookedSen: 143_300 },
+  { docNo: '2990-SO-2607-024', customer: 'Yap Kah Heng', status: 'CANCELLED', cancelledOn: '2026-08-01', remainingSen: 336_500, bookedSen: 336_500, movableSen: 336_500, keepSen: 0 },
+  { docNo: '2990-SO-2608-028', customer: 'Yap Kah Heng', status: 'CANCELLED', cancelledOn: '2026-08-20', remainingSen: 143_300, bookedSen: 143_300, movableSen: 143_300, keepSen: 0 },
 ];
 const CATALOG = [{ value: 'Cash', label: 'Cash' }, { value: 'Merchant', label: 'Merchant' }];
 
@@ -43,7 +44,7 @@ describe('ConvertSourceField', () => {
     const onChange = vi.fn();
     render(<ConvertSourceField sources={SOURCES} value="" onChange={onChange} />);
     const sel = screen.getByLabelText('Cancelled order') as HTMLSelectElement;
-    expect(Array.from(sel.options).map((o) => o.textContent)).toEqual(['— Cancelled order —', '2990-SO-2607-024 · RM 3,365.00 left', '2990-SO-2608-028 · RM 1,433.00 left']);
+    expect(Array.from(sel.options).map((o) => o.textContent)).toEqual(['— Order the money comes from —', '2990-SO-2607-024 · RM 3,365.00 left', '2990-SO-2608-028 · RM 1,433.00 left']);
     fireEvent.change(sel, { target: { value: '2990-SO-2608-028' } });
     expect(onChange).toHaveBeenCalledWith('2990-SO-2608-028', 143_300);
     cleanup();
@@ -52,23 +53,44 @@ describe('ConvertSourceField', () => {
     expect(kept.value).toBe('2990-SO-2605-001');
     expect(kept.options).toHaveLength(4);
   });
+
+  /* Any customer's order, by number (owner 2026-09-16: 可能多张、不同顾客): the
+     server's own money answer decides; the order joins the list and is picked. */
+  it('another order by number joins the list and is picked for what it may give; a refused one says why', async () => {
+    fetchMock.mockImplementation(async (path: string) => {
+      if (path === '/mfg-sales-orders/2990-SO-2609-060/money') return { money: { docNo: '2990-SO-2609-060', status: 'CONFIRMED', cancelled: false, customer: { name: 'Lim Ah Lian' }, bookedSen: 100_000, remainingSen: 100_000, totalSen: 150_000, keepFraction: 0.5, keepSen: 75_000, movableSen: 25_000, reason: null }, others: [] };
+      if (path === '/mfg-sales-orders/2990-SO-0000-000/money') { const e = Object.assign(new Error('2990-SO-0000-000 is not a Sales Order of this company.'), { status: 404 }); throw e; }
+      throw new Error('unexpected ' + path);
+    });
+    const onChange = vi.fn();
+    render(<ConvertSourceField sources={SOURCES} value="" onChange={onChange} />);
+    fireEvent.change(screen.getByLabelText('Another order'), { target: { value: '2990-SO-2609-060' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+    await waitFor(() => expect(onChange).toHaveBeenCalledWith('2990-SO-2609-060', 25_000));
+    const sel = screen.getByLabelText('Cancelled order') as HTMLSelectElement;
+    expect(Array.from(sel.options).map((o) => o.textContent)).toContain('2990-SO-2609-060 · RM 250.00 can move');
+    fireEvent.change(screen.getByLabelText('Another order'), { target: { value: '2990-SO-0000-000' } });
+    fireEvent.keyDown(screen.getByLabelText('Another order'), { key: 'Enter' });
+    await waitFor(() => expect(screen.getByText('2990-SO-0000-000 is not a Sales Order of this company.')).toBeTruthy());
+    expect(sel.options).toHaveLength(4);
+  });
 });
 
 describe('useMobileConvertSources', () => {
   it('a saved order asks by its number; the New SO screen asks by phone once six digits are typed', () => {
     useConvertSources.mockReturnValue({ data: { sources: [SOURCES[0]] } });
-    useCancelledWithMoney.mockReturnValue({ data: { orders: SOURCES, totalRemainingSen: 479_800 } });
+    useOrdersWithMoney.mockReturnValue({ data: { orders: SOURCES, totalRemainingSen: 479_800 } });
     const saved = renderHook(() => useMobileConvertSources({ docNo: '2990-SO-2609-050' }));
     expect(saved.result.current).toEqual([SOURCES[0]]);
     expect(useConvertSources).toHaveBeenLastCalledWith('2990-SO-2609-050');
-    expect(useCancelledWithMoney).toHaveBeenLastCalledWith(null, false);
+    expect(useOrdersWithMoney).toHaveBeenLastCalledWith(null, false);
 
     const short = renderHook(() => useMobileConvertSources({ phone: '0123' }));
-    expect(useCancelledWithMoney).toHaveBeenLastCalledWith('0123', false);
+    expect(useOrdersWithMoney).toHaveBeenLastCalledWith('0123', false);
     expect(short.result.current).toEqual(SOURCES);
 
     renderHook(() => useMobileConvertSources({ phone: ' 0123456789 ' }));
-    expect(useCancelledWithMoney).toHaveBeenLastCalledWith('0123456789', true);
+    expect(useOrdersWithMoney).toHaveBeenLastCalledWith('0123456789', true);
     expect(useConvertSources).toHaveBeenLastCalledWith(null);
   });
 });

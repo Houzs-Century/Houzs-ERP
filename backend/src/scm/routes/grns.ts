@@ -4,7 +4,7 @@
 import { poPriceByPoItemId, poRefByPoItemId, stampGrnLinePoRefs, type LinePoRef } from '../lib/line-po-ref';
 import { Hono } from 'hono';
 import { GRN_STATUS_BUCKETS } from '../lib/grn-status-buckets';
-import { GRN_HEADER_COLS, GRN_LIST_SELECT, filterGrnList, orderGrnList, readGrnListFilters } from '../lib/grn-list-read'; import { attachGrnLines } from '../lib/grn-export-rows';
+import { GRN_HEADER_COLS, GRN_LIST_SELECT, grnListSelect, filterGrnList, orderGrnList, readGrnListFilters } from '../lib/grn-list-read'; import { attachGrnLines } from '../lib/grn-export-rows';
 import { HELD_OR_TERM, isDocumentHeld } from '../lib/document-hold';
 import { isReceivablePo } from '../lib/source-document-gates'; import { mountHoldRoute } from './document-hold-routes';
 import type { Context } from 'hono';
@@ -1002,7 +1002,7 @@ grns.get('/', async (c) => {
        different receipts than the tab it was pressed on. */
     const filters = readGrnListFilters((k) => c.req.query(k));
     const supplierId = filters.supplierId;
-    let q = orderGrnList(filterGrnList(sb.from('grns').select(GRN_LIST_SELECT, { count: 'exact' }), filters, c), filters.sort);
+    let q = orderGrnList(filterGrnList(sb.from('grns').select(grnListSelect(filters), { count: 'exact' }), filters, c), filters.sort);
     q = q.range(page * pageSize, page * pageSize + pageSize - 1);
 
     /* Status counts mirror the FE filter-pill buckets (draft / posted /

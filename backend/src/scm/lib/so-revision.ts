@@ -57,6 +57,7 @@ import { activeCompanyId, isMirroredDocNo, houzsOwns2990 } from './companyScope'
 import { todayMyt } from './my-time';
 import { dateOrNull } from './date-coerce';
 import { soWarehouseIdForDoc } from './so-warehouse';
+import { variantsForCompare } from './amendment-noop-lines';
 import { inPoLineOrder, nextPoLineNo, sortBySourceSoLine } from './po-line-order';
 import { soIsMigratedShape } from './so-is-migrated';
 import { routingNote, type AmendmentFieldKind } from '../shared/amendment-routing';
@@ -80,7 +81,9 @@ function soAmendmentFieldKinds(
     if (change === 'ADD' || change === 'REMOVE') { kinds.push('LINE'); continue; }
     const old = l.old_snapshot ?? {};
     if (l.new_item_code != null && String(l.new_item_code) !== String(old.item_code ?? old.itemCode ?? '')) kinds.push('SPEC');
-    if (l.new_variants != null && JSON.stringify(l.new_variants) !== JSON.stringify(old.variants ?? null)) kinds.push('VARIANT');
+    /* Compared without the `remark` side channel and in canonical key order —
+       a remark copied into variants is not a spec change (HC-SO-011410, 2026-09-15). */
+    if (l.new_variants != null && variantsForCompare(l.new_variants) !== variantsForCompare(old.variants ?? null)) kinds.push('VARIANT');
     if (l.new_qty != null && Number(l.new_qty) !== Number(old.qty ?? NaN)) kinds.push('QTY');
     if (l.new_unit_price_sen != null && Number(l.new_unit_price_sen) !== Number(old.unit_price_sen ?? old.unitPriceSen ?? NaN)) kinds.push('PRICE');
   }
@@ -378,9 +381,12 @@ export async function applySoAmendment(
      mig 0091 gave the column a HOUZS DEFAULT — so a blip books a 2990 order's new
      line to Houzs, silently, exactly as the note on that insert warns. */
   const { data: soHdrCo, error: soHdrCoErr } = await sb.from('mfg_sales_orders')
-    .select('company_id, linked_ac_docno').eq('doc_no', docNo).maybeSingle();
+    .select('company_id, linked_ac_docno, so_date').eq('doc_no', docNo).maybeSingle();
   if (soHdrCoErr) throw new Error(`applySoAmendment: SO company load failed: ${soHdrCoErr.message}`);
   const soCompanyId = (soHdrCo as { company_id?: number | null } | null)?.company_id ?? null;
+  // Stage 3c: re-price a bound line's COST as-of the order's own date (auto-derive,
+  // flag-gated in recomputeOneLine). Null when the header carries no date.
+  const soAsOf = (soHdrCo as { so_date?: string | null } | null)?.so_date ?? null;
 
   /* Is this order MIGRATED from AutoCount? `linked_ac_docno` is the marker that
      actually exists on the SO header (migration 0271); `migrated_no_stock` lives
@@ -589,7 +595,7 @@ export async function applySoAmendment(
         qty,
         unitPriceSen: Number(diff.new_unit_price_sen ?? 0),
         variants: (variants as MfgItemForRecompute['variants']) ?? null,
-      }, cachedConfig, soCompanyId, { trustOperatorSelling: addLineTrust });
+      }, cachedConfig, soCompanyId, { trustOperatorSelling: addLineTrust, asOf: soAsOf });
 
       const unit = rec.unit_price_sen;
       const lineTotal = qty * unit;
@@ -710,7 +716,7 @@ export async function applySoAmendment(
       qty,
       unitPriceSen: clientUnit,
       variants: (variants as MfgItemForRecompute['variants']) ?? null,
-    }, cachedConfig, soCompanyId, { trustOperatorSelling: amendTrust });
+    }, cachedConfig, soCompanyId, { trustOperatorSelling: amendTrust, asOf: soAsOf });
 
     const unit = rec.unit_price_sen;
     /* Mig 0317 — the request may carry a new discount; otherwise the line keeps

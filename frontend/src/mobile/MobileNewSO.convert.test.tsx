@@ -15,8 +15,8 @@ const { detailBody } = vi.hoisted(() => ({ detailBody: { current: null as unknow
 vi.mock("../vendor/scm/lib/authed-fetch", async (orig) => ({
   ...(await orig<typeof import("../vendor/scm/lib/authed-fetch")>()),
   authedFetch: vi.fn((path: string) => {
-    if (/\/mfg-sales-orders\/cancelled-with-money/.test(path)) {
-      return Promise.resolve({ orders: [{ docNo: OLD, customer: "Ada", cancelledOn: "2026-08-01", remainingSen: 336_500, bookedSen: 336_500 }], totalRemainingSen: 336_500 });
+    if (/\/mfg-sales-orders\/with-money/.test(path)) {
+      return Promise.resolve({ orders: [{ docNo: OLD, customer: "Ada", status: "CANCELLED", cancelledOn: "2026-08-01", remainingSen: 336_500, bookedSen: 336_500, movableSen: 336_500, keepSen: 0 }], totalRemainingSen: 336_500 });
     }
     if (/\/mfg-sales-orders\/[^/?]+$/.test(path)) return Promise.resolve(detailBody.current);
     return new Promise(() => undefined);

@@ -80,7 +80,8 @@ export const listReceiptsHandler = async (c: any): Promise<Response> => {
       payer: (r.debtor as Row | null)?.name ?? '(debtor)', moneyAccount: r.bank_account_code,
       totalSen: Number(r.total_sen ?? 0), status: r.status, debtorId: r.debtor_id,
     })),
-    ...((customer.data ?? []) as Row[]).map((r) => ({
+    /* Money that LEFT an order (a mirror row, negative) is no receipt. */
+    ...((customer.data ?? []) as Row[]).filter((r) => Number(r.amount_sen ?? 0) >= 0).map((r) => ({
       kind: 'CUSTOMER' as const, id: r.id, number: r.so_doc_no,
       date: String(r.paid_at ?? '').slice(0, 10),
       payer: r.is_deposit === true ? 'Customer deposit' : 'Customer payment',

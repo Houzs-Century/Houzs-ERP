@@ -17,6 +17,7 @@ import { enqueueSoPaymentEdit } from './ac-so-payment-edit';
 import { recordSoAudit, type FieldChange } from './so-audit';
 import { CONVERTED_METHOD, postSoPayment, reverseSoPayment, type SoPaymentRow } from '../../acc/payments';
 import { afterConvertedRowBooked, afterConvertedRowRemoved } from './so-money';
+import { mytDateOf, todayMyt } from './my-time';
 import { ledgerFactsOf, repostSoPaymentEdit } from '../../acc/payment-repost';
 import { createReceiptForPayment } from '../../acc/receipts';
 import { cancelDepositInvoiceForPaymentBestEffort, issueDepositInvoiceBestEffort, reissueDepositInvoiceBestEffort } from '../../acc/deposit-invoices';
@@ -50,7 +51,8 @@ export function deriveAccountSheet(
 export const PAYMENT_COLS =
   'id, so_doc_no, paid_at, method, merchant_provider, installment_months, ' +
   'online_type, approval_code, amount_sen, account_sheet, slip_key, collected_by, note, ' +
-  'created_at, created_by, version, updated_at, company_id, converted_from_so_doc_no';
+  'created_at, created_by, version, updated_at, company_id, converted_from_so_doc_no, ' +
+  'converted_to_so_doc_no, mirror_of_payment_id, refund_pv_id';
 
 /* ── recordSoPaymentRow — the factored insert+audit core of
    POST /:docNo/payments (same pattern as createSalesOrderCore). ONE place
@@ -65,8 +67,14 @@ export type SoPaymentRowInput = {
   docNo: string;
   paidAt: string;
   method: 'merchant' | 'transfer' | 'cash' | 'installment' | 'converted';
-  /** A converted row (docs/bugs/0927): the cancelled order the money comes from. */
+  /** A converted row (docs/bugs/0927): the order the money comes from. */
   convertedFromDocNo?: string | null;
+  /** A MIRROR row (owner 2026-09-16): the money that left this order — a
+      negative `converted` amount following the converted row it became on
+      the other order, or the refund voucher that paid it out. */
+  convertedToDocNo?: string | null;
+  mirrorOfPaymentId?: string | null;
+  refundPvId?: string | null;
   merchantProvider?: string | null;
   installmentMonths?: number | null;
   onlineType?: string | null;
@@ -76,7 +84,8 @@ export type SoPaymentRowInput = {
   slipKey: string | null;
   collectedBy?: string | null;
   note?: string | null;
-  createdBy: string;
+  /** Null only for a mirror the system writes on a voucher's behalf. */
+  createdBy: string | null;
   actorName?: string | null;
   /* First-deposit marker — the list/detail paid-rollup adds the header
      deposit_sen on top of the ledger UNLESS an is_deposit row marks the
@@ -105,6 +114,7 @@ export async function bookSoPaymentBestEffort(sb: any, row: Record<string, unkno
      receipted when the money was first received, so no receipt here. */
   if ((row as { method?: string }).method === CONVERTED_METHOD) {
     await afterConvertedRowBooked(sb, row, where);
+    await mirrorConvertedRowBestEffort(sb, row, where);
     return;
   }
   /* THE OFFICIAL RECEIPT IS BORN HERE (GL redesign item 9) — DRAFT for
@@ -282,6 +292,9 @@ export async function recordSoPaymentRow(
        row's sheet names the order the money came from (docs/bugs/0927). */
     account_sheet:      p.accountSheet?.trim() || (converted ? `Converted from ${p.convertedFromDocNo ?? '?'}` : deriveAccountSheet(p.method, merchantProvider, onlineType)),
     ...(converted ? { converted_from_so_doc_no: p.convertedFromDocNo ?? null } : {}),
+    ...(p.convertedToDocNo ? { converted_to_so_doc_no: p.convertedToDocNo } : {}),
+    ...(p.mirrorOfPaymentId ? { mirror_of_payment_id: p.mirrorOfPaymentId } : {}),
+    ...(p.refundPvId ? { refund_pv_id: p.refundPvId } : {}),
     slip_key:           p.slipKey,
     collected_by:       p.collectedBy ?? null,
     note:               p.note ?? null,
@@ -390,9 +403,118 @@ export async function afterSoPaymentRemoved(
      none. */
   await cancelDepositInvoiceForPaymentBestEffort(sb, { paymentId: p.paymentId, reason: `payment on ${p.docNo} deleted` });
   await afterConvertedRowRemoved(sb, { paymentId: p.paymentId, companyId: p.companyId, actor: null });
+  await removeMirrorRowsBestEffort(sb, { companyId: p.companyId, match: { mirror_of_payment_id: p.paymentId }, why: `money moved to ${p.docNo} moved back` });
   /* The deposit just shrank, so an invoice it was settling may owe money again.
      This is the direction that matters: an invoice left reading PAID after the
      payment behind it was reversed tells the office to collect nothing. */
   await recomputeSiPaidForOrder(sb, p.docNo, p.companyId);
   return { originalJeNo: voided?.originalJeNo ?? null, contraJeNo: voided?.jeNo ?? null, jeNo: null };
+}
+
+/* ── Mirror rows — the money that LEFT an order (owner 2026-09-16) ──────────
+   Refund and Convert are not for cancelled orders only: money may leave a
+   LIVE order (convert while it keeps its deposit fraction; refund at Finance's
+   word). A live order has a balance, and every reader of an order's money
+   sums its payment rows — the totals view, the deposit gate, the lists,
+   AutoCount's balance, the invoice roll. So the leaving money is a payment
+   row too, through this same writer: method `converted`, a NEGATIVE amount,
+   on the order it left, following what took it —
+
+     moved out   converted_to_so_doc_no + mirror_of_payment_id (the converted
+                 row on the new order); written when that row is booked,
+                 removed when it is deleted
+     refunded    refund_pv_id (the posted Customer Refund voucher); written
+                 when it posts, removed when it is cancelled
+
+   A mirror books nothing — the transfer or the voucher is the accounting —
+   gets no receipt and no deposit invoice (the converted method and the sign
+   keep it out of every money-in reader), and nobody edits or deletes one by
+   hand: it follows its counterpart. The pool an order may still refund or
+   move (so-money.ts) reads booked money off the ledger and never counts one. */
+export const isMirrorRow = (r: { amount_sen?: unknown }): boolean => Number(r.amount_sen ?? 0) < 0;
+
+const mirrorLog = (...args: unknown[]): void => {
+  // eslint-disable-next-line no-console
+  console.error('[so-payment-mirror]', ...args);
+};
+
+async function mirrorExists(sb: any, match: Record<string, string>): Promise<boolean | null> {
+  let q = sb.from('mfg_sales_order_payments').select('id');
+  for (const [k, v] of Object.entries(match)) q = q.eq(k, v);
+  const { data, error } = await q.limit(1);
+  if (error) { mirrorLog('mirror lookup failed:', error.message); return null; }
+  return ((data ?? []) as unknown[]).length > 0;
+}
+
+/** After a converted row is booked: its mirror on the order the money came
+    from, dated the day of the move. Idempotent on the converted row's id. */
+export async function mirrorConvertedRowBestEffort(sb: any, row: Record<string, unknown>, where: string): Promise<void> {
+  const r = row as { id?: unknown; so_doc_no?: unknown; converted_from_so_doc_no?: unknown; amount_sen?: unknown; created_at?: unknown; created_by?: unknown; collected_by?: unknown };
+  const id = String(r.id ?? '');
+  const toDocNo = String(r.so_doc_no ?? '');
+  const fromDocNo = String(r.converted_from_so_doc_no ?? '');
+  const amountSen = Number(r.amount_sen ?? 0);
+  if (!id || !toDocNo || !fromDocNo || !(amountSen > 0)) return;
+  try {
+    const seen = await mirrorExists(sb, { mirror_of_payment_id: id });
+    if (seen !== false) return;
+    const out = await recordSoPaymentRow(sb, {
+      docNo: fromDocNo, paidAt: r.created_at ? mytDateOf(String(r.created_at)) : todayMyt(), method: CONVERTED_METHOD, amountSen: -amountSen,
+      convertedToDocNo: toDocNo, mirrorOfPaymentId: id, accountSheet: `Moved to ${toDocNo}`, note: `Moved to ${toDocNo}`, slipKey: null,
+      collectedBy: r.collected_by == null ? null : String(r.collected_by), createdBy: r.created_by == null ? null : String(r.created_by),
+      auditSource: 'automation', auditNote: `Money moved to ${toDocNo}`,
+    });
+    if (out.errorMessage) mirrorLog(`${where}: ${fromDocNo}'s mirror of the move to ${toDocNo} not written —`, out.errorMessage);
+  } catch (e) {
+    mirrorLog(`${where}: mirror hook threw:`, e);
+  }
+}
+
+/** After a Customer Refund voucher on an order posts: the refund's mirror,
+    dated the voucher. Idempotent on the voucher's id. `null` is an invoice
+    refund or a voucher naming no order, and is silent. */
+export async function mirrorRefundBestEffort(
+  sb: any, p: { companyId: number; pvId: string; pvNumber: string; voucherDate: string; soDocNo: string; amountSen: number; actor: string | null } | null,
+): Promise<void> {
+  if (!p || !(p.amountSen > 0)) return;
+  try {
+    const seen = await mirrorExists(sb, { refund_pv_id: p.pvId });
+    if (seen !== false) return;
+    const out = await recordSoPaymentRow(sb, {
+      docNo: p.soDocNo, paidAt: p.voucherDate || todayMyt(), method: CONVERTED_METHOD, amountSen: -p.amountSen,
+      refundPvId: p.pvId, accountSheet: `Refund ${p.pvNumber}`, note: `Refunded by ${p.pvNumber}`, slipKey: null,
+      createdBy: null, actorName: p.actor, auditSource: 'automation', auditNote: `Refund voucher ${p.pvNumber} posted`,
+    });
+    if (out.errorMessage) mirrorLog(`refund ${p.pvNumber}: ${p.soDocNo}'s mirror not written —`, out.errorMessage);
+  } catch (e) {
+    mirrorLog(`refund ${p.pvNumber}: mirror hook threw:`, e);
+  }
+}
+
+/** The mirror rows following a deleted converted row or a cancelled refund
+    voucher: deleted, with the audit line, the AutoCount balance and the
+    invoice roll a hand delete gets. */
+export async function removeMirrorRowsBestEffort(
+  sb: any, p: { companyId: number | null; match: { mirror_of_payment_id: string } | { refund_pv_id: string }; why: string },
+): Promise<void> {
+  try {
+    let q = sb.from('mfg_sales_order_payments').select('id, so_doc_no, paid_at, method, amount_sen');
+    for (const [k, v] of Object.entries(p.match)) q = q.eq(k, v);
+    const { data, error } = await q;
+    if (error) { mirrorLog('mirror lookup failed:', error.message); return; }
+    for (const m of (data ?? []) as Array<{ id: string; so_doc_no: string; paid_at: string; method: string; amount_sen: number }>) {
+      const { error: delErr } = await sb.from('mfg_sales_order_payments').delete().eq('id', m.id);
+      if (delErr) { mirrorLog(`mirror ${m.id} on ${m.so_doc_no} not removed —`, delErr.message); continue; }
+      await recordSoAudit(sb, {
+        docNo: m.so_doc_no, action: 'DELETE_PAYMENT', actorId: null, actorName: null, paymentId: m.id, source: 'automation', note: p.why,
+        fieldChanges: [
+          { field: 'paidAt', from: m.paid_at, to: null }, { field: 'method', from: m.method, to: null }, { field: 'amountSen', from: m.amount_sen, to: null },
+        ],
+      });
+      await enqueueSoPaymentEdit(sb, { companyId: p.companyId, docNo: m.so_doc_no, createdBy: null });
+      await recomputeSiPaidForOrder(sb, m.so_doc_no, p.companyId);
+    }
+  } catch (e) {
+    mirrorLog('mirror removal threw:', e);
+  }
 }

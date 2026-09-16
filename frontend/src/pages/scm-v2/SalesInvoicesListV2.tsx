@@ -1,15 +1,5 @@
-// SalesInvoicesListV2 — Theme C redesign of the Sales Invoices listing.
-// Mirrors the DO V2 template (which mirrors SO V2); the three-headed sales
-// chain (DO / SI / DR) shares the same chrome so this file focuses on the
-// SI-specific bits: money-centric stats (Outstanding / Paid), a status flow
-// biased around payment (SENT → PARTIALLY_PAID → PAID → CANCELLED), and the
-// SI-specific cross-doc anchors (From SO + From DO instead of just From SO).
-//
-// Route: /scm/sales-invoices.
-// Data:  useSalesInvoices / useSalesInvoiceDetail / useUpdateSalesInvoiceStatus
-//        (all live in the vendored SCM lib; useRecordSiPayment is available
-//         for a follow-up drawer action, not wired here to keep this PR to
-//         chrome only.)
+// SalesInvoicesListV2 — Sales Invoices listing (mirrors DO/SO V2). SI-specific:
+// money stats, payment-biased status flow, From SO/DO anchors. /scm/sales-invoices.
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { siPaymentIntentSearch } from "./siPaymentIntent";
@@ -69,6 +59,8 @@ import {
   useSalesInvoiceDetail,
   useUpdateSalesInvoiceStatus,
 } from "../../vendor/scm/lib/sales-invoice-queries";
+import { useMfgCustomers } from "../../vendor/scm/lib/sales-order-queries";
+import { useServerColumnFunnels, funnelValues } from "../../hooks/useServerColumnFunnels";
 import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { useChoice } from "../../vendor/scm/components/ChoiceDialog";
@@ -874,6 +866,13 @@ export function SalesInvoicesListV2() {
   const [sort, setSort] = useState<string | undefined>(undefined);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [printingDocs, setPrintingDocs] = useState(false);
+  // Server-filterable funnels (owner 2026-09-16): Customer Name + Currency → list query (pager over the filtered set); Debtor CODE + line/MRP funnels stay client-side; Customer checklist seeded with every customer.
+  const customersQ = useMfgCustomers();
+  const customerNames = useMemo(() => [...new Set((customersQ.data?.customers ?? []).map((cst) => cst.name).filter((n): n is string => !!n))], [customersQ.data]);
+  const { serverFunnels, onColFiltersChange } = useServerColumnFunnels(
+    (cf) => ({ debtorNames: funnelValues(cf, "debtor_name"), currencies: funnelValues(cf, "currency") }),
+    () => setPageParam(0),
+  );
   const { requestTerm: debouncedSearch } = useDebouncedSearchTerm(search);
 
   // Send the active tab's BUCKET NAME as `status`; the backend resolves each
@@ -890,6 +889,7 @@ export function SalesInvoicesListV2() {
     status: apiStatus,
     q: debouncedSearch,
     sort,
+    ...serverFunnels,
   });
   const searchTransition = useSearchResultTransition({
     inputTerm: search,
@@ -1240,6 +1240,7 @@ export function SalesInvoicesListV2() {
       key: "debtor_name",
       label: "Customer",
       getValue: (r) => r.debtor_name,
+      filterSeedValues: customerNames, // seeded with every customer (server-filterable)
       render: (r) => (
         <span className="text-[13px] font-semibold text-ink">
           {r.debtor_name || "—"}
@@ -1889,6 +1890,7 @@ export function SalesInvoicesListV2() {
               rows={rows}
               /* Feeds the stat strip so the tiles describe what is on screen. */
               onFilteredRowsChange={visible.onFilteredRowsChange}
+              onColFiltersChange={onColFiltersChange}
               loading={listLoading}
               error={error ? (error as Error).message ?? "Failed to load" : null}
               columns={columns}

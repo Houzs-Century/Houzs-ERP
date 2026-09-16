@@ -1,7 +1,13 @@
 // ----------------------------------------------------------------------------
-// so-money — the money on a CANCELLED sales order, and its two exits (owner
-// 2026-09-15; docs/bugs/0927): 先 cancel；之后 refund（可部分，弹去 Finance 开
-// PV）或 convert 去新 SO（可部分；一对多、多对一）；两个按钮挨着一起.
+// so-money — the money on a sales order, and its two exits (owner 2026-09-15;
+// docs/bugs/0927): refund（可部分，弹去 Finance 开 PV）或 convert 去新 SO（可部分；
+// 一对多、多对一）；两个按钮挨着一起. Since 2026-09-16 the order need not be
+// cancelled: a LIVE order may move money out as long as it keeps its deposit
+// fraction of the total (Houzs 30% / 2990 50%, the Processing-Date gate's own
+// number, total including transport), and may refund any part of it — the
+// voucher is Finance's to approve. A cancelled order keeps no floor. Money
+// that leaves a live order is mirrored on it as a negative payment row
+// (lib/so-payment-row.ts mirror rows), so its Paid and Balance move.
 //
 // ONE POOL. What an order collected is one sum, and what is left of it is
 // read off the ledger every time, never kept in a column:
@@ -46,6 +52,8 @@ import { issueDepositInvoice } from '../../acc/deposit-invoices';
 import { releaseConversionNotes, takeFromDepositInvoices } from '../../acc/deposit-refunds';
 import { resolveRoles } from '../../acc/rules';
 import { mytDateOf, todayMyt } from './my-time';
+import { companyCodeById } from './doc-no';
+import { processingDateThresholdFor } from '../shared/order-rules';
 import { fmtSen } from '../shared/format';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- PostgREST client, untyped throughout the acc layer */
@@ -64,6 +72,8 @@ export type MoneyPayment = {
   collectedBy: string | null;
   /** A converted row: the cancelled order it moved money from. */
   convertedFrom: string | null;
+  /** The proof the money arrived with (an R2 key), if one was attached. */
+  slipKey: string | null;
 };
 export type MoneyRefund = { id: string; pvNumber: string; status: string; voucherDate: string; totalSen: number };
 export type MoneyConversion = { paymentId: string; toDocNo: string; amountSen: number; paidOn: string; convertedOn: string };
@@ -80,7 +90,15 @@ export type OrderMoney = {
   conversions: MoneyConversion[];
   convertedSen: number;
   remainingSen: number;
-  /** The money may still be refunded or moved: the order is cancelled and something is left. */
+  /** The order's total (local currency, every line — transport included). */
+  totalSen: number;
+  /** The deposit fraction a LIVE order keeps (Houzs 0.3 / 2990 0.5); 0 once cancelled. */
+  keepFraction: number;
+  /** What must stay on a live order: ceil(keepFraction × total). 0 once cancelled. */
+  keepSen: number;
+  /** What may move to another order: remaining − keepSen, never below 0. A refund has no floor. */
+  movableSen: number;
+  /** The money may still be refunded or moved: something is left. */
   open: boolean;
   reason: string | null;
 };
@@ -136,22 +154,24 @@ export async function orderMoney(sb: Db, companyId: number, docNoRaw: unknown): 
   const docNo = String(docNoRaw ?? '').trim();
   if (!docNo) return { ok: false, status: 400, error: 'doc_required', message: 'Which order? Name the Sales Order.' };
   const { data: so, error } = await sb.from('mfg_sales_orders')
-    .select('doc_no, company_id, status, debtor_name, debtor_code, phone, customer_id')
+    .select('doc_no, company_id, status, debtor_name, debtor_code, phone, customer_id, local_total_sen')
     .eq('doc_no', docNo).maybeSingle();
   if (error) return { ok: false, status: 500, error: 'load_failed', message: error.message };
-  const row = so as { doc_no: string; company_id: number | null; status: string | null; debtor_name: string | null; debtor_code: string | null; phone: string | null; customer_id: string | null } | null;
+  const row = so as { doc_no: string; company_id: number | null; status: string | null; debtor_name: string | null; debtor_code: string | null; phone: string | null; customer_id: string | null; local_total_sen: number | null } | null;
   if (!row || Number(row.company_id) !== companyId) return { ok: false, status: 404, error: 'not_found', message: `${docNo} is not a Sales Order of this company.` };
 
   const { data: pays, error: pErr } = await sb.from('mfg_sales_order_payments')
-    .select('id, paid_at, method, merchant_provider, amount_sen, collected_by, converted_from_so_doc_no').eq('so_doc_no', docNo).order('paid_at');
+    .select('id, paid_at, method, merchant_provider, amount_sen, collected_by, converted_from_so_doc_no, slip_key').eq('so_doc_no', docNo).order('paid_at');
   if (pErr) return { ok: false, status: 500, error: 'load_failed', message: pErr.message };
-  const rows = (pays ?? []) as Row[];
+  /* A mirror row (the money that left, negative) is not money in: the pool
+     reads what left off the vouchers and the converted rows themselves. */
+  const rows = ((pays ?? []) as Row[]).filter((r) => Number(r.amount_sen ?? 0) >= 0);
   const booked = await bookedIds(sb, companyId, rows.map((r) => String(r.id)));
   if (!booked.ok) return { ok: false, status: 500, error: 'load_failed', message: booked.reason };
   const payments: MoneyPayment[] = rows.map((r) => ({
     id: String(r.id), paidOn: dayOf(r.paid_at), method: String(r.method ?? ''), provider: r.merchant_provider ?? null,
     amountSen: Number(r.amount_sen ?? 0), booked: booked.ids.has(String(r.id)), collectedBy: r.collected_by ?? null,
-    convertedFrom: r.converted_from_so_doc_no ?? null,
+    convertedFrom: r.converted_from_so_doc_no ?? null, slipKey: r.slip_key ? String(r.slip_key) : null,
   }));
   const refunds = await refundsOn(sb, companyId, docNo);
   if (!refunds.ok) return { ok: false, status: 500, error: 'load_failed', message: refunds.reason };
@@ -164,9 +184,18 @@ export async function orderMoney(sb: Db, companyId: number, docNoRaw: unknown): 
   const remainingSen = Math.max(0, bookedSen - refundedSen - convertedSen);
   const status = row.status ?? null;
   const cancelled = String(status ?? '').toUpperCase() === 'CANCELLED';
+  /* The floor a live order keeps: the Processing-Date gate's own fraction of
+     the same total (shared/order-rules.ts) — one rule, one number per company. */
+  let keepFraction = 0;
+  if (!cancelled) {
+    try { keepFraction = processingDateThresholdFor(await companyCodeById(sb, companyId)); }
+    catch (e) { return { ok: false, status: 500, error: 'load_failed', message: e instanceof Error ? e.message : String(e) }; }
+  }
+  const totalSen = Math.max(0, Number(row.local_total_sen ?? 0));
+  const keepSen = cancelled ? 0 : Math.ceil(totalSen * keepFraction);
+  const movableSen = Math.max(0, remainingSen - keepSen);
   let reason: string | null = null;
-  if (!cancelled) reason = `${docNo} is not cancelled — its money stays on it. Cancel the order first; the money is refunded or moved after.`;
-  else if (bookedSen === 0) reason = payments.length === 0 ? `${docNo} collected nothing.` : `${docNo}'s payments never reached this ledger — nothing here to refund or move.`;
+  if (bookedSen === 0) reason = payments.length === 0 ? `${docNo} collected nothing.` : `${docNo}'s payments never reached this ledger — nothing here to refund or move.`;
   else if (remainingSen === 0) reason = `${docNo}'s money is spoken for — refunded or moved in full.`;
   return {
     ok: true,
@@ -174,7 +203,8 @@ export async function orderMoney(sb: Db, companyId: number, docNoRaw: unknown): 
       docNo, status, cancelled,
       customer: { name: row.debtor_name ?? null, phone: row.phone ?? null, customerId: row.customer_id ?? null, debtorCode: row.debtor_code?.trim() || null },
       payments, bookedSen, refunds: refunds.rows, refundedSen, conversions: conversions.rows, convertedSen, remainingSen,
-      open: cancelled && remainingSen > 0, reason,
+      totalSen, keepFraction, keepSen, movableSen,
+      open: remainingSen > 0, reason,
     },
   };
 }
@@ -187,18 +217,23 @@ export type ConvertPlan = {
   collectedBy: string | null;
   /** The cancelled order's customer, for the screen. */
   fromCustomer: string | null;
+  /** The proof the money arrived with (owner 2026-09-16: attachment 可以带过来):
+      the first booked payment's slip, else the first slip any payment on the
+      source carries — the same R2 object, referenced from both orders. */
+  slipKey: string | null;
 };
 
 /**
- * May this much move from that cancelled order to this one? The source must
- * be a cancelled order of the company with that much left; an order cannot
- * feed itself. Returns what the converted row carries.
+ * May this much move from that order to this one? The source must be an
+ * order of the company with that much left — and, while it is live, that
+ * much above its floor; an order cannot feed itself. Returns what the
+ * converted row carries.
  */
 export async function convertGuard(
   sb: Db, companyId: number, p: { fromDocNo: unknown; toDocNo: string; amountSen: number },
 ): Promise<{ ok: true; plan: ConvertPlan } | { ok: false; status: Refusal; error: string; message: string }> {
   const fromDocNo = String(p.fromDocNo ?? '').trim();
-  if (!fromDocNo) return { ok: false, status: 400, error: 'convert_source_required', message: 'Which cancelled order is the money from? Name it.' };
+  if (!fromDocNo) return { ok: false, status: 400, error: 'convert_source_required', message: 'Which order is the money from? Name it.' };
   if (fromDocNo === p.toDocNo) return { ok: false, status: 400, error: 'convert_same_order', message: `${fromDocNo} cannot move money to itself.` };
   const amount = Number(p.amountSen);
   if (!Number.isInteger(amount) || amount <= 0) return { ok: false, status: 400, error: 'convert_amount_required', message: 'How much moves? An amount above zero, in sen.' };
@@ -212,7 +247,14 @@ export async function convertGuard(
       message: `${fromDocNo} has ${fmtSen(money.remainingSen)} left to move (${fmtSen(money.bookedSen)} paid, ${fmtSen(money.refundedSen)} on refund vouchers, ${fmtSen(money.convertedSen)} moved already) — not ${fmtSen(amount)}.`,
     };
   }
+  if (amount > money.movableSen) {
+    return {
+      ok: false, status: 409, error: 'convert_keeps_deposit',
+      message: `${fromDocNo} keeps ${fmtSen(money.keepSen)} (${Math.round(money.keepFraction * 100)}% of ${fmtSen(money.totalSen)}) while it stands — ${money.movableSen > 0 ? `${fmtSen(money.movableSen)} can move` : 'nothing can move'}, not ${fmtSen(amount)}.`,
+    };
+  }
   const first = money.payments.find((x) => x.booked && x.amountSen > 0) ?? money.payments[0] ?? null;
+  const slipKey = first?.slipKey ?? money.payments.find((x) => x.slipKey)?.slipKey ?? null;
   return {
     ok: true,
     plan: {
@@ -220,21 +262,31 @@ export async function convertGuard(
       paidAt: first?.paidOn && /^\d{4}-\d{2}-\d{2}$/.test(first.paidOn) ? first.paidOn : todayMyt(),
       collectedBy: first?.collectedBy ?? null,
       fromCustomer: money.customer.name,
+      slipKey,
     },
   };
 }
 
-export type ConvertSource = { docNo: string; customer: string | null; cancelledOn: string | null; remainingSen: number; bookedSen: number };
+export type ConvertSource = {
+  docNo: string; customer: string | null; status: string | null;
+  /** The day it was cancelled; null while it stands. */
+  cancelledOn: string | null;
+  remainingSen: number; bookedSen: number;
+  /** What may move to another order — the remaining, less the floor a live order keeps. */
+  movableSen: number;
+  keepSen: number;
+};
 
 /**
- * The cancelled orders a new order may draw on: this customer's, with money
- * left — matched by customer id, else debtor code, else phone — plus any
- * order named outright (`also`), whoever's it is.
+ * The orders a new order may draw on: this customer's, with money left —
+ * matched by customer id, else debtor code, else phone — plus any order named
+ * outright (`also`), whoever's it is. A live order is listed for what it may
+ * give above its floor.
  */
 export async function convertSources(
   sb: Db, companyId: number, p: { customerId?: string | null; debtorCode?: string | null; phone?: string | null; also?: string[]; exclude?: string | null },
 ): Promise<{ ok: true; sources: ConvertSource[] } | { ok: false; reason: string }> {
-  let q = sb.from('mfg_sales_orders').select('doc_no, debtor_name, updated_at, status').eq('company_id', companyId).eq('status', 'CANCELLED');
+  let q = sb.from('mfg_sales_orders').select('doc_no, debtor_name, updated_at, status').eq('company_id', companyId);
   const customerId = String(p.customerId ?? '').trim();
   const debtorCode = String(p.debtorCode ?? '').trim();
   const phone = String(p.phone ?? '').trim();
@@ -251,20 +303,29 @@ export async function convertSources(
   for (const docNo of [...docs].sort()) {
     const m = await orderMoney(sb, companyId, docNo);
     if (!m.ok) { if (m.status === 404) continue; return { ok: false, reason: m.message }; }
-    if (!m.money.open) continue;
+    if (!m.money.open || m.money.movableSen <= 0) continue;
     const row = ((data ?? []) as Row[]).find((r) => String(r.doc_no) === docNo);
-    sources.push({ docNo, customer: m.money.customer.name, cancelledOn: row?.updated_at ? mytDateOf(String(row.updated_at)) : null, remainingSen: m.money.remainingSen, bookedSen: m.money.bookedSen });
+    sources.push(sourceOf(m.money, row ?? null));
   }
   return { ok: true, sources };
 }
 
+const sourceOf = (m: OrderMoney, row: Row | null): ConvertSource => ({
+  docNo: m.docNo, customer: m.customer.name, status: m.status,
+  cancelledOn: m.cancelled && row?.updated_at ? mytDateOf(String(row.updated_at)) : null,
+  remainingSen: m.remainingSen, bookedSen: m.bookedSen, movableSen: m.movableSen, keepSen: m.keepSen,
+});
+
 /**
- * Every cancelled order of the company still holding money — Finance's list;
- * narrowed to one customer's by phone for a page that has no order yet (the
- * New SO page picking "Convert from cancelled SO"; docs/bugs/0931).
+ * Every order of the company still holding money it may refund or move —
+ * Finance's list when `cancelledOnly` (cancelled orders whose money has to
+ * go somewhere), any status for the Sales Orders list's bar and the New SO
+ * page; narrowed to one customer's by phone for a page that has no order yet
+ * (the New SO page picking "Convert from another SO"; docs/bugs/0931).
  */
-export async function cancelledOrdersWithMoney(sb: Db, companyId: number, p: { phone?: string | null } = {}): Promise<{ ok: true; rows: ConvertSource[] } | { ok: false; reason: string }> {
-  let q = sb.from('mfg_sales_orders').select('doc_no, debtor_name, updated_at').eq('company_id', companyId).eq('status', 'CANCELLED');
+export async function ordersWithMoney(sb: Db, companyId: number, p: { phone?: string | null; cancelledOnly: boolean }): Promise<{ ok: true; rows: ConvertSource[] } | { ok: false; reason: string }> {
+  let q = sb.from('mfg_sales_orders').select('doc_no, debtor_name, updated_at, status').eq('company_id', companyId);
+  if (p.cancelledOnly) q = q.eq('status', 'CANCELLED');
   const phone = String(p.phone ?? '').trim();
   if (phone) q = q.eq('phone', phone);
   const { data, error } = await q;
@@ -274,7 +335,7 @@ export async function cancelledOrdersWithMoney(sb: Db, companyId: number, p: { p
     const m = await orderMoney(sb, companyId, String(r.doc_no));
     if (!m.ok) { if (m.status === 404) continue; return { ok: false, reason: m.message }; }
     if (m.money.bookedSen === 0) continue;
-    rows.push({ docNo: String(r.doc_no), customer: m.money.customer.name, cancelledOn: r.updated_at ? mytDateOf(String(r.updated_at)) : null, remainingSen: m.money.remainingSen, bookedSen: m.money.bookedSen });
+    rows.push(sourceOf(m.money, r));
   }
   return { ok: true, rows: rows.filter((x) => x.remainingSen > 0) };
 }

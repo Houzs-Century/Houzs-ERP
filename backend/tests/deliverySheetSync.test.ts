@@ -70,6 +70,7 @@ const HEAD: FeedHeadRow = {
   postcode: "43300",
   city: "Seri Kembangan",
   customer_state: "Selangor",
+  venue: "Balakong Showroom",
   status: "CONFIRMED",
   do_numbers: "HC-DO-2609-001",
   po_numbers: "PO-2609-001, PO-2609-002",
@@ -103,6 +104,7 @@ describe("toSheetRecord — the AutoCount-named record the sheet writes", () => 
     expect(r.InvAddr3).toBe("43300 Seri Kembangan");
     expect(r.InvAddr4).toBe("Selangor");
     expect(r.Region).toBe("WEST");
+    expect(r.SOUDF_VENUE).toBe("Balakong Showroom");
     expect(r.LastModified).toBe(HEAD.last_modified_text);
   });
 
@@ -199,6 +201,51 @@ describe("GET /so-since", () => {
     });
     const res = await app.request("/so-since", { headers: { "X-Intake-Key": KEY } }, env(db));
     expect(res.status).toBe(502);
+  });
+});
+
+describe("GET /overdue and /balance-collection — the two daily lists (phase 2)", () => {
+  test("overdue: undelivered orders past their delivery date, Malaysian day, company-scoped, oldest first", async () => {
+    const { db, seen } = fakeDb((sql) => {
+      if (/FROM companies/i.test(sql)) return { id: HOUZS };
+      if (/FROM scm\.mfg_sales_orders so/.test(sql)) return [{ ...HEAD, customer_delivery_date: "2026-08-01" }];
+      return [];
+    });
+    const res = await app.request("/overdue", { headers: { "X-Intake-Key": KEY } }, env(db));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    expect(body.count).toBe(1);
+    expect(body.records[0]).toMatchObject({ DocNo: "SO-013495", SalesExemptionExpiryDate: "2026-08-01", SOUDF_VENUE: "Balakong Showroom" });
+    const feed = seen.find((s) => /FROM scm\.mfg_sales_orders so/.test(s.sql))!;
+    expect(feed.binds).toEqual([HOUZS]);
+    expect(feed.sql).toContain("t.status NOT IN ('CLOSED', 'DELIVERED', 'INVOICED')");
+    expect(feed.sql).toContain("t.customer_delivery_date::date < (now() AT TIME ZONE 'Asia/Kuala_Lumpur')::date");
+    expect(feed.sql).toContain("ORDER BY t.customer_delivery_date, t.doc_no");
+    expect(feed.sql).not.toContain("LIMIT");
+  });
+
+  test("balance-collection: delivered orders still owing, company-scoped", async () => {
+    const { db, seen } = fakeDb((sql) => {
+      if (/FROM companies/i.test(sql)) return { id: HOUZS };
+      if (/FROM scm\.mfg_sales_orders so/.test(sql)) return [{ ...HEAD, status: "DELIVERED", balance_sen_live: 250000 }];
+      return [];
+    });
+    const res = await app.request("/balance-collection", { headers: { "X-Intake-Key": KEY } }, env(db));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    expect(body.records[0]).toMatchObject({ DocNo: "SO-013495", SOUDF_BALANCE: 2500, Status: "DELIVERED" });
+    const feed = seen.find((s) => /FROM scm\.mfg_sales_orders so/.test(s.sql))!;
+    expect(feed.binds).toEqual([HOUZS]);
+    expect(feed.sql).toContain("t.status IN ('CLOSED', 'DELIVERED', 'INVOICED')");
+    expect(feed.sql).toContain("t.balance_sen_live > 0");
+  });
+
+  test("both lists are 401 on a wrong key and 503 without a HOUZS row", async () => {
+    const { db } = fakeDb((sql) => (/FROM companies/i.test(sql) ? null : []));
+    for (const path of ["/overdue", "/balance-collection"]) {
+      expect((await app.request(path, { headers: { "X-Intake-Key": "wrong" } }, env(db))).status).toBe(401);
+      expect((await app.request(path, { headers: { "X-Intake-Key": KEY } }, env(db))).status).toBe(503);
+    }
   });
 });
 

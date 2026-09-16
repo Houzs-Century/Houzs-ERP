@@ -167,7 +167,7 @@ Desktop / mobile parity
 - A header branding of `NONE` / `N/A` / blank is a placeholder (`isPlaceholderBrandText`). The sofa label is the company house brand (ZANOTTI / 2990s Sofa). The PDF letterhead lookup is per company (`lib/brand-letterhead.ts`).
 - Floating pickers use `frontend/src/lib/anchoredPanel.ts`, which sets both `top` and `bottom`. Don't hand-roll `top: rect.bottom + 4`.
 - Amendments: a new line field must add the signature entry, payload, column, `applySoAmendment` write and every reader together. The direct half drops amendable keys (`withoutFrozenHeaderFields`) rather than reverting them. `DIRECT_ONLY` skips only the amendment. Line delivery date, description, uom, item group and cost cannot be changed on a locked SO.
-- `POST /:docNo/amendments` requires a reason (400 `reason_required`). Header keys go to the Logistic lane, product lines to Purchaser, service lines to Logistic. Each lane gets its own notice.
+- `POST /:docNo/amendments` requires a reason (400 `reason_required`). Header keys go to the Logistic lane, product lines to Purchaser, service lines to Logistic. Each lane gets its own notice. A line whose every requested value equals the stored line is dropped before the split (`lib/amendment-noop-lines.ts`, 2026-09-16) — the phone used to send one per remarked line and open an empty Purchaser approval (`docs/bugs/0944`).
 - Leaving `?edit=1` must clear the URL (`returnToDetail` with replace). Submitting an amendment keeps the editor open.
 - History drawers must pass `q.error`, so a failed read never shows "No history yet".
 - `tests-pg` fixtures must use production column types. Backend typecheck does not cover `tests-pg/`.

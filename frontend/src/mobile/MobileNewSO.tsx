@@ -11,6 +11,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { authedFetch } from "../vendor/scm/lib/authed-fetch";
 import { lineWriteFailure, lineWriteSaveMessage, type LineWriteFailure } from "../vendor/scm/lib/line-write-failures";
+import { amendmentVariants } from "../vendor/scm/lib/so-amendment-line-diff";
 import { photoLabel, photoUploadFailure, photoUploadFailureMessage, unmatchedLinePhotos, type PhotoUploadFailure } from "../vendor/scm/lib/photo-upload-failures";
 import { runSoVersionedMutation } from "../vendor/scm/lib/so-versioned-mutation";
 import { notifySaveProblems, SaveProblemsList, saveProblemsTitle } from "../vendor/scm/components/SaveProblemsList";
@@ -178,7 +179,7 @@ type Payment = {
    *  recordNewPayments has two call sites and the rows survive a failed
    *  submit, which is exactly the double-fire this closes. */
   idempotencyKey: string;
-  method: string; // Cash / Merchant / Online / Installment / Convert from cancelled SO
+  method: string; // Cash / Merchant / Online / Installment / Convert from another SO
   convertedFromDocNo?: string; // the cancelled order a converted row draws on
   date: string;
   amount: string; // RM as typed
@@ -1658,13 +1659,14 @@ export function MobileNewSO({
     if (l.itemCode !== (snap.item_code ?? "")) return true;
     if ((num(l.qty) || 1) !== (snap.qty ?? 1)) return true;
     if (toSen(l.price) !== (snap.unit_price_sen ?? 0)) return true;
-    if (canonJson(buildVariants(l)) !== canonJson(snap.variants ?? {})) return true;
-    /* mig 0280 — the remark is a carryable field now, so a remark-only edit IS
-       a request. Stated explicitly rather than relying on the variants compare
-       above: buildVariants copies the remark into variants.remark, so this was
-       incidentally caught here while desktop's signature (four fields, no
-       variants.remark side channel) missed it entirely and silently requested
-       nothing. Both platforms now test the same five fields on purpose. */
+    /* Variants WITHOUT the remark side channel on BOTH sides (amendmentVariants):
+       buildVariants copies the remark into variants.remark, the stored blob of an
+       imported line carries none, so the raw compare read every remarked line as
+       a spec change — a Delivery Date change on HC-SO-011410 opened a second,
+       Purchaser approval over nothing (owner 2026-09-15). */
+    if (canonJson(amendmentVariants(buildVariants(l))) !== canonJson(amendmentVariants(snap.variants))) return true;
+    /* mig 0280 — the remark is a carryable field, so a remark-only edit IS a
+       request; it is tested HERE, as its own field, on both platforms. */
     if (l.remark.trim() !== (snap.remark ?? "").trim()) return true;
     return false;
   };
@@ -1727,7 +1729,7 @@ export function MobileNewSO({
       if (!snap) continue;
       if (!amendmentLineChanged(l, snap)) continue; // nothing amendable moved
       const codeSame = l.itemCode === (snap.item_code ?? "");
-      const variantsSame = canonJson(buildVariants(l)) === canonJson(snap.variants ?? {});
+      const variantsSame = canonJson(amendmentVariants(buildVariants(l))) === canonJson(amendmentVariants(snap.variants));
       const priceSame = toSen(l.price) === (snap.unit_price_sen ?? 0);
       const qtyMoved = (num(l.qty) || 1) !== (snap.qty ?? 1);
       const qtyOnly = codeSame && variantsSame && priceSame && qtyMoved;
@@ -1735,7 +1737,8 @@ export function MobileNewSO({
         salesOrderItemId: l.itemId,
         changeType: qtyOnly ? "QTY" : "SPEC",
         newItemCode: l.itemCode || undefined,
-        newVariants: buildVariants(l),
+        // The remark rides newRemark below, never inside the variants an approval writes back.
+        newVariants: amendmentVariants(buildVariants(l)) ?? undefined,
         newQty: num(l.qty) || 1,
         newUnitPriceSen: toSen(l.price),
         /* mig 0280 — send the remark only when it MOVED (desktop parity): a null
@@ -3530,7 +3533,7 @@ function PayCard({ pay, staff, convertSources, onChange, onRemove }: { pay: Paym
   /* Live payment dropdowns from the maintenance catalog (same API the desktop
      SalesOrderNew uses); FALLBACK_OPTIONS only backs an offline load. Was
      hardcoded ("Maybank"/"One Shot") and never hit the API — that was the drift. */
-  /* "Convert from cancelled SO" joins the list while the customer has a cancelled order with money (docs/bugs/0933). */
+  /* "Convert from another SO" joins the list while the customer has an order with money to give (docs/bugs/0933). */
   const methodOpts = withConvertOption(optionsOrFallback("payment_method", useSoDropdownOptions("payment_method").data), convertSources.length > 0 || pay.method === CONVERT_LABEL);
   const bankOpts = optionsOrFallback("payment_merchant", useSoDropdownOptions("payment_merchant").data);
   const planOpts = optionsOrFallback("installment_plan", useSoDropdownOptions("installment_plan").data);

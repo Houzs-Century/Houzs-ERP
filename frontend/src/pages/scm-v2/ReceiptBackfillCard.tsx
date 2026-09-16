@@ -2,6 +2,7 @@
 // The plan (what the run would take, per month and series) is read on
 // mount; nothing is written until the button is pressed and confirmed.
 
+import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import { retryUnlessClientError } from '../../lib/retryPolicy';
@@ -21,11 +22,22 @@ export const useReceiptBackfillPlan = () => useQuery({
   retry: retryUnlessClientError,
 });
 
-export const useRunReceiptBackfill = () => {
+/** The run, in batches the server sizes (owner 2026-09-16: one call for 179
+    outran the 30 s the client waits): call again while something is left and
+    the last batch made progress; `onBatch` carries the running total. */
+export const useRunReceiptBackfill = (onBatch?: (sum: BackfillResult) => void) => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => authedFetch<BackfillResult>('/accounting/receipts/backfill', { method: 'POST' }),
-    onSuccess: () => {
+    mutationFn: async () => {
+      const sum: BackfillResult = { created: 0, formalised: 0, failed: [], remaining: -1 };
+      for (;;) {
+        const r = await authedFetch<BackfillResult>('/accounting/receipts/backfill', { method: 'POST' });
+        sum.created += r.created; sum.formalised += r.formalised; sum.failed = [...sum.failed, ...r.failed]; sum.remaining = r.remaining;
+        onBatch?.({ ...sum });
+        if (r.remaining <= 0 || r.created + r.formalised === 0) return sum;
+      }
+    },
+    onSettled: () => {
       void qc.invalidateQueries({ queryKey: PLAN_KEY });
       void qc.invalidateQueries({ queryKey: ['receipts'] });
     },
@@ -48,7 +60,8 @@ const bad = 'var(--c-festive-b, #B8331F)';
 
 export const ReceiptBackfillCard = () => {
   const plan = useReceiptBackfillPlan();
-  const run = useRunReceiptBackfill();
+  const [progress, setProgress] = useState<BackfillResult | null>(null);
+  const run = useRunReceiptBackfill(setProgress);
   const askConfirm = useConfirm();
   const p = plan.data;
   const clean = p != null && p.total === 0;
@@ -77,7 +90,7 @@ export const ReceiptBackfillCard = () => {
               }).then((ok) => { if (ok) run.mutate(); });
             }}
             style={{ marginLeft: 'auto', border: `1px solid ${good}`, color: good, background: 'none', borderRadius: 6, padding: '4px 12px', cursor: 'pointer', fontSize: 'var(--fs-12)', fontWeight: 700 }}>
-            {run.isPending ? 'Creating…' : `Create ${p.total} receipt${p.total === 1 ? '' : 's'} now`}
+            {run.isPending ? (progress ? `Creating… ${progress.created} of ${p.total}, ${progress.remaining} left` : 'Creating…') : `Create ${p.total} receipt${p.total === 1 ? '' : 's'} now`}
           </button>
         )}
       </div>
@@ -106,7 +119,12 @@ export const ReceiptBackfillCard = () => {
           </tbody>
         </table>
       )}
-      {run.isError && <div style={{ fontSize: 'var(--fs-13)', color: bad }}>The run could not finish: {run.error instanceof Error ? run.error.message : String(run.error)}</div>}
+      {run.isError && (
+        <div style={{ fontSize: 'var(--fs-13)', color: bad }}>
+          The run stopped: {run.error instanceof Error ? run.error.message : String(run.error)}
+          {progress && ` — ${progress.created} created so far; every receipt made is kept, press again for the rest.`}
+        </div>
+      )}
       {run.data && (
         <div style={{ fontSize: 'var(--fs-13)', color: run.data.failed.length > 0 ? bad : good, fontWeight: 600 }}>
           Created {run.data.created}, formal {run.data.formalised}, refused {run.data.failed.length}

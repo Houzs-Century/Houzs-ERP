@@ -118,7 +118,7 @@ import {
   PaymentsTable, labelToApi, draftMethodFields, newPaymentDraft, convertDraftsFrom,
   missingMethodSubField, parseInstallmentMonths, type PaymentDraft,
 } from '../../vendor/scm/components/PaymentsTable';
-import { useCancelledWithMoney } from '../../vendor/scm/lib/so-money-queries';
+import { useOrdersWithMoney } from '../../vendor/scm/lib/so-money-queries';
 import { useBranding } from '../../hooks/useBranding';
 import styles from './SalesOrderNew.module.css';
 import { fmtMoneySen } from '@2990s/shared';
@@ -597,8 +597,8 @@ export const SalesOrderNew = () => {
 
   // ── Payments draft state (Task #105: the Detail's PaymentsTable in DRAFT mode; the rows batch to /:docNo/payments after create) ──
   const [paymentDrafts, setPaymentDrafts] = useState<PaymentDraft[]>([]);
-  /* This customer's cancelled orders with money — what a "Convert from cancelled SO" row may draw on (docs/bugs/0931). */
-  const cancelledForCustomer = useCancelledWithMoney(phone.trim() || null, phone.trim().length >= 6);
+  /* This customer's orders with money to give — what a "Convert from another SO" row may draw on (docs/bugs/0931; live orders too since 2026-09-16). */
+  const cancelledForCustomer = useOrdersWithMoney(phone.trim() || null, phone.trim().length >= 6);
   const [createdDocNo, setCreatedDocNo] = useState<string | null>(null);
 
   // ── Debtor autocomplete + warehouse lookup ─────────────────────────

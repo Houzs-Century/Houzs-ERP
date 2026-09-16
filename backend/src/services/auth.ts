@@ -20,6 +20,7 @@ import { applySalesJdOverride } from "./salesJdAccess";
 import { issueSessionPass, sessionSigningSecret } from "./session-pass";
 import { sidFor, revokeSession } from "./session-revocation";
 import { resolvePositionPolicy, positionGrantsWildcard } from "./positionPolicy";
+import { policyRowFromDb, type PositionPolicyRow } from "./positionPolicyRows";
 import {
   applyPageOverrides,
   loadPositionPageOverrides,
@@ -138,7 +139,12 @@ export const REMEMBER_TTL_SECONDS = 60 * 60 * 24 * 365; // 1 year, rolling
  * (position_page_overrides) — both editable in the Roles & Permissions
  * matrix, so an edit must bust every cached session of that position's
  * members on their next request. The bump re-hydrates every session once. */
-export const AUTHZ_ENVELOPE_VERSION = 2;
+/* v3 (2026-09-16): the position's `position_policy` row (cohort / profile /
+ * flags, Roles & Permissions › Titles) joins the fingerprint and rides the
+ * envelope as `position_policy`; a cached v2 envelope has no such field, so
+ * the bump rebuilds each session once rather than serving the name rule to a
+ * Title whose row now says otherwise. */
+export const AUTHZ_ENVELOPE_VERSION = 3;
 
 /* Session ORIGIN (mig 0120) — the DOOR a session was minted at. It is NOT a
    property of the person: the same salesperson simultaneously holds a 'pos'
@@ -180,6 +186,11 @@ export interface AuthUser {
    *  transition. */
   position_id: number | null;
   position_name: string | null;
+  /** The Title's stored policy row (`position_policy`, Roles & Permissions ›
+   *  Titles). When present it decided cohort / page access / money / config /
+   *  fleet at hydration; the name-keyed rule in positionPolicy.ts was used only
+   *  if this is null. Optional so pre-v3 literals still type-check. */
+  position_policy?: PositionPolicyRow | null;
   status: string;
   permissions: string[];
   /** O(1) lookup mirror of `permissions`. Hydrated once at session
@@ -392,6 +403,14 @@ interface SessionAuthority {
   position_name: string | null;
   position_department_id: number | null;
   position_department_name: string | null;
+  /** The Title's position_policy row, joined on the authority read so an edit
+   *  on Roles & Permissions › Titles changes the fingerprint (and so busts the
+   *  cached envelope) without a further UNION arm — D1 caps compound SELECTs. */
+  policy_cohort: string | null;
+  policy_profile: string | null;
+  policy_money: number | boolean | null;
+  policy_config: number | boolean | null;
+  policy_fleet: number | boolean | null;
   department_name: string | null;
 }
 
@@ -436,6 +455,11 @@ function buildAuthzFingerprint(
       authority.position_name,
       authority.position_department_id,
       authority.position_department_name,
+      authority.policy_cohort ?? null,
+      authority.policy_profile ?? null,
+      Number(authority.policy_money ?? 0),
+      Number(authority.policy_config ?? 0),
+      Number(authority.policy_fleet ?? 0),
     ],
     department: [authority.department_id, authority.department_name],
     brands_for: [authority.user_id, authority.manager_id],
@@ -479,6 +503,17 @@ async function hydrateAuthUser(env: Env, row: any): Promise<AuthUser> {
   const managerId: number | null = row.manager_id ?? null;
   const permissions = parsePermissions(row.role_permissions);
   const permissionsSet = new Set(permissions);
+  // The Title's policy row rides the same SELECT (LEFT JOIN position_policy);
+  // null when the Title has no row, which hands every rule below to its
+  // name-keyed fallback.
+  const policyRow: PositionPolicyRow | null = policyRowFromDb({
+    position_id: row.position_id,
+    cohort: row.policy_cohort,
+    profile: row.policy_profile,
+    can_move_money: row.policy_money,
+    can_write_config: row.policy_config,
+    is_fleet: row.policy_fleet,
+  });
   // Position => '*' (owner 2026-07-20): a god-tier POSITION (Super Admin / Owner)
   // is a full super admin with NO roles.permissions grant — step 1 of merging role
   // + position onto ONE position-driven controller. Additive: it only ever ADDS
@@ -486,7 +521,7 @@ async function hydrateAuthUser(env: Env, row: any): Promise<AuthUser> {
   // then flows through the existing wildcard machinery — the page short-circuit
   // below (permissionsSet.has("*") -> fullAccessMap) and every requirePermission
   // site. Exact-name match lives in positionPolicy (never substring).
-  if (!permissionsSet.has("*") && positionGrantsWildcard(row.position_name ?? null)) {
+  if (!permissionsSet.has("*") && positionGrantsWildcard(row.position_name ?? null, policyRow)) {
     permissions.push("*");
     permissionsSet.add("*");
   }
@@ -534,7 +569,7 @@ async function hydrateAuthUser(env: Env, row: any): Promise<AuthUser> {
     const policy = resolvePositionPolicy({
       position_name: row.position_name ?? null,
       department_name: row.department_name ?? null,
-    });
+    }, policyRow);
     pageAccess = policy.pageAccess;
     scmMeta.explicitScm = policy.scmConfigured;
   } else {
@@ -598,10 +633,12 @@ async function hydrateAuthUser(env: Env, row: any): Promise<AuthUser> {
         permissions: permissionsSet,
         position_name: row.position_name ?? null,
         department_name: row.department_name ?? null,
+        position_policy: policyRow,
       }),
       pageOverrides,
     ),
     position_capabilities: positionCapabilities,
+    position_policy: policyRow,
     // An overridden position is explicitly configured — the area guard must
     // enforce its composed map even for a default-full cohort (whose map is
     // the full-access map with only the overridden keys replaced, so nothing
@@ -662,12 +699,16 @@ export async function getUserBySession(env: Env, token: string): Promise<AuthUse
               p.name AS position_name,
               p.department_id AS position_department_id,
               pd.name AS position_department_name,
+              pp.cohort AS policy_cohort, pp.profile AS policy_profile,
+              pp.can_move_money AS policy_money, pp.can_write_config AS policy_config,
+              pp.is_fleet AS policy_fleet,
               d.name AS department_name
        FROM sessions s
        JOIN users u ON u.id = s.user_id
        JOIN roles r ON r.id = u.role_id
        LEFT JOIN positions p ON p.id = u.position_id
        LEFT JOIN departments pd ON pd.id = p.department_id
+       LEFT JOIN position_policy pp ON pp.position_id = u.position_id
        LEFT JOIN departments d ON d.id = u.department_id
        WHERE s.token = ?`
     )
@@ -795,12 +836,16 @@ export async function getUserBySession(env: Env, token: string): Promise<AuthUse
               r.name as role_name, r.permissions as role_permissions,
               r.scope_to_pic,
               p.name as position_name,
+              pp.cohort as policy_cohort, pp.profile as policy_profile,
+              pp.can_move_money as policy_money, pp.can_write_config as policy_config,
+              pp.is_fleet as policy_fleet,
               d.name as department_name,
               s.expires_at, s.origin
        FROM sessions s
        JOIN users u ON u.id = s.user_id
        JOIN roles r ON r.id = u.role_id
        LEFT JOIN positions p ON p.id = u.position_id
+       LEFT JOIN position_policy pp ON pp.position_id = u.position_id
        LEFT JOIN departments d ON d.id = u.department_id
        WHERE s.token = ?`
     )
@@ -844,10 +889,14 @@ export async function getUserById(env: Env, id: number): Promise<AuthUser | null
             r.name as role_name, r.permissions as role_permissions,
             r.scope_to_pic,
             p.name as position_name,
+              pp.cohort as policy_cohort, pp.profile as policy_profile,
+              pp.can_move_money as policy_money, pp.can_write_config as policy_config,
+              pp.is_fleet as policy_fleet,
             d.name as department_name
      FROM users u
      JOIN roles r ON r.id = u.role_id
      LEFT JOIN positions p ON p.id = u.position_id
+     LEFT JOIN position_policy pp ON pp.position_id = u.position_id
      LEFT JOIN departments d ON d.id = u.department_id
      WHERE u.id = ?`
   )

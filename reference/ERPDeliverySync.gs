@@ -13,9 +13,9 @@
 // by the pull (the writer starts at col B, as it always did).
 //
 // SETUP (once, by the account that owns the triggers):
-//   1. File > Project settings > Script properties:
-//        ERP_BASE_URL   = https://<the ERP worker host>          (no trailing slash)
-//        SHEET_SYNC_KEY = <the HC sheet's key, same value as the GitHub secret>
+//   1. Nothing to configure while ERPMain.gs keeps ASSR_SYNC_KEY and the ERP is
+//      at https://erp.houzscentury.com (the defaults below). Otherwise set Script
+//      properties ERP_BASE_URL (no trailing slash) and SHEET_SYNC_KEY.
 //   2. Run erpSeedFromSheet()   — pushes EVERY row's col A / col O into the ERP,
 //      so the first ERP pull does not overwrite the sheet with older values.
 //   3. Run setupErpTriggers()   — removes the AutoCount scheduledPull /
@@ -78,6 +78,27 @@ function erpDateText_(v) {
   return String(v == null ? "" : v).trim();
 }
 
+// Rows the pull may APPEND: only orders dated on/after ERP_APPEND_FROM (Script
+// property, default = the cutover day). AutoCount's getSince only ever added an
+// order to the sheet when that order was modified, so years-old open orders
+// never reached it; sending every ERP order on the first pull appended ~2,400
+// of them (2026-09-16 15:11). Existing rows are always updated.
+function erpAppendFrom_() {
+  return PropertiesService.getScriptProperties().getProperty("ERP_APPEND_FROM") || "2026-09-15";
+}
+function erpIsNewOrder_(o) {
+  return !!o.DocDate && String(o.DocDate).slice(0, 10) >= erpAppendFrom_();
+}
+function erpExistingDocNos_(sheet, cfg) {
+  const map = {};
+  const lastRow = sheet.getLastRow();
+  if (lastRow < cfg.startRow) return map;
+  sheet.getRange(cfg.startRow, 2, lastRow - cfg.startRow + 1, 1).getValues().forEach(function (r) {
+    if (r[0]) map[String(r[0]).trim()] = true;
+  });
+  return map;
+}
+
 /**
  * The ERP only overwrites a cell when it KNOWS the value. For every field the
  * writer touches, a null from the ERP keeps what the sheet already holds — so
@@ -132,6 +153,7 @@ function runErpPullProcess(triggerType) {
   let message = "";
   let pulled = 0;
   let failed = 0;
+  let skipped = 0;
 
   try {
     const cfg = erpConfig_();
@@ -158,8 +180,17 @@ function runErpPullProcess(triggerType) {
         if (!buckets[region].length) return;
         const sheetName = erpSheetFor_(region);
         const sheet = ss.getSheetByName(sheetName);
-        if (sheet) erpPreserveBlanks_(sheet, getSheetConfig(sheetName), buckets[region]);
-        const r = writeDataToTargetSheet(ss, sheetName, buckets[region], rid);
+        let recs = buckets[region];
+        if (sheet) {
+          const cfg = getSheetConfig(sheetName);
+          const existing = erpExistingDocNos_(sheet, cfg);
+          const before = recs.length;
+          recs = recs.filter(function (o) { return existing[String(o.DocNo).trim()] || erpIsNewOrder_(o); });
+          skipped += before - recs.length;
+          erpPreserveBlanks_(sheet, cfg, recs);
+        }
+        if (!recs.length) return;
+        const r = writeDataToTargetSheet(ss, sheetName, recs, rid);
         pulled += r.success;
         pageFail += r.fail;
       });
@@ -175,7 +206,7 @@ function runErpPullProcess(triggerType) {
       if (!data.has_more) break;
     }
     if (pulled === 0 && failed === 0) { status = "SKIPPED"; message = "No modifications since the checkpoint."; }
-    else { status = failed > 0 ? "PARTIAL" : "SYNCED"; message = "Pulled " + pulled + " record(s) from the ERP. Failed " + failed + "."; }
+    else { status = failed > 0 ? "PARTIAL" : "SYNCED"; message = "Pulled " + pulled + " record(s) from the ERP. Failed " + failed + ". Skipped " + skipped + " old order(s) not on the sheet."; }
   } catch (e) {
     status = "FAILED";
     message = e.message;
@@ -339,4 +370,50 @@ function setupErpTriggers() {
   ScriptApp.newTrigger("scheduledErpSync").timeBased().everyMinutes(15).create();
   Log.info("setup", "AutoCount pull/push triggers removed; scheduledErpSync installed every 15 minutes.");
   try { SpreadsheetApp.getUi().alert("ERP sync installed (every 15 min). AutoCount pull/push triggers removed."); } catch (e) {}
+}
+
+// ── One-off cleanup of the rows the FIRST pull appended (2026-09-16 15:04) ──
+// erpSeedFromSheet at 14:54 counted the rows with a Doc. No. on each tab; every
+// row the 15:04 pull appended sits BELOW those, so the appended block on a tab
+// is 'the rows with a Doc. No. after the first N'. erpListAppendedRows() only
+// logs the ranges; erpDeleteAppendedRows() deletes them after checking that
+// every row in the block looks pull-written (col A empty, Sync Status SYNCED).
+const ERP_ROWS_BEFORE_FIRST_PULL = { 'Delivery Details': 4238, 'EM Order': 243, 'SG Order': 134 };
+function erpAppendedRowRanges_() {
+  const ss = getTargetSs();
+  const out = [];
+  erpRegionalSheets_().forEach(function (sConfig) {
+    const sheet = ss.getSheetByName(sConfig.name);
+    const keep = ERP_ROWS_BEFORE_FIRST_PULL[sConfig.name];
+    if (!sheet || keep == null) return;
+    const data = sheet.getDataRange().getValues();
+    let seen = 0, firstRow = null;
+    for (let i = sConfig.start - 1; i < data.length; i++) {
+      if (!String(data[i][1] || '').trim()) continue;
+      seen++;
+      if (seen === keep + 1) { firstRow = i + 1; break; }
+    }
+    if (!firstRow) { out.push({ name: sConfig.name, firstRow: null, lastRow: sheet.getLastRow(), count: 0, ok: true, why: 'nothing appended' }); return; }
+    const lastRow = sheet.getLastRow();
+    let bad = [];
+    for (let r = firstRow; r <= lastRow; r++) {
+      const row = data[r - 1];
+      const a = String(row[0] || '').trim(), doc = String(row[1] || '').trim(), st = String(row[sConfig.statusCol - 1] || '').trim();
+      if (a !== '' || doc === '' || st !== 'SYNCED') bad.push('R' + r + ' A=' + a + ' B=' + doc + ' status=' + st);
+    }
+    out.push({ name: sConfig.name, firstRow: firstRow, lastRow: lastRow, count: lastRow - firstRow + 1, firstDoc: String(data[firstRow - 1][1]), lastDoc: String(data[lastRow - 1][1]), ok: bad.length === 0, why: bad.slice(0, 5).join(' | ') });
+  });
+  return out;
+}
+function erpListAppendedRows() {
+  erpAppendedRowRanges_().forEach(function (r) { Log.info('cleanup', JSON.stringify(r)); });
+}
+function erpDeleteAppendedRows() {
+  const ss = getTargetSs();
+  erpAppendedRowRanges_().forEach(function (r) {
+    if (!r.firstRow) { Log.info('cleanup', '[' + r.name + '] nothing to delete'); return; }
+    if (!r.ok) { Log.warn('cleanup', '[' + r.name + '] NOT deleted, block is not uniformly pull-written: ' + r.why); return; }
+    ss.getSheetByName(r.name).deleteRows(r.firstRow, r.count);
+    Log.info('cleanup', '[' + r.name + '] deleted rows ' + r.firstRow + '-' + r.lastRow + ' (' + r.count + ' rows, ' + r.firstDoc + ' .. ' + r.lastDoc + ')');
+  });
 }

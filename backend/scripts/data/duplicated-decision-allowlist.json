@@ -1394,6 +1394,11 @@
       "check": "D2",
       "key": "AGENT,CANCELLED,CURRENCY,DESC2,DETAIL_DESCRIPTION,DETAIL_DESCRIPTION_2,DISCOUNT,DN,EXCHANGE_RATE,GRN_NUMBER,INCLUSIVE,ITEM_CODE,LINE_TAX,LINE_TOTAL,LOCAL_TOTAL,LOCATION,OUR_PO_NO,PROJ_NO,QTY,RECEIVED_AT,SUBTOTAL,SUPPLIER,SUPPLIER_CODE,TAX,TAX_CODE,TOTAL,TOTAL_EX,TOTAL_INC,UNIT_PRICE,UOM ~ AGENT,CANCELLED,CURRENCY,DESC2,DETAIL_DESCRIPTION,DETAIL_DESCRIPTION_2,DISCOUNT,EXCHANGE_RATE,INCLUSIVE,INVOICE_DATE,INVOICE_NUMBER,ITEM_CODE,LINE_TAX,LINE_TOTAL,LOCAL_TOTAL,LOCATION,PROJ_NO,QTY,SUBTOTAL,SUPPLIER,SUPPLIER_CODE,SUPPLIER_INVOICE_REF,TAX,TAX_CODE,TOTAL,TOTAL_EX,TOTAL_INC,UNIT_PRICE,UOM",
       "why": "TWO LISTS' DEFAULT COLUMN SETS (GRN_DEFAULT_COLUMN_KEYS, PI_DEFAULT_COLUMN_KEYS), not one decision in two homes: each is AutoCount's OWN Detail Listing layout for that document (GR layout S and PI layout SS read from the book's Layout table 2026-09-15). They share most keys because AutoCount's two listings do, and they differ exactly where the documents do: the document reference (Supplier DO No / Supplier Invoice No.), the document date and number columns, and GR's Our PO No. Owner 2026-09-15: each list's default view is AutoCount's columns in AutoCount's order; each is ONE constant so a change stays one line. (The Sales Invoices list keeps its own grid as the default by owner ruling; its AutoCount set SI_AC_COLUMN_KEYS only orders the chooser.)"
+    },
+    {
+      "check": "D1",
+      "key": "CALENDAR_VIEWER,DRIVER_HELPER,STOREKEEPER,STOREKEEPER_SUPERVISOR|backend/src/services/positionPolicy.ts backend/src/services/positionPolicyRows.ts",
+      "why": "ONE vocabulary with a TYPE-CHECKED second home, not a second decision: RESTRICTED_PROFILES (positionPolicyRows.ts) is the list a position_policy row may name, and PROFILE_ROWS (positionPolicy.ts) maps each name to its page whitelist as Record<RestrictedProfile, ...> — a profile added to one and not the other is a compile error (tsc), never a runtime drift. positionPolicyRows.ts cannot import positionPolicy.ts (cycle), which is why the map lives beside the whitelists it names."
     }
   ]
 }

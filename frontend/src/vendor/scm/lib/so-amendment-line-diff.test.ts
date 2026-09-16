@@ -22,6 +22,7 @@ import {
   amendmentLineSig,
   amendmentUnrenderedAxes,
   amendmentVariantSummaries,
+  amendmentVariants,
   resolveVariantGroup,
   unrenderedVariantAxes,
   visibleAmendmentLines,
@@ -384,5 +385,30 @@ describe('amendmentLineSig', () => {
 
   it('an untouched draft round-trips to the same signature', () => {
     expect(amendmentLineSig({ ...draft })).toBe(amendmentLineSig(draft));
+  });
+});
+
+/* HC-SO-011410 (owner 2026-09-15): the phone copies the line remark into
+   variants.remark, the stored blob of an imported line carries none, so the raw
+   compare read every remarked line as a spec change and a Delivery Date change
+   opened a second, Purchaser approval over nothing. The amendment compares and
+   sends variants through amendmentVariants. */
+describe('amendmentVariants', () => {
+  it('strips the remark side channel and nothing else', () => {
+    expect(amendmentVariants({ gap: '14"', remark: '账本原文: PC151-01/Divan8+4/gap14', size: null }))
+      .toEqual({ gap: '14"', size: null });
+  });
+
+  it('a blob that was only a remark reads as no variants — the same as an imported line\'s null', () => {
+    expect(amendmentVariants({ remark: '账本原文: set' })).toBeNull();
+    expect(amendmentVariants(null)).toBeNull();
+    expect(amendmentVariants(undefined)).toBeNull();
+    expect(amendmentVariants({})).toBeNull();
+  });
+
+  it('does not mutate its input', () => {
+    const v = { gap: '14"', remark: 'x' };
+    amendmentVariants(v);
+    expect(v).toEqual({ gap: '14"', remark: 'x' });
   });
 });
