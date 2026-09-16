@@ -52,6 +52,23 @@ const seatKey = (rows) =>
       .sort((a, b) => (a[0] + a[1] < b[0] + b[1] ? -1 : 1)),
   );
 
+/** A trustworthy COST signal for the diff. For SOFA the SO cost is the seat
+ *  grid (base_price_sen is only a flat fallback and is often a stale legacy
+ *  value), so report the dearest seat-grid cell; for every other category the
+ *  cost IS base_price_sen. This stops the diff headlining sofas as "5063 -> 0"
+ *  when the real per-height cost is preserved/corrected in the grid. */
+const costSignalSen = (category, baseSen, seatRows) => {
+  if (String(category ?? '').toUpperCase() === 'SOFA') {
+    let max = 0;
+    for (const r of Array.isArray(seatRows) ? seatRows : []) {
+      const n = Number(r?.priceSen ?? 0);
+      if (Number.isFinite(n) && n > max) max = n;
+    }
+    if (max > 0) return max;
+  }
+  return Number(baseSen ?? 0);
+};
+
 /** Derive one company's planned changes. Returns { changes, skipped, byReason }. */
 async function planCompany(client, companyId) {
   const products = await client`
@@ -88,10 +105,12 @@ async function planCompany(client, companyId) {
     const p1Changed = 'price1_sen' in pt && Number(newP1 ?? -1) !== Number(p.price1_sen ?? -1);
     const seatChanged = pt.seat_height_prices !== undefined && seatKey(newSeat) !== seatKey(p.seat_height_prices);
     if (!baseChanged && !p1Changed && !seatChanged) continue;
+    const oldCost = costSignalSen(p.category, p.base_price_sen, p.seat_height_prices);
+    const newCost = costSignalSen(p.category, newBase, newSeat);
     changes.push({
       id: p.id, code: p.code, category: p.category,
-      oldBase: p.base_price_sen, newBase, p1Changed, seatChanged,
-      delta: Number(newBase ?? 0) - Number(p.base_price_sen ?? 0),
+      oldCost, newCost, p1Changed, seatChanged,
+      delta: newCost - oldCost,
       patch: { base_price_sen: newBase, price1_sen: newP1, seat_height_prices: newSeat },
     });
   }
@@ -114,7 +133,7 @@ try {
     note(`biggest movers (code | category | old RM -> new RM${'  (+P1/seat)'}):`);
     for (const m of movers) {
       const tags = `${m.p1Changed ? ' P1' : ''}${m.seatChanged ? ' seat' : ''}`;
-      note(`  ${m.code} | ${m.category ?? '-'} | ${rm(m.oldBase)} -> ${rm(m.newBase)}${tags}`);
+      note(`  ${m.code} | ${m.category ?? '-'} | ${rm(m.oldCost)} -> ${rm(m.newCost)}${tags}`);
     }
     if (changes.length > movers.length) note(`  ... ${changes.length - movers.length} more.`);
 
