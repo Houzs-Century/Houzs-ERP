@@ -8,6 +8,7 @@ import { fmtAmt } from "../lib/scm";
 import { useQueryClient } from "@tanstack/react-query";
 import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
+import { notifySaveProblems } from "../vendor/scm/components/SaveProblemsList";
 import { usePrompt } from "../vendor/scm/components/PromptDialog"; import { CancelRequestPanel } from "../vendor/scm/components/CancelRequestPanel"; import { useCancelRequestAction } from "../pages/scm-v2/use-cancel-request-action";
 import { fetchScanSlipImageBlobUrl } from "../vendor/scm/lib/slip";
 import { MobileLinePhotos } from "./MobileLinePhotos";
@@ -401,7 +402,12 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
     try {
       await updateStatus.mutateAsync({ docNo, status, expectedStatus: h?.status ?? null });
     } catch (e) {
-      setActionError(e instanceof Error ? e.message : "Something went wrong. Please try again.");
+      /* Confirming an incomplete order fails the shared gate (422 validation_failed)
+         — render EVERY reason at once in the SAME SaveProblemsList popup the
+         desktop + create surfaces use (owner 2026-09-16, mobile edit parity),
+         instead of the old bulleted-text line. Any non-gate error still falls back
+         to the inline actionError. */
+      await notifySaveProblems(notifyTop, e, setActionError, "Something went wrong. Please try again.");
     } finally {
       setBusy(false);
     }

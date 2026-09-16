@@ -73,18 +73,21 @@ const mount = (so: Record<string, unknown>) => {
 
 const BANNER = /delivery address is required/i;
 
-describe("phone SO editor — delivery-address banner", () => {
-  it("does NOT warn when State, City, Postcode and Address Line 1 are all filled", async () => {
+describe("phone SO editor — the standing delivery-address banner is GONE", () => {
+  /* Owner 2026-09-16: remove the banner entirely — it is noise now. A missing
+     address surfaces the same way as every other blocker: the field `*` + red
+     mark, a line in the backend all-at-once problems list, and the persistent
+     "Can't save — N to fix" pill by Save. The address RULE is unchanged (still
+     enforced by the backend collector); only the standing banner is gone. */
+  it("shows no banner when the address is complete", async () => {
     mount(baseHeader);
-    // The address card has mounted with the loaded values.
     await waitFor(() => expect(screen.getByDisplayValue("268, Lorong Permata 10,")).toBeTruthy());
     expect(screen.queryByText(BANNER)).toBeNull();
   });
 
-  it("still warns, naming the missing field, when a required address field is empty", async () => {
+  it("shows no banner even when a required address field is empty (it was removed)", async () => {
     mount({ ...baseHeader, postcode: null });
     await waitFor(() => expect(screen.getByDisplayValue("268, Lorong Permata 10,")).toBeTruthy());
-    const banner = await screen.findByText(BANNER);
-    expect(banner.textContent).toMatch(/postcode/i);
+    expect(screen.queryByText(BANNER)).toBeNull();
   });
 });
