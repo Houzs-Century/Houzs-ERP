@@ -64,22 +64,24 @@ describe('the shared save-guard layer carries no slip rule', () => {
     }
   });
 
-  test('the guards that did NOT change are still shared by all four', () => {
+  test('the guards that did NOT change are still shared — no surface diverges', () => {
     /* Removing one rule must not quietly unhook the others from the shared
        layer — desktop and mobile diverging on a save guard is the recurring
        bug class named in CLAUDE.md.
 
-       Since 2026-09-16 ALL FOUR create/edit surfaces reach the date + stock-
-       location guards through the ONE aggregator collectSoSaveProblems (which
-       collects every blocker into one list) rather than calling them inline, so
-       the shared path for each is `collectSoSaveProblems`; the evaluator itself
-       still calls both guards, asserted below. */
+       Since 2026-09-16 the BACKEND is the sole authority (owner: frontend 只是
+       显示问题). The three desktop create surfaces post their draft to the ONE
+       validate endpoint and render the returned problems[]; the backend collector
+       (shared/so-submit-problems.ts) owns the date + stock-location guards. Mobile
+       still reaches them through the client aggregator until PR3 migrates it, and
+       that aggregator still calls both guards (asserted below). */
+    for (const source of [desktopSource, guidedSource, fromProductsSource]) {
+      expect(source).toContain('/mfg-sales-orders/validate');
+    }
+    expect(mobileSource).toContain('collectSoSaveProblems');
     const evaluatorSource = read('src/vendor/scm/lib/so-save-problems-client.ts');
     expect(evaluatorSource).toContain('soDateGuardError');
     expect(evaluatorSource).toContain('soStockLocationError');
-    for (const source of [desktopSource, mobileSource, guidedSource, fromProductsSource]) {
-      expect(source).toContain('collectSoSaveProblems');
-    }
   });
 });
 
