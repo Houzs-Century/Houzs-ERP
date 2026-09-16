@@ -132,7 +132,7 @@ Sales-Director carve-out for their own department.
   derivation.
 - `backend/src/routes/departments.ts` — department lead/headcount/code.
 - `backend/src/routes/position-capabilities.ts`,
-  `backend/src/services/positionCapabilities.ts`,
-  `backend/src/services/positionPageOverrides.ts` — the page-access matrix.
+  `backend/src/services/positionCapabilities.ts` — the Actions matrix;
+  `backend/src/routes/position-policy.ts` — the Titles tab.
 - `frontend/src/pages/Positions.tsx` — Titles tab.
 - `frontend/src/pages/Roles.tsx` — Roles editor.

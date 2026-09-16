@@ -275,7 +275,6 @@ POST,/api/pos/set-pin,AUTHENTICATED_MIDDLEWARE,NO_GLOBAL_COMPANY_CONTEXT,,,auth,
 POST,/api/pos/verify-pin,AUTHENTICATED_MIDDLEWARE,NO_GLOBAL_COMPANY_CONTEXT,,,auth,verifyPassword,YES,HANDLER_GUARD_REVIEW,backend/src/routes/pos.ts
 GET,/api/position-capabilities,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""users.read"")",,NO,DECLARED_GATE,backend/src/routes/position-capabilities.ts
 PUT,/api/position-capabilities/:positionId,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""roles.manage"")",,YES,DECLARED_GATE,backend/src/routes/position-capabilities.ts
-PUT,/api/position-capabilities/:positionId/pages,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""roles.manage"")",,YES,DECLARED_GATE,backend/src/routes/position-capabilities.ts
 GET,/api/position-policy,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""users.read"")",,NO,DECLARED_GATE,backend/src/routes/position-policy.ts
 DELETE,/api/position-policy/:positionId,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""roles.manage"")",,YES,DECLARED_GATE,backend/src/routes/position-policy.ts
 PUT,/api/position-policy/:positionId,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""roles.manage"")",,YES,DECLARED_GATE,backend/src/routes/position-policy.ts

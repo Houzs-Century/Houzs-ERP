@@ -21,11 +21,6 @@ import { issueSessionPass, sessionSigningSecret } from "./session-pass";
 import { sidFor, revokeSession } from "./session-revocation";
 import { resolvePositionPolicy, positionGrantsWildcard } from "./positionPolicy";
 import { policyRowFromDb, type PositionPolicyRow } from "./positionPolicyRows";
-import {
-  applyPageOverrides,
-  loadPositionPageOverrides,
-  type PageOverrideRow,
-} from "./positionPageOverrides";
 
 // ── Crypto helpers ────────────────────────────────────────
 // PBKDF2 via Web Crypto — built into Workers, no WASM needed.
@@ -136,7 +131,7 @@ export const REMEMBER_TTL_SECONDS = 60 * 60 * 24 * 365; // 1 year, rolling
 // its first request after deploy instead of waiting for KV TTL.
 /* v2 (2026-08-22): the fingerprint components gained the position's
  * capability rows (position_capabilities) and SCM page overrides
- * (position_page_overrides) — both editable in the Roles & Permissions
+ * (position_page_overrides, dropped in v4) — both editable in the Roles & Permissions
  * matrix, so an edit must bust every cached session of that position's
  * members on their next request. The bump re-hydrates every session once. */
 /* v3 (2026-09-16): the position's `position_policy` row (cohort / profile /
@@ -144,7 +139,10 @@ export const REMEMBER_TTL_SECONDS = 60 * 60 * 24 * 365; // 1 year, rolling
  * envelope as `position_policy`; a cached v2 envelope has no such field, so
  * the bump rebuilds each session once rather than serving the name rule to a
  * Title whose row now says otherwise. */
-export const AUTHZ_ENVELOPE_VERSION = 3;
+/* v4 (2026-09-16): the position_page_overrides layer is gone (table dropped,
+ * never used in production); the fingerprint lost its override arm and the
+ * envelope its override composition, so every cached v3 session rebuilds once. */
+export const AUTHZ_ENVELOPE_VERSION = 4;
 
 /* Session ORIGIN (mig 0120) — the DOOR a session was minted at. It is NOT a
    property of the person: the same salesperson simultaneously holds a 'pos'
@@ -415,7 +413,7 @@ interface SessionAuthority {
 }
 
 interface AuthzComponent {
-  kind: "page" | "brand" | "cap" | "pgov";
+  kind: "page" | "brand" | "cap";
   owner_key: "role" | "self" | "manager" | "position";
   item_key: string;
   item_value: string;
@@ -576,24 +574,18 @@ async function hydrateAuthUser(env: Env, row: any): Promise<AuthUser> {
     pageAccess = await loadPageAccessForRole(env, row.role_id, permissionsSet, scmMeta);
   }
 
-  // Editable Roles & Permissions matrix (owner 2026-08-22): the position's
-  // operational capability rows ride the session envelope, and its stored SCM
-  // page OVERRIDES compose over the resolved policy below. A `*` caller skips
-  // both loads — the guards bypass on the wildcard, so the rows would be dead
-  // weight on the hottest path. Positionless users have neither by definition.
+  // Actions matrix (owner 2026-08-22): the position's operational capability
+  // rows ride the session envelope. A `*` caller skips the load — the guard
+  // bypasses on the wildcard, so the rows would be dead weight on the hottest
+  // path. Positionless users have none by definition.
   let positionCapabilities: string[] = [];
-  let pageOverrides: PageOverrideRow[] = [];
   if (row.position_id != null && !permissionsSet.has("*")) {
-    const [capRows, overrideRows] = await Promise.all([
-      env.DB.prepare(
-        `SELECT capability FROM position_capabilities WHERE position_id = ? ORDER BY capability`,
-      )
-        .bind(row.position_id)
-        .all<{ capability: string }>(),
-      loadPositionPageOverrides(env, row.position_id),
-    ]);
+    const capRows = await env.DB.prepare(
+      `SELECT capability FROM position_capabilities WHERE position_id = ? ORDER BY capability`,
+    )
+      .bind(row.position_id)
+      .all<{ capability: string }>();
     positionCapabilities = (capRows.results ?? []).map((r) => r.capability);
-    pageOverrides = overrideRows;
   }
 
   return {
@@ -624,26 +616,15 @@ async function hydrateAuthUser(env: Env, row: any): Promise<AuthUser> {
     // under default-full the operation cohort is full anyway, and for the
     // restricted Storekeeper / Supervisor it was WRONG — it granted warehouse-write
     // edit the owner's manual denies them.
-    // Stored SCM overrides (the editable matrix) compose LAST — after the JD
-    // caps — because they are the owner's explicit per-position ruling. They
-    // cannot WIDEN past a code rule: salesJdDenial / salesJdWriteDenial /
-    // moneyWriteDenial all run before the map inside scmAreaGuard.
-    page_access: applyPageOverrides(
-      applySalesJdOverride(pageAccess, {
-        permissions: permissionsSet,
-        position_name: row.position_name ?? null,
-        department_name: row.department_name ?? null,
-        position_policy: policyRow,
-      }),
-      pageOverrides,
-    ),
+    page_access: applySalesJdOverride(pageAccess, {
+      permissions: permissionsSet,
+      position_name: row.position_name ?? null,
+      department_name: row.department_name ?? null,
+      position_policy: policyRow,
+    }),
     position_capabilities: positionCapabilities,
     position_policy: policyRow,
-    // An overridden position is explicitly configured — the area guard must
-    // enforce its composed map even for a default-full cohort (whose map is
-    // the full-access map with only the overridden keys replaced, so nothing
-    // narrows by accident).
-    scm_l2_configured: scmMeta.explicitScm || pageOverrides.length > 0,
+    scm_l2_configured: scmMeta.explicitScm,
     // sessions.origin — present only on the getUserBySession row (that SELECT
     // already joins `sessions`, so this costs no extra round-trip). getUserById
     // has no session, so `row.origin` is absent there and this lands null =
@@ -742,11 +723,6 @@ export async function getUserBySession(env: Env, token: string): Promise<AuthUse
               pc.capability AS item_key, '' AS item_value
        FROM principal pr
        JOIN position_capabilities pc ON pc.position_id = pr.position_id
-       UNION ALL
-       SELECT 'pgov' AS kind, 'position' AS owner_key,
-              po.page_key AS item_key, po.level AS item_value
-       FROM principal pr
-       JOIN position_page_overrides po ON po.position_id = pr.position_id
        ORDER BY kind, owner_key, item_key, item_value`
     )
       .bind(token)
