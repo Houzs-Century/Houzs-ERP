@@ -136,6 +136,61 @@ describe('deriveProductCostFromSuppliers — zero-priced winner is reported, not
   });
 });
 
+describe('deriveProductCostFromSuppliers — a cost-less binding never anchors cost (owner 2026-09-16)', () => {
+  it('SOFA: a supplier with only P1 (no P2 anywhere, flat 0) does NOT win; cost comes from a P2 supplier (9058-L class)', () => {
+    // ARMANI 9058-L is only-P1 with a 10405 outlier; the four agreeing suppliers
+    // quote a real P2 cost. The dearest AMONG suppliers that quote a cost wins.
+    const r = chosen(
+      deriveProductCostFromSuppliers('SOFA', [
+        b({ supplier_id: 'armani', unit_price_sen: 0, price_matrix: { '24': { P1: 1040500 }, '30': { P1: 110000 } } }),
+        b({
+          supplier_id: 'ohana',
+          unit_price_sen: 0,
+          price_matrix: { '24': { P2: 105000, P3: 110000 }, '30': { P2: 110000, P3: 115000 } },
+        }),
+      ]),
+    );
+    expect(r.chosenSupplierId).toBe('ohana'); // NOT armani
+    expect(r.dearnessSen).toBe(115000); // RM1150 (dearest cell of the cost supplier), never 1040500
+    const rows = r.patch.seat_height_prices ?? [];
+    expect(rows.some((x) => x.priceSen === 1040500)).toBe(false); // the P1 outlier never leaks
+    expect(rows.find((x) => x.height === '24' && x.tier === 'PRICE_2')?.priceSen).toBe(105000);
+  });
+
+  it('SOFA: when EVERY supplier is only-P1 (no cost tier anywhere) -> skipped, cost not fabricated', () => {
+    const r = deriveProductCostFromSuppliers('SOFA', [
+      b({ supplier_id: 'a', unit_price_sen: 0, price_matrix: { '24': { P1: 1040500 } } }),
+    ]);
+    expect(r.skipped).toBe(true);
+    if (r.skipped) expect(r.reason).toBe('no_supplier_with_cost');
+  });
+
+  it('BEDFRAME: an only-P1 binding (no P2, no flat) cannot win and null the cost', () => {
+    const r = chosen(
+      deriveProductCostFromSuppliers('BEDFRAME', [
+        b({ supplier_id: 'onlyP1', price_matrix: { P1: 299000 } }),
+        b({ supplier_id: 'real', price_matrix: { P2: 55000 } }),
+      ]),
+    );
+    expect(r.chosenSupplierId).toBe('real'); // NOT onlyP1
+    expect(r.patch.base_price_sen).toBe(55000); // RM550, never null and never 2990
+  });
+
+  it('a binding that HAS a cost tier still ranks by its dearest cell (rule unchanged)', () => {
+    // 'rich' has both a real P2 cost AND a high P1; it still participates and its
+    // whole set (P2 cost) wins over the cheaper 'real' — the filter only removes
+    // cost-less bindings, it does not change ranking for costed ones.
+    const r = chosen(
+      deriveProductCostFromSuppliers('BEDFRAME', [
+        b({ supplier_id: 'real', price_matrix: { P2: 55000 } }),
+        b({ supplier_id: 'rich', price_matrix: { P1: 299000, P2: 70000 } }),
+      ]),
+    );
+    expect(r.chosenSupplierId).toBe('rich');
+    expect(r.patch.base_price_sen).toBe(70000);
+  });
+});
+
 describe('deriveProductCostFromSuppliers — BEDFRAME flat-priced (no matrix)', () => {
   it('derives base_price_sen from the flat unit_price_sen, not null (ELEPHANE-(SK) class)', () => {
     const r = deriveProductCostFromSuppliers('BEDFRAME', [

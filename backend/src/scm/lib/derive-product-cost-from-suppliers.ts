@@ -109,6 +109,39 @@ function dearnessSen(lane: 'FLAT' | 'BEDFRAME' | 'SOFA', b: SupplierBindingCost)
   return sawCell ? max : flat;
 }
 
+/** Does this binding carry an actual COST tier — not merely a P1/selling number
+ *  or nothing (owner 2026-09-16)?
+ *
+ *  The rule takes the most-expensive SUPPLIER's price. A binding whose only
+ *  price is a non-cost tier (a P1/selling figure, or an empty grid) must NOT be
+ *  allowed to win the "most expensive" contest and then anchor the cost as 0 or
+ *  null — that is how ARMANI's 9058-L ({"24":{P1:1040500},"30":{P1:110000}},
+ *  no P2, flat 0) would otherwise import a 10405 selling number, or a null, as
+ *  cost. "Most expensive supplier" therefore means most expensive AMONG the
+ *  suppliers that actually quote a cost. This does NOT change the max-cell
+ *  ranking for bindings that DO have a cost tier; it only excludes cost-less
+ *  bindings from winning.
+ *
+ *  Per lane the cost is exactly what `bindingToProductPatch` / the sofa mapping
+ *  read as cost:
+ *   · FLAT     — the flat unit_price IS the cost (no separate selling tier), so a
+ *                flat binding always has one; a 0 is handled downstream by the
+ *                dearnessSen === 0 guard, not excluded here.
+ *   · BEDFRAME — P2, falling back to the flat unit_price. Only-P1 (no P2, no
+ *                flat) carries no cost.
+ *   · SOFA     — a P2 in ANY seat cell, else the flat fallback. A grid of only
+ *                P1/P3 cells with no flat carries no cost. */
+function hasCostTier(lane: 'FLAT' | 'BEDFRAME' | 'SOFA', b: SupplierBindingCost): boolean {
+  if (lane === 'FLAT') return true;
+  const flat = asCent(b.unit_price_sen);
+  const m = matrixOf(b.price_matrix);
+  if (lane === 'BEDFRAME') return asCent(m.P2) !== null || (flat !== null && flat > 0);
+  for (const cell of Object.values(m)) {
+    if (asCent(matrixOf(cell).P2) !== null) return true;
+  }
+  return flat !== null && flat > 0;
+}
+
 /** Build the product's SOFA seat_height_prices COST grid from a supplier's
  *  price_matrix {height:{P1,P2,P3}} — the inverse of productToBindingPatch's
  *  sofa branch. */
@@ -149,7 +182,15 @@ export function deriveProductCostFromSuppliers(
   }
   const lane = laneFor(category);
 
-  const [first, ...rest] = bindings;
+  // Exclude bindings that carry no cost tier (only a P1/selling number, or an
+  // empty grid) so a cost-less binding can never win the "most expensive"
+  // contest and anchor a 0/null cost. Ranking among the survivors is unchanged.
+  const costed = bindings.filter((x) => hasCostTier(lane, x));
+  if (costed.length === 0) {
+    return { skipped: true, reason: 'no_supplier_with_cost' };
+  }
+
+  const [first, ...rest] = costed;
   let best = first;
   let bestDear = dearnessSen(lane, best);
   for (const cur of rest) {
