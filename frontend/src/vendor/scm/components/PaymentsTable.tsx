@@ -36,7 +36,7 @@ import { MoneyInput } from './MoneyInput';
 import { DateField } from './DateField';
 import { RefundsLine } from './RefundsLine';
 import { OrderMoneyPanel } from './OrderMoneyPanel';
-import { CONVERT_LABEL, CONVERTED_METHOD, convertPicksFrom, useConvertSources, type ConvertSource } from '../lib/so-money-queries';
+import { CONVERT_LABEL, CONVERTED_METHOD, convertPicksFrom, useAddedConvertSources, useConvertSources, type ConvertSource } from '../lib/so-money-queries';
 import { useNotify } from './NotifyDialog';
 import { useConfirm } from './ConfirmDialog';
 import { todayMyt, mytDayOf } from '../lib/dates';
@@ -597,7 +597,10 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
      server for its customer's cancelled orders with money; the New SO page
      hands them in. */
   const convertSourcesQ  = useConvertSources(props.docNo);
-  const convertSources: ConvertSource[] = props.docNo ? (convertSourcesQ.data?.sources ?? []) : ((props as DraftModeProps).convertSources ?? []);
+  const listedSources: ConvertSource[] = props.docNo ? (convertSourcesQ.data?.sources ?? []) : ((props as DraftModeProps).convertSources ?? []);
+  /* Another order by number — any customer's (owner 2026-09-16: 可能多张、不同顾客). */
+  const morePicker = useAddedConvertSources(listedSources);
+  const convertSources = morePicker.sources;
   const merchantOptsQ    = useSoDropdownOptions('payment_merchant');
   const merchantOpts     = optionsOrFallback('payment_merchant', merchantOptsQ.data);
   const onlineOptsQ      = useSoDropdownOptions('online_type');
@@ -1062,6 +1065,11 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
       ?? value;
   };
 
+  const addSourceTo = async (uid: string, amountSen: number): Promise<void> => {
+    const src = await morePicker.add();
+    if (src) patchDraft(uid, { convertedFromDocNo: src.docNo, ...(amountSen <= 0 ? { amountSen: src.movableSen } : {}) });
+  };
+
   const totalRowCount = persistedPayments.length + drafts.length;
 
   /* Optional payment-slip column. One slip per order, so we fetch it once and
@@ -1512,11 +1520,9 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                     {methodOpts.map((m) => (
                       <option key={m.id} value={m.value}>{m.label}</option>
                     ))}
-                    {/* Money moved from a cancelled order (docs/bugs/0931) — offered
-                        only when this customer has a cancelled order with money. */}
-                    {(convertSources.length > 0 || d.methodLabel === CONVERT_LABEL) && (
-                      <option value={CONVERT_LABEL}>{CONVERT_LABEL}</option>
-                    )}
+                    {/* Money moved from another order (docs/bugs/0931) — always offered:
+                        the source may be any customer's, named by number below. */}
+                    <option value={CONVERT_LABEL}>{CONVERT_LABEL}</option>
                     {/* Persist labels that are no longer active in the
                         list so existing drafts (rehydrated from
                         somewhere) still render their selection. */}
@@ -1549,6 +1555,16 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                         <option value={d.convertedFromDocNo}>{d.convertedFromDocNo}</option>
                       )}
                     </select>
+                  )}
+                  {d.methodLabel === CONVERT_LABEL && !locked && (
+                    <span style={{ display: 'inline-flex', gap: 4, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <input className={paymentsStyles.inlineSelect} style={{ fontSize: 'var(--fs-11)', minWidth: 170 }} value={morePicker.more}
+                        onChange={(e) => morePicker.setMore(e.target.value)} placeholder="Another order, e.g. 2990-SO-2607-024" aria-label="Another order"
+                        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void addSourceTo(d.uid, d.amountSen); } }} />
+                      <button type="button" disabled={morePicker.busy} onClick={() => void addSourceTo(d.uid, d.amountSen)}
+                        style={{ fontSize: 'var(--fs-11)', padding: '2px 8px', border: '1px solid var(--c-line, rgba(34,31,32,0.2))', borderRadius: 6, background: 'transparent', cursor: 'pointer' }}>Add</button>
+                      {morePicker.note && <span style={{ fontSize: 'var(--fs-11)', color: 'var(--c-danger, #a33)' }}>{morePicker.note}</span>}
+                    </span>
                   )}
                   {/* L2 — Merchant cascade: pick the Bank + Installment plan. */}
                   {d.methodLabel === 'Merchant' && (

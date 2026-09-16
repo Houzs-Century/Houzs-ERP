@@ -3,10 +3,11 @@
 // draw on, the pick hands back what is left there, a converted row posts only
 // its source and amount, and the sources come by order number for a saved
 // order and by phone for the New SO screen — which has no order yet.
-import { cleanup, fireEvent, render, renderHook, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const { useConvertSources, useOrdersWithMoney } = vi.hoisted(() => ({ useConvertSources: vi.fn(), useOrdersWithMoney: vi.fn() }));
+const { useConvertSources, useOrdersWithMoney, fetchMock } = vi.hoisted(() => ({ useConvertSources: vi.fn(), useOrdersWithMoney: vi.fn(), fetchMock: vi.fn() }));
+vi.mock('../vendor/scm/lib/authed-fetch', () => ({ authedFetch: (path: string) => fetchMock(path) }));
 vi.mock('../vendor/scm/lib/so-money-queries', async (orig) => ({
   ...(await orig<Record<string, unknown>>()), useConvertSources, useOrdersWithMoney,
 }));
@@ -51,6 +52,27 @@ describe('ConvertSourceField', () => {
     const kept = screen.getByLabelText('Cancelled order') as HTMLSelectElement;
     expect(kept.value).toBe('2990-SO-2605-001');
     expect(kept.options).toHaveLength(4);
+  });
+
+  /* Any customer's order, by number (owner 2026-09-16: 可能多张、不同顾客): the
+     server's own money answer decides; the order joins the list and is picked. */
+  it('another order by number joins the list and is picked for what it may give; a refused one says why', async () => {
+    fetchMock.mockImplementation(async (path: string) => {
+      if (path === '/mfg-sales-orders/2990-SO-2609-060/money') return { money: { docNo: '2990-SO-2609-060', status: 'CONFIRMED', cancelled: false, customer: { name: 'Lim Ah Lian' }, bookedSen: 100_000, remainingSen: 100_000, totalSen: 150_000, keepFraction: 0.5, keepSen: 75_000, movableSen: 25_000, reason: null }, others: [] };
+      if (path === '/mfg-sales-orders/2990-SO-0000-000/money') { const e = Object.assign(new Error('2990-SO-0000-000 is not a Sales Order of this company.'), { status: 404 }); throw e; }
+      throw new Error('unexpected ' + path);
+    });
+    const onChange = vi.fn();
+    render(<ConvertSourceField sources={SOURCES} value="" onChange={onChange} />);
+    fireEvent.change(screen.getByLabelText('Another order'), { target: { value: '2990-SO-2609-060' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+    await waitFor(() => expect(onChange).toHaveBeenCalledWith('2990-SO-2609-060', 25_000));
+    const sel = screen.getByLabelText('Cancelled order') as HTMLSelectElement;
+    expect(Array.from(sel.options).map((o) => o.textContent)).toContain('2990-SO-2609-060 · RM 250.00 can move');
+    fireEvent.change(screen.getByLabelText('Another order'), { target: { value: '2990-SO-0000-000' } });
+    fireEvent.keyDown(screen.getByLabelText('Another order'), { key: 'Enter' });
+    await waitFor(() => expect(screen.getByText('2990-SO-0000-000 is not a Sales Order of this company.')).toBeTruthy());
+    expect(sel.options).toHaveLength(4);
   });
 });
 
