@@ -378,9 +378,12 @@ export async function applySoAmendment(
      mig 0091 gave the column a HOUZS DEFAULT — so a blip books a 2990 order's new
      line to Houzs, silently, exactly as the note on that insert warns. */
   const { data: soHdrCo, error: soHdrCoErr } = await sb.from('mfg_sales_orders')
-    .select('company_id, linked_ac_docno').eq('doc_no', docNo).maybeSingle();
+    .select('company_id, linked_ac_docno, so_date').eq('doc_no', docNo).maybeSingle();
   if (soHdrCoErr) throw new Error(`applySoAmendment: SO company load failed: ${soHdrCoErr.message}`);
   const soCompanyId = (soHdrCo as { company_id?: number | null } | null)?.company_id ?? null;
+  // Stage 3c: re-price a bound line's COST as-of the order's own date (auto-derive,
+  // flag-gated in recomputeOneLine). Null when the header carries no date.
+  const soAsOf = (soHdrCo as { so_date?: string | null } | null)?.so_date ?? null;
 
   /* Is this order MIGRATED from AutoCount? `linked_ac_docno` is the marker that
      actually exists on the SO header (migration 0271); `migrated_no_stock` lives
@@ -589,7 +592,7 @@ export async function applySoAmendment(
         qty,
         unitPriceSen: Number(diff.new_unit_price_sen ?? 0),
         variants: (variants as MfgItemForRecompute['variants']) ?? null,
-      }, cachedConfig, soCompanyId, { trustOperatorSelling: addLineTrust });
+      }, cachedConfig, soCompanyId, { trustOperatorSelling: addLineTrust, asOf: soAsOf });
 
       const unit = rec.unit_price_sen;
       const lineTotal = qty * unit;
@@ -710,7 +713,7 @@ export async function applySoAmendment(
       qty,
       unitPriceSen: clientUnit,
       variants: (variants as MfgItemForRecompute['variants']) ?? null,
-    }, cachedConfig, soCompanyId, { trustOperatorSelling: amendTrust });
+    }, cachedConfig, soCompanyId, { trustOperatorSelling: amendTrust, asOf: soAsOf });
 
     const unit = rec.unit_price_sen;
     /* Mig 0317 — the request may carry a new discount; otherwise the line keeps

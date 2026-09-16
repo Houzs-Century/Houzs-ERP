@@ -33,6 +33,8 @@ import {
 } from '../shared/mfg-pricing';
 import { chunkIn } from './paginate-all';
 import { pgrestInList } from './pgrest-in-list';
+import { autoDeriveEnabled } from './auto-derive-cost';
+import { resolveMfgProductCostAsOf } from './supplier-price-history';
 import {
   computeSofaSellingSen,
   comboChargedPrices,
@@ -1164,10 +1166,10 @@ export async function recomputeOneLine(
      and silently re-pricing against every company's catalogue. */
   cachedConfig: MaintenanceConfig | null | undefined,
   companyId: number | null | undefined,
-  opts?: { trustOperatorSelling?: TrustSelling },
+  opts?: { trustOperatorSelling?: TrustSelling; asOf?: string | null },
 ): Promise<RecomputedLine> {
   const config = cachedConfig ?? await loadMaintenanceConfig(sb);
-  const [product, fabric, sellingTiers, fabricAddonConfig, modelOverrides, compartmentOverrides] = await Promise.all([
+  const [productLoaded, fabric, sellingTiers, fabricAddonConfig, modelOverrides, compartmentOverrides] = await Promise.all([
     loadProductByCode(sb, item.itemCode, companyId),
     loadFabricByCode(sb, item.variants?.fabricCode ?? null),
     loadFabricSellingTiers(sb, item.variants?.fabricId ?? null),
@@ -1175,6 +1177,29 @@ export async function recomputeOneLine(
     loadModelFabricTierOverrides(sb),
     loadCompartmentFabricTierOverrides(sb),
   ]);
+  // Stage 3c (flag-gated): when auto-derive is ON and a derived-cost history row
+  // applies for this order's date, override the product COST so the SO/budget
+  // cost reflects the order's date and historical figures don't move. Flag OFF,
+  // no asOf, or no history row -> the flat product cost, byte-identical to
+  // before. A history-read blip degrades to the flat cost (logged), never blocks.
+  let product = productLoaded;
+  if (productLoaded && companyId != null && opts?.asOf) {
+    try {
+      if (await autoDeriveEnabled(sb)) {
+        const asOfCost = await resolveMfgProductCostAsOf(sb, companyId, item.itemCode, opts.asOf);
+        if (asOfCost) {
+          product = {
+            ...productLoaded,
+            base_price_sen: asOfCost.base_price_sen ?? productLoaded.base_price_sen,
+            price1_sen: asOfCost.price1_sen ?? productLoaded.price1_sen,
+            seat_height_prices: (asOfCost.seat_height_prices as ProductRowLite['seat_height_prices']) ?? productLoaded.seat_height_prices,
+          };
+        }
+      }
+    } catch (e) {
+      console.error(`[auto-derive] as-of cost resolve failed for ${item.itemCode}:`, e instanceof Error ? e.message : e);
+    }
+  }
   const [sofaModulePrices, sofaModuleCostRows] = product?.category === 'SOFA'
     ? await Promise.all([
         loadModelSofaModulePrices(
