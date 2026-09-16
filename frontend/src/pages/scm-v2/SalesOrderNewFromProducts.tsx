@@ -26,7 +26,7 @@
 // URL is state: ?q= (search) and ?cat= (category filter).
 // ----------------------------------------------------------------------------
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { lineIdentity } from "@2990s/shared";
 import {
@@ -56,12 +56,12 @@ import { useIdempotencyKey } from "../../lib/idempotency";
 import { cn } from "../../lib/utils";
 import { fmtSen } from "../../vendor/shared/format";
 import { companyRequiresStockLocation } from "../../vendor/scm/lib/so-form-validate";
-import { collectSoSaveProblems } from "../../vendor/scm/lib/so-save-problems-client";
+import { authedFetch, type SaveProblem } from "../../vendor/scm/lib/authed-fetch";
+import { SaveBlockedIndicator } from "../../vendor/scm/components/SaveBlockedIndicator";
+import { useSoValidate } from "../../vendor/scm/lib/use-so-validate";
 import { SaveProblemsList, saveProblemsTitle, notifySaveProblems } from "../../vendor/scm/components/SaveProblemsList";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { useBranding } from "../../hooks/useBranding";
-import { hasSofaMixConflict, SOFA_MIX_MESSAGE } from "../../vendor/shared/so-variant-rule";
-import { todayMyt } from "../../vendor/scm/lib/dates";
 import { PhoneInput } from "../../vendor/scm/components/PhoneInput";
 
 // ── Types & constants ───────────────────────────────────────────────────────
@@ -253,6 +253,24 @@ export function SalesOrderNewFromProducts() {
   const customerValid = customer.name.trim() && customer.phone.trim();
   const canSubmit = customerValid && cartLines.length > 0 && !create.isPending;
 
+  /* Backend authors the blocker list (owner 2026-09-16); a cart CAN mix sofa +
+     bedframe/mattress, so sofa-mix is the real guard here. buildValidateDraft
+     turns the cart into the validate payload; this surface just displays. */
+  const buildValidateDraft = useCallback(() => ({
+    debtorName: customer.name,
+    phone: customer.phone,
+    items: cartLines.map((l) => ({ itemCode: l.code, itemGroup: itemGroupFor(l.sku.category), qty: l.qty })),
+    asDraft: landsDraft,
+    hasVenue: true,
+    hasSalesperson: true,
+    companyCode: branding.companyCode,
+  }), [customer.name, customer.phone, cartLines, landsDraft, branding.companyCode]);
+  const liveValidateDraft = useMemo(() => buildValidateDraft(), [buildValidateDraft]);
+  const { problems: blockingProblems } = useSoValidate(liveValidateDraft, cartLines.length > 0);
+  const openBlockingList = () => {
+    void notify({ title: saveProblemsTitle(blockingProblems.length), body: <SaveProblemsList problems={blockingProblems} />, tone: "error" });
+  };
+
   const onSubmit = async () => {
     if (!canSubmit) {
       setShowValidation(true);
@@ -271,42 +289,22 @@ export function SalesOrderNewFromProducts() {
       variants: { addedVia: "from-products" },
       remark: "",
     }));
-    /* Pre-validate through the SAME shared collectSoSaveProblems the Full form
-       (SalesOrderNew) and the phone use, and show every reason at once in the
-       SAME SaveProblemsList popup the server's 422 uses. A cart CAN mix
-       categories, so the sofa-mix rule is the real guard here (a sofa +
-       bedframe/mattress cart 400s so_sofa_no_other_main on the server). The
-       other gates are wired but inert on this flow, exactly as before: no dates
-       are collected (the date guard runs on empty inputs and passes; a future
-       date field is then guarded automatically), no payments (the slip is
-       optional everywhere, owner 2026-08-13), and variant completeness only
-       fires once a Processing Date is set (server parity) — none is set here, so
-       it's enforced on the SO detail. Venue / salesperson are NOT this surface's
-       concern (it manages neither; the server gates a CONFIRMED create), so they
-       are marked satisfied to avoid inventing a client block this flow never had.
-       The stock-location gate stays inert for the companies it covers because
-       for those this create IS a draft (landsDraft), never written to AutoCount;
-       still wired, so the day this flow stops drafting it is gated instead of
-       silently minting locationless orders. */
-    const problems = collectSoSaveProblems({
-      required: {
-        customerName: customer.name,
-        phone: customer.phone,
-        hasNamedLine: items.length > 0,
-        asDraft: landsDraft,
-        hasVenue: true,
-        hasSalesperson: true,
-        location: { companyCode: branding.companyCode, salesLocation: "", state: "", asDraft: landsDraft },
-      },
-      location: { companyCode: branding.companyCode, salesLocation: "", state: "", asDraft: landsDraft },
-      processingDate: "",
-      completeness: { customerName: customer.name, fillAddressLater: false, address1: "", postcode: "", deliveryDate: "" },
-      dateGuard: { processingDate: "", deliveryDate: "", today: todayMyt() },
-      variantOffenders: [],
-      sofaMixConflict: hasSofaMixConflict(items.map((i) => i.itemGroup)),
-      sofaMixMessage: SOFA_MIX_MESSAGE,
-      paymentGaps: [],
-    });
+    /* Backend authors the blocker list (owner 2026-09-16); validate returns the
+       reasons a cart can trip (identity, sofa-mix) — this just displays them in
+       the same SaveProblemsList popup + live indicator. A failed validate never
+       blocks; the create call is the authoritative backstop. */
+    let problems: SaveProblem[] = [];
+    try {
+      const r = await authedFetch<{ problems: SaveProblem[] }>("/mfg-sales-orders/validate", {
+        method: "POST",
+        body: JSON.stringify(buildValidateDraft()),
+      });
+      problems = r.problems;
+    } catch {
+      // silent-write-ok: validate is a READ-ONLY dry-run (it writes nothing); its
+      // failure must not block the operator, and the create call below is the
+      // authoritative gate that surfaces any real refusal.
+    }
     if (problems.length > 0) {
       await notify({ title: saveProblemsTitle(problems.length), body: <SaveProblemsList problems={problems} />, tone: "error" });
       return;
@@ -413,6 +411,8 @@ export function SalesOrderNewFromProducts() {
           canSubmit={Boolean(canSubmit)}
           landsDraft={landsDraft}
           onSubmit={onSubmit}
+          blockedProblems={blockingProblems}
+          onOpenBlocked={openBlockingList}
         />
       </div>
 
@@ -424,6 +424,8 @@ export function SalesOrderNewFromProducts() {
         canSubmit={Boolean(canSubmit)}
         landsDraft={landsDraft}
         onSubmit={onSubmit}
+        blockedProblems={blockingProblems}
+        onOpenBlocked={openBlockingList}
       />
 
       {/* Manual-add modal (out-of-catalogue codes) */}
@@ -740,6 +742,8 @@ function CartCard({
   canSubmit,
   landsDraft,
   onSubmit,
+  blockedProblems,
+  onOpenBlocked,
 }: {
   customer: Customer;
   setCustomer: (c: Customer) => void;
@@ -754,6 +758,8 @@ function CartCard({
   canSubmit: boolean;
   landsDraft: boolean;
   onSubmit: () => void;
+  blockedProblems: SaveProblem[];
+  onOpenBlocked: () => void;
 }) {
   return (
     <aside className="self-start rounded-xl border border-border bg-surface p-4 shadow-stone lg:sticky lg:top-4">
@@ -862,6 +868,9 @@ function CartCard({
 
       {/* CTA — desktop. On mobile the sticky bottom bar handles submit. */}
       <div className="mt-3 hidden lg:block">
+        <div className="mb-2 flex justify-end">
+          <SaveBlockedIndicator problems={blockedProblems} onOpen={onOpenBlocked} />
+        </div>
         <div className="flex items-center justify-between gap-3">
           <span className="font-money text-[13px] font-bold text-primary-ink">
             {fmtRm(subtotalSen)}
@@ -990,6 +999,8 @@ function MobileFooter({
   canSubmit,
   landsDraft,
   onSubmit,
+  blockedProblems,
+  onOpenBlocked,
 }: {
   cartCount: number;
   subtotalSen: number;
@@ -997,10 +1008,17 @@ function MobileFooter({
   canSubmit: boolean;
   landsDraft: boolean;
   onSubmit: () => void;
+  blockedProblems: SaveProblem[];
+  onOpenBlocked: () => void;
 }) {
   if (cartCount === 0) return null;
   return (
     <div className="sticky bottom-0 -mx-4 mt-4 bg-sidebar px-4 py-3 text-sidebar-ink shadow-[0_-4px_18px_-8px_rgba(17,24,16,.4)] lg:hidden">
+      {blockedProblems.length > 0 && (
+        <div className="mb-2 flex justify-center">
+          <SaveBlockedIndicator problems={blockedProblems} onOpen={onOpenBlocked} />
+        </div>
+      )}
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
           <div className="text-[10.5px] uppercase tracking-brand text-sidebar-ink-muted">
