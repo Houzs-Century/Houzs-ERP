@@ -112,7 +112,11 @@ export function makeSupabaseDerivedCostIO(sb: Sb): DerivedCostIO {
     async loadProduct(companyId, code) {
       let q = sb.from('mfg_products').select('id, category').eq('code', code);
       if (companyId != null) q = q.eq('company_id', companyId);
-      const { data } = await q.maybeSingle();
+      const { data, error } = await q.maybeSingle();
+      // Bind the error: a failed read must not masquerade as "product not found"
+      // (which would silently skip the recompute). Throw — the best-effort
+      // caller logs it, same as loadBindings.
+      if (error) throw new Error(`product read failed for ${code}: ${error.message}`);
       return (data as { id: string; category: string | null } | null) ?? null;
     },
     async loadBindings(companyId, code) {
