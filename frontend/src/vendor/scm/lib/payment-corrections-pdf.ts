@@ -14,7 +14,7 @@
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import {
-  DOC_TABLE_HEAD_STYLES, DOC_TABLE_STYLES, deliverPdf, drawHeader, ensurePdfCjkFont,
+  DOC_TABLE_HEAD_STYLES, DOC_TABLE_STYLES, deliverPdf, drawHeader, ensurePdfCjkFont, paperText,
   fmtDocDate, fmtDocStamp, safeName, type PdfAction,
 } from './pdf-common';
 /* Money reads 'RM 1,990.00' on this report, as it does on the screen and every
@@ -142,7 +142,7 @@ export const monthText = (month: string): string => {
   return m ? `${m[2]}/${m[1]}` : month;
 };
 
-const signed = (sen: number): string => (sen < 0 ? `−${fmtRm(-sen)}` : sen > 0 ? `+${fmtRm(sen)}` : fmtRm(0));
+const signed = (sen: number): string => (sen < 0 ? `-${fmtRm(-sen)}` : sen > 0 ? `+${fmtRm(sen)}` : fmtRm(0));
 
 /** The sentence an empty month prints and shows: what was LOOKED FOR, in the
     month named — never a claim about the business. */
@@ -166,7 +166,7 @@ export function correctionsDocument(input: CorrectionsInput): CorrectionsDocumen
       recordedText(r),
       reasonText(r),
       ledgerText(r),
-    ]),
+    ].map(paperText)),
     empty: input.rows.length === 0 ? emptyText(input.month) : null,
   };
 }

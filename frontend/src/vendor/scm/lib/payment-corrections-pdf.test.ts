@@ -115,10 +115,10 @@ describe('correctionsDocument', () => {
     expect(doc.lines).toEqual([[
       '10/09/2026\nChew',
       '2990-SO-2606-043\nWong li way',
-      'Amount RM 1,990.00 → RM 1,991.00',
+      'Amount RM 1,990.00 -> RM 1,991.00',
       'Rachael\n29/08/2026',
       'Sales keyed RM 1,990 — receipt shows RM 1,991',
-      'JE-2609-0031 → reversed by JE-2609-0057 → JE-2609-0058',
+      'JE-2609-0031 -> reversed by JE-2609-0057 -> JE-2609-0058',
     ]]);
     expect(doc.empty).toBeNull();
   });
@@ -128,8 +128,21 @@ describe('correctionsDocument', () => {
     expect(doc.summary).toEqual([
       { label: 'Payment actions', value: '6' },
       { label: 'Added / edited / deleted / proof', value: '1 / 3 / 1 / 1' },
-      { label: 'Money received, net effect', value: '−RM 899.00' },
+      { label: 'Money received, net effect', value: '-RM 899.00' },
     ]);
+  });
+
+  /* The screen keeps → and −; on paper helvetica has neither and neither subset
+     carries them, so the guard refused the whole report ("a character we cannot
+     print yet") for any month with one edit. What the PDF gets is WinAnsi. */
+  it('prints nothing helvetica cannot paint: the arrows and the minus are folded for paper', () => {
+    const doc = correctionsDocument({ month: '2026-09', rows: [row(), row({ reason: 'Bank → cash, per receipt' })], summary: { ...summary, netMovedSen: -161_000 } });
+    const printed = [...doc.summary.map((s) => s.value), ...doc.lines.flat()].join('\n');
+    expect(printed).toContain('-RM 1,610.00');
+    expect(printed).toContain('Bank -> cash, per receipt');
+    const winAnsiAboveLatin1 = new Set([0x2013, 0x2014, 0x2018, 0x2019, 0x201c, 0x201d, 0x2022, 0x2026]);
+    const outside = [...printed].filter((ch) => { const cp = ch.codePointAt(0) ?? 0; return cp > 0xff && !winAnsiAboveLatin1.has(cp); });
+    expect(outside).toEqual([]);
   });
 
   it('a blank reason and a missing customer print as a dash and as nothing, not as "null"', () => {
