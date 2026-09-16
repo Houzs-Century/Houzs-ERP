@@ -72,6 +72,8 @@ export type MoneyPayment = {
   collectedBy: string | null;
   /** A converted row: the cancelled order it moved money from. */
   convertedFrom: string | null;
+  /** The proof the money arrived with (an R2 key), if one was attached. */
+  slipKey: string | null;
 };
 export type MoneyRefund = { id: string; pvNumber: string; status: string; voucherDate: string; totalSen: number };
 export type MoneyConversion = { paymentId: string; toDocNo: string; amountSen: number; paidOn: string; convertedOn: string };
@@ -159,7 +161,7 @@ export async function orderMoney(sb: Db, companyId: number, docNoRaw: unknown): 
   if (!row || Number(row.company_id) !== companyId) return { ok: false, status: 404, error: 'not_found', message: `${docNo} is not a Sales Order of this company.` };
 
   const { data: pays, error: pErr } = await sb.from('mfg_sales_order_payments')
-    .select('id, paid_at, method, merchant_provider, amount_sen, collected_by, converted_from_so_doc_no').eq('so_doc_no', docNo).order('paid_at');
+    .select('id, paid_at, method, merchant_provider, amount_sen, collected_by, converted_from_so_doc_no, slip_key').eq('so_doc_no', docNo).order('paid_at');
   if (pErr) return { ok: false, status: 500, error: 'load_failed', message: pErr.message };
   /* A mirror row (the money that left, negative) is not money in: the pool
      reads what left off the vouchers and the converted rows themselves. */
@@ -169,7 +171,7 @@ export async function orderMoney(sb: Db, companyId: number, docNoRaw: unknown): 
   const payments: MoneyPayment[] = rows.map((r) => ({
     id: String(r.id), paidOn: dayOf(r.paid_at), method: String(r.method ?? ''), provider: r.merchant_provider ?? null,
     amountSen: Number(r.amount_sen ?? 0), booked: booked.ids.has(String(r.id)), collectedBy: r.collected_by ?? null,
-    convertedFrom: r.converted_from_so_doc_no ?? null,
+    convertedFrom: r.converted_from_so_doc_no ?? null, slipKey: r.slip_key ? String(r.slip_key) : null,
   }));
   const refunds = await refundsOn(sb, companyId, docNo);
   if (!refunds.ok) return { ok: false, status: 500, error: 'load_failed', message: refunds.reason };
@@ -215,6 +217,10 @@ export type ConvertPlan = {
   collectedBy: string | null;
   /** The cancelled order's customer, for the screen. */
   fromCustomer: string | null;
+  /** The proof the money arrived with (owner 2026-09-16: attachment 可以带过来):
+      the first booked payment's slip, else the first slip any payment on the
+      source carries — the same R2 object, referenced from both orders. */
+  slipKey: string | null;
 };
 
 /**
@@ -248,6 +254,7 @@ export async function convertGuard(
     };
   }
   const first = money.payments.find((x) => x.booked && x.amountSen > 0) ?? money.payments[0] ?? null;
+  const slipKey = first?.slipKey ?? money.payments.find((x) => x.slipKey)?.slipKey ?? null;
   return {
     ok: true,
     plan: {
@@ -255,6 +262,7 @@ export async function convertGuard(
       paidAt: first?.paidOn && /^\d{4}-\d{2}-\d{2}$/.test(first.paidOn) ? first.paidOn : todayMyt(),
       collectedBy: first?.collectedBy ?? null,
       fromCustomer: money.customer.name,
+      slipKey,
     },
   };
 }

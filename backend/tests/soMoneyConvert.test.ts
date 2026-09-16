@@ -91,7 +91,7 @@ function harness(tables: Record<string, Row[]> = {}) {
         order(LIVE, 'CONFIRMED', { debtor_name: 'Lim Ah Lian', customer_id: 'cust-3', phone: '0777', local_total_sen: 150_000 }),
       ],
       mfg_sales_order_payments: [
-        pay('p1', OLD, '2026-07-01', 'transfer', 50_000, { online_type: 'DuitNow' }),
+        pay('p1', OLD, '2026-07-01', 'transfer', 50_000, { online_type: 'DuitNow', slip_key: 'slips/p1-duitnow.jpg' }),
         pay('p2', OLD, '2026-07-03', 'cash', 20_000),
         pay('p3', OLD2, '2026-07-10', 'merchant', 30_000, { merchant_provider: 'GHL', approval_code: '123456' }),
         pay('p4', LIVE, '2026-08-20', 'merchant', 100_000, { merchant_provider: 'PBB', approval_code: '654321' }),
@@ -175,6 +175,8 @@ describe('convert — a payment row on the new order', () => {
     expect(res.status, await res.clone().text()).toBe(201);
     const { payment } = await res.json() as { payment: Row };
     expect(payment).toMatchObject({ so_doc_no: NEW, method: 'converted', amount_sen: 30_000, paid_at: '2026-07-01', collected_by: 'staff-1', account_sheet: `Converted from ${OLD}`, converted_from_so_doc_no: OLD, note: `Converted from ${OLD}` });
+    /* The proof rides along (owner 2026-09-16): the first booked payment's slip, the same R2 object on both orders. */
+    expect(payment.slip_key).toBe('slips/p1-duitnow.jpg');
     /* The transfer: Dr AR / Cr AR, both on the customer, dated the day of the move. */
     const entry = sb.tables.journal_entries.find((j) => j.source_type === 'SOCONV' && j.source_doc_no === payment.id)!;
     expect(entry).toBeTruthy();
@@ -329,6 +331,7 @@ describe('the order create takes a converted row too', () => {
     expect(rawSo).toContain('paid_at:            plan ? plan.paidAt : paidAt,');
     expect(rawSo).toContain('collected_by:       plan ? plan.collectedBy : ((body.salespersonId as string) ?? callerStaffId),');
     expect(rawSo).toContain('account_sheet:      plan ? `Converted from ${plan.fromDocNo}` : deriveAccountSheet(p.method, merchantProvider, null),');
+    expect(rawSo).toContain('slip_key:           posPaymentSlipKeys![i] ?? (plan ? plan.slipKey : null),');
     /* The insert hands the booking hook the columns a converted row's entry needs. */
     expect(rawSo).toContain("select('id, so_doc_no, paid_at, method, merchant_provider, amount_sen, company_id, converted_from_so_doc_no, created_at, created_by').single();");
   });
@@ -345,6 +348,22 @@ describe('Finance\'s list, narrowed to one customer', () => {
     expect(theirs.orders.map((o) => [o.docNo, o.remainingSen])).toEqual([[OLD2, 30_000]]);
     const nobody = await (await app.request('/mfg-sales-orders/cancelled-with-money?phone=0000')).json() as { orders: Row[] };
     expect(nobody.orders).toEqual([]);
+  });
+});
+
+describe('the proof rides with the money (owner 2026-09-16: attachment 可以带过来)', () => {
+  test('a source whose first payment carries no slip hands over the first slip any of its payments has; none at all leaves the row slip-less', async () => {
+    const { app } = harness({
+      mfg_sales_order_payments: [
+        pay('p1', OLD, '2026-07-01', 'transfer', 50_000, { online_type: 'DuitNow' }),
+        pay('p2', OLD, '2026-07-03', 'cash', 20_000, { slip_key: 'slips/p2-cash.jpg' }),
+        pay('p3', OLD2, '2026-07-10', 'merchant', 30_000, { merchant_provider: 'GHL', approval_code: '123456' }),
+      ],
+    });
+    const { payment } = await (await convert(app, NEW, OLD, 30_000)).json() as { payment: Row };
+    expect(payment.slip_key).toBe('slips/p2-cash.jpg');
+    const { payment: bare } = await (await convert(app, OTHER, OLD2, 10_000)).json() as { payment: Row };
+    expect(bare.slip_key).toBeNull();
   });
 });
 
