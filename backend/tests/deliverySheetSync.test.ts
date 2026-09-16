@@ -1,6 +1,24 @@
-import { describe, expect, test } from "vitest";
+import { beforeEach, describe, expect, test, vi } from "vitest";
 import app from "../src/routes/deliverySheetSync";
 import { normSheetDate, parseLimit, parseSince, toSheetRecord, type FeedHeadRow } from "../src/lib/delivery-sheet-feed";
+import { toOutstandingPoRecord, type PoFeedRow } from "../src/lib/delivery-sheet-po-feed";
+
+/* Phase 3's write leg goes through the PO editor's own writers (supplier-date
+ * cascade, downstream lock, AutoCount enqueue), which need a Supabase client;
+ * here they are recorded, and the route's decisions around them are what is
+ * pinned. */
+const po = vi.hoisted(() => ({
+  cascade: vi.fn(async (_sb: unknown, _args: unknown) => ({ ok: true }) as { ok: true } | { ok: false; reason: string }),
+  lock: vi.fn(async (_sb: unknown, _id: string) => null as { message: string } | null),
+  enqueue: vi.fn(async (_sb: unknown, _opts: unknown) => true),
+}));
+vi.mock("../src/db/supabase", () => ({ isSupabaseConfigured: () => true, getSupabaseService: () => ({ fake: true }) }));
+vi.mock("../src/scm/lib/po-supplier-date-cascade", async (orig) => ({
+  ...(await orig<typeof import("../src/scm/lib/po-supplier-date-cascade")>()),
+  cascadePoSupplierDate: (sb: unknown, args: unknown) => po.cascade(sb, args),
+}));
+vi.mock("../src/scm/lib/downstream-lock", () => ({ poHasDownstream: (sb: unknown, id: string) => po.lock(sb, id) }));
+vi.mock("../src/scm/lib/autocount-outbox", () => ({ enqueueEdit: (sb: unknown, opts: unknown) => po.enqueue(sb, opts) }));
 
 /* The HC Delivery sheet's ERP sync (owner 2026-09-15: stop the AutoCount pull,
  * feed the sheet from the ERP). Pins the shared-secret guard, the company
@@ -322,6 +340,207 @@ describe("POST /updates — col A → remark4, col O → customer_delivery_date"
     );
     expect(bad.status).toBe(401);
     const { res } = await post({ updates: Array.from({ length: 301 }, () => ({ DocNo: "x", Remark4: "y" })) }, () => ({ id: HOUZS }));
+    expect(res.status).toBe(413);
+  });
+});
+
+/* Phase 3 (owner 2026-09-16: 「第三期换 Outstanding PO」) — the Outstanding PO
+ * tab and the three supplier delivery dates written back. */
+const PO_LINE: PoFeedRow = {
+  po_id: "9d2b9f8e-0000-4000-8000-000000000001",
+  po_number: "HC-PO-2609-021",
+  linked_ac_docno: "PO-004521",
+  status: "SUBMITTED",
+  on_hold: false,
+  so_doc_no: "HC-SO-013495",
+  so_ac_docno: "SO-013495",
+  creditor_code: "400-S001",
+  creditor_name: "Sleep Well Sdn Bhd",
+  item_code: "M1",
+  item_description: "Queen mattress",
+  description2: "Firm",
+  location: "KL",
+  item_group: "MATTRESS",
+  doc_date: "2026-09-01",
+  remaining_qty: 2,
+  delivery_date: "2026-09-20",
+  supplier_delivery_date_2: "2026-09-25",
+  supplier_delivery_date_3: null,
+  supplier_delivery_date_4: null,
+};
+
+describe("GET /outstanding-po — the Outstanding PO tab", () => {
+  test("maps every column the tab writes, keyed on the book's numbers", () => {
+    expect(toOutstandingPoRecord(PO_LINE)).toEqual({
+      DocNo: "PO-004521",
+      ErpDocNo: "HC-PO-2609-021",
+      SODocNo: "SO-013495",
+      CreditorCode: "400-S001",
+      CreditorName: "Sleep Well Sdn Bhd",
+      ItemCode: "M1",
+      ItemDescription: "Queen mattress",
+      ItemDescription2: "Firm",
+      Location: "KL",
+      ItemGroup: "MATTRESS",
+      DocDate: "2026-09-01",
+      RemainingQty: 2,
+      DeliveryDate: "2026-09-20",
+      SupplierDeliveryDate1: "2026-09-25",
+      SupplierDeliveryDate2: null,
+      SupplierDeliveryDate3: null,
+      Status: "SUBMITTED",
+      OnHold: false,
+    });
+    // An ERP-made PO keys on its own number; a line without a source order has no SO Doc No.
+    expect(toOutstandingPoRecord({ ...PO_LINE, linked_ac_docno: null, so_ac_docno: null, so_doc_no: null, description2: " " }))
+      .toMatchObject({ DocNo: "HC-PO-2609-021", SODocNo: null, ItemDescription2: null });
+  });
+
+  test("outstanding = the PO list's own roll-up, lines with quantity left, this company only", async () => {
+    const { db, seen } = fakeDb((sql) => {
+      if (/FROM companies/i.test(sql)) return { id: HOUZS };
+      if (/FROM scm\.purchase_order_items i/.test(sql)) return [PO_LINE];
+      return [];
+    });
+    const res = await app.request("/outstanding-po", { headers: { "X-Intake-Key": KEY } }, env(db));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    expect(body.count).toBe(1);
+    expect(body.records[0]).toMatchObject({ DocNo: "PO-004521", RemainingQty: 2 });
+    const feed = seen.find((s) => /FROM scm\.purchase_order_items i/.test(s.sql))!;
+    expect(feed.binds).toEqual([HOUZS]);
+    expect(feed.sql).toContain("po.company_id = ?1");
+    expect(feed.sql).toContain("po.status::text IN ('PARTIALLY_RECEIVED', 'SUBMITTED')");
+    expect(feed.sql).toContain("i.qty - COALESCE(i.received_qty, 0) > 0");
+  });
+
+  test("401 on a wrong key, 503 without a HOUZS row", async () => {
+    const { db } = fakeDb((sql) => (/FROM companies/i.test(sql) ? null : []));
+    expect((await app.request("/outstanding-po", { headers: { "X-Intake-Key": "wrong" } }, env(db))).status).toBe(401);
+    expect((await app.request("/outstanding-po", { headers: { "X-Intake-Key": KEY } }, env(db))).status).toBe(503);
+  });
+});
+
+describe("POST /po-dates — Supplier Delivery Date 1/2/3 → supplier_delivery_date_2/3/4", () => {
+  const HEAD = {
+    id: PO_LINE.po_id,
+    po_number: "HC-PO-2609-021",
+    linked_ac_docno: "PO-004521",
+    status: "SUBMITTED",
+    company_id: HOUZS,
+    supplier_delivery_date_2: "2026-09-25",
+    supplier_delivery_date_3: null,
+    supplier_delivery_date_4: null,
+  };
+  beforeEach(() => {
+    po.cascade.mockClear();
+    po.lock.mockClear();
+    po.enqueue.mockClear();
+    po.cascade.mockResolvedValue({ ok: true });
+    po.lock.mockResolvedValue(null);
+    po.enqueue.mockResolvedValue(true);
+  });
+  type Head = typeof HEAD;
+  function post(body: unknown, heads: Head[] = [HEAD]) {
+    // The heads read answers each sheet number it was asked for, as the JOIN would.
+    const { db, seen } = fakeDb((sql, binds) =>
+      /FROM companies/i.test(sql)
+        ? { id: HOUZS }
+        : /scm\.purchase_orders po/.test(sql)
+          ? heads.flatMap((h) => {
+              const key = [h.linked_ac_docno, h.po_number].find((k) => k && binds.includes(k));
+              return key ? [{ ...h, sheet_doc_no: key }] : [];
+            })
+          : [],
+    );
+    return app
+      .request(
+        "/po-dates",
+        { method: "POST", headers: { "X-Intake-Key": KEY, "content-type": "application/json" }, body: JSON.stringify(body) },
+        env(db),
+      )
+      .then(async (res) => ({ res, body: (await res.json()) as any, seen }));
+  }
+
+  test("a moved date is cascaded to header + lines through the PO editor's writer, then queued to AutoCount once", async () => {
+    const { res, body, seen } = await post({
+      updates: [{ DocNo: "PO-004521", SupplierDeliveryDate1: "2026/09/25", SupplierDeliveryDate2: "2026-10-02" }],
+    });
+    expect(res.status).toBe(200);
+    expect(body.written).toBe(1);
+    expect(body.results[0]).toMatchObject({ DocNo: "PO-004521", ErpDocNo: "HC-PO-2609-021", ok: true, written: { supplier_delivery_date_3: "2026-10-02" }, queued: true });
+    const heads = seen.find((s) => /scm\.purchase_orders po/.test(s.sql))!;
+    expect(heads.binds).toEqual(["PO-004521", HOUZS]);
+    expect(heads.sql).toContain("po.linked_ac_docno = v.sheet_doc_no OR po.po_number = v.sheet_doc_no");
+    expect(heads.sql).toContain("po.company_id = ?");
+    // Slot 2 already held 09-25, so only slot 3 is written.
+    expect(po.cascade).toHaveBeenCalledTimes(1);
+    expect(po.cascade.mock.calls[0]![1]).toMatchObject({ companyId: HOUZS, poId: PO_LINE.po_id, slot: 3, date: "2026-10-02", applyToLines: true, actor: null });
+    expect(po.lock).toHaveBeenCalledWith({ fake: true }, PO_LINE.po_id);
+    expect(po.enqueue).toHaveBeenCalledTimes(1);
+    expect(po.enqueue.mock.calls[0]![1]).toMatchObject({ companyId: HOUZS, docType: "PO", docId: PO_LINE.po_id });
+  });
+
+  test("dates the ERP already holds write nothing and queue nothing; a blank keeps the ERP's date", async () => {
+    const { body } = await post({ updates: [{ DocNo: "HC-PO-2609-021", SupplierDeliveryDate1: "2026-09-25", SupplierDeliveryDate2: "" }] });
+    expect(body.written).toBe(0);
+    expect(body.results[0]).toMatchObject({ ok: true, unchanged: true });
+    expect(po.cascade).not.toHaveBeenCalled();
+    expect(po.enqueue).not.toHaveBeenCalled();
+  });
+
+  test("a PO with a live GRN is locked, a received PO is refused, a cascade failure is reported — none of them queue", async () => {
+    po.lock.mockResolvedValueOnce({ message: "PO has a live GRN" });
+    const locked = await post({ updates: [{ DocNo: "PO-004521", SupplierDeliveryDate3: "2026-10-09" }] });
+    expect(locked.body.results[0]).toMatchObject({ skipped: "po_locked", message: "PO has a live GRN" });
+    expect(po.cascade).not.toHaveBeenCalled();
+
+    const received = await post({ updates: [{ DocNo: "PO-004521", SupplierDeliveryDate3: "2026-10-09" }] }, [{ ...HEAD, status: "RECEIVED" }]);
+    expect(received.body.results[0]).toMatchObject({ skipped: "po_not_outstanding", status: "RECEIVED" });
+    expect(po.lock).toHaveBeenCalledTimes(1);
+
+    po.cascade.mockResolvedValueOnce({ ok: false, reason: "Header updated but lines failed: boom" });
+    const failed = await post({ updates: [{ DocNo: "PO-004521", SupplierDeliveryDate3: "2026-10-09" }] });
+    expect(failed.body.results[0]).toMatchObject({ error: "Header updated but lines failed: boom", written: {} });
+    expect(failed.body.written).toBe(0);
+    expect(po.enqueue).not.toHaveBeenCalled();
+  });
+
+  test("validation per row: no Doc No., a bad date, nothing to write, an unknown PO; one PO's lines merge into one write", async () => {
+    const { body, seen } = await post({
+      updates: [
+        { SupplierDeliveryDate1: "2026-10-01" },
+        { DocNo: "PO-004521", SupplierDeliveryDate1: "soon" },
+        { DocNo: "PO-004521" },
+        { DocNo: "PO-999999", SupplierDeliveryDate1: "2026-10-01" },
+        { DocNo: "PO-004521", SupplierDeliveryDate2: "2026-10-02" },
+        { DocNo: "PO-004521", SupplierDeliveryDate3: "2026-10-03" },
+      ],
+    });
+    expect(body.results[0]).toMatchObject({ skipped: "no_doc_no" });
+    expect(body.results[1]).toMatchObject({ skipped: "bad_date", field: "SupplierDeliveryDate1" });
+    expect(body.results[2]).toMatchObject({ skipped: "nothing_to_write" });
+    expect(body.results[3]).toMatchObject({ DocNo: "PO-999999", skipped: "no_order" });
+    expect(body.results[4]).toMatchObject({ ok: true, written: { supplier_delivery_date_3: "2026-10-02", supplier_delivery_date_4: "2026-10-03" } });
+    expect(body.results[5]).toMatchObject({ ok: true });
+    expect(body.written).toBe(2);
+    const heads = seen.filter((s) => /scm\.purchase_orders po/.test(s.sql));
+    expect(heads).toHaveLength(1);
+    expect(heads[0]!.binds).toEqual(["PO-999999", "PO-004521", HOUZS]);
+    expect(heads[0]!.sql).toContain("(VALUES (?::text), (?::text))");
+    expect(po.cascade).toHaveBeenCalledTimes(2);
+    expect(po.enqueue).toHaveBeenCalledTimes(1);
+  });
+
+  test("a wrong key is 401; more than the cap is 413", async () => {
+    const { db } = fakeDb(() => []);
+    const bad = await app.request(
+      "/po-dates",
+      { method: "POST", headers: { "X-Intake-Key": "wrong", "content-type": "application/json" }, body: "{}" },
+      env(db),
+    );
+    expect(bad.status).toBe(401);
+    const { res } = await post({ updates: Array.from({ length: 301 }, () => ({ DocNo: "x", SupplierDeliveryDate1: "2026-10-01" })) });
     expect(res.status).toBe(413);
   });
 });
