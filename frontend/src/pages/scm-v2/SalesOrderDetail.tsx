@@ -31,7 +31,7 @@ import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/Prin
 import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
 import { SoSourceChips } from '../../components/SoSourceChips';
 import { useSetBreadcrumbs } from '../../hooks/useBreadcrumbs';
-import { buildVariantSummary, canonicalizeVariants, fmtSen, fmtDateOrDash, fmtMoneySen, lineIdentity, missingVariantAxes, sofaMixIntroduced, SOFA_MIX_MESSAGE } from '@2990s/shared'; // Commander 2026-05-28
+import { buildVariantSummary, canonicalizeVariants, fmtSen, fmtDateOrDash, fmtMoneySen, lineIdentity, missingVariantAxes } from '@2990s/shared'; // Commander 2026-05-28
 import { PhoneInput } from '../../vendor/scm/components/PhoneInput';
 import { SkeletonDetailPage } from '../../vendor/scm/components/Skeleton';
 import {
@@ -64,7 +64,9 @@ import { soDateGuardError, soErrorText } from '../../vendor/scm/lib/so-form-vali
 import { FROZEN_LINE_LABEL, FROZEN_LINE_LABEL_STYLE, FROZEN_LINE_STYLE } from '../../vendor/scm/lib/so-frozen-line-style';
 import { zeroPriceClaim } from '../../vendor/scm/lib/zeroPriceClaim';
 import { notifySaveProblems, SaveProblemsList, saveProblemsTitle } from '../../vendor/scm/components/SaveProblemsList';
-import { collectSoEditSaveProblems } from '../../vendor/scm/lib/so-save-problems-client';
+import { SaveBlockedIndicator } from '../../vendor/scm/components/SaveBlockedIndicator';
+import { useSoValidate } from '../../vendor/scm/lib/use-so-validate';
+import { authedFetch, type SaveProblem } from '../../vendor/scm/lib/authed-fetch';
 import {
   buildAmendmentHeaderChanges,
   hasAmendmentHeaderChanges,
@@ -86,7 +88,7 @@ import { addressLineProps } from '../../lib/acColumnWidths';
    off-by-one on an off-GMT+8 phone. formatDate formats a date-only string
    verbatim and pins the rest to Asia/Kuala_Lumpur. */
 import { formatDate } from '../../lib/utils';
-import { SoLineCard, emptySoLine, missingRequiredVariants, type SoLineDraft } from '../../vendor/scm/components/SoLineCard';
+import { SoLineCard, emptySoLine, type SoLineDraft } from '../../vendor/scm/components/SoLineCard';
 import { PaymentsTable, type PaymentDraft, type PaymentCommitResult } from '../../vendor/scm/components/PaymentsTable';
 import { paymentSaveOutcome } from '../../vendor/scm/lib/payment-save-outcome';
 import { completePaymentRetryDraft, consumePaymentRetryNavigationState, readPaymentRetryHandoff, readPaymentRetryNavigationState } from '../../lib/paymentRetryHandoff';
@@ -790,6 +792,42 @@ export const SalesOrderDetail = () => {
      from the previous attempt would accuse the operator of a stale baseline
      they have already dealt with. */
   const clearSaveFeedback = () => { setSaveError(null); setVersionConflict(null); };
+
+  /* Backend authors the submit-blocked list (owner 2026-09-16). The draft carries
+     the edit context (isEdit + ORIGINAL dates/line groups) so the grandfather +
+     introduced-mix carve-outs run server-side. Name/address/venue/salesperson/
+     location stay the server PATCH's gate; stored dates on both sides grandfather,
+     and the CustomerCard validate() supplies the edited-date fault. */
+  const editedDraftGroups = useMemo(
+    () => [...Object.values(editingDrafts), ...stagedAddDrafts(addingDrafts)].filter((d) => d.itemCode.trim()),
+    [editingDrafts, addingDrafts],
+  );
+  const buildEditValidateDraft = useCallback(() => {
+    const proc = header?.processing_date ? String(header.processing_date).slice(0, 10) : '';
+    const deliv = header?.customer_delivery_date ? String(header.customer_delivery_date).slice(0, 10) : '';
+    return {
+      isEdit: true, hasVenue: true, hasSalesperson: true, fillAddressLater: false, companyCode: null, salesLocation: '', payments: [],
+      phone: customerCardRef.current?.getPhone() ?? header?.phone, debtorName: header?.debtor_name,
+      address1: header?.address1, postcode: header?.postcode, customerState: header?.customer_state,
+      items: editedDraftGroups.map((d) => ({ itemCode: d.itemCode, itemGroup: d.itemGroup, variants: d.variants, qty: d.qty })),
+      origItemGroups: items.map((it) => it.item_group),
+      processingDate: proc, customerDeliveryDate: deliv, origProcessingDate: proc, origDeliveryDate: deliv,
+    };
+  }, [editedDraftGroups, header, items]);
+  const liveEditDraft = useMemo(() => buildEditValidateDraft(), [buildEditValidateDraft]);
+  const { problems: editBackendProblems } = useSoValidate(liveEditDraft, !!header);
+  const editClientExtras = useMemo<SaveProblem[]>(() => {
+    const blankAdd = firstBlankStagedAdd(addingDrafts);
+    const blankLine = Object.values(editingDrafts).some((d) => !d.itemCode.trim());
+    return [
+      ...(blankLine ? [{ code: 'line_unpicked', message: 'Every line must have a product selected before saving.', field: 'Line items' }] : []),
+      ...(blankAdd != null ? [{ code: 'line_unpicked', message: `${stagedAddLabel(blankAdd)} has no product picked — pick one, or remove that line before saving.`, field: 'Line items' }] : []),
+    ];
+  }, [editingDrafts, addingDrafts]);
+  const editBlockingProblems = useMemo(() => [...editBackendProblems, ...editClientExtras], [editBackendProblems, editClientExtras]);
+  const openEditBlockingList = () => {
+    void notify({ title: saveProblemsTitle(editBlockingProblems.length), body: <SaveProblemsList problems={editBlockingProblems} />, tone: 'error' });
+  };
   const enterEdit  = () => { clearSaveFeedback(); setIsEditing(true); };
   const cancelEdit = () => {
     customerCardRef.current?.reset();
@@ -809,46 +847,30 @@ export const SalesOrderDetail = () => {
      resolve; any failure surfaces inline and keeps the user in edit mode so
      nothing is silently lost. */
   const [savingOrder, setSavingOrder] = useState(false);
-  const saveEdit = () => {
+  const saveEdit = async () => {
     const handle = customerCardRef.current;
     if (!handle || !header) return;
     if (savingOrder) return;
     clearSaveFeedback();
 
-    /* ONE consolidated client pre-flight, shown all at once in the SAME
-       SaveProblemsList popup the server's 422 uses (owner 2026-09-16, after
-       #4007). Collects the detail editor's client-checkable blockers — the
-       compulsory phone, a blank line / staged add, the sofa-mix rule, every
-       line's option/size/fabric gap once a Processing Date is set, and the
-       header date fault — into one list via the shared collectSoEditSaveProblems.
-       No rule changes; name / address / venue / salesperson / location stay the
-       server's gate (it returns its own aggregated problems on the PATCH, shown
-       via notifySaveProblems below).
-
-       Sofa-mix is INTRODUCED, not flat (2026-08-18): the server line paths refuse
-       only a change that INTRODUCES the mix, so an order written before the rule
-       existed stays editable; a flat client check would refuse saves the server
-       accepts. Variants are the PROCEED rule — required only once a Processing
-       Date is set. The header date fault comes from the CustomerCard's own
-       validate() (date XOR + no-past-date). */
+    /* Backend authors the business-rule blockers; merge the client-only extras
+       (blank line, blank staged add, CustomerCard date fault). PATCH below gates. */
     const blankAddPos = firstBlankStagedAdd(addingDrafts);
     const blankLine = Object.values(editingDrafts).find((d) => !d.itemCode.trim());
-    const editedDrafts = [...Object.values(editingDrafts), ...stagedAddDrafts(addingDrafts)].filter((d) => d.itemCode.trim());
     const headerErr = handle.validate();
-    const problems = collectSoEditSaveProblems({
-      phone: handle.getPhone(),
-      processingDate: header?.processing_date ? String(header.processing_date).slice(0, 10) : '',
-      variantOffenders: editedDrafts
-        .map((d) => ({ itemCode: d.itemCode, missingLabels: missingRequiredVariants(d.itemGroup, d.variants, d.itemCode) }))
-        .filter((o) => o.missingLabels.length > 0),
-      sofaMixConflict: sofaMixIntroduced(items.map((it) => it.item_group), editedDrafts.map((d) => d.itemGroup)),
-      sofaMixMessage: SOFA_MIX_MESSAGE,
-      extra: [
-        ...(blankAddPos != null ? [{ code: 'line_unpicked', message: `${stagedAddLabel(blankAddPos)} has no product picked — pick one, or remove that line before saving.`, field: 'Line items' }] : []),
-        ...(blankLine ? [{ code: 'line_unpicked', message: 'Every line must have a product selected before saving.', field: 'Line items' }] : []),
-        ...(headerErr ? [{ code: 'date_invalid', message: headerErr, field: 'Dates' }] : []),
-      ],
-    });
+    let serverProblems: SaveProblem[] = [];
+    try {
+      const r = await authedFetch<{ problems: SaveProblem[] }>('/mfg-sales-orders/validate', {
+        method: 'POST', body: JSON.stringify(buildEditValidateDraft()),
+      });
+      serverProblems = r.problems;
+    } catch { /* silent-write-ok: read-only dry-run; the writes below are the gate. */ }
+    const problems: SaveProblem[] = [
+      ...serverProblems,
+      ...(blankAddPos != null ? [{ code: 'line_unpicked', message: `${stagedAddLabel(blankAddPos)} has no product picked — pick one, or remove that line before saving.`, field: 'Line items' }] : []),
+      ...(blankLine ? [{ code: 'line_unpicked', message: 'Every line must have a product selected before saving.', field: 'Line items' }] : []),
+      ...(headerErr ? [{ code: 'date_invalid', message: headerErr, field: 'Dates' }] : []),
+    ];
     if (problems.length > 0) {
       void notify({ title: saveProblemsTitle(problems.length), body: <SaveProblemsList problems={problems} />, tone: 'error' });
       return;
@@ -1115,17 +1137,27 @@ export const SalesOrderDetail = () => {
        the state every amendable SO is in). */
     const blankAddPos = firstBlankStagedAdd(addingDrafts);
     const headerErr = handle.validate();
-    const problems = collectSoEditSaveProblems({
-      phone: handle.getPhone(),
-      processingDate: '',
-      variantOffenders: [],
-      sofaMixConflict: false,
-      sofaMixMessage: SOFA_MIX_MESSAGE,
-      extra: [
-        ...(blankAddPos != null ? [{ code: 'line_unpicked', message: `${stagedAddLabel(blankAddPos)} has no product picked — pick one, or remove that line before submitting.`, field: 'Line items' }] : []),
-        ...(headerErr ? [{ code: 'date_invalid', message: headerErr, field: 'Dates' }] : []),
-      ],
-    });
+    /* An amendment's only backend business rule is the compulsory phone (variants
+       and sofa mix ride the line diff): validate with the STORED lines and no
+       Processing Date so only phone can fire, then merge the client extras. */
+    let serverProblems: SaveProblem[] = [];
+    try {
+      const r = await authedFetch<{ problems: SaveProblem[] }>('/mfg-sales-orders/validate', {
+        method: 'POST',
+        body: JSON.stringify({
+          isEdit: true, hasVenue: true, hasSalesperson: true, fillAddressLater: false, companyCode: null, salesLocation: '', payments: [],
+          processingDate: '', customerDeliveryDate: '', phone: handle.getPhone(), debtorName: header?.debtor_name,
+          items: items.map((it) => ({ itemCode: it.item_code, itemGroup: it.item_group, variants: {}, qty: it.qty })),
+          origItemGroups: items.map((it) => it.item_group),
+        }),
+      });
+      serverProblems = r.problems;
+    } catch { /* silent-write-ok: read-only dry-run; the amendment write below is the gate. */ }
+    const problems: SaveProblem[] = [
+      ...serverProblems,
+      ...(blankAddPos != null ? [{ code: 'line_unpicked', message: `${stagedAddLabel(blankAddPos)} has no product picked — pick one, or remove that line before submitting.`, field: 'Line items' }] : []),
+      ...(headerErr ? [{ code: 'date_invalid', message: headerErr, field: 'Dates' }] : []),
+    ];
     if (problems.length > 0) {
       void notify({ title: saveProblemsTitle(problems.length), body: <SaveProblemsList problems={problems} />, tone: 'error' });
       return;
@@ -1913,17 +1945,20 @@ export const SalesOrderDetail = () => {
                   onClick={cancelEdit} disabled={updateHeader.isPending || savingOrder}>
                   <span>Cancel</span>
                 </Button>
+                {/* Persistent "Can't save — N to fix" pill (owner 2026-09-16): a
+                    blocked Save is never silent; backend-authored, clears live. */}
+                {!migratedLocked && <SaveBlockedIndicator problems={editBlockingProblems} onOpen={openEditBlockingList} />}
                 {/* Phase 1-C — on a processing-locked (PO'd) SO the primary Save
                     SUBMITS AN AMENDMENT instead of writing the lines directly. */}
                 {amendmentMode ? (
                   <Button variant="primary"
-                    onClick={submitAmendment} disabled={migratedLocked || savingOrder || createAmendment.isPending}>
+                    onClick={() => { void submitAmendment(); }} disabled={migratedLocked || savingOrder || createAmendment.isPending}>
                     <Save {...ICON} />
                     <span>{savingOrder || createAmendment.isPending ? 'Submitting…' : 'Submit amendment request'}</span>
                   </Button>
                 ) : (
                   <Button variant="primary"
-                    onClick={saveEdit} disabled={migratedLocked || updateHeader.isPending || savingOrder}>
+                    onClick={() => { void saveEdit(); }} disabled={migratedLocked || updateHeader.isPending || savingOrder}>
                     <Save {...ICON} />
                     <span>{updateHeader.isPending || savingOrder ? 'Saving…' : 'Save'}</span>
                   </Button>
@@ -1949,7 +1984,7 @@ export const SalesOrderDetail = () => {
           className={styles.bannerWarn}
           saving={savingOrder}
           onReview={() => setHistoryOpen(true)}
-          onProceed={() => { if (adoptServerVersion()) (amendmentMode ? submitAmendment : saveEdit)(); }}
+          onProceed={() => { if (adoptServerVersion()) void (amendmentMode ? submitAmendment : saveEdit)(); }}
         />
       )}
 

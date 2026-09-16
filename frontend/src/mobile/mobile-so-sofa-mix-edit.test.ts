@@ -79,13 +79,16 @@ describe('mobile hands the differential question to the backend, like the server
     expect(draftBody()).toContain('origItemGroups: origItems.map((it) => it.item_group)');
   });
 
-  test('desktop still asks the same question — the two surfaces move together', () => {
-    /* SalesOrderDetail now feeds the sofa-mix rule into the shared
-       collectSoEditSaveProblems aggregator, but the DIFFERENTIAL form is intact:
-       the before-set is the STORED lines (`items`), the after-set the edited
-       drafts, and the flat create-path rule is gone. */
-    expect(desktopDetailSource).toContain('sofaMixIntroduced(items.map((it) => it.item_group)');
-    expect(desktopDetailSource, 'desktop must not fall back to the flat create-path rule on an EDIT')
+  test('desktop moves together — it also hands the differential to the backend', () => {
+    /* SalesOrderDetail now posts its edit draft to /mfg-sales-orders/validate with
+       the STORED line groups as origItemGroups, so the backend computes the SAME
+       differential (mixes(after) && !mixes(before)) it does for the phone. The
+       client mix rules — flat and differential — are gone from the desktop edit. */
+    expect(desktopDetailSource).toContain('/mfg-sales-orders/validate');
+    expect(desktopDetailSource).toContain('origItemGroups: items.map((it) => it.item_group)');
+    expect(desktopDetailSource, 'desktop must not keep the flat create-path rule')
       .not.toContain('hasSofaMixConflict(');
+    expect(desktopDetailSource, 'desktop must not keep a client differential rule either')
+      .not.toContain('sofaMixIntroduced(');
   });
 });
