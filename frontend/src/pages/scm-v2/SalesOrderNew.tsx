@@ -64,7 +64,8 @@ import {
   unmatchedLinePhotos,
   type PhotoUploadFailure,
 } from '../../vendor/scm/lib/photo-upload-failures';
-import { notifySaveProblems } from '../../vendor/scm/components/SaveProblemsList';
+import { notifySaveProblems, SaveProblemsList, saveProblemsTitle } from '../../vendor/scm/components/SaveProblemsList';
+import { collectSoSaveProblems } from '../../vendor/scm/lib/so-save-problems-client';
 import { notifyAcNotSent } from '../../vendor/scm/lib/ac-not-sent';
 import { useIdempotencyKey } from '../../lib/idempotency';
 import { DebtorSuggestList } from '../../vendor/scm/components/DebtorSuggestList';
@@ -118,7 +119,6 @@ import {
   missingMethodSubField, parseInstallmentMonths, type PaymentDraft,
 } from '../../vendor/scm/components/PaymentsTable';
 import { useCancelledWithMoney } from '../../vendor/scm/lib/so-money-queries';
-import { soDateGuardError, soStockLocationError, soRequiredFieldErrors, soRequiredFieldsMessage, soProceedingAddressErrors } from '../../vendor/scm/lib/so-form-validate';
 import { useBranding } from '../../hooks/useBranding';
 import styles from './SalesOrderNew.module.css';
 import { fmtMoneySen } from '@2990s/shared';
@@ -1399,154 +1399,57 @@ export const SalesOrderNew = () => {
       });
       return;
     }
-    /* One-pass required-field check (owner 2026-08-20 live QA: "为什么要慢慢爆呢"
-       — the form popped ONE missing field per click). Collect EVERY always-required
-       field the operator is missing and show them together. The CONDITIONAL guards
-       below (date sanity, scanned-SKU, sofa-mix, Processing-Date proceed gate, the
-       "State has no warehouse" config case, payment sub-fields) still run one at a
-       time, because each only applies once an earlier choice is made. Shared with
-       mobile via soRequiredFieldErrors so the required set can't drift. */
+    /* ONE consolidated "what is blocking this save" check (owner 2026-09-16,
+       after #4007). Every client-checkable blocker — always-required fields, the
+       customer/address/postcode/delivery-date completeness a Processing Date
+       demands, each line's option/size/fabric gaps, the date rules, stock
+       location, sofa mix and payment sub-fields — is collected into ONE list by
+       the shared collectSoSaveProblems and shown in the SAME SaveProblemsList
+       popup the server's validation_failed refusal uses, so the operator sees
+       ALL the reasons at once and the phone, the desktop and the backend read
+       identically. No rule changes: each blocker is still the same shared helper
+       it always was. Owner 2026-08-20/23 ("为什么要慢慢爆呢", "create salesorder
+       要两次?") — the one-at-a-time popping is what this ends. */
     const validLines = lines.filter((l) => l.itemCode.trim() && l.qty > 0);
-    const missingRequired = soRequiredFieldErrors({
-      customerName: debtorName,
-      phone,
-      hasNamedLine: validLines.length > 0,
-      asDraft,
-      hasVenue: !!effectiveVenueId,
-      hasSalesperson: !!salespersonId,
-      location: { companyCode: branding.companyCode, salesLocation, state, mappingsLoaded: !!stateWarehousesQ.data, asDraft },
-    });
-    /* BOTH lists, ONE dialog. The proceeding-address group's condition is
-       `processingDate`, which is known right here — it only READ like a
-       sequential guard because it sat in a second `if` further down that the
-       return above never reached. Owner 2026-08-23: 「create salesorder 要两
-       次？」 — Venue and State on the first press, address and postcode on the
-       second. */
-    const missingProceeding = soProceedingAddressErrors({
-      processingDate,
-      customerName: debtorName,
-      fillAddressLater,
-      address1,
-      postcode,
-      deliveryDate,
-    });
-    if (missingRequired.length > 0 || missingProceeding.length > 0) {
-      void notify({ ...soRequiredFieldsMessage(missingRequired, missingProceeding), tone: 'error' });
-      return;
-    }
-    // Date sanity (set-together / not-past / processing≤delivery) — shared with
-    // mobile via soDateGuardError so the rule can't drift between surfaces.
-    const dateErr = soDateGuardError({ processingDate, deliveryDate, today });
-    if (dateErr) {
-      void notify({ ...dateErr, tone: 'error' });
-      return;
-    }
     /* Scan-Order core rule (Task #73) — a NO-MATCH scanned line seeds an empty
-       SKU picker the operator MUST fill from the dropdown ("应该是 dropdown 而
-       不是 manually 填写"). Block the save while any scanned line is still
-       unpicked (it carries the slip rawText but no itemCode) rather than
-       silently dropping it, so the operator is forced to pick a real SKU. */
+       SKU picker the operator MUST fill from the dropdown. Carried into the list
+       as an extra so it shows alongside the other blockers. */
     const unpickedScanned = lines.filter((l) => !l.itemCode.trim() && (scanLineMeta[l.rid]?.rawText ?? '').trim() !== '');
-    if (unpickedScanned.length > 0) {
-      void notify({
-        title: 'Pick a SKU for every scanned line.',
-        body:
-          `${unpickedScanned.length} scanned line${unpickedScanned.length === 1 ? '' : 's'} ` +
-          `${unpickedScanned.length === 1 ? "doesn't" : "don't"} have a product picked yet. ` +
-          'Pick a real SKU from the dropdown (the slip text is shown as a hint) or remove the line, then try again.',
-        tone: 'error',
-      });
-      return;
-    }
-    // Sofa is exclusive among main products — the server 400s
-    // `so_sofa_no_other_main` when a sofa line rides with a bedframe/mattress.
-    // Block + warn here so the operator gets one plain sentence, not a raw 400.
-    if (hasSofaMixConflict(validLines.map((l) => l.itemGroup))) {
-      void notify({ title: SOFA_MIX_MESSAGE, tone: 'error' });
-      return;
-    }
-    /* Variant completeness is the PROCEED rule, and only the proceed rule
-       (owner 2026-08-13: "只要是没有 proceed 这一张订单，其实都不一定是需要填写
-       的，除非它是 proceed 了"). A Processing Date IS proceed, so it demands the
-       full axis list — the same rule the server applies (so-variant-check via
-       collectProcessingGateProblems), together with the address / postcode /
-       delivery-date completeness the same date requires.
-
-       It briefly ALSO ran at confirm, date or no date (2026-08-08,
-       HC-SO-2607-008). That made a salesperson unable to book a real order
-       from a real customer who had not yet picked a seat height. Removed:
-       confirm means "this is a real order", proceed means "this is
-       buildable". Save as Draft was never gated either way. */
-    if (processingDate) {
-      /* Delivery completeness is the SAME proceed rule, and the server has
-         enforced it on procDate alone since 2026-07-31 (so-save-problems.ts).
-         Check it HERE too, or a blank address — or "Fill in address later" left
-         ticked, which BLANKS the address out of the payload — comes back as a
-         bare validation_failed naming no field. */
-      /* The address fields moved UP into the one-pass check above — see
-         soProceedingAddressErrors. Nothing is checked twice: reaching here means
-         that list was empty. The "untick Fill in address later" hint went with
-         them into the shared message. */
-      const missOf = (l: SoLineDraft): string[] =>
-        missingRequiredVariants(l.itemGroup, l.variants, l.itemCode);
-      const variantGaps = validLines
-        .map((l) => ({ code: l.itemCode, miss: missOf(l) }))
-        .filter((x) => x.miss.length > 0);
-      if (variantGaps.length > 0) {
-        void notify({
-          title: 'Complete all variant selections before setting a Processing Date:',
-          body: variantGaps.map((x) => `• ${x.code}: ${x.miss.join(', ')}`).join('\n'),
-          tone: 'error',
-        });
-        return;
-      }
-    }
-    /* Confirm gates (owner 2026-08-08) — a confirmed order needs a venue and a
-       salesperson; drafts stay freely saveable. Both are now collected in the
-       one-pass required-field check above (soRequiredFieldErrors), so the backend
-       stays the authoritative gate and the operator sees them alongside the other
-       missing fields rather than in two more separate dialogs. The SELF sentinel
-       counts as a salesperson: the backend stamps the caller's own staff row. */
-    /* Stock-location gate (owner 2026-08-13, company 1 only) — the order must
-       ship from a warehouse or AutoCount refuses the whole document. SHARED
-       with mobile via soStockLocationError; the backend is the authoritative
-       gate (422 validation_failed) and this only saves the operator a
-       round-trip with a form full of typing. Reads the SAME salesLocation the
-       create body sends, so the two can never disagree. */
-    const locationErr = soStockLocationError({
-      companyCode: branding.companyCode,
-      salesLocation,
-      state,
-      mappingsLoaded: !!stateWarehousesQ.data,
-      asDraft,
+    const problems = collectSoSaveProblems({
+      required: {
+        customerName: debtorName,
+        phone,
+        hasNamedLine: validLines.length > 0,
+        asDraft,
+        hasVenue: !!effectiveVenueId,
+        hasSalesperson: !!salespersonId,
+        location: { companyCode: branding.companyCode, salesLocation, state, mappingsLoaded: !!stateWarehousesQ.data, asDraft },
+      },
+      location: { companyCode: branding.companyCode, salesLocation, state, mappingsLoaded: !!stateWarehousesQ.data, asDraft },
+      processingDate,
+      completeness: { customerName: debtorName, fillAddressLater, address1, postcode, deliveryDate },
+      dateGuard: { processingDate, deliveryDate, today },
+      variantOffenders: validLines
+        .map((l) => ({ itemCode: l.itemCode, missingLabels: missingRequiredVariants(l.itemGroup, l.variants, l.itemCode) }))
+        .filter((o) => o.missingLabels.length > 0),
+      sofaMixConflict: hasSofaMixConflict(validLines.map((l) => l.itemGroup)),
+      sofaMixMessage: SOFA_MIX_MESSAGE,
+      paymentGaps: paymentDrafts
+        .map((d, i) => ({ row: i + 1, method: d.methodLabel, missing: d.amountSen > 0 ? missingMethodSubField(d) : null }))
+        .flatMap((x) => (x.missing ? [{ row: x.row, method: x.method, missing: x.missing }] : [])),
+      extra: unpickedScanned.length > 0
+        ? [{
+            code: 'scanned_line_unpicked',
+            message:
+              `${unpickedScanned.length} scanned line${unpickedScanned.length === 1 ? '' : 's'} ` +
+              `${unpickedScanned.length === 1 ? 'has' : 'have'} no product picked — pick a real SKU from the dropdown ` +
+              '(the slip text is shown as a hint) or remove the line.',
+            field: 'Line items',
+          }]
+        : [],
     });
-    if (locationErr) {
-      void notify({ ...locationErr, tone: 'error' });
-      return;
-    }
-
-    /* NO SLIP GUARD (Owner 2026-08-13) — "SalesOrder 所有的付款都不强制".
-       A payment slip is optional on every SO path now, so an amount-bearing
-       draft saves without one; the row is still POSTED (flushPaymentDrafts
-       filters on amount, never on the slip), which is the half that matters.
-       A scanned card receipt still rides along on its own path — see
-       receiptDeposit below. */
-
-    /* Cascade guard (spec 1) — a chosen payment method needs its required
-       sub-field(s): Merchant → Bank + Plan; Online → Sub-Type; Cash → none.
-       Block the save and name the first row + missing field so commander knows
-       exactly what to pick. Only checks amount-bearing rows (a zeroed/blank row
-       is dropped at flush time). */
-    const methodGaps = paymentDrafts
-      .map((d, i) => ({ row: i + 1, method: d.methodLabel, missing: d.amountSen > 0 ? missingMethodSubField(d) : null }))
-      .filter((x) => x.missing !== null);
-    if (methodGaps.length > 0) {
-      const g = methodGaps[0]!;
-      void notify({
-        title: `Payment ${g.row} (${g.method}) needs a ${g.missing}.`,
-        body: 'Pick the required sub-field for each payment method before saving.',
-        tone: 'error',
-      });
+    if (problems.length > 0) {
+      void notify({ title: saveProblemsTitle(problems.length), body: <SaveProblemsList problems={problems} />, tone: 'error' });
       return;
     }
 
