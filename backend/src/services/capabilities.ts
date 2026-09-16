@@ -44,6 +44,7 @@
 // a blank to fill.
 // ----------------------------------------------------------------------------
 
+import { isCrewScopedUser, isDefectReviewerPosition } from "./projectGates";
 import type { PositionPolicyRow } from "./positionPolicyRows";
 import type { AuthUser } from "./auth";
 import { hasPermission } from "./permissions";
@@ -259,6 +260,16 @@ const PREDICATES = {
    *  normalised name on both sides: a free-text rename must never slide into a
    *  tier. */
   "org.salesDirector": (u: CapabilityCaller): boolean => isSalesDirectorUser(asAuthUser(u)),
+
+  /** Is this caller the defect REVIEWER position (Storekeeper Supervisor's job:
+   *  triage fresh defects outside the region states). GATE:
+   *  projectGates.isDefectReviewerPosition — the Title's row, then its name. */
+  "org.defect.reviewer": (u: CapabilityCaller): boolean => isDefectReviewerPosition(asAuthUser(u)),
+
+  /** Is this caller CREW-SCOPED on projects (sees only the events they are
+   *  crewed on: helpers, storekeepers, the warehouse crew). GATE:
+   *  projectGates.isCrewScopedUser — the Title's row, then its name. */
+  "org.crew.scoped": (u: CapabilityCaller): boolean => isCrewScopedUser(asAuthUser(u)),
 } as const satisfies Record<string, (u: CapabilityCaller) => boolean>;
 
 /** Every capability key, frozen in declaration order. The frontend pins its own

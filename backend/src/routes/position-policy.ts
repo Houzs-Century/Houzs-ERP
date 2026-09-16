@@ -8,6 +8,7 @@ import {
 } from "../services/positionPolicy";
 import {
   POSITION_COHORTS,
+  POSITION_DUTIES,
   RESTRICTED_PROFILES,
   SALES_PROFILES,
   loadAllPositionPolicyRows,
@@ -32,6 +33,7 @@ type EffectivePolicy = {
   can_move_money: boolean;
   can_write_config: boolean;
   is_fleet: boolean;
+  duty: string;
 };
 
 /** What a Title resolves to right now — from its row when it has one, else
@@ -48,6 +50,7 @@ function effectiveFor(p: PositionRow, row: PositionPolicyRow | null): { source: 
         can_move_money: row.can_move_money,
         can_write_config: row.can_write_config,
         is_fleet: row.is_fleet,
+        duty: row.duty,
       },
     };
   }
@@ -61,6 +64,7 @@ function effectiveFor(p: PositionRow, row: PositionPolicyRow | null): { source: 
       can_move_money: god || policy.flags.canMoveMoney,
       can_write_config: god || policy.flags.canWriteConfig,
       is_fleet: false,
+      duty: god ? "management" : "other",
     },
   };
 }
@@ -90,6 +94,7 @@ app.get("/", requirePermission("users.read"), async (c) => {
     cohorts: POSITION_COHORTS,
     restricted_profiles: RESTRICTED_PROFILES,
     sales_profiles: SALES_PROFILES,
+    duties: POSITION_DUTIES,
     positions: (positions.results ?? []).map((p) => {
       const row = rows.get(p.id) ?? null;
       return { id: p.id, name: p.name, slug: p.slug, department_name: p.department_name, active: !!p.active, row, ...effectiveFor(p, row) };
@@ -119,14 +124,15 @@ app.put("/:positionId", requirePermission("roles.manage"), async (c) => {
   const before = await loadPositionPolicyRow(c.env, positionId);
   const row = v.row;
   await c.env.DB.prepare(
-    `INSERT INTO position_policy (position_id, cohort, profile, can_move_money, can_write_config, is_fleet, updated_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO position_policy (position_id, cohort, profile, can_move_money, can_write_config, is_fleet, duty, updated_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (position_id) DO UPDATE SET
        cohort = excluded.cohort,
        profile = excluded.profile,
        can_move_money = excluded.can_move_money,
        can_write_config = excluded.can_write_config,
        is_fleet = excluded.is_fleet,
+       duty = excluded.duty,
        updated_by = excluded.updated_by,
        updated_at = CURRENT_TIMESTAMP`,
   )
@@ -137,6 +143,7 @@ app.put("/:positionId", requirePermission("roles.manage"), async (c) => {
       row.can_move_money ? 1 : 0,
       row.can_write_config ? 1 : 0,
       row.is_fleet ? 1 : 0,
+      row.duty,
       c.get("user").id,
     )
     .run();
@@ -145,7 +152,7 @@ app.put("/:positionId", requirePermission("roles.manage"), async (c) => {
     action: "position_policy.update",
     entityType: "position",
     entityId: positionId,
-    summary: `Set policy of Title "${position.name}" to ${row.cohort}${row.profile ? ` / ${row.profile}` : ""}`,
+    summary: `Set policy of Title "${position.name}" to ${row.cohort}${row.profile ? ` / ${row.profile}` : ""}, duty ${row.duty}`,
     meta: { position: position.name, slug: position.slug, before, after: row },
   });
 

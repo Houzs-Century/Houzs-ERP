@@ -14,6 +14,15 @@ import {
   validatePolicyRow,
   type PositionPolicyRow,
 } from "../src/services/positionPolicyRows";
+import {
+  getPmsRole,
+  isDirectorUser,
+  isProductCostViewer,
+  isSalesDirectorUser,
+  isSalesUser,
+} from "../src/services/pmsAccess";
+import { isCrewScopedUser, isDefectReviewerPosition, salesDirectorMayAttach } from "../src/services/projectGates";
+import type { AuthUser } from "../src/services/auth";
 
 /* Roles & Permissions review part B (2026-09-16): a Title's cohort / profile /
  * flags now come from a `position_policy` ROW keyed by position_id, with the
@@ -27,6 +36,8 @@ import {
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PG_MIGRATION = resolve(HERE, "../src/db/migrations-pg/20260916T1600_position_policy.sql");
 const D1_MIRROR = resolve(HERE, "../src/db/migrations/155_position_policy.sql");
+const PG_DUTY_MIGRATION = resolve(HERE, "../src/db/migrations-pg/20260916T1800_position_policy_duty.sql");
+const D1_DUTY_MIRROR = resolve(HERE, "../src/db/migrations/157_position_policy_duty.sql");
 
 function rowOf(entry: (typeof POSITION_POLICY_SEED)[number], positionId = 999): PositionPolicyRow {
   return {
@@ -36,7 +47,30 @@ function rowOf(entry: (typeof POSITION_POLICY_SEED)[number], positionId = 999): 
     can_move_money: entry.can_move_money,
     can_write_config: entry.can_write_config,
     is_fleet: entry.is_fleet,
+    duty: entry.duty,
   };
+}
+
+/** An AuthUser-shaped caller: by NAME (no row) or by ROW (name blanked, so a
+ *  regex could not be what answered). */
+function callerByName(entry: (typeof POSITION_POLICY_SEED)[number], perms: string[] = []): AuthUser {
+  return {
+    id: 7,
+    position_name: entry.name,
+    department_name: entry.department,
+    permissions: perms,
+    permissions_set: new Set(perms),
+  } as unknown as AuthUser;
+}
+function callerByRow(entry: (typeof POSITION_POLICY_SEED)[number], perms: string[] = []): AuthUser {
+  return {
+    id: 7,
+    position_name: "Renamed Title",
+    department_name: null,
+    position_policy: rowOf(entry),
+    permissions: perms,
+    permissions_set: new Set(perms),
+  } as unknown as AuthUser;
 }
 
 describe("position_policy seed — each row is its production name, by id", () => {
@@ -121,6 +155,82 @@ describe("position_policy migrations carry exactly the seed", () => {
   });
 });
 
+describe("position_policy duty — the project-page and crew answers by ROW equal the name rule", () => {
+  // The one seeded duty that is NOT what the name rule gave: the regex
+  // /^Purchasing$/ never matched the renamed "Procurement/Purchasing", so that
+  // Title has resolved to OTHER on projects since the rename while the
+  // product-cost check (which carries the alias) still admitted it. The row
+  // restores the documented PMS PURCHASING role; no active member on 2026-09-16.
+  const KNOWN_ROLE_DIFFERENCE: Record<string, "PURCHASING"> = { purchasing: "PURCHASING" };
+  for (const entry of POSITION_POLICY_SEED) {
+    test(`${entry.name}: pmsAccess / projectGates agree row vs name`, () => {
+      // Owner-tier Titles carry `*` at hydration (positionGrantsWildcard), so
+      // both callers get it — the name rule alone never saw a bare god name.
+      const perms = entry.cohort === "god" ? ["*"] : [];
+      const byName = callerByName(entry, perms);
+      const byRow = callerByRow(entry, perms);
+      const project = { pic_id: 7 };
+      const other = { pic_id: 99 };
+      const expectedRole = (p: { pic_id: number }) => KNOWN_ROLE_DIFFERENCE[entry.slug] ?? getPmsRole(byName, p);
+      expect(getPmsRole(byRow, project), "PMS role as PIC").toBe(expectedRole(project));
+      expect(getPmsRole(byRow, other), "PMS role not PIC").toBe(expectedRole(other));
+      expect(isDirectorUser(byRow), "director").toBe(isDirectorUser(byName));
+      expect(isSalesUser(byRow), "sales").toBe(isSalesUser(byName));
+      expect(isSalesDirectorUser(byRow), "sales director").toBe(isSalesDirectorUser(byName));
+      expect(isProductCostViewer(byRow), "cost viewer").toBe(isProductCostViewer(byName));
+      expect(isCrewScopedUser(byRow), "crew scoped").toBe(isCrewScopedUser(byName));
+      expect(isDefectReviewerPosition(byRow), "defect reviewer").toBe(isDefectReviewerPosition(byName));
+      expect(salesDirectorMayAttach("Filled Floor Plan", "Renamed Title", rowOf(entry)), "floor plan attach").toBe(
+        salesDirectorMayAttach("Filled Floor Plan", entry.name, null),
+      );
+    });
+  }
+
+  test("a renamed Title keeps its job by row: Storekeeper Supervisor stays the defect reviewer", () => {
+    const sup = POSITION_POLICY_SEED.find((e) => e.slug === "storekeeper_supervisor")!;
+    expect(isDefectReviewerPosition(callerByRow(sup))).toBe(true);
+    expect(isDefectReviewerPosition({ position_name: "Warehouse Crew KL", position_policy: null })).toBe(false);
+    const crew = POSITION_POLICY_SEED.find((e) => e.slug === "warehouse_crew_kl")!;
+    expect(isCrewScopedUser(callerByRow(crew))).toBe(true);
+    expect(isCrewScopedUser(callerByRow(sup))).toBe(false);
+  });
+
+  test("duty answers: logistic edits projects, purchasing sees cost, management is a director", () => {
+    const base = POSITION_POLICY_SEED.find((e) => e.slug === "hr_manager")!;
+    const withDuty = (duty: PositionPolicyRow["duty"]): AuthUser =>
+      ({ ...callerByRow(base), position_policy: { ...rowOf(base), duty } }) as AuthUser;
+    expect(getPmsRole(withDuty("logistic"), { pic_id: null })).toBe("LOGISTIC");
+    expect(getPmsRole(withDuty("purchasing"), { pic_id: null })).toBe("PURCHASING");
+    expect(isProductCostViewer(withDuty("purchasing"))).toBe(true);
+    expect(isProductCostViewer(withDuty("other"))).toBe(false);
+    expect(getPmsRole(withDuty("management"), { pic_id: null })).toBe("DIRECTOR");
+    expect(isDirectorUser(withDuty("finance"))).toBe(true);
+    expect(getPmsRole(withDuty("helper"), { pic_id: null })).toBe("DRIVER");
+    expect(isCrewScopedUser(withDuty("helper"))).toBe(true);
+    expect(isCrewScopedUser(withDuty("driver"))).toBe(false);
+  });
+});
+
+describe("the duty migrations carry exactly the seed", () => {
+  const seedDuties = Object.fromEntries(POSITION_POLICY_SEED.map((e) => [e.slug, e.duty]));
+  const parse = (sql: string): Record<string, string> => {
+    const out: Record<string, string> = {};
+    for (const m of sql.matchAll(/SET duty = '(\w+)'\s+WHERE position_id IN \(SELECT id FROM (?:public\.)?positions WHERE slug IN \(([^)]+)\)\)/g)) {
+      for (const slug of m[2].split(",").map((x) => x.trim().replace(/^'|'$/g, ""))) out[slug] = m[1];
+    }
+    return out;
+  };
+  for (const [label, file] of [["Postgres", PG_DUTY_MIGRATION], ["D1 mirror", D1_DUTY_MIRROR]] as const) {
+    test(`${label}: every non-other seed duty is set, nothing else is`, () => {
+      const sql = readFileSync(file, "utf8");
+      const fromSql = parse(sql);
+      const expected = Object.fromEntries(Object.entries(seedDuties).filter(([, d]) => d !== "other"));
+      expect(fromSql).toEqual(expected);
+      if (label === "Postgres") expect(sql).toMatch(/^-- REVERSAL:/m);
+    });
+  }
+});
+
 describe("validatePolicyRow refuses what the resolver could not honour", () => {
   const base = { cohort: "full", profile: null, can_move_money: false, can_write_config: false, is_fleet: false };
   test("accepts each seed row", () => {
@@ -142,12 +252,22 @@ describe("validatePolicyRow refuses what the resolver could not honour", () => {
     const god = validatePolicyRow(1, { ...base, cohort: "god" });
     expect(god.ok && god.row.can_move_money && god.row.can_write_config).toBe(true);
   });
+  test("duty: unknown refused, absent reads as other, owner tier is always management", () => {
+    expect(validatePolicyRow(1, { ...base, duty: "janitor" }).ok).toBe(false);
+    const absent = validatePolicyRow(1, { ...base });
+    expect(absent.ok && absent.row.duty).toBe("other");
+    const god = validatePolicyRow(1, { ...base, cohort: "god", duty: "warehouse" });
+    expect(god.ok && god.row.duty).toBe("management");
+    const fromOldDb = policyRowFromDb({ position_id: 3, cohort: "full", profile: null, can_move_money: 1, can_write_config: 0, is_fleet: 0 });
+    expect(fromOldDb?.duty).toBe("other");
+  });
+
   test("unknown cohort, missing flags, and a D1 0/1 row all read as intended", () => {
     expect(validatePolicyRow(1, { ...base, cohort: "admin" }).ok).toBe(false);
     expect(validatePolicyRow(1, { cohort: "full" }).ok).toBe(true);
     expect(validatePolicyRow(1, { cohort: "full", can_move_money: "yes" }).ok).toBe(false);
     const fromDb = policyRowFromDb({ position_id: 16, cohort: "restricted", profile: "driver_helper", can_move_money: 0, can_write_config: 0, is_fleet: 1 });
-    expect(fromDb).toEqual({ position_id: 16, cohort: "restricted", profile: "driver_helper", can_move_money: false, can_write_config: false, is_fleet: true });
+    expect(fromDb).toEqual({ position_id: 16, cohort: "restricted", profile: "driver_helper", can_move_money: false, can_write_config: false, is_fleet: true, duty: "other" });
     expect(policyRowFromDb({ position_id: 16, cohort: null })).toBeNull();
     expect(policyRowFromDb(null)).toBeNull();
   });

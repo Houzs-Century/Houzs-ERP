@@ -52,6 +52,8 @@ each child. Any page not listed for a position = **none**.
 
 ## Project-detail (PMS) section-level visibility  (layered on top of the page matrix)
 
+> The PMS role below comes from the Title's `position_policy` row — the **Duty** column on Roles & Permissions › Titles (management / finance → Director; purchasing → Purchasing; logistic → Logistic; driver / helper → Driver; the sales cohort → PIC / Sales) — with the old name regexes only as the fallback for a Title with no row.
+
 | PMS role | Sections | Financial | Rental |
 |---|---|---|---|
 | Director (Super Admin / Sales Director) | everything + delete | YES | YES |

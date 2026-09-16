@@ -36,6 +36,25 @@ export type SalesProfile = (typeof SALES_PROFILES)[number];
 
 export type PositionProfile = RestrictedProfile | SalesProfile;
 
+/** What this Title's job is on a PROJECT page and around the warehouse — the
+ *  facet the name regexes in pmsAccess.ts / projectGates.ts used to decide.
+ *  management / finance → PMS DIRECTOR (finance also sees product cost);
+ *  purchasing → PMS PURCHASING + product cost; logistic → PMS LOGISTIC;
+ *  driver → PMS DRIVER; helper → PMS DRIVER and crew-scoped; warehouse →
+ *  crew-scoped; other → PMS OTHER. The sales cohort is PIC / SALES from its
+ *  cohort regardless of duty. */
+export const POSITION_DUTIES = [
+  "management",
+  "finance",
+  "purchasing",
+  "logistic",
+  "driver",
+  "helper",
+  "warehouse",
+  "other",
+] as const;
+export type PositionDuty = (typeof POSITION_DUTIES)[number];
+
 export interface PositionPolicyRow {
   position_id: number;
   cohort: PositionCohort;
@@ -48,6 +67,8 @@ export interface PositionPolicyRow {
   /** restricted cohort only: sees only their OWN delivery jobs and fails closed
    *  to an empty board when unlinked (Driver / Helper). */
   is_fleet: boolean;
+  /** Job on a project page / around the warehouse — see POSITION_DUTIES. */
+  duty: PositionDuty;
 }
 
 export type PositionPolicyInputRow = Omit<PositionPolicyRow, "position_id">;
@@ -55,6 +76,11 @@ export type PositionPolicyInputRow = Omit<PositionPolicyRow, "position_id">;
 const COHORT_SET: ReadonlySet<string> = new Set(POSITION_COHORTS);
 const RESTRICTED_SET: ReadonlySet<string> = new Set(RESTRICTED_PROFILES);
 const SALES_SET: ReadonlySet<string> = new Set(SALES_PROFILES);
+const DUTY_SET: ReadonlySet<string> = new Set(POSITION_DUTIES);
+
+export function isPositionDuty(v: unknown): v is PositionDuty {
+  return typeof v === "string" && DUTY_SET.has(v);
+}
 
 export function isPositionCohort(v: unknown): v is PositionCohort {
   return typeof v === "string" && COHORT_SET.has(v);
@@ -105,6 +131,10 @@ export function validatePolicyRow(
   if ((money || config) && cohort !== "full" && cohort !== "god")
     return { ok: false, error: "Money and config writes are flags of a full Title; restricted and sales Titles take them from their profile." };
 
+  const rawDuty = body.duty == null || body.duty === "" ? "other" : body.duty;
+  if (!isPositionDuty(rawDuty))
+    return { ok: false, error: `duty must be one of ${POSITION_DUTIES.join(", ")}.` };
+
   return {
     ok: true,
     row: {
@@ -114,6 +144,7 @@ export function validatePolicyRow(
       can_move_money: cohort === "god" ? true : money,
       can_write_config: cohort === "god" ? true : config,
       is_fleet: fleet,
+      duty: cohort === "god" ? "management" : rawDuty,
     },
   };
 }
@@ -128,6 +159,7 @@ export function policyRowFromDb(raw: {
   can_move_money?: unknown;
   can_write_config?: unknown;
   is_fleet?: unknown;
+  duty?: unknown;
 } | null | undefined): PositionPolicyRow | null {
   if (!raw || raw.cohort == null) return null;
   const positionId = Number(raw.position_id);
@@ -138,6 +170,8 @@ export function policyRowFromDb(raw: {
     can_move_money: asFlag(raw.can_move_money) ?? false,
     can_write_config: asFlag(raw.can_write_config) ?? false,
     is_fleet: asFlag(raw.is_fleet) ?? false,
+    // A database that predates the duty column answers undefined: "other".
+    duty: raw.duty ?? "other",
   });
   return v.ok ? v.row : null;
 }
@@ -147,7 +181,7 @@ export async function loadPositionPolicyRow(
   positionId: number,
 ): Promise<PositionPolicyRow | null> {
   const raw = await env.DB.prepare(
-    `SELECT position_id, cohort, profile, can_move_money, can_write_config, is_fleet
+    `SELECT position_id, cohort, profile, can_move_money, can_write_config, is_fleet, duty
        FROM position_policy WHERE position_id = ?`,
   )
     .bind(positionId)
@@ -157,7 +191,7 @@ export async function loadPositionPolicyRow(
 
 export async function loadAllPositionPolicyRows(env: Env): Promise<Map<number, PositionPolicyRow>> {
   const res = await env.DB.prepare(
-    `SELECT position_id, cohort, profile, can_move_money, can_write_config, is_fleet
+    `SELECT position_id, cohort, profile, can_move_money, can_write_config, is_fleet, duty
        FROM position_policy ORDER BY position_id`,
   ).all<Record<string, unknown>>();
   const out = new Map<number, PositionPolicyRow>();
@@ -189,7 +223,7 @@ const seed = (
   department: string | null,
   cohort: PositionCohort,
   profile: PositionProfile | null,
-  flags: { money?: boolean; config?: boolean; fleet?: boolean } = {},
+  flags: { money?: boolean; config?: boolean; fleet?: boolean; duty?: PositionDuty } = {},
 ): PositionPolicySeedEntry => ({
   slug,
   name,
@@ -199,6 +233,7 @@ const seed = (
   can_move_money: cohort === "god" ? true : flags.money ?? false,
   can_write_config: cohort === "god" ? true : flags.config ?? false,
   is_fleet: flags.fleet ?? false,
+  duty: cohort === "god" ? "management" : flags.duty ?? "other",
 });
 
 export const POSITION_POLICY_SEED: ReadonlyArray<PositionPolicySeedEntry> = [
@@ -206,23 +241,23 @@ export const POSITION_POLICY_SEED: ReadonlyArray<PositionPolicySeedEntry> = [
   seed("owner", "Owner", "Management", "god", null),
   seed("managing_director", "Managing Director", "Management", "god", null),
   seed("hr_manager", "HR Manager", "HR Department", "full", null),
-  seed("finance_manager", "Finance Manager", "Finance Department", "full", null, { money: true }),
+  seed("finance_manager", "Finance Manager", "Finance Department", "full", null, { money: true, duty: "finance" }),
   seed("it_developer_executive", "IT Developer Executive", "IT Department", "full", null),
   seed("service_admin", "Service Admin", "Operation Department", "full", null),
   seed("pg_wh_assistant", "PG WH Assistant", "Operation Department", "full", null),
   seed("ops_director", "Operation Manager", "Operation Department", "full", null, { config: true }),
   seed("ops_executive", "Operation Executive", "Operation Department", "full", null, { config: true }),
-  seed("purchasing", "Procurement/Purchasing", "Operation Department", "full", null, { config: true }),
+  seed("purchasing", "Procurement/Purchasing", "Operation Department", "full", null, { config: true, duty: "purchasing" }),
   seed("logistic", "Logistic Admin", "Operation Department", "full", null, { config: true }),
   seed("sales_director", "Sales Director", "Sales Department", "sales", "director"),
   seed("sales_manager", "Sales Manager", "Sales Department", "sales", "rep"),
   seed("sales_executive", "Sales Executive", "Sales Department", "sales", "rep"),
   seed("sales_person", "Sales Person", "Sales Department", "sales", "rep"),
-  seed("storekeeper", "Storekeeper", "Operation Department", "restricted", "storekeeper"),
+  seed("storekeeper", "Storekeeper", "Operation Department", "restricted", "storekeeper", { duty: "warehouse" }),
   seed("storekeeper_supervisor", "Storekeeper Supervisor", "Operation Department", "restricted", "storekeeper_supervisor"),
-  seed("warehouse_crew_kl", "Warehouse Crew KL", "Operation Department", "restricted", "storekeeper"),
-  seed("driver", "Driver", "Operation Department", "restricted", "driver_helper", { fleet: true }),
-  seed("helper", "Helper", "Operation Department", "restricted", "driver_helper", { fleet: true }),
+  seed("warehouse_crew_kl", "Warehouse Crew KL", "Operation Department", "restricted", "storekeeper", { duty: "warehouse" }),
+  seed("driver", "Driver", "Operation Department", "restricted", "driver_helper", { fleet: true, duty: "driver" }),
+  seed("helper", "Helper", "Operation Department", "restricted", "driver_helper", { fleet: true, duty: "helper" }),
   seed("outsource_transporter", "Outsource Transporter", "Operation Department", "restricted", "driver_helper"),
   seed("calendar-viewer", "Calendar Viewer", "Management", "restricted", "calendar_viewer"),
 ];

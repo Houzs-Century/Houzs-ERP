@@ -144,6 +144,7 @@ describe("position_policy — a Title's row decides the session", () => {
 
     const listBefore = await api("GET", "/api/position-policy", reader.bearer);
     expect(listBefore.status).toBe(200);
+    expect(listBefore.json.duties).toContain("logistic");
     const entryBefore = listBefore.json.positions.find((p: any) => p.id === target.positionId);
     expect(entryBefore.source).toBe("name");
     expect(entryBefore.row).toBeNull();
@@ -161,12 +162,18 @@ describe("position_policy — a Title's row decides the session", () => {
     expect(bad.status).toBe(400);
 
     const ok = await api("PUT", `/api/position-policy/${target.positionId}`, admin.bearer, {
-      cohort: "sales", profile: "director", can_move_money: false, can_write_config: false, is_fleet: false,
+      cohort: "sales", profile: "director", can_move_money: false, can_write_config: false, is_fleet: false, duty: "logistic",
     });
     expect(ok.status).toBe(200);
     expect(ok.json.source).toBe("row");
     expect(ok.json.row.cohort).toBe("sales");
     expect(ok.json.row.profile).toBe("director");
+    expect(ok.json.row.duty).toBe("logistic");
+    expect(ok.json.effective.duty).toBe("logistic");
+    const badDuty = await api("PUT", `/api/position-policy/${target.positionId}`, admin.bearer, {
+      cohort: "full", profile: null, can_move_money: false, can_write_config: false, is_fleet: false, duty: "janitor",
+    });
+    expect(badDuty.status).toBe(400);
 
     const targetMe = await api("GET", "/api/auth/me", target.bearer);
     expect(targetMe.json.user.page_access["scm.sales"]).toBe("full");

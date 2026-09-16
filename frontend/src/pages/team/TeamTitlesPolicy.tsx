@@ -21,6 +21,7 @@ export interface TitlePolicyRow {
   can_move_money: boolean;
   can_write_config: boolean;
   is_fleet: boolean;
+  duty: string;
 }
 
 export interface TitlePolicyEntry {
@@ -37,6 +38,7 @@ export interface TitlePolicyEntry {
     can_move_money: boolean;
     can_write_config: boolean;
     is_fleet: boolean;
+    duty?: string;
   };
 }
 
@@ -44,8 +46,24 @@ export interface TitlePolicyPayload {
   cohorts: PolicyCohort[];
   restricted_profiles: string[];
   sales_profiles: string[];
+  /** Absent from a backend that predates the Duty column. */
+  duties?: string[];
   positions: TitlePolicyEntry[];
 }
+
+const DUTY_LABEL: Record<string, string> = {
+  management: "Management",
+  finance: "Finance",
+  purchasing: "Purchasing",
+  logistic: "Logistic",
+  driver: "Driver",
+  helper: "Helper",
+  warehouse: "Warehouse crew",
+  other: "Other",
+};
+
+const DUTY_HELP =
+  "The Title's job on a project page: Management / Finance see money; Purchasing sees product cost; Logistic edits projects; Driver and Helper use the driver view; Helper and Warehouse crew see only events they are crewed on. A Sales Title is Sales on projects whatever this says.";
 
 const COHORT_LABEL: Record<PolicyCohort, string> = {
   god: "Owner tier",
@@ -94,22 +112,25 @@ function draftOf(e: TitlePolicyEntry): Draft {
     can_move_money: src.can_move_money,
     can_write_config: src.can_write_config,
     is_fleet: src.is_fleet,
+    duty: src.duty ?? "other",
   };
 }
 
 /** Coerce a draft into a shape the API accepts for its cohort (a profile
  *  only where the cohort takes one; flags only where the cohort owns them). */
 function normalise(d: Draft, payload: TitlePolicyPayload): Draft {
+  const duties = payload.duties ?? [];
+  const duty = duties.includes(d.duty) ? d.duty : "other";
   if (d.cohort === "restricted") {
     const profile = d.profile && payload.restricted_profiles.includes(d.profile) ? d.profile : payload.restricted_profiles[0] ?? null;
-    return { cohort: d.cohort, profile, can_move_money: false, can_write_config: false, is_fleet: d.is_fleet };
+    return { cohort: d.cohort, profile, can_move_money: false, can_write_config: false, is_fleet: d.is_fleet, duty };
   }
   if (d.cohort === "sales") {
     const profile = d.profile && payload.sales_profiles.includes(d.profile) ? d.profile : "rep";
-    return { cohort: d.cohort, profile, can_move_money: false, can_write_config: false, is_fleet: false };
+    return { cohort: d.cohort, profile, can_move_money: false, can_write_config: false, is_fleet: false, duty };
   }
-  if (d.cohort === "god") return { cohort: d.cohort, profile: null, can_move_money: true, can_write_config: true, is_fleet: false };
-  return { cohort: d.cohort, profile: null, can_move_money: d.can_move_money, can_write_config: d.can_write_config, is_fleet: false };
+  if (d.cohort === "god") return { cohort: d.cohort, profile: null, can_move_money: true, can_write_config: true, is_fleet: false, duty: "management" };
+  return { cohort: d.cohort, profile: null, can_move_money: d.can_move_money, can_write_config: d.can_write_config, is_fleet: false, duty };
 }
 
 export function TeamTitlesPolicy({
@@ -169,7 +190,10 @@ export function TeamTitlesPolicy({
     }
   }
 
-  const gridTemplate = "220px 130px 170px 72px 72px 72px 90px";
+  const showDuty = (payload.duties ?? []).length > 0;
+  const gridTemplate = showDuty
+    ? "200px 120px 150px 130px 64px 64px 64px 90px"
+    : "220px 130px 170px 72px 72px 72px 90px";
   let lastDept: string | null | undefined;
 
   return (
@@ -180,7 +204,7 @@ export function TeamTitlesPolicy({
             className="grid items-end gap-2 border-b border-border bg-surface-2 px-5 py-2"
             style={{ gridTemplateColumns: gridTemplate }}
           >
-            {["Title", "Cohort", "Profile", "Money", "Config", "Fleet", "Source"].map((h) => (
+            {["Title", "Cohort", "Profile", ...(showDuty ? ["Duty"] : []), "Money", "Config", "Fleet", "Source"].map((h) => (
               <span key={h} className="font-mono text-[10px] uppercase tracking-wider text-ink-muted">
                 {h}
               </span>
@@ -250,6 +274,24 @@ export function TeamTitlesPolicy({
                     <span className="text-[12px] text-ink-muted">—</span>
                   )}
 
+                  {showDuty && (
+                    <select
+                      id={`title-policy-duty-${p.id}`}
+                      aria-label={`${p.name} duty`}
+                      value={d.duty}
+                      disabled={disabled || d.cohort === "god"}
+                      title={d.cohort === "god" ? "Owner tier is Management on every project" : DUTY_HELP}
+                      onChange={(e) => save(p, { duty: e.target.value })}
+                      className="h-8 rounded-md border border-border bg-surface px-2 text-[12.5px] text-ink"
+                    >
+                      {(payload.duties ?? []).map((o) => (
+                        <option key={o} value={o}>
+                          {DUTY_LABEL[o] ?? o}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+
                   <FlagCell
                     id={`title-policy-money-${p.id}`}
                     label={`${p.name} may move money`}
@@ -301,8 +343,9 @@ export function TeamTitlesPolicy({
       <div className="mt-4 flex items-start gap-3 rounded-lg border border-border bg-surface p-4 shadow-stone">
         <Badge tone="accent">Note</Badge>
         <p className="mb-0 text-[12.5px] leading-relaxed text-ink-secondary">
-          A Title's cohort decides which pages its members see; the Roles matrix decides
-          what they can do on them. Changes reach members on their next request. A Title
+          A Title's cohort decides which pages its members see; its duty decides its
+          job on a project page (who sees money, who edits, who is crew); the Roles
+          matrix decides what they can do. Changes reach members on their next request. A Title
           marked Default has no stored row and follows its name; set it once to pin it.
           The Actions and SCM tabs still compose over the cohort.
         </p>
