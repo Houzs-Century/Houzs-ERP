@@ -27,6 +27,7 @@ import { effectiveDelivery } from '../shared/effective-delivery';
 import { supabaseAuth } from '../middleware/auth';
 import { escapeForOr } from '../lib/postgrest-search';
 import { bindingToProductPatch } from '../lib/cost-anchor-sync';
+import { autoDeriveEnabled, recomputeDerivedProductCostSafe } from '../lib/auto-derive-cost';
 import { paginateAll } from '../lib/paginate-all';
 import { scopeToCompany, activeCompanyId, stampCompany,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY,
@@ -259,6 +260,28 @@ async function syncAnchoredProductFromBinding(
   } catch {
     // Best-effort mirror — never surface to the primary write.
   }
+}
+
+/* After a binding write, keep the product cost in step. Auto-derive stage 2b:
+   when the app_config flag is ON, recompute this SKU's derived cost from ALL its
+   suppliers (whole-set max) and write it to the product — this is the mechanism
+   that replaces the is_cost_anchor mirror. When the flag is OFF (the shipped
+   default), run `fallback` instead, which is exactly today's behaviour (the
+   is_cost_anchor mirror at the sites that had one, or nothing at the sites that
+   did not). Best-effort on both legs: a projection failure never fails the
+   supplier-price write that is the source of truth. */
+async function afterBindingWrite(
+  supabase: SupabaseClient,
+  companyId: number | null | undefined,
+  itemCode: string | null | undefined,
+  fallback: () => Promise<void>,
+): Promise<void> {
+  if (await autoDeriveEnabled(supabase)) {
+    const code = String(itemCode ?? '').trim();
+    if (code) await recomputeDerivedProductCostSafe(supabase, companyId, code);
+    return;
+  }
+  await fallback();
 }
 
 // ── List suppliers ────────────────────────────────────────────────────
@@ -627,6 +650,9 @@ export const createSupplierBindingHandler = async (c: any) => {
     if (error.code === '42501') return c.json({ error: 'forbidden', reason: error.message }, 403);
     return c.json({ error: 'insert_failed', reason: error.message }, 500);
   }
+  // Auto-derive stage 2b: recompute the product cost from all suppliers when the
+  // flag is ON; OFF is a no-op (today's create did not sync).
+  await afterBindingWrite(supabase, activeCompanyId(c), (data as { item_code?: string } | null)?.item_code, async () => {});
   return c.json({ binding: data }, 201);
 };
 suppliers.post('/:id/bindings', createSupplierBindingHandler);
@@ -723,6 +749,14 @@ export const createSupplierBindingsBatchHandler = async (c: any) => {
     if (error.code === '42501') return c.json({ error: 'forbidden', reason: error.message }, 403);
     return c.json({ error: 'insert_failed', reason: error.message }, 500);
   }
+  // Auto-derive stage 2b: recompute each affected SKU's product cost when ON;
+  // OFF is a no-op (today's batch create did not sync).
+  if (await autoDeriveEnabled(supabase)) {
+    const companyId = activeCompanyId(c);
+    const rawCodes: string[] = (data ?? []).map((r: { item_code?: string }) => String(r.item_code ?? '').trim());
+    const codes = [...new Set(rawCodes.filter((s) => s.length > 0))];
+    for (const code of codes) await recomputeDerivedProductCostSafe(supabase, companyId, code);
+  }
   return c.json({ inserted: (data ?? []).length, skipped, bindings: data ?? [] }, 201);
 };
 suppliers.post('/:id/bindings/batch', createSupplierBindingsBatchHandler);
@@ -802,11 +836,15 @@ suppliers.patch('/:id/bindings/:bindingId', async (c) => {
   }
   if (!data) return c.json(NOT_THIS_COMPANY, 404);
 
-  /* Cost anchor (0177) — if this binding is the cost anchor for its
-     item_code, mirror its (just-written) cost onto the linked
-     mfg_products row. Best-effort: the binding write above already
-     committed, so a sync failure must not 500 this response. */
-  await syncAnchoredProductFromBinding(supabase, data as unknown as Record<string, unknown>, activeCompanyId(c));
+  /* Keep the product cost in step with this binding write. Flag ON (stage 2b):
+     recompute from all suppliers. Flag OFF (default): the is_cost_anchor mirror,
+     exactly as before. Best-effort: a sync failure must not 500 this response. */
+  await afterBindingWrite(
+    supabase,
+    activeCompanyId(c),
+    (data as { item_code?: string }).item_code,
+    () => syncAnchoredProductFromBinding(supabase, data as unknown as Record<string, unknown>, activeCompanyId(c)),
+  );
 
   return c.json({ binding: data });
 });
@@ -871,9 +909,15 @@ suppliers.patch('/:id/bindings/:bindingId/cost-anchor', async (c) => {
       .eq('company_id', co.companyId)
       .neq('id', bindingId);
 
-    // Initial sync — push the binding's current cost onto the product so they
-    // start aligned. Best-effort (never fails the anchor toggle).
-    await syncAnchoredProductFromBinding(supabase, updated as unknown as Record<string, unknown>, activeCompanyId(c));
+    // Initial sync — align the product with this binding. Flag ON (stage 2b):
+    // recompute from all suppliers (whole-set max). Flag OFF: push this anchor's
+    // cost, as before. Best-effort (never fails the anchor toggle).
+    await afterBindingWrite(
+      supabase,
+      activeCompanyId(c),
+      (updated as { item_code?: string }).item_code,
+      () => syncAnchoredProductFromBinding(supabase, updated as unknown as Record<string, unknown>, activeCompanyId(c)),
+    );
   }
 
   return c.json({ binding: updated });
@@ -887,9 +931,16 @@ suppliers.delete('/:id/bindings/:bindingId', async (c) => {
      bindingId from another company deletes nothing and returns not-found. */
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
-  const { data, error } = await scopeToCompanyId(supabase.from('supplier_material_bindings').delete().eq('id', bindingId), co.companyId).select('id').maybeSingle();
+  const { data, error } = await scopeToCompanyId(supabase.from('supplier_material_bindings').delete().eq('id', bindingId), co.companyId).select('id, item_code').maybeSingle();
   if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
   if (!data) return c.json(NOT_THIS_COMPANY, 404);
+  // Auto-derive stage 2b: a removed supplier can change the max — recompute when
+  // ON (if it was the last supplier the derivation skips, leaving the cost as-is
+  // for the binding-gap report to surface). OFF is a no-op (today's delete).
+  if (await autoDeriveEnabled(supabase)) {
+    const code = String((data as { item_code?: string }).item_code ?? '').trim();
+    if (code) await recomputeDerivedProductCostSafe(supabase, co.companyId, code);
+  }
   return c.body(null, 204);
 });
 
