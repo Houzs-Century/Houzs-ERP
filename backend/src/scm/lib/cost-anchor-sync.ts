@@ -119,10 +119,13 @@ export function bindingToProductPatch(binding: BindingCost): SyncResult<ProductP
     const p2 = asCent(m.P2);
     const p1 = asCent(m.P1);
     const patch: ProductPatch = {};
-    // base_price_sen ⇐ matrix.P2 (PRICE_2 / cost ref); price1_sen ⇐ matrix.P1.
-    // A missing matrix cell maps to null (clears the product side) so the two
-    // sides can't silently diverge.
-    patch.base_price_sen = p2;
+    // base_price_sen ⇐ matrix.P2 (PRICE_2 / cost ref), FALLING BACK to the flat
+    // unit_price_sen when the binding carries no matrix. A bedframe supplier can
+    // price by a {P1,P2} matrix OR by a single flat unit_price_sen; reading only
+    // the matrix dropped the cost of every flat-priced bedframe to null (found by
+    // the auto-derive reprice diff on ELEPHANE-(SK) etc.: RM1650 flat, no matrix,
+    // derived null). price1_sen ⇐ matrix.P1 (no flat equivalent for the P1 lane).
+    patch.base_price_sen = p2 ?? asCent(binding.unit_price_sen);
     patch.price1_sen = p1;
     return { skipped: false, patch };
   }

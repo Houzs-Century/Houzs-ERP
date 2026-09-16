@@ -143,3 +143,18 @@ describe('non-sofa sync is unchanged (bidirectional)', () => {
     expect(patch.price_matrix).toEqual({ P2: 5000, P1: 4000 });
   });
 });
+
+// ── BEDFRAME flat-priced binding (no matrix) — the auto-derive reprice bug ──
+describe('bindingToProductPatch — BEDFRAME falls back to flat unit_price_sen', () => {
+  it('a matrix-less bedframe binding maps its flat cost to base_price_sen (not null)', () => {
+    // ELEPHANE-(SK): RM1650 in unit_price_sen, price_matrix null. Must NOT derive null.
+    const patch = patchOf(bindingToProductPatch({ category: 'BEDFRAME', unit_price_sen: 165000, price_matrix: null }));
+    expect(patch.base_price_sen).toBe(165000);
+    expect(patch.price1_sen).toBeNull();
+  });
+  it('a matrix P2 still wins over the flat fallback', () => {
+    const patch = patchOf(bindingToProductPatch({ category: 'BEDFRAME', unit_price_sen: 165000, price_matrix: { P2: 200000, P1: 190000 } }));
+    expect(patch.base_price_sen).toBe(200000);
+    expect(patch.price1_sen).toBe(190000);
+  });
+});
