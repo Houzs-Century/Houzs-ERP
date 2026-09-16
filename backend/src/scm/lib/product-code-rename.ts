@@ -46,6 +46,10 @@ export const PRODUCT_CODE_CASCADE: readonly CascadeColumn[] = [
   { table: 'master_price_history',       col: 'item_code' },
   /* Effective-dated selling price (0187): the as-of resolver reads it by code. */
   { table: 'mfg_product_price_history',  col: 'item_code' },
+  /* Effective-dated COST history (auto-derive stage 3a): supplier cost history
+     (per material_kind) and the derived product-cost history, both read by code. */
+  { table: 'supplier_binding_price_history', col: 'item_code', kind: true },
+  { table: 'mfg_product_cost_history',   col: 'item_code' },
   { table: 'inventory_movements',        col: 'item_code' },
   { table: 'inventory_lots',             col: 'item_code' },
   { table: 'inventory_lot_consumptions', col: 'item_code' },
