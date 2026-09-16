@@ -98,6 +98,20 @@ describe('the plan', () => {
 });
 
 describe('the run', () => {
+  /* One call for 179 outran the client (owner 2026-09-16): the run is batched,
+     oldest paid first, and each call says what is left. */
+  test('?limit= takes a batch of the oldest and reports the rest; the next call continues in series order', async () => {
+    const sb = world();
+    const app = harness(sb);
+    const first = await (await app.request('/accounting/receipts/backfill?limit=2', { method: 'POST' })).json() as { created: number; formalised: number; remaining: number };
+    expect(first).toMatchObject({ created: 2, formalised: 1, remaining: 2 });
+    const rows = () => sb.tables.acc_official_receipts as Row[];
+    expect(rows().map((r) => String(r.payment_id)).filter((id) => id !== 'p-has').sort()).toEqual(['p-card-1', 'p-cash']);
+    const second = await (await app.request('/accounting/receipts/backfill?limit=2', { method: 'POST' })).json() as { created: number; remaining: number };
+    expect(second).toMatchObject({ created: 2, remaining: 0 });
+    expect(rows().find((r) => r.payment_id === 'p-transfer')).toMatchObject({ or_number: '2990-DraftOR-2607-002' });
+  });
+
   test('creates each missing receipt through the live path, formalises the confirmed card payment, and a second run does nothing', async () => {
     const sb = world();
     const app = harness(sb);

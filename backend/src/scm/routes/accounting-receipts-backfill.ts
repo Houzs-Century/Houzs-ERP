@@ -183,8 +183,14 @@ export type BackfillResult = {
   remaining: number;
 };
 
-/** POST /accounting/receipts/backfill — the run: every missing receipt through
-    the live path, then the confirmed card ones formal on their payout bank. */
+/** POST /accounting/receipts/backfill?limit=N — one BATCH of the run (owner
+    2026-09-16: 179 in one call outran the client's 30 s and the card could
+    not say whether it saved): the oldest N missing receipts through the live
+    path, the confirmed card ones among them formal on their payout bank, and
+    what is still left — the card calls again until nothing is. Series order
+    holds because every batch is the oldest first. */
+export const BATCH_DEFAULT = 30;
+export const BATCH_MAX = 100;
 export const receiptsBackfillRun = async (c: Ctx) => {
   if (!requirePerm(c)) return c.json({ error: "You don't have permission to issue receipts." }, 403);
   const co = requireActiveCompanyId(c);
@@ -192,8 +198,11 @@ export const receiptsBackfillRun = async (c: Ctx) => {
   const sb = c.get('supabase');
   const code = await companyCodeById(sb, co.companyId);
   if (!code) return c.json({ error: 'company_code_missing', message: 'This company has no document prefix.' }, 409);
-  const missing = await loadMissing(sb, co.companyId);
-  if (!missing.ok) return c.json({ error: 'load_failed', reason: missing.reason }, 500);
+  const missingAll = await loadMissing(sb, co.companyId);
+  if (!missingAll.ok) return c.json({ error: 'load_failed', reason: missingAll.reason }, 500);
+  const limitRaw = Number(c.req.query('limit') ?? BATCH_DEFAULT);
+  const limit = Number.isInteger(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, BATCH_MAX) : BATCH_DEFAULT;
+  const missing = { rows: missingAll.rows.slice(0, limit) };
   const actor = (c.get('houzsUser') as { name?: string } | undefined)?.name ?? null;
 
   const failed: BackfillResult['failed'] = [];
