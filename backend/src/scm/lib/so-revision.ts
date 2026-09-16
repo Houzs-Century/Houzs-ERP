@@ -57,6 +57,7 @@ import { activeCompanyId, isMirroredDocNo, houzsOwns2990 } from './companyScope'
 import { todayMyt } from './my-time';
 import { dateOrNull } from './date-coerce';
 import { soWarehouseIdForDoc } from './so-warehouse';
+import { variantsForCompare } from './amendment-noop-lines';
 import { inPoLineOrder, nextPoLineNo, sortBySourceSoLine } from './po-line-order';
 import { soIsMigratedShape } from './so-is-migrated';
 import { routingNote, type AmendmentFieldKind } from '../shared/amendment-routing';
@@ -80,7 +81,9 @@ function soAmendmentFieldKinds(
     if (change === 'ADD' || change === 'REMOVE') { kinds.push('LINE'); continue; }
     const old = l.old_snapshot ?? {};
     if (l.new_item_code != null && String(l.new_item_code) !== String(old.item_code ?? old.itemCode ?? '')) kinds.push('SPEC');
-    if (l.new_variants != null && JSON.stringify(l.new_variants) !== JSON.stringify(old.variants ?? null)) kinds.push('VARIANT');
+    /* Compared without the `remark` side channel and in canonical key order —
+       a remark copied into variants is not a spec change (HC-SO-011410, 2026-09-15). */
+    if (l.new_variants != null && variantsForCompare(l.new_variants) !== variantsForCompare(old.variants ?? null)) kinds.push('VARIANT');
     if (l.new_qty != null && Number(l.new_qty) !== Number(old.qty ?? NaN)) kinds.push('QTY');
     if (l.new_unit_price_sen != null && Number(l.new_unit_price_sen) !== Number(old.unit_price_sen ?? old.unitPriceSen ?? NaN)) kinds.push('PRICE');
   }

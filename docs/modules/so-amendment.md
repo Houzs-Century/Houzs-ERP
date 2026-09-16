@@ -33,6 +33,7 @@ State machine (a lane row lives inside the existing status enum): `REQUESTED -> 
 - The amendable header field list is defined in code (`so-amendment-header.ts`) and asserted in CI — don't let a second hand-written list of amendable fields drift from it.
 - A locked SO's direct header PATCH must DROP every amendable key rather than attempt to revert it to a prior value — reproducing a byte-exact original has failed before.
 - An approved SPEC change must re-resolve the line's `description`/`description2` from the catalogue for the new code, and must re-carry the SO line's current photos and re-derive the supplier code onto any bound PO line.
+- A line that asks for nothing must never reach an approver. The submit route and the lane preview both run `dropNoopAmendmentLines` (`lib/amendment-noop-lines.ts`) BEFORE the empty check and the lane split: a SPEC / QTY line on an existing line whose every carried field equals the stored line is dropped (variants compared WITHOUT the `remark` key, in canonical key order; an omitted field cannot make a change; ADD / REMOVE always kept; a failed read refuses 500). Owner 2026-09-16, HC-SO-011410: the phone copied the line remark into `variants.remark`, every remarked imported line read as a spec change, and a Delivery Date change opened a second, empty Purchaser approval — 41 such approvals had already raised 32 PO amendments (`docs/bugs/0944-a-delivery-date-change-on-the-phone-raised-a-second-amendment.md`). The phone now compares and sends variants through `amendmentVariants` (`vendor/scm/lib/so-amendment-line-diff.ts`); the remark rides `newRemark` only.
 
 ## Gotchas
 
@@ -46,6 +47,8 @@ State machine (a lane row lives inside the existing status enum): `REQUESTED -> 
 - `backend/src/scm/shared/amendment-lane.ts` — the lane classification, single source of truth.
 - `backend/src/scm/routes/so-amendments.ts` — API surface.
 - `backend/src/scm/lib/so-revision.ts` — apply engine, catalogue re-resolve on SPEC change.
+- `backend/src/scm/lib/amendment-noop-lines.ts` — drops no-change lines before the split (submit + preview); `variantsForCompare` is also what the PO follow-up's `VARIANT` test reads.
+- `backend/src/scm/lib/amendment-lane-resolve.ts` + `routes/so-amendment-lane-preview.ts` — the one lane resolver, and the read-only preview the submit dialog shows.
 - `backend/src/services/amendmentNotify.ts` — notice audience per event.
 - `backend/scripts/relane-so-amendment.mjs` — the only way to move a stored lane.
 - `frontend/src/vendor/scm/lib/so-amendment-header.ts` — amendable header field list.

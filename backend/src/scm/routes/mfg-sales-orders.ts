@@ -161,6 +161,7 @@ import { recordSoAudit, diffFields, type FieldChange } from '../lib/so-audit';
 import { soLineFieldChanges } from '../lib/so-line-audit-diff';
 import { buildAmendmentLineRows, LINE_BUILD_ERRORS } from '../lib/amendment-lines';
 import { resolveAmendmentLaneSplit } from '../lib/amendment-lane-resolve';
+import { dropNoopAmendmentLines } from '../lib/amendment-noop-lines';
 // OCR self-learning: a DRAFT confirm is the review event the background scan
 // path never reported. Lives in lib/ (not scan-so.ts) — scan-so.ts already
 // imports this route's create core, so the reverse import would be a cycle.
@@ -10760,7 +10761,13 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
   /* The header PATCH's identity lock, on this road too: once a live DO / SI exists the snapshotted fields stay put. */
   const lockedByAmendment = Object.keys(headerChanges).map((k) => AMENDABLE_HEADER_FIELDS[k]).filter((col) => SO_IDENTITY_LOCK_COLS.has(col));
   if (lockedByAmendment.length > 0 && freezeRead.freeze.hasLiveDownstream) return c.json({ error: 'so_identity_locked', message: 'SO has a Delivery Order / Sales Invoice — customer, address and contact fields are locked.', lockedFields: lockedByAmendment }, 409);
-  const submittedLines = Array.isArray(body.lines) ? body.lines : [];
+  /* A line whose every requested value equals the line as stored asks for nothing
+     and is dropped BEFORE the empty check and the lane split (lib/amendment-noop-lines):
+     HC-SO-011410, owner 2026-09-15 — a phone Delivery Date change also carried two
+     such lines and opened a Purchaser approval over no change. */
+  const noopSplit = await dropNoopAmendmentLines(sb, docNo, Array.isArray(body.lines) ? body.lines : []);
+  if (!noopSplit) return c.json(LINE_BUILD_ERRORS.unreadable, 500);
+  const submittedLines = noopSplit.kept;
   if (!hasHeaderChanges && submittedLines.length === 0) {
     return c.json({
       error: 'amendment_empty',
