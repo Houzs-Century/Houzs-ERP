@@ -2546,6 +2546,8 @@ type SkuDraft = {
   leadTimeDays: number;
   moq: number;
   isMainSupplier: boolean;
+  paymentTermsOverride: string;
+  notes: string;
 };
 
 const SkuFormDialog = ({
@@ -2580,6 +2582,8 @@ const SkuFormDialog = ({
           leadTimeDays: editing.lead_time_days,
           moq: editing.moq,
           isMainSupplier: editing.is_main_supplier,
+          paymentTermsOverride: editing.payment_terms_override ?? '',
+          notes: editing.notes ?? '',
         }
       : {
           materialKind: 'mfg_product',
@@ -2591,6 +2595,8 @@ const SkuFormDialog = ({
           leadTimeDays: 0,
           moq: 0,
           isMainSupplier: false,
+          paymentTermsOverride: '',
+          notes: '',
         },
   );
 
@@ -2809,6 +2815,16 @@ const SkuFormDialog = ({
               />
             </label>
 
+            <label className={styles.field}>
+              <span className={styles.fieldLabel}>Payment Terms Override</span>
+              <input
+                className={styles.fieldInput}
+                placeholder="e.g. 30% deposit, balance on delivery"
+                value={draft.paymentTermsOverride}
+                onChange={(e) => set('paymentTermsOverride', e.target.value)}
+              />
+            </label>
+
             <div className={`${styles.field} ${styles.formGridFull}`}>
               <label className={styles.checkRow}>
                 <input
@@ -2821,6 +2837,17 @@ const SkuFormDialog = ({
                 </span>
               </label>
             </div>
+
+            <label className={`${styles.field} ${styles.formGridFull}`}>
+              <span className={styles.fieldLabel}>Notes</span>
+              <textarea
+                className={styles.fieldInput}
+                placeholder="Free-text note for this supplier mapping"
+                value={draft.notes}
+                onChange={(e) => set('notes', e.target.value)}
+                style={{ minHeight: 60, resize: 'vertical' }}
+              />
+            </label>
           </div>
         </div>
 
