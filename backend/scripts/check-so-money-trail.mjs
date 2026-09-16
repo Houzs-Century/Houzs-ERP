@@ -89,6 +89,24 @@ try {
       console.log(`  ${day(j.entry_date)}  ${j.je_no}  ${String(j.source_type).padEnd(15)} ${j.reversed ? "(reversed) " : ""}${j.narration ?? ""}\n      ${legs}`);
     }
 
+    /* A DELETED row's booking and its reversal name the order in their narration, not a row that still exists. */
+    const named = await pg`
+      SELECT je_no, entry_date, source_type, source_doc_no, reversed, narration
+      FROM scm.journal_entries WHERE company_id = ${so.company_id} AND narration LIKE ${'%' + docNo + '%'}
+        AND source_doc_no <> ALL(${ids.length ? ids : ['-']}) AND NOT (narration LIKE ANY(${jeNos.length ? jeNos.map((n) => `%${n}%`) : ['-']}))
+      ORDER BY entry_date, je_no`;
+    console.log(`
+other journals naming the order — rows since deleted, and their reversals (${named.length}):`);
+    for (const j of named) {
+      const lines = await pg`
+        SELECT account_code, debit_sen, credit_sen, party_code FROM scm.journal_entry_lines
+        WHERE journal_entry_id = (SELECT id FROM scm.journal_entries WHERE je_no = ${j.je_no} AND company_id = ${so.company_id} LIMIT 1)
+        ORDER BY line_no`;
+      const legs = lines.map((l) => `${l.account_code}${l.party_code ? `/${l.party_code}` : ''} ${Number(l.debit_sen) > 0 ? `Dr ${rm(l.debit_sen)}` : `Cr ${rm(l.credit_sen)}`}`).join(' | ');
+      console.log(`  ${day(j.entry_date)}  ${j.je_no}  ${String(j.source_type).padEnd(15)} ${j.reversed ? '(reversed) ' : ''}${j.narration ?? ''}
+      ${legs}`);
+    }
+
     const dis = await pg`
       SELECT di_number, invoice_date, amount_sen, status, payment_id, credit_note_id
       FROM scm.acc_deposit_invoices WHERE company_id = ${so.company_id} AND so_doc_no = ${docNo} ORDER BY invoice_date, di_number`;
