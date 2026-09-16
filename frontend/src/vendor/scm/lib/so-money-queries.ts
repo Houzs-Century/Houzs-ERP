@@ -9,6 +9,7 @@
 // and the draft rows that parameter seeds.
 // ----------------------------------------------------------------------------
 
+import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
@@ -149,6 +150,30 @@ export const useRequestRefund = (docNo: string) => {
 };
 
 /* ── The converted row's vocabulary on the desktop ─────────────────────── */
+
+/** A picker that lists the customer's own orders takes another order by
+    number — any customer's (owner 2026-09-16: 可能多张、不同顾客). The listed
+    rows come first; an order named here joins them once the server says it
+    has money to give. One home for the panel's picker, the payment row's
+    select and the phone's field. */
+export function useAddedConvertSources(listed: ConvertSource[]) {
+  const [added, setAdded] = useState<ConvertSource[]>([]);
+  const [more, setMore] = useState('');
+  const [note, setNote] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const sources = useMemo(() => [...listed, ...added.filter((a) => !listed.some((l) => l.docNo === a.docNo))], [listed, added]);
+  const add = async (): Promise<ConvertSource | null> => {
+    setBusy(true);
+    const r = await readConvertSource(more);
+    setBusy(false);
+    if (!r.ok) { setNote(r.reason); return null; }
+    if (sources.some((x) => x.docNo === r.source.docNo)) { setNote(`${r.source.docNo} is already in the list.`); return null; }
+    setAdded((a) => [...a, r.source]);
+    setMore(''); setNote(null);
+    return r.source;
+  };
+  return { sources, more, setMore, note, busy, add };
+}
 
 const fmtRmPlain = (sen: number): string => `RM ${(sen / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 

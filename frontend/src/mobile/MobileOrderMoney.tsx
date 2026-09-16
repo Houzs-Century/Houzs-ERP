@@ -13,7 +13,7 @@
 // ----------------------------------------------------------------------------
 
 import {
-  CONVERT_LABEL, CONVERTED_METHOD, useConvertSources, useOrdersWithMoney,
+  CONVERT_LABEL, CONVERTED_METHOD, useAddedConvertSources, useConvertSources, useOrdersWithMoney,
   type ConvertPick, type ConvertSource,
 } from "../vendor/scm/lib/so-money-queries";
 import { fmtSen } from "../vendor/shared/format";
@@ -53,12 +53,15 @@ export function useMobileConvertSources(p: { docNo?: string | null; phone?: stri
     from. Picking one hands back what it may give so an empty amount can be
     filled (desktop parity). A stored value the list no longer offers stays
     selectable, the same courtesy the Bank picker extends. */
-export function ConvertSourceField({ sources, value, onChange }: {
+export function ConvertSourceField({ sources: listed, value, onChange }: {
   sources: ConvertSource[];
   value: string;
   onChange: (docNo: string, remainingSen: number) => void;
 }) {
+  const picker = useAddedConvertSources(listed);
+  const sources = picker.sources;
   const opts = value && !sources.some((s) => s.docNo === value) ? [{ docNo: value, remainingSen: 0, movableSen: 0, keepSen: 0 } as ConvertSource, ...sources] : sources;
+  const addAnother = async () => { const src = await picker.add(); if (src) onChange(src.docNo, src.movableSen); };
   return (
     <div className="fld">
       <span className="fld-l">Order the money comes from</span>
@@ -67,6 +70,12 @@ export function ConvertSourceField({ sources, value, onChange }: {
         <option value="">— Order the money comes from —</option>
         {opts.map((s) => <option key={s.docNo} value={s.docNo}>{s.docNo} · {fmtSen(s.movableSen)} {s.keepSen > 0 ? 'can move' : 'left'}</option>)}
       </select>
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 4 }}>
+        <input className="fld-i" value={picker.more} onChange={(e) => picker.setMore(e.target.value)} placeholder="Another order, e.g. 2990-SO-2607-024" aria-label="Another order"
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void addAnother(); } }} />
+        <button type="button" className="btn" disabled={picker.busy} onClick={() => void addAnother()}>Add</button>
+      </div>
+      {picker.note && <div style={{ fontSize: 10.5, color: 'var(--c-danger, #a33)', marginTop: 3 }}>{picker.note}</div>}
       <div style={{ fontSize: 10.5, color: "var(--mut2)", marginTop: 3 }}>
         Money already paid on that order moves here — its paid date and collector stay as they were.
       </div>

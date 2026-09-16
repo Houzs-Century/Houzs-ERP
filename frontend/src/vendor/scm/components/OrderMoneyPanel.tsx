@@ -27,7 +27,7 @@ import { MoneyInput } from './MoneyInput';
 import { fmtDate } from '../../shared/format';
 import { useNotify } from './NotifyDialog';
 import {
-  convertParamOf, newOrderWithMoneyHref, readConvertSource, useOrderMoney, useRequestRefund, useRequestRefunds,
+  convertParamOf, newOrderWithMoneyHref, useAddedConvertSources, useOrderMoney, useRequestRefund, useRequestRefunds,
   type ConvertPick, type ConvertSource, type OrderMoney,
 } from '../lib/so-money-queries';
 
@@ -102,20 +102,15 @@ export function ConvertPicker({ rows: given, copyFrom, ticked: tickedAtFirst, on
   rows: ConvertRow[]; copyFrom: string; ticked: string[]; onDone: () => void; onOpen?: OpenNewOrder;
 }) {
   const navigate = useNavigate();
-  const [added, setAdded] = useState<ConvertRow[]>([]);
-  const rows = useMemo(() => [...given, ...added.filter((a) => !given.some((g) => g.docNo === a.docNo))], [given, added]);
+  const picker = useAddedConvertSources(given);
+  const rows = picker.sources as ConvertRow[];
   const [ticked, setTicked] = useState<Set<string>>(() => new Set(tickedAtFirst));
   const [amounts, setAmounts] = useState<Record<string, number>>(() => Object.fromEntries(given.map((r) => [r.docNo, r.movableSen])));
-  const [more, setMore] = useState('');
-  const [moreNote, setMoreNote] = useState<string | null>(null);
   const addAnother = async () => {
-    const r = await readConvertSource(more);
-    if (!r.ok) { setMoreNote(r.reason); return; }
-    if (rows.some((x) => x.docNo === r.source.docNo)) { setMoreNote(`${r.source.docNo} is already in the list.`); return; }
-    setAdded((a) => [...a, r.source]);
-    setAmounts((a) => ({ ...a, [r.source.docNo]: r.source.movableSen }));
-    setTicked((t) => new Set([...t, r.source.docNo]));
-    setMore(''); setMoreNote(null);
+    const src = await picker.add();
+    if (!src) return;
+    setAmounts((a) => ({ ...a, [src.docNo]: src.movableSen }));
+    setTicked((t) => new Set([...t, src.docNo]));
   };
   const picks: ConvertPick[] = rows.filter((r) => ticked.has(r.docNo)).map((r) => ({ docNo: r.docNo, amountSen: amounts[r.docNo] ?? 0 }));
   const bad = rows.find((r) => ticked.has(r.docNo) && ((amounts[r.docNo] ?? 0) <= 0 || (amounts[r.docNo] ?? 0) > r.movableSen));
@@ -143,11 +138,11 @@ export function ConvertPicker({ rows: given, copyFrom, ticked: tickedAtFirst, on
         <span style={muted}>The new order opens with {copyFrom}'s customer and lines; one payment row per ticked order, dated the day the money was first paid.</span>
       </div>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-        <input value={more} onChange={(e) => setMore(e.target.value)} placeholder="Another order, e.g. 2990-SO-2607-024" aria-label="Another cancelled order"
+        <input value={picker.more} onChange={(e) => picker.setMore(e.target.value)} placeholder="Another order, e.g. 2990-SO-2607-024" aria-label="Another cancelled order"
           onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void addAnother(); } }}
           style={{ minWidth: 260, padding: '4px 8px', border: '1px solid var(--c-line, rgba(34,31,32,0.2))', borderRadius: 6 }} />
-        <button type="button" style={btn} onClick={() => void addAnother()}>Add</button>
-        {moreNote && <span style={{ color: 'var(--c-danger, #a33)' }}>{moreNote}</span>}
+        <button type="button" style={btn} disabled={picker.busy} onClick={() => void addAnother()}>Add</button>
+        {picker.note && <span style={{ color: 'var(--c-danger, #a33)' }}>{picker.note}</span>}
       </div>
       <span hidden data-testid="convert-param">{convertParamOf(picks)}</span>
     </div>
