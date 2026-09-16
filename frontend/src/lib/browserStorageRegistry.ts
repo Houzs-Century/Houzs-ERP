@@ -207,9 +207,9 @@ export const PRODUCTION_STORAGE_CALLERS = [
   "pages/scm-v2/ProductModels.tsx",
   "pages/scm-v2/SoFromProducts.tsx",
   "pages/scm-v2/SupplierDetail.tsx",
-  // Persisted DataGrid funnel filters (dg-filters:<idKey>, DEVICE_PREF via the
-  // dg- family) — the DataTable dt:filters twin. Column keys and filter values
-  // only; the company scoping rides the layout idKey, never storage-read.
+  // DataGrid funnel filters. Since 2026-09-16 they live in in-visit memory, not
+  // storage; this file only REMOVES the pre-2026-09-16 dg-filters:<idKey> keys
+  // (DEVICE_PREF via the dg- family) so a stale one cannot re-narrow a list.
   "vendor/scm/components/dataGridFilterStorage.ts",
   "vendor/scm/components/dataGridLayoutStorage.ts",
 ] as const;

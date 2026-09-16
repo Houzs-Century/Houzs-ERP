@@ -176,7 +176,7 @@ The pitfalls that recurred most, one line each.
 - Menus inside clipped containers portal through `frontend/src/lib/anchoredPanel.ts`; native `confirm()` prompts are replaced by in-app dialogs.
 - Dates go through `fmtDate` and `DateField`; money shows 2 decimals with thousands separators everywhere, exports included → `backend/scripts/check-date-formatting.mjs`.
 - Status words come from `frontend/src/vendor/scm/lib/status-pill.ts`, not per-page maps; never print a raw enum.
-- Saved grid layouts and column filters hid rows, re-rendered forever and overwrote layouts; a remembered filter is visible and clearable.
+- Saved grid layouts and column filters hid rows, re-rendered forever and overwrote layouts; a funnel filter is visible and clearable, and lives in in-visit memory (clean on a fresh page load, kept across route changes) — never localStorage.
 - A loading or failed state never renders a value ("STOCK", "0", "No history yet").
 
 ### Projects, service cases, fleet and mail

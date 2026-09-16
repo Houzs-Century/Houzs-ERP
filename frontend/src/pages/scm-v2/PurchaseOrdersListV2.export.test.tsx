@@ -12,6 +12,7 @@ import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PO_LINE_LABELS, type PoListLine } from "../../vendor/scm/lib/po-line-export-columns";
+import { primeInVisitColFilters, resetInVisitColFilters } from "../../components/dataTableColFilterMemory";
 
 const h = vi.hoisted(() => ({
   authed: vi.fn(async (_path: string, _init?: unknown): Promise<unknown> => ({})),
@@ -167,6 +168,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   localStorage.clear();
+  resetInVisitColFilters();
 });
 
 const calledPaths = () => h.authed.mock.calls.map((c) => String(c[0]));
@@ -227,7 +229,8 @@ describe("Purchase Order list: the ONE Export", () => {
   });
 
   it("follows the grid's funnel over the whole fetched set", async () => {
-    localStorage.setItem("dt:filters:purchase-orders-v2", JSON.stringify({ item_code: ["AK-BASTION (K)"] }));
+    // A funnel set this visit (in-visit memory, not localStorage).
+    primeInVisitColFilters("purchase-orders-v2", { item_code: ["AK-BASTION (K)"] });
     mount("/scm/purchase-orders");
     await exportNow();
     // Only PO-009304 has a Bastion line; the funnel keeps the whole PO.

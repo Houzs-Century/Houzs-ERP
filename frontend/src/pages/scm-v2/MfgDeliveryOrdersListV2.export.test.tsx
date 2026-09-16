@@ -17,6 +17,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { primeInVisitColFilters, resetInVisitColFilters } from "../../components/dataTableColFilterMemory";
 
 const h = vi.hoisted(() => ({
   authed: vi.fn(async (_path: string, _init?: unknown): Promise<unknown> => ({})),
@@ -133,6 +134,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   localStorage.clear();
+  resetInVisitColFilters();
 });
 
 const exportNow = async () => {
@@ -197,7 +199,7 @@ describe("Delivery Orders list: the ONE Export", () => {
   it("follows the grid's funnel over the whole fetched set", async () => {
     const beyond = dOrder("d-4", "HC-DO-2609-000604", [line("l-5", { item_code: "AK-BASTION (Q)" })]);
     h.authed.mockImplementation(async () => ({ deliveryOrders: [...all, beyond], total: 4, lineCount: 5, next: null }));
-    localStorage.setItem("dt:filters:delivery-orders-v2", JSON.stringify({ item_code: ["AK-BASTION (Q)"] }));
+    primeInVisitColFilters("delivery-orders-v2", { item_code: ["AK-BASTION (Q)"] });
     mount("/scm/delivery-orders");
     const { body, cell } = await exportNow();
     // The funnel keeps a WHOLE delivery order that has a Bastion line — on the
