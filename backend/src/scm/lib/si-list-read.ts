@@ -38,9 +38,28 @@ export type SiListFilters = {
   from: string | null;
   to: string | null;
   sort: string | null;
+  /** Server-filterable column funnels (owner 2026-09-16): Customer (debtor) Name
+     and Currency (base columns). Debtor CODE + line-level / MRP funnels stay
+     client-side on the loaded page. */
+  debtorNames: string[] | null;
+  currencies: string[] | null;
 };
 
 const param = (v: string | undefined): string | null => (v === undefined || v === '' ? null : v);
+
+/* Multi-value funnel params ride as a JSON array in ONE param (a customer name
+   may contain a comma). Malformed / empty reads as no filter. */
+function jsonArrayParam(v: string | undefined): string[] | null {
+  if (v === undefined || v === '') return null;
+  try {
+    const parsed = JSON.parse(v) as unknown;
+    if (!Array.isArray(parsed)) return null;
+    const out = parsed.filter((x): x is string => typeof x === 'string' && x.length > 0);
+    return out.length ? out : null;
+  } catch {
+    return null;
+  }
+}
 
 export function readSiListFilters(query: (key: string) => string | undefined): SiListFilters {
   return {
@@ -49,6 +68,8 @@ export function readSiListFilters(query: (key: string) => string | undefined): S
     from: param(query('from')),
     to: param(query('to')),
     sort: param(query('sort')),
+    debtorNames: jsonArrayParam(query('debtorNames')),
+    currencies: jsonArrayParam(query('currencies')),
   };
 }
 
@@ -106,5 +127,9 @@ export function filterSiList<Q>(q: Q, f: SiListFilters, c: CompanyScopeCtx, scop
   }
   if (f.from) out = out.gte('invoice_date', f.from);
   if (f.to) out = out.lte('invoice_date', f.to);
+  /* Server-filterable column funnels (owner 2026-09-16) — Customer Name /
+     Currency pushed down so the pager runs over the filtered set. */
+  if (f.debtorNames && f.debtorNames.length > 0) out = out.in('debtor_name', f.debtorNames);
+  if (f.currencies && f.currencies.length > 0) out = out.in('currency', f.currencies);
   return out as unknown as Q;
 }

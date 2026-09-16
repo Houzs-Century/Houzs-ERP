@@ -15,7 +15,7 @@ import { senToRinggit } from './grn-list-export';
 
 export { senToRinggit };
 
-export type SiListFilterParams = { status?: string; q?: string; sort?: string };
+export type SiListFilterParams = { status?: string; q?: string; sort?: string; debtorNames?: string[]; currencies?: string[] };
 
 /** The list's filter as query parameters — no paging. */
 export function siListParams(f: SiListFilterParams): URLSearchParams {
@@ -23,6 +23,10 @@ export function siListParams(f: SiListFilterParams): URLSearchParams {
   if (f.status) usp.set('status', f.status);
   if (f.q && f.q.trim()) usp.set('q', f.q.trim());
   if (f.sort) usp.set('sort', f.sort);
+  // Server-filterable column funnels (owner 2026-09-16): Customer Name /
+  // Currency, JSON arrays (a customer name may contain a comma).
+  if (f.debtorNames && f.debtorNames.length) usp.set('debtorNames', JSON.stringify(f.debtorNames));
+  if (f.currencies && f.currencies.length) usp.set('currencies', JSON.stringify(f.currencies));
   return usp;
 }
 
