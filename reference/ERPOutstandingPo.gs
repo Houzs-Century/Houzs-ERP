@@ -59,7 +59,10 @@ function runErpOutstandingPoPull(triggerType) {
 
     const maxRows = sheet.getMaxRows();
     if (maxRows >= ERP_PO_START_ROW) sheet.getRange(ERP_PO_START_ROW, 1, maxRows - ERP_PO_START_ROW + 1, sheet.getMaxColumns()).clear();
-    sheet.getBandings().forEach(function (b) { if (b.getRange().getRow() >= ERP_PO_START_ROW) b.remove(); });
+    // Any banding that reaches the data area goes, not only one that starts
+    // there: the first live run (2026-09-16) found one and applyRowBanding
+    // refuses a range that already has alternating colours.
+    sheet.getBandings().forEach(function (b) { if (b.getRange().getLastRow() >= ERP_PO_START_ROW) b.remove(); });
 
     const n = ERP_PO_HEADERS.length;
     sheet.getRange(ERP_PO_START_ROW, 1, 1, n).setValues([ERP_PO_HEADERS]);
@@ -77,7 +80,7 @@ function runErpOutstandingPoPull(triggerType) {
       const report = sheet.getRange(ERP_PO_START_ROW, 1, rows.length + 1, n);
       sheet.getRange(ERP_PO_START_ROW, 1, 1, n).setBackground("#274e13").setFontColor("#FFFFFF").setFontWeight("bold").setHorizontalAlignment("center");
       sheet.getRange(ERP_PO_START_ROW + 1, 1, rows.length, n).setVerticalAlignment("middle");
-      report.applyRowBanding(SpreadsheetApp.BandingTheme.LIGHT_GREEN);
+      try { report.applyRowBanding(SpreadsheetApp.BandingTheme.LIGHT_GREEN); } catch (e) { Log.warn(rid, "Row banding skipped: " + e.message); }
       report.setBorder(true, true, true, true, true, true, "#cccccc", SpreadsheetApp.BorderStyle.SOLID);
       sheet.setFrozenRows(ERP_PO_START_ROW);
       sheet.autoResizeColumns(1, n);
@@ -187,6 +190,7 @@ function pushPoDatesToErp(triggerType, dryRun) {
     const t = erpPushPoDates_(erpConfig_(), updates, rid, dryRun);
     const message = (dryRun ? "PREVIEW (nothing written) for " : "Pushed dates for ") + updates.length + " PO(s): " + erpPoTallyText_(t);
     Log.info(rid, message);
+    if (dryRun) Log.info(rid, "Preview details (" + t.notes.length + "):\n" + t.notes.join("\n"));
     recordExecutionLog(ss, rid, "PO_DATE_SYNC", startTime, new Date(), dryRun ? "PREVIEW" : t.failed ? "PARTIAL" : "SYNCED", message, userEmail);
     if (triggerType === "MANUAL") SpreadsheetApp.getUi().alert("Outstanding PO dates\n\n" + message);
   } catch (e) {
