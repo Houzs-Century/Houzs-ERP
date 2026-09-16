@@ -1471,7 +1471,11 @@ export const SalesOrderNew = () => {
         body: JSON.stringify(buildValidateDraft(asDraft)),
       });
       serverProblems = r.problems;
-    } catch { /* validate unreachable — fall through to the authoritative create */ }
+    } catch {
+      // silent-write-ok: validate is a READ-ONLY dry-run (it writes nothing); its
+      // failure must not block the operator, and the create call below is the
+      // authoritative gate that surfaces any real refusal.
+    }
     const problems = [...serverProblems, ...scannedExtras];
     if (problems.length > 0) {
       void notify({ title: saveProblemsTitle(problems.length), body: <SaveProblemsList problems={problems} />, tone: 'error' });
