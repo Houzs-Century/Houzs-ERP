@@ -249,6 +249,24 @@ export function useMfgProducts(opts?: {
   });
 }
 
+/* SKU codes (this company) that already carry at least one supplier binding.
+   Powers the SKU Master "no supplier binding" filter so staff can find the SKUs
+   still missing a supplier and fill them one by one. Company-keyed cache so a
+   company switch never serves the other company's set (same reason useMfgProducts
+   keys by activeCompanyKey). Returns a Set for O(1) membership. */
+export function useMfgProductBoundCodes() {
+  return useQuery({
+    queryKey: ['mfg-product-bound-codes', activeCompanyKey()],
+    queryFn: async () => {
+      const res = await authedFetch<{ codes: string[] }>('/mfg-products/bound-codes');
+      return new Set(res.codes);
+    },
+    staleTime: 60_000,
+    retry: retryUnlessClientError,
+    retryDelay: 800,
+  });
+}
+
 /* ─── Special Add-ons (migration 0134) — SO-parity read (Loo 2026-06-06).
    The SO/PO line editor's Specials accordion reads THESE (the same
    GET /special-addons the POS uses) instead of legacy maintenance_config
