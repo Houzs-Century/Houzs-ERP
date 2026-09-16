@@ -27,7 +27,7 @@ import { effectiveDelivery } from '../shared/effective-delivery';
 import { supabaseAuth } from '../middleware/auth';
 import { escapeForOr } from '../lib/postgrest-search';
 import { bindingToProductPatch } from '../lib/cost-anchor-sync';
-import { autoDeriveEnabled, recomputeDerivedProductCostSafe } from '../lib/auto-derive-cost';
+import { autoDeriveEnabled, recomputeDerivedProductCostSafe, recordSupplierPriceHistorySafe } from '../lib/auto-derive-cost';
 import { paginateAll } from '../lib/paginate-all';
 import { scopeToCompany, activeCompanyId, stampCompany,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY,
@@ -270,15 +270,39 @@ async function syncAnchoredProductFromBinding(
    is_cost_anchor mirror at the sites that had one, or nothing at the sites that
    did not). Best-effort on both legs: a projection failure never fails the
    supplier-price write that is the source of truth. */
+type BindingSnapshot = {
+  supplier_id?: string | null;
+  unit_price_sen?: number | null;
+  price_matrix?: unknown;
+  is_main_supplier?: boolean | null;
+  price_valid_from?: string | null;
+};
+
 async function afterBindingWrite(
   supabase: SupabaseClient,
   companyId: number | null | undefined,
   itemCode: string | null | undefined,
   fallback: () => Promise<void>,
+  binding?: BindingSnapshot | null,
 ): Promise<void> {
   if (await autoDeriveEnabled(supabase)) {
     const code = String(itemCode ?? '').trim();
-    if (code) await recomputeDerivedProductCostSafe(supabase, companyId, code);
+    if (code) {
+      // Stage 3b-supplier: snapshot this supplier's price into the source
+      // timeline (prior value kept), then recompute the derived product cost.
+      if (binding?.supplier_id) {
+        await recordSupplierPriceHistorySafe(supabase, {
+          companyId,
+          supplierId: binding.supplier_id,
+          itemCode: code,
+          unitPriceSen: binding.unit_price_sen ?? null,
+          priceMatrix: binding.price_matrix ?? null,
+          isMainSupplier: binding.is_main_supplier ?? null,
+          effectiveFrom: binding.price_valid_from ?? null,
+        });
+      }
+      await recomputeDerivedProductCostSafe(supabase, companyId, code);
+    }
     return;
   }
   await fallback();
@@ -652,7 +676,7 @@ export const createSupplierBindingHandler = async (c: any) => {
   }
   // Auto-derive stage 2b: recompute the product cost from all suppliers when the
   // flag is ON; OFF is a no-op (today's create did not sync).
-  await afterBindingWrite(supabase, activeCompanyId(c), (data as { item_code?: string } | null)?.item_code, async () => {});
+  await afterBindingWrite(supabase, activeCompanyId(c), (data as { item_code?: string } | null)?.item_code, async () => {}, data as unknown as BindingSnapshot);
   return c.json({ binding: data }, 201);
 };
 suppliers.post('/:id/bindings', createSupplierBindingHandler);
@@ -753,6 +777,18 @@ export const createSupplierBindingsBatchHandler = async (c: any) => {
   // OFF is a no-op (today's batch create did not sync).
   if (await autoDeriveEnabled(supabase)) {
     const companyId = activeCompanyId(c);
+    // Stage 3b-supplier: snapshot each inserted supplier price into the source
+    // timeline, then recompute each affected SKU's product cost once.
+    for (const r of (data ?? []) as unknown as (BindingSnapshot & { item_code?: string })[]) {
+      const code = String(r.item_code ?? '').trim();
+      if (code && r.supplier_id) {
+        await recordSupplierPriceHistorySafe(supabase, {
+          companyId, supplierId: r.supplier_id, itemCode: code,
+          unitPriceSen: r.unit_price_sen ?? null, priceMatrix: r.price_matrix ?? null,
+          isMainSupplier: r.is_main_supplier ?? null, effectiveFrom: r.price_valid_from ?? null,
+        });
+      }
+    }
     const rawCodes: string[] = (data ?? []).map((r: { item_code?: string }) => String(r.item_code ?? '').trim());
     const codes = [...new Set(rawCodes.filter((s) => s.length > 0))];
     for (const code of codes) await recomputeDerivedProductCostSafe(supabase, companyId, code);
@@ -844,6 +880,7 @@ suppliers.patch('/:id/bindings/:bindingId', async (c) => {
     activeCompanyId(c),
     (data as { item_code?: string }).item_code,
     () => syncAnchoredProductFromBinding(supabase, data as unknown as Record<string, unknown>, activeCompanyId(c)),
+    data as unknown as BindingSnapshot,
   );
 
   return c.json({ binding: data });
@@ -917,6 +954,7 @@ suppliers.patch('/:id/bindings/:bindingId/cost-anchor', async (c) => {
       activeCompanyId(c),
       (updated as { item_code?: string }).item_code,
       () => syncAnchoredProductFromBinding(supabase, updated as unknown as Record<string, unknown>, activeCompanyId(c)),
+      updated as unknown as BindingSnapshot,
     );
   }
 

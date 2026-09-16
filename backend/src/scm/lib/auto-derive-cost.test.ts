@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   autoDeriveEnabled,
   recomputeDerivedProductCost,
+  recordSupplierPriceHistorySafe,
   type DerivedCostIO,
 } from './auto-derive-cost';
 import type { SupplierBindingCost } from './derive-product-cost-from-suppliers';
@@ -149,5 +150,42 @@ describe('recomputeDerivedProductCost — as-of history timeline (stage 3b)', ()
     await recomputeDerivedProductCost(io, 1, 'X');
     expect(history).toHaveLength(1);
     expect(history[0]).toMatchObject({ patch: { base_price_sen: 9500 } });
+  });
+});
+
+// ── recordSupplierPriceHistorySafe — the supplier source timeline (stage 3b-supplier) ──
+function histSb(latest: unknown) {
+  const inserts: Record<string, unknown>[] = [];
+  const chain: Record<string, unknown> = {
+    select: () => chain, eq: () => chain, order: () => chain, limit: () => chain,
+    maybeSingle: async () => ({ data: latest, error: null }),
+    insert: async (row: Record<string, unknown>) => { inserts.push(row); return { error: null }; },
+  };
+  return { sb: { from: () => chain }, inserts };
+}
+const args = (unitPriceSen: number) => ({
+  companyId: 1, supplierId: 'sup-1', itemCode: 'X',
+  unitPriceSen, priceMatrix: null, isMainSupplier: true, effectiveFrom: '2026-05-01',
+});
+
+describe('recordSupplierPriceHistorySafe — dedup', () => {
+  it('no prior row -> appends a snapshot', async () => {
+    const { sb, inserts } = histSb(null);
+    await recordSupplierPriceHistorySafe(sb, args(9000));
+    expect(inserts).toHaveLength(1);
+    expect(inserts[0]).toMatchObject({ supplier_id: 'sup-1', item_code: 'X', unit_price_sen: 9000, effective_from: '2026-05-01' });
+  });
+
+  it('unchanged price -> appends nothing', async () => {
+    const { sb, inserts } = histSb({ unit_price_sen: 9000, price_matrix: null });
+    await recordSupplierPriceHistorySafe(sb, args(9000));
+    expect(inserts).toHaveLength(0);
+  });
+
+  it('changed price -> appends the new snapshot', async () => {
+    const { sb, inserts } = histSb({ unit_price_sen: 9000, price_matrix: null });
+    await recordSupplierPriceHistorySafe(sb, args(9500));
+    expect(inserts).toHaveLength(1);
+    expect(inserts[0]).toMatchObject({ unit_price_sen: 9500 });
   });
 });

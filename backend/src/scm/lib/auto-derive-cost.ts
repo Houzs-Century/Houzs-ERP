@@ -248,3 +248,64 @@ export async function recomputeDerivedProductCostSafe(
     console.error(`[auto-derive] recompute failed for ${code}:`, e instanceof Error ? e.message : e);
   }
 }
+
+/**
+ * Snapshot ONE supplier's price for a SKU into supplier_binding_price_history —
+ * the source timeline (stage 3b-supplier: "a supplier price keeps its prior
+ * value"). Deduped: appends only when the price differs from the latest row for
+ * that (company, supplier, code), so a no-op re-save adds nothing. Best-effort —
+ * a failure never blocks the binding write (the flat binding is the source of
+ * truth); the read/write errors are bound and thrown internally, then logged.
+ */
+export async function recordSupplierPriceHistorySafe(
+  sb: Sb,
+  args: {
+    companyId: number | null | undefined;
+    supplierId: string;
+    itemCode: string;
+    unitPriceSen: number | null;
+    priceMatrix: unknown;
+    isMainSupplier: boolean | null;
+    effectiveFrom?: string | null;
+  },
+): Promise<void> {
+  const code = args.itemCode.trim();
+  if (!code || !args.supplierId) return;
+  try {
+    let q = sb
+      .from('supplier_binding_price_history')
+      .select('unit_price_sen, price_matrix')
+      .eq('material_kind', 'mfg_product')
+      .eq('item_code', code)
+      .eq('supplier_id', args.supplierId);
+    if (args.companyId != null) q = q.eq('company_id', args.companyId);
+    const { data: latest, error: readErr } = await q
+      .order('effective_from', { ascending: false })
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (readErr) throw new Error(readErr.message);
+    const prev = latest as { unit_price_sen?: number | null; price_matrix?: unknown } | null;
+    if (
+      prev &&
+      Number(prev.unit_price_sen ?? 0) === Number(args.unitPriceSen ?? 0) &&
+      JSON.stringify(prev.price_matrix ?? null) === JSON.stringify(args.priceMatrix ?? null)
+    ) {
+      return; // unchanged — do not pile up an identical history row
+    }
+    const { error: insErr } = await sb.from('supplier_binding_price_history').insert({
+      company_id: args.companyId,
+      supplier_id: args.supplierId,
+      material_kind: 'mfg_product',
+      item_code: code,
+      unit_price_sen: args.unitPriceSen ?? null,
+      price_matrix: args.priceMatrix ?? null,
+      is_main_supplier: Boolean(args.isMainSupplier),
+      effective_from: (args.effectiveFrom ?? '').trim() || todayMyt(),
+      notes: 'supplier price snapshot',
+    });
+    if (insErr) throw new Error(insErr.message);
+  } catch (e) {
+    console.error(`[auto-derive] supplier price history record failed for ${code}:`, e instanceof Error ? e.message : e);
+  }
+}
