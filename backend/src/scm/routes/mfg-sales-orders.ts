@@ -4282,7 +4282,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
            `receiptImageKey`: that key is the single-deposit scan path's proof
            (below) and stamping it on several split rows would put one photo on
            payments it does not evidence. */
-        slip_key:           posPaymentSlipKeys![i] ?? null,
+        slip_key:           posPaymentSlipKeys![i] ?? (plan ? plan.slipKey : null),
         /* Account Sheet auto-fill (Loo 2026-06-07) — split rows carry no
            onlineType, so transfer falls back to 'Bank transfer'. */
         account_sheet:      plan ? `Converted from ${plan.fromDocNo}` : deriveAccountSheet(p.method, merchantProvider, null),
@@ -9905,7 +9905,7 @@ export const postSoPaymentHandler = async (c: any) => {
     approvalCode:      p.approvalCode,
     amountSen:       p.amountSen,
     accountSheet:      p.accountSheet,
-    slipKey:           paymentSlipKey,
+    slipKey:           paymentSlipKey ?? (plan ? plan.slipKey : null),
     collectedBy:       plan ? plan.collectedBy : p.collectedBy,
     note:              p.note ?? (plan ? `Converted from ${plan.fromDocNo}` : null),
     createdBy:         user.id,

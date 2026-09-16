@@ -58,8 +58,8 @@ describe('SO create — payments[]', () => {
     expect(code).toContain('if (sessionIds.length > 0) {');
   });
 
-  test('a row with no slip is inserted with a null slip_key, not skipped', () => {
-    expect(code).toContain('slip_key:           posPaymentSlipKeys![i] ?? null,');
+  test('a row with no slip is inserted with a null slip_key, not skipped — a converted row alone inherits the proof of its source', () => {
+    expect(code).toContain('slip_key:           posPaymentSlipKeys![i] ?? (plan ? plan.slipKey : null),');
     /* The scan receipt belongs to the SINGLE-deposit path; fanning it across
        split rows would stamp one photo onto payments it does not evidence. */
     const insertAt = code.indexOf('slip_key:           posPaymentSlipKeys![i]');
