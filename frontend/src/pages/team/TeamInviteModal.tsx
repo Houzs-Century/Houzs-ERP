@@ -90,6 +90,11 @@ export function TeamInviteModal({
   const [division, setDivision] = useState("");
   const [managerId, setManagerId] = useState<number | null>(null);
   const [positionId, setPositionId] = useState<number | null>(null);
+  // Role = what the member may DO (the Title decides what they see). Defaults to
+  // the baseline role and is chosen here, so a new member no longer lands on the
+  // 0-key placeholder until someone remembers the profile (2026-09-16). A scoped
+  // Sales Director never chooses it — the server forces the baseline.
+  const [roleId, setRoleId] = useState<number | null>(() => defaultRoleId(roles));
   const [companyIds, setCompanyIds] = useState<number[]>([]);
   const [editingAssignment, setEditingAssignment] = useState(false);
   const [withPassword, setWithPassword] = useState(false);
@@ -116,6 +121,7 @@ export function TeamInviteModal({
     setDeptId(presetDeptId);
     setDivision("");
     setPositionId(null);
+    setRoleId(defaultRoleId(roles));
     setCompanyIds(companies.length ? [companies[0].id] : []);
     setWithPassword(false);
     setPassword("");
@@ -163,7 +169,6 @@ export function TeamInviteModal({
 
   async function send() {
     if (!canSend) return;
-    const roleId = defaultRoleId(roles);
     if (roleId == null && !salesDirScoped) {
       toast.error("No role available to assign — create a baseline role first.");
       return;
@@ -222,7 +227,6 @@ export function TeamInviteModal({
   // twenty good invites around it.
   async function sendBulk() {
     if (bulkEmails.length === 0 || bulkBusy) return;
-    const roleId = defaultRoleId(roles);
     if (roleId == null && !salesDirScoped) {
       toast.error("No role available to assign — create a baseline role first.");
       return;
@@ -618,7 +622,37 @@ export function TeamInviteModal({
             )}
           </div>
 
-          {/* Position — drives page access; role stays a hidden baseline. */}
+          {/* Role — what the member may DO. Hidden for a scoped Sales Director:
+              the server forces the baseline role for that caller. */}
+          {!salesDirScoped && (
+            <div className="rounded-md border border-border-subtle bg-surface-2 p-4">
+              <Eyebrow>Role</Eyebrow>
+              {roles.length === 0 ? (
+                <p className="mb-0 mt-2 text-[12px] text-ink-muted">No roles available.</p>
+              ) : (
+                <select
+                  id="invite-role"
+                  aria-label="Role"
+                  className={cn(FIELD_SELECT_CLS, "mt-2")}
+                  value={roleId ?? ""}
+                  onChange={(e) => setRoleId(e.target.value ? Number(e.target.value) : null)}
+                >
+                  {[...roles]
+                    .sort((a, b) => a.name.localeCompare(b.name))
+                    .map((r) => (
+                      <option key={r.id} value={r.id}>
+                        {r.name}
+                      </option>
+                    ))}
+                </select>
+              )}
+              <p className="mb-0 mt-2.5 text-[11.5px] text-ink-secondary">
+                What the member can do. Pages come from the Position. Can be changed later on the profile.
+              </p>
+            </div>
+          )}
+
+          {/* Position — drives page access. */}
           <div className="rounded-md border border-border-subtle bg-surface-2 p-4">
             <Eyebrow>Position</Eyebrow>
             {deptPositions.length === 0 ? (
