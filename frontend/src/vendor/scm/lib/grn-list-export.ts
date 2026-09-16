@@ -13,7 +13,7 @@ import { authedFetch } from './authed-fetch';
 import { ExportTruncatedError } from './po-list-export';
 import { applyListMrpEnrichment, type EnrichableMrpRow, type ListMrpEnrichment } from '../../../lib/listMrpEnrichment';
 
-export type GrnListFilterParams = { status?: string; supplierId?: string; q?: string; sort?: string };
+export type GrnListFilterParams = { status?: string; supplierId?: string; q?: string; sort?: string; creditorNames?: string[]; creditorCodes?: string[]; currencies?: string[] };
 
 /** The list's filter as query parameters — no paging. */
 export function grnListParams(f: GrnListFilterParams): URLSearchParams {
@@ -22,6 +22,11 @@ export function grnListParams(f: GrnListFilterParams): URLSearchParams {
   if (f.supplierId) usp.set('supplierId', f.supplierId);
   if (f.q && f.q.trim()) usp.set('q', f.q.trim());
   if (f.sort) usp.set('sort', f.sort);
+  // Server-filterable column funnels (owner 2026-09-16): Creditor Name / Code /
+  // Currency, JSON arrays (a creditor name may contain a comma).
+  if (f.creditorNames && f.creditorNames.length) usp.set('creditorNames', JSON.stringify(f.creditorNames));
+  if (f.creditorCodes && f.creditorCodes.length) usp.set('creditorCodes', JSON.stringify(f.creditorCodes));
+  if (f.currencies && f.currencies.length) usp.set('currencies', JSON.stringify(f.currencies));
   return usp;
 }
 

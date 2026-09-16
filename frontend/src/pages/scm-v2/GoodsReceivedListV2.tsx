@@ -50,6 +50,8 @@ import { PullToRefresh } from "../../components/PullToRefresh";
 import { ListErrorPanel, SearchPendingPanel, SearchProgress } from "../../components/SearchProgress";
 import { SearchScopeHint } from "../../components/SearchScopeHint";
 import { useDebouncedSearchTerm, useSearchResultTransition } from "../../hooks/useServerSearch";
+import { useSuppliers } from "../../vendor/scm/lib/suppliers-queries";
+import { useServerColumnFunnels, funnelValues } from "../../hooks/useServerColumnFunnels";
 import {
   useGrnsPaged,
   useEnrichedGrnListRows,
@@ -537,6 +539,14 @@ export function GoodsReceivedListV2() {
   const [sort, setSort] = useState<string | undefined>(undefined);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [printingDocs, setPrintingDocs] = useState(false);
+  // Server-filterable funnels (owner 2026-09-16): Creditor Name/Code + Currency → list query (pager over the filtered set); line/MRP funnels stay client-side. Creditor checklists seeded with every supplier.
+  const suppliersQ = useSuppliers();
+  const supplierNames = useMemo(() => [...new Set((suppliersQ.data ?? []).map((s) => s.name).filter((n): n is string => !!n))], [suppliersQ.data]);
+  const supplierCodes = useMemo(() => [...new Set((suppliersQ.data ?? []).map((s) => s.code).filter((c): c is string => !!c))], [suppliersQ.data]);
+  const { serverFunnels, onColFiltersChange } = useServerColumnFunnels(
+    (cf) => ({ creditorNames: funnelValues(cf, "supplier"), creditorCodes: funnelValues(cf, "supplier_code"), currencies: funnelValues(cf, "currency") }),
+    () => setPageParam(0),
+  );
   const { requestTerm: debouncedSearch } = useDebouncedSearchTerm(search);
 
   // Send the active tab's BUCKET NAME as `status`; the backend resolves it to
@@ -549,6 +559,7 @@ export function GoodsReceivedListV2() {
     status: apiStatus,
     q: debouncedSearch,
     sort,
+    ...serverFunnels,
   });
   const searchTransition = useSearchResultTransition({
     inputTerm: search,
@@ -826,6 +837,7 @@ export function GoodsReceivedListV2() {
       width: "120px",
       disableSort: true,
       getValue: (r) => r.supplier?.code ?? "",
+      filterSeedValues: supplierCodes, // server-filterable; seed with every creditor code
       render: (r) => <span className="font-mono text-[11.5px] text-ink-secondary">{supplierCodeOf(r)}</span>,
     },
     supplier: {
@@ -833,6 +845,7 @@ export function GoodsReceivedListV2() {
       label: GRN_LABELS.creditorName,
       disableSort: true,
       getValue: (r) => r.supplier?.name ?? "",
+      filterSeedValues: supplierNames, // server-filterable; seed with every creditor name
       render: (r) => <div className="min-w-0 truncate text-[13px] font-semibold text-ink">{supplierNameOf(r)}</div>,
     },
     /* A goods receipt names no purchase agent in this ERP. */
@@ -1083,6 +1096,7 @@ export function GoodsReceivedListV2() {
                 exportLines={exportLines}
                 serverSort
                 onSortChange={setSortAndReset}
+                onColFiltersChange={onColFiltersChange}
                 emptyLabel={filtersActive ? "No GRNs match — try Reset layout to clear filters." : "No GRNs yet."}
                 search={{ value: search, onChange: setSearch, placeholder: "Search GRN no, delivery note or notes…", debounceMs: 0, searching: searchTransition.isSearching, countPending: isLoading || isPlaceholderData || Boolean(error) || searchTransition.resultsAreStale, scope: "server", totalRecords: total }}
                 resetFilters={{ active: filtersActive, onReset: resetLayout, label: "Reset layout" }}
