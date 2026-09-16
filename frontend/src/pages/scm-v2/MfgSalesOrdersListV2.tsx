@@ -80,7 +80,7 @@ import { shortCompanyName, getBrandingCompanyCode } from "../../lib/branding";
 import { brandingLabel, isPlaceholderBrandText } from "../../vendor/shared/so-branding-label";
 import { soCanRaiseDo } from "../../vendor/shared/so-deliverable-states";
 import { useDebouncedSearchTerm, useSearchResultTransition } from "../../hooks/useServerSearch";
-import { useMfgSalesOrdersPaged, useUpdateMfgSalesOrderStatus, useMfgSalesOrderDetail, useEnrichedSoListRows, useSoLineCoverage } from "../../vendor/scm/lib/sales-order-queries";
+import { useMfgSalesOrdersPaged, useMfgCustomers, useUpdateMfgSalesOrderStatus, useMfgSalesOrderDetail, useEnrichedSoListRows, useSoLineCoverage } from "../../vendor/scm/lib/sales-order-queries";
 import { useSetDocumentHold } from "../../vendor/scm/lib/document-hold-queries";
 import { holdPrompt } from "./use-hold-action";
 import { useCancelRequestAction } from "./use-cancel-request-action";
@@ -1065,6 +1065,20 @@ export function MfgSalesOrdersListV2() {
   // Multi-select → batch "Print all". Keys are doc_no (the DataTable rowKey).
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [printingDocs, setPrintingDocs] = useState(false);
+  /* Server-filterable column funnels the grid pushes down (owner 2026-09-16) so
+     pagination runs over the filtered set: Customer (debtor) Name + Currency.
+     Debtor CODE and every line-level / MRP funnel stay client-side on the loaded
+     page (documented — debtor_code's grid value prefers ac_debtor_code, and the
+     line/MRP columns are not base columns on the list view). */
+  const [serverFunnels, setServerFunnels] = useState<{ debtorNames?: string[]; currencies?: string[] }>({});
+  /* Seed the Customer Name funnel with every customer (not only the loaded
+     page's) so a customer whose orders are all on a later page is still
+     pickable — the point of pushing the filter server-side. */
+  const customersQ = useMfgCustomers();
+  const customerNames = useMemo(
+    () => [...new Set((customersQ.data?.customers ?? []).map((c) => c.name).filter((n): n is string => !!n))],
+    [customersQ.data],
+  );
 
   const { data, isLoading, isFetching, isPlaceholderData, error } = useMfgSalesOrdersPaged({
     page,
@@ -1074,6 +1088,7 @@ export function MfgSalesOrdersListV2() {
     sort,
     filters: soFilters,
     enabled: sortReady,
+    ...serverFunnels,
   });
   const searchTransition = useSearchResultTransition({
     inputTerm: search,
@@ -1170,6 +1185,25 @@ export function MfgSalesOrdersListV2() {
       return;
     }
     setPageParam(0); // sort change → back to page 0
+  };
+  /* DataTable reports its funnel state here; we lift the SERVER-FILTERABLE ones
+     (Customer Name, Currency) into the list query. Mirrors setSortAndReset: the
+     first (mount-restore) report adopts the funnel without clobbering a
+     deep-linked ?page=; later changes reset to page 1. */
+  const funnelSyncedRef = useRef(false);
+  const serverFunnelSigRef = useRef("");
+  const onColFiltersChange = (colFilters: Record<string, string[] | undefined>) => {
+    const pick = (key: string): string[] | undefined => {
+      const v = colFilters[key];
+      return v && v.length > 0 ? v : undefined;
+    };
+    const next = { debtorNames: pick("debtor_name"), currencies: pick("currency") };
+    const sig = JSON.stringify(next);
+    if (sig === serverFunnelSigRef.current) return;
+    serverFunnelSigRef.current = sig;
+    setServerFunnels(next);
+    if (!funnelSyncedRef.current) { funnelSyncedRef.current = true; return; }
+    setPageParam(0);
   };
   const resetLayout = () => {
     setSort(undefined);
@@ -1400,6 +1434,9 @@ export function MfgSalesOrdersListV2() {
       group: "Basic",
       label: SO_LABELS.debtorName,
       getValue: (r) => r.debtor_name,
+      // Server-filterable: the funnel is pushed into the list query, so seed the
+      // checklist with every customer (not just the loaded page's).
+      filterSeedValues: customerNames,
       render: (r) => (
         <span className="text-[13px] font-semibold text-ink">
           {r.debtor_name || "—"}
@@ -2109,6 +2146,7 @@ export function MfgSalesOrdersListV2() {
             exportName="sales-orders"
             serverSort
             onSortChange={setSortAndReset}
+            onColFiltersChange={onColFiltersChange}
             emptyLabel={
               filtersActive
                 ? "No sales orders match — try Reset layout to clear filters."
