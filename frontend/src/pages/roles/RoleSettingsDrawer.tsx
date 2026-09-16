@@ -174,6 +174,11 @@ export function RoleSettingsDrawer({
             configured per-tab when the parent is set to <strong>Partial</strong>.
             Full or None overrides every sub-tab. Wildcard roles bypass this matrix.
           </p>
+          <p className="text-[11px] text-ink-secondary">
+            <strong>Applies only to members with no Title.</strong> A member who
+            holds a Title gets their pages from the Title&apos;s policy, not from
+            this matrix; this role decides what they can do, not what they see.
+          </p>
           {pagesQ.loading || accessQ.loading ? (
             <Skeleton className="h-24 w-full rounded-md" />
           ) : (

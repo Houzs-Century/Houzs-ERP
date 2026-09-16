@@ -46,6 +46,7 @@ each child. Any page not listed for a position = **none**.
 - **Logistic**: projects V, projects.list V, projects.calendar V (setup/dismantle schedule) · delivery_orders F · logistics F (trips/fleet).  🚫 finances, cost, purchase, sales.
 - **Storekeeper**: projects V, projects.calendar V · delivery_orders V (out) · purchase_orders V (incoming/GR).  🚫 price, profit, cost-margin, sales, customers. (Dedicated stock page = future.)
 - **Driver / Helper**: NO staff pages (all none). They use the separate **Driver portal** (DriverHome/DriverTrip), gated by role verbs `trips.read.own` etc. — only their own assigned jobs + POD upload.
+- **Outsource Transporter**: the outsourced delivery contractors, on the Driver ROLE. Same whitelist as Driver / Helper (`positionPolicy.ts` `RESTRICTED_ROWS`). Not in `FLEET_POSITIONS`: none has a `scm.drivers.user_id` link, and an unlinked fleet position fails closed to an empty board — link first, then move.
 
 ## Project-detail (PMS) section-level visibility  (layered on top of the page matrix)
 
