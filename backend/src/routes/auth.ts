@@ -546,14 +546,19 @@ app.post("/accept-invite", async (c) => {
 
   const hash = await hashPassword(body.password);
 
-  // Promote the placeholder user (created at invite time) to active.
+  // Promote the placeholder user (created at invite time) to active. The
+  // placeholder already carries the invitation's role; an admin who changed
+  // the member's Role on the profile BEFORE the person signed in must win, so
+  // the invitation's role is written only if the row somehow has none
+  // (2026-09-16: seven invitations still pointed at the 0-key placeholder role
+  // after their members had been moved to real roles).
   const userResult = await c.env.DB.prepare(
     `UPDATE users
      SET name = COALESCE(?, name),
          password_hash = ?,
          status = 'active',
          joined_at = datetime('now'),
-         role_id = ?
+         role_id = COALESCE(role_id, ?)
      WHERE email = ? AND status = 'invited'`
   )
     .bind(body.name?.trim() || null, hash, inv.role_id, inv.email)

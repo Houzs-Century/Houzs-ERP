@@ -28,6 +28,12 @@ Sales-Director carve-out for their own department.
   + headcount, Titles (positions) CRUD, role assignment.
 - `roles.manage` — `PUT /api/position-capabilities` (the page-access
   matrix), a separate key from `users.manage`.
+- **Invite carries a Role** (`POST /api/users/invite` `role_id`, required): the
+  desktop modal's Role select (default `defaultRoleId` = the baseline role, the
+  0-key placeholder) and the phone form's Role field both post it. Accepting
+  the invite (`POST /api/auth/accept-invite`) keeps whatever Role an admin set
+  on the profile in the meantime; the invitation's role fills in only if the
+  placeholder row has none.
 - **Scoped Sales Director** (`requirePermissionOrSalesDirector`): may invite
   into and edit within their OWN department without `users.manage`. An
   invite from this caller always gets the **baseline role**
