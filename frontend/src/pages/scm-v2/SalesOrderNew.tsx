@@ -40,7 +40,7 @@ import {
 //   • Navigation repointed to /scm/sales-orders/*.
 // ----------------------------------------------------------------------------
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery as useTanstackQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Camera, ChevronDown, Plus, Save, X } from 'lucide-react';
@@ -56,7 +56,7 @@ import {
   type DebtorSuggestion,
 } from '../../vendor/scm/lib/sales-order-queries';
 import { zeroPriceClaim } from '../../vendor/scm/lib/zeroPriceClaim';
-import { authedFetch, humanApiError } from '../../vendor/scm/lib/authed-fetch';
+import { authedFetch, humanApiError, type SaveProblem } from '../../vendor/scm/lib/authed-fetch';
 import {
   photoLabel,
   photoUploadFailure,
@@ -65,7 +65,8 @@ import {
   type PhotoUploadFailure,
 } from '../../vendor/scm/lib/photo-upload-failures';
 import { notifySaveProblems, SaveProblemsList, saveProblemsTitle } from '../../vendor/scm/components/SaveProblemsList';
-import { collectSoSaveProblems } from '../../vendor/scm/lib/so-save-problems-client';
+import { SaveBlockedIndicator } from '../../vendor/scm/components/SaveBlockedIndicator';
+import { useSoValidate } from '../../vendor/scm/lib/use-so-validate';
 import { notifyAcNotSent } from '../../vendor/scm/lib/ac-not-sent';
 import { useIdempotencyKey } from '../../lib/idempotency';
 import { DebtorSuggestList } from '../../vendor/scm/components/DebtorSuggestList';
@@ -1374,12 +1375,68 @@ export const SalesOrderNew = () => {
     );
   };
 
+  /* Backend is the sole authority for the submit-blocked problem list (owner
+     2026-09-16: 「跟 backend 串通, frontend 只是显示问题」). buildValidateDraft turns
+     the current form state into the payload the POST /mfg-sales-orders/validate
+     dry-run reads; the frontend holds NO validation rules — every problem + its
+     wording is the server's collectSoSubmitProblems. */
+  const buildValidateDraft = useCallback((asDraftFlag: boolean) => ({
+    debtorName,
+    phone,
+    items: lines.map((l) => ({ itemCode: l.itemCode, itemGroup: l.itemGroup, variants: l.variants, qty: l.qty })),
+    asDraft: asDraftFlag,
+    hasVenue: !!effectiveVenueId,
+    hasSalesperson: !!salespersonId,
+    companyCode: branding.companyCode,
+    salesLocation,
+    customerState: state,
+    processingDate,
+    customerDeliveryDate: deliveryDate,
+    fillAddressLater,
+    address1,
+    postcode,
+    payments: paymentDrafts.map((d) => ({
+      methodLabel: d.methodLabel,
+      merchantProvider: d.merchantProvider,
+      installmentMonthsLabel: d.installmentMonthsLabel,
+      onlineType: d.onlineType,
+      convertedFromDocNo: d.convertedFromDocNo,
+      amountSen: d.amountSen,
+    })),
+  }), [debtorName, phone, lines, effectiveVenueId, salespersonId, branding.companyCode, salesLocation, state, processingDate, deliveryDate, fillAddressLater, address1, postcode, paymentDrafts]);
+
+  /* Live "Can't save — N to fix" list, asked of the backend as the operator
+     types (debounced). Based on the CONFIRMED create (asDraft:false), which is
+     what the owner's complaint is about. Skipped once the order already exists. */
+  const liveValidateDraft = useMemo(() => buildValidateDraft(false), [buildValidateDraft]);
+  const { problems: backendLiveProblems } = useSoValidate(liveValidateDraft, !createdDocNo);
+  /* The ONE genuinely client-only blocker: a NO-MATCH scanned line (Task #73)
+     seeds an empty SKU picker the backend cannot see (it holds scan metadata,
+     not a rule). Merged into the same list so the operator still sees it. */
+  const scannedExtras = useMemo<SaveProblem[]>(() => {
+    const unpicked = lines.filter((l) => !l.itemCode.trim() && (scanLineMeta[l.rid]?.rawText ?? '').trim() !== '');
+    return unpicked.length > 0
+      ? [{
+          code: 'scanned_line_unpicked',
+          message:
+            `${unpicked.length} scanned line${unpicked.length === 1 ? '' : 's'} ` +
+            `${unpicked.length === 1 ? 'has' : 'have'} no product picked — pick a real SKU from the dropdown ` +
+            '(the slip text is shown as a hint) or remove the line.',
+          field: 'Line items',
+        }]
+      : [];
+  }, [lines, scanLineMeta]);
+  const blockingProblems = useMemo(() => [...backendLiveProblems, ...scannedExtras], [backendLiveProblems, scannedExtras]);
+  const openBlockingList = () => {
+    void notify({ title: saveProblemsTitle(blockingProblems.length), body: <SaveProblemsList problems={blockingProblems} />, tone: 'error' });
+  };
+
   /* DRAFT flow — `asDraft` adds `asDraft: true` to the create body so the SO
      lands as DRAFT (excluded from KPI/MRP/PO/DO until Confirmed on Detail).
      The two header buttons both call onSave; only the flag differs. When the
      form was opened from a scan (fromScan), "Save as Draft" is the primary
      button so scanned orders default to draft for operator review. */
-  const onSave = (asDraft = false) => {
+  const onSave = async (asDraft = false) => {
     if (createdDocNo) {
       const intents = paymentIntents();
       if (intents.length === 0) {
@@ -1399,55 +1456,23 @@ export const SalesOrderNew = () => {
       });
       return;
     }
-    /* ONE consolidated "what is blocking this save" check (owner 2026-09-16,
-       after #4007). Every client-checkable blocker — always-required fields, the
-       customer/address/postcode/delivery-date completeness a Processing Date
-       demands, each line's option/size/fabric gaps, the date rules, stock
-       location, sofa mix and payment sub-fields — is collected into ONE list by
-       the shared collectSoSaveProblems and shown in the SAME SaveProblemsList
-       popup the server's validation_failed refusal uses, so the operator sees
-       ALL the reasons at once and the phone, the desktop and the backend read
-       identically. No rule changes: each blocker is still the same shared helper
-       it always was. Owner 2026-08-20/23 ("为什么要慢慢爆呢", "create salesorder
-       要两次?") — the one-at-a-time popping is what this ends. */
     const validLines = lines.filter((l) => l.itemCode.trim() && l.qty > 0);
-    /* Scan-Order core rule (Task #73) — a NO-MATCH scanned line seeds an empty
-       SKU picker the operator MUST fill from the dropdown. Carried into the list
-       as an extra so it shows alongside the other blockers. */
-    const unpickedScanned = lines.filter((l) => !l.itemCode.trim() && (scanLineMeta[l.rid]?.rawText ?? '').trim() !== '');
-    const problems = collectSoSaveProblems({
-      required: {
-        customerName: debtorName,
-        phone,
-        hasNamedLine: validLines.length > 0,
-        asDraft,
-        hasVenue: !!effectiveVenueId,
-        hasSalesperson: !!salespersonId,
-        location: { companyCode: branding.companyCode, salesLocation, state, mappingsLoaded: !!stateWarehousesQ.data, asDraft },
-      },
-      location: { companyCode: branding.companyCode, salesLocation, state, mappingsLoaded: !!stateWarehousesQ.data, asDraft },
-      processingDate,
-      completeness: { customerName: debtorName, fillAddressLater, address1, postcode, deliveryDate },
-      dateGuard: { processingDate, deliveryDate, today },
-      variantOffenders: validLines
-        .map((l) => ({ itemCode: l.itemCode, missingLabels: missingRequiredVariants(l.itemGroup, l.variants, l.itemCode) }))
-        .filter((o) => o.missingLabels.length > 0),
-      sofaMixConflict: hasSofaMixConflict(validLines.map((l) => l.itemGroup)),
-      sofaMixMessage: SOFA_MIX_MESSAGE,
-      paymentGaps: paymentDrafts
-        .map((d, i) => ({ row: i + 1, method: d.methodLabel, missing: d.amountSen > 0 ? missingMethodSubField(d) : null }))
-        .flatMap((x) => (x.missing ? [{ row: x.row, method: x.method, missing: x.missing }] : [])),
-      extra: unpickedScanned.length > 0
-        ? [{
-            code: 'scanned_line_unpicked',
-            message:
-              `${unpickedScanned.length} scanned line${unpickedScanned.length === 1 ? '' : 's'} ` +
-              `${unpickedScanned.length === 1 ? 'has' : 'have'} no product picked — pick a real SKU from the dropdown ` +
-              '(the slip text is shown as a hint) or remove the line.',
-            field: 'Line items',
-          }]
-        : [],
-    });
+    /* Backend is the authority for what blocks this submit (owner 2026-09-16).
+       Ask the validate dry-run for the definitive list for THIS press (draft vs
+       confirmed differ), and merge the one client-only extra (a NO-MATCH scanned
+       line, Task #73, whose scan metadata the backend cannot see). A failed
+       validate does not block — the create call below is the authoritative
+       backstop and returns the same problems[] shape. Shown in the SAME
+       SaveProblemsList popup the live indicator and the server refusal use. */
+    let serverProblems: SaveProblem[] = [];
+    try {
+      const r = await authedFetch<{ problems: SaveProblem[] }>('/mfg-sales-orders/validate', {
+        method: 'POST',
+        body: JSON.stringify(buildValidateDraft(asDraft)),
+      });
+      serverProblems = r.problems;
+    } catch { /* validate unreachable — fall through to the authoritative create */ }
+    const problems = [...serverProblems, ...scannedExtras];
     if (problems.length > 0) {
       void notify({ title: saveProblemsTitle(problems.length), body: <SaveProblemsList problems={problems} />, tone: 'error' });
       return;
@@ -1666,9 +1691,14 @@ export const SalesOrderNew = () => {
             <Button variant="ghost" onClick={() => navigate('/scm/sales-orders')}>
               <X {...ICON} /> Cancel
             </Button>
+            {/* Persistent "Can't save — N to fix · tap to see" (owner 2026-09-16):
+                a blocked Save is never silent. Count + list are backend-authored
+                (useSoValidate), so it clears itself as fields are fixed. Renders
+                nothing when the order is complete. */}
+            <SaveBlockedIndicator problems={blockingProblems} onOpen={openBlockingList} />
             <Button
               variant={fromScan ? 'secondary' : 'primary'}
-              onClick={() => onSave(false)}
+              onClick={() => { void onSave(false); }}
               disabled={create.isPending}
             >
               <Save {...ICON} />
@@ -1680,7 +1710,7 @@ export const SalesOrderNew = () => {
             </Button>
             <Button
               variant={fromScan ? 'primary' : 'secondary'}
-              onClick={() => onSave(true)}
+              onClick={() => { void onSave(true); }}
               disabled={create.isPending || !!createdDocNo}
             >
               <Save {...ICON} />
