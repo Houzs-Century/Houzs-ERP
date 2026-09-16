@@ -37,5 +37,8 @@ One line per open item: what — waiting on — since. Delete the line when it i
 - MRP: one global PO-grouping toggle (per-SO or combine); PO date = customer date − supplier×category lead time; sofa/bedframe/accessory/(SP) mattress lines are covered only by a linked PO line; an SO without a processing date is not allocated; no MRP convert on the phone.
 - Six documents (SO/PO/GR/PI/SI/DO): effective status SUBMITTED (DO keeps DRAFT/LOADED/DISPATCHED); cancel approval on SO only; every document gets line delivery date, line remark, FOC, per-line warehouse and a change log; discount typed as amount or %.
 
+## Recurring
+- Monthly: read every `docs/modules/*.md` against the code it describes and correct what drifted; the guides are orientation, the code is the authority (last done 2026-09-16) — dev
+
 ## Handoffs still in tasks/
 Two remain until their work lands: `HANDOFF-exports-import-money-2026-09-15.md` (PR #3972, Delivery Orders export) and `HANDOFF-2026-09-15-mrp-stale-demand.md` (the owner's MRP close-out decision). Delete each when done. No new handoff files.
