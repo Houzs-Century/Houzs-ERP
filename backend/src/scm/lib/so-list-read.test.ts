@@ -24,7 +24,7 @@ const so = (over: Row): Row => ({
   customer_so_no: null, branding: 'ZANOTTI', phone: '012-345 6789', ...over,
 });
 
-const params = (over: Partial<SoListParams>): SoListParams => ({ status: null, q: null, sort: null, from: null, to: null, f: [], ...over });
+const params = (over: Partial<SoListParams>): SoListParams => ({ status: null, q: null, sort: null, from: null, to: null, f: [], debtorNames: null, currencies: null, ...over });
 
 async function docNos(rows: Row[], p: SoListParams, companyId = 1): Promise<string[]> {
   const sb = fakeSb({ mfg_sales_orders_with_payment_totals: rows, mfg_sales_order_payments: [] });
@@ -67,7 +67,35 @@ describe('the Sales Order list predicate set', () => {
   it('reads the query string the list sends, repeated f rows included', () => {
     const q: Record<string, string> = { status: 'CONFIRMED', q: 'x', sort: 'doc_no:asc' };
     expect(readSoListParams((k) => q[k], (k) => (k === 'f' ? ['a:is:1', 'b:is:2'] : undefined)))
-      .toEqual({ status: 'CONFIRMED', q: 'x', sort: 'doc_no:asc', from: null, to: null, f: ['a:is:1', 'b:is:2'] });
+      .toEqual({ status: 'CONFIRMED', q: 'x', sort: 'doc_no:asc', from: null, to: null, f: ['a:is:1', 'b:is:2'], debtorNames: null, currencies: null });
+  });
+
+  it('pushes the Customer (debtor) Name funnel into the query so it matches across pages', async () => {
+    const rows = [
+      so({ doc_no: 'A', debtor_name: 'ALICE' }),
+      so({ doc_no: 'B', debtor_name: 'BOB' }),
+      so({ doc_no: 'C', debtor_name: 'ALICE' }),
+    ];
+    // Only ALICE's orders, regardless of which page they sit on — the point of
+    // the server-side push (multi-value, so a second customer could be added).
+    expect(await docNos(rows, params({ debtorNames: ['ALICE'], sort: 'doc_no:asc' }))).toEqual(['A', 'C']);
+    expect(await docNos(rows, params({ debtorNames: ['ALICE', 'BOB'], sort: 'doc_no:asc' }))).toEqual(['A', 'B', 'C']);
+  });
+
+  it('pushes the Currency funnel into the query', async () => {
+    const rows = [
+      so({ doc_no: 'A', currency: 'MYR' }),
+      so({ doc_no: 'B', currency: 'USD' }),
+    ];
+    expect(await docNos(rows, params({ currencies: ['USD'], sort: 'doc_no:asc' }))).toEqual(['B']);
+  });
+
+  it('parses the debtorNames / currencies funnel params as JSON arrays (commas in names survive)', () => {
+    const q: Record<string, string> = { debtorNames: JSON.stringify(['ALICE, INC', 'BOB']), currencies: JSON.stringify(['MYR']) };
+    const p = readSoListParams((k) => q[k], () => undefined);
+    expect(p.debtorNames).toEqual(['ALICE, INC', 'BOB']);
+    expect(p.currencies).toEqual(['MYR']);
+    expect(readSoListParams((k) => (k === 'debtorNames' ? 'not json' : undefined), () => undefined).debtorNames).toBeNull();
   });
 });
 
