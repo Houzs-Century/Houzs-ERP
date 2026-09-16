@@ -16,6 +16,17 @@
    RE-READS on a FRESH connection and asserts the invariant "every SKU with
    bindings now stores its derived cost" (shape, not a row count).
 
+   TRACEABLE + REVERSIBLE. In apply, for each SKU it changes it writes TWO
+   scm.mfg_product_cost_history rows: a pre-image baseline (the as-was manual
+   cost, effective_from 2000-01-01, notes 'pre-backfill baseline (as-was manual
+   cost)') and the new derived row (effective today, source_supplier_id = the
+   chosen supplier). The baseline is BOTH the rollback source AND the as-of floor
+   so a historical order re-priced with the flag ON keeps its old budget cost
+   (resolveMfgProductCostAsOf reads the newest row <= the order date). Both
+   inserts are guarded so a re-run adds no duplicate. ROLLBACK: turn the flag off
+   and restore each product's cost columns from its baseline row (SQL in the PR
+   body / the stage-4 report).
+
    DO NOT run apply on production without the owner's explicit go — that live
    reprice is auto-derive stage 4.
 
@@ -36,6 +47,10 @@ const LIST_LIMIT = Number(process.env.LIST_LIMIT) > 0 ? Number(process.env.LIST_
 const note = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 const bad = (m) => console.log(process.env.GITHUB_ACTIONS ? `::error::${m}` : `ERROR ${m}`);
 const rm = (sen) => (sen == null ? '-' : (Number(sen) / 100).toFixed(2));
+/** Today in Malaysia time (UTC+8) as YYYY-MM-DD — the derived row's effective date. */
+const todayMyt = () => new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
+const BASELINE_NOTE = 'pre-backfill baseline (as-was manual cost)';
+const DERIVED_NOTE = 'auto-derived backfill (stage 4)';
 
 if (APPLY && process.env.CONFIRM !== CONFIRM_PHRASE) {
   bad(`MODE=apply requires CONFIRM="${CONFIRM_PHRASE}"`);
@@ -92,7 +107,7 @@ async function planCompany(client, companyId) {
   }
 
   const changes = [];
-  const byReason = { no_supplier_binding: 0, all_zero_priced: 0, product_not_found: 0 };
+  const byReason = { no_supplier_binding: 0, all_zero_priced: 0, no_supplier_with_cost: 0, product_not_found: 0 };
   for (const p of products) {
     const derived = deriveProductCostFromSuppliers(p.category, byCode.get(p.code) ?? []);
     if (derived.skipped) { byReason[derived.reason] = (byReason[derived.reason] ?? 0) + 1; continue; }
@@ -111,6 +126,8 @@ async function planCompany(client, companyId) {
       id: p.id, code: p.code, category: p.category,
       oldCost, newCost, p1Changed, seatChanged,
       delta: newCost - oldCost,
+      chosenSupplierId: derived.chosenSupplierId ?? null,
+      old: { base_price_sen: p.base_price_sen ?? null, price1_sen: p.price1_sen ?? null, seat_height_prices: p.seat_height_prices ?? null },
       patch: { base_price_sen: newBase, price1_sen: newP1, seat_height_prices: newSeat },
     });
   }
@@ -128,7 +145,7 @@ try {
     grandChanges += changes.length;
     note('');
     note(`===== Company ${co} =====`);
-    note(`active SKUs: ${products}; would CHANGE: ${changes.length}; skipped no-binding: ${byReason.no_supplier_binding}; skipped all-zero: ${byReason.all_zero_priced}`);
+    note(`active SKUs: ${products}; would CHANGE: ${changes.length}; skipped no-binding: ${byReason.no_supplier_binding}; skipped all-zero: ${byReason.all_zero_priced}; skipped no-cost-tier: ${byReason.no_supplier_with_cost}`);
     const movers = [...changes].sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta)).slice(0, LIST_LIMIT);
     note(`biggest movers (code | category | old RM -> new RM${'  (+P1/seat)'}):`);
     for (const m of movers) {
@@ -138,7 +155,20 @@ try {
     if (changes.length > movers.length) note(`  ... ${changes.length - movers.length} more.`);
 
     if (APPLY) {
+      const today = todayMyt();
       for (const ch of changes) {
+        // 1) Pre-image baseline (as-was manual cost) — rollback source AND the
+        //    as-of floor so a historical order keeps its old budget cost. Guarded
+        //    so a re-run never appends a second baseline for the same SKU.
+        await sql`
+          INSERT INTO scm.mfg_product_cost_history
+            (company_id, item_code, base_price_sen, price1_sen, seat_height_prices, source_supplier_id, effective_from, notes)
+          SELECT ${co}, ${ch.code}, ${ch.old.base_price_sen}, ${ch.old.price1_sen},
+                 ${sql.json(ch.old.seat_height_prices ?? null)}, NULL, '2000-01-01', ${BASELINE_NOTE}
+          WHERE NOT EXISTS (
+            SELECT 1 FROM scm.mfg_product_cost_history
+            WHERE company_id = ${co} AND item_code = ${ch.code} AND notes = ${BASELINE_NOTE})`;
+        // 2) The reprice.
         await sql`
           UPDATE scm.mfg_products
           SET base_price_sen = ${ch.patch.base_price_sen},
@@ -146,8 +176,20 @@ try {
               seat_height_prices = ${sql.json(ch.patch.seat_height_prices ?? null)},
               updated_at = now()
           WHERE id = ${ch.id} AND company_id = ${co}`;
+        // 3) The derived-cost history row (effective today, from the chosen
+        //    supplier). Guarded per (company, code, today, derived-note) so a
+        //    same-day re-run does not append a duplicate.
+        await sql`
+          INSERT INTO scm.mfg_product_cost_history
+            (company_id, item_code, base_price_sen, price1_sen, seat_height_prices, source_supplier_id, effective_from, notes)
+          SELECT ${co}, ${ch.code}, ${ch.patch.base_price_sen}, ${ch.patch.price1_sen},
+                 ${sql.json(ch.patch.seat_height_prices ?? null)}, ${ch.chosenSupplierId}, ${today}, ${DERIVED_NOTE}
+          WHERE NOT EXISTS (
+            SELECT 1 FROM scm.mfg_product_cost_history
+            WHERE company_id = ${co} AND item_code = ${ch.code}
+              AND effective_from = ${today} AND notes = ${DERIVED_NOTE})`;
       }
-      note(`APPLIED ${changes.length} product cost updates for company ${co}.`);
+      note(`APPLIED ${changes.length} product cost updates for company ${co} (+ baseline & derived history rows).`);
     }
   }
 
