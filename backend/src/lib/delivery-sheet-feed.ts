@@ -15,6 +15,7 @@
 import { LOCATION_MAP } from "../services/autocount-master-maps";
 import { bookSpellingOrOwn, resolveAcAgent } from "../services/autocount-writeback";
 import { summariseReadiness } from "../scm/lib/so-readiness";
+import { SO_DELIVERED_OR_BEYOND } from "../scm/shared/so-deliverable-states";
 
 /** One head row, as the feed SQL below returns it. Every date is `::text`
  *  because postgres.js leaves `date` columns as strings but turns
@@ -172,14 +173,12 @@ WHERE t.last_modified > ?2::timestamptz
 ORDER BY t.last_modified, t.doc_no
 LIMIT ?3`;
 
-/** The statuses that mean the goods have left — the book's "fully transferred".
- *  "Undelivered" is deliberately NOT a second list here: the base SELECT already
- *  drops DRAFT and CANCELLED, so an undelivered order is simply one that is not
- *  in this set (so-delivery-sync.ts's DELIVERABLE_FROM is the auto-advance rule,
- *  a different question, and excludes ON_HOLD for its own reason). */
-export const DELIVERED_STATUSES = ["DELIVERED", "INVOICED", "CLOSED"] as const;
-
-const inList = (xs: readonly string[]) => xs.map((s) => `'${s}'`).join(", ");
+/* "The goods have left" is SO_DELIVERED_OR_BEYOND (so-deliverable-states.ts,
+   the one home) and "undelivered" is deliberately NOT a second list: the base
+   SELECT already drops DRAFT and CANCELLED (SO_NOT_AN_ORDER), so an undelivered
+   order is simply one not in that set — held orders included, which is why
+   so-delivery-sync.ts's DELIVERABLE_FROM (the auto-advance rule) is not reused. */
+const inList = (xs: Iterable<string>) => [...xs].sort().map((s) => `'${s}'`).join(", ");
 
 /**
  * The Overdue History feed (replaces AutoCount `/SalesOrder/getOverdue`,
@@ -192,7 +191,7 @@ export const FEED_OVERDUE_SQL = `
 SELECT t.*, t.last_modified::text AS last_modified_text
 FROM (${FEED_BASE_SQL}
 ) t
-WHERE t.status NOT IN (${inList(DELIVERED_STATUSES)})
+WHERE t.status NOT IN (${inList(SO_DELIVERED_OR_BEYOND)})
   AND t.customer_delivery_date::date < (now() AT TIME ZONE 'Asia/Kuala_Lumpur')::date
 ORDER BY t.customer_delivery_date, t.doc_no`;
 
@@ -207,7 +206,7 @@ export const FEED_BALANCE_COLLECTION_SQL = `
 SELECT t.*, t.last_modified::text AS last_modified_text
 FROM (${FEED_BASE_SQL}
 ) t
-WHERE t.status IN (${inList(DELIVERED_STATUSES)})
+WHERE t.status IN (${inList(SO_DELIVERED_OR_BEYOND)})
   AND t.balance_sen_live > 0
 ORDER BY t.customer_delivery_date NULLS LAST, t.doc_no`;
 
