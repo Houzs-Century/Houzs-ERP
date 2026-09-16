@@ -99,15 +99,15 @@ export const useGrns = (status?: string) =>
 // the resolved grns.status DB value (UPPERCASE); each GRN filter-pill bucket
 // (draft/posted/cancelled) maps 1:1 to a single DB status, so no bucket needs
 // to be dropped here.
-export function useGrnsPaged(params: { page: number; pageSize: number; status?: string; q?: string; sort?: string }) {
-  const { page, pageSize, status, q, sort } = params;
+export function useGrnsPaged(params: { page: number; pageSize: number; status?: string; q?: string; sort?: string; creditorNames?: string[]; creditorCodes?: string[]; currencies?: string[] }) {
+  const { page, pageSize, status, q, sort, creditorNames, creditorCodes, currencies } = params;
   // The filter half is shared with the two exports (grn-list-export.ts), so an
   // export can never be sent a different filter than the list it was pressed on.
-  const usp = grnListParams({ status, q, sort });
+  const usp = grnListParams({ status, q, sort, creditorNames, creditorCodes, currencies });
   usp.set('page', String(page));
   usp.set('pageSize', String(pageSize));
   return useQuery({
-    queryKey: ['grns-paged', page, pageSize, status ?? '', q ?? '', sort ?? ''],
+    queryKey: ['grns-paged', page, pageSize, status ?? '', q ?? '', sort ?? '', JSON.stringify(creditorNames ?? []), JSON.stringify(creditorCodes ?? []), JSON.stringify(currencies ?? [])],
     queryFn: ({ signal }) => authedFetch<{ grns: any[]; total: number; page: number; pageSize: number; statusCounts: { all: number; draft: number; posted: number; cancelled: number } & Partial<Record<'on_hold', number>> }>(`/grns?${usp.toString()}`, { signal }),
     placeholderData: (prev: any) => prev,
     staleTime: 30_000,
