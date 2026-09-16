@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useState } from "react";
-import { DataTable, type Column, type FunnelAllRowsScope } from "./DataTable";
+import { DataTable, type Column } from "./DataTable";
 import { downloadCSV } from "../lib/csv";
 
 vi.mock("../lib/csv", async (importOriginal) => {
@@ -1477,89 +1477,57 @@ describe("Sort is persisted, and Reset must clear it", () => {
   });
 });
 
-describe("DataTable funnelAllRows (whole filtered set)", () => {
-  /* Owner 2026-09-16 — a column funnel is client-side, so on a server-paged list
-     it only ever filtered the loaded page: funnelling a value that lives on a
-     LATER page hid every row on this one and never reached the match. With
-     funnelAllRows wired, an active funnel fetches every matching row (all pages)
-     and filters over that instead. */
-  it("filters over the fetched whole set, not just the loaded page, when a funnel is active", async () => {
+describe("DataTable onColFiltersChange (server-side funnel push)", () => {
+  /* Owner 2026-09-16 — a server-paged list pushes its SERVER-FILTERABLE funnels
+     into the list query so pagination runs over the filtered set. The grid still
+     owns and persists the funnels; it just REPORTS them so the page can build
+     the query (mirrors onSortChange + serverSort). */
+  it("reports a restored funnel on mount", async () => {
     setViewport(1280);
-    // The funnel targets a status that appears on NO loaded-page row — the whole
-    // point: a page-local funnel would show zero, the widened one finds it.
-    localStorage.setItem("dt:filters:funnel-all", JSON.stringify({ status: ["Special"] }));
-    const special: Row = { id: 999, name: "Order 999", status: "Special" };
-    const fetchRows = vi.fn().mockResolvedValue([...rows, special]);
-    const seen: Row[][] = [];
+    localStorage.setItem("dt:filters:ccf-mount", JSON.stringify({ status: ["Open"] }));
+    const seen: Record<string, string[]>[] = [];
     render(
       <DataTable
-        tableId="funnel-all"
+        tableId="ccf-mount"
         rows={rows}
         columns={columns}
         getRowKey={(row) => row.id}
-        onFilteredRowsChange={(r) => seen.push(r)}
-        funnelAllRows={{
-          fetchRows,
-          signature: "tab=all",
-          onScopeChange: () => {},
-          onError: () => {},
-        }}
+        onColFiltersChange={(cf) => seen.push(cf)}
       />,
     );
-    // Before the read resolves the page-local funnel matches nothing.
-    expect(seen.at(-1)).toHaveLength(0);
-    // Once the whole set arrives, the funnel finds the single matching row.
-    await waitFor(() => expect(seen.at(-1)).toEqual([special]));
-    expect(fetchRows).toHaveBeenCalledTimes(1);
-    expect(fetchRows).toHaveBeenCalledWith({ exportKeys: ["status"], filterKeys: ["status"] });
+    await waitFor(() => expect(seen.at(-1)).toEqual({ status: ["Open"] }));
   });
 
-  it("does not read, and reports no scope, when no funnel is active", () => {
+  it("reports an empty object when no funnel is set", async () => {
     setViewport(1280);
-    const fetchRows = vi.fn().mockResolvedValue(rows);
-    const scopes: (FunnelAllRowsScope | null)[] = [];
+    const seen: Record<string, string[]>[] = [];
     render(
       <DataTable
-        tableId="funnel-all-idle"
+        tableId="ccf-empty"
         rows={rows}
         columns={columns}
         getRowKey={(row) => row.id}
-        funnelAllRows={{
-          fetchRows,
-          signature: "tab=all",
-          onScopeChange: (s) => scopes.push(s),
-          onError: () => {},
-        }}
+        onColFiltersChange={(cf) => seen.push(cf)}
       />,
     );
-    expect(fetchRows).not.toHaveBeenCalled();
-    expect(scopes.at(-1)).toBeNull();
+    await waitFor(() => expect(seen.at(-1)).toEqual({}));
   });
 
-  it("reverts to the loaded page and reports the error when the whole-set fetch fails", async () => {
+  it("reports the new funnel when a value is ticked in the popover", async () => {
     setViewport(1280);
-    localStorage.setItem("dt:filters:funnel-all-fail", JSON.stringify({ status: ["Open"] }));
-    const fetchRows = vi.fn().mockRejectedValue(new Error("too many to hold"));
-    const onError = vi.fn();
-    const seen: Row[][] = [];
+    const seen: Record<string, string[]>[] = [];
     render(
       <DataTable
-        tableId="funnel-all-fail"
+        tableId="ccf-tick"
         rows={rows}
         columns={columns}
         getRowKey={(row) => row.id}
-        onFilteredRowsChange={(r) => seen.push(r)}
-        funnelAllRows={{
-          fetchRows,
-          signature: "tab=all",
-          onScopeChange: () => {},
-          onError,
-        }}
+        onColFiltersChange={(cf) => seen.push(cf)}
       />,
     );
-    await waitFor(() => expect(onError).toHaveBeenCalledOnce());
-    // Page-local funnel still works: the 100 "Open" rows of the loaded page.
-    expect(seen.at(-1)).toHaveLength(rows.filter((r) => r.status === "Open").length);
+    fireEvent.click(screen.getByTitle("Filter & sort Status"));
+    fireEvent.click(await screen.findByRole("checkbox", { name: /Open/ }));
+    await waitFor(() => expect(seen.at(-1)).toEqual({ status: ["Open"] }));
   });
 });
 

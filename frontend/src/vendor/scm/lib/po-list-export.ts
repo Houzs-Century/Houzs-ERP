@@ -14,7 +14,19 @@ import { authedFetch } from './authed-fetch';
 import { applyListMrpEnrichment, type EnrichableMrpRow, type ListMrpEnrichment } from '../../../lib/listMrpEnrichment';
 import type { PoListLine } from './po-line-export-columns';
 
-export type PoListFilterParams = { status?: string; supplierId?: string; q?: string; sort?: string };
+export type PoListFilterParams = {
+  status?: string;
+  supplierId?: string;
+  q?: string;
+  sort?: string;
+  /* Server-filterable column funnels (owner 2026-09-16): the Creditor Name /
+     Code and Currency funnels the grid pushes down so pagination runs over the
+     filtered set. Sent as JSON arrays in one param each — a creditor name may
+     contain a comma. */
+  creditorNames?: string[];
+  creditorCodes?: string[];
+  currencies?: string[];
+};
 
 /** The list's filter as query parameters — no paging. */
 export function poListParams(f: PoListFilterParams): URLSearchParams {
@@ -23,6 +35,9 @@ export function poListParams(f: PoListFilterParams): URLSearchParams {
   if (f.supplierId) usp.set('supplierId', f.supplierId);
   if (f.q && f.q.trim()) usp.set('q', f.q.trim());
   if (f.sort) usp.set('sort', f.sort);
+  if (f.creditorNames && f.creditorNames.length) usp.set('creditorNames', JSON.stringify(f.creditorNames));
+  if (f.creditorCodes && f.creditorCodes.length) usp.set('creditorCodes', JSON.stringify(f.creditorCodes));
+  if (f.currencies && f.currencies.length) usp.set('currencies', JSON.stringify(f.currencies));
   return usp;
 }
 

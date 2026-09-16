@@ -19,7 +19,7 @@
 import { Hono } from 'hono';
 import { PO_STATUS_BUCKETS } from '../lib/po-status-buckets';
 import { HELD_OR_TERM, isDocumentHeld } from '../lib/document-hold';
-import { PO_HEADER_COLS, PO_LIST_SELECT, filterPoList, orderPoList, readPoListFilters, stampPoListGrns } from '../lib/po-list-read';
+import { PO_HEADER_COLS, PO_LIST_SELECT, poListSelect, filterPoList, orderPoList, readPoListFilters, stampPoListGrns } from '../lib/po-list-read';
 import { attachPoLines } from '../lib/po-line-export';
 import { firstUnorderableSo, soNotOrderableResponse } from '../lib/source-document-gates';
 import { soLinkItemMismatch, type SoSourceLine } from '../lib/so-link-item-identity';
@@ -424,7 +424,7 @@ mfgPurchaseOrders.get('/', async (c) => {
 
     const filters = readPoListFilters((k) => c.req.query(k));
     const q = filterPoList(
-      orderPoList(supabase.from('purchase_orders').select(PO_LIST_SELECT, { count: 'exact' }), filters.sort),
+      orderPoList(supabase.from('purchase_orders').select(poListSelect(filters), { count: 'exact' }), filters.sort),
       filters,
       c,
       VALID_STATUSES,

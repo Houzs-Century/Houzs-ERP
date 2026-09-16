@@ -63,6 +63,7 @@ import { SearchScopeHint } from "../../components/SearchScopeHint";
 import { useDebouncedSearchTerm, useSearchResultTransition } from "../../hooks/useServerSearch";
 import {
   usePurchaseOrdersPaged,
+  useSuppliers,
   useEnrichedPoListRows,
   usePurchaseOrderDetail,
   fetchPurchaseOrderDetail,
@@ -757,6 +758,27 @@ export function PurchaseOrdersListV2() {
   // DataTable `selection` prop only renders the checkboxes + reports toggles).
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [printingDocs, setPrintingDocs] = useState(false);
+  /* The SERVER-FILTERABLE column funnels, reported by DataTable's
+     onColFiltersChange and pushed into the list query so pagination runs over
+     the filtered set (owner 2026-09-16): Creditor Name (the "supplier" column),
+     Creditor Code, Currency. Every other funnel (line-level: Item Code,
+     Description, Location, Item Group, Delivery Date, Remaining/Qty/…, SO Doc No;
+     the Doc Date value-set; and the MRP-derived Assigned SO / Delivered) stays
+     client-side on the loaded page — those columns are line- or MRP-level and
+     the list query cannot express them cheaply. */
+  const [serverFunnels, setServerFunnels] = useState<{ creditorNames?: string[]; creditorCodes?: string[]; currencies?: string[] }>({});
+  /* Seed the Creditor Name / Code funnel checklists with EVERY supplier (not
+     only those on the loaded page), so a creditor whose POs are all on a later
+     page is still pickable — the point of pushing the filter server-side. */
+  const suppliersQ = useSuppliers();
+  const supplierNames = useMemo(
+    () => [...new Set((suppliersQ.data ?? []).map((s) => s.name).filter((n): n is string => !!n))],
+    [suppliersQ.data],
+  );
+  const supplierCodes = useMemo(
+    () => [...new Set((suppliersQ.data ?? []).map((s) => s.code).filter((c): c is string => !!c))],
+    [suppliersQ.data],
+  );
   const { requestTerm: debouncedSearch } = useDebouncedSearchTerm(search);
 
   // Send the active tab's BUCKET NAME as `status`; the backend resolves each
@@ -771,6 +793,7 @@ export function PurchaseOrdersListV2() {
     status: apiStatus,
     q: debouncedSearch,
     sort,
+    ...serverFunnels,
   });
   const searchTransition = useSearchResultTransition({
     inputTerm: search,
@@ -836,6 +859,29 @@ export function PurchaseOrdersListV2() {
     else next.set("page", String(p));
     setParams(next, { replace: true });
   };
+  /* DataTable reports its funnel state here; we lift the SERVER-FILTERABLE ones
+     into the list query. A changed server funnel restarts at page 1 (mirrors
+     setSortAndReset), but the FIRST report — the funnel DataTable restored from
+     storage on mount — must not clobber a deep-linked ?page=. */
+  const funnelSyncedRef = useRef(false);
+  const serverFunnelSigRef = useRef("");
+  const onColFiltersChange = (colFilters: Record<string, string[] | undefined>) => {
+    const pick = (key: string): string[] | undefined => {
+      const v = colFilters[key];
+      return v && v.length > 0 ? v : undefined;
+    };
+    const next = {
+      creditorNames: pick("supplier"),
+      creditorCodes: pick("creditor_code"),
+      currencies: pick("currency"),
+    };
+    const sig = JSON.stringify(next);
+    if (sig === serverFunnelSigRef.current) return;
+    serverFunnelSigRef.current = sig;
+    setServerFunnels(next);
+    if (!funnelSyncedRef.current) { funnelSyncedRef.current = true; return; }
+    setPageParam(0);
+  };
   const setStatusChip = (s: StatusTab) => {
     const next = new URLSearchParams(params);
     if (s === "all") next.delete("status");
@@ -877,10 +923,10 @@ export function PurchaseOrdersListV2() {
   };
 
   /* The ONE Export (owner 2026-09-15): every order the list's tab + search +
-     sort match — not the page on screen — one row per line, with the grid's
-     visible columns, funnels and sort (DataTable `exportLines`). The filter is
-     the one the list request is built from: the settled search term. */
-  const exportFilters = { status: apiStatus, q: debouncedSearch, sort };
+     sort (and server-filterable funnels) match — not the page on screen — one
+     row per line, with the grid's visible columns, funnels and sort (DataTable
+     `exportLines`). The filter is the one the list request is built from. */
+  const exportFilters = { status: apiStatus, q: debouncedSearch, sort, ...serverFunnels };
   const exportLines = {
     fetchRows: (need: { exportKeys: string[]; filterKeys: string[] }) => fetchPoExportRows<PoGridRow>(exportFilters, need),
     linesOf: (r: PoGridRow): readonly PoListLine[] => r.lines ?? [],
@@ -1121,6 +1167,9 @@ export function PurchaseOrdersListV2() {
       width: "120px",
       disableSort: true,
       getValue: (r) => r.supplier?.code ?? "",
+      // Server-filterable: the funnel is pushed into the list query, so seed the
+      // checklist with every creditor code (not just the loaded page's).
+      filterSeedValues: supplierCodes,
       render: (r) => <span className="font-mono text-[11.5px] text-ink-secondary">{r.supplier?.code || "—"}</span>,
     },
     {
@@ -1131,6 +1180,9 @@ export function PurchaseOrdersListV2() {
       label: PO_LINE_LABELS.creditorName,
       disableSort: true,
       getValue: (r) => supplierNameOf(r),
+      // Server-filterable: seed with every creditor name so one not on the
+      // loaded page is still pickable (the point of the server-side push).
+      filterSeedValues: supplierNames,
       render: (r) => (
         <div className="min-w-0 truncate text-[13px] font-semibold text-ink">
           {supplierNameOf(r)}
@@ -1515,6 +1567,7 @@ export function PurchaseOrdersListV2() {
                 /* Feeds the stat strip so the tiles describe what is on screen
                    rather than what the server matched (owner 2026-08-12). */
                 onFilteredRowsChange={visible.onFilteredRowsChange}
+                onColFiltersChange={onColFiltersChange}
                 loading={listLoading}
                 error={error ? (error as Error).message ?? "Failed to load" : null}
                 columns={columns}
