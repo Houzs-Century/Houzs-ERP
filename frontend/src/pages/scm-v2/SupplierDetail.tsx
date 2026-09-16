@@ -861,15 +861,8 @@ const InfoCell = ({ label, value }: { label: string; value: string }) => (
   </div>
 );
 
-/* ════════════════════════════════════════════════════════════════════════
-   CategorySection — collapsible wrapper for one category's SKU mappings.
-
-   PR — Commander 2026-05-27. Default open; click the header row to toggle.
-   Uses native <details>-style behaviour via useState so we can persist the
-   open/closed state across re-renders (which a raw <details> would lose on
-   key-change). No localStorage — the user's task brief explicitly says
-   "Persist nothing".
-   ════════════════════════════════════════════════════════════════════════ */
+// CategorySection — collapsible wrapper for one category's SKU mappings.
+// Open/closed state is persisted per panel (usePersistedOpen).
 
 const CategorySection = ({
   label,
@@ -2456,9 +2449,7 @@ const ImportBindingsDialog = ({
   );
 };
 
-/* ════════════════════════════════════════════════════════════════════════
-   Last 10 POs table
-   ════════════════════════════════════════════════════════════════════════ */
+// Last 10 POs table.
 
 type LastPo = {
   id: string;
@@ -2532,9 +2523,7 @@ const LastTenPOsTable = ({ rows }: { rows: LastPo[] }) => {
   );
 };
 
-/* ════════════════════════════════════════════════════════════════════════
-   SKU form modal — create or edit a supplier_material_binding
-   ════════════════════════════════════════════════════════════════════════ */
+// SKU form modal — create or edit a supplier_material_binding.
 
 type SkuDraft = {
   materialKind: MaterialKind;
@@ -2562,12 +2551,8 @@ const SkuFormDialog = ({
   const create = useCreateBinding();
   const update = useUpdateBinding();
   const notify = useNotify();
-  /* PR — Commander 2026-05-27 ("为什么不能 auto-bind"): when commander types
-     an internal SKU code and the supplier_sku field is still empty, look up
-     the SKU row in the mfg_products cache and auto-derive the supplier_sku
-     using composeSupplierSku() — same per-SKU suffix rule the Model-first
-     picker uses. The user can still overwrite the autofill manually. We
-     don't stomp an existing supplier_sku and don't run in edit mode. */
+  // Auto-derives supplier_sku from the typed internal code (create flow only,
+  // never overwriting a value the user typed) — see the useEffect below.
   const products = useMfgProducts();
 
   const [draft, setDraft] = useState<SkuDraft>(() =>
@@ -2600,21 +2585,16 @@ const SkuFormDialog = ({
         },
   );
 
-  /* Lazy lookup by code. The mfg_products cache is module-shared across the
-     page (the SKU mappings table + the Model picker already use it), so
-     reading from it here is free. Returns null when the typed code isn't a
-     known internal SKU — keeps the autofill no-op for free-text material
-     codes (raw / fabric / one-off accessory). */
+  // Null when the code isn't a known internal SKU, so autofill no-ops for
+  // free-text material codes (raw / fabric / one-off accessory).
   const findProductByCode = (code: string): MfgProductRow | null => {
     if (!code.trim()) return null;
     const wanted = code.trim().toUpperCase();
     return (products.data ?? []).find((p) => (p.code ?? '').toUpperCase() === wanted) ?? null;
   };
 
-  /* Auto-bind supplier_sku once the typed internal code resolves to a known
-     mfg_products row AND the user hasn't already typed something into the
-     Supplier SKU field. Only fires for the create flow (editing === null);
-     editing an existing binding leaves the supplier_sku alone. */
+  // Create flow only: fill supplier_sku from the resolved product when the
+  // field is still empty; editing an existing binding leaves it alone.
   const supplierSkuRef = useRef(draft.supplierSku);
   supplierSkuRef.current = draft.supplierSku;
   useEffect(() => {
@@ -2627,20 +2607,15 @@ const SkuFormDialog = ({
     if (!next || next === supplierSkuRef.current) return;
     setDraft((s) => ({
       ...s,
-      // Also seed materialName from the resolved product if it was blank,
-      // so the user doesn't have to retype the internal description.
+      // Seed a blank description from the resolved product too.
       materialName: s.materialName.trim() || (p.name ?? s.materialName),
       supplierSku: next,
     }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft.itemCode, draft.materialKind, products.data, editing]);
 
-  /* #5 — live "becomes →" preview (mirrors the New Models bulk form's
-     previewCodes banner). As the operator types the internal code, resolve it
-     against the mfg_products cache and show what composeSupplierSku() will
-     produce — the SAME suffix rule the auto-fill above applies — so the
-     generated Supplier SKU isn't a silent surprise. Only meaningful for
-     manufacturing SKUs that resolve to a known product. */
+  // Live preview of what composeSupplierSku() will derive from the typed code,
+  // so the auto-filled Supplier SKU isn't a silent surprise.
   const skuPreview = useMemo(() => {
     if (draft.materialKind !== 'mfg_product') return null;
     const code = draft.itemCode.trim();
@@ -2661,9 +2636,8 @@ const SkuFormDialog = ({
       notify({ title: 'Internal code, description and supplier SKU are required.', tone: 'error' });
       return;
     }
-    // Staff #7 — on a FAILED bind, keep the dialog OPEN and surface the error
-    // (it used to fail silently → the operator re-typed everything). onClose
-    // fires on success only, so the draft is never lost on error.
+    // Keep the dialog open on a failed save and surface the error, so the
+    // draft is never lost (onClose fires on success only).
     const onError = (err: unknown) => notify({
       title: 'Save failed',
       body: err instanceof Error ? err.message : 'Something went wrong.',
@@ -2751,10 +2725,7 @@ const SkuFormDialog = ({
               />
             </label>
 
-            {/* #5 — live code preview. Shows what composeSupplierSku() derives
-                from the typed internal code (same look as the New Models bulk
-                form's "Will create →" banner) so the auto-filled Supplier SKU
-                isn't silent. Flags when the operator has overridden the rule. */}
+            {/* Preview of the auto-derived Supplier SKU; flags an override. */}
             {skuPreview && (
               <div
                 className={styles.formGridFull}
@@ -2862,9 +2833,7 @@ const SkuFormDialog = ({
   );
 };
 
-/* ════════════════════════════════════════════════════════════════════════
-   Supplier Info card with inline edit (all fields)
-   ════════════════════════════════════════════════════════════════════════ */
+// Supplier Info card with inline edit (all fields).
 
 const SupplierInfoCard = ({
   supplier,
