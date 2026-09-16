@@ -149,6 +149,15 @@ const WINANSI_ABOVE_LATIN1 = new Set([
   0x2022, 0x2026, 0x2030, 0x2039, 0x203a, 0x20ac, 0x2122,
 ]);
 
+/* The generators' own joiners — the arrow between an old and a new value, the
+   minus of a negative figure, the "about" of a converted amount — are outside
+   WinAnsi AND outside both subsets, so a report that is otherwise plain Latin
+   would refuse to print over its own punctuation. Folded to ASCII for paper;
+   the screen keeps the symbols. Applied to a whole cell, a customer's own
+   arrow folds the same way, which is a faithful print, not a corruption. */
+const PAPER_FOLDS: ReadonlyArray<[RegExp, string]> = [[/→/g, '->'], [/←/g, '<-'], [/−/g, '-'], [/≈/g, '~']];
+export const paperText = (s: string): string => PAPER_FOLDS.reduce((acc, [re, to]) => acc.replace(re, to), s);
+
 /** Hanzi proper (vs. CJK punctuation) — picks which subset a document needs. */
 const isHanzi = (cp: number): boolean =>
   (cp >= 0x3400 && cp <= 0x4dbf) ||   // Unified Ideographs Ext. A

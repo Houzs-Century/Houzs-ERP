@@ -70,6 +70,12 @@ describe('mobile save() asks the differential question, like desktop and the ser
   });
 
   test('desktop still asks the same question — the two surfaces move together', () => {
-    expect(desktopDetailSource).toContain('sofaMixIntroduced(storedGroups, editedGroups)');
+    /* SalesOrderDetail now feeds the sofa-mix rule into the shared
+       collectSoEditSaveProblems aggregator, but the DIFFERENTIAL form is intact:
+       the before-set is the STORED lines (`items`), the after-set the edited
+       drafts, and the flat create-path rule is gone. */
+    expect(desktopDetailSource).toContain('sofaMixIntroduced(items.map((it) => it.item_group)');
+    expect(desktopDetailSource, 'desktop must not fall back to the flat create-path rule on an EDIT')
+      .not.toContain('hasSofaMixConflict(');
   });
 });
