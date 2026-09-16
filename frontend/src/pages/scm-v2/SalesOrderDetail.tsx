@@ -63,7 +63,8 @@ import {
 import { soDateGuardError, soErrorText } from '../../vendor/scm/lib/so-form-validate';
 import { FROZEN_LINE_LABEL, FROZEN_LINE_LABEL_STYLE, FROZEN_LINE_STYLE } from '../../vendor/scm/lib/so-frozen-line-style';
 import { zeroPriceClaim } from '../../vendor/scm/lib/zeroPriceClaim';
-import { notifySaveProblems } from '../../vendor/scm/components/SaveProblemsList';
+import { notifySaveProblems, SaveProblemsList, saveProblemsTitle } from '../../vendor/scm/components/SaveProblemsList';
+import { collectSoEditSaveProblems } from '../../vendor/scm/lib/so-save-problems-client';
 import {
   buildAmendmentHeaderChanges,
   hasAmendmentHeaderChanges,
@@ -814,79 +815,42 @@ export const SalesOrderDetail = () => {
     if (savingOrder) return;
     clearSaveFeedback();
 
-    /* Owner 2026-06-03 — phone is COMPULSORY on every SO. Mirror the New SO
-       guard so Edit can't blank it out (the backend PATCH now rejects an
-       empty phone too; this keeps the operator from a confusing 400). */
-    if (!handle.getPhone().trim()) {
-      notify({
-        title: 'Phone number is required',
-        body: 'every sales order must have a contact number.',
-        tone: 'error',
-      });
-      return;
-    }
+    /* ONE consolidated client pre-flight, shown all at once in the SAME
+       SaveProblemsList popup the server's 422 uses (owner 2026-09-16, after
+       #4007). Collects the detail editor's client-checkable blockers — the
+       compulsory phone, a blank line / staged add, the sofa-mix rule, every
+       line's option/size/fabric gap once a Processing Date is set, and the
+       header date fault — into one list via the shared collectSoEditSaveProblems.
+       No rule changes; name / address / venue / salesperson / location stay the
+       server's gate (it returns its own aggregated problems on the PATCH, shown
+       via notifySaveProblems below).
 
-    // Guard: every staged add needs a product. Named by POSITION — with
-    // several staged, "the new line" no longer says which card to go and fix.
+       Sofa-mix is INTRODUCED, not flat (2026-08-18): the server line paths refuse
+       only a change that INTRODUCES the mix, so an order written before the rule
+       existed stays editable; a flat client check would refuse saves the server
+       accepts. Variants are the PROCEED rule — required only once a Processing
+       Date is set. The header date fault comes from the CustomerCard's own
+       validate() (date XOR + no-past-date). */
     const blankAddPos = firstBlankStagedAdd(addingDrafts);
-    if (blankAddPos != null) {
-      setSaveError(`${stagedAddLabel(blankAddPos)} has no product picked — pick one, or remove that line before saving.`);
-      return;
-    }
-    // Guard: every existing line must still reference a product.
     const blankLine = Object.values(editingDrafts).find((d) => !d.itemCode.trim());
-    if (blankLine) {
-      setSaveError('Every line must have a product selected before saving.');
-      return;
-    }
-    /* Sofa is exclusive among main products — the server 400s
-       `so_sofa_no_other_main` when a sofa line rides with a bedframe/mattress.
-       Block + warn here so the operator gets one plain sentence, not a raw 400.
-       In edit mode every existing line is seeded into editingDrafts, so this
-       (+ EVERY staged add) covers the whole order.
-
-       INTRODUCED, not flat (2026-08-18). This asked `hasSofaMixConflict` on the
-       edited set alone, which is the CREATE path's question. The three server
-       line paths ask a different one — `mainMixIntroduced` refuses only a change
-       that INTRODUCES the mix, so an order written before the rule existed stays
-       editable — and the flat client check sat in front of them refusing saves
-       the server would have accepted. An operator on a pre-rule mixed order could
-       not save ANY change to it, not even a phone number, and the sentence blamed
-       a rule the server itself grandfathers. */
-    const storedGroups = items.map((it) => it.item_group);
-    const editedGroups = [
-      ...Object.values(editingDrafts),
-      ...stagedAddDrafts(addingDrafts),
-    ].filter((d) => d.itemCode.trim()).map((d) => d.itemGroup);
-    if (sofaMixIntroduced(storedGroups, editedGroups)) {
-      setSaveError(SOFA_MIX_MESSAGE);
-      return;
-    }
-    // Variants are only mandatory once a processing date is set: with a date
-    // the order is committed to production and purchasing needs the full spec.
-    // No processing date = still a draft, so allow saving with gaps.
-    if (header?.processing_date) {
-      const variantGaps = [
-        ...Object.values(editingDrafts),
-        ...stagedAddDrafts(addingDrafts),
-      ]
-        .filter((d) => d.itemCode.trim())
-        .map((d) => ({ code: d.itemCode, miss: missingRequiredVariants(d.itemGroup, d.variants, d.itemCode) }))
-        .filter((x) => x.miss.length > 0);
-      if (variantGaps.length > 0) {
-        setSaveError(
-          'Complete all variant selections before saving — '
-          + variantGaps.map((x) => `${x.code}: ${x.miss.join(', ')}`).join('; ') + '.',
-        );
-        return;
-      }
-    }
-
-    // Validate the header (date XOR + no-past-date) BEFORE writing anything,
-    // so an invalid date can't leave lines half-committed.
+    const editedDrafts = [...Object.values(editingDrafts), ...stagedAddDrafts(addingDrafts)].filter((d) => d.itemCode.trim());
     const headerErr = handle.validate();
-    if (headerErr) {
-      setSaveError(headerErr);
+    const problems = collectSoEditSaveProblems({
+      phone: handle.getPhone(),
+      processingDate: header?.processing_date ? String(header.processing_date).slice(0, 10) : '',
+      variantOffenders: editedDrafts
+        .map((d) => ({ itemCode: d.itemCode, missingLabels: missingRequiredVariants(d.itemGroup, d.variants, d.itemCode) }))
+        .filter((o) => o.missingLabels.length > 0),
+      sofaMixConflict: sofaMixIntroduced(items.map((it) => it.item_group), editedDrafts.map((d) => d.itemGroup)),
+      sofaMixMessage: SOFA_MIX_MESSAGE,
+      extra: [
+        ...(blankAddPos != null ? [{ code: 'line_unpicked', message: `${stagedAddLabel(blankAddPos)} has no product picked — pick one, or remove that line before saving.`, field: 'Line items' }] : []),
+        ...(blankLine ? [{ code: 'line_unpicked', message: 'Every line must have a product selected before saving.', field: 'Line items' }] : []),
+        ...(headerErr ? [{ code: 'date_invalid', message: headerErr, field: 'Dates' }] : []),
+      ],
+    });
+    if (problems.length > 0) {
+      void notify({ title: saveProblemsTitle(problems.length), body: <SaveProblemsList problems={problems} />, tone: 'error' });
       return;
     }
 
@@ -1142,26 +1106,28 @@ export const SalesOrderDetail = () => {
     const handle = customerCardRef.current;
     if (!handle || !header || savingOrder) return;
     clearSaveFeedback();
-    // Guard: every staged add must have a product picked (named by position).
+    /* ONE consolidated client pre-flight for the amendment submit, shown all at
+       once in the same SaveProblemsList popup the server uses (owner 2026-09-16).
+       An amendment does not re-check variants or sofa mix (those ride the line
+       diff); its client blockers are a blank staged add, the compulsory phone,
+       and the header date fault (the shared guard's original-date carve-out
+       keeps this from tripping on the SO's own unchanged past processing date —
+       the state every amendable SO is in). */
     const blankAddPos = firstBlankStagedAdd(addingDrafts);
-    if (blankAddPos != null) {
-      setSaveError(`${stagedAddLabel(blankAddPos)} has no product picked — pick one, or remove that line before submitting.`);
-      return;
-    }
-    /* Owner 2026-06-03 — phone is COMPULSORY on every SO. Mirrors saveEdit: the
-       header PATCH below carries the phone, so an amendment submit must not be a
-       back door to blanking it. */
-    if (!handle.getPhone().trim()) {
-      setSaveError('Phone number is required — every sales order must have a contact number.');
-      return;
-    }
-    /* Header date sanity BEFORE anything is written. With the shared guard's
-       original-date carve-out this no longer trips on the SO's own unchanged
-       past processing date — which is exactly the state every amendable SO is
-       in, and is what used to make this unreachable. */
     const headerErr = handle.validate();
-    if (headerErr) {
-      setSaveError(headerErr);
+    const problems = collectSoEditSaveProblems({
+      phone: handle.getPhone(),
+      processingDate: '',
+      variantOffenders: [],
+      sofaMixConflict: false,
+      sofaMixMessage: SOFA_MIX_MESSAGE,
+      extra: [
+        ...(blankAddPos != null ? [{ code: 'line_unpicked', message: `${stagedAddLabel(blankAddPos)} has no product picked — pick one, or remove that line before submitting.`, field: 'Line items' }] : []),
+        ...(headerErr ? [{ code: 'date_invalid', message: headerErr, field: 'Dates' }] : []),
+      ],
+    });
+    if (problems.length > 0) {
+      void notify({ title: saveProblemsTitle(problems.length), body: <SaveProblemsList problems={problems} />, tone: 'error' });
       return;
     }
 

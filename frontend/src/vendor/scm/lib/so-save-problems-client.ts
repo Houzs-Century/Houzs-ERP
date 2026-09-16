@@ -231,3 +231,63 @@ export function collectSoSaveProblems(input: SoSaveProblemsInput): SaveProblem[]
 
   return out;
 }
+
+/** Input for the SO DETAIL editor's save / amendment pre-flight
+ *  (`SalesOrderDetail`). The detail edits an existing order and delegates
+ *  name / address / venue / salesperson / stock-location completeness to the
+ *  SERVER, which returns its own aggregated `problems[]` on the PATCH (shown via
+ *  notifySaveProblems). So the CLIENT pre-flight here is a subset: the
+ *  compulsory phone, per-line variant/size/fabric gaps (only once a Processing
+ *  Date is set), the sofa-mix rule, and detail-specific blockers (a blank line,
+ *  a blank staged add, the header date fault) passed as `extra`. */
+export interface SoEditSaveProblemsInput {
+  /** The current (possibly edited) phone. Compulsory on every SO (owner
+   *  2026-06-03). */
+  phone: string;
+  /** The order's Processing Date ('' when none) — variants are the PROCEED rule,
+   *  so per-line gaps are only reported when it is set. */
+  processingDate: string;
+  variantOffenders: readonly VariantGapLine[];
+  sofaMixConflict: boolean;
+  sofaMixMessage: string;
+  /** Detail-specific blockers already SaveProblem-shaped: a blank line, a blank
+   *  staged add, the header date fault (`handle.validate()`). */
+  extra?: readonly SaveProblem[];
+}
+
+/** The DETAIL editor's client pre-flight blockers, as ONE list rendered in the
+ *  same SaveProblemsList popup the server's 422 uses. A thin wrapper over
+ *  collectSoSaveProblems that fixes the gates the detail does NOT pre-check
+ *  (name / address / venue / salesperson / location) to satisfied, so only the
+ *  detail's real client checks (phone, variants, sofa mix, extras) can fire —
+ *  everything else stays the server's job and shows through notifySaveProblems.
+ */
+export function collectSoEditSaveProblems(i: SoEditSaveProblemsInput): SaveProblem[] {
+  const noServerGate = { companyCode: null, salesLocation: '', state: '', isEdit: true };
+  return collectSoSaveProblems({
+    required: {
+      // Name / venue / salesperson / location are the SERVER's gate on a detail
+      // edit (shown via notifySaveProblems); only phone is pre-checked here.
+      customerName: 'server-gated',
+      phone: i.phone,
+      hasNamedLine: true,
+      asDraft: i.processingDate.trim() === '',
+      hasVenue: true,
+      hasSalesperson: true,
+      location: noServerGate,
+    },
+    location: noServerGate,
+    processingDate: i.processingDate,
+    // Address completeness is the server's gate on the detail edit; sentinels
+    // keep it from firing client-side here.
+    completeness: { customerName: 'server-gated', fillAddressLater: false, address1: 'server-gated', postcode: 'server-gated', deliveryDate: 'server-gated' },
+    // The header date fault comes from the CustomerCard's own validate() and is
+    // passed as an extra; this guard stays inert to avoid double-reporting.
+    dateGuard: { processingDate: '', deliveryDate: '', today: '' },
+    variantOffenders: i.variantOffenders,
+    sofaMixConflict: i.sofaMixConflict,
+    sofaMixMessage: i.sofaMixMessage,
+    paymentGaps: [],
+    extra: i.extra,
+  });
+}
