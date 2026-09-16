@@ -41,10 +41,14 @@ export type RecordedPaymentLike = {
   /* Money moved from a cancelled order (docs/bugs/0933): the order it came from. */
   converted_from_so_doc_no?: string | null;
   convertedFromSoDocNo?: string | null;
+  /* A negative converted row is money that LEFT this order (owner 2026-09-16). */
+  amount_sen?: number | null;
+  converted_to_so_doc_no?: string | null;
+  refund_pv_id?: string | null;
 };
 
 const METHOD_LABELS: Record<string, string> = {
-  cash: 'Cash', transfer: 'Online', merchant: 'Merchant', installment: 'Installment', converted: 'Convert from cancelled SO',
+  cash: 'Cash', transfer: 'Online', merchant: 'Merchant', installment: 'Installment', converted: 'Convert from another SO',
 };
 const methodLabel = (m: string | null): string => (m ? METHOD_LABELS[m] ?? m : '—');
 
@@ -63,7 +67,7 @@ export function PaymentInfoBlock({ payment }: { payment: RecordedPaymentLike }) 
     .join(' · ');
   return (
     <div style={{ minWidth: 0 }}>
-      <div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--ink)' }}>{methodLabel(p.method)}</div>
+      <div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--ink)' }}>{Number(p.amount_sen) < 0 ? (p.refund_pv_id ? 'Refund' : 'Moved out') : methodLabel(p.method)}</div>
       <div className="money" style={{ fontSize: 10.5, color: 'var(--mut)', marginTop: 2 }}>{meta}</div>
       {/* Bank + tenure (Merchant + Installment) / online type (Transfer) —
           parity with desktop PaymentsTable. Installment carries a bank too since
@@ -75,7 +79,9 @@ export function PaymentInfoBlock({ payment }: { payment: RecordedPaymentLike }) 
             .join(' · ')}
         </div>
       )}
-      {p.method === 'converted' ? (
+      {p.method === 'converted' && Number(p.amount_sen) < 0 ? (
+        <div className="money" style={{ fontSize: 10, color: 'var(--mut2)' }}>{p.converted_to_so_doc_no ? `to ${p.converted_to_so_doc_no}` : 'money that left this order'}</div>
+      ) : p.method === 'converted' ? (
         <div className="money" style={{ fontSize: 10, color: 'var(--mut2)' }}>from {p.convertedFromSoDocNo ?? p.converted_from_so_doc_no ?? '—'}</div>
       ) : null}
       {p.method === 'transfer' && online ? (

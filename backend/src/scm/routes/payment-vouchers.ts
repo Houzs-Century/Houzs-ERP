@@ -55,6 +55,7 @@ import { apControlRole, pvLines, customerRefundLines, resolveRoles } from '../..
 import { customerPartyCode } from '../../acc/payments';
 import { refundSourceHandler, refundCreateGuard, refundOwnControl, bookRefundCredit, refundHookInput } from '../lib/pv-refund';
 import { refundDepositInvoicesBestEffort, releaseRefundNotesBestEffort } from '../../acc/deposit-refunds';
+import { mirrorRefundBestEffort, removeMirrorRowsBestEffort } from '../lib/so-payment-row';
 import { CASH_SERIES_LETTER } from '../../acc/receipts';
 import { settleApInvoicePaidSen } from '../lib/ap-invoice-settlement';
 import { allocationHeadroomBreach, pendingReservationsHandler } from '../lib/pv-reservations';
@@ -1088,6 +1089,7 @@ export const postPaymentVoucherHandler = async (c: any) => {
   if (isRefund(pv.purpose)) await bookRefundCredit(sb, { ...pv, debtor_code: refundPv.debtor_code ?? null }, 'refund');
   /* The deposit-invoice half of a refund (docs/bugs/0860): a credit note per invoice it draws on. */
   await refundDepositInvoicesBestEffort(sb, refundHookInput({ ...pv, ...refundPv, id, company_id: companyId }, totalSen, approvalActor(c)));
+  await mirrorRefundBestEffort(sb, refundHookInput({ ...pv, ...refundPv, id, company_id: companyId }, totalSen, approvalActor(c)));
 
   /* The money-out event. Recorded here rather than after the PI settlement loop
      below so a settlement hiccup cannot cost us the record that the GL was
@@ -1635,6 +1637,7 @@ export const cancelPaymentVoucherHandler = async (c: any) => {
   const rev = await reversePvAccounting(sb, cancelled.pv_number);
   if (rev.ok && isRefund(head.purpose)) await bookRefundCredit(sb, head, 'reversal');
   if (rev.ok && isRefund(head.purpose)) await releaseRefundNotesBestEffort(sb, { companyId: co.companyId, pvId: id, pvNumber: cancelled.pv_number, actor: approvalActor(c) });
+  if (rev.ok && isRefund(head.purpose)) await removeMirrorRowsBestEffort(sb, { companyId: co.companyId, match: { refund_pv_id: id }, why: `refund voucher ${cancelled.pv_number} cancelled` });
   if (!rev.ok) {
     // eslint-disable-next-line no-console
     console.error(`[pv-accounting] reversal failed for ${cancelled.pv_number}:`, rev.status, rev.reason);

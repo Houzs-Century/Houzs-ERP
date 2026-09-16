@@ -140,7 +140,8 @@ export async function loadRefundSource(
     const { data: pays, error: pErr } = await sb.from('mfg_sales_order_payments')
       .select('id, paid_at, method, merchant_provider, amount_sen').eq('so_doc_no', docNo).order('paid_at');
     if (pErr) return { ok: false, status: 500, error: 'load_failed', message: pErr.message };
-    const rows = (pays ?? []) as Array<{ id: string; paid_at: string | null; method: string; merchant_provider: string | null; amount_sen: number }>;
+    /* A mirror row (money that left, negative; lib/so-payment-row.ts) is not money in. */
+    const rows = ((pays ?? []) as Array<{ id: string; paid_at: string | null; method: string; merchant_provider: string | null; amount_sen: number }>).filter((r) => Number(r.amount_sen ?? 0) >= 0);
     const booked = await bookedIds(sb, companyId, 'SOPAY', rows.map((r) => String(r.id)));
     if (!booked.ok) return { ok: false, status: 500, error: 'load_failed', message: booked.reason };
     payments = rows.map((r) => ({

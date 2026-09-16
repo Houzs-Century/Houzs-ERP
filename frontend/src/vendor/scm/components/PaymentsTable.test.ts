@@ -166,7 +166,7 @@ describe("Convert from cancelled SO — the desktop's fifth method", () => {
   });
 
   it("the gate wants the cancelled order picked; the other methods are unchanged", () => {
-    expect(missingMethodSubField({ methodLabel: CONVERT_LABEL, merchantProvider: "", installmentMonthsLabel: "", onlineType: "", convertedFromDocNo: "" })).toBe("cancelled order");
+    expect(missingMethodSubField({ methodLabel: CONVERT_LABEL, merchantProvider: "", installmentMonthsLabel: "", onlineType: "", convertedFromDocNo: "" })).toBe("order the money comes from");
     expect(missingMethodSubField({ methodLabel: CONVERT_LABEL, merchantProvider: "", installmentMonthsLabel: "", onlineType: "", convertedFromDocNo: "2990-SO-2607-010" })).toBeNull();
     expect(missingMethodSubField({ methodLabel: "Cash", merchantProvider: "", installmentMonthsLabel: "", onlineType: "" })).toBeNull();
   });

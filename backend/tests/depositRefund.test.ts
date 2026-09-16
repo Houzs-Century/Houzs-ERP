@@ -67,7 +67,7 @@ function harness() {
     journal_entries: [], journal_entry_lines: [],
     payment_vouchers: [{ ...REFUND_PV }], payment_voucher_lines: [{ ...REFUND_LINE }], pv_allocations: [],
     acc_bank_letters: [], acc_numbering: [], acc_supplier_advances: [], acc_vendor_memory: [],
-    customer_credits: [], entity_audit_log: [], suppliers: [],
+    customer_credits: [], entity_audit_log: [], suppliers: [], mfg_so_audit_log: [],
   }, {}, [{ table: 'payment_vouchers', column: 'pv_number', name: 'payment_vouchers_pv_number_key' }], ['journal_entry_lines']);
   const app = new Hono();
   app.use('*', async (c, next) => {
@@ -180,6 +180,31 @@ describe('a refund voucher on an order with deposit invoices', () => {
     /* Everything is back where it was: AR the two deposits, 509 the two deposits earned. */
     expect(netOf(sb, '300-0000')).toBe(0);
     expect(-netOf(sb, '509-0000')).toBe(150_000);
+  });
+
+  /* The order's own books (owner 2026-09-16): the refund leaves the order as a
+     negative payment row that follows the voucher, so its Paid and Balance
+     move; it books nothing (the voucher did) and goes when the voucher is
+     cancelled. */
+  test('posting it mirrors the refund on the order as a negative row following the voucher; cancelling takes the row with it', async () => {
+    const { app, sb } = harness();
+    await withTwoDeposits(sb);
+    await postRefund(app);
+    const rows = () => sb.tables.mfg_sales_order_payments as Row[];
+    const mirror = rows().find((r) => r.refund_pv_id === 'pv1')!;
+    expect(mirror).toMatchObject({ so_doc_no: SO, method: 'converted', amount_sen: -120_000, paid_at: '2026-09-08', account_sheet: 'Refund 2990-CRF-2609-001', note: 'Refunded by 2990-CRF-2609-001', created_by: null });
+    /* The two deposits above were handed to the hook, never inserted: the mirror is the only row here. */
+    expect(rows().map((r) => r.amount_sen)).toEqual([-120_000]);
+    expect(jes(sb).some((j) => j.source_doc_no === mirror.id)).toBe(false);
+    expect((sb.tables.mfg_so_audit_log as Row[]).map((a) => [a.so_doc_no, a.action, a.source, a.payment_id])).toEqual([[SO, 'ADD_PAYMENT', 'automation', mirror.id]]);
+    /* Posting again finds it (the voucher is already posted, but the hook is idempotent on its own). */
+    const { mirrorRefundBestEffort } = await import('../src/scm/lib/so-payment-row');
+    await mirrorRefundBestEffort(sb, { companyId: CO, pvId: 'pv1', pvNumber: '2990-CRF-2609-001', voucherDate: '2026-09-08', soDocNo: SO, amountSen: 120_000, actor: 'Chew' });
+    expect(rows().filter((r) => r.refund_pv_id === 'pv1')).toHaveLength(1);
+
+    expect((await app.request('/payment-vouchers/pv1/cancel', { method: 'POST' })).status).toBe(200);
+    expect(rows()).toEqual([]);
+    expect((sb.tables.mfg_so_audit_log as Row[]).map((a) => [a.action, a.note])).toEqual([['ADD_PAYMENT', 'Refund voucher 2990-CRF-2609-001 posted'], ['DELETE_PAYMENT', 'refund voucher 2990-CRF-2609-001 cancelled']]);
   });
 
   test('money no deposit invoice covers raises no note, and is reported', async () => {

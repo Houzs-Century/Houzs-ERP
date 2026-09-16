@@ -261,7 +261,7 @@ import {
 } from '../lib/so-create-payment-slips';
 import { pickCrossCategoryMatch, type AutoMatchCandidate } from '../lib/cross-category-match';
 import { convertGuard, type ConvertPlan } from '../lib/so-money';
-import { cancelledWithMoneyHandler, soConvertSourcesHandler, soMoneyHandler, soMoneyRefundHandler } from './so-money-routes';
+import { cancelledWithMoneyHandler, ordersWithMoneyHandler, soConvertSourcesHandler, soMoneyHandler, soMoneyRefundHandler } from './so-money-routes';
 import { recomputeSoStockAllocation, isHardBoundLine } from '../lib/so-stock-allocation';
 import { snapshotSoLineLinks, planSoLineRelink, applySoLineRelink, soLineVariantSig } from '../lib/so-line-relink';
 import { advanceSoGeneration } from '../lib/so-generation';
@@ -1527,6 +1527,7 @@ registerCrossCategoryRoutes(mfgSalesOrders);
    static path isn't captured as a docNo. */
 /* The money on a cancelled order — refund or convert (docs/bugs/0927); handlers in so-money-routes.ts. */
 mfgSalesOrders.get('/cancelled-with-money', cancelledWithMoneyHandler);
+mfgSalesOrders.get('/with-money', ordersWithMoneyHandler);
 const guarded = (h: (c: any) => Promise<Response>) => async (c: any) => ((await selfScopedSalesBlocked(c, c.req.param('docNo'))) ? c.json({ error: 'not_found' }, 404) : h(c));
 mfgSalesOrders.get('/:docNo/money', guarded(soMoneyHandler));
 mfgSalesOrders.post('/:docNo/money/refund', guarded(soMoneyRefundHandler));
@@ -9992,7 +9993,7 @@ mfgSalesOrders.patch('/:docNo/payments/:id', async (c) => {
   };
   if (before.so_doc_no !== docNo) return c.json({ error: 'payment_doc_mismatch' }, 400);
   /* Money moved from a cancelled order is moved back by deleting the row, never edited in place (docs/bugs/0927). */
-  if (String(before.method) === 'converted') return c.json({ error: 'converted_row_not_editable', reason: 'This row is money moved from a cancelled order. Delete it to move the money back, then move it again.' }, 409);
+  if (String(before.method) === 'converted') return c.json({ error: 'converted_row_not_editable', reason: Number(before.amount_sen) < 0 ? 'This row follows money that left the order — it moves with the converted row or the refund voucher it follows.' : 'This row is money moved from another order. Delete it to move the money back, then move it again.' }, 409);
 
   /* WHO MAY CHANGE THIS ROW, AND WHY — one predicate for the PATCH, the DELETE
      and both screens (scm/shared/so-field-policy.ts, paymentRowMutable): DRAFT
@@ -10187,6 +10188,8 @@ export const deleteSoPaymentHandler = async (c: any) => {
   if (!row) return c.json({ error: 'not_found' }, 404);
   const rowTyped = row as { so_doc_no: string; paid_at: string; method: string; amount_sen: number; approval_code: string | null; version: number };
   if (rowTyped.so_doc_no !== docNo) return c.json({ error: 'payment_doc_mismatch' }, 400);
+  /* A mirror follows its counterpart (lib/so-payment-row.ts): the converted row on the other order, or the refund voucher. */
+  if (Number(rowTyped.amount_sen) < 0) return c.json({ error: 'mirror_row_not_deletable', reason: 'This row follows money that left the order. Delete the converted row on the order it went to, or cancel the refund voucher, and it goes with it.' }, 409);
   const currentVersion = Number(rowTyped.version ?? 1);
   const versionCheck = paymentVersionGuard(c.req.query('version'), currentVersion, soCasGrace(c));
   if (!versionCheck.ok) return c.json(versionCheck.body, versionCheck.status);

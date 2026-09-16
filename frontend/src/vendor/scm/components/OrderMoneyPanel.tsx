@@ -1,23 +1,26 @@
-/* OrderMoneyPanel — the money on a CANCELLED Sales Order and its two exits,
-   side by side (owner 2026-09-15: 他应该是 convert or refund，所以功能要做一起 …
-   这个按钮我觉得挨着一起; docs/bugs/0927 the backend, docs/bugs/0931 this).
+/* OrderMoneyPanel — the money on a Sales Order and its two exits, side by
+   side (owner 2026-09-15: 他应该是 convert or refund，所以功能要做一起 … 这个按钮
+   我觉得挨着一起; docs/bugs/0927 the backend, docs/bugs/0931 this). Since
+   2026-09-16 the order need not be cancelled: a LIVE order keeps its deposit
+   fraction of the total (Houzs 30% / 2990 50%) and may move the rest; it may
+   refund any part (Finance approves the voucher).
 
-   Under the payments table of a saved order, only when the order is
-   cancelled and collected something: paid · refunded (the vouchers, with
-   their status) · moved (to which orders) · REMAINING. Two buttons when
+   Under the payments table of a saved order, once it collected something:
+   paid · refunded (the vouchers, with their status) · moved (to which
+   orders) · REMAINING, and for a live order what it keeps. Two buttons when
    something is left:
 
      [Refund]   an amount (part or all) and a note → a Customer Refund
                 voucher DRAFT for Finance, on the salesperson's behalf; only
                 Finance approves, and the draft already counts against what
                 is left.
-     [Convert]  this order and the customer's other cancelled orders with
-                money, each with a tick and an amount (part or all) → the New
-                SO page opens with the customer and lines copied and one
+     [Convert]  this order and the customer's other orders with money, each
+                with a tick and an amount (part or all of what may move) → the
+                New SO page opens with the customer and lines copied and one
                 converted row per tick (owner: 这个是可以选多张一起 convert? — 可以).
 
-   Renders nothing for a live order, and nothing on a failed read: the
-   payments above are the money truth. */
+   Renders nothing for an order that collected nothing, and nothing on a
+   failed read: the payments above are the money truth. */
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { MoneyInput } from './MoneyInput';
@@ -49,6 +52,12 @@ export function moneySummary(m: OrderMoney): string {
   if (m.convertedSen > 0) parts.push(`Moved ${fmtRm(m.convertedSen)}`);
   parts.push(`Remaining ${fmtRm(m.remainingSen)}`);
   return parts.join(' · ');
+}
+
+/** What a live order must keep, and what may move — nothing for a cancelled one. */
+export function keepLine(m: OrderMoney): string | null {
+  if (m.cancelled || m.keepSen <= 0) return null;
+  return `Keeps ${fmtRm(m.keepSen)} (${Math.round(m.keepFraction * 100)}% of ${fmtRm(m.totalSen)}) · ${m.movableSen > 0 ? `${fmtRm(m.movableSen)} can move` : 'nothing can move'}`;
 }
 
 function RefundForm({ docNo, remainingSen, onDone }: { docNo: string; remainingSen: number; onDone: () => void }) {
@@ -85,9 +94,10 @@ type OpenNewOrder = (copyFrom: string, picks: ConvertPick[]) => void;
 
 export type ConvertRow = ConvertSource & { self?: boolean };
 
-/** Pick which cancelled orders to take money from, and how much of each; the
-    New SO page then opens on `copyFrom` with one converted row per tick.
-    Another cancelled order — any customer's — can be added by number. */
+/** Pick which orders to take money from, and how much of each (a live order
+    gives what is above its floor); the New SO page then opens on `copyFrom`
+    with one converted row per tick. Another order — any customer's — can be
+    added by number. */
 export function ConvertPicker({ rows: given, copyFrom, ticked: tickedAtFirst, onDone, onOpen }: {
   rows: ConvertRow[]; copyFrom: string; ticked: string[]; onDone: () => void; onOpen?: OpenNewOrder;
 }) {
@@ -95,7 +105,7 @@ export function ConvertPicker({ rows: given, copyFrom, ticked: tickedAtFirst, on
   const [added, setAdded] = useState<ConvertRow[]>([]);
   const rows = useMemo(() => [...given, ...added.filter((a) => !given.some((g) => g.docNo === a.docNo))], [given, added]);
   const [ticked, setTicked] = useState<Set<string>>(() => new Set(tickedAtFirst));
-  const [amounts, setAmounts] = useState<Record<string, number>>(() => Object.fromEntries(given.map((r) => [r.docNo, r.remainingSen])));
+  const [amounts, setAmounts] = useState<Record<string, number>>(() => Object.fromEntries(given.map((r) => [r.docNo, r.movableSen])));
   const [more, setMore] = useState('');
   const [moreNote, setMoreNote] = useState<string | null>(null);
   const addAnother = async () => {
@@ -103,23 +113,23 @@ export function ConvertPicker({ rows: given, copyFrom, ticked: tickedAtFirst, on
     if (!r.ok) { setMoreNote(r.reason); return; }
     if (rows.some((x) => x.docNo === r.source.docNo)) { setMoreNote(`${r.source.docNo} is already in the list.`); return; }
     setAdded((a) => [...a, r.source]);
-    setAmounts((a) => ({ ...a, [r.source.docNo]: r.source.remainingSen }));
+    setAmounts((a) => ({ ...a, [r.source.docNo]: r.source.movableSen }));
     setTicked((t) => new Set([...t, r.source.docNo]));
     setMore(''); setMoreNote(null);
   };
   const picks: ConvertPick[] = rows.filter((r) => ticked.has(r.docNo)).map((r) => ({ docNo: r.docNo, amountSen: amounts[r.docNo] ?? 0 }));
-  const bad = rows.find((r) => ticked.has(r.docNo) && ((amounts[r.docNo] ?? 0) <= 0 || (amounts[r.docNo] ?? 0) > r.remainingSen));
+  const bad = rows.find((r) => ticked.has(r.docNo) && ((amounts[r.docNo] ?? 0) <= 0 || (amounts[r.docNo] ?? 0) > r.movableSen));
   const total = picks.reduce((s, p) => s + p.amountSen, 0);
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }} data-testid="convert-form">
-      <span>Move to a new order — tick the cancelled orders to take money from, and how much of each:</span>
+      <span>Move to a new order — tick the orders to take money from, and how much of each:</span>
       {rows.map((r) => (
         <label key={r.docNo} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           <input type="checkbox" checked={ticked.has(r.docNo)} aria-label={`Take from ${r.docNo}`}
             onChange={(e) => setTicked((s) => { const n = new Set(s); if (e.target.checked) n.add(r.docNo); else n.delete(r.docNo); return n; })} />
           <span style={{ fontFamily: 'var(--font-mono)' }}>{r.docNo}</span>
           {!r.self && r.customer && <span style={muted}>{r.customer}</span>}
-          <span style={muted}>{fmtRm(r.remainingSen)} left</span>
+          <span style={muted}>{r.keepSen > 0 ? `${fmtRm(r.movableSen)} can move (keeps ${fmtRm(r.keepSen)})` : `${fmtRm(r.remainingSen)} left`}</span>
           <MoneyInput valueSen={amounts[r.docNo] ?? 0} onCommit={(sen) => setAmounts((a) => ({ ...a, [r.docNo]: sen ?? 0 }))} aria-label={`Amount from ${r.docNo}`} />
         </label>
       ))}
@@ -129,11 +139,11 @@ export function ConvertPicker({ rows: given, copyFrom, ticked: tickedAtFirst, on
           Open a new order with {fmtRm(total)}
         </button>
         <button type="button" style={btn} onClick={onDone}>Cancel</button>
-        {bad && <span style={{ color: 'var(--c-danger, #a33)' }}>{bad.docNo}: between RM 0.01 and {fmtRm(bad.remainingSen)}.</span>}
+        {bad && <span style={{ color: 'var(--c-danger, #a33)' }}>{bad.docNo}: between RM 0.01 and {fmtRm(bad.movableSen)}.</span>}
         <span style={muted}>The new order opens with {copyFrom}'s customer and lines; one payment row per ticked order, dated the day the money was first paid.</span>
       </div>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-        <input value={more} onChange={(e) => setMore(e.target.value)} placeholder="Another cancelled order, e.g. 2990-SO-2607-024" aria-label="Another cancelled order"
+        <input value={more} onChange={(e) => setMore(e.target.value)} placeholder="Another order, e.g. 2990-SO-2607-024" aria-label="Another cancelled order"
           onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void addAnother(); } }}
           style={{ minWidth: 260, padding: '4px 8px', border: '1px solid var(--c-line, rgba(34,31,32,0.2))', borderRadius: 6 }} />
         <button type="button" style={btn} onClick={() => void addAnother()}>Add</button>
@@ -144,11 +154,11 @@ export function ConvertPicker({ rows: given, copyFrom, ticked: tickedAtFirst, on
   );
 }
 
-/** The panel's convert: this order first, ticked, for what is left; the
-    customer's other cancelled orders beneath, unticked. */
+/** The panel's convert: this order first, ticked, for what may move; the
+    customer's other orders beneath, unticked. */
 function ConvertForm({ money, others, onDone, onOpen }: { money: OrderMoney; others: ConvertSource[]; onDone: () => void; onOpen?: OpenNewOrder }) {
   const rows = useMemo<ConvertRow[]>(() => [
-    { docNo: money.docNo, customer: money.customer.name, cancelledOn: null, remainingSen: money.remainingSen, bookedSen: money.bookedSen, self: true },
+    { docNo: money.docNo, customer: money.customer.name, status: money.status, cancelledOn: null, remainingSen: money.remainingSen, bookedSen: money.bookedSen, movableSen: money.movableSen, keepSen: money.keepSen, self: true },
     ...others.map((o) => ({ ...o, self: false })),
   ], [money, others]);
   return <ConvertPicker rows={rows} copyFrom={money.docNo} ticked={[money.docNo]} onDone={onDone} onOpen={onOpen} />;
@@ -197,13 +207,16 @@ export function OrderMoneyPanel({ docNo, onOpenNewOrder }: { docNo: string; onOp
   const q = useOrderMoney(docNo);
   const [mode, setMode] = useState<'idle' | 'refund' | 'convert'>('idle');
   const m = q.data?.money;
-  if (q.isError || !m || !m.cancelled || m.bookedSen === 0) return null;
+  if (q.isError || !m || m.bookedSen === 0) return null;
   const others = q.data?.others ?? [];
+  const title = m.cancelled ? 'Money on this cancelled order' : 'Money on this order';
+  const keeps = keepLine(m);
   return (
-    <div style={panel} data-testid="order-money-panel" aria-label="Money on this cancelled order">
+    <div style={panel} data-testid="order-money-panel" aria-label={title}>
       <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
-        <span style={{ fontWeight: 700 }}>Money on this cancelled order</span>
+        <span style={{ fontWeight: 700 }}>{title}</span>
         <span>{moneySummary(m)}</span>
+        {keeps && <span style={muted}>{keeps}</span>}
       </div>
       {(m.refunds.length > 0 || m.conversions.length > 0) && (
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', ...muted }}>
@@ -220,9 +233,10 @@ export function OrderMoneyPanel({ docNo, onOpenNewOrder }: { docNo: string; onOp
         </div>
       )}
       {m.open && mode === 'idle' && (
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <button type="button" style={btn} onClick={() => setMode('refund')}>Refund</button>
-          <button type="button" style={btn} onClick={() => setMode('convert')}>Convert</button>
+          <button type="button" style={btn} disabled={m.movableSen <= 0} onClick={() => setMode('convert')}>Convert</button>
+          {m.movableSen <= 0 && <span style={muted}>Nothing above the floor to move.</span>}
         </div>
       )}
       {!m.open && m.reason && <span style={muted}>{m.reason}</span>}

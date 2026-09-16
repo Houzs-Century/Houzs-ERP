@@ -13,7 +13,7 @@
 // ----------------------------------------------------------------------------
 
 import {
-  CONVERT_LABEL, CONVERTED_METHOD, useCancelledWithMoney, useConvertSources,
+  CONVERT_LABEL, CONVERTED_METHOD, useConvertSources, useOrdersWithMoney,
   type ConvertPick, type ConvertSource,
 } from "../vendor/scm/lib/so-money-queries";
 import { fmtSen } from "../vendor/shared/format";
@@ -39,33 +39,33 @@ export const convertedBody = (convertedFromDocNo: string, amountSen: number): Re
 /** Sen → the RM string the phone's amount boxes hold ("1433.00"). */
 export const rmInput = (sen: number): string => (sen / 100).toFixed(2);
 
-/** The cancelled orders a row may draw on: a saved order asks the server by
-    its number; the New SO screen, which has no order yet, asks by the
-    customer's phone once enough of it is typed. */
+/** The orders a row may draw on (cancelled, or live above their floor): a
+    saved order asks the server by its number; the New SO screen, which has
+    no order yet, asks by the customer's phone once enough of it is typed. */
 export function useMobileConvertSources(p: { docNo?: string | null; phone?: string | null }): ConvertSource[] {
   const phone = (p.phone ?? "").trim();
   const saved = useConvertSources(p.docNo ?? null);
-  const byPhone = useCancelledWithMoney(phone || null, !p.docNo && phone.length >= 6);
+  const byPhone = useOrdersWithMoney(phone || null, !p.docNo && phone.length >= 6);
   return p.docNo ? saved.data?.sources ?? [] : byPhone.data?.orders ?? [];
 }
 
-/** The L2 pick under "Convert from cancelled SO": which cancelled order the
-    money comes from. Picking one hands back what is left on it so an empty
-    amount can be filled (desktop parity). A stored value the list no longer
-    offers stays selectable, the same courtesy the Bank picker extends. */
+/** The L2 pick under "Convert from another SO": which order the money comes
+    from. Picking one hands back what it may give so an empty amount can be
+    filled (desktop parity). A stored value the list no longer offers stays
+    selectable, the same courtesy the Bank picker extends. */
 export function ConvertSourceField({ sources, value, onChange }: {
   sources: ConvertSource[];
   value: string;
   onChange: (docNo: string, remainingSen: number) => void;
 }) {
-  const opts = value && !sources.some((s) => s.docNo === value) ? [{ docNo: value, remainingSen: 0 } as ConvertSource, ...sources] : sources;
+  const opts = value && !sources.some((s) => s.docNo === value) ? [{ docNo: value, remainingSen: 0, movableSen: 0, keepSen: 0 } as ConvertSource, ...sources] : sources;
   return (
     <div className="fld">
-      <span className="fld-l">Cancelled order</span>
+      <span className="fld-l">Order the money comes from</span>
       <select className="fld-i" value={value} aria-label="Cancelled order"
-        onChange={(e) => { const s = opts.find((o) => o.docNo === e.target.value); onChange(e.target.value, s?.remainingSen ?? 0); }}>
-        <option value="">— Cancelled order —</option>
-        {opts.map((s) => <option key={s.docNo} value={s.docNo}>{s.docNo} · {fmtSen(s.remainingSen)} left</option>)}
+        onChange={(e) => { const s = opts.find((o) => o.docNo === e.target.value); onChange(e.target.value, s?.movableSen ?? 0); }}>
+        <option value="">— Order the money comes from —</option>
+        {opts.map((s) => <option key={s.docNo} value={s.docNo}>{s.docNo} · {fmtSen(s.movableSen)} {s.keepSen > 0 ? 'can move' : 'left'}</option>)}
       </select>
       <div style={{ fontSize: 10.5, color: "var(--mut2)", marginTop: 3 }}>
         Money already paid on that order moves here — its paid date and collector stay as they were.

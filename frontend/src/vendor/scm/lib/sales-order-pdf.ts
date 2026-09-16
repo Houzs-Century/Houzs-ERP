@@ -182,6 +182,9 @@ type SoPayment = {
      'converted' = money moved from a cancelled order (docs/bugs/0931). */
   method: 'merchant' | 'transfer' | 'cash' | 'installment' | 'converted';
   converted_from_so_doc_no?: string | null;
+  /* A negative converted row is money that LEFT (owner 2026-09-16). */
+  converted_to_so_doc_no?: string | null;
+  refund_pv_id?: string | null;
   /* Task #122 (cascade) — merchant_provider / installment_months are now
      open string + integer (driven by the so_dropdown_options cascade
      categories). online_type is the new Online sub-type column. */
@@ -297,6 +300,7 @@ const methodLabel = (p: SoPayment): string => {
     return p.installment_months ? `${base} · ${p.installment_months}m` : base;
   }
   /* Money moved from a cancelled order (docs/bugs/0931): the order it came from. */
+  if (p.method === 'converted' && Number(p.amount_sen) < 0) return p.refund_pv_id ? `Refund${p.account_sheet ? ` ${p.account_sheet.replace(/^Refund\s*/, '')}` : ''}` : p.converted_to_so_doc_no ? `Moved to ${p.converted_to_so_doc_no}` : 'Moved out';
   if (p.method === 'converted') return p.converted_from_so_doc_no ? `Moved from ${p.converted_from_so_doc_no}` : 'Moved from a cancelled order';
   return 'Cash';
 };
