@@ -47,6 +47,28 @@ const je = (docNo: string, entryDate: string): Row =>
      source_doc_no: docNo, entry_date: entryDate, posted: true, reversed: false,
      total_debit_sen: 0, total_credit_sen: 0 });
 
+const arLine = (jeNo: string, sourceType: string, debitSen: number, creditSen: number): Row =>
+  ({ line_id: `${jeNo}-1`, je_no: jeNo, company_id: CO, account_code: '300-0000', source_type: sourceType, debit_sen: debitSen, credit_sen: creditSen });
+
+describe('the AR control check knows every source that legitimately moves AR', () => {
+  /* Deposit invoices (Dr AR), the credit notes a refund raises against them and
+     the Customer Refund voucher (Dr AR) came after the check was written and
+     were listed as foreign: 36 findings on a clean control account. */
+  test('a deposit invoice, its reversal, a credit note and a refund voucher are not findings; a manual entry still is', async () => {
+    const app = harness({
+      v_gl_entries: [
+        arLine('JE-1', 'DI', 100_000, 0), arLine('JE-2', 'DI_REVERSAL', 0, 100_000), arLine('JE-3', 'CN', 0, 40_000),
+        arLine('JE-4', 'PV', 40_000, 0), arLine('JE-5', 'SOPAY', 0, 100_000), arLine('JE-6', 'MANUAL', 500, 0),
+      ],
+    });
+    const body = await (await app.request('/control-check')).json() as any;
+    const ar = body.checks.find((x: any) => x.role === 'AR');
+    expect(ar.foreignLines.map((f: any) => `${f.jeNo} ${f.sourceType}`)).toEqual(['JE-6 MANUAL']);
+    /* Balance counts every line, findings or not: 100,000 - 100,000 - 40,000 + 40,000 - 100,000 + 500. */
+    expect(ar.glBalanceSen).toBe(-99_500);
+  });
+});
+
 describe('the self-check reports payments that never reached the ledger', () => {
   test('names the ones that failed, and the period it is speaking about', async () => {
     const app = harness({
