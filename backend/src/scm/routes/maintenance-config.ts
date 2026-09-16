@@ -21,10 +21,14 @@
 
 import { Hono } from 'hono';
 import type { Context } from 'hono';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { supabaseAuth } from '../middleware/auth';
 import { canWriteScmConfig } from '../lib/houzs-perms';
 import { todayMyt } from '../lib/my-time';
 import { normalizeConfigInchPools } from '../shared/maintenance-pools';
+import { autoDeriveEnabled } from '../lib/auto-derive-cost';
+import { deriveMasterConfigCostFromSuppliers, configCostChanged } from '../lib/derive-config-cost';
+import type { MaintenanceConfig } from '../shared/mfg-pricing';
 import { activeCompanyId, scopeToCompany,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
 import {
@@ -227,6 +231,69 @@ maintenanceConfig.get('/history', async (c) => {
   return c.json({ history: rows });
 });
 
+/* Auto-derive stage 5 (owner Option 1, COST-ONLY): after a supplier-scope config
+   write, raise the MASTER config's cost surcharges (priceSen) to the most
+   expensive supplier — preserving every sellingPriceSen — and append a master
+   row only when the cost actually moved. This replaces the sofa_combo_anchor /
+   is_cost_anchor style manual mirror for the surcharge pools. Best-effort: a
+   failure never fails the caller's own supplier write (read/write errors are
+   bound and thrown internally, then logged). Flag-gated by the caller. */
+async function recomputeMasterConfigCostFromSuppliers(
+  supabase: SupabaseClient,
+  companyId: number | null | undefined,
+  createdBy: string,
+): Promise<void> {
+  try {
+    const asOf = todayMyt();
+    let sq = supabase
+      .from('maintenance_config_history')
+      .select('scope, config, effective_from, created_at')
+      .like('scope', 'supplier:%')
+      .lte('effective_from', asOf);
+    if (companyId != null) sq = sq.eq('company_id', companyId);
+    const { data: supRows, error: supErr } = await sq
+      .order('effective_from', { ascending: false })
+      .order('created_at', { ascending: false });
+    if (supErr) throw new Error(supErr.message);
+    const latestByScope = new Map<string, MaintenanceConfig>();
+    for (const r of (supRows ?? []) as { scope: string; config: unknown }[]) {
+      if (!latestByScope.has(r.scope)) latestByScope.set(r.scope, r.config as MaintenanceConfig);
+    }
+    const supplierConfigs = [...latestByScope.values()];
+    if (supplierConfigs.length === 0) return;
+
+    let mq = supabase
+      .from('maintenance_config_history')
+      .select('config')
+      .eq('scope', 'master')
+      .lte('effective_from', asOf);
+    if (companyId != null) mq = mq.eq('company_id', companyId);
+    const { data: masterRow, error: mErr } = await mq
+      .order('effective_from', { ascending: false })
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (mErr) throw new Error(mErr.message);
+    const master = ((masterRow as { config?: unknown } | null)?.config ?? null) as MaintenanceConfig | null;
+
+    const derived = deriveMasterConfigCostFromSuppliers(master, supplierConfigs);
+    if (!configCostChanged(master, derived)) return;
+
+    const { error: insErr } = await supabase.from('maintenance_config_history').insert({
+      company_id: companyId,
+      id: genId(),
+      scope: 'master',
+      config: normalizeConfigInchPools(derived),
+      effective_from: asOf,
+      notes: 'auto-derived cost (max supplier)',
+      created_by: createdBy,
+    });
+    if (insErr) throw new Error(insErr.message);
+  } catch (e) {
+    console.error('[auto-derive] master config cost recompute failed:', e instanceof Error ? e.message : e);
+  }
+}
+
 // ── POST /changes ──────────────────────────────────────────────────────
 // Append a new effective-dated row. body: { scope, config, effectiveFrom, notes? }
 // Editor-only (Commander 2026-06-18) — pricing config feeds SO/PO cost and was
@@ -289,6 +356,14 @@ export const createChangeHandler = async (c: McCtx) => {
       return c.json({ error: 'forbidden', reason: error.message }, 403);
     }
     return c.json({ error: 'insert_failed', reason: error.message }, 500);
+  }
+
+  // Auto-derive stage 5 (flag OFF by default, inert): a supplier-scope write
+  // raises the master config's cost surcharges to the most expensive supplier
+  // (cost-only; selling untouched). Runs before the version bump below so the
+  // one orphan covers both the supplier row and any derived master row.
+  if (scope.startsWith('supplier:') && (await autoDeriveEnabled(supabase))) {
+    await recomputeMasterConfigCostFromSuppliers(supabase, activeCompanyId(c), user.id);
   }
 
   // A new effective-dated row can change /resolved for ANY (scope, asOf)
