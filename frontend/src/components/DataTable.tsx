@@ -74,9 +74,6 @@ import {
 } from "./dataTableLineExport";
 import { SearchScopeHint } from "./SearchScopeHint";
 import { MobileVirtualList } from "../mobile/MobileVirtualList";
-import { useFunnelAllRows, type FunnelAllRowsConfig, type FunnelAllRowsScope } from "./useFunnelAllRows";
-
-export type { FunnelAllRowsConfig, FunnelAllRowsScope };
 
 export interface Column<T, L = never> {
   key: string;
@@ -245,14 +242,15 @@ interface Props<T, L = never> {
    *  visible columns, funnels and sort (dataTableLineExport.ts). When set, the
    *  toolbar Export writes an .xlsx this way and `onExport` is not called. */
   exportLines?: DataTableLineExport<T, L>;
-  /** Widen the client-side column funnels from the loaded page to the WHOLE
-   *  filtered set. On a server-paged list a funnel otherwise only sees the
-   *  current page, so funnelling e.g. Creditor Name leaves every match on later
-   *  pages unreached. When wired and a funnel is active, `fetchRows` reads every
-   *  row the server filters match (all pages — the line export's read) and the
-   *  funnels run over that; row windowing bounds the DOM, so the page just hides
-   *  its server pager while `onScopeChange` reports active. See useFunnelAllRows. */
-  funnelAllRows?: FunnelAllRowsConfig<T>;
+  /** Reports the per-column funnel state (the same `{ colKey: [values] }` the
+   *  grid persists and applies) whenever it changes, so a server-paged list can
+   *  push the SERVER-FILTERABLE columns into its list query and paginate over the
+   *  filtered set — while the grid still owns and persists the funnels and
+   *  applies them client-side on the loaded page. Mirrors `onSortChange` +
+   *  `serverSort`: the grid stays the source of truth, the page drives the
+   *  server. Columns the server cannot filter (line-level, MRP-derived) simply
+   *  keep working client-side on the page. */
+  onColFiltersChange?: (colFilters: Record<string, string[]>) => void;
   /** If provided, an Import button is shown that calls this with the parsed File. */
   onImport?: (file: File) => void;
   /** Optional eyebrow rendered next to the row count. */
@@ -684,7 +682,7 @@ function DataTableInner<T, L>({
   exportName,
   onExport,
   exportLines,
-  funnelAllRows,
+  onColFiltersChange,
   onImport,
   caption,
   udfTable,
@@ -945,20 +943,18 @@ function DataTableInner<T, L>({
     resetFilters?.onReset();
   }
 
-  /* Whole-filtered-set funnels (owner 2026-09-16): when `funnelAllRows` is wired
-     and a funnel is active, `baseRows` is the whole matching set (all pages),
-     not just the loaded page — so a funnel narrows the WHOLE list. See
-     useFunnelAllRows. */
-  const funnelKeys = useMemo(
-    () => Object.entries(colFilters).filter(([, v]) => v.length > 0).map(([k]) => k),
-    [colFilters],
-  );
-  const baseRows = useFunnelAllRows(
-    rows,
-    Boolean(funnelAllRows) && colFiltersActive,
-    funnelKeys,
-    funnelAllRows,
-  );
+  /* Report funnel changes so a server-paged page can push its server-filterable
+     columns into the list query (mirrors onSortChange). Published only on an
+     actual value change, in an effect, so a parent that stores the report cannot
+     re-enter this render — same guard as onFilteredRowsChange. */
+  const reportedColFiltersRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!onColFiltersChange) return;
+    const serialized = JSON.stringify(colFilters);
+    if (reportedColFiltersRef.current === serialized) return;
+    reportedColFiltersRef.current = serialized;
+    onColFiltersChange(colFilters);
+  }, [colFilters, onColFiltersChange]);
 
   // Expanded drill-down rows (opt-in `expandable`). Transient — a Set of
   // expansion ids so the chevron toggle is O(1) and reloads start collapsed.
@@ -2059,11 +2055,9 @@ function DataTableInner<T, L>({
   // Per-column filters apply first (client-side, loaded rows only), then
   // sort — the SAME functions the line export runs over every fetched row
   // (dataTableRows.ts).
-  // `baseRows` is the loaded page, or the whole filtered set under a
-  // funnelAllRows scope; everything downstream follows from filtering it.
   const filteredRows = useMemo(
-    () => (baseRows ? applyColumnFilters(baseRows, colFilters, allColumns) : baseRows),
-    [baseRows, colFilters, allColumns],
+    () => (rows ? applyColumnFilters(rows, colFilters, allColumns) : rows),
+    [rows, colFilters, allColumns],
   );
 
   const sortedRows = useMemo(
@@ -3166,9 +3160,8 @@ function DataTableInner<T, L>({
           overflow clip + sticky stacking); closes on outside/Esc/scroll. */}
       {/* ── Column filter + sort popover — every getValue column (owner
           2026-07-24), portalled like the menu. Sort A→Z/Z→A, live search over
-          distinct getValue results across the base rows (the loaded page, or
-          the whole matching set under a funnelAllRows scope; pre-filter so
-          unticking works), Select all / Invert / Clear, checklist with counts. */}
+          distinct getValue results across LOADED rows (pre-filter so unticking
+          works), Select all / Invert / Clear, checklist with counts. */}
       {filterMenu &&
         (() => {
           const col = allColumns.find((c) => c.key === filterMenu.colKey);
@@ -3176,7 +3169,7 @@ function DataTableInner<T, L>({
           const getter = col.getValue;
           const multi = col.getFilterValues;
           const counts = new Map<string, number>();
-          for (const r of baseRows ?? []) {
+          for (const r of rows ?? []) {
             // A multi-value row counts once against EACH of its values, so
             // the funnel lists "Bedframe" and "Mattress" separately rather
             // than a composite "Bedframe, Mattress" entry.

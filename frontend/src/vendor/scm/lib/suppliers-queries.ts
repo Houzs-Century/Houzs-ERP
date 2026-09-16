@@ -628,15 +628,15 @@ export type PoStatusCounts = {
      `outstanding` is: an older deployment answers without it. */
   on_hold?: number;
 };
-export function usePurchaseOrdersPaged(params: { page: number; pageSize: number; status?: string; supplierId?: string; q?: string; sort?: string }) {
-  const { page, pageSize, status, supplierId, q, sort } = params;
+export function usePurchaseOrdersPaged(params: { page: number; pageSize: number; status?: string; supplierId?: string; q?: string; sort?: string; creditorNames?: string[]; creditorCodes?: string[]; currencies?: string[] }) {
+  const { page, pageSize, status, supplierId, q, sort, creditorNames, creditorCodes, currencies } = params;
   // The filter half is shared with the two exports (po-list-export.ts), so an
   // export can never be sent a different filter than the list it was pressed on.
-  const usp = poListParams({ status, supplierId, q, sort });
+  const usp = poListParams({ status, supplierId, q, sort, creditorNames, creditorCodes, currencies });
   usp.set('page', String(page));
   usp.set('pageSize', String(pageSize));
   return useQuery({
-    queryKey: ['mfg-purchase-orders-paged', page, pageSize, status ?? '', supplierId ?? '', q ?? '', sort ?? ''],
+    queryKey: ['mfg-purchase-orders-paged', page, pageSize, status ?? '', supplierId ?? '', q ?? '', sort ?? '', JSON.stringify(creditorNames ?? []), JSON.stringify(creditorCodes ?? []), JSON.stringify(currencies ?? [])],
     queryFn: ({ signal }) => authedFetch<{ purchaseOrders: PoHeaderRow[]; total: number; page: number; pageSize: number; statusCounts: PoStatusCounts }>(`/mfg-purchase-orders?${usp.toString()}`, { signal }),
     placeholderData: (prev: any) => prev,
     staleTime: 30_000,

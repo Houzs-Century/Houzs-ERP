@@ -17,7 +17,7 @@ import { scopeToCompany, type CompanyScopeCtx } from './companyScope';
 import { lookupByIds } from './document-line-export';
 import { chunkIn } from './paginate-all';
 import { pageWithTruncation } from './outstanding-po-lines';
-import { PO_LIST_SELECT, filterPoList, orderPoList, stampPoListGrns, type PoListFilters } from './po-list-read';
+import { poListSelect, filterPoList, orderPoList, stampPoListGrns, type PoListFilters } from './po-list-read';
 import { warehouseLabel } from './warehouse-label';
 import { bookSpellingOrOwn } from '../../services/autocount-writeback';
 import { LOCATION_MAP } from '../../services/autocount-master-maps';
@@ -177,7 +177,7 @@ export async function buildPoExportRows(
 ): Promise<PoExportRows> {
   const sb = sbIn as Sb;
   const read = await pageWithTruncation<{ id: string; purchase_location_id?: string | null } & Record<string, unknown>>((from, to) =>
-    orderPoList(filterPoList(sb.from('purchase_orders').select(PO_LIST_SELECT), filters, c, validStatuses), filters.sort)
+    orderPoList(filterPoList(sb.from('purchase_orders').select(poListSelect(filters)), filters, c, validStatuses), filters.sort)
       .range(from, to));
   if (read.error) return { error: `purchase orders: ${read.error.message}` };
   const stamped = await stampPoListGrns(sb, read.data ?? []);

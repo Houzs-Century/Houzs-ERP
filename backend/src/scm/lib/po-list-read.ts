@@ -44,7 +44,11 @@ export const PO_HEADER_COLS =
    2026-07-24). supplier_sku rides the items embed (owner 2026-08-05). */
 export const PO_LIST_SELECT = `${PO_HEADER_COLS}, supplier:suppliers(id, code, name, contact_person, phone, email, address), items:purchase_order_items(item_code, material_name, qty, supplier_sku), purchase_location:warehouses!purchase_location_id(id, code, name)`;
 
-/** The list's filter contract, as the query string carries it. */
+/** The list's filter contract, as the query string carries it.
+ *  `creditorNames`/`creditorCodes`/`currencies` are the SERVER-FILTERABLE column
+ *  funnels the Purchase Orders grid pushes down so pagination runs over the
+ *  filtered set (owner 2026-09-16). Line-level and MRP-derived funnels are not
+ *  here — they stay client-side on the loaded page (see PurchaseOrdersListV2). */
 export type PoListFilters = {
   status: string | null;
   supplierId: string | null;
@@ -52,9 +56,27 @@ export type PoListFilters = {
   from: string | null;
   to: string | null;
   sort: string | null;
+  creditorNames: string[] | null;
+  creditorCodes: string[] | null;
+  currencies: string[] | null;
 };
 
 const param = (v: string | undefined): string | null => (v === undefined || v === '' ? null : v);
+
+/* Multi-value funnel params ride as a JSON array in ONE query param, not a
+   comma-joined string: a creditor name may itself contain a comma. A malformed
+   or empty value reads as "no filter" (null), never a crash. */
+function jsonArrayParam(v: string | undefined): string[] | null {
+  if (v === undefined || v === '') return null;
+  try {
+    const parsed = JSON.parse(v) as unknown;
+    if (!Array.isArray(parsed)) return null;
+    const out = parsed.filter((x): x is string => typeof x === 'string' && x.length > 0);
+    return out.length ? out : null;
+  } catch {
+    return null;
+  }
+}
 
 export function readPoListFilters(query: (key: string) => string | undefined): PoListFilters {
   return {
@@ -64,7 +86,24 @@ export function readPoListFilters(query: (key: string) => string | undefined): P
     from: param(query('from')),
     to: param(query('to')),
     sort: param(query('sort')),
+    creditorNames: jsonArrayParam(query('creditorNames')),
+    creditorCodes: jsonArrayParam(query('creditorCodes')),
+    currencies: jsonArrayParam(query('currencies')),
   };
+}
+
+/** The SELECT for the list read. When a creditor funnel is active the supplier
+ *  embed becomes `!inner` so a `supplier.name`/`supplier.code` filter removes the
+ *  parent PO (a plain embed would only null the embed and keep every PO). Shared
+ *  by the list and both exports so all three match the same set. */
+export function poListSelect(f: PoListFilters): string {
+  const creditorFilter =
+    (f.creditorNames !== null && f.creditorNames.length > 0) ||
+    (f.creditorCodes !== null && f.creditorCodes.length > 0);
+  const supplierEmbed = creditorFilter
+    ? 'supplier:suppliers!inner(id, code, name, contact_person, phone, email, address)'
+    : 'supplier:suppliers(id, code, name, contact_person, phone, email, address)';
+  return `${PO_HEADER_COLS}, ${supplierEmbed}, items:purchase_order_items(item_code, material_name, qty, supplier_sku), purchase_location:warehouses!purchase_location_id(id, code, name)`;
 }
 
 /* Indexed by a caller's string, so an unknown key is `undefined` — say so. */
@@ -116,6 +155,14 @@ export function filterPoList<Q>(q: Q, f: PoListFilters, c: CompanyScopeCtx, vali
     else if (validStatuses.has(f.status)) out = out.eq('status', f.status);
   }
   if (f.supplierId) out = out.eq('supplier_id', f.supplierId);
+  /* Server-filterable column funnels (owner 2026-09-16): Creditor Name / Code
+     via the `supplier` embed (poListSelect makes it `!inner` so these remove the
+     parent PO, not just null the embed), Currency on the base column. Multi-value
+     via `in`. The grid pushes the ticked values so pagination runs over the
+     filtered set. */
+  if (f.creditorNames && f.creditorNames.length > 0) out = out.in('supplier.name', f.creditorNames);
+  if (f.creditorCodes && f.creditorCodes.length > 0) out = out.in('supplier.code', f.creditorCodes);
+  if (f.currencies && f.currencies.length > 0) out = out.in('currency', f.currencies);
   out = scopeToCompany(out, c); // multi-company: isolate to the active company
   /* free-text search over the base-table text columns. Supplier name / code are
      embedded resources, not base purchase_orders columns, so they can't be
