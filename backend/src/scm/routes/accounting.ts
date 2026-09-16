@@ -1262,11 +1262,14 @@ export const controlCheckHandler = async (c: any) => {
     const foreign: Foreign[] = [];
     /* What LEGITIMATELY moves each control account: the document that books it
        plus everything that settles it. AR moves on invoices AND on customer
-       payments (SOPAY/SIPAY, phase 2A); AP moves on purchase invoices AND on
-       the payment vouchers that settle them. Anything else on the account is
-       the finding. */
+       payments (SOPAY/SIPAY, phase 2A), on the deposit invoice a payment
+       raises (DI, Dr AR), on the credit note a refund raises against it (CN)
+       and on the Customer Refund voucher itself (PV, Dr AR); AP moves on
+       purchase invoices AND on the payment vouchers that settle them.
+       Anything else on the account is the finding. */
     const family = role === 'AR'
-      ? new Set(['SI', 'SI_REVERSAL', 'SOPAY', 'SOPAY_REVERSAL', 'SIPAY', 'SIPAY_REVERSAL'])
+      ? new Set(['SI', 'SI_REVERSAL', 'SOPAY', 'SOPAY_REVERSAL', 'SIPAY', 'SIPAY_REVERSAL',
+        'DI', 'DI_REVERSAL', 'CN', 'CN_REVERSAL', 'PV', 'PV_REVERSAL'])
       : role === 'AR_OTHER'
         ? new Set(['ODB', 'ODB_REVERSAL', 'ODR', 'ODR_REVERSAL'])
         /* API = the AP invoice (docs/bugs/0654): it credits 400 or 405 by the
