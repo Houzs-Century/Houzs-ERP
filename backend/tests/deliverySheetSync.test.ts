@@ -532,6 +532,24 @@ describe("POST /po-dates — Supplier Delivery Date 1/2/3 → supplier_delivery_
     expect(po.enqueue).toHaveBeenCalledTimes(1);
   });
 
+  test("dry_run reports what would move, after the lock check, and writes and queues nothing", async () => {
+    const { body } = await post({
+      dry_run: true,
+      updates: [{ DocNo: "PO-004521", SupplierDeliveryDate1: "2026-09-25", SupplierDeliveryDate2: "2026-10-02" }],
+    });
+    expect(body.dry_run).toBe(true);
+    expect(body.written).toBe(0);
+    expect(body.results[0]).toMatchObject({
+      ok: true,
+      dry_run: true,
+      would_write: { supplier_delivery_date_3: "2026-10-02" },
+      current: { supplier_delivery_date_2: "2026-09-25", supplier_delivery_date_3: null },
+    });
+    expect(po.lock).toHaveBeenCalledTimes(1);
+    expect(po.cascade).not.toHaveBeenCalled();
+    expect(po.enqueue).not.toHaveBeenCalled();
+  });
+
   test("a wrong key is 401; more than the cap is 413", async () => {
     const { db } = fakeDb(() => []);
     const bad = await app.request(

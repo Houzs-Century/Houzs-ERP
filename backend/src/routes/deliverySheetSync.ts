@@ -283,9 +283,9 @@ type SheetPoDates = { DocNo?: unknown; SupplierDeliveryDate1?: unknown; Supplier
 app.post("/po-dates", async (c) => {
   const denied = await badSheetKey(c);
   if (denied) return denied;
-  let body: { updates?: unknown };
+  let body: { updates?: unknown; dry_run?: unknown };
   try {
-    body = (await c.req.json()) as { updates?: unknown };
+    body = (await c.req.json()) as { updates?: unknown; dry_run?: unknown };
   } catch {
     return c.json({ error: "bad_json" }, 400);
   }
@@ -293,6 +293,10 @@ app.post("/po-dates", async (c) => {
   if (!updates) return c.json({ error: "bad_request", message: "updates[] required" }, 400);
   if (updates.length > UPDATES_MAX) return c.json({ error: "too_many", max: UPDATES_MAX }, 413);
   if (!isSupabaseConfigured(c.env)) return c.json({ error: "supabase not configured" }, 503);
+  // A preview: everything up to the write is done and reported, nothing is
+  // written or queued. The cutover's first push is run this way so the owner
+  // sees what the tab would change before it changes it.
+  const dryRun = body.dry_run === true;
   const co = await sheetCompanyId(c);
   if ("refusal" in co) return co.refusal;
 
@@ -375,6 +379,12 @@ app.post("/po-dates", async (c) => {
       report({ skipped: "po_locked", message: lock.message });
       continue;
     }
+    if (dryRun) {
+      const wouldWrite: Record<string, string> = {};
+      for (const [slot, date] of moved) wouldWrite[SUPPLIER_DATE_SLOT_COL[slot]] = date;
+      report({ ok: true, dry_run: true, would_write: wouldWrite, current: before_dates(h) });
+      continue;
+    }
     const before: Record<string, unknown> = {
       po_number: h.po_number,
       status: h.status,
@@ -416,8 +426,16 @@ app.post("/po-dates", async (c) => {
     else report({ ok: true, written, queued });
   }
 
-  const count = results.filter((r) => r.ok === true && r.unchanged !== true).length;
-  return c.json({ count: results.length, written: count, results });
+  const count = results.filter((r) => r.ok === true && r.unchanged !== true && r.dry_run !== true).length;
+  return c.json({ count: results.length, written: count, dry_run: dryRun, results });
 });
+
+function before_dates(h: PoHeadForSheet): Record<string, string | null> {
+  return {
+    supplier_delivery_date_2: h.supplier_delivery_date_2,
+    supplier_delivery_date_3: h.supplier_delivery_date_3,
+    supplier_delivery_date_4: h.supplier_delivery_date_4,
+  };
+}
 
 export default app;

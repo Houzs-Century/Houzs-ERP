@@ -104,13 +104,14 @@ function erpPoDatesOf_(row) {
   return u;
 }
 
-/** POSTs the updates in batches; returns per-outcome counts and the failures. */
-function erpPushPoDates_(cfg, updates, rid) {
+/** POSTs the updates in batches; returns per-outcome counts and the failures.
+ *  With dryRun the ERP reports what WOULD move and writes nothing. */
+function erpPushPoDates_(cfg, updates, rid, dryRun) {
   const tally = { written: 0, unchanged: 0, skipped: 0, failed: 0, notes: [] };
   for (let i = 0; i < updates.length; i += ERP_PUSH_BATCH) {
     const batch = updates.slice(i, i + ERP_PUSH_BATCH);
     try {
-      const res = erpFetch_(cfg, "/api/delivery-sheet/po-dates", { method: "post", contentType: "application/json", payload: JSON.stringify({ updates: batch }) }, rid);
+      const res = erpFetch_(cfg, "/api/delivery-sheet/po-dates", { method: "post", contentType: "application/json", payload: JSON.stringify({ updates: batch, dry_run: dryRun === true }) }, rid);
       if (res.getResponseCode() !== 200) {
         tally.failed += batch.length;
         tally.notes.push("HTTP " + res.getResponseCode() + ": " + res.getContentText().slice(0, 200));
@@ -118,6 +119,7 @@ function erpPushPoDates_(cfg, updates, rid) {
       }
       (JSON.parse(res.getContentText()).results || []).forEach(function (r) {
         if (r.ok === true && r.unchanged === true) tally.unchanged++;
+        else if (r.ok === true && r.dry_run === true) { tally.written++; tally.notes.push(r.DocNo + ": would write " + JSON.stringify(r.would_write) + " (ERP now " + JSON.stringify(r.current) + ")"); }
         else if (r.ok === true) tally.written++;
         else if (r.skipped) { tally.skipped++; if (r.skipped !== "nothing_to_write") tally.notes.push(r.DocNo + ": " + r.skipped + (r.message ? " - " + r.message : "")); }
         else { tally.failed++; tally.notes.push(r.DocNo + ": " + (r.error || "failed")); }
@@ -156,8 +158,8 @@ function erpSyncSelectedPoDates() {
 }
 
 /** Every data row's dates -> the ERP, one payload per PO (a PO's lines share
- *  the header dates; a value on any of its rows counts). */
-function pushPoDatesToErp(triggerType) {
+ *  the header dates; a value on any of its rows counts). dryRun previews. */
+function pushPoDatesToErp(triggerType, dryRun) {
   const rid = Utilities.getUuid();
   const startTime = new Date();
   const ss = getTargetSs();
@@ -182,10 +184,10 @@ function pushPoDatesToErp(triggerType) {
       });
     });
     const updates = order.map(function (d) { return byDoc[d]; }).filter(function (u) { return Object.keys(u).length > 1; });
-    const t = erpPushPoDates_(erpConfig_(), updates, rid);
-    const message = "Pushed dates for " + updates.length + " PO(s): " + erpPoTallyText_(t);
+    const t = erpPushPoDates_(erpConfig_(), updates, rid, dryRun);
+    const message = (dryRun ? "PREVIEW (nothing written) for " : "Pushed dates for ") + updates.length + " PO(s): " + erpPoTallyText_(t);
     Log.info(rid, message);
-    recordExecutionLog(ss, rid, "PO_DATE_SYNC", startTime, new Date(), t.failed ? "PARTIAL" : "SYNCED", message, userEmail);
+    recordExecutionLog(ss, rid, "PO_DATE_SYNC", startTime, new Date(), dryRun ? "PREVIEW" : t.failed ? "PARTIAL" : "SYNCED", message, userEmail);
     if (triggerType === "MANUAL") SpreadsheetApp.getUi().alert("Outstanding PO dates\n\n" + message);
   } catch (e) {
     Log.error(rid, "ERP PO date push failed", e);
@@ -196,6 +198,8 @@ function pushPoDatesToErp(triggerType) {
 
 function manualErpPoPull() { runErpOutstandingPoPull("MANUAL"); }
 function manualErpPoPush() { pushPoDatesToErp("MANUAL"); }
+/** Editor-only preview: what the tab's dates would change in the ERP. */
+function erpPreviewPoDatePush() { pushPoDatesToErp("SCHEDULED", true); }
 /** Daily: the sheet's dates go to the ERP first, then the tab is refreshed. */
 function scheduledErpPoSync() { pushPoDatesToErp("SCHEDULED"); runErpOutstandingPoPull("SCHEDULED"); }
 
