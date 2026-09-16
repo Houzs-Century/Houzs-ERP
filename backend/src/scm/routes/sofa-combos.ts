@@ -31,6 +31,8 @@ import { canonicalizeComboModulesForStorage, comboSlotsKey, sofaComboCostSen, pa
 import { loadModelSofaModuleCosts } from '../lib/mfg-pricing-recompute';
 import { canWriteScmConfig } from '../lib/houzs-perms';
 import { todayMyt } from '../lib/my-time';
+import { autoDeriveEnabled } from '../lib/auto-derive-cost';
+import { deriveMasterComboCostFromSuppliers, comboCostChanged } from '../lib/derive-combo-cost';
 import { activeCompanyId, scopeToCompany } from '../lib/companyScope';
 
 export const sofaCombos = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -478,6 +480,66 @@ sofaCombos.put('/anchors/:baseModel', async (c) => {
   return c.json({ ok: true });
 });
 
+/* Auto-derive stage 5b (owner Option 1, COST-ONLY): after a SUPPLIER-scoped
+   combo write, derive the MASTER combo's COST grid (prices_by_height) from the
+   most-expensive supplier combo for the same scope tuple and append a master row
+   — preserving the master's SELLING grid (selling_prices_by_height, POS). No
+   supplier combo -> nothing derived (a gap the owner fills). This replaces the
+   sofa_combo_anchor mirror. Best-effort; flag-gated by the caller. */
+async function recomputeMasterComboCostFromSuppliers(
+  supabase: SupabaseClient,
+  savedRow: Row,
+  companyId: number | null | undefined,
+  createdBy: string,
+): Promise<void> {
+  try {
+    const key = comboSlotsKey(savedRow.modules ?? []);
+    const asOf = todayMyt();
+    let q = supabase
+      .from('sofa_combo_pricing')
+      .select('supplier_id, modules, prices_by_height, selling_prices_by_height, pwp_prices_by_height, default_free_gifts, label, effective_from, created_at')
+      .eq('base_model', savedRow.base_model)
+      .eq('tier', savedRow.tier)
+      .is('deleted_at', null)
+      .lte('effective_from', asOf);
+    if (companyId != null) q = q.eq('company_id', companyId);
+    q = savedRow.customer_id == null ? q.is('customer_id', null) : q.eq('customer_id', savedRow.customer_id);
+    const { data, error } = await q.order('effective_from', { ascending: false }).order('created_at', { ascending: false });
+    if (error) throw new Error(error.message);
+    const rows = ((data ?? []) as Row[]).filter((r) => comboSlotsKey(r.modules ?? []) === key);
+    const latestSup = new Map<string, Row>();
+    let master: Row | null = null;
+    for (const r of rows) {
+      if (r.supplier_id == null) { if (!master) master = r; }
+      else if (!latestSup.has(r.supplier_id)) latestSup.set(r.supplier_id, r);
+    }
+    const derived = deriveMasterComboCostFromSuppliers(
+      [...latestSup.values()].map((r) => ({ supplier_id: r.supplier_id as string, prices_by_height: r.prices_by_height })),
+    );
+    if (!derived) return;
+    if (master && !comboCostChanged(master.prices_by_height, derived)) return;
+    const { error: insErr } = await supabase.from('sofa_combo_pricing').insert({
+      company_id: companyId,
+      base_model: savedRow.base_model,
+      modules: savedRow.modules,
+      tier: savedRow.tier,
+      customer_id: savedRow.customer_id,
+      supplier_id: null,
+      prices_by_height: derived,
+      selling_prices_by_height: master?.selling_prices_by_height ?? {},
+      pwp_prices_by_height: master?.pwp_prices_by_height ?? {},
+      default_free_gifts: master?.default_free_gifts ?? [],
+      label: master?.label ?? savedRow.label,
+      effective_from: asOf,
+      notes: 'auto-derived cost (max supplier)',
+      created_by: createdBy,
+    });
+    if (insErr) throw new Error(insErr.message);
+  } catch (e) {
+    console.error('[auto-derive] master combo cost recompute failed:', e instanceof Error ? e.message : e);
+  }
+}
+
 // ── POST / ─────────────────────────────────────────────────────────────
 // Create a new combo row. body: {
 //   baseModel, modules: string[][], tier?: SofaPriceTier | null,
@@ -627,8 +689,16 @@ sofaCombos.post('/', async (c) => {
   // combo to the other side (master ⇄ that supplier). Best-effort: a mirror
   // failure leaves the primary row intact and just reports mirrored:false.
   const savedRow = data as unknown as Row;
-  const anchor = await loadComboAnchor(supabase, baseModel, activeCompanyId(c));
-  const mirrored = anchor ? await mirrorAnchoredCombo(supabase, savedRow, anchor, user.id, activeCompanyId(c)) : false;
+  let mirrored = false;
+  if (await autoDeriveEnabled(supabase)) {
+    // Stage 5b: a supplier-scope write auto-derives the MASTER combo COST from
+    // the most-expensive supplier (cost-only); a master write persists until the
+    // next supplier write re-derives, mirroring the SKU model. Anchor mirror off.
+    if (savedRow.supplier_id != null) await recomputeMasterComboCostFromSuppliers(supabase, savedRow, activeCompanyId(c), user.id);
+  } else {
+    const anchor = await loadComboAnchor(supabase, baseModel, activeCompanyId(c));
+    mirrored = anchor ? await mirrorAnchoredCombo(supabase, savedRow, anchor, user.id, activeCompanyId(c)) : false;
+  }
   return c.json({ ...rowToWire(savedRow), mirrored }, 201);
 });
 
@@ -754,8 +824,13 @@ export const sofaComboPutHandler = async (c: any) => {
   // R8 — mirror the new effective row to the other side of the anchor when the
   // base model is anchored (master ⇄ supplier). Same best-effort contract as POST.
   const savedRow = data as unknown as Row;
-  const anchor = await loadComboAnchor(supabase, (orig as { base_model: string }).base_model, activeCompanyId(c));
-  const mirrored = anchor ? await mirrorAnchoredCombo(supabase, savedRow, anchor, user.id, activeCompanyId(c)) : false;
+  let mirrored = false;
+  if (await autoDeriveEnabled(supabase)) {
+    if (savedRow.supplier_id != null) await recomputeMasterComboCostFromSuppliers(supabase, savedRow, activeCompanyId(c), user.id);
+  } else {
+    const anchor = await loadComboAnchor(supabase, (orig as { base_model: string }).base_model, activeCompanyId(c));
+    mirrored = anchor ? await mirrorAnchoredCombo(supabase, savedRow, anchor, user.id, activeCompanyId(c)) : false;
+  }
   return c.json({ ...rowToWire(savedRow), mirrored }, 201);
 };
 sofaCombos.put('/:id', sofaComboPutHandler);
