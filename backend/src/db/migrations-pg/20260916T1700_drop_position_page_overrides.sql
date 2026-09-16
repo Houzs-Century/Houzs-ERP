@@ -1,0 +1,13 @@
+-- 20260916T1700_drop_position_page_overrides.sql
+-- REVERSAL:
+--   Re-run the CREATE TABLE from 0323_position_page_overrides.sql (the table
+--   held ZERO rows in production on 2026-09-16, so nothing is lost) and
+--   restore the reader in services/auth.ts + the six SCM tabs on Roles &
+--   Permissions from the commit before this one.
+--
+-- Roles & Permissions review 2026-09-16: the per-page SCM override axis
+-- (the Sales / Procurement / Consignment / Transportation / Warehouse /
+-- Finance tabs) was never used — 0 rows since it shipped on 2026-08-22 — and
+-- since part B the Titles tab (position_policy) answers "which pages does
+-- this Title see". Owner: 删掉那些不需要的.
+DROP TABLE IF EXISTS public.position_page_overrides;
