@@ -1,10 +1,23 @@
 # PLAN — Auto-derive the Product Maintenance price from Supplier prices
 
-Status: DESIGN ONLY, for owner approval. Nothing implemented. Read-only
+Status: OWNER APPROVED 2026-09-16; staged implementation in progress. Read-only
 investigation done on production `anogrigyjbduyzclzjgn` ("HOUZS ERP SG") and the
 code in this worktree, 2026-09-16. Every count below was read off the live
 database at the moment of writing (R07); code claims are labelled PROVEN /
 UNKNOWN (R02).
+
+Owner decisions folded in (2026-09-16): (1) "most expensive" = the WHOLE SET
+from the single dearest supplier, not a per-cell max. (2) **Backend-only — ZERO
+frontend diff**: the recompute overwrites the stored product cost on a
+supplier-price change; the frontend keeps reading the same column; the manual
+field is NOT made read-only (a stray manual edit is just overwritten on the next
+recompute). (3) **Effective dating is IN SCOPE** (not deferred): a supplier
+price carries a valid-from with the prior value kept, and the derived cost is
+as-of-date-aware. (4) Surface price CONFLICTS (a SKU/combo whose suppliers
+disagree) so the owner removes/edits the wrong one. (5) Cost basis CONFIRMED:
+the Sales Report SO stage already reads the Product-Maintenance-derived cost
+(`total_cost_sen` via `computeMfgLineCost`); the shipped/DO stage stays on actual
+FIFO `ship_cost_sen` and is never touched.
 
 ---
 
@@ -260,30 +273,34 @@ Sales Report（代码叫 Fair Report）DO 阶段：成本 = `ship_cost_sen ?? un
 按 `company_id` scope（R105：service-role 绕过 RLS，谓词是唯一隔离）。公司 2 多供应
 商差价比例更高（66/68），受影响更明显。
 
-## 9. 工作量估计 + 分阶段上线（R24）
+## 9. 工作量估计 + 分阶段上线（R24，已按老板决定重排）
 
-| 阶段 | 内容 | 风险 | 估时 |
-|---|---|---|---|
-| 1 | 派生纯函数（max over suppliers，含 matrix 形态转换）+ 单元测试。inert，无人读。 | 极低 | 0.5–1 天 |
-| 2 | **绑定缺口报表**（每公司，脚本 + workflow）。老板据此补 392 个缺口。 | 极低（只读） | 0.5 天 |
-| 3 | 反转 cost-anchor：绑定写入 → 重算产品成本（选项 C）；产品成本 UI 只读；一次性 backfill（DRY-RUN → apply）。 | 中（money，需 CI 验证的独立 PR） | 2–3 天 |
-| 4 | 沙发 combo master + special master 同样改自动派生（反转 anchor 镜像）。 | 中 | 1–2 天 |
-| 5 | Phase 2 供应商价历史（`supplier_binding_price_history`）→ 派生改「按文件日期取当时最贵」。 | 中 | 2–3 天（依赖 Phase 2） |
+| 阶段 | 内容 | 状态 | 风险 | 估时 |
+|---|---|---|---|---|
+| 1 | 绑定缺口报表（每公司只读脚本，走现有 runner，无新 workflow）。 | **DONE** PR #4012 已合并+部署 | 极低 | — |
+| 2 | 派生纯函数（whole-set max supplier，含 sofa 反向 matrix）+ 9 单元测试。inert。 | **DONE** PR #4013 inert | 极低 | — |
+| 1b | 价格冲突报表（每公司列出供应商价钱不一致的 SKU / 沙发 combo，附各供应商值）。只读。 | 本 PR | 极低（只读） | 0.5 天 |
+| 2b | **纯后端**：绑定写入（create/patch/bulk/delete/set-main）后重算受影响 SKU 的派生成本写回 `mfg_products`，替代 `is_cost_anchor` 镜像；`scm.app_config` 旗标默认 OFF（inert）；一次性 backfill（DRY-RUN→apply）。**不动任何前端**。per-SKU 重算 + R43 前后计时。 | 待做 | 中（money，独立 CI PR） | 2–3 天 |
+| 3（效期）| 供应商价效期：`supplier_binding_price_history`（valid-from + 旧值留存），派生按日期 as-of；派生变动写入产品成本历史（仿现有 `mfg_product_price_history`）供 SO 重算按订单日期取当时成本。**较大件**（生产 `price_valid_from/to` 今天全空）。 | 待做 | 中 | 3–4 天 |
+| 4（重价）| 一次性生产重价：先出前后 diff（多少 SKU 变、变多少、最大变动、每公司），**STOP 等老板 go**，才写。 | 待做（老板 gated）| 高 | 1 天 + 等 |
+| 5（combo/special）| 沙发 combo master + special（腿/高度/gap/布料）同样 whole-set max 自动派生。 | 待做 | 中 | 1–2 天 |
 
-合计约 6–10 个工作日，分 5 个独立 PR，每个先验证再下一个（R25 一路做完，但 money-
-critical 的第 3/4 阶段各自独立 CI 验证）。
+已完成阶段 1、2；剩余约 7–10 个工作日，每个独立 PR、先验证再下一个（R25），第 2b/3/5
+是 money-critical 各自独立 CI 验证，第 4 步的实际重价永远等老板 go。
 
-## 10. 要老板拍板的开放问题
+## 10. 开放问题 —— 老板已拍板（2026-09-16）
 
-1. **「最贵」在沙发/床架（一张 matrix）怎么定义？** 整体最贵供应商整套拿（推荐，PO 对
-   得上），还是每格各自取最贵（更贵，但拼出没人报过的表）？
-2. **按哪个日期算？** 现在供应商价没有生效日期。先「当下最贵」（马上能做），还是等
-   Phase 2 建供应商价历史后「按销售单/交货单日期取当时最贵」（符合你「在供应商那边维
-   护价 + 生效日期」的要求，但要多做一个阶段）？
-3. **利润口径确认**：已出货的 Sales Report 用的是**出货冻结的实际 FIFO 成本**，不是产
-   品维护价 —— 改产品维护价**不会**倒改历史数字（这几乎肯定是你要的）。请确认：你要
-   自动派生影响的是**销售单当下算的成本/毛利基准**（以及开口未出货单），已出货那笔的
-   历史保持不动，对吗？
+1. ~~「最贵」定义~~ → **整套拿最贵供应商**（whole-set），已定。matrix 用「最贵格」选
+   出哪个供应商胜出（报表口径同）。
+2. ~~按哪个日期算~~ → **效期 IN SCOPE**（阶段 3）：供应商价带 valid-from、旧值留存，
+   派生按日期 as-of。
+3. ~~利润口径~~ → **已确认**：SO 阶段 = 产品维护派生成本（预算），已出货 = 实际 FIFO
+   `ship_cost_sen`（不动）。这就是预算 vs 实际的分段视图。
+
+**仍需留意（不是拍板，是设计约束）**：SO 阶段成本是**保存时的快照**（`total_cost_sen`
+在 SO save/recompute 写入），不是实时算。所以派生价变动只对**之后被重算的订单**生效；
+已保存的开口单要刷新预算成本需触发重算（阶段 3 效期设计里，重算按订单日期 as-of 取当
+时派生成本，历史数字不动）。是否要对现有开口单做一次重算 sweep，是一个独立的小决定。
 
 ---
 
