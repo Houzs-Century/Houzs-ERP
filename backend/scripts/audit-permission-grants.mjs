@@ -18,6 +18,9 @@
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
 import { classifyPosition } from "./lib/position-classification.mjs";
+// The catalogue itself, so "what does this role actually hold" is answered by
+// the same parser login uses (tsx, like the classifier above).
+import { droppedPermissions, parsePermissions } from "../src/services/permissions.ts";
 
 function resolveUrl() {
   if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
@@ -125,6 +128,40 @@ try {
     try { perms = JSON.parse(r.permissions || "[]"); } catch {}
     console.log(`\n  ${r.id} ${r.name} (${r.active_users} active, ${perms.length} keys):`);
     console.log(`      ${[...perms].sort().join("  ") || "(none)"}`);
+  }
+
+  // -- (2c) STORED vs EFFECTIVE: the keys login throws away --------------------
+  // parsePermissions() filters every stored key through PERMISSIONS[]; a key
+  // outside the catalogue is dropped at session hydration with no signal
+  // (0478). A tick in the Roles matrix for such a key grants nothing. This is
+  // the live-DB half the build-time drift test cannot see (it scans repo seeds).
+  notice("-- (2c) roles whose STORED keys differ from what LOGIN keeps (catalogue drop) --");
+  let dropTotal = 0;
+  for (const r of roles) {
+    const dropped = droppedPermissions(r.permissions);
+    if (!dropped.length) continue;
+    dropTotal++;
+    const kept = parsePermissions(r.permissions).length;
+    console.log(
+      `  ${String(r.id).padStart(3)} | ${String(r.name).padEnd(34)} | active=${String(r.active_users).padStart(3)} | stored=${String(kept + dropped.length).padStart(3)} effective=${String(kept).padStart(3)} | dropped: ${dropped.sort().join(", ")}`,
+    );
+  }
+  console.log(dropTotal ? `
+  ${dropTotal} roles carry keys the catalogue does not know.` : "  (none — no stored key is outside the catalogue)");
+
+  // -- (2d) roles that grant NOTHING to active people -----------------------
+  // A role with zero effective keys on a full-cohort position is the
+  // "sees every page, every button 403s" shape (owner 2026-09-16: 看得到、点不动).
+  notice("-- (2d) roles with ZERO effective keys that active people hold --");
+  const emptyRoles = roles.filter((r) => r.active_users > 0 && parsePermissions(r.permissions).length === 0);
+  if (!emptyRoles.length) console.log("  (none)");
+  for (const r of emptyRoles) {
+    const holders = await pg`
+      SELECT u.id, coalesce(p.name, '(no position)') AS position
+        FROM users u LEFT JOIN positions p ON p.id = u.position_id
+       WHERE u.role_id = ${r.id} AND u.status = 'active' ORDER BY u.id`;
+    console.log(`  ${String(r.id).padStart(3)} | ${String(r.name).padEnd(34)} | ${r.active_users} active`);
+    for (const h of holders) console.log(`        ${personRef(h.id)} position=${h.position}`);
   }
 
   // -- (3) WHO IS ACTUALLY IN THE SYSTEM ------------------------------------
@@ -266,6 +303,24 @@ try {
     console.log(
       `  ${String(r.position).padEnd(24)} | ${String(r.role).padEnd(34)} | ${String(r.people).padStart(3)} | role grants scm.access: ${r.role_has_scm_access ? "YES" : "no"}`,
     );
+
+  // -- (7b) one position, several roles: the same Title, different API rights --
+  // Pages come from the Title (positionPolicy), actions from the role. Two
+  // people on one Title with different roles see the same screens and can do
+  // different things on them — the "same job, different buttons" report.
+  notice("-- (7b) positions whose active members are spread over more than one role --");
+  const spread = new Map();
+  for (const r of px) {
+    if (!spread.has(r.position)) spread.set(r.position, []);
+    spread.get(r.position).push(`${r.role} (${r.people})`);
+  }
+  let spreadCount = 0;
+  for (const [position, rolesHeld] of [...spread.entries()].sort((a, b) => b[1].length - a[1].length)) {
+    if (rolesHeld.length < 2) continue;
+    spreadCount++;
+    console.log(`  ${String(position).padEnd(24)} ${rolesHeld.length} roles: ${rolesHeld.join(", ")}`);
+  }
+  if (!spreadCount) console.log("  (none — no position spans two roles)");
 
   // -- (8) IS THE SCM WRITE FREEZE ON RIGHT NOW? ----------------------------
   notice("-- (8) scm.app_config['scm.write_freeze'] --");

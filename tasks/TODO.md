@@ -3,6 +3,8 @@
 One line per open item: what — waiting on — since. Delete the line when it is done. Older items were dropped on 2026-09-15; they are in tag `archive/docs-2026-09-15`.
 
 ## Waiting on owner
+- Roles & Permissions part A follow-ups (people decisions): move the 5 active holders of the 0-key `Position Preview` role onto real roles (HR Manager, one Finance Manager, one Operation Executive, one IT Developer Executive, the one member with no Title); merge or keep the two live Sales Director role variants (differ by stock_in.approve / users.read / projects.write); the 7 Titles with no active member stay until part B keys policy by position_id — 2026-09-16
+- Roles & Permissions part B: per-Title policy row keyed by position_id (cohort, money, config, fleet, god) replacing the name-keyed sets in positionPolicy.ts; editor tab; retire role_page_access + position_page_access — owner picked B on 2026-09-16, design PR next — 2026-09-16
 - Hookka supplier account 400-H004 belongs to another company in the book: A (recommended) map to 400-O002 and move 94 POs; B 400-H003; C keep. HC-GRN-2609-081 is refused until then — 2026-09-15
 - Payment text: keep AutoCount's text and append ERP references (root fix), then restore 61 orders; the #3969 stopgap is live — 2026-09-15
 - Carried-over balances: 6 payments on 4 orders (RM 9,047) exist only in AutoCount. A (recommended) staff key them in the ERP — 2026-09-15

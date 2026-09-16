@@ -356,6 +356,15 @@ const RESTRICTED_ROWS: ReadonlyMap<string, readonly PolicyRow[]> = new Map(
     // fallback in resolvePositionPolicy covers future regional variants
     // ("Warehouse Crew JB", …) so a new region can't reopen the hole.
     ["Warehouse Crew KL", STOREKEEPER_ROWS],
+    // Owner 2026-09-16 (Roles & Permissions review, part A): the outsourced
+    // delivery contractors. 13 active accounts on the Driver ROLE, but the
+    // position name was unclassified, so they fell into the default-FULL cohort
+    // and saw every page a manager sees (the role's keys stopped the API, not
+    // the menus). Same whitelist as Driver / Helper. NOT a fleet position:
+    // none of them has a scm.drivers row linked by user_id, and a fleet
+    // position with no link fails CLOSED to an empty board (deliveryScope.ts)
+    // — link them first, then move the name into FLEET_POSITIONS.
+    ["Outsource Transporter", DRIVER_HELPER_ROWS],
     ["Calendar Viewer", CALENDAR_VIEWER_ROWS],
   ].map(([name, rows]) => [normalisePosition(name as string), rows as readonly PolicyRow[]]),
 );
