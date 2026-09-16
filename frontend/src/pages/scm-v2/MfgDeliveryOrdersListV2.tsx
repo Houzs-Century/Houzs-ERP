@@ -52,6 +52,7 @@ import {
   StockAdjChip,
   type DocumentDrillLine,
 } from "../../components/DocumentLinesExpansion";
+import { useMfgCustomers } from "../../vendor/scm/lib/sales-order-queries";
 import { ListPager } from "../../components/ListPager";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { useVisibleRows } from "../../hooks/useVisibleRows";
@@ -836,6 +837,16 @@ export function MfgDeliveryOrdersListV2() {
   // Export button against double-clicks while PDFs generate.
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [exporting, setExporting] = useState(false);
+  /* Server-filterable column funnels the grid pushes down (owner 2026-09-16) so
+     pagination runs over the filtered set: Customer (debtor) Name + Currency.
+     Debtor CODE (grid value prefers ac_debtor_code) and line-level / MRP funnels
+     stay client-side on the loaded page. */
+  const [serverFunnels, setServerFunnels] = useState<{ debtorNames?: string[]; currencies?: string[] }>({});
+  const customersQ = useMfgCustomers();
+  const customerNames = useMemo(
+    () => [...new Set((customersQ.data?.customers ?? []).map((cst) => cst.name).filter((n): n is string => !!n))],
+    [customersQ.data],
+  );
   const [sort, setSort] = useState<string | undefined>(undefined);
   const { requestTerm: debouncedSearch } = useDebouncedSearchTerm(search);
 
@@ -851,6 +862,7 @@ export function MfgDeliveryOrdersListV2() {
     status: apiStatus,
     q: debouncedSearch,
     sort,
+    ...serverFunnels,
   });
   const searchTransition = useSearchResultTransition({
     inputTerm: search,
@@ -943,6 +955,25 @@ export function MfgDeliveryOrdersListV2() {
       return;
     }
     setPageParam(0); // sort change → back to page 0
+  };
+  /* DataTable reports funnel state; lift the SERVER-FILTERABLE ones (Customer
+     Name, Currency) into the list query. Mirrors setSortAndReset: first
+     (mount-restore) report adopts without clobbering ?page=; later changes reset
+     to page 1. */
+  const funnelSyncedRef = useRef(false);
+  const serverFunnelSigRef = useRef("");
+  const onColFiltersChange = (colFilters: Record<string, string[] | undefined>) => {
+    const pick = (key: string): string[] | undefined => {
+      const v = colFilters[key];
+      return v && v.length > 0 ? v : undefined;
+    };
+    const next = { debtorNames: pick("debtor_name"), currencies: pick("currency") };
+    const sig = JSON.stringify(next);
+    if (sig === serverFunnelSigRef.current) return;
+    serverFunnelSigRef.current = sig;
+    setServerFunnels(next);
+    if (!funnelSyncedRef.current) { funnelSyncedRef.current = true; return; }
+    setPageParam(0);
   };
   const resetLayout = () => {
     setSort(undefined);
@@ -1244,6 +1275,9 @@ export function MfgDeliveryOrdersListV2() {
       key: "debtor_name",
       label: DO_LABELS.debtorName,
       getValue: (r) => r.debtor_name,
+      // Server-filterable: seed the checklist with every customer (not just the
+      // loaded page's), so a customer whose DOs are all on a later page is pickable.
+      filterSeedValues: customerNames,
       render: (r) => (
         <span className="text-[13px] font-semibold text-ink">
           {r.debtor_name || "—"}
@@ -1738,6 +1772,7 @@ export function MfgDeliveryOrdersListV2() {
               rows={rows}
               /* Feeds the stat strip so the tiles describe what is on screen. */
               onFilteredRowsChange={visible.onFilteredRowsChange}
+              onColFiltersChange={onColFiltersChange}
               loading={listLoading}
               error={error ? (error as Error).message ?? "Failed to load" : null}
               columns={columns}

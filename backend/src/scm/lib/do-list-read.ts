@@ -26,9 +26,28 @@ export type DoListParams = {
   sort: string | null;
   from: string | null;
   to: string | null;
+  /** Server-filterable column funnels (owner 2026-09-16): Customer (debtor) Name
+     and Currency (base columns on delivery_orders). Debtor CODE and line-level /
+     MRP funnels stay client-side on the loaded page. */
+  debtorNames: string[] | null;
+  currencies: string[] | null;
 };
 
 const param = (v: string | undefined): string | null => (v === undefined || v === '' ? null : v);
+
+/* Multi-value funnel params ride as a JSON array in ONE param (a customer name
+   may contain a comma). Malformed / empty reads as no filter. */
+function jsonArrayParam(v: string | undefined): string[] | null {
+  if (v === undefined || v === '') return null;
+  try {
+    const parsed = JSON.parse(v) as unknown;
+    if (!Array.isArray(parsed)) return null;
+    const out = parsed.filter((x): x is string => typeof x === 'string' && x.length > 0);
+    return out.length ? out : null;
+  } catch {
+    return null;
+  }
+}
 
 export function readDoListParams(query: (key: string) => string | undefined): DoListParams {
   return {
@@ -37,6 +56,8 @@ export function readDoListParams(query: (key: string) => string | undefined): Do
     sort: param(query('sort')),
     from: param(query('from')),
     to: param(query('to')),
+    debtorNames: jsonArrayParam(query('debtorNames')),
+    currencies: jsonArrayParam(query('currencies')),
   };
 }
 
@@ -105,5 +126,9 @@ export function filterDoList<Q>(q: Q, p: DoListParams, c: CompanyScopeCtx, scope
   }
   if (p.from) out = out.gte('do_date', p.from);
   if (p.to) out = out.lte('do_date', p.to);
+  /* Server-filterable column funnels (owner 2026-09-16) — Customer Name /
+     Currency pushed down so the pager runs over the filtered set. */
+  if (p.debtorNames && p.debtorNames.length > 0) out = out.in('debtor_name', p.debtorNames);
+  if (p.currencies && p.currencies.length > 0) out = out.in('currency', p.currencies);
   return out as unknown as Q;
 }
