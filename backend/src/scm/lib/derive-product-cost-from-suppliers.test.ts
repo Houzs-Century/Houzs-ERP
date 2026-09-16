@@ -135,3 +135,15 @@ describe('deriveProductCostFromSuppliers — zero-priced winner is reported, not
     expect(r.patch.base_price_sen).toBe(0);
   });
 });
+
+describe('deriveProductCostFromSuppliers — BEDFRAME flat-priced (no matrix)', () => {
+  it('derives base_price_sen from the flat unit_price_sen, not null (ELEPHANE-(SK) class)', () => {
+    const r = deriveProductCostFromSuppliers('BEDFRAME', [
+      b({ supplier_id: 'a', unit_price_sen: 165000, price_matrix: null }),
+      b({ supplier_id: 'b', unit_price_sen: 160000, price_matrix: null }),
+    ]);
+    if (r.skipped) throw new Error('expected a patch');
+    expect(r.chosenSupplierId).toBe('a');      // dearest flat
+    expect(r.patch.base_price_sen).toBe(165000); // not null
+  });
+});
