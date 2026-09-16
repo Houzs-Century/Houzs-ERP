@@ -36,9 +36,30 @@ export type SoListParams = {
   to: string | null;
   /** The second-level filter rows, one `f` param each (so-list-filter-model). */
   f: string[];
+  /** Server-filterable column funnels the grid pushes down (owner 2026-09-16) so
+     pagination runs over the filtered set: Customer (debtor) Name and Currency,
+     both base columns on the list view. Debtor CODE stays client-side — its grid
+     value prefers ac_debtor_code over the base debtor_code, so it is not a clean
+     base-column filter. */
+  debtorNames: string[] | null;
+  currencies: string[] | null;
 };
 
 const param = (v: string | undefined): string | null => (v === undefined || v === '' ? null : v);
+
+/* Multi-value funnel params ride as a JSON array in ONE param (a customer name
+   may contain a comma). Malformed / empty reads as no filter. */
+function jsonArrayParam(v: string | undefined): string[] | null {
+  if (v === undefined || v === '') return null;
+  try {
+    const parsed = JSON.parse(v) as unknown;
+    if (!Array.isArray(parsed)) return null;
+    const out = parsed.filter((x): x is string => typeof x === 'string' && x.length > 0);
+    return out.length ? out : null;
+  } catch {
+    return null;
+  }
+}
 
 export function readSoListParams(
   query: (key: string) => string | undefined,
@@ -51,6 +72,8 @@ export function readSoListParams(
     from: param(query('from')),
     to: param(query('to')),
     f: queries('f') ?? [],
+    debtorNames: jsonArrayParam(query('debtorNames')),
+    currencies: jsonArrayParam(query('currencies')),
   };
 }
 
@@ -164,6 +187,12 @@ export async function prepareSoListRead(
        period chips. */
     if (p.from) q = q.gte('so_date', p.from);
     if (p.to) q = q.lte('so_date', p.to);
+    /* Server-filterable column funnels (owner 2026-09-16): Customer Name and
+       Currency, pushed down so the pager runs over the filtered set. In `header`
+       (not `scoped`) so the list + its count narrow while the status-count pills
+       stay full — mirrors how the PO creditor funnel behaves. */
+    if (p.debtorNames && p.debtorNames.length > 0) q = q.in('debtor_name', p.debtorNames);
+    if (p.currencies && p.currencies.length > 0) q = q.in('currency', p.currencies);
     return q as unknown as T;
   };
 
