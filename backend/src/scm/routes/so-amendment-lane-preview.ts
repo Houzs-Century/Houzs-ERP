@@ -23,6 +23,7 @@ import { hasHouzsPerm, isSalesCaller } from '../lib/houzs-perms';
 import { activeCompanyId } from '../lib/companyScope';
 import { soAmendableHeaderFields } from '../shared/so-field-policy';
 import { resolveAmendmentLaneSplit, summarizeLaneSplit } from '../lib/amendment-lane-resolve';
+import { dropNoopAmendmentLines, type NoopCheckLine } from '../lib/amendment-noop-lines';
 import { LINE_BUILD_ERRORS } from '../lib/amendment-lines';
 
 const AMENDABLE_HEADER_FIELDS: Record<string, string> = soAmendableHeaderFields();
@@ -46,7 +47,7 @@ soAmendmentLanePreview.post('/:docNo/amendments/lane-preview', async (c) => {
 
   let body: {
     headerChanges?: Record<string, unknown> | null;
-    lines?: Array<{ salesOrderItemId?: string | null; newItemCode?: string | null }>;
+    lines?: Array<NoopCheckLine>;
   };
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
 
@@ -63,12 +64,23 @@ soAmendmentLanePreview.post('/:docNo/amendments/lane-preview', async (c) => {
       headerChanges[k] = v;
     }
   }
-  const lines = (Array.isArray(body.lines) ? body.lines : []).map((l) => ({
+  const rawLines = (Array.isArray(body.lines) ? body.lines : []).map((l) => ({
     salesOrderItemId: typeof l?.salesOrderItemId === 'string' ? l.salesOrderItemId : null,
+    changeType: typeof l?.changeType === 'string' ? l.changeType : undefined,
     newItemCode: typeof l?.newItemCode === 'string' ? l.newItemCode : null,
+    newVariants: l?.newVariants ?? null,
+    newQty: typeof l?.newQty === 'number' ? l.newQty : null,
+    newUnitPriceSen: typeof l?.newUnitPriceSen === 'number' ? l.newUnitPriceSen : null,
+    newRemark: typeof l?.newRemark === 'string' ? l.newRemark : null,
+    newDiscountSen: typeof l?.newDiscountSen === 'number' ? l.newDiscountSen : null,
   }));
 
-  const split = await resolveAmendmentLaneSplit(sb, docNo, activeCompanyId(c), headerChanges, lines);
+  /* Same two steps as the submit route, in the same order: drop the lines that
+     ask for nothing, then split what is left. A no-op line must not be shown as
+     a desk the submit will never ask. */
+  const noopSplit = await dropNoopAmendmentLines(sb, docNo, rawLines);
+  if (!noopSplit) return c.json(LINE_BUILD_ERRORS.unreadable, 500);
+  const split = await resolveAmendmentLaneSplit(sb, docNo, activeCompanyId(c), headerChanges, noopSplit.kept);
   if (!split) return c.json(LINE_BUILD_ERRORS.unreadable, 500);
-  return c.json(summarizeLaneSplit(split));
+  return c.json({ ...summarizeLaneSplit(split), droppedNoopLines: noopSplit.dropped.length });
 });

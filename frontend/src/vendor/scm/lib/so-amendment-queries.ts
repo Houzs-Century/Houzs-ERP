@@ -241,7 +241,14 @@ export const useAmendmentLanePreview = (args: AmendmentLanePreviewArgs | null) =
   queryFn: () => authedFetch<AmendmentLanePreview>(
     `/mfg-sales-orders/${args!.docNo}/amendments/lane-preview`,
     { method: 'POST', body: JSON.stringify({
-      lines: args!.lines.map((l) => ({ salesOrderItemId: l.salesOrderItemId ?? null, newItemCode: l.newItemCode ?? null })),
+      /* Every field the server's no-op test reads (lib/amendment-noop-lines), so the
+         preview drops exactly the lines the submit will drop. oldSnapshot stays home. */
+      lines: args!.lines.map(({ oldSnapshot: _snap, ...l }) => ({
+        salesOrderItemId: l.salesOrderItemId ?? null, changeType: l.changeType,
+        newItemCode: l.newItemCode ?? null, newVariants: l.newVariants ?? null,
+        newQty: l.newQty ?? null, newUnitPriceSen: l.newUnitPriceSen ?? null,
+        newRemark: l.newRemark ?? null, newDiscountSen: l.newDiscountSen ?? null,
+      })),
       headerChanges: args!.headerChanges ?? null,
     }) },
   ),

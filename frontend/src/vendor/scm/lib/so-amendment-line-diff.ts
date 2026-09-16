@@ -322,6 +322,19 @@ export type AmendmentSigDraft = {
   discountSen?: number | null;
 };
 
+/** The variants blob as an AMENDMENT compares and sends it: without the `remark`
+    key. The phone's line editor copies the line remark into `variants.remark`
+    (buildVariants) while the stored blob of an imported line carries none, so a
+    compare of the raw blobs read every remarked line as a spec change and a
+    Delivery Date change on HC-SO-011410 opened a second, Purchaser approval over
+    nothing (owner 2026-09-15). The remark rides `newRemark`, not the variants. */
+export const amendmentVariants = (v: unknown): Record<string, unknown> | null => {
+  if (v == null || typeof v !== 'object' || Array.isArray(v)) return null;
+  const rest = { ...(v as Record<string, unknown>) };
+  delete rest.remark;
+  return Object.keys(rest).length === 0 ? null : rest;
+};
+
 export const amendmentLineSig = (d: AmendmentSigDraft): string => JSON.stringify({
   itemCode:     d.itemCode,
   qty:          d.qty,
