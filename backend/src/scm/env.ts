@@ -35,6 +35,10 @@ export interface Variables {
      *  the director-position sales view-all bypass (canViewAllSales) reads it
      *  from here. null when the user has no position assigned. */
     position_name?: string | null;
+    /** The Title's stored policy row (position_policy) mirrored from the real
+     *  AuthUser — decides cohort / money / config / fleet ahead of the
+     *  position_name fallbacks. */
+    position_policy?: import("../services/positionPolicyRows").PositionPolicyRow | null;
     /** STABLE ORG FIELD (public.users → departments.name) mirrored from the real
      *  AuthUser so SCM handlers can call pmsAccess.isSalesUser against the REAL
      *  caller — isSalesUser matches a "Sales …" position OR a department whose

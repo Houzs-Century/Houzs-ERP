@@ -39,7 +39,11 @@ Sales-Director carve-out for their own department.
   from one place (`memberEditFormFor` / `editMemberScope.tsx`).
 - **Title gates menus, Role gates permissions** — they are different
   columns (`position_id` vs `role_id`); a role created in Roles &
-  Permissions never appears under the Title picker.
+  Permissions never appears under the Title picker. What a Title opens is its
+  `position_policy` row (Roles & Permissions › **Titles**: cohort god / full /
+  restricted / sales, profile, money / config / fleet); a new Title has no row
+  and follows its name (an unknown name is full) until it is set there.
+  Renaming a Title no longer changes anyone's access once its row exists.
 
 ## Rules that must not break
 

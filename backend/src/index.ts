@@ -30,6 +30,7 @@ import users from "./routes/users";
 import roles from "./routes/roles";
 import positions from "./routes/positions";
 import positionCapabilities from "./routes/position-capabilities";
+import positionPolicy from "./routes/position-policy";
 import departments from "./routes/departments";
 import documentRefs from "./routes/documentRefs";
 import companies from "./routes/companies";
@@ -421,6 +422,7 @@ app.route("/api/users", users);
 app.route("/api/roles", roles);
 app.route("/api/positions", positions);
 app.route("/api/position-capabilities", positionCapabilities);
+app.route("/api/position-policy", positionPolicy);
 app.route("/api/departments", departments);
 // Document reference numbers + document types (mig 20260906T1417): the
 // router carries its own /document-refs and /document-types prefixes.

@@ -18,6 +18,9 @@
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
 import { classifyPosition } from "./lib/position-classification.mjs";
+// The catalogue itself, so "what does this role actually hold" is answered by
+// the same parser login uses (tsx, like the classifier above).
+import { droppedPermissions, parsePermissions } from "../src/services/permissions.ts";
 
 function resolveUrl() {
   if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
@@ -66,13 +69,23 @@ try {
       FROM positions p
       LEFT JOIN departments d ON d.id = p.department_id
      ORDER BY p.id`;
+  // The per-Title policy rows (position_policy, Roles & Permissions › Titles):
+  // a Title with a row is classified by it, exactly as login does; a Title
+  // without one prints as policy:name so the gap is visible.
+  const policyRows = new Map();
+  for (const r of await pg`
+    SELECT position_id, cohort, profile, can_move_money, can_write_config, is_fleet FROM position_policy`)
+    policyRows.set(r.position_id, r);
+  const rowFor = (id) => policyRows.get(id) ?? null;
+  const rowByName = new Map(positions.map((p) => [p.name, rowFor(p.id)]));
+  console.log(`  position_policy rows: ${policyRows.size} of ${positions.length} Titles have one`);
 
   notice("-- (1) LIVE POSITIONS -> which code cohort each one lands in --");
   console.log(
     "  id | position                  | department            | act | policy cohort              | PMS role   | flags",
   );
   for (const p of positions) {
-    const k = classifyPosition(p.name, p.dept);
+    const k = classifyPosition(p.name, p.dept, rowFor(p.id));
     console.log(
       `  ${String(p.id).padStart(2)} | ${String(p.name).padEnd(25)} | ${String(p.dept ?? "-").padEnd(21)} | ${String(p.active_users).padStart(3)} | ${k.label.padEnd(26)} | ${k.pmsRole.padEnd(10)} | ${k.flags.join(",") || "-"}`,
     );
@@ -81,7 +94,7 @@ try {
   notice("-- (1b) each position-keyed rule -> the LIVE positions it admits (asked of the code) --");
   const admits = new Map();
   for (const p of positions) {
-    const k = classifyPosition(p.name, p.dept);
+    const k = classifyPosition(p.name, p.dept, rowFor(p.id));
     for (const f of [`cohort:${k.cohort}`, ...k.flags]) {
       if (!admits.has(f)) admits.set(f, []);
       admits.get(f).push(`${p.name} (${p.active_users})`);
@@ -92,7 +105,7 @@ try {
 
   notice("-- (1c) PMS regex misses: live positions getPmsRole falls through to OTHER --");
   for (const p of positions) {
-    if (classifyPosition(p.name, p.dept).pmsRole !== "OTHER") continue;
+    if (classifyPosition(p.name, p.dept, rowFor(p.id)).pmsRole !== "OTHER") continue;
     console.log(`  ${String(p.name).padEnd(28)} -> OTHER  (${p.active_users} active users)`);
   }
 
@@ -127,6 +140,40 @@ try {
     console.log(`      ${[...perms].sort().join("  ") || "(none)"}`);
   }
 
+  // -- (2c) STORED vs EFFECTIVE: the keys login throws away --------------------
+  // parsePermissions() filters every stored key through PERMISSIONS[]; a key
+  // outside the catalogue is dropped at session hydration with no signal
+  // (0478). A tick in the Roles matrix for such a key grants nothing. This is
+  // the live-DB half the build-time drift test cannot see (it scans repo seeds).
+  notice("-- (2c) roles whose STORED keys differ from what LOGIN keeps (catalogue drop) --");
+  let dropTotal = 0;
+  for (const r of roles) {
+    const dropped = droppedPermissions(r.permissions);
+    if (!dropped.length) continue;
+    dropTotal++;
+    const kept = parsePermissions(r.permissions).length;
+    console.log(
+      `  ${String(r.id).padStart(3)} | ${String(r.name).padEnd(34)} | active=${String(r.active_users).padStart(3)} | stored=${String(kept + dropped.length).padStart(3)} effective=${String(kept).padStart(3)} | dropped: ${dropped.sort().join(", ")}`,
+    );
+  }
+  console.log(dropTotal ? `
+  ${dropTotal} roles carry keys the catalogue does not know.` : "  (none — no stored key is outside the catalogue)");
+
+  // -- (2d) roles that grant NOTHING to active people -----------------------
+  // A role with zero effective keys on a full-cohort position is the
+  // "sees every page, every button 403s" shape (owner 2026-09-16: 看得到、点不动).
+  notice("-- (2d) roles with ZERO effective keys that active people hold --");
+  const emptyRoles = roles.filter((r) => r.active_users > 0 && parsePermissions(r.permissions).length === 0);
+  if (!emptyRoles.length) console.log("  (none)");
+  for (const r of emptyRoles) {
+    const holders = await pg`
+      SELECT u.id, coalesce(p.name, '(no position)') AS position
+        FROM users u LEFT JOIN positions p ON p.id = u.position_id
+       WHERE u.role_id = ${r.id} AND u.status = 'active' ORDER BY u.id`;
+    console.log(`  ${String(r.id).padStart(3)} | ${String(r.name).padEnd(34)} | ${r.active_users} active`);
+    for (const h of holders) console.log(`        ${personRef(h.id)} position=${h.position}`);
+  }
+
   // -- (3) WHO IS ACTUALLY IN THE SYSTEM ------------------------------------
   const people = await pg`
     SELECT u.id, u.status,
@@ -147,7 +194,7 @@ try {
 
   const wild = people.filter((u) => {
     let perms = []; try { perms = JSON.parse(u.role_perms || "[]"); } catch {}
-    return perms.includes("*") || classifyPosition(u.position_name, u.dept_name).cohort === "god";
+    return perms.includes("*") || classifyPosition(u.position_name, u.dept_name, rowByName.get(u.position_name) ?? null).cohort === "god";
   });
   console.log(`\n  EFFECTIVE WILDCARD "*" holders (role "*" OR god position): ${wild.length}`);
   for (const u of wild) {
@@ -160,7 +207,7 @@ try {
   const tally = new Map();
   for (const u of people) {
     let perms = []; try { perms = JSON.parse(u.role_perms || "[]"); } catch {}
-    const k = classifyPosition(u.position_name, u.dept_name);
+    const k = classifyPosition(u.position_name, u.dept_name, rowByName.get(u.position_name) ?? null);
     const c = perms.includes("*") || k.cohort === "god" ? "wildcard *" : k.label;
     tally.set(c, (tally.get(c) ?? 0) + 1);
   }
@@ -242,7 +289,7 @@ try {
   let ignoredDenies = 0;
   for (const r of ignored) {
     // Only a position the policy resolves to FULL ignores its saved rows.
-    if (classifyPosition(r.position, r.dept).cohort !== "full") continue;
+    if (classifyPosition(r.position, r.dept, rowByName.get(r.position) ?? null).cohort !== "full") continue;
     ignoredCount++;
     if (r.level === "none") ignoredDenies++;
     console.log(
@@ -266,6 +313,24 @@ try {
     console.log(
       `  ${String(r.position).padEnd(24)} | ${String(r.role).padEnd(34)} | ${String(r.people).padStart(3)} | role grants scm.access: ${r.role_has_scm_access ? "YES" : "no"}`,
     );
+
+  // -- (7b) one position, several roles: the same Title, different API rights --
+  // Pages come from the Title (positionPolicy), actions from the role. Two
+  // people on one Title with different roles see the same screens and can do
+  // different things on them — the "same job, different buttons" report.
+  notice("-- (7b) positions whose active members are spread over more than one role --");
+  const spread = new Map();
+  for (const r of px) {
+    if (!spread.has(r.position)) spread.set(r.position, []);
+    spread.get(r.position).push(`${r.role} (${r.people})`);
+  }
+  let spreadCount = 0;
+  for (const [position, rolesHeld] of [...spread.entries()].sort((a, b) => b[1].length - a[1].length)) {
+    if (rolesHeld.length < 2) continue;
+    spreadCount++;
+    console.log(`  ${String(position).padEnd(24)} ${rolesHeld.length} roles: ${rolesHeld.join(", ")}`);
+  }
+  if (!spreadCount) console.log("  (none — no position spans two roles)");
 
   // -- (8) IS THE SCM WRITE FREEZE ON RIGHT NOW? ----------------------------
   notice("-- (8) scm.app_config['scm.write_freeze'] --");
@@ -299,7 +364,7 @@ try {
       LEFT JOIN user_companies g ON g.user_id = u.id
       LEFT JOIN companies c ON c.id = g.company_id
      WHERE u.status = 'active'
-     GROUP BY 1, 2, 3 ORDER BY 1, 3`).filter((r) => classifyPosition(r.position, r.dept).cohort === "full");
+     GROUP BY 1, 2, 3 ORDER BY 1, 3`).filter((r) => classifyPosition(r.position, r.dept, rowByName.get(r.position) ?? null).cohort === "full");
   for (const r of uc)
     console.log(`  ${String(r.position).padEnd(24)} ${String(r.company).padEnd(8)} ${String(r.people).padStart(3)} people`);
 
@@ -313,7 +378,7 @@ try {
       JOIN positions p ON p.id = u.position_id
       LEFT JOIN departments d ON d.id = u.department_id
      WHERE u.status = 'active'
-     GROUP BY 1, 2, 3 ORDER BY 4 DESC`).filter((a) => classifyPosition(a.position, a.dept).cohort === "full");
+     GROUP BY 1, 2, 3 ORDER BY 4 DESC`).filter((a) => classifyPosition(a.position, a.dept, rowByName.get(a.position) ?? null).cohort === "full");
   if (!acted.length) console.log("  (no audit_events rows for these people)");
   for (const a of acted)
     console.log(`  ${String(a.position).padEnd(24)} ${personRef(a.person_id)} ${String(a.events).padStart(5)} events, newest ${a.newest}`);

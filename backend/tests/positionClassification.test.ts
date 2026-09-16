@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { classifyPosition } from '../scripts/lib/position-classification.mjs';
-import { positionGrantsWildcard, resolvePositionPolicy } from '../src/services/positionPolicy';
+import { isFleetPosition, positionGrantsWildcard, resolvePositionPolicy } from '../src/services/positionPolicy';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -22,6 +22,16 @@ describe('classifyPosition answers with the enforcing code', () => {
     expect(classifyPosition('Managing Director', 'Management').cohort).toBe('god');
     expect(classifyPosition('Warehouse Crew KL', 'Operation Department').cohort).toBe('restricted');
     expect(classifyPosition('Calendar Viewer', null).cohort).toBe('restricted');
+  });
+
+  it('Outsource Transporter is restricted like Driver / Helper, and is NOT fleet (unlinked → would fail closed)', () => {
+    const k = classifyPosition('Outsource Transporter', 'Operation Department');
+    expect(k.cohort).toBe('restricted');
+    const policy = resolvePositionPolicy({ position_name: 'Outsource Transporter', department_name: 'Operation Department' });
+    const driver = resolvePositionPolicy({ position_name: 'Driver', department_name: 'Operation Department' });
+    expect(policy.pageAccess).toEqual(driver.pageAccess);
+    expect(policy.scmConfigured).toBe(true);
+    expect(isFleetPosition('Outsource Transporter')).toBe(false);
   });
 
   it('agrees with resolvePositionPolicy for the live position names', () => {
