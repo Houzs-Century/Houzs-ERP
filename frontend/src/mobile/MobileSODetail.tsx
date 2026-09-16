@@ -7,7 +7,7 @@ import type { FlowNav } from "./relationship-map-model";
 import { fmtAmt } from "../lib/scm";
 import { useQueryClient } from "@tanstack/react-query";
 import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
-import { useNotify } from "../vendor/scm/components/NotifyDialog";
+import { useNotify } from "../vendor/scm/components/NotifyDialog"; import { notifySaveProblems } from "../vendor/scm/components/SaveProblemsList";
 import { usePrompt } from "../vendor/scm/components/PromptDialog"; import { CancelRequestPanel } from "../vendor/scm/components/CancelRequestPanel"; import { useCancelRequestAction } from "../pages/scm-v2/use-cancel-request-action";
 import { fetchScanSlipImageBlobUrl } from "../vendor/scm/lib/slip";
 import { MobileLinePhotos } from "./MobileLinePhotos";
@@ -401,7 +401,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
     try {
       await updateStatus.mutateAsync({ docNo, status, expectedStatus: h?.status ?? null });
     } catch (e) {
-      setActionError(e instanceof Error ? e.message : "Something went wrong. Please try again.");
+      await notifySaveProblems(notifyTop, e, setActionError, "Something went wrong. Please try again.");
     } finally {
       setBusy(false);
     }

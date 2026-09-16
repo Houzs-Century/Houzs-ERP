@@ -70,18 +70,13 @@ describe('the shared save-guard layer carries no slip rule', () => {
        bug class named in CLAUDE.md.
 
        Since 2026-09-16 the BACKEND is the sole authority (owner: frontend 只是
-       显示问题). The three desktop create surfaces post their draft to the ONE
-       validate endpoint and render the returned problems[]; the backend collector
-       (shared/so-submit-problems.ts) owns the date + stock-location guards. Mobile
-       still reaches them through the client aggregator until PR3 migrates it, and
-       that aggregator still calls both guards (asserted below). */
-    for (const source of [desktopSource, guidedSource, fromProductsSource]) {
+       显示问题). All four create surfaces — desktop, mobile, guided and
+       from-products — post their draft to the ONE validate endpoint and render
+       the returned problems[]; the backend collector (shared/so-submit-problems.ts)
+       owns the date + stock-location guards, so no surface can diverge. */
+    for (const source of [desktopSource, mobileSource, guidedSource, fromProductsSource]) {
       expect(source).toContain('/mfg-sales-orders/validate');
     }
-    expect(mobileSource).toContain('collectSoSaveProblems');
-    const evaluatorSource = read('src/vendor/scm/lib/so-save-problems-client.ts');
-    expect(evaluatorSource).toContain('soDateGuardError');
-    expect(evaluatorSource).toContain('soStockLocationError');
   });
 });
 
