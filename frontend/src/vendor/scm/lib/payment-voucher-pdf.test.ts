@@ -123,11 +123,11 @@ describe('the payment voucher sheet', () => {
   test('MYR spells the total in words; a foreign voucher must NOT, and shows the posted-to-GL line instead', async () => {
     const myr = await render();
     expect(has(myr, 'RINGGIT MALAYSIA')).toBe(true);
-    expect(has(myr, '≈ posted to GL')).toBe(false);
+    expect(has(myr, 'Posted to GL as')).toBe(false);
 
     const cny = await render({ currency: 'CNY', exchange_rate: 0.62 });
     expect(has(cny, 'RINGGIT MALAYSIA')).toBe(false);
-    expect(has(cny, '≈ posted to GL')).toBe(true);
+    expect(has(cny, 'Posted to GL as')).toBe(true);
     expect(has(cny, 'CNY @ 0.62')).toBe(true);
   });
 

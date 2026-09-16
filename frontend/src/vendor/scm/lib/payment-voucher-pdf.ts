@@ -193,7 +193,7 @@ export async function renderPaymentVoucherInto(
   ty += 8;
   if (isForeign) {
     doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(80);
-    doc.text('≈ posted to GL', totalsX, ty);
+    doc.text('Posted to GL as', totalsX, ty);
     doc.text(fmtRm(Math.round(totalSen * rate), 'MYR'), pageW - margin, ty, { align: 'right' });
     doc.setTextColor(0);
     ty += 5;
