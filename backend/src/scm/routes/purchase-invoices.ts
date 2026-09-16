@@ -2,7 +2,7 @@
 
 import { Hono } from 'hono';
 import { PI_STATUS_BUCKETS } from '../lib/pi-status-buckets';
-import { PI_HEADER_COLS, PI_LIST_SELECT, filterPiList, orderPiList, readPiListFilters } from '../lib/pi-list-read';
+import { PI_HEADER_COLS, PI_LIST_SELECT, piListSelect, filterPiList, orderPiList, readPiListFilters } from '../lib/pi-list-read';
 import { attachPiLines } from '../lib/pi-export-rows';
 import { HELD_OR_TERM } from '../lib/document-hold'; import { grnNotBillableRefusal } from '../lib/source-document-gates'; import { mountHoldRoute } from './document-hold-routes';
 import type { Context } from 'hono';
@@ -360,7 +360,7 @@ purchaseInvoices.get('/', async (c) => {
      build (lib/pi-list-read.ts), so an export can never match different
      invoices than the tab it was pressed on. */
   const filters = readPiListFilters((k) => c.req.query(k));
-  let q = orderPiList(filterPiList(sb.from('purchase_invoices').select(SELECT, { count: 'exact' }), filters, c), filters.sort);
+  let q = orderPiList(filterPiList(sb.from('purchase_invoices').select(piListSelect(filters), { count: 'exact' }), filters, c), filters.sort);
   q = q.range(page * pageSize, page * pageSize + pageSize - 1);
   const { data, error, count } = await q;
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
@@ -384,7 +384,7 @@ purchaseInvoices.get('/', async (c) => {
   if (!counted.ok) return c.json({ error: 'status_counts_failed', reason: counted.reason }, 500);
   const statusCounts = counted.counts;
 
-  const purchaseInvoices = (data ?? []) as Array<Record<string, unknown>>; // MRP columns OMITTED (C16); healed by GET /list-mrp-enrichment — see BUG-HISTORY
+  const purchaseInvoices = (data ?? []) as unknown as Array<Record<string, unknown>>; // MRP columns OMITTED (C16); healed by GET /list-mrp-enrichment — see BUG-HISTORY
   /* The page's LINES, in AutoCount's spelling — the same attach the export
      uses (lib/pi-export-rows.ts), so a line column shows on screen exactly
      what the file holds. The legacy unpaged path does not carry them: its

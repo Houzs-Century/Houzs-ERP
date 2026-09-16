@@ -31,9 +31,29 @@ export type PiListFilters = {
   from: string | null;
   to: string | null;
   sort: string | null;
+  /** Server-filterable column funnels (owner 2026-09-16): Creditor Name / Code
+     via the supplier embed, Currency on the base column. Line-level / MRP funnels
+     stay client-side on the loaded page. */
+  creditorNames: string[] | null;
+  creditorCodes: string[] | null;
+  currencies: string[] | null;
 };
 
 const param = (v: string | undefined): string | null => (v === undefined || v === '' ? null : v);
+
+/* Multi-value funnel params ride as a JSON array in ONE param (a creditor name
+   may contain a comma). Malformed / empty reads as no filter. */
+function jsonArrayParam(v: string | undefined): string[] | null {
+  if (v === undefined || v === '') return null;
+  try {
+    const parsed = JSON.parse(v) as unknown;
+    if (!Array.isArray(parsed)) return null;
+    const out = parsed.filter((x): x is string => typeof x === 'string' && x.length > 0);
+    return out.length ? out : null;
+  } catch {
+    return null;
+  }
+}
 
 export function readPiListFilters(query: (key: string) => string | undefined): PiListFilters {
   return {
@@ -42,7 +62,23 @@ export function readPiListFilters(query: (key: string) => string | undefined): P
     from: param(query('from')),
     to: param(query('to')),
     sort: param(query('sort')),
+    creditorNames: jsonArrayParam(query('creditorNames')),
+    creditorCodes: jsonArrayParam(query('creditorCodes')),
+    currencies: jsonArrayParam(query('currencies')),
   };
+}
+
+/** The SELECT for the PI list read; the supplier embed becomes `!inner` when a
+ *  creditor funnel is active so a `supplier.name`/`supplier.code` filter removes
+ *  the parent invoice. Shared by the list and the export. */
+export function piListSelect(f: PiListFilters): string {
+  const creditorFilter =
+    (f.creditorNames !== null && f.creditorNames.length > 0) ||
+    (f.creditorCodes !== null && f.creditorCodes.length > 0);
+  const supplierEmbed = creditorFilter
+    ? 'supplier:suppliers!inner(id, code, name, contact_person, phone, email, address)'
+    : 'supplier:suppliers(id, code, name, contact_person, phone, email, address)';
+  return `${PI_HEADER_COLS}, ${supplierEmbed}, purchase_order:purchase_orders(id, po_number), grn:grns(id, grn_number, delivery_note_ref), linked_ac_docno`;
 }
 
 /* Indexed by a caller's string, so an unknown key is `undefined` — say so. */
@@ -93,5 +129,10 @@ export function filterPiList<Q>(q: Q, f: PiListFilters, c: CompanyScopeCtx): Q {
   }
   if (f.from) out = out.gte('invoice_date', f.from);
   if (f.to) out = out.lte('invoice_date', f.to);
+  /* Server-filterable column funnels (owner 2026-09-16) — Creditor Name / Code
+     (piListSelect makes the supplier embed `!inner`) and Currency. */
+  if (f.creditorNames && f.creditorNames.length > 0) out = out.in('supplier.name', f.creditorNames);
+  if (f.creditorCodes && f.creditorCodes.length > 0) out = out.in('supplier.code', f.creditorCodes);
+  if (f.currencies && f.currencies.length > 0) out = out.in('currency', f.currencies);
   return out as unknown as Q;
 }
