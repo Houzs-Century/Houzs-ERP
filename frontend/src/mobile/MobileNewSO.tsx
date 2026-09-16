@@ -178,7 +178,7 @@ type Payment = {
    *  recordNewPayments has two call sites and the rows survive a failed
    *  submit, which is exactly the double-fire this closes. */
   idempotencyKey: string;
-  method: string; // Cash / Merchant / Online / Installment / Convert from cancelled SO
+  method: string; // Cash / Merchant / Online / Installment / Convert from another SO
   convertedFromDocNo?: string; // the cancelled order a converted row draws on
   date: string;
   amount: string; // RM as typed
@@ -3530,7 +3530,7 @@ function PayCard({ pay, staff, convertSources, onChange, onRemove }: { pay: Paym
   /* Live payment dropdowns from the maintenance catalog (same API the desktop
      SalesOrderNew uses); FALLBACK_OPTIONS only backs an offline load. Was
      hardcoded ("Maybank"/"One Shot") and never hit the API — that was the drift. */
-  /* "Convert from cancelled SO" joins the list while the customer has a cancelled order with money (docs/bugs/0933). */
+  /* "Convert from another SO" joins the list while the customer has an order with money to give (docs/bugs/0933). */
   const methodOpts = withConvertOption(optionsOrFallback("payment_method", useSoDropdownOptions("payment_method").data), convertSources.length > 0 || pay.method === CONVERT_LABEL);
   const bankOpts = optionsOrFallback("payment_merchant", useSoDropdownOptions("payment_merchant").data);
   const planOpts = optionsOrFallback("installment_plan", useSoDropdownOptions("installment_plan").data);

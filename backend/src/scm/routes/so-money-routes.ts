@@ -1,21 +1,25 @@
 // ----------------------------------------------------------------------------
-// so-money-routes — the money panel on a cancelled Sales Order and its two
-// exits (owner 2026-09-15; docs/bugs/0927). Rules in lib/so-money.ts; these
-// are the doors. Registered from routes/mfg-sales-orders.ts behind its
-// per-order guard (selfScopedSalesBlocked), which is private to that file.
+// so-money-routes — the money panel on a Sales Order (cancelled or live since
+// 2026-09-16) and its two exits (owner 2026-09-15; docs/bugs/0927). Rules in
+// lib/so-money.ts; these are the doors. Registered from
+// routes/mfg-sales-orders.ts behind its per-order guard
+// (selfScopedSalesBlocked), which is private to that file.
 //
 //   GET  /:docNo/money             what it collected, what left by refund
-//                                  or conversion, what is left — and this
-//                                  customer's other cancelled orders with
-//                                  money, for the Convert tick list
+//                                  or conversion, what is left, what a live
+//                                  order must keep — and this customer's
+//                                  other orders with money, for the Convert
+//                                  tick list
 //   POST /:docNo/money/refund      { amountSen, note? } — a Customer Refund
 //                                  voucher DRAFT for Finance, on the
 //                                  salesperson's behalf
-//   GET  /:docNo/convert-sources   the cancelled orders THIS order may draw
-//                                  on (?also=SO-a,SO-b names orders outright)
+//   GET  /:docNo/convert-sources   the orders THIS order may draw on
+//                                  (?also=SO-a,SO-b names orders outright)
 //   GET  /cancelled-with-money     Finance's list: cancelled orders still
 //                                  holding money (?phone= narrows it to one
 //                                  customer's, for a page with no order yet)
+//   GET  /with-money               the same for orders of ANY status — the
+//                                  Sales Orders list's bar, the New SO page
 //
 // The CONVERSION itself is not a door here: it is a payment row with method
 // `converted` on the new order, through POST /:docNo/payments and the
@@ -23,7 +27,7 @@
 // ----------------------------------------------------------------------------
 
 import { requireActiveCompanyId } from '../lib/companyScope';
-import { cancelledOrdersWithMoney, convertSources, orderMoney, refundDraftBody } from '../lib/so-money';
+import { convertSources, orderMoney, ordersWithMoney, refundDraftBody } from '../lib/so-money';
 import { createPaymentVoucherCore } from './payment-vouchers';
 import { fmtSen } from '../shared/format';
 
@@ -36,10 +40,10 @@ export const soMoneyHandler = async (c: Ctx): Promise<Response> => {
   const sb = c.get('supabase');
   const m = await orderMoney(sb, co.companyId, c.req.param('docNo'));
   if (!m.ok) return c.json({ error: m.error, message: m.message }, m.status);
-  /* The customer's other cancelled orders with money — what the Convert
-     button lists beside this one. Only a cancelled order asks. */
+  /* The customer's other orders with money — what the Convert button lists
+     beside this one. Only an order with money asks. */
   let others: Awaited<ReturnType<typeof convertSources>> = { ok: true, sources: [] };
-  if (m.money.cancelled) {
+  if (m.money.open) {
     others = await convertSources(sb, co.companyId, { customerId: m.money.customer.customerId, debtorCode: m.money.customer.debtorCode, phone: m.money.customer.phone, exclude: m.money.docNo });
     if (!others.ok) return c.json({ error: 'load_failed', reason: others.reason }, 500);
   }
@@ -85,10 +89,12 @@ export const soConvertSourcesHandler = async (c: Ctx): Promise<Response> => {
   return c.json({ sources: r.sources });
 };
 
-export const cancelledWithMoneyHandler = async (c: Ctx): Promise<Response> => {
+const withMoney = (cancelledOnly: boolean) => async (c: Ctx): Promise<Response> => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
-  const r = await cancelledOrdersWithMoney(c.get('supabase'), co.companyId, { phone: String(c.req.query('phone') ?? '').trim() || null });
+  const r = await ordersWithMoney(c.get('supabase'), co.companyId, { phone: String(c.req.query('phone') ?? '').trim() || null, cancelledOnly });
   if (!r.ok) return c.json({ error: 'load_failed', reason: r.reason }, 500);
   return c.json({ orders: r.rows, totalRemainingSen: r.rows.reduce((s, x) => s + x.remainingSen, 0) });
 };
+export const cancelledWithMoneyHandler = withMoney(true);
+export const ordersWithMoneyHandler = withMoney(false);

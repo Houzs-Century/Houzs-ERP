@@ -6,9 +6,9 @@
 import { cleanup, fireEvent, render, renderHook, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const { useConvertSources, useCancelledWithMoney } = vi.hoisted(() => ({ useConvertSources: vi.fn(), useCancelledWithMoney: vi.fn() }));
+const { useConvertSources, useOrdersWithMoney } = vi.hoisted(() => ({ useConvertSources: vi.fn(), useOrdersWithMoney: vi.fn() }));
 vi.mock('../vendor/scm/lib/so-money-queries', async (orig) => ({
-  ...(await orig<Record<string, unknown>>()), useConvertSources, useCancelledWithMoney,
+  ...(await orig<Record<string, unknown>>()), useConvertSources, useOrdersWithMoney,
 }));
 
 import { ConvertSourceField, convertedBody, rmInput, useMobileConvertSources, withConvertOption } from './MobileOrderMoney';
@@ -17,8 +17,8 @@ import { CONVERT_LABEL, type ConvertSource } from '../vendor/scm/lib/so-money-qu
 afterEach(cleanup);
 
 const SOURCES: ConvertSource[] = [
-  { docNo: '2990-SO-2607-024', customer: 'Yap Kah Heng', cancelledOn: '2026-08-01', remainingSen: 336_500, bookedSen: 336_500 },
-  { docNo: '2990-SO-2608-028', customer: 'Yap Kah Heng', cancelledOn: '2026-08-20', remainingSen: 143_300, bookedSen: 143_300 },
+  { docNo: '2990-SO-2607-024', customer: 'Yap Kah Heng', status: 'CANCELLED', cancelledOn: '2026-08-01', remainingSen: 336_500, bookedSen: 336_500, movableSen: 336_500, keepSen: 0 },
+  { docNo: '2990-SO-2608-028', customer: 'Yap Kah Heng', status: 'CANCELLED', cancelledOn: '2026-08-20', remainingSen: 143_300, bookedSen: 143_300, movableSen: 143_300, keepSen: 0 },
 ];
 const CATALOG = [{ value: 'Cash', label: 'Cash' }, { value: 'Merchant', label: 'Merchant' }];
 
@@ -43,7 +43,7 @@ describe('ConvertSourceField', () => {
     const onChange = vi.fn();
     render(<ConvertSourceField sources={SOURCES} value="" onChange={onChange} />);
     const sel = screen.getByLabelText('Cancelled order') as HTMLSelectElement;
-    expect(Array.from(sel.options).map((o) => o.textContent)).toEqual(['— Cancelled order —', '2990-SO-2607-024 · RM 3,365.00 left', '2990-SO-2608-028 · RM 1,433.00 left']);
+    expect(Array.from(sel.options).map((o) => o.textContent)).toEqual(['— Order the money comes from —', '2990-SO-2607-024 · RM 3,365.00 left', '2990-SO-2608-028 · RM 1,433.00 left']);
     fireEvent.change(sel, { target: { value: '2990-SO-2608-028' } });
     expect(onChange).toHaveBeenCalledWith('2990-SO-2608-028', 143_300);
     cleanup();
@@ -57,18 +57,18 @@ describe('ConvertSourceField', () => {
 describe('useMobileConvertSources', () => {
   it('a saved order asks by its number; the New SO screen asks by phone once six digits are typed', () => {
     useConvertSources.mockReturnValue({ data: { sources: [SOURCES[0]] } });
-    useCancelledWithMoney.mockReturnValue({ data: { orders: SOURCES, totalRemainingSen: 479_800 } });
+    useOrdersWithMoney.mockReturnValue({ data: { orders: SOURCES, totalRemainingSen: 479_800 } });
     const saved = renderHook(() => useMobileConvertSources({ docNo: '2990-SO-2609-050' }));
     expect(saved.result.current).toEqual([SOURCES[0]]);
     expect(useConvertSources).toHaveBeenLastCalledWith('2990-SO-2609-050');
-    expect(useCancelledWithMoney).toHaveBeenLastCalledWith(null, false);
+    expect(useOrdersWithMoney).toHaveBeenLastCalledWith(null, false);
 
     const short = renderHook(() => useMobileConvertSources({ phone: '0123' }));
-    expect(useCancelledWithMoney).toHaveBeenLastCalledWith('0123', false);
+    expect(useOrdersWithMoney).toHaveBeenLastCalledWith('0123', false);
     expect(short.result.current).toEqual(SOURCES);
 
     renderHook(() => useMobileConvertSources({ phone: ' 0123456789 ' }));
-    expect(useCancelledWithMoney).toHaveBeenLastCalledWith('0123456789', true);
+    expect(useOrdersWithMoney).toHaveBeenLastCalledWith('0123456789', true);
     expect(useConvertSources).toHaveBeenLastCalledWith(null);
   });
 });

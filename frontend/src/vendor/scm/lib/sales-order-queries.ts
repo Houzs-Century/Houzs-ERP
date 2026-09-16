@@ -340,10 +340,16 @@ export type SoPayment = {
   id: string;
   so_doc_no: string;
   paid_at: string;
-  /* `converted` = money moved from a cancelled order (docs/bugs/0927/0931). */
+  /* `converted` = money moved from another order (docs/bugs/0927/0931) — or,
+     with a NEGATIVE amount, a MIRROR: money that left this order (owner
+     2026-09-16), following the converted row it became or the refund voucher. */
   method: 'merchant' | 'transfer' | 'cash' | 'installment' | 'converted';
-  /** A converted row: the cancelled order the money came from. */
+  /** A converted row: the order the money came from. */
   converted_from_so_doc_no?: string | null;
+  /** A mirror: where the money went, and what it follows. */
+  converted_to_so_doc_no?: string | null;
+  mirror_of_payment_id?: string | null;
+  refund_pv_id?: string | null;
   merchant_provider: string | null;
   installment_months: number | null;
   online_type: string | null;

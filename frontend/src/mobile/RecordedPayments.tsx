@@ -566,7 +566,7 @@ export function AddPaymentSheet({
                 missing instead of only greying Save out. */}
             {missingSubField && (
               <div style={{ fontSize: 11.5, color: "#a16a2e", textAlign: "center" }}>
-                {method === CONVERT_LABEL ? "Pick the cancelled order the money comes from." : `Choose the ${missingSubField} for this ${method.toLowerCase()} payment.`}
+                {method === CONVERT_LABEL ? "Pick the order the money comes from." : `Choose the ${missingSubField} for this ${method.toLowerCase()} payment.`}
               </div>
             )}
             {error && <div style={{ fontSize: 11.5, color: "var(--red)", textAlign: "center" }}>{error}</div>}
@@ -804,7 +804,8 @@ export function RecordedPaymentsList({
                 this it was gated on canEdit alone, so a months-old payment could
                 be deleted from the phone while the pencil beside it was already
                 locked — and the server had no gate on delete either. */}
-            {canEdit && rowMutable(p) && (
+            {/* A mirror (money that LEFT; negative) follows the converted row or the refund voucher: no hand delete (owner 2026-09-16). */}
+            {canEdit && rowMutable(p) && Number(p.amount_sen ?? 0) >= 0 && (
               <button
                 type="button"
                 onClick={() => void deletePayment(p.id)}

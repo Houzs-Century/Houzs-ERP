@@ -30,7 +30,7 @@ import { PaymentInfoBlock } from './PaymentInfoBlock';
 import { CONVERT_LABEL } from '../vendor/scm/lib/so-money-queries';
 
 const DOC = '2990-SO-2609-050';
-const SOURCES: ConvertSource[] = [{ docNo: '2990-SO-2607-024', customer: 'Yap Kah Heng', cancelledOn: '2026-08-01', remainingSen: 336_500, bookedSen: 336_500 }];
+const SOURCES: ConvertSource[] = [{ docNo: '2990-SO-2607-024', customer: 'Yap Kah Heng', status: 'CANCELLED', cancelledOn: '2026-08-01', remainingSen: 336_500, bookedSen: 336_500, movableSen: 336_500, keepSen: 0 }];
 const STAFF = [{ id: 'st-1', name: 'Aina' }];
 const converted: RecordedPayment = {
   id: 'pay-c', version: 1, amount_sen: 336_500, method: 'converted', paid_at: '2026-07-03', account_sheet: 'Converted from 2990-SO-2607-024',
@@ -57,7 +57,7 @@ describe('AddPaymentSheet', () => {
     /* An amount alone is not enough: the order it comes from is owed. */
     fireEvent.change(screen.getByText('Amount').parentElement!.querySelector('input')!, { target: { value: '100.00' } });
     expect(record.disabled).toBe(true);
-    expect(screen.getByText('Pick the cancelled order the money comes from.')).toBeTruthy();
+    expect(screen.getByText('Pick the order the money comes from.')).toBeTruthy();
     fireEvent.change(screen.getByText('Amount').parentElement!.querySelector('input')!, { target: { value: '0.00' } });
     fireEvent.change(screen.getByLabelText('Cancelled order'), { target: { value: '2990-SO-2607-024' } });
     expect((screen.getByText('Amount').parentElement!.querySelector('input') as HTMLInputElement).value).toBe('3365.00');
@@ -89,7 +89,7 @@ describe('AddPaymentSheet', () => {
 describe('a stored converted row', () => {
   it('reads its method and the order it came from', () => {
     render(<PaymentInfoBlock payment={converted} />);
-    expect(screen.getByText('Convert from cancelled SO')).toBeTruthy();
+    expect(screen.getByText('Convert from another SO')).toBeTruthy();
     expect(screen.getByText('from 2990-SO-2607-024')).toBeTruthy();
   });
 
@@ -97,5 +97,23 @@ describe('a stored converted row', () => {
     render(<RecordedPaymentsList docNo={DOC} payments={[converted]} staff={STAFF} canEdit draftUnlocked onChanged={() => {}} />);
     expect(screen.queryByLabelText('Edit payment')).toBeNull();
     expect(screen.getByLabelText('Delete payment')).toBeTruthy();
+  });
+
+  /* Money that LEFT an order (owner 2026-09-16): a negative converted row
+     following the converted row it became, or the refund voucher. */
+  it('a mirror reads as Moved out / Refund with where it went, and has neither pencil nor trash', () => {
+    const movedOut: RecordedPayment = { ...converted, id: 'pay-m', amount_sen: -25_000, account_sheet: 'Moved to 2990-SO-2609-051', converted_from_so_doc_no: null, converted_to_so_doc_no: '2990-SO-2609-051' };
+    render(<PaymentInfoBlock payment={movedOut} />);
+    expect(screen.getByText('Moved out')).toBeTruthy();
+    expect(screen.getByText('to 2990-SO-2609-051')).toBeTruthy();
+    cleanup();
+    const refunded: RecordedPayment = { ...converted, id: 'pay-r', amount_sen: -40_000, account_sheet: 'Refund 2990HPV-2609-012', converted_from_so_doc_no: null, refund_pv_id: 'pv-1' };
+    render(<PaymentInfoBlock payment={refunded} />);
+    expect(screen.getByText('Refund')).toBeTruthy();
+    expect(screen.getByText(/Refund 2990HPV-2609-012/)).toBeTruthy();
+    cleanup();
+    render(<RecordedPaymentsList docNo={DOC} payments={[movedOut]} staff={STAFF} canEdit draftUnlocked onChanged={() => {}} />);
+    expect(screen.queryByLabelText('Edit payment')).toBeNull();
+    expect(screen.queryByLabelText('Delete payment')).toBeNull();
   });
 });

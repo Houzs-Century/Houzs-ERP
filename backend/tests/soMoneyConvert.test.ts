@@ -16,14 +16,19 @@
      • under the deposit-invoice switch: the moved amount comes off the old
        invoice by a credit note carrying the converted row, and the new order
        gets its own invoice dated the day of the move;
-     • Finance's list of cancelled orders still holding money.
+     • Finance's list of cancelled orders still holding money;
+     • since 2026-09-16 a LIVE order too: convert while it keeps its deposit
+       fraction of the total (2990 50%, Houzs 30%), refund with no floor; the
+       money that left is MIRRORED on it as a negative row that follows the
+       converted row (books nothing, goes when it goes) and is never edited
+       or deleted by hand; the any-status list beside Finance's.
    Real handlers, fake PostgREST (fakeSb). */
 
 import { Hono } from 'hono';
 import { describe, expect, test } from 'vitest';
 import { fakeSb, type Row } from '../src/scm/lib/fake-postgrest';
 import { deleteSoPaymentHandler, postSoPaymentHandler } from '../src/scm/routes/mfg-sales-orders';
-import { cancelledWithMoneyHandler, soConvertSourcesHandler, soMoneyHandler, soMoneyRefundHandler } from '../src/scm/routes/so-money-routes';
+import { cancelledWithMoneyHandler, ordersWithMoneyHandler, soConvertSourcesHandler, soMoneyHandler, soMoneyRefundHandler } from '../src/scm/routes/so-money-routes';
 import { soRouterSource } from './lib/so-router-source';
 const rawSo = soRouterSource();
 
@@ -32,6 +37,8 @@ const OLD = '2990-SO-2607-010';
 const OLD2 = '2990-SO-2607-024';
 const NEW = '2990-SO-2609-050';
 const OTHER = '2990-SO-2609-051';
+/* A live order of another customer: RM 1,500 total, RM 1,000 paid and booked. */
+const LIVE = '2990-SO-2609-060';
 
 const CHART: Row[] = [
   { company_id: CO, account_code: '300-0000', account_name: 'ACCOUNT RECEIVEABLE', account_type: 'ASSET', parent_code: null, is_active: true, acc_money: false },
@@ -76,13 +83,18 @@ function harness(tables: Record<string, Row[]> = {}) {
         je('je1', '2990-JE-2607-0001', 'p1', '2026-07-01'),
         je('je2', '2990-JE-2607-0002', 'p2', '2026-07-03'),
         je('je3', '2990-JE-2607-0003', 'p3', '2026-07-10'),
+        je('je4', '2990-JE-2608-0004', 'p4', '2026-08-20'),
       ],
       journal_entry_lines: [],
-      mfg_sales_orders: [order(OLD, 'CANCELLED'), order(OLD2, 'CANCELLED'), order(NEW, 'CONFIRMED'), order(OTHER, 'CONFIRMED', { debtor_name: 'Someone Else', customer_id: 'cust-2', phone: '0999' })],
+      mfg_sales_orders: [
+        order(OLD, 'CANCELLED'), order(OLD2, 'CANCELLED'), order(NEW, 'CONFIRMED'), order(OTHER, 'CONFIRMED', { debtor_name: 'Someone Else', customer_id: 'cust-2', phone: '0999' }),
+        order(LIVE, 'CONFIRMED', { debtor_name: 'Lim Ah Lian', customer_id: 'cust-3', phone: '0777', local_total_sen: 150_000 }),
+      ],
       mfg_sales_order_payments: [
         pay('p1', OLD, '2026-07-01', 'transfer', 50_000, { online_type: 'DuitNow' }),
         pay('p2', OLD, '2026-07-03', 'cash', 20_000),
         pay('p3', OLD2, '2026-07-10', 'merchant', 30_000, { merchant_provider: 'GHL', approval_code: '123456' }),
+        pay('p4', LIVE, '2026-08-20', 'merchant', 100_000, { merchant_provider: 'PBB', approval_code: '654321' }),
       ],
       mfg_so_audit_log: [],
       payment_voucher_lines: [],
@@ -110,6 +122,7 @@ function harness(tables: Record<string, Row[]> = {}) {
     await next();
   });
   app.get('/mfg-sales-orders/cancelled-with-money', cancelledWithMoneyHandler as never);
+  app.get('/mfg-sales-orders/with-money', ordersWithMoneyHandler as never);
   app.get('/mfg-sales-orders/:docNo/money', soMoneyHandler as never);
   app.post('/mfg-sales-orders/:docNo/money/refund', soMoneyRefundHandler as never);
   app.get('/mfg-sales-orders/:docNo/convert-sources', soConvertSourcesHandler as never);
@@ -131,13 +144,13 @@ describe('the money panel on a cancelled order', () => {
   test('paid (booked), refunded, moved, remaining — and the customer\'s other cancelled orders with money', async () => {
     const { app } = harness();
     const { money: m, others } = await money(app, OLD);
-    expect(m).toMatchObject({ docNo: OLD, status: 'CANCELLED', cancelled: true, bookedSen: 70_000, refundedSen: 0, convertedSen: 0, remainingSen: 70_000, open: true, reason: null });
+    expect(m).toMatchObject({ docNo: OLD, status: 'CANCELLED', cancelled: true, bookedSen: 70_000, refundedSen: 0, convertedSen: 0, remainingSen: 70_000, open: true, reason: null, keepFraction: 0, keepSen: 0, movableSen: 70_000 });
     expect(m.payments.map((p: Row) => [p.id, p.booked, p.paidOn])).toEqual([['p1', true, '2026-07-01'], ['p2', true, '2026-07-03']]);
     expect(others.map((o) => [o.docNo, o.remainingSen])).toEqual([[OLD2, 30_000]]);
-    /* A live order's money stays on it. */
+    /* A live order with nothing on it has nothing to give. */
     const live = await money(app, NEW);
     expect(live.money).toMatchObject({ cancelled: false, open: false, bookedSen: 0 });
-    expect(live.money.reason).toMatch(/not cancelled/);
+    expect(live.money.reason).toMatch(/collected nothing/);
     expect(live.others).toEqual([]);
   });
 
@@ -146,7 +159,7 @@ describe('the money panel on a cancelled order', () => {
     const res = await app.request(`/mfg-sales-orders/${NEW}/convert-sources`);
     expect(res.status).toBe(200);
     const b = await res.json() as { sources: Array<Record<string, any>> };
-    expect(b.sources.map((s) => [s.docNo, s.remainingSen, s.customer])).toEqual([[OLD, 70_000, 'Ah Meng'], [OLD2, 30_000, 'Ah Meng']]);
+    expect(b.sources.map((s) => [s.docNo, s.remainingSen, s.movableSen, s.customer])).toEqual([[OLD, 70_000, 70_000, 'Ah Meng'], [OLD2, 30_000, 30_000, 'Ah Meng']]);
     /* Another customer's order is not listed unless named. */
     const other = await (await app.request(`/mfg-sales-orders/${OTHER}/convert-sources`)).json() as { sources: Row[] };
     expect(other.sources).toEqual([]);
@@ -332,5 +345,92 @@ describe('Finance\'s list, narrowed to one customer', () => {
     expect(theirs.orders.map((o) => [o.docNo, o.remainingSen])).toEqual([[OLD2, 30_000]]);
     const nobody = await (await app.request('/mfg-sales-orders/cancelled-with-money?phone=0000')).json() as { orders: Row[] };
     expect(nobody.orders).toEqual([]);
+  });
+});
+
+describe('a LIVE order (owner 2026-09-16) — money may leave it above its deposit floor', () => {
+  const mirrorOf = (sb: ReturnType<typeof harness>['sb'], paymentId: string) =>
+    sb.tables.mfg_sales_order_payments.find((p) => p.mirror_of_payment_id === paymentId) ?? null;
+
+  test('the panel: total, the fraction it keeps (2990: 50%, transport included), what may move; a refund has no floor', async () => {
+    const { app } = harness();
+    const { money: m, others } = await money(app, LIVE);
+    expect(m).toMatchObject({ docNo: LIVE, cancelled: false, open: true, reason: null, bookedSen: 100_000, remainingSen: 100_000, totalSen: 150_000, keepFraction: 0.5, keepSen: 75_000, movableSen: 25_000 });
+    expect(others).toEqual([]);
+    /* Houzs keeps 30%. */
+    const houzs = harness({ companies: [{ id: CO, code: 'HOUZS' }] });
+    const { money: h } = await money(houzs.app, LIVE);
+    expect(h).toMatchObject({ keepFraction: 0.3, keepSen: 45_000, movableSen: 55_000 });
+  });
+
+  test('convert: more than the floor allows is refused with the figures; up to it moves, and the order MIRRORS the money that left', async () => {
+    const { app, sb } = harness();
+    const over = await convert(app, NEW, LIVE, 25_001);
+    expect(over.status).toBe(409);
+    const refusal = await over.json() as { error: string; message: string };
+    expect(refusal.error).toBe('convert_keeps_deposit');
+    expect(refusal.message).toContain('keeps RM 750.00 (50% of RM 1,500.00)');
+    expect(refusal.message).toContain('RM 250.00 can move');
+
+    const res = await convert(app, NEW, LIVE, 25_000);
+    expect(res.status, await res.clone().text()).toBe(201);
+    const { payment } = await res.json() as { payment: Row };
+    expect(payment).toMatchObject({ so_doc_no: NEW, method: 'converted', amount_sen: 25_000, paid_at: '2026-08-20', converted_from_so_doc_no: LIVE });
+    /* The mirror on the live order: negative, dated the day of the move, naming where the money went. */
+    const mirror = mirrorOf(sb, String(payment.id))!;
+    expect(mirror).toBeTruthy();
+    expect(mirror).toMatchObject({ so_doc_no: LIVE, method: 'converted', amount_sen: -25_000, converted_to_so_doc_no: NEW, account_sheet: `Moved to ${NEW}` });
+    expect(String(mirror.paid_at)).toBe(new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10));
+    /* It books nothing: the transfer is the accounting. The order's paid total is what the rows sum to. */
+    expect(sb.tables.journal_entries.filter((j) => j.source_doc_no === mirror.id)).toEqual([]);
+    expect(sb.tables.mfg_sales_order_payments.filter((p) => p.so_doc_no === LIVE).reduce((t, p) => t + Number(p.amount_sen), 0)).toBe(75_000);
+    /* The audit says the system did it. */
+    const audit = sb.tables.mfg_so_audit_log.find((a) => a.so_doc_no === LIVE && a.action === 'ADD_PAYMENT')!;
+    expect(audit).toMatchObject({ source: 'automation', payment_id: mirror.id });
+    /* The pool never counts the mirror: RM 750 left, none of it movable, all of it refundable. */
+    const { money: after } = await money(app, LIVE);
+    expect(after).toMatchObject({ bookedSen: 100_000, convertedSen: 25_000, remainingSen: 75_000, movableSen: 0, open: true });
+    expect(after.payments.map((p: Row) => p.id)).toEqual(['p4']);
+    expect((await convert(app, OTHER, LIVE, 1)).status).toBe(409);
+    expect((await app.request(`/mfg-sales-orders/${LIVE}/money/refund`, json({ amountSen: 75_000, note: 'sofa arrived scratched' }))).status).toBe(201);
+  });
+
+  test('un-convert takes the mirror with it; the mirror itself cannot be deleted or edited by hand', async () => {
+    const { app, sb } = harness();
+    const { payment } = await (await convert(app, NEW, LIVE, 20_000)).json() as { payment: Row };
+    const mirror = mirrorOf(sb, String(payment.id))!;
+    mirror.created_at = new Date().toISOString(); mirror.version = 1;
+    const byHand = await app.request(`/mfg-sales-orders/${LIVE}/payments/${mirror.id}?version=1`, { method: 'DELETE' });
+    expect(byHand.status).toBe(409);
+    expect(((await byHand.json()) as { error: string }).error).toBe('mirror_row_not_deletable');
+    expect(rawSo).toContain("reason: Number(before.amount_sen) < 0 ? 'This row follows money that left the order");
+
+    const row = sb.tables.mfg_sales_order_payments.find((p) => p.id === payment.id)!;
+    row.created_at = new Date().toISOString(); row.version = 1;
+    const del = await app.request(`/mfg-sales-orders/${NEW}/payments/${payment.id}?version=1`, { method: 'DELETE' });
+    expect(del.status, await del.clone().text()).toBe(200);
+    expect(mirrorOf(sb, String(payment.id))).toBeNull();
+    expect(sb.tables.mfg_so_audit_log.filter((a) => a.so_doc_no === LIVE).map((a) => [a.action, a.source, a.note])).toEqual([['ADD_PAYMENT', 'automation', `Money moved to ${NEW}`], ['DELETE_PAYMENT', 'automation', `money moved to ${NEW} moved back`]]);
+    const { money: back } = await money(app, LIVE);
+    expect(back).toMatchObject({ remainingSen: 100_000, movableSen: 25_000 });
+  });
+
+  test('the lists: Finance\'s is cancelled orders only; the any-status one carries the live order for what it may give', async () => {
+    const { app } = harness();
+    const cancelled = await (await app.request('/mfg-sales-orders/cancelled-with-money')).json() as { orders: Row[] };
+    expect(cancelled.orders.map((o) => o.docNo)).toEqual([OLD, OLD2]);
+    const any = await (await app.request('/mfg-sales-orders/with-money')).json() as { orders: Row[]; totalRemainingSen: number };
+    expect(any.orders.map((o) => [o.docNo, o.status, o.remainingSen, o.movableSen, o.keepSen])).toEqual([
+      [OLD, 'CANCELLED', 70_000, 70_000, 0], [OLD2, 'CANCELLED', 30_000, 30_000, 0], [LIVE, 'CONFIRMED', 100_000, 25_000, 75_000],
+    ]);
+    expect(any.totalRemainingSen).toBe(200_000);
+    const mine = await (await app.request('/mfg-sales-orders/with-money?phone=0777')).json() as { orders: Row[] };
+    expect(mine.orders.map((o) => o.docNo)).toEqual([LIVE]);
+    /* A live order the new order may draw on is listed with what it may give; one at its floor is not. */
+    const named = await (await app.request(`/mfg-sales-orders/${NEW}/convert-sources?also=${LIVE}`)).json() as { sources: Row[] };
+    expect(named.sources.find((x) => x.docNo === LIVE)).toMatchObject({ movableSen: 25_000, keepSen: 75_000, cancelledOn: null, status: 'CONFIRMED' });
+    expect((await convert(app, NEW, LIVE, 25_000)).status).toBe(201);
+    const atFloor = await (await app.request(`/mfg-sales-orders/${NEW}/convert-sources?also=${LIVE}`)).json() as { sources: Row[] };
+    expect(atFloor.sources.some((x) => x.docNo === LIVE)).toBe(false);
   });
 });
