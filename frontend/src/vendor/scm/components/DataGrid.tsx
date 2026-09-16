@@ -49,7 +49,7 @@ import {
   useCompanyScopedDataGridLayout,
   writeDataGridLayout,
 } from './dataGridLayoutStorage';
-import { readDataGridFilters, writeDataGridFilters } from './dataGridFilterStorage';
+import { purgeStoredDataGridFilters, readDataGridFilters, writeDataGridFilters } from './dataGridFilterStorage';
 import { subscribeActiveCompany, getActiveCompanySnapshot } from '../../../lib/activeCompany';
 import {
   EMPTY_LAYOUT,
@@ -514,14 +514,19 @@ function DataGridInner<T>({
   const [columnsMenuOverKey, setColumnsMenuOverKey] = useState<string | null>(null);
   /* Per-column filters (Commander 2026-05-29): value sets, date presets,
      number ranges, custom date ranges; filterMenu anchors the open dropdown.
-     PERSISTED per grid since 2026-08-19 (dataGridFilterStorage, keyed like the
-     layout blob) — DataTable's funnels have been a saved view since 2026-07-29,
-     while these cleared whenever opening a record replaced the workspace tab. */
+     Held in IN-VISIT memory (dataGridFilterStorage, keyed like the layout blob):
+     a funnel survives opening a record and coming back — the owner's 2026-08-19
+     rule — but a fresh page load / F5 opens clean (owner 2026-09-16). The purge
+     effect erases the pre-2026-09-16 dg-filters:* localStorage keys so a stale
+     one cannot re-narrow a list. */
   const [filters, setFilters] = useState<Record<string, string[]>>(() => readDataGridFilters(scopedStorageKey).values);
   const [dateFilters, setDateFilters] = useState<Record<string, DatePreset>>(() => readDataGridFilters(scopedStorageKey).dates as Record<string, DatePreset>);
   const [numberFilters, setNumberFilters] = useState<Record<string, { min?: number; max?: number }>>(() => readDataGridFilters(scopedStorageKey).numbers);
   const [dateRangeFilters, setDateRangeFilters] = useState<Record<string, { from?: string; to?: string }>>(() => readDataGridFilters(scopedStorageKey).dateRanges);
   useEffect(() => { writeDataGridFilters(scopedStorageKey, { values: filters, dates: dateFilters, numbers: numberFilters, dateRanges: dateRangeFilters }); }, [scopedStorageKey, filters, dateFilters, numberFilters, dateRangeFilters]);
+  useEffect(() => {
+    for (const k of [scopedStorageKey, storageKey, legacyStorageKey]) if (k) purgeStoredDataGridFilters(k);
+  }, [scopedStorageKey, storageKey, legacyStorageKey]);
   const [filterMenu, setFilterMenu] = useState<{ colKey: string; x: number; y: number } | null>(null);
   // Type-to-find text for `filterType: 'numbering'` (filters the value list).
   const [filterSearch, setFilterSearch] = useState('');

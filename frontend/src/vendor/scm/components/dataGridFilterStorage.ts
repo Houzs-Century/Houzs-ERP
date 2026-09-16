@@ -1,17 +1,23 @@
-// Persisted per-column FILTERS for the vendored SCM DataGrid — the funnel
-// value sets, date presets, number ranges and custom date ranges that used to
-// be React state only, so any unmount (opening a record replaces the workspace
-// tab) silently cleared them. Owner 2026-08-19, after the shared-board layout
-// fix: "漏斗和页签被清掉,也做成和 service case 一样" — DataTable has persisted
-// its funnels since 2026-07-29 (`dt:filters:*`); this is the DataGrid twin.
+// Per-column FILTERS for the vendored SCM DataGrid — the funnel value sets,
+// date presets, number ranges and custom date ranges. The DataTable twin of
+// this store lives in components/dataTableColFilterMemory.
 //
-// Storage: ONE JSON blob per grid under `dg-filters:<idKey>`, where idKey is
-// the SAME company-scoped (or shared-board unscoped) key the grid's layout
-// blob uses — filters follow exactly the layout's company semantics. The
-// `dg-` prefix keeps the key inside the registered grid-layout DEVICE_PREF
-// family (lib/browserStorageRegistry.ts). Filters are deliberately NOT synced
-// to the account (lib/tableLayouts.ts): they are a working view, not a layout
-// — same split DataTable ships with.
+// IN-VISIT memory: ONE entry per grid in a module-scoped Map, keyed by the SAME
+// company-scoped (or shared-board unscoped) key the grid's layout blob uses, so
+// filters follow exactly the layout's company semantics. Module scope survives
+// a client-side route change (opening a record and coming back remounts the
+// grid but keeps the module loaded), so a funnel set this visit is NOT lost —
+// the owner's 2026-08-19 rule ("漏斗和页签被清掉,也做成和 service case 一样"). It is
+// WIPED on a full page load / new tab / F5, because the bundle re-evaluates and
+// this Map starts empty — the owner's 2026-09-16 rule that a list opens with NO
+// funnel on a fresh entry.
+//
+// Deliberately NOT localStorage (that survived across sessions — the stale
+// funnel the owner hit on the PO list) and NOT sessionStorage (that survives an
+// F5, which must be clean). The grid's LAYOUT blob (`dg-<idKey>` / column order,
+// widths, saved views) stays in localStorage; only the funnel filters moved
+// here. `purgeStoredDataGridFilters` erases the pre-2026-09-16 `dg-filters:*`
+// localStorage keys on mount so a stale one cannot re-narrow a list.
 
 export type DataGridFilters = {
   /** colKey → allowed values (the funnel's tick list). Absent = no filter. */
@@ -27,7 +33,6 @@ export type DataGridFilters = {
   dateRanges: Record<string, { from?: string; to?: string }>;
 };
 
-const VERSION = 1 as const;
 const MAX_KEYS = 200;
 const MAX_VALUES_PER_KEY = 500;
 
@@ -130,33 +135,38 @@ export function isEmptyDataGridFilters(f: DataGridFilters): boolean {
   );
 }
 
-/** Unlike the layout blob's all-or-nothing decode, each FACET sanitises
- *  independently, so one corrupt entry costs that entry, never the rest. */
+// In-visit store: idKey -> its funnel filters. Wiped when the bundle
+// re-evaluates on a full page load; kept across a client-side route change.
+const memory = new Map<string, DataGridFilters>();
+
+/** Read the grid's in-visit funnel filters. Each facet is sanitised on write,
+ *  so a returned entry is already clean; a clone keeps a caller from mutating
+ *  the stored object in place. */
 export function readDataGridFilters(idKey: string): DataGridFilters {
-  if (typeof window === "undefined") return { ...EMPTY_DATA_GRID_FILTERS };
-  try {
-    const raw = window.localStorage.getItem(storageKeyFor(idKey));
-    if (!raw) return { ...EMPTY_DATA_GRID_FILTERS };
-    const parsed: unknown = JSON.parse(raw);
-    if (!isRecord(parsed) || parsed.version !== VERSION) return { ...EMPTY_DATA_GRID_FILTERS };
-    return sanitizeDataGridFilters(parsed);
-  } catch {
-    return { ...EMPTY_DATA_GRID_FILTERS };
-  }
+  const held = memory.get(idKey);
+  return held ? sanitizeDataGridFilters(held) : { ...EMPTY_DATA_GRID_FILTERS };
 }
 
 export function writeDataGridFilters(idKey: string, filters: DataGridFilters): void {
+  const clean = sanitizeDataGridFilters(filters);
+  // No filters = no entry: an empty entry would read as "a saved view of
+  // everything" and make Clear look like it failed.
+  if (isEmptyDataGridFilters(clean)) memory.delete(idKey);
+  else memory.set(idKey, clean);
+}
+
+/** Remove the pre-2026-09-16 localStorage funnel blob for this grid. Funnels no
+ *  longer persist to disk; a leftover key would re-narrow a list on next login. */
+export function purgeStoredDataGridFilters(idKey: string): void {
   if (typeof window === "undefined") return;
   try {
-    const clean = sanitizeDataGridFilters(filters);
-    // No filters = no key: an empty entry would read as "a saved view of
-    // everything" and make Clear look like it failed to persist.
-    if (isEmptyDataGridFilters(clean)) {
-      window.localStorage.removeItem(storageKeyFor(idKey));
-      return;
-    }
-    window.localStorage.setItem(storageKeyFor(idKey), JSON.stringify({ version: VERSION, ...clean }));
+    window.localStorage.removeItem(storageKeyFor(idKey));
   } catch {
-    // Quota / privacy mode — filters stay working state for this session.
+    // storage unavailable: nothing to erase
   }
+}
+
+// Test seam: simulate a fresh page load by emptying the in-visit store.
+export function resetDataGridFilterMemory(): void {
+  memory.clear();
 }

@@ -41,6 +41,7 @@ import { withSingleActive } from "./LayoutSection";
 import { showAllColumnPrefs, toggleColumnPrefs, type ColumnPrefs } from "./dataTableColumnPrefs";
 import { UdfCell } from "./UdfCell";
 import { useLocalStorage } from "../hooks/useLocalStorage";
+import { useInVisitColFilters } from "./dataTableColFilterMemory";
 import { useFrozenTableHeader } from "./useFrozenTableHeader";
 import { useSmallViewport } from "../hooks/useSmallViewport";
 import { inferColumnGroup } from "../lib/columnGroups";
@@ -493,22 +494,6 @@ function sanitizeColumnWidths(value: unknown): Record<string, number> {
   return widths;
 }
 
-// Persisted column filters: { colKey: [allowed values] }. Keeps only plain
-// string arrays (de-duped, like setColumnFilter writes them) so a corrupt
-// entry can never crash row filtering; empty lists are dropped because an
-// empty allow-list means "no filter on this column".
-function sanitizeColFilters(value: unknown): Record<string, string[]> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  const out: Record<string, string[]> = {};
-  for (const [key, vals] of Object.entries(value as Record<string, unknown>)) {
-    if (!key || !Array.isArray(vals)) continue;
-    const strings = [...new Set(vals.filter((v): v is string => typeof v === "string"))].slice(0, 500);
-    if (strings.length > 0) out[key] = strings;
-    if (Object.keys(out).length >= 100) break;
-  }
-  return out;
-}
-
 // Keep a pointer-anchored context menu inside the viewport: one opened near the
 // bottom or right edge hung off-screen, and any page scroll dismisses these
 // menus, so the clipped tail was unreachable. Measured after render, re-clamped
@@ -866,35 +851,36 @@ function DataTableInner<T, L>({
   const [dropCol, setDropCol] = useState<string | null>(null);
   const draggedRef = useRef(false);
 
-  // Per-column value filters (the funnel popover). Persisted per table and
-  // company like the rest of the dt:* layout prefs — owner 2026-07-29:
-  // filters kept resetting on reload ("不能保留 filter 记忆"), so they are a
-  // saved view now, not a working gesture. `colFilters[key]` = the set of
-  // allowed values; absent/empty = no filter on that column. The funnel icon
-  // stays highlighted on restored filters, and each column's popover Clear
-  // (or the page's reset control) drops its entry.
-  const storedColFilters = useLocalStorage<Record<string, string[]>>(
-    `dt:filters:${idKey}`,
-    {},
-    legacyStorageKey("filters"),
-    sanitizeColFilters,
-  );
+  /* Per-column value filters (the funnel popover). `colFilters[key]` = the set
+     of allowed values; absent/empty = no filter on that column. The funnel icon
+     stays highlighted while a filter is set, and each column's popover Clear
+     (or the page's reset control) drops its entry.
+
+     Three sources, by design (owner 2026-09-16, reconciling 2026-07-29 /
+     2026-08-19):
+     - default (`persistFilters` true): IN-VISIT memory (dataTableColFilterMemory).
+       A funnel survives drilling into a record and back, but a fresh page load /
+       new tab / F5 opens clean — it never reaches localStorage.
+     - `persistFilters={false}` (SKU Master, document line tables): per-mount
+       useState, clean on EVERY mount — a remembered funnel there hid a
+       just-renamed row.
+     There is no longer a localStorage-backed funnel path; the old dt:filters:*
+     keys are erased on mount below so a stale one cannot re-narrow a list. */
+  const visitColFilters = useInVisitColFilters(idKey);
   const sessionColFilters = useState<Record<string, string[]>>({});
-  const [colFilters, setColFilters] = persistFilters ? storedColFilters : sessionColFilters;
-  /* Not persisting: erase what the stored hook holds. Keyed on its value too,
-     because that hook re-reads and re-writes the key when the company resolves
-     after mount, which would otherwise bring an old filter back. */
-  const storedFilterValue = storedColFilters[0];
+  const [colFilters, setColFilters] = persistFilters ? visitColFilters : sessionColFilters;
+  /* Erase the pre-2026-09-16 localStorage funnel key (both modes now — funnels
+     no longer persist to disk at all). Re-runs when idKey gains its `c<company>:`
+     prefix after the company resolves, so both the scoped and legacy keys go. */
   const legacyFilterKey = legacyStorageKey("filters");
   useEffect(() => {
-    if (persistFilters) return;
     try {
       localStorage.removeItem(`dt:filters:${idKey}`);
       if (legacyFilterKey) localStorage.removeItem(legacyFilterKey);
     } catch {
       // storage unavailable: nothing was persisted to erase
     }
-  }, [persistFilters, idKey, legacyFilterKey, storedFilterValue]);
+  }, [idKey, legacyFilterKey]);
   // The filter BUTTON's rect, not a click point: the positioner needs both edges.
   const [filterMenu, setFilterMenu] = useState<{ left: number; top: number; bottom: number; colKey: string } | null>(null);
   const [filterQuery, setFilterQuery] = useState("");

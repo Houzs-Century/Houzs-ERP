@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useState } from "react";
 import { DataTable, type Column } from "./DataTable";
+import { primeInVisitColFilters, resetInVisitColFilters } from "./dataTableColFilterMemory";
 import { downloadCSV } from "../lib/csv";
 
 vi.mock("../lib/csv", async (importOriginal) => {
@@ -60,6 +61,7 @@ function setViewport(width: number) {
 afterEach(() => {
   cleanup();
   localStorage.clear();
+  resetInVisitColFilters();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   if (originalMatchMedia) Object.defineProperty(window, "matchMedia", originalMatchMedia);
@@ -89,12 +91,12 @@ describe("DataTable onFilteredRowsChange", () => {
     expect(seen.at(-1)).toHaveLength(rows.length);
   });
 
-  /* docs/bugs 2026-09-15: a saved funnel made a fresh filtered array on every
-     render, and a page that stores the report and rebuilds its columns on each
-     render (every list page) looped forever — the vitest worker crashed. */
+  /* docs/bugs 2026-09-15: a remembered funnel made a fresh filtered array on
+     every render, and a page that stores the report and rebuilds its columns on
+     each render (every list page) looped forever — the vitest worker crashed. */
   it("settles when a funnel is saved and the parent stores the report and rebuilds its columns", () => {
     setViewport(1280);
-    localStorage.setItem("dt:filters:orders-loop", JSON.stringify({ status: ["Open"] }));
+    primeInVisitColFilters("orders-loop", { status: ["Open"] });
     function Parent() {
       const [seen, setSeen] = useState<Row[]>([]);
       const fresh = columns.map((c) => ({ ...c }));
@@ -111,8 +113,8 @@ describe("DataTable onFilteredRowsChange", () => {
 
   it("reports only the rows a persisted column filter leaves visible", () => {
     setViewport(1280);
-    // A restored funnel, exactly as a reload rehydrates it.
-    localStorage.setItem("dt:filters:orders-filtered", JSON.stringify({ status: ["Open"] }));
+    // A funnel restored on remount, as in-visit memory rehydrates it.
+    primeInVisitColFilters("orders-filtered", { status: ["Open"] });
     const seen: Row[][] = [];
     render(
       <DataTable
@@ -386,11 +388,12 @@ describe("DataTable column width persistence", () => {
     // operator, not to a table, so it is a single global key. Anything else
     // appearing outside the family is a regression.
     const perTable = keys.filter((key) => key !== "dt:cols-drawer-az");
-    // hidden, shown, order, sort, mview, widths, pinned, pinnedr, groups,
-    // filters. `pinnedr` is the right-freeze list (owner 2026-08-03) — a
-    // second flat list rather than a reshaped `pinned`, so every layout
-    // already on disk keeps reading.
-    expect(perTable).toHaveLength(10);
+    // hidden, shown, order, sort, mview, widths, pinned, pinnedr, groups.
+    // `pinnedr` is the right-freeze list (owner 2026-08-03) — a second flat list
+    // rather than a reshaped `pinned`, so every layout already on disk keeps
+    // reading. Funnel filters are NO LONGER here (owner 2026-09-16): they live in
+    // in-visit memory (dataTableColFilterMemory), never localStorage.
+    expect(perTable).toHaveLength(9);
     expect(perTable.every((key) => key.endsWith(":sales-order-lines"))).toBe(true);
   });
 
@@ -1200,31 +1203,52 @@ describe("DataTable header filter + sort menu", () => {
     expect(screen.queryByPlaceholderText("Search values…")).toBeNull();
   });
 
-  it("persists ticked filters and restores them on remount", () => {
+  /* Owner 2026-09-16 ("进入那个东西都是不要 filter 先的"): a funnel set this visit
+     survives a client-side remount (drilling into a record and back), but it
+     never reaches localStorage, so a fresh page load opens clean. */
+  it("keeps a funnel across a remount this visit, without touching localStorage", () => {
     setViewport(1280);
     const { container, unmount } = render(
-      <DataTable tableId="filter-persist" rows={rows.slice(0, 6)} columns={columns} getRowKey={(r) => r.id} />,
+      <DataTable tableId="filter-visit" rows={rows.slice(0, 6)} columns={columns} getRowKey={(r) => r.id} />,
     );
     openFunnel("Status");
     fireEvent.click(screen.getByRole("checkbox", { name: /Open/ }));
     expect(rowCount(container)).toBe(3);
-    expect(JSON.parse(localStorage.getItem("dt:filters:filter-persist") ?? "null")).toEqual({
-      status: ["Open"],
-    });
+    // The funnel is NOT written to localStorage — it lives in in-visit memory.
+    expect(localStorage.getItem("dt:filters:filter-visit")).toBeNull();
 
+    // A client-side remount (the module stays loaded) keeps the funnel…
     unmount();
     const second = render(
-      <DataTable tableId="filter-persist" rows={rows.slice(0, 6)} columns={columns} getRowKey={(r) => r.id} />,
+      <DataTable tableId="filter-visit" rows={rows.slice(0, 6)} columns={columns} getRowKey={(r) => r.id} />,
     );
-    // The stored filter applies from the first paint…
     expect(rowCount(second.container)).toBe(3);
     // …and the funnel stays highlighted so the narrowed view is explained.
     expect(screen.getByTitle("Filter & sort Status").className).toContain("text-accent");
-    // Clear drops the persisted entry, not just the in-memory one.
+    // Clear drops the remembered entry so a later remount reads clean.
     openFunnel("Status");
     fireEvent.click(screen.getByText("Clear"));
     expect(rowCount(second.container)).toBe(6);
-    expect(JSON.parse(localStorage.getItem("dt:filters:filter-persist") ?? "null")).toEqual({});
+    second.unmount();
+    const third = render(
+      <DataTable tableId="filter-visit" rows={rows.slice(0, 6)} columns={columns} getRowKey={(r) => r.id} />,
+    );
+    expect(rowCount(third.container)).toBe(6);
+  });
+
+  /* Fresh page load = empty module store = clean list, even if a pre-2026-09-16
+     dt:filters:* key is still sitting in localStorage; that stale key is erased
+     on mount so it can never re-narrow the list again. */
+  it("opens clean on a fresh load and erases a stale localStorage funnel", () => {
+    setViewport(1280);
+    localStorage.setItem("dt:filters:filter-fresh", JSON.stringify({ status: ["Open"] }));
+    resetInVisitColFilters(); // simulate a fresh bundle evaluation
+    const { container } = render(
+      <DataTable tableId="filter-fresh" rows={rows.slice(0, 6)} columns={columns} getRowKey={(r) => r.id} />,
+    );
+    expect(rowCount(container)).toBe(6);
+    expect(screen.getByTitle("Filter & sort Status").className).not.toContain("text-accent");
+    expect(localStorage.getItem("dt:filters:filter-fresh")).toBeNull();
   });
 
   /* SKU Master (owner 2026-09-15): a remembered funnel made his catalogue look
@@ -1273,7 +1297,8 @@ describe("DataTable header filter + sort menu", () => {
     const reset = screen.getByTitle("Clear all filters and search");
     fireEvent.click(reset);
     expect(rowCount(container)).toBe(6);
-    expect(JSON.parse(localStorage.getItem("dt:filters:filter-reset") ?? "null")).toEqual({});
+    // The funnel lived in in-visit memory, never localStorage.
+    expect(localStorage.getItem("dt:filters:filter-reset")).toBeNull();
     expect(screen.queryByTitle("Clear all filters and search")).toBeNull();
   });
 
@@ -1300,16 +1325,19 @@ describe("DataTable header filter + sort menu", () => {
     expect(onReset).toHaveBeenCalledTimes(1);
   });
 
-  it("ignores corrupt persisted filters instead of crashing or hiding rows", () => {
+  it("ignores any leftover localStorage funnel instead of applying or crashing on it", () => {
     setViewport(1280);
+    // A pre-2026-09-16 dt:filters:* blob (even a corrupt one) is never read as a
+    // funnel now — the list opens clean and the stale key is erased on mount.
     localStorage.setItem(
       "dt:filters:filter-corrupt",
-      JSON.stringify({ status: "not-an-array", name: [1, 2], "": ["x"] }),
+      JSON.stringify({ status: ["Open"], name: [1, 2], "": ["x"] }),
     );
     const { container } = render(
       <DataTable tableId="filter-corrupt" rows={rows.slice(0, 6)} columns={columns} getRowKey={(r) => r.id} />,
     );
     expect(rowCount(container)).toBe(6);
+    expect(localStorage.getItem("dt:filters:filter-corrupt")).toBeNull();
   });
 });
 
@@ -1480,11 +1508,11 @@ describe("Sort is persisted, and Reset must clear it", () => {
 describe("DataTable onColFiltersChange (server-side funnel push)", () => {
   /* Owner 2026-09-16 — a server-paged list pushes its SERVER-FILTERABLE funnels
      into the list query so pagination runs over the filtered set. The grid still
-     owns and persists the funnels; it just REPORTS them so the page can build
-     the query (mirrors onSortChange + serverSort). */
+     owns the funnels (in-visit); it just REPORTS them so the page can build the
+     query (mirrors onSortChange + serverSort). */
   it("reports a restored funnel on mount", async () => {
     setViewport(1280);
-    localStorage.setItem("dt:filters:ccf-mount", JSON.stringify({ status: ["Open"] }));
+    primeInVisitColFilters("ccf-mount", { status: ["Open"] });
     const seen: Record<string, string[]>[] = [];
     render(
       <DataTable

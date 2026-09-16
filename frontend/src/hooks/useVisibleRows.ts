@@ -2,10 +2,12 @@
 // useVisibleRows — "what is the table actually showing?", for summary tiles.
 //
 // Owner 2026-08-12/13. A list page's stat cards summarise the rows the SERVER
-// returned. The DataTable's per-column funnels are CLIENT-side and persisted per
-// user (`dt:filters:*`, owner 2026-07-29 — "filters kept resetting on reload"),
-// so a filter set once survives every reload and stops reading as a filter. It
-// just reads as a broken list.
+// returned. The DataTable's per-column funnels are CLIENT-side and, since
+// 2026-09-16, kept in in-visit memory (dataTableColFilterMemory): a funnel set
+// this visit survives route changes but a fresh page load opens clean. A funnel
+// active on screen still narrows the rows without touching those server totals,
+// so a stat card and the visible rows can still disagree — which is what this
+// hook exists to reconcile.
 //
 // What that cost on Purchase Orders: a stuck DATE funnel left 5 rows worth
 // RM 9,112.50 on screen under a "Sum on this page" card reading RM 164,349.70 —

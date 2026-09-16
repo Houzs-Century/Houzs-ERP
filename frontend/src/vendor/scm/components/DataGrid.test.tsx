@@ -2,6 +2,7 @@ import { useState } from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { DataGrid, type DataGridColumn } from "./DataGrid";
+import { resetDataGridFilterMemory } from "./dataGridFilterStorage";
 
 const rowTexts = (container: HTMLElement): string[] =>
   [...container.querySelectorAll("tr[data-vrow]")].map((tr) => tr.textContent ?? "");
@@ -17,6 +18,7 @@ const columns: DataGridColumn<Row>[] = [
 
 afterEach(() => {
   localStorage.clear();
+  resetDataGridFilterMemory();
   vi.restoreAllMocks();
 });
 

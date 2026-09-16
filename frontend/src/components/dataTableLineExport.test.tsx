@@ -7,6 +7,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useState } from "react";
+import { primeInVisitColFilters, resetInVisitColFilters } from "./dataTableColFilterMemory";
 
 const h = vi.hoisted(() => ({
   aoa: [] as unknown[][],
@@ -63,6 +64,7 @@ const columns: Column<Doc, Line>[] = [
 afterEach(() => {
   cleanup();
   localStorage.clear();
+  resetInVisitColFilters();
   h.aoa = [];
   h.files = [];
 });
@@ -128,8 +130,8 @@ describe("the grid keeps its rows' identity when nothing filters or sorts", () =
 
 describe("DataTable exportLines", () => {
   it("exports every fetched row through the stored funnel, with only the visible columns", async () => {
-    // The page holds ONE row; the server set holds three. A restored funnel keeps Open.
-    localStorage.setItem("dt:filters:docs-export", JSON.stringify({ status: ["Open"] }));
+    // The page holds ONE row; the server set holds three. An in-visit funnel keeps Open.
+    primeInVisitColFilters("docs-export", { status: ["Open"] });
     localStorage.setItem("dt:hidden:docs-export", JSON.stringify(["due"]));
     const fetchRows = vi.fn(async () => docs);
     const onError = vi.fn();
