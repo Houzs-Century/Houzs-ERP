@@ -29,8 +29,15 @@
 // a send is still waiting or its newest refusal is not predated by an arrival:
 // the page's own judgement, from lib/cleared-arrived-plan.mjs.
 //
+// FORCE_UNFINISHED (comma/space list) is the ONE exception: it clears a named,
+// genuinely-unfinished document anyway — for one the owner is handling in
+// AutoCount directly, so the ERP alert is noise. It never sweeps (a doc is
+// forced only if in BOTH DOC_NOS and FORCE_UNFINISHED), each is logged loudly
+// with its verdict, and it comes back the same way (archived_at = NULL).
+//
 // RE-RUN: idempotent. Rows already archived are left alone; a doc_no with no
-// rows is reported, not an error; an unfinished document is skipped every time.
+// rows is reported, not an error; an unfinished document is skipped every time
+// unless it is named in FORCE_UNFINISHED.
 import { readFileSync } from 'node:fs';
 import postgres from 'postgres';
 import { clearVerdict } from './lib/cleared-arrived-plan.mjs';
@@ -98,12 +105,25 @@ try {
       + (items.length === 0 ? '  (no outbox row for this doc)' : ''));
   }
 
+  /* FORCE_UNFINISHED names the exact doc_nos allowed off the list even though
+     they are NOT in the account book — for a document the owner is handling in
+     AutoCount directly, so the ERP alert is noise. It NEVER sweeps: a doc is
+     forced only if named here AND in DOC_NOS, and each one is logged loudly with
+     its verdict so a forced clear is never silent. It comes back the same way any
+     archive does (archived_at = NULL). */
+  const FORCE = new Set((process.env.FORCE_UNFINISHED ?? '').split(/[\s,]+/).map((s) => s.trim()).filter(Boolean));
   const unfinished = new Map();
+  const forced = [];
   for (const d of DOC_NOS) {
     const why = clearVerdict(perDoc.get(d) ?? []);
-    if (why && why !== 'no rows') unfinished.set(d, why);
+    if (!why || why === 'no rows') continue;
+    if (FORCE.has(d)) forced.push({ d, why });
+    else unfinished.set(d, why);
   }
   for (const [d, why] of unfinished) console.log(`  SKIPPED ${d}: ${why}`);
+  for (const { d, why } of forced) {
+    console.log(`  FORCING ${d} despite: ${why} — it is NOT in the account book; clearing only removes it from Not Accepted (FORCE_UNFINISHED)`);
+  }
   finishedDocs = DOC_NOS.filter((d) => !unfinished.has(d));
   const totalLive = rows.filter((r) => r.archived_at === null && finishedDocs.includes(r.doc_no)).length;
   console.log(`TOTAL live to archive: ${totalLive}`);
@@ -149,7 +169,7 @@ try {
     console.error(`POST-CHECK FAILED — ${stillLive} row(s) still not archived`);
     process.exit(1);
   }
-  console.log(`OK — ${finishedDocs.length} document(s) archived off Not Accepted; ${DOC_NOS.length - finishedDocs.length} skipped as unfinished.`);
+  console.log(`OK — ${finishedDocs.length} document(s) archived off Not Accepted (${forced.length} forced despite being unfinished); ${DOC_NOS.length - finishedDocs.length} skipped as unfinished.`);
 } finally {
   await pg2.end();
 }
