@@ -4793,7 +4793,16 @@ mfgSalesOrders.post('/validate', async (c) => {
         hasPostcode: !fillAddressLater && str(body.postcode).trim() !== '',
       },
     },
-    sofaMixConflict: mixesSofaWithOtherMain(items.map((it) => (it.itemGroup as string | null | undefined) ?? null)),
+    /* Sofa exclusivity. On a CREATE the server asks the flat question ("does this
+       set mix?"). On an EDIT it asks whether the change INTRODUCES a mix, so an
+       order written before the rule stays editable — sofaMixIntroduced =
+       mixes(after) && !mixes(before). The frontend sends the order's ORIGINAL
+       line groups as origItemGroups; on a create it omits them ([] -> !mixes([])
+       is true), so the ONE formula below is flat for a create and differential
+       for an edit, matching the server's line-mix gate. */
+    sofaMixConflict:
+      mixesSofaWithOtherMain(items.map((it) => (it.itemGroup as string | null | undefined) ?? null))
+      && !mixesSofaWithOtherMain(((body.origItemGroups as unknown[] | undefined) ?? []).map((g) => (typeof g === 'string' ? g : null))),
     paymentGaps,
   });
 
