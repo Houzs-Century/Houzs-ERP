@@ -10,6 +10,7 @@ One line per open item: what — waiting on — since. Delete the line when it i
 - Schedule the office AutoCount host swap (turns on #3865 and #3922, the receipts route and the CreditorCode edit) — 2026-09-14
 - Carried-over receipts → purchase invoices are refused; needs an accounting decision — 2026-09-15
 - Option pools: clear only fabric/special restrictions (recommended), split the column, or leave — 2026-09-13
+- Auto-derive product price: before the production reprice (replacing hand-typed Product Maintenance costs with the max-supplier value), owner must OK the before/after diff — plan stage 3 — 2026-09-16
 - MRP go-ahead: apply the PO-line link repair, then recompute SO allocation — 2026-09-11
 - Legacy relay it-houzs.dev serves the PO dump and debtor list with no key: take it down or add a key — 2026-08-12
 
@@ -31,6 +32,7 @@ One line per open item: what — waiting on — since. Delete the line when it i
 - Photos over 2 MiB are dropped (4 documents) — 2026-09-14
 
 ## Plans in force
+- Auto-derive product price from supplier (owner 2026-09-16, plan `PLAN-auto-derive-product-price-from-supplier.md`): Product Maintenance / sofa-combo / special cost prices stop being hand-typed and auto-derive = the MOST EXPENSIVE supplier (whole set for sofa/bedframe, not per-cell); supplier<->SKU link stays as the source; manual price fields go read-only; "current most expensive" only, effective-dating is Phase 2 (deferred). Only the SO-side budget cost changes; shipped DO FIFO history is untouched. Staged: (1) binding-gap report DONE, (2) reverse cost-anchor inert, (3) production reprice behind owner go, (4) combo+specials.
 - MRP: one global PO-grouping toggle (per-SO or combine); PO date = customer date − supplier×category lead time; sofa/bedframe/accessory/(SP) mattress lines are covered only by a linked PO line; an SO without a processing date is not allocated; no MRP convert on the phone.
 - Six documents (SO/PO/GR/PI/SI/DO): effective status SUBMITTED (DO keeps DRAFT/LOADED/DISPATCHED); cancel approval on SO only; every document gets line delivery date, line remark, FOC, per-line warehouse and a change log; discount typed as amount or %.
 
