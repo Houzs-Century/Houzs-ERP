@@ -28,6 +28,7 @@ import {
   type SupplierBindingCost,
 } from './derive-product-cost-from-suppliers';
 import { readMfgProductBindings } from './supplier-bindings';
+import { todayMyt } from './my-time';
 
 /** app_config key holding the on/off switch. Row absent / any non-on value =
  *  OFF (today's behaviour). */
@@ -65,7 +66,46 @@ export type DerivedCostIO = {
   loadProduct(companyId: number | null | undefined, code: string): Promise<{ id: string; category: string | null } | null>;
   loadBindings(companyId: number | null | undefined, code: string): Promise<SupplierBindingCost[]>;
   writeProductCost(productId: string, patch: DerivedProductCost): Promise<void>;
+  /** The latest derived-cost history row for (company, code), for dedup — so an
+   *  unchanged recompute does not append a redundant row. */
+  latestCostHistory(
+    companyId: number | null | undefined,
+    code: string,
+  ): Promise<{ base_price_sen: number | null; price1_sen: number | null; seat_height_prices: unknown } | null>;
+  /** Append a derived-cost history row effective `effectiveFrom` (YYYY-MM-DD) —
+   *  the as-of timeline the SO recompute reads (stage 3c). */
+  appendCostHistory(
+    companyId: number | null | undefined,
+    code: string,
+    patch: DerivedProductCost,
+    sourceSupplierId: string,
+    effectiveFrom: string,
+  ): Promise<void>;
 };
+
+/** Does the derived patch differ from the latest history row? Compares the three
+ *  cost lanes; a missing history row always counts as changed. Seat grids are
+ *  compared order-independently. */
+function costHistoryChanged(
+  latest: { base_price_sen: number | null; price1_sen: number | null; seat_height_prices: unknown } | null,
+  patch: DerivedProductCost,
+): boolean {
+  if (!latest) return true;
+  const num = (v: number | null | undefined) => (v == null ? null : Number(v));
+  if ('base_price_sen' in patch && num(patch.base_price_sen) !== num(latest.base_price_sen)) return true;
+  if ('price1_sen' in patch && num(patch.price1_sen) !== num(latest.price1_sen)) return true;
+  if (patch.seat_height_prices !== undefined) {
+    const key = (rows: unknown) =>
+      JSON.stringify(
+        (Array.isArray(rows) ? rows : [])
+          .map((r: { height?: unknown; tier?: unknown; priceSen?: unknown }) =>
+            `${String(r.height ?? '')}|${String(r.tier ?? 'PRICE_2')}|${Number(r.priceSen ?? 0)}`)
+          .sort(),
+      );
+    if (key(patch.seat_height_prices) !== key(latest.seat_height_prices)) return true;
+  }
+  return false;
+}
 
 export type RecomputeResult = {
   written: boolean;
@@ -103,6 +143,16 @@ export async function recomputeDerivedProductCost(
   if (derived.dearnessSen === 0) return { written: false, reason: 'all_zero_priced' };
 
   await io.writeProductCost(product.id, derived.patch);
+
+  // Append the as-of timeline row (stage 3b) so the SO recompute can read the
+  // budget cost as-of the order's date and historical figures don't move. Only
+  // when the derived cost actually changed, so repeated no-op recomputes do not
+  // pile up identical rows. Effective from today (MYT) — a supplier-price change
+  // takes effect from when it is recorded.
+  const latest = await io.latestCostHistory(companyId, code);
+  if (costHistoryChanged(latest, derived.patch)) {
+    await io.appendCostHistory(companyId, code, derived.patch, derived.chosenSupplierId, todayMyt());
+  }
   return { written: true, chosenSupplierId: derived.chosenSupplierId };
 }
 
@@ -149,6 +199,33 @@ export function makeSupabaseDerivedCostIO(sb: Sb): DerivedCostIO {
       // Keyed by the product's own id (PK) — the loadProduct read already scoped
       // to the active company, so the id belongs to this company.
       await sb.from('mfg_products').update(update).eq('id', productId);
+    },
+    async latestCostHistory(companyId, code) {
+      let q = sb
+        .from('mfg_product_cost_history')
+        .select('base_price_sen, price1_sen, seat_height_prices')
+        .eq('item_code', code);
+      if (companyId != null) q = q.eq('company_id', companyId);
+      const { data, error } = await q
+        .order('effective_from', { ascending: false })
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (error) throw new Error(`cost history read failed for ${code}: ${error.message}`);
+      return (data as { base_price_sen: number | null; price1_sen: number | null; seat_height_prices: unknown } | null) ?? null;
+    },
+    async appendCostHistory(companyId, code, patch, sourceSupplierId, effectiveFrom) {
+      const { error } = await sb.from('mfg_product_cost_history').insert({
+        company_id: companyId,
+        item_code: code,
+        base_price_sen: 'base_price_sen' in patch ? (patch.base_price_sen ?? null) : null,
+        price1_sen: 'price1_sen' in patch ? (patch.price1_sen ?? null) : null,
+        seat_height_prices: patch.seat_height_prices ?? null,
+        source_supplier_id: sourceSupplierId,
+        effective_from: effectiveFrom,
+        notes: 'auto-derived (max supplier)',
+      });
+      if (error) throw new Error(`cost history append failed for ${code}: ${error.message}`);
     },
   };
 }
