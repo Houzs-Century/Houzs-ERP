@@ -53,7 +53,9 @@ import { useIdempotencyKey } from "../../lib/idempotency";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
 import { fmtSen } from "../../vendor/shared/format";
-import { soDateGuardError, soStockLocationError, soErrorText } from "../../vendor/scm/lib/so-form-validate";
+import { collectSoSaveProblems } from "../../vendor/scm/lib/so-save-problems-client";
+import { SaveProblemsList, saveProblemsTitle, notifySaveProblems } from "../../vendor/scm/components/SaveProblemsList";
+import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { useBranding } from "../../hooks/useBranding";
 import { hasSofaMixConflict, SOFA_MIX_MESSAGE } from "../../vendor/shared/so-variant-rule";
 import { todayMyt } from "../../vendor/scm/lib/dates";
@@ -155,6 +157,7 @@ export function SalesOrderNewGuided() {
   const [step, setStep] = useState<number>(0);
   const [showValidation, setShowValidation] = useState<boolean>(false);
   const [postError, setPostError] = useState<string | null>(null);
+  const notify = useNotify();
 
   // Draft state
   const [customer, setCustomer] = useState<Customer>({
@@ -256,36 +259,42 @@ export function SalesOrderNewGuided() {
       };
     });
 
-    /* Pre-validate with the SAME shared guards the Full form (SalesOrderNew)
-       runs, so a bad build surfaces one plain sentence here instead of a raw
-       server 400/409. The wizard collects no dates (added on the SO detail
-       after save), so soDateGuardError operates on empty inputs and passes —
-       kept for single-logic-layer parity so a future date field on this flow is
-       guarded automatically. Payments are not guarded at all: the slip is
-       optional everywhere (Owner 2026-08-13) and this flow collects no payment.
-       Every line here
-       is a sofa module, so hasSofaMixConflict can't fire in practice, but the
-       check mirrors the Full form verbatim. Variant completeness
-       (missingRequiredVariants) is enforced only once a processing date is set
-       (server parity); the guided flow sets none, so it's enforced on the SO
-       detail, not here.
-
-       The stock-location gate (owner 2026-08-13) is inert here for the same
-       parity reason: this flow lands a DRAFT unconditionally (see `asDraft`
-       below) and a draft is never written to AutoCount, so the guard passes —
-       but it is wired, so the day this flow stops drafting it is gated
-       automatically instead of silently minting locationless orders. */
-    const preErr =
-      soDateGuardError({ processingDate: "", deliveryDate: "", today: todayMyt() }) ??
-      (hasSofaMixConflict(items.map((i) => i.itemGroup)) ? { title: SOFA_MIX_MESSAGE } : null) ??
-      soStockLocationError({
-        companyCode: branding.companyCode,
-        salesLocation: "",
-        state: "",
+    /* Pre-validate through the SAME shared collectSoSaveProblems the Full form
+       (SalesOrderNew) and the phone use, and show every reason at once in the
+       SAME SaveProblemsList popup the server's 422 uses. Every gate is wired but
+       inert on this flow, exactly as before: every line is a sofa module so the
+       sofa-mix rule can't fire; no dates are collected (the date guard runs on
+       empty inputs and passes; a future date field is then guarded
+       automatically); no payments (the slip is optional everywhere, owner
+       2026-08-13); variant completeness only fires once a Processing Date is set
+       (server parity) — the wizard sets none, so it's enforced on the SO detail;
+       and the stock-location gate is inert because this flow lands a DRAFT
+       unconditionally (asDraft below), never written to AutoCount, but stays
+       wired so the day it stops drafting it is gated. Venue / salesperson are
+       NOT this surface's concern (the wizard drafts and the operator confirms on
+       the detail), so they are marked satisfied to avoid inventing a client
+       block this flow never had. */
+    const problems = collectSoSaveProblems({
+      required: {
+        customerName: customer.name,
+        phone: customer.phone,
+        hasNamedLine: items.length > 0,
         asDraft: true,
-      });
-    if (preErr) {
-      setPostError(soErrorText(preErr));
+        hasVenue: true,
+        hasSalesperson: true,
+        location: { companyCode: branding.companyCode, salesLocation: "", state: "", asDraft: true },
+      },
+      location: { companyCode: branding.companyCode, salesLocation: "", state: "", asDraft: true },
+      processingDate: "",
+      completeness: { customerName: customer.name, fillAddressLater: false, address1: "", postcode: "", deliveryDate: "" },
+      dateGuard: { processingDate: "", deliveryDate: "", today: todayMyt() },
+      variantOffenders: [],
+      sofaMixConflict: hasSofaMixConflict(items.map((i) => i.itemGroup)),
+      sofaMixMessage: SOFA_MIX_MESSAGE,
+      paymentGaps: [],
+    });
+    if (problems.length > 0) {
+      await notify({ title: saveProblemsTitle(problems.length), body: <SaveProblemsList problems={problems} />, tone: "error" });
       return;
     }
 
@@ -311,7 +320,9 @@ export function SalesOrderNewGuided() {
       const res = await create.mutateAsync({ ...body, idempotencyKey: idemKey });
       navigate(`/scm/sales-orders/${res.docNo}`);
     } catch (e) {
-      setPostError(errMsg(e));
+      /* A server aggregated refusal (422 validation_failed) shows every reason
+         in the same popup; anything else falls back to the inline banner. */
+      await notifySaveProblems(notify, e, () => setPostError(errMsg(e)), errMsg(e));
     }
   };
 

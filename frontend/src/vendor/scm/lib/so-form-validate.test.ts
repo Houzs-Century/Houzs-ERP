@@ -151,14 +151,17 @@ describe("SalesOrderNewFromProducts lands a draft exactly where it must", () => 
     expect(source).toContain("asDraft: landsDraft || undefined,");
   });
 
-  it("keeps the location guard wired, inert only because the create is a draft", () => {
-    /* Same shape as the guided wizard: the day this flow stops drafting it is
-       gated automatically instead of silently minting locationless orders. */
+  it("keeps the location guard wired through the shared evaluator, inert only because the create is a draft", () => {
+    /* Since 2026-09-16 the pre-flight runs through collectSoSaveProblems, so the
+       location gate is fed via its `location` input with asDraft: landsDraft —
+       still wired, so the day this flow stops drafting it is gated automatically
+       instead of silently minting locationless orders (same shape as the guided
+       wizard). */
     const guard = source.slice(
-      source.indexOf("soStockLocationError({"),
-      source.indexOf("if (preErr) {"),
+      source.indexOf("const problems = collectSoSaveProblems({"),
+      source.indexOf("if (problems.length > 0) {"),
     );
-    expect(guard).toContain("asDraft: landsDraft,");
+    expect(guard).toContain("asDraft: landsDraft");
   });
 
   it("no longer tells the operator to go and use the Full form", () => {
