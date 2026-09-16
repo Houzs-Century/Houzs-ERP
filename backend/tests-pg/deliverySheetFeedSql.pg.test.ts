@@ -29,6 +29,7 @@ import {
   type FeedHeadRow,
   type FeedLineRow,
 } from '../src/lib/delivery-sheet-feed';
+import { FEED_OUTSTANDING_PO_SQL, poHeadsForSheetSql, toOutstandingPoRecord, type PoFeedRow, type PoHeadForSheet } from '../src/lib/delivery-sheet-po-feed';
 
 const url = process.env.TEST_DATABASE_URL ?? '';
 const describePg = url ? describe : describe.skip;
@@ -39,6 +40,12 @@ const SP1 = '11111111-1111-4111-8111-111111111111';
 const ITEM1 = '22222222-2222-4222-8222-222222222222';
 const PO_LIVE = '33333333-3333-4333-8333-333333333333';
 const PO_DEAD = '44444444-4444-4444-8444-444444444444';
+const PO_PART = '55555555-5555-4555-8555-555555555555';
+const PO_DONE = '66666666-6666-4666-8666-666666666666';
+const PO_OTHER = '77777777-7777-4777-8777-777777777777';
+const SUP1 = '88888888-8888-4888-8888-888888888888';
+const WH_KL = '99999999-9999-4999-8999-999999999999';
+const WH_PG = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 
 async function resetFixture(s: Sql): Promise<void> {
   const parsed = new URL(url);
@@ -82,8 +89,22 @@ async function resetFixture(s: Sql): Promise<void> {
       id uuid PRIMARY KEY, doc_no text NOT NULL, item_group text, item_code text, stock_status text NOT NULL DEFAULT 'PENDING',
       cancelled boolean DEFAULT false
     );
-    CREATE TABLE scm.purchase_orders (id uuid PRIMARY KEY, po_number text, status text NOT NULL, cancelled_at timestamptz);
-    CREATE TABLE scm.purchase_order_items (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), purchase_order_id uuid NOT NULL, so_item_id uuid);
+    DROP TABLE IF EXISTS scm.suppliers CASCADE;
+    DROP TABLE IF EXISTS scm.warehouses CASCADE;
+    CREATE TABLE scm.suppliers (id uuid PRIMARY KEY, code text, name text);
+    CREATE TABLE scm.warehouses (id uuid PRIMARY KEY, code text, name text);
+    CREATE TABLE scm.purchase_orders (
+      id uuid PRIMARY KEY, po_number text, status text NOT NULL, cancelled_at timestamptz,
+      company_id bigint NOT NULL DEFAULT 1, linked_ac_docno text, supplier_id uuid, purchase_location_id uuid, on_hold boolean DEFAULT false,
+      po_date date NOT NULL DEFAULT '2026-09-01', expected_at date,
+      supplier_delivery_date_2 date, supplier_delivery_date_3 date, supplier_delivery_date_4 date
+    );
+    CREATE TABLE scm.purchase_order_items (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(), purchase_order_id uuid NOT NULL, so_item_id uuid,
+      item_code text, material_name text, description text, description2 text, item_group text,
+      qty integer NOT NULL DEFAULT 1, received_qty integer DEFAULT 0, delivery_date date, warehouse_id uuid,
+      line_no integer, created_at timestamptz NOT NULL DEFAULT now()
+    );
 
     INSERT INTO scm.staff VALUES ('${SP1}', 'Lim Yau Wei');
     INSERT INTO scm.mfg_sales_orders
@@ -120,11 +141,25 @@ async function resetFixture(s: Sql): Promise<void> {
       ('HC-DO-2609-002', 'HC-SO-013495', 'CANCELLED', '2026-09-06 00:00:00+00');
     INSERT INTO scm.mfg_sales_order_items (id, doc_no, item_group, item_code, stock_status) VALUES
       ('${ITEM1}', 'HC-SO-013495', 'MATTRESS', 'M1', 'READY');
-    INSERT INTO scm.purchase_orders VALUES
-      ('${PO_LIVE}', 'PO-2609-001', 'SUBMITTED', NULL),
-      ('${PO_DEAD}', 'PO-2609-002', 'CANCELLED', '2026-09-04 00:00:00+00');
-    INSERT INTO scm.purchase_order_items (purchase_order_id, so_item_id) VALUES
-      ('${PO_LIVE}', '${ITEM1}'), ('${PO_DEAD}', '${ITEM1}');
+    INSERT INTO scm.suppliers VALUES ('${SUP1}', '400-S001', 'Sleep Well Sdn Bhd');
+    INSERT INTO scm.warehouses VALUES ('${WH_KL}', 'KL', 'KL Warehouse'), ('${WH_PG}', 'PG', 'Penang');
+    INSERT INTO scm.purchase_orders (id, po_number, status, cancelled_at, company_id, linked_ac_docno, supplier_id, purchase_location_id, po_date, expected_at, supplier_delivery_date_2) VALUES
+      ('${PO_LIVE}', 'PO-2609-001', 'SUBMITTED', NULL, 1, 'PO-004521', '${SUP1}', '${WH_KL}', '2026-09-01', '2026-09-20', '2026-09-25'),
+      ('${PO_DEAD}', 'PO-2609-002', 'CANCELLED', '2026-09-04 00:00:00+00', 1, NULL, '${SUP1}', '${WH_KL}', '2026-09-02', NULL, NULL),
+      ('${PO_PART}', 'PO-2608-009', 'PARTIALLY_RECEIVED', NULL, 1, 'PO-004400', '${SUP1}', '${WH_KL}', '2026-08-15', '2026-09-10', NULL),
+      ('${PO_DONE}', 'PO-2608-001', 'RECEIVED', NULL, 1, 'PO-004300', '${SUP1}', '${WH_KL}', '2026-08-01', NULL, NULL),
+      ('${PO_OTHER}', '2990-PO-2609-001', 'SUBMITTED', NULL, 2, NULL, '${SUP1}', '${WH_KL}', '2026-09-01', NULL, NULL);
+    -- Phase-3 lines: PO-2609-001 has a mattress line from the SO (2 of 3 left,
+    -- line warehouse PG overrides the header) and a stock line (fully received,
+    -- so not outstanding); the partial PO has one line left; the received and
+    -- other-company POs have quantity left but never appear.
+    INSERT INTO scm.purchase_order_items (purchase_order_id, so_item_id, item_code, material_name, description, description2, item_group, qty, received_qty, delivery_date, warehouse_id, line_no) VALUES
+      ('${PO_LIVE}', '${ITEM1}', 'M1', 'Queen mattress', NULL, 'Firm', 'MATTRESS', 3, 1, '2026-09-22', '${WH_PG}', 1),
+      ('${PO_LIVE}', NULL, 'A1', 'Pillow', 'Pillow (stock)', NULL, 'ACCESSORIES', 4, 4, NULL, NULL, 2),
+      ('${PO_DEAD}', '${ITEM1}', 'M1', 'Queen mattress', NULL, NULL, 'MATTRESS', 1, 0, NULL, NULL, 1),
+      ('${PO_PART}', NULL, 'B1', 'Bed frame', NULL, NULL, 'BEDFRAME', 2, 1, NULL, NULL, 1),
+      ('${PO_DONE}', NULL, 'B2', 'Bed frame', NULL, NULL, 'BEDFRAME', 2, 0, NULL, NULL, 1),
+      ('${PO_OTHER}', NULL, 'M9', 'Other company', NULL, NULL, 'MATTRESS', 2, 0, NULL, NULL, 1);
   `);
 }
 
@@ -275,5 +310,43 @@ describePg('HC Delivery sheet feed SQL — real Postgres', () => {
     for (const key of ['2990-SO-2609-001', 'SO-000001', 'SO-000002', 'SO-999999']) {
       expect(await sql.unsafe(upd1, [key, 'x', null, 1] as never[])).toHaveLength(0);
     }
+  });
+
+  test('outstanding PO: lines with quantity left on SUBMITTED / PARTIALLY_RECEIVED orders, this company, oldest PO first', async () => {
+    const rows = (await sql.unsafe(toPgPlaceholders(FEED_OUTSTANDING_PO_SQL), [1] as never[])) as unknown as PoFeedRow[];
+    expect(rows.map((r) => [r.po_number, r.item_code, r.remaining_qty])).toEqual([
+      ['PO-2608-009', 'B1', 1],
+      ['PO-2609-001', 'M1', 2],
+    ]);
+    // Line warehouse beats the header's; line date beats expected_at; the SO
+    // is named by the book's number; supplier dates are the HEADER slots.
+    expect(toOutstandingPoRecord(rows[1]!)).toMatchObject({
+      DocNo: 'PO-004521',
+      ErpDocNo: 'PO-2609-001',
+      SODocNo: 'SO-013495',
+      CreditorCode: '400-S001',
+      CreditorName: 'Sleep Well Sdn Bhd',
+      ItemDescription: 'Queen mattress',
+      ItemDescription2: 'Firm',
+      Location: 'PG',
+      ItemGroup: 'MATTRESS',
+      DocDate: '2026-09-01',
+      RemainingQty: 2,
+      DeliveryDate: '2026-09-22',
+      SupplierDeliveryDate1: '2026-09-25',
+      SupplierDeliveryDate2: null,
+      Status: 'SUBMITTED',
+    });
+    expect(toOutstandingPoRecord(rows[0]!)).toMatchObject({ DocNo: 'PO-004400', SODocNo: null, Location: 'KL', DeliveryDate: '2026-09-10', Status: 'PARTIALLY_RECEIVED' });
+    expect(await sql.unsafe(toPgPlaceholders(FEED_OUTSTANDING_PO_SQL), [2] as never[])).toHaveLength(1);
+  });
+
+  test('the PO heads read finds each sheet number by the book number or the ERP number, within the company', async () => {
+    const heads = (await sql.unsafe(toPgPlaceholders(poHeadsForSheetSql(4)), ['PO-004521', 'PO-2608-009', '2990-PO-2609-001', 'PO-999999', 1] as never[])) as unknown as PoHeadForSheet[];
+    expect(heads.map((h) => [h.sheet_doc_no, h.po_number, h.status, h.supplier_delivery_date_2]).sort()).toEqual([
+      ['PO-004521', 'PO-2609-001', 'SUBMITTED', '2026-09-25'],
+      ['PO-2608-009', 'PO-2608-009', 'PARTIALLY_RECEIVED', null],
+    ]);
+    expect(typeof heads[0]!.company_id).toBe('number');
   });
 });

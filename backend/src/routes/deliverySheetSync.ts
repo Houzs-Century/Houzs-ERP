@@ -46,6 +46,19 @@ import {
   type FeedHeadRow,
   type FeedLineRow,
 } from "../lib/delivery-sheet-feed";
+import {
+  FEED_OUTSTANDING_PO_SQL,
+  PO_OUTSTANDING_STATUSES,
+  SHEET_PO_DATE_SLOTS,
+  poHeadsForSheetSql,
+  toOutstandingPoRecord,
+  type PoFeedRow,
+  type PoHeadForSheet,
+} from "../lib/delivery-sheet-po-feed";
+import { getSupabaseService, isSupabaseConfigured } from "../db/supabase";
+import { SUPPLIER_DATE_SLOT_COL, cascadePoSupplierDate } from "../scm/lib/po-supplier-date-cascade";
+import { poHasDownstream } from "../scm/lib/downstream-lock";
+import { enqueueEdit } from "../scm/lib/autocount-outbox";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -240,5 +253,189 @@ app.post("/updates", async (c) => {
   const written = results.filter((r) => r.ok === true).length;
   return c.json({ count: results.length, written, results });
 });
+
+/* Phase 3 (owner 2026-09-16): the Outstanding PO tab. Replaces AutoCount's
+   /PurchaseOrder/getOutstanding (read) and /PurchaseOrder/update-udf-dates
+   (the three supplier delivery dates, written back to the ERP's header slots
+   2/3/4 and cascaded to the lines — the same writer the PO editor's bulk
+   supplier-date action and the line import use — and then queued to the
+   account book through the ordinary PO write-back). */
+
+app.get("/outstanding-po", async (c) => {
+  const denied = await badSheetKey(c);
+  if (denied) return denied;
+  const co = await sheetCompanyId(c);
+  if ("refusal" in co) return co.refusal;
+  let rows: PoFeedRow[];
+  try {
+    // company-scope: ?1 is the secret's company id.
+    const res = (await c.env.DB.prepare(FEED_OUTSTANDING_PO_SQL).bind(co.id).all()) as { results?: PoFeedRow[] };
+    rows = res.results ?? [];
+  } catch (e) {
+    return c.json({ error: "feed_read_failed", message: e instanceof Error ? e.message : String(e) }, 502);
+  }
+  const records = rows.map(toOutstandingPoRecord);
+  return c.json({ count: records.length, records });
+});
+
+type SheetPoDates = { DocNo?: unknown; SupplierDeliveryDate1?: unknown; SupplierDeliveryDate2?: unknown; SupplierDeliveryDate3?: unknown };
+
+app.post("/po-dates", async (c) => {
+  const denied = await badSheetKey(c);
+  if (denied) return denied;
+  let body: { updates?: unknown; dry_run?: unknown };
+  try {
+    body = (await c.req.json()) as { updates?: unknown; dry_run?: unknown };
+  } catch {
+    return c.json({ error: "bad_json" }, 400);
+  }
+  const updates = Array.isArray(body.updates) ? (body.updates as SheetPoDates[]) : null;
+  if (!updates) return c.json({ error: "bad_request", message: "updates[] required" }, 400);
+  if (updates.length > UPDATES_MAX) return c.json({ error: "too_many", max: UPDATES_MAX }, 413);
+  if (!isSupabaseConfigured(c.env)) return c.json({ error: "supabase not configured" }, 503);
+  // A preview: everything up to the write is done and reported, nothing is
+  // written or queued. The cutover's first push is run this way so the owner
+  // sees what the tab would change before it changes it.
+  const dryRun = body.dry_run === true;
+  const co = await sheetCompanyId(c);
+  if ("refusal" in co) return co.refusal;
+
+  // Validate every row first. A blank date KEEPS the ERP's date (clearing a
+  // supplier date is done in the ERP, as the phase-1 rule for col O); a row
+  // with nothing to write is skipped before any read.
+  const results: Array<Record<string, unknown>> = updates.map(() => ({}));
+  const wanted = new Map<string, { i: number[]; dates: Partial<Record<2 | 3 | 4, string>> }>();
+  updates.forEach((u, i) => {
+    const docNo = String(u.DocNo ?? "").trim();
+    if (!docNo) {
+      results[i] = { DocNo: null, skipped: "no_doc_no" };
+      return;
+    }
+    const dates: Partial<Record<2 | 3 | 4, string>> = {};
+    for (const [field, slot] of SHEET_PO_DATE_SLOTS) {
+      const raw = u[field];
+      if (raw == null || !String(raw).trim()) continue;
+      const d = normSheetDate(raw);
+      if (!d) {
+        results[i] = { DocNo: docNo, skipped: "bad_date", field };
+        return;
+      }
+      dates[slot] = d;
+    }
+    if (!Object.keys(dates).length) {
+      results[i] = { DocNo: docNo, skipped: "nothing_to_write" };
+      return;
+    }
+    results[i] = { DocNo: docNo, skipped: "no_order" };
+    // The same Doc. No. on several lines: later rows fill slots earlier ones
+    // left blank and override the ones they name (last wins per slot).
+    const w = wanted.get(docNo) ?? { i: [], dates: {} };
+    w.i.push(i);
+    Object.assign(w.dates, dates);
+    wanted.set(docNo, w);
+  });
+
+  let heads: PoHeadForSheet[] = [];
+  if (wanted.size) {
+    try {
+      // company-scope: the last bind is the secret's company id.
+      const res = (await c.env.DB.prepare(poHeadsForSheetSql(wanted.size))
+        .bind(...wanted.keys(), co.id)
+        .all()) as { results?: PoHeadForSheet[] };
+      heads = res.results ?? [];
+    } catch (e) {
+      return c.json({ error: "po_read_failed", message: e instanceof Error ? e.message : String(e) }, 502);
+    }
+  }
+
+  const sb = getSupabaseService(c.env);
+  for (const h of heads) {
+    const w = wanted.get(h.sheet_doc_no);
+    if (!w) continue;
+    const report = (r: Record<string, unknown>) => {
+      for (const i of w.i) results[i] = { DocNo: h.sheet_doc_no, ErpDocNo: h.po_number, ...r };
+    };
+    if (!PO_OUTSTANDING_STATUSES.includes(h.status)) {
+      report({ skipped: "po_not_outstanding", status: h.status });
+      continue;
+    }
+    // Only a date that actually moved is written, so a daily push of the whole
+    // tab queues nothing for a PO whose dates the ERP already holds.
+    const moved = (Object.entries(w.dates) as Array<[string, string]>)
+      .map(([slot, date]) => [Number(slot) as 2 | 3 | 4, date] as const)
+      .filter(([slot, date]) => h[SUPPLIER_DATE_SLOT_COL[slot]] !== date);
+    if (!moved.length) {
+      report({ ok: true, unchanged: true });
+      continue;
+    }
+    let lock: { message: string } | null;
+    try {
+      lock = await poHasDownstream(sb, h.id);
+    } catch (e) {
+      report({ error: `downstream check failed: ${e instanceof Error ? e.message : String(e)}` });
+      continue;
+    }
+    if (lock) {
+      report({ skipped: "po_locked", message: lock.message });
+      continue;
+    }
+    if (dryRun) {
+      const wouldWrite: Record<string, string> = {};
+      for (const [slot, date] of moved) wouldWrite[SUPPLIER_DATE_SLOT_COL[slot]] = date;
+      report({ ok: true, dry_run: true, would_write: wouldWrite, current: before_dates(h) });
+      continue;
+    }
+    const before: Record<string, unknown> = {
+      po_number: h.po_number,
+      status: h.status,
+      company_id: h.company_id,
+      supplier_delivery_date_2: h.supplier_delivery_date_2,
+      supplier_delivery_date_3: h.supplier_delivery_date_3,
+      supplier_delivery_date_4: h.supplier_delivery_date_4,
+    };
+    const written: Record<string, string> = {};
+    let failure: string | null = null;
+    for (const [slot, date] of moved) {
+      const r = await cascadePoSupplierDate(sb, {
+        companyId: co.id,
+        poId: h.id,
+        before,
+        slot,
+        date,
+        applyToLines: true,
+        actor: null,
+        note: "HC Delivery sheet (Outstanding PO)",
+      });
+      if (!r.ok) {
+        failure = r.reason;
+        break;
+      }
+      written[SUPPLIER_DATE_SLOT_COL[slot]] = date;
+    }
+    // ERP -> AutoCount, once per PO that moved (even a half-applied one: the
+    // book should hold whatever the ERP now holds).
+    let queued = false;
+    if (Object.keys(written).length) {
+      try {
+        queued = await enqueueEdit(sb, { companyId: co.id, docType: "PO", docId: h.id, createdBy: null });
+      } catch (e) {
+        console.error(`delivery-sheet po-dates: AutoCount enqueue failed for ${h.po_number}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+    if (failure) report({ error: failure, written, queued });
+    else report({ ok: true, written, queued });
+  }
+
+  const count = results.filter((r) => r.ok === true && r.unchanged !== true && r.dry_run !== true).length;
+  return c.json({ count: results.length, written: count, dry_run: dryRun, results });
+});
+
+function before_dates(h: PoHeadForSheet): Record<string, string | null> {
+  return {
+    supplier_delivery_date_2: h.supplier_delivery_date_2,
+    supplier_delivery_date_3: h.supplier_delivery_date_3,
+    supplier_delivery_date_4: h.supplier_delivery_date_4,
+  };
+}
 
 export default app;
