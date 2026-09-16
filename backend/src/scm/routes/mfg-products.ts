@@ -22,6 +22,7 @@ import { escapeForOr } from '../lib/postgrest-search';
 import { paginateAll } from '../lib/paginate-all';
 import { findSkuUsage, usageCheckFailedBody } from '../lib/sku-usage';
 import { productToBindingPatch, type ProductSeatCost } from '../lib/cost-anchor-sync';
+import { autoDeriveEnabled } from '../lib/auto-derive-cost';
 import { moduleCodeFromSku, normalizeSofaTier, parseDefaultFreeGifts } from '../shared';
 import { canWriteScmConfig, canViewScmProductCost } from '../lib/houzs-perms';
 import { PRODUCT_FINANCE_KEYS, stripProductPriceHistory } from '../lib/finance-keys';
@@ -943,7 +944,11 @@ export const patchMfgProductHandler = async (c: AppContext) => {
   /* Rename-aware: bindings + price history were cascade-renamed above, so all
      post-write side effects must address the SKU by its FINAL code. */
   const finalCode = typeof updates.code === 'string' ? (updates.code as string) : (current.code as string);
-  if (costFieldChanged) {
+  // Auto-derive stage 2b: when the flag is ON the SUPPLIER side is authoritative
+  // and the product cost is derived from it, so a product edit must NOT push back
+  // onto the binding (that would overwrite the supplier's real price with a
+  // derived value). Fall through to the is_cost_anchor mirror only while OFF.
+  if (costFieldChanged && !(await autoDeriveEnabled(supabase))) {
     // Use the FINAL values. `'key' in updates` (not ??) so an explicit clear to
     // null is honoured rather than falling back to the old value.
     await syncAnchorBindingFromProduct(supabase, finalCode, {
