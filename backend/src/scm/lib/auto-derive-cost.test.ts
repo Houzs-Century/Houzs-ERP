@@ -42,14 +42,25 @@ function fakeIo(opts: {
   category?: string | null;
   productMissing?: boolean;
   bindings?: SupplierBindingCost[];
-}): { io: DerivedCostIO; writes: { id: string; patch: unknown }[] } {
+  latest?: { base_price_sen: number | null; price1_sen: number | null; seat_height_prices: unknown } | null;
+}): {
+  io: DerivedCostIO;
+  writes: { id: string; patch: unknown }[];
+  history: { patch: unknown; sourceSupplierId: string; effectiveFrom: string }[];
+} {
   const writes: { id: string; patch: unknown }[] = [];
+  const history: { patch: unknown; sourceSupplierId: string; effectiveFrom: string }[] = [];
   return {
     writes,
+    history,
     io: {
       loadProduct: async () => (opts.productMissing ? null : { id: 'p1', category: opts.category ?? 'MATTRESS' }),
       loadBindings: async () => opts.bindings ?? [],
       writeProductCost: async (id, patch) => { writes.push({ id, patch }); },
+      latestCostHistory: async () => opts.latest ?? null,
+      appendCostHistory: async (_c, _code, patch, sourceSupplierId, effectiveFrom) => {
+        history.push({ patch, sourceSupplierId, effectiveFrom });
+      },
     },
   };
 }
@@ -106,5 +117,37 @@ describe('recomputeDerivedProductCost', () => {
     const cell = (h: string) => patch.seat_height_prices?.find((x) => x.height === h && x.tier === 'PRICE_2')?.priceSen;
     expect(cell('24')).toBe(300000);
     expect(cell('28')).toBe(90000); // whole set from 'hi', not per-cell max
+  });
+});
+
+describe('recomputeDerivedProductCost — as-of history timeline (stage 3b)', () => {
+  it('appends a cost-history row when the derived cost is new (no prior history)', async () => {
+    const { io, history } = fakeIo({
+      bindings: [b({ supplier_id: 'a', unit_price_sen: 9000 })],
+      latest: null,
+    });
+    await recomputeDerivedProductCost(io, 1, 'X');
+    expect(history).toHaveLength(1);
+    expect(history[0]).toMatchObject({ sourceSupplierId: 'a', patch: { base_price_sen: 9000 } });
+    expect(history[0].effectiveFrom).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  it('does NOT append when the derived cost equals the latest history row (dedup)', async () => {
+    const { io, history } = fakeIo({
+      bindings: [b({ supplier_id: 'a', unit_price_sen: 9000 })],
+      latest: { base_price_sen: 9000, price1_sen: null, seat_height_prices: null },
+    });
+    await recomputeDerivedProductCost(io, 1, 'X');
+    expect(history).toHaveLength(0);
+  });
+
+  it('appends when the latest history differs (a real price move)', async () => {
+    const { io, history } = fakeIo({
+      bindings: [b({ supplier_id: 'a', unit_price_sen: 9500 })],
+      latest: { base_price_sen: 9000, price1_sen: null, seat_height_prices: null },
+    });
+    await recomputeDerivedProductCost(io, 1, 'X');
+    expect(history).toHaveLength(1);
+    expect(history[0]).toMatchObject({ patch: { base_price_sen: 9500 } });
   });
 });
