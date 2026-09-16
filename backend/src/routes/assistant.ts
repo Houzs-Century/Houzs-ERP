@@ -31,6 +31,7 @@
 // unowned, or deleted returns 404, never 403.
 // ---------------------------------------------------------------------------
 
+import type { PositionPolicyRow } from "../services/positionPolicyRows";
 import { Hono } from "hono";
 import type { Env } from "../types";
 import { askAssistant } from "../services/assistant";
@@ -51,12 +52,14 @@ const app = new Hono<{ Bindings: Env }>();
 
 type AnswerData = { answer: string; agents: Array<{ key: string; label: string }>; degraded: boolean };
 
-function assistantUser(c: {
-  get: (k: string) => unknown;
-}): { permissions?: unknown; position_name?: string | null; department_name?: string | null } | undefined {
-  return c.get("user") as
-    | { permissions?: unknown; position_name?: string | null; department_name?: string | null }
-    | undefined;
+type AssistantCaller = {
+  permissions?: unknown;
+  position_name?: string | null;
+  department_name?: string | null;
+  position_policy?: PositionPolicyRow | null;
+};
+function assistantUser(c: { get: (k: string) => unknown }): AssistantCaller | undefined {
+  return c.get("user") as AssistantCaller | undefined;
 }
 function callerId(c: { get: (k: string) => unknown }): string | null {
   return c.get("userId") != null ? String(c.get("userId")) : null;
@@ -114,7 +117,7 @@ app.post("/chat", async (c) => {
       403,
     );
   }
-  const scope = scopeForUser(user, (i) => resolvePositionPolicy(i));
+  const scope = scopeForUser(user, (i) => resolvePositionPolicy(i, user?.position_policy ?? null));
   const userId = callerId(c);
 
   /* Resolve the conversation this turn belongs to. A supplied id that is not the

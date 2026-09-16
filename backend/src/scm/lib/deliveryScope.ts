@@ -55,6 +55,7 @@
 // ─────────────────────────────────────────────────────────────────────────
 
 import { resolvePositionPolicy, isFleetPosition } from "../../services/positionPolicy";
+import type { PositionPolicyRow } from "../../services/positionPolicyRows";
 
 /** The caller shape this module reads — a subset of the SCM `houzsUser`
  *  (env.ts Variables.houzsUser): the real Houzs integer user id plus the org +
@@ -64,6 +65,7 @@ export interface DeliveryScopeCaller {
   id?: number | null;
   position_name?: string | null;
   department_name?: string | null;
+  position_policy?: PositionPolicyRow | null;
   permissions?: ReadonlyArray<string> | ReadonlySet<string>;
   permissions_set?: ReadonlySet<string>;
 }
@@ -119,10 +121,13 @@ export async function resolveDeliveryScope(
 
   // INTENT gate — only the policy's restricted cohort (the transportation-view
   // positions) is a candidate for scoping. Everyone else keeps the whole board.
-  const policy = resolvePositionPolicy({
-    position_name: caller.position_name ?? null,
-    department_name: caller.department_name ?? null,
-  });
+  const policy = resolvePositionPolicy(
+    {
+      position_name: caller.position_name ?? null,
+      department_name: caller.department_name ?? null,
+    },
+    caller.position_policy ?? null,
+  );
   if (policy.cohort !== "restricted") return SCOPE_ALL;
 
   const uid = caller.id;
@@ -154,7 +159,7 @@ export async function resolveDeliveryScope(
   // keeps the whole board. A transient lookup error already returned SCOPE_ALL
   // above, so this branch is only the clean "no rows" case.
   if (driverIds.size === 0 && helperIds.size === 0) {
-    return isFleetPosition(caller.position_name ?? null)
+    return isFleetPosition(caller.position_name ?? null, caller.position_policy ?? null)
       ? { mode: "self", driverIds, helperIds }
       : SCOPE_ALL;
   }

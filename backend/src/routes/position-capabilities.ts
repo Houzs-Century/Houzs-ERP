@@ -15,6 +15,10 @@ import {
   resolvePositionPolicy,
   positionGrantsWildcard,
 } from "../services/positionPolicy";
+import {
+  loadAllPositionPolicyRows,
+  loadPositionPolicyRow,
+} from "../services/positionPolicyRows";
 
 /* The editable Roles & Permissions matrix (owner 2026-08-22: "要界面可编辑",
  * extended same day to 全部 SCM 模块). Two editable axes:
@@ -36,7 +40,7 @@ const app = new Hono<{ Bindings: Env }>();
  * grant row. Positions themselves come from GET /api/positions.
  */
 app.get("/", requirePermission("users.read"), async (c) => {
-  const [capRows, overrideRows, positionRows] = await Promise.all([
+  const [capRows, overrideRows, positionRows, policyRows] = await Promise.all([
     c.env.DB.prepare(
       `SELECT position_id, capability
          FROM position_capabilities
@@ -52,6 +56,7 @@ app.get("/", requirePermission("users.read"), async (c) => {
          FROM positions p
          LEFT JOIN departments d ON d.id = p.department_id`,
     ).all<{ id: number; name: string; department_name: string | null }>(),
+    loadAllPositionPolicyRows(c.env),
   ]);
 
   // Per-position POLICY BASELINE for the SCM leaf keys — what the code-defined
@@ -60,13 +65,14 @@ app.get("/", requirePermission("users.read"), async (c) => {
   // read as full everywhere (the wildcard bypasses the guard).
   const baselines: Record<number, Record<string, string>> = {};
   for (const p of positionRows.results) {
-    const god = positionGrantsWildcard(p.name);
+    const policyRow = policyRows.get(p.id) ?? null;
+    const god = positionGrantsWildcard(p.name, policyRow);
     const policy = god
       ? null
-      : resolvePositionPolicy({
-          position_name: p.name,
-          department_name: p.department_name,
-        });
+      : resolvePositionPolicy(
+          { position_name: p.name, department_name: p.department_name },
+          policyRow,
+        );
     const map: Record<string, string> = {};
     for (const key of SCM_OVERRIDE_KEYS) {
       map[key] = god ? "full" : (policy?.pageAccess[key] ?? "none");
@@ -181,7 +187,7 @@ app.put("/:positionId/pages", requirePermission("roles.manage"), async (c) => {
     .bind(positionId)
     .first<{ id: number; name: string; slug: string }>();
   if (!position) return c.json({ error: "Position not found." }, 404);
-  if (positionGrantsWildcard(position.name))
+  if (positionGrantsWildcard(position.name, await loadPositionPolicyRow(c.env, positionId)))
     return c.json({ error: "Owner-tier positions always pass — nothing to override." }, 400);
 
   const before = await c.env.DB.prepare(

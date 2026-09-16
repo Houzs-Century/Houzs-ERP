@@ -13,7 +13,7 @@ Two separate authorization systems live under Team > Roles. Flat permissions (`x
 ## Permissions
 
 - `roles.read` (or the Sales Director carve-out, read-only) to open the tab; `roles.manage` for every mutation, including page-access edits.
-- `"*"` (wildcard) is reserved for god positions (Super Admin, Owner, Managing Director) and satisfies every flat key automatically via `hasPermission`.
+- `"*"` (wildcard) is reserved for owner-tier Titles — a `position_policy` row with cohort `god` (Super Admin, Owner, Managing Director on 2026-09-16), or, for a Title with no row, the `GOD_POSITIONS` name list — and satisfies every flat key automatically via `hasPermission`.
 - Several high-value keys are declared but granted to **no seed role** on purpose — only `*` holds them until the owner explicitly assigns them: `scm.payment_voucher.check` / `.approve` (the two-yes voucher gate), `scm.so_payment.amend` (correcting a payment after its same-day window, never past a RECONCILED one), `memos.manage` (cross-department memo authority), `announcements.approve` (the publish gate for every notice).
 - `hasPermission` (honours `*`) is what every access gate must use. `hasPermissionLiterally` (ignores `*`, checks only what a role explicitly lists) is a separate reading used ONLY for deciding whose desk work belongs on — amendment notice audiences and sidebar pending-approval counts — never for permitting an action. Holding a key literally can also carry an obligation (e.g. `scm.so_payment.amend` requires a reason on every action once a role names it, even for the Owner via a custom role).
 
@@ -30,14 +30,15 @@ Two separate authorization systems live under Team > Roles. Flat permissions (`x
 - The inverse of the missing-catalogue bug also happens and is harder to notice: a key granted in a stored role row that gates nothing anywhere (dozens of these exist) — don't assume every checked box in the matrix corresponds to a live gate.
 - A `*` (wildcard) holder passes every gate via `hasPermission` and so can never reproduce a missing-catalogue-entry bug by testing as themselves — test as a role holding the specific key, not as Owner/IT Admin.
 - There is no frontend permission registry and must not be one — the client only holds booleans the server already decided (`frontend/src/auth/capabilities.ts`); don't add a second source of truth for what a role can do.
-- A role's flat `permissions` only decides what it can DO — page access (what it can SEE) is a separate table (`role_page_access`) resolved from `positionPolicy.ts` at login for positioned users; editing the matrix here never touches menu visibility.
+- A role's flat `permissions` only decides what it can DO — page access (what it can SEE) comes from the member's Title: its `position_policy` row (Roles & Permissions › **Titles**: cohort god / full / restricted / sales, a profile for restricted and sales, and the money / config / fleet flags; `PUT /api/position-policy/:positionId`, `roles.manage`, audited as `position_policy.update`), resolved by `positionPolicy.ts` at login. A Title with no row falls back to the name-keyed sets in that file (an unclassified name is full). The whitelists a profile names stay code. `role_page_access` is read only for a member with no Title. Editing the Roles matrix never touches menu visibility.
+- The row rides the session: it is joined on the authority read and is part of the authz fingerprint, so a Titles edit reaches every member of that Title on their next request; it is carried onto `AuthUser.position_policy` and the SCM bridge's `houzsUser`, and the sales-JD, money-write, config-write and delivery-scope rules read it ahead of `position_name`. `pmsAccess` (director / PIC regexes) still keys on the name.
 - There is no per-grant audit trail — `audit_events` records once per `role.update`, not per permission key; don't expect to find who flipped one specific checkbox.
 
 ## Where the code is
 
 - `backend/src/services/permissions.ts` — `PERMISSIONS[]`, the catalogue, `UNDECLARED_ROLE_KEYS`.
 - `backend/src/services/pageAccess.ts` — the separate page-access catalogue (`PAGES[]`).
-- `backend/src/services/positionPolicy.ts` — `positionGrantsWildcard`, god positions.
+- `backend/src/services/positionPolicy.ts` — `resolvePositionPolicy(input, row)`, `policyFromRow`, `positionGrantsWildcard`; `backend/src/services/positionPolicyRows.ts` — the row type, validation, loader and `POSITION_POLICY_SEED`; `backend/src/routes/position-policy.ts` — the Titles API; `frontend/src/pages/team/TeamTitlesPolicy.tsx` — the Titles tab.
 - `backend/src/routes/roles.ts` — API surface.
 - `backend/tests/permissionCatalogueDrift.test.ts` — the build-time ledger/catalogue drift gate.
 - `frontend/src/pages/Roles.tsx`, `frontend/src/mobile/MobileRoles.tsx` — desktop/mobile admin surfaces.

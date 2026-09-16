@@ -44,6 +44,7 @@
 // a blank to fill.
 // ----------------------------------------------------------------------------
 
+import type { PositionPolicyRow } from "./positionPolicyRows";
 import type { AuthUser } from "./auth";
 import { hasPermission } from "./permissions";
 import {
@@ -71,6 +72,7 @@ export interface CapabilityCaller {
   permissions_set?: ReadonlySet<string>;
   position_name?: string | null;
   department_name?: string | null;
+  position_policy?: PositionPolicyRow | null;
 }
 
 /** Adapt a `CapabilityCaller` to the `AuthUser`-shaped argument the pmsAccess /
@@ -81,6 +83,7 @@ function asAuthUser(u: CapabilityCaller): AuthUser {
   return {
     position_name: u.position_name ?? null,
     department_name: u.department_name ?? null,
+    position_policy: u.position_policy ?? null,
     permissions_set: u.permissions_set ?? new Set(u.permissions ?? []),
   } as unknown as AuthUser;
 }
@@ -93,6 +96,7 @@ function asMoneyCaller(u: CapabilityCaller): MoneyWriteCaller {
     permissions: u.permissions,
     permissions_set: u.permissions_set,
     position_name: u.position_name ?? null,
+    position_policy: u.position_policy ?? null,
   };
 }
 
@@ -113,10 +117,13 @@ function granted(u: CapabilityCaller): ReadonlyArray<string> | ReadonlySet<strin
 function canWriteScmConfigFor(u: CapabilityCaller): boolean {
   return (
     hasPermission(granted(u), "scm.config.write") ||
-    resolvePositionPolicy({
-      position_name: u.position_name ?? null,
-      department_name: u.department_name ?? null,
-    }).flags.canWriteConfig
+    resolvePositionPolicy(
+      {
+        position_name: u.position_name ?? null,
+        department_name: u.department_name ?? null,
+      },
+      u.position_policy ?? null,
+    ).flags.canWriteConfig
   );
 }
 

@@ -14,6 +14,7 @@
 // (`npx tsx scripts/audit-permission-grants.mjs`). No shebang: a test imports it.
 
 import { positionGrantsWildcard, resolvePositionPolicy } from "../../src/services/positionPolicy.ts";
+import { policyRowFromDb } from "../../src/services/positionPolicyRows.ts";
 import {
   getPmsRole,
   isDirectorUser,
@@ -47,16 +48,21 @@ const COHORT_LABEL = {
  * @param {string | null | undefined} departmentName
  * @returns {{ cohort: "god" | "restricted" | "sales" | "full" | "positionless", label: string, flags: string[], pmsRole: string }}
  */
-export function classifyPosition(positionName, departmentName) {
+export function classifyPosition(positionName, departmentName, policyRow = null) {
   const pos = (positionName ?? "").trim();
   if (!pos) return { cohort: "positionless", label: COHORT_LABEL.positionless, flags: [], pmsRole: "OTHER" };
   const dept = departmentName ?? null;
-  const god = positionGrantsWildcard(pos);
-  const policy = resolvePositionPolicy({ position_name: pos, department_name: dept });
+  // The Title's stored policy row (position_policy) decides first, as it does
+  // at hydration; null keeps the name rule. Pass the raw DB row — the coercion
+  // is the same one auth.ts applies.
+  const row = policyRow ? policyRowFromDb({ position_id: policyRow.position_id ?? 0, ...policyRow }) : null;
+  const god = positionGrantsWildcard(pos, row);
+  const policy = resolvePositionPolicy({ position_name: pos, department_name: dept }, row);
   const cohort = god ? "god" : policy.cohort;
   const caller = callerFor(pos, dept, god);
 
   const flags = [];
+  flags.push(row ? "policy:row" : "policy:name");
   if (god) flags.push("WILDCARD*");
   if (god || policy.flags.canMoveMoney) flags.push("money-write");
   if (god || policy.flags.canWriteConfig) flags.push("config-write");
