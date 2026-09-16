@@ -55,12 +55,10 @@ import {
 import { useIdempotencyKey } from "../../lib/idempotency";
 import { cn } from "../../lib/utils";
 import { fmtSen } from "../../vendor/shared/format";
-import {
-  companyRequiresStockLocation,
-  soDateGuardError,
-  soStockLocationError,
-  soErrorText,
-} from "../../vendor/scm/lib/so-form-validate";
+import { companyRequiresStockLocation } from "../../vendor/scm/lib/so-form-validate";
+import { collectSoSaveProblems } from "../../vendor/scm/lib/so-save-problems-client";
+import { SaveProblemsList, saveProblemsTitle, notifySaveProblems } from "../../vendor/scm/components/SaveProblemsList";
+import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { useBranding } from "../../hooks/useBranding";
 import { hasSofaMixConflict, SOFA_MIX_MESSAGE } from "../../vendor/shared/so-variant-rule";
 import { todayMyt } from "../../vendor/scm/lib/dates";
@@ -251,6 +249,7 @@ export function SalesOrderNewFromProducts() {
 
   // Submit
   const [postError, setPostError] = useState<string | null>(null);
+  const notify = useNotify();
   const customerValid = customer.name.trim() && customer.phone.trim();
   const canSubmit = customerValid && cartLines.length > 0 && !create.isPending;
 
@@ -272,34 +271,44 @@ export function SalesOrderNewFromProducts() {
       variants: { addedVia: "from-products" },
       remark: "",
     }));
-    /* Pre-validate with the SAME shared guards the Full form (SalesOrderNew)
-       runs, so a bad cart surfaces one plain sentence here instead of a raw
-       server 400/409. A cart CAN mix categories, so hasSofaMixConflict is the
-       real guard here (a sofa + bedframe/mattress cart 400s so_sofa_no_other_main
-       on the server). This flow collects no dates (added on the SO detail), so
-       soDateGuardError runs on empty inputs and passes — kept for
-       single-logic-layer parity so a future date field is guarded
-       automatically. Payments are not guarded at all: the slip is optional
-       everywhere (owner 2026-08-13) and this flow collects no payment. Variant
-       completeness (missingRequiredVariants) only fires once a processing date
-       is set (server parity); none is set here, so it's enforced on the SO
-       detail. */
-    const preErr =
-      soDateGuardError({ processingDate: "", deliveryDate: "", today: todayMyt() }) ??
-      (hasSofaMixConflict(items.map((i) => i.itemGroup)) ? { title: SOFA_MIX_MESSAGE } : null) ??
-      soStockLocationError({
-        companyCode: branding.companyCode,
-        salesLocation: "",
-        state: "",
-        /* Inert for exactly the companies the location rule covers, because
-           for those this create IS a draft (below) and a draft is never
-           written to AutoCount. Still wired, like the guided wizard: the day
-           this flow stops drafting, it is gated instead of silently minting
-           locationless orders. */
+    /* Pre-validate through the SAME shared collectSoSaveProblems the Full form
+       (SalesOrderNew) and the phone use, and show every reason at once in the
+       SAME SaveProblemsList popup the server's 422 uses. A cart CAN mix
+       categories, so the sofa-mix rule is the real guard here (a sofa +
+       bedframe/mattress cart 400s so_sofa_no_other_main on the server). The
+       other gates are wired but inert on this flow, exactly as before: no dates
+       are collected (the date guard runs on empty inputs and passes; a future
+       date field is then guarded automatically), no payments (the slip is
+       optional everywhere, owner 2026-08-13), and variant completeness only
+       fires once a Processing Date is set (server parity) — none is set here, so
+       it's enforced on the SO detail. Venue / salesperson are NOT this surface's
+       concern (it manages neither; the server gates a CONFIRMED create), so they
+       are marked satisfied to avoid inventing a client block this flow never had.
+       The stock-location gate stays inert for the companies it covers because
+       for those this create IS a draft (landsDraft), never written to AutoCount;
+       still wired, so the day this flow stops drafting it is gated instead of
+       silently minting locationless orders. */
+    const problems = collectSoSaveProblems({
+      required: {
+        customerName: customer.name,
+        phone: customer.phone,
+        hasNamedLine: items.length > 0,
         asDraft: landsDraft,
-      });
-    if (preErr) {
-      setPostError(soErrorText(preErr));
+        hasVenue: true,
+        hasSalesperson: true,
+        location: { companyCode: branding.companyCode, salesLocation: "", state: "", asDraft: landsDraft },
+      },
+      location: { companyCode: branding.companyCode, salesLocation: "", state: "", asDraft: landsDraft },
+      processingDate: "",
+      completeness: { customerName: customer.name, fillAddressLater: false, address1: "", postcode: "", deliveryDate: "" },
+      dateGuard: { processingDate: "", deliveryDate: "", today: todayMyt() },
+      variantOffenders: [],
+      sofaMixConflict: hasSofaMixConflict(items.map((i) => i.itemGroup)),
+      sofaMixMessage: SOFA_MIX_MESSAGE,
+      paymentGaps: [],
+    });
+    if (problems.length > 0) {
+      await notify({ title: saveProblemsTitle(problems.length), body: <SaveProblemsList problems={problems} />, tone: "error" });
       return;
     }
 
@@ -325,7 +334,10 @@ export function SalesOrderNewFromProducts() {
       const res = await create.mutateAsync({ ...body, idempotencyKey: idemKey });
       navigate(`/scm/sales-orders/${res.docNo}`);
     } catch (e) {
-      setPostError(errMsg(e));
+      /* A server aggregated refusal (422 validation_failed — e.g. a CONFIRMED
+         create the server gates) shows every reason in the same popup; anything
+         else falls back to the inline banner. */
+      await notifySaveProblems(notify, e, () => setPostError(errMsg(e)), errMsg(e));
     }
   };
 
