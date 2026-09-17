@@ -175,17 +175,18 @@ export async function notifySoAmendmentRaised(
   }
 }
 
-/** An APPROVER, reviewing a request on their desk, says it is not theirs to
- *  sign (owner 2026-09-17). Nothing moves: the row stays on its lane until the
- *  relane workflow moves it. The OTHER lane's desk is told because it is the
- *  desk the approver believes it belongs to; the requester is told because
- *  their request is now waiting on a move, not on a signature. */
-export async function notifySoAmendmentLaneFlagged(
+/** An APPROVER said a request was not theirs to sign, and it MOVED to the other
+ *  desk (owner 2026-09-17, option B). The receiving desk gets a to-do card —
+ *  the request now waits on THEM — carrying the note that explains why it
+ *  arrived. The requester is told their request changed hands. The approver
+ *  who passed it on hears nothing back. */
+export async function notifySoAmendmentHandedOver(
   env: Env,
   opts: {
     amendmentNo: string;
     soDocNo: string;
-    lane: SoAmendmentLane;
+    fromLane: SoAmendmentLane;
+    toLane: SoAmendmentLane;
     companyId: number | string | null;
     note: string;
     actorName: string | null;
@@ -195,43 +196,42 @@ export async function notifySoAmendmentLaneFlagged(
 ): Promise<void> {
   try {
     const actor = Number(opts.actorUserId) || 0;
-    const otherLane: SoAmendmentLane = opts.lane === "LINES" ? "DELIVERY" : "LINES";
     const by = (opts.actorName ?? "").trim();
-    const flaggedBy = by ? `${by}, who approves ${LANE_NOTICE_LABEL[opts.lane]},` : `The ${LANE_NOTICE_LABEL[opts.lane]} approver`;
+    const passedBy = by ? `${by} (${LANE_NOTICE_LABEL[opts.fromLane]} approver)` : `The ${LANE_NOTICE_LABEL[opts.fromLane]} approver`;
     const note = shortReason(opts.note);
-    const body =
-      `${flaggedBy} says amendment ${opts.amendmentNo} on Sales Order ${opts.soDocNo} is not theirs to approve ` +
-      `and believes it is ${LANE_NOTICE_LABEL[otherLane]}: ${note} ` +
-      `It stays with ${LANE_NOTICE_LABEL[opts.lane]} until an administrator moves it (Actions: Relane SO amendment).`;
 
-    const otherApprovers = await usersHoldingPermission(env, LANE_APPROVE_PERM[otherLane], {
+    const approvers = await usersHoldingPermission(env, LANE_APPROVE_PERM[opts.toLane], {
       companyId: opts.companyId,
     });
-    const otherAudience = cleanIds(await withUpline(env, otherApprovers)).filter((id) => id !== actor);
-    if (otherAudience.length > 0) {
+    const approverAudience = cleanIds(await withUpline(env, approvers)).filter((id) => id !== actor);
+    if (approverAudience.length > 0) {
       await postPersonalNotice(env, {
-        userIds: otherAudience,
+        userIds: approverAudience,
         category: "GENERAL",
-        title: `SO amendment ${opts.amendmentNo} may be on the wrong desk`,
-        body,
+        title: `SO amendment ${opts.amendmentNo} needs approval`,
+        body:
+          `${passedBy} passed amendment ${opts.amendmentNo} on Sales Order ${opts.soDocNo} to you ` +
+          `as not theirs to approve: ${note} It is now waiting for ${LANE_NOTICE_LABEL[opts.toLane]} approval.`,
         source: SO_SOURCE,
       });
     }
 
     const requesterAudience = cleanIds([opts.requesterUserId]).filter(
-      (id) => id !== actor && !otherAudience.includes(id),
+      (id) => id !== actor && !approverAudience.includes(id),
     );
     if (requesterAudience.length > 0) {
       await postPersonalNotice(env, {
         userIds: requesterAudience,
         category: "GENERAL",
-        title: `SO amendment ${opts.amendmentNo}: the approver says it is on the wrong desk`,
-        body,
+        title: `SO amendment ${opts.amendmentNo} was passed to another approver`,
+        body:
+          `${passedBy} passed amendment ${opts.amendmentNo} on Sales Order ${opts.soDocNo} to the ` +
+          `${LANE_NOTICE_LABEL[opts.toLane]} approver: ${note} It is still waiting for approval.`,
         source: SO_SOURCE,
       });
     }
   } catch (e) {
-    console.error("[amendment-notify] SO lane-flag notify failed:", (e as Error).message);
+    console.error("[amendment-notify] SO handover notify failed:", (e as Error).message);
   }
 }
 
