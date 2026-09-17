@@ -172,6 +172,15 @@ function TransferLineRow({
           }}
         />
       </td>
+      <td>
+        <input
+          type="text"
+          value={line.notes ?? ''}
+          onChange={(e) => setLine(line._key, { notes: e.target.value })}
+          placeholder="(optional) — shown as Description 2"
+          className={styles.fieldInput}
+        />
+      </td>
       <td className={styles.actionsCell}>
         <button
           type="button"
@@ -421,6 +430,7 @@ const StockTransferForm = ({ onStartNew }: { onStartNew: () => void }) => {
                 <th>Variant bucket *</th>
                 <th style={{ width: 110, textAlign: 'right' }}>Available</th>
                 <th style={{ width: 110, textAlign: 'right' }}>Qty *</th>
+                <th style={{ width: 200 }}>Remarks</th>
                 <th style={{ width: 40 }} />
               </tr>
             </thead>
