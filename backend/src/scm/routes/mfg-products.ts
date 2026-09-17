@@ -228,6 +228,35 @@ export const listMfgProductsHandler = async (c: AppContext) => {
 };
 mfgProducts.get('/', listMfgProductsHandler);
 
+// ── GET /bound-codes ─────────────────────────────────────────────────────
+// Company-scoped set of mfg_product item codes that already carry at least one
+// supplier binding. Powers the SKU Master "no supplier binding" filter so staff
+// can find SKUs still missing a supplier and fill them one by one. Read-only,
+// selects only item_code (cheap) and paginates so >1000 bindings are not
+// silently truncated. Declared before GET /:id so the static path wins.
+mfgProducts.get('/bound-codes', async (c) => {
+  const supabase = c.get('supabase');
+  const { data, error } = await paginateAll((from, to) =>
+    supabase
+      .from('supplier_material_bindings')
+      .select('item_code')
+      .eq('material_kind', 'mfg_product')
+      .eq('company_id', activeCompanyId(c))
+      .order('item_code')
+      .range(from, to),
+  );
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  const codes = [
+    ...new Set(
+      ((data ?? []) as Array<{ item_code: string | null }>)
+        .map((r) => r.item_code)
+        .filter((code): code is string => Boolean(code)),
+    ),
+  ];
+  c.header('vary', 'X-Company-Id');
+  return c.json({ codes });
+});
+
 // ── POST / ─────────────────────────────────────────────────────────────
 // Create a new mfg_product. id is text PK — we generate a short uuid-ish
 // id since the existing import uses Excel-style ids like 'mfg-xxxxxxx'.

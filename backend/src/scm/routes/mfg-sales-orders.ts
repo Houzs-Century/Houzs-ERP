@@ -176,7 +176,7 @@ import { signSoItemPhotoUrl, soItemPhotoBindings, type SlipMime } from '../lib/r
 import { baseKeyOf, deleteThumbFor, putOptionalThumb, thumbKeyFor } from '../../services/photoThumbs';
 import { photoProxyPath, proxyFallbackPayload, warnSigningFailedOnce, type PhotoUrlPayload } from '../lib/photoProxyFallback';
 import { slipBindings } from '../lib/slip';
-import { amendmentMixRefusal, createMixRefusal, lineMixRefusal } from '../lib/main-mix';
+import { amendmentMixRefusal, createMixRefusal, lineMixRefusal, mixesSofaWithOtherMain } from '../lib/main-mix';
 import { refuseWithoutWriting } from '../lib/no-write-refusal';
 import {
   loadMaintenanceConfig,
@@ -252,7 +252,8 @@ import {
   findFreeTextSoLines, freeTextSoLineResponse,
 } from '../lib/validate-item-codes';
 import { collectSoConfirmProblems, soConfirmProblemsForDoc } from '../lib/so-confirm-gate';
-import { soLocationProblem, soLocationProblemForDoc } from '../lib/so-location-gate';
+import { companyRequiresStockLocation, soLocationProblem, soLocationProblemForDoc } from '../lib/so-location-gate';
+import { collectSoSubmitProblems, soPaymentSubFieldGap } from '../shared/so-submit-problems';
 import { soAgentToStamp, readStaffForStamp, followSalespersonToAgent } from '../lib/so-agent';
 import {
   claimedSlipSessionIds,
@@ -4710,6 +4711,102 @@ mfgSalesOrders.post('/', async (c) => {
     json: (b, status) => ({ status: status ?? 200, body: b as Record<string, unknown> }),
   });
   return c.json(out.body, out.status as 201);
+});
+
+/* ── POST /validate — dry-run "what is blocking this submit" ────────────────
+   Owner 2026-09-16 (「跟 backend 串通, frontend 只是显示问题」): the BACKEND is
+   the single source of the submit-blocked problem set AND its wording. This
+   endpoint runs the SAME collectSoSubmitProblems the real create would, on the
+   DRAFT the operator is still filling in, and returns problems[] WITHOUT writing
+   anything — no doc number, no idempotency, no DB. The frontend calls it debounced
+   as the operator types and simply renders the list + the "Can't save — N to fix"
+   count; it holds no validation rules of its own. Pure (no reads): the form
+   already carries the item groups, the resolved sales location, the venue /
+   salesperson ids and the payment rows, so this computes the verdict from the
+   posted state alone. The authoritative gates still run on the real submit. */
+mfgSalesOrders.post('/validate', async (c) => {
+  let body: Record<string, unknown>;
+  try { body = (await c.req.json()) as Record<string, unknown>; }
+  catch { return c.json({ error: 'invalid_json' }, 400); }
+
+  const str = (v: unknown): string => (typeof v === 'string' ? v : '');
+  const items = (body.items as Array<Record<string, unknown>> | undefined) ?? [];
+  const asDraft = body.asDraft === true;
+  const isEdit = body.isEdit === true;
+  const procDate = str(body.processingDate).trim() || null;
+  const delivDate = str(body.customerDeliveryDate).trim() || null;
+  const fillAddressLater = body.fillAddressLater === true;
+  const companyCode = body.companyCode ?? null;
+
+  const linesForCheck = items.map((it) => ({
+    itemCode: String(it.itemCode ?? ''),
+    group: (it.itemGroup as string | null | undefined) ?? null,
+    variants: (it.variants as Record<string, unknown> | null) ?? null,
+  }));
+  const hasNamedLine = items.some(
+    (it) => String(it.itemCode ?? '').trim() !== '' && Number(it.qty ?? 0) > 0,
+  );
+  const todayMY = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
+
+  const payments = (body.payments as Array<Record<string, unknown>> | undefined) ?? [];
+  const paymentGaps = payments
+    .map((p, i) => {
+      if (Number(p.amountSen ?? 0) <= 0) return null;
+      const missing = soPaymentSubFieldGap({
+        methodLabel: str(p.methodLabel),
+        merchantProvider: str(p.merchantProvider) || null,
+        installmentMonthsLabel: str(p.installmentMonthsLabel) || null,
+        onlineType: str(p.onlineType) || null,
+        convertedFromDocNo: str(p.convertedFromDocNo) || null,
+      });
+      return missing ? { row: i + 1, method: str(p.methodLabel) || 'payment', missing } : null;
+    })
+    .filter((g): g is { row: number; method: string; missing: string } => g !== null);
+
+  const problems = collectSoSubmitProblems({
+    customerName: str(body.debtorName) || str(body.customerName),
+    phone: str(body.phone),
+    hasNamedLine,
+    asDraft,
+    hasVenue: str(body.venueId).trim() !== '' || body.hasVenue === true,
+    hasSalesperson: str(body.salespersonId).trim() !== '' || body.hasSalesperson === true,
+    gateLocation: !asDraft && !isEdit && companyRequiresStockLocation(companyCode),
+    companyCode,
+    salesLocation: str(body.salesLocation),
+    customerState: str(body.customerState),
+    gate: {
+      procDate,
+      delivDate,
+      todayMY,
+      /* Edit context (owner 2026-09-16): the edit surfaces send the order's
+         ORIGINAL dates so the gate's grandfather carve-out applies — an
+         already-saved past (or unpaired) date this edit does NOT change is a
+         historical record, not a fresh entry, and must not block. Absent on a
+         create (every date is new), so both are null there. */
+      origProcDate: str(body.origProcessingDate).trim() || null,
+      origDelivDate: str(body.origDeliveryDate).trim() || null,
+      variantOffenders: procDate ? findIncompleteVariantLines(linesForCheck) : [],
+      kivOffenders: procDate ? findColourKivLines(linesForCheck) : [],
+      completeness: {
+        hasCustomerName: (str(body.debtorName) || str(body.customerName)).trim() !== '',
+        hasAddress: !fillAddressLater && str(body.address1).trim() !== '',
+        hasPostcode: !fillAddressLater && str(body.postcode).trim() !== '',
+      },
+    },
+    /* Sofa exclusivity. On a CREATE the server asks the flat question ("does this
+       set mix?"). On an EDIT it asks whether the change INTRODUCES a mix, so an
+       order written before the rule stays editable — sofaMixIntroduced =
+       mixes(after) && !mixes(before). The frontend sends the order's ORIGINAL
+       line groups as origItemGroups; on a create it omits them ([] -> !mixes([])
+       is true), so the ONE formula below is flat for a create and differential
+       for an edit, matching the server's line-mix gate. */
+    sofaMixConflict:
+      mixesSofaWithOtherMain(items.map((it) => (it.itemGroup as string | null | undefined) ?? null))
+      && !mixesSofaWithOtherMain(((body.origItemGroups as unknown[] | undefined) ?? []).map((g) => (typeof g === 'string' ? g : null))),
+    paymentGaps,
+  });
+
+  return c.json({ problems }, 200);
 });
 
 /* ── createDraftSalesOrder — headless SO create for the background scan job ──

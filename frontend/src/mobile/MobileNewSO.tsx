@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { postScanLearningSample, reportScanLearningSkipped } from "../vendor/scm/lib/scan-learning";
 import {
   cascadeMasterVariants,
@@ -9,13 +9,14 @@ import {
   type MasterVariantSnapshot,
 } from "../vendor/scm/lib/so-variant-cascade";
 import { useQueryClient } from "@tanstack/react-query";
-import { authedFetch } from "../vendor/scm/lib/authed-fetch";
+import { authedFetch, type SaveProblem } from "../vendor/scm/lib/authed-fetch";
 import { lineWriteFailure, lineWriteSaveMessage, type LineWriteFailure } from "../vendor/scm/lib/line-write-failures";
 import { amendmentVariants } from "../vendor/scm/lib/so-amendment-line-diff";
 import { photoLabel, photoUploadFailure, photoUploadFailureMessage, unmatchedLinePhotos, type PhotoUploadFailure } from "../vendor/scm/lib/photo-upload-failures";
 import { runSoVersionedMutation } from "../vendor/scm/lib/so-versioned-mutation";
 import { notifySaveProblems, SaveProblemsList, saveProblemsTitle } from "../vendor/scm/components/SaveProblemsList";
-import { collectSoSaveProblems } from "../vendor/scm/lib/so-save-problems-client";
+import { SaveBlockedIndicator } from "../vendor/scm/components/SaveBlockedIndicator";
+import { useSoValidate } from "../vendor/scm/lib/use-so-validate";
 import { uploadSlipFull } from "../vendor/scm/lib/slip";
 import { usePickableStaff } from "../vendor/scm/lib/admin-queries";
 import { resolveSelfStaff } from "../vendor/scm/lib/self-staff";
@@ -103,7 +104,7 @@ import { ConvertSourceField, convertedBody, rmInput, useMobileConvertSources, wi
 import { CONVERT_LABEL, type ConvertSource } from "../vendor/scm/lib/so-money-queries";
 import { useFabricLibrary } from "../vendor/scm/lib/queries";
 import { activeOptions, maintPickerValues, restrictPricedToPool, restrictStringsToPool } from "../vendor/shared/maintenance-pools";
-import { missingVariantAxes, sofaMixIntroduced, SOFA_MIX_MESSAGE } from "../vendor/shared/so-variant-rule";
+import { missingVariantAxes } from "../vendor/shared/so-variant-rule";
 import { MFG_CATEGORY_LABELS } from "../vendor/shared/product-categories";
 import { isColourKiv } from "../vendor/shared/variant-summary";
 /* parseInches is imported, not redeclared: this file's private copy also served
@@ -1348,16 +1349,64 @@ export function MobileNewSO({
      procDate alone (2026-07-31). docs/modules/sales-order.md, "address marks". */
   const addressRequired = Boolean(procDate);
   const stateRequiredForCompany = companyRequiresStockLocation(branding.companyCode);
-  const missingAddress = addressRequired
-    ? [
-        !addr1.trim() ? "address line 1" : null,
-        !postcode.trim() ? "postcode" : null,
-        stateRequiredForCompany && !state.trim() ? "state" : null,
-      ].filter(Boolean) as string[]
-    : [];
 
   const namedLines = useMemo(() => lines.filter((l) => l.name.trim() || l.itemCode.trim()), [lines]);
   const unpickedLines = useMemo(() => namedLines.filter((l) => !l.itemCode.trim()), [namedLines]);
+
+  /* Backend is the sole authority for the submit-blocked list (owner 2026-09-16,
+     frontend 只是显示). buildValidateDraft turns this form (create OR edit) into
+     the /mfg-sales-orders/validate payload — including the edit context (isEdit +
+     the order's ORIGINAL dates and line groups) so the grandfather + introduced-
+     mix carve-outs apply and an untouched old order never false-alarms. The phone
+     holds NO validation rules; every problem + its wording is the server's. */
+  const buildSoValidateDraft = useCallback((asDraftFlag: boolean) => ({
+    debtorName: name,
+    phone,
+    items: namedLines.map((l) => ({ itemCode: l.itemCode, itemGroup: l.itemGroup, variants: l.variants, qty: l.qty })),
+    asDraft: asDraftFlag,
+    isEdit,
+    hasVenue: isEdit || !!outgoingVenueName || !!outgoingVenueId,
+    hasSalesperson: isEdit || !canChangeSalesperson || !!outgoingSalespersonId || !!selfStaffMatch,
+    companyCode: branding.companyCode,
+    salesLocation,
+    customerState: state,
+    processingDate: asDraftFlag ? "" : procDate,
+    customerDeliveryDate: asDraftFlag ? "" : delivDate,
+    fillAddressLater: false,
+    address1: addr1,
+    postcode,
+    origProcessingDate: origProcDate,
+    origDeliveryDate: origDelivDate,
+    origItemGroups: origItems.map((it) => it.item_group),
+    payments: pays.map((p) => ({
+      methodLabel: p.method,
+      merchantProvider: p.bank,
+      installmentMonthsLabel: p.plan,
+      onlineType: p.online,
+      convertedFromDocNo: p.convertedFromDocNo ?? "",
+      amountSen: toSen(p.amount),
+    })),
+  }), [name, phone, namedLines, isEdit, outgoingVenueName, outgoingVenueId, canChangeSalesperson, outgoingSalespersonId, selfStaffMatch, branding.companyCode, salesLocation, state, procDate, delivDate, addr1, postcode, origProcDate, origDelivDate, origItems, pays]);
+
+  /* Two genuinely client-only blockers the backend cannot see: an invalid email
+     format, and a line with no product picked. Merged into the same list. */
+  const soClientExtras = useMemo<SaveProblem[]>(() => [
+    ...(emailErr ? [{ code: "email_invalid", message: "Enter a valid email, or leave it blank.", field: "Email" }] : []),
+    ...(unpickedLines.length > 0
+      ? [{
+          code: "line_unpicked",
+          message: `Pick a product from the catalog for every line (${unpickedLines.length} line${unpickedLines.length === 1 ? "" : "s"} still ha${unpickedLines.length === 1 ? "s" : "ve"} no product selected).`,
+          field: "Line items",
+        }]
+      : []),
+  ], [emailErr, unpickedLines]);
+
+  const liveSoValidateDraft = useMemo(() => buildSoValidateDraft(false), [buildSoValidateDraft]);
+  const { problems: soBackendProblems } = useSoValidate(liveSoValidateDraft, true);
+  const soBlockingProblems = useMemo(() => [...soBackendProblems, ...soClientExtras], [soBackendProblems, soClientExtras]);
+  const openSoBlockingList = () => {
+    void notify({ title: saveProblemsTitle(soBlockingProblems.length), body: <SaveProblemsList problems={soBlockingProblems} />, tone: "error" });
+  };
 
   /* The lines as the shared cascade layer sees them. A line with no SKU picked
      has no category, so it neither drives nor follows. */
@@ -1806,78 +1855,24 @@ export function MobileNewSO({
       ecName, ecPhone, ecRel,
       salespersonId: outgoingSalespersonId,
     };
-    /* ONE consolidated "what is blocking this save" check (owner 2026-09-16,
-       after #4007). Every client-checkable blocker — the always-required fields,
-       the customer/address/postcode/delivery-date completeness a Processing Date
-       demands, EVERY line's option/size/fabric gaps (not just the first), the
-       date rules, the stock location, sofa mix and payment sub-fields — is
-       collected into ONE list by the shared collectSoSaveProblems and shown in
-       the SAME SaveProblemsList popup the desktop and the server's
-       validation_failed refusal use. That ends the phone's one-error-at-a-time
-       popping and the #4007 masking (a mattress line with empty options and a
-       bedframe with no size hidden behind the address banner). No rule changes:
-       each blocker is still the same shared helper.
-
-       Confirm gates fire on a NEW confirmed order only — an edit keeps its venue
-       / salesperson / location, so those are pre-satisfied here on isEdit. The
-       address completeness now matches the desktop and the backend exactly
-       (address line 1 + postcode + a delivery date, State via the HOUZS location
-       gate) rather than the phone's old blanket State+City rule, which refused
-       orders the server accepts — the same client-stricter-than-server fault as
-       #4007. */
-    const problems = collectSoSaveProblems({
-      required: {
-        customerName: name,
-        phone,
-        hasNamedLine: namedLines.length >= 1,
-        asDraft,
-        hasVenue: isEdit || !!outgoingVenueName || !!outgoingVenueId,
-        hasSalesperson: isEdit || !canChangeSalesperson || !!outgoingSalespersonId || !!selfStaffMatch,
-        location: { companyCode: branding.companyCode, salesLocation, state, mappingsLoaded: !!stateWarehousesQ.data, asDraft, isEdit },
-      },
-      location: { companyCode: branding.companyCode, salesLocation, state, mappingsLoaded: !!stateWarehousesQ.data, asDraft, isEdit },
-      processingDate: procOut,
-      completeness: { customerName: name, fillAddressLater: false, address1: addr1, postcode, deliveryDate: delivOut },
-      dateGuard: {
-        processingDate: procOut,
-        deliveryDate: delivOut,
-        today: todayMyt(),
-        requireDatesTogether: !asDraft,
-        originalProcessingDate: origProcDate,
-        originalDeliveryDate: origDelivDate,
-        canRemoveProcessingDate,
-      },
-      variantOffenders: namedLines
-        .map((l) => ({ itemCode: l.itemCode, missingLabels: missingVariantAxes(l.itemGroup, l.variants, l.itemCode).map((a) => a.label) }))
-        .filter((o) => o.missingLabels.length > 0),
-      sofaMixConflict: sofaMixIntroduced(origItems.map((it) => it.item_group), namedLines.map((l) => l.itemGroup)),
-      sofaMixMessage: SOFA_MIX_MESSAGE,
-      paymentGaps: pays
-        .map((p, i) => ({
-          row: i + 1,
-          method: p.method,
-          missing: toSen(p.amount) > 0
-            ? missingMethodSubField({
-                methodLabel: p.method,
-                merchantProvider: p.bank,
-                installmentMonthsLabel: p.plan,
-                onlineType: p.online,
-                convertedFromDocNo: p.convertedFromDocNo ?? "",
-              })
-            : null,
-        }))
-        .flatMap((x) => (x.missing ? [{ row: x.row, method: x.method, missing: x.missing }] : [])),
-      extra: [
-        ...(emailErr ? [{ code: "email_invalid", message: "Enter a valid email, or leave it blank.", field: "Email" }] : []),
-        ...(unpickedLines.length > 0
-          ? [{
-              code: "line_unpicked",
-              message: `Pick a product from the catalog for every line (${unpickedLines.length} line${unpickedLines.length === 1 ? "" : "s"} still ha${unpickedLines.length === 1 ? "s" : "ve"} no product selected).`,
-              field: "Line items",
-            }]
-          : []),
-      ],
-    });
+    /* Backend authors the blocker list (owner 2026-09-16). Post this order (create
+       OR edit) to the validate dry-run and render its problems[] — the SAME list
+       the live "Can't save" pill and the server's 422 show. Merge the two
+       client-only extras (invalid email, an unpicked line) the backend can't see.
+       A failed validate never blocks: the create/edit call below is authoritative
+       and returns the same problems[] shape. */
+    let serverProblems: SaveProblem[] = [];
+    try {
+      const r = await authedFetch<{ problems: SaveProblem[] }>(`/mfg-sales-orders/validate`, {
+        method: "POST",
+        body: JSON.stringify(buildSoValidateDraft(asDraft)),
+      });
+      serverProblems = r.problems;
+    } catch {
+      // silent-write-ok: validate is a READ-ONLY dry-run (writes nothing); its
+      // failure must not block, and the save call below is the authoritative gate.
+    }
+    const problems = [...serverProblems, ...soClientExtras];
     if (problems.length > 0) {
       await notify({ title: saveProblemsTitle(problems.length), body: <SaveProblemsList problems={problems} />, tone: "error" });
       return;
@@ -2370,18 +2365,12 @@ export function MobileNewSO({
             <div className="card" style={{ marginBottom: 11 }}>
               <div className="card-h"><span className="card-t">Delivery address</span></div>
               <div className="card-b" style={{ display: "flex", flexDirection: "column", gap: 9 }}>
-                {/* Only cry out when the address is ACTUALLY short. This used to
-                    render on `addressRequired` alone (a Processing Date is set),
-                    so a fully-filled address still showed "the full delivery
-                    address ... is required" — a warning on a complete address
-                    that reads as "it won't save". The save gate (missingAddress)
-                    was always right; the banner was the false alarm. Gate it on
-                    missingAddress and name only what is missing. */}
-                {addressRequired && missingAddress.length > 0 && (
-                  <div style={{ fontSize: 10.5, color: "#a16a2e", background: "#fbf3e6", border: "1px solid #ecd9b6", borderRadius: 10, padding: "7px 10px" }}>
-                    A Processing Date is set, so the delivery address is required — still missing {missingAddress.length === 1 ? missingAddress[0] : missingAddress.slice(0, -1).join(", ") + " and " + missingAddress[missingAddress.length - 1]}.
-                  </div>
-                )}
+                {/* No standing "delivery address is required" banner (owner
+                    2026-09-16: remove it — noise). A missing address now surfaces
+                    the same way as every other blocker: as a line in the backend
+                    all-at-once problems list, the field `*` + red mark below, and
+                    the persistent "Can't save — N to fix" pill by Save. The rule
+                    itself is unchanged (still in the backend collector). */}
                 <Field label={addressRequired ? "Address Line 1 *" : "Address Line 1"} error={touched && addressRequired && !addr1.trim()} scanned={scanned("addr1", addr1)}>
                       <input className="fld-i" value={addr1} disabled={identityLocked} {...addressLineProps(setAddr1, { value: addr2, set: setAddr2 })} onChange={(e) => setAddr1(e.target.value)} placeholder="Unit, street, area" />
                     </Field>
@@ -2613,6 +2602,14 @@ export function MobileNewSO({
 
       {/* Action bar — single primary action per mode+status. Balanced,
           full-width buttons (no Back/Next). */}
+      {!loading && !migratedLocked && soBlockingProblems.length > 0 && (
+        <div style={{ display: "flex", justifyContent: "center", padding: "0 0 9px" }}>
+          {/* Persistent "Can't save — N to fix · tap to see" (owner 2026-09-16):
+              a blocked Save is never silent. Count + list are backend-authored
+              (useSoValidate); it clears itself as fields are fixed. */}
+          <SaveBlockedIndicator problems={soBlockingProblems} onOpen={openSoBlockingList} />
+        </div>
+      )}
       {!loading && (
         <footer id="nso-footer" className="actbar" style={{ display: "flex", gap: 9 }}>
           {mode === "edit" ? (
