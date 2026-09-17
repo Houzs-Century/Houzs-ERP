@@ -246,6 +246,22 @@ export const lineDateOf = (l: MrpLine, dateBasis: DateBasis): string | null =>
   : dateBasis === 'orderBy' ? l.orderByDate
   : l.deliveryDate;
 
+/** The EARLIEST of a Model row's SO-line dates on the chosen basis. A Model can
+ *  span several SO lines (a pooled item serves more than one order); the leading
+ *  date is the edge the plan sorts by and the one the From–To window tests a row
+ *  against, so it is the date to surface at the group level. `null` when no line
+ *  carries that date (renders "—"). Display-only — the allocation never reads it. */
+export const groupEarliestDate = (g: ModelGroup, dateBasis: DateBasis): string | null => {
+  let earliest: string | null = null;
+  for (const v of g.variants) {
+    for (const l of v.lines) {
+      const d = lineDateOf(l, dateBasis);
+      if (d && (earliest === null || d < earliest)) earliest = d;
+    }
+  }
+  return earliest;
+};
+
 /** Is this SO line inside the active From–To window? A window with no bounds
  *  passes everything; a line with no date on the chosen basis is excluded. */
 export const lineInWindow = (l: MrpLine, filters: MrpFilters): boolean => {
