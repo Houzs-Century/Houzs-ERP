@@ -108,7 +108,7 @@ const STATEMENT_TYPES = new Set(['OPEN_ITEM', 'BALANCE_FORWARD', 'NO_STATEMENT']
 const AGING_BASES = new Set(['INVOICE_DATE', 'DUE_DATE']);
 
 const BINDING_COLS =
-  'id, supplier_id, material_kind, item_code, material_name, supplier_sku, ' +
+  'id, supplier_id, material_kind, item_code, ac_item_code, material_name, supplier_sku, ' +
   'unit_price_sen, currency, lead_time_days, payment_terms_override, moq, ' +
   'price_valid_from, price_valid_to, is_main_supplier, notes, price_matrix, ' +
   'is_cost_anchor, created_at, updated_at';
@@ -644,6 +644,7 @@ export const createSupplierBindingHandler = async (c: any) => {
     supplier_id: supplierId,
     material_kind: kind,
     item_code: body.itemCode,
+    ac_item_code: (body.acItemCode as string | undefined) ?? null,
     material_name: body.materialName,
     supplier_sku: body.supplierSku,
     unit_price_sen: typeof body.unitPriceSen === 'number' ? body.unitPriceSen : 0,
@@ -735,6 +736,7 @@ export const createSupplierBindingsBatchHandler = async (c: any) => {
       supplier_id: supplierId,
       material_kind: kind,
       item_code: b.itemCode,
+      ac_item_code: (b.acItemCode as string | undefined) ?? null,
       material_name: b.materialName,
       supplier_sku: b.supplierSku,
       unit_price_sen: typeof b.unitPriceSen === 'number' ? b.unitPriceSen : 0,
@@ -797,7 +799,9 @@ export const createSupplierBindingsBatchHandler = async (c: any) => {
 };
 suppliers.post('/:id/bindings/batch', createSupplierBindingsBatchHandler);
 
-suppliers.patch('/:id/bindings/:bindingId', async (c) => {
+// Exported so a cross-tenant test can drive it without the supabaseAuth bridge.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- bare-Hono handler, mirrors createSupplierBindingHandler
+export const patchSupplierBindingHandler = async (c: any) => {
   const bindingId = c.req.param('bindingId');
   let body: Record<string, unknown>;
   try { body = (await c.req.json()) as Record<string, unknown>; } catch {
@@ -806,7 +810,7 @@ suppliers.patch('/:id/bindings/:bindingId', async (c) => {
 
   const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
   const map: Array<[keyof typeof body, string]> = [
-    ['itemCode', 'item_code'], ['materialName', 'material_name'],
+    ['itemCode', 'item_code'], ['acItemCode', 'ac_item_code'], ['materialName', 'material_name'],
     ['supplierSku', 'supplier_sku'], ['unitPriceSen', 'unit_price_sen'],
     ['leadTimeDays', 'lead_time_days'], ['paymentTermsOverride', 'payment_terms_override'],
     ['moq', 'moq'], ['priceValidFrom', 'price_valid_from'], ['priceValidTo', 'price_valid_to'],
@@ -884,7 +888,8 @@ suppliers.patch('/:id/bindings/:bindingId', async (c) => {
   );
 
   return c.json({ binding: data });
-});
+};
+suppliers.patch('/:id/bindings/:bindingId', patchSupplierBindingHandler);
 
 // ── Set / clear the cost anchor for a binding ────────────────────────────
 // PATCH /suppliers/:id/bindings/:bindingId/cost-anchor   body { anchor: boolean }
