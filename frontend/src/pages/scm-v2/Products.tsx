@@ -92,6 +92,7 @@ import { CategorySwapSelect } from '../../vendor/scm/components/CategorySwapSele
 import { CostAnchorCard } from './CostAnchorCard';
 import { ProductPriceTimeline } from './ProductPriceTimeline';
 import { SkuHistoryTabs } from './SkuHistoryTabs';
+import { AddSupplierBinding } from './AddSupplierBinding';
 import { ImportModelsMoved } from '../../vendor/scm/components/ImportModelsMoved';
 import { MFG_CATEGORY_LABELS, MFG_PRODUCT_CATEGORIES } from '../../vendor/shared/product-categories';
 import { useStaffLookup } from '../../hooks/useStaffLookup';
@@ -3936,6 +3937,8 @@ const ProductSuppliersDrawer = ({
               </tbody>
             </table>
           )}
+
+          <AddSupplierBinding productCode={row.code} productName={row.name} />
 
           <SkuHistoryTabs productId={row.id} />
         </div>
