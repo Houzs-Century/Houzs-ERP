@@ -54,9 +54,9 @@ export type AmendmentRow = {
      signs). NULL on rows raised before the rework — those keep the legacy
      supplier-confirmed two-gate chain. */
   lane?: 'LINES' | 'DELIVERY' | string | null;
-  /* Owner 2026-09-15 (option B) — the requester's note that the computed
-     approver looked wrong. NULL when not flagged. The row still sits on the
-     lane the rule gave it; an administrator moves it with the relane workflow. */
+  /* The APPROVER's note that this request is not theirs to sign (owner
+     2026-09-17). NULL when not flagged. The row still sits on the lane the rule
+     gave it; an administrator moves it with the relane workflow. */
   lane_flag_note?: string | null;
   /* Owner 2026-07-27 — the PO(s) this SO's lines were purchased on
      (purchase_order_items.so_item_id linkage, resolved by the list endpoint).
@@ -281,8 +281,6 @@ export const useCreateAmendment = () => {
       docNo: string;
       idempotencyKey?: string;
       reason?: string;
-      /** The requester's note that the previewed approver looks wrong (option B). */
-      laneFlagNote?: string | null;
       lines: CreateAmendmentLine[];
       headerChanges?: SoAmendmentHeaderChanges;
     }) =>
@@ -372,6 +370,19 @@ export const useRejectAmendment = () => {
     mutationFn: ({ id, reason }: { id: string; reason: string }) =>
       authedFetch<{ amendment: AmendmentRow }>(`/so-amendments/${id}/reject`, {
         method: 'PATCH', body: JSON.stringify({ reason }),
+      }),
+    onSuccess: (_, vars) => invalidateAmendmentSideEffects(qc, vars.id),
+  });
+};
+
+/* Flag — the APPROVER saying this request is not theirs to sign. A note, not a
+   transition: the row stays REQUESTED on its lane until it is relaned. */
+export const useFlagAmendmentLane = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, note }: { id: string; note: string }) =>
+      authedFetch<{ amendment: AmendmentRow }>(`/so-amendments/${id}/flag-lane`, {
+        method: 'PATCH', body: JSON.stringify({ note }),
       }),
     onSuccess: (_, vars) => invalidateAmendmentSideEffects(qc, vars.id),
   });

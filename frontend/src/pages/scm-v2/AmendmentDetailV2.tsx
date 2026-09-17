@@ -54,6 +54,7 @@ import { AMENDMENT_APPROVER_LABEL, soAmendmentApprover } from "../../vendor/scm/
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { usePrompt } from "../../vendor/scm/components/PromptDialog";
+import { WrongApproverFlagButton } from "./WrongApproverFlagButton";
 import {
   useAmendmentDetail,
   useSupplierConfirm,
@@ -933,11 +934,11 @@ export function AmendmentDetailV2() {
                 <p className="text-[13px] leading-relaxed text-ink-secondary">{reason}</p>
               </Section>
             )}
-            {/* Option B (owner 2026-09-15): the requester doubted the computed approver.
-                The row still sits on its lane; an administrator moves it with the
-                relane workflow. Shown to both desks so neither signs blind. */}
+            {/* The approver on this desk said it is not theirs to sign (owner
+                2026-09-17). The row still sits on its lane; an administrator moves
+                it with the relane workflow. Shown to both desks so neither signs blind. */}
             {asStr(amendment.lane_flag_note) && (
-              <Section title="Approver flagged by requester">
+              <Section title="Flagged as the wrong approver">
                 <p className="text-[13px] leading-relaxed text-ink-secondary">“{asStr(amendment.lane_flag_note)}”</p>
                 <p className="mt-1 text-[12px] text-ink-muted">
                   The request stays with the approver shown until an administrator moves it.
@@ -1081,6 +1082,11 @@ export function AmendmentDetailV2() {
                   )}
                   {/* Reject — the lane approver's refusal; REQUESTED only (after
                       apply there is nothing left to refuse). Reason mandatory. */}
+                  <WrongApproverFlagButton
+                    amendment={{ id: String(id), amendment_no: amendmentNo, status, lane, lane_flag_note: asStr(amendment.lane_flag_note) }}
+                    canSign={canApproveLane}
+                    variant="desktop"
+                  />
                   {status === "REQUESTED" && canReject && (
                     <Button
                       variant="secondary"

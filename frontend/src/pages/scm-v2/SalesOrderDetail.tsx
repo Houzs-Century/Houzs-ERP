@@ -1174,11 +1174,11 @@ export const SalesOrderDetail = () => {
     });
     if (plan === 'NOTHING') { setSaveError(AMENDMENT_NOTHING_TO_SUBMIT); return; }
     /* DIRECT_ONLY needs no ask: nothing is going for approval. Otherwise the shared
-       dialog shows WHO approves, takes the required reason, and lets the requester
-       flag the approver (owner 2026-09-15; vendor/scm/components/AmendmentSubmitDialog). */
+       dialog shows WHO approves and takes the required reason
+       (owner 2026-09-15; vendor/scm/components/AmendmentSubmitDialog). */
     const answer = plan === 'AMENDMENT'
       ? await submitDialog.ask({ docNo: header.doc_no, lines, headerChanges })
-      : { reason: '', laneFlagNote: null };
+      : { reason: '' };
     if (answer == null) return; // cancelled the dialog
     setSavingOrder(true);
     try {
@@ -1199,7 +1199,6 @@ export const SalesOrderDetail = () => {
         createdRes = await createAmendment.mutateAsync({
           docNo: header.doc_no,
           reason: answer.reason,
-          laneFlagNote: answer.laneFlagNote,
           lines,
           headerChanges,
           idempotencyKey: amendKeyRef.current,

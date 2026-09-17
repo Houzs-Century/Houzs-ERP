@@ -1,7 +1,7 @@
 /* The shared "submit this amendment?" ask (owner 2026-09-15, option B). Pinned:
    the dialog SHOWS the desk the server will route to, in the approver's own
-   word; a blank reason cannot be confirmed; flagging the approver requires a
-   note; an unflagged confirm carries laneFlagNote null; Cancel answers null;
+   word; a blank reason cannot be confirmed; the requester is NOT asked to flag
+   the approver (owner 2026-09-17 — that is the approver's call); Cancel answers null;
    and a preview that failed still lets the requester submit — the server
    routes by the rule either way. */
 
@@ -19,7 +19,7 @@ vi.mock('../lib/so-amendment-queries', () => ({
   useAmendmentLanePreview: () => previewState,
 }));
 
-const { useAmendmentSubmitDialog, describeLanePreview, AMENDMENT_FLAG_NOTE_REQUIRED } = await import('./AmendmentSubmitDialog');
+const { useAmendmentSubmitDialog, describeLanePreview } = await import('./AmendmentSubmitDialog');
 const { AMENDMENT_REASON_REQUIRED } = await import('../lib/so-amendment-submit');
 
 const Asker = () => {
@@ -62,7 +62,7 @@ describe('AmendmentSubmitDialog', () => {
     expect(box.textContent).toContain('two amendments');
   });
 
-  test('a blank reason cannot be confirmed; a reason alone answers with no flag', async () => {
+  test('a blank reason cannot be confirmed; a reason alone is the whole answer', async () => {
     previewState.data = { lanes: ['DELIVERY'], perLane: { LINES: { lineCount: 0, headerKeys: [] }, DELIVERY: { lineCount: 1, headerKeys: [] } } };
     open();
     fireEvent.click(screen.getByText('Submit amendment'));
@@ -71,21 +71,16 @@ describe('AmendmentSubmitDialog', () => {
 
     fireEvent.change(screen.getByLabelText('Reason'), { target: { value: '  last min cancellation penalty ' } });
     fireEvent.click(screen.getByText('Submit amendment'));
-    await waitFor(() => expect(answer()).toBe(JSON.stringify({ reason: 'last min cancellation penalty', laneFlagNote: null })));
+    await waitFor(() => expect(answer()).toBe(JSON.stringify({ reason: 'last min cancellation penalty' })));
   });
 
-  test('flagging the approver requires a note, and the note travels with the answer', async () => {
+  /* Owner 2026-09-17: the requester cannot judge the desk, so the submit dialog
+     no longer asks. The flag lives on the approver's job card (WrongApproverFlagButton). */
+  test('the requester is not asked whether the approver looks wrong', () => {
     previewState.data = { lanes: ['LINES'], perLane: { LINES: { lineCount: 1, headerKeys: [] }, DELIVERY: { lineCount: 0, headerKeys: [] } } };
     open();
-    fireEvent.change(screen.getByLabelText('Reason'), { target: { value: 'penalty' } });
-    fireEvent.click(screen.getByLabelText('The approver looks wrong'));
-    fireEvent.click(screen.getByText('Submit amendment'));
-    expect(screen.getByText(AMENDMENT_FLAG_NOTE_REQUIRED)).toBeTruthy();
-    expect(answer()).toBe('unasked');
-
-    fireEvent.change(screen.getByLabelText('Why the approver looks wrong'), { target: { value: 'transport charge, Logistic approves these' } });
-    fireEvent.click(screen.getByText('Submit amendment'));
-    await waitFor(() => expect(answer()).toBe(JSON.stringify({ reason: 'penalty', laneFlagNote: 'transport charge, Logistic approves these' })));
+    expect(screen.queryByText(/approver looks wrong/i)).toBeNull();
+    expect(screen.queryByRole('checkbox')).toBeNull();
   });
 
   test('Cancel answers null', async () => {
@@ -102,7 +97,7 @@ describe('AmendmentSubmitDialog', () => {
     expect(screen.getByTestId('lane-preview').textContent).toContain('Could not work out the approver yet');
     fireEvent.change(screen.getByLabelText('Reason'), { target: { value: 'penalty' } });
     fireEvent.click(screen.getByText('Submit amendment'));
-    await waitFor(() => expect(answer()).toBe(JSON.stringify({ reason: 'penalty', laneFlagNote: null })));
+    await waitFor(() => expect(answer()).toBe(JSON.stringify({ reason: 'penalty' })));
     previewState.isError = false;
   });
 });
