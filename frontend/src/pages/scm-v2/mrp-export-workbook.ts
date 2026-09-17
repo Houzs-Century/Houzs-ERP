@@ -117,10 +117,14 @@ function demandRow(opts: {
   // An undated line is planned LAST — the page tags it "No date" rather than blank.
   cells[8] = line.deliveryDate ? isoDay(line.deliveryDate) : 'No date';
   cells[9] = line.qty;
-  cells[10] = sku.stock;
+  // col 10 (Stock) stays blank on a demand row — it's a SKU-level total, and
+  // repeating it on every line under the group header was noise (owner
+  // 2026-09-17: "idw repetitive below just 6 on first row can already").
   cells[11] = coverageText(line);
   cells[12] = poOutstandingText(line);
-  cells[13] = line.source === 'shortage' ? line.shortageQty : 0;
+  // A covered line's Shortage stays blank rather than a literal 0 — same
+  // owner note: only an actual shortage figure is worth printing.
+  cells[13] = line.source === 'shortage' ? line.shortageQty : null;
   cells[14] = statusText(line.source);
   cells[15] = supplierText(sku, line);
   return { kind: 'demand', cells, shortage: line.source === 'shortage' && line.shortageQty > 0 };
@@ -155,6 +159,10 @@ export function buildSheetRows(
       head[8] = first.deliveryDate ? isoDay(first.deliveryDate) : 'No date';
       head[9] = g.qtyNeeded;
       head[10] = g.stock;
+      // PO Outstanding on the header is the SAME rollup the on-screen group row
+      // shows (g.poOutstanding — total qty covered by a PO across every line
+      // below), not the individual PO strings a demand row carries.
+      head[12] = g.poOutstanding;
       head[13] = g.shortage;
       out.push({ kind: 'group', cells: head });
       for (const v of g.variants) {
@@ -182,6 +190,7 @@ export function buildSheetRows(
       head[2] = g.description ?? '';
       head[9] = g.qtyNeeded;
       head[10] = g.stock;
+      head[12] = g.poOutstanding; // rollup, same as the sofa branch above
       head[13] = g.shortage;
       out.push({ kind: 'group', cells: head });
       for (const v of g.variants) {
@@ -242,8 +251,13 @@ export type SheetSpec = { view: MrpView; rows: SheetRow[] };
    empty cell in such a row still carries the fill; an empty cell in a plain row
    is `null` (empty, unstyled). */
 function toXlsxCell(value: Cell, col: number, fill: string | null, groupBold: boolean): WxlCell {
-  const isNum = NUM_COLS.has(col);
   const has = value !== null && value !== '';
+  // PO Outstanding (col 12) carries a NUMBER on a group header row (the qty
+  // rollup) and a STRING on a demand row (the PO + ETA text) — so type is
+  // decided per-value there, not by a fixed column. Every other numeric
+  // column is number-only, so NUM_COLS still decides for a blank cell (no
+  // value to read a type from).
+  const isNum = has ? typeof value === 'number' : NUM_COLS.has(col);
   if (!has && !fill) return null;
   const cell: NonNullable<WxlCell> = {};
   if (has) {

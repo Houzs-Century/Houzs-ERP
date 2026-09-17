@@ -97,7 +97,7 @@ describe('buildSheetRows — SKU-grouped (non-sofa)', () => {
   const idx = (label: string) => MRP_EXPORT_HEADERS.indexOf(label as (typeof MRP_EXPORT_HEADERS)[number]);
   const data = emptyResp({
     skus: [sku({
-      itemCode: 'AK-MATT (Q)', description: 'AKEMI MATTRESS (Q)', qtyNeeded: 2, stock: 2, shortage: 1,
+      itemCode: 'AK-MATT (Q)', description: 'AKEMI MATTRESS (Q)', qtyNeeded: 2, stock: 2, poOutstanding: 1, shortage: 1,
       mainSupplierName: 'DIGLANT MANUFACTURING SDN BHD',
       suppliers: [{ supplierId: 's1', code: 'DIG', name: 'DIGLANT MANUFACTURING SDN BHD', isMain: true }],
       lines: [
@@ -116,6 +116,7 @@ describe('buildSheetRows — SKU-grouped (non-sofa)', () => {
     expect(g.cells[idx('Description')]).toBe('AKEMI MATTRESS (Q)');
     expect(g.cells[idx('Qty Needed')]).toBe(2);
     expect(g.cells[idx('Stock')]).toBe(2);
+    expect(g.cells[idx('PO Outstanding')]).toBe(1); // rollup — how much of it is below on a PO
     expect(g.cells[idx('Shortage')]).toBe(1);
     expect(g.cells[idx('Warehouse')]).toBeNull(); // A blank on a non-sofa group header
     expect(g.cells[idx('SO No')]).toBeNull();
@@ -130,11 +131,12 @@ describe('buildSheetRows — SKU-grouped (non-sofa)', () => {
     expect(po.cells[idx('SO No')]).toBe('HC-SO-013411');
     expect(po.cells[idx('Processing Date')]).toBe('2026-09-02'); // ISO (sorts as text)
     expect(po.cells[idx('Delivery Date')]).toBe('2026-10-01');
+    expect(po.cells[idx('Stock')]).toBeNull(); // SKU-level total lives on the header, not repeated per line
     expect(po.cells[idx('Coverage')]).toBe(''); // a PO-covered line leaves Coverage blank
     expect(po.cells[idx('PO Outstanding')]).toBe('HC-PO-2609-018  ·  ETA 25/09/2026');
     expect(po.cells[idx('Status')]).toBe('IN PRODUCTION');
     expect(po.cells[idx('Supplier')]).toBe('DIGLANT MANUFACTURING SDN BHD');
-    expect(po.cells[idx('Shortage')]).toBe(0);
+    expect(po.cells[idx('Shortage')]).toBeNull(); // a covered line leaves Shortage blank, not 0
   });
 
   test('a shortage demand row is flagged (whole row goes red) and shows needs PO', () => {
