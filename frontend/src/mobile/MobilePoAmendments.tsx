@@ -28,7 +28,7 @@ import "./mobile.css";
  * pages/scm-v2/PoAmendments.tsx and the PO sibling of MobileAmendments.
  * The same two-source inbox as desktop (vendor/scm/lib/po-amendment-inbox.ts):
  * direct PO amendments plus the SO amendments that revise a bound PO. The
- * SIMPLIFIED status chips (Requested / Approved / All) filter it. Tapping a
+ * SIMPLIFIED status chips (Requested / Approved / Rejected / All) filter it. Tapping a
  * direct card opens the PO amendment job card (MobilePoAmendmentDetail); tapping
  * an SO-driven card opens its Sales Order, whose page hosts the SO amendment
  * gates — where the phone SO queue sends the same row. This screen only lists +

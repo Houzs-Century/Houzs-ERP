@@ -35,9 +35,9 @@ import "./mobile.css";
  * those live on AmendmentDetail.lines, surfaced on the SO detail's diff view.
  * ------------------------------------------------------------------ */
 
-// SIMPLIFIED status filter (owner 2026-07-24): Requested / Approved / All — same
-// as the desktop queue. The granular backend enum is collapsed via
-// amendmentBucketOf; the closed (REJECTED) rows are reached through "All".
+// SIMPLIFIED status filter (owner 2026-07-24; Rejected added 2026-09-17): Requested /
+// Approved / Rejected / All — same as the desktop queue. The granular backend enum
+// is collapsed via amendmentBucketOf.
 const STATUS_CHIPS = AMENDMENT_LIST_CHIPS;
 
 // Amendments still awaiting an action — the REQUESTED bucket (open / in-flight);
