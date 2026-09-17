@@ -12,126 +12,27 @@ import { Eyebrow } from "./teamShared";
  * their next request. The vocabularies come from the API; nothing here
  * restates a backend rule. */
 
-export type PolicyCohort = "god" | "full" | "restricted" | "sales";
-
-export interface TitlePolicyRow {
-  position_id: number;
-  cohort: PolicyCohort;
-  profile: string | null;
-  can_move_money: boolean;
-  can_write_config: boolean;
-  is_fleet: boolean;
-  duty: string;
-}
-
-export interface TitlePolicyEntry {
-  id: number;
-  name: string;
-  slug: string;
-  department_name: string | null;
-  active: boolean;
-  row: TitlePolicyRow | null;
-  source: "row" | "name";
-  effective: {
-    cohort: PolicyCohort;
-    profile: string | null;
-    can_move_money: boolean;
-    can_write_config: boolean;
-    is_fleet: boolean;
-    duty?: string;
-  };
-}
-
-export interface TitlePolicyPayload {
-  cohorts: PolicyCohort[];
-  restricted_profiles: string[];
-  sales_profiles: string[];
-  /** Absent from a backend that predates the Duty column. */
-  duties?: string[];
-  positions: TitlePolicyEntry[];
-}
-
-const DUTY_LABEL: Record<string, string> = {
-  management: "Management",
-  finance: "Finance",
-  purchasing: "Purchasing",
-  logistic: "Logistic",
-  driver: "Driver",
-  helper: "Helper",
-  warehouse: "Warehouse crew",
-  other: "Other",
-};
-
-const DUTY_HELP =
-  "The Title's job on a project page: Management / Finance see money; Purchasing sees product cost; Logistic edits projects; Driver and Helper use the driver view; Helper and Warehouse crew see only events they are crewed on. A Sales Title is Sales on projects whatever this says.";
-
-const COHORT_LABEL: Record<PolicyCohort, string> = {
-  god: "Owner tier",
-  full: "Full",
-  restricted: "Restricted",
-  sales: "Sales",
-};
-
-const COHORT_HELP: Record<PolicyCohort, string> = {
-  god: "Every permission, every page. Same as the Super Admin role.",
-  full: "Sees every page. Money and master-data writes are the two switches.",
-  restricted: "Only the pages of the chosen profile. Field and warehouse crew.",
-  sales: "The sales chain: owns Sales Orders, views what Office operates.",
-};
-
-const PROFILE_LABEL: Record<string, string> = {
-  driver_helper: "Driver / Helper",
-  storekeeper: "Storekeeper",
-  storekeeper_supervisor: "Storekeeper Supervisor",
-  calendar_viewer: "Calendar only",
-  director: "Director",
-  rep: "Rep",
-};
-
-function profileLabel(p: string | null): string {
-  if (!p) return "—";
-  return PROFILE_LABEL[p] ?? p.replace(/_/g, " ");
-}
-
-/** Department display order: Management first, then Sales, then Operation. */
-function deptRank(name: string | null): number {
-  const n = (name ?? "").toLowerCase();
-  if (n.includes("management")) return 0;
-  if (n.includes("sales")) return 1;
-  if (n.includes("operation")) return 2;
-  return 3;
-}
-
-type Draft = Omit<TitlePolicyRow, "position_id">;
-
-function draftOf(e: TitlePolicyEntry): Draft {
-  const src = e.row ?? e.effective;
-  return {
-    cohort: src.cohort,
-    profile: src.profile,
-    can_move_money: src.can_move_money,
-    can_write_config: src.can_write_config,
-    is_fleet: src.is_fleet,
-    duty: src.duty ?? "other",
-  };
-}
-
-/** Coerce a draft into a shape the API accepts for its cohort (a profile
- *  only where the cohort takes one; flags only where the cohort owns them). */
-function normalise(d: Draft, payload: TitlePolicyPayload): Draft {
-  const duties = payload.duties ?? [];
-  const duty = duties.includes(d.duty) ? d.duty : "other";
-  if (d.cohort === "restricted") {
-    const profile = d.profile && payload.restricted_profiles.includes(d.profile) ? d.profile : payload.restricted_profiles[0] ?? null;
-    return { cohort: d.cohort, profile, can_move_money: false, can_write_config: false, is_fleet: d.is_fleet, duty };
-  }
-  if (d.cohort === "sales") {
-    const profile = d.profile && payload.sales_profiles.includes(d.profile) ? d.profile : "rep";
-    return { cohort: d.cohort, profile, can_move_money: false, can_write_config: false, is_fleet: false, duty };
-  }
-  if (d.cohort === "god") return { cohort: d.cohort, profile: null, can_move_money: true, can_write_config: true, is_fleet: false, duty: "management" };
-  return { cohort: d.cohort, profile: null, can_move_money: d.can_move_money, can_write_config: d.can_write_config, is_fleet: false, duty };
-}
+export type {
+  PolicyCohort,
+  TitlePolicyRow,
+  TitlePolicyEntry,
+  TitlePolicyPayload,
+} from "../../lib/titlePolicyModel";
+import type { PolicyCohort, TitlePolicyEntry, TitlePolicyPayload, Draft } from "../../lib/titlePolicyModel";
+import {
+  COHORT_HELP,
+  COHORT_LABEL,
+  DUTY_HELP,
+  DUTY_LABEL,
+  draftOf,
+  dutyEditableFor,
+  flagsEditableFor,
+  fleetEditableFor,
+  normalise,
+  orderedPositions,
+  profileLabel,
+  profileOptionsFor,
+} from "../../lib/titlePolicyModel";
 
 export function TeamTitlesPolicy({
   payload,
@@ -152,13 +53,7 @@ export function TeamTitlesPolicy({
     setDrafts(next);
   }, [payload]);
 
-  const positions = [...payload.positions]
-    .filter((p) => p.active)
-    .sort(
-      (a, b) =>
-        deptRank(a.department_name) - deptRank(b.department_name) ||
-        a.name.localeCompare(b.name),
-    );
+  const positions = orderedPositions(payload);
 
   async function save(entry: TitlePolicyEntry, patch: Partial<Draft>) {
     if (!canEdit || savingId != null) return;
@@ -216,10 +111,9 @@ export function TeamTitlesPolicy({
             const disabled = !canEdit || savingId != null;
             const deptHeader = p.department_name !== lastDept ? (p.department_name ?? "No department") : null;
             lastDept = p.department_name;
-            const profileOptions =
-              d.cohort === "restricted" ? payload.restricted_profiles : d.cohort === "sales" ? payload.sales_profiles : [];
-            const flagsEditable = d.cohort === "full";
-            const fleetEditable = d.cohort === "restricted";
+            const profileOptions = profileOptionsFor(d.cohort, payload);
+            const flagsEditable = flagsEditableFor(d.cohort);
+            const fleetEditable = fleetEditableFor(d.cohort);
             return (
               <div key={p.id}>
                 {deptHeader && (
@@ -279,7 +173,7 @@ export function TeamTitlesPolicy({
                       id={`title-policy-duty-${p.id}`}
                       aria-label={`${p.name} duty`}
                       value={d.duty}
-                      disabled={disabled || d.cohort === "god"}
+                      disabled={disabled || !dutyEditableFor(d.cohort)}
                       title={d.cohort === "god" ? "Owner tier is Management on every project" : DUTY_HELP}
                       onChange={(e) => save(p, { duty: e.target.value })}
                       className="h-8 rounded-md border border-border bg-surface px-2 text-[12.5px] text-ink"
