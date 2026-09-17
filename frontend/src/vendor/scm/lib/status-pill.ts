@@ -302,8 +302,6 @@ const BUCKET_ENTRY: Record<AmendmentBucket, Entry> = {
 export const simplifiedAmendmentPill = (status: string | null | undefined): Entry =>
   BUCKET_ENTRY[amendmentBucketOf(status)];
 
-/** The simplified filter chips every amendment list uses. */
-export const AMENDMENT_LIST_CHIPS = ['all', 'REQUESTED', 'APPROVED', 'REJECTED'] as const;
 export const amendmentBucketLabel = (bucket: string): string =>
   bucket === 'all' ? 'All' : (BUCKET_ENTRY[bucket as AmendmentBucket]?.label ?? bucket);
 
@@ -314,6 +312,11 @@ export const amendmentBucketLabel = (bucket: string): string =>
  *  amendmentBucketOf folds anything else into REQUESTED, so there is no fourth
  *  rank to place. */
 export const AMENDMENT_BUCKET_ORDER: readonly AmendmentBucket[] = ['REQUESTED', 'APPROVED', 'REJECTED'];
+
+/** The simplified filter chips every amendment list uses: All, then one chip per
+ *  bucket in the order the list itself opens in. Derived, not retyped — a bucket
+ *  the rows can carry always has a chip (owner 2026-09-17: Rejected had none). */
+export const AMENDMENT_LIST_CHIPS: ReadonlyArray<'all' | AmendmentBucket> = ['all', ...AMENDMENT_BUCKET_ORDER];
 
 export const amendmentBucketRank = (status: string | null | undefined): number =>
   AMENDMENT_BUCKET_ORDER.indexOf(amendmentBucketOf(status));
