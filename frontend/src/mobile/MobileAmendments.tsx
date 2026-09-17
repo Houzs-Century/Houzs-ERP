@@ -151,7 +151,7 @@ export function MobileAmendments({
                   )}
                   {(a.lane_flag_note ?? "").trim() && (
                     <div className="amdno" style={{ color: "var(--amber, #a66a00)" }}>
-                      Approver flagged by requester: "{a.lane_flag_note}"
+                      Flagged as the wrong approver: "{a.lane_flag_note}"
                     </div>
                   )}
                   <div className="foot">

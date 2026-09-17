@@ -108,6 +108,10 @@ export type BindingRow = {
   supplier_id: string;
   material_kind: MaterialKind;
   item_code: string;
+  /** B4 (2026-09-17) — the AutoCount item code this binding maps to. Free text,
+   *  NULL when unknown; no uniqueness. Used when reconciling a PO/GRN against
+   *  the accounting book. */
+  ac_item_code: string | null;
   material_name: string;
   supplier_sku: string;
   unit_price_sen: number;
@@ -463,6 +467,8 @@ export function useUpdateSupplier() {
 export type NewBinding = {
   materialKind: MaterialKind;
   itemCode: string;
+  /** B4 — AutoCount item code (optional, free text). */
+  acItemCode?: string;
   materialName: string;
   supplierSku: string;
   unitPriceSen?: number;

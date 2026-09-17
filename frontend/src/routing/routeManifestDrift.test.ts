@@ -158,10 +158,12 @@ describe("mobile route drift gate", () => {
     expect(MOBILE_MENU_GROUPS.flatMap((group) => group.items)).toHaveLength(38);
     // 6 since 2026-09-10: /roles, the rebuilt Roles & Permissions screen, reached
     // from a Profile row (gated via the Team hub tab).
-    expect(PROFILE_ORG_ITEMS).toHaveLength(6);
-    expect(allMobile).toHaveLength(44);
-    expect(new Set(allMobile.map((item) => item.to)).size).toBe(44);
-    expect(new Set(allMobile.map((item) => item.to.split("?")[0])).size).toBe(43);
+    // 7 since 2026-09-17: /titles, the phone Titles editor (position_policy),
+    // the last desktop-only Roles & Permissions surface to reach the phone.
+    expect(PROFILE_ORG_ITEMS).toHaveLength(7);
+    expect(allMobile).toHaveLength(45);
+    expect(new Set(allMobile.map((item) => item.to)).size).toBe(45);
+    expect(new Set(allMobile.map((item) => item.to.split("?")[0])).size).toBe(44);
   });
 
   it("maps every declared mobile row to a real screen, never a placeholder stub", () => {

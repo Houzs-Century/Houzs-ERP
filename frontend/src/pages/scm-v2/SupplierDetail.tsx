@@ -2528,6 +2528,7 @@ const LastTenPOsTable = ({ rows }: { rows: LastPo[] }) => {
 type SkuDraft = {
   materialKind: MaterialKind;
   itemCode: string;
+  acItemCode: string;
   materialName: string;
   supplierSku: string;
   unitPriceSen: number;
@@ -2560,6 +2561,7 @@ const SkuFormDialog = ({
       ? {
           materialKind: editing.material_kind,
           itemCode: editing.item_code,
+          acItemCode: editing.ac_item_code ?? '',
           materialName: editing.material_name,
           supplierSku: editing.supplier_sku,
           unitPriceSen: editing.unit_price_sen,
@@ -2573,6 +2575,7 @@ const SkuFormDialog = ({
       : {
           materialKind: 'mfg_product',
           itemCode: '',
+          acItemCode: '',
           materialName: '',
           supplierSku: '',
           unitPriceSen: 0,
@@ -2725,6 +2728,12 @@ const SkuFormDialog = ({
               />
             </label>
 
+            <label className={styles.field}>
+              <span className={styles.fieldLabel}>AutoCount Item Code</span>
+              <input className={styles.fieldInput} placeholder="Its code in AutoCount (optional)"
+                value={draft.acItemCode} onChange={(e) => set('acItemCode', e.target.value)} />
+            </label>
+
             {/* Preview of the auto-derived Supplier SKU; flags an override. */}
             {skuPreview && (
               <div
@@ -2768,32 +2777,20 @@ const SkuFormDialog = ({
 
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Lead Time (days)</span>
-              <input
-                type="number"
-                className={styles.fieldInput}
-                value={draft.leadTimeDays}
-                onChange={(e) => set('leadTimeDays', Number(e.target.value) || 0)}
-              />
+              <input type="number" className={styles.fieldInput} value={draft.leadTimeDays}
+                onChange={(e) => set('leadTimeDays', Number(e.target.value) || 0)} />
             </label>
 
             <label className={styles.field}>
               <span className={styles.fieldLabel}>MOQ</span>
-              <input
-                type="number"
-                className={styles.fieldInput}
-                value={draft.moq}
-                onChange={(e) => set('moq', Number(e.target.value) || 0)}
-              />
+              <input type="number" className={styles.fieldInput} value={draft.moq}
+                onChange={(e) => set('moq', Number(e.target.value) || 0)} />
             </label>
 
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Payment Terms Override</span>
-              <input
-                className={styles.fieldInput}
-                placeholder="e.g. 30% deposit, balance on delivery"
-                value={draft.paymentTermsOverride}
-                onChange={(e) => set('paymentTermsOverride', e.target.value)}
-              />
+              <input className={styles.fieldInput} placeholder="e.g. 30% deposit, balance on delivery"
+                value={draft.paymentTermsOverride} onChange={(e) => set('paymentTermsOverride', e.target.value)} />
             </label>
 
             <div className={`${styles.field} ${styles.formGridFull}`}>
