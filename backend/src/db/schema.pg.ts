@@ -108,19 +108,6 @@ export const push_devices = pgTable("push_devices", {
   last_reminder_sent_on: text("last_reminder_sent_on"),
 });
 
-// ── role_page_access (mig 073) ─────────────────────────────
-export const role_page_access = pgTable(
-  "role_page_access",
-  {
-    role_id: integer("role_id").notNull(),
-    page_key: text("page_key").notNull(),
-    level: text("level").notNull(),
-    created_at: text("created_at").default(nowText),
-    updated_at: text("updated_at").default(nowText),
-  },
-  (t) => ({ pk: primaryKey({ columns: [t.role_id, t.page_key] }) }),
-);
-
 // ── departments ────────────────────────────────────────────
 export const departments = pgTable("departments", {
   id: serial("id").primaryKey(),
@@ -289,19 +276,6 @@ export const positions = pgTable("positions", {
   active: integer("active").notNull().default(1),
   created_at: text("created_at").default(nowText),
 });
-
-// ── position_page_access (mig 094) — 4-level matrix (none/view/edit/full) ──
-export const position_page_access = pgTable(
-  "position_page_access",
-  {
-    position_id: integer("position_id").notNull(),
-    page_key: text("page_key").notNull(),
-    level: text("level").notNull(),
-    created_at: text("created_at").default(nowText),
-    updated_at: text("updated_at").default(nowText),
-  },
-  (t) => ({ pk: primaryKey({ columns: [t.position_id, t.page_key] }) }),
-);
 
 // ── password_resets (mig 027) ──────────────────────────────
 export const password_resets = pgTable("password_resets", {

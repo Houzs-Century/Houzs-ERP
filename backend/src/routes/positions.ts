@@ -1,20 +1,14 @@
 import { Hono } from "hono";
 import type { Env } from "../types";
-import {
-  PAGES,
-  isDormantPageKey,
-  isValidPageKey,
-  isValidPositionLevel,
-  loadPageAccessForPosition,
-  type AccessLevel,
-} from "../services/pageAccess";
+import { PAGES, fullAccessMap, type AccessLevel } from "../services/pageAccess";
+import { positionGrantsWildcard, resolvePositionPolicy } from "../services/positionPolicy";
+import { loadPositionPolicyRow } from "../services/positionPolicyRows";
 import { requirePermission, requirePermissionOrSalesDirector } from "../middleware/auth";
 import { isSalesDirectorUser } from "../services/pmsAccess";
 import { hasPermission } from "../services/permissions";
-import { setSetting } from "../services/email";
 import { audit } from "../services/audit";
 import { getDb } from "../db/client";
-import { positions, position_page_access, users, departments } from "../db/schema";
+import { positions, users, departments } from "../db/schema";
 import { and, asc, eq, sql } from "drizzle-orm";
 
 // Positions = the staff org unit (department × position). Mirrors roles.ts but
@@ -83,255 +77,6 @@ app.get("/", requirePermissionOrSalesDirector("users.read"), async (c) => {
       active: !!r.active,
       member_count: r.member_count ?? 0,
     })),
-  });
-});
-
-/**
- * Read the admin-defined display order for the matrix (a flat list of page
- * keys). Stored in app_settings under POSITION_PAGE_ORDER_KEY. Returns [] when
- * unset or unreadable — callers then fall back to the catalogue's own order.
- */
-const POSITION_PAGE_ORDER_KEY = "position_page_order";
-async function getPageOrder(env: Env): Promise<string[]> {
-  try {
-    const row = await env.DB.prepare(
-      "SELECT value FROM app_settings WHERE key = ?",
-    )
-      .bind(POSITION_PAGE_ORDER_KEY)
-      .first<{ value: string }>();
-    if (!row?.value) return [];
-    const parsed = JSON.parse(row.value);
-    return Array.isArray(parsed) ? parsed.filter((k) => typeof k === "string") : [];
-  } catch {
-    return [];
-  }
-}
-
-/**
- * Sort the catalogue by a stored key order (stable). Keys absent from the
- * order keep their catalogue position (they sort after ordered ones, in
- * original sequence). Display-only — the cascade in loadPageAccessForPosition
- * still reads PAGES in code order, so parent-before-child is never disturbed.
- */
-function orderPages<T extends { key: string }>(list: T[], order: string[]): T[] {
-  if (order.length === 0) return list;
-  const rank = new Map(order.map((k, i) => [k, i]));
-  return list
-    .map((p, i) => ({ p, i }))
-    .sort((a, b) => {
-      const ra = rank.has(a.p.key) ? rank.get(a.p.key)! : Number.MAX_SAFE_INTEGER;
-      const rb = rank.has(b.p.key) ? rank.get(b.p.key)! : Number.MAX_SAFE_INTEGER;
-      return ra - rb || a.i - b.i;
-    })
-    .map((x) => x.p);
-}
-
-/**
- * GET /api/positions/pages
- * Page catalogue for the matrix editor (same payload as /api/roles/pages),
- * sorted by the admin's saved matrix order when one exists.
- */
-app.get("/pages", requirePermission("users.read"), async (c) => {
-  const order = await getPageOrder(c.env);
-  return c.json({
-    pages: orderPages([...PAGES], order).map((p) => ({
-      key: p.key,
-      label: p.label,
-      partialMeaning: p.partialMeaning,
-      supportsPartial: p.supportsPartial,
-      parent: p.parent ?? null,
-      // Class A — the key exists here but NOTHING reads it, so setting it has
-      // never done anything. Surfaced so the editor can grey the control and
-      // stop the UI claiming a save that means nothing. Purely descriptive:
-      // it changes no level and no resolution (pageAccess.DORMANT_PAGE_KEYS).
-      dormant: isDormantPageKey(p.key),
-    })),
-  });
-});
-
-/**
- * PATCH /api/positions/page-order
- * Save the matrix display order (drag-reorder). Body: { order: string[] } —
- * a flat list of valid page keys. Global (affects every position's matrix);
- * gated on users.manage like the rest of the position admin surface.
- * Registered before "/:id" so the literal path wins over the id param.
- */
-app.patch("/page-order", requirePermission("users.manage"), async (c) => {
-  const body = await c.req.json<{ order?: unknown }>().catch(() => ({}) as any);
-  if (!Array.isArray(body.order)) {
-    return c.json({ error: "order[] is required" }, 400);
-  }
-  const order = body.order.filter(
-    (k: unknown): k is string => typeof k === "string" && isValidPageKey(k),
-  );
-  const userId = (c.get("user") as { id?: number } | undefined)?.id ?? null;
-  await setSetting(c.env, POSITION_PAGE_ORDER_KEY, order, userId);
-  await audit(c, {
-    action: "positions.page_order.update",
-    summary: `Reordered the position matrix (${order.length} pages)`,
-    meta: { count: order.length },
-  });
-  return c.json({ ok: true, count: order.length });
-});
-
-/**
- * GET /api/positions/page-access/export
- *
- * Every position's matrix in ONE response — the input to
- * `scripts/export-position-access.mjs`, which turns it into
- * `services/positionAccessSnapshot.ts`.
- *
- * WHY THIS EXISTS AT ALL. The rules are moving out of this table and into
- * backend code (services/salesJdAccess.ts is the first one). Before anything is
- * switched off, the owner has to be able to READ what the table currently says
- * — all 17 positions at once, not one click at a time — because nobody can
- * currently state what a position sees. The code cannot answer it either: nav
- * visibility ORs `anyPerm`/`anyAccess` (frontend navFilter.ts:76-91) and with
- * `scm_l2_configured` the `scm.access` term is dropped, so for a non-`*` user
- * the matrix cell alone decides. Read from the ROWS or be wrong. This was
- * proven the expensive way on 2026-07-17: Sales Director's access was reported
- * from Sidebar.tsx's flags and the owner corrected it from memory.
- *
- * WHY `entries` IS THE EXPLICIT ROWS AND NOT THE RESOLVED MAP. An absent row
- * and a `level = 'none'` row are DIFFERENT FACTS for any child page, and
- * flattening them is how this export would silently destroy his settings:
- * loadPageAccessForPosition (pageAccess.ts:748) resolves a child as
- * `explicit[key] ?? out[parent]` — absent means INHERIT THE PARENT, `'none'`
- * means DENIED even when the parent is full. Writing a resolved map back as
- * explicit rows would nail every child to today's parent value and quietly
- * sever the inheritance. So `entries` is a photograph: exactly the rows that
- * exist, verbatim, and nothing invented for the ones that don't.
- * (`reference_houzs_nullish_hides_ignorance` — `?? "none"` turning "unknown"
- * into a confident lie is this codebase's most repeated bug.)
- *
- * `resolved` is the DERIVED companion — what each position actually gets at
- * login, inheritance applied, via the real loader. It is what the owner reads
- * to check "我現在看到的東西" is intact. It is NOT the snapshot's source of
- * truth and must never be written back as rows.
- *
- * Registered before "/:id" so the literal path wins over the id param.
- */
-app.get("/page-access/export", requirePermission("users.manage"), async (c) => {
-  const db = getDb(c.env);
-
-  // Which DB answered. Staging and prod are DIFFERENT Supabase projects with
-  // different rows — a snapshot generated off staging and shipped as prod's
-  // would rewrite real people's access with test data. The generator refuses on
-  // this string rather than trusting whoever ran it to remember.
-  const generatedFrom = `${c.env.PUBLIC_APP_URL ?? "unknown-app-url"} (${new URL(c.req.url).host})`;
-
-  const posRows = await db
-    .select({
-      id: positions.id,
-      name: positions.name,
-      slug: positions.slug,
-      active: positions.active,
-      department_id: positions.department_id,
-      department_name: departments.name,
-    })
-    .from(positions)
-    .leftJoin(departments, eq(positions.department_id, departments.id))
-    .orderBy(asc(positions.id));
-
-  // One read of the whole table — no per-position round-trip. Ungated by
-  // page_key on purpose: rows whose key is no longer in the registry are still
-  // rows, and a photograph that drops them is not a photograph.
-  const allRows = await db
-    .select({
-      position_id: position_page_access.position_id,
-      page_key: position_page_access.page_key,
-      level: position_page_access.level,
-    })
-    .from(position_page_access);
-
-  const byPosition = new Map<number, Array<{ page_key: string; level: string }>>();
-  for (const r of allRows) {
-    const list = byPosition.get(r.position_id) ?? [];
-    list.push({ page_key: r.page_key, level: r.level });
-    byPosition.set(r.position_id, list);
-  }
-
-  const registryKeys = new Set(PAGES.map((p) => p.key));
-  let explicitRows = 0;
-  let orphanRows = 0;
-  let gapCells = 0;
-
-  const out: Array<{
-    id: number;
-    name: string;
-    slug: string;
-    active: number;
-    department_id: number | null;
-    department_name: string | null;
-    entries: Record<string, string>;
-    orphan_keys: string[];
-    missing_keys: string[];
-    resolved: Record<string, AccessLevel>;
-  }> = [];
-  for (const p of posRows) {
-    const rows = byPosition.get(p.id) ?? [];
-
-    // Sorted by key so a regenerated file diffs cleanly — row order out of PG
-    // is not stable, and an unsorted export would churn every regeneration and
-    // bury a real change in the noise.
-    const entries: Record<string, string> = {};
-    for (const r of [...rows].sort((a, b) => a.page_key.localeCompare(b.page_key))) {
-      entries[r.page_key] = r.level;
-    }
-
-    // Rows whose page_key the registry no longer knows. loadPageAccessForPosition
-    // ignores them (isValidPageKey, pageAccess.ts:727) so they grant nothing
-    // today — but they are still in the table and would come back to life if the
-    // key were ever re-added. Named, not dropped.
-    const orphan_keys = Object.keys(entries).filter((k) => !registryKeys.has(k));
-
-    // Registry pages this position has NO row for. This is where "he never set
-    // it" hides: a gap is not a decision, and it must not be exported as one.
-    const missing_keys = PAGES.map((x) => x.key).filter((k) => !(k in entries));
-
-    explicitRows += Object.keys(entries).length;
-    orphanRows += orphan_keys.length;
-    gapCells += missing_keys.length;
-
-    out.push({
-      id: p.id,
-      name: p.name,
-      slug: p.slug,
-      active: p.active,
-      department_id: p.department_id,
-      department_name: p.department_name ?? null,
-      entries,
-      orphan_keys,
-      missing_keys,
-      // Derived — inheritance applied, through the SAME loader login uses, so
-      // the review table cannot disagree with the live system. Re-reading the
-      // rows once per position (rather than resolving from `allRows` in memory)
-      // is a deliberate N+1: ~17 positions, admin-only, run by hand a few times
-      // in this migration's life. A second local implementation of the inherit
-      // cascade is the thing worth avoiding here — a review table that quietly
-      // disagrees with login is worse than 17 cheap indexed reads.
-      resolved: await loadPageAccessForPosition(c.env, p.id),
-    });
-  }
-
-  return c.json({
-    generatedFrom,
-    generatedAt: new Date().toISOString(),
-    // The table has NO company_id and NO updated_by (schema.pg.ts:266-276):
-    // position_id, page_key, level, created_at, updated_at, PK(position_id,
-    // page_key). Positions are global across both companies, so there is no
-    // per-company cell for this export to flatten. Timestamps are deliberately
-    // NOT exported: they are not access facts, and they would churn the diff on
-    // every regeneration.
-    schemaNote: "position_page_access has no company_id and no updated_by; positions are global",
-    registryPageCount: PAGES.length,
-    totals: {
-      positions: out.length,
-      explicit_rows: explicitRows,
-      orphan_rows: orphanRows,
-      gap_cells: gapCells,
-    },
-    positions: out,
   });
 });
 
@@ -449,14 +194,6 @@ app.delete("/:id", requirePermission("users.manage"), async (c) => {
     );
   }
 
-  // The page-access matrix FK (position_page_access.position_id) was ON DELETE
-  // CASCADE in the schema, but the D1->PG load dropped it to NO ACTION — so a
-  // bare delete throws once a position has any saved matrix row (virtually all
-  // real positions do). Clear children first (same cutover fix as departments).
-  await c.env.DB.prepare(`DELETE FROM position_page_access WHERE position_id = ?`)
-    .bind(id)
-    .run();
-
   await db.delete(positions).where(eq(positions.id, id));
   await audit(c, {
     action: "position.delete",
@@ -469,8 +206,11 @@ app.delete("/:id", requirePermission("users.manage"), async (c) => {
 
 /**
  * GET /api/positions/:id/page-access
- * The position's per-page map. Unlike roles, positions have NO permission-set
- * backfill — any page without an explicit row defaults to "none".
+ * The pages a Title's members see, as login resolves them: the Title's
+ * position_policy row (or, with no row, the name rule), owner tier = full on
+ * every page. Read-only — the cohort is edited on Roles & Permissions › Titles.
+ * (Until 2026-09-17 this answered from the dropped position_page_access
+ * matrix, which login had not read since 2026-07-18.)
  */
 app.get("/:id/page-access", requirePermission("users.read"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
@@ -478,94 +218,25 @@ app.get("/:id/page-access", requirePermission("users.read"), async (c) => {
   const db = getDb(c.env);
 
   const posRow = await db
-    .select({ id: positions.id })
+    .select({ id: positions.id, name: positions.name, department_name: departments.name })
     .from(positions)
+    .leftJoin(departments, eq(departments.id, positions.department_id))
     .where(eq(positions.id, id))
     .limit(1);
   if (posRow.length === 0) return c.json({ error: "Position not found" }, 404);
 
-  // Effective level = what the position actually resolves to at login (inherit
-  // model: children inherit the parent unless they have an explicit row). The
-  // `explicit` flag marks rows the admin set directly vs inherited — so the
-  // editor shows the true effective access and only sends overrides on save.
-  const effective = await loadPageAccessForPosition(c.env, id);
-  const rows = await db
-    .select({ page_key: position_page_access.page_key, level: position_page_access.level })
-    .from(position_page_access)
-    .where(eq(position_page_access.position_id, id));
-  const explicitKeys = new Set(
-    rows.filter((r) => isValidPageKey(r.page_key) && isValidPositionLevel(r.level)).map((r) => r.page_key),
-  );
+  const policyRow = await loadPositionPolicyRow(c.env, id);
+  const resolved = positionGrantsWildcard(posRow[0].name, policyRow)
+    ? fullAccessMap()
+    : resolvePositionPolicy(
+        { position_name: posRow[0].name, department_name: posRow[0].department_name ?? null },
+        policyRow,
+      ).pageAccess;
 
   const out: Record<string, { level: AccessLevel; explicit: boolean }> = {};
-  for (const p of PAGES) {
-    out[p.key] = { level: effective[p.key] ?? "none", explicit: explicitKeys.has(p.key) };
-  }
+  for (const p of PAGES) out[p.key] = { level: resolved[p.key] ?? "none", explicit: false };
 
-  // Class B — ORPHAN rows: a `position_page_access` row whose page_key is not in
-  // the catalogue. `loadPageAccessForPosition` filters every row through
-  // isValidPageKey, so an orphan is not merely denied — it is never read at all.
-  // The admin set it, the UI said "Saved", and it was discarded on that save and
-  // every read since. His 2026-06-13 "money pages: Finance only" ruling is SIX of
-  // these on Finance Manager (overview, orders, orders.balance, orders.overdue,
-  // orders.pnl, petty_cash) — dead from the moment he pressed save.
-  //
-  // WHY SURFACE THEM AT ALL. A dormant key at least has a row in the editor to
-  // grey; an orphan has nothing to render, so silence is the ONLY thing the UI
-  // can say about it — and silence is what let a year of "那個設定很多都設定不到"
-  // stay unexplained. These rows are the physical record of rules he believes are
-  // in force. Named here so the editor can show them as never-wired, which is the
-  // one honest thing to say about a setting that was thrown away.
-  //
-  // READ-ONLY, and not deleted. Deleting them would destroy the evidence of what
-  // he intended, and they grant nothing today. `page_access` above is untouched:
-  // these keys are NOT merged into it, so nothing resolves differently for
-  // anyone. Same fact the export already reports as `orphan_keys`, on the
-  // endpoint the editor actually reads.
-  const orphan_rows = rows
-    .filter((r) => !isValidPageKey(r.page_key))
-    .map((r) => ({ page_key: r.page_key, level: r.level }))
-    .sort((a, b) => a.page_key.localeCompare(b.page_key));
-
-  return c.json({ position_id: id, page_access: out, orphan_rows });
-});
-
-/**
- * PATCH /api/positions/:id/page-access — DISABLED (2026-07-20).
- *
- * This used to upsert `position_page_access` rows, but `services/auth.ts` no
- * longer reads that table for a positioned user: their `page_access` is resolved
- * from `resolvePositionPolicy` (services/positionPolicy.ts) at session load (see
- * hydrateAuthUser). Writing here changed nothing yet returned `{ ok: true }`, so
- * the Team > Positions editor reported "Saved" for edits that never took effect.
- * The editor is now read-only; this endpoint is short-circuited so it can never
- * silently write the ignored table again.
- *
- * The route AND the `position_page_access` table are intentionally KEPT so the
- * per-position matrix can be revived when permissions are reworked — restore the
- * upsert body from git history once auth.ts reads the table again. Until then it
- * answers honestly (409 + plain message) and does NOT write.
- */
-app.patch("/:id/page-access", requirePermission("users.manage"), async (c) => {
-  const id = parseInt(c.req.param("id"), 10);
-  if (!id) return c.json({ error: "Invalid ID." }, 400);
-
-  // Record the blocked attempt (a stale client or a direct API call) WITHOUT
-  // touching the table, so the audit trail never claims an update happened.
-  await audit(c, {
-    action: "position.page_access.update_blocked",
-    entityType: "position",
-    entityId: id,
-    summary: `Blocked a page-access edit for position #${id} — per-position page-access editing is disabled (access is governed by position defaults).`,
-  });
-
-  return c.json(
-    {
-      error:
-        "Editing page access per position is turned off. Page access is currently governed by position defaults and cannot be changed here.",
-    },
-    409,
-  );
+  return c.json({ position_id: id, page_access: out, orphan_rows: [] });
 });
 
 export default app;

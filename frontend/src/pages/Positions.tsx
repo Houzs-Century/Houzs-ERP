@@ -8,30 +8,7 @@ import { useToast } from "../hooks/useToast";
 import { useDialog } from "../hooks/useDialog";
 import { api } from "../api/client";
 import { cn } from "../lib/utils";
-import type { AccessLevel, Department, Position } from "../types";
-
-// Shape of GET /api/positions/page-access/export (backend/src/routes/positions.ts:208).
-// Declared here rather than in types.ts because that file is owned by another
-// live branch. A PARTIAL description, not an exhaustive one: only `positions` is
-// read (the confirmation count + the empty-export guard). Everything else —
-// `totals`, `orphan_keys`, `missing_keys` — is never touched and rides through to
-// the file verbatim, because the file is a photograph and this page is only the
-// shutter. `entries` (the explicit rows) and `resolved` (inheritance applied) are
-// DIFFERENT facts and neither may ever be flattened into the other.
-type PageAccessExport = {
-  generatedFrom: string;
-  generatedAt: string;
-  totals: { positions: number; explicit_rows: number; orphan_rows: number; gap_cells: number };
-  positions: Array<{
-    id: number;
-    name: string;
-    /** EXPLICIT rows only. An absent key means NO ROW (inherit the parent,
-     *  pageAccess.ts:748) — which is NOT the same fact as a row of "none". */
-    entries: Record<string, string>;
-    /** Derived: inheritance applied. Review aid, never a source of rows. */
-    resolved: Record<string, AccessLevel>;
-  }>;
-};
+import type { Department, Position } from "../types";
 
 /** Embedded in the Team page as the "Titles" tab (a Title is a `positions` row). */
 export function PositionsTab() {
@@ -154,50 +131,6 @@ export function PositionsTab() {
     }
   }
 
-  // The owner's live matrix, out of prod and onto his disk in ONE click.
-  //
-  // WHY A BUTTON. The rules are moving out of this table and into backend code,
-  // and the export is their only honest source — but the endpoint needs a bearer
-  // token, which lives in his browser and nowhere anyone can hand over safely
-  // (DASHBOARD_API_KEY is a write-only Cloudflare secret; nobody can read it
-  // back, him included). Asking him to paste a token out of DevTools stalled the
-  // whole workstream for a day. He is already authenticated in this tab — so the
-  // click IS the handover, and no credential ever leaves the browser.
-  const [exporting, setExporting] = useState(false);
-  async function exportPageAccess() {
-    setExporting(true);
-    try {
-      const data = await api.get<PageAccessExport>("/api/positions/page-access/export");
-      // Refuse to hand him a plausible-looking empty file: a snapshot generated
-      // from a photograph of nothing would silently blank real people's access.
-      // Prefer a visible failure over an invisible one (the same bar the
-      // generator sets on itself, export-position-access.mjs:88-99). Explicit
-      // checks, never `?? []` — an unknown must not be defaulted into a fact.
-      if (!Array.isArray(data?.positions) || data.positions.length === 0) {
-        toast.error("The export came back with no positions — nothing was saved. Please try again.");
-        return;
-      }
-      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = "houzs-position-access.json";
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 10_000);
-      toast.success(
-        `Exported ${data.positions.length} positions — saved to your Downloads as houzs-position-access.json`,
-      );
-    } catch (e: any) {
-      // Always a sentence, never a code, and never a silent no-op: the client
-      // has already turned the HTTP status into plain language (humanHttpMessage).
-      toast.error(e?.message || "Couldn't export the page-access matrix. Please try again.");
-    } finally {
-      setExporting(false);
-    }
-  }
-
   async function deletePosition(p: Position) {
     if (p.member_count > 0) {
       toast.error(`${p.name} still has ${p.member_count} member(s) — reassign them first.`);
@@ -221,14 +154,6 @@ export function PositionsTab() {
           {positions.length} title{positions.length === 1 ? "" : "s"}
         </span>
         <div className="flex items-center gap-2">
-          <Button
-            variant="secondary"
-            onClick={exportPageAccess}
-            disabled={exporting}
-            title="Download every position's page-access rows as JSON"
-          >
-            {exporting ? "Exporting…" : "Export"}
-          </Button>
           <Button variant="brass" icon={<Plus size={14} />} onClick={() => setEditing("new")}>
             New Title
           </Button>
@@ -597,12 +522,11 @@ function PositionMatrixEditor({
           Page access
         </div>
         <p className="text-[12px] leading-relaxed text-ink-secondary">
-          Page access is currently governed by position defaults and cannot be edited here.
-          Members of this title automatically get the pages their title is set up to see.
+          Members of this title see the pages of its cohort — set on Roles & Permissions,
+          under Titles (cohort, profile and duty).
         </p>
         <p className="mt-2 text-[11px] leading-relaxed text-ink-muted">
-          Page access per title is edited on Roles & Permissions. You can still rename this
-          title or move it to another department with the edit button above.
+          Rename this title or move it to another department with the edit button above.
         </p>
       </div>
     </div>

@@ -26,8 +26,8 @@ Sales-Director carve-out for their own department.
 - `users.manage` — every mutation: invite, edit (incl. enable/disable),
   resend, revoke, reset-password, impersonate/totp actions, department lead
   + headcount, Titles (positions) CRUD, role assignment.
-- `roles.manage` — `PUT /api/position-capabilities` (the page-access
-  matrix), a separate key from `users.manage`.
+- `roles.manage` — `PUT /api/position-capabilities` (the Actions matrix) and
+  `PUT /api/position-policy` (the Titles tab), a separate key from `users.manage`.
 - **Invite carries a Role** (`POST /api/users/invite` `role_id`, required): the
   desktop modal's Role select (default `defaultRoleId` = the baseline role, the
   0-key placeholder) and the phone form's Role field both post it. Accepting

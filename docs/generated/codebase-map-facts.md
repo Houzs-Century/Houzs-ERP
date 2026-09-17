@@ -11,7 +11,7 @@ FOR, which trees are dead, what must be changed in pairs — lives in
 
 ## 1. Backend route inventory
 
-217 route modules (55 in `backend/src/routes`, 162 in `backend/src/scm/routes`), 1319 endpoint registrations.
+217 route modules (55 in `backend/src/routes`, 162 in `backend/src/scm/routes`), 1311 endpoint registrations.
 
 An endpoint is a `router.<method>("/…")` registration. For the per-route authorization
 boundary see the sibling artifact `docs/generated/route-capability-matrix.csv`, which
@@ -30,13 +30,13 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/assrPortal.ts` | 14 | 540 |
 | `backend/src/routes/assr_print.ts` | 1 | 1220 |
 | `backend/src/routes/audit.ts` | 1 | 74 |
-| `backend/src/routes/auth.ts` | 13 | 862 |
+| `backend/src/routes/auth.ts` | 13 | 867 |
 | `backend/src/routes/brandShare.ts` | 2 | 53 |
 | `backend/src/routes/branding.ts` | 5 | 294 |
 | `backend/src/routes/chatCallback.ts` | 1 | 282 |
 | `backend/src/routes/clientErrors.ts` | 2 | 232 |
 | `backend/src/routes/companies.ts` | 1 | 48 |
-| `backend/src/routes/deliverySheetSync.ts` | 4 | 244 |
+| `backend/src/routes/deliverySheetSync.ts` | 6 | 441 |
 | `backend/src/routes/departments.ts` | 4 | 281 |
 | `backend/src/routes/documentRefs.ts` | 5 | 133 |
 | `backend/src/routes/finance.ts` | 2 | 466 |
@@ -51,17 +51,17 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/notifications.ts` | 1 | 218 |
 | `backend/src/routes/portal.ts` | 6 | 329 |
 | `backend/src/routes/pos.ts` | 9 | 506 |
-| `backend/src/routes/position-capabilities.ts` | 3 | 224 |
-| `backend/src/routes/position-policy.ts` | 3 | 177 |
-| `backend/src/routes/positions.ts` | 9 | 571 |
+| `backend/src/routes/position-capabilities.ts` | 2 | 123 |
+| `backend/src/routes/position-policy.ts` | 3 | 184 |
+| `backend/src/routes/positions.ts` | 5 | 242 |
 | `backend/src/routes/presence.ts` | 2 | 201 |
-| `backend/src/routes/projects.ts` | 115 | 5153 |
+| `backend/src/routes/projects.ts` | 115 | 5154 |
 | `backend/src/routes/projects_print.ts` | 1 | 1314 |
 | `backend/src/routes/publicBrandCalendar.ts` | 6 | 138 |
 | `backend/src/routes/publicContractorCalendar.ts` | 5 | 148 |
 | `backend/src/routes/publicDoScan.ts` | 4 | 926 |
 | `backend/src/routes/push.ts` | 2 | 71 |
-| `backend/src/routes/roles.ts` | 8 | 376 |
+| `backend/src/routes/roles.ts` | 5 | 227 |
 | `backend/src/routes/sales.ts` | 13 | 1302 |
 | `backend/src/routes/search.ts` | 1 | 578 |
 | `backend/src/routes/settings.ts` | 4 | 102 |
@@ -154,7 +154,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/lorries.ts` | 3 | 329 |
 | `backend/src/scm/routes/lorry-capacity.ts` | 3 | 493 |
 | `backend/src/scm/routes/lorry-service-records.ts` | 6 | 327 |
-| `backend/src/scm/routes/maintenance-config.ts` | 5 | 410 |
+| `backend/src/scm/routes/maintenance-config.ts` | 5 | 485 |
 | `backend/src/scm/routes/mfg-products.ts` | 11 | 1301 |
 | `backend/src/scm/routes/mfg-purchase-orders-list-enrichment.ts` | 1 | 82 |
 | `backend/src/scm/routes/mfg-purchase-orders.ts` | 24 | 4428 |
@@ -217,7 +217,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/so-mirror.ts` | 1 | 333 |
 | `backend/src/scm/routes/so-money-routes.ts` | 0 | 100 |
 | `backend/src/scm/routes/so-settings.ts` | 2 | 61 |
-| `backend/src/scm/routes/sofa-combos.ts` | 7 | 795 |
+| `backend/src/scm/routes/sofa-combos.ts` | 5 | 689 |
 | `backend/src/scm/routes/sofa-compartment-photos.ts` | 3 | 308 |
 | `backend/src/scm/routes/sofa-quick-picks.ts` | 3 | 213 |
 | `backend/src/scm/routes/special-addons.ts` | 6 | 420 |
@@ -245,14 +245,14 @@ scripts, never assumed: each runner declares its own directory, and
 
 | tree | runner | *.sql | highest | applied to PRODUCTION by deploy.yml | read by backend vitest |
 |---|---|---|---|---|---|
-| `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 154 | `155_position_policy.sql` (155) | no | yes |
-| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 437 | `0352_acc_pv_files.sql` (0352) | YES | no |
+| `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 157 | `158_drop_legacy_page_access_tables.sql` (158) | no | yes |
+| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 441 | `0352_acc_pv_files.sql` (0352) | YES | no |
 
 Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its number): `0136_capture_compat_views_trips_lorries.sql.TEMPLATE`
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (2725 files, 823558 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (2731 files, 823350 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -263,7 +263,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `backend/src/services/autocount-sofa-corpus.ts` | 8581 |
 | `frontend/src/pages/Team.tsx` | 5673 |
 | `backend/src/scm/routes/delivery-orders-mfg.ts` | 5356 |
-| `backend/src/routes/projects.ts` | 5153 |
+| `backend/src/routes/projects.ts` | 5154 |
 | `frontend/src/pages/scm-v2/Products.tsx` | 5014 |
 | `backend/src/scm/routes/scan-so.ts` | 4895 |
 | `frontend/src/mobile/MobilePMS.tsx` | 4490 |
@@ -272,7 +272,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4168 |
 | `frontend/src/mobile/MobileNewSO.tsx` | 3652 |
 | `backend/src/scm/routes/grns.ts` | 3538 |
-| `frontend/src/components/DataTable.tsx` | 3515 |
+| `frontend/src/components/DataTable.tsx` | 3501 |
 | `frontend/src/mobile/MobileServiceCase.tsx` | 3381 |
 | `backend/src/routes/assr.ts` | 3361 |
 | `backend/src/services/projects.ts` | 3137 |
