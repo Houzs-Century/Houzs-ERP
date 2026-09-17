@@ -84,4 +84,18 @@ describe('MobileStockTransferNew — the next step after Create', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Done' }));
     await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1));
   });
+
+  test('a line Remarks typed before Create is sent as that line\'s notes', async () => {
+    render(<ConfirmProvider><MobileStockTransferNew onBack={() => {}} /></ConfirmProvider>);
+    fireEvent.change(selects()[0]!, { target: { value: 'w1' } });
+    fireEvent.change(selects()[1]!, { target: { value: 'w2' } });
+    fireEvent.click(screen.getByText('+ Add item'));
+    fireEvent.click(screen.getByText('pick CH-1'));
+    fireEvent.change(selects()[2]!, { target: { value: '' } });
+    fireEvent.change(screen.getByPlaceholderText('Remarks (optional) — shown as Description 2'), {
+      target: { value: 'DO-4596 ART0496' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Create transfer' }));
+    expect((calls[0]! as unknown as { items: Array<{ notes?: string }> }).items[0]!.notes).toBe('DO-4596 ART0496');
+  });
 });
