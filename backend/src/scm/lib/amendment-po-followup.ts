@@ -40,7 +40,7 @@ export type PoFollowUpResult = {
   warnings: string[];
 };
 
-type SoAmendLine = {
+export type SoAmendLine = {
   sales_order_item_id: string | null;
   change_type: string;
   new_item_code: string | null;
@@ -53,7 +53,7 @@ type SoAmendLine = {
    PO; a SPEC edit does when it changes WHAT the item is (code or variants) —
    a sell-price-only SPEC edit changes what the CUSTOMER pays, which the PO
    (supplier cost) does not carry. */
-const poRelevant = (l: SoAmendLine): boolean => {
+export const poRelevant = (l: SoAmendLine): boolean => {
   const t = String(l.change_type ?? '').toUpperCase();
   if (t === 'ADD' || t === 'REMOVE' || t === 'QTY') return true;
   if (t === 'SPEC') return l.new_item_code != null || l.new_variants != null;
@@ -83,7 +83,7 @@ export type SoLineIdentity = { item_code?: string | null; item_group?: string | 
    has no SVC- prefix and no row, so by code alone it read as goods and would
    have raised an amendment against every PO bound to the order
    (docs/bugs/0895-an-amendment-that-added-a-service-line-went-to-the-purchaser.md). */
-const serviceOnlyChange = (
+export const serviceOnlyChange = (
   l: SoAmendLine,
   identityOf: (soItemId: string) => SoLineIdentity | undefined,
   categoryOf: (itemCode: string) => string | null,

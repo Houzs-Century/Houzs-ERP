@@ -44,7 +44,7 @@ vi.mock('./orgScope', () => ({
     id === 41 ? [41, 40, 39, 38] : [id],
 }));
 
-const { notifySoAmendmentRaised, notifySoAmendmentResolved, notifySoAmendmentLaneFlagged } = await import('./amendmentNotify');
+const { notifySoAmendmentRaised, notifySoAmendmentResolved, notifySoAmendmentHandedOver } = await import('./amendmentNotify');
 const { usersHoldingPermission } = await import('./permissionHolders');
 const { LANE_APPROVE_KEY } = await import('../scm/shared/amendment-lane');
 
@@ -167,29 +167,29 @@ describe('amendment notice audience', () => {
     expect(posted.some((p) => p.title.includes('wrong desk'))).toBe(false);
   });
 
-  /* Owner 2026-09-17: the APPROVER, not the requester, says a request is on
-     the wrong desk. The OTHER lane's desk gets a card — it is the desk the
-     approver believes it belongs to — and so does the requester, whose request
-     now waits on a move. The approver who flagged hears nothing back, and
-     nobody is asked to sign: the row stays put until the relane workflow. */
-  it('an approver flagging the wrong desk tells the other desk and the requester, never themselves', async () => {
-    await notifySoAmendmentLaneFlagged(fakeEnv(), {
+  /* Owner 2026-09-17, option B: an approver who says "not mine" PASSES the
+     request to the other desk. That desk gets a to-do card — it now waits on
+     them — carrying the note; the requester is told it changed hands; the
+     approver who passed it on hears nothing back. */
+  it('a handover gives the receiving desk a to-do and tells the requester, never the one who passed it', async () => {
+    await notifySoAmendmentHandedOver(fakeEnv(), {
       amendmentNo: 'SO-12757/A1',
       soDocNo: 'SO-12757',
-      lane: 'LINES',
+      fromLane: 'LINES',
+      toLane: 'DELIVERY',
       companyId: 1,
       note: 'transport charge, Logistic approves these',
       actorName: 'Purchaser Pat',
       actorUserId: 41,
       requesterUserId: 77,
     });
-    const other = posted.find((p) => p.title.includes('may be on the wrong desk'))!;
-    expect(other.userIds).toEqual([43]);                 // the DELIVERY desk, not the LINES one
-    expect(other.body).toContain('Purchaser Pat');
-    expect(other.body).toContain('believes it is delivery / customer info: transport charge, Logistic approves these');
-    expect(other.body).toContain('Relane SO amendment');
-    expect(other.source).toBe('so_amendment');
-    const requester = posted.find((p) => p.title.includes('the approver says it is on the wrong desk'))!;
+    const todo = posted.find((p) => p.title.includes('needs approval'))!;
+    expect(todo.userIds).toEqual([43]);                  // the DELIVERY desk, not the LINES one
+    expect(todo.body).toContain('Purchaser Pat (product lines approver) passed amendment SO-12757/A1');
+    expect(todo.body).toContain('transport charge, Logistic approves these');
+    expect(todo.body).toContain('waiting for delivery / customer info approval');
+    expect(todo.source).toBe('so_amendment');
+    const requester = posted.find((p) => p.title.includes('was passed to another approver'))!;
     expect(requester.userIds).toEqual([77]);
     expect(posted.flatMap((p) => p.userIds)).not.toContain(41);
   });
