@@ -314,10 +314,17 @@ export function toSheetRecord(row: FeedHeadRow, lines: ReadonlyArray<FeedLineRow
   const addr3 = blankToNull(row.address3) ?? blankToNull([row.postcode, row.city].filter(Boolean).join(" "));
   const addr4 = blankToNull(row.address4) ?? blankToNull(row.customer_state);
   // The sheet's Remarks 2 is the stock-readiness wording ("READY", "PARTIAL",
-  // "MATTRESS"). A migrated order carries the book's text; an order without
-  // one gets the same derivation the SO list and /so-export use.
-  const readiness = lines.length ? summariseReadiness([...lines]).stockRemark : "";
-  const remark2 = blankToNull(row.remark2) ?? sheetReadinessWording(readiness);
+  // "MATTRESS"). The live LINE state is the truth: a migrated order's header
+  // remark2 is a one-time AutoCount import snapshot the ERP never updates, so
+  // when stock arrives the lines flip to READY (and the SO to READY_TO_SHIP)
+  // while the header keeps its old "BEDFRAME"/"ACC/BEDFRAME" wording. When the
+  // lines prove the order is READY / READY (PARTIAL), that wins over a frozen
+  // partial-groups word; otherwise keep the header snapshot (what a genuinely
+  // partial migrated order carries), then the derived word, then blank.
+  const derived = lines.length ? sheetReadinessWording(summariseReadiness([...lines]).stockRemark) : null;
+  const header = blankToNull(row.remark2);
+  const remark2 =
+    header && !isSheetReady(header) && derived && isSheetReady(derived) ? derived : (header ?? derived);
   return {
     DocNo: row.linked_ac_docno ?? row.doc_no,
     ErpDocNo: row.doc_no,

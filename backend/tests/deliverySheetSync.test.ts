@@ -576,12 +576,19 @@ describe("the READY gate", () => {
     expect(sheetReadinessWording("")).toBeNull();
   });
 
-  test("the record carries the verdict: a typed remark wins over the lines; no remark and short lines is not ready", () => {
+  test("live lines that prove READY win over a frozen partial-groups remark; a genuinely partial typed remark is kept; no remark and short lines is not ready", () => {
     const readyLine = { doc_no: HEAD.doc_no, item_group: "MATTRESS", item_code: "M1", stock_status: "READY", cancelled: false };
     const shortLine = { doc_no: HEAD.doc_no, item_group: "BEDFRAME", item_code: "B1", stock_status: "PENDING", cancelled: false };
     expect(toSheetRecord(HEAD, [readyLine])).toMatchObject({ Remark2: "READY", Ready: true });
     expect(toSheetRecord(HEAD, [readyLine, shortLine])).toMatchObject({ Remark2: "MATTRESS", Ready: false });
-    expect(toSheetRecord({ ...HEAD, remark2: "ACC" }, [readyLine])).toMatchObject({ Remark2: "ACC", Ready: false });
+    // Owner report 2026-09-17: a migrated order fully allocated in the ERP (every
+    // line READY, SO at READY_TO_SHIP) still showed its frozen AutoCount word
+    // ("BEDFRAME"/"ACC/BEDFRAME") on the sheet, because the header snapshot the
+    // ERP never updates won over the live lines. The live READY wins now.
+    expect(toSheetRecord({ ...HEAD, remark2: "ACC" }, [readyLine])).toMatchObject({ Remark2: "READY", Ready: true });
+    expect(toSheetRecord({ ...HEAD, remark2: "BEDFRAME/ACC" }, [readyLine])).toMatchObject({ Remark2: "READY", Ready: true });
+    // A genuinely partial order (a main line still short) keeps its typed word.
+    expect(toSheetRecord({ ...HEAD, remark2: "BEDFRAME/ACC" }, [readyLine, shortLine])).toMatchObject({ Remark2: "BEDFRAME/ACC", Ready: false });
     expect(toSheetRecord({ ...HEAD, remark2: "READY (PARTIAL)" }, [shortLine])).toMatchObject({ Ready: true });
     expect(toSheetRecord(HEAD, [])).toMatchObject({ Remark2: null, Ready: false });
   });
