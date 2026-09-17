@@ -7,7 +7,7 @@
 //     side approves, the bound PO must be revised + re-sent to the supplier —
 //     purchasing needs those in ITS queue, not only on the SO side).
 // The PO-side sibling of pages/scm-v2/Amendments.tsx, built to the owner's
-// SIMPLIFIED model: the status filter is just Requested / Approved / All.
+// SIMPLIFIED model: the status filter is just Requested / Approved / Rejected / All.
 //
 // Double-clicking a row opens its job card: a direct amendment opens
 // PoAmendmentDetailV2 (/scm/po-amendments/:id); an SO-driven row opens the SO
@@ -44,10 +44,8 @@ import { PageHeader } from '../../components/Layout';
 import { FilterPills } from '../../components/FilterPills';
 import { useStaffLookup } from '../../hooks/useStaffLookup';
 
-// SIMPLIFIED status filter (owner 2026-07-24): Requested / Approved / All only.
-// The backend enum still carries REJECTED (a rejected/withdrawn amendment), but
-// the queue is about what is open vs applied, so the closed rows are reached via
-// "All" rather than their own chip — mirrors the SO amendment simplification.
+// SIMPLIFIED status filter (owner 2026-07-24; Rejected added 2026-09-17): Requested /
+// Approved / Rejected / All — the same shared chip list as the SO amendment queue.
 const STATUS_CHIPS = AMENDMENT_LIST_CHIPS;
 
 /* New unique storage key — NEVER reuse another list's key. (v2: the merged

@@ -269,7 +269,7 @@ export function withStatusLabels<T extends object>(
 
 // ── Simplified amendment status buckets (owner 2026-07-24) ───────────────────
 // The amendment LIST surfaces (SO + PO queues, desktop + mobile) collapse to just
-// Requested / Approved / All. The SO amendment backend still carries the granular
+// Requested / Approved / Rejected / All. The SO amendment backend still carries the granular
 // two-gate enum (SUPPLIER_PENDING / SO_APPROVED / PO_APPROVED / SENT) that the
 // 2990 mirror + the SO detail stepper depend on — so this ONLY changes what the
 // list shows, never the stored value. The PO amendment enum already IS the
@@ -277,7 +277,8 @@ export function withStatusLabels<T extends object>(
 //
 //   REQUESTED bucket = still open / in-flight (REQUESTED, SUPPLIER_PENDING)
 //   APPROVED  bucket = applied            (SO_APPROVED, PO_APPROVED, SENT, APPROVED)
-//   REJECTED  bucket = closed w/o applying (REJECTED — reached via the All chip)
+//   REJECTED  bucket = closed w/o applying (REJECTED — refused by an approver, or
+//               withdrawn by the requester; its own chip since owner 2026-09-17)
 export type AmendmentBucket = 'REQUESTED' | 'APPROVED' | 'REJECTED';
 
 const APPLIED_STATES = ['SO_APPROVED', 'PO_APPROVED', 'SENT', 'APPROVED'];
@@ -302,7 +303,7 @@ export const simplifiedAmendmentPill = (status: string | null | undefined): Entr
   BUCKET_ENTRY[amendmentBucketOf(status)];
 
 /** The simplified filter chips every amendment list uses. */
-export const AMENDMENT_LIST_CHIPS = ['all', 'REQUESTED', 'APPROVED'] as const;
+export const AMENDMENT_LIST_CHIPS = ['all', 'REQUESTED', 'APPROVED', 'REJECTED'] as const;
 export const amendmentBucketLabel = (bucket: string): string =>
   bucket === 'all' ? 'All' : (BUCKET_ENTRY[bucket as AmendmentBucket]?.label ?? bucket);
 
