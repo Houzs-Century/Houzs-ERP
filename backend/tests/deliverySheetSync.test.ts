@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import app from "../src/routes/deliverySheetSync";
-import { normSheetDate, parseLimit, parseSince, toSheetRecord, type FeedHeadRow } from "../src/lib/delivery-sheet-feed";
+import { isSheetReady, normSheetDate, parseFromDate, parseLimit, parseSince, sheetReadinessWording, toSheetRecord, type FeedHeadRow } from "../src/lib/delivery-sheet-feed";
 import { toOutstandingPoRecord, type PoFeedRow } from "../src/lib/delivery-sheet-po-feed";
 
 /* Phase 3's write leg goes through the PO editor's own writers (supplier-date
@@ -114,7 +114,8 @@ describe("toSheetRecord — the AutoCount-named record the sheet writes", () => 
     expect(r.Total).toBe(5388);
     expect(r.SOUDF_BALANCE).toBe(1000);
     // No header Remarks 2 → the readiness wording the SO list derives.
-    expect(r.Remark2).toBe("PARTIAL");
+    expect(r.Remark2).toBe("READY (PARTIAL)");
+    expect(r.Ready).toBe(true);
     expect(r.SOUDF_PDate).toBe("2026-08-21");
     expect(r.SalesExemptionExpiryDate).toBe("2026-10-01");
     expect(r.Remark4).toBe("Done Scheduling");
@@ -560,5 +561,61 @@ describe("POST /po-dates — Supplier Delivery Date 1/2/3 → supplier_delivery_
     expect(bad.status).toBe(401);
     const { res } = await post({ updates: Array.from({ length: 301 }, () => ({ DocNo: "x", SupplierDeliveryDate1: "2026-10-01" })) });
     expect(res.status).toBe(413);
+  });
+});
+
+/* Owner 2026-09-17: 「我只要 Ready / ready partial 才同步进去」 — an order may ENTER
+ * the sheet only when Remarks 2 says READY or READY (PARTIAL). */
+describe("the READY gate", () => {
+  test("READY and READY (PARTIAL) pass, typed or derived; a list of the groups that are in does not", () => {
+    for (const ok of ["READY", "ready", "READY (PARTIAL)", "Ready (partial)"]) expect(isSheetReady(ok)).toBe(true);
+    for (const no of ["ACC", "BEDFRAME", "MATTRESS/ACC", "BEDFRAME/ACC", "", null, "NOT READY", "READYING"]) expect(isSheetReady(no)).toBe(false);
+    expect(sheetReadinessWording("PARTIAL")).toBe("READY (PARTIAL)");
+    expect(sheetReadinessWording("READY")).toBe("READY");
+    expect(sheetReadinessWording("ACC")).toBe("ACC");
+    expect(sheetReadinessWording("")).toBeNull();
+  });
+
+  test("the record carries the verdict: a typed remark wins over the lines; no remark and short lines is not ready", () => {
+    const readyLine = { doc_no: HEAD.doc_no, item_group: "MATTRESS", item_code: "M1", stock_status: "READY", cancelled: false };
+    const shortLine = { doc_no: HEAD.doc_no, item_group: "BEDFRAME", item_code: "B1", stock_status: "PENDING", cancelled: false };
+    expect(toSheetRecord(HEAD, [readyLine])).toMatchObject({ Remark2: "READY", Ready: true });
+    expect(toSheetRecord(HEAD, [readyLine, shortLine])).toMatchObject({ Remark2: "MATTRESS", Ready: false });
+    expect(toSheetRecord({ ...HEAD, remark2: "ACC" }, [readyLine])).toMatchObject({ Remark2: "ACC", Ready: false });
+    expect(toSheetRecord({ ...HEAD, remark2: "READY (PARTIAL)" }, [shortLine])).toMatchObject({ Ready: true });
+    expect(toSheetRecord(HEAD, [])).toMatchObject({ Remark2: null, Ready: false });
+  });
+
+  test("GET /ready-open returns only the READY ones of the open orders since the date, company-scoped", async () => {
+    expect(parseFromDate("2026-09-15")).toBe("2026-09-15");
+    expect(parseFromDate("2026/09/15")).toBeNull();
+    expect(parseFromDate("2026-09-15'; --")).toBeNull();
+    const { db, seen } = fakeDb((sql) => {
+      if (/FROM companies/i.test(sql)) return { id: HOUZS };
+      if (/FROM scm\.mfg_sales_orders so/.test(sql)) return [HEAD, { ...HEAD, doc_no: "HC-SO-2609-090", linked_ac_docno: null }];
+      if (/FROM scm\.mfg_sales_order_items/.test(sql))
+        return [
+          { doc_no: "HC-SO-013495", item_group: "MATTRESS", item_code: "M1", stock_status: "READY", cancelled: false },
+          { doc_no: "HC-SO-2609-090", item_group: "MATTRESS", item_code: "M1", stock_status: "PENDING", cancelled: false },
+        ];
+      return [];
+    });
+    const res = await app.request("/ready-open?from=2026-09-15", { headers: { "X-Intake-Key": KEY } }, env(db));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    expect(body).toMatchObject({ count: 1, scanned: 2, from: "2026-09-15" });
+    expect(body.records[0]).toMatchObject({ DocNo: "SO-013495", Ready: true });
+    const feed = seen.find((s) => /FROM scm\.mfg_sales_orders so/.test(s.sql))!;
+    expect(feed.binds).toEqual([HOUZS, "2026-09-15"]);
+    expect(feed.sql).toContain("t.status NOT IN ('CLOSED', 'DELIVERED', 'INVOICED')");
+    expect(feed.sql).toContain("t.so_date::date >= ?2::date");
+  });
+
+  test("/ready-open: a bad from is 400 before any read; a wrong key is 401", async () => {
+    const { db, seen } = fakeDb(() => []);
+    expect((await app.request("/ready-open?from=yesterday", { headers: { "X-Intake-Key": KEY } }, env(db))).status).toBe(400);
+    expect((await app.request("/ready-open", { headers: { "X-Intake-Key": KEY } }, env(db))).status).toBe(400);
+    expect(seen).toHaveLength(0);
+    expect((await app.request("/ready-open?from=2026-09-15", { headers: { "X-Intake-Key": "wrong" } }, env(db))).status).toBe(401);
   });
 });
