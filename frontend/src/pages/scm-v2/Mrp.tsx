@@ -849,13 +849,9 @@ export const Mrp = () => {
               </button>
               {/* The report's Export button (the shared DataTable's own, wired via
                   `onExport` below) downloads the v7 workbook — one sheet per
-                  category tab, in the owner-approved layout. This second button
-                  is additive (owner 2026-09-17): the same workbook builder,
-                  scoped to just the tab open right now. */}
-              <button type="button" className={TOOLBAR_BTN} onClick={onExportCurrentTab} disabled={exporting}
-                title={`Download only the ${views.find((v) => v.value === view)?.label ?? view} tab as a workbook`}>
-                Export tab
-              </button>
+                  category tab, in the owner-approved layout. The per-tab variant
+                  sits in the DataTable's own toolbar (`toolbarExtra` below),
+                  beside Export/Columns rather than up here. */}
               {/* Server-side Regenerate — recompute + save the stored planning
                   snapshot (option B). Distinct from Refresh, which only re-reads. */}
               <button type="button" className={TOOLBAR_BTN} onClick={() => regenerate.mutate()} disabled={regenerate.isPending}
@@ -1014,6 +1010,12 @@ export const Mrp = () => {
         /* The Export button downloads the v7 workbook (a sheet per category tab),
            not this tab's grid CSV — see onExportWorkbook. */
         onExport={onExportWorkbook}
+        toolbarExtra={
+          <button type="button" className={TOOLBAR_BTN} onClick={onExportCurrentTab} disabled={exporting}
+            title={`Download only the ${views.find((v) => v.value === view)?.label ?? view} tab as a workbook`}>
+            Export tab
+          </button>
+        }
         search={{
           value: search,
           onChange: setSearch,
