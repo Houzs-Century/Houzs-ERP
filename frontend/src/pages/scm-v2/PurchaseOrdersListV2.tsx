@@ -584,7 +584,25 @@ function DetailDrawer({
               </div>
 
               <div className="mt-4 rounded-lg border border-border bg-surface px-5 py-4">
-                <TotalRow k="PO total" v={fmtRm(total)} strong />
+                <div className="flex items-center justify-between gap-3 border-b border-border-subtle pb-3">
+                  <QtyTotal label="Ordered" value={items.reduce((s, l) => s + Number(l.qty ?? 0), 0)} />
+                  <QtyTotal
+                    label="Received"
+                    value={items.reduce((s, l) => s + Number(l.received_qty ?? 0), 0)}
+                    tone="synced"
+                  />
+                  <QtyTotal
+                    label="Balance"
+                    value={items.reduce(
+                      (s, l) => s + Math.max(0, Number(l.qty ?? 0) - Number(l.received_qty ?? 0)),
+                      0,
+                    )}
+                    tone="balance"
+                  />
+                </div>
+                <div className="pt-3">
+                  <TotalRow k="Grand total" v={fmtRm(total)} strong />
+                </div>
               </div>
             </div>
 
@@ -662,6 +680,31 @@ function RowKV({ k, v }: { k: string; v: ReactNode }) {
       <span className="flex-1 text-[13px] font-semibold leading-relaxed text-ink">
         {v}
       </span>
+    </div>
+  );
+}
+
+function QtyTotal({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: number;
+  tone?: "synced" | "balance";
+}) {
+  const color =
+    tone === "synced" && value > 0
+      ? "text-synced"
+      : tone === "balance" && value > 0
+        ? "text-accent-bright"
+        : "text-ink";
+  return (
+    <div className="flex flex-col items-center gap-0.5">
+      <span className="font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">
+        {label}
+      </span>
+      <span className={cn("font-money text-[15px] font-bold", color)}>{value}</span>
     </div>
   );
 }
