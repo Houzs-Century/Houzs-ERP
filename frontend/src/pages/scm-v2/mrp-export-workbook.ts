@@ -1,5 +1,7 @@
 // MRP Stock Status Report — Excel export (v7 layout, owner-approved
-// C:\...\MRP-Export-Layout-Mockup-v7.xlsx, 2026-09-16).
+// C:\...\MRP-Export-Layout-Mockup-v7.xlsx, 2026-09-16; v8 splits Coverage /
+// PO Outstanding into two columns, 2026-09-17, to match the on-screen group
+// row's own split).
 //
 // ONE workbook, one SHEET per category tab (Sofa, Bedframe, Mattress,
 // Accessories, Others). Each sheet mirrors what that tab shows on screen
@@ -11,8 +13,11 @@
 //     set composition + customer/state/dates + total qty), then the module
 //     pieces (and any cover / pillow riders) underneath.
 // The header row is dark green; group headers light green; any SHORTAGE demand
-// row is tinted light red. Coverage is ONE column, exactly the on-screen chip:
-// "stock" / "HC-PO-xxxx  ·  ETA dd/mm/yyyy" / "needs PO".
+// row is tinted light red. Coverage and PO Outstanding are TWO columns (v8,
+// owner-approved 2026-09-17 — matches the on-screen group row's own Stock /
+// PO Outstanding / Shortage split): Coverage carries "stock" / "needs PO",
+// PO Outstanding carries "HC-PO-xxxx  ·  ETA dd/mm/yyyy" for a covered line —
+// each demand row fills exactly one of the two, never both.
 //
 // Parity is by CONSTRUCTION: every sheet is fetched with that tab's OWN
 // `?category=` (a category filter changes the allocation inputs, so the full
@@ -29,27 +34,35 @@ import {
   computeTabModels, type ModelGroup, type MrpFilters, type AccessoryBySoDoc,
 } from './mrp-model-pipeline';
 
-/* Column order = the approved v7 layout (A..O). */
+/* Column order = the approved v8 layout (A..P). */
 export const MRP_EXPORT_HEADERS = [
   'Warehouse', 'Item Code', 'Description', 'Item Description 2', 'SO No',
   'Customer', 'State', 'Processing Date', 'Delivery Date', 'Qty Needed',
-  'Stock', 'Coverage', 'Shortage', 'Status', 'Supplier',
+  'Stock', 'Coverage', 'PO Outstanding', 'Shortage', 'Status', 'Supplier',
 ] as const;
-const COL = MRP_EXPORT_HEADERS.length; // 15
+const COL = MRP_EXPORT_HEADERS.length; // 16
 
 type Cell = string | number | null;
 export type SheetRow =
   | { kind: 'group'; cells: Cell[] }
   | { kind: 'demand'; cells: Cell[]; shortage: boolean };
 
-/* The MRP coverage chip, verbatim as a string. `·` is U+00B7 with two spaces
-   either side, matching the v7 mockup. */
+/* Coverage: 'stock' / 'needs PO', blank for a PO-covered line — that text now
+   lives in PO Outstanding (poOutstandingText below). */
 export function coverageText(l: Pick<MrpLine, 'source' | 'poNumber' | 'poEta'>): string {
   if (l.source === 'stock') return 'stock';
   if (l.source === 'shortage') return 'needs PO';
-  // 'po' — allocSourceOf guarantees a PO number here; guard defensively anyway.
+  return '';
+}
+
+/* The covering PO, verbatim as a string. `·` is U+00B7 with two spaces either
+   side, matching the mockup. Blank unless the line is actually PO-covered —
+   the text used to live in Coverage; it now has its own column. */
+export function poOutstandingText(l: Pick<MrpLine, 'source' | 'poNumber' | 'poEta'>): string {
+  if (l.source !== 'po') return '';
+  // allocSourceOf guarantees a PO number here; guard defensively anyway.
   if (!l.poNumber) return '';
-  return l.poEta ? `${l.poNumber}  \u00b7  ETA ${fmtDate(l.poEta)}` : l.poNumber;
+  return l.poEta ? `${l.poNumber}  ·  ETA ${fmtDate(l.poEta)}` : l.poNumber;
 }
 
 /* Readiness word, derived from the ONE coverage signal the MRP screen has (there
@@ -86,7 +99,7 @@ export function sofaSpec(itemCode: string, variantLabel: string | null): string 
 const isoDay = (iso: string | null): string => (iso ? iso.slice(0, 10) : '');
 const blankRow = (): Cell[] => Array<Cell>(COL).fill(null);
 
-/* Build one demand/piece row (columns A..O). `warehouse`/`stock`/`spec` come
+/* Build one demand/piece row (columns A..P). `warehouse`/`stock`/`spec` come
    from the SKU; the rest from the SO line. */
 function demandRow(opts: {
   warehouse: string; itemCode: Cell; spec: string; sku: MrpSku; line: MrpLine;
@@ -106,9 +119,10 @@ function demandRow(opts: {
   cells[9] = line.qty;
   cells[10] = sku.stock;
   cells[11] = coverageText(line);
-  cells[12] = line.source === 'shortage' ? line.shortageQty : 0;
-  cells[13] = statusText(line.source);
-  cells[14] = supplierText(sku, line);
+  cells[12] = poOutstandingText(line);
+  cells[13] = line.source === 'shortage' ? line.shortageQty : 0;
+  cells[14] = statusText(line.source);
+  cells[15] = supplierText(sku, line);
   return { kind: 'demand', cells, shortage: line.source === 'shortage' && line.shortageQty > 0 };
 }
 
@@ -141,7 +155,7 @@ export function buildSheetRows(
       head[8] = first.deliveryDate ? isoDay(first.deliveryDate) : 'No date';
       head[9] = g.qtyNeeded;
       head[10] = g.stock;
-      head[12] = g.shortage;
+      head[13] = g.shortage;
       out.push({ kind: 'group', cells: head });
       for (const v of g.variants) {
         for (const l of v.lines) {
@@ -168,7 +182,7 @@ export function buildSheetRows(
       head[2] = g.description ?? '';
       head[9] = g.qtyNeeded;
       head[10] = g.stock;
-      head[12] = g.shortage;
+      head[13] = g.shortage;
       out.push({ kind: 'group', cells: head });
       for (const v of g.variants) {
         for (const l of v.lines) {
@@ -201,8 +215,8 @@ const C_SHORT_FONT = '#9E2B22';
 const C_TITLE_FONT = '#0C4D31';
 const C_SUBTITLE_FONT = '#6A6F66';
 
-const COL_WIDTHS = [11, 21, 32, 36, 15, 14, 16, 15, 15, 11, 8, 26, 10, 17, 30];
-const NUM_COLS = new Set([9, 10, 12]); // Qty Needed, Stock, Shortage (0-based)
+const COL_WIDTHS = [11, 21, 32, 36, 15, 14, 16, 15, 15, 11, 8, 12, 26, 10, 17, 30];
+const NUM_COLS = new Set([9, 10, 13]); // Qty Needed, Stock, Shortage (0-based)
 
 function subtitle(view: MrpView, asOf: string | null, warehouseLabel: string, filters: MrpFilters): string {
   const grouped = view.value === 'sofa'
@@ -240,7 +254,7 @@ function toXlsxCell(value: Cell, col: number, fill: string | null, groupBold: bo
   if (fill) cell.backgroundColor = fill;
   if (groupBold) { cell.fontWeight = 'bold'; cell.color = C_GROUP_FONT; cell.fontSize = 10; }
   // A shortage row's Shortage figure reads red + bold.
-  if (fill === C_SHORT_FILL && col === 12) { cell.fontWeight = 'bold'; cell.color = C_SHORT_FONT; }
+  if (fill === C_SHORT_FILL && col === 13) { cell.fontWeight = 'bold'; cell.color = C_SHORT_FONT; }
   return cell;
 }
 
