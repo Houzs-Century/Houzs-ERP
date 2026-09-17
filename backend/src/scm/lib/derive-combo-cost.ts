@@ -42,6 +42,19 @@ function dearestCell(grid: Record<string, number | null> | null | undefined): nu
 export function deriveMasterComboCostFromSuppliers(
   supplierCombos: readonly SupplierComboCost[],
 ): Record<string, number | null> | null {
+  return pickDearestSupplierCombo(supplierCombos)?.prices_by_height ?? null;
+}
+
+/**
+ * Like `deriveMasterComboCostFromSuppliers`, but also names WHICH supplier the
+ * dearest whole-set grid came from — for the Combo Pricing "cost auto-derived,
+ * anchored to <supplier>" badge. Same dearest-cell ranking + deterministic
+ * tie-break (main supplier, then lexically smaller id). Returns null when there
+ * are NO supplier combos (a gap the owner fills in the binding).
+ */
+export function pickDearestSupplierCombo(
+  supplierCombos: readonly SupplierComboCost[],
+): { supplierId: string; prices_by_height: Record<string, number | null> } | null {
   if (supplierCombos.length === 0) return null;
   let best = supplierCombos[0];
   let bestDear = dearestCell(best.prices_by_height);
@@ -57,7 +70,7 @@ export function deriveMasterComboCostFromSuppliers(
       bestDear = d;
     }
   }
-  return best.prices_by_height ?? {};
+  return { supplierId: best.supplier_id, prices_by_height: best.prices_by_height ?? {} };
 }
 
 /** True when two cost grids differ (worth appending a new master row). Compares
