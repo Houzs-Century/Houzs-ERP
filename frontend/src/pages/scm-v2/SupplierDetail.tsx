@@ -93,6 +93,7 @@ import styles from './SupplierDetail.module.css';
 import { exportBindingsCsv, ImportBindingsDialog } from './SupplierBindingsCsv';
 import { EffectiveDatedHistory } from '../../vendor/scm/components/EffectiveDatedHistory';
 import { todayMyt } from '../../vendor/scm/lib/dates';
+import { DateField } from '../../vendor/scm/components/DateField';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
@@ -2263,7 +2264,7 @@ const BindingPriceTimeline = ({ supplierId, binding }: { supplierId: string; bin
       <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: 'var(--space-3)' }}>
         <label className={styles.field} style={{ margin: 0 }}>
           <span className={styles.fieldLabel}>Effective from</span>
-          <input type="date" className={styles.fieldInput} value={effectiveFrom} onChange={(e) => setEffectiveFrom(e.target.value)} />
+          <DateField className={styles.fieldInput} value={effectiveFrom} onChange={(iso) => setEffectiveFrom(iso)} />
         </label>
         <label className={styles.field} style={{ margin: 0 }}>
           <span className={styles.fieldLabel}>Unit price</span>
