@@ -95,6 +95,50 @@ export function assrOrderPoText(row: unknown): string {
   return assrOrderPos(row).map((p) => p.po_number).join(" · ");
 }
 
+/**
+ * "PO" — the case's purchase-order references as ONE value for the list column:
+ * the SO's supplier "Order PO"s (`order_pos`, read-only) first, then the case's
+ * own service PO (`po_no`). Deduped so a service PO hand-typed as the order PO
+ * without its company prefix (`HC-PO-009918` vs `PO-009918`) shows once, not
+ * twice.
+ *
+ * DISPLAY ONLY. The two are never merged in the data: generate-po refuses once
+ * `po_no` is set and costing prices the repair from it. This is the one reader
+ * the desktop list uses so the column stops looking doubled; the detail screens
+ * still show the two apart, because that is where the service PO is edited.
+ */
+export function assrMergedPos(row: unknown): AssrOrderPo[] {
+  const out: AssrOrderPo[] = [];
+  const seen = new Set<string>();
+  const add = (id: string, po_number: string): void => {
+    const key = canonicalPoNumber(po_number);
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    out.push({ id, po_number });
+  };
+  for (const p of assrOrderPos(row)) add(p.id, p.po_number);
+  const r = (row ?? {}) as Record<string, unknown>;
+  const poNo = r.po_no ?? r.poNo;
+  if (typeof poNo === "string" && poNo.trim()) add("", poNo.trim());
+  return out;
+}
+
+/** "PO1 · PO2", same separator as assrOrderPoText; "" when the case has none. */
+export function assrMergedPoText(row: unknown): string {
+  return assrMergedPos(row).map((p) => p.po_number).join(" · ");
+}
+
+/** Canonical form for the dedupe above: upper-case, drop whitespace, and strip
+ *  a leading company-code prefix ("HC-", "2990-") when what remains is itself a
+ *  PO number, so a prefixed order PO and its bare-typed twin compare equal.
+ *  Anything that is not `<code>-PO…` is compared whole, so genuinely different
+ *  numbers (e.g. "APO/2609-001") never collapse. */
+function canonicalPoNumber(s: string): string {
+  const t = s.trim().toUpperCase().replace(/\s+/g, "");
+  const m = t.match(/^[A-Z0-9]+-(PO[-/].*)$/);
+  return m ? m[1] : t;
+}
+
 /** The PO detail page is scoped to the tab's ACTIVE company while Service Cases
  *  are cross-company, so the link carries the case's company as the
  *  `?company=` new-window seed (lib/activeCompany.ts consumeCompanyUrlSeed). */
