@@ -583,8 +583,8 @@ export function useScheduleBindingPrice() {
         { method: 'POST', body: JSON.stringify(body) },
       ),
     onSuccess: (_, vars) => {
-      qc.invalidateQueries({ queryKey: ['binding-price-history', vars.supplierId, vars.bindingId] });
-      qc.invalidateQueries({ queryKey: ['supplier-detail', vars.supplierId] });
+      void qc.invalidateQueries({ queryKey: ['binding-price-history', vars.supplierId, vars.bindingId] });
+      void qc.invalidateQueries({ queryKey: ['supplier-detail', vars.supplierId] });
     },
     onError: writeFailed,
   });

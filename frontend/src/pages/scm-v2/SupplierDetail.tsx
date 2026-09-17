@@ -2242,7 +2242,7 @@ const BindingPriceTimeline = ({ supplierId, binding }: { supplierId: string; bin
 
   const submit = () => {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(effectiveFrom)) {
-      notify({ title: 'Pick a valid date.', tone: 'error' });
+      void notify({ title: 'Pick a valid date.', tone: 'error' });
       return;
     }
     schedule.mutate(
