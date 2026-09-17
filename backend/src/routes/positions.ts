@@ -215,21 +215,20 @@ app.delete("/:id", requirePermission("users.manage"), async (c) => {
 app.get("/:id/page-access", requirePermission("users.read"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (!id) return c.json({ error: "Invalid ID." }, 400);
-  const db = getDb(c.env);
-
-  const posRow = await db
-    .select({ id: positions.id, name: positions.name, department_name: departments.name })
-    .from(positions)
-    .leftJoin(departments, eq(departments.id, positions.department_id))
-    .where(eq(positions.id, id))
-    .limit(1);
-  if (posRow.length === 0) return c.json({ error: "Position not found" }, 404);
+  const pos = await c.env.DB.prepare(
+    `SELECT p.name AS name, d.name AS department_name
+       FROM positions p LEFT JOIN departments d ON d.id = p.department_id
+      WHERE p.id = ?`,
+  )
+    .bind(id)
+    .first<{ name: string; department_name: string | null }>();
+  if (!pos) return c.json({ error: "Position not found" }, 404);
 
   const policyRow = await loadPositionPolicyRow(c.env, id);
-  const resolved = positionGrantsWildcard(posRow[0].name, policyRow)
+  const resolved = positionGrantsWildcard(pos.name, policyRow)
     ? fullAccessMap()
     : resolvePositionPolicy(
-        { position_name: posRow[0].name, department_name: posRow[0].department_name ?? null },
+        { position_name: pos.name, department_name: pos.department_name ?? null },
         policyRow,
       ).pageAccess;
 
