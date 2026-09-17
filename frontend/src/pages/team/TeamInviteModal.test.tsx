@@ -27,13 +27,18 @@ const roles = [
   { id: 7, name: "Super Admin", is_system: true, permissions: ["*"] },
 ] as unknown as Role[];
 
-function mount(salesDirScoped = false) {
+const POSITIONS = [
+  { id: 900, name: "Outsource Transporter", slug: "outsource_transporter", department_id: null, active: true },
+  { id: 901, name: "Storekeeper", slug: "storekeeper", department_id: null, active: true },
+] as unknown as import("../../types").Position[];
+
+function mount(salesDirScoped = false, positions: import("../../types").Position[] = []) {
   return render(
     <TeamInviteModal
       open
       onClose={() => {}}
       departments={[]}
-      positions={[]}
+      positions={positions}
       roles={roles}
       members={[]}
       companies={[]}
@@ -69,5 +74,18 @@ describe("TeamInviteModal — Role", () => {
   test("a scoped Sales Director gets no Role field", () => {
     mount(true);
     expect(screen.queryByLabelText("Role")).toBeNull();
+  });
+});
+
+describe("TeamInviteModal — outsourced Title nudge", () => {
+  test("warns when an outsource Title is picked, not for an internal one", () => {
+    mount(false, POSITIONS);
+    expect(screen.queryByText(/belongs in Fleet/i)).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Outsource Transporter" }));
+    expect(screen.getByText(/belongs in Fleet/i)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Storekeeper" }));
+    expect(screen.queryByText(/belongs in Fleet/i)).toBeNull();
   });
 });
