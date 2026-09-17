@@ -1,13 +1,15 @@
 // ---------------------------------------------------------------------------
 // assistantAccess.ts — FE mirror of the backend Assistant access gate.
 //
-// LOCKSTEP FIXTURE, not a second source. Under the vendored-clone architecture the
-// FE and BE share no import, so the only thing keeping them honest is that both
-// name the same positions and both have a test saying so. The BACKEND is the
-// control (routes/assistant.ts returns 403); this file exists so a denied user is
-// not shown a launcher / menu item that will 403 when tapped.
+// PRIMARY PATH is the server answer: when /auth/me carried a capability set,
+// canUseAssistant reads `org.assistant.use` (backend capabilities.ts composes the
+// very same canUseAssistant gate) and the two name lists below are NOT consulted.
+// They remain as the STALE-DEPLOY FALLBACK — a cached SPA shell talking to a
+// Worker that predates the capability — and as the lockstep fixture. The BACKEND
+// is the control (routes/assistant.ts returns 403); this file exists so a denied
+// user is not shown a launcher / menu item that will 403 when tapped.
 //
-// Two rules, mirrored from backend/src/services/assistant-scope.ts:
+// Two rules in the fallback, mirrored from backend/src/services/assistant-scope.ts:
 //   • DENY list   — field crew (owner 2026-07-18) + Sales (owner 2026-07-19,
 //                   "remove the Assistant from Sales first").
 //   • FAIL CLOSED — a NAMED position absent from the KNOWN list is denied, so a
@@ -56,8 +58,19 @@ const normalise = (n: string | null | undefined): string =>
   String(n ?? "").trim().toLowerCase().replace(/\s+/g, " ");
 
 export function canUseAssistant(
-  user: { permissions?: unknown; position_name?: string | null } | null | undefined,
+  user:
+    | {
+        permissions?: unknown;
+        position_name?: string | null;
+        /** The server-resolved capability set from /auth/me; when present its
+         *  `org.assistant.use` answer (the same backend gate) wins over the two
+         *  name lists below, which stay only as the stale-deploy fallback. */
+        capabilities?: Partial<Record<string, boolean>>;
+      }
+    | null
+    | undefined,
 ): boolean {
+  if (user?.capabilities) return user.capabilities["org.assistant.use"] === true;
   const perms = user?.permissions;
   const isWildcard = Array.isArray(perms)
     ? perms.includes("*")
