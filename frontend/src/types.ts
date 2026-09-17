@@ -212,6 +212,10 @@ export interface AssrCase {
   /** Who collects the faulty item in the Supplier stage — 'customer' =
    *  our logistics picks up from the customer's house. */
   pickup_by?: "customer" | "supplier" | null;
+  /** Who delivers the item back to the customer — 'own' = our lorry, which
+   *  syncs the DELIVERY leg to the HC Delivery sheet on its do_date; 'supplier'
+   *  = supplier / 3PL delivers, never synced. NULL = not yet confirmed. */
+  delivery_by?: "own" | "supplier" | null;
   items_ready_at?: string | null;
   stage_changed_at?: string | null;
   // Mig 081 — Verification card (gate between Under Verification and

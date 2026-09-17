@@ -24,8 +24,16 @@
 // ENDPOINTS (backend/src/routes/deliverySheetSync.ts, X-Intake-Key = SHEET_SYNC_KEY):
 //   GET  {ERP_BASE_URL}/api/delivery-sheet/so-since?since=<checkpoint>&limit=300
 //   POST {ERP_BASE_URL}/api/delivery-sheet/updates   {updates:[{DocNo, Remark4, ExpiryDate}]}
+//   GET  {ERP_BASE_URL}/api/delivery-sheet/assr-legs?since=<checkpoint>&limit=300
+//        Service-Case legs the ERP marked OWN-TEAM (inspection / pickup /
+//        delivery-back). Appended to the SAME regional tabs, DocNo =
+//        "<ASSR-NO>#<KIND>". Own-team gated by the ERP; the leg rows are never
+//        pushed back (erpCollectUpdates_ skips a DocNo with '#').
 
 const ERP_CHECKPOINT_PROP = "ERP_SYNC_CHECKPOINT";
+// Service-Case legs ride their own cursor so a stuck ASSR page never holds up
+// the Sales-Order pull and vice-versa.
+const ERP_ASSR_CHECKPOINT_PROP = "ERP_ASSR_CHECKPOINT";
 const ERP_PAGE_LIMIT = 300;
 // Apps Script kills a run at 6 minutes; ~300 rows write in about a minute.
 // The checkpoint advances per page, so a run that stops early resumes.
@@ -278,6 +286,9 @@ function erpCollectUpdates_(sheet, sConfig, all) {
     const row = data[i];
     const docNo = String(row[1] || "").trim();
     if (!docNo) continue;
+    // ASSR leg rows carry "<ASSR-NO>#<KIND>" and have no SO to update — never
+    // push them back (they would only ever come back as skipped 'no_order').
+    if (docNo.indexOf("#") >= 0) continue;
     if (!all && row[sConfig.statusCol - 1] !== "PENDING") continue;
     out.push({ rowIndex: i + 1, DocNo: docNo, Remark4: String(row[0] == null ? "" : row[0]), ExpiryDate: erpDateText_(row[14]) });
   }
@@ -395,12 +406,92 @@ function erpSeedFromSheet() {
 }
 
 /** Push first so a pending edit is never overwritten by the pull that follows. */
+/**
+ * Pull the Service-Case (ASSR) legs the ERP marked OWN-TEAM and write them to
+ * the regional tabs beside the Sales-Order rows. Each open case emits up to
+ * three legs (inspection / pickup / delivery-back), keyed
+ * DocNo = "<ASSR-NO>#<KIND>", so they never collide with an SO number and a
+ * re-pull updates the same row. There is NO readiness / append-from gate: the
+ * own-team mark IS the entry condition, applied by the ERP feed, so every
+ * returned record is written. Own cursor, own execution-log line.
+ */
+function runErpAssrPull(triggerType) {
+  const rid = Utilities.getUuid();
+  const startTime = new Date();
+  const props = PropertiesService.getScriptProperties();
+  const ss = getTargetSs();
+  const userEmail = Session.getActiveUser().getEmail();
+  let status = "PENDING";
+  let message = "";
+  let pulled = 0;
+  let failed = 0;
+
+  try {
+    const cfg = erpConfig_();
+    for (let page = 0; page < ERP_MAX_PAGES_PER_RUN; page++) {
+      const since = props.getProperty(ERP_ASSR_CHECKPOINT_PROP) || "";
+      Log.info(rid, "ERP ASSR pull page " + (page + 1) + " since [" + since + "]");
+      const res = erpFetch_(cfg, "/api/delivery-sheet/assr-legs?since=" + encodeURIComponent(since) + "&limit=" + ERP_PAGE_LIMIT, null, rid);
+      if (res.getResponseCode() !== 200) throw new Error("ERP returned " + res.getResponseCode() + ": " + res.getContentText().slice(0, 200));
+      const data = JSON.parse(res.getContentText());
+      const records = data.records || [];
+      if (records.length === 0) break;
+
+      const buckets = { WEST: [], EAST: [], SG: [] };
+      let dropped = 0;
+      records.forEach(function (o) {
+        o.Attention = "SEAMPIFY";
+        const region = erpRegionOf_(o);
+        if (region) buckets[region].push(o); else dropped++;
+      });
+      if (dropped) Log.warn(rid, dropped + " ASSR leg(s) had no region and were not written.");
+
+      let pageFail = 0;
+      ["WEST", "EAST", "SG"].forEach(function (region) {
+        if (!buckets[region].length) return;
+        const sheetName = erpSheetFor_(region);
+        const sheet = ss.getSheetByName(sheetName);
+        if (!sheet) return;
+        // writeDataToTargetSheet finds each DocNo (col B) or appends it, so an
+        // existing leg row is updated in place and a new one is appended.
+        const r = writeDataToTargetSheet(ss, sheetName, buckets[region], rid);
+        pulled += r.success;
+        pageFail += r.fail;
+      });
+      failed += pageFail;
+
+      // next_since / has_more count CASES, not legs (see the /assr-legs route),
+      // so the checkpoint advances one case-page at a time exactly like the SO pull.
+      if (pageFail === 0 && data.next_since) {
+        props.setProperty(ERP_ASSR_CHECKPOINT_PROP, data.next_since);
+        Log.info(rid, "ASSR checkpoint advanced to " + data.next_since);
+      } else if (pageFail > 0) {
+        Log.warn(rid, pageFail + " ASSR leg(s) failed on this page. Checkpoint NOT advanced; stopping.");
+        break;
+      }
+      if (!data.has_more) break;
+    }
+    if (pulled === 0 && failed === 0) { status = "SKIPPED"; message = "No ASSR legs changed since the checkpoint."; }
+    else { status = failed > 0 ? "PARTIAL" : "SYNCED"; message = "Pulled " + pulled + " ASSR leg(s) from the ERP. Failed " + failed + "."; }
+  } catch (e) {
+    status = "FAILED";
+    message = e.message;
+    Log.error(rid, "ERP ASSR pull failed", e);
+  } finally {
+    Log.info(rid, "ERP ASSR pull finished: " + status + " - " + message);
+    recordExecutionLog(ss, rid, triggerType === "MANUAL" ? "ERP_ASSR_PULL_MANUAL" : "ERP_ASSR_PULL", startTime, new Date(), status, message, userEmail);
+    if (triggerType === "MANUAL") SpreadsheetApp.getUi().alert("ERP ASSR pull " + status + "\n" + message);
+  }
+}
+
 function scheduledErpSync() {
   pushUpdatesToErp("SCHEDULED");
   runErpPullProcess("SCHEDULED");
+  runErpAssrPull("SCHEDULED");
 }
 function manualErpPull() { runErpPullProcess("MANUAL"); }
 function manualErpPush() { pushUpdatesToErp("MANUAL"); }
+function manualErpAssrPull() { runErpAssrPull("MANUAL"); }
 
 /** Clears the ERP checkpoint so the next pull re-reads every order. */
 function resetErpCheckpoint() {

@@ -995,6 +995,11 @@ const PATCH_FIELDS = [
   // Lives on the Under Verification stage since mig 0105.
   "inspection_by",
   "pickup_by",
+  // Who delivers the item back to the customer: 'own' = our team (the leg
+  // syncs to the HC Delivery sheet), 'supplier' = supplier/3PL (never synced),
+  // NULL = not yet confirmed. Mirrors inspection_by / pickup_by as the
+  // own-team gate for the delivery-back leg.
+  "delivery_by",
   // Mig 0105 — QC-on-receipt result (pass/fail/na), shown next to
   // qc_receipt_date in the Verification stage panel.
   "qc_issue_result",
@@ -1027,6 +1032,7 @@ const FIELD_LABELS: Record<string, string> = {
   verification_outcome: "Verification Outcome", verified_root_cause: "Verified Root Cause",
   qc_receipt_date: "QC Receipt Date", goods_returned_note: "Goods Returned Note",
   supplier_service_note: "Supplier Service Note", inspection_by: "Inspection By", pickup_by: "Pickup By",
+  delivery_by: "Delivery By",
   qc_issue_result: "QC Result",
 };
 // Only DATE and REMARK/note edits are worth a timeline entry (owner

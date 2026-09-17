@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 import app from "../src/routes/deliverySheetSync";
 import { isSheetReady, normSheetDate, parseFromDate, parseLimit, parseSince, sheetReadinessWording, toSheetRecord, type FeedHeadRow } from "../src/lib/delivery-sheet-feed";
 import { toOutstandingPoRecord, type PoFeedRow } from "../src/lib/delivery-sheet-po-feed";
+import { toAssrLegRecords, type AssrFeedRow } from "../src/lib/delivery-sheet-assr-feed";
 
 /* Phase 3's write leg goes through the PO editor's own writers (supplier-date
  * cascade, downstream lock, AutoCount enqueue), which need a Supabase client;
@@ -617,5 +618,117 @@ describe("the READY gate", () => {
     expect((await app.request("/ready-open", { headers: { "X-Intake-Key": KEY } }, env(db))).status).toBe(400);
     expect(seen).toHaveLength(0);
     expect((await app.request("/ready-open?from=2026-09-15", { headers: { "X-Intake-Key": "wrong" } }, env(db))).status).toBe(401);
+  });
+});
+
+/* Owner 2026-09-17: a Service Case's inspection / pickup / delivery legs reach
+ * the sheet only when OUR OWN team drives them. The SQL runs against real
+ * Postgres in tests-pg/deliverySheetAssrFeedSql.pg.test.ts; here the mapper's
+ * expansion and the route's shape / gating are pinned. */
+const ASSR: AssrFeedRow = {
+  assr_no: "ASSR/2609-012",
+  status: "In Progress",
+  customer_name: "Wendy",
+  phone: "60127712155",
+  location: "KL WAREHOUSE",
+  sales_agent: "LUCAS",
+  delivery_order: "HC-DO-2609-050",
+  addr1: "12 Jalan Satu",
+  addr2: "Taman Dua",
+  addr3: null,
+  addr4: "Selangor",
+  inspection_by: "own",
+  inspection_visit_at: "2026-09-20",
+  pickup_by: "customer",
+  customer_pickup_at: "2026-09-21",
+  delivery_by: "own",
+  do_date: "2026-09-25",
+  last_modified_text: "2026-09-17 09:09:28.123456+00",
+};
+
+describe("toAssrLegRecords — one own-team leg per set date, in the sheet's record shape", () => {
+  test("all three legs: keyed <ASSR-NO>#<KIND>, each on its own date, only DELIVERY carries the DO", () => {
+    const legs = toAssrLegRecords(ASSR);
+    expect(legs.map((l) => l.Kind)).toEqual(["INSPECT", "PICKUP", "DELIVERY"]);
+    const by = Object.fromEntries(legs.map((l) => [l.Kind, l]));
+    expect(by.INSPECT).toMatchObject({
+      DocNo: "ASSR/2609-012#INSPECT", ErpDocNo: "ASSR/2609-012", Remark2: "SERVICE INSPECTION",
+      SalesExemptionExpiryDate: "2026-09-20", TransferTo: null, DebtorName: "Wendy", Phone1: "60127712155",
+      SalesLocation: "KL", SalesAgent: "LUCAS", Region: "WEST", Status: "PENDING", Ready: false,
+      InvAddr1: "12 Jalan Satu", InvAddr4: "Selangor", Total: 0, SOUDF_BALANCE: 0, LastModified: ASSR.last_modified_text,
+    });
+    expect(by.PICKUP).toMatchObject({ DocNo: "ASSR/2609-012#PICKUP", Remark2: "SERVICE PICKUP", SalesExemptionExpiryDate: "2026-09-21", TransferTo: null });
+    expect(by.DELIVERY).toMatchObject({ DocNo: "ASSR/2609-012#DELIVERY", Remark2: "SERVICE DELIVERY", SalesExemptionExpiryDate: "2026-09-25", TransferTo: "HC-DO-2609-050" });
+  });
+
+  test("the own-team gate is per leg: supplier / 3PL / unconfirmed or a missing date emits nothing", () => {
+    // Every leg supplier-driven → nothing, even with all dates set.
+    expect(toAssrLegRecords({ ...ASSR, inspection_by: "supplier", pickup_by: "supplier", delivery_by: "supplier" })).toEqual([]);
+    // Not-yet-confirmed (null markers) → nothing.
+    expect(toAssrLegRecords({ ...ASSR, inspection_by: null, pickup_by: null, delivery_by: null })).toEqual([]);
+    // Own-team but no date → nothing (the date is what the team schedules against).
+    expect(toAssrLegRecords({ ...ASSR, inspection_visit_at: null, pickup_by: null, delivery_by: null })).toEqual([]);
+    // Only own-team pickup set → exactly the PICKUP leg.
+    expect(toAssrLegRecords({ ...ASSR, inspection_by: null, delivery_by: null }).map((l) => l.Kind)).toEqual(["PICKUP"]);
+  });
+
+  test("a Singapore address routes the legs to SG", () => {
+    expect(toAssrLegRecords({ ...ASSR, addr3: "SINGAPORE 408600" })[0]!.Region).toBe("SG");
+  });
+});
+
+describe("GET /assr-legs", () => {
+  test("wrong key 401, bad since 400, no HOUZS row 503 — all before any case is read", async () => {
+    const bad = fakeDb(() => []);
+    expect((await app.request("/assr-legs", { headers: { "X-Intake-Key": "wrong" } }, env(bad.db))).status).toBe(401);
+    expect(bad.seen).toHaveLength(0);
+    expect((await app.request("/assr-legs?since=last%20week", { headers: { "X-Intake-Key": KEY } }, env(bad.db))).status).toBe(400);
+    const noco = fakeDb((sql) => (/FROM companies/i.test(sql) ? null : []));
+    expect((await app.request("/assr-legs", { headers: { "X-Intake-Key": KEY } }, env(noco.db))).status).toBe(503);
+  });
+
+  test("reads the secret's company, own-team gated, expands each case to its legs and pages by case", async () => {
+    const { db, seen } = fakeDb((sql) => {
+      if (/FROM companies/i.test(sql)) return { id: HOUZS };
+      if (/FROM assr_cases/.test(sql)) return [ASSR];
+      return [];
+    });
+    const res = await app.request("/assr-legs?since=2026-09-01%2000:00:00&limit=100", { headers: { "X-Intake-Key": KEY } }, env(db));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    expect(body.cases).toBe(1);
+    expect(body.count).toBe(3);
+    expect(body.records.map((r: any) => r.DocNo)).toEqual(["ASSR/2609-012#INSPECT", "ASSR/2609-012#PICKUP", "ASSR/2609-012#DELIVERY"]);
+    expect(body.next_since).toBe(ASSR.last_modified_text);
+    expect(body.has_more).toBe(false);
+    const feed = seen.find((s) => /FROM assr_cases/.test(s.sql))!;
+    expect(feed.binds).toEqual([HOUZS, "2026-09-01 00:00:00", 100]);
+    expect(feed.sql).toContain("company_id = ?1");
+    expect(feed.sql).toContain("closed_at IS NULL");
+    expect(feed.sql).toContain("archived_at IS NULL");
+    expect(feed.sql).toMatch(/inspection_by\s*=\s*'own'/);
+    expect(feed.sql).toMatch(/pickup_by\s*=\s*'customer'/);
+    expect(feed.sql).toMatch(/delivery_by\s*=\s*'own'/);
+  });
+
+  test("has_more is measured in cases: a full case page asks the sheet to come back", async () => {
+    const { db } = fakeDb((sql) => {
+      if (/FROM companies/i.test(sql)) return { id: HOUZS };
+      if (/FROM assr_cases/.test(sql)) return [ASSR];
+      return [];
+    });
+    const res = await app.request("/assr-legs?since=2026-09-01%2000:00:00&limit=1", { headers: { "X-Intake-Key": KEY } }, env(db));
+    const body = (await res.json()) as any;
+    expect(body.cases).toBe(1);
+    expect(body.has_more).toBe(true);
+  });
+
+  test("a failed read is 502, not an empty page that would advance the checkpoint over unseen cases", async () => {
+    const { db } = fakeDb((sql) => {
+      if (/FROM companies/i.test(sql)) return { id: HOUZS };
+      if (/FROM assr_cases/.test(sql)) throw new Error("connection reset");
+      return [];
+    });
+    expect((await app.request("/assr-legs", { headers: { "X-Intake-Key": KEY } }, env(db))).status).toBe(502);
   });
 });
