@@ -23,6 +23,7 @@ import { paginateAll } from '../lib/paginate-all';
 import { findSkuUsage, usageCheckFailedBody } from '../lib/sku-usage';
 import { productToBindingPatch, type ProductSeatCost } from '../lib/cost-anchor-sync';
 import { autoDeriveEnabled } from '../lib/auto-derive-cost';
+import { resolveProductCostAnchor } from '../lib/derive-product-cost-from-suppliers';
 import { moduleCodeFromSku, normalizeSofaTier, parseDefaultFreeGifts } from '../shared';
 import { canWriteScmConfig, canViewScmProductCost } from '../lib/houzs-perms';
 import { PRODUCT_FINANCE_KEYS, stripProductPriceHistory } from '../lib/finance-keys';
@@ -1125,7 +1126,7 @@ mfgProducts.get('/:id/suppliers', async (c) => {
   const { data, error } = await supabase
     .from('supplier_material_bindings')
     .select(`
-      id, supplier_id, supplier_sku, unit_price_sen, currency,
+      id, supplier_id, supplier_sku, unit_price_sen, price_matrix, currency,
       lead_time_days, moq, is_main_supplier, notes,
       suppliers(code, name, phone)
     `)
@@ -1135,7 +1136,44 @@ mfgProducts.get('/:id/suppliers', async (c) => {
     .order('unit_price_sen', { ascending: true });
 
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  return c.json({ product, suppliers: data ?? [] });
+
+  /* The COST ANCHOR (auto-derive stage 2b, display side). Classify the same
+     bindings the write path runs (resolveProductCostAnchor -> the one audited
+     rule) so the drawer can name which supplier the cost is anchored to and
+     whether the suppliers agree — without a second copy of the money logic. The
+     cost figure itself is finance data, so it is stripped for callers who cannot
+     view SKU cost, exactly like GET /:id/price-history; the anchor supplier NAME
+     and STATE are not the cost value and stay visible so a gap is still spottable. */
+  const rows = (data ?? []) as Array<{
+    supplier_id: string;
+    is_main_supplier: boolean | null;
+    unit_price_sen: number | null;
+    price_matrix: unknown;
+    suppliers?: { name?: string | null } | null;
+  }>;
+  const resolved = resolveProductCostAnchor(
+    (product as { category: string | null }).category,
+    rows.map((r) => ({
+      supplier_id: r.supplier_id,
+      is_main_supplier: r.is_main_supplier,
+      unit_price_sen: r.unit_price_sen,
+      price_matrix: r.price_matrix,
+    })),
+  );
+  const anchorSupplierName =
+    resolved.anchorSupplierId != null
+      ? rows.find((r) => r.supplier_id === resolved.anchorSupplierId)?.suppliers?.name ?? null
+      : null;
+  const anchor = {
+    state: resolved.state,
+    reason: resolved.reason,
+    anchorSupplierId: resolved.anchorSupplierId,
+    anchorSupplierName,
+    costSen: canViewScmProductCost(c) ? resolved.costSen : null,
+    costedCount: resolved.costedCount,
+    totalCount: resolved.totalCount,
+  };
+  return c.json({ product, suppliers: data ?? [], anchor });
 });
 
 // ── Effective-dated SELLING price (Pricing "Option B", ph.2) ──────────────────
