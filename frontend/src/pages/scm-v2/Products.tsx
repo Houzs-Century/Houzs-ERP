@@ -30,7 +30,7 @@
 // ----------------------------------------------------------------------------
 
 import { useCallback, useEffect, useMemo, useRef, useState, type HTMLAttributes, type ReactNode } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import {
   Download,
   Upload,
@@ -81,6 +81,7 @@ import {
   type SeatHeightPrice,
   type SofaPriceTier,
   type ProductSupplierRow,
+  type ProductCostAnchor,
   type MfgProductPriceChangeRow,
   type SpecialAddonRow,
   type SpecialAddonInput,
@@ -88,6 +89,8 @@ import {
   type SpecialAddonsHistoryRow, mfgCategoryLabel,
 } from '../../vendor/scm/lib/mfg-products-queries';
 import { CategorySwapSelect } from '../../vendor/scm/components/CategorySwapSelect';
+import { CostAnchorCard } from './CostAnchorCard';
+import { ProductPriceTimeline } from './ProductPriceTimeline';
 import { ImportModelsMoved } from '../../vendor/scm/components/ImportModelsMoved';
 import { MFG_CATEGORY_LABELS, MFG_PRODUCT_CATEGORIES } from '../../vendor/shared/product-categories';
 import { useStaffLookup } from '../../hooks/useStaffLookup';
@@ -112,7 +115,6 @@ import { useBrandingPool } from '../../vendor/scm/lib/product-models-queries';
 import { useQueryClient } from '@tanstack/react-query';
 import { parseMoneyToSen } from '../../lib/money';
 import styles from './Products.module.css';
-import { DateField } from "../../vendor/scm/components/DateField";
 import { normalizeImportHeader, looksLikeGridExport, mapGridHeaders, isGridNoPrice, importFailureMessage } from './products-import-headers';
 import { ProductRow, fmtRm, fmtUnit, priceForHeightTier, useSkuGridOrder, saveStagedEdits, stageRowEdit, type ProductEditPatch } from './products/SkuEditRow';
 
@@ -3627,7 +3629,14 @@ const NewSkuDrawer = ({ onClose }: { onClose: () => void }) => {
       price1Sen: isMattress || isService ? null : toSen(form.price1),
       costPriceSen: toSen(form.costPrice) ?? 0,
       unitM3Milli: toMilli(form.unitM3),
-    }, { onSuccess: onClose });
+    }, {
+      onSuccess: onClose,
+      // Surface the server refusal (duplicate code, bad category, …) instead of
+      // failing silently. This create was only ever "handled" because a sibling
+      // mutation named `create` in the same file carried an onError; that sibling
+      // (ProductPriceTimeline) now lives in its own file, so make it explicit.
+      onError: (e) => notify({ title: e instanceof Error ? e.message : 'Could not create the SKU.', tone: 'error' }),
+    });
   };
 
   return (
@@ -3719,165 +3728,21 @@ const Field = ({
 
 const fmtRmSen = (centi: number): string => fmtSen(centi);
 
-/* Effective-dated SELLING price timeline (Pricing "Option B", ph.2). Lives on the
-   SKU detail drawer: shows the current price, a "Next: RM X from <date>" badge for
-   the pending change, the dated history (date · RM · who), and an "add future
-   price" form. Money is integer sen (MoneyInput + fmtSen). Mirrors the
-   maintenance-config effective-date editor's shape.
-
-   NOTE the price amount is held in a REF, not just state: MoneyInput commits on
-   blur, and a click on Schedule blurs the field first — reading the ref in the
-   handler avoids the stale-closure race a disabled-by-amount button would hit. */
-const ProductPriceTimeline = ({ row }: { row: MfgProductRow }) => {
-  const q = useMfgProductPriceChanges(row.id);
-  const create = useCreateMfgProductPriceChange();
-  const [effDate, setEffDate] = useState(todayMyt());
-  const [amountSen, setAmountSen] = useState<number | null>(null);
-  const amountRef = useRef<number | null>(null);
-  const [notes, setNotes] = useState('');
-  const [formError, setFormError] = useState<string | null>(null);
-
-  const today = todayMyt();
-  const history = q.data?.history ?? [];
-  const pending = q.data?.pending ?? null;
-  const current = q.data?.currentSellPriceSen ?? row.sell_price_sen ?? null;
-
-  const setAmount = (sen: number | null) => { amountRef.current = sen; setAmountSen(sen); };
-  const save = () => {
-    setFormError(null);
-    const amount = amountRef.current;
-    if (!effDate) { setFormError('Pick an effective date.'); return; }
-    if (amount == null || !Number.isInteger(amount) || amount < 0) { setFormError('Enter a price.'); return; }
-    create.mutate(
-      { id: row.id, effectiveFrom: effDate, sellPriceSen: amount, notes: notes.trim() || undefined },
-      {
-        onSuccess: () => { setAmount(null); setNotes(''); setEffDate(todayMyt()); },
-        onError: (e) => setFormError(e instanceof Error ? e.message : 'Could not schedule the price.'),
-      },
-    );
-  };
-
-  const h3 = {
-    fontSize: 'var(--fs-12)', fontWeight: 700, textTransform: 'uppercase' as const,
-    letterSpacing: '0.06em', color: '#767b6e', marginBottom: 'var(--space-2)',
-  };
-  const fieldLabel = {
-    fontSize: 'var(--fs-11)', fontWeight: 700, textTransform: 'uppercase' as const,
-    letterSpacing: '0.04em', color: '#767b6e', marginBottom: 4, display: 'block',
-  };
-  const inputBox = {
-    background: '#fff', border: '1px solid #c2c6bd', borderRadius: 'var(--radius-sm)',
-    padding: '4px 8px', fontSize: 'var(--fs-13)', outline: 'none',
-  };
-
-  return (
-    <section style={{ marginBottom: 'var(--space-5)' }}>
-      <h3 style={h3}>Selling price timeline</h3>
-
-      {/* Current + pending badges — "today = current, <future> = new". */}
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 'var(--space-3)' }}>
-        <span style={{
-          display: 'inline-flex', alignItems: 'baseline', gap: 6, padding: '3px 10px',
-          background: '#fff', border: '1px solid #c2c6bd', borderRadius: 'var(--radius-pill)',
-          fontSize: 'var(--fs-12)', color: '#3a3f36',
-        }}>
-          <span style={{ color: '#767b6e', textTransform: 'uppercase', letterSpacing: '0.04em', fontSize: 'var(--fs-11)', fontWeight: 700 }}>Now</span>
-          {fmtSen(current)}
-        </span>
-        {pending && (
-          <span style={{
-            display: 'inline-flex', alignItems: 'baseline', gap: 6, padding: '3px 10px',
-            background: 'rgba(232, 107, 58, 0.08)', border: '1px solid rgba(232, 107, 58, 0.35)',
-            borderRadius: 'var(--radius-pill)', fontSize: 'var(--fs-12)', color: '#b64a1e',
-          }}>
-            <span style={{ textTransform: 'uppercase', letterSpacing: '0.04em', fontSize: 'var(--fs-11)', fontWeight: 700 }}>Next</span>
-            {fmtSen(pending.sellPriceSen)} from {pending.effectiveFrom}
-          </span>
-        )}
-      </div>
-
-      {/* Add a future price. */}
-      <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: 'var(--space-3)' }}>
-        <div>
-          <label style={fieldLabel}>Effective from</label>
-          <DateField value={effDate} onChange={(iso) => setEffDate(iso)} style={{ ...inputBox, fontFamily: 'var(--font-mono)' }}/>
-        </div>
-        <div>
-          <label style={fieldLabel}>New price</label>
-          <MoneyInput
-            bare
-            valueSen={amountSen}
-            onCommit={setAmount}
-            allowBlank
-            selectOnFocus
-            placeholder="0.00"
-            style={{ ...inputBox, width: 120, textAlign: 'right' }}
-          />
-        </div>
-        <div style={{ flex: 1, minWidth: 160 }}>
-          <label style={fieldLabel}>Note (optional)</label>
-          <input
-            type="text"
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            placeholder="e.g. new-year list price"
-            style={{ ...inputBox, width: '100%' }}
-          />
-        </div>
-        <Button variant="primary" onClick={save} disabled={create.isPending}>
-          {create.isPending ? 'Scheduling…' : 'Schedule price'}
-        </Button>
-      </div>
-      {formError && (
-        <p style={{ margin: '0 0 var(--space-3)', color: '#b3261e', fontSize: 'var(--fs-12)' }}>{formError}</p>
-      )}
-
-      {/* Dated history — newest first. */}
-      {q.isLoading ? (
-        <p style={{ color: '#767b6e', fontSize: 'var(--fs-13)' }}>Loading price timeline…</p>
-      ) : history.length === 0 ? (
-        <p style={{ color: '#767b6e', fontSize: 'var(--fs-13)' }}>
-          No scheduled prices yet. The flat price {fmtSen(current)} applies until you schedule one.
-        </p>
-      ) : (
-        <table className={styles.table} style={{ width: '100%' }}>
-          <thead>
-            <tr>
-              <th>Effective from</th>
-              <th style={{ textAlign: 'right' }}>Price</th>
-              <th>Set by</th>
-              <th>Note</th>
-            </tr>
-          </thead>
-          <tbody>
-            {history.map((h: MfgProductPriceChangeRow) => {
-              const isFuture = h.effective_from > today;
-              return (
-                <tr key={h.id} style={{ background: isFuture ? 'rgba(232, 107, 58, 0.06)' : undefined }}>
-                  <td>
-                    <span style={{ fontFamily: 'var(--font-mono)' }}>{h.effective_from}</span>
-                    {isFuture && (
-                      <span className={styles.codeChip} style={{ marginLeft: 6, fontSize: 'var(--fs-11)' }}>Scheduled</span>
-                    )}
-                  </td>
-                  <td className={styles.numCell}>{fmtSen(h.sell_price_sen)}</td>
-                  <td style={{ color: '#3a3f36' }}>{h.created_by || '—'}</td>
-                  <td style={{ color: '#767b6e', fontSize: 'var(--fs-12)' }}>{h.notes || ''}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      )}
-    </section>
-  );
-};
 
 const ProductSuppliersDrawer = ({
   row, onClose,
 }: { row: MfgProductRow; onClose: () => void }) => {
   const q = useMfgProductSuppliers(row.id);
   const suppliers = q.data?.suppliers ?? [];
+  const anchor = q.data?.anchor ?? null;
+  // Cost is fixed on the SUPPLIER side (owner ruling); the anchor card's CTA and
+  // an empty-gap "Fix in Binding" jump to that supplier so the price is fixed at
+  // its source. Closing the drawer first keeps the back-stack clean.
+  const navigate = useNavigate();
+  const openSupplier = (supplierId: string | null) => {
+    onClose();
+    navigate(supplierId ? `/scm/suppliers/${supplierId}` : '/scm/suppliers');
+  };
   // 0166 — editable SKU barcode. Local draft commits on Enter (no blur-auto-save,
   // Commander 2026-06-15) via the shared PATCH hook (verified-save reads back).
   const update = useUpdateMfgProductPrices();
@@ -3915,9 +3780,12 @@ const ProductSuppliersDrawer = ({
             {!row.model_id
               ? <CategorySwapSelect kind="sku" id={row.id} category={row.category} />
               : (
-                <p style={{ marginTop: 4, fontSize: 'var(--fs-12)', color: '#767b6e' }}>
-                  Category: {mfgCategoryLabel(row.category)} — this SKU belongs to model {row.base_model ?? ''}; change the category on the model (Modular tab) and its SKUs move with it.
-                </p>
+                <div style={{ marginTop: 4 }}>
+                  <CategorySwapSelect kind="model" id={row.model_id} category={row.category} />
+                  <p style={{ marginTop: 2, fontSize: 'var(--fs-11)', color: '#767b6e' }}>
+                    Belongs to model {row.base_model ?? ''} — changing the category moves the whole model and all its SKUs.
+                  </p>
+                </div>
               )}
             {/* 0166 — barcode lives on the SKU detail drawer (the SKU Master
                 grid column is read-only + default-hidden). Saves on Enter. */}
@@ -3996,6 +3864,14 @@ const ProductSuppliersDrawer = ({
               </section>
             );
           })()}
+
+          {anchor && (
+            <CostAnchorCard
+              anchor={anchor}
+              onOpenSupplier={openSupplier}
+              fallbackSupplierId={anchor.anchorSupplierId ?? (suppliers.length > 0 ? suppliers[0].supplier_id : null)}
+            />
+          )}
 
           <ProductPriceTimeline row={row} />
 
