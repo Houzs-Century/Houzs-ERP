@@ -4131,8 +4131,7 @@ function ProjectSpecStrip({
             RENTAL and nothing else — "other details keep hidden behind edit".
             Venue, State, Organizer and Contractor were on it too, which pushed
             the numbers the owner actually checks off the row entirely.
-            Booth came back on 2026-09-09 — it reads at a glance like the rest.
-            Clicking Edit still reveals every field. */}
+            Booth came back 2026-09-09. Edit still reveals every field. */}
         {editing && (<>
         <SpecCell label="Brand">
           {editing ? (
