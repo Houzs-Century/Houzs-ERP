@@ -16,7 +16,7 @@ export function DeliveryByCard({
   patch,
 }: {
   c: { delivery_by?: string | null; do_date?: string | null };
-  patch: (body: Record<string, unknown>) => void;
+  patch: (body: Record<string, unknown>) => Promise<void>;
 }) {
   return (
     <div className="mb-3 space-y-2 rounded-md border border-border-subtle bg-surface px-3 py-2.5">
