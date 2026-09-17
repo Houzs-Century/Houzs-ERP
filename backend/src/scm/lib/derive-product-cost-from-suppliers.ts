@@ -271,6 +271,25 @@ export type CostAnchorResult = {
 };
 
 /**
+ * ONE supplier binding's comparable cost scalar (sen), per the SKU's category
+ * lane — the same "dearness" the anchor ranks on. Used by the supplier-price
+ * History tab to decide whether a supplier RAISED or LOWERED its price between
+ * two effective dates, so the direction arrow is computed on the one audited
+ * rule rather than a hand-rolled comparison that would disagree with the anchor.
+ */
+export function comparableCostSen(
+  category: AnchorCategory | null,
+  binding: Pick<SupplierBindingCost, 'unit_price_sen' | 'price_matrix'>,
+): number {
+  return dearnessSen(laneFor(category), {
+    supplier_id: '',
+    is_main_supplier: null,
+    unit_price_sen: binding.unit_price_sen,
+    price_matrix: binding.price_matrix,
+  });
+}
+
+/**
  * Classify a SKU's supplier bindings for DISPLAY: which supplier anchors the
  * derived cost and in what state. Runs the exact rule the write path runs
  * (deriveProductCostFromSuppliers), so the drawer can never disagree with the

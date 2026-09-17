@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   deriveProductCostFromSuppliers,
   resolveProductCostAnchor,
+  comparableCostSen,
   type DeriveResult,
   type SupplierBindingCost,
 } from './derive-product-cost-from-suppliers';
@@ -289,5 +290,25 @@ describe('resolveProductCostAnchor — the drawer/SKU-master display state', () 
     expect(r.state).toBe('ok');
     expect(r.anchorSupplierId).toBe('only');
     expect(r.costSen).toBe(110000); // base_price_sen (flat) null -> dearnessSen = dearest cell across the grid
+  });
+});
+
+describe('comparableCostSen — the History supplier-price direction scalar', () => {
+  it('FLAT: the flat unit price is the comparable', () => {
+    expect(comparableCostSen('MATTRESS', { unit_price_sen: 5200, price_matrix: null })).toBe(5200);
+  });
+  it('BEDFRAME: ranks on P2 (cost ref), falling back to P1 then flat', () => {
+    expect(comparableCostSen('BEDFRAME', { unit_price_sen: 0, price_matrix: { P2: 55000, P1: 50000 } })).toBe(55000);
+    expect(comparableCostSen('BEDFRAME', { unit_price_sen: 0, price_matrix: { P1: 50000 } })).toBe(50000);
+  });
+  it('SOFA: the dearest cell across the whole grid', () => {
+    expect(
+      comparableCostSen('SOFA', { unit_price_sen: null, price_matrix: { '24': { P2: 105000, P3: 110000 }, '30': { P2: 90000 } } }),
+    ).toBe(110000);
+  });
+  it('is directional: a later dearer set compares GREATER (raised)', () => {
+    const before = comparableCostSen('ACCESSORY', { unit_price_sen: 1500, price_matrix: null });
+    const after = comparableCostSen('ACCESSORY', { unit_price_sen: 1800, price_matrix: null });
+    expect(after).toBeGreaterThan(before);
   });
 });
