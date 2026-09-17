@@ -121,7 +121,7 @@ import { Forbidden } from "./Forbidden";
 import { PrintPreviewModal, usePrintPreview } from "../components/scm-v2/PrintPreviewModal";
 import { defaultBrandingForCompany, HOUZS_COMPANY_CODE } from "../lib/branding";
 import { resolutionRoute, isStageActive, assrSubStatus, assrSubStatusAddsInfo, assrSubStatusLabel, ASSR_STAGES, ASSR_SUB_STATUSES } from "../vendor/scm/lib/assr/stages";
-import { ASSR_ISSUE_CATEGORIES, ASSR_NOTE_AUDIENCES, assrNoteIsCustomerVisible, assrOrderPoText, type AssrNoteAudience } from "../vendor/scm/lib/assr/case-fields";
+import { ASSR_ISSUE_CATEGORIES, ASSR_NOTE_AUDIENCES, assrNoteIsCustomerVisible, assrMergedPoText, type AssrNoteAudience } from "../vendor/scm/lib/assr/case-fields";
 import { AssrOrderPoLine } from "../components/AssrOrderPoLine";
 import { ASSR_STAGE_LABEL } from "../vendor/scm/lib/assr-stage-labels";
 import type {
@@ -721,20 +721,15 @@ function CasesView({
       getValue: (r) => r.delivery_order || r.do_numbers,
     },
     {
-      key: "order_pos",
+      key: "po",
       filterable: true,
-      label: "Order PO",
-      // Supplier POs raised from the case's SO (server merge). PO No below is the case's own service PO.
-      render: (r) => <span className="font-mono text-xs">{assrOrderPoText(r) || "—"}</span>,
-      getValue: (r) => assrOrderPoText(r),
-    },
-    {
-      key: "po_no",
-      filterable: true,
-      label: "PO No",
-      // The customer's purchase-order reference on the case (Nico 2026-08-14).
-      render: (r) => <span className="font-mono text-xs">{r.po_no || "—"}</span>,
-      getValue: (r) => r.po_no,
+      label: "PO",
+      // ONE column for both PO facts on a case: the SO's supplier "Order PO"s
+      // (order_pos, read-only) and the case's own service PO (po_no), deduped
+      // so a service PO typed without its company prefix does not show twice.
+      // The two stay separate fields — the detail panel edits/mints po_no.
+      render: (r) => <span className="font-mono text-xs">{assrMergedPoText(r) || "—"}</span>,
+      getValue: (r) => assrMergedPoText(r),
     },
     {
       key: "customer_name",
