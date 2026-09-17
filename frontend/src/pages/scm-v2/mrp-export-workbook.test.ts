@@ -116,6 +116,7 @@ describe('buildSheetRows — SKU-grouped (non-sofa)', () => {
     expect(g.cells[idx('Description')]).toBe('AKEMI MATTRESS (Q)');
     expect(g.cells[idx('Qty Needed')]).toBe(2);
     expect(g.cells[idx('Stock')]).toBe(2);
+    expect(g.cells[idx('Coverage')]).toBe(0); // rollup — qtyNeeded(2) - poOutstanding(1) - shortage(1)
     expect(g.cells[idx('PO Outstanding')]).toBe(1); // rollup — how much of it is below on a PO
     expect(g.cells[idx('Shortage')]).toBe(1);
     expect(g.cells[idx('Warehouse')]).toBeNull(); // A blank on a non-sofa group header

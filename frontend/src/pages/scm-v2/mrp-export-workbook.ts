@@ -15,9 +15,16 @@
 // The header row is dark green; group headers light green; any SHORTAGE demand
 // row is tinted light red. Coverage and PO Outstanding are TWO columns (v8,
 // owner-approved 2026-09-17 — matches the on-screen group row's own Stock /
-// PO Outstanding / Shortage split): Coverage carries "stock" / "needs PO",
-// PO Outstanding carries "HC-PO-xxxx  ·  ETA dd/mm/yyyy" for a covered line —
-// each demand row fills exactly one of the two, never both.
+// PO Outstanding / Shortage split), and each reads DIFFERENTLY on the two row
+// kinds:
+//   • Demand row — Coverage is the word ("stock" / "needs PO"); PO Outstanding
+//     is that line's own PO + ETA string. Stock stays blank (it's a SKU-level
+//     total, not a per-line one) and Shortage stays blank off an actual
+//     shortage line, rather than printing 0.
+//   • Group header (green) — every one of Stock / Coverage / PO Outstanding /
+//     Shortage is a QTY rollup for everything under it: Coverage is how much
+//     of the demand is stock-covered (shortage doesn't count), PO Outstanding
+//     is g.poOutstanding (the same figure the on-screen group row shows).
 //
 // Parity is by CONSTRUCTION: every sheet is fetched with that tab's OWN
 // `?category=` (a category filter changes the allocation inputs, so the full
@@ -137,6 +144,13 @@ function demandRow(opts: {
  * use the SKU-grouped layout. `accessoryBySoDoc` supplies each sofa SO's cover /
  * pillow riders (empty / ignored off the sofa tab).
  */
+/* Qty of the group's demand actually covered by STOCK — the three sources
+   (stock / po / shortage) are exhaustive per line, so this is the remainder
+   rather than a fourth field the server has to compute and ship. */
+function stockCoveredQty(g: Pick<ModelGroup, 'qtyNeeded' | 'poOutstanding' | 'shortage'>): number {
+  return g.qtyNeeded - g.poOutstanding - g.shortage;
+}
+
 export function buildSheetRows(
   isSofa: boolean,
   models: readonly ModelGroup[],
@@ -159,6 +173,9 @@ export function buildSheetRows(
       head[8] = first.deliveryDate ? isoDay(first.deliveryDate) : 'No date';
       head[9] = g.qtyNeeded;
       head[10] = g.stock;
+      // Coverage on the header is a QTY rollup (how much of the demand below
+      // is stock-covered), not the demand-row word — shortage doesn't count.
+      head[11] = stockCoveredQty(g);
       // PO Outstanding on the header is the SAME rollup the on-screen group row
       // shows (g.poOutstanding — total qty covered by a PO across every line
       // below), not the individual PO strings a demand row carries.
@@ -190,6 +207,7 @@ export function buildSheetRows(
       head[2] = g.description ?? '';
       head[9] = g.qtyNeeded;
       head[10] = g.stock;
+      head[11] = stockCoveredQty(g); // rollup, same as the sofa branch above
       head[12] = g.poOutstanding; // rollup, same as the sofa branch above
       head[13] = g.shortage;
       out.push({ kind: 'group', cells: head });
