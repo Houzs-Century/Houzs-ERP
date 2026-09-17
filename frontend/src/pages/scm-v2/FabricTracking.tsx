@@ -18,7 +18,7 @@
 // ----------------------------------------------------------------------------
 
 import { useMemo, useRef, useState } from 'react';
-import { Search, Plus, X, Download, Upload } from 'lucide-react';
+import { Search, Plus, X, Download, Upload, Info } from 'lucide-react';
 import { Button, IconButton } from '../../components/Button';
 import { PageHeader } from '../../components/Layout';
 import {
@@ -90,7 +90,7 @@ export const FabricTracking = () => {
     <div>
       {/* ── Header — shared PageHeader (full-bleed, design-system) ─── */}
       <PageHeader
-        eyebrow="Reference data"
+        eyebrow="Master Data"
         title="Fabric Converter"
         primaryAction={
           <div className="flex items-stretch gap-2">
@@ -140,6 +140,16 @@ export const FabricTracking = () => {
         <input ref={fileInputRef} type="file"
           accept=".xlsx,.xls,.csv,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
           style={{ display: 'none' }} onChange={onFileChosen} />
+      </div>
+
+      {/* Approved redesign 2026-09-17 — plain-language note on what the tiers
+          drive and the per-company scope of these codes. */}
+      <div className="mb-4 flex items-start gap-2 rounded-md border border-border bg-surface-2 p-3 text-[12px] leading-relaxed text-ink-muted">
+        <Info size={15} strokeWidth={1.75} className="mt-px flex-none text-primary" />
+        <span>
+          Codes here are per company. The Sofa / Bedframe tiers feed the <strong className="font-semibold text-ink">Fabrics</strong> pool
+          in Maintenance and the sofa / bedframe fabric surcharge (Price&nbsp;1 vs Price&nbsp;2). Adding colours makes the fabric pickable on POS.
+        </span>
       </div>
 
       <FabricsTable rows={rows} isLoading={isLoading} error={error} />

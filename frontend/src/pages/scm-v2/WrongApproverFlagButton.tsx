@@ -5,9 +5,10 @@
 // Owner 2026-09-17: the flag used to sit in the requester's submit dialog, where
 // nobody can judge it — a salesperson does not know which desk signs what. The
 // approver reading the change does, so the flag lives on the job card, next to
-// Approve / Reject. It is a NOTE, not a transition: the row stays REQUESTED on
-// the lane the rule gave it, the other desk and the requester are told, and an
-// administrator moves it with the relane workflow.
+// Approve / Reject. Option B (same day): it PASSES the request to the other desk
+// — still REQUESTED, with the approver's note — unless the server refuses: a
+// change the Purchase Order has to follow never leaves the Purchaser, and a
+// request moves only once, so two desks cannot bounce it.
 //
 // One component for the desktop job card and the phone's amendment card, so the
 // rule (who may flag, when) and the ask cannot drift between the two.
@@ -30,10 +31,10 @@ export type FlaggableAmendment = {
 };
 
 export const WRONG_APPROVER_NOTE_TOO_SHORT =
-  "Say which desk should approve it, and why — that note is what they read.";
+  "Say why this is not yours to approve — that note is what the other desk reads.";
 
 /* Only a lane row still waiting on its desk, only by someone who could sign it,
-   and only once: the saved note is what the other desk reads. */
+   and only once: a row that already carries a note was passed here. */
 export function canFlagWrongApprover(a: FlaggableAmendment | null | undefined, canSign: boolean): boolean {
   if (!a || !canSign) return false;
   if (a.status !== "REQUESTED") return false;
@@ -63,7 +64,7 @@ export function WrongApproverFlagButton({ amendment, canSign, variant }: {
   if (variant === "mobile" && saved) {
     return (
       <div style={{ fontSize: 11.5, lineHeight: 1.45, color: "#8a5a00" }}>
-        Flagged as the wrong approver: "{saved}" It stays here until an administrator moves it.
+        Passed here by the other approver: "{saved}"
       </div>
     );
   }
@@ -73,32 +74,31 @@ export function WrongApproverFlagButton({ amendment, canSign, variant }: {
 
   const handleFlag = async () => {
     const note = await askPrompt({
-      title: `Flag amendment ${amendment.amendment_no ?? ""} as the wrong approver?`.replace(/\s+/g, " ").trim(),
-      body: "Use this when the change is not yours to approve. The request stays on your desk for now: "
-        + `your note is saved on it, the ${otherDesk} desk and the person who raised it are told, `
-        + "and an administrator can move it.",
+      title: `Pass amendment ${amendment.amendment_no ?? ""} to ${otherDesk}?`.replace(/\s+/g, " ").trim(),
+      body: `Use this when the change is not yours to approve. It moves to the ${otherDesk} desk with your note `
+        + "and leaves your queue; the person who raised it is told. It can be passed on only once.",
       placeholder: `e.g. this is a transport charge, ${otherDesk} approves those`,
       multiline: true,
-      confirmLabel: "Flag wrong approver",
+      confirmLabel: `Pass to ${otherDesk}`,
       validate: (v) => (v.trim().length < 5 ? WRONG_APPROVER_NOTE_TOO_SHORT : null),
     });
     if (note == null) return;
     try {
       await flagLane.mutateAsync({ id: amendment.id, note: note.trim() });
       void notify({
-        title: "Flagged as the wrong approver",
-        body: `The ${otherDesk} desk and the person who raised it have been told. It stays here until an administrator moves it.`,
+        title: `Passed to ${otherDesk}`,
+        body: `It is now waiting on the ${otherDesk} desk. They and the person who raised it have been told.`,
       });
     } catch (e) {
       void notify({
-        title: "Could not flag this amendment",
-        body: `${plainError(e)} Nothing was changed — please try again.`,
+        title: `Not passed to ${otherDesk}`,
+        body: `${plainError(e)} Nothing was changed.`,
         tone: "error",
       });
     }
   };
 
-  const label = flagLane.isPending ? "Flagging…" : "This is not mine to approve";
+  const label = flagLane.isPending ? "Passing it on…" : "This is not mine to approve";
   if (variant === "mobile") {
     return (
       <button
