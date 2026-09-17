@@ -627,6 +627,55 @@ export function useMfgProductSuppliers(id: string | null) {
   });
 }
 
+/* HISTORY — three tabs on the SKU drawer. Cost + Supplier-price are new reads
+   (both append-only, company-scoped, cost figures finance-gated server-side so a
+   non-cost caller gets null in the money fields). Selling reuses the /price-changes
+   timeline above. */
+export type MfgProductCostHistoryRow = {
+  id: string;
+  effectiveFrom: string;            // YYYY-MM-DD
+  basePriceSen: number | null;      // null when finance-gated OR that lane unchanged
+  price1Sen: number | null;
+  seatHeightPrices: unknown | null;
+  sourceSupplierId: string | null;
+  sourceSupplierName: string | null;
+  notes: string | null;
+  createdBy: string | null;
+  createdAt: string;
+};
+export function useMfgProductCostHistory(id: string | null) {
+  return useQuery({
+    queryKey: ['mfg-product-cost-history', id],
+    queryFn: () => authedFetch<{ history: MfgProductCostHistoryRow[] }>(`/mfg-products/${id}/cost-history`),
+    enabled: Boolean(id),
+    staleTime: 30_000,
+  });
+}
+
+export type SupplierPriceHistoryRow = {
+  id: string;
+  supplierId: string;
+  supplierCode: string | null;
+  supplierName: string | null;
+  isMainSupplier: boolean;
+  unitPriceSen: number | null;      // null when finance-gated
+  priceMatrix: unknown | null;
+  comparableSen: number | null;     // the dearness the anchor ranks on; null when gated
+  direction: 'up' | 'down' | null;  // raised / lowered vs this supplier's prior row
+  effectiveFrom: string;
+  notes: string | null;
+  createdBy: string | null;
+  createdAt: string;
+};
+export function useMfgProductSupplierPriceHistory(id: string | null) {
+  return useQuery({
+    queryKey: ['mfg-product-supplier-price-history', id],
+    queryFn: () => authedFetch<{ history: SupplierPriceHistoryRow[] }>(`/mfg-products/${id}/supplier-price-history`),
+    enabled: Boolean(id),
+    staleTime: 30_000,
+  });
+}
+
 /** Body shape for POST /mfg-products. id + status default server-side. */
 export type NewMfgProductInput = {
   code: string;

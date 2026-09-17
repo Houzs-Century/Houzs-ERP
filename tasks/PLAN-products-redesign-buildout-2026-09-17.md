@@ -22,7 +22,8 @@ Each wave = its own CI-green PR. Status kept current here per PR.
 - [x] A5 Frontend — editable Category for model SKUs too (reuse `CategorySwapSelect kind="model"`
       + the existing move-the-whole-model confirmation). Standalone SKUs were already editable.
       **PR: feat/sku-drawer-cost-card.**
-- [ ] A4 Frontend — History block (three tabs: Cost / Selling / Supplier price). Needs A2.
+- [x] A4 Frontend — History block (`SkuHistoryTabs`: Cost / Selling / Supplier price, ↑/↓ arrows).
+      **PR: feat/sku-drawer-history-tabs — opening.**
 - [ ] A6 B2 — "Add supplier binding" action from the drawer (reuse create-binding mutation).
 
 ## Wave B — SKU Master list
