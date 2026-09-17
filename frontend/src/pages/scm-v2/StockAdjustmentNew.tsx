@@ -26,6 +26,7 @@ import { Save, X, Minus, Plus, AlertTriangle, ChevronDown } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { activeOptions, ADJUSTMENT_REASONS, adjustmentIncreaseErrors, maintPickerValues } from '@2990s/shared';
 import { useWarehouses } from '../../vendor/scm/lib/inventory-queries';
+import { bucketKey, NO_BUCKET_PICKED } from '../../vendor/scm/lib/stock-adjustment-buckets';
 import {
   useStockAdjustment,
   useInventoryProductBreakdown,
@@ -106,6 +107,11 @@ const StockAdjustmentForm = ({ onStartNew }: { onStartNew: () => void }) => {
   const [variants, setVariants]     = useState<Record<string, unknown>>({});
   const [batchNo, setBatchNo]       = useState<string>('');
   const [variantKey, setVariantKey] = useState<string>('');
+  // Which open bucket the DECREASE picker points at, as its stable key. Kept
+  // apart from variantKey/batchNo because the no-variant, no-batch bucket has
+  // both empty: without this, picking it read as picking nothing and that lot
+  // could never be decreased. NO_BUCKET_PICKED ('') = nothing chosen.
+  const [pickedKey, setPickedKey]   = useState<string>(NO_BUCKET_PICKED);
 
   // ── Data ───────────────────────────────────────────────────────────
   const warehouses = useWarehouses();
@@ -170,6 +176,7 @@ const StockAdjustmentForm = ({ onStartNew }: { onStartNew: () => void }) => {
     setVariants({});
     setBatchNo('');
     setVariantKey('');
+    setPickedKey(NO_BUCKET_PICKED);
   };
 
   // Set one variant value; auto-compute bedframe Total Height = Divan + Leg + Gap.
@@ -185,10 +192,10 @@ const StockAdjustmentForm = ({ onStartNew }: { onStartNew: () => void }) => {
   // DECREASE — operator picks which existing lot to take from. Stores the exact
   // bucket's variant_key + batch_no and caps the qty input to that bucket.
   const hasVariantGroup = itemGroup === 'sofa' || itemGroup === 'bedframe';
-  const onPickBucket = (value: string) => {
-    if (!value) { setVariantKey(''); setBatchNo(''); return; }
-    const b = buckets.find((x) => `${x.variant_key} ${x.batch_no ?? ''}` === value);
-    if (!b) return;
+  const onPickBucket = (key: string) => {
+    setPickedKey(key);
+    const b = buckets.find((x) => bucketKey(x) === key);
+    if (!b) { setVariantKey(''); setBatchNo(''); return; }
     setVariantKey(b.variant_key);
     setBatchNo(b.batch_no ?? '');
     // Cap the qty down so a decrease can't exceed the chosen lot.
@@ -197,10 +204,10 @@ const StockAdjustmentForm = ({ onStartNew }: { onStartNew: () => void }) => {
 
   // Qty ceiling for a DECREASE — the picked lot's quantity (null = uncapped).
   const bucketQtyCap = useMemo(() => {
-    if (type !== 'decrease' || (!variantKey && !batchNo)) return null;
-    const b = buckets.find((x) => x.variant_key === variantKey && (x.batch_no ?? '') === batchNo);
+    if (type !== 'decrease' || pickedKey === NO_BUCKET_PICKED) return null;
+    const b = buckets.find((x) => bucketKey(x) === pickedKey);
     return b ? b.qty : null;
-  }, [type, variantKey, batchNo, buckets]);
+  }, [type, pickedKey, buckets]);
 
   const onSave = async () => {
     if (!canSave) {
@@ -218,7 +225,7 @@ const StockAdjustmentForm = ({ onStartNew }: { onStartNew: () => void }) => {
     }
     // DECREASE gate — when there are open lots, the operator must say which one
     // the stock comes out of (so the right variant/batch is reduced).
-    if (type === 'decrease' && buckets.length > 0 && !variantKey && !batchNo) {
+    if (type === 'decrease' && buckets.length > 0 && pickedKey === NO_BUCKET_PICKED) {
       void notify({
         title: 'Pick which batch or variant the stock comes out of',
         body: 'This item has more than one open batch, so we need to know which one to reduce.',
@@ -309,7 +316,7 @@ const StockAdjustmentForm = ({ onStartNew }: { onStartNew: () => void }) => {
               <span className={styles.fieldLabel}>Warehouse *</span>
               <select
                 value={warehouseId}
-                onChange={(e) => setWarehouseId(e.target.value)}
+                onChange={(e) => { setWarehouseId(e.target.value); setPickedKey(NO_BUCKET_PICKED); setVariantKey(''); setBatchNo(''); }}
                 className={styles.fieldInput}
               >
                 <option value="">— Pick a warehouse —</option>
@@ -523,13 +530,13 @@ const StockAdjustmentForm = ({ onStartNew }: { onStartNew: () => void }) => {
                 <label className={styles.field}>
                   <span className={styles.fieldLabel}>Take from *</span>
                   <select
-                    value={variantKey || batchNo ? `${variantKey} ${batchNo}` : ''}
+                    value={pickedKey}
                     onChange={(e) => onPickBucket(e.target.value)}
                     className={styles.fieldInput}
                   >
-                    <option value="">— Pick which batch / variant —</option>
+                    <option value={NO_BUCKET_PICKED}>— Pick which batch / variant —</option>
                     {sortByText(buckets).map((b) => (
-                      <option key={`${b.variant_key} ${b.batch_no ?? ''}`} value={`${b.variant_key} ${b.batch_no ?? ''}`}>
+                      <option key={bucketKey(b)} value={bucketKey(b)}>
                         {(b.batch_no || 'No batch')} · {(b.variant_key || 'plain')} · {b.qty} PCS
                       </option>
                     ))}
