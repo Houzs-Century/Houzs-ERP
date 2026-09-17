@@ -12,7 +12,7 @@ import type { MrpSku, MrpLine, MrpResponse, SofaSet } from '../../vendor/scm/lib
 import { mrpViews } from './mrp-views';
 import { computeTabModels } from './mrp-model-pipeline';
 import {
-  buildSheetRows, buildMrpWorkbookBlob, coverageText, poOutstandingText, statusText, supplierText, sofaSpec,
+  buildSheetRows, buildMrpWorkbookBlob, coverageText, statusText, supplierText, sofaSpec,
   MRP_EXPORT_HEADERS, type SheetSpec, type SheetRow,
 } from './mrp-export-workbook';
 
@@ -57,20 +57,14 @@ const views = mrpViews(undefined);
 const viewOf = (v: string) => views.find((x) => x.value === v)!;
 
 describe('coverage / status / supplier / spec cells', () => {
-  test('coverage: stock / needs PO, blank for a PO-covered line', () => {
+  test('coverage chip string matches the on-screen chip', () => {
     expect(coverageText({ source: 'stock', poNumber: null, poEta: null })).toBe('stock');
     expect(coverageText({ source: 'shortage', poNumber: null, poEta: null })).toBe('needs PO');
-    expect(coverageText({ source: 'po', poNumber: 'HC-PO-2609-018', poEta: '2026-09-25' })).toBe('');
-  });
-
-  test('PO Outstanding: the covering PO string, blank off a PO-covered line', () => {
-    expect(poOutstandingText({ source: 'stock', poNumber: null, poEta: null })).toBe('');
-    expect(poOutstandingText({ source: 'shortage', poNumber: null, poEta: null })).toBe('');
     // PO number, two spaces, U+00B7, two spaces, ETA dd/mm/yyyy.
-    expect(poOutstandingText({ source: 'po', poNumber: 'HC-PO-2609-018', poEta: '2026-09-25' }))
+    expect(coverageText({ source: 'po', poNumber: 'HC-PO-2609-018', poEta: '2026-09-25' }))
       .toBe('HC-PO-2609-018  ·  ETA 25/09/2026');
     // A covering PO with no ETA is just the number.
-    expect(poOutstandingText({ source: 'po', poNumber: 'HC-PO-009942', poEta: null })).toBe('HC-PO-009942');
+    expect(coverageText({ source: 'po', poNumber: 'HC-PO-009942', poEta: null })).toBe('HC-PO-009942');
   });
 
   test('status word is derived from the coverage source', () => {
@@ -97,7 +91,7 @@ describe('buildSheetRows — SKU-grouped (non-sofa)', () => {
   const idx = (label: string) => MRP_EXPORT_HEADERS.indexOf(label as (typeof MRP_EXPORT_HEADERS)[number]);
   const data = emptyResp({
     skus: [sku({
-      itemCode: 'AK-MATT (Q)', description: 'AKEMI MATTRESS (Q)', qtyNeeded: 2, stock: 2, poOutstanding: 1, shortage: 1,
+      itemCode: 'AK-MATT (Q)', description: 'AKEMI MATTRESS (Q)', qtyNeeded: 2, stock: 2, shortage: 1,
       mainSupplierName: 'DIGLANT MANUFACTURING SDN BHD',
       suppliers: [{ supplierId: 's1', code: 'DIG', name: 'DIGLANT MANUFACTURING SDN BHD', isMain: true }],
       lines: [
@@ -116,8 +110,6 @@ describe('buildSheetRows — SKU-grouped (non-sofa)', () => {
     expect(g.cells[idx('Description')]).toBe('AKEMI MATTRESS (Q)');
     expect(g.cells[idx('Qty Needed')]).toBe(2);
     expect(g.cells[idx('Stock')]).toBe(2);
-    expect(g.cells[idx('Coverage')]).toBe(0); // rollup — qtyNeeded(2) - poOutstanding(1) - shortage(1)
-    expect(g.cells[idx('PO Outstanding')]).toBe(1); // rollup — how much of it is below on a PO
     expect(g.cells[idx('Shortage')]).toBe(1);
     expect(g.cells[idx('Warehouse')]).toBeNull(); // A blank on a non-sofa group header
     expect(g.cells[idx('SO No')]).toBeNull();
@@ -132,19 +124,16 @@ describe('buildSheetRows — SKU-grouped (non-sofa)', () => {
     expect(po.cells[idx('SO No')]).toBe('HC-SO-013411');
     expect(po.cells[idx('Processing Date')]).toBe('2026-09-02'); // ISO (sorts as text)
     expect(po.cells[idx('Delivery Date')]).toBe('2026-10-01');
-    expect(po.cells[idx('Stock')]).toBeNull(); // SKU-level total lives on the header, not repeated per line
-    expect(po.cells[idx('Coverage')]).toBe(''); // a PO-covered line leaves Coverage blank
-    expect(po.cells[idx('PO Outstanding')]).toBe('HC-PO-2609-018  ·  ETA 25/09/2026');
+    expect(po.cells[idx('Coverage')]).toBe('HC-PO-2609-018  ·  ETA 25/09/2026');
     expect(po.cells[idx('Status')]).toBe('IN PRODUCTION');
     expect(po.cells[idx('Supplier')]).toBe('DIGLANT MANUFACTURING SDN BHD');
-    expect(po.cells[idx('Shortage')]).toBeNull(); // a covered line leaves Shortage blank, not 0
+    expect(po.cells[idx('Shortage')]).toBe(0);
   });
 
   test('a shortage demand row is flagged (whole row goes red) and shows needs PO', () => {
     const short = demandRows(rows).find((r) => r.shortage)!;
     expect(short.shortage).toBe(true);
     expect(short.cells[idx('Coverage')]).toBe('needs PO');
-    expect(short.cells[idx('PO Outstanding')]).toBe('');
     expect(short.cells[idx('Shortage')]).toBe(1);
     expect(short.cells[idx('Status')]).toBe('CONFIRMED');
   });
@@ -184,8 +173,7 @@ describe('buildSheetRows — SO-grouped (sofa)', () => {
     const pieces = demandRows(rows).slice(0, 2);
     expect(pieces.map((p) => p.cells[idx('Item Code')])).toEqual(['5535-L(LHF)', '5535-2A(RHF)']);
     expect(pieces[0]!.cells[idx('Item Description 2')]).toBe('BO315-21 PEARL / SEAT 32');
-    expect(pieces[0]!.cells[idx('Coverage')]).toBe('');
-    expect(pieces[0]!.cells[idx('PO Outstanding')]).toBe('HC-PO-009942  ·  ETA 25/09/2026');
+    expect(pieces[0]!.cells[idx('Coverage')]).toBe('HC-PO-009942  ·  ETA 25/09/2026');
     expect(pieces[0]!.cells[idx('Supplier')]).toBe('OHANA STUDIO SDN BHD');
   });
 
@@ -193,7 +181,6 @@ describe('buildSheetRows — SO-grouped (sofa)', () => {
     const rider = demandRows(rows).at(-1)!;
     expect(rider.cells[idx('Item Code')]).toBe('PILLOW');
     expect(rider.cells[idx('Coverage')]).toBe('needs PO');
-    expect(rider.cells[idx('PO Outstanding')]).toBe('');
     expect(rider.shortage).toBe(true);
   });
 });
@@ -261,11 +248,10 @@ describe('buildMrpWorkbookBlob — the rendered workbook', () => {
     const cell = (addr: string) => wb.Sheets.Mattress![addr]?.v;
     expect(cell('A1')).toBe('MRP Stock Status  -  Mattress');   // merged title
     expect(cell('A3')).toBe('Warehouse');                       // header row 3
-    expect(cell('P3')).toBe('Supplier');
+    expect(cell('O3')).toBe('Supplier');
     expect(cell('B4')).toBe('AK-MATT (Q)');                     // group header code
     expect(cell('L5')).toBe('needs PO');                        // shortage coverage
-    expect(cell('M5')).toBeUndefined();                         // PO Outstanding blank off a shortage row
-    expect(cell('O5')).toBe('CONFIRMED');                       // shortage status
-    expect(cell('N5')).toBe(1);                                 // shortage figure
+    expect(cell('N5')).toBe('CONFIRMED');                       // shortage status
+    expect(cell('M5')).toBe(1);                                 // shortage figure
   });
 });

@@ -236,10 +236,6 @@ interface Props<T, L = never> {
   getRowClassName?: (row: T) => string | undefined;
   /** Filename stem for CSV export, e.g. "orders". A date suffix is appended automatically. */
   exportName?: string;
-  /** Toolbar button text, default "Export" — override when a second export
-   *  button sits beside it (via `toolbarExtra`) and the two need distinct
-   *  labels, e.g. MRP's "Export all" beside "Export current tab". */
-  exportLabel?: string;
   /** If provided, the Export button calls this with the visible export columns instead of
    *  exporting the on-screen rows — so a server-paged list can export ALL pages with them. */
   onExport?: (columns: CSVColumn<T>[]) => void;
@@ -673,7 +669,6 @@ function DataTableInner<T, L>({
   getRowKey,
   getRowClassName,
   exportName,
-  exportLabel = "Export",
   onExport,
   exportLines,
   toolbarExtra,
@@ -2353,7 +2348,7 @@ function DataTableInner<T, L>({
             className={toolbarBtn}
           >
             <Download size={13} />
-            {exporting ? "Exporting…" : exportLabel}
+            {exporting ? "Exporting…" : "Export"}
           </button>
           {toolbarExtra}
           {/* Density toggle removed 2026-06 — layout is permanently comfy. */}

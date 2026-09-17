@@ -1032,7 +1032,6 @@ export const Mrp = () => {
         exportName={`mrp-${view}`}
         /* The Export button downloads the v7 workbook (a sheet per category tab),
            not this tab's grid CSV — see onExportWorkbook. */
-        exportLabel="Export all"
         onExport={onExportWorkbook}
         toolbarExtra={
           <button type="button" className={TOOLBAR_BTN} onClick={onExportCurrentTab} disabled={exporting}
