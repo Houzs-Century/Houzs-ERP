@@ -1,7 +1,7 @@
 import type { Env } from "../types";
 import { parsePermissions } from "./permissions";
 import {
-  loadPageAccessForRole,
+  pageAccessFromPermissions,
   fullAccessMap,
   type AccessLevel,
   type PageAccessMeta,
@@ -142,7 +142,10 @@ export const REMEMBER_TTL_SECONDS = 60 * 60 * 24 * 365; // 1 year, rolling
 /* v4 (2026-09-16): the position_page_overrides layer is gone (table dropped,
  * never used in production); the fingerprint lost its override arm and the
  * envelope its override composition, so every cached v3 session rebuilds once. */
-export const AUTHZ_ENVELOPE_VERSION = 4;
+/* v5 (2026-09-17): role_page_access is gone; the fingerprint lost its `page`
+ * arm and a member with no Title resolves pages from the role's permission keys
+ * alone, so every cached v4 session rebuilds once. */
+export const AUTHZ_ENVELOPE_VERSION = 5;
 
 /* Session ORIGIN (mig 0120) — the DOOR a session was minted at. It is NOT a
    property of the person: the same salesperson simultaneously holds a 'pos'
@@ -414,7 +417,7 @@ interface SessionAuthority {
 }
 
 interface AuthzComponent {
-  kind: "page" | "brand" | "cap";
+  kind: "brand" | "cap";
   owner_key: "role" | "self" | "manager" | "position";
   item_key: string;
   item_value: string;
@@ -565,8 +568,8 @@ async function hydrateAuthUser(env: Env, row: any): Promise<AuthUser> {
   } else if (row.position_id != null) {
     // ALL 17 positioned cohorts resolve HERE now — full, restricted, AND sales.
     // The policy is the single page-access source; the legacy position matrix is
-    // no longer read for a positioned user. (loadPageAccessForPosition survives
-    // only for the positionless role-matrix fallback below.)
+    // no longer read for a positioned user. (A member with no Title resolves from the
+    // role's permission keys below.)
     const policy = resolvePositionPolicy({
       position_name: row.position_name ?? null,
       department_name: row.department_name ?? null,
@@ -574,7 +577,8 @@ async function hydrateAuthUser(env: Env, row: any): Promise<AuthUser> {
     pageAccess = policy.pageAccess;
     scmMeta.explicitScm = policy.scmConfigured;
   } else {
-    pageAccess = await loadPageAccessForRole(env, row.role_id, permissionsSet, scmMeta);
+    // No Title: pages come from the role's permission keys alone.
+    pageAccess = pageAccessFromPermissions(permissionsSet);
   }
 
   // Actions matrix (owner 2026-08-22): the position's operational capability
@@ -707,11 +711,6 @@ export async function getUserBySession(env: Env, token: string): Promise<AuthUse
          JOIN users u ON u.id = s.user_id
          WHERE s.token = ?
        )
-       SELECT 'page' AS kind, 'role' AS owner_key,
-              rpa.page_key AS item_key, rpa.level AS item_value
-       FROM principal pr
-       JOIN role_page_access rpa ON rpa.role_id = pr.role_id
-       UNION ALL
        SELECT 'brand' AS kind, 'self' AS owner_key,
               ub.brand AS item_key, '' AS item_value
        FROM principal pr

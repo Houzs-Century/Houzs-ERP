@@ -6,11 +6,9 @@
 // the TABLE is wrong — change it there and regenerate, or the next regeneration
 // silently reverts you.
 //
-// Regenerate:
-//   node backend/scripts/export-position-access.mjs \
-//     --input ~/Downloads/houzs-position-access.json
-//   
-//   (the JSON comes from the Export button on Team -> Positions)
+// FROZEN 2026-09-17: the table this photographed (position_page_access) and the
+// export that regenerated it are gone. The file stays as the fixture the
+// position-policy parity tests compare against; it is no longer regenerated.
 //
 // Generated from : https://erp.houzscentury.com (autocount-sync-api.houzs-erp.workers.dev)
 // Positions      : 17

@@ -61,11 +61,6 @@ afterEach(async () => {
       .bind(userId || -1, managerUserId || -1)
       .run();
   }
-  if (roleId) {
-    await env.DB.prepare(`DELETE FROM role_page_access WHERE role_id = ?`)
-      .bind(roleId)
-      .run();
-  }
   if (token) {
     await env.DB.prepare(`DELETE FROM sessions WHERE token = ?`).bind(token).run();
   }
@@ -170,29 +165,6 @@ describe("authoritative session revocation with a warm hydration cache", () => {
     expect(after?.permissions).toEqual([]);
     expect(after?.permissions_set.has("*")).toBe(false);
     expect(after?.scope_to_pic).toBe(true);
-  });
-
-  test("role page-access revocation replaces the cached matrix next request", async () => {
-    await env.DB.prepare(`UPDATE roles SET permissions = ? WHERE id = ?`)
-      .bind(JSON.stringify([]), roleId)
-      .run();
-    await env.DB.prepare(
-      `INSERT INTO role_page_access (role_id, page_key, level) VALUES (?, 'projects', 'full')`,
-    )
-      .bind(roleId)
-      .run();
-
-    const before = await warmHydratedCache();
-    expect(before.page_access.projects).toBe("full");
-
-    await env.DB.prepare(
-      `UPDATE role_page_access SET level = 'none' WHERE role_id = ? AND page_key = 'projects'`,
-    )
-      .bind(roleId)
-      .run();
-
-    const after = await getUserBySession(env as unknown as Env, token);
-    expect(after?.page_access.projects).toBe("none");
   });
 
   test("position and department renames replace cached organization authority next request", async () => {

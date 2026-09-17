@@ -4,7 +4,6 @@ name: Seed (Staging)
 # fixture:
 #   • 3 departments (SALES, OPERATION, HQ)
 #   • 17 positions + org-chart hierarchy
-#   • position_page_access matrix rows
 #   • 17 test accounts, one per position — password "houzs1234", email
 #     "<position_slug>@example.my"
 #

@@ -61,7 +61,6 @@ async function api(
 // ── Setup ─────────────────────────────────────────────────────────
 
 beforeEach(async () => {
-  await env.DB.exec(`DELETE FROM role_page_access`);
   await env.DB.exec(`DELETE FROM sales_entries`);
   await env.DB.exec(`DELETE FROM sessions`);
   await env.DB.exec(`DELETE FROM users`);
@@ -102,23 +101,6 @@ describe("requirePageAccess middleware — Sales pilot", () => {
     // Plain-language 403 body (fix/zero-jargon-mopup): no longer leaks the
     // internal pageKey/level ("Forbidden: needs full access to sales").
     expect(String(res.json?.error ?? "")).toMatch(/permission to view this page/i);
-  });
-
-  test("explicit 'none' row overrides backfill — even sales.read can't pass", async () => {
-    const rep = await seedUser({
-      email: "blocked@test.local",
-      permissions: ["sales.read"],
-    });
-    // Admin sets the role to 'none' explicitly. The fallback would
-    // have given them 'partial'; the explicit row wins.
-    await env.DB.prepare(
-      `INSERT OR REPLACE INTO role_page_access (role_id, page_key, level)
-       VALUES (?, 'sales', 'none')`,
-    )
-      .bind(rep.roleId)
-      .run();
-    const res = await api("GET", "/api/sales/entries", rep.bearer);
-    expect(res.status).toBe(403);
   });
 
   test("manage-only endpoint requires full level — partial is rejected", async () => {

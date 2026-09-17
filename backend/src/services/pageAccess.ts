@@ -54,7 +54,7 @@ export interface PageDef {
    *  children none; partial → per-child config). */
   parent?: string;
   /** One-shot backfill rule: given a role's permission set, decide
-   *  the level. Used by `scripts/backfill-role-page-access.mjs`
+   *  the level. Used by `pageAccessFromPermissions`
    *  and as a fallback when no explicit matrix row exists yet. */
   backfill: (perms: ReadonlySet<string>) => AccessLevel;
 }
@@ -729,7 +729,7 @@ export function fullAccessMap(): Record<string, AccessLevel> {
  * Compute the backfill level for a role on a specific page, given
  * the role's permission set. Used by:
  *   - the one-shot backfill script (writes a row per role × page)
- *   - the `loadPageAccessForRole` fallback when no explicit row exists
+ *   - `pageAccessFromPermissions`, the page map of a member with no Title
  */
 export function computeBackfillLevel(
   pageKey: string,
@@ -772,66 +772,29 @@ export interface PageAccessMeta {
   explicitScm: boolean;
 }
 
-export async function loadPageAccessForRole(
-  env: Env,
-  roleId: number,
+/**
+ * A member with NO Title: every page resolves from the role's permission keys
+ * (`computeBackfillLevel`), then the parent cascade — full forces children
+ * full, none forces them none, partial leaves each child its own level. The
+ * explicit `role_page_access` rows that used to override this were dropped on
+ * 2026-09-17; a titled member never reaches this path (positionPolicy.ts).
+ */
+export function pageAccessFromPermissions(
   rolePerms: ReadonlySet<string>,
-  meta?: PageAccessMeta,
-): Promise<Record<string, AccessLevel>> {
-  // Wildcard short-circuits — Owner / IT Admin always see 'full'.
-  if (rolePerms.has("*")) {
-    return fullAccessMap();
-  }
-
-  const rows = await env.DB.prepare(
-    `SELECT page_key, level FROM role_page_access WHERE role_id = ?`,
-  )
-    .bind(roleId)
-    .all<{ page_key: string; level: string }>();
-
-  const explicit: Record<string, AccessLevel> = {};
-  for (const r of rows.results ?? []) {
-    if (isValidPageKey(r.page_key) && isValidAccessLevel(r.level)) {
-      explicit[r.page_key] = r.level;
-      if (meta && r.page_key.startsWith("scm")) meta.explicitScm = true;
-    }
-  }
-
-  // Pass 1: resolve every page (parents + standalones) from explicit
-  // row or backfill.
+): Record<string, AccessLevel> {
+  if (rolePerms.has("*")) return fullAccessMap();
   const raw: Record<string, AccessLevel> = {};
-  for (const p of PAGES) {
-    raw[p.key] = explicit[p.key] ?? computeBackfillLevel(p.key, rolePerms);
-  }
-
-  // Pass 2: cascade parent level into children when parent is full/none.
-  // When parent is "partial", the child's own row/backfill stands.
+  for (const p of PAGES) raw[p.key] = computeBackfillLevel(p.key, rolePerms);
   const out: Record<string, AccessLevel> = { ...raw };
   for (const p of PAGES) {
     if (!p.parent) continue;
     const parentLevel = raw[p.parent];
     if (parentLevel === "full") out[p.key] = "full";
     else if (parentLevel === "none") out[p.key] = "none";
-    // parentLevel === "partial" → keep the child's resolved level.
   }
-
   return out;
 }
 
-/**
- * Hydrate a POSITION's full page-access map from `position_page_access`
- * (4-level none/view/edit/full). Positions have NO permission-set backfill.
- *
- * INHERIT model (simpler than the role matrix's partial-parent rule): a child
- * sub-page inherits its parent's level unless it has its own explicit row. So
- * the seed can grant a whole area with one parent row (projects:view) and
- * override individual sub-tabs (projects.finances:none to hide finances), or
- * grant just one tab (projects:none + projects.calendar:view). A standalone
- * page with no row is "none".
- *
- * Returned record is attached to `AuthUser.page_access` exactly like the role
- * loader's output, so `requirePageAccess` / `usePageAccess` need no changes.
- */
 /**
  * The position inherit model as a PURE function of its rows — the single
  * implementation of the cascade, shared by every source of those rows.
@@ -887,18 +850,4 @@ export function resolvePositionAccessFromRows(
   }
 
   return out;
-}
-
-export async function loadPageAccessForPosition(
-  env: Env,
-  positionId: number,
-  meta?: PageAccessMeta,
-): Promise<Record<string, AccessLevel>> {
-  const rows = await env.DB.prepare(
-    `SELECT page_key, level FROM position_page_access WHERE position_id = ?`,
-  )
-    .bind(positionId)
-    .all<{ page_key: string; level: string }>();
-
-  return resolvePositionAccessFromRows(rows.results ?? [], meta);
 }

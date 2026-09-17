@@ -284,10 +284,6 @@ POST,/api/positions,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermi
 DELETE,/api/positions/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""users.manage"")",,YES,DECLARED_GATE,backend/src/routes/positions.ts
 PATCH,/api/positions/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""users.manage"")",,YES,DECLARED_GATE,backend/src/routes/positions.ts
 GET,/api/positions/:id/page-access,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""users.read"")",,NO,DECLARED_GATE,backend/src/routes/positions.ts
-PATCH,/api/positions/:id/page-access,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""users.manage"")",,YES,DECLARED_GATE,backend/src/routes/positions.ts
-GET,/api/positions/page-access/export,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""users.manage"")",,NO,DECLARED_GATE,backend/src/routes/positions.ts
-PATCH,/api/positions/page-order,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""users.manage"")",,YES,DECLARED_GATE,backend/src/routes/positions.ts
-GET,/api/positions/pages,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""users.read"")",,NO,DECLARED_GATE,backend/src/routes/positions.ts
 GET,/api/presence,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/presence.ts
 POST,/api/presence/heartbeat,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/presence.ts
 GET,/api/projects,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePageAccess(""projects.list"")",,NO,DECLARED_GATE,backend/src/routes/projects.ts
@@ -427,9 +423,6 @@ GET,/api/roles,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission
 POST,/api/roles,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""roles.manage"")",,YES,DECLARED_GATE,backend/src/routes/roles.ts
 DELETE,/api/roles/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""roles.manage"")",,YES,DECLARED_GATE,backend/src/routes/roles.ts
 PATCH,/api/roles/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""roles.manage"")",,YES,DECLARED_GATE,backend/src/routes/roles.ts
-GET,/api/roles/:id/page-access,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""roles.read"")",,NO,DECLARED_GATE,backend/src/routes/roles.ts
-PATCH,/api/roles/:id/page-access,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""roles.manage"")",,YES,DECLARED_GATE,backend/src/routes/roles.ts
-GET,/api/roles/pages,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""roles.read"")",,NO,DECLARED_GATE,backend/src/routes/roles.ts
 GET,/api/roles/permissions,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""roles.read"")",,NO,DECLARED_GATE,backend/src/routes/roles.ts
 GET,/api/sales/entries,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePageAccessOrSalesView(""sales"")",,NO,DECLARED_GATE,backend/src/routes/sales.ts
 POST,/api/sales/entries,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePageAccess(""sales"")",,YES,DECLARED_GATE,backend/src/routes/sales.ts

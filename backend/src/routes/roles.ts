@@ -1,18 +1,10 @@
 import { Hono } from "hono";
 import type { Env } from "../types";
 import { PERMISSIONS, isValidPermission, parsePermissions, droppedPermissions } from "../services/permissions";
-import {
-  PAGES,
-  computeBackfillLevel,
-  isDormantPageKey,
-  isValidAccessLevel,
-  isValidPageKey,
-  type AccessLevel,
-} from "../services/pageAccess";
 import { requirePermission, requirePermissionOrSalesDirector } from "../middleware/auth";
 import { audit } from "../services/audit";
 import { getDb } from "../db/client";
-import { roles, role_page_access, users } from "../db/schema";
+import { roles, users } from "../db/schema";
 import { eq, sql } from "drizzle-orm";
 
 const app = new Hono<{ Bindings: Env }>();
@@ -192,139 +184,6 @@ app.patch("/:id", requirePermission("roles.manage"), async (c) => {
 });
 
 /**
- * GET /api/roles/pages
- * Returns the page catalogue (key, label, partialMeaning, supportsPartial)
- * for the admin Page Access UI. Independent of role — same payload for
- * any caller with roles.read.
- */
-app.get("/pages", requirePermission("roles.read"), async (c) => {
-  return c.json({
-    pages: PAGES.map((p) => ({
-      key: p.key,
-      label: p.label,
-      partialMeaning: p.partialMeaning,
-      supportsPartial: p.supportsPartial,
-      parent: p.parent ?? null,
-      // Class A — the key exists in PAGES but NOTHING reads it, so setting it
-      // has never done anything. Same field, same source of truth, same seven
-      // keys as /api/positions/pages: the catalogue is ONE array, so a cell
-      // that lies in the Positions editor lies here identically. #709 greyed
-      // Positions and flagged that this editor still rendered the seven as
-      // settable. Purely descriptive — changes no level and no resolution
-      // (pageAccess.DORMANT_PAGE_KEYS is read by nothing in the resolve path).
-      dormant: isDormantPageKey(p.key),
-    })),
-  });
-});
-
-/**
- * GET /api/roles/:id/page-access
- * Returns the role's per-page access map. Pages without an explicit
- * `role_page_access` row fall back to the catalogue's backfill rule
- * computed against the role's current `permissions` JSON.
- */
-app.get("/:id/page-access", requirePermission("roles.read"), async (c) => {
-  const id = parseInt(c.req.param("id"), 10);
-  if (!id) return c.json({ error: "Invalid ID." }, 400);
-  const db = getDb(c.env);
-
-  const roleRow = await db
-    .select({ permissions: roles.permissions })
-    .from(roles)
-    .where(eq(roles.id, id))
-    .limit(1);
-  if (roleRow.length === 0) return c.json({ error: "Role not found" }, 404);
-
-  const permsSet = new Set(parsePermissions(roleRow[0].permissions));
-
-  const rows = await db
-    .select({ page_key: role_page_access.page_key, level: role_page_access.level })
-    .from(role_page_access)
-    .where(eq(role_page_access.role_id, id));
-
-  const explicit: Record<string, AccessLevel> = {};
-  for (const r of rows) {
-    if (isValidPageKey(r.page_key) && isValidAccessLevel(r.level)) {
-      explicit[r.page_key] = r.level;
-    }
-  }
-
-  const out: Record<string, { level: AccessLevel; explicit: boolean }> = {};
-  for (const p of PAGES) {
-    if (explicit[p.key]) {
-      out[p.key] = { level: explicit[p.key], explicit: true };
-    } else {
-      out[p.key] = { level: computeBackfillLevel(p.key, permsSet), explicit: false };
-    }
-  }
-
-  return c.json({ role_id: id, page_access: out });
-});
-
-/**
- * PATCH /api/roles/:id/page-access
- * Body: { entries: Array<{ page_key, level }> }
- * Upserts one or more (page_key, level) rows for the role.
- *
- * System roles (Owner / IT Admin) hold the `*` wildcard which
- * short-circuits matrix lookups, but we still allow writes for
- * audit-log visibility — they just have no behavioural effect.
- */
-app.patch("/:id/page-access", requirePermission("roles.manage"), async (c) => {
-  const id = parseInt(c.req.param("id"), 10);
-  if (!id) return c.json({ error: "Invalid ID." }, 400);
-
-  const body = await c.req.json<{
-    entries: Array<{ page_key: string; level: string }>;
-  }>();
-  if (!body || !Array.isArray(body.entries) || body.entries.length === 0) {
-    return c.json({ error: "entries[] is required" }, 400);
-  }
-
-  const cleaned: Array<{ page_key: string; level: AccessLevel }> = [];
-  for (const e of body.entries) {
-    if (!isValidPageKey(e.page_key)) {
-      return c.json({ error: `Unknown page_key: ${e.page_key}` }, 400);
-    }
-    if (!isValidAccessLevel(e.level)) {
-      return c.json({ error: `Invalid level: ${e.level}` }, 400);
-    }
-    cleaned.push({ page_key: e.page_key, level: e.level });
-  }
-
-  const db = getDb(c.env);
-  const roleRow = await db
-    .select({ id: roles.id })
-    .from(roles)
-    .where(eq(roles.id, id))
-    .limit(1);
-  if (roleRow.length === 0) return c.json({ error: "Role not found" }, 404);
-
-  // Upsert on the (role_id, page_key) PK. Done in a loop because the
-  // matrix payload is at most 13 rows so this is fine.
-  for (const e of cleaned) {
-    await c.env.DB.prepare(
-      `INSERT INTO role_page_access (role_id, page_key, level, updated_at)
-       VALUES (?, ?, ?, datetime('now'))
-       ON CONFLICT(role_id, page_key) DO UPDATE SET
-         level = excluded.level, updated_at = excluded.updated_at`,
-    )
-      .bind(id, e.page_key, e.level)
-      .run();
-  }
-
-  await audit(c, {
-    action: "role.page_access.update",
-    entityType: "role",
-    entityId: id,
-    summary: `Updated page access for role #${id} (${cleaned.length} page(s))`,
-    meta: { entries: cleaned },
-  });
-
-  return c.json({ ok: true, written: cleaned.length });
-});
-
-/**
  * DELETE /api/roles/:id
  * Delete a custom role. Refuses if any user still holds it.
  */
@@ -354,14 +213,6 @@ app.delete("/:id", requirePermission("roles.manage"), async (c) => {
       409
     );
   }
-
-  // The page-access matrix FK (role_page_access.role_id) was ON DELETE CASCADE
-  // in the schema, but the D1->PG load dropped it to NO ACTION — so a bare
-  // delete throws once a role has any saved matrix row. Clear children first
-  // (same cutover fix as departments/positions).
-  await c.env.DB.prepare(`DELETE FROM role_page_access WHERE role_id = ?`)
-    .bind(id)
-    .run();
 
   await db.delete(roles).where(eq(roles.id, id));
   await audit(c, {

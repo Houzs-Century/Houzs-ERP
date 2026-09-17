@@ -2,14 +2,11 @@
 // demo/canonical data goes in a script). Idempotent. Creates:
 //   1. the 3 canonical departments (SALES / OPERATION / HQ)
 //   2. the 17 positions (department × position)
-//   3. the position_page_access matrix (transcribed from docs/PERMISSION-MATRIX.md)
-//   4. one ACTIVE test account per position (shared simple password) so the
+//   3. one ACTIVE test account per position (shared simple password) so the
 //      owner can log into each and see exactly what that position sees.
 //
-// Page-access uses the INHERIT model (services/pageAccess.ts loadPageAccessForPosition):
-// a child sub-page inherits its parent's level unless given its own row. So the
-// matrix below lists only the rows that differ; everything else resolves to none
-// or to the parent.
+// Page access is NOT seeded here: a Title's pages come from its position_policy
+// row (seeded by migration, edited on Roles & Permissions › Titles).
 //
 // Usage:
 //   node scripts/seed-user-management.mjs --dry-run   # print plan, no DB
@@ -65,30 +62,6 @@ const MANAGER = {
   driver: "logistic", helper: "logistic",
 };
 
-// position_page_access rows. Only rows that differ from the inherit default.
-// super_admin omitted — it uses the Owner role (* wildcard → full everything).
-const MATRIX = {
-  hr_manager: { overview: "view", "projects.calendar": "view", team: "view", "team.roles": "none", "team.departments": "none" },
-  finance_manager: { overview: "full", projects: "view", "projects.finances": "full", orders: "full", delivery_orders: "view", purchase_orders: "view", petty_cash: "full", sales: "view" },
-  admin_assistant: { overview: "view", "projects.calendar": "edit", "team.members": "view" },
-
-  sales_director: { overview: "full", projects: "full", "projects.finances": "view", orders: "full", sales: "full", sales_team: "full", service_cases: "view", "team.members": "view" },
-  sales_manager: { overview: "view", projects: "view", "projects.finances": "none", "orders.sales_orders": "view", sales_team: "view" },
-  sales_executive: { overview: "view", projects: "view", "projects.finances": "none", "orders.sales_orders": "view" },
-  sales_person: { overview: "view", projects: "view", "projects.finances": "none", "orders.sales_orders": "view" },
-  sales_trainee: { overview: "view", projects: "view", "projects.finances": "none" },
-
-  ops_director: { overview: "view", projects: "view", "projects.finances": "none", service_cases: "full", delivery_orders: "full", purchase_orders: "full", logistics: "full" },
-  ops_manager: { overview: "view", "projects.calendar": "view", service_cases: "edit", delivery_orders: "edit", purchase_orders: "view", logistics: "edit" },
-  ops_executive: { "projects.calendar": "view", service_cases: "view", delivery_orders: "view", logistics: "view" },
-  purchasing: { "projects.list": "view", "projects.calendar": "view", purchase_orders: "full" },
-  logistic: { "projects.list": "view", "projects.calendar": "view", delivery_orders: "full", logistics: "full" },
-  storekeeper: { "projects.calendar": "view", delivery_orders: "view", purchase_orders: "view" },
-  // driver / helper: no staff pages — they use the Driver portal.
-  driver: {},
-  helper: {},
-};
-
 // Broad read-only verb bundle for the "Position Preview" role so that pages a
 // position can SEE also return data (page visibility is from the position
 // matrix; this role just supplies the read verbs the data endpoints check).
@@ -116,9 +89,6 @@ const emailFor = (slug) => `${slug}@${TEST_DOMAIN}`;
 function planSummary() {
   console.log(`Departments: ${DEPARTMENTS.join(", ")}`);
   console.log(`Positions: ${POSITIONS.length}`);
-  let rows = 0;
-  for (const p of POSITIONS) rows += Object.keys(MATRIX[p.slug] ?? {}).length;
-  console.log(`position_page_access rows: ${rows}`);
   console.log(`Test accounts (password "${TEST_PASSWORD}"):`);
   for (const p of POSITIONS) {
     console.log(`  ${emailFor(p.slug).padEnd(26)} ${p.dept}/${p.name}  (role ${p.role}, mgr ${MANAGER[p.slug] ?? "-"})`);
@@ -193,18 +163,6 @@ async function roleIdByName(name) {
 const posId = {};
 for (const p of POSITIONS) posId[p.slug] = await upsertPosition(p, deptId[p.dept]);
 
-// 4. matrix rows
-let matrixRows = 0;
-for (const p of POSITIONS) {
-  const rows = MATRIX[p.slug] ?? {};
-  for (const [pageKey, level] of Object.entries(rows)) {
-    await sql`INSERT INTO position_page_access (position_id, page_key, level, updated_at)
-      VALUES (${posId[p.slug]}, ${pageKey}, ${level}, now())
-      ON CONFLICT (position_id, page_key) DO UPDATE SET level = excluded.level, updated_at = now()`;
-    matrixRows++;
-  }
-}
-
 // 5. test accounts (one per position, active, with org tree)
 const hash = await hashPassword(TEST_PASSWORD);
 const userId = {};
@@ -229,7 +187,7 @@ for (const p of POSITIONS) {
   if (mgr && userId[mgr]) await sql`UPDATE users SET manager_id=${userId[mgr]} WHERE id=${userId[p.slug]}`;
 }
 
-console.log(`Seeded: ${DEPARTMENTS.length} departments, ${POSITIONS.length} positions, ${matrixRows} matrix rows, ${POSITIONS.length} test accounts.`);
+console.log(`Seeded: ${DEPARTMENTS.length} departments, ${POSITIONS.length} positions, ${POSITIONS.length} test accounts.`);
 console.log(`\nTest accounts — log in at erp.houzscentury.com, password "${TEST_PASSWORD}":`);
 for (const p of POSITIONS) console.log(`  ${emailFor(p.slug).padEnd(26)} ${p.dept} / ${p.name}`);
 await sql.end();

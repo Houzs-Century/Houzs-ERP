@@ -121,7 +121,6 @@ afterEach(async () => {
   mintedTokens.length = 0;
   if (userId) await env.DB.prepare(`DELETE FROM users WHERE id = ?`).bind(userId).run();
   if (roleId) {
-    await env.DB.prepare(`DELETE FROM role_page_access WHERE role_id = ?`).bind(roleId).run();
     await env.DB.prepare(`DELETE FROM roles WHERE id = ?`).bind(roleId).run();
   }
   userId = 0;
