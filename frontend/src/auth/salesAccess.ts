@@ -73,6 +73,10 @@ export function isDirectorUser(user: AuthUser | null | undefined): boolean {
  */
 export function isSalesStaff(user: AuthUser | null | undefined): boolean {
   if (!user) return false;
+  // The server's answer (pmsAccess.isSalesUser, which reads the Title's policy
+  // row first) wins whenever /auth/me carried a capability set; the org-field
+  // regex below is the fallback for a shell that predates it.
+  if (user.capabilities) return capability(user, "org.sales.staff");
   const dept = (user.department_name ?? "").toLowerCase();
   if (dept.includes("sales")) return true;
   return SALES_POSITION.test((user.position_name ?? "").trim());
@@ -123,6 +127,7 @@ const SALES_DIRECTOR_POSITION_NAMES: ReadonlySet<string> = new Set(
  */
 export function isSalesDirectorUser(user: AuthUser | null | undefined): boolean {
   if (!user) return false;
+  if (user.capabilities) return capability(user, "org.salesDirector");
   return SALES_DIRECTOR_POSITION_NAMES.has(normalisePosition(user.position_name));
 }
 

@@ -126,34 +126,4 @@ describe('amendment-raised effects', () => {
     expect(notices[0].salespersonUserId).toBeNull();
     expect(notices[0].reason).toBeNull();
   });
-
-  /* Owner 2026-09-15, option B: the requester may FLAG the computed approver
-     with a note. The note must outlive the row's column (audit) and reach the
-     notice (so the other desk hears the doubt); an unflagged request carries
-     neither — no empty field row, no phantom card. */
-  it('audits the lane flag note when the requester doubted the approver, and nothing when they did not', async () => {
-    const base = {
-      docNo: 'SO-3', amendmentNo: 'SO-3/A1', lane: 'LINES', actorId: 'u', actorName: 'Ivy',
-      headerKeys: [], headerChanges: {}, oldHeaderSnapshot: {}, columnOf: {},
-    };
-    await recordAmendmentRequested(null, { ...base, laneFlagNote: 'transport fee, should be Logistic' });
-    await recordAmendmentRequested(null, { ...base, laneFlagNote: null });
-    expect(audits[0].fieldChanges).toEqual([
-      { field: 'amendment', from: null, to: 'SO-3/A1' },
-      { field: 'lane', to: 'LINES' },
-      { field: 'lane_flag_note', to: 'transport fee, should be Logistic' },
-    ]);
-    expect(audits[1].fieldChanges).toEqual([
-      { field: 'amendment', from: null, to: 'SO-3/A1' },
-      { field: 'lane', to: 'LINES' },
-    ]);
-  });
-
-  it('hands the lane flag note to every lane\'s notice', async () => {
-    await notifyAmendmentsRaised(ctx, null, {
-      docNo: 'SO-3', salespersonStaffId: null, laneFlagNote: 'should be Logistic',
-      created: [{ amendment_no: 'SO-3/A1', lane: 'LINES' }, { amendment_no: 'SO-3/A2', lane: 'DELIVERY' }],
-    });
-    expect(notices.map((n) => n.laneFlagNote)).toEqual(['should be Logistic', 'should be Logistic']);
-  });
 });

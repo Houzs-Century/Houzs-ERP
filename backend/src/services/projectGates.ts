@@ -1,5 +1,6 @@
 import type { Env } from "../types";
 import { hasPermission } from "./permissions";
+import type { PositionPolicyRow } from "./positionPolicyRows";
 
 /**
  * Who may act on a project's checklist — the owner's people rules, extracted
@@ -33,18 +34,37 @@ export const DEFECT_REVIEW_REGION_STATES = ["Pulau Pinang", "Kelantan", "Terengg
 
 export function isCrewScopedUser(
   user:
-    | { position_name?: string | null; permissions?: string[]; permissions_set?: Set<string> | string[] }
+    | {
+        position_name?: string | null;
+        position_policy?: PositionPolicyRow | null;
+        permissions?: string[];
+        permissions_set?: Set<string> | string[];
+      }
     | null
     | undefined,
 ): boolean {
   if (!user) return false;
   const granted = (user as any).permissions_set ?? user.permissions;
   if (hasPermission(granted, "*") || hasPermission(granted, "projects.write")) return false;
+  // The Title's row decides (Roles & Permissions › Titles, Duty column);
+  // the name rule below is the fallback for a Title with no row.
+  const row = user.position_policy;
+  if (row) return row.duty === "helper" || row.duty === "warehouse";
   const pos = (user.position_name ?? "").trim().toLowerCase();
-  // Owner 2026-08-28: the admin-created regional warehouse-crew positions
-  // ("Warehouse Crew KL", …) carry the whole helper/storekeeper cohort now —
-  // prefix match, mirroring positionPolicy.isWarehouseCrewPosition.
   return CREW_SCOPED_POSITIONS.has(pos) || pos.startsWith("warehouse crew");
+}
+
+/** The defect REVIEWER position (owner 2026-08-07: the Storekeeper Supervisor
+ *  triages fresh defects outside the region states). By the Title's row
+ *  (profile storekeeper_supervisor), by exact name for a Title with no row —
+ *  the name check is what the 2026-08-28 reorg silently switched off. */
+export function isDefectReviewerPosition(
+  user: { position_name?: string | null; position_policy?: PositionPolicyRow | null } | null | undefined,
+): boolean {
+  if (!user) return false;
+  const row = user.position_policy;
+  if (row) return row.cohort === "restricted" && row.profile === "storekeeper_supervisor";
+  return (user.position_name ?? "").trim().toLowerCase() === "storekeeper supervisor";
 }
 
 /** Is this project's state reviewed by the region warehouse (Ops Exec)? */
@@ -97,9 +117,12 @@ export async function approverBrandBlocked(
 export function salesDirectorMayAttach(
   title: string | null | undefined,
   positionName: string | null | undefined,
+  row: PositionPolicyRow | null | undefined = null,
 ): boolean {
-  const pos = (positionName ?? "").trim().toLowerCase();
-  if (pos !== "sales director") return false;
+  const isSalesDirector = row
+    ? row.cohort === "sales" && row.profile === "director"
+    : (positionName ?? "").trim().toLowerCase() === "sales director";
+  if (!isSalesDirector) return false;
   return /^filled floor\s*plan/i.test((title ?? "").trim());
 }
 

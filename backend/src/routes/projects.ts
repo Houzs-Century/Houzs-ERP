@@ -9,6 +9,7 @@ import {
   DEFECT_REVIEW_REGION_STATES,
   approverBrandBlocked,
   isCrewScopedUser,
+  isDefectReviewerPosition,
   isDefectRegionState,
   roleLabelAdmits,
   salesDirectorMayAttach,
@@ -1119,7 +1120,7 @@ app.get("/", requirePageAccess("projects.list"), async (c) => {
       // Executive" is shared with the purchasers Sim/Farra. Scoped to the region
       // states only (exclude = false).
       pendingDefectReview = true;
-    } else if ((user.position_name ?? "").trim().toLowerCase() === "storekeeper supervisor") {
+    } else if (isDefectReviewerPosition(user)) {
       // Shukor (owner 2026-08-07; region split 2026-08-11): the Storekeeper
       // Supervisor triages fresh defects for every state OUTSIDE Nancy's region
       // (the second warehouse). Keyed on POSITION, not role — his role is the
@@ -4163,7 +4164,7 @@ app.patch(
     if (!row) return c.json({ error: "Not found" }, 404);
     if (
       !hasPermission(granted, "projects.write") &&
-      !salesDirectorMayAttach(row.title, user?.position_name)
+      !salesDirectorMayAttach(row.title, user?.position_name, user?.position_policy ?? null)
     ) {
       if (!roleLabelAdmits(row.role_label, user?.role_name)) {
         return c.json(
@@ -4213,7 +4214,7 @@ app.post(
     // Supervisor + Nancy the Ops Exec (region states). The purchaser (Sim /
     // Farra) and BD only close escalations. State routing governs My Pending
     // visibility; either reviewer may act, the frontend shows the right one.
-    const isReviewer = position === "storekeeper supervisor" || role === "ops exec";
+    const isReviewer = isDefectReviewerPosition(user) || role === "ops exec";
     const isPurchaser = role.includes("purchaser") || role.includes("bd");
     if (!isAdmin && !isReviewer && !isPurchaser) {
       return c.json(

@@ -449,6 +449,8 @@ const ORG_ROW_ICONS: Record<string, keyof typeof ROW_ICONS> = {
   "/announcements": "cast",
   "/team?tab=members": "users",
   "/team?tab=positions": "badge",
+  "/titles": "badge",
+  "/roles": "shield",
   "/team?tab=departments": "building",
 };
 const orgIconOf = (to: string): keyof typeof ROW_ICONS => ORG_ROW_ICONS[to] ?? "list";

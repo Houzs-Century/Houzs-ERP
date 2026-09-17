@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   deriveProductCostFromSuppliers,
+  resolveProductCostAnchor,
+  comparableCostSen,
   type DeriveResult,
   type SupplierBindingCost,
 } from './derive-product-cost-from-suppliers';
@@ -200,5 +202,113 @@ describe('deriveProductCostFromSuppliers — BEDFRAME flat-priced (no matrix)', 
     if (r.skipped) throw new Error('expected a patch');
     expect(r.chosenSupplierId).toBe('a');      // dearest flat
     expect(r.patch.base_price_sen).toBe(165000); // not null
+  });
+});
+
+describe('resolveProductCostAnchor — the drawer/SKU-master display state', () => {
+  it('SERVICE category -> service state, no supplier anchor, cost not supplier-derived', () => {
+    const r = resolveProductCostAnchor('SERVICE', [b({ supplier_id: 's1', unit_price_sen: 5000 })]);
+    expect(r.state).toBe('service');
+    expect(r.anchorSupplierId).toBeNull();
+    expect(r.costSen).toBeNull();
+  });
+
+  it('no bindings -> empty / no_supplier_binding', () => {
+    const r = resolveProductCostAnchor('MATTRESS', []);
+    expect(r.state).toBe('empty');
+    expect(r.reason).toBe('no_supplier_binding');
+    expect(r.totalCount).toBe(0);
+  });
+
+  it('bound but every price blank/zero -> empty / no_supplier_with_cost (never anchored RM 0)', () => {
+    const r = resolveProductCostAnchor('MATTRESS', [
+      b({ supplier_id: 's1', unit_price_sen: 0 }),
+      b({ supplier_id: 's2', unit_price_sen: null }),
+    ]);
+    expect(r.state).toBe('empty');
+    expect(r.reason).toBe('no_supplier_with_cost');
+    expect(r.anchorSupplierId).toBeNull();
+    expect(r.costSen).toBeNull();
+    expect(r.totalCount).toBe(2);
+  });
+
+  it('bedframe bound only with a P1 (no cost tier) -> empty / no_supplier_with_cost', () => {
+    const r = resolveProductCostAnchor('BEDFRAME', [b({ supplier_id: 'p1', price_matrix: { P1: 299000 } })]);
+    expect(r.state).toBe('empty');
+    expect(r.reason).toBe('no_supplier_with_cost');
+    expect(r.totalCount).toBe(1);
+    expect(r.costedCount).toBe(0);
+  });
+
+  it('single costed supplier -> ok, anchored to it, cost = its set', () => {
+    const r = resolveProductCostAnchor('MATTRESS', [b({ supplier_id: 'only', unit_price_sen: 52000 })]);
+    expect(r.state).toBe('ok');
+    expect(r.anchorSupplierId).toBe('only');
+    expect(r.costSen).toBe(52000);
+    expect(r.costedCount).toBe(1);
+    expect(r.totalCount).toBe(1);
+  });
+
+  it('several costed suppliers that all AGREE -> ok (not a conflict)', () => {
+    const r = resolveProductCostAnchor('ACCESSORY', [
+      b({ supplier_id: 'a', unit_price_sen: 7000 }),
+      b({ supplier_id: 'b', unit_price_sen: 7000 }),
+    ]);
+    expect(r.state).toBe('ok');
+    expect(r.costSen).toBe(7000);
+    expect(r.costedCount).toBe(2);
+  });
+
+  it('costed suppliers DIFFER -> conflict, anchored to the dearest, cost = highest set', () => {
+    const r = resolveProductCostAnchor('ACCESSORY', [
+      b({ supplier_id: 'cheap', unit_price_sen: 1500 }),
+      b({ supplier_id: 'dear', unit_price_sen: 1800 }),
+    ]);
+    expect(r.state).toBe('conflict');
+    expect(r.anchorSupplierId).toBe('dear');
+    expect(r.costSen).toBe(1800);
+    expect(r.costedCount).toBe(2);
+    expect(r.totalCount).toBe(2);
+  });
+
+  it('a cost-less binding is NOT counted among the costed suppliers (N of M)', () => {
+    const r = resolveProductCostAnchor('BEDFRAME', [
+      b({ supplier_id: 'p1only', price_matrix: { P1: 299000 } }), // no cost tier
+      b({ supplier_id: 'real', price_matrix: { P2: 55000 } }),
+    ]);
+    expect(r.state).toBe('ok'); // only one costed supplier -> no conflict
+    expect(r.anchorSupplierId).toBe('real');
+    expect(r.costSen).toBe(55000);
+    expect(r.costedCount).toBe(1); // p1only is not costed
+    expect(r.totalCount).toBe(2);
+  });
+
+  it('sofa with a grid but no flat -> cost falls back to the dearest cell, still ok', () => {
+    const r = resolveProductCostAnchor('SOFA', [
+      b({ supplier_id: 'only', unit_price_sen: null, price_matrix: { '24': { P2: 105000, P3: 110000 } } }),
+    ]);
+    expect(r.state).toBe('ok');
+    expect(r.anchorSupplierId).toBe('only');
+    expect(r.costSen).toBe(110000); // base_price_sen (flat) null -> dearnessSen = dearest cell across the grid
+  });
+});
+
+describe('comparableCostSen — the History supplier-price direction scalar', () => {
+  it('FLAT: the flat unit price is the comparable', () => {
+    expect(comparableCostSen('MATTRESS', { unit_price_sen: 5200, price_matrix: null })).toBe(5200);
+  });
+  it('BEDFRAME: ranks on P2 (cost ref), falling back to P1 then flat', () => {
+    expect(comparableCostSen('BEDFRAME', { unit_price_sen: 0, price_matrix: { P2: 55000, P1: 50000 } })).toBe(55000);
+    expect(comparableCostSen('BEDFRAME', { unit_price_sen: 0, price_matrix: { P1: 50000 } })).toBe(50000);
+  });
+  it('SOFA: the dearest cell across the whole grid', () => {
+    expect(
+      comparableCostSen('SOFA', { unit_price_sen: null, price_matrix: { '24': { P2: 105000, P3: 110000 }, '30': { P2: 90000 } } }),
+    ).toBe(110000);
+  });
+  it('is directional: a later dearer set compares GREATER (raised)', () => {
+    const before = comparableCostSen('ACCESSORY', { unit_price_sen: 1500, price_matrix: null });
+    const after = comparableCostSen('ACCESSORY', { unit_price_sen: 1800, price_matrix: null });
+    expect(after).toBeGreaterThan(before);
   });
 });

@@ -1,36 +1,14 @@
-import { env } from "cloudflare:test";
-import { describe, expect, test, beforeEach } from "vitest";
+import { describe, expect, test } from "vitest";
 import {
-  loadPageAccessForPosition,
+  resolvePositionAccessFromRows,
   levelRank,
   isValidPositionLevel,
 } from "../src/services/pageAccess";
 
-// Exercises the position page-access engine (4-level + inherit model) against
-// the isolated test D1, which has the positions + position_page_access tables
-// from migration 094.
-
-async function seedPosition(slug: string, rows: Record<string, string>): Promise<number> {
-  const res = await env.DB.prepare(
-    `INSERT INTO positions (slug, name, level) VALUES (?, ?, 100)`,
-  )
-    .bind(slug, slug)
-    .run();
-  const id = res.meta.last_row_id as number;
-  for (const [k, v] of Object.entries(rows)) {
-    await env.DB.prepare(
-      `INSERT INTO position_page_access (position_id, page_key, level) VALUES (?, ?, ?)`,
-    )
-      .bind(id, k, v)
-      .run();
-  }
-  return id;
-}
-
-beforeEach(async () => {
-  await env.DB.exec(`DELETE FROM position_page_access`);
-  await env.DB.exec(`DELETE FROM positions`);
-});
+// The position page-access engine (4-level + inherit model), exercised through
+// its pure resolver. The rows used to come from the position_page_access table
+// (dropped 2026-09-17); they now come from the code whitelists a Title's
+// position_policy profile names, through this same function.
 
 describe("position page-access (4-level + inherit)", () => {
   test("levelRank: partial is a rank-1 alias of view", () => {
@@ -47,37 +25,34 @@ describe("position page-access (4-level + inherit)", () => {
     expect(isValidPositionLevel("edit")).toBe(true);
     expect(isValidPositionLevel("full")).toBe(true);
     expect(isValidPositionLevel("partial")).toBe(false);
-    expect(isValidPositionLevel("bogus")).toBe(false);
+    expect(isValidPositionLevel("admin")).toBe(false);
   });
 
-  test("children inherit parent; explicit child overrides; financials hidden", async () => {
-    const id = await seedPosition("sales_exec", {
-      team: "view",
-      projects: "view",
-      "projects.finances": "none",
-    });
-    const map = await loadPageAccessForPosition(env, id);
+  test("children inherit parent; explicit child overrides; financials hidden", () => {
+    const map = resolvePositionAccessFromRows([
+      { page_key: "team", level: "view" },
+      { page_key: "projects", level: "view" },
+      { page_key: "projects.finances", level: "none" },
+    ]);
     expect(map.team).toBe("view");
     expect(map.projects).toBe("view");
     expect(map["projects.list"]).toBe("view"); // inherited
     expect(map["projects.calendar"]).toBe("view"); // inherited
     expect(map["projects.finances"]).toBe("none"); // explicit override → hidden
-    expect(map["service_cases.cases"]).toBe("none"); // unseeded → none
+    expect(map["service_cases.cases"]).toBe("none"); // no row → none
     expect(map.sales).toBe("none");
   });
 
-  test("parent full cascades to all children", async () => {
-    const id = await seedPosition("sales_dir", { projects: "full" });
-    const map = await loadPageAccessForPosition(env, id);
+  test("parent full cascades to all children", () => {
+    const map = resolvePositionAccessFromRows([{ page_key: "projects", level: "full" }]);
     expect(map.projects).toBe("full");
     expect(map["projects.list"]).toBe("full");
     expect(map["projects.calendar"]).toBe("full");
     expect(map["projects.finances"]).toBe("full");
   });
 
-  test("narrow grant: parent none + a single child view", async () => {
-    const id = await seedPosition("hr", { "projects.calendar": "view" });
-    const map = await loadPageAccessForPosition(env, id);
+  test("narrow grant: parent none + a single child view", () => {
+    const map = resolvePositionAccessFromRows([{ page_key: "projects.calendar", level: "view" }]);
     expect(map.projects).toBe("none");
     expect(map["projects.calendar"]).toBe("view");
     expect(map["projects.list"]).toBe("none");

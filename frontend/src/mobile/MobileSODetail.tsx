@@ -8,7 +8,7 @@ import { fmtAmt } from "../lib/scm";
 import { useQueryClient } from "@tanstack/react-query";
 import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
 import { useNotify } from "../vendor/scm/components/NotifyDialog"; import { notifySaveProblems } from "../vendor/scm/components/SaveProblemsList";
-import { usePrompt } from "../vendor/scm/components/PromptDialog"; import { CancelRequestPanel } from "../vendor/scm/components/CancelRequestPanel"; import { useCancelRequestAction } from "../pages/scm-v2/use-cancel-request-action";
+import { usePrompt } from "../vendor/scm/components/PromptDialog"; import { CancelRequestPanel } from "../vendor/scm/components/CancelRequestPanel"; import { useCancelRequestAction } from "../pages/scm-v2/use-cancel-request-action"; import { WrongApproverFlagButton } from "../pages/scm-v2/WrongApproverFlagButton";
 import { fetchScanSlipImageBlobUrl } from "../vendor/scm/lib/slip";
 import { MobileLinePhotos } from "./MobileLinePhotos";
 import { useStaff, usePickableStaff } from "../vendor/scm/lib/admin-queries";
@@ -975,8 +975,8 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
                     )}
                   </>
                 )}
-                {/* Reject — an approver refusing (reason mandatory). Available at
-                    every pre-approved gate, exactly as desktop AmendmentDetailV2. */}
+                <WrongApproverFlagButton amendment={openAmendmentDetail.data?.amendment} canSign={canApproveLane} variant="mobile" />
+                {/* Reject — an approver refusing (reason mandatory), at every pre-approved gate as on desktop. */}
                 {canOfferReject && (
                   <button
                     type="button"

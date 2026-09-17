@@ -63,8 +63,10 @@ see scm/lib/maps.ts (Directions, env-gated on GOOGLE_MAPS_API_KEY).
 **Authz model** (3 layers):
 - Flat permission strings (`permissions.ts`, ~30 keys) → `requirePermission` /
   `requireAnyPermission` (O(1) Set lookup on the hydrated user).
-- Per-page access matrix (`pageAccess.ts`, mig 073, `role_page_access`) →
-  `requirePageAccess(page, level)` with none/partial/full + parent→child cascade.
+- Page access (`pageAccess.ts` catalogue) → `requirePageAccess(page, level)`. A
+  member's map comes from their Title's `position_policy` row
+  (`positionPolicy.ts`); a member with no Title gets it from the role's
+  permission keys. No per-page table is stored.
 - Row scope (`projectAcl.ts`, mig 049): PIC one-hop (`pic_id ∈ {self, manager}`)
   ∩ brand allow-list. `scope_to_pic` role flag turns it on.
 
@@ -81,7 +83,7 @@ GitHub Actions: CI (typecheck+test) + Deploy on main.
 ## 2. Data model (the migration trees + `schema.pg.ts`), by domain
 
 1. **Auth/access**: `users` (role_id, manager_id, department_id, points), `roles`
-   (JSON permissions, `scope_to_pic`, `is_system`), `role_page_access` (mig 073),
+   (JSON permissions, `scope_to_pic`, `is_system`), `positions` + `position_policy`,
    `sessions`, `invitations`, `password_resets`, `departments` + `department_brands`
    (mig 048), `user_brands` (mig 049).
 2. **Sales**: `sales_orders` + `order_details` (legacy, AutoCount-synced,

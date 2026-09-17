@@ -234,3 +234,113 @@ export function deriveProductCostFromSuppliers(
     patch: mapped.patch,
   };
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// DISPLAY resolver — the anchor + state a drawer/list shows (read-only).
+//
+// This is a THIN wrapper over deriveProductCostFromSuppliers: it does NOT change
+// what gets written (auto-derive-cost.ts owns the write path), it only classifies
+// the SAME inputs for display so the UI can say "anchored to <supplier>", "took
+// highest", or "missing price". Kept in this module so the classification runs on
+// the one audited money rule (laneFor / hasCostTier / dearnessSen), not a copy.
+// ─────────────────────────────────────────────────────────────────────────
+
+/** The four states the SKU drawer / SKU-master column render:
+ *   · ok       — a single supplier, or all costed suppliers agree.
+ *   · conflict — >1 costed supplier and they DIFFER; the highest set was taken.
+ *   · empty    — no costed supplier (nothing bound, or the price is blank/zero).
+ *   · service  — a SERVICE-category SKU; cost is labour/freight, not supplier-derived. */
+export type CostAnchorState = 'ok' | 'conflict' | 'empty' | 'service';
+
+export type CostAnchorResult = {
+  state: CostAnchorState;
+  /** Why the state is 'empty': 'no_supplier_binding' (nothing bound) or
+   *  'no_supplier_with_cost' (bound, but no supplier carries a real cost). null
+   *  for every other state. Lets the UI pick "add a supplier" vs "fill the price". */
+  reason: string | null;
+  /** The supplier whose whole set anchors the cost (states ok | conflict), else null. */
+  anchorSupplierId: string | null;
+  /** The derived headline cost in sen (base_price_sen lane; falls back to the
+   *  ranking scalar for a sofa with no flat), or null when not resolvable. Callers
+   *  that must not reveal cost null this out — it is the only cost-bearing field. */
+  costSen: number | null;
+  /** Suppliers that carry a real cost tier — the "N" in "highest full set (N of M)". */
+  costedCount: number;
+  /** Total supplier bindings for this SKU — the "M". */
+  totalCount: number;
+};
+
+/**
+ * ONE supplier binding's comparable cost scalar (sen), per the SKU's category
+ * lane — the same "dearness" the anchor ranks on. Used by the supplier-price
+ * History tab to decide whether a supplier RAISED or LOWERED its price between
+ * two effective dates, so the direction arrow is computed on the one audited
+ * rule rather than a hand-rolled comparison that would disagree with the anchor.
+ */
+export function comparableCostSen(
+  category: AnchorCategory | null,
+  binding: Pick<SupplierBindingCost, 'unit_price_sen' | 'price_matrix'>,
+): number {
+  return dearnessSen(laneFor(category), {
+    supplier_id: '',
+    is_main_supplier: null,
+    unit_price_sen: binding.unit_price_sen,
+    price_matrix: binding.price_matrix,
+  });
+}
+
+/**
+ * Classify a SKU's supplier bindings for DISPLAY: which supplier anchors the
+ * derived cost and in what state. Runs the exact rule the write path runs
+ * (deriveProductCostFromSuppliers), so the drawer can never disagree with the
+ * stored derived cost.
+ *
+ * SERVICE is a display-only carve-out (owner: a service item's cost is
+ * labour/freight, not supplier-derived) — it does not change the derivation for a
+ * service SKU that happens to carry a binding, only how the drawer labels it.
+ */
+export function resolveProductCostAnchor(
+  category: AnchorCategory | null,
+  bindings: readonly SupplierBindingCost[],
+): CostAnchorResult {
+  const totalCount = bindings.length;
+  if ((category ?? '').toUpperCase() === 'SERVICE') {
+    return { state: 'service', reason: null, anchorSupplierId: null, costSen: null, costedCount: 0, totalCount };
+  }
+  const lane = laneFor(category);
+  const costed = bindings.filter((x) => hasCostTier(lane, x));
+  const costedCount = costed.length;
+  if (costedCount === 0) {
+    return {
+      state: 'empty',
+      reason: totalCount === 0 ? 'no_supplier_binding' : 'no_supplier_with_cost',
+      anchorSupplierId: null,
+      costSen: null,
+      costedCount,
+      totalCount,
+    };
+  }
+  const derived = deriveProductCostFromSuppliers(category, bindings);
+  // A zero-dearness winner is "no real price" — the same condition auto-derive
+  // refuses to write (all_zero_priced). Surface it as the missing-price gap, not
+  // an anchored RM 0.00.
+  if (derived.skipped || derived.dearnessSen === 0) {
+    return {
+      state: 'empty',
+      reason: derived.skipped ? derived.reason : 'no_supplier_with_cost',
+      anchorSupplierId: null,
+      costSen: null,
+      costedCount,
+      totalCount,
+    };
+  }
+  const conflict = costedCount > 1 && costed.some((x) => dearnessSen(lane, x) !== derived.dearnessSen);
+  return {
+    state: conflict ? 'conflict' : 'ok',
+    reason: null,
+    anchorSupplierId: derived.chosenSupplierId,
+    costSen: derived.patch.base_price_sen ?? derived.dearnessSen,
+    costedCount,
+    totalCount,
+  };
+}

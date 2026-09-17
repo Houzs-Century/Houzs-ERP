@@ -1,7 +1,7 @@
 import type { Env } from "../types";
 import { parsePermissions } from "./permissions";
 import {
-  loadPageAccessForRole,
+  pageAccessFromPermissions,
   fullAccessMap,
   type AccessLevel,
   type PageAccessMeta,
@@ -142,7 +142,10 @@ export const REMEMBER_TTL_SECONDS = 60 * 60 * 24 * 365; // 1 year, rolling
 /* v4 (2026-09-16): the position_page_overrides layer is gone (table dropped,
  * never used in production); the fingerprint lost its override arm and the
  * envelope its override composition, so every cached v3 session rebuilds once. */
-export const AUTHZ_ENVELOPE_VERSION = 4;
+/* v5 (2026-09-17): role_page_access is gone; the fingerprint lost its `page`
+ * arm and a member with no Title resolves pages from the role's permission keys
+ * alone, so every cached v4 session rebuilds once. */
+export const AUTHZ_ENVELOPE_VERSION = 5;
 
 /* Session ORIGIN (mig 0120) — the DOOR a session was minted at. It is NOT a
    property of the person: the same salesperson simultaneously holds a 'pos'
@@ -409,11 +412,12 @@ interface SessionAuthority {
   policy_money: number | boolean | null;
   policy_config: number | boolean | null;
   policy_fleet: number | boolean | null;
+  policy_duty: string | null;
   department_name: string | null;
 }
 
 interface AuthzComponent {
-  kind: "page" | "brand" | "cap";
+  kind: "brand" | "cap";
   owner_key: "role" | "self" | "manager" | "position";
   item_key: string;
   item_value: string;
@@ -458,6 +462,7 @@ function buildAuthzFingerprint(
       Number(authority.policy_money ?? 0),
       Number(authority.policy_config ?? 0),
       Number(authority.policy_fleet ?? 0),
+      authority.policy_duty ?? null,
     ],
     department: [authority.department_id, authority.department_name],
     brands_for: [authority.user_id, authority.manager_id],
@@ -511,6 +516,7 @@ async function hydrateAuthUser(env: Env, row: any): Promise<AuthUser> {
     can_move_money: row.policy_money,
     can_write_config: row.policy_config,
     is_fleet: row.policy_fleet,
+    duty: row.policy_duty,
   });
   // Position => '*' (owner 2026-07-20): a god-tier POSITION (Super Admin / Owner)
   // is a full super admin with NO roles.permissions grant — step 1 of merging role
@@ -562,8 +568,8 @@ async function hydrateAuthUser(env: Env, row: any): Promise<AuthUser> {
   } else if (row.position_id != null) {
     // ALL 17 positioned cohorts resolve HERE now — full, restricted, AND sales.
     // The policy is the single page-access source; the legacy position matrix is
-    // no longer read for a positioned user. (loadPageAccessForPosition survives
-    // only for the positionless role-matrix fallback below.)
+    // no longer read for a positioned user. (A member with no Title resolves from the
+    // role's permission keys below.)
     const policy = resolvePositionPolicy({
       position_name: row.position_name ?? null,
       department_name: row.department_name ?? null,
@@ -571,7 +577,8 @@ async function hydrateAuthUser(env: Env, row: any): Promise<AuthUser> {
     pageAccess = policy.pageAccess;
     scmMeta.explicitScm = policy.scmConfigured;
   } else {
-    pageAccess = await loadPageAccessForRole(env, row.role_id, permissionsSet, scmMeta);
+    // No Title: pages come from the role's permission keys alone.
+    pageAccess = pageAccessFromPermissions(permissionsSet);
   }
 
   // Actions matrix (owner 2026-08-22): the position's operational capability
@@ -682,7 +689,7 @@ export async function getUserBySession(env: Env, token: string): Promise<AuthUse
               pd.name AS position_department_name,
               pp.cohort AS policy_cohort, pp.profile AS policy_profile,
               pp.can_move_money AS policy_money, pp.can_write_config AS policy_config,
-              pp.is_fleet AS policy_fleet,
+              pp.is_fleet AS policy_fleet, pp.duty AS policy_duty,
               d.name AS department_name
        FROM sessions s
        JOIN users u ON u.id = s.user_id
@@ -704,11 +711,6 @@ export async function getUserBySession(env: Env, token: string): Promise<AuthUse
          JOIN users u ON u.id = s.user_id
          WHERE s.token = ?
        )
-       SELECT 'page' AS kind, 'role' AS owner_key,
-              rpa.page_key AS item_key, rpa.level AS item_value
-       FROM principal pr
-       JOIN role_page_access rpa ON rpa.role_id = pr.role_id
-       UNION ALL
        SELECT 'brand' AS kind, 'self' AS owner_key,
               ub.brand AS item_key, '' AS item_value
        FROM principal pr
@@ -814,7 +816,7 @@ export async function getUserBySession(env: Env, token: string): Promise<AuthUse
               p.name as position_name,
               pp.cohort as policy_cohort, pp.profile as policy_profile,
               pp.can_move_money as policy_money, pp.can_write_config as policy_config,
-              pp.is_fleet as policy_fleet,
+              pp.is_fleet as policy_fleet, pp.duty as policy_duty,
               d.name as department_name,
               s.expires_at, s.origin
        FROM sessions s
@@ -867,7 +869,7 @@ export async function getUserById(env: Env, id: number): Promise<AuthUser | null
             p.name as position_name,
               pp.cohort as policy_cohort, pp.profile as policy_profile,
               pp.can_move_money as policy_money, pp.can_write_config as policy_config,
-              pp.is_fleet as policy_fleet,
+              pp.is_fleet as policy_fleet, pp.duty as policy_duty,
             d.name as department_name
      FROM users u
      JOIN roles r ON r.id = u.role_id

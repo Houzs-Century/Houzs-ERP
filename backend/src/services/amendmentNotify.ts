@@ -120,11 +120,6 @@ export async function notifySoAmendmentRaised(
     salespersonUserId?: number | null;
     /** users.id of the person who raised it — excluded from every audience. */
     requesterUserId?: number | null;
-    /** The requester's note that the computed approver looks wrong (owner
-     *  2026-09-15, option B). The assigned desk's notice carries it, and the
-     *  OTHER lane's approvers get a separate card — they are the desk the
-     *  requester believes it belongs to, and an administrator can move it. */
-    laneFlagNote?: string | null;
   },
 ): Promise<void> {
   try {
@@ -132,9 +127,7 @@ export async function notifySoAmendmentRaised(
     const by = (opts.requesterName ?? "").trim();
     const raisedBy = by ? ` by ${by}` : "";
     const reason = shortReason(opts.reason);
-    const flagNote = shortReason(opts.laneFlagNote);
-    const flagTail = flagNote ? ` The requester flagged the approver as possibly wrong: ${flagNote}` : "";
-    const tail = (reason ? ` Reason: ${reason}` : "") + flagTail;
+    const tail = reason ? ` Reason: ${reason}` : "";
     const requester = Number(opts.requesterUserId) || 0;
 
     // 1. The desk that has to sign, plus its upline. A LEGACY (lane-null) row
@@ -161,31 +154,6 @@ export async function notifySoAmendmentRaised(
       });
     }
 
-    // 1b. A flagged lane: the OTHER desk is told too, because the requester
-    //     believes the request is theirs. Nobody is asked to sign here — the
-    //     row stays where the rule put it until the relane workflow moves it.
-    if (flagNote && opts.lane) {
-      const otherLane: SoAmendmentLane = opts.lane === "LINES" ? "DELIVERY" : "LINES";
-      const otherApprovers = await usersHoldingPermission(env, LANE_APPROVE_PERM[otherLane], {
-        companyId: opts.companyId ?? null,
-      });
-      const otherAudience = cleanIds(await withUpline(env, otherApprovers)).filter(
-        (id) => id !== requester && !approverAudience.includes(id),
-      );
-      if (otherAudience.length > 0) {
-        await postPersonalNotice(env, {
-          userIds: otherAudience,
-          category: "GENERAL",
-          title: `SO amendment ${opts.amendmentNo} may be on the wrong desk`,
-          body:
-            `Amendment ${opts.amendmentNo} on Sales Order ${opts.soDocNo} was raised${raisedBy} ` +
-            `for ${laneLabel} approval, but the requester believes it is ${LANE_NOTICE_LABEL[otherLane]}: ` +
-            `${flagNote} It stays with ${laneLabel} until an administrator moves it (Actions: Relane SO amendment).`,
-          source: SO_SOURCE,
-        });
-      }
-    }
-
     // 2. The salesperson whose order it is — informational, not a to-do, so it
     //    is a SEPARATE notice rather than the approver's card sent wider.
     const salesAudience = cleanIds([opts.salespersonUserId]).filter(
@@ -204,6 +172,66 @@ export async function notifySoAmendmentRaised(
     }
   } catch (e) {
     console.error("[amendment-notify] SO raised notify failed:", (e as Error).message);
+  }
+}
+
+/** An APPROVER said a request was not theirs to sign, and it MOVED to the other
+ *  desk (owner 2026-09-17, option B). The receiving desk gets a to-do card —
+ *  the request now waits on THEM — carrying the note that explains why it
+ *  arrived. The requester is told their request changed hands. The approver
+ *  who passed it on hears nothing back. */
+export async function notifySoAmendmentHandedOver(
+  env: Env,
+  opts: {
+    amendmentNo: string;
+    soDocNo: string;
+    fromLane: SoAmendmentLane;
+    toLane: SoAmendmentLane;
+    companyId: number | string | null;
+    note: string;
+    actorName: string | null;
+    actorUserId: number | null;
+    requesterUserId: number | null;
+  },
+): Promise<void> {
+  try {
+    const actor = Number(opts.actorUserId) || 0;
+    const by = (opts.actorName ?? "").trim();
+    const passedBy = by ? `${by} (${LANE_NOTICE_LABEL[opts.fromLane]} approver)` : `The ${LANE_NOTICE_LABEL[opts.fromLane]} approver`;
+    const note = shortReason(opts.note);
+
+    const approvers = await usersHoldingPermission(env, LANE_APPROVE_PERM[opts.toLane], {
+      companyId: opts.companyId,
+    });
+    const approverAudience = cleanIds(await withUpline(env, approvers)).filter((id) => id !== actor);
+    if (approverAudience.length > 0) {
+      await postPersonalNotice(env, {
+        userIds: approverAudience,
+        category: "GENERAL",
+        title: `SO amendment ${opts.amendmentNo} needs approval`,
+        body:
+          `${passedBy} passed amendment ${opts.amendmentNo} on Sales Order ${opts.soDocNo} to you ` +
+          `as not theirs to approve: ${note} It is now waiting for ${LANE_NOTICE_LABEL[opts.toLane]} approval.`,
+        source: SO_SOURCE,
+      });
+    }
+
+    const requesterAudience = cleanIds([opts.requesterUserId]).filter(
+      (id) => id !== actor && !approverAudience.includes(id),
+    );
+    if (requesterAudience.length > 0) {
+      await postPersonalNotice(env, {
+        userIds: requesterAudience,
+        category: "GENERAL",
+        title: `SO amendment ${opts.amendmentNo} was passed to another approver`,
+        body:
+          `${passedBy} passed amendment ${opts.amendmentNo} on Sales Order ${opts.soDocNo} to the ` +
+          `${LANE_NOTICE_LABEL[opts.toLane]} approver: ${note} It is still waiting for approval.`,
+        source: SO_SOURCE,
+      });
+    }
+  } catch (e) {
+    console.error("[amendment-notify] SO handover notify failed:", (e as Error).message);
   }
 }
 

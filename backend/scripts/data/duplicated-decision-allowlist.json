@@ -582,7 +582,7 @@
     },
     {
       "check": "D1",
-      "key": "P1,P2,P3|backend/src/scm/routes/suppliers.ts frontend/src/pages/scm-v2/SupplierDetail.tsx",
+      "key": "P1,P2,P3|backend/src/scm/routes/suppliers.ts frontend/src/pages/scm-v2/SupplierBindingsCsv.tsx",
       "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 2 homes: TIER_KEYS, SOFA_TIERS_FOR_EXPORT. Cost of divergence is a blank chip, not a wrong number."
     },
     {

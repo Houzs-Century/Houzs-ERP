@@ -44,7 +44,7 @@ vi.mock('./orgScope', () => ({
     id === 41 ? [41, 40, 39, 38] : [id],
 }));
 
-const { notifySoAmendmentRaised, notifySoAmendmentResolved } = await import('./amendmentNotify');
+const { notifySoAmendmentRaised, notifySoAmendmentResolved, notifySoAmendmentHandedOver } = await import('./amendmentNotify');
 const { usersHoldingPermission } = await import('./permissionHolders');
 const { LANE_APPROVE_KEY } = await import('../scm/shared/amendment-lane');
 
@@ -167,29 +167,31 @@ describe('amendment notice audience', () => {
     expect(posted.some((p) => p.title.includes('wrong desk'))).toBe(false);
   });
 
-  /* Owner 2026-09-15, option B: a requester who doubts the computed approver
-     flags it with a note. The assigned desk's card quotes the doubt, and the
-     OTHER lane's desk gets its own card — it is the desk the requester believes
-     the request belongs to. Nobody is asked to sign there; the row stays put
-     until the relane workflow moves it. */
-  it('a flagged lane tells the assigned desk about the doubt, and the other desk separately', async () => {
-    await notifySoAmendmentRaised(fakeEnv(), {
+  /* Owner 2026-09-17, option B: an approver who says "not mine" PASSES the
+     request to the other desk. That desk gets a to-do card — it now waits on
+     them — carrying the note; the requester is told it changed hands; the
+     approver who passed it on hears nothing back. */
+  it('a handover gives the receiving desk a to-do and tells the requester, never the one who passed it', async () => {
+    await notifySoAmendmentHandedOver(fakeEnv(), {
       amendmentNo: 'SO-12757/A1',
       soDocNo: 'SO-12757',
-      lane: 'LINES',
+      fromLane: 'LINES',
+      toLane: 'DELIVERY',
       companyId: 1,
-      requesterName: 'Syasya',
-      reason: 'last min cancellation penalty',
-      laneFlagNote: 'transport charge, Logistic approves these',
+      note: 'transport charge, Logistic approves these',
+      actorName: 'Purchaser Pat',
+      actorUserId: 41,
+      requesterUserId: 77,
     });
-    const assigned = posted.find((p) => p.title.includes('needs approval'))!;
-    expect(assigned.userIds.sort()).toEqual([40, 41]);
-    expect(assigned.body).toContain('flagged the approver as possibly wrong: transport charge, Logistic approves these');
-    const other = posted.find((p) => p.title.includes('may be on the wrong desk'))!;
-    expect(other.userIds).toEqual([43]);                 // the DELIVERY desk, not the LINES one
-    expect(other.body).toContain('believes it is delivery / customer info');
-    expect(other.body).toContain('Relane SO amendment');
-    expect(other.source).toBe('so_amendment');
+    const todo = posted.find((p) => p.title.includes('needs approval'))!;
+    expect(todo.userIds).toEqual([43]);                  // the DELIVERY desk, not the LINES one
+    expect(todo.body).toContain('Purchaser Pat (product lines approver) passed amendment SO-12757/A1');
+    expect(todo.body).toContain('transport charge, Logistic approves these');
+    expect(todo.body).toContain('waiting for delivery / customer info approval');
+    expect(todo.source).toBe('so_amendment');
+    const requester = posted.find((p) => p.title.includes('was passed to another approver'))!;
+    expect(requester.userIds).toEqual([77]);
+    expect(posted.flatMap((p) => p.userIds)).not.toContain(41);
   });
 
   it('carries the rejection reason to the requester and the salesperson', async () => {

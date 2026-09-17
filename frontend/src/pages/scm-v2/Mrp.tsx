@@ -35,7 +35,7 @@ import { useCreatePosFromSoItems } from '../../vendor/scm/lib/suppliers-queries'
 import { newIdempotencyKey } from '../../lib/idempotency';
 import { mrpViews, mrpCategoryOf } from './mrp-views';
 import {
-  type ModelGroup, type MrpFilters, rowKey, computeTabModels, lineInWindow,
+  type ModelGroup, type MrpFilters, rowKey, computeTabModels, lineInWindow, groupEarliestDate,
 } from './mrp-model-pipeline';
 import { exportMrpWorkbook } from './mrp-export-workbook';
 import { fmtDate, fmtDateTime } from '../../vendor/shared/format';
@@ -791,6 +791,29 @@ export const Mrp = () => {
       key: 'shortage', label: 'Shortage', width: '120px', align: 'right', className: styles.num,
       getValue: (g) => g.shortage,
       render: (g) => (g.shortage > 0 ? <span className={styles.shortNum}>{g.shortage}</span> : '—'),
+    },
+    /* Planning dates (owner 2026-09-17) — default-hidden, opt-in from the Columns
+       drawer. A Model row can span several SO lines, so each shows the EARLIEST of
+       the group's lines on that basis (the leading edge the plan sorts by, the per-
+       line dates stay in the drilldown). Grouped under Logistics so the three sit
+       together beside Warehouse; "—" when no line carries that date. */
+    {
+      key: 'processingDate', label: 'Processing Date', group: 'Logistics',
+      width: '150px', defaultHidden: true, exportFormat: 'date',
+      getValue: (g) => groupEarliestDate(g, 'processing') ?? '',
+      render: (g) => fmtDate(groupEarliestDate(g, 'processing')),
+    },
+    {
+      key: 'soDate', label: 'SO Date', group: 'Logistics',
+      width: '130px', defaultHidden: true, exportFormat: 'date',
+      getValue: (g) => groupEarliestDate(g, 'soDate') ?? '',
+      render: (g) => fmtDate(groupEarliestDate(g, 'soDate')),
+    },
+    {
+      key: 'deliveryDate', label: 'Delivery Date', group: 'Logistics',
+      width: '140px', defaultHidden: true, exportFormat: 'date',
+      getValue: (g) => groupEarliestDate(g, 'delivery') ?? '',
+      render: (g) => fmtDate(groupEarliestDate(g, 'delivery')),
     },
   ];
 

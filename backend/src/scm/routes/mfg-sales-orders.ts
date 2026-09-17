@@ -10717,8 +10717,6 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
 
   let body: {
     reason?: string;
-    /** Owner 2026-09-15 (option B): the requester's note that the computed approver looks wrong. */
-    laneFlagNote?: string | null;
     headerChanges?: Record<string, unknown> | null;
     lines?: Array<{
       salesOrderItemId?: string | null;
@@ -10742,7 +10740,6 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
       reason: 'Say why this amendment is needed — the approver reads the reason before the changes.',
     }, 400);
   }
-  body.laneFlagNote = typeof body.laneFlagNote === 'string' ? body.laneFlagNote.trim().slice(0, 500) || null : null;
 
   // Guard 1 — SO exists. Pull the lock columns (processing_date + status) plus
   // salesperson_id for the ownership scope check below, plus the amendable
@@ -11022,7 +11019,6 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
       status:       'REQUESTED',
       lane:         laneKey,
       reason:       body.reason,
-      lane_flag_note: body.laneFlagNote,
       requested_by: requesterStaffId,
       company_id:   activeCompanyId(c),
       header_changes:      laneHasHeader ? half.headerChanges : null,
@@ -11064,7 +11060,7 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
     /* History row now, per lane; the notice after the loop, once every half has
        landed. Both live in lib/amendment-raised-effects. */
     await recordAmendmentRequested(sb, {
-      docNo, amendmentNo, lane: laneKey, actorId: user.id, reason: body.reason, laneFlagNote: body.laneFlagNote,
+      docNo, amendmentNo, lane: laneKey, actorId: user.id, reason: body.reason,
       actorName: (user.user_metadata as { name?: string } | undefined)?.name ?? null,
       headerKeys: half.headerKeys, headerChanges: half.headerChanges,
       oldHeaderSnapshot, columnOf: AMENDABLE_HEADER_FIELDS,
@@ -11072,7 +11068,7 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
   }
 
   await notifyAmendmentsRaised(c, sb, {
-    docNo, reason: body.reason, laneFlagNote: body.laneFlagNote, created: createdAmendments,
+    docNo, reason: body.reason, created: createdAmendments,
     salespersonStaffId: (soRow as { salesperson_id?: string | null }).salesperson_id,
   });
 

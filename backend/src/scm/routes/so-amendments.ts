@@ -27,10 +27,12 @@ import {
 import { applySoAmendment, reviseBoundPo, ReceivedFloorError } from '../lib/so-revision';
 import { chunkIn } from '../lib/paginate-all';
 import { raisePoFollowUps } from '../lib/amendment-po-followup';
+import { judgeLaneHandover } from '../lib/amendment-lane-handover';
 import { hasHouzsPerm, holdsHouzsPermLiterally, canViewAllSales, canWriteScmConfig } from '../lib/houzs-perms';
 import { resolveSalesScopeIds, applySoScope, soDocOutOfScope, resolveCallerStaffId, resolveUserIdByStaffId } from '../lib/salesScope';
 import {
   notifySoAmendmentResolved,
+  notifySoAmendmentHandedOver,
   notifyPoAmendmentRaised,
 } from '../../services/amendmentNotify';
 import { collectProcessingGateProblems } from '../shared/so-save-problems';
@@ -89,6 +91,7 @@ type AmendmentForWrite = {
   /* scm.staff uuid of whoever raised it — the audience of the approved /
      rejected notice (services/amendmentNotify.ts). */
   requested_by?: string | null;
+  lane_flag_note?: string | null;
 };
 
 /** Lane of a loaded row — narrowed to the two known values, else legacy. */
@@ -138,6 +141,11 @@ const NOT_IN_LANE_FLOW = (what: string) => ({
   error: 'not_in_lane_flow',
   reason: `This amendment uses the two-lane flow — ${what}`,
 });
+/* The refusal the lane-only flag answers when pointed at a legacy row. */
+const LEGACY_HAS_NO_DESK = {
+  error: 'legacy_amendment',
+  reason: 'This amendment predates the two-desk flow, so there is no other desk to pass it to.',
+};
 type AmendmentWriteLoad =
   // A Houzs-NATIVE amendment: apply locally, exactly as before.
   | { ok: true; mirrored: false; amendment: AmendmentForWrite }
@@ -173,7 +181,7 @@ async function loadAmendmentForWrite(
 ): Promise<AmendmentWriteLoad> {
   const { data } = await scopeToCompany(
     sb.from('so_amendments')
-      .select('id, so_doc_no, amendment_no, status, version, lane, reason, apply_lease_token, apply_lease_expires_at, header_changes, requested_by')
+      .select('id, so_doc_no, amendment_no, status, version, lane, reason, apply_lease_token, apply_lease_expires_at, header_changes, requested_by, lane_flag_note')
       .eq('id', id),
     c,
   ).maybeSingle();
@@ -1352,6 +1360,102 @@ soAmendments.patch('/:id/reject', async (c) => {
       salespersonUserId: audience.salespersonUserId,
     });
   }
+
+  return c.json({ amendment: updated });
+});
+
+/* ── PATCH /:id/flag-lane ──────────────────────────────────────────────────
+   The APPROVER, reviewing a request on their desk, saying it is not theirs to
+   sign — and the request MOVES to the other desk (owner 2026-09-17, option B;
+   the requester cannot judge the desk, the approver reading the change can).
+   Gated on the row's own lane key. lib/amendment-lane-handover decides whether
+   the move is safe: a change the Purchase Order has to follow never leaves the
+   Purchaser. ONCE per amendment — a row that already carries a handover note
+   cannot be passed back, so two desks cannot bounce it between them; the
+   second desk approves or rejects. */
+soAmendments.patch('/:id/flag-lane', async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const sb = c.get('supabase'); const id = c.req.param('id'); const user = c.get('user');
+
+  let body: { note?: string } = {};
+  try { body = (await c.req.json()) as typeof body; } catch { /* validated below */ }
+  const note = typeof body.note === 'string' ? body.note.trim().slice(0, 500) : '';
+  if (!note) {
+    return c.json({
+      error: 'note_required',
+      message: 'Say why this is not yours to approve — that note is what the other desk reads.',
+    }, 400);
+  }
+
+  const loaded = await loadAmendmentForWrite(sb, id, c);
+  if (!loaded.ok) return c.json({ error: 'not_found' }, 404);
+  const lane = laneOf(loaded.amendment);
+  if (!lane) return c.json(LEGACY_HAS_NO_DESK, 409);
+  if (!hasHouzsPerm(c, LANE_APPROVE_KEY[lane])) {
+    return c.json({
+      error: 'flag_forbidden',
+      message: `Only an approver of the ${LANE_LABEL[lane]} lane can pass this amendment to the other desk.`,
+    }, 403);
+  }
+  if (loaded.mirrored) return c.json(MIRRORED_SO_READONLY, 409);
+  const { amendment } = loaded;
+  if (amendment.status !== 'REQUESTED') {
+    return c.json({
+      error: 'bad_transition',
+      reason: 'This amendment has already been acted on, so it can no longer be passed to the other desk.',
+    }, 409);
+  }
+  if ((amendment.lane_flag_note ?? '').trim()) {
+    return c.json({
+      error: 'already_handed_over',
+      reason: 'This amendment was already passed over from the other desk once. Approve it, or reject it with a reason.',
+    }, 409);
+  }
+
+  const verdict = await judgeLaneHandover(sb, c, {
+    id: amendment.id, so_doc_no: amendment.so_doc_no, lane, header_changes: amendment.header_changes ?? null,
+  });
+  if (!verdict.ok) return c.json({ error: verdict.error, reason: verdict.reason }, verdict.status);
+
+  const { data: updated, error: updErr } = await sb.from('so_amendments').update({
+    lane:           verdict.toLane,
+    lane_flag_note: note,
+    version:        Number(amendment.version ?? 1) + 1,
+    updated_at:     new Date().toISOString(),
+  }).eq('id', id)
+    .eq('company_id', co.companyId)
+    .eq('status', 'REQUESTED')
+    .eq('lane', lane)
+    .eq('version', Number(amendment.version ?? 1))
+    .select('id, so_doc_no, amendment_no, status, lane, lane_flag_note, version')
+    .maybeSingle();
+  if (updErr) return c.json({ error: 'update_failed', reason: updErr.message }, 500);
+  if (!updated) return c.json({ error: 'amendment_version_conflict' }, 409);
+
+  await recordSoAudit(sb, {
+    docNo: amendment.so_doc_no,
+    action: 'AMENDMENT_LANE_FLAGGED',
+    actorId: user.id,
+    actorName: c.get('houzsUser')?.name ?? actorName(user),
+    fieldChanges: [
+      { field: 'lane', from: lane, to: verdict.toLane },
+      { field: 'lane_flag_note', to: note },
+    ],
+    note,
+  });
+
+  await notifySoAmendmentHandedOver(c.env, {
+    amendmentNo: amendment.amendment_no ?? '',
+    soDocNo: amendment.so_doc_no,
+    fromLane: lane,
+    toLane: verdict.toLane,
+    companyId: co.companyId,
+    note,
+    actorName: c.get('houzsUser')?.name ?? actorName(user),
+    actorUserId: c.get('houzsUser')?.id ?? null,
+    requesterUserId: await resolveUserIdByStaffId(sb, amendment.requested_by),
+  });
 
   return c.json({ amendment: updated });
 });

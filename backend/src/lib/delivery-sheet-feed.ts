@@ -89,6 +89,9 @@ export type DeliverySheetRecord = {
   Attention: string | null;
   SOUDF_VENUE: string | null;
   Status: string;
+  /** Remarks 2 says READY / READY (PARTIAL) — the owner's gate for a NEW row
+   *  on the sheet (2026-09-17). Decided here so the Apps Script has no copy. */
+  Ready: boolean;
   Region: "WEST" | "EAST" | "SG" | null;
   LastModified: string;
 };
@@ -210,6 +213,30 @@ WHERE t.status IN (${inList(SO_DELIVERED_OR_BEYOND)})
   AND t.balance_sen_live > 0
 ORDER BY t.customer_delivery_date NULLS LAST, t.doc_no`;
 
+/**
+ * Orders that may be ABSENT from the sheet and are now allowed onto it (owner
+ * 2026-09-17: 「我只要 Ready / ready partial 才同步进去」). An order that was not
+ * ready when it was last modified is not appended by the since-feed, and the
+ * allocator flipping its lines to READY later does not touch the header — so
+ * nothing would ever re-send it. This list is the sweep: every undelivered
+ * order dated on/after `?2` (the script's ERP_APPEND_FROM), which the route
+ * then narrows to the READY ones once the lines are read. Binds: ?1
+ * company_id, ?2 from-date. Bounded by the open order book since the cutover.
+ */
+export const FEED_READY_OPEN_SQL = `
+SELECT t.*, t.last_modified::text AS last_modified_text
+FROM (${FEED_BASE_SQL}
+) t
+WHERE t.status NOT IN (${inList(SO_DELIVERED_OR_BEYOND)})
+  AND t.so_date::date >= ?2::date
+ORDER BY t.so_date, t.doc_no`;
+
+/** `from=yyyy-mm-dd`, exactly; anything else is refused before `::date`. */
+export function parseFromDate(raw: string | undefined | null): string | null {
+  const s = (raw ?? "").trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
+}
+
 /** The lines behind a page of heads, for the Remarks-2 readiness wording.
  *  Bare `?` per doc number; bind the doc numbers in the same order. */
 export function feedLinesSql(docCount: number): string {
@@ -267,6 +294,21 @@ export function sheetRegion(salesLocation: string | null, addr3: string | null):
   return null;
 }
 
+/** The derived readiness label in the SHEET's vocabulary. The SO list says
+ *  "PARTIAL" (every main item in, an accessory short); the dispatch team's word
+ *  for that, and the one 70 migrated orders already carry, is "READY (PARTIAL)". */
+export function sheetReadinessWording(stockRemark: string): string | null {
+  const s = stockRemark.trim();
+  if (!s) return null;
+  return s === "PARTIAL" ? "READY (PARTIAL)" : s;
+}
+
+/** READY or READY (PARTIAL), typed or derived. "ACC", "BEDFRAME", "MATTRESS/ACC"
+ *  name the groups that ARE in while the rest is not — not ready to deliver. */
+export function isSheetReady(remark2: string | null): boolean {
+  return /^READY\b/i.test((remark2 ?? "").trim());
+}
+
 export function toSheetRecord(row: FeedHeadRow, lines: ReadonlyArray<FeedLineRow>): DeliverySheetRecord {
   const salesLocation = bookSpellingOrOwn(row.sales_location, LOCATION_MAP);
   const addr3 = blankToNull(row.address3) ?? blankToNull([row.postcode, row.city].filter(Boolean).join(" "));
@@ -275,6 +317,7 @@ export function toSheetRecord(row: FeedHeadRow, lines: ReadonlyArray<FeedLineRow
   // "MATTRESS"). A migrated order carries the book's text; an order without
   // one gets the same derivation the SO list and /so-export use.
   const readiness = lines.length ? summariseReadiness([...lines]).stockRemark : "";
+  const remark2 = blankToNull(row.remark2) ?? sheetReadinessWording(readiness);
   return {
     DocNo: row.linked_ac_docno ?? row.doc_no,
     ErpDocNo: row.doc_no,
@@ -288,7 +331,7 @@ export function toSheetRecord(row: FeedHeadRow, lines: ReadonlyArray<FeedLineRow
     SalesAgent: resolveAcAgent(row.agent, row.salesperson_name),
     Total: senToAmount(row.local_total_sen),
     SOUDF_BALANCE: senToAmount(row.balance_sen_live),
-    Remark2: blankToNull(row.remark2) ?? blankToNull(readiness),
+    Remark2: remark2,
     SOUDF_PDate: row.processing_date,
     SalesExemptionExpiryDate: row.customer_delivery_date,
     Remark4: blankToNull(row.remark4),
@@ -302,6 +345,7 @@ export function toSheetRecord(row: FeedHeadRow, lines: ReadonlyArray<FeedLineRow
     Attention: null,
     SOUDF_VENUE: blankToNull(row.venue),
     Status: row.status,
+    Ready: isSheetReady(remark2),
     Region: sheetRegion(salesLocation, addr3),
     LastModified: row.last_modified_text,
   };

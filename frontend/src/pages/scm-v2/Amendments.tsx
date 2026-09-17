@@ -36,11 +36,11 @@ import { useStaffLookup } from '../../hooks/useStaffLookup';
 import { customerRefOf } from '../../lib/customer-ref';
 import { cn } from '../../lib/utils';
 
-// SIMPLIFIED status filter (owner 2026-07-24): Requested / Approved / All only.
+// SIMPLIFIED status filter (owner 2026-07-24; Rejected added 2026-09-17): Requested / Approved / Rejected / All.
 // The backend so_amendment_status enum still carries the granular two-gate values
 // (SUPPLIER_PENDING / SO_APPROVED / PO_APPROVED / SENT) the 2990 mirror + the SO
-// detail stepper depend on — the queue just collapses them into the two buckets
-// via amendmentBucketOf, and reaches the closed (REJECTED) rows through "All".
+// detail stepper depend on — the queue just collapses them into the three buckets
+// via amendmentBucketOf.
 const STATUS_CHIPS = AMENDMENT_LIST_CHIPS;
 
 /* New unique storage key — NEVER reuse another list's key. */

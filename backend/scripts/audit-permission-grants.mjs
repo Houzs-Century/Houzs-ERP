@@ -254,50 +254,6 @@ try {
     for (const g of none) console.log(`      ${personRef(g.id)} position=${g.position_name ?? "-"}`);
   }
 
-  // -- (5) The page-access TABLES the position policy no longer reads --------
-  const ppa = await pg`
-    SELECT p.name, count(*)::int AS rows
-      FROM position_page_access a JOIN positions p ON p.id = a.position_id
-     GROUP BY p.name ORDER BY p.name`;
-  notice("-- (5) position_page_access rows still in the table (NO LONGER READ for a positioned user) --");
-  for (const r of ppa) console.log(`  ${String(r.name).padEnd(28)} ${String(r.rows).padStart(4)} rows`);
-
-  const rpa = await pg`
-    SELECT r.name, count(*)::int AS rows
-      FROM role_page_access a JOIN roles r ON r.id = a.role_id
-     GROUP BY r.name ORDER BY r.name`;
-  notice("-- (5b) role_page_access rows (THE live source for a POSITIONLESS user) --");
-  for (const r of rpa) console.log(`  ${String(r.name).padEnd(28)} ${String(r.rows).padStart(4)} rows`);
-
-  // -- (6) THE ROWS THE OWNER CONFIGURED THAT NOTHING READS ------------------
-  // auth.ts hydrates a POSITIONED user from resolvePositionPolicy(), not from
-  // position_page_access. For any position the policy files as FULL
-  // (classifyPosition(...).cohort === "full") the resolved map is fullAccessMap() -- so every row the
-  // owner saved in Team > Positions for that position is INERT, including the
-  // rows that say "none".
-  notice("-- (6) IGNORED Team>Positions rows (position resolves to FULL in code) --");
-  const ignored = await pg`
-    SELECT p.name AS position, a.page_key, a.level,
-           (SELECT count(*)::int FROM users u
-             WHERE u.position_id = p.id AND u.status = 'active') AS active_users,
-           d.name AS dept
-      FROM position_page_access a
-      JOIN positions p ON p.id = a.position_id
-      LEFT JOIN departments d ON d.id = p.department_id
-     ORDER BY p.name, a.page_key`;
-  let ignoredCount = 0;
-  let ignoredDenies = 0;
-  for (const r of ignored) {
-    // Only a position the policy resolves to FULL ignores its saved rows.
-    if (classifyPosition(r.position, r.dept, rowByName.get(r.position) ?? null).cohort !== "full") continue;
-    ignoredCount++;
-    if (r.level === "none") ignoredDenies++;
-    console.log(
-      `  ${String(r.position).padEnd(24)} ${String(r.page_key).padEnd(28)} = ${String(r.level).padEnd(7)} (${r.active_users} active people)${r.level === "none" ? "   <-- a DENY the system ignores" : ""}`,
-    );
-  }
-  console.log(`\n  ${ignoredCount} saved rows are inert; ${ignoredDenies} of them are explicit "none" denials.`);
-
   // -- (7) WHICH ROLE EACH UNCLASSIFIED-POSITION PERSON HOLDS ----------------
   notice("-- (7) position x role for every active user --");
   const px = await pg`

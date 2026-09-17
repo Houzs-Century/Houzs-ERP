@@ -23,6 +23,7 @@ import { paginateAll } from '../lib/paginate-all';
 import { findSkuUsage, usageCheckFailedBody } from '../lib/sku-usage';
 import { productToBindingPatch, type ProductSeatCost } from '../lib/cost-anchor-sync';
 import { autoDeriveEnabled } from '../lib/auto-derive-cost';
+import { resolveProductCostAnchor, comparableCostSen } from '../lib/derive-product-cost-from-suppliers';
 import { moduleCodeFromSku, normalizeSofaTier, parseDefaultFreeGifts } from '../shared';
 import { canWriteScmConfig, canViewScmProductCost } from '../lib/houzs-perms';
 import { PRODUCT_FINANCE_KEYS, stripProductPriceHistory } from '../lib/finance-keys';
@@ -1125,7 +1126,7 @@ mfgProducts.get('/:id/suppliers', async (c) => {
   const { data, error } = await supabase
     .from('supplier_material_bindings')
     .select(`
-      id, supplier_id, supplier_sku, unit_price_sen, currency,
+      id, supplier_id, supplier_sku, unit_price_sen, price_matrix, currency,
       lead_time_days, moq, is_main_supplier, notes,
       suppliers(code, name, phone)
     `)
@@ -1135,7 +1136,186 @@ mfgProducts.get('/:id/suppliers', async (c) => {
     .order('unit_price_sen', { ascending: true });
 
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  return c.json({ product, suppliers: data ?? [] });
+
+  /* The COST ANCHOR (auto-derive stage 2b, display side). Classify the same
+     bindings the write path runs (resolveProductCostAnchor -> the one audited
+     rule) so the drawer can name which supplier the cost is anchored to and
+     whether the suppliers agree — without a second copy of the money logic. The
+     cost figure itself is finance data, so it is stripped for callers who cannot
+     view SKU cost, exactly like GET /:id/price-history; the anchor supplier NAME
+     and STATE are not the cost value and stay visible so a gap is still spottable. */
+  const rows = (data ?? []) as Array<{
+    supplier_id: string;
+    is_main_supplier: boolean | null;
+    unit_price_sen: number | null;
+    price_matrix: unknown;
+    suppliers?: { name?: string | null } | null;
+  }>;
+  const resolved = resolveProductCostAnchor(
+    (product as { category: string | null }).category,
+    rows.map((r) => ({
+      supplier_id: r.supplier_id,
+      is_main_supplier: r.is_main_supplier,
+      unit_price_sen: r.unit_price_sen,
+      price_matrix: r.price_matrix,
+    })),
+  );
+  const anchorSupplierName =
+    resolved.anchorSupplierId != null
+      ? rows.find((r) => r.supplier_id === resolved.anchorSupplierId)?.suppliers?.name ?? null
+      : null;
+  const anchor = {
+    state: resolved.state,
+    reason: resolved.reason,
+    anchorSupplierId: resolved.anchorSupplierId,
+    anchorSupplierName,
+    costSen: canViewScmProductCost(c) ? resolved.costSen : null,
+    costedCount: resolved.costedCount,
+    totalCount: resolved.totalCount,
+  };
+  return c.json({ product, suppliers: data ?? [], anchor });
+});
+
+// ── GET /:id/cost-history ──────────────────────────────────────────────
+// The DERIVED product cost timeline (scm.mfg_product_cost_history, append-only,
+// written by auto-derive stage 2b) — newest first, with the supplier whose whole
+// set anchored each derived cost. Powers the drawer's History → Cost (anchor) tab.
+// Cost figures are finance data, so they are stripped for callers who cannot view
+// SKU cost, exactly like GET /:id/price-history.
+mfgProducts.get('/:id/cost-history', async (c) => {
+  const id = c.req.param('id');
+  const supabase = c.get('supabase');
+
+  const { data: product, error: pErr } = await scopeToCompany(
+    supabase.from('mfg_products').select('code').eq('id', id),
+    c,
+  ).maybeSingle();
+  if (pErr) return c.json({ error: 'load_failed', reason: pErr.message }, 500);
+  if (!product) return c.json({ error: 'not_found' }, 404);
+
+  const { data, error } = await supabase
+    .from('mfg_product_cost_history')
+    .select('id, base_price_sen, price1_sen, seat_height_prices, source_supplier_id, effective_from, notes, created_by, created_at')
+    .eq('item_code', (product as { code: string }).code)
+    .eq('company_id', activeCompanyId(c))
+    .order('effective_from', { ascending: false })
+    .order('created_at', { ascending: false });
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+
+  const rows = (data ?? []) as Array<{
+    source_supplier_id: string | null;
+    base_price_sen: number | null;
+    price1_sen: number | null;
+    seat_height_prices: unknown;
+  } & Record<string, unknown>>;
+
+  // Resolve the anchor supplier names in one company-scoped read.
+  const supplierIds = [...new Set(rows.map((r) => r.source_supplier_id).filter((v): v is string => !!v))];
+  const nameById = new Map<string, string>();
+  if (supplierIds.length > 0) {
+    const { data: sup, error: sErr } = await supabase
+      .from('suppliers')
+      .select('id, name')
+      .in('id', supplierIds)
+      .eq('company_id', activeCompanyId(c));
+    if (sErr) return c.json({ error: 'load_failed', reason: sErr.message }, 500);
+    for (const s of (sup ?? []) as Array<{ id: string; name: string | null }>) {
+      if (s.name != null) nameById.set(s.id, s.name);
+    }
+  }
+
+  const canCost = canViewScmProductCost(c);
+  const history = rows.map((r) => ({
+    id: r.id,
+    effectiveFrom: r.effective_from,
+    // cost fields are finance data — null them for non-cost callers.
+    basePriceSen: canCost ? r.base_price_sen : null,
+    price1Sen: canCost ? r.price1_sen : null,
+    seatHeightPrices: canCost ? r.seat_height_prices : null,
+    sourceSupplierId: r.source_supplier_id,
+    sourceSupplierName: r.source_supplier_id ? nameById.get(r.source_supplier_id) ?? null : null,
+    notes: r.notes ?? null,
+    createdBy: r.created_by ?? null,
+    createdAt: r.created_at,
+  }));
+  return c.json({ history });
+});
+
+// ── GET /:id/supplier-price-history ────────────────────────────────────
+// Every supplier's cost change for this SKU over time (scm.supplier_binding_price_history,
+// append-only, snapshotted by recordSupplierPriceHistorySafe) — newest first, with a
+// per-supplier direction (raised / lowered) computed on the same dearness the anchor
+// ranks on. Powers the drawer's History → Supplier price tab. Finance-gated.
+mfgProducts.get('/:id/supplier-price-history', async (c) => {
+  const id = c.req.param('id');
+  const supabase = c.get('supabase');
+
+  const { data: product, error: pErr } = await scopeToCompany(
+    supabase.from('mfg_products').select('code, category').eq('id', id),
+    c,
+  ).maybeSingle();
+  if (pErr) return c.json({ error: 'load_failed', reason: pErr.message }, 500);
+  if (!product) return c.json({ error: 'not_found' }, 404);
+  const category = (product as { category: string | null }).category;
+
+  const { data, error } = await supabase
+    .from('supplier_binding_price_history')
+    .select('id, supplier_id, unit_price_sen, price_matrix, is_main_supplier, effective_from, notes, created_by, created_at, suppliers(code, name)')
+    .eq('material_kind', 'mfg_product')
+    .eq('item_code', (product as { code: string }).code)
+    .eq('company_id', activeCompanyId(c))
+    .order('effective_from', { ascending: false })
+    .order('created_at', { ascending: false });
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+
+  const rows = (data ?? []) as Array<{
+    id: string;
+    supplier_id: string;
+    unit_price_sen: number | null;
+    price_matrix: unknown;
+    is_main_supplier: boolean | null;
+    effective_from: string;
+    notes: string | null;
+    created_by: string | null;
+    created_at: string;
+    suppliers?: { code?: string | null; name?: string | null } | null;
+  }>;
+
+  /* DIRECTION (raised / lowered). Rows arrive newest-first; for each supplier the
+     NEXT-OLDER row is the prior price, so compare each row's comparable cost with
+     the previous row for that same supplier. The oldest row per supplier (binding
+     added) has no prior -> null. */
+  const priorBySupplier = new Map<string, number>();
+  const withDir = rows.map((r) => {
+    const cur = comparableCostSen(category, { unit_price_sen: r.unit_price_sen, price_matrix: r.price_matrix });
+    return { r, cur };
+  });
+  // walk OLDEST-first to know the prior, then the rows stay newest-first for output.
+  for (let i = withDir.length - 1; i >= 0; i--) {
+    const { r, cur } = withDir[i];
+    const prior = priorBySupplier.get(r.supplier_id);
+    (withDir[i] as { dir?: 'up' | 'down' | null }).dir =
+      prior === undefined ? null : cur > prior ? 'up' : cur < prior ? 'down' : null;
+    priorBySupplier.set(r.supplier_id, cur);
+  }
+
+  const canCost = canViewScmProductCost(c);
+  const history = withDir.map(({ r, cur }, i) => ({
+    id: r.id,
+    supplierId: r.supplier_id,
+    supplierCode: r.suppliers?.code ?? null,
+    supplierName: r.suppliers?.name ?? null,
+    isMainSupplier: Boolean(r.is_main_supplier),
+    unitPriceSen: canCost ? r.unit_price_sen : null,
+    priceMatrix: canCost ? r.price_matrix : null,
+    comparableSen: canCost ? cur : null,
+    direction: canCost ? (withDir[i] as { dir?: 'up' | 'down' | null }).dir ?? null : null,
+    effectiveFrom: r.effective_from,
+    notes: r.notes ?? null,
+    createdBy: r.created_by ?? null,
+    createdAt: r.created_at,
+  }));
+  return c.json({ history });
 });
 
 // ── Effective-dated SELLING price (Pricing "Option B", ph.2) ──────────────────

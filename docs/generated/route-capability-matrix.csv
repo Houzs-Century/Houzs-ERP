@@ -191,6 +191,7 @@ GET,/api/delivery-sheet/balance-collection,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY
 GET,/api/delivery-sheet/outstanding-po,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,NO,INHERITED_ONLY,backend/src/routes/deliverySheetSync.ts
 GET,/api/delivery-sheet/overdue,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,NO,INHERITED_ONLY,backend/src/routes/deliverySheetSync.ts
 POST,/api/delivery-sheet/po-dates,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/deliverySheetSync.ts
+GET,/api/delivery-sheet/ready-open,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,NO,INHERITED_ONLY,backend/src/routes/deliverySheetSync.ts
 GET,/api/delivery-sheet/so-since,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,NO,INHERITED_ONLY,backend/src/routes/deliverySheetSync.ts
 POST,/api/delivery-sheet/updates,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/deliverySheetSync.ts
 GET,/api/departments,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermissionOrSalesDirector(""users.read"")",,NO,DECLARED_GATE,backend/src/routes/departments.ts
@@ -283,10 +284,6 @@ POST,/api/positions,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermi
 DELETE,/api/positions/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""users.manage"")",,YES,DECLARED_GATE,backend/src/routes/positions.ts
 PATCH,/api/positions/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""users.manage"")",,YES,DECLARED_GATE,backend/src/routes/positions.ts
 GET,/api/positions/:id/page-access,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""users.read"")",,NO,DECLARED_GATE,backend/src/routes/positions.ts
-PATCH,/api/positions/:id/page-access,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""users.manage"")",,YES,DECLARED_GATE,backend/src/routes/positions.ts
-GET,/api/positions/page-access/export,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""users.manage"")",,NO,DECLARED_GATE,backend/src/routes/positions.ts
-PATCH,/api/positions/page-order,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""users.manage"")",,YES,DECLARED_GATE,backend/src/routes/positions.ts
-GET,/api/positions/pages,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""users.read"")",,NO,DECLARED_GATE,backend/src/routes/positions.ts
 GET,/api/presence,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/presence.ts
 POST,/api/presence/heartbeat,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/presence.ts
 GET,/api/projects,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePageAccess(""projects.list"")",,NO,DECLARED_GATE,backend/src/routes/projects.ts
@@ -426,9 +423,6 @@ GET,/api/roles,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission
 POST,/api/roles,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""roles.manage"")",,YES,DECLARED_GATE,backend/src/routes/roles.ts
 DELETE,/api/roles/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""roles.manage"")",,YES,DECLARED_GATE,backend/src/routes/roles.ts
 PATCH,/api/roles/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""roles.manage"")",,YES,DECLARED_GATE,backend/src/routes/roles.ts
-GET,/api/roles/:id/page-access,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""roles.read"")",,NO,DECLARED_GATE,backend/src/routes/roles.ts
-PATCH,/api/roles/:id/page-access,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""roles.manage"")",,YES,DECLARED_GATE,backend/src/routes/roles.ts
-GET,/api/roles/pages,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""roles.read"")",,NO,DECLARED_GATE,backend/src/routes/roles.ts
 GET,/api/roles/permissions,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""roles.read"")",,NO,DECLARED_GATE,backend/src/routes/roles.ts
 GET,/api/sales/entries,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePageAccessOrSalesView(""sales"")",,NO,DECLARED_GATE,backend/src/routes/sales.ts
 POST,/api/sales/entries,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePageAccess(""sales"")",,YES,DECLARED_GATE,backend/src/routes/sales.ts
@@ -838,9 +832,11 @@ DELETE,/api/scm/mfg-products/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth 
 GET,/api/scm/mfg-products/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.products"", { openRead: true })",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/mfg-products.ts
 PATCH,/api/scm/mfg-products/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.products"", { openRead: true })",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/mfg-products.ts
 POST,/api/scm/mfg-products/:id/activate-one-shot,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.products"", { openRead: true })",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/mfg-products.ts
+GET,/api/scm/mfg-products/:id/cost-history,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.products"", { openRead: true })",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/mfg-products.ts
 GET,/api/scm/mfg-products/:id/price-changes,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.products"", { openRead: true })",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/mfg-products.ts
 POST,/api/scm/mfg-products/:id/price-changes,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.products"", { openRead: true })",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/mfg-products.ts
 GET,/api/scm/mfg-products/:id/price-history,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.products"", { openRead: true })",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/mfg-products.ts
+GET,/api/scm/mfg-products/:id/supplier-price-history,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.products"", { openRead: true })",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/mfg-products.ts
 GET,/api/scm/mfg-products/:id/suppliers,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.products"", { openRead: true })",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/mfg-products.ts
 POST,/api/scm/mfg-products/batch-import,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.products"", { openRead: true })",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/mfg-products.ts
 GET,/api/scm/mfg-products/bound-codes,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.products"", { openRead: true })",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/mfg-products.ts
@@ -1169,6 +1165,7 @@ GET,/api/scm/so-amendments,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requ
 GET,/api/scm/so-amendments/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.sales.orders"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/so-amendments.ts
 PATCH,/api/scm/so-amendments/:id/approve-po,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.sales.orders"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/so-amendments.ts
 PATCH,/api/scm/so-amendments/:id/approve-so,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.sales.orders"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/so-amendments.ts
+PATCH,/api/scm/so-amendments/:id/flag-lane,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.sales.orders"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/so-amendments.ts
 PATCH,/api/scm/so-amendments/:id/reject,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.sales.orders"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/so-amendments.ts
 PATCH,/api/scm/so-amendments/:id/send,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.sales.orders"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/so-amendments.ts
 PATCH,/api/scm/so-amendments/:id/supplier-confirm,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.sales.orders"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/so-amendments.ts

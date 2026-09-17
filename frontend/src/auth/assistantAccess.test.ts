@@ -51,4 +51,32 @@ describe("assistant access (FE mirror)", () => {
     expect(canUseAssistant({ permissions: ["*"], position_name: "Driver" })).toBe(true);
     expect(canUseAssistant({ permissions: ["*"], position_name: "Ghost Title" })).toBe(true);
   });
+
+  test("the server capability WINS over the name lists when present", () => {
+    // A denied name the server nonetheless allowed → allowed (server is the control).
+    expect(
+      canUseAssistant({
+        permissions: [],
+        position_name: "Driver",
+        capabilities: { "org.assistant.use": true },
+      }),
+    ).toBe(true);
+    // A recognised, non-denied name the server denied → denied.
+    expect(
+      canUseAssistant({
+        permissions: [],
+        position_name: "Operation Manager",
+        capabilities: { "org.assistant.use": false },
+      }),
+    ).toBe(false);
+    // Key absent from a present set fails closed, even for a name that would pass.
+    expect(
+      canUseAssistant({ permissions: [], position_name: "HR Manager", capabilities: {} }),
+    ).toBe(false);
+  });
+
+  test("no capability set → the name-list fallback still answers (stale-deploy shell)", () => {
+    expect(canUseAssistant({ permissions: [], position_name: "Driver" })).toBe(false);
+    expect(canUseAssistant({ permissions: [], position_name: "HR Manager" })).toBe(true);
+  });
 });

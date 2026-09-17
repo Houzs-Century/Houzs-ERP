@@ -89,6 +89,51 @@ function erpAppendFrom_() {
 function erpIsNewOrder_(o) {
   return !!o.DocDate && String(o.DocDate).slice(0, 10) >= erpAppendFrom_();
 }
+// Owner 2026-09-17: an order may ENTER the sheet only when Remarks 2 says READY
+// or READY (PARTIAL). The ERP decides (record.Ready); the text test is only for
+// a backend that does not send the flag yet. Rows already on the sheet are
+// always updated, whatever their Remarks 2.
+function erpIsReady_(o) {
+  if (o.Ready === true || o.Ready === false) return o.Ready;
+  return /^READY\b/i.test(String(o.Remark2 || "").trim());
+}
+
+/**
+ * The sweep behind the READY gate. An order that was not ready when it last
+ * changed is not appended by the pull, and stock arriving later flips its
+ * LINES, not the order, so the since-feed never re-sends it. ready-open lists
+ * every undelivered READY order dated on/after ERP_APPEND_FROM; the ones not on
+ * their tab yet are appended here. Existing rows are left to the pull.
+ */
+function erpAppendReadyOpen_(ss, cfg, rid) {
+  const out = { appended: 0, failed: 0 };
+  const res = erpFetch_(cfg, "/api/delivery-sheet/ready-open?from=" + encodeURIComponent(erpAppendFrom_()), null, rid);
+  if (res.getResponseCode() !== 200) {
+    Log.warn(rid, "ready-open returned " + res.getResponseCode() + "; READY sweep skipped this run.");
+    return out;
+  }
+  const records = JSON.parse(res.getContentText()).records || [];
+  const buckets = { WEST: [], EAST: [], SG: [] };
+  records.forEach(function (o) {
+    o.Attention = "SEAMPIFY";
+    const region = erpRegionOf_(o);
+    if (region) buckets[region].push(o);
+  });
+  ["WEST", "EAST", "SG"].forEach(function (region) {
+    if (!buckets[region].length) return;
+    const sheetName = erpSheetFor_(region);
+    const sheet = ss.getSheetByName(sheetName);
+    if (!sheet) return;
+    const existing = erpExistingDocNos_(sheet, getSheetConfig(sheetName));
+    const fresh = buckets[region].filter(function (o) { return !existing[String(o.DocNo).trim()]; });
+    if (!fresh.length) return;
+    const r = writeDataToTargetSheet(ss, sheetName, fresh, rid);
+    out.appended += r.success;
+    out.failed += r.fail;
+  });
+  if (out.appended || out.failed) Log.info(rid, "READY sweep: appended " + out.appended + ", failed " + out.failed + ".");
+  return out;
+}
 function erpExistingDocNos_(sheet, cfg) {
   const map = {};
   const lastRow = sheet.getLastRow();
@@ -154,6 +199,7 @@ function runErpPullProcess(triggerType) {
   let pulled = 0;
   let failed = 0;
   let skipped = 0;
+  let notReady = 0;
 
   try {
     const cfg = erpConfig_();
@@ -184,9 +230,12 @@ function runErpPullProcess(triggerType) {
         if (sheet) {
           const cfg = getSheetConfig(sheetName);
           const existing = erpExistingDocNos_(sheet, cfg);
-          const before = recs.length;
-          recs = recs.filter(function (o) { return existing[String(o.DocNo).trim()] || erpIsNewOrder_(o); });
-          skipped += before - recs.length;
+          recs = recs.filter(function (o) {
+            if (existing[String(o.DocNo).trim()]) return true;
+            if (!erpIsNewOrder_(o)) { skipped++; return false; }
+            if (!erpIsReady_(o)) { notReady++; return false; }
+            return true;
+          });
           erpPreserveBlanks_(sheet, cfg, recs);
         }
         if (!recs.length) return;
@@ -205,8 +254,11 @@ function runErpPullProcess(triggerType) {
       }
       if (!data.has_more) break;
     }
-    if (pulled === 0 && failed === 0) { status = "SKIPPED"; message = "No modifications since the checkpoint."; }
-    else { status = failed > 0 ? "PARTIAL" : "SYNCED"; message = "Pulled " + pulled + " record(s) from the ERP. Failed " + failed + ". Skipped " + skipped + " old order(s) not on the sheet."; }
+    const sweep = erpAppendReadyOpen_(ss, cfg, rid);
+    pulled += sweep.appended;
+    failed += sweep.failed;
+    if (pulled === 0 && failed === 0) { status = "SKIPPED"; message = "No modifications since the checkpoint." + (notReady ? " " + notReady + " new order(s) not READY yet." : ""); }
+    else { status = failed > 0 ? "PARTIAL" : "SYNCED"; message = "Pulled " + pulled + " record(s) from the ERP (" + sweep.appended + " newly READY). Failed " + failed + ". Skipped " + skipped + " old order(s) not on the sheet, " + notReady + " new order(s) not READY yet."; }
   } catch (e) {
     status = "FAILED";
     message = e.message;

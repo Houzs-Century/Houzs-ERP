@@ -144,6 +144,7 @@ describe("position_policy — a Title's row decides the session", () => {
 
     const listBefore = await api("GET", "/api/position-policy", reader.bearer);
     expect(listBefore.status).toBe(200);
+    expect(listBefore.json.duties).toContain("logistic");
     const entryBefore = listBefore.json.positions.find((p: any) => p.id === target.positionId);
     expect(entryBefore.source).toBe("name");
     expect(entryBefore.row).toBeNull();
@@ -161,12 +162,18 @@ describe("position_policy — a Title's row decides the session", () => {
     expect(bad.status).toBe(400);
 
     const ok = await api("PUT", `/api/position-policy/${target.positionId}`, admin.bearer, {
-      cohort: "sales", profile: "director", can_move_money: false, can_write_config: false, is_fleet: false,
+      cohort: "sales", profile: "director", can_move_money: false, can_write_config: false, is_fleet: false, duty: "logistic",
     });
     expect(ok.status).toBe(200);
     expect(ok.json.source).toBe("row");
     expect(ok.json.row.cohort).toBe("sales");
     expect(ok.json.row.profile).toBe("director");
+    expect(ok.json.row.duty).toBe("logistic");
+    expect(ok.json.effective.duty).toBe("logistic");
+    const badDuty = await api("PUT", `/api/position-policy/${target.positionId}`, admin.bearer, {
+      cohort: "full", profile: null, can_move_money: false, can_write_config: false, is_fleet: false, duty: "janitor",
+    });
+    expect(badDuty.status).toBe(400);
 
     const targetMe = await api("GET", "/api/auth/me", target.bearer);
     expect(targetMe.json.user.page_access["scm.sales"]).toBe("full");
@@ -190,5 +197,49 @@ describe("position_policy — a Title's row decides the session", () => {
       cohort: "full", profile: null, can_move_money: false, can_write_config: false, is_fleet: false,
     });
     expect(missing.status).toBe(404);
+  });
+
+  test("GET /api/positions/:id/page-access answers what the Title RESOLVES to (row, then name), not a stored matrix", async () => {
+    const reader = await seedPositionedUser({
+      email: "ppol-pages-reader@test.local",
+      permissions: ["users.read"],
+      positionName: "Test Pages Reader",
+      positionSlug: "test_pages_reader",
+    });
+    const target = await seedPositionedUser({
+      email: "ppol-pages-target@test.local",
+      permissions: ["users.read"],
+      positionName: "Night Stock Clerk",
+      positionSlug: "night_stock_clerk",
+    });
+
+    // No row: an unclassified name is full.
+    const byName = await api("GET", `/api/positions/${target.positionId}/page-access`, reader.bearer);
+    expect(byName.status).toBe(200);
+    expect(byName.json.page_access["scm.warehouse.transfers"].level).toBe("full");
+    expect(byName.json.page_access["scm.warehouse.transfers"].explicit).toBe(false);
+
+    await env.DB.prepare(
+      `INSERT INTO position_policy (position_id, cohort, profile, can_move_money, can_write_config, is_fleet)
+       VALUES (?, 'restricted', 'storekeeper', 0, 0, 0)`,
+    )
+      .bind(target.positionId)
+      .run();
+    const byRow = await api("GET", `/api/positions/${target.positionId}/page-access`, reader.bearer);
+    expect(byRow.json.page_access["scm.warehouse.inventory"].level).toBe("view");
+    expect(byRow.json.page_access["scm.warehouse.transfers"].level).toBe("none");
+    expect(byRow.json.page_access["projects"].level).toBe("view");
+
+    await env.DB.prepare(`UPDATE position_policy SET cohort = 'god', profile = NULL WHERE position_id = ?`)
+      .bind(target.positionId)
+      .run();
+    const god = await api("GET", `/api/positions/${target.positionId}/page-access`, reader.bearer);
+    expect(god.json.page_access["scm.finance.accounting"].level).toBe("full");
+
+    const missing = await api("GET", `/api/positions/999999/page-access`, reader.bearer);
+    expect(missing.status).toBe(404);
+    // The write door is gone with the table.
+    const patch = await api("PATCH", `/api/positions/${target.positionId}/page-access`, reader.bearer, { entries: [] });
+    expect([404, 405]).toContain(patch.status);
   });
 });

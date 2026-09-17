@@ -1968,7 +1968,7 @@ export function MobileNewSO({
             if (answer == null) { setSubmitting(false); return; } // cancelled
             try {
               amendCreatedRes = await createAmendment.mutateAsync({
-                docNo, reason: answer.reason, laneFlagNote: answer.laneFlagNote, lines: amLines, headerChanges,
+                docNo, reason: answer.reason, lines: amLines, headerChanges,
                 idempotencyKey: amendIdemKey,
               });
             } catch (e) {
