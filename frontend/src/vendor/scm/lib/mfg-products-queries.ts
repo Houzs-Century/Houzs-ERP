@@ -598,12 +598,29 @@ export type ProductSupplierRow = {
     phone: string | null;
   } | null;
 };
+/* The derived-cost ANCHOR for a SKU (auto-derive stage 2b, display side). Says
+   which supplier the Product Maintenance cost is anchored to and in what state,
+   so the drawer / SKU-master column can show it and flag a missing-price gap.
+   costSen is null when the caller cannot view SKU cost (finance-gated server-side). */
+export type ProductCostAnchorState = 'ok' | 'conflict' | 'empty' | 'service';
+export type ProductCostAnchor = {
+  state: ProductCostAnchorState;
+  /** For state 'empty': 'no_supplier_binding' | 'no_supplier_with_cost'. null otherwise. */
+  reason: string | null;
+  anchorSupplierId: string | null;
+  anchorSupplierName: string | null;
+  costSen: number | null;
+  costedCount: number;
+  totalCount: number;
+};
+
 export function useMfgProductSuppliers(id: string | null) {
   return useQuery({
     queryKey: ['mfg-product-suppliers', id],
     queryFn: () => authedFetch<{
       product: { code: string; name: string; category: string };
       suppliers: ProductSupplierRow[];
+      anchor: ProductCostAnchor;
     }>(`/mfg-products/${id}/suppliers`),
     enabled: Boolean(id),
     staleTime: 30_000,
