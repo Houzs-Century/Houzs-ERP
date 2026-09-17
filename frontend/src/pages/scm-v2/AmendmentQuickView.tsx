@@ -262,7 +262,7 @@ function Summary({
       )}
       {(laneFlagNote ?? "").trim() && (
         <div className="mt-3 rounded-md border border-warn/40 bg-warn/10 px-3 py-2 text-[12px] text-ink">
-          <div className="font-semibold">The requester flagged the approver as possibly wrong.</div>
+          <div className="font-semibold">The approver flagged this as being on the wrong desk.</div>
           <div className="mt-1">“{laneFlagNote}”</div>
         </div>
       )}

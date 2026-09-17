@@ -5,9 +5,8 @@
 // approver is not the requester's to choose (the lane table in
 // shared/amendment-lane.ts is the single source of truth, and twice this month
 // the rule was what needed fixing — docs/bugs/0816, 0895), but the requester
-// should SEE the answer before the row exists, and be able to flag it when it
-// looks wrong. This route is the "see" half; the flag rides the submit body
-// (laneFlagNote) and lands on scm.so_amendments.lane_flag_note.
+// should SEE the answer before the row exists. Saying the desk is WRONG is the
+// approver's call, made on their job card (PATCH /so-amendments/:id/flag-lane).
 //
 // It answers with the SAME function the submit route stores from
 // (lib/amendment-lane-resolve), so the desk shown is the desk the row lands on.

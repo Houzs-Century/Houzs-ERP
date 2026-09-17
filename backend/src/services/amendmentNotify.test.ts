@@ -44,7 +44,7 @@ vi.mock('./orgScope', () => ({
     id === 41 ? [41, 40, 39, 38] : [id],
 }));
 
-const { notifySoAmendmentRaised, notifySoAmendmentResolved } = await import('./amendmentNotify');
+const { notifySoAmendmentRaised, notifySoAmendmentResolved, notifySoAmendmentLaneFlagged } = await import('./amendmentNotify');
 const { usersHoldingPermission } = await import('./permissionHolders');
 const { LANE_APPROVE_KEY } = await import('../scm/shared/amendment-lane');
 
@@ -167,29 +167,31 @@ describe('amendment notice audience', () => {
     expect(posted.some((p) => p.title.includes('wrong desk'))).toBe(false);
   });
 
-  /* Owner 2026-09-15, option B: a requester who doubts the computed approver
-     flags it with a note. The assigned desk's card quotes the doubt, and the
-     OTHER lane's desk gets its own card — it is the desk the requester believes
-     the request belongs to. Nobody is asked to sign there; the row stays put
-     until the relane workflow moves it. */
-  it('a flagged lane tells the assigned desk about the doubt, and the other desk separately', async () => {
-    await notifySoAmendmentRaised(fakeEnv(), {
+  /* Owner 2026-09-17: the APPROVER, not the requester, says a request is on
+     the wrong desk. The OTHER lane's desk gets a card — it is the desk the
+     approver believes it belongs to — and so does the requester, whose request
+     now waits on a move. The approver who flagged hears nothing back, and
+     nobody is asked to sign: the row stays put until the relane workflow. */
+  it('an approver flagging the wrong desk tells the other desk and the requester, never themselves', async () => {
+    await notifySoAmendmentLaneFlagged(fakeEnv(), {
       amendmentNo: 'SO-12757/A1',
       soDocNo: 'SO-12757',
       lane: 'LINES',
       companyId: 1,
-      requesterName: 'Syasya',
-      reason: 'last min cancellation penalty',
-      laneFlagNote: 'transport charge, Logistic approves these',
+      note: 'transport charge, Logistic approves these',
+      actorName: 'Purchaser Pat',
+      actorUserId: 41,
+      requesterUserId: 77,
     });
-    const assigned = posted.find((p) => p.title.includes('needs approval'))!;
-    expect(assigned.userIds.sort()).toEqual([40, 41]);
-    expect(assigned.body).toContain('flagged the approver as possibly wrong: transport charge, Logistic approves these');
     const other = posted.find((p) => p.title.includes('may be on the wrong desk'))!;
     expect(other.userIds).toEqual([43]);                 // the DELIVERY desk, not the LINES one
-    expect(other.body).toContain('believes it is delivery / customer info');
+    expect(other.body).toContain('Purchaser Pat');
+    expect(other.body).toContain('believes it is delivery / customer info: transport charge, Logistic approves these');
     expect(other.body).toContain('Relane SO amendment');
     expect(other.source).toBe('so_amendment');
+    const requester = posted.find((p) => p.title.includes('the approver says it is on the wrong desk'))!;
+    expect(requester.userIds).toEqual([77]);
+    expect(posted.flatMap((p) => p.userIds)).not.toContain(41);
   });
 
   it('carries the rejection reason to the requester and the salesperson', async () => {
