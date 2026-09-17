@@ -11,7 +11,7 @@ FOR, which trees are dead, what must be changed in pairs — lives in
 
 ## 1. Backend route inventory
 
-217 route modules (55 in `backend/src/routes`, 162 in `backend/src/scm/routes`), 1314 endpoint registrations.
+217 route modules (55 in `backend/src/routes`, 162 in `backend/src/scm/routes`), 1315 endpoint registrations.
 
 An endpoint is a `router.<method>("/…")` registration. For the per-route authorization
 boundary see the sibling artifact `docs/generated/route-capability-matrix.csv`, which
@@ -159,7 +159,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/mfg-purchase-orders-list-enrichment.ts` | 1 | 82 |
 | `backend/src/scm/routes/mfg-purchase-orders.ts` | 24 | 4428 |
 | `backend/src/scm/routes/mfg-sales-orders-list-enrichment.ts` | 2 | 327 |
-| `backend/src/scm/routes/mfg-sales-orders.ts` | 35 | 11087 |
+| `backend/src/scm/routes/mfg-sales-orders.ts` | 35 | 11083 |
 | `backend/src/scm/routes/mfg-sales-orders/cross-category.ts` | 2 | 80 |
 | `backend/src/scm/routes/mfg-sales-orders/customer-credit.ts` | 1 | 19 |
 | `backend/src/scm/routes/mfg-sales-orders/debtor-search.ts` | 1 | 30 |
@@ -210,8 +210,8 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/scan-so.ts` | 11 | 4895 |
 | `backend/src/scm/routes/sg-postcode.ts` | 1 | 35 |
 | `backend/src/scm/routes/slips.ts` | 3 | 246 |
-| `backend/src/scm/routes/so-amendment-lane-preview.ts` | 1 | 86 |
-| `backend/src/scm/routes/so-amendments.ts` | 10 | 1452 |
+| `backend/src/scm/routes/so-amendment-lane-preview.ts` | 1 | 85 |
+| `backend/src/scm/routes/so-amendments.ts` | 11 | 1533 |
 | `backend/src/scm/routes/so-dropdown-options.ts` | 4 | 318 |
 | `backend/src/scm/routes/so-handover.ts` | 4 | 487 |
 | `backend/src/scm/routes/so-mirror.ts` | 1 | 333 |
@@ -252,12 +252,12 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (2732 files, 823804 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (2735 files, 824178 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
 |---|---|
-| `backend/src/scm/routes/mfg-sales-orders.ts` | 11087 |
+| `backend/src/scm/routes/mfg-sales-orders.ts` | 11083 |
 | `frontend/src/pages/Projects.tsx` | 8897 |
 | `frontend/src/pages/ServiceCases.tsx` | 8850 |
 | `backend/src/services/autocount-sofa-corpus.ts` | 8581 |
@@ -269,7 +269,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `frontend/src/mobile/MobilePMS.tsx` | 4490 |
 | `backend/src/scm/routes/mfg-purchase-orders.ts` | 4428 |
 | `frontend/src/pages/scm-v2/SupplierDetail.tsx` | 4338 |
-| `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4203 |
+| `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4202 |
 | `frontend/src/mobile/MobileNewSO.tsx` | 3649 |
 | `backend/src/scm/routes/grns.ts` | 3538 |
 | `frontend/src/components/DataTable.tsx` | 3501 |
@@ -457,7 +457,7 @@ Page files by directory:
 | `frontend/src/pages/announcements` | 5 |
 | `frontend/src/pages/projects` | 10 |
 | `frontend/src/pages/roles` | 2 |
-| `frontend/src/pages/scm-v2` | 184 |
+| `frontend/src/pages/scm-v2` | 185 |
 | `frontend/src/pages/scm-v2/products` | 2 |
 | `frontend/src/pages/settings` | 1 |
 | `frontend/src/pages/team` | 12 |
