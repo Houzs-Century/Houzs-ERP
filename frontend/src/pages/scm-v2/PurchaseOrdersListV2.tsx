@@ -585,18 +585,15 @@ function DetailDrawer({
 
               <div className="mt-4 rounded-lg border border-border bg-surface px-5 py-4">
                 <div className="flex items-center justify-between gap-3 border-b border-border-subtle pb-3">
-                  <QtyTotal label="Ordered" value={items.reduce((s, l) => s + Number(l.qty ?? 0), 0)} />
+                  <QtyTotal label="Ordered" value={items.reduce((s, l) => s + l.qty, 0)} />
                   <QtyTotal
                     label="Received"
-                    value={items.reduce((s, l) => s + Number(l.received_qty ?? 0), 0)}
+                    value={items.reduce((s, l) => s + l.received_qty, 0)}
                     tone="synced"
                   />
                   <QtyTotal
                     label="Balance"
-                    value={items.reduce(
-                      (s, l) => s + Math.max(0, Number(l.qty ?? 0) - Number(l.received_qty ?? 0)),
-                      0,
-                    )}
+                    value={items.reduce((s, l) => s + Math.max(0, l.qty - l.received_qty), 0)}
                     tone="balance"
                   />
                 </div>
