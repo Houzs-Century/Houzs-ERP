@@ -18,6 +18,7 @@ import { PosPinCard } from "./PosPinCard";
 import { showsPosPinCard } from "./posPinEligibility";
 import type { TeamMember, Department, Position, Role } from "../../types";
 import { empCode, statusBadgeProps, divisionOf, roleOptions, Eyebrow, SegmentedTabs, FIELD_SELECT_CLS } from "./teamShared";
+import { isExternalPosition, EXTERNAL_POSITION_MESSAGE } from "../../lib/externalPosition";
 
 /* Member Profile — design handoff screen 02. Right-side drawer opened from a
  * Directory row: identity card fixed left, editable Assignment + read-only
@@ -410,6 +411,11 @@ export function TeamMemberProfile({
                     ]}
                     disabled={!canManage}
                   />
+                  {isExternalPosition(positions.find((p) => p.id === draft.position_id) ?? null) && (
+                    <div className="mt-1.5 rounded-md border border-accent bg-warning-bg px-3 py-2 text-[11px] leading-snug text-warning-text">
+                      {EXTERNAL_POSITION_MESSAGE}
+                    </div>
+                  )}
                 </Field>
                 {/* Beside Title because the two are separate lists: a role made in
                     Roles & Permissions is never a Title (owner 2026-09-15 chose this
