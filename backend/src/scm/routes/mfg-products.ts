@@ -23,7 +23,8 @@ import { paginateAll } from '../lib/paginate-all';
 import { findSkuUsage, usageCheckFailedBody } from '../lib/sku-usage';
 import { productToBindingPatch, type ProductSeatCost } from '../lib/cost-anchor-sync';
 import { autoDeriveEnabled } from '../lib/auto-derive-cost';
-import { resolveProductCostAnchor, comparableCostSen } from '../lib/derive-product-cost-from-suppliers';
+import { resolveProductCostAnchor, comparableCostSen, type SupplierBindingCost } from '../lib/derive-product-cost-from-suppliers';
+import { readMfgProductBindings } from '../lib/supplier-bindings';
 import { moduleCodeFromSku, normalizeSofaTier, parseDefaultFreeGifts } from '../shared';
 import { canWriteScmConfig, canViewScmProductCost } from '../lib/houzs-perms';
 import { PRODUCT_FINANCE_KEYS, stripProductPriceHistory } from '../lib/finance-keys';
@@ -144,6 +145,10 @@ async function syncAnchorBindingFromProduct(
 export const listMfgProductsHandler = async (c: AppContext) => {
   const category = c.req.query('category');
   const search = c.req.query('search');
+  // B1 — the SKU Master screen asks for the per-row cost-anchor STATE (its cost
+  // column marker). OPT-IN via ?anchorState=1 so the SO / PO / GRN catalog pickers
+  // that load this SAME list stay a plain column read with no extra binding query.
+  const wantAnchorState = c.req.query('anchorState') === '1';
   const supabase = c.get('supabase');
 
   // PR #104 — Commander 2026-05-26: dropped fabric_usage_sen /
@@ -201,11 +206,45 @@ export const listMfgProductsHandler = async (c: AppContext) => {
   });
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   // Flatten the joined model → a plain allowed_options field on each product.
-  const products = ((data ?? []) as unknown as Array<Record<string, unknown> & { model?: { allowed_options: unknown } | Array<{ allowed_options: unknown }> | null }>)
+  const products: Array<Record<string, unknown>> = ((data ?? []) as unknown as Array<Record<string, unknown> & { model?: { allowed_options: unknown } | Array<{ allowed_options: unknown }> | null }>)
     .map(({ model, ...p }) => {
       const m = Array.isArray(model) ? model[0] : model;
       return { ...p, allowed_options: m?.allowed_options ?? null };
     });
+
+  /* B1 — per-row cost-anchor STATE for the SKU Master cost column (teal ok /
+     amber suppliers-differ / red gap / service). One BULK binding read over the
+     page's codes (readMfgProductBindings chunks + pages the IN-list), grouped in
+     memory, classified by the SAME audited rule the drawer uses. STATE only — no
+     supplier name and no cost figure (base_price_sen already rides the row; the
+     drawer shows the anchor detail on click) — so this is a cheap projection, and
+     it runs ONLY when the SKU Master asks (wantAnchorState). A binding-read error
+     degrades to no marker rather than failing the catalogue every picker needs. */
+  if (wantAnchorState && products.length > 0) {
+    const codes = products.map((p) => String(p.code));
+    const { data: bindings, error: bErr } = await readMfgProductBindings<{
+      item_code: string; supplier_id: string; is_main_supplier: boolean | null;
+      unit_price_sen: number | null; price_matrix: unknown;
+    }>(supabase, {
+      codes,
+      companyId: activeCompanyId(c),
+      select: 'item_code, supplier_id, is_main_supplier, unit_price_sen, price_matrix',
+    });
+    if (!bErr) {
+      const byCode = new Map<string, SupplierBindingCost[]>();
+      for (const b of bindings) {
+        const arr = byCode.get(b.item_code) ?? [];
+        arr.push({ supplier_id: b.supplier_id, is_main_supplier: b.is_main_supplier, unit_price_sen: b.unit_price_sen, price_matrix: b.price_matrix });
+        byCode.set(b.item_code, arr);
+      }
+      for (const p of products) {
+        p.costAnchorState = resolveProductCostAnchor(
+          (p.category as string | null) ?? null,
+          byCode.get(String(p.code)) ?? [],
+        ).state;
+      }
+    }
+  }
   /* Perf (go-live) — the 1141-row SKU master is the catalog picker every SO /
      PO / GRN / DO "new" page loads, and it changes rarely (price/config edits,
      not per-order). A short PRIVATE max-age lets the browser reuse the payload

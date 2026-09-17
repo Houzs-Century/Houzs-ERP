@@ -37,6 +37,15 @@ export type SofaComboRule = {
   createdAt: string;
   updatedAt: string;
   createdBy: string | null;
+  /* A1 (2026-09-17) — COST derive-status, set by the backend for the MASTER
+     view only (auto-derive flag ON):
+       auto   — cost auto-derives from a supplier combo (derivedFromSupplier*).
+       manual — cost set by hand; no supplier combo matches.
+       gap    — no supplier combo AND no cost: a binding gap to fill.
+     Absent on supplier-scoped combos and when the flag is off. */
+  costSource?: 'auto' | 'manual' | 'gap';
+  derivedFromSupplierId?: string | null;
+  derivedFromSupplierName?: string | null;
 };
 
 export type NewSofaCombo = {

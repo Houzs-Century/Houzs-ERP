@@ -11,6 +11,7 @@ import { PhoneInput } from "../../vendor/scm/components/PhoneInput";
 import type { TeamMember, Department, Position, Role } from "../../types";
 import { defaultRoleId, deriveDeptLead, divisionOf, Eyebrow, FIELD_SELECT_CLS } from "./teamShared";
 import { showsPosPinCard } from "./posPinEligibility";
+import { isExternalPosition, EXTERNAL_POSITION_MESSAGE } from "../../lib/externalPosition";
 
 /* Invite Member — design handoff screen 03. One centered modal: person &
  * email, an assignment summary prefilled from the Directory's current
@@ -692,6 +693,11 @@ export function TeamInviteModal({
                 </Badge>
               )}
             </p>
+            {isExternalPosition(position) && (
+              <p className="mb-0 mt-2.5 rounded-md border border-accent bg-warning-bg px-3 py-2 text-[11.5px] leading-snug text-warning-text">
+                {EXTERNAL_POSITION_MESSAGE}
+              </p>
+            )}
           </div>
 
           {inputMode === "single" && showPosPin && (

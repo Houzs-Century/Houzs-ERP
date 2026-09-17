@@ -190,6 +190,11 @@ export type MfgProductRow = {
   updated_at?: string;
   one_shot?: boolean;
   source_doc_no?: string | null;
+  /* B1 — the derived-cost anchor state for the SKU Master cost-column marker
+     (teal ok / amber suppliers-differ / red gap / service). Present ONLY when the
+     list was fetched with anchorState (the SKU Master screen); undefined for the
+     SO/PO catalogue pickers that don't ask. */
+  costAnchorState?: 'ok' | 'conflict' | 'empty' | 'service';
 };
 
 /** Sofa-only seat-height price row off the SKU's seat_height_prices JSONB.
@@ -223,13 +228,18 @@ export function useMfgProducts(opts?: {
   category?: MfgCategory;
   search?: string;
   enabled?: boolean;
+  /* B1 — ask the server for each row's costAnchorState (the SKU Master cost
+     marker). Opt-in and separately cache-keyed so the SO/PO pickers keep their
+     lean, un-annotated list. */
+  anchorState?: boolean;
 }) {
   return useQuery({
-    queryKey: ['mfg-products', activeCompanyKey(), opts?.category ?? 'all', opts?.search ?? ''],
+    queryKey: ['mfg-products', activeCompanyKey(), opts?.category ?? 'all', opts?.search ?? '', opts?.anchorState ? 'anchor' : ''],
     queryFn: async ({ signal }) => {
       const params = new URLSearchParams();
       if (opts?.category) params.set('category', opts.category);
       if (opts?.search) params.set('search', opts.search);
+      if (opts?.anchorState) params.set('anchorState', '1');
       const res = await authedFetch<{ products: MfgProductRow[] }>(
         `/mfg-products${params.toString() ? `?${params.toString()}` : ''}`,
         { signal },
@@ -622,6 +632,55 @@ export function useMfgProductSuppliers(id: string | null) {
       suppliers: ProductSupplierRow[];
       anchor: ProductCostAnchor;
     }>(`/mfg-products/${id}/suppliers`),
+    enabled: Boolean(id),
+    staleTime: 30_000,
+  });
+}
+
+/* HISTORY — three tabs on the SKU drawer. Cost + Supplier-price are new reads
+   (both append-only, company-scoped, cost figures finance-gated server-side so a
+   non-cost caller gets null in the money fields). Selling reuses the /price-changes
+   timeline above. */
+export type MfgProductCostHistoryRow = {
+  id: string;
+  effectiveFrom: string;            // YYYY-MM-DD
+  basePriceSen: number | null;      // null when finance-gated OR that lane unchanged
+  price1Sen: number | null;
+  seatHeightPrices: unknown | null;
+  sourceSupplierId: string | null;
+  sourceSupplierName: string | null;
+  notes: string | null;
+  createdBy: string | null;
+  createdAt: string;
+};
+export function useMfgProductCostHistory(id: string | null) {
+  return useQuery({
+    queryKey: ['mfg-product-cost-history', id],
+    queryFn: () => authedFetch<{ history: MfgProductCostHistoryRow[] }>(`/mfg-products/${id}/cost-history`),
+    enabled: Boolean(id),
+    staleTime: 30_000,
+  });
+}
+
+export type SupplierPriceHistoryRow = {
+  id: string;
+  supplierId: string;
+  supplierCode: string | null;
+  supplierName: string | null;
+  isMainSupplier: boolean;
+  unitPriceSen: number | null;      // null when finance-gated
+  priceMatrix: unknown | null;
+  comparableSen: number | null;     // the dearness the anchor ranks on; null when gated
+  direction: 'up' | 'down' | null;  // raised / lowered vs this supplier's prior row
+  effectiveFrom: string;
+  notes: string | null;
+  createdBy: string | null;
+  createdAt: string;
+};
+export function useMfgProductSupplierPriceHistory(id: string | null) {
+  return useQuery({
+    queryKey: ['mfg-product-supplier-price-history', id],
+    queryFn: () => authedFetch<{ history: SupplierPriceHistoryRow[] }>(`/mfg-products/${id}/supplier-price-history`),
     enabled: Boolean(id),
     staleTime: 30_000,
   });
