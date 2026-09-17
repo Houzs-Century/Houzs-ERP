@@ -9,7 +9,7 @@
 // HOUZS VENDOR — verbatim from apps/backend/src/pages/StockTransferDetail.tsx.
 // Import boundary only: react-router → react-router-dom; Skeleton/ConfirmDialog/
 // NotifyDialog/StatusPill + useWarehouses ← vendored; transfer hooks ←
-// vendored stock-queries; buildVariantSummary via @2990s/shared; css colocated.
+// vendored stock-queries; css colocated.
 // Back/Close → the parallel /scm/stock-transfers list.
 // ----------------------------------------------------------------------------
 
@@ -21,7 +21,7 @@ import { SkeletonDetailPage } from '../../vendor/scm/components/Skeleton';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { StatusPill } from '../../vendor/scm/components/StatusPill';
-import { buildVariantSummary, fmtDate, fmtDateTime, fmtQty } from '@2990s/shared'; // Commander 2026-05-28 — Description 2
+import { fmtDate, fmtDateTime, fmtQty } from '@2990s/shared';
 import { useWarehouses } from '../../vendor/scm/lib/inventory-queries';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
 import {
@@ -252,23 +252,13 @@ export const StockTransferDetail = () => {
                 <tr key={ln._key}>
                   <td><span className={styles.codeCell}>{ln.itemCode}</span></td>
                   <td>{ln.productName || <span className={styles.muted}>—</span>}</td>
-                  {/* "Description 2": variant/spec summary in its own column.
-                      Prefers a stored description2, falls back to the computed
-                      variant summary, then a muted em-dash when both are empty. */}
+                  {/* "Description 2": the Remarks typed on this line at creation
+                      (StockTransferNew's per-line Remarks column). Lines are
+                      read-only post-0078, so this is set once, at Save. */}
                   <td>
-                    {(() => {
-                      const row = ln as unknown as {
-                        description2?: string | null;
-                        item_group?: string | null;
-                        variants?: Record<string, unknown> | null;
-                      };
-                      const desc2 = (row.description2 && row.description2.trim())
-                        ? row.description2
-                        : buildVariantSummary(row.item_group, row.variants);
-                      return desc2
-                        ? <span>{desc2}</span>
-                        : <span className={styles.muted}>—</span>;
-                    })()}
+                    {ln.notes?.trim()
+                      ? <span>{ln.notes}</span>
+                      : <span className={styles.muted}>—</span>}
                   </td>
                   <td className={styles.tableRight} style={{ fontFamily: 'var(--font-mono)' }}>
                     {fmtQty(ln.qty)}
