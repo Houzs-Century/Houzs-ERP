@@ -46,6 +46,7 @@ import {
   Truck,
   Star,
   ChevronDown,
+  Info,
 } from 'lucide-react';
 import { Button } from '../../components/Button';
 import { PageHeader } from '../../components/Layout';
@@ -1524,7 +1525,13 @@ export const MaintenanceTab = ({
                   onClick={() => setActiveKey(t.key)}
                 >
                   <span>{t.label}</span>
-                  <span className={styles.maintCount}>({count})</span>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                    {/* Priced pools carry a single surcharge cost (the "RM" tag,
+                        mirroring the approved Maintenance mockup); unpriced
+                        pools show only their count. */}
+                    {t.priced && <span className={styles.maintRmPill}>RM</span>}
+                    <span className={styles.maintCount}>({count})</span>
+                  </span>
                 </button>
               );
             })}
@@ -1931,15 +1938,12 @@ const SofaCompartmentsList = ({
             {...dragRowProps(i)}
             style={{
               ...(dragRowProps(i).style ?? {}),
-              gridTemplateColumns: '32px 32px 56px 1fr auto auto auto',
+              gridTemplateColumns: '32px 56px 1fr auto auto auto',
               gap: 'var(--space-3)',
               alignItems: 'center',
               opacity: entryIsActive ? 1 : 0.55,
             }}
           >
-            <button type="button" className={styles.maintRowIcon} title="History">
-              <History {...ICON_PROPS} />
-            </button>
             <span className={styles.maintRowIdx} style={editMode ? { cursor: 'grab' } : undefined}>
               {i + 1}
             </span>
@@ -2220,11 +2224,10 @@ const SofaCompartmentsList = ({
           style={{
             background: '#fff',
             borderColor: '#16695f',
-            gridTemplateColumns: '32px 32px 1fr auto',
+            gridTemplateColumns: '32px 1fr auto',
           }}
         >
-          <span className={styles.maintRowIcon}><Plus {...ICON_PROPS} /></span>
-          <span className={styles.maintRowIdx}>+</span>
+          <span className={styles.maintRowIdx}><Plus {...ICON_PROPS} /></span>
           <input
             type="text"
             placeholder="New compartment code (e.g. 1A(LHF))"
@@ -2864,13 +2867,10 @@ const MaintenanceList = ({
             {...dragRowProps(i)}
             style={{
               ...(dragRowProps(i).style ?? {}),
-              gridTemplateColumns: '32px 32px 1fr auto auto',
+              gridTemplateColumns: '32px 1fr auto auto',
               opacity: entryIsActive ? 1 : 0.55,
             }}
           >
-            <button type="button" className={styles.maintRowIcon} title="History">
-              <History {...ICON_PROPS} />
-            </button>
             <span className={styles.maintRowIdx} style={editMode ? { cursor: 'grab' } : undefined}>{i + 1}</span>
             <span className={styles.maintRowValue}>
               {editMode ? (
@@ -3008,11 +3008,10 @@ const MaintenanceList = ({
             style={{
               background: '#fff',
               borderColor: '#16695f',
-              gridTemplateColumns: '32px 32px 1fr auto',
+              gridTemplateColumns: '32px 1fr auto',
             }}
           >
-            <span className={styles.maintRowIcon}><Plus {...ICON_PROPS} /></span>
-            <span className={styles.maintRowIdx}>+</span>
+            <span className={styles.maintRowIdx}><Plus {...ICON_PROPS} /></span>
             {isSizeRow ? (
               /* PR (Commander 2026-06-22) — Bedframe/Mattress ADD row mirrors
                  the inline 3-input editor (code · label · dimensions) so a new
@@ -3150,12 +3149,10 @@ const MaintenanceList = ({
           {...dragRowProps(i)}
           style={{
             ...(dragRowProps(i).style ?? {}),
+            gridTemplateColumns: '32px 1fr auto',
             opacity: opt.active === false ? 0.55 : 1,
           }}
         >
-          <button type="button" className={styles.maintRowIcon} title="History">
-            <History {...ICON_PROPS} />
-          </button>
           <span className={styles.maintRowIdx} style={editMode ? { cursor: 'grab' } : undefined}>{i + 1}</span>
           <span className={styles.maintRowValue}>
             {editMode ? (
@@ -3279,11 +3276,10 @@ const MaintenanceList = ({
           style={{
             background: '#fff',
             borderColor: '#16695f',
-            gridTemplateColumns: '32px 32px 1fr auto',
+            gridTemplateColumns: '32px 1fr auto',
           }}
         >
-          <span className={styles.maintRowIcon}><Plus {...ICON_PROPS} /></span>
-          <span className={styles.maintRowIdx}>+</span>
+          <span className={styles.maintRowIdx}><Plus {...ICON_PROPS} /></span>
           <input
             type="text"
             placeholder="New value"
@@ -4168,6 +4164,17 @@ const SpecialsMaintenancePanel = ({
           </Button>
         </div>
       </header>
+
+      {/* COST, not selling (approved mockup) — special add-ons carry an internal
+          COST only; the customer is never charged for them (docs/bugs/0859). The
+          single RM figure below is that cost, used for SO costing. */}
+      <div className={styles.maintCostNote}>
+        <Info {...ICON_PROPS} />
+        <span>
+          <strong>This is cost, not selling.</strong> The customer is not charged for these
+          add-ons — the RM figure is the internal cost used for order costing.
+        </span>
+      </div>
 
       {error && <div style={{ color: '#b23a3a', fontSize: 'var(--fs-13)', margin: 'var(--space-3) 0' }} role="alert">{error}</div>}
 
