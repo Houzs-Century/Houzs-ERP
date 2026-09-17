@@ -27,11 +27,12 @@ import {
 import { applySoAmendment, reviseBoundPo, ReceivedFloorError } from '../lib/so-revision';
 import { chunkIn } from '../lib/paginate-all';
 import { raisePoFollowUps } from '../lib/amendment-po-followup';
+import { judgeLaneHandover } from '../lib/amendment-lane-handover';
 import { hasHouzsPerm, holdsHouzsPermLiterally, canViewAllSales, canWriteScmConfig } from '../lib/houzs-perms';
 import { resolveSalesScopeIds, applySoScope, soDocOutOfScope, resolveCallerStaffId, resolveUserIdByStaffId } from '../lib/salesScope';
 import {
   notifySoAmendmentResolved,
-  notifySoAmendmentLaneFlagged,
+  notifySoAmendmentHandedOver,
   notifyPoAmendmentRaised,
 } from '../../services/amendmentNotify';
 import { collectProcessingGateProblems } from '../shared/so-save-problems';
@@ -90,6 +91,7 @@ type AmendmentForWrite = {
   /* scm.staff uuid of whoever raised it — the audience of the approved /
      rejected notice (services/amendmentNotify.ts). */
   requested_by?: string | null;
+  lane_flag_note?: string | null;
 };
 
 /** Lane of a loaded row — narrowed to the two known values, else legacy. */
@@ -142,7 +144,7 @@ const NOT_IN_LANE_FLOW = (what: string) => ({
 /* The refusal the lane-only flag answers when pointed at a legacy row. */
 const LEGACY_HAS_NO_DESK = {
   error: 'legacy_amendment',
-  reason: 'This amendment predates the two-desk flow, so it has no desk to flag.',
+  reason: 'This amendment predates the two-desk flow, so there is no other desk to pass it to.',
 };
 type AmendmentWriteLoad =
   // A Houzs-NATIVE amendment: apply locally, exactly as before.
@@ -179,7 +181,7 @@ async function loadAmendmentForWrite(
 ): Promise<AmendmentWriteLoad> {
   const { data } = await scopeToCompany(
     sb.from('so_amendments')
-      .select('id, so_doc_no, amendment_no, status, version, lane, reason, apply_lease_token, apply_lease_expires_at, header_changes, requested_by')
+      .select('id, so_doc_no, amendment_no, status, version, lane, reason, apply_lease_token, apply_lease_expires_at, header_changes, requested_by, lane_flag_note')
       .eq('id', id),
     c,
   ).maybeSingle();
@@ -1364,11 +1366,13 @@ soAmendments.patch('/:id/reject', async (c) => {
 
 /* ── PATCH /:id/flag-lane ──────────────────────────────────────────────────
    The APPROVER, reviewing a request on their desk, saying it is not theirs to
-   sign (owner 2026-09-17: the requester cannot judge the desk; the approver
-   reading the change can). It is a note, not a transition: status, lane and
-   version are untouched, so the row stays signable where the rule put it and
-   only the relane script moves it. Gated on the row's own lane key — the same
-   people who could approve or reject it. */
+   sign — and the request MOVES to the other desk (owner 2026-09-17, option B;
+   the requester cannot judge the desk, the approver reading the change can).
+   Gated on the row's own lane key. lib/amendment-lane-handover decides whether
+   the move is safe: a change the Purchase Order has to follow never leaves the
+   Purchaser. ONCE per amendment — a row that already carries a handover note
+   cannot be passed back, so two desks cannot bounce it between them; the
+   second desk approves or rejects. */
 soAmendments.patch('/:id/flag-lane', async (c) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
@@ -1380,7 +1384,7 @@ soAmendments.patch('/:id/flag-lane', async (c) => {
   if (!note) {
     return c.json({
       error: 'note_required',
-      message: 'Say which desk you think should approve this, and why — that note is what they read.',
+      message: 'Say why this is not yours to approve — that note is what the other desk reads.',
     }, 400);
   }
 
@@ -1391,7 +1395,7 @@ soAmendments.patch('/:id/flag-lane', async (c) => {
   if (!hasHouzsPerm(c, LANE_APPROVE_KEY[lane])) {
     return c.json({
       error: 'flag_forbidden',
-      message: `Only an approver of the ${LANE_LABEL[lane]} lane can flag this amendment as being on the wrong desk.`,
+      message: `Only an approver of the ${LANE_LABEL[lane]} lane can pass this amendment to the other desk.`,
     }, 403);
   }
   if (loaded.mirrored) return c.json(MIRRORED_SO_READONLY, 409);
@@ -1399,17 +1403,32 @@ soAmendments.patch('/:id/flag-lane', async (c) => {
   if (amendment.status !== 'REQUESTED') {
     return c.json({
       error: 'bad_transition',
-      reason: 'This amendment has already been acted on, so its approver can no longer be flagged.',
+      reason: 'This amendment has already been acted on, so it can no longer be passed to the other desk.',
+    }, 409);
+  }
+  if ((amendment.lane_flag_note ?? '').trim()) {
+    return c.json({
+      error: 'already_handed_over',
+      reason: 'This amendment was already passed over from the other desk once. Approve it, or reject it with a reason.',
     }, 409);
   }
 
+  const verdict = await judgeLaneHandover(sb, c, {
+    id: amendment.id, so_doc_no: amendment.so_doc_no, lane, header_changes: amendment.header_changes ?? null,
+  });
+  if (!verdict.ok) return c.json({ error: verdict.error, reason: verdict.reason }, verdict.status);
+
   const { data: updated, error: updErr } = await sb.from('so_amendments').update({
+    lane:           verdict.toLane,
     lane_flag_note: note,
+    version:        Number(amendment.version ?? 1) + 1,
     updated_at:     new Date().toISOString(),
   }).eq('id', id)
     .eq('company_id', co.companyId)
     .eq('status', 'REQUESTED')
-    .select('id, so_doc_no, amendment_no, status, lane, lane_flag_note')
+    .eq('lane', lane)
+    .eq('version', Number(amendment.version ?? 1))
+    .select('id, so_doc_no, amendment_no, status, lane, lane_flag_note, version')
     .maybeSingle();
   if (updErr) return c.json({ error: 'update_failed', reason: updErr.message }, 500);
   if (!updated) return c.json({ error: 'amendment_version_conflict' }, 409);
@@ -1419,14 +1438,18 @@ soAmendments.patch('/:id/flag-lane', async (c) => {
     action: 'AMENDMENT_LANE_FLAGGED',
     actorId: user.id,
     actorName: c.get('houzsUser')?.name ?? actorName(user),
-    fieldChanges: [{ field: 'lane_flag_note', to: note }],
+    fieldChanges: [
+      { field: 'lane', from: lane, to: verdict.toLane },
+      { field: 'lane_flag_note', to: note },
+    ],
     note,
   });
 
-  await notifySoAmendmentLaneFlagged(c.env, {
+  await notifySoAmendmentHandedOver(c.env, {
     amendmentNo: amendment.amendment_no ?? '',
     soDocNo: amendment.so_doc_no,
-    lane,
+    fromLane: lane,
+    toLane: verdict.toLane,
     companyId: co.companyId,
     note,
     actorName: c.get('houzsUser')?.name ?? actorName(user),

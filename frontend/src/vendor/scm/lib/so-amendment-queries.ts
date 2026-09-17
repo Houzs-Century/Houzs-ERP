@@ -54,9 +54,9 @@ export type AmendmentRow = {
      signs). NULL on rows raised before the rework — those keep the legacy
      supplier-confirmed two-gate chain. */
   lane?: 'LINES' | 'DELIVERY' | string | null;
-  /* The APPROVER's note that this request is not theirs to sign (owner
-     2026-09-17). NULL when not flagged. The row still sits on the lane the rule
-     gave it; an administrator moves it with the relane workflow. */
+  /* Set when an APPROVER said this request was not theirs to sign and PASSED it
+     to the other desk (owner 2026-09-17). `lane` is already the receiving desk;
+     this is the note that came with it. NULL when it never changed hands. */
   lane_flag_note?: string | null;
   /* Owner 2026-07-27 — the PO(s) this SO's lines were purchased on
      (purchase_order_items.so_item_id linkage, resolved by the list endpoint).
@@ -375,8 +375,8 @@ export const useRejectAmendment = () => {
   });
 };
 
-/* Flag — the APPROVER saying this request is not theirs to sign. A note, not a
-   transition: the row stays REQUESTED on its lane until it is relaned. */
+/* Flag — the APPROVER saying this request is not theirs to sign. The server
+   passes it to the other desk (still REQUESTED), or refuses and says why. */
 export const useFlagAmendmentLane = () => {
   const qc = useQueryClient();
   return useMutation({
