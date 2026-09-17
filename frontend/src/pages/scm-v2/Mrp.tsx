@@ -22,7 +22,7 @@
 
 import { useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router';
-import { ChevronRight, ChevronDown, RefreshCw, Truck, ShoppingCart, CalendarRange, Clock } from 'lucide-react';
+import { ChevronRight, ChevronDown, RefreshCw, Truck, ShoppingCart, CalendarRange, Clock, Download } from 'lucide-react';
 import { DataTable, type Column } from '../../components/DataTable';
 import {
   useMrp, useRegenerateMrp, useCategoryLeadTimes, useUpdateCategoryLeadTime, GLOBAL_LEAD_KEY,
@@ -1013,7 +1013,7 @@ export const Mrp = () => {
         toolbarExtra={
           <button type="button" className={TOOLBAR_BTN} onClick={onExportCurrentTab} disabled={exporting}
             title={`Download only the ${views.find((v) => v.value === view)?.label ?? view} tab as a workbook`}>
-            Export tab
+            <Download {...ICON} /> Export current tab ({displayModels.length})
           </button>
         }
         search={{
