@@ -11,14 +11,18 @@ Each wave = its own CI-green PR. Status kept current here per PR.
 - [x] A1 Backend cost-anchor read — extend `GET /mfg-products/:id/suppliers` with
       `anchor {state, reason, anchorSupplierId, anchorSupplierName, costSen, costedCount, totalCount}`.
       Resolver `resolveProductCostAnchor` in the audited derive module; cost figure
-      finance-gated. **PR: feat/sku-drawer-anchor-read — open.**
-- [ ] A2 Backend History reads — company-scoped GET endpoints over
-      `scm.mfg_product_cost_history` (Cost tab) and `scm.supplier_binding_price_history`
-      (Supplier-price tab, ↑/↓ direction). Selling reuses the existing price-changes read.
-- [ ] A3 Frontend — Product Maintenance Cost section (anchor card, ok/conflict/empty/service).
-- [ ] A4 Frontend — History block (three tabs: Cost / Selling / Supplier price).
-- [ ] A5 Frontend — editable Category in the drawer (reuse `CategorySwapSelect` +
-      model-category-move confirmation).
+      finance-gated. **PR #4077 — MERGED.**
+- [x] A2 Backend History reads — company-scoped GET endpoints over
+      `scm.mfg_product_cost_history` (`/cost-history`, Cost tab) and
+      `scm.supplier_binding_price_history` (`/supplier-price-history`, Supplier-price tab,
+      up/down direction via `comparableCostSen`). Selling reuses the existing price-changes read.
+      **PR: feat/sku-drawer-history-reads — opening.**
+- [x] A3 Frontend — Product Maintenance Cost section (`CostAnchorCard`, ok/conflict/empty/service).
+      **PR: feat/sku-drawer-cost-card — opening (with A5).**
+- [x] A5 Frontend — editable Category for model SKUs too (reuse `CategorySwapSelect kind="model"`
+      + the existing move-the-whole-model confirmation). Standalone SKUs were already editable.
+      **PR: feat/sku-drawer-cost-card.**
+- [ ] A4 Frontend — History block (three tabs: Cost / Selling / Supplier price). Needs A2.
 - [ ] A6 B2 — "Add supplier binding" action from the drawer (reuse create-binding mutation).
 
 ## Wave B — SKU Master list
