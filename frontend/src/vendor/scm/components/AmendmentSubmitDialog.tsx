@@ -10,10 +10,11 @@
 //   1. to SEE which desk the request will go to, before it exists — read from
 //      POST /:docNo/amendments/lane-preview, the same resolver the create
 //      stores from, so the badge here is the badge the row will carry;
-//   2. a REASON, required (owner 2026-09-15, 「reason 换成一定 fill in」);
-//   3. a way to FLAG the approver as wrong, with a note. The request still goes
-//      where the rule says; the note lands on the row and in the History, the
-//      other desk is told, and an administrator can move it (relane workflow).
+//   2. a REASON, required (owner 2026-09-15, 「reason 换成一定 fill in」).
+//
+// Flagging the approver as wrong is NOT asked here (owner 2026-09-17): the
+// requester cannot judge the desk. The approver reading the change can, so the
+// flag lives on their job card (WrongApproverFlag).
 //
 // Same calm card as PromptDialog, rendered by the page through the hook's
 // `element` — a page-owned dialog needs no app-root provider, and the two pages
@@ -41,10 +42,7 @@ import {
   soAmendmentApprover, AMENDMENT_APPROVER_LABEL, AMENDMENT_APPROVER_TONE,
 } from '../lib/amendment-approver';
 
-export type AmendmentSubmitAnswer = { reason: string; laneFlagNote: string | null };
-
-export const AMENDMENT_FLAG_NOTE_REQUIRED =
-  'Say which desk you think should approve it, and why — that note is what they read.';
+export type AmendmentSubmitAnswer = { reason: string };
 
 /* One line per lane the request will split into, in the approver's own words. */
 export function describeLanePreview(p: AmendmentLanePreview): Array<{ lane: AmendmentLane; text: string }> {
@@ -119,14 +117,11 @@ export type AmendmentSubmitDialogProps = {
 export const AmendmentSubmitDialog = ({ ask, onConfirm, onCancel }: AmendmentSubmitDialogProps) => {
   const preview = useAmendmentLanePreview(ask);
   const [reason, setReason] = useState('');
-  const [flagged, setFlagged] = useState(false);
-  const [flagNote, setFlagNote] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   const submit = () => {
     if (!reason.trim()) { setError(AMENDMENT_REASON_REQUIRED); return; }
-    if (flagged && !flagNote.trim()) { setError(AMENDMENT_FLAG_NOTE_REQUIRED); return; }
-    onConfirm({ reason: reason.trim(), laneFlagNote: flagged ? flagNote.trim() : null });
+    onConfirm({ reason: reason.trim() });
   };
 
   const lanes = preview.data ? describeLanePreview(preview.data) : [];
@@ -168,31 +163,6 @@ export const AmendmentSubmitDialog = ({ ask, onConfirm, onCancel }: AmendmentSub
           autoFocus
           onChange={(e) => { setReason(e.target.value); if (error) setError(null); }}
         />
-
-        <label style={{ ...labelStyle, display: 'flex', alignItems: 'center', gap: 8, fontWeight: 600 }}>
-          <input
-            type="checkbox"
-            checked={flagged}
-            onChange={(e) => { setFlagged(e.target.checked); if (error) setError(null); }}
-          />
-          The approver looks wrong
-        </label>
-        {flagged && (
-          <>
-            <textarea
-              id="amend-submit-flag"
-              aria-label="Why the approver looks wrong"
-              style={inputStyle}
-              value={flagNote}
-              placeholder="e.g. this is a transport charge, Logistic approves those"
-              onChange={(e) => { setFlagNote(e.target.value); if (error) setError(null); }}
-            />
-            <p style={{ ...bodyStyle, margin: 'var(--space-2) 0 0', color: 'var(--c-ink-muted, #6b6f66)' }}>
-              The request still goes to the desk shown above. Your note travels with it, the other desk
-              is told, and an administrator can move it.
-            </p>
-          </>
-        )}
 
         {error && <p style={errStyle}>{error}</p>}
         <div style={actions}>
