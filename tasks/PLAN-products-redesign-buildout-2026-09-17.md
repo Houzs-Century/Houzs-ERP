@@ -34,9 +34,27 @@ Each wave = its own CI-green PR. Status kept current here per PR.
       the Price 2 / base-price column. **PR: feat/sku-master-cost-marker — opening.**
 
 ## Wave C — sibling tabs to their mockups (align visuals, don't rebuild logic — R109)
-- [ ] C1 Modular tab
-- [ ] C2 Variants tab
-- [ ] C3 Categories tab (stays the catalogue-category editor, owner ruling)
+- [x] C1 Modular tab — model Category is now editable on the model editor via
+      `CategorySwapSelect kind="model"` (reuses the A5 move-whole-model-and-SKUs
+      confirmation). The ON/OFF allowed-option chips, All/None toggle and authority
+      copy already matched. **PR: feat/products-modular-redesign.**
+- [x] C2 Variants tab — already built to the mockup (design-handoff item 5,
+      `products/VariantsTab.tsx`): category/model picker, Size/Tier/Colour axis filters,
+      SKU / Variant / Base / Override / Effective / Enabled table with the switch. No change needed.
+- [x] C3 Categories tab — already the catalogue-category editor the mockup shows:
+      hero-image card grid, kebab (edit / move / delete), New-category drawer and the
+      409 delete-gate. Backend already carries hero-image upload + `hero_image_key`/focal/alt
+      (`backend/src/scm/routes/categories.ts`). Nothing net-new; no change needed.
+
+## Maintenance (A2 redesign) — separate from Wave A/B backend
+- [x] Products > Maintenance pools calmed to the approved mockup: rows are label + cost
+      only (dead per-row History icon removed; effective-dated History stays click-to-reveal),
+      a priced pool shows an "RM" rail tag, and the Specials pool shows a "This is cost, not
+      selling" note. **PR: feat/products-maintenance-redesign (#4099).**
+- [ ] OWNER DECISION — the mockup's "auto-derive a pool cost from the most-expensive supplier"
+      (a supplier anchor revealed on a cost click) is NOT built. Maintenance pools have no
+      supplier binding today; the cost-anchor read is SKU-level only. This is net-new backend
+      + storage, flagged rather than invented.
 
 ## Judgement calls / notes
 - A1: `SERVICE` category returns `state:'service'` for DISPLAY only — it does not change
