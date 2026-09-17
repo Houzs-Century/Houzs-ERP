@@ -3629,7 +3629,14 @@ const NewSkuDrawer = ({ onClose }: { onClose: () => void }) => {
       price1Sen: isMattress || isService ? null : toSen(form.price1),
       costPriceSen: toSen(form.costPrice) ?? 0,
       unitM3Milli: toMilli(form.unitM3),
-    }, { onSuccess: onClose });
+    }, {
+      onSuccess: onClose,
+      // Surface the server refusal (duplicate code, bad category, …) instead of
+      // failing silently. This create was only ever "handled" because a sibling
+      // mutation named `create` in the same file carried an onError; that sibling
+      // (ProductPriceTimeline) now lives in its own file, so make it explicit.
+      onError: (e) => notify({ title: e instanceof Error ? e.message : 'Could not create the SKU.', tone: 'error' }),
+    });
   };
 
   return (
