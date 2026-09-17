@@ -20,12 +20,13 @@ function payload(): TitlePolicyPayload {
     cohorts: ["god", "full", "restricted", "sales"],
     restricted_profiles: ["driver_helper", "storekeeper", "storekeeper_supervisor", "calendar_viewer"],
     sales_profiles: ["director", "rep"],
+    duties: ["management", "finance", "purchasing", "logistic", "driver", "helper", "warehouse", "other"],
     positions: [
       {
         id: 3, name: "Finance Manager", slug: "finance_manager", department_name: "Finance Department", active: true,
-        row: { position_id: 3, cohort: "full", profile: null, can_move_money: true, can_write_config: false, is_fleet: false },
+        row: { position_id: 3, cohort: "full", profile: null, can_move_money: true, can_write_config: false, is_fleet: false, duty: "finance" },
         source: "row",
-        effective: { cohort: "full", profile: null, can_move_money: true, can_write_config: false, is_fleet: false },
+        effective: { cohort: "full", profile: null, can_move_money: true, can_write_config: false, is_fleet: false, duty: "finance" },
       },
       {
         id: 26, name: "PG WH Assistant", slug: "pg_wh_assistant", department_name: "Operation Department", active: true,
@@ -66,7 +67,7 @@ describe("TeamTitlesPolicy", () => {
     fireEvent.change(screen.getByLabelText("PG WH Assistant cohort"), { target: { value: "restricted" } });
     await waitFor(() => expect(put).toHaveBeenCalledTimes(1));
     expect(put).toHaveBeenCalledWith("/api/position-policy/26", {
-      cohort: "restricted", profile: "driver_helper", can_move_money: false, can_write_config: false, is_fleet: false,
+      cohort: "restricted", profile: "driver_helper", can_move_money: false, can_write_config: false, is_fleet: false, duty: "other",
     });
     expect(onSaved).toHaveBeenCalled();
   });
@@ -76,12 +77,22 @@ describe("TeamTitlesPolicy", () => {
     fireEvent.click(screen.getByLabelText("Finance Manager may move money"));
     await waitFor(() => expect(put).toHaveBeenCalledTimes(1));
     expect(put).toHaveBeenLastCalledWith("/api/position-policy/3", {
-      cohort: "full", profile: null, can_move_money: false, can_write_config: false, is_fleet: false,
+      cohort: "full", profile: null, can_move_money: false, can_write_config: false, is_fleet: false, duty: "finance",
     });
     fireEvent.change(screen.getByLabelText("Finance Manager cohort"), { target: { value: "sales" } });
     await waitFor(() => expect(put).toHaveBeenCalledTimes(2));
     expect(put).toHaveBeenLastCalledWith("/api/position-policy/3", {
-      cohort: "sales", profile: "rep", can_move_money: false, can_write_config: false, is_fleet: false,
+      cohort: "sales", profile: "rep", can_move_money: false, can_write_config: false, is_fleet: false, duty: "finance",
+    });
+  });
+
+  test("the Duty select saves the chosen duty and is locked for owner tier", async () => {
+    render(<TeamTitlesPolicy payload={payload()} canEdit onSaved={() => {}} />);
+    expect((screen.getByLabelText("Finance Manager duty") as HTMLSelectElement).value).toBe("finance");
+    fireEvent.change(screen.getByLabelText("PG WH Assistant duty"), { target: { value: "warehouse" } });
+    await waitFor(() => expect(put).toHaveBeenCalledTimes(1));
+    expect(put).toHaveBeenLastCalledWith("/api/position-policy/26", {
+      cohort: "full", profile: null, can_move_money: false, can_write_config: false, is_fleet: false, duty: "warehouse",
     });
   });
 

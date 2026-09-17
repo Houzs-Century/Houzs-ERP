@@ -63,6 +63,8 @@ export const CAPABILITY_KEYS = [
   "fair.invoice.view",
   "fair.report.view",
   "fair.so.view",
+  "org.crew.scoped",
+  "org.defect.reviewer",
   "org.director",
   "org.sales.staff",
   "org.salesDirector",

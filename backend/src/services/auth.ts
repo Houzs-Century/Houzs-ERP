@@ -409,6 +409,7 @@ interface SessionAuthority {
   policy_money: number | boolean | null;
   policy_config: number | boolean | null;
   policy_fleet: number | boolean | null;
+  policy_duty: string | null;
   department_name: string | null;
 }
 
@@ -458,6 +459,7 @@ function buildAuthzFingerprint(
       Number(authority.policy_money ?? 0),
       Number(authority.policy_config ?? 0),
       Number(authority.policy_fleet ?? 0),
+      authority.policy_duty ?? null,
     ],
     department: [authority.department_id, authority.department_name],
     brands_for: [authority.user_id, authority.manager_id],
@@ -511,6 +513,7 @@ async function hydrateAuthUser(env: Env, row: any): Promise<AuthUser> {
     can_move_money: row.policy_money,
     can_write_config: row.policy_config,
     is_fleet: row.policy_fleet,
+    duty: row.policy_duty,
   });
   // Position => '*' (owner 2026-07-20): a god-tier POSITION (Super Admin / Owner)
   // is a full super admin with NO roles.permissions grant — step 1 of merging role
@@ -682,7 +685,7 @@ export async function getUserBySession(env: Env, token: string): Promise<AuthUse
               pd.name AS position_department_name,
               pp.cohort AS policy_cohort, pp.profile AS policy_profile,
               pp.can_move_money AS policy_money, pp.can_write_config AS policy_config,
-              pp.is_fleet AS policy_fleet,
+              pp.is_fleet AS policy_fleet, pp.duty AS policy_duty,
               d.name AS department_name
        FROM sessions s
        JOIN users u ON u.id = s.user_id
@@ -814,7 +817,7 @@ export async function getUserBySession(env: Env, token: string): Promise<AuthUse
               p.name as position_name,
               pp.cohort as policy_cohort, pp.profile as policy_profile,
               pp.can_move_money as policy_money, pp.can_write_config as policy_config,
-              pp.is_fleet as policy_fleet,
+              pp.is_fleet as policy_fleet, pp.duty as policy_duty,
               d.name as department_name,
               s.expires_at, s.origin
        FROM sessions s
@@ -867,7 +870,7 @@ export async function getUserById(env: Env, id: number): Promise<AuthUser | null
             p.name as position_name,
               pp.cohort as policy_cohort, pp.profile as policy_profile,
               pp.can_move_money as policy_money, pp.can_write_config as policy_config,
-              pp.is_fleet as policy_fleet,
+              pp.is_fleet as policy_fleet, pp.duty as policy_duty,
             d.name as department_name
      FROM users u
      JOIN roles r ON r.id = u.role_id

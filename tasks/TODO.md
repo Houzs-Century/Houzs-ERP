@@ -3,7 +3,7 @@
 One line per open item: what — waiting on — since. Delete the line when it is done. Older items were dropped on 2026-09-15; they are in tag `archive/docs-2026-09-15`.
 
 ## Waiting on owner
-- Roles & Permissions part B follow-ups: (1) `pmsAccess.ts` director / PIC / purchasing regexes and `projectGates.ts` warehouse-crew prefix still key on the Title's NAME — move onto `position_policy`; (2) phone has no Titles editor (desktop-only like the Actions / SCM matrices) — 2026-09-16
+- Roles & Permissions part B follow-ups: (1) phone has no Titles editor (desktop-only like the Actions matrix); (2) three frontend name lists remain (`assistantAccess.ts` denial list, `Sidebar.tsx` hideForPositions, `crewScope.ts` fallback) — fold onto capabilities; (3) owner to consider Duty = logistic for Logistic Admin (their renamed Title has resolved to OTHER on projects since the rename) — 2026-09-16
 - Hookka supplier account 400-H004 belongs to another company in the book: A (recommended) map to 400-O002 and move 94 POs; B 400-H003; C keep. HC-GRN-2609-081 is refused until then — 2026-09-15
 - Payment text: keep AutoCount's text and append ERP references (root fix), then restore 61 orders; the #3969 stopgap is live — 2026-09-15
 - Carried-over balances: 6 payments on 4 orders (RM 9,047) exist only in AutoCount. A (recommended) staff key them in the ERP — 2026-09-15

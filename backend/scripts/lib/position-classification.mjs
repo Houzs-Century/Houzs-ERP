@@ -25,11 +25,12 @@ import {
 /** The caller shape the rules read, built the way auth hydration builds it: a
  *  god position carries the `*` wildcard, everyone else starts with none (role
  *  grants are counted separately by the audit). */
-function callerFor(positionName, departmentName, god) {
+function callerFor(positionName, departmentName, god, row = null) {
   return {
     id: 0,
     position_name: positionName,
     department_name: departmentName,
+    position_policy: row,
     permissions: god ? ["*"] : [],
     permissions_set: new Set(god ? ["*"] : []),
   };
@@ -59,7 +60,7 @@ export function classifyPosition(positionName, departmentName, policyRow = null)
   const god = positionGrantsWildcard(pos, row);
   const policy = resolvePositionPolicy({ position_name: pos, department_name: dept }, row);
   const cohort = god ? "god" : policy.cohort;
-  const caller = callerFor(pos, dept, god);
+  const caller = callerFor(pos, dept, god, row);
 
   const flags = [];
   flags.push(row ? "policy:row" : "policy:name");
