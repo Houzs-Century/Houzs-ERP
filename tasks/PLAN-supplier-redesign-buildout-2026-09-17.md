@@ -19,7 +19,7 @@ Do NOT touch `Products.tsx` / `mfg-products.ts` (another agent).
 |---|-------|-------|--------|
 | B4 | `ac_item_code` on bindings | column ALREADY exists (mig 0326, read-only by write-back); PR surfaces it through suppliers.ts create/PATCH/batch + BindingRow + SkuFormDialog so purchasing can maintain it | PR OPEN |
 | A3 | Fabric Converter align | `FabricTracking.tsx` info note + eyebrow (table left as-is per R109) | PR #4080 |
-| B1 | Effective-dated supplier-price UI | FE dated-price UI on binding (backend exists) + read endpoint if needed | todo |
+| B1 | Effective-dated supplier-price UI | GET timeline + POST schedule-price endpoints (suppliers.ts, auto-baseline, append-only, company-scoped) + FE timeline panel on the binding (SkuFormDialog) | PR OPEN |
 | B3 | Bulk-create importer | importer now auto-creates unknown codes via `/bindings/batch` (already company-scoped) with a dry-run preview; CSV subsystem extracted to `SupplierBindingsCsv.tsx` | PR OPEN |
 | A1 | Combo Pricing redesign | SofaComboTab FE + `sofa-combos.ts` wire derive-status/anchor/gap | todo (needs sofa-combos.ts, flagged) |
 

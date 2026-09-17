@@ -546,6 +546,50 @@ export function useDeleteBinding() {
   });
 }
 
+// ── B1 — effective-dated supplier price timeline on a binding ────────────────
+export type BindingPriceChange = {
+  id: string;
+  effective_from: string;
+  unit_price_sen: number | null;
+  price_matrix: PriceMatrix | null;
+  notes: string | null;
+  created_by: string | null;
+  created_at: string;
+};
+export type BindingPriceHistory = {
+  history: BindingPriceChange[];
+  currentUnitPriceSen: number | null;
+  currentPriceMatrix: PriceMatrix | null;
+};
+
+/** The binding's price timeline (newest first) + its current flat cost. */
+export function useBindingPriceHistory(supplierId: string, bindingId: string | null) {
+  return useQuery({
+    queryKey: ['binding-price-history', supplierId, bindingId],
+    enabled: !!bindingId,
+    queryFn: () =>
+      authedFetch<BindingPriceHistory>(`/suppliers/${supplierId}/bindings/${bindingId}/price-changes`),
+  });
+}
+
+/** Append one effective-dated cost row (schedule a future/dated supplier price). */
+export function useScheduleBindingPrice() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ supplierId, bindingId, ...body }:
+      { supplierId: string; bindingId: string; effectiveFrom: string; unitPriceSen: number; notes?: string }) =>
+      authedFetch<{ ok: boolean; baselined: boolean }>(
+        `/suppliers/${supplierId}/bindings/${bindingId}/price-changes`,
+        { method: 'POST', body: JSON.stringify(body) },
+      ),
+    onSuccess: (_, vars) => {
+      qc.invalidateQueries({ queryKey: ['binding-price-history', vars.supplierId, vars.bindingId] });
+      qc.invalidateQueries({ queryKey: ['supplier-detail', vars.supplierId] });
+    },
+    onError: writeFailed,
+  });
+}
+
 /** Migration 0177 — set/clear this binding as the cost anchor for its
  *  item_code. Setting clears the flag on any other binding for the same
  *  product (one anchor per code) and pushes the binding's current cost onto the

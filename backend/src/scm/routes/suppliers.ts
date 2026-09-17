@@ -28,6 +28,7 @@ import { supabaseAuth } from '../middleware/auth';
 import { escapeForOr } from '../lib/postgrest-search';
 import { bindingToProductPatch } from '../lib/cost-anchor-sync';
 import { autoDeriveEnabled, recomputeDerivedProductCostSafe, recordSupplierPriceHistorySafe } from '../lib/auto-derive-cost';
+import { todayMyt } from '../lib/my-time';
 import { paginateAll } from '../lib/paginate-all';
 import { scopeToCompany, activeCompanyId, stampCompany,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY,
@@ -986,6 +987,151 @@ suppliers.delete('/:id/bindings/:bindingId', async (c) => {
   }
   return c.body(null, 204);
 });
+
+// ── Supplier binding price timeline (B1, effective-dated) ────────────────────
+// GET  /suppliers/:id/bindings/:bindingId/price-changes  — the binding's price
+//      history (newest first) + the current flat cost, for the timeline panel.
+// POST /suppliers/:id/bindings/:bindingId/price-changes  — append ONE effective-
+//      dated cost row. Auto-baselines the current flat cost at today when
+//      scheduling the FIRST future price for a binding with no history, so the
+//      timeline reads "today = current, <future> = new". Append-only: a wrong
+//      future price is corrected by appending, never by editing the past.
+//
+// Supplier side of docs/pricing-effective-dating-design.md phase 2. These rows
+// are the SAME table auto-derive stage 3b reads as-of (supplier-price-history.ts),
+// so a scheduled price takes effect for the derived product cost on its date.
+// Additive + append-only: no existing row changes, so today's pricing is
+// unchanged until a scheduled date arrives. Company-scoped throughout.
+const PRICE_ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+async function loadBindingForPriceHistory(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Hono ctx, matches the binding handlers
+  c: any,
+  bindingId: string,
+  companyId: number,
+) {
+  const supabase = c.get('supabase');
+  return scopeToCompanyId(
+    supabase
+      .from('supplier_material_bindings')
+      .select('id, supplier_id, material_kind, item_code, unit_price_sen, price_matrix, is_main_supplier')
+      .eq('id', bindingId),
+    companyId,
+  ).maybeSingle();
+}
+
+// Exported so a cross-tenant test can drive it without the supabaseAuth bridge.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- bare-Hono handler, mirrors the binding handlers
+export const listBindingPriceChangesHandler = async (c: any) => {
+  const bindingId = c.req.param('bindingId');
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const supabase = c.get('supabase');
+  const { data: binding, error: bErr } = await loadBindingForPriceHistory(c, bindingId, co.companyId);
+  if (bErr) return c.json({ error: 'load_failed', reason: bErr.message }, 500);
+  if (!binding) return c.json(NOT_THIS_COMPANY, 404);
+  const b = binding as { supplier_id: string; material_kind: string; item_code: string; unit_price_sen: number | null; price_matrix: unknown };
+
+  const { data, error } = await supabase
+    .from('supplier_binding_price_history')
+    .select('id, effective_from, unit_price_sen, price_matrix, notes, created_by, created_at')
+    .eq('company_id', co.companyId)
+    .eq('supplier_id', b.supplier_id)
+    .eq('material_kind', b.material_kind)
+    .eq('item_code', b.item_code)
+    .order('effective_from', { ascending: false })
+    .order('created_at', { ascending: false });
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  return c.json({
+    history: data ?? [],
+    currentUnitPriceSen: b.unit_price_sen ?? null,
+    currentPriceMatrix: b.price_matrix ?? null,
+  });
+};
+suppliers.get('/:id/bindings/:bindingId/price-changes', listBindingPriceChangesHandler);
+
+// Exported so a cross-tenant test can drive it without the supabaseAuth bridge.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- bare-Hono handler, mirrors the binding handlers
+export const createBindingPriceChangeHandler = async (c: any) => {
+  const bindingId = c.req.param('bindingId');
+  let body: { effectiveFrom?: string; unitPriceSen?: number | null; priceMatrix?: unknown; notes?: string };
+  try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
+
+  const effectiveFrom = (body.effectiveFrom ?? '').trim();
+  if (!PRICE_ISO_DATE.test(effectiveFrom)) return c.json({ error: 'effective_from_required', message: 'YYYY-MM-DD' }, 400);
+  const unitPriceSen = body.unitPriceSen;
+  if (typeof unitPriceSen !== 'number' || !Number.isInteger(unitPriceSen) || unitPriceSen < 0) {
+    return c.json({ error: 'unit_price_required', message: 'integer sen >= 0' }, 400);
+  }
+
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const supabase = c.get('supabase');
+  const houzsUser = c.get('houzsUser');
+  const systemUser = c.get('user');
+
+  const { data: binding, error: bErr } = await loadBindingForPriceHistory(c, bindingId, co.companyId);
+  if (bErr) return c.json({ error: 'load_failed', reason: bErr.message }, 500);
+  if (!binding) return c.json(NOT_THIS_COMPANY, 404);
+  const b = binding as { supplier_id: string; material_kind: string; item_code: string; unit_price_sen: number | null; price_matrix: unknown; is_main_supplier: boolean | null };
+
+  // Validate any explicit matrix against the SKU's category (money shape safety);
+  // when omitted, the binding's CURRENT matrix rides along unchanged.
+  let priceMatrix: Record<string, unknown> | null | undefined;
+  if (body.priceMatrix !== undefined) {
+    const cat = await categoryForMaterial(supabase, b.material_kind, b.item_code, co.companyId);
+    try { priceMatrix = validatePriceMatrix(body.priceMatrix, cat); }
+    catch (e) { return c.json({ error: 'invalid_price_matrix', reason: e instanceof Error ? e.message : 'invalid_price_matrix' }, 400); }
+  }
+
+  const createdBy =
+    (houzsUser?.name?.trim() || houzsUser?.email?.trim() ||
+      (houzsUser?.id != null ? String(houzsUser.id) : '')) || systemUser.id;
+  const today = todayMyt();
+
+  // Auto-baseline: scheduling the FIRST future price for a binding with no
+  // history also snapshots the current flat cost at today.
+  const toInsert: Array<Record<string, unknown>> = [];
+  let baselined = false;
+  if (effectiveFrom > today) {
+    const { data: existing, error: exErr } = await supabase
+      .from('supplier_binding_price_history')
+      .select('id')
+      .eq('company_id', co.companyId).eq('supplier_id', b.supplier_id)
+      .eq('material_kind', b.material_kind).eq('item_code', b.item_code)
+      .limit(1).maybeSingle();
+    if (exErr) return c.json({ error: 'load_failed', reason: exErr.message }, 500);
+    if (!existing) {
+      baselined = true;
+      toInsert.push({
+        company_id: co.companyId, supplier_id: b.supplier_id, material_kind: b.material_kind,
+        item_code: b.item_code, unit_price_sen: b.unit_price_sen ?? null, price_matrix: b.price_matrix ?? null,
+        is_main_supplier: Boolean(b.is_main_supplier), effective_from: today,
+        notes: 'Auto-baseline: current cost before the first scheduled change.', created_by: createdBy,
+      });
+    }
+  }
+  toInsert.push({
+    company_id: co.companyId, supplier_id: b.supplier_id, material_kind: b.material_kind,
+    item_code: b.item_code, unit_price_sen: unitPriceSen,
+    price_matrix: priceMatrix !== undefined ? priceMatrix : (b.price_matrix ?? null),
+    is_main_supplier: Boolean(b.is_main_supplier), effective_from: effectiveFrom,
+    notes: body.notes?.trim() ? body.notes.trim() : null, created_by: createdBy,
+  });
+
+  const { data, error } = await supabase
+    .from('supplier_binding_price_history')
+    .insert(toInsert)
+    .select('id, effective_from, unit_price_sen, price_matrix, notes, created_by, created_at');
+  if (error) {
+    if (error.code === '42501') return c.json({ error: 'forbidden', reason: error.message }, 403);
+    return c.json({ error: 'insert_failed', reason: error.message }, 500);
+  }
+  const inserted = (data ?? []) as Array<{ effective_from: string }>;
+  const row = inserted.find((r) => r.effective_from === effectiveFrom) ?? inserted.at(-1) ?? null;
+  return c.json({ ok: true, baselined, row }, 201);
+};
+suppliers.post('/:id/bindings/:bindingId/price-changes', createBindingPriceChangeHandler);
 
 // ── Scorecard: live PO + GRN aggregation for KPI tiles ───────────────
 //
