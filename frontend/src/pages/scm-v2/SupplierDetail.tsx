@@ -46,6 +46,9 @@ import {
   useUpdateBinding,
   useDeleteBinding,
   useSetCostAnchor,
+  useBindingPriceHistory,
+  useScheduleBindingPrice,
+  type BindingPriceChange,
   type BindingRow,
   type MaterialKind,
   type Currency,
@@ -88,6 +91,9 @@ import { PhoneInput } from '../../vendor/scm/components/PhoneInput';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
 import styles from './SupplierDetail.module.css';
 import { exportBindingsCsv, ImportBindingsDialog } from './SupplierBindingsCsv';
+import { EffectiveDatedHistory } from '../../vendor/scm/components/EffectiveDatedHistory';
+import { todayMyt } from '../../vendor/scm/lib/dates';
+import { DateField } from '../../vendor/scm/components/DateField';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
@@ -2206,6 +2212,8 @@ const SkuFormDialog = ({
               />
             </label>
           </div>
+
+          {editing && <BindingPriceTimeline supplierId={supplierId} binding={editing} />}
         </div>
 
         <footer className={styles.modalFooter}>
@@ -2215,6 +2223,70 @@ const SkuFormDialog = ({
           </Button>
         </footer>
       </div>
+    </div>
+  );
+};
+
+// ── B1 — effective-dated supplier price timeline for a binding ───────────────
+// The binding's unit cost by date (via the reusable EffectiveDatedHistory) plus
+// a "schedule a future price" form. Append-only: scheduling never rewrites the
+// past. NOTE (owner): these rows are the same table auto-derive reads as-of, so
+// a scheduled price moves the derived product cost on its date.
+const BindingPriceTimeline = ({ supplierId, binding }: { supplierId: string; binding: BindingRow }) => {
+  const history = useBindingPriceHistory(supplierId, binding.id);
+  const schedule = useScheduleBindingPrice();
+  const notify = useNotify();
+  const [effectiveFrom, setEffectiveFrom] = useState(() => todayMyt());
+  const [priceSen, setPriceSen] = useState<number>(binding.unit_price_sen);
+
+  const rows: BindingPriceChange[] = history.data?.history ?? [];
+
+  const submit = () => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(effectiveFrom)) {
+      void notify({ title: 'Pick a valid date.', tone: 'error' });
+      return;
+    }
+    schedule.mutate(
+      { supplierId, bindingId: binding.id, effectiveFrom, unitPriceSen: priceSen },
+      {
+        onSuccess: (r) => notify({ title: r.baselined ? 'Price scheduled (current cost baselined at today).' : 'Price scheduled.' }),
+        onError: (e) => notify({ title: 'Schedule failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' }),
+      },
+    );
+  };
+
+  return (
+    <div className={styles.formGridFull} style={{ marginTop: 'var(--space-4)', borderTop: '1px solid var(--line)', paddingTop: 'var(--space-3)' }}>
+      <span className={styles.fieldLabel}>Supplier price timeline</span>
+      <p style={{ fontSize: 'var(--fs-11)', color: '#767b6e', margin: '2px 0 10px' }}>
+        The unit cost this supplier charges, by date. Scheduling a future price never touches past orders — it applies from its own date.
+      </p>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: 'var(--space-3)' }}>
+        <label className={styles.field} style={{ margin: 0 }}>
+          <span className={styles.fieldLabel}>Effective from</span>
+          <DateField className={styles.fieldInput} value={effectiveFrom} onChange={(iso) => setEffectiveFrom(iso)} />
+        </label>
+        <label className={styles.field} style={{ margin: 0 }}>
+          <span className={styles.fieldLabel}>Unit price</span>
+          <MoneyInput bare valueSen={priceSen} inputClassName={styles.fieldInput} align="left" onCommit={(sen) => setPriceSen(sen ?? 0)} />
+        </label>
+        <Button variant="secondary" onClick={submit} disabled={schedule.isPending}>
+          {schedule.isPending ? 'Scheduling…' : 'Schedule price'}
+        </Button>
+      </div>
+      <EffectiveDatedHistory
+        rows={rows}
+        rowKey={(r) => r.id}
+        effectiveFrom={(r) => r.effective_from}
+        loading={history.isLoading}
+        emptyLabel="No scheduled or past supplier prices yet."
+        renderRow={(r) => (
+          <div style={{ fontSize: 'var(--fs-13)', marginTop: 2 }}>
+            <strong style={{ fontFamily: 'var(--font-mono, monospace)' }}>{fmtSen(r.unit_price_sen ?? 0)}</strong>
+            {r.notes ? <span style={{ color: 'var(--fg-soft)', marginLeft: 8 }}>{r.notes}</span> : null}
+          </div>
+        )}
+      />
     </div>
   );
 };
