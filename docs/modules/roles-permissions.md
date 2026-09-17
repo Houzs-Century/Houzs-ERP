@@ -40,7 +40,7 @@ Two separate authorization systems live under Team > Roles. Flat permissions (`x
 
 - `backend/src/services/permissions.ts` — `PERMISSIONS[]`, the catalogue, `UNDECLARED_ROLE_KEYS`.
 - `backend/src/services/pageAccess.ts` — the separate page-access catalogue (`PAGES[]`).
-- `backend/src/services/positionPolicy.ts` — `resolvePositionPolicy(input, row)`, `policyFromRow`, `positionGrantsWildcard`; `backend/src/services/positionPolicyRows.ts` — the row type, validation, loader and `POSITION_POLICY_SEED`; `backend/src/routes/position-policy.ts` — the Titles API; `frontend/src/pages/team/TeamTitlesPolicy.tsx` — the Titles tab.
+- `backend/src/services/positionPolicy.ts` — `resolvePositionPolicy(input, row)`, `policyFromRow`, `positionGrantsWildcard`; `backend/src/services/positionPolicyRows.ts` — the row type, validation, loader and `POSITION_POLICY_SEED`; `backend/src/routes/position-policy.ts` — the Titles API; `frontend/src/lib/titlePolicyModel.ts` — the shared editor logic (types, vocabularies, `draftOf`/`normalise`); `frontend/src/pages/team/TeamTitlesPolicy.tsx` — the desktop Titles tab; `frontend/src/mobile/MobileTitles.tsx` — the phone editor (Profile › Titles, reads `users.read`, writes `roles.manage`).
 - `backend/src/routes/roles.ts` — API surface.
 - `backend/tests/permissionCatalogueDrift.test.ts` — the build-time ledger/catalogue drift gate.
 - `frontend/src/pages/Roles.tsx`, `frontend/src/mobile/MobileRoles.tsx` — desktop/mobile admin surfaces.

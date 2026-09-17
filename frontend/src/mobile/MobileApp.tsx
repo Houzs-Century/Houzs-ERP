@@ -48,6 +48,7 @@ const MobileServiceCase = lazy(() => import("./MobileServiceCase").then((m) => (
 const MobilePMS = lazy(() => import("./MobilePMS").then((m) => ({ default: m.MobilePMS })));
 const MobileMailCenter = lazy(() => import("./MobileMailCenter").then((m) => ({ default: m.MobileMailCenter })));
 const MobileRoles = lazy(() => import("./MobileRoles").then((m) => ({ default: m.MobileRoles })));
+const MobileTitles = lazy(() => import("./MobileTitles").then((m) => ({ default: m.MobileTitles })));
 const MobileAnnouncements = lazy(() => import("./MobileAnnouncements").then((m) => ({ default: m.MobileAnnouncements })));
 // The unacknowledged-notice pop-up. Lazy like every other mobile screen, and
 // only mounted once the unread badge says something IS waiting — that hook
@@ -140,6 +141,7 @@ type Screen =
   | { t: "pms"; projectId?: number }
   | { t: "mail" }
   | { t: "roles" }
+  | { t: "titles" }
   | { t: "announcements" }
   | { t: "inbox" }
   /* A real mobile destination this user's position may not open. Reached only
@@ -174,6 +176,7 @@ export function destinationScreen(to: string, label: string): DestinationTarget 
   if (path === "/announcements") return { t: "announcements" };
   if (path === "/activity-inbox") return { t: "inbox" };
   if (path === "/roles") return { t: "roles" };
+  if (path === "/titles") return { t: "titles" };
   if (path === "/scm/delivery-planning") return { t: "delivery-planning" };
   if (path === "/scm/warehouses/racks") return { t: "racks" };
   // Fleet Health on a phone IS the driver's mileage capture; the desktop Fleet
@@ -492,6 +495,11 @@ export const PROFILE_ORG_ITEMS: MobileMenuItem[] = [
      leaf to borrow, and a distinct /roles path keeps it out of the /team?tab=*
      set mobileMenuGates.test pins. Screen mounts only for can("roles.read"). */
   { to: "/roles", label: "Roles", gateVia: "/team?tab=hub" },
+  /* Titles — its own mobile screen (MobileTitles), one Title's position_policy
+     row (cohort / profile / duty / flags). gateVia the /team hub tab like Roles;
+     a distinct /titles path keeps it out of the /team?tab=* set the gate test
+     pins. Reads ride users.read (screen mount); writes need roles.manage. */
+  { to: "/titles", label: "Titles", gateVia: "/team?tab=hub" },
 ];
 
 /** Mobile app shell — bottom tab bar + slide-up module menu, permission-gated
@@ -975,6 +983,7 @@ function MobileAppInner() {
   else if (screen.t === "pms") overlay = <MobilePMS onBack={back} initialProjectId={screen.projectId} />;
   else if (screen.t === "mail") overlay = <MobileMailCenter onBack={back} />;
   else if (screen.t === "roles") overlay = can("roles.read") ? <MobileRoles onBack={back} /> : <TabLocked title="Roles" />;
+  else if (screen.t === "titles") overlay = can("users.read") ? <MobileTitles onBack={back} /> : <TabLocked title="Titles" />;
   else if (screen.t === "announcements") overlay = <MobileAnnouncements onBack={back} />;
   else if (screen.t === "inbox") overlay = <MobileInbox onBack={back} onOpen={(n) => { const doc = (n as { doc_no?: string }).doc_no; if (doc) setScreen({ t: "so-detail", docNo: doc }); }} />;
   else if (screen.t === "locked") overlay = <UrlLocked label={screen.label} onHome={leaveUrlDeadEnd} />;
