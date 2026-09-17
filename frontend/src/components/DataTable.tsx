@@ -243,6 +243,10 @@ interface Props<T, L = never> {
    *  visible columns, funnels and sort (dataTableLineExport.ts). When set, the
    *  toolbar Export writes an .xlsx this way and `onExport` is not called. */
   exportLines?: DataTableLineExport<T, L>;
+  /** Extra toolbar button(s) rendered beside Export/Columns, for a caller that
+   *  needs a second export variant (e.g. MRP's per-tab export) without a whole
+   *  second toolbar. */
+  toolbarExtra?: React.ReactNode;
   /** Reports the per-column funnel state (the same `{ colKey: [values] }` the
    *  grid persists and applies) whenever it changes, so a server-paged list can
    *  push the SERVER-FILTERABLE columns into its list query and paginate over the
@@ -667,6 +671,7 @@ function DataTableInner<T, L>({
   exportName,
   onExport,
   exportLines,
+  toolbarExtra,
   onColFiltersChange,
   onImport,
   caption,
@@ -2345,6 +2350,7 @@ function DataTableInner<T, L>({
             <Download size={13} />
             {exporting ? "Exporting…" : "Export"}
           </button>
+          {toolbarExtra}
           {/* Density toggle removed 2026-06 — layout is permanently comfy. */}
           {/* Mobile-only: flip between cards and the desktop-style table
               (horizontally scrollable). Hidden on `sm+` because the

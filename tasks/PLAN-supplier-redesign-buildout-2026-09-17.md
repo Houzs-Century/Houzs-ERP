@@ -21,12 +21,18 @@ Do NOT touch `Products.tsx` / `mfg-products.ts` (another agent).
 | A3 | Fabric Converter align | `FabricTracking.tsx` info note + eyebrow (table left as-is per R109) | PR #4080 |
 | B1 | Effective-dated supplier-price UI | GET timeline + POST schedule-price endpoints (suppliers.ts, auto-baseline, append-only, company-scoped) + FE timeline panel on the binding (SkuFormDialog) | PR OPEN |
 | B3 | Bulk-create importer | importer now auto-creates unknown codes via `/bindings/batch` (already company-scoped) with a dry-run preview; CSV subsystem extracted to `SupplierBindingsCsv.tsx` | PR OPEN |
-| A1 | Combo Pricing redesign | SofaComboTab FE + `sofa-combos.ts` wire derive-status/anchor/gap | todo (needs sofa-combos.ts, flagged) |
+| A1 | Combo Pricing redesign | GET /sofa-combos now stamps master combos with costSource auto/manual/gap + anchored supplier (pickDearestSupplierCombo); SofaComboTab shows the derive-status row + gap, History moved INTO the Edit modal, dead anchor code removed | PR OPEN |
 
 ## Flags to main (judgement / ownership)
 - **A2 Maintenance redesign is BLOCKED**: all rendering (`MaintenanceList`, `SpecialsMaintenancePanel`,
   `MaintenanceHistoryDialog`) lives inside `Products.tsx`, owned by another agent. Cannot do in owned files.
-- **A1 Combo** needs backend enrichment in `sofa-combos.ts` (`rowToWire` lacks derive-status/anchor-supplier/gap).
-  That file is not one of my 3 named files (but not a protected file either). Proceeding; flag.
+- **A1 Combo** required backend enrichment in `sofa-combos.ts` (GET stamps derive-status). That file is not one
+  of my 3 named files (but not a protected file). DONE + flagged. Two divergences from the mockup, deliberate:
+  (1) the master grid keeps showing selling-then-cost (the 2026-07-24 「爆掉了」 fix) rather than switching to a
+  pure COST grid, so cells are NOT per-cell "derived"-highlighted (would misrepresent selling cells); the
+  derive-status ROW carries the auto/gap/manual provenance instead. (2) The gap row states "set it on the
+  supplier binding" rather than a deep-link button (target ambiguous from the master view).
+- **A1 + B1 are UNVERIFIED in the live DOM** (no access to the authed app): verified by typecheck + unit tests
+  only. Both need a browser pass before the owner relies on them.
 - **B1 read-integration into `po-pricing.ts` deriveMfgPoUnitCost** (the money-critical as-of-date read) is
   the deliberately-staged, owner-gated step — NOT in scope here; the UI + write are.

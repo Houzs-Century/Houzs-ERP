@@ -32,7 +32,7 @@ import { loadModelSofaModuleCosts } from '../lib/mfg-pricing-recompute';
 import { canWriteScmConfig } from '../lib/houzs-perms';
 import { todayMyt } from '../lib/my-time';
 import { autoDeriveEnabled } from '../lib/auto-derive-cost';
-import { deriveMasterComboCostFromSuppliers, comboCostChanged } from '../lib/derive-combo-cost';
+import { deriveMasterComboCostFromSuppliers, comboCostChanged, pickDearestSupplierCombo } from '../lib/derive-combo-cost';
 import { activeCompanyId, scopeToCompany } from '../lib/companyScope';
 
 export const sofaCombos = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -230,7 +230,86 @@ sofaCombos.get('/', async (c) => {
     seen.add(key);
     out.push(r);
   }
-  return c.json({ rules: out.map(rowToWire) });
+
+  // ── Combo Pricing derive-status (A1) ──────────────────────────────────────
+  // For the MASTER view (supplier_id IS NULL), tell each combo whether its COST
+  // auto-derives from a supplier (and WHICH — the dearest whole set, same rule
+  // as recomputeMasterComboCostFromSuppliers), or is a GAP (no supplier combo,
+  // owner fills it in the binding), or is MANUAL (has cost, no supplier combo).
+  // Gated on the auto-derive flag so a flag-OFF read is byte-identical to before.
+  const scopeKeyOf = (r: Row) => JSON.stringify([r.base_model, comboSlotsKey(r.modules ?? []), r.tier, r.customer_id]);
+  const isMasterView = !(supplierIdRaw !== undefined && supplierIdRaw !== '' && supplierIdRaw !== 'null');
+  let winnerByScope: Map<string, { supplierId: string; supplierName: string | null }> | null = null;
+  if (isMasterView && out.length > 0 && (await autoDeriveEnabled(supabase))) {
+    let sq = scopeToCompany(
+      supabase.from('sofa_combo_pricing')
+        .select('base_model, modules, tier, customer_id, supplier_id, prices_by_height, effective_from, created_at')
+        .is('deleted_at', null)
+        .not('supplier_id', 'is', null),
+      c,
+    ).order('effective_from', { ascending: false }).order('created_at', { ascending: false });
+    if (baseModel) sq = sq.eq('base_model', baseModel);
+    if (customerIdRaw !== undefined) {
+      if (customerIdRaw === '' || customerIdRaw === '__all__' || customerIdRaw === 'null') sq = sq.is('customer_id', null);
+      else sq = sq.eq('customer_id', customerIdRaw);
+    }
+    const { data: supData, error: supErr } = await sq;
+    // Best-effort enrichment: a failed supplier-combo read just omits the
+    // derive-status — it never 500s the combo list.
+    if (supErr) return c.json({ rules: out.map(rowToWire) });
+
+    // Latest supplier row per (scope, supplier), then group by scope.
+    const supSeen = new Set<string>();
+    const byScope = new Map<string, Array<{ supplier_id: string; prices_by_height: Record<string, number | null> | null }>>();
+    for (const r of ((supData ?? []) as unknown as Row[])) {
+      if (r.effective_from > today || r.supplier_id == null) continue;
+      const supKey = `${scopeKeyOf(r)}|${r.supplier_id}`;
+      if (supSeen.has(supKey)) continue;
+      supSeen.add(supKey);
+      const sk = scopeKeyOf(r);
+      const list = byScope.get(sk) ?? [];
+      list.push({ supplier_id: r.supplier_id as string, prices_by_height: r.prices_by_height });
+      byScope.set(sk, list);
+    }
+
+    const winnerIdByScope = new Map<string, string>();
+    const wantedIds = new Set<string>();
+    for (const [sk, combos] of byScope) {
+      const w = pickDearestSupplierCombo(combos);
+      if (w) { winnerIdByScope.set(sk, w.supplierId); wantedIds.add(w.supplierId); }
+    }
+    const nameById = new Map<string, string>();
+    if (wantedIds.size > 0) {
+      const { data: sup, error: nameErr } = await scopeToCompany(supabase.from('suppliers').select('id, name'), c).in('id', [...wantedIds]);
+      // Best-effort: on a name-lookup failure the anchor still shows by id.
+      if (!nameErr) for (const s of ((sup ?? []) as Array<{ id: string; name: string | null }>)) nameById.set(s.id, s.name ?? '');
+    }
+    winnerByScope = new Map();
+    for (const [sk, supplierId] of winnerIdByScope) {
+      winnerByScope.set(sk, { supplierId, supplierName: nameById.get(supplierId) ?? null });
+    }
+  }
+
+  const gridHasCost = (g: unknown): boolean => {
+    for (const v of Object.values((g ?? {}) as Record<string, unknown>)) {
+      const n = typeof v === 'number' ? v : Number(v);
+      if (Number.isFinite(n) && n > 0) return true;
+    }
+    return false;
+  };
+  const withDeriveStatus = (r: Row) => {
+    const wire = rowToWire(r);
+    if (winnerByScope == null) return wire;
+    const w = winnerByScope.get(scopeKeyOf(r));
+    if (w) return { ...wire, costSource: 'auto', derivedFromSupplierId: w.supplierId, derivedFromSupplierName: w.supplierName };
+    return {
+      ...wire,
+      costSource: gridHasCost(r.prices_by_height) ? 'manual' : 'gap',
+      derivedFromSupplierId: null,
+      derivedFromSupplierName: null,
+    };
+  };
+  return c.json({ rules: out.map(withDeriveStatus) });
 });
 
 // ── GET /history ───────────────────────────────────────────────────────
