@@ -376,14 +376,20 @@ export const Mrp = () => {
      computeTabModels with the page's live warehouse / date / only-shortages /
      search filters. See mrp-export-workbook.ts. */
   const [exporting, setExporting] = useState(false);
-  const onExportWorkbook = () => {
+  // scope: 'all' keeps the owner-approved v7 workbook (one sheet per category
+  // tab) unchanged; 'tab' exports only the tab currently open (owner 2026-09-17:
+  // someone still wants the full multi-sheet export, so this is additive, not a
+  // replacement).
+  const runExportWorkbook = (scope: 'all' | 'tab') => {
     if (exporting) return;
     setExporting(true);
     const warehouseLabel = warehouseId === 'all'
       ? 'All'
       : (data?.warehouses.find((w) => w.id === warehouseId)?.code ?? warehouseId);
+    const activeView = views.find((v) => v.value === view) ?? views[0];
     void exportMrpWorkbook({
-      views, warehouseId, includeUndated: showUndated, filters,
+      views: scope === 'tab' ? [activeView] : views,
+      warehouseId, includeUndated: showUndated, filters,
       asOf: data?.asOf ?? null, warehouseLabel,
       onError: (e) => setDialog({
         kind: 'info', title: 'Export failed',
@@ -391,6 +397,8 @@ export const Mrp = () => {
       }),
     }).finally(() => setExporting(false));
   };
+  const onExportWorkbook = () => runExportWorkbook('all');
+  const onExportCurrentTab = () => runExportWorkbook('tab');
 
   /* Model-row expansion is driven by DataTable via its controlled-expansion API
      (expandable.expandedIds = expandedModels, onExpandedChange = setExpandedModels);
@@ -841,7 +849,13 @@ export const Mrp = () => {
               </button>
               {/* The report's Export button (the shared DataTable's own, wired via
                   `onExport` below) downloads the v7 workbook — one sheet per
-                  category tab, in the owner-approved layout. */}
+                  category tab, in the owner-approved layout. This second button
+                  is additive (owner 2026-09-17): the same workbook builder,
+                  scoped to just the tab open right now. */}
+              <button type="button" className={TOOLBAR_BTN} onClick={onExportCurrentTab} disabled={exporting}
+                title={`Download only the ${views.find((v) => v.value === view)?.label ?? view} tab as a workbook`}>
+                Export tab
+              </button>
               {/* Server-side Regenerate — recompute + save the stored planning
                   snapshot (option B). Distinct from Refresh, which only re-reads. */}
               <button type="button" className={TOOLBAR_BTN} onClick={() => regenerate.mutate()} disabled={regenerate.isPending}
