@@ -27,8 +27,9 @@ Each wave = its own CI-green PR. Status kept current here per PR.
 - [ ] A6 B2 — "Add supplier binding" action from the drawer (reuse create-binding mutation).
 
 ## Wave B — SKU Master list
-- [ ] B1 Cost/anchor column (teal derived / amber differ / red Gap chip), detail on click.
-      Reuses the A1 anchor read.
+- [x] B1 Cost/anchor column marker (teal derived / amber differ / red Gap chip), detail via the
+      drawer on double-click. Backend `?anchorState=1` (#4086, merged); frontend `costMarker` on
+      the Price 2 / base-price column. **PR: feat/sku-master-cost-marker — opening.**
 
 ## Wave C — sibling tabs to their mockups (align visuals, don't rebuild logic — R109)
 - [ ] C1 Modular tab

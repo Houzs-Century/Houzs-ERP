@@ -89,6 +89,7 @@ import {
   type SpecialAddonsHistoryRow, mfgCategoryLabel,
 } from '../../vendor/scm/lib/mfg-products-queries';
 import { CategorySwapSelect } from '../../vendor/scm/components/CategorySwapSelect';
+import { costMarker } from './costMarker';
 import { CostAnchorCard } from './CostAnchorCard';
 import { ProductPriceTimeline } from './ProductPriceTimeline';
 import { SkuHistoryTabs } from './SkuHistoryTabs';
@@ -319,6 +320,8 @@ const SkuMasterTab = () => {
   const { data: products, isLoading, isFetching, error } = useMfgProducts({
     category: category === 'all' ? undefined : category,
     search: debouncedSearch.trim() || undefined,
+    // B1 — the SKU Master grid shows the derived-cost anchor marker per row.
+    anchorState: true,
   });
   const searching =
     search.trim() !== debouncedSearch.trim() || (!isLoading && isFetching);
@@ -715,7 +718,7 @@ const SkuMasterTab = () => {
           getValue: (r) => r.base_price_sen ?? -1,
           render: (r) => (
             <span className={r.base_price_sen ? styles.price : styles.priceEmpty}>
-              {fmtRm(r.base_price_sen)}
+              {fmtRm(r.base_price_sen)}{costMarker(r.costAnchorState)}
             </span>
           ),
         },
@@ -744,7 +747,7 @@ const SkuMasterTab = () => {
           getValue: (r) => r.base_price_sen ?? -1,
           render: (r) => (
             <span className={r.base_price_sen ? styles.price : styles.priceEmpty}>
-              {fmtRm(r.base_price_sen)}
+              {fmtRm(r.base_price_sen)}{costMarker(r.costAnchorState)}
             </span>
           ),
         },
