@@ -72,7 +72,6 @@ type ComboTabProps = {
 export const SofaComboTab = ({ supplierId }: ComboTabProps) => {
   const [baseModelFilter, setBaseModelFilter] = useState<string>('');
   const [composer, setComposer] = useState<{ open: boolean; editing?: SofaComboRule }>({ open: false });
-  const [historyFor, setHistoryFor] = useState<SofaComboRule | null>(null);
 
   // Batch price edit (#39) — multi-select combos then POST one fresher-effective
   // row per selected combo with adjusted prices. Append-only: never PUT/overwrite.
@@ -337,7 +336,7 @@ export const SofaComboTab = ({ supplierId }: ComboTabProps) => {
                   selected={selectedIds.has(r.id)}
                   onToggleSelect={() => toggleSelected(r.id)}
                   onEdit={() => setComposer({ open: true, editing: r })}
-                  onHistory={() => setHistoryFor(r)}
+                  onHistory={() => setComposer({ open: true, editing: r })}
                   onDelete={async () => {
                     if (await askConfirm({
                       title: 'Soft-delete this combo?',
@@ -366,10 +365,6 @@ export const SofaComboTab = ({ supplierId }: ComboTabProps) => {
         />
       )}
 
-      {historyFor && (
-        <HistoryModal rule={historyFor} supplierId={supplierId} heights={heights} onClose={() => setHistoryFor(null)} />
-      )}
-
       {batchOpen && (
         <BatchEditModal
           rules={(combosQ.data ?? []).filter((r) => selectedIds.has(r.id))}
@@ -394,13 +389,6 @@ export const SofaComboTab = ({ supplierId }: ComboTabProps) => {
     </div>
   );
 };
-
-// ─── Anchor control (R8) ──────────────────────────────────────────────
-// Per-base_model「⇄ Anchor」picker shown on the SALES-side combo view only.
-// Anchoring a model to a supplier makes the server mirror every combo
-// create + price edit between this master combo and that supplier's scope, so
-// the Product-Maintenance cost stays in lock-step with the supplier's cost.
-// Picking a supplier sets the anchor; the ✕ clears it (un-anchor).
 
 // ─── Combo card ────────────────────────────────────────────────────────
 
@@ -489,6 +477,11 @@ function ComboCard({
         </button>
       </div>
 
+      {/* A1 — COST derive-status (master view only; backend sets it under the
+          auto-derive flag): which supplier the cost is anchored to, or a red
+          "missing supplier price" gap, or manual. */}
+      {!rule.supplierId && rule.costSource && <DeriveStatusRow rule={rule} />}
+
       {/* Height tiers — wrap into roomy cells instead of cramming every size
           into one tight row (Commander 2026-06-15: "字那么小怎么看"). Cells now
           auto-fill at a comfortable min-width and the size + price font is bumped. */}
@@ -553,6 +546,35 @@ function ComboCard({
           <History size={12} strokeWidth={1.75} /> History
         </button>
       </div>
+    </div>
+  );
+}
+
+// A1 — the COST derive-status line under a master combo card.
+function DeriveStatusRow({ rule }: { rule: SofaComboRule }) {
+  const base: CSSProperties = {
+    display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap',
+    fontFamily: 'var(--font-sans)', fontSize: 'var(--fs-12)',
+    padding: '5px 8px', borderRadius: 'var(--radius-sm)', lineHeight: 1.35,
+  };
+  if (rule.costSource === 'auto') {
+    return (
+      <div style={{ ...base, background: 'var(--c-cream)', color: 'var(--c-secondary-a, #0f4c45)' }}>
+        <span>Cost auto-derived · anchored to <strong>{rule.derivedFromSupplierName || 'supplier'}</strong>{' '}
+          <span style={{ color: 'var(--fg-muted)' }}>(highest set)</span></span>
+      </div>
+    );
+  }
+  if (rule.costSource === 'gap') {
+    return (
+      <div style={{ ...base, background: 'var(--c-festive-b-bg, #f6e2df)', color: 'var(--c-festive-b, #b0463a)', fontWeight: 600 }}>
+        Missing supplier price — set it on the supplier binding.
+      </div>
+    );
+  }
+  return (
+    <div style={{ ...base, color: 'var(--fg-soft)', border: '1px dashed var(--line)' }}>
+      Manual cost · not derived (no matching supplier combo)
     </div>
   );
 }
@@ -885,6 +907,14 @@ function ComposerModal({
           />
         </Field>
 
+        {/* A1 — the combo's effective-dated history now lives inside the Edit
+            modal (past effective rows), not a separate dialog. */}
+        {editing && (
+          <Field label="History — past effective rows for this combo">
+            <ComposerHistory rule={editing} supplierId={supplierId} heights={heights} />
+          </Field>
+        )}
+
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
           <Button variant="primary" onClick={submit} disabled={create.isPending || update.isPending}>
@@ -893,6 +923,48 @@ function ComposerModal({
         </div>
       </div>
     </ModalShell>
+  );
+}
+
+// A1 — the combo history timeline, rendered INSIDE the Edit modal (was a
+// standalone HistoryModal). Same effective-dated list as before, minus the
+// modal chrome.
+function ComposerHistory({ rule, supplierId, heights }: { rule: SofaComboRule; supplierId?: string; heights: string[] }) {
+  const historyQ = useSofaComboHistory({
+    baseModel: rule.baseModel,
+    modules: rule.modules,
+    tier: rule.tier,
+    customerId: rule.customerId,
+    supplierId: supplierId ?? rule.supplierId,
+  });
+  return (
+    <EffectiveDatedHistory<SofaComboRule>
+      rows={historyQ.data ?? []}
+      loading={historyQ.isLoading}
+      rowKey={(r) => r.id}
+      effectiveFrom={(r) => r.effectiveFrom}
+      isDeleted={(r) => !!r.deletedAt}
+      emptyLabel="No history rows yet."
+      renderRow={(r) => (
+        <>
+          <div style={{ display: 'grid', gridTemplateColumns: `repeat(${heights.length}, 1fr)`, gap: 4, marginTop: 6 }}>
+            {sortByNumeric(heights).map((h) => (
+              <div key={h} style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>{h}</div>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-12)' }}>
+                  {fmtRm(r.pricesByHeight?.[h] ?? null)}
+                </div>
+              </div>
+            ))}
+          </div>
+          {r.notes && (
+            <div style={{ marginTop: 6, fontSize: 'var(--fs-12)', color: 'var(--fg-soft)' }}>
+              {r.notes}
+            </div>
+          )}
+        </>
+      )}
+    />
   );
 }
 
@@ -1234,60 +1306,6 @@ function BatchEditModal({
   );
 }
 
-// ─── History modal ────────────────────────────────────────────────────
-
-function HistoryModal({ rule, supplierId, heights, onClose }: { rule: SofaComboRule; supplierId?: string; heights: string[]; onClose: () => void }) {
-  const historyQ = useSofaComboHistory({
-    baseModel: rule.baseModel,
-    modules: rule.modules,
-    tier: rule.tier,
-    customerId: rule.customerId,
-    supplierId: supplierId ?? rule.supplierId,
-  });
-
-  return (
-    <ModalShell title="Combo history" onClose={onClose}>
-      {/* Reusable effective-dated history (A4): newest-first rows each tagged
-          Active / Pending·Nd / Past + the append-only reassurance banner. The
-          per-row body (prices + notes) is supplied below; the component owns the
-          timeline math, badges, banner and empty/loading states. Soft-deleted
-          rows still appear, tagged Deleted (deletedAt). */}
-      <EffectiveDatedHistory<SofaComboRule>
-        rows={historyQ.data ?? []}
-        loading={historyQ.isLoading}
-        rowKey={(r) => r.id}
-        effectiveFrom={(r) => r.effectiveFrom}
-        isDeleted={(r) => !!r.deletedAt}
-        emptyLabel="No history rows."
-        header={
-          <>
-            {rule.baseModel} · {buildComboLabel(rule.modules)}{rule.tier ? ` · ${rule.tier}` : ''}
-          </>
-        }
-        renderRow={(r) => (
-          <>
-            <div style={{ display: 'grid', gridTemplateColumns: `repeat(${heights.length}, 1fr)`, gap: 4, marginTop: 6 }}>
-              {sortByNumeric(heights).map((h) => (
-                <div key={h} style={{ textAlign: 'center' }}>
-                  <div style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>{h}</div>
-                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-12)' }}>
-                    {fmtRm(r.pricesByHeight?.[h] ?? null)}
-                  </div>
-                </div>
-              ))}
-            </div>
-            {r.notes && (
-              <div style={{ marginTop: 6, fontSize: 'var(--fs-12)', color: 'var(--fg-soft)' }}>
-                {r.notes}
-              </div>
-            )}
-          </>
-        )}
-      />
-    </ModalShell>
-  );
-}
-
 // ─── Small primitives ─────────────────────────────────────────────────
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
@@ -1389,21 +1407,6 @@ const chipStyleSoft: CSSProperties = {
   padding: '2px 6px',
   borderRadius: 'var(--radius-sm)',
   border: '1px solid var(--line)',
-};
-
-// Anchored-supplier chip (R8) — reuses the orange supplier-identity tint so it
-// reads as "this model is bound to a supplier", with an inline ✕ to clear.
-const anchorChipStyle: CSSProperties = {
-  display: 'inline-flex',
-  alignItems: 'center',
-  fontFamily: 'var(--font-sans)',
-  fontSize: 'var(--fs-11)',
-  fontWeight: 600,
-  background: 'var(--c-paper)',
-  color: 'var(--c-orange, #c47b2f)',
-  padding: '2px 6px',
-  borderRadius: 'var(--radius-sm)',
-  border: '1px solid var(--c-orange, #c47b2f)',
 };
 
 const statusPillActive: CSSProperties = {

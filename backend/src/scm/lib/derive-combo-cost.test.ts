@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deriveMasterComboCostFromSuppliers, comboCostChanged, type SupplierComboCost } from './derive-combo-cost';
+import { deriveMasterComboCostFromSuppliers, comboCostChanged, pickDearestSupplierCombo, type SupplierComboCost } from './derive-combo-cost';
 
 const s = (o: Partial<SupplierComboCost> & { supplier_id: string }): SupplierComboCost => ({
   is_main_supplier: false, prices_by_height: {}, ...o,
@@ -33,6 +33,36 @@ describe('deriveMasterComboCostFromSuppliers — whole-set dearest supplier', ()
     ]);
     expect(out).toEqual({ '24': 900 });
     // proven the main (aaa) won: identical grids, but tie-break is deterministic
+  });
+});
+
+describe('pickDearestSupplierCombo — names the anchored supplier (A1 derive-status)', () => {
+  it('no supplier combos -> null (a gap)', () => {
+    expect(pickDearestSupplierCombo([])).toBeNull();
+  });
+
+  it('returns the dearest supplier id + its whole grid', () => {
+    const w = pickDearestSupplierCombo([
+      s({ supplier_id: 'A', prices_by_height: { '24': 300, '28': 100 } }),
+      s({ supplier_id: 'B', prices_by_height: { '24': 250, '28': 250 } }),
+    ]);
+    expect(w).toEqual({ supplierId: 'A', prices_by_height: { '24': 300, '28': 100 } });
+  });
+
+  it('tie on dearest cell -> main supplier wins the anchor', () => {
+    const w = pickDearestSupplierCombo([
+      s({ supplier_id: 'zzz', prices_by_height: { '24': 900 }, is_main_supplier: false }),
+      s({ supplier_id: 'aaa', prices_by_height: { '24': 900 }, is_main_supplier: true }),
+    ]);
+    expect(w?.supplierId).toBe('aaa');
+  });
+
+  it('agrees with deriveMasterComboCostFromSuppliers on the grid', () => {
+    const combos = [
+      s({ supplier_id: 'A', prices_by_height: { '24': 300, '28': 100 } }),
+      s({ supplier_id: 'B', prices_by_height: { '24': 250, '28': 250 } }),
+    ];
+    expect(pickDearestSupplierCombo(combos)?.prices_by_height).toEqual(deriveMasterComboCostFromSuppliers(combos));
   });
 });
 
