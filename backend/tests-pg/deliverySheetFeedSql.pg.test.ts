@@ -22,6 +22,7 @@ import {
   FEED_BALANCE_COLLECTION_SQL,
   FEED_EPOCH,
   FEED_OVERDUE_SQL,
+  FEED_READY_OPEN_SQL,
   FEED_SINCE_SQL,
   feedLinesSql,
   updateFromSheetSql,
@@ -222,6 +223,16 @@ describePg('HC Delivery sheet feed SQL — real Postgres', () => {
     await sql`UPDATE scm.mfg_sales_orders SET customer_delivery_date = '2099-01-01' WHERE doc_no = 'HC-SO-000010'`;
     expect(await sql.unsafe(toPgPlaceholders(FEED_OVERDUE_SQL), [1] as never[])).toHaveLength(0);
     await sql`UPDATE scm.mfg_sales_orders SET customer_delivery_date = '2026-01-05' WHERE doc_no = 'HC-SO-000010'`;
+  });
+
+  test('ready-open: undelivered orders dated on/after the from-date, this company only, oldest first', async () => {
+    const open = async (company: number, from: string) =>
+      ((await sql.unsafe(toPgPlaceholders(FEED_READY_OPEN_SQL), [company, from] as never[])) as unknown as FeedHeadRow[]).map((r) => r.doc_no);
+    // DELIVERED (000011, 000012, 2609-078), DRAFT and CANCELLED never appear.
+    expect(await open(1, '2026-01-01')).toEqual(['HC-SO-000010', 'HC-SO-013495']);
+    expect(await open(1, '2026-08-20')).toEqual(['HC-SO-013495']);
+    expect(await open(1, '2026-08-21')).toEqual([]);
+    expect(await open(2, '2026-01-01')).toEqual(['2990-SO-000013', '2990-SO-2609-001']);
   });
 
   test('balance-collection: delivered orders still owing, this company only', async () => {

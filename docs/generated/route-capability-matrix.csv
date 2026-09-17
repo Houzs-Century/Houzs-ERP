@@ -191,6 +191,7 @@ GET,/api/delivery-sheet/balance-collection,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY
 GET,/api/delivery-sheet/outstanding-po,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,NO,INHERITED_ONLY,backend/src/routes/deliverySheetSync.ts
 GET,/api/delivery-sheet/overdue,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,NO,INHERITED_ONLY,backend/src/routes/deliverySheetSync.ts
 POST,/api/delivery-sheet/po-dates,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/deliverySheetSync.ts
+GET,/api/delivery-sheet/ready-open,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,NO,INHERITED_ONLY,backend/src/routes/deliverySheetSync.ts
 GET,/api/delivery-sheet/so-since,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,NO,INHERITED_ONLY,backend/src/routes/deliverySheetSync.ts
 POST,/api/delivery-sheet/updates,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/deliverySheetSync.ts
 GET,/api/departments,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermissionOrSalesDirector(""users.read"")",,NO,DECLARED_GATE,backend/src/routes/departments.ts

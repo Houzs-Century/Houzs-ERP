@@ -34,11 +34,13 @@ import { intakeCompany } from "../lib/intake-company";
 import {
   FEED_BALANCE_COLLECTION_SQL,
   FEED_OVERDUE_SQL,
+  FEED_READY_OPEN_SQL,
   FEED_SINCE_SQL,
   UPDATES_MAX,
   updateFromSheetSql,
   feedLinesSql,
   normSheetDate,
+  parseFromDate,
   parseLimit,
   parseSince,
   toSheetRecord,
@@ -178,6 +180,24 @@ app.get("/balance-collection", async (c) => {
   const loaded = await loadRecords(c, FEED_BALANCE_COLLECTION_SQL, [co.id]);
   if ("refusal" in loaded) return loaded.refusal;
   return c.json({ count: loaded.records.length, records: loaded.records });
+});
+
+/* Owner 2026-09-17: only an order whose Remarks 2 is READY / READY (PARTIAL)
+   may ENTER the sheet. The since-feed marks each record `Ready` and the Apps
+   Script appends only those; this is the sweep for the ones that became ready
+   without their header moving (the allocator flips lines, not the order). */
+app.get("/ready-open", async (c) => {
+  const denied = await badSheetKey(c);
+  if (denied) return denied;
+  const from = parseFromDate(c.req.query("from"));
+  if (!from) return c.json({ error: "bad_from", message: "from must be yyyy-mm-dd" }, 400);
+  const co = await sheetCompanyId(c);
+  if ("refusal" in co) return co.refusal;
+  // company-scope: ?1 is the secret's company id.
+  const loaded = await loadRecords(c, FEED_READY_OPEN_SQL, [co.id, from]);
+  if ("refusal" in loaded) return loaded.refusal;
+  const records = loaded.records.filter((r) => r.Ready);
+  return c.json({ count: records.length, scanned: loaded.records.length, from, records });
 });
 
 type SheetUpdate = { DocNo?: unknown; Remark4?: unknown; ExpiryDate?: unknown };
