@@ -7,6 +7,7 @@ import {
   isDirectorUser,
   canViewFairReport,
 } from "../auth/salesAccess";
+import { capability } from "../auth/capabilities";
 
 /**
  * Single source of truth for "which nav entries can this user see".
@@ -55,19 +56,13 @@ export function makeNavVisible({ user, can, pageAccess }: NavFilterCtx) {
     // Rep HIDE gate — cut from a NON-director Sales rep only (SCM trim +
     // Service-Cases board/metrics). Director/office pass through.
     if (t.hideForSalesRep && isSalesNonDirector(user)) return false;
-    /* HIDE BY POSITION — evaluated BEFORE the sales bypasses below, so no
-       `showFor*` flag can re-open an entry a position is denied. Used for the
-       Assistant, which field crew (driver/helper/storekeeper) do not get. The
-       backend 403s them regardless; this only stops showing a menu item that
-       would fail when tapped. */
-    if (t.hideForPositions?.length) {
-      const pos = String((user as { position_name?: string | null } | null)?.position_name ?? "")
-        .trim().toLowerCase().replace(/\s+/g, " ");
-      const wildcard = Array.isArray(user?.permissions)
-        ? (user!.permissions as string[]).includes("*")
-        : false;
-      if (!wildcard && pos && t.hideForPositions.includes(pos)) return false;
-    }
+    /* HIDE UNLESS THE SERVER SAID YES — evaluated BEFORE the sales bypasses
+       below, so no `showFor*` flag can re-open an entry the capability denies.
+       Used for the Assistant (org.assistant.use): the backend 403s a denied
+       caller regardless, this only stops offering a menu item that would fail
+       when tapped. capability() fails closed, so a stale shell with no resolved
+       set hides the entry rather than leaking it. */
+    if (t.requireCapability && !capability(user, t.requireCapability)) return false;
     // Rep-only entry — visible ONLY to a non-director Sales rep; everyone else
     // (office/director) never sees it.
     if (t.salesRepOnly && !isSalesNonDirector(user)) return false;

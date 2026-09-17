@@ -15,6 +15,7 @@
 // ----------------------------------------------------------------------------
 
 import { isCrewScopedUser, isDefectReviewerPosition } from "../src/services/projectGates";
+import { canUseAssistant } from "../src/services/assistant-scope";
 import { describe, expect, test } from "vitest";
 import {
   CAPABILITY_KEYS,
@@ -146,6 +147,7 @@ const GATES: Record<CapabilityKey, (u: CapabilityCaller) => boolean> = {
   "org.salesDirector": (u) => isSalesDirectorUser(asAuthUser(u)),
   "org.defect.reviewer": (u) => isDefectReviewerPosition(asAuthUser(u)),
   "org.crew.scoped": (u) => isCrewScopedUser(asAuthUser(u)),
+  "org.assistant.use": (u) => canUseAssistant(asAuthUser(u)),
 
   // The composed page-open tier — union of the write gate and the read tier.
   "scm.maintenance.open": (u) =>

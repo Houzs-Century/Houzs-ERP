@@ -68,6 +68,7 @@ import {
 import { cn } from "../lib/utils";
 import { booleanRecordPreference, useIdentityPreference } from "../hooks/useIdentityPreference";
 import { useAuth } from "../auth/AuthContext";
+import type { CapabilityKey } from "../auth/capabilities";
 import { makeNavFilter } from "./navFilter";
 import { CompanyMark } from "./CompanyMark";
 import { PresencePanel } from "./PresencePanel";
@@ -197,10 +198,12 @@ export interface NavTab {
    *  the entry survives the visibility filter. Renders nothing at 0, which is
    *  also what a non-approver and a failed poll both produce. */
   badge?: ApprovalBadgeSource;
-  /** Positions (exact, lowercased) that must NOT see this entry. Checked before
-   *  every `showFor*` bypass, so a show-flag cannot re-open it. The backend is
-   *  still the control — this only avoids offering a tap that 403s. */
-  hideForPositions?: readonly string[];
+  /** Hide this entry unless the server resolved this capability to true on
+   *  /auth/me. Checked before every `showFor*` bypass, so a show-flag cannot
+   *  re-open it. The backend is still the control — this only avoids offering a
+   *  tap that 403s. Preferred over a position-name list: the answer is decided
+   *  once, server-side, and cannot drift from the gate it describes. */
+  requireCapability?: CapabilityKey;
   /** Sales-access model: show this entry ONLY to a NON-director Sales user and
    *  hide it from everyone else (office/director). Bypasses the permission
    *  gates. Used for the single rep-facing "Sales Orders" leaf mounted directly
@@ -920,10 +923,11 @@ export const NAV_TABS: NavTab[] = [
     to: "/assistant",
     label: "Assistant",
     icon: Bot,
-    // Open to staff, EXCEPT the field crew (owner 2026-07-18). What the rest may
-    // SEE is scoped server-side by position; this list is who gets no surface at
-    // all. Mirrors auth/assistantAccess.ts — a lockstep fixture, not a 2nd source.
-    hideForPositions: ["driver", "helper", "storekeeper", "storekeeper supervisor"],
+    // Open to staff, EXCEPT the field crew + Sales (owner 2026-07-18/19). Who
+    // gets no surface at all is decided server-side (capabilities.org.assistant.use,
+    // composing assistant-scope.canUseAssistant) — the same answer the /assistant
+    // route guard reads, so the nav link and the page can no longer disagree.
+    requireCapability: "org.assistant.use",
   },
   {
     section: "system",

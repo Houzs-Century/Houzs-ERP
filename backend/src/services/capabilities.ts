@@ -45,6 +45,7 @@
 // ----------------------------------------------------------------------------
 
 import { isCrewScopedUser, isDefectReviewerPosition } from "./projectGates";
+import { canUseAssistant } from "./assistant-scope";
 import type { PositionPolicyRow } from "./positionPolicyRows";
 import type { AuthUser } from "./auth";
 import { hasPermission } from "./permissions";
@@ -270,6 +271,12 @@ const PREDICATES = {
    *  crewed on: helpers, storekeepers, the warehouse crew). GATE:
    *  projectGates.isCrewScopedUser — the Title's row, then its name. */
   "org.crew.scoped": (u: CapabilityCaller): boolean => isCrewScopedUser(asAuthUser(u)),
+
+  /** May this caller open the Assistant at all. GATE: assistant-scope.canUseAssistant
+   *  — wildcard yes, field crew + Sales denied, an unrecognised position fails
+   *  CLOSED. The FE mirrored this deny list twice (auth/assistantAccess.ts route
+   *  guard + Sidebar hideForPositions); both now read this answer instead. */
+  "org.assistant.use": (u: CapabilityCaller): boolean => canUseAssistant(asAuthUser(u)),
 } as const satisfies Record<string, (u: CapabilityCaller) => boolean>;
 
 /** Every capability key, frozen in declaration order. The frontend pins its own
