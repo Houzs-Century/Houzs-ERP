@@ -253,7 +253,10 @@ sofaCombos.get('/', async (c) => {
       if (customerIdRaw === '' || customerIdRaw === '__all__' || customerIdRaw === 'null') sq = sq.is('customer_id', null);
       else sq = sq.eq('customer_id', customerIdRaw);
     }
-    const { data: supData } = await sq;
+    const { data: supData, error: supErr } = await sq;
+    // Best-effort enrichment: a failed supplier-combo read just omits the
+    // derive-status — it never 500s the combo list.
+    if (supErr) return c.json({ rules: out.map(rowToWire) });
 
     // Latest supplier row per (scope, supplier), then group by scope.
     const supSeen = new Set<string>();
@@ -277,8 +280,9 @@ sofaCombos.get('/', async (c) => {
     }
     const nameById = new Map<string, string>();
     if (wantedIds.size > 0) {
-      const { data: sup } = await scopeToCompany(supabase.from('suppliers').select('id, name'), c).in('id', [...wantedIds]);
-      for (const s of ((sup ?? []) as Array<{ id: string; name: string | null }>)) nameById.set(s.id, s.name ?? '');
+      const { data: sup, error: nameErr } = await scopeToCompany(supabase.from('suppliers').select('id, name'), c).in('id', [...wantedIds]);
+      // Best-effort: on a name-lookup failure the anchor still shows by id.
+      if (!nameErr) for (const s of ((sup ?? []) as Array<{ id: string; name: string | null }>)) nameById.set(s.id, s.name ?? '');
     }
     winnerByScope = new Map();
     for (const [sk, supplierId] of winnerIdByScope) {
