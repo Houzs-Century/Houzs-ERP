@@ -3767,6 +3767,12 @@ const ProductSuppliersDrawer = ({
           maxHeight: '85vh',
           display: 'flex',
           flexDirection: 'column',
+          /* Clip to the panel so the scroll area (min-height:0 below) shrinks
+             and scrolls inside the 85vh box instead of overflowing it — the
+             pinned footer must never hide the last rows (bottom of the
+             Suppliers table / History / Schedule-price), which the A3 Cost card
+             made worse by adding content height. */
+          overflow: 'hidden',
         }}
       >
         <header className={styles.drawerHeader}>
@@ -3823,7 +3829,10 @@ const ProductSuppliersDrawer = ({
           </button>
         </header>
 
-        <div style={{ flex: 1, overflowY: 'auto', padding: 'var(--space-4)' }}>
+        {/* minHeight:0 lets this flex child shrink below its content height so
+            it scrolls inside the panel; paddingBottom keeps the last row clear
+            of the pinned footer. */}
+        <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 'var(--space-4)', paddingBottom: 'var(--space-6)' }}>
           {/* Commander 2026-05-29 — "双击点进去要看到 supplier 和 available 什么
               variant". This drill-in now shows BOTH: the model's allowed variant
               options first, then the suppliers carrying the SKU. */}
@@ -3892,15 +3901,20 @@ const ProductSuppliersDrawer = ({
             </div>
           )}
           {!q.isLoading && suppliers.length > 0 && (
+            /* Let the table scroll horizontally inside the drawer on narrow
+               widths instead of squeezing the columns (the .table min-width
+               kicks in under 600px). The numeric columns stay content-sized
+               and on one line so the Supplier column takes the slack. */
+            <div style={{ overflowX: 'auto' }}>
             <table className={styles.table} style={{ width: '100%' }}>
               <thead>
                 <tr>
                   <th style={{ width: 32 }}></th>
-                  <th>Supplier</th>
-                  <th>Supplier SKU</th>
-                  <th style={{ textAlign: 'right' }}>Unit Price</th>
-                  <th style={{ textAlign: 'right' }}>Lead (d)</th>
-                  <th style={{ textAlign: 'right' }}>MOQ</th>
+                  <th style={{ whiteSpace: 'nowrap' }}>Supplier</th>
+                  <th style={{ whiteSpace: 'nowrap' }}>Supplier SKU</th>
+                  <th style={{ textAlign: 'right', whiteSpace: 'nowrap', width: '1%' }}>Unit Price</th>
+                  <th style={{ textAlign: 'right', whiteSpace: 'nowrap', width: '1%' }}>Lead</th>
+                  <th style={{ textAlign: 'right', whiteSpace: 'nowrap', width: '1%' }}>MOQ</th>
                 </tr>
               </thead>
               <tbody>
@@ -3926,15 +3940,16 @@ const ProductSuppliersDrawer = ({
                         ? <span className={styles.codeChip}>{s.supplier_sku}</span>
                         : <span style={{ color: '#767b6e' }}>(same as our code)</span>}
                     </td>
-                    <td className={styles.numCell}>
+                    <td className={styles.numCell} style={{ whiteSpace: 'nowrap' }}>
                       {fmtRmSen(s.unit_price_sen)}{s.currency !== 'MYR' ? ` ${s.currency}` : ''}
                     </td>
-                    <td className={styles.numCell}>{s.lead_time_days || '—'}</td>
-                    <td className={styles.numCell}>{s.moq || '—'}</td>
+                    <td className={styles.numCell} style={{ whiteSpace: 'nowrap' }}>{s.lead_time_days || '—'}</td>
+                    <td className={styles.numCell} style={{ whiteSpace: 'nowrap' }}>{s.moq || '—'}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
+            </div>
           )}
 
           <AddSupplierBinding productCode={row.code} productName={row.name} />
