@@ -133,6 +133,11 @@
       "why": "A type=\"date\" PROP on a wrapper component (InlineEdit / EditRow / TextInput / Field / RMLikeInput), not a native input. Each of those renders <DateField> for this branch, so the display is DD/MM/YYYY on every machine."
     },
     {
+      "file": "frontend/src/pages/ServiceCaseDeliveryBy.tsx",
+      "text": "type=\"date\"",
+      "why": "A type=\"date\" PROP on the InlineEdit wrapper (the ASSR delivery-back date), not a native input. InlineEdit renders <DateField> for this branch, so the display is DD/MM/YYYY on every machine."
+    },
+    {
       "file": "frontend/src/pages/Overview.tsx",
       "text": "const dateLabel = `${now.toLocaleDateString(\"en-GB\", { weekday: \"long\" })} ${fmtDate(now)}`.toUpperCase();",
       "why": "Renders the WEEKDAY NAME only; the date beside it comes from fmtDate. A weekday is a word by design and carries no day/month ambiguity."

@@ -57,6 +57,11 @@ import {
   type PoFeedRow,
   type PoHeadForSheet,
 } from "../lib/delivery-sheet-po-feed";
+import {
+  FEED_ASSR_LEGS_SQL,
+  toAssrLegRecords,
+  type AssrFeedRow,
+} from "../lib/delivery-sheet-assr-feed";
 import { getSupabaseService, isSupabaseConfigured } from "../db/supabase";
 import { SUPPLIER_DATE_SLOT_COL, cascadePoSupplierDate } from "../scm/lib/po-supplier-date-cascade";
 import { poHasDownstream } from "../scm/lib/downstream-lock";
@@ -198,6 +203,44 @@ app.get("/ready-open", async (c) => {
   if ("refusal" in loaded) return loaded.refusal;
   const records = loaded.records.filter((r) => r.Ready);
   return c.json({ count: records.length, scanned: loaded.records.length, from, records });
+});
+
+/* Service-Case (ASSR) legs (owner 2026-09-17): each open case's inspection /
+   pickup / delivery-back leg that OUR OWN team drives is emitted here so the
+   sheet appends it beside the Sales-Order rows for the same region. Own-team
+   gated by design (see delivery-sheet-assr-feed.ts); the Delivery Planning
+   board stays un-gated, so board and sheet intentionally differ. Incremental,
+   same `since`/`limit` cursor as /so-since — but the LIMIT counts CASES, each
+   expanding to up to three leg rows. */
+app.get("/assr-legs", async (c) => {
+  const denied = await badSheetKey(c);
+  if (denied) return denied;
+  const since = parseSince(c.req.query("since"));
+  if (!since) return c.json({ error: "bad_since", message: "since must be a timestamp (yyyy-mm-dd hh:mm:ss[.ffffff][+hh])" }, 400);
+  const limit = parseLimit(c.req.query("limit"));
+  const co = await sheetCompanyId(c);
+  if ("refusal" in co) return co.refusal;
+
+  let cases: AssrFeedRow[];
+  try {
+    // company-scope: ?1 is the secret's company id, resolved from the master.
+    const res = (await c.env.DB.prepare(FEED_ASSR_LEGS_SQL).bind(co.id, since, limit).all()) as { results?: AssrFeedRow[] };
+    cases = res.results ?? [];
+  } catch (e) {
+    return c.json({ error: "feed_read_failed", message: e instanceof Error ? e.message : String(e) }, 502);
+  }
+  const records = cases.flatMap(toAssrLegRecords);
+  return c.json({
+    count: records.length,
+    // The page is a CASE page; the checkpoint and has_more are measured in
+    // cases so paging is correct even though each case emits up to three legs.
+    cases: cases.length,
+    limit,
+    since,
+    next_since: cases.length ? cases[cases.length - 1]!.last_modified_text : null,
+    has_more: cases.length >= limit,
+    records,
+  });
 });
 
 type SheetUpdate = { DocNo?: unknown; Remark4?: unknown; ExpiryDate?: unknown };

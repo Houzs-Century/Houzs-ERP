@@ -66,6 +66,7 @@ import { Badge } from "../components/Badge";
 import { Panel, PanelSection, FieldRow } from "../components/Panel";
 import { CaseAccessSection } from "../components/CaseAccessSection";
 import { InlineEdit } from "../components/InlineEdit";
+import { DeliveryByCard } from "./ServiceCaseDeliveryBy";
 import { ExpandableText } from "../components/ExpandableText";
 import { StatCard } from "../components/StatCard";
 import { useQuery } from "../hooks/useQuery";
@@ -4260,16 +4261,17 @@ function DetailContent({
                     the date logistics collects the faulty item from the
                     customer's house — precedes the supplier handover. */}
                 {/* Pickup by (Nico 2026-08-07) — who collects the faulty
-                    item. Customer pickup = our logistics goes to the
-                    customer's house (fires the Delivery-sheet PICKUP job);
-                    Supplier direct = the supplier collects it themselves. */}
+                    item. Own team pickup (stored 'customer') = our logistics
+                    goes to the customer's house, which syncs the PICKUP leg to
+                    the HC Delivery sheet; Supplier direct = the supplier
+                    collects it themselves and it never reaches the sheet. */}
                 <div className="flex items-center gap-2">
                   <span className="w-[130px] shrink-0 text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
                     Pickup by
                   </span>
                   <div className="flex gap-1.5">
                     {([
-                      { v: "customer", label: "Customer pickup" },
+                      { v: "customer", label: "Own team pickup" },
                       { v: "supplier", label: "Supplier direct" },
                     ] as const).map((o) => (
                       <button
@@ -4381,6 +4383,8 @@ function DetailContent({
               openStage={openStage}
               setOpenStage={setOpenStage}
             >
+              {/* Delivery-by own-team gate -> ServiceCaseDeliveryBy.tsx (owner 2026-09-17). */}
+              <DeliveryByCard c={c} patch={patch} />
               <CollapsibleBlock title="Reference & Logistics">
             <div className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3">
               {([
