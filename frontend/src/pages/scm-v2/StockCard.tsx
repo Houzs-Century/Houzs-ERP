@@ -34,6 +34,7 @@ import {
 } from '../../vendor/scm/lib/inventory-queries';
 import { adjustmentReasonLabel, fmtSen, fmtDate, fmtDateTime, fmtQty } from '@2990s/shared';
 import { DataTable, type Column } from '../../components/DataTable';
+import { DateField } from '../../vendor/scm/components/DateField';
 import {
   EMPTY_MOVEMENT_FILTER,
   filterMovements,
@@ -502,22 +503,18 @@ export const StockCard = () => {
               <div className={styles.mvGroup}>
                 <span className={styles.mvGroupLabel}>Date range</span>
                 <div className={styles.mvDateRange}>
-                  <input
-                    type="date"
-                    className={styles.mvDate}
+                  <DateField
                     aria-label="From date"
                     value={movementFilter.dateFrom}
                     max={movementFilter.dateTo || undefined}
-                    onChange={(e) => setMovementFilter((f) => ({ ...f, dateFrom: e.target.value }))}
+                    onChange={(iso) => setMovementFilter((f) => ({ ...f, dateFrom: iso }))}
                   />
                   <span className={styles.mvDateSep}>–</span>
-                  <input
-                    type="date"
-                    className={styles.mvDate}
+                  <DateField
                     aria-label="To date"
                     value={movementFilter.dateTo}
                     min={movementFilter.dateFrom || undefined}
-                    onChange={(e) => setMovementFilter((f) => ({ ...f, dateTo: e.target.value }))}
+                    onChange={(iso) => setMovementFilter((f) => ({ ...f, dateTo: iso }))}
                   />
                 </div>
               </div>

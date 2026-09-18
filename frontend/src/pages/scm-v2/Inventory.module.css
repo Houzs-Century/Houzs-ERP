@@ -94,8 +94,7 @@
   gap: 6px;
   flex-wrap: wrap;
 }
-.mvSelect,
-.mvDate {
+.mvSelect {
   height: 34px;
   font-family: var(--font-sans);
   font-size: var(--fs-13);
@@ -106,8 +105,7 @@
   color: #11140f;
   outline: none;
 }
-.mvSelect:focus,
-.mvDate:focus { border-color: #c2c6bd; background: #f4f6f3; }
+.mvSelect:focus { border-color: #c2c6bd; background: #f4f6f3; }
 .mvDateRange {
   display: flex;
   align-items: center;
@@ -492,7 +490,7 @@
   }
   .mvMeta { margin-left: 0; padding-bottom: 0; justify-content: space-between; }
   .mvSourceSearch { min-width: 0; }
-  .mvSelect, .mvDate { height: 38px; }
+  .mvSelect { height: 38px; }
   .mvDateRange { justify-content: space-between; }
   .warehouseChips {
     flex-wrap: wrap;
