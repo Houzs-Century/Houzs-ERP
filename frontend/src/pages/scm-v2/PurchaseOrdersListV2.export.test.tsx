@@ -264,6 +264,25 @@ describe("Purchase Order list: the ONE Export", () => {
     expect(h.cells[`${at(PO_LINE_LABELS.unitPrice)}:1`]).toMatchObject({ t: "n", z: "#,##0.00##" });
   });
 
+  it("carries the _R revision suffix on an AC-linked Doc No too (owner report 2026-09-18)", async () => {
+    // Approving a PO amendment bumps `revision`, but the Doc No cell showed
+    // the AC-linked number as-is (never re-derived, never suffixed) — a
+    // revised PO looked identical to its own original on screen.
+    h.authed.mockImplementation(async (path: string) => {
+      if (path.startsWith("/mfg-purchase-orders/export/rows")) {
+        return {
+          purchaseOrders: [po("po-r1", "HC-PO-2609-140", [ln("l-1")], { linked_ac_docno: "AC-PO-140", revision: 2 })],
+          total: 1, lineCount: 1, truncated: false,
+        };
+      }
+      if (path.startsWith("/mfg-purchase-orders/list-mrp-enrichment")) return { enrichment: {} };
+      return {};
+    });
+    mount("/scm/purchase-orders");
+    await exportNow();
+    expect(h.aoa[1]![0]).toBe("AC-PO-140_R1");
+  });
+
   it("refuses to hand over a short file when the server stopped reading", async () => {
     h.authed.mockImplementation(async () => ({ purchaseOrders: [], total: 0, lineCount: 0, truncated: true }));
     mount("/scm/purchase-orders");
