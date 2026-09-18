@@ -45,7 +45,7 @@
    RE-RUN: idempotent. A row already carrying the target geometry + summary is
    reported unchanged and rewritten to the identical object. */
 import postgres from 'postgres';
-import { buildDefaultSofaCells, findModule } from '../src/scm/shared/sofa-build.ts';
+import { findModule, moduleFootprint } from '../src/scm/shared/sofa-build.ts';
 
 const DSN = process.env.DATABASE_URL;
 if (!DSN) { console.error('need DATABASE_URL'); process.exit(2); }
@@ -93,14 +93,20 @@ function planGroup(rows) {
   const lead = rows.find((r) => String(JSON.parse(r.raw).summary ?? '').trim() !== '');
   const tail = summaryTail(lead ? JSON.parse(lead.raw).summary : '');
   const newSummary = [composition, ...tail].join(' · ');
-  // Geometry from the same default layout the PDF reconstructs with.
-  const cells = buildDefaultSofaCells(ordered.map((r) => ({ moduleId: r.module })), DEPTH);
-  const geoByModule = new Map(cells.map((c) => [c.moduleId, c]));
+  // Default left-to-right layout, inlined (buildDefaultSofaCells is frontend-
+  // only; this is its convention): x accumulates by footprint width, y=0, rot=0,
+  // cellIndex = position in the drawing order. Dup-safe (indexed by position).
   const out = [];
-  for (const r of ordered) {
-    const c = geoByModule.get(r.module);
+  let gx = 0;
+  for (let i = 0; i < ordered.length; i++) {
+    const r = ordered[i];
+    const m = findModule(r.module);
+    const fp = m ? moduleFootprint(m, 0, DEPTH) : null;
     const target = { ...r.variants, summary: newSummary };
-    if (c) { target.x = c.x; target.y = c.y; target.rot = c.rot; target.cellIndex = c.cellIndex; }
+    if (fp && fp.w > 0) {
+      target.x = gx; target.y = 0; target.rot = 0; target.cellIndex = i;
+      gx += fp.w;
+    }
     out.push({ row: r, target, note: 'geometry + summary' });
   }
   for (const r of unknown) out.push({ row: r, target: null, note: `SKIPPED — ${r.module ? 'no spec' : 'unrecognised code'} (${r.item_code})` });
