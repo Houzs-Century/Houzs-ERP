@@ -75,6 +75,37 @@ describe('purchase-order-pdf sofa layout (reinstated 2026-07-27)', () => {
     if (process.env.SOFA_PDF_OUT) writeFileSync(process.env.SOFA_PDF_OUT, pdf);
   });
 
+  /* A geometry-bearing (POS-configured) sofa whose stored variants.summary has
+     gone STALE — the config once read "L(LHF) + 2A(RHF)" but the build's lines
+     are now L(LHF) + 1NA + 1A(P)(RHF). The caption must come from the actual
+     drawn module codes, not the stale summary, or the supplier reads a piece
+     that is not on the order. (PO 2990-PO-2609-030, owner 2026-09-18.) */
+  it('captions a geometry sofa from its module codes, not a stale summary', async () => {
+    const staleSummary = 'L(LHF) + 2A(RHF) · 24" · EZ/Colour KIV';
+    const geoLine = (moduleId: string, x: number, cellIndex: number) => ({
+      item_code: `SIYYP-${moduleId}`,
+      material_name: `SOFA SIYYP ${moduleId}`,
+      supplier_sku: `9053-${moduleId}`,
+      qty: 1,
+      unit_price_sen: 50000,
+      line_total_sen: 50000,
+      uom: 'UNIT',
+      item_group: 'sofa',
+      so_doc_no: '2990-SO-2608-040',
+      variants: { x, y: 0, rot: 0, cellIndex, summary: staleSummary },
+    });
+    const b64 = await purchaseOrderPdfBase64(
+      header,
+      [geoLine('L(LHF)', 0, 0), geoLine('1NA', 95, 1), geoLine('1A(P)(RHF)', 170, 2)] as never,
+    );
+    const raw = Buffer.from(b64, 'base64').toString('latin1');
+    expect(raw).toContain('Sofa layout');
+    // The real modules appear in the caption; the stale "2A(RHF)" must not.
+    expect(raw).toContain('1NA');
+    expect(raw).toContain('1A\\(P\\)\\(RHF\\)');
+    expect(raw).not.toContain('2A\\(RHF\\)');
+  });
+
   it('draws nothing sofa-shaped for a non-sofa PO', async () => {
     const b64 = await purchaseOrderPdfBase64(header, [{
       item_code: 'ANGGN-FIRM-K',
