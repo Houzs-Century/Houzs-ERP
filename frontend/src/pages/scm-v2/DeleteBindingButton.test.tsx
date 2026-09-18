@@ -42,4 +42,15 @@ describe('DeleteBindingButton', () => {
     // Back to the single trash affordance.
     expect(screen.getByLabelText('Remove HOOKKA')).toBeTruthy();
   });
+
+  it("surfaces the server's refusal when the binding has been used on a PO", () => {
+    // The backend refuses to delete a used binding (binding_in_use, 409); the
+    // reason must reach the operator, not vanish.
+    h.mutate.mockImplementation((_vars: unknown, opts: { onError?: (e: Error) => void }) =>
+      opts.onError?.(new Error("This supplier binding has been used on a purchase order, so it can't be removed.")));
+    render(<DeleteBindingButton supplierId="sup-1" bindingId="bind-9" supplierName="HOOKKA" />);
+    fireEvent.click(screen.getByLabelText('Remove HOOKKA'));
+    fireEvent.click(screen.getByText('Remove'));
+    expect(screen.getByRole('alert').textContent).toContain("can't be removed");
+  });
 });
