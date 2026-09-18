@@ -377,12 +377,6 @@ export const PurchaseInvoiceDetail = () => {
     () => new Set(editLines.map((l) => l.grnItemId).filter((x): x is string => Boolean(x))),
     [editLines],
   );
-  // Owner 2026-09-18: the picker should only offer a GRN line whose item code
-  // is already one of this PI's own lines — never a brand-new item.
-  const piItemCodes = useMemo(
-    () => new Set(editLines.map((l) => l.itemCode).filter((x): x is string => Boolean(x))),
-    [editLines],
-  );
 
   if (detail.isPending) {
     return <SkeletonDetailPage />;
@@ -466,7 +460,7 @@ export const PurchaseInvoiceDetail = () => {
      becomes a grnLinked draft; Save sends its grnItemId to POST /:id/items,
      which already validates + caps + recomputes the GRN's invoiced_qty (T12's
      endpoint was built for this, just never had a button). The two hooks this
-     needs (showGrnPicker, linkedGrnItemIds, piItemCodes) live ABOVE the
+     needs (showGrnPicker, linkedGrnItemIds) live ABOVE the
      isPending/isError guards below, with the rest of the page's hooks — not
      here, past them, which is a rules-of-hooks violation ESLint caught. */
   const addGrnLines = (picked: Array<{ it: OutstandingGrnItem; qty: number }>) => {
@@ -859,7 +853,6 @@ export const PurchaseInvoiceDetail = () => {
         <GrnLinePickerModal
           supplierId={piSupplierId}
           currency={pi.currency}
-          matchItemCodes={piItemCodes}
           excludeGrnItemIds={linkedGrnItemIds}
           onAdd={addGrnLines}
           onClose={() => setShowGrnPicker(false)}
@@ -1057,15 +1050,28 @@ function InfoCell({ label, value }: { label: string; value: string | null | unde
    not stashed through a handoff.
    ════════════════════════════════════════════════════════════════════════ */
 
+/* The outstanding GRN lines a saved, editable PI may transfer in: this invoice's
+   supplier and currency, minus lines already on it. It is deliberately NOT
+   filtered by item code — owner 2026-09-18 reversed the earlier item-match rule,
+   so an editable PI can pull in ANY of the supplier's outstanding receipts,
+   whatever the product. Exported for tests. */
+export function pickableGrnLinesForPi(
+  items: OutstandingGrnItem[],
+  supplierId: string,
+  currency: string,
+  excludeGrnItemIds: ReadonlySet<string>,
+): OutstandingGrnItem[] {
+  return items
+    .filter((it) => it.supplierId === supplierId)
+    .filter((it) => (it.currency ?? 'MYR') === (currency || 'MYR'))
+    .filter((it) => !excludeGrnItemIds.has(it.grnItemId));
+}
+
 const GrnLinePickerModal = ({
-  supplierId, currency, matchItemCodes, excludeGrnItemIds, onAdd, onClose,
+  supplierId, currency, excludeGrnItemIds, onAdd, onClose,
 }: {
   supplierId: string;
   currency: string;
-  /** Owner 2026-09-18: only offer a GRN line whose item code is already one
-      of this PI's own lines — never a brand-new item the invoice doesn't
-      already carry. */
-  matchItemCodes: Set<string>;
   /** GRN lines already on this invoice (persisted or picked this session) —
       hidden so the same line can't be added twice. */
   excludeGrnItemIds: Set<string>;
@@ -1077,12 +1083,8 @@ const GrnLinePickerModal = ({
   const [picks, setPicks] = useState<Record<string, number>>({});
 
   const items = useMemo(
-    () => (itemsQ.data?.items ?? [])
-      .filter((it) => it.supplierId === supplierId)
-      .filter((it) => (it.currency ?? 'MYR') === (currency || 'MYR'))
-      .filter((it) => matchItemCodes.has(it.itemCode))
-      .filter((it) => !excludeGrnItemIds.has(it.grnItemId)),
-    [itemsQ.data, supplierId, currency, matchItemCodes, excludeGrnItemIds],
+    () => pickableGrnLinesForPi(itemsQ.data?.items ?? [], supplierId, currency, excludeGrnItemIds),
+    [itemsQ.data, supplierId, currency, excludeGrnItemIds],
   );
   const visible = useMemo(() => filterOutstandingGrnLines(items, query), [items, query]);
 
@@ -1143,7 +1145,7 @@ const GrnLinePickerModal = ({
             </p>
           ) : visible.length === 0 ? (
             <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-13)' }}>
-              No outstanding GRN lines match an item already on this invoice
+              No outstanding GRN lines to transfer
               {currency ? ` for this supplier in ${currency}` : ''}.
             </p>
           ) : (
