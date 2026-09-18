@@ -183,11 +183,12 @@ stockTransfers.patch('/:id', async (c) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
 
-  const { data: beforeRow } = await db
+  const { data: beforeRow, error: beforeErr } = await db
     .from('stock_transfers', companyIdScope(co.companyId))
     .select('transfer_no, notes, status, from_warehouse_id, to_warehouse_id, company_id')
     .eq('id', id)
     .maybeSingle();
+  if (beforeErr) return c.json({ error: 'load_failed', reason: beforeErr.message }, 500);
   if (!beforeRow) return c.json(NOT_THIS_COMPANY, 404);
   const before = beforeRow as {
     transfer_no: string; notes: string | null; status: string;
@@ -232,13 +233,20 @@ stockTransfers.patch('/:id', async (c) => {
   // nothing at all). Computed below, once oldLineRows is loaded.
   let sameBuckets = false;
   if (itemsInput) {
-    const { data: oldLines } = await db
+    const { data: oldLines, error: oldLinesErr } = await db
       .from('stock_transfer_lines', CENTRALISED(
         'the header read above already proved this transfer is this company\'s — its own lines are that document\'s by construction',
       ))
       .select('id, item_code, variant_key, qty')
       .eq('stock_transfer_id', id)
       .order('created_at');
+    // Not defensive: an error here silently reading as "no old lines" would
+    // make sameBuckets false-negative (a same-bucket edit misclassified as a
+    // real change) AND drop every old line's qty from the availability
+    // credit — a stock check that should say "8 available" would say "6",
+    // wrongly refusing (or worse, on a different shape, wrongly allowing) the
+    // edit. Fail loud instead of guessing.
+    if (oldLinesErr) return c.json({ error: 'load_failed', reason: oldLinesErr.message }, 500);
     oldLineRows = (oldLines ?? []) as typeof oldLineRows;
 
     sameBuckets = oldLineRows.length === newLineRows.length && oldLineRows.every((o, i) =>
@@ -362,9 +370,14 @@ stockTransfers.patch('/:id', async (c) => {
     return c.json({ error: 'transfer_movements_failed', id, transferNo: before.transfer_no, movementErrors }, 422);
   }
 
-  const { data: after } = await db
+  // The write above already committed — a failure here means only that this
+  // response can't confirm it, not that anything need be rolled back. Still
+  // reported rather than returning `{ transfer: undefined }`, which the
+  // frontend would otherwise read as a silent, unexplained empty transfer.
+  const { data: after, error: afterErr } = await db
     .from('stock_transfers', companyIdScope(co.companyId))
     .select(HEADER).eq('id', id).maybeSingle();
+  if (afterErr) return c.json({ error: 'load_failed', reason: afterErr.message }, 500);
   return c.json({ transfer: after });
 });
 
