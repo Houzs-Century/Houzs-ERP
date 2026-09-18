@@ -143,15 +143,32 @@ describe('each report as lines', () => {
     expect(lines.find((l) => l.id === 'sum:net')).toMatchObject({ kind: 'net', depth: 0 });
   });
 
-  test('Receipts & Payments: opening, the receipts tree, its total, the payments tree, its total, closing — ids kept apart per side', () => {
+  test('the Cash Flow: each top category as a block, its tree, its own subtotal name; a running subtotal; then Cash Surplus, Balance b/f, Balance c/f', () => {
+    const top = (id: string, label: string, flow: 'in' | 'out', totalLabel: string, children: LaidNode[], pct: number | null, kind: LaidNode['kind'] = 'category'): LaidNode =>
+      ({ ...cat(id, label, children, pct), kind, flow, totalLabel });
     const r = {
-      layout: { receipts: [acc('300-0000', 50_000, 100, { '310-0010': 50_000 })], payments: [cat('cat:p', 'Purchases', [acc('601-0003', 40_000, 57.1)], 57.1), acc('ADV', 30_000, 42.9)] },
+      layout: {
+        inSen: 50_000, outSen: 70_000,
+        tree: [
+          top('side:in', 'RECEIPTS', 'in', 'Total receipts', [{ ...acc('300-0000', 50_000, 100, { '310-0010': 50_000 }), id: 'in:acc:300-0000', flow: 'in' as const }], 100),
+          top('side:out', 'PAYMENTS', 'out', 'Total payments', [cat('out:cat:p', 'Purchases', [{ ...acc('601-0003', 40_000, 57.1), id: 'out:acc:601-0003', flow: 'out' as const }], 57.1)], 57.1),
+          { kind: 'subtotal' as const, id: 'sub:ops', label: 'Net operation surplus / (deficit)', amountSen: 10_000, pct: null, children: [] },
+          top('unassigned:out', 'Unassigned payments', 'out', 'Total unassigned payments', [{ ...acc('ADV', 30_000, 42.9), id: 'out:acc:ADV', flow: 'out' as const }], 42.9, 'unassigned'),
+        ],
+      },
       totals: { openingTotalSen: -10_000, receiptsTotalSen: 50_000, paymentsTotalSen: 70_000, closingTotalSen: -30_000 },
     };
     const lines = rpLines(r);
-    expect(lines.map((l) => l.id)).toEqual(['bal:opening', 'blk:receipts', 'R:acc:300-0000', 'tot:receipts', 'blk:payments', 'P:cat:p', 'P:acc:601-0003', 'P:acc:ADV', 'tot:payments', 'bal:closing']);
-    expect(lines.find((l) => l.id === 'tot:receipts')).toMatchObject({ amountSen: 50_000, pct: 100 });
-    expect(lines.find((l) => l.id === 'bal:closing')).toMatchObject({ kind: 'net', amountSen: -30_000, pct: null });
+    expect(lines.map((l) => l.id)).toEqual([
+      'blk:side:in', 'in:acc:300-0000', 'tot:side:in', 'blk:side:out', 'out:cat:p', 'out:acc:601-0003', 'tot:side:out', 'sub:ops',
+      'blk:unassigned:out', 'out:acc:ADV', 'tot:unassigned:out', 'net:surplus', 'bal:opening', 'bal:closing',
+    ]);
+    expect(lines.find((l) => l.id === 'tot:side:in')).toMatchObject({ label: 'Total receipts', kind: 'total', amountSen: 50_000, pct: 100 });
+    expect(lines.find((l) => l.id === 'sub:ops')).toMatchObject({ label: 'Net operation surplus / (deficit)', kind: 'net', amountSen: 10_000, pct: null });
+    expect(lines.find((l) => l.id === 'tot:unassigned:out')).toMatchObject({ label: 'Total unassigned payments', kind: 'total', amountSen: 30_000, pct: 42.9 });
+    expect(lines.find((l) => l.id === 'net:surplus')).toMatchObject({ label: 'Cash Surplus / (Deficit)', kind: 'net', amountSen: -20_000, pct: null });
+    expect(lines.find((l) => l.id === 'bal:opening')).toMatchObject({ label: 'Balance b/f', kind: 'total', amountSen: -10_000 });
+    expect(lines.find((l) => l.id === 'bal:closing')).toMatchObject({ label: 'Balance c/f', kind: 'net', amountSen: -30_000, pct: null });
   });
 });
 

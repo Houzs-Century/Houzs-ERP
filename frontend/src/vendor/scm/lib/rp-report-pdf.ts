@@ -13,7 +13,7 @@ import {
   fmtDocDate, fmtDocStamp, type PdfAction,
 } from './pdf-common';
 import type { RpReport } from './rp-report-queries';
-import { flattenLaid, fmtPct, pctOf, type LaidNode } from './report-layout';
+import { flattenLaid, fmtPct, type LaidNode } from './report-layout';
 
 /** 1,234.56 with a bracketed negative — the report's own money dress. */
 export const fmtRp = (sen: number): string => {
@@ -41,22 +41,23 @@ export function rpTable(r: RpReport, shown?: string[]): { head: string[]; lines:
   const balance = (label: string, per: Record<string, number>, total: number, pct: string): Line =>
     ({ kind: 'balance', label, cells: [...codes.map((c) => fmtRp(per[c] ?? 0)), fmtRp(total), pct] });
   const blank = codes.map(() => '').concat('', '');
-  const lines: Line[] = [
-    balance('Opening balance', r.opening, r.totals.openingTotalSen, ''),
-    { kind: 'section', label: 'RECEIPTS', cells: blank },
-    ...treeLines(r.layout.receipts),
-    balance('Total receipts', r.totals.receipts, r.totals.receiptsTotalSen, fmtPct(pctOf(r.totals.receiptsTotalSen, r.totals.receiptsTotalSen || null))),
-    { kind: 'section', label: 'PAYMENTS', cells: blank },
-    ...treeLines(r.layout.payments),
-    balance('Total payments', r.totals.payments, r.totals.paymentsTotalSen, fmtPct(pctOf(r.totals.paymentsTotalSen, r.totals.paymentsTotalSen || null))),
-    balance('Closing balance', r.totals.closing, r.totals.closingTotalSen, ''),
-  ];
+  const lines: Line[] = [];
+  for (const n of r.layout.tree) {
+    if (n.kind === 'subtotal') { lines.push(balance(n.label, n.cells ?? {}, n.amountSen, '')); continue; }
+    lines.push({ kind: 'section', label: n.label, cells: blank });
+    lines.push(...treeLines(n.children));
+    lines.push(balance(n.totalLabel ?? `Total ${n.label}`, n.cells ?? {}, n.amountSen, fmtPct(n.pct)));
+  }
+  const surplusPer = Object.fromEntries(r.columns.map((c) => [c.code, (r.totals.receipts[c.code] ?? 0) - (r.totals.payments[c.code] ?? 0)]));
+  lines.push(balance('Cash Surplus / (Deficit)', surplusPer, r.totals.receiptsTotalSen - r.totals.paymentsTotalSen, ''));
+  lines.push(balance('Balance b/f', r.opening, r.totals.openingTotalSen, ''));
+  lines.push(balance('Balance c/f', r.totals.closing, r.totals.closingTotalSen, ''));
   return { head, lines };
 }
 
 export async function generateRpPdf(r: RpReport, opts?: { action?: PdfAction; columns?: string[] }): Promise<void> {
   const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'landscape' });
-  await ensurePdfCjkFont(doc, [...r.receipts, ...r.payments, ...flattenLaid(r.layout.receipts).map((x) => x.node), ...flattenLaid(r.layout.payments).map((x) => x.node)]);
+  await ensurePdfCjkFont(doc, [...r.receipts, ...r.payments, ...flattenLaid(r.layout.tree).map((x) => x.node)]);
   const y = drawHeader(doc, {
     docTitle: 'CASH FLOW',
     rightMeta: [

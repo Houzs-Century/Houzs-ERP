@@ -151,6 +151,16 @@ export const ReportLayoutEditor = ({ report, onClose }: Props) => {
         </tr>
       );
     }
+    if (it.kind === 'subtotal') {
+      return (
+        <tr key={key} data-kind="subtotal" draggable onDragStart={() => setDrag({ block, item: it })} {...dragProps(block, { kind: 'before', key })}>
+          <td style={{ ...codeCell, paddingLeft: indent }}><span style={grip} aria-hidden><GripVertical {...ICON} /></span></td>
+          <td style={{ ...cell, fontWeight: 600 }}>{it.label} <span style={soft}>· subtotal of everything above</span></td>
+          {companies.map((co) => <td key={co.id} style={cell} />)}
+          <td style={{ ...cell, whiteSpace: 'nowrap', textAlign: 'right' }}>{arrows}</td>
+        </tr>
+      );
+    }
     const open = !folded.has(it.id);
     return (
       <Fragment key={key}>

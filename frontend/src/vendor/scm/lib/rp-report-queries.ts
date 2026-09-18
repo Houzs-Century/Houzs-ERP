@@ -27,10 +27,12 @@ export type RpReport = {
     openingTotalSen: number; receiptsTotalSen: number; paymentsTotalSen: number; closingTotalSen: number;
   };
   entries: RpEntry[];
-  /** The rows on the report's layout (docs/bugs/0912): the one tree laid out
-      twice, a figure per column on every row and category, % of the side's
-      total; the supplier-advance row follows the tree. */
-  layout: { stored: boolean; receipts: LaidNode[]; payments: LaidNode[] };
+  /** The rows on the Cash Flow tree (docs/bugs/0912; directed since
+      2026-09-18): the top level is In/Out categories with their own subtotal
+      names, running subtotals, and the unassigned groups last; a figure per
+      column on every row and category, % of the side's total. inSen − outSen
+      is always receipts − payments. */
+  layout: { stored: boolean; tree: LaidNode[]; inSen: number; outSen: number };
 };
 
 export const rpReportPath = (from: string, to: string, accounts: readonly string[], byParty: boolean): string =>
