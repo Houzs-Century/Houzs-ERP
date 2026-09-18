@@ -1395,6 +1395,20 @@ const ProductBreakdownDrawer = ({
      mobile Stock Card uses — one logic layer, two presentations. */
   const lotRows = useMemo(() => reservations.data ?? [], [reservations.data]);
   const bd = useMemo(() => buildStockBreakdown(lotRows), [lotRows]);
+  /* Owned + consignment lots, one flat list tagged with which bucket each row
+     came from — DataTable's groupBy needs one array, not two, to give this
+     table the same column-filter/sort/freeze funnel every other DataTable in
+     this file already has (owner request: "want this filtering system for
+     the stock breakdown tables too"). The inline "Owned value subtotal" row
+     the old hand-rolled <table> carried is dropped here — it duplicated the
+     "Total Value (owned)" StatCard already shown above the table. */
+  const lotTableRows = useMemo(
+    () => [
+      ...bd.ownedLots.map((r) => ({ ...r, _source: 'owned' as const })),
+      ...bd.consignmentLots.map((r) => ({ ...r, _source: 'consignment' as const })),
+    ],
+    [bd.ownedLots, bd.consignmentLots],
+  );
   const breakdownPending = reservations.data === undefined || Boolean(reservations.error);
 
   return (
@@ -1459,100 +1473,76 @@ const ProductBreakdownDrawer = ({
             scroll container (no nested-scroll jank); the wide table scrolls
             sideways inside its own card for long lists. */}
         <p className={styles.eyebrow} style={{ marginTop: 'var(--space-4)' }}>
-          Stock Lots (oldest first — consumed first on the next DO)
+          Stock Lots (oldest first — consumed first on the next DO) &middot; Owned value subtotal {fmtRm(bd.ownedValueSen)}
         </p>
-        <div className={`${styles.tableCard} ${styles.drawerScroll}`}>
-          <table className={`${styles.table} ${styles.compactTable} ${styles.lotTable}`}>
-            <thead>
-              <tr>
-                <th>Warehouse</th>
-                <th>Attributes</th>
-                <th style={{ textAlign: 'right' }}>Qty</th>
-                <th style={{ textAlign: 'right' }}>Unit Cost</th>
-                <th style={{ textAlign: 'right' }}>Value</th>
-                <th>Source</th>
-                <th>Received</th>
-                <th>Assigned SO &middot; Qty &middot; Delivery</th>
-                <th>Assigned / Free</th>
-              </tr>
-            </thead>
-            <tbody>
-              {reservations.isLoading && <tr><td colSpan={9} className={styles.emptyRow}>Loading…</td></tr>}
-              {!reservations.isLoading && lotRows.length === 0 && (
-                <tr><td colSpan={9} className={styles.emptyRow}>No open lots for this SKU.</td></tr>
-              )}
-
-              {/* OWNED lots — counted in the value subtotal + header Total Value. */}
-              {!reservations.isLoading && bd.ownedLots.map((r, i) => {
-                const attrs = formatVariantKey(r.variant_key, r.fabric_supplier_code);
-                const value = (r.qty_remaining ?? 0) * (r.unit_cost_sen ?? 0);
-                return (
-                  <tr key={r.id ?? `own|${r.warehouse_id}|${r.variant_key}|${r.batch_no ?? ''}|${i}`}>
-                    {/* SHORT code-name everywhere (owner rule; BUG-HISTORY #63). */}
-                    <td>{r.warehouse_code ?? r.warehouse_name ?? '—'}</td>
-                    <td>{attrs || <span className={styles.numCellZero}>Standard</span>}</td>
-                    <td className={`${styles.numCell} ${r.qty_remaining > 0 ? styles.numCellPos : styles.numCellZero}`}>{fmtQty(r.qty_remaining)}</td>
-                    <td className={`${styles.numCell} ${styles.numCellZero}`}>{r.unit_cost_sen > 0 ? fmtRm(r.unit_cost_sen) : '—'}</td>
-                    <td className={styles.numCell} style={{ fontWeight: 700 }}>{value > 0 ? fmtRm(value) : '—'}</td>
-                    {/* SOURCE — the GRN (or PCR/adjustment) that fed this lot. A
-                        GRN-sourced lot also traces to its originating PO. */}
-                    <td className={styles.numCellZero}>
-                      {r.source_doc_no ?? '—'}
-                      {r.source_po_no && <span className={styles.sourcePo}>from {r.source_po_no}</span>}
-                    </td>
-                    <td className={styles.numCellZero}>{r.received_at ? fmtDate(r.received_at) : '—'}</td>
-                    <td>{renderAssignedFor(r)}</td>
-                    <td>{renderAssignedFreeStatus(r)}</td>
-                  </tr>
-                );
-              })}
-
-              {/* Owned value subtotal — what the header "Total Value (owned)" sums. */}
-              {!reservations.isLoading && bd.ownedLots.length > 0 && (
-                <tr>
-                  <td colSpan={4} style={{ textAlign: 'right', fontWeight: 700 }}>Owned value subtotal</td>
-                  <td className={styles.numCell} style={{ fontWeight: 800 }}>{fmtRm(bd.ownedValueSen)}</td>
-                  <td colSpan={4} />
-                </tr>
-              )}
-
-              {/* CONSIGNMENT lots — held here but NOT owned: value shows "—" and
-                  stays OUT of the owned subtotal + Total Value. Identified by the
-                  lot's SOURCE (a PC Receive fed it), never the warehouse flag —
-                  so a PCR mis-posted into a normal warehouse is still separated
-                  (BUG-HISTORY 2026-07-25). */}
-              {!reservations.isLoading && bd.consignmentLots.length > 0 && (
-                <tr>
-                  <td colSpan={9} style={{ paddingTop: 'var(--space-3)' }}>
-                    <span className={styles.eyebrow}>Consignment — held, not owned (excluded from value)</span>
-                  </td>
-                </tr>
-              )}
-              {!reservations.isLoading && bd.consignmentLots.map((r, i) => {
-                const attrs = formatVariantKey(r.variant_key, r.fabric_supplier_code);
-                return (
-                  <tr key={r.id ?? `con|${r.warehouse_id}|${r.variant_key}|${r.batch_no ?? ''}|${i}`}>
-                    <td>
-                      {r.warehouse_code ?? r.warehouse_name ?? '—'}
-                      <span className={`${styles.movementPill} ${styles.movementAdj}`} style={{ marginLeft: 6 }}>Consignment</span>
-                    </td>
-                    <td>{attrs || <span className={styles.numCellZero}>Standard</span>}</td>
-                    <td className={`${styles.numCell} ${r.qty_remaining > 0 ? styles.numCellPos : styles.numCellZero}`}>{fmtQty(r.qty_remaining)}</td>
-                    <td className={`${styles.numCell} ${styles.numCellZero}`}>{r.unit_cost_sen > 0 ? fmtRm(r.unit_cost_sen) : '—'}</td>
-                    <td className={`${styles.numCell} ${styles.numCellZero}`} title="Consignment stock is excluded from inventory value.">—</td>
-                    <td className={styles.numCellZero}>
-                      {r.source_doc_no ?? '—'}
-                      {r.source_po_no && <span className={styles.sourcePo}>from {r.source_po_no}</span>}
-                    </td>
-                    <td className={styles.numCellZero}>{r.received_at ? fmtDate(r.received_at) : '—'}</td>
-                    <td>{renderAssignedFor(r)}</td>
-                    <td>{renderAssignedFreeStatus(r)}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        <DataTable<(typeof lotTableRows)[number]>
+          tableId="inventory-stock-lots"
+          layoutFamily="inventory-stock-lots"
+          exportName="inventory-stock-lots"
+          rows={reservations.isLoading ? null : lotTableRows}
+          loading={reservations.isLoading}
+          emptyLabel="No open lots for this SKU."
+          getRowKey={(r) => r.id ?? `${r._source}|${r.warehouse_id}|${r.variant_key}|${r.batch_no ?? ''}`}
+          groupBy={{ key: 'source', label: (v) => (v === 'owned' ? 'Owned' : 'Consignment — held, not owned (excluded from value)') }}
+          columns={[
+            { key: 'source', label: 'Bucket', defaultHidden: true, getValue: (r) => r._source, render: (r) => r._source },
+            {
+              key: 'warehouse', label: 'Warehouse', width: '140px',
+              getValue: (r) => r.warehouse_code ?? r.warehouse_name ?? '',
+              render: (r) => (
+                <>
+                  {r.warehouse_code ?? r.warehouse_name ?? '—'}
+                  {r._source === 'consignment' && (
+                    <span className={`${styles.movementPill} ${styles.movementAdj}`} style={{ marginLeft: 6 }}>Consignment</span>
+                  )}
+                </>
+              ),
+            },
+            {
+              key: 'attrs', label: 'Attributes', width: '160px',
+              getValue: (r) => formatVariantKey(r.variant_key, r.fabric_supplier_code),
+              render: (r) => formatVariantKey(r.variant_key, r.fabric_supplier_code) || <span className={styles.numCellZero}>Standard</span>,
+            },
+            {
+              key: 'qty', label: 'Qty', align: 'right', width: '80px',
+              getValue: (r) => r.qty_remaining,
+              render: (r) => <span className={`${styles.numCell} ${r.qty_remaining > 0 ? styles.numCellPos : styles.numCellZero}`}>{fmtQty(r.qty_remaining)}</span>,
+            },
+            {
+              key: 'unitCost', label: 'Unit Cost', align: 'right', width: '100px',
+              getValue: (r) => r.unit_cost_sen,
+              render: (r) => <span className={`${styles.numCell} ${styles.numCellZero}`}>{r.unit_cost_sen > 0 ? fmtRm(r.unit_cost_sen) : '—'}</span>,
+            },
+            {
+              key: 'value', label: 'Value', align: 'right', width: '100px',
+              getValue: (r) => (r._source === 'owned' ? r.qty_remaining * r.unit_cost_sen : 0),
+              render: (r) => {
+                if (r._source === 'consignment') return <span className={`${styles.numCell} ${styles.numCellZero}`} title="Consignment stock is excluded from inventory value.">—</span>;
+                const value = r.qty_remaining * r.unit_cost_sen;
+                return <span className={styles.numCell} style={{ fontWeight: 700 }}>{value > 0 ? fmtRm(value) : '—'}</span>;
+              },
+            },
+            {
+              // SOURCE — the GRN (or PCR/adjustment) that fed this lot. A
+              // GRN-sourced lot also traces to its originating PO.
+              key: 'source_doc', label: 'Source', width: '150px',
+              getValue: (r) => r.source_doc_no ?? '',
+              render: (r) => (
+                <span className={styles.numCellZero}>
+                  {r.source_doc_no ?? '—'}
+                  {r.source_po_no && <span className={styles.sourcePo}>from {r.source_po_no}</span>}
+                </span>
+              ),
+            },
+            {
+              key: 'received', label: 'Received', width: '110px',
+              getValue: (r) => r.received_at ?? '',
+              render: (r) => <span className={styles.numCellZero}>{r.received_at ? fmtDate(r.received_at) : '—'}</span>,
+            },
+            { key: 'assigned_for', label: 'Assigned SO · Qty · Delivery', width: '220px', render: (r) => renderAssignedFor(r) },
+            { key: 'assigned_free', label: 'Assigned / Free', width: '140px', render: (r) => renderAssignedFreeStatus(r) },
+          ] satisfies Column<(typeof lotTableRows)[number]>[]}
+        />
 
         {/* Movements ledger — collapsed by default. Header is a button. */}
         <button type="button"
@@ -1567,61 +1557,56 @@ const ProductBreakdownDrawer = ({
           </span>
         </button>
         {movementsOpen && (
-          <div className={`${styles.tableCard} ${styles.drawerScroll}`}>
-            <table className={`${styles.table} ${styles.compactTable}`}>
-              <thead>
-                <tr>
-                  <th>When</th>
-                  <th>Type</th>
-                  <th>Warehouse</th>
-                  <th style={{ textAlign: 'right' }}>Qty</th>
-                  <th style={{ textAlign: 'right' }}>Running</th>
-                  <th>Source Doc</th>
-                  <th>Reason</th>
-                  <th>Notes</th>
-                </tr>
-              </thead>
-              <tbody>
-                {movements.isLoading && <tr><td colSpan={8} className={styles.emptyRow}>Loading…</td></tr>}
-                {!movements.isLoading && movementsWithBalance.length === 0 && (
-                  <tr><td colSpan={8} className={styles.emptyRow}>No movements yet for this SKU.</td></tr>
-                )}
-                {movementsWithBalance.map((m) => {
-                  const href = docHrefFor(m);
+          <DataTable<(typeof movementsWithBalance)[number]>
+            tableId="inventory-sku-movements"
+            layoutFamily="inventory-sku-movements"
+            exportName="inventory-sku-movements"
+            rows={movements.isLoading ? null : movementsWithBalance}
+            loading={movements.isLoading}
+            emptyLabel="No movements yet for this SKU."
+            getRowKey={(m) => m.id}
+            columns={[
+              { key: 'when', label: 'When', width: '150px', getValue: (m) => m.created_at, render: (m) => <span className={styles.numCellZero}>{fmtDateTime(m.created_at)}</span> },
+              {
+                key: 'type', label: 'Type', width: '100px',
+                getValue: (m) => m.movement_type,
+                render: (m) => (
+                  <span className={`${styles.movementPill} ${
+                    m.movement_type === 'IN' ? styles.movementIn
+                    : m.movement_type === 'OUT' ? styles.movementOut
+                    : styles.movementAdj}`}>{m.movement_type}</span>
+                ),
+              },
+              {
+                key: 'warehouse', label: 'Warehouse', width: '110px',
+                getValue: (m) => (m.warehouse_id ? whById.get(m.warehouse_id)?.code ?? '' : ''),
+                render: (m) => { const wh = m.warehouse_id ? whById.get(m.warehouse_id) : null; return wh ? wh.code : '—'; },
+              },
+              {
+                key: 'qty', label: 'Qty', align: 'right', width: '80px',
+                getValue: (m) => (m.movement_type === 'OUT' ? -Math.abs(m.qty) : m.qty),
+                render: (m) => {
                   const qtySign = m.movement_type === 'IN' ? '+' : m.movement_type === 'OUT' ? '−' : (m.qty > 0 ? '+' : m.qty < 0 ? '−' : '');
                   const qtyClass = m.qty > 0 ? styles.numCellPos : m.qty < 0 ? styles.numCellNeg : styles.numCellZero;
-                  const wh = m.warehouse_id ? whById.get(m.warehouse_id) : null;
-                  return (
-                    <tr key={m.id}>
-                      <td className={styles.numCellZero}>{fmtDateTime(m.created_at)}</td>
-                      <td>
-                        <span className={`${styles.movementPill} ${
-                          m.movement_type === 'IN' ? styles.movementIn
-                          : m.movement_type === 'OUT' ? styles.movementOut
-                          : styles.movementAdj}`}>{m.movement_type}</span>
-                      </td>
-                      <td>{wh ? wh.code : (m.warehouse_id ? '—' : '—')}</td>
-                      <td className={`${styles.numCell} ${qtyClass}`}>{qtySign}{fmtQty(Math.abs(m.qty))}</td>
-                      <td className={`${styles.numCell}`} style={{ fontWeight: 700 }}>
-                        {fmtQty(m.runningBalance)}
-                      </td>
-                      <td>
-                        {m.source_doc_no ? (
-                          href
-                            ? <Link to={href} className={styles.docLink}>{m.source_doc_no}</Link>
-                            : <span className={styles.docLink}>{m.source_doc_no}</span>
-                        ) : <span className={styles.numCellZero}>—</span>}
-                      </td>
-                      <td className={styles.numCellZero}>
-                        {m.reason_code ? adjustmentReasonLabel(m.reason_code) : '—'}
-                      </td>
-                      <td className={`${styles.numCellZero} ${styles.notesCell}`} title={m.notes ?? ''}>{m.notes ?? '—'}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+                  return <span className={`${styles.numCell} ${qtyClass}`}>{qtySign}{fmtQty(Math.abs(m.qty))}</span>;
+                },
+              },
+              { key: 'running', label: 'Running', align: 'right', width: '90px', getValue: (m) => m.runningBalance, render: (m) => <span className={styles.numCell} style={{ fontWeight: 700 }}>{fmtQty(m.runningBalance)}</span> },
+              {
+                key: 'source_doc', label: 'Source Doc', width: '140px',
+                getValue: (m) => m.source_doc_no ?? '',
+                render: (m) => {
+                  if (!m.source_doc_no) return <span className={styles.numCellZero}>—</span>;
+                  const href = docHrefFor(m);
+                  return href
+                    ? <Link to={href} className={styles.docLink}>{m.source_doc_no}</Link>
+                    : <span className={styles.docLink}>{m.source_doc_no}</span>;
+                },
+              },
+              { key: 'reason', label: 'Reason', width: '130px', getValue: (m) => (m.reason_code ? adjustmentReasonLabel(m.reason_code) : ''), render: (m) => <span className={styles.numCellZero}>{m.reason_code ? adjustmentReasonLabel(m.reason_code) : '—'}</span> },
+              { key: 'notes', label: 'Notes', getValue: (m) => m.notes ?? '', render: (m) => <span className={`${styles.numCellZero} ${styles.notesCell}`} title={m.notes ?? ''}>{m.notes ?? '—'}</span> },
+            ] satisfies Column<(typeof movementsWithBalance)[number]>[]}
+          />
         )}
 
         {/* COGS — collapsed by default. */}
