@@ -74,7 +74,7 @@ import { useStateWarehouseMappings } from "../../vendor/scm/lib/state-warehouse-
 import { useLocalities, countryForState } from "../../vendor/scm/lib/localities-queries";
 import {
   useAddressCascade, pickState, pickCity, pickPostcode,
-  cityPlaceholder, postcodePlaceholder, POSTCODE_NEEDS_STATE,
+  cityPlaceholder, postcodePlaceholder,
 } from "../../vendor/scm/lib/address-cascade";
 import { StatePicker } from "../../vendor/scm/components/StatePicker";
 import { SearchableSelect } from "../../vendor/scm/components/SearchableSelect";
@@ -1359,7 +1359,6 @@ export function DeliveryOrderNewV2() {
                 onResolve={(r) => { setAddr1(r.address); if (r.state && r.city) { setState(r.state); setCity(r.city); } }}
                 postcodeChoices={withCurrent(postcodes, postcode)}
                 placeholder={loc.isLoading ? "Loading…" : postcodePlaceholder(state, city)}
-                blockedReason={state ? undefined : POSTCODE_NEEDS_STATE}
                 disabled={loc.isLoading || lk("postcode")}
                 classes={{
                   field: "block",
