@@ -542,9 +542,14 @@ export const patchProductModelHandler = async (c: Context<{ Bindings: Env; Varia
   if (newCategory !== undefined) {
     const moved = await moveModelCategory(supabase, co.companyId, String(id), newCategory);
     if (!moved.ok) {
-      return moved.error === 'model_not_found'
-        ? c.json(NOT_THIS_COMPANY, 404)
-        : c.json({ error: moved.error, reason: moved.reason }, 500);
+      if (moved.error === 'model_not_found') return c.json(NOT_THIS_COMPANY, 404);
+      // A model already holds this code in the target category — a real,
+      // actionable clash, not a server fault. 409 + a plain `message` so the
+      // operator sees the reason instead of the generic 5xx sentence.
+      if (moved.error === 'target_category_taken') {
+        return c.json({ error: moved.error, message: moved.reason }, 409);
+      }
+      return c.json({ error: moved.error, reason: moved.reason }, 500);
     }
     if (data) {
       data = { ...data, category: newCategory };
