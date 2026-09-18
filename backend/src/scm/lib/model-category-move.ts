@@ -35,12 +35,15 @@ export async function moveModelCategory(
        system hit a problem" (owner 2026-09-18: two "SERVICE X SL" models of the
        same code, changing one to SERVICE hit the other). */
     if ((modelErr as { code?: string }).code === '23505') {
-      const { data: self } = await scopeToCompanyId(supabase
+      // Best-effort enrichment: name the code in the message when we can read
+      // it. A failed re-read must not turn an actionable clash into a 500, so
+      // it just falls back to the code-less sentence.
+      const { data: self, error: selfErr } = await scopeToCompanyId(supabase
         .from('product_models')
         .select('model_code')
         .eq('id', modelId), companyId)
         .maybeSingle();
-      const code = (self as { model_code?: string } | null)?.model_code ?? '';
+      const code = selfErr ? '' : ((self as { model_code?: string } | null)?.model_code ?? '');
       const label = mfgCategoryLabel(category);
       return {
         ok: false,
