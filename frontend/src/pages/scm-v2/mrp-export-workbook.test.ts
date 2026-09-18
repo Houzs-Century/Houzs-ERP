@@ -261,11 +261,12 @@ describe('buildMrpWorkbookBlob — the rendered workbook', () => {
     const cell = (addr: string) => wb.Sheets.Mattress![addr]?.v;
     expect(cell('A1')).toBe('MRP Stock Status  -  Mattress');   // merged title
     expect(cell('A3')).toBe('Warehouse');                       // header row 3
-    expect(cell('P3')).toBe('Supplier');
+    expect(cell('O3')).toBe('Supplier');
+    expect(cell('P3')).toBe('Customer');                        // moved to the last column
     expect(cell('B4')).toBe('AK-MATT (Q)');                     // group header code
-    expect(cell('L5')).toBe('needs PO');                        // shortage coverage
-    expect(cell('M5')).toBeUndefined();                         // PO Outstanding blank off a shortage row
-    expect(cell('O5')).toBe('CONFIRMED');                       // shortage status
-    expect(cell('N5')).toBe(1);                                 // shortage figure
+    expect(cell('K5')).toBe('needs PO');                        // shortage coverage
+    expect(cell('L5')).toBeUndefined();                         // PO Outstanding blank off a shortage row
+    expect(cell('N5')).toBe('CONFIRMED');                       // shortage status
+    expect(cell('M5')).toBe(1);                                 // shortage figure
   });
 });
