@@ -4,7 +4,7 @@
 // POST /purchase-invoices/:id/items with grnItemId set.
 import { describe, expect, test } from 'vitest';
 import type { OutstandingGrnItem } from '../../vendor/scm/lib/suppliers-queries';
-import { grnItemToEditLine } from './PurchaseInvoiceDetail';
+import { grnItemToEditLine, pickableGrnLinesForPi } from './PurchaseInvoiceDetail';
 
 const grnItem = (over: Partial<OutstandingGrnItem> = {}): OutstandingGrnItem => ({
   grnItemId: 'gi-1', grnId: 'g-1', grnDocNo: 'GRN-2609-001', receivedAt: '2026-09-10',
@@ -48,5 +48,27 @@ describe('grnItemToEditLine', () => {
     const a = grnItemToEditLine(grnItem(), 1);
     const b = grnItemToEditLine(grnItem(), 3);
     expect(a.rid).toBe(b.rid);
+  });
+});
+
+describe('pickableGrnLinesForPi — an editable PI pulls in ANY of the supplier\'s outstanding GRN lines', () => {
+  test('a same-supplier line for a product the invoice does NOT already carry is still offered (owner 2026-09-18)', () => {
+    const items = [
+      grnItem({ grnItemId: 'a', itemCode: 'AK-ULTIMATE MATT (Q)' }),
+      grnItem({ grnItemId: 'b', itemCode: 'ZOFIA-(S)' }), // a different product than anything on the PI
+    ];
+    const out = pickableGrnLinesForPi(items, 's-1', 'MYR', new Set());
+    expect(out.map((i) => i.grnItemId).sort()).toEqual(['a', 'b']);
+  });
+
+  test('another supplier, a different currency, and a line already on the invoice are all excluded', () => {
+    const items = [
+      grnItem({ grnItemId: 'mine' }),
+      grnItem({ grnItemId: 'other-supplier', supplierId: 's-2' }),
+      grnItem({ grnItemId: 'other-ccy', currency: 'USD' }),
+      grnItem({ grnItemId: 'already-on-pi' }),
+    ];
+    const out = pickableGrnLinesForPi(items, 's-1', 'MYR', new Set(['already-on-pi']));
+    expect(out.map((i) => i.grnItemId)).toEqual(['mine']);
   });
 });
