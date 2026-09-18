@@ -41,11 +41,12 @@ import {
   computeTabModels, type ModelGroup, type MrpFilters, type AccessoryBySoDoc,
 } from './mrp-model-pipeline';
 
-/* Column order = the approved v8 layout (A..P). */
+/* Column order = the approved v8 layout (A..P), Customer moved to the last
+   column (owner 2026-09-18: was F, wanted at the end). */
 export const MRP_EXPORT_HEADERS = [
   'Warehouse', 'Item Code', 'Description', 'Item Description 2', 'SO No',
-  'Customer', 'State', 'Processing Date', 'Delivery Date', 'Qty Needed',
-  'Stock', 'Coverage', 'PO Outstanding', 'Shortage', 'Status', 'Supplier',
+  'State', 'Processing Date', 'Delivery Date', 'Qty Needed',
+  'Stock', 'Coverage', 'PO Outstanding', 'Shortage', 'Status', 'Supplier', 'Customer',
 ] as const;
 const COL = MRP_EXPORT_HEADERS.length; // 16
 
@@ -118,22 +119,22 @@ function demandRow(opts: {
   // col 2 (Description) stays blank on a demand row — it lives on the group header.
   cells[3] = spec;
   cells[4] = line.soDocNo;
-  cells[5] = line.debtorName ?? '';
-  cells[6] = line.customerState ?? '';
-  cells[7] = isoDay(line.processingDate);
+  cells[5] = line.customerState ?? '';
+  cells[6] = isoDay(line.processingDate);
   // An undated line is planned LAST — the page tags it "No date" rather than blank.
-  cells[8] = line.deliveryDate ? isoDay(line.deliveryDate) : 'No date';
-  cells[9] = line.qty;
-  // col 10 (Stock) stays blank on a demand row — it's a SKU-level total, and
+  cells[7] = line.deliveryDate ? isoDay(line.deliveryDate) : 'No date';
+  cells[8] = line.qty;
+  // col 9 (Stock) stays blank on a demand row — it's a SKU-level total, and
   // repeating it on every line under the group header was noise (owner
   // 2026-09-17: "idw repetitive below just 6 on first row can already").
-  cells[11] = coverageText(line);
-  cells[12] = poOutstandingText(line);
+  cells[10] = coverageText(line);
+  cells[11] = poOutstandingText(line);
   // A covered line's Shortage stays blank rather than a literal 0 — same
   // owner note: only an actual shortage figure is worth printing.
-  cells[13] = line.source === 'shortage' ? line.shortageQty : null;
-  cells[14] = statusText(line.source);
-  cells[15] = supplierText(sku, line);
+  cells[12] = line.source === 'shortage' ? line.shortageQty : null;
+  cells[13] = statusText(line.source);
+  cells[14] = supplierText(sku, line);
+  cells[15] = line.debtorName ?? '';
   return { kind: 'demand', cells, shortage: line.source === 'shortage' && line.shortageQty > 0 };
 }
 
@@ -160,17 +161,17 @@ export function buildSheetRows(
       head[0] = g.warehouseCode ?? g.warehouseName ?? '';
       head[1] = g.itemCode; // the SO doc no
       head[2] = g.description ?? '';
-      head[5] = first.debtorName ?? '';
-      head[6] = first.customerState ?? '';
-      head[7] = isoDay(first.processingDate);
-      head[8] = first.deliveryDate ? isoDay(first.deliveryDate) : 'No date';
-      head[9] = g.qtyNeeded;
-      head[10] = g.stock;
+      head[5] = first.customerState ?? '';
+      head[6] = isoDay(first.processingDate);
+      head[7] = first.deliveryDate ? isoDay(first.deliveryDate) : 'No date';
+      head[8] = g.qtyNeeded;
+      head[9] = g.stock;
       // PO Outstanding on the header is the SAME rollup the on-screen group row
       // shows (g.poOutstanding — total qty covered by a PO across every line
       // below), not the individual PO strings a demand row carries.
-      head[12] = g.poOutstanding;
-      head[13] = g.shortage;
+      head[11] = g.poOutstanding;
+      head[12] = g.shortage;
+      head[15] = first.debtorName ?? '';
       out.push({ kind: 'group', cells: head });
       for (const v of g.variants) {
         for (const l of v.lines) {
@@ -195,10 +196,10 @@ export function buildSheetRows(
       const head = blankRow();
       head[1] = g.itemCode;
       head[2] = g.description ?? '';
-      head[9] = g.qtyNeeded;
-      head[10] = g.stock;
-      head[12] = g.poOutstanding; // rollup, same as the sofa branch above
-      head[13] = g.shortage;
+      head[8] = g.qtyNeeded;
+      head[9] = g.stock;
+      head[11] = g.poOutstanding; // rollup, same as the sofa branch above
+      head[12] = g.shortage;
       out.push({ kind: 'group', cells: head });
       for (const v of g.variants) {
         for (const l of v.lines) {
@@ -231,8 +232,8 @@ const C_SHORT_FONT = '#9E2B22';
 const C_TITLE_FONT = '#0C4D31';
 const C_SUBTITLE_FONT = '#6A6F66';
 
-const COL_WIDTHS = [11, 21, 32, 36, 15, 14, 16, 15, 15, 11, 8, 12, 26, 10, 17, 30];
-const NUM_COLS = new Set([9, 10, 13]); // Qty Needed, Stock, Shortage (0-based)
+const COL_WIDTHS = [11, 21, 32, 36, 15, 16, 15, 15, 11, 8, 12, 26, 10, 17, 30, 14];
+const NUM_COLS = new Set([8, 9, 12]); // Qty Needed, Stock, Shortage (0-based)
 
 function subtitle(view: MrpView, asOf: string | null, warehouseLabel: string, filters: MrpFilters): string {
   const grouped = view.value === 'sofa'
@@ -259,7 +260,7 @@ export type SheetSpec = { view: MrpView; rows: SheetRow[] };
    is `null` (empty, unstyled). */
 function toXlsxCell(value: Cell, col: number, fill: string | null, groupBold: boolean): WxlCell {
   const has = value !== null && value !== '';
-  // PO Outstanding (col 12) carries a NUMBER on a group header row (the qty
+  // PO Outstanding (col 11) carries a NUMBER on a group header row (the qty
   // rollup) and a STRING on a demand row (the PO + ETA text) — so type is
   // decided per-value there, not by a fixed column. Every other numeric
   // column is number-only, so NUM_COLS still decides for a blank cell (no
@@ -275,7 +276,7 @@ function toXlsxCell(value: Cell, col: number, fill: string | null, groupBold: bo
   if (fill) cell.backgroundColor = fill;
   if (groupBold) { cell.fontWeight = 'bold'; cell.color = C_GROUP_FONT; cell.fontSize = 10; }
   // A shortage row's Shortage figure reads red + bold.
-  if (fill === C_SHORT_FILL && col === 13) { cell.fontWeight = 'bold'; cell.color = C_SHORT_FONT; }
+  if (fill === C_SHORT_FILL && col === 12) { cell.fontWeight = 'bold'; cell.color = C_SHORT_FONT; }
   return cell;
 }
 
