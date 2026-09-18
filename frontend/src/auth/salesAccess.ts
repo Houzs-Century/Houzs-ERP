@@ -98,6 +98,19 @@ export function canCreateEvent(user: AuthUser | null | undefined): boolean {
 }
 
 /**
+ * May this user read a SOLO roadshow's organizer — the mall management? Owner
+ * 2026-09-18: "give permission to BD, owner, weisiang only can see, others only
+ * show solo". The SAME three as canCreateEvent, named separately because it is a
+ * different decision that happens to share a tier today; it calls through rather
+ * than copy the matcher, so the tier has one definition. Exhibitions are not
+ * affected — their organizer is for everybody. Display-only
+ * (pages/projects/soloOrganizerMask.ts): nothing server-side redacts the name.
+ */
+export function canSeeSoloOrganizer(user: AuthUser | null | undefined): boolean {
+  return canCreateEvent(user);
+}
+
+/**
  * Non-director sales user — the restricted cohort of the Sales access model
  * (Delivery Returns hidden, Projects Finances hidden, etc.). Directors in the
  * Sales department are explicitly NOT restricted.
