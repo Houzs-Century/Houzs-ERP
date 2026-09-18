@@ -25,6 +25,7 @@ Racks (`scm.warehouse_racks`) live one level under a warehouse, unique per `(war
 - The NON-SELLING warehouse set (`{showroom, display, service}`) lives in exactly one module (`non-selling-warehouse.ts`) — import it, never re-declare it; a duplicate declaration fails the build.
 - Classify a lot as consignment by its SOURCE document (`isConsignmentLotSource`), never by the warehouse's own `is_consignment` flag — a receipt mis-posted into a normal warehouse would otherwise leak supplier-owned stock into owned value.
 - A positive stock ADJUSTMENT or STOCK_TAKE variance must resolve a real unit cost (typed, else weighted average of other priced open lots, else last-known cost) or be refused (`422 cost_required`) — never silently open a lot at RM0.
+- New Stock Adjustment is a line-by-line table (like Stock Transfer): Qty is SIGNED — positive increases (found / recount up), negative decreases (write-off / damage / loss). There is NO increase/decrease toggle; the sign IS the direction, sent verbatim as `qtyDelta` (the POST has always taken a signed delta). A sofa/bedframe INCREASE still needs its variant axes + (sofa) batch; a DECREASE still picks the exact open lot — both in the row's expandable detail. qty 0 or no SKU is invalid.
 - Do not delete a warehouse with movement history — the FK from `inventory_movements`/`lots`/`cogs` refuses it (409 `in_use`); deactivate instead.
 
 ## Gotchas
