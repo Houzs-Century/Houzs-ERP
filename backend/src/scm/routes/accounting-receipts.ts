@@ -12,13 +12,18 @@ import { requireActiveCompanyId } from '../lib/companyScope';
 import { ensureReceiptForPayment, formaliseReceipt } from '../../acc/receipts';
 import { resolveRoles } from '../../acc/rules';
 import { companyCodeById } from '../lib/doc-no';
+import { paginateAll } from '../lib/paginate-all';
+import { monthRange } from './accounting-receipts-check';
 
 /* Receipts are a sales-side paper: the writer key covers recording payments,
    so it covers handing over the receipt for one. */
 const requirePerm = (c: any): boolean =>
   hasHouzsPerm(c, 'scm.payment_voucher.post') || hasHouzsPerm(c, 'scm.sales_order.write');
 
-/* ── GET /accounting/receipts?status=&limit= ─────────────────────────────── */
+/* ── GET /accounting/receipts?status=&limit=&month=YYYY-MM ─────────────────
+   Without a month: the newest `limit` receipts. With one: every receipt whose
+   payment day falls in it, oldest first, so the month reads whole beside its
+   check (accounting-receipts-check.ts). */
 export const receiptsList = async (c: any): Promise<Response> => {
   if (!requirePerm(c)) return c.json({ error: "You don't have permission to see receipts." }, 403);
   const co = requireActiveCompanyId(c);
@@ -26,14 +31,22 @@ export const receiptsList = async (c: any): Promise<Response> => {
   const sb = c.get('supabase');
   const status = String(c.req.query('status') ?? '').trim().toUpperCase();
   const limit = Math.min(200, Math.max(1, Number(c.req.query('limit') ?? 100) || 100));
+  const month = String(c.req.query('month') ?? '').trim();
+  const range = month ? monthRange(month) : null;
+  if (month && !range) return c.json({ error: 'bad_month', message: 'Which month? YYYY-MM.' }, 400);
 
-  let q = sb.from('acc_official_receipts')
-    .select('id, or_number, status, payment_source, payment_id, doc_no, customer_name, method, amount_sen, paid_at, channel_account_code, issued_at, issued_by, created_at')
-    .eq('company_id', co.companyId)
+  const COLS = 'id, or_number, status, payment_source, payment_id, doc_no, customer_name, method, amount_sen, paid_at, channel_account_code, issued_at, issued_by, created_at';
+  const scoped = (q: any) => (status === 'DRAFT' || status === 'FORMAL' ? q.eq('status', status) : q);
+  if (range) {
+    const all = await paginateAll<Record<string, unknown>>((from, to) => scoped(sb.from('acc_official_receipts').select(COLS)
+      .eq('company_id', co.companyId).gte('paid_at', range.from).lte('paid_at', range.to))
+      .order('paid_at', { ascending: true }).order('or_number', { ascending: true }).range(from, to));
+    if (all.error) return c.json({ error: 'load_failed', reason: all.error.message }, 500);
+    return c.json({ receipts: all.data ?? [] });
+  }
+  const { data, error } = await scoped(sb.from('acc_official_receipts').select(COLS).eq('company_id', co.companyId))
     .order('created_at', { ascending: false })
     .limit(limit);
-  if (status === 'DRAFT' || status === 'FORMAL') q = q.eq('status', status);
-  const { data, error } = await q;
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   return c.json({ receipts: data ?? [] });
 };

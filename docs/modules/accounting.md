@@ -79,7 +79,7 @@ Deposit invoices, notes, receipts
 - With the switch on, the delivery reconciler raises the final invoice when an order turns DELIVERED; `postSiRevenue` closes each standing DI with a CN (Dr 509 / Cr AR) dated the invoice day; cancelling that invoice contras the CNs.
 - Backlog order: issue missing DIs first, then invoice already-delivered orders (dated when the goods left).
 - A posted Customer Refund voucher naming an SO raises a CN per deposit invoice it draws on, oldest first; cancelling the voucher contras them.
-- One official receipt per payment for ever; a reprint never re-issues. Table `scm.acc_official_receipts` (`scm.acc_receipts` is the general receipt).
+- One official receipt per payment for ever; a reprint never re-issues. Table `scm.acc_official_receipts` (`scm.acc_receipts` is the general receipt). The Official Receipts page opens on the current month: `GET /accounting/receipts?month=YYYY-MM` lists the month whole (oldest first), `GET /accounting/receipts/check?month=` reads the month's SO + SI payments that arrived (no converted, mirror or zero rows) against its receipts by payment day — totals, difference, payments without a receipt, receipts whose amount is not their payment's, receipts whose payment is gone.
 - A settled purchase invoice is locked (`pi_locked`): cancel the voucher (unwinds `applied_sen`), edit, pay again.
 - AP invoice edit refuses `total_below_paid`, `supplier_locked`, or a cancelled bill; files refused on a cancelled bill (`invoice_cancelled`), delete refused once posted (`evidence_locked`). Debtor bill edit: `total_below_received`, debtor fixed.
 - OCR pre-fill writes UPPER CASE and takes the account from vendor memory only, never a model guess.
