@@ -28,6 +28,8 @@ const MIGRATED = [
   'pages/scm-v2/ConsignmentNoteNew.tsx',
   'pages/scm-v2/ConsignmentOrderNew.tsx',
   'pages/scm-v2/ConsignmentReturnNew.tsx',
+  'pages/scm-v2/StockTransferNew.tsx',
+  'pages/scm-v2/StockAdjustmentNew.tsx',
 ];
 
 // Strip comments so a WHY-comment mentioning the old wording never trips the scan.

@@ -145,7 +145,7 @@ describe('New Stock Adjustment — signed qty encodes the direction', () => {
     setQty('3', 0);
     setReason(0);
     // Line 2 — add, decrease −2, pick the lot.
-    fireEvent.click(screen.getAllByRole('button', { name: /Add Line Item/ })[0]!);
+    fireEvent.click(screen.getAllByRole('button', { name: /Add line/i })[0]!);
     fireEvent.change(screen.getAllByPlaceholderText('Type or pick a SKU code…')[1]!, { target: { value: 'CH-1' } });
     setQty('-2', 1);
     setReason(1);
