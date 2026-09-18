@@ -23,6 +23,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { Save, Trash2, X } from 'lucide-react';
 import { Button } from '@2990s/design-system';
+import { AddLineButton } from '../../vendor/scm/components/AddLineButton';
 import { useCreatePaymentVoucher, usePaymentVoucherDetail, useSupplierAdvances, usePvReservations, NO_RESERVATIONS, useExtractBills, useUploadPvFile, useRefundSource, fileToBase64, type BillExtraction, type VendorMemory, type PvFilePayload } from '../../vendor/scm/lib/payment-voucher-queries';
 import { takePvFiles } from '../../vendor/scm/lib/pv-file-handoff';
 import { useIdempotencyKey } from '../../lib/idempotency';
@@ -949,10 +950,7 @@ export const PaymentVoucherNew = () => {
             </div>
           ))}
 
-          <button type="button" onClick={addLine}
-            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, width: '100%', padding: '12px 14px', border: '1px dashed var(--c-orange)', borderRadius: 'var(--radius-md)', background: 'transparent', color: 'var(--c-orange)', fontFamily: 'var(--font-sans)', fontSize: 'var(--fs-13)', fontWeight: 600, cursor: 'pointer' }}>
-            + Add another line
-          </button>
+          <AddLineButton variant="block" onClick={addLine} />
         </div>
       </section>
       )}

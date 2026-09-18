@@ -36,6 +36,12 @@ const MIGRATED = [
   'pages/scm-v2/PurchaseConsignmentOrderNew.tsx',
   'pages/scm-v2/PurchaseConsignmentReturnNew.tsx',
   'pages/scm-v2/PurchaseReturnNew.tsx',
+  'pages/scm-v2/PaymentVoucherNew.tsx',
+  'pages/scm-v2/ApInvoiceForm.tsx',
+  'pages/scm-v2/DebtorBillForm.tsx',
+  'pages/scm-v2/CreditNotes.tsx',
+  'pages/scm-v2/DeliveryOrderNewV2.tsx',
+  'pages/scm-v2/PurchaseConsignmentReceiveNew.tsx',
 ];
 
 // Strip comments so a WHY-comment mentioning the old wording never trips the scan.
@@ -45,7 +51,8 @@ const stripComments = (src: string): string =>
 describe('add-line shell — migrated forms keep the shared chrome', () => {
   it('every migrated form imports the shared AddLineButton', () => {
     for (const f of MIGRATED) {
-      expect(read(f), f).toContain("from '../../vendor/scm/components/AddLineButton'");
+      // Quote-agnostic: some files quote imports with " and some with '.
+      expect(read(f), f).toContain('vendor/scm/components/AddLineButton');
     }
   });
 
@@ -58,7 +65,7 @@ describe('add-line shell — migrated forms keep the shared chrome', () => {
       // module, so no migrated form should carry it inline any more —
       // label-agnostic, so it also catches a revert to the old wording.
       expect(src, f).not.toMatch(/1px dashed var\(--c-orange\)/);
-      expect(src, f).not.toMatch(/>\s*Add (Line Item|another item)\s*</);
+      expect(src, f).not.toMatch(/>\s*(\+ )?Add (Line Item|another item|another line)\s*</);
     }
   });
 });
