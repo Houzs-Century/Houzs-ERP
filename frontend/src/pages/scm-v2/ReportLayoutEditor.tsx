@@ -29,6 +29,10 @@ const iconBtn: React.CSSProperties = {
   background: 'transparent', border: 0, padding: '2px 4px', cursor: 'pointer', color: 'inherit', display: 'inline-flex', alignItems: 'center',
 };
 const cell: React.CSSProperties = { padding: '3px 8px', verticalAlign: 'middle' };
+/* Account No. and Name are their own columns, the drag handle beside the number
+   (owner 2026-09-18: 拖动应该在 account number 旁边; number 和 name 各自一个 column). */
+const codeCell: React.CSSProperties = { ...cell, whiteSpace: 'nowrap', fontFamily: 'var(--font-mono)' };
+const grip: React.CSSProperties = { ...soft, marginRight: 6, cursor: 'grab', display: 'inline-flex', verticalAlign: 'middle' };
 
 type Drag = { block: string; item: LayoutItem };
 
@@ -117,10 +121,7 @@ export const ReportLayoutEditor = ({ report, onClose }: Props) => {
   const foldAll = () => { if (draft) setFolded(new Set(categoryIds(draft))); };
   const unfoldAll = () => setFolded(new Set());
 
-  const nameOf = (code: string): string => {
-    const a = names.get(code);
-    return a ? `${code} — ${a.name}` : `${code} — (not on the chart)`;
-  };
+  const nameOf = (code: string): string => names.get(code)?.name ?? '(not on the chart)';
 
   const renderItems = (block: string, items: LayoutItem[], depth: number): React.ReactNode => items.map((it) => {
     const key = itemKey(it);
@@ -136,10 +137,11 @@ export const ReportLayoutEditor = ({ report, onClose }: Props) => {
     if (it.kind === 'account') {
       return (
         <tr key={key} data-kind="account" draggable onDragStart={() => setDrag({ block, item: it })} {...dragProps(block, { kind: 'before', key })}>
-          <td style={{ ...cell, paddingLeft: indent }}>
-            <span style={{ ...soft, marginRight: 6, cursor: 'grab' }} aria-hidden><GripVertical {...ICON} /></span>
-            {nameOf(it.code)}
+          <td style={{ ...codeCell, paddingLeft: indent }}>
+            <span style={grip} aria-hidden><GripVertical {...ICON} /></span>
+            {it.code}
           </td>
+          <td style={cell}>{nameOf(it.code)}</td>
           {companies.map((co) => <td key={co.id} style={cell} />)}
           <td style={{ ...cell, whiteSpace: 'nowrap', textAlign: 'right' }}>
             {arrows}
@@ -153,10 +155,14 @@ export const ReportLayoutEditor = ({ report, onClose }: Props) => {
     return (
       <Fragment key={key}>
         <tr data-kind="category" draggable onDragStart={() => setDrag({ block, item: it })} {...dragProps(block, { kind: 'into', categoryId: it.id })}>
-          <td style={{ ...cell, paddingLeft: indent, fontWeight: 600 }}>
+          <td style={{ ...codeCell, paddingLeft: indent, fontWeight: 600 }}>
+            <span style={grip} aria-hidden><GripVertical {...ICON} /></span>
             <button type="button" style={iconBtn} aria-label={open ? `Fold ${it.label}` : `Unfold ${it.label}`} onClick={() => toggleFold(it.id)}>
               {open ? <ChevronDown {...ICON} /> : <ChevronRight {...ICON} />}
             </button>
+            {it.code ?? ''}
+          </td>
+          <td style={{ ...cell, fontWeight: 600 }}>
             {editingId === it.id ? (
               <input
                 autoFocus
@@ -170,7 +176,6 @@ export const ReportLayoutEditor = ({ report, onClose }: Props) => {
             ) : (
               <>
                 <span>{it.label}</span>
-                {it.code && <span style={{ ...soft, marginLeft: 6 }}>{it.code}</span>}
                 <button type="button" style={iconBtn} aria-label={`Rename ${it.label}`} onClick={() => startRename(it.id, it.label)}><Pencil {...ICON} /></button>
               </>
             )}
@@ -205,7 +210,7 @@ export const ReportLayoutEditor = ({ report, onClose }: Props) => {
     return (
       <Fragment key={block.key}>
         <tr data-block={block.key} {...dragProps(block.key, { kind: 'end' })}>
-          <td style={{ ...cell, paddingTop: 10, fontWeight: 700 }}>{block.title}</td>
+          <td colSpan={2} style={{ ...cell, paddingTop: 10, fontWeight: 700 }}>{block.title}</td>
           {companies.map((co) => <td key={co.id} style={cell} />)}
           <td style={{ ...cell, textAlign: 'right', paddingTop: 10 }}>
             <Button variant="ghost" size="sm" aria-label={`Add a category to ${block.title}`}
@@ -216,21 +221,22 @@ export const ReportLayoutEditor = ({ report, onClose }: Props) => {
         </tr>
         {renderItems(block.key, items, 1)}
         {items.length === 0 && spare.length === 0 && (
-          <tr><td colSpan={2 + companies.length} style={{ ...cell, paddingLeft: 24, ...soft }}>No accounts in this block.</td></tr>
+          <tr><td colSpan={3 + companies.length} style={{ ...cell, paddingLeft: 24, ...soft }}>No accounts in this block.</td></tr>
         )}
         {spare.length > 0 && (
           <>
             <tr data-unassigned={block.key}>
-              <td colSpan={2 + companies.length} style={{ ...cell, paddingLeft: 24, fontStyle: 'italic', ...soft }}>
+              <td colSpan={3 + companies.length} style={{ ...cell, paddingLeft: 24, fontStyle: 'italic', ...soft }}>
                 Unassigned — printed at the foot of {block.title} until placed
               </td>
             </tr>
             {spare.map((a) => (
               <tr key={a.code} data-kind="spare" draggable onDragStart={() => setDrag({ block: block.key, item: { kind: 'account', code: a.code } })}>
-                <td style={{ ...cell, paddingLeft: 40 }}>
-                  <span style={{ ...soft, marginRight: 6, cursor: 'grab' }} aria-hidden><GripVertical {...ICON} /></span>
-                  {a.code} — {a.name}
+                <td style={{ ...codeCell, paddingLeft: 40 }}>
+                  <span style={grip} aria-hidden><GripVertical {...ICON} /></span>
+                  {a.code}
                 </td>
+                <td style={cell}>{a.name}</td>
                 {companies.map((co) => <td key={co.id} style={cell} />)}
                 <td style={{ ...cell, textAlign: 'right' }}>
                   <Button variant="ghost" size="sm" aria-label={`Place ${a.code}`}
@@ -279,7 +285,8 @@ export const ReportLayoutEditor = ({ report, onClose }: Props) => {
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr>
-                  <th style={{ ...cell, textAlign: 'left', ...soft }}>Category / account</th>
+                  <th style={{ ...cell, textAlign: 'left', ...soft }}>Account No.</th>
+                  <th style={{ ...cell, textAlign: 'left', ...soft }}>Name</th>
                   {companies.map((co) => <th key={co.id} style={{ ...cell, textAlign: 'center', ...soft }}>{co.code}</th>)}
                   <th style={{ ...cell, textAlign: 'right', ...soft }}>Order</th>
                 </tr>

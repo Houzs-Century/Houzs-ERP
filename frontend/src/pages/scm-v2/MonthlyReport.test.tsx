@@ -50,7 +50,7 @@ const draw = () => render(
 
 /** A cell's own first text (the amount) and the % line under it. */
 const amountOf = (c: HTMLElement): string => (c.firstChild?.textContent ?? '');
-const pctUnder = (c: HTMLElement): string => c.querySelector('div')?.textContent ?? '';
+const pctBeside = (c: HTMLElement): string => c.querySelector('span[data-pct]')?.textContent ?? '';
 
 describe('the monthly view', () => {
   test('累计 leftmost, then the newest month on the left and older to the right; a month-only line still prints', () => {
@@ -84,7 +84,9 @@ describe('the monthly view', () => {
     const rent = () => within(screen.getByText('RENT').closest('tr')!).getAllByRole('cell').map(amountOf);
     expect(rent()).toEqual(['RENT', 'RM 3000.00', 'RM 1000.00', 'RM 1000.00', 'RM 1000.00']);
     /* The % rides under every amount (owner: by month 没有 percentage). */
-    expect(within(screen.getByText('RENT').closest('tr')!).getAllByRole('cell').map(pctUnder)).toEqual(['', '30.0%', '25.0%', '40.0%', '20.0%']);
+    expect(within(screen.getByText('RENT').closest('tr')!).getAllByRole('cell').map(pctBeside)).toEqual(['', '30.0%', '25.0%', '40.0%', '20.0%']);
+    /* On the same line as the amount, not under it (owner 2026-09-18). */
+    expect(within(screen.getByText('RENT').closest('tr')!).getAllByRole('cell')[1]!.querySelector('div')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: '%' }));
     expect(rent()).toEqual(['RENT', '30.0%', '25.0%', '40.0%', '20.0%']);
     expect(screen.getAllByRole('columnheader')[0]!.textContent).toBe('P&L · % of sales');
@@ -114,7 +116,7 @@ describe('the monthly view', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Expand OPERATING EXPENSE' }));
     expect(screen.getByText('900-A001 — RENT')).toBeTruthy();
     /* The amount keeps its % under it on the opened rows too. */
-    expect(within(screen.getByText('900-A001 — RENT').closest('tr')!).getAllByRole('cell').map(pctUnder)).toEqual(['', '10.0%', '10.0%', '10.0%', '10.0%']);
+    expect(within(screen.getByText('900-A001 — RENT').closest('tr')!).getAllByRole('cell').map(pctBeside)).toEqual(['', '10.0%', '10.0%', '10.0%', '10.0%']);
     fireEvent.click(screen.getByRole('button', { name: 'Lines of 900-A001 — RENT' }));
     expect(useLedger).toHaveBeenLastCalledWith({ from: '2026-07-01', to: '2026-09-30', accounts: ['900-A001'] });
     const drill = document.querySelector('tr[data-lines-of="900-A001"]') as HTMLElement;

@@ -73,13 +73,20 @@ describe('the layout editor', () => {
     expect(screen.getByText(/Saved by Finance/)).toBeTruthy();
     expect(screen.getByText('Expenses')).toBeTruthy();
     expect(screen.getByText('Operating Expense')).toBeTruthy();
-    expect(screen.getByText('900-A001 — ACCOUNTING FEE')).toBeTruthy();
+    /* Account No. and Name are their own cells, the drag handle beside the number (owner 2026-09-18). */
+    const fee = within(rowOf('900-A001')).getAllByRole('cell');
+    expect(fee[0]!.textContent).toBe('900-A001');
+    expect(fee[0]!.querySelector('svg')).not.toBeNull();
+    expect(fee[1]!.textContent).toBe('ACCOUNTING FEE');
+    const opex = within(rowOf('Operating Expense')).getAllByRole('cell');
+    expect(opex[0]!.textContent).toBe('900-0000');
+    expect(opex[1]!.textContent).toBe('Operating Expense');
     /* ADVERTISEMENT is unticked for HOUZS, ticked for 2990. */
     expect((screen.getByLabelText('ADVERTISEMENT for HOUZS') as HTMLInputElement).checked).toBe(false);
     expect((screen.getByLabelText('ADVERTISEMENT for 2990') as HTMLInputElement).checked).toBe(true);
     /* 900-H010 is on the chart (HOUZS) but nowhere in the tree. */
     expect(screen.getByText(/Unassigned — printed at the foot of Expenses/)).toBeTruthy();
-    expect(screen.getByText('900-H010 — HOMESTAY EXPENSES')).toBeTruthy();
+    expect(rowOf('900-H010').textContent).toContain('HOMESTAY EXPENSES');
     expect(screen.getByRole('button', { name: 'Place 900-H010' })).toBeTruthy();
     /* Save waits for an edit. */
     expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true);
@@ -123,8 +130,10 @@ describe('the layout editor', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Add a category to Expenses' }));
     expect(screen.getByText('New category')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Delete ADVERTISEMENT' }));
-    expect(screen.queryByText('ADVERTISEMENT')).toBeNull();
-    expect(screen.getByText('900-A014 — ADVERTISEMENT - SHOWROOM')).toBeTruthy();
+    /* The category row is gone (its header account 900-A002 now sits among the spares under its own name). */
+    expect(screen.queryByLabelText('ADVERTISEMENT for HOUZS')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Rename ADVERTISEMENT' })).toBeNull();
+    expect(rowOf('900-A014').textContent).toContain('ADVERTISEMENT - SHOWROOM');
     fireEvent.click(screen.getByRole('button', { name: 'Unplace 900-A001' }));
     /* Back among the spares — and 900-A002, the deleted header, is a spare too. */
     const spares = screen.getAllByRole('button', { name: /^Place / }).map((b) => b.getAttribute('aria-label'));
@@ -139,13 +148,13 @@ describe('the layout editor', () => {
 
   test('Fold all hides every category\'s rows, Unfold all shows them again (docs/bugs/0912)', () => {
     draw();
-    expect(screen.getByText('900-A001 — ACCOUNTING FEE')).toBeTruthy();
+    expect(screen.getByText('ACCOUNTING FEE')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Fold all' }));
-    expect(screen.queryByText('900-A001 — ACCOUNTING FEE')).toBeNull();
+    expect(screen.queryByText('ACCOUNTING FEE')).toBeNull();
     expect(screen.queryByText('ADVERTISEMENT')).toBeNull();
     expect(screen.getByText('Operating Expense')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Unfold all' }));
-    expect(screen.getByText('900-A001 — ACCOUNTING FEE')).toBeTruthy();
+    expect(screen.getByText('ACCOUNTING FEE')).toBeTruthy();
     expect(screen.getByText('ADVERTISEMENT')).toBeTruthy();
   });
 

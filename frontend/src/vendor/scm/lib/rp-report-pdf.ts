@@ -1,6 +1,7 @@
 // ----------------------------------------------------------------------------
-// rp-report-pdf — "Print" for the Receipts & Payments report. It prints WHAT
-// THE SCREEN SHOWS: the same columns, the same rows, the same four balance
+// rp-report-pdf — "Print" for the Cash Flow report (Receipts & Payments until
+// 2026-09-18). It prints WHAT THE SCREEN SHOWS: the same columns (Total, plus
+// the accounts ticked on the screen), the same rows, the same four balance
 // lines — so the paper and the screen can never disagree. Landscape A4 on
 // the shared letterhead, the autoTable dress every document wears.
 // ----------------------------------------------------------------------------
@@ -27,9 +28,11 @@ type Line = { kind: 'section' | 'row' | 'category' | 'balance'; label: string; c
     rows are the report's tree (docs/bugs/0912): a category with its
     per-column subtotal, its rows indented beneath, % of the side's total
     last; the balance lines carry the side's own %. */
-export function rpTable(r: RpReport): { head: string[]; lines: Line[] } {
-  const codes = r.columns.map((c) => c.code);
-  const head = ['', ...r.columns.map((c) => `${c.code}\n${c.name}`), 'Total', '%'];
+export function rpTable(r: RpReport, shown?: string[]): { head: string[]; lines: Line[] } {
+  /* The columns the screen shows: Total alone unless accounts were ticked. */
+  const columns = shown ? r.columns.filter((c) => shown.includes(c.code)) : r.columns;
+  const codes = columns.map((c) => c.code);
+  const head = ['', ...columns.map((c) => `${c.code}\n${c.name}`), 'Total', '%'];
   const treeLines = (nodes: LaidNode[]): Line[] => flattenLaid(nodes).map(({ node, depth }) => ({
     kind: node.kind === 'account' ? 'row' : 'category',
     label: `${'   '.repeat(Math.max(0, depth - 1))}${node.label}`,
@@ -51,11 +54,11 @@ export function rpTable(r: RpReport): { head: string[]; lines: Line[] } {
   return { head, lines };
 }
 
-export async function generateRpPdf(r: RpReport, opts?: { action?: PdfAction }): Promise<void> {
+export async function generateRpPdf(r: RpReport, opts?: { action?: PdfAction; columns?: string[] }): Promise<void> {
   const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'landscape' });
   await ensurePdfCjkFont(doc, [...r.receipts, ...r.payments, ...flattenLaid(r.layout.receipts).map((x) => x.node), ...flattenLaid(r.layout.payments).map((x) => x.node)]);
   const y = drawHeader(doc, {
-    docTitle: 'RECEIPTS & PAYMENTS',
+    docTitle: 'CASH FLOW',
     rightMeta: [
       { label: 'Period', value: `${fmtDocDate(r.from)} – ${fmtDocDate(r.to)}` },
       { label: 'Accounts', value: r.columns.map((c) => c.code).join(', ') },
@@ -63,7 +66,7 @@ export async function generateRpPdf(r: RpReport, opts?: { action?: PdfAction }):
       { label: 'Printed', value: fmtDocStamp() },
     ],
   });
-  const t = rpTable(r);
+  const t = rpTable(r, opts?.columns);
   autoTable(doc, {
     startY: y + 2,
     head: [t.head],
@@ -80,5 +83,5 @@ export async function generateRpPdf(r: RpReport, opts?: { action?: PdfAction }):
       if (line.kind === 'balance') { data.cell.styles.fontStyle = 'bold'; data.cell.styles.lineWidth = { top: 0.2, bottom: 0, left: 0, right: 0 }; }
     },
   });
-  deliverPdf(doc, `receipts-payments-${r.from}-to-${r.to}.pdf`, opts?.action ?? 'preview');
+  deliverPdf(doc, `cash-flow-${r.from}-to-${r.to}.pdf`, opts?.action ?? 'preview');
 }

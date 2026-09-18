@@ -35,6 +35,15 @@ describe('rpTable', () => {
     expect(t.lines[8]!.cells).toEqual(['100.00', '100.00', '']);
   });
 
+  /* The paper follows the screen (owner 2026-09-18: default 看 total): no ticks, Total alone. */
+  it('prints only the columns the screen shows — Total alone when nothing is ticked', () => {
+    const alone = rpTable(r, []);
+    expect(alone.head).toEqual(['', 'Total', '%']);
+    expect(alone.lines[0]!.cells).toEqual(['(100.00)', '']);
+    expect(alone.lines[2]!.cells).toEqual(['500.00', '100.0%']);
+    expect(rpTable(r, ['310-0010']).head).toEqual(rpTable(r).head);
+  });
+
   it('fmtRp brackets a negative and keeps the thousands', () => {
     expect(fmtRp(123456)).toBe('1,234.56');
     expect(fmtRp(-5)).toBe('(0.05)');
