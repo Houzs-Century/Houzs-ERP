@@ -32,6 +32,7 @@ import { todayMyt } from '../../vendor/scm/lib/dates';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { Save, Trash2, X, ChevronDown, ArrowRightLeft } from 'lucide-react';
+import { AddLineButton } from '../../vendor/scm/components/AddLineButton';
 import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
 import { Button } from '@2990s/design-system';
 import { formatPhone } from '@2990s/shared/phone';
@@ -821,7 +822,7 @@ export const PurchaseInvoiceNew = () => {
           {lines.length === 0 && (
             <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-13)', padding: 'var(--space-3) 0' }}>
               {isManual
-                ? 'Pick a supplier in the header, then use “Add another item” below to add lines by hand.'
+                ? 'Pick a supplier in the header, then use “Add line” below to add lines by hand.'
                 : 'No accepted items on this GRN.'}
             </p>
           )}
@@ -1046,10 +1047,7 @@ export const PurchaseInvoiceNew = () => {
 
           {/* "Add another item" — manual mode (mirrors New PO, always shown). */}
           {isManual && (
-            <button type="button" onClick={addEmptyManualLine}
-              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, width: '100%', padding: '12px 14px', border: '1px dashed var(--c-orange)', borderRadius: 'var(--radius-md)', background: 'transparent', color: 'var(--c-orange)', fontFamily: 'var(--font-sans)', fontSize: 'var(--fs-13)', fontWeight: 600, cursor: 'pointer' }}>
-              + Add another item
-            </button>
+            <AddLineButton variant="block" onClick={addEmptyManualLine} />
           )}
         </div>
       </section>

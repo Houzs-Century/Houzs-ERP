@@ -20,7 +20,8 @@
 import { todayMyt } from '../../vendor/scm/lib/dates';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Save, Trash2, X } from 'lucide-react';
+import { Save, Trash2, X } from 'lucide-react';
+import { AddLineButton } from '../../vendor/scm/components/AddLineButton';
 import { Button } from '@2990s/design-system';
 import { formatPhone } from '@2990s/shared/phone';
 import { useCreatePurchaseConsignmentOrder } from '../../vendor/scm/lib/purchase-consignment-order-queries';
@@ -792,28 +793,7 @@ export const PurchaseConsignmentOrderNew = () => {
             );
           })}
 
-          <button
-            type="button"
-            onClick={addLine}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 6,
-              width: '100%',
-              padding: '12px 14px',
-              border: '1px dashed var(--c-orange)',
-              borderRadius: 'var(--radius-md)',
-              background: 'transparent',
-              color: 'var(--c-orange)',
-              fontFamily: 'var(--font-sans)',
-              fontSize: 'var(--fs-13)',
-              fontWeight: 600,
-              cursor: 'pointer',
-            }}
-          >
-            <Plus {...ICON} /> Add another item
-          </button>
+          <AddLineButton variant="block" onClick={addLine} />
         </div>
       </section>
 

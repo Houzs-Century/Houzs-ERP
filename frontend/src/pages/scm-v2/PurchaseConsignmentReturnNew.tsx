@@ -19,7 +19,8 @@ import { transferFromLabel } from '../../lib/convertScope';
 import { todayMyt } from '../../vendor/scm/lib/dates';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowRightLeft, Plus, Save, Trash2, X, ChevronDown } from 'lucide-react';
+import { ArrowRightLeft, Save, Trash2, X, ChevronDown } from 'lucide-react';
+import { AddLineButton } from '../../vendor/scm/components/AddLineButton';
 import { Button } from '@2990s/design-system';
 import { buildVariantSummary } from '@2990s/shared';
 import {
@@ -386,7 +387,7 @@ export const PurchaseConsignmentReturnNew = () => {
           {lines.length === 0 ? (
             <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-13)', padding: 'var(--space-3) 0' }}>
               {isManual
-                ? 'Pick a supplier in the header, then use “Add another item” below to add returns by hand.'
+                ? 'Pick a supplier in the header, then use “Add line” below to add returns by hand.'
                 : grn
                   ? 'No accepted lines on this Receive to return.'
                   : 'No lines on this Order to return.'}
@@ -570,28 +571,7 @@ export const PurchaseConsignmentReturnNew = () => {
           )}
 
           {isManual && (
-            <button
-              type="button"
-              onClick={addLine}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 6,
-                width: '100%',
-                padding: '12px 14px',
-                border: '1px dashed var(--c-orange)',
-                borderRadius: 'var(--radius-md)',
-                background: 'transparent',
-                color: 'var(--c-orange)',
-                fontFamily: 'var(--font-sans)',
-                fontSize: 'var(--fs-13)',
-                fontWeight: 600,
-                cursor: 'pointer',
-              }}
-            >
-              <Plus {...ICON} /> Add another item
-            </button>
+            <AddLineButton variant="block" onClick={addLine} />
           )}
         </div>
       </section>
