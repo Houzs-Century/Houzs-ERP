@@ -15,7 +15,7 @@ export const ACCOUNTING_TAB_TITLES = {
   close: 'Month-end',
   pnl: 'P&L',
   bs: 'Balance Sheet',
-  rp: 'Receipts & Payments',
+  rp: 'Cash Flow',
   ar: 'AR Aging',
   ap: 'AP Aging',
   check: 'Self-check',

@@ -726,7 +726,7 @@ export const NAV_TABS: NavTab[] = [
         children: [
           { to: "/scm/accounting?tab=pnl", label: "P&L", icon: BarChart3, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
           { to: "/scm/accounting?tab=bs", label: "Balance Sheet", icon: LayoutDashboard, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
-          { to: "/scm/accounting?tab=rp", label: "Receipts & Payments", icon: Banknote, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
+          { to: "/scm/accounting?tab=rp", label: "Cash Flow", icon: Banknote, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
           { to: "/scm/accounting?tab=ar", label: "AR Aging", icon: HandCoins, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
           { to: "/scm/accounting?tab=ap", label: "AP Aging", icon: Wallet, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
           // Finance's corrections to recorded payments (docs/bugs/0785) — a
