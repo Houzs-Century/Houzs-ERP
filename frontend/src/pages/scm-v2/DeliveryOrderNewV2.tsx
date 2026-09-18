@@ -33,7 +33,6 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   ArrowLeft,
   ArrowRight as ArrowRightIcon,
-  Plus,
   X as XIcon,
   Save,
   CheckCircle2,
@@ -41,6 +40,7 @@ import {
   ShoppingCart,
 } from "lucide-react";
 import { Button } from "../../components/Button";
+import { AddLineButton } from "../../vendor/scm/components/AddLineButton";
 import {
   useCreateMfgDeliveryOrder,
   useMfgDeliveryOrderDetail,
@@ -1530,13 +1530,7 @@ export function DeliveryOrderNewV2() {
           </div>
 
           <div className="mt-4 flex items-center justify-between">
-            <button
-              type="button"
-              onClick={addLine}
-              className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-dashed border-border-strong bg-surface px-4 text-[13px] font-semibold text-primary-ink hover:border-primary/60 hover:bg-primary-soft"
-            >
-              <Plus size={14} /> Add line
-            </button>
+            <AddLineButton variant="ghost" onClick={addLine} />
             <div className="text-right">
               <div className="font-mono text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
                 Total items

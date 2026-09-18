@@ -11,8 +11,9 @@
 // ----------------------------------------------------------------------------
 
 import { useEffect, useRef, useState } from 'react';
-import { Plus, X } from 'lucide-react';
+import { X } from 'lucide-react';
 import { Button } from '@2990s/design-system';
+import { AddLineButton } from '../../vendor/scm/components/AddLineButton';
 import type { Account } from '../../vendor/scm/lib/accounting-queries';
 import {
   useExtractBills, fileToBase64, PV_FILE_ACCEPT, type BillExtraction, type VendorMemory, type PvFilePayload,
@@ -36,7 +37,6 @@ export type ApFormSubmit = {
   lines: Array<{ description?: string; debitAccountCode: string; amountSen: number }>;
 };
 
-const ICON = { size: 16, strokeWidth: 1.75 } as const;
 const myt = (): string => new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
 export const emptyLine = (rid: number): ApFormLine => ({ rid, description: '', debitAccountCode: '', amountSen: 0 });
 export const emptyApForm = (): ApFormValues => ({ supplierId: '', supplierRef: '', invoiceDate: myt(), dueDate: '', description: '', lines: [emptyLine(1)] });
@@ -297,7 +297,7 @@ export const ApInvoiceForm = ({
         <tfoot>
           <tr style={{ borderTop: '1px solid var(--border-weak, #e3e1da)' }}>
             <td colSpan={2} style={td}>
-              <Button variant="ghost" size="sm" onClick={() => addLine(true)}><Plus {...ICON} /> Line</Button>
+              <AddLineButton variant="ghost" onClick={() => addLine(true)} />
               <span style={{ ...soft, marginLeft: 'var(--space-3)' }}>Insert adds a line · Enter on an amount moves down</span>
             </td>
             <td style={{ ...td, ...right, fontWeight: 700, color: belowPaid ? 'var(--c-festive-b, #B8331F)' : undefined }}>Total {fmtSen(total)}</td>
