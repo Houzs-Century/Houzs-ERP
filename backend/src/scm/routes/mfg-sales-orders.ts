@@ -5242,7 +5242,8 @@ export const patchMfgSalesOrderStatusHandler = async (c: any) => {
      cancel-credit block above. */
   if (fromNorm === 'CANCELLED' && toStatus !== 'CANCELLED') {
     try {
-      const { data: so } = await scopeToCompanyId(sb.from('mfg_sales_orders').select('debtor_code, debtor_name'), co.companyId).eq('doc_no', docNo).maybeSingle();
+      const { data: so, error: soErr } = await scopeToCompanyId(sb.from('mfg_sales_orders').select('debtor_code, debtor_name'), co.companyId).eq('doc_no', docNo).maybeSingle();
+      if (soErr) throw new Error(soErr.message);
       const s = so as { debtor_code: string | null; debtor_name: string | null } | null;
       if (s?.debtor_code) {
         await reverseCancelledSoCredit(sb, {
