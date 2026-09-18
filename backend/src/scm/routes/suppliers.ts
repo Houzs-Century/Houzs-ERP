@@ -975,6 +975,29 @@ suppliers.delete('/:id/bindings/:bindingId', async (c) => {
      bindingId from another company deletes nothing and returns not-found. */
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
+  /* A USED BINDING IS NOT DELETABLE (owner 2026-09-18). purchase_order_items is
+     the only table that references a binding (binding_id, ON DELETE SET NULL), so
+     a hard delete would silently null the "which supplier binding this line came
+     from" link on real purchase orders. Refuse instead — only an UNUSED binding
+     may be removed (the case this affordance is for: clearing junk RM0 bindings
+     never ordered against). binding_id is a company-unique UUID, so a hit is this
+     company's own PO line; no separate company predicate is needed to read it.
+     Error is bound and branched (swallowed-reads): a failed check must not let a
+     used binding through. */
+  {
+    const { data: usedBy, error: usedErr } = await supabase
+      .from('purchase_order_items')
+      .select('id')
+      .eq('binding_id', bindingId)
+      .limit(1);
+    if (usedErr) return c.json({ error: 'binding_use_check_failed', reason: usedErr.message }, 500);
+    if (usedBy && usedBy.length > 0) {
+      return c.json({
+        error: 'binding_in_use',
+        reason: "This supplier binding has been used on a purchase order, so it can't be removed. It stays as the record of what was ordered.",
+      }, 409);
+    }
+  }
   const { data, error } = await scopeToCompanyId(supabase.from('supplier_material_bindings').delete().eq('id', bindingId), co.companyId).select('id, item_code').maybeSingle();
   if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
   if (!data) return c.json(NOT_THIS_COMPANY, 404);

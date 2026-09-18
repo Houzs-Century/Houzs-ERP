@@ -95,6 +95,7 @@ import { CostAnchorCard } from './CostAnchorCard';
 import { ProductPriceTimeline } from './ProductPriceTimeline';
 import { SkuHistoryTabs } from './SkuHistoryTabs';
 import { AddSupplierBinding } from './AddSupplierBinding';
+import { DeleteBindingButton } from './DeleteBindingButton';
 import { ImportModelsMoved } from '../../vendor/scm/components/ImportModelsMoved';
 import { MFG_CATEGORY_LABELS, MFG_PRODUCT_CATEGORIES } from '../../vendor/shared/product-categories';
 import { useStaffLookup } from '../../hooks/useStaffLookup';
@@ -3915,6 +3916,7 @@ const ProductSuppliersDrawer = ({
                   <th style={{ textAlign: 'right', whiteSpace: 'nowrap', width: '1%' }}>Unit Price</th>
                   <th style={{ textAlign: 'right', whiteSpace: 'nowrap', width: '1%' }}>Lead</th>
                   <th style={{ textAlign: 'right', whiteSpace: 'nowrap', width: '1%' }}>MOQ</th>
+                  <th style={{ width: 32 }} aria-label="Remove"></th>
                 </tr>
               </thead>
               <tbody>
@@ -3945,6 +3947,13 @@ const ProductSuppliersDrawer = ({
                     </td>
                     <td className={styles.numCell} style={{ whiteSpace: 'nowrap' }}>{s.lead_time_days || '—'}</td>
                     <td className={styles.numCell} style={{ whiteSpace: 'nowrap' }}>{s.moq || '—'}</td>
+                    <td style={{ textAlign: 'center' }}>
+                      <DeleteBindingButton
+                        supplierId={s.supplier_id}
+                        bindingId={s.id}
+                        supplierName={s.suppliers?.name ?? s.supplier_id}
+                      />
+                    </td>
                   </tr>
                 ))}
               </tbody>

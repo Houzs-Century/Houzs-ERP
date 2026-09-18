@@ -34,6 +34,7 @@ import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import styles from './Suppliers.module.css';
 import { PageHeader } from '../../components/Layout';
+import { NumberInput } from '../../vendor/scm/components/NumberInput';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -172,13 +173,14 @@ export const DeliveryPlanningRegions = ({ embedded = false }: { embedded?: boole
       accessor: (r) => {
         const buf = edits[r.id] ?? {};
         return (
-          <input
-            type="number"
+          <NumberInput
+            sign="unsigned"
+            decimal={false}
             className={styles.fieldInput}
             style={{ textAlign: 'right' }}
-            value={String(buf.sortOrder ?? sortOrderOf(r))}
+            value={buf.sortOrder ?? sortOrderOf(r)}
             onClick={(e) => e.stopPropagation()}
-            onChange={(e) => setEdits((s) => ({ ...s, [r.id]: { ...s[r.id], sortOrder: Number(e.target.value) } }))}
+            onValueChange={(n) => setEdits((s) => ({ ...s, [r.id]: { ...s[r.id], sortOrder: n ?? 0 } }))}
             onBlur={() => commitRow(r)}
             onKeyDown={(e) => { if (e.key === 'Enter') commitRow(r); }}
           />

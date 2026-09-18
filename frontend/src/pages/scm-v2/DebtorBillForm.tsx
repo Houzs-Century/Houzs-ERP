@@ -9,8 +9,9 @@
 // ----------------------------------------------------------------------------
 
 import { useEffect, useRef, useState } from 'react';
-import { Plus, X } from 'lucide-react';
+import { X } from 'lucide-react';
 import { Button } from '@2990s/design-system';
+import { AddLineButton } from '../../vendor/scm/components/AddLineButton';
 import type { Account } from '../../vendor/scm/lib/accounting-queries';
 import { AccountSelect } from '../../vendor/scm/components/AccountSelect';
 import { useSaveHotkey, SAVE_HOTKEY_HINT } from '../../vendor/scm/lib/use-save-hotkey';
@@ -24,7 +25,6 @@ export type BillFormValues = { billDate: string; notes: string; lines: BillFormL
 export type BillFormMode = 'new' | 'edit' | 'copy';
 export type BillFormSubmit = { billDate: string; notes?: string; lines: Array<{ description?: string; creditAccountCode: string; amountSen: number }> };
 
-const ICON = { size: 16, strokeWidth: 1.75 } as const;
 const myt = (): string => new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
 export const emptyBillLine = (rid: number): BillFormLine => ({ rid, description: '', creditAccountCode: '', amountSen: 0 });
 export const emptyBillForm = (): BillFormValues => ({ billDate: myt(), notes: '', lines: [emptyBillLine(1)] });
@@ -149,7 +149,7 @@ export const DebtorBillForm = ({ mode, initial, accounts, receivedSen = 0, savin
         <tfoot>
           <tr style={{ borderTop: '1px solid var(--border-weak, #e3e1da)' }}>
             <td colSpan={2} style={td}>
-              <Button variant="ghost" size="sm" onClick={() => addLine(true)}><Plus {...ICON} /> Line</Button>
+              <AddLineButton variant="ghost" onClick={() => addLine(true)} />
               <span style={{ ...soft, marginLeft: 'var(--space-3)' }}>Insert adds a line · Enter on an amount moves down</span>
             </td>
             <td style={{ ...td, ...right, fontWeight: 700, color: belowReceived ? 'var(--c-festive-b, #B8331F)' : undefined }}>Total {fmtSen(total)}</td>

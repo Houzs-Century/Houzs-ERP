@@ -38,6 +38,7 @@ import { useFabricTrackings } from '../../vendor/scm/lib/fabric-queries';
 import { PcVariantEditor } from '../../vendor/scm/components/PcVariantEditor';
 import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
+import { NumberInput } from '../../vendor/scm/components/NumberInput';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
 import styles from './SalesOrderDetail.module.css';
@@ -537,8 +538,8 @@ export const PurchaseConsignmentReturnNew = () => {
                   <div className={styles.formGrid4}>
                     <label className={styles.field}>
                       <span className={styles.fieldLabel}>Qty Returned</span>
-                      <input type="number" min={0} value={l.qtyReturned}
-                        onChange={(e) => setLine(l.rid, { qtyReturned: Math.max(0, Number(e.target.value) || 0) })}
+                      <NumberInput value={l.qtyReturned} sign="unsigned" decimal={false}
+                        onValueChange={(n) => setLine(l.rid, { qtyReturned: Math.max(0, n ?? 0) })}
                         className={styles.fieldInput} style={{ textAlign: 'right' }} />
                     </label>
                     <label className={styles.field}>

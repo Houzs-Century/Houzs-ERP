@@ -25,6 +25,7 @@ import { ArrowLeft, ImagePlus, Save, Store, Trash2, Wand2, X, Power, PowerOff } 
 import { LazySlot } from '../../components/LazySlot';
 import { Button } from '../../components/Button';
 import { PageHeader } from '../../components/Layout';
+import { NumberInput } from '../../vendor/scm/components/NumberInput';
 import { maintActiveValues, fmtSen } from '@2990s/shared';
 import {
   useProductModel, useUpdateProductModel, useDeleteProductModel, useGenerateModelSkus,
@@ -616,20 +617,17 @@ export const ProductModelDetail = ({
             <div className={styles.optHead}>
               <span className="t-eyebrow">Mattress thickness (cm)</span>
             </div>
-            <input
-              type="number"
-              min={0}
-              max={99}
-              step={1}
+            <NumberInput
+              sign="unsigned"
+              decimal={false}
               value={
                 typeof (allowed as { mattress_thickness_cm?: number }).mattress_thickness_cm === 'number'
                   ? (allowed as { mattress_thickness_cm: number }).mattress_thickness_cm
-                  : ''
+                  : null
               }
-              onChange={(e) => {
-                const v = e.target.value === '' ? null : Number(e.target.value);
+              onValueChange={(v) => {
                 const next: AllowedOptions = { ...allowed };
-                if (v == null || Number.isNaN(v)) {
+                if (v == null) {
                   delete (next as { mattress_thickness_cm?: number }).mattress_thickness_cm;
                 } else {
                   (next as { mattress_thickness_cm: number }).mattress_thickness_cm = v;

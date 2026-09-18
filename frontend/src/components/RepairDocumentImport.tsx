@@ -31,6 +31,7 @@ import { Button } from "./Button";
 import { api } from "../api/client";
 import { cn } from "../lib/utils";
 import { DateField } from "../vendor/scm/components/DateField";
+import { NumberInput } from "../vendor/scm/components/NumberInput";
 
 const FIELD = "w-full rounded-md border border-border bg-surface px-2.5 py-1.5 text-[12px] text-ink focus:border-primary focus:outline-none";
 const LABEL = "mb-1 block text-[10px] font-semibold uppercase tracking-brand text-ink-muted";
@@ -473,7 +474,7 @@ export function RepairDocumentImport({ vehicleId, plate, onDone, onCancel }: {
                       <input className={cn(FIELD, "w-[70px]")} value={r.uom ?? ""} onChange={(e) => setRow(i, { uom: e.target.value.toUpperCase() || null })} />
                     </td>
                     <td className="px-2 py-1">
-                      <input type="number" step="0.01" className={cn(FIELD, "w-[76px] text-right")} value={r.qty ?? ""} onChange={(e) => setRow(i, { qty: e.target.value === "" ? null : Number(e.target.value) })} />
+                      <NumberInput sign="unsigned" decimal className={cn(FIELD, "w-[76px] text-right")} value={r.qty ?? null} onValueChange={(n) => setRow(i, { qty: n })} />
                     </td>
                     <td className="px-2 py-1">
                       <input type="number" step="0.01" className={cn(FIELD, "w-[96px] text-right")}
@@ -481,9 +482,9 @@ export function RepairDocumentImport({ vehicleId, plate, onDone, onCancel }: {
                         onChange={(e) => setRow(i, { unitPriceSen: e.target.value === "" ? null : Math.round(Number(e.target.value) * 100) })} />
                     </td>
                     <td className="px-2 py-1">
-                      <input type="number" step="0.01" min="0" max="100" className={cn(FIELD, "w-[72px] text-right")}
-                        value={r.discountPct ?? ""}
-                        onChange={(e) => setRow(i, { discountPct: e.target.value === "" ? null : Number(e.target.value) })} />
+                      <NumberInput sign="unsigned" decimal className={cn(FIELD, "w-[72px] text-right")}
+                        value={r.discountPct ?? null}
+                        onValueChange={(n) => setRow(i, { discountPct: n })} />
                     </td>
                     <td className="px-2 py-1 text-right font-medium tabular-nums text-ink">{money(r.lineSen)}</td>
                   </tr>

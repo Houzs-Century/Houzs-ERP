@@ -34,6 +34,7 @@ import { useAccounts, useAccountRoles, useSaveBankDefault } from '../../vendor/s
 import { useBankRules, useSaveBankRule, useCreateBankRule, useBankConfigs, useSaveBankConfig, type BankRule, type BankConfig } from './bank-queries';
 import { useVoucherNumbering, useSaveVoucherNumbering } from './accounting-phase1-queries';
 import css from './SettlementSetup.module.css';
+import { NumberInput } from '../../vendor/scm/components/NumberInput';
 import { PageHeader } from '../../components/Layout';
 
 export const SettlementSetup = () => {
@@ -314,8 +315,12 @@ const BankRulesCard = () => {
                     </select>
                   </td>
                   <td style={{ padding: '4px 8px' }}>
-                    <input type="number" value={v.sort_order}
-                      onChange={(e) => edit(r.id, { sort_order: Number(e.target.value) })}
+                    <NumberInput
+                      aria-label={`Order for ${r.acquirer_code} rule ${r.id}`}
+                      value={v.sort_order}
+                      sign="unsigned"
+                      decimal={false}
+                      onValueChange={(n) => edit(r.id, { sort_order: n ?? 0 })}
                       style={{ width: 64, fontSize: 'var(--fs-12)', padding: '4px 6px' }} />
                   </td>
                   <td style={{ padding: '4px 8px', textAlign: 'center' }}>

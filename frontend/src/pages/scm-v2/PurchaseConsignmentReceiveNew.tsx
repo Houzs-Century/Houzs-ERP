@@ -24,7 +24,8 @@ import { transferFromLabel } from '../../lib/convertScope';
 import { todayMyt } from '../../vendor/scm/lib/dates';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowRightLeft, ListChecks, Plus, Save, Trash2, X, ChevronDown } from 'lucide-react';
+import { ArrowRightLeft, ListChecks, Save, Trash2, X, ChevronDown } from 'lucide-react';
+import { AddLineButton } from '../../vendor/scm/components/AddLineButton';
 import { Button } from '@2990s/design-system';
 import { buildVariantSummary, fmtDateOrDash } from '@2990s/shared';
 import {
@@ -815,19 +816,7 @@ export const PurchaseConsignmentReceiveNew = () => {
               >
                 <ListChecks {...ICON} /> Pick items (multi-select)
               </button>
-              <button
-                type="button"
-                onClick={addEmptyManualLine}
-                style={{
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-                  flex: 1, padding: '12px 14px',
-                  border: '1px dashed var(--c-orange)', borderRadius: 'var(--radius-md)',
-                  background: 'transparent', color: 'var(--c-orange)',
-                  fontFamily: 'var(--font-sans)', fontSize: 'var(--fs-13)', fontWeight: 600, cursor: 'pointer',
-                }}
-              >
-                <Plus {...ICON} /> Add another item
-              </button>
+              <AddLineButton variant="ghost" onClick={addEmptyManualLine} />
             </div>
           )}
         </div>

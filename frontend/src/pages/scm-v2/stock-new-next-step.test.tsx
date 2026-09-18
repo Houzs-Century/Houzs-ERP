@@ -98,7 +98,9 @@ describe('StockTransferNew — the next step after Post', () => {
     fireEvent.change(screen.getByPlaceholderText('Type code…'), { target: { value: 'CH-1' } });
     const bucket = document.querySelector('tbody select') as HTMLSelectElement;
     fireEvent.change(bucket, { target: { value: '' } });
-    fireEvent.change(document.querySelector('tbody input[type="number"]') as HTMLInputElement, { target: { value: qty } });
+    const qtyInput = document.querySelector('tbody input[aria-label^="Qty for"]') as HTMLInputElement;
+    fireEvent.focus(qtyInput);
+    fireEvent.change(qtyInput, { target: { value: qty } });
     fireEvent.click(screen.getByRole('button', { name: /Post Transfer/ }));
   };
 
@@ -156,7 +158,9 @@ describe('StockAdjustmentNew — the next step after Save', () => {
   const fillAndSave = (qty: string) => {
     fireEvent.change(select(/^Warehouse \*/), { target: { value: 'w1' } });
     fireEvent.change(screen.getByPlaceholderText('Type or pick a SKU code…'), { target: { value: 'CH-1' } });
-    fireEvent.change(document.querySelector('tbody input[type="number"]') as HTMLInputElement, { target: { value: qty } });
+    const qtyInput = document.querySelector('tbody input[aria-label^="Qty for"]') as HTMLInputElement;
+    fireEvent.focus(qtyInput);
+    fireEvent.change(qtyInput, { target: { value: qty } });
     fireEvent.change(screen.getByLabelText(/Reason for/) as HTMLSelectElement, { target: { value: 'FOUND' } });
     fireEvent.click(screen.getByRole('button', { name: /Save Adjustment/ }));
   };
