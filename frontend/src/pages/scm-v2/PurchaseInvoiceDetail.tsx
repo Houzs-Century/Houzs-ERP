@@ -456,6 +456,12 @@ export const PurchaseInvoiceDetail = () => {
     () => new Set(editLines.map((l) => l.grnItemId).filter((x): x is string => Boolean(x))),
     [editLines],
   );
+  // Owner 2026-09-18: the picker should only offer a GRN line whose item code
+  // is already one of this PI's own lines — never a brand-new item.
+  const piItemCodes = useMemo(
+    () => new Set(editLines.map((l) => l.itemCode).filter((x): x is string => Boolean(x))),
+    [editLines],
+  );
   const addGrnLines = (picked: Array<{ it: OutstandingGrnItem; qty: number }>) => {
     setEditLines((prev) => [...prev, ...picked.map(({ it, qty }) => grnItemToEditLine(it, qty))]);
     setShowGrnPicker(false);
@@ -619,6 +625,18 @@ export const PurchaseInvoiceDetail = () => {
               <span>{cancel.isPending ? 'Cancelling…' : 'Cancel'}</span>
             </Button>
           )}
+          {/* "Transfer from GRN" — mirrors AutoCount's own PI ribbon button.
+              Pulls more outstanding lines from this supplier's goods-received
+              notes onto this SAME saved invoice. Beside Save/Edit, not down in
+              the Line Items header, since it's a document-level action like
+              Cancel/Print, not a per-line one like "+ Add item". */}
+          {isEditing && !isLocked && (
+            <Button variant="ghost" size="md" onClick={() => setShowGrnPicker(true)} disabled={!piSupplierId}
+              title={piSupplierId ? undefined : 'Pick a supplier first'}>
+              <PackageCheck {...ICON} />
+              <span>Transfer from GRN</span>
+            </Button>
+          )}
           {/* View → Edit gate. Default View shows Edit (disabled while locked);
               editing flips into draft mode and the button becomes the single
               "Save" that commits the whole draft. Back (top-left) discards. */}
@@ -693,21 +711,13 @@ export const PurchaseInvoiceDetail = () => {
           <h2 className={styles.cardTitle}>Line Items ({isEditing ? editLines.length : visibleItems.length})</h2>
           {/* T12 — Edit mode restores the Create UI: a "+ Add item" that appends a
               blank PoLineCard (PI is free-entry). Hidden while the PI is locked.
-              "Transfer from GRN" beside it mirrors AutoCount's own PI ribbon
-              button — pulls more outstanding lines from this supplier's
-              goods-received notes onto this SAME saved invoice. */}
+              "Transfer from GRN" sits in the top header toolbar beside Save,
+              not here — see the header actions block. */}
           {isEditing && !isLocked && (
-            <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
-              <Button variant="ghost" size="sm" onClick={() => setShowGrnPicker(true)} disabled={!piSupplierId}
-                title={piSupplierId ? undefined : 'Pick a supplier first'}>
-                <PackageCheck {...ICON} />
-                <span>Transfer from GRN</span>
-              </Button>
-              <Button variant="primary" size="sm" onClick={startAddLine}>
-                <Plus {...ICON} />
-                <span>{ADD_LINE_LABEL}</span>
-              </Button>
-            </div>
+            <Button variant="primary" size="sm" onClick={startAddLine}>
+              <Plus {...ICON} />
+              <span>{ADD_LINE_LABEL}</span>
+            </Button>
           )}
         </header>
 
@@ -842,6 +852,7 @@ export const PurchaseInvoiceDetail = () => {
         <GrnLinePickerModal
           supplierId={piSupplierId}
           currency={pi.currency}
+          matchItemCodes={piItemCodes}
           excludeGrnItemIds={linkedGrnItemIds}
           onAdd={addGrnLines}
           onClose={() => setShowGrnPicker(false)}
@@ -1032,15 +1043,22 @@ function InfoCell({ label, value }: { label: string; value: string | null | unde
    GrnLinePickerModal — "Transfer from GRN" on an already-saved PI. Same data
    source as the create-time picker (PurchaseInvoiceFromGrn.tsx), locked to
    THIS invoice's supplier + currency instead of letting the operator pick
-   any — a saved PI already has both fixed. Picks are handed straight to the
-   caller's editLines (addGrnLines above), not stashed through a handoff.
+   any — a saved PI already has both fixed. Owner 2026-09-18: also locked to
+   THIS invoice's own item codes — a line for a SKU the invoice doesn't
+   already carry never shows, even if it's outstanding for the supplier.
+   Picks are handed straight to the caller's editLines (addGrnLines above),
+   not stashed through a handoff.
    ════════════════════════════════════════════════════════════════════════ */
 
 const GrnLinePickerModal = ({
-  supplierId, currency, excludeGrnItemIds, onAdd, onClose,
+  supplierId, currency, matchItemCodes, excludeGrnItemIds, onAdd, onClose,
 }: {
   supplierId: string;
   currency: string;
+  /** Owner 2026-09-18: only offer a GRN line whose item code is already one
+      of this PI's own lines — never a brand-new item the invoice doesn't
+      already carry. */
+  matchItemCodes: Set<string>;
   /** GRN lines already on this invoice (persisted or picked this session) —
       hidden so the same line can't be added twice. */
   excludeGrnItemIds: Set<string>;
@@ -1055,8 +1073,9 @@ const GrnLinePickerModal = ({
     () => (itemsQ.data?.items ?? [])
       .filter((it) => it.supplierId === supplierId)
       .filter((it) => (it.currency ?? 'MYR') === (currency || 'MYR'))
+      .filter((it) => matchItemCodes.has(it.itemCode))
       .filter((it) => !excludeGrnItemIds.has(it.grnItemId)),
-    [itemsQ.data, supplierId, currency, excludeGrnItemIds],
+    [itemsQ.data, supplierId, currency, matchItemCodes, excludeGrnItemIds],
   );
   const visible = useMemo(() => filterOutstandingGrnLines(items, query), [items, query]);
 
@@ -1117,8 +1136,8 @@ const GrnLinePickerModal = ({
             </p>
           ) : visible.length === 0 ? (
             <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-13)' }}>
-              No outstanding GRN lines left to bill for this supplier
-              {currency ? ` in ${currency}` : ''}.
+              No outstanding GRN lines match an item already on this invoice
+              {currency ? ` for this supplier in ${currency}` : ''}.
             </p>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-1)' }}>
