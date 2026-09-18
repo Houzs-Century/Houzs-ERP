@@ -30,6 +30,12 @@ const MIGRATED = [
   'pages/scm-v2/ConsignmentReturnNew.tsx',
   'pages/scm-v2/StockTransferNew.tsx',
   'pages/scm-v2/StockAdjustmentNew.tsx',
+  'pages/scm-v2/PurchaseOrderNew.tsx',
+  'pages/scm-v2/GrnNew.tsx',
+  'pages/scm-v2/PurchaseInvoiceNew.tsx',
+  'pages/scm-v2/PurchaseConsignmentOrderNew.tsx',
+  'pages/scm-v2/PurchaseConsignmentReturnNew.tsx',
+  'pages/scm-v2/PurchaseReturnNew.tsx',
 ];
 
 // Strip comments so a WHY-comment mentioning the old wording never trips the scan.
@@ -46,10 +52,13 @@ describe('add-line shell — migrated forms keep the shared chrome', () => {
   it('no migrated form hand-rolls its own dashed add-line button any more', () => {
     for (const f of MIGRATED) {
       const src = stripComments(read(f));
-      // The bespoke shape these forms used before the shell: an inline dashed
-      // orange button labelled "Add Line Item".
-      expect(src, f).not.toMatch(/border:\s*'1px dashed var\(--c-orange\)'[\s\S]{0,200}Add Line Item/);
-      expect(src, f).not.toMatch(/>\s*Add Line Item\s*</);
+      // The bespoke shape every one of these forms used before the shell was an
+      // inline dashed-orange add button (labelled "Add Line Item" or "Add
+      // another item"). The dashed style now lives ONLY in AddLineButton's CSS
+      // module, so no migrated form should carry it inline any more —
+      // label-agnostic, so it also catches a revert to the old wording.
+      expect(src, f).not.toMatch(/1px dashed var\(--c-orange\)/);
+      expect(src, f).not.toMatch(/>\s*Add (Line Item|another item)\s*</);
     }
   });
 });

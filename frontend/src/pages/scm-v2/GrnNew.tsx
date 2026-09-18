@@ -29,7 +29,8 @@
 import { todayMyt } from '../../vendor/scm/lib/dates';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Plus, Save, Trash2, X, ArrowRightLeft, ChevronDown } from 'lucide-react';
+import { Save, Trash2, X, ArrowRightLeft, ChevronDown } from 'lucide-react';
+import { AddLineButton } from '../../vendor/scm/components/AddLineButton';
 import { Button } from '@2990s/design-system';
 import { formatPhone } from '@2990s/shared/phone';
 import { activeOptions, buildVariantSummary, fmtDateOrDash, isServiceLine, maintPickerValues } from '@2990s/shared';
@@ -1007,7 +1008,7 @@ export const GrnNew = () => {
           {lines.length === 0 ? (
             <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-13)', padding: 'var(--space-3) 0' }}>
               {isManual
-                ? 'Pick a supplier in the header, then use “Add another item” below to receive items by hand. Receiving against a PO? Pick one in the header, or use '
+                ? 'Pick a supplier in the header, then use “Add line” below to receive items by hand. Receiving against a PO? Pick one in the header, or use '
                 : 'Choose a Purchase Order in the header to receive against it. Receiving lines from several POs at once? Use '}
               <button type="button" onClick={goToFromPo} style={{ background: 'none', border: 'none', color: 'var(--c-orange)', cursor: 'pointer', padding: 0, font: 'inherit' }}>From Purchase Order</button>.
             </p>
@@ -1382,28 +1383,7 @@ export const GrnNew = () => {
               now (owner 2026-09-10): manual, from-PO-picks, and single-PO, so an
               item the PO never ordered can be received in the same create step. */}
           {canAddManualLine && (
-            <button
-              type="button"
-              onClick={addEmptyManualLine}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 6,
-                width: '100%',
-                padding: '12px 14px',
-                border: '1px dashed var(--c-orange)',
-                borderRadius: 'var(--radius-md)',
-                background: 'transparent',
-                color: 'var(--c-orange)',
-                fontFamily: 'var(--font-sans)',
-                fontSize: 'var(--fs-13)',
-                fontWeight: 600,
-                cursor: 'pointer',
-              }}
-            >
-              <Plus {...ICON} /> Add another item
-            </button>
+            <AddLineButton variant="block" onClick={addEmptyManualLine} />
           )}
 
         </div>
