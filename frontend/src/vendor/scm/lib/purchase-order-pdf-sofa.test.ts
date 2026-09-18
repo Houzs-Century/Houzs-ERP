@@ -13,6 +13,11 @@ import { describe, expect, it } from 'vitest';
 import { writeFileSync } from 'node:fs';
 import { purchaseOrderPdfBase64 } from './purchase-order-pdf';
 
+/* One cast for every test's line array, instead of one per call site: the
+   generator takes the rich PoItem[]; these fixtures carry only the fields each
+   case exercises. Kept to a single `as never` so the eslint ratchet stays low. */
+const asItems = (rows: unknown[]) => rows as never;
+
 const header = {
   po_number: '2990-PO-TEST-001',
   supplier_id: null,
@@ -53,7 +58,7 @@ describe('purchase-order-pdf sofa layout (reinstated 2026-07-27)', () => {
   it('draws the orientation schematic for a geometry-less sofa PO', async () => {
     const b64 = await purchaseOrderPdfBase64(
       header,
-      [sofaLine('2A(LHF)'), sofaLine('L(RHF)')] as never,
+      asItems([sofaLine('2A(LHF)'), sofaLine('L(RHF)')]),
     );
     const pdf = Buffer.from(b64, 'base64');
     const raw = pdf.toString('latin1');
@@ -96,7 +101,7 @@ describe('purchase-order-pdf sofa layout (reinstated 2026-07-27)', () => {
     });
     const b64 = await purchaseOrderPdfBase64(
       header,
-      [geoLine('L(LHF)', 0, 0), geoLine('1NA', 95, 1), geoLine('1A(P)(RHF)', 170, 2)] as never,
+      asItems([geoLine('L(LHF)', 0, 0), geoLine('1NA', 95, 1), geoLine('1A(P)(RHF)', 170, 2)]),
     );
     const raw = Buffer.from(b64, 'base64').toString('latin1');
     expect(raw).toContain('Sofa layout');
@@ -107,7 +112,7 @@ describe('purchase-order-pdf sofa layout (reinstated 2026-07-27)', () => {
   });
 
   it('draws nothing sofa-shaped for a non-sofa PO', async () => {
-    const b64 = await purchaseOrderPdfBase64(header, [{
+    const b64 = await purchaseOrderPdfBase64(header, asItems([{
       item_code: 'ANGGN-FIRM-K',
       material_name: '2990 ANGGN-FIRM MATTRESS (183X190X35CM)',
       supplier_sku: 'NF-ANGGN-K',
@@ -118,7 +123,7 @@ describe('purchase-order-pdf sofa layout (reinstated 2026-07-27)', () => {
       item_group: 'mattress',
       so_doc_no: null,
       variants: {},
-    }] as never);
+    }]));
     const raw = Buffer.from(b64, 'base64').toString('latin1');
     expect(raw).not.toContain('Sofa layout');
   });
