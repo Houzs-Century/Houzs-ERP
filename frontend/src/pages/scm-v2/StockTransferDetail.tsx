@@ -219,6 +219,12 @@ export const StockTransferDetail = () => {
     setAvailByLine((m) => (m[key] === avail ? m : { ...m, [key]: avail }));
   }, []);
 
+  // Snapshot of what the SERVER last said each line was, keyed by the fresh
+  // _key minted at hydrate — used only to detect whether the user actually
+  // touched SKU/variant/qty, so Save can skip the reverse+reapply movement
+  // dance for a plain "fix the note" edit (see `linesChanged` below).
+  const [originalLines, setOriginalLines] = useState<Record<string, { itemCode: string; variantKey: string | undefined; qty: number }>>({});
+
   const hydrateFromServer = useCallback(() => {
     if (!detail.data) return;
     const t = detail.data.transfer;
@@ -226,7 +232,7 @@ export const StockTransferDetail = () => {
     setToWarehouseId(t.to_warehouse_id);
     setTransferDate(t.transfer_date);
     setNotes(t.notes ?? '');
-    setLines(detail.data.lines.map((l) => ({
+    const hydrated = detail.data.lines.map((l) => ({
       _key:        newKey(),
       id:          l.id,
       itemCode:    l.item_code,
@@ -234,7 +240,11 @@ export const StockTransferDetail = () => {
       variantKey:  l.variant_key ?? '',
       qty:         l.qty,
       notes:       l.notes ?? '',
-    })));
+    }));
+    setLines(hydrated);
+    setOriginalLines(Object.fromEntries(hydrated.map((l) => [l._key, {
+      itemCode: l.itemCode, variantKey: l.variantKey, qty: l.qty,
+    }])));
     setAvailByLine({});
   }, [detail.data]);
 
@@ -272,12 +282,26 @@ export const StockTransferDetail = () => {
     return avail != null && l.qty > avail;
   });
 
+  // Only send `items` when a line's SKU/variant/qty actually changed — a
+  // plain header-Notes edit must NOT trigger the reverse+reapply dance (it
+  // has nothing to reverse for). Line NOTES changes ride along with items
+  // (the backend's only path for line-level notes is the full replace), so a
+  // line-notes-only edit still needs `items` sent — but that only fires while
+  // itemsEditable (POSTED), matching what the backend accepts.
+  const linesChanged = itemsEditable && lines.some((l) => {
+    // originalLines is populated for every _key at the same hydrate that
+    // creates `lines` (hydrateFromServer), so a miss here can't happen.
+    const o = originalLines[l._key]!;
+    return o.itemCode !== l.itemCode || o.variantKey !== l.variantKey || o.qty !== l.qty
+      || (l.notes ?? '') !== (detail.data?.lines.find((sl) => sl.id === l.id)?.notes ?? '');
+  });
+
   const onSave = () => {
     if (!id) return;
     updateNotes.mutate({
       id,
       notes,
-      ...(itemsEditable ? {
+      ...(linesChanged ? {
         items: lines.map((l) => ({
           itemCode: l.itemCode, productName: l.productName,
           variantKey: l.variantKey, qty: l.qty, notes: l.notes,
@@ -520,18 +544,14 @@ export const StockTransferDetail = () => {
                       </td>
                       {/* "Description 2": the Remarks typed on this line at
                           creation (StockTransferNew's per-line Remarks
-                          column) — editable text-only while `editing`, on any
-                          status, via the same PATCH /:id that touches the
-                          header notes. */}
+                          column). This read-only branch only renders while
+                          !itemsEditable (i.e. not POSTED) — the backend's
+                          only path for a line note is the `items` replace,
+                          which it refuses on a non-POSTED transfer, so this
+                          stays plain text here rather than an input that
+                          would silently discard whatever was typed into it. */}
                       <td>
-                        {editing ? (
-                          <input
-                            type="text"
-                            value={ln.notes ?? ''}
-                            onChange={(e) => setLine(ln._key, { notes: e.target.value })}
-                            className={styles.fieldInput}
-                          />
-                        ) : ln.notes?.trim()
+                        {ln.notes?.trim()
                           ? <span>{ln.notes}</span>
                           : <span className={styles.muted}>—</span>}
                       </td>

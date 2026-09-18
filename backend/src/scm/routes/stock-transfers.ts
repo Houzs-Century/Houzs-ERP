@@ -226,52 +226,64 @@ stockTransfers.patch('/:id', async (c) => {
   ), { entityType: 'STOCK_TRANSFER', entityId: id, action: 'UPDATE', companyId: before.company_id });
   if (!pf.ok) return c.json(auditUnavailableBody(), 409);
 
-  let oldLineRows: Array<{ item_code: string; variant_key: string | null; qty: number }> = [];
+  let oldLineRows: Array<{ id: string; item_code: string; variant_key: string | null; qty: number }> = [];
+  // Same (item_code, variant_key, qty) in the same order as before → nothing
+  // that moves stock actually changed (only notes/productName did, or
+  // nothing at all). Computed below, once oldLineRows is loaded.
+  let sameBuckets = false;
   if (itemsInput) {
     const { data: oldLines } = await db
       .from('stock_transfer_lines', CENTRALISED(
         'the header read above already proved this transfer is this company\'s — its own lines are that document\'s by construction',
       ))
-      .select('item_code, variant_key, qty')
-      .eq('stock_transfer_id', id);
+      .select('id, item_code, variant_key, qty')
+      .eq('stock_transfer_id', id)
+      .order('created_at');
     oldLineRows = (oldLines ?? []) as typeof oldLineRows;
 
-    // Sum qty per (item_code, variant_key) bucket, old vs new — reversal
-    // restores exactly the old-bucket amount to the source warehouse.
-    const bucketKey = (itemCode: string, variantKey: string | null) => `${itemCode}::${variantKey ?? ''}`;
-    const oldByBucket = new Map<string, number>();
-    for (const l of oldLineRows) {
-      const k = bucketKey(l.item_code, l.variant_key);
-      oldByBucket.set(k, (oldByBucket.get(k) ?? 0) + Number(l.qty));
-    }
-    const newByBucket = new Map<string, number>();
-    for (const l of newLineRows) {
-      const k = bucketKey(l.item_code, l.variant_key);
-      newByBucket.set(k, (newByBucket.get(k) ?? 0) + l.qty);
-    }
+    sameBuckets = oldLineRows.length === newLineRows.length && oldLineRows.every((o, i) =>
+      o.item_code === newLineRows[i]!.item_code
+      && (o.variant_key ?? '') === newLineRows[i]!.variant_key
+      && Number(o.qty) === newLineRows[i]!.qty);
 
-    const shortages: Array<{ itemCode: string; variantKey: string; requested: number; available: number }> = [];
-    for (const [k, requested] of newByBucket.entries()) {
-      const [itemCode, variantKey] = k.split('::');
-      const { data: lots, error: lotsErr } = await db
-        .from('v_inventory_lots_open', companyScope(c))
-        .select('qty_remaining')
-        .eq('warehouse_id', before.from_warehouse_id)
-        .eq('item_code', itemCode)
-        .eq('variant_key', variantKey);
-      if (lotsErr) return c.json({ error: 'stock_check_failed', reason: lotsErr.message }, 500);
-      const currentOpen = (lots ?? []).reduce((s: number, r: { qty_remaining: number | null }) => s + Number(r.qty_remaining ?? 0), 0);
-      const available = currentOpen + (oldByBucket.get(k) ?? 0);
-      if (requested > available) shortages.push({ itemCode: itemCode!, variantKey: variantKey ?? '', requested, available });
-    }
-    if (shortages.length) {
-      // A per-document, per-SKU sentence — the generic curated 409 fallback
-      // ("refresh and check") gives the operator nothing to act on; this names
-      // exactly which line and by how much (humanApiError prefers `message`).
-      const message = shortages
-        .map((s) => `${s.itemCode}${s.variantKey ? ` (${s.variantKey})` : ''}: requested ${s.requested}, only ${s.available} available at the source warehouse`)
-        .join('; ');
-      return c.json({ error: 'insufficient_stock', message, shortages }, 409);
+    if (!sameBuckets) {
+      // Sum qty per (item_code, variant_key) bucket, old vs new — reversal
+      // restores exactly the old-bucket amount to the source warehouse.
+      const bucketKey = (itemCode: string, variantKey: string | null) => `${itemCode}::${variantKey ?? ''}`;
+      const oldByBucket = new Map<string, number>();
+      for (const l of oldLineRows) {
+        const k = bucketKey(l.item_code, l.variant_key);
+        oldByBucket.set(k, (oldByBucket.get(k) ?? 0) + Number(l.qty));
+      }
+      const newByBucket = new Map<string, number>();
+      for (const l of newLineRows) {
+        const k = bucketKey(l.item_code, l.variant_key);
+        newByBucket.set(k, (newByBucket.get(k) ?? 0) + l.qty);
+      }
+
+      const shortages: Array<{ itemCode: string; variantKey: string; requested: number; available: number }> = [];
+      for (const [k, requested] of newByBucket.entries()) {
+        const [itemCode, variantKey] = k.split('::');
+        const { data: lots, error: lotsErr } = await db
+          .from('v_inventory_lots_open', companyScope(c))
+          .select('qty_remaining')
+          .eq('warehouse_id', before.from_warehouse_id)
+          .eq('item_code', itemCode)
+          .eq('variant_key', variantKey);
+        if (lotsErr) return c.json({ error: 'stock_check_failed', reason: lotsErr.message }, 500);
+        const currentOpen = (lots ?? []).reduce((s: number, r: { qty_remaining: number | null }) => s + Number(r.qty_remaining ?? 0), 0);
+        const available = currentOpen + (oldByBucket.get(k) ?? 0);
+        if (requested > available) shortages.push({ itemCode: itemCode!, variantKey: variantKey ?? '', requested, available });
+      }
+      if (shortages.length) {
+        // A per-document, per-SKU sentence — the generic curated 409 fallback
+        // ("refresh and check") gives the operator nothing to act on; this names
+        // exactly which line and by how much (humanApiError prefers `message`).
+        const message = shortages
+          .map((s) => `${s.itemCode}${s.variantKey ? ` (${s.variantKey})` : ''}: requested ${s.requested}, only ${s.available} available at the source warehouse`)
+          .join('; ');
+        return c.json({ error: 'insufficient_stock', message, shortages }, 409);
+      }
     }
   }
 
@@ -284,7 +296,21 @@ stockTransfers.patch('/:id', async (c) => {
   }
 
   let movementErrors: string[] = [];
-  if (itemsInput) {
+  if (itemsInput && sameBuckets) {
+    // Nothing that moves stock changed — update each line's notes/display
+    // name IN PLACE (by id, same order), never touching movements. This is
+    // the common case for "fix a typo in the line remark" and must stay
+    // cheap and riskless, not run the reverse+reapply dance for no reason.
+    for (let i = 0; i < oldLineRows.length; i++) {
+      const { error } = await db
+        .from('stock_transfer_lines', CENTRALISED(
+          'the header read above already proved this transfer is this company\'s — updating its own line by id',
+        ))
+        .update({ product_name: newLineRows[i]!.product_name, notes: newLineRows[i]!.notes })
+        .eq('id', oldLineRows[i]!.id);
+      if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
+    }
+  } else if (itemsInput) {
     // Un-post: reverse every movement this transfer wrote (same idempotent,
     // bucket-net helper Cancel uses), then swap the lines and re-apply.
     const rev = await reverseMovements(db.unscoped(

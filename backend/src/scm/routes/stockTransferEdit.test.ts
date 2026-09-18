@@ -177,4 +177,35 @@ describe('PATCH stock-transfers/:id — item/qty/SKU replace', () => {
     expect(res.status).toBe(400);
     expect(lines('st-1')[0]!.qty).toBe(2);
   });
+
+  // Same (item_code, variant_key, qty) as before — only notes/display name
+  // differ. Must NOT go through reverse+delete+insert+reapply (that would
+  // needlessly touch inventory_movements for a line that never moved
+  // differently, and would mint a NEW line id, silently orphaning anything
+  // keyed on the old one). Asserted by the line id staying put.
+  it('a same-bucket items edit (notes only) updates in place — no reverse/reapply, id unchanged', async () => {
+    sb = makeSb();
+    const res = await patch('st-1', {
+      items: [{ itemCode: 'SKU-1', productName: 'Sofa', variantKey: '', qty: 2, notes: 'checked twice' }],
+    });
+    expect(res.status).toBe(200);
+    const ls = lines('st-1');
+    expect(ls).toHaveLength(1);
+    expect(ls[0]!.id).toBe('li-1');
+    expect(ls[0]!.notes).toBe('checked twice');
+    expect(ls[0]!.qty).toBe(2);
+  });
+
+  it('a same-bucket edit skips the stock check entirely — even a qty that LOOKS short is fine because nothing is moving', async () => {
+    sb = makeSb();
+    // Drain the open lots to 0 — a real qty change of 2 would now 409, but
+    // asking for the SAME qty (2) must still succeed: nothing is reversed or
+    // re-applied, so there is nothing to check availability for.
+    sb.tables.v_inventory_lots_open = [];
+    const res = await patch('st-1', {
+      items: [{ itemCode: 'SKU-1', variantKey: '', qty: 2, notes: 'still fine' }],
+    });
+    expect(res.status).toBe(200);
+    expect(lines('st-1')[0]!.id).toBe('li-1');
+  });
 });
