@@ -7,9 +7,13 @@
 // Export writes the same table as CSV. Each column is ONE request to the
 // report's own endpoint for that period, so a month can never disagree with
 // the single-period screen for the same month. Nothing is stored.
+// Owner 2026-09-18: a cell with nothing in it prints a dash in both its slots
+// (没有 amount 的不留空白); an account's lines open under its row in the month
+// grid, each under its own month (那笔费用挂在那个月份的下面) — the name opens
+// the whole range, a month's figure opens that month alone.
 // ----------------------------------------------------------------------------
 
-import { Fragment, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { useQueries } from '@tanstack/react-query';
 import { Download } from 'lucide-react';
 import { Button } from '@2990s/design-system';
@@ -20,7 +24,7 @@ import {
   type FlatLine, type MonthColumn, type MonthlyLine,
 } from '../../vendor/scm/lib/report-monthly';
 import { LevelButtons, useReportTree, type Level } from './ReportLayoutTree';
-import { AccountLinesRow } from './AccountLinesRow';
+import { AccountMonthRows } from './AccountMonthRows';
 
 const soft: React.CSSProperties = { fontSize: 'var(--fs-13)', color: 'var(--text-soft, #8a8578)' };
 const card: React.CSSProperties = {
@@ -32,6 +36,9 @@ const num: React.CSSProperties = { textAlign: 'right', whiteSpace: 'nowrap', pad
 const pctBeside: React.CSSProperties = { fontSize: 'var(--fs-11, 11px)', color: 'var(--text-soft, #8a8578)', fontWeight: 400, marginLeft: 6, display: 'inline-block', minWidth: 46, textAlign: 'right' };
 const chevron: React.CSSProperties = { background: 'none', border: 'none', padding: '0 4px 0 0', cursor: 'pointer', font: 'inherit', color: 'var(--text-soft, #8a8578)', width: 18, display: 'inline-block', textAlign: 'left' };
 const nameBtn: React.CSSProperties = { background: 'none', border: 'none', padding: 0, cursor: 'pointer', font: 'inherit', color: 'inherit' };
+const figureBtn: React.CSSProperties = { ...nameBtn, fontVariantNumeric: 'tabular-nums' };
+/* Nothing in the cell: a dash in the amount slot and one in the % slot (owner 2026-09-18, method B). */
+const DASH = '-';
 const btn = (active: boolean): React.CSSProperties => ({
   padding: '2px 8px', fontSize: 'var(--fs-12, 12px)', borderRadius: 'var(--radius-sm, 4px)',
   border: '1px solid var(--c-line, rgba(34,31,32,0.2))', background: active ? 'var(--c-ink, #221f20)' : 'transparent',
@@ -69,6 +76,15 @@ export function MonthlyReport<T>({ report, title, withCumulative, fetchColumn, l
   const [showPct, setShowPct] = useState(false);
   const [level, setLevel] = useState<Level>('all');
   const tree = useReportTree(level);
+  /* Which month an opened account shows: null is the whole range (the name was
+     clicked), a key is that month alone (its figure was clicked). */
+  const [drillMonth, setDrillMonth] = useState<Record<string, string | null>>({});
+  useEffect(() => { setDrillMonth({}); }, [level]);
+  const openLines = (id: string, month: string | null, drilledNow: boolean, monthNow: string | null) => {
+    if (!drilledNow) { tree.toggleDrill(id); setDrillMonth((m) => ({ ...m, [id]: month })); return; }
+    if (monthNow === month) { tree.toggleDrill(id); return; }
+    setDrillMonth((m) => ({ ...m, [id]: month }));
+  };
   const columns = useMemo(() => monthColumns(latest, count, withCumulative), [latest, count, withCumulative]);
 
   const results = useQueries({
@@ -145,22 +161,35 @@ export function MonthlyReport<T>({ report, title, withCumulative, fetchColumn, l
                       <td style={{ padding: `2px 10px 2px ${10 + 14 * Math.max(0, l.depth)}px`, position: 'sticky', left: 0, background: 'var(--c-cream)', whiteSpace: 'nowrap', ...style(l) }}>
                         {folder && <button type="button" style={chevron} aria-label={`${open ? 'Collapse' : 'Expand'} ${l.label}`} aria-expanded={open} onClick={() => tree.toggle(l.id, open)}>{open ? '▾' : '▸'}</button>}
                         {drillable
-                          ? <button type="button" style={nameBtn} aria-label={`Lines of ${l.label}`} aria-expanded={drilled} onClick={() => tree.toggleDrill(l.id)}>{l.label}</button>
+                          ? <button type="button" style={nameBtn} aria-label={`Lines of ${l.label}`} aria-expanded={drilled} onClick={() => openLines(l.id, null, drilled, drillMonth[l.id] ?? null)}>{l.label}</button>
                           : l.label}
                       </td>
                       {columns.map((c) => {
                         const cell = l.cells[c.key];
                         const blank = !cell || l.kind === 'block';
+                        const monthNow = drillMonth[l.id] ?? null;
+                        const pick = c.cumulative ? null : c.key;
+                        const figure = showPct ? fmtPct(cell?.pct ?? null) : fmt(cell?.amountSen ?? 0);
                         return (
                           <td key={c.key} style={{ ...num, ...style(l), ...(c.cumulative ? { borderRight: '2px solid var(--c-ink, #221f20)' } : {}) }}>
-                            {blank ? (l.kind === 'block' ? '' : <span style={soft}>—</span>)
-                              : showPct ? fmtPct(cell.pct)
-                                : <>{fmt(cell.amountSen)}<span data-pct style={pctBeside}>{fmtPct(cell.pct)}</span></>}
+                            {blank
+                              ? (l.kind === 'block' ? '' : <><span style={soft}>{DASH}</span>{!showPct && <span data-pct style={pctBeside}>{DASH}</span>}</>)
+                              : (
+                                <>
+                                  {drillable
+                                    ? <button type="button" style={figureBtn} aria-label={`Lines of ${l.label} · ${c.label}`} aria-pressed={drilled && monthNow === pick} onClick={() => openLines(l.id, pick, drilled, monthNow)}>{figure}</button>
+                                    : figure}
+                                  {!showPct && <span data-pct style={pctBeside}>{fmtPct(cell.pct)}</span>}
+                                </>
+                              )}
                           </td>
                         );
                       })}
                     </tr>
-                    {drilled && l.code && <AccountLinesRow code={l.code} from={range.from} to={range.to} colSpan={1 + columns.length} />}
+                    {drilled && l.code && (
+                      <AccountMonthRows code={l.code} columns={columns} from={range.from} to={range.to} month={drillMonth[l.id] ?? null}
+                        rowSen={l.cells.cumulative?.amountSen ?? Object.values(l.cells).reduce((sum, cell) => sum + (cell?.amountSen ?? 0), 0)} fmt={fmt} />
+                    )}
                   </Fragment>
                 );
               })}
