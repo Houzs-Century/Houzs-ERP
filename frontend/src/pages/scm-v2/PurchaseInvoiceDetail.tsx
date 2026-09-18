@@ -369,6 +369,21 @@ export const PurchaseInvoiceDetail = () => {
   };
   const print = usePrintPreview(deliverPrintPdf);
 
+  /* Transfer from GRN — state + derived sets for the picker (addGrnLines
+     below, past the guards, is a plain function so it's fine there; these
+     three are hooks and must stay above every early return in the file). */
+  const [showGrnPicker, setShowGrnPicker] = useState(false);
+  const linkedGrnItemIds = useMemo(
+    () => new Set(editLines.map((l) => l.grnItemId).filter((x): x is string => Boolean(x))),
+    [editLines],
+  );
+  // Owner 2026-09-18: the picker should only offer a GRN line whose item code
+  // is already one of this PI's own lines — never a brand-new item.
+  const piItemCodes = useMemo(
+    () => new Set(editLines.map((l) => l.itemCode).filter((x): x is string => Boolean(x))),
+    [editLines],
+  );
+
   if (detail.isPending) {
     return <SkeletonDetailPage />;
   }
@@ -450,18 +465,10 @@ export const PurchaseInvoiceDetail = () => {
      invoice, alongside the free-entry "+ Add item" above. Each picked line
      becomes a grnLinked draft; Save sends its grnItemId to POST /:id/items,
      which already validates + caps + recomputes the GRN's invoiced_qty (T12's
-     endpoint was built for this, just never had a button). */
-  const [showGrnPicker, setShowGrnPicker] = useState(false);
-  const linkedGrnItemIds = useMemo(
-    () => new Set(editLines.map((l) => l.grnItemId).filter((x): x is string => Boolean(x))),
-    [editLines],
-  );
-  // Owner 2026-09-18: the picker should only offer a GRN line whose item code
-  // is already one of this PI's own lines — never a brand-new item.
-  const piItemCodes = useMemo(
-    () => new Set(editLines.map((l) => l.itemCode).filter((x): x is string => Boolean(x))),
-    [editLines],
-  );
+     endpoint was built for this, just never had a button). The two hooks this
+     needs (showGrnPicker, linkedGrnItemIds, piItemCodes) live ABOVE the
+     isPending/isError guards below, with the rest of the page's hooks — not
+     here, past them, which is a rules-of-hooks violation ESLint caught. */
   const addGrnLines = (picked: Array<{ it: OutstandingGrnItem; qty: number }>) => {
     setEditLines((prev) => [...prev, ...picked.map(({ it, qty }) => grnItemToEditLine(it, qty))]);
     setShowGrnPicker(false);
