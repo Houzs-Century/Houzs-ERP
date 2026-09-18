@@ -84,8 +84,12 @@ import { ReceiptsPaymentsTab } from './ReceiptsPayments';
 import { generateRpPdf } from '../../vendor/scm/lib/rp-report-pdf';
 
 describe('the Receipts & Payments tab', () => {
-  test('columns per money account, receipts above payments, the four balance lines, brackets for a negative', () => {
+  test('Total alone by default, a ticked account adds its own column, receipts above payments, the four balance lines, brackets for a negative', () => {
     render(<ReceiptsPaymentsTab />);
+    /* Total alone by default (owner 2026-09-18: default 看 total); a tick adds the account's own column. */
+    expect(screen.queryByText('310-0010', { selector: 'th' })).toBeNull();
+    expect(screen.getByText('Total', { selector: 'th' })).toBeTruthy();
+    fireEvent.click(screen.getByLabelText('Column 310-0010'));
     expect(screen.getByText('310-0010', { selector: 'th' })).toBeTruthy();
     expect(screen.getByText('RECEIPTS')).toBeTruthy();
     expect(screen.getByText('PAYMENTS')).toBeTruthy();
@@ -108,8 +112,9 @@ describe('the Receipts & Payments tab', () => {
     expect(screen.getByText('%', { selector: 'th' })).toBeTruthy();
   });
 
-  test('a figure opens the entries behind it — a category\'s figure, every row under it; the toggle and the account ticks change the read', () => {
+  test('a figure opens the entries behind it — a category\'s figure, every row under it; the toggle changes the read; a tick adds a column', () => {
     render(<ReceiptsPaymentsTab />);
+    fireEvent.click(screen.getByLabelText('Column 310-0010'));
     fireEvent.click(screen.getByLabelText('601-0003 · PURCHASE OF SOFA 310-0010'));
     expect(screen.getByText(/601-0003 · PURCHASE OF SOFA · 310-0010 — 1 entry/)).toBeTruthy();
     expect(screen.getByText('FOSHAN CHAIRS')).toBeTruthy();
@@ -120,20 +125,23 @@ describe('the Receipts & Payments tab', () => {
 
     fireEvent.click(screen.getByLabelText('Show debtor and creditor names'));
     expect(lastPath.value.endsWith('|true')).toBe(true);
+    /* A tick shows a column; the read itself still covers every account. */
     fireEvent.click(screen.getByLabelText('Column 320-0000'));
-    expect(lastPath.value).toContain('|310-0010|');
+    expect(screen.getByText('320-0000', { selector: 'th' })).toBeTruthy();
+    expect(lastPath.value).not.toContain('320-0000');
+    expect(lastPath.value).not.toContain('310-0010');
   });
 
   test('Print hands the report to the PDF', () => {
     render(<ReceiptsPaymentsTab />);
     fireEvent.click(screen.getByText('Print'));
-    expect(vi.mocked(generateRpPdf)).toHaveBeenCalledWith(report);
+    expect(vi.mocked(generateRpPdf)).toHaveBeenCalledWith(report, { columns: [] });
   });
 
-  test('By month opens the monthly view with 累计; Print steps aside; the account ticks still narrow the read (docs/bugs/0916)', () => {
+  test('By month opens the monthly view with 累计; Print steps aside; the column ticks stay (docs/bugs/0916)', () => {
     render(<ReceiptsPaymentsTab />);
     fireEvent.click(screen.getByRole('button', { name: 'By month' }));
-    expect(screen.getByRole('region', { name: /Monthly · Receipts & Payments/ }).textContent).toBe('with 累计');
+    expect(screen.getByRole('region', { name: /Monthly · Cash Flow/ }).textContent).toBe('with 累计');
     expect(screen.queryByText('Closing balance')).toBeNull();
     expect((screen.getByText('Print').closest('button') as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByLabelText('Column 310-0010')).toBeTruthy();

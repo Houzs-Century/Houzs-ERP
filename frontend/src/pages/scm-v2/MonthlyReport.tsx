@@ -28,7 +28,8 @@ const card: React.CSSProperties = {
 };
 const num: React.CSSProperties = { textAlign: 'right', whiteSpace: 'nowrap', padding: '2px 10px', fontVariantNumeric: 'tabular-nums' };
 /* The % under an amount — the same figure the % toggle prints alone. */
-const pctLine: React.CSSProperties = { fontSize: 'var(--fs-11, 11px)', color: 'var(--text-soft, #8a8578)', fontWeight: 400, lineHeight: 1.1 };
+/* The % rides BESIDE the amount, on the same line (owner 2026-09-18: percentage 应该在 amount 旁边而不是下面). */
+const pctBeside: React.CSSProperties = { fontSize: 'var(--fs-11, 11px)', color: 'var(--text-soft, #8a8578)', fontWeight: 400, marginLeft: 6, display: 'inline-block', minWidth: 46, textAlign: 'right' };
 const chevron: React.CSSProperties = { background: 'none', border: 'none', padding: '0 4px 0 0', cursor: 'pointer', font: 'inherit', color: 'var(--text-soft, #8a8578)', width: 18, display: 'inline-block', textAlign: 'left' };
 const nameBtn: React.CSSProperties = { background: 'none', border: 'none', padding: 0, cursor: 'pointer', font: 'inherit', color: 'inherit' };
 const btn = (active: boolean): React.CSSProperties => ({
@@ -154,7 +155,7 @@ export function MonthlyReport<T>({ report, title, withCumulative, fetchColumn, l
                           <td key={c.key} style={{ ...num, ...style(l), ...(c.cumulative ? { borderRight: '2px solid var(--c-ink, #221f20)' } : {}) }}>
                             {blank ? (l.kind === 'block' ? '' : <span style={soft}>—</span>)
                               : showPct ? fmtPct(cell.pct)
-                                : <>{fmt(cell.amountSen)}<div style={pctLine}>{fmtPct(cell.pct)}</div></>}
+                                : <>{fmt(cell.amountSen)}<span data-pct style={pctBeside}>{fmtPct(cell.pct)}</span></>}
                           </td>
                         );
                       })}
