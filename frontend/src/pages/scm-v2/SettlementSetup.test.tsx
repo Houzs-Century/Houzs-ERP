@@ -257,6 +257,7 @@ describe('the bank recognition rules card', () => {
     const order = screen.getByLabelText('Order for PBB rule 1') as HTMLInputElement;
     expect(order.value).toBe('20');
     // A leading zero typed in front survives while focused, then normalises on blur …
+    fireEvent.focus(order);
     fireEvent.change(order, { target: { value: '0100' } });
     expect(order.value).toBe('0100');
     fireEvent.blur(order);

@@ -85,7 +85,13 @@ const pickSku = () =>
 // The Qty box is type="text" (a signed-integer field that keeps its raw text
 // apart from the number) — select it by its aria-label, not the input type.
 const qtyInputs = () => Array.from(document.querySelectorAll('tbody input[aria-label^="Qty for"]')) as HTMLInputElement[];
-const setQty = (value: string, i = 0) => fireEvent.change(qtyInputs()[i]!, { target: { value } });
+// Focus before typing — the field keeps its raw text apart from the number only
+// while focused (as a real user does), then re-syncs to the number on blur.
+const setQty = (value: string, i = 0) => {
+  const el = qtyInputs()[i]!;
+  fireEvent.focus(el);
+  fireEvent.change(el, { target: { value } });
+};
 const reasonSelects = () => screen.getAllByLabelText(/Reason for/) as HTMLSelectElement[];
 const setReason = (i = 0) => fireEvent.change(reasonSelects()[i]!, { target: { value: 'FOUND' } });
 const save = () => fireEvent.click(screen.getByRole('button', { name: /Save Adjustment/ }));

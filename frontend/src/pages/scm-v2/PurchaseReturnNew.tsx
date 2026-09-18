@@ -44,6 +44,7 @@ import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
 import { sortByText, sortByNumeric } from '../../vendor/scm/lib/sort-options';
 import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
+import { NumberInput } from '../../vendor/scm/components/NumberInput';
 import { SpecialOrders } from '../../vendor/scm/components/SpecialOrders';
 import { specialOrderSurface } from '../../vendor/scm/lib/special-order-surface';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
@@ -653,8 +654,8 @@ export const PurchaseReturnNew = () => {
                   <div className={styles.formGrid4}>
                     <label className={styles.field}>
                       <span className={styles.fieldLabel}>Qty Returned</span>
-                      <input type="number" min={0} value={l.qtyReturned}
-                        onChange={(e) => setLine(l.rid, { qtyReturned: Math.max(0, Number(e.target.value) || 0) })}
+                      <NumberInput value={l.qtyReturned} sign="unsigned" decimal={false}
+                        onValueChange={(n) => setLine(l.rid, { qtyReturned: Math.max(0, n ?? 0) })}
                         className={styles.fieldInput} style={{ textAlign: 'right' }} />
                     </label>
                     <label className={styles.field}>

@@ -43,6 +43,7 @@ import {
   type PoPriceMatrix,
 } from '@2990s/shared/mfg-pricing';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
+import { NumberInput } from '../../vendor/scm/components/NumberInput';
 import { DiscountInput } from '../../vendor/scm/components/DiscountInput';
 import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDialog';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
@@ -735,10 +736,11 @@ export const PurchaseConsignmentOrderNew = () => {
                 <div className={styles.formGrid4} style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))' }}>
                   <label className={styles.field}>
                     <span className={styles.fieldLabel}>Qty</span>
-                    <input
-                      type="number" min={0} step={1}
+                    <NumberInput
                       value={l.qty}
-                      onChange={(e) => setLine(l.rid, { qty: Number(e.target.value) })}
+                      sign="unsigned"
+                      decimal={false}
+                      onValueChange={(n) => setLine(l.rid, { qty: n ?? 0 })}
                       className={styles.fieldInput}
                       style={{ textAlign: 'right' }}
                     />

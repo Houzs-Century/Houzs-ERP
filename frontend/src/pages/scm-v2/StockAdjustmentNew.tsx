@@ -54,6 +54,7 @@ import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDialog';
 import { FreshMount } from '../../lib/freshMount';
 import { SpecialOrders } from '../../vendor/scm/components/SpecialOrders';
+import { NumberInput } from '../../vendor/scm/components/NumberInput';
 import { computeTotalHeight, isTotalHeightCategory, isTotalHeightPart } from '../../vendor/shared/total-height';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
@@ -62,17 +63,6 @@ const ICON = { size: 16, strokeWidth: 1.75 } as const;
 // helper so the row and the Save loop read the same rule.
 type AdjustmentType = 'increase' | 'decrease';
 const directionOf = (qty: number): AdjustmentType => (qty < 0 ? 'decrease' : 'increase');
-
-// Signed-integer field helpers — the Qty input keeps its DISPLAYED text apart
-// from the numeric state so an in-progress entry survives keystroke by keystroke
-// (a lone "-", an empty box, a leading zero) instead of being reformatted mid-type.
-// Strip everything but digits and a single leading minus.
-const cleanSignedInt = (raw: string): string => raw.replace(/[^\d-]/g, '').replace(/(?!^)-/g, '');
-// "" and "-" parse to 0 so the numeric state stays a real number while typing.
-const parseSignedInt = (text: string): number => {
-  const n = Math.trunc(Number(text));
-  return Number.isFinite(n) ? n : 0;
-};
 
 let seq = 0;
 const newKey = () => `adj-${Date.now()}-${seq++}`;
@@ -167,15 +157,6 @@ function AdjustmentLineRow({
 }) {
   const type = directionOf(line.qty);
   const magnitude = Math.abs(line.qty);
-
-  // Displayed Qty text, kept apart from the numeric line.qty (see helpers above).
-  const [qtyText, setQtyText] = useState(() => String(line.qty));
-  // Resync the box only when line.qty is changed from OUTSIDE this input — e.g.
-  // picking a lot caps a decrease to the lot's quantity. Guarded by parse so a
-  // mid-type value ("0100", "-") the user is still editing is not clobbered.
-  useEffect(() => {
-    setQtyText((prev) => (parseSignedInt(prev) === line.qty ? prev : String(line.qty)));
-  }, [line.qty]);
 
   // Open stock buckets for the DECREASE "Take from" picker — only fires once
   // both warehouse + SKU are set (enabled guard inside the hook).
@@ -300,23 +281,18 @@ function AdjustmentLineRow({
 
         {/* Qty — SIGNED. + increases, − decreases. On a DECREASE capped to the picked lot. */}
         <td className={styles.tableRight}>
-          <input
-            type="text"
-            inputMode="numeric"
-            value={qtyText}
-            onChange={(e) => {
-              // type="number" makes React skip the DOM update when the parsed
-              // number is unchanged (typing "0" before "100" leaves "0100" on
-              // screen) and eats a lone "-" (NaN -> 0 wipes the minus). Bind the
-              // raw text instead and parse it into the numeric source of truth.
-              const text = cleanSignedInt(e.target.value);
-              setQtyText(text);
-              let n = parseSignedInt(text);
-              // Keep a picked-lot decrease from exceeding the lot.
-              if (n < 0 && bucketQtyCap != null) n = Math.max(n, -bucketQtyCap);
-              setLine(line._key, { qty: n });
+          {/* SIGNED — the only signed numeric field in the system (negative =
+              decrease). Empty / lone "-" reads as 0; a picked-lot decrease is
+              capped to the lot. */}
+          <NumberInput
+            value={line.qty}
+            sign="signed"
+            decimal={false}
+            onValueChange={(n) => {
+              let q = n ?? 0;
+              if (q < 0 && bucketQtyCap != null) q = Math.max(q, -bucketQtyCap);
+              setLine(line._key, { qty: q });
             }}
-            onBlur={() => setQtyText(String(line.qty))}
             className={styles.fieldInput}
             aria-label={`Qty for ${line.itemCode || 'line'}`}
             title="Positive = increase (found / recount up); negative = decrease (write-off / damage / loss)"

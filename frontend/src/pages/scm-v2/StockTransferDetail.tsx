@@ -36,6 +36,7 @@ import {
 } from '../../vendor/scm/lib/stock-queries';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
+import { NumberInput } from '../../vendor/scm/components/NumberInput';
 import { EntityHistoryPanel } from './EntityHistoryPanel';
 import { STOCK_TRANSFER_AUDIT_LABELS } from './entity-audit-labels';
 import { DateField } from "../../vendor/scm/components/DateField";
@@ -147,14 +148,11 @@ function EditableTransferLineRow({
             </span>}
       </td>
       <td className={styles.tableRight}>
-        <input
-          type="number"
-          min={1}
-          step={1}
+        <NumberInput
+          sign="unsigned"
+          decimal={false}
           value={line.qty}
-          onChange={(e) => setLine(line._key, {
-            qty: Math.max(0, Math.floor(Number(e.target.value) || 0)),
-          })}
+          onValueChange={(n) => setLine(line._key, { qty: Math.max(0, n ?? 0) })}
           className={styles.fieldInput}
           style={{
             textAlign: 'right',

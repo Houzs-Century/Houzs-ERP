@@ -34,6 +34,7 @@ import { useAccounts, useAccountRoles, useSaveBankDefault } from '../../vendor/s
 import { useBankRules, useSaveBankRule, useCreateBankRule, useBankConfigs, useSaveBankConfig, type BankRule, type BankConfig } from './bank-queries';
 import { useVoucherNumbering, useSaveVoucherNumbering } from './accounting-phase1-queries';
 import css from './SettlementSetup.module.css';
+import { NumberInput } from '../../vendor/scm/components/NumberInput';
 import { PageHeader } from '../../components/Layout';
 
 export const SettlementSetup = () => {
@@ -260,11 +261,6 @@ const BankRulesCard = () => {
   const save = useSaveBankRule();
   const createM = useCreateBankRule();
   const [drafts, setDrafts] = useState<Record<number, Partial<BankRule> | undefined>>({});
-  // Displayed text of the Order input per row, kept apart from the numeric
-  // sort_order so an in-progress entry (a leading zero, an empty box) survives
-  // keystroke by keystroke instead of being reformatted mid-type. Empty = show
-  // the committed number.
-  const [sortText, setSortText] = useState<Record<number, string>>({});
   const [note, setNote] = useState<string | null>(null);
   const [newRule, setNewRule] = useState<{ acquirerCode: string; pattern: string }>({ acquirerCode: '', pattern: '' });
 
@@ -319,21 +315,12 @@ const BankRulesCard = () => {
                     </select>
                   </td>
                   <td style={{ padding: '4px 8px' }}>
-                    <input
-                      type="text"
-                      inputMode="numeric"
+                    <NumberInput
                       aria-label={`Order for ${r.acquirer_code} rule ${r.id}`}
-                      value={sortText[r.id] ?? String(v.sort_order)}
-                      onChange={(e) => {
-                        // Bound to raw text, not the parsed number: type="number"
-                        // bound to Number(...) leaves a leading zero on screen
-                        // (typing "100" in front of a 0 shows "0100") because React
-                        // skips the DOM write when the parsed value is unchanged.
-                        const text = e.target.value.replace(/[^\d]/g, '');
-                        setSortText((s) => ({ ...s, [r.id]: text }));
-                        edit(r.id, { sort_order: text === '' ? 0 : Number(text) });
-                      }}
-                      onBlur={() => setSortText((s) => { const { [r.id]: _drop, ...rest } = s; return rest; })}
+                      value={v.sort_order}
+                      sign="unsigned"
+                      decimal={false}
+                      onValueChange={(n) => edit(r.id, { sort_order: n ?? 0 })}
                       style={{ width: 64, fontSize: 'var(--fs-12)', padding: '4px 6px' }} />
                   </td>
                   <td style={{ padding: '4px 8px', textAlign: 'center' }}>
@@ -353,7 +340,7 @@ const BankRulesCard = () => {
                           ...(d.sort_order !== undefined ? { sortOrder: d.sort_order } : {}),
                           ...(d.is_active !== undefined ? { isActive: d.is_active } : {}),
                         }, {
-                          onSuccess: () => { setDrafts((prev) => { const { [r.id]: _gone, ...rest } = prev; return rest; }); setSortText((s) => { const { [r.id]: _t, ...rest } = s; return rest; }); setNote(null); },
+                          onSuccess: () => { setDrafts((prev) => { const { [r.id]: _gone, ...rest } = prev; return rest; }); setNote(null); },
                           onError: (e) => setNote(refusalText(e, 'Rule not saved.')),
                         });
                       }}>

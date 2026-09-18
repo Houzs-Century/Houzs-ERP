@@ -18,6 +18,7 @@ import { Download } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { useCollectionReport, type CollectionOrder, type CollectionReport, type CollectionRow } from '../../vendor/scm/lib/collection-report-queries';
 import { DateField } from '../../vendor/scm/components/DateField';
+import { NumberInput } from '../../vendor/scm/components/NumberInput';
 import { fmtDateOrDash } from '../../vendor/shared/format';
 
 const myt = (): string => new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
@@ -105,8 +106,8 @@ export const CollectionTab = () => {
         <span style={soft}>to</span><DateField value={to} onChange={setTo} aria-label="Collection to" />
         <label style={{ ...soft, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
           Below
-          <input type="number" min={1} max={100} value={threshold} aria-label="Deposit threshold percent"
-            onChange={(e) => { const n = Number(e.target.value); if (Number.isFinite(n) && n > 0 && n <= 100) setThreshold(n); }}
+          <NumberInput sign="unsigned" decimal={false} value={threshold} aria-label="Deposit threshold percent"
+            onValueChange={(n) => { if (n != null && n > 0 && n <= 100) setThreshold(n); }}
             style={{ width: 56, padding: '4px 6px', fontSize: 'var(--fs-12)' }} />
           %
         </label>
