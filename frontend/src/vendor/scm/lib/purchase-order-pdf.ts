@@ -674,7 +674,14 @@ async function renderPurchaseOrderInto(
   for (const g of sofaGroups.values()) {
     const cells = g.parts.sort((a, b) => a.idx - b.idx).map((p) => p.cell);
     if (cells.length === 0) continue;
-    distinctSofas.push({ cells, depth: g.depth, model: g.model, soNo: g.soNo });
+    // Caption from the ACTUAL drawn module codes (the reconstruction path below
+    // already does this), NOT the stored variants.summary. A summary snapshots
+    // the composition at add time and goes stale when the build is later edited:
+    // a PO captioned "L(LHF) + 2A(RHF)" for a sofa whose lines had become
+    // L(LHF) + 1A(P)(RHF) + 1NA. g.model (summary → material_name → item_code)
+    // stays the fallback for a group whose cells somehow carry no code.
+    const caption = cells.map((c) => c.moduleId).filter(Boolean).join(' + ') || g.model;
+    distinctSofas.push({ cells, depth: g.depth, model: caption, soNo: g.soNo });
   }
   for (const [fk, g] of fallbackGroups) {
     if (geometryKeys.has(fk)) continue; // already drawn from real geometry
