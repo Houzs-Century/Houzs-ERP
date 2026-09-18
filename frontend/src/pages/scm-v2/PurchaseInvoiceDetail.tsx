@@ -38,6 +38,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft, FileText, Pencil, Plus, Printer, Save, Ban, ChevronDown,
+  PackageCheck, Search, X,
 } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { buildVariantSummary, fmtDateOrDash } from '@2990s/shared';
@@ -54,9 +55,12 @@ import {
   usePostPurchaseInvoice,
 } from '../../vendor/scm/lib/purchase-invoice-queries';
 import {
-  useSuppliers, useSupplierDetail,
-  type BindingRow, type SupplierRow,
+  useSuppliers, useSupplierDetail, useOutstandingGrnItems,
+  type BindingRow, type SupplierRow, type OutstandingGrnItem,
 } from '../../vendor/scm/lib/suppliers-queries';
+import { filterOutstandingGrnLines } from '../../vendor/scm/lib/outstanding-grn-search';
+import { VariantDescription } from '../../vendor/scm/components/VariantDescription';
+import { SearchInput } from '../../components/Button';
 import { useMfgProducts, useMaintenanceConfig, useSpecialAddons } from '../../vendor/scm/lib/mfg-products-queries';
 import { useFabricTrackings } from '../../vendor/scm/lib/fabric-queries';
 import { useWarehouses } from '../../vendor/scm/lib/inventory-queries';
@@ -129,8 +133,12 @@ type PiItemRow = Record<string, unknown> & {
 
 /* Whole-line edit (T12) — Edit mode drives one PoLineCard per line, the SAME rich
    editor as Create. EditLine = the shared PoLineDraft + the persisted item id
-   (absent on a freshly-added blank card) + whether the line came from a GRN. */
-type EditLine = PoLineDraft & { itemId?: string; grnLinked?: boolean };
+   (absent on a freshly-added blank card) + whether the line came from a GRN.
+   grnItemId is set on a line ADDED via "Transfer from GRN" (below) — it has no
+   itemId yet (never saved), but Save must still tell the server which GRN line
+   it bills; a line loaded from the server already carries this on the item row
+   itself, so draftFromItem doesn't need to set it (grnLinked alone locks it). */
+type EditLine = PoLineDraft & { itemId?: string; grnLinked?: boolean; grnItemId?: string };
 
 const headerSnapshot = (p: any): HeaderDraft => ({
   supplierId:         p.supplier_id ?? '',
@@ -159,6 +167,24 @@ const draftFromItem = (it: PiItemRow): EditLine => ({
   variants:       (it.variants as Record<string, unknown> | null) ?? {},
   /* An existing line's stored price is authoritative — don't let the cost
      auto-recompute clobber it on enter-edit. Editing variants re-arms it. */
+  priceTouched:   true,
+});
+
+/* Map one picked outstanding GRN line → an editable PoLineCard draft, for
+   "Transfer from GRN" (addGrnLines below). Exported so the mapping itself —
+   the one non-trivial piece of this feature — has a test independent of the
+   page's many data hooks; see PurchaseInvoiceDetail.grnLine.test.ts. */
+export const grnItemToEditLine = (it: OutstandingGrnItem, qty: number): EditLine => ({
+  rid:            `g${it.grnItemId}`,
+  grnItemId:      it.grnItemId,
+  grnLinked:      true,
+  materialKind:   'mfg_product',
+  itemCode:   it.itemCode,
+  materialName:   it.description || it.itemCode,
+  category:       it.itemGroup ? it.itemGroup.toLowerCase() : undefined,
+  variants:       (it.variants as Record<string, unknown> | null) ?? {},
+  qty,
+  unitPriceSen: it.unitPriceSen,
   priceTouched:   true,
 });
 
@@ -419,6 +445,22 @@ export const PurchaseInvoiceDetail = () => {
     setEditLines((prev) => [...prev, { ...emptyPoLine() }]);
   addLineHandoff.current = { enabled: isEditing && !isLocked, onTrigger: startAddLine };
 
+  /* Transfer from GRN (mirrors AutoCount's "Transfer From Goods Receive Note"
+     on an already-saved PI) — pulls more outstanding GRN lines onto THIS
+     invoice, alongside the free-entry "+ Add item" above. Each picked line
+     becomes a grnLinked draft; Save sends its grnItemId to POST /:id/items,
+     which already validates + caps + recomputes the GRN's invoiced_qty (T12's
+     endpoint was built for this, just never had a button). */
+  const [showGrnPicker, setShowGrnPicker] = useState(false);
+  const linkedGrnItemIds = useMemo(
+    () => new Set(editLines.map((l) => l.grnItemId).filter((x): x is string => Boolean(x))),
+    [editLines],
+  );
+  const addGrnLines = (picked: Array<{ it: OutstandingGrnItem; qty: number }>) => {
+    setEditLines((prev) => [...prev, ...picked.map(({ it, qty }) => grnItemToEditLine(it, qty))]);
+    setShowGrnPicker(false);
+  };
+
   /* Remove a line. A persisted line fires the delete mutation immediately; a
      never-saved blank card just drops from the draft array. */
   const removeLine = async (rid: string) => {
@@ -466,9 +508,11 @@ export const PurchaseInvoiceDetail = () => {
       const byId = new Map(items.map((it) => [it.id, it]));
       for (const d of editLines) {
         if (!d.itemId) {
-          // New free-entry line — full insert payload (grnItemId null).
+          // New line — free-entry (grnItemId undefined) or GRN-transferred
+          // (set by addGrnLines above); the server caps/consumes either way.
           await addItem.mutateAsync({
             id: pi.id,
+            grnItemId:      d.grnItemId,
             materialKind:   d.materialKind,
             itemCode:   d.itemCode,
             materialName:   d.materialName || d.itemCode,
@@ -648,12 +692,22 @@ export const PurchaseInvoiceDetail = () => {
         <header className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Line Items ({isEditing ? editLines.length : visibleItems.length})</h2>
           {/* T12 — Edit mode restores the Create UI: a "+ Add item" that appends a
-              blank PoLineCard (PI is free-entry). Hidden while the PI is locked. */}
+              blank PoLineCard (PI is free-entry). Hidden while the PI is locked.
+              "Transfer from GRN" beside it mirrors AutoCount's own PI ribbon
+              button — pulls more outstanding lines from this supplier's
+              goods-received notes onto this SAME saved invoice. */}
           {isEditing && !isLocked && (
-            <Button variant="primary" size="sm" onClick={startAddLine}>
-              <Plus {...ICON} />
-              <span>{ADD_LINE_LABEL}</span>
-            </Button>
+            <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
+              <Button variant="ghost" size="sm" onClick={() => setShowGrnPicker(true)} disabled={!piSupplierId}
+                title={piSupplierId ? undefined : 'Pick a supplier first'}>
+                <PackageCheck {...ICON} />
+                <span>Transfer from GRN</span>
+              </Button>
+              <Button variant="primary" size="sm" onClick={startAddLine}>
+                <Plus {...ICON} />
+                <span>{ADD_LINE_LABEL}</span>
+              </Button>
+            </div>
           )}
         </header>
 
@@ -783,6 +837,16 @@ export const PurchaseInvoiceDetail = () => {
           </div>
         </div>
       </section>
+
+      {showGrnPicker && (
+        <GrnLinePickerModal
+          supplierId={piSupplierId}
+          currency={pi.currency}
+          excludeGrnItemIds={linkedGrnItemIds}
+          onAdd={addGrnLines}
+          onClose={() => setShowGrnPicker(false)}
+        />
+      )}
     </div>
   );
 };
@@ -963,3 +1027,151 @@ function InfoCell({ label, value }: { label: string; value: string | null | unde
     </div>
   );
 }
+
+/* ════════════════════════════════════════════════════════════════════════
+   GrnLinePickerModal — "Transfer from GRN" on an already-saved PI. Same data
+   source as the create-time picker (PurchaseInvoiceFromGrn.tsx), locked to
+   THIS invoice's supplier + currency instead of letting the operator pick
+   any — a saved PI already has both fixed. Picks are handed straight to the
+   caller's editLines (addGrnLines above), not stashed through a handoff.
+   ════════════════════════════════════════════════════════════════════════ */
+
+const GrnLinePickerModal = ({
+  supplierId, currency, excludeGrnItemIds, onAdd, onClose,
+}: {
+  supplierId: string;
+  currency: string;
+  /** GRN lines already on this invoice (persisted or picked this session) —
+      hidden so the same line can't be added twice. */
+  excludeGrnItemIds: Set<string>;
+  onAdd: (picked: Array<{ it: OutstandingGrnItem; qty: number }>) => void;
+  onClose: () => void;
+}) => {
+  const itemsQ = useOutstandingGrnItems();
+  const [query, setQuery] = useState('');
+  const [picks, setPicks] = useState<Record<string, number>>({});
+
+  const items = useMemo(
+    () => (itemsQ.data?.items ?? [])
+      .filter((it) => it.supplierId === supplierId)
+      .filter((it) => (it.currency ?? 'MYR') === (currency || 'MYR'))
+      .filter((it) => !excludeGrnItemIds.has(it.grnItemId)),
+    [itemsQ.data, supplierId, currency, excludeGrnItemIds],
+  );
+  const visible = useMemo(() => filterOutstandingGrnLines(items, query), [items, query]);
+
+  const togglePick = (it: OutstandingGrnItem) =>
+    setPicks((s) => {
+      const next = { ...s };
+      if (it.grnItemId in next) delete next[it.grnItemId];
+      else next[it.grnItemId] = it.remaining;
+      return next;
+    });
+  const setQty = (it: OutstandingGrnItem, qty: number) =>
+    setPicks((s) => ({ ...s, [it.grnItemId]: Math.min(it.remaining, Math.max(0, qty)) }));
+
+  const pickedCount = Object.keys(picks).length;
+  const confirm = () => {
+    const chosen = items
+      .filter((it) => (picks[it.grnItemId] ?? 0) > 0)
+      .map((it) => ({ it, qty: picks[it.grnItemId] }));
+    if (chosen.length === 0) return;
+    onAdd(chosen);
+  };
+
+  return (
+    <div role="presentation" style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.28)', zIndex: 1000,
+      display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 'var(--space-4)',
+    }}>
+      <div role="dialog" aria-label="Transfer lines from GRN" style={{
+        background: 'var(--c-paper, #fff)', borderRadius: 'var(--radius-md)',
+        border: '1px solid var(--line)', width: 'min(720px, 96vw)', maxHeight: '86vh',
+        display: 'flex', flexDirection: 'column',
+      }}>
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: 'var(--space-3) var(--space-4)', borderBottom: '1px solid var(--line)',
+        }}>
+          <strong>Transfer from GRN</strong>
+          <button type="button" onClick={onClose} aria-label="Close"
+            style={{ background: 'none', border: 0, cursor: 'pointer', color: 'var(--fg-muted)' }}>
+            <X size={18} strokeWidth={1.75} />
+          </button>
+        </div>
+        <div style={{ padding: 'var(--space-2) var(--space-4)' }}>
+          <SearchInput
+            value={query}
+            onChange={setQuery}
+            placeholder="Search GRN, item…"
+            aria-label="Search outstanding GRN lines"
+            leadingIcon={<Search size={14} strokeWidth={1.75} />}
+          />
+        </div>
+        <div style={{ overflowY: 'auto', padding: '0 var(--space-4) var(--space-3)', flex: 1 }}>
+          {itemsQ.isLoading ? (
+            <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-13)' }}>Loading…</p>
+          ) : itemsQ.isError ? (
+            <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-13)' }}>
+              We couldn&rsquo;t load the outstanding GRN lines — close this and try again.
+            </p>
+          ) : visible.length === 0 ? (
+            <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-13)' }}>
+              No outstanding GRN lines left to bill for this supplier
+              {currency ? ` in ${currency}` : ''}.
+            </p>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-1)' }}>
+              {visible.map((it) => {
+                const on = it.grnItemId in picks;
+                const qty = picks[it.grnItemId] ?? 0;
+                return (
+                  <div key={it.grnItemId} style={{
+                    display: 'grid', gridTemplateColumns: '24px 1fr 90px 80px 110px', gap: 'var(--space-2)',
+                    alignItems: 'center', padding: 'var(--space-2) 0', borderBottom: '1px solid var(--line)',
+                    background: on ? 'rgba(213, 90, 40, 0.04)' : 'transparent',
+                  }}>
+                    <input type="checkbox" checked={on} onChange={() => togglePick(it)} />
+                    <div style={{ fontSize: 'var(--fs-13)' }}>
+                      <div style={{ fontFamily: 'var(--font-mono)' }}>{it.itemCode}</div>
+                      <VariantDescription
+                        itemCode={it.itemCode} itemGroup={it.itemGroup}
+                        variants={it.variants} description={it.description}
+                      />
+                      <div style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-11)' }}>
+                        {it.grnDocNo}{it.poDocNo ? ` · PO ${it.poDocNo}` : ''}
+                      </div>
+                    </div>
+                    <span style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-13)' }}>
+                      {it.remaining}
+                    </span>
+                    <input
+                      type="number" min={0} max={it.remaining}
+                      value={on ? qty : ''} placeholder={String(it.remaining)}
+                      disabled={!on}
+                      onChange={(e) => setQty(it, Number(e.target.value) || 0)}
+                      className={styles.fieldInput}
+                      style={{ textAlign: 'right', padding: '4px 6px', fontSize: 'var(--fs-13)' }}
+                    />
+                    <span style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-12)' }}>
+                      {fmtRm(qty * it.unitPriceSen, currency)}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+        <div style={{
+          display: 'flex', justifyContent: 'flex-end', gap: 'var(--space-2)',
+          padding: 'var(--space-3) var(--space-4)', borderTop: '1px solid var(--line)',
+        }}>
+          <Button variant="ghost" size="md" onClick={onClose}>Cancel</Button>
+          <Button variant="primary" size="md" onClick={confirm} disabled={pickedCount === 0}>
+            {pickedCount === 0 ? 'Pick at least 1 line' : `Add ${pickedCount} line${pickedCount === 1 ? '' : 's'}`}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+};
