@@ -4,6 +4,7 @@ import {
   isSalesDirectorUser,
   canOperateDeliveryOrders,
   canOperateSalesInvoices,
+  canSeeSoloOrganizer,
 } from "./salesAccess";
 import type { AuthUser } from "../types";
 
@@ -147,5 +148,25 @@ describe("canOperateDeliveryOrders / canOperateSalesInvoices", () => {
     );
     expect(canOperateDeliveryOrders(g.user, g.can, g.pageAccess)).toBe(true);
     expect(canOperateSalesInvoices(g.user, g.can, g.pageAccess)).toBe(true);
+  });
+});
+
+/**
+ * Owner 2026-09-18: a SOLO roadshow's organizer (the mall management) is for
+ * "BD, owner, weisiang only ... others only show solo". These are the three live
+ * accounts that pass on that day, and the cohorts the owner named as NOT passing.
+ */
+describe("canSeeSoloOrganizer", () => {
+  it("passes BD staff, the Owner position and weisiang", () => {
+    expect(canSeeSoloOrganizer(u({ role_name: "BD Exec", position_name: "Operation Executive" }))).toBe(true);
+    expect(canSeeSoloOrganizer(u({ role_name: "Owner", position_name: "Owner", permissions: ["*"] }))).toBe(true);
+    expect(canSeeSoloOrganizer(u({ email: "WeiSiang329@gmail.com", role_name: "Super Admin", position_name: "Managing Director" }))).toBe(true);
+  });
+
+  it("refuses salesmen, sales directors and the OTHER super admins - a wildcard is not the tier", () => {
+    expect(canSeeSoloOrganizer(u({ role_name: "Sales Person", position_name: "Sales Executive", department_name: "Sales Department" }))).toBe(false);
+    expect(canSeeSoloOrganizer(u({ role_name: "Sales Director", position_name: "Sales Director" }))).toBe(false);
+    expect(canSeeSoloOrganizer(u({ role_name: "Super Admin", position_name: "Super Admin", permissions: ["*"] }))).toBe(false);
+    expect(canSeeSoloOrganizer(null)).toBe(false);
   });
 });

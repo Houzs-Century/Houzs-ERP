@@ -87,7 +87,7 @@ import { useFocusFromUrl } from "../hooks/useFocusFromUrl";
 import { useStickyFilters } from "../hooks/useStickyFilters";
 import { useAuth } from "../auth/AuthContext";
 import { usePageAccess } from "../auth/PageGuard";
-import { isSalesStaff, isDirectorUser, isSalesDirectorUser, canCreateEvent, canLogSalesEntry, canWriteProjectFinance } from "../auth/salesAccess";
+import { isSalesStaff, isDirectorUser, isSalesDirectorUser, canCreateEvent, canSeeSoloOrganizer, canLogSalesEntry, canWriteProjectFinance } from "../auth/salesAccess";
 import { readProjectAccess, projectAccessUnresolved, holdsChecklistApproval } from "../auth/projectAccess";
 import { roleLabelAdmitsRole } from "../auth/roleLabelAdmits";
 import { isCrewScopedUser } from "../auth/crewScope";
@@ -123,6 +123,7 @@ import type {
   Paginated,
 } from "./projects/types";
 import { composeDefaultProjectName, viewableMime, googleCalendarUrl } from "./projects/projectHelpers";
+import { salesOrderProjectLabel, type SoloMaskProject } from "./projects/soloOrganizerMask";
 import { STATUS_OPTIONS, ProjectStatusSelect } from "./projects/projectStatus";
 import { OrganizerPicker, VenuePicker } from "./projects/ProjectPickers";
 import { CreateProjectPanel } from "./projects/CreateProjectPanel";
@@ -3595,8 +3596,7 @@ function ProjectDetailContent({
             <DetailMain>
               <ProjectSalesEntriesSection
                 projectId={id}
-                projectCode={p.code}
-                projectName={p.name}
+                project={p}
                 canManage={can("sales.manage")}
                 currentTotalSales={detail.data?.finance?.total_sales ?? null}
                 onTotalSaved={() => detail.reload()}
@@ -7966,16 +7966,15 @@ function ServicePhotos({ projectId, readOnly = false }: { projectId: number; rea
 
 function ProjectSalesEntriesSection({
   projectId,
-  projectCode,
-  projectName,
+  project,
   canManage,
   currentTotalSales,
   onTotalSaved,
   toast,
 }: {
   projectId: number;
-  projectCode: string | null;
-  projectName: string;
+  /** code + name + what soloOrganizerMask needs to label the Sales Order panel. */
+  project: SoloMaskProject;
   canManage: boolean;
   currentTotalSales: number | null;
   onTotalSaved: () => void;
@@ -8112,7 +8111,7 @@ function ProjectSalesEntriesSection({
 
   const rows = list.data?.data ?? [];
   const totals = list.data?.totals;
-  const projectLabel = projectCode ? `${projectCode} · ${projectName}` : projectName;
+  const projectLabel = salesOrderProjectLabel(project, canSeeSoloOrganizer(auth.user)); // solo: organizer masked outside BD/Owner/weisiang (owner 2026-09-18)
 
   // When an event has no individual sales entries, fall back to the project's
   // lump-sum total (project_finance.total_sales) so this box matches the
@@ -8172,7 +8171,7 @@ function ProjectSalesEntriesSection({
                 }`;
                 await api.downloadFile(
                   `/api/sales/entries/export?${qs}`,
-                  `sales_${projectCode || projectId}.csv`
+                  `sales_${project.code || projectId}.csv`
                 );
               } catch (e: any) {
                 toast.error(e?.message || "Export failed");

@@ -127,6 +127,13 @@ list. Holding `projects.write` escapes crew scoping entirely on both.
   `venue-binding.ts`) must stay the single source for their value↔label
   contract across desktop and mobile — each surface may keep its own visual
   styling, but never a second copy of the values/labels/matching rule.
+- The in-project Sales Order panel (`Sales.tsx` `EntryPanel`, opened from
+  `Projects.tsx` `ProjectSalesEntriesSection`) labels its Project field through
+  `pages/projects/soloOrganizerMask.ts`: a **solo** event's organizer (the mall
+  management) reads `SOLO` and the code is dropped, for everyone except
+  `salesAccess.canSeeSoloOrganizer` (BD role, Owner position, weisiang). An
+  exhibition's organizer shows to everybody. Display-only — the stored name,
+  the list, the calendar and the API still carry the organizer.
 
 ## Gotchas
 
