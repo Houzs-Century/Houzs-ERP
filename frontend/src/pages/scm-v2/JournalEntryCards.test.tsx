@@ -156,6 +156,9 @@ describe('a manual journal drafted', () => {
     expect(screen.getByText(/copied — check the date/)).toBeTruthy();
     expect((screen.getByPlaceholderText('Narration (what is this entry?)') as HTMLInputElement).value).toBe("Salary - Jun'26");
     expect((screen.getByLabelText('Line 1 account') as HTMLInputElement).value).toBe('900-S100 — GROSS SALARY');
+    /* The box fills its column and names the account in full on hover (owner 2026-09-18: the name was clipped). */
+    expect((screen.getByLabelText('Line 1 account') as HTMLInputElement).style.width).toBe('100%');
+    expect((screen.getByLabelText('Line 1 account') as HTMLInputElement).title).toBe('900-S100 — GROSS SALARY');
     expect((screen.getByLabelText('Line 1 debit') as HTMLInputElement).value).toBe('19206.98');
     expect((screen.getByLabelText('Line 2 credit') as HTMLInputElement).value).toBe('19206.98');
     expect((screen.getByLabelText('Line 2 note') as HTMLInputElement).value).toBe("Net Salary - Jun'26");

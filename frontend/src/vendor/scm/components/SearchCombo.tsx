@@ -71,6 +71,7 @@ export function SearchCombo({
   value,
   onChange,
   className,
+  fill = false,
   placeholder = '— type to search —',
   disabled,
   id,
@@ -80,6 +81,9 @@ export function SearchCombo({
   value: string;
   onChange: (value: string) => void;
   className?: string;
+  /** Fill the column it sits in — an account's code and name need the room
+      (the journal form, owner 2026-09-18: JE 显示 hide 掉名字了). */
+  fill?: boolean;
   placeholder?: string;
   disabled?: boolean;
   id?: string;
@@ -162,7 +166,7 @@ export function SearchCombo({
   return (
     <div
       ref={wrapRef}
-      style={{ position: 'relative' }}
+      style={{ position: 'relative', ...(fill ? { display: 'block', width: '100%' } : {}) }}
       onBlur={(e) => {
         /* Focus leaving the whole widget (not moving into the list). */
         if (!wrapRef.current?.contains(e.relatedTarget as Node | null)) close(true);
@@ -177,6 +181,8 @@ export function SearchCombo({
         aria-label={ariaLabel}
         autoComplete="off"
         className={className}
+        style={fill ? { width: '100%' } : undefined}
+        title={chosen?.label}
         placeholder={placeholder}
         disabled={disabled}
         value={shown}
