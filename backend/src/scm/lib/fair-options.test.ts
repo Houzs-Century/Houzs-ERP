@@ -86,6 +86,38 @@ describe('buildFairOptions — one row is a place plus an organizer', () => {
     expect(fairOptionLabel(pavilion!)).toBe('PAVILION BUKIT JALIL — MEGAHOME');
   });
 
+  it('reads a SOLO roadshow as SOLO and leaves an exhibition its organizer (owner 2026-09-18)', () => {
+    /* Production 2026-09: IOI MALL PUTRAJAYA / MALL MGT and SUNWAY CARNIVAL /
+       MALL MGMT are event type "solo"; SETIA SPICE / HOMELOVE is an exhibition. */
+    const rows = [
+      fair({ projectId: 1, venue: 'IOI MALL PUTRAJAYA', organizer: 'MALL MGT', eventType: 'solo' }),
+      fair({ projectId: 2, venue: 'SETIA SPICE CONVENTION CENTRE', organizer: 'HOMELOVE', eventType: 'exhibition' }),
+      fair({ projectId: 3, venue: 'PAVILION BUKIT JALIL', organizer: 'MEGAHOME' }),
+    ];
+    const { running } = buildFairOptions(rows, '2026-09-12');
+    expect(running.map(fairOptionLabel)).toEqual([
+      'IOI MALL PUTRAJAYA — SOLO',
+      'PAVILION BUKIT JALIL — MEGAHOME',
+      'SETIA SPICE CONVENTION CENTRE — HOMELOVE',
+    ]);
+    /* The label changed, the identity did not: the save path still resolves the
+       project from the real organizer. */
+    expect(running[0].organizer).toBe('MALL MGT');
+    expect(running[0].key).toContain('mall mgt');
+  });
+
+  it('dates two SOLO roadshows at one venue that would both read SOLO', () => {
+    const rows = [
+      fair({ projectId: 1, venue: 'SUNWAY CARNIVAL', organizer: 'MALL MGMT', eventType: 'solo', startDate: '2026-09-04', endDate: '2026-09-06' }),
+      fair({ projectId: 2, venue: 'SUNWAY CARNIVAL', organizer: 'VINCENT (VTEAM EVENT)', eventType: 'solo', startDate: '2026-09-18', endDate: '2026-09-20' }),
+    ];
+    const { month } = buildFairOptions(rows, '2026-09-12');
+    expect(month.map(fairOptionLabel)).toEqual([
+      'SUNWAY CARNIVAL — SOLO (2026-09-04 ~ 2026-09-06)',
+      'SUNWAY CARNIVAL — SOLO (2026-09-18 ~ 2026-09-20)',
+    ]);
+  });
+
   it('keeps a fair that straddles the month end while the order is inside it', () => {
     const rows = [fair({ projectId: 159, startDate: '2026-08-28', endDate: '2026-09-02' })];
     const { running } = buildFairOptions(rows, '2026-09-01');

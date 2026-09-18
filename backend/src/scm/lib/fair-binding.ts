@@ -55,6 +55,7 @@ function toFairRow(r: Record<string, unknown>): FairProjectRow {
     startDate: str(r, 'startdate', 'startDate', 'start_date'),
     endDate: str(r, 'enddate', 'endDate', 'end_date'),
     status: str(r, 'status'),
+    eventType: str(r, 'eventtype', 'eventType', 'event_type'),
   };
 }
 
@@ -63,7 +64,9 @@ function toFairRow(r: Record<string, unknown>): FairProjectRow {
    projects, and `isPickableFair` stays the single authority on the decision. */
 const FAIR_COLUMNS =
   'p.id AS id, p.venue AS venue, p.organizer AS organizer, p.brand AS brand, ' +
-  'p.start_date AS startdate, p.end_date AS enddate, p.status AS status';
+  'p.start_date AS startdate, p.end_date AS enddate, p.status AS status, ' +
+  /* The event type decides the picker LABEL only (a solo roadshow reads "SOLO"). */
+  '(SELECT et.slug FROM project_event_types et WHERE et.id = p.event_type_id) AS eventtype';
 
 const LIVE_FAIR = `p.venue IS NOT NULL AND trim(p.venue) <> ''
      AND p.start_date IS NOT NULL

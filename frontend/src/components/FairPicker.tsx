@@ -24,6 +24,9 @@
 //     alone is not a fair — 15 venue-months in 2026 carry two or more organizers
 //     at one venue, so 31 rows would read identically. `fairLabel`'s comment
 //     carries the measurement and how it was taken.
+//     A SOLO roadshow reads "VENUE — SOLO" (owner 2026-09-18): it has no
+//     organizer to name, MALL MGT is only the landlord. Exhibitions are unchanged,
+//     and the value sent on a pick is still the real organizer.
 //  2. NOBODY TYPES. *"dont let them write in manual, third option just pick
 //     others"* — Others opens a second PICK over the company's 92-row venue
 //     master, which covers every venue any 2026 fair uses. Free text is what
