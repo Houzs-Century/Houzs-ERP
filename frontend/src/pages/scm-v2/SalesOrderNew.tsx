@@ -94,7 +94,7 @@ import {
 } from '../../vendor/scm/lib/localities-queries';
 import {
   useAddressCascade, pickState, pickCity, pickPostcode,
-  cityPlaceholder, postcodePlaceholder, POSTCODE_NEEDS_STATE,
+  cityPlaceholder, postcodePlaceholder,
 } from '../../vendor/scm/lib/address-cascade';
 import { StatePicker } from '../../vendor/scm/components/StatePicker';
 import {
@@ -2110,7 +2110,6 @@ export const SalesOrderNew = () => {
               onResolve={(r) => { setAddress1(r.address); if (r.state && r.city) { setState(r.state); setCity(r.city); } }}
               postcodeChoices={postcodeChoices}
               placeholder={loc.isLoading ? 'Loading…' : postcodePlaceholder(state, city)}
-              blockedReason={state ? undefined : POSTCODE_NEEDS_STATE}
               disabled={loc.isLoading}
               classes={{ field: styles.field, label: styles.fieldLabel, select: styles.fieldSelect, selectWrap: styles.selectWrap, chevron: styles.selectChevron, input: styles.fieldInput }}
             />
