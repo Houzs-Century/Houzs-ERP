@@ -10,7 +10,9 @@
 // Owner 2026-09-18: a cell with nothing in it prints a dash in both its slots
 // (没有 amount 的不留空白); an account's lines open under its row in the month
 // grid, each under its own month (那笔费用挂在那个月份的下面) — the name opens
-// the whole range, a month's figure opens that month alone.
+// the whole range, a month's figure opens that month alone. Rows wear a
+// dashed hairline, light up under the mouse, and the name column stays put
+// while the months scroll (his pick of the two samples, style one).
 // ----------------------------------------------------------------------------
 
 import { Fragment, useEffect, useMemo, useState } from 'react';
@@ -25,6 +27,7 @@ import {
 } from '../../vendor/scm/lib/report-monthly';
 import { LevelButtons, useReportTree, type Level } from './ReportLayoutTree';
 import { AccountMonthRows } from './AccountMonthRows';
+import styles from './MonthlyReport.module.css';
 
 const soft: React.CSSProperties = { fontSize: 'var(--fs-13)', color: 'var(--text-soft, #8a8578)' };
 const card: React.CSSProperties = {
@@ -157,8 +160,8 @@ export function MonthlyReport<T>({ report, title, withCumulative, fetchColumn, l
                 const drilled = drillable && Boolean(tree.drilled[l.id]);
                 return (
                   <Fragment key={l.id}>
-                    <tr data-kind={l.kind} data-depth={l.depth} style={l.kind === 'net' || l.kind === 'total' ? { borderTop: l.kind === 'net' ? '2px solid var(--c-ink, #221f20)' : '1px solid var(--border-weak, #e3e1da)' } : undefined}>
-                      <td style={{ padding: `2px 10px 2px ${10 + 14 * Math.max(0, l.depth)}px`, position: 'sticky', left: 0, background: 'var(--c-cream)', whiteSpace: 'nowrap', ...style(l) }}>
+                    <tr data-kind={l.kind} data-depth={l.depth} className={l.kind === 'block' ? undefined : styles.row} style={l.kind === 'net' || l.kind === 'total' ? { borderTop: l.kind === 'net' ? '2px solid var(--c-ink, #221f20)' : '1px solid var(--border-weak, #e3e1da)' } : undefined}>
+                      <td className={styles.name} style={{ padding: `2px 10px 2px ${10 + 14 * Math.max(0, l.depth)}px`, ...style(l) }}>
                         {folder && <button type="button" style={chevron} aria-label={`${open ? 'Collapse' : 'Expand'} ${l.label}`} aria-expanded={open} onClick={() => tree.toggle(l.id, open)}>{open ? '▾' : '▸'}</button>}
                         {drillable
                           ? <button type="button" style={nameBtn} aria-label={`Lines of ${l.label}`} aria-expanded={drilled} onClick={() => openLines(l.id, null, drilled, drillMonth[l.id] ?? null)}>{l.label}</button>

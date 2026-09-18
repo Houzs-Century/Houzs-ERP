@@ -67,6 +67,10 @@ describe('the monthly view', () => {
     expect(screen.getByText(/did not load/).textContent).toContain('4 column(s)');
     const rent = screen.getByText('RENT').closest('tr')!;
     expect(within(rent).getAllByRole('cell').map(amountOf)).toEqual(['RENT', '-', 'RM 1000.00', 'RM 1000.00', 'RM 1000.00', '-', '-', '-']);
+    /* Style one (owner 2026-09-18): every line wears the dashed row style and a frozen name cell; a block line does not. */
+    expect(rent.className).toMatch(/row/);
+    expect(within(rent).getAllByRole('cell')[0]!.className).toMatch(/name/);
+    expect(screen.getByText('Expenses').closest('tr')!.className).toBe('');
     const advert = screen.getByText('ADVERT').closest('tr')!;
     expect(within(advert).getAllByRole('cell').map(amountOf)).toEqual(['ADVERT', '-', '-', 'RM 50.00', '-', '-', '-', '-']);
     /* A dash in the % slot too — nothing is left blank (owner 2026-09-18, method B). */
