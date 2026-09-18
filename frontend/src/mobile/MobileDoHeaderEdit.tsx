@@ -49,7 +49,7 @@ import { warehouseLabel } from "../vendor/scm/lib/warehouse-label";
 import { useLocalities, countryForState } from "../vendor/scm/lib/localities-queries";
 import {
   useAddressCascade, pickState, pickCity, pickPostcode,
-  cityPlaceholder, postcodePlaceholder, POSTCODE_NEEDS_STATE,
+  cityPlaceholder, postcodePlaceholder,
 } from "../vendor/scm/lib/address-cascade";
 import { useDebtorSearch, type DebtorSuggestion } from "../vendor/scm/lib/sales-order-queries";
 import { useDebouncedValue } from "../vendor/scm/lib/hooks";
@@ -254,7 +254,6 @@ export function MobileDoHeaderEdit({ id, onBack, onSaved }: {
         onResolve={(r) => set({ address1: r.address, ...(r.state && r.city ? { state: r.state, city: r.city } : {}) })}
         postcodeChoices={withCurrent(postcodes, form.postcode)}
         placeholder={loc.isLoading ? "Loading…" : postcodePlaceholder(form.state, form.city)}
-        blockedReason={form.state ? undefined : POSTCODE_NEEDS_STATE}
         disabled={lockedKey("postcode") || loc.isLoading}
         classes={{ field: "st-fld", label: "st-fl", select: "cal-sel", input: "cal-sel" }}
       />

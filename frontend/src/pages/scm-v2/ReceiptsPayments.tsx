@@ -9,13 +9,16 @@
 // settled, rule A), or by debtor/creditor on the toggle. Pick the period,
 // tick the accounts, click a figure to see the entries behind it, Print.
 // The rows sit on the report's LAYOUT (docs/bugs/0912 — the big groups the
-// owner asked for on 2026-09-07, showroom 费用 / operation 费用 …): one tree
-// over the chart, laid out for receipts and again for payments, a category
-// summing its rows per column, % of the side's total on every line, L1..Ln
-// buttons, the Layout button for whoever may read the statements.
+// owner asked for on 2026-09-07, showroom 费用 / operation 费用 …) — since
+// 2026-09-18 the Cash Flow tree: every top category is In or Out and prints
+// as a section with its own subtotal name, a running subtotal is a bold
+// line, the unassigned groups sit last, then Cash Surplus / (Deficit),
+// Balance b/f and Balance c/f. A category sums its rows per column, every
+// line carries % of its side's total; L1..Ln buttons, the Layout button for
+// whoever may read the statements.
 // ----------------------------------------------------------------------------
 
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import { Printer } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { useAuth } from '../../auth/AuthContext';
@@ -25,7 +28,7 @@ import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import { rpLines, type MonthColumn } from '../../vendor/scm/lib/report-monthly';
 import { ByMonthButton, MonthlyReport } from './MonthlyReport';
 import { fmtRp, generateRpPdf } from '../../vendor/scm/lib/rp-report-pdf';
-import { fmtPct, laidDepth, leafKeys, pctOf, type LaidNode } from '../../vendor/scm/lib/report-layout';
+import { fmtPct, laidDepth, leafKeys, type LaidNode } from '../../vendor/scm/lib/report-layout';
 import { DateField } from '../../vendor/scm/components/DateField';
 import { fmtDateOrDash } from '../../vendor/shared/format';
 import { LaidRows, LevelButtons, useReportTree, type Level } from './ReportLayoutTree';
@@ -38,6 +41,18 @@ const soft: React.CSSProperties = { fontSize: 'var(--fs-12)', color: 'var(--fg-m
 const card: React.CSSProperties = { background: 'var(--c-paper, #fff)', border: '1px solid var(--border-weak, #e3e1da)', borderRadius: 8, padding: 'var(--space-3)' };
 const th: React.CSSProperties = { padding: '6px 10px', fontSize: 'var(--fs-11)', fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--fg-muted)', borderBottom: '1px solid var(--border-weak, #e3e1da)', whiteSpace: 'nowrap' };
 const num: React.CSSProperties = { textAlign: 'right', fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' };
+/** Which entries a node's figure opens: an In line the receipts, an Out line
+    the payments, a Net line both — a category whatever its lines carry. */
+const sidesOf = (n: LaidNode): Array<'R' | 'P'> => {
+  const flows = new Set<string>();
+  const walk = (x: LaidNode): void => { if (x.children.length === 0) flows.add(x.flow ?? 'net'); else x.children.forEach(walk); };
+  walk(n);
+  const out: Array<'R' | 'P'> = [];
+  if (flows.has('in') || flows.has('net')) out.push('R');
+  if (flows.has('out') || flows.has('net')) out.push('P');
+  return out;
+};
+
 const SOURCE_WORD: Partial<Record<string, string>> = {
   PV: 'Payment voucher', SOPAY: 'Customer payment', SIPAY: 'Customer payment', RCT: 'Receipt', ODR: 'Other debtor receipt',
   SETTLE: 'Settlement', SETTLEBANK: 'Settlement', MANUAL: 'Journal', CASHUP: 'Cash-up',
@@ -54,7 +69,7 @@ export const ReceiptsPaymentsTab = () => {
   const [shown, setShown] = useState<Set<string>>(() => new Set());
   const q = useRpReport(from, to, [], byParty);
   /* A figure clicked: the rows under it (one, or a whole category's), the column or the total. */
-  const [drill, setDrill] = useState<{ side: 'R' | 'P'; id: string; label: string; rowKeys: string[]; column: string | null } | null>(null);
+  const [drill, setDrill] = useState<{ sides: Array<'R' | 'P'>; id: string; label: string; rowKeys: string[]; column: string | null } | null>(null);
   const [level, setLevel] = useState<Level>('all');
   const tree = useReportTree(level);
   const [editing, setEditing] = useState(false);
@@ -74,11 +89,13 @@ export const ReceiptsPaymentsTab = () => {
   const r = q.data;
   const entries = useMemo(() => {
     if (!r || !drill) return [];
-    return r.entries.filter((e) => e.side === drill.side && drill.rowKeys.includes(e.rowKey) && (drill.column == null || e.column === drill.column));
+    return r.entries.filter((e) => drill.sides.includes(e.side) && drill.rowKeys.includes(e.rowKey) && (drill.column == null || e.column === drill.column));
   }, [r, drill]);
-  const pick = (side: 'R' | 'P') => (node: LaidNode, column: string | null) =>
-    setDrill({ side, id: node.id, label: node.label, rowKeys: leafKeys(node), column });
-  const treeDepth = r ? Math.max(laidDepth(r.layout.receipts), laidDepth(r.layout.payments)) : 0;
+  const pick = (node: LaidNode, column: string | null) =>
+    setDrill({ sides: sidesOf(node), id: node.id, label: node.label, rowKeys: leafKeys(node), column });
+  /* The levels count inside a side: L1 is the first layer under RECEIPTS / PAYMENTS. */
+  const treeDepth = r ? Math.max(0, ...r.layout.tree.map((n) => laidDepth(n.children))) : 0;
+  const surplusPer: Record<string, number> = r ? Object.fromEntries(r.columns.map((c) => [c.code, (r.totals.receipts[c.code] ?? 0) - (r.totals.payments[c.code] ?? 0)])) : {};
   const columns = r ? r.columns.filter((c) => shown.has(c.code)) : [];
   const columnCodes = columns.map((c) => c.code);
 
@@ -130,16 +147,19 @@ export const ReceiptsPaymentsTab = () => {
               </tr>
             </thead>
             <tbody>
-              <BalanceLine label="Opening balance" columns={columns} per={r.opening} total={r.totals.openingTotalSen} />
-              <SectionLine label="RECEIPTS" span={columns.length + 3} />
-              <LaidRows nodes={r.layout.receipts} level={level} columns={columnCodes} fmt={fmtRp} onPick={pick('R')} activeId={drill?.side === 'R' ? drill.id : null} tree={tree} drill={{ from, to }} />
-              {r.receipts.length === 0 && <EmptyLine text="No money came in on these accounts in the period." span={columns.length + 3} />}
-              <BalanceLine label="Total receipts" columns={columns} per={r.totals.receipts} total={r.totals.receiptsTotalSen} pct={fmtPct(pctOf(r.totals.receiptsTotalSen, r.totals.receiptsTotalSen || null))} />
-              <SectionLine label="PAYMENTS" span={columns.length + 3} />
-              <LaidRows nodes={r.layout.payments} level={level} columns={columnCodes} fmt={fmtRp} onPick={pick('P')} activeId={drill?.side === 'P' ? drill.id : null} tree={tree} drill={{ from, to }} />
-              {r.payments.length === 0 && <EmptyLine text="No money went out of these accounts in the period." span={columns.length + 3} />}
-              <BalanceLine label="Total payments" columns={columns} per={r.totals.payments} total={r.totals.paymentsTotalSen} pct={fmtPct(pctOf(r.totals.paymentsTotalSen, r.totals.paymentsTotalSen || null))} />
-              <BalanceLine label="Closing balance" columns={columns} per={r.totals.closing} total={r.totals.closingTotalSen} strong />
+              {r.layout.tree.map((n) => (n.kind === 'subtotal'
+                ? <BalanceLine key={n.id} label={n.label} columns={columns} per={n.cells ?? {}} total={n.amountSen} strong />
+                : (
+                  <Fragment key={n.id}>
+                    <SectionLine label={n.label} span={columns.length + 3} muted={n.kind === 'unassigned'} />
+                    <LaidRows nodes={n.children} level={level} columns={columnCodes} fmt={fmtRp} onPick={pick} activeId={drill?.id ?? null} tree={tree} drill={{ from, to }} />
+                    {n.children.length === 0 && <EmptyLine text={n.flow === 'out' ? 'No money went out of these accounts in the period.' : 'No money came in on these accounts in the period.'} span={columns.length + 3} />}
+                    <BalanceLine label={n.totalLabel ?? `Total ${n.label}`} columns={columns} per={n.cells ?? {}} total={n.amountSen} pct={fmtPct(n.pct)} />
+                  </Fragment>
+                )))}
+              <BalanceLine label="Cash Surplus / (Deficit)" columns={columns} per={surplusPer} total={r.totals.receiptsTotalSen - r.totals.paymentsTotalSen} strong />
+              <BalanceLine label="Balance b/f" columns={columns} per={r.opening} total={r.totals.openingTotalSen} />
+              <BalanceLine label="Balance c/f" columns={columns} per={r.totals.closing} total={r.totals.closingTotalSen} strong />
             </tbody>
           </table>
         </div>
@@ -177,8 +197,8 @@ export const ReceiptsPaymentsTab = () => {
   );
 };
 
-const SectionLine = ({ label, span }: { label: string; span: number }) => (
-  <tr><td colSpan={span} style={{ padding: '10px 10px 4px', fontWeight: 700 }}>{label}</td></tr>
+const SectionLine = ({ label, span, muted }: { label: string; span: number; muted?: boolean }) => (
+  <tr><td colSpan={span} style={{ padding: '10px 10px 4px', fontWeight: 700, ...(muted ? { fontStyle: 'italic', ...soft } : {}) }}>{label}</td></tr>
 );
 const EmptyLine = ({ text, span }: { text: string; span: number }) => (
   <tr><td colSpan={span} style={{ padding: '2px 10px 2px 24px', ...soft }}>{text}</td></tr>

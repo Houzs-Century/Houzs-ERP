@@ -27,12 +27,14 @@
 // stored; every request re-derives.
 //
 // Since docs/bugs/0912 the rows ALSO come back arranged on the report's
-// LAYOUT (acc/report-layout.ts — one tree, the whole chart, laid out twice:
-// receipts and payments), each row keeping its figure per money column, a
-// category summing its rows per column, % of the side's total on every
-// line. A transfer prints where the other money account sits on the tree;
-// the supplier-advance row, which is no account, follows the tree at the
-// block's foot. The flat rows stay as they were.
+// LAYOUT (acc/report-layout.ts) — since 2026-09-18 the Cash Flow tree: one
+// tree, every line with a direction, In/Out top categories with their own
+// subtotal names, running subtotals, the unassigned at the foot — each row
+// keeping its figure per money column, a category summing its rows per
+// column, % of the side's total on every line. A transfer prints where the
+// other money account sits on the tree; the supplier-advance row, which is
+// no account, prints under Unassigned payments. The flat rows stay as they
+// were: the screen's drill-down and the tests read them.
 // ----------------------------------------------------------------------------
 
 import { hasHouzsPerm } from '../lib/houzs-perms';
@@ -40,7 +42,7 @@ import { requireActiveCompanyId } from '../lib/companyScope';
 import { paginateAll } from '../lib/paginate-all';
 import { resolveRoles } from '../../acc/rules';
 import { countsInTheBooks } from '../../acc/reversal-pairs';
-import { laidLineNode, layOutBlock, type LaidLine, type LaidNode, type LayoutItem } from '../../acc/report-layout';
+import { layOutCashFlow, type LaidLine } from '../../acc/report-layout';
 import { allowedIds, resolveLayout } from './accounting-report-layouts';
 
 const requirePerm = (c: any): boolean => hasHouzsPerm(c, 'scm.payment_voucher.post');
@@ -332,25 +334,19 @@ export const receiptsPaymentsReport = async (c: any): Promise<Response> => {
   const laid = await resolveLayout(sb, allowedIds(c), 'rp');
   if (!laid.ok) return c.json({ error: 'load_failed', reason: laid.reason }, 500);
   const tree = laid.layout.blocks.accounts ?? [];
-  const layout = {
-    stored: laid.stored,
-    receipts: rowsOnTree(tree, receiptRows, companyId, totals.receiptsTotalSen),
-    payments: rowsOnTree(tree, paymentRows, companyId, totals.paymentsTotalSen),
-  };
+  const cf = layOutCashFlow(tree, cashFlowLines(receiptRows), cashFlowLines(paymentRows), companyId);
+  const layout = { stored: laid.stored, tree: cf.nodes, inSen: cf.inSen, outSen: cf.outSen };
   return c.json({ from, to, byParty, columns, opening, receipts: receiptRows, payments: paymentRows, layout, totals, entries });
 };
 
-/** One side's rows on the tree: a coded row sits where its code sits (a
-    control account by party, or a transfer, as several rows under one
-    code); a row with no account (supplier advances) follows the tree. */
-export function rowsOnTree(tree: LayoutItem[], rows: RpRow[], companyId: number, sideTotalSen: number): LaidNode[] {
-  const baseSen = sideTotalSen !== 0 ? sideTotalSen : null;
-  const line = (r: RpRow, code: string): LaidLine => ({
-    code, key: r.key, name: r.name,
+/** One side's rows as lines for the tree: a coded row sits where its code
+    sits (a control account by party, or a transfer, as several rows under
+    one code); a row with no account (supplier advances) is keyed by its own
+    key, which no tree places, so it prints under Unassigned. */
+export function cashFlowLines(rows: RpRow[]): LaidLine[] {
+  return rows.map((r) => ({
+    code: r.code ?? r.key, key: r.key, name: r.name,
     label: r.key === r.code ? `${r.code} · ${r.name}` : r.name,
     amountSen: r.totalSen, cells: { ...r.cells },
-  });
-  const coded = rows.flatMap((r) => (r.code ? [line(r, r.code)] : []));
-  const loose = rows.flatMap((r) => (r.code ? [] : [line(r, r.key)]));
-  return [...layOutBlock(tree, coded, companyId, baseSen), ...loose.map((l) => laidLineNode(l, baseSen))];
+  }));
 }

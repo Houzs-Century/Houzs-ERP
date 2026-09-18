@@ -4,9 +4,9 @@
 
 import { describe, expect, test } from 'vitest';
 import {
-  accountKey, addCategory, blockOfKey, categoryIds, flattenLaid, fmtPct, foldsChildren, folderOpen, laidDepth, leafKeys, linesVisible, moveWithinSiblings, newCategoryId, pctOf, placeItem,
-  removeCategory, renameCategory, setCategoryTick, unplaceAccount, unplacedAccounts,
-  type LaidNode, type Layout, type LayoutAccountRow, type LayoutItem,
+  accountKey, addCategory, addSubtotal, blockOfKey, categoryIds, flattenLaid, fmtPct, foldsChildren, folderOpen, itemKey, laidDepth, leafKeys, linesVisible, moveWithinSiblings, newCategoryId, newSubtotalId, pctOf, placeItem,
+  removeCategory, removeSubtotal, renameCategory, setAccountFlow, setCategoryFlow, setCategoryTick, setTotalLabel, unplaceAccount, unplacedAccounts,
+  type LaidNode, type Layout, type LayoutAccountRow, type LayoutBlockDef, type LayoutItem,
 } from './report-layout';
 
 const layout = (): Layout => ({
@@ -27,7 +27,7 @@ const layout = (): Layout => ({
 });
 
 const shape = (items: LayoutItem[]): unknown[] =>
-  items.map((it) => (it.kind === 'account' ? it.code : { [it.id]: shape(it.children) }));
+  items.map((it) => (it.kind === 'account' ? it.code : it.kind === 'subtotal' ? { subtotal: it.id } : { [it.id]: shape(it.children) }));
 
 describe('moving among siblings', () => {
   test('down swaps with the next; the ends stay put; the given tree is untouched', () => {
@@ -213,5 +213,88 @@ describe('linesVisible', () => {
     expect(folderOpen({ id: 'opex', depth: 1 }, 1, {})).toBe(false);
     expect(folderOpen({ id: 'opex', depth: 1 }, 2, {})).toBe(true);
     expect(folderOpen({ id: 'opex', depth: 1 }, 1, { opex: true })).toBe(true);
+  });
+});
+
+/* ── the Cash Flow tree (owner 2026-09-18) ───────────────────────────────── */
+
+const cashFlow = (): Layout => ({
+  version: 1,
+  blocks: {
+    accounts: [
+      { kind: 'category', id: 'side:in', label: 'RECEIPTS', flow: 'in', totalLabel: 'Total receipts', children: [
+        { kind: 'category', id: 'in:sec:CA', label: 'CURRENT ASSETS', children: [{ kind: 'account', code: '300-0000', flow: 'in' }, { kind: 'account', code: '320-0000', flow: 'in' }] },
+      ] },
+      { kind: 'category', id: 'side:out', label: 'PAYMENTS', flow: 'out', totalLabel: 'Total payments', children: [
+        { kind: 'account', code: '300-0000', flow: 'out' },
+        { kind: 'category', id: 'out:acc:601-0000', label: 'PURCHASES', code: '601-0000', children: [{ kind: 'account', code: '601-0003', flow: 'out' }] },
+      ] },
+    ],
+  },
+});
+const cfBlock: LayoutBlockDef = { key: 'accounts', title: 'Accounts', sections: ['CURRENT ASSETS', 'COST OF GOODS SOLD', 'EXPENSES'] };
+const cfAccounts: LayoutAccountRow[] = [
+  { code: '300-0000', name: 'AR', type: 'ASSET', parentCode: null, section: 'CURRENT ASSETS', perCompany: {} },
+  { code: '320-0000', name: 'CASH', type: 'ASSET', parentCode: null, section: 'CURRENT ASSETS', perCompany: {} },
+  { code: '601-0000', name: 'PURCHASES', type: 'EXPENSE', parentCode: null, section: 'COST OF GOODS SOLD', perCompany: {} },
+  { code: '601-0003', name: 'SOFA', type: 'EXPENSE', parentCode: '601-0000', section: 'COST OF GOODS SOLD', perCompany: {} },
+  { code: '910-0000', name: 'UTILITIES', type: 'EXPENSE', parentCode: null, section: 'EXPENSES', perCompany: {} },
+];
+const codesOf = (rows: LayoutAccountRow[]): string[] => rows.map((a) => a.code);
+
+describe('the Cash Flow tree', () => {
+  test('an account line is keyed by its direction too — one account, two lines', () => {
+    expect(accountKey('300-0000', 'in')).toBe('a:in:300-0000');
+    expect(itemKey({ kind: 'account', code: '300-0000', flow: 'out' })).toBe('a:out:300-0000');
+    expect(itemKey({ kind: 'subtotal', id: 'sub:1', label: 'Net' })).toBe('sub:1');
+    const l = unplaceAccount(cashFlow(), 'accounts', '300-0000', 'out');
+    expect(shape(l.blocks.accounts!)).toEqual([
+      { 'side:in': [{ 'in:sec:CA': ['300-0000', '320-0000'] }] },
+      { 'side:out': [{ 'out:acc:601-0000': ['601-0003'] }] },
+    ]);
+  });
+
+  test('a top category takes a side; one deeper down follows its parent; the subtotal name is set or cleared', () => {
+    const before = cashFlow();
+    let l = setCategoryFlow(before, 'side:out', 'in');
+    expect((l.blocks.accounts![1] as { flow?: string }).flow).toBe('in');
+    expect(setCategoryFlow(before, 'in:sec:CA', 'out')).toBe(before);
+    l = setTotalLabel(l, 'side:out', 'Net Loan');
+    expect((l.blocks.accounts![1] as { totalLabel?: string }).totalLabel).toBe('Net Loan');
+    l = setTotalLabel(l, 'side:out', '   ');
+    expect('totalLabel' in (l.blocks.accounts![1] as object)).toBe(false);
+    expect(setTotalLabel(before, 'a:in:300-0000', 'x')).toBe(before);
+  });
+
+  test('a line turns Net, its key follows; a subtotal joins the top level, moves there, never into a category, and goes', () => {
+    let l = setAccountFlow(cashFlow(), 'accounts', 'a:out:300-0000', 'net');
+    const out = l.blocks.accounts![1] as { children: LayoutItem[] };
+    expect(out.children[0]).toEqual({ kind: 'account', code: '300-0000', flow: 'net' });
+    expect(itemKey(out.children[0]!)).toBe('a:net:300-0000');
+    expect(setAccountFlow(l, 'accounts', 'side:in', 'in')).toBe(l);
+    l = addSubtotal(l, 'accounts', 'Net operation surplus / (deficit)', 'sub:ops');
+    expect(l.blocks.accounts![2]).toEqual({ kind: 'subtotal', id: 'sub:ops', label: 'Net operation surplus / (deficit)' });
+    const sub = l.blocks.accounts![2]!;
+    /* Between the sides: fine. Into a category, or above a nested line: refused. */
+    const moved = placeItem(l, 'accounts', sub, { kind: 'before', key: 'side:out' });
+    expect(shape(moved.blocks.accounts!).map((x) => Object.keys(x as object)[0])).toEqual(['side:in', 'subtotal', 'side:out']);
+    expect(placeItem(l, 'accounts', sub, { kind: 'into', categoryId: 'side:in' })).toBe(l);
+    expect(placeItem(l, 'accounts', sub, { kind: 'before', key: 'a:in:300-0000' })).toBe(l);
+    l = renameCategory(l, 'sub:ops', 'Cash Surplus');
+    expect((l.blocks.accounts![2] as { label: string }).label).toBe('Cash Surplus');
+    l = removeSubtotal(l, 'sub:ops');
+    expect(l.blocks.accounts).toHaveLength(2);
+    expect(removeSubtotal(l, 'sub:nope')).toBe(l);
+    expect(newSubtotalId(1000, 5)).toMatch(/^sub:/);
+  });
+
+  test('the unplaced are asked for per side: a line reads its own side, Net reads both, a header account its top side', () => {
+    const l = cashFlow();
+    expect(codesOf(unplacedAccounts(l, cfBlock, cfAccounts, 'in'))).toEqual(['601-0000', '601-0003', '910-0000']);
+    expect(codesOf(unplacedAccounts(l, cfBlock, cfAccounts, 'out'))).toEqual(['320-0000', '910-0000']);
+    const net = setAccountFlow(unplaceAccount(l, 'accounts', '300-0000', 'in'), 'accounts', 'a:out:300-0000', 'net');
+    expect(codesOf(unplacedAccounts(net, cfBlock, cfAccounts, 'in'))).toEqual(['601-0000', '601-0003', '910-0000']);
+    /* Without a side, the old reading: placed anywhere counts. */
+    expect(codesOf(unplacedAccounts(l, cfBlock, cfAccounts))).toEqual(['910-0000']);
   });
 });

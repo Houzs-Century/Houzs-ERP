@@ -2,17 +2,17 @@
 // The State / City / Postcode cascade, in ONE place.
 //
 // The owner's rule for every address surface: "它可以由上往下，也可以由下往上" —
-// pick a State and City/Postcode narrow to it, OR pick a City first and let the
-// State fill itself in.
+// pick a State and City/Postcode narrow to it, OR pick a City or a Postcode
+// first and let the State fill itself in. All three fields are valid starting
+// points, both directions, everywhere (owner 2026-09-18: "从 postcode 或者从
+// state 开始都行").
 //
-// REFINED 2026-09-12 (owner): "一定要选 state 才填写 postcode". POSTCODE is now
-// State-first — it may NOT be picked until a State exists. So the bottom-up leg
-// that started from a bare Postcode is gone: postcodeOptionsFor returns EMPTY
-// with no State, and the forms block the field and pop POSTCODE_NEEDS_STATE on
-// a click. City-first still works (it back-fills State, which then opens
-// Postcode), so "由下往上" survives via City; only the Postcode-first entry was
-// removed, on purpose. The old bottom-up-from-postcode behaviour is pinned OFF
-// in address-cascade.test.ts so it cannot quietly return.
+// A Malaysian 5-digit postcode maps to one locality, so a bare Postcode is an
+// unambiguous start: pickPostcode back-fills State + City off resolvePostcode.
+// A Postcode-first gate ("一定要选 state 才填写 postcode") shipped 2026-09-12 and
+// was reversed by the owner on 2026-09-18 — do NOT re-add it: postcodeOptionsFor
+// offers the cross-state pool with no State, and no form blocks the field.
+// AMBIGUITY is still refused, never guessed (see the resolvers below).
 //
 // This module exists because that wiring was about to be hand-copied a fourth
 // time. SalesOrderNew, MobileNewSO and SalesOrderDetail each grew their own
@@ -44,8 +44,10 @@
 import { useMemo } from 'react';
 import {
   allCities,
+  allPostcodes,
   citiesInState,
   distinctStates,
+  postcodesForCity,
   postcodesInCity,
   postcodesInState,
   resolveCityState,
@@ -64,18 +66,16 @@ export interface AddressTriple {
 export const cityOptionsFor = (rows: LocalityRow[], state: string): string[] =>
   (state ? citiesInState(rows, state) : allCities(rows));
 
-/* Postcode options. State-first (owner 2026-09-12): a Postcode may not be
-   picked until a State is chosen, so with no State this is EMPTY — the form
-   blocks the field and shows POSTCODE_NEEDS_STATE. With a State:
-     both  -> the city's postcodes in that state
-     state -> every postcode in the state (top-down keeps narrowing).
-   City can still start the cascade (it back-fills State when unambiguous);
-   once State is set this opens up. Postcode is the one field that no longer
-   works bottom-up from nothing — see the header note. */
+/* Postcode options, narrowed by whatever IS known — in order:
+   both  -> the city's postcodes in that state
+   state -> every postcode in the state (top-down keeps narrowing)
+   city  -> the postcodes of that city name, whichever states carry it
+   neither -> the whole pool, so the operator can start from a postcode. */
 export const postcodeOptionsFor = (rows: LocalityRow[], state: string, city: string): string[] => {
-  if (!state) return [];
-  if (city) return postcodesInCity(rows, state, city);
-  return postcodesInState(rows, state);
+  if (state && city) return postcodesInCity(rows, state, city);
+  if (state) return postcodesInState(rows, state);
+  if (city) return postcodesForCity(rows, city);
+  return allPostcodes(rows);
 };
 
 /* Picking a State RESETS the rest of the cascade — a city/postcode chosen under
@@ -124,15 +124,10 @@ export const pickPostcode = (
 export const cityPlaceholder = (state: string): string =>
   (state ? 'Pick city' : 'Pick city — State fills in');
 
-/* The message a form shows — in the field placeholder and in the popup — when
-   the operator reaches for Postcode before choosing a State (owner 2026-09-12).
-   Kept here so the placeholder and the popup can never drift apart. */
-export const POSTCODE_NEEDS_STATE = 'Choose a State (state / region) before entering a Postcode.';
-
 export const postcodePlaceholder = (state: string, city: string): string => {
-  if (!state) return 'Select State first';
   if (city) return 'Pick postcode';
-  return 'Pick postcode — City fills in';
+  if (state) return 'Pick postcode — City fills in';
+  return 'Pick postcode — State and City fill in';
 };
 
 /* The three option lists, memoised. Every form needs the same three and they

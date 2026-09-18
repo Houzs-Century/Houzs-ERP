@@ -70,7 +70,7 @@ describe('address forms use the shared State picker', () => {
   it('the Delivery Order address uses the SAME widgets as the Sales Order — searchable City, the shared Postcode field', () => {
     /* Owner 2026-09-14: 「一定要跟 Sales Order 一模一样」. Same functions is not
        enough if the boxes behave differently: the order form's City is typeable
-       and its Postcode carries the State-first popup and the Singapore lookup. */
+       and its Postcode is the shared field (searchable, with the Singapore lookup). */
     const so = forms.find((f) => f.rel === 'pages/scm-v2/SalesOrderNew.tsx');
     const doForm = forms.find((f) => f.rel === 'pages/scm-v2/DeliveryOrderNewV2.tsx')!;
     for (const widget of ['<StatePicker', '<SearchableSelect', '<AddressPostcodeField']) {
