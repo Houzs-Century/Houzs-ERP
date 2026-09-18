@@ -42,6 +42,13 @@ vi.mock('../../vendor/scm/lib/stock-queries', async (importOriginal) => ({
       adjustCalls.push(vars);
       opts.onSuccess({ movement: { id: `mv-${adjustCalls.length}` } });
     },
+    // StockAdjustmentNew's multi-item Save loop posts each item sequentially
+    // via mutateAsync (owner 2026-09-18) — react-query's real useMutation
+    // always provides both; this stub needs to as well.
+    mutateAsync: async (vars: (typeof adjustCalls)[number]) => {
+      adjustCalls.push(vars);
+      return { movement: { id: `mv-${adjustCalls.length}` } };
+    },
   }),
 }));
 vi.mock('../../vendor/scm/lib/inventory-queries', async (importOriginal) => ({
