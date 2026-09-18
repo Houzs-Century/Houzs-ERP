@@ -35,6 +35,7 @@ import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataG
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
+import { NumberInput } from '../../vendor/scm/components/NumberInput';
 import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
@@ -331,13 +332,13 @@ export const SoFromProducts = () => {
           const on = Boolean(picks[p.code]?.picked);
           return (
             <span {...stop} style={{ display: 'inline-flex' }}>
-              <input
-                type="number"
-                min={1}
-                value={on ? picks[p.code]!.qty : ''}
+              <NumberInput
+                sign="unsigned"
+                decimal={false}
+                value={on ? picks[p.code]!.qty : null}
                 placeholder="1"
                 disabled={!on}
-                onChange={(e) => setQty(p.code, Math.max(1, Number(e.target.value) || 1))}
+                onValueChange={(n) => setQty(p.code, Math.max(1, n ?? 1))}
                 className={styles.fieldInput}
                 style={{ textAlign: 'right', padding: '3px 6px', fontSize: 'var(--fs-12)', width: 64 }}
               />
@@ -416,20 +417,20 @@ export const SoFromProducts = () => {
           <div className={styles.formGrid2}>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Mattress only</span>
-              <input type="number" min={0} max={200} value={counts.mattressOnly}
-                onChange={(e) => setCounts((c) => ({ ...c, mattressOnly: Math.max(0, Number(e.target.value) || 0) }))}
+              <NumberInput sign="unsigned" decimal={false} value={counts.mattressOnly}
+                onValueChange={(n) => setCounts((c) => ({ ...c, mattressOnly: Math.max(0, n ?? 0) }))}
                 className={styles.fieldInput} />
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Mattress + Bedframe (CODY)</span>
-              <input type="number" min={0} max={200} value={counts.mattressBedframe}
-                onChange={(e) => setCounts((c) => ({ ...c, mattressBedframe: Math.max(0, Number(e.target.value) || 0) }))}
+              <NumberInput sign="unsigned" decimal={false} value={counts.mattressBedframe}
+                onValueChange={(n) => setCounts((c) => ({ ...c, mattressBedframe: Math.max(0, n ?? 0) }))}
                 className={styles.fieldInput} />
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Sofa set (+ accessory)</span>
-              <input type="number" min={0} max={200} value={counts.sofaSet}
-                onChange={(e) => setCounts((c) => ({ ...c, sofaSet: Math.max(0, Number(e.target.value) || 0) }))}
+              <NumberInput sign="unsigned" decimal={false} value={counts.sofaSet}
+                onValueChange={(n) => setCounts((c) => ({ ...c, sofaSet: Math.max(0, n ?? 0) }))}
                 className={styles.fieldInput} />
             </label>
             <label className={styles.field}>

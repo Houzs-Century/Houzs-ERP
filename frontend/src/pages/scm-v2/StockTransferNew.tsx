@@ -35,6 +35,7 @@ import {
 } from '../../vendor/scm/lib/stock-queries';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
+import { NumberInput } from '../../vendor/scm/components/NumberInput';
 import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDialog';
 import { FreshMount } from '../../lib/freshMount';
 import { DateField } from "../../vendor/scm/components/DateField";
@@ -158,14 +159,12 @@ function TransferLineRow({
             </span>}
       </td>
       <td className={styles.tableRight}>
-        <input
-          type="number"
-          min={1}
-          step={1}
+        <NumberInput
+          sign="unsigned"
+          decimal={false}
           value={line.qty}
-          onChange={(e) => setLine(line._key, {
-            qty: Math.max(0, Math.floor(Number(e.target.value) || 0)),
-          })}
+          onValueChange={(n) => setLine(line._key, { qty: Math.max(0, n ?? 0) })}
+          aria-label={`Qty for ${line.itemCode || 'line'}`}
           className={styles.fieldInput}
           style={{
             textAlign: 'right',

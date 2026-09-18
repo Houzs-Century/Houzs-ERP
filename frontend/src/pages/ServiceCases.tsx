@@ -43,6 +43,7 @@ import {
 } from "lucide-react";
 import { HubGrid } from "../components/HubGrid";
 import { PageHeader } from "../components/Layout";
+import { NumberInput } from "../vendor/scm/components/NumberInput";
 import {
   DetailLayout,
   DetailGrid,
@@ -2965,14 +2966,13 @@ function CreatePanel({
                       onClick={(e) => e.preventDefault()}
                     >
                       <span className="text-[10px] uppercase tracking-brand text-ink-muted">Qty</span>
-                      <input
-                        type="number"
-                        min={1}
+                      <NumberInput
+                        sign="unsigned"
+                        decimal={false}
                         value={itemQty[item.item_code] ?? (item.qty && item.qty > 0 ? item.qty : 1)}
                         onClick={(e) => e.stopPropagation()}
-                        onChange={(e) => {
-                          const n = parseInt(e.target.value, 10);
-                          setItemQty((q) => ({ ...q, [item.item_code]: Number.isFinite(n) && n > 0 ? n : 1 }));
+                        onValueChange={(n) => {
+                          setItemQty((q) => ({ ...q, [item.item_code]: n != null && n > 0 ? n : 1 }));
                         }}
                         className="w-14 rounded-md border border-border bg-bg px-2 py-1 text-right text-[12px] outline-none focus:border-primary"
                       />
@@ -8357,11 +8357,11 @@ function ItemQtyStepper({ caseId, item, disabled, onSaved, toast }: {
       >
         −
       </button>
-      <input
-        type="number"
-        min={1}
+      <NumberInput
+        sign="unsigned"
+        decimal={false}
         value={qty}
-        onChange={(e) => set(parseInt(e.target.value, 10) || 1)}
+        onValueChange={(n) => set(n ?? 1)}
         disabled={saving}
         className="w-8 border-x border-border bg-transparent py-0.5 text-center text-[11px] font-semibold text-ink outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
         title="Quantity"
@@ -8417,11 +8417,11 @@ function ItemCartonStepper({ caseId, item, disabled, onSaved, toast }: {
       >
         −
       </button>
-      <input
-        type="number"
-        min={1}
+      <NumberInput
+        sign="unsigned"
+        decimal={false}
         value={qtyCarton}
-        onChange={(e) => set(parseInt(e.target.value, 10) || 1)}
+        onValueChange={(n) => set(n ?? 1)}
         disabled={saving}
         className="w-8 border-x border-border bg-transparent py-0.5 text-center text-[11px] font-semibold text-ink outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
         title="Cartons"

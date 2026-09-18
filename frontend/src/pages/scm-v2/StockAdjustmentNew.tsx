@@ -56,6 +56,7 @@ import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDialog';
 import { FreshMount } from '../../lib/freshMount';
 import { SpecialOrders } from '../../vendor/scm/components/SpecialOrders';
+import { NumberInput } from '../../vendor/scm/components/NumberInput';
 import { computeTotalHeight, isTotalHeightCategory, isTotalHeightPart } from '../../vendor/shared/total-height';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
@@ -282,16 +283,17 @@ function AdjustmentLineRow({
 
         {/* Qty — SIGNED. + increases, − decreases. On a DECREASE capped to the picked lot. */}
         <td className={styles.tableRight}>
-          <input
-            type="number"
-            step={1}
-            min={bucketQtyCap != null ? -bucketQtyCap : undefined}
+          {/* SIGNED — the only signed numeric field in the system (negative =
+              decrease). Empty / lone "-" reads as 0; a picked-lot decrease is
+              capped to the lot. */}
+          <NumberInput
             value={line.qty}
-            onChange={(e) => {
-              let n = Math.trunc(Number(e.target.value) || 0);
-              // Keep a picked-lot decrease from exceeding the lot.
-              if (n < 0 && bucketQtyCap != null) n = Math.max(n, -bucketQtyCap);
-              setLine(line._key, { qty: n });
+            sign="signed"
+            decimal={false}
+            onValueChange={(n) => {
+              let q = n ?? 0;
+              if (q < 0 && bucketQtyCap != null) q = Math.max(q, -bucketQtyCap);
+              setLine(line._key, { qty: q });
             }}
             className={styles.fieldInput}
             aria-label={`Qty for ${line.itemCode || 'line'}`}

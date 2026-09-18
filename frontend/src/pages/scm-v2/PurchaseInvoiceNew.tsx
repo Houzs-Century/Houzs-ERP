@@ -58,6 +58,7 @@ import { useMfgProducts, useMaintenanceConfig, useSpecialAddons } from '../../ve
 import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
 import { sortByText, sortByNumeric } from '../../vendor/scm/lib/sort-options';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
+import { NumberInput } from '../../vendor/scm/components/NumberInput';
 import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDialog';
 import styles from './SalesOrderDetail.module.css';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
@@ -1022,8 +1023,8 @@ export const PurchaseInvoiceNew = () => {
                 <div className={styles.formGrid4} style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))' }}>
                   <label className={styles.field}>
                     <span className={styles.fieldLabel}>Qty</span>
-                    <input type="number" min={0} value={l.qty}
-                      onChange={(e) => setLine(l.rid, { qty: Math.max(0, Number(e.target.value) || 0) })}
+                    <NumberInput value={l.qty} sign="unsigned" decimal={false}
+                      onValueChange={(n) => setLine(l.rid, { qty: Math.max(0, n ?? 0) })}
                       className={styles.fieldInput} style={{ textAlign: 'right' }} />
                   </label>
                   <label className={styles.field}>

@@ -33,6 +33,7 @@ import { SkuPreviewStrip } from '../../vendor/scm/components/SkuPreviewStrip';
 import { composeSupplierSku } from '../../vendor/scm/lib/supplier-sku-helpers';
 import { MultiSupplierPicker } from '../../vendor/scm/components/MultiSupplierPicker';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
+import { NumberInput } from '../../vendor/scm/components/NumberInput';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
@@ -2125,18 +2126,20 @@ export function ModularAssignSupplierDialog({
                               />
                             </td>
                             <td style={{ ...tdStyle, textAlign: 'right' }}>
-                              <input
-                                type="number"
+                              <NumberInput
+                                sign="unsigned"
+                                decimal={false}
                                 value={d.leadTimeDays}
-                                onChange={(e) => setDraft(d.key, { leadTimeDays: Number(e.target.value) || 0 })}
+                                onValueChange={(n) => setDraft(d.key, { leadTimeDays: n ?? 0 })}
                                 style={{ ...inputStyle, width: 60, textAlign: 'right' }}
                               />
                             </td>
                             <td style={{ ...tdStyle, textAlign: 'right' }}>
-                              <input
-                                type="number"
+                              <NumberInput
+                                sign="unsigned"
+                                decimal={false}
                                 value={d.moq}
-                                onChange={(e) => setDraft(d.key, { moq: Number(e.target.value) || 0 })}
+                                onValueChange={(n) => setDraft(d.key, { moq: n ?? 0 })}
                                 style={{ ...inputStyle, width: 60, textAlign: 'right' }}
                               />
                             </td>

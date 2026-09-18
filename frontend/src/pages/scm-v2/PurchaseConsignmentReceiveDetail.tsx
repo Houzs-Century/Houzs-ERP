@@ -47,6 +47,7 @@ import { useFabricTrackings } from '../../vendor/scm/lib/fabric-queries';
 import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
 import { PcVariantEditor } from '../../vendor/scm/components/PcVariantEditor';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
+import { NumberInput } from '../../vendor/scm/components/NumberInput';
 import { DiscountInput } from '../../vendor/scm/components/DiscountInput';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
@@ -579,11 +580,11 @@ export const PurchaseConsignmentReceiveDetail = () => {
                     <label className={styles.field}>
                       <span className={styles.fieldLabel}>Received</span>
                       {isEditing ? (
-                        <input
-                          type="number" min={0}
+                        <NumberInput
+                          sign="unsigned" decimal={false}
                           className={styles.fieldInput} style={{ textAlign: 'right' }}
                           value={d.qty} disabled={isLocked}
-                          onChange={(e) => setLine(it, { qty: Number(e.target.value) || 0 })}
+                          onValueChange={(n) => setLine(it, { qty: n ?? 0 })}
                         />
                       ) : (
                         <input

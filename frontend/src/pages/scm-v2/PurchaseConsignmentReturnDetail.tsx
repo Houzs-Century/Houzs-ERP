@@ -40,6 +40,7 @@ import { useFabricTrackings } from '../../vendor/scm/lib/fabric-queries';
 import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
 import { PcVariantEditor } from '../../vendor/scm/components/PcVariantEditor';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
+import { NumberInput } from '../../vendor/scm/components/NumberInput';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { StatusPill } from '../../vendor/scm/components/StatusPill';
@@ -414,14 +415,14 @@ export const PurchaseConsignmentReturnDetail = () => {
                     {isEditing ? (
                       <>
                         <td className={styles.tableRight}>
-                          <input
-                            type="number"
-                            min={0}
+                          <NumberInput
+                            sign="unsigned"
+                            decimal={false}
                             className={styles.fieldInput}
                             style={{ width: 70, textAlign: 'right' }}
                             value={d.qty}
                             disabled={isLocked}
-                            onChange={(e) => setLine(it, { qty: Number(e.target.value) || 0 })}
+                            onValueChange={(n) => setLine(it, { qty: n ?? 0 })}
                           />
                         </td>
                         <td className={styles.tableRight}>

@@ -50,6 +50,7 @@ import { useMemo, useState, type ReactNode } from 'react';
 import { Plus, Save, X } from 'lucide-react';
 import { Button } from '../../components/Button';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
+import { NumberInput } from '../../vendor/scm/components/NumberInput';
 import { ADD_LINE_LABEL } from '../../vendor/scm/lib/add-line-handoff';
 import { useAddSalesInvoiceItem } from '../../vendor/scm/lib/sales-invoice-queries';
 import { useMfgProducts } from '../../vendor/scm/lib/mfg-products-queries';
@@ -191,12 +192,12 @@ export function useSalesInvoiceAddLine(
       <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
         <label className="flex flex-col gap-1">
           <span className={LABEL}>Qty</span>
-          <input
-            type="number"
-            min={0}
+          <NumberInput
+            sign="unsigned"
+            decimal={false}
             className={`${INPUT} text-right`}
             value={draft.qty}
-            onChange={(e) => setDraft((d) => ({ ...d, qty: Number(e.target.value) || 0 }))}
+            onValueChange={(n) => setDraft((d) => ({ ...d, qty: n ?? 0 }))}
           />
         </label>
         <label className="flex flex-col gap-1">
