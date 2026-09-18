@@ -267,7 +267,7 @@ import { cancelledWithMoneyHandler, ordersWithMoneyHandler, soConvertSourcesHand
 import { recomputeSoStockAllocation, isHardBoundLine } from '../lib/so-stock-allocation';
 import { snapshotSoLineLinks, planSoLineRelink, applySoLineRelink, soLineVariantSig } from '../lib/so-line-relink';
 import { advanceSoGeneration } from '../lib/so-generation';
-import { creditFromCancelledSo, getCustomerCreditBalance } from '../lib/customer-credits';
+import { creditFromCancelledSo, reverseCancelledSoCredit, getCustomerCreditBalance } from '../lib/customer-credits';
 import { summariseReadiness, type ReadinessLine } from '../lib/so-readiness';
 import { soLineStockVerdict, type LiveStockState, type SoLineStockVerdictRow } from '../lib/so-line-effective-stock';
 import { loadNonSellingWarehouses } from '../lib/non-selling-warehouse';
@@ -4926,23 +4926,19 @@ export const patchMfgSalesOrderStatusHandler = async (c: any) => {
   const fromStatus = (prev as { status: string } | null)?.status ?? null;
   const fromNorm = fromStatus == null ? null : String(fromStatus).toUpperCase();
 
-  /* A CANCEL THAT REACHED AUTOCOUNT CANNOT BE TAKEN BACK.
-     The 2.2 SDK has no un-cancel: a whole-file grep of the reflected surface
-     for `uncancel`, `Cancelled:Boolean` and `set_Cancelled` returns nothing,
-     and CancelDocument is a COMMAND, not a flag we could write back to false.
-     So an ERP un-cancel has no push - it would leave the order live here and
-     cancelled there, which is exactly the divergence the owner named
-     ("一边取消一边没取消"). Refusing is the only option that cannot silently
-     diverge, and it matches what AutoCount itself enforces. */
-  if (fromNorm === 'CANCELLED' && toStatus !== 'CANCELLED'
-      && (prev as { linked_ac_docno?: string | null }).linked_ac_docno) {
-    return c.json({
-      error: 'cancel_is_final',
-      reason: 'This order was cancelled in AutoCount too, and AutoCount has no un-cancel. '
-        + 'Raise a new sales order instead.',
-      acDocNo: (prev as { linked_ac_docno?: string | null }).linked_ac_docno,
-    }, 409);
-  }
+  /* REOPEN (un-cancel) POLICY — owner 2026-09-18.
+     A MIGRATED order (linked_ac_docno) carried over from AutoCount CAN be
+     reopened. Its CANCELLED almost always came from the AutoCount sync, not the
+     ERP cancel flow, so there is nothing to unwind except the status; the one ERP
+     money side-effect that can exist — the deposit→credit refund — is clawed back
+     after commit (reverseCancelledSoCredit) so a reopen never double-counts.
+     AutoCount has no un-cancel, so this reopen pushes NOTHING back (isCancel is
+     false below, so neither enqueueCancel nor enqueueSoCreate fires): the ERP goes
+     live while AutoCount stays cancelled, a divergence the owner chose to accept
+     and reconcile in the book by hand. A NON-migrated cancel, by contrast, ran the
+     full ERP cancel flow (credit, PWP vouchers voided, stock released), and
+     reversing all of that safely is not something this path does — it stays final
+     (the guard just below). */
   const currentVersion = Number((prev as { version?: number | string }).version ?? 1);
   const expectedVersionRaw = Number(body.version);
   const statusGrace = !Number.isInteger(expectedVersionRaw) || expectedVersionRaw < 1;
@@ -4957,13 +4953,17 @@ export const patchMfgSalesOrderStatusHandler = async (c: any) => {
   }
   if (activeSoEditLease(prev as SoEditLeaseRow)) return c.json(SO_EDIT_LEASE_CONFLICT, 409);
 
-  /* Audit 2026-06-11 C-1/H1 — a CANCELLED SO is FINAL (mirrors do_cancelled_final).
-     Un-cancelling left the Edge #B SO_CANCEL_REFUND customer credit standing while
-     the SO's deposit payments went live again — the same money existed twice
-     (there is no SO_REOPEN_CONTRA claw-back on the SO side). Re-order via a NEW
-     SO instead. Re-cancel (CANCELLED→CANCELLED) still rides through below and is
-     idempotent (creditFromCancelledSo no-ops on the source pair). */
-  if (fromNorm === 'CANCELLED' && toStatus !== 'CANCELLED') {
+  /* Audit 2026-06-11 C-1/H1 — a NON-migrated CANCELLED SO is FINAL (mirrors
+     do_cancelled_final). Its cancel ran the full ERP flow: the deposit became a
+     customer credit, PWP vouchers were voided and stock was released. The
+     SO_REOPEN_CONTRA claw-back (owner 2026-09-18) now reverses the credit, but the
+     vouchers and stock release are NOT unwound here, so a hand reopen would leave
+     those wrong — re-order via a NEW SO instead. A MIGRATED order is exempt (it is
+     let through above): its cancel came from the AutoCount sync with none of those
+     side-effects, and the claw-back covers the only one that can exist. Re-cancel
+     (CANCELLED→CANCELLED) still rides through below and is idempotent. */
+  if (fromNorm === 'CANCELLED' && toStatus !== 'CANCELLED'
+      && !(prev as { linked_ac_docno?: string | null }).linked_ac_docno) {
     return c.json({
       error: 'so_cancelled_final',
       reason: 'A cancelled Sales Order cannot be reactivated — its deposit was already converted to customer credit. Create a new SO instead.',
@@ -5232,6 +5232,28 @@ export const patchMfgSalesOrderStatusHandler = async (c: any) => {
         });
       }
     } catch (e) { /* eslint-disable-next-line no-console */ console.error('[customer-credit] so-cancel credit failed:', e); }
+  }
+
+  /* Reopen (un-cancel) — claw back any standing deposit→credit refund so the
+     restored deposit is not counted twice. Only a MIGRATED order reaches here (a
+     non-migrated reopen is refused above); reverseCancelledSoCredit is idempotent
+     and a no-op when no credit stands (the common case — the migrated cancel came
+     from the AutoCount sync, which never wrote one). Best-effort, mirrors the
+     cancel-credit block above. */
+  if (fromNorm === 'CANCELLED' && toStatus !== 'CANCELLED') {
+    try {
+      const { data: so, error: soErr } = await scopeToCompanyId(sb.from('mfg_sales_orders').select('debtor_code, debtor_name'), co.companyId).eq('doc_no', docNo).maybeSingle();
+      if (soErr) throw new Error(soErr.message);
+      const s = so as { debtor_code: string | null; debtor_name: string | null } | null;
+      if (s?.debtor_code) {
+        await reverseCancelledSoCredit(sb, {
+          docNo,
+          debtorCode: s.debtor_code,
+          debtorName: s.debtor_name,
+          createdBy: user.id,
+        });
+      }
+    } catch (e) { /* eslint-disable-next-line no-console */ console.error('[customer-credit] so-reopen contra failed:', e); }
   }
 
   // The committed response (incl. any pwpVouchers summary) was built inside the
