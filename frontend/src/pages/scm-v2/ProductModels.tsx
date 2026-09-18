@@ -64,7 +64,6 @@ if (typeof window !== 'undefined' && window.localStorage.getItem(PM_GRID_KEY) ==
 export const ProductModels = () => {
   const [filter, setFilter] = useState<MfgCategory | 'all'>('all');
   const [search, setSearch] = useState('');
-  const [creating, setCreating] = useState(false);
   // PR #119 — Commander 2026-05-26: clicking a Model in Modular tab opens
   // a right-side drawer with the detail content (photo / allowed options /
   // SKU variants) instead of navigating away to /product-models/{id}. The
@@ -314,11 +313,6 @@ export const ProductModels = () => {
             />
           </div>
         }
-        primaryAction={
-          <Button variant="primary" icon={<Plus {...ICON} />} onClick={() => setCreating(true)}>
-            New Model
-          </Button>
-        }
       />
 
       {/* Category filter chips */}
@@ -415,7 +409,7 @@ export const ProductModels = () => {
         loadedSearchLimit={1000}
         onRowDoubleClick={(m) => setOpenModelId(m.id)}
         isLoading={isLoading}
-        emptyMessage='No models match. Try clearing filters, or click "+ New Model" to create one.'
+        emptyMessage='No models match. Try clearing filters. New models are created from SKU Master → New SKU.'
         toolbar={
           <label className="inline-flex cursor-pointer items-center gap-1.5 text-[12px] text-ink-muted">
             <input
@@ -430,8 +424,6 @@ export const ProductModels = () => {
           </label>
         }
       />
-
-      {creating && <NewModelDialog onClose={() => setCreating(false)} />}
 
       {/* Owner request 2026-06-12 — quick per-model Edit dialog. */}
       {editModel && (
