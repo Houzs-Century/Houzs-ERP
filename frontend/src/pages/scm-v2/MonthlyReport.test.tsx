@@ -1,8 +1,10 @@
 /* The monthly view (owner 2026-09-14, docs/bugs/0916: 能看每个月的). Pinned:
    one request per column, 累计 leftmost then newest → oldest; a line a month
-   has and the range lacks still prints; the % toggle; the months buttons;
-   the levels; Export writes the CSV. The lines themselves:
-   vendor/scm/lib/report-monthly.test.ts. */
+   has and the range lacks still prints, a dash in both slots where a month
+   has nothing (owner 2026-09-18); the % toggle; the months buttons; the
+   levels; Export writes the CSV; an account's lines open under its row in
+   the month grid, each under its month, a month's figure alone. The lines
+   themselves: vendor/scm/lib/report-monthly.test.ts. */
 
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
@@ -64,9 +66,11 @@ describe('the monthly view', () => {
     expect(seen).toContain('2026-04-01..2026-09-30');
     expect(screen.getByText(/did not load/).textContent).toContain('4 column(s)');
     const rent = screen.getByText('RENT').closest('tr')!;
-    expect(within(rent).getAllByRole('cell').map(amountOf)).toEqual(['RENT', '—', 'RM 1000.00', 'RM 1000.00', 'RM 1000.00', '—', '—', '—']);
+    expect(within(rent).getAllByRole('cell').map(amountOf)).toEqual(['RENT', '-', 'RM 1000.00', 'RM 1000.00', 'RM 1000.00', '-', '-', '-']);
     const advert = screen.getByText('ADVERT').closest('tr')!;
-    expect(within(advert).getAllByRole('cell').map(amountOf)).toEqual(['ADVERT', '—', '—', 'RM 50.00', '—', '—', '—', '—']);
+    expect(within(advert).getAllByRole('cell').map(amountOf)).toEqual(['ADVERT', '-', '-', 'RM 50.00', '-', '-', '-', '-']);
+    /* A dash in the % slot too — nothing is left blank (owner 2026-09-18, method B). */
+    expect(within(advert).getAllByRole('cell').map(pctBeside)).toEqual(['', '-', '-', '2.0%', '-', '-', '-', '-']);
     /* ADVERT sits after RENT, where August had it. */
     const rows = screen.getAllByRole('row').map((r) => String(r.textContent));
     expect(rows.findIndex((t) => t.startsWith('ADVERT'))).toBe(rows.findIndex((t) => t.startsWith('RENT')) + 1);
@@ -101,10 +105,11 @@ describe('the monthly view', () => {
     expect(String(download.mock.calls[0]![1])).toContain('RENT,30.0%,25.0%,40.0%,20.0%');
   });
 
-  test('a category folds and unfolds by its chevron past the level; an account name opens its lines for the whole range', () => {
+  test('a category folds and unfolds by its chevron past the level; an account name opens its lines under their months; a month\'s figure opens that month alone', () => {
     treeMode = true;
     useLedger.mockReturnValue({ data: { blocks: [{ code: '900-A001', name: 'RENT', type: 'EXPENSE', openingSen: 0, debitSen: 300_000, creditSen: 0, closingSen: 300_000, lines: [
       { lineId: 'l1', date: '2026-08-05', jeNo: 'JE-1', journal: 'BANK', counter: { code: '310-0010', name: 'MAYBANK', more: 0 }, doc: 'PV-1', doc2: null, description: 'Rent August', who: null, debitSen: 100_000, creditSen: 0, balanceSen: 100_000, reversal: '' },
+      { lineId: 'l2', date: '2026-09-02', jeNo: 'JE-2', journal: 'BANK', counter: { code: '310-0010', name: 'MAYBANK', more: 0 }, doc: 'PV-2', doc2: null, description: 'Rent September', who: null, debitSen: 100_000, creditSen: 0, balanceSen: 200_000, reversal: '' },
     ] }], totals: { debitSen: 300_000, creditSen: 0 } }, isLoading: false, isError: false });
     vi.useFakeTimers({ now: new Date('2026-09-15T04:00:00Z'), toFake: ['Date'] });
     try {
@@ -119,9 +124,25 @@ describe('the monthly view', () => {
     expect(within(screen.getByText('900-A001 — RENT').closest('tr')!).getAllByRole('cell').map(pctBeside)).toEqual(['', '10.0%', '10.0%', '10.0%', '10.0%']);
     fireEvent.click(screen.getByRole('button', { name: 'Lines of 900-A001 — RENT' }));
     expect(useLedger).toHaveBeenLastCalledWith({ from: '2026-07-01', to: '2026-09-30', accounts: ['900-A001'] });
-    const drill = document.querySelector('tr[data-lines-of="900-A001"]') as HTMLElement;
-    expect(within(drill).getByText('Rent August')).toBeTruthy();
-    expect(within(drill).getByText(/共 1 笔/)).toBeTruthy();
+    /* Each line sits under its month (and under 累计), a dash elsewhere; the foot sums per column. */
+    const lineRows = () => Array.from(document.querySelectorAll('tr[data-line-of="900-A001"]')) as HTMLElement[];
+    expect(lineRows()).toHaveLength(2);
+    const august = lineRows()[0]!;
+    expect(within(august).getAllByRole('cell').map((c) => c.textContent)).toEqual(['05/08/2026 · Rent AugustPV-1', 'RM 1000.00', '-', 'RM 1000.00', '-']);
+    expect(within(lineRows()[1]!).getAllByRole('cell').map((c) => c.textContent)).toEqual(['02/09/2026 · Rent SeptemberPV-2', 'RM 1000.00', 'RM 1000.00', '-', '-']);
+    const foot = () => document.querySelector('tr[data-lines-foot="900-A001"]') as HTMLElement;
+    expect(within(foot()).getAllByRole('cell').map((c) => c.textContent)).toEqual(['共 2 笔在 GL 打开', 'RM 2000.00', 'RM 1000.00', 'RM 1000.00', '-']);
+    /* August's figure: that month's line alone; the same figure again closes; the name reopens the range. */
+    fireEvent.click(screen.getByRole('button', { name: 'Lines of 900-A001 — RENT · 08/2026' }));
+    expect(lineRows()).toHaveLength(1);
+    expect(within(foot()).getAllByRole('cell')[0]!.textContent).toBe('共 1 笔 · 08/2026在 GL 打开');
+    expect((screen.getByRole('button', { name: 'Lines of 900-A001 — RENT · 08/2026' }) as HTMLButtonElement).getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(screen.getByRole('button', { name: 'Lines of 900-A001 — RENT · 08/2026' }));
+    expect(lineRows()).toHaveLength(0);
+    fireEvent.click(screen.getByRole('button', { name: 'Lines of 900-A001 — RENT · 09/2026' }));
+    expect(lineRows()).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: 'Lines of 900-A001 — RENT' }));
+    expect(lineRows()).toHaveLength(2);
     fireEvent.click(screen.getByRole('button', { name: 'Collapse OPERATING EXPENSE' }));
     expect(screen.queryByText('900-A001 — RENT')).toBeNull();
     treeMode = false;
