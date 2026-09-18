@@ -41,12 +41,14 @@ import {
   computeTabModels, type ModelGroup, type MrpFilters, type AccessoryBySoDoc,
 } from './mrp-model-pipeline';
 
-/* Column order = the approved v8 layout (A..P), Customer moved to the last
-   column (owner 2026-09-18: was F, wanted at the end). */
+/* Column order = the approved v8 layout (A..P): Customer moved to the last
+   column (owner 2026-09-18: was F, wanted at the end), then State moved to
+   sit immediately before it (owner 2026-09-18: was F, wanted right before
+   Customer at the end, not left up front). */
 export const MRP_EXPORT_HEADERS = [
   'Warehouse', 'Item Code', 'Description', 'Item Description 2', 'SO No',
-  'State', 'Processing Date', 'Delivery Date', 'Qty Needed',
-  'Stock', 'Coverage', 'PO Outstanding', 'Shortage', 'Status', 'Supplier', 'Customer',
+  'Processing Date', 'Delivery Date', 'Qty Needed',
+  'Stock', 'Coverage', 'PO Outstanding', 'Shortage', 'Status', 'Supplier', 'State', 'Customer',
 ] as const;
 const COL = MRP_EXPORT_HEADERS.length; // 16
 
@@ -119,21 +121,21 @@ function demandRow(opts: {
   // col 2 (Description) stays blank on a demand row — it lives on the group header.
   cells[3] = spec;
   cells[4] = line.soDocNo;
-  cells[5] = line.customerState ?? '';
-  cells[6] = isoDay(line.processingDate);
+  cells[5] = isoDay(line.processingDate);
   // An undated line is planned LAST — the page tags it "No date" rather than blank.
-  cells[7] = line.deliveryDate ? isoDay(line.deliveryDate) : 'No date';
-  cells[8] = line.qty;
-  // col 9 (Stock) stays blank on a demand row — it's a SKU-level total, and
+  cells[6] = line.deliveryDate ? isoDay(line.deliveryDate) : 'No date';
+  cells[7] = line.qty;
+  // col 8 (Stock) stays blank on a demand row — it's a SKU-level total, and
   // repeating it on every line under the group header was noise (owner
   // 2026-09-17: "idw repetitive below just 6 on first row can already").
-  cells[10] = coverageText(line);
-  cells[11] = poOutstandingText(line);
+  cells[9] = coverageText(line);
+  cells[10] = poOutstandingText(line);
   // A covered line's Shortage stays blank rather than a literal 0 — same
   // owner note: only an actual shortage figure is worth printing.
-  cells[12] = line.source === 'shortage' ? line.shortageQty : null;
-  cells[13] = statusText(line.source);
-  cells[14] = supplierText(sku, line);
+  cells[11] = line.source === 'shortage' ? line.shortageQty : null;
+  cells[12] = statusText(line.source);
+  cells[13] = supplierText(sku, line);
+  cells[14] = line.customerState ?? '';
   cells[15] = line.debtorName ?? '';
   return { kind: 'demand', cells, shortage: line.source === 'shortage' && line.shortageQty > 0 };
 }
@@ -161,16 +163,16 @@ export function buildSheetRows(
       head[0] = g.warehouseCode ?? g.warehouseName ?? '';
       head[1] = g.itemCode; // the SO doc no
       head[2] = g.description ?? '';
-      head[5] = first.customerState ?? '';
-      head[6] = isoDay(first.processingDate);
-      head[7] = first.deliveryDate ? isoDay(first.deliveryDate) : 'No date';
-      head[8] = g.qtyNeeded;
-      head[9] = g.stock;
+      head[5] = isoDay(first.processingDate);
+      head[6] = first.deliveryDate ? isoDay(first.deliveryDate) : 'No date';
+      head[7] = g.qtyNeeded;
+      head[8] = g.stock;
       // PO Outstanding on the header is the SAME rollup the on-screen group row
       // shows (g.poOutstanding — total qty covered by a PO across every line
       // below), not the individual PO strings a demand row carries.
-      head[11] = g.poOutstanding;
-      head[12] = g.shortage;
+      head[10] = g.poOutstanding;
+      head[11] = g.shortage;
+      head[14] = first.customerState ?? '';
       head[15] = first.debtorName ?? '';
       out.push({ kind: 'group', cells: head });
       for (const v of g.variants) {
@@ -196,10 +198,10 @@ export function buildSheetRows(
       const head = blankRow();
       head[1] = g.itemCode;
       head[2] = g.description ?? '';
-      head[8] = g.qtyNeeded;
-      head[9] = g.stock;
-      head[11] = g.poOutstanding; // rollup, same as the sofa branch above
-      head[12] = g.shortage;
+      head[7] = g.qtyNeeded;
+      head[8] = g.stock;
+      head[10] = g.poOutstanding; // rollup, same as the sofa branch above
+      head[11] = g.shortage;
       out.push({ kind: 'group', cells: head });
       for (const v of g.variants) {
         for (const l of v.lines) {
@@ -232,8 +234,8 @@ const C_SHORT_FONT = '#9E2B22';
 const C_TITLE_FONT = '#0C4D31';
 const C_SUBTITLE_FONT = '#6A6F66';
 
-const COL_WIDTHS = [11, 21, 32, 36, 15, 16, 15, 15, 11, 8, 12, 26, 10, 17, 30, 14];
-const NUM_COLS = new Set([8, 9, 12]); // Qty Needed, Stock, Shortage (0-based)
+const COL_WIDTHS = [11, 21, 32, 36, 15, 15, 15, 11, 8, 12, 26, 10, 17, 30, 16, 14];
+const NUM_COLS = new Set([7, 8, 11]); // Qty Needed, Stock, Shortage (0-based)
 
 function subtitle(view: MrpView, asOf: string | null, warehouseLabel: string, filters: MrpFilters): string {
   const grouped = view.value === 'sofa'
