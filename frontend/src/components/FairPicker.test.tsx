@@ -141,7 +141,7 @@ describe('FairPicker — a row is a place plus an organizer', () => {
     const labels = fairOptionLabels();
     expect(labels).toContain('IOI MALL PUTRAJAYA — SOLO');
     expect(labels).toContain('MID VALLEY — REX');
-    expect(labels.some((l) => (l ?? '').includes('MALL MGT'))).toBe(false);
+    expect(labels.some((l) => l.includes('MALL MGT'))).toBe(false);
     /* Only the wording changed: the pick still carries the real organizer, which
        is what the server resolves the project from. */
     fireEvent.change(fairSelect(), { target: { value: 'fair:ioi mall putrajaya|mall mgt|2026-09-11|2026-09-13' } });
