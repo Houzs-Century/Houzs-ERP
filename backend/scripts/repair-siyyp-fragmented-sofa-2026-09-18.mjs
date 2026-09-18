@@ -21,19 +21,23 @@
 
    THE REPAIR (Option C-durable, owner-confirmed). For BOTH the SO items and the
    copied PO items, on the two keyless sofa lines MERGE the geometry a
-   left-to-right default layout gives them (buildDefaultSofaCells, the same code
-   the PDF reconstructs with), and set the SAME corrected summary on all three
-   so they form one group. The correct summary's COMPOSITION and the drawing
-   order follow the CURRENT line order (owner left the old SKU ordering as-is:
-   L(LHF) + 1A(P)(RHF) + 1NA). buildKey is NOT added or changed — the SO display
-   fold needs it, so leaving it keeps the SO listing at three lines and touches
-   no pricing / DO-picking path (those key on buildKey / cells). line_no is NOT
-   changed. Every non-geometry field (fabric, colour, leg, seat) is preserved.
+   left-to-right default layout gives them (the buildDefaultSofaCells convention,
+   the same the PDF reconstructs with), and set the SAME corrected summary on all
+   three so they form one group. buildKey is NOT added or changed — the SO
+   display fold needs it, so leaving it keeps the SO listing at three lines and
+   touches no pricing / DO-picking path (those key on buildKey / cells). Every
+   non-geometry field (fabric, colour, leg, seat) is preserved.
 
-   RESEQUENCE=1 (default off) instead orders the drawing + summary by handedness
-   (L(LHF) -> 1NA -> 1A(P)(RHF)); it is held pending the owner's answer on
-   whether to also correct THIS one order's sequence, and it does NOT touch
-   line_no either (the SKU line order is the owner's separate, declined change).
+   RESEQUENCE=1 orders this one order to the canonical handedness sequence
+   L(LHF) -> 1NA -> 1A(P)(RHF) (RHF last) — owner said yes for THIS order only,
+   2026-09-18. It sets the drawing geometry left-to-right in that order, the
+   summary composition in that order, AND permutes line_no WITHIN the sofa
+   block's own slots (the sofa lines' current line_no values, reused in
+   handedness order). Only the sofa lines are read or written, so any non-sofa
+   line (e.g. the SO's delivery service line) keeps its slot and nothing
+   collides (there is no unique index on line_no; only the pkey on id).
+   RESEQUENCE unset keeps the current line order (geometry + summary + line_no).
+   Either way the owner still declines a GENERAL old-order reorder.
 
    MODE=plan (default) prints every row's before/after and writes nothing.
    MODE=apply needs CONFIRM="I HAVE REVIEWED THE DRY-RUN", writes one row at a
@@ -93,6 +97,13 @@ function planGroup(rows) {
   const lead = rows.find((r) => String(JSON.parse(r.raw).summary ?? '').trim() !== '');
   const tail = summaryTail(lead ? JSON.parse(lead.raw).summary : '');
   const newSummary = [composition, ...tail].join(' · ');
+  // When RESEQUENCE, the sofa block's OWN line_no slots are reused in handedness
+  // order — only the sofa lines are read or moved, so any non-sofa line on the
+  // document (e.g. a delivery service line) keeps its position and there is no
+  // collision (it is a permutation of the sofa lines' own slots).
+  const slots = known
+    .map((r) => (typeof r.line_no === 'number' ? r.line_no : null))
+    .sort((a, b) => (a === null ? -1 : b === null ? 1 : a - b));
   // Default left-to-right layout, inlined (buildDefaultSofaCells is frontend-
   // only; this is its convention): x accumulates by footprint width, y=0, rot=0,
   // cellIndex = position in the drawing order. Dup-safe (indexed by position).
@@ -107,9 +118,10 @@ function planGroup(rows) {
       target.x = gx; target.y = 0; target.rot = 0; target.cellIndex = i;
       gx += fp.w;
     }
-    out.push({ row: r, target, note: 'geometry + summary' });
+    const targetLineNo = RESEQUENCE ? slots[i] ?? r.line_no : r.line_no;
+    out.push({ row: r, target, targetLineNo, note: `geometry + summary${RESEQUENCE ? ' + line_no' : ''}` });
   }
-  for (const r of unknown) out.push({ row: r, target: null, note: `SKIPPED — ${r.module ? 'no spec' : 'unrecognised code'} (${r.item_code})` });
+  for (const r of unknown) out.push({ row: r, target: null, targetLineNo: r.line_no, note: `SKIPPED — ${r.module ? 'no spec' : 'unrecognised code'} (${r.item_code})` });
   return out;
 }
 
@@ -161,10 +173,11 @@ async function main() {
     for (const p of plan) {
       const idLabel = `${p.row.item_code} (line ${p.row.line_no ?? 'NULL'}, ${p.row.id})`;
       if (!p.target) { note(`  ${idLabel}: ${p.note}`); continue; }
-      const changed = JSON.stringify(p.row.variants) !== JSON.stringify(p.target);
-      note(`  ${idLabel}: ${changed ? 'CHANGE' : 'already correct'}`);
-      note(`      before: ${shortJson(p.row.variants)}`);
-      note(`      after:  ${shortJson(p.target)}`);
+      const changed = JSON.stringify(p.row.variants) !== JSON.stringify(p.target)
+        || p.targetLineNo !== p.row.line_no;
+      note(`  ${idLabel}: ${changed ? 'CHANGE' : 'already correct'} (${p.note})`);
+      note(`      before: line_no=${p.row.line_no ?? 'NULL'}  ${shortJson(p.row.variants)}`);
+      note(`      after:  line_no=${p.targetLineNo ?? 'NULL'}  ${shortJson(p.target)}`);
       if (changed) writes.push({ table: g.table, ...p });
     }
   }
@@ -181,11 +194,11 @@ async function main() {
   let wrote = 0;
   for (const w of writes) {
     const back = await sql.unsafe(
-      `UPDATE scm.${w.table} SET variants = $2::text::jsonb
+      `UPDATE scm.${w.table} SET variants = $2::text::jsonb, line_no = $4
         WHERE id = $1 AND company_id = $3
-       RETURNING id::text AS id`, [w.row.id, JSON.stringify(w.target), w.row.company_id]);
+       RETURNING id::text AS id`, [w.row.id, JSON.stringify(w.target), w.row.company_id, w.targetLineNo]);
     wrote += back.length;
-    note(`  ${back.length ? 'OK ' : 'SKIP'} ${w.table} ${w.row.item_code} ${w.row.id}`);
+    note(`  ${back.length ? 'OK ' : 'SKIP'} ${w.table} ${w.row.item_code} ${w.row.id} -> line_no ${w.targetLineNo ?? 'NULL'}`);
   }
   note(`  written: ${wrote} of ${writes.length}`);
 
@@ -198,20 +211,27 @@ async function main() {
       ['PO', 'purchase_order_items', 'JOIN scm.purchase_orders p ON p.id = i.purchase_order_id', PO_DOC],
     ]) {
       const where = table === 'purchase_order_items' ? 'p.po_number = $1' : 'i.doc_no = $1';
-      const rows = await check.unsafe(
-        `SELECT i.item_code,
+      // ALL lines, so a non-sofa line proves it kept its slot.
+      const all = await check.unsafe(
+        `SELECT i.item_code, i.item_group, i.line_no,
                 (i.variants ? 'x') AS has_x,
                 (i.variants ? 'y') AS has_y,
                 i.variants->>'summary' AS summary
            FROM scm.${table} i ${join}
-          WHERE ${where} AND i.item_group = 'sofa'
+          WHERE ${where}
           ORDER BY i.line_no NULLS FIRST, i.created_at, i.id`, [val]);
+      const rows = all.filter((r) => r.item_group === 'sofa');
       const summaries = new Set(rows.map((r) => r.summary));
       const missingGeo = rows.filter((r) => !r.has_x || !r.has_y).map((r) => r.item_code);
       const stale = rows.filter((r) => String(r.summary ?? '').includes('2A(RHF)')).map((r) => r.item_code);
-      note(`  ${label} ${val}: ${rows.length} sofa line(s); distinct summaries=${summaries.size}; missing geometry=[${missingGeo.join(', ') || 'none'}]; still-names-2A(RHF)=[${stale.join(', ') || 'none'}]`);
+      // Sofa lines in stored line order must run LHF -> MID -> RHF (hand rank non-decreasing).
+      const ranks = rows.map((r) => hand(moduleOf(r.item_code) ?? ''));
+      const ordered = ranks.every((v, i) => i === 0 || ranks[i - 1] <= v);
+      note(`  ${label} ${val}: ${all.length} line(s), ${rows.length} sofa; distinct summaries=${summaries.size}; handedness-ordered=${ordered}; missing geometry=[${missingGeo.join(', ') || 'none'}]; still-names-2A(RHF)=[${stale.join(', ') || 'none'}]`);
+      for (const r of all) note(`      line ${r.line_no ?? 'NULL'}: ${r.item_code} [${r.item_group}]`);
       if (missingGeo.length) bad(`  ${label}: ${missingGeo.length} sofa line(s) still carry no geometry`);
       if (stale.length) bad(`  ${label}: ${stale.length} sofa line(s) still name 2A(RHF)`);
+      if (RESEQUENCE && !ordered) bad(`  ${label}: sofa lines are not in LHF->MID->RHF order`);
     }
   } finally {
     await check.end({ timeout: 5 });
