@@ -128,6 +128,26 @@ describe('FairPicker — a row is a place plus an organizer', () => {
     expect(new Set(fairs).size).toBe(3);
   });
 
+  it('reads a SOLO roadshow as SOLO; an exhibition keeps its organizer (owner 2026-09-18)', () => {
+    fixture.data = {
+      ...DATA,
+      running: [
+        { key: 'ioi mall putrajaya|mall mgt|2026-09-11|2026-09-13', venue: 'IOI MALL PUTRAJAYA', organizer: 'MALL MGT', solo: true, startDate: '2026-09-11', endDate: '2026-09-13', showDates: false, projectIds: [1] },
+        { key: 'mid valley|rex|2026-09-11|2026-09-13', venue: 'MID VALLEY', organizer: 'REX', solo: false, startDate: '2026-09-11', endDate: '2026-09-13', showDates: false, projectIds: [340] },
+      ],
+      month: [],
+    };
+    const { onChange } = renderPicker({ venue: null, organizer: null });
+    const labels = fairOptionLabels();
+    expect(labels).toContain('IOI MALL PUTRAJAYA — SOLO');
+    expect(labels).toContain('MID VALLEY — REX');
+    expect(labels.some((l) => (l ?? '').includes('MALL MGT'))).toBe(false);
+    /* Only the wording changed: the pick still carries the real organizer, which
+       is what the server resolves the project from. */
+    fireEvent.change(fairSelect(), { target: { value: 'fair:ioi mall putrajaya|mall mgt|2026-09-11|2026-09-13' } });
+    expect(onChange).toHaveBeenCalledWith({ venue: 'IOI MALL PUTRAJAYA', organizer: 'MALL MGT' });
+  });
+
   it('sends the venue AND the organizer when a fair is picked', () => {
     const { onChange } = renderPicker({ venue: null, organizer: null });
     fireEvent.change(fairSelect(), { target: { value: 'fair:mid valley|rex|2026-09-11|2026-09-13' } });

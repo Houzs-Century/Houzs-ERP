@@ -49,6 +49,9 @@ export type FairProjectRow = {
   /** `YYYY-MM-DD`, MYT, INCLUSIVE. NULL = open-ended. */
   endDate: string | null;
   status: string | null;
+  /** `project_event_types.slug` — "exhibition" / "solo". Optional: only the
+   *  picker's LABEL reads it, so a loader that resolves a fair need not carry it. */
+  eventType?: string | null;
 };
 
 /** One row in the dropdown. `key` is what the client sends back on save. */
@@ -59,6 +62,11 @@ export type FairOption = {
   key: string;
   venue: string;
   organizer: string;
+  /** TRUE for a solo roadshow. The label then reads "SOLO" in the organizer's
+   *  place (owner 2026-09-18: a solo roadshow has no organizer to name, the mall
+   *  management is only who the space was rented from). `organizer` itself is
+   *  untouched — it is still what the save path resolves the project from. */
+  solo: boolean;
   startDate: string;
   endDate: string | null;
   /** TRUE only when another row in the same list would otherwise read identically
@@ -111,6 +119,16 @@ export function isPickableFair(row: FairProjectRow): boolean {
   return true;
 }
 
+function isSoloRow(row: FairProjectRow): boolean {
+  return clean(row.eventType).toLowerCase() === 'solo';
+}
+
+/** The organizer half of the label. An EXHIBITION names its organizer — that is
+ *  what tells two fairs at one venue apart. A SOLO roadshow reads "SOLO". */
+function labelOrganizer(o: Pick<FairOption, 'organizer' | 'solo'>): string {
+  return o.solo ? 'SOLO' : o.organizer;
+}
+
 function optionKey(venue: string, organizer: string, start: string, end: string | null): string {
   return [fairKeyPart(venue), fairKeyPart(organizer), start, end ?? ''].join('|');
 }
@@ -150,7 +168,7 @@ export function buildFairOptions(rows: FairProjectRow[], soDate: string): FairOp
       continue;
     }
     byKey.set(key, {
-      key, venue, organizer, startDate: start, endDate: end,
+      key, venue, organizer, solo: isSoloRow(row), startDate: start, endDate: end,
       showDates: false,
       projectIds: [row.projectId],
     });
@@ -164,7 +182,9 @@ export function buildFairOptions(rows: FairProjectRow[], soDate: string): FairOp
      otherwise. */
   const sameLabel = new Map<string, FairOption[]>();
   for (const o of all) {
-    const k = `${fairKeyPart(o.venue)}|${fairKeyPart(o.organizer)}`;
+    /* Keyed on what the row READS as, so two solo roadshows at one venue under
+       different mall contacts both get their dates instead of reading alike. */
+    const k = `${fairKeyPart(o.venue)}|${fairKeyPart(labelOrganizer(o))}`;
     const list = sameLabel.get(k);
     if (list) list.push(o); else sameLabel.set(k, [o]);
   }
@@ -283,8 +303,8 @@ function oneBoothOrNothing(rows: FairProjectRow[], candidateIds: number[]): Fair
 
 /** Human label for one row, used by the picker and by the pending screen so the
  *  two can never describe the same event differently. */
-export function fairOptionLabel(o: Pick<FairOption, 'venue' | 'organizer' | 'startDate' | 'endDate' | 'showDates'>): string {
-  const base = `${o.venue} — ${o.organizer}`;
+export function fairOptionLabel(o: Pick<FairOption, 'venue' | 'organizer' | 'solo' | 'startDate' | 'endDate' | 'showDates'>): string {
+  const base = `${o.venue} — ${labelOrganizer(o)}`;
   if (!o.showDates) return base;
   const end = o.endDate && o.endDate !== o.startDate ? ` ~ ${o.endDate}` : '';
   return `${base} (${o.startDate}${end})`;

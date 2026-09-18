@@ -21,6 +21,10 @@ export type FairOption = {
   key: string;
   venue: string;
   organizer: string;
+  /** Set by the server for a solo roadshow: the label reads "SOLO" where an
+   *  exhibition names its organizer. Optional so a response cached from before
+   *  the field existed still renders. */
+  solo?: boolean;
   startDate: string;
   endDate: string | null;
   showDates: boolean;
@@ -54,9 +58,16 @@ export type FairOptionsResponse = {
  *  identically on the venue alone. October 2026 at MID VALLEY is three of them
  *  (BIGHOME 10-02, HOMELOVE 10-15, MLE 10-23), and `showDates` does not rescue
  *  those: the server sets it only when the venue AND the organizer repeat inside
- *  one month. */
-export function fairLabel(o: Pick<FairOption, 'venue' | 'organizer' | 'startDate' | 'endDate' | 'showDates'>): string {
-  const base = `${o.venue} — ${o.organizer}`;
+ *  one month.
+ *
+ *  SOLO ROADSHOWS READ "SOLO" (owner 2026-09-18: "for solo roadshow change to
+ *  solo dont mention mall mgt. for exhibition remain same"). This is NOT the
+ *  organizer being dropped again: an exhibition still names its organizer. A solo
+ *  roadshow has none — MALL MGT / MALL MGMT is only who the floor was rented
+ *  from — and the server widens `showDates` to match, so two solo rows at one
+ *  venue in a month still read apart. */
+export function fairLabel(o: Pick<FairOption, 'venue' | 'organizer' | 'solo' | 'startDate' | 'endDate' | 'showDates'>): string {
+  const base = `${o.venue} — ${o.solo ? 'SOLO' : o.organizer}`;
   if (!o.showDates) return base;
   const end = o.endDate && o.endDate !== o.startDate ? ` ~ ${o.endDate}` : '';
   return `${base} (${o.startDate}${end})`;
