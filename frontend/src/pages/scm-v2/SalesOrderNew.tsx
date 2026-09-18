@@ -43,7 +43,9 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery as useTanstackQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Camera, ChevronDown, Plus, Save, X } from 'lucide-react';
+import { ArrowLeft, Camera, ChevronDown, Save, X } from 'lucide-react';
+import { AddLineButton } from '../../vendor/scm/components/AddLineButton';
+import { useAddLineHotkey } from '../../vendor/scm/lib/useAddLineHotkey';
 import { Button } from '../../components/Button';
 import { PageHeader } from '../../components/Layout';
 import { api } from '../../api/client';
@@ -706,6 +708,7 @@ export const SalesOrderNew = () => {
      below keeps non-overridden lines in sync with subsequent header
      changes. */
   const addLine  = () => setLines((prev) => [...prev, newLine(deliveryDate || null)]);
+  useAddLineHotkey(addLine);
   const dropLine = (rid: string) => setLines((prev) => prev.filter((l) => l.rid !== rid));
 
   /* Desktop sofa multi-add (MobileSkuPicker.onPickMany parity). SoLineCard's
@@ -2190,28 +2193,7 @@ export const SalesOrderNew = () => {
             );
           })}
 
-          <button
-            type="button"
-            onClick={addLine}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 6,
-              width: '100%',
-              padding: '12px 14px',
-              background: 'transparent',
-              border: '1px dashed var(--c-orange)',
-              borderRadius: 'var(--radius-md)',
-              color: 'var(--c-orange)',
-              fontFamily: 'var(--font-sans)',
-              fontSize: 'var(--fs-13)',
-              fontWeight: 600,
-              cursor: 'pointer',
-            }}
-          >
-            <Plus {...ICON} /> Add Line Item
-          </button>
+          <AddLineButton variant="block" onClick={addLine} />
 
           <div style={{
             display: 'flex',

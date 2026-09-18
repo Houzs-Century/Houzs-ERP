@@ -1,0 +1,53 @@
+// Convention guard for Option A (owner 2026-09-18): the forms migrated to the
+// shared add-line CHROME must keep using it. Each migrated editor imports the
+// shared AddLineButton and no longer hand-rolls its own dashed "Add Line Item"
+// button. This is a RATCHET over the already-migrated set — it does not fail on
+// forms not yet migrated; a form joins the list only when its PR moves it over,
+// and from then on this test stops it drifting back to a bespoke button/label.
+
+import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+
+const read = (rel: string): string => {
+  const roots = ['frontend/src/', 'src/'];
+  for (const r of roots) {
+    try { return readFileSync(resolve(process.cwd(), r + rel), 'utf8'); } catch { /* try next */ }
+  }
+  for (const r of roots) {
+    try { return readFileSync(resolve(process.cwd(), '..', r + rel), 'utf8'); } catch { /* try next */ }
+  }
+  throw new Error(`${rel} not found from ${process.cwd()} — this scan must never pass on an empty read`);
+};
+
+// Forms migrated to the shared add-line chrome. Append here as each rollout PR
+// moves a form over.
+const MIGRATED = [
+  'pages/scm-v2/SalesOrderNew.tsx',
+  'pages/scm-v2/SalesInvoiceNew.tsx',
+  'pages/scm-v2/ConsignmentNoteNew.tsx',
+  'pages/scm-v2/ConsignmentOrderNew.tsx',
+  'pages/scm-v2/ConsignmentReturnNew.tsx',
+];
+
+// Strip comments so a WHY-comment mentioning the old wording never trips the scan.
+const stripComments = (src: string): string =>
+  src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+
+describe('add-line shell — migrated forms keep the shared chrome', () => {
+  it('every migrated form imports the shared AddLineButton', () => {
+    for (const f of MIGRATED) {
+      expect(read(f), f).toContain("from '../../vendor/scm/components/AddLineButton'");
+    }
+  });
+
+  it('no migrated form hand-rolls its own dashed add-line button any more', () => {
+    for (const f of MIGRATED) {
+      const src = stripComments(read(f));
+      // The bespoke shape these forms used before the shell: an inline dashed
+      // orange button labelled "Add Line Item".
+      expect(src, f).not.toMatch(/border:\s*'1px dashed var\(--c-orange\)'[\s\S]{0,200}Add Line Item/);
+      expect(src, f).not.toMatch(/>\s*Add Line Item\s*</);
+    }
+  });
+});

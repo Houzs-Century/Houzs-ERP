@@ -20,7 +20,9 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ChevronDown, Plus, Save, X } from 'lucide-react';
+import { ChevronDown, Save, X } from 'lucide-react';
+import { AddLineButton } from '../../vendor/scm/components/AddLineButton';
+import { useAddLineHotkey } from '../../vendor/scm/lib/useAddLineHotkey';
 import { Button } from '@2990s/design-system';
 import { PhoneInput } from '../../vendor/scm/components/PhoneInput';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
@@ -235,6 +237,7 @@ export const ConsignmentOrderNew = () => {
     setLines((prev) => prev.map((l) => (l.rid === rid ? { ...l, ...patch } : l)));
 
   const addLine  = () => setLines((prev) => [...prev, newLine(deliveryDate || null)]);
+  useAddLineHotkey(addLine);
   const dropLine = (rid: string) => setLines((prev) => prev.filter((l) => l.rid !== rid));
 
   /* Client-side master-follower cascade for delivery date. */
@@ -510,7 +513,7 @@ export const ConsignmentOrderNew = () => {
     }
     const validLines = lines.filter((l) => l.itemCode.trim() && l.qty > 0);
     if (validLines.length === 0) {
-      notify({ title: 'Add at least one item via "+ Add Line Item".', tone: 'error' });
+      notify({ title: 'Add at least one item via "Add line".', tone: 'error' });
       return;
     }
     // Sofa is exclusive among main products — the server 400s
@@ -1027,28 +1030,7 @@ export const ConsignmentOrderNew = () => {
             />
           ))}
 
-          <button
-            type="button"
-            onClick={addLine}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 6,
-              width: '100%',
-              padding: '12px 14px',
-              background: 'transparent',
-              border: '1px dashed var(--c-orange)',
-              borderRadius: 'var(--radius-md)',
-              color: 'var(--c-orange)',
-              fontFamily: 'var(--font-sans)',
-              fontSize: 'var(--fs-13)',
-              fontWeight: 600,
-              cursor: 'pointer',
-            }}
-          >
-            <Plus {...ICON} /> Add Line Item
-          </button>
+          <AddLineButton variant="block" onClick={addLine} />
 
           <div style={{
             display: 'flex',
