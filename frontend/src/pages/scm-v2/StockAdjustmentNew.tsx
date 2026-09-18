@@ -63,6 +63,17 @@ const ICON = { size: 16, strokeWidth: 1.75 } as const;
 type AdjustmentType = 'increase' | 'decrease';
 const directionOf = (qty: number): AdjustmentType => (qty < 0 ? 'decrease' : 'increase');
 
+// Signed-integer field helpers — the Qty input keeps its DISPLAYED text apart
+// from the numeric state so an in-progress entry survives keystroke by keystroke
+// (a lone "-", an empty box, a leading zero) instead of being reformatted mid-type.
+// Strip everything but digits and a single leading minus.
+const cleanSignedInt = (raw: string): string => raw.replace(/[^\d-]/g, '').replace(/(?!^)-/g, '');
+// "" and "-" parse to 0 so the numeric state stays a real number while typing.
+const parseSignedInt = (text: string): number => {
+  const n = Math.trunc(Number(text));
+  return Number.isFinite(n) ? n : 0;
+};
+
 let seq = 0;
 const newKey = () => `adj-${Date.now()}-${seq++}`;
 
@@ -156,6 +167,15 @@ function AdjustmentLineRow({
 }) {
   const type = directionOf(line.qty);
   const magnitude = Math.abs(line.qty);
+
+  // Displayed Qty text, kept apart from the numeric line.qty (see helpers above).
+  const [qtyText, setQtyText] = useState(() => String(line.qty));
+  // Resync the box only when line.qty is changed from OUTSIDE this input — e.g.
+  // picking a lot caps a decrease to the lot's quantity. Guarded by parse so a
+  // mid-type value ("0100", "-") the user is still editing is not clobbered.
+  useEffect(() => {
+    setQtyText((prev) => (parseSignedInt(prev) === line.qty ? prev : String(line.qty)));
+  }, [line.qty]);
 
   // Open stock buckets for the DECREASE "Take from" picker — only fires once
   // both warehouse + SKU are set (enabled guard inside the hook).
@@ -281,16 +301,22 @@ function AdjustmentLineRow({
         {/* Qty — SIGNED. + increases, − decreases. On a DECREASE capped to the picked lot. */}
         <td className={styles.tableRight}>
           <input
-            type="number"
-            step={1}
-            min={bucketQtyCap != null ? -bucketQtyCap : undefined}
-            value={line.qty}
+            type="text"
+            inputMode="numeric"
+            value={qtyText}
             onChange={(e) => {
-              let n = Math.trunc(Number(e.target.value) || 0);
+              // type="number" makes React skip the DOM update when the parsed
+              // number is unchanged (typing "0" before "100" leaves "0100" on
+              // screen) and eats a lone "-" (NaN -> 0 wipes the minus). Bind the
+              // raw text instead and parse it into the numeric source of truth.
+              const text = cleanSignedInt(e.target.value);
+              setQtyText(text);
+              let n = parseSignedInt(text);
               // Keep a picked-lot decrease from exceeding the lot.
               if (n < 0 && bucketQtyCap != null) n = Math.max(n, -bucketQtyCap);
               setLine(line._key, { qty: n });
             }}
+            onBlur={() => setQtyText(String(line.qty))}
             className={styles.fieldInput}
             aria-label={`Qty for ${line.itemCode || 'line'}`}
             title="Positive = increase (found / recount up); negative = decrease (write-off / damage / loss)"

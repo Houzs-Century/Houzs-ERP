@@ -251,6 +251,24 @@ describe('the bank recognition rules card', () => {
       expect.anything(),
     );
   });
+
+  test('the Order number field keeps no leading zero and commits the right number', () => {
+    draw();
+    const order = screen.getByLabelText('Order for PBB rule 1') as HTMLInputElement;
+    expect(order.value).toBe('20');
+    // A leading zero typed in front survives while focused, then normalises on blur …
+    fireEvent.change(order, { target: { value: '0100' } });
+    expect(order.value).toBe('0100');
+    fireEvent.blur(order);
+    expect(order.value).toBe('100');
+    // … and the number committed to the draft is never corrupted.
+    const saves = screen.getAllByText('Save').map((el) => el.closest('button')!).filter((b) => !b.disabled);
+    fireEvent.click(saves[saves.length - 1]!);
+    expect(saveRule).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 1, sortOrder: 100 }),
+      expect.anything(),
+    );
+  });
 });
 
 /* One clearing account per bank (owner 2026-09-07: 我想要拆账户). The picker
