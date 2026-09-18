@@ -27,7 +27,7 @@ const layout = (): Layout => ({
 });
 
 const shape = (items: LayoutItem[]): unknown[] =>
-  items.map((it) => (it.kind === 'account' ? it.code : { [it.id]: shape(it.children) }));
+  items.map((it) => (it.kind === 'account' ? it.code : it.kind === 'subtotal' ? { subtotal: it.id } : { [it.id]: shape(it.children) }));
 
 describe('moving among siblings', () => {
   test('down swaps with the next; the ends stay put; the given tree is untouched', () => {

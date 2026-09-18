@@ -17,7 +17,17 @@ export const REPORT_TITLES: Record<ReportKey, string> = {
   pnl: 'P&L', balance_sheet: 'Balance Sheet', performance: 'Performance P&L', rp: 'Cash Flow',
 };
 
-export type LayoutAccount = { kind: 'account'; code: string };
+/** Cash Flow: which way a line reads — money in, money out, or in − out. */
+export type Flow = 'in' | 'out' | 'net';
+/** Cash Flow: a top category's side — it feeds Total Cash In or Total Cash Out. */
+export type Side = 'in' | 'out';
+
+export type LayoutAccount = {
+  kind: 'account';
+  code: string;
+  /** Cash Flow only: the line's direction. */
+  flow?: Flow;
+};
 export type LayoutCategory = {
   kind: 'category';
   id: string;
@@ -26,9 +36,15 @@ export type LayoutCategory = {
   code?: string;
   /** Companies that UNTICKED it — absent means every company shows it. */
   hiddenFor?: number[];
+  /** Cash Flow only: a TOP category's side (sub-categories follow their parent). */
+  flow?: Side;
+  /** Cash Flow only: what the category's subtotal line prints; absent = "Total <label>". */
+  totalLabel?: string;
   children: LayoutItem[];
 };
-export type LayoutItem = LayoutAccount | LayoutCategory;
+/** Cash Flow only: a running-sum line at the top level — everything above it, In less Out. */
+export type LayoutSubtotal = { kind: 'subtotal'; id: string; label: string };
+export type LayoutItem = LayoutAccount | LayoutCategory | LayoutSubtotal;
 export type Layout = { version: 1; blocks: Record<string, LayoutItem[]> };
 
 export type LayoutBlockDef = { key: string; title: string; sections: string[] };
@@ -51,16 +67,20 @@ export type ReportLayoutResponse = {
 
 /** A block of the report as the server laid the period on the tree. */
 export type LaidNode = {
-  kind: 'category' | 'account' | 'unassigned';
+  kind: 'category' | 'account' | 'unassigned' | 'subtotal';
   id: string;
   label: string;
   code?: string;
-  /** The row's key on a line (Receipts & Payments: the drill-down's handle). */
+  /** The row's key on a line (Cash Flow: the drill-down's handle). */
   key?: string;
   amountSen: number;
   pct: number | null;
-  /** A figure per money column (Receipts & Payments), summed on a category. */
+  /** A figure per money column (Cash Flow), summed on a category. */
   cells?: Record<string, number>;
+  /** Cash Flow: an account line's direction; a top category's or unassigned group's side. */
+  flow?: Flow;
+  /** Cash Flow: what a top category's subtotal line prints. */
+  totalLabel?: string;
   children: LaidNode[];
 };
 
@@ -207,7 +227,7 @@ export function renameCategory(layout: Layout, id: string, label: string): Layou
   const next = clone(layout);
   for (const items of Object.values(next.blocks)) {
     const hit = locate(items, id);
-    if (hit && hit.item.kind === 'category') { hit.item.label = label; return next; }
+    if (hit && (hit.item.kind === 'category' || hit.item.kind === 'subtotal')) { hit.item.label = label; return next; }
   }
   return layout;
 }
@@ -298,7 +318,7 @@ export function unplaceAccount(layout: Layout, block: string, code: string): Lay
 const placedCodes = (items: LayoutItem[], into = new Set<string>()): Set<string> => {
   for (const it of items) {
     if (it.kind === 'account') into.add(it.code);
-    else { if (it.code) into.add(it.code); placedCodes(it.children, into); }
+    else if (it.kind === 'category') { if (it.code) into.add(it.code); placedCodes(it.children, into); }
   }
   return into;
 };

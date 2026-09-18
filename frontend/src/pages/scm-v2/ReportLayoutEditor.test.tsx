@@ -61,7 +61,7 @@ vi.mock('../../vendor/scm/components/ConfirmDialog', () => ({ useConfirm: () => 
 import { ReportLayoutEditor } from './ReportLayoutEditor';
 
 const shape = (items: LayoutItem[]): unknown[] =>
-  items.map((it) => (it.kind === 'account' ? it.code : { [it.id]: shape(it.children) }));
+  items.map((it) => (it.kind === 'account' ? it.code : it.kind === 'subtotal' ? { subtotal: it.id } : { [it.id]: shape(it.children) }));
 const saved = (): Layout => saveAsync.mock.calls[saveAsync.mock.calls.length - 1]![0];
 const draw = () => render(<ReportLayoutEditor report="pnl" onClose={() => {}} />);
 const rowOf = (text: string | RegExp) => screen.getByText(text).closest('tr')!;

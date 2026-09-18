@@ -23,8 +23,20 @@
 // (% of sales), the Balance Sheet (% of total assets, both sides), the
 // Performance P&L's account part — its other income and its expenses, the
 // computed operating expense standing where the account it replaces sits —
-// and Receipts & Payments, whose one block is the whole chart laid out twice,
-// receipts and payments, each row carrying a figure per money column.
+// and the Cash Flow (Receipts & Payments until 2026-09-18), whose one block
+// is ONE tree over the whole chart with a DIRECTION on every line (owner
+// 2026-09-18, his two cash-flow workbooks): a top category is In or Out, an
+// account line under it is In, Out or Net — so one account may print twice
+// (Customer / (-) Refund to Customer), an Out line under an In category
+// prints negative (Repayment under Loan From/(Repayment)), a Net line is
+// in − out (Loan - MBB) — a subtotal line anywhere at the top level is the
+// running sum of everything above it (Net operation surplus), and a
+// category's subtotal prints under its own name (Total Cash In). Every
+// account's money in and money out is placed at most once; whatever is not
+// placed prints under Unassigned receipts / payments so the surplus always
+// equals closing − opening. The default tree, and a tree saved before
+// directions existed, is RECEIPTS (In, every account In) over PAYMENTS
+// (Out, every account Out) — the report as it always read.
 // ----------------------------------------------------------------------------
 
 import { ACCOUNT_SECTIONS, defaultSectionFor } from '../scm/lib/account-sections';
@@ -66,7 +78,19 @@ export const REPORT_BLOCKS: Record<ReportKey, BlockDef[]> = {
 export const isReportKey = (s: unknown): s is ReportKey =>
   typeof s === 'string' && Object.prototype.hasOwnProperty.call(REPORT_BLOCKS, s);
 
-export type LayoutAccount = { kind: 'account'; code: string };
+/** Cash Flow: which way a line reads — money in, money out, or in − out. */
+export type Flow = 'in' | 'out' | 'net';
+/** Cash Flow: a top category's side — it feeds Total Cash In or Total Cash Out. */
+export type Side = 'in' | 'out';
+export const FLOWS: readonly Flow[] = ['in', 'out', 'net'];
+export const SIDES: readonly Side[] = ['in', 'out'];
+
+export type LayoutAccount = {
+  kind: 'account';
+  code: string;
+  /** Cash Flow only: the line's direction (always set on a checked Cash Flow tree). */
+  flow?: Flow;
+};
 export type LayoutCategory = {
   kind: 'category';
   id: string;
@@ -75,9 +99,15 @@ export type LayoutCategory = {
   code?: string;
   /** Companies that UNTICKED the category — absent means every company shows it. */
   hiddenFor?: number[];
+  /** Cash Flow only: a TOP category's side (sub-categories follow their parent). */
+  flow?: Side;
+  /** Cash Flow only: what the category's subtotal line prints ("Total Cash In"); absent = "Total <label>". */
+  totalLabel?: string;
   children: LayoutItem[];
 };
-export type LayoutItem = LayoutAccount | LayoutCategory;
+/** Cash Flow only: a running-sum line at the top level — everything above it, In less Out. */
+export type LayoutSubtotal = { kind: 'subtotal'; id: string; label: string };
+export type LayoutItem = LayoutAccount | LayoutCategory | LayoutSubtotal;
 export type Layout = { version: 1; blocks: Record<string, LayoutItem[]> };
 
 /** One chart definition, as the union across companies hands it over. */
@@ -127,6 +157,7 @@ export function defaultLayout(report: ReportKey, accounts: ChartAccount[]): Layo
       blocks[block.key] = roots.map((a) => build(a, 0));
     }
   }
+  if (report === 'rp') blocks.accounts = wrapCashFlowSides(blocks.accounts ?? []);
   return { version: 1, blocks };
 }
 
@@ -138,7 +169,10 @@ export type LayoutCheck = { ok: true; layout: Layout } | { ok: false; reason: st
    and slashes are in — a tree the chart built must always be savable. */
 const ID_RE = /^[A-Za-z0-9:_./ -]{1,64}$/;
 
-export function validateLayout(report: ReportKey, raw: unknown): LayoutCheck {
+export function validateLayout(report: ReportKey, rawIn: unknown): LayoutCheck {
+  /* A Cash Flow tree saved before directions existed is the old two-sided
+     report: read as RECEIPTS (In) over PAYMENTS (Out), never refused. */
+  const raw = report === 'rp' ? upgradeCashFlowLayout(rawIn) : rawIn;
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { ok: false, reason: 'The layout must be an object.' };
   const top = raw as { version?: unknown; blocks?: unknown };
   if (top.version !== 1) return { ok: false, reason: 'The layout version must be 1.' };
@@ -147,10 +181,14 @@ export function validateLayout(report: ReportKey, raw: unknown): LayoutCheck {
   const given = Object.keys(top.blocks as object);
   const extra = given.filter((k) => !wanted.includes(k));
   if (extra.length > 0) return { ok: false, reason: `Unknown block: ${extra.join(', ')}.` };
+  const cashFlow = report === 'rp';
   const ids = new Set<string>();
   const codes = new Set<string>();
+  /* Cash Flow: an account's money in and its money out are each placed at most once. */
+  const inPlaced = new Set<string>();
+  const outPlaced = new Set<string>();
   let count = 0;
-  const walk = (items: unknown, depth: number, where: string): LayoutItem[] | string => {
+  const walk = (items: unknown, depth: number, where: string, side: Side | null): LayoutItem[] | string => {
     if (!Array.isArray(items)) return `${where}: children must be a list.`;
     if (depth > LAYOUT_MAX_DEPTH) return `${where}: deeper than ${LAYOUT_MAX_DEPTH} levels.`;
     const out: LayoutItem[] = [];
@@ -162,9 +200,29 @@ export function validateLayout(report: ReportKey, raw: unknown): LayoutCheck {
       if (o.kind === 'account') {
         const code = typeof o.code === 'string' ? o.code.trim() : '';
         if (!code || code.length > 32) return `${where}: an account needs its code.`;
-        if (codes.has(code)) return `${code} is placed twice.`;
-        codes.add(code);
-        out.push({ kind: 'account', code });
+        if (cashFlow) {
+          if (side === null) return `Cash Flow: ${code} must sit inside an In or Out category.`;
+          const flow = typeof o.flow === 'string' && (FLOWS as readonly string[]).includes(o.flow) ? (o.flow as Flow) : side;
+          if (flow !== 'out' && inPlaced.has(code)) return `${code}'s money in is placed twice.`;
+          if (flow !== 'in' && outPlaced.has(code)) return `${code}'s money out is placed twice.`;
+          if (flow !== 'out') inPlaced.add(code);
+          if (flow !== 'in') outPlaced.add(code);
+          out.push({ kind: 'account', code, flow });
+        } else {
+          if (codes.has(code)) return `${code} is placed twice.`;
+          codes.add(code);
+          out.push({ kind: 'account', code });
+        }
+      } else if (o.kind === 'subtotal') {
+        if (!cashFlow || depth !== 1) return `${where}: a subtotal line belongs to the Cash Flow layout, at the top level.`;
+        const id = typeof o.id === 'string' ? o.id.trim() : '';
+        if (!ID_RE.test(id)) return `${where}: a subtotal needs an id (letters, digits, spaces, : _ . / -).`;
+        if (ids.has(id)) return `Category id ${id} is used twice.`;
+        ids.add(id);
+        const label = typeof o.label === 'string' ? o.label.trim() : '';
+        if (!label) return `Subtotal ${id} has no name.`;
+        if (label.length > LAYOUT_MAX_LABEL) return `Subtotal ${id}: the name is longer than ${LAYOUT_MAX_LABEL} characters.`;
+        out.push({ kind: 'subtotal', id, label });
       } else if (o.kind === 'category') {
         const id = typeof o.id === 'string' ? o.id.trim() : '';
         if (!ID_RE.test(id)) return `${where}: a category needs an id (letters, digits, spaces, : _ . / -).`;
@@ -179,21 +237,34 @@ export function validateLayout(report: ReportKey, raw: unknown): LayoutCheck {
           if (!Array.isArray(o.hiddenFor) || !o.hiddenFor.every((n) => Number.isInteger(n))) return `Category ${id}: hiddenFor must list company ids.`;
           hiddenFor = [...new Set(o.hiddenFor as number[])].sort((a, b) => a - b);
         }
-        const children = walk(o.children ?? [], depth + 1, `Category ${label}`);
+        let catSide: Side | undefined;
+        let totalLabel: string | undefined;
+        if (cashFlow) {
+          if (depth === 1) {
+            if (typeof o.flow !== 'string' || !(SIDES as readonly string[]).includes(o.flow)) return `Cash Flow: ${label} must be In or Out.`;
+            catSide = o.flow as Side;
+          }
+          const tl = typeof o.totalLabel === 'string' ? o.totalLabel.trim() : '';
+          if (tl.length > LAYOUT_MAX_LABEL) return `Category ${id}: the subtotal name is longer than ${LAYOUT_MAX_LABEL} characters.`;
+          if (tl) totalLabel = tl;
+        }
+        const children = walk(o.children ?? [], depth + 1, `Category ${label}`, cashFlow ? (catSide ?? side) : null);
         if (typeof children === 'string') return children;
         const cat: LayoutCategory = { kind: 'category', id, label, children };
         if (code) cat.code = code;
         if (hiddenFor && hiddenFor.length > 0) cat.hiddenFor = hiddenFor;
+        if (catSide) cat.flow = catSide;
+        if (totalLabel) cat.totalLabel = totalLabel;
         out.push(cat);
       } else {
-        return `${where}: an item must be an account or a category.`;
+        return `${where}: an item must be an account, a category or a subtotal.`;
       }
     }
     return out;
   };
   const blocks: Record<string, LayoutItem[]> = {};
   for (const key of wanted) {
-    const items = walk((top.blocks as Record<string, unknown>)[key] ?? [], 1, `Block ${key}`);
+    const items = walk((top.blocks as Record<string, unknown>)[key] ?? [], 1, `Block ${key}`, null);
     if (typeof items === 'string') return { ok: false, reason: items };
     blocks[key] = items;
   }
@@ -214,7 +285,7 @@ export type LaidLine = {
   cells?: Record<string, number>;
 };
 export type LaidNode = {
-  kind: 'category' | 'account' | 'unassigned';
+  kind: 'category' | 'account' | 'unassigned' | 'subtotal';
   id: string;
   label: string;
   code?: string;
@@ -225,6 +296,10 @@ export type LaidNode = {
   pct: number | null;
   /** Per-column figures, summed on a category, where the lines carry them. */
   cells?: Record<string, number>;
+  /** Cash Flow: an account line's direction; a top category's or unassigned group's side. */
+  flow?: Flow;
+  /** Cash Flow: what a top category's subtotal line prints. */
+  totalLabel?: string;
   children: LaidNode[];
 };
 
@@ -293,6 +368,7 @@ export function layOutBlock(items: LayoutItem[], lines: LaidLine[], companyId: n
         out.push(...take(it.code));
         continue;
       }
+      if (it.kind === 'subtotal') continue; // Cash Flow only; laid by layOutCashFlow
       if (it.hiddenFor?.includes(companyId)) continue;
       /* A header that booked something itself (older than 父户不记账) prints
          first inside its own category. */
@@ -313,3 +389,192 @@ export function layOutBlock(items: LayoutItem[], lines: LaidLine[], companyId: n
 /** How deep a laid-out tree goes (1 = only top-level rows) — the L1..Ln buttons. */
 export const laidDepth = (nodes: LaidNode[]): number =>
   nodes.reduce((d, n) => Math.max(d, 1 + (n.children.length > 0 ? laidDepth(n.children) : 0)), 0);
+
+/* ── The Cash Flow tree (owner 2026-09-18) ──────────────────────────────── */
+
+const SIDE_ID = { in: 'side:in', out: 'side:out' } as const;
+
+/** The chart's tree twice, as a Cash Flow tree: RECEIPTS (In, every account
+    In) over PAYMENTS (Out, every account Out) — today's report. Category ids
+    are prefixed by their side so the two copies never collide. */
+export function wrapCashFlowSides(items: LayoutItem[]): LayoutItem[] {
+  const retag = (list: LayoutItem[], side: Side): LayoutItem[] => list.flatMap((it): LayoutItem[] => {
+    if (it.kind === 'account') return [{ kind: 'account', code: it.code, flow: side }];
+    if (it.kind === 'subtotal') return [];
+    const cat: LayoutCategory = { kind: 'category', id: `${side}:${it.id}`, label: it.label, children: retag(it.children, side) };
+    if (it.code) cat.code = it.code;
+    if (it.hiddenFor && it.hiddenFor.length > 0) cat.hiddenFor = [...it.hiddenFor];
+    return [cat];
+  });
+  return [
+    { kind: 'category', id: SIDE_ID.in, label: 'RECEIPTS', flow: 'in', totalLabel: 'Total receipts', children: retag(items, 'in') },
+    { kind: 'category', id: SIDE_ID.out, label: 'PAYMENTS', flow: 'out', totalLabel: 'Total payments', children: retag(items, 'out') },
+  ];
+}
+
+/** Whether a Cash Flow tree already carries directions: every top-level item
+    is a subtotal or a category with a side. An empty tree counts as typed. */
+export const isCashFlowTyped = (items: unknown): boolean =>
+  Array.isArray(items) && items.every((it) => {
+    if (!it || typeof it !== 'object') return false;
+    const o = it as Record<string, unknown>;
+    return o.kind === 'subtotal' || (o.kind === 'category' && (o.flow === 'in' || o.flow === 'out'));
+  });
+
+/** Whether anything on a tree carries the new editor's marks — a direction,
+    a subtotal name, a subtotal line. A tree with none is from before them. */
+const hasDirections = (items: unknown): boolean =>
+  Array.isArray(items) && items.some((it) => {
+    if (!it || typeof it !== 'object') return false;
+    const o = it as Record<string, unknown>;
+    return o.kind === 'subtotal' || o.flow !== undefined || o.totalLabel !== undefined || hasDirections(o.children);
+  });
+
+/** A Cash Flow tree from before directions existed (one tree, laid out twice
+    by the report) becomes the same two-sided report as a typed tree. A tree
+    that carries any direction mark is the new editor's and is handed back
+    untouched for the validator to check in full. */
+export function upgradeCashFlowLayout(raw: unknown): unknown {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return raw;
+  const top = raw as { version?: unknown; blocks?: unknown };
+  if (top.version !== 1 || !top.blocks || typeof top.blocks !== 'object' || Array.isArray(top.blocks)) return raw;
+  const items = (top.blocks as Record<string, unknown>).accounts;
+  if (!Array.isArray(items) || hasDirections(items)) return raw;
+  return { version: 1, blocks: { accounts: wrapCashFlowSides(items as LayoutItem[]) } };
+}
+
+export type CashFlowLaid = {
+  /** The top level: In/Out categories with their trees, subtotal lines, and the unassigned groups last. */
+  nodes: LaidNode[];
+  /** Σ of the In categories (money in less what they show negative) — Total Cash In. */
+  inSen: number;
+  /** Σ of the Out categories — Total Cash Out. inSen − outSen = receipts − payments, always. */
+  outSen: number;
+};
+
+const scaled = (cells: Record<string, number> | undefined, by: 1 | -1): Record<string, number> | undefined =>
+  cells ? Object.fromEntries(Object.entries(cells).map(([k, v]) => [k, by * v])) : undefined;
+const addCells = (a: Record<string, number> | undefined, b: Record<string, number> | undefined): Record<string, number> | undefined => {
+  if (!a && !b) return undefined;
+  const out: Record<string, number> = { ...(a ?? {}) };
+  for (const [k, v] of Object.entries(b ?? {})) out[k] = (out[k] ?? 0) + v;
+  return out;
+};
+
+/**
+ * The period's receipts and payments on the Cash Flow tree. A line's figure
+ * is oriented to its top category: under an In category an In line is
+ * positive, an Out line negative, a Net line in − out; under an Out category
+ * the other way round. A subtotal line is everything above it, In less Out.
+ * A category a company unticked is skipped with its subtree; whatever the
+ * tree does not place prints under Unassigned receipts / payments at the
+ * foot, so inSen − outSen is always receipts − payments. % of the side's
+ * total on every line.
+ */
+export function layOutCashFlow(items: LayoutItem[], receipts: LaidLine[], payments: LaidLine[], companyId: number): CashFlowLaid {
+  const byCode = (lines: LaidLine[]): Map<string, LaidLine[]> => {
+    const m = new Map<string, LaidLine[]>();
+    for (const l of lines) m.set(l.code, [...(m.get(l.code) ?? []), l]);
+    return m;
+  };
+  const inBy = byCode(receipts);
+  const outBy = byCode(payments);
+  const inPlaced = new Set<string>();
+  const outPlaced = new Set<string>();
+  /* The id carries the direction: one account's In line and Out line are two lines. */
+  const leaf = (l: LaidLine, by: 1 | -1, flow: Flow): LaidNode => {
+    const node = laidLineNode({ ...l, amountSen: by * l.amountSen, cells: scaled(l.cells, by) }, null);
+    node.id = `${flow}:${node.id}`;
+    node.flow = flow;
+    return node;
+  };
+  /* The lines an account line takes, oriented to its side. */
+  const take = (code: string, flow: Flow, side: Side): LaidNode[] => {
+    if (flow === 'in' || flow === 'out') {
+      const placed = flow === 'in' ? inPlaced : outPlaced;
+      const ls = ((flow === 'in' ? inBy : outBy).get(code) ?? []).filter((l) => !placed.has(keyOf(l)));
+      for (const l of ls) placed.add(keyOf(l));
+      return ls.map((l) => leaf(l, flow === side ? 1 : -1, flow));
+    }
+    /* Net: in − out per row key, oriented to the side. */
+    const ins = (inBy.get(code) ?? []).filter((l) => !inPlaced.has(keyOf(l)));
+    const outs = (outBy.get(code) ?? []).filter((l) => !outPlaced.has(keyOf(l)));
+    for (const l of ins) inPlaced.add(keyOf(l));
+    for (const l of outs) outPlaced.add(keyOf(l));
+    const keys = [...new Set([...ins, ...outs].map(keyOf))];
+    return keys.map((key) => {
+      const i = ins.find((l) => keyOf(l) === key);
+      const o = outs.find((l) => keyOf(l) === key);
+      const src = i ?? o!;
+      const sign: 1 | -1 = side === 'in' ? 1 : -1;
+      const amountSen = sign * ((i?.amountSen ?? 0) - (o?.amountSen ?? 0));
+      const cells = addCells(scaled(i?.cells, sign), scaled(o?.cells, sign === 1 ? -1 : 1));
+      const node = laidLineNode({ ...src, amountSen, cells }, null);
+      node.id = `net:${node.id}`;
+      node.flow = 'net';
+      return node;
+    });
+  };
+  const walk = (list: LayoutItem[], side: Side): LaidNode[] => {
+    const out: LaidNode[] = [];
+    for (const it of list) {
+      if (it.kind === 'account') { out.push(...take(it.code, it.flow ?? side, side)); continue; }
+      if (it.kind === 'subtotal') continue;
+      if (it.hiddenFor?.includes(companyId)) continue;
+      const kids: LaidNode[] = [...(it.code ? take(it.code, side, side) : []), ...walk(it.children, side)];
+      if (kids.length === 0) continue;
+      const node = groupNode('category', it.id, it.label, kids, null);
+      if (it.code) node.code = it.code;
+      out.push(node);
+    }
+    return out;
+  };
+  /* First pass: the tree, without % — the side totals are only known after. */
+  type Top = { node: LaidNode; side: Side | null };
+  const tops: Top[] = [];
+  for (const it of items) {
+    if (it.kind === 'account') continue; // never on a checked tree
+    if (it.kind === 'subtotal') { tops.push({ node: { kind: 'subtotal', id: it.id, label: it.label, amountSen: 0, pct: null, children: [] }, side: null }); continue; }
+    const side = it.flow ?? 'in';
+    if (it.hiddenFor?.includes(companyId)) continue;
+    const kids = walk(it.children, side);
+    const node = groupNode('category', it.id, it.label, kids, null);
+    node.flow = side;
+    node.totalLabel = it.totalLabel ?? `Total ${it.label}`;
+    if (it.code) node.code = it.code;
+    tops.push({ node, side });
+  }
+  const restIn = receipts.filter((l) => !inPlaced.has(keyOf(l))).map((l) => leaf(l, 1, 'in'));
+  const restOut = payments.filter((l) => !outPlaced.has(keyOf(l))).map((l) => leaf(l, 1, 'out'));
+  if (restIn.length > 0) {
+    const node = groupNode('unassigned', 'unassigned:in', 'Unassigned receipts', restIn, null);
+    node.flow = 'in'; node.totalLabel = 'Total unassigned receipts';
+    tops.push({ node, side: 'in' });
+  }
+  if (restOut.length > 0) {
+    const node = groupNode('unassigned', 'unassigned:out', 'Unassigned payments', restOut, null);
+    node.flow = 'out'; node.totalLabel = 'Total unassigned payments';
+    tops.push({ node, side: 'out' });
+  }
+  const inSen = tops.filter((t) => t.side === 'in').reduce((s, t) => s + t.node.amountSen, 0);
+  const outSen = tops.filter((t) => t.side === 'out').reduce((s, t) => s + t.node.amountSen, 0);
+  /* Second pass: % of the side's total, and the running subtotals. */
+  const withPct = (n: LaidNode, base: number | null): void => {
+    n.pct = pctOf(n.amountSen, base);
+    for (const k of n.children) withPct(k, base);
+  };
+  let running = 0;
+  let runningCells: Record<string, number> | undefined;
+  for (const t of tops) {
+    if (t.side === null) {
+      t.node.amountSen = running;
+      if (runningCells) t.node.cells = { ...runningCells };
+      continue;
+    }
+    withPct(t.node, t.side === 'in' ? (inSen || null) : (outSen || null));
+    const by: 1 | -1 = t.side === 'in' ? 1 : -1;
+    running += by * t.node.amountSen;
+    runningCells = addCells(runningCells, scaled(t.node.cells, by));
+  }
+  return { nodes: tops.map((t) => t.node), inSen, outSen };
+}
