@@ -1,0 +1,24 @@
+/* By month rows (owner 2026-09-18, style one of the two samples): a dashed
+   hairline under every row, the whole row lit while the mouse is on it, the
+   name column frozen at the left while the months scroll. The frozen cell
+   needs a SOLID background — a translucent one would show the scrolled
+   figures through it. */
+
+.row td {
+  border-bottom: 1px dashed var(--border-weak, #e3e1da);
+}
+
+.row:hover td {
+  background: var(--c-cream-hover, #f3f1ea);
+}
+
+.name {
+  position: sticky;
+  left: 0;
+  background: var(--c-cream, #fff);
+  white-space: nowrap;
+}
+
+.row:hover .name {
+  background: var(--c-cream-hover, #f3f1ea);
+}
