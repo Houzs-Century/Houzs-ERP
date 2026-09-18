@@ -273,15 +273,20 @@ describe('a cancel that reached AutoCount is final', () => {
     expect(rawSdk).toContain('CancelDocument');
   });
 
-  test('the SO status route refuses to leave CANCELLED once linked_ac_docno is set', () => {
-    /* Anchor changed 2026-08-18: the handler is now the named export
-       patchMfgSalesOrderStatusHandler, MOUNTED at the bottom of the file, so the old
-       `mfgSalesOrders.patch(...)` anchor lands on the one-line mount and slices nothing. */
+  test('a MIGRATED cancelled SO can be reopened (owner 2026-09-18); a non-migrated one stays final', () => {
+    /* Reversal of the old blanket refusal. The owner chose to let a carried-over
+       (migrated) order be reopened and reconcile AutoCount by hand — AutoCount
+       still has no un-cancel, so the reopen pushes nothing back. A NON-migrated
+       cancel ran the full ERP flow (credit + vouchers + stock), so it stays final. */
     const h = rawSo.slice(rawSo.indexOf('export const patchMfgSalesOrderStatusHandler'));
-    const guard = h.slice(0, h.indexOf('const currentVersion'));
-    expect(guard).toContain('cancel_is_final');
-    expect(guard).toContain("fromNorm === 'CANCELLED'");
-    expect(guard).toContain('linked_ac_docno');
+    // The old migrated-blocking guard is gone.
+    expect(h).not.toContain('cancel_is_final');
+    // A non-migrated cancelled SO is still refused — and ONLY a non-migrated one.
+    expect(h).toContain('so_cancelled_final');
+    expect(h).toContain("!(prev as { linked_ac_docno?: string | null }).linked_ac_docno");
+    // A reopen claws back any standing deposit->credit refund, so the customer's
+    // money is never counted twice.
+    expect(h).toContain('reverseCancelledSoCredit');
   });
 
   test('the PO reopen route refuses the same way', () => {
