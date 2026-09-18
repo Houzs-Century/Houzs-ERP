@@ -24,7 +24,7 @@ Auto-posting source types (reversal = `<TYPE>_REVERSAL`)
 
 Documents
 - AP invoice: DRAFT → POSTED → PARTIALLY_PAID / PAID (paid by an AP Payment voucher through `scm.settle_api_paid_sen`). Cancel writes `API_REVERSAL`, refused once money is on it (`has_payments`). Editing a posted bill re-posts. The list also mirrors purchase invoices read-only (`kind: 'PI'`).
-- Other Debtor bill: posts on create (atomic with its journal); PAID when fully knocked off; cancel refused once money received; edit re-posts.
+- Other Debtor bill: posts on create (atomic with its journal); PAID when fully knocked off; cancel refused once money received; edit re-posts; prints as an INVOICE to the debtor (description and amount per line, never the account code; total, received, balance due, words; CANCELLED watermark).
 - Other Debtor receipt: Draft → Prepared → Checked → Approved (approve posts ODR and knocks off bills, clamped at live outstanding). Reject returns to Draft clearing every mark; withdraw only before Checked. From the Receipts page with `postNow: true` it posts in the same call.
 - General receipt (RCT): posts on create; the only undo is VOID (RCT_REVERSAL + CANCELLED). Editing a posted receipt reverses and re-posts on the new date and keeps its number; a void one refuses (`receipt_cancelled`).
 - Credit / debit note (CN and DN to a customer, SCN from a supplier): DRAFT → POSTED → CANCELLED by contra; a posted note is never edited (`not_editable`).
