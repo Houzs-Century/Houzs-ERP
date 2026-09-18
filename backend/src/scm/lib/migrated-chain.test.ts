@@ -7,10 +7,15 @@ import {
   accountingSuppressed,
   refuseMigratedSources,
   deliveryMustMirrorAutoCount,
+  receiptMustMirrorAutoCount,
   MIGRATED_WRITEBACK_SKIP_REASON,
   type MigratedSourceDoc,
 } from './migrated-chain';
 import { MIGRATED_DELIVERIES_NOT_INVOICED_IN_AUTOCOUNT } from './migrated-deliveries-not-invoiced.generated';
+import {
+  MIGRATED_RECEIPTS_NOT_INVOICED_IN_AUTOCOUNT,
+  MIGRATED_RECEIPTS_NOT_INVOICED_AS_OF,
+} from './migrated-receipts-not-invoiced.generated';
 
 /* Every fixture below is a real document read out of production and live
    AED_HOUZS on 2026-08-11, not an invented shape. The AutoCount totals are
@@ -375,5 +380,44 @@ describe('a migrated delivery AutoCount never invoiced', () => {
     expect(list.every((n) => /^HC-DO-\d{6}$/.test(n))).toBe(true);
     expect(list).not.toContain('HC-DO-000097');
     expect(list).not.toContain('HC-DO-003699');
+  });
+});
+
+/* docs/bugs/0918, purchase-side mirror — a GRN carried over from AutoCount that
+   AutoCount never invoiced is billed into a purchase invoice like any other; one
+   AutoCount invoiced still mirrors. receiptMustMirrorAutoCount is the exact shape
+   of deliveryMustMirrorAutoCount, one table over. */
+describe('receiptMustMirrorAutoCount — the PURCHASE-side mirror', () => {
+  const onList = new Set(['HC-GR-000034']);
+
+  it('a migrated GRN NOT on the never-invoiced list still mirrors (stays refused)', () => {
+    const must = receiptMustMirrorAutoCount({ docNo: 'HC-GR-000201-PO-000273', migrated: true }, onList);
+    expect(must).toBe(true);
+    expect(refuseMigratedSources([{ docNo: 'HC-GR-000201-PO-000273', migrated: must }])).not.toBeNull();
+  });
+
+  it('a migrated GRN ON the never-invoiced list is ordinary (NOT refused)', () => {
+    const must = receiptMustMirrorAutoCount({ docNo: 'HC-GR-000034', migrated: true }, onList);
+    expect(must).toBe(false);
+    expect(refuseMigratedSources([{ docNo: 'HC-GR-000034', migrated: must }])).toBeNull();
+  });
+
+  it('a non-migrated GRN is ordinary whether or not it is on the list', () => {
+    expect(receiptMustMirrorAutoCount({ docNo: 'GRN-2608-001', migrated: false }, onList)).toBe(false);
+    expect(receiptMustMirrorAutoCount({ docNo: 'HC-GR-000034', migrated: false }, onList)).toBe(false);
+  });
+
+  it('FAIL-CLOSED: with an EMPTY list every migrated GRN still mirrors — the inert-ship invariant', () => {
+    expect(receiptMustMirrorAutoCount({ docNo: 'HC-GR-000034', migrated: true }, new Set())).toBe(true);
+    expect(receiptMustMirrorAutoCount({ docNo: 'HC-GR-000201-PO-000273', migrated: true }, new Set())).toBe(true);
+  });
+
+  it('SHIPS INERT: the committed allowlist is empty and unmeasured, so no migrated GRN is unblocked yet', () => {
+    expect(MIGRATED_RECEIPTS_NOT_INVOICED_IN_AUTOCOUNT.size).toBe(0);
+    expect(MIGRATED_RECEIPTS_NOT_INVOICED_AS_OF).toBe('not-yet-measured');
+    // proven against the SHIPPED set, not a fixture: today it changes nothing
+    expect(receiptMustMirrorAutoCount(
+      { docNo: 'HC-GR-000034', migrated: true }, MIGRATED_RECEIPTS_NOT_INVOICED_IN_AUTOCOUNT,
+    )).toBe(true);
   });
 });
