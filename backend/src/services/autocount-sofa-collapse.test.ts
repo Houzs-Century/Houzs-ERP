@@ -338,9 +338,39 @@ describe('the two corrections that a naive inverse gets wrong', () => {
     }
   });
 
-  it('refuses a solo 3S rather than emitting text that decodes to two pieces', () => {
+  it('a SIZED 3S is refused — by the gate now, not by withholding the token', () => {
+    /* CHANGED 2026-09-10, and the measurement that used to justify withholding
+       the token is what makes proposing it safe. `3S (28")` decodes to a
+       DIFFERENT sofa, so the round trip refuses it — which is where every other
+       spelling in this file is judged. Withholding it refused the sizeless case
+       too, and that is the case a real 3S build has. */
     expect(parseSofa('3S (28")', '9028', false).pieces).toEqual(['2A(LHF)', '1A(RHF)']);
-    expect(composeSofaDesc2(['3S'], { size: '28' })).toBeNull();
+    const sized = composeSofaDesc2(['3S'], { size: '28' });
+    expect(sized).toBe('3S (28")');
+    expect(decodesTo(sized as string, '9028', ['3S'], { size: '28' }).ok).toBe(false);
+  });
+
+  it('and a 3S with NO seat size goes through, which is what HC-SO-001640 has', () => {
+    const bare = composeSofaDesc2(['3S'], { size: null });
+    expect(bare).toBe('3S');
+    expect(decodesTo(bare as string, '9028', ['3S'], { size: null }).ok).toBe(true);
+    /* HC-SO-001472's build, refused for the sized case's reason since the day
+       the token was withheld. */
+    const three = composeSofaDesc2(['3S', '1S', '2S'], { size: null });
+    expect(decodesTo(three as string, '00913', ['3S', '1S', '2S'], { size: null }).ok).toBe(true);
+  });
+
+  it('end to end: a sizeless 3S document composes, a sized one is refused', () => {
+    const line = (over: Partial<CollapsibleLine>): CollapsibleLine => ({
+      item_code: '00913-3S', item_group: 'sofa', description: 'SOFA 00913 3S',
+      description2: '[ 3S / COL: HM 3383-6 ]', qty: 1, unit_price_sen: 399000,
+      linked_ac_dtlkey: 111907, variants: { colourLabel: 'HM 3383-6', specials: [] },
+      ...over,
+    });
+    expect(collapseSofaLines([line({})]).refusals).toEqual([]);
+    const sized = collapseSofaLines([line({ variants: { seatHeight: 28, colourLabel: 'HM 3383-6', specials: [] } })]);
+    expect(sized.lines).toHaveLength(0);
+    expect(sized.refusals[0].reason).toContain('does not survive a decode');
   });
 });
 
@@ -468,12 +498,32 @@ describe('REFUSAL is the designed outcome, never a plausible guess', () => {
   });
 
   it('refuses rather than truncating a Desc2 longer than AutoCount holds', () => {
-    const long = `${'X'.repeat(AC_DESC2_MAX)}Y`;
-    expect(long.length).toBe(AC_DESC2_MAX + 1);
+    /* CHANGED 2026-09-10 and the change is deliberate. This used a 101-character
+       run of X, which the decoder puts on the SPECIALS axis — so the owner's
+       pointer rung now fits it and the document goes, carrying the build read
+       off the ITEM CODES (which is where the pieces come from, not from this
+       text) plus a sentence saying the specification is in the ERP.
+
+       The property this test exists for is unchanged: nothing is ever
+       TRUNCATED. It is asked here of the case the pointer cannot reach — length
+       in the COLOUR, which is part of the specification and never replaced. */
+    const long = `COL: ${'X'.repeat(AC_DESC2_MAX)}Y`;
     const res = collapseSofaLines(build([{ item_code: '9028-1S', description2: long }]));
     expect(res.lines).toHaveLength(0);
     expect(res.refusals[0].reason).toContain(String(AC_DESC2_MAX));
     expect(res.refusals[0].reason).toContain('truncating');
+  });
+
+  it('an unreadable Desc2 travels as the build plus a pointer, not as itself', () => {
+    /* The case the rewrite above gave up, kept as its own test so the new
+       behaviour is asserted rather than merely no longer failing. */
+    const long = `${'X'.repeat(AC_DESC2_MAX)}Y`;
+    const res = collapseSofaLines(build([{ item_code: '9028-1S', description2: long }]));
+    expect(res.refusals).toEqual([]);
+    const text = String(res.lines[0].description2);
+    expect(text.length).toBeLessThanOrEqual(AC_DESC2_MAX);
+    expect(text).toContain('Special Order: Refer to ERP');
+    expect(text).not.toContain('XXX');
   });
 
   it('refuses a compartment list it cannot spell, quoting what the stored text decodes to', () => {
@@ -699,5 +749,396 @@ describe('folding follows the shape AutoCount already holds, not the item code',
     ]);
     expect(res.lines).toHaveLength(1);
     expect(res.lines[0].linked_ac_dtlkey ?? null).toBeNull();
+  });
+});
+
+// ----------------------------------------------------------------------------
+// A DEAD FABRIC ROW'S OBITUARY IS NOT PART OF THE BUILD.
+//
+// The fabric library renumbered itself on 2026-08-11 and left every old row in
+// place with `[superseded by X on 2026-08-11]` written into the row's own LABEL.
+// buildVariantSummary has stripped that since the day it was found; this
+// renderer did not, and it is the one a sofa goes through — so HC-SO-008460
+// (112), HC-SO-012513 (113) and HC-SO-012629 (117) stayed refused against a
+// field that holds 100, all three by the same 39 characters of bookkeeping.
+//
+// Two more were refused by the other half of the same fault: the composed text
+// lost the brackets while the EXPECTATION still carried them, so the round trip
+// failed on a colour that had not changed (HC-SO-004725, HC-SO-007958).
+// ----------------------------------------------------------------------------
+describe('a superseded colour travels as its live name', () => {
+  const OBITUARY = 'BO315-3 [superseded by BO315-03 on 2026-08-11]';
+  const sofa = (over: Partial<CollapsibleLine> = {}): CollapsibleLine[] => ([
+    {
+      item_code: '9028-L(RHF)', item_group: 'sofa', description: 'SOFA 9028 L(RHF)',
+      description2: 'LR + 2EL / COL: ' + OBITUARY, qty: 1, unit_price_sen: 399000,
+      linked_ac_dtlkey: 55,
+      variants: { colourLabel: OBITUARY, specials: ['BOTTOM USE UMBRELLA FABRIC', 'Nylon Fabric'] },
+      ...over,
+    },
+    {
+      item_code: '9028-2A(LHF)', item_group: 'sofa', description: 'SOFA 9028 2A(LHF)',
+      description2: 'LR + 2EL / COL: ' + OBITUARY, qty: 1, unit_price_sen: 0,
+      linked_ac_dtlkey: 55,
+      variants: { colourLabel: OBITUARY, specials: ['BOTTOM USE UMBRELLA FABRIC', 'Nylon Fabric'] },
+      ...over,
+    },
+  ]);
+
+  it('writes the SUCCESSOR code and fits inside the column', () => {
+    const res = collapseSofaLines(sofa());
+    expect(res.refusals).toEqual([]);
+    expect(res.lines).toHaveLength(1);
+    const text = String(res.lines[0].description2);
+    expect(text).toContain('BO315-03');
+    expect(text).not.toContain('superseded');
+    expect(text.length).toBeLessThanOrEqual(AC_DESC2_MAX);
+  });
+
+  it('the obituary is what put it over — 39 characters of bookkeeping', () => {
+    /* Measured rather than asserted from memory: the same build with the note
+       still in it is over the column, and that is the whole defect. */
+    const withNote = `LR + 2EL / COL: ${OBITUARY} / BOTTOM USE UMBRELLA FABRIC / Nylon Fabric`;
+    expect(withNote.length).toBeGreaterThan(AC_DESC2_MAX);
+    const res = collapseSofaLines(sofa());
+    expect(String(res.lines[0].description2).length).toBeLessThan(withNote.length - 30);
+  });
+
+  it('the ROUND TRIP passes, because the expectation uses the live name too', () => {
+    /* The half that a shorter string alone would not have fixed. `colour` is
+       handed to composeSofaDesc2 AND to decodesTo; stripping it in only one of
+       them trades a length refusal for a colour-mismatch refusal. */
+    const res = collapseSofaLines(sofa());
+    expect(res.refusals).toEqual([]);
+    expect(res.lines[0].via).toBe('compose');
+  });
+
+  it('a colour with no note is untouched', () => {
+    const res = collapseSofaLines(sofa({
+      description2: 'LR + 2EL / COL: BO315-03 BEIGE',
+      variants: { colourLabel: 'BO315-03 BEIGE', specials: [] },
+    }));
+    expect(res.refusals).toEqual([]);
+    expect(String(res.lines[0].description2)).toContain('BO315-03 BEIGE');
+  });
+});
+
+// ----------------------------------------------------------------------------
+// THE LENGTH GATE BELONGS TO THE TEXT THAT IS ACTUALLY SENT.
+//
+// The stored `description2` is the ERP's own line summary, written by the
+// importer or by buildVariantSummary. It is NOT what goes to AutoCount for a
+// sofa — the composed build is — and yet the gate sat at the top of collapseRun
+// and refused the whole document on it. HC-SO-013339 is refused today at 107
+// stored characters without the composer ever being asked.
+//
+// This does not promise that every such document then goes: the composed text
+// has its own gate, and a long specification is long whichever renderer writes
+// it. What it removes is the refusal that never consulted the text being sent.
+// ----------------------------------------------------------------------------
+describe('over-long STORED text does not refuse a document the composer can spell', () => {
+  const STORED = 'BO315-03 BEIGE / SEAT 35 / LEG DEFAULT / SPECIAL: Use 9028 ArmRest/L Shape 188CM/Bottom use Umbrella Fabric';
+
+  /* The variants are the ERP's CURRENT state and the stored text is what the
+     line was imported with. They differ here on purpose — that is the whole
+     case: an edited line whose imported summary is long and whose actual build
+     spells short. */
+  const sofa = (): CollapsibleLine[] => ([
+    {
+      item_code: '8030-L(RHF)', item_group: 'sofa', description: 'SOFA 8030 L(RHF)',
+      description2: STORED, qty: 1, unit_price_sen: 399000, linked_ac_dtlkey: 66,
+      variants: { seatHeight: 35, colourLabel: 'BO315-03 BEIGE', specials: ['Nylon Fabric'] },
+    },
+    {
+      item_code: '8030-2A(LHF)', item_group: 'sofa', description: 'SOFA 8030 2A(LHF)',
+      description2: STORED, qty: 1, unit_price_sen: 0, linked_ac_dtlkey: 66,
+      variants: { seatHeight: 35, colourLabel: 'BO315-03 BEIGE', specials: ['Nylon Fabric'] },
+    },
+  ]);
+
+  it('the stored text really is over the column', () => {
+    expect(STORED.length).toBeGreaterThan(AC_DESC2_MAX);
+  });
+
+  it('composes instead of refusing, and what it sends fits', () => {
+    const res = collapseSofaLines(sofa());
+    expect(res.refusals).toEqual([]);
+    expect(res.lines).toHaveLength(1);
+    expect(String(res.lines[0].description2).length).toBeLessThanOrEqual(AC_DESC2_MAX);
+    expect(res.lines[0].via).toBe('compose');
+  });
+
+  it('and it never ECHOES an over-long stored string', () => {
+    /* The gate did not go away, it moved to the branch that sends this text.
+       An echo of 107 characters would be refused by AutoCount for the whole
+       document, which is the outcome the gate exists to prevent. */
+    const res = collapseSofaLines(sofa());
+    expect(String(res.lines[0].description2)).not.toBe(STORED);
+  });
+});
+
+// ----------------------------------------------------------------------------
+// A SOFA WHOSE SPECIAL ORDER WILL NOT FIT POINTS AT THE ERP.
+//
+// The owner's rung, 2026-09-10: 「Special Order 可以不进 ... 最重要是每一张单都
+// 可以进到就行了」. It is the LAST rung and it costs the special order only —
+// the pieces, the size and the colour are still composed exactly and still have
+// to survive the decode gate, because those are what a wrong answer would build.
+// ----------------------------------------------------------------------------
+describe('a special order that will not fit points at the ERP', () => {
+  const sofa = (specials: string[]): CollapsibleLine[] => ([
+    {
+      item_code: '9028-L(RHF)', item_group: 'sofa', description: 'SOFA 9028 L(RHF)',
+      description2: 'LR + 2EL / COL: BEIGE', qty: 1, unit_price_sen: 399000,
+      linked_ac_dtlkey: 55,
+      variants: { seatHeight: 35, colourLabel: 'BO315-03 BEIGE', specials },
+    },
+    {
+      item_code: '9028-2A(LHF)', item_group: 'sofa', description: 'SOFA 9028 2A(LHF)',
+      description2: 'LR + 2EL / COL: BEIGE', qty: 1, unit_price_sen: 0,
+      linked_ac_dtlkey: 55,
+      variants: { seatHeight: 35, colourLabel: 'BO315-03 BEIGE', specials },
+    },
+  ]);
+
+  const TOO_LONG = [
+    'BOTTOM USE UMBRELLA FABRIC',
+    'Nylon Fabric',
+    'Use 9028 ArmRest and a very long note about the build that will not fit',
+  ];
+
+  it('sends the build with a pointer instead of refusing the document', () => {
+    const res = collapseSofaLines(sofa(TOO_LONG));
+    expect(res.refusals).toEqual([]);
+    const text = String(res.lines[0].description2);
+    expect(text.length).toBeLessThanOrEqual(AC_DESC2_MAX);
+    expect(text).toContain('Special Order: Refer to ERP');
+    /* The half that must NOT be lost. */
+    expect(text).toContain('LR + 2EL');
+    expect(text).toContain('BO315-03 BEIGE');
+    expect(text).toContain('(35")');
+  });
+
+  it('is the LAST rung — specials that fit travel verbatim', () => {
+    const res = collapseSofaLines(sofa(['Nylon Fabric']));
+    expect(res.refusals).toEqual([]);
+    const text = String(res.lines[0].description2);
+    expect(text).toContain('Nylon Fabric');
+    expect(text).not.toContain('Special Order: Refer to ERP');
+  });
+
+  it('never ADDS a pointer to a build that has no special order', () => {
+    const res = collapseSofaLines(sofa([]));
+    expect(res.refusals).toEqual([]);
+    expect(String(res.lines[0].description2)).not.toContain('Special Order');
+  });
+
+  it('the gate asks whether the POINTER is there, not whether it decodes back', () => {
+    /* parseSofa reads specials from a fixed vocabulary — nylon, wooden arm,
+       recliner — because it was written to decode the account book's own text.
+       It will never read the pointer back as a special, so comparing it through
+       sameSpecials would refuse every document this rung exists to rescue. */
+    expect(decodesTo(
+      'LR + 2EL (35") / COL: BEIGE / Special Order: Refer to ERP',
+      '9028', ['L(RHF)', '2A(LHF)'],
+      { size: '35', colour: 'BEIGE', specials: ['Special Order: Refer to ERP'] },
+    ).ok).toBe(true);
+  });
+
+  it('and it REFUSES when the pointer is not in the text', () => {
+    /* The guard that keeps the rule above from being a blank cheque: a caller
+       claiming the specials were pointed at the ERP must actually have said so
+       in the text it is about to send. */
+    const v = decodesTo(
+      'LR + 2EL (35") / COL: BEIGE',
+      '9028', ['L(RHF)', '2A(LHF)'],
+      { size: '35', colour: 'BEIGE', specials: ['Special Order: Refer to ERP'] },
+    );
+    expect(v.ok).toBe(false);
+  });
+
+  it('still refuses when the length is in the COLOUR, not the special order', () => {
+    /* The pointer costs the special order and nothing else, so it cannot rescue
+       a document whose build or colour is itself over the column. */
+    const res = collapseSofaLines(sofa(TOO_LONG).map((l) => ({
+      ...l,
+      variants: { seatHeight: 35, colourLabel: `BEIGE ${'X'.repeat(110)}`, specials: TOO_LONG },
+    })));
+    expect(res.lines).toHaveLength(0);
+    expect(res.refusals[0].reason).toContain(String(AC_DESC2_MAX));
+  });
+});
+
+// ----------------------------------------------------------------------------
+// THE POINTER IS TRIED FOR EVERY WAY A SPECIAL ORDER CAN BLOCK A DOCUMENT.
+//
+// Measured on production 2026-09-10, the special order was the whole obstacle on
+// three more builds and wore three different faces — a forbidden character, a
+// word the decoder has never heard of, and length. The owner's ruling covers all
+// three, because what it says is that the special order need not reach AutoCount
+// at all: 「Special Order 可以不进 ... 最重要是每一张单都可以进到就行了」.
+// ----------------------------------------------------------------------------
+describe('a special order that BLOCKS a sofa points at the ERP too', () => {
+  const sofa = (specials: string[], over: Partial<CollapsibleLine> = {}): CollapsibleLine[] => ([
+    {
+      item_code: '5526-2A(LHF)', item_group: 'sofa', description: 'SOFA 5526 2A(LHF)',
+      description2: '2EL + STOOL (28")', qty: 1, unit_price_sen: 399000, linked_ac_dtlkey: 91,
+      variants: { seatHeight: 28, colourLabel: 'BEIGE', specials }, ...over,
+    },
+    {
+      item_code: '5526-STOOL', item_group: 'sofa', description: 'SOFA 5526 STOOL',
+      description2: '2EL + STOOL (28")', qty: 1, unit_price_sen: 0, linked_ac_dtlkey: 91,
+      variants: { seatHeight: 28, colourLabel: 'BEIGE', specials }, ...over,
+    },
+  ]);
+
+  it('a special carrying a forbidden character no longer blames the pieces', () => {
+    /* composeSofaDesc2 refuses a special containing `+` or `/` — it would look
+       like a second structure segment — and the refusal used to read "cannot
+       spell [2A(LHF), STOOL]", naming the pieces and blaming them.
+       HC-SO-001526 and HC-SO-001445 are that. */
+    const res = collapseSofaLines(sofa(['NO BACK CUSHION / TBC']));
+    expect(res.refusals).toEqual([]);
+    expect(String(res.lines[0].description2)).toContain('Special Order: Refer to ERP');
+    expect(String(res.lines[0].description2)).toContain('2EL + STOOL');
+  });
+
+  it('a special the decoder has never heard of no longer fails the round trip', () => {
+    /* `ALL` (HC-SO-008302) and `DAYBED` (HC-SO-004716): the decoder reads
+       specials from a fixed vocabulary, so these never come back and the gate
+       refused a build that was otherwise perfect. */
+    const res = collapseSofaLines(sofa(['BOTTOM FULLY COVERED BY FABRIC', 'ALL']));
+    expect(res.refusals).toEqual([]);
+    expect(String(res.lines[0].description2)).toContain('Special Order: Refer to ERP');
+  });
+
+  it('and a special that travels fine still travels, in full', () => {
+    const res = collapseSofaLines(sofa(['Nylon Fabric']));
+    expect(res.refusals).toEqual([]);
+    expect(String(res.lines[0].description2)).toContain('Nylon Fabric');
+    expect(String(res.lines[0].description2)).not.toContain('Special Order');
+  });
+
+  it('the refusal reported is what is wrong with the DOCUMENT, not with a rewrite of it', () => {
+    /* Both attempts fail when the pieces are the problem, and the sentence a
+       person reads must then be about the pieces. */
+    const res = collapseSofaLines([
+      {
+        item_code: '5526-CNR', item_group: 'sofa', description: 'SOFA 5526 CNR',
+        description2: 'C', qty: 1, unit_price_sen: 100, linked_ac_dtlkey: 92,
+        variants: { colourLabel: 'BEIGE', specials: ['ALL'] },
+      },
+    ]);
+    expect(res.lines).toHaveLength(0);
+    expect(res.refusals[0].reason).toContain('cannot spell');
+  });
+});
+
+// ----------------------------------------------------------------------------
+// THE BOOK ALREADY SAYS WHICH ERP LINES ARE ONE LINE.
+//
+// A sofa is ONE line in AutoCount and several here, and every piece carries that
+// one line's DtlKey. The runs are formed by ADJACENCY, which is right until
+// something interrupts a sofa — HC-SO-001526 holds `1EL` and `2ER` of one sofa
+// with ANOTHER sofa's two lines between them, so each end was collapsed alone,
+// and `1EL` by itself decodes to a single seat rather than a left arm.
+//
+// Measured on production 2026-09-10: HC-SO-001255, HC-SO-001526, HC-SO-002315,
+// HC-SO-004716 and HC-SO-012016 are all this shape.
+// ----------------------------------------------------------------------------
+describe('a sofa interrupted by another sofa is still ONE build', () => {
+  const piece = (
+    code: string, key: number | null, d2: string, over: Partial<CollapsibleLine> = {},
+  ): CollapsibleLine => ({
+    item_code: code, item_group: 'sofa', description: `SOFA ${code}`,
+    description2: d2, qty: 1, unit_price_sen: 0, linked_ac_dtlkey: key,
+    variants: { seatHeight: 35, colourLabel: 'BEIGE', specials: [] }, ...over,
+  });
+
+  /* HC-SO-001526's shape: two ends of one sofa with a second sofa between. */
+  const D2_A = '1EL + 2ER (35")';
+  const D2_B = '2EL + STOOL (35")';
+  const interleaved = (): CollapsibleLine[] => ([
+    piece('5526-2A(RHF)', 102956, D2_A, { unit_price_sen: 399000 }),
+    piece('5526-2A(LHF)', 102957, D2_B, { unit_price_sen: 299000 }),
+    piece('5526-STOOL', 102957, D2_B),
+    piece('5526-1A(LHF)', 102956, D2_A),
+  ]);
+
+  it('gathers the two ends into one line instead of refusing both', () => {
+    const res = collapseSofaLines(interleaved());
+    expect(res.refusals).toEqual([]);
+    /* Two book lines out of four ERP lines — one per DtlKey. */
+    expect(res.lines).toHaveLength(2);
+    expect(res.lines.map((l) => Number(l.linked_ac_dtlkey))).toEqual([102956, 102957]);
+  });
+
+  it('emits the gathered build at the position of its FIRST piece', () => {
+    /* The document's line order is what a person reads; a sofa must not jump
+       to the end of the document because its pieces were scattered. */
+    const res = collapseSofaLines(interleaved());
+    expect(res.lines[0].sourceIndexes).toEqual([0, 3]);
+    expect(res.lines[1].sourceIndexes).toEqual([1, 2]);
+  });
+
+  it("writes the BOOK'S order, never the mirror the ERP rows happen to be in", () => {
+    /* THE HAZARD THIS TEST EXISTS FOR. The ERP's line order here is
+       [2A(RHF), 1A(LHF)]; the book holds `1EL + 2ER`. Composing from the row
+       order round-trips perfectly and writes `2ER + 1EL` — the MIRROR of the
+       sofa the book records, which nothing downstream would catch. */
+    const res = collapseSofaLines(interleaved());
+    expect(String(res.lines[0].description2)).toContain('1EL + 2ER');
+    expect(String(res.lines[0].description2)).not.toContain('2ER + 1EL');
+    /* The colour still comes from the ERP — the arrangement is the only thing
+       the book is authoritative for. */
+    expect(String(res.lines[0].description2)).toContain('BEIGE');
+  });
+
+  it("and echoes the book's text verbatim when nothing about it has changed", () => {
+    const same = interleaved().map((l) => (
+      Number(l.linked_ac_dtlkey) === 102956
+        ? { ...l, description2: '1EL + 2ER (35") / COL: BEIGE' }
+        : l
+    ));
+    const res = collapseSofaLines(same);
+    expect(String(res.lines[0].description2)).toBe('1EL + 2ER (35") / COL: BEIGE');
+    expect(res.lines[0].via).toBe('echo');
+  });
+
+  it('leaves a sofa the adjacency rule already handles alone', () => {
+    /* The guard that keeps this change to the documents that are broken: a
+       contiguous run is not gathered, so nothing that works today moves. */
+    const contiguous = [
+      piece('5526-2A(RHF)', 102956, D2_A, { unit_price_sen: 399000 }),
+      piece('5526-1A(LHF)', 102956, D2_A),
+      piece('5526-2A(LHF)', 102957, D2_B, { unit_price_sen: 299000 }),
+      piece('5526-STOOL', 102957, D2_B),
+    ];
+    const res = collapseSofaLines(contiguous);
+    expect(res.refusals).toEqual([]);
+    expect(res.lines).toHaveLength(2);
+  });
+
+  it('does not gather two DIFFERENT models that happen to share a key', () => {
+    /* A key is the book's line and two models cannot be one build. Gathering
+       them would hide a data fault behind a composed line. */
+    const res = collapseSofaLines([
+      piece('5526-2A(RHF)', 102956, D2_A, { unit_price_sen: 399000 }),
+      piece('9028-1S', 102957, '1S (35")'),
+      piece('3068-1A(LHF)', 102956, D2_A),
+    ]);
+    /* Nothing is gathered, so the two 102956 lines take the adjacency path and
+       are judged on their own — which is a refusal, loudly, not a silent merge. */
+    expect(res.lines.every((l) => (l.sourceIndexes ?? []).length === 1)).toBe(true);
+  });
+
+  it('a keyless document is untouched — the book has never seen it', () => {
+    const res = collapseSofaLines([
+      piece('5526-2A(RHF)', null, D2_A, { unit_price_sen: 399000 }),
+      piece('5526-2A(LHF)', null, D2_B, { unit_price_sen: 299000 }),
+      piece('5526-1A(LHF)', null, D2_A),
+    ]);
+    expect(res.lines).toHaveLength(3);
+    expect(res.lines.every((l) => l.via === 'passthrough')).toBe(true);
   });
 });

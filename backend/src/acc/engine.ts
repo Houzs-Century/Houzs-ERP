@@ -32,6 +32,7 @@ import { nextJeNo, jePrefixForCompany } from '../scm/lib/doc-no';
 import { todayMyt } from '../scm/lib/my-time';
 import { dateOrNull } from '../scm/lib/date-coerce';
 import { REVERSAL_SOURCE, CONTROL_ROLES, resolveRoles } from './rules';
+import { accMastersCompanyId } from './masters-company';
 import type { RuleLine } from './rules';
 
 export type EngineLine = RuleLine;
@@ -91,7 +92,7 @@ async function checkAccounts(
   companyId: number | null,
   codes: string[],
 ): Promise<{ ok: true } | { ok: false; status: 'account_invalid' | 'account_check_failed'; reason: string }> {
-  const co = companyId == null ? 1 : Number(companyId);
+  const co = accMastersCompanyId(companyId, 'checkAccounts');
   const { data, error } = await sb
     .from('accounts')
     .select('account_code, parent_code, is_active')
@@ -118,16 +119,14 @@ async function checkAccounts(
   return { ok: true };
 }
 
-export async function postJournal(sb: any, input: PostJournalInput): Promise<PostJournalResult> {
-  const { companyId, sourceType, sourceDocNo, narration } = input;
-  /* `entryDate: string` does not stop `""` — an unfilled <input type="date">
-     posts one, and journal_entries.entry_date is `date NOT NULL`. Blank would
-     500 the whole post AND poison nextJeNo (`new Date("")` is Invalid Date,
-     so the month prefix comes out NaN). Today is the only sane document date
-     for a journal being written today, and it is what every caller that omits
-     the key already gets. */
-  const entryDate = dateOrNull(input.entryDate) ?? todayMyt();
-  const postNow = input.postNow !== false;
+/**
+ * The read-only half of the gate — steps 1–3b: shape, balance, the chart, the
+ * control guard. postJournal runs it first; a DRY RUN (acc/payments' diagnosis,
+ * docs/bugs/0652) runs it alone, so "would this post, and if not why?" is
+ * answered by the same code that posts — never by a second opinion.
+ */
+export async function validateJournal(sb: any, input: PostJournalInput): Promise<{ ok: true; totalSen: number } | PostJournalErr> {
+  const { companyId, sourceType } = input;
   const lines = input.lines ?? [];
 
   // 1+2 — shape and balance. Rejected before any read or write.
@@ -167,6 +166,27 @@ export async function postJournal(sb: any, input: PostJournalInput): Promise<Pos
       };
     }
   }
+  return { ok: true, totalSen: dr };
+}
+
+export async function postJournal(sb: any, input: PostJournalInput): Promise<PostJournalResult> {
+  const { companyId, sourceType, sourceDocNo, narration } = input;
+  /* `entryDate: string` does not stop `""` — an unfilled <input type="date">
+     posts one, and journal_entries.entry_date is `date NOT NULL`. Blank would
+     500 the whole post AND poison nextJeNo (`new Date("")` is Invalid Date,
+     so the month prefix comes out NaN). Today is the only sane document date
+     for a journal being written today, and it is what every caller that omits
+     the key already gets. */
+  const entryDate = dateOrNull(input.entryDate) ?? todayMyt();
+  const postNow = input.postNow !== false;
+  const lines = input.lines ?? [];
+
+  // 1–3b — shape, balance, the chart, the control guard: the read-only half of
+  // the gate, shared with validateJournal (the dry run asks exactly this).
+  const v = await validateJournal(sb, input);
+  if (!v.ok) return v;
+  const dr = v.totalSen;
+  const cr = dr;
 
   // 4 — one ACTIVE entry per source document. The read fails CLOSED (a blip
   // must never read as "no entry exists yet" — that is precisely how a second
@@ -300,7 +320,10 @@ export type ReverseJournalInput = {
 };
 
 export type ReverseJournalResult =
-  | { ok: true; status: 'reversed'; jeNo: string; jeId: string }
+  /** `jeNo` is the CONTRA written (or, when the original had no lines to
+      mirror, the original itself); `originalJeNo` is always the entry that
+      was voided — the number a reader recognises, which the contra's is not. */
+  | { ok: true; status: 'reversed'; jeNo: string; jeId: string; originalJeNo: string }
   | { ok: true; status: 'already_reversed' | 'nothing_to_reverse' }
   | { ok: false; status: 'reversal_read_failed' | 'reversal_insert_failed' | 'reversal_lines_failed'; reason?: string };
 
@@ -354,7 +377,7 @@ export async function reverseJournal(sb: any, input: ReverseJournalInput): Promi
   if (totalSen <= 0) {
     // Nothing of value to reverse — flag it so re-voids no-op.
     await sb.from('journal_entries').update({ reversed: true }).eq('id', orig.id);
-    return { ok: true, status: 'reversed', jeNo: orig.je_no, jeId: orig.id };
+    return { ok: true, status: 'reversed', jeNo: orig.je_no, jeId: orig.id, originalJeNo: orig.je_no };
   }
 
   // Mirror the SAME accounts + parties with debit/credit swapped — a faithful
@@ -457,5 +480,5 @@ export async function reverseJournal(sb: any, input: ReverseJournalInput): Promi
   await sb.from('journal_entries').update({ posted: true }).eq('id', revJe.id);
   await sb.from('journal_entries').update({ reversed: true, reversed_by_je: revJe.id }).eq('id', orig.id);
 
-  return { ok: true, status: 'reversed', jeNo: revJe.je_no, jeId: revJe.id };
+  return { ok: true, status: 'reversed', jeNo: revJe.je_no, jeId: revJe.id, originalJeNo: orig.je_no };
 }

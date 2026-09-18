@@ -1,0 +1,89 @@
+name: Transfer counter check (read-only)
+
+# 「还有 transfer from and o[ut]」 (owner, 2026-09-08)
+#
+# THE HALF OF "transfer to" NOBODY WAS ASKING. Convert symmetry check already
+# compares the book's counter to the book's own children (section 3) and the
+# ERP's counter to the ERP's own children (section 4b). Neither compares the
+# two SYSTEMS' counters to each other, so both can read clean while the ERP
+# believes a different thing from the account book about the same line.
+#
+# It is not hypothetical: run 34198847720 reports 140 of 1344 ERP
+# purchase-order lines disagreeing with their own goods receipts and 80 of 792
+# goods-receipt lines with their own purchase invoices — and section 4b cannot
+# say whether either is a DEFECT, because the receipt that moved the counter
+# happened in AutoCount and the cutover deliberately created no ERP document
+# for it. Only the book decides that, and this asks it.
+#
+# The AutoCount side does NOT come from here: the book is reachable only over
+# ZeroTier from the office network, which a GitHub-hosted runner has no route
+# to. It comes from the committed snapshot
+# backend/scripts/data/ac-convert-edges.json.gz, the same one the symmetry
+# check reads, refreshed by running export-ac-convert-edges.mjs on a machine on
+# that network. This REFUSES on a snapshot older than max_snapshot_age_days
+# rather than answering against a stale book.
+#
+# Read-only: SELECTs only, no writes, no DDL, no transaction. Manual trigger
+# only — it is a question, not a gate.
+on:
+  workflow_dispatch:
+    inputs:
+      max_snapshot_age_days:
+        description: "Refuse if the AutoCount snapshot is older than this many days"
+        required: false
+        default: "2"
+      company_id:
+        description: "ERP company to check (AED_HOUZS is company 1)"
+        required: false
+        default: "1"
+      show:
+        description: "How many offending documents to name per class"
+        required: false
+        default: "20"
+      docs:
+        description: "Comma-separated AutoCount document numbers to print in full (e.g. DO-001800,DO-005583)"
+        required: false
+        default: ""
+
+# Deliberately NOT in the deploy concurrency group: this touches nothing and
+# must never queue behind — or displace — a release.
+concurrency:
+  group: ac-transfer-counter-check
+  cancel-in-progress: true
+
+jobs:
+  counters:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - name: Compare every stored ceiling against AutoCount's own counter
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MAX_SNAPSHOT_AGE_DAYS: ${{ inputs.max_snapshot_age_days }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          SHOW: ${{ inputs.show }}
+          DOCS: ${{ inputs.docs }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first
+        # pipefail, or `tee` swallows a crash and a truncated answer reads as success
+        run: |
+          set -o pipefail
+          node scripts/check-ac-transfer-counters.mjs | tee transfer-counters.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ac-transfer-counters
+          path: backend/transfer-counters.txt
+          retention-days: 14

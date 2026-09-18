@@ -68,6 +68,7 @@ import type { Context, Next } from 'hono';
 import { getSupabaseService } from '../../db/supabase';
 import { activeCompanyId } from './companyScope';
 import { SCM_AREAS, areaForPath, areaLabel } from './scm-areas';
+import { OPEN_TOKENS, ALL_TOKENS } from './app-config-tokens';
 
 const FREEZE_TTL_MS = 30_000;
 const FREEZE_KEY = 'scm.write_freeze';
@@ -101,9 +102,9 @@ export function primeWriteFreezeCache(raw: string | null | undefined, descriptio
 }
 
 /* An explicit "we are open" token. Anything else non-empty is an instruction to
-   freeze something, and is parsed as such. */
-const OPEN_TOKENS = new Set(['', 'off', '0', 'false']);
-const ALL_TOKENS = new Set(['all', 'true']);
+   freeze something, and is parsed as such. Shared with the migrated-SO lock next
+   door (lib/app-config-tokens.ts): the two grammars differ, but "did I turn it
+   off?" must not have two answers for two rows of the same table. */
 
 const dedupe = <T>(xs: T[]): T[] => [...new Set(xs)];
 const split = (s: string): string[] => s.split(',').map((t) => t.trim()).filter((t) => t.length > 0);

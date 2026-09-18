@@ -1,0 +1,11 @@
+{
+  "_note": "Sales-order lines the ACCOUNT BOOK states and the ERP does not hold. Each entry is ONE AutoCount line, named by its DocNo and its DtlKey, and nothing about it is written here: the item, the quantity, the money and the text all come from the committed snapshot data/ac-reconcile-truth.json.gz, which is the same snapshot the reconcile compares against. This file only says WHICH lines are allowed to be created and WHY, so the script can never sweep.",
+  "_rules": "THE MONEY MAY NOT MOVE. A sales order's header total was imported from the book's own total, so creating a PRICED line would make the document's lines and its header disagree — the script REFUSES any book line whose unit price or subtotal is not zero, and that refusal is the whole reason this is an allow-list rather than a sweep. THE LINE MUST NAME SOMETHING: the owner's ruling of 2026-09-08, 「删掉啊 没写的也删掉」, says a book row that states no item code, no description, no build text and no money is nothing, and nothing is not created. THE ITEM MUST ALREADY EXIST: the AutoCount code is resolved through the same mapping sheet the importer used, and a product the catalogue does not hold is a refusal, never a minted SKU. IT IS IDEMPOTENT: a line carrying that DtlKey already on the document means the work is done, and the run says so instead of inserting a second one.",
+  "entries": [
+    {
+      "doc": "HC-SO-012128",
+      "dtlKey": "924549",
+      "why": "the last of the AutoCount SO lines with no ERP line (reconcile run 34235091322, 'AutoCount line with no ERP line: 1 of 1'). The book states HOK-SQUARE PILLOW x4 at RM 0.00 with Desc2 'FOR CONPESSANTION WRONG ITEM DELIVERY' — a compensation pillow the salesperson gave away after a wrong delivery. It names an item, a quantity and a reason, so the owner's 'a row that says nothing is nothing' ruling does NOT reach it; and it carries no money, so creating it cannot move the document's total (book netTotal 3300.00, the sofa line alone)."
+    }
+  ]
+}

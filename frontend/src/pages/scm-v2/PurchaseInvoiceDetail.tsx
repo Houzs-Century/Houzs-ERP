@@ -67,6 +67,9 @@ import {
   type PoPriceMatrix,
 } from '@2990s/shared/mfg-pricing';
 import { PoLineCard, emptyPoLine, type PoLineDraft } from '../../vendor/scm/components/PoLineCard';
+import { LinePoRefLink } from '../../vendor/scm/components/LinePoRefLink';
+import { PoPriceReference } from '../../vendor/scm/components/PoPriceReference';
+import { linePoLink } from '../../vendor/scm/lib/line-po-link';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { SkeletonDetailPage } from '../../vendor/scm/components/Skeleton';
@@ -77,6 +80,9 @@ import { computeTotalHeight, isTotalHeightCategory, isTotalHeightPart } from '..
 import { transferFromColumnLabel } from "../../lib/convertScope";
 import { DateField } from "../../vendor/scm/components/DateField";
 
+import { ADD_LINE_LABEL } from '../../vendor/scm/lib/add-line-handoff';
+import { purchaseInvoiceLinesLocked } from '../../vendor/scm/lib/line-add-lock';
+import { useAddLineHandoff } from '../../vendor/scm/lib/useAddLineHandoff';
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
 const fmtRm = (centi: number | null | undefined, currency = 'MYR'): string => {
@@ -114,6 +120,11 @@ type PiItemRow = Record<string, unknown> & {
   /* GRN-sourced lines carry the source GRN line id; identity + variants on those
      stay read-only (only qty/price editable). Free-entry lines have it null. */
   grn_item_id?: string | null;
+  /* #26 — the line's own purchase order, resolved by the detail GET. */
+  source_po_id?: string | null;
+  source_po_number?: string | null;
+  /* The PO price trail (mig 20260914T0200), served by the detail GET. */
+  po_unit_price_sen?: number | null;
 };
 
 /* Whole-line edit (T12) — Edit mode drives one PoLineCard per line, the SAME rich
@@ -153,6 +164,11 @@ const draftFromItem = (it: PiItemRow): EditLine => ({
 
 export const PurchaseInvoiceDetail = () => {
   const { id } = useParams<{ id: string }>();
+  /* "Add line" from the detail page. At the TOP with the other hooks: this
+     editor returns early while the document loads, and a hook written below
+     that return is the rules-of-hooks violation the linter caught when this
+     was first pasted in per-file (docs/bugs/0853). */
+  const addLineHandoff = useAddLineHandoff();
   const detail = usePurchaseInvoiceDetail(id ?? null);
   const updateHeader = useUpdatePurchaseInvoiceHeader();
   const addItem = useAddPurchaseInvoiceItem();
@@ -224,7 +240,7 @@ export const PurchaseInvoiceDetail = () => {
   // Unified edit-lock (migration 0106): a PI is read-only once it has ANY
   // payment recorded (paid_sen > 0) OR is CANCELLED. POSTED with zero payment
   // stays editable.
-  const isLocked = pi ? (pi.status === 'CANCELLED' || (pi.paid_sen ?? 0) > 0) : true;
+  const isLocked = pi ? purchaseInvoiceLinesLocked({ status: pi.status, paid_sen: pi.paid_sen ?? null }) : true;
   // DRAFT lifecycle — a DRAFT PI is editable (not locked) and shows a Confirm
   // banner; confirming flips DRAFT → POSTED (where AP/GL post + GRN consume run).
   const isDraft = (pi?.status as string) === 'DRAFT';
@@ -401,6 +417,7 @@ export const PurchaseInvoiceDetail = () => {
      Committed by the page-level Save. */
   const startAddLine = () =>
     setEditLines((prev) => [...prev, { ...emptyPoLine() }]);
+  addLineHandoff.current = { enabled: isEditing && !isLocked, onTrigger: startAddLine };
 
   /* Remove a line. A persisted line fires the delete mutation immediately; a
      never-saved blank card just drops from the draft array. */
@@ -635,7 +652,7 @@ export const PurchaseInvoiceDetail = () => {
           {isEditing && !isLocked && (
             <Button variant="primary" size="sm" onClick={startAddLine}>
               <Plus {...ICON} />
-              <span>Add item</span>
+              <span>{ADD_LINE_LABEL}</span>
             </Button>
           )}
         </header>
@@ -648,8 +665,22 @@ export const PurchaseInvoiceDetail = () => {
              ONE page-level Save diffs each draft and add/update/deletes. */
           <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)', padding: 'var(--space-3)' }}>
             {editLines.map((l, idx) => (
+              <div key={l.rid}>
+              {/* #26 — which PO this line came from, above its editor. A new or
+                  free-entry line has none and shows nothing. */}
+              {(() => {
+                const src = l.itemId ? items.find((it) => it.id === l.itemId) : undefined;
+                /* Beside the #26 PO link: the PO's price against the price being
+                   typed now (owner 2026-09-14). Reference only — Save is never
+                   gated on it. */
+                return src && (linePoLink(src) || src.grn_item_id) ? (
+                  <div className={styles.muted} style={{ fontSize: 'var(--fs-12)', margin: '0 0 var(--space-1) var(--space-1)', display: 'flex', gap: 'var(--space-3)', alignItems: 'baseline', flexWrap: 'wrap' }}>
+                    {linePoLink(src) && <span>From PO <LinePoRefLink line={src} /></span>}
+                    <PoPriceReference poUnitPriceSen={src.po_unit_price_sen} piUnitPriceSen={l.unitPriceSen} fmt={(sen) => fmtRm(sen, pi.currency)} />
+                  </div>
+                ) : null;
+              })()}
               <PoLineCard
-                key={l.rid}
                 index={idx}
                 line={l}
                 currency={pi.currency}
@@ -669,6 +700,7 @@ export const PurchaseInvoiceDetail = () => {
                 hidePoFields
                 identityReadOnly={Boolean(l.grnLinked)}
               />
+              </div>
             ))}
             {editLines.length === 0 && (
               <p className={styles.emptyRow} style={{ padding: 'var(--space-3)' }}>
@@ -684,7 +716,9 @@ export const PurchaseInvoiceDetail = () => {
               <tr>
                 <th>Item</th>
                 <th>Group</th>
+                <th>PO</th>
                 <th className={styles.tableRight}>Qty</th>
+                <th className={styles.tableRight}>PO price</th>
                 <th className={styles.tableRight}>Unit</th>
                 <th className={styles.tableRight}>Disc</th>
                 <th className={styles.tableRight}>Total</th>
@@ -703,7 +737,9 @@ export const PurchaseInvoiceDetail = () => {
                     })()}
                   </td>
                   <td className={styles.muted}>{it.item_group ?? it.material_kind ?? '—'}</td>
+                  <td><LinePoRefLink line={it} /></td>
                   <td className={styles.tableRight}>{it.qty}</td>
+                  <td className={styles.tableRight}><PoPriceReference poUnitPriceSen={it.po_unit_price_sen} piUnitPriceSen={it.unit_price_sen} fmt={(sen) => fmtRm(sen, pi.currency)} align="right" /></td>
                   <td className={styles.tableRight}>{fmtRm(it.unit_price_sen, pi.currency)}</td>
                   <td className={styles.tableRight}>{(it.discount_sen ?? 0) > 0 ? fmtRm(it.discount_sen, pi.currency) : '—'}</td>
                   <td className={styles.priceCell}>{fmtRm(it.line_total_sen ?? (it.qty * it.unit_price_sen - (it.discount_sen ?? 0)), pi.currency)}</td>
@@ -838,6 +874,9 @@ const SupplierCard = ({
                 onChange={(e) => onField('currency', e.target.value)}>
                 <option value="MYR">MYR</option>
                 <option value="RMB">RMB</option>
+                {/* CNY — same currency as RMB under its ISO code; a purchase
+                    invoice raised against a CNY purchase order carries it. */}
+                <option value="CNY">CNY</option>
                 <option value="USD">USD</option>
                 <option value="SGD">SGD</option>
               </select>

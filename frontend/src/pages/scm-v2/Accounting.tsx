@@ -2,7 +2,8 @@
 // Accounting page — the ledger's face (accounting module, phase 1).
 //
 // Tab strip:
-//   1. Chart of Accounts — the account tree: add / rename / deactivate
+//   1. Chart of Accounts — the ACTIVE company's tree, read-only (maintenance
+//      lives on the union page /scm/chart-of-accounts — one door only)
 //   2. Journal Entries — list w/ filter, drill into lines, NEW manual journal,
 //      post a draft, reverse a posted manual journal
 //   3. General Ledger — flat GL stream, filter by account / date
@@ -13,14 +14,10 @@
 //      drift named to the document (brief §3.5)
 // ----------------------------------------------------------------------------
 
-import { useMemo, useState } from 'react';
-import { BookOpen, FileText, ListTree, Receipt, ShieldCheck, TrendingDown, TrendingUp } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
+import { ACCOUNTING_TAB_TITLES, accountingTabFromSearch, type AccountingTab } from './accounting-tabs';
 import {
-  useJournalEntries,
-  useJournalEntryDetail,
-  useCreateJournalEntry,
-  usePostJournalEntry,
-  useGlEntries,
   useAccountBalances,
   useArAging,
   useApAging,
@@ -28,115 +25,91 @@ import {
   type Account,
   type ArAgingRow,
   type ApAgingRow,
-  type JournalEntry,
-  type JeLineIn,
 } from '../../vendor/scm/lib/accounting-queries';
 import {
-  useCreateAccount,
-  useUpdateAccount,
-  useReverseJournalEntry,
   useControlCheck,
+  usePaymentBookingDryRun,
+  useBookUnbookedPayments,
   type ControlCheckRow,
   type UnbookedPayments,
+  type PaymentDryRun,
+  type PaymentDrift,
+  type PaymentDriftRow,
 } from './accounting-phase1-queries';
 import { DataTable, type Column } from '../../components/DataTable';
+import { ItemGroupsTab } from './ItemGroups';
+import { StockCloseTab } from './StockClose';
+import { PnLTab, BalanceSheetTab } from './Reports';
+import { ReceiptsPaymentsTab } from './ReceiptsPayments';
+import { PaymentCorrectionsTab } from './PaymentCorrectionsTab';
+import { CollectionTab } from './CollectionReport';
+import { MerchantChargesTab } from './MerchantChargesReport';
+import { PerformanceTab } from './PerformancePnl';
+import { cardStyle, fieldStyle, btnStyle } from './JournalEntryCards';
+import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { fmtSen } from '../../vendor/shared/format';
 import { byText } from '../../vendor/scm/lib/sort-options';
 import styles from './Suppliers.module.css';
+import { GeneralLedger } from './GeneralLedger';
+import { JournalTab } from './JournalEntries';
+import { CancelledWithMoneyCard } from './CancelledWithMoneyCard';
+import { ReceiptBackfillCard } from './ReceiptBackfillCard';
 import { PageHeader } from '../../components/Layout';
 import { fmtDateOrDash } from '../../vendor/shared/format';
 import { DateField } from "../../vendor/scm/components/DateField";
 
-const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
 // The ONE guarded centi→"RM …" formatter — returns "—" for an absent/non-finite
 // amount, never "RM NaN". Kept under the local name so callsites are unchanged.
 const fmt = (sen: number | null | undefined) => fmtSen(sen);
 
-type Tab = 'coa' | 'je' | 'gl' | 'tb' | 'ar' | 'ap' | 'check';
+type Tab = AccountingTab;
 
 export const Accounting = () => {
-  const [tab, setTab] = useState<Tab>('je');
+  /* THE TAB THE URL NAMES (docs/bugs/0824). The Finance sidebar deep-links
+     every tab (/scm/accounting?tab=pnl …) and is the ONE way between them
+     (owner 2026-09-12: 只靠侧栏就好，不然太乱了 — the strip of sixteen buttons
+     that used to sit here repeated the sidebar's three groups; docs/bugs/0841).
+     The page opens on the tab asked for, follows a sidebar click made while it
+     is already open, and names the tab in its title. A name the page does not
+     know falls back to the journal. */
+  const [params] = useSearchParams();
+  const wanted = accountingTabFromSearch(params.get('tab'));
+  const [tab, setTabState] = useState<Tab>(wanted ?? 'je');
+  useEffect(() => {
+    if (wanted && wanted !== tab) setTabState(wanted);
+  }, [wanted, tab]);
 
   return (
     <div className="space-y-4">
-      <PageHeader eyebrow="Finance" title="Accounting" />
-
-      <div className={styles.statusChips} style={{ gap: 'var(--space-2)' }}>
-        <TabBtn label="Chart of Accounts" icon={<ListTree {...ICON} />} active={tab === 'coa'} onClick={() => setTab('coa')} />
-        <TabBtn label="Journal Entries" icon={<BookOpen {...ICON} />} active={tab === 'je'}    onClick={() => setTab('je')} />
-        <TabBtn label="General Ledger"  icon={<FileText {...ICON} />} active={tab === 'gl'}    onClick={() => setTab('gl')} />
-        <TabBtn label="Trial Balance"   icon={<Receipt {...ICON} />}  active={tab === 'tb'} onClick={() => setTab('tb')} />
-        <TabBtn label="AR Aging"        icon={<TrendingUp {...ICON} />} active={tab === 'ar'}  onClick={() => setTab('ar')} />
-        <TabBtn label="AP Aging"        icon={<TrendingDown {...ICON} />} active={tab === 'ap'} onClick={() => setTab('ap')} />
-        <TabBtn label="Self-check"      icon={<ShieldCheck {...ICON} />} active={tab === 'check'} onClick={() => setTab('check')} />
-      </div>
+      <PageHeader eyebrow="Finance" title={`Accounting · ${ACCOUNTING_TAB_TITLES[tab]}`} />
 
       {tab === 'coa'   && <CoaTab />}
+      {tab === 'groups' && <ItemGroupsTab />}
       {tab === 'je'    && <JeTab />}
       {tab === 'gl'    && <GlTab />}
       {tab === 'tb'    && <TrialBalanceTab />}
+      {tab === 'close' && <StockCloseTab />}
+      {tab === 'pnl'   && <PnLTab />}
+      {tab === 'bs'    && <BalanceSheetTab />}
+      {tab === 'rp'    && <ReceiptsPaymentsTab />}
       {tab === 'ar'    && <ArAgingTab />}
       {tab === 'ap'    && <ApAgingTab />}
       {tab === 'check' && <SelfCheckTab />}
+      {tab === 'corrections' && <PaymentCorrectionsTab />}
+      {tab === 'collection' && <CollectionTab />}
+      {tab === 'charges' && <MerchantChargesTab />}
+      {tab === 'performance' && <PerformanceTab />}
     </div>
   );
 };
-
-const TabBtn = ({
-  label, icon, active, onClick,
-}: { label: string; icon: React.ReactNode; active: boolean; onClick: () => void }) => (
-  <button type="button" onClick={onClick}
-    style={{
-      display: 'inline-flex', alignItems: 'center', gap: 6,
-      padding: '6px 12px',
-      border: '1px solid var(--c-line, rgba(34,31,32,0.12))',
-      borderRadius: 'var(--radius-md)',
-      background: active ? 'var(--c-ink)' : 'transparent',
-      color: active ? 'var(--c-cream)' : 'var(--c-ink)',
-      fontSize: 'var(--fs-13)',
-      cursor: 'pointer',
-    }}>
-    {icon}
-    <span>{label}</span>
-  </button>
-);
-
-/* Small shared form styling for the phase-1 cards. */
-const cardStyle: React.CSSProperties = {
-  padding: 'var(--space-4)',
-  background: 'var(--c-cream)',
-  border: '1px solid var(--c-line, rgba(34,31,32,0.12))',
-  borderRadius: 'var(--radius-md)',
-};
-const fieldStyle: React.CSSProperties = {
-  padding: '6px 10px',
-  border: '1px solid var(--c-line, rgba(34,31,32,0.2))',
-  borderRadius: 'var(--radius-sm, 6px)',
-  fontSize: 'var(--fs-13)',
-  background: 'white',
-};
-const btnStyle = (primary?: boolean): React.CSSProperties => ({
-  padding: '6px 14px',
-  border: '1px solid var(--c-ink)',
-  borderRadius: 'var(--radius-md)',
-  background: primary ? 'var(--c-ink)' : 'transparent',
-  color: primary ? 'var(--c-cream)' : 'var(--c-ink)',
-  fontSize: 'var(--fs-13)',
-  fontWeight: 600,
-  cursor: 'pointer',
-});
 
 /* ── Chart of Accounts ───────────────────────────────────────────────── */
 const ACCOUNT_TYPE_ORDER = ['ASSET', 'LIABILITY', 'EQUITY', 'INCOME', 'EXPENSE'];
 
 const CoaTab = () => {
   const q = useAccounts();
-  const createM = useCreateAccount();
-  const updateM = useUpdateAccount();
   const [showInactive, setShowInactive] = useState(false);
-  const [editing, setEditing] = useState<Account | null>(null);
-  const [adding, setAdding] = useState(false);
 
   const all = useMemo(() => q.data?.accounts ?? [], [q.data]);
   const parents = useMemo(() => new Set(all.map((a) => a.parent_code).filter(Boolean) as string[]), [all]);
@@ -152,39 +125,20 @@ const CoaTab = () => {
 
   return (
     <div className="space-y-3">
-      <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center' }}>
-        <button type="button" style={btnStyle(true)} onClick={() => { setAdding(true); setEditing(null); }}>
-          Add account
-        </button>
+      <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
+        {/* This tab is the ACTIVE company's ledger view. The chart is
+            MAINTAINED in one place only — the union page with the per-company
+            ticks (the owner, 2026-09-03: 照理说应该维护 overall chart of
+            account 罢了). Adding here used to create the row in whichever
+            company you happened to be standing in; that door is closed. */}
+        <Link to="/scm/chart-of-accounts" style={{ fontSize: 'var(--fs-13)', fontWeight: 600, color: 'var(--c-orange)' }}>
+          Maintain the chart (all companies) →
+        </Link>
         <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 'var(--fs-13)' }}>
           <input type="checkbox" checked={showInactive} onChange={(e) => setShowInactive(e.target.checked)} />
           Show deactivated (legacy codes)
         </label>
       </div>
-
-      {(adding || editing) && (
-        <AccountForm
-          key={editing?.account_code ?? 'new'}
-          existing={editing}
-          accounts={all}
-          busy={createM.isPending || updateM.isPending}
-          onCancel={() => { setAdding(false); setEditing(null); }}
-          onSubmit={(v) => {
-            const done = () => { setAdding(false); setEditing(null); };
-            if (editing) {
-              updateM.mutate(
-                { code: editing.account_code, accountName: v.name, parentCode: v.parent || null, isActive: v.active },
-                { onSuccess: done },
-              );
-            } else {
-              createM.mutate(
-                { accountCode: v.code, accountName: v.name, accountType: v.type, parentCode: v.parent || null },
-                { onSuccess: done },
-              );
-            }
-          }}
-        />
-      )}
 
       <DataTable<Account>
         tableId="accounting-coa"
@@ -195,17 +149,47 @@ const CoaTab = () => {
         emptyLabel="No accounts."
         getRowKey={(r) => r.account_code}
         groupBy={{ key: 'type' }}
-        onRowClick={(r) => { setEditing(r); setAdding(false); }}
         columns={[
           { key: 'type', label: 'Type', width: '110px', defaultHidden: true, getValue: (r) => r.account_type, render: (r) => r.account_type },
-          { key: 'code', label: 'Code', width: '130px', getValue: (r) => r.account_code, render: (r) => <span className={styles.codeChip}>{r.account_code}</span> },
+          {
+            key: 'code', label: 'Code', width: '130px', getValue: (r) => r.account_code,
+            render: (r) => (
+              <span className={styles.codeChip} style={parents.has(r.account_code) ? { fontWeight: 700 } : undefined}>
+                {r.account_code}
+              </span>
+            ),
+          },
           {
             key: 'name', label: 'Name',
             getValue: (r) => r.account_name,
-            // Children indent under their parent so the hierarchy reads as a tree.
-            render: (r) => <span style={{ paddingLeft: r.parent_code ? 18 : 0 }}>{r.account_name}</span>,
+            /* 父子 account 不是很明显 (the owner, 2026-09-03, this very table
+               in hand): headers now carry WEIGHT like the union page's —
+               bold, tagged — and children step in behind a tree glyph
+               instead of a barely-there 18px. */
+            render: (r) => (
+              parents.has(r.account_code)
+                ? (
+                  <span style={{ fontWeight: 700 }}>
+                    {r.account_name}
+                    <span style={{ marginLeft: 6, fontSize: 'var(--fs-11)', fontWeight: 400, color: 'var(--c-ink-soft, #666)' }}>header</span>
+                  </span>
+                )
+                : r.parent_code
+                  ? (
+                    <span style={{ paddingLeft: 26, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                      <span aria-hidden style={{ color: 'var(--c-ink-soft, #999)' }}>└</span>
+                      {r.account_name}
+                    </span>
+                  )
+                  : <span>{r.account_name}</span>
+            ),
           },
-          { key: 'parent', label: 'Parent', width: '120px', getValue: (r) => r.parent_code ?? '', render: (r) => r.parent_code ?? '—' },
+          {
+            key: 'parent', label: 'Parent', width: '120px', getValue: (r) => r.parent_code ?? '',
+            render: (r) => r.parent_code
+              ? <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--c-ink-soft, #666)' }}>{r.parent_code}</span>
+              : '—',
+          },
           {
             key: 'kind', label: 'Posting', width: '110px',
             getValue: (r) => (parents.has(r.account_code) ? 'HEADER' : 'POSTABLE'),
@@ -228,359 +212,17 @@ const CoaTab = () => {
   );
 };
 
-const AccountForm = ({
-  existing, accounts, busy, onSubmit, onCancel,
-}: {
-  existing: Account | null;
-  accounts: Account[];
-  busy: boolean;
-  onSubmit: (v: { code: string; name: string; type: string; parent: string; active: boolean }) => void;
-  onCancel: () => void;
-}) => {
-  const [code, setCode] = useState(existing?.account_code ?? '');
-  const [name, setName] = useState(existing?.account_name ?? '');
-  const [type, setType] = useState(existing?.account_type ?? 'EXPENSE');
-  const [parent, setParent] = useState(existing?.parent_code ?? '');
-  const [active, setActive] = useState(existing?.is_active ?? true);
-
-  const parentOptions = accounts.filter((a) => a.is_active && a.account_type === type && a.account_code !== existing?.account_code);
-
-  return (
-    <div style={cardStyle} className="space-y-3">
-      <div style={{ fontWeight: 700 }}>{existing ? `Edit ${existing.account_code}` : 'New account'}</div>
-      <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
-        <input style={{ ...fieldStyle, width: 130 }} placeholder="Code (e.g. 950-0000)" value={code}
-          disabled={Boolean(existing)} onChange={(e) => setCode(e.target.value)} />
-        <input style={{ ...fieldStyle, width: 260 }} placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} />
-        <select style={fieldStyle} value={type} disabled={Boolean(existing)} onChange={(e) => { setType(e.target.value as Account['account_type']); setParent(''); }}>
-          {ACCOUNT_TYPE_ORDER.map((t) => <option key={t} value={t}>{t}</option>)}
-        </select>
-        <select style={fieldStyle} value={parent} onChange={(e) => setParent(e.target.value)}>
-          <option value="">No parent</option>
-          {parentOptions.map((a) => <option key={a.account_code} value={a.account_code}>{a.account_code} — {a.account_name}</option>)}
-        </select>
-        {existing && (
-          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 'var(--fs-13)' }}>
-            <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} />
-            Active
-          </label>
-        )}
-      </div>
-      <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
-        <button type="button" style={btnStyle(true)} disabled={busy || !name.trim() || (!existing && !code.trim())}
-          onClick={() => onSubmit({ code: code.trim(), name: name.trim(), type, parent, active })}>
-          {busy ? 'Saving…' : existing ? 'Save changes' : 'Create account'}
-        </button>
-        <button type="button" style={btnStyle()} onClick={onCancel}>Cancel</button>
-      </div>
-    </div>
-  );
-};
-
 /* ── Journal Entries ─────────────────────────────────────────────────── */
 
-/* JE status label — REVERSED wins over POSTED, then DRAFT. */
-const jeStatus = (r: JournalEntry): string =>
-  r.reversed ? 'REVERSED' : r.posted ? 'POSTED' : 'DRAFT';
-
-const JeTab = () => {
-  const [sourceType, setSourceType] = useState<string>('');
-  const q = useJournalEntries(sourceType ? { sourceType } : undefined);
-  const rows = useMemo(() => q.data?.journalEntries ?? [], [q.data]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
-
-  const [search, setSearch] = useState('');
-  const visible = useMemo(() => {
-    const term = search.trim().toLowerCase();
-    if (!term) return rows;
-    return rows.filter((r) =>
-      `${r.je_no} ${r.entry_date} ${r.source_type} ${r.source_doc_no ?? ''} ${jeStatus(r)}`
-        .toLowerCase()
-        .includes(term),
-    );
-  }, [rows, search]);
-
-  return (
-    <div className="space-y-3">
-      <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
-        <button type="button" style={btnStyle(true)} onClick={() => { setCreating((v) => !v); setSelectedId(null); }}>
-          {creating ? 'Close journal form' : 'New manual journal'}
-        </button>
-        <select
-          value={sourceType}
-          onChange={(e) => setSourceType(e.target.value)}
-          className={styles.searchInput}
-          style={{ maxWidth: 220 }}>
-          <option value="">All sources</option>
-          <option value="SI">SI — Sales Invoice</option>
-          <option value="SI_REVERSAL">SI Reversal</option>
-          <option value="PI">PI — Purchase Invoice</option>
-          <option value="PI_REVERSAL">PI Reversal</option>
-          <option value="PV">PV — Payment Voucher</option>
-          <option value="PV_REVERSAL">PV Reversal</option>
-          <option value="MANUAL">Manual</option>
-          <option value="MANUAL_REVERSAL">Manual Reversal</option>
-        </select>
-      </div>
-
-      {creating && <NewJournalForm onDone={() => setCreating(false)} />}
-      {selectedId && <JeDetailCard id={selectedId} onClose={() => setSelectedId(null)} />}
-
-      <DataTable<JournalEntry>
-        tableId="accounting-je"
-        layoutFamily="accounting-je"
-        exportName="journal-entries"
-        rows={q.isLoading ? null : visible}
-        loading={q.isLoading}
-        emptyLabel="No entries."
-        getRowKey={(r) => r.id}
-        onRowClick={(r) => { setSelectedId(r.id); setCreating(false); }}
-        /* Search is loaded-only (the JE query caps at 500 — searchScope
-           contract): DataTable renders the box + scope hint, the page owns
-           the actual filtering, per the DeliveryReturnsListV2 convention. */
-        search={{
-          value: search,
-          onChange: setSearch,
-          placeholder: 'Filter visible entries…',
-          loadedLimit: 500,
-        }}
-        columns={[
-          { key: 'je_no', label: 'JE No', width: '140px', getValue: (r) => r.je_no, render: (r) => <span className={styles.codeChip}>{r.je_no}</span> },
-          { key: 'entry_date', label: 'Date', width: '110px', getValue: (r) => r.entry_date, render: (r) => fmtDateOrDash(r.entry_date) },
-          { key: 'source', label: 'Source', width: '110px', getValue: (r) => r.source_type, render: (r) => r.source_type },
-          { key: 'doc', label: 'Doc', width: '140px', getValue: (r) => r.source_doc_no ?? '', render: (r) => r.source_doc_no ?? '—' },
-          { key: 'debit', label: 'Debit', align: 'right', width: '130px', getValue: (r) => r.total_debit_sen / 100, render: (r) => fmt(r.total_debit_sen) },
-          { key: 'credit', label: 'Credit', align: 'right', width: '130px', getValue: (r) => r.total_credit_sen / 100, render: (r) => fmt(r.total_credit_sen) },
-          {
-            key: 'status', label: 'Status', width: '110px',
-            getValue: (r) => jeStatus(r),
-            render: (r) => (
-              <span className={`${styles.statusPill} ${r.posted ? styles.statusActive : styles.statusInactive}`}>
-                {jeStatus(r)}
-              </span>
-            ),
-          },
-        ] satisfies Column<JournalEntry>[]}
-      />
-    </div>
-  );
-};
-
-/* RM string → integer sen; null when the input is not money. */
-const rmToSen = (raw: string): number | null => {
-  const t = raw.trim();
-  if (!t) return 0;
-  const n = Number(t);
-  if (!Number.isFinite(n) || n < 0) return null;
-  return Math.round(n * 100);
-};
-
-type DraftLine = { accountCode: string; debit: string; credit: string; notes: string };
-const EMPTY_LINE: DraftLine = { accountCode: '', debit: '', credit: '', notes: '' };
-
-const NewJournalForm = ({ onDone }: { onDone: () => void }) => {
-  const accounts = useAccounts();
-  const createM = useCreateJournalEntry();
-  const [entryDate, setEntryDate] = useState(() => new Date().toISOString().slice(0, 10));
-  const [narration, setNarration] = useState('');
-  const [lines, setLines] = useState<DraftLine[]>([{ ...EMPTY_LINE }, { ...EMPTY_LINE }]);
-
-  const all = accounts.data?.accounts ?? [];
-  const parents = useMemo(() => new Set(all.map((a) => a.parent_code).filter(Boolean) as string[]), [all]);
-  // Postable = active and not a header — the same rule the engine enforces,
-  // applied here so the picker cannot offer an account the post will refuse.
-  const postable = all.filter((a) => a.is_active && !parents.has(a.account_code));
-
-  const totals = useMemo(() => {
-    let dr = 0; let cr = 0; let bad = false;
-    for (const l of lines) {
-      const d = rmToSen(l.debit); const c = rmToSen(l.credit);
-      if (d == null || c == null) { bad = true; continue; }
-      dr += d; cr += c;
-      if (d > 0 && c > 0) bad = true;
-    }
-    return { dr, cr, bad };
-  }, [lines]);
-
-  const canSave = !totals.bad && totals.dr === totals.cr && totals.dr > 0
-    && lines.every((l) => l.accountCode || (!l.debit && !l.credit));
-
-  const setLine = (i: number, patch: Partial<DraftLine>) =>
-    setLines((ls) => ls.map((l, j) => (j === i ? { ...l, ...patch } : l)));
-
-  const submit = () => {
-    const body = {
-      entryDate,
-      narration: narration.trim() || null,
-      lines: lines
-        .filter((l) => l.accountCode)
-        .map((l): JeLineIn => ({
-          accountCode: l.accountCode,
-          debitSen: rmToSen(l.debit) ?? 0,
-          creditSen: rmToSen(l.credit) ?? 0,
-          notes: l.notes.trim() || null,
-        })),
-    };
-    createM.mutate(body, { onSuccess: onDone });
-  };
-
-  return (
-    <div style={cardStyle} className="space-y-3">
-      <div style={{ fontWeight: 700 }}>New manual journal (draft — posting is a separate step)</div>
-      <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
-        <DateField style={fieldStyle} value={entryDate} onChange={(iso) => setEntryDate(iso)}/>
-        <input style={{ ...fieldStyle, flex: 1, minWidth: 240 }} placeholder="Narration (what is this entry?)"
-          value={narration} onChange={(e) => setNarration(e.target.value)} />
-      </div>
-
-      {lines.map((l, i) => (
-        <div key={i} style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap', alignItems: 'center' }}>
-          <select style={{ ...fieldStyle, minWidth: 260 }} value={l.accountCode} onChange={(e) => setLine(i, { accountCode: e.target.value })}>
-            <option value="">Select account…</option>
-            {[...postable].sort((a, b) => byText(a.account_code, b.account_code)).map((a) => (
-              <option key={a.account_code} value={a.account_code}>{a.account_code} — {a.account_name}</option>
-            ))}
-          </select>
-          <input style={{ ...fieldStyle, width: 120 }} placeholder="Debit RM" inputMode="decimal"
-            value={l.debit} onChange={(e) => setLine(i, { debit: e.target.value, credit: e.target.value ? '' : l.credit })} />
-          <input style={{ ...fieldStyle, width: 120 }} placeholder="Credit RM" inputMode="decimal"
-            value={l.credit} onChange={(e) => setLine(i, { credit: e.target.value, debit: e.target.value ? '' : l.debit })} />
-          <input style={{ ...fieldStyle, flex: 1, minWidth: 160 }} placeholder="Line note"
-            value={l.notes} onChange={(e) => setLine(i, { notes: e.target.value })} />
-          {lines.length > 2 && (
-            <button type="button" style={btnStyle()} onClick={() => setLines((ls) => ls.filter((_, j) => j !== i))}>Remove</button>
-          )}
-        </div>
-      ))}
-
-      <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap' }}>
-        <button type="button" style={btnStyle()} onClick={() => setLines((ls) => [...ls, { ...EMPTY_LINE }])}>Add line</button>
-        <span style={{ fontSize: 'var(--fs-13)' }}>
-          Dr {fmt(totals.dr)} · Cr {fmt(totals.cr)} ·{' '}
-          {totals.dr === totals.cr && totals.dr > 0 && !totals.bad
-            ? <b style={{ color: 'var(--c-secondary-a, #2F5D4F)' }}>balanced</b>
-            : <b style={{ color: 'var(--c-festive-b, #B8331F)' }}>{totals.bad ? 'invalid amounts' : 'not balanced'}</b>}
-        </span>
-        <button type="button" style={btnStyle(true)} disabled={!canSave || createM.isPending} onClick={submit}>
-          {createM.isPending ? 'Saving…' : 'Save draft'}
-        </button>
-      </div>
-    </div>
-  );
-};
-
-const JeDetailCard = ({ id, onClose }: { id: string; onClose: () => void }) => {
-  const q = useJournalEntryDetail(id);
-  const postM = usePostJournalEntry();
-  const reverseM = useReverseJournalEntry();
-  const je = q.data?.journalEntry;
-  const lines = q.data?.lines ?? [];
-
-  return (
-    <div style={cardStyle} className="space-y-3">
-      {!je ? (
-        <div style={{ fontSize: 'var(--fs-13)' }}>{q.isLoading ? 'Loading…' : 'Entry not found.'}</div>
-      ) : (
-        <>
-          <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap' }}>
-            <span className={styles.codeChip}>{je.je_no}</span>
-            <span>{fmtDateOrDash(je.entry_date)}</span>
-            <span>{je.source_type}{je.source_doc_no ? ` · ${je.source_doc_no}` : ''}</span>
-            <span className={`${styles.statusPill} ${je.posted ? styles.statusActive : styles.statusInactive}`}>{jeStatus(je)}</span>
-            <span style={{ flex: 1 }} />
-            {je.source_type === 'MANUAL' && !je.posted && !je.reversed && (
-              <button type="button" style={btnStyle(true)} disabled={postM.isPending}
-                onClick={() => postM.mutate(id)}>
-                {postM.isPending ? 'Posting…' : 'Post'}
-              </button>
-            )}
-            {je.source_type === 'MANUAL' && je.posted && !je.reversed && (
-              <button type="button" style={btnStyle()} disabled={reverseM.isPending}
-                onClick={() => reverseM.mutate(id)}>
-                {reverseM.isPending ? 'Reversing…' : 'Reverse'}
-              </button>
-            )}
-            <button type="button" style={btnStyle()} onClick={onClose}>Close</button>
-          </div>
-          {je.narration && <div style={{ fontSize: 'var(--fs-13)', color: 'var(--c-ink-soft, #555)' }}>{je.narration}</div>}
-          <table style={{ width: '100%', fontSize: 'var(--fs-13)', borderCollapse: 'collapse' }}>
-            <thead>
-              <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--c-line, rgba(34,31,32,0.12))' }}>
-                <th style={{ padding: '4px 8px' }}>#</th>
-                <th style={{ padding: '4px 8px' }}>Account</th>
-                <th style={{ padding: '4px 8px', textAlign: 'right' }}>Debit</th>
-                <th style={{ padding: '4px 8px', textAlign: 'right' }}>Credit</th>
-                <th style={{ padding: '4px 8px' }}>Party</th>
-                <th style={{ padding: '4px 8px' }}>Note</th>
-              </tr>
-            </thead>
-            <tbody>
-              {lines.map((l) => (
-                <tr key={l.id} style={{ borderBottom: '1px solid var(--c-line, rgba(34,31,32,0.06))' }}>
-                  <td style={{ padding: '4px 8px' }}>{l.line_no}</td>
-                  <td style={{ padding: '4px 8px' }}>{l.account_code}</td>
-                  <td style={{ padding: '4px 8px', textAlign: 'right' }}>{l.debit_sen > 0 ? fmt(l.debit_sen) : '—'}</td>
-                  <td style={{ padding: '4px 8px', textAlign: 'right' }}>{l.credit_sen > 0 ? fmt(l.credit_sen) : '—'}</td>
-                  <td style={{ padding: '4px 8px' }}>{l.party_name ?? l.party_code ?? '—'}</td>
-                  <td style={{ padding: '4px 8px' }}>{l.notes ?? '—'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </>
-      )}
-    </div>
-  );
-};
+/* The Journal page grouped per entry — the AutoCount way (docs/bugs/0935).
+   Its filters live in the URL; the entry card and the draft form ride with it. */
+const JeTab = () => <JournalTab />;
 
 /* ── GL ──────────────────────────────────────────────────────────────── */
-const GlTab = () => {
-  const accounts = useAccounts();
-  const [accountCode, setAccountCode] = useState<string>('');
-  const q = useGlEntries(accountCode ? { accountCode } : undefined);
-  const rows = q.data?.glEntries ?? [];
-
-  type GlRow = (typeof rows)[number];
-  return (
-    <div className="space-y-3">
-      {/* Account scope select stays a page-level control above the table
-          (the DataTable toolbar owns search/export/columns). */}
-      <select
-        value={accountCode}
-        onChange={(e) => setAccountCode(e.target.value)}
-        className={styles.searchInput}
-        style={{ maxWidth: 320 }}>
-        <option value="">All accounts</option>
-        {[...(accounts.data?.accounts ?? [])]
-          .sort((a, b) => byText(a.account_code, b.account_code))
-          .map((a) => (
-          <option key={a.account_code} value={a.account_code}>
-            {a.account_code} — {a.account_name}
-          </option>
-        ))}
-      </select>
-      <DataTable<GlRow>
-        tableId="accounting-gl"
-        layoutFamily="accounting-gl"
-        exportName="general-ledger"
-        rows={q.isLoading ? null : rows}
-        loading={q.isLoading}
-        emptyLabel="No GL entries posted yet."
-        getRowKey={(r) => r.line_id}
-        columns={[
-          { key: 'entry_date', label: 'Date', width: '110px', getValue: (r) => r.entry_date, render: (r) => fmtDateOrDash(r.entry_date) },
-          { key: 'je_no', label: 'JE No', width: '130px', getValue: (r) => r.je_no, render: (r) => <span className={styles.codeChip}>{r.je_no}</span> },
-          { key: 'source', label: 'Source', width: '180px', getValue: (r) => `${r.source_type}${r.source_doc_no ? ` · ${r.source_doc_no}` : ''}`, render: (r) => `${r.source_type}${r.source_doc_no ? ` · ${r.source_doc_no}` : ''}` },
-          { key: 'account', label: 'Account', getValue: (r) => `${r.account_code} — ${r.account_name}`, render: (r) => `${r.account_code} — ${r.account_name}` },
-          { key: 'debit', label: 'Debit', align: 'right', width: '120px', getValue: (r) => r.debit_sen / 100, render: (r) => (r.debit_sen > 0 ? fmt(r.debit_sen) : '—') },
-          { key: 'credit', label: 'Credit', align: 'right', width: '120px', getValue: (r) => r.credit_sen / 100, render: (r) => (r.credit_sen > 0 ? fmt(r.credit_sen) : '—') },
-          { key: 'party', label: 'Party', width: '160px', getValue: (r) => r.party_name ?? r.party_code ?? '', render: (r) => r.party_name ?? r.party_code ?? '—' },
-        ] satisfies Column<GlRow>[]}
-      />
-    </div>
-  );
-};
+/* The General Ledger the AutoCount way — per-account blocks, BALANCE B/F, a
+   running balance, the journal's references (docs/bugs/0924). Its filters
+   live in the URL, so a figure on a statement opens it on that account. */
+const GlTab = () => <GeneralLedger />;
 
 /* ── Trial Balance ───────────────────────────────────────────────────── */
 
@@ -690,6 +332,10 @@ const SelfCheckTab = () => {
       {q.isLoading && <div style={{ fontSize: 'var(--fs-13)' }}>Running checks…</div>}
       {checks.map((check) => <ControlCheckCard key={check.role} check={check} />)}
       {q.data?.payments && <UnbookedPaymentsCard p={q.data.payments} />}
+      {q.data?.paymentDrift && <PaymentDriftCard d={q.data.paymentDrift} />}
+      {/* Money on cancelled orders with no exit taken yet (docs/bugs/0931). */}
+      <CancelledWithMoneyCard />
+      <ReceiptBackfillCard />
     </div>
   );
 };
@@ -704,10 +350,25 @@ const SelfCheckTab = () => {
    ever booked one; a card that silently spoke about a period nobody could see
    would be its own kind of lie. */
 
-const UnbookedPaymentsCard = ({ p }: { p: UnbookedPayments }) => {
+/* docs/bugs/0652: a company whose hook had refused EVERY payment read "all of
+   them" here — nothing had ever booked, so there was "no period to check". The
+   card now says so in red, with the money, and the Why? button puts each
+   unbooked payment through the gate's own checks (dry run, nothing written) and
+   prints the verdict and reason the console-only hook never showed anyone. */
+export const UnbookedPaymentsCard = ({ p }: { p: UnbookedPayments }) => {
   const good = 'var(--c-secondary-a, #2F5D4F)';
   const bad = 'var(--c-festive-b, #B8331F)';
-  const clean = p.ok && p.rows.length === 0;
+  const never = p.since == null && (p.neverBooked?.count ?? 0) > 0;
+  const clean = p.ok && p.rows.length === 0 && !never;
+  const dry = usePaymentBookingDryRun();
+  const book = useBookUnbookedPayments();
+  const askConfirm = useConfirm();
+  /* The real run is offered only after a dry run the gate refused nothing on
+     (docs/bugs/0655) — the owner presses it himself; the write is his. */
+  const bookable = dry.data && dry.data.scanned > 0 && dry.data.failed.length === 0 ? dry.data : null;
+  const bookableSen = bookable ? bookable.rows.reduce((s, r) => s + r.amountSen, 0) : 0;
+  const unbookedCount = never ? (p.neverBooked?.count ?? 0) : p.rows.length;
+  const unbookedSen = never ? (p.neverBooked?.totalSen ?? 0) : p.totalSen;
 
   return (
     <div style={{ ...cardStyle, borderColor: clean ? good : bad }} className="space-y-2">
@@ -718,9 +379,15 @@ const UnbookedPaymentsCard = ({ p }: { p: UnbookedPayments }) => {
           background: clean ? 'rgba(47, 93, 79, 0.12)' : 'rgba(184, 51, 31, 0.12)',
           color: clean ? good : bad,
         }}>
-          {clean ? 'all of them' : `${p.rows.length} did not`}
+          {clean ? 'all of them' : never ? 'none, ever' : `${p.rows.length} did not`}
         </span>
-        {!clean && <span>{fmt(p.totalSen)} on documents and not in the books</span>}
+        {!clean && <span>{fmt(unbookedSen)} on {unbookedCount} payment{unbookedCount === 1 ? '' : 's'} and not in the books</span>}
+        {!clean && (
+          <button type="button" onClick={() => dry.mutate()} disabled={dry.isPending}
+            style={{ marginLeft: 'auto', border: `1px solid ${bad}`, color: bad, background: 'none', borderRadius: 6, padding: '2px 10px', cursor: 'pointer', fontSize: 'var(--fs-12)', fontWeight: 600 }}>
+            {dry.isPending ? 'Asking the gate…' : 'Why? (dry run)'}
+          </button>
+        )}
       </div>
 
       {p.error && <div style={{ fontSize: 'var(--fs-13)', color: bad }}>The check could not run: {p.error}</div>}
@@ -729,11 +396,38 @@ const UnbookedPaymentsCard = ({ p }: { p: UnbookedPayments }) => {
           speaking about nothing. */}
       <div style={{ fontSize: 'var(--fs-12)', color: 'var(--c-ink-soft, #777)' }}>
         {p.since == null
-          ? 'No payment has been booked in this company yet, so there is no period to check. '
-            + 'Payments recorded before the accounting module starts here are expected to be unbooked.'
+          ? (never
+            ? `No payment has ever been booked in this company, yet ${p.neverBooked?.count ?? 0} were recorded between ${p.neverBooked?.firstPaidOn ?? '?'} and ${p.neverBooked?.lastPaidOn ?? '?'} (imported and zero rows not counted). The booking hook is not reaching the books — press Why? for the gate's own reason on each.`
+            : 'No payment has been booked in this company yet, and its SO/SI payment tables hold no bookable row (imported and zero rows are skipped by design).')
           : `Counting payments from ${p.since}, the first day this company booked one. `
             + 'Anything earlier is history that was deliberately left unbooked.'}
       </div>
+
+      {dry.isError && <div style={{ fontSize: 'var(--fs-13)', color: bad }}>The dry run could not run: {dry.error instanceof Error ? dry.error.message : String(dry.error)}</div>}
+      {dry.data && <DryRunResult r={dry.data} />}
+      {bookable && !book.data && (
+        <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center' }}>
+          <button type="button" disabled={book.isPending}
+            onClick={() => {
+              void askConfirm({
+                title: `Book ${bookable.scanned} payment${bookable.scanned === 1 ? '' : 's'} into the ledger?`,
+                body: `The gate refused none of them. Each posts on its own paid date — ${fmt(bookableSen)} in total, Dr bank / cash / clearing, Cr Trade Debtors.`,
+                confirmLabel: 'Book them',
+              }).then((ok) => { if (ok) book.mutate(); });
+            }}
+            style={{ border: `1px solid ${good}`, color: good, background: 'none', borderRadius: 6, padding: '4px 12px', cursor: 'pointer', fontSize: 'var(--fs-12)', fontWeight: 700 }}>
+            {book.isPending ? 'Booking…' : `Book ${bookable.scanned} payment${bookable.scanned === 1 ? '' : 's'} now`}
+          </button>
+          <span style={{ fontSize: 'var(--fs-12)', color: 'var(--c-ink-soft, #777)' }}>Nothing is written until you confirm.</span>
+        </div>
+      )}
+      {book.isError && <div style={{ fontSize: 'var(--fs-13)', color: bad }}>The booking could not run: {book.error instanceof Error ? book.error.message : String(book.error)}</div>}
+      {book.data && (
+        <div style={{ fontSize: 'var(--fs-13)', color: book.data.failed.length > 0 ? bad : good, fontWeight: 600 }}>
+          Booked {book.data.posted}, skipped {book.data.skipped}, refused {book.data.failed.length}
+          {book.data.remaining > 0 ? ` — ${book.data.remaining} still waiting, press Why? and book again` : ' — the card re-reads now'}.
+        </div>
+      )}
 
       {p.rows.length > 0 && (
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
@@ -758,6 +452,131 @@ const UnbookedPaymentsCard = ({ p }: { p: UnbookedPayments }) => {
   );
 };
 
+/* ── A payment that reached the ledger and then stopped agreeing with it ────
+   Editing a payment writes the row and does NOT re-post its journal entry, so
+   the two drift apart in silence. Today almost nothing is editable — a payment
+   can only be changed on the day it was keyed — and that accident is the only
+   thing holding the count at zero. The owner has confirmed with management
+   (2026-09-10) that Finance should be able to correct a mis-keyed payment,
+   which opens that window; this card is what has to be watching when it does.
+
+   It reads. It writes nothing, and offers no button to: putting the entry
+   right is the NEXT step (make the edit reverse and re-post), and a fix
+   offered before that exists would be a fix that does not work. */
+const driftWords: Record<PaymentDriftRow['fields'][number], string> = {
+  amount: 'amount', date: 'date', method: 'how it was paid',
+};
+
+export const PaymentDriftCard = ({ d }: { d: PaymentDrift }) => {
+  const good = 'var(--c-secondary-a, #2F5D4F)';
+  const bad = 'var(--c-festive-b, #B8331F)';
+  const soft = 'var(--c-ink-soft, #777)';
+  const clean = d.ok && d.rows.length === 0;
+  /* Nothing booked here yet is not the same statement as everything agrees,
+     and the card must not borrow the second one's words for the first. */
+  const nothingToCompare = clean && d.scanned === 0;
+
+  return (
+    <div style={{ ...cardStyle, borderColor: clean ? good : bad }} className="space-y-2">
+      <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap' }}>
+        <b>Payments that still agree with their entry</b>
+        <span style={{
+          padding: '2px 10px', borderRadius: 999, fontWeight: 700, fontSize: 'var(--fs-12)',
+          background: clean ? 'rgba(47, 93, 79, 0.12)' : 'rgba(184, 51, 31, 0.12)',
+          color: clean ? good : bad,
+        }}>
+          {nothingToCompare ? 'nothing to compare' : clean ? `all ${d.scanned}` : `${d.rows.length} do not`}
+        </span>
+      </div>
+
+      {d.error && <div style={{ fontSize: 'var(--fs-13)', color: bad }}>The check could not run: {d.error}</div>}
+
+      <div style={{ fontSize: 'var(--fs-12)', color: soft }}>
+        {nothingToCompare
+          ? 'No payment has reached the ledger in this company yet, so there is no entry to compare a payment against.'
+          : `Comparing ${d.scanned} payment${d.scanned === 1 ? '' : 's'} against the journal entry that explains it. `
+            + 'Editing a payment does not re-post its entry, so a change made after the day it was keyed leaves the books behind.'}
+      </div>
+
+      {d.rows.length > 0 && (
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
+          <thead>
+            <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--c-line, rgba(34,31,32,0.18))' }}>
+              <th>Document</th><th>Entry</th><th>What moved</th>
+              <th style={{ textAlign: 'right' }}>Payment says</th>
+              <th style={{ textAlign: 'right' }}>Entry says</th>
+            </tr>
+          </thead>
+          <tbody>
+            {d.rows.map((r) => (
+              <tr key={`${r.source}:${r.id}`} style={{ borderBottom: '1px solid var(--c-line, rgba(34,31,32,0.10))' }}>
+                <td>{r.docNo}</td>
+                <td>{r.jeNo}</td>
+                <td>{r.fields.map((f) => driftWords[f]).join(', ')}</td>
+                <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                  {fmt(r.paymentAmountSen)}<br />
+                  <span style={{ color: soft, fontSize: 'var(--fs-12)' }}>{r.paidOn || 'no date'} · {r.paymentMethod}</span>
+                </td>
+                <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                  {fmt(r.entryAmountSen)}<br />
+                  <span style={{ color: soft, fontSize: 'var(--fs-12)' }}>{r.entryDate} · {r.entryMethod ?? 'not stated'}</span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      {d.rows.length > 0 && (
+        <div style={{ fontSize: 'var(--fs-12)', color: soft }}>
+          Nothing here is corrected automatically. The entry is put right by reversing it and
+          booking it again — until that is built, reverse the entry by hand and re-key the payment.
+        </div>
+      )}
+    </div>
+  );
+};
+
+/* The dry run's answer, row by row — the verdict column is the gate's own
+   status word (would_post, account_invalid, …) and the reason is its sentence. */
+const DryRunResult = ({ r }: { r: PaymentDryRun }) => {
+  const good = 'var(--c-secondary-a, #2F5D4F)';
+  const bad = 'var(--c-festive-b, #B8331F)';
+  const byStatus = new Map<string, number>();
+  for (const row of r.rows) byStatus.set(row.status, (byStatus.get(row.status) ?? 0) + 1);
+  const summary = [...byStatus].map(([s, n]) => `${n} ${s === 'would_post' ? 'would post' : s}`).join(', ');
+  return (
+    <div className="space-y-1" style={{ fontSize: 'var(--fs-13)' }}>
+      <div>
+        <b>Dry run</b> — {r.scanned} unbooked payment{r.scanned === 1 ? '' : 's'} put through the gate, nothing written
+        {r.rows.length > 0 ? `: ${summary}.` : '.'}
+        {r.remaining > r.rows.length ? ` Showing the first ${r.rows.length}.` : ''}
+      </div>
+      {r.rows.length > 0 && (
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
+          <thead>
+            <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--c-line, rgba(34,31,32,0.18))' }}>
+              <th>Document</th><th>Paid on</th><th>How</th><th style={{ textAlign: 'right' }}>Amount</th><th>Verdict</th><th>Reason</th>
+            </tr>
+          </thead>
+          <tbody>
+            {r.rows.map((row) => (
+              <tr key={row.id} style={{ borderBottom: '1px solid var(--c-line, rgba(34,31,32,0.10))' }}>
+                <td>{row.docNo}</td>
+                <td>{row.paidOn}</td>
+                <td>{row.method}</td>
+                <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmt(row.amountSen)}</td>
+                <td style={{ fontWeight: 600, color: row.status === 'would_post' ? good : bad }}>{row.status === 'would_post' ? 'would post' : row.status}</td>
+                <td>{row.reason ?? '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+};
+
 const ControlCheckCard = ({ check }: { check: ControlCheckRow }) => {
   if ('error' in check) {
     return (
@@ -770,7 +589,10 @@ const ControlCheckCard = ({ check }: { check: ControlCheckRow }) => {
   return (
     <div style={{ ...cardStyle, borderColor: ok ? 'var(--c-secondary-a, #2F5D4F)' : 'var(--c-festive-b, #B8331F)' }} className="space-y-2">
       <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap' }}>
-        <b>{check.role === 'AR' ? 'Accounts Receivable control' : 'Accounts Payable control'}</b>
+        <b>{check.role === 'AR' ? 'Accounts Receivable control'
+          : check.role === 'AR_OTHER' ? 'Other Debtors control'
+          : check.role === 'AP_OTHER' ? 'Other Creditors control'
+          : 'Accounts Payable control'}</b>
         <span className={styles.codeChip}>{check.accountCode}</span>
         <span>GL balance {fmt(check.glBalanceSen)}</span>
         <span style={{
@@ -871,6 +693,9 @@ const ApAgingTab = () => {
         getRowKey={(r) => r.invoice_id}
         columns={[
           { key: 'invoice', label: 'Invoice', width: '140px', getValue: (r) => r.invoice_number, render: (r) => <span className={styles.codeChip}>{r.invoice_number}</span> },
+          /* Both kinds age here since 2026-09-06 — the AP invoice (non-stock
+             bill) beside the purchase invoice; the column says which. */
+          { key: 'kind', label: 'Kind', width: '90px', getValue: (r) => r.kind ?? 'PI', render: (r) => (r.kind === 'API' ? 'AP inv' : 'PI') },
           // Owner 2026-07-24: supplier NAME and CODE are separate columns on
           // every procurement table, not one combined cell.
           { key: 'supplier', label: 'Supplier', getValue: (r) => r.supplier_name ?? '', render: (r) => r.supplier_name ?? '—' },

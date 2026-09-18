@@ -34,6 +34,7 @@ import type { Env, Variables } from '../env';
 import { supabaseAuth } from '../middleware/auth';
 import { scopeToCompany } from '../lib/companyScope';
 import { attachPiAssignedSos, pickPiListMrpEnrichment } from '../lib/pi-assigned-sos';
+import { attachGrnLineFacts, piPoPriceSummaryByInvoice, type PiPoPriceSummary } from '../lib/pi-po-price';
 
 export const purchaseInvoicesListEnrichment = new Hono<{ Bindings: Env; Variables: Variables }>();
 purchaseInvoicesListEnrichment.use('*', supabaseAuth);
@@ -70,4 +71,38 @@ purchaseInvoicesListEnrichment.get('/list-mrp-enrichment', async (c) => {
     if (id) enrichment[id] = pickPiListMrpEnrichment(r);
   }
   return c.json({ enrichment });
+});
+
+/* ── PO price vs invoice price, per invoice (owner 2026-09-14) ─────────────
+   GET /purchase-invoices/list-po-price?piIds=UUID,UUID
+     -> { summary: { [piId]: { linesDiffering, totalDiffSen, comparableLines, lines } } }
+
+   The marker the list shows so a person can see, without opening an invoice,
+   that some lines were billed at a price other than the purchase order's. It
+   reads the lines through the SAME attachGrnLineFacts the detail page uses —
+   the stored trail where there is one, the live join for a line written before
+   the trail existed — so the list and the detail cannot count differently.
+   Information only: nothing is blocked, approved or reconciled off it. */
+purchaseInvoicesListEnrichment.get('/list-po-price', async (c) => {
+  const sb = c.get('supabase') as any;
+  const raw = (c.req.query('piIds') ?? '').trim();
+  const piIds = [...new Set(raw.split(',').map((s) => s.trim()).filter(Boolean))].slice(0, MAX_IDS);
+  if (piIds.length === 0) return c.json({ summary: {} });
+
+  // Same tenant boundary as the list: an id from another company does not come back.
+  const { data: heads, error: hErr } = await scopeToCompany(sb.from('purchase_invoices').select('id'), c).in('id', piIds);
+  if (hErr) return c.json({ error: 'enrichment_failed', reason: hErr.message }, 500);
+  const ids = ((heads ?? []) as Array<{ id: string }>).map((h) => h.id);
+  if (ids.length === 0) return c.json({ summary: {} });
+
+  const { data: lines, error: lErr } = await sb.from('purchase_invoice_items')
+    .select('id, purchase_invoice_id, grn_item_id, qty, unit_price_sen, po_unit_price_sen')
+    .in('purchase_invoice_id', ids);
+  if (lErr) return c.json({ error: 'enrichment_failed', reason: lErr.message }, 500);
+  const items = (lines ?? []) as Array<Record<string, unknown> & { id: string; purchase_invoice_id: string; grn_item_id?: string | null }>;
+  await attachGrnLineFacts(sb, items);
+
+  const summary: Record<string, PiPoPriceSummary> = {};
+  for (const [id, s] of piPoPriceSummaryByInvoice(items)) summary[id] = s;
+  return c.json({ summary });
 });

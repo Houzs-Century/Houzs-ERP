@@ -218,7 +218,7 @@ async function main() {
     note(`\ncleared linked_ac_docno on ${THE_DOC} (${back.length} row)`);
   }
 
-  const queued = live ? false : await enqueuePoCreate(pgrestShim(sql, 'scm'), { companyId, poId: po.id, createdBy: null });
+  const queued = live ? false : await enqueuePoCreate(pgrestShim(sql, 'scm', { writeback: 'enqueue' }), { companyId, poId: po.id, createdBy: null });
   if (live) note(`enqueue skipped — a pending ${live.op} row already exists (${live.id}).`);
   else note(`enqueuePoCreate returned ${queued}`);
 

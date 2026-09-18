@@ -1,0 +1,71 @@
+name: Check model option pools vs backup (read-only)
+
+# The owner reported on 2026-09-13 that some SIZES and the HEADREST had gone
+# missing on the 2990 side. Earlier that day `open-model-option-pools` cleared
+# allowed_options on 421 Models, across EVERY company. This reads the live rows
+# against the backup that run took and reports, per company, what was cleared —
+# and names the option values that lived in exactly one Model's pool, which is
+# the only shape in which clearing a pool can REMOVE a choice rather than add one.
+#
+# READ-ONLY: no DDL, no writes, no transaction. Manual trigger only.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: ["prod", "staging"]
+      company:
+        description: "Optional: limit to one company id or code (e.g. 2990)"
+        required: false
+        default: ""
+
+concurrency:
+  group: check-model-option-pools
+  cancel-in-progress: false
+
+jobs:
+  prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-model-option-pools-vs-backup.mjs
+        env:
+          COMPANY: ${{ inputs.company }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+  staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-model-option-pools-vs-backup.mjs
+        env:
+          COMPANY: ${{ inputs.company }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

@@ -103,9 +103,12 @@ describe("UnrecognisedScopeNotice — the loud half", () => {
 describe("no site hand-builds a convert link", () => {
   // Parameters on a convert path that are NOT a source scope, so they are
   // legitimately hand-written. `appendToGrn` names an existing DESTINATION GRN
-  // to append the picked lines into — the opposite direction to a scope.
+  // to append the picked lines into — the opposite direction to a scope. `q` is
+  // the Bill-a-GRN picker's search term (owner 2026-09-14): it narrows what is
+  // shown and scopes nothing, and the picker declares it to readConvertScope.
   const NON_SCOPE_PARAMS: Record<string, readonly string[]> = {
     "/scm/grns/from-po": ["appendToGrn"],
+    "/scm/purchase-invoices/from-grn": ["q"],
   };
   // This module writes the table; these two suites deliberately write the OLD
   // spellings to prove they are REPORTED rather than honoured.

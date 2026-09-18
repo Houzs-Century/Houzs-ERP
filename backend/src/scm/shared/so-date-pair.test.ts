@@ -18,6 +18,7 @@ import {
   SO_DATE_PAIR_REFUSAL,
   soDatePairCascadeColumns,
   soDatePairRefusal,
+  soDateDay,
   soDateYmd,
 } from './so-processing-date';
 
@@ -128,5 +129,43 @@ describe('soDatePairCascadeColumns — clearing one clears both', () => {
     expect(soDatePairCascadeColumns({
       procCleared: false, delivInPatch: false, origDeliv: '2026-09-20',
     })).toEqual([]);
+  });
+});
+
+/* The approve-so gate reads the SO's stored dates through the PostgreSQL
+   command transaction, whose postgres.js shim returns a DATE column as a JS
+   Date. `String(date).slice(0, 10)` is 'Fri Aug 28' — it sorts after every
+   '2026-…' string, so the gate refused a legal Delivery Date amendment
+   (2990-SO-2606-011, 2026-09-04). These pin the Date branch. */
+describe('soDateDay / soDateYmd — a Date object is a day, not "Fri Aug 28"', () => {
+  it('reads a Date object as its UTC calendar day', () => {
+    const stored = new Date('2026-08-28'); // what postgres.js hands back for DATE '2026-08-28'
+    expect(soDateDay(stored)).toBe('2026-08-28');
+    expect(soDateYmd(stored)).toBe('2026-08-28');
+  });
+
+  it('compares a stored Date against an amendment string in date order', () => {
+    const nextProc = soDateDay(new Date('2026-08-28'));
+    const nextDeliv = soDateDay('2026-09-19');
+    // The failing shape: 'Fri Aug 28' > '2026-09-19' was TRUE.
+    expect(nextProc > nextDeliv).toBe(false);
+    expect(soDatePairRefusal({
+      nextProc, nextDeliv, origProc: nextProc, origDeliv: soDateDay(new Date('2026-09-13')),
+    })).toBeNull();
+  });
+
+  it('keeps the string shapes exactly as before', () => {
+    expect(soDateDay('2026-09-01T00:00:00+00:00')).toBe('2026-09-01');
+    expect(soDateDay('  2026-09-01 ')).toBe('2026-09-01');
+    expect(soDateDay(null)).toBe('');
+    expect(soDateDay(undefined)).toBe('');
+    expect(soDateDay('')).toBe('');
+    expect(soDateDay('next tuesday')).toBe('next tuesd');
+    expect(soDateYmd('next tuesday')).toBeNull();
+  });
+
+  it('treats an invalid Date as absent', () => {
+    expect(soDateDay(new Date('garbage'))).toBe('');
+    expect(soDateYmd(new Date('garbage'))).toBeNull();
   });
 });

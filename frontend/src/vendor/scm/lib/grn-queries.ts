@@ -18,6 +18,7 @@
 import { useMemo } from 'react';
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
+import { grnListParams } from './grn-list-export';
 import { applyListMrpEnrichment, type EnrichableMrpRow, type ListMrpEnrichment } from '../../../lib/listMrpEnrichment';
 import { idempotentInit } from '../../../lib/idempotency';
 import { serviceNotify } from './dialog-service';
@@ -54,6 +55,9 @@ export const useGrnFromPos = () => {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['grns'] });
       qc.invalidateQueries({ queryKey: ['mfg-purchase-orders'] });
+      /* The whole-PO convert AUTO-POSTS, so stock IN is written on every success
+         (postGrnAndRollup); a mounted Stock Card / inventory list must refetch. */
+      void qc.invalidateQueries({ queryKey: ['inventory'] });
       /* Force picker refetch so received PO lines drop off. */
       qc.invalidateQueries({ queryKey: ['grns', 'outstanding-po-items'], refetchType: 'all' });
     },
@@ -95,16 +99,15 @@ export const useGrns = (status?: string) =>
 // the resolved grns.status DB value (UPPERCASE); each GRN filter-pill bucket
 // (draft/posted/cancelled) maps 1:1 to a single DB status, so no bucket needs
 // to be dropped here.
-export function useGrnsPaged(params: { page: number; pageSize: number; status?: string; q?: string; sort?: string }) {
-  const { page, pageSize, status, q, sort } = params;
-  const usp = new URLSearchParams();
+export function useGrnsPaged(params: { page: number; pageSize: number; status?: string; q?: string; sort?: string; creditorNames?: string[]; creditorCodes?: string[]; currencies?: string[] }) {
+  const { page, pageSize, status, q, sort, creditorNames, creditorCodes, currencies } = params;
+  // The filter half is shared with the two exports (grn-list-export.ts), so an
+  // export can never be sent a different filter than the list it was pressed on.
+  const usp = grnListParams({ status, q, sort, creditorNames, creditorCodes, currencies });
   usp.set('page', String(page));
   usp.set('pageSize', String(pageSize));
-  if (status) usp.set('status', status);
-  if (q && q.trim()) usp.set('q', q.trim());
-  if (sort) usp.set('sort', sort);
   return useQuery({
-    queryKey: ['grns-paged', page, pageSize, status ?? '', q ?? '', sort ?? ''],
+    queryKey: ['grns-paged', page, pageSize, status ?? '', q ?? '', sort ?? '', JSON.stringify(creditorNames ?? []), JSON.stringify(creditorCodes ?? []), JSON.stringify(currencies ?? [])],
     queryFn: ({ signal }) => authedFetch<{ grns: any[]; total: number; page: number; pageSize: number; statusCounts: { all: number; draft: number; posted: number; cancelled: number } & Partial<Record<'on_hold', number>> }>(`/grns?${usp.toString()}`, { signal }),
     placeholderData: (prev: any) => prev,
     staleTime: 30_000,
@@ -251,7 +254,11 @@ export const usePostGrn = () => {
 /* ── GRN PO-clone CRUD (mirror the PO header + line item hooks) ─────────────
    PATCH /grns/:id (header), POST/PATCH/DELETE /grns/:id/items[/:itemId].
    Each invalidates the GRN detail (['grn-detail', id]) + list (['grns']) —
-   the same query keys useGrnDetail + useGrns read. */
+   the same query keys useGrnDetail + useGrns read — plus ['inventory']: on a
+   POSTED GRN every one of these re-syncs stock server-side (header → warehouse
+   relocation OUT+IN, item add → IN, item edit → delta OUT/IN, item delete →
+   reversing OUT), so a mounted Stock Card / inventory list must refetch. Same
+   stock-side rule usePostGrn / useCancelGrn follow (docs/modules/grn.md §1). */
 export const useUpdateGrnHeader = () => {
   const qc = useQueryClient();
   return useMutation({
@@ -264,6 +271,7 @@ export const useUpdateGrnHeader = () => {
     onSuccess: (_, vars) => {
       qc.invalidateQueries({ queryKey: ['grn-detail', vars.id] });
       qc.invalidateQueries({ queryKey: ['grns'] });
+      void qc.invalidateQueries({ queryKey: ['inventory'] });
     },
   });
 };
@@ -278,6 +286,7 @@ export const useAddGrnItem = () => {
     onSuccess: (_, vars) => {
       qc.invalidateQueries({ queryKey: ['grn-detail', vars.grnId] });
       qc.invalidateQueries({ queryKey: ['grns'] });
+      void qc.invalidateQueries({ queryKey: ['inventory'] });
     },
   });
 };
@@ -292,6 +301,7 @@ export const useUpdateGrnItem = () => {
     onSuccess: (_, vars) => {
       qc.invalidateQueries({ queryKey: ['grn-detail', vars.grnId] });
       qc.invalidateQueries({ queryKey: ['grns'] });
+      void qc.invalidateQueries({ queryKey: ['inventory'] });
     },
   });
 };
@@ -304,6 +314,7 @@ export const useDeleteGrnItem = () => {
     onSuccess: (_, vars) => {
       qc.invalidateQueries({ queryKey: ['grn-detail', vars.grnId] });
       qc.invalidateQueries({ queryKey: ['grns'] });
+      void qc.invalidateQueries({ queryKey: ['inventory'] });
     },
     onError: writeFailed,
   });

@@ -1,0 +1,56 @@
+name: Migrated purchase invoices — one named cause per gap (read-only)
+
+# Manual. The reconcile's purchase-invoice section ends in a number ("21 GAP")
+# and a list of document numbers. This turns that number into 21 named causes,
+# because the remedies are OPPOSITE: an invoice billed partly on receipts the
+# migration deliberately left behind is CORRECTLY absent and must not be
+# "repaired", while an invoice whose receipt lost its price is money the ERP is
+# missing. Repairing the first kind is how RM 13,068.55 of fabricated discount
+# landed on PO-009335 (docs/bugs/0665).
+#
+# SELECT only — no DDL, no writes, no transaction. Manual trigger only: a
+# production DB read on a schedule becomes CI noise nobody reads.
+#
+# The AutoCount side is the committed snapshot, never a live query. The book is
+# reachable only over the owner's ZeroTier link, which a GitHub-hosted runner
+# has no route to, and a heavy read there starves the ERP -> AutoCount
+# write-back.
+on:
+  workflow_dispatch:
+    inputs:
+      company_id:
+        description: "ERP company (AED_HOUZS is company 1)"
+        required: false
+        default: "1"
+
+# Deliberately NOT the deploy's concurrency group: this touches nothing and must
+# never queue behind - or displace - a release.
+concurrency:
+  group: diag-migrated-purchase-invoices
+  cancel-in-progress: true
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      # tsx, because the verdict is IMPORTED from src/scm/lib/migrated-chain.ts —
+      # the same module the converter and the convert routes use. A diagnostic
+      # that re-implements the gate explains its own copy, not the gate.
+      - run: npx tsx scripts/diag-migrated-purchase-invoices.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first

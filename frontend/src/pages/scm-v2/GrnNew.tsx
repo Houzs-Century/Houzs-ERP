@@ -50,6 +50,7 @@ import { sortByText } from '../../vendor/scm/lib/sort-options';
 import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDialog';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
 import { SpecialOrders } from '../../vendor/scm/components/SpecialOrders';
+import { specialOrderSurface } from '../../vendor/scm/lib/special-order-surface';
 import type { GrnFromPoPick } from './GrnFromPo';
 import styles from './SalesOrderDetail.module.css';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
@@ -483,6 +484,14 @@ export const GrnNew = () => {
     : null;
   // Header PO id: picks → first pick's PO; single-PO → that PO; manual → null.
   const headerPoId = hasPicks ? pickPoId : (po?.id ?? null);
+  /* Owner 2026-09-10 — the free "Add another item" affordance is no longer
+     manual-only. A from-PO-picks / single-PO GRN can also receive an EXTRA item
+     the PO never ordered (a supplier freebie, a sample) in the SAME create step,
+     instead of saving first and adding it on the detail page. The server's
+     unlinked-PO guard still refuses a hand-added line whose material IS on the
+     header PO. Gated on a resolved supplier so the binding-aware picker has one;
+     manual mode keeps showing it even before a supplier is chosen. */
+  const canAddManualLine = isManual || !!supplierId;
   /* Multi-currency (Phase 1-A) — a PO-linked GRN inherits (and the server
      re-derives) the source PO's currency, so the picker is LOCKED to it; a
      manual / from-picks GRN lets the operator choose (defaults MYR = no-op). */
@@ -568,14 +577,19 @@ export const GrnNew = () => {
   const debouncedProductQuery = useDebouncedValue(productQuery, 250);
   const productsQ = useMfgProducts({
     search: debouncedProductQuery,
-    enabled: isManual && debouncedProductQuery.trim().length >= 2,
+    // The catalogue search fires only when someone types >=2 chars, which only
+    // happens in a MANUAL line's item-code picker — so it stays dormant in a
+    // pure PO receipt without gating on isManual (which used to suppress it for
+    // a manual line added beside PO picks).
+    enabled: debouncedProductQuery.trim().length >= 2,
   });
 
   // Commander 2026-05-29 — supplier-bound picks carry no category on the
   // binding row, so (mirroring New PO's `allSkus`/`categoryForCode`) we pull
-  // the full catalogue to resolve a bound SKU's itemGroup. Gated to manual +
-  // supplier so a PO-sourced / no-supplier GRN never fires the lookup.
-  const allSkusQ = useMfgProducts({ enabled: isManual && !!supplierId });
+  // the full catalogue to resolve a bound SKU's itemGroup. Fires only when a
+  // supplier is set AND a manual line actually exists (in any mode), so a
+  // PO-sourced receipt with no hand-added line never pays for the lookup.
+  const allSkusQ = useMfgProducts({ enabled: !!supplierId && lines.some((l) => l.purchaseOrderItemId === null) });
   const categoryForCode = (code: string): string | undefined => {
     const sku = (allSkusQ.data ?? []).find((p) => p.code === code);
     return sku?.category ? sku.category.toLowerCase() : undefined;
@@ -1023,6 +1037,22 @@ export const GrnNew = () => {
                 isManualLine &&
                 (l.itemGroup === 'bedframe' || l.itemGroup === 'sofa') &&
                 !!maint;
+              /* THE SPECIAL ORDER, for the categories with no variant grid.
+                 Owner 2026-09-10: 「POGR 是不是也是要能看得到这些数据？…全部都是
+                 要带过去的哦」 — a custom pillow's colour and an SP mattress's
+                 size reach the supplier's PDF already (description2 carries the
+                 SPECIAL segment for every category) but were invisible on every
+                 cost document, because each one gates its editor on bedframe or
+                 sofa. One rule, shared: vendor/scm/lib/special-order-surface.ts.
+                 Empty pool on purpose — this document carries no catalogue for
+                 those categories, and choosing WHAT to build is the sales
+                 order's job. SpecialOrders no longer calls a carried pick
+                 "retired" when it has no pool to judge it against. */
+              const specialSurface = specialOrderSurface({
+                category: l.itemGroup ?? '',
+                hasItemCode: Boolean(l.itemCode),
+                pickedSpecialCount: 0,
+              });
               const setVariant = (key: string, value: string) =>
                 setLine(l.rid, { variants: (() => {
                   const variants: Record<string, unknown> = { ...(l.variants ?? {}), [key]: value };
@@ -1195,6 +1225,16 @@ export const GrnNew = () => {
                       Commander 2026-05-29: mirrors New PO / the PO Edit modal so
                       the receiver specifies divan/leg/total height, gap, special,
                       seat size + fabric. Same variant keys the PO/SO store. */}
+                  {specialSurface.block && (
+                    <div style={{ marginTop: 'var(--space-2)' }}>
+                      <SpecialOrders
+                        options={[]}
+                        variants={(l.variants ?? {}) as Record<string, unknown>}
+                        onPatch={(patch) => setLine(l.rid, { variants: { ...(l.variants ?? {}), ...patch } })}
+                        showPrices={false}
+                      />
+                    </div>
+                  )}
                   {showVariantEditor && (
                     <div style={{
                       background: 'var(--c-cream)',
@@ -1338,8 +1378,10 @@ export const GrnNew = () => {
             })
           )}
 
-          {/* "Add another item" — manual mode (mirrors New PO, always shown). */}
-          {isManual && (
+          {/* "Add another item" — a hand-added extra line. Shown in every mode
+              now (owner 2026-09-10): manual, from-PO-picks, and single-PO, so an
+              item the PO never ordered can be received in the same create step. */}
+          {canAddManualLine && (
             <button
               type="button"
               onClick={addEmptyManualLine}

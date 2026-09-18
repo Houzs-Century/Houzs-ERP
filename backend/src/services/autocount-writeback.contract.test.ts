@@ -56,6 +56,7 @@ import {
    moves — a hand-copied literal is how a test ends up proving yesterday. */
 import { AC_DEBTOR_CODE } from './autocount-writeback';
 import { resetWritebackFlagCache } from '../scm/lib/autocount-writeback-flag';
+import { parsePgrestInList } from '../scm/lib/pgrest-in-list';
 
 /* ?raw hands back the WORKING TREE bytes, which on Windows are CRLF. Normalise,
    or every anchor and every regex here means something different depending on
@@ -379,9 +380,17 @@ describe('layer 1 — the keys AcSyncService.cs parses, read out of its source',
        silently destroys whatever photographs the line was holding. This
        assertion is what makes adding a third way to write it impossible to do
        quietly. */
+    /* `Gone` was in this list for part of 2026-09-02 and is deliberately NOT any
+       more. It is an ERP-side fact — composeEdit reads it to decide whether the
+       line SET changed and therefore whether to rebuild (services/ac-line-gone.ts,
+       docs/bugs/0608) — and the host stopped reading it when the per-type
+       DeleteDetail branch was removed. It still rides along in Lines and is
+       ignored, which is why it must be absent HERE: this list is what the SERVICE
+       parses, and listing a key it does not read would make the contract lie in
+       the direction that reads as safe. */
     expect(detailKeys(CS_EDIT)).toEqual(
-      ['DeliveryDate', 'Desc2', 'Description', 'DtlKey', 'FurtherDescription', 'ItemCode',
-       'Location', 'Photos', 'Qty', 'UnitPrice'].sort(),
+      ['DeliveryDate', 'Desc2', 'Description', 'DtlKey', 'FurtherDescription',
+       'ItemCode', 'Location', 'Photos', 'Qty', 'UnitPrice'].sort(),
     );
   });
 
@@ -439,8 +448,8 @@ const LATER_MIGRATIONS: Record<string, string[]> = {
     'revision', 'company_id', 'po_email_sent_at', 'po_email_sent_to',
     'linked_ac_grn_docnos', 'linked_ac_pinv_docnos', 'linked_ac_docno',
   ],
-  // 0083 (company_id), 0273 (linked_ac_dtlkey — PR #1819), 0274 (photo_urls)
-  purchase_order_items: ['company_id', 'linked_ac_dtlkey', 'photo_urls'],
+  // 0083 (company_id), 0273 (linked_ac_dtlkey — PR #1819), 0274 (photo_urls), 20260910T0547 (line_no)
+  purchase_order_items: ['company_id', 'linked_ac_dtlkey', 'photo_urls', 'line_no'],
   suppliers: ['company_id'],
 };
 
@@ -513,6 +522,13 @@ function fakeSb(tables: Record<string, Row[]>, omit: Record<string, string[]> = 
       eq(col: string, val: unknown) { filters.push((r) => String(r[col]) === String(val)); return builder; },
       neq(col: string, val: unknown) { filters.push((r) => String(r[col]) !== String(val)); return builder; },
       in(col: string, vals: unknown[]) { filters.push((r) => vals.map(String).includes(String(r[col]))); return builder; },
+      /* The ESCAPED in-list the shared readers now build (docs/bugs/0780). */
+      filter(col: string, op: string, val: string) {
+        if (op !== 'in') throw new Error(`fake: filter(${op}) is not implemented`);
+        const vals = parsePgrestInList(val);
+        filters.push((r: Record<string, unknown>) => vals.includes(String(r[col])));
+        return builder;
+      },
       lt(col: string, val: unknown) { filters.push((r) => Number(r[col] ?? 0) < Number(val)); return builder; },
       order() { return builder; },
       limit(n: number) { limitN = n; return builder; },
@@ -1303,15 +1319,13 @@ describe('/so-to-po carries the whole master', () => {
        disguise — `Description: null` on a purchase order the ERP describes is
        exactly what the owner saw.
 
-       `Ref` IS ABSENT FROM THIS LIST ON PURPOSE, and it is the only one:
-       `readPoEnqueueShape` (autocount-read.ts:201-203) puts the source sales
-       order numbers in a CREATE's Ref because AutoCount has no DocTransfer
-       link to carry them, and leaves a transfer's null because it does. The
-       KEY must still be carried — the parity test above enforces that — but
-       the two documents legitimately hold different values there. */
-    for (const key of ['DocNo', 'DocDate', 'CreditorCode', 'CreditorName', 'Agent', 'Description', 'UDF']) {
+       `Ref` and `UDF.SONo` name the SOURCE order (docs/bugs/0926); the transfer
+       fixture has one and the create control none, so they are left out. */
+    const sans = (u: unknown) => ({ ...(u as Record<string, unknown>), SONo: undefined });
+    for (const key of ['DocNo', 'DocDate', 'CreditorCode', 'CreditorName', 'Agent', 'Description']) {
       expect(transferred[key], `${key} on the transfer`).toEqual(created[key]);
     }
+    expect(sans(transferred.UDF), 'UDF on the transfer').toEqual(sans(created.UDF));
   });
 
   test('the header PURCHASE LOCATION reaches both arms — AutoCount has one and the ERP has one', async () => {

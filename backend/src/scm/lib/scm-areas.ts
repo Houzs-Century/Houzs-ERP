@@ -79,9 +79,15 @@ export const SCM_AREA_MOUNTS: ReadonlyArray<readonly [string, string]> = [
   ["/stock-takes/*", "scm.warehouse.stock_take"],
   ["/accounting/*", "scm.finance.accounting"],
   ["/payment-vouchers/*", "scm.finance.accounting"],
+  ["/other-debtors/*", "scm.finance.accounting"],
+  ["/receipts/*", "scm.finance.accounting"],
+  ["/ap-invoices/*", "scm.finance.accounting"],
+  ["/credit-notes/*", "scm.finance.accounting"],
+  ["/deposit-invoices/*", "scm.finance.accounting"],
   ["/payment-audit-log/*", "scm.finance.accounting"],
   ["/mrp/*", "scm.procurement.mrp"],
   ["/mrp-lead-times/*", "scm.procurement.mrp"],
+  ["/mrp-supplier-lead-times/*", "scm.procurement.mrp"],
   ["/outstanding/*", "scm.finance.outstanding"],
   ["/unbilled-deliveries/*", "scm.finance.outstanding"],
   ["/addons/*", "scm.procurement.products"],
@@ -129,14 +135,44 @@ export const SCM_UNGUARDED_PREFIXES: readonly string[] = [
   "/sales-analysis",
   "/state-warehouse-mappings",
   "/entity-audit-log",
+  /* The go-live change log (2026-09-08). No area guard for /autocount-outbox's
+     reason: an L2 area key is a PAGE key and this page belongs to no SCM area —
+     it reads sales orders, deliveries, purchases and receipts at once, so any
+     area key here would be an arbitrary owner. It is READ-ONLY, so the freeze
+     treating it as frozen costs nothing. Authorization is the flat
+     scm.changelog.read / settings.manage keys inside the route. */
+  "/change-log",
   "/autocount-outbox",
+  /* The Venture Portal live sales-order feed and its settings (2026-09-12). No
+     area guard for /autocount-outbox's reason: an L2 area key is a PAGE key and
+     this page belongs to no SCM area — it spans sales orders, their lines,
+     those lines' costs and their payments at once. Authorization is the flat
+     scm.venture_portal.read / .manage keys inside the route.
+     WHAT BEING ON THIS LIST COSTS, said plainly rather than discovered from a
+     refused save: unlike /change-log and /autocount-outbox this router is NOT
+     read-only, so a company-wide write freeze also pauses CHANGING the feed —
+     the secret, the scope, the switch. That is survivable and not nothing: the
+     cron drain is not an HTTP request and keeps delivering what is already
+     queued, so during a freeze the feed can be running and not be turnable off
+     from the page. Whoever imposed the freeze can still flip
+     scm.app_config 'scm.venture_portal_feed'. Exempting this prefix from the
+     freeze is a deliberate change to write-freeze's own contract and belongs in
+     its own PR, not smuggled in with the feed. */
+  "/venture-portal-feed",
   "/currencies",
   "/hr",
   "/localities",
+  // SG postcode -> address via OneMap (2026-09-11): a shared reference lookup
+  // like /localities — read-only, cross-area, on the coarse gate.
+  "/sg-postcode",
   "/staff",
   "/fabric-colours",
   "/document-flow",
   "/po-so-coverage",
+  // The cancellation-request inbox (2026-09-08): spans the sales and procurement
+  // areas, so it rides the coarse scm.access gate only; its writes are per-
+  // document routes behind their own area guards.
+  "/cancel-requests",
   // "/ar" left this list on 2026-08-13 when it gained an area guard. Both halves
   // have to move together: the drift test derives the guarded set and the
   // unguarded set from the SAME source scan, so gating a router without removing

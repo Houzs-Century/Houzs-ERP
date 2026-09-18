@@ -1,0 +1,44 @@
+name: What exactly is too long for the account book (read-only)
+
+# The owner, 2026-09-09: 「太长的全部给我 我edit」. A length cannot be edited; the
+# words can, so this prints the actual text of every line the book is refusing
+# for being over its column.
+#
+# Read-only, and scoped to the documents you name. It DOES print the build
+# specification — that is the whole point of it — so name only the documents you
+# need. Nothing else about them is printed: no customer, no address, no money.
+on:
+  workflow_dispatch:
+    inputs:
+      doc_nos:
+        description: "Documents, comma separated"
+        required: true
+        default: "HC-SO-012312,HC-SO-007678,HC-PO-2609-017,HC-SO-012513,HC-SO-012629"
+        type: string
+
+concurrency:
+  group: too-long-for-the-book
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      # tsx: it renders with the REAL buildVariantSummary and the REAL sofa
+      # collapse, so what it prints is what the write-back would send.
+      - run: npx tsx scripts/check-too-long-for-the-book.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DOC_NOS: ${{ inputs.doc_nos }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

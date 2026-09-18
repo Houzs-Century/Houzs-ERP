@@ -128,3 +128,199 @@ test("upsert without a safe onConflict is a loud gap, never a silent write", asy
   assert.ok(sb.__gaps.some((g) => /upsert onConflict/.test(g)), "the gap is recorded on __gaps");
   assert.equal(sql.calls.length, 0, "and nothing was written");
 });
+
+/* ── one-level !inner embeds (docs/bugs/0672) ──────────────────────────────
+   These are the two reads recomputeSoStockAllocation has issued since
+   24b379034 (#2298) and that the shim refused for three weeks with
+   `unsafe identifier "so.status"`. The fake below answers the catalog probe
+   the way production's pg_constraint does — mfg_sales_order_items joins its
+   header on doc_no, NOT on an id — so a test that passed against an assumed
+   `parent_id` convention would fail here. */
+function fakeSqlWithCatalog(fkRows, dataRows = []) {
+  const calls = [];
+  const run = (text, params = []) => {
+    if (/pg_constraint/.test(text)) {
+      const [, parent, child] = params;
+      return Promise.resolve(fkRows.filter((r) =>
+        (r.src_table === parent && r.tgt_table === child) || (r.src_table === child && r.tgt_table === parent)));
+    }
+    calls.push({ text, params });
+    return Promise.resolve(dataRows);
+  };
+  const sql = (strings, ...params) => run(strings.raw ? strings.raw.join("?") : String(strings), params);
+  sql.unsafe = (text, params = []) => run(text, params);
+  sql.calls = calls;
+  return sql;
+}
+
+const SO_FKS = [
+  { src_table: "mfg_sales_order_items", tgt_table: "mfg_sales_orders", src_col: "doc_no", tgt_col: "doc_no" },
+  { src_table: "delivery_order_items", tgt_table: "mfg_sales_order_items", src_col: "so_item_id", tgt_col: "id" },
+  { src_table: "purchase_order_items", tgt_table: "mfg_sales_order_items", src_col: "so_item_id", tgt_col: "id" },
+];
+
+test("the allocator's DO-line load translates into one parent-grained statement", async () => {
+  const sql = fakeSqlWithCatalog(SO_FKS, [{ id: "so-1", so: { status: "OPEN" }, do_items: [{ id: "d1", qty: 2, delivery_order_id: "do-1" }] }]);
+  const sb = pgrestShim(sql);
+  const { data, error } = await sb
+    .from("mfg_sales_order_items")
+    .select("id, so:mfg_sales_orders!inner(status), do_items:delivery_order_items!inner(id, qty, delivery_order_id)")
+    .eq("cancelled", false)
+    .not("so.status", "in", "(CANCELLED,CLOSED)")
+    .order("id")
+    .range(0, 999);
+  assert.equal(error, null, `expected no error, got ${error && error.message}`);
+  assert.deepEqual(data[0].do_items, [{ id: "d1", qty: 2, delivery_order_id: "do-1" }]);
+  const { text, params } = lastCall(sql);
+  // The header embed is an INNER JOIN on the REAL foreign key column.
+  assert.match(text, /JOIN "scm"."mfg_sales_orders" "so" ON "so"."doc_no" = "p"."doc_no"/);
+  // The DO lines are aggregated, not joined — otherwise .range() would page
+  // over joined rows and both repeat and skip parents.
+  assert.match(text, /json_agg\(json_build_object\('id', "c_do_items"."id", 'qty', "c_do_items"."qty", 'delivery_order_id', "c_do_items"."delivery_order_id"\)\)/);
+  assert.match(text, /EXISTS \(SELECT 1 FROM "scm"."delivery_order_items" "c_do_items" WHERE "c_do_items"."so_item_id" = "p"."id"\)/);
+  // The filter that used to be refused is now a column reference on the join.
+  assert.match(text, /"so"."status" NOT IN \(\$2, \$3\)/);
+  assert.doesNotMatch(text, /"so\.status"/);
+  assert.match(text, /ORDER BY "p"."id" ASC LIMIT 1000 OFFSET 0/);
+  /* Placeholders ascend across the statement as it reads, so a log line can be
+     checked by eye against its parameter array. */
+  assert.match(text, /WHERE "p"\."cancelled" = \$1 AND "so"\."status" NOT IN \(\$2, \$3\)/);
+  assert.deepEqual(params, [false, "CANCELLED", "CLOSED"]);
+});
+
+test("a filter on a to-many embed narrows BOTH the aggregate and the EXISTS", async () => {
+  const sql = fakeSqlWithCatalog(SO_FKS, []);
+  const sb = pgrestShim(sql);
+  const { error } = await sb
+    .from("mfg_sales_order_items")
+    .select("id, so:mfg_sales_orders!inner(status), po_items:purchase_order_items!inner(qty, received_qty)")
+    .eq("cancelled", false)
+    .not("so.status", "in", "(CANCELLED)")
+    .gt("po_items.received_qty", 0)
+    .order("id")
+    .range(0, 99);
+  assert.equal(error, null, `expected no error, got ${error && error.message}`);
+  const { text, params } = lastCall(sql);
+  const narrowed = text.match(/"c_po_items"."received_qty" > \$\d+/g) ?? [];
+  assert.equal(narrowed.length, 2, `the embed filter must appear in the aggregate AND the EXISTS, saw ${narrowed.length}`);
+  // A parent whose only PO line has received nothing must not come back.
+  assert.match(text, /EXISTS \(SELECT 1 FROM "scm"."purchase_order_items" "c_po_items" WHERE "c_po_items"."so_item_id" = "p"."id" AND "c_po_items"."received_qty" > \$\d+\)/);
+  assert.deepEqual(params, [0, false, "CANCELLED", 0]);
+  assert.match(text, /^SELECT .*LIMIT 100 OFFSET 0$/);
+});
+
+test("a filter naming an alias select() never declared is a loud gap", async () => {
+  const sql = fakeSqlWithCatalog(SO_FKS, []);
+  const sb = pgrestShim(sql);
+  const { error } = await sb.from("mfg_sales_order_items")
+    .select("id, so:mfg_sales_orders!inner(status)")
+    .not("header.status", "in", "(CANCELLED)");
+  assert.match(String(error?.message), /no embed called "header"/);
+  assert.equal(sb.__gaps.length, 1);
+});
+
+/* LEFT embeds (no !inner), 2026-09-14. `do-unlinked-coverage.ts` reads
+   `parent:delivery_orders(status)` and computeMrp reaches it, so until this the
+   real MRP engine could not run over the shim at all. A LEFT embed must never
+   remove a parent row, and an unmatched to-one must come back null. */
+const DO_FKS = [
+  { src_table: "delivery_order_items", tgt_table: "delivery_orders", src_col: "delivery_order_id", tgt_col: "id" },
+];
+
+test("a LEFT to-one embed is a LEFT JOIN with no parent narrowing, null when unmatched", async () => {
+  const sql = fakeSqlWithCatalog(DO_FKS, []);
+  const sb = pgrestShim(sql);
+  const { error } = await sb.from("delivery_order_items")
+    .select("id, so_item_id, qty, parent:delivery_orders(status)")
+    .in("so_item_id", ["s1", "s2"])
+    .order("id")
+    .range(0, 999);
+  assert.equal(error, null, `expected no error, got ${error && error.message}`);
+  const { text, params } = lastCall(sql);
+  assert.match(text, /LEFT JOIN "scm"."delivery_orders" "parent" ON "parent"."id" = "p"."delivery_order_id"/);
+  assert.match(text, /CASE WHEN "parent"."id" IS NULL THEN NULL ELSE json_build_object\('status', "parent"."status"\) END AS "parent"/);
+  assert.doesNotMatch(text, /(^|[^T]) JOIN "scm"."delivery_orders"/, "must not be an INNER join");
+  assert.doesNotMatch(text, /EXISTS/);
+  assert.deepEqual(params, ["s1", "s2"]);
+  assert.equal(sb.__gaps.length, 0);
+});
+
+test("a LEFT to-many embed aggregates without the EXISTS that !inner adds", async () => {
+  const sql = fakeSqlWithCatalog(SO_FKS, []);
+  const sb = pgrestShim(sql);
+  const { error } = await sb.from("mfg_sales_order_items").select("id, do_items:delivery_order_items(id, qty)");
+  assert.equal(error, null, `expected no error, got ${error && error.message}`);
+  const { text } = lastCall(sql);
+  assert.match(text, /COALESCE\(json_agg/);
+  assert.doesNotMatch(text, /EXISTS/);
+});
+
+test("a FILTER on a LEFT embed is still a loud gap — it narrows the embed, not the parents", async () => {
+  const sql = fakeSqlWithCatalog(SO_FKS, []);
+  const sb = pgrestShim(sql);
+  const { error } = await sb.from("mfg_sales_order_items")
+    .select("id, so:mfg_sales_orders(status)")
+    .not("so.status", "in", "(CANCELLED)");
+  assert.match(String(error?.message), /LEFT embed/);
+  assert.equal(sb.__gaps.length, 1);
+});
+
+test("an ambiguous relationship gaps with its count instead of picking a join column", async () => {
+  const sql = fakeSqlWithCatalog([
+    ...SO_FKS,
+    { src_table: "delivery_order_items", tgt_table: "mfg_sales_order_items", src_col: "origin_so_item_id", tgt_col: "id" },
+  ], []);
+  const sb = pgrestShim(sql);
+  const { error } = await sb.from("mfg_sales_order_items")
+    .select("id, do_items:delivery_order_items!inner(id)");
+  assert.match(String(error?.message), /2 single-column foreign key\(s\)/);
+});
+
+test("two levels of embedding are refused", async () => {
+  const sql = fakeSqlWithCatalog(SO_FKS, []);
+  const sb = pgrestShim(sql);
+  const { error } = await sb.from("mfg_sales_order_items")
+    .select("id, do_items:delivery_order_items!inner(id, do:delivery_orders!inner(status))");
+  assert.match(String(error?.message), /ONE level of embedding/);
+});
+
+test("a select with no embed emits exactly the SQL it always did", async () => {
+  const sql = fakeSqlWithCatalog(SO_FKS, []);
+  const sb = pgrestShim(sql);
+  await sb.from("mfg_sales_order_items").select("id, doc_no").eq("cancelled", false).order("id").range(0, 9);
+  const { text, params } = lastCall(sql);
+  assert.equal(text, 'SELECT "id", "doc_no" FROM "scm"."mfg_sales_order_items" WHERE "cancelled" = $1 ORDER BY "id" ASC LIMIT 10 OFFSET 0');
+  assert.deepEqual(params, [false]);
+});
+
+// ── The repair mark ─────────────────────────────────────────────────────────
+// A cutover repair reaches the database through this shim, and a repair must
+// never queue a write-back: it COPIES a value out of the account book, so
+// sending it back is pointless where the two agree and overwrites the owner's
+// source of truth where they do not. Owner, 2026-09-09: 「正常来说你的这批更改
+// 不应该是syncback autocount啊 应该remain啊」.
+const REPAIR_CLIENT = Symbol.for("houzs.ac.repairClient");
+
+test("the default is SUPPRESSED — a script that says nothing cannot write back", () => {
+  const sb = pgrestShim(fakeSql(), "scm");
+  assert.equal(sb[REPAIR_CLIENT], true);
+});
+
+test('writeback:"enqueue" opts a deliberate push tool back in', () => {
+  const sb = pgrestShim(fakeSql(), "scm", { writeback: "enqueue" });
+  assert.equal(sb[REPAIR_CLIENT], undefined);
+});
+
+test("the mark is not enumerable, so it cannot leak into a payload", () => {
+  const sb = pgrestShim(fakeSql(), "scm");
+  assert.equal(Object.keys(sb).includes("repairClient"), false);
+  assert.equal(JSON.parse(JSON.stringify(sb))[REPAIR_CLIENT], undefined);
+});
+
+test("a typo in writeback is refused rather than silently pushing", () => {
+  // "enqueu", "on", "true" must never be read as permission to write to a live
+  // account book. Anything but the two known words throws.
+  for (const bad of ["enqueu", "on", "true", "yes", ""]) {
+    assert.throws(() => pgrestShim(fakeSql(), "scm", { writeback: bad }), /writeback must be/);
+  }
+});

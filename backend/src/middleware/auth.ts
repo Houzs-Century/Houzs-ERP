@@ -46,6 +46,12 @@ declare module "hono" {
      *  `requirePageAccess`. Routes that need partial/full branching
      *  read this instead of recomputing. */
     access_level: AccessLevel;
+    /** WHICH AUTH PATH THIS REQUEST TOOK — 'pass' skipped the two joined
+     *  authorization reads, 'session-db' paid them. Set here and read ONLY by
+     *  the read-only probe in routes/systemHealth.ts, so "is the fast path
+     *  actually firing" is an observation rather than a reading of this file
+     *  (docs/bugs/0593 is what a reading got wrong). */
+    authPath: 'pass' | 'session-db';
     /** Per-request id (set by requestLog, echoed as X-Request-Id).
      *  The audit trail stamps it on each event so a logged action can
      *  be correlated back to its access-log line. */
@@ -153,6 +159,7 @@ export const auth: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
   // every request takes the DB path exactly as before.
   const passUser = await tryPassAuth(c.env, c.req.header("X-Session-Pass") || "", token, Date.now());
   if (passUser) {
+    c.set("authPath", "pass");
     c.set("user", passUser);
     c.set("userId", passUser.id);
     c.set("sessionOrigin", passUser.session_origin ?? undefined);
@@ -186,6 +193,7 @@ export const auth: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
   const reissued = await mintSessionPass(c.env, token, Date.now());
   if (reissued) c.header("X-Session-Pass", reissued);
 
+  c.set("authPath", "session-db");
   c.set("user", user);
   // ASSR routes (assr.ts + assrPortal.ts) read `c.get("userId")` for
   // audit columns (created_by, verified_by, etc.). Set it alongside

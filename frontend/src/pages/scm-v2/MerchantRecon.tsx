@@ -31,8 +31,8 @@ import { AlertTriangle, ArrowLeft, ArrowRight, CheckCheck, Download, Undo2, Uplo
 import {
   useAcquirerSetup, useSaveAcquirerSetup, useSettlementBatches, useSettlementBatch,
   useUploadStatement, useConfirmSettlementRow, useConfirmMatched, useIgnoreSettlementRow,
-  useSettlementWatchlist, useUnconfirmSettlementRow,
-  type AcquirerSetup, type SettlementRow, type SettlementBucket, type SettlementBatch, type BankAccount,
+  useSettlementWatchlist, useUnconfirmSettlementRow, useFindPayments,
+  type AcquirerSetup, type SettlementRow, type SettlementBucket, type SettlementBatch, type BankAccount, type SettlementCandidate,
 } from './settlement-queries';
 import {
   ICON, fmt, btn, cell, num, table, headRow, rowLine, softText, danger, good, panel,
@@ -112,7 +112,7 @@ const ReconcileTab = () => {
   const [statementMonth, setStatementMonth] = useState('');
   /* One result line per file — a month's statements go up in one go and each
      one answers for itself, so a single bad file never hides four good ones. */
-  const [results, setResults] = useState<Array<{ name: string; ok: boolean; text: string }>>([]);
+  const [results, setResults] = useState<Array<{ name: string; ok: boolean; text: string; leftOut?: string }>>([]);
   const [busy, setBusy] = useState(false);
   const chosen = acquirers.find((a) => a.code === code) ?? null;
 
@@ -167,11 +167,22 @@ const ReconcileTab = () => {
           statementMonth: statementMonth || null,
         });
         made.push(r.batchId);
+        /* A line the bank pays once, already on another report, left out of
+           this batch (docs/bugs/0823) — carried separately so the landing view
+           can say it: a report one line short with no reason is a puzzle. */
+        const leftOut = r.alreadyOnReport > 0
+          ? `${r.alreadyOnReport} line(s) already on ${[...new Set(r.alreadyOnReportDetail.map((d) => d.fileName ?? `batch ${d.batchId}`))].join(', ')} left out — the bank pays a card transaction once`
+          : undefined;
         done.push({
           name: f.name,
           ok: true,
+          ...(leftOut ? { leftOut } : {}),
           text: `${r.rows} line${r.rows === 1 ? '' : 's'} (${r.periodFrom} → ${r.periodTo}), gross ${fmt(r.grossSen)}, fee ${fmt(r.feeSen)}`
             + (r.skippedLines > 0 ? ` · ${r.skippedLines} summary line(s) left out` : '')
+            /* A line the bank pays once, already on another report (docs/bugs/0823). */
+            + (r.alreadyOnReport > 0
+              ? ` · ${r.alreadyOnReport} line(s) already on ${[...new Set(r.alreadyOnReportDetail.map((d) => d.fileName ?? `batch ${d.batchId}`))].join(', ')} left out`
+              : '')
             + ` · matched ${bucketCount(r.buckets, 'MATCHED')}, to confirm ${bucketCount(r.buckets, 'NEEDS_CONFIRM')}, not matched ${bucketCount(r.buckets, 'UNMATCHED')}`,
         });
       } catch (err) {
@@ -190,6 +201,7 @@ const ReconcileTab = () => {
   if (justUploaded != null) {
     return (
       <UploadSummary batchIds={justUploaded} refusals={results.filter((r) => !r.ok)}
+        leftOut={results.flatMap((r) => (r.ok && r.leftOut ? [{ name: r.name, text: r.leftOut }] : []))}
         onOpen={setBatchId} onDone={() => setJustUploaded(null)} />
     );
   }
@@ -206,6 +218,10 @@ const ReconcileTab = () => {
      "nothing outstanding" when it means "not loaded". */
   const waiting = watchlist.data?.recordedNotArrived ?? [];
   const waitingSen = waiting.reduce((s, p) => s + p.amountSen, 0);
+  /* Keyed in without a bank: the server lists such a payment ONCE here
+     (docs/bugs/0688 — it used to sit under every merchant), and the confirm
+     that stamps its bank is what moves it onto that merchant's list. */
+  const untagged = waiting.filter((p) => p.acquirerCode == null).length;
 
   return (
     <div className="space-y-4">
@@ -342,6 +358,7 @@ const ReconcileTab = () => {
         <b>{`Card payments no merchant report has reported yet (${waiting.length})`}</b>
         <div style={softText}>
           Keyed in by the sales team; the merchant has not put them on a report. {fmt(waitingSen)} in total.
+          {untagged > 0 && ` ${untagged} keyed in without a bank (未标): shown once here, offered to each merchant's report, and named by the one that confirms it.`}
         </div>
         {watchlist.isLoading && <div style={{ fontSize: 'var(--fs-13)' }}>Loading…</div>}
         {!watchlist.isLoading && waiting.length === 0 && (
@@ -353,15 +370,16 @@ const ReconcileTab = () => {
           <table className={grid.grid}>
             <thead>
               <tr>
-                <th>Merchant</th><th>Document</th><th>Customer paid on</th>
+                <th>Merchant</th><th>Document</th><th>Salesperson</th><th>Customer paid on</th>
                 <th className={grid.num}>Days</th><th className={grid.num}>Amount</th><th>Approval</th>
               </tr>
             </thead>
             <tbody>
               {waiting.map((p) => (
                 <tr key={`${p.source}:${p.id}`}>
-                  <td><span className={styles.codeChip}>{p.acquirerCode}</span></td>
+                  <td><span className={styles.codeChip}>{p.acquirerCode ?? '未标'}</span></td>
                   <td>{p.docNo}</td>
+                  <td>{p.salespersonName ?? '—'}</td>
                   <td>{p.paidOn}</td>
                   <td className={grid.num} style={{ color: p.ageDays > 14 ? danger : undefined, fontWeight: p.ageDays > 14 ? 700 : undefined }}>
                     {p.ageDays}
@@ -470,9 +488,11 @@ const PostedNote = ({ posted }: { posted: { confirmed: number; failed: number } 
   </div>
 );
 
-const UploadSummary = ({ batchIds, refusals, onOpen, onDone }: {
+const UploadSummary = ({ batchIds, refusals, leftOut, onOpen, onDone }: {
   batchIds: number[];
   refusals: Array<{ name: string; text: string }>;
+  /** Files read whole but one or more lines short — already on another report (docs/bugs/0823). */
+  leftOut: Array<{ name: string; text: string }>;
   onOpen: (id: number) => void;
   onDone: () => void;
 }) => {
@@ -544,6 +564,15 @@ const UploadSummary = ({ batchIds, refusals, onOpen, onDone }: {
           so it says its own reason here or it says nothing anywhere. */}
       {refusals.map((r) => (
         <div key={r.name} style={{ fontSize: 'var(--fs-13)', color: danger, display: 'flex', gap: 6 }}>
+          <AlertTriangle {...ICON} />
+          <span><b>{r.name}</b> — {r.text}</span>
+        </div>
+      ))}
+      {/* A file read whole but a line short: the line is on another report
+          already, and the bank pays it once (docs/bugs/0823). Said here, or
+          the operator sees a report missing a line and no reason. */}
+      {leftOut.map((r) => (
+        <div key={`left-${r.name}`} style={{ fontSize: 'var(--fs-13)', display: 'flex', gap: 6 }}>
           <AlertTriangle {...ICON} />
           <span><b>{r.name}</b> — {r.text}</span>
         </div>
@@ -771,6 +800,9 @@ const BatchView = ({ batchId, onBack }: { batchId: number; onBack: () => void })
 
   const rows = useMemo(() => q.data?.rows ?? [], [q.data]);
   const batch = q.data?.batch ?? null;
+  /* A payment Finance corrected after the upload: the server read it back as
+     this report opened and says which links moved (docs/bugs/0833). */
+  const refreshed = q.data?.refreshedLinks ?? [];
   const openRows = rows.filter((r) => !r.confirmed_at && r.bucket !== 'IGNORED');
   const doneRows = rows.filter((r) => r.confirmed_at || r.bucket === 'IGNORED');
   const unconfirmedMatched = rows.filter((r) => r.bucket === 'MATCHED' && !r.confirmed_at).length;
@@ -862,6 +894,15 @@ const BatchView = ({ batchId, onBack }: { batchId: number; onBack: () => void })
           Posted {confirmAll.data.confirmed} of {confirmAll.data.attempted}.
           {confirmAll.data.statementCharge?.jeNo && ` Statement charge booked as ${confirmAll.data.statementCharge.jeNo}.`}
           {confirmAll.data.failed.map((f) => <div key={f.rowId}>{f.rowId ? `Line ${f.rowId}: ` : ''}{f.reason}</div>)}
+        </div>
+      )}
+
+      {refreshed.length > 0 && (
+        <div style={panel('good')} data-testid="refreshed-links">
+          <b>{refreshed.length} link{refreshed.length === 1 ? '' : 's'} refreshed to the payment's current amount</b>
+          <div style={softText}>
+            {refreshed.map((l) => `${l.docNo ?? l.paymentId}: ${fmt(l.fromSen)} → ${fmt(l.toSen)}`).join(' · ')}
+          </div>
         </div>
       )}
 
@@ -971,16 +1012,89 @@ const HandOff = ({ batch, toConfirm, toDecide }: { batch: SettlementBatch; toCon
 
 /* ── One statement line, with its candidates ──────────────────────────────── */
 
+const key = (p: { source: string; id: string }) => `${p.source}:${p.id}`;
+
+/* ── "Find the sale" ──────────────────────────────────────────────────────────
+   The window offers what could plausibly be this line; a person may know which
+   sale it IS — keyed twelve days after the swipe, no bank on it, so the matcher
+   never loaded it (docs/bugs/0792; owner: 我要怎样选对应的 SO?). Here every
+   card payment of the company can be searched whatever its date, the exact
+   gross marked "possible" and ranked first, and any one of them ticked
+   (owner: 可以注明 possible，但不能不让我选其他的). The confirm reads the chosen
+   payments back, so the amount still has to add up before anything posts. */
+const FindTheSale = ({ rowId, grossSen, picked, shown, onToggle }: {
+  rowId: number; grossSen: number; picked: Set<string>;
+  /** Already offered above — not listed twice. */
+  shown: Set<string>;
+  onToggle: (p: SettlementCandidate) => void;
+}) => {
+  const [q, setQ] = useState('');
+  const found = useFindPayments(rowId, q);
+  const list = (found.data?.payments ?? []).filter((p) => !shown.has(key(p)));
+  return (
+    <div className="space-y-1" style={{ borderTop: '1px dashed var(--c-line, rgba(34,31,32,0.15))', paddingTop: 'var(--space-2)' }}>
+      <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap' }}>
+        <input type="search" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Find the sale"
+          placeholder="SO number, customer, approval code or amount"
+          style={{ padding: '4px 8px', border: '1px solid var(--c-line, rgba(34,31,32,0.25))', borderRadius: 'var(--radius-sm)', minWidth: 260 }} />
+        <span style={softText}>Any card payment of this company, whatever its date — the exact {fmt(grossSen)} is marked possible.</span>
+      </div>
+      {found.isError && (
+        <div style={{ fontSize: 'var(--fs-13)', color: danger }}>{refusalText(found.error, 'The search did not run.')}</div>
+      )}
+      {found.isLoading && <div style={softText}>Searching…</div>}
+      {found.data && list.length === 0 && (
+        <div style={softText}>No card payment of this company {q.trim() ? `matches "${q.trim()}"` : 'is waiting for a merchant report'}.</div>
+      )}
+      {list.length > 0 && (
+        <table style={table}>
+          <thead>
+            <tr style={headRow}>
+              <th style={cell} />
+              <th style={cell}>Document</th><th style={cell}>Customer</th><th style={cell}>Paid</th>
+              <th style={cell}>Approval</th><th style={num}>Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            {list.map((p) => (
+              <tr key={key(p)} style={p.possible ? { background: 'rgba(47, 93, 79, 0.08)' } : undefined}>
+                <td style={cell}>
+                  <input type="checkbox" checked={picked.has(key(p))} onChange={() => onToggle(p)} aria-label={`Select ${p.docNo}`} />
+                </td>
+                <td style={cell}>
+                  {p.docNo}
+                  {p.possible && <span className={styles.codeChip} style={{ marginLeft: 6 }}>possible</span>}
+                  {p.merchantProvider === null && (
+                    <span style={{ marginLeft: 6, fontSize: 'var(--fs-12)', color: 'var(--text-soft, #8a8578)' }}>未标 merchant</span>
+                  )}
+                </td>
+                <td style={cell}>{p.customerName ?? '—'}</td>
+                <td style={cell}>{p.paidOn}</td>
+                <td style={cell}>{p.approvalCode ?? '—'}</td>
+                <td style={num}>{fmt(p.amountSen)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+};
+
 const SettlementLine = ({ row }: { row: SettlementRow }) => {
   const confirm = useConfirmSettlementRow();
   const ignore = useIgnoreSettlementRow();
-  const key = (p: { source: string; id: string }) => `${p.source}:${p.id}`;
   /* Start on the system's own answer when it has one — the operator confirms
      instead of repeating the search (owner: 尽量根据日期金额去尝试自动匹配后让我
      知道，我 final confirm). Seeded once, so a refetch never undoes his ticks. */
   const [picked, setPicked] = useState<Set<string>>(() => new Set((row.suggested ?? []).map(key)));
 
-  const chosen = row.candidates.filter((p) => picked.has(key(p)));
+  /* Payments a person found beyond the window, kept by key so a new search
+     never drops a tick. */
+  const [extra, setExtra] = useState<Map<string, SettlementCandidate>>(() => new Map());
+  const [finding, setFinding] = useState(false);
+  const offered = [...row.candidates, ...[...extra.values()].filter((p) => !row.candidates.some((c) => key(c) === key(p)))];
+  const chosen = offered.filter((p) => picked.has(key(p)));
   const chosenSen = chosen.reduce((s, p) => s + p.amountSen, 0);
   const balanced = chosen.length > 0 && chosenSen === row.gross_sen;
   const hinted = new Set(row.comboHints.flat());
@@ -993,6 +1107,19 @@ const SettlementLine = ({ row }: { row: SettlementRow }) => {
       return next;
     });
   };
+  const toggleFound = (p: SettlementCandidate) => {
+    setExtra((prev) => {
+      const next = new Map(prev);
+      if (next.has(key(p))) next.delete(key(p)); else next.set(key(p), p);
+      return next;
+    });
+    toggle(p);
+  };
+  const findButton = !row.confirmed_at && row.linked.length === 0 && (
+    <button type="button" style={btn()} onClick={() => setFinding((v) => !v)} aria-expanded={finding}>
+      {finding ? 'Hide the search' : 'Find the sale'}
+    </button>
+  );
 
   return (
     /* A section, not a div: each line is its own piece of the report, and the
@@ -1048,7 +1175,16 @@ const SettlementLine = ({ row }: { row: SettlementRow }) => {
                     <input type="checkbox" checked={picked.has(key(p))} onChange={() => toggle(p)}
                       aria-label={`Select ${p.docNo}`} />
                   </td>
-                  <td style={cell}>{p.docNo}</td>
+                  <td style={cell}>
+                    {p.docNo}
+                    {/* A migration-era payment carries no merchant tag; say so
+                        where it is being claimed. Confirming writes the tag.
+                        Strictly null: a candidate WITHOUT the field (an older
+                        cached response) is unknown, not untagged. */}
+                    {p.merchantProvider === null && (
+                      <span style={{ marginLeft: 6, fontSize: 'var(--fs-12)', color: 'var(--text-soft, #8a8578)' }}>未标 merchant</span>
+                    )}
+                  </td>
                   <td style={cell}>{p.paidOn}</td>
                   <td style={cell}>{p.approvalCode ?? '—'}</td>
                   <td style={num}>{fmt(p.amountSen)}</td>
@@ -1056,6 +1192,18 @@ const SettlementLine = ({ row }: { row: SettlementRow }) => {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {!row.confirmed_at && finding && (
+        <FindTheSale rowId={row.id} grossSen={row.gross_sen} picked={picked}
+          shown={new Set(row.candidates.map(key))} onToggle={toggleFound} />
+      )}
+
+      {/* The choice is confirmed here whether it came from the window or the
+          search — a found sale alone is a full selection. */}
+      {!row.confirmed_at && (row.candidates.length > 0 || extra.size > 0) && (
+        <div className="space-y-1">
           <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap' }}>
             <span style={{ fontSize: 'var(--fs-13)', color: balanced ? good : danger }}>
               Selected {fmt(chosenSen)} of {fmt(row.gross_sen)}
@@ -1070,6 +1218,7 @@ const SettlementLine = ({ row }: { row: SettlementRow }) => {
               })}>
               Confirm and post
             </button>
+            {findButton}
             <button type="button" style={btn()} onClick={() => ignore.mutate({ rowId: row.id, restore: row.bucket === 'IGNORED' })}>
               {row.bucket === 'IGNORED' ? 'Put back' : 'Set aside'}
             </button>
@@ -1077,12 +1226,14 @@ const SettlementLine = ({ row }: { row: SettlementRow }) => {
         </div>
       )}
 
-      {!row.confirmed_at && row.candidates.length === 0 && row.linked.length === 0 && (
-        <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center' }}>
+      {!row.confirmed_at && row.candidates.length === 0 && row.linked.length === 0 && extra.size === 0 && (
+        <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap' }}>
           <span style={{ fontSize: 'var(--fs-13)', color: danger }}>
-            No payment in the ERP explains this money. Record the sale first — it must not be cleared out of
+            No payment within the matching window explains this money. If the sale IS in the ERP — keyed later,
+            or without a bank — find it below; otherwise record it first, because it must not be cleared out of
             in-transit without one.
           </span>
+          {findButton}
           <button type="button" style={btn()} onClick={() => ignore.mutate({ rowId: row.id, restore: row.bucket === 'IGNORED' })}>
             {row.bucket === 'IGNORED' ? 'Put back' : 'Set aside'}
           </button>

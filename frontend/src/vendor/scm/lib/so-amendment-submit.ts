@@ -21,6 +21,8 @@
 // and "nothing to submit" is true only when BOTH halves are empty.
 // ----------------------------------------------------------------------------
 
+import { AMENDMENT_APPROVER_LABEL, soAmendmentApprover } from './amendment-approver';
+
 /** What the operator's in-flight edit adds up to. */
 export type AmendmentSubmitPlan =
   /** Neither half has a change — the only case that is a genuine error. */
@@ -59,6 +61,12 @@ export function planAmendmentSubmit(input: AmendmentSubmitInput): AmendmentSubmi
 export const AMENDMENT_NOTHING_TO_SUBMIT =
   'No changes to submit — edit a line, a date or the delivery address first, then submit the amendment.';
 
+/** The reason prompt's validation message, shared by both surfaces (owner
+    2026-09-15: the reason is REQUIRED; the server refuses 400 reason_required
+    without one). */
+export const AMENDMENT_REASON_REQUIRED =
+  'A reason is required — the approver reads it before the changes.';
+
 /** Shown for 'DIRECT_ONLY'. Says the work landed AND why no approval appeared,
     so the absent amendment does not read as a failure. Deliberately does not
     enumerate the fields: desktop reaches this with contact details, mobile can
@@ -86,7 +94,7 @@ export function amendmentSubmittedNotice(
     amendments?: Array<{ amendment_no?: string | null; lane?: string | null }>;
   } | null | undefined)?.amendments ?? [];
   const lane = (l?: string | null) =>
-    l === 'LINES' ? 'Purchasing' : l === 'DELIVERY' ? 'Logistics' : '';
+    (l === 'LINES' || l === 'DELIVERY' ? AMENDMENT_APPROVER_LABEL[soAmendmentApprover(l)] : '');
   if (created.length > 1) {
     return {
       title: 'Amendment split into two approvals',
@@ -106,8 +114,13 @@ export function amendmentSubmittedNotice(
 /** The amendment-mode banner, in ONE place because it was wrong in two.
     Addresses joined the CONTROLLED set on 2026-07-27 (two-lane phase 2,
     so-field-policy) and both banners still told the operator that address lines
-    "save straight away" — the exact opposite of what the server now does. */
+    "save straight away" — the exact opposite of what the server now does.
+    Customer name / phone / email made the same move on 2026-08-21 and the
+    banner kept promising they saved directly for three weeks (HC-SO-013497).
+    The list of what saves straight away is the FREE set in so-field-policy —
+    keep it in step with that table, not with memory. */
 export const AMENDMENT_MODE_BANNER =
-  'This order is already ordered from the supplier. Edit the lines, dates or delivery '
-  + 'address as usual — your request goes to the coordinator and supplier to confirm '
-  + 'before the order is revised. Customer name, phone, email and the note save straight away.';
+  'This order is already ordered from the supplier. Edit the lines, dates, delivery '
+  + 'address or customer name, phone and email as usual — your request goes to the '
+  + 'coordinator and supplier to confirm before the order is revised. The note, '
+  + 'customer type and emergency contact save straight away.';

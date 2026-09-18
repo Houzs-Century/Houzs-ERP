@@ -7,7 +7,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import { writeFailedAs } from '../../vendor/scm/lib/mutation-error';
 import { retryUnlessClientError } from '../../lib/retryPolicy';
-import type { Account } from '../../vendor/scm/lib/accounting-queries';
+import type { Account, JeLineIn, JournalEntry } from '../../vendor/scm/lib/accounting-queries';
 
 export const useCreateAccount = () => {
   const qc = useQueryClient();
@@ -45,6 +45,56 @@ export const useReverseJournalEntry = () => {
   });
 };
 
+/** A manual journal edited in one step (owner 2026-09-15: 我无法 edit). A
+    posted entry comes back under a NEW number with `replaced` naming the old
+    one and the contra that reversed it; a draft is rewritten in place and
+    `replaced` is null. */
+export type JournalEntryEdited = {
+  journalEntry: JournalEntry;
+  lineCount: number;
+  replaced: { originalJeNo: string; originalJeId: string; contraJeNo: string | null } | null;
+};
+export const useEditJournalEntry = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...body }: { id: string; entryDate?: string; narration?: string | null; lines: JeLineIn[] }) =>
+      authedFetch<JournalEntryEdited>(`/accounting/journal-entries/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+    onSuccess: (_, { id }) => {
+      void qc.invalidateQueries({ queryKey: ['journal-entries'] });
+      void qc.invalidateQueries({ queryKey: ['journal-entry-detail', id] });
+      void qc.invalidateQueries({ queryKey: ['gl-entries'] });
+      void qc.invalidateQueries({ queryKey: ['account-balances'] });
+      void qc.invalidateQueries({ queryKey: ['control-check'] });
+    },
+    onError: writeFailedAs('Journal entry not edited'),
+  });
+};
+
+/** The Journal page grouped per entry (docs/bugs/0935): every entry of the
+    period with its lines in order and the references the GL page prints. */
+export type JournalLineLite = { line_no: number; account_code: string; debit_sen: number; credit_sen: number; party_name: string | null; notes: string | null };
+export type JournalEntryGrouped = JournalEntry & {
+  journal_class: string;
+  lines: JournalLineLite[];
+  doc: string | null;
+  doc2: string | null;
+  who: string | null;
+  reference: string | null;
+};
+export type JournalGroupedFilters = { from: string; to: string; sourceType?: string };
+export const useJournalEntriesGrouped = (f: JournalGroupedFilters, enabled = true) => {
+  const params = new URLSearchParams({ withLines: '1', from: f.from, to: f.to });
+  if (f.sourceType) params.set('sourceType', f.sourceType);
+  const qs = params.toString();
+  return useQuery({
+    queryKey: ['journal-entries', 'grouped', qs],
+    queryFn: () => authedFetch<{ journalEntries: JournalEntryGrouped[] }>(`/accounting/journal-entries?${qs}`),
+    enabled: enabled && Boolean(f.from && f.to),
+    staleTime: 30_000,
+    retry: retryUnlessClientError,
+  });
+};
+
 export type ControlDrift = { docNo: string; docTotalSen: number; jeTotalSen: number; diffSen: number; note: string };
 export type ControlForeign = { jeNo: string; sourceType: string; debitSen: number; creditSen: number };
 export type ControlCheckRow =
@@ -61,11 +111,100 @@ export type UnbookedPayments = {
   ok: boolean;
   /** Only when the check itself could not run. */
   error?: string;
+  /** When NOTHING has ever booked (since = null): what the payment tables hold
+      anyway — the money the hook should have moved (docs/bugs/0652). */
+  neverBooked?: { count: number; totalSen: number; firstPaidOn: string | null; lastPaidOn: string | null };
 };
+
+/** The Self-check card's "Why?" — the backfill endpoint in dry-run mode: each
+    unbooked payment through the gate's own checks, verdict and reason back,
+    nothing written (docs/bugs/0652). */
+export type PaymentDryRunRow = { id: string; docNo: string; paidOn: string; method: string; amountSen: number; status: string; reason?: string };
+export type PaymentDryRun = {
+  ok: boolean; dryRun: boolean; scanned: number; posted: number; wouldPost: number; skipped: number;
+  failed: Array<{ id: string; status: string; reason?: string }>; rows: PaymentDryRunRow[]; remaining: number;
+};
+export const usePaymentBookingDryRun = () => useMutation({
+  mutationFn: () => authedFetch<PaymentDryRun>('/accounting/backfill/customer-payments', {
+    method: 'POST', body: JSON.stringify({ dryRun: true, limit: 500 }),
+  }),
+});
+
+/** A payment that reached the ledger and then stopped agreeing with it. The
+    PATCH that edits a payment never re-posts, so an edited row leaves its
+    entry behind; `fields` names what moved (amount / date / method), and both
+    sides are carried so the difference can be read without opening the entry.
+    A changed acquirer is NOT in here — that lives in the entry's lines. */
+export type PaymentDriftRow = {
+  source: 'SOPAY' | 'SIPAY';
+  id: string;
+  docNo: string;
+  jeNo: string;
+  fields: Array<'amount' | 'date' | 'method'>;
+  paymentAmountSen: number;
+  entryAmountSen: number;
+  paidOn: string;
+  entryDate: string;
+  paymentMethod: string;
+  entryMethod: string | null;
+};
+export type PaymentDrift = {
+  rows: PaymentDriftRow[];
+  /** How many active payment entries were read — a clean answer over zero
+      entries is a different statement from a clean answer over 4,000. */
+  scanned: number;
+  ok: boolean;
+  /** Only when the check itself could not run. */
+  error?: string;
+};
+
+/** The Finance report of every payment action made on the correction right
+    (docs/bugs/0785; widened to adds, deletes and proof attaches by a role
+    holding the right, docs/bugs/0888): a filtered read of the SO audit log,
+    one row per action, with the reason typed at the time, who first recorded
+    the payment, and what it did to the ledger. */
+export type PaymentCorrectionRow = {
+  id: string;
+  at: string;
+  by: string;
+  docNo: string;
+  customer: string | null;
+  kind: 'added' | 'edited' | 'deleted' | 'proof';
+  changes: Array<{ field: string; from: unknown; to: unknown }>;
+  amountFromSen: number | null;
+  amountToSen: number | null;
+  reason: string;
+  /** No reason because the row predates the rule (owner 2026-09-14: 规则之前). */
+  beforeRule: boolean;
+  /** Who FIRST recorded the payment this row concerns, and when (ISO); null
+      when it could not be read — never a guess. */
+  recordedBy: string | null;
+  recordedOn: string | null;
+  /** The entry that was voided, the contra that voided it, the entry booked
+      in its place — any null when that part did not happen. */
+  originalJeNo: string | null;
+  contraJeNo: string | null;
+  jeNo: string | null;
+};
+export type PaymentCorrections = {
+  month: string;
+  rows: PaymentCorrectionRow[];
+  summary: {
+    corrections: number; added: number; edited: number; deleted: number; proof: number;
+    netMovedSen: number; addedSen: number; deletedSen: number;
+  };
+};
+export const usePaymentCorrections = (month: string) => useQuery({
+  queryKey: ['payment-corrections', month],
+  queryFn: () => authedFetch<PaymentCorrections>(`/accounting/payment-corrections?month=${encodeURIComponent(month)}`),
+  staleTime: 30_000,
+  retry: retryUnlessClientError,
+  retryDelay: 800,
+});
 
 export const useControlCheck = () => useQuery({
   queryKey: ['control-check'],
-  queryFn: () => authedFetch<{ checks: ControlCheckRow[]; payments: UnbookedPayments }>(`/accounting/control-check`),
+  queryFn: () => authedFetch<{ checks: ControlCheckRow[]; payments: UnbookedPayments; paymentDrift?: PaymentDrift }>(`/accounting/control-check`),
   staleTime: 30_000,
   retry: retryUnlessClientError,
   retryDelay: 800,
@@ -126,5 +265,136 @@ export const useConfirmDailyClose = () => {
       void qc.invalidateQueries({ queryKey: ['account-balances'] });
     },
     onError: writeFailedAs('Daily close not confirmed'),
+  });
+};
+
+/* ── Item groups — the product-group ↔ ledger-account registry (GL redesign
+   item 1). The binding decides which purchase/sales account a document line
+   posts to; an unbound group refuses to post, so this screen is where the
+   owner keeps the map. ─────────────────────────────────────────────────── */
+
+export type ItemGroupBinding = {
+  purchase: string;
+  sales: string;
+  salesReturn: string;
+  purchaseReturn: string;
+};
+
+export type ItemGroup = {
+  code: string;
+  name: string;
+  isActive: boolean;
+  /** companyId → the four accounts; a missing key means UNBOUND there. */
+  bindings: Record<string, ItemGroupBinding>;
+};
+
+export const useItemGroups = () => useQuery({
+  queryKey: ['item-groups'],
+  queryFn: () => authedFetch<{ companies: Array<{ id: number; code: string }>; groups: ItemGroup[] }>(`/accounting/item-groups`),
+  staleTime: 15_000,
+  retry: retryUnlessClientError,
+  retryDelay: 800,
+});
+
+export const useCreateItemGroup = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { code: string; name: string; companyId: number; accounts: ItemGroupBinding }) =>
+      authedFetch<{ ok: boolean; code: string }>(`/accounting/item-groups`, { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['item-groups'] }); },
+    onError: writeFailedAs('Group not created'),
+  });
+};
+
+export const useBindItemGroup = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ code, ...body }: { code: string; companyId: number; accounts: ItemGroupBinding }) =>
+      authedFetch<{ ok: boolean }>(`/accounting/item-groups/${encodeURIComponent(code)}/accounts`, { method: 'PUT', body: JSON.stringify(body) }),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['item-groups'] }); },
+    onError: writeFailedAs('Binding not saved'),
+  });
+};
+
+export const usePatchItemGroup = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ code, ...body }: { code: string; name?: string; isActive?: boolean }) =>
+      authedFetch<{ ok: boolean }>(`/accounting/item-groups/${encodeURIComponent(code)}`, { method: 'PATCH', body: JSON.stringify(body) }),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['item-groups'] }); },
+    onError: writeFailedAs('Group not updated'),
+  });
+};
+
+/* ── Month-end stock close (GL redesign item 4) — run log + manual run. ──── */
+
+export type StockCloseRun = {
+  month: string;
+  ran_at: string;
+  trigger: string;
+  stock_value_sen: number;
+  action: 'posted' | 'unchanged' | 'reposted' | 'failed';
+  je_no: string | null;
+  rev_je_no: string | null;
+  note: string | null;
+};
+
+export const useStockClose = () => useQuery({
+  queryKey: ['stock-close'],
+  queryFn: () => authedFetch<{ liveValueSen: number; defaultMonth: string; runs: StockCloseRun[] }>(`/accounting/stock-close`),
+  staleTime: 15_000,
+  retry: retryUnlessClientError,
+  retryDelay: 800,
+});
+
+export const useRunStockClose = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { month?: string }) =>
+      authedFetch<{ outcome: { action: string; jeNo?: string; note?: string } }>(`/accounting/stock-close/run`, { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['stock-close'] });
+      void qc.invalidateQueries({ queryKey: ['journal-entries'] });
+      void qc.invalidateQueries({ queryKey: ['gl-entries'] });
+      void qc.invalidateQueries({ queryKey: ['account-balances'] });
+    },
+    onError: writeFailedAs('Month-end run failed'),
+  });
+};
+
+/* ── Voucher numbering (GL redesign item 8a) — per-bank letters + width. ── */
+
+/* fixedCash marks the drawer: its letter is C on both papers (CPV / COR),
+   minted straight off roles.CASH — shown, never editable, never PUT. */
+export type NumberingAccount = { accountCode: string; accountName: string; letter: string | null; fixedCash?: boolean };
+
+export const useVoucherNumbering = () => useQuery({
+  queryKey: ['voucher-numbering'],
+  queryFn: () => authedFetch<{ digits: number; accounts: NumberingAccount[] }>(`/accounting/numbering`),
+  staleTime: 30_000,
+  retry: retryUnlessClientError,
+  retryDelay: 800,
+});
+
+export const useSaveVoucherNumbering = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { digits?: number; letters?: Array<{ accountCode: string; letter: string }> }) =>
+      authedFetch<{ ok: boolean }>(`/accounting/numbering`, { method: 'PUT', body: JSON.stringify(body) }),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['voucher-numbering'] }); },
+    onError: writeFailedAs('Numbering not saved'),
+  });
+};
+
+/** The real backfill behind the Self-check card's "Book now" — the same
+    endpoint without dryRun, one batch of up to 500 (docs/bugs/0655). Each
+    payment posts on its own paid date; the control check re-reads after. */
+export const useBookUnbookedPayments = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => authedFetch<PaymentDryRun>('/accounting/backfill/customer-payments', {
+      method: 'POST', body: JSON.stringify({ limit: 500 }),
+    }),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['control-check'] }); },
   });
 };

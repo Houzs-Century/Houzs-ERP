@@ -1,0 +1,83 @@
+name: AutoCount write-back — rebuild ONE document's lines (DRY-RUN gated)
+
+# THE RECOVERY TOOL, and the one the re-queue ladder deliberately cannot be.
+#
+# requeueOneRow refuses a `sent` row because for a CREATE, sending again puts a
+# SECOND document into a licensed account book. That guard stays. But a document
+# can be `sent` and still WRONG — on 2026-09-02 SO-013394 landed with seven of
+# eight lines carrying a blank item code (docs/bugs/0615), and every path back to
+# it was closed: the ladder refused it as already-sent, and an ordinary ERP save
+# would compose a KEYED edit against line keys the rebuild had already destroyed.
+#
+# This asks for one more rebuild, by document number, deliberately.
+#
+# WHAT A REBUILD COSTS: the document's details are CLEARED and re-added, so every
+# AutoCount line key on it is destroyed and reissued. Anything holding those keys
+# downstream is voided. Hence one document at a time, and a confirm phrase.
+#
+# It is not a second composer — it calls the same enqueueEdit the routes call, so
+# every refusal the composer knows still applies and is printed verbatim. The
+# HOST then refuses again on its own evidence if the book says a line was
+# transferred.
+#
+# Access path: DATABASE_URL through lib/pgrest-shim.mjs. SUPABASE_URL /
+# SUPABASE_SERVICE_ROLE_KEY are Worker secrets and must never be added to
+# Actions; see CLAUDE.md.
+#
+# Read the result with "AutoCount write-back queue — health (read-only)".
+on:
+  workflow_dispatch:
+    inputs:
+      doc_no:
+        description: "The ERP document number to rebuild (HC-SO-013394). One document only"
+        required: true
+        type: string
+      doc_type:
+        description: "SO or PO. The four converted types cannot be rebuilt — their lines hold the transfer link"
+        required: false
+        default: "SO"
+        type: choice
+        options: [SO, PO]
+      apply:
+        description: "1 to write, anything else DRY-RUN"
+        required: false
+        default: "0"
+        type: string
+      confirm_doc:
+        description: "Repeat the document number here to APPLY. Ignored on a dry run"
+        required: false
+        default: ""
+        type: string
+
+# Its own group. A recovery run must never queue behind — or displace — a deploy.
+concurrency:
+  group: rebuild-ac-document
+  cancel-in-progress: false
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      # tsx, so the REAL enqueueEdit is imported from src and the composer is
+      # never re-implemented in a script.
+      - run: npx tsx scripts/rebuild-ac-document.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DOC_NO: ${{ inputs.doc_no }}
+          DOC_TYPE: ${{ inputs.doc_type }}
+          APPLY: ${{ inputs.apply }}
+          CONFIRM_DOC: ${{ inputs.confirm_doc }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first

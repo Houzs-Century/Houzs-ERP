@@ -16,6 +16,10 @@
 // handler; this fill just closes the common case at write time).
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { pgrestIn } from './pgrest-in-list';
+import { normCategory } from './so-readiness';
+import { brandForHeader, deriveListFirstItemBranding } from './so-list-first-item-branding';
+import { brandingLabel } from '../shared/so-branding-label';
 
 export type LineBrandingRow = {
   item_code?: string | null;
@@ -54,9 +58,13 @@ export async function deriveLineBrandingFromProduct(
     const codes = [...codeSet];
     for (let i = 0; i < codes.length; i += 300) {
       const chunk = codes.slice(i, i + 300);
-      let q = sb.from('mfg_products').select('code, branding').in('code', chunk);
+      let q = pgrestIn(sb.from('mfg_products').select('code, branding'), 'code', chunk);
       if (cid != null) q = q.eq('company_id', cid);
-      const { data } = await q;
+      const { data, error } = await q;
+      if (error) {
+        // eslint-disable-next-line no-console
+        console.error('[derive-line-branding] mfg_products branding read failed:', (error as { message?: unknown }).message ?? error);
+      }
       for (const p of (data ?? []) as Array<{ code: string; branding: string | null }>) {
         if (!isBlank(p.branding)) {
           brandByKey.set(`${cid ?? 0}:${p.code}`, p.branding!.trim());
@@ -104,8 +112,16 @@ export async function deriveLineBrandingFromProduct(
  */
 export async function deriveHeaderBrandingFromLines(
   sb: SupabaseClient,
-  rows: LineBrandingRow[],
+  rows: Array<LineBrandingRow & { item_group?: string | null }>,
   fallbackCompanyId: number | null,
+  /* WHEN THE SKU SAYS NOTHING, the brand the SO LIST shows — if it is one of
+     the company's maintained brands (2026-09-14). Without it a Houzs sofa whose
+     SKU carries no branding (the 5526 family) was created with a NULL header
+     while the list printed ZANOTTI, and the Branding filter could not find it:
+     HC-SO-2609-065 / -071 / -072 on production. null = no brand list could be
+     read, and then the SKU-only answer stands. Required, not optional: its
+     absence changes the answer. */
+  listFallback: { companyCode: string | null; brands: readonly string[] } | null,
 ): Promise<string | null> {
   const codes = Array.from(new Set(
     rows.map((r) => r.item_code).filter((v): v is string => !!v && v.trim() !== ''),
@@ -116,7 +132,7 @@ export async function deriveHeaderBrandingFromLines(
   const brandByCode = new Map<string, string>();
   const catByCode = new Map<string, string>();
   for (let i = 0; i < codes.length; i += 300) {
-    let q = sb.from('mfg_products').select('code, branding, category').in('code', codes.slice(i, i + 300));
+    let q = pgrestIn(sb.from('mfg_products').select('code, branding, category'), 'code', codes.slice(i, i + 300));
     if (cid != null) q = q.eq('company_id', cid);
     const { data, error } = await q;
     /* An unreadable catalogue is NOT "this SKU has no brand". Swallowing it via
@@ -137,5 +153,18 @@ export async function deriveHeaderBrandingFromLines(
   };
   const rep = rows.find((r) => isMain(r.item_code)) ?? rows[0];
   const brand = rep?.item_code ? brandByCode.get(rep.item_code) : undefined;
-  return brand ?? null;
+  if (brand) return brand;
+  if (!listFallback || listFallback.brands.length === 0) return null;
+
+  /* The list's own rule, over these rows in the order the create inserts them
+     (line_no = array index), so the header matches the Branding pill. */
+  const productCategory = new Map<string, string>();
+  for (const [code, cat] of catByCode) productCategory.set(code, normCategory(cat));
+  const first = deriveListFirstItemBranding(
+    rows.map((r) => ({ doc_no: '', item_group: r.item_group ?? null, branding: r.branding ?? null, item_code: r.item_code ?? null })),
+    productCategory,
+    brandByCode,
+  ).get('');
+  const label = brandingLabel(first?.category ?? null, first?.branding ?? null, listFallback.companyCode);
+  return brandForHeader(label, listFallback.brands);
 }

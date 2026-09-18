@@ -3,12 +3,17 @@
 //
 // localities-reverse-resolve.test.ts pins the RESOLVERS. This pins the WIRING
 // the forms now share: which options each select offers given what is already
-// picked, and what the next triple is after each pick. The two properties that
+// picked, and what the next triple is after each pick. The properties that
 // matter most, and that the hand-copied wiring got wrong:
 //   - top-down keeps narrowing: a picked State narrows Postcode too, not only
 //     City (the copies fell back to the nationwide pool whenever City was blank)
-//   - bottom-up never destroys the pick: the postcode the operator just chose
-//     survives the State it back-fills
+//   - bottom-up never destroys the pick: the postcode the resolvers back-fill
+//     from survives the State they set
+//   - all three fields are valid starting points (owner 2026-09-18: "从 postcode
+//     或者从 state 开始都行"): with no State, postcodeOptionsFor offers the
+//     cross-state pool so a bare Postcode can start the cascade and back-fill
+//     State + City. A Postcode-first gate shipped 2026-09-12 and was reversed on
+//     2026-09-18; postcode-first is pinned ON here so it cannot silently regress.
 // ----------------------------------------------------------------------------
 import { describe, it, expect } from 'vitest';
 import {
@@ -64,12 +69,19 @@ describe('postcodeOptionsFor', () => {
     expect(postcodeOptionsFor(ROWS, 'Selangor', '')).not.toContain('50000');
   });
 
-  it('narrows to the city name when the city is ambiguous and left the state blank', () => {
-    expect(postcodeOptionsFor(ROWS, '', 'Taman Melati')).toEqual(['53100', '81100']);
+  /* Postcode-first (owner 2026-09-18, reversing the 2026-09-12 gate): with no
+     State the field offers the cross-state pool, so a bare Postcode can start
+     the cascade. Pinned ON so the old State-first block cannot silently return. */
+  it('offers the cross-state pool when nothing is picked, so Postcode can start the cascade', () => {
+    expect(postcodeOptionsFor(ROWS, '', '')).toEqual(
+      ['10000', '43300', '47810', '47820', '50000', '53100', '81100'],
+    );
   });
 
-  it('offers everything when nothing is picked, so Postcode can start the cascade', () => {
-    expect(postcodeOptionsFor(ROWS, '', '')).toHaveLength(7);
+  /* An ambiguous city that could not resolve a State still narrows Postcode to
+     the states that share the name, rather than the whole country. */
+  it('narrows to the city name when a city is picked but no state resolved', () => {
+    expect(postcodeOptionsFor(ROWS, '', 'Taman Melati')).toEqual(['53100', '81100']);
   });
 });
 
@@ -151,7 +163,7 @@ describe('placeholders advertise the field as a starting point', () => {
     expect(cityPlaceholder('Selangor')).toBe('Pick city');
   });
 
-  it('names exactly the fields a Postcode pick will fill', () => {
+  it('names what a Postcode pick fills, at each starting point', () => {
     expect(postcodePlaceholder('', '')).toBe('Pick postcode — State and City fill in');
     expect(postcodePlaceholder('Selangor', '')).toBe('Pick postcode — City fills in');
     expect(postcodePlaceholder('Selangor', 'Petaling Jaya')).toBe('Pick postcode');

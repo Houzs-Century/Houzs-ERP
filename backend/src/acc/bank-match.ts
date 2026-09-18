@@ -460,3 +460,211 @@ export function matchBankMovements(input: {
     };
   });
 }
+
+/* ── WHICH LEDGER ENTRY IS THIS MOVEMENT? ─────────────────────────────────────
+   Owner, 2026-09-09, looking at a RM 3,000 transfer on the statement and the
+   RM 3,000 receipt sitting in the books beside it, with no button that says
+   they are the same money.
+
+   Everything above this line is about ACQUIRER money — a payout the system can
+   recognise and book. Most of a bank statement is not that: a customer's
+   transfer, a bank charge, a deposit. Those are already in the books, posted by
+   whatever document created them, and reconciling one means SAYING WHICH ENTRY
+   IT IS. That has always been possible (POST /bank/lines/:id/match) and has
+   never had a way to choose.
+
+   This is the choosing, and it is deliberately narrow. The operator is agreeing
+   that two records are one fact, so the list he is offered must be short enough
+   to read and must never quietly include a near-miss:
+
+     • the AMOUNT must agree to the sen, signed the same way. Money into the
+       bank is a debit on the bank account, so the ledger movement's
+       debit − credit must EQUAL the statement's amount. A tolerance here would
+       be an invitation to reconcile RM 3,000.00 against RM 3,000.50 and never
+       find the fifty sen again;
+     • the DATE may differ, because a cheque banked on Friday clears on Monday,
+       but only within a window, and the closer one is offered first;
+     • an entry ALREADY claimed by another movement is not offered at all — one
+       entry cannot account for two, which the database enforces anyway; being
+       refused after choosing is a worse way to learn it.
+
+   Ranked, never auto-applied. The matcher above books money because a payout
+   has a batch to prove it; this one only proposes, because "these are the same
+   thing" is a judgement about the business and the person holding the statement
+   is the one who can make it. */
+
+/** One posted entry on the bank account, as far as offering it as a match
+    cares. The same shape acc/bank-reconcile reads. */
+export type EntryCandidateSource = {
+  jeNo: string;
+  entryDate: string;
+  sourceType: string | null;
+  sourceDocNo: string | null;
+  debitSen: number;
+  creditSen: number;
+  /** Who was paid / who paid, and the entry's own note — what the bank's text
+      is read against (docs/bugs/0814). */
+  partyName?: string | null;
+  notes?: string | null;
+};
+
+export type EntryCandidate = EntryCandidateSource & {
+  /** Signed the way the statement signs it: positive is money in. */
+  amountSen: number;
+  /** Days between the entry and the movement. 0 is the same day. */
+  daysApart: number;
+};
+
+/** How far apart a bank movement and its entry may be and still be offered.
+    A week covers a cheque banked on Friday and cleared on Monday, a payment
+    keyed the day after it left, and a weekend either side. Beyond that the
+    coincidence of an equal amount stops being evidence. */
+export const ENTRY_MATCH_WINDOW_DAYS = 7;
+
+const DAY_MS = 86_400_000;
+const daysBetween = (a: string, b: string): number =>
+  Math.round(Math.abs(Date.parse(`${a}T00:00:00Z`) - Date.parse(`${b}T00:00:00Z`)) / DAY_MS);
+
+/**
+ * The entries this movement could be, best first.
+ *
+ * `claimed` is every je_no some movement already points at — including this
+ * statement's own, so an entry cannot be offered twice on one screen.
+ */
+export function entryCandidatesFor(
+  movement: { bookedOn: string; amountSen: number },
+  ledger: EntryCandidateSource[],
+  claimed: ReadonlySet<string>,
+): EntryCandidate[] {
+  /* A movement with no date cannot be windowed, and a window is the only thing
+     keeping an equal amount from being a coincidence. Offer nothing rather than
+     offer everything. */
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(movement.bookedOn)) return [];
+
+  const out: EntryCandidate[] = [];
+  for (const e of ledger) {
+    if (claimed.has(e.jeNo)) continue;
+    const amountSen = e.debitSen - e.creditSen;
+    if (amountSen !== movement.amountSen) continue;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(e.entryDate)) continue;
+    const daysApart = daysBetween(e.entryDate, movement.bookedOn);
+    if (daysApart > ENTRY_MATCH_WINDOW_DAYS) continue;
+    out.push({ ...e, amountSen, daysApart });
+  }
+
+  /* Closest day first, then oldest, then by entry number — which is posting
+     order, so two entries on one day are offered in the order they were made.
+     The last term is what makes this deterministic: without it the tie falls to
+     insertion order, which is whatever the database happened to return, and the
+     same screen could offer the same two entries in either order. */
+  return out.sort((a, b) =>
+    a.daysApart - b.daysApart
+    || a.entryDate.localeCompare(b.entryDate)
+    || a.jeNo.localeCompare(b.jeNo));
+}
+
+/* ── The obvious ones (docs/bugs/0814) ────────────────────────────────────────
+   Owner, 2026-09-11, on a RM 45,000 rental transfer beside the one RM 45,000
+   voucher in the books, to NAVINDER SINGH GILL, the bank line reading "Rental
+   - Jun'26 PARVEEN AND NAVINDER": 你看着 45,000 为什么我还需要自己 manual 匹配？
+   And the rule he set: 只要名字金额一样就自动都对，名字不一样不确定我可以 manual 对.
+
+   So "never auto-applied" above gets one exception, and it is narrow: exactly
+   ONE same-amount entry within the window, AND the bank's own words for the
+   movement carry a word of that entry's payee. The amount alone is a
+   coincidence waiting to happen (two vouchers of RM 1,000 in a week); the
+   name alone matches half the ledger; the two together, with no other
+   candidate, is what a person would have pressed without thinking. Days apart
+   do not matter — a cheque clears when it clears. */
+
+/** Words that name nobody: company boilerplate, the bank's own vocabulary,
+    the words every transfer carries. */
+const NAME_STOP = new Set([
+  'SDN', 'BHD', 'BERHAD', 'SDNBHD', 'ENTERPRISE', 'TRADING', 'HOLDING', 'HOLDINGS', 'PLT', 'LTD', 'LIMITED',
+  'THE', 'AND', 'FOR', 'FROM', 'TO', 'AT', 'OF', 'MR', 'MRS', 'MS', 'MDM', 'MALAYSIA',
+  'PAYMENT', 'PAYMENTS', 'TRANSFER', 'FUND', 'INSTANT', 'DIO', 'CIB', 'BANK', 'CASH', 'INTERNAL',
+  'RENTAL', 'REFUND', 'BILL', 'JOMPAY', 'GIRO', 'ADV', 'CREDIT', 'DEBIT', 'ADVICE', 'RECEIVED',
+]);
+
+/** The words of a name or a bank line that could name somebody. */
+export const nameTokens = (text: string): string[] =>
+  String(text).toUpperCase().replace(/[^A-Z0-9]+/g, ' ').split(' ')
+    .filter((t) => t.length >= 3 && !NAME_STOP.has(t) && !/^\d+$/.test(t));
+
+/**
+ * Does the bank's text for a movement name the entry's party? A word in
+ * common — or, because Hong Leong cuts names short ("PENGURUSAN AIR SELANGO"),
+ * one word being the start of the other at five letters or more.
+ */
+export function namesAgree(bankText: string, partyName: string | null | undefined): boolean {
+  const bank = nameTokens(bankText);
+  const party = nameTokens(partyName ?? '');
+  if (party.length === 0) return false;
+  return party.some((p) => bank.some((b) =>
+    b === p || (p.length >= 5 && b.length >= 5 && (b.startsWith(p) || p.startsWith(b)))));
+}
+
+/**
+ * The entry a movement obviously is — or null, in which case a person
+ * decides. `claimed` is every je_no already accounted for (other statements'
+ * and this pass's), so the one candidate cannot be one somebody already took.
+ */
+export function obviousEntryFor(
+  movement: { bookedOn: string; amountSen: number; description: string; reference: string | null },
+  ledger: EntryCandidateSource[],
+  claimed: ReadonlySet<string>,
+): EntryCandidate | null {
+  const candidates = entryCandidatesFor(movement, ledger, claimed);
+  if (candidates.length !== 1) return null;
+  const only = candidates[0]!;
+  const text = `${movement.description} ${movement.reference ?? ''}`;
+  return namesAgree(text, only.partyName ?? only.notes ?? null) ? only : null;
+}
+
+/* ── A movement the bank itself reversed (docs/bugs/0817) ─────────────────────
+   Hong Leong, 04/06/2026: 2990's RM 2,872.75 instant transfer to its own
+   Alliance account failed, and the bank put the money back the same day —
+   description "CIB Instant Transfer Reversal", the SAME transaction reference
+   as the transfer it undid. A second transfer under a fresh reference went
+   through. The pair is the bank's own business: no entry in the books is
+   either half of it, and the transfer voucher is the retry's (owner: 这两笔是
+   contra 的，bank transaction fail).
+
+   The bank's word, the bank's reference, the money cancelling to the sen, and
+   the reversal no earlier than what it reverses — the four together, or no
+   pair. A reversal takes ONE original, the earliest still unpaired; an
+   original is never paired twice. Within one statement only: the two lines
+   sit on the same page the operator is holding. */
+export type ReversalSource = {
+  id: number; lineNo: number; bookedOn: string; description: string; reference: string | null; amountSen: number;
+};
+export type ReversalPair<T> = { original: T; reversal: T };
+
+const isBankReversal = (description: string): boolean => /\breversal\b/i.test(description);
+/* The reference as the bank wrote it, with only the spacing and the case
+   forgiven; blank is not a reference two lines can share. */
+const referenceKey = (reference: string | null): string | null => {
+  const key = String(reference ?? '').replace(/\s+/g, ' ').trim().toUpperCase();
+  return key.length > 0 ? key : null;
+};
+
+export function bankReversalPairs<T extends ReversalSource>(lines: readonly T[]): ReversalPair<T>[] {
+  const ordered = [...lines].sort((a, b) => a.bookedOn.localeCompare(b.bookedOn) || a.lineNo - b.lineNo);
+  const taken = new Set<number>();
+  const pairs: ReversalPair<T>[] = [];
+  for (const reversal of ordered) {
+    if (!isBankReversal(reversal.description) || reversal.amountSen === 0) continue;
+    const key = referenceKey(reversal.reference);
+    if (key === null) continue;
+    const original = ordered.find((l) =>
+      l.id !== reversal.id && !taken.has(l.id) && !isBankReversal(l.description)
+      && referenceKey(l.reference) === key
+      && l.amountSen === -reversal.amountSen
+      && l.bookedOn <= reversal.bookedOn);
+    if (!original) continue;
+    taken.add(original.id);
+    taken.add(reversal.id);
+    pairs.push({ original, reversal });
+  }
+  return pairs;
+}

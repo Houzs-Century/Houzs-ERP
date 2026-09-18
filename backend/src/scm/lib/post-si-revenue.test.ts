@@ -22,15 +22,28 @@ const INV = 'HC-SI-2608-001';
 
 type World = {
   invoices?: Row[];
+  /** The invoice's lines — their product group decides the sales account (docs/bugs/0829). */
+  items?: Row[];
+  /** scm.acc_item_group_accounts for company 1. */
+  binds?: Row[];
   jes?: Row[];
   jeLines?: Row[];
   /** columns the query planner must not find — drives a 42703 on that read. */
   missing?: Record<string, string[]>;
 };
 
-const world = ({ invoices, jes = [], jeLines = [], missing = {} }: World = {}) =>
+const BINDS: Row[] = [
+  { company_id: 1, group_code: 'SOFA', sales_account: '500-0003', purchase_account: '601-0003' },
+  { company_id: 1, group_code: 'MATTRESS', sales_account: '500-0001', purchase_account: '601-0001' },
+];
+
+const world = ({ invoices, items, binds = BINDS, jes = [], jeLines = [], missing = {} }: World = {}) =>
   fakeSb(
     {
+      sales_invoice_items: items ?? [
+        { id: 'l-1', sales_invoice_id: 'si-1', item_group: 'sofa', line_total_sen: 388800 },
+      ],
+      acc_item_group_accounts: binds,
       sales_invoices: invoices ?? [
         {
           id: 'si-1',
@@ -53,7 +66,7 @@ const siJes = (sb: ReturnType<typeof fakeSb>) =>
   sb.tables.journal_entries.filter((j) => j.source_type === 'SI');
 
 describe('postSiRevenue — booking the revenue once', () => {
-  it('posts ONE balanced Dr Trade Debtor / Cr Sales Revenue entry for the invoice total', async () => {
+  it('posts ONE balanced Dr Trade Debtor / Cr the product group\'s own sales account for the invoice total', async () => {
     const sb = world();
     const out = await postSiRevenue(sb, INV);
     expect(out).toMatchObject({ ok: true, status: 'posted', totalSen: 388800 });
@@ -65,8 +78,47 @@ describe('postSiRevenue — booking the revenue once', () => {
     const lines = sb.tables.journal_entry_lines.filter((l) => l.journal_entry_id === je.id);
     expect(lines.map((l) => [l.account_code, l.debit_sen, l.credit_sen])).toEqual([
       ['300-0000', 388800, 0],
-      ['500-0000', 0, 388800],
+      ['500-0003', 0, 388800],
     ]);
+  });
+
+  it('credits one line per product group (case-folded), and the header total is the law — the remainder lands on the largest group', async () => {
+    /* Two sofa lines and one mattress line; a header discount of 1 sen makes
+       the total one short of the lines, and the sen comes off the largest. */
+    const sb = world({
+      invoices: [{ id: 'si-1', invoice_number: INV, invoice_date: '2026-08-01', debtor_code: 'C-001', debtor_name: 'Ah Meng Furnishing', total_sen: 388799, company_id: 1, status: 'ISSUED' }],
+      items: [
+        { id: 'l-1', sales_invoice_id: 'si-1', item_group: 'sofa', line_total_sen: 200000 },
+        { id: 'l-2', sales_invoice_id: 'si-1', item_group: 'Sofa', line_total_sen: 100000 },
+        { id: 'l-3', sales_invoice_id: 'si-1', item_group: 'mattress', line_total_sen: 88800 },
+      ],
+    });
+    const out = await postSiRevenue(sb, INV);
+    expect(out).toMatchObject({ ok: true, status: 'posted', totalSen: 388799 });
+    const je = siJes(sb)[0]!;
+    const lines = sb.tables.journal_entry_lines.filter((l) => l.journal_entry_id === je.id);
+    expect(lines.map((l) => [l.account_code, l.debit_sen, l.credit_sen])).toEqual([
+      ['300-0000', 388799, 0],
+      ['500-0003', 0, 299999],
+      ['500-0001', 0, 88800],
+    ]);
+  });
+
+  it('a group with no sales account bound REFUSES by name and posts nothing; so does a line with no group; so does an invoice with no lines', async () => {
+    const unbound = world({ items: [{ id: 'l-1', sales_invoice_id: 'si-1', item_group: 'dining', line_total_sen: 388800 }] });
+    const r1 = await postSiRevenue(unbound, INV);
+    expect(r1).toMatchObject({ ok: false, status: 'group_unbound' });
+    expect(String((r1 as { reason?: string }).reason)).toContain('DINING');
+    expect(String((r1 as { reason?: string }).reason)).toContain('Item Groups');
+    expect(siJes(unbound)).toHaveLength(0);
+
+    const ungrouped = world({ items: [{ id: 'l-1', sales_invoice_id: 'si-1', item_group: null, line_total_sen: 388800 }] });
+    expect(await postSiRevenue(ungrouped, INV)).toMatchObject({ ok: false, status: 'line_ungrouped' });
+    expect(siJes(ungrouped)).toHaveLength(0);
+
+    const bare = world({ items: [] });
+    expect(await postSiRevenue(bare, INV)).toMatchObject({ ok: false, status: 'no_lines' });
+    expect(siJes(bare)).toHaveLength(0);
   });
 
   it('a SECOND call books nothing — one invoice, one revenue entry', async () => {
@@ -135,7 +187,7 @@ describe('reverseSiRevenue — voiding it once', () => {
     const revLines = sb.tables.journal_entry_lines.filter((l) => l.journal_entry_id === reversals[0]!.id);
     expect(revLines.map((l) => [l.account_code, l.debit_sen, l.credit_sen])).toEqual([
       ['300-0000', 0, 388800],
-      ['500-0000', 388800, 0],
+      ['500-0003', 388800, 0],
     ]);
   });
 

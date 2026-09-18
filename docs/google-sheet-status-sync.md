@@ -145,3 +145,10 @@ nothing and prints, with **real sheet row numbers**:
 - The script holds `SHEET_SYNC_KEY` in plaintext (Apps Script has no secret
   store). It is the same value as the GitHub Actions secret; never paste it
   into a doc, a commit, or a screenshot.
+
+## The SO rows: `ERPDeliverySync.gs` (2026-09-15)
+
+The regional tabs' Sales Order pull and push moved off AutoCount onto the ERP
+(`/api/delivery-sheet/*`). The script is `reference/ERPDeliverySync.gs`; the surface,
+the column rulings and the cutover order (seed, then arm the trigger) are in
+`docs/modules/delivery-sheet-sync.md`. The editing notes above apply unchanged.

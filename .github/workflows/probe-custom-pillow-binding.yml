@@ -1,0 +1,62 @@
+name: Probe custom pillow binding (read-only)
+
+# Owner 2026-09-14: a SQUARE PILLOW / LONG PILLOW sewn in a chosen colour must be
+# allocated to ITS sales-order line, not pooled FIFO by SKU. Purchasing reported
+# the symptom the same day (HC-SO-013384 / 013496 / 013236, and the double PO
+# HC-PO-2609-091 / 2609-101 on HC-SO-013503).
+#
+# Prints, for the named orders: each custom pillow line with its colour and every
+# purchase-order line pointing at it; what the REAL MRP engine names as each
+# line's cover (own purchase order, or somebody else's); and, company-wide, the
+# lines ordered more than once and the purchase lines whose colour disagrees with
+# the sales line they point at.
+#
+# READ-ONLY. No APPLY flag; every statement is a SELECT, the session is set READ
+# ONLY, and the engine runs behind a guard that refuses any write method.
+on:
+  workflow_dispatch:
+    inputs:
+      company_id:
+        description: "ERP company (AED_HOUZS is company 1)"
+        required: false
+        default: "1"
+        type: string
+      sos:
+        description: "Comma-separated sales orders to print in full"
+        required: false
+        default: "HC-SO-013384,HC-SO-013496,HC-SO-013236,HC-SO-013503"
+        type: string
+      pos:
+        description: "Comma-separated purchase orders to print in full"
+        required: false
+        default: "HC-PO-010083,HC-PO-010084,HC-PO-009945,HC-PO-2609-058,HC-PO-2609-065,HC-PO-2609-053,HC-PO-2609-091,HC-PO-2609-101"
+        type: string
+
+# Not in the deploy concurrency group: it touches nothing and must never queue
+# behind - or displace - a release.
+concurrency:
+  group: probe-custom-pillow-binding
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npx tsx scripts/probe-custom-pillow-binding.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMPANY: ${{ inputs.company_id }}
+          SOS: ${{ inputs.sos }}
+          POS: ${{ inputs.pos }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

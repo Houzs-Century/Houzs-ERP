@@ -6,9 +6,11 @@ import {
   enqueueConvertIfAllowed,
   accountingSuppressed,
   refuseMigratedSources,
+  deliveryMustMirrorAutoCount,
   MIGRATED_WRITEBACK_SKIP_REASON,
   type MigratedSourceDoc,
 } from './migrated-chain';
+import { MIGRATED_DELIVERIES_NOT_INVOICED_IN_AUTOCOUNT } from './migrated-deliveries-not-invoiced.generated';
 
 /* Every fixture below is a real document read out of production and live
    AED_HOUZS on 2026-08-11, not an invented shape. The AutoCount totals are
@@ -342,5 +344,36 @@ describe('a migrated invoice posts no journal entry', () => {
   it('suppresses accounting for a migrated source and leaves an ordinary one alone', () => {
     expect(accountingSuppressed({ migrated: true })).toBe(true);
     expect(accountingSuppressed({ migrated: false })).toBe(false);
+  });
+});
+
+/* docs/bugs/0918 — a delivery carried over from AutoCount that AutoCount never
+   invoiced is billed like any other; one AutoCount invoiced still mirrors. The
+   numbers are production's on 2026-09-15. */
+describe('a migrated delivery AutoCount never invoiced', () => {
+  it('HC-DO-011484 is not refused: AutoCount holds no invoice from it', () => {
+    const docNo = 'HC-DO-011484';
+    const migrated = deliveryMustMirrorAutoCount({ docNo, migrated: true }, MIGRATED_DELIVERIES_NOT_INVOICED_IN_AUTOCOUNT);
+    expect(migrated).toBe(false);
+    expect(refuseMigratedSources([{ docNo, migrated }])).toBeNull();
+  });
+
+  it('HC-DO-000097, which AutoCount invoiced as I-000213, is still refused', () => {
+    const docNo = 'HC-DO-000097';
+    const migrated = deliveryMustMirrorAutoCount({ docNo, migrated: true }, MIGRATED_DELIVERIES_NOT_INVOICED_IN_AUTOCOUNT);
+    expect(refuseMigratedSources([{ docNo, migrated }])).not.toBeNull();
+  });
+
+  it('a migrated delivery missing from the measurement is refused, and an ordinary one never is', () => {
+    expect(deliveryMustMirrorAutoCount({ docNo: 'HC-DO-011484', migrated: true }, new Set())).toBe(true);
+    expect(deliveryMustMirrorAutoCount({ docNo: 'HC-DO-2609-103', migrated: false }, new Set())).toBe(false);
+  });
+
+  it('the measured list holds only migrated delivery numbers, and not the two AutoCount invoiced', () => {
+    const list = [...MIGRATED_DELIVERIES_NOT_INVOICED_IN_AUTOCOUNT];
+    expect(list.length).toBeGreaterThan(0);
+    expect(list.every((n) => /^HC-DO-\d{6}$/.test(n))).toBe(true);
+    expect(list).not.toContain('HC-DO-000097');
+    expect(list).not.toContain('HC-DO-003699');
   });
 });

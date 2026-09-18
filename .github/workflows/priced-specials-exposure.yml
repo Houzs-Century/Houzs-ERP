@@ -1,0 +1,61 @@
+name: Priced options — can a variant fix move a price? (read-only)
+
+# Manual, read-only. Owner, 2026-09-13:
+# 「处理 variant 关卖价什么事情呢 不要影响到我们的卖价啊 只是处理我们的 variant 啊」
+#
+# A picked option's SELLING surcharge folds into the unit price
+# (shared/mfg-pricing.ts:237-254 -> lib/mfg-pricing-recompute.ts:532), BUT the
+# same file makes that arm structurally inert on a MIGRATED document
+# (:535-545, owner ruling "A"). So the exposure is exactly one population: a
+# line on a NATIVE order carrying a PRICED option.
+#
+# This counts it, for the whole system rather than for one tool, and prints the
+# ringgit at risk. It writes nothing: SELECT only, no DDL, no transaction.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      company:
+        description: "company_id"
+        required: false
+        default: "1"
+        type: string
+
+concurrency:
+  group: priced-specials-exposure-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: npx tsx scripts/check-priced-specials-exposure.mjs
+        env:
+          COMPANY_ID: ${{ inputs.company }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: npx tsx scripts/check-priced-specials-exposure.mjs
+        env:
+          COMPANY_ID: ${{ inputs.company }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

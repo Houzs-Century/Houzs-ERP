@@ -1,4 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { PromptProvider } from "../vendor/scm/components/PromptDialog";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -100,6 +101,14 @@ function notice(over: Partial<Record<string, unknown>> = {}): Row {
   };
 }
 
+const DOC_TYPES = [
+  { code: "ANN", label: "Announcement", attachmentRequired: false },
+  { code: "MEMO", label: "Memo", attachmentRequired: false },
+  { code: "SOP", label: "Standard operating procedure", attachmentRequired: true },
+  { code: "WARN", label: "Warning", attachmentRequired: false },
+  { code: "NTC", label: "Notice", attachmentRequired: false },
+];
+
 function mountWith(rows: Row[]) {
   apiGet.mockImplementation(async (url: string) => {
     if (url.startsWith("/api/announcements/banner?scope=human")) {
@@ -119,6 +128,11 @@ function mountWith(rows: Row[]) {
       };
     }
     if (url === "/api/departments") return { departments: [] };
+    if (url === "/api/document-types") return { data: DOC_TYPES };
+    if (url.startsWith("/api/document-refs/next")) {
+      const t = /typeCode=([A-Z]+)/.exec(url)?.[1] ?? "ANN";
+      return { data: { refNo: `OPS-${t}-2609-0001` } };
+    }
     if (url === "/api/positions") return { positions: [] };
     if (url === "/api/users") return { users: [] };
     if (url === "/api/companies") return { companies: [{ id: 1, code: "HZ", name: "Houzs" }] };
@@ -127,7 +141,9 @@ function mountWith(rows: Row[]) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
-      <MobileAnnouncements />
+      <PromptProvider>
+        <MobileAnnouncements />
+      </PromptProvider>
     </QueryClientProvider>,
   );
 }
@@ -183,7 +199,7 @@ describe("MobileAnnouncements — a phone-posted notice can expire", () => {
     });
 
     await act(async () => {
-      fireEvent.click(screen.getByText(/Publish announcement/));
+      fireEvent.click(screen.getByText(/Submit for approval/));
     });
 
     await waitFor(() => expect(apiPost).toHaveBeenCalled());
@@ -194,6 +210,34 @@ describe("MobileAnnouncements — a phone-posted notice can expire", () => {
     expect(Date.parse(String(sent.expiresAt))).toBe(
       new Date("2026-09-01T18:00").getTime(),
     );
+  });
+});
+
+describe("MobileAnnouncements — numbering on the phone (owner 2026-09-09)", () => {
+  it("the type follows the category until picked by hand; the number is previewed; a file-demanding type holds Submit", async () => {
+    await openCompose();
+    const type = screen.getByLabelText("Document type") as HTMLSelectElement;
+    // General (Notice) is the default category → NTC, and the number is previewed.
+    await waitFor(() => expect(type.value).toBe("NTC"));
+    await waitFor(() => expect(screen.getByTestId("ref-no-preview").textContent).toContain("OPS-NTC-2609-0001"));
+    fireEvent.change(screen.getByLabelText("Category"), { target: { value: "SOP" } });
+    await waitFor(() => expect(type.value).toBe("SOP"));
+    // SOP demands a file: the hint shows and Submit is held.
+    expect(screen.getByTestId("attachment-required-hint")).toBeTruthy();
+    expect((screen.getByText(/Submit for approval/) as HTMLButtonElement).disabled).toBe(true);
+    // Picked by hand: the category no longer moves it, and the hold lifts.
+    fireEvent.change(type, { target: { value: "MEMO" } });
+    fireEvent.change(screen.getByLabelText("Category"), { target: { value: "WARNING" } });
+    expect(type.value).toBe("MEMO");
+    expect(screen.queryByTestId("attachment-required-hint")).toBeNull();
+    expect(screen.getByLabelText("Numbered under")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Sticky type" } });
+    await act(async () => {
+      fireEvent.click(screen.getByText(/Submit for approval/));
+    });
+    await waitFor(() => expect(apiPost).toHaveBeenCalled());
+    const [, payload] = apiPost.mock.calls.find((c) => c[0] === "/api/announcements")!;
+    expect(payload).toEqual(expect.objectContaining({ docType: "MEMO", category: "WARNING" }));
   });
 });
 
@@ -218,21 +262,37 @@ describe("MobileAnnouncements — a publisher can retract from the phone", () =>
     await waitFor(() => expect(apiPatch).toHaveBeenCalledWith("/api/announcements/a1", { isActive: false }));
   });
 
-  it("deletes only after a confirm, and reports a refusal", async () => {
+  it("discards a DRAFT only after a confirm, and reports a refusal (a submitted notice is voided, not deleted)", async () => {
     confirmAnswer.current = false;
-    await openDetail([notice()]);
+    await openDetail([notice({ approvalStatus: "DRAFT" })]);
     await act(async () => {
-      fireEvent.click(screen.getByText("Delete"));
+      fireEvent.click(screen.getByText("Discard draft"));
     });
     expect(apiDel).not.toHaveBeenCalled();
 
     confirmAnswer.current = true;
     apiDel.mockRejectedValueOnce(new Error("403: Announcement not found"));
     await act(async () => {
-      fireEvent.click(screen.getByText("Delete"));
+      fireEvent.click(screen.getByText("Discard draft"));
     });
     await waitFor(() => expect(apiDel).toHaveBeenCalledWith("/api/announcements/a1"));
     await waitFor(() => expect(notified.some((n) => /403|not found/i.test(String(n.body)))).toBe(true));
+  });
+
+  it("a submitted notice offers Void…, which asks a reason and POSTs /void (mig 20260907T1030)", async () => {
+    apiPost.mockResolvedValue({ success: true, data: { id: "a1", voidedAt: "2026-09-07T00:00:00Z" } });
+    await openDetail([notice()]);
+    expect(screen.queryByText("Delete")).toBeNull();
+    await act(async () => {
+      fireEvent.click(screen.getByText("Void…"));
+    });
+    const box = await screen.findByRole("textbox", { name: /reason|void/i }).catch(() => null);
+    const input = box ?? (await screen.findAllByRole("textbox")).at(-1)!;
+    fireEvent.change(input, { target: { value: "Superseded." } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Void" }));
+    });
+    await waitFor(() => expect(apiPost).toHaveBeenCalledWith("/api/announcements/a1/void", { reason: "Superseded." }));
   });
 });
 

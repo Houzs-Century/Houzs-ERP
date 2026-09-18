@@ -56,7 +56,7 @@ import poBucketsSrc from "../src/scm/lib/po-status-buckets.ts?raw";
 import soDeliverableSrc from "../src/scm/shared/so-deliverable-states.ts?raw";
 import inventoryRouterSrc from "../src/scm/routes/inventory.ts?raw";
 import procurementLearningSrc from "../src/services/agents/procurement-learning.ts?raw";
-import soRouterSrc from "../src/scm/routes/mfg-sales-orders.ts?raw";
+import { soRouterSource } from "./lib/so-router-source";
 import soDetailGatesSrc from "../../frontend/src/vendor/scm/lib/so-detail-gates.ts?raw";
 
 import { SO_TERMINAL_STATES } from "../src/scm/shared/so-terminal-states";
@@ -64,6 +64,7 @@ import { isCrewScopedUser as backendIsCrewScoped } from "../src/services/project
 import { isCrewScopedUser as frontendIsCrewScoped } from "../../frontend/src/auth/crewScope";
 import { normaliseTypographicQuotes } from "../src/scm/shared/mfg-pricing";
 import { computeVariantKey } from "../src/scm/shared/variant-key";
+const soRouterSrc = soRouterSource();
 
 /* ── Source-read helpers ───────────────────────────────────────────────────
    Comments in this repo QUOTE the sets they explain, so they are blanked

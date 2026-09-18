@@ -1,229 +1,47 @@
-> ## Corrections — 2026-08-12 code-read sweep
->
-> 1. The schema DOES enforce type↔is_showroom one-way: trigger trg_warehouse_sync_is_showroom (mig 0186, absent from this guide) overwrites is_showroom from type — a raw UPDATE of is_showroom alone is silently reverted.
-> 2. SalesOrderMaintenance.tsx:38-41 dropped useCreateWarehouse/useUpdateWarehouse — that view only READS.
-> 3. The type enum shipped in 0177_scm_warehouse_type_and_unify.sql, not “mig 0171” (0171 is idempotency; the file's internal header was never renumbered).
-> 4. The OR-include at inventory.ts:357-359 reads is_consignment, not is_showroom.
-> 5. POST/PATCH also accept country/state/postcode/city (mig 0180); 0180 + 0186 missing from the migration table. Racks, state-warehouse-mappings, warehouse-label and WH_NONE are undocumented here (coverage gap). — *warehouse-label CLOSED 2026-08-21: see §1, "The display rule has a FRONTEND home now". The other three remain open.*
+# Warehouses
 
-# Module: Warehouses (SCM master)
+`scm.warehouses` — the master list of physical stock locations. Small table, but load-bearing: every stock movement, Delivery Order, GRN, SO reserve, inventory balance and venue resolve reads from it.
 
-Per-module technical doc for `scm.warehouses` — the master list of physical
-stock locations. Small table, but load-bearing: every stock movement / DO / GRN
-/ SO reserve / inventory balance / venue resolve reads from it.
+## Statuses and flow
 
-> **Naming (vocabulary registry).** The building an order ships from is
-> `warehouse_id` (uuid -> `scm.warehouses`), per line; its one display rule is
-> `warehouse-label.ts` (code first, then name). It is declared in
-> `backend/scripts/lib/vocabulary.mjs`. The SO header still keeps a free-text
-> snapshot `sales_location`; unifying that onto `warehouse_id` is a STAGED backfill
-> migration (it lands on `scm.mfg_sales_orders` and its grant-bearing
-> `mfg_sales_orders_with_payment_totals` view — the 0189 hazard), not yet shipped.
-> `purchase_location_id` (PO header) and `showroom_warehouse_id` are separate
-> columns, not drift.
+`type` (`scm.warehouse_type` enum) is the canonical classification — five values, each with its own cross-company sharing rule:
 
-> Convention: money in **sen**, dates UTC. Reads/writes via `/api/scm/*`.
->
-> **Line numbers here are INDICATIVE, not authoritative.** They were correct at
-> `main` @ `c523a02f` and drift with every merge — an audit on 2026-08-13 found
-> every `:NNN` in this directory stale while the paths, methods and permission
-> keys were right. Resolve a route to its current line with the GENERATED
-> artifact, which cannot go stale because it is rebuilt from the tree:
->
-> ```bash
-> npm --prefix backend run gen:route-locator   # then grep docs/generated/route-locator.md
-> ```
+| Type | Meaning | Sharing |
+|---|---|---|
+| `warehouse` | pure stock location | both companies |
+| `showroom` | sales point, feeds the venue list | company-specific |
+| `display` | display stock at a partner site, must not net into sellable inventory | HOUZS-only |
+| `service` | repair / customer-service centre | both companies |
+| `others` | HQ or anything else | HOUZS-only |
 
----
+`is_showroom` is a legacy boolean kept for backward-compatible readers (venue-binding resolver, Members page, an inventory OR-include) — it is DERIVED from `type` by a database trigger, not an independent fact.
 
-## 1. Frontend
+Racks (`scm.warehouse_racks`) live one level under a warehouse, unique per `(warehouse_id, rack)`; a rack can carry a `zone` override of its default number-based zone grouping. A cross-company, read-only view backs an "All Companies" rack tab and the mobile rack-lookup screen — there is no cross-company write; editing, stock and zone stay per-company.
 
-| Surface | File | Notes |
-|---------|------|-------|
-| Desktop list | `frontend/src/pages/scm-v2/Warehouses.tsx` | DataGrid, per-column filter + sort. Type column + label at `:22-33`. |
-| Shared edit drawer | `frontend/src/vendor/scm/components/WarehouseFormDrawer.tsx` | Type dropdown replaces the old "Mark as Showroom" checkbox (mig 0177). |
-| Master admin (inline) | `frontend/src/pages/scm-v2/SalesOrderMaintenance.tsx` | Legacy inline table — also uses `useCreateWarehouse` / `useUpdateWarehouse`. |
-| Query hook | `frontend/src/vendor/scm/lib/inventory-queries.ts` | `useWarehouses({ includeInactive })`, staleTime 5 min. `Warehouse` + `WarehouseType`. |
+## Rules that must not break
 
-`useWarehouses()` is the single read hook every consumer (PO, DO, GRN, SO,
-Inventory board, Racks) reaches through. Do not open a per-page fetch — the
-5-min staleness is intentional and shared.
+- Set `type`, never `is_showroom` directly — a trigger overwrites `is_showroom` from `type` on every insert/update, so a raw update of the flag alone is silently reverted.
+- Every read and write on `scm.warehouses` (and racks) must be company-scoped — an unscoped query can promote, demote or delete another company's default warehouse.
+- The NON-SELLING warehouse set (`{showroom, display, service}`) lives in exactly one module (`non-selling-warehouse.ts`) — import it, never re-declare it; a duplicate declaration fails the build.
+- Classify a lot as consignment by its SOURCE document (`isConsignmentLotSource`), never by the warehouse's own `is_consignment` flag — a receipt mis-posted into a normal warehouse would otherwise leak supplier-owned stock into owned value.
+- A positive stock ADJUSTMENT or STOCK_TAKE variance must resolve a real unit cost (typed, else weighted average of other priced open lots, else last-known cost) or be refused (`422 cost_required`) — never silently open a lot at RM0.
+- Do not delete a warehouse with movement history — the FK from `inventory_movements`/`lots`/`cogs` refuses it (409 `in_use`); deactivate instead.
 
-### The display rule has a FRONTEND home now (2026-08-21)
+## Gotchas
 
-`warehouseLabel` — **code first, then name**, trimmed, `null` when neither is
-set — used to exist only at `backend/src/scm/lib/warehouse-label.ts`, and the
-frontend cannot import from `backend/src`. So every frontend surface that showed
-a warehouse hand-wrote its own order and they drifted in both directions: the
-Purchase Orders list printed the NAME and the grid truncated it to
-`BALAKONG WAREHO…`, while the same page's PDF export printed the code.
+- Use the shared `warehouseLabel` rule (code first, then name) via its frontend mirror — don't hand-write a `?.name || ?.code` fallback; a corpus test fails the build on any new private copy.
+- Read warehouses through `useWarehouses()` — its 5-minute staleness is intentional and shared; don't add a per-page fetch.
+- `CONSIGN-OUT` is a 2990-only, inactive historical placeholder — do not copy it to HOUZS in a future unification pass.
+- Filter `type='showroom'` for "sales point", `type='warehouse'` for "stock location", or `is_active=true` alone for "everything selectable" — don't reuse `is_showroom` for a new consumer.
+- Rack labels carry no implicit prefix — the grid renders the stored `rack` string verbatim, so a seeded label must already contain everything that should show.
+- On mobile, racks are read-only lookup (plus create) — rename, re-zone, batch-edit and delete are still desktop-only.
 
-| | |
-|---|---|
-| the rule | `backend/src/scm/lib/warehouse-label.ts` |
-| the frontend MIRROR | `frontend/src/vendor/scm/lib/warehouse-label.ts` — **byte-identical**, and it must stay at the top level of `vendor/scm/lib` |
-| the referee | `frontend/src/vendor/scm/lib/warehouse-label.canonical.test.ts` (byte-identity + the order + a corpus pin) and `node backend/scripts/check-shared-mirrors.mjs --strict`, which already enumerates that exact directory pair |
+## Where the code is
 
-**Import it; do not spell it.** The corpus pin in that test fails by NAMING any
-file under `frontend/src` that re-grows a private `?.name || ?.code` warehouse
-fallback, so a new screen cannot quietly add the fifteenth copy. Where a row
-carries the warehouse as FLAT snapshot columns instead of a nested object
-(`warehouse_code` / `warehouse_name`, `warehouseLocationCode` /
-`warehouseLocationName`), wrap the two into the rule with a one-line local
-adapter — `GrnFromPo.tsx` is the worked example — rather than writing a second
-rule.
-
-Two sites are deliberately still private copies. Both are already code-first, so
-both render correctly:
-
-- `pages/scm-v2/SalesOrderDetail.tsx` resolves a venue's warehouse by hand. It is
-  the corpus test's shrink-only `PENDING` entry — converting it makes the test
-  fail until the entry is deleted.
-- `pages/scm-v2/Inventory.tsx`, three cells over the flat columns. Converting it
-  needs an adapter, and that file is AT its file-size ceiling, which
-  `npm run check:file-size` will not let a change grow. Do it when that file is
-  next split.
-
----
-
-## 2. Schema (`scm.warehouses`)
-
-Row per (company, code). Baseline table in `0000_baseline.sql`; grown through
-these migrations:
-
-| Migration | What it added |
-|-----------|--------------|
-| `0086_warehouses_company_id.sql` | `company_id bigint` + backfilled to HOUZS; per-company index. |
-| `0087_master_codes_per_company.sql` | UNIQUE `(company_id, code)` (replaced `code`-unique). |
-| `0148_venue_binding.sql` | `is_showroom bool NOT NULL DEFAULT false` + `venue_name text`. |
-| `0177_scm_warehouse_type_and_unify.sql` | `scm.warehouse_type` enum + `type` column (NOT NULL); 2990 renames; cross-company copies for warehouse + service types. |
-| `0186_warehouse_is_showroom_sync.sql` | one-time reconcile + `trg_warehouse_sync_is_showroom` — a BEFORE INSERT OR UPDATE OF `type`, `is_showroom` trigger that sets `is_showroom := COALESCE(type = 'showroom', false)` on every write. 0177 backfilled once in one direction and added no trigger, so a warehouse typed 'showroom' through the new drawer kept `is_showroom=false` — that is why 2990's "PJ SHOWROOM" was missing from the venue picker. |
-
-### Type enum (mig 0177)
-
-`scm.warehouse_type` has FIVE values:
-
-| Type | Meaning | Cross-company sharing |
-|------|---------|-----------------------|
-| `warehouse` | Pure stock (KL, PG, SBH, SRW, CHINA) | **Both companies** — this is a fleet-shared type. |
-| `showroom` | Sales point that also feeds the venue list. `is_showroom = true` invariant. | Company-specific — HOUZS: Kelana.J, Sunway. 2990: PJ. |
-| `display` | Display stock at a partner site; must NOT net into sellable inventory. | HOUZS-only (C&C, EM, KL, PG, SBH). |
-| `service` | Repair / customer-service centre. | **Both companies** — KL SERVICE, PG SERVICE. |
-| `others` | HQ, C&C K.J, any site that doesn't fit. | HOUZS-only. |
-
-`is_showroom` is kept for backward compatibility (venue-binding resolver +
-Members-page staff parking + `inventory.ts`'s OR-include). Since mig 0186
-**`type` is canonical and `is_showroom` is DERIVED from it by a database
-trigger** — `trg_warehouse_sync_is_showroom` overwrites `is_showroom` with
-`(type = 'showroom')` on every insert and on every update touching either
-column. The routes still compute the pair themselves (POST `inventory.ts:150-151`,
-PATCH `:267-271`), but the trigger has the last word: a create sent as
-`{ type: 'display', isShowroom: true }` lands `is_showroom=false`, not the
-`true` the route computed.
-
----
-
-## 3. Backend routes (`/inventory/warehouses`)
-
-Owned by `backend/src/scm/routes/inventory.ts`:
-
-- `GET  /inventory/warehouses?includeInactive=true` — list. Company-scoped via
-  `scopeToCompany(...)` (`:42-52`).
-- `POST /inventory/warehouses` — create. Company required (`requireActiveCompanyId`
-  refuses if unresolved — see the LEAK FIX header at `:64-69`). Accepts
-  `{ code, name, location?, isActive?, isDefault?, isShowroom?, venueName?, type? }`.
-  `type` defaults to `'warehouse'`, or `'showroom'` when `isShowroom=true` and
-  `type` omitted (`:71-97`).
-- `PATCH /inventory/warehouses/:id` — update. Same company-scope guard as POST
-  (`:124-168`); demoting the previous default is scoped to this company (this
-  used to be a cross-company leak — see the header at `:110-122`). `type` and
-  `isShowroom` move together — send either, get both.
-- `DELETE /inventory/warehouses/:id` — hard delete. Also company-scoped
-  (`:184-201`). Returns `in_use` (409) on FK violation from
-  `inventory_movements` / `lots` / `cogs`; UI should suggest deactivate instead.
-
----
-
-## 4. Downstream reads
-
-The Type column is not just cosmetic — several downstream code paths already
-key off the older `is_showroom` flag and will migrate to `type` incrementally:
-
-- **Venue-binding resolver** (mig 0148) reads `is_showroom = true` to feed the
-  Sales Maintenance venue list. Since 0186 the trigger guarantees the flag
-  tracks `type='showroom'` on every write, so these readers need no migration.
-- **Members page** — staff `showroom_warehouse_id` FK; the picker filters on
-  `is_showroom = true`.
-- **Inventory list** (`inventory.ts:257`) OR-includes `is_consignment=true`
-  rows into the balances read so consignment/showroom stock stays visible.
-- **Free-to-sell** (`inventory.ts`, `deliveredReturnedBySoItem`) subtracts a
-  Sales Order line's delivered qty, and only counts a DO whose status is NOT in
-  `DO_NOT_DELIVERED_STATES`. **That set gained LOADED on 2026-08-20** — a
-  delivery still on the lorry was taking its units OUT of Reserved before any
-  stock had moved, which inflates free-to-sell towards over-sell. One predicate
-  now (`doCountsAsDelivered`); the trace is in `docs/modules/delivery-order.md`
-  under *"Has this delivery counted?" is ONE predicate now*.
-- **FIFO lot feeds carry the consignment verdict on the ROW** (2026-08-20).
-  `GET /inventory/lots/:itemCode` now stamps `is_consignment` on every lot, the
-  way `GET /inventory/reservations` already did, from the one classifier
-  `isConsignmentLotSource` (`scm/lib/inventory-movements.ts`) over the lot's
-  `source_doc_type` / `source_doc_no`. It was the only lot feed that did not say,
-  and its consumer — the desktop Stock Card — therefore valued the supplier's
-  goods as ours while the per-warehouse table beneath it, fed by
-  `/breakdown/:itemCode`, excluded them. Both clients now split the same feed
-  through the shared `buildStockBreakdown`, so a new lot surface adds no third
-  filter.
-
-Rule of thumb when adding a new consumer: if you want "sales point", filter
-`type='showroom'`; if you want "stock location", filter `type='warehouse'`; if
-you want "everything selectable", filter `is_active=true` and skip type.
-
----
-
-## 5. Rules that will bite you
-
-- **`is_showroom` and `type` are ONE fact, and the SCHEMA enforces it** since
-  mig 0186. Set `type`; `is_showroom` follows. A raw SQL UPDATE of `is_showroom`
-  alone does NOT stick — the BEFORE trigger rewrites it from `type` — so a
-  "fix" applied to the flag is silently discarded. To change whether a warehouse
-  is a showroom, change `type`.
-- **Company scope is on every read/write.** Any new query on `scm.warehouses`
-  must go through `scopeToCompany` / `scopeToCompanyId`, or `activeCompanyId(c)`
-  in a hand-written filter. The audit at `inventory.ts:110-122` shows what
-  happens without it: a company can promote / demote / delete another company's
-  default warehouse.
-- **CONSIGN-OUT is 2990-only and inactive.** It's a historical consignment-out
-  placeholder; do not copy it to HOUZS on any future unification pass.
-- **Consignment is QUANTITY, never VALUE — and the verdict is by SOURCE.** Stock
-  fed by a Purchase Consignment Receive belongs to the supplier until it sells,
-  so it counts on hand and must stay out of every value total. Classify with
-  `isConsignmentLotSource(source_doc_type, source_doc_no)`, never with the
-  warehouse's own `is_consignment` flag: a PCR mis-posted into a normal
-  warehouse defeats the flag and leaks into owned value (BUG-HISTORY
-  2026-07-25). On the client, never write a fourth filter — `buildStockBreakdown`
-  (`frontend/src/vendor/scm/lib/inventory-queries.ts`) is the one split, and it
-  returns `ownedValueSen` beside `consignmentQty` so a surface can show both.
-- **Do not delete a warehouse with movement history.** FK from
-  `inventory_movements` will refuse (409 `in_use`). Deactivate (`is_active=false`)
-  instead — the master row stays, historical rows keep pointing at it.
-- **A positive stock ADJUSTMENT / STOCK_TAKE variance must carry a real unit cost
-  (audit R3, 2026-07-25).** A found-stock increase opens a FIFO lot; the trigger
-  floors an un-costed lot to RM0 and never re-costs it (permanent RM0 COGS). So
-  `POST /inventory/adjustments` (increase) and stock-take `PATCH /:id/post` now
-  resolve the SKU's best-known cost (operator's if typed, else the weighted avg of
-  its other priced open lots — consignment excluded — else its last-known priced
-  cost). If NO basis exists anywhere they reject with **422 `cost_required`**
-  (adjustment: the operator enters a cost; stock-take: the POSTED flip is reverted
-  to OPEN and the SKU(s) named). Pure decision in
-  `backend/src/scm/shared/adjustment-cost.ts`; never writes 0.
-
----
-
-## 6. See also
-
-- `docs/modules/stock-take.md` — the cycle-count document (assignees, blind
-  counts, variance threshold, NONZERO scope — phase 1, 2026-08-08).
-- `docs/modules/delivery-order.md` — DO consumes warehouse for the OUT leg.
-- `docs/modules/grn.md` — GRN consumes warehouse for the IN leg.
-- `BUG-HISTORY.md` — entry 2026-07-23 for the type + unification rationale;
-  entry 2026-06-20 for the `is_default` cross-company leak fix.
+- `backend/src/scm/routes/inventory.ts` — warehouse CRUD, valuation, racks.
+- `backend/src/scm/lib/warehouse-label.ts`, `frontend/src/vendor/scm/lib/warehouse-label.ts` — the shared display rule (byte-identical pair).
+- `backend/src/scm/lib/non-selling-warehouse.ts` — the non-selling type set.
+- `backend/src/scm/shared/adjustment-cost.ts` — variance cost resolution.
+- `frontend/src/pages/scm-v2/Warehouses.tsx`, `CrossCompanyRacks.tsx` — desktop surfaces.
+- `frontend/src/mobile/MobileRacks.tsx` — mobile rack lookup.
+- `frontend/src/vendor/scm/lib/inventory-queries.ts` — `useWarehouses`.

@@ -150,3 +150,133 @@ describe('checkAllowedOptions — unchanged behaviour', () => {
     expect(err!.allowed).toEqual(PROD_TOTAL_HEIGHTS);
   });
 });
+
+/* ── The fabric pool holds SERIES, and the line sends a COLOUR ──────────────
+   The owner opened every sofa Model's fabric allow-list and his staff still
+   could not pick a fabric. Cause: the screen that FILLS the pool
+   (ProductModelDetail's Modular drawer) offers `fabric_library.id` - a fabric
+   SERIES - while this gate compared the line's `fabricCode`/`colourId`, a
+   COLOUR. One field, two vocabularies.
+
+   MEASURED on production 2026-09-11, company 1: all 79 sofa Models carry the
+   SAME 101-entry pool; 91 entries are library ids, 3 are colour ids, 10 are
+   library LABELS ("GD2034 (HIVE)"); 851 colours are active. Three of 851 could
+   be picked. The pool values and the line shape below are copied from that
+   measurement, not invented - `BO315` is in the real pool and
+   `{"colourId":"BO315-23","fabricId":"BO315"}` is a real saved line.
+   docs/bugs/0814. */
+const REAL_POOL_HEAD = ['311', 'A201', 'AH', 'ALPINE-5311', 'AM275', 'AMBER', 'AVANI', 'BN125', 'BO315', 'BYD'];
+const sofa = product({ code: '8030-1A(LHF)', category: 'SOFA' });
+
+describe('checkAllowedOptions — the fabric pool speaks SERIES', () => {
+  const pool = model({ fabrics: REAL_POOL_HEAD });
+
+  it('accepts a colour whose SERIES is in the pool (the case that was refused)', () => {
+    expect(checkAllowedOptions(sofa, pool, {
+      fabricCode: 'BO315-23', colourId: 'BO315-23', fabricId: 'BO315',
+    })).toBeNull();
+  });
+
+  it('still accepts a pool entry that is a COLOUR, so a per-shade allow keeps working', () => {
+    expect(checkAllowedOptions(sofa, model({ fabrics: ['BO315-23'] }), {
+      fabricCode: 'BO315-23', colourId: 'BO315-23', fabricId: 'BO315',
+    })).toBeNull();
+  });
+
+  it('STILL REFUSES a fabric whose series is not in the pool — the gate is not switched off', () => {
+    const err = checkAllowedOptions(sofa, pool, {
+      fabricCode: 'GD2502-11', colourId: 'GD2502-11', fabricId: 'GD2502',
+    });
+    expect(err).not.toBeNull();
+    expect(err!.field).toBe('fabric');
+    expect(err!.value).toBe('GD2502-11');
+    expect(err!.allowed).toEqual(REAL_POOL_HEAD);
+  });
+
+  it('refuses when the line carries NO series and the colour is not in the pool', () => {
+    // A line written before pickFabricColour sent fabricId. Nothing to resolve
+    // by, so the old answer stands - the gate must not guess a series from the
+    // colour's spelling.
+    expect(checkAllowedOptions(sofa, pool, { fabricCode: 'BO315-23' })).not.toBeNull();
+  });
+
+  it('an EMPTY pool still gates nothing, series or not', () => {
+    expect(checkAllowedOptions(sofa, model({ fabrics: [] }), {
+      fabricCode: 'GD2502-11', fabricId: 'GD2502',
+    })).toBeNull();
+  });
+
+  it('a series that matches nothing does not accidentally pass an unrelated colour', () => {
+    expect(checkAllowedOptions(sofa, pool, {
+      fabricCode: 'ZZZ-01', colourId: 'ZZZ-01', fabricId: 'ZZZ',
+    })).not.toBeNull();
+  });
+
+  it('a pool entry stored as a LABEL matches neither colour nor series — the 10 rows a repair must fix', () => {
+    // "GD2034 (HIVE)" is fabric_library.label, not .id. Accepting labels here
+    // would make the gate guess at display text; the data is repaired instead.
+    const err = checkAllowedOptions(sofa, model({ fabrics: ['GD2034 (HIVE)'] }), {
+      fabricCode: 'GD2034-01', colourId: 'GD2034-01', fabricId: 'GD2034',
+    });
+    expect(err).not.toBeNull();
+  });
+});
+
+describe('checkAllowedOptions — the pool is typed by a person, so it trims too', () => {
+  /* `"TARONI "` is verbatim from production: a trailing space, in all 79 of
+     company 1's sofa fabric pools. The pickers trim; without the gate trimming,
+     the screen offers TARONI and the save refuses it. docs/bugs/0814. */
+  it('accepts a fabric whose pool entry carries a trailing space', () => {
+    expect(checkAllowedOptions(sofa, model({ fabrics: ['TARONI '] }), {
+      fabricCode: 'TARONI-05', colourId: 'TARONI-05', fabricId: 'TARONI',
+    })).toBeNull();
+  });
+
+  it('accepts a gap whose pool entry is padded AND curly', () => {
+    expect(checkAllowedOptions(product(), model({ gaps: [' 11” '] }), { gap: '11"' })).toBeNull();
+  });
+
+  it('trims the glyph and the space only — a different value is still refused', () => {
+    expect(checkAllowedOptions(product(), model({ gaps: [' 11” '] }), { gap: '12"' })).not.toBeNull();
+  });
+});
+
+describe('checkAllowedOptions — a DIVAN ONLY line has no gap, so no total-height pool', () => {
+  /* The one DIVAN ONLY Model on prod (model_code 'DIVAN ONLY', read 2026-09-15),
+     its pools verbatim. HC-SO-011153 added DIVAN ONLY-(SS) with an 8" divan,
+     No Leg and no gap: the editor summed that to 8", this pool starts at 10",
+     and the line was refused — the owner's "divan only 不需要 gap" (2026-08-09)
+     undone by arithmetic. */
+  const divanOnlyModel = model({
+    divan_heights: ['4"', '5"', '6"', '8"', '10"', '11"', '12"', '13"', '14"', '16"'],
+    leg_heights: ['No Leg', '1"', '2"', '4"', '6"', '7"', '5"'],
+    gaps: ['4"', '5"', '6"', '7"', '8"', '9"', '10"', '11"', '12"', '13"', '14"', '15"', '16"', '17"', '18"', '19"', '20"', '21"'],
+    total_heights: ['10"', '12"', '14"', '16"', '17"', '18"', '19"', '20"', '21"', '22"', '23"', '24"', '25"', '26"', '27"', '28"'],
+    sizes: ['K', 'Q', 'S', 'SS', 'SK', 'SP'],
+  });
+  const divanOnly = (code: string) => product({ code, size_code: 'SS' });
+  const eightInchNoLegNoGap = { divanHeight: '8"', legHeight: 'No Leg', totalHeight: '8"' };
+
+  it('accepts the refused HC-SO-011153 line: 8" divan, No Leg, no gap', () => {
+    expect(checkAllowedOptions(divanOnly('DIVAN ONLY-(SS)'), divanOnlyModel, eightInchNoLegNoGap)).toBeNull();
+  });
+
+  it('holds for every spelling the catalogue and the book use', () => {
+    for (const code of ['DIVAN ONLY', 'DIVAN ONLY-(K)', 'HOK-DIVAN ONLY (K)', 'NB- DIVAN ONLY (SS)']) {
+      expect(checkAllowedOptions(divanOnly(code), divanOnlyModel, eightInchNoLegNoGap), code).toBeNull();
+    }
+  });
+
+  it('DOES NOT weaken the gate for a bedframe with a mattress — the same 8" is still refused there', () => {
+    const err = checkAllowedOptions(product(), divanOnlyModel, eightInchNoLegNoGap);
+    expect(err).not.toBeNull();
+    expect(err!.field).toBe('total_height');
+  });
+
+  it('still holds a DIVAN ONLY divan and leg to their own pools', () => {
+    expect(checkAllowedOptions(divanOnly('DIVAN ONLY-(SS)'), divanOnlyModel, { divanHeight: '7"', totalHeight: '7"' })!.field)
+      .toBe('divan_height');
+    expect(checkAllowedOptions(divanOnly('DIVAN ONLY-(SS)'), divanOnlyModel, { divanHeight: '8"', legHeight: '3"', totalHeight: '11"' })!.field)
+      .toBe('leg_height');
+  });
+});

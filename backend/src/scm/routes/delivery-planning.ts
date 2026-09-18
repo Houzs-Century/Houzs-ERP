@@ -100,6 +100,8 @@ import { zoneForAddress } from '../lib/zone-classify';
 import { deriveSetCount, type SetLine } from '../lib/set-count';
 import { composeAddress, geocodeAddressCached, normalizeAddress } from '../lib/geocode';
 import { dateOrNull } from '../lib/date-coerce';
+import { pgrestIn } from '../lib/pgrest-in-list';
+import { planningPoNosByDoc } from '../lib/planning-po-nos';
 
 export const deliveryPlanning = new Hono<{ Bindings: Env; Variables: Variables }>();
 deliveryPlanning.use('*', supabaseAuth);
@@ -448,7 +450,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
     amend_reason: string | null; amendReason?: string | null;
     // HC SO-context raw-data fields. dual-read camelCase below.
     possession_date: string | null; house_type: string | null;
-    replacement_disposal: string | null; referral: string | null;
+    replacement_disposal: string | null; referral: string | null; ref: string | null;
     possessionDate?: string | null; houseType?: string | null; replacementDisposal?: string | null;
   };
   /* CROSS-COMPANY = the caller's GRANTED companies; unscoped, this read took every tenant's. */
@@ -458,7 +460,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         /* NO `id` column here: scm.mfg_sales_orders is keyed by doc_no (TEXT PK) and
            has no `id` column: selecting it makes PostgREST reject the whole query and
            the board 500s. Identity here is doc_no; every join below keys on it. */
-        .select('doc_no, company_id, debtor_code, debtor_name, phone, branding, status, delivery_state, agent, salesperson_id, venue, customer_state, customer_country, customer_delivery_date, amend_date_from_customer, amended_delivery_date, amend_reason, processing_date, so_date, address1, address2, postcode, building_type, local_total_sen, balance_sen, possession_date, house_type, replacement_disposal, referral')
+        .select('doc_no, company_id, debtor_code, debtor_name, phone, branding, status, delivery_state, agent, salesperson_id, venue, customer_state, customer_country, customer_delivery_date, amend_date_from_customer, amended_delivery_date, amend_reason, processing_date, so_date, address1, address2, postcode, building_type, local_total_sen, balance_sen, possession_date, house_type, replacement_disposal, referral, ref')
         .neq('status', 'DRAFT')
         .neq('status', 'CANCELLED')
         .order('customer_delivery_date', { ascending: true, nullsFirst: false }),
@@ -569,9 +571,8 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
       if (chunk.length === 0) continue;
       const { data: prodRows } = await paginateAll<{ code: string; category: string | null; branding: string | null }>((from, to) =>
         scopeToCompany(
-          sb.from('mfg_products')
-            .select('code, category, branding')
-            .in('code', chunk),
+          pgrestIn(sb.from('mfg_products')
+            .select('code, category, branding'), 'code', chunk),
           c,
         ).range(from, to),
       );
@@ -893,6 +894,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
       // untouched (see the ASSR union after this map for the 'assr' rows).
       row_type: 'so' as 'so' | 'assr' | 'dp' | 'project',
       ref: null as string | null,
+      so_ref: (r.ref as string | null) ?? null, // the order's reference (AutoCount Ref, e.g. pg0791) - the board's "Reference" column
       job_kind: null as 'customer_pickup' | 'delivery' | 'inspection' | null,
       // DP-Order job type (DELIVERY/PICKUP/SERVICE/SETUP/DISMANTLE/SUPPLIER_PICKUP)
       // — only 'dp' rows carry it; SO/ASSR rows are null (union parity).
@@ -1078,7 +1080,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         const rowKey = `${assrNo}#${leg.jobKind}`;
         assrOrders.push({
           row_type: 'assr',
-          ref: assrNo,
+          ref: assrNo, so_ref: null,
           job_kind: leg.jobKind,
           dp_job_type: null,
           dp_no: null,
@@ -1252,7 +1254,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
       dpTripIdByKey.set(`DP:${String(d.id)}`, ((d.trip_id ?? (d as { tripId?: string | null }).tripId) as string | null) ?? null);
       dpBoardRows.push({
         row_type: 'dp',
-        ref: (d.dp_no as string | null) ?? null,
+        ref: (d.dp_no as string | null) ?? null, so_ref: null,
         job_kind: null,
         dp_job_type: (d.job_type as string | null) ?? null,
         dp_no: (d.dp_no as string | null) ?? null,
@@ -1387,7 +1389,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         const rowKey = `PRJ:${String(p.id)}#${leg.jobType}`;
         projectOrders.push({
           row_type: 'project',
-          ref: p.code ?? null,
+          ref: p.code ?? null, so_ref: null,
           job_kind: null,
           dp_job_type: leg.jobType,
           dp_no: null,
@@ -1471,7 +1473,8 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
     console.warn(`[delivery-planning] project union skipped: ${String((e as Error).message).slice(0, 120)}`);
   }
 
-  const allOrders = [...orders, ...assrOrders, ...dpBoardRows, ...projectOrders];
+  const poNosByDoc = await planningPoNosByDoc(sb, soRows); // "PO No." column: POs raised from the SO, walked per company (lib/planning-po-nos.ts)
+  const allOrders = [...orders.map((o) => ({ ...o, po_nos: poNosByDoc.get(o.so_doc_no) ?? [] })), ...assrOrders, ...dpBoardRows, ...projectOrders];
 
   /* 7c. PER-ASSIGNEE ROW SCOPE. For a self-scoped caller (Driver/Helper), keep
         ONLY the rows assigned to them; unassigned rows and other crews' jobs drop
@@ -1664,7 +1667,7 @@ deliveryPlanning.get('/geo', async (c) => {
       const chunk = codeList.slice(i, i + 300);
       if (chunk.length === 0) continue;
       const { data: prodRows } = await paginateAll<{ code: string; category: string | null }>((from, to) =>
-        scopeToCompany(sb.from('mfg_products').select('code, category').in('code', chunk), c).range(from, to),
+        scopeToCompany(pgrestIn(sb.from('mfg_products').select('code, category'), 'code', chunk), c).range(from, to),
       );
       for (const p of (prodRows ?? [])) if (p.category) geoProductCategory.set(p.code, normCategory(p.category));
     }

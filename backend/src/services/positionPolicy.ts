@@ -61,6 +61,7 @@ import {
 // ONE Sales-cohort detection rule. salesJdAccess does not import this module, so
 // there is no cycle.
 import { SALES_JD, isSalesCohort } from "./salesJdAccess";
+import type { PositionPolicyRow, RestrictedProfile } from "./positionPolicyRows";
 
 /** A code-defined explicit access row — same shape resolvePositionAccessFromRows
  *  reads from the DB, so the restricted whitelists resolve through the identical
@@ -189,8 +190,26 @@ const FLAGS_SALES_DIRECTOR: PositionAccessFlags = {
   canSeeCommission: false,
   announcementScope: "dept",
   canMoveMoney: false,
-  // Sales Director does not manage SCM master data either.
-  canWriteConfig: false,
+  // SCM MASTER-DATA WRITE (owner 2026-09-01, asked of Kris's account: "想让他能改"
+  // — retail price, sofa combos, and Model activation / Modular toggles). Paired
+  // with the scm.procurement.products row below: the area guard admits the write
+  // and this flag satisfies the per-route canWriteScmConfig check that
+  // /mfg-products, /sofa-combos and /maintenance-config additionally impose.
+  // Granting only one half leaves every price + combo save 403'ing, which is the
+  // exact state this replaces (the POS showed him the full editor because its
+  // role is position-derived, and every save failed server-side).
+  //
+  // BREADTH, measured rather than assumed — canWriteScmConfig is `flat perm OR
+  // this flag`, so it reaches all 18 route files that call it. Every one of them
+  // is ALSO area-gated on scm.procurement.products except four, which is the
+  // whole of what this widens beyond the Products area:
+  //   · sales-analysis PUT /targets      — edits the sales target profile. A Sales
+  //                                        Director owning his own targets is the
+  //                                        intent, not a side effect.
+  //   · so-amendments GET /command-diag  — read-only 2990-connection diagnostic.
+  //   · localities, state-warehouse-mappings — ungated read-mostly master data.
+  // Money is untouched (canMoveMoney stays false) and no read is widened.
+  canWriteConfig: true,
 };
 
 // ── The restricted whitelists — the owner's manual, per position ─────────────
@@ -330,9 +349,44 @@ const RESTRICTED_ROWS: ReadonlyMap<string, readonly PolicyRow[]> = new Map(
     ["Helper", DRIVER_HELPER_ROWS],
     ["Storekeeper", STOREKEEPER_ROWS],
     ["Storekeeper Supervisor", STOREKEEPER_SUPERVISOR_ROWS],
+    // Owner 2026-08-28: the warehouse crew position(s) the owner created in the
+    // admin UI ("Warehouse Crew KL", mixing Helper + Storekeeper roles). Same
+    // whitelist as Storekeeper — projects view + warehouse view. Without this
+    // entry the whole crew fell into the default-FULL cohort (finance pages
+    // included) AND lost every position-keyed crew behaviour. The PREFIX
+    // fallback in resolvePositionPolicy covers future regional variants
+    // ("Warehouse Crew JB", …) so a new region can't reopen the hole.
+    ["Warehouse Crew KL", STOREKEEPER_ROWS],
+    // Owner 2026-09-16 (Roles & Permissions review, part A): the outsourced
+    // delivery contractors. 13 active accounts on the Driver ROLE, but the
+    // position name was unclassified, so they fell into the default-FULL cohort
+    // and saw every page a manager sees (the role's keys stopped the API, not
+    // the menus). Same whitelist as Driver / Helper. NOT a fleet position:
+    // none of them has a scm.drivers row linked by user_id, and a fleet
+    // position with no link fails CLOSED to an empty board (deliveryScope.ts)
+    // — link them first, then move the name into FLEET_POSITIONS.
+    ["Outsource Transporter", DRIVER_HELPER_ROWS],
     ["Calendar Viewer", CALENDAR_VIEWER_ROWS],
   ].map(([name, rows]) => [normalisePosition(name as string), rows as readonly PolicyRow[]]),
 );
+
+/** Prefix rule for the owner's regional warehouse-crew positions — see the
+ *  RESTRICTED_ROWS note. Normalised-name prefix, not \b substring: the name
+ *  must START with "warehouse crew", so an office position that merely
+ *  mentions warehouse cannot be pulled into the restricted cohort. */
+export function isWarehouseCrewPosition(positionName: string | null | undefined): boolean {
+  return normalisePosition(positionName ?? "").startsWith("warehouse crew");
+}
+
+/** The restricted whitelists by PROFILE name — what a `position_policy` row
+ *  points at. The rows are the same constants the name rule uses, so a Title
+ *  moved onto a profile resolves exactly as the named Title always did. */
+const PROFILE_ROWS: Readonly<Record<RestrictedProfile, readonly PolicyRow[]>> = {
+  driver_helper: DRIVER_HELPER_ROWS,
+  storekeeper: STOREKEEPER_ROWS,
+  storekeeper_supervisor: STOREKEEPER_SUPERVISOR_ROWS,
+  calendar_viewer: CALENDAR_VIEWER_ROWS,
+};
 
 // ── The Sales cohort's page access — folded IN, no longer deferred ───────────
 //
@@ -355,12 +409,25 @@ const SALES_JD_ROWS: readonly PolicyRow[] = Object.entries(SALES_JD).map(
 );
 
 // Sales Director (prod row scm.sales=full + the projects.calendar view his row
-// carries). Director tier: scm.sales=full, view-all scope, margin visible.
+// carries). Director tier: scm.sales=full, view-all scope, margin visible, and
+// — since 2026-09-01 — the Products & Maintenance area at `edit`.
+//
+// WHY THE PRODUCTS ROW IS HERE AND NOT IN Team > Positions. For the sales cohort
+// this array IS the page access: resolvePositionPolicy feeds it to the resolver
+// and the position_page_access rows in the DB are not read at all (the audit
+// prints them under "NO LONGER READ for a positioned user"). So the owner cannot
+// grant this from the Positions screen — the grant has to land here.
+//
+// `edit`, not `full`: every scmAreaGuard in the Products area defaults to
+// writeLevel "edit" and none asks for "full", so `edit` is exactly what the
+// price / combo / model writes need. The gap is deliberate — anything a later
+// route marks full-only stays out until someone decides it belongs here.
 const SALES_DIRECTOR_ROWS: readonly PolicyRow[] = [
   { page_key: "projects", level: "view" },
   { page_key: "projects.calendar", level: "view" },
   { page_key: "sales", level: "none" },
   { page_key: "scm.sales", level: "full" },
+  { page_key: "scm.procurement.products", level: "edit" },
   { page_key: "service_cases", level: "edit" },
   ...SALES_JD_ROWS,
 ];
@@ -495,15 +562,24 @@ function positionCanWriteConfig(positionName: string | null): boolean {
 // ahead of the position existing so the owner + Test Admin (position=NULL today,
 // '*' role-only) can be migrated onto it and roles.permissions can eventually
 // retire. Additive only: it can only ever ADD '*', never remove a permission.
+// "Managing Director" joined 2026-09-07 (owner: "managing director 和 super
+// admin 同等级，通权限") — the MD position (prod positions id 25, Management,
+// level 10 like Super Admin) is a full super admin by position, so the money /
+// config carve-outs and every requirePermission door open for it exactly as
+// they do for Super Admin.
 const GOD_POSITIONS: ReadonlySet<string> = new Set(
-  ["Super Admin", "Owner"].map(normalisePosition),
+  ["Super Admin", "Owner", "Managing Director"].map(normalisePosition),
 );
 
 /** True when this POSITION alone confers the '*' wildcard (full super admin).
  *  Exact normalised-name membership; unknown/empty → false. Consumed by
  *  services/auth.ts (hydrateAuthUser), which adds '*' to the caller's
  *  permission set so position drives god-mode without a role grant. */
-export function positionGrantsWildcard(positionName: string | null): boolean {
+export function positionGrantsWildcard(
+  positionName: string | null,
+  row?: PositionPolicyRow | null,
+): boolean {
+  if (row) return row.cohort === "god";
   const name = normalisePosition(positionName ?? "");
   return name ? GOD_POSITIONS.has(name) : false;
 }
@@ -520,7 +596,11 @@ const FLEET_POSITIONS: ReadonlySet<string> = new Set(
 /** True for a fleet position (Driver / Helper) — the population resolveDelivery
  *  Scope narrows to their OWN assignments and, when unlinked, fails CLOSED to an
  *  empty board rather than exposing the whole fleet. Unknown/empty → false. */
-export function isFleetPosition(positionName: string | null | undefined): boolean {
+export function isFleetPosition(
+  positionName: string | null | undefined,
+  row?: PositionPolicyRow | null,
+): boolean {
+  if (row) return row.is_fleet;
   const name = normalisePosition(positionName ?? "");
   return name ? FLEET_POSITIONS.has(name) : false;
 }
@@ -538,6 +618,10 @@ export interface MoneyWriteCaller {
   permissions?: ReadonlyArray<string> | ReadonlySet<string>;
   permissions_set?: ReadonlySet<string>;
   position_name?: string | null;
+  /** The Title's stored policy row (hydrated onto AuthUser / houzsUser). When
+   *  present it decides; the name sets below are the fallback for a Title
+   *  with no row. */
+  position_policy?: PositionPolicyRow | null;
 }
 
 function hasWildcard(u: MoneyWriteCaller): boolean {
@@ -581,6 +665,11 @@ export function moneyWriteDenial(
   if (!MONEY_WRITE_AREAS.has(area)) return null;
   // The owner / IT wildcard is never narrowed.
   if (hasWildcard(user)) return null;
+  if (user.position_policy) {
+    return user.position_policy.cohort === "god" || user.position_policy.can_move_money
+      ? null
+      : MONEY_DENY_REASON;
+  }
   // Unidentifiable caller (no position) → not denied; see docstring.
   const pos = user.position_name;
   if (!pos) return null;
@@ -644,12 +733,27 @@ export interface PositionPolicy {
  * invariant, proven by positionPolicy.test.ts over every snapshot position plus
  * a hypothetical unclassified name.
  */
-export function resolvePositionPolicy(input: PositionPolicyInput): PositionPolicy {
+export function resolvePositionPolicy(
+  input: PositionPolicyInput,
+  row?: PositionPolicyRow | null,
+): PositionPolicy {
+  // A stored `position_policy` row decides first (Roles & Permissions › Titles,
+  // keyed by position_id). The name rule below is the fallback for a Title with
+  // no row, so a Title created after the seed still lands on the same
+  // fail-open default it always did.
+  if (row) {
+    const fromRow = policyFromRow(row);
+    if (fromRow) return fromRow;
+  }
   const name = normalisePosition(input.position_name ?? "");
 
   // Restricted whitelist wins first — an exact-name cohort, so a Sales position
-  // can never fall in here.
-  const rows = name ? RESTRICTED_ROWS.get(name) : undefined;
+  // can never fall in here. Regional warehouse-crew names fall back to the
+  // Warehouse Crew whitelist by prefix (see RESTRICTED_ROWS note).
+  const rows = name
+    ? RESTRICTED_ROWS.get(name) ??
+      (isWarehouseCrewPosition(name) ? RESTRICTED_ROWS.get(normalisePosition("Warehouse Crew KL")) : undefined)
+    : undefined;
   if (rows) {
     const meta: PageAccessMeta = { explicitScm: false };
     const pageAccess = resolvePositionAccessFromRows(rows, meta);
@@ -710,6 +814,61 @@ export function resolvePositionPolicy(input: PositionPolicyInput): PositionPolic
   };
 }
 
+/**
+ * Resolve a stored `position_policy` row to the same PositionPolicy shape the
+ * name rule produces, through the SAME whitelists and flag constants, so a Title
+ * on a row and a Title on its name cannot disagree (positionPolicyRows.test.ts
+ * pins every seeded row byte-identical to its name). Returns null only for a
+ * row whose profile the code does not know — the caller then falls back to the
+ * name rule rather than locking anyone out on bad data.
+ */
+export function policyFromRow(row: PositionPolicyRow): PositionPolicy | null {
+  switch (row.cohort) {
+    case "restricted": {
+      const rows = row.profile ? PROFILE_ROWS[row.profile as RestrictedProfile] : undefined;
+      if (!rows) return null;
+      const meta: PageAccessMeta = { explicitScm: false };
+      const pageAccess = resolvePositionAccessFromRows(rows, meta);
+      return { cohort: "restricted", pageAccess, scmConfigured: meta.explicitScm, flags: FLAGS_RESTRICTED };
+    }
+    case "sales": {
+      if (row.profile !== "director" && row.profile !== "rep") return null;
+      const isDirector = row.profile === "director";
+      const meta: PageAccessMeta = { explicitScm: false };
+      const pageAccess = resolvePositionAccessFromRows(
+        isDirector ? SALES_DIRECTOR_ROWS : SALES_ORDINARY_ROWS,
+        meta,
+      );
+      return {
+        cohort: "sales",
+        pageAccess,
+        scmConfigured: meta.explicitScm,
+        flags: isDirector ? FLAGS_SALES_DIRECTOR : FLAGS_SALES,
+      };
+    }
+    case "god": {
+      // The wildcard itself is injected at hydration (positionGrantsWildcard);
+      // a direct resolver call for a god row answers the unrestricted map.
+      return {
+        cohort: "full",
+        pageAccess: fullAccessMap(),
+        scmConfigured: false,
+        flags: { ...FLAGS_FULL_MONEY, canWriteConfig: true },
+      };
+    }
+    default: {
+      const full = fullAccessMap();
+      const baseFlags = row.can_move_money ? FLAGS_FULL_MONEY : FLAGS_FULL;
+      return {
+        cohort: "full",
+        pageAccess: row.can_move_money ? full : withMoneyWriteRemoved(full),
+        scmConfigured: false,
+        flags: row.can_write_config ? { ...baseFlags, canWriteConfig: true } : baseFlags,
+      };
+    }
+  }
+}
+
 /** The tolerant caller shape for the SCM master-data write rule — satisfied by
  *  the Houzs `AuthUser`, by the SCM bridge's `houzsUser`, and by the /auth/me
  *  serialiser. */
@@ -749,8 +908,11 @@ export function userCanWriteScmConfig(u: ScmConfigWriteCaller | null | undefined
       : (perms as ReadonlySet<string>).has("scm.config.write");
     if (held) return true;
   }
-  return resolvePositionPolicy({
-    position_name: u.position_name ?? null,
-    department_name: u.department_name ?? null,
-  }).flags.canWriteConfig;
+  return resolvePositionPolicy(
+    {
+      position_name: u.position_name ?? null,
+      department_name: u.department_name ?? null,
+    },
+    u.position_policy ?? null,
+  ).flags.canWriteConfig;
 }

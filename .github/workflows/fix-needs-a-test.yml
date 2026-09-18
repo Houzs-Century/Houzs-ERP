@@ -1,0 +1,44 @@
+name: Fix needs a test
+
+# The bug ledger (one markdown file per bug) was retired on 2026-09-15: 1,477
+# files nobody read. A test is the memory that runs. This reports a fix PR that
+# changed product code and left no test behind.
+#
+# ADVISORY on purpose for the first week — it prints the finding and exits 0, so
+# nobody's merge is blocked while we see how often it fires on real work. Drop
+# the `--advisory` flag to make it fail, and only then consider making it a
+# required context.
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize, labeled, unlabeled, ready_for_review]
+
+concurrency:
+  group: fix-needs-a-test-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  fix-needs-a-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Both sides of the diff must exist locally, so no shallow clone.
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      # A checker that cannot match reports a clean run — test the gate first.
+      - name: Test the gate
+        run: node --test scripts/lib/fix-has-test.test.mjs
+      - name: Check
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BRANCH: ${{ github.event.pull_request.head.ref }}
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: node scripts/check-fix-has-test.mjs --advisory

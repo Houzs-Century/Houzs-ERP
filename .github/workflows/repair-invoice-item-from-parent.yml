@@ -1,0 +1,82 @@
+name: Invoice item code — put a migrated invoice back on its parent's code (PLAN by default)
+
+# Manual. Four invoice lines in production name a delivery or receipt line for a
+# different product (probe-link-identity run 34178911176, 2026-09-08 10:08
+# local). The AutoCount re-cut committed at 08:03-08:07 today says the parent
+# document holds ONE line, the invoice was raised from it, and both sides carry
+# the same item code and the same Desc2 in the book — so the LINK is forced and
+# is not touched. What moved is the ERP's item code on ONE side: the sofa
+# compartment correction rewrote the parent and never reached the invoice that
+# had snapshotted it. docs/bugs/0687.
+#
+# PLAN IS THE DEFAULT and prints exactly what apply would write, plus every
+# refusal with its reason. Read that before choosing apply. Apply also needs the
+# CONFIRM phrase, runs in one transaction, and ends by re-reading every repaired
+# row on a FRESH connection to assert its code, its money and its link.
+#
+# It writes item_code only. No money column, no link column, no parent row, no
+# header total, no variants. An invoice never moves stock in this ERP, so no
+# allocation recompute is implied.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan prints what would change; apply writes it"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      company:
+        description: "company_id"
+        required: false
+        default: "1"
+        type: string
+      confirm:
+        description: "on apply, type: repair-invoice-item-from-parent"
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: repair-invoice-item-from-parent-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/repair-invoice-item-from-parent.mjs
+        env:
+          MODE: ${{ inputs.mode }}
+          COMPANY: ${{ inputs.company }}
+          CONFIRM: ${{ inputs.confirm }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/repair-invoice-item-from-parent.mjs
+        env:
+          MODE: ${{ inputs.mode }}
+          COMPANY: ${{ inputs.company }}
+          CONFIRM: ${{ inputs.confirm }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

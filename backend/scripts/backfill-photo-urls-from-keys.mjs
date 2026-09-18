@@ -36,6 +36,9 @@ if (APPLY && process.env.CONFIRM !== "ATTACH PHOTO KEYS") {
 const here = path.dirname(fileURLToPath(import.meta.url));
 const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 const sql = postgres(DST, { ssl: "require", prepare: false, max: 1 });
+/* docs/bugs/0672 — a group addressed by a NON-UNIQUE key must be one product
+   before "the first row" means anything. */
+import { isOneModel, modelsIn } from "./lib/one-model-group.mjs";
 
 const readKeys = (f) => fs.readFileSync(path.join(here, "data", f), "utf8")
   .split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith("#"));
@@ -44,22 +47,45 @@ async function attach(kind, file, table, docCol, joinSql) {
   const keys = readKeys(file);
   const pat = new RegExp(`^${kind}-items/([^/]+)/[^/]+/ac-(\\d+)-\\d+\\.jpg$`);
   const rows = await joinSql();
-  // (doc_no | dtlkey) -> first line by line-order carrying that AC line
-  const byId = new Map();
+  /* (doc_no | dtlkey) -> the whole GROUP, not just the first row.
+     `linked_ac_dtlkey` is NOT unique — migrations 0273 and 0280 index it
+     non-uniquely, and probe-link-identity.mjs run 34172468269 counted 310 SO
+     keys and 106 PO keys carried by more than one row in production. Keeping
+     only the first was not itself wrong (it is the owner's sofa rule, 2026-08-10
+     「每个 SKU 的照片都一样,留第一个就可以了」) but it made the group
+     unexaminable: whether the rows behind that key are one build's compartments
+     or two unrelated products could not be asked. Now they are kept and the
+     question is asked below. docs/bugs/0672. */
+  const groupOf = new Map();
   for (const r of rows) {
     const k = `${r.doc}|${r.dtlkey}`;
-    if (!byId.has(k)) byId.set(k, r);
+    if (!groupOf.has(k)) groupOf.set(k, []);
+    groupOf.get(k).push(r);
   }
   const plan = [], misses = [];
+  let crossModel = 0;
   for (const key of keys) {
     const m = key.match(pat);
     if (!m) { misses.push({ key, why: "unparseable key" }); continue; }
-    const row = byId.get(`${m[1]}|${m[2]}`);
-    if (!row) { misses.push({ key, why: "no line with that doc_no + linked_ac_dtlkey" }); continue; }
+    const group = groupOf.get(`${m[1]}|${m[2]}`);
+    if (!group) { misses.push({ key, why: "no line with that doc_no + linked_ac_dtlkey" }); continue; }
+    /* THE GROUP MUST BE ONE PRODUCT — docs/bugs/0672. Taking `group[0]` is the
+       owner's sofa rule when the rows are one build's compartments, and a coin
+       flip when they are not: the photo would land on whichever row sorted
+       first. The MODEL is what compartments share (their item codes
+       deliberately differ: MODEL-1S, MODEL-2S, MODEL-CNR), so that is the test.
+       Measured 0 failures in production on the run above, so this refuses
+       nothing today and refuses the first group that ever regresses. */
+    if (!isOneModel(group, (r) => r.item_code)) {
+      crossModel += 1;
+      misses.push({ key, why: `that doc_no + DtlKey names ${modelsIn(group, (r) => r.item_code).length} different models — refused rather than attached to whichever sorted first` });
+      continue;
+    }
+    const row = group[0];
     if ((row.photo_urls ?? []).includes(key)) continue; // already attached — inert
     plan.push({ id: row.id, key, doc: row.doc });
   }
-  log(`${kind.toUpperCase()}: keys ${keys.length}; to attach ${plan.length}; already attached ${keys.length - plan.length - misses.length}; misses ${misses.length}`);
+  log(`${kind.toUpperCase()}: keys ${keys.length}; to attach ${plan.length}; already attached ${keys.length - plan.length - misses.length}; misses ${misses.length} (of which CROSS-MODEL groups refused: ${crossModel})`);
   for (const s of misses.slice(0, 10)) log(`   MISS ${s.key} — ${s.why}`);
   if (misses.length > 10) log(`   ... and ${misses.length - 10} more misses`);
 
@@ -85,12 +111,12 @@ async function attach(kind, file, table, docCol, joinSql) {
 async function main() {
   log(`mode=${APPLY ? "APPLY" : "PLAN"}`);
   const so = await attach("so", "r2-so-photo-keys-2026-08-10.txt", "mfg_sales_order_items", "doc_no", async () =>
-    sql`SELECT i.id, i.doc_no AS doc, i.linked_ac_dtlkey::text AS dtlkey, i.photo_urls
+    sql`SELECT i.id, i.doc_no AS doc, i.linked_ac_dtlkey::text AS dtlkey, i.photo_urls, i.item_code
         FROM scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
         WHERE h.company_id = 1 AND h.linked_ac_docno IS NOT NULL AND i.linked_ac_dtlkey IS NOT NULL
         ORDER BY i.doc_no, i.line_no NULLS LAST, i.id`);
   const po = await attach("po", "r2-po-photo-keys-2026-08-10.txt", "purchase_order_items", "po_number", async () =>
-    sql`SELECT i.id, p.po_number AS doc, i.linked_ac_dtlkey::text AS dtlkey, i.photo_urls
+    sql`SELECT i.id, p.po_number AS doc, i.linked_ac_dtlkey::text AS dtlkey, i.photo_urls, i.item_code
         FROM scm.purchase_order_items i JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
         WHERE p.company_id = 1 AND i.linked_ac_dtlkey IS NOT NULL
         ORDER BY p.po_number, i.id`);

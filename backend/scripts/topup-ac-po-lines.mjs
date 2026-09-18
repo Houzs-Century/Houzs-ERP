@@ -49,13 +49,22 @@
 //   - the missing scm.purchase_order_items rows. The DECODERS are shared with
 //     the importers, never re-implemented (lib/parse-sofa.mjs,
 //     lib/fabric-colour-match.mjs, lib/parse-bedframe.mjs). item_group is NOT
-//     shared, because the two importers do not agree with each other:
-//     import-ac-outstanding-po.mjs:119 reads the mapping CSV's category
-//     (`CATG[cat] || "others"`), import-ac-so-linked-pos.mjs:171 reads the
-//     catalogue's (`prodCat.get(erp) ?? "others"`). This script prefers the
-//     catalogue and falls back to the CSV, reports every line where the two
-//     rules differ, and REFUSES a line where they disagree about SOFA - that
-//     one flips a build between decomposed compartments and a single row.
+//     shared, because the two importers do not agree with each other: the
+//     outstanding-PO importer reads the mapping CSV's category, the SO-linked
+//     one reads the catalogue's. This script prefers the catalogue and falls
+//     back to the CSV, reports every line where the two rules differ, and
+//     REFUSES a line where they disagree about SOFA - that one flips a build
+//     between decomposed compartments and a single row.
+//
+//     THE CATALOGUE IS ASKED WITH THE ALIASED CODE. Both importers fold the
+//     mapped code through SOFA_MODEL_ALIAS before they use it and this script
+//     did not, which is not a stylistic gap: the catalogue is looked up by
+//     CODE, so asking it about `5536-1S` - a code no product row has ever
+//     carried, because the ERP spells that sofa `9058-*` - returns nothing, and
+//     the `?? "others"` underneath reports that silence as a category. Four
+//     purchase orders were withheld on a "disagreement" the alias table had
+//     already settled. The fold is applied where the mapping is READ; see the
+//     block by the catalogue query.
 //   - so_item_id where the export gives a FromSODtlKey AND that SO line
 //     resolves AND is not already claimed; NULL otherwise, never wrong. The
 //     claim is re-checked inside the transaction so a concurrent sibling repair
@@ -83,8 +92,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 import { buildFabricColourIndex, isPendingColour } from "./lib/fabric-colour-match.mjs";
-import { parseBedframe } from "./lib/parse-bedframe.mjs";
+import { bedframeVariants, parseBedframe } from "./lib/parse-bedframe.mjs";
 import { SOFA_MODEL_ALIAS, parseSofa } from "./lib/parse-sofa.mjs";
+import { aliasFoldsForCatalog, catalogPredicate, nonCatalogRefs, formatNonCatalogRefusal } from "./lib/catalog-code-guard.mjs";
 import {
   RECEIVED_INDETERMINATE,
   buildFamilies, claimErpRows, diffExpectedRows, groupByDoc, mergeAcPoLines, planFamilyInserts,
@@ -151,6 +161,42 @@ async function main() {
   const prodByCode = new Map(products.map((p) => [p.code.toUpperCase(), p]));
   const codeSet = new Set(products.map((p) => p.code.toUpperCase()));
   const prodCat = new Map(products.map((p) => [norm(p.code), PCATG[String(p.category ?? "").toUpperCase()] ?? null]));
+
+  /* ALIAS FOLD (docs/bugs/0577, and the four documents this omission withheld).
+     BOTH importers already do exactly this, at exactly this point — the mapping
+     file names the sofa model the BOOK uses (`HOK-5536 SOFA` -> `5536-1S`) and
+     the ERP spells the four folded models by their alias (SOFA_MODEL_ALIAS:
+     5530/5536/5537/5540 -> 9028/9058/8030/8030). This script was the one CSV
+     item-code writer that never applied it, and being the odd one out is not a
+     cosmetic difference: the catalogue is read by CODE a few dozen lines below,
+     so asking it about `5536-1S` — a code no product row has ever carried —
+     returns nothing, and the `?? "others"` underneath turns that silence into a
+     confident LABEL. The two importers' rules then "disagreed about SOFA" and
+     the family was withheld, on a question SOFA_MODEL_ALIAS had already
+     answered.
+
+     The consequence is not a mislabelled row. A sofa is decomposed into one ERP
+     row per COMPARTMENT and an "other" is a single row, so the label decides
+     the SHAPE of the document; and a sofa reads READY only through its own
+     dedicated purchase-order line, so a withheld family leaves the customer leg
+     with nothing behind it.
+
+     Folded HERE and not in the CSV on purpose, same as both importers:
+     src/services/autocount-item-map.ts is compiled from the same file and read
+     in the OTHER direction. See aliasFoldsForCatalog's note for what repointing
+     the rows costs there (192 of 697 corpus lines written back naming the wrong
+     AutoCount item). Only a code the catalogue LACKS is folded, and only onto
+     one it has, so this can never move a code that already resolves. */
+  {
+    const moves = aliasFoldsForCatalog([...byAc.values()].map((v) => v.erp), catalogPredicate(codeSet), SOFA_MODEL_ALIAS);
+    if (moves.size) {
+      log(`alias fold: ${moves.size} mapped code(s) the catalogue does not carry resolve through SOFA_MODEL_ALIAS`);
+      for (const [from, to] of moves) log(`   ${from} -> ${to}`);
+      for (const v of byAc.values()) if (moves.has(v.erp)) v.erp = moves.get(v.erp);
+    } else {
+      log(`alias fold: no mapped code needs folding — every mapped code is in the catalogue as written.`);
+    }
+  }
   const whs = await sql`SELECT id, code FROM scm.warehouses WHERE company_id = ${CO}`;
   const whByCode = new Map(whs.map((w) => [norm(w.code), w.id]));
   const whId = (loc) => { const k = norm(loc); return whByCode.get(norm(SALESLOC[k] || k)) ?? whByCode.get(k) ?? null; };
@@ -310,13 +356,10 @@ async function main() {
     let bf = null, variants = null;
     if (r.grp === "bedframe") {
       bf = parseBedframe(l.desc2);
-      const pending = isPendingColour(bf.color);
-      const fc = pending ? null : findColour(bf.color);
-      const tot = (Number(bf.gap) || 0) + (Number(bf.divan) || 0) + (Number(bf.leg) || 0);
-      variants = { fabricId: fc ? fc.fabric_id : null, colourId: fc ? fc.colour_id : null, fabricCode: fc ? fc.colour_id : null,
-        colourLabel: fc ? fc.label : null, fabricLabel: fc ? fc.fabric_id : null,
-        gap: bf.gap != null ? bf.gap + '"' : null, divanHeight: bf.divan != null ? bf.divan + '"' : null,
-        legHeight: bf.leg != null ? bf.leg + '"' : null, totalHeight: tot ? tot + '"' : null, specials: bf.specials || [] };
+      /* One statement of the block, in lib/parse-bedframe.mjs beside the parser
+         that feeds it — it decides the PENDING-colour rule too, so this caller
+         no longer restates it. */
+      variants = bedframeVariants(bf, findColour);
     }
     const prod = prodByCode.get(r.erp.toUpperCase());
     return [{ ...base, itemCode: r.erp, materialName: (prod && prod.name) || l.description || r.erp,
@@ -448,6 +491,31 @@ async function main() {
     log("   catalogue = import-ac-so-linked-pos.mjs:171; csv = import-ac-outstanding-po.mjs:119; this script prefers the catalogue");
     for (const g of groupDisagree.slice(0, 10)) log(`   ${g.doc} "${g.code}" catalogue=${g.catalogue} csv=${g.csv} used=${g.used}${g.sofaSplit ? "  <- SOFA SPLIT, family withheld" : ""}`);
     if (groupDisagree.length > 10) log(`   ... and ${groupDisagree.length - 10} more`);
+  }
+
+  /* CATALOG GUARD — the last thing between the plan and the database, and the
+     same one both importers carry (docs/bugs/0577). This script has the silent
+     fallback verbatim a few dozen lines up:
+
+         const code = codeSet.has(ph.toUpperCase()) ? ph : r.erp;
+
+     so an unparseable sofa whose mapped code the catalogue does not know writes
+     that raw code onto a document line. item_code has NO foreign key to
+     scm.mfg_products, so nothing refuses it and the row lands as an ORPHAN: the
+     product panel reads blank and the line cannot be matched to the sales order
+     that spells the same sofa properly. The fold above resolves the four
+     ALIASED models; this refuses whatever is left, by name, before anything is
+     written. It runs BEFORE the dry-run return on purpose — an operator should
+     learn the plan is unwritable while reading it, not after typing CONFIRM. */
+  const badCodes = nonCatalogRefs(
+    plan.flatMap((p) => p.rows.map((r) => ({ code: r.itemCode, doc: p.po.po_number, acDoc: p.doc, sku: r.supplierSku }))),
+    catalogPredicate(codeSet),
+  );
+  if (badCodes.length) {
+    log("");
+    for (const line of formatNonCatalogRefusal(badCodes, { script: "topup-ac-po-lines.mjs" })) log(line);
+    await sql.end();
+    process.exit(2);
   }
 
   if (!APPLY) {

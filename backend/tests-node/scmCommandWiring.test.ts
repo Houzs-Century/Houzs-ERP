@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest';
-import salesOrderSource from '../src/scm/routes/mfg-sales-orders.ts?raw';
+import { soRouterSource } from '../tests/lib/so-router-source';
 import amendmentSource from '../src/scm/routes/so-amendments.ts?raw';
+const salesOrderSource = soRouterSource();
 
 describe('SCM atomic command wiring', () => {
   for (const [handler, path] of [

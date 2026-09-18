@@ -23,7 +23,6 @@ const prefix = (candidate: string) => (key: string) => key.startsWith(candidate)
 const IDENTITY_PREFERENCE_BASES = [
   "announcements:",
   "assr:",
-  "filters:",
   "houzs-mail-prefs:",
   "houzs:assistant-launcher-pos",
   "notifications:",
@@ -59,12 +58,28 @@ export const BROWSER_STORAGE_KEY_REGISTRY: readonly StorageKeyRegistration[] = [
   { id: "scm-handoffs", classification: "TRANSIENT", storage: ["sessionStorage"], keyFamily: "houzs:scm-handoff:v<version>:<registered non-payment handoff>", matches: (key) => SCM_TRANSIENT_KEYS.has(key) },
   { id: "query-snapshots", classification: "CACHE", storage: ["localStorage"], keyFamily: "houzs-rq-snapshot:<build>:<session>:<company>", matches: prefix("houzs-rq-snapshot:") },
   { id: "chunk-recovery", classification: "TRANSIENT", storage: ["sessionStorage"], keyFamily: "chunk-recovered-at", matches: exact("chunk-recovered-at") },
+  { id: "chunk-action-reload", classification: "TRANSIENT", storage: ["sessionStorage"], keyFamily: "chunk-action-reload (cooldown for the print-action stale-chunk reload)", matches: exact("chunk-action-reload") },
+  { id: "chunk-print-resume", classification: "TRANSIENT", storage: ["sessionStorage"], keyFamily: "chunk-print-resume (the print to reopen after that reload)", matches: exact("chunk-print-resume") },
   { id: "workspace-tabs", classification: "TRANSIENT", storage: ["sessionStorage"], keyFamily: "houzs.workspaceTabs.v1 (per-window strip; blob records its {user,company} owner)", matches: exact("houzs.workspaceTabs.v1") },
   { id: "scm-list-return", classification: "TRANSIENT", storage: ["sessionStorage"], keyFamily: "houzs.scmListReturn.v1 (per-section last filtered list URL, for detail Back)", matches: exact("houzs.scmListReturn.v1") },
   { id: "assr-list-filter", classification: "TRANSIENT", storage: ["sessionStorage"], keyFamily: "houzs.assrListFilter.v1 (per-tab Service Cases search + stage, for detail Back)", matches: exact("houzs.assrListFilter.v1") },
+  // Owner 2026-08-24: "i want make it my filter didnt close until i manually
+  // clear filter or close erp then filter will auto clear". Session-scoped for
+  // exactly that reason — it survives opening a project and coming back, and
+  // dies with the tab — the same shape scm-list-return and assr-list-filter
+  // above already use for their detail-Back. It was localStorage (an
+  // IDENTITY_PREF), which kept last week's filters alive on the next login.
+  // The legacy localStorage copies are cleaned up by useStickyFilters.
+  { id: "list-filters", classification: "TRANSIENT", storage: ["localStorage", "sessionStorage"], keyFamily: "filters:<page>:u<user>:c<company> (per-tab list filters; localStorage listed for cleanup of the pre-2026-08-24 copies only)", matches: (key) => /^filters:.+:u\d+:c\d+$/.test(key) },
   { id: "mobile-mode-override", classification: "TRANSIENT", storage: ["localStorage", "sessionStorage"], keyFamily: "hz_force_mobile (session + legacy local cleanup)", matches: exact("hz_force_mobile") },
   { id: "legacy-notification-preference", classification: "TRANSIENT", storage: ["localStorage"], keyFamily: "notifications:browserPush (ownerless cleanup only)", matches: exact("notifications:browserPush") },
   { id: "scan-toast-acks", classification: "TRANSIENT", storage: ["localStorage"], keyFamily: "houzs:scan-draft-acked:u<user>:c<company>", matches: prefix("houzs:scan-draft-acked:") },
+  // "I have seen today's pending-work reminder" (owner 2026-09-09). The DATE is
+  // part of the key, which is the whole mechanism: tomorrow's key does not
+  // exist yet, so the reminder returns by itself with no cron to run and
+  // nothing to reset. localStorage, not session — acknowledging it must
+  // survive a refresh, or the modal would reappear all day.
+  { id: "pending-reminder-acks", classification: "TRANSIENT", storage: ["localStorage"], keyFamily: "pending-reminder:u<user>:c<company>:<YYYY-MM-DD>", matches: (key) => /^pending-reminder:u\d+:c\d+:\d{4}-\d{2}-\d{2}$/.test(key) },
   { id: "identity-preferences", classification: "IDENTITY_PREF", storage: ["localStorage"], keyFamily: "<approved preference base>:u<user>:c<company>", matches: identityPreference },
   { id: "pwa-dismissals", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "pwa:<surface>:dismissed-at", matches: prefix("pwa:") },
   // Native-app opt-ins, per DEVICE and per install. Currently just the
@@ -146,10 +161,14 @@ export const PRODUCTION_STORAGE_CALLERS = [
   "components/useAnnouncementBanner.ts",
   "hooks/useIdentityPreference.ts",
   "hooks/useLocalStorage.ts",
+  "hooks/usePendingReminder.ts",
   "hooks/useStickyFilters.ts",
   "lib/activeCompany.ts",
   "lib/authToken.ts",
   "lib/browserNotificationPreference.ts",
+  // chunk-action-reload + chunk-print-resume (sessionStorage, TRANSIENT): the
+  // cooldown and the print to reopen after a stale-build reload.
+  "lib/chunkActionRecovery.ts",
   // Native app: reads/writes ONLY the per-device biometric opt-in flag
   // (native:biometric-session, DEVICE_PREF). The session it unlocks lives in the
   // iOS Keychain, never in browser storage — this file touches localStorage for
@@ -179,12 +198,18 @@ export const PRODUCTION_STORAGE_CALLERS = [
   "mobile/useIsMobile.ts",
   "pages/MailCenter/mail-local.ts",
   "pages/MailCenter/mail-prefs.ts",
+  // Composer draft autosave (2026-09-05): "announcements:draft:u<user>",
+  // written debounced while a notice is being written, cleared on post. A
+  // half-written notice surviving a closed modal / reload is the point; the
+  // key is per user so a shared browser never shows one person's draft to the
+  // next. Reviewed with the announcements redesign.
+  "pages/announcements/ComposerModal.tsx",
   "pages/scm-v2/ProductModels.tsx",
   "pages/scm-v2/SoFromProducts.tsx",
   "pages/scm-v2/SupplierDetail.tsx",
-  // Persisted DataGrid funnel filters (dg-filters:<idKey>, DEVICE_PREF via the
-  // dg- family) — the DataTable dt:filters twin. Column keys and filter values
-  // only; the company scoping rides the layout idKey, never storage-read.
+  // DataGrid funnel filters. Since 2026-09-16 they live in in-visit memory, not
+  // storage; this file only REMOVES the pre-2026-09-16 dg-filters:<idKey> keys
+  // (DEVICE_PREF via the dg- family) so a stale one cannot re-narrow a list.
   "vendor/scm/components/dataGridFilterStorage.ts",
   "vendor/scm/components/dataGridLayoutStorage.ts",
 ] as const;

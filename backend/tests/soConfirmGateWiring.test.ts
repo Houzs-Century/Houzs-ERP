@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest';
-import routeSource from '../src/scm/routes/mfg-sales-orders.ts?raw';
+import { soRouterSource } from './lib/so-router-source';
+const routeSource = soRouterSource();
 
 /* Owner rulings 2026-08-08 — every SO line is a catalog SKU (free text never
    saves), and CONFIRMED requires a salesperson, a venue and complete required

@@ -28,6 +28,7 @@
 
 import { computeVariantKey, effectiveDelivery } from '../shared';
 import type { OutstandingCommitment } from './ship-commitment';
+import { pgrestIn } from './pgrest-in-list';
 
 /** One open PO line's remaining supply, bucketed the way MRP pools it. */
 export type IncomingLine = {
@@ -294,15 +295,14 @@ export function allocateExpectedBatches(
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function loadIncomingLines(sb: any, itemCodes: string[], warehouseId: string | null): Promise<IncomingLine[]> {
   if (itemCodes.length === 0) return [];
-  const { data, error } = await sb
+  const { data, error } = await pgrestIn(sb
     .from('purchase_order_items')
     .select(`
       item_code, item_group, variants, qty, received_qty, delivery_date,
       supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4,
       warehouse_id,
       po:purchase_orders!inner ( po_number, status, expected_at, supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4, purchase_location_id )
-    `)
-    .in('item_code', itemCodes)
+    `), 'item_code', itemCodes)
     .not('po.status', 'in', '("CANCELLED","DRAFT")');
   if (error) throw new Error(`incoming_load_failed: ${error.message}`);
   const out: IncomingLine[] = [];

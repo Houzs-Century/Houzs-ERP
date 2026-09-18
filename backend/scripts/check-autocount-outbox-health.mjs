@@ -31,6 +31,7 @@
 // every legitimate answer — including a completely empty queue, which is the
 // correct state today — because a red job reads as "the check broke" and the
 // ANSWER is the output. Only an unreachable database exits non-zero.
+import { acFailedHeadingLine, acQueueTotalsLine } from './lib/ac-queue-report-lines.mjs';
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
 
@@ -40,7 +41,25 @@ import postgres from "postgres";
    start disagreeing about the same row. src/scm/lib/autocount-outbox-status.ts
    is the source; this is its plain-node mirror, and a canonical test fails if
    they drift. */
-import { AC_SKIP_KINDS, REQUEUE_NOTE_PREFIX } from "./lib/autocount-skip-kinds.mjs";
+import { REQUEUE_NOTE_PREFIX } from "./lib/autocount-skip-kinds.mjs";
+/* The grouping is a MODULE because this file used to re-implement the
+   classification rule inline and got the priority order wrong — see
+   docs/bugs/0606-the-outbox-health-report-counted-one-refusal-under-two-remed.md and tests/acSkipGrouping.test.mjs. */
+import { groupAcSkipsByKind } from "./lib/ac-skip-grouping.mjs";
+/* THE PAGE'S OWN RULE, IMPORTED — not mirrored, and not re-expressed in SQL.
+   A document that was refused and then ARRIVED is history: the page has skipped
+   it since docs/bugs/0727, and this report did not, so the same two delivery
+   orders read IN AUTOCOUNT on the screen and FAILED in the log. That is the
+   two-readers-two-copies failure this file's own header warns about, happening
+   to this file.
+
+   It is imported rather than copied because it CAN be: the canonical test says
+   this script "runs under node against postgres.js and cannot import
+   TypeScript", and that was true of how it was INVOKED, never of the script. It
+   runs under `npx tsx` now (autocount-outbox-health.yml), the same way
+   repair-address-to-forty.mjs already imports src/ in Actions. A rule with one
+   home needs no referee. */
+import { acDocKeyOf, newestArrivalByDoc, supersededFailureKeys } from "./lib/ac-failed-superseded.mjs";
 
 function resolveUrl() {
   if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
@@ -97,7 +116,7 @@ const notice = (msg) =>
 const pg = postgres(url, { ssl: "require", prepare: false, max: 1 });
 
 try {
-  const [flag, counts, byOp, oldest, failed, requeuedFailed, skipped] = await Promise.all([
+  const [flag, counts, byOp, oldest, failed, requeuedFailed, failedAll, skipped] = await Promise.all([
     /* THE SWITCH ITSELF, not a sentence about it. Until this line existed the
        script described `scm.autocount_writeback` in prose and never read it, so
        "is the write-back on" could only be answered from a document — and the
@@ -164,7 +183,18 @@ try {
          FROM scm.autocount_outbox
         WHERE status = 'failed' AND last_error LIKE ${`${REQUEUE_NOTE_PREFIX}%`}
         ORDER BY created_at DESC`,
-    pg`SELECT doc_type, doc_no, op, coalesce(last_error, '') AS last_error
+    /* EVERY outstanding failure, three columns, no LIMIT. The list above is
+       capped at 25 for the log; the COUNTS below are whole-table, and the
+       discounts subtracted from them were being computed off the capped list —
+       true only while there are fewer than 25 failures. Deciding what is still
+       outstanding needs the whole set, and doc/date is cheap. */
+    pg`SELECT doc_type, doc_no, created_at
+         FROM scm.autocount_outbox
+        WHERE status = 'failed'
+          AND (last_error IS NULL OR last_error NOT LIKE ${`${REQUEUE_NOTE_PREFIX}%`})`,
+    /* created_at, because a skip is discounted by the same ORDER the failures
+       are: a document that arrived AFTER this refusal is history. */
+    pg`SELECT doc_type, doc_no, op, created_at, coalesce(last_error, '') AS last_error
          FROM scm.autocount_outbox
         WHERE status = 'skipped'
         ORDER BY created_at DESC`,
@@ -211,7 +241,7 @@ try {
      act on.
 
      One query, six document types, keyed the way the outbox keys them. */
-  const liveDocs = failed.length
+  const liveDocs = failedAll.length
     ? await pg`
         SELECT 'SO' AS doc_type, doc_no          AS doc_no FROM scm.mfg_sales_orders
         UNION ALL SELECT 'PO', po_number              FROM scm.purchase_orders
@@ -222,8 +252,45 @@ try {
     : [];
   const liveKeys = new Set(liveDocs.map((r) => `${r.doc_type}:${r.doc_no}`));
   const stillInErp = (r) => liveKeys.has(`${r.doc_type}:${r.doc_no}`);
-  const failedLive = failed.filter(stillInErp);
   const failedGone = failed.filter((r) => !stillInErp(r));
+
+  /* ── DID THE DOCUMENT ARRIVE AFTER THIS REFUSAL? ───────────────────────
+     A row that failed and was then SENT is history. HC-DO-2609-004 and -009
+     were re-composed and accepted into AED_HOUZS, the page has shown them as
+     in the book since docs/bugs/0727 — and this report went on calling them
+     failures, because the page learned the rule and the report did not.
+
+     ORDER, NOT SET MEMBERSHIP, and acRefusalPredatesArrival is the whole of it:
+     a document that arrived and was THEN edited into a refusal is in the book
+     AND needs attention, so only the other order is discounted. The rule is
+     imported, so the screen and this log cannot answer differently.
+
+     Read by doc_no and matched on BOTH parts in JS: one document number is
+     enough of a predicate to keep the read small, and the key is the pair. */
+  /* BOTH POPULATIONS, or the rule is half a rule again. The arrivals are read
+     for every document that carries an outstanding refusal of ANY kind — a
+     failure or a skip — because both are discounted by the same order. Reading
+     only the failures' documents would leave `arrivedAt.get()` undefined for
+     every skip, and `acRefusalPredatesArrival` answers false on an undefined
+     arrival, so nothing would be discounted and the code would look right. */
+  const failedDocNos = [...new Set([
+    ...failedAll.map((r) => r.doc_no),
+    ...skipped.map((r) => r.doc_no),
+  ])];
+  const arrivals = failedDocNos.length
+    ? await pg`SELECT doc_type, doc_no, max(created_at) AS arrived_at
+                 FROM scm.autocount_outbox
+                WHERE status = 'sent' AND doc_no = ANY(${failedDocNos})
+                GROUP BY doc_type, doc_no`
+    : [];
+  const arrivedAt = newestArrivalByDoc(arrivals);
+  const failedArrivedKeys = supersededFailureKeys(failedAll, arrivedAt);
+  const isSuperseded = (r) => failedArrivedKeys.has(acDocKeyOf(r));
+  /* The PRINTED list follows the same rule as the count. A heading that says
+     "each is a document that is in the ERP and NOT in AutoCount" must not list
+     one that is. */
+  const failedArrived = failed.filter((r) => stillInErp(r) && failedArrivedKeys.has(acDocKeyOf(r)));
+  const failedLive = failed.filter((r) => stillInErp(r) && !failedArrivedKeys.has(acDocKeyOf(r)));
 
   const by = Object.fromEntries(counts.map((r) => [r.status, r.n]));
   const byRequeued = Object.fromEntries(counts.map((r) => [r.status, r.requeued]));
@@ -234,7 +301,13 @@ try {
   /* THE ALARM READS THE SAME TWO NUMBERS THE REPORT DOES, not its own query.
      A watchdog that asks a different question from the report it is attached to
      is a watchdog that can disagree with the page a human then opens. */
-  alarm.failedOutstanding = Math.max(0, failedOutstanding - failedGone.length);
+  /* DISCOUNTED OVER THE WHOLE SET, not over the 25 that get printed. Two
+     reasons a failure is not something a person can act on, and a row can carry
+     both, so they are counted once as rows rather than added as two numbers:
+     the ERP document is gone (a wipe, a deletion — nothing left to send), or
+     the document arrived after this refusal (already in the book). */
+  const failedNotActionable = failedAll.filter((r) => !stillInErp(r) || isSuperseded(r)).length;
+  alarm.failedOutstanding = Math.max(0, failedOutstanding - failedNotActionable);
   alarm.pending = oldest.map((r) => ({
     docType: r.doc_type, docNo: r.doc_no, op: r.op,
     ageS: Number(r.age_s ?? 0), age: String(r.age ?? ''),
@@ -252,7 +325,21 @@ try {
      still true that nothing was ever sent for it (or that it failed); what
      changed is that it is no longer the open question. */
   const settled = skipped.filter((r) => r.last_error.startsWith(REQUEUE_NOTE_PREFIX));
-  const outstanding = skipped.filter((r) => !r.last_error.startsWith(REQUEUE_NOTE_PREFIX));
+  /* AND THE SAME RULE THE FAILURES GET. A skip is a refusal like any other, and
+     one the account book has since answered is history — the document arrived
+     after it. The first version of this rule (docs/bugs/0743) covered `failed`
+     and stopped there, so three documents whose keys were long since backfilled
+     — HC-SO-001180, HC-SO-001463, HC-SO-001473 — kept telling an operator to go
+     and backfill a key that is already there. Half a rule reads exactly like a
+     finding. */
+  const skipArrivedKeys = supersededFailureKeys(
+    skipped.filter((r) => !r.last_error.startsWith(REQUEUE_NOTE_PREFIX)),
+    arrivedAt,
+  );
+  const answered = skipped.filter((r) => !r.last_error.startsWith(REQUEUE_NOTE_PREFIX)
+    && skipArrivedKeys.has(acDocKeyOf(r)));
+  const outstanding = skipped.filter((r) => !r.last_error.startsWith(REQUEUE_NOTE_PREFIX)
+    && !skipArrivedKeys.has(acDocKeyOf(r)));
 
   if (total === 0) {
     notice("QUEUE EMPTY — zero rows of any status.");
@@ -269,15 +356,7 @@ try {
           : "which is the expected state while scm.autocount_writeback is off."),
     );
   } else {
-    notice(
-      `queue: ${total} row(s) — ` +
-        ["pending", "sent", "failed", "skipped"]
-          .map((s) => `${s} ${by[s] ?? 0}`)
-          .join(" / ") +
-        (settled.length + requeuedFailed.length
-          ? ` (${settled.length + requeuedFailed.length} of those have been re-queued)`
-          : ""),
-    );
+    notice(acQueueTotalsLine(total, by, settled.length + requeuedFailed.length));
   }
 
   /* PER OPERATION — the question the totals cannot answer.
@@ -324,7 +403,7 @@ try {
      A re-queued failure is history and is listed under RE-QUEUED below. */
   if (failedOutstanding > 0) {
     if (failedLive.length) {
-      notice(`FAILED: ${failedLive.length} — each is a document that is in the ERP and NOT in AutoCount.`);
+      notice(acFailedHeadingLine(failedLive));
       for (const r of failedLive) {
         notice(`  ${r.doc_type} ${r.doc_no} (${r.op}, ${r.attempts} attempts): ${String(r.last_error ?? "").slice(0, 300)}`);
       }
@@ -343,8 +422,157 @@ try {
         notice(`  ${r.doc_type} ${r.doc_no} (${r.op}): gone from the ERP`);
       }
     }
+    /* ITS OWN HEADING for the same reason: the document IS in the account book,
+       so there is nothing to send again. Printed rather than hidden, because
+       the row is still the record of an attempt that was refused. */
+    if (failedArrived.length) {
+      notice(
+        `FAILED — ARRIVED SINCE: ${failedArrived.length}. The document reached AutoCount AFTER this ` +
+          'refusal, so the row is the record of an attempt and not something to send again. ' +
+          'Nothing to do.',
+      );
+      for (const r of failedArrived) {
+        notice(`  ${r.doc_type} ${r.doc_no} (${r.op}): in the account book since ${arrivedAt.get(acDocKeyOf(r))}`);
+      }
+    }
   } else {
     notice(`FAILED: 0 outstanding${requeuedFailed.length ? ` (${requeuedFailed.length} re-queued, below)` : ""}`);
+  }
+
+  /* ── WHAT THE RELINK SWEEP ACTUALLY DID (docs/bugs/0815) ───────────────────
+     The sweep reads and writes a LIVE account book on a 5-minute cron, and its
+     only output was a console.log in a Worker log this account's token cannot
+     read. It was run in `apply` three times on 2026-09-11 and stamped ZERO keys
+     every time, and the cause could not be established — twice the reason was
+     guessed at and twice the guess was wrong. It now writes its run down; this
+     prints it. `refused` is the part that was never visible: it says, per
+     document, why a line could not be matched. */
+  const [sweepRow] = await pg`
+    SELECT value, updated_at FROM scm.app_config
+     WHERE key = 'scm.autocount_relink_sweep_last_run'`;
+  if (sweepRow) {
+    let run = null;
+    try { run = JSON.parse(sweepRow.value); } catch { /* printed raw below */ }
+    if (!run) {
+      notice(`RELINK SWEEP — last run recorded at ${sweepRow.updated_at}, but its value is not readable JSON.`);
+    } else {
+      notice(
+        `RELINK SWEEP — last ran ${run.at} in ${String(run.mode).toUpperCase()}: scanned ${run.scanned} ` +
+          `document(s), stamped ${run.linesStamped} line key(s), queued ${run.docsEnqueued} edit(s).`,
+      );
+      for (const d of run.docs ?? []) {
+        /* "1 matched" alone said nothing about whether the document MOVES: a
+           run can match all it can and still queue nothing. The verdict is the
+           part a person is actually reading for. */
+        const moves = d.enqueued ? ' — RELEASED' : d.wouldEnqueue ? ' — WOULD BE RELEASED' : ' — still held';
+        const head = `  ${d.docType} ${d.bookDocNo || '(no book number)'}: ${d.keylessBefore} keyless, ` +
+          `${d.stamped || d.wouldStamp || 0} matched${moves}`;
+        notice(d.skipped ? `${head} — SKIPPED: ${d.skipped}` : head);
+        for (const r of d.refused ?? []) notice(`      refused: ${r}`);
+      }
+      if (!(run.docs ?? []).length) {
+        notice('  no document detail in the last run — either nothing was held back, or the sweep is off.');
+      }
+    }
+  } else {
+    notice('RELINK SWEEP — no run recorded yet. It writes one on its next non-off cron tick.');
+  }
+
+  /* ── SENT, BUT THE LINES KEPT NO IDENTITY (docs/bugs/0813) ─────────────────
+     A `sent` row with a last_error is not a failure — the document IS in the
+     account book. It is a document whose DtlKeys were never stored, so its NEXT
+     edit will be refused whole with "The ERP cannot tell which lines AutoCount
+     already has". Until the drain recorded this, the only trace was a
+     console.error in a Worker log this account's token cannot read, and the
+     first anyone knew was an operator being refused days later. It is reported
+     and NOT alarmed, for the reason the header gives about skips: it is a
+     statement about the document's shape, it does not change on its own, and
+     the remedy is a person pressing "Match up lines". */
+  /* A sent row's last_error now carries one of two facts, joined with " | "
+     when both apply: a line-identity gap, or photographs left behind for size
+     (scm/lib/autocount-photo-attach.ts, docs/bugs/0899). They need different
+     people, so they are listed apart. */
+  const identityRows = await pg`
+    SELECT company_id, doc_type, doc_no, op, last_error, sent_at
+      FROM scm.autocount_outbox
+     WHERE status = 'sent' AND last_error IS NOT NULL AND last_error NOT LIKE 'PHOTOS NOT SENT:%'
+     ORDER BY sent_at DESC
+     LIMIT 400`;
+  /* THE ROW IS HISTORY; THE DOCUMENT IS NOW (docs/bugs/0905). The note on a sent
+     row is what the drain could not store THEN. Keys arrive afterwards by other
+     roads — the DocTransfer stamp, the relink sweep, a rebuild — and the note
+     stays. On 2026-09-14 this section listed 40 documents while the stamp had
+     already keyed most of them, so a reader chased work that was done. Each
+     document is now looked up as it is today: listed only while a row of it
+     still has no key, and counted apart once every row has one. A document this
+     lookup cannot find (a row filed under an id, docs/bugs/0774) stays listed,
+     the conservative direction. */
+  const docsOf = (t) => [...new Set(identityRows.filter((r) => r.doc_type === t).map((r) => String(r.doc_no)))];
+  const keylessNow = identityRows.length ? await pg`
+    SELECT 'SO' AS doc_type, i.company_id, i.doc_no, count(*) FILTER (WHERE i.linked_ac_dtlkey IS NULL)::int AS keyless
+      FROM scm.mfg_sales_order_items i WHERE i.doc_no = ANY(${docsOf("SO")}) GROUP BY 1, 2, 3
+    UNION ALL
+    SELECT 'PO', h.company_id, h.po_number, count(*) FILTER (WHERE i.linked_ac_dtlkey IS NULL)::int
+      FROM scm.purchase_orders h JOIN scm.purchase_order_items i ON i.purchase_order_id = h.id
+     WHERE h.po_number = ANY(${docsOf("PO")}) GROUP BY 1, 2, 3
+    UNION ALL
+    SELECT 'DO', h.company_id, h.do_number, count(*) FILTER (WHERE i.linked_ac_dtlkey IS NULL)::int
+      FROM scm.delivery_orders h JOIN scm.delivery_order_items i ON i.delivery_order_id = h.id
+     WHERE h.do_number = ANY(${docsOf("DO")}) GROUP BY 1, 2, 3
+    UNION ALL
+    SELECT 'GR', h.company_id, h.grn_number, count(*) FILTER (WHERE i.linked_ac_dtlkey IS NULL)::int
+      FROM scm.grns h JOIN scm.grn_items i ON i.grn_id = h.id
+     WHERE h.grn_number = ANY(${docsOf("GR")}) GROUP BY 1, 2, 3
+    UNION ALL
+    SELECT 'IV', h.company_id, h.invoice_number, count(*) FILTER (WHERE i.linked_ac_dtlkey IS NULL)::int
+      FROM scm.sales_invoices h JOIN scm.sales_invoice_items i ON i.sales_invoice_id = h.id
+     WHERE h.invoice_number = ANY(${docsOf("IV")}) GROUP BY 1, 2, 3
+    UNION ALL
+    SELECT 'PI', h.company_id, h.invoice_number, count(*) FILTER (WHERE i.linked_ac_dtlkey IS NULL)::int
+      FROM scm.purchase_invoices h JOIN scm.purchase_invoice_items i ON i.purchase_invoice_id = h.id
+     WHERE h.invoice_number = ANY(${docsOf("PI")}) GROUP BY 1, 2, 3` : [];
+  const keylessOf = new Map(keylessNow.map((k) => [`${k.company_id}|${k.doc_type}|${k.doc_no}`, Number(k.keyless)]));
+  const seenGapDoc = new Set();
+  const identityGaps = [];
+  const keyedSince = [];
+  for (const r of identityRows) {
+    const k = `${r.company_id}|${r.doc_type}|${r.doc_no}`;
+    if (seenGapDoc.has(k)) continue;
+    seenGapDoc.add(k);
+    if (keylessOf.get(k) === 0) keyedSince.push(r);
+    else identityGaps.push(r);
+  }
+  const photosLeftBehind = await pg`
+    SELECT doc_type, doc_no, op, last_error, sent_at
+      FROM scm.autocount_outbox
+     WHERE status = 'sent' AND last_error LIKE '%PHOTOS NOT SENT:%'
+     ORDER BY sent_at DESC
+     LIMIT 40`;
+  if (photosLeftBehind.length) {
+    notice(
+      `IN AUTOCOUNT, SENT WITHOUT SOME PHOTOGRAPHS: ${photosLeftBehind.length}. A picture was too large for the ` +
+        "service to accept in one request, so the document went without it and the book kept the pictures it had.",
+    );
+    for (const r of photosLeftBehind) {
+      notice(`  ${r.doc_type} ${r.doc_no} (${r.op}): ${String(r.last_error).slice(String(r.last_error).indexOf('PHOTOS NOT SENT:'))}`);
+    }
+  }
+  if (identityGaps.length) {
+    notice(
+      `IN AUTOCOUNT, BUT WITH NO LINE IDENTITY: ${identityGaps.length} document(s) with a row still keyless today. The document arrived; its ` +
+        "lines did not keep the account book's keys, so its next edit will be refused whole. " +
+        'Press "Match up lines" on each, then save it again.',
+    );
+    for (const r of identityGaps) {
+      const k = keylessOf.get(`${r.company_id}|${r.doc_type}|${r.doc_no}`);
+      notice(`  ${r.doc_type} ${r.doc_no} (${r.op}${k == null ? ", not found by number" : `, ${k} row(s) keyless now`}): ${r.last_error}`);
+    }
+  }
+  if (keyedSince.length) {
+    notice(
+      `KEYED SINCE: ${keyedSince.length} document(s) whose send could not store line keys, and whose rows all carry one today. ` +
+        "The note on the sent row is history; nothing to do.",
+    );
   }
 
   if (oldest.length) {
@@ -377,11 +605,24 @@ try {
      away: a reason this script does not recognise is a code path that grew a
      new refusal, and rolling it into 'other' is how it stays invisible. */
   if (outstanding.length > 0) {
-    const seen = new Set();
-    for (const { needle, remedy: meaning } of AC_SKIP_KINDS) {
-      const hits = outstanding.filter((r) => r.last_error.includes(needle));
-      hits.forEach((r) => seen.add(r.doc_no + r.op));
-      if (!hits.length) continue;
+    /* ONE ROW, ONE CLASS — through the shared classifier, not a second copy of
+       the matching rule. This loop used to re-implement the classification as
+       `outstanding.filter(r => r.last_error.includes(needle))` once per kind,
+       with nothing excluding a row an earlier kind had already claimed. Every
+       needle a stored sentence contains therefore reported it again, under a
+       DIFFERENT remedy.
+
+       AC_SKIP_KINDS is a PRIORITY order and says so in its own comments — the
+       transport needle sits before the masters one deliberately, because "the
+       host is not answering" reading as bad master data sends whoever
+       investigates to the wrong subsystem, and that cost a day on 2026-08-23.
+       `classifyAcSkip` honours the priority by returning the FIRST match; this
+       report did not, so it printed the losing class as well. Measured on
+       production run 33593927462 (2026-09-02): TWO skipped rows, on ONE
+       document, reported as `skipped 2` twice under two different remedies —
+       four lines, and a reader summing the buckets counts four. */
+    const { ordered, unrecognised } = groupAcSkipsByKind(outstanding);
+    for (const { remedy: meaning, rows: hits } of ordered) {
       notice(`  skipped ${hits.length}: ${meaning}`);
       /* NAME THE DOCUMENTS AND QUOTE THE REASON. A bare count tells an operator
          that something was refused but not what to open, and the message body
@@ -392,12 +633,26 @@ try {
         notice(`    - ${r.doc_type} ${r.doc_no} (${r.op}): ${r.last_error.slice(0, 400)}`);
       }
     }
-    const rest = outstanding.filter((r) => !seen.has(r.doc_no + r.op));
-    for (const r of rest) {
+    /* The unrecognised bucket comes from the same classification pass. It used
+       to be `outstanding` minus a Set keyed on `doc_no + op`, which collapses
+       two rows of one document into one key — so a second unrecognised row on
+       the same document could be dropped from the report entirely. */
+    for (const r of unrecognised) {
       notice(`  skipped (UNRECOGNISED reason): ${r.doc_type} ${r.doc_no} (${r.op}): ${r.last_error.slice(0, 200)}`);
     }
   } else {
     notice(`SKIPPED: 0 outstanding${settled.length ? ` (${settled.length} re-queued, below)` : ""}`);
+  }
+  /* ITS OWN HEADING, like the failures' — printed because the row is still the
+     record of a refusal, and not counted because there is nothing left to do. */
+  if (answered.length) {
+    notice(
+      `SKIPPED — ARRIVED SINCE: ${answered.length}. The document reached AutoCount AFTER this ` +
+        'refusal, so the row is the record of an attempt and not something to act on. Nothing to do.',
+    );
+    for (const r of answered) {
+      notice(`  ${r.doc_type} ${r.doc_no} (${r.op}): in the account book since ${arrivedAt.get(acDocKeyOf(r))}`);
+    }
   }
 
   const requeuedAll = [...requeuedFailed, ...settled];
@@ -636,7 +891,7 @@ if (process.env.ALARM === '1') {
   const reasons = [];
   if (alarm.failedOutstanding > 0) {
     reasons.push(
-      `${alarm.failedOutstanding} document(s) are in the ERP and NOT in AutoCount, ` +
+      `${alarm.failedOutstanding} document(s) carry an operation the account book did not complete, ` +
         'with no retries left. Open AutoCount Sync and press Send again on each.',
     );
   }

@@ -20,6 +20,8 @@ import type {
   MfgPricedOption,
   MfgFabricTier,
 } from '@2990s/shared/mfg-pricing';
+import { MFG_PRODUCT_CATEGORIES, mfgCategoryLabel, type MfgProductCategory } from '../../shared/product-categories';
+import { fmtSen } from '../../shared/format';
 
 /* HOUZS VENDOR — Products wave. The Maintenance editor reads/writes priced
    pool options ({ value, priceSen, costSen?, sellingPriceSen?, active? }). The
@@ -133,7 +135,13 @@ export function useMaintenanceConfig(
    these two read hooks, so it is intentionally left out.
    ═══════════════════════════════════════════════════════════════════════════ */
 
-export type MfgCategory = 'BEDFRAME' | 'SOFA' | 'ACCESSORY' | 'MATTRESS' | 'SERVICE' | 'BEDLINES' | 'DINING' | 'DIFFUSER' | 'CARPET';
+/* FABRIC_ACCESSORY is shown as "Sofa Accessory" (owner 2026-09-14). The code has no
+   'sofa' in it on purpose: 41 readers test a group with includes('sofa'), and a pillow
+   would become a SOFA main product to all of them. tasks/PLAN-sofa-accessories-category.md */
+export type MfgCategory = MfgProductCategory;
+/* The category list and the one label per category live in
+   vendor/shared/product-categories.ts (mirror of the backend's). */
+export { MFG_PRODUCT_CATEGORIES, mfgCategoryLabel };
 
 /** MfgProductRow — the PO New form only reads id/code/name/category off each
     SKU. The ProductModels wave reads a few more SKU columns (size_code for the
@@ -182,6 +190,11 @@ export type MfgProductRow = {
   updated_at?: string;
   one_shot?: boolean;
   source_doc_no?: string | null;
+  /* B1 — the derived-cost anchor state for the SKU Master cost-column marker
+     (teal ok / amber suppliers-differ / red gap / service). Present ONLY when the
+     list was fetched with anchorState (the SKU Master screen); undefined for the
+     SO/PO catalogue pickers that don't ask. */
+  costAnchorState?: 'ok' | 'conflict' | 'empty' | 'service';
 };
 
 /** Sofa-only seat-height price row off the SKU's seat_height_prices JSONB.
@@ -215,13 +228,18 @@ export function useMfgProducts(opts?: {
   category?: MfgCategory;
   search?: string;
   enabled?: boolean;
+  /* B1 — ask the server for each row's costAnchorState (the SKU Master cost
+     marker). Opt-in and separately cache-keyed so the SO/PO pickers keep their
+     lean, un-annotated list. */
+  anchorState?: boolean;
 }) {
   return useQuery({
-    queryKey: ['mfg-products', activeCompanyKey(), opts?.category ?? 'all', opts?.search ?? ''],
+    queryKey: ['mfg-products', activeCompanyKey(), opts?.category ?? 'all', opts?.search ?? '', opts?.anchorState ? 'anchor' : ''],
     queryFn: async ({ signal }) => {
       const params = new URLSearchParams();
       if (opts?.category) params.set('category', opts.category);
       if (opts?.search) params.set('search', opts.search);
+      if (opts?.anchorState) params.set('anchorState', '1');
       const res = await authedFetch<{ products: MfgProductRow[] }>(
         `/mfg-products${params.toString() ? `?${params.toString()}` : ''}`,
         { signal },
@@ -236,6 +254,24 @@ export function useMfgProducts(opts?: {
        Catalog" on every open/keystroke. */
     staleTime: 5 * 60_000,
     placeholderData: keepPreviousData,
+    retry: retryUnlessClientError,
+    retryDelay: 800,
+  });
+}
+
+/* SKU codes (this company) that already carry at least one supplier binding.
+   Powers the SKU Master "no supplier binding" filter so staff can find the SKUs
+   still missing a supplier and fill them one by one. Company-keyed cache so a
+   company switch never serves the other company's set (same reason useMfgProducts
+   keys by activeCompanyKey). Returns a Set for O(1) membership. */
+export function useMfgProductBoundCodes() {
+  return useQuery({
+    queryKey: ['mfg-product-bound-codes', activeCompanyKey()],
+    queryFn: async () => {
+      const res = await authedFetch<{ codes: string[] }>('/mfg-products/bound-codes');
+      return new Set(res.codes);
+    },
+    staleTime: 60_000,
     retry: retryUnlessClientError,
     retryDelay: 800,
   });
@@ -455,6 +491,10 @@ export function useUpdateMfgProductPrices() {
       if (body.price1Sen    !== undefined) expect.price1_sen     = body.price1Sen;
       if (body.costPriceSen !== undefined) expect.cost_price_sen = body.costPriceSen;
       if (body.barcode      !== undefined) expect.barcode        = body.barcode;
+      // SKU Master edits the code and description too; read those back as well
+      // (the server stores them trimmed).
+      if (body.code         !== undefined) expect.code           = body.code.trim();
+      if (body.name         !== undefined) expect.name           = body.name.trim();
 
       const result = await verifiedSave<{ product: Record<string, unknown> }>({
         endpoint: `/mfg-products/${id}`,
@@ -467,9 +507,9 @@ export function useUpdateMfgProductPrices() {
 
       if (!result.ok) {
         throw new Error(friendlySaveMessage(result, {
-          noun: 'price',
-          fieldNames: { base_price_sen: 'Base price', price1_sen: 'Price 1', cost_price_sen: 'Cost price' },
-          fmt: (v) => (v == null ? '(blank)' : `RM${(Number(v) / 100).toFixed(2)}`),
+          noun: 'change',
+          fieldNames: { base_price_sen: 'Base price', price1_sen: 'Price 1', cost_price_sen: 'Cost price', name: 'Description', code: 'Product code' },
+          fmt: (v) => (v == null ? '(blank)' : fmtSen(Number(v))),
         }));
       }
       return { ok: true as const, changed: 1 };
@@ -568,13 +608,79 @@ export type ProductSupplierRow = {
     phone: string | null;
   } | null;
 };
+/* The derived-cost ANCHOR for a SKU (auto-derive stage 2b, display side). Says
+   which supplier the Product Maintenance cost is anchored to and in what state,
+   so the drawer / SKU-master column can show it and flag a missing-price gap.
+   costSen is null when the caller cannot view SKU cost (finance-gated server-side). */
+export type ProductCostAnchorState = 'ok' | 'conflict' | 'empty' | 'service';
+export type ProductCostAnchor = {
+  state: ProductCostAnchorState;
+  /** For state 'empty': 'no_supplier_binding' | 'no_supplier_with_cost'. null otherwise. */
+  reason: string | null;
+  anchorSupplierId: string | null;
+  anchorSupplierName: string | null;
+  costSen: number | null;
+  costedCount: number;
+  totalCount: number;
+};
+
 export function useMfgProductSuppliers(id: string | null) {
   return useQuery({
     queryKey: ['mfg-product-suppliers', id],
     queryFn: () => authedFetch<{
       product: { code: string; name: string; category: string };
       suppliers: ProductSupplierRow[];
+      anchor: ProductCostAnchor;
     }>(`/mfg-products/${id}/suppliers`),
+    enabled: Boolean(id),
+    staleTime: 30_000,
+  });
+}
+
+/* HISTORY — three tabs on the SKU drawer. Cost + Supplier-price are new reads
+   (both append-only, company-scoped, cost figures finance-gated server-side so a
+   non-cost caller gets null in the money fields). Selling reuses the /price-changes
+   timeline above. */
+export type MfgProductCostHistoryRow = {
+  id: string;
+  effectiveFrom: string;            // YYYY-MM-DD
+  basePriceSen: number | null;      // null when finance-gated OR that lane unchanged
+  price1Sen: number | null;
+  seatHeightPrices: unknown | null;
+  sourceSupplierId: string | null;
+  sourceSupplierName: string | null;
+  notes: string | null;
+  createdBy: string | null;
+  createdAt: string;
+};
+export function useMfgProductCostHistory(id: string | null) {
+  return useQuery({
+    queryKey: ['mfg-product-cost-history', id],
+    queryFn: () => authedFetch<{ history: MfgProductCostHistoryRow[] }>(`/mfg-products/${id}/cost-history`),
+    enabled: Boolean(id),
+    staleTime: 30_000,
+  });
+}
+
+export type SupplierPriceHistoryRow = {
+  id: string;
+  supplierId: string;
+  supplierCode: string | null;
+  supplierName: string | null;
+  isMainSupplier: boolean;
+  unitPriceSen: number | null;      // null when finance-gated
+  priceMatrix: unknown | null;
+  comparableSen: number | null;     // the dearness the anchor ranks on; null when gated
+  direction: 'up' | 'down' | null;  // raised / lowered vs this supplier's prior row
+  effectiveFrom: string;
+  notes: string | null;
+  createdBy: string | null;
+  createdAt: string;
+};
+export function useMfgProductSupplierPriceHistory(id: string | null) {
+  return useQuery({
+    queryKey: ['mfg-product-supplier-price-history', id],
+    queryFn: () => authedFetch<{ history: SupplierPriceHistoryRow[] }>(`/mfg-products/${id}/supplier-price-history`),
     enabled: Boolean(id),
     staleTime: 30_000,
   });
@@ -633,6 +739,16 @@ export type BatchImportResult = {
   upserted: number;
   failed: number;
   failures: Array<{ code: string; reason: string }>;
+  /* A category change on a SKU that belongs to a model moves the model and all its SKUs. */
+  modelsMoved?: ImportModelMove[];
+};
+
+export type ImportModelMove = {
+  modelCode: string;
+  modelName: string | null;
+  from: string;
+  to: string;
+  skuCount: number;
 };
 
 export function useBatchImportMfgProducts() {

@@ -39,9 +39,10 @@
    ---------------------------------------------------------------------------- */
 
 import {
-  createContext, useCallback, useContext, useMemo, useRef, useState,
+  createContext, useCallback, useContext, useEffect, useMemo, useRef, useState,
   type ReactNode,
 } from "react";
+import { clearPrintResume, peekPrintResume, trackPrintAction } from "../../lib/chunkActionRecovery";
 import { PrintPreviewModal } from "./PrintPreviewModal";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { TRANSFER_DOC } from "../../vendor/shared/transfer-vocabulary";
@@ -80,7 +81,13 @@ export function PrintChainProvider({ children }: { children: ReactNode }) {
   const printDocument = useCallback<PrintDocumentFn>((t) => {
     setLoaded(null);
     setTarget(t);
-    const promise = import("../../lib/printDocumentPdf").then((m) => m.fetchPrintBundle(t));
+    /* Tracked (lib/chunkActionRecovery): a chunk the last deploy deleted reloads
+       the tab once and the effect below reopens THIS document's preview. */
+    const promise = trackPrintAction(
+      { kind: "chain", target: t },
+      () => import("../../lib/printDocumentPdf").then((m) => m.fetchPrintBundle(t)),
+      Date.now,
+    );
     read.current = { target: t, promise };
     void promise.then(
       (bundle) => { if (read.current?.target === t) setLoaded(bundle); },
@@ -101,9 +108,11 @@ export function PrintChainProvider({ children }: { children: ReactNode }) {
     const cur = read.current;
     if (!cur) return;
     try {
-      const bundle = await cur.promise;
-      const { renderPrintBundle } = await import("../../lib/printDocumentPdf");
-      await renderPrintBundle(cur.target, bundle, action);
+      await trackPrintAction({ kind: "chain", target: cur.target }, async () => {
+        const bundle = await cur.promise;
+        const { renderPrintBundle } = await import("../../lib/printDocumentPdf");
+        await renderPrintBundle(cur.target, bundle, action);
+      }, Date.now);
     } catch (e) {
       void notify({
         title: "PDF generation failed",
@@ -112,6 +121,15 @@ export function PrintChainProvider({ children }: { children: ReactNode }) {
       });
     }
   }, [notify]);
+
+  /* The load after a stale-build reload: reopen the document that was being
+     printed, once, and only on the URL it was printed from. */
+  useEffect(() => {
+    const resume = peekPrintResume(`${window.location.pathname}${window.location.search}`, Date.now());
+    if (resume?.kind !== "chain") return;
+    clearPrintResume();
+    printDocument(resume.target);
+  }, [printDocument]);
 
   const close = useCallback(() => { read.current = null; setTarget(null); setLoaded(null); }, []);
   /* Print and download close the dialog once the render RESOLVES, never before

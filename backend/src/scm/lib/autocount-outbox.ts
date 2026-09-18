@@ -45,6 +45,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Env } from '../env';
 import { getSupabaseService } from '../../db/supabase';
 import { isWritebackEnabled } from './autocount-writeback-flag';
+import { inAcLineOrder } from './ac-line-order'; import { poRaisedFromSo } from './so-po-raised';
 import { claimOutboxRow, releaseExpiredClaims } from './autocount-claim';
 import { splitSofaCode } from '../../services/autocount-sofa-collapse';
 import { SO_PROCESSING_DATE_COLUMN } from '../shared/so-processing-date';
@@ -59,7 +60,6 @@ import {
   bookSpellingOrOwn,
   resolveAcAgent,
   soBranding,
-  soCustomerRef,
   soInvoiceAddress,
   composeCreatePo,
   composeCreateSo,
@@ -92,6 +92,7 @@ import {
 /* Re-exported so a route can name the shape it passes to enqueueEdit without
    also importing the composer module. */
 export type { AcRetiredLine } from '../../services/autocount-writeback';
+import { poEditHeader } from '../../services/autocount-po-supplier-dates';
 
 import { mastersOf } from './autocount-masters';
 import { soEditHeader } from './so-edit-header';
@@ -108,11 +109,16 @@ import { backfillSoToPoKeys, poBodyForShape } from './autocount-so-to-po-keys';
 import { acParentlessCreateReason, acNotCarriedReason } from './autocount-outbox-status';
 /* Line identity, split out 2026-08-17 for the same cap reason as the two
    imports above. Same function, same call site in dispatchOne. */
-import { persistLineKeys, persistNewLineKeys, newLineTargetOf } from './autocount-line-keys';
+import { lineIdentityGap, persistNewLineKeys, newLineTargetOf } from './autocount-line-keys';
+import { attachPhotos } from './autocount-photo-attach';
+import { erpOwnsPaymentText } from './ac-payement-owner';
+import { readPoSourceSo } from './autocount-po-source-so';
+import { resendHeldEdits } from './autocount-held-edit-resend';
+import { isStaleKeyRefusal, recomposeStaleKeyedEdit, liveLineKeys, staleKeyReplacedNote } from './autocount-stale-key-recompose';
+import { queueSoPoDocNos } from './autocount-so-po-doc-no';
 import { readMfgProductBindings } from './supplier-bindings';
 import {
   soLine,
-  present,
   DOWNSTREAM,
   CONVERT_TARGET,
   readConvertSourceKeys,
@@ -353,20 +359,20 @@ export async function enqueueAcOp(sb: Sb, input: EnqueueInput): Promise<boolean>
    customer_so_no is the customer's own reference; po_doc_no / customer_po were
    the other two columns that once held it, both 0%-filled and DROPPED from
    scm.mfg_sales_orders by migration 0310 — `customer_so_no` is the only one any
-   surface still writes, and it is what ToPONo reads (soCustomerRef). */
+   surface still writes, and it is what Ref reads (soReference, docs/bugs/0926). */
 /* emergency_contact_phone is AutoCount's DeliverPhone1 and `phone` is its
    Phone1 — two contacts, two columns (owner 2026-08-15). The cutover decided
    the pairing in this direction already: import-ac-outstanding-so.mjs:302 takes
    DeliverPhone1 when it differs from Phone1 and inserts it as
    emergency_contact_phone (:390/:412). Reading `phone` for both would put the
    customer's number in front of the driver.
-   total_revenue_sen + deposit_sen are two of the three inputs to the
-   outstanding balance the BALANCE UDF carries; the third is the payments ledger
-   (readSoOutstandingSen). NOT balance_sen — recomputeTotals rewrites that to
-   the gross total on every edit, and it is the column the cutover's UDF_BALANCE
-   landed in, which is exactly what makes it look like the right one. */
+   total_revenue_sen (or local_total_sen when it is 0 — a migrated order) +
+   deposit_sen feed the BALANCE UDF; the third input is the payments ledger.
+   readSoOutstandingSen takes the local_total_sen fallback since 2026-09-12, so
+   it MUST stay in this select (omit it and a migrated order's UDF_BALANCE is
+   dropped). NOT balance_sen — recomputeTotals rewrites that to the gross total. */
 const SO_HEADER_COLS =
-  'doc_no, so_date, debtor_name, agent, salesperson_id, sales_location, branding, venue, address1, address2, address3, address4, city, postcode, customer_state, phone, emergency_contact_phone, ref, customer_so_no, processing_date, customer_delivery_date, total_revenue_sen, deposit_sen, linked_ac_docno';
+  'doc_no, so_date, debtor_name, agent, salesperson_id, sales_location, branding, venue, address1, address2, address3, address4, city, postcode, customer_state, phone, emergency_contact_phone, ref, customer_so_no, processing_date, customer_delivery_date, total_revenue_sen, local_total_sen, deposit_sen, linked_ac_docno';
 /* `cancelled` and `branding` are on THIS list and on no other, because only
    scm.mfg_sales_order_items has them (the other five line tables are
    still to get `cancelled` — docs/autocount-line-retirement-plan.md). Asking
@@ -379,7 +385,7 @@ const SO_HEADER_COLS =
    (owner 2026-08-15). It also holds the BLANK the book itself carries on 11,886
    of its 60,939 lines. */
 const SO_ITEM_COLS =
-  'id, item_code, item_group, branding, description, description2, qty, unit_price_sen, variants, linked_ac_dtlkey, cancelled, warehouse_id, line_delivery_date, photo_urls';
+  'id, item_code, item_group, branding, description, description2, qty, unit_price_sen, variants, linked_ac_dtlkey, cancelled, warehouse_id, line_delivery_date, photo_urls, line_no';
 /* scm.purchase_orders is SUPPLIER-keyed. It has no creditor_code, creditor_name,
    agent or ref: the creditor is scm.suppliers.code / .name behind supplier_id,
    and the other two do not exist at all on the ERP side. */
@@ -387,13 +393,13 @@ const SO_ITEM_COLS =
    the same header field and the ERP had never sent one, so the book defaulted it
    on every purchase order it has written. Guide §7c3b-ii. */
 const PO_HEADER_COLS =
-  'id, company_id, po_number, po_date, supplier_id, notes, purchase_location_id, linked_ac_docno';
+  'id, company_id, po_number, po_date, supplier_id, notes, purchase_location_id, linked_ac_docno, supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4';
 /* description2 is NOT optional here. The PO importer wrote the AutoCount sofa
    Desc2 verbatim onto every compartment row, and that stored text is what the
    D9 collapse echoes back. Leaving the column out of this list is what made the
    PO side fall back to a variants blob and throw the original build away. */
 const PO_ITEM_COLS =
-  'id, item_code, item_group, description, description2, qty, unit_price_sen, variants, linked_ac_dtlkey, warehouse_id, delivery_date, photo_urls';
+  'id, item_code, item_group, description, description2, qty, unit_price_sen, variants, linked_ac_dtlkey, warehouse_id, delivery_date, photo_urls, line_no';
 
 /**
  * The four DOWNSTREAM document types, described once.
@@ -502,11 +508,10 @@ async function noteReadFailure(
     || e instanceof MissingAgentError
     || e instanceof MissingSalesLocationError
     || e instanceof MissingCreditorError
-    /* THE LIST IS THE WHOLE MECHANISM: an error missing from it is SWALLOWED by
-       the early return below — no row, no log line, nothing to read. Pinned
-       against acNotSentProblems' twin chain in ac-preflight.test.ts. */
+    /* An error missing from this list is NOT a named refusal — it is still written down as "compose failed" (0888: an
+       early return here dropped four days of amendment edits with no row and no log). Pinned in ac-preflight.test.ts. */
     || e instanceof AcSoToPoAlignmentError;
-  if (!refused && !(e instanceof AcReadError)) return [];
+  const named = refused || e instanceof AcReadError;  // anything else still lands, class-named, as "compose failed"
   const message = (e as Error).message;
   // eslint-disable-next-line no-console
   console.error(
@@ -532,7 +537,7 @@ async function noteReadFailure(
          operator actually reads. */
       reason: refused
         ? `refused, nothing sent (${(e as Error).name}): ${message}`
-        : `compose failed, nothing sent: ${message}`,
+        : `compose failed, nothing sent: ${named ? '' : `(${(e as Error).name}) `}${message}`,
     });
   } catch { /* the note is best-effort; the log above is the floor */ }
   /* AND THE OPERATOR IS TOLD. The skipped row is what an ENGINEER reads; it is
@@ -561,7 +566,7 @@ export async function enqueueSoCreate(
        again would duplicate the order in the live book. */
     if ((header as { linked_ac_docno?: string | null }).linked_ac_docno) return AC_ENQUEUE_SILENT;
     const items = await readOrThrow('mfg_sales_order_items',
-      sb.from('mfg_sales_order_items').select(SO_ITEM_COLS).eq('doc_no', opts.docNo));
+      inAcLineOrder(sb.from('mfg_sales_order_items').select(SO_ITEM_COLS).eq('doc_no', opts.docNo)));
     const rows = (items ?? []) as Record<string, unknown>[];
     const lines = await withLocations(sb, rows, rows.map(soLine));
     /* Composed TWICE on purpose: once to learn which ERP rows produced which
@@ -645,10 +650,13 @@ async function readPoHeader(sb: Sb, poId: string) {
     creditor_code: s?.code ?? null,
     creditor_name: s?.name ?? null,
     agent: AC_PURCHASE_AGENT,
-    ref: null,
+    ...(await readPoSourceSo(sb, String(h.id ?? poId))),  // ref + source_so_no - docs/bugs/0926
     notes: (h.notes as string | null) ?? null,
     purchase_location: purchaseLocation,
     linked_ac_docno: (h.linked_ac_docno as string | null) ?? null,
+    supplier_delivery_date_2: (h.supplier_delivery_date_2 as string | null) ?? null,
+    supplier_delivery_date_3: (h.supplier_delivery_date_3 as string | null) ?? null,
+    supplier_delivery_date_4: (h.supplier_delivery_date_4 as string | null) ?? null,
   };
 }
 
@@ -668,7 +676,7 @@ export async function enqueuePoCreate(
     poNumber = header.po_number || opts.poId;
     if (header.linked_ac_docno) return AC_ENQUEUE_SILENT;
     const items = await readOrThrow('purchase_order_items',
-      sb.from('purchase_order_items').select(PO_ITEM_COLS).eq('purchase_order_id', opts.poId));
+      inAcLineOrder(sb.from('purchase_order_items').select(PO_ITEM_COLS).eq('purchase_order_id', opts.poId)));
     const rows = (items ?? []) as Record<string, unknown>[];
     const lines = await withLocations(sb, rows, rows.map(soLine));
     const bindings = await bindingsFor(sb, opts.companyId, lines.map((l) => l.item_code), header.supplier_id);
@@ -676,11 +684,10 @@ export async function enqueuePoCreate(
     /* TRANSFER OR CREATE — po-transfer-shape.ts falls back on ANY doubt. READ
        BEFORE COMPOSING: the shape decides whether an ItemCode is even sent
        (docs/bugs/0541). */
-    const { shape, sourceRef } = await readPoEnqueueShape(sb, opts.poId);
+    const { shape } = await readPoEnqueueShape(sb, opts.poId);
     const forTransfer = shape.kind === 'transfer';
     const { collapsed, details } = composeDetails(lines, { supplierCode: header.creditor_code, bindings, forTransfer });
     const body = composeCreatePo(header, lines, { bindings, forTransfer });
-    if (sourceRef) (body as unknown as Record<string, unknown>).Ref = sourceRef;
 
     return { queued: await enqueueAcOp(sb, {
       companyId: opts.companyId,
@@ -949,7 +956,7 @@ export async function retiredLineOf(
     const n = r.linked_ac_dtlkey == null ? NaN : Number(r.linked_ac_dtlkey);
     if (!Number.isFinite(n) || n <= 0) return [];
     const desc2 = r.description2 == null ? undefined : String(r.description2);
-    return [{ DtlKey: n, ItemCode: String(r[codeCol] ?? ''), ...(desc2 ? { Desc2: desc2 } : {}) }];
+    return [{ DtlKey: n, ItemCode: String(r[codeCol] ?? ''), ...(desc2 ? { Desc2: desc2 } : {}), Gone: 'deleted' as const }];
   } catch {
     return [];
   }
@@ -1207,25 +1214,27 @@ export async function enqueueEdit(
      * delete route has to say so explicitly, and this is how.
      */
     retire?: AcRetiredLine[];
+    rebuild?: boolean;  // requeue only; ABSENT = keyed edit, the stricter answer - 0614
     /** ERP columns THIS REQUEST wrote — same contract as `newLineIds`: the
      *  composer reads the SAVED row and cannot tell a clear from a blank. */
     touchedFields?: readonly string[];
   },
 ): Promise<boolean> {
+  let resolvedDocNo: string | null = null;  // the CATCH needs the number: a PO route passes only docId, so a refusal was filed under a UUID (docs/bugs/0774)
   try {
     if (opts.companyId == null) return false;
     if (!(await isWritebackEnabled(sb, opts.companyId))) return false;
 
     const retired = (opts.retire ?? []).filter((r) => Number.isFinite(Number(r.DtlKey)));
     const composed = opts.docType === 'SO'
-      ? await composeSoState(sb, String(opts.docNo), retired, opts.newLineIds, opts.touchedFields)
+      ? await composeSoState(sb, String(opts.docNo), retired, opts.newLineIds, opts.touchedFields, opts.rebuild ?? false)
       : opts.docType === 'PO'
-        ? await composePoState(sb, String(opts.docId ?? opts.docNo), retired, opts.newLineIds)
+        ? await composePoState(sb, String(opts.docId ?? opts.docNo), retired, opts.newLineIds, opts.rebuild ?? false)
         : await composeDownstreamState(sb, opts.docType, String(opts.docId ?? opts.docNo), retired, opts.newLineIds);
     if (!composed) return false;
     /* A PO route knows its id, not its number; the outbox row is keyed by the
        human document number so it lines up with the create row. */
-    const docNo = composed.docNo;
+    const docNo = (resolvedDocNo = composed.docNo);
 
     const pending = await findPendingOriginatingOp(sb, opts.companyId, opts.docType, docNo, opts.docId ?? null);
     if (pending) {
@@ -1319,7 +1328,7 @@ export async function enqueueEdit(
       companyId: opts.companyId as number,
       op: 'edit',
       docType: opts.docType,
-      docNo: String(opts.docNo ?? opts.docId ?? ''),
+      docNo: String(resolvedDocNo ?? opts.docNo ?? opts.docId ?? ''),
       docId: opts.docId ?? null,
     });
     return false;
@@ -1376,8 +1385,7 @@ async function composeDownstreamState(
   if (!header) return null;
   const h = header as unknown as Record<string, unknown>;
   const items = await readOrThrow(spec.itemTable,
-    sb.from(spec.itemTable).select(spec.itemCols).eq(spec.itemFk, id)
-      .order('created_at', { ascending: true }).order('id', { ascending: true }));
+    inAcLineOrder(sb.from(spec.itemTable).select(spec.itemCols).eq(spec.itemFk, id)));
   const lines = ((items ?? []) as unknown as Record<string, unknown>[]).map(spec.line);
   const docNo = spec.docNoOf(h);
   return {
@@ -1399,19 +1407,20 @@ async function composeDownstreamState(
   };
 }
 
-async function composeSoState(sb: Sb, docNo: string, retired: AcRetiredLine[] = [], newLineIds?: string[], touchedFields: readonly string[] = []) {
+async function composeSoState(sb: Sb, docNo: string, retired: AcRetiredLine[] = [], newLineIds?: string[], touchedFields: readonly string[] = [], rebuild = false) {
   const header = await readOrThrow('mfg_sales_orders header',
     sb.from('mfg_sales_orders').select(SO_HEADER_COLS).eq('doc_no', docNo).maybeSingle());
   if (!header) return null;
   const items = await readOrThrow('mfg_sales_order_items',
-    sb.from('mfg_sales_order_items').select(SO_ITEM_COLS).eq('doc_no', docNo));
+    inAcLineOrder(sb.from('mfg_sales_order_items').select(SO_ITEM_COLS).eq('doc_no', docNo)));
   const soRows = (items ?? []) as Record<string, unknown>[];
   const lines = await withLocations(sb, soRows, soRows.map(soLine));
   const h = header as Record<string, unknown>;
   const bindings = await bindingsFor(sb, (h.company_id as number | null) ?? null, lines.map((l) => l.item_code));
-  const salespersonName = await readSalespersonName(sb, h.salesperson_id);
-  const outstandingSen = await readSoOutstandingSen(sb, h);
-  const paymentRefs = await readSoPaymentRefs(sb, docNo);
+  const [salespersonName, outstandingSen, erpPaymentRefs, poRaised] = await Promise.all([
+    readSalespersonName(sb, h.salesperson_id), readSoOutstandingSen(sb, h),
+    readSoPaymentRefs(sb, docNo), poRaisedFromSo(sb, docNo)]);   // batched; 0609
+  const paymentRefs = erpOwnsPaymentText(h.linked_ac_docno) ? erpPaymentRefs : [];  // the office's text on a carried-over order - 0934
   return {
     docNo,
     linkedAcDocNo: (h.linked_ac_docno as string | null) ?? null,
@@ -1431,20 +1440,18 @@ async function composeSoState(sb: Sb, docNo: string, retired: AcRetiredLine[] = 
     edit: () => composeEdit(
       'SO', String(h.linked_ac_docno ?? docNo),
       soEditHeader(h, salespersonName, lines, outstandingSen, paymentRefs, touchedFields), lines,
-      {
-        bindings,
-        ...(newLineIds && newLineIds.length ? { newLineIds: new Set(newLineIds) } : {}),
-      },
+      { bindings,   // 0609: a PO raised from this SO blocks the rebuild, never the edit
+        ...(newLineIds?.length ? { newLineIds: new Set(newLineIds) } : {}), ...(poRaised ? { rebuildBlocked: 'A PO was raised from this SO.' } : {}), ...(rebuild ? { rebuild: true } : {}) },
       retired,
     ),
   };
 }
 
-async function composePoState(sb: Sb, poId: string, retired: AcRetiredLine[] = [], newLineIds?: string[]) {
+async function composePoState(sb: Sb, poId: string, retired: AcRetiredLine[] = [], newLineIds?: string[], rebuild = false) {
   const header = await readPoHeader(sb, poId);
   if (!header) return null;
   const items = await readOrThrow('purchase_order_items',
-    sb.from('purchase_order_items').select(PO_ITEM_COLS).eq('purchase_order_id', poId));
+    inAcLineOrder(sb.from('purchase_order_items').select(PO_ITEM_COLS).eq('purchase_order_id', poId)));
   const poRows = (items ?? []) as Record<string, unknown>[];
   const lines = await withLocations(sb, poRows, poRows.map(soLine));
   /* A line this request just ADDED inherits the purchase order's own warehouse
@@ -1471,13 +1478,9 @@ async function composePoState(sb: Sb, poId: string, retired: AcRetiredLine[] = [
     photos: photosOf(poRows),
     self: { table: 'purchase_orders', keyCol: 'id', key: poId } as AcDocRef,
     create: () => composeCreatePo(header, lines, { bindings: poBindings }) as unknown as Record<string, unknown>,
-    /* No Ref: the ERP has no such field on a purchase order, and /edit applies
-       only the keys it is GIVEN (AcSyncService.cs:369 `h.ContainsKey`). Sending
-       null would blank whatever the account book has there. */
-    edit: () => composeEdit('PO', String(header.linked_ac_docno ?? header.po_number), present({
-      CreditorName: header.creditor_name,
-      Description: header.notes,
-    }), lines, {
+    /* Ref and SONo come from the source order (readPoSourceSo); /edit applies
+       only the keys it is GIVEN, so a PO with no single source sends neither. */
+    edit: () => composeEdit('PO', String(header.linked_ac_docno ?? header.po_number), poEditHeader(header), lines, {
       supplierCode: header.creditor_code,
       bindings: poBindings,
       /* Add-a-line, same contract as the sales order's: the ROUTE names the row
@@ -1489,7 +1492,7 @@ async function composePoState(sb: Sb, poId: string, retired: AcRetiredLine[] = [
          appends a duplicate into a live book (mfg-purchase-orders.ts, the
          convert-from-SO append, says exactly this). Their stock location is
          filled in above, on the line. */
-      ...(newLineIds && newLineIds.length ? { newLineIds: new Set(newLineIds) } : {}),
+      ...(newLineIds && newLineIds.length ? { newLineIds: new Set(newLineIds) } : {}), ...(rebuild ? { rebuild: true } : {}),
     }, retired),
   };
 }
@@ -1529,7 +1532,7 @@ async function composePoState(sb: Sb, poId: string, retired: AcRetiredLine[] = [
  * amount of data entry. Expanding the query with each line's sofa base code
  * costs nothing for a non-sofa line (splitSofaCode returns null).
  */
-async function bindingsFor(
+export async function bindingsFor(
   sb: Sb,
   companyId: number | null | undefined,
   codes: string[],
@@ -1659,16 +1662,6 @@ function photosOf(rows: Record<string, unknown>[]): AcOutboxPayload['photos'] {
  * through String.fromCharCode in chunks — whole-array spread blows the call
  * stack on anything of photograph size, which is the entire input class.
  */
-function b64(buf: ArrayBuffer): string {
-  const bytes = new Uint8Array(buf);
-  let out = '';
-  const CHUNK = 0x8000;
-  for (let i = 0; i < bytes.length; i += CHUNK) {
-    out += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
-  }
-  return btoa(out);
-}
-
 async function mark(sb: Sb, id: string, patch: Record<string, unknown>): Promise<void> {
   await sb.from('autocount_outbox')
     /* THE CLAIM COMES OFF HERE, on every outcome, because this is the one place
@@ -1818,38 +1811,14 @@ export async function dispatchOne(
     if (creditor) Object.assign(body, creditor);
   }
 
-  /* THE PHOTOGRAPHS, fetched in the moment they are sent.
-     `payload.photos` names R2 keys; the bytes live in the SO_ITEM_PHOTOS
-     bucket and are turned into base64 here rather than stored in the outbox —
-     see the field's own note for why an append-only table must not carry them.
-
-     BEST-EFFORT PER PICTURE, FATAL FOR NONE. A photograph is not the document:
-     an unreadable object must not stop a price change reaching the account
-     book. What it must not do either is lie — a line whose pictures could not
-     be read sends NO `Photos` key at all, and the service leaves whatever
-     `FurtherDescription` the book already holds. Sending a SHORT list would
-     overwrite five pictures with three. */
-  if (row.op === 'edit' && payload.photos?.length) {
-    const lines = Array.isArray(body.Lines) ? (body.Lines as Array<Record<string, unknown>>) : [];
-    for (const want of payload.photos) {
-      const line = lines.find((l) => Number(l.DtlKey) === want.dtlKey);
-      if (!line || !want.keys.length) continue;
-      try {
-        const jpegs: Array<{ Jpeg: string }> = [];
-        for (const key of want.keys) {
-          const obj = await (env as unknown as { SO_ITEM_PHOTOS?: R2Bucket }).SO_ITEM_PHOTOS?.get(key);
-          if (!obj) throw new Error(`photo not in the bucket: ${key}`);
-          jpegs.push({ Jpeg: b64(await obj.arrayBuffer()) });
-        }
-        if (jpegs.length === want.keys.length) line.Photos = jpegs;
-      } catch (e) {
-        console.warn(
-          `photos not attached to ${row.doc_type} ${row.doc_no} line ${want.dtlKey}: `
-          + (e instanceof Error ? e.message : String(e)),
-        );
-      }
-    }
-  }
+  /* THE PHOTOGRAPHS, fetched in the moment they are sent — keys in the payload,
+     bytes from SO_ITEM_PHOTOS. Per line all or none, an unreadable picture never
+     stops the document, and since docs/bugs/0899 a line whose pictures would
+     take the body past the host's 2 MiB limit is sent without them and the row
+     says so (autocount-photo-attach.ts). */
+  const photoNote = row.op === 'edit' && payload.photos?.length
+    ? await attachPhotos(env, body, payload.photos, `${row.doc_type} ${row.doc_no}`)
+    : null;
 
   const attempts = (row.attempts ?? 0) + 1;
 
@@ -1890,11 +1859,16 @@ export async function dispatchOne(
   const result = await callAcService(env, row.op, body, fetchImpl);
 
   if (result.ok) {
+    /* Line identity is a second question and this file does not own it:
+       docs/bugs/0813, and `lineIdentityGap` in autocount-line-keys.ts. Recorded
+       BEFORE the mark so the two facts arrive together. */
+    const identityGap = await lineIdentityGap(sb, row, payload, result.lines, body);
+
     await mark(sb, row.id, {
       ...stamp,
       status: 'sent',
       attempts,
-      last_error: null,
+      last_error: [identityGap, photoNote].filter(Boolean).join(' | ') || null,
       ac_doc_no: result.docNo,
       sent_at: new Date().toISOString(),
     });
@@ -1905,19 +1879,42 @@ export async function dispatchOne(
         .update({ linked_ac_docno: result.docNo })
         .eq(payload.writeback.keyCol, payload.writeback.key);
     }
-    /* The same map one level down. Without it a document the ERP creates has
-       NULL line identity forever, and its first edit is refused by composeEdit
-       (or, before that refusal existed, appended duplicates into the book). */
-    if (payload.lineWriteback) {
-      await persistLineKeys(sb, row, payload.lineWriteback, result.lines);
-    }
     /* AN EDIT THAT ADDED A LINE LEARNS THAT LINE'S KEY (docs/bugs/0583-*).
        Without it the added row stays keyless and every LATER edit is refused. */
     if (row.op === 'edit') {
       const target = newLineTargetOf(row.doc_type, payload);
       if (target) await persistNewLineKeys(sb, row, target, result.lines);
     }
+    /* An edit refused while this row was on its way goes out now (docs/bugs/0924).
+       doc_type is one of the six by the table's CHECK (migration 0277). */
+    await resendHeldEdits(sb, { ...row, doc_type: row.doc_type as AcDocType }, (o) => enqueueEdit(sb, o));
+    await queueSoPoDocNos(sb, row, (i) => enqueueAcOp(sb, i));  // PO Doc No. of the source orders - docs/bugs/0926
     return 'sent';
+  }
+
+  /* A KEYED EDIT THE BOOK REFUSED AS LINE-NOT-FOUND never succeeds on retry: the
+     drain replays the stored payload and it still names the same key. Decide it
+     now instead of burning six attempts. When the ERP has RE-KEYED the line (a
+     Rebuild), compose the document as it now stands, once, and fold this row as
+     Replaced; when the ERP STILL carries the key, the account book lost the line
+     and it is left failing for a person to see. docs/bugs/0941. */
+  if (row.op === 'edit' && isStaleKeyRefusal(result.error)) {
+    const outcome = await recomposeStaleKeyedEdit(
+      sb,
+      { id: row.id, company_id: row.company_id, doc_type: row.doc_type as AcDocType,
+        doc_no: row.doc_no, doc_id: row.doc_id, op: row.op, last_error: result.error ?? null },
+      (o) => enqueueEdit(sb, o),
+      (docType, docNo, docId) => liveLineKeys(sb, docType, docNo, docId),
+    );
+    if (outcome.kind !== 'none') {
+      await mark(sb, row.id, {
+        ...stamp,
+        attempts,
+        status: 'failed',
+        last_error: (outcome.kind === 'queued' ? staleKeyReplacedNote(outcome.key) : '') + (result.error ?? ''),
+      });
+      return 'failed';
+    }
   }
 
   const giveUp = !result.retryable || attempts >= MAX_ATTEMPTS;

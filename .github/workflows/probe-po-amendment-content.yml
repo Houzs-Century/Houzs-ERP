@@ -1,0 +1,39 @@
+name: What did a PO amendment change? (read-only)
+
+# Manual, read-only. Prints each amendment's reason, header changes and every line
+# change beside its before-snapshot, for the purchase orders named. Built because
+# the supplier proposer skips a PO "amended after the supplier's cut", and whether
+# our PO or the supplier's export is the newer truth depends on WHAT the amendment
+# changed. SELECT only, no DDL, no transaction.
+on:
+  workflow_dispatch:
+    inputs:
+      docs:
+        description: "Purchase orders, comma separated (e.g. HC-PO-010086)"
+        required: true
+        default: ""
+        type: string
+      company:
+        description: "company_id"
+        required: false
+        default: "1"
+        type: string
+
+concurrency:
+  group: probe-po-amendment-content
+  cancel-in-progress: false
+
+jobs:
+  prod:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/probe-po-amendment-content.mjs
+        env:
+          DOCS: ${{ inputs.docs }}
+          COMPANY_ID: ${{ inputs.company }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

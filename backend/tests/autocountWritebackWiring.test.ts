@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import rawSo from '../src/scm/routes/mfg-sales-orders.ts?raw';
+import { soRouterSource } from './lib/so-router-source';
 /* The payment insert core lives below the route layer, because scan-so.ts
    writes through it with no request context. Its anchor has to be read from
    there or this test pins a function that is no longer in the file. */
@@ -8,9 +8,14 @@ import rawSdk from '../scripts/autocount-service/sdk-api-reference.txt?raw';
 import rawPo from '../src/scm/routes/mfg-purchase-orders.ts?raw';
 import rawDo from '../src/scm/routes/delivery-orders-mfg.ts?raw';
 import rawGrn from '../src/scm/routes/grns.ts?raw';
-import rawSi from '../src/scm/routes/sales-invoices.ts?raw';
+/* The DO -> SI conversion lives below the route layer since docs/bugs/0830 —
+   the delivery reconciler raises the final invoice through it with no request
+   context — so its enqueue is read from the lib, as the payment insert's is;
+   the router itself no longer carries a flow this file pins. */
+import rawSiFromDo from '../src/scm/lib/si-from-do.ts?raw';
 import rawPi from '../src/scm/routes/purchase-invoices.ts?raw';
 import rawCron from '../src/index.ts?raw';
+const rawSo = soRouterSource();
 
 /* ?raw hands back the WORKING TREE bytes, and on Windows (core.autocrlf=true)
    that is CRLF while git stores LF. Any anchor below containing a newline then
@@ -21,7 +26,7 @@ const paymentRowSource = lf(rawPaymentRow);
 const poSource = lf(rawPo);
 const doSource = lf(rawDo);
 const grnSource = lf(rawGrn);
-const siSource = lf(rawSi);
+const siFromDoSource = lf(rawSiFromDo);
 const piSource = lf(rawPi);
 const cronSource = lf(rawCron);
 
@@ -97,7 +102,7 @@ describe('the six flows are hooked at the point the document becomes permanent',
   });
 
   test('5. DO -> Sales Invoice', () => {
-    const conv = between(siSource, 'Converted from ${distinctDoNumbers.length > 1', '/* LEAK GUARD (DRAFT)');
+    const conv = between(siFromDoSource, 'Converted from ${distinctDoNumbers.length > 1', '/* LEAK GUARD (DRAFT)');
     expect(conv).toContain("op: 'do_to_iv'");
     // Every delivery order the invoice bills.
     expect(conv).toContain('doIds.map(');
@@ -154,15 +159,17 @@ describe('cancel and edit are hooked, and only where the downstream lock has alr
     // Header CAS save.
     expect(between(soSource, 'header saved but edit lease was no longer ours', 'version: savedVersion,'))
       .toContain('queueAcSoEdit(c, docNo');
-    // Line add / edit / delete.
-    expect(between(soSource, 'post-line-add failed', 'return c.json({ item: data }, 201);'))
+    // Line add / edit / delete. Anchored on the deferAllocationRecompute label
+    // that ends each handler's work (was the old inline console.error string,
+    // removed when these routes moved off the blocking recompute 2026-09-11).
+    expect(between(soSource, "post-line-add", 'return c.json({ item: data }, 201);'))
       .toContain('queueAcSoEdit(c, docNo');
-    expect(between(soSource, 'post-line-patch failed', 'return c.json({ ok: true });'))
+    expect(between(soSource, "post-line-edit", 'return c.json({ ok: true });'))
       .toContain('queueAcSoEdit(c, docNo');
     /* The delete also RETIRES the removed line in AutoCount — without naming it
        the account book keeps it live, because /edit applies only the lines it
        is given. See autocountWritebackCells.test.ts for the all-six version. */
-    expect(between(soSource, 'post-line-delete failed', 'return c.body(null, 204);'))
+    expect(between(soSource, "post-line-delete", 'return c.body(null, 204);'))
       .toContain('queueAcSoEdit(c, docNo, retire)');
     /* Variant / SKU changes. These run inside runScmPgCommand, so the queue
        call must sit OUTSIDE the transaction and fire only on a 2xx. */
@@ -186,14 +193,20 @@ describe('cancel and edit are hooked, and only where the downstream lock has alr
        receipts through recordSoPaymentRow with no request context, so an
        enqueue written into POST /:docNo/payments would cover the payments a
        human typed and silently miss every scanned one. */
+    /* HEADER-ONLY since docs/bugs/0896: a payment sends BALANCE and PAYEMENT
+       through enqueueSoPaymentEdit, so a line AutoCount refuses cannot strand
+       the money. The whole-document queueAcSoEdit on these three paths is the
+       regression this pins. */
     expect(between(paymentRowSource, 'export async function recordSoPaymentRow(', 'return { payment: data as Record<string, unknown>, errorMessage: null };'))
-      .toContain('await enqueueEdit(sb, {');
-    expect(between(soSource, "action: 'UPDATE_PAYMENT',", 'collected_by_name: staff?.name ?? null'))
-      .toContain('queueAcSoEdit(c, docNo)');
+      .toContain('await enqueueSoPaymentEdit(sb, {');
+    const amend = between(soSource, "action: 'UPDATE_PAYMENT',", 'collected_by_name: staff?.name ?? null');
+    expect(amend).toContain("enqueueSoPaymentEdit(c.get('supabase'), { companyId: activeCompanyId(c), docNo,");
+    expect(amend).not.toContain('queueAcSoEdit(c, docNo)');
     /* The delete direction matters most: a book left showing a settled order
        after the payment was reversed understates what the customer owes. */
-    expect(between(soSource, "action: 'DELETE_PAYMENT',", 'return c.json({ ok: true });'))
-      .toContain('queueAcSoEdit(c, docNo)');
+    const remove = between(soSource, "action: 'DELETE_PAYMENT',", 'return c.json({ ok: true });');
+    expect(remove).toContain("enqueueSoPaymentEdit(c.get('supabase'), { companyId: activeCompanyId(c), docNo,");
+    expect(remove).not.toContain('queueAcSoEdit(c, docNo)');
   });
 
   test('every PO mutation path queues an edit', () => {

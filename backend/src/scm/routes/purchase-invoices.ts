@@ -2,7 +2,9 @@
 
 import { Hono } from 'hono';
 import { PI_STATUS_BUCKETS } from '../lib/pi-status-buckets';
-import { HELD_OR_TERM, HOLD_COLUMNS } from '../lib/document-hold'; import { grnNotBillableRefusal } from '../lib/source-document-gates'; import { mountHoldRoute } from './document-hold-routes';
+import { PI_HEADER_COLS, PI_LIST_SELECT, piListSelect, filterPiList, orderPiList, readPiListFilters } from '../lib/pi-list-read';
+import { attachPiLines } from '../lib/pi-export-rows';
+import { HELD_OR_TERM } from '../lib/document-hold'; import { grnNotBillableRefusal } from '../lib/source-document-gates'; import { mountHoldRoute } from './document-hold-routes';
 import type { Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
@@ -20,11 +22,11 @@ import { normalizeCurrency, normalizeExchangeRate, masterRateForCurrency } from 
 import { assertForeignRatePostable, assertForeignRatePatchable } from '../lib/fx-guard';
 import { parseLineNumbers, invalidLineNumberBody } from '../shared/line-numbers';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
-import { escapeForOr } from '../lib/postgrest-search';
 import {
   coveredGrnIds, findUnlinkedPiLines, unlinkedInvoiceResponse, unlinkedCheckFailedResponse,
 } from '../lib/return-unlinked-lines';
 import { assertSourceLinesInCompany } from '../lib/ref-in-company';
+import { piGrnSourceRefusal } from '../lib/pi-grn-source-guard';
 import { readStatusCounts } from '../lib/status-counts';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY,
@@ -37,6 +39,7 @@ import { resolvePoSoCoveragePerSkuForPos, resolveDeliveredByCodeForPos, summariz
 import { enqueueConvert, recordParentlessCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
 import { sourceGrnIdsForPi } from '../lib/convert-parent';
 import { refuseMigratedSources } from '../lib/migrated-chain';
+import { attachGrnLineFacts, withPoPriceSnapshot } from '../lib/pi-po-price'; import { loadOutstandingGrnLines } from '../lib/outstanding-grn-lines';
 import { refuseWithoutWriting } from '../lib/no-write-refusal';
 /* The create's refusal bodies and the two rules its exits follow (2026-08-19). */
 import { insertFailed, loadFailed, rollbackPi, committedAnyway } from '../lib/pi-create-refusals';
@@ -64,14 +67,14 @@ purchaseInvoices.use('*', supabaseAuth);
 
 /* CREATE joined the post/payment/cancel/header pass late; recorded the same way. */
 
-const HEADER =
-  'id, invoice_number, supplier_invoice_ref, supplier_id, purchase_order_id, grn_id, invoice_date, due_date, currency, exchange_rate, subtotal_sen, tax_sen, total_sen, paid_sen, status, notes, posted_at, created_at, created_by, updated_at, ' + HOLD_COLUMNS; // HOLD_COLUMNS = mig 0324's marker, BESIDE the status pill
+/* The header columns live with the list's filter (lib/pi-list-read.ts). */
+const HEADER = PI_HEADER_COLS;
 const ITEM =
   'id, purchase_invoice_id, grn_item_id, material_kind, item_code, material_name, qty, unit_price_sen, line_total_sen, notes, ' +
   /* PR #42 — variant fields (migration 0057) */
   'item_group, description, description2, uom, discount_sen, variants, ' +
   'gap_inches, divan_height_inches, divan_price_sen, leg_height_inches, leg_price_sen, ' +
-  'custom_specials, line_suffix, special_order_price_sen, unit_cost_sen, created_at';
+  'custom_specials, line_suffix, special_order_price_sen, unit_cost_sen, po_unit_price_sen, created_at';
 
 /* Compact non-null string dedupe (document-flow idiom) — the customer-DO
    resolve below walks id lists hop by hop. */
@@ -321,9 +324,8 @@ async function migratedRefusalForGrnItems(
 
 purchaseInvoices.get('/', async (c) => {
   const sb = c.get('supabase');
-  // Supplier CONTACT fields ride the list embed — the quick-view drawer's
-  // SUPPLIER panel renders off the list row (owner 2026-07-24: all "—").
-  const SELECT = `${HEADER}, supplier:suppliers(id, code, name, contact_person, phone, email, address), purchase_order:purchase_orders(id, po_number), grn:grns(id, grn_number, delivery_note_ref)`;
+  // The list select + filter live in lib/pi-list-read.ts, shared with the exports.
+  const SELECT = PI_LIST_SELECT;
 
   /* Opt-in server-side pagination + search + sort + status-counts (mirrors the
      SO list in mfg-sales-orders.ts). The PRESENCE of `page` switches paging on;
@@ -354,32 +356,11 @@ purchaseInvoices.get('/', async (c) => {
   const psRaw = Number(c.req.query('pageSize'));
   const pageSize = Number.isFinite(psRaw) && psRaw > 0 ? Math.min(100, Math.max(1, Math.trunc(psRaw))) : 50;
 
-  const SORT_COLS = new Set(['invoice_date', 'invoice_number', 'status', 'total_sen']);
-  const [rawCol, rawDir] = (c.req.query('sort') ?? 'invoice_date:desc').split(':');
-  const sortCol = SORT_COLS.has(rawCol) ? rawCol : 'invoice_date';
-  const sortAsc = rawDir === 'asc';
-
-  let q = sb.from('purchase_invoices').select(SELECT, { count: 'exact' }).order(sortCol, { ascending: sortAsc });
-  /* unique tiebreaker so range paging can't skip/repeat rows sharing the sort key */
-  if (sortCol !== 'invoice_number') q = q.order('invoice_number', { ascending: sortAsc });
-  /* Resolve the incoming `status`: a known bucket key → all its raw statuses;
-     'all'/empty → no filter; otherwise treat it as a raw DB status. */
-  const status = c.req.query('status');
-  if (status && status !== 'all') {
-    if (status === 'on_hold') q = q.or(HELD_OR_TERM); /* the MARKER (mig 0324) */ else if (PI_STATUS_BUCKETS[status]) q = q.in('status', PI_STATUS_BUCKETS[status]);
-    else q = q.eq('status', status);
-  }
-  q = scopeToCompany(q, c); // multi-company: isolate to the active company
-  /* free-text search over the base-table text columns the FE searches
-     (PurchaseInvoicesListV2 hay). Supplier name / PO / GRN source are embedded
-     resources, not base purchase_invoices columns, so they can't be ilike'd here. */
-  const search = c.req.query('q');
-  if (search) {
-    const s = escapeForOr(search);
-    if (s) q = q.or(`invoice_number.ilike.%${s}%,supplier_invoice_ref.ilike.%${s}%,notes.ilike.%${s}%`);
-  }
-  const from = c.req.query('from'); if (from) q = q.gte('invoice_date', from);
-  const to = c.req.query('to'); if (to) q = q.lte('invoice_date', to);
+  /* Tab + company + search + date range + sort: the SAME read the two exports
+     build (lib/pi-list-read.ts), so an export can never match different
+     invoices than the tab it was pressed on. */
+  const filters = readPiListFilters((k) => c.req.query(k));
+  let q = orderPiList(filterPiList(sb.from('purchase_invoices').select(piListSelect(filters), { count: 'exact' }), filters, c), filters.sort);
   q = q.range(page * pageSize, page * pageSize + pageSize - 1);
   const { data, error, count } = await q;
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
@@ -403,17 +384,24 @@ purchaseInvoices.get('/', async (c) => {
   if (!counted.ok) return c.json({ error: 'status_counts_failed', reason: counted.reason }, 500);
   const statusCounts = counted.counts;
 
-  const purchaseInvoices = (data ?? []) as Array<Record<string, unknown>>; // MRP columns OMITTED (C16); healed by GET /list-mrp-enrichment — see BUG-HISTORY
-  return c.json({ purchaseInvoices, total, page, pageSize, statusCounts });
+  const purchaseInvoices = (data ?? []) as unknown as Array<Record<string, unknown>>; // MRP columns OMITTED (C16); healed by GET /list-mrp-enrichment — see BUG-HISTORY
+  /* The page's LINES, in AutoCount's spelling — the same attach the export
+     uses (lib/pi-export-rows.ts), so a line column shows on screen exactly
+     what the file holds. The legacy unpaged path does not carry them: its
+     callers never render a line column. */
+  const withLines = await attachPiLines(sb, c, purchaseInvoices as Array<{ id: string } & Record<string, unknown>>);
+  if (withLines.error !== null) return c.json({ error: 'lines_read_failed', reason: withLines.error }, 500);
+  return c.json({ purchaseInvoices: withLines.rows, total, page, pageSize, statusCounts });
 });
 
 /* ── GET /outstanding-grn-items ─────────────────────────────────────────
-   Returns GRN LINES eligible for invoicing. Migration 0106 added
-   grn_items.invoiced_qty, so this now tracks PER-LINE remaining (Commander
-   2026-05-30 unified consumption model): for each grn_item from a POSTED GRN
-   we return remaining = qty_accepted - invoiced_qty and include only lines
-   with remaining > 0. A GRN line can be invoiced across MULTIPLE PIs until
-   fully consumed (replaces the old header-level all-or-nothing dedupe).
+   The Bill a Goods-Received Note picker: every line still to bill (accepted -
+   invoiced - returned > 0, per line since mig 0106, so a note can be billed
+   across several invoices) on POSTED, not-held notes. The read lives in
+   lib/outstanding-grn-lines.ts: driven by the notes that still have something
+   to bill, paged, company-scoped. It used to take the newest 500 posted notes
+   FIRST and filter afterwards, so an older unbilled note fell out of the
+   picker in silence.
 
    IMPORTANT (route ordering): this STATIC path MUST be registered before
    the `/:id` param route below — otherwise Hono matches `/:id` first and
@@ -421,85 +409,8 @@ purchaseInvoices.get('/', async (c) => {
    2026-05-28, same class as the PO-from-SO shadowing.) */
 purchaseInvoices.get('/outstanding-grn-items', async (c) => {
   const sb = c.get('supabase');
-  // Pull every POSTED GRN with its supplier + parent PO so we can group
-  // and present in the picker.
-  const { data: grnHeaders, error: hErr } = await scopeToCompany(
-    sb
-      .from('grns')
-      .select(`
-      id, grn_number, received_at, supplier_id, purchase_order_id, currency, exchange_rate,
-      supplier:suppliers ( code, name ),
-      purchase_order:purchase_orders ( po_number )
-    `),
-    c,
-  )
-    .eq('status', 'POSTED').eq('on_hold', false) // mig 0324: a held GRN now reads POSTED — the block stopped being free
-    .order('received_at', { ascending: false })
-    .limit(500);
-  if (hErr) return c.json({ error: 'load_failed', reason: hErr.message }, 500);
-  const headers = (grnHeaders ?? []) as unknown as Array<{
-    id: string; grn_number: string; received_at: string; supplier_id: string;
-    purchase_order_id: string | null;
-    currency?: string | null; exchange_rate?: string | number | null;
-    supplier: { code: string; name: string } | null;
-    purchase_order: { po_number: string } | null;
-  }>;
-  if (headers.length === 0) return c.json({ items: [] });
-
-  // Load the GRN items for every POSTED GRN. Per-line remaining tracking
-  // (migration 0106) replaces the header-level dedupe — a partially-invoiced
-  // GRN keeps surfacing its lines that still have remaining > 0.
-  const grnIds = headers.map((h) => h.id);
-  const { data: items, error: iErr } = await sb
-    .from('grn_items')
-    .select(`
-      id, grn_id, material_kind, item_code, material_name, item_group,
-      description, qty_accepted, qty_rejected, invoiced_qty, returned_qty, unit_price_sen, variants
-    `)
-    .in('grn_id', grnIds);
-  if (iErr) return c.json({ error: 'load_failed', reason: iErr.message }, 500);
-
-  const headerById = new Map(headers.map((h) => [h.id, h]));
-  const out = ((items ?? []) as Array<{
-    id: string; grn_id: string; material_kind: string; item_code: string;
-    material_name: string; item_group: string | null; description: string | null;
-    qty_accepted: number; qty_rejected: number; invoiced_qty: number; returned_qty: number;
-    unit_price_sen: number; variants: unknown;
-  }>)
-    .map((r) => {
-      const invoiced = r.invoiced_qty ?? 0;
-      const returned = r.returned_qty ?? 0;
-      const remaining = (r.qty_accepted ?? 0) - invoiced - returned;
-      return { ...r, _remaining: remaining };
-    })
-    .filter((r) => r._remaining > 0)
-    .map((r) => {
-      const h = headerById.get(r.grn_id)!;
-      return {
-        grnItemId:      r.id,
-        grnId:          r.grn_id,
-        grnDocNo:       h.grn_number,
-        receivedAt:     h.received_at,
-        supplierId:     h.supplier_id,
-        supplierCode:   h.supplier?.code ?? '',
-        supplierName:   h.supplier?.name ?? '',
-        purchaseOrderId: h.purchase_order_id,
-        poDocNo:        h.purchase_order?.po_number ?? null,
-        itemCode:       r.item_code,
-        description:    r.description ?? r.material_name,
-        itemGroup:      r.item_group ?? '',
-        qtyAccepted:    r.qty_accepted,
-        invoicedQty:    r.invoiced_qty ?? 0,
-        remaining:      r._remaining,
-        unitPriceSen: r.unit_price_sen,
-        variants:       r.variants,
-        /* Multi-note invoices (owner 2026-08-06) — the picker may combine
-           several of a supplier's notes into ONE invoice, but a PI header
-           carries ONE currency + rate, so the picker locks on these too. */
-        currency:       normalizeCurrency(h.currency),
-        exchangeRate:   normalizeExchangeRate(h.exchange_rate, normalizeCurrency(h.currency)),
-      };
-    });
+  const loaded = await loadOutstandingGrnLines({ sb, scopeQuery: (q) => scopeToCompany(q, c) });
+  if (loaded.error !== null) return c.json({ error: 'load_failed', reason: loaded.error }, 500);
 
   /* Owner 2026-08-06 — re-resolve each line's SUPPLIER fabric code from the
      live fabric_trackings row, exactly as the GRN / PO / SI details already do
@@ -509,9 +420,9 @@ purchaseInvoices.get('/outstanding-grn-items', async (c) => {
      current one — the same GRN line read two different ways (found on
      2990-GRN-2608-006: detail KN390-1, picker KN390-2). One batched read,
      fail-soft. */
-  await enrichLinesWithFabricSupplierCode(sb, c, out);
+  await enrichLinesWithFabricSupplierCode(sb, c, loaded.items);
 
-  return c.json({ items: out });
+  return c.json({ items: loaded.items, truncated: loaded.truncated });
 });
 
 purchaseInvoices.get('/:id', async (c) => {
@@ -546,21 +457,18 @@ purchaseInvoices.get('/:id', async (c) => {
      the PI shows the supplier's code even when no live supplier↔material binding
      exists; PI-native service lines (grn_item_id NULL) simply carry none. The
      frontend still falls back to the binding when a line has no snapshot. */
+  /* Two facts a PI line borrows from its GRN line — the supplier's own code and
+     the price we ORDERED at (owner 2026-09-12: 「PI 应该要有两个价钱」). Both come
+     off the same row, so `lib/pi-po-price.ts` reads them together. Auxiliary: a
+     failed hop leaves both null rather than 500ing the whole invoice. */
   try {
-    const grnItemIds = uniq((items as Array<{ grn_item_id?: string | null }>).map((r) => r.grn_item_id));
-    if (grnItemIds.length) {
-      const { data: gis } = await sb.from('grn_items').select('id, supplier_sku').in('id', grnItemIds);
-      const skuByGrnItem = new Map<string, string>();
-      for (const g of (gis ?? []) as Array<{ id: string; supplier_sku: string | null }>) {
-        if (g.supplier_sku) skuByGrnItem.set(g.id, g.supplier_sku);
-      }
-      for (const it of items as Array<Record<string, unknown> & { grn_item_id?: string | null }>) {
-        it.supplier_sku = it.grn_item_id ? skuByGrnItem.get(it.grn_item_id) ?? null : null;
-      }
-    }
+    // The cast is the supabase builder's generic DEPTH (TS2589), not a type
+    // hole: the helper only ever calls from().select().in().
+    await attachGrnLineFacts(sb as unknown as Parameters<typeof attachGrnLineFacts>[0],
+      items as Array<Record<string, unknown> & { id: string; grn_item_id?: string | null }>);
   } catch (e) {
     // eslint-disable-next-line no-console
-    console.error('[pi detail] supplier-sku resolve failed', { id, error: e });
+    console.error('[pi detail] grn-line facts resolve failed', { id, error: e });
   }
 
   /* Customer DO(s) — owner 2026-07-23 ("要的", following "PI need show Do
@@ -768,35 +676,12 @@ purchaseInvoices.post('/', async (c) => {
       if (!mig.ok) return refuseWithoutWriting(c, loadFailed(mig.reason, 'check whether this receipt was carried over from the account book'), 500);
       if (mig.refusal) return refuseWithoutWriting(c, mig.refusal, 409);
     }
-    if (gids.length > 0) {
-      /* The parent GRN rides the embed for the guard below: these grn_item ids
-         come from the request body, and the downstream writes
-         (recomputeGrnInvoiced, recostForPi) land on whoever owns them while the
-         invoice is stamped activeCompanyId(c). */
-      const { data: giRows } = await sb.from('grn_items')
-        .select('id, qty_accepted, invoiced_qty, returned_qty, grn:grns!inner ( grn_number, company_id )').in('id', gids);
-      type GiRow = {
-        id: string; qty_accepted: number; invoiced_qty: number; returned_qty: number;
-        grn?: { grn_number?: string | null; company_id?: number | null } | Array<{ grn_number?: string | null; company_id?: number | null }> | null;
-      };
-      const giList = (giRows ?? []) as unknown as GiRow[];
-      const parentOf = (g: GiRow) => (Array.isArray(g.grn) ? g.grn[0] : g.grn) ?? null;
-      // isCrossCompanySource is false for a null company_id, so a hit is never null.
-      const foreign = giList.map(parentOf).find((p) => isCrossCompanySource(p?.company_id, c));
-      if (foreign) return refuseWithoutWriting(c, crossCompanyConversionBlocked(foreign.grn_number ?? null, foreign.company_id, c), 409);
-      const byId = new Map<string, { qty_accepted: number; invoiced_qty: number; returned_qty: number }>(
-        giList.map((g) => [g.id, g]),
-      );
-      const over: Array<{ grnItemId: string; requested: number; remaining: number }> = [];
-      for (const [gid, want] of wantByGrnItem.entries()) {
-        const g = byId.get(gid);
-        if (!g) return refuseWithoutWriting(c, { error: 'item_not_found', grnItemId: gid, message: 'A line on this invoice points at a receipt line that is no longer there. Reopen the Goods Receipt and raise the invoice from it again.' }, 400);
-        const remaining = (g.qty_accepted ?? 0) - (g.invoiced_qty ?? 0) - (g.returned_qty ?? 0);
-        if (want > remaining) over.push({ grnItemId: gid, requested: want, remaining });
-      }
-      if (over.length > 0) {
-        return refuseWithoutWriting(c, { error: 'qty_exceeds_remaining', lines: over }, 409);
-      }
+    /* Company + IDENTITY + quantity, over ONE read of the source rows — moved
+       to lib/pi-grn-source-guard.ts beside its siblings checkSiOverRemaining
+       and qtyCapRefusal. The identity half is docs/bugs/0672 site 15. */
+    {
+      const bad = await piGrnSourceRefusal(sb, c, wantByGrnItem, items);
+      if (bad) return refuseWithoutWriting(c, bad.body, bad.status);
     }
   }
 
@@ -889,7 +774,7 @@ purchaseInvoices.post('/', async (c) => {
   const h = header as unknown as { id: string; invoice_number: string };
 
   const rowsWithId = itemRows.map((r) => ({ ...r, purchase_invoice_id: h.id }));
-  const { error: iErr } = await sb.from('purchase_invoice_items').insert(stampCompany(rowsWithId, c));
+  const { error: iErr } = await withPoPriceSnapshot(sb, rowsWithId, () => sb.from('purchase_invoice_items').insert(stampCompany(rowsWithId, c)));
   if (iErr) {
     // The claim follows the PROOF: an unproven rollback keeps it (a retype), a
     // released one over a surviving header would mint a second invoice.
@@ -1161,76 +1046,20 @@ export const postPurchaseInvoiceHandler = async (c: any) => {
 };
 purchaseInvoices.patch('/:id/post', postPurchaseInvoiceHandler);
 
-// Record a payment against the PI. Adds to paid_sen and auto-transitions
-// status: paid_sen == total → PAID, paid_sen > 0 && < total → PARTIALLY_PAID.
-purchaseInvoices.patch('/:id/payment', async (c) => {
-  const sb = c.get('supabase'); const id = c.req.param('id');
-  /* company-scope: this records MONEY PAID. The concurrency loop below guards
-     two payments racing on the same PI, never whose PI it is. */
-  const { data: own, error: ownErr } = await scopeToCompany(sb.from('purchase_invoices').select('id').eq('id', id), c).maybeSingle();
-  if (ownErr) return c.json({ error: 'lookup_failed', reason: ownErr.message }, 500);
-  if (!own) return c.json({ error: 'not_found' }, 404);
-  let body: { amountSen?: number; notes?: string };
-  try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
-  const amount = Number(body.amountSen ?? 0);
-  if (!Number.isFinite(amount) || amount <= 0) return c.json({ error: 'invalid_amount' }, 400);
-
-  // Optimistic-concurrency loop (Bug#5, ported from 2990 1355332c). The old code
-  // did read-modify-write — two payments hitting the SAME PI at once both read X
-  // and both wrote X+amount, silently LOSING one. PI has no payment ledger to
-  // re-sum (unlike SI's recomputePaid), and PostgREST can't do `col = col + x`,
-  // so we gate the UPDATE on `paid_sen = <the value we just read>`: if a
-  // concurrent payment moved it, the update matches 0 rows and we retry with a
-  // fresh read.
-  for (let attempt = 0; attempt < 6; attempt += 1) {
-    const { data: cur } = await sb.from('purchase_invoices')
-      .select('paid_sen, total_sen, status, invoice_number, company_id').eq('id', id).maybeSingle();
-    if (!cur) return c.json({ error: 'not_found' }, 404);
-    const c0 = cur as {
-      paid_sen: number; total_sen: number; status: string;
-      invoice_number?: string | null; company_id?: number | null;
-    };
-    // LEAK GUARD (DRAFT) — a DRAFT PI is not yet a real liability; reject payment
-    // until it's confirmed. (Re-added with the DRAFT lifecycle — see POST/.)
-    if (c0.status === 'DRAFT') return c.json({ error: 'not_payable', message: 'PI is a draft — confirm it before recording payment' }, 409);
-    if (c0.status === 'CANCELLED') return c.json({ error: 'not_payable', message: 'PI is cancelled' }, 409);
-
-    const newPaid = c0.paid_sen + amount;
-    const newStatus = newPaid >= c0.total_sen ? 'PAID' : 'PARTIALLY_PAID';
-
-    const { data, error } = await sb.from('purchase_invoices').update({
-      paid_sen: newPaid, status: newStatus, updated_at: new Date().toISOString(),
-    })
-      .eq('id', id)
-      .eq('paid_sen', c0.paid_sen) // only if nobody else moved it since the read
-      .select('id, paid_sen, status');
-    if (error) return c.json({ error: 'payment_failed', reason: error.message }, 500);
-    if (data && data.length > 0) {
-      /* Written only by the attempt whose compare-and-set actually landed, so a
-         retry loop cannot produce two rows for one payment. The from-value is
-         the paid_sen that guard matched, which makes the pair exact rather
-         than approximate. All three figures are INTEGER SEN. */
-      await recordEntityAudit(sb, {
-        entityType: 'PURCHASE_INVOICE',
-        entityId: id,
-        entityDocNo: c0.invoice_number ?? null,
-        action: 'UPDATE',
-        actor: c.get('houzsUser'),
-        companyId: c0.company_id ?? activeCompanyId(c),
-        statusSnapshot: newStatus,
-        note: 'Payment recorded',
-        fieldChanges: compactChanges([
-          fieldChange('paidSen', c0.paid_sen, newPaid),
-          fieldChange('paymentAmountSen', null, amount),
-          ...statusChange(c0.status, newStatus),
-        ]),
-      });
-      return c.json({ purchaseInvoice: data[0] });
-    }
-    // 0 rows updated → a concurrent payment changed paid_sen; loop re-reads + retries.
-  }
-  return c.json({ error: 'payment_conflict', message: 'Another payment was recorded at the same moment — please check the balance and retry.' }, 409);
-});
+/* RETIRED (docs/bugs/0889-supplier-invoice-payments-could-skip-the-payment-voucher-and.md).
+   This added a typed amount straight onto paid_sen: no payment voucher, no
+   journal entry, no hold check, no approval, and no clamp to what was owed. A
+   supplier invoice is paid with an AP Payment voucher, which settles it through
+   scm.settle_pi_paid_sen when the voucher posts (routes/payment-vouchers.ts).
+   Its only working caller was the phone's Record Payment sheet; the desktop's
+   Mark paid sent RM0, which this refused. Kept as a refusal rather than deleted
+   so a browser tab still running the old screen gets a sentence, not a 404. */
+export const retiredPiPaymentHandler = (c: any) =>
+  c.json({
+    error: 'payment_voucher_required',
+    message: 'Supplier invoices are paid with an AP Payment: Finance, Money out, Payment Vouchers.',
+  }, 409);
+purchaseInvoices.patch('/:id/payment', retiredPiPaymentHandler);
 
 // Exported for the scope tests: supabaseAuth cannot run in the vitest harness.
 export const cancelPurchaseInvoiceHandler = async (c: any) => {
@@ -1627,7 +1456,7 @@ export const createPurchaseInvoicesFromGrnItemsHandler = async (c: Context<{ Bin
       special_order_price_sen: row.special_order_price_sen ?? 0,
       discount_sen: discFor(row, qty),
     }));
-    const { error: iErr } = await sb.from('purchase_invoice_items').insert(stampCompany(rows, c));
+    const { error: iErr } = await withPoPriceSnapshot(sb, rows, () => sb.from('purchase_invoice_items').insert(stampCompany(rows, c)));
     if (iErr) {
       await sb.from('purchase_invoices').delete().eq('id', h.id);
       continue;
@@ -1815,7 +1644,7 @@ export const createPurchaseInvoiceFromGrnHandler = async (c: any) => {
     special_order_price_sen: it.special_order_price_sen ?? 0,
     discount_sen: discFor(it),
   }));
-  const { error: insErr } = await sb.from('purchase_invoice_items').insert(stampCompany(rows, c));
+  const { error: insErr } = await withPoPriceSnapshot(sb, rows, () => sb.from('purchase_invoice_items').insert(stampCompany(rows, c)));
   if (insErr) { await sb.from('purchase_invoices').delete().eq('id', h.id); return c.json({ error: 'items_insert_failed', reason: insErr.message }, 500); }
 
   /* Post-insert over-invoice verification (race guard) — the remaining filter
@@ -2039,7 +1868,7 @@ purchaseInvoices.post('/:id/items', async (c) => {
   // (accepted - invoiced - returned).
   const grnItemId = (it.grnItemId as string) ?? null;
   if (grnItemId) {
-    const xl = await assertSourceLinesInCompany(sb, c, 'grn_items', [grnItemId]);
+    const xl = await assertSourceLinesInCompany(sb, c, 'grn_items', [grnItemId], { lines: [it], linkField: 'grnItemId', source: 'Goods Receipt line' });
     if (!xl.ok) return c.json(xl.body, xl.status);
     /* Same refusal as every other path that can attach a GRN line — a receipt
        carried over from AutoCount is invoiced by the converter, never by hand. */
@@ -2081,7 +1910,7 @@ purchaseInvoices.post('/:id/items', async (c) => {
     description2: buildVariantSummary(String(it.itemGroup ?? ''), (it.variants as Record<string, unknown> | null) ?? null) || null,
     uom: (it.uom as string) ?? 'UNIT',
   };
-  const { data, error } = await sb.from('purchase_invoice_items').insert({ ...row, company_id: activeCompanyId(c) }).select(ITEM).single();
+  const { data, error } = await withPoPriceSnapshot(sb, [row], () => sb.from('purchase_invoice_items').insert({ ...row, company_id: activeCompanyId(c) }).select(ITEM).single());
   if (error) return c.json({ error: 'insert_failed', reason: error.message }, 500);
 
   /* Bug #3/#11 — POST-INSERT over-invoice verification. The pre-check is a
@@ -2278,6 +2107,18 @@ purchaseInvoices.patch('/:id/items/:itemId', async (c) => {
       requested: qty, ownPriorDraw: prevQty, what: 'GRN line',
     });
     if (capLock) return c.json(capLock, 409);
+  }
+
+  /* THE LINK CAN ALSO DRIFT AFTER THE FACT. docs/bugs/0672's second structural
+     observation: four EDIT paths let `item_code` be rewritten UNDER a live link,
+     so a line bound correctly at create time can be edited out of identity with
+     its source afterwards; only the GRN edit path freezes it
+     (grnInheritedFieldChanges). Re-asserted against the code that will actually
+     be STORED — the body's when it sends one, the previous value otherwise. */
+  if (grnItemId) {
+    const xl = await assertSourceLinesInCompany(sb, c, 'grn_items', [grnItemId],
+      { lines: [{ grnItemId, itemCode: it.itemCode ?? prev.item_code }], linkField: 'grnItemId', source: 'Goods Receipt line' });
+    if (!xl.ok) return c.json(xl.body, xl.status);
   }
 
   const { error } = await scopeToCompanyId(sb.from('purchase_invoice_items').update(updates).eq('id', itemId), co.companyId);

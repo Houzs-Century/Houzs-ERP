@@ -1,0 +1,63 @@
+name: Scrap pillow SKU choice (read-only)
+
+# Manual, read-only. Answers the owner's ask of 2026-09-10:
+#   "确保我的 scrap pillow 是选对的: 1. 有颜色的是选 custom scrap pillow
+#    2. 没有颜色是选 random ... 之前 SKU 我不确定你有没有选对,可能你选错了"
+#
+# It cross-tabs every scrap-pillow sales-order line by SKU family (CUSTOM /
+# RANDOM / neither) x whether a colour is recorded x whether the order has been
+# PROCEEDED, and prints AutoCount's own words for each mismatch beside our
+# choice — because a mismatch measured only inside the ERP cannot tell a
+# migration error from a blank field, and those need opposite remedies.
+#
+# The owner's standing rule of 2026-09-04 is honoured in the counting, not just
+# in the prose: a line on an order with no Processing Date may legitimately have
+# no colour, so that population is reported APART and is never quoted as work.
+#
+# SELECTs only: no DDL, no writes, no transaction, and there is no APPLY. It
+# never re-codes a line — moving a live document onto a different SKU moves
+# stock and can move money, and that is the owner's decision.
+#
+# Exits 0 for every legitimate answer including "no rows", because the ANSWER is
+# the output and a red job reads as "the check broke".
+on:
+  workflow_dispatch:
+    inputs:
+      company:
+        description: "Company (1 = Houzs Century). 2990 documents are out of scope."
+        required: false
+        default: "1"
+        type: string
+      scrap_re:
+        description: "Which products count as a SCRAP pillow (JS regex, case-insensitive)"
+        required: false
+        default: "(SQUARE|LONG|SOFA|SCRAP)\\s*PILLOW"
+        type: string
+      cap:
+        description: "How many example rows to print per bucket"
+        required: false
+        default: "20"
+        type: string
+
+# Its own group — a diagnostic must never queue behind, or displace, a release.
+concurrency:
+  group: scrap-pillow-sku-choice
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install the one dependency the script needs
+        run: npm --prefix backend install postgres --no-audit --no-fund --no-save
+      - name: Report the scrap-pillow SKU choice
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMPANY: ${{ inputs.company }}
+          SCRAP_RE: ${{ inputs.scrap_re }}
+          CAP: ${{ inputs.cap }}
+        run: node backend/scripts/check-scrap-pillow-sku-choice.mjs

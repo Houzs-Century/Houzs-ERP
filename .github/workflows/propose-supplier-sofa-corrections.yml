@@ -1,0 +1,74 @@
+name: Propose sofa corrections from the supplier listing (read-only)
+
+# Turn the SUPPLIER'S listing into entries the existing corrections applier can
+# write, and PRINT them. It writes nothing to any database; a human commits the
+# JSON it emits.
+#
+# The owner, 2026-09-10: 「你确保你是根源改动那个数据就行了」 - change the data at
+# its ROOT. For a sofa build the root is not one document: the sales order, the
+# purchase order raised from it and the delivery paperwork all carry the same
+# compartments. apply-sofa-compartment-corrections.mjs already corrects the SO
+# and the PO together, refuses a build whose downstream moved stock, and holds
+# the money still. This produces its INPUT rather than becoming a second writer
+# with a second set of guards to keep in step.
+#
+# The answer it proposes is the supplier's: 「supplier的肯定对的 基本上你可以跟」.
+# A reference with no purchase order here is an old delivered order and is
+# counted, never proposed: 「找不到PO 可能已经送完了的 就不理」.
+#
+# SELECT only. Manual trigger. Own concurrency group. Exit 0 for every answer.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      company_id:
+        description: "Company. Blank = 1."
+        required: false
+        default: ""
+
+concurrency:
+  group: propose-supplier-sofa-corrections-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/propose-supplier-sofa-corrections.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          OUT: proposed-supplier-sofa-corrections.json
+          NODE_OPTIONS: --dns-result-order=ipv4first
+      - uses: actions/upload-artifact@v4
+        with:
+          name: proposed-supplier-sofa-corrections
+          path: backend/proposed-supplier-sofa-corrections.json
+
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/propose-supplier-sofa-corrections.mjs
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

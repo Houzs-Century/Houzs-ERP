@@ -1,0 +1,84 @@
+name: Re-decode the collapsed sofa lines
+
+# A sofa build the importer could not read landed as ONE line on the bare `-1S`
+# placeholder. The decoder has been taught since — 1EFL, 1Console, L2L(...),
+# 1R(P), 1B/S seater — so some of those rows now decode cleanly from the text
+# they already hold. This re-derives the build from AutoCount's own words (never
+# from a photograph, and never from a curated list), re-codes the existing row
+# as the first piece and inserts the rest beside it.
+#
+# NOTHING IS DELETED. The money does not move: the re-coded row's money columns
+# are not written at all and every inserted piece is 0, and the document total
+# is asserted before and after inside the same transaction.
+#
+# PLAN unless mode=apply, which additionally needs the confirm phrase.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      mode:
+        description: "plan (writes nothing) or apply"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: 'On apply only: I HAVE REVIEWED THE DRY-RUN'
+        required: false
+        default: ""
+      company:
+        description: "company_id"
+        required: false
+        default: "1"
+      doc:
+        description: "Optional single document number, to rehearse one build"
+        required: false
+        default: ""
+
+concurrency:
+  group: redecode-collapsed-sofa-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/redecode-collapsed-sofa-lines.mjs
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY: ${{ inputs.company }}
+          DOC: ${{ inputs.doc }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/redecode-collapsed-sofa-lines.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY: ${{ inputs.company }}
+          DOC: ${{ inputs.doc }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

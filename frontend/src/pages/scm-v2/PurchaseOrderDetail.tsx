@@ -57,7 +57,6 @@ import {
   useAddPurchaseOrderItem,
   useUpdatePurchaseOrderItem,
   useDeletePurchaseOrderItem,
-  useCancelPurchaseOrder,
   useConfirmPurchaseOrder,
   useReopenPurchaseOrder,
   useSuppliers,
@@ -82,6 +81,7 @@ import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { SkeletonDetailPage } from '../../vendor/scm/components/Skeleton';
 import { RelationshipMapButton } from '../../vendor/scm/components/RelationshipMapButton';
 import { StatusPill } from '../../vendor/scm/components/StatusPill';
+import { usePoCancelAction } from './use-po-cancel-action';
 import { SearchableSelect } from '../../vendor/scm/components/SearchableSelect';
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import { canOperatePurchaseOrders } from '../../auth/salesAccess';
@@ -101,6 +101,9 @@ import styles from './SalesOrderDetail.module.css';
 import { computeTotalHeight, isTotalHeightCategory, isTotalHeightPart } from '../../vendor/shared/total-height';
 import { DateField } from "../../vendor/scm/components/DateField";
 
+import { ADD_LINE_LABEL } from '../../vendor/scm/lib/add-line-handoff';
+import { purchaseOrderLinesLocked } from '../../vendor/scm/lib/line-add-lock';
+import { useAddLineHandoff } from '../../vendor/scm/lib/useAddLineHandoff';
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
 const fmtRm = (centi: number | null | undefined, currency = 'MYR'): string => {
@@ -179,6 +182,10 @@ const draftFromItem = (it: PoItemRow): EditLine => ({
   materialKind:   it.material_kind,
   itemCode:   it.item_code,
   materialName:   it.material_name,
+  /* Per-line remarks (scm.purchase_order_items.notes). Seeded so Edit SHOWS
+     what is stored instead of blanking it on save — and this column is where
+     the AutoCount migration parked the book's own Description 2. */
+  notes:          it.notes ?? '',
   supplierSku:    it.supplier_sku ?? undefined,
   qty:            it.qty,
   unitPriceSen: it.unit_price_sen,
@@ -203,10 +210,15 @@ const draftFromItem = (it: PoItemRow): EditLine => ({
 export const PurchaseOrderDetail = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  /* "Add line" from the detail page. At the TOP with the other hooks: this
+     editor returns early while the document loads, and a hook written below
+     that return is the rules-of-hooks violation the linter caught when this
+     was first pasted in per-file (docs/bugs/0853). */
+  const addLineHandoff = useAddLineHandoff();
   const detail = usePurchaseOrderDetail(id ?? null);
   const updateHeader = useUpdatePurchaseOrderHeader();
   // PR-DRAFT-removal — Submit button removed (POs are SUBMITTED on create).
-  const cancel = useCancelPurchaseOrder();
+  const { cancelPo, isPending: cancelling } = usePoCancelAction();
   const confirm = useConfirmPurchaseOrder();
   const reopen = useReopenPurchaseOrder();
   const addItem = useAddPurchaseOrderItem();
@@ -214,6 +226,13 @@ export const PurchaseOrderDetail = () => {
   const deleteItem = useDeletePurchaseOrderItem();
   const askConfirm = useConfirm();
   const notify = useNotify();
+  /* The cancel itself — ask why, then cancel. Owner 2026-09-09: no approval,
+     but no silent cancel either (./use-po-cancel-action.ts, shared with the
+     read page, the list menu and mobile). */
+  const executeCancel = (poNumber: string) => {
+    if (!id) return;
+    void cancelPo(id, poNumber);
+  };
   // PR #102 — PO PDF (AutoCount layout) needs the Purchase Location's
   // human-readable name; the header only carries the warehouse id. Load
   // warehouses once at the top so the print handler can resolve it.
@@ -336,7 +355,7 @@ export const PurchaseOrderDetail = () => {
      `isLocked` (= hard OR children) still gates the LINE editor + inherited
      fields; `hardLocked` gates the Edit button + the PO-own header fields. */
   const hardLocked = po ? !isEditableStatus : true;
-  const isLocked = po ? (!isEditableStatus || hasChildren) : true;
+  const isLocked = po ? purchaseOrderLinesLocked({ status: po.status, has_children: po.has_children ?? null }) : true;
   const lockedDueToChildren = po ? (isEditableStatus && hasChildren) : false;
 
   /* Only a HARD lock (Received / Cancelled) drops us out of Edit — a PO with a
@@ -638,6 +657,7 @@ export const PurchaseOrderDetail = () => {
       warehouseId:  po.purchase_location_id ?? undefined,
       deliveryDate: headerView.expectedAt || undefined,
     }]);
+  addLineHandoff.current = { enabled: isEditing && !isLocked, onTrigger: startAddLine };
 
   /* Remove a line. A persisted line fires the delete mutation immediately (it
      releases SO quota back to the From-SO picker — same as the old trash
@@ -702,6 +722,7 @@ export const PurchaseOrderDetail = () => {
             materialKind:   d.materialKind,
             itemCode:   d.itemCode,
             materialName:   d.materialName || d.itemCode,
+            notes:          d.notes || undefined,
             supplierSku:    d.supplierSku,
             qty:            d.qty,
             unitPriceSen: d.unitPriceSen,
@@ -724,6 +745,7 @@ export const PurchaseOrderDetail = () => {
         const changed =
           d.itemCode !== it.item_code ||
           (d.materialName || d.itemCode) !== it.material_name ||
+          (d.notes ?? '') !== (it.notes ?? '') ||
           (d.supplierSku ?? '') !== (it.supplier_sku ?? '') ||
           (d.category ?? '') !== (it.item_group ?? '') ||
           d.qty !== it.qty ||
@@ -741,6 +763,8 @@ export const PurchaseOrderDetail = () => {
           poId: po.id, itemId: d.itemId,
           itemCode:   d.itemCode,
           materialName:   d.materialName || d.itemCode,
+          /* Always sent, so CLEARING a remark actually reaches the server. */
+          notes:          d.notes ?? '',
           supplierSku:    d.supplierSku,
           qty:            d.qty,
           unitPriceSen: d.unitPriceSen,
@@ -989,17 +1013,16 @@ export const PurchaseOrderDetail = () => {
               The Delete half of that report no longer exists: the endpoint and
               both buttons were removed 2026-08-11 (#1939) under the owner rule
               不可以删只可以 cancel. Cancel + Reopen are the whole surface. */}
+          {/* Owner 2026-09-09 —「PO cancelled 不需要审批，只需要 remark 原因取消」:
+              the approval this button briefly routed through is gone, the
+              mandatory reason it introduced is not. Same for a DRAFT and a live
+              PO; the server refuses either without a reason. */}
           {(po.status === 'DRAFT' || po.status === 'SUBMITTED' || po.status === 'PARTIALLY_RECEIVED') && (
             <Button variant="ghost" size="md"
-              onClick={async () => {
-                if (!(await askConfirm({ title: `Cancel PO ${po.po_number}?`, body: 'This sets status to CANCELLED — line items + linked docs stay for audit.', confirmLabel: 'Cancel PO', danger: true }))) return;
-                cancel.mutate(po.id, {
-                  onError: (err) => notify({ title: 'Cancel failed', body: `${err instanceof Error ? err.message : 'Something went wrong.'}`, tone: 'error' }),
-                });
-              }}
-              disabled={cancel.isPending}>
+              onClick={() => executeCancel(po.po_number)}
+              disabled={cancelling}>
               <Ban {...ICON} />
-              <span>{cancel.isPending ? 'Cancelling…' : 'Cancel'}</span>
+              <span>{cancelling ? 'Cancelling…' : 'Cancel PO'}</span>
             </Button>
           )}
           {/* Reopen a cancelled PO (Commander 2026-06-16 — "PO cancel 了 不可以
@@ -1230,7 +1253,7 @@ export const PurchaseOrderDetail = () => {
           {isEditing && !isLocked && (
             <Button variant="primary" size="sm" onClick={startAddLine}>
               <Plus {...ICON} />
-              <span>Add item</span>
+              <span>{ADD_LINE_LABEL}</span>
             </Button>
           )}
         </header>
@@ -1296,6 +1319,10 @@ export const PurchaseOrderDetail = () => {
                   <PoLineCard
                     index={idx}
                     line={l}
+                    /* Per-line Remarks box — this parent carries `notes` in both
+                       the add-item and the update-item payload below, which is
+                       what the prop's contract requires. */
+                    showRemarks
                     currency={po.currency}
                     supplierId={poSupplierId}
                     bindings={bindings}
@@ -1598,6 +1625,14 @@ const SupplierCard = ({
                 options={[
                   { value: 'MYR', label: 'MYR' },
                   { value: 'RMB', label: 'RMB' },
+                  /* CNY is the ISO code for the same currency as RMB. Both are
+                     listed because the AutoCount book states CNY and the
+                     migration copies the book's value rather than translating
+                     it (mig 20260907T2330). A stored value missing from this
+                     list renders the select BLANK and the next save silently
+                     rewrites it — which is why the code has to be here, not
+                     only in the DB enum. */
+                  { value: 'CNY', label: 'CNY' },
                   { value: 'USD', label: 'USD' },
                   { value: 'SGD', label: 'SGD' },
                 ]}

@@ -16,7 +16,7 @@ import type { AcquirerSetup, SettlementRow } from './settlement-queries';
 const MBB: AcquirerSetup = {
   code: 'MBB', display_name: 'MBB', statement_format: 'CSV', has_unique_ref: true,
   fee_method: 'stated', date_tolerance_days: 3, column_map: { date: 'Txn Date', gross: 'Gross' },
-  transit_account_code: '320-0000', fee_account_code: '930-0000', bank_account_code: '330-0000',
+  transit_account_code: '326-0000', fee_account_code: '930-0000', bank_account_code: '310-0010',
   is_active: true, ready: true, autoMatchable: true,
 };
 const GHL: AcquirerSetup = { ...MBB, code: 'GHL', display_name: 'GHL', has_unique_ref: false, autoMatchable: false, dates_have_no_year: true, bank_account_code: null, bankReady: false };
@@ -27,8 +27,9 @@ const ROW: SettlementRow = {
   bucket: 'NEEDS_CONFIRM', match_reason: 'amount+date', confirmed_at: null,
   posted_je_no: null, notes: null, linked: [],
   candidates: [
-    { source: 'SOPAY', id: 'p1', docNo: 'SO-2608-001', paidOn: '2026-08-01', amountSen: 60000, approvalCode: 'A1' },
-    { source: 'SOPAY', id: 'p2', docNo: 'SO-2608-002', paidOn: '2026-08-02', amountSen: 40000, approvalCode: null },
+    /* p1 is a migration-era payment: no merchant tag. p2 was tagged at the till. */
+    { source: 'SOPAY', id: 'p1', docNo: 'SO-2608-001', paidOn: '2026-08-01', amountSen: 60000, approvalCode: 'A1', merchantProvider: null },
+    { source: 'SOPAY', id: 'p2', docNo: 'SO-2608-002', paidOn: '2026-08-02', amountSen: 40000, approvalCode: null, merchantProvider: 'MBB' },
   ],
   comboHints: [['p1', 'p2']],
   clue: 'No single payment matches; 1 pair(s) of payments add up to this amount',
@@ -78,10 +79,22 @@ const BATCH = {
   status: 'OPEN', uploaded_by: null, created_at: '',
 };
 let batchList: Array<Record<string, unknown>> = [BATCH];
+
+/* A line the window could offer nothing for (docs/bugs/0792). */
+const LONELY_ROW: SettlementRow = {
+  id: 11, line_no: 9, txn_date: '2026-06-02', ref: '615318040666',
+  gross_sen: 286500, fee_sen: 11460, net_sen: 275040,
+  bucket: 'UNMATCHED', match_reason: null, confirmed_at: null,
+  posted_je_no: null, notes: null, linked: [], candidates: [], comboHints: [], clue: null,
+};
+const findResults = [
+  { source: 'SOPAY' as const, id: 'f1', docNo: '2990-SO-2606-011', customerName: 'Chou Mun Yee', paidOn: '2026-06-14', amountSen: 286500, approvalCode: '005751', merchantProvider: null, possible: true, method: 'installment' },
+  { source: 'SOPAY' as const, id: 'f2', docNo: '2990-SO-2606-013', customerName: 'Tan Ah Kow', paidOn: '2026-06-14', amountSen: 336500, approvalCode: '009577', merchantProvider: null, possible: false, method: 'installment' },
+];
 const setBatchList = (b: Array<Record<string, unknown>>) => { batchList = b; };
 
 vi.mock('./settlement-queries', () => ({
-  useAcquirerSetup: () => ({ data: { acquirers: [MBB, GHL], bankAccounts: [{ account_code: '330-0000', account_name: 'Bank — Maybank Current' }] }, isLoading: false }),
+  useAcquirerSetup: () => ({ data: { acquirers: [MBB, GHL], bankAccounts: [{ account_code: '310-0010', account_name: 'Bank — Maybank Current' }] }, isLoading: false }),
   useSaveAcquirerSetup: () => ({ mutate: saveMutate, isPending: false }),
   useSettlementBatches: () => ({ data: { batches: batchList }, isLoading: false }),
   useSettlementBatch: () => ({
@@ -94,7 +107,9 @@ vi.mock('./settlement-queries', () => ({
       },
       acquirer: { code: 'MBB', hasUniqueRef: true, dateToleranceDays: 3 },
       buckets: { MATCHED: 1, NEEDS_CONFIRM: 1, UNMATCHED: 0, IGNORED: 0 },
-      rows: [ROW, MATCHED_ROW, SUGGESTED_ROW, DONE_ROW],
+      rows: [ROW, MATCHED_ROW, SUGGESTED_ROW, DONE_ROW, LONELY_ROW],
+      /* The owner's 3,053 → 3,052, read back as the report opened (docs/bugs/0833). */
+      refreshedLinks: [{ settlementRowId: 2, paymentSource: 'SOPAY', paymentId: 'p7', docNo: 'SO-2608-777', fromSen: 305300, toSen: 305200 }],
     },
     isLoading: false,
   }),
@@ -103,8 +118,16 @@ vi.mock('./settlement-queries', () => ({
   useUnconfirmSettlementRow: () => ({ mutate: unconfirmMutate, isPending: false }),
   useConfirmMatched: () => ({ mutate: confirmMatchedMutate, isPending: false, data: null }),
   useIgnoreSettlementRow: () => ({ mutate: vi.fn(), isPending: false }),
+  /* "Find the sale" (docs/bugs/0792): what the server would answer for the
+     lonely line — the sale keyed twelve days late, at the exact gross. */
+  useFindPayments: (rowId: number | null, q: string) => ({
+    data: rowId == null ? undefined : { q, payments: findResults.filter((p) => q === '' || p.docNo.includes(q) || p.customerName.toLowerCase().includes(q.toLowerCase())) },
+    isLoading: false, isError: false, error: null,
+  }),
   useSettlementWatchlist: () => ({ data: { from: '2026-05-18', to: '2026-08-16', clean: false, arrivedNotRecorded: [], recordedNotArrived: [
-    { source: 'SOPAY', id: 'w1', acquirerCode: 'MBB', docNo: 'SO-2607-088', paidOn: '2026-07-18', amountSen: 35000, approvalCode: 'A0900', ageDays: 29 },
+    { source: 'SOPAY', id: 'w1', acquirerCode: 'MBB', docNo: 'SO-2607-088', paidOn: '2026-07-18', amountSen: 35000, approvalCode: 'A0900', ageDays: 29, salespersonName: 'Kah Wai' },
+    /* Keyed in without a bank — the server lists it once, under no acquirer (docs/bugs/0688). */
+    { source: 'SOPAY', id: 'w2', acquirerCode: null, docNo: 'SO-2606-013', paidOn: '2026-06-14', amountSen: 336500, approvalCode: '009577', ageDays: 63 },
   ] }, isLoading: false }),
 }));
 
@@ -170,6 +193,9 @@ describe('the reconcile tab', () => {
       grossSen: 177700, feeSen: 2600, netSen: 175100,
       periodFrom: '2026-08-01', periodTo: '2026-08-03',
       buckets: { MATCHED: 1, NEEDS_CONFIRM: 1, UNMATCHED: 1, IGNORED: 0 },
+      /* One line the bank pays once, already on another report (docs/bugs/0823). */
+      alreadyOnReport: 1,
+      alreadyOnReportDetail: [{ lineNo: 1, txnDate: '2026-08-01', ref: 'A1', grossSen: 100000, batchId: 7, fileName: '027012896718_EP41_713_20260801.CSV', lineNoThere: 1 }],
     });
     draw();
     fireEvent.change(screen.getByLabelText('Acquirer'), { target: { value: 'MBB' } });
@@ -182,6 +208,9 @@ describe('the reconcile tab', () => {
     fireEvent.click(screen.getByText(/^Upload merchant report/));
 
     await waitFor(() => expect(screen.getByText(/report read/)).toBeTruthy());
+    /* What was left out, and where it already is (docs/bugs/0823). */
+    expect(screen.getByText(/1 line\(s\) already on 027012896718_EP41_713_20260801\.CSV left out/)).toBeTruthy();
+    expect(screen.getByText(/the bank pays a card transaction once/)).toBeTruthy();
     /* The three counts come from the batch list, which the fixture answers. */
     /* The three tallies… */
     expect(screen.getAllByText('matched by reference').length).toBeGreaterThan(0);
@@ -208,9 +237,20 @@ describe('the reconcile tab', () => {
     /* Lines already decided are not work, so they are not on the work list. */
     expect(screen.queryByText('JE-2608-0011')).toBeNull();
     // and the payments the sales team keyed in that no report has reported
-    expect(screen.getByText('Card payments no merchant report has reported yet (1)')).toBeTruthy();
+    expect(screen.getByText('Card payments no merchant report has reported yet (2)')).toBeTruthy();
     expect(screen.getByText('SO-2607-088')).toBeTruthy();
     expect(screen.getByText('A0900')).toBeTruthy();
+  });
+
+  /* docs/bugs/0688 — the owner, the morning per-bank clearing went live: the
+     same instalment under GHL, HLB, MBB and PBB, and the header counting it
+     four times. It is one payment: one row, marked 未标, counted once. */
+  test('a payment keyed in without a bank is one row, marked 未标, and counted once', () => {
+    draw();
+    expect(screen.getByText('未标')).toBeTruthy();
+    expect(screen.getByText('SO-2606-013')).toBeTruthy();
+    expect(screen.getByText(/RM 3,715\.00 in total/)).toBeTruthy();
+    expect(screen.getByText(/1 keyed in without a bank/)).toBeTruthy();
   });
 
   /* Only Hong Leong writes its dates without a year. Showing everyone else a
@@ -255,12 +295,22 @@ describe('the reconcile tab', () => {
     expect(screen.queryByText('Reference 969745 matches SO-2608-043')).toBeNull();
   });
 
+  test('a payment corrected after the upload is read back as the report opens, and named (docs/bugs/0833)', () => {
+    draw();
+    fireEvent.click(screen.getByText('Reconcile'));
+    const note = screen.getByTestId('refreshed-links');
+    expect(note.textContent).toContain('1 link refreshed');
+    expect(note.textContent).toContain('SO-2608-777');
+    expect(note.textContent).toContain('3,052.00');
+  });
+
   test('a report opens on the lines still to decide, with its clue and candidates', () => {
     draw();
     fireEvent.click(screen.getByText('Reconcile'));
     /* Two kinds of not-done on this report, and the screen names both: one
-       matched by reference (a button) and one that needs a person. */
-    expect(screen.getByText('1 matched, waiting for you to confirm · 2 still to decide')).toBeTruthy();
+       matched by reference (a button) and the ones that need a person — ROW,
+       SUGGESTED_ROW, and the LONELY_ROW the window had nothing for. */
+    expect(screen.getByText('1 matched, waiting for you to confirm · 3 still to decide')).toBeTruthy();
     expect(screen.getByText(/pair\(s\) of payments add up/)).toBeTruthy();
     expect(screen.getByText('SO-2608-001')).toBeTruthy();
     // the list it came from is off the screen
@@ -279,6 +329,20 @@ describe('the reconcile tab', () => {
        the server's own refusals (money already received) come back verbatim. */
     fireEvent.click(screen.getByTitle(/Take this line back out of the ledger/));
     expect(unconfirmMutate).toHaveBeenCalledWith(8, expect.anything());
+  });
+
+  /* A migration-era payment carries no merchant tag; the operator claiming it
+     should see that where he ticks it. Strictly null-only: SUGGESTED_ROW's
+     candidate omits the field entirely (an older response shape) and must NOT
+     be called untagged. */
+  test('an untagged payment says so where it is claimed', () => {
+    draw();
+    fireEvent.click(screen.getByText('Reconcile'));
+    expect(screen.getAllByText('未标 merchant')).toHaveLength(1);
+    const cell = screen.getByText(/SO-2608-001/).closest('td') as HTMLElement;
+    expect(cell.textContent).toContain('未标 merchant');
+    const tagged = screen.getByText(/SO-2608-002/).closest('td') as HTMLElement;
+    expect(tagged.textContent).not.toContain('未标 merchant');
   });
 
   /* The approval code may be mistyped, so the system falls back to amount+date
@@ -476,5 +540,77 @@ describe('inside one report', () => {
   test('the "set aside" explanation is said once', () => {
     open();
     expect(screen.getAllByText(/just moves a line out of the working list/)).toHaveLength(1);
+  });
+});
+
+/* ── "Find the sale" — docs/bugs/0792 ────────────────────────────────────────
+   GHL line RM 2,865.00 of 2026-06-02: the screen said "no sale in the ERP"
+   over 2990-SO-2606-011, the same amount, keyed twelve days later with no bank.
+   The person knows which sale it is; the screen must let him say so. */
+describe('finding the sale the window could not offer', () => {
+  const open = () => { draw(); fireEvent.click(screen.getByText('Reconcile')); };
+  const lonely = () => screen.getByText('615318040666').closest('section') as HTMLElement;
+
+  test('a line with no candidate offers the search instead of a dead end', () => {
+    open();
+    const card = lonely();
+    expect(within(card).getByText(/find it below/)).toBeTruthy();
+    expect(within(card).queryByText('Confirm and post')).toBeNull();
+    fireEvent.click(within(card).getByText('Find the sale'));
+    expect(within(card).getByLabelText('Find the sale')).toBeTruthy();
+  });
+
+  test('the exact gross is marked possible, and the rest is still offered', () => {
+    open();
+    const card = lonely();
+    fireEvent.click(within(card).getByText('Find the sale'));
+    const hit = within(card).getByLabelText('Select 2990-SO-2606-011').closest('tr') as HTMLElement;
+    expect(within(hit).getByText('possible')).toBeTruthy();
+    expect(within(hit).getByText('Chou Mun Yee')).toBeTruthy();
+    expect(within(hit).getByText('未标 merchant')).toBeTruthy();
+    const other = within(card).getByLabelText('Select 2990-SO-2606-013').closest('tr') as HTMLElement;
+    expect(within(other).queryByText('possible')).toBeNull();
+  });
+
+  test('ticking the found sale confirms it with what the server will read back', () => {
+    open();
+    const card = lonely();
+    fireEvent.click(within(card).getByText('Find the sale'));
+    fireEvent.click(within(card).getByLabelText('Select 2990-SO-2606-011'));
+    expect(within(card).getByText(/Selected RM 2,865\.00 of RM 2,865\.00/)).toBeTruthy();
+    const go = within(card).getByText('Confirm and post') as HTMLButtonElement;
+    expect(go.disabled).toBe(false);
+    fireEvent.click(go);
+    expect(confirmMutate).toHaveBeenCalledWith({
+      rowId: 11, matchReason: 'manual',
+      payments: [{ source: 'SOPAY', id: 'f1', docNo: '2990-SO-2606-011', amountSen: 286500 }],
+    });
+  });
+
+  test('a found sale that does not add up cannot be confirmed', () => {
+    open();
+    const card = lonely();
+    fireEvent.click(within(card).getByText('Find the sale'));
+    fireEvent.click(within(card).getByLabelText('Select 2990-SO-2606-013'));
+    expect((within(card).getByText('Confirm and post') as HTMLButtonElement).disabled).toBe(true);
+    expect(within(card).getByText(/RM 500\.00 out/)).toBeTruthy();
+  });
+
+  test('a line that already has candidates can still look further', () => {
+    open();
+    const card = screen.getByLabelText('Select SO-2608-001').closest('section') as HTMLElement;
+    fireEvent.click(within(card).getByText('Find the sale'));
+    expect(within(card).getByLabelText('Find the sale')).toBeTruthy();
+  });
+});
+
+/* Owner 2026-09-10, on the "not yet reported" table: 我想要看到 salesman 的名字. */
+describe('the watchlist names the salesperson', () => {
+  test('a payment shows who sold it, and a dash when nobody is named', () => {
+    draw();
+    const w1 = screen.getByText('SO-2607-088').closest('tr') as HTMLElement;
+    expect(within(w1).getByText('Kah Wai')).toBeTruthy();
+    const w2 = screen.getByText('SO-2606-013').closest('tr') as HTMLElement;
+    expect(within(w2).getByText('—')).toBeTruthy();
   });
 });

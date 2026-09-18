@@ -103,6 +103,7 @@ export function SearchInput({
   placeholder = "Search…",
   className,
   inputClassName,
+  widthClassName = "w-72",
   leadingIcon,
   autoFocus,
   "aria-label": ariaLabel,
@@ -114,6 +115,14 @@ export function SearchInput({
   className?: string;
   /** Field override, for a caller that needs a different height/fill. */
   inputClassName?: string;
+  /**
+   * Field WIDTH utility. Defaults to `w-72` (288px), the historical fixed
+   * width. Pass e.g. `w-full` to make the field fill its wrapper — kept as
+   * its own slot (not folded into inputClassName) because `cn` is a plain
+   * join, so a width in inputClassName would collide with a hardcoded one
+   * rather than override it.
+   */
+  widthClassName?: string;
   /** Rendered inside the field, before the text. */
   leadingIcon?: ReactNode;
   autoFocus?: boolean;
@@ -127,7 +136,8 @@ export function SearchInput({
       autoFocus={autoFocus}
       aria-label={ariaLabel}
       className={cn(
-        "h-9 w-72 rounded-md border border-border bg-surface px-3.5 text-[13px] text-ink outline-none transition-colors placeholder:text-ink-muted focus:border-primary focus:ring-2 focus:ring-primary/20",
+        "h-9 rounded-md border border-border bg-surface px-3.5 text-[13px] text-ink outline-none transition-colors placeholder:text-ink-muted focus:border-primary focus:ring-2 focus:ring-primary/20",
+        widthClassName,
         inputClassName
       )}
     />

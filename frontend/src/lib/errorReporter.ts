@@ -59,9 +59,8 @@ import { api, requestIdFromError, onRequestTelemetry } from "../api/client";
 import { readAuthToken } from "./authToken";
 import { companyHeader } from "./activeCompany";
 import { correlatedFetch } from "./requestCorrelation";
+import { BUILD_ID } from "./buildId";
 
-declare const __BUILD_ID__: string;
-const BUILD_ID = typeof __BUILD_ID__ !== "undefined" ? __BUILD_ID__ : "dev";
 
 const FLUSH_MS = 10_000;
 const FLUSH_AT = 10; // queue length that triggers an immediate flush

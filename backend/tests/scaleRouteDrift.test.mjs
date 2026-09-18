@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { test } from 'vitest';
 import ts from "typescript";
 import { SO_LIST_COLUMNS } from "../scripts/scale-pg-real-schema.mjs";
+import { soRouterSource } from "./lib/so-router-source";
 
 const readRoute = (path) => readFile(new URL(path, import.meta.url), "utf8");
 
@@ -67,15 +68,19 @@ const productionSoListColumns = (source, constants) => {
 
 test("scale contract remains attached to current production route surfaces", async () => {
   const [soRoute, productRoute, usersRoute] = await Promise.all([
-    readRoute("../src/scm/routes/mfg-sales-orders.ts"),
+    soRouterSource(),
     readRoute("../src/scm/routes/mfg-products.ts"),
     readRoute("../src/routes/users.ts"),
   ]);
 
   assert.match(soRoute, /mfg_sales_orders_with_payment_totals/);
-  assert.match(soRoute, /\.order\(sortCol, \{ ascending: sortAsc \}\)/);
+  /* The list's filter + sort live in lib/so-list-read.ts since 2026-09-15 and
+     the page query is built through them. */
+  const soListRead = await readRoute("../src/scm/lib/so-list-read.ts");
+  assert.match(soRoute, /let q = read\.header\(orderSoList\(fromSoList\(sb, LIST_COLS, \{ count: 'exact' \}\)/);
+  assert.match(soListRead, /\.order\(col, \{ ascending: asc \}\)/);
   assert.match(soRoute, /q = q\.range\(page \* pageSize, page \* pageSize \+ pageSize - 1\)/);
-  assert.match(soRoute, /\.from\('mfg_sales_order_items'\)/);
+  assert.match(soRoute + (await readRoute("../src/scm/lib/so-list-rows.ts")), /\.from\('mfg_sales_order_items'\)/);
   assert.match(productRoute, /\.from\('mfg_products'\)/);
   assert.match(productRoute, /model:product_models\(allowed_options\)/);
   assert.match(productRoute, /return q\.range\(from, to\)/);

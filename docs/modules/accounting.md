@@ -1,296 +1,171 @@
-# Module: Accounting (财务/会计)
+# Accounting
 
-> The requirements brief is `docs/新ERP会计模块需求书.md` — twelve iron rules,
-> a five-phase build order, and the boundary rules (§6) that govern every
-> change this module makes. Read it before extending this module. Phase
-> tracking and owner decisions live with the owner; the standing ones are
-> restated here.
+Houzs's own general ledger, kept to formal-book standard while AutoCount runs in parallel (the ERP pushes documents to AutoCount).
+Covers the posting engine, chart of accounts, finance documents (AP invoices, Other Debtors, receipts, credit/debit notes, deposit invoices, official receipts), merchant and bank reconciliation, daily and month-end closes, and the financial reports.
+Used by Finance and the owner on desktop, through the Finance sidebar (Money in, Money out, Bank & cards, Books, Reports, Setup).
+Payment vouchers have their own guide (`docs/modules/payment-voucher.md`); the requirements brief is `docs/新ERP会计模块需求书.md`.
 
-**Owner decisions (2026-08-13):** the existing Finance menu pages are THIS
-module's to upgrade · AutoCount runs in parallel (ERP pushes documents to it;
-the module is built to formal-book standard so it can eventually replace it) ·
-multi-company WITH intercompany invoicing · tax data structures in phase 2,
-MyInvois in phase 5 · account codes unify on AutoCount-style `XXX-XXXX` in
-phase 1 · **reconciliation features (acquirer/card-machine + bank) must be
-tested by the owner locally before they merge.**
+## Statuses and flow
 
-## 1. The one posting gate
+Journal entries
+- Every entry is written POSTED by the engine; a manual journal (JV) starts DRAFT and posts via `POST /accounting/journal-entries/:id/post`.
+- A reversal is a contra entry, never a delete: the original carries `reversed`, the contra `reversed_by_je`. Manual journals reverse via `/reverse`; document entries only through their document's own cancel.
+- Editing a manual journal (`PUT /journal-entries/:id`): validate, write the corrected DRAFT, reverse the old entry with a contra dated the OLD entry's day, post. A DRAFT is rewritten in place; document entries refuse `not_manual`, reversed ones `already_reversed`.
+- Journal class (SALES / PURCHASE / BANK / CASH / GENERAL) is derived by `classifyJournal`, never stored; SOPAY/SIPAY/PV split CASH vs BANK by the money account they touch.
 
-Every journal entry is written by `backend/src/acc/engine.ts` —
-`postJournal` / `reverseJournal` — and nowhere else. The rules table
-(`backend/src/acc/rules.ts`) is the single, readable list of "which action
-books which entry":
+Auto-posting source types (reversal = `<TYPE>_REVERSAL`)
+- `SI` sales invoice: Dr AR (customer party) / Cr each item group's sales account; posts at create/confirm, resync voids and re-posts after post-issue edits.
+- `PI` purchase invoice: Dr each item group's purchase account / Cr the supplier's AP control (400 or 405). `API` AP invoice: Dr each line's account / Cr AP control.
+- `PV` payment voucher: posts at approve, reverses at cancel.
+- `SOPAY` / `SIPAY` customer payment: Dr cash, default bank or the acquirer's clearing account / Cr AR. `SOCONV` money moved off a cancelled order: Dr AR (old customer) / Cr AR (new customer).
+- `CASHUP` daily-close cash over/short (946-0000; corrected by JV). `STOCKADJ` month-end stock pair: Dr 330-0000 / Cr 620-0000 on the last day, mirror dated the 1st.
+- `SETTLE` merchant fee at confirm; `SETTLEMOVE` untagged card money to the merchant's own clearing account; `SETTLEADJ` statement charge with no transaction; `SETTLEBANK` payout credit; `SETTLECHARGE` bank charge kept from a payout.
+- `ODB` debtor bill, `ODR` debtor receipt, `RCT` general receipt, `CN` / `DN` / `SCN` notes, `DI` deposit invoice.
 
-| action | entry | source_type | reversal |
-|---|---|---|---|
-| Sales invoice issued | Dr AR / Cr SALES | `SI` | `SI_REVERSAL` |
-| Purchase invoice posted | Dr INVENTORY / Cr AP | `PI` | `PI_REVERSAL` |
-| Payment voucher posted | Dr expense legs / Cr bank-or-AP header | `PV` | `PV_REVERSAL` |
-| Manual journal (JV) | operator lines, draft first | `MANUAL` | `MANUAL_REVERSAL` |
-| Customer payment collected | Dr CASH/BANK/transit / Cr AR | `SOPAY` / `SIPAY` | `*_REVERSAL` |
-| Daily cash close | Dr/Cr OVER_SHORT / Cr/Dr CASH | `CASHUP` | (correct by JV) |
-| Acquirer settlement confirmed | Dr fee / Cr transit | `SETTLE` | `SETTLE_REVERSAL` |
-| Statement charge with no transaction | Dr fee / Cr transit | `SETTLEADJ` | `SETTLEADJ_REVERSAL` |
-| Acquirer payout received | Dr bank / Cr transit | `SETTLEBANK` | `SETTLEBANK_REVERSAL` |
+Documents
+- AP invoice: DRAFT → POSTED → PARTIALLY_PAID / PAID (paid by an AP Payment voucher through `scm.settle_api_paid_sen`). Cancel writes `API_REVERSAL`, refused once money is on it (`has_payments`). Editing a posted bill re-posts. The list also mirrors purchase invoices read-only (`kind: 'PI'`).
+- Other Debtor bill: posts on create (atomic with its journal); PAID when fully knocked off; cancel refused once money received; edit re-posts.
+- Other Debtor receipt: Draft → Prepared → Checked → Approved (approve posts ODR and knocks off bills, clamped at live outstanding). Reject returns to Draft clearing every mark; withdraw only before Checked. From the Receipts page with `postNow: true` it posts in the same call.
+- General receipt (RCT): posts on create; the only undo is VOID (RCT_REVERSAL + CANCELLED). Editing a posted receipt reverses and re-posts on the new date and keeps its number; a void one refuses (`receipt_cancelled`).
+- Credit / debit note (CN and DN to a customer, SCN from a supplier): DRAFT → POSTED → CANCELLED by contra; a posted note is never edited (`not_editable`).
+- Deposit invoice (DI): issued and posted per qualifying customer payment; closed by one CN when the order's final invoice posts (`credit_note_id`); cancel needs a reason (row kept); `POST /deposit-invoices/:id/post` retries a journal refused at birth.
+- Official receipt: DRAFT (`{co}DraftOR-YYMM`) when the payment is recorded → FORMAL when the money is confirmed: cash at once (`{co}COR`), card at merchant-recon confirm, transfer by the manual Confirm money button.
+- Merchant settlement line: MATCHED / NEEDS_CONFIRM / UNMATCHED / IGNORED. Confirm posts SETTLE (+ SETTLEMOVE); Undo (`/settlement/rows/:id/unconfirm`) reverses, releases the links and returns to NEEDS_CONFIRM, refused while the report has recorded payout credits.
+- Bank statement line `state`: OPEN → POSTED (matched or money received) or IGNORED (incl. duplicates and bank reversal pairs); Undo reopens the whole match group.
+- Bank month (company × account × month): open → locked (`/lock`) → unlocked (`/unlock` sets `released_at`; the row stays).
+- Daily close: confirming freezes the day's buckets and posts CASHUP; card/transfer differences are recorded, never posted there.
+- Month-end stock close: nightly 00:05 MYT; on the 1st posts the pair for the month just ended, other nights heal late documents by reversing and re-posting; every run logs to `scm.acc_stock_close_runs`.
+- Money on a sales order, cancelled or live: refund (a Customer Refund voucher DRAFT for Finance; no floor) or convert (a `converted` payment row on the new order); un-convert = delete that row. A LIVE order keeps its Processing-Date deposit fraction of the total (Houzs 30% / 2990 50%, transport included) — `convertGuard` refuses past it (`convert_keeps_deposit`); a cancelled order keeps nothing. Money that leaves an order is MIRRORED on it as a negative `converted` row (`converted_to_so_doc_no` + `mirror_of_payment_id`, or `refund_pv_id` once the voucher posts) so Paid / Balance / the deposit gate / AutoCount move; a mirror books nothing, gets no receipt or deposit invoice, and is never edited or deleted by hand — it follows its counterpart. Both exits from the order's money panel, or from the Sales Orders list with several orders ticked (any customers, any status with money; one refund draft per order; the new order copies the first ticked order); the convert picker takes another order by number. Lists: `/cancelled-with-money` (Finance's card) and `/with-money` (any status).
 
-Adding an auto-posting document type means: a rule in `rules.ts`, a caller
-that builds its lines through that rule, and a behaviour-lock test — the
-brief makes the test MANDATORY (系统 3 died of an untested copy).
+## Permissions
 
-The gate enforces, in order: shape (≥2 one-sided integer-sen lines) →
-balance (Σdr = Σcr > 0) → chart (code exists for the company, active, not a
-parent header) → idempotency (one ACTIVE entry per company+source_type+
-source_doc_no; the read fails CLOSED) → numbering (per-company `JE-YYMM-NNNN`,
-mint-retry on collision). Account codes resolve through ROLES
-(`scm.acc_account_roles`, per company) — never hardcoded at call sites.
+- Area guard `scm.finance.accounting` on `/accounting`, `/payment-vouchers`, `/other-debtors`, `/receipts`, `/ap-invoices`, `/credit-notes`, `/deposit-invoices`. Chart, journal list, GL stream, balances, aging, and AP invoice / receipt / Other Debtor lists read on the area alone.
+- `scm.payment_voucher.post` — every GL write and ledger maintenance (manual journals, chart, account roles, voucher numbering, item groups, backfills, stock close), merchant and bank reconciliation, the statements and reports (P&L, balance sheet, R&P, performance, collection, merchant charges, general ledger view, layouts), posting AP invoices and notes, deposit-invoice switch / backlog / re-post.
+- `scm.payment_voucher.create` / `.write` — raise and edit AP invoices, credit notes, general receipts, Other Debtor bills and receipts (raise, prepare).
+- `scm.payment_voucher.check` — check an Other Debtor receipt. `scm.payment_voucher.approve` — approve-and-post it; also unlock a closed bank month (with a reason).
+- `scm.payment_voucher.cancel` — cancel AP invoices, debtor bills, credit notes, deposit invoices; void general receipts.
+- `scm.so_payment.amend` — role key (Team > Roles & Permissions; the Finance role has it): correct a sales-order payment after its keyed day, never past reconciliation. A role literally holding it owes a reason on every SO payment add / edit / delete / proof attach (`KEY_HOLDER_REASON_REQUIRED`); the `*` wildcard alone is not a holder.
 
-**The numbering step reaches ACROSS SCHEMAS, and that is the one thing to know
-before touching it.** `jePrefixForCompany` (`scm/lib/doc-no.ts`) resolves the
-per-company prefix from the company's CODE — HOUZS mints bare, every other
-company takes `<CODE>-` — and the companies master is **`public.companies`**,
-while the SCM client is pinned to `scm` (`db/supabase.ts:77`). The read must
-therefore say `sb.schema('public')` explicitly. It is the only
-`from('companies')` in the backend; every other reader goes through raw SQL
-(`middleware/companyContext.ts:120`), so there is no sibling call to disagree
-with a mistake here.
+## Rules that must not break
 
-It **fails closed** — minting under the wrong company's prefix would collide two
-ledgers' running numbers — but `postJournal` CONTAINS that failure as
-`je_prefix_failed` rather than letting it escape. Between 2026-08-18 and
-2026-08-23 it escaped, and no journal entry was written in either company for
-five days while the documents themselves posted normally: see
-`docs/bugs/0522`.
+Engine and chart
+- Only `postJournal` / `reverseJournal` (`backend/src/acc/engine.ts`) write journal lines; a new auto-posting type needs a rule in `acc/rules.ts`, a caller building lines through it, and a behaviour-lock test.
+- Gate order: shape (≥2 one-sided integer-sen lines) → balance → chart (exists for the company, active, not a header) → idempotency (one ACTIVE entry per company + source_type + source_doc_no; read fails closed) → per-company number. `validateJournal` is the read-only half.
+- Database backstops stay: `acc_je_balanced_totals`, `acc_jel_nonneg`, `acc_jel_one_sided`, partial unique `acc_je_one_active_source`, trigger `trg_je_balanced`.
+- Account codes resolve through roles (`scm.acc_account_roles`, per company); never hardcode a code at a call site.
+- `jePrefixForCompany` (`scm/lib/doc-no.ts`) reads `public.companies` via `sb.schema('public')`; it fails closed and `postJournal` returns `je_prefix_failed`.
+- Which company's chart / roles / acquirers a posting reads is decided only by `accMastersCompanyId` (`acc/masters-company.ts`); never re-implement its fallback inline.
+- New finance tables take the `acc_` prefix; never reuse an existing `scm` table name in a migration.
+- Every finance router declares `router.use('*', supabaseAuth)` itself (pinned by `backend/tests/scmRouterBridge.test.ts`).
+- Reads are company-scoped and page past the 1,000-row cap; a company id sent in a body is re-checked against the caller's grants.
+- Header accounts never post (父户不记账): engine, `requireLeafAccount` and AccountSelect all refuse; an account with any sub-account, retired ones included, is a header.
+- Control accounts are never hand-picked: roles AR, AR_OTHER, AP, AP_OTHER (`CONTROL_ROLES`; manual journals refuse) and special types SDC/SCC/SBS (`requireLeafAccount` refuses).
+- One definition per code across companies: rename via `scm.acc_rename_account` (one transaction, collision refuses), updates hit every company, delete only a never-used code, tick OFF cascades to children, tick ON brings the parent chain.
+- `section` decides the account type (`scm/lib/account-sections.ts`); moving a header moves its subtree, a child refuses (`section_child`); a reparent onto an account with postings refuses (`parent_has_postings`); parent shares the type; no cycles.
+- 405-x suppliers book to AP_OTHER (405-0000), all others to AP (400-0000) — `apControlRole` only; an AP payment on the other control refuses `wrong_ap_control`.
+- Lines post per item group (`acc/item-group-split.ts`): ungrouped (`line_ungrouped`) or unbound (`group_unbound`) refuses by name, never a default account. Groups are born only via `scm.acc_register_item_group`; discounts stay company-level.
+- PI posts periodic: documents never touch 330-0000; stock value reaches the GL only through STOCKADJ, replayed on `inventory_movements.movement_date`.
+- Migrated documents (`migrated_no_stock`) and `imported`-method payments book nothing — AutoCount already carries them.
 
-## 2. Database layer (second checks, migration 0296)
+Customer payments
+- Every sales-order payment insert (panel, scan job, both SO-create inserts) goes through `bookSoPaymentBestEffort` (`scm/lib/so-payment-row.ts`): books SOPAY, issues the deposit invoice, births the official receipt; never blocks the order; logs refusals.
+- AR lines carry `party_code` from `customerPartyCode`: the debtor code when kept, else the order's `customer_id`.
+- A payment edit re-posts only if amount, paid date, method or merchant provider changed; the contra is dated on the original entry's day. A delete's contra is dated today.
+- A payment changes only as a draft, on its keyed day, or under the amend right with a reason. A reconciled payment (confirmed settlement line, bank match on its entry, locked bank month on its money leg) is locked for everyone; each check fails closed.
+- A converted payment row cannot be PATCHed; refunds plus conversions never exceed the pool (`orderMoney`, `scm/lib/so-money.ts`); converted rows are skipped by daily close, drift check and receipt healing.
 
-- `acc_je_balanced_totals` CHECK — header totals always equal.
-- `acc_jel_nonneg` / `acc_jel_one_sided` CHECKs on lines.
-- `acc_je_one_active_source` partial unique index — the database itself
-  refuses a second ACTIVE entry for the same source document. A race or read
-  blip can delay a posting; it can no longer double-book it.
-- `scm.acc_account_roles` — role → account_code per company (AR / SALES /
-  INVENTORY / AP today; settlement-in-transit and friends arrive in phase 2).
-- `trg_je_balanced` (pre-existing): on the posted flip, re-sums the REAL
-  lines, refuses unbalanced/empty, stamps totals + `posted_at`.
+Deposit invoices, notes, receipts
+- A DI is issued only when the company switch is on, the payment is on/after the start day, the order is live (`order_not_live` for DRAFT/CANCELLED) and has no live sales invoice; one DI stands per payment.
+- With the switch on, the delivery reconciler raises the final invoice when an order turns DELIVERED; `postSiRevenue` closes each standing DI with a CN (Dr 509 / Cr AR) dated the invoice day; cancelling that invoice contras the CNs.
+- Backlog order: issue missing DIs first, then invoice already-delivered orders (dated when the goods left).
+- A posted Customer Refund voucher naming an SO raises a CN per deposit invoice it draws on, oldest first; cancelling the voucher contras them.
+- One official receipt per payment for ever; a reprint never re-issues. Table `scm.acc_official_receipts` (`scm.acc_receipts` is the general receipt). The Official Receipts page opens on the current month: `GET /accounting/receipts?month=YYYY-MM` lists the month whole (oldest first), `GET /accounting/receipts/check?month=` reads the month's SO + SI payments that arrived (no converted, mirror or zero rows) against its receipts by payment day — totals, difference, payments without a receipt, receipts whose amount is not their payment's, receipts whose payment is gone.
+- A settled purchase invoice is locked (`pi_locked`): cancel the voucher (unwinds `applied_sen`), edit, pay again.
+- AP invoice edit refuses `total_below_paid`, `supplier_locked`, or a cancelled bill; files refused on a cancelled bill (`invoice_cancelled`), delete refused once posted (`evidence_locked`). Debtor bill edit: `total_below_received`, debtor fixed.
+- OCR pre-fill writes UPPER CASE and takes the account from vendor memory only, never a model guess.
 
-Ledger tables stay `scm.accounts`, `scm.journal_entries`,
-`scm.journal_entry_lines` (live before this module; renaming them buys risk,
-not clarity). NEW tables take the `acc_` prefix — that is the boundary
-marker other teams can rely on.
+Numbering and dates
+- Finance series (AP invoice, PV draft and formal, OR draft and formal, general receipt, debtor bill and receipt) take YYMM from the document date (`docMonthTag`); a later date change never re-mints. Operational series keep the keyed day.
+- CN / DN / SCN / DI mint `{co}-<KIND>-YYMM-NNN` via `mintMonthlyDocNo`.
+- A correction's contra is dated as the original (its month nets to zero); a real cancel's contra is dated today.
+- Voucher letters: one per money account, unique per company; C is reserved for cash (CPV / COR) and refused for banks.
 
-## 3. API surface (backend/src/scm/routes/accounting.ts)
+Merchant reconciliation
+- Auto-match only on a unique reference inside the tolerance; amount+date matches and out-of-window references are offered pre-ticked for a person, never taken. "Confirm all matched" rescues only `matched`, never `suggested`.
+- Confirm re-reads the chosen payments (`payment_not_found`, `not_card_payment`, `amount_mismatch` on database figures) and stamps the acquirer tag only where it is NULL.
+- Candidates: card payments tagged with this acquirer or untagged, and untagged `imported` rows; never another acquirer's, never cash/transfer, never a CANCELLED order's; untagged ones list once.
+- `acc_settlement_matches` is UNIQUE on (payment_source, payment_id); a report file is unique by hash; a line already on another report (day + ref + gross) is left out and a file with nothing new refuses `already_on_report`; a failed upload deletes its batch head.
+- Unconfirmed links refresh from their payment each time a report opens; a confirmed link is changed only by a named migration.
+- Confirm books the fee only; each bank credit books SETTLEBANK separately, and a credit overshooting the report's net refuses.
+- Fee and payout-charge accounts must be ACTIVE EXPENSE LEAVES of the company; a payout charge is dated the settlement day, needs a note, cannot exceed the difference, one per day.
+- An acquirer's clearing account must be a live 326-/327- account of that company; untagged card money stays on generic 326-0000.
+- Bank recognition rules are global; regexes compile at write time and need a capture group; no delete (`is_active = false`).
 
-`/accounting/*`, all behind `supabaseAuth`; GL writes additionally gated on
-`scm.payment_voucher.post` (owner decision recorded in-file; dedicated
-`acc.*` keys arrive with the phase-1 UI).
+Bank reconciliation
+- Columns are found by heading text, never position; overlapping uploads dedupe by `movementFingerprint`; CSV and PDF cannot mix in one account-month (`mixed_sources`).
+- A movement belongs to the month of its own date; a file's balance speaks for a month only if the file lies wholly inside it; files must chain; a typed month-end closing applies only where no file prints one.
+- Entries offered for a movement: same amount to the sen, same direction, within 7 days, never already claimed; proposed, not applied. Auto "obvious" match needs exactly one such entry whose names agree.
+- Group match is several movements → one entry or one → several (`one_side_only` otherwise), totals equal to the sen (`amount_mismatch`); undo reopens every movement in the group.
+- One entry is claimed at most once per bank account (a transfer once on each bank); a line may name several entries (`jeNosOf`); claims count only from POSTED lines.
+- A month locks only when a statement is filed, nothing is undecided, it is covered end to end, a closing balance exists and it tallies (`not_tallied`); there is no reason override.
+- A closed month refuses booking, matching, ignoring, undoing and uploads with a movement dated inside it; a failed lock read refuses. It is not a GL period close.
+- Card decisions on OPEN lines are recomputed on every read (`freshDecisions`); POSTED and IGNORED lines keep what they were booked as.
 
-Reads: `GET /accounts`, `/journal-entries`, `/journal-entries/:id`, `/gl`
-(v_gl_entries), `/balances` (v_account_balances), `/ar-aging`, `/ap-aging` —
-all company-scoped, all paginated past PostgREST's 1000-row cap.
-Writes: `POST /journal-entries` (manual JV **draft** through the gate; source
-type is FORCED to MANUAL and the chart is validated), `POST
-/journal-entries/:id/post`, `POST /journal-entries/:id/reverse` (MANUAL only
-— documents reverse through their own cancel flows), `POST /post/si/:inv`,
-`POST /post/pi/:inv` (manual re-post endpoints; DRAFT guarded), `POST
-/accounts` + `PATCH /accounts/:code` (chart management: code immutable,
-parent must share the type, deactivation refused for parents-with-children
-and role accounts), `GET /control-check` (reconciliation layer 1: AR/AP
-control vs documents, drift named to the doc, foreign lines listed).
+Reports
+- Every reader counts only posted entries on neither side of a reversal pair (`acc/reversal-pairs.ts`): statements, R&P, GL, Daily Bank, bank ledger, `scm.v_account_balances`.
+- Statements classify accounts by section; the balance sheet prints its own difference, never absorbs it.
+- Report layouts (`scm.acc_report_layouts`) are presentation only: the section still decides the block; one tree per report for all companies with per-company hiding; unplaced accounts print under Unassigned so a total equals what is printed.
+- Cash Flow (`rp`) is one directed tree (`layOutCashFlow`): every top category is In or Out and prints with its own subtotal name (`totalLabel`); an account line carries a flow (In, Out, Net = in − out) so one account may sit twice, once per direction, and an Out line under an In category prints negative; a `subtotal` item at the top level is the running sum of everything above it, In less Out; unassigned receipts and payments print as their own groups last; Cash Surplus / (Deficit), Balance b/f and Balance c/f close the report. A stored tree with no direction marks is read as RECEIPTS (In) / PAYMENTS (Out), so the report reads as before until it is rearranged in the Layout editor (the side of a top category, a line's direction, a category's subtotal name, subtotal rows, spares offered per side).
+- Figures print positive; parentheses only where credits beat debits in the period; never a minus inside brackets (`fmtSenParen`).
+- By-month columns are one call each to the report's own endpoint; nothing is stored.
+- Performance P&L: sales and cost from sales orders by SO date (not DRAFT/CANCELLED); expenses from the ledger with the company's operating-expense account replaced by its rate of non-service sales.
+- Daily Bank reads the ledger live; settlement-in-transit is shown but never movable; draft vouchers awaiting approval come off the available figure.
 
-**Phase 1 (2026-08-16).** One AutoCount-style chart for every company
-(migration 0297; company 2 template copied to company 1, ledger lines
-remapped, roles repointed to 300-0000 / 310-0000 / 400-0000 / 500-0000,
-legacy codes deactivated as alias records). MANUAL journals are blocked from
-control accounts by the engine. The Accounting page carries seven tabs:
-Chart of Accounts (add/rename/deactivate), Journal Entries (+ manual JV
-form, post, reverse), General Ledger, Trial Balance (born with its own
-zero-difference self-check tile), AR/AP Aging, and Self-check (layer 1).
+Process and UI
+- Merchant and bank reconciliation changes are tested by the owner locally before merge.
+- Server refusal sentences stay under 200 characters; curated codes (`payment_edit_locked`, `already_on_report`) are listed in `SERVER_SENTENCE_WINS`.
+- The Accounting page has no tab strip: tabs are `/scm/accounting?tab=<name>` from `accounting-tabs.ts`, reached from the sidebar; a new report joins Reports, a maintenance screen joins Setup.
+- Accounts display as code over name (`AccountCell`). Desktop only; no mobile surface.
+- Endpoints: see `docs/generated/route-capability-matrix.csv`.
 
-**Phase 2A (2026-08-16).** Customer payments reach the ledger: acc/payments.ts posts each sales-panel payment row through the gate (Dr CASH / BANK_DEFAULT / acquirer transit by the panel 3-method model, Cr AR; source SOPAY/SIPAY keyed on the payment row uuid). scm.acc_acquirers is the 2.13 master (display_name = the exact merchant_provider strings; CIMB/GHL/HLB/MBB/PBB seeded; 决定4 config columns NULL until the owner fills them). imported-method rows and payments on migrated invoices never book - AutoCount carries that money. GET /acquirers lists the master; POST /backfill/customer-payments walks unposted rows batched + idempotent. The sales-side insert/delete HOOKS are NOT yet wired - listed for owner approval per brief 6.3/6.4.
+## Gotchas
 
-**Phase 2B part 1 (2026-08-16): Daily Bank.** GET /accounting/daily-bank?date= answers the owner one question - today, where is the money and how much can actually move - live from the ledger (2.3: no caches): opening/in/out/closing per money account (scm.accounts.acc_money flag, migration 0299), settlement-in-transit balances per acquirer (visible, never counted movable), and — since phase 3 (2026-08-28, mig 0339) — pendingApprovalSen: every DRAFT payment voucher sitting in the approval queue, converted to MYR the way posting will, subtracted from available. Page /scm/daily-bank (Finance menu): date navigation + Get Image (canvas-drawn PNG to clipboard for WhatsApp, download fallback). Board arithmetic pinned in acc/daily-bank.test.ts. 946-0000 Cash Over/Short + OVER_SHORT role seeded for the coming daily cashup.
+- Reading `companies` on the scm-pinned client wrote no journals for days — always `sb.schema('public')`.
+- Finance routers without their own `supabaseAuth` failed in production while harness tests passed — declare it on every new router.
+- Payment inserts that skipped the hook never reached the books — use `bookSoPaymentBestEffort`; run the Self-check dry run (`POST /accounting/backfill/customer-payments {dryRun: true}`) before backfilling.
+- Selecting columns `mfg_sales_orders` lacks passes the fake client — use `debtor_name` / `phone`; `soPaymentOrderColumns.test.ts` pins the selects.
+- A route's response shaping dropped a computed field — assert the route reply, not only the library.
+- A source type the control check does not know shows as foreign lines — add every new source type to its control's family.
+- `CREATE TABLE IF NOT EXISTS` on a taken name is a silent no-op — choose a new name.
+- Writing an enum column from a CASE of text literals fails (42804) — type each branch as the enum.
+- Backfill contras dated on the run day overstated earlier months — pass the original entry's date.
+- Counting an unconfirmed settlement link as reconciled locked correctable payments — lock only on a confirmed line.
+- A fee account left on an inactive code refused every confirm unnoticed — setup offers only postable leaves and names a bad one.
+- Candidate reads bound to the date window missed late-keyed payments — fetch references regardless of date; Find the sale searches everything.
+- Batch detail reading only `candidates` / `suggested` showed matched lines as unexplained — fall back to `matched`; refuse an upload whose row insert returns fewer ids.
+- Untagged payments walked per acquirer were counted once per merchant — list them once.
+- Bank Undo left match rows behind and blocked re-matching — undo deletes them.
+- The lock and the screen built different match indexes and disagreed — both use `matchesByLineOf`.
+- Trial balance summed both sides of reversal pairs and drafts — filter lines before the join.
+- Bank rows seeded state on mount and ignored the matcher's fresh decision — key rows on the decision (`decisionKey`).
+- Header detection that read only active children let a header take postings — count retired children too.
+- `fetchMonthlyDocNos` reading whole rows minted -001 twice — read the named column.
+- DateField on touch: `showPicker()` from onClick is dead on iOS and a full-field overlay blocks typing — keep the native date input on the icon only.
+- A card settlement confirm moves money keyed under no bank or the wrong bank: one `SETTLEMOVE` line per clearing account the payment debited, into the merchant's own clearing account (`clearingMoveLinesFrom`, `backend/src/acc/rules.ts`), and it corrects the payment's `merchant_provider` with an `UPDATE_PAYMENT` history line.
 
-**Phase 3 (2026-08-28): PV approval — money leaves only after a yes.** The full write-up lives in docs/modules/payment-voucher.md §0b (marker columns per the 0324 lesson, the pure rule table in scm/lib/pv-approval.ts, the post gate, the scm.payment_voucher.approve key, the audit verbs). What belongs to THIS module: the Daily Bank board's available figure now answers "closing minus what is already asked for", which is the question the owner's phase-3 placeholder was holding a seat for.
+## Where the code is
 
-**Phase 2B part 2 (2026-08-16): Daily close (layer 2).** GET/PUT /accounting/daily-close + POST /daily-close/confirm: each day each company counts the drawer against the system takings (both sales panels, bucketed cash / transfer / per-acquirer; imported rows never count). Confirming freezes the day (scm.acc_daily_closes, migration 0300) and posts the CASH over/short THAT DAY through the gate (946-0000, source CASHUP, idempotent per company+date); card/transfer differences are settlement timing owned by layer 3 - recorded, never posted here. UI: the Daily close view on the Daily Bank page. Confirmed buckets refuse edits - corrections are manual journals, on the record.
-
-**Phase 2B part 3 (2026-08-16): acquirer settlement reconciliation (layer 3).**
-The layer that empties `320-0000`. The acquirer master follows the owner's
-"define once, all companies share" principle: `scm.acc_acquirer_config` is
-GLOBAL (statement format, unique-ref flag, fee method, date tolerance, column
-map — 决定4, taught once) and `scm.acc_company_acquirers` is the per-company
-link (which bank/transit/fee accounts); migration 0332 splits them and leaves
-`scm.acc_acquirers` behind as a VIEW of the same shape, so every phase-2A
-reader is untouched. **The five layouts arrive TAUGHT** (migration 0338 seeds
-HLB/MBB/GHL/PBB/AEON with the validated column maps — the owner, 2026-08-27:
-为什么report setup 我还需要自己set; tests/acquirerLayoutSeed.test.mjs runs each
-seeded layout against its committed fixture). The seed fills only rows still
-untaught, so a layout corrected in the UI is never overwritten. What setup
-still asks per company is ONLY the account links below.
-
-**Which bank receives the money is PER COMPANY** (owner, 2026-08-18: 例如pbb，在
-houzs 可能是maybank 收钱，但是在2990 是hong leong bank 收钱). That is exactly what
-`acc_company_acquirers.bank_account_code` is for, and the screens now say so:
-`GET /setup` returns `bankReady` per merchant plus the ACTIVE company's own money
-accounts (`accounts.acc_money`), so the setup field is a CHOICE from this
-company's bank accounts rather than a typed account code; `GET /batches/:id`
-returns `receiving_bank` { code, name, configured } so the bank screen names the
-account BEFORE the money is recorded. Unset still falls back to the company's
-BANK_DEFAULT role — the books never stop — but the fallback is now stated on
-screen in red instead of only in a server log.
-
-Migration 0302 adds `acc_settlement_batches` (one upload,
-UNIQUE on the file's content hash), `acc_settlement_rows` (the four screen
-buckets MATCHED / NEEDS_CONFIRM / UNMATCHED / IGNORED) and
-`acc_settlement_matches` (which payments a line covers — UNIQUE
-`(payment_source, payment_id)`, so the database itself refuses to settle the
-same money twice). `acc/settlement-parse.ts` reads a statement entirely from
-config and REFUSES by name rather than parsing 0 rows (§2.14);
-`acc/settlement-match.ts` auto-matches ONLY on a unique reference — an acquirer
-without one (or one whose 决定4 is still blank) sends every line to a human, and
-the date tolerance comes from the config row, not a literal. A reference that
-matches NOTHING falls through to amount+date, because the owner cannot guarantee
-the code was typed correctly (2026-08-18: 我没办法确定 authorised code salesperson
-一定填对); when exactly ONE payment makes that amount in range — one payment, or
-one exact-summing pair — it comes back as `suggested`, pre-ticked on screen with
-the reason, for a human to confirm. Offered, never taken: two possible answers is
-a question, so nothing is ticked and he chooses;
-`acc/settlement.ts` confirms, which POSTS that moment.
-
-**Two events, two entries** (owner, 2026-08-17: 全部卡机都是隔几天收到的。应该是
-先对卡机报告，然后 match 了就会去 match bank statement). Reconciling the card
-machine and receiving the money are days apart, so the ledger keeps them apart:
-confirming a line books the FEE only (Dr fee / Cr transit, source `SETTLE`,
-keyed `SETTLE-<row id>`, dated by the transaction). In between, settlement-in-
-transit holds exactly what the acquirer still owes — the fee is already lost and
-is no longer receivable. The customer side never changes: AR is knocked off by
-the full gross at the swipe (owner: 顾客还款确定到时是记录6000哦，不然knock off
-不到). A fee-free line confirms with no entry at all.
-
-**And the way back out (2026-08-29, the owner's 上传了能cancel 掉? made the gap
-loud): POST /settlement/rows/:id/unconfirm** — the door the ignore refusal has
-always pointed at, now with a button behind it (an Undo beside every "done"
-row on /scm/merchant-recon). It reverses the `SETTLE-<row id>` fee entry
-(never deletes), releases the payment links so the money is claimable again,
-and sends the row back to NEEDS_CONFIRM for a fresh decision — never silently
-back to matched. REFUSED while the statement has recorded receipts: undo those
-credits first (they have their own button). `unconfirmSettlementRow` in
-acc/settlement.ts; contract in tests/settlementRoutes.test.ts.
-
-**One statement, one or more credits** (owner, same day: 我实际收到的钱可能是多笔
-的哦). Hong Leong pays a multi-day statement one credit per trading day, Maybank
-credits each trading date separately, and Public Bank goes the other way — one
-advice covering three days. So each credit is a row in
-`scm.acc_settlement_receipts` (migration 0335) with its own date, amount and
-entry: Dr bank / Cr transit, source `SETTLEBANK`, keyed
-`SETTLEBANK-<batch id>-<receipt id>` (per receipt, so two identical credits on
-one day both post), dated by the BANK statement. A statement is "in the bank"
-only when its credits add up to `stated_net_sen ?? net_sen`; a credit that would
-overshoot is refused with both numbers named, because that money belongs to
-another statement. `undoBatchReceipt` REVERSES a credit's entry rather than
-deleting it. Layer 4 (bank reconciliation) will write these same rows from the
-bank statement itself, which is why the operator is never asked for a payout
-date at upload time — that is the one moment he cannot know it.
-
-Thirteen endpoints under `/accounting/settlement/*` (setup read/write, upload,
-batch list/detail, confirm one, confirm-all-matched, received, receipt undo,
-ignore, watchlist, in-transit, CSV export), each carrying its own permission
-check on top of the area guard.
-
-**Two pages, named by the owner** (2026-08-17: 就不能分成 merchant
-reconciliation, bank statement reconciliation 吗？) — because it is two jobs on
-two days:
-
-- `/scm/merchant-recon` — **Merchant reconciliation** (step 1 of 2): the
-  MERCHANT statement against what the ERP recorded. It books fees; it never
-  books the bank. Setup moved out to its own screen, so this one is the work.
-
-  Uploading lands on WHAT THE UPLOAD FOUND, across every file at once (owner,
-  2026-08-18: 当我上传完全部文件后…让我知道我 upload 的文件有哪里几笔是 match 的，
-  有哪里几笔是我要 manual check 或 verify 的，有哪里几笔会是 merchant 收到但完全
-  match 不上的) — three counts because they are three different jobs, a per-file
-  breakdown, and one button that confirms every reference-matched line in the
-  whole upload, report by report so a refusal names its own file.
-
-  Then the work list, which shows ONLY what is not matched yet (owner: 应该就只会
-  显示还没对上的 transaction 吧): the reports with lines still to decide, split by
-  the kind of problem (`to_confirm_count` — matched by reference, one button;
-  `to_choose_count` — a choice he can make; `no_record_count` — the report has it
-  and no sale in the ERP does), and underneath, the card
-  payments the sales team keyed in that no report has reported yet. A report
-  whose lines are all decided leaves the screen, saying where it went. Opening
-  one shows its open lines and nothing else; one checkbox brings the finished
-  lines back. The four buckets still exist in the data and in the CSV export —
-  the screen shows the work instead of a pile switcher.
-- `/scm/bank-recon` — **Bank statement reconciliation** (step 2 of 2): the BANK
-  statement against what the merchants owe. **GATED**: a report appears here
-  only once every one of its lines is decided (owner: 核对完了没有问题才会显示去
-  bank statement 的 reconciliation) — the ones not ready are counted and NAMED
-  rather than silently missing, and the record-a-credit box is withheld from a
-  report that goes back to undecided. Tabs: Money to come in (the reports still
-  owed money, the credits banked against each, a date+amount box for the next
-  one, undo), Still with the merchants (the in-transit detail — three states,
-  each naming who keyed the payment in, each showing what is STILL owed after
-  fees, statement charges and part-payments). This is the screen layer 4 will
-  feed from the bank statement file.
-
-- `/scm/settlement-setup` — **Reconciliation setup**: ONE maintenance TABLE,
-  every company at once (owner, 2026-08-18: 我应该 overall maintenance table，左手
-  边是 merchant、bank，上面 header 是公司，这个公司有就 tick). Merchants and banks
-  are the ROWS, companies are the COLUMNS, and a tick in a cell means that
-  company uses it; a ticked merchant cell also carries WHICH of that company's
-  banks its money lands in. The shared half — how the report reads — sits on the
-  row, outside every company column, because that is what it is. The read
-  answers for every company the caller is granted; the two writes take the
-  company as a PARAMETER and re-check it against those same grants
-  (`allowedCompanyIds`)
-  — a company id in a request body is an instruction, not an authorisation. A
-  company nobody has set up shows every merchant unticked and creates its link
-  row on the first tick, so a new company needs no migration. Unticking a bank a
-  merchant still pays into is REFUSED by name. Nothing new is stored: the ticks
-  are `acc_company_acquirers` (0301) and `accounts.is_active` on the company's
-  money accounts — the chart is already maintained centrally (0297), which is the
-  owner's own answer to where banks are defined ("chart of account 我也是会做成总
-  维护不是？").
-
-On both reconciliation screens, working a statement REPLACES the list rather than stacking under it —
-the owner on the version that stacked: 就感觉很多东西挤在一页. Each page links to
-the other where the work hands over. What they share is presentation only
-(`settlement-ui.ts`); every rule stays on the server, so the two screens cannot
-drift into two answers.
-
-SI auto-posts on create/confirm (`lib/post-si-revenue.ts`; resync
-void+reposts on post-issue edits). PI posts on demand + resyncs. PV posts on
-`POST /payment-vouchers/:id/post` and reverses on cancel. All three files own
-only their document specifics; the entry writing is the engine's.
-
-**Migrated documents book nothing** (`migrated_no_stock` guard): AutoCount
-already carries their revenue/payable — posting here would double the books.
-This is the parallel-run seam and it stays until the owner retires AutoCount.
-
-## 4. Tests
-
-- `backend/src/acc/engine.test.ts` — 22 locks on the gate itself.
-- `backend/src/acc/settlement-parse.test.ts` / `settlement-match.test.ts` /
-  `settlement.test.ts` — the layer-3 rules: a refused file names what is wrong,
-  only a unique reference auto-matches, the tolerance is the configured number,
-  a prorated fee sums exactly, a selection that does not add up is refused, and
-  confirming twice books once.
-- `backend/tests/settlementRoutes.test.ts` — the endpoints, including the 403
-  at this end and the same-file-twice refusal.
-- `backend/src/scm/lib/post-si-revenue.test.ts` — the SI path's 15 locks,
-  passing unchanged across the engine rewire (the proof the rewire preserved
-  behaviour).
-- Company scoping and permission locks: `tests/companyScopeProcurementFinance`,
-  `tests/companyWriteScope`, `tests/positionPolicy`.
-- All light-project suites green at the rewire commit (318 files / 4,858 tests).
-
-## 5. What phase 0 deliberately did NOT change
-
-No endpoint contracts, no UI, no permission keys, no call sites outside this
-module. `sales-invoices.ts`, `purchase-invoices.ts` and every other caller
-still import the same functions with the same signatures and results. The
-two behaviour changes are both fixes the old code documented against itself:
-a PV reversal of a line-less entry now aborts loudly instead of posting a
-zero-line reversal header, and a manual JV naming an account the company
-chart cannot explain is now a 400.
+- `backend/src/acc/engine.ts`, `backend/src/acc/rules.ts` — posting gate, rule table, `CONTROL_ROLES`, `apControlRole`.
+- `backend/src/acc/payments.ts`, `payment-repost.ts`, `payment-reconciled.ts`, `payment-drift.ts`, `payment-corrections.ts` — customer payments.
+- `backend/src/acc/settlement.ts`, `settlement-parse.ts`, `settlement-match.ts`, `payout-advice.ts`, `payout-charge.ts` — merchant reconciliation.
+- `backend/src/acc/bank.ts`, `bank-parse.ts`, `bank-parse-pdf.ts`, `bank-match.ts`, `bank-month.ts`, `bank-lock.ts`, `bank-reconcile.ts` — bank reconciliation.
+- `backend/src/acc/credit-notes.ts`, `deposit-invoices.ts`, `deposit-refunds.ts`, `receipts.ts`, `item-group-split.ts`, `stock-close.ts`, `daily-close.ts`, `daily-bank.ts`.
+- `backend/src/acc/journal-refs.ts`, `journal-class.ts`, `reversal-pairs.ts`, `report-layout.ts`, `performance-pnl.ts`, `masters-company.ts`, `bill-extract.ts`.
+- `backend/src/scm/routes/accounting.ts` (mounts the rest) plus `accounting-chart.ts`, `accounting-reports.ts`, `accounting-rp.ts`, `accounting-ledger.ts`, `accounting-journal-edit.ts`, `accounting-settlement.ts`, `accounting-bank.ts`, `accounting-bank-months.ts`, `accounting-bank-locks.ts`, `accounting-bank-config.ts`, `accounting-item-groups.ts`, `accounting-pi-backfill.ts`, `accounting-stock-close.ts`, `accounting-numbering.ts`, `accounting-receipts.ts`, `accounting-collection.ts`, `accounting-merchant-charges.ts`, `accounting-performance.ts`, `accounting-report-layouts.ts` (same folder).
+- `backend/src/scm/routes/ap-invoices.ts`, `ap-invoice-files.ts`, `other-debtors.ts`, `receipts.ts`, `credit-notes.ts`, `deposit-invoices.ts`, `so-money-routes.ts`.
+- `backend/src/scm/lib/so-payment-row.ts`, `so-money.ts`, `post-si-revenue.ts`, `auto-final-invoice.ts`, `si-from-do.ts`, `account-sections.ts`, `doc-no.ts`, `doc-files.ts`, `ap-invoice-settlement.ts`, `so-payment-reason.ts`; `backend/src/scm/shared/so-field-policy.ts`.
+- Mounts and area map: `backend/src/scm/index.ts`, `backend/src/scm/lib/scm-areas.ts`.
+- `frontend/src/pages/scm-v2/Accounting.tsx`, `accounting-tabs.ts`, `JournalEntries.tsx`, `JournalEntryCards.tsx`, `GeneralLedger.tsx`, `Reports.tsx`, `ReportLayoutEditor.tsx`, `ReportLayoutTree.tsx`, `MonthlyReport.tsx`, `PerformancePnl.tsx`, `ReceiptsPayments.tsx`, `CollectionReport.tsx`, `MerchantChargesReport.tsx`, `PaymentCorrectionsTab.tsx`, `CancelledWithMoneyCard.tsx`, `ItemGroups.tsx`, `PiBackfill.tsx`.
+- `frontend/src/pages/scm-v2/ChartOfAccounts.tsx`, `ApInvoices.tsx`, `ApInvoiceForm.tsx`, `OtherDebtors.tsx`, `Receipts.tsx`, `CreditNotes.tsx`, `DepositInvoices.tsx`, `OfficialReceipts.tsx`, `DailyBank.tsx`.
+- `frontend/src/pages/scm-v2/MerchantRecon.tsx`, `PayoutAdviceTab.tsx`, `BankRecon.tsx`, `BankStatementTab.tsx`, `BankMonthTab.tsx`, `bank-reconcile-pick.tsx`, `SettlementSetup.tsx`, `settlement-queries.ts`, `bank-queries.ts`.
+- `frontend/src/vendor/scm/lib/accounting-queries.ts`, `report-layout.ts`, `report-monthly.ts`; `frontend/src/vendor/shared/format.ts`; `frontend/src/components/Sidebar.tsx`.

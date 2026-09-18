@@ -9,12 +9,10 @@ has to rediscover the shape of the thing by probing production.
 | Where to go next | For |
 |---|---|
 | `docs/modules/autocount-writeback.md` | how to CALL the service, the master-data foreign key chain, the payload shapes |
-| `docs/autocount-migration-record.md` | how the one-time migration was done, the coverage matrix, the Friday runbook |
 | `docs/autocount-service-deploy.md` | building and swapping the exe on the host |
+| `docs/ac-resync-runbook.md` + `docs/autocount-remigration-runbook.md` | re-syncing from the book, and what each importer reads and writes |
 | `docs/generated/autocount-coverage.md` | which operations exist, which the service implements, which routes trigger them, and which have run against the live book — GENERATED |
-| `docs/autocount-writeback-golive-coe.md` | **the day the write-back was switched on and nothing reached the book** — seven faults in one chain, and the one shape that caused three of them |
-| `docs/autocount-writeback-exposure-coe.md` | the API key that was being published |
-| `docs/autocount-read-relay-exposure-coe.md` | the read relay that answers the public internet without a key |
+| `docs/LESSONS.md` | the write-back go-live, the published service key and the open read relay, one entry each |
 
 ---
 
@@ -41,7 +39,7 @@ This is the part people get wrong. "The AutoCount connection" is not one thing.
 
 | # | Channel | Direction | Auth | What it is for |
 |---|---|---|---|---|
-| 1 | `https://autocount.houzscentury.com` → cloudflared → `localhost:8900` **AcSyncService** | ERP **writes** to AutoCount | `X-API-KEY` header, fail-closed | The live write-back. Nine routes, all POST, **all writes** |
+| 1 | `https://autocount.houzscentury.com` → cloudflared → `localhost:8900` **AcSyncService** | ERP **writes** to AutoCount, and asks it six narrow questions | `X-API-KEY` header, fail-closed | The live write-back. **17 routes: ten write, six READ, plus `/health`** — see §6 |
 | 2 | `https://it-houzs.dev` — the LEGACY read relay | reads **out of** AutoCount | **partial and broken — see the COE** | Pre-cutover read middleware. Still up |
 | 3 | ZeroTier → `10.147.17.100,55500` — direct SQL to `AED_HOUZS` | reads (and could write) | SQL login `sa2` + password | How the migration read the book, and how every fidelity comparison was done — including reading `Desc2` line by line |
 | 4 | `tempdb.ac_src_bridge` — a scratch table | moves source code to and from the host | same SQL login | The only channel needing neither a screen nor a keyboard. **Its contents are stale** — see §7 |
@@ -188,11 +186,46 @@ with `TransferedDocNotAllowToCancelException`. Cancel the child first.
 
 ## 6. Reading data OUT of AutoCount
 
-There is **no read route on the write service**. All nine of its routes are
-writes; `/health` is the only thing that answers anything, and it answers from
-constants. That is deliberate — it is a receiving end.
+> **CORRECTED 2026-09-08.** This section opened *“There is no read route on the
+> write service. All nine of its routes are writes; `/health` is the only thing
+> that answers anything”*. That was true when it was written and has not been
+> since 2026-08-31, and it is the expensive direction to be wrong in: it tells a
+> reader who needs one fact out of the account book that there is no way to ask,
+> so they either go without the fact or reach for the ZeroTier SQL credential.
+> Re-count rather than believing this paragraph either —
+> `grep -n 'case "/' backend/scripts/autocount-service/AcSyncService.cs`.
 
-Reading happens two other ways:
+**The service has SIX read routes**, added one at a time as a question came up
+that no export could answer. Each is one `SELECT`, no SDK session, no
+transaction, no document opened:
+
+| route | answers | the ERP reaches it at |
+|---|---|---|
+| `/doc-read` | one document's header + lines as the BOOK holds them, naming any column that does not exist | `GET /api/scm/autocount-outbox/book-doc` |
+| `/table-columns` | which columns a document table actually has (names only) — including whether it carries `UDF_` columns | `GET /api/scm/autocount-outbox/table-columns?table=DO` |
+| `/further-description` | a line's `FurtherDescription`, reporting truncation instead of hiding it | **service only — no ERP route** |
+| `/line-fingerprints` | a document's lines, enough to match ours up against the book's | the held-back / relink flow |
+| `/picture-census` | how many lines carry a picture | **service only — no ERP route** |
+| `/last-errors` | the host's own recent failures | `GET /api/scm/autocount-outbox/host-log` |
+
+`/health` is still the only one that answers from CONSTANTS, and the trap in §7
+about it stands untouched: it proves a process is listening, never that the book
+can be opened.
+
+**Everything else on the service writes** — the seven document operations,
+`/cancel`, `/edit` and `/ensure-masters`.
+
+**The ERP keeps the two vocabularies APART, on purpose.** `AC_ROUTE`
+(`backend/src/services/autocount-writeback.ts`) is the eleven operations the
+write-back can ask for, and every one of them is a thing an outbox ROW can be —
+a document's journey, with a status, attempts and a retry policy. The reads live
+in their own map, `AC_READ_ROUTE`
+(`backend/src/services/autocount-host-read.ts`), and that file's header says why:
+a read takes no outbox row, has no retry policy and no attempts, because there is
+nothing to deliver. **Adding a read route must never add an `AcOp`.**
+
+Two BULK ways of reading remain, and the read routes do not replace them —
+they answer one document, not a corpus:
 
 1. **Direct SQL over ZeroTier** (channel 3). This is how every comparison in
    this repository was produced — `export-ac-fidelity-truth.py` and the
@@ -200,8 +233,8 @@ Reading happens two other ways:
    machine on that network and commit the result; each snapshot prints its own
    timestamp so a stale export is visible rather than silently compared.
 2. **The legacy relay** (channel 2). Still up, and **two of its endpoints answer
-   the public internet with no key at all** — see
-   `docs/autocount-read-relay-exposure-coe.md`. Do not build anything new on it
+   the public internet with no key at all** — see `docs/LESSONS.md` (2026-08-12)
+   and the open owner action in `tasks/TODO.md`. Do not build anything new on it
    until that is closed.
 
 ---

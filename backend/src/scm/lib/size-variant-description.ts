@@ -26,6 +26,7 @@
 // ----------------------------------------------------------------------------
 
 import { scopeToCompany } from './companyScope';
+import { pgrestIn } from './pgrest-in-list';
 
 /** The mfg_products columns the correction needs. */
 export type SizeSkuRow = {
@@ -93,10 +94,14 @@ export const loadSizeSkuMap = async (
   const byCode = new Map<string, SizeSkuRow>();
   if (codes.length === 0) return byCode;
   try {
-    const { data: own } = await scopeToCompany(
-      sb.from('mfg_products').select(SIZE_SKU_COLS).in('code', codes),
+    const { data: own, error: ownErr } = await scopeToCompany(
+      pgrestIn(sb.from('mfg_products').select(SIZE_SKU_COLS), 'code', codes),
       c,
     );
+    if (ownErr) {
+      // eslint-disable-next-line no-console
+      console.error('[loadSizeSkuMap] mfg_products by-code read failed:', (ownErr as { message?: unknown }).message ?? ownErr);
+    }
     const ownRows = (own ?? []) as SizeSkuRow[];
     for (const r of ownRows) byCode.set(r.code, r);
 

@@ -9,9 +9,12 @@ import { MediaLightbox, type MediaItem } from "../components/MediaLightbox";
 import { SearchProgress } from "../components/SearchProgress";
 import { SearchScopeHint } from "../components/SearchScopeHint";
 import { useSearchResultTransition } from "../hooks/useServerSearch";
+import { booleanPreference, useIdentityPreference } from "../hooks/useIdentityPreference";
 import { useAuth } from "../auth/AuthContext";
-import { isSalesNonDirector, isSalesDirectorUser, canLogSalesEntry } from "../auth/salesAccess";
+import { isSalesNonDirector, isSalesDirectorUser, canLogSalesEntry, canCreateEvent } from "../auth/salesAccess";
+import { NewProjectSheet } from "./MobileNewProject";
 import { capability } from "../auth/capabilities";
+import { roleLabelAdmitsRole } from "../auth/roleLabelAdmits";
 import { readProjectAccess, projectAccessUnresolved, holdsChecklistApproval } from "../auth/projectAccess";
 import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
@@ -25,6 +28,8 @@ import "./mobile.css";
 import { fmtTime } from "../vendor/shared/format";
 import { DateField } from "../vendor/scm/components/DateField";
 import { DefectActionsCtx, DefectFileActions, type AttachmentAction } from "./MobilePmsDefectActions";
+import { PlanFileChips } from "./MobilePmsPlanFileChips";
+import { floorPlanTileVisible } from "./MobilePmsFloorPlanTiles";
 
 /* ------------------------------------------------------------------ *
  * Mobile Project (PMS) — list + detail.
@@ -409,14 +414,19 @@ function ProjectListView({ onOpen, onBack }: { onOpen: (id: number) => void; onB
   // back timeline-ordered (soonest event first) with my_pending_titles chips
   // saying WHY each row is the caller's; a completed/submitted task drops the
   // row server-side.
-  const [myPendingOn, setMyPendingOn] = useState(false);
+  // Shares the DESKTOP checkbox's stored preference (owner 2026-09-09) so the
+  // daily reminder can arm the same filter on either shell.
+  const [myPendingOn, setMyPendingOn] = useIdentityPreference("projects:myPending", false, booleanPreference);
+  // New-event sheet (owner 2026-07-31), gated by canCreateEvent below.
+  const [creating, setCreating] = useState(false);
+  const notify = useNotify();
   // Owner 2026-07-21: field/sales roles (Sales Executive/Manager except Sales
   // Director, plus Driver/Helper/Storekeeper) get a slimmed filter bar — only
   // "My events", "Setup", "Dismantle" (no All / Draft / Live / Completed).
   const _pos = (user?.position_name ?? "").trim();
   const _dept = (user?.department_name ?? "").trim();
   const _isDirector = !!user?.permissions?.includes("*") || /\b(super admin|sales director|finance manager)\b/i.test(_pos);
-  const _isCrew = /\b(driver|helper)\b/i.test(_pos) || /storekeeper/i.test(_pos);
+  const _isCrew = /\b(driver|helper)\b/i.test(_pos) || /storekeeper/i.test(_pos) || /^warehouse crew/i.test(_pos);
   const _isSalesExec = (/sales/i.test(_dept) || /^sales/i.test(_pos)) && !_isDirector;
   const restrictedCohort = _isCrew || _isSalesExec;
   const visibleStageFilters = restrictedCohort
@@ -531,6 +541,17 @@ function ProjectListView({ onOpen, onBack }: { onOpen: (id: number) => void; onB
               <div className="scr-title">Projects</div>
             </div>
           </div>
+          {/* New event (owner 2026-07-31) — same gate as the desktop button:
+              BD / Owner position / weisiang, which the backend re-checks. */}
+          {canCreateEvent(user) && (
+            <button
+              className="tinybtn"
+              style={{ marginLeft: "auto", background: "var(--brand)", borderColor: "var(--brand)", color: "#fff", fontWeight: 700 }}
+              onClick={() => setCreating(true)}
+            >
+              + New
+            </button>
+          )}
         </div>
         <div className="hdr-row" style={{ marginTop: 11 }}>
           <div className="searchbar">
@@ -667,6 +688,13 @@ function ProjectListView({ onOpen, onBack }: { onOpen: (id: number) => void; onB
           </>
         )}
       </div>
+      {creating && (
+        <NewProjectSheet
+          notify={notify}
+          onClose={() => setCreating(false)}
+          onCreated={(id) => { setCreating(false); onOpen(id); }}
+        />
+      )}
     </div>
   );
 }
@@ -733,7 +761,8 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
     queryKey: ["mobile-pms-phase-photos", id],
     queryFn: () => api.get<{ photos: PhasePhoto[] }>(`/api/projects/${id}/phase-photos`),
     staleTime: 15_000,
-    enabled: canSetupDismantle,
+    // Owner 2026-07-28: the S&D card is view-for-all — every viewer loads the
+    // phase photos (the endpoint admits any projects.read holder).
     retry: false,
   });
   const photos = photoData?.photos ?? [];
@@ -799,23 +828,21 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
   };
   const reloadPhotos = () => qc.invalidateQueries({ queryKey: ["mobile-pms-phase-photos", id] });
 
-  // Defect action timeline (owner 2026-07-29) — who may stamp Ongoing/Done on
-  // defect uploads: the purchaser (Sim), BD, and wildcard/manage admins.
+  // Two-stage defect triage (owner 2026-08-07; state split 2026-08-11):
+  // canReview = THIS project's state reviewer — Nancy (Ops Exec role) for the
+  // region states, Shukor (Storekeeper Supervisor position) for the rest;
+  // admin always. canPurchase = purchaser (Sim/Farra) / BD / admin closes an
+  // escalated (Replace) defect. Mirrors desktop.
   const defectActionsValue = useMemo(
     () => ({
       actions: (((data as any)?.checklist_attachment_actions ?? []) as AttachmentAction[]),
-      // Two-stage defect triage (owner 2026-08-07; two-warehouse split
-      // 2026-08-11): canReview = the reviewer for THIS project's state — Nancy
-      // (Ops Exec role) for the region states, Shukor (Storekeeper Supervisor)
-      // for every other state; admin always. canPurchase = purchaser (Sim /
-      // Farra) / BD or admin closes an escalated (Replace) defect. Mirrors desktop.
       canReview: (() => {
         if (!user) return false;
         const perms = user.permissions ?? [];
         if (perms.includes("*") || perms.includes("projects.manage")) return true;
         const region = new Set(["pulau pinang", "kelantan", "terengganu", "perak"]);
         const inRegion = region.has(((data as any)?.project?.state ?? "").trim().toLowerCase());
-        const isShukor = /^storekeeper supervisor$/i.test((user.position_name ?? "").trim());
+        const isShukor = user.capabilities ? user.capabilities["org.defect.reviewer"] === true : /^storekeeper supervisor$/i.test((user.position_name ?? "").trim());
         const isNancy = /^ops exec$/i.test((user.role_name ?? "").trim());
         return (isShukor && !inRegion) || (isNancy && inRegion);
       })(),
@@ -894,7 +921,9 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
   const isMgt = isOwnerAdmin || isDirectorPos || /^management$/i.test(_dept);
   const isBD = /bd\s*exec|business\s*develop/i.test(_roleName);
   const isDriverCrew = /\b(Driver|Helper)\b/i.test(_pos);
-  const isStorekeeper = /storekeeper/i.test(_pos);
+  // Owner 2026-08-28: the admin-created "Warehouse Crew KL" position (mixed
+  // Helper + Storekeeper roles) rides the storekeeper arm of every crew gate.
+  const isStorekeeper = /storekeeper/i.test(_pos) || /^warehouse crew/i.test(_pos);
   const isLogistic = /logistic/i.test(_pos);
   // Purchasers are matched by POSITION OR ROLE — the live purchasers (Farra,
   // Sim) hold the Purchaser ROLE on an "Operation Executive" position, so a
@@ -986,19 +1015,18 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
     return false;
   };
   const visibleChecklist = (data?.checklist ?? []).filter((it) => !itemHidden(it));
-  // Owner 2026-07-21 (re-reversed): the Filled floorplan tile is hidden from
-  // crew again — their Floor Plans card keeps Display (tile), Unfilled
-  // (view/download) and the stock-transfer records (view/download).
-  const hideFilledPlan = isDriverCrew || isStorekeeper;
+  // Owner 2026-09-15 ("nk ada display floorplan and stock out saja"): crew —
+  // driver/helper/storekeeper — keep ONLY the Display tile + stock records;
+  // 3D/2D/Unfilled/Filled all go (supersedes the 2026-07-21 Filled-only hide).
+  const crewPlanView = isDriverCrew || isStorekeeper;
   // Owner 2026-07-23: the Unfilled/Filled floorplan tiles are for sales,
   // sales director, management and BD only — the ops/office cohort keeps the
   // card (Display tile, 3D/2D design, stock records) without them.
   const hidePlanTiles = cohortOps || isPurchaserView;
 
   // ── Owner 2026-07-23 card respec — tile sets for the two new cohorts ──
-  // Ops/office cohort: view & download only, except purchasers who keep edit
-  // on their two deliverables. Contract + Payment cards are NOT rendered for
-  // this cohort at all; License / Weekend Activity / Stamp Duty are absent.
+  // Ops/office: view & download only (no Contract/Payment cards, no License /
+  // Weekend Activity / Stamp Duty); purchasers keep edit on their two docs.
   const opsOperationTiles: DocTile[] = [
     { label: "Permit", match: /permit/i, readOnly: true },
     { label: "Decoration", match: /^deco/i, readOnly: true, remarkWithFiles: true },
@@ -1011,22 +1039,19 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
     { label: "Event Complete Image", match: /^event complete image/i, readOnly: true },
     { label: "Dismantle Image", match: /^dismantle image/i, readOnly: true },
   ];
-  // Purchaser view (Sim, Farra): exactly three S&D tiles — Defect List to
-  // consult, their own two deliverables to edit.
+  // Purchaser view (Sim, Farra): Defect tiles to consult + their two docs.
   const purchaserSdTiles: DocTile[] = [
     { label: "Defect Item Setup", match: /^defect (list|item) setup/i, readOnly: true },
     { label: "Defect Item Dismantle", match: /^defect (list|item) dismantle/i, readOnly: true },
     { label: "Exchange List", match: /^exchange list/i },
     { label: "Stock In Transfer Record", match: /^stock in transfer/i },
   ];
-  // Management cohort (mgt / sales director / BD / owner): everything view &
-  // download; the BD tier (owner/BD/weisiang) edits, Kingsley additionally
-  // edits the contract. License shows only to the BD tier.
+  // Management cohort: everything view & download; the BD tier edits, Kingsley
+  // additionally edits the contract. License shows only to the BD tier.
   const mgmtContractTiles: DocTile[] = [
     { label: "Agreement / Quotation", match: /^agreement/i, readOnly: !canContractEdit, fullWidth: true },
   ];
-  // Arrangement per the owner's 2026-07-23 sketch: License + Stamp Duty row,
-  // Permit full-width ("big"), then Weekend Activity + Decoration row.
+  // Arrangement per the owner's 2026-07-23 sketch.
   const mgmtOperationTiles: DocTile[] = [
     ...(canBdEdit ? [{ label: "License", match: /^license/i }] : []),
     // Owner 2026-07-28: Stamp Duty is hidden from the Sales Director view
@@ -1048,10 +1073,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
     { label: "Exchange List", match: /^exchange list/i, readOnly: !canBdEdit },
     { label: "Event Complete Image", match: /^event complete image/i, readOnly: !canBdEdit },
     { label: "Dismantle Image", match: /^dismantle image/i, readOnly: !canBdEdit },
-    // Owner 2026-07-31: a HALF tile again, so it sits beside Dismantle Image.
-    // It was pinned full-width on 2026-07-23 when it was the odd 7th tile;
-    // splitting Defect List into Setup + Dismantle made the count even (8), so
-    // full-width now strands Dismantle Image alone with a gap next to it.
+    // Owner 2026-07-31: HALF tile (8 tiles = even count), beside Dismantle Image.
     { label: "Stock In Transfer Record", match: /^stock in transfer/i, readOnly: !canBdEdit },
   ];
   // Owner 2026-07-18: PIC assignment AND Sales-Attending assignment are open to
@@ -1067,8 +1089,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
   const canAssignPeople = canWrite;
   const canEditTeam = canAssignPeople;
   const canEditAttending = canAssignPeople;
-  // PIC's phone from the project detail (backend populates pic_phone) — shown
-  // on the mobile Team card for everyone, not just editors.
+  // PIC's phone (backend pic_phone) — on the mobile Team card for everyone.
   const picPhone = formatPhone(p?.pic_phone);
 
   return (
@@ -1111,7 +1132,8 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
             )}
             {/* Owner 2026-07-20: project-level edits (status + Edit here)
                 require the PMS EDIT section — sales roles (pms.canEdit=false)
-                get the read-only badge instead. */}
+                get the read-only badge instead. The status is the ONE control an
+                archived project withholds, as on the desktop (docs/bugs/0893). */}
             {p && canWrite && access.canEdit && !archived && (
               <select
                 value={p.status ?? ""}
@@ -1129,7 +1151,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
             {/* Edit lived on the (removed) Project card's summary — the card
                 is gone (owner 2026-07-22: header carries all its info), so the
                 sequential-prompt editor moved up here. Same flow, same gate. */}
-            {p && canWrite && access.canEdit && !archived && (
+            {p && canWrite && access.canEdit && (
               <button
                 className="tinybtn"
                 disabled={busy}
@@ -1248,7 +1270,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
                 <svg className="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="m9 6 6 6-6 6" /></svg>
               </summary>
               <div className="pbody">
-                {canEditTeam && !archived ? (
+                {canEditTeam ? (
                   <>
                     <label className="fld" style={{ marginBottom: picPhone ? 4 : 10 }}>
                       <span className="fld-l">PIC</span>
@@ -1289,7 +1311,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
                   projectId={id}
                   attendees={data.sales_attendees ?? []}
                   options={salesReps}
-                  canWrite={canEditAttending && !archived}
+                  canWrite={canEditAttending}
                   busy={busy}
                   setBusy={setBusy}
                   notify={notify}
@@ -1312,7 +1334,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
               attachments={data.checklist_attachments}
               projectStart={p.start_date}
               projectEnd={p.end_date}
-              canTick={canTick && !archived}
+              canTick={canTick}
               can={can}
               busy={busy}
               setBusy={setBusy}
@@ -1337,15 +1359,15 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
                 lorries={lorries}
                 /* `canEdit !== false` treated BOTH an absent pms block and an
                    omitted flag as writable. Now the server's answer, fail-closed. */
-                canWrite={canWrite && access.canEdit && !archived}
+                canWrite={canWrite && access.canEdit}
                 /* Crew manage the setup/dismantle photos (owner 2026-07-21);
                    the backend re-gates on being crewed on the phase. */
-                canPhoto={(isDriverCrew || isStorekeeper) && !archived}
+                canPhoto={(isDriverCrew || isStorekeeper)}
                 /* Schedule reference (owner 2026-07-29): hidden from all —
                    logistic views/downloads, the BD/owner tier (canBdEdit:
                    owner/BD/weisiang) uploads/removes. */
                 canScheduleView={isLogistic || canBdEdit}
-                canScheduleEdit={canBdEdit && !archived}
+                canScheduleEdit={canBdEdit}
                 busy={busy}
                 setBusy={setBusy}
                 patchProject={patchProject}
@@ -1363,7 +1385,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
               <SalesDocsCard
                 checklist={data.checklist}
                 attachments={data.checklist_attachments}
-                canTick={canTick && !archived}
+                canTick={canTick}
                 busy={busy}
                 setBusy={setBusy}
                 notify={notify}
@@ -1373,23 +1395,38 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
               />
             )}
 
-            {/* Crew (driver/helper/storekeeper) doc tiles (owner 2026-07-21 v2)
-                — same card style as sales, ALL view/download-only (their photo
-                work lives in Setup & Dismantle's phase photos). Replaces their
-                tasklist rows (hidden above). */}
+            {/* Crew doc tiles (owner 2026-07-21 v2) — replaces the crew's
+                tasklist rows; photo work lives in Setup & Dismantle. */}
             {(isDriverCrew || isStorekeeper) && (
               <SalesDocsCard
-                tiles={CREW_DOC_TILES}
+                /* A crew reviewer (Shukor) has the dedicated Defect list card —
+                   drop the defect tiles here so they don't render twice. */
+                tiles={defectActionsValue.canReview
+                  ? CREW_DOC_TILES.filter((t) => !/^defect/i.test(t.label))
+                  : CREW_DOC_TILES}
                 title="Event documents"
                 checklist={data.checklist}
                 attachments={data.checklist_attachments}
-                canTick={canTick && !archived}
+                canTick={canTick}
                 busy={busy}
                 setBusy={setBusy}
                 notify={notify}
                 prompt={prompt}
                 confirm={confirm}
                 reload={reload}
+              />
+            )}
+
+            {/* Defect list — the state reviewer's own card (owner 2026-09-15):
+                per-photo Done/Replace for Shukor / Nancy / admin. See the guide. */}
+            {defectActionsValue.canReview && (
+              <SalesDocsCard
+                tiles={DEFECT_REVIEW_TILES}
+                title="Defect list"
+                checklist={data.checklist}
+                attachments={data.checklist_attachments}
+                canTick={canTick}
+                busy={busy} setBusy={setBusy} notify={notify} prompt={prompt} confirm={confirm} reload={reload}
               />
             )}
 
@@ -1401,7 +1438,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
                 title="Setup & Dismantle documents"
                 checklist={data.checklist}
                 attachments={data.checklist_attachments}
-                canTick={canTick && !archived}
+                canTick={canTick}
                 busy={busy} setBusy={setBusy} notify={notify} prompt={prompt} confirm={confirm} reload={reload}
               />
             )}
@@ -1418,7 +1455,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
                     title="Contract"
                     checklist={data.checklist}
                     attachments={data.checklist_attachments}
-                    canTick={canTick && !archived}
+                    canTick={canTick}
                     busy={busy} setBusy={setBusy} notify={notify} prompt={prompt} confirm={confirm} reload={reload}
                   />
                 )}
@@ -1431,7 +1468,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
                     title="Payment"
                     checklist={data.checklist}
                     attachments={data.checklist_attachments}
-                    canTick={canTick && !archived}
+                    canTick={canTick}
                     busy={busy} setBusy={setBusy} notify={notify} prompt={prompt} confirm={confirm} reload={reload}
                   />
                 )}
@@ -1441,7 +1478,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
                   title="Operation"
                   checklist={data.checklist}
                   attachments={data.checklist_attachments}
-                  canTick={canTick && !archived}
+                  canTick={canTick}
                   busy={busy} setBusy={setBusy} notify={notify} prompt={prompt} confirm={confirm} reload={reload}
                 />
               </>
@@ -1453,27 +1490,30 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
                 showRoleTags={isLogistic}
                 checklist={data.checklist}
                 attachments={data.checklist_attachments}
-                canTick={canTick && !archived}
+                canTick={canTick}
                 busy={busy} setBusy={setBusy} notify={notify} prompt={prompt} confirm={confirm} reload={reload}
               />
             )}
 
             {/* setup & dismantle (logistic) — office-cohort position, below
-                Operation (owner 2026-07-23). */}
-            {!cohort5 && canSetupDismantle && !isPurchaserView && (
+                Operation (owner 2026-07-23). Owner 2026-07-28: view-for-ALL
+                users (incl. purchasers and PMS tiers lacking SETUP_DISMANTLE)
+                — the backend now sends the schedule/crew data to every
+                viewer; editing stays tiered as before. */}
+            {!cohort5 && (
               <SetupDismantle
                 projectId={id}
                 project={p}
                 photos={photos}
                 drivers={drivers}
                 lorries={lorries}
-                canWrite={canWrite && access.canEdit && !archived}
-                canPhoto={(isDriverCrew || isStorekeeper) && !archived}
+                canWrite={canWrite && access.canEdit}
+                canPhoto={(isDriverCrew || isStorekeeper)}
                 /* Schedule reference (owner 2026-07-29): hidden from all —
                    logistic views/downloads, the BD/owner tier (canBdEdit:
                    owner/BD/weisiang) uploads/removes. */
                 canScheduleView={isLogistic || canBdEdit}
-                canScheduleEdit={canBdEdit && !archived}
+                canScheduleEdit={canBdEdit}
                 busy={busy}
                 setBusy={setBusy}
                 patchProject={patchProject}
@@ -1491,7 +1531,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
                 showRoleTags={isLogistic}
                 checklist={data.checklist}
                 attachments={data.checklist_attachments}
-                canTick={canTick && !archived}
+                canTick={canTick}
                 busy={busy} setBusy={setBusy} notify={notify} prompt={prompt} confirm={confirm} reload={reload}
               />
             )}
@@ -1502,7 +1542,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
                 title="Setup & Dismantle documents"
                 checklist={data.checklist}
                 attachments={data.checklist_attachments}
-                canTick={canTick && !archived}
+                canTick={canTick}
                 busy={busy} setBusy={setBusy} notify={notify} prompt={prompt} confirm={confirm} reload={reload}
               />
             )}
@@ -1514,10 +1554,10 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
               attachments={data.attachments}
               checklist={data.checklist}
               checklistAttachments={data.checklist_attachments}
-              canWrite={canWrite && !archived}
-              hideFilledPlan={hideFilledPlan}
+              canWrite={canWrite}
+              crewPlanView={crewPlanView}
               hidePlanTiles={hidePlanTiles}
-              canStockEdit={isPurchaserView && canTick && !archived}
+              canStockEdit={isPurchaserView && canTick}
               confirm={confirm}
               busy={busy}
               setBusy={setBusy}
@@ -1540,7 +1580,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
               <SalesPanel
                 projectId={id}
                 incomeLines={data.finance_lines}
-                canLogSale={canLogSale && !archived}
+                canLogSale={canLogSale}
                 busy={busy}
                 setBusy={setBusy}
                 prompt={prompt}
@@ -1557,7 +1597,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
               <FinancialSnapshot
                 finance={data.finance!}
                 lines={data.finance_lines}
-                canWrite={canWrite && !archived && financeCanEdit}
+                canWrite={canWrite && financeCanEdit}
                 busy={busy}
                 setBusy={setBusy}
                 notify={notify}
@@ -2151,18 +2191,9 @@ function TaskRow({
   // drivers, so they attach on DRIVER-badged rows too (owner 2026-07-13) —
   // no task is ever badged HELPER/STOREKEEPER.
   const tickOnly = canTick && !can("projects.write");
-  const badge = (it.role_label ?? "").trim().toUpperCase();
-  const userRole = (user?.role_name ?? "").trim().toUpperCase();
-  // A combined badge ("SALES PIC & DRIVER" — the Defect List pair, owner
-  // 2026-07-29) admits every listed role; each part keeps the DRIVER →
-  // helper/storekeeper extension. Mirrors backend roleLabelAdmits.
-  const roleMatchesUser =
-    !!badge && !!userRole &&
-    badge.split("&").some((part) => {
-      const l = part.trim();
-      return !!l && (l === userRole ||
-        (l === "DRIVER" && (userRole === "HELPER" || userRole === "STOREKEEPER")));
-    });
+  // Shared with the desktop and mirroring backend roleLabelAdmits: a combined
+  // badge admits every listed role, DRIVER also admitting helper/storekeeper.
+  const roleMatchesUser = roleLabelAdmitsRole(it.role_label, user?.role_name);
   // Gated row, no approval key, but the row is badged for THIS user's function
   // (the purchaser on her own Exchange List / Stock In / Stock Out): since
   // 2026-08-17 the backend lets the owner function toggle N/A — only
@@ -2171,11 +2202,15 @@ function TaskRow({
   const naOnly = permBlocked && canTick && roleMatchesUser;
   const canRowTick = canTick && (!permBlocked || naOnly);
   const canAttach = canTick && (!tickOnly || roleMatchesUser);
-  // Owner 2026-08-05: file DELETE follows the PC rule — managers only
-  // (projects.manage: BD / managers / directors). Crew and sales keep upload
-  // (canAttach) but no longer see the × on file chips. canAttach folds in the
-  // row-edit + !archived gate, so a manager still can't delete a locked row.
-  const canRemoveFile = canAttach && can("projects.manage");
+  // Owner 2026-09-03: "every user can delete/remove file or image from their own
+  // task, both pc and mobile pms" — REPLACES the 2026-08-05 managers-only rule
+  // (`canAttach && can("projects.manage")`), which had left crew and sales able
+  // to upload a wrong photo they could not then take off. Delete now follows
+  // ATTACH on both surfaces: canAttach is already scoped to the row the caller
+  // may work on (tick-only roles to their own badge) and folds in the row-edit
+  // gate, so a row the caller may not work on still refuses. An archived project
+  // no longer locks it (docs/bugs/0893), exactly as on the desktop.
+  const canRemoveFile = canAttach;
 
   const cycle = async () => {
     if (!canRowTick || busy) return;
@@ -3151,28 +3186,26 @@ const SALES_DOC_TILES: ReadonlyArray<DocTile> = [
 ];
 
 // ── Crew (driver/helper/storekeeper) tile set (owner 2026-07-21 v2) ──
-// Same card style as sales, ALL view/download-only — crew's own photo work
-// (setup/dismantle) moved to the Setup & Dismantle section's phase photos.
-// Decoration shows its remark AND its files (view remark + download).
-// Defect tiles carry the per-file Ongoing/Done timeline + the N/A button
-// (owner 2026-07-29). Matched off the resolved checklist item title.
-// Live task titles are "Defect Item Setup/Dismantle" (there are no "Defect
-// List" rows in prod), so the old /^defect list/i matched nothing here and the
-// tile path never showed the action buttons or the no-defect N/A control
-// (BUG-HISTORY 2026-08-07). Widen to match both families, like every other
-// defect matcher and the backend.
+// Same card style as sales; crew's own photo work lives in Setup & Dismantle's
+// phase photos. Defect tiles carry the per-file action timeline (owner
+// 2026-07-29). Match BOTH title families — live rows are "Defect Item …", not
+// "Defect List …" (BUG-HISTORY 2026-08-07: the narrow match hid the buttons).
 const isDefectTile = (t: { item?: ChecklistItem | null }): boolean =>
   /^defect (list|item)/i.test((t.item?.title ?? "").trim());
 
+// Reviewer's Defect-list card (owner 2026-09-15). readOnly — reviewers stamp,
+// never upload; isDefectTile still renders the file list + actions.
+const DEFECT_REVIEW_TILES: ReadonlyArray<DocTile> = [
+  { label: "Defect Item Setup", match: /^defect (list|item) setup/i, readOnly: true },
+  { label: "Defect Item Dismantle", match: /^defect (list|item) dismantle/i, readOnly: true },
+];
+
 const CREW_DOC_TILES: ReadonlyArray<DocTile> = [
-  // Owner 2026-07-22: Stock Out Transfer Record + Blank Floorplan tiles
-  // removed from the crew card — the floorplan already lives in the
-  // Floor plans & layout card below, so the Event documents card carries
-  // just the permit + decoration brief.
+  // Owner 2026-07-22: Stock Out + Blank Floorplan tiles removed (floorplan
+  // lives in the Floor plans & layout card below).
   { label: "Permit", match: /permit/i, readOnly: true },
   { label: "Decoration", match: /^deco/i, readOnly: true, remarkWithFiles: true },
-  // Defect List pair (owner 2026-07-29): shared sales+driver deliverables
-  // ("SALES PIC & DRIVER") — crew EDIT them here, compulsory remark per photo.
+  // Defect pair (owner 2026-07-29): crew EDIT, compulsory remark per photo.
   { label: "Defect Item Setup", match: /^defect (list|item) setup/i, requirePhotoRemark: true },
   { label: "Defect Item Dismantle", match: /^defect (list|item) dismantle/i, requirePhotoRemark: true },
 ];
@@ -3335,10 +3368,11 @@ function SalesDocsCard({
   // be approved on a phone. Gate + endpoint match the desktop DocRow exactly
   // (shared checklistReviewVisible / ReviewButtons); user drives the perm check.
   const { user, can } = useAuth();
-  // Owner 2026-08-05: file DELETE follows the PC rule — managers only
-  // (projects.manage). canTick already folds in !archived, so a manager still
-  // can't delete on an archived project; upload/remark stay on canTick.
-  const canDeleteFiles = can("projects.manage") && canTick;
+  // Owner 2026-09-03: every user may remove a file from THEIR OWN task, so this
+  // follows the tile's own edit right instead of projects.manage. Each use site
+  // already ANDs `!t.readOnly`, which is what marks a tile as not this cohort's
+  // to work on.
+  const canDeleteFiles = canTick;
 
   const tiles = tileDefs.map((t) => {
     const item = (checklist ?? []).find(
@@ -3486,7 +3520,12 @@ function SalesDocsCard({
       <div className="pbody">
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 9 }}>
           {tiles.map((t) => {
-            const latest = t.files[t.files.length - 1];
+            // Tile cover (owner 2026-08-28): prefer the newest IMAGE so a PDF
+            // uploaded after the photos doesn't blank the thumbnail — users
+            // read the hatched placeholder as "nothing here".
+            const latest =
+              [...t.files].reverse().find((f) => /^image\//.test(f.content_type ?? "")) ??
+              t.files[t.files.length - 1];
             const hasContent = t.remarkTile ? !!(t.item?.notes ?? "").trim()
               : t.remarkWithFiles ? (t.files.length > 0 || !!(t.item?.notes ?? "").trim())
               : t.files.length > 0;
@@ -3659,7 +3698,7 @@ function SalesDocsCard({
 // record is uploaded via PUT /:id/stock-transfers/upload → POST
 // /:id/stock-transfers. Existing rows are listed read-only.
 function FloorPlans({
-  projectId, stockTransfers, attachments, checklist, checklistAttachments, canWrite, hideFilledPlan, hidePlanTiles, canStockEdit, confirm, busy, setBusy, notify, reload,
+  projectId, stockTransfers, attachments, checklist, checklistAttachments, canWrite, crewPlanView, hidePlanTiles, canStockEdit, confirm, busy, setBusy, notify, reload,
 }: {
   projectId: number;
   stockTransfers?: StockTransfer[];
@@ -3667,7 +3706,8 @@ function FloorPlans({
   checklist?: ChecklistItem[];
   checklistAttachments?: TaskAttachment[];
   canWrite: boolean;
-  hideFilledPlan?: boolean;
+  /** Owner 2026-09-15: crew see ONLY the Display tile (+ stock records). */
+  crewPlanView?: boolean;
   /** Owner 2026-07-23: hide the Unfilled+Filled plan tiles (ops/office cohort
    *  — floorplans are for sales/SD/mgt/BD only); 3D/2D/banner/stock stay. */
   hidePlanTiles?: boolean;
@@ -3685,8 +3725,16 @@ function FloorPlans({
   // Approve/Reject on the reviewable Floor-Plans docs (owner 2026-07-29): Stock
   // Out Transfer Record (stock_transfer.approve), 3D / 2D Design + Display Floor
   // Plan (no perm → submit-then-review). Shared gate/buttons with the doc cards.
-  const { user } = useAuth();
+  const { user, can } = useAuth();
   const prompt = usePrompt();
+  // Owner 2026-08-24: "display floorplan i cant remove existing file using
+  // mobile". These tiles were VIEW-only — tap opens the lightbox and that was
+  // the whole interaction — while the tasklist rows that carry the file chips
+  // (with their ×) are hidden for every mobile cohort. So on a phone there was
+  // no way to remove, or replace, a plan already uploaded. Owner 2026-09-03:
+  // every user may remove a file from their own task, so this is now the card's
+  // own write gate alone — projects.manage no longer required.
+  const canDeleteFiles = canWrite;
   const itemByPrefix = (prefix: RegExp): ChecklistItem | undefined =>
     (checklist ?? []).find((it) => prefix.test((it.title || "").trim()));
   const threeDItem = itemByPrefix(/^3d\s*(design|render)/i);
@@ -3702,35 +3750,42 @@ function FloorPlans({
   // mobile browsers popup-block window.open once an await has broken the
   // user-gesture chain, which made these tiles dead on phones.
   const plans = (attachments ?? []).filter((a) => (a.category || "").toLowerCase() === "floorplan");
-  const taskPlanFiles = (prefix: RegExp): MediaItem[] => {
+  /** The tile's live attachment ROWS — the lightbox only needs r2_key, but
+   *  removing a file needs its id, so keep the rows and derive the media. */
+  const taskPlanAtts = (prefix: RegExp): TaskAttachment[] => {
     const ids = new Set(
       (checklist ?? []).filter((it) => prefix.test((it.title || "").trim())).map((it) => it.id)
     );
-    return (checklistAttachments ?? [])
-      .filter((a) => !a.archived_at && ids.has(a.item_id))
-      .map((a): MediaItem => ({
-        r2_key: a.r2_key,
-        content_type: a.mime_type ?? mimeFromKey(a.r2_key),
-        caption: a.file_name,
-      }));
+    return (checklistAttachments ?? []).filter((a) => !a.archived_at && ids.has(a.item_id));
   };
+  const asMedia = (a: TaskAttachment): MediaItem => ({
+    r2_key: a.r2_key,
+    content_type: a.mime_type ?? mimeFromKey(a.r2_key),
+    caption: a.file_name,
+  });
+  const taskPlanFiles = (prefix: RegExp): MediaItem[] => taskPlanAtts(prefix).map(asMedia);
   const legacyItem = (a: ProjectAttachment | undefined): MediaItem[] => {
     const k = a ? pick(a.r2_key, a.r2Key) : undefined;
     return a && k
       ? [{ r2_key: k, content_type: pick(a.mime_type, a.mimeType) ?? mimeFromKey(k), caption: pick(a.file_name, a.fileName) }]
       : [];
   };
-  const unfilledFiles = (() => { const t = taskPlanFiles(/^blank\s*floor\s*plan/i); return t.length ? t : legacyItem(plans[0]); })();
-  const filledFiles = (() => { const t = taskPlanFiles(/^filled\s*floor\s*plan/i); return t.length ? t : legacyItem(plans[1]); })();
+  const unfilledAtts = taskPlanAtts(/^blank\s*floor\s*plan/i);
+  const filledAtts = taskPlanAtts(/^filled\s*floor\s*plan/i);
+  const unfilledFiles = unfilledAtts.length ? unfilledAtts.map(asMedia) : legacyItem(plans[0]);
+  const filledFiles = filledAtts.length ? filledAtts.map(asMedia) : legacyItem(plans[1]);
   // Owner 2026-07-23: 3D + 2D design tiles join this card (view/download via
   // the lightbox) — their booth-layout tasklist rows are gone on mobile.
-  const threeDFiles = taskPlanFiles(/^3d\s*(design|render)/i);
-  const twoDFiles = taskPlanFiles(/^2d\s*design/i);
+  const threeDAtts = taskPlanAtts(/^3d\s*(design|render)/i);
+  const twoDAtts = taskPlanAtts(/^2d\s*design/i);
+  const threeDFiles = threeDAtts.map(asMedia);
+  const twoDFiles = twoDAtts.map(asMedia);
   // Black banner (owner 2026-07-17 v2): shows the "Display Floor Plan" task
   // attachments in the lightbox (which carries a Download button). Was the 3D
   // placeholder, then briefly wired to 3D Design; the owner wants the booth's
   // display floorplan here instead.
-  const displayPlanFiles = taskPlanFiles(/^display\s*floor\s*plan/i);
+  const displayPlanAtts = taskPlanAtts(/^display\s*floor\s*plan/i);
+  const displayPlanFiles = displayPlanAtts.map(asMedia);
   // Checklist task ids by title prefix — used to attach uploads to the right task.
   const taskIdByPrefix = (prefix: RegExp): number | null =>
     (checklist ?? []).find((it) => prefix.test((it.title || "").trim()))?.id ?? null;
@@ -3811,6 +3866,44 @@ function FloorPlans({
       if (filledRef.current) filledRef.current.value = "";
     }
   };
+  // Upload straight onto the Display floor plan task — the replace half of the
+  // same complaint: with no upload here, removing a wrong plan left the tile
+  // empty and the phone with no way to put the right one back.
+  const displayRef = useRef<HTMLInputElement | null>(null);
+  const displayPlanTaskId = displayItem?.id ?? null;
+  const uploadDisplayPlan = async (file: File) => {
+    if (displayPlanTaskId == null) {
+      await notify({ title: "No Display Floor Plan task", body: "This event has no Display Floor Plan task to attach to.", tone: "error" });
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      await notify({ title: "File too large", body: "Max 10MB.", tone: "error" });
+      return;
+    }
+    const ext = (file.name.split(".").pop() || "").toLowerCase();
+    if (!ext) {
+      await notify({ title: "Missing extension", body: "The file needs an extension.", tone: "error" });
+      return;
+    }
+    setBusy(true);
+    try {
+      const buf = await file.arrayBuffer();
+      await api.putBinary(
+        `/api/projects/checklist/${displayPlanTaskId}/attachments?ext=${encodeURIComponent(ext)}&name=${encodeURIComponent(file.name)}`,
+        buf,
+        file.type || "application/octet-stream",
+      );
+      // Display Floor Plan is reviewable — mirror the doc tiles so the
+      // approver's Approve/Reject reappear after a re-upload.
+      await autoSubmitReviewable(displayPlanTaskId, displayItem?.title ?? "Display Floor Plan");
+      reload();
+    } catch (e) {
+      await notify({ title: "Upload failed", body: e instanceof Error ? e.message : "Please try again.", tone: "error" });
+    } finally {
+      setBusy(false);
+      if (displayRef.current) displayRef.current.value = "";
+    }
+  };
   const [planView, setPlanView] = useState<{ items: MediaItem[]; idx: number } | null>(null);
   const [docView, setDocView] = useState<MediaItem | null>(null);
   const openPlan = async (files: MediaItem[], which: string) => {
@@ -3833,22 +3926,23 @@ function FloorPlans({
             black banner is gone and it shows its own preview like every other
             tile. Order is Display → 3D + 2D → Unfilled + Filled; Display spans
             the full width so the two design tiles stay paired on their own row.
-            Filled plan is hidden from driver/helper/storekeeper (owner
-            2026-07-16); BOTH plan tiles are hidden from the ops/office cohort
-            (owner 2026-07-23: sales/SD/mgt/BD only). */}
+            Which tiles a cohort sees is ONE rule in MobilePmsFloorPlanTiles.ts:
+            crew = Display only (owner 2026-09-15); ops/office lose the two
+            plan tiles (owner 2026-07-23: sales/SD/mgt/BD only). */}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 9 }}>
           {([
-            { key: "Display", label: "Display floor plan", files: displayPlanFiles, badge: "PLAN", bg: "#f3ece0", col: "#a16a2e", item: displayItem, full: true, mediaH: 140 },
-            { key: "3D Design", label: "3D Design", files: threeDFiles, badge: "3D", bg: "#e9e6f4", col: "#5b4b8a", item: threeDItem, full: false, mediaH: 80 },
-            { key: "2D Design", label: "2D Design", files: twoDFiles, badge: "2D", bg: "#e2ecf5", col: "#2f5c8a", item: twoDItem, full: false, mediaH: 80 },
-            { key: "Unfilled", label: "Unfilled plan", files: unfilledFiles, badge: "DRAFT", bg: "#f6efd9", col: "#6e4d12", item: undefined, full: false, mediaH: 80 },
-            { key: "Filled", label: "Filled plan", files: filledFiles, badge: "PLACED", bg: "#e2f0e9", col: "#2f8a5b", item: undefined, full: false, mediaH: 80 },
-          ] as const).filter((t) =>
-            !(hideFilledPlan && t.key === "Filled") &&
-            !(hidePlanTiles && (t.key === "Unfilled" || t.key === "Filled"))
-          ).map((t) => {
+            { key: "Display", label: "Display floor plan", files: displayPlanFiles, atts: displayPlanAtts, badge: "PLAN", bg: "#f3ece0", col: "#a16a2e", item: displayItem, full: true, mediaH: 140 },
+            { key: "3D Design", label: "3D Design", files: threeDFiles, atts: threeDAtts, badge: "3D", bg: "#e9e6f4", col: "#5b4b8a", item: threeDItem, full: false, mediaH: 80 },
+            { key: "2D Design", label: "2D Design", files: twoDFiles, atts: twoDAtts, badge: "2D", bg: "#e2ecf5", col: "#2f5c8a", item: twoDItem, full: false, mediaH: 80 },
+            { key: "Unfilled", label: "Unfilled plan", files: unfilledFiles, atts: unfilledAtts, badge: "DRAFT", bg: "#f6efd9", col: "#6e4d12", item: undefined, full: false, mediaH: 80 },
+            { key: "Filled", label: "Filled plan", files: filledFiles, atts: filledAtts, badge: "PLACED", bg: "#e2f0e9", col: "#2f8a5b", item: undefined, full: false, mediaH: 80 },
+          ] as const).filter((t) => floorPlanTileVisible(t.key, { crewPlanView, hidePlanTiles })).map((t) => {
             const files = t.files;
-            const latest = files[files.length - 1];
+            // Cover = newest IMAGE (owner 2026-08-28): a PDF uploaded after the
+            // photos must not blank the thumbnail into the hatched placeholder.
+            const latest =
+              [...files].reverse().find((f) => /^image\//.test(f.content_type ?? "")) ??
+              files[files.length - 1];
             // Display / 3D / 2D are reviewable (owner 2026-07-29); the
             // Unfilled / Filled plan tiles are not.
             const tileItem = t.item;
@@ -3883,6 +3977,26 @@ function FloorPlans({
                       {files.length ? "+ Add / replace" : "Upload"}
                     </button>
                   )}
+                  {t.key === "Display" && canWrite && displayPlanTaskId != null && (
+                    <button
+                      className="tinybtn"
+                      style={{ marginTop: 6, width: "100%" }}
+                      disabled={busy}
+                      onClick={(e) => { e.stopPropagation(); displayRef.current?.click(); }}
+                    >
+                      {files.length ? "+ Add / replace" : "Upload"}
+                    </button>
+                  )}
+                  {canDeleteFiles && (
+                    <PlanFileChips
+                      files={t.atts}
+                      busy={busy}
+                      setBusy={setBusy}
+                      confirm={confirm}
+                      notify={notify}
+                      reload={reload}
+                    />
+                  )}
                   {tileCanReview && tileItem && (
                     <ReviewButtons item={tileItem} busy={busy} setBusy={setBusy} prompt={prompt} notify={notify} reload={reload} />
                   )}
@@ -3892,6 +4006,7 @@ function FloorPlans({
           })}
         </div>
         <input ref={filledRef} type="file" accept="image/*,.pdf" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadFilledPlan(f); }} />
+        <input ref={displayRef} type="file" accept="image/*,.pdf" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadDisplayPlan(f); }} />
 
         <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "#9aa093", margin: "10px 0 6px" }}>Stock transfer record</div>
         {stockOutAtts.length === 0 && <div style={{ fontSize: 12, color: "#9aa093", marginBottom: 8 }}>No stock transfer recorded yet.</div>}

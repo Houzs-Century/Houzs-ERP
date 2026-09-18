@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest';
+import { describe, expect, it, test } from 'vitest';
 // @ts-expect-error - plain .mjs, shared by both refresh sweeps
 import {
   OWNED_VARIANT_KEYS,
@@ -6,6 +6,10 @@ import {
   assertOnlyOwnedKeys,
   buildBedframeVariantPatch,
   buildSizeOnlyVariantPatch,
+  OWNED_SOFA_KEYS,
+  OWNED_BOOK_CORRECTION_KEYS,
+  OWNED_PI_SNAPSHOT_KEYS,
+  MERGE_TABLES,
 } from '../scripts/lib/variant-merge.mjs';
 import mergeLibSource from '../scripts/lib/variant-merge.mjs?raw';
 import soRefreshSource from '../scripts/refresh-so-variants.mjs?raw';
@@ -235,5 +239,96 @@ describe('variant refresh: the WRITE is a merge, in the source', () => {
     for (const [name, src] of [sources[1], sources[2]])
       expect(`${name} writes custom_specials: ${/custom_specials\s*=/.test(src)}`)
         .toBe(`${name} writes custom_specials: false`);
+  });
+});
+
+/* ---------------------------------------------------------------------------
+ * OWNED_BOOK_CORRECTION_KEYS — the reviewed-list writer, not a sweep.
+ *
+ * `repair-so-variant-from-book.mjs` may own a key the refresh sweeps must not,
+ * because it writes a HUMAN-REVIEWED list guarded by `erp_now`, while a sweep
+ * recomputes from Desc2 and overwrites every owned key on every run. Keeping
+ * them as two lists is the point; merging them would silently arm the sweeps.
+ * ------------------------------------------------------------------------ */
+describe('OWNED_BOOK_CORRECTION_KEYS', () => {
+  it('owns the leg, which the sofa SWEEP list deliberately does not', () => {
+    expect(OWNED_BOOK_CORRECTION_KEYS).toContain('legHeight');
+    expect(OWNED_SOFA_KEYS).not.toContain('legHeight');
+  });
+
+  it('is the sofa sweep list plus the leg, and nothing else', () => {
+    expect([...OWNED_BOOK_CORRECTION_KEYS].sort())
+      .toEqual([...OWNED_SOFA_KEYS, 'legHeight'].sort());
+  });
+
+  it('never carries a bedframe-only axis — a sofa has no divan and no gap', () => {
+    for (const k of ['divanHeight', 'gap', 'totalHeight']) {
+      expect(OWNED_BOOK_CORRECTION_KEYS).not.toContain(k);
+    }
+  });
+
+  it('never carries specials, which are money and belong to their own backfill', () => {
+    expect(OWNED_BOOK_CORRECTION_KEYS).not.toContain('specials');
+    expect(OWNED_BOOK_CORRECTION_KEYS).not.toContain('special');
+  });
+});
+
+/* ---------------------------------------------------------------------------
+ * OWNED_PI_SNAPSHOT_KEYS — the migrated purchase-invoice line taking back the
+ * receipt line it was copied from (repair-migrated-invoice-variants-from-
+ * receipt.mjs). A THIRD list on purpose: its source is neither a Desc2 re-parse
+ * nor the account book, it is our own parent row, and it only ever fills a line
+ * whose variants is absent or empty. Merging it into either of the others would
+ * silently arm a writer that never asked for these keys (docs/bugs/0755).
+ * ------------------------------------------------------------------------ */
+describe('OWNED_PI_SNAPSHOT_KEYS', () => {
+  it('never carries specials, which are money — the whole guard of this writer', () => {
+    for (const k of ['specials', 'special', 'specialsRecorded', 'customSpecials']) {
+      expect(OWNED_PI_SNAPSHOT_KEYS).not.toContain(k);
+    }
+  });
+
+  it('is a SUBSET of what the sweeps already own, so it can invent no key', () => {
+    const known = new Set([...OWNED_VARIANT_KEYS, ...OWNED_SOFA_KEYS]);
+    for (const k of OWNED_PI_SNAPSHOT_KEYS) expect([...known]).toContain(k);
+  });
+
+  it('carries the bedframe axes the tally compares, which the book-correction list does not', () => {
+    for (const k of ['divanHeight', 'gap', 'totalHeight']) {
+      expect(OWNED_PI_SNAPSHOT_KEYS).toContain(k);
+      expect(OWNED_BOOK_CORRECTION_KEYS).not.toContain(k);
+    }
+  });
+
+  it('is its own list and not an alias of either sweep list', () => {
+    expect([...OWNED_PI_SNAPSHOT_KEYS].sort()).not.toEqual([...OWNED_VARIANT_KEYS].sort());
+    expect([...OWNED_PI_SNAPSHOT_KEYS].sort()).not.toEqual([...OWNED_BOOK_CORRECTION_KEYS].sort());
+  });
+
+  it('refuses a patch carrying a key it does not own', () => {
+    expect(() => assertOnlyOwnedKeys({ specials: ['NYLON'] }, OWNED_PI_SNAPSHOT_KEYS))
+      .toThrow(/does not own: specials/);
+  });
+});
+
+describe('the purchase-invoice merge is a FILL, not a merge', () => {
+  it('is a table this merger knows', () => {
+    expect(MERGE_TABLES).toContain('purchase_invoice_items');
+  });
+
+  /* The predicate is the entire safety property of this writer: without it the
+     statement would overwrite a line somebody has since filled in. Asserted on
+     the SOURCE because there is no Postgres in this suite, the same way the
+     rest of this file pins the sweeps' write shape. */
+  it("carries `= '{}'::jsonb` on its WHERE so a line with a value is left alone", () => {
+    const m = /UPDATE scm\.purchase_invoice_items SET[\s\S]*?RETURNING id/.exec(mergeLibSource);
+    expect(m, 'no UPDATE scm.purchase_invoice_items statement in variant-merge.mjs').not.toBeNull();
+    expect(m![0]).toContain("COALESCE(variants, '{}'::jsonb) = '{}'::jsonb");
+    /* and no OTHER statement may carry it: the fill is this writer's alone */
+    expect(mergeLibSource.split("COALESCE(variants, '{}'::jsonb) = '{}'::jsonb").length - 1).toBe(1);
+  });
+
+  it('takes no geometry columns — an invoice line mirrors no geometry decision of its own', () => {
+    expect(mergeLibSource).toContain('purchase_invoice_items takes no geometry columns');
   });
 });

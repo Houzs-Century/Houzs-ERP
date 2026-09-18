@@ -60,7 +60,13 @@ jobs:
           cache: npm
           cache-dependency-path: backend/package-lock.json
       - run: npm ci
-      - run: node scripts/check-autocount-outbox-health.mjs
+      # tsx, not node: the report imports the PAGE's own classification rule
+      # (acRefusalPredatesArrival, src/scm/lib/autocount-outbox-status.ts) rather
+      # than keeping a third copy of it. Two readers with two copies is how the
+      # screen said a document was in the account book while this log called it
+      # a failure — docs/bugs/0727 fixed the page and left the report behind.
+      # Same pattern as repair-address-to-forty.yml, which already imports src/.
+      - run: npx tsx scripts/check-autocount-outbox-health.mjs
         env:
           # ALARM only on the schedule. A person who pressed Run workflow is
           # already looking at the report and does not need the run marked

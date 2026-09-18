@@ -25,20 +25,28 @@ import { memo, useEffect, useRef, useState, type CSSProperties, type ReactNode, 
 import { useQuery } from '@tanstack/react-query';
 import {
   DollarSign, Plus, Trash2, Save, FileText, Image as ImageIcon,
-  Calendar as CalIcon, User as UserIcon, Tag, Pencil,
+  Calendar as CalIcon, User as UserIcon, Tag, Pencil, Printer,
 } from 'lucide-react';
 import { sortByText } from '../lib/sort-options';
+import { authedFetch } from '../lib/authed-fetch';
+import { generateReceiptPdf, type ReceiptPdfData } from '../lib/receipt-pdf';
 import { fetchPaymentSlipUrl, scanPaymentReceipt, type SlipUrlResponse } from '../lib/slip';
 import { SlipUploadField } from './SlipUploadField';
 import { MoneyInput } from './MoneyInput';
 import { DateField } from './DateField';
+import { RefundsLine } from './RefundsLine';
+import { OrderMoneyPanel } from './OrderMoneyPanel';
+import { CONVERT_LABEL, CONVERTED_METHOD, convertPicksFrom, useAddedConvertSources, useConvertSources, type ConvertSource } from '../lib/so-money-queries';
 import { useNotify } from './NotifyDialog';
 import { useConfirm } from './ConfirmDialog';
 import { todayMyt, mytDayOf } from '../lib/dates';
 /* The SHARED payment-window predicate — the same function the server calls, so
    the button and the endpoint cannot disagree about whether the window is open
    (Owner 2026-07-19). */
-import { paymentRowMutable } from '../lib/so-field-policy';
+import { paymentRowMutable, type PaymentChangeVia } from '../lib/so-field-policy';
+import { useAuth as useHouzsAuth } from '../../../auth/AuthContext';
+import { owesPaymentReason, paymentReasonAsk, reasonWhyFor } from '../lib/payment-reason';
+import { usePrompt } from './ConfirmDialog';
 import {
   PAYMENT_METHOD_CODE_TO_VALUE,
   PAYMENT_METHOD_DEFAULT_LABELS,
@@ -62,6 +70,7 @@ import { formatDate } from '../../../lib/utils';
 import { newIdempotencyKey } from '../../../lib/idempotency';
 import detailStyles from '../../../pages/scm-v2/SalesOrderDetail.module.css';
 import paymentsStyles from '../../../pages/scm-v2/Payments.module.css';
+import { useUnsavedWork } from '../../../lib/unsavedWork';
 
 /* Bare amount, no currency. The Amount COLUMN carries the currency once in its
    header: `currency` is a single per-document prop (callers pass
@@ -86,7 +95,9 @@ const ONE_SHOT_PLAN = 'One Shot';
    so the Detail page's ledger semantics don't change).
    ════════════════════════════════════════════════════════════════════════ */
 
-export type PaymentMethod = PaymentMethodCode;
+/* Plus `converted` — money moved from a cancelled order (docs/bugs/0927/0931):
+   a Sales-Order-only method that names the order it comes from. */
+export type PaymentMethod = PaymentMethodCode | typeof CONVERTED_METHOD;
 /* Bank provider name (now open-ended — sourced from
    so_dropdown_options('payment_merchant'), no longer constrained to the
    legacy 4-bank enum). */
@@ -106,39 +117,82 @@ export type MerchantProvider = string;
    below can only fire on data that predates the API lock. */
 export type PaymentMethodLabel = string;
 
+/* Maintenance VALUE → ledger code, for ALL FOUR codes the ledger stores. The
+   shared PAYMENT_METHOD_VALUE_TO_CODE deliberately omits Installment — that map
+   is the LOCK list (the three protected L1 rows) — so it must not be the
+   resolver here: an `installment` row opened for edit carries the value
+   'Installment', fell through to a cash fallback, and the edit was SAVED AS
+   CASH — sheet, plan and journal with it (owner 2026-09-12: 用 finance 权限改
+   资料时 payment method 会跳掉去 cash; docs/bugs/0838). A value none of the four
+   is refused by name — never booked as something else. */
+const VALUE_TO_CODE: Readonly<Partial<Record<string, PaymentMethod>>> = Object.fromEntries(
+  (Object.entries(PAYMENT_METHOD_CODE_TO_VALUE) as Array<[PaymentMethod, string]>).map(([code, value]) => [value, code]),
+);
+
+export class UnknownPaymentMethodError extends Error {
+  constructor(label: string) {
+    super(`Payment method "${label}" is not one of Merchant / Online / Installment / Cash — pick the method again before saving.`);
+    this.name = 'UnknownPaymentMethodError';
+  }
+}
+
 export const labelToApi = (label: PaymentMethodLabel): {
   method: PaymentMethod;
   merchantProvider: MerchantProvider | null;
 } => {
-  const method = paymentMethodCodeForValue(label);
+  if (label === CONVERT_LABEL) return { method: CONVERTED_METHOD, merchantProvider: null };
+  const method = VALUE_TO_CODE[label] ?? paymentMethodCodeForValue(label);
   if (method) return { method, merchantProvider: null };
-  // The payment_method category is locked server-side to the four core
-  // values, so an unknown value here means pre-lock drifted data — surface
-  // it and fall back to cash so we don't book a card payment as transfer.
-  // eslint-disable-next-line no-console
-  console.warn(
-    `[PaymentsTable] Unknown payment method value "${label}" — falling ` +
-    `back to method=cash. Values are locked to Merchant / Online / ` +
-    `Installment / Cash (see @2990s/shared/payment-methods).`,
-  );
-  return { method: 'cash', merchantProvider: null };
+  throw new UnknownPaymentMethodError(label);
 };
 
 /* Persisted method code → the maintenance row VALUE (for select rehydrate
-   + the locked-set keys). Display labels resolve live from methodOpts. */
+   + the locked-set keys). Display labels resolve live from methodOpts. A code
+   the screen does not know opens under its own name (the select shows it as
+   an extra option) so the row cannot be saved as anything else by accident. */
+/** Money that left this order — a negative `converted` row following the
+    converted row on the other order or the refund voucher (owner 2026-09-16). */
+const isMirror = (p: SoPayment): boolean => Number(p.amount_sen) < 0;
+
 const apiToValue = (p: SoPayment): string =>
-  PAYMENT_METHOD_CODE_TO_VALUE[p.method] ?? 'Cash';
+  p.method === CONVERTED_METHOD ? CONVERT_LABEL
+  : ((PAYMENT_METHOD_CODE_TO_VALUE as Partial<Record<string, string>>)[p.method] ?? String(p.method));
+
+/* The edit draft, seeded VERBATIM from the persisted row (owner 2026-09-12: 我按
+   edit 时默认会已输入的资料，我只会 edit 我想要 edit 的东西; docs/bugs/0838) —
+   every field as stored, the method by its own value (an installment row opens
+   as Installment with its bank and plan), nothing derived, so a save that
+   touches one field sends the rest back unchanged. */
+export const editDraftOf = (p: SoPayment, planLabel: (months: number | null) => string): PaymentDraft => ({
+  uid: Math.random().toString(36).slice(2, 10),
+  paidAt: (p.paid_at ?? '').slice(0, 10) || todayMyt(),
+  methodLabel: apiToValue(p),
+  merchantProvider: p.merchant_provider ?? '',
+  installmentMonthsLabel:
+    (p.method === 'merchant' || p.method === 'installment')
+      ? planLabel(p.installment_months) : '',
+  onlineType: p.online_type ?? '',
+  convertedFromDocNo: p.converted_from_so_doc_no ?? '',
+  amountSen: p.amount_sen,
+  accountSheet: p.account_sheet ?? '',
+  approvalCode: p.approval_code ?? '',
+  collectedBy: p.collected_by ?? '',
+  slipUploadSessionId: null,
+  editingPersistedId: p.id,
+});
 
 const methodPillStyle = (m: PaymentMethod): CSSProperties => {
   const bg =
     m === 'merchant'    ? 'rgba(232, 107, 58, 0.12)' :
     m === 'transfer'    ? 'rgba(47, 93, 79, 0.12)'   :
     m === 'installment' ? 'rgba(34, 31, 32, 0.08)'   :
+    m === 'converted'   ? 'rgba(99, 91, 255, 0.12)'  :
                           'rgba(0, 0, 0, 0.06)';
   const fg =
     m === 'merchant'    ? 'var(--c-burnt)' :
     m === 'transfer'    ? 'var(--c-secondary-a, #2F5D4F)' :
     m === 'installment' ? 'var(--c-ink)' :
+    m === 'converted'   ? 'var(--c-ink)' :
                           'var(--fg-muted)';
   return {
     display: 'inline-block',
@@ -183,6 +237,9 @@ export type PaymentDraft = {
   merchantProvider:         string;             // L2 bank pick (Merchant + Installment)
   installmentMonthsLabel:   string;             // L2 plan pick (Merchant + Installment)
   onlineType:               string;             // L2 sub-type (Online only)
+  /* Money moved from a cancelled order (docs/bugs/0931): the order it comes
+     from — the L2 pick under "Convert from another SO". */
+  convertedFromDocNo?:      string;
   amountSen:              number;
   accountSheet:             string;
   approvalCode:             string;
@@ -225,12 +282,20 @@ export const newPaymentDraft = (defaultStaffId = ''): PaymentDraft => ({
   merchantProvider:       '',
   installmentMonthsLabel: '',
   onlineType:             '',
+  convertedFromDocNo:     '',
   amountSen: 0,
   accountSheet: '',
   approvalCode: '',
   collectedBy: defaultStaffId,
   slipUploadSessionId: null,
 });
+
+/** The rows the cancelled order's Convert button hands the New SO page
+    (`?convert=SO-a:sen,SO-b:sen`; docs/bugs/0931): one converted draft per
+    pick, the amount as ticked, the day and collector left to the server (it
+    takes the cancelled order's first payment's). */
+export const convertDraftsFrom = (param: string | null | undefined, defaultStaffId = ''): PaymentDraft[] =>
+  convertPicksFrom(param).map((p) => ({ ...newPaymentDraft(defaultStaffId), methodLabel: CONVERT_LABEL, convertedFromDocNo: p.docNo, amountSen: p.amountSen }));
 
 /* Parse an installment-plan label like 'One Shot' / 'One-off' / '3 months' /
    '12 months' into an integer term in months. The one-shot labels and any
@@ -257,8 +322,10 @@ export const parseInstallmentMonths = (label: string): number | null => {
    cash fallback. Shared by the per-row commit gate (SAVED mode) and the New SO
    batch-save guard (DRAFT mode) so both pages enforce the same rule. */
 export const missingMethodSubField = (
-  d: Pick<PaymentDraft, 'methodLabel' | 'merchantProvider' | 'installmentMonthsLabel' | 'onlineType'>,
+  d: Pick<PaymentDraft, 'methodLabel' | 'merchantProvider' | 'installmentMonthsLabel' | 'onlineType' | 'convertedFromDocNo'>,
 ): string | null => {
+  /* Money moved from a cancelled order needs the order it comes from. */
+  if (d.methodLabel === CONVERT_LABEL) return d.convertedFromDocNo ? null : 'order the money comes from';
   if (d.methodLabel === 'Merchant') {
     if (!d.merchantProvider) return 'Bank';
     if (!d.installmentMonthsLabel) return 'Plan';
@@ -277,8 +344,9 @@ export const missingMethodSubField = (
    one place. */
 export const draftMethodFields = (
   method: PaymentMethod,
-  d: Pick<PaymentDraft, 'merchantProvider' | 'installmentMonthsLabel' | 'onlineType'>,
+  d: Pick<PaymentDraft, 'merchantProvider' | 'installmentMonthsLabel' | 'onlineType' | 'convertedFromDocNo'>,
 ): Record<string, unknown> => {
+  if (method === CONVERTED_METHOD) return { convertedFromDocNo: d.convertedFromDocNo || null };
   if (method === 'merchant') {
     return {
       merchantProvider:  d.merchantProvider || null,
@@ -357,6 +425,12 @@ type SavedModeProps = {
    *  in-card toggle). The card header lives in here, not in the caller, so a
    *  page that needs a control beside "Payments" has to hand it in. */
   headerAction?: ReactNode;
+  /** Official Receipt print (GL redesign 9b). When present, a PERSISTED row
+   *  grows a printer button: POST /accounting/receipts/ensure fetches (or
+   *  heals) the payment's OR, then the pdf prints — DRAFT watermark until the
+   *  money is confirmed. Deliberately available while `locked`: printing
+   *  changes nothing, and the counter is exactly where it happens. */
+  receiptFor?: ReceiptSource;
 };
 
 type DraftModeProps = {
@@ -382,7 +456,19 @@ type DraftModeProps = {
    *  count is always 0 in DRAFT mode (the whole document is unsaved and the
    *  page's own Save commits it), so this never fires here. */
   onUnsavedChange?: (count: number) => void;
+  /** See SavedModeProps.receiptFor. DRAFT-mode rows are anonymous local state,
+   *  so the caller must also say which uids are persisted payment ids
+   *  (`persistedIds`) — the SI detail seeds its drafts from the API rows and
+   *  keeps `uid = row id`, which is exactly the key the ensure endpoint takes. */
+  receiptFor?: ReceiptSource;
+  /** The cancelled orders a draft row may draw on (docs/bugs/0931) — the New SO
+   *  page reads them by the customer's phone, having no order yet. Absent or
+   *  empty, the "Convert from another SO" method is not offered. */
+  convertSources?: ConvertSource[];
 };
+
+/** Which payment book the rows belong to, in the receipts table's own key. */
+type ReceiptSource = { source: 'SOPAY' | 'SIPAY'; persistedIds?: ReadonlySet<string> };
 
 export type PaymentsTableProps = SavedModeProps | DraftModeProps;
 
@@ -448,6 +534,46 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
   /* Owner 2026-07-13 — DRAFT SO: lift the per-row same-day EDIT lock so every
      persisted payment on an unconfirmed order can still be corrected. */
   const draftUnlocked = props.draftUnlocked ?? false;
+  /* Owner + management 2026-09-10 — FINANCE may correct a payment after the
+     day it was keyed. Showing the control is the courtesy; the endpoint still
+     decides, and it refuses a payment that has already been RECONCILED — a
+     fact only the server can read, so this side never claims to know it. */
+  const { can, user: houzsUser } = useHouzsAuth();
+  const mayAmend = can('scm.so_payment.amend');
+  /* A correction on the amend right owes a reason, asked BEFORE the write and
+     required (owner 2026-09-10: 靠权限改的来决定). A same-day fix asks nothing —
+     unless the caller's ROLE holds the right LITERALLY (owner 2026-09-14,
+     docs/bugs/0888): then every payment action asks — add, edit, delete, the
+     proof — same day or not, and lands on Accounting › Corrections. The server
+     reads the key the same way (holdsHouzsPermLiterally) and refuses without.
+     The wording of every ask lives in lib/payment-reason, shared with mobile. */
+  const reasonOnEvery = owesPaymentReason(houzsUser);
+  const askReason = usePrompt();
+
+  /* ── Official Receipt print (GL redesign 9b) ──────────────────────────
+     ensure-then-print: the endpoint fetches the payment's OR (creating one
+     for a payment recorded before the module existed) and hands the whole
+     row back; the pdf carries a DRAFT watermark until the money confirms. */
+  const receiptFor = props.receiptFor;
+  const [receiptBusy, setReceiptBusy] = useState<string | null>(null);
+  const printReceipt = async (paymentId: string) => {
+    if (!receiptFor) return;
+    setReceiptBusy(paymentId);
+    try {
+      const res = await authedFetch<{ receipt: ReceiptPdfData }>('/accounting/receipts/ensure', {
+        method: 'POST', body: JSON.stringify({ source: receiptFor.source, paymentId }),
+      });
+      await generateReceiptPdf(res.receipt, { action: 'print' });
+    } catch (e) {
+      void notify({
+        title: 'Receipt not printed',
+        body: e instanceof Error ? e.message : 'Something went wrong.',
+        tone: 'error',
+      });
+    } finally {
+      setReceiptBusy(null);
+    }
+  };
 
   const staffQ = useStaff();
   const staff  = staffQ.data ?? [];        // FULL roster — resolves persisted collected_by names
@@ -467,6 +593,14 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
      under Merchant / Online / Installment. */
   const methodOptsQ      = useSoDropdownOptions('payment_method');
   const methodOpts       = optionsOrFallback('payment_method', methodOptsQ.data);
+  /* Money moved from a cancelled order (docs/bugs/0931): a saved order asks the
+     server for its customer's cancelled orders with money; the New SO page
+     hands them in. */
+  const convertSourcesQ  = useConvertSources(props.docNo);
+  const listedSources: ConvertSource[] = props.docNo ? (convertSourcesQ.data?.sources ?? []) : ((props as DraftModeProps).convertSources ?? []);
+  /* Another order by number — any customer's (owner 2026-09-16: 可能多张、不同顾客). */
+  const morePicker = useAddedConvertSources(listedSources);
+  const convertSources = morePicker.sources;
   const merchantOptsQ    = useSoDropdownOptions('payment_merchant');
   const merchantOpts     = optionsOrFallback('payment_merchant', merchantOptsQ.data);
   const onlineOptsQ      = useSoDropdownOptions('online_type');
@@ -494,8 +628,12 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
       body: 'The slip currently attached to this payment will be swapped for the one you just uploaded. The change is recorded in the order history.',
       confirmLabel: 'Replace',
     }))) return;
+    /* A role holding the right says why (docs/bugs/0888) — before the write,
+       and a dismissed ask abandons it. */
+    const reason = reasonOnEvery ? await askReason(paymentReasonAsk(p.slip_key ? 'proof-replace' : 'proof', 'holder')) : '';
+    if (reason === null) return;
     attachSlip.mutate(
-      { docNo: (props as SavedModeProps).docNo, id: p.id, uploadSessionId },
+      { docNo: (props as SavedModeProps).docNo, id: p.id, uploadSessionId, ...(reason ? { reason } : {}) },
       {
         onError: (e) => {
           // eslint-disable-next-line no-console
@@ -699,7 +837,14 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
     if (Number.isNaN(t)) return false;
     const day = mytDayOf(createdAt);
     if (day === null) return false;
-    return paymentRowMutable(day, todayMyt(), draftUnlocked).mutable;
+    return paymentRowMutable(day, todayMyt(), draftUnlocked, { mayAmend }).mutable;
+  };
+  /* WHY a row may change — 'amend' is the one that owes a reason. */
+  const rowVia = (createdAt: string | null | undefined): PaymentChangeVia => {
+    if (!createdAt) return null;
+    const day = mytDayOf(createdAt);
+    if (day === null) return null;
+    return paymentRowMutable(day, todayMyt(), draftUnlocked, { mayAmend }).via;
   };
 
   /* installment_months (int|null) → the maintenance plan LABEL/value to rehydrate
@@ -718,33 +863,20 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
      draft edits it. Reuses the exact same inline fields as Add Payment. */
   const beginEditPersisted = (p: SoPayment) => {
     if (!isSaved || isEditingPersisted(p.id)) return;
-    setSavedDrafts((prev) => [...prev, {
-      uid: Math.random().toString(36).slice(2, 10),
-      paidAt: (p.paid_at ?? '').slice(0, 10) || todayMyt(),
-      methodLabel: apiToValue(p),
-      merchantProvider: p.merchant_provider ?? '',
-      installmentMonthsLabel:
-        (p.method === 'merchant' || p.method === 'installment')
-          ? installmentLabelForMonths(p.installment_months) : '',
-      onlineType: p.online_type ?? '',
-      amountSen: p.amount_sen,
-      accountSheet: p.account_sheet ?? '',
-      approvalCode: p.approval_code ?? '',
-      collectedBy: p.collected_by ?? '',
-      slipUploadSessionId: null,
-      editingPersistedId: p.id,
-    }]);
+    setSavedDrafts((prev) => [...prev, editDraftOf(p, installmentLabelForMonths)]);
   };
 
   /* Commit an edit draft → PATCH /:docNo/payments/:id. Same payload derivation
      as commitDraft's POST (method-scoped sub-fields via draftMethodFields);
      slip is untouched by an edit. On success the draft is dropped and the
      (freshly refetched) persisted row reappears. */
-  const commitEdit = (d: PaymentDraft) => {
+  const commitEdit = async (d: PaymentDraft) => {
     if (!isSaved || !d.editingPersistedId) return;
     const persisted = persistedPayments.find((p) => p.id === d.editingPersistedId);
     if (!persisted) return;
-    const { method } = labelToApi(d.methodLabel);
+    let method: PaymentMethod;
+    try { ({ method } = labelToApi(d.methodLabel)); }
+    catch (e) { void notify({ title: 'Payment method not recognised', body: e instanceof Error ? e.message : String(e), tone: 'error' }); return; }
     const body = {
       docNo:        (props as SavedModeProps).docNo,
       id:           d.editingPersistedId,
@@ -757,7 +889,10 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
       collectedBy:  d.collectedBy  || null,
       ...draftMethodFields(method, d),
     };
-    editPayment.mutate(body, {
+    const why = reasonWhyFor(rowVia(persisted.created_at), reasonOnEvery);
+    const reason = why ? await askReason(paymentReasonAsk('edit', why)) : '';
+    if (reason === null) return;
+    editPayment.mutate({ ...body, ...(reason ? { reason } : {}) }, {
       onSuccess: () => removeDraft(d.uid),
       onError: (e) => {
         // eslint-disable-next-line no-console
@@ -769,7 +904,7 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
 
   /* SAVED mode commit — fire POST /:docNo/payments. DRAFT mode has no
      commit affordance; the parent batches them at SO-create time. */
-  const commitDraft = (d: PaymentDraft) => {
+  const commitDraft = async (d: PaymentDraft) => {
     if (!isSaved) return;
     /* Owner 2026-07-13 — the slip is OPTIONAL now (a receipt isn't always on
        hand). Gate only on an amount > 0; the SO route accepts a slip-less
@@ -777,7 +912,9 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
     if (d.amountSen <= 0) return;
     /* Same-day EDIT (owner 2026-07-13) — an edit draft carries the id of the
        persisted row it amends. Route it through PATCH instead of POST. */
-    if (d.editingPersistedId) { commitEdit(d); return; }
+    /* commitEdit is async since it may ask for a reason; its failures are
+       reported inside it (notify), so nothing is lost by not awaiting here. */
+    if (d.editingPersistedId) { void commitEdit(d); return; }
     /* Cascade guard (spec 1) — block the commit when the chosen method is
        missing a required sub-field (Merchant → Bank + Plan; Online → Sub-Type)
        and tell the operator which one. */
@@ -789,7 +926,9 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
       });
       return;
     }
-    const { method } = labelToApi(d.methodLabel);
+    let method: PaymentMethod;
+    try { ({ method } = labelToApi(d.methodLabel)); }
+    catch (e) { void notify({ title: 'Payment method not recognised', body: e instanceof Error ? e.message : String(e), tone: 'error' }); return; }
     /* Cascade payload — populate sub-fields by the L1 method only
        (draftMethodFields). The API mirrors the same guard and will scrub any
        irrelevant sub-fields (e.g. a stale onlineType left over from a
@@ -810,6 +949,11 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
       idempotencyKey:  d.idempotencyKey,
       ...draftMethodFields(method, d),
     };
+    /* A ROLE holding the correction right says why it records money, too
+       (docs/bugs/0888) — asked before the write, abandoned when dismissed. */
+    const reason = reasonOnEvery ? await askReason(paymentReasonAsk('add', 'holder')) : '';
+    if (reason === null) return;
+    if (reason) body.reason = reason;
     addPayment.mutate(body as { docNo: string } & Record<string, unknown>, {
       onSuccess: () => {
         removeDraft(d.uid);
@@ -848,10 +992,21 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
       if (d.amountSen <= 0) { blocked.push(`${d.methodLabel}: no amount`); continue; }
       const missing = missingMethodSubField(d);
       if (missing) { blocked.push(`${d.methodLabel}: pick the ${missing}`); continue; }
-      const { method } = labelToApi(d.methodLabel);
+      let method: PaymentMethod;
+      try { ({ method } = labelToApi(d.methodLabel)); }
+      catch (e) { blocked.push(`${d.methodLabel}: ${e instanceof Error ? e.message : 'payment method not recognised'}`); continue; }
+      /* A holder of the right says why for each row the page saves — a
+         dismissed ask leaves that row where it is, reported as blocked. */
+      let reason = '';
+      if (reasonOnEvery) {
+        const answer = await askReason(paymentReasonAsk('add', 'holder'));
+        if (answer === null) { blocked.push(`${d.methodLabel}: no reason given`); continue; }
+        reason = answer;
+      }
       try {
         await addPayment.mutateAsync({
           docNo:           (props as SavedModeProps).docNo,
+          ...(reason ? { reason } : {}),
           paidAt:          d.paidAt,
           method,
           amountSen:       d.amountSen,
@@ -873,7 +1028,7 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
     }
     return { committed, failed, blocked };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- props is read at call time by design
-  }, [isSaved, addPayment, removeDraft]);
+  }, [isSaved, addPayment, removeDraft, reasonOnEvery, askReason]);
 
   /* Summary maths — identical across modes. In DRAFT mode there are no
      persisted rows yet, so paid is just Σ drafts. In SAVED mode paid is
@@ -902,10 +1057,17 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
      the row's method (so a rename in SO Maintenance re-labels history too);
      falls back to the shared defaults. */
   const methodDisplay = (p: SoPayment): string => {
+    /* A mirror (money that LEFT; negative): what took it, not a way money arrives. */
+    if (isMirror(p)) return p.refund_pv_id ? 'Refund' : 'Moved out';
     const value = apiToValue(p);
     return methodOpts.find((m) => m.value === value)?.label
       ?? PAYMENT_METHOD_DEFAULT_LABELS[p.method as PaymentMethodCode]
       ?? value;
+  };
+
+  const addSourceTo = async (uid: string, amountSen: number): Promise<void> => {
+    const src = await morePicker.add();
+    if (src) patchDraft(uid, { convertedFromDocNo: src.docNo, ...(amountSen <= 0 ? { amountSen: src.movableSen } : {}) });
   };
 
   const totalRowCount = persistedPayments.length + drafts.length;
@@ -1000,6 +1162,10 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
      the whole document and its own recovery path, and would otherwise prompt on
      every single exit from a form where every row is legitimately unsaved. */
   const unsavedCount = isSaved ? drafts.length : 0;
+  /* The same rows are unsaved work for an AUTOMATIC reload
+     (lib/chunkActionRecovery), which must never fire while money is typed but
+     unbooked. Draft mode is covered by its /new URL (lib/unsavedWork). */
+  useUnsavedWork(unsavedCount > 0);
   useEffect(() => {
     if (unsavedCount === 0) return;
     const warn = (e: BeforeUnloadEvent) => {
@@ -1158,6 +1324,16 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                       {p.installment_months ? `${p.installment_months}m` : ''}
                     </span>
                   )}
+                  {isMirror(p) && p.converted_to_so_doc_no && (
+                    <span style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>
+                      to <a href={`/scm/sales-orders/${encodeURIComponent(p.converted_to_so_doc_no)}`} style={{ color: 'var(--c-orange)', fontFamily: 'var(--font-mono)' }}>{p.converted_to_so_doc_no}</a>
+                    </span>
+                  )}
+                  {p.method === CONVERTED_METHOD && p.converted_from_so_doc_no && (
+                    <span style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>
+                      from <a href={`/scm/sales-orders/${encodeURIComponent(p.converted_from_so_doc_no)}`} style={{ color: 'var(--c-orange)', fontFamily: 'var(--font-mono)' }}>{p.converted_from_so_doc_no}</a>
+                    </span>
+                  )}
                   {/* NO approval code here — desktop renders it in its own
                       "Approval Code" COLUMN below. Mobile's PaymentInfoBlock
                       does print it inline, and that is correct FOR MOBILE: the
@@ -1166,7 +1342,7 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                       the VALUE, not the placement. */}
                 </span>
                 <span className={paymentsStyles.cellRight} data-label="Amount"
-                      style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>
+                      style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600, ...(isMirror(p) ? { color: 'var(--c-danger, #a33)' } : {}) }}>
                   {fmtAmt(p.amount_sen)}
                 </span>
                 <span className={paymentsStyles.cell} data-label="Account Sheet">
@@ -1212,13 +1388,29 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                   {p.collected_by_name ?? staffNameById(p.collected_by) ?? <span className={detailStyles.muted}>—</span>}
                 </span>
                 <span className={paymentsStyles.cell}>
+                  {receiptFor && p.method !== CONVERTED_METHOD && (
+                    <button
+                      type="button"
+                      onClick={() => void printReceipt(p.id)}
+                      disabled={receiptBusy === p.id}
+                      title="Print official receipt"
+                      style={{
+                        background: 'transparent', border: 'none', padding: 4,
+                        cursor: 'pointer', color: 'var(--fg-muted)',
+                      }}
+                    >
+                      <Printer size={14} strokeWidth={1.75} />
+                    </button>
+                  )}
                   {!locked && (
                     <div style={{ display: 'flex', gap: 2, justifyContent: 'flex-end', alignItems: 'center' }}>
                       {/* Same-day EDIT (owner 2026-07-13) — only for a payment
                           recorded today; after MYT midnight it locks (no pencil).
                           A DRAFT SO (draftUnlocked) is never same-day-locked, so
                           every persisted row keeps its pencil while unconfirmed. */}
-                      {rowMutable(p.created_at) && (
+                      {/* Money moved from a cancelled order is moved back by
+                          deleting the row, never edited in place (docs/bugs/0931). */}
+                      {rowMutable(p.created_at) && p.method !== CONVERTED_METHOD && (
                         <button
                           type="button"
                           disabled={editPayment.isPending}
@@ -1240,19 +1432,24 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                           while the pencil beside it did — so a months-old payment
                           on a delivered, invoiced SO could be hard-deleted,
                           silently flipping the order from PAID back to owing. */}
-                      {rowMutable(p.created_at) && (
+                      {/* A mirror follows its counterpart: the converted row on the
+                          other order, or the refund voucher. No hand delete. */}
+                      {rowMutable(p.created_at) && !isMirror(p) && (
                         <button
                           type="button"
                           className={paymentsStyles.trashBtn}
                           disabled={deletePayment.isPending}
                           onClick={async () => {
+                            const why = reasonWhyFor(rowVia(p.created_at), reasonOnEvery);
+                            const reason = why ? await askReason(paymentReasonAsk('delete', why)) : '';
+                            if (reason === null) return;
                             if (await askConfirm({
                               title: `Delete this ${methodDisplay(p)} payment of ${fmtRm(p.amount_sen, currency)}?`,
                               body: 'This removes the payment from the order, so the balance owing goes back up. It cannot be undone.',
                               confirmLabel: 'Delete',
                               danger: true,
                             })) {
-                              deletePayment.mutate({ docNo: (props as SavedModeProps).docNo, id: p.id, version: p.version });
+                              deletePayment.mutate({ docNo: (props as SavedModeProps).docNo, id: p.id, version: p.version, ...(reason ? { reason } : {}) });
                             }
                           }}
                           title="Remove payment (same-day only)"
@@ -1316,12 +1513,16 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                         installmentMonthsLabel: next === 'Merchant' || next === 'Installment'
                           ? d.installmentMonthsLabel : '',
                         onlineType:             next === 'Online'   ? d.onlineType       : '',
+                        convertedFromDocNo:     next === CONVERT_LABEL ? (d.convertedFromDocNo ?? '') : '',
                       });
                     }}
                   >
                     {methodOpts.map((m) => (
                       <option key={m.id} value={m.value}>{m.label}</option>
                     ))}
+                    {/* Money moved from another order (docs/bugs/0931) — always offered:
+                        the source may be any customer's, named by number below. */}
+                    <option value={CONVERT_LABEL}>{CONVERT_LABEL}</option>
                     {/* Persist labels that are no longer active in the
                         list so existing drafts (rehydrated from
                         somewhere) still render their selection. */}
@@ -1330,6 +1531,41 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                     )}
                   </select>
 
+                  {/* L2 — the order the money comes from; picking one fills the
+                      amount with what it may give when the row is still empty
+                      (docs/bugs/0931; a live order gives what is above its floor). */}
+                  {d.methodLabel === CONVERT_LABEL && (
+                    <select
+                      className={paymentsStyles.inlineSelect}
+                      style={{ fontSize: 'var(--fs-11)' }}
+                      value={d.convertedFromDocNo ?? ''}
+                      disabled={locked}
+                      onChange={(e) => {
+                        const from = e.target.value;
+                        const src = convertSources.find((s) => s.docNo === from);
+                        patchDraft(d.uid, { convertedFromDocNo: from, ...(src && d.amountSen <= 0 ? { amountSen: src.movableSen } : {}) });
+                      }}
+                      aria-label="Cancelled order"
+                    >
+                      <option value="">— Order the money comes from —</option>
+                      {convertSources.map((s) => (
+                        <option key={s.docNo} value={s.docNo}>{s.docNo} · {fmtRm(s.movableSen, currency)} {s.keepSen > 0 ? 'can move' : 'left'}</option>
+                      ))}
+                      {d.convertedFromDocNo && !convertSources.some((s) => s.docNo === d.convertedFromDocNo) && (
+                        <option value={d.convertedFromDocNo}>{d.convertedFromDocNo}</option>
+                      )}
+                    </select>
+                  )}
+                  {d.methodLabel === CONVERT_LABEL && !locked && (
+                    <span style={{ display: 'inline-flex', gap: 4, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <input className={paymentsStyles.inlineSelect} style={{ fontSize: 'var(--fs-11)', minWidth: 170 }} value={morePicker.more}
+                        onChange={(e) => morePicker.setMore(e.target.value)} placeholder="Another order, e.g. 2990-SO-2607-024" aria-label="Another order"
+                        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void addSourceTo(d.uid, d.amountSen); } }} />
+                      <button type="button" disabled={morePicker.busy} onClick={() => void addSourceTo(d.uid, d.amountSen)}
+                        style={{ fontSize: 'var(--fs-11)', padding: '2px 8px', border: '1px solid var(--c-line, rgba(34,31,32,0.2))', borderRadius: 6, background: 'transparent', cursor: 'pointer' }}>Add</button>
+                      {morePicker.note && <span style={{ fontSize: 'var(--fs-11)', color: 'var(--c-danger, #a33)' }}>{morePicker.note}</span>}
+                    </span>
+                  )}
                   {/* L2 — Merchant cascade: pick the Bank + Installment plan. */}
                   {d.methodLabel === 'Merchant' && (
                     <>
@@ -1580,6 +1816,23 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                     >
                       <Trash2 size={14} strokeWidth={1.75} />
                     </button>
+                    {/* DRAFT-mode rows seeded from PERSISTED payments (uid =
+                        API row id — the SI detail) can hand over their OR.
+                        NOT gated by `locked`: printing changes nothing. */}
+                    {receiptFor?.persistedIds?.has(d.uid) === true && (
+                      <button
+                        type="button"
+                        onClick={() => void printReceipt(d.uid)}
+                        disabled={receiptBusy === d.uid}
+                        title="Print official receipt"
+                        style={{
+                          background: 'transparent', border: 'none', padding: 4,
+                          cursor: 'pointer', color: 'var(--fg-muted)',
+                        }}
+                      >
+                        <Printer size={14} strokeWidth={1.75} />
+                      </button>
+                    )}
                   </div>
                 </span>
               </div>
@@ -1618,6 +1871,12 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
               )}
             </span>
           </div>
+          {/* Money that went BACK (§14) — every refund voucher on a saved
+              order, linked by number; nothing when there is none. */}
+          {isSaved && <RefundsLine docNo={(props as SavedModeProps).docNo} />}
+          {/* A CANCELLED order's money and its two exits — refund or convert
+              (docs/bugs/0931); the panel decides for itself whether to show. */}
+          {isSaved && <OrderMoneyPanel docNo={(props as SavedModeProps).docNo} />}
         </div>
       </div>
     </section>

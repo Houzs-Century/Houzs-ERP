@@ -86,6 +86,22 @@ export type ReadinessLine = {
   category?: string | null;
   stock_status: 'PENDING' | 'READY' | string;
   cancelled?: boolean | null;
+  /** This line has nothing left to deliver — `qty - delivered + returned <= 0`.
+   *
+   *  A line that has SHIPPED cannot be waiting for stock, but its
+   *  `stock_status` says it is: recomputeSoStockAllocation skips the line at
+   *  `remaining <= 0` (correctly — there is nothing left to allocate), so the
+   *  stored value is FROZEN at whatever it last was, and for goods that shipped
+   *  straight off a purchase order that is usually PENDING.
+   *
+   *  OPTIONAL, and this is the one shape CLAUDE.md's "a parameter that DECIDES
+   *  something is required" rule permits: **its absence is the STRICTER
+   *  direction.** A caller that cannot say whether the line shipped leaves it
+   *  undefined and the line keeps gating exactly as it did before this field
+   *  existed — the order reads NOT ready, which never over-promises. Making it
+   *  required would have forced eight call sites, several of which do not load
+   *  delivery quantities at all, to invent an answer. */
+  fulfilled?: boolean | null;
 };
 
 export type ReadinessSummary = {
@@ -130,7 +146,7 @@ export type ReadinessSummary = {
  */
 export function summariseReadiness(lines: ReadinessLine[]): ReadinessSummary {
   const live = lines.filter((l) => !l.cancelled);
-  let mainCount = 0, mainReady = 0, accCount = 0, accReady = 0, svcCount = 0;
+  let mainCount = 0, mainReady = 0, accCount = 0, accReady = 0, svcCount = 0, fulCount = 0;
   /* Per-MAIN-category totals, so the label can name the categories that are
      FULLY in ("BEDFRAME" when every bedframe line is READY while a mattress
      line on the same SO is not). A category is ready only when total === ready;
@@ -151,6 +167,17 @@ export function summariseReadiness(lines: ReadinessLine[]): ReadinessSummary {
        strongest of the three signals. */
     if (isServiceLine({ itemGroup: l.item_group, itemCode: l.item_code, category: l.category })) {
       svcCount += 1;
+      continue;
+    }
+    /* ALREADY SHIPPED — counted, never gating, for the same reason SERVICE
+       lines are counted: `continue` alone would make an order whose every line
+       has been delivered byte-identical to an order with NO LINES, and the
+       empty-husk gate below would then refuse a finished order (soShipGate,
+       the 16 POS husks of 2026-08-13). It is excluded from the ready tallies
+       because its goods are at the customer — asking whether they are "in
+       stock" is asking the wrong question of the wrong line. */
+    if (l.fulfilled === true) {
+      fulCount += 1;
       continue;
     }
     const cat = normCategory(l.item_group);
@@ -175,7 +202,7 @@ export function summariseReadiness(lines: ReadinessLine[]): ReadinessSummary {
 
   /* Every live line, service included — the ONLY thing that separates "this SO
      has nothing left to wait for" from "this SO has nothing on it". */
-  const liveCount = mainCount + accCount + svcCount;
+  const liveCount = mainCount + accCount + svcCount + fulCount;
 
   const isMainReady  = mainCount > 0 ? mainReady === mainCount : true;  // no-main SO = main-ready by convention
   /* >= 1 live line AND every stock-bearing line allocated. Service lines make

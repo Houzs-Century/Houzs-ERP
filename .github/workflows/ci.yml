@@ -64,16 +64,27 @@ jobs:
   # tsconfig, a new top-level directory — matches nothing and therefore runs
   # BOTH halves. Unknown means run it.
   #
-  # THE OTHER TRAP: a REQUIRED check that is SKIPPED is not a passed check —
-  # GitHub leaves the PR pending on it forever. So `backend-typecheck` always
-  # runs (it also carries the doc gates, which a docs-only PR is exactly what
-  # needs), and the `backend` / `frontend` roll-ups accept `skipped` from the
-  # jobs they gate. Those roll-ups are the required contexts, not the jobs below.
+  # THE OTHER TRAP, CORRECTED 2026-09-15. "A skipped required check leaves the PR
+  # pending forever" is true of a WORKFLOW that never triggers (path filter on
+  # `on:`), not of a JOB skipped by `if:` — GitHub's docs, "Using conditions to
+  # control job execution": a skipped job reports "Success" and "will not prevent
+  # a pull request from merging, even if it is a required check". That makes a
+  # skip a PASS, so the danger runs the other way: a job skipped because
+  # `changes` FAILED would read green. Hence `backend-typecheck` is skipped only
+  # on a proven merge-queue reuse and runs whenever `changes` did not succeed,
+  # and the `backend` / `frontend` roll-ups require `changes` to succeed before
+  # they accept `skipped` from the jobs they gate.
   changes:
     runs-on: ubuntu-latest
+    # actions + pull-requests: read, for the merge-queue reuse lookup below.
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
     outputs:
-      backend: ${{ steps.decide.outputs.backend }}
-      frontend: ${{ steps.decide.outputs.frontend }}
+      backend: ${{ steps.reuse.outputs.backend || steps.decide.outputs.backend }}
+      frontend: ${{ steps.reuse.outputs.frontend || steps.decide.outputs.frontend }}
+      reuse: ${{ steps.reuse.outputs.reuse || 'false' }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -84,7 +95,8 @@ jobs:
 
           if [ "${{ github.event_name }}" != "pull_request" ]; then
             # merge_group has no PR base to diff against, and it is the last gate
-            # before main. Run everything.
+            # before main. Run everything — unless the `reuse` step below proves
+            # this exact tree already passed on the PR.
             echo "event=${{ github.event_name }}: running both halves"
             echo "backend=true"  >> "$GITHUB_OUTPUT"
             echo "frontend=true" >> "$GITHUB_OUTPUT"
@@ -127,7 +139,41 @@ jobs:
           echo "backend=$backend"   >> "$GITHUB_OUTPUT"
           echo "frontend=$frontend" >> "$GITHUB_OUTPUT"
 
+      # MERGE-QUEUE REUSE (owner approved 2026-09-15, docs/ci-fast-lane.md §3.1).
+      # Every PR used to run the whole suite twice: on the PR, then again in the
+      # queue — in 28 of the 60 PRs measured, on a tree the PR run had already
+      # passed. The PR run records the tree it tested; the queue run looks it up
+      # and skips only the jobs that PR run PROVES passed on that exact tree
+      # (rules and their tests: scripts/lib/ci-queue-reuse.mjs). The `if` on
+      # backend-typecheck / lint / file-size / e2e-contract runs them whenever
+      # `changes` did not succeed, and both roll-ups require `changes` to
+      # succeed, so a broken lookup can only make the queue run MORE.
+      - name: Test the reuse rules
+        run: node --test scripts/ci-queue-reuse.test.mjs
+      - name: Record the tree this PR run tests
+        if: github.event_name == 'pull_request'
+        id: tree
+        run: echo "tree=$(git rev-parse 'HEAD^{tree}')" >> "$GITHUB_OUTPUT"
+      - if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-tree-${{ steps.tree.outputs.tree }}
+          path: .github/workflows/ci.yml
+          retention-days: 7
+          overwrite: true
+        # Only a speed-up rides on this: without it the queue runs everything.
+        continue-on-error: true
+      - name: Reuse the PR run's result for this exact tree
+        if: github.event_name == 'merge_group'
+        id: reuse
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/ci-queue-reuse.mjs
+
   backend-typecheck:
+    needs: changes
+    # Runs unless the queue proved it passed on this tree; runs if `changes` broke.
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.reuse != 'true') }}
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -170,43 +216,15 @@ jobs:
       # Runs from the repo root, hence the `cd ..`; both are dependency-free.
       - run: cd .. && node scripts/explain.mjs --check
       - run: cd .. && node --test scripts/explain.test.mjs
-      - run: cd .. && node scripts/explain.mjs --check-docs
-      # The two DERIVED docs. Neither is in deploy.yml — a stale doc must never
-      # block a release (audit:routes as a deploy gate jammed prod twice in one
-      # day) — and since 2026-08-14 neither fails a PR on DRIFT either. They
-      # mirror things every PR is required to move: BUG-HISTORY.md, which the
-      # working agreement makes every code PR append to, and line numbers, which
-      # shift on every backend merge. With serial merges that made them a
-      # deadlock: five PRs failed here at once, were regenerated one by one, and
-      # were stale again after the next merge.
-      #
-      # What they DO still fail on is the reason they are here at all — the
-      # generator producing nothing, the failure docs/staging-bench-rot-coe.md
-      # records going unnoticed for three weeks. Drift prints on every run with
-      # both counts; `--strict` fails on it for anyone who wants that.
-      # Pinned by backend/tests/derivedDocsDoNotDeadlock.test.mjs.
-      - run: npm run audit:bug-index
-      # The bug ledger is a DIRECTORY since 2026-08-20 (docs/bugs/, one file per
-      # entry). This gates the same failure the line above does — the generator
-      # dying — plus the invariant that makes the split work: one file is one
-      # entry, named NNNN-slug.md. Neither compares against a committed copy;
-      # there is no committed copy, which is the point.
-      - run: npm run audit:bug-history
-      # And the OTHER half of that split: nothing may put ledger content back at
-      # the old path. #2567 moved the layout and left it unguarded, and on
-      # 2026-08-21 the whole 24,000-line ledger was back on `main` with every
-      # check green — one PR's entry existed ONLY in the resurrected file.
-      # A branch forked before the split still carries `BUG-HISTORY.md
-      # merge=union` in ITS OWN .gitattributes, and a merge applies the
-      # attributes of the tree it runs in, so `git merge origin/main` keeps both
-      # sides and EXITS 0. Nothing on `main` can reach into that branch; what it
-      # can do is refuse the result, here, in a required check.
-      - run: npm run audit:bug-signpost
-      - run: npm run audit:map
       # Transaction-workflow drift tripwire: fails if any transaction document's
       # header edit loses its inherited-field lock (see check-workflow-consistency.mjs).
       - run: npm run audit:workflow-consistency
-      - run: npm run audit:doc-refs
+      # Also run on the BACKEND leg, and that is not duplication: the measured
+      # column width lives in backend/src/services/autocount-address-fit.ts, and
+      # a backend-only PR never runs `frontend-checks` (it is gated on
+      # `changes.outputs.frontend`). Widening the constant on this side alone
+      # would silently leave the input boxes disagreeing with the book.
+      - run: node ../frontend/scripts/check-ac-column-widths.mjs
       # The AutoCount write-back composes against two GENERATED files: the
       # cutover item map (D10) and the real Desc2 sofa corpus the collapse tests
       # run on (D9). Both are compiled from backend/scripts/data/ because the
@@ -215,6 +233,9 @@ jobs:
       # against last month's account book while the suite stayed green.
       - run: npm run audit:ac-item-map
       - run: npm run audit:ac-sofa-corpus
+      # The AutoCount item master (Description, Item Group, UOM per book item) the
+      # document list exports print, from export-ac-item-master.py (autocount-book-item.ts).
+      - run: npm run audit:ac-item-master
       # And a THIRD since 2026-08-14: the four master-data spelling maps
       # (agent / location / venue / branding) are compiled from
       # autocount-so-writeback-mappings.json, so that CONFIRMING a binding is an
@@ -267,12 +288,8 @@ jobs:
       # the backlog it found was judged in the same PR (15 waived at the site
       # with a reason, 8 fixed) rather than left as a number nobody reads.
       - run: node ../frontend/scripts/check-silent-writes.mjs --strict
-      # docs-drift is the fourth: the docs make CHECKABLE claims (file paths,
-      # migration numbers, permission keys, npm scripts) and this repo has a
-      # documented history of those rotting unnoticed for months. --strict gates
-      # on its CERTAIN half only; the advisory half (line numbers, key-shaped
-      # prose) is printed and never fails a PR.
-      - run: node scripts/check-docs-drift.mjs --strict
+      # CLAUDE.md, module guides, the bug summary and TODO stay short (line limits).
+      - run: node ../scripts/check-docs-size.mjs
 
       # One word per concept. The registry drives the guard AND the glossary, so
       # a concept is registered once instead of needing a fourth hand-written
@@ -619,7 +636,7 @@ jobs:
     # that blocks one honest PR in ten gets routed around, then deleted - which
     # is how secret-hygiene.yml died and let a credential back in. It stays
     # advisory until that rate is fixed, and fixing the rate is the real task.
-    needs: [backend-typecheck, backend-tests, lint, file-size, e2e-contract]
+    needs: [changes, backend-typecheck, backend-tests, lint, file-size, e2e-contract]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -634,6 +651,12 @@ jobs:
               *) echo "::error::$1 = ${2:-<empty>}"; exit 1 ;;
             esac
           }
+          must_succeed() {
+            # `changes` decides what the rest skip. If it failed, its dependants
+            # are skipped and `ok` would accept that, so it must be a real success.
+            [ "$2" = success ] || { echo "::error::$1 = ${2:-<empty>}"; exit 1; }
+          }
+          must_succeed changes "${{ needs.changes.result }}"
           echo "backend-typecheck: ${{ needs.backend-typecheck.result }}"
           echo "backend-tests:     ${{ needs.backend-tests.result }}"
           echo "lint:              ${{ needs.lint.result }}"
@@ -665,6 +688,9 @@ jobs:
   # Do NOT make this a required status check until it has run green on a few
   # merges. Adding it to the ruleset is a separate, deliberate step.
   lint:
+    needs: changes
+    # Runs unless the queue proved it passed on this tree; runs if `changes` broke.
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.reuse != 'true') }}
     runs-on: ubuntu-latest
     # FRONTEND ENFORCES. BACKEND REPORTS. Deliberate, with a written exit
     # condition — read it before "fixing" the backend leg.
@@ -792,8 +818,63 @@ jobs:
   # same pattern as `backend` above, and for the same reason.
 
 
-  frontend-checks:
+  # The frontend vitest suite, instrumented, sliced across three runners.
+  #
+  # WHY SHARDED (2026-09-15, docs/ci-fast-lane.md). The comment that used to sit
+  # on this step said "18s bare, 20s instrumented" (measured 2026-08-13). By
+  # 2026-09-15 the suite was 484 files / 4,986 tests and `npm run test:coverage`
+  # took 236-302s on one runner, which made `frontend-checks` the slowest job in
+  # the run: median 5m12s over the last 60 merged PRs, and the job that decided
+  # how long a frontend or mixed PR waited — TWICE, once on the PR and once again
+  # in the merge queue.
+  #
+  # NOTHING IS SKIPPED. Same files, same `--coverage`, same config; `--shard`
+  # only decides which runner executes which file. Each shard writes a vitest
+  # BLOB report (results + raw coverage), and `frontend-checks` below merges the
+  # three with `vitest run --merge-reports --coverage` into the same
+  # coverage/coverage-final.json the ratchet always read. The ratchet refuses a
+  # report that is missing a file on disk, so a shard that silently dropped
+  # files cannot turn into a false green.
+  #
+  # A failing test fails its shard; `frontend-checks` then never runs and the
+  # `frontend` roll-up asserts THIS job's result as well, so the red reaches the
+  # required context.
+  frontend-tests:
     needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      # Every shard finishes, so one run shows every failing file, not the first
+      # shard's worth.
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      # `default` keeps the per-test log a failing shard needs; `blob` is what
+      # the merge step reads. Written with `npx`, not `npm run`, on purpose:
+      # backend/tests/scaleRealSchemaContract.test.mjs finds the BACKEND shard
+      # command by the `npm run <script> -- --shard=` shape.
+      - run: npx vitest run --coverage --reporter=default --reporter=blob --shard=${{ matrix.shard }}/${{ strategy.job-total }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: frontend-vitest-blob-${{ matrix.shard }}
+          path: frontend/.vitest-reports/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 1
+
+  frontend-checks:
+    needs: [changes, frontend-tests]
     if: needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
     defaults:
@@ -807,10 +888,24 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
-      # `test:coverage` and not `test`: the SAME suite with the v8 provider on.
-      # Measured 2026-08-13 on this machine: 18s bare, 20s instrumented. Running
-      # both would pay for the suite twice for 2s of information.
-      - run: npm run test:coverage
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: frontend-vitest-blob-*
+          merge-multiple: true
+          path: frontend/.vitest-reports
+      # Refuse to merge fewer blobs than there were shards: a missing blob is a
+      # third of the suite that would otherwise read as "not run" rather than
+      # as a failure.
+      - name: Every shard delivered its blob
+        run: |
+          set -euo pipefail
+          ls -la .vitest-reports
+          n=$(find .vitest-reports -name 'blob-*.json' | wc -l)
+          echo "blob reports: $n (expected 3)"
+          [ "$n" -eq 3 ]
+      # The merged report: test totals across the shards, and the SAME
+      # coverage/coverage-final.json a single `npm run test:coverage` writes.
+      - run: npx vitest run --merge-reports --coverage
       # frontend/src may only go UP, and its count of files with NO test may only
       # go DOWN. Checked here rather than only in the merged `coverage-ratchet`
       # job because THIS job is the one the ruleset requires, so a frontend
@@ -829,6 +924,13 @@ jobs:
       # Not part of `npm test` (vitest only collects src/**), so they are run
       # explicitly here — a checker nobody runs is not a checker.
       - run: node --test ../scripts/check-coverage-verdict.mjs
+      # The sales-order address boxes stop at the account book's own column
+      # width, and a long PASTE spills into the next line rather than losing its
+      # tail. An address wider than 40 characters made AutoCount refuse the whole
+      # document (docs/bugs/0728); the owner asked for the limit to be on
+      # the input, and a limit kept by remembering is a limit the next address
+      # input will not have. Zero dependencies, reads two files and the tsx tree.
+      - run: node scripts/check-ac-column-widths.mjs
 
   # The typecheck half of what used to be one `frontend-checks` job.
   #
@@ -877,6 +979,10 @@ jobs:
       # explicitly — a checker nobody runs is not a checker.
       - run: node --test scripts/check-bundle-verdict.mjs
       - run: node --test scripts/check-raw-fetch-inventory.test.mjs
+      # The merge/prune rules deploy.yml uses to keep the previous builds'
+      # chunks in each Pages deployment — they run only on a push to main, so
+      # this is the one place they are exercised before they touch a release.
+      - run: node --test scripts/retain-previous-assets.test.mjs
       # `tsc --noEmit` against this tsconfig ("files": [] + references) resolves
       # zero inputs and exits 0 on a tree full of type errors. The typecheck
       # script above was exactly that until 2026-08-01. Pin the shape.
@@ -1039,6 +1145,9 @@ jobs:
       - run: npm run test:perf-local
 
   file-size:
+    needs: changes
+    # Runs unless the queue proved it passed on this tree; runs if `changes` broke.
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.reuse != 'true') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -1068,7 +1177,7 @@ jobs:
   # `if: always()` plus explicit result assertions, for the reason spelled out
   # on the `backend` roll-up: a skipped check is not a failed check.
   frontend:
-    needs: [frontend-checks, frontend-typecheck, frontend-build, frontend-perf, lint]
+    needs: [changes, frontend-tests, frontend-checks, frontend-typecheck, frontend-build, frontend-perf, lint]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -1088,10 +1197,21 @@ jobs:
               *) echo "::error::$1 = ${2:-<empty>}"; exit 1 ;;
             esac
           }
+          must_succeed() {
+            # `changes` decides what the rest skip. If it failed, its dependants
+            # are skipped and `ok` would accept that, so it must be a real success.
+            [ "$2" = success ] || { echo "::error::$1 = ${2:-<empty>}"; exit 1; }
+          }
+          must_succeed changes "${{ needs.changes.result }}"
+          echo "frontend-tests:     ${{ needs.frontend-tests.result }}"
           echo "frontend-checks:    ${{ needs.frontend-checks.result }}"
           echo "frontend-typecheck: ${{ needs.frontend-typecheck.result }}"
           echo "frontend-build:     ${{ needs.frontend-build.result }}"
           echo "frontend-perf:      ${{ needs.frontend-perf.result }}"
+          # The sharded suite (2026-09-15). A failing shard SKIPS frontend-checks
+          # (its dependency failed), and skipped passes the line below — so the
+          # shards' own result is what carries a test failure to this context.
+          ok frontend-tests "${{ needs.frontend-tests.result }}"
           ok frontend-checks "${{ needs.frontend-checks.result }}"
           ok frontend-typecheck "${{ needs.frontend-typecheck.result }}"
           ok frontend-build "${{ needs.frontend-build.result }}"
@@ -1107,6 +1227,9 @@ jobs:
           ok lint "${{ needs.lint.result }}"
 
   e2e-contract:
+    needs: changes
+    # Runs unless the queue proved it passed on this tree; runs if `changes` broke.
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.reuse != 'true') }}
     runs-on: ubuntu-latest
     defaults:
       run:

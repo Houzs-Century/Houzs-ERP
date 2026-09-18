@@ -123,6 +123,26 @@ describe("pmsAccess — project-detail section gating", () => {
     expect(a.canRental).toBe(false);
   });
 
+  test("projects.finance.view grants canFinancial to a non-director — the flag the project-detail strip reads (owner 2026-09-04)", () => {
+    const bd = user({
+      position_name: "Operation Executive",
+      perms: ["projects.write", "projects.manage", "projects.finance.view"],
+    });
+    const a = getPmsAccess(bd, { pic_id: 99 });
+    // isFinanceViewer honoured this permission from the day it was added;
+    // canFinancial did not, so GET /projects/:id still stripped `finance` +
+    // `finance_lines` from a holder. The two must agree — otherwise the
+    // Rental box renders, accepts a number, and cannot read back the line it
+    // just wrote, so every retype books ANOTHER line (12 on one project).
+    expect(isFinanceViewer(bd)).toBe(true);
+    expect(a.canFinancial).toBe(true);
+    expect(financeHiddenForUser(bd)).toBe(false);
+    // Still not a director, and the grant is finance-only.
+    expect(a.role).toBe("OTHER");
+    expect(isDirectorUser(bd)).toBe(false);
+    expect(a.canPayment).toBe(false);
+  });
+
   test("projects.write ALONE does not grant EDIT or WF_SENSITIVE — a Sales Person stays read-only (over-grant guard)", () => {
     const salesPerson = user({ id: 7, position_name: "Sales Executive", perms: ["projects.write"] });
     const a = getPmsAccess(salesPerson, { pic_id: 7 });
@@ -398,12 +418,20 @@ describe("SETUP_DISMANTLE stripping — crew editor + documents section", () => 
     expect(isSetupDismantleSection(null)).toBe(false);
   });
 
-  test("NULLs the crew JSON + times and strips the document section, comments, attachments, progress", () => {
+  // Owner 2026-07-28 ("all users can view the setup & dismantle part"): the
+  // crew JSON, service crew, schedule remark and scheduled times are NO LONGER
+  // NULLed — the S&D card is view-for-all and editing is gated on the write
+  // path instead. Only the DOCUMENT rows are still role-filtered. These two
+  // cases used to assert the opposite; they are re-pinned, not deleted, so the
+  // ruling stays visible.
+  test("KEEPS the crew JSON + times, and strips the document section, comments, attachments, progress", () => {
     const detail = {
       project: {
         id: 1,
         setup_crew: '{"drivers":[{"name":"A"}]}',
         dismantle_crew: '{"drivers":[{"name":"B"}]}',
+        service_crew: '{"drivers":[{"name":"C"}]}',
+        schedule_remark: "load at 6am",
         setup_start_at: "2026-07-15T08:00:00Z",
         dismantle_start_at: "2026-07-18T20:00:00Z",
       },
@@ -430,10 +458,12 @@ describe("SETUP_DISMANTLE stripping — crew editor + documents section", () => 
       ],
     };
     const out = stripSetupDismantle(detail);
-    expect(out.project.setup_crew).toBeNull();
-    expect(out.project.dismantle_crew).toBeNull();
-    expect(out.project.setup_start_at).toBeNull();
-    expect(out.project.dismantle_start_at).toBeNull();
+    expect(out.project.setup_crew).toBe('{"drivers":[{"name":"A"}]}');
+    expect(out.project.dismantle_crew).toBe('{"drivers":[{"name":"B"}]}');
+    expect(out.project.service_crew).toBe('{"drivers":[{"name":"C"}]}');
+    expect(out.project.schedule_remark).toBe("load at 6am");
+    expect(out.project.setup_start_at).toBe("2026-07-15T08:00:00Z");
+    expect(out.project.dismantle_start_at).toBe("2026-07-18T20:00:00Z");
     expect(out.checklist.map((r: any) => r.id)).toEqual([3]);
     expect(out.checklist_comments.map((r: any) => r.id)).toEqual([101]);
     expect(out.checklist_attachments.map((r: any) => r.id)).toEqual([201]);
@@ -441,7 +471,7 @@ describe("SETUP_DISMANTLE stripping — crew editor + documents section", () => 
     expect(out.section_progress.map((s: any) => s.id)).toEqual([20]);
   });
 
-  test("no document section → still NULLs the crew JSON (crew editor is part of the section)", () => {
+  test("no document section → the crew JSON still survives, and nothing else is touched", () => {
     const detail = {
       project: { id: 1, setup_crew: "{}", dismantle_crew: null, setup_start_at: "x", dismantle_start_at: null },
       checklist: [{ id: 3, title: "3D Design", section_id: 20, status: "pending" }],
@@ -451,10 +481,28 @@ describe("SETUP_DISMANTLE stripping — crew editor + documents section", () => 
       section_progress: [{ id: 20, total: 1, done: 0, na: 0, complete: 0 }],
     };
     const out = stripSetupDismantle(detail);
-    expect(out.project.setup_crew).toBeNull();
-    expect(out.project.setup_start_at).toBeNull();
+    expect(out.project.setup_crew).toBe("{}");
+    expect(out.project.setup_start_at).toBe("x");
     // Non-setup checklist untouched.
     expect(out.checklist.map((r: any) => r.id)).toEqual([3]);
     expect(out.sections.map((s: any) => s.id)).toEqual([20]);
+  });
+
+  test("a SALES PIC document row stays on the wire even though it lives in the S&D section", () => {
+    const detail = {
+      project: { id: 1 },
+      checklist: [
+        { id: 1, title: "Setup Image", section_id: 60, role_label: "SALES PIC", status: "done" },
+        { id: 2, title: "Loading List", section_id: 60, role_label: "DRIVER", status: "pending" },
+      ],
+      checklist_comments: [],
+      checklist_attachments: [],
+      sections: [{ id: 60, name: "SETUP & DISMANTLE DOCUMENTS", sort_order: 60 }],
+      section_progress: [{ id: 60, total: 2, done: 1, na: 0, complete: 0 }],
+    };
+    const out = stripSetupDismantle(detail);
+    expect(out.checklist.map((r: any) => r.id)).toEqual([1]);
+    // The section survives because something under it survived.
+    expect(out.sections.map((s: any) => s.id)).toEqual([60]);
   });
 });

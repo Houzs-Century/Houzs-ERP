@@ -3,6 +3,7 @@ import {
   amendmentMixRefusal, createMixRefusal, lineMixRefusal, mixesSofaWithOtherMain,
   sofaMixRefusal, SOFA_MIX_ERROR, type MixRefusal,
 } from './main-mix';
+import { parsePgrestInList } from './pgrest-in-list';
 
 /* ═══════════════════════════════════════════════════════════════════════════
    "May a sofa share an order with a bedframe or a mattress?" — one rule, three
@@ -27,6 +28,18 @@ type AnySb = any;
 
 type Row = Record<string, unknown> & { _table: string };
 
+/* Model the WIRE faithfully. postgrest-js's own `.in()` quotes [,()] but never
+   escapes; PostgREST reads the list back with parsePgrestInList — so a value
+   carrying `"` (inch mark) or `\` closes the list early and drops itself and
+   every value after it (docs/bugs/0780). A list without those two characters
+   round-trips unchanged, so every pre-existing case stays byte-identical to the
+   old naive membership. `.filter(_, 'in', pgrestInList(...))` sends an escaped
+   payload, so it survives — which is exactly the fix under test. */
+const wireIn = (vs: readonly unknown[]): unknown[] =>
+  vs.some((v) => typeof v === 'string' && /["\\]/.test(v))
+    ? parsePgrestInList(`(${[...new Set(vs)].map((s) => (typeof s === 'string' && /[,()]/.test(s) ? `"${s}"` : `${s}`)).join(',')})`)
+    : [...vs];
+
 /** Supabase-shaped mock: chainable `.select().eq().in()`, thenable. Records the
  *  filters so a test can prove the query was actually scoped, and can be told to
  *  fail a named table so the "could not tell" path is reachable. */
@@ -49,7 +62,12 @@ const makeSb = (rows: Row[], failTable?: string) => {
         select: () => builder,
         order:  () => builder,
         eq: (col: string, v: unknown) => { eqs.push([col, v]); return builder; },
-        in: (col: string, vs: unknown[]) => { ins.push([col, vs]); return builder; },
+        in: (col: string, vs: unknown[]) => { ins.push([col, wireIn(vs)]); return builder; },
+        /* The escaped in-list path the fix uses: `.filter(col, 'in', pgrestInList(...))`. */
+        filter: (col: string, op: string, payload: string) => {
+          if (op === 'in') ins.push([col, parsePgrestInList(payload)]);
+          return builder;
+        },
         maybeSingle: async () => ({ data: run()[0] ?? null, error: null }),
         then: (res: AnySb, rej: AnySb) => Promise.resolve(result()).then(res, rej),
       };
@@ -382,5 +400,23 @@ describe('amendmentMixRefusal — the third home, found while wiring the other t
     const sb = makeSb([...CATALOGUE, soLine('l1', 'SO-1', 'BED-A')], 'mfg_sales_order_items');
     expect(verdict(await amendmentMixRefusal(sb, 'SO-1', [amd({ changeType: 'ADD', newItemCode: 'SOFA-A' })], 1)))
       .toBe('unavailable');
+  });
+
+  /* docs/bugs/0780 (amendment flavour). An EXISTING line whose catalogued code
+     carries an inch mark (`"`) is loaded, alongside the requested code, to
+     classify the order. The old `.in('code', …)` quoted that value without
+     escaping it, so PostgREST dropped it AND every code after it — the requested
+     SVC line then read as absent and this gate refused a legal amendment as
+     "unavailable". The escaped read resolves every code; the amendment is
+     ALLOWED. A revert to `.in()` trips the wireIn model above and this fails. */
+  it('resolves an existing line whose code carries an inch mark (") — docs/bugs/0780', async () => {
+    const INCH = 'DUNLOPILLO GENERASI 5" MATT (SS)';
+    const sb = makeSb([
+      ...CATALOGUE, product(INCH, 'MATTRESS'),
+      soLine('l1', 'SO-1', INCH), soLine('l2', 'SO-1', 'BED-A'),
+    ]);
+    expect(verdict(await amendmentMixRefusal(
+      sb, 'SO-1', [amd({ changeType: 'ADD', newItemCode: 'SVC-DELIVERY' })], 1,
+    ))).toBe('allowed');
   });
 });

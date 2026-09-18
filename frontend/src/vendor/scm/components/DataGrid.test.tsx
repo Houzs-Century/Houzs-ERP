@@ -2,6 +2,7 @@ import { useState } from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { DataGrid, type DataGridColumn } from "./DataGrid";
+import { resetDataGridFilterMemory } from "./dataGridFilterStorage";
 
 const rowTexts = (container: HTMLElement): string[] =>
   [...container.querySelectorAll("tr[data-vrow]")].map((tr) => tr.textContent ?? "");
@@ -17,6 +18,7 @@ const columns: DataGridColumn<Row>[] = [
 
 afterEach(() => {
   localStorage.clear();
+  resetDataGridFilterMemory();
   vi.restoreAllMocks();
 });
 
@@ -31,6 +33,50 @@ describe("DataGrid search scope", () => {
       />,
     );
     expect(screen.getByText("Searches 2 loaded rows only")).toBeTruthy();
+  });
+});
+
+describe("DataGrid selectable — where the tick lives (owner 2026-09-03)", () => {
+  const drawSelectable = (checkboxOnly: boolean, onRowDoubleClick?: (r: Row) => void) => {
+    const toggles: string[] = [];
+    const Host = () => {
+      const [sel, setSel] = useState<Set<string>>(new Set());
+      return (
+        <DataGrid
+          rows={rows}
+          columns={columns}
+          storageKey={`select-${checkboxOnly ? "box" : "row"}`}
+          rowKey={(r) => r.id}
+          onRowDoubleClick={onRowDoubleClick}
+          selectable={{
+            selectedKeys: sel,
+            onToggle: (k) => { toggles.push(k); setSel((p) => { const n = new Set(p); if (n.has(k)) n.delete(k); else n.add(k); return n; }); },
+            onToggleAll: () => {},
+            checkboxOnly: checkboxOnly || undefined,
+          }}
+        />
+      );
+    };
+    const view = render(<Host />);
+    return { toggles, view };
+  };
+
+  test("default keeps the Commander rule — a row click IS a tick", () => {
+    const { toggles } = drawSelectable(false);
+    fireEvent.click(screen.getByText("Alpha"));
+    expect(toggles).toEqual(["1"]);
+  });
+
+  test("checkboxOnly: the row click ticks NOTHING; only the checkbox cell does, and double-click still opens", () => {
+    const opened: string[] = [];
+    const { toggles } = drawSelectable(true, (r) => opened.push(r.id));
+    fireEvent.click(screen.getByText("Alpha"));
+    expect(toggles).toEqual([]);
+    const boxes = screen.getAllByLabelText("Select row");
+    fireEvent.click(boxes[0]!);
+    expect(toggles).toEqual(["1"]);
+    fireEvent.doubleClick(screen.getByText("Alpha"));
+    expect(opened).toEqual(["1"]);
   });
 });
 

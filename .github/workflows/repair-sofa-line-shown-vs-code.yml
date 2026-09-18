@@ -1,0 +1,93 @@
+name: Every column must state the piece the code states
+
+# Manual. A sofa line states its piece in more columns than one, and every one of
+# them is read by somebody: the printed name (`description ?? material_name`,
+# which the sales-order and GRN PDFs print beside the code) and the SUPPLIER's
+# own code, `supplier_sku` — the PO PDF's "Supplier Code" column, which the
+# document itself labels as the code they act on. A line whose code was
+# corrected while a sibling column kept the old piece therefore prints, or
+# ORDERS, a different sofa.
+#
+# Broadened 2026-09-11 (owner: 「你查看一下全套系统，看有没有类似的问题，都要同一时间解决掉」) from
+# 4 line tables and one column per row to ALL 14 printed line tables and EVERY
+# column on them that can state a piece — the purchase invoice had no arm at all,
+# and `supplier_sku` had never been swept anywhere. docs/bugs/0822.
+#
+# It rewrites ONLY the piece token, and only where a column states a DIFFERENT
+# piece. A column that states no piece is the supplier's own product name
+# ("HOK SOFA - 5536") and is left exactly as it is — on a purchase document that
+# is what belongs there.
+#
+# Text only: no code, no quantity, no money, no stock. MODE=plan unless told
+# otherwise; apply needs the confirm phrase and re-reads every row it wrote on a
+# FRESH connection.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      company:
+        description: "company_id"
+        required: false
+        default: "1"
+        type: string
+      mode:
+        description: "plan or apply"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: 'type exactly: NAME THE PIECE THE CODE STATES (only needed for apply)'
+        required: false
+        default: ""
+        type: string
+      docs:
+        description: "Only these document numbers, comma separated (blank = every document)"
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: repair-sofa-line-shown-vs-code-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/repair-sofa-line-shown-vs-code.mjs
+        env:
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY_ID: ${{ inputs.company }}
+          DOCS: ${{ inputs.docs }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/repair-sofa-line-shown-vs-code.mjs
+        env:
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY_ID: ${{ inputs.company }}
+          DOCS: ${{ inputs.docs }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

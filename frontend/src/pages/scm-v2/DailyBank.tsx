@@ -130,7 +130,9 @@ export const DailyBank = () => {
             <div style={{ fontSize: 'var(--fs-24, 24px)', fontWeight: 700 }}>{fmt(totals.totalTransitSen)}</div>
           </div>
           <div>
-            <div className={styles.subtitle}>Awaiting approval</div>
+            {/* Checked vouchers awaiting the second yes — daily bank 的
+                pending 就是第一层的checked (owner, 2026-09-02). */}
+            <div className={styles.subtitle}>Checked, awaiting approval</div>
             <div style={{ fontSize: 'var(--fs-24, 24px)', fontWeight: 700 }}>{fmt(totals.pendingApprovalSen)}</div>
           </div>
         </section>
@@ -225,7 +227,7 @@ const drawBoard = (b: DailyBankBoard): HTMLCanvasElement => {
   nl(1.5);
   text(`Can actually move: ${fmtSen(b.availableSen)}`, P, { bold: true, size: 17, color: '#2F5D4F' });
   nl();
-  text(`In transit (not yet remitted): ${fmtSen(b.totalTransitSen)}   ·   Awaiting approval: ${fmtSen(b.pendingApprovalSen)}`, P, { size: 13, color: '#555' });
+  text(`In transit (not yet remitted): ${fmtSen(b.totalTransitSen)}   ·   Checked, awaiting approval: ${fmtSen(b.pendingApprovalSen)}`, P, { size: 13, color: '#555' });
   nl(1.5);
 
   for (const bl of b.blocks) {

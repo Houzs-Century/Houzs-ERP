@@ -228,3 +228,14 @@ export const pricingRange = (min: number | null, max?: number | null): string =>
   if (max === null || max === undefined || max === min) return `from RM ${fmtMoney(min)}`;
   return `RM ${fmtMoney(min)} – ${fmtMoney(max)}`;
 };
+
+/** Money on a statement (docs/bugs/0910): a negative figure in parentheses,
+    "(RM 1,139.19)" — never a minus sign after the RM. Expenses and costs are
+    shown as the positive figures they are; only a period whose credits beat
+    its debits (a reversal) turns a line negative, and that is what the
+    parentheses mean. A loss is a negative net and reads the same way. */
+export const fmtSenParen = (centi: number | null | undefined): string => {
+  const n = Number(centi);
+  if (centi == null || !Number.isFinite(n)) return '—';
+  return n < 0 ? `(${fmtSen(-n)})` : fmtSen(n);
+};

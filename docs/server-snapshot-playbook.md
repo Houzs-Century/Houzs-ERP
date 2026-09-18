@@ -84,7 +84,7 @@ Mandatory guardrails (each maps to a HOOKKA incident — do NOT skip):
 ---
 
 ## Related client-side backlog (always-worth-it, being cleared separately)
-See `docs/hookka-technique-parity.md` Bucket C. Remaining real gaps after
+From the Hookka technique-parity review, Bucket C (removed 2026-09-15, in git history). Remaining real gaps after
 verification: SW cache keyed to build id (auto), weak-net asset pre-cache, FE RUM /
 slow-fetch timing, verified-save readback, wider localStorage-snapshot whitelist
 (needs the non-SCM pages on stable query keys first), more trgm indexes.

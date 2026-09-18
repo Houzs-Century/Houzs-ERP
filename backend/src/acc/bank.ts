@@ -17,6 +17,8 @@
 import type { BankColumnMap, BankParseConfig } from './bank-parse';
 import type { BankRecognitionRule, PayableBatch, PayoutAdviceForMatch } from './bank-match';
 import type { LedgerMovement } from './bank-reconcile';
+import { lockMonthOf, monthAsDate, monthFromDate, type MonthLock } from './bank-lock';
+import { isReversalPair } from './reversal-pairs';
 
 export type BankStatementConfig = {
   id: number;
@@ -110,7 +112,7 @@ export async function loadRecognitionRules(
 export async function loadPayableBatches(
   sb: any, companyId: number,
 ): Promise<{ ok: true; batches: PayableBatch[] } | Fail> {
-  const [batchRes, rowRes, recRes] = await Promise.all([
+  const [batchRes, rowRes, recRes, chargeRes] = await Promise.all([
     sb.from('acc_settlement_batches')
       .select('id, acquirer_code, file_name, period_from, period_to, net_sen, stated_net_sen')
       .eq('company_id', companyId),
@@ -118,10 +120,18 @@ export async function loadPayableBatches(
       .select('batch_id, confirmed_at, bucket').eq('company_id', companyId),
     sb.from('acc_settlement_receipts')
       .select('batch_id, amount_sen').eq('company_id', companyId),
+    /* What the bank KEPT off a payout and Finance booked as a charge
+       (docs/bugs/0787) is settled the same way a credit is — the report is
+       owed its net less it. Read here too (docs/bugs/0812): the bank side was
+       still asking for the full net, so an advice that rightly said less was
+       distrusted and the credit matched nothing. */
+    sb.from('acc_settlement_payout_batches')
+      .select('batch_id, charge_sen').eq('company_id', companyId),
   ]);
   if (batchRes.error) return { ok: false, reason: batchRes.error.message };
   if (rowRes.error) return { ok: false, reason: rowRes.error.message };
   if (recRes.error) return { ok: false, reason: recRes.error.message };
+  if (chargeRes.error) return { ok: false, reason: chargeRes.error.message };
 
   const openByBatch = new Map<number, number>();
   for (const r of (rowRes.data ?? []) as Array<Record<string, any>>) {
@@ -134,14 +144,20 @@ export async function loadPayableBatches(
     const id = Number(r.batch_id);
     receivedByBatch.set(id, (receivedByBatch.get(id) ?? 0) + Number(r.amount_sen ?? 0));
   }
+  const chargedByBatch = new Map<number, number>();
+  for (const r of (chargeRes.data ?? []) as Array<{ batch_id: number | null; charge_sen: number | null }>) {
+    if (r.batch_id == null) continue;
+    const id = Number(r.batch_id);
+    chargedByBatch.set(id, (chargedByBatch.get(id) ?? 0) + Number(r.charge_sen ?? 0));
+  }
 
   const batches: PayableBatch[] = [];
   for (const b of (batchRes.data ?? []) as Array<Record<string, any>>) {
     const id = Number(b.id);
     if ((openByBatch.get(id) ?? 0) > 0) continue;             // not reconciled yet
     const payableSen = Number(b.stated_net_sen ?? b.net_sen ?? 0);
-    const outstandingSen = payableSen - (receivedByBatch.get(id) ?? 0);
-    if (outstandingSen === 0) continue;                        // already in the bank
+    const outstandingSen = payableSen - (receivedByBatch.get(id) ?? 0) - (chargedByBatch.get(id) ?? 0);
+    if (outstandingSen === 0) continue;                        // already in the bank, or kept by it
     batches.push({
       id,
       acquirerCode: String(b.acquirer_code),
@@ -207,16 +223,15 @@ export async function loadPayoutAdvices(
  * through, so the reconciliation cannot disagree with the general ledger — it
  * is reading the same rows.
  *
- * Reversed entries are KEPT (migration 0290, owner decision 2026-08-13: show
- * both entries and let them net). A reversal and its original sum to zero, so
- * the balance is right and the audit trail survives — which is what a
- * reconciliation needs, since the bank statement will show neither.
+ * A reversed entry and its contra are left out together — the same predicate
+ * every statement reads (acc/reversal-pairs.ts, docs/bugs/0923): they net to
+ * nothing and the bank statement will show neither.
  */
 export async function loadAccountLedger(
   sb: any, companyId: number, accountCode: string, upTo: string,
 ): Promise<{ ok: true; movements: LedgerMovement[] } | Fail> {
   const { data, error } = await sb.from('v_gl_entries')
-    .select('je_no, entry_date, source_type, source_doc_no, debit_sen, credit_sen, notes')
+    .select('je_no, entry_date, source_type, source_doc_no, debit_sen, credit_sen, notes, party_name, reversed, reversed_by_je')
     .eq('company_id', companyId)
     .eq('account_code', accountCode)
     .lte('entry_date', upTo);
@@ -227,6 +242,11 @@ export async function loadAccountLedger(
      entries. Summed rather than deduplicated, so nothing is lost either way. */
   const byJe = new Map<string, LedgerMovement>();
   for (const r of (data ?? []) as Array<Record<string, any>>) {
+    /* A REVERSED entry and the contra that undid it are one correction, not
+       two bank movements: they net to nothing and no statement will ever show
+       either. Both sides carry reversed_by_je; neither is the bank's business
+       (docs/bugs/0802 — they were being listed, and offered, as two entries). */
+    if (isReversalPair(r)) continue;
     const jeNo = String(r.je_no ?? '');
     const at = byJe.get(jeNo);
     if (at) {
@@ -241,8 +261,150 @@ export async function loadAccountLedger(
         debitSen: Number(r.debit_sen ?? 0),
         creditSen: Number(r.credit_sen ?? 0),
         notes: r.notes ?? null,
+        partyName: (r.party_name as string | null | undefined) ?? null,
       });
     }
   }
   return { ok: true, movements: [...byJe.values()].sort((a, b) => a.entryDate.localeCompare(b.entryDate)) };
+}
+
+/**
+ * The entry numbers a line's posted_je_no names. A split payout writes one
+ * receipt per report and stores them as "A, B" (docs/bugs/0809) — read as one
+ * number, neither was found, and a split's receipts sat in "in the books, not
+ * on the bank" while the bank counted the movement as posted.
+ */
+export const jeNosOf = (value: unknown): string[] =>
+  String(value ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+
+/**
+ * What the account's OTHER statements have claimed, for the carried list
+ * (docs/bugs/0802): every je_no a POSTED line of any statement of this account
+ * points at (its own posted_je_no, or a match row on a POSTED line), except the
+ * statement being looked at — plus the day the first statement ever filed for
+ * the account begins, before which nothing was reconciled here and so nothing
+ * is "still waiting". Fails closed: a read that fails is a refusal.
+ */
+export async function loadClaimedElsewhere(
+  sb: Parameters<typeof loadAccountLedger>[0], companyId: number, accountCode: string, exceptStatementId: number | null,
+): Promise<{ ok: true; claimed: Set<string>; firstPeriodFrom: string | null } | Fail> {
+  const { data: stmts, error: sErr } = await sb.from('acc_bank_statements')
+    .select('id, period_from').eq('company_id', companyId).eq('account_code', accountCode);
+  if (sErr) return { ok: false, reason: sErr.message };
+  const all = (stmts ?? []) as Array<{ id: number; period_from: string | null }>;
+  const firstPeriodFrom = all.map((s) => String(s.period_from ?? '').slice(0, 10)).filter(Boolean).sort()[0] ?? null;
+  const ids = all.map((s) => Number(s.id)).filter((id) => id !== exceptStatementId);
+  const claimed = new Set<string>();
+  if (ids.length === 0) return { ok: true, claimed, firstPeriodFrom };
+
+  const { data: lines, error: lErr } = await sb.from('acc_bank_statement_lines')
+    .select('id, posted_je_no, state').eq('company_id', companyId).in('statement_id', ids).eq('state', 'POSTED');
+  if (lErr) return { ok: false, reason: lErr.message };
+  const posted = (lines ?? []) as Array<{ id: number; posted_je_no: string | null }>;
+  for (const l of posted) for (const je of jeNosOf(l.posted_je_no)) claimed.add(je);
+
+  const postedIds = posted.map((l) => Number(l.id));
+  if (postedIds.length > 0) {
+    const { data: matches, error: mErr } = await sb.from('acc_bank_statement_matches')
+      .select('bank_line_id, je_no').eq('company_id', companyId).in('bank_line_id', postedIds);
+    if (mErr) return { ok: false, reason: mErr.message };
+    for (const m of (matches ?? []) as Array<{ je_no: string }>) claimed.add(String(m.je_no));
+  }
+  return { ok: true, claimed, firstPeriodFrom };
+}
+
+/** Everything the reconciliation should treat as already claimed: what other
+    statements claimed, and every ledger entry older than the first statement
+    ever filed for the account. */
+export const claimedSetFor = (
+  elsewhere: { claimed: Set<string>; firstPeriodFrom: string | null },
+  ledger: Array<{ jeNo: string; entryDate: string }>,
+): Set<string> => {
+  const out = new Set(elsewhere.claimed);
+  if (elsewhere.firstPeriodFrom) {
+    for (const l of ledger) if (l.entryDate < elsewhere.firstPeriodFrom) out.add(l.jeNo);
+  }
+  return out;
+};
+
+/**
+ * The LIVE lock on one month of one account, or null.
+ *
+ * Lives here rather than beside the lock routes because it is a read, and
+ * because every guarded write in layer 4 has to make it — a guard that imported
+ * from a route module would put a cycle between the two files that need it most
+ * (owner, 2026-09-08: 还有lock 起来不可以随便碰).
+ *
+ * A released lock is NOT live: the row stays for ever as the record that the
+ * month was closed and reopened, and only `released_at IS NULL` stops a write.
+ */
+export async function loadLiveMonthLock(
+  sb: any, companyId: number, accountCode: string, month: string,
+): Promise<{ ok: true; lock: MonthLock | null } | Fail> {
+  const { data, error } = await sb.from('acc_bank_month_locks')
+    .select('account_code, period_month, locked_by, locked_at, lock_note,'
+      + ' closing_statement_sen, closing_ledger_sen, difference_sen, statement_count, was_complete')
+    .eq('company_id', companyId)
+    .eq('account_code', accountCode)
+    .eq('period_month', monthAsDate(month))
+    .is('released_at', null)
+    .maybeSingle();
+  if (error) return { ok: false, reason: error.message };
+  if (!data) return { ok: true, lock: null };
+  const r = data as Record<string, any>;
+  return {
+    ok: true,
+    lock: {
+      accountCode: String(r.account_code),
+      month: monthFromDate(String(r.period_month ?? '')),
+      lockedBy: r.locked_by == null ? null : String(r.locked_by),
+      lockedAt: String(r.locked_at ?? ''),
+      lockNote: r.lock_note == null ? null : String(r.lock_note),
+      closingStatementSen: r.closing_statement_sen == null ? null : Number(r.closing_statement_sen),
+      closingLedgerSen: r.closing_ledger_sen == null ? null : Number(r.closing_ledger_sen),
+      differenceSen: r.difference_sen == null ? null : Number(r.difference_sen),
+      statementCount: Number(r.statement_count ?? 0),
+      wasComplete: r.was_complete === true,
+    },
+  };
+}
+
+/**
+ * Which bank account a statement line belongs to, and the month its own date
+ * puts it in — the two things a guard needs before it can ask about a lock.
+ *
+ * TWO PLAIN READS, not one read with an embed. `select('…, acc_bank_statements
+ * !inner(account_code)')` would do it in one trip and was the first shape here;
+ * it is wrong twice over. PostgREST returns an embedded row as an object or a
+ * one-element array depending on how it read the relationship, so the caller
+ * has to guess — and a guard that guesses wrong does not fail loudly, it
+ * silently decides the line has no account and lets a locked month through or
+ * refuses an open one. The fake client the route tests run on models no embeds
+ * at all, which means the guard would have been exercised by nothing.
+ *
+ * Two reads that both work everywhere beat one that is only tested in
+ * production.
+ */
+export async function loadLineMonth(
+  sb: any, companyId: number, lineId: number,
+): Promise<{ ok: true; found: false } | { ok: true; found: true; accountCode: string; month: string } | Fail> {
+  const { data: lineRow, error } = await sb.from('acc_bank_statement_lines')
+    .select('booked_on, statement_id')
+    .eq('id', lineId).eq('company_id', companyId).maybeSingle();
+  if (error) return { ok: false, reason: error.message };
+  if (!lineRow) return { ok: true, found: false };
+  const line = lineRow as Record<string, any>;
+
+  const { data: stmtRow, error: sErr } = await sb.from('acc_bank_statements')
+    .select('account_code')
+    .eq('id', Number(line.statement_id)).eq('company_id', companyId).maybeSingle();
+  if (sErr) return { ok: false, reason: sErr.message };
+  const accountCode = stmtRow == null ? '' : String((stmtRow as Record<string, any>).account_code ?? '');
+  /* A line whose statement cannot be found is not a line this guard can clear.
+     Saying so is a refusal the operator can act on; assuming "not locked" is
+     the failure this whole function exists to prevent. */
+  if (!accountCode) {
+    return { ok: false, reason: `bank line ${lineId} has no statement to check a lock against` };
+  }
+  return { ok: true, found: true, accountCode, month: lockMonthOf(String(line.booked_on).slice(0, 10)) };
 }

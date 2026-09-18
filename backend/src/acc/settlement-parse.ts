@@ -18,6 +18,8 @@
 // the config says the acquirer sends) rather than mis-parsed as text.
 // ----------------------------------------------------------------------------
 
+import { fmtSen } from '../scm/shared/format';
+
 export type StatementColumnMap = {
   date?: string;
   ref?: string;
@@ -352,7 +354,7 @@ export function parseStatement(cfg: ParseConfig, text: string): ParseResult {
         if (statedNet != null && statedNet !== netSen) {
           return {
             ok: false,
-            reason: `Line ${i + 1}: ${(grossSen / 100).toFixed(2)} less the fee ${(feeSen / 100).toFixed(2)} is ${(netSen / 100).toFixed(2)}, but the file says ${(statedNet / 100).toFixed(2)}. That fee heading is probably a rate, not an amount — set ${cfg.code} to "gross minus net".`,
+            reason: `Line ${i + 1}: ${fmtSen(grossSen)} less the fee ${fmtSen(feeSen)} is ${fmtSen(netSen)}, but the file says ${fmtSen(statedNet)}. That fee heading is probably a rate, not an amount — set ${cfg.code} to "gross minus net".`,
           };
         }
       }
@@ -362,7 +364,7 @@ export function parseStatement(cfg: ParseConfig, text: string): ParseResult {
       netSen = n;
       feeSen = Math.abs(grossSen) - Math.abs(n);
       if (feeSen < 0) {
-        return { ok: false, reason: `Line ${i + 1}: the net (${(n / 100).toFixed(2)}) is larger than the gross (${(grossSen / 100).toFixed(2)}) — that is not a fee, so the file is not being read the way ${cfg.code} wrote it.` };
+        return { ok: false, reason: `Line ${i + 1}: the net (${fmtSen(n)}) is larger than the gross (${fmtSen(grossSen)}) — that is not a fee, so the file is not being read the way ${cfg.code} wrote it.` };
       }
     }
 

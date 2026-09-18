@@ -91,7 +91,7 @@ export function isEntityType(v: unknown): v is EntityType {
    decider's. They answer "who asked for this money, who said yes/no, and when" —
    the question the 决定 trail exists for. A REJECT row carries the why as a
    field change (rejection_note), where the submitter reads it. */
-export const AUDIT_ACTIONS = ['CREATE', 'UPDATE', 'POST', 'CANCEL', 'REVERSE', 'DELETE', 'SEND', 'AMENDMENT_PO_APPROVED', 'RECOUNT_FAILED', 'BIND_SHADOW', 'SUBMIT_FOR_APPROVAL', 'WITHDRAW_FROM_APPROVAL', 'APPROVE', 'REJECT'] as const;
+export const AUDIT_ACTIONS = ['CREATE', 'UPDATE', 'POST', 'CANCEL', 'REVERSE', 'DELETE', 'SEND', 'AMENDMENT_PO_APPROVED', 'RECOUNT_FAILED', 'BIND_SHADOW', 'SUBMIT_FOR_APPROVAL', 'WITHDRAW_FROM_APPROVAL', 'CHECK', 'APPROVE', 'REJECT'] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 
 /* The Houzs caller, as middleware/auth.ts stashes it. Deliberately structural:

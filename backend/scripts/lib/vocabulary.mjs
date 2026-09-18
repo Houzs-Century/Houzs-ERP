@@ -135,7 +135,16 @@ export const VOCABULARY = [
     alsoCanonical: [],
     retired: ["material_code", "product_code"],
     declaredIn: "backend/src/scm/routes/mfg-products.ts",
-    allow: ["scripts/lib/vocabulary.mjs", "scripts/lib/drift-catalogue.mjs"],
+    allow: [
+      "scripts/lib/vocabulary.mjs",
+      "scripts/lib/drift-catalogue.mjs",
+      /* The SKU rename's census of every code-bearing column on production must
+         NAME the dead `public`-schema copies that still carry the old spellings
+         (docs/modules/product-code-rename.md) — it records them as keeping
+         their value, it does not use them. */
+      "src/scm/lib/product-code-rename.ts",
+      "scripts/probe-product-code-columns.mjs",
+    ],
     note:
       "The SKU reference on a line item. AutoCount (the system of record) calls it " +
       "ItemCode, so item_code is canonical; material_code (purchasing) and product_code " +

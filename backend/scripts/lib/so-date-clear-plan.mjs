@@ -1,0 +1,212 @@
+// ---------------------------------------------------------------------------
+// so-date-clear-plan — clearing an SO's Processing Date and Delivery Date, as a
+// PLAN and a SHAPE ASSERTION. Pure: rows in, a verdict out. No filesystem, no
+// database; the caller owns the I/O and the write.
+//
+// ── WHY THE SHAPE AND NOT A ROW COUNT ──────────────────────────────────────
+// The owner asked for two dates to be removed from HC-SO-013495 and for
+// NOTHING ELSE on that order to move. "1 row updated" is true of a write that
+// also moved the status, re-derived the deposit or dropped a line, which is
+// exactly the class of report that turned 7 production rows from one unreadable
+// shape into another on 2026-08-13. So the check here is: these three columns
+// changed, in this direction, and every other column of the header AND of every
+// line came back byte-identical.
+//
+// ── WHICH COLUMNS, AND WHY THESE ───────────────────────────────────────────
+// `processing_date` is THE name (migration 0286 renamed internal_expected_dd;
+// `proceeded_at` is a retired twin). Naming a dead column is 42703 and 42703
+// fails the WHOLE statement, so a run that reports "0 defects" after touching
+// one is reporting nothing at all — hence the test that pins the spelling.
+//
+// `customer_delivery_date` is the HEADER's delivery date — the customer's
+// original promise, the column `soDatePairCascadeColumns` names when a
+// Processing Date clear cascades, and the column `apply_so_header_cas` writes
+// through `p_delivery_date`. Not `amended_delivery_date` (a reschedule
+// Logistics confirmed) and not `line_delivery_date` (the per-line mirror).
+//
+// `version` is the third, and it is not bookkeeping noise. It is the optimistic
+// concurrency token: leaving it alone would let a browser that loaded this
+// order BEFORE the clear save its stale form afterwards and put both dates
+// straight back, silently. The route bumps it by one on every header write and
+// so does this.
+//
+// ── AND THE LINE MIRROR, WHICH IS NOT A LINE EDIT ──────────────────────────
+// `line_delivery_date` is a MIRROR of the header date whenever
+// `line_delivery_date_overridden` is false: migration 0172's
+// apply_so_header_followers writes exactly that pair, and 0330's
+// apply_so_header_cas still does — `p_apply_delivery_date` sets
+// `line_delivery_date = p_delivery_date, line_delivery_date_overridden = false`
+// on every line of the document. So clearing the header delivery date through
+// the app ALREADY clears the mirror; it is one fact stored twice, not a second
+// decision.
+//
+// Leaving it behind would be a HALF clear, and a visible one. effectiveSoDelivery
+// falls through to `line_delivery_date` as a LAST RESORT, override flag or not
+// (step 4), so an order with a null header date and a live mirror still reads as
+// dated demand to MRP, the stock allocator, PO coverage and the delivery board —
+// the very surfaces the clear exists to remove it from. Measured on prod
+// 2026-09-09 (probe run 34315803944): HC-SO-013495's sofa line carries
+// line_delivery_date 2026-10-10 with overridden=false while its header says
+// 2026-09-08, so the mirror is not even in step with the header it mirrors.
+//
+// This module touches NOTHING else: no status, no payment column, no item code,
+// no quantity, no money. verifyCleared REFUSES if any of them moved.
+// ---------------------------------------------------------------------------
+import { createHash } from "node:crypto";
+
+/** The header columns this lane sets, and the value each is set to. */
+export const HEADER_CLEARS = Object.freeze({
+  processing_date: null,
+  customer_delivery_date: null,
+});
+
+/** The line mirror, exactly as apply_so_header_cas writes it. */
+export const LINE_CLEARS = Object.freeze({
+  line_delivery_date: null,
+  line_delivery_date_overridden: false,
+});
+
+/** Every header column allowed to differ between before and after. Anything
+ *  else that moved is a defect, whatever the row count says. */
+export const HEADER_CHANGED_COLUMNS = Object.freeze([
+  "processing_date",
+  "customer_delivery_date",
+  "version",
+]);
+
+/** Line columns allowed to differ. */
+export const LINE_CHANGED_COLUMNS = Object.freeze(Object.keys(LINE_CLEARS));
+
+/* One canonical string per value, so a column that did not change cannot read
+   as changed because the two reads used different clients.
+
+   THIS IS THE docs/bugs/0636 LESSON. A stored DATE arrives as '2026-09-07'
+   over PostgREST and as a JS Date over postgres.js, and `String(aDate)` is
+   'Mon Sep 07 2026 …' — nothing like the string form. The planning read and
+   the verifying read deliberately use DIFFERENT connections, so without this
+   every date column on the row would read as a change and the verify would
+   refuse a correct write. null and the four-character string 'null' must stay
+   distinguishable, which is why null gets a sentinel rather than String(). */
+const canon = (v) => {
+  if (v === null || v === undefined) return "\0NULL";
+  if (v instanceof Date) return Number.isNaN(v.getTime()) ? "\0BADDATE" : v.toISOString();
+  if (typeof v === "object") return `\0JSON:${JSON.stringify(v)}`;
+  if (typeof v === "boolean") return `\0BOOL:${v}`;
+  if (typeof v === "number") return `\0NUM:${v}`;
+  const s = String(v);
+  /* A timestamp written as a string and the same instant as a Date must agree.
+     'YYYY-MM-DD' is widened to the ISO midnight the Date branch produces. */
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return new Date(`${s}T00:00:00.000Z`).toISOString();
+  if (/^\d{4}-\d{2}-\d{2}[T ]/.test(s)) {
+    const d = new Date(s.replace(" ", "T"));
+    if (!Number.isNaN(d.getTime())) return d.toISOString();
+  }
+  return s;
+};
+
+/**
+ * A stable fingerprint of a row, skipping the columns this write is allowed to
+ * change. Committed in the plan and re-computed at apply: if the order moved
+ * under us between planning and applying, the digests disagree and the apply
+ * refuses rather than writing against a row nobody reviewed.
+ */
+export function stableDigest(row, skip = []) {
+  const s = new Set(skip);
+  const parts = Object.keys(row ?? {}).sort()
+    .filter((k) => !s.has(k))
+    .map((k) => `${k}=${canon(row[k])}`);
+  return createHash("sha256").update(parts.join("\n")).digest("hex");
+}
+
+/**
+ * What this write will do to ONE named order, or why it will not.
+ *
+ * @returns {{refusal: string|null, digest: string|null,
+ *            headerSets: object|null, lineIds: string[], alreadyClear: boolean}}
+ */
+export function planClear({ docNo, companyId, header, lines }) {
+  const none = { digest: null, headerSets: null, lineIds: [], alreadyClear: false };
+  if (!header) return { refusal: `not found: ${docNo}`, ...none };
+  if (String(header.doc_no) !== String(docNo)) {
+    return { refusal: `doc_no mismatch: asked for ${docNo}, row says ${header.doc_no}`, ...none };
+  }
+  if (Number(header.company_id) !== Number(companyId)) {
+    return { refusal: `company mismatch: asked for company ${companyId}, row says ${header.company_id}`, ...none };
+  }
+
+  const rows = Array.isArray(lines) ? lines : [];
+  const alreadyClear =
+    header.processing_date == null &&
+    header.customer_delivery_date == null &&
+    rows.every((l) => l.line_delivery_date == null && l.line_delivery_date_overridden === false);
+
+  return {
+    refusal: null,
+    digest: stableDigest(header, HEADER_CHANGED_COLUMNS),
+    headerSets: { ...HEADER_CLEARS, version: Number(header.version) + 1 },
+    lineIds: rows.map((l) => l.id),
+    alreadyClear,
+  };
+}
+
+/**
+ * Did the write leave EXACTLY the intended shape? Every problem is reported,
+ * not just the first, so one run says everything that is wrong.
+ */
+export function verifyCleared({ before, after, beforeLines, afterLines }) {
+  const problems = [];
+  if (!before) problems.push("no before-row was recorded, so nothing can be compared");
+  if (!after) problems.push("the order did not come back on the verifying connection");
+  if (!before || !after) return { ok: false, problems };
+
+  /* 1. The two dates are gone. */
+  for (const [col, want] of Object.entries(HEADER_CLEARS)) {
+    if (canon(after[col]) !== canon(want)) {
+      problems.push(`${col} should be ${want === null ? "NULL" : want} and is ${JSON.stringify(after[col])}`);
+    }
+  }
+
+  /* 2. The concurrency token moved by exactly one. Not at all, and a stale form
+        can put the dates back; by two, and something else wrote as well. */
+  const bumped = Number(after.version) - Number(before.version);
+  if (bumped !== 1) {
+    problems.push(`version should have bumped by exactly 1, went ${before.version} -> ${after.version}`);
+  }
+
+  /* 3. NOTHING ELSE on the header. */
+  const skip = new Set(HEADER_CHANGED_COLUMNS);
+  for (const col of new Set([...Object.keys(before), ...Object.keys(after)])) {
+    if (skip.has(col)) continue;
+    if (canon(before[col]) !== canon(after[col])) {
+      problems.push(`${col} changed and must not have: ${JSON.stringify(before[col])} -> ${JSON.stringify(after[col])}`);
+    }
+  }
+
+  /* 4. The lines: same rows, same everything, minus the mirror. */
+  const bl = Array.isArray(beforeLines) ? beforeLines : [];
+  const al = Array.isArray(afterLines) ? afterLines : [];
+  if (bl.length !== al.length) {
+    problems.push(`line count changed: ${bl.length} before, ${al.length} after`);
+  }
+  const byId = new Map(al.map((l) => [String(l.id), l]));
+  for (const b of bl) {
+    const a = byId.get(String(b.id));
+    if (!a) { problems.push(`line ${b.id} is missing after the write`); continue; }
+    byId.delete(String(b.id));
+    for (const [col, want] of Object.entries(LINE_CLEARS)) {
+      if (canon(a[col]) !== canon(want)) {
+        problems.push(`line ${b.id}: ${col} should be ${want === null ? "NULL" : want} and is ${JSON.stringify(a[col])}`);
+      }
+    }
+    const lskip = new Set(LINE_CHANGED_COLUMNS);
+    for (const col of new Set([...Object.keys(b), ...Object.keys(a)])) {
+      if (lskip.has(col)) continue;
+      if (canon(b[col]) !== canon(a[col])) {
+        problems.push(`line ${b.id}: ${col} changed and must not have: ${JSON.stringify(b[col])} -> ${JSON.stringify(a[col])}`);
+      }
+    }
+  }
+  for (const leftover of byId.keys()) problems.push(`line ${leftover} appeared and was not there before`);
+
+  return { ok: problems.length === 0, problems };
+}

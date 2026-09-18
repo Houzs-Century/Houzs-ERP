@@ -12,6 +12,7 @@ import {
   LayoutGrid,
   Table as TableIcon,
   X as XIcon,
+  Pencil,
 } from "lucide-react";
 import { PageHeader } from "../../components/Layout";
 import { StatCard } from "../../components/StatCard";
@@ -31,6 +32,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
 import { fmtDate } from "../../vendor/shared/format";
 import { warehouseLabel } from "../../vendor/scm/lib/warehouse-label";
+import { withStatusLabels } from "../../vendor/scm/lib/status-pill";
 import { stockTransferRowMenu } from "./row-menus";
 
 type StatusTab = "all" | "posted" | "cancelled";
@@ -42,13 +44,19 @@ const fromWarehouseOf = (r: StockTransferRow): string =>
 const toWarehouseOf = (r: StockTransferRow): string =>
   warehouseLabel(r.to_warehouse) || r.to_warehouse_id || "—";
 
-const STATUS_TONE: Record<
+/* The LABEL is NOT declared here. It comes from `vendor/scm/lib/status-pill.ts`,
+   the one canonical map — docs/modules/document-status-vocabulary.md §1. What
+   stays is what is genuinely this page's own: the tone palette (four names, not
+   status-pill's six) and the filter BUCKET. */
+const STATUS_OWN: Record<
   string,
-  { tone: "success" | "warning" | "error" | "neutral"; label: string; bucket: StatusTab }
+  { tone: "success" | "warning" | "error" | "neutral"; bucket: StatusTab }
 > = {
-  POSTED:    { tone: "success", label: "Confirmed", bucket: "posted" },
-  CANCELLED: { tone: "error",   label: "Cancelled", bucket: "cancelled" },
+  POSTED:    { tone: "success", bucket: "posted" },
+  CANCELLED: { tone: "error",   bucket: "cancelled" },
 };
+const STATUS_TONE = withStatusLabels("stockTransfer", STATUS_OWN);
+
 const statusFor = (s: string) =>
   STATUS_TONE[(s || "").toUpperCase()] ?? { tone: "neutral" as const, label: s || "—", bucket: "posted" as StatusTab };
 
@@ -203,6 +211,10 @@ export function StockTransfersListV2() {
      the PDF from a LIST row is not possible here anyway: the row carries the
      warehouse pair and a line COUNT, never the lines. */
   const goPrint = (r: StockTransferRow) => navigate(`/scm/stock-transfers/${r.id}?print=1`);
+  // Same ?edit=1 contract as ?print=1: the detail page opens straight into the
+  // notes-edit state (owner: an Edit entry reachable from the main list, not
+  // just from inside the detail page).
+  const goEdit = (r: StockTransferRow) => navigate(`/scm/stock-transfers/${r.id}?edit=1`);
   const doCancel = async (r: StockTransferRow) => {
     if (await askConfirm({
       title: `Cancel transfer ${r.transfer_no}?`,
@@ -288,6 +300,35 @@ export function StockTransfersListV2() {
         const st = statusFor(r.status);
         return <Badge tone={st.tone} size="xs">{st.label}</Badge>;
       },
+    },
+    {
+      key: "notes",
+      label: "Notes",
+      getValue: (r) => r.notes ?? "",
+      render: (r) => (
+        <span className="truncate text-[12.5px] text-ink-secondary" title={r.notes ?? undefined}>
+          {r.notes || "—"}
+        </span>
+      ),
+    },
+    {
+      key: "edit",
+      label: "",
+      width: "48px",
+      align: "right",
+      disableSort: true,
+      getValue: () => "",
+      render: (r) => (
+        <button
+          type="button"
+          aria-label={`Edit ${r.transfer_no}`}
+          title="Edit notes"
+          className="inline-flex items-center justify-center rounded p-1 text-ink-muted hover:bg-surface-hover hover:text-ink"
+          onClick={(e) => { e.stopPropagation(); goEdit(r); }}
+        >
+          <Pencil size={13} strokeWidth={1.75} />
+        </button>
+      ),
     },
     // Re-added from the legacy StockTransfers list (data already on the row).
     // Default-hidden so the chooser exposes it without changing the default view.

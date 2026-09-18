@@ -29,7 +29,11 @@
 //      equivalents), so a parent cannot be cancelled out from under a live child.
 //
 // A class flags when a route file in its MANIFEST no longer contains the guard
-// symbol. Absence = that document silently lost the guard.
+// symbol. Absence = that document silently lost the guard. "The route file" is
+// the router's FAMILY: the file plus every file a `register<Topic>Routes(router)`
+// / `mount<Name>Route(router, ...)` call in it comes from
+// (scripts/lib/router-family.mjs), so moving a handler out of the router file
+// cannot move its guard out of this check.
 //
 // WHAT IT IS NOT. It proves the guard SYMBOL is present and wired, not that the
 // chosen guard is semantically complete for that document — that is a judgement
@@ -40,12 +44,19 @@
 // belongs to, which forces the author to decide its guards rather than forget
 // them.
 // ----------------------------------------------------------------------------
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { expandRouterFamily } from './lib/router-family.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const ROUTES = join(HERE, '..', 'src', 'scm', 'routes');
+const BACKEND = join(HERE, '..');
+const ROUTES_KEY = 'src/scm/routes';
+/** A backend-relative POSIX key's text, or null. */
+const readBackendSource = (key) => {
+  const full = join(BACKEND, ...key.split('/'));
+  return existsSync(full) && statSync(full).isFile() ? readFileSync(full, 'utf8') : null;
+};
 
 /* ── CLASS 1: HEADER inherited-field lock ──────────────────────────────────
    Every transaction document whose HEADER edit must carry an inherited-field
@@ -57,7 +68,7 @@ const HEADER_MANIFEST = [
   { doc: 'Sales Order',                 file: 'mfg-sales-orders.ts',              symbols: ['changedIdentityLockCols', 'SO_IDENTITY_LOCK_COLS'] },
   { doc: 'Purchase Order',              file: 'mfg-purchase-orders.ts',           symbols: ['changedPoIdentityLockCols'] },
   { doc: 'Goods Received Note',         file: 'grns.ts',                          symbols: ['grnHeaderInheritedChanges'] },
-  { doc: 'Delivery Order',              file: 'delivery-orders-mfg.ts',           symbols: ['changedLockedCols', 'DO_IDENTITY_LOCK_COLS'] },
+  { doc: 'Delivery Order',              file: 'delivery-orders-mfg.ts',           symbols: ['doLockedHeaderChanges'] },
   { doc: 'Consignment Order',           file: 'consignment-orders.ts',            symbols: ['CO_IDENTITY_LOCK_COLS'] },
   { doc: 'Consignment Note',            file: 'consignment-notes.ts',             symbols: ['changedLockedCols', 'CN_IDENTITY_LOCK_COLS'] },
   { doc: 'Purchase-Consignment Order',  file: 'purchase-consignment-orders.ts',   symbols: ['changedLockedCols', 'PCO_IDENTITY_LOCK_COLS'] },
@@ -174,28 +185,50 @@ function selfTestClass(label, sampleSymbol) {
     throw new Error(`self-test [${label}]: detector fooled by a substring / renamed identifier (${sampleSymbol})`);
 }
 
+/* Self-test the FAMILY read, once: a guard that lives only in a file the router
+   reaches through a register call must be found, and one that lives only in a
+   file the router does NOT call must not. Without this, a family read that
+   stopped at the router file would look exactly like a clean run. */
+function selfTestFamily() {
+  const tree = {
+    'r/doc.ts': "import { registerCancelRoutes } from './doc/cancel';\nexport const doc = 1;\nregisterCancelRoutes(doc);\n",
+    'r/doc/cancel.ts': 'export function registerCancelRoutes(router) { if (docHasDownstream()) return; }\n',
+    'r/other.ts': 'export const x = otherHasDownstream();\n',
+  };
+  const { source, files } = expandRouterFamily('r/doc.ts', (key) => tree[key] ?? null);
+  if (files.join() !== 'r/doc.ts,r/doc/cancel.ts' || !fileHasSymbol(source, ['docHasDownstream'])) {
+    throw new Error('self-test [router family]: a guard in a register-function file was not read');
+  }
+  if (fileHasSymbol(source, ['otherHasDownstream'])) {
+    throw new Error('self-test [router family]: a file the router never calls was read');
+  }
+}
+
 function checkClass({ label, manifest, allowlist, sampleSymbol }) {
   selfTestClass(label, sampleSymbol);
   const missing = [];
   let checked = 0;
+  let filesRead = 0;
   for (const { doc, file, symbols } of manifest) {
-    const path = join(ROUTES, file);
-    if (!existsSync(path)) { missing.push({ doc, file, reason: 'route file not found' }); continue; }
+    const key = `${ROUTES_KEY}/${file}`;
+    if (readBackendSource(key) === null) { missing.push({ doc, file, reason: 'route file not found' }); continue; }
     if (allowlist.has(file)) { checked += 1; continue; }
-    const body = readFileSync(path, 'utf8');
+    const family = expandRouterFamily(key, readBackendSource);
     checked += 1;
-    if (!fileHasSymbol(body, symbols)) {
-      missing.push({ doc, file, reason: `guard absent — expected one of: ${symbols.join(', ')}` });
+    filesRead += family.files.length;
+    if (!fileHasSymbol(family.source, symbols)) {
+      missing.push({ doc, file, reason: `guard absent from ${family.files.join(' + ')} — expected one of: ${symbols.join(', ')}` });
     }
   }
-  return { checked, missing };
+  return { checked, filesRead, missing };
 }
 
 function main() {
+  selfTestFamily();
   let failed = false;
   for (const klass of CLASSES) {
-    const { checked, missing } = checkClass(klass);
-    console.log(`workflow-consistency [${klass.label}]: ${checked} transaction document(s) checked.`);
+    const { checked, filesRead, missing } = checkClass(klass);
+    console.log(`workflow-consistency [${klass.label}]: ${checked} transaction document(s) checked (${filesRead} router file(s) read, register/mount calls followed).`);
     if (missing.length === 0) {
       console.log(`  All checked documents carry the ${klass.label}. No drift.`);
       continue;

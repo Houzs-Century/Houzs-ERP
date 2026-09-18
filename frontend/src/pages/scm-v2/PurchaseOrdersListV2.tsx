@@ -27,10 +27,16 @@ import {
   ArrowRightLeft,
   CalendarClock,
 } from "lucide-react";
+import { fetchPoExportRows } from "../../vendor/scm/lib/po-list-export";
+import { PO_LINE_LABELS, poStatusWord, senToRinggit, type PoListLine } from "../../vendor/scm/lib/po-line-export-columns";
+import { poLineColumns, type PoColumn, type PoGridRow } from "./po-list-line-columns";
 import {
   PoBulkSupplierDateModal,
   type BulkSupplierDateResult,
 } from "../../components/scm-v2/PoBulkSupplierDateModal";
+import { PoLineImportModal } from "../../components/scm-v2/PoLineImportModal";
+import { useAuth as useHouzsAuth } from "../../auth/AuthContext";
+import { canOperatePurchaseOrders } from "../../auth/salesAccess";
 import { PageHeader } from "../../components/Layout";
 import { StatCard } from "../../components/StatCard";
 import { FilterPills } from "../../components/FilterPills";
@@ -44,6 +50,7 @@ import {
   type DocumentDrillLine,
   type DrillItemFields,
 } from "../../components/DocumentLinesExpansion";
+import { coverageStateOf } from "../../components/coverage-state";
 import { usePoSoCoverage, originsByCode, provenanceByCode, storedLinkSkus, deliveredByCode } from "../../vendor/scm/lib/flow-queries";
 import { ListPager } from "../../components/ListPager";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
@@ -56,16 +63,15 @@ import { SearchScopeHint } from "../../components/SearchScopeHint";
 import { useDebouncedSearchTerm, useSearchResultTransition } from "../../hooks/useServerSearch";
 import {
   usePurchaseOrdersPaged,
+  useSuppliers,
   useEnrichedPoListRows,
   usePurchaseOrderDetail,
-  useCancelPurchaseOrder,
   fetchPurchaseOrderDetail,
   type PoHeaderRow,
   type PoItemRow,
 } from "../../vendor/scm/lib/suppliers-queries";
 import { useWarehouses } from "../../vendor/scm/lib/inventory-queries";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
-import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { useChoice } from "../../vendor/scm/components/ChoiceDialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
@@ -73,8 +79,11 @@ import { convertToLink, transferToLabel, transferFromLabel } from "../../lib/con
 import { isCancelledDocStatus } from "../../lib/scm";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 import { useHoldAction } from "./use-hold-action";
+import { usePoCancelAction } from "./use-po-cancel-action";
 import { StatusWithHold, rowIsHeld } from "../../vendor/scm/components/HoldChip";
 import { usePrintDocument } from "../../components/scm-v2/PrintChainProvider";
+import { PrintPreviewBatchModal, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
+import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { purchaseOrderPrintChain } from "../../lib/printChain";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -125,6 +134,8 @@ const supplierSkusOf = (r: PoHeaderRow): string =>
 const totalOf = (r: PoHeaderRow): number =>
   r.total_sen ?? r.subtotal_sen ?? 0;
 
+// The line export prints these same words (PO_STATUS_WORDS in
+// po-line-export-columns.ts, refereed against this map by its canonical test).
 // PO lifecycle: DRAFT → SUBMITTED → PARTIALLY_RECEIVED → RECEIVED, plus
 // CANCELLED. Bucket them for the pills; the raw status still surfaces in
 // the row Badge.
@@ -221,7 +232,8 @@ function SplitDropdown({
   onDuplicate,
 }: {
   onFromSo: () => void;
-  onImport: () => void;
+  /** Absent when the user may not edit purchase orders — the item is not offered. */
+  onImport: (() => void) | null;
   onDuplicate: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -254,13 +266,15 @@ function SplitDropdown({
             >
               New from Sales Order
             </button>
-            <button
-              type="button"
-              className="block w-full px-3.5 py-2 text-left text-[12.5px] text-ink hover:bg-primary-soft"
-              onClick={() => { setOpen(false); onImport(); }}
-            >
-              Import from file
-            </button>
+            {onImport && (
+              <button
+                type="button"
+                className="block w-full px-3.5 py-2 text-left text-[12.5px] text-ink hover:bg-primary-soft"
+                onClick={() => { setOpen(false); onImport(); }}
+              >
+                Import lines
+              </button>
+            )}
             <button
               type="button"
               className="block w-full px-3.5 py-2 text-left text-[12.5px] text-ink hover:bg-primary-soft"
@@ -570,7 +584,22 @@ function DetailDrawer({
               </div>
 
               <div className="mt-4 rounded-lg border border-border bg-surface px-5 py-4">
-                <TotalRow k="PO total" v={fmtRm(total)} strong />
+                <div className="flex items-center justify-between gap-3 border-b border-border-subtle pb-3">
+                  <QtyTotal label="Ordered" value={items.reduce((s, l) => s + l.qty, 0)} />
+                  <QtyTotal
+                    label="Received"
+                    value={items.reduce((s, l) => s + l.received_qty, 0)}
+                    tone="synced"
+                  />
+                  <QtyTotal
+                    label="Balance"
+                    value={items.reduce((s, l) => s + Math.max(0, l.qty - l.received_qty), 0)}
+                    tone="balance"
+                  />
+                </div>
+                <div className="pt-3">
+                  <TotalRow k="Grand total" v={fmtRm(total)} strong />
+                </div>
               </div>
             </div>
 
@@ -652,6 +681,31 @@ function RowKV({ k, v }: { k: string; v: ReactNode }) {
   );
 }
 
+function QtyTotal({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: number;
+  tone?: "synced" | "balance";
+}) {
+  const color =
+    tone === "synced" && value > 0
+      ? "text-synced"
+      : tone === "balance" && value > 0
+        ? "text-accent-bright"
+        : "text-ink";
+  return (
+    <div className="flex flex-col items-center gap-0.5">
+      <span className="font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">
+        {label}
+      </span>
+      <span className={cn("font-money text-[15px] font-bold", color)}>{value}</span>
+    </div>
+  );
+}
+
 function TotalRow({ k, v, strong }: { k: string; v: string; strong?: boolean }) {
   return (
     <div className="flex items-center justify-between py-1.5">
@@ -708,6 +762,7 @@ function PoLinesExpansion({ id }: { id: string }) {
     <div className="flex flex-col gap-2">
       <DocumentLinesExpansion
         isLoading={detailQ.isLoading}
+        coverage={coverageStateOf(covQ)}
         isError={Boolean(detailQ.error)}
         errorMessage={detailQ.error instanceof Error ? detailQ.error.message : null}
         lines={lines}
@@ -729,7 +784,6 @@ export function PurchaseOrdersListV2() {
   const queryClient = useQueryClient();
   const notify = useNotify();
   const askChoice = useChoice();
-  const askConfirm = useConfirm();
   const warehousesQ = useWarehouses({ includeInactive: true });
 
   const status = (params.get("status") ?? "all") as StatusTab;
@@ -744,6 +798,27 @@ export function PurchaseOrdersListV2() {
   // DataTable `selection` prop only renders the checkboxes + reports toggles).
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [printingDocs, setPrintingDocs] = useState(false);
+  /* The SERVER-FILTERABLE column funnels, reported by DataTable's
+     onColFiltersChange and pushed into the list query so pagination runs over
+     the filtered set (owner 2026-09-16): Creditor Name (the "supplier" column),
+     Creditor Code, Currency. Every other funnel (line-level: Item Code,
+     Description, Location, Item Group, Delivery Date, Remaining/Qty/…, SO Doc No;
+     the Doc Date value-set; and the MRP-derived Assigned SO / Delivered) stays
+     client-side on the loaded page — those columns are line- or MRP-level and
+     the list query cannot express them cheaply. */
+  const [serverFunnels, setServerFunnels] = useState<{ creditorNames?: string[]; creditorCodes?: string[]; currencies?: string[] }>({});
+  /* Seed the Creditor Name / Code funnel checklists with EVERY supplier (not
+     only those on the loaded page), so a creditor whose POs are all on a later
+     page is still pickable — the point of pushing the filter server-side. */
+  const suppliersQ = useSuppliers();
+  const supplierNames = useMemo(
+    () => [...new Set((suppliersQ.data ?? []).map((s) => s.name).filter((n): n is string => !!n))],
+    [suppliersQ.data],
+  );
+  const supplierCodes = useMemo(
+    () => [...new Set((suppliersQ.data ?? []).map((s) => s.code).filter((c): c is string => !!c))],
+    [suppliersQ.data],
+  );
   const { requestTerm: debouncedSearch } = useDebouncedSearchTerm(search);
 
   // Send the active tab's BUCKET NAME as `status`; the backend resolves each
@@ -758,6 +833,7 @@ export function PurchaseOrdersListV2() {
     status: apiStatus,
     q: debouncedSearch,
     sort,
+    ...serverFunnels,
   });
   const searchTransition = useSearchResultTransition({
     inputTerm: search,
@@ -774,7 +850,7 @@ export function PurchaseOrdersListV2() {
   // rows it describes. Same flag SearchScopeHint already uses for its count.
   const statsPending =
     isLoading || isPlaceholderData || Boolean(error) || searchTransition.resultsAreStale;
-  const cancelPo = useCancelPurchaseOrder();
+  const { cancelPo } = usePoCancelAction();
   const holdAction = useHoldAction("po");
 
   // Server already filtered + sorted this page — render verbatim. The MRP-derived
@@ -823,6 +899,29 @@ export function PurchaseOrdersListV2() {
     else next.set("page", String(p));
     setParams(next, { replace: true });
   };
+  /* DataTable reports its funnel state here; we lift the SERVER-FILTERABLE ones
+     into the list query. A changed server funnel restarts at page 1 (mirrors
+     setSortAndReset), but the FIRST report — the funnel DataTable restored from
+     storage on mount — must not clobber a deep-linked ?page=. */
+  const funnelSyncedRef = useRef(false);
+  const serverFunnelSigRef = useRef("");
+  const onColFiltersChange = (colFilters: Record<string, string[] | undefined>) => {
+    const pick = (key: string): string[] | undefined => {
+      const v = colFilters[key];
+      return v && v.length > 0 ? v : undefined;
+    };
+    const next = {
+      creditorNames: pick("supplier"),
+      creditorCodes: pick("creditor_code"),
+      currencies: pick("currency"),
+    };
+    const sig = JSON.stringify(next);
+    if (sig === serverFunnelSigRef.current) return;
+    serverFunnelSigRef.current = sig;
+    setServerFunnels(next);
+    if (!funnelSyncedRef.current) { funnelSyncedRef.current = true; return; }
+    setPageParam(0);
+  };
   const setStatusChip = (s: StatusTab) => {
     const next = new URLSearchParams(params);
     if (s === "all") next.delete("status");
@@ -863,9 +962,38 @@ export function PurchaseOrdersListV2() {
     await queryClient.invalidateQueries({ queryKey: ["mfg-purchase-orders"] });
   };
 
+  /* The ONE Export (owner 2026-09-15): every order the list's tab + search +
+     sort (and server-filterable funnels) match — not the page on screen — one
+     row per line, with the grid's visible columns, funnels and sort (DataTable
+     `exportLines`). The filter is the one the list request is built from. */
+  const exportFilters = { status: apiStatus, q: debouncedSearch, sort, ...serverFunnels };
+  const exportLines = {
+    fetchRows: (need: { exportKeys: string[]; filterKeys: string[] }) => fetchPoExportRows<PoGridRow>(exportFilters, need),
+    linesOf: (r: PoGridRow): readonly PoListLine[] => r.lines ?? [],
+    sheetName: "Purchase Orders",
+    onError: (e: Error) => {
+      void notify({ title: "Export failed", body: e.message || "The export could not be completed.", tone: "error" });
+    },
+  };
+
   const goNewPo = () => navigate("/scm/purchase-orders/new");
   const goFromSo = () => navigate("/scm/purchase-orders/from-so");
-  const goImport = () => navigate("/scm/purchase-orders?import=1");
+  /* `?import=1` opens the PO line import (owner 2026-09-15). The menu item used to
+     navigate here with nothing reading the param
+     (docs/bugs/0921-the-purchase-order-list-s-import-from-file-opened-nothing.md). URL is state, so a reload keeps the dialog open. */
+  const { can, pageAccess } = useHouzsAuth();
+  const mayImportLines = canOperatePurchaseOrders(can, pageAccess);
+  const importOpen = mayImportLines && params.get("import") === "1";
+  const goImport = () => {
+    const next = new URLSearchParams(params);
+    next.set("import", "1");
+    setParams(next);
+  };
+  const closeImport = () => {
+    const next = new URLSearchParams(params);
+    next.delete("import");
+    setParams(next, { replace: true });
+  };
   const goDuplicate = () => navigate("/scm/purchase-orders?duplicate=1");
   const goSuppliers = () => navigate("/scm/suppliers");
   const goGrn = () => navigate("/scm/grns");
@@ -931,8 +1059,10 @@ export function PurchaseOrdersListV2() {
 
   // Batch "Print all" — fetch each selected PO's full detail, resolve its bound
   // warehouse name (the PDF can't hit the API), then render into one combined
-  // file or one file per PO. Mirrors the V1 PurchaseOrders list handler.
-  const printSelectedPos = async () => {
+  // file or one file per PO. Reached through the same Print preview as the
+  // GRN / DO / SI lists (owner 2026-09-14: 「PO打印没有这个」), so View / Print /
+  // Download are the exits and only Download still asks combined-vs-separate.
+  const deliverSelectedPos = async (action: PdfAction) => {
     if (printingDocs) return;
     const chosen = rows.filter((r) => selectedIds.has(r.id));
     if (chosen.length === 0) return;
@@ -968,11 +1098,11 @@ export function PurchaseOrdersListV2() {
           staleTime: 30_000,
         });
         const po = toPo(d);
-        await pdf.generatePurchaseOrderPdf(po.header as never, po.items as never);
+        await pdf.generatePurchaseOrderPdf(po.header as never, po.items as never, { action });
         clearSelection();
         return;
       }
-      const how = await askChoice({
+      const how = action !== "save" ? "one" : await askChoice({
         title: `Print ${chosen.length} purchase orders`,
         options: [
           { value: "one", label: "One combined PDF" },
@@ -993,13 +1123,11 @@ export function PurchaseOrdersListV2() {
       if (how === "one") {
         await pdf.generateCombinedPurchaseOrderPdf(pos as never, {
           fileName: `purchase-orders-${new Date().toISOString().slice(0, 10)}.pdf`,
+          action,
         });
       } else {
         for (const po of pos)
-          await pdf.generatePurchaseOrderPdf(
-            po.header as never,
-            po.items as never
-          );
+          await pdf.generatePurchaseOrderPdf(po.header as never, po.items as never, { action });
       }
       clearSelection();
     } catch (e) {
@@ -1012,6 +1140,7 @@ export function PurchaseOrdersListV2() {
       setPrintingDocs(false);
     }
   };
+  const batchPrint = usePrintPreview(deliverSelectedPos);
 
   /* RECEIVABLE is the server's own allow-list (grns.ts RECEIVABLE_PO_STATUSES)
      — SUBMITTED or PARTIALLY_RECEIVED.
@@ -1030,22 +1159,32 @@ export function PurchaseOrdersListV2() {
     transferToGrn: goGrnFromPo, cancel: (r) => doCancel(r), setHold: setPoHold,
     canReceive: (r) => !rowIsHeld(r) && ["SUBMITTED", "PARTIALLY_RECEIVED"].includes(r.status.toUpperCase()),
     canCancel: (r) => !["CANCELLED", "RECEIVED"].includes(r.status.toUpperCase()),
+    isDraft: (r) => r.status.toUpperCase() === "DRAFT",
   });
+  /* Owner 2026-09-09 — a PO cancel needs no approval, only its reason
+     (./use-po-cancel-action.ts holds the prompt and the words; the server
+     refuses a cancel without one). DRAFT and live take the same path. */
   const doCancel = async (r: PoHeaderRow) => {
-    if (await askConfirm({
-      title: `Cancel PO ${r.po_number}?`,
-      body: "This can only be undone if no GRN has been raised.",
-      confirmLabel: "Cancel PO",
-      danger: true,
-    })) {
-      cancelPo.mutate(r.id, { onSuccess: () => setSelected(null) });
-    }
+    if (await cancelPo(r.id, r.po_number)) setSelected(null);
   };
 
-  const columns: Column<PoHeaderRow>[] = [
+  /* Default view = AutoCount's PO listing columns, in AutoCount's order (owner
+     2026-09-15: a default export equals the AutoCount file). Every other column
+     stays in the chooser, hidden until picked; the export follows whatever the
+     operator shows. */
+  const lineCols = poLineColumns();
+  // _R suffix applies to whichever number is shown (owner report 2026-09-18:
+  // an AC-linked PO's revision was invisible because the AC doc no bypassed
+  // poDisplayNumber entirely) — the AC book keeps one document per PO (edited
+  // in place, never a new doc no), so its number needs the same revision
+  // marker the ERP number gets.
+  const docNoOf = (r: PoGridRow): string => poDisplayNumber(r.linked_ac_docno?.trim() || r.po_number, r.revision);
+  const columns: PoColumn[] = [
     {
       key: "po_number",
-      label: "PO No.",
+      /* Owner 2026-09-15: AutoCount's own Doc No when the PO is linked to the book,
+         else the ERP number — the ERP number stays on ERP Doc No. */
+      label: PO_LINE_LABELS.docNo,
       // 180 + font-docno (owner 2026-07-31): 132 clipped a full doc no (see
       // the measured DO No. note in MfgDeliveryOrdersListV2). Wider than the
       // 156 used elsewhere because this cell also carries the "_R1" revision
@@ -1054,7 +1193,7 @@ export function PurchaseOrdersListV2() {
       width: "180px",
       alwaysVisible: true,
       // _R suffix (owner 2026-07-27) — a revised PO reads PO-xxx_R1 everywhere.
-      getValue: (r) => poDisplayNumber(r.po_number, r.revision),
+      getValue: (r) => docNoOf(r),
       render: (r) => (
         <span
           className={cn(
@@ -1062,73 +1201,82 @@ export function PurchaseOrdersListV2() {
             isCancelledDocStatus(r.status) && "dt-cancel-strike",
           )}
         >
-          {poDisplayNumber(r.po_number, r.revision)}
+          {docNoOf(r)}
         </span>
       ),
     },
+    lineCols.so_doc_no!,
     {
-      key: "po_date",
-      label: "Date",
-      width: "108px",
-      getValue: (r) => r.po_date,
-      render: (r) => <span className="text-[12.5px] text-ink-secondary">{fmtDate(r.po_date)}</span>,
+      key: "creditor_code",
+      label: PO_LINE_LABELS.creditorCode,
+      width: "120px",
+      disableSort: true,
+      getValue: (r) => r.supplier?.code ?? "",
+      // Server-filterable: the funnel is pushed into the list query, so seed the
+      // checklist with every creditor code (not just the loaded page's).
+      filterSeedValues: supplierCodes,
+      render: (r) => <span className="font-mono text-[11.5px] text-ink-secondary">{r.supplier?.code || "—"}</span>,
     },
     {
       // Owner 2026-07-23: supplier NAME and CODE are separate columns, not a
       // stacked cell — a purchaser filters/sorts by code, so it needs to be its
       // own field.
       key: "supplier",
-      label: "Supplier",
+      label: PO_LINE_LABELS.creditorName,
       disableSort: true,
       getValue: (r) => supplierNameOf(r),
+      // Server-filterable: seed with every creditor name so one not on the
+      // loaded page is still pickable (the point of the server-side push).
+      filterSeedValues: supplierNames,
       render: (r) => (
         <div className="min-w-0 truncate text-[13px] font-semibold text-ink">
           {supplierNameOf(r)}
         </div>
       ),
     },
+    lineCols.item_code!,
+    lineCols.item_description!,
+    lineCols.item_description_2!,
+    lineCols.location!,
+    lineCols.item_group!,
     {
-      /* Owner 2026-08-05 (PO-outstanding Excel uplift) — the per-row items
-         summary, so the export carries WHAT was ordered. Supplier "Code"
-         column removed in the same pass ("Supplier code - 删掉"); the code
-         still shows in the cards view + quick-view drawer. */
-      key: "items",
-      label: "Items",
-      width: "240px",
-      disableSort: true,
-      getValue: (r) => itemsSummaryOf(r),
-      render: (r) => (
-        <span
-          title={(r.items ?? []).map((it) => `${it.item_code} × ${it.qty}`).join("\n")}
-          className="block min-w-0 truncate font-mono text-[11.5px] text-ink-secondary"
-        >
-          {itemsSummaryOf(r) || "—"}
-        </span>
-      ),
+      key: "po_date",
+      label: PO_LINE_LABELS.docDate,
+      width: "108px",
+      getValue: (r) => r.po_date,
+      exportFormat: "date",
+      render: (r) => <span className="text-[12.5px] text-ink-secondary">{fmtDate(r.po_date)}</span>,
     },
+    lineCols.remaining_qty!,
+    lineCols.delivery_date!,
+    lineCols.estimate_delivery_date_1!,
+    lineCols.estimate_delivery_date_2!,
+    lineCols.estimate_delivery_date_3!,
     {
-      /* Owner 2026-08-05 — the SUPPLIER's own SKU per line, aligned with the
-         Items column ("—" holds unbound lines' slots). */
-      key: "supplier_sku",
-      label: "Supplier SKU",
-      width: "200px",
+      key: "erp_doc_no",
+      label: PO_LINE_LABELS.erpDocNo,
+      width: "180px",
       disableSort: true,
-      getValue: (r) => supplierSkusOf(r),
-      render: (r) => (
-        <span
-          title={(r.items ?? []).map((it) => `${it.item_code} → ${it.supplier_sku?.trim() || "—"}`).join("\n")}
-          className="block min-w-0 truncate font-mono text-[11.5px] text-ink-secondary"
-        >
-          {supplierSkusOf(r) || "—"}
-        </span>
-      ),
+      defaultHidden: true,
+      getValue: (r) => poDisplayNumber(r.po_number, r.revision),
+      render: (r) => <span className="font-docno text-[12.5px] text-ink-secondary">{poDisplayNumber(r.po_number, r.revision)}</span>,
     },
+    lineCols.erp_item_code!,
+    lineCols.remarks!,
+    lineCols.qty!,
+    lineCols.received_qty!,
+    lineCols.unit_price!,
+    lineCols.line_total!,
     {
       key: "expected",
       label: "Expected",
       width: "128px",
+      defaultHidden: true,
       disableSort: true,
       getValue: (r) => r.expected_at ?? "",
+      /* Owner 2026-09-15: in the file, each line's own delivery date. */
+      lineValue: (_r, l) => l.delivery_date,
+      exportFormat: "date",
       render: (r) => (
         <span className="text-[12.5px] text-ink-secondary">{fmtDate(r.expected_at)}</span>
       ),
@@ -1138,6 +1286,7 @@ export function PurchaseOrdersListV2() {
       key: "purchase_location",
       label: "Purchase Location",
       width: "160px",
+      defaultHidden: true,
       disableSort: true,
       getValue: (r) => locationOf(r),
       render: (r) => (
@@ -1152,6 +1301,7 @@ export function PurchaseOrdersListV2() {
       key: "currency",
       label: "Currency",
       width: "96px",
+      defaultHidden: true,
       disableSort: true,
       getValue: (r) => r.currency ?? "MYR",
       render: (r) => (
@@ -1165,8 +1315,11 @@ export function PurchaseOrdersListV2() {
       key: "assigned_so",
       label: "Assigned SO",
       width: "168px",
+      defaultHidden: true,
       disableSort: true,
       getValue: (r) => (r.assigned_sos ?? []).map((a) => a.soDocNo).join(", "),
+      /* Owner 2026-09-15: in the file, the SO each line was raised for. */
+      lineValue: (_r, l) => l.so_doc_no,
       render: (r) => (
         <AssignedSoCell
           assignments={r.assigned_sos}
@@ -1185,6 +1338,7 @@ export function PurchaseOrdersListV2() {
       key: "grn_no",
       label: "GRN No",
       width: "150px",
+      defaultHidden: true,
       disableSort: true,
       getValue: (r) => grnRefsOf(r.transfer_to_grns).map((g) => g.grnNumber).join(", "),
       render: (r) => (
@@ -1201,6 +1355,7 @@ export function PurchaseOrdersListV2() {
       key: "delivered",
       label: "Delivered",
       width: "180px",
+      defaultHidden: true,
       disableSort: true,
       getValue: (r) => (r.delivered_dos ?? []).map((d) => d.doNo).join(", "),
       render: (r) => (
@@ -1214,9 +1369,11 @@ export function PurchaseOrdersListV2() {
       key: "status",
       label: "Status",
       width: "144px",
+      defaultHidden: true,
       // Exempt from the cancelled-row fade — the pill is WHY the row is grey.
       className: "dt-cancel-keep",
-      getValue: (r) => r.status,
+      // The export writes the word on screen, hold included (owner 2026-09-15).
+      getValue: (r) => poStatusWord(r.status, rowIsHeld(r)) ?? "",
       render: (r) => {
         const st = statusFor(r.status);
         /* mig 0324 — the Hold marker sits BESIDE the real status pill. */
@@ -1227,14 +1384,19 @@ export function PurchaseOrdersListV2() {
       key: "total",
       label: "Total",
       width: "128px",
+      defaultHidden: true,
       align: "right",
       getValue: (r) => totalOf(r),
+      /* Stored in sen; the file is in ringgit (docs/bugs — Total exported 1500000 for RM15,000.00). */
+      exportValue: (r) => senToRinggit(totalOf(r), 2),
+      exportFormat: "money",
       render: (r) => (
         <span className="font-money text-[13px] font-semibold text-ink">
           {fmtRm(totalOf(r))}
         </span>
       ),
     },
+    lineCols.line_id!,
   ];
 
   const statusPillOptions: Array<{ value: StatusTab; label: string }> = [
@@ -1300,7 +1462,7 @@ export function PurchaseOrdersListV2() {
                   >
                     New Purchase Order
                   </Button>
-                  <SplitDropdown onFromSo={goFromSo} onImport={goImport} onDuplicate={goDuplicate} />
+                  <SplitDropdown onFromSo={goFromSo} onImport={mayImportLines ? goImport : null} onDuplicate={goDuplicate} />
                 </div>
               </div>
             }
@@ -1421,12 +1583,19 @@ export function PurchaseOrdersListV2() {
                       variant="secondary"
                       icon={<Printer size={14} />}
                       disabled={printingDocs}
-                      onClick={() => void printSelectedPos()}
+                      onClick={batchPrint.openPreview}
                     >
                       {printingDocs
                         ? "Printing…"
                         : `Print all (${selectedIds.size})`}
                     </Button>
+                    <PrintPreviewBatchModal
+                      open={batchPrint.open}
+                      onClose={batchPrint.close}
+                      docTitle="Purchase Orders"
+                      docNos={rows.filter((r) => selectedIds.has(r.id)).map((r) => poDisplayNumber(r.po_number, r.revision))}
+                      {...batchPrint.handlers}
+                    />
                     <Button
                       variant="primary"
                       icon={<Package size={14} />}
@@ -1437,12 +1606,13 @@ export function PurchaseOrdersListV2() {
                   </div>
                 </div>
               )}
-              <DataTable<PoHeaderRow>
+              <DataTable<PoGridRow, PoListLine>
                 tableId="purchase-orders-v2"
                 rows={rows}
                 /* Feeds the stat strip so the tiles describe what is on screen
                    rather than what the server matched (owner 2026-08-12). */
                 onFilteredRowsChange={visible.onFilteredRowsChange}
+                onColFiltersChange={onColFiltersChange}
                 loading={listLoading}
                 error={error ? (error as Error).message ?? "Failed to load" : null}
                 columns={columns}
@@ -1461,7 +1631,8 @@ export function PurchaseOrdersListV2() {
                   onToggleAll: toggleSelectAll,
                 }}
                 contextMenu={poContextMenu}
-            exportName="purchase-orders"
+                exportName="purchase-orders"
+                exportLines={exportLines}
                 serverSort
                 onSortChange={setSortAndReset}
                 emptyLabel={
@@ -1546,6 +1717,8 @@ export function PurchaseOrdersListV2() {
         onClose={() => setBulkDateOpen(false)}
         onDone={(res) => void onBulkDateDone(res)}
       />
+
+      <PoLineImportModal open={importOpen} onClose={closeImport} />
     </PullToRefresh>
   );
 }

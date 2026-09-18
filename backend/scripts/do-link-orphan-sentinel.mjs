@@ -50,18 +50,53 @@
 //
 // Usage: node backend/scripts/do-link-orphan-sentinel.mjs
 import postgres from "postgres";
+// The SAME set the app reads (src/scm/shared/do-shipped-states.ts), through the
+// .mjs mirror — hand-typing it here is how a sentinel and the code it watches
+// come to disagree (check-do-integrity.mjs, 2026-08-20).
+import { DO_NOT_DELIVERED_SQL_IN } from "./lib/do-shipped-states.mjs";
 
 /* BASELINE = the orphans that are known, understood and deliberately left.
-   Exactly one on 2026-08-17: 2990-DO-2607-013's NTYR pillow. Its SO line
-   (2990-SO-2606-030, ordered 1) is already fully delivered by
-   2990-DO-2608-010, so re-linking it would report 2 delivered against 1
-   ordered. repair-do-so-item-links.mjs refuses it by design and a human has to
-   decide whether it is a re-delivery or a duplicate document.
 
    RAISING THIS NUMBER TO GET GREEN IS THE ONE THING NOT TO DO. It is the count
    of orphans we have an ANSWER for, not a tolerance. A new orphan is the event
-   this sentinel exists to report. */
-const BASELINE_ORPHANS = 1;
+   this sentinel exists to report. Every one below is named with its answer, so
+   the next person can check the answer instead of inheriting a number.
+
+   1. 2990-DO-2607-013's NTYR pillow (2026-08-17). Its SO line
+      (2990-SO-2606-030, ordered 1) is already fully delivered by
+      2990-DO-2608-010, so re-linking it would report 2 delivered against 1
+      ordered. repair-do-so-item-links.mjs refuses it by design and a human has
+      to decide whether it is a re-delivery or a duplicate document.
+
+   2-4. THE ACCOUNT BOOK'S OWN GAP, traced 2026-09-08 against
+      ac-convert-edges.json.gz (the whole book, cut 2026-09-07 16:39 local).
+      These three are NOT rows a delete blanked — they were never linkable,
+      because the item is not on the sales order IN AUTOCOUNT EITHER:
+
+        HC-DO-001800 delivers HB109NL x3 and HB109M-CC x3 naming HC-SO-002281.
+        AutoCount's SO-002281 has four lines and neither item is among them:
+        AK-ARMOUR MATT (Q), AK- LTX CLS PIL, NTYR-CS LTX PIL + CSC,
+        AK-SK + MICROFIL PIL. The book still counted the delivery — seq 32 and
+        48 read TransferedQty 3 of 3 — so AutoCount consumed OTHER lines'
+        quantity to ship these two.
+
+        HC-DO-005583 delivers AK-SK FX AIRLOFT PIL x2 naming HC-SO-007435,
+        whose seq 144 is AK-SK + MICROFIL PIL x2 with TransferedQty 2 of 2.
+        Same sequence, same quantity, a different product name: a substitution
+        AutoCount recorded on the delivery and never on the order.
+
+      So the ERP is FAITHFUL here and a link would be INVENTED — the owner's
+      standing rule is 「跟 autocount 一样」, and where the book is silent the
+      answer is that the book is silent. repair-do-so-item-links.mjs reaches the
+      same verdict from the ERP side alone and refuses all three with
+      `no_so_line_with_that_item_code` (run 34182380708, 2026-09-08 11:07
+      local). Ledger: docs/bugs/0690-*.md.
+
+      WHAT WOULD MAKE THIS A DEFECT AGAIN: if AutoCount's own sales order gains
+      a line for one of these items, the answer above stops being true and the
+      row becomes repairable. That is a book change, so it shows up as a
+      re-import, not as a silent drift. */
+const BASELINE_ORPHANS = 4;
 
 /* BASELINE = goods lines that carry NO warehouse and therefore can never be
    allocated stock (allocation buckets by warehouse+item+variant). Ten on
@@ -185,6 +220,39 @@ try {
        AND i.from_mrp = true
        AND i.so_item_id IS NULL`;
 
+  /* 4. A delivery order that COUNTS as delivered and holds NO line rows. Found
+        2026-09-04: three 2990 documents (2607-016/018/019) carried line_count,
+        money and OUT movements from 2026-07-23 while their 8 rows sat under
+        header ids that no longer existed. syncSoDeliveredFromDo read them as
+        "nothing delivered", released three delivered orders back to
+        READY_TO_SHIP, and MRP planned sofas already in the customers' homes.
+        Mig 20260904T0800 makes this state unreachable through SQL for every
+        writer that respects triggers; this row is what says the lock held.
+        Baseline ZERO, by definition — an empty shipped document is never an
+        answer. */
+  const [{ emptyLive }] = await pg`
+    SELECT COUNT(*)::int AS "emptyLive"
+      FROM scm.delivery_orders d
+     WHERE upper(coalesce(d.status::text, '')) NOT IN ${pg.unsafe(DO_NOT_DELIVERED_SQL_IN)}
+       AND NOT EXISTS (SELECT 1 FROM scm.delivery_order_items i WHERE i.delivery_order_id = d.id)`;
+  const emptyLiveRows = await pg`
+    SELECT d.do_number, d.so_doc_no, d.status::text AS status, d.line_count
+      FROM scm.delivery_orders d
+     WHERE upper(coalesce(d.status::text, '')) NOT IN ${pg.unsafe(DO_NOT_DELIVERED_SQL_IN)}
+       AND NOT EXISTS (SELECT 1 FROM scm.delivery_order_items i WHERE i.delivery_order_id = d.id)
+     ORDER BY d.do_number
+     LIMIT 20`;
+
+  /* 4b. The other half of the same defect: line rows whose delivery_order_id
+         names NO header. The FK is ON DELETE CASCADE and validated, so these can
+         only be written by a path that bypassed it — which is exactly what the
+         2026-07-23 writer did. Eight existed until the 2026-09-04 re-parent. */
+  const [{ headerless }] = await pg`
+    SELECT COUNT(*)::int AS headerless
+      FROM scm.delivery_order_items i
+      LEFT JOIN scm.delivery_orders d ON d.id = i.delivery_order_id
+     WHERE d.id IS NULL`;
+
   const recentDeletes = await pg`
     SELECT to_char(deleted_at, 'YYYY-MM-DD HH24:MI') AS at, doc_no, item_code,
            COALESCE(jwt_claims->>'email', jwt_claims->>'sub', db_user) AS who,
@@ -205,6 +273,11 @@ try {
   console.log(`SO-line deletes in the last 25h: ${recentDeletes.length}`);
   console.log(`goods lines with no warehouse: ${nullWarehouse} [baseline ${BASELINE_NULL_WAREHOUSE}]`);
   console.log(`from_mrp PO lines with no SO link: ${poUnbound} [baseline ${BASELINE_PO_UNBOUND}]`);
+  console.log(`shipped delivery orders with NO line rows: ${emptyLive} [baseline 0]`);
+  for (const r of emptyLiveRows) {
+    console.log(`    ${r.do_number}  from ${r.so_doc_no ?? "-"}  status ${r.status ?? "-"}  line_count ${r.line_count ?? "?"}`);
+  }
+  console.log(`delivery line rows with no header: ${headerless} [baseline 0]`);
   for (const d of recentDeletes) {
     console.log(`  ${d.at}  ${d.doc_no ?? "-"}  ${d.item_code ?? "-"}  by ${d.who ?? "?"}  (${d.application_name ?? "-"})`);
   }
@@ -236,6 +309,20 @@ try {
     alarms.push(
       `${invisible} delivery line(s) carry neither a per-line SO link nor a so_doc_no on the header, ` +
       `and stock moved against them. Neither coverage reading can see these — MRP is wrong about them right now.`,
+    );
+  }
+  if (emptyLive > 0) {
+    alarms.push(
+      `${emptyLive} shipped delivery order(s) hold NO line rows (listed above). Each is broken delivery evidence: ` +
+      `the delivery sync now HOLDS its SO at DELIVERED instead of releasing it, but MRP and every DO reader still ` +
+      `see an empty document. Find the rows (delivery_order_items whose so_item_id belongs to that SO) and ` +
+      `re-parent them, as on 2026-09-04. Mig 20260904T0800 should have refused this — check the trigger is present.`,
+    );
+  }
+  if (headerless > 0) {
+    alarms.push(
+      `${headerless} delivery line row(s) name a delivery_order_id that has no header. The FK is ON DELETE CASCADE, ` +
+      `so a writer bypassed it. Re-parent them to the live document for their SO (2026-09-04 repair) and name the writer.`,
     );
   }
 } finally {

@@ -991,8 +991,8 @@ app.post("/invite", requirePermissionOrSalesDirector("users.manage"), async (c) 
 
   // Sales Director → department-scoped invite. The new member is FORCED into
   // the director's own department; a position from another department is
-  // rejected; and — since the scoped invite UI hides the Role picker — a
-  // baseline role is defaulted server-side when none is supplied. A Sales
+  // rejected; and the role is ALWAYS the baseline, whatever the client sent —
+  // the rule PATCH /:id applies by deleting role_id (docs/bugs/0887). A Sales
   // Director with no department cannot invite (fail-closed).
   const inviteScope = salesDirectorScope(c, "users.manage");
   if (inviteScope.scoped) {
@@ -1019,12 +1019,9 @@ app.post("/invite", requirePermissionOrSalesDirector("users.manage"), async (c) 
         );
       }
     }
-    // Default the role when the scoped UI didn't send one.
-    if (!body.role_id) {
-      const def = await resolveDefaultRoleId(db);
-      if (def == null) return c.json({ error: "No role available to assign" }, 500);
-      body.role_id = def;
-    }
+    const def = await resolveDefaultRoleId(db);
+    if (def == null) return c.json({ error: "No role available to assign" }, 500);
+    body.role_id = def;
   }
 
   if (!body.email || !body.role_id) {
@@ -1816,7 +1813,7 @@ app.patch("/:id", requirePermissionOrSalesDirector("users.manage"), async (c) =>
   // edit changes targeting without touching the session. Covers every such
   // field in ONE place. Best-effort (bustBannerForUser swallows KV trouble).
   const bannerTargetingChanged =
-    "department_id" in set ||
+    "department_id" in set || "division" in set ||
     "position_id" in set ||
     "role_id" in set ||
     "status" in set ||

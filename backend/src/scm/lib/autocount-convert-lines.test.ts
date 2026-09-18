@@ -309,3 +309,154 @@ describe('a partial conversion transfers only the lines it actually took', () =>
     expect(row.payload.body.DtlKeys).toBeUndefined();
   });
 });
+
+/* ── A SOFA IS ONE LINE IN THE BOOK AND SEVERAL IN THE ERP ───────────────────
+   Measured in AED_HOUZS on 2026-09-08: SO-013224 holds exactly two lines,
+   901830 HOK-5535 SOFA and 901831 HOK-LONG PILLOW, while the ERP holds three —
+   two sofa pieces both keyed 901830, plus the pillow. Sending one key per ERP
+   line therefore handed the host `[901830, 901830, 901831]`, and it answered
+
+     of 3 line key(s) given, only 2 exist on a SO
+
+   which reads as a missing key and is not: all three are real and two are the
+   same one. HC-DO-2609-004 and -009 spent every attempt on that sentence. */
+describe('several ERP lines sharing one book line', () => {
+  const convertDo = (sb: unknown) => enqueueConvert(sb as never, {
+    companyId: 1,
+    op: 'so_to_do',
+    from: { table: 'mfg_sales_orders', keyCol: 'doc_no', key: 'HC-SO-9' },
+    to: { table: 'delivery_orders', keyCol: 'id', key: 'do-1' },
+    docType: 'DO',
+    docNo: 'HC-DO-1',
+    docId: 'do-1',
+  });
+
+  /* Two sofa pieces on ONE book key, plus a pillow on its own. */
+  const sofaSo = (pieceQty = 1) => [
+    { id: 'so-1', doc_no: 'HC-SO-9', item_code: 'HOK-5535 SOFA', qty: pieceQty, unit_price_sen: 100, linked_ac_dtlkey: 901830, cancelled: false },
+    { id: 'so-2', doc_no: 'HC-SO-9', item_code: 'HOK-5535 SOFA', qty: pieceQty, unit_price_sen: 100, linked_ac_dtlkey: 901830, cancelled: false },
+    { id: 'so-3', doc_no: 'HC-SO-9', item_code: 'HOK-LONG PILLOW', qty: 3, unit_price_sen: 100, linked_ac_dtlkey: 901831, cancelled: false },
+  ];
+
+  test('the shared key is sent ONCE, not once per piece', async () => {
+    const sb = withFlag('1', {
+      mfg_sales_order_items: sofaSo(),
+      delivery_order_items: [
+        { id: 'd1', delivery_order_id: 'do-1', so_item_id: 'so-1', item_code: 'HOK-5535 SOFA', qty: 1 },
+        { id: 'd2', delivery_order_id: 'do-1', so_item_id: 'so-2', item_code: 'HOK-5535 SOFA', qty: 1 },
+        { id: 'd3', delivery_order_id: 'do-1', so_item_id: 'so-3', item_code: 'HOK-LONG PILLOW', qty: 3 },
+      ],
+    });
+    expect((await convertDo(sb)).queued).toBe(true);
+    const [row] = outbox(sb);
+    expect(row.status).toBe('pending');
+    /* THE WHOLE FIX: two 901830s collapse to one, and the order is first-seen. */
+    expect(row.payload.body.DtlKeys).toEqual([901830, 901831]);
+  });
+
+  /* Summing the pieces would send 2 against a book line of 1 — an over-transfer
+     of a licensed account book. Whole, no quantity is sent at all and the
+     service moves each named line's outstanding, so one sofa moves once. */
+  test('no quantity rides with a shared key, so the piece count cannot over-transfer', async () => {
+    const sb = withFlag('1', {
+      mfg_sales_order_items: sofaSo(),
+      delivery_order_items: [
+        { id: 'd1', delivery_order_id: 'do-1', so_item_id: 'so-1', item_code: 'HOK-5535 SOFA', qty: 1 },
+        { id: 'd2', delivery_order_id: 'do-1', so_item_id: 'so-2', item_code: 'HOK-5535 SOFA', qty: 1 },
+        { id: 'd3', delivery_order_id: 'do-1', so_item_id: 'so-3', item_code: 'HOK-LONG PILLOW', qty: 3 },
+      ],
+    });
+    await convertDo(sb);
+    const [row] = outbox(sb);
+    expect(row.payload.body.Details).toBeUndefined();
+  });
+
+  /* HALF A SOFA HAS NO SHAPE IN THE BOOK, so it WAITS — option C, the owner's
+     ruling of 2026-09-08. What used to happen is that the whole document was
+     refused for it, which held a pillow hostage to a sofa. */
+  test('the sofa WAITS and the pillow goes on time', async () => {
+    const sb = withFlag('1', {
+      mfg_sales_order_items: sofaSo(),
+      delivery_order_items: [
+        /* one of the two sofa pieces ships; the pillow ships too */
+        { id: 'd1', delivery_order_id: 'do-1', so_item_id: 'so-1', item_code: 'HOK-5535 SOFA', qty: 1 },
+        { id: 'd3', delivery_order_id: 'do-1', so_item_id: 'so-3', item_code: 'HOK-LONG PILLOW', qty: 3 },
+      ],
+    });
+    expect((await convertDo(sb)).queued).toBe(true);
+    const [row] = outbox(sb);
+    expect(row.status).toBe('pending');
+    /* THE PILLOW ONLY. 901830 is the sofa and its second piece is still here. */
+    expect(row.payload.body.DtlKeys).toEqual([901831]);
+  });
+
+  /* 「C 除了accessories 不看 就看sofa」 — the pillow is a different key and a
+     different question, so it never enters the sofa's decision. */
+  test('an undelivered ACCESSORY does not hold the sofa back', async () => {
+    const sb = withFlag('1', {
+      mfg_sales_order_items: sofaSo(),
+      delivery_order_items: [
+        /* BOTH sofa pieces ship; the pillow does not */
+        { id: 'd1', delivery_order_id: 'do-1', so_item_id: 'so-1', item_code: 'HOK-5535 SOFA', qty: 1 },
+        { id: 'd2', delivery_order_id: 'do-1', so_item_id: 'so-2', item_code: 'HOK-5535 SOFA', qty: 1 },
+      ],
+    });
+    expect((await convertDo(sb)).queued).toBe(true);
+    const [row] = outbox(sb);
+    expect(row.payload.body.DtlKeys).toEqual([901830]);
+  });
+
+  /* COUNTED ACROSS EVERY DELIVERY, not just this one. Each trip takes ONE
+     piece, so "did THIS document take them all" answers no on the very trip
+     that completes it — the sofa would wait for ever. */
+  test('the delivery that covers the LAST piece carries the sofa', async () => {
+    const sb = withFlag('1', {
+      mfg_sales_order_items: sofaSo(),
+      delivery_order_items: [
+        /* piece 1 went out on an EARLIER delivery order */
+        { id: 'd0', delivery_order_id: 'do-0', so_item_id: 'so-1', item_code: 'HOK-5535 SOFA', qty: 1 },
+        /* this one takes the last piece */
+        { id: 'd2', delivery_order_id: 'do-1', so_item_id: 'so-2', item_code: 'HOK-5535 SOFA', qty: 1 },
+      ],
+    });
+    expect((await convertDo(sb)).queued).toBe(true);
+    const [row] = outbox(sb);
+    expect(row.payload.body.DtlKeys).toEqual([901830]);
+    /* And still no quantity: the ERP counts pieces, the book counts sofas. */
+    expect(row.payload.body.Details).toBeUndefined();
+  });
+
+  /* A transfer with NO lines is not a transfer - the service falls back to
+     every outstanding line on the source, which is the defect this whole
+     function exists to prevent. */
+  test('a document that is ONLY an incomplete sofa is refused, not sent empty', async () => {
+    const sb = withFlag('1', {
+      mfg_sales_order_items: sofaSo(),
+      delivery_order_items: [
+        { id: 'd1', delivery_order_id: 'do-1', so_item_id: 'so-1', item_code: 'HOK-5535 SOFA', qty: 1 },
+      ],
+    });
+    expect((await convertDo(sb)).queued).toBe(false);
+    const [row] = outbox(sb);
+    expect(row.status).toBe('skipped');
+    expect(row.last_error).toContain('waits for the delivery that completes it');
+    expect(outbox(sb).filter((r) => r.status === 'pending')).toHaveLength(0);
+  });
+
+  /* The 1:1 case must be untouched: a document with no shared key still sends
+     its per-line quantities on a genuine part-quantity shipment. */
+  test('a document with no shared key still sends quantities on a real partial', async () => {
+    const sb = withFlag('1', {
+      mfg_sales_order_items: [
+        { id: 'so-1', doc_no: 'HC-SO-9', item_code: 'SKU-1', qty: 5, unit_price_sen: 100, linked_ac_dtlkey: 7001, cancelled: false },
+      ],
+      delivery_order_items: [
+        { id: 'd1', delivery_order_id: 'do-1', so_item_id: 'so-1', item_code: 'SKU-1', qty: 2 },
+      ],
+    });
+    await convertDo(sb);
+    const [row] = outbox(sb);
+    expect(row.payload.body.DtlKeys).toEqual([7001]);
+    expect(row.payload.body.Details).toEqual([{ DtlKey: 7001, Qty: 2 }]);
+  });
+});

@@ -21,7 +21,7 @@
 // shows an indicative subtotal, not the authoritative number.
 // ----------------------------------------------------------------------------
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { lineIdentity } from "@2990s/shared";
 import {
@@ -37,7 +37,7 @@ import {
   X,
 } from "lucide-react";
 import { Button } from "../../components/Button";
-import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
+import { authedFetch, type SaveProblem } from "../../vendor/scm/lib/authed-fetch";
 
 // authedFetch surfaces backend errors as Error objects whose `.message` already
 // contains the human-readable string errMsg() built (status + body). We
@@ -53,9 +53,11 @@ import { useIdempotencyKey } from "../../lib/idempotency";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
 import { fmtSen } from "../../vendor/shared/format";
-import { soDateGuardError, soStockLocationError, soErrorText } from "../../vendor/scm/lib/so-form-validate";
+import { SaveBlockedIndicator } from "../../vendor/scm/components/SaveBlockedIndicator";
+import { useSoValidate } from "../../vendor/scm/lib/use-so-validate";
+import { SaveProblemsList, saveProblemsTitle, notifySaveProblems } from "../../vendor/scm/components/SaveProblemsList";
+import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { useBranding } from "../../hooks/useBranding";
-import { hasSofaMixConflict, SOFA_MIX_MESSAGE } from "../../vendor/shared/so-variant-rule";
 import { todayMyt } from "../../vendor/scm/lib/dates";
 import { PhoneInput } from "../../vendor/scm/components/PhoneInput";
 
@@ -155,6 +157,7 @@ export function SalesOrderNewGuided() {
   const [step, setStep] = useState<number>(0);
   const [showValidation, setShowValidation] = useState<boolean>(false);
   const [postError, setPostError] = useState<string | null>(null);
+  const notify = useNotify();
 
   // Draft state
   const [customer, setCustomer] = useState<Customer>({
@@ -207,6 +210,22 @@ export function SalesOrderNewGuided() {
     return sum;
   }, [moduleEntries, skusQ.data]);
 
+  /* Backend is the sole authority for submit-blocked problems (owner 2026-09-16).
+     The wizard drafts, so the only reasons it can trip are identity + sofa-mix;
+     validate returns them, this just displays. */
+  const buildValidateDraft = useCallback(() => ({
+    debtorName: customer.name,
+    phone: customer.phone,
+    items: moduleEntries.map(([code, qty]) => ({ itemCode: code, itemGroup: "sofa", qty })),
+    asDraft: true,
+    companyCode: branding.companyCode,
+  }), [customer.name, customer.phone, moduleEntries, branding.companyCode]);
+  const liveValidateDraft = useMemo(() => buildValidateDraft(), [buildValidateDraft]);
+  const { problems: blockingProblems } = useSoValidate(liveValidateDraft, moduleEntries.length > 0);
+  const openBlockingList = () => {
+    void notify({ title: saveProblemsTitle(blockingProblems.length), body: <SaveProblemsList problems={blockingProblems} />, tone: "error" });
+  };
+
   // Validation per step
   const stepValid = (s: number): boolean => {
     if (s === 0) return customer.name.trim().length > 0 && customer.phone.trim().length > 0;
@@ -256,36 +275,24 @@ export function SalesOrderNewGuided() {
       };
     });
 
-    /* Pre-validate with the SAME shared guards the Full form (SalesOrderNew)
-       runs, so a bad build surfaces one plain sentence here instead of a raw
-       server 400/409. The wizard collects no dates (added on the SO detail
-       after save), so soDateGuardError operates on empty inputs and passes —
-       kept for single-logic-layer parity so a future date field on this flow is
-       guarded automatically. Payments are not guarded at all: the slip is
-       optional everywhere (Owner 2026-08-13) and this flow collects no payment.
-       Every line here
-       is a sofa module, so hasSofaMixConflict can't fire in practice, but the
-       check mirrors the Full form verbatim. Variant completeness
-       (missingRequiredVariants) is enforced only once a processing date is set
-       (server parity); the guided flow sets none, so it's enforced on the SO
-       detail, not here.
-
-       The stock-location gate (owner 2026-08-13) is inert here for the same
-       parity reason: this flow lands a DRAFT unconditionally (see `asDraft`
-       below) and a draft is never written to AutoCount, so the guard passes —
-       but it is wired, so the day this flow stops drafting it is gated
-       automatically instead of silently minting locationless orders. */
-    const preErr =
-      soDateGuardError({ processingDate: "", deliveryDate: "", today: todayMyt() }) ??
-      (hasSofaMixConflict(items.map((i) => i.itemGroup)) ? { title: SOFA_MIX_MESSAGE } : null) ??
-      soStockLocationError({
-        companyCode: branding.companyCode,
-        salesLocation: "",
-        state: "",
-        asDraft: true,
+    /* Backend authors the blocker list (owner 2026-09-16); this wizard drafts
+       unconditionally, so validate returns only the identity / sofa-mix reasons
+       the draft can trip. Same SaveProblemsList popup + live indicator as the
+       Full form. A failed validate never blocks — the create is the backstop. */
+    let problems: SaveProblem[] = [];
+    try {
+      const r = await authedFetch<{ problems: SaveProblem[] }>('/mfg-sales-orders/validate', {
+        method: 'POST',
+        body: JSON.stringify(buildValidateDraft()),
       });
-    if (preErr) {
-      setPostError(soErrorText(preErr));
+      problems = r.problems;
+    } catch {
+      // silent-write-ok: validate is a READ-ONLY dry-run (it writes nothing); its
+      // failure must not block the operator, and the create call below is the
+      // authoritative gate that surfaces any real refusal.
+    }
+    if (problems.length > 0) {
+      await notify({ title: saveProblemsTitle(problems.length), body: <SaveProblemsList problems={problems} />, tone: "error" });
       return;
     }
 
@@ -311,7 +318,9 @@ export function SalesOrderNewGuided() {
       const res = await create.mutateAsync({ ...body, idempotencyKey: idemKey });
       navigate(`/scm/sales-orders/${res.docNo}`);
     } catch (e) {
-      setPostError(errMsg(e));
+      /* A server aggregated refusal (422 validation_failed) shows every reason
+         in the same popup; anything else falls back to the inline banner. */
+      await notifySaveProblems(notify, e, () => setPostError(errMsg(e)), errMsg(e));
     }
   };
 
@@ -420,6 +429,8 @@ export function SalesOrderNewGuided() {
           onBack={goBack}
           onNext={goNext}
           onSubmit={onSubmit}
+          blockedProblems={blockingProblems}
+          onOpenBlocked={openBlockingList}
         />
       </div>
 
@@ -434,6 +445,8 @@ export function SalesOrderNewGuided() {
         onBack={goBack}
         onNext={goNext}
         onSubmit={onSubmit}
+        blockedProblems={blockingProblems}
+        onOpenBlocked={openBlockingList}
       />
     </div>
   );
@@ -1175,6 +1188,8 @@ function SoLiveSummary({
   onBack,
   onNext,
   onSubmit,
+  blockedProblems,
+  onOpenBlocked,
 }: {
   customer: Customer;
   model: ProductModel | null;
@@ -1187,6 +1202,8 @@ function SoLiveSummary({
   onBack: () => void;
   onNext: () => void;
   onSubmit: () => void;
+  blockedProblems: SaveProblem[];
+  onOpenBlocked: () => void;
 }) {
   return (
     <aside className="hidden self-start rounded-xl border border-border bg-surface p-4 shadow-stone lg:block">
@@ -1228,14 +1245,17 @@ function SoLiveSummary({
           Back
         </Button>
         {isLast ? (
-          <Button
-            variant="primary"
-            onClick={onSubmit}
-            disabled={submitting}
-            icon={submitting ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
-          >
-            {submitting ? "Saving…" : "Save draft SO"}
-          </Button>
+          <div className="flex flex-col items-stretch gap-2">
+            <SaveBlockedIndicator problems={blockedProblems} onOpen={onOpenBlocked} />
+            <Button
+              variant="primary"
+              onClick={onSubmit}
+              disabled={submitting}
+              icon={submitting ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+            >
+              {submitting ? "Saving…" : "Save draft SO"}
+            </Button>
+          </div>
         ) : (
           <Button variant="primary" onClick={onNext} disabled={submitting}>
             Next{" "}
@@ -1267,6 +1287,8 @@ function MobileFooter({
   onBack,
   onNext,
   onSubmit,
+  blockedProblems,
+  onOpenBlocked,
 }: {
   subtotalSen: number;
   modulePcs: number;
@@ -1276,6 +1298,8 @@ function MobileFooter({
   onBack: () => void;
   onNext: () => void;
   onSubmit: () => void;
+  blockedProblems: SaveProblem[];
+  onOpenBlocked: () => void;
 }) {
   return (
     <div className="sticky bottom-0 -mx-4 mt-4 border-t border-border bg-surface px-4 py-3 shadow-[0_-4px_18px_-8px_rgba(17,24,16,.12)] lg:hidden">
@@ -1287,6 +1311,11 @@ function MobileFooter({
           {fmtRm(subtotalSen)}
         </span>
       </div>
+      {isLast && (
+        <div className="mb-2">
+          <SaveBlockedIndicator problems={blockedProblems} onOpen={onOpenBlocked} />
+        </div>
+      )}
       <div className="grid grid-cols-[auto_1fr] gap-2">
         <Button
           variant="secondary"

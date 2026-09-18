@@ -5,6 +5,7 @@
 
 import { describe, expect, test } from 'vitest';
 import { lineItemGroup, attributesTheGroupWillIgnore, resolveItemGroups } from './sku-category';
+import { parsePgrestInList } from './pgrest-in-list';
 
 const SOFA = { fabricCode: 'PC151-12', seatHeight: '30', legHeight: 'Default' };
 
@@ -115,5 +116,65 @@ describe('resolveItemGroups — one value, before any reader', () => {
   test('a failed catalogue read leaves every line exactly as it arrived', async () => {
     const out = await resolveItemGroups(fakeSb(null), [{ itemCode: 'BF-KING-01', itemGroup: 'others' }], 1);
     expect(out[0]!.itemGroup).toBe('others');
+  });
+});
+
+/* ── docs/bugs/0819 — the by-code sweep, at a representative site ─────────────
+   Model the WIRE, not a convenient stand-in. postgrest-js `.in()` quotes `[,()]`
+   but never ESCAPES, so a code carrying `"` (inch mark) closes its own quoted
+   value early and the first `)` after it closes the whole `in.(` list — the code
+   AND every code after it in the batch silently read as absent, request still
+   200. `.filter(_, 'in', pgrestInList(...))` sends the escaped payload that
+   survives. This fake reproduces both, so a revert of skuCategoryMap to
+   `.in('code', …)` fails these. */
+const wireIn = (vs: readonly unknown[]): unknown[] =>
+  vs.some((v) => typeof v === 'string' && /["\\]/.test(v))
+    ? parsePgrestInList(`(${[...new Set(vs)].map((s) => (typeof s === 'string' && /[,()]/.test(s) ? `"${s}"` : `${s}`)).join(',')})`)
+    : [...vs];
+
+const wireSb = (rows: Array<{ code: string; category: string | null; company_id: number }>) => ({
+  from: () => {
+    const eqs: Array<[string, unknown]> = [];
+    const ins: Array<[string, unknown[]]> = [];
+    const run = () => ({
+      data: rows
+        .filter((r) => eqs.every(([col, v]) => (r as Record<string, unknown>)[col] === v))
+        .filter((r) => ins.every(([col, vs]) => vs.includes((r as Record<string, unknown>)[col]))),
+      error: null,
+    });
+    const builder: Record<string, unknown> = {
+      select: () => builder,
+      eq: (col: string, v: unknown) => { eqs.push([col, v]); return builder; },
+      in: (col: string, vs: unknown[]) => { ins.push([col, wireIn(vs)]); return builder; },
+      filter: (col: string, op: string, payload: string) => {
+        if (op === 'in') ins.push([col, parsePgrestInList(payload)]);
+        return builder;
+      },
+      then: (resolve: (v: unknown) => unknown) => Promise.resolve(run()).then(resolve),
+    };
+    return builder;
+  },
+});
+
+describe('skuCategoryMap — an inch-mark code, and every code after it, still resolves (docs/bugs/0819)', () => {
+  const INCH = 'DUNLOPILLO GENERASI 5" MATT (SS)';
+  const catalogue = [
+    { code: INCH, category: 'MATTRESS', company_id: 1 },
+    { code: '9058-1NA', category: 'SOFA', company_id: 1 }, // in the same batch, AFTER the inch mark
+  ];
+
+  test('the escaped read resolves both categories', async () => {
+    const out = await resolveItemGroups(
+      wireSb(catalogue),
+      [{ itemCode: INCH, itemGroup: null }, { itemCode: '9058-1NA', itemGroup: null }],
+      1,
+    );
+    expect(out.map((l) => l.itemGroup)).toEqual(['mattress', 'sofa']);
+  });
+
+  test('proof the wire model bites — a raw .in() drops the inch mark and the code after it', () => {
+    // What the raw library emits, read back the way PostgREST parses it: one
+    // garbled value, and 9058-1NA gone entirely.
+    expect(wireIn([INCH, '9058-1NA'])).toEqual(['DUNLOPILLO GENERASI 5 MATT (SS']);
   });
 });

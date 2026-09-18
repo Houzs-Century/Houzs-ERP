@@ -17,7 +17,7 @@ import { describe, expect, test } from 'vitest';
 import { fakeSb, type Row } from '../src/scm/lib/fake-postgrest';
 import {
   settlementSetup, settlementUpload, settlementBatches, settlementBatchDetail,
-  settlementConfirmRow, settlementConfirmMatched, settlementIgnoreRow, settlementWatchlist,
+  settlementConfirmRow, settlementConfirmMatched, settlementIgnoreRow, settlementWatchlist, settlementFindPayments,
   settlementBatchReceived, settlementInTransit, settlementRowUnconfirm,
   settlementMaintenance, settlementMaintenanceMerchant, settlementMaintenanceBank,
 } from '../src/scm/routes/accounting-settlement';
@@ -25,13 +25,13 @@ import {
 const CO = 1;
 const GL_PERM = 'scm.payment_voucher.post';
 
-const CHART: Row[] = ['320-0000', '330-0000', '930-0000'].map((code) => ({
+const CHART: Row[] = ['326-0000', '310-0010', '930-0000'].map((code) => ({
   account_code: code, account_name: code, account_type: 'ASSET', parent_code: null, is_active: true, company_id: CO,
 }));
 
 const MBB: Row = {
   company_id: CO, code: 'MBB', display_name: 'MBB',
-  transit_account_code: '320-0000', fee_account_code: '930-0000', bank_account_code: '330-0000',
+  transit_account_code: '326-0000', fee_account_code: '930-0000', bank_account_code: '310-0010',
   statement_format: 'CSV', has_unique_ref: true, fee_method: 'stated',
   date_tolerance_days: 3, is_active: true,
   column_map: { date: 'Txn Date', ref: 'Approval Code', gross: 'Gross', fee: 'MDR' },
@@ -90,6 +90,7 @@ function harness(tables: Record<string, Row[]>, perms: readonly string[] = [GL_P
   app.post('/settlement/rows/:id/ignore', settlementIgnoreRow as never);
   app.post('/settlement/batches/:id/received', settlementBatchReceived as never);
   app.get('/settlement/watchlist', settlementWatchlist as never);
+  app.get('/settlement/rows/:id/find', settlementFindPayments as never);
   app.get('/settlement/in-transit', settlementInTransit as never);
   app.get('/settlement/maintenance', settlementMaintenance as never);
   app.patch('/settlement/maintenance/merchant', settlementMaintenanceMerchant as never);
@@ -126,12 +127,12 @@ describe('one merchant, two companies, two banks', () => {
     const { app, sb } = harness({
       accounts: [
         ...CHART,
-        { account_code: '331-0000', account_name: 'Bank — Hong Leong', account_type: 'ASSET', parent_code: null, is_active: true, company_id: CO, acc_money: true },
-        { account_code: '330-0000', account_name: 'Bank — Maybank', account_type: 'ASSET', parent_code: null, is_active: true, company_id: CO, acc_money: true },
+        { account_code: '310-0020', account_name: 'Bank — Hong Leong', account_type: 'ASSET', parent_code: null, is_active: true, company_id: CO, acc_money: true },
+        { account_code: '310-0010', account_name: 'Bank — Maybank', account_type: 'ASSET', parent_code: null, is_active: true, company_id: CO, acc_money: true },
       ],
       acc_acquirers: [
-        { ...MBB, code: 'PBB', display_name: 'PBB', bank_account_code: '330-0000' },
-        { ...MBB, code: 'PBB', display_name: 'PBB', company_id: OTHER, bank_account_code: '331-0000' },
+        { ...MBB, code: 'PBB', display_name: 'PBB', bank_account_code: '310-0010' },
+        { ...MBB, code: 'PBB', display_name: 'PBB', company_id: OTHER, bank_account_code: '310-0020' },
       ],
     });
     const body = await (await app.request('/settlement/setup')).json() as {
@@ -140,10 +141,10 @@ describe('one merchant, two companies, two banks', () => {
     };
     /* This company sees ITS row, and only its own money accounts to choose from. */
     expect(body.acquirers).toHaveLength(1);
-    expect(body.acquirers[0]).toMatchObject({ code: 'PBB', bank_account_code: '330-0000', bankReady: true });
-    expect(body.bankAccounts.map((b) => b.account_code)).toEqual(['330-0000', '331-0000']);
+    expect(body.acquirers[0]).toMatchObject({ code: 'PBB', bank_account_code: '310-0010', bankReady: true });
+    expect(body.bankAccounts.map((b) => b.account_code)).toEqual(['310-0010', '310-0020']);
     /* And the other company's link is untouched by any of it. */
-    expect(sb.tables.acc_acquirers.find((r) => r.company_id === OTHER)).toMatchObject({ bank_account_code: '331-0000' });
+    expect(sb.tables.acc_acquirers.find((r) => r.company_id === OTHER)).toMatchObject({ bank_account_code: '310-0020' });
   });
 
   test('a merchant with no receiving bank is READY to read but not ready to bank', async () => {
@@ -158,9 +159,9 @@ describe('one merchant, two companies, two banks', () => {
    择？ — so the company is a parameter, checked against his grants. */
 describe('maintenance — one screen, every company', () => {
   const CHART_MONEY: Row[] = [
-    { account_code: '330-0000', account_name: 'Bank — Maybank', account_type: 'ASSET', parent_code: null, is_active: true, acc_money: true, company_id: CO },
-    { account_code: '331-0000', account_name: 'Bank — Hong Leong', account_type: 'ASSET', parent_code: null, is_active: true, acc_money: true, company_id: CO },
-    { account_code: '330-0000', account_name: 'Bank — Maybank', account_type: 'ASSET', parent_code: null, is_active: true, acc_money: true, company_id: 2 },
+    { account_code: '310-0010', account_name: 'Bank — Maybank', account_type: 'ASSET', parent_code: null, is_active: true, acc_money: true, company_id: CO },
+    { account_code: '310-0020', account_name: 'Bank — Hong Leong', account_type: 'ASSET', parent_code: null, is_active: true, acc_money: true, company_id: CO },
+    { account_code: '310-0010', account_name: 'Bank — Maybank', account_type: 'ASSET', parent_code: null, is_active: true, acc_money: true, company_id: 2 },
   ];
   const CONFIG: Row[] = [
     { code: 'MBB', display_name: 'MBB', statement_format: 'CSV', has_unique_ref: true, fee_method: 'stated', date_tolerance_days: 3, column_map: { date: 'Txn Date', gross: 'Gross', fee: 'MDR' }, is_active: true },
@@ -170,7 +171,7 @@ describe('maintenance — one screen, every company', () => {
   test('answers for EVERY company at once — the rows are merchants, the columns are companies', async () => {
     const { app } = harness({
       accounts: CHART_MONEY, acc_acquirer_config: CONFIG,
-      acc_company_acquirers: [{ company_id: CO, acquirer_code: 'MBB', bank_account_code: '331-0000', is_active: true }],
+      acc_company_acquirers: [{ company_id: CO, acquirer_code: 'MBB', bank_account_code: '310-0020', is_active: true }],
     });
     const body = await (await app.request('/settlement/maintenance')).json() as {
       companies: Array<{ id: number }>;
@@ -183,7 +184,7 @@ describe('maintenance — one screen, every company', () => {
        link row anywhere — a row all the same, unticked, because that is how a
        company starts using it. */
     const mbb = body.merchants.find((m) => m.code === 'MBB')!;
-    expect(mbb.byCompany['1']).toMatchObject({ enabled: true, linked: true, bankAccountCode: '331-0000' });
+    expect(mbb.byCompany['1']).toMatchObject({ enabled: true, linked: true, bankAccountCode: '310-0020' });
     expect(mbb.byCompany['2']).toMatchObject({ enabled: false, linked: false, bankAccountCode: null });
     const cimb = body.merchants.find((m) => m.code === 'CIMB')!;
     expect(cimb.byCompany['1']).toMatchObject({ enabled: false, linked: false });
@@ -191,8 +192,8 @@ describe('maintenance — one screen, every company', () => {
     /* One row per account CODE, with what each company does with it — and an
        account a company does not carry reads as 'not in its chart', never as
        an unticked box it could tick. */
-    expect(body.banks.map((b) => b.account_code)).toEqual(['330-0000', '331-0000']);
-    const hlb = body.banks.find((b) => b.account_code === '331-0000')!;
+    expect(body.banks.map((b) => b.account_code)).toEqual(['310-0010', '310-0020']);
+    const hlb = body.banks.find((b) => b.account_code === '310-0020')!;
     expect(hlb.byCompany['1']).toMatchObject({ inChart: true, enabled: true, usedBy: ['MBB'] });
     expect(hlb.byCompany['2']).toMatchObject({ inChart: false, enabled: false, usedBy: [] });
   });
@@ -204,7 +205,7 @@ describe('maintenance — one screen, every company', () => {
     expect(write.status).toBe(409);
     expect(await write.json()).toMatchObject({ error: 'company_not_granted' });
 
-    const bank = await patch(app, '/settlement/maintenance/bank', { companyId: 99, accountCode: '330-0000', enabled: false });
+    const bank = await patch(app, '/settlement/maintenance/bank', { companyId: 99, accountCode: '310-0010', enabled: false });
     expect(bank.status).toBe(409);
   });
 
@@ -217,27 +218,27 @@ describe('maintenance — one screen, every company', () => {
     expect(sb.tables.acc_company_acquirers[0]).toMatchObject({ company_id: 2, acquirer_code: 'MBB', is_active: true });
 
     /* And pointing it at a bank updates the same row rather than making another. */
-    const again = await patch(app, '/settlement/maintenance/merchant', { companyId: 2, code: 'MBB', bankAccountCode: '330-0000' });
+    const again = await patch(app, '/settlement/maintenance/merchant', { companyId: 2, code: 'MBB', bankAccountCode: '310-0010' });
     expect(await again.json()).toMatchObject({ created: false });
     expect(sb.tables.acc_company_acquirers).toHaveLength(1);
-    expect(sb.tables.acc_company_acquirers[0]).toMatchObject({ bank_account_code: '330-0000' });
+    expect(sb.tables.acc_company_acquirers[0]).toMatchObject({ bank_account_code: '310-0010' });
   });
 
   test('a bank a merchant still pays into cannot be unticked, and the refusal names it', async () => {
     const { app, sb } = harness({
       accounts: CHART_MONEY, acc_acquirer_config: CONFIG,
-      acc_company_acquirers: [{ company_id: CO, acquirer_code: 'MBB', bank_account_code: '331-0000', is_active: true }],
+      acc_company_acquirers: [{ company_id: CO, acquirer_code: 'MBB', bank_account_code: '310-0020', is_active: true }],
     });
-    const res = await patch(app, '/settlement/maintenance/bank', { companyId: 1, accountCode: '331-0000', enabled: false });
+    const res = await patch(app, '/settlement/maintenance/bank', { companyId: 1, accountCode: '310-0020', enabled: false });
     expect(res.status).toBe(409);
     expect(await res.json()).toMatchObject({ error: 'bank_in_use', message: expect.stringContaining('MBB') });
-    expect(sb.tables.accounts.find((a) => a.account_code === '331-0000' && a.company_id === 1)).toMatchObject({ is_active: true });
+    expect(sb.tables.accounts.find((a) => a.account_code === '310-0020' && a.company_id === 1)).toMatchObject({ is_active: true });
 
     /* Free it first, then it goes. */
     await patch(app, '/settlement/maintenance/merchant', { companyId: 1, code: 'MBB', bankAccountCode: null });
-    const ok = await patch(app, '/settlement/maintenance/bank', { companyId: 1, accountCode: '331-0000', enabled: false });
+    const ok = await patch(app, '/settlement/maintenance/bank', { companyId: 1, accountCode: '310-0020', enabled: false });
     expect(ok.status).toBe(200);
-    expect(sb.tables.accounts.find((a) => a.account_code === '331-0000' && a.company_id === 1)).toMatchObject({ is_active: false });
+    expect(sb.tables.accounts.find((a) => a.account_code === '310-0020' && a.company_id === 1)).toMatchObject({ is_active: false });
   });
 });
 
@@ -278,6 +279,24 @@ describe('POST /settlement/batches — a bad upload is loud', () => {
     expect(await again.json()).toMatchObject({ error: 'already_uploaded' });
     expect(sb.tables.acc_settlement_batches).toHaveLength(1);
   });
+
+  /* An upload that wrote its batch head and then died left a batch with NO
+     lines still holding the file hash — and told the operator "already
+     uploaded" about an upload that never finished (the owner's PBB statement
+     of 2026-08-01 sat exactly like this). The retry must be let in. */
+  test('a half-failed upload does not hold its file hostage — the retry replaces the wreck', async () => {
+    const { app, sb } = harness({ mfg_sales_order_payments: [soPayment()] });
+    expect((await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT })).status).toBe(200);
+    // Simulate the half-failure: the lines vanish, the batch head remains.
+    sb.tables.acc_settlement_rows = [];
+    sb.tables.acc_settlement_matches = [];
+
+    const retry = await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT });
+    expect(retry.status).toBe(200);
+    // One batch — the retry's, whole this time — never the wreck plus a twin.
+    expect(sb.tables.acc_settlement_batches).toHaveLength(1);
+    expect(sb.tables.acc_settlement_rows).toHaveLength(2);
+  });
 });
 
 describe('POST /settlement/batches — the four piles', () => {
@@ -308,6 +327,99 @@ describe('POST /settlement/batches — the four piles', () => {
   });
 });
 
+/* ── A transaction already on another report (docs/bugs/0823) ─────────────────
+   Maybank prints an Amex card sold on an EzyPay instalment on BOTH the EP41
+   and the T41AX report of the day — one swipe, two files, the bank pays
+   once. The same FILE twice was already refused by its hash; the same LINE on
+   a second file was not, and would have made a batch waiting for a payout
+   that never comes. */
+describe('a transaction already on another report', () => {
+  const FIRST = { acquirerCode: 'MBB', fileName: '027012896718_EP41_713_20260801.CSV', content: STATEMENT };
+  const second = (content: string) => ({ acquirerCode: 'MBB', fileName: '027012896718_T41AX_467_20260801.CSV', content });
+  const HEAD = 'Txn Date,Approval Code,Gross,MDR';
+
+  test('the second report keeps only its new line, and names the first report for the rest', async () => {
+    const { app, sb } = harness({ mfg_sales_order_payments: [soPayment()] });
+    expect((await upload(app, FIRST)).status).toBe(200);
+    const res = await upload(app, second(`${HEAD}\n01/08/2026,A1,1000.00,15.00\n01/08/2026,B7,500.00,7.50`));
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+    expect(body.rows).toBe(1);
+    expect(body.alreadyOnReport).toBe(1);
+    expect(body.alreadyOnReportDetail).toEqual([expect.objectContaining({
+      /* File line numbers: the heading is line 1, the first transaction line 2. */
+      lineNo: 2, txnDate: '2026-08-01', ref: 'A1', grossSen: 100000,
+      fileName: '027012896718_EP41_713_20260801.CSV', lineNoThere: 2,
+    })]);
+    /* The left-out line takes its share of the fee with it. */
+    expect(body).toMatchObject({ grossSen: 50000, feeSen: 750, netSen: 49250 });
+    const batches = sb.tables.acc_settlement_batches as Row[];
+    expect(batches).toHaveLength(2);
+    expect(batches[1]).toMatchObject({ row_count: 1, gross_sen: 50000, fee_sen: 750, net_sen: 49250 });
+    const rows = (sb.tables.acc_settlement_rows as Row[]).filter((r) => r.batch_id === batches[1]!.id);
+    expect(rows.map((r) => r.ref)).toEqual(['B7']);
+  });
+
+  test('a report with nothing new is refused, and stores nothing', async () => {
+    const { app, sb } = harness({ mfg_sales_order_payments: [soPayment()] });
+    expect((await upload(app, FIRST)).status).toBe(200);
+    const res = await upload(app, second(`${HEAD}\n01/08/2026,A1,1000.00,15.00`));
+    expect(res.status).toBe(409);
+    const body = await res.json() as any;
+    expect(body.error).toBe('already_on_report');
+    expect(body.alreadyOnReport).toBe(1);
+    expect(body.message).toMatch(/027012896718_EP41_713_20260801\.CSV/);
+    expect(body.message.length).toBeLessThan(200);
+    expect(sb.tables.acc_settlement_batches).toHaveLength(1);
+    expect(sb.tables.acc_settlement_rows).toHaveLength(2);
+  });
+
+  test('a different amount under the same day and reference is another transaction', async () => {
+    const { app, sb } = harness({ mfg_sales_order_payments: [soPayment()] });
+    expect((await upload(app, FIRST)).status).toBe(200);
+    const res = await upload(app, second(`${HEAD}\n01/08/2026,A1,1200.00,18.00`));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ rows: 1, alreadyOnReport: 0 });
+    expect(sb.tables.acc_settlement_batches).toHaveLength(2);
+  });
+
+  test('an acquirer without unique references is never deduplicated this way', async () => {
+    const { app, sb } = harness({ acc_acquirers: [GHL], mfg_sales_order_payments: [soPayment({ merchant_provider: 'GHL' })] });
+    const ghl = (name: string, extra: string) => ({ acquirerCode: 'GHL', fileName: name, content: `Txn Date,Gross,MDR\n01/08/2026,1000.00,15.00${extra}` });
+    expect((await upload(app, ghl('ghl-a.csv', ''))).status).toBe(200);
+    const res = await upload(app, ghl('ghl-b.csv', '\n02/08/2026,50.00,1.00'));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ rows: 2, alreadyOnReport: 0 });
+    expect(sb.tables.acc_settlement_batches).toHaveLength(2);
+  });
+});
+
+describe('an unconfirmed link follows its payment (docs/bugs/0833)', () => {
+  test('opening the report reads the corrected amount back into the link and names it; a confirmed line is left alone', async () => {
+    const { app, sb } = harness({ mfg_sales_order_payments: [soPayment()] });
+    const up = await (await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT })).json() as { batchId: string };
+    expect(sb.tables.acc_settlement_matches[0]).toMatchObject({ payment_id: 'p1', amount_sen: 100000 });
+    /* Finance corrects the payment after the upload (3,053 → 3,052 in the
+       owner's case; here 1,000.00 → 999.00). */
+    sb.tables.mfg_sales_order_payments[0]!.amount_sen = 99900;
+    const opened = await app.request(`/settlement/batches/${up.batchId}`);
+    expect(opened.status).toBe(200);
+    const body = await opened.json() as { refreshedLinks: unknown[]; rows: Array<{ line_no: number; linked: Array<{ amount_sen: number }> }> };
+    expect(body.refreshedLinks).toEqual([expect.objectContaining({ paymentId: 'p1', docNo: 'SO-2608-001', fromSen: 100000, toSen: 99900 })]);
+    expect(sb.tables.acc_settlement_matches[0]).toMatchObject({ amount_sen: 99900 });
+    expect(body.rows.find((r) => r.linked.length > 0)?.linked[0]).toMatchObject({ amount_sen: 99900 });
+    /* Opened again with nothing moved: nothing to name. */
+    const again = await (await app.request(`/settlement/batches/${up.batchId}`)).json() as { refreshedLinks: unknown[] };
+    expect(again.refreshedLinks).toEqual([]);
+    /* Confirmed: the ledger's now. A later correction is not read back. */
+    sb.tables.acc_settlement_rows[0]!.confirmed_at = '2026-08-05T00:00:00Z';
+    sb.tables.mfg_sales_order_payments[0]!.amount_sen = 50000;
+    const after = await (await app.request(`/settlement/batches/${up.batchId}`)).json() as { refreshedLinks: unknown[] };
+    expect(after.refreshedLinks).toEqual([]);
+    expect(sb.tables.acc_settlement_matches[0]).toMatchObject({ amount_sen: 99900 });
+  });
+});
+
 describe('confirming is the moment of posting', () => {
   test('bulk-confirming the auto-matched pile books the FEE, and leaves the bank alone', async () => {
     const { app, sb } = harness({ mfg_sales_order_payments: [soPayment()] });
@@ -320,8 +432,8 @@ describe('confirming is the moment of posting', () => {
     const lines = sb.tables.journal_entry_lines;
     expect(lines).toHaveLength(2);
     expect(lines.find((l) => l.account_code === '930-0000')).toMatchObject({ debit_sen: 1500 });
-    expect(lines.find((l) => l.account_code === '320-0000')).toMatchObject({ credit_sen: 1500 });
-    expect(lines.some((l) => l.account_code === '330-0000')).toBe(false);
+    expect(lines.find((l) => l.account_code === '326-0000')).toMatchObject({ credit_sen: 1500 });
+    expect(lines.some((l) => l.account_code === '310-0010')).toBe(false);
     expect(sb.tables.journal_entries[0]).toMatchObject({ source_type: 'SETTLE', entry_date: '2026-08-01' });
   });
 
@@ -341,20 +453,70 @@ describe('confirming is the moment of posting', () => {
     expect(adj).toBeTruthy();
     const adjLines = sb.tables.journal_entry_lines.filter((l) => l.journal_entry_id === adj!.id);
     expect(adjLines.find((l) => l.account_code === '930-0000')).toMatchObject({ debit_sen: 25416 });
-    expect(adjLines.find((l) => l.account_code === '320-0000')).toMatchObject({ credit_sen: 25416 });
+    expect(adjLines.find((l) => l.account_code === '326-0000')).toMatchObject({ credit_sen: 25416 });
   });
 
+  /* The RM 1,000.00 payment against the RM 777.00 line — and the screen's own
+     figure is not what is compared: the payment's amount in the books is
+     (docs/bugs/0792), so a browser claiming 777.00 changes nothing. */
   test('confirming a line whose selection does not add up is refused with the difference', async () => {
     const { app, sb } = harness({ mfg_sales_order_payments: [soPayment()] });
     await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT });
     const unmatched = sb.tables.acc_settlement_rows.find((r) => r.bucket === 'UNMATCHED')!;
 
     const res = await post(app, `/settlement/rows/${unmatched.id}/confirm`, {
-      payments: [{ source: 'SOPAY', id: 'px', docNo: 'SO-9', amountSen: 1000 }],
+      payments: [{ source: 'SOPAY', id: 'p1', docNo: 'SO-2608-001', amountSen: 77700 }],
     });
     expect(res.status).toBe(409);
     expect(await res.json()).toMatchObject({ error: 'amount_mismatch' });
     expect(sb.tables.journal_entries).toHaveLength(0);
+  });
+
+  /* docs/bugs/0792 — "Find the sale" lets a person pick ANY card payment, so
+     the confirm reads each one back: not in this company's books, or not a
+     card payment, is a refusal the operator can read, not a 500. */
+  test('a payment the books do not hold, or a cash one, is refused by name', async () => {
+    const { app, sb } = harness({ mfg_sales_order_payments: [soPayment(), soPayment({ id: 'cash1', so_doc_no: 'SO-2608-002', method: 'cash', merchant_provider: null, amount_sen: 77700 })] });
+    await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT });
+    const unmatched = sb.tables.acc_settlement_rows.find((r) => r.bucket === 'UNMATCHED')!;
+
+    const ghost = await post(app, `/settlement/rows/${unmatched.id}/confirm`, {
+      payments: [{ source: 'SOPAY', id: 'px', docNo: 'SO-9', amountSen: 77700 }],
+    });
+    expect(ghost.status).toBe(409);
+    expect(await ghost.json()).toMatchObject({ error: 'payment_not_found' });
+
+    const cash = await post(app, `/settlement/rows/${unmatched.id}/confirm`, {
+      payments: [{ source: 'SOPAY', id: 'cash1', docNo: 'SO-2608-002', amountSen: 77700 }],
+    });
+    expect(cash.status).toBe(409);
+    expect(await cash.json()).toMatchObject({ error: 'not_card_payment' });
+    expect(sb.tables.journal_entries).toHaveLength(0);
+  });
+
+  test('GET rows/:id/find lists the company card payments by document, the exact gross marked possible', async () => {
+    const { app, sb } = harness({
+      mfg_sales_order_payments: [
+        soPayment({ id: 'late', so_doc_no: 'SO-2608-077', paid_at: '2026-08-20T10:00:00', amount_sen: 77700, approval_code: null, merchant_provider: null }),
+        /* The same customer's earlier, CANCELLED order: its money is not offered (docs/bugs/0837). */
+        soPayment({ id: 'gone', so_doc_no: 'SO-2608-070', paid_at: '2026-08-19T10:00:00', amount_sen: 77700, approval_code: null, merchant_provider: null }),
+        soPayment(),
+      ],
+      mfg_sales_orders: [
+        { doc_no: 'SO-2608-077', company_id: CO, debtor_name: 'Chou Mun Yee', status: 'CONFIRMED' },
+        { doc_no: 'SO-2608-070', company_id: CO, debtor_name: 'Chou Mun Yee', status: 'CANCELLED' },
+        { doc_no: 'SO-2608-001', company_id: CO, debtor_name: 'Someone Else', status: 'DELIVERED' },
+      ],
+      sales_invoices: [],
+    });
+    await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT });
+    const unmatched = sb.tables.acc_settlement_rows.find((r) => r.bucket === 'UNMATCHED')!;
+
+    const res = await app.request(`/settlement/rows/${unmatched.id}/find?q=chou`);
+    expect(res.status).toBe(200);
+    const body = await res.json() as { payments: Array<{ id: string; possible: boolean; customerName: string | null }> };
+    expect(body.payments).toEqual([expect.objectContaining({ id: 'late', possible: true, customerName: 'Chou Mun Yee' })]);
+    expect((await app.request('/settlement/rows/999999/find')).status).toBe(404);
   });
 
   test('a line with no payment behind it cannot be cleared out of in-transit', async () => {
@@ -384,8 +546,8 @@ describe('POST /settlement/batches/:id/received — the money arrives', () => {
     expect(receipt).toMatchObject({ entry_date: '2026-08-05' });
     const lines = sb.tables.journal_entry_lines.filter((l) => l.journal_entry_id === receipt.id);
     /* The statement's net: 1,777.00 gross less 26.00 of fees. */
-    expect(lines.find((l) => l.account_code === '330-0000')).toMatchObject({ debit_sen: 175100 });
-    expect(lines.find((l) => l.account_code === '320-0000')).toMatchObject({ credit_sen: 175100 });
+    expect(lines.find((l) => l.account_code === '310-0010')).toMatchObject({ debit_sen: 175100 });
+    expect(lines.find((l) => l.account_code === '326-0000')).toMatchObject({ credit_sen: 175100 });
     expect(sb.tables.acc_settlement_receipts[0]).toMatchObject({ batch_id: up.batchId, received_on: '2026-08-05', amount_sen: 175100 });
   });
 
@@ -470,7 +632,7 @@ describe('GET /settlement/in-transit — whose money is still out there', () => 
     expect(body.lines[0].amountSen).toBe(100000 - 1500 - 25416);
 
     const transit = sb.tables.journal_entry_lines
-      .filter((l) => l.account_code === '320-0000')
+      .filter((l) => l.account_code === '326-0000')
       .reduce((s, l) => s + Number(l.debit_sen ?? 0) - Number(l.credit_sen ?? 0), 0);
     /* The swipe itself is booked by phase 2A, not here, so what this suite can
        compare is the movement: everything taken out of in-transit so far is
@@ -491,7 +653,7 @@ describe('GET /settlement/in-transit — whose money is still out there', () => 
     expect(body.lines[0]).toMatchObject({ state: 'RECONCILED_NOT_PAID', amountSen: 100000 - 1500 - 50000 });
 
     const transit = sb.tables.journal_entry_lines
-      .filter((l) => l.account_code === '320-0000')
+      .filter((l) => l.account_code === '326-0000')
       .reduce((s, l) => s + Number(l.debit_sen ?? 0) - Number(l.credit_sen ?? 0), 0);
     expect(body.totalSen).toBe(100000 + transit);
   });
@@ -549,7 +711,7 @@ describe('taking a confirmed line back — the door the ignore refusal points at
        time — the once-only unique would refuse this if the link survived. */
     const again = await post(app, `/settlement/rows/${confirmed.id}/confirm`, {
       matchReason: 'manual',
-      payments: [{ source: 'SOPAY', id: 'm1', docNo: 'SO-2608-001', amountSen: 100000 }],
+      payments: [{ source: 'SOPAY', id: 'p1', docNo: 'SO-2608-001', amountSen: 100000 }],
     });
     expect(again.status).toBe(200);
     expect(sb.tables.acc_settlement_rows.find((r) => r.id === confirmed.id)!.confirmed_at).toBeTruthy();
@@ -587,12 +749,12 @@ describe('taking a confirmed line back — the door the ignore refusal points at
 describe('the batch detail and the watchlists', () => {
   test('the detail names the bank this merchant pays THIS company into', async () => {
     const { app } = harness({
-      accounts: CHART.map((r) => (r.account_code === '330-0000' ? { ...r, account_name: 'Bank — Maybank' } : r)),
+      accounts: CHART.map((r) => (r.account_code === '310-0010' ? { ...r, account_name: 'Bank — Maybank' } : r)),
       mfg_sales_order_payments: [soPayment()],
     });
     const up = await (await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT })).json() as { batchId: number };
     const body = await (await app.request(`/settlement/batches/${up.batchId}`)).json() as { batch: { receiving_bank: Record<string, unknown> } };
-    expect(body.batch.receiving_bank).toMatchObject({ code: '330-0000', name: 'Bank — Maybank', configured: true });
+    expect(body.batch.receiving_bank).toMatchObject({ code: '310-0010', name: 'Bank — Maybank', configured: true });
   });
 
   /* Unset does not stop the books — it falls back to the company default — but
@@ -601,7 +763,7 @@ describe('the batch detail and the watchlists', () => {
     const { app } = harness({ acc_acquirers: [{ ...MBB, bank_account_code: null }], mfg_sales_order_payments: [soPayment()] });
     const up = await (await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT })).json() as { batchId: number };
     const body = await (await app.request(`/settlement/batches/${up.batchId}`)).json() as { batch: { receiving_bank: Record<string, unknown> } };
-    expect(body.batch.receiving_bank).toMatchObject({ code: '330-0000', configured: false });
+    expect(body.batch.receiving_bank).toMatchObject({ code: '310-0010', configured: false });
   });
 
   /* The owner, looking at an auto-matched line: 出现的这个是什么？ The screen
@@ -642,7 +804,19 @@ describe('the batch detail and the watchlists', () => {
     /* p3 is a fortnight before the statement period: too old to be a candidate
        for any of its lines, so it stays on watchlist 1 while the statement's
        second line — money with no sale behind it — stays on watchlist 2. */
-    const { app } = harness({ mfg_sales_order_payments: [soPayment(), soPayment({ id: 'p3', so_doc_no: 'SO-3', paid_at: '2026-07-15T09:00:00', amount_sen: 5000, approval_code: 'B2' })] });
+    /* c1 sits on a CANCELLED order: not a sale to reconcile, so it is on
+       neither list (owner 2026-09-12: cancel SO 就 cancel 不显示; docs/bugs/0837). */
+    const { app } = harness({
+      mfg_sales_order_payments: [
+        soPayment(),
+        soPayment({ id: 'p3', so_doc_no: 'SO-3', paid_at: '2026-07-15T09:00:00', amount_sen: 5000, approval_code: 'B2' }),
+        soPayment({ id: 'c1', so_doc_no: 'SO-GONE', paid_at: '2026-07-16T09:00:00', amount_sen: 6000, approval_code: 'B3' }),
+      ],
+      mfg_sales_orders: [
+        { doc_no: 'SO-3', company_id: CO, debtor_name: 'Still Here', status: 'CONFIRMED' },
+        { doc_no: 'SO-GONE', company_id: CO, debtor_name: 'Gone', status: 'CANCELLED' },
+      ],
+    });
     await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT });
 
     const body = await (await app.request('/settlement/watchlist?from=2026-07-01&to=2026-08-16')).json() as {
@@ -654,6 +828,40 @@ describe('the batch detail and the watchlists', () => {
     expect(body.arrivedNotRecorded.map((r) => r.ref)).toEqual(['ZZ9']);
     expect(body.clean).toBe(false);
   });
+
+  /* docs/bugs/0688 — the owner, the morning per-bank clearing went live: the
+     same instalment under GHL, HLB, MBB and PBB, and the header counting it
+     four times. An untagged payment is every acquirer's CANDIDATE (that is how
+     a statement finds it) but ONE payment on a watch list. */
+  test('an untagged payment sits on each watch list once, under no acquirer', async () => {
+    const { app } = harness({
+      acc_acquirers: [MBB, GHL],
+      mfg_sales_order_payments: [
+        soPayment(),
+        soPayment({ id: 'u1', so_doc_no: 'SO-2608-013', method: 'installment', merchant_provider: null, amount_sen: 336500, approval_code: '009577' }),
+      ],
+    });
+    const byId = (rows: Array<{ id: string; acquirerCode: string | null }>) =>
+      Object.fromEntries(rows.map((r) => [r.id, r.acquirerCode]));
+
+    const w = await (await app.request('/settlement/watchlist?from=2026-07-20&to=2026-08-16')).json() as {
+      recordedNotArrived: Array<{ id: string; acquirerCode: string | null }>;
+    };
+    expect(byId(w.recordedNotArrived)).toEqual({ p1: 'MBB', u1: null });
+    /* Asked about the merchant that never tagged it, it is still his candidate — once. */
+    const g = await (await app.request('/settlement/watchlist?acquirer=GHL&from=2026-07-20&to=2026-08-16')).json() as {
+      recordedNotArrived: Array<{ id: string; acquirerCode: string | null }>;
+    };
+    expect(byId(g.recordedNotArrived)).toEqual({ u1: null });
+
+    const t = await (await app.request('/settlement/in-transit?from=2026-07-20&to=2026-08-16')).json() as {
+      totalSen: number; ageing: Record<string, unknown>; lines: Array<{ paymentId: string; acquirerCode: string | null }>;
+    };
+    expect(Object.fromEntries(t.lines.map((l) => [l.paymentId, l.acquirerCode]))).toEqual({ p1: 'MBB', u1: null });
+    expect(t.lines).toHaveLength(2);
+    expect(t.totalSen).toBe(436500);
+    expect(Object.keys(t.ageing).sort()).toEqual(['MBB', '未标']);
+  });
 });
 
 describe('GET /settlement/batches', () => {
@@ -663,5 +871,287 @@ describe('GET /settlement/batches', () => {
     const body = await (await app.request('/settlement/batches')).json() as { batches: Array<Record<string, unknown>> };
     expect(body.batches).toHaveLength(1);
     expect(body.batches[0]).toMatchObject({ acquirer_code: 'MBB', file_name: 'aug.csv', row_count: 2 });
+  });
+});
+
+/* One clearing account per bank (owner 2026-09-07: 我想要拆账户，因为这样我比较然后
+   检查回). The maintenance screen offers each company's 326-/327- accounts and
+   points a merchant at one; the write refuses anything that is not a live
+   clearing account of that company. */
+describe('maintenance — the clearing account per merchant', () => {
+  const CLEARING: Row[] = [
+    { account_code: '326-0000', account_name: 'CARD MACHINE CLEARING (EDC)', account_type: 'ASSET', parent_code: null, is_active: true, acc_money: false, company_id: 2 },
+    { account_code: '326-0010', account_name: 'CARD MACHINE CLEARING — PBB', account_type: 'ASSET', parent_code: null, is_active: true, acc_money: false, company_id: 2 },
+    { account_code: '326-0090', account_name: 'RETIRED', account_type: 'ASSET', parent_code: null, is_active: false, acc_money: false, company_id: 2 },
+    { account_code: '310-0010', account_name: 'Bank — Maybank', account_type: 'ASSET', parent_code: null, is_active: true, acc_money: true, company_id: 2 },
+    { account_code: '900-0000', account_name: 'Rent', account_type: 'EXPENSE', parent_code: null, is_active: true, acc_money: false, company_id: 2 },
+  ];
+  const world = () => harness({
+    accounts: CLEARING,
+    acc_acquirer_config: [{ code: 'PBB', display_name: 'PBB', statement_format: 'CSV', has_unique_ref: true, fee_method: 'stated', date_tolerance_days: 3, column_map: { date: 'D', gross: 'G' }, is_active: true }],
+    acc_company_acquirers: [{ company_id: 2, acquirer_code: 'PBB', transit_account_code: '326-0010', fee_account_code: '930-0000', bank_account_code: '310-0010', is_active: true }],
+  });
+
+  test('the screen reads each company\'s live clearing accounts and where the merchant sits today', async () => {
+    const { app } = world();
+    const body = await (await app.request('/settlement/maintenance')).json() as {
+      merchants: Array<{ code: string; byCompany: Record<string, { transitAccountCode: string | null }> }>;
+      clearings: Record<string, Array<{ account_code: string }>>;
+    };
+    expect(body.merchants.find((m) => m.code === 'PBB')!.byCompany['2']).toMatchObject({ transitAccountCode: '326-0010' });
+    /* Live 326-/327- only — the retired one and the bank and the expense never appear. */
+    expect(body.clearings['2']!.map((a) => a.account_code)).toEqual(['326-0000', '326-0010']);
+    expect(body.clearings['1']).toEqual([]);
+  });
+
+  test('pointing the merchant at a clearing account writes the link; a bank, an expense, a retired or a foreign code is refused', async () => {
+    const { app, sb } = world();
+    const ok = await patch(app, '/settlement/maintenance/merchant', { companyId: 2, code: 'PBB', transitAccountCode: '326-0000' });
+    expect(ok.status, await ok.clone().text()).toBe(200);
+    expect(sb.tables.acc_company_acquirers[0]).toMatchObject({ transit_account_code: '326-0000' });
+    for (const bad of ['310-0010', '900-0000', '326-0090', '326-0777']) {
+      const res = await patch(app, '/settlement/maintenance/merchant', { companyId: 2, code: 'PBB', transitAccountCode: bad });
+      expect(res.status, bad).toBe(400);
+      expect(((await res.json()) as { error: string }).error).toBe('bad_clearing_account');
+    }
+    expect(sb.tables.acc_company_acquirers[0]).toMatchObject({ transit_account_code: '326-0000' });
+    /* Blank = back to the generic account. */
+    const blank = await patch(app, '/settlement/maintenance/merchant', { companyId: 2, code: 'PBB', transitAccountCode: '' });
+    expect(blank.status).toBe(200);
+    expect(sb.tables.acc_company_acquirers[0]).toMatchObject({ transit_account_code: '326-0000' });
+  });
+});
+
+/* ── WHAT THE OWNER SAW ON 2026-09-09 ────────────────────────────────────────
+   Nine PBB lines stood MATCHED, each carrying the clue "Reference 034766
+   matches 2990-SO-2606-046", and every one of them ALSO said "No payment in the
+   ERP explains this money". Pressing "Confirm all 9 matched" posted nothing.
+
+   Three separate faults produced that one screen, and each gets a test here:
+     • the detail read `candidates`/`suggested`, which matchStatement empties on
+       purpose for a ref match — the payment lives in `matched`;
+     • the link insert was skipped in silence when the rows insert returned no
+       ids, leaving nine MATCHED lines and zero links;
+     • a payment carrying the exact reference was never LOADED when it fell
+       outside the date window, so four other lines read "No payment recorded
+       near …" with the payment sitting in the ERP. */
+
+describe('a reference-matched line always arrives carrying its payment', () => {
+  test('the detail offers the matched payment, pre-ticked, even with no link stored', async () => {
+    const { app, sb } = harness({ mfg_sales_order_payments: [soPayment()] });
+    const up = await (await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT })).json() as { batchId: number };
+
+    /* Reproduce the prod state exactly: the line stands MATCHED and its link
+       row is gone. Before the fix this rendered "No payment in the ERP explains
+       this money" under a clue naming the sale. */
+    sb.tables.acc_settlement_matches = [];
+
+    const body = await (await app.request(`/settlement/batches/${up.batchId}`)).json() as {
+      rows: Array<{ bucket: string; clue: string | null; candidates: Array<{ id: string }>; suggested: Array<{ id: string }>; linked: unknown[] }>;
+    };
+    const matched = body.rows.find((r) => r.bucket === 'MATCHED')!;
+    expect(matched.linked).toHaveLength(0);
+    expect(matched.candidates.map((p) => p.id)).toEqual(['p1']);
+    expect(matched.suggested.map((p) => p.id)).toEqual(['p1']);
+    /* The two sentences can no longer contradict each other. */
+    expect(matched.clue).toMatch(/Reference A1 matches SO-2608-001/);
+  });
+});
+
+describe('the link insert cannot fail in silence', () => {
+  /* On prod the rows insert reported no error and returned no ids, so every
+     link hit its `continue` and nine MATCHED lines kept zero links. A count
+     that cannot be reconciled to the decisions is the only thing that says so. */
+  test('an upload whose lines report no ids is refused, and keeps nothing', async () => {
+    const { app, sb } = harness({ mfg_sales_order_payments: [soPayment()] });
+    const realFrom = sb.from.bind(sb);
+    sb.from = ((table: string) => {
+      const q = realFrom(table);
+      if (table !== 'acc_settlement_rows') return q;
+      const realInsert = q.insert.bind(q);
+      /* The shape of the failure: the write happens, the representation does
+         not come back. */
+      q.insert = (rows: unknown) => {
+        const ins = realInsert(rows);
+        ins.select = () => Promise.resolve({ data: [], error: null });
+        return ins;
+      };
+      return q;
+    }) as typeof sb.from;
+
+    const res = await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT });
+    expect(res.status).toBe(500);
+    const body = (await res.json()) as Row;
+    expect(String(body.message)).toMatch(/could not be linked/);
+    /* Nothing kept: the batch is cleaned up so the file can come in again. */
+    expect(sb.tables.acc_settlement_batches).toHaveLength(0);
+  });
+});
+
+describe('an exact reference is not hidden by the date window', () => {
+  /* The owner's four PBB lines: same reference, same amount, keyed eleven days
+     late because the sale was written up late. MBB's tolerance here is 3. */
+  test('a payment keyed long after the swipe is found and offered', async () => {
+    const { app } = harness({
+      mfg_sales_order_payments: [soPayment({ paid_at: '2026-08-12T10:00:00' })],
+    });
+    const up = await (await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT })).json() as { batchId: number };
+    const body = await (await app.request(`/settlement/batches/${up.batchId}`)).json() as {
+      rows: Array<{ ref: string | null; bucket: string; clue: string | null; suggested: Array<{ id: string }> }>;
+    };
+    const line = body.rows.find((r) => r.ref === 'A1')!;
+    /* Offered, not taken — a reference across eleven days is also the shape of
+       a mis-keyed code, and this is the path that books money. */
+    expect(line.bucket).toBe('NEEDS_CONFIRM');
+    expect(line.suggested.map((p) => p.id)).toEqual(['p1']);
+    expect(line.clue).toMatch(/outside the 3-day window/);
+    expect(line.clue).not.toMatch(/No payment recorded/);
+  });
+});
+
+/* ── "CONFIRM ALL 9 MATCHED" MUST NOT POST 0 ──────────────────────────────────
+   The detail screen was fixed to fall back to the matcher when a link is
+   missing (docs/bugs/0760), and the owner then saw the payment on screen — but
+   the bulk button reads the LINK TABLE, so it still sent an empty selection for
+   every one of those nine lines and answered "Posted 0. 9 could not be".
+
+   The same fallback belongs here, with one difference that is the whole point:
+   only `matched` is rescued, never `suggested`. Nobody is reading each line on
+   this path, and this button's promise is "post every line the unique reference
+   already matched". */
+
+describe('confirm-all posts a matched line whose link went missing', () => {
+  test('the payment is recovered from the matcher, and the link is written back', async () => {
+    const { app, sb } = harness({ mfg_sales_order_payments: [soPayment()] });
+    const up = await (await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT })).json() as { batchId: number };
+
+    /* Exactly the prod state: MATCHED bucket, no link. */
+    sb.tables.acc_settlement_matches = [];
+
+    const res = await post(app, `/settlement/batches/${up.batchId}/confirm-matched`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { attempted: number; confirmed: number; failed: unknown[] };
+    expect(body.attempted).toBe(1);
+    expect(body.confirmed).toBe(1);
+    expect(body.failed).toEqual([]);
+
+    /* Confirming writes the link, so the data heals as he works. */
+    expect((sb.tables.acc_settlement_matches as Row[]).length).toBe(1);
+    const row = (sb.tables.acc_settlement_rows as Row[]).find((r) => r.bucket === 'MATCHED')!;
+    expect(row.confirmed_at).toBeTruthy();
+    expect(row.posted_je_no).toBeTruthy();
+  });
+
+  /* THE LINE THAT MUST NOT MOVE. A payment the matcher only SUGGESTS — here an
+     out-of-window reference — is not something a bulk button may post: it is
+     offered on the detail screen for a human to look at. */
+  test('a merely suggested payment is not posted by the bulk button', async () => {
+    const { app, sb } = harness({
+      mfg_sales_order_payments: [soPayment({ paid_at: '2026-08-12T10:00:00' })],
+    });
+    const up = await (await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT })).json() as { batchId: number };
+    /* Eleven days out: NEEDS_CONFIRM with the payment pre-ticked, so the bulk
+       button has nothing to do — and must not invent something. */
+    const rows = sb.tables.acc_settlement_rows as Row[];
+    expect(rows.find((r) => r.ref === 'A1')!.bucket).toBe('NEEDS_CONFIRM');
+
+    const res = await post(app, `/settlement/batches/${up.batchId}/confirm-matched`);
+    const body = (await res.json()) as { attempted: number; confirmed: number };
+    expect(body.attempted).toBe(0);
+    expect(body.confirmed).toBe(0);
+    expect(sb.tables.acc_settlement_matches).toHaveLength(0);
+  });
+
+  test('a batch that does not exist is a 404, not an empty success', async () => {
+    const { app } = harness({ mfg_sales_order_payments: [soPayment()] });
+    const res = await post(app, '/settlement/batches/9999/confirm-matched');
+    expect(res.status).toBe(404);
+  });
+});
+
+/* ── WHERE THE MERCHANT FEE GOES, CHOOSABLE ──────────────────────────────────
+   It had to be a migration once (docs/bugs/0762): the fee account was seeded at
+   930-0000, the AutoCount chart deactivated that code, and every settlement
+   confirm in both companies refused with nothing on any screen able to repoint
+   it. The owner, told that: 这个需要.
+
+   What is pinned here is that the screen can only be OFFERED, and can only
+   SAVE, an account the posting gate would actually accept — because the whole
+   failure was a fee account the gate refuses. */
+
+describe('the merchant fee account is chosen, not assumed', () => {
+  const EXPENSES: Row[] = [
+    { account_code: '900-0000', account_name: 'EXPENSES', account_type: 'EXPENSE', parent_code: null, is_active: true, company_id: CO },
+    { account_code: '900-B001', account_name: 'BANK CHARGES', account_type: 'EXPENSE', parent_code: '900-0000', is_active: true, company_id: CO },
+    { account_code: '900-T009', account_name: 'TERMINAL INTEREST CHARGES', account_type: 'EXPENSE', parent_code: '900-0000', is_active: true, company_id: CO },
+    /* The shape that started all this: present, but switched off. */
+    { account_code: '930-0000', account_name: 'MISCELLANEOUS EXPENSES XXX', account_type: 'EXPENSE', parent_code: null, is_active: false, company_id: CO },
+    { account_code: '310-0010', account_name: 'Bank', account_type: 'ASSET', parent_code: null, is_active: true, acc_money: true, company_id: CO },
+  ];
+  const CFG: Row[] = [
+    { code: 'MBB', display_name: 'MBB', statement_format: 'CSV', has_unique_ref: true, fee_method: 'stated', date_tolerance_days: 3, column_map: { date: 'Txn Date', gross: 'Gross', fee: 'MDR' }, is_active: true },
+  ];
+  const rig = () => harness({
+    accounts: EXPENSES, acc_acquirer_config: CFG,
+    acc_company_acquirers: [{ company_id: CO, acquirer_code: 'MBB', bank_account_code: '310-0010', fee_account_code: '930-0000', is_active: true }],
+  });
+
+  test('offers the active expense LEAVES, and never a header or a dead code', async () => {
+    const { app } = rig();
+    const body = await (await app.request('/settlement/maintenance')).json() as {
+      feeAccounts: Record<string, Array<{ account_code: string }>>;
+    };
+    const offered = (body.feeAccounts[String(CO)] ?? []).map((a) => a.account_code);
+    expect(offered).toEqual(['900-B001', '900-T009']);
+    /* 900-0000 has children — nothing posts to it. 930-0000 is switched off,
+       which is the exact account that refused every confirm. */
+    expect(offered).not.toContain('900-0000');
+    expect(offered).not.toContain('930-0000');
+  });
+
+  test('says what each company currently books the fee to', async () => {
+    const { app } = rig();
+    const body = await (await app.request('/settlement/maintenance')).json() as { merchants: Array<Record<string, any>> };
+    expect(body.merchants.find((m) => m.code === 'MBB')!.byCompany[String(CO)])
+      .toMatchObject({ feeAccountCode: '930-0000' });
+  });
+
+  test('saves a pick', async () => {
+    const { app, sb } = rig();
+    const res = await patch(app, '/settlement/maintenance/merchant', { companyId: CO, code: 'MBB', feeAccountCode: '900-T009' });
+    expect(res.status).toBe(200);
+    expect((sb.tables.acc_company_acquirers as Row[])[0]!.fee_account_code).toBe('900-T009');
+  });
+
+  /* THE ONES THAT MATTER. Each refusal is the posting gate's own rule, applied
+     where the choice is made rather than at the moment somebody confirms a
+     statement — which is where it was applied before, six days too late. */
+  test('refuses an account that is switched off', async () => {
+    const { app, sb } = rig();
+    const res = await patch(app, '/settlement/maintenance/merchant', { companyId: CO, code: 'MBB', feeAccountCode: '930-0000' });
+    expect(res.status).toBe(400);
+    expect(String(((await res.json()) as Row).message)).toMatch(/switched off/);
+    expect((sb.tables.acc_company_acquirers as Row[])[0]!.fee_account_code).toBe('930-0000');
+  });
+
+  test('refuses an account that is not an expense', async () => {
+    const { app } = rig();
+    const res = await patch(app, '/settlement/maintenance/merchant', { companyId: CO, code: 'MBB', feeAccountCode: '310-0010' });
+    expect(res.status).toBe(400);
+    expect(String(((await res.json()) as Row).message)).toMatch(/expense/i);
+  });
+
+  test('refuses a header account, and says to pick one of its children', async () => {
+    const { app } = rig();
+    const res = await patch(app, '/settlement/maintenance/merchant', { companyId: CO, code: 'MBB', feeAccountCode: '900-0000' });
+    expect(res.status).toBe(400);
+    expect(String(((await res.json()) as Row).message)).toMatch(/sub-accounts/);
+  });
+
+  test('refuses a code this company does not carry', async () => {
+    const { app } = rig();
+    const res = await patch(app, '/settlement/maintenance/merchant', { companyId: CO, code: 'MBB', feeAccountCode: '999-9999' });
+    expect(res.status).toBe(400);
+    expect(String(((await res.json()) as Row).message)).toMatch(/not in this company/);
   });
 });

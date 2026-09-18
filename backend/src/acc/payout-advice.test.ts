@@ -81,3 +81,31 @@ describe('an advice against the reports it pays for', () => {
     expect(s.blockedBy).not.toMatch(/difference of/);
   });
 });
+
+/* A BANK CHARGE deducted from a day's payout (owner 2026-09-10, docs/bugs/0787).
+   Public Bank took RM 324.00 off the 2026-06-06 settlement for a terminal
+   application fee: the advice said RM 3,024.18, the report nets RM 3,348.18.
+   Once Finance has booked that charge against the day, the day AGREES —
+   report net = advice net + charge — and the sentence says so, with the
+   money. A charge that covers only part of the gap leaves the rest a finding. */
+describe('statusOfPayout — a day with a bank charge booked against it', () => {
+  const report = { id: 6, fileName: '2990HOMESB_CSV_20260606.csv', periodFrom: '2026-06-06', periodTo: '2026-06-06', payableSen: 334_818, openLines: 0 };
+
+  it('agrees when advice + charge = report, and names the charge', () => {
+    const s = statusOfPayout({ netSen: 302_418, batches: [{ settledOn: '2026-06-06', netSen: 302_418, chargeSen: 32_400, chargeAccountCode: '900-T009' }] as never }, [report]);
+    expect(s.days[0]).toMatchObject({ state: 'AGREES', differenceSen: 0, chargeSen: 32_400, chargeAccountCode: '900-T009' });
+    expect(s.readyToReceive).toBe(true);
+    expect(s.blockedBy).toBeNull();
+  });
+
+  it('a charge that covers only part of the gap leaves the rest as the finding', () => {
+    const s = statusOfPayout({ netSen: 302_418, batches: [{ settledOn: '2026-06-06', netSen: 302_418, chargeSen: 30_000, chargeAccountCode: '900-T009' }] as never }, [report]);
+    expect(s.days[0]).toMatchObject({ state: 'DIFFERS', differenceSen: 2_400, chargeSen: 30_000 });
+    expect(s.blockedBy).toMatch(/RM 24\.00/);
+  });
+
+  it('a day with no charge reads exactly as before — the charge fields are simply absent', () => {
+    const s = statusOfPayout({ netSen: 302_418, batches: [{ settledOn: '2026-06-06', netSen: 302_418 }] as never }, [report]);
+    expect(s.days[0]).toMatchObject({ state: 'DIFFERS', differenceSen: 32_400, chargeSen: 0, chargeAccountCode: null });
+  });
+});

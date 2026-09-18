@@ -190,6 +190,20 @@ export function defaultRoleId(
   return (preview ?? zeroPerm ?? nonSystem ?? sorted[0]).id;
 }
 
+/** The member profile's Role picker: every role by name, plus the member's own
+ *  role when the list lacks it (still loading, or a viewer who cannot read
+ *  roles), so a member who has a role never shows a blank field. */
+export function roleOptions(
+  roles: Array<{ id: number; name: string }>,
+  current: { id: number; name: string } | null,
+): Array<{ value: string; label: string }> {
+  const opts = roles.map((r) => ({ value: String(r.id), label: r.name }));
+  if (current && !roles.some((r) => r.id === current.id)) {
+    opts.push({ value: String(current.id), label: current.name });
+  }
+  return opts.sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" }));
+}
+
 /** Form-row chrome for SearchableSelect (it styles its own input from
  *  className) — matches the plain <input> fields beside it. */
 export const FIELD_SELECT_CLS =

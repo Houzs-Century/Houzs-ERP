@@ -9,9 +9,20 @@ import { hasPermission } from "../services/permissions";
 import { getDb } from "../db/client";
 import { departments, users } from "../db/schema";
 import { and, eq, sql } from "drizzle-orm";
+import { normaliseCode } from "../services/documentRefs";
 import { bumpConfigVersion } from "../services/configCache";
 
 const app = new Hono<{ Bindings: Env }>();
+
+/** The department (id) holding a reference-number code, case-insensitively. */
+async function codeTakenBy(db: ReturnType<typeof getDb>, code: string): Promise<number | null> {
+  const rows = await db
+    .select({ id: departments.id })
+    .from(departments)
+    .where(sql`upper(${departments.code}) = ${code}`)
+    .limit(1);
+  return rows.length > 0 ? rows[0].id : null;
+}
 
 /**
  * GET /api/departments
@@ -38,6 +49,8 @@ app.get("/", requirePermissionOrSalesDirector("users.read"), async (c) => {
       description: departments.description,
       color: departments.color,
       sort_order: departments.sort_order,
+      // The reference-number segment (mig 20260906T1417); NULL until assigned.
+      code: departments.code,
       // The REAL lead + optional headcount target (mig-pg 0331). The FE resolves
       // lead_user_id to a member from the users list it already holds, so no
       // join is needed here.
@@ -68,11 +81,17 @@ app.post("/", requirePermission("users.manage"), async (c) => {
     description?: string;
     color?: string;
     sort_order?: number;
+    code?: string | null;
   }>();
   const name = (body.name || "").trim();
   if (!name) return c.json({ error: "name is required" }, 400);
 
   const color = normaliseColor(body.color) ?? "64748b";
+  // The reference-number segment (mig 20260906T1417): optional, 2–4 letters,
+  // unique across departments regardless of case.
+  const codeGiven = body.code != null && String(body.code).trim() !== "";
+  const code = codeGiven ? normaliseCode(body.code) : null;
+  if (codeGiven && !code) return c.json({ error: "code must be 2–4 letters (e.g. OPS, FIN)" }, 400);
 
   const db = getDb(c.env);
   // Name is UNIQUE — fail fast on dupes (idempotent create plays
@@ -85,6 +104,9 @@ app.post("/", requirePermission("users.manage"), async (c) => {
   if (existing.length > 0) {
     return c.json({ error: "A department with that name already exists" }, 409);
   }
+  if (code && (await codeTakenBy(db, code)) != null) {
+    return c.json({ error: `Code ${code} is already used by another department` }, 409);
+  }
 
   const inserted = await db
     .insert(departments)
@@ -93,6 +115,7 @@ app.post("/", requirePermission("users.manage"), async (c) => {
       description: body.description?.trim() || null,
       color,
       sort_order: body.sort_order ?? 0,
+      code,
     })
     .returning({ id: departments.id });
 
@@ -103,6 +126,7 @@ app.post("/", requirePermission("users.manage"), async (c) => {
       description: body.description?.trim() || null,
       color,
       sort_order: body.sort_order ?? 0,
+      code,
       member_count: 0,
     },
     201
@@ -124,6 +148,7 @@ app.patch("/:id", requirePermission("users.manage"), async (c) => {
     sort_order?: number;
     lead_user_id?: number | null;
     headcount_target?: number | null;
+    code?: string | null;
   }>();
 
   const set: Record<string, any> = {};
@@ -131,6 +156,20 @@ app.patch("/:id", requirePermission("users.manage"), async (c) => {
     const name = body.name.trim();
     if (!name) return c.json({ error: "name cannot be empty" }, 400);
     set.name = name;
+  }
+  if (body.code !== undefined) {
+    // "" / null clears the code; otherwise 2–4 letters, unique across departments.
+    if (body.code == null || String(body.code).trim() === "") {
+      set.code = null;
+    } else {
+      const code = normaliseCode(body.code);
+      if (!code) return c.json({ error: "code must be 2–4 letters (e.g. OPS, FIN)" }, 400);
+      const holder = await codeTakenBy(getDb(c.env), code);
+      if (holder != null && holder !== id) {
+        return c.json({ error: `Code ${code} is already used by another department` }, 409);
+      }
+      set.code = code;
+    }
   }
   if (body.description !== undefined) {
     set.description = body.description?.trim() || null;

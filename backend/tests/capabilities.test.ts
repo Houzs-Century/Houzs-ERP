@@ -14,6 +14,8 @@
 // which one.
 // ----------------------------------------------------------------------------
 
+import { isCrewScopedUser, isDefectReviewerPosition } from "../src/services/projectGates";
+import { canUseAssistant } from "../src/services/assistant-scope";
 import { describe, expect, test } from "vitest";
 import {
   CAPABILITY_KEYS,
@@ -143,6 +145,9 @@ const GATES: Record<CapabilityKey, (u: CapabilityCaller) => boolean> = {
   "org.sales.staff": (u) => isSalesUser(asAuthUser(u)),
   "org.director": (u) => isDirectorUser(asAuthUser(u)),
   "org.salesDirector": (u) => isSalesDirectorUser(asAuthUser(u)),
+  "org.defect.reviewer": (u) => isDefectReviewerPosition(asAuthUser(u)),
+  "org.crew.scoped": (u) => isCrewScopedUser(asAuthUser(u)),
+  "org.assistant.use": (u) => canUseAssistant(asAuthUser(u)),
 
   // The composed page-open tier — union of the write gate and the read tier.
   "scm.maintenance.open": (u) =>
@@ -250,10 +255,15 @@ describe("scm.maintenance.open — the divergence this PR closes", () => {
     });
   }
 
-  test("Sales Director opens the page READ-ONLY — in, but no config write", () => {
+  /* Owner 2026-09-01 — the Sales Director now MAINTAINS product master data
+     (retail price, sofa combos, Model activation / Modular toggles), so the page
+     he could already open is no longer read-only for him. Finance Manager below
+     is the unchanged read-only case, and is why this test is not simply deleted:
+     "opens but cannot write" is still a real state, just not his. */
+  test("Sales Director opens the page AND may write config", () => {
     const u = positioned("Sales Director");
     expect(resolveCapabilities(u)["scm.maintenance.open"]).toBe(true);
-    expect(resolveCapabilities(u)["scm.config.write"]).toBe(false);
+    expect(resolveCapabilities(u)["scm.config.write"]).toBe(true);
   });
 
   test("Finance Manager opens the page READ-ONLY", () => {

@@ -19,6 +19,7 @@ import { env } from "cloudflare:test";
 import { Hono } from "hono";
 import { beforeAll, describe, expect, test } from "vitest";
 import announcementRoutes from "../src/routes/announcements";
+import announcementReceiptRoutes from "../src/routes/announcementReceipts";
 
 const state = { user: undefined as unknown };
 const app = new Hono();
@@ -27,6 +28,7 @@ app.use("*", async (c: never, next: never) => {
   await (next as unknown as () => Promise<void>)();
 });
 app.route("/api/announcements", announcementRoutes);
+app.route("/api/announcements", announcementReceiptRoutes);
 
 // A rank-and-file salesperson: no announcements.* verb at all, no position (so
 // none of the code-keyed Sales-Director bypasses fire either). This is the exact
@@ -65,12 +67,15 @@ describe("GET /api/announcements — open to every authed user, audience-filtere
   beforeAll(async () => {
     await env.DB.prepare(
       `CREATE TABLE IF NOT EXISTS announcements (
-         id TEXT PRIMARY KEY, title TEXT, body TEXT, is_active INTEGER,
+         id TEXT PRIMARY KEY, title TEXT, body TEXT, body_html TEXT, is_active INTEGER,
          expires_at TEXT, reminded_at TEXT, created_by INTEGER, created_at TEXT,
          updated_at TEXT, translations TEXT, attachments TEXT, media_layout TEXT,
          target_type TEXT, target_dept_ids TEXT, target_position_ids TEXT,
          target_user_ids TEXT, target_company_ids TEXT, category TEXT,
-         source TEXT, company_id INTEGER)`,
+         source TEXT, company_id INTEGER, require_ack INTEGER, scheduled_at TEXT,
+         target_divisions TEXT, excluded_user_ids TEXT, escalated_at TEXT,
+         approval_status TEXT, submitted_by INTEGER, submitted_at TEXT, reviewed_by INTEGER,
+         reviewed_at TEXT, reject_reason TEXT, ref_no TEXT, doc_type TEXT)`,
     ).run();
 
     const now = new Date().toISOString();

@@ -35,6 +35,7 @@ import {
   type HrCommissionRow,
 } from '../../vendor/scm/lib/hr-queries';
 import { DateField } from "../../vendor/scm/components/DateField";
+import { writeLineExportXlsx } from "../../vendor/scm/lib/line-export-file";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -154,10 +155,11 @@ export const HrCommission = () => {
 
   const onExport = async () => {
     if (!data) return;
-    const rows: (string | number)[][] = [[
+    const columns = [
       'Showroom', 'Salesperson', 'Tier', 'Goods (RM)', 'Rate', 'Personal (RM)',
       'Override rate', 'Override (RM)', 'Item KPI (RM)', 'Total (RM)',
-    ]];
+    ];
+    const rows: (string | number)[][] = [];
     for (const s of data.showrooms) {
       for (const r of s.rows) {
         rows.push([
@@ -172,16 +174,14 @@ export const HrCommission = () => {
         ]);
       }
     }
-    const XLSX = await import('../../lib/xlsx-runtime');
-    const ws = XLSX.utils.aoa_to_sheet(rows);
-    ws['!cols'] = rows[0].map((_, i) => {
-      let w = 10;
-      for (const row of rows) w = Math.max(w, String(row[i] ?? '').length);
-      return { wch: Math.min(40, w + 2) };
-    });
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Commission');
-    XLSX.writeFileXLSX(wb, `Commission ${applied.from} to ${applied.to}.xlsx`);
+    const money = '#,##0.00';
+    await writeLineExportXlsx(
+      columns,
+      { 'Goods (RM)': money, 'Personal (RM)': money, 'Override (RM)': money, 'Item KPI (RM)': money, 'Total (RM)': money },
+      rows,
+      'Commission',
+      `Commission ${applied.from} to ${applied.to}.xlsx`,
+    );
   };
 
   return (

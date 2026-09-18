@@ -24,6 +24,11 @@ concurrency:
   group: staging-e2e
   cancel-in-progress: false
 
+# `issues: write` is for the notify job below and nothing else.
+permissions:
+  contents: read
+  issues: write
+
 jobs:
   smoke:
     runs-on: ubuntu-latest
@@ -89,6 +94,27 @@ jobs:
           elif [ "$deployed" != "$tested" ]; then
             echo "::warning title=Staging is not running the commit this suite tested::deployed=$deployed tested=$tested. The assertions below are true about the DEPLOYED build, not about the checked-out source."
           fi
+
+          # The one thing that CAN fail this step: the Worker's PostgREST key is not
+          # a service-role key. With an anon-role key every table read succeeds and
+          # every VIEW read answers "permission denied", and no spec can tell that
+          # apart from a real bug — measured 2026-08-21..09-12, three weeks red,
+          # docs/bugs/0824 (probe run 34644526231). /health reports the key's role
+          # claim; an older Worker without the field reports nothing and is only
+          # warned about, so this cannot go red on a build that predates it.
+          rest_role=$(printf '%s' "$health" | sed -n 's/.*"rest_role":"\([^"]*\)".*/\1/p')
+          rest_ref=$(printf '%s' "$health" | sed -n 's/.*"rest_ref":"\([^"]*\)".*/\1/p')
+          rest_key_ref=$(printf '%s' "$health" | sed -n 's/.*"rest_key_ref":"\([^"]*\)".*/\1/p')
+          echo "| REST key role | \`${rest_role:-unreported}\` (project \`${rest_ref:-?}\`, key minted for \`${rest_key_ref:-?}\`) |" >> "$GITHUB_STEP_SUMMARY"
+          if [ -z "$rest_role" ]; then
+            echo "::warning title=REST key role unreported::/health carries no rest_role — this Worker predates the field; the key's role is unknown to this run."
+          elif [ "$rest_role" != "service_role" ]; then
+            echo "::error title=Staging Worker's PostgREST key is role '$rest_role', not service_role::Every view read will answer 'permission denied' and every table read will still succeed. Set SUPABASE_SERVICE_ROLE_KEY on the staging Worker to the staging project's service_role key (docs/bugs/0824). The specs below are not run: they would measure the wrong thing."
+            exit 1
+          elif [ -n "$rest_ref" ] && [ -n "$rest_key_ref" ] && [ "$rest_ref" != "$rest_key_ref" ]; then
+            echo "::error title=REST key minted for another project::SUPABASE_URL is project $rest_ref but the key was minted for $rest_key_ref."
+            exit 1
+          fi
       - run: npx playwright install --with-deps chromium
       - run: npx playwright test
         env:
@@ -113,3 +139,41 @@ jobs:
           name: playwright-report
           path: frontend/e2e/playwright-report/
           retention-days: 14
+
+  # A red rehearsal that reaches nobody is not a rehearsal. Measured 2026-09-12:
+  # this workflow had concluded `failure` on every run since 2026-08-21 and no
+  # person had been told (docs/bugs/0824; the mirror of docs/bugs/0083, where a
+  # GREEN nobody verified hid a stale build for two weeks). One open issue is the
+  # signal: created on the first red, appended on every later red, closed by hand
+  # once green is confirmed. No secret needed — GITHUB_TOKEN with issues:write.
+  notify:
+    needs: smoke
+    if: ${{ failure() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Open or update the "Staging rehearsal RED" issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TRIGGER: ${{ github.event_name }}
+          SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          set -euo pipefail
+          title="Staging rehearsal RED — staging-e2e is failing"
+          body="Staging E2E failed.
+
+          - Run: $RUN_URL
+          - Trigger: $TRIGGER
+          - Commit under test: $SHA
+          - Date (UTC): $(date -u +%FT%TZ)
+
+          Read the Playwright report artifact on the run before assuming a flake. Close this issue only after a GREEN run is confirmed on the Actions tab (docs/bugs/0824)."
+          existing=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "\"$title\" in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --repo "$GITHUB_REPOSITORY" --body "$body"
+            echo "appended to issue #$existing"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --label "staging" --body "$body" \
+              || gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body "$body"
+            echo "opened a new issue"
+          fi

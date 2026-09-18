@@ -207,30 +207,34 @@ export function amendmentHeaderDiffRows(
 }
 
 /**
- * The header patch to send ALONGSIDE an amendment: every frozen field is forced
- * back to its ORIGINAL value so the direct PATCH stays inside the server's
- * field-scoped lock (it 409s `so_locked_processing` on a genuine change to a
- * frozen column, and passes an unchanged one). The requested new values travel
- * on the amendment instead. Non-frozen fields in `patch` (customer type /
- * emergency contact / note) pass through untouched and save immediately.
+ * The header patch to send ALONGSIDE an amendment: every frozen (CONTROLLED)
+ * key is REMOVED, so the direct PATCH carries only the FREE fields (customer
+ * type, emergency contact, note). The requested new values for frozen fields
+ * travel on the amendment (buildAmendmentHeaderChanges) instead.
  *
- * `salesLocation` needs its own treatment. It is a frozen column server-side
- * (SO_PROCESSING_LOCK_COLS) but it is not amendable directly — it is DERIVED
- * from the State, and BOTH forms recompute it live from the State picker. So an
- * amendment that changes the State would carry a changed sales_location in this
- * patch and 409 on it. Dropping the key entirely leaves it out of the server's
- * `col in updates` diff, so the lock passes and the column is untouched; the
- * apply step re-derives it from the approved State exactly as the header PATCH
- * would. That is also why it is absent from AMENDABLE_HEADER_KEYS.
+ * WHY DROP, NOT REVERT. Until 2026-09-12 this helper "reverted" each frozen key
+ * to its saved value so the server's field-scoped lock would read it as
+ * unchanged. That needs the reverted value to equal the seeded one BYTE FOR
+ * BYTE, and it failed twice through the same seam:
+ *   * 2026-08-21 (ledger 0488) — mobile omitted two keys from `original`; the
+ *     revert wrote NULL for them; every mobile amendment on an SO with an
+ *     address 409'd so_locked_processing.
+ *   * 2026-09-12 (HC-SO-013497) — desktop passed a complete `original`, but the
+ *     revert TRIMMED it while the pristine payload held the raw stored value.
+ *     AutoCount-imported rows carry trailing spaces ("MR LIM "), so the diff
+ *     sent the name on a colour-only edit and the server 409'd.
+ * The server's lock diffs `col in updates`: a column that is never SENT cannot
+ * trip it. Dropping the key is therefore strictly safer than any revert — there
+ * is no value to reproduce, so there is nothing to get wrong, and no `original`
+ * argument for a caller to get wrong either.
+ *
+ * `salesLocation` is dropped for the same reason it always was: a frozen column
+ * server-side (SO_PROCESSING_LOCK_COLS) that is DERIVED from the State, so it is
+ * absent from AMENDABLE_HEADER_KEYS and re-derived when the amendment applies.
  */
-export function withFrozenHeaderFieldsReverted<T extends Record<string, unknown>>(
-  patch: T,
-  original: AmendableHeaderValues,
-): T {
+export function withoutFrozenHeaderFields<T extends Record<string, unknown>>(patch: T): T {
   const out: Record<string, unknown> = { ...patch };
-  for (const key of AMENDABLE_HEADER_KEYS) {
-    if (key in out) out[key] = outValue(original[key]);
-  }
+  for (const key of AMENDABLE_HEADER_KEYS) delete out[key];
   delete out['salesLocation'];
   // Double cast: T is a generic constrained to Record<string, unknown>, so a
   // direct `as T` from the widened Record is not a comparable conversion.

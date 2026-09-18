@@ -29,27 +29,53 @@ import { fabricTracking } from "./routes/fabric-tracking";
 import { suppliers } from "./routes/suppliers";
 import { mfgPurchaseOrders } from "./routes/mfg-purchase-orders";
 import { mfgPurchaseOrdersListEnrichment } from "./routes/mfg-purchase-orders-list-enrichment";
+import { poLineImport } from "./routes/po-line-import";
 import { purchaseOrderItemPhotos } from "./routes/purchase-order-item-photos";
+import { purchaseOrderExports } from "./routes/purchase-order-exports";
+import {
+  CANCEL_REQUEST_OPEN_READ_PATH,
+  cancelApprovalGuard,
+  cancelExecutionBypass,
+  cancelRequestsInbox,
+  poCancelRequests,
+  soCancelRequests,
+} from "./routes/document-cancel-routes";
 import { grns } from "./routes/grns";
 import { grnsListEnrichment } from "./routes/grns-list-enrichment";
+import { grnExports } from "./routes/grn-exports";
 import { purchaseInvoices } from "./routes/purchase-invoices";
 import { purchaseInvoicesListEnrichment } from "./routes/purchase-invoices-list-enrichment";
+import { purchaseInvoiceExports } from "./routes/purchase-invoice-exports";
 import { paymentVouchers } from "./routes/payment-vouchers";
+import { otherDebtors } from "./routes/other-debtors";
+import { apInvoices } from "./routes/ap-invoices";
+import { creditNotes } from "./routes/credit-notes";
+import { depositInvoices } from "./routes/deposit-invoices";
+import { receipts } from "./routes/receipts";
 import { entityAuditLog } from "./routes/entity-audit-log";
+import { changeLog } from "./routes/change-log";
 import { autocountOutbox } from "./routes/autocount-outbox";
+import { venturePortalFeed } from "./routes/venture-portal-feed";
 import { currencies } from "./routes/currencies";
 import { mfgSalesOrders } from "./routes/mfg-sales-orders";
 import { mfgSalesOrdersListEnrichment } from "./routes/mfg-sales-orders-list-enrichment";
+import { salesOrderExports } from "./routes/sales-order-exports";
+import { mfgSoFairs } from "./routes/mfg-so-fairs";
+import { soAmendmentLanePreview } from "./routes/so-amendment-lane-preview";
 import { soAmendments } from "./routes/so-amendments";
 import { soHandover } from "./routes/so-handover";
 import { poAmendments } from "./routes/po-amendments";
 import { stateWarehouseMappings } from "./routes/state-warehouse-mappings";
 import { deliveryOrdersMfg } from "./routes/delivery-orders-mfg";
+import { deliveryOrderExports } from "./routes/delivery-order-exports";
 import { deliveryOrderScanToken } from "./routes/delivery-order-scan-token";
 import { deliveryOrderItemPhotos } from "./routes/delivery-order-item-photos";
 import { salesInvoices } from "./routes/sales-invoices";
+import { salesInvoiceExports } from "./routes/sales-invoice-exports";
 import { deliveryReturns } from "./routes/delivery-returns";
 import { purchaseReturns } from "./routes/purchase-returns";
+import { deliveryReturnExports } from "./routes/delivery-return-exports";
+import { purchaseReturnExports } from "./routes/purchase-return-exports";
 import { consignmentOrders } from "./routes/consignment-orders";
 import { consignmentNotes } from "./routes/consignment-notes";
 import { consignmentReturns } from "./routes/consignment-returns";
@@ -65,9 +91,11 @@ import { stockTakes } from "./routes/stock-takes";
 import { accounting } from "./routes/accounting";
 import { mrp } from "./routes/mrp";
 import { mrpLeadTimes } from "./routes/mrp-lead-times";
+import { mrpSupplierLeadTimes } from "./routes/mrp-supplier-lead-times";
 import { outstanding } from "./routes/outstanding";
 import { unbilledDeliveries } from "./routes/unbilled-deliveries";
 import { localities } from "./routes/localities";
+import { sgPostcode } from "./routes/sg-postcode";
 import { staff } from "./routes/staff";
 import { fabricColours } from "./routes/fabric-colours";
 import { addons } from "./routes/addons";
@@ -106,6 +134,8 @@ import { hr } from "./routes/hr";
 import { scmAreaGuard } from "./middleware/area-guard";
 import { hasPositionCapability } from "../services/positionCapabilities";
 import { scmWriteFreeze } from "./lib/write-freeze";
+import { venturePortalKick } from "./lib/venture-portal-kick";
+import { migratedSoReadonly, migratedSoAmendmentReadonly } from "./lib/migrated-so-readonly";
 import { writeFreezeStatus } from "./routes/write-freeze-status";
 
 export const scm = new Hono<{ Bindings: Env }>();
@@ -122,6 +152,18 @@ export const scm = new Hono<{ Bindings: Env }>();
    below use. Grammar, the UPDATE for each stage, and the rollback:
    docs/write-freeze-staged-lift.md. */
 scm.use('/*', scmWriteFreeze());
+
+/* ── VENTURE PORTAL FEED: SEND WITHIN SECONDS (owner 2026-09-13) ────────────
+   After a successful non-GET, schedule the Venture Portal outbox drain instead
+   of leaving it to the five-minute cron — the owner's 「我要秒级 update 的」.
+   Mounted HERE, immediately after the freeze, for two reasons: a frozen write
+   returns 503 without calling next(), so the kick is not even entered for a
+   save that did not happen; and one mount covers every router that can touch a
+   sales order, which a per-handler call could not. It runs AFTER next(), it can
+   never fail the request, and both cron sweeps stay exactly as they were — they
+   are the zero-loss guarantee and this is only the accelerator. Cost of an idle
+   kick, and what it cannot see: lib/venture-portal-kick.ts. */
+scm.use('/*', venturePortalKick());
 
 /* Read-only view of that value for the operator making the go/no-go call —
    GET, so the freeze never blocks it, and no area guard because it is not an
@@ -276,12 +318,35 @@ scm.route("/quotes", quotes);
 scm.use("/suppliers/*", scmAreaGuard("scm.procurement.suppliers"));
 scm.route("/suppliers", suppliers);
 // ── Purchase Orders / GRN / PI (scm.procurement.*) ──────────────────────────
-scm.use("/mfg-purchase-orders/*", scmAreaGuard("scm.procurement.po"));
+// The cancel guard runs FIRST. On a Purchase Order it is what makes the REASON
+// mandatory (owner 2026-09-09:「PO cancelled 不需要审批，只需要 remark 原因取消」):
+// PATCH /:id/cancel without one is refused 400 before the router is reached,
+// and the cancellation is recorded with its reason afterwards. No approval, so
+// nothing here signs and the bypass below admits nobody on this prefix — it and
+// the open-read suffix stay because the mount is shared with the Sales Order's
+// approvers, whose keys DO open …/cancel-request (docs/bugs/0717,
+// routes/document-cancel-routes.ts).
+scm.use("/mfg-purchase-orders/:id/cancel", cancelApprovalGuard("PO"));
+scm.use("/mfg-purchase-orders/*", scmAreaGuard("scm.procurement.po", {
+  openReadPaths: [CANCEL_REQUEST_OPEN_READ_PATH],
+  writeBypass: cancelExecutionBypass("PO"),
+}));
 // Deferred list enrichment — the MRP-derived PO-list columns (Assigned SO /
 // Delivered) the list no longer computes on its critical path. Mounted BEFORE
 // the main router so its static `/list-mrp-enrichment` path resolves ahead of
 // `/:id`. Shares the guard above via the path prefix.
 scm.route("/mfg-purchase-orders", mfgPurchaseOrdersListEnrichment);
+// PO line import (owner 2026-09-15): POST /line-import/preview + /apply. Static
+// paths, mounted ahead of the main router's `/:id` routes; same area guard.
+scm.route("/mfg-purchase-orders", poLineImport);
+// The list's two exports (every page the filters match) — static /export/...
+// paths, so also BEFORE the main router's `/:id`.
+scm.route("/mfg-purchase-orders", purchaseOrderExports);
+// Cancellation needs a reason + the PO's one approval (owner 2026-09-08). The
+// request routes ride this prefix's area guard; the guard in front of
+// PATCH /:id/cancel is mounted above, ahead of the area guard.
+// routes/document-cancel-routes.ts — the PO router itself is not edited.
+scm.route("/mfg-purchase-orders", poCancelRequests);
 scm.route("/mfg-purchase-orders", mfgPurchaseOrders);
 // Per-line photo WRITES (upload / delete PO-owned keys) — separate file because
 // the main router is at its size ceiling; same prefix, same area guard.
@@ -297,6 +362,9 @@ scm.use("/grns/*", scmAreaGuard("scm.procurement.grn"));
 // the main router so its static `/list-mrp-enrichment` path resolves ahead of
 // `/:id`. Shares the guard above via the path prefix.
 scm.route("/grns", grnsListEnrichment);
+// The list's two exports (every page the filters match) — static /export/...
+// paths, so also BEFORE the main router's `/:id`.
+scm.route("/grns", grnExports);
 scm.route("/grns", grns);
 scm.use("/purchase-invoices/*", scmAreaGuard("scm.procurement.pi"));
 // Deferred list enrichment — the MRP-derived PI-list columns (Assigned SO /
@@ -304,25 +372,81 @@ scm.use("/purchase-invoices/*", scmAreaGuard("scm.procurement.pi"));
 // the main router so its static `/list-mrp-enrichment` path resolves ahead of
 // `/:id`. Shares the guard above via the path prefix.
 scm.route("/purchase-invoices", purchaseInvoicesListEnrichment);
+// The list's two exports — static /export/... paths, BEFORE the main router.
+scm.route("/purchase-invoices", purchaseInvoiceExports);
 scm.route("/purchase-invoices", purchaseInvoices);
 // ── Sales Orders (scm.sales.orders) ─────────────────────────────────────────
-scm.use("/mfg-sales-orders/*", scmAreaGuard("scm.sales.orders"));
+// Same key-not-area admission as the PO mount above: the Purchaser signs
+// level 2 on a Sales Order cancel with Sales Orders at `view`.
+// Cancel guard first, for the same reason as the PO mount above: the Purchaser
+// signs level 2 with Sales Orders at `view` and must still be able to run the
+// cancel they just approved (docs/bugs/0717).
+scm.use("/mfg-sales-orders/:docNo/status", cancelApprovalGuard("SO"));
+scm.use("/mfg-sales-orders/*", scmAreaGuard("scm.sales.orders", {
+  openReadPaths: [CANCEL_REQUEST_OPEN_READ_PATH],
+  writeBypass: cancelExecutionBypass("SO"),
+}));
+/* MIGRATED sales orders are READ-ONLY while the cutover finishes (owner
+   2026-09-08, 「只开新单，旧单暂时不能改」). A NEW order saves normally; one
+   carried across from AutoCount does not, because sync-ac-delta can still
+   overwrite an edit unannounced and AutoCount payments taken since 2026-08-28
+   have not reached the ERP, so its balance on screen is wrong.
+
+   Mounted HERE rather than inside the router because the router is a
+   12,000-line file on its size ceiling, and because this is the same position
+   the write freeze occupies: a document-level rule and a module-level one
+   belong next to each other, not one of them buried in a route file. It is
+   scoped to this prefix, so it is the SO surface only, and `POST /` carries no
+   doc number in its path and is never reached — 「只开新单」 in one line of
+   control flow. Switch + runbook: docs/migrated-so-lock.md. */
+scm.use("/mfg-sales-orders/*", migratedSoReadonly());
 // Deferred list enrichment — the MRP-derived SO-list fields the list no longer
 // computes on its critical path (READY source-PO chips + readiness/planning
 // verdicts). Mounted BEFORE the main router so its static `/list-mrp-enrichment`
 // path resolves ahead of `/:docNo`. Shares the guard above via the path prefix.
 scm.route("/mfg-sales-orders", mfgSalesOrdersListEnrichment);
+// The list's line export (every page the filters match) — a static /export/...
+// path, so also BEFORE the main router's `/:docNo`.
+scm.route("/mfg-sales-orders", salesOrderExports);
+// Cancellation needs a reason + TWO approvals (owner 2026-09-08). Request routes
+// on this prefix (behind the area guard AND the migrated-SO lock); the guard on
+// the status route — which only wakes when the body says CANCELLED — is mounted
+// above, ahead of the area guard. routes/document-cancel-routes.ts.
+scm.route("/mfg-sales-orders", soCancelRequests);
+// The fair picker (owner 2026-09-13). Mounted BEFORE the main router for the same
+// reason as the enrichment above: its static `/fair-options` and `/fair-pending`
+// paths must resolve ahead of `/:docNo`. In its own file because
+// mfg-sales-orders.ts is already over its file-size ceiling.
+scm.route("/mfg-sales-orders", mfgSoFairs);
+// Lane preview (owner 2026-09-15, option B): which desk an amendment WILL go to,
+// read from the same resolver the submit route stores from. Own file for the
+// same ceiling reason; ahead of the main router so `/:docNo/amendments/lane-preview`
+// is matched before its `/:docNo/amendments`. routes/so-amendment-lane-preview.ts.
+scm.route("/mfg-sales-orders", soAmendmentLanePreview);
 scm.route("/mfg-sales-orders", mfgSalesOrders);
 // SO amendment / revision workflow — SO-centric, so it rides the same L2 area
 // guard as Sales Orders (GET=view, PATCH=edit); the finer scm.amendment.* gates
 // layer on inside the handlers.
 scm.use("/so-amendments/*", scmAreaGuard("scm.sales.orders"));
+/* MIGRATED sales orders are READ-ONLY here too — the SECOND door onto the same
+   document. `POST /mfg-sales-orders/:docNo/amendments` (raise one) is already
+   behind the guard on that prefix, but every GATE lives here, and approve-so is
+   not a status flip: it runs applySoAmendment, which rewrites the bound SO's
+   header and lines in place. An amendment already OPEN when the lock shipped
+   could be driven forward through this prefix; docs/migrated-so-lock.md §7
+   recorded that hole and this closes it. Same 409, same bypass cohort, same
+   switch. */
+scm.use("/so-amendments/*", migratedSoAmendmentReadonly());
 scm.route("/so-amendments", soAmendments);
 // Salesperson handover (resignation / transfer). SO-centric, so it rides the
 // same L2 area guard; the finer scm.so.attribute_other gate is enforced inside
 // both handlers.
 scm.use("/so-handover/*", scmAreaGuard("scm.sales.orders"));
 scm.route("/so-handover", soHandover);
+// The cancellation-request inbox — both documents, this company. Coarse
+// scm.access only: an inbox spanning the sales and procurement areas cannot
+// pick one of them; each row's actions still hit the per-document routes above.
+scm.route("/cancel-requests", cancelRequestsInbox);
 // state-warehouse-mappings: cross-area lookup (SO/DO warehouse routing) — left
 // on the coarse gate, see SHARED READ HELPERS note above.
 scm.route("/state-warehouse-mappings", stateWarehouseMappings);
@@ -358,6 +482,14 @@ scm.use(
     },
   }),
 );
+/* Cancelling a delivery order costs a REASON (owner 2026-09-14, 「DO cancel need
+   pop out window for reason」) — the Purchase Order's rule, on the DO's status
+   route: the guard wakes only when the body asks for CANCELLED, refuses 400
+   without a reason, and records the cancellation with it
+   (routes/document-cancel-routes.ts). Mounted AFTER the area guard, unlike the PO
+   and SO guards: no approver has to be admitted past it, so a caller is asked
+   who they are before they are asked why. The DO router itself is not edited. */
+scm.use("/delivery-orders-mfg/:id/status", cancelApprovalGuard("DO"));
 /* Two routers on one prefix, like /grns and /purchase-invoices above. The
    scan-token mint is a NEW FILE because delivery-orders-mfg.ts is already past
    its file-size ceiling and a ceiling may only fall. Mounted FIRST so its one
@@ -367,6 +499,9 @@ scm.route("/delivery-orders-mfg", deliveryOrderScanToken);
 // reasoning as the scan token directly above. Shares the DO area guard via the
 // path prefix, so GET here needs exactly what the DO detail GET needs.
 scm.route("/delivery-orders-mfg", deliveryOrderItemPhotos);
+// The list's line export (every page the filters match) — a static /export/...
+// path, so also BEFORE the main router's `/:id`.
+scm.route("/delivery-orders-mfg", deliveryOrderExports);
 scm.route("/delivery-orders-mfg", deliveryOrdersMfg);
 // Ported 2026-06-20 — SI backend (skipped in the earlier sync; the vendored SI
 // pages 404'd on /sales-invoices). NEEDS scm.sales_invoice_payments +
@@ -377,10 +512,16 @@ scm.route("/delivery-orders-mfg", deliveryOrdersMfg);
 // invoice). Row-scoped own+downline; cost/margin stripped for non-finance.
 // Writes still require edit on scm.sales.invoices.
 scm.use("/sales-invoices/*", scmAreaGuard("scm.sales.invoices", { readInheritsFrom: "scm.sales.orders" }));
+// The list's two exports — static /export/... paths, BEFORE the main router.
+scm.route("/sales-invoices", salesInvoiceExports);
 scm.route("/sales-invoices", salesInvoices);
 scm.use("/delivery-returns/*", scmAreaGuard("scm.sales.returns"));
+// The list's ONE export (every return the filters match) — a static
+// /export/rows path, so BEFORE the main router's `/:id`; same area guard.
+scm.route("/delivery-returns", deliveryReturnExports);
 scm.route("/delivery-returns", deliveryReturns);
 scm.use("/purchase-returns/*", scmAreaGuard("scm.procurement.pr"));
+scm.route("/purchase-returns", purchaseReturnExports);
 scm.route("/purchase-returns", purchaseReturns);
 // ── Consignment (scm.consignment.*) ─────────────────────────────────────────
 scm.use("/consignment-orders/*", scmAreaGuard("scm.consignment.orders"));
@@ -448,6 +589,28 @@ scm.route("/accounting", accounting);
 // finer scm.payment_voucher.* gates layer on inside the handlers.
 scm.use("/payment-vouchers/*", scmAreaGuard("scm.finance.accounting"));
 scm.route("/payment-vouchers", paymentVouchers);
+// Other Debtors (owner 2026-09-03) — registry + debtor bills + receipts; the
+// same area and the same PV permission family gate the handlers inside.
+scm.use("/other-debtors/*", scmAreaGuard("scm.finance.accounting"));
+scm.route("/other-debtors", otherDebtors);
+// Receipts (owner 2026-09-03, later the same day) — the unified money-in list
+// plus general receipts that post directly; same area, same key family.
+scm.use("/receipts/*", scmAreaGuard("scm.finance.accounting"));
+scm.route("/receipts", receipts);
+// AP Invoices (owner 2026-09-06) — the non-stock supplier bill beside the
+// purchase invoices it is paid alongside; same area, same PV key family.
+scm.use("/ap-invoices/*", scmAreaGuard("scm.finance.accounting"));
+scm.route("/ap-invoices", apInvoices);
+// Credit and debit notes (owner 2026-09-12; docs/bugs/0827) — the customer's
+// CN / DN and the supplier's SCN, raised by Finance; same area, same PV key
+// family as the AP invoice beside it.
+scm.use("/credit-notes/*", scmAreaGuard("scm.finance.accounting"));
+scm.route("/credit-notes", creditNotes);
+// Deposit invoices (owner 2026-09-12; docs/bugs/0828) — born with a customer
+// payment when the company's switch is on; Finance reads, cancels, re-posts,
+// and holds the switch. Same area as the notes and receipts beside it.
+scm.use("/deposit-invoices/*", scmAreaGuard("scm.finance.accounting"));
+scm.route("/deposit-invoices", depositInvoices);
 // Payment Audit Log — Finance's payment TRAIL (port of 2990's /admin/audit-log):
 // one row per mfg_sales_order_payments entry + its SO header context. Read-only.
 // Same L2 area as Accounting: it is the money ledger's read side, not a new
@@ -487,6 +650,15 @@ scm.use("/payment-audit-log/*", scmAreaGuard("scm.finance.accounting"));
 // Narrowing later is safe; nothing consumes this endpoint yet (backend-only, no
 // UI in this PR).
 scm.route("/entity-audit-log", entityAuditLog);
+// Go-live CHANGE LOG (2026-09-08): the same two audit tables, read ACROSS
+// documents instead of one at a time, and split into what a PERSON changed and
+// what the system changed. NO scmAreaGuard, for /autocount-outbox's reason: an
+// L2 area key is a PAGE key and this page belongs to no SCM area — it spans
+// sales orders, deliveries, purchases and receipts at once. Authorization is the
+// flat scm.changelog.read / settings.manage keys checked inside the route
+// against the REAL caller, which is stricter than the coarse scm.access
+// umbrella, and has to be: it reports what every colleague did.
+scm.route("/change-log", changeLog);
 // AutoCount write-back queue, READ ONLY (scm.autocount_outbox, mig 0277). NO
 // scmAreaGuard, for hr's reason and not for the umbrella's: an L2 area key is a
 // PAGE key and this page belongs to no SCM area — it spans sales orders,
@@ -497,6 +669,17 @@ scm.route("/entity-audit-log", entityAuditLog);
 // and it has to be, because this endpoint quotes what the licensed account book
 // said about every document the company pushed.
 scm.route("/autocount-outbox", autocountOutbox);
+// ERP -> Venture Portal live sales-order feed: the settings page AND its queue
+// (scm.venture_portal_outbox, mig 20260912T1800). NO scmAreaGuard, for
+// /autocount-outbox's reason — an L2 area key is a PAGE key and this page
+// belongs to no SCM area: it spans sales orders, their lines, those lines' COSTS
+// and their payments at once, so any area key here would be an arbitrary owner.
+// Authorization is the flat scm.venture_portal.read / .manage / settings.manage
+// keys checked inside the route against the REAL caller. Deliberately
+// cross-company, unlike every other SCM route: which companies feed the portal
+// is the setting this page edits, so a company predicate would hide the thing
+// being set from the person setting it. The route header says so in full.
+scm.route("/venture-portal-feed", venturePortalFeed);
 // Currency MASTER — owner-maintained list + rate_to_myr, read by the GRN/PI/PV
 // currency dropdowns across areas. Like state-warehouse-mappings, it's a shared
 // lookup left on the coarse scm gate (reads open); writes are gated inside the
@@ -517,6 +700,8 @@ scm.use("/mrp/*", scmAreaGuard("scm.procurement.mrp"));
 scm.route("/mrp", mrp);
 scm.use("/mrp-lead-times/*", scmAreaGuard("scm.procurement.mrp"));
 scm.route("/mrp-lead-times", mrpLeadTimes);
+scm.use("/mrp-supplier-lead-times/*", scmAreaGuard("scm.procurement.mrp"));
+scm.route("/mrp-supplier-lead-times", mrpSupplierLeadTimes);
 // Ported 2026-06-20 — Outstanding dashboard (v_*_outstanding views), MY
 // State/City/Postcode reference (my_localities). /fabric-library already
 // mounted above — its GET list was added to the existing route, not remounted.
@@ -534,6 +719,10 @@ scm.route("/unbilled-deliveries", unbilledDeliveries);
 // localities: MY State/City/Postcode reference — cross-area lookup, left on the
 // coarse gate (see SHARED READ HELPERS note above).
 scm.route("/localities", localities);
+// sg-postcode: live Singapore 6-digit postcode -> address via OneMap. Same
+// shared-read rationale as localities (a postcode resolves the same for every
+// caller); inert until the ONEMAP_* Worker secrets are set.
+scm.route("/sg-postcode", sgPostcode);
 // Wired 2026-06-20 — SCM stub-wiring wave: SO Salesperson dropdown (staff),
 // SoLineCard fabric-colour picker (fabric-colours). /product-models gained a
 // GET /by-code/:code for the SoLineCard saved-line allowed_options resolve.

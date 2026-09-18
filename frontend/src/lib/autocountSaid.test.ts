@@ -38,6 +38,7 @@ const row = (over: Partial<AcOutboxRow> = {}): AcOutboxRow => ({
   can_requeue: true,
   can_send_now: false,
   ac_doc_no: null,
+  archived_at: null,
   created_at: "2026-08-20T12:37:00Z",
   updated_at: "2026-08-20T14:13:00Z",
   sent_at: null,

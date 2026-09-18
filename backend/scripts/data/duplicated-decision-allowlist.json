@@ -42,18 +42,28 @@
     },
     {
       "check": "D1",
-      "key": "MYR,RMB,SGD,USD|backend/src/scm/lib/purchase-doc-vocab.ts backend/src/scm/routes/suppliers.ts frontend/src/lib/scm.ts frontend/src/pages/scm-v2/SupplierDetail.tsx frontend/src/pages/scm-v2/Suppliers.tsx",
+      "key": "CNY,MYR,RMB,SGD,USD|backend/src/scm/lib/purchase-doc-vocab.ts backend/src/scm/routes/suppliers.ts frontend/src/lib/scm.ts frontend/src/pages/scm-v2/SupplierDetail.tsx frontend/src/pages/scm-v2/Suppliers.tsx",
       "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 5 homes: VALID_CURRENCIES, CURRENCIES, CURRENCY_SYMBOL, CURRENCY_OPTIONS. Cost of divergence is a blank chip, not a wrong number."
     },
     {
       "check": "D1",
-      "key": "ACCESSORY,BEDFRAME,BEDLINES,CARPET,DIFFUSER,DINING,MATTRESS,SERVICE,SOFA|backend/src/scm/routes/mfg-products.ts backend/src/scm/shared/so-branding-label.ts frontend/src/pages/scm-v2/ProductModels.tsx frontend/src/vendor/shared/so-branding-label.ts",
-      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 4 homes: MFG_PRODUCT_CATEGORIES, CATEGORIES. Cost of divergence is a blank chip, not a wrong number."
+      "key": "BANK,CASH,GENERAL,PURCHASE,SALES|backend/src/acc/journal-class.ts frontend/src/pages/scm-v2/JournalEntries.tsx",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — classifyJournal (journal-class.ts) is the rule; JOURNALS (JournalEntries.tsx, once JOURNAL_CHIPS in Accounting.tsx) is the chip strip's render order over labels the SERVER already stamped on each row (journal_class). The frontend cannot import backend/src/acc (the shared package here is a pair of vendored copies, not a workspace import), and a chip the backend stopped emitting filters to an empty list — a blank chip, not a wrong number."
     },
     {
       "check": "D1",
-      "key": "APPLICATION/PDF,IMAGE/JPEG,IMAGE/PNG,IMAGE/WEBP|backend/src/scm/routes/lorry-service-records.ts backend/src/scm/routes/slips.ts backend/src/scm/shared/schemas/slip.schema.ts frontend/src/vendor/scm/lib/slip.ts",
-      "why": "AN UPLOAD WHITELIST, per endpoint, and deliberately not one list: each surface decides what IT accepts (portal vs staff vs mail vs OCR). 4 homes: ALLOWED_SLIP_MIMES. Divergence costs a refused upload, never money or stock."
+      "key": "BEDFRAME,FABRIC_ACCESSORY,SOFA|backend/src/scm/lib/so-stock-allocation.ts frontend/src/vendor/scm/lib/variant-editor-groups.ts",
+      "why": "TWO QUESTIONS that today have the same answer: HARD_BOUND_GROUPS decides which sales lines MRP binds per order (backend allocation); VARIANT_EDITOR_GROUPS decides which purchase-form lines show the fabric/seat/leg pickers (frontend). The Sofa Accessory category (2026-09-14) joined both because a custom pillow is both made per order and picks a fabric, but a group could be one without the other (a mattress with a size editor need not bind). Each is already one home for its own question; the four PO/PC form copies were collapsed into VARIANT_EDITOR_GROUPS."
+    },
+    {
+      "check": "D1",
+      "key": "ACCESSORY,BEDFRAME,BEDLINES,CARPET,DIFFUSER,DINING,FABRIC_ACCESSORY,MATTRESS,SERVICE,SOFA|backend/src/scm/shared/product-categories.ts backend/src/scm/shared/so-branding-label.ts frontend/src/pages/scm-v2/ItemGroups.tsx frontend/src/vendor/shared/product-categories.ts frontend/src/vendor/shared/so-branding-label.ts",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 5 homes: MFG_PRODUCT_CATEGORIES + MFG_CATEGORY_LABELS (shared/product-categories.ts, the ONE list and label map since 2026-09-15, mirrored byte-identical to the frontend and read by the SKU Master tabs and the Modular page, which used to carry their own CATEGORIES copies), so-branding-label's productEnum, and ItemGroups' SUGGESTED — a per-category map of DEFAULT account bindings (values are accounts, keys just happen to be the vocabulary; the registry itself lives in scm.acc_item_groups seeded from the same enum). Cost of divergence is a blank chip or an unsuggested row, not a wrong number."
+    },
+    {
+      "check": "D1",
+      "key": "APPLICATION/PDF,IMAGE/JPEG,IMAGE/PNG,IMAGE/WEBP|backend/src/scm/lib/doc-files.ts backend/src/scm/routes/lorry-service-records.ts backend/src/scm/routes/slips.ts backend/src/scm/shared/schemas/slip.schema.ts frontend/src/vendor/scm/lib/slip.ts",
+      "why": "AN UPLOAD WHITELIST, per endpoint, and deliberately not one list: each surface decides what IT accepts (portal vs staff vs mail vs OCR vs the PV evidence store). 5 homes: ALLOWED_SLIP_MIMES, DOC_FILE_MIMES (lib/doc-files.ts — the ONE evidence store the PV and the AP invoice share since 2026-09-06; it replaced pv-files.ts's PV_FILE_MIMES, not a sixth list). Divergence costs a refused upload, never money or stock."
     },
     {
       "check": "D1",
@@ -77,7 +87,7 @@
     },
     {
       "check": "D1",
-      "key": "EXPECTED_AT,NOTES,SUPPLIER_ID|backend/src/scm/lib/po-revision.ts backend/src/scm/routes/po-amendments.ts frontend/src/mobile/MobilePoAmendmentDetail.tsx frontend/src/pages/scm-v2/PoAmendmentDetailV2.tsx",
+      "key": "EXPECTED_AT,NOTES,SUPPLIER_ID|backend/src/scm/lib/po-revision.ts backend/src/scm/routes/po-amendments.ts frontend/src/mobile/MobilePoAmendmentDetail.tsx frontend/src/pages/scm-v2/po-amendment-diff-card.tsx",
       "why": "THE AMENDABLE PO HEADER FIELDS — which header columns a PO amendment may carry. One home decides, three render labels for it (AMENDABLE_HEADER, HEADER_LABEL). The deciding copy is po-revision.ts; the others cannot widen it."
     },
     {
@@ -87,8 +97,13 @@
     },
     {
       "check": "D1",
-      "key": "GENERAL,LEARNING,SOP,WARNING|frontend/src/components/AnnouncementBanner.tsx frontend/src/mobile/MobileAnnouncementPopup.tsx frontend/src/mobile/MobileAnnouncements.tsx frontend/src/pages/Announcements.tsx",
-      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 4 homes: CATEGORY_LABEL, CAT_LABEL, CAT_COLOR, CATEGORY_ORDER. Cost of divergence is a blank chip, not a wrong number."
+      "key": "GENERAL,LEARNING,SOP,WARNING|frontend/src/components/announcementCategory.ts frontend/src/mobile/MobileAnnouncementPopup.tsx frontend/src/mobile/MobileAnnouncements.tsx",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a category is rendered, not a second answer to what the categories are. Since the 2026-09-05 redesign the DESKTOP has exactly one home, components/announcementCategory.ts (CATEGORY_META + CATEGORY_ORDER; the banner, inbox, manage, composer, bell and dashboard all import it — AnnouncementBanner.tsx and pages/Announcements.tsx no longer carry their own maps). The two phone files keep CAT_LABEL / CAT_COLOR because the phone shell paints with hex in inline styles, not Tailwind tokens; the four enum values themselves are validated in ONE place, readCategory() in backend/src/routes/announcements.ts. Cost of divergence is a blank chip, not a wrong number."
+    },
+    {
+      "check": "D1",
+      "key": ",1,2,3,4|frontend/src/mobile/MobileAnnouncements.tsx frontend/src/pages/announcements/ComposerModal.tsx",
+      "why": "The photo-layout picker's option list (\"\" = auto, then 1 / 2 / 3 / 4 columns) on each shell's composer. It is a PRESENTATION of the backend's PhotoLayout enum, whose single home is readMediaLayout() in backend/src/routes/announcements.ts — a value outside it is dropped server-side, so a divergent picker can only offer a choice that is silently ignored, never store a wrong layout. The desktop entry MOVED from pages/Announcements.tsx into pages/announcements/ComposerModal.tsx with the 2026-09-05 redesign; the phone composer is unchanged."
     },
     {
       "check": "D1",
@@ -97,7 +112,7 @@
     },
     {
       "check": "D1",
-      "key": "ACCESSORIES_COST_SEN,ACCESSORIES_SEN,BEDFRAME_COST_SEN,BEDFRAME_SEN,MARGIN_PCT_BASIS,MATTRESS_SOFA_COST_SEN,MATTRESS_SOFA_SEN,OTHERS_COST_SEN,OTHERS_SEN,TOTAL_COST_SEN,TOTAL_MARGIN_SEN|backend/src/scm/routes/consignment-notes.ts backend/src/scm/routes/consignment-returns.ts backend/src/scm/routes/delivery-returns.ts",
+      "key": "ACCESSORIES_COST_SEN,ACCESSORIES_SEN,BEDFRAME_COST_SEN,BEDFRAME_SEN,MARGIN_PCT_BASIS,MATTRESS_SOFA_COST_SEN,MATTRESS_SOFA_SEN,OTHERS_COST_SEN,OTHERS_SEN,TOTAL_COST_SEN,TOTAL_MARGIN_SEN|backend/src/scm/lib/delivery-return-list-read.ts backend/src/scm/routes/consignment-notes.ts backend/src/scm/routes/consignment-returns.ts",
       "why": "THE MONEY-COLUMN KEY LIST for a document family. Each document type carries the columns it actually has (SO has deposit_sen, DO/SI have service_sen), so these are meant to differ; D2 reports the exact differences and they line up with the schema. 3 homes: CN_FINANCE_KEYS, CRN_FINANCE_KEYS, DR_FINANCE_KEYS."
     },
     {
@@ -114,11 +129,6 @@
       "check": "D1",
       "key": "ARRIVES EM WAREHOUSE,CONFIRM,DONE DELIVERED,DONE SHIPOUT,HOUSE NOT READY,PENDING PICKUP,REQUEST HOLD|backend/src/scm/routes/delivery-orders-mfg.ts backend/src/scm/routes/delivery-planning.ts frontend/src/vendor/scm/lib/delivery-planning-queries.ts",
       "why": "THE HC DELIVERY SUB-STATUS VALUES — the owner's own words, carried on the DO, the planning board and the frontend query layer (HC_SUBSTATUS_VALUES). Free text to the business, a closed set to the code; three homes and no referee."
-    },
-    {
-      "check": "D1",
-      "key": "ASSET,EQUITY,EXPENSE,INCOME,LIABILITY|backend/src/scm/routes/accounting.ts frontend/src/pages/scm-v2/Accounting.tsx frontend/src/vendor/scm/components/AccountSelect.tsx",
-      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 3 homes: ACCOUNT_TYPES, ACCOUNT_TYPE_ORDER, TYPE_ORDER, TYPE_LABEL. Cost of divergence is a blank chip, not a wrong number."
     },
     {
       "check": "D1",
@@ -162,12 +172,12 @@
     },
     {
       "check": "D1",
-      "key": "DO,GR,IV,PI,PO,SO|backend/src/scm/lib/autocount-outbox.ts backend/src/scm/lib/autocount-requeue.ts backend/src/scm/routes/autocount-outbox.ts frontend/src/lib/autocountOutbox.ts",
-      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 3 homes: REQUEUE_DOC_TYPES, DOC_TYPES, AC_DOC_TYPES, AC_DOC_TYPE_LABEL, AC_DOC_TYPE_PLURAL. Cost of divergence is a blank chip, not a wrong number. NEW HOME since this was recorded: AC_DOC_NOUN in backend/src/scm/lib/autocount-outbox.ts, which maps a doc type to its noun ('SO' -> 'Sales Order') for outbox messages. Presentation of the same vocabulary, exactly like the label and plural maps already listed here."
+      "key": "DO,GR,IV,PI,PO,SO|backend/src/scm/lib/autocount-outbox.ts backend/src/scm/lib/autocount-requeue.ts backend/src/scm/routes/autocount-outbox.ts backend/src/scm/routes/autocount-relink.ts frontend/src/lib/autocountOutbox.ts",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 3 homes: REQUEUE_DOC_TYPES, DOC_TYPES, AC_DOC_TYPES, AC_DOC_TYPE_LABEL, AC_DOC_TYPE_PLURAL. Cost of divergence is a blank chip, not a wrong number. NEW HOME since this was recorded: AC_DOC_NOUN in backend/src/scm/lib/autocount-outbox.ts, which maps a doc type to its noun ('SO' -> 'Sales Order') for outbox messages. Presentation of the same vocabulary, exactly like the label and plural maps already listed here. ALSO NEW: the DOC map in backend/src/scm/routes/autocount-relink.ts, which keys per-type header/line WIRING (line table, parent column, header resolution) by the same vocabulary so Match up lines works for all six types (docs/bugs/0792) — wiring keyed by the vocabulary, not a second answer to what the types are."
     },
     {
       "check": "D1",
-      "key": "FRI,MON,SAT,SUN,THU,TUE,WED|frontend/src/mobile/MobileCalendar.tsx frontend/src/pages/Projects.tsx frontend/src/pages/ServiceCases.tsx",
+      "key": "FRI,MON,SAT,SUN,THU,TUE,WED|frontend/src/mobile/MobileCalendar.tsx frontend/src/pages/ServiceCases.tsx frontend/src/pages/projects/ProjectsCalendarView.tsx",
       "why": "A CALENDAR/LOCALE vocabulary (months, weekdays, languages) — fixed by the world, not by this business, and it cannot drift into a wrong answer. 3 homes: WEEKDAYS."
     },
     {
@@ -372,8 +382,8 @@
     },
     {
       "check": "D1",
-      "key": "CANCELLED,CLOSED,ON_HOLD|frontend/src/pages/scm-v2/ConsignmentOrders.tsx frontend/src/vendor/scm/lib/so-status.ts",
-      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 2 homes: TERMINAL. Cost of divergence is a blank chip, not a wrong number."
+      "key": "CANCELLED,CLOSED,ON_HOLD|backend/src/scm/lib/so-line-export-columns.ts frontend/src/pages/scm-v2/ConsignmentOrders.tsx frontend/src/vendor/scm/lib/so-line-export-columns.ts frontend/src/vendor/scm/lib/so-status.ts",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 2 homes: TERMINAL. Cost of divergence is a blank chip, not a wrong number. NEW HOME 2026-09-15: SO_TERMINAL in so-line-export-columns.ts (backend + its byte-identical vendored twin) — the server-side copy of soStatusDisplay's TERMINAL set, so the Sales Order line export prints the word the list pill shows. Not a second decision: so-line-export-columns.canonical.test.ts runs soListStatusWord against soRowStatus(row, soStatusDisplay) for every status x delivery state x lifecycle, so the copy cannot drift from so-status.ts without failing."
     },
     {
       "check": "D1",
@@ -487,11 +497,6 @@
     },
     {
       "check": "D1",
-      "key": "DWG,JPEG,JPG,MP4,PDF,PNG,SKP,WEBP|backend/src/routes/projects.ts frontend/src/pages/Projects.tsx",
-      "why": "AN UPLOAD WHITELIST, per endpoint, and deliberately not one list: each surface decides what IT accepts (portal vs staff vs mail vs OCR). 2 homes: PROJECT_ATTACH_ALLOWED, ALLOWED. Divergence costs a refused upload, never money or stock."
-    },
-    {
-      "check": "D1",
       "key": "EAST,JOHOR,KAJANG,KEDAH,KL,KLANG,MELAKA,NS,PAHANG,PENANG,PERAK,PJ,PUCHONG,RAWANG|backend/src/scm/lib/zone-classify.ts frontend/src/vendor/scm/lib/delivery-map-model.ts",
       "why": "THE DELIVERY ZONE NAMES. zone-classify.ts assigns a stop to a zone; delivery-map-model.ts colours it. Same vocabulary, two jobs — but a zone added to one and not the other renders an uncoloured stop, so it is recorded rather than waved through."
     },
@@ -512,7 +517,7 @@
     },
     {
       "check": "D1",
-      "key": "FULL,NONE,PARTIAL|backend/src/services/pageAccess.ts frontend/src/pages/Roles.tsx",
+      "key": "FULL,NONE,PARTIAL|backend/src/services/pageAccess.ts frontend/src/pages/roles/RoleSettingsDrawer.tsx",
       "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 2 homes: ACCESS_LEVELS. Cost of divergence is a blank chip, not a wrong number."
     },
     {
@@ -537,8 +542,8 @@
     },
     {
       "check": "D1",
-      "key": "JOHOR,KEDAH,KELANTAN,KUALA LUMPUR,LABUAN,MELAKA,NEGERI SEMBILAN,PAHANG,PERAK,PERLIS,PULAU PINANG,PUTRAJAYA,SABAH,SARAWAK,SELANGOR,TERENGGANU|backend/src/scm/lib/canonical-state.ts frontend/src/pages/Projects.tsx",
-      "why": "THE CANONICAL MALAYSIAN STATES. canonical-state.ts is the authored home (mig 0175 canonicalises Penang to Pulau Pinang) and Projects.tsx re-types the list for its picker. D2 shows three further spellings of this list elsewhere that do NOT agree — KL vs KUALA LUMPUR, PENANG vs PULAU PINANG, an extra IPOH. Those are the ones worth fixing; this pair is the one that is already correct."
+      "key": "JOHOR,KEDAH,KELANTAN,KUALA LUMPUR,LABUAN,MELAKA,NEGERI SEMBILAN,PAHANG,PERAK,PERLIS,PULAU PINANG,PUTRAJAYA,SABAH,SARAWAK,SELANGOR,TERENGGANU|backend/src/scm/lib/canonical-state.ts frontend/src/pages/projects/CreateProjectPanel.tsx",
+      "why": "THE CANONICAL MALAYSIAN STATES. canonical-state.ts is the authored home (mig 0175 canonicalises Penang to Pulau Pinang) and pages/projects/CreateProjectPanel.tsx re-types the list for its picker. D2 shows three further spellings of this list elsewhere that do NOT agree — KL vs KUALA LUMPUR, PENANG vs PULAU PINANG, an extra IPOH. Those are the ones worth fixing; this pair is the one that is already correct."
     },
     {
       "check": "D1",
@@ -577,7 +582,7 @@
     },
     {
       "check": "D1",
-      "key": "P1,P2,P3|backend/src/scm/routes/suppliers.ts frontend/src/pages/scm-v2/SupplierDetail.tsx",
+      "key": "P1,P2,P3|backend/src/scm/routes/suppliers.ts frontend/src/pages/scm-v2/SupplierBindingsCsv.tsx",
       "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 2 homes: TIER_KEYS, SOFA_TIERS_FOR_EXPORT. Cost of divergence is a blank chip, not a wrong number."
     },
     {
@@ -897,11 +902,6 @@
     },
     {
       "check": "D2",
-      "key": "ALL,CANCELLED,DRAFT,POSTED ~ CANCELLED,DRAFT,POSTED",
-      "why": "A STATUS SET VERSUS THE FILTER CHIPS OVER IT PLUS \"ALL\". The pseudo-value is the filter's, not the document's."
-    },
-    {
-      "check": "D2",
       "key": "APPLICATION/PDF,IMAGE/JPEG,IMAGE/PNG,IMAGE/WEBP ~ IMAGE/JPEG,IMAGE/PNG,IMAGE/WEBP",
       "why": "TWO UPLOAD WHITELISTS differing by APPLICATION/PDF. Each surface decides what it accepts and they are not required to agree; the difference here is the surface (a supplier portal takes no DWG, the ops app takes video)."
     },
@@ -1022,6 +1022,11 @@
     },
     {
       "check": "D1",
+      "key": "ASSET,EQUITY,EXPENSE,INCOME,LIABILITY|backend/src/scm/routes/accounting-chart.ts backend/src/scm/routes/accounting.ts frontend/src/pages/scm-v2/Accounting.tsx frontend/src/pages/scm-v2/ChartOfAccounts.tsx frontend/src/vendor/scm/components/AccountSelect.tsx",
+      "why": "THE FIVE ACCOUNT TYPES — a closed vocabulary fixed by double-entry accounting itself, not a business rule that can drift (an unknown type is refused by every validator). Five homes: two server validators (accounting.ts POST /accounts, accounting-chart.ts import), two pickers' display order (Accounting.tsx, AccountSelect.tsx) and the chart page's section→type map (ChartOfAccounts.tsx). Recorded rather than collapsed for the PRICE_TIERS reason: the validators must stay server-side and the label/order maps must stay renderable client-side."
+    },
+    {
+      "check": "D1",
       "key": "HELPER,STOREKEEPER,STOREKEEPER SUPERVISOR|backend/src/services/projectGates.ts frontend/src/auth/crewScope.ts",
       "why": "THE CREW-SCOPED POSITIONS, and this twin is DELIBERATE: the projects filter bar has to render before any round-trip, so the client cannot wait to be told. It is also the twin that had already drifted — the desktop copy substring-matched the position name and carried no permission escape, so an owner-created \"Warehouse Helper\" caged the UI while the server returned everything, and an admin holding the Storekeeper position lost controls the server would have allowed. PINNED by backend/tests/duplicatedDecisionPins.test.ts, which imports BOTH implementations and runs one corpus of (position, permissions) pairs through them. Added by the same change that created the second home — this gate flagged its own author, which is the behaviour it is for."
     },
@@ -1087,8 +1092,8 @@
     },
     {
       "check": "D1",
-      "key": "CANCELLED,DRAFT,ON_HOLD,PARTIALLY_RECEIVED,RECEIVED,SUBMITTED|backend/src/scm/routes/mfg-purchase-orders.ts frontend/src/pages/scm-v2/PurchaseOrderDetailV2.tsx frontend/src/vendor/scm/lib/status-pill.ts",
-      "why": "THE PURCHASE ORDER'S STATUS VOCABULARY, in its write home and its TWO display homes. VALID_STATUSES is what the PATCH accepts; status-pill's PO map is what a value reads as on a list; STAGE_LABEL is what it reads as on the detail page. Three homes, one vocabulary, and they must agree — a value the route accepts and a map cannot name renders as a raw slug, which is how ASSR printed the word \"voided\" on the customer portal. They became identical on 2026-08-21 when ON_HOLD (mig 0318) was added to all three. THE DIVERGENCE THAT MATTERS IS A DISPLAY MAP FALLING BEHIND THE ROUTE, and the detail page carries a THIRD thing to update alongside them: effectiveOf, whose fall-through answered CANCELLED, so a held purchase order told the buyer it was cancelled until this change named ON_HOLD there too."
+      "key": "CANCELLED,DRAFT,ON_HOLD,PARTIALLY_RECEIVED,RECEIVED,SUBMITTED|backend/src/scm/lib/po-line-export-columns.ts backend/src/scm/routes/mfg-purchase-orders.ts frontend/src/pages/scm-v2/PurchaseOrderDetailV2.tsx frontend/src/vendor/scm/lib/po-line-export-columns.ts frontend/src/vendor/scm/lib/status-pill.ts",
+      "why": "THE PURCHASE ORDER'S STATUS VOCABULARY, in its write home and its TWO display homes. VALID_STATUSES is what the PATCH accepts; status-pill's PO map is what a value reads as on a list; STAGE_LABEL is what it reads as on the detail page. Three homes, one vocabulary, and they must agree — a value the route accepts and a map cannot name renders as a raw slug, which is how ASSR printed the word \"voided\" on the customer portal. They became identical on 2026-08-21 when ON_HOLD (mig 0318) was added to all three. THE DIVERGENCE THAT MATTERS IS A DISPLAY MAP FALLING BEHIND THE ROUTE, and the detail page carries a THIRD thing to update alongside them: effectiveOf, whose fall-through answered CANCELLED, so a held purchase order told the buyer it was cancelled until this change named ON_HOLD there too. THIRD DISPLAY HOME, 2026-09-15: PO_STATUS_WORDS in lib/po-line-export-columns.ts (backend) and its byte-identical vendored twin (frontend, refereed by po-line-export-columns.canonical.test.ts). It is the word the Purchase Orders LIST shows — po-line-export-columns.canonical.test.ts asserts it says exactly what the STATUS_TONE map in PurchaseOrdersListV2 says — and the word the PO line export prints, owner 2026-09-15: export the word on screen, not the stored value. It lives in the mirror because the SERVER builds the export rows and cannot import a frontend map. Same divergence risk as the other display maps: a status the route accepts and this map cannot name prints as the raw value."
     },
     {
       "check": "D2",
@@ -1179,6 +1184,221 @@
       "check": "D1",
       "key": "-,--,KIV,N.A.,N/A,NA,NIL,NONE,TBC,—|backend/src/scm/shared/so-branding-label.ts frontend/src/vendor/shared/so-branding-label.ts",
       "why": "THE MIRROR ITSELF, not a second decision. PLACEHOLDER_BRAND_TEXTS is declared ONCE in scm/shared/ and frontend/src/vendor/shared/ is its byte-identical copy, which check-shared-mirrors.mjs --strict fails the build over if the two ever differ - the opposite of the drift this check exists to catch."
+    },
+    {
+      "check": "D1",
+      "key": "EMBED,HEAD,IFRAME,MATH,NOSCRIPT,OBJECT,SCRIPT,STYLE,SVG,TEMPLATE,TEXTAREA,TITLE|backend/src/lib/announcementRichText.ts frontend/src/lib/announcementRichText.ts",
+      "why": "THE ANNOUNCEMENT RICH-BODY GRAMMAR, a deliberate cross-tree TWIN: backend/src/lib/announcementRichText.ts is the original and frontend/src/lib/announcementRichText.ts is its byte-identical copy (the two packages share no build). Both sides run the SAME canonicaliser, the Worker on write and the browser on render, so the sets must be equal; backend/tests/announcementRichText.test.ts and frontend/src/lib/announcementRichText.test.ts pin the same fixtures so a drift is a red test on one side. 2 homes: RAW_DROP, RICH_SIZES."
+    },
+    {
+      "check": "D1",
+      "key": "B,I,MARK,S,U|backend/src/lib/announcementRichText.ts frontend/src/lib/announcementRichText.ts",
+      "why": "THE ANNOUNCEMENT RICH-BODY GRAMMAR, a deliberate cross-tree TWIN: backend/src/lib/announcementRichText.ts is the original and frontend/src/lib/announcementRichText.ts is its byte-identical copy (the two packages share no build). Both sides run the SAME canonicaliser, the Worker on write and the browser on render, so the sets must be equal; backend/tests/announcementRichText.test.ts and frontend/src/lib/announcementRichText.test.ts pin the same fixtures so a drift is a red test on one side. Added with the 2026-09-05 toolbar follow-up (h1/h2 headings, mark highlight). 4 homes now: RAW_DROP, RICH_SIZES, PARA_BLOCKS, INLINE_MARKS."
+    },
+    {
+      "check": "D1",
+      "key": "H1,H2,P|backend/src/lib/announcementRichText.ts frontend/src/lib/announcementRichText.ts",
+      "why": "THE ANNOUNCEMENT RICH-BODY GRAMMAR, a deliberate cross-tree TWIN: backend/src/lib/announcementRichText.ts is the original and frontend/src/lib/announcementRichText.ts is its byte-identical copy (the two packages share no build). Both sides run the SAME canonicaliser, the Worker on write and the browser on render, so the sets must be equal; backend/tests/announcementRichText.test.ts and frontend/src/lib/announcementRichText.test.ts pin the same fixtures so a drift is a red test on one side. Added with the 2026-09-05 toolbar follow-up (h1/h2 headings, mark highlight). 4 homes now: RAW_DROP, RICH_SIZES, PARA_BLOCKS, INLINE_MARKS."
+    },
+    {
+      "check": "D1",
+      "key": "10,11,12,14,16,18,20,24,28,36,LG,SM,XL|backend/src/lib/announcementRichText.ts frontend/src/lib/announcementRichText.ts",
+      "why": "THE ANNOUNCEMENT RICH-BODY GRAMMAR, a deliberate cross-tree TWIN: backend/src/lib/announcementRichText.ts is the original and frontend/src/lib/announcementRichText.ts is its byte-identical copy (the two packages share no build). Both sides run the SAME canonicaliser, the Worker on write and the browser on render, so the sets must be equal; backend/tests/announcementRichText.test.ts and frontend/src/lib/announcementRichText.test.ts pin the same fixtures so a drift is a red test on one side. 2 homes: RAW_DROP, RICH_SIZES."
+    },
+    {
+      "check": "D2",
+      "key": "*,SCM.ACCESS,SCM.PAYMENT_VOUCHER.POST ~ *,SCM.ACCESS,SCM.PAYMENT_VOUCHER.POST,SCM.SALES_ORDER.WRITE",
+      "why": "THE FINANCE NAV GATE against the Official Receipts nav gate, one key apart BY DESIGN. The recon/setup/chart rows show only to GL people (scm.payment_voucher.post); the Official Receipts row adds SCM.SALES_ORDER.WRITE because the OR is sales-side paper — the salesperson who records the payment hands the receipt over — and the sidebar MIRRORS the backend guard (accounting-receipts.ts requirePerm: payment_voucher.post OR sales_order.write). Folding onto the GL-only set would hide the book from the very people who print from it; divergence costs a nav row showing or not, never money."
+    },
+    {
+      "check": "D1",
+      "key": "DO,GRN,PO,SO|backend/src/scm/lib/downstream-lock.ts backend/src/scm/routes/change-log.ts frontend/src/lib/changeLog.ts",
+      "why": "THE FOUR DOCUMENT KINDS THE OWNER OPENED TO STAFF (2026-09-08), plus one unrelated set that happens to hold the same four values. Three homes, and each answers a different question: downstream-lock.ts REFUSALS is a map of why a downstream document refuses an edit and has nothing to do with the change log; change-log.ts ALL_DOC_TYPES is the SERVER's list, which is the boundary — the client cannot widen it; frontend/src/lib/changeLog.ts CL_DOC_TYPES plus CL_DOC_TYPE_LABEL is the ONE client-side home, imported by both pages/ChangeLog.tsx and mobile/MobileChangeLog.tsx rather than written out again (they each held a copy until this entry was recorded, and that copy was deleted, not allowlisted). Cost of the remaining divergence is a chip the server answers 'every type' for, never a wrong number. Same shape as the AutoCount doc-type entry above."
+    },
+    {
+      "check": "D1",
+      "key": "*,SCM.CHANGELOG.READ,SETTINGS.MANAGE|frontend/src/App.tsx frontend/src/components/Sidebar.tsx",
+      "why": "THE CHANGE LOG'S TWO READ KEYS, on the nav row and on the route door — the same pair, in the same file pair, for the same reason as the AutoCount Sync entry already recorded here. Neither is the boundary: GET /api/scm/change-log checks them against the REAL caller and 403s. These two only decide whether a row is worth SHOWING and whether the door opens, so a divergence costs a visible-but-empty page, never access."
+    },
+    {
+      "check": "D2",
+      "key": "DO,GRN,PO ~ DO,GRN,PO,SO",
+      "why": "THE CHANGE LOG'S DOCUMENT TYPES VERSUS THE ONES THAT LIVE IN scm.entity_audit_log, differing by SO — and that difference IS the schema, not a drift. Sales orders record into their own table (scm.mfg_so_audit_log); every other SCM document records into scm.entity_audit_log (migration 0139). ENTITY_DOC_TYPES is deliberately the three that table carries, and the route reads both tables to answer as one. The sets are meant to differ and they differ in exactly the right place."
+    },
+    {
+      "check": "D1",
+      "key": "DO,PO,SO|backend/src/scm/routes/document-cancel-routes.ts backend/src/scm/shared/document-cancel.ts backend/src/services/cancelRequestNotify.ts frontend/src/pages/scm-v2/CancelRequests.tsx",
+      "why": "THE DOCUMENTS WHOSE CANCEL COSTS A WRITTEN REASON (SO since 2026-09-08, PO 2026-09-09, DO 2026-09-14 — docs/modules/document-cancel-approval.md). The set only became visible to this check when the DO made it three values. ONE home answers the rule: backend/src/scm/shared/document-cancel.ts (CANCEL_DOC_TYPES, NOUN, APPROVAL_LEVELS, CANCEL_APPROVE_KEY), which is the only table the server gate reads. The other homes key something ELSE by it: document-cancel-routes.ts DOCS is per-document WIRING (table, key column, whether the cancel rides a status route, where its history row goes); services/cancelRequestNotify.ts holds CANCEL_APPROVE_PERM and a title-case NOUN as literals because a Houzs-side service must not import the SCM bundle, and cancelRequestNotify.test.ts asserts CANCEL_APPROVE_PERM equals CANCEL_APPROVE_KEY; CancelRequests.tsx DOC_LABEL / DOC_PATH are PRESENTATION of the ledger row's doc_type, typed Record<CancelRequestRow['doc_type'], ...> so a new type fails to compile there. Every record is keyed by the TypeScript union, so a document added to one and not another is a compile error, and a divergence that slips past costs a missing label or a notice to nobody — never a cancel that skips its reason, because only the shared rules decide that."
+    },
+    {
+      "check": "D2",
+      "key": "DO,GRN,PO,SO ~ DO,PO,SO",
+      "why": "TWO DIFFERENT QUESTIONS THAT SHARE THREE ANSWERS, differing by GRN. {DO,GRN,PO,SO} is the change log's documents and downstream-lock's refusal map (the entry above explains both); {DO,PO,SO} is the documents whose cancel costs a written reason (document-cancel.ts). A goods receipt has a change log but no cancel-reason rule — the owner has asked for a reason on SO, PO and DO cancels only — so GRN being absent from the second set is the absence of a ruling, not a rule enforced at N-1 of N places. If the owner rules that a GRN cancel needs a reason too, it joins CANCEL_DOC_TYPES and this entry goes."
+    },
+    {
+      "check": "D1",
+      "key": "CLOSED,DELIVERED,INVOICED|backend/src/scm/shared/so-deliverable-states.ts backend/src/services/agents/cs-agent.ts frontend/src/vendor/shared/so-deliverable-states.ts",
+      "why": "DELIVERED-OR-BEYOND, asked twice (the frontend copy is the byte-identical VENDORED TWIN of the shared file, refereed by frontend/src/vendor/shared/so-deliverable-states.canonical.test.ts — not a second decision): the CS agent answers \"has the customer got it\" for a chat reply; the sales side (SO_DELIVERED_OR_BEYOND in scm/shared/so-deliverable-states.ts, since docs/bugs/0832 the ONE home the Collection report and the final-invoice backlog both read) answers \"is this order at the balance stage\" for Finance. Both read the SO status enum as the same three words today. Recorded rather than collapsed: since docs/bugs/0831 the report ALSO counts an order with a live sales invoice as at the balance stage and measures the balance against the invoice's total; the status set stays for the delivered-but-uninvoiced orders, while the agent stays on delivery alone — they diverge on purpose."
+    },
+    {
+      "check": "D1",
+      "key": "CN,DN,SCN|backend/src/acc/credit-notes.ts frontend/src/pages/scm-v2/CreditNotes.tsx frontend/src/vendor/scm/lib/credit-note-pdf.ts",
+      "why": "THE THREE KINDS OF NOTE (docs/bugs/0827; the vocabulary moved with the note core into acc/credit-notes.ts, docs/bugs/0831) — the migration CHECK is the one definition; the core validates the kind against it and the page labels it. The frontend cannot import the backend, and a label map is the presentation of a vocabulary, not a second answer to what the kinds are. The print (credit-note-pdf.ts, docs/bugs/0834) titles the sheet by kind — CREDIT NOTE / DEBIT NOTE / SUPPLIER CREDIT NOTE — off the same three words: the third presentation of the one vocabulary, not a fourth answer."
+    },
+    {
+      "check": "D1",
+      "key": "#,ACCOUNT CODE,ACCOUNT NAME,AMOUNT,DESCRIPTION|frontend/src/vendor/scm/lib/credit-note-pdf.ts frontend/src/vendor/scm/lib/payment-voucher-pdf.ts",
+      "why": "TWO SHEETS' COLUMN HEADINGS — the payment voucher's lines table and the credit note's (docs/bugs/0834) head their lines with the same five words. A heading row is the presentation of each sheet, decided sheet by sheet (the receipt's and the invoice's differ); nothing reads the two to agree, and a sheet that later needs a sixth column changes alone."
+    },
+    {
+      "check": "D1",
+      "key": "*,SCM.VENTURE_PORTAL.READ,SETTINGS.MANAGE|frontend/src/App.tsx frontend/src/components/Sidebar.tsx",
+      "why": "THE PERMISSION KEYS ONE NAV ENTRY IS GATED ON, written once on the route Guard and once on the sidebar item so a hidden link is also an unreachable route. The pair must agree; the server is the real gate and neither of these is it. unnamed inline literal(s)."
+    },
+    {
+      "check": "D1",
+      "key": "FAILED,PENDING,SENT,SKIPPED|backend/src/scm/lib/autocount-outbox-status.ts backend/src/scm/lib/venture-portal-outbox.ts",
+      "why": "THE AUTOCOUNT OUTBOX STATUSES VERSUS THE VENTURE PORTAL OUTBOX STATUSES. Two different outboxes, to two different systems, that deliberately share four state names so this codebase has ONE dialect for 'where is my outbox row' — the same ruling already recorded for the mail outbox against AutoCount's. They are not one rule: either outbox may grow a fifth state for a reason that has nothing to do with the other, and the Venture Portal feed must not inherit one."
+    },
+    {
+      "check": "D1",
+      "key": "CANCEL,CREATE,DELETE,POST,REVERSE,UPDATE|frontend/src/pages/scm-v2/document-audit-labels.ts frontend/src/pages/scm-v2/entity-audit-labels.ts",
+      "why": "THE AUDIT VERB SET has ONE home and these are not it: the six verbs are declared once, in backend/src/scm/lib/entity-audit.ts, and every dictionary here is keyed on that same set. What is duplicated is the WORDS, and the words must differ per document on purpose - POST means 'Confirmed purchase order' on a PO, 'Posted to AP' on a purchase invoice, 'Issued invoice' on a sales invoice and 'Loaded onto lorry' on a delivery order, which is the whole reason a per-document dictionary exists. Collapsing them would print one verb for eight documents and lose the distinction staff read. The real hazard is a key the dictionary spells differently from the backend, and that IS pinned: DocumentHistoryDrawer.test.tsx reads each route's own alias tuples and fails on a header field with no label."
+    },
+    {
+      "check": "D1",
+      "key": "DELIVERY_ORDER,GRN,INVENTORY_ADJUSTMENT,PAYMENT_VOUCHER,PURCHASE_INVOICE,PURCHASE_ORDER,PURCHASE_RETURN,SALES_INVOICE,STOCK_TAKE,STOCK_TRANSFER|backend/src/scm/lib/entity-audit.ts frontend/src/vendor/scm/lib/entity-audit-queries.ts",
+      "why": "PINNED BY A TEST, which is this checker's own prescribed remedy for a pair that must stay two. The list cannot be imported across the app boundary (the frontend does not build backend sources), so frontend/src/vendor/scm/lib/entity-audit-queries.test.ts READS backend/src/scm/lib/entity-audit.ts and asserts the two are equal, with a second assertion that the read found more than five names so a dead matcher cannot report a pass. Recorded rather than collapsed because this pair already cost four documents their change log while the comment said 'must stay in step' and nothing made it - docs/bugs/0847-four-documents-kept-a-change-log-nobody-could-read.md."
+    },
+    {
+      "check": "D2",
+      "key": "CANCEL,CREATE,DELETE,POST,REVERSE,SEND,UPDATE ~ CANCEL,CREATE,DELETE,POST,REVERSE,UPDATE",
+      "why": "SEND is the purchase order's alone, and correctly so: it records that the PO was EMAILED to its supplier, the one event in this log that leaves the building. No other document in entity_audit_log is transmitted to an outside party, so labelling SEND on the other seven would advertise a verb their routes never write."
+    },
+    {
+      "check": "D2",
+      "key": "DELIVERY_ORDER,GRN,INVENTORY_ADJUSTMENT,PAYMENT_VOUCHER,PURCHASE_INVOICE,PURCHASE_ORDER,PURCHASE_RETURN,SALES_INVOICE,STOCK_TAKE,STOCK_TRANSFER ~ DELIVERY_ORDER,GRN,PAYMENT_VOUCHER,PURCHASE_INVOICE,PURCHASE_ORDER,SALES_INVOICE,STOCK_TAKE,STOCK_TRANSFER",
+      "why": "A DELIBERATE SUBSET, not a drift. The history drawer's DOCS registry covers the eight documents that have a detail screen asking for their history; PURCHASE_RETURN and INVENTORY_ADJUSTMENT are recorded WRITE-ONLY - the rows exist for an investigator and for /inventory/reconcile, and no screen requests them. The registry's key type is Extract<AuditEntityType, ...> so the compiler refuses a document this file has no label vocabulary for, and adding a screen for either means adding its row here."
+    },
+    {
+      "check": "D1",
+      "key": "ARRIVAL_AT,ARRIVES_EM_WAREHOUSE_DATE,CUSTOMER_DELIVERED_DATE,DELIVERY_SUBSTATUS,DEPARTURE_AT,DRIVER_ID,DRIVER_NAME,ETA_ARRIVING_PORT,EXPECTED_DELIVERY_AT,SHIPOUT_DATE,TIME_CONFIRMED,TIME_RANGE,VEHICLE|backend/src/scm/shared/do-header-lock.ts frontend/src/vendor/shared/do-header-lock.ts",
+      "why": "A VENDORED TWIN, not a second decision: the Delivery Order header columns that stay editable once a Sales Invoice or Delivery Return exists (owner ruling 2026-09-14). One home in backend/src/scm/shared/do-header-lock.ts, read by the PATCH /delivery-orders-mfg/:id refusal; the byte-identical copy under frontend/src/vendor/shared/ exists because the desktop edit form and the phone edit screen disable fields from it and the browser cannot import backend/src. Refereed by frontend/src/vendor/shared/do-header-lock.canonical.test.ts (byte compare) and backend/tests/doHeaderLockPartition.test.ts (every PATCH column classified)."
+    },
+    {
+      "check": "D1",
+      "key": "ADDRESS1,ADDRESS2,ADDRESS3,ADDRESS4,AGENT,BILL_TO_ADDRESS,BRANDING,BUILDING_TYPE,CITY,CURRENCY,CUSTOMER_ID,CUSTOMER_PO_IMAGE_B64,CUSTOMER_SO_NO,CUSTOMER_STATE,CUSTOMER_TYPE,DEBTOR_CODE,DEBTOR_NAME,EMAIL,EMERGENCY_CONTACT_NAME,EMERGENCY_CONTACT_PHONE,EMERGENCY_CONTACT_RELATIONSHIP,HUB_ID,HUB_NAME,INSTALL_TO_ADDRESS,PHONE,POSTCODE,REF,SALES_LOCATION,SHIP_TO_ADDRESS,SO_DATE,VENUE,VENUE_ID|backend/src/scm/shared/so-identity-lock.ts frontend/src/vendor/shared/so-identity-lock.ts",
+      "why": "A VENDORED TWIN, not a second decision: the Sales Order header columns a live Delivery Order / Sales Invoice snapshots and so freezes (owner 2026-05-31). One home in backend/src/scm/shared/so-identity-lock.ts, read by the header PATCH and the amendment routes; the byte-identical copy under frontend/src/vendor/shared/ exists since 2026-09-15 because a partly delivered order now opens for edit (per-line freeze) and the desktop and phone editors must grey out exactly the fields the server refuses. Refereed by frontend/src/vendor/shared/so-line-freeze.canonical.test.ts (byte compare)."
+    },
+    {
+      "check": "D1",
+      "key": "AFTER,BEFORE,BETWEEN,ON,PRESET|backend/src/scm/shared/so-list-filter-model.ts frontend/src/vendor/shared/so-list-filter-model.ts",
+      "why": "THE SO LIST DATE-FILTER OPERATORS. ONE module with two byte-identical homes: the SO list endpoint parses the second-level filters with the backend copy and the phone sheet / desktop bar build them with the vendored copy (the browser cannot import backend/src). Refereed by frontend/src/vendor/shared/so-list-filter-model.canonical.test.ts (byte compare), so the two cannot diverge."
+    },
+    {
+      "check": "D1",
+      "key": "BETWEEN,EQ,GT,LT|backend/src/scm/shared/so-list-filter-model.ts frontend/src/vendor/shared/so-list-filter-model.ts",
+      "why": "THE SO LIST TOTAL-FILTER OPERATORS. ONE module with two byte-identical homes: the SO list endpoint parses the second-level filters with the backend copy and the phone sheet / desktop bar build them with the vendored copy (the browser cannot import backend/src). Refereed by frontend/src/vendor/shared/so-list-filter-model.canonical.test.ts (byte compare), so the two cannot diverge."
+    },
+    {
+      "check": "D1",
+      "key": "BETWEEN,EQ,GT,LT,POSITIVE|backend/src/scm/shared/so-list-filter-model.ts frontend/src/vendor/shared/so-list-filter-model.ts",
+      "why": "THE SO LIST BALANCE-FILTER OPERATORS. ONE module with two byte-identical homes: the SO list endpoint parses the second-level filters with the backend copy and the phone sheet / desktop bar build them with the vendored copy (the browser cannot import backend/src). Refereed by frontend/src/vendor/shared/so-list-filter-model.canonical.test.ts (byte compare), so the two cannot diverge."
+    },
+    {
+      "check": "D2",
+      "key": "BETWEEN,EQ,GT,LT ~ BETWEEN,EQ,GT,LT,POSITIVE",
+      "why": "THE SO LIST TOTAL vs BALANCE FILTER OPERATORS, differing by POSITIVE (\"has balance\"). Deliberate: an order always has a positive total, so \"has total\" is not a question anyone asks; \"has balance\" is the owner-named one. Same field-definition table, one file."
+    },
+    {
+      "check": "D1",
+      "key": "ESTIMATE DELIVERY DATE,SUPPLIER DELIVERY DATE 2,SUPPLIER DELIVERY DATE 3|backend/src/scm/lib/po-line-export-columns.ts frontend/src/vendor/scm/lib/po-line-export-columns.ts",
+      "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it (the server builds the PO line export rows, the browser writes the sheet and labels the Outstanding tab). frontend/src/vendor/scm/lib/po-line-export-columns.canonical.test.ts asserts the two files are byte-identical and check-shared-mirrors.mjs compares the pair. Symbols: PO_ESTIMATE_DELIVERY_DATE_LABELS."
+    },
+    {
+      "check": "D1",
+      "key": "SUPPLIER_DELIVERY_DATE_2,SUPPLIER_DELIVERY_DATE_3,SUPPLIER_DELIVERY_DATE_4|backend/src/scm/lib/po-line-export-columns.ts frontend/src/vendor/scm/lib/po-line-export-columns.ts",
+      "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it (the server builds the PO line export rows, the browser writes the sheet and labels the Outstanding tab). frontend/src/vendor/scm/lib/po-line-export-columns.canonical.test.ts asserts the two files are byte-identical and check-shared-mirrors.mjs compares the pair. Symbols: PO_ESTIMATE_DELIVERY_DATE_FIELDS."
+    },
+    {
+      "check": "D1",
+      "key": "AUTOCOUNT DOC NO,BRANDING,CATEGORY,CUSTOMER CODE,CUSTOMER NAME,CUSTOMER REF,DELIVERED ON,DELIVERY ADDRESS,DELIVERY DATE,DOC DATE,DOC NO,DRIVER,EXPECTED DELIVERY,INVOICE NO.,INVOICED QTY,ITEM CODE,ITEM DESCRIPTION,ITEM DESCRIPTION 2,LINE ID,LOCATION,M³,PHONE,QTY,REMARKS,RETURNED QTY,SALESPERSON,SO DOC NO.,STATE,STATUS,UNINVOICED QTY,UOM,VEHICLE,VENUE|backend/src/scm/lib/do-line-export-columns.ts frontend/src/vendor/scm/lib/do-line-export-columns.ts",
+      "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it (the server builds the line export rows, the browser writes the sheet). The frontend canonical test asserts the two files are byte-identical and check-shared-mirrors.mjs compares the pair. Symbols: DO_LINE_EXPORT_COLUMNS (do-line-export-columns.canonical.test.ts)."
+    },
+    {
+      "check": "D1",
+      "key": "AUTOCOUNT DOC NO,BRANDING,CATEGORY,CUSTOMER CODE,CUSTOMER NAME,CUSTOMER REF,DELIVERED QTY,DELIVERY ADDRESS,DELIVERY DATE,DISCOUNT,DO NO.,DOC BALANCE,DOC DATE,DOC NO,ITEM CODE,ITEM DESCRIPTION,ITEM DESCRIPTION 2,LINE ID,LINE TOTAL,LOCATION,ON DELIVERY ORDER QTY,PHONE,PO DELIVERY DATE,PO NO.,PROCESSING DATE,QTY,REMAINING QTY,REMARKS,RETURNED QTY,SALES LOCATION,SALESPERSON,STATE,STATUS,STOCK STATUS,UNIT PRICE,UOM,VENUE|backend/src/scm/lib/so-line-export-columns.ts frontend/src/vendor/scm/lib/so-line-export-columns.ts",
+      "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it (the server builds the line export rows, the browser writes the sheet). The frontend canonical test asserts the two files are byte-identical and check-shared-mirrors.mjs compares the pair. Symbols: SO_LINE_EXPORT_COLUMNS (so-line-export-columns.canonical.test.ts)."
+    },
+    {
+      "check": "D1",
+      "key": "CANCEL,CANCELLED,CLOSED,COMPLETED,CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,ON_HOLD,READY_TO_SHIP,SHIPPED|backend/src/scm/lib/so-line-export-columns.ts frontend/src/vendor/scm/lib/so-line-export-columns.ts",
+      "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it (the server builds the line export rows, the browser writes the sheet). The frontend canonical test asserts the two files are byte-identical and check-shared-mirrors.mjs compares the pair. Symbols: SO_STATUS_WORDS (so-line-export-columns.canonical.test.ts)."
+    },
+    {
+      "check": "D1",
+      "key": "CANCEL,CANCELLED,COMPLETED,DELIVERED,DISPATCHED,DRAFT,INVOICED,IN_TRANSIT,LOADED,SIGNED|backend/src/scm/lib/do-line-export-columns.ts frontend/src/vendor/scm/lib/do-line-export-columns.ts",
+      "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it (the server builds the line export rows, the browser writes the sheet). The frontend canonical test asserts the two files are byte-identical and check-shared-mirrors.mjs compares the pair. Symbols: DO_STATUS_WORDS (do-line-export-columns.canonical.test.ts)."
+    },
+    {
+      "check": "D2",
+      "key": "CANCEL,CANCELLED,CLOSED,COMPLETED,CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,ON_HOLD,READY_TO_SHIP,SHIPPED ~ CANCELLED,CLOSED,CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,ON_HOLD,READY_TO_SHIP,SHIPPED",
+      "why": "SO_STATUS_WORDS (so-line-export-columns.ts, 2026-09-15) is the LABEL half of the Sales Orders list's STATUS_TONE map (pages/scm-v2/so-list-status.ts), keyed by stored value, carried in a mirror because the server builds the line export and cannot import a page map. It deliberately holds exactly the keys that map holds — including the legacy spellings CANCEL and COMPLETED, and SHIPPED which has no tab — because its job is to print the word the list prints for any value a row can carry. so-line-export-columns.canonical.test.ts asserts every entry equals statusFor(key).label. It is a DISPLAY map, so it is not meant to equal SO_STATUSES (the write vocabulary) or the detail page's SO_STATUS_LABEL; the difference is the two legacy spellings a stored row can still carry."
+    },
+    {
+      "check": "D2",
+      "key": "CANCEL,CANCELLED,CLOSED,COMPLETED,CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,ON_HOLD,READY_TO_SHIP,SHIPPED ~ CANCELLED,CLOSED,CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,ON_HOLD,READY_TO_SHIP,RETURNED,SHIPPED",
+      "why": "SO_STATUS_WORDS (so-line-export-columns.ts, 2026-09-15) is the LABEL half of the Sales Orders list's STATUS_TONE map (pages/scm-v2/so-list-status.ts), keyed by stored value, carried in a mirror because the server builds the line export and cannot import a page map. It deliberately holds exactly the keys that map holds — including the legacy spellings CANCEL and COMPLETED, and SHIPPED which has no tab — because its job is to print the word the list prints for any value a row can carry. so-line-export-columns.canonical.test.ts asserts every entry equals statusFor(key).label. It is a DISPLAY map, so it is not meant to equal status-pill.ts's SO map, which names RETURNED (never stored on a column) and not the legacy spellings; the export follows the LIST, and the list follows so-list-status.ts."
+    },
+    {
+      "check": "D2",
+      "key": "CANCEL,CANCELLED,CLOSED,COMPLETED,CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,ON_HOLD,READY_TO_SHIP,SHIPPED ~ CANCELLED,CLOSED,CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,ON_HOLD,READY_TO_SHIP",
+      "why": "SO_STATUS_WORDS (so-line-export-columns.ts, 2026-09-15) is the LABEL half of the Sales Orders list's STATUS_TONE map (pages/scm-v2/so-list-status.ts), keyed by stored value, carried in a mirror because the server builds the line export and cannot import a page map. It deliberately holds exactly the keys that map holds — including the legacy spellings CANCEL and COMPLETED, and SHIPPED which has no tab — because its job is to print the word the list prints for any value a row can carry. so-line-export-columns.canonical.test.ts asserts every entry equals statusFor(key).label. It is a DISPLAY map, so it is not meant to equal SO_TAB_STATUSES, which is WHICH TAB a status is counted under (SHIPPED folds into Delivered), a different question from what word a row prints."
+    },
+    {
+      "check": "D2",
+      "key": "CANCEL,CANCELLED,CLOSED,COMPLETED,CONFIRMED,DELIVERED,DRAFT,INVOICED,IN_PRODUCTION,ON_HOLD,READY_TO_SHIP,SHIPPED ~ CANCELLED,CLOSED,CONFIRMED,DELIVERED,INVOICED,IN_PRODUCTION,ON_HOLD,READY_TO_SHIP,SHIPPED",
+      "why": "SO_STATUS_WORDS (so-line-export-columns.ts, 2026-09-15) is the LABEL half of the Sales Orders list's STATUS_TONE map (pages/scm-v2/so-list-status.ts), keyed by stored value, carried in a mirror because the server builds the line export and cannot import a page map. It deliberately holds exactly the keys that map holds — including the legacy spellings CANCEL and COMPLETED, and SHIPPED which has no tab — because its job is to print the word the list prints for any value a row can carry. so-line-export-columns.canonical.test.ts asserts every entry equals statusFor(key).label. It is a DISPLAY map, so it is not meant to equal ConsignmentOrders.tsx STATUS_LABEL, a different document's screen."
+    },
+    {
+      "check": "D2",
+      "key": "CANCEL,CANCELLED,COMPLETED,DELIVERED,DISPATCHED,DRAFT,INVOICED,IN_TRANSIT,LOADED,SIGNED ~ CANCELLED,DELIVERED,DISPATCHED,DRAFT,INVOICED,IN_TRANSIT,LOADED,SIGNED",
+      "why": "DO_STATUS_WORDS (do-line-export-columns.ts, 2026-09-15) is the LABEL half of the Delivery Orders list's STATUS_TONE map (pages/scm-v2/do-list-status.ts), keyed by stored value, carried in a mirror because the server builds the line export. It holds exactly the keys that map holds, the legacy spellings CANCEL and COMPLETED included, so a row carrying either prints the list's word; do-line-export-columns.canonical.test.ts asserts every entry equals statusFor(key).label. status-pill.ts's DO map is a different display home that does not carry the legacy spellings."
+    },
+    {
+      "check": "D1",
+      "key": "CANCELLED,CLOSED,DRAFT,ON_HOLD,POSTED|backend/src/scm/lib/grn-line-export-columns.ts frontend/src/vendor/scm/lib/grn-line-export-columns.ts frontend/src/vendor/scm/lib/status-pill.ts",
+      "why": "THE GOODS RECEIVED STATUS WORDS, in their display home and the line export. status-pill.ts GRN is what the list shows (GoodsReceivedListV2 withStatusLabels(\"grn\")); GRN_STATUS_WORDS in grn-line-export-columns.ts (backend + its byte-identical frontend twin) is the word the GRN line export prints, owner 2026-09-15: export the word on screen. It lives in the mirror because the SERVER builds the export rows and cannot import a frontend map. grn-line-export-columns.canonical.test.ts reads status-pill.ts GRN block and asserts the two maps say the same words, so they cannot drift silently."
+    },
+    {
+      "check": "D1",
+      "key": "AUTOCOUNT DOC NO,BALANCE,BRANDING,CATEGORY,CUSTOMER CODE,CUSTOMER NAME,CUSTOMER REF,DELIVERY DATE,DISCOUNT,DO NO.,DOC DATE,DOC NO,DUE DATE,INVOICE TOTAL,ITEM CODE,ITEM DESCRIPTION,ITEM DESCRIPTION 2,LINE ID,LINE TOTAL,LOCATION,OVERDUE DAYS,PAID,PHONE,QTY,REMARKS,SALESPERSON,SO DOC NO.,STATUS,UNIT PRICE,UOM,VENUE|backend/src/scm/lib/si-line-export-columns.ts frontend/src/vendor/scm/lib/si-line-export-columns.ts",
+      "why": "A VENDORED TWIN, not a second decision: the Sales Invoice line export column contract, authored in backend/src/scm/lib/si-line-export-columns.ts and copied byte-identical into frontend/src/vendor/scm/lib so the browser can write the sheet the server builds the rows for (owner 2026-09-15: every list exports one row per line). frontend/src/vendor/scm/lib/si-line-export-columns.canonical.test.ts asserts the two files are identical and pins the header names an import will read; check-shared-mirrors.mjs compares the pair. Symbols: SI_LINE_EXPORT_COLUMNS."
+    },
+    {
+      "check": "D1",
+      "key": "AUTOCOUNT DOC NO,BALANCE,CATEGORY,CURRENCY,DISCOUNT,DOC DATE,DOC NO,DUE DATE,GRN NO.,INVOICE TOTAL,ITEM CODE,ITEM DESCRIPTION,ITEM DESCRIPTION 2,LINE ID,LINE TOTAL,LOCATION,OVERDUE DAYS,PO NO.,PO UNIT PRICE,QTY,REMARKS,SO DOC NO.,STATUS,SUPPLIER CODE,SUPPLIER INVOICE NO.,SUPPLIER NAME,SUPPLIER SKU,UNIT PRICE,UOM|backend/src/scm/lib/pi-line-export-columns.ts frontend/src/vendor/scm/lib/pi-line-export-columns.ts",
+      "why": "A VENDORED TWIN, not a second decision: the Purchase Invoice line export column contract, authored in backend/src/scm/lib/pi-line-export-columns.ts and copied byte-identical into frontend/src/vendor/scm/lib so the browser can write the sheet the server builds the rows for (owner 2026-09-15: every list exports one row per line). frontend/src/vendor/scm/lib/pi-line-export-columns.canonical.test.ts asserts the two files are identical and pins the header names an import will read; check-shared-mirrors.mjs compares the pair. Symbols: PI_LINE_EXPORT_COLUMNS."
+    },
+    {
+      "check": "D1",
+      "key": "AUTOCOUNT DOC NO,CATEGORY,CURRENCY,DELIVERY DATE,DISCOUNT,DOC DATE,DOC NO,INVOICE NO.,INVOICED QTY,ITEM CODE,ITEM DESCRIPTION,ITEM DESCRIPTION 2,LINE ID,LINE TOTAL,LOCATION,PO NO.,RECEIVED QTY,REMARKS,RETURNED QTY,SO DOC NO.,STATUS,SUPPLIER CODE,SUPPLIER DO NO.,SUPPLIER NAME,SUPPLIER SKU,UNINVOICED QTY,UNIT PRICE,UOM|backend/src/scm/lib/grn-line-export-columns.ts frontend/src/vendor/scm/lib/grn-line-export-columns.ts",
+      "why": "A VENDORED TWIN, not a second decision: the Goods Received line export column contract, authored in backend/src/scm/lib/grn-line-export-columns.ts and copied byte-identical into frontend/src/vendor/scm/lib so the browser can write the sheet the server builds the rows for (owner 2026-09-15: every list exports one row per line). frontend/src/vendor/scm/lib/grn-line-export-columns.canonical.test.ts asserts the two files are identical and pins the header names an import will read; check-shared-mirrors.mjs compares the pair. Symbols: GRN_LINE_EXPORT_COLUMNS."
+    },
+    {
+      "check": "D1",
+      "key": "CANCELLED,DRAFT,ON_HOLD,PAID,PARTIALLY_PAID,POSTED|backend/src/scm/lib/pi-line-export-columns.ts frontend/src/vendor/scm/lib/pi-line-export-columns.ts",
+      "why": "A VENDORED TWIN, not a second decision: the Purchase Invoice line export column contract, authored in backend/src/scm/lib/pi-line-export-columns.ts and copied byte-identical into frontend/src/vendor/scm/lib so the browser can write the sheet the server builds the rows for (owner 2026-09-15: every list exports one row per line). frontend/src/vendor/scm/lib/pi-line-export-columns.canonical.test.ts asserts the two files are identical and pins the header names an import will read; check-shared-mirrors.mjs compares the pair. Symbols: PI_STATUS_WORDS — the words the Purchase Invoices LIST shows (its own STATUS_TONE map, which pi-line-export-columns.canonical.test.ts reads out of PurchaseInvoicesListV2.tsx and compares), owner 2026-09-15: export the word on screen."
+    },
+    {
+      "check": "D2",
+      "key": "AGENT,CANCELLED,CURRENCY,DESC2,DETAIL_DESCRIPTION,DETAIL_DESCRIPTION_2,DISCOUNT,DN,EXCHANGE_RATE,GRN_NUMBER,INCLUSIVE,ITEM_CODE,LINE_TAX,LINE_TOTAL,LOCAL_TOTAL,LOCATION,OUR_PO_NO,PROJ_NO,QTY,RECEIVED_AT,SUBTOTAL,SUPPLIER,SUPPLIER_CODE,TAX,TAX_CODE,TOTAL,TOTAL_EX,TOTAL_INC,UNIT_PRICE,UOM ~ AGENT,CANCELLED,CURRENCY,DESC2,DETAIL_DESCRIPTION,DETAIL_DESCRIPTION_2,DISCOUNT,EXCHANGE_RATE,INCLUSIVE,INVOICE_DATE,INVOICE_NUMBER,ITEM_CODE,LINE_TAX,LINE_TOTAL,LOCAL_TOTAL,LOCATION,PROJ_NO,QTY,SUBTOTAL,SUPPLIER,SUPPLIER_CODE,SUPPLIER_INVOICE_REF,TAX,TAX_CODE,TOTAL,TOTAL_EX,TOTAL_INC,UNIT_PRICE,UOM",
+      "why": "TWO LISTS' DEFAULT COLUMN SETS (GRN_DEFAULT_COLUMN_KEYS, PI_DEFAULT_COLUMN_KEYS), not one decision in two homes: each is AutoCount's OWN Detail Listing layout for that document (GR layout S and PI layout SS read from the book's Layout table 2026-09-15). They share most keys because AutoCount's two listings do, and they differ exactly where the documents do: the document reference (Supplier DO No / Supplier Invoice No.), the document date and number columns, and GR's Our PO No. Owner 2026-09-15: each list's default view is AutoCount's columns in AutoCount's order; each is ONE constant so a change stays one line. (The Sales Invoices list keeps its own grid as the default by owner ruling; its AutoCount set SI_AC_COLUMN_KEYS only orders the chooser.)"
+    },
+    {
+      "check": "D1",
+      "key": "CALENDAR_VIEWER,DRIVER_HELPER,STOREKEEPER,STOREKEEPER_SUPERVISOR|backend/src/services/positionPolicy.ts backend/src/services/positionPolicyRows.ts",
+      "why": "ONE vocabulary with a TYPE-CHECKED second home, not a second decision: RESTRICTED_PROFILES (positionPolicyRows.ts) is the list a position_policy row may name, and PROFILE_ROWS (positionPolicy.ts) maps each name to its page whitelist as Record<RestrictedProfile, ...> — a profile added to one and not the other is a compile error (tsc), never a runtime drift. positionPolicyRows.ts cannot import positionPolicy.ts (cycle), which is why the map lives beside the whitelists it names."
     }
   ]
 }

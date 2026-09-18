@@ -1,23 +1,30 @@
 // ----------------------------------------------------------------------------
-// Delivery Order print theme — Theme C "Ink & Petrol" (owner handoff 2026-08-07,
-// design project "DO Layout 重新设计" / HANDOFF-delivery-order.md).
+// Delivery Order print theme — BLACK ON WHITE, ONE FACE, for a dot-matrix printer.
 //
-// The handoff is written as CSS (var(--c-orange), border-radius, @page). The DO
-// is drawn by jsPDF, not rendered as HTML — there is no stylesheet to reference,
-// so the palette is declared ONCE here, named after the repo's Tailwind DS
-// tokens, and every draw call reads it from here. That is the closest thing to
-// "reference the token, don't hardcode a new colour" that a PDF can have.
+// Owner 2026-09-08: the DO is printed on an Epson LQ-310 (24-pin impact
+// printer, black ribbon) onto 9.5 x 11 inch 2-ply continuous paper. On that
+// printer the Theme C "Ink & Petrol" sheet this file used to describe came out
+// unreadable, and each of its three devices was a cause, not a style choice:
 //
-// Where the handoff's value IS a DS token, the token's value wins (they agree,
-// or differ imperceptibly — noted per entry). Three of the handoff's colours
-// have NO token in this repo; they are marked, so a later design pass knows
-// exactly which three to reconcile rather than re-deriving the whole set.
+//   · every grey ink (muted labels, faint placeholders, the green column
+//     headers) is DITHERED by the driver into a speckle of dots — there is no
+//     grey ribbon — and the second carbonless ply gets a fainter copy of the
+//     speckle;
+//   · every pale fill (the paper panel, the brass doc-number chip, the teal
+//     status chip, the rounded header band) prints as a field of dots UNDER
+//     the text, which is the one thing an impact printer cannot make legible;
+//   · the courier / helvetica mix set most of the small text in a thin
+//     typewriter face at 7.5–9pt, below what 24 pins at 180dpi can form.
+//
+// So the palette is one colour and no fills, the face is one family, and the
+// sizes below are the whole scale — every draw call reads from here, so the
+// floor the test pins (nothing under DO_SIZE.min) is a fact about the sheet.
 // ----------------------------------------------------------------------------
 
 export type Rgb = [number, number, number];
 
 /** mm per point — jsPDF documents here are created with unit: 'mm', while every
- *  font size in the handoff (and in setFontSize) is in points. */
+ *  font size (and setFontSize) is in points. */
 export const PT = 25.4 / 72;
 
 /** Points → mm. */
@@ -27,79 +34,52 @@ export const pt = (points: number): number => points * PT;
  *  unit (mm here), not em. */
 export const charSpace = (sizePt: number, em: number): number => pt(sizePt) * em;
 
-/**
- * A translucent ink over white paper, flattened. The handoff writes the hairlines
- * and the status chip as rgba(); a PDF fill has no alpha channel, and the paper
- * underneath is always white on a printed document, so the composite is exact
- * rather than an approximation.
- */
-const overWhite = (rgb: Rgb, alpha: number): Rgb => [
-  Math.round(rgb[0] * alpha + 255 * (1 - alpha)),
-  Math.round(rgb[1] * alpha + 255 * (1 - alpha)),
-  Math.round(rgb[2] * alpha + 255 * (1 - alpha)),
-];
-
-const INK_RGB: Rgb = [34, 31, 32]; // the hairline ink the handoff writes as rgba(34,31,32,…)
-
 export const DO_THEME = {
-  // ── Ink ──────────────────────────────────────────────────────────────────
-  /** ink.DEFAULT #11140f */
-  ink: [17, 20, 15] as Rgb,
-  /** ink.secondary #414539 (handoff #4a4f45 — same step, token wins) */
-  inkSecondary: [65, 69, 57] as Rgb,
-  /** ink.muted #767b6e */
-  inkMuted: [118, 123, 110] as Rgb,
-  /** HANDOFF-ONLY #9aa093 — the em-dash placeholder tint. No DS token sits
-   *  between ink.muted and border.strong; kept as specified. */
-  inkFaint: [154, 160, 147] as Rgb,
-
-  // ── Brand ────────────────────────────────────────────────────────────────
-  /** primary.DEFAULT #16695f — the handoff calls this --c-orange (the design
-   *  project rebinds that name to petrol; this repo's --c-orange is a real
-   *  orange, so the NAME is not portable — the value is). */
-  petrol: [22, 105, 95] as Rgb,
-  /** primary.ink #0c3f39 — the handoff's --c-burnt. */
-  burnt: [12, 63, 57] as Rgb,
-  /** accent.DEFAULT #a16a2e — eyebrows and the doc-number chip's ink. */
-  brass: [161, 106, 46] as Rgb,
-  /** accent.soft #f3ece0 (handoff #f5ecd8 — same pale brass, token wins). */
-  brassSoft: [243, 236, 224] as Rgb,
-
-  // ── Surfaces ─────────────────────────────────────────────────────────────
-  /** surface-2 #f4f6f3 — the handoff's --c-paper. */
-  paper: [244, 246, 243] as Rgb,
-  white: [255, 255, 255] as Rgb,
-
-  // ── Table + status ───────────────────────────────────────────────────────
-  /** HANDOFF-ONLY #2F5D4F — the column-header green, a step between
-   *  primary.DEFAULT and primary.ink that this repo has no token for. */
-  tableHeadInk: [47, 93, 79] as Rgb,
-  /** HANDOFF-ONLY #00695c — the Status chip's ink. */
-  statusInk: [0, 105, 92] as Rgb,
-  /** rgba(0,150,136,.14) on white. */
-  statusBg: overWhite([0, 150, 136], 0.14),
-
-  /** rgba(34,31,32,.12) on white — row rules, panel border, footer rule. */
-  line: overWhite(INK_RGB, 0.12),
-  /** rgba(34,31,32,.28) on white — signature rules and the dotted fields. */
-  lineStrong: overWhite(INK_RGB, 0.28),
+  /** The only ink. Every text, rule and QR module is this. */
+  ink: [0, 0, 0] as Rgb,
+  /** Rules are ink too: a hairline in a tint would dither into a dotted line. */
+  line: [0, 0, 0] as Rgb,
 } as const;
 
 /**
- * jsPDF ships helvetica / times / courier and nothing else, and the handoff
- * forbids a web font, so the system-UI stack maps to helvetica and the system
- * mono stack maps to courier.
- *
- * `monoFor` exists because that mapping has one sharp edge: a document carrying
- * CJK text has its font redirected by ensurePdfCjkFont, which only rewrites
- * requests for 'helvetica'. A cell asking for 'courier' would keep courier and
- * paint the CJK as mojibake — the exact failure the CJK guard exists to prevent.
- * Mono is a numeric/identifier affordance, so any string that isn't plain ASCII
- * gives it up and stays on the redirectable family.
+ * The type scale, in points. One family (SANS) at these sizes and nothing
+ * else — "字体统一" (owner 2026-09-08). `min` is the floor the template test
+ * holds every setFontSize call to; a size added below it fails the test rather
+ * than printing as a smudge on the second ply.
  */
-export const MONO = 'courier';
-export const SANS = 'helvetica';
+export const DO_SIZE = {
+  min: 9,
+  /** The document title, right column of the letterhead. */
+  title: 18,
+  /** The DO number under the title. */
+  docNo: 13,
+  /** Company name, left column of the letterhead. */
+  company: 15,
+  /** Registration number, address, customer-service line, "Issued" date. */
+  meta: 10,
+  /** DELIVER TO / DELIVERY DETAILS captions and the QR caption. */
+  caption: 10,
+  /** Customer name in the info panel. */
+  customer: 13,
+  /** Address, phone, note, detail rows, table body. */
+  body: 10.5,
+  /** Table column headers. */
+  tableHead: 9.5,
+  /** TOTAL row — body size, bold. One step up wrapped a 7-digit m³ total in
+   *  its 11% column. */
+  tableFoot: 10.5,
+  /** Signature block titles. */
+  sigTitle: 11,
+  /** Name / Date fields under a signature. */
+  sigField: 10,
+  /** Footer line and page number. */
+  footer: 9,
+} as const;
 
-export const monoFor = (text: string): string =>
-  // eslint-disable-next-line no-control-regex
-  /^[\x00-\x7F]*$/.test(text) ? MONO : SANS;
+/**
+ * jsPDF ships helvetica / times / courier and nothing else. Helvetica is the
+ * ONE family the DO uses, and it is also the family ensurePdfCjkFont redirects
+ * onto the embedded CJK subset — so a Chinese address paints correctly in every
+ * cell, which the old courier identifier columns could not promise.
+ */
+export const SANS = 'helvetica';

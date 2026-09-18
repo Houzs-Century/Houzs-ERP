@@ -75,7 +75,7 @@ const WH = 'WH-MAIN';
 
 const world = (opts: {
   company: number; group: string; code: string;
-  variants?: Row | null; poItems?: Row[]; pooledQty?: number; category?: string;
+  variants?: Row | null; poItems?: Row[]; pooledQty?: number; pooledKey?: string; category?: string;
 }) => fakeSb({
   stock_allocation_recompute_lock: [{ lock_key: 'GLOBAL', locked_by: null, locked_until: null }],
   mfg_sales_orders: [{
@@ -90,7 +90,7 @@ const world = (opts: {
   }],
   mfg_products: [{ code: opts.code, category: opts.category ?? opts.group.toUpperCase() }],
   inventory_balances: opts.pooledQty
-    ? [{ warehouse_id: WH, item_code: opts.code, variant_key: '', qty: opts.pooledQty }]
+    ? [{ warehouse_id: WH, item_code: opts.code, variant_key: opts.pooledKey ?? '', qty: opts.pooledQty }]
     : [],
   v_inventory_lots_open: [],
   delivery_orders: [], delivery_order_items: [], delivery_returns: [], delivery_return_items: [],
@@ -129,6 +129,42 @@ describe('company-1 hard binding: the pool is never a bound line\'s evidence', (
 
   test('a C1 STANDARD mattress still pools — only the bound groups bind', async () => {
     const sb = world({ company: 1, group: 'mattress', code: 'AKEMI BULWARK MATT (K)', category: 'MATTRESS', pooledQty: 2 });
+    const res = await recomputeSoStockAllocation(sb);
+    expect(res.ok).toBe(true);
+    expect(lineOf(sb).stock_status).toBe('READY');
+  });
+});
+
+/* CUSTOM PILLOWS JOIN HARD BINDING (owner 2026-09-14, 「因为它是 accessories，你也是
+   still 要根据它的规格来分配的」). A SQUARE PILLOW / LONG PILLOW is sewn in the
+   colour the customer chose, so pooled stock of the same SKU is somebody else's
+   colour. Production 2026-09-14: HC-SO-011160's four single SQUARE PILLOWs
+   (B0315-7/8/9/12) read READY off pooled KL stock while their own HC-PO-010150
+   had received nothing. */
+describe('company-1 custom pillows are bound to their own purchase order', () => {
+  test('a C1 SQUARE PILLOW with a colour and NO receipt of its own stays PENDING despite pooled stock', async () => {
+    const sb = world({
+      company: 1, group: 'fabric_accessory', code: 'SQUARE PILLOW', category: 'FABRIC_ACCESSORY',
+      variants: { fabricCode: 'B0315-7' }, pooledQty: 59, pooledKey: 'fabriccode=b0315-7',
+      poItems: [{ qty: 1, received_qty: 0 }],
+    });
+    const res = await recomputeSoStockAllocation(sb);
+    expect(res.ok).toBe(true);
+    expect(lineOf(sb).stock_status).toBe('PENDING');
+  });
+
+  test('a C1 LONG PILLOW whose own purchase order is received is READY with no pooled stock', async () => {
+    const sb = world({
+      company: 1, group: 'fabric_accessory', code: 'LONG PILLOW', category: 'FABRIC_ACCESSORY',
+      variants: { fabricCode: 'ZL-17' }, poItems: [{ qty: 1, received_qty: 1 }],
+    });
+    const res = await recomputeSoStockAllocation(sb);
+    expect(res.ok).toBe(true);
+    expect(lineOf(sb).stock_status).toBe('READY');
+  });
+
+  test('a C1 PLAIN accessory still pools', async () => {
+    const sb = world({ company: 1, group: 'accessory', code: 'AK- ESSENTIAL BOLSTER', category: 'ACCESSORY', pooledQty: 2 });
     const res = await recomputeSoStockAllocation(sb);
     expect(res.ok).toBe(true);
     expect(lineOf(sb).stock_status).toBe('READY');

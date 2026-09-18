@@ -102,7 +102,7 @@ async function main() {
         if (changeSamples.length < 15) changeSamples.push(`   ${it.item_code}  ${k}: "${before}" -> "${after}"`);
       }
     }
-    updates.push({ id: it.id, patch, specials, geometry: { gap: bf.gap, divan: bf.divan, leg: bf.leg } });
+    updates.push({ id: it.id, doc: it.linked_ac_docno, item: it.item_code, had, patch, specials, geometry: { gap: bf.gap, divan: bf.divan, leg: bf.leg } });
   }
   const withColour = updates.filter((u) => u.patch.colourId).length;
   const withSpecials = updates.filter((u) => u.specials.length).length;
@@ -110,6 +110,36 @@ async function main() {
   log(`source of truth: ${byKey} by AutoCount DtlKey, ${byOwnText} by the line's own description2, ${noSource} skipped for having neither`);
   log(`WHAT THE WRITE WOULD DO, per owned key: ${fills} would FILL a blank; ${changes} would CHANGE a value that is already there`);
   if (changes) { log(`the changes (up to 15) — read these before APPLY=1:`); for (const ln of changeSamples) log(ln); }
+
+  /* ── WHAT THIS SWEEP WOULD ERASE, counted before it runs ──
+     The SO arm gained this in #3074; this arm shares the very function that
+     makes it necessary, so it carried the identical blind spot. A defect class
+     half-fixed is the one that bites next (the DtlKey collision above is the
+     precedent, fixed on both arms together for the same reason).
+
+     `buildBedframeVariantPatch` returns null for every owned axis the parse does
+     not yield (variant-merge.mjs), and `variants || patch` writes those nulls.
+     So a value the ERP holds and the Desc2 does not state is DELETED — and when
+     the book says TBC/KIV, `fc` is null, which nulls the whole colour block.
+     Correct for a re-derivation, destructive for an operator's own correction,
+     and which of the two it is, is a NUMBER. `fills`/`changes` above cannot see
+     it: both `continue` on a blank `after`, which is exactly the erase case. */
+  const wipes = new Map();
+  const blank = (v) => v === undefined || v === null || String(v).trim() === "";
+  for (const u of updates) {
+    for (const [k, v] of Object.entries(u.patch)) {
+      if (!blank(v) || blank(u.had[k])) continue;
+      if (!wipes.has(k)) wipes.set(k, []);
+      wipes.get(k).push(`${u.doc || "?"} ${u.item}: "${u.had[k]}" -> null`);
+    }
+  }
+  const wiped = [...wipes.values()].reduce((a, l) => a + l.length, 0);
+  log(`WOULD ERASE: ${wiped} value(s) the ERP holds and the AutoCount Desc2 does not state`);
+  for (const [k, list] of [...wipes.entries()].sort((a, b) => b[1].length - a[1].length)) {
+    log(`   ${k.padEnd(14)} ${list.length}`);
+    for (const x of list.slice(0, 10)) log(`      ${x}`);
+    if (list.length > 10) log(`      ... and ${list.length - 10} more`);
+  }
 
   if (!APPLY) { log("\nDRY-RUN — set APPLY=1 to write."); await sql.end(); return; }
   /* Merged, never replaced: `variants = variants || patch` overwrites only the

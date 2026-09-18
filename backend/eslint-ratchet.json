@@ -65,10 +65,6 @@
       "@typescript-eslint/no-explicit-any": 1,
       "@typescript-eslint/no-unnecessary-condition": 6
     },
-    "src/routes/events.ts": {
-      "@typescript-eslint/no-explicit-any": 8,
-      "@typescript-eslint/no-unnecessary-condition": 1
-    },
     "src/routes/finance.ts": {
       "@typescript-eslint/no-explicit-any": 1,
       "@typescript-eslint/no-unnecessary-condition": 8
@@ -192,9 +188,6 @@
     },
     "src/scm/lib/bridge-2990.test.ts": {
       "no-restricted-syntax": 3
-    },
-    "src/scm/lib/bridge-2990.ts": {
-      "@typescript-eslint/no-unnecessary-condition": 2
     },
     "src/scm/lib/check-stock-availability.ts": {
       "@typescript-eslint/no-explicit-any": 1,
@@ -495,9 +488,6 @@
     "src/scm/lib/special-delivery.ts": {
       "@typescript-eslint/no-explicit-any": 1
     },
-    "src/scm/lib/staff-code.ts": {
-      "@typescript-eslint/no-unnecessary-condition": 3
-    },
     "src/scm/lib/stock-allocation-job.ts": {
       "@typescript-eslint/no-explicit-any": 6,
       "@typescript-eslint/no-unnecessary-condition": 1
@@ -655,9 +645,6 @@
     },
     "src/scm/routes/maintenance-config.ts": {
       "@typescript-eslint/no-unnecessary-condition": 2
-    },
-    "src/scm/routes/maintenance-push.ts": {
-      "@typescript-eslint/no-explicit-any": 3
     },
     "src/scm/routes/mfg-products.ts": {
       "@typescript-eslint/no-explicit-any": 3,

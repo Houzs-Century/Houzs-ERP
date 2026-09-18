@@ -23,6 +23,7 @@
 // rule applies to LIST header cells only).
 
 import { showDeliveredQty, sourcePoTitle, StockAdjChip } from "./DocumentLinesExpansion";
+import { type CoverageState, coveragePlaceholder } from "./coverage-state";
 import { cn, formatDate } from "../lib/utils";
 import { PO_CELL_MAX, poCellChips, type SoPoChipRow } from "../lib/soPoChips";
 
@@ -49,6 +50,12 @@ export type SoLineSourceFields = {
   ready_source_pos?: ReadySourceChip[];
   delivered_qty?: number | null;
   remaining_qty?: number | null;
+  /** WHY this line can never read READY, when the reason is WHERE it stands —
+   *  a display / showroom / service warehouse (owner ruling 2026-09-08). The
+   *  server composes the sentence; both surfaces render it verbatim. */
+  non_selling_warehouse?: {
+    code: string | null; name: string | null; type: string | null; notice: string;
+  } | null;
 };
 
 /* 2990-parity stock pill (one home — formerly drillStock in the SO list):
@@ -79,14 +86,33 @@ export function soLineStockPill(l: SoLineSourceFields): { label: string; cls: st
 export function SoStockPill({ line }: { line: SoLineSourceFields }) {
   const stock = soLineStockPill(line);
   if (!stock) return <span className="text-[11px] text-ink-muted">—</span>;
+  /* A REFUSAL THAT REACHES NOBODY IS THE DEFECT (vendor/scm/lib/mutation-error.ts:
+     35 write paths once refused correctly and told no one, and the owner
+     reported it as "the button does nothing"). A PENDING pill on a line whose
+     goods are visibly sitting in KL DISPLAY is exactly that shape — correct,
+     and unexplainable to the person reading it. So the warehouse is NAMED under
+     the pill and the full sentence, including what to do instead, is on the
+     hover. Mobile renders the same two things from the same payload field
+     (mobile/source-chips.tsx) — one rule, two presentations. */
+  const ns = line.non_selling_warehouse ?? null;
   return (
-    <span
-      className={
-        "inline-block rounded-full px-2 py-0.5 text-[9.5px] font-bold uppercase tracking-wider " +
-        stock.cls
-      }
-    >
-      {stock.label}
+    <span className="inline-flex flex-col items-start gap-0.5">
+      <span
+        className={
+          "inline-block rounded-full px-2 py-0.5 text-[9.5px] font-bold uppercase tracking-wider " +
+          stock.cls
+        }
+      >
+        {stock.label}
+      </span>
+      {ns ? (
+        <span
+          className="text-[9px] font-semibold uppercase leading-tight tracking-wide text-warning-text"
+          title={ns.notice}
+        >
+          {ns.code ?? ns.name ?? "Display"} — transfer to sell
+        </span>
+      ) : null}
     </span>
   );
 }
@@ -101,7 +127,18 @@ const chipBase =
 const floatingChipBase =
   "rounded border border-dashed border-border px-1.5 py-0.5 font-docno text-[11px] font-semibold text-ink-secondary";
 
-export function SoSourceChips({ line }: { line: SoLineSourceFields }) {
+export function SoSourceChips({
+  line,
+  coverage,
+}: {
+  line: SoLineSourceFields;
+  /* REQUIRED (coverage-state.tsx). Chips 3 and 4 read `ready_source_pos` and
+     `coverage_po`, which the detail payload hard-codes empty and a SECOND query
+     fills (docs/bugs/0596). Until it lands this cell used to print a bare dash —
+     "nothing is on the way" — which is a claim, not a blank. Owner 2026-09-02:
+     「我以为是 bugs」. */
+  coverage: CoverageState;
+}) {
   const shippedPos = line.shipped_source_pos ?? [];
   const shippedSet = new Set(shippedPos);
   const fullyShipped = (line.delivered_qty ?? 0) > 0 && (line.remaining_qty ?? null) === 0;
@@ -119,7 +156,8 @@ export function SoSourceChips({ line }: { line: SoLineSourceFields }) {
   const showIncoming = incomingPo && !shippedSet.has(incomingPo) && !readyPoChips.some((r) => r.po === incomingPo);
 
   if (shippedPos.length === 0 && readyPoChips.length === 0 && !anyAdj && !incomingPo) {
-    return <span className="text-[11px] text-ink-muted">—</span>;
+    /* BEFORE the dash: an unresolved read is not "nothing on the way". */
+    return coveragePlaceholder(coverage) ?? <span className="text-[11px] text-ink-muted">—</span>;
   }
   return (
     <span className="flex min-w-0 flex-wrap items-center gap-1">

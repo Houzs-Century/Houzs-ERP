@@ -51,6 +51,8 @@
 
 /** One prior OUT movement in a single (warehouse, product, variant) + company
  *  bucket, with the ledger facts the reconcile decision depends on. */
+import { pgrestIn } from './pgrest-in-list';
+
 export type RetroOutMovement = {
   movementId: string;
   /** Source DO id (source_doc_id). Collected for the COGS re-stamp. */
@@ -277,13 +279,16 @@ export async function reconcileUncostedOuts(
     try {
       const codes = [...new Set(distinct.map((b) => b.item_code))];
       const whs = [...new Set(distinct.map((b) => b.warehouse_id))];
-      const { data: outs } = await sb
+      const { data: outs, error: outsErr } = await pgrestIn(sb
         .from('inventory_movements')
         .select('source_doc_type, source_doc_id, item_code, warehouse_id, variant_key, created_at')
-        .eq('movement_type', 'OUT')
-        .in('item_code', codes)
+        .eq('movement_type', 'OUT'), 'item_code', codes)
         .in('warehouse_id', whs)
         .lt('created_at', cutoffTs);
+      if (outsErr) {
+        // eslint-disable-next-line no-console
+        console.error('[oversell-retrocost] reconcile OUT lookup failed:', (outsErr as { message?: unknown }).message ?? outsErr);
+      }
       const bucketKeys = new Set(distinct.map((b) => `${b.warehouse_id}::${b.item_code}::${b.variant_key ?? ''}`));
       for (const m of (outs ?? []) as Array<{ source_doc_type: string | null; source_doc_id: string | null; item_code: string; warehouse_id: string; variant_key: string | null; created_at?: string | null }>) {
         if ((m.source_doc_type ?? '').toUpperCase() !== 'DO' || !m.source_doc_id) continue;

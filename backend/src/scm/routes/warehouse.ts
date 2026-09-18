@@ -26,8 +26,10 @@ import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { scopeToCompany, activeCompanyId,
-  requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
+  requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY,
+  scopeToAllowedCompanies, companyCodeMap } from '../lib/companyScope';
 import { todayMyt } from '../lib/my-time';
+import { buildSeedRackLabels } from '../shared/rack-labels';
 
 export const warehouse = new Hono<{ Bindings: Env; Variables: Variables }>();
 warehouse.use('*', supabaseAuth);
@@ -49,7 +51,7 @@ type RackItemRow = {
 };
 
 const RACK_COLS =
-  'id, warehouse_id, rack, position, status, reserved, notes, created_at, updated_at';
+  'id, warehouse_id, rack, position, zone, status, reserved, notes, created_at, updated_at';
 const ITEM_COLS =
   'id, rack_id, item_code, variant_key, product_name, size_label, customer_name, source_doc_no, qty, stocked_in_date, notes';
 const MOVE_COLS =
@@ -92,7 +94,7 @@ warehouse.get('/', async (c) => {
 
   // Page through so PostgREST's default 1000-row cap can't silently truncate the
   // rack grid (a large warehouse can exceed 1000 racks).
-  const { data: racks, error: rackErr } = await paginateAll<{ id: string; warehouse_id: string; rack: string; position: string | null; reserved: boolean; notes: string | null }>((from, to) => {
+  const { data: racks, error: rackErr } = await paginateAll<{ id: string; warehouse_id: string; rack: string; position: string | null; zone: string | null; reserved: boolean; notes: string | null }>((from, to) => {
     let rackQ = sb.from('warehouse_racks').select(RACK_COLS).order('rack');
     if (warehouseId) rackQ = rackQ.eq('warehouse_id', warehouseId);
     rackQ = scopeToCompany(rackQ, c); // multi-company: isolate to the active company
@@ -131,7 +133,7 @@ warehouse.get('/', async (c) => {
 
   const data = (racks ?? []).map((r: {
     id: string; warehouse_id: string; rack: string; position: string | null;
-    reserved: boolean; notes: string | null;
+    zone: string | null; reserved: boolean; notes: string | null;
   }) => {
     const rackItems = itemsByRack.get(r.id) ?? [];
     return {
@@ -159,6 +161,99 @@ warehouse.get('/', async (c) => {
   return c.json({
     racks: data,
     warehouses: warehouses ?? [],
+    summary: { total, occupied, empty, reserved, occupancyRate },
+  });
+});
+
+// ── GET /warehouse/cross-company — READ-ONLY view across every company the
+// caller may see. The same physical warehouse exists as one record per company
+// (same `code`), so this WIDENS to the caller's allowed companies
+// (scopeToAllowedCompanies, not scopeToCompany) and tags each rack with its
+// company + its warehouse code, letting the UI show one combined list with a
+// company column. No writes here — edits/stock/zone stay per-company.
+warehouse.get('/cross-company', async (c) => {
+  const sb = c.get('supabase');
+
+  // Racks across the allowed companies (company_id carried so we can tag them).
+  type CcRackRow = {
+    id: string; warehouse_id: string; rack: string; position: string | null;
+    zone: string | null; reserved: boolean; notes: string | null; company_id: number | null;
+  };
+  const { data: racks, error: rackErr } = await paginateAll<CcRackRow>((from, to) =>
+    scopeToAllowedCompanies(
+      sb.from('warehouse_racks').select(`${RACK_COLS}, company_id`).order('rack'),
+      c,
+    ).range(from, to),
+  );
+  if (rackErr) return c.json({ error: 'load_failed', reason: rackErr.message }, 500);
+
+  // Warehouse code/name per warehouse_id, across the allowed companies.
+  const { data: whRows, error: whErr } = await scopeToAllowedCompanies(
+    sb.from('warehouses').select('id, code, name, company_id'),
+    c,
+  );
+  if (whErr) return c.json({ error: 'load_failed', reason: whErr.message }, 500);
+  const whById = new Map<string, { code: string; name: string }>(
+    (whRows ?? []).map((w: { id: string; code: string; name: string }) => [w.id, { code: w.code, name: w.name }]),
+  );
+
+  // Items, grouped under their rack (same two-step fetch the per-company grid uses).
+  const rackIds = (racks ?? []).map((r) => r.id);
+  let items: RackItemRow[] = [];
+  if (rackIds.length > 0) {
+    const { data: itemRows, error: itemErr } = await chunkIn<RackItemRow>(rackIds, (batch, from, to) => sb
+      .from('warehouse_rack_items')
+      .select(ITEM_COLS)
+      .in('rack_id', batch)
+      .order('stocked_in_date', { ascending: true })
+      .range(from, to));
+    if (itemErr) return c.json({ error: 'load_failed', reason: itemErr.message }, 500);
+    items = (itemRows ?? []) as RackItemRow[];
+  }
+  const itemsByRack = new Map<string, RackItemRow[]>();
+  for (const it of items) {
+    const arr = itemsByRack.get(it.rack_id) ?? [];
+    arr.push(it);
+    itemsByRack.set(it.rack_id, arr);
+  }
+
+  const codes = companyCodeMap(c);
+  const data = (racks ?? []).map((r) => {
+    const rackItems = itemsByRack.get(r.id) ?? [];
+    const wh = whById.get(r.warehouse_id);
+    return {
+      ...r,
+      company_code: r.company_id != null ? codes.get(Number(r.company_id)) ?? null : null,
+      warehouse_code: wh?.code ?? null,
+      warehouse_name: wh?.name ?? null,
+      status: deriveStatus(rackItems.length, r.reserved),
+      items: rackItems,
+    };
+  });
+
+  const total = data.length;
+  const occupied = data.filter((r) => r.status === 'OCCUPIED').length;
+  const empty = data.filter((r) => r.status === 'EMPTY').length;
+  const reserved = data.filter((r) => r.status === 'RESERVED').length;
+  const occupancyRate = total > 0 ? Math.round((occupied / total) * 100) : 0;
+
+  // The physical-warehouse picker (distinct code among racks) and the companies
+  // present — both derived from what actually came back, so empty ones drop out.
+  const warehouseByCode = new Map<string, string>();
+  for (const r of data) if (r.warehouse_code && !warehouseByCode.has(r.warehouse_code)) warehouseByCode.set(r.warehouse_code, r.warehouse_name ?? r.warehouse_code);
+  const warehouses = [...warehouseByCode.entries()]
+    .map(([code, name]) => ({ code, name }))
+    .sort((a, b) => a.code.localeCompare(b.code));
+  const companyById = new Map<number, string | null>();
+  for (const r of data) if (r.company_id != null) companyById.set(Number(r.company_id), r.company_code);
+  const companies = [...companyById.entries()]
+    .map(([id, code]) => ({ id, code }))
+    .sort((a, b) => (a.code ?? '').localeCompare(b.code ?? ''));
+
+  return c.json({
+    racks: data,
+    warehouses,
+    companies,
     summary: { total, occupied, empty, reserved, occupancyRate },
   });
 });
@@ -222,18 +317,30 @@ export const createWarehouseRacksHandler = async (c: any) => {
   if (targets.length === 0) return c.json({ error: 'warehouse_required' }, 400);
   const multi = targets.length > 1;
 
-  // Seed mode: { count, prefix } creates "Rack 1".."Rack N" in every target,
-  // skipping labels that already exist (unique (warehouse_id, rack)).
+  /* Seed mode: { count, prefix } creates "Rack 1".."Rack N" in every target,
+     skipping labels that already exist (unique (warehouse_id, rack)).
+
+     With { series, levels } it creates an AISLE.LEVEL grid instead —
+     series "L", count 21, levels 2 gives "Rack L1.1" … "Rack L21.2" (owner
+     2026-09-09, KL WAREHOUSE's real numbering). The label shapes live in
+     shared/rack-labels.ts, mirrored to the browser, so the modal's preview and
+     this insert cannot disagree; `levels: 1` reproduces the flat shape exactly,
+     which is the back-compat contract every earlier seed run relies on. */
   const count = Number(body.count ?? 0);
   if (Number.isFinite(count) && count > 0) {
     const prefix = String(body.prefix ?? 'Rack').trim() || 'Rack';
+    const labels = buildSeedRackLabels({
+      prefix,
+      series: typeof body.series === 'string' ? body.series : null,
+      count,
+      levels: body.levels == null ? 1 : Number(body.levels),
+    });
     const rows: Array<Record<string, unknown>> = [];
     for (const warehouseId of targets) {
       const { data: existing } = await sb
         .from('warehouse_racks').select('rack').eq('warehouse_id', warehouseId);
       const taken = new Set((existing ?? []).map((r: { rack: string }) => r.rack));
-      for (let i = 1; i <= Math.min(count, 200); i++) {
-        const label = `${prefix} ${i}`;
+      for (const label of labels) {
         // multi-company: stamp the active company on every seeded rack
         if (!taken.has(label)) rows.push({ company_id: activeCompanyId(c), warehouse_id: warehouseId, rack: label, status: 'EMPTY' });
       }
@@ -260,6 +367,7 @@ export const createWarehouseRacksHandler = async (c: any) => {
       warehouse_id: warehouseId,
       rack,
       position: (body.position as string) ?? null,
+      zone: typeof body.zone === 'string' && body.zone.trim() ? body.zone.trim() : null,
       reserved: body.reserved === true,
       status: body.reserved === true ? 'RESERVED' : 'EMPTY',
       notes: (body.notes as string) ?? null,
@@ -294,6 +402,9 @@ warehouse.patch('/racks/:id', async (c) => {
   if (typeof body.position === 'string') updates.position = body.position;
   if (typeof body.notes === 'string')    updates.notes = body.notes;
   if (typeof body.reserved === 'boolean') updates.reserved = body.reserved;
+  // zone: an explicit null / "" clears the manual override (back to the
+  // number-range rule), so key the write on PRESENCE, not on a string value.
+  if ('zone' in body) updates.zone = typeof body.zone === 'string' && body.zone.trim() ? body.zone.trim() : null;
 
   // Multi-company: scope the write (and the read-back) to the active company so
   // a blind rack id from another company matches nothing.

@@ -324,6 +324,36 @@ describe("nav — Finance / HR are top-level, not under Supply Chain", () => {
 });
 
 /**
+ * Assistant is gated by the server-resolved capability (org.assistant.use), not
+ * a position-name list. The nav link and the /assistant route guard read the
+ * SAME answer, so they can no longer disagree — the drift that let a Sales user
+ * see a launcher that 403s. capability() fails closed, so a shell with no
+ * resolved set hides the link rather than leaking it.
+ */
+describe("nav — Assistant gates on the org.assistant.use capability", () => {
+  const withCap = (v: boolean) =>
+    rep({ position_name: "Operation Manager", department_name: "Operation Department", capabilities: { "org.assistant.use": v } });
+
+  it("shows Assistant on desktop AND phone when the capability is true", () => {
+    const ctx = ctxFor(withCap(true));
+    expect(desktopPaths(ctx)).toContain("/assistant");
+    expect(phoneAllows(ctx, "/assistant")).toBe(true);
+  });
+
+  it("hides Assistant on both surfaces when the capability is false", () => {
+    const ctx = ctxFor(withCap(false));
+    expect(desktopPaths(ctx)).not.toContain("/assistant");
+    expect(phoneAllows(ctx, "/assistant")).toBe(false);
+  });
+
+  it("hides Assistant when no capability set was resolved (fails closed)", () => {
+    const ctx = ctxFor(rep({ position_name: "Operation Manager", department_name: "Operation Department" }));
+    expect(desktopPaths(ctx)).not.toContain("/assistant");
+    expect(phoneAllows(ctx, "/assistant")).toBe(false);
+  });
+});
+
+/**
  * Every groupId App.tsx mounts a sub-group hub for must resolve SOMEWHERE in
  * NAV_TABS. ScmSubgroupHub used to look these up inside `scm.children` only, so
  * lifting Finance to the root turned /scm/finance — a live, bookmarkable URL —

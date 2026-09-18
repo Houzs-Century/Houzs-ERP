@@ -118,3 +118,21 @@ export function soCanRaiseDo(
 }
 
 export type SoUndeliverableStatus = (typeof SO_UNDELIVERABLE_STATUSES)[number];
+
+/* ── Two more readings of the SO status, kept beside the deliverable one so
+   the sales side asks each question in ONE place (docs/bugs/0832) ─────────
+
+   SO_DELIVERED_OR_BEYOND — the goods have LEFT, whatever came after: the
+   balance stage of the Collection report, and the orders the final-invoice
+   backlog may raise an invoice for. INVOICED and CLOSED are past delivery,
+   not short of it. (The CS agent keeps its own reading of the same three
+   words for a chat reply — "has the customer got it" — recorded in the
+   duplicated-decision allowlist as a deliberate second answer.)
+
+   SO_NOT_AN_ORDER — never became an order, or was taken back: its money is a
+   refund or a credit, never a sale. The Collection report leaves these out
+   and no deposit invoice is raised on one. ON_HOLD and CLOSED are NOT here:
+   an order on hold still sold something and a closed one delivered what it
+   delivered — they are undeliverable (above), not un-ordered. */
+export const SO_DELIVERED_OR_BEYOND: ReadonlySet<string> = new Set(['DELIVERED', 'INVOICED', 'CLOSED']);
+export const SO_NOT_AN_ORDER: ReadonlySet<string> = new Set(['DRAFT', 'CANCELLED']);

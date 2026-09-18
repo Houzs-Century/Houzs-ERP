@@ -67,6 +67,7 @@ import {
   loadFabricSellingTiersByIds, loadFabricTierAddonConfig,
   loadModelFabricTierOverrides, loadCompartmentFabricTierOverrides,
 } from '../lib/mfg-pricing-recompute';
+import { pgrestIn } from '../lib/pgrest-in-list';
 
 export const salesAnalysis = new Hono<{ Bindings: Env; Variables: Variables }>();
 salesAnalysis.use('*', supabaseAuth);
@@ -368,10 +369,9 @@ salesAnalysis.get('/', async (c) => {
       const { data: prodRows, error: prodErr } = await chunkIn<{ code: string; category: string | null; model_id: string | null; size_code: string | null; size_label: string | null; base_model: string | null }>(
         codes,
         (batch, from, to) => {
-          let q = sb
+          let q = pgrestIn(sb
             .from('mfg_products')
-            .select('code, category, model_id, size_code, size_label, base_model')
-            .in('code', batch)
+            .select('code, category, model_id, size_code, size_label, base_model'), 'code', batch)
             .order('code')
             .range(from, to);
           q = scopeToCompany(q, c);

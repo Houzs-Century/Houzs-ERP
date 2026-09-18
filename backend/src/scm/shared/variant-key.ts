@@ -76,6 +76,15 @@ const ATTRS_BY_GROUP: Record<string, Array<keyof VariantAttrs>> = {
   sofa: ['fabricCode', 'seatHeight', 'legHeight'],
   bedframe: ['fabricCode', 'gap', 'divanHeight', 'legHeight', 'totalHeight'],
   mattress: [],
+  /* SOFA ACCESSORIES (owner 2026-09-14): a custom square / long pillow is made
+     per order from the customer's fabric, so its COLOUR is its identity. As an
+     `accessory` it keyed on the code alone and MRP gave PC151-01 stock to a
+     PC151-02 order. Colour only - no seat, leg or gap.
+     THE CODE HAS NO 'sofa' IN IT ON PURPOSE: 41 readers test a group with
+     includes('sofa') (pricing, sofa-mix, MRP, readiness, delivery rates), and a
+     pillow named sofa_* would be treated as a SOFA main product by every one.
+     Shown to people as "Sofa Accessories". tasks/PLAN-sofa-accessories-category.md */
+  fabric_accessory: ['fabricCode'],
   accessory: [],
   others: [],
   service: [],

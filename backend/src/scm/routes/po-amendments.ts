@@ -36,8 +36,12 @@ import { planStockRelease, type AllocationRow } from '../lib/po-allocations';
    class), so the one imported above already covers both engines. */
 import { reviseBoundPo } from '../lib/so-revision';
 import { enqueueEdit } from '../lib/autocount-outbox';
-import { hasHouzsPerm } from '../lib/houzs-perms';
-import { resolveCallerStaffId } from '../lib/salesScope';
+import { hasHouzsPerm, holdsHouzsPermLiterally } from '../lib/houzs-perms';
+import { resolveCallerStaffId, resolveUserIdByStaffId } from '../lib/salesScope';
+import {
+  notifyPoAmendmentRaised,
+  notifyPoAmendmentResolved,
+} from '../../services/amendmentNotify';
 import {
   recordEntityAudit,
   assertAuditWritable,
@@ -49,7 +53,7 @@ import {
   requireActiveCompanyId,
   stampCompany,
 } from '../lib/companyScope';
-import { runScmPgCommand } from '../lib/pg-supabase-transaction';
+import { deferScmAfterCommit, runScmPgCommand } from '../lib/pg-supabase-transaction';
 import { dateOrNull } from '../lib/date-coerce';
 
 export const poAmendments = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -107,6 +111,43 @@ poAmendments.get('/', async (c) => {
     .limit(500);
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   return c.json({ amendments: data ?? [] });
+});
+
+/* ── GET /pending-count — PO amendments waiting for THIS caller ────────────
+   Twin of the SO route's /pending-count, feeding the red count on the "PO
+   Amendments" sidebar entry (owner 2026-09-09, added alongside the SO one:
+   "PO Amendments 也一起加").
+
+   SIMPLER THAN ITS SO SIBLING, and the difference is real rather than an
+   oversight: a PO amendment has ONE approver key (scm.po_amendment.approve —
+   see the header of the approve gate), no lanes and no legacy chain, so there
+   is nothing to split. Someone without that key gets 0 and the badge never
+   renders, which is the same "only on accounts that must approve" rule.
+
+   The follow-up rows an approved SO amendment auto-raises land here too, and
+   those are exactly the ones nobody asked for by hand — the count is the only
+   thing that says they arrived.
+
+   Registered BEFORE `/:id` (Hono matches in order) and fails SOFT with 0. */
+poAmendments.get('/pending-count', async (c) => {
+  /* Literal holder only — see the SO twin. The `*` wildcard opens every gate but
+     does not make the work yours (owner 2026-09-09). */
+  if (!holdsHouzsPermLiterally(c, 'scm.po_amendment.approve')) return c.json({ count: 0 });
+  const sb = c.get('supabase');
+  try {
+    const { data, error } = await scopeToCompany(
+      sb.from('po_amendments').select('id').eq('status', 'REQUESTED'),
+      c,
+    );
+    if (error) {
+      console.error('[po-amendment] pending-count failed:', error.message);
+      return c.json({ count: 0 });
+    }
+    return c.json({ count: data.length });
+  } catch (e) {
+    console.error('[po-amendment] pending-count threw:', (e as Error).message);
+    return c.json({ count: 0 });
+  }
 });
 
 /* ── GET /:id — amendment detail ───────────────────────────────────────────
@@ -273,6 +314,19 @@ poAmendments.post('/', async (c) => {
       return c.json({ error: 'create_failed', reason: lineErr.message }, 500);
     }
   }
+
+  /* Tell the desk that has to confirm it (owner 2026-09-02) — a PO amendment
+     used to appear in the module and wait for somebody to look. Best-effort:
+     notifyPoAmendmentRaised never throws, so a notify outage cannot 500 a
+     created amendment. */
+  await notifyPoAmendmentRaised(c.env, {
+    amendmentNo: amendment.amendment_no,
+    poNumber: amendment.po_number,
+    companyId: activeCompanyId(c),
+    reason: body.reason ?? null,
+    requesterName: c.get('houzsUser')?.name ?? null,
+    requesterUserId: c.get('houzsUser')?.id ?? null,
+  });
 
   return c.json({ amendment: created }, 201);
 });
@@ -445,6 +499,25 @@ export async function approvePoAmendmentHandler(c: any, sb: any): Promise<Respon
     createdBy: c.get('houzsUser')?.id ?? null,
   });
 
+  /* Notice AFTER COMMIT — the requester learns their PO revision went through
+     (owner 2026-09-02). The staff -> user lookup runs here, inside the
+     transaction, because `sb` does not outlive the deferred callback. */
+  {
+    const requesterUserId = await resolveUserIdByStaffId(sb, amendment.requested_by);
+    const actorUserId = c.get('houzsUser')?.id ?? null;
+    const actorLabel = c.get('houzsUser')?.name ?? null;
+    deferScmAfterCommit(c, async () => {
+      await notifyPoAmendmentResolved(c.env, {
+        amendmentNo: amendment.amendment_no ?? '',
+        poNumber: amendment.po_number,
+        outcome: 'approved',
+        actorName: actorLabel,
+        actorUserId,
+        requesterUserId,
+      });
+    });
+  }
+
   return c.json({ amendment: updated, revision: appliedRevision, warnings: appliedWarnings });
 }
 poAmendments.patch('/:id/approve', (c) => {
@@ -586,6 +659,23 @@ poAmendments.patch('/:id/reject', async (c) => {
       console.error('[po-amendment] stock release after reject failed:', e);
       releaseWarnings.push(e instanceof Error ? e.message : 'stock release failed');
     }
+  }
+
+  /* The reason is required precisely so the requester knows what to change —
+     carry it to them instead of leaving it on a screen they have no reason to
+     reopen (owner 2026-09-02). Plain route, so this fires inline; it never
+     throws. */
+  {
+    const requesterUserId = await resolveUserIdByStaffId(sb, amendment.requested_by);
+    await notifyPoAmendmentResolved(c.env, {
+      amendmentNo: amendment.amendment_no ?? '',
+      poNumber: amendment.po_number,
+      outcome: 'rejected',
+      reason,
+      actorName: c.get('houzsUser')?.name ?? null,
+      actorUserId: c.get('houzsUser')?.id ?? null,
+      requesterUserId,
+    });
   }
 
   return c.json({

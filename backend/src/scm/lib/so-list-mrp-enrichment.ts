@@ -84,6 +84,10 @@ export type EnrichmentItem = {
   item_code: string | null;
   stock_status: string | null;
   cancelled?: boolean | null;
+  /* Where the line ships FROM. Joined the shape on 2026-09-08: the
+     non-selling-warehouse rule decides per line, so the line has to say where
+     it stands (lib/non-selling-warehouse.ts). */
+  warehouse_id?: string | null;
 };
 
 /** The per-doc header inputs `derivePlanningState` needs that are NOT
@@ -121,10 +125,16 @@ export function assembleSoListMrpEnrichment(input: {
    *  readinessLinesByDoc enforces. `null` = caller cannot say (strict: the
    *  live-'stock' promotion is then off for every line). */
   processedDocs: ReadonlySet<string> | null;
+  /** Display / showroom / service warehouse ids (owner ruling 2026-09-08) — a
+   *  line standing in one of these is never rolled up as READY. REQUIRED and
+   *  `| null` rather than optional: a caller that cannot load the warehouse
+   *  master types the null and says so. */
+  nonSellingWarehouseIds: ReadonlySet<string> | null;
 }): Map<string, SoListMrpEnrichment> {
   const {
     docNos, items, coverage, categoryByCode, readyByItem,
     fullyShippedItemIds, headers, delivered, remaining, today, processedDocs,
+    nonSellingWarehouseIds,
   } = input;
 
   // READY-arm source-PO union per doc — the SHIPPED map is intentionally empty:
@@ -140,7 +150,7 @@ export function assembleSoListMrpEnrichment(input: {
 
   // Readiness — the SAME two calls the list makes, but with the LIVE coverage so
   // the label reflects goods the stored status has not caught up to yet.
-  const linesByDoc = readinessLinesByDoc(items, coverage, processedDocs);
+  const linesByDoc = readinessLinesByDoc(items, coverage, processedDocs, nonSellingWarehouseIds);
   attachLineCategories(linesByDoc.values(), categoryByCode);
 
   const out = new Map<string, SoListMrpEnrichment>();

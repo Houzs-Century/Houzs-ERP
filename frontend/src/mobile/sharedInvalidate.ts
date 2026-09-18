@@ -55,6 +55,16 @@ const CONVERT_PICKER_ROOTS = ["convert-source", "convert-lines", "convert-grn-li
 
 /* A convert touches source + target doc lists (SO/DO/SI/PO/GRN) and, for a GRN,
  * inventory — invalidate the union so no desktop picker/list is left stale. */
+/* The mobile module LIST's own query keys. MobileModuleList keys an un-paged
+   list ["mobile-module", ...] and a SERVER-paginated one ["mobile-module-paged",
+   ...] — and React Query matches a prefix ELEMENT, so invalidating
+   ["mobile-module"] does NOT reach ["mobile-module-paged"]. PO / GRN / PI / DO /
+   SI are all in SERVER_PAGINATED, so a write that bumps only the first key leaves
+   those lists showing their 30-second-old page. Both, always. */
+export function invalidateMobileLists(qc: QueryClient) {
+  bump(qc, ["mobile-module", "mobile-module-paged"]);
+}
+
 export function invalidateConvertShared(qc: QueryClient) {
   invalidateSoShared(qc);
   invalidateDoShared(qc);

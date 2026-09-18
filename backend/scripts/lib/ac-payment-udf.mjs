@@ -94,5 +94,17 @@ export function composePaymentUdf(payments) {
   /* A single space between groups. The separator is not recoverable from the
      extract — parsePayment discards whatever sits between the parentheses — so
      any choice round-trips, and this is the one that reads best. */
-  return groups.join(' ');
+  const spaced = groups.join(' ');
+  if (spaced.length <= AC_PAYEMENT_MAX) return spaced;
+  /* Over the nvarchar(50) field (docs/bugs/0921): whole references, run
+     together, from the first, as the book's own long texts are. */
+  let text = '';
+  for (const g of groups) {
+    if (text.length + g.length > AC_PAYEMENT_MAX) break;
+    text += g;
+  }
+  return text || null;
 }
+
+/** `SO.UDF_PAYEMENT` is nvarchar(50) in the live book (INFORMATION_SCHEMA, 2026-09-15). */
+export const AC_PAYEMENT_MAX = 50;

@@ -26,7 +26,7 @@
 // URL is state: ?q= (search) and ?cat= (category filter).
 // ----------------------------------------------------------------------------
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { lineIdentity } from "@2990s/shared";
 import {
@@ -55,15 +55,13 @@ import {
 import { useIdempotencyKey } from "../../lib/idempotency";
 import { cn } from "../../lib/utils";
 import { fmtSen } from "../../vendor/shared/format";
-import {
-  companyRequiresStockLocation,
-  soDateGuardError,
-  soStockLocationError,
-  soErrorText,
-} from "../../vendor/scm/lib/so-form-validate";
+import { companyRequiresStockLocation } from "../../vendor/scm/lib/so-form-validate";
+import { authedFetch, type SaveProblem } from "../../vendor/scm/lib/authed-fetch";
+import { SaveBlockedIndicator } from "../../vendor/scm/components/SaveBlockedIndicator";
+import { useSoValidate } from "../../vendor/scm/lib/use-so-validate";
+import { SaveProblemsList, saveProblemsTitle, notifySaveProblems } from "../../vendor/scm/components/SaveProblemsList";
+import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { useBranding } from "../../hooks/useBranding";
-import { hasSofaMixConflict, SOFA_MIX_MESSAGE } from "../../vendor/shared/so-variant-rule";
-import { todayMyt } from "../../vendor/scm/lib/dates";
 import { PhoneInput } from "../../vendor/scm/components/PhoneInput";
 
 // ── Types & constants ───────────────────────────────────────────────────────
@@ -251,8 +249,27 @@ export function SalesOrderNewFromProducts() {
 
   // Submit
   const [postError, setPostError] = useState<string | null>(null);
+  const notify = useNotify();
   const customerValid = customer.name.trim() && customer.phone.trim();
   const canSubmit = customerValid && cartLines.length > 0 && !create.isPending;
+
+  /* Backend authors the blocker list (owner 2026-09-16); a cart CAN mix sofa +
+     bedframe/mattress, so sofa-mix is the real guard here. buildValidateDraft
+     turns the cart into the validate payload; this surface just displays. */
+  const buildValidateDraft = useCallback(() => ({
+    debtorName: customer.name,
+    phone: customer.phone,
+    items: cartLines.map((l) => ({ itemCode: l.code, itemGroup: itemGroupFor(l.sku.category), qty: l.qty })),
+    asDraft: landsDraft,
+    hasVenue: true,
+    hasSalesperson: true,
+    companyCode: branding.companyCode,
+  }), [customer.name, customer.phone, cartLines, landsDraft, branding.companyCode]);
+  const liveValidateDraft = useMemo(() => buildValidateDraft(), [buildValidateDraft]);
+  const { problems: blockingProblems } = useSoValidate(liveValidateDraft, cartLines.length > 0);
+  const openBlockingList = () => {
+    void notify({ title: saveProblemsTitle(blockingProblems.length), body: <SaveProblemsList problems={blockingProblems} />, tone: "error" });
+  };
 
   const onSubmit = async () => {
     if (!canSubmit) {
@@ -272,34 +289,24 @@ export function SalesOrderNewFromProducts() {
       variants: { addedVia: "from-products" },
       remark: "",
     }));
-    /* Pre-validate with the SAME shared guards the Full form (SalesOrderNew)
-       runs, so a bad cart surfaces one plain sentence here instead of a raw
-       server 400/409. A cart CAN mix categories, so hasSofaMixConflict is the
-       real guard here (a sofa + bedframe/mattress cart 400s so_sofa_no_other_main
-       on the server). This flow collects no dates (added on the SO detail), so
-       soDateGuardError runs on empty inputs and passes — kept for
-       single-logic-layer parity so a future date field is guarded
-       automatically. Payments are not guarded at all: the slip is optional
-       everywhere (owner 2026-08-13) and this flow collects no payment. Variant
-       completeness (missingRequiredVariants) only fires once a processing date
-       is set (server parity); none is set here, so it's enforced on the SO
-       detail. */
-    const preErr =
-      soDateGuardError({ processingDate: "", deliveryDate: "", today: todayMyt() }) ??
-      (hasSofaMixConflict(items.map((i) => i.itemGroup)) ? { title: SOFA_MIX_MESSAGE } : null) ??
-      soStockLocationError({
-        companyCode: branding.companyCode,
-        salesLocation: "",
-        state: "",
-        /* Inert for exactly the companies the location rule covers, because
-           for those this create IS a draft (below) and a draft is never
-           written to AutoCount. Still wired, like the guided wizard: the day
-           this flow stops drafting, it is gated instead of silently minting
-           locationless orders. */
-        asDraft: landsDraft,
+    /* Backend authors the blocker list (owner 2026-09-16); validate returns the
+       reasons a cart can trip (identity, sofa-mix) — this just displays them in
+       the same SaveProblemsList popup + live indicator. A failed validate never
+       blocks; the create call is the authoritative backstop. */
+    let problems: SaveProblem[] = [];
+    try {
+      const r = await authedFetch<{ problems: SaveProblem[] }>("/mfg-sales-orders/validate", {
+        method: "POST",
+        body: JSON.stringify(buildValidateDraft()),
       });
-    if (preErr) {
-      setPostError(soErrorText(preErr));
+      problems = r.problems;
+    } catch {
+      // silent-write-ok: validate is a READ-ONLY dry-run (it writes nothing); its
+      // failure must not block the operator, and the create call below is the
+      // authoritative gate that surfaces any real refusal.
+    }
+    if (problems.length > 0) {
+      await notify({ title: saveProblemsTitle(problems.length), body: <SaveProblemsList problems={problems} />, tone: "error" });
       return;
     }
 
@@ -325,7 +332,10 @@ export function SalesOrderNewFromProducts() {
       const res = await create.mutateAsync({ ...body, idempotencyKey: idemKey });
       navigate(`/scm/sales-orders/${res.docNo}`);
     } catch (e) {
-      setPostError(errMsg(e));
+      /* A server aggregated refusal (422 validation_failed — e.g. a CONFIRMED
+         create the server gates) shows every reason in the same popup; anything
+         else falls back to the inline banner. */
+      await notifySaveProblems(notify, e, () => setPostError(errMsg(e)), errMsg(e));
     }
   };
 
@@ -401,6 +411,8 @@ export function SalesOrderNewFromProducts() {
           canSubmit={Boolean(canSubmit)}
           landsDraft={landsDraft}
           onSubmit={onSubmit}
+          blockedProblems={blockingProblems}
+          onOpenBlocked={openBlockingList}
         />
       </div>
 
@@ -412,6 +424,8 @@ export function SalesOrderNewFromProducts() {
         canSubmit={Boolean(canSubmit)}
         landsDraft={landsDraft}
         onSubmit={onSubmit}
+        blockedProblems={blockingProblems}
+        onOpenBlocked={openBlockingList}
       />
 
       {/* Manual-add modal (out-of-catalogue codes) */}
@@ -728,6 +742,8 @@ function CartCard({
   canSubmit,
   landsDraft,
   onSubmit,
+  blockedProblems,
+  onOpenBlocked,
 }: {
   customer: Customer;
   setCustomer: (c: Customer) => void;
@@ -742,6 +758,8 @@ function CartCard({
   canSubmit: boolean;
   landsDraft: boolean;
   onSubmit: () => void;
+  blockedProblems: SaveProblem[];
+  onOpenBlocked: () => void;
 }) {
   return (
     <aside className="self-start rounded-xl border border-border bg-surface p-4 shadow-stone lg:sticky lg:top-4">
@@ -850,6 +868,9 @@ function CartCard({
 
       {/* CTA — desktop. On mobile the sticky bottom bar handles submit. */}
       <div className="mt-3 hidden lg:block">
+        <div className="mb-2 flex justify-end">
+          <SaveBlockedIndicator problems={blockedProblems} onOpen={onOpenBlocked} />
+        </div>
         <div className="flex items-center justify-between gap-3">
           <span className="font-money text-[13px] font-bold text-primary-ink">
             {fmtRm(subtotalSen)}
@@ -978,6 +999,8 @@ function MobileFooter({
   canSubmit,
   landsDraft,
   onSubmit,
+  blockedProblems,
+  onOpenBlocked,
 }: {
   cartCount: number;
   subtotalSen: number;
@@ -985,10 +1008,17 @@ function MobileFooter({
   canSubmit: boolean;
   landsDraft: boolean;
   onSubmit: () => void;
+  blockedProblems: SaveProblem[];
+  onOpenBlocked: () => void;
 }) {
   if (cartCount === 0) return null;
   return (
     <div className="sticky bottom-0 -mx-4 mt-4 bg-sidebar px-4 py-3 text-sidebar-ink shadow-[0_-4px_18px_-8px_rgba(17,24,16,.4)] lg:hidden">
+      {blockedProblems.length > 0 && (
+        <div className="mb-2 flex justify-center">
+          <SaveBlockedIndicator problems={blockedProblems} onOpen={onOpenBlocked} />
+        </div>
+      )}
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
           <div className="text-[10.5px] uppercase tracking-brand text-sidebar-ink-muted">

@@ -1,3 +1,4 @@
+import type { PositionPolicyRow } from "../../services/positionPolicyRows";
 import { createMiddleware } from "hono/factory";
 import type { User } from "@supabase/supabase-js";
 import type { Env, Variables } from "../env";
@@ -80,6 +81,7 @@ export const supabaseAuth = createMiddleware<{ Bindings: Env; Variables: Variabl
       permissions?: string[];
       permissions_set?: Set<string>;
       position_capabilities?: string[];
+      position_policy?: PositionPolicyRow | null;
     } | undefined;
     // Stash the real Houzs user (integer id) for per-user PUBLIC-schema lookups
     // (the next line overwrites `user` with the scm.staff system identity).
@@ -106,6 +108,10 @@ export const supabaseAuth = createMiddleware<{ Bindings: Env; Variables: Variabl
             // scan-to-LOADED on scm.do.load. hasPositionCapability fails closed
             // when this is absent, so an older cached session simply can't.
             position_capabilities: hu.position_capabilities,
+            // The Title's policy row, so the SCM-side rules (sales JD, money
+            // write, config write, delivery scope) read the same decision the
+            // session was hydrated from instead of re-deriving it by name.
+            position_policy: hu.position_policy ?? null,
           }
         : undefined,
     );

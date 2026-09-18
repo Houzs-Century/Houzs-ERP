@@ -311,8 +311,9 @@ describe('it IS in the accounts, and part of it is not', () => {
    an instanceof chain someone has to remember to extend:
 
      noteReadFailure (autocount-outbox.ts)  -> the durable outbox row, which is
-       what an ENGINEER reads. Anything missing from its chain hits the early
-       return: no row, no console line, nothing.
+       what an ENGINEER reads. Anything missing from its chain is written as a
+       class-named "compose failed" row, not as the refusal it is (until 0888 it
+       hit an early return: no row, no console line, nothing).
      acNotSentProblems (this module)        -> the sentence the OPERATOR reads.
        Anything missing from its chain returns [] — saved, not sent, nobody told.
 

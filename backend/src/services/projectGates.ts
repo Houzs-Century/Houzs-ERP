@@ -1,5 +1,6 @@
 import type { Env } from "../types";
 import { hasPermission } from "./permissions";
+import type { PositionPolicyRow } from "./positionPolicyRows";
 
 /**
  * Who may act on a project's checklist — the owner's people rules, extracted
@@ -16,8 +17,12 @@ import { hasPermission } from "./permissions";
 // only events they're crewed on (setup/dismantle FK slots or the per-lorry
 // crew JSON). Matched on the EXACT position name (never \b substrings —
 // position names are owner-editable free text; see the pmsAccess note).
-// Drivers intentionally stay unscoped (owner kept them see-all).
-const CREW_SCOPED_POSITIONS = new Set(["helper", "storekeeper", "storekeeper supervisor"]);
+// Drivers intentionally stay unscoped (owner kept them see-all), and so does
+// Storekeeper Supervisor since 2026-09-15: that position is the defect
+// reviewer for the non-region states, and the owner opened ALL events to him
+// ("he need to see defect list") — the review work spans events he is never
+// crewed on.
+const CREW_SCOPED_POSITIONS = new Set(["helper", "storekeeper"]);
 
 // Two-warehouse defect-review split (owner 2026-08-11). Projects in these
 // (canonical, Title-Case) states go to Nancy (Ops Exec) for clean-or-replace;
@@ -29,14 +34,37 @@ export const DEFECT_REVIEW_REGION_STATES = ["Pulau Pinang", "Kelantan", "Terengg
 
 export function isCrewScopedUser(
   user:
-    | { position_name?: string | null; permissions?: string[]; permissions_set?: Set<string> | string[] }
+    | {
+        position_name?: string | null;
+        position_policy?: PositionPolicyRow | null;
+        permissions?: string[];
+        permissions_set?: Set<string> | string[];
+      }
     | null
     | undefined,
 ): boolean {
   if (!user) return false;
   const granted = (user as any).permissions_set ?? user.permissions;
   if (hasPermission(granted, "*") || hasPermission(granted, "projects.write")) return false;
-  return CREW_SCOPED_POSITIONS.has((user.position_name ?? "").trim().toLowerCase());
+  // The Title's row decides (Roles & Permissions › Titles, Duty column);
+  // the name rule below is the fallback for a Title with no row.
+  const row = user.position_policy;
+  if (row) return row.duty === "helper" || row.duty === "warehouse";
+  const pos = (user.position_name ?? "").trim().toLowerCase();
+  return CREW_SCOPED_POSITIONS.has(pos) || pos.startsWith("warehouse crew");
+}
+
+/** The defect REVIEWER position (owner 2026-08-07: the Storekeeper Supervisor
+ *  triages fresh defects outside the region states). By the Title's row
+ *  (profile storekeeper_supervisor), by exact name for a Title with no row —
+ *  the name check is what the 2026-08-28 reorg silently switched off. */
+export function isDefectReviewerPosition(
+  user: { position_name?: string | null; position_policy?: PositionPolicyRow | null } | null | undefined,
+): boolean {
+  if (!user) return false;
+  const row = user.position_policy;
+  if (row) return row.cohort === "restricted" && row.profile === "storekeeper_supervisor";
+  return (user.position_name ?? "").trim().toLowerCase() === "storekeeper supervisor";
 }
 
 /** Is this project's state reviewed by the region warehouse (Ops Exec)? */
@@ -89,9 +117,12 @@ export async function approverBrandBlocked(
 export function salesDirectorMayAttach(
   title: string | null | undefined,
   positionName: string | null | undefined,
+  row: PositionPolicyRow | null | undefined = null,
 ): boolean {
-  const pos = (positionName ?? "").trim().toLowerCase();
-  if (pos !== "sales director") return false;
+  const isSalesDirector = row
+    ? row.cohort === "sales" && row.profile === "director"
+    : (positionName ?? "").trim().toLowerCase() === "sales director";
+  if (!isSalesDirector) return false;
   return /^filled floor\s*plan/i.test((title ?? "").trim());
 }
 

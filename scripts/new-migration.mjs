@@ -41,9 +41,7 @@ writeFileSync(file, `-- ${stamp}_${slug}.sql
 -- Reversal: <how it is undone, or why it cannot be>
 -- Verified against: <the database or catalog it was proved on>
 --
--- Both lines above are read by scripts/check-working-agreement.mjs from the PR
--- BODY, not from here — copy them across. Prefer CREATE OR REPLACE over DROP for
--- views: 0189 -> 0190 -> 0191 is the recorded case where a DROP lost the view's
+-- Prefer CREATE OR REPLACE over DROP for views: 0189 -> 0190 -> 0191 is the recorded case where a DROP lost the view's
 -- grants and the API 403'd until they were re-issued.
 
 `, 'utf8');

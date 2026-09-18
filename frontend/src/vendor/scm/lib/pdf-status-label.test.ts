@@ -344,16 +344,39 @@ describe('the delivery order trap the owner was holding', () => {
     expect(await doPdf.render('DISPATCHED')).toBe('LOADED');
   });
 
-  /* The confirm step reads Confirmed on ALL of them (owner 2026-08-21, 「那就
-     A」). Five stored words, one printed word — the sweep that reached every
-     screen and stopped at the paper. */
-  test('every document\'s confirm step prints Confirmed', async () => {
+  /* The confirm step prints WHAT THE SCREEN SAYS, which is the whole assertion,
+     so the expected word is READ from status-pill.ts rather than typed here.
+     It used to be typed as 'CONFIRMED' for all eight, and on 2026-09-13 the
+     owner moved five of them to "Submitted"; a hand-typed expectation would
+     have made the paper half of that ruling look like a regression. The three
+     he did not name still print Confirmed, and this loop proves both halves
+     without having to know which is which. */
+  test('every document\'s confirm step prints the word its screen shows', async () => {
     const CONFIRM_STEP: Array<[StatusDocType, string]> = [
       ['do', 'LOADED'], ['grn', 'POSTED'], ['pi', 'POSTED'], ['pr', 'POSTED'],
       ['si', 'SENT'], ['so', 'CONFIRMED'],
       ['stockTake', 'POSTED'], ['stockTransfer', 'POSTED'],
     ];
     for (const [docType, stored] of CONFIRM_STEP) {
+      const d = PRINTED_DOCS.find((x) => x.docType === docType)!;
+      const onScreen = statusLabel(docType, stored).toUpperCase();
+      expect((await d.render(stored)).toUpperCase(), `${d.title} ${stored}`).toBe(onScreen);
+    }
+  });
+
+  /* And the split itself, spelled out, so the ruling is legible from here too. */
+  test('five documents print Submitted; the three he did not name print Confirmed', async () => {
+    const SUBMITTED: Array<[StatusDocType, string]> = [
+      ['grn', 'POSTED'], ['pi', 'POSTED'], ['si', 'SENT'], ['so', 'CONFIRMED'],
+    ];
+    for (const [docType, stored] of SUBMITTED) {
+      const d = PRINTED_DOCS.find((x) => x.docType === docType)!;
+      expect((await d.render(stored)).toUpperCase(), `${d.title} ${stored}`).toBe('SUBMITTED');
+    }
+    const STILL_CONFIRMED: Array<[StatusDocType, string]> = [
+      ['pr', 'POSTED'], ['stockTake', 'POSTED'], ['stockTransfer', 'POSTED'],
+    ];
+    for (const [docType, stored] of STILL_CONFIRMED) {
       const d = PRINTED_DOCS.find((x) => x.docType === docType)!;
       expect((await d.render(stored)).toUpperCase(), `${d.title} ${stored}`).toBe('CONFIRMED');
     }

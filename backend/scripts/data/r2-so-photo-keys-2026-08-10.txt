@@ -1,6 +1,11 @@
 # R2 keys recovered 2026-08-29 from the round-1 attach run logs (newest run wins).
 # Every key below comes from the two newest runs (2026-08-10 14:29 / 2026-08-15), whose
-# end state round-1 verified against R2 one-by-one with 0 missing. Doubtful earlier-run
+# end state round-1 verified against R2 one-by-one with 0 missing.
+# CORRECTED 2026-09-02: that 0-missing claim NO LONGER HOLDS. Swept against R2
+# today, 64 keys across both files answer 404. 55 are stale duplicates - the same
+# photograph hangs on the same row under a live key, so the row shows one good tile
+# and one broken one - and 9 leave the row showing nothing. What removed them is
+# UNKNOWN. Do not treat a key in this file as proof its object exists; check it. Doubtful earlier-run
 # keys live in r2-so-photo-keys-doubtful.txt and are NOT attached until verified.
 so-items/HC-SO-000383/c0fc7a30-af3e-4e1c-8489-efaebb6057fe/ac-34737-1.jpg
 so-items/HC-SO-002609/b5712e8b-bf87-4b7f-8780-70b86464184e/ac-167630-1.jpg

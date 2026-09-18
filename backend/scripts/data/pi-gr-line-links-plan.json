@@ -1,0 +1,373 @@
+{
+  "built_at": "2026-09-08T20:23:17.212Z",
+  "company_id": 1,
+  "digest": "0b42b6e3c6415c1c6279e1b12fc4ea313de0b300f1368f5c24a2b3a80d58ad27",
+  "writes": [
+    {
+      "piItemId": "1fa59c9b-4e8b-4cad-97be-a3b988dbc046",
+      "grnItemId": "3ae6bbda-4fb2-4ecc-885d-5a5194151a51",
+      "invoiceNumber": "HC-PI-003230",
+      "itemCode": "VALKYRIE-(K)",
+      "piDocNo": "PI-003230",
+      "piDtlKey": "456469",
+      "grDocNo": "GR-002032",
+      "grDtlKey": "444645",
+      "how": "the only line of its item code on GR-002032"
+    },
+    {
+      "piItemId": "460a8488-eb96-4293-adc0-490dae73e7d1",
+      "grnItemId": "7e13e4bd-6857-4655-bb6b-8d5f53d88609",
+      "invoiceNumber": "HC-PI-003477",
+      "itemCode": "AKEMI ARISTOI MATT (SK)",
+      "piDocNo": "PI-003477",
+      "piDtlKey": "478732",
+      "grDocNo": "GR-002187",
+      "grDtlKey": "476881",
+      "how": "the only line of its item code on GR-002187"
+    },
+    {
+      "piItemId": "a480a59d-d110-46e2-8ff9-60e4ac1c9c74",
+      "grnItemId": "960e655c-eac8-4998-a9c1-d6028322b994",
+      "invoiceNumber": "HC-PI-006104",
+      "itemCode": "AKEMI IMMORTAL MATT (SK)",
+      "piDocNo": "PI-006104",
+      "piDtlKey": "850555",
+      "grDocNo": "GR-004058",
+      "grDtlKey": "850548",
+      "how": "the only line of its item code on GR-004058"
+    },
+    {
+      "piItemId": "7f8c5475-27db-4186-8574-7478bbdf2b65",
+      "grnItemId": "68e46eee-105d-43a7-8992-ff674a1b8f47",
+      "invoiceNumber": "HC-PI-006169",
+      "itemCode": "AKEMI ULTIMATE MATT (SK)",
+      "piDocNo": "PI-006169",
+      "piDtlKey": "746410",
+      "grDocNo": "GR-004129",
+      "grDtlKey": "745486",
+      "how": "the only line of its item code on GR-004129"
+    },
+    {
+      "piItemId": "87243d8a-d9c3-4e4d-9296-acace648c646",
+      "grnItemId": "22e81ea7-954d-43c9-8e17-8e57271a9fd3",
+      "invoiceNumber": "HC-PI-006244",
+      "itemCode": "HILTON (A)-(K)",
+      "piDocNo": "PI-006244",
+      "piDtlKey": "749140",
+      "grDocNo": "GR-004126",
+      "grDtlKey": "745317",
+      "how": "the only line of its item code on GR-004126"
+    },
+    {
+      "piItemId": "da88fff2-c731-4593-ab4e-df84f06a9742",
+      "grnItemId": "2d21a20c-3f74-413f-ab9b-b92eff3a2a08",
+      "invoiceNumber": "HC-PI-006621",
+      "itemCode": "SQUARE PILLOW",
+      "piDocNo": "PI-006621",
+      "piDtlKey": "794964",
+      "grDocNo": "GR-004433",
+      "grDtlKey": "794944",
+      "how": "the only line of its item code on GR-004433"
+    },
+    {
+      "piItemId": "1df1cef5-4110-41e1-ad5e-aaf191cf8d60",
+      "grnItemId": "c87d41a2-503b-49e7-8a1e-3c97c17d8a4b",
+      "invoiceNumber": "HC-PI-007555",
+      "itemCode": "MACRO (A)-(K)",
+      "piDocNo": "PI-007555",
+      "piDtlKey": "872833",
+      "grDocNo": "GR-005007",
+      "grDtlKey": "861308",
+      "how": "the only line of its item code on GR-005007"
+    },
+    {
+      "piItemId": "573f7a30-f1c8-408a-a173-1726f081b306",
+      "grnItemId": "268aa8fe-7cfd-4716-bc3c-6331b8a9459e",
+      "invoiceNumber": "HC-PI-007618",
+      "itemCode": "AKEMI EQUINOX MATT (SK)",
+      "piDocNo": "PI-007618",
+      "piDtlKey": "878067",
+      "grDocNo": "GR-005090",
+      "grDtlKey": "875327",
+      "how": "the only line of its item code on GR-005090"
+    },
+    {
+      "piItemId": "edeff09f-6aa1-4114-b4df-19ac62aec7f9",
+      "grnItemId": "60b75831-d2b5-44e3-b36b-8ff44fe5e55e",
+      "invoiceNumber": "HC-PI-007797",
+      "itemCode": "HILTON (A)-(K)",
+      "piDocNo": "PI-007797",
+      "piDtlKey": "891822",
+      "grDocNo": "GR-005150",
+      "grDtlKey": "881347",
+      "how": "the only line of its item code on GR-005150"
+    },
+    {
+      "piItemId": "3412a4b1-40ab-4ac3-a1b5-8b685d8169aa",
+      "grnItemId": "668435a6-6b15-40d8-bbeb-047ea803e075",
+      "invoiceNumber": "HC-PI-007811",
+      "itemCode": "PRINCE-(SK)",
+      "piDocNo": "PI-007811",
+      "piDtlKey": "895110",
+      "grDocNo": "GR-005216",
+      "grDtlKey": "895107",
+      "how": "the only line of its item code on GR-005216"
+    },
+    {
+      "piItemId": "eb69f0bd-a887-4758-a1bf-5d643e52ca37",
+      "grnItemId": "eb1f43ef-ae39-4fc4-9210-ced8666339ac",
+      "invoiceNumber": "HC-PI-007817",
+      "itemCode": "STOOL 1",
+      "piDocNo": "PI-007817",
+      "piDtlKey": "903907",
+      "grDocNo": "GR-005209",
+      "grDtlKey": "892335",
+      "how": "the only line of its item code on GR-005209"
+    },
+    {
+      "piItemId": "dcaa7e20-444e-4878-8f7a-6edac08795ff",
+      "grnItemId": "7478f5ae-ed8a-4956-8adb-44dde3197dcb",
+      "invoiceNumber": "HC-PI-007817",
+      "itemCode": "8030-1A(LHF)",
+      "piDocNo": "PI-007817",
+      "piDtlKey": "903909",
+      "grDocNo": "GR-005209",
+      "grDtlKey": "892337",
+      "how": "the only line of its item code on GR-005209"
+    },
+    {
+      "piItemId": "d0f9458b-a4f0-4931-b3ac-3589474eadb0",
+      "grnItemId": "67188763-4c31-4dc7-a353-f162a1a02972",
+      "invoiceNumber": "HC-PI-007822",
+      "itemCode": "SQUARE PILLOW",
+      "piDocNo": "PI-007822",
+      "piDtlKey": "904085",
+      "grDocNo": "GR-005240",
+      "grDtlKey": "904057",
+      "how": "the only line of its item code on GR-005240"
+    },
+    {
+      "piItemId": "02b6c6ee-c404-453b-b2ce-15da34296a7d",
+      "grnItemId": "5b9bf458-8406-4367-aa76-1cffe014c2be",
+      "invoiceNumber": "HC-PI-007824",
+      "itemCode": "STOOL 1",
+      "piDocNo": "PI-007824",
+      "piDtlKey": "904120",
+      "grDocNo": "GR-005228",
+      "grDtlKey": "895231",
+      "how": "the only line of its item code on GR-005228"
+    },
+    {
+      "piItemId": "0edb9444-399f-4897-8d15-d01d235dc1a1",
+      "grnItemId": "690d5a77-31b3-4838-9dcb-5a6a56d3518c",
+      "invoiceNumber": "HC-PI-007862",
+      "itemCode": "AKEMI ARMOUR MATT (SK)",
+      "piDocNo": "PI-007862",
+      "piDtlKey": "905832",
+      "grDocNo": "GR-005226",
+      "grDtlKey": "895216",
+      "how": "the only line of its item code on GR-005226"
+    },
+    {
+      "piItemId": "ff02024e-2147-4022-b8e5-2c4bb25d2970",
+      "grnItemId": "55cf92f9-80c6-4510-b27e-fe5692bc3538",
+      "invoiceNumber": "HC-PI-007865",
+      "itemCode": "AKEMI BASTION MATT (SK)",
+      "piDocNo": "PI-007865",
+      "piDtlKey": "905857",
+      "grDocNo": "GR-005189",
+      "grDtlKey": "889110",
+      "how": "the only line of its item code on GR-005189"
+    },
+    {
+      "piItemId": "ee76541b-fe0a-46a7-bbea-9201bc6f7e62",
+      "grnItemId": "c2436d0f-a172-48aa-9694-f19a88b0e604",
+      "invoiceNumber": "HC-PI-007875",
+      "itemCode": "TRION (A) (HB STR)-(K)",
+      "piDocNo": "PI-007875",
+      "piDtlKey": "906078",
+      "grDocNo": "GR-005246",
+      "grDtlKey": "905253",
+      "how": "the only line of its item code on GR-005246"
+    },
+    {
+      "piItemId": "25bc56c1-e069-4fc7-87d4-b0adf88629b0",
+      "grnItemId": "d0404052-e223-47bb-934b-fc4fd55345dd",
+      "invoiceNumber": "HC-PI-007875",
+      "itemCode": "CELENE 2.0 (A)(F)-(SS)",
+      "piDocNo": "PI-007875",
+      "piDtlKey": "906080",
+      "grDocNo": "GR-005246",
+      "grDtlKey": "905255",
+      "how": "the only line of its item code on GR-005246"
+    },
+    {
+      "piItemId": "aaa76711-a51d-47ba-b6d0-dd8c96bb50be",
+      "grnItemId": "135db5de-fc94-4f6d-8949-d3298fd659d6",
+      "invoiceNumber": "HC-PI-007893",
+      "itemCode": "LEOMAG (A)-(K)",
+      "piDocNo": "PI-007893",
+      "piDtlKey": "909951",
+      "grDocNo": "GR-005244",
+      "grDtlKey": "905167",
+      "how": "the only line of its item code on GR-005244"
+    },
+    {
+      "piItemId": "63187da9-4c25-4644-a72c-3d6b09502908",
+      "grnItemId": "1f510516-66d3-4b5e-b689-12b1c1a23291",
+      "invoiceNumber": "HC-PI-007893",
+      "itemCode": "JAGER-(SS)",
+      "piDocNo": "PI-007893",
+      "piDtlKey": "909953",
+      "grDocNo": "GR-005244",
+      "grDtlKey": "905169",
+      "how": "the only line of its item code on GR-005244"
+    },
+    {
+      "piItemId": "6c5b1a1b-f863-4eb0-af3a-6e67126daff7",
+      "grnItemId": "7c6a473f-6124-4ed9-ae39-8864a0388930",
+      "invoiceNumber": "HC-PI-007893",
+      "itemCode": "CODY-(Q)",
+      "piDocNo": "PI-007893",
+      "piDtlKey": "909955",
+      "grDocNo": "GR-005244",
+      "grDtlKey": "905171",
+      "how": "the only line of its item code on GR-005244"
+    },
+    {
+      "piItemId": "d42bec43-b278-4966-86ca-faab8929a40a",
+      "grnItemId": "c55f6ddf-9f0e-42e0-9097-a2c34d66a1dc",
+      "invoiceNumber": "HC-PI-007895",
+      "itemCode": "SQUARE PILLOW",
+      "piDocNo": "PI-007895",
+      "piDtlKey": "910017",
+      "grDocNo": "GR-005241",
+      "grDtlKey": "904065",
+      "how": "the only line of its item code on GR-005241"
+    },
+    {
+      "piItemId": "c1f6a251-e270-4458-acb5-97228b0da188",
+      "grnItemId": "8198a1cb-240d-4b72-947b-d7202c9ec7f1",
+      "invoiceNumber": "HC-PI-007917",
+      "itemCode": "9058-1S",
+      "piDocNo": "PI-007917",
+      "piDtlKey": "914591",
+      "grDocNo": "GR-005306",
+      "grDtlKey": "913784",
+      "how": "the only line of its item code on GR-005306"
+    },
+    {
+      "piItemId": "285165f2-908c-4503-8dd5-1f01cbdd5dd2",
+      "grnItemId": "74323732-ce92-4e31-bc10-3c1ddffb07da",
+      "invoiceNumber": "HC-PI-007925",
+      "itemCode": "AKEMI ULTIMATE MATT (SK)",
+      "piDocNo": "PI-007925",
+      "piDtlKey": "914703",
+      "grDocNo": "GR-005300",
+      "grDtlKey": "913229",
+      "how": "the only line of its item code on GR-005300"
+    },
+    {
+      "piItemId": "4c900052-9bb1-4d9c-93ae-1ab907ccc782",
+      "grnItemId": "352a6298-a6e6-4fdc-86b2-723ab7042b7c",
+      "invoiceNumber": "HC-PI-007957",
+      "itemCode": "AKEMI GUARDIAN MATT (K)",
+      "piDocNo": "PI-007957",
+      "piDtlKey": "918115",
+      "grDocNo": "GR-005319",
+      "grDtlKey": "915639",
+      "how": "the only line of its item code on GR-005319"
+    },
+    {
+      "piItemId": "06f6218a-8423-46bb-a4fa-01d4b77335c4",
+      "grnItemId": "06362936-beac-4a1c-bd13-98438855ad4c",
+      "invoiceNumber": "HC-PI-007957",
+      "itemCode": "AKEMI ULTIMATE MATT (Q)",
+      "piDocNo": "PI-007957",
+      "piDtlKey": "918117",
+      "grDocNo": "GR-005319",
+      "grDtlKey": "915641",
+      "how": "the only line of its item code on GR-005319"
+    }
+  ],
+  "refusals": [
+    {
+      "piDtlKey": "209551",
+      "erp": "HC-PI-001531",
+      "grDocNo": "GR-000815",
+      "why": "the ERP splits the book's receipt line 209355 into 3 rows (a sofa build); which one this invoice billed is a stock question, and stock is deferred"
+    },
+    {
+      "piDtlKey": "862267",
+      "erp": "HC-PI-007405",
+      "grDocNo": "GR-004993",
+      "why": "the ERP splits the book's receipt line 860796 into 2 rows (a sofa build); which one this invoice billed is a stock question, and stock is deferred"
+    },
+    {
+      "piDtlKey": "868808",
+      "erp": "HC-PI-007502",
+      "grDocNo": "GR-005045",
+      "why": "the ERP splits the book's receipt line 868276 into 4 rows (a sofa build); which one this invoice billed is a stock question, and stock is deferred"
+    },
+    {
+      "piDtlKey": "903905",
+      "erp": "HC-PI-007817",
+      "grDocNo": "GR-005209",
+      "why": "the ERP splits the book's receipt line 892333 into 2 rows (a sofa build); which one this invoice billed is a stock question, and stock is deferred"
+    },
+    {
+      "piDtlKey": "904083",
+      "erp": "HC-PI-007822",
+      "grDocNo": "GR-005240",
+      "why": "the ERP splits the book's receipt line 904055 into 2 rows (a sofa build); which one this invoice billed is a stock question, and stock is deferred"
+    },
+    {
+      "piDtlKey": "904116",
+      "erp": "HC-PI-007824",
+      "grDocNo": "GR-005228",
+      "why": "the ERP splits the book's receipt line 895227 into 2 rows (a sofa build); which one this invoice billed is a stock question, and stock is deferred"
+    },
+    {
+      "piDtlKey": "904118",
+      "erp": "HC-PI-007824",
+      "grDocNo": "GR-005228",
+      "why": "the ERP splits the book's receipt line 895229 into 3 rows (a sofa build); which one this invoice billed is a stock question, and stock is deferred"
+    },
+    {
+      "piDtlKey": "905654",
+      "erp": "HC-PI-007853",
+      "grDocNo": "GR-005243",
+      "why": "the ERP splits the book's receipt line 905163 into 2 rows (a sofa build); which one this invoice billed is a stock question, and stock is deferred"
+    },
+    {
+      "piDtlKey": "905661",
+      "erp": "HC-PI-007854",
+      "grDocNo": "GR-005242",
+      "why": "the ERP splits the book's receipt line 905160 into 2 rows (a sofa build); which one this invoice billed is a stock question, and stock is deferred"
+    },
+    {
+      "piDtlKey": "909976",
+      "erp": "HC-PI-007894",
+      "grDocNo": "GR-005268",
+      "why": "the ERP splits the book's receipt line 908761 into 3 rows (a sofa build); which one this invoice billed is a stock question, and stock is deferred"
+    },
+    {
+      "piDtlKey": "910015",
+      "erp": "HC-PI-007895",
+      "grDocNo": "GR-005241",
+      "why": "the ERP splits the book's receipt line 904063 into 2 rows (a sofa build); which one this invoice billed is a stock question, and stock is deferred"
+    },
+    {
+      "piDtlKey": "914605",
+      "erp": "HC-PI-007919",
+      "grDocNo": "GR-005302",
+      "why": "the ERP splits the book's receipt line 913238 into 3 rows (a sofa build); which one this invoice billed is a stock question, and stock is deferred"
+    },
+    {
+      "piDtlKey": "917914",
+      "erp": "HC-PI-007941",
+      "grDocNo": "GR-005281",
+      "why": "the ERP splits the book's receipt line 911293 into 2 rows (a sofa build); which one this invoice billed is a stock question, and stock is deferred"
+    }
+  ]
+}

@@ -44,12 +44,41 @@ const allMobile: MobileDestination[] = [
 
 describe("executable route contract", () => {
   it("matches every canonical staff page mounted by App.tsx, with no extras", () => {
+    // 149 since 2026-09-03: /scm/chart-of-accounts — every account, every company, one tick each.
+    // 148 since 2026-09-02: /scm/payment-vouchers/scan — the bill pile, read and grouped.
     // 147 since 2026-08-25 (feat/acc-settlement merged main again): /scm/merchant-recon,
     //     /scm/bank-recon and /scm/settlement-setup — the settlement screens, +3 on main's 144.
     // 144 since 2026-08-25: /scm/loading-list, the warehouse no-price loading queue.
     // (143 since 2026-08-25: driver POD; 143 since 2026-08-21: /scm/do-load.)
     // (142 since 2026-08-16: /scm/daily-bank; 141 since 2026-08-15: /autocount-sync.)
-    expect(STAFF_ROUTE_PATTERNS).toHaveLength(147);
+    // 151 since 2026-09-03 night: /scm/receipts — every ringgit in, one list
+    // (general + other-debtor + customer). (150 that evening: /scm/other-debtors.)
+    // 152 since 2026-09-05: /scm/official-receipts — the OR book (GL redesign
+    // 9b), NOT the money-in list: drafts under the watermark, Confirm money.
+    // 153 since 2026-09-06: /scm/ap-invoices — the Finance side's supplier
+    // bills, both kinds (AP invoices raised there, purchase invoices mirrored).
+    // 154 since 2026-09-08: /scm/ap-invoices/scan — the bill pile for AP
+    // invoices, one AP invoice per bill (the voucher's pile page, target="ap").
+    // 155 since 2026-09-08: /change-log — who changed which document since the
+    // owner opened sales, delivery, purchase and receipt documents to staff.
+    // 156 since 2026-09-08: /scm/cancel-requests — the cancellation-approval
+    // inbox (SO / PO cancel = a reason + two signatures).
+    // 157 for a few hours on 2026-09-09: /memos, the department memo register.
+    // 156 again since 2026-09-09: the owner moved the register INTO the
+    // Announcements page (its Register mode, /announcements?view=register —
+    // docs/modules/memos.md), so /memos is no route.
+    // 157 since 2026-09-12: /scm/credit-notes — credit and debit notes to a
+    // customer, supplier credit notes (docs/bugs/0827).
+    // 158 since 2026-09-12: /scm/deposit-invoices — one invoice per deposit,
+    // born off the payment when the company's switch is on (docs/bugs/0828).
+    // 159 since 2026-09-12: /venture-portal-feed — the live sales-order feed to
+    // the Venture Portal (which pays Revenue Department commission out of these
+    // orders) and its settings: receiver address, shared secret, which
+    // companies, start date, and the queue with the reason on the row.
+    // 160 since 2026-09-13: /scm/fair-pending — the sales orders whose FAIR link
+    // the system could not settle on its own (two booths fit, or the order's
+    // brand has no booth at that event). docs/bugs/0862.
+    expect(STAFF_ROUTE_PATTERNS).toHaveLength(160);
     expect(new Set(STAFF_ROUTE_PATTERNS).size).toBe(STAFF_ROUTE_PATTERNS.length);
     expect([...STAFF_ROUTE_PATTERNS].sort()).toEqual([...appPages].sort());
   });
@@ -70,10 +99,24 @@ describe("executable route contract", () => {
       .filter((path) => path !== "*");
     expect([...new Set(["/survey/:token", ...mountedPublic])].sort())
       .toEqual([...PUBLIC_ROUTE_PATTERNS].sort());
-    // 156 since 2026-08-25 (feat/acc-settlement merged main again) — see the staff-route count above.
+    // 158 since 2026-09-03 — /scm/chart-of-accounts; see the staff-route count above.
+    // (157 since 2026-09-02.)
+    // (156 since 2026-08-25.)
     // (153 since 2026-08-25: /scm/loading-list.)
     // (152 since 2026-08-21.) (151 since 2026-08-16.) (150 since 2026-08-15.)
-    expect(ROUTE_CONTRACT).toHaveLength(156);
+    // 160 since 2026-09-03 night — /scm/receipts; see the staff-route count above.
+    // 161 since 2026-09-05 — /scm/official-receipts; see the staff-route count above.
+    // 162 since 2026-09-06 — /scm/ap-invoices; see the staff-route count above.
+    // 163 since 2026-09-08 — /scm/ap-invoices/scan; see the staff-route count above.
+    // 164 since 2026-09-08 — /change-log; see the staff-route count above.
+    // 165 since 2026-09-08 — /scm/cancel-requests; see the staff-route count above.
+    // 166 for a few hours on 2026-09-09 (/memos), 165 again the same day; see
+    // the staff-route count above.
+    // 166 since 2026-09-12 — /scm/credit-notes; see the staff-route count above.
+    // 167 since 2026-09-12 — /scm/deposit-invoices; see the staff-route count above.
+    // 168 since 2026-09-12 — /venture-portal-feed; see the staff-route count.
+    // 169 since 2026-09-13 — /scm/fair-pending; see the staff-route count above.
+    expect(ROUTE_CONTRACT).toHaveLength(169);
   });
 
   it("keeps every desktop nav destination on a live staff route", () => {
@@ -101,11 +144,26 @@ describe("executable route contract", () => {
 describe("mobile route drift gate", () => {
   it("pins the complete runtime destination inventory", () => {
     // 35 since 2026-08-15: the System group and its one row, /autocount-sync.
-    expect(MOBILE_MENU_GROUPS.flatMap((group) => group.items)).toHaveLength(35);
-    expect(PROFILE_ORG_ITEMS).toHaveLength(5);
-    expect(allMobile).toHaveLength(40);
-    expect(new Set(allMobile.map((item) => item.to)).size).toBe(40);
-    expect(new Set(allMobile.map((item) => item.to.split("?")[0])).size).toBe(39);
+    // 36 since 2026-09-08: /change-log, the System group's second row — the
+    // owner asks "who changed my sales order" away from a desk too.
+    // 37 since 2026-09-12: /venture-portal-feed, the System group's third row.
+    // On a phone for the same reason the other two are: whether the Venture
+    // Portal received an order decides whether somebody's commission is right,
+    // and turning the feed OFF is the control most plausibly wanted away from
+    // a desk.
+    // 38 since 2026-09-13: /scm/warehouses/racks, the Warehouse group's fifth
+    // row — the storekeeper's rack LOOKUP. Owner parity ruling 2026-09-12
+    // (「电脑版本有的，手机版本都要有」); the phone could CREATE a rack and never
+    // read one back.
+    expect(MOBILE_MENU_GROUPS.flatMap((group) => group.items)).toHaveLength(38);
+    // 6 since 2026-09-10: /roles, the rebuilt Roles & Permissions screen, reached
+    // from a Profile row (gated via the Team hub tab).
+    // 7 since 2026-09-17: /titles, the phone Titles editor (position_policy),
+    // the last desktop-only Roles & Permissions surface to reach the phone.
+    expect(PROFILE_ORG_ITEMS).toHaveLength(7);
+    expect(allMobile).toHaveLength(45);
+    expect(new Set(allMobile.map((item) => item.to)).size).toBe(45);
+    expect(new Set(allMobile.map((item) => item.to.split("?")[0])).size).toBe(44);
   });
 
   it("maps every declared mobile row to a real screen, never a placeholder stub", () => {

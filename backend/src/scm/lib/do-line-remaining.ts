@@ -85,6 +85,7 @@ export type DoPendingBasis = 'invoiceable' | 'delivered';
 const inPendingPool = (basis: DoPendingBasis, status: string | null | undefined): boolean =>
   basis === 'invoiceable' ? doCountsAsInvoiceable(status) : doCountsAsDelivered(status);
 import { paginateAll, chunkIn } from './paginate-all';
+import { lineLinkItemMismatch } from './line-link-item-identity';
 import { SI_TRANSFERABLE_DO_STATES } from '../shared/do-shipped-states';
 
 export type DoRemainingLine = {
@@ -98,6 +99,10 @@ export type DoRemainingLine = {
   description: string | null;
   description2: string | null;
   uom: string | null;
+  /** The DO line's own per-line delivery date, carried through so the DO->SI (and
+   *  DO->DR) convert keeps the delivery date the DO set on each line instead of
+   *  landing a blank box. NULL = the line had none. */
+  lineDeliveryDate: string | null;
   /** delivered = the DO line's qty */
   delivered: number;
   invoiced: number;
@@ -215,7 +220,7 @@ export async function doLineRemaining(
     .from('delivery_order_items')
     .select(
       'id, delivery_order_id, item_code, item_group, description, description2, uom, qty, ' +
-      'unit_price_sen, unit_cost_sen, discount_sen, variants, ' +
+      'unit_price_sen, unit_cost_sen, discount_sen, variants, line_delivery_date, ' +
       'gap_inches, divan_height_inches, divan_price_sen, leg_height_inches, leg_price_sen, ' +
       'custom_specials, line_suffix, special_order_price_sen',
     )
@@ -319,6 +324,7 @@ export async function doLineRemaining(
       description: (l.description as string | null) ?? null,
       description2: (l.description2 as string | null) ?? null,
       uom: (l.uom as string | null) ?? null,
+      lineDeliveryDate: (l.line_delivery_date as string | null) ?? null,
       delivered,
       invoiced,
       returned,
@@ -468,7 +474,40 @@ export const custKeyOf = (l: { debtorCode: string | null; debtorName: string | n
  */
 export type SiOverRemainingRefusal =
   | { status: 409; body: { error: string; lines: Array<{ doItemId: string; requested: number; remaining: number }> } }
-  | { status: 503; body: { error: string; message: string } };
+  | { status: 503; body: { error: string; message: string } }
+  /* The identity refusal — docs/bugs/0672 site 15. It carries `reason` rather
+     than `lines`, the shape soLinkTargetRefusal already answers with. */
+  | { status: 409 | 503; body: { error: string; reason: string } & Record<string, unknown> };
+
+/* The identity half of checkSiOverRemaining, kept separate so the quantity
+   ceiling and the product assertion each read as one thing.
+
+   A LINE WHOSE SOURCE CANNOT BE READ BACK IS REFUSED, NOT SKIPPED. An id that
+   resolved to nothing cannot be asserted equal to anything, and treating "not
+   found" as "nothing to compare" is precisely the false negative docs/bugs/0672
+   is made of. `checkSiReopenOverRemaining` is the one caller that cannot supply
+   an item code (it reads `do_item_id, qty` off the stored invoice); it now reads
+   `item_code` too, so every caller can be compared. */
+async function siLinkedItemCodes(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  sb: any,
+  lines: Array<Record<string, unknown>>,
+): Promise<SiOverRemainingRefusal | null> {
+  const claims = lines
+    .filter((l) => l.doItemId)
+    .map((l) => ({ linkId: String(l.doItemId), itemCode: l.itemCode }));
+  if (claims.length === 0) return null;
+  const { data, error } = await sb.from('delivery_order_items')
+    .select('id, item_code').in('id', [...new Set(claims.map((cl) => cl.linkId))]);
+  if (error) {
+    return { status: 503, body: { error: 'link_identity_unavailable', reason: `delivery_order_items: ${error.message}` } };
+  }
+  const byId = new Map<string, string | null>(
+    ((data ?? []) as Array<{ id: string; item_code: string | null }>).map((r) => [r.id, r.item_code]),
+  );
+  const bad = lineLinkItemMismatch(claims, byId, { source: 'Delivery Order line' });
+  return bad ? { status: 409, body: bad } : null;
+}
 
 export async function checkSiOverRemaining(
   sb: any,
@@ -489,6 +528,30 @@ export async function checkSiOverRemaining(
      `over_remaining` against a ceiling computed as if it had delivered nothing. */
   const remaining = await doRemainingByItemId(sb, [...wanted.keys()], 'invoiceable');
   if (!remaining.ok) return { status: 503, body: remainingUnavailableResponse(remaining.reason) };
+  /* IDENTITY BEFORE QUANTITY — docs/bugs/0672 site 15.
+     This guard proved for months that a line does not take MORE than the
+     delivery has left. It never asked whether the delivery line is the SAME
+     PRODUCT. A sales-invoice line for product B naming a delivery line for
+     product A passes every check on this path: valid foreign key, nothing
+     dangling, no constraint broken — and `doLineRemaining` then draws that
+     invoice down against the WRONG delivery line, leaving the right one open to
+     be invoiced a second time. probe-link-identity.mjs run 34172468269 counted
+     2 such rows live on `sales_invoice_items.do_item_id`.
+
+     It belongs HERE rather than at the two call sites for the reason this
+     file's own header gives about the reopen path: "a guard whose inputs are
+     assembled somewhere else is a guard that can be starved." Both the create
+     and the add-line path already funnel through this function, so putting the
+     rule here makes it impossible to reach one of them without it.
+
+     Asserted BEFORE the cap: a ceiling computed against the wrong line is a
+     number about the wrong thing, and reporting it sends the operator to fix a
+     quantity when the real fault is the source they picked. Costs no extra
+     read — doLineRemaining already selects `item_code` for every DO line. */
+  {
+    const codes = await siLinkedItemCodes(sb, lines);
+    if (codes) return codes;
+  }
   const offenders: Array<{ doItemId: string; requested: number; remaining: number }> = [];
   for (const [doItemId, requested] of wanted) {
     const cap = (remaining.remaining.get(doItemId) ?? 0) + (excludeByDoItem?.get(doItemId) ?? 0);
@@ -516,12 +579,12 @@ export async function checkSiReopenOverRemaining(
 ): Promise<SiOverRemainingRefusal | null> {
   const { data, error } = await sb
     .from('sales_invoice_items')
-    .select('do_item_id, qty')
+    .select('do_item_id, qty, item_code')
     .eq('sales_invoice_id', salesInvoiceId);
   if (error) return { status: 503, body: remainingUnavailableResponse(`sales_invoice_items: ${error.message}`) };
-  const lines = ((data ?? []) as Array<{ do_item_id: string | null; qty: number }>)
+  const lines = ((data ?? []) as Array<{ do_item_id: string | null; qty: number; item_code: string | null }>)
     .filter((l) => l.do_item_id)
-    .map((l) => ({ doItemId: l.do_item_id as string, qty: l.qty }));
+    .map((l) => ({ doItemId: l.do_item_id as string, qty: l.qty, itemCode: l.item_code }));
   return checkSiOverRemaining(sb, lines);
 }
 

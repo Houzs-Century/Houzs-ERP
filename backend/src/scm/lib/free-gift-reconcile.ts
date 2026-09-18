@@ -35,6 +35,8 @@ import { activeCompanyId } from './companyScope';
 import { recomputeTotals } from '../routes/mfg-sales-orders';
 import { recordSoAudit, type FieldChange } from './so-audit';
 import { loadSoWarehouseMasters, resolveSoWarehouseId } from './so-warehouse';
+import { readSoLineFreeze } from './downstream-lock';
+import { soLineFrozen } from '../shared/so-line-freeze';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -120,7 +122,16 @@ export async function reconcileFreeGiftLinesForSo(sb: any, docNo: string, c: any
 
     // 6. Diff (bucketed by giftProductId + campaignName; idempotent no-op when
     //    the bucket totals already match).
-    const { toInsert, toDeleteIds } = diffFreeGiftLines(desired, existing);
+    const { toInsert, toDeleteIds: wanted } = diffFreeGiftLines(desired, existing);
+    /* A gift line a live Delivery Order / Sales Invoice already carries is FROZEN
+       (owner 2026-09-15, shared/so-line-freeze.ts): the gift went out with the
+       goods, so removing its trigger later leaves it where it is. An unreadable
+       verdict deletes nothing. */
+    let toDeleteIds = wanted;
+    if (wanted.length > 0) {
+      const freezeRead = await readSoLineFreeze(sb, docNo);
+      toDeleteIds = freezeRead.ok ? wanted.filter((id) => !soLineFrozen(freezeRead.freeze, id)) : [];
+    }
 
     // 7. Delete gift lines the triggers no longer grant.
     if (toDeleteIds.length > 0) {

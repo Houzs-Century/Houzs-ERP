@@ -53,6 +53,11 @@ import { rowIsHeld, type HoldFields } from "../../vendor/scm/components/HoldChip
  *  so the four columns are spelled once for the whole app. */
 type StatusRow = { status?: string | null } & HoldFields;
 
+/** Server-decided: carried across from AutoCount AND the cutover lock is on for
+ *  this company. Optional so a cached pre-deploy list row still type-checks; an
+ *  absent value reads as "not locked", which is the pre-2026-09 menu exactly. */
+type MigratedRow = { migrated_readonly?: boolean | null };
+
 /* ── THE HOLD, ON ALL FIVE DOCUMENTS (owner 2026-08-22) ──────────────────────
    「我们的hold是给我们知道一个 order hold这的」 — a hold is a MARKER telling
    people an order is paused. 「take off hold也要看」 — releasing had to be looked
@@ -195,7 +200,7 @@ const norm = (s: string | null | undefined) => String(s ?? "").toUpperCase();
    NetSuite computes Partially Fulfilled / Pending Billing and offers Close and
    Cancel. The list of buttons a human gets is short everywhere, and it is short
    for this reason. */
-export function salesOrderRowMenu<R extends StatusRow & SoChainRow>(h: {
+export function salesOrderRowMenu<R extends StatusRow & SoChainRow & MigratedRow>(h: {
   open: (r: R) => void;
   edit: (r: R) => void;
   print: (t: PrintTarget) => void;
@@ -220,6 +225,23 @@ export function salesOrderRowMenu<R extends StatusRow & SoChainRow>(h: {
        since mig 0324 a hold is a MARKER, so it is offered on every row and says
        nothing about where the order is. */
     const live = !isDraft && !isCancelled && !isClosed;
+    /* CUTOVER (owner 2026-09-08) — an order carried across from AutoCount is
+       view-only until its payments are reconciled, so the menu offers Open and
+       Print and nothing else. Leaving Confirm / Cancel / Close / Hold on it
+       would offer a click the API is going to refuse: a toast the operator has
+       to read to find out the row was never actionable. Edit stays out for the
+       same reason; the detail page states why in a banner.
+       `migrated_readonly` is decided by the SERVER (the list stamps it per row)
+       — the browser cannot see the app_config switch or the caller's bypass. */
+    if (r.migrated_readonly === true) {
+      return buildRowMenu(
+        [
+          { label: "Open", onClick: () => h.open(r) },
+          ...printEntries(salesOrderPrintChain(r), { print: h.print, open: () => h.open(r) }),
+        ],
+        [], [], [],
+      );
+    }
     return buildRowMenu(
       [
         { label: "Open", onClick: () => h.open(r) },
@@ -236,7 +258,7 @@ export function salesOrderRowMenu<R extends StatusRow & SoChainRow>(h: {
         live && { label: "Close remaining", onClick: () => h.close(r) },
         isCancelled && { label: "Reopen", onClick: () => h.reopen(r) },
       ],
-      [!isCancelled && dangerItem("Cancel Sales Order", () => h.cancel(r))],
+      [!isCancelled && dangerItem("Request cancellation", () => h.cancel(r))],
     );
   };
 }
@@ -251,9 +273,10 @@ export function salesOrderRowMenu<R extends StatusRow & SoChainRow>(h: {
    text argued a stock-reversing action must not sit two pixels from "Open"
    without the detail page's confirmation copy. The objection was to the MISSING
    CONFIRMATION, not to the entry — so the entry ships WITH one: the list's
-   `cancel` handler goes through `askConfirm` before it writes, exactly like the
-   Sales Order list's, and it is the SAME endpoint the detail page posts
-   (`PATCH /delivery-orders-mfg/:id/status`, status CANCELLED). Nothing new
+   `cancel` handler asks for the REASON before it writes (owner 2026-09-14,
+   use-do-cancel-action.ts — the detail page's own prompt), and it is the SAME
+   endpoint the detail page posts (`PATCH /delivery-orders-mfg/:id/status`,
+   status CANCELLED plus the reason the server now requires). Nothing new
    happens here; the capability is the page's, the menu only offers it.
 
    `canCancel` is the LIST's to compute and it cannot be complete, which is
@@ -398,6 +421,8 @@ export function purchaseOrderRowMenu<R extends StatusRow & PoChainRow>(h: {
   cancel: (r: R) => void;
   canReceive: (r: R) => boolean;
   canCancel: (r: R) => boolean;
+  /** A DRAFT still cancels directly; a live PO is cancelled by REQUEST (owner 2026-09-08). */
+  isDraft: (r: R) => boolean;
 }): (r: R) => RowMenuItem[] {
   return (r) => buildRowMenu(
     [
@@ -407,7 +432,7 @@ export function purchaseOrderRowMenu<R extends StatusRow & PoChainRow>(h: {
     ],
     [h.canReceive(r) && { label: transferToLabel("grn"), onClick: () => h.transferToGrn(r) }],
     holdEntries(r, h.setHold),
-    [h.canCancel(r) && dangerItem("Cancel Purchase Order", () => h.cancel(r))],
+    [h.canCancel(r) && dangerItem(h.isDraft(r) ? "Cancel Purchase Order" : "Request cancellation", () => h.cancel(r))],
   );
 }
 
@@ -509,6 +534,9 @@ export function salesInvoiceRowMenu<R extends StatusRow & SiChainRow>(h: {
 export function purchaseInvoiceRowMenu<R extends StatusRow & PiChainRow>(h: {
   open: (r: R) => void;
   edit: (r: R) => void;
+  /* Copy as new (owner 2026-09-03, AutoCount in hand: right click 就能直接
+     copy) — content as a template, identity fresh; any status qualifies. */
+  copyAsNew: (r: R) => void;
   print: (t: PrintTarget) => void;
   confirm: (r: R) => void;
   setHold: (r: R, onHold: boolean) => void;
@@ -528,6 +556,7 @@ export function purchaseInvoiceRowMenu<R extends StatusRow & PiChainRow>(h: {
     [
       { label: "Open", onClick: () => h.open(r) },
       { label: "Edit", onClick: () => h.edit(r) },
+      { label: "Copy as new", onClick: () => h.copyAsNew(r) },
       ...printEntries(purchaseInvoicePrintChain(r), { print: h.print, open: () => h.open(r) }),
     ],
     [h.canConfirm(r) && { label: "Confirm", onClick: () => h.confirm(r) }],

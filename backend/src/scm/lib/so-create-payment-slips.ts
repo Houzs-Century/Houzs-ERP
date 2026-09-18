@@ -38,7 +38,10 @@ export const soCreatePaymentSchema = z.object({
   /* READ the shared list, never re-type it — payment-methods.ts states that
      rule, and this file was extracted from the router just as main introduced
      it, so the two arrived together and only look independent. */
-  method:            z.enum(PAYMENT_METHOD_CODES),
+  /* Plus `converted` — money moved from a cancelled order (docs/bugs/0927),
+     a Sales-Order-only method that names the order it comes from. */
+  method:            z.enum([...PAYMENT_METHOD_CODES, 'converted']),
+  convertedFromDocNo: z.string().trim().min(1).optional().nullable(),
   amountSen:       z.number().int().positive(),
   approvalCode:      z.string().optional().nullable(),
   merchantProvider:  z.string().trim().min(1).optional().nullable(),

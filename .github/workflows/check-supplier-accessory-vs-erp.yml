@@ -1,0 +1,59 @@
+name: Supplier accessories (pillows) vs our purchase orders (read-only)
+
+# Manual, read-only. The accessory half of the supplier comparison, listed as
+# "never compared" in the 2026-09-10 handoff. Owner, 2026-09-14:
+# 「配件 66 行没有对过的，也可以做到完」.
+#
+# 72 accessory lines over 58 supplier documents, three codes: SQUARE PILLOW,
+# SQUARE PILLOW RDM (random colour), LONG PILLOW. Compared per document, per
+# pillow type, on quantity, with received quantity beside every difference.
+#
+# It writes nothing: SELECT only, no DDL, no transaction.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      company:
+        description: "company_id"
+        required: false
+        default: "1"
+        type: string
+
+concurrency:
+  group: check-supplier-accessory-vs-erp-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/check-supplier-accessory-vs-erp.mjs
+        env:
+          COMPANY_ID: ${{ inputs.company }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/check-supplier-accessory-vs-erp.mjs
+        env:
+          COMPANY_ID: ${{ inputs.company }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

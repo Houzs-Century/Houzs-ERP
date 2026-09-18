@@ -8,12 +8,12 @@ import { fakeSb, type Row } from '../scm/lib/fake-postgrest';
 import { bucketPayments, systemTakings, postCashOverShort } from './daily-close';
 import { DEFAULT_ROLE_CODES } from './rules';
 
-const CHART: Row[] = ['335-0000', '946-0000'].map((code) => ({
+const CHART: Row[] = ['320-0000', '946-0000'].map((code) => ({
   account_code: code, account_name: code, account_type: 'EXPENSE', parent_code: null, is_active: true, company_id: 1,
 }));
 
 describe('bucketPayments — the drawer view', () => {
-  it('cash and transfer are their own buckets; card money groups by acquirer; imported never counts', () => {
+  it('cash and transfer are their own buckets; card money groups by acquirer; imported and converted never count', () => {
     const buckets = bucketPayments([
       { method: 'cash', merchant_provider: null, amount_sen: 100 },
       { method: 'cash', merchant_provider: null, amount_sen: 50 },
@@ -23,6 +23,8 @@ describe('bucketPayments — the drawer view', () => {
       { method: 'merchant', merchant_provider: 'GHL', amount_sen: 7 },
       { method: 'merchant', merchant_provider: null, amount_sen: 9 },
       { method: 'imported', merchant_provider: null, amount_sen: 99999 },
+      /* Money moved from a cancelled order never passed the till (docs/bugs/0927). */
+      { method: 'converted', merchant_provider: null, amount_sen: 77777 },
     ]);
     expect(buckets.get('cash')).toBe(150);
     expect(buckets.get('transfer')).toBe(200);

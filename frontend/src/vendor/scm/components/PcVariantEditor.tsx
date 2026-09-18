@@ -161,6 +161,28 @@ export const PcVariantEditor = ({
     );
   }
 
+  /* Sofa Accessory (owner 2026-09-14): colour only, from the same fabric list. */
+  if (category === 'fabric_accessory') {
+    return (
+      <div className={styles.formGrid4}>
+        <label className={styles.field}>
+          <span className={styles.fieldLabel}>Fabrics</span>
+          <select
+            className={styles.fieldSelect}
+            value={String(variants.fabricCode ?? '')}
+            disabled={locked}
+            onChange={(e) => onChange('fabricCode', e.target.value)}
+          >
+            <option value="" disabled>Select…</option>
+            {[...pickableFabrics(fabrics, String(variants.fabricCode ?? ''))].sort((a, b) => byText(fabricOptionLabel(a), fabricOptionLabel(b))).map((f) => (
+              <option key={f.id} value={f.fabric_code}>{fabricOptionLabel(f)}</option>
+            ))}
+          </select>
+        </label>
+      </div>
+    );
+  }
+
   if (category === 'sofa') {
     return (
       <>

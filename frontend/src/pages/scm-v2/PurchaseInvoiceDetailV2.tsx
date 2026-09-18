@@ -2,13 +2,14 @@
 // page. Procurement-side twin of SalesInvoiceDetailV2: money-forward,
 // Outstanding-as-hero, but flipped — this is what WE owe to the supplier.
 
-import { lazy, useMemo, type ReactNode } from "react";
+import { lazy, useMemo, useState, type ReactNode } from "react";
 import { buildVariantSummary, fmtDate, fmtMoneySen, orderLineIdentity } from "@2990s/shared";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { LazySlot } from "../../components/LazySlot";
 import { scmListReturnTo } from "../../lib/scmListReturn";
 import {
   ArrowLeft,
+  Copy,
   History,
   Printer,
   XCircle,
@@ -16,10 +17,10 @@ import {
   CircleDot,
   Phone as PhoneIcon,
   MoreHorizontal,
-  CheckCircle2,
   Wallet,
   AlertTriangle,
   Send,
+  Plus,
 } from "lucide-react";
 import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
@@ -35,8 +36,9 @@ import {
   usePurchaseInvoiceDetail,
   useCancelPurchaseInvoice,
   usePostPurchaseInvoice,
-  useRecordPiPayment,
 } from "../../vendor/scm/lib/purchase-invoice-queries";
+import { useAuth as useHouzsAuth } from "../../auth/AuthContext";
+import { apPaymentHrefFor, canOpenApPayment, piAwaitsPayment } from "../../vendor/scm/lib/pi-payment-path";
 import { useSupplierDetail } from "../../vendor/scm/lib/suppliers-queries";
 import { skuMapFromBindings, supplierCodeFor } from "../../vendor/scm/lib/supplier-doc-data";
 import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
@@ -44,10 +46,16 @@ import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
+import { statusLabel } from "../../vendor/scm/lib/status-pill";
 import { cn } from "../../lib/utils";
 import { resolveFxRate } from "./fx-rate";
 import { HoldChip, type HoldFields } from "../../vendor/scm/components/HoldChip";
 
+import { DocumentHistoryDrawer } from "./DocumentHistoryDrawer";
+import { FocAmount } from "../../vendor/scm/components/FocAmount";
+import { LinePoRefLink } from "../../vendor/scm/components/LinePoRefLink";
+import { PoPriceReference } from "../../vendor/scm/components/PoPriceReference";
+import { ADD_LINE_LABEL, addLineHref } from "../../vendor/scm/lib/add-line-handoff";
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 type PiStatus =
@@ -95,6 +103,14 @@ type PiItem = {
   /* Supplier's own code — PI has no column of its own; the detail GET carries it
      down from the source GRN line (grn_item_id → grn_items.supplier_sku). */
   supplier_sku?: string | null;
+  /** What the PURCHASE ORDER says this line costs, resolved by the backend
+      through grn_item -> purchase_order_item. null when the line has no
+      purchase order behind it (a PI-native service line, a receipt with no
+      PO, or an unbound SKU ordered at 0 and keyed in here). */
+  po_unit_price_sen?: number | null;
+  /* #26 — the line's own purchase order, resolved through its receipt line. */
+  source_po_id?: string | null;
+  source_po_number?: string | null;
   description?: string | null;
   description2?: string | null;
   item_group?: string | null;
@@ -105,6 +121,9 @@ type PiItem = {
   line_total_sen?: number;
   /* Landed-cost allocation (Phase 1-A) — freight (MYR sen) allocated to this line. */
   allocated_charge_sen?: number | null;
+  /* The line's own remark (purchase_invoice_items.notes) — carried from the GRN
+     line at conversion. Owner 2026-09-12: the remark travels with the line. */
+  notes?: string | null;
 };
 
 /* Landed-cost allocation (Phase 1-A) — human labels for the freight basis. */
@@ -155,7 +174,7 @@ const EFFECTIVE_TONE: Record<
   { tone: "success" | "warning" | "error" | "neutral"; label: string; blurb: string }
 > = {
   draft: { tone: "warning", label: "Draft", blurb: "Draft · not yet posted" },
-  posted: { tone: "warning", label: "Confirmed", blurb: "Confirmed · awaiting payment" },
+  posted: { tone: "warning", label: "Submitted", blurb: "Submitted · awaiting payment" },
   on_hold: { tone: "warning", label: "On Hold", blurb: "On hold · payment blocked until released" },
   partial: { tone: "warning", label: "Partially paid", blurb: "Partially paid · balance still due" },
   paid: { tone: "success", label: "Paid", blurb: "Paid · loop closed" },
@@ -163,13 +182,11 @@ const EFFECTIVE_TONE: Record<
   cancelled: { tone: "error", label: "Cancelled", blurb: "Cancelled · no further action" },
 };
 
-const STAGE_LABEL: Record<string, string> = {
-  DRAFT: "Draft",
-  POSTED: "Posted",
-  PARTIALLY_PAID: "Partially paid",
-  PAID: "Paid",
-  CANCELLED: "Cancelled",
-};
+/* The header BADGE reads its word from vendor/scm/lib/status-pill.ts. It used to
+   read a hand-written STAGE_LABEL here, which said "Posted" for POSTED - contradicting the
+   owner's ruling that this rung reads one word on every surface, and invisible to
+   localStatusMapsAgree because a flat map is not the { label } shape it parsed.
+   docs/bugs/0868. The guard now scans that shape too. */
 
 const initialsOf = (name: string | null | undefined): string => {
   if (!name) return "—";
@@ -369,7 +386,7 @@ function PurchaseInvoiceDetailV2ReadOnly() {
   const detail = usePurchaseInvoiceDetail(id ?? null);
   const cancelPi = useCancelPurchaseInvoice();
   const postPi = usePostPurchaseInvoice();
-  const recordPayment = useRecordPiPayment();
+  const { can, pageAccess } = useHouzsAuth();
   const notify = useNotify();
   const askConfirm = useConfirm();
 
@@ -416,14 +433,15 @@ function PurchaseInvoiceDetailV2ReadOnly() {
   );
 
   const eff = purchaseInvoice ? effectiveOf(purchaseInvoice) : null;
-  const stageLabel = purchaseInvoice
-    ? STAGE_LABEL[(purchaseInvoice.status || "").toUpperCase()] ??
-      purchaseInvoice.status
-    : "";
+  const stageLabel = purchaseInvoice ? statusLabel("pi", purchaseInvoice.status) : "";
   const badgeTone = eff ? EFFECTIVE_TONE[eff].tone : "neutral";
 
   const outstanding = purchaseInvoice ? outstandingOf(purchaseInvoice) : 0;
 
+  /* History drawer. The button used to navigate to `?tab=history`, a param
+     nothing in this file reads, so it changed the URL and nothing else — while
+     the backend had been recording this invoice's every change all along. */
+  const [historyOpen, setHistoryOpen] = useState(false);
   const overdueDays = purchaseInvoice ? daysPast(purchaseInvoice.due_date) : -1;
   const isOverdue = overdueDays > 0 && outstanding > 0;
 
@@ -433,7 +451,10 @@ function PurchaseInvoiceDetailV2ReadOnly() {
   // filters, so the prior filtered view comes back — no context lost.
   const goBack = () => navigate(scmListReturnTo("/scm/purchase-invoices"));
   const goEdit = () => id && navigate(`/scm/purchase-invoices/${id}?edit=1`);
-  const goHistory = () => id && navigate(`/scm/purchase-invoices/${id}?tab=history`);
+  /* "Add line" from the page you START on — the affordance lived only
+     inside the editor, under a different name per document, so it read as
+     missing (docs/bugs/0853). */
+  const goAddLine = () => id && navigate(addLineHref(`/scm/purchase-invoices/${id}`));
   // Render + download the PI PDF via the shared jspdf generator (client-side),
   // mirroring the V1 PurchaseInvoiceDetail handler. The old `?print=1`
   // navigation was dead — nothing consumed that param — so the button did nothing.
@@ -453,8 +474,12 @@ function PurchaseInvoiceDetailV2ReadOnly() {
   };
   const print = usePrintPreview(deliverPrintPdf);
   useOpenPrintPreviewFromUrl(print.openPreview, !!purchaseInvoice);
-  const goRecordPayment = () =>
-    id && navigate(`/scm/purchase-invoices/${id}?tab=payments&record=1`);
+  /* A supplier invoice is paid with an AP Payment voucher, opened with this
+     invoice already ticked (docs/bugs/0889). This used to navigate to
+     `?tab=payments&record=1` on this same page, which reads neither. */
+  const goRecordPayment = () => {
+    if (purchaseInvoice) navigate(apPaymentHrefFor(purchaseInvoice));
+  };
   const doPost = async () => {
     if (!id) return;
     if (await askConfirm({
@@ -476,11 +501,6 @@ function PurchaseInvoiceDetailV2ReadOnly() {
       cancelPi.mutate(purchaseInvoice.id);
     }
   };
-  const doMarkPaid = () => {
-    if (!purchaseInvoice) return;
-    recordPayment.mutate({ id: purchaseInvoice.id, amountSen: outstanding });
-  };
-
   const lineColumns: Column<PiItem>[] = [
     {
       key: "item",
@@ -535,6 +555,16 @@ function PurchaseInvoiceDetailV2ReadOnly() {
       },
     },
     {
+      /* #26 — the purchase order THIS line came from, clickable. Per line, not
+         the header's: one receipt / invoice can span several orders. A line with
+         no PO behind it shows a dash (vendor/scm/lib/line-po-link.ts). */
+      key: "sourcePo",
+      label: "PO",
+      width: "128px",
+      getValue: (l) => l.source_po_number ?? "",
+      render: (l) => <LinePoRefLink line={l} />,
+    },
+    {
       key: "qty",
       label: "Qty",
       width: "72px",
@@ -547,9 +577,52 @@ function PurchaseInvoiceDetailV2ReadOnly() {
       ),
     },
     {
+      /* The line's own remark. Owner 2026-09-12: 「行备注（remark）应该也是要一样，
+         因为它们会带过去」 — the warehouse writes one at receipt ("outer carton
+         dented"), the invoice clerk needs to see it, and until now the only
+         place to put a sentence was the document header, where it belongs to
+         every line at once. The COLUMN was always there (grn_items.notes,
+         purchase_invoice_items.notes) and the GRN line PATCH has always
+         accepted it; nothing rendered it. See docs/bugs/0845. */
+      key: "lineNote",
+      label: "Remark",
+      width: "180px",
+      getValue: (l) => l.notes ?? "",
+      render: (l) => (
+        l.notes ? (
+          <span className="block truncate text-[12.5px] italic text-ink-secondary" title={l.notes}>
+            {l.notes}
+          </span>
+        ) : (
+          <span className="text-[12px] text-ink-muted">—</span>
+        )
+      ),
+    },
+    {
+      /* Owner 2026-09-12: 「PI 应该要有两个价钱」; 2026-09-14: 「点开这个 PI 时，我也能
+         一眼看清：根据 PO 设想的价钱是多少，以及最终开单（PI）又是多少」. The PO
+         price is the TRAIL stored on the line when it was written (mig
+         20260914T0200; older lines read the order live until back-filled). It is
+         reference only — nothing blocks or asks. PoPriceReference keeps "no PO
+         link" and "PO had no price" apart from a real figure. */
+      key: "poUnit",
+      label: "PO price",
+      width: "128px",
+      align: "right",
+      getValue: (l) => l.po_unit_price_sen ?? -1,
+      render: (l) => (
+        <PoPriceReference
+          poUnitPriceSen={l.po_unit_price_sen}
+          piUnitPriceSen={l.unit_price_sen ?? 0}
+          fmt={(sen) => fmtMoney(sen, purchaseInvoice?.currency)}
+          align="right"
+        />
+      ),
+    },
+    {
       key: "unit",
-      label: "Unit price",
-      width: "108px",
+      label: "PI price",
+      width: "112px",
       align: "right",
       getValue: (l) => l.unit_price_sen ?? 0,
       render: (l) => (
@@ -567,15 +640,16 @@ function PurchaseInvoiceDetailV2ReadOnly() {
       render: (l) => {
         const freight = Number(l.allocated_charge_sen ?? 0);
         return (
-          <span className="inline-flex flex-col items-end">
-            <span className="font-money text-[13px] font-semibold text-ink">
-              {fmtMoney(l.line_total_sen ?? 0, purchaseInvoice?.currency)}
-            </span>
-            {/* Landed-cost allocation (Phase 1-A) — per-line freight (MYR sen). */}
-            {freight > 0 && (
-              <span className="font-money text-[10.5px] text-accent-ink">+freight {fmtMoney(freight, "MYR")}</span>
-            )}
-          </span>
+          <FocAmount
+            line={l}
+            amount={fmtMoney(l.line_total_sen ?? 0, purchaseInvoice?.currency)}
+            /* Landed-cost allocation (Phase 1-A) — per-line freight (MYR sen).
+               Dropped on a free line: a freebie that carries allocated freight
+               still cost nothing to buy, which is what the badge claims. */
+            sub={freight > 0
+              ? <span className="font-money text-[10.5px] text-accent-ink">+freight {fmtMoney(freight, "MYR")}</span>
+              : undefined}
+          />
         );
       },
     },
@@ -610,10 +684,8 @@ function PurchaseInvoiceDetailV2ReadOnly() {
 
   const rawStatus = (purchaseInvoice.status || "").toUpperCase();
   const isCancelled = rawStatus === "CANCELLED";
-  const isTerminal = isCancelled || rawStatus === "PAID";
   const canPost = rawStatus === "DRAFT";
-  const canRecordPayment = !isTerminal && outstanding > 0 && rawStatus !== "DRAFT";
-  const canMarkPaid = !isTerminal && outstanding === 0 && rawStatus !== "DRAFT";
+  const canRecordPayment = piAwaitsPayment(purchaseInvoice) && canOpenApPayment(can, pageAccess);
 
   return (
     <div className="pb-24 md:pb-0">
@@ -694,7 +766,13 @@ function PurchaseInvoiceDetailV2ReadOnly() {
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <Button variant="ghost" icon={<History size={14} />} onClick={goHistory}>History</Button>
+            <Button variant="ghost" icon={<History size={14} />} onClick={() => setHistoryOpen(true)}>History</Button>
+            {/* Copy as new (owner 2026-09-03): content as template, identity
+                fresh — any status; the New page does the pre-fill. */}
+            <Button variant="ghost" icon={<Copy size={14} />}
+              onClick={() => navigate(`/scm/purchase-invoices/new?copyFrom=${id}`)}>
+              Copy as new
+            </Button>
             <Button variant="secondary" icon={<Printer size={14} />} onClick={print.openPreview}>Print PDF</Button>
             {!isCancelled && (
               <Button variant="danger" icon={<XCircle size={14} />} onClick={doCancel}>Cancel PI</Button>
@@ -705,9 +783,7 @@ function PurchaseInvoiceDetailV2ReadOnly() {
             {canRecordPayment && (
               <Button variant="secondary" icon={<Wallet size={14} />} onClick={goRecordPayment}>Record payment</Button>
             )}
-            {canMarkPaid && (
-              <Button variant="secondary" icon={<CheckCircle2 size={14} />} onClick={doMarkPaid}>Mark paid</Button>
-            )}
+            <Button variant="secondary" icon={<Plus size={14} />} onClick={goAddLine}>{ADD_LINE_LABEL}</Button>
             <Button variant="primary" icon={<Edit3 size={14} />} onClick={goEdit}>Edit</Button>
           </div>
         </div>
@@ -818,7 +894,7 @@ function PurchaseInvoiceDetailV2ReadOnly() {
             <Section title={`Line items · ${items.length}`}>
               <DataTable<PiItem>
                 tableId={`pi-lines-${id}`}
-                layoutFamily={DATA_TABLE_LAYOUT_FAMILIES.purchaseInvoiceLines}
+                layoutFamily={DATA_TABLE_LAYOUT_FAMILIES.purchaseInvoiceLines} persistSort={false} persistFilters={false}
                 rows={items}
                 loading={false}
                 columns={lineColumns}
@@ -916,6 +992,10 @@ function PurchaseInvoiceDetailV2ReadOnly() {
           </button>
         </div>
       </div>
+      {historyOpen && (
+        <DocumentHistoryDrawer doc="PURCHASE_INVOICE" id={String(purchaseInvoice.id)}
+          label={purchaseInvoice.invoice_number} onClose={() => setHistoryOpen(false)} />
+      )}
       <PrintPreviewModal
         open={print.open}
         onClose={print.close}

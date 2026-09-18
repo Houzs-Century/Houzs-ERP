@@ -379,7 +379,7 @@ const PATCH_FIELDS = [
   "name", "stage", "status",
   "start_date", "end_date",
   "organizer", "state", "venue", "venue_address",
-  "brand", "event_type_id",
+  "brand", "contractor", "event_type_id",
   "booth_no", "size_sqm",
   "notion_url", "notes",
   "pic_id",
@@ -1065,15 +1065,20 @@ export function stripSensitiveChecklist<
 }
 
 /**
- * Server-side backstop for SETUP_DISMANTLE visibility (owner 2026-07-15).
+ * Server-side backstop for SETUP_DISMANTLE visibility (owner 2026-07-15,
+ * NARROWED by the owner 2026-07-28 to documents only).
  * Returns a shallow copy of a project-detail payload with the Setup & Dismantle
- * section fully removed: the crew JSON + scheduled times NULLed on the project
- * row, and the "SETUP & DISMANTLE DOCUMENTS" checklist rows — plus their
- * comments, attachments, sections, and section-progress — stripped. Called for
- * a caller whose PMS role lacks SETUP_DISMANTLE (pmsAccess `canSetupDismantle`
- * === false), mirroring how the detail-GET strips finance / payment /
- * WF_SENSITIVE. The crew fields are NULLed unconditionally (the crew editor is
- * part of the same hidden section) even when no document rows are present.
+ * DOCUMENT rows removed: the "SETUP & DISMANTLE DOCUMENTS" checklist rows —
+ * plus their comments, attachments, sections, and section-progress — stripped.
+ * Called for a caller whose PMS role lacks SETUP_DISMANTLE (pmsAccess
+ * `canSetupDismantle` === false), mirroring how the detail-GET strips finance /
+ * payment / WF_SENSITIVE.
+ *
+ * The crew JSON, service crew, schedule remark and scheduled times are NO
+ * LONGER NULLed here — owner 2026-07-28, "all users can view the setup &
+ * dismantle part": the S&D card is view-for-all and every viewer receives that
+ * data. Editing it stays gated by the PATCH route and the UI's canWrite/canEdit
+ * tier, not by what reaches the wire.
  */
 export function stripSetupDismantle<
   T extends {
@@ -1085,21 +1090,12 @@ export function stripSetupDismantle<
     section_progress?: any[];
   }
 >(detail: T): T {
-  // Crew editor blobs + scheduled times live on the project row — always blank
-  // them (they render only inside the now-hidden Setup & Dismantle panel).
-  const project = detail.project
-    ? {
-        ...detail.project,
-        setup_crew: null,
-        dismantle_crew: null,
-        // service_crew (owner 2026-07-22) is the same hidden logistics panel.
-        service_crew: null,
-        // schedule_remark (owner 2026-07-23) renders in the same panel too.
-        schedule_remark: null,
-        setup_start_at: null,
-        dismantle_start_at: null,
-      }
-    : detail.project;
+  // Owner 2026-07-28 ("all users can view the setup & dismantle part"): the
+  // crew blobs, service crew, schedule remark and scheduled times STAY on the
+  // wire for every viewer — the S&D card is view-for-all, and editing remains
+  // gated by the PATCH route + the UI's canWrite/canEdit tier. Only the
+  // DOCUMENT rows below stay role-filtered.
+  const project = detail.project;
 
   // Document rows are identified by their cloned section NAME. Owner
   // 2026-07-16: the sales PIC's OWN deliverables — the rows badged
@@ -1765,19 +1761,25 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
       );
     }
     if (names.length) {
-      // Match the active section (lowest sort_order with open tasks).
+      // Keep events that still OWE work in the picked section — not events whose
+      // ACTIVE section is that one. Owner 2026-08-24: "why once i click task on
+      // expo map on whole sept to see my pending floorplan not appear at all".
+      // The old predicate compared against the lowest-sort_order section that
+      // still had an open task, so ONE unfinished early section hid every later
+      // one: measured on production that day, all 25 September events reported
+      // CONTRACT as their active section while 23 of them had open EXPO MAP
+      // tasks, so the filter answered "no results" for every section except
+      // CONTRACT. EXISTS is also what the chip now promises — it is labelled
+      // Task, lists a task COUNT per section, and paints a badge per open task
+      // of the picked section (section_tasks_map below).
       ors.push(
-        `(
-           SELECT s.name FROM project_checklist_sections s
-            WHERE s.project_id = p.id
-              AND EXISTS (
-                SELECT 1 FROM project_checklist c
-                 WHERE c.project_id = p.id
-                   AND c.section_id = s.id
-                   AND c.status NOT IN ('done','na')
-              )
-            ORDER BY s.sort_order LIMIT 1
-         ) IN (${names.map(() => "?").join(",")})`
+        `EXISTS (
+           SELECT 1 FROM project_checklist c
+             JOIN project_checklist_sections s ON s.id = c.section_id
+            WHERE c.project_id = p.id
+              AND c.status NOT IN ('done','na')
+              AND s.name IN (${names.map(() => "?").join(",")})
+         )`
       );
     }
     where.push(`(${ors.join(" OR ")})`);

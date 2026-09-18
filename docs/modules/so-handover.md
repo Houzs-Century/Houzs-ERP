@@ -1,133 +1,46 @@
-# Module: Salesperson handover (SCM)
+# Salesperson Handover
 
-> **Line numbers here are INDICATIVE.** Resolve a route to its current line with
-> the generated artifact, which is rebuilt from the tree:
->
-> ```bash
-> npm --prefix backend run gen:route-locator   # then grep docs/generated/route-locator.md
-> ```
+Moves a salesperson's Sales Orders to another salesperson, and separately lets several salespeople share access to one order. `salesperson_id` is the key SO row-visibility filters on, so an order left on a departed rep is invisible to whoever now answers that customer — this module exists to fix that in bulk. Read `sales-order.md` first.
 
-Moving a salesperson's Sales Orders to another salesperson. Written 2026-08-17
-when the owner asked, on a resignation: *"如果第一个销售人员PIC辞职，销售订单是否
-可以分配给第二个人PIC来更新销售订单"*.
+## Statuses and flow
 
-Read `sales-order.md` first — this module only moves ONE column on an order, but
-that column decides who can see it.
+Two separate operations, both bulk (up to 25 orders per call, `HANDOVER_BATCH_MAX`), both re-verifying each order at write time rather than trusting a stale list:
 
----
+- **Hand them to** (`POST /apply`, `{fromStaffId, toStaffId, docNos[]}`) — moves attribution: one new owner, writes `salesperson_id` + `agent` + an AutoCount edit. Three-step UI: pick who's leaving, review the exact orders, pick who takes them.
+- **Also give access to** (`POST /share`, `{staffIds[], docNos[], mode: add|remove}`) — grants or withdraws read/write access without moving attribution: any number of people, writes only `collaborator_staff_ids`. No primary among collaborators (owner ruling: equal access).
 
-## 1. Why this needed a module at all
+Both answer per-order (`{moved, skipped}` / `{changed, skipped}`), never a bare count — a partial application must be visible.
 
-`mfg_sales_orders.salesperson_id` is not decoration. It is the key SO row-level
-visibility filters on (`sales-order.md` §2, the `scopeIds` `in('salesperson_id', …)`
-on the list, detail, count and money queries). So an order left on a departed rep
-is not merely mis-labelled — **it is invisible to the person now answering that
-customer**, and it stays in the departed rep's My-Cases-style scope.
+## Permissions
 
-Two things blocked the fix before 2026-08-17:
+- `scm.so.attribute_other` gates `holders`, `preview`, `apply`, and `share` alike, plus the per-order `salespersonId` header PATCH on SO Detail.
+- Signing/using either endpoint requires this one key; there is no separate key for sharing vs. reassigning.
 
-1. **`salesperson_id` was in the SO identity lock** — frozen once a non-cancelled
-   DO / SI existed. That was collateral, not intent: a Delivery Order and a Sales
-   Invoice snapshot the customer, the addresses and the money. Neither snapshots
-   *who sold it*. The owner ruled the column out of the lock; everything else in
-   `SO_IDENTITY_LOCK_COLS` stays frozen.
-2. **The header PATCH had no server-side permission check.** It mapped
-   `salespersonId` straight through and relied on the SO Detail page disabling
-   the select. The route's scope check only proves the order is the caller's
-   OWN, so a self-scoped salesperson could hand their own order to anybody.
+## Rules that must not break
 
-Both now live in `backend/src/scm/shared/so-identity-lock.ts`, which is the file
-to read before changing any of this.
+- `salesperson_id` is deliberately excluded from the SO identity lock; every other locked column stays frozen once a non-cancelled DO/SI exists.
+- The `agent` (AutoCount rep name) field IS identity-locked, but a handover is allowed to change it *only* when it changed by following the salesperson (`agentFollowedSalesperson` flag) — a client-authored `agent` change stays locked. If this carve-out breaks, the symptom is a 409 naming `agent` on an otherwise legitimate handover.
+- `/apply` re-reads each order at write time and skips any whose `salesperson_id` no longer matches `fromStaffId` — never move an order based solely on the preview snapshot.
+- `access_staff_ids` (what every scoped SO read filters on) is DERIVED by a DB trigger from `salesperson_id` + `collaborator_staff_ids` — only ever write `collaborator_staff_ids`; never write the derived column directly.
+- The two migrations that added collaborator support (the table alter and the view that carries it) must ship together — the table alone breaks the SO list with a 500 for every user.
+- Sharing's reach is Sales Orders only, by owner ruling — Delivery Orders, Sales Invoices, Delivery Returns, Consignment Orders, quotes, reports and AR still filter on `salesperson_id` alone, because those documents snapshot the rep who sold it for commission.
+- `/apply` checks the migrated-SO lock (it writes `agent`, an AutoCount field) and refuses per-order into `skipped[]` rather than 409ing the whole batch; `/share` deliberately does NOT check that lock (nothing it writes syncs to AutoCount).
 
-## 2. The `agent` carve-out — the part that is easy to break
+## Gotchas
 
-`agent` is the AutoCount rep NAME on the header, and it IS identity-locked.
-`scm/lib/so-agent.ts` (`followSalespersonToAgent`) makes it follow a reassigned
-salesperson so the account book, the SO list and the Detail Listing stop naming
-the previous rep.
+- Use `GET /so-handover/holders` for the "From" picker, not `GET /staff` — the roster buckets an AutoCount-imported rep with no ERP login onto the 2990 mirror company, hiding them even though their orders are in the active company; switching company doesn't help since the person and the orders then live in different company scopes.
+- A migrated order inside a batch lands in `skipped[]` with its own reason instead of failing the whole request — always check `skipped[]`, a 200 does not mean every order moved.
+- Sharing alone does not fix the AutoCount book or the SO list's displayed rep — if a departed rep must stop being named there, run "Hand them to" as well, not just "Also give access to".
+- There is no "replace" mode on `/share`, only `add` / `remove` — an unrecognised mode falls back to `add`. A replace was rejected on purpose: it would silently drop a grant someone else made.
+- A share that already exists reports as `skipped`, not `changed` — a second identical grant is a no-op and the response says so.
+- The "Shared with" field is absent (not blank) on an unshared order — most orders have no collaborators, and rendering blank rows everywhere would train people to stop reading the field.
 
-Those two facts fight each other: unlocking `salesperson_id` alone is dead on
-arrival, because handing over a delivered order also writes the new name into
-`agent` and the lock 409s on THAT instead. So the header PATCH records whether
-`agent` changed *only* because it followed the salesperson, and
-`changedIdentityLockCols(updates, before, { agentFollowedSalesperson })` exempts
-exactly that case. A client-authored `agent` never sets the flag and stays
-locked.
+## Where the code is
 
-If a future change moves the follow, moves the lock check, or reorders them, this
-carve-out is what silently breaks — the symptom is a 409 `so_identity_locked`
-naming `agent` on an otherwise legitimate handover.
-
-## 3. Surface
-
-| Method | Path | Permission | Purpose |
-|--------|------|-----------|---------|
-| GET | `/api/scm/so-handover/preview?from=<staffId>` | `scm.so.attribute_other` | Every SO in the active company currently attributed to that staff id: `{ from, total, truncated, batchMax, orders[] }`, capped at 500 |
-| POST | `/api/scm/so-handover/apply` | `scm.so.attribute_other` | Moves a named batch: `{ fromStaffId, toStaffId, docNos[] }` → `{ moved[], skipped[] }` |
-
-Both in `backend/src/scm/routes/so-handover.ts`, mounted in `scm/index.ts` behind
-the `scm.sales.orders` area guard. The preview is gated too — it enumerates
-another salesperson's order book.
-
-Also reachable per-order: the header PATCH (`salespersonId`) from SO Detail, same
-permission, same audit. On a hard-locked (DO/SI) order the page-level **Edit**
-button opens for a caller who may re-attribute, and only the Salesperson field
-opts out of the lock — every other field stays disabled, so **Override** is still
-the door for addresses and lines.
-
-### Refusals
-
-| Status | Body | When |
-|---|---|---|
-| 403 | `forbidden` | caller lacks `scm.so.attribute_other` |
-| 403 | `forbidden_attribute_other` | same, via the header PATCH |
-| 400 | `missing_staff` / `same_staff` / `no_orders` / `too_many_orders` | payload guard, `parseHandoverBody` |
-| 409 | company-unresolved refusal | no active company on the request |
-
-## 4. Why apply() is shaped the way it is
-
-- **The operator sees the list first.** Three steps — pick who is leaving, read
-  the exact orders, pick who takes them. Reassignment is bulk and irreversible-ish
-  (an undo is another handover), so the middle step is the product, not a
-  formality.
-- **`docNos` is explicit, never "everything for this staff id".** The preview can
-  be minutes old, so `apply` re-reads each order and **skips any whose
-  `salesperson_id` is no longer `fromStaffId`**, reporting the reason. Without
-  that re-check a stale tab could move an order somebody else had just claimed.
-- **25 per batch** (`HANDOVER_BATCH_MAX`). Each order costs a read, a write, an
-  audit row and an AutoCount enqueue; the UI loops batches and shows progress. A
-  60-order POST that 524s halfway is worse than four clean batches.
-- **Per-order reporting, not a count.** `{ moved, skipped }` — a handover that
-  half-applied in silence is how an order goes missing from both reps' lists.
-- **No financial column is written.** Commission is booked off the DO / SI
-  snapshots, which keep the rep who sold the order; moving the SO re-books
-  nothing.
-
-## 5. What each moved order writes
-
-| Sink | What lands |
-|---|---|
-| `mfg_sales_orders` | `salesperson_id` = new staff; `agent` = new staff's name (skipped when that name cannot be read — a stale name beats an empty one) |
-| `mfg_so_audit_log` | `recordSoAudit` `UPDATE_DETAILS`, field changes `salespersonId` and `agent` with from → to, note `Salesperson handover` |
-| AutoCount outbox | `enqueueEdit({ docType: 'SO', touchedFields: ['agent'] })` — see `autocount-writeback.md`; without it the account book keeps naming the departed rep |
-
-## 6. Frontend
-
-`frontend/src/pages/scm-v2/SalespersonHandover.tsx`, rendered as a collapsible
-section on **SO Maintenance** (`/scm/sales-orders/maintenance`) behind the same
-permission the API enforces.
-
-- **From** reads the FULL roster (`useStaff`) — the person handing over is usually
-  deactivated already, and an active-only list would hide the exact case this
-  tool exists for. Inactive people are labelled.
-- **To** reads `usePickableStaff` (company-scoped, active only), so an order can
-  never land on a departed or cross-company rep.
-- Both pickers are the house `SearchableSelect`.
-
-## 7. Tests
-
-| File | Pins |
-|---|---|
-| `backend/src/scm/shared/so-identity-lock.test.ts` | what still freezes, that `salesperson_id` does not, the `agent` carve-out, and that the carve-out smuggles nothing else through |
-| `backend/src/scm/routes/so-handover.test.ts` | the payload guard: both staff ids required, no self-handover, dedupe, the batch cap |
-| `frontend/src/pages/scm-v2/SalespersonHandover.test.tsx` | the preview is a GET before any write, the 25-per-batch chunking, and that skips are reported rather than swallowed |
+- `backend/src/scm/routes/so-handover.ts` — holders/preview/apply/share routes.
+- `backend/src/scm/shared/so-identity-lock.ts` — identity lock + the `agent` carve-out.
+- `backend/src/scm/lib/so-agent.ts` — `followSalespersonToAgent`.
+- `backend/src/db/migrations-pg/20260909T1000_scm_so_collaborator_staff_ids.sql`, `20260909T1001_scm_so_payment_totals_view_carries_collaborators.sql` — collaborator columns + trigger + view.
+- `frontend/src/pages/scm-v2/SalespersonHandover.tsx` — the panel on SO Maintenance.
+- `frontend/src/vendor/scm/lib/so-collaborators.ts` — id-to-name resolution shared by desktop/mobile.
+- `backend/scripts/check-so-holders.mjs` — read-only diagnostic for who actually holds orders.

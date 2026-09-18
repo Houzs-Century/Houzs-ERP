@@ -1,0 +1,81 @@
+name: PostgREST contract — SO list filters
+
+# Starts a disposable Postgres and a REAL PostgREST (the version staging runs —
+# `PostgREST 14.5` read from staging's pg_stat_activity, probe run 34819831872),
+# loads the fixture and the computed-field migration, and drives the Sales Order
+# list's second-level filters through postgrest-js and the list handler's own
+# prepareSoListFilters. It exists because no other check in this repo runs
+# PostgREST: unit tests pin the predicates, the pg test pins the SQL, and only
+# this answers whether PostgREST accepts a filter on a function over the view's
+# row inside a count=exact page, a grouped aggregate and a sum aggregate.
+# Touches no shared database.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - backend/src/db/migrations-pg/20260914T1600_scm_so_list_line_filter_fields.sql
+      - backend/src/scm/lib/so-list-query-filters.ts
+      - backend/src/scm/shared/so-list-filter-model.ts
+      - backend/scripts/postgrest-contract/**
+      - .github/workflows/postgrest-contract-so-list-filters.yml
+
+concurrency:
+  group: postgrest-contract-so-list-filters-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: contract
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d contract"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      PGURL: postgres://postgres:postgres@127.0.0.1:5432/contract
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - name: Load the fixture and the migration
+        run: |
+          set -euo pipefail
+          psql "$PGURL" -v ON_ERROR_STOP=1 -q -f scripts/postgrest-contract/so-list-filters-fixture.sql
+          psql "$PGURL" -v ON_ERROR_STOP=1 -q -f src/db/migrations-pg/20260914T1600_scm_so_list_line_filter_fields.sql
+      - name: Start PostgREST 14.5
+        run: |
+          set -euo pipefail
+          docker run -d --name postgrest --network host \
+            -e PGRST_DB_URI="$PGURL" \
+            -e PGRST_DB_SCHEMAS=scm \
+            -e PGRST_DB_ANON_ROLE=service_role \
+            -e PGRST_DB_AGGREGATES_ENABLED=true \
+            -e PGRST_SERVER_PORT=3000 \
+            postgrest/postgrest:v14.5
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:3000/ > /dev/null 2>&1; then echo "PostgREST is up"; break; fi
+            sleep 1
+          done
+          docker logs postgrest | tail -5
+      - name: Drive the list filters through PostgREST
+        run: npx tsx scripts/postgrest-contract/so-list-filters.check.ts
+      - name: PostgREST log
+        if: always()
+        run: docker logs postgrest | tail -40

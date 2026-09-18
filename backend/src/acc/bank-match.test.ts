@@ -16,8 +16,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   groupBankMovements, recogniseAcquirer, matchBankMovements, exactCombination,
-  type BankRecognitionRule, type PayableBatch, type PayoutAdviceForMatch,
-} from './bank-match';
+  type BankRecognitionRule, type PayableBatch, type PayoutAdviceForMatch, namesAgree, obviousEntryFor,
+  bankReversalPairs, type ReversalSource } from './bank-match';
 import type { BankLine } from './bank-parse';
 
 let seq = 0;
@@ -46,6 +46,35 @@ const RULES: BankRecognitionRule[] = [
     tradingDatePattern: 'MERCHANT\\s+(\\d{8})',
   },
 ];
+
+/* ── The 2990 Hong Leong statement's two more shapes (2026-09-08) ──────────── */
+describe('GHL and the split "MERCHAN T" — the rules as 20260908T2100 seeds them', () => {
+  const RULES_2990: BankRecognitionRule[] = [
+    { acquirerCode: 'PBB', pattern: 'PBB-PBCS' },
+    { acquirerCode: 'HLB', pattern: 'CA Credit Advice', tradingDatePattern: 'MERCHAN\\s*T\\s+(\\d{8})', merchantPattern: '(\\d{9,})\\s+MERCHAN' },
+    { acquirerCode: 'GHL', pattern: '/GHL/|FOR GHL', merchantPattern: '/GHL/(\\d{6,})' },
+  ];
+
+  it('a GHL payout arrives as an interbank GIRO credit naming /GHL/<merchant>', () => {
+    const seen = recogniseAcquirer(RULES_2990, {
+      description: 'Cr Adv-Interbank GIRO at KLM',
+      reference: '161320P226260720 /GHL/6600030486 DMS A3 (FOR GHL)',
+    });
+    expect(seen).toEqual({ acquirerCode: 'GHL', tradingDate: null, merchantNo: '6600030486' });
+  });
+
+  it("Hong Leong's own credit reads the trading day whether the word MERCHANT is whole or split", () => {
+    const whole = recogniseAcquirer(RULES_2990, { description: 'CA Credit Advice', reference: '00005992235  MERCHANT 20260617' });
+    expect(whole).toEqual({ acquirerCode: 'HLB', tradingDate: '2026-06-17', merchantNo: '00005992235' });
+    const split = recogniseAcquirer(RULES_2990, { description: 'CA Credit Advice', reference: '00005992284 MERCHAN T 20260824' });
+    expect(split).toEqual({ acquirerCode: 'HLB', tradingDate: '2026-08-24', merchantNo: '00005992284' });
+  });
+
+  it("a Public Bank advice on the same statement is still Public Bank's", () => {
+    const seen = recogniseAcquirer(RULES_2990, { description: 'Cr Adv-Interbank GIRO at KLM', reference: '2026081200006541 03999061714 PBB-PBCS AC 3' });
+    expect(seen?.acquirerCode).toBe('PBB');
+  });
+});
 
 describe('joining a credit to the charge taken back against it', () => {
   /* The real pair: RM 875.00 in and RM 3.94 out, same reference, same day. */
@@ -488,5 +517,115 @@ describe('a credit the payment advice answers for', () => {
       rules: RULES, batches: twoOfEach, payouts: [august, september],
     })[0]!;
     expect(undecided.kind).toBe('PAYOUT_UNSURE');
+  });
+});
+
+/* ── The obvious ones (docs/bugs/0814) ────────────────────────────────────────
+   Owner, 2026-09-11, on a RM 45,000 rental transfer with exactly one entry of
+   RM 45,000 in the books, to NAVINDER SINGH GILL, the bank line reading
+   "Rental - Jun'26 PARVEEN AND NAVINDER": 你看着 45,000 为什么我还需要自己
+   manual 匹配？ And the rule he set: 只要名字金额一样就自动都对，名字不一样不
+   确定我可以 manual 对. So: exactly one same-amount entry within the window AND
+   the bank's text names the payee → matched without a hand. */
+describe('names on the bank and in the books', () => {
+  it('agree when the bank\'s text carries a word of the payee', () => {
+    expect(namesAgree("Rental - Jun'26 PARVEEN AND NAVINDER 20260606HLBBMYKL", 'NAVINDER SINGH GILL')).toBe(true);
+    expect(namesAgree('JomPAY Bill Payment TENAGA NASIONAL BERHAD CIBJOM3004', 'TENAGA NASIONAL BERHAD')).toBe(true);
+    expect(namesAgree('2990 Home PV-000050 HOUZS VENTURE HOLDING SDN. BHD.', 'HOUZS VENTURE HOLDING SDN BHD')).toBe(true);
+  });
+
+  /* Hong Leong truncates: "PENGURUSAN AIR SELANGO". A word that is the start
+     of the other, five letters or more, still agrees. */
+  it('survive the bank cutting a name short', () => {
+    expect(namesAgree('6598159943 PENGURUSAN AIR SELANGO CIBJOM', 'AIR SELANGOR')).toBe(true);
+  });
+
+  it('do not agree on company boilerplate alone, or when the books name nobody', () => {
+    expect(namesAgree('Fund Transfer SDN BHD PAYMENT', 'CATRON TRADING SDN BHD')).toBe(false);
+    expect(namesAgree('LAU LEE YEN', null)).toBe(false);
+    expect(namesAgree('LAU LEE YEN', 'Payment received (transfer) — 2990-SO-2606-001')).toBe(false);
+  });
+});
+
+describe('the obvious entry for a movement', () => {
+  const ledger = [
+    { jeNo: 'JE-1', entryDate: '2026-06-06', sourceType: 'PV', sourceDocNo: 'HPV-2606-023', debitSen: 0, creditSen: 4500000, partyName: 'NAVINDER SINGH GILL' },
+    { jeNo: 'JE-2', entryDate: '2026-06-03', sourceType: 'PV', sourceDocNo: 'HPV-2606-003', debitSen: 0, creditSen: 287212, partyName: 'Internal transfer to 310-0030' },
+    { jeNo: 'JE-3', entryDate: '2026-06-10', sourceType: 'PV', sourceDocNo: 'HPV-2606-008', debitSen: 0, creditSen: 100000, partyName: 'VIVIAN CHOW WAI MAN' },
+    { jeNo: 'JE-4', entryDate: '2026-06-11', sourceType: 'PV', sourceDocNo: 'HPV-2606-009', debitSen: 0, creditSen: 100000, partyName: 'LOO WEN WEI' },
+  ];
+  const mv = (over: Partial<{ bookedOn: string; amountSen: number; description: string; reference: string | null }> = {}) => ({
+    bookedOn: '2026-06-06', amountSen: -4500000, description: 'CIB Instant Transfer at DIO', reference: "Rental - Jun'26 PARVEEN AND NAVINDER", ...over,
+  });
+
+  it('is the one same-amount entry the bank names, days apart or not', () => {
+    expect(obviousEntryFor(mv(), ledger, new Set())?.jeNo).toBe('JE-1');
+    expect(obviousEntryFor(mv({ bookedOn: '2026-06-10' }), ledger, new Set())?.jeNo).toBe('JE-1');
+  });
+
+  it('is nothing when the amount agrees but the name does not — that is a hand\'s call', () => {
+    expect(obviousEntryFor(mv({ reference: 'Rental - PARVEEN' }), ledger, new Set())).toBeNull();
+  });
+
+  it('is nothing when two entries carry the amount, even if one is named', () => {
+    expect(obviousEntryFor(mv({ bookedOn: '2026-06-10', amountSen: -100000, reference: 'VIVIAN CHOW' }), ledger, new Set())).toBeNull();
+  });
+
+  it('is nothing when the only entry is already claimed', () => {
+    expect(obviousEntryFor(mv(), ledger, new Set(['JE-1']))).toBeNull();
+  });
+});
+
+/* ── A movement the bank itself reversed (docs/bugs/0817) ─────────────────────
+   Hong Leong, 04/06/2026: 2990's RM 2,872.75 instant transfer to its own
+   Alliance account failed and the bank put it back the same day — "CIB
+   Instant Transfer Reversal", the SAME transaction reference — while a second
+   transfer under a fresh reference went through. The pair is the bank's own
+   business; the retry is what the books' transfer voucher is for (owner:
+   这两笔是 contra 的，bank transaction fail). */
+describe('a movement the bank itself reversed', () => {
+  const ref = (id: string) => `Alliance PV-000035 2990 HOME SDN. BHD. 20260604HLBBMYKL010OCB${id}`;
+  const mv = (id: number, over: Partial<ReversalSource> = {}): ReversalSource => ({
+    id, lineNo: id, bookedOn: '2026-06-04', description: 'CIB Instant Transfer at DIO',
+    reference: ref('02763120'), amountSen: -287275, ...over,
+  });
+  const reversal = (id: number, over: Partial<ReversalSource> = {}) =>
+    mv(id, { description: 'CIB Instant Transfer Reversal at DIO', amountSen: 287275, ...over });
+  const ids = (pairs: ReturnType<typeof bankReversalPairs<ReversalSource>>) => pairs.map((p) => [p.original.id, p.reversal.id]);
+
+  it('pairs the reversal with the movement carrying its reference, not with the retry', () => {
+    expect(ids(bankReversalPairs([
+      mv(14),
+      mv(18, { reference: '2990 Fund Tranfer 2990 HOME SDN. BHD. 20260604HLBBMYKL010OCB03546681' }),
+      reversal(20),
+    ]))).toEqual([[14, 20]]);
+  });
+
+  it('forgives the spacing and the case of the reference, and the order the lines arrive in', () => {
+    expect(ids(bankReversalPairs([
+      reversal(20, { reference: `  ${ref('02763120').toLowerCase()}  ` }),
+      mv(14),
+    ]))).toEqual([[14, 20]]);
+  });
+
+  it("refuses a pair without the bank's word, a shared reference, or the money cancelling", () => {
+    /* A credit that is not called a reversal is a credit. */
+    expect(bankReversalPairs([mv(1), mv(2, { amountSen: 287275 })])).toEqual([]);
+    /* A blank reference is not one two lines can share. */
+    expect(bankReversalPairs([mv(1, { reference: null }), reversal(2, { reference: null })])).toEqual([]);
+    expect(bankReversalPairs([mv(1, { reference: '   ' }), reversal(2, { reference: '   ' })])).toEqual([]);
+    /* Another reference is another transaction. */
+    expect(bankReversalPairs([mv(1, { reference: ref('03546681') }), reversal(2)])).toEqual([]);
+    /* The money must cancel to the sen. */
+    expect(bankReversalPairs([mv(1), reversal(2, { amountSen: 287200 })])).toEqual([]);
+    /* A reversal booked before what it reverses is not one. */
+    expect(bankReversalPairs([mv(1, { bookedOn: '2026-06-05' }), reversal(2)])).toEqual([]);
+    /* Two reversals never pair with each other. */
+    expect(bankReversalPairs([reversal(1, { amountSen: -287275 }), reversal(2)])).toEqual([]);
+  });
+
+  it('gives each reversal one original, the earliest still unpaired, and never an original twice', () => {
+    expect(ids(bankReversalPairs([mv(1), mv(2), reversal(3), reversal(4)]))).toEqual([[1, 3], [2, 4]]);
+    expect(ids(bankReversalPairs([mv(1), reversal(3), reversal(4)]))).toEqual([[1, 3]]);
   });
 });

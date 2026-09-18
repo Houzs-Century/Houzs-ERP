@@ -116,6 +116,31 @@ describe("pgrest-shim — the loud-failure contract", () => {
     expect(sb.__gaps.length).toBe(1);
   });
 
+  /* docs/bugs/0668 — the embedded FILTER, the half the gap list used to miss.
+     `so-stock-allocation.ts` filters its inverted reads on an embedded alias
+     (`.not('so.status', 'in', …)`, `.gt('po_items.received_qty', 0)`). Those
+     dotted names reached `q()` and fell through to the plain "unsafe
+     identifier" throw, which records NOTHING on __gaps — so the shim's own
+     safety net never fired for the one shape the allocator uses, and
+     `recompute-so-allocation` printed "the projection already matches" over
+     three green production dispatches that judged not one line. */
+  test("an embedded FILTER is a recorded gap, not a bare unsafe-identifier throw", async () => {
+    const { sql } = fakeSql([]);
+    const sb = pgrestShim(sql as never);
+    const res = await sb.from("mfg_sales_order_items").select("id").not("so.status", "in", "(DRAFT)");
+    expect(res.error?.message).toContain("GAP");
+    expect(sb.__gaps.length).toBe(1);
+    expect(sb.__gaps[0]).toContain("so.status");
+  });
+
+  test("a scalar comparison on an embedded alias is the same gap", async () => {
+    const { sql } = fakeSql([]);
+    const sb = pgrestShim(sql as never);
+    const res = await sb.from("mfg_sales_order_items").select("id").gt("po_items.received_qty", 0);
+    expect(res.error?.message).toContain("GAP");
+    expect(sb.__gaps[0]).toContain("po_items.received_qty");
+  });
+
   test("unsafe identifiers are refused before any SQL is built", () => {
     const { sql } = fakeSql([]);
     const sb = pgrestShim(sql as never);
@@ -132,6 +157,20 @@ describe("pgrest-shim — 2026-08-01 growth: the recomputeSoStockAllocation surf
       .not("status", "in", "(CANCELLED,CLOSED,SHIPPED,DELIVERED,INVOICED,DRAFT)");
     expect(calls[0].text).toContain('"status" NOT IN ($1, $2, $3, $4, $5, $6)');
     expect(calls[0].params).toEqual(["CANCELLED", "CLOSED", "SHIPPED", "DELIVERED", "INVOICED", "DRAFT"]);
+  });
+
+  /* mrp.ts `sqlNotInList` writes the QUOTED form. Split naively, the quotes
+     stayed inside each value and computeMrp died on its first read with
+     `invalid input value for enum scm.mfg_so_status: ""CANCELLED""` — so no
+     script could run the real MRP engine over this shim (2026-09-14). */
+  test(".not(col,'in','(\"A\",\"B\")') — the QUOTED list mrp.ts writes binds bare values", async () => {
+    const { sql, calls } = fakeSql([]);
+    const sb = pgrestShim(sql as never);
+    await sb.from("mfg_sales_orders")
+      .select("doc_no, status")
+      .not("status", "in", '("CANCELLED","DRAFT")');
+    expect(calls[0].text).toContain('"status" NOT IN ($1, $2)');
+    expect(calls[0].params).toEqual(["CANCELLED", "DRAFT"]);
   });
 
   test(".or('a.is.null,b.lt.<ISO>') — the lock-claim disjunction; the ISO value keeps its dots", async () => {

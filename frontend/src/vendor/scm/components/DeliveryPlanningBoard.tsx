@@ -747,7 +747,8 @@ export function DeliveryPlanningBoard({
          columns are structurally empty. Five columns were removed outright in
          that pass — Days Left, Delivered Date, Property, Possession, Referral,
          Internal Est. — and the address moved INTO the default view, because
-         where the lorry is going is a planning question. */
+         where the lorry is going is a planning question. Referral came BACK
+         on 2026-09-15 as "Reference" (default-hidden, see below). */
       // What is this row, and who is it for (owner 2026-08-19: + who sold it
       // and at which venue — Salesperson / Venue joined the default view)
       'row_type', 'so_doc_no', 'company_code', 'debtor_name', 'salesperson', 'venue', 'phone', 'wa_message',
@@ -779,11 +780,11 @@ export function DeliveryPlanningBoard({
       // Execution times — filled in as the day happens, not while planning it
       'time_range', 'time_confirmed', 'arrival_at', 'departure_at',
       // Customer detail
-      'house_type', 'replacement_disposal', 'branding',
+      'house_type', 'replacement_disposal', 'so_ref', 'branding',
       // Crew detail — the Driver / Lorry columns above carry the summary
       'driver_ic', 'driver_contact', 'driver_2', 'helper_1', 'helper_2',
       // Document + money
-      'so_date', 'warehouse', 'do_date', 'balance_sen',
+      'so_date', 'warehouse', 'do_date', 'po_nos', 'balance_sen',
     ];
     const pos = new Map(DP_DEFAULT_ORDER.map((k, i) => [k, i] as const));
     const cols: DataGridColumn<PlanningOrder>[] = [
@@ -898,8 +899,9 @@ export function DeliveryPlanningBoard({
        pass, and `house_type` took over its NAME — one "Building Type" column
        instead of two that nobody could tell apart. The API still sends
        building_type and PlanningOrder still types it; only this board stopped
-       showing it. `possession_date` and `referral` went the same way: they
-       answer a sales question, not a dispatch one. */
+       showing it. `possession_date` went the same way: it answers a sales
+       question, not a dispatch one. `referral` went too, and came back on
+       2026-09-15 as "Reference" — below. */
     {
       key: 'house_type', label: 'Building Type', width: 130, groupable: true, defaultHidden: true,
       accessor: (o) => o.house_type ?? '—',
@@ -910,6 +912,18 @@ export function DeliveryPlanningBoard({
       key: 'replacement_disposal', label: 'Replacement / Disposal', width: 180, defaultHidden: true,
       accessor: (o) => o.replacement_disposal ?? '—',
       searchValue: (o) => o.replacement_disposal ?? '',
+    },
+    {
+      /* Reference — the order's own reference, `mfg_sales_orders.ref` (AutoCount
+         Ref, e.g. pg0791 on HC-SO-004574; the delivery sheet's Ref column).
+         Owner 2026-09-15 ("delivery planning 没有 reference number 选项"). First
+         shipped reading `referral` (#3961) — the HC referral CHANNEL, empty on
+         every order — so the column was blank; docs/bugs/0934. Default-HIDDEN:
+         it lives in the Columns panel, not the default view. SO rows only. */
+      key: 'so_ref', label: 'Reference', width: 140, groupable: true, defaultHidden: true,
+      accessor: (o) => o.so_ref ?? '—',
+      searchValue: (o) => o.so_ref ?? '',
+      groupValue: (o) => o.so_ref ?? '(none)',
     },
     {
       /* The order's ACTUAL customer state (Kuala Lumpur / Selangor / Johor …).
@@ -1153,6 +1167,7 @@ export function DeliveryPlanningBoard({
       )),
       searchValue: (o) => (o.row_type !== 'so' ? '' : String(o.local_total_sen)),
       exportValue: (o) => (o.row_type !== 'so' ? '' : o.local_total_sen / 100),
+      exportFormat: 'money',
       sortFn: (a, b) => a.local_total_sen - b.local_total_sen,
       numberValue: (o) => (o.row_type !== 'so' ? null : o.local_total_sen / 100),
     },
@@ -1175,6 +1190,7 @@ export function DeliveryPlanningBoard({
       ),
       searchValue: (o) => String(liveBalance(o)),
       exportValue: (o) => liveBalance(o) / 100,
+      exportFormat: 'money',
       sortFn: (a, b) => liveBalance(a) - liveBalance(b),
       numberValue: (o) => liveBalance(o) / 100,
     },
@@ -1184,6 +1200,16 @@ export function DeliveryPlanningBoard({
         ? <span style={DOCNO_STYLE}>{o.delivery_orders.map((d) => d.do_number).join(', ')}</span>
         : '—'),
       searchValue: (o) => o.delivery_orders.map((d) => d.do_number).join(' '),
+    },
+    {
+      /* PO No. — the purchase orders RAISED from this SO, the SO list's muted
+         raised-PO chips (same walk: backend lib/so-converted-po.ts, adapted per
+         company by lib/planning-po-nos.ts). Owner 2026-09-15, asked for beside
+         Reference. Default-hidden; SO rows only, a dash on the synthetic kinds. */
+      key: 'po_nos', label: 'PO No.', width: 150, groupable: true, defaultHidden: true,
+      accessor: (o) => (o.po_nos?.length ? <span style={DOCNO_STYLE}>{o.po_nos.join(', ')}</span> : '—'),
+      searchValue: (o) => (o.po_nos ?? []).join(' '),
+      groupValue: (o) => (o.po_nos?.length ? o.po_nos.join(', ') : '(none)'),
     },
     /* DO Date — the latest DO's OWN document date (delivery_orders.do_date), from
        the same latest-DO lookup the crew / HC fields use. Default-HIDDEN since

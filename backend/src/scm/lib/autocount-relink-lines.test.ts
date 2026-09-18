@@ -112,3 +112,168 @@ describe('matching a keyless ERP line to the account book', () => {
     expect(new Set(plan.assign.map((a) => a.id)).size).toBe(2);
   });
 });
+
+/* A SOFA IS ONE BOOK LINE. The ERP holds a build as its compartments; AutoCount
+ * holds it as a single detail under `<model>-1S`. Until 2026-09-11 this planner
+ * compared the two one-to-one, so every compartment of every build was refused
+ * — the `stamped 0` the relink sweep reported with no cause named, and the
+ * reason HC-GRN-2609-008's eight 8060 lines could not be repaired by hand
+ * either.
+ */
+describe('a sofa build folds to one book line', () => {
+  const compartment = (id: string, code: string, dtlKey: number | null = null): ErpLineForRelink =>
+    ({ id, acItemCode: code, desc2: null, dtlKey });
+
+  test('every compartment of the build takes the one book line s key', () => {
+    const plan = planLineRelink({
+      bookLines: [book({ DtlKey: 7001, ItemCode: '8060-1S' })],
+      erpLines: [
+        compartment('c1', '8060-1B(LHF)'),
+        compartment('c2', '8060-CNR'),
+        compartment('c3', '8060-1NA'),
+      ],
+    });
+    expect(plan.assign.map((a) => [a.id, a.dtlKey])).toEqual([['c1', 7001], ['c2', 7001], ['c3', 7001]]);
+    expect(plan.refused).toEqual([]);
+  });
+
+  /* The build's own kept rows name its book line better than any matcher can:
+     one AutoCount line has one DtlKey. */
+  test('compartments adopt the key their kept siblings already carry', () => {
+    const plan = planLineRelink({
+      bookLines: [book({ DtlKey: 7001, ItemCode: '8060-1S' }), book({ DtlKey: 7002, ItemCode: '8060-1S' })],
+      erpLines: [
+        compartment('kept', '8060-1A(RHF)', 7002),
+        compartment('c1', '8060-CNR'),
+      ],
+    });
+    expect(plan.assign).toEqual([{ id: 'c1', dtlKey: 7002, itemCode: '8060-CNR' }]);
+    expect(plan.refused).toEqual([]);
+  });
+
+  /* Two builds of one model on one document. Telling them apart needs the
+     composed build text, which this planner does not hold — so it refuses the
+     group rather than handing one build the other's line. */
+  test('two unclaimed lines of the same model refuse the whole build', () => {
+    const plan = planLineRelink({
+      bookLines: [book({ DtlKey: 7001, ItemCode: '9058-1S' }), book({ DtlKey: 7002, ItemCode: '9058-1S' })],
+      erpLines: [compartment('c1', '9058-CNR'), compartment('c2', '9058-1NA')],
+    });
+    expect(plan.assign).toEqual([]);
+    expect(plan.refused[0]).toContain('2 unclaimed lines with that item code');
+  });
+
+  /* A repair that fixes the ordinary lines and names the sofa is better than
+     one that refuses the document whole. */
+  test('a refused build leaves the document s ordinary lines repaired', () => {
+    const plan = planLineRelink({
+      bookLines: [
+        book({ DtlKey: 7001, ItemCode: '9058-1S' }),
+        book({ DtlKey: 7002, ItemCode: '9058-1S' }),
+        book({ DtlKey: 7100, ItemCode: 'HOK-SQUARE PILLOW' }),
+      ],
+      erpLines: [
+        compartment('c1', '9058-CNR'),
+        erp({ id: 'pillow', acItemCode: 'HOK-SQUARE PILLOW' }),
+      ],
+    });
+    expect(plan.assign).toEqual([{ id: 'pillow', dtlKey: 7100, itemCode: 'HOK-SQUARE PILLOW' }]);
+    expect(plan.refused).toHaveLength(1);
+    expect(plan.refused[0]).toContain('sofa 9058');
+  });
+
+  /* The compartment suffix is what makes a code a sofa. An ordinary hyphenated
+     code must keep going through the one-to-one path. */
+  test('an ordinary hyphenated code is not treated as a build', () => {
+    const plan = planLineRelink({
+      bookLines: [book({ DtlKey: 8001, ItemCode: 'AK-BASTION MATT (Q)' })],
+      erpLines: [erp({ id: 'm1', acItemCode: 'AK-BASTION MATT (Q)' })],
+    });
+    expect(plan.assign).toEqual([{ id: 'm1', dtlKey: 8001, itemCode: 'AK-BASTION MATT (Q)' }]);
+  });
+  /* THE ORDERING IS THE LOAD-BEARING PART. The book does not always fold: a live
+     delivery order keeps its 9028 compartments as three lines under their own
+     codes (autocountRelinkSweep.test.ts). Folding first would refuse all three
+     and lose three provable stamps, so the fold only ever sees a row pass 1
+     could find no line for. */
+  test('the book s own per-compartment lines win over the fold', () => {
+    const plan = planLineRelink({
+      bookLines: [
+        book({ DtlKey: 5001, ItemCode: '9028-2A(LHF)', Desc2: null }),
+        book({ DtlKey: 5002, ItemCode: '9028-L(RHF)', Desc2: null }),
+        book({ DtlKey: 5003, ItemCode: '9028-1S', Desc2: null }),
+      ],
+      erpLines: [compartment('a', '9028-2A(LHF)'), compartment('b', '9028-L(RHF)')],
+    });
+    expect(plan.assign.map((x) => [x.id, x.dtlKey])).toEqual([['a', 5001], ['b', 5002]]);
+    expect(plan.refused).toEqual([]);
+  });
+});
+
+/* `absent` — THE ONLY REFUSAL A CALLER MAY TURN INTO A DECLARATION.
+ *
+ * AcSyncService offers two ways out of a keyless line: store its DtlKey, or
+ * mark it IsNewLine. The second is honest only when the line really is new, and
+ * this list is the proof: the book carries NO line with that item code, claimed
+ * or not. A book line another row has claimed still EXISTS, and declaring
+ * against it would append a second copy — permanently, because this SDK gives
+ * DeleteDetail to SalesOrder alone. docs/bugs/0817.
+ */
+describe('what the account book has no line for at all', () => {
+  test('a code on no book line is absent', () => {
+    const plan = planLineRelink({
+      bookLines: [book({ DtlKey: 5001, ItemCode: 'AK-ARMOUR MATT (SK)' })],
+      erpLines: [
+        erp({ id: 'matt', acItemCode: 'AK-ARMOUR MATT (SK)' }),
+        erp({ id: 'pillow', acItemCode: 'AK-SLEEP ESSENTIAL 7 HOLES' }),
+      ],
+    });
+    expect(plan.assign).toEqual([{ id: 'matt', dtlKey: 5001, itemCode: 'AK-ARMOUR MATT (SK)' }]);
+    expect(plan.absent).toEqual([{ id: 'pillow', itemCode: 'AK-SLEEP ESSENTIAL 7 HOLES' }]);
+  });
+
+  /* THE TRAP THIS LIST EXISTS TO AVOID. The book HAS the line; another ERP row
+     took it. "No unclaimed line" is true and "absent" is false, and declaring
+     this row new would duplicate a line the book already holds. */
+  test('a code whose only book line another row claimed is NOT absent', () => {
+    const plan = planLineRelink({
+      bookLines: [book({ DtlKey: 5001, ItemCode: 'HOK-SQUARE PILLOW' })],
+      erpLines: [
+        erp({ id: 'kept', acItemCode: 'HOK-SQUARE PILLOW', dtlKey: 5001 }),
+        erp({ id: 'second', acItemCode: 'HOK-SQUARE PILLOW' }),
+      ],
+    });
+    expect(plan.assign).toEqual([]);
+    expect(plan.refused[0]).toContain('no unclaimed line with that item code');
+    expect(plan.absent, 'a claimed line still EXISTS').toEqual([]);
+  });
+
+  /* A repeated code the book can no longer separate is a matching failure, not
+     a new line: the book holds those lines. */
+  test('an ambiguous repeat is refused but never absent', () => {
+    const plan = planLineRelink({
+      bookLines: [
+        book({ DtlKey: 6001, ItemCode: 'HOK-2008(A) (Q)', Desc2: null }),
+        book({ DtlKey: 6002, ItemCode: 'HOK-2008(A) (Q)', Desc2: null }),
+      ],
+      erpLines: [
+        erp({ id: 'a', acItemCode: 'HOK-2008(A) (Q)', desc2: null }),
+        erp({ id: 'b', acItemCode: 'HOK-2008(A) (Q)', desc2: null }),
+      ],
+    });
+    expect(plan.absent).toEqual([]);
+    expect(plan.refused.length).toBeGreaterThan(0);
+  });
+
+  /* The folded-sofa refusal asks about `<model>-1S`. A build the book holds
+     under its compartments' own codes is absent under the folded one while
+     being entirely present, so that refusal never reaches this list. */
+  test('a folded-sofa refusal is not absent', () => {
+    const plan = planLineRelink({
+      bookLines: [book({ DtlKey: 7001, ItemCode: '8060-1S' }), book({ DtlKey: 7002, ItemCode: '8060-1S' })],
+      erpLines: [erp({ id: 'c1', acItemCode: '8060-CNR' }), erp({ id: 'c2', acItemCode: '8060-1NA' })],
+    });
+    expect(plan.assign).toEqual([]);
+    expect(plan.absent).toEqual([]);
+  });
+});

@@ -28,6 +28,11 @@ on:
         required: false
         default: "25"
         type: string
+      all_so:
+        description: "1 = every sales order, not only the ones with a Processing Date"
+        required: false
+        default: "0"
+        type: string
 
 concurrency:
   group: check-sofa-bedframe-completeness-${{ inputs.target }}
@@ -49,6 +54,7 @@ jobs:
           COMPANY: ${{ inputs.company }}
           LIST: ${{ inputs.list }}
           CAP: ${{ inputs.cap }}
+          ALL_SO: ${{ inputs.all_so }}
           DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
 
   run-prod:
@@ -65,4 +71,5 @@ jobs:
           COMPANY: ${{ inputs.company }}
           LIST: ${{ inputs.list }}
           CAP: ${{ inputs.cap }}
+          ALL_SO: ${{ inputs.all_so }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}

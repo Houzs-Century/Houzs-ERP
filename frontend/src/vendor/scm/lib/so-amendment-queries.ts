@@ -18,6 +18,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
 import { idempotentInit } from '../../../lib/idempotency';
+import { AMENDMENT_APPROVALS_KEY } from '../../../hooks/useAmendmentApprovals';
 import { invalidateSoLists } from './sales-order-queries';
 import type { SoAmendmentHeaderChanges } from './so-amendment-header';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
@@ -53,6 +54,10 @@ export type AmendmentRow = {
      signs). NULL on rows raised before the rework — those keep the legacy
      supplier-confirmed two-gate chain. */
   lane?: 'LINES' | 'DELIVERY' | string | null;
+  /* Set when an APPROVER said this request was not theirs to sign and PASSED it
+     to the other desk (owner 2026-09-17). `lane` is already the receiving desk;
+     this is the note that came with it. NULL when it never changed hands. */
+  lane_flag_note?: string | null;
   /* Owner 2026-07-27 — the PO(s) this SO's lines were purchased on
      (purchase_order_items.so_item_id linkage, resolved by the list endpoint).
      The PO Amendments inbox merges rows with a bound PO alongside the direct
@@ -60,6 +65,12 @@ export type AmendmentRow = {
      Empty on an SO with no purchase leg (and on responses from a pre-upgrade
      backend, so read it defensively). */
   bound_pos?: Array<{ id: string; po_number: string; status: string }>;
+  /* Owner 2026-09-14 (the queue's Reference column) — the SO header's `ref` and
+     `customer_so_no`, raw, as the list endpoint read them. Resolve for display
+     with customerRefOf (lib/customer-ref.ts), the one rule for that cell. Absent
+     from a pre-upgrade backend, so read it defensively. */
+  so_ref?: string | null;
+  so_customer_so_no?: string | null;
 };
 
 export type AmendmentLine = {
@@ -151,6 +162,14 @@ const invalidateAmendmentSideEffects = (
      view reads the SO audit log — refetch it so the new decision shows at once
      (broad key: the gate carries the amendment id, not the SO doc_no here). */
   qc.invalidateQueries({ queryKey: ['mfg-sales-order-audit-log'] });
+  /* The sidebar's red count of amendments awaiting THIS user's signature
+     (hooks/useAmendmentApprovals). Every gate that resolves an amendment passes
+     through here, which is why the invalidation lives at this one point rather
+     than on each approve/reject screen: the owner's ask was "审批后就根据目前
+     需要的单号改变", and a screen that forgot to call it would look exactly like
+     the 60s poll being slow. The key is IMPORTED, not respelled — a second copy
+     of it would drift silently and show as a badge that just never updates. */
+  void qc.invalidateQueries({ queryKey: AMENDMENT_APPROVALS_KEY });
 };
 
 /* ── List ──────────────────────────────────────────────────────────────── */
@@ -195,6 +214,46 @@ export const usePoRevisions = (poId: string | null) => useQuery({
   queryFn: () => authedFetch<{ revisions: SoRevisionRow[] }>(`/mfg-purchase-orders/${poId}/revisions`),
   enabled: Boolean(poId),
   staleTime: 30_000,
+  retry: retryUnlessClientError,
+  retryDelay: 800,
+});
+
+/* ── Lane preview (owner 2026-09-15, option B) ─────────────────────────────
+   POST /mfg-sales-orders/:docNo/amendments/lane-preview — which desk the
+   request WILL go to, answered by the same resolver the create stores from.
+   Read-only on the server; a POST only because the payload is the draft. Not
+   cached across drafts: the key carries the lines and header keys, so editing
+   the draft re-asks. */
+export type AmendmentLane = 'LINES' | 'DELIVERY';
+export type AmendmentLanePreview = {
+  lanes: AmendmentLane[];
+  perLane: Record<AmendmentLane, { lineCount: number; headerKeys: string[] }>;
+};
+export type AmendmentLanePreviewArgs = {
+  docNo: string;
+  lines: CreateAmendmentLine[];
+  headerChanges?: SoAmendmentHeaderChanges;
+};
+export const useAmendmentLanePreview = (args: AmendmentLanePreviewArgs | null) => useQuery({
+  queryKey: ['so-amendment-lane-preview', args?.docNo ?? null,
+    (args?.lines ?? []).map((l) => `${l.salesOrderItemId ?? ''}|${l.newItemCode ?? ''}`),
+    Object.keys(args?.headerChanges ?? {}).sort()],
+  queryFn: () => authedFetch<AmendmentLanePreview>(
+    `/mfg-sales-orders/${args!.docNo}/amendments/lane-preview`,
+    { method: 'POST', body: JSON.stringify({
+      /* Every field the server's no-op test reads (lib/amendment-noop-lines), so the
+         preview drops exactly the lines the submit will drop. oldSnapshot stays home. */
+      lines: args!.lines.map(({ oldSnapshot: _snap, ...l }) => ({
+        salesOrderItemId: l.salesOrderItemId ?? null, changeType: l.changeType,
+        newItemCode: l.newItemCode ?? null, newVariants: l.newVariants ?? null,
+        newQty: l.newQty ?? null, newUnitPriceSen: l.newUnitPriceSen ?? null,
+        newRemark: l.newRemark ?? null, newDiscountSen: l.newDiscountSen ?? null,
+      })),
+      headerChanges: args!.headerChanges ?? null,
+    }) },
+  ),
+  enabled: args != null,
+  staleTime: 60_000,
   retry: retryUnlessClientError,
   retryDelay: 800,
 });
@@ -311,6 +370,19 @@ export const useRejectAmendment = () => {
     mutationFn: ({ id, reason }: { id: string; reason: string }) =>
       authedFetch<{ amendment: AmendmentRow }>(`/so-amendments/${id}/reject`, {
         method: 'PATCH', body: JSON.stringify({ reason }),
+      }),
+    onSuccess: (_, vars) => invalidateAmendmentSideEffects(qc, vars.id),
+  });
+};
+
+/* Flag — the APPROVER saying this request is not theirs to sign. The server
+   passes it to the other desk (still REQUESTED), or refuses and says why. */
+export const useFlagAmendmentLane = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, note }: { id: string; note: string }) =>
+      authedFetch<{ amendment: AmendmentRow }>(`/so-amendments/${id}/flag-lane`, {
+        method: 'PATCH', body: JSON.stringify({ note }),
       }),
     onSuccess: (_, vars) => invalidateAmendmentSideEffects(qc, vars.id),
   });

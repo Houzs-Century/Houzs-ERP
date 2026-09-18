@@ -36,6 +36,7 @@
 // states for conversions).
 // ─────────────────────────────────────────────────────────────────────────
 
+import { assertLinkedLineItemsMatch } from "./line-link-item-identity";
 import {
   NOT_THIS_COMPANY,
   allowedCompanyIds,
@@ -46,7 +47,12 @@ import {
 /** A refusal ready to hand to `c.json(res.body, res.status)`, or ok. */
 export type RefCheck =
   | { ok: true }
-  | { ok: false; body: { error: string; message: string }; status: 404 | 409 | 500 };
+  | { ok: false; body: { error: string; message: string }; status: 404 | 409 | 500 }
+  /* The identity refusal (below) carries `reason` rather than `message`, the
+     shape `soLinkTargetRefusal` already answers with, and can be a 503 when the
+     source rows could not be READ — "we could not check" must never be spelled
+     the same way as "we checked and it was fine". */
+  | { ok: false; body: { error: string; reason: string } & Record<string, unknown>; status: 409 | 503 };
 
 const OK: RefCheck = { ok: true };
 
@@ -171,9 +177,31 @@ export async function assertSourceLinesInCompany(
   c: CompanyScopeCtx,
   table: string,
   ids: Array<string | null | undefined>,
+  /* IDENTITY, when the caller can supply it — docs/bugs/0672 site 15.
+     The company half of this guard was never the whole question. A source line
+     may be in the right company, its parent may be in the right state and the
+     quantity may fit, and it can still be A DIFFERENT PRODUCT: the foreign key
+     is valid, nothing dangles, no constraint breaks, and no coverage count
+     drops. `recomputePoReceived`, `recomputeGrnInvoiced` and
+     `adjustGrnReturnedQty` all address the quantity ledger BY THIS LINK
+     (`.eq('id', ...)`), so a wrong one draws down the WRONG source line and
+     leaves the right one open to be received, invoiced or returned twice.
+
+     Passed as the request's own line payloads plus the field that carries the
+     link, so a caller adds no bookkeeping to opt in — the same shape adapter
+     argument this function's header already makes about the company rule. */
+  identity?: { lines: Array<Record<string, unknown>>; linkField: string; source: string },
 ): Promise<RefCheck> {
   const out = await crossCompanySourceRefusal(sb, c, table, ids, null);
-  if (!out) return OK;
-  if ("loadError" in out) return unreadable("line");
-  return { ok: false, body: out.blocked, status: 409 };
+  if (out) {
+    if ("loadError" in out) return unreadable("line");
+    return { ok: false, body: out.blocked, status: 409 };
+  }
+  if (!identity) return OK;
+  const claims = identity.lines
+    .map((l) => ({ linkId: l[identity.linkField] as string | null | undefined, itemCode: l.itemCode }))
+    .filter((cl) => typeof cl.linkId === "string" && cl.linkId.length > 0);
+  if (claims.length === 0) return OK;
+  const idc = await assertLinkedLineItemsMatch(sb, table, claims, { source: identity.source });
+  return idc.ok ? OK : { ok: false, body: idc.body, status: idc.status };
 }

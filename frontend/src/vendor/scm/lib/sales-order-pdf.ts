@@ -23,6 +23,7 @@ import {
   type PdfAction,
 } from './pdf-common';
 import { billToBlock } from './pdf-party-blocks';
+import { mfgCategoryLabel } from '../../shared/product-categories';
 import { loadFabricDescriptionMap, loadFabricSupplierMap } from './supplier-doc-data';
 import { composeSoLineDescription } from './so-line-description';
 import {
@@ -31,12 +32,12 @@ import {
   buildPhotoGroups,
   collectPhotoImages,
   drawItemPhotosBlock,
+  fetchLinePhotoForPdf,
   photoKeyOwners,
   photoKeysOf,
   type PdfPhotoImage,
 } from './pdf-item-photos';
 import { fetchSoItemPhotoBlob } from './sales-order-queries';
-import { THUMB_KEY_SUFFIX } from '../../../lib/imagePipeline';
 import {
   ensureBrandingLogoLoaded,
   ensureBrandLogoLoaded,
@@ -177,8 +178,13 @@ type SoItem = {
    accepted so callers can pass the row verbatim. */
 type SoPayment = {
   paid_at: string;
-  /* 2026-06-06 payment-method unify — 'installment' is first-class. */
-  method: 'merchant' | 'transfer' | 'cash' | 'installment';
+  /* 2026-06-06 payment-method unify — 'installment' is first-class;
+     'converted' = money moved from a cancelled order (docs/bugs/0931). */
+  method: 'merchant' | 'transfer' | 'cash' | 'installment' | 'converted';
+  converted_from_so_doc_no?: string | null;
+  /* A negative converted row is money that LEFT (owner 2026-09-16). */
+  converted_to_so_doc_no?: string | null;
+  refund_pv_id?: string | null;
   /* Task #122 (cascade) — merchant_provider / installment_months are now
      open string + integer (driven by the so_dropdown_options cascade
      categories). online_type is the new Online sub-type column. */
@@ -293,6 +299,9 @@ const methodLabel = (p: SoPayment): string => {
     const base = p.merchant_provider ? `Installment (${p.merchant_provider})` : 'Installment';
     return p.installment_months ? `${base} · ${p.installment_months}m` : base;
   }
+  /* Money moved from a cancelled order (docs/bugs/0931): the order it came from. */
+  if (p.method === 'converted' && Number(p.amount_sen) < 0) return p.refund_pv_id ? `Refund${p.account_sheet ? ` ${p.account_sheet.replace(/^Refund\s*/, '')}` : ''}` : p.converted_to_so_doc_no ? `Moved to ${p.converted_to_so_doc_no}` : 'Moved out';
+  if (p.method === 'converted') return p.converted_from_so_doc_no ? `Moved from ${p.converted_from_so_doc_no}` : 'Moved from a cancelled order';
   return 'Cash';
 };
 
@@ -366,9 +375,10 @@ export async function renderSalesOrderInto(
   );
 
   /* Owner spec 2026-08 — photos follow the line onto the printed document.
-     Only `.thumb` siblings are fetched (never originals — PDF size), each
-     photo best-effort: a key whose fetch or decode fails is skipped and the
-     PDF renders without it. */
+     The `.thumb` sibling is fetched first and a line whose thumb 404s falls
+     back to its original (fetchLinePhotoForPdf — the AutoCount cutover keys
+     have no thumb; docs/bugs/0815), each photo best-effort: a key whose fetch
+     or decode fails is skipped and the PDF renders without it. */
   const photoGroups = buildPhotoGroups(orderedItems.map((it) => ({
     code: it.item_code,
     photoKeys: photoKeysOf(it.photo_urls),
@@ -383,7 +393,7 @@ export async function renderSalesOrderInto(
         (key) => {
           const ownerId = photoOwners.get(key);
           if (!ownerId) return Promise.reject(new Error('photo_owner_missing'));
-          return fetchSoItemPhotoBlob(header.doc_no, ownerId, key + THUMB_KEY_SUFFIX);
+          return fetchLinePhotoForPdf((k) => fetchSoItemPhotoBlob(header.doc_no, ownerId, k), key);
         },
         blobToSquarePdfImage,
       )
@@ -601,7 +611,10 @@ export async function renderSalesOrderInto(
     const grp = (it.item_group || 'OTHER').toUpperCase();
     if (grp !== lastGroup) {
       bodyRows.push([{
-        content: grp, colSpan: 7,
+        /* The category's NAME, not its code: `fabric_accessory` printed as
+           FABRIC_ACCESSORY on HC-SO-2609-071 while every screen says Sofa
+           Accessory (owner 2026-09-15). An unknown group still prints as stored. */
+        content: mfgCategoryLabel(grp).toUpperCase(), colSpan: 7,
         styles: { fontStyle: 'bold', textColor: 40, halign: 'left', lineWidth: { top: 0.4 } as never },
       }]);
       lastGroup = grp;

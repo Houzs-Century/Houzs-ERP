@@ -82,7 +82,11 @@ for (const m of cs.matchAll(/path\s*==\s*"(\/[a-z-]+)"/g)) implemented.add(m[1])
 /* Read from the route tree rather than from a list, so a new call site appears
    here the day it is written and a deleted one disappears the day it is not. */
 const ROUTES_DIR = path.join(BACKEND, 'src/scm/routes');
-const routeFiles = fs.readdirSync(ROUTES_DIR)
+/* Recursive, so a handler moved into routes/<router>/<topic>.ts keeps its row. */
+const routeFilesUnder = (dir) =>
+  fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
+    e.isDirectory() ? routeFilesUnder(path.join(dir, e.name)).map((f) => `${e.name}/${f}`) : [e.name]);
+const routeFiles = routeFilesUnder(ROUTES_DIR)
   .filter((f) => f.endsWith('.ts') && !f.includes('.test.'));
 must(routeFiles, 'route files', 20);
 

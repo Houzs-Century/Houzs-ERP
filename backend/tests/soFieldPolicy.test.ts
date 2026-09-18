@@ -122,6 +122,23 @@ describe('lockedColumnsChanged — FREE fields pass straight through', () => {
     expect(lockedColumnsChanged({ city: '' }, { ...BEFORE, city: undefined })).toEqual([]);
   });
 
+  /* 2026-09-12 (HC-SO-013497). AutoCount-imported rows hold "MR LIM " with a
+     trailing space. A client that re-sends the name it displayed ("MR LIM")
+     changes nothing a customer or supplier could see, so the lock must not
+     read it as a CONTROLLED change. Whitespace at the edges is never an
+     amendment. */
+  it('ignores a whitespace-only difference — trailing spaces from imports are not an edit', () => {
+    expect(lockedColumnsChanged(
+      { debtor_name: 'MR LIM', address1: '12 Jalan Satu' },
+      { ...BEFORE, debtor_name: 'MR LIM ', address1: ' 12 Jalan Satu ' },
+    )).toEqual([]);
+  });
+
+  it('still rejects a real change that also differs in whitespace', () => {
+    expect(lockedColumnsChanged({ debtor_name: 'MR TAN' }, { ...BEFORE, debtor_name: 'MR LIM ' }))
+      .toEqual(['debtor_name']);
+  });
+
   it('cannot be tripped by a column that is never sent', () => {
     // `col in updates` semantics — load-bearing for the revert-and-omit flow.
     expect(lockedColumnsChanged({}, BEFORE)).toEqual([]);

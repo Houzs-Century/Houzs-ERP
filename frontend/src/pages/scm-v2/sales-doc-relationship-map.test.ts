@@ -23,16 +23,16 @@ const node = (type: FlowNode['type'], id: string, label: string): FlowNode => ({
 const cell = (nodes: ReturnType<typeof buildDoChainNodes>, type: string) =>
   nodes.find((n) => n.type === type)!;
 
-describe('buildDoChainNodes (audit R8 — DO no longer hard-codes GRN "Not created")', () => {
+/* Every procurement route open, unless a test says otherwise. */
+const OPEN = { canOpenPo: true, canOpenGrn: true, canOpenPi: true };
+const SHUT = { canOpenPo: false, canOpenGrn: false, canOpenPi: false };
+
+describe('buildDoChainNodes — the owner two-chain shape (2026-07-23) on the DO page', () => {
   const header = { id: 'do-1', do_number: 'DO-1', so_doc_no: 'SO-1' };
 
   it('paints the GRN node done with the real GRN when the graph has one', () => {
     const nodes = buildDoChainNodes(
-      header,
-      [node('so', 'SO-1', 'SO-1')],
-      [node('grn', 'grn-9', 'GRN-9')],
-      [],
-      true,
+      header, [node('so', 'SO-1', 'SO-1')], [], [], [node('grn', 'grn-9', 'GRN-9')], [], OPEN,
     );
     const grn = cell(nodes, 'GRN');
     expect(grn.state).toBe('done');
@@ -41,7 +41,7 @@ describe('buildDoChainNodes (audit R8 — DO no longer hard-codes GRN "Not creat
   });
 
   it('still reads "Not created" when the family has no GRN', () => {
-    const nodes = buildDoChainNodes(header, [node('so', 'SO-1', 'SO-1')], [], [], true);
+    const nodes = buildDoChainNodes(header, [node('so', 'SO-1', 'SO-1')], [], [], [], [], OPEN);
     const grn = cell(nodes, 'GRN');
     expect(grn.state).toBe('pending');
     expect(grn.doc).toBe('Not created');
@@ -49,11 +49,7 @@ describe('buildDoChainNodes (audit R8 — DO no longer hard-codes GRN "Not creat
 
   it('collapses several GRNs to a count and labels the procurement gate', () => {
     const nodes = buildDoChainNodes(
-      header,
-      [],
-      [node('grn', 'g1', 'GRN-1'), node('grn', 'g2', 'GRN-2')],
-      [],
-      false, // no procurement access
+      header, [], [], [], [node('grn', 'g1', 'GRN-1'), node('grn', 'g2', 'GRN-2')], [], SHUT,
     );
     const grn = cell(nodes, 'GRN');
     expect(grn.doc).toBe('2 GRNs');
@@ -61,11 +57,59 @@ describe('buildDoChainNodes (audit R8 — DO no longer hard-codes GRN "Not creat
   });
 
   it('paints the Sales Invoice node from the graph and keeps the DO current', () => {
-    const nodes = buildDoChainNodes(header, [], [], [node('si', 'si-3', 'INV-3')], true);
+    const nodes = buildDoChainNodes(header, [], [node('si', 'si-3', 'INV-3')], [], [], [], OPEN);
     expect(cell(nodes, 'Sales Invoice').state).toBe('done');
     expect(cell(nodes, 'Sales Invoice').doc).toBe('INV-3');
     expect(cell(nodes, 'Delivery Order').state).toBe('current');
-    expect(nodes).toHaveLength(5);
+  });
+
+  /* THE CHANGE. The five-node chain put the GRN in the sales row with no room
+     for the purchase order that produced it, so the DO page could say goods were
+     received and never say what they were bought on. The graph has carried `po`
+     and `pi` all along — only this builder never read them. */
+  it('renders SEVEN nodes, in the order the canvas positions them', () => {
+    const nodes = buildDoChainNodes(header, [], [], [], [], [], OPEN);
+    expect(nodes.map((n) => n.type)).toEqual([
+      'Customer PO', 'Sales Order', 'Delivery Order', 'Sales Invoice',
+      'Purchase Order', 'GRN', 'Purchase Invoice',
+    ]);
+  });
+
+  it('names the purchase order the goods were bought on', () => {
+    const nodes = buildDoChainNodes(
+      header, [], [], [node('po', 'po-7', 'HC-PO-009326')], [], [], OPEN,
+    );
+    const po = cell(nodes, 'Purchase Order');
+    expect(po.state).toBe('done');
+    expect(po.doc).toBe('HC-PO-009326');
+    expect(po.meta).toBe('Tap to open');
+  });
+
+  it('collapses several purchase orders to a count', () => {
+    const nodes = buildDoChainNodes(
+      header, [], [], [node('po', 'p1', 'PO-1'), node('po', 'p2', 'PO-2')], [], [], OPEN,
+    );
+    expect(cell(nodes, 'Purchase Order').doc).toBe('2 purchase orders');
+    expect(cell(nodes, 'Purchase Order').meta).toBe('Tap to list');
+  });
+
+  it('reads "On supplier order" while nothing has been bought yet', () => {
+    const nodes = buildDoChainNodes(header, [], [], [], [], [], OPEN);
+    const po = cell(nodes, 'Purchase Order');
+    expect(po.state).toBe('pending');
+    expect(po.doc).toBe('Not created');
+    expect(po.meta).toBe('On supplier order');
+  });
+
+  it('names the supplier invoice, and gates PO and PI the same way as the GRN', () => {
+    const nodes = buildDoChainNodes(
+      header, [], [], [node('po', 'p1', 'PO-1')], [], [node('pi', 'pi-1', 'PI-1')], SHUT,
+    );
+    expect(cell(nodes, 'Purchase Invoice').doc).toBe('PI-1');
+    /* A salesperson must never be handed a node that navigates into <Forbidden>
+       — the tile says what it is and answers in a notice instead. */
+    expect(cell(nodes, 'Purchase Order').meta).toBe('Procurement document');
+    expect(cell(nodes, 'Purchase Invoice').meta).toBe('Procurement document');
   });
 });
 
@@ -129,5 +173,57 @@ describe('buildDrChainNodes (audit R8 — DR shows real SO + SI, not "Upstream �
     expect(cell(nodes, 'Sales Order').doc).toBe('Not linked');
     expect(cell(nodes, 'Sales Invoice').doc).toBe('Not created');
     expect(nodes).toHaveLength(5);
+  });
+});
+
+/* THE REGRESSION (docs/bugs/0909). customerRefOf reads `ref` FIRST, but the
+   three header types omitted the column, so the pages never passed it and the
+   Customer PO node fell through to "Not linked". On live data `ref` is the ONLY
+   filled reference on 174 of 246 delivery orders (po_doc_no is 0%-filled and
+   customer_so_no carries a value on just 13), so the node read "Not linked" for
+   the overwhelming majority of orders that DO carry a customer reference —
+   e.g. HC-DO-011555, whose ref is HC10995. */
+describe('Customer PO node resolves off `ref` — the only filled column on live data', () => {
+  it('DO: renders the customer reference when ONLY ref is set', () => {
+    const nodes = buildDoChainNodes(
+      { id: 'do-1', do_number: 'HC-DO-011555', ref: 'HC10995' },
+      [], [], [], [], [], OPEN,
+    );
+    const po = cell(nodes, 'Customer PO');
+    expect(po.doc).toBe('HC10995'); // NOT "Not linked"
+    expect(po.meta).toBe("Customer's own doc");
+  });
+
+  it('SI: renders the customer reference when ONLY ref is set', () => {
+    const nodes = buildSiChainNodes(
+      { id: 'si-1', invoice_number: 'INV-1', ref: 'HC10995' },
+      [],
+      [],
+      [],
+    );
+    expect(cell(nodes, 'Customer PO').doc).toBe('HC10995');
+  });
+
+  it('DR: renders the customer reference when ONLY ref is set', () => {
+    const nodes = buildDrChainNodes(
+      { id: 'dr-1', return_number: 'DR-1', ref: 'HC10995' },
+      [],
+      [],
+      [],
+    );
+    expect(cell(nodes, 'Customer PO').doc).toBe('HC10995');
+  });
+
+  it('still reads "Not linked" when the order carries no reference at all', () => {
+    const nodes = buildDoChainNodes({ id: 'do-2', do_number: 'DO-2' }, [], [], [], [], [], OPEN);
+    expect(cell(nodes, 'Customer PO').doc).toBe('Not linked');
+  });
+
+  it('ref outranks the legacy columns, matching every other surface', () => {
+    const nodes = buildDoChainNodes(
+      { id: 'do-3', do_number: 'DO-3', ref: 'HC10995', customer_so_no: 'SRC-SO', po_doc_no: 'LEGACY' },
+      [], [], [], [], [], OPEN,
+    );
+    expect(cell(nodes, 'Customer PO').doc).toBe('HC10995');
   });
 });

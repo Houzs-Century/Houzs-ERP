@@ -70,6 +70,7 @@ function harness(options: { raceBeforeCas?: boolean; followerApplied?: boolean }
       proceeded_at: null,
       edit_lease_token: null,
       edit_lease_expires_at: null,
+      edit_lease_user_id: null,
     }],
     mfg_so_audit_log: [],
     mfg_sales_order_items: [],
@@ -103,6 +104,15 @@ function harness(options: { raceBeforeCas?: boolean; followerApplied?: boolean }
           const expected = Number(args?.p_expected_version);
           if (Number(row.version) !== expected) {
             return { data: [{ applied: false, current_version: row.version, conflict_reason: 'version' }], error: null };
+          }
+          /* The lease half of apply_so_header_cas, in the order the SQL checks it
+             (20260915T1200_scm_so_header_cas_skip_frozen_lines.sql): a required
+             lease must be the live one; with none required, any live lease refuses. */
+          const required = (args?.p_required_lease as string | null | undefined) ?? null;
+          const live = Boolean(row.edit_lease_token)
+            && Date.parse(String(row.edit_lease_expires_at ?? '')) > Date.now();
+          if (required !== null ? (row.edit_lease_token !== required || !live) : live) {
+            return { data: [{ applied: false, current_version: row.version, conflict_reason: 'lease' }], error: null };
           }
           if (options.followerApplied === false) {
             return { data: [{ applied: false, current_version: row.version, conflict_reason: 'follower' }], error: null };
@@ -270,6 +280,9 @@ describe('mandatory Sales Order header compare-and-swap', () => {
       lineWriteLeaseToken: 'lease-token-owner-one',
       version: 1,
     });
+    /* Held by ANOTHER person. The same person takes their own lease back
+       (docs/bugs/0630), which the describe block at the end of this file pins. */
+    row.edit_lease_user_id = 2;
 
     const other = await patchHeader(app, { note: 'must not land', version: 2 });
     expect(other.status).toBe(409);
@@ -355,6 +368,108 @@ describe('a venue id with no name is not a request to blank the venue', () => {
    stored value", and the pair rule was judged against dates the save was about
    to delete. Both directions are pinned here because they fail OPPOSITE ways:
    the legal save was refused, and the illegal one was allowed through. */
+/* Owner 2026-09-15, HC-SO-2609-071: 「我第一次 save 的时候可以 ... 如果我要一瞬间再
+   edit 第二次也是可以的啊，为什么不可以呢？」 — ten 409s on this route.
+
+   Production held the answer: the order's lease (reserved 12:01:10.572Z, one
+   minute) was still on the row, never released, after a save that reported
+   success. The desktop editor had adopted the venue master's "MID VALLEY" by its
+   project id "1" — not a uuid, so this route drops it — and that was the ONLY
+   field the save sent. With a field in the body the client did not say
+   `completeLineWrites`, the server normalised the field away, and answered the
+   "nothing changed" early return: 200, lease untouched, no `version`. Every
+   Save for the next minute met the caller's own lock. */
+describe('a finished save never leaves its own lock behind', () => {
+  const liveFor = (ms: number) => new Date(Date.now() + ms).toISOString();
+
+  test('a composite save whose header fields all normalise away still releases its lease', async () => {
+    const { app, row } = harness();
+    const leaseToken = 'lease-token-venue-adoption';
+    await patchHeader(app, { reserveLineWrites: true, lineWriteLeaseToken: leaseToken, version: 1 });
+
+    const done = await patchHeader(app, { venueId: '1', lineWriteLeaseToken: leaseToken, version: 2 });
+
+    expect(done.status).toBe(200);
+    expect(await done.json()).toMatchObject({ ok: true, version: 2, released: true });
+    expect(row).toMatchObject({ version: 2, edit_lease_token: null, edit_lease_expires_at: null });
+  });
+
+  test('a nothing-changed answer still names the version, so no screen adopts a missing one', async () => {
+    const { app } = harness();
+
+    const res = await patchHeader(app, { note: 'original' });
+
+    expect(await res.json()).toMatchObject({ ok: true, changed: 0, version: 1 });
+  });
+
+  test('the same person takes back the lock their own earlier save left behind', async () => {
+    const { app, row } = harness();
+    Object.assign(row, {
+      version: 2, edit_lease_token: 'left-behind-by-my-first-save',
+      edit_lease_expires_at: liveFor(50_000), edit_lease_user_id: '1',
+    });
+
+    const res = await patchHeader(app, { reserveLineWrites: true, lineWriteLeaseToken: 'lease-token-my-second-save', version: 2 });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ reserved: true, version: 3 });
+    expect(row).toMatchObject({ version: 3, edit_lease_token: 'lease-token-my-second-save' });
+  });
+
+  test('a header-only save by the same person is not refused by their own leftover lock', async () => {
+    const { app, row } = harness();
+    Object.assign(row, {
+      version: 2, edit_lease_token: 'left-behind-by-my-first-save',
+      edit_lease_expires_at: liveFor(50_000), edit_lease_user_id: 1,
+    });
+
+    const res = await patchHeader(app, { note: 'second save', version: 2 });
+
+    expect(res.status).toBe(200);
+    expect(row).toMatchObject({ note: 'second save', version: 3, edit_lease_token: null });
+  });
+
+  test('taking a lock back never skips the version check', async () => {
+    const { app, row } = harness();
+    Object.assign(row, {
+      version: 3, edit_lease_token: 'left-behind', edit_lease_expires_at: liveFor(50_000), edit_lease_user_id: 1,
+    });
+
+    const res = await patchHeader(app, { reserveLineWrites: true, lineWriteLeaseToken: 'lease-token-stale-screen', version: 2 });
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ error: 'so_version_conflict', currentVersion: 3 });
+    expect(row).toMatchObject({ version: 3, edit_lease_token: 'left-behind' });
+  });
+
+  test("someone else's live lock still refuses, and so does a lock with no recorded holder", async () => {
+    for (const holder of [2, null]) {
+      const { app, row } = harness();
+      Object.assign(row, {
+        version: 2, edit_lease_token: 'held-elsewhere', edit_lease_expires_at: liveFor(50_000), edit_lease_user_id: holder,
+      });
+
+      const res = await patchHeader(app, { reserveLineWrites: true, lineWriteLeaseToken: 'lease-token-mine', version: 2 });
+
+      expect(res.status).toBe(409);
+      expect(await res.json()).toMatchObject({ error: 'so_edit_lease_conflict', reason: 'held' });
+      expect(row).toMatchObject({ version: 2, edit_lease_token: 'held-elsewhere' });
+    }
+  });
+
+  test('the end of a save the same person has since superseded does not release the newer lock', async () => {
+    const { app, row } = harness();
+    Object.assign(row, {
+      version: 3, edit_lease_token: 'lease-token-newer-save', edit_lease_expires_at: liveFor(50_000), edit_lease_user_id: 1,
+    });
+
+    const res = await patchHeader(app, { completeLineWrites: true, lineWriteLeaseToken: 'lease-token-older-save', version: 3 });
+
+    expect(res.status).toBe(409);
+    expect(row).toMatchObject({ version: 3, edit_lease_token: 'lease-token-newer-save' });
+  });
+});
+
 describe('clearing the date pair from the edit page (null payload)', () => {
   /* A complete header, so the only thing either save can fail on is the date
      pair — the base fixture has no address, which the proceed gate reports as

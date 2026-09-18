@@ -8,6 +8,42 @@ export const fmtMoney = (n: number): string =>
 /** Returns "RM 2,990" — for inline copy where PriceTag is overkill. */
 export const fmtRM = (n: number): string => `RM ${fmtMoney(n)}`;
 
+/** ERP/centi money → "RM 2,990.00" (2dp). The centi-layer counterpart to
+ *  {@link fmtRM} for cost/GL/document totals. Null-safe AND non-finite-safe
+ *  ("—"). NOTE: assumes MYR — for documents that carry their own `currency`
+ *  field, use {@link fmtMoneySen} instead of hardcoding the RM prefix. */
+export const fmtSen = (centi: number | null | undefined): string => {
+  const n = Number(centi);
+  if (centi == null || !Number.isFinite(n)) return '—';
+  return `RM ${(n / 100).toLocaleString('en-MY', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+};
+
+/** Sen money with the document's OWN currency → "MYR 2,990.00" (2dp).
+ *  The currency-carrying counterpart to {@link fmtSen}, and the ONE home for
+ *  the `${currency} ${centi/100}` shape that was hand-copied into 16 page-local
+ *  `fmtMoney` helpers (SO/DO/DR/SI detail + the purchase-side pages).
+ *
+ *  Unknown / unreadable number → "—", never the literal text "NaN" (owner's
+ *  plain-language rule). Every local copy was `(centi / 100).toLocaleString(...)`
+ *  with NO finite guard, so an absent or non-numeric field rendered "MYR NaN"
+ *  straight at the user — a number the ERP does not have must read as blank, not
+ *  as a broken one. Mobile's MobileModuleDetail.money() already had this guard;
+ *  the desktop copies never got it. */
+export const fmtMoneySen = (
+  centi: number | null | undefined,
+  currency = 'MYR',
+): string => {
+  const n = Number(centi);
+  if (centi == null || !Number.isFinite(n)) return '—';
+  return `${currency} ${(n / 100).toLocaleString('en-MY', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+};
+
 /* ── THE ONE DATE RULE ───────────────────────────────────────────────────────
    DD/MM/YYYY, numeric, day-first (Malaysian standard). Ruled twice by the
    owner and written into the tree both times:

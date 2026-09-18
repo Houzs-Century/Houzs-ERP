@@ -22,6 +22,9 @@ import { escapeForOr } from '../lib/postgrest-search';
 import { paginateAll } from '../lib/paginate-all';
 import { findSkuUsage, usageCheckFailedBody } from '../lib/sku-usage';
 import { productToBindingPatch, type ProductSeatCost } from '../lib/cost-anchor-sync';
+import { autoDeriveEnabled } from '../lib/auto-derive-cost';
+import { resolveProductCostAnchor, comparableCostSen, type SupplierBindingCost } from '../lib/derive-product-cost-from-suppliers';
+import { readMfgProductBindings } from '../lib/supplier-bindings';
 import { moduleCodeFromSku, normalizeSofaTier, parseDefaultFreeGifts } from '../shared';
 import { canWriteScmConfig, canViewScmProductCost } from '../lib/houzs-perms';
 import { PRODUCT_FINANCE_KEYS, stripProductPriceHistory } from '../lib/finance-keys';
@@ -31,6 +34,10 @@ import { scopeToCompany, activeCompanyId,
 import { todayMyt } from '../lib/my-time';
 import { resolveSellPriceSenAsOf, resolvePendingSellPriceAfter } from '../lib/product-pricing-history';
 import type { Env, Variables } from '../env';
+import { categorySwapAllowed } from '../shared/category-swap';
+import { PRODUCT_CODE_CASCADE } from '../lib/product-code-rename';
+import { moveModelCategory, planModelCategoryMoves, type ImportModelMove } from '../lib/model-category-move';
+import { MFG_PRODUCT_CATEGORIES, MFG_CATEGORY_LABELS, mfgCategoryLabel, parseMfgCategory } from '../shared/product-categories';
 
 export const mfgProducts = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -138,6 +145,10 @@ async function syncAnchorBindingFromProduct(
 export const listMfgProductsHandler = async (c: AppContext) => {
   const category = c.req.query('category');
   const search = c.req.query('search');
+  // B1 — the SKU Master screen asks for the per-row cost-anchor STATE (its cost
+  // column marker). OPT-IN via ?anchorState=1 so the SO / PO / GRN catalog pickers
+  // that load this SAME list stay a plain column read with no extra binding query.
+  const wantAnchorState = c.req.query('anchorState') === '1';
   const supabase = c.get('supabase');
 
   // PR #104 — Commander 2026-05-26: dropped fabric_usage_sen /
@@ -195,11 +206,45 @@ export const listMfgProductsHandler = async (c: AppContext) => {
   });
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   // Flatten the joined model → a plain allowed_options field on each product.
-  const products = ((data ?? []) as unknown as Array<Record<string, unknown> & { model?: { allowed_options: unknown } | Array<{ allowed_options: unknown }> | null }>)
+  const products: Array<Record<string, unknown>> = ((data ?? []) as unknown as Array<Record<string, unknown> & { model?: { allowed_options: unknown } | Array<{ allowed_options: unknown }> | null }>)
     .map(({ model, ...p }) => {
       const m = Array.isArray(model) ? model[0] : model;
       return { ...p, allowed_options: m?.allowed_options ?? null };
     });
+
+  /* B1 — per-row cost-anchor STATE for the SKU Master cost column (teal ok /
+     amber suppliers-differ / red gap / service). One BULK binding read over the
+     page's codes (readMfgProductBindings chunks + pages the IN-list), grouped in
+     memory, classified by the SAME audited rule the drawer uses. STATE only — no
+     supplier name and no cost figure (base_price_sen already rides the row; the
+     drawer shows the anchor detail on click) — so this is a cheap projection, and
+     it runs ONLY when the SKU Master asks (wantAnchorState). A binding-read error
+     degrades to no marker rather than failing the catalogue every picker needs. */
+  if (wantAnchorState && products.length > 0) {
+    const codes = products.map((p) => String(p.code));
+    const { data: bindings, error: bErr } = await readMfgProductBindings<{
+      item_code: string; supplier_id: string; is_main_supplier: boolean | null;
+      unit_price_sen: number | null; price_matrix: unknown;
+    }>(supabase, {
+      codes,
+      companyId: activeCompanyId(c),
+      select: 'item_code, supplier_id, is_main_supplier, unit_price_sen, price_matrix',
+    });
+    if (!bErr) {
+      const byCode = new Map<string, SupplierBindingCost[]>();
+      for (const b of bindings) {
+        const arr = byCode.get(b.item_code) ?? [];
+        arr.push({ supplier_id: b.supplier_id, is_main_supplier: b.is_main_supplier, unit_price_sen: b.unit_price_sen, price_matrix: b.price_matrix });
+        byCode.set(b.item_code, arr);
+      }
+      for (const p of products) {
+        p.costAnchorState = resolveProductCostAnchor(
+          (p.category as string | null) ?? null,
+          byCode.get(String(p.code)) ?? [],
+        ).state;
+      }
+    }
+  }
   /* Perf (go-live) — the 1141-row SKU master is the catalog picker every SO /
      PO / GRN / DO "new" page loads, and it changes rarely (price/config edits,
      not per-order). A short PRIVATE max-age lets the browser reuse the payload
@@ -223,14 +268,42 @@ export const listMfgProductsHandler = async (c: AppContext) => {
 };
 mfgProducts.get('/', listMfgProductsHandler);
 
+// ── GET /bound-codes ─────────────────────────────────────────────────────
+// Company-scoped set of mfg_product item codes that already carry at least one
+// supplier binding. Powers the SKU Master "no supplier binding" filter so staff
+// can find SKUs still missing a supplier and fill them one by one. Read-only,
+// selects only item_code (cheap) and paginates so >1000 bindings are not
+// silently truncated. Declared before GET /:id so the static path wins.
+mfgProducts.get('/bound-codes', async (c) => {
+  const supabase = c.get('supabase');
+  const { data, error } = await paginateAll((from, to) =>
+    supabase
+      .from('supplier_material_bindings')
+      .select('item_code')
+      .eq('material_kind', 'mfg_product')
+      .eq('company_id', activeCompanyId(c))
+      .order('item_code')
+      .range(from, to),
+  );
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  const codes = [
+    ...new Set(
+      ((data ?? []) as Array<{ item_code: string | null }>)
+        .map((r) => r.item_code)
+        .filter((code): code is string => Boolean(code)),
+    ),
+  ];
+  c.header('vary', 'X-Company-Id');
+  return c.json({ codes });
+});
+
 // ── POST / ─────────────────────────────────────────────────────────────
 // Create a new mfg_product. id is text PK — we generate a short uuid-ish
 // id since the existing import uses Excel-style ids like 'mfg-xxxxxxx'.
-/* The `mfg_product_category` PG enum, in declaration order. This is the ONE
-   in-repo statement of that taxonomy — the HR item-KPI category picker imports
-   it rather than re-listing the values, so a rule can never offer a category the
-   column cannot hold. Keep in step with the enum if it ever gains a member. */
-export const MFG_PRODUCT_CATEGORIES = ['SOFA', 'BEDFRAME', 'ACCESSORY', 'MATTRESS', 'BEDLINES', 'DINING', 'DIFFUSER', 'CARPET', 'SERVICE'] as const;
+/* The `mfg_product_category` enum list lives in shared/product-categories.ts
+   (one home, mirrored to the frontend); re-exported here for the routes that
+   have always imported it from this file. */
+export { MFG_PRODUCT_CATEGORIES };
 const VALID_CATEGORIES = new Set<string>(MFG_PRODUCT_CATEGORIES);
 mfgProducts.post('/', async (c) => {
   const gate = await requireRole(c);
@@ -296,7 +369,9 @@ mfgProducts.post('/', async (c) => {
 // ── POST /batch-import ─────────────────────────────────────────────────
 // Bulk upsert from a CSV import. Body: { rows: [{ code, name, category, ... }] }.
 // Upserts by code (ON CONFLICT DO UPDATE). Returns count inserted/updated.
-mfgProducts.post('/batch-import', async (c) => {
+/* Exported so the import's field rules (what an existing SKU takes from a
+   sheet) can be driven by a test. */
+export const batchImportMfgProductsHandler = async (c: AppContext) => {
   const gate = await requireRole(c);
   if (!gate.ok) return gate.res;
   let body: { rows?: Array<Record<string, unknown>> };
@@ -305,9 +380,16 @@ mfgProducts.post('/batch-import', async (c) => {
   if (list.length === 0) return c.json({ error: 'rows_required' }, 400);
   if (list.length > 500) return c.json({ error: 'too_many', message: 'Max 500 rows per import' }, 400);
 
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
   const supabase = c.get('supabase');
   let upserted = 0;
   const failures: Array<{ code: string; reason: string }> = [];
+
+  const plan = await planModelCategoryMoves(supabase, co.companyId, list);
+  if (!plan.ok) return c.json({ error: 'load_failed', reason: plan.reason }, 500);
+  const modelsMoved: ImportModelMove[] = [];
+  const moveFailed = new Map<string, string>();
 
   // Data-loss-safe upsert (Wei Siang). Only fields PRESENT and non-empty in
   // the body row are written. On an ON CONFLICT update that means a column the
@@ -318,12 +400,60 @@ mfgProducts.post('/batch-import', async (c) => {
   for (const r of list) {
     const code = String(r.code ?? '').trim();
     const name = String(r.name ?? '').trim();
-    const category = String(r.category ?? '').trim();
-    if (!code || !name || !VALID_CATEGORIES.has(category)) {
-      failures.push({ code, reason: 'missing code/name or invalid category' });
+    const categoryCell = String(r.category ?? '').trim();
+    /* Read as a person types it (any case, or the label "Sofa Accessory").
+       A filled cell that is not a category is REPORTED: it used to be dropped
+       without a word, so a batch category edit could save everything except
+       the category and still say "updated" (owner 2026-09-15). */
+    const category = parseMfgCategory(categoryCell);
+    if (!code) {
+      failures.push({ code, reason: 'missing code' });
       continue;
     }
-    const row: Record<string, unknown> = { code, name, category };
+    /* NAME AND CATEGORY ARE REQUIRED TO CREATE, NOT TO UPDATE.
+     *
+     * The owner states the contract in one sentence (2026-09-07):
+     * 「如果没有 Code 在系统里面的 import,就是等于开 Code。然后如果我有 Code 在
+     *   系统里面,它 match 得到,就是代表我要更改东西」— a code the system does not
+     * hold is a NEW SKU, a code it holds is an EDIT.
+     *
+     * Demanding both on every row contradicted the data-loss-safe rule written
+     * twenty lines above: every OTHER column is written only when the cell is
+     * filled, precisely so an edited export cannot wipe what it does not carry.
+     * Name and category were the two exceptions, which made the commonest real
+     * file — a price-only edit — impossible to import at all. It failed as
+     * `missing code/name or invalid category`, reading like a broken file
+     * rather than a rule.
+     *
+     * The existence read moved UP for this; the write branch below reuses it. */
+    const { data: existing } = await supabase.from('mfg_products')
+      .select('id, seat_height_prices').eq('code', code).eq('company_id', activeCompanyId(c)).maybeSingle();
+
+    if (categoryCell && !category) {
+      failures.push({
+        code,
+        reason: `category "${categoryCell}" is not a category — use one of: ${MFG_PRODUCT_CATEGORIES.map((c) => MFG_CATEGORY_LABELS[c]).join(', ')}.`,
+      });
+      continue;
+    }
+    const conflict = category ? plan.conflicts.get(code) : undefined;
+    if (conflict) {
+      failures.push({ code, reason: conflict });
+      continue;
+    }
+    if (!existing && (!name || !category)) {
+      failures.push({
+        code,
+        reason: `${code} is not in the system, so this row would CREATE it — a new SKU needs a name and a valid category (${[...VALID_CATEGORIES].join(', ')}).`,
+      });
+      continue;
+    }
+
+    const row: Record<string, unknown> = { code };
+    /* Present-and-non-empty only, exactly like every other column. On a create
+       the guard above has already proved both are there. */
+    if (name) row.name = name;
+    if (category) row.category = category;
 
     // String fields — include only when the cell actually has a value.
     if (hasVal(r.status))      row.status = String(r.status);
@@ -361,8 +491,27 @@ mfgProducts.post('/batch-import', async (c) => {
 
     // Never rewrite the PK id on re-import: UPDATE an existing SKU by code (id +
     // any omitted column left untouched), INSERT a brand-new SKU with a fresh id.
-    const { data: existing } = await supabase.from('mfg_products')
-      .select('id, seat_height_prices').eq('code', code).eq('company_id', activeCompanyId(c)).maybeSingle();
+    // `existing` was read above, where it also decides create-vs-edit.
+    /* A SKU on a model changes category only with its model: the model and every
+       SKU of it move first, once per model, and a failed move writes nothing for
+       this row (owner 2026-09-15). */
+    const move = existing && category ? plan.moves.get(code) : undefined;
+    if (move) {
+      let moveError = moveFailed.get(move.modelId);
+      if (moveError === undefined && !modelsMoved.some((m) => m.modelId === move.modelId)) {
+        const moved = await moveModelCategory(supabase, co.companyId, move.modelId, move.to);
+        if (moved.ok) {
+          modelsMoved.push({ ...move, skuCount: moved.skuCodes.length });
+        } else {
+          moveError = `model ${move.modelCode} could not be moved to ${mfgCategoryLabel(move.to)} (${moved.reason}), so this row was not saved.`;
+          moveFailed.set(move.modelId, moveError);
+        }
+      }
+      if (moveError !== undefined) {
+        failures.push({ code, reason: moveError });
+        continue;
+      }
+    }
     let error;
     if (existing) {
       // Merge sofa prices BY TIER: the export ships one tier at a time, so an
@@ -392,8 +541,9 @@ mfgProducts.post('/batch-import', async (c) => {
     }
   }
 
-  return c.json({ upserted, failed: failures.length, failures: failures.slice(0, 50) });
-});
+  return c.json({ upserted, failed: failures.length, failures: failures.slice(0, 50), modelsMoved });
+};
+mfgProducts.post('/batch-import', batchImportMfgProductsHandler);
 
 // ── DELETE /:id ────────────────────────────────────────────────────────
 // PR #82 (Commander 2026-05-26) — SKU Master multi-select delete needs a
@@ -587,6 +737,9 @@ export const patchMfgProductHandler = async (c: AppContext) => {
     name?: string;
     /** 0166 — free-text SKU barcode. Empty string clears to NULL. */
     barcode?: string | null;
+    /** Any other valid category (shared/category-swap.ts), and only on a SKU
+        with no model — a modelled SKU moves with its model. */
+    category?: string;
   };
   try {
     body = (await c.req.json()) as typeof body;
@@ -605,7 +758,7 @@ export const patchMfgProductHandler = async (c: AppContext) => {
 
   const { data: current, error: loadErr } = await scopeToCompanyId(supabase
     .from('mfg_products')
-    .select('code, base_price_sen, price1_sen, cost_price_sen, sell_price_sen, pwp_price_sen, default_variants, seat_height_prices')
+    .select('code, category, model_id, base_price_sen, price1_sen, cost_price_sen, sell_price_sen, pwp_price_sen, default_variants, seat_height_prices')
     .eq('id', id), co.companyId)
     .maybeSingle();
   if (loadErr) return c.json({ error: 'load_failed', reason: loadErr.message }, 500);
@@ -652,6 +805,15 @@ export const patchMfgProductHandler = async (c: AppContext) => {
   if (body.barcode !== undefined) {
     const trimmed = typeof body.barcode === 'string' ? body.barcode.trim() : null;
     updates.barcode = trimmed ? trimmed : null;
+  }
+  if (body.category !== undefined && String(body.category).toUpperCase() !== String(current.category ?? '').toUpperCase()) {
+    if (current.model_id) {
+      return c.json({ error: 'category_on_model', reason: 'This SKU belongs to a model — change the category on the model, and its SKUs move with it.' }, 409);
+    }
+    if (!categorySwapAllowed(current.category, body.category)) {
+      return c.json({ error: 'category_change_not_allowed', reason: `"${String(body.category)}" is not a product category.` }, 409);
+    }
+    updates.category = String(body.category).toUpperCase();
   }
   // PR #87 — per-SKU active toggle. Stored as 'ACTIVE' | 'INACTIVE' to match
   // the rest of the schema (matches mfg_products.status default in inserts).
@@ -792,33 +954,11 @@ export const patchMfgProductHandler = async (c: AppContext) => {
       if (dup.length > 0) {
         return c.json({ error: 'duplicate_code', reason: 'Another SKU already uses that code.' }, 409);
       }
-      /* item_code tables carry material_kind (mfg_product | fabric | raw) —
-         scope those so a fabric that happens to share the string is untouched. */
-      const CASCADE: Array<{ table: string; col: string; kind?: true }> = [
-        { table: 'supplier_material_bindings', col: 'item_code', kind: true },
-        { table: 'purchase_order_items',       col: 'item_code', kind: true },
-        { table: 'grn_items',                  col: 'item_code', kind: true },
-        { table: 'purchase_invoice_items',     col: 'item_code', kind: true },
-        { table: 'purchase_return_items',      col: 'item_code', kind: true },
-        { table: 'mfg_sales_order_items',      col: 'item_code' },
-        { table: 'mfg_so_price_overrides',     col: 'item_code' },
-        { table: 'delivery_order_items',       col: 'item_code' },
-        { table: 'sales_invoice_items',        col: 'item_code' },
-        { table: 'delivery_return_items',      col: 'item_code' },
-        { table: 'pwp_codes',                  col: 'trigger_item_code' },
-        { table: 'pwp_codes',                  col: 'redeemed_item_code' },
-        { table: 'hr_item_kpi',                col: 'ref' },
-        { table: 'product_dept_configs',       col: 'item_code' },
-        { table: 'master_price_history',       col: 'item_code' },
-        { table: 'inventory_movements',        col: 'item_code' },
-        { table: 'inventory_lots',             col: 'item_code' },
-        { table: 'inventory_lot_consumptions', col: 'item_code' },
-        { table: 'stock_transfer_lines',       col: 'item_code' },
-        { table: 'stock_take_lines',           col: 'item_code' },
-        { table: 'warehouse_rack_items',       col: 'item_code' },
-        { table: 'warehouse_rack_movements',   col: 'item_code' },
-      ];
-      for (const t of CASCADE) {
+      /* The column list, and the columns that deliberately keep the old code,
+         live in lib/product-code-rename.ts, pinned against production by
+         tests/productCodeRenameCoverage.test.ts. `kind` scopes the tables that
+         also store fabrics and raw materials. */
+      for (const t of PRODUCT_CODE_CASCADE) {
         let q = scopeToCompanyId(
           supabase.from(t.table)
             .update({ [t.col]: newCode }, { count: 'exact' })
@@ -873,7 +1013,11 @@ export const patchMfgProductHandler = async (c: AppContext) => {
   /* Rename-aware: bindings + price history were cascade-renamed above, so all
      post-write side effects must address the SKU by its FINAL code. */
   const finalCode = typeof updates.code === 'string' ? (updates.code as string) : (current.code as string);
-  if (costFieldChanged) {
+  // Auto-derive stage 2b: when the flag is ON the SUPPLIER side is authoritative
+  // and the product cost is derived from it, so a product edit must NOT push back
+  // onto the binding (that would overwrite the supplier's real price with a
+  // derived value). Fall through to the is_cost_anchor mirror only while OFF.
+  if (costFieldChanged && !(await autoDeriveEnabled(supabase))) {
     // Use the FINAL values. `'key' in updates` (not ??) so an explicit clear to
     // null is honoured rather than falling back to the old value.
     await syncAnchorBindingFromProduct(supabase, finalCode, {
@@ -1021,7 +1165,7 @@ mfgProducts.get('/:id/suppliers', async (c) => {
   const { data, error } = await supabase
     .from('supplier_material_bindings')
     .select(`
-      id, supplier_id, supplier_sku, unit_price_sen, currency,
+      id, supplier_id, supplier_sku, unit_price_sen, price_matrix, currency,
       lead_time_days, moq, is_main_supplier, notes,
       suppliers(code, name, phone)
     `)
@@ -1031,7 +1175,186 @@ mfgProducts.get('/:id/suppliers', async (c) => {
     .order('unit_price_sen', { ascending: true });
 
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  return c.json({ product, suppliers: data ?? [] });
+
+  /* The COST ANCHOR (auto-derive stage 2b, display side). Classify the same
+     bindings the write path runs (resolveProductCostAnchor -> the one audited
+     rule) so the drawer can name which supplier the cost is anchored to and
+     whether the suppliers agree — without a second copy of the money logic. The
+     cost figure itself is finance data, so it is stripped for callers who cannot
+     view SKU cost, exactly like GET /:id/price-history; the anchor supplier NAME
+     and STATE are not the cost value and stay visible so a gap is still spottable. */
+  const rows = (data ?? []) as Array<{
+    supplier_id: string;
+    is_main_supplier: boolean | null;
+    unit_price_sen: number | null;
+    price_matrix: unknown;
+    suppliers?: { name?: string | null } | null;
+  }>;
+  const resolved = resolveProductCostAnchor(
+    (product as { category: string | null }).category,
+    rows.map((r) => ({
+      supplier_id: r.supplier_id,
+      is_main_supplier: r.is_main_supplier,
+      unit_price_sen: r.unit_price_sen,
+      price_matrix: r.price_matrix,
+    })),
+  );
+  const anchorSupplierName =
+    resolved.anchorSupplierId != null
+      ? rows.find((r) => r.supplier_id === resolved.anchorSupplierId)?.suppliers?.name ?? null
+      : null;
+  const anchor = {
+    state: resolved.state,
+    reason: resolved.reason,
+    anchorSupplierId: resolved.anchorSupplierId,
+    anchorSupplierName,
+    costSen: canViewScmProductCost(c) ? resolved.costSen : null,
+    costedCount: resolved.costedCount,
+    totalCount: resolved.totalCount,
+  };
+  return c.json({ product, suppliers: data ?? [], anchor });
+});
+
+// ── GET /:id/cost-history ──────────────────────────────────────────────
+// The DERIVED product cost timeline (scm.mfg_product_cost_history, append-only,
+// written by auto-derive stage 2b) — newest first, with the supplier whose whole
+// set anchored each derived cost. Powers the drawer's History → Cost (anchor) tab.
+// Cost figures are finance data, so they are stripped for callers who cannot view
+// SKU cost, exactly like GET /:id/price-history.
+mfgProducts.get('/:id/cost-history', async (c) => {
+  const id = c.req.param('id');
+  const supabase = c.get('supabase');
+
+  const { data: product, error: pErr } = await scopeToCompany(
+    supabase.from('mfg_products').select('code').eq('id', id),
+    c,
+  ).maybeSingle();
+  if (pErr) return c.json({ error: 'load_failed', reason: pErr.message }, 500);
+  if (!product) return c.json({ error: 'not_found' }, 404);
+
+  const { data, error } = await supabase
+    .from('mfg_product_cost_history')
+    .select('id, base_price_sen, price1_sen, seat_height_prices, source_supplier_id, effective_from, notes, created_by, created_at')
+    .eq('item_code', (product as { code: string }).code)
+    .eq('company_id', activeCompanyId(c))
+    .order('effective_from', { ascending: false })
+    .order('created_at', { ascending: false });
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+
+  const rows = (data ?? []) as Array<{
+    source_supplier_id: string | null;
+    base_price_sen: number | null;
+    price1_sen: number | null;
+    seat_height_prices: unknown;
+  } & Record<string, unknown>>;
+
+  // Resolve the anchor supplier names in one company-scoped read.
+  const supplierIds = [...new Set(rows.map((r) => r.source_supplier_id).filter((v): v is string => !!v))];
+  const nameById = new Map<string, string>();
+  if (supplierIds.length > 0) {
+    const { data: sup, error: sErr } = await supabase
+      .from('suppliers')
+      .select('id, name')
+      .in('id', supplierIds)
+      .eq('company_id', activeCompanyId(c));
+    if (sErr) return c.json({ error: 'load_failed', reason: sErr.message }, 500);
+    for (const s of (sup ?? []) as Array<{ id: string; name: string | null }>) {
+      if (s.name != null) nameById.set(s.id, s.name);
+    }
+  }
+
+  const canCost = canViewScmProductCost(c);
+  const history = rows.map((r) => ({
+    id: r.id,
+    effectiveFrom: r.effective_from,
+    // cost fields are finance data — null them for non-cost callers.
+    basePriceSen: canCost ? r.base_price_sen : null,
+    price1Sen: canCost ? r.price1_sen : null,
+    seatHeightPrices: canCost ? r.seat_height_prices : null,
+    sourceSupplierId: r.source_supplier_id,
+    sourceSupplierName: r.source_supplier_id ? nameById.get(r.source_supplier_id) ?? null : null,
+    notes: r.notes ?? null,
+    createdBy: r.created_by ?? null,
+    createdAt: r.created_at,
+  }));
+  return c.json({ history });
+});
+
+// ── GET /:id/supplier-price-history ────────────────────────────────────
+// Every supplier's cost change for this SKU over time (scm.supplier_binding_price_history,
+// append-only, snapshotted by recordSupplierPriceHistorySafe) — newest first, with a
+// per-supplier direction (raised / lowered) computed on the same dearness the anchor
+// ranks on. Powers the drawer's History → Supplier price tab. Finance-gated.
+mfgProducts.get('/:id/supplier-price-history', async (c) => {
+  const id = c.req.param('id');
+  const supabase = c.get('supabase');
+
+  const { data: product, error: pErr } = await scopeToCompany(
+    supabase.from('mfg_products').select('code, category').eq('id', id),
+    c,
+  ).maybeSingle();
+  if (pErr) return c.json({ error: 'load_failed', reason: pErr.message }, 500);
+  if (!product) return c.json({ error: 'not_found' }, 404);
+  const category = (product as { category: string | null }).category;
+
+  const { data, error } = await supabase
+    .from('supplier_binding_price_history')
+    .select('id, supplier_id, unit_price_sen, price_matrix, is_main_supplier, effective_from, notes, created_by, created_at, suppliers(code, name)')
+    .eq('material_kind', 'mfg_product')
+    .eq('item_code', (product as { code: string }).code)
+    .eq('company_id', activeCompanyId(c))
+    .order('effective_from', { ascending: false })
+    .order('created_at', { ascending: false });
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+
+  const rows = (data ?? []) as Array<{
+    id: string;
+    supplier_id: string;
+    unit_price_sen: number | null;
+    price_matrix: unknown;
+    is_main_supplier: boolean | null;
+    effective_from: string;
+    notes: string | null;
+    created_by: string | null;
+    created_at: string;
+    suppliers?: { code?: string | null; name?: string | null } | null;
+  }>;
+
+  /* DIRECTION (raised / lowered). Rows arrive newest-first; for each supplier the
+     NEXT-OLDER row is the prior price, so compare each row's comparable cost with
+     the previous row for that same supplier. The oldest row per supplier (binding
+     added) has no prior -> null. */
+  const priorBySupplier = new Map<string, number>();
+  const withDir = rows.map((r) => {
+    const cur = comparableCostSen(category, { unit_price_sen: r.unit_price_sen, price_matrix: r.price_matrix });
+    return { r, cur };
+  });
+  // walk OLDEST-first to know the prior, then the rows stay newest-first for output.
+  for (let i = withDir.length - 1; i >= 0; i--) {
+    const { r, cur } = withDir[i];
+    const prior = priorBySupplier.get(r.supplier_id);
+    (withDir[i] as { dir?: 'up' | 'down' | null }).dir =
+      prior === undefined ? null : cur > prior ? 'up' : cur < prior ? 'down' : null;
+    priorBySupplier.set(r.supplier_id, cur);
+  }
+
+  const canCost = canViewScmProductCost(c);
+  const history = withDir.map(({ r, cur }, i) => ({
+    id: r.id,
+    supplierId: r.supplier_id,
+    supplierCode: r.suppliers?.code ?? null,
+    supplierName: r.suppliers?.name ?? null,
+    isMainSupplier: Boolean(r.is_main_supplier),
+    unitPriceSen: canCost ? r.unit_price_sen : null,
+    priceMatrix: canCost ? r.price_matrix : null,
+    comparableSen: canCost ? cur : null,
+    direction: canCost ? (withDir[i] as { dir?: 'up' | 'down' | null }).dir ?? null : null,
+    effectiveFrom: r.effective_from,
+    notes: r.notes ?? null,
+    createdBy: r.created_by ?? null,
+    createdAt: r.created_at,
+  }));
+  return c.json({ history });
 });
 
 // ── Effective-dated SELLING price (Pricing "Option B", ph.2) ──────────────────

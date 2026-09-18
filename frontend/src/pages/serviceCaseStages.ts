@@ -18,7 +18,7 @@ export const STAGE_FUNNEL_DESC: Record<string, string> = {
   pending_review: "New case — first review",
   under_verification: "Inspect & verify the issue",
   pending_solution: "Decide fix & assign supplier",
-  pending_supplier_pickup: "Item with supplier for repair",
+  pending_supplier_pickup: "Customer pickup · supplier pickup · supplier return",
   pending_item_ready: "Repair done — QC check",
   pending_delivery_service: "Schedule return delivery",
   completed: "Closed & rated",

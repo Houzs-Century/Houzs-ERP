@@ -41,13 +41,15 @@ describe("sub_status stamping on stage transitions", () => {
     expect(row?.sub_status).toBe("pending_inspection");
   });
 
-  test("entering Supplier seeds pending_supplier_pickup", async () => {
+  test("entering Supplier seeds pending_customer_pickup (the collect-first leg)", async () => {
+    // Nico 2026-09-01: the stage begins by collecting the item FROM the
+    // customer, so the customer-pickup leg is the seeded entry point.
     await seedCase(1, "pending_solution");
     await transitionStage(env, 1, "pending_supplier_pickup" as any, USER_ID);
     const row = await env.DB.prepare(
       `SELECT sub_status FROM assr_cases WHERE id = 1`
     ).first<{ sub_status: string | null }>();
-    expect(row?.sub_status).toBe("pending_supplier_pickup");
+    expect(row?.sub_status).toBe("pending_customer_pickup");
   });
 
   test("leaving a sub-status stage clears the field", async () => {

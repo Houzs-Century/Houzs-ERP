@@ -31,6 +31,8 @@ import { canonicalizeComboModulesForStorage, comboSlotsKey, sofaComboCostSen, pa
 import { loadModelSofaModuleCosts } from '../lib/mfg-pricing-recompute';
 import { canWriteScmConfig } from '../lib/houzs-perms';
 import { todayMyt } from '../lib/my-time';
+import { autoDeriveEnabled } from '../lib/auto-derive-cost';
+import { deriveMasterComboCostFromSuppliers, comboCostChanged, pickDearestSupplierCombo } from '../lib/derive-combo-cost';
 import { activeCompanyId, scopeToCompany } from '../lib/companyScope';
 
 export const sofaCombos = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -101,82 +103,6 @@ function rowToWire(r: Row) {
   };
 }
 
-// ── R8 anchor mirror (Commander 2026-06-16) ──────────────────────────────
-// A base_model can be ANCHORED to one supplier (sofa_combo_anchor, PK
-// base_model). While anchored, every combo CREATE and price EDIT is mirrored
-// bidirectionally between the master (sales-side, supplier_id NULL) combo and
-// that supplier's scope (supplier_id = the anchored supplier), so the
-// Product-Maintenance cost reference and the anchored supplier's cost stay in
-// lock-step. Mirroring is append-only (it INSERTs a copy on the other side)
-// and best-effort (the primary write already succeeded — a mirror failure must
-// never 500 the caller; we just report mirrored:false).
-
-// `Sb` = the Supabase client this route's middleware stashes on the context
-// (`c.get('supabase')`, see env.ts Variables). The mirror helpers take it
-// explicitly so they can run the secondary INSERT on the same client.
-type Sb = SupabaseClient;
-
-// The anchored supplier for a base model, or null when not anchored.
-async function loadComboAnchor(
-  sb: Sb,
-  baseModel: string,
-  companyId?: number | null,
-): Promise<string | null> {
-  let q = sb
-    .from('sofa_combo_anchor')
-    .select('supplier_id')
-    .eq('base_model', baseModel);
-  if (companyId != null) q = q.eq('company_id', companyId);
-  const { data } = await q.maybeSingle();
-  return (data as { supplier_id?: string } | null)?.supplier_id ?? null;
-}
-
-// Mirror a just-saved combo row to the OTHER side of the anchor.
-//   · savedRow on the master (supplier_id NULL)         → copy into the supplier scope.
-//   · savedRow on the anchored supplier's scope          → copy into the master (NULL).
-//   · savedRow on some OTHER supplier (not the anchor)   → no mirror (returns false).
-// The copy keeps the same scope tuple (base_model / modules / tier / customer)
-// and every price map, only swapping supplier_id to the mirror target, so the
-// lookup picker treats it as a fresh effective-dated row on that side.
-async function mirrorAnchoredCombo(
-  sb: Sb,
-  savedRow: Row,
-  anchorSupplierId: string,
-  userId: string,
-  companyId?: number | null,
-): Promise<boolean> {
-  let target: string | null;
-  if (savedRow.supplier_id == null) {
-    target = anchorSupplierId;            // master → supplier scope
-  } else if (savedRow.supplier_id === anchorSupplierId) {
-    target = null;                        // anchored supplier → master
-  } else {
-    return false;                         // a different supplier — not part of this anchor
-  }
-
-  try {
-    const { error } = await sb.from('sofa_combo_pricing').insert({
-      company_id: companyId ?? null,
-      base_model: savedRow.base_model,
-      modules: savedRow.modules,
-      tier: savedRow.tier,
-      customer_id: savedRow.customer_id,
-      supplier_id: target,
-      prices_by_height: savedRow.prices_by_height,
-      selling_prices_by_height: savedRow.selling_prices_by_height,
-      pwp_prices_by_height: savedRow.pwp_prices_by_height ?? {},
-      default_free_gifts: savedRow.default_free_gifts ?? [],
-      label: savedRow.label,
-      effective_from: savedRow.effective_from,
-      notes: savedRow.notes,
-      created_by: userId,
-    });
-    return !error;
-  } catch {
-    // Best-effort — the primary write already succeeded; never throw here.
-    return false;
-  }
-}
 
 /**
  * Validate + CANONICALIZE incoming combo `modules` into the OR-set slot shape
@@ -304,7 +230,86 @@ sofaCombos.get('/', async (c) => {
     seen.add(key);
     out.push(r);
   }
-  return c.json({ rules: out.map(rowToWire) });
+
+  // ── Combo Pricing derive-status (A1) ──────────────────────────────────────
+  // For the MASTER view (supplier_id IS NULL), tell each combo whether its COST
+  // auto-derives from a supplier (and WHICH — the dearest whole set, same rule
+  // as recomputeMasterComboCostFromSuppliers), or is a GAP (no supplier combo,
+  // owner fills it in the binding), or is MANUAL (has cost, no supplier combo).
+  // Gated on the auto-derive flag so a flag-OFF read is byte-identical to before.
+  const scopeKeyOf = (r: Row) => JSON.stringify([r.base_model, comboSlotsKey(r.modules ?? []), r.tier, r.customer_id]);
+  const isMasterView = !(supplierIdRaw !== undefined && supplierIdRaw !== '' && supplierIdRaw !== 'null');
+  let winnerByScope: Map<string, { supplierId: string; supplierName: string | null }> | null = null;
+  if (isMasterView && out.length > 0 && (await autoDeriveEnabled(supabase))) {
+    let sq = scopeToCompany(
+      supabase.from('sofa_combo_pricing')
+        .select('base_model, modules, tier, customer_id, supplier_id, prices_by_height, effective_from, created_at')
+        .is('deleted_at', null)
+        .not('supplier_id', 'is', null),
+      c,
+    ).order('effective_from', { ascending: false }).order('created_at', { ascending: false });
+    if (baseModel) sq = sq.eq('base_model', baseModel);
+    if (customerIdRaw !== undefined) {
+      if (customerIdRaw === '' || customerIdRaw === '__all__' || customerIdRaw === 'null') sq = sq.is('customer_id', null);
+      else sq = sq.eq('customer_id', customerIdRaw);
+    }
+    const { data: supData, error: supErr } = await sq;
+    // Best-effort enrichment: a failed supplier-combo read just omits the
+    // derive-status — it never 500s the combo list.
+    if (supErr) return c.json({ rules: out.map(rowToWire) });
+
+    // Latest supplier row per (scope, supplier), then group by scope.
+    const supSeen = new Set<string>();
+    const byScope = new Map<string, Array<{ supplier_id: string; prices_by_height: Record<string, number | null> | null }>>();
+    for (const r of ((supData ?? []) as unknown as Row[])) {
+      if (r.effective_from > today || r.supplier_id == null) continue;
+      const supKey = `${scopeKeyOf(r)}|${r.supplier_id}`;
+      if (supSeen.has(supKey)) continue;
+      supSeen.add(supKey);
+      const sk = scopeKeyOf(r);
+      const list = byScope.get(sk) ?? [];
+      list.push({ supplier_id: r.supplier_id as string, prices_by_height: r.prices_by_height });
+      byScope.set(sk, list);
+    }
+
+    const winnerIdByScope = new Map<string, string>();
+    const wantedIds = new Set<string>();
+    for (const [sk, combos] of byScope) {
+      const w = pickDearestSupplierCombo(combos);
+      if (w) { winnerIdByScope.set(sk, w.supplierId); wantedIds.add(w.supplierId); }
+    }
+    const nameById = new Map<string, string>();
+    if (wantedIds.size > 0) {
+      const { data: sup, error: nameErr } = await scopeToCompany(supabase.from('suppliers').select('id, name'), c).in('id', [...wantedIds]);
+      // Best-effort: on a name-lookup failure the anchor still shows by id.
+      if (!nameErr) for (const s of ((sup ?? []) as Array<{ id: string; name: string | null }>)) nameById.set(s.id, s.name ?? '');
+    }
+    winnerByScope = new Map();
+    for (const [sk, supplierId] of winnerIdByScope) {
+      winnerByScope.set(sk, { supplierId, supplierName: nameById.get(supplierId) ?? null });
+    }
+  }
+
+  const gridHasCost = (g: unknown): boolean => {
+    for (const v of Object.values((g ?? {}) as Record<string, unknown>)) {
+      const n = typeof v === 'number' ? v : Number(v);
+      if (Number.isFinite(n) && n > 0) return true;
+    }
+    return false;
+  };
+  const withDeriveStatus = (r: Row) => {
+    const wire = rowToWire(r);
+    if (winnerByScope == null) return wire;
+    const w = winnerByScope.get(scopeKeyOf(r));
+    if (w) return { ...wire, costSource: 'auto', derivedFromSupplierId: w.supplierId, derivedFromSupplierName: w.supplierName };
+    return {
+      ...wire,
+      costSource: gridHasCost(r.prices_by_height) ? 'manual' : 'gap',
+      derivedFromSupplierId: null,
+      derivedFromSupplierName: null,
+    };
+  };
+  return c.json({ rules: out.map(withDeriveStatus) });
 });
 
 // ── GET /history ───────────────────────────────────────────────────────
@@ -376,107 +381,66 @@ sofaCombos.get('/history', async (c) => {
   return c.json({ rules: matching.map(rowToWire) });
 });
 
-// ── GET /anchors ─────────────────────────────────────────────────────────
-// R8 — every base_model → anchored supplier mapping. SELECT is open (the combo
-// UI reads this to drive the per-model anchor control + the write paths read it
-// to decide whether to mirror). Declared BEFORE the `/:id` routes so the literal
-// `/anchors` path always wins over the `:id` param matcher.
-sofaCombos.get('/anchors', async (c) => {
-  const supabase = c.get('supabase');
-  const { data, error } = await scopeToCompany(
-    supabase
-      .from('sofa_combo_anchor')
-      .select('base_model, supplier_id'),
-    c,
-  )
-    .order('base_model', { ascending: true });
-  /* scm.sofa_combo_anchor DOES NOT EXIST in Houzs — verified against production
-     2026-08-12 (`to_regclass('scm.sofa_combo_anchor')` = NULL), which is what
-     migration 0114 recorded when it skipped the table. R8 came across from 2990
-     with the route and the frontend query but without its table, so this handler
-     has 500'd on EVERY Combo Pricing page load since it was vendored.
 
-     An absent table means "nothing is anchored", which is the truth and is
-     exactly what an empty list says. Report it as such rather than as a failure:
-     the caller (useSofaComboAnchors) only ever asks "which models are anchored",
-     and a 500 answers that question no better than [] while filling the console
-     with a red herring. Every OTHER error still surfaces as 500 — this narrows
-     to the one code that means the relation is missing (42P01), so a genuine
-     permission or connection fault can never hide behind it.
-
-     If the feature is ever wanted, the fix is a migration creating the table;
-     this branch then simply stops being taken. See docs/modules/combo-pricing.md
-     section 6. */
-  if (error) {
-    const missing = error.code === '42P01' || /relation .* does not exist/i.test(error.message ?? '');
-    if (missing) return c.json({ anchors: [] });
-    return c.json({ error: 'load_failed', reason: error.message }, 500);
-  }
-  return c.json({ anchors: (data ?? []) as Array<{ base_model: string; supplier_id: string }> });
-});
-
-// ── PUT /anchors/:baseModel ───────────────────────────────────────────────
-// R8 — set or clear the anchor for one base model. body { supplierId: string |
-// null }. A non-empty supplierId UPSERTs the anchor (one row per base_model);
-// null / empty deletes it (un-anchor). Write-gated like every combo mutation.
-sofaCombos.put('/anchors/:baseModel', async (c) => {
-  const gate = await requireWriteRole(c);
-  if (!gate.ok) return gate.res;
-
-  const baseModel = c.req.param('baseModel');
-  if (!baseModel) return c.json({ error: 'base_model_required' }, 400);
-
-  let body: { supplierId?: string | null };
+/* Auto-derive stage 5b (owner Option 1, COST-ONLY): after a SUPPLIER-scoped
+   combo write, derive the MASTER combo's COST grid (prices_by_height) from the
+   most-expensive supplier combo for the same scope tuple and append a master row
+   — preserving the master's SELLING grid (selling_prices_by_height, POS). No
+   supplier combo -> nothing derived (a gap the owner fills). This replaces the
+   sofa_combo_anchor mirror. Best-effort; flag-gated by the caller. */
+async function recomputeMasterComboCostFromSuppliers(
+  supabase: SupabaseClient,
+  savedRow: Row,
+  companyId: number | null | undefined,
+  createdBy: string,
+): Promise<void> {
   try {
-    body = (await c.req.json()) as typeof body;
-  } catch {
-    return c.json({ error: 'invalid_json' }, 400);
-  }
-
-  const supabase = c.get('supabase');
-  const user = c.get('user');
-  const supplierId =
-    typeof body.supplierId === 'string' && body.supplierId.trim() ? body.supplierId.trim() : null;
-
-  if (supplierId) {
-    const { error } = await supabase
-      .from('sofa_combo_anchor')
-      .upsert(
-        {
-          company_id: activeCompanyId(c),
-          base_model: baseModel,
-          supplier_id: supplierId,
-          created_by: user.id,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: 'company_id,base_model' },
-      );
-    if (error) {
-      /* DEAD BRANCH -- here and at EVERY other 42501 site in this file. 42501 is
-         Postgres permission-denied, i.e. RLS, and RLS cannot fire on this path: mig
-         0061 enabled RLS on every scm table with NO policies, and the SCM client is
-         the SERVICE-ROLE client (scm/middleware/auth.ts:93 -> db/supabase.ts
-         getSupabaseService), which bypasses RLS by design. No scm function RAISEs
-         42501 either -- the live tree's only ERRCODE is 22023. Do NOT read this as a
-         permission check and do NOT treat it as scoping: the only boundary is this
-         route's own predicate. (docs/audit-2026-08-13-ledger.md K1) */
-      if (error.code === '42501' || /permission denied/i.test(error.message)) {
-        return c.json({ error: 'forbidden', reason: error.message }, 403);
-      }
-      return c.json({ error: 'anchor_upsert_failed', reason: error.message }, 500);
+    const key = comboSlotsKey(savedRow.modules ?? []);
+    const asOf = todayMyt();
+    let q = supabase
+      .from('sofa_combo_pricing')
+      .select('supplier_id, modules, prices_by_height, selling_prices_by_height, pwp_prices_by_height, default_free_gifts, label, effective_from, created_at')
+      .eq('base_model', savedRow.base_model)
+      .eq('tier', savedRow.tier)
+      .is('deleted_at', null)
+      .lte('effective_from', asOf);
+    if (companyId != null) q = q.eq('company_id', companyId);
+    q = savedRow.customer_id == null ? q.is('customer_id', null) : q.eq('customer_id', savedRow.customer_id);
+    const { data, error } = await q.order('effective_from', { ascending: false }).order('created_at', { ascending: false });
+    if (error) throw new Error(error.message);
+    const rows = ((data ?? []) as Row[]).filter((r) => comboSlotsKey(r.modules ?? []) === key);
+    const latestSup = new Map<string, Row>();
+    let master: Row | null = null;
+    for (const r of rows) {
+      if (r.supplier_id == null) { if (!master) master = r; }
+      else if (!latestSup.has(r.supplier_id)) latestSup.set(r.supplier_id, r);
     }
-  } else {
-    const { error } = await supabase.from('sofa_combo_anchor').delete().eq('base_model', baseModel).eq('company_id', activeCompanyId(c));
-    if (error) {
-      if (error.code === '42501' || /permission denied/i.test(error.message)) {
-        return c.json({ error: 'forbidden', reason: error.message }, 403);
-      }
-      return c.json({ error: 'anchor_delete_failed', reason: error.message }, 500);
-    }
+    const derived = deriveMasterComboCostFromSuppliers(
+      [...latestSup.values()].map((r) => ({ supplier_id: r.supplier_id as string, prices_by_height: r.prices_by_height })),
+    );
+    if (!derived) return;
+    if (master && !comboCostChanged(master.prices_by_height, derived)) return;
+    const { error: insErr } = await supabase.from('sofa_combo_pricing').insert({
+      company_id: companyId,
+      base_model: savedRow.base_model,
+      modules: savedRow.modules,
+      tier: savedRow.tier,
+      customer_id: savedRow.customer_id,
+      supplier_id: null,
+      prices_by_height: derived,
+      selling_prices_by_height: master?.selling_prices_by_height ?? {},
+      pwp_prices_by_height: master?.pwp_prices_by_height ?? {},
+      default_free_gifts: master?.default_free_gifts ?? [],
+      label: master?.label ?? savedRow.label,
+      effective_from: asOf,
+      notes: 'auto-derived cost (max supplier)',
+      created_by: createdBy,
+    });
+    if (insErr) throw new Error(insErr.message);
+  } catch (e) {
+    console.error('[auto-derive] master combo cost recompute failed:', e instanceof Error ? e.message : e);
   }
-
-  return c.json({ ok: true });
-});
+}
 
 // ── POST / ─────────────────────────────────────────────────────────────
 // Create a new combo row. body: {
@@ -627,8 +591,15 @@ sofaCombos.post('/', async (c) => {
   // combo to the other side (master ⇄ that supplier). Best-effort: a mirror
   // failure leaves the primary row intact and just reports mirrored:false.
   const savedRow = data as unknown as Row;
-  const anchor = await loadComboAnchor(supabase, baseModel, activeCompanyId(c));
-  const mirrored = anchor ? await mirrorAnchoredCombo(supabase, savedRow, anchor, user.id, activeCompanyId(c)) : false;
+  let mirrored = false;
+  // Auto-derive (flag-gated): a supplier-scope write derives the MASTER combo
+  // COST from the most-expensive supplier (cost-only). The old sofa_combo_anchor
+  // mirror is removed — 0 models were ever anchored, so it never fired, and the
+  // derivation replaces it (owner 2026-09-16). `mirrored` stays for response
+  // shape and is always false now.
+  if (savedRow.supplier_id != null && (await autoDeriveEnabled(supabase))) {
+    await recomputeMasterComboCostFromSuppliers(supabase, savedRow, activeCompanyId(c), user.id);
+  }
   return c.json({ ...rowToWire(savedRow), mirrored }, 201);
 });
 
@@ -751,11 +722,13 @@ export const sofaComboPutHandler = async (c: any) => {
 
   if (error) return c.json({ error: 'insert_failed', reason: error.message }, 500);
 
-  // R8 — mirror the new effective row to the other side of the anchor when the
-  // base model is anchored (master ⇄ supplier). Same best-effort contract as POST.
+  // Auto-derive (flag-gated): a supplier-scope write derives the master combo
+  // COST from the most-expensive supplier. Anchor mirror removed (see POST).
   const savedRow = data as unknown as Row;
-  const anchor = await loadComboAnchor(supabase, (orig as { base_model: string }).base_model, activeCompanyId(c));
-  const mirrored = anchor ? await mirrorAnchoredCombo(supabase, savedRow, anchor, user.id, activeCompanyId(c)) : false;
+  const mirrored = false;
+  if (savedRow.supplier_id != null && (await autoDeriveEnabled(supabase))) {
+    await recomputeMasterComboCostFromSuppliers(supabase, savedRow, activeCompanyId(c), user.id);
+  }
   return c.json({ ...rowToWire(savedRow), mirrored }, 201);
 };
 sofaCombos.put('/:id', sofaComboPutHandler);

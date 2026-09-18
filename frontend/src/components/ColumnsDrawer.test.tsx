@@ -323,19 +323,36 @@ describe("Sales Orders column groups", () => {
     const source = await import("node:fs").then((fs) =>
       fs.readFileSync("src/pages/scm-v2/MfgSalesOrdersListV2.tsx", "utf8"),
     );
-    const columnsBlock = source.slice(
-      source.indexOf("const columns: Column<SoRow>[] = ["),
-      source.indexOf("/* One pill per vocabulary status"),
+    const start = source.indexOf("const columns: Column<SoRow, SoListLine>[] = [");
+    expect(start).toBeGreaterThan(0);
+    const columnsBlock = source.slice(start, source.indexOf("/* One pill per vocabulary status"));
+    const keys = [...columnsBlock.matchAll(/\bkey: "([a-z0-9_]+)"/g)].map((m) => m[1]);
+    const groups = [...columnsBlock.matchAll(/\bgroup: "([^"]+)"/g)].map((m) => m[1]);
+
+    /* Since 2026-09-15 the finance money columns and the line columns are built
+       by pages/scm-v2/so-do-list-columns.tsx (shared with the Delivery Order
+       list). The page passes the finance group by name; every line column is in
+       "Lines". They count toward the page's columns here. */
+    const shared = await import("node:fs").then((fs) =>
+      fs.readFileSync("src/pages/scm-v2/so-do-list-columns.tsx", "utf8"),
     );
-    const keys = [...columnsBlock.matchAll(/^\s*key: "([a-z0-9_]+)",$/gm)].map((m) => m[1]);
-    const groups = [...columnsBlock.matchAll(/^\s*group: "([^"]+)",$/gm)].map((m) => m[1]);
+    expect(columnsBlock).toContain('financeColumns<SoRow, SoListLine>("Finance")');
+    const financeBlock = shared.slice(shared.indexOf("const FINANCE_MONEY"), shared.indexOf("/** A line unit price"));
+    const financeKeys = [
+      ...financeBlock.matchAll(/\["([a-z0-9_]+)",/g),
+      ...financeBlock.matchAll(/\bkey: "([a-z0-9_]+)"/g),
+    ].map((m) => m[1]);
+    const soLineBlock = shared.slice(shared.indexOf("export function soLineColumns"), shared.indexOf("export function doLineColumns"));
+    const lineKeys = [...soLineBlock.matchAll(/^ {4}([a-z0-9_]+): /gm)].map((m) => m[1]);
+    expect(soLineBlock).toContain('group: "Lines"');
 
     // Every column carries a group — a new column added without one would
     // silently fall to the bottom of the drawer, ungrouped.
-    expect(keys.length).toBeGreaterThanOrEqual(44);
+    expect(keys.length + financeKeys.length + lineKeys.length).toBeGreaterThanOrEqual(44);
     expect(groups.length).toBe(keys.length);
-    expect(new Set(groups)).toEqual(
-      new Set(["Basic", "Customer", "Amounts", "Logistics", "Finance"]),
+    expect(financeKeys).toHaveLength(13);
+    expect(new Set([...groups, "Finance", "Lines"])).toEqual(
+      new Set(["Basic", "Customer", "Amounts", "Logistics", "Finance", "Lines"]),
     );
   });
 });

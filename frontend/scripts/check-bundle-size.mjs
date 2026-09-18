@@ -202,7 +202,33 @@ const CEILINGS = {
   // (the same build, measured honestly for the first time; the true figure on
   // the old commit was ~269 KB and removing jspdf's tree from the eager path
   // cut it to ~155). Keep tight: a real regression here is a first-paint cost.
-  INITIAL_JS_GZIP: 165 * KB,
+  // 165 -> 166 on 2026-09-05: the notification bell (top chrome, always
+  // loaded) became the one unread entry point — tabs, announcement rows with
+  // inline Acknowledge / Mark read, source tags — for the Announcements
+  // redesign (PR #2994), +1.0 KB gzip. Deliberate; the popover body is the
+  // next candidate to lazy-load if this ceiling is reached again.
+  // 166 -> 167 on 2026-09-08: main sat at 165.8 and the cancellation-approval
+  // inbox (PR #3223) added one sidebar entry, one lazy route and one manifest
+  // line to the shell — +0.3 KB gzip, no new eager module (its icon is one the
+  // shell already loads). The bell popover body is STILL the next diet; this
+  // bump buys 1 KB, not a policy.
+  // 167 -> 168 on 2026-09-12: main sat at 166.8 and the Finance sidebar
+  // regroup (six groups, twelve deep-linked Accounting tabs; docs/bugs/0824)
+  // added +0.4 KB to the entry chunk the sidebar lives in. Deliberate: the
+  // sidebar is initial by nature. Next candidate to lazy-load is still the
+  // same as the note above.
+  // 168 -> 169 on 2026-09-14: main sat AT 168.0 and #26 (the source PO beside
+  // each goods-receipt / purchase-invoice line, PR #3807) measured +0.1 KB on
+  // the entry with NO new eager module — the entry's lazy-chunk map gained one
+  // name for the shared LinePoRefLink chunk the five purchase pages import.
+  // Any PR adding a shared lazy chunk would have tripped it; the bell popover
+  // body is still the diet that buys real room.
+  // 169 -> 170 on 2026-09-16: main sat AT 169.0 and the SCM server-side funnel
+  // rollout (GRN, PR #4030) added NO eager module — the entry's lazy-chunk map
+  // gained one name for the shared useServerColumnFunnels chunk the SCM list
+  // pages import. Same shared-lazy-chunk mechanism as the note above; the bell
+  // popover body is still the diet that buys real room.
+  INITIAL_JS_GZIP: 170 * KB,
   // Everything the app can lazy-load (users only fetch the routes they visit).
   // A soft guard against unbounded total growth, not a first-paint cost. Left
   // at 1800 deliberately — main is at ~99% of it and RAISING IT AGAIN IS NOT
@@ -235,6 +261,9 @@ const CEILINGS = {
 // exactly the size of change that should have to say so out loud.
 const GROWTH = {
   INITIAL_JS_GZIP: 8 * KB,
+  // 2026-09-14: #3818 vendored pdf.js (+97.4 KB gzip, all lazy — loaded on the
+  // press that picks a statement .pdf; initial JS +0.0 KB). It went in under a
+  // one-PR allowance of 100; the merge base carries it now, so back to 60.
   TOTAL_JS_GZIP: 60 * KB,
   // Per-chunk raw growth. A chunk gaining 100 KB raw without crossing the
   // absolute ceiling is still a route getting out of hand.

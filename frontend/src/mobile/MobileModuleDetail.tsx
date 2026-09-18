@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { siDepositAppliedSen, siOutstandingSen } from "../vendor/scm/lib/si-outstanding";
+import { offersRecordPayment, piPaymentHint } from "./doc-payment";
 import { visibleFields, canOperateDeliveryOrders, canOperateSalesInvoices } from "../auth/salesAccess";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { lineIdentity, orderLineIdentity } from "@2990s/shared";
@@ -7,14 +8,18 @@ import { buildVariantSummary } from "../vendor/shared/variant-summary";
 import { formatPhone } from "@2990s/shared/phone";
 import { authedFetch } from "../vendor/scm/lib/authed-fetch";
 import { usePoSoCoverage, originsByCode, provenanceByCode, storedLinkSkus, deliveredByCode, type OriginAssignment } from "../vendor/scm/lib/flow-queries";
-import { CommittedBatchRowMobile, PairedSoRowsMobile, SourcePosRowMobile } from "./source-chips";
+import { CommittedBatchRowMobile, PairedSoRowsMobile, SourcePosRowMobile, SubstitutedRowMobile } from "./source-chips"; import { MobileLinePoFacts, mobilePiPoPriceNotice } from "./MobileLinePoRef";
 import { MobileRelationshipMap } from "./MobileRelationshipMap";
+import { MobileLineRemark } from "./MobileLineRemark";
 import { useGrnZeroCostRemedy } from "./MobileGrnZeroCost";
 import { flowAnchorForModule, type FlowNav } from "./relationship-map-model";
 import { idempotentInit, useIdempotencyKey } from "../lib/idempotency";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
+import { MobileAddLine } from "./MobileAddLine";
 import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
+import { usePrompt } from "../vendor/scm/components/PromptDialog";
+import { askActionReason, DO_CANCEL_PROMPT, PO_CANCEL_PROMPT, type ActVariant, type DocAction } from "./doc-actions";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
 import { MODULE_CONFIGS } from "./MobileModuleList";
 import { invalidateModuleShared } from "./sharedInvalidate";
@@ -28,6 +33,7 @@ import { formatDate } from "../lib/utils";
 import { PAYMENT_METHOD_CODES, PAYMENT_METHOD_DEFAULT_LABELS } from "../vendor/scm/lib/payment-methods";
 import { PrintPreviewModal, usePrintPreview } from "../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../vendor/scm/lib/pdf-common";
+import { humaniseStatusKey, statusLabel, type StatusDocType } from "../vendor/scm/lib/status-pill";
 import "./mobile.css";
 
 // ---------------------------------------------------------------------------
@@ -135,7 +141,7 @@ function CancelledRibbon({ header }: { header: any }) {
   );
 }
 
-function StatusPill({ status }: { status: unknown }) {
+function StatusPill({ status, statusDoc }: { status: unknown; statusDoc: StatusDocType | null }) {
   const raw = s(status).trim();
   if (!raw) return null;
   const p = phase(status);
@@ -147,10 +153,9 @@ function StatusPill({ status }: { status: unknown }) {
     cancelled: ["#f8eaea", "#b23a3a", "none"],
   };
   const [bg, fg, border] = map[p];
-  const label = raw
-    .replace(/_/g, " ")
-    .toLowerCase()
-    .replace(/\b\w/g, (m) => m.toUpperCase());
+  /* Word from status-pill.ts; title-casing the stored value made a LOADED delivery order read "Loaded"
+     (docs/bugs/0868). null = no canonical map: humaniseStatusKey is that same old title-casing. */
+  const label = statusDoc ? statusLabel(statusDoc, raw) : humaniseStatusKey(raw);
   return (
     <span className="spill" style={{ background: bg, color: fg, border }}>
       {label}
@@ -185,8 +190,8 @@ function Eyebrow({ children }: { children: string }) {
 }
 
 /** One `.docrow` line item: name + qty on top, unit price + amount below. */
-function LineItem({ name, sub, qty, unitSen, amountSen, assigned, sourceLinked, provenance, allocations, poNumber, sourcePos, sourceAdj, delivered, committedBatch }: {
-  name: string; sub?: string; qty: unknown; unitSen: unknown; amountSen: unknown;
+function LineItem({ name, sub, remark, qty, unitSen, amountSen, assigned, sourceLinked, provenance, allocations, poNumber, sourcePos, sourceAdj, delivered, committedBatch, substituted, poRef }: {
+  name: string; sub?: string; qty: unknown; unitSen: unknown; amountSen: unknown; remark?: string | null;
   // Present (even if empty) only for purchase docs (PO/GRN/PI): the REAL origin
   // Sales Order(s) this line was raised from + that SO's effective delivery
   // date, matched by SKU. Empty array → dash, mirroring the desktop columns.
@@ -223,6 +228,8 @@ function LineItem({ name, sub, qty, unitSen, amountSen, assigned, sourceLinked, 
   // exactly as it always was.
   allocations?: Array<{ seq: number; qty: number; so_doc_no: string | null }>;
   poNumber?: string;
+  /* DO lines only (mig 20260907T2340) — see SubstitutedRowMobile. */ substituted?: boolean;
+  /* GRN / PI lines (#26): the line's own PO — see MobileLinePoRef. */ poRef?: React.ReactNode;
 }) {
   const q = Number(qty);
   const qtyLabel = Number.isFinite(q) ? q : 0;
@@ -236,6 +243,7 @@ function LineItem({ name, sub, qty, unitSen, amountSen, assigned, sourceLinked, 
         {sub ? <span style={{ marginRight: 8 }}>{sub}</span> : null}
         <span>@ {money(unitSen)}</span>
       </div>
+      <SubstitutedRowMobile on={substituted} /><MobileLineRemark text={remark} />{poRef}
       {assigned && (
         /* Purchase docs — the per-SO PAIRED rows (owner 2026-08-02): one row
            per assigned SO = [SO chip | date | that SO's delivered DOs xqty |
@@ -283,8 +291,8 @@ function LineItem({ name, sub, qty, unitSen, amountSen, assigned, sourceLinked, 
 }
 
 // ── Header card (shared by every module) ────────────────────────────────────
-function DetailHeader({ eyebrow, title, subtitle, status, onBack, onEdit, onPdf, onMap }: {
-  eyebrow: string; title: string; subtitle?: string; status?: unknown; onBack: () => void; onEdit?: () => void; onPdf?: () => void;
+function DetailHeader({ eyebrow, title, subtitle, status, statusDoc, onBack, onEdit, onPdf, onMap }: {
+  eyebrow: string; title: string; subtitle?: string; status?: unknown; statusDoc: StatusDocType | null; onBack: () => void; onEdit?: () => void; onPdf?: () => void;
   /** Opens the mobile Relationship Map (document modules with a flow anchor). */
   onMap?: () => void;
 }) {
@@ -295,7 +303,7 @@ function DetailHeader({ eyebrow, title, subtitle, status, onBack, onEdit, onPdf,
           <span style={{ fontSize: 17, lineHeight: 1 }}>{"‹"}</span> Back
         </span>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <StatusPill status={status} />
+          <StatusPill status={status} statusDoc={statusDoc} />
           {onMap && (
             <button className="tinybtn" onClick={onMap} style={{ background: "#f4f6f3", border: "1px solid var(--line2)", color: "var(--ink)" }}>
               Map
@@ -336,11 +344,13 @@ type DocMap = {
   title: (h: any) => string;
   subtitle?: (h: any) => string;
   status: (h: any) => unknown;
+  /** status-pill.ts vocabulary for the header pill. REQUIRED - null is a decision (humanise the stored value). */
+  statusDoc: StatusDocType | null;
   /** KV grid rows: [label, value]. */
   meta: (h: any) => Array<[string, string]>;
   /** [Total, Secondary, Tertiary] stats — each [label, value, color] or null. */
   stats: (h: any) => Array<[string, string, string] | null>;
-  line: (it: any) => { name: string; sub?: string; qty: unknown; unitSen: unknown; amountSen: unknown };
+  line: (it: any) => { name: string; sub?: string; remark?: string | null; qty: unknown; unitSen: unknown; amountSen: unknown };
   /** Optional amber warning bar between the stats and the line items —
    *  computed from the SAME detail payload (header + items), so no extra
    *  fetch. Return null for "nothing to warn about". */
@@ -356,12 +366,12 @@ const DOC_MODULES: Record<string, DocMap> = {
     eyebrow: (h) => firstOf(h.do_number),
     title: (h) => firstOf(h.debtor_name, h.debtor_code),
     subtitle: (h) => (s(h.so_doc_no).trim() ? `SO ${s(h.so_doc_no)}` : ""),
-    status: (h) => h.status,
+    status: (h) => h.status, statusDoc: "do",
     meta: (h) => [
       ["DO Date", dmy(h.do_date)],
       ["Delivery", dmy(h.customer_delivery_date ?? h.expected_delivery_at)],
       ["Phone", formatPhone(firstOf(h.phone))],
-      ["Location", firstOf(h.sales_location, h.customer_state, h.state)],
+      ["Ship-from", firstOf(h.sales_location)], // the BRANCH (owner 2026-09-07, header-level); the customer_state fallback was a different concept under one label
       ["Reference", firstOf(h.ref, h.po_doc_no)],
       ["Salesperson", firstOf(h.agent)],
     ],
@@ -390,7 +400,7 @@ const DOC_MODULES: Record<string, DocMap> = {
     eyebrow: (h) => firstOf(h.invoice_number),
     title: (h) => firstOf(h.debtor_name, h.debtor_code),
     subtitle: (h) => (s(h.so_doc_no).trim() ? `SO ${s(h.so_doc_no)}` : ""),
-    status: (h) => h.status,
+    status: (h) => h.status, statusDoc: "si",
     meta: (h) => [
       ["Invoice Date", dmy(h.invoice_date)],
       ["Due Date", dmy(h.due_date)],
@@ -442,7 +452,7 @@ const DOC_MODULES: Record<string, DocMap> = {
       const po = s(nested(h.purchase_order)?.po_number).trim();
       return join(code, po ? `PO ${po}` : "");
     },
-    status: (h) => h.status,
+    status: (h) => h.status, statusDoc: "grn",
     meta: (h) => [
       ["Received", dmy(h.received_at)],
       ["Delivery Note", firstOf(h.delivery_note_ref)],
@@ -469,7 +479,7 @@ const DOC_MODULES: Record<string, DocMap> = {
     eyebrow: (h) => firstOf(h.po_number),
     title: (h) => firstOf(nested(h.supplier)?.name, h.po_number),
     subtitle: (h) => firstOf(nested(h.supplier)?.code) === "—" ? "" : firstOf(nested(h.supplier)?.code),
-    status: (h) => h.status,
+    status: (h) => h.status, statusDoc: "po",
     meta: (h) => [
       ["PO Date", dmy(h.po_date)],
       ["Expected", dmy(h.expected_at)],
@@ -489,11 +499,8 @@ const DOC_MODULES: Record<string, DocMap> = {
          surfaces the sofa/bedframe colour+composition), then item_code +
          cumulative received_qty. buildVariantSummary returns "" when the row
          has no variants, so a bare material line still reads correctly. */
-      sub: join(
-        buildVariantSummary(it.item_group, it.variants) || (it.description2 ?? ""),
-        it.item_code,
-        s(it.received_qty).trim() ? `Received ${s(it.received_qty)}` : "",
-      ),
+      sub: join(buildVariantSummary(it.item_group, it.variants) || (it.description2 ?? ""), it.item_code, s(it.received_qty).trim() ? `Received ${s(it.received_qty)}` : ""),
+      remark: it.notes ?? null, // MobileLineRemark's header has the why
       qty: it.qty,
       unitSen: it.unit_price_sen,
       amountSen: it.line_total_sen,
@@ -523,7 +530,8 @@ const DOC_MODULES: Record<string, DocMap> = {
       firstOf(nested(h.supplier)?.code) === "—" ? "" : firstOf(nested(h.supplier)?.code),
       s(h.supplier_invoice_ref).trim() ? `Ref ${s(h.supplier_invoice_ref)}` : "",
     ),
-    status: (h) => h.status,
+    notice: (_h, items) => mobilePiPoPriceNotice(items), // PO price vs PI price, reference only (owner 2026-09-14)
+    status: (h) => h.status, statusDoc: "pi",
     meta: (h) => [
       ["Invoice Date", dmy(h.invoice_date)],
       ["Due Date", dmy(h.due_date)],
@@ -575,7 +583,7 @@ const DOC_MODULES: Record<string, DocMap> = {
       const po = s(nested(h.purchase_order)?.po_number).trim();
       return join(grn ? `GRN ${grn}` : "", po ? `PO ${po}` : "");
     },
-    status: (h) => h.status,
+    status: (h) => h.status, statusDoc: "pr",
     meta: (h) => [
       ["Return Date", dmy(h.return_date)],
       ["Reason", firstOf(h.reason)],
@@ -617,7 +625,7 @@ const DOC_MODULES: Record<string, DocMap> = {
     eyebrow: (h) => firstOf(h.return_number),
     title: (h) => firstOf(h.debtor_name, h.return_number),
     subtitle: (h) => (s(h.do_doc_no).trim() ? `DO ${s(h.do_doc_no)}` : ""),
-    status: (h) => h.status,
+    status: (h) => h.status, statusDoc: "dr",
     meta: (h) => [
       ["Return Date", dmy(h.return_date)],
       ["Reason", firstOf(h.reason)],
@@ -666,7 +674,7 @@ const DOC_MODULES: Record<string, DocMap> = {
       s(h.ref).trim() ? `Ref ${s(h.ref)}` : "",
       s(h.po_doc_no).trim() ? `PO ${s(h.po_doc_no)}` : "",
     ),
-    status: (h) => h.status,
+    status: (h) => h.status, statusDoc: null,
     meta: (h) => [
       ["Order Date", dmy(h.so_date)],
       ["Delivery", dmy(h.customer_delivery_date ?? h.processing_date)],
@@ -710,7 +718,7 @@ const DOC_MODULES: Record<string, DocMap> = {
     eyebrow: (h) => firstOf(h.do_number),
     title: (h) => firstOf(h.debtor_name, h.do_number),
     subtitle: (h) => (s(h.consignment_so_doc_no).trim() ? `CO ${s(h.consignment_so_doc_no)}` : ""),
-    status: (h) => h.status,
+    status: (h) => h.status, statusDoc: null,
     meta: (h) => [
       ["Note Date", dmy(h.do_date)],
       ["Delivery", dmy(h.customer_delivery_date ?? h.expected_delivery_at)],
@@ -750,7 +758,7 @@ const DOC_MODULES: Record<string, DocMap> = {
     eyebrow: (h) => firstOf(h.return_number),
     title: (h) => firstOf(h.debtor_name, h.return_number),
     subtitle: (h) => (s(h.do_doc_no).trim() ? `CN ${s(h.do_doc_no)}` : ""),
-    status: (h) => h.status,
+    status: (h) => h.status, statusDoc: null,
     meta: (h) => [
       ["Return Date", dmy(h.return_date)],
       ["Reason", firstOf(h.reason)],
@@ -792,7 +800,7 @@ const DOC_MODULES: Record<string, DocMap> = {
     eyebrow: (h) => firstOf(h.pc_number),
     title: (h) => firstOf(nested(h.supplier)?.name, h.pc_number),
     subtitle: (h) => firstOf(nested(h.supplier)?.code) === "—" ? "" : firstOf(nested(h.supplier)?.code),
-    status: (h) => h.status,
+    status: (h) => h.status, statusDoc: null,
     meta: (h) => [
       ["PC Date", dmy(h.po_date)],
       ["Expected", dmy(h.expected_at)],
@@ -838,7 +846,7 @@ const DOC_MODULES: Record<string, DocMap> = {
       const pc = s(nested(h.purchase_consignment_order)?.pc_number ?? h.pc_order_no).trim();
       return join(code, pc ? `PC ${pc}` : "");
     },
-    status: (h) => h.status,
+    status: (h) => h.status, statusDoc: null,
     meta: (h) => [
       ["Received", dmy(h.received_at)],
       ["Delivery Note", firstOf(h.delivery_note_ref)],
@@ -884,7 +892,7 @@ const DOC_MODULES: Record<string, DocMap> = {
       const recv = s(nested(h.pc_receive)?.receive_number).trim();
       return join(pc ? `PC ${pc}` : "", recv ? `Receive ${recv}` : "");
     },
-    status: (h) => h.status,
+    status: (h) => h.status, statusDoc: null,
     meta: (h) => [
       ["Return Date", dmy(h.return_date)],
       ["Reason", firstOf(h.reason)],
@@ -940,51 +948,6 @@ function docId(row: any): string {
 // VALID from the doc's CURRENT status are offered, so no button ever 409s.
 // Destructive actions (Cancel / Void) go through the in-app confirm (danger).
 // ---------------------------------------------------------------------------
-
-type ActVariant = "solid" | "outline" | "danger";
-
-/** One footer action button descriptor. */
-type DocAction = {
-  key: string;
-  label: string;
-  variant: ActVariant;
-  /** POST/PATCH/DELETE request, relative to /api/scm. */
-  request: { path: string; method: "PATCH" | "POST" | "DELETE"; body?: unknown };
-  /** In-app danger confirm before firing (Cancel / Void). */
-  confirm?: { title: string; body?: string; confirmLabel: string };
-  /** When true, the record no longer exists after this action → navigate back
-   *  to the list instead of staying on a now-deleted detail.
-   *
-   *  NO action sets this today. The last one that did was the mobile Delete PO
-   *  (removed 2026-08-11 with its endpoint — owner rule 不可以删只可以 cancel).
-   *  Kept because a legitimate `removes` action can still exist — discarding a
-   *  DRAFT that was never confirmed, the shape SO `DELETE /:docNo` has. It is
-   *  NOT the hook for re-adding a document delete; see
-   *  docs/hard-delete-inventory.md. */
-  removes?: boolean;
-};
-
-/** true when total − paid still leaves a balance (Record Payment worth offering). */
-function hasBalance(h: any): boolean {
-  const total = Number(h?.total_sen ?? h?.local_total_sen ?? 0);
-  const paid = Number(h?.paid_sen ?? 0);
-  const t = Number.isFinite(total) ? total : 0;
-  const p = Number.isFinite(paid) ? paid : 0;
-  return t > 0 && t - p > 0;
-}
-
-/** Whether a module's Record Payment sheet should be offered for `status`, and
- *  which payment endpoint + payload shape it uses. Returns null when payments
- *  don't apply (module has no payment route, or status/balance forbids it). */
-type PayKind = "si" | "pi";
-function paymentKind(moduleKey: string, header: any): PayKind | null {
-  const st = s(header?.status).toUpperCase();
-  if (st === "CANCELLED" || st === "DRAFT") return null;
-  if (!hasBalance(header)) return null;
-  if (moduleKey === "sales-invoices") return "si";
-  if (moduleKey === "purchase-invoices") return "pi";
-  return null;
-}
 
 /**
  * May this user OPERATE the document behind `moduleKey` (advance its status,
@@ -1045,7 +1008,7 @@ function statusActionsFor(moduleKey: string, id: string, header: any, mayOperate
       };
       const step = next[st];
       if (step) out.push({ key: "next", label: step[1], variant: "solid", request: { path, method: "PATCH", body: { status: step[0] } } });
-      out.push({ ...cancel(path, "delivery order"), confirm: { title: "Cancel this delivery order?", body: "This voids the DO and returns any shipped stock to the shelf.", confirmLabel: "Cancel DO" } });
+      out.push({ key: "cancel", label: "Cancel", variant: "danger", request: { path, method: "PATCH", body: { status: "CANCELLED" } }, reasonPrompt: DO_CANCEL_PROMPT });
       return out;
     }
 
@@ -1072,7 +1035,7 @@ function statusActionsFor(moduleKey: string, id: string, header: any, mayOperate
       if (st === "RECEIVED") return out;
       if (st === "DRAFT") {
         out.push({ key: "submit", label: "Submit", variant: "solid", request: { path: `/mfg-purchase-orders/${enc}/confirm`, method: "PATCH" } });
-        out.push({ key: "cancel", label: "Cancel", variant: "danger", request: { path: `/mfg-purchase-orders/${enc}/cancel`, method: "PATCH" }, confirm: { title: "Cancel this purchase order?", body: "This voids the PO and releases its SO lines back to the picker.", confirmLabel: "Cancel PO" } });
+        out.push({ key: "cancel", label: "Cancel", variant: "danger", request: { path: `/mfg-purchase-orders/${enc}/cancel`, method: "PATCH" }, reasonPrompt: PO_CANCEL_PROMPT });
         return out;
       }
       if (st === "CANCELLED") {
@@ -1083,7 +1046,7 @@ function statusActionsFor(moduleKey: string, id: string, header: any, mayOperate
         return out;
       }
       // SUBMITTED / PARTIALLY_RECEIVED
-      out.push({ key: "cancel", label: "Cancel", variant: "danger", request: { path: `/mfg-purchase-orders/${enc}/cancel`, method: "PATCH" }, confirm: { title: "Cancel this purchase order?", body: "This voids the PO and releases its SO lines back to the picker.", confirmLabel: "Cancel PO" } });
+      out.push({ key: "cancel", label: "Cancel", variant: "danger", request: { path: `/mfg-purchase-orders/${enc}/cancel`, method: "PATCH" }, reasonPrompt: PO_CANCEL_PROMPT });
       return out;
     }
 
@@ -1124,7 +1087,7 @@ function statusActionsFor(moduleKey: string, id: string, header: any, mayOperate
     }
 
     // Purchase Invoice — /post (DRAFT→POSTED), /cancel (blocked once paid).
-    // Payment is a separate action (see paymentKind → PI sheet).
+    // Payment is an AP Payment voucher, not an action here (see piPaymentHint).
     case "purchase-invoices": {
       if (st === "CANCELLED" || st === "PAID") return out;
       if (st === "DRAFT") {
@@ -1166,17 +1129,15 @@ function actSkin(variant: ActVariant, disabled: boolean): React.CSSProperties {
   return { flex: 1, padding: 12, borderRadius: 11, fontSize: 13.5, whiteSpace: "nowrap", ...skin, opacity: disabled ? 0.55 : 1 };
 }
 
-/** Record-Payment bottom sheet. `kind` picks the endpoint + payload:
- *  si → POST /sales-invoices/:id/payments { paidAt, method, amountSen, ... }
- *  pi → PATCH /purchase-invoices/:id/payment { amountSen, notes }. */
-function PaymentSheet({ kind, id, header, onClose, onDone }: {
-  kind: PayKind; id: string; header: any; onClose: () => void; onDone: () => void;
+/** Record-Payment bottom sheet for a Sales Invoice:
+ *  POST /sales-invoices/:id/payments { paidAt, method, amountSen, ... }. */
+function PaymentSheet({ id, header, onClose, onDone }: {
+  id: string; header: any; onClose: () => void; onDone: () => void;
 }) {
   const notify = useNotify();
   const total = Number(header?.total_sen ?? header?.local_total_sen ?? 0);
   const paid = Number(header?.paid_sen ?? 0);
-  // Gated on `kind`, not on the key being absent: this pre-fills an amount to COLLECT.
-  const balance = siOutstandingSen(total, paid, kind === "si" ? siDepositAppliedSen(header) : 0);
+  const balance = siOutstandingSen(total, paid, siDepositAppliedSen(header));
 
   const [amount, setAmount] = useState(() => (balance > 0 ? (balance / 100).toFixed(2) : ""));
   const [method, setMethod] = useState("cash");
@@ -1193,22 +1154,10 @@ function PaymentSheet({ kind, id, header, onClose, onDone }: {
     mutationFn: async () => {
       const amountSen = Math.round(Number(amount) * 100);
       if (!Number.isFinite(amountSen) || amountSen <= 0) throw new Error("Enter a valid amount greater than zero.");
-      if (kind === "si") {
-        const body: Record<string, unknown> = { paidAt: date, method, amountSen };
-        if (ref.trim()) body.approvalCode = ref.trim();
-        await authedFetch(`/sales-invoices/${encodeURIComponent(id)}/payments`,
-          idempotentInit(idemKey, { method: "POST", body: JSON.stringify(body) }));
-      } else {
-        const body: Record<string, unknown> = { amountSen };
-        if (ref.trim()) body.notes = ref.trim();
-        /* The PI payment PATCH is ADDITIVE — purchase-invoices.ts:644 computes
-           `newPaid = c0.paid_sen + amount`, so a double-fire pays the supplier
-           twice on paper. Its optimistic-concurrency loop gates on the paid_sen
-           it just read, which stops a concurrent write from being LOST; it does
-           nothing about the same payment arriving twice. Hence the key. */
-        await authedFetch(`/purchase-invoices/${encodeURIComponent(id)}/payment`,
-          idempotentInit(idemKey, { method: "PATCH", body: JSON.stringify(body) }));
-      }
+      const body: Record<string, unknown> = { paidAt: date, method, amountSen };
+      if (ref.trim()) body.approvalCode = ref.trim();
+      await authedFetch(`/sales-invoices/${encodeURIComponent(id)}/payments`,
+        idempotentInit(idemKey, { method: "POST", body: JSON.stringify(body) }));
     },
     onSuccess: () => { onDone(); onClose(); void notify({ title: "Payment recorded" }); },
     onError: (e) => setError(e instanceof Error ? e.message : "Couldn't record the payment. Please try again."),
@@ -1239,25 +1188,21 @@ function PaymentSheet({ kind, id, header, onClose, onDone }: {
           <input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00" style={inputStyle} />
         </div>
 
-        {kind === "si" && (
-          <div style={{ marginBottom: 12 }}>
-            <label style={labelStyle}>Method</label>
-            <select value={method} onChange={(e) => setMethod(e.target.value)} style={{ ...inputStyle, appearance: "none", WebkitAppearance: "none" }}>
-              {SI_METHODS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
-            </select>
-          </div>
-        )}
+        <div style={{ marginBottom: 12 }}>
+          <label style={labelStyle}>Method</label>
+          <select value={method} onChange={(e) => setMethod(e.target.value)} style={{ ...inputStyle, appearance: "none", WebkitAppearance: "none" }}>
+            {SI_METHODS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+          </select>
+        </div>
 
-        {kind === "si" && (
-          <div style={{ marginBottom: 12 }}>
-            <label style={labelStyle}>Date</label>
-            <DateField value={date} onChange={(iso) => setDate(iso)} style={inputStyle}/>
-          </div>
-        )}
+        <div style={{ marginBottom: 12 }}>
+          <label style={labelStyle}>Date</label>
+          <DateField value={date} onChange={(iso) => setDate(iso)} style={inputStyle}/>
+        </div>
 
         <div style={{ marginBottom: 14 }}>
-          <label style={labelStyle}>{kind === "si" ? "Reference" : "Note"}</label>
-          <input value={ref} onChange={(e) => setRef(e.target.value)} placeholder={kind === "si" ? "Approval / reference" : "Optional note"} style={inputStyle} />
+          <label style={labelStyle}>Reference</label>
+          <input value={ref} onChange={(e) => setRef(e.target.value)} placeholder="Approval / reference" style={inputStyle} />
         </div>
 
         {error && <div style={{ fontSize: 11.5, color: "#b23a3a", marginBottom: 12, textAlign: "center" }}>{error}</div>}
@@ -1276,7 +1221,7 @@ function PaymentSheet({ kind, id, header, onClose, onDone }: {
 }
 
 /** Sticky action footer for a document detail: status transition buttons +
- *  (for SI/PI) a Record Payment action opening the PaymentSheet. Invalidates
+ *  (for SI) a Record Payment action opening the PaymentSheet. Invalidates
  *  the detail + list queries on success; surfaces errors inline. Renders
  *  nothing when there is no valid action from the current status. */
 function DocActionFooter({ moduleKey, id, header, invalidate, onPOD, onDeleted }: {
@@ -1288,6 +1233,7 @@ function DocActionFooter({ moduleKey, id, header, invalidate, onPOD, onDeleted }
   onDeleted?: () => void;
 }) {
   const qc = useQueryClient();
+  const prompt = usePrompt();
   const confirm = useConfirm();
   const notify = useNotify();
   const [error, setError] = useState<string | null>(null);
@@ -1302,7 +1248,7 @@ function DocActionFooter({ moduleKey, id, header, invalidate, onPOD, onDeleted }
      scroll padding all agree. */
   const podEnabled = !!onPOD && mayOperate;
   const statusActions = useMemo(() => statusActionsFor(moduleKey, id, header, mayOperate), [moduleKey, id, header, mayOperate]);
-  const payKind = paymentKind(moduleKey, header);
+  const canPay = offersRecordPayment(moduleKey, header);
 
   const refresh = () => {
     invalidate();
@@ -1352,8 +1298,10 @@ function DocActionFooter({ moduleKey, id, header, invalidate, onPOD, onDeleted }
     if (mutation.isPending) return;
     setError(null);
     if (action.confirm && !(await confirm({ title: action.confirm.title, body: action.confirm.body, confirmLabel: action.confirm.confirmLabel, danger: true }))) return;
+    const fired = await askActionReason(action, prompt);
+    if (!fired) return; // the reason IS the confirmation — dismissed means no
     setRunningKey(action.key);
-    mutation.mutate(action);
+    mutation.mutate(fired);
   };
 
   /* ── THE DELIVERY ORDER'S NEXT STEP, SAID OUT LOUD ───────────────────────
@@ -1385,9 +1333,10 @@ function DocActionFooter({ moduleKey, id, header, invalidate, onPOD, onDeleted }
     moduleKey === "delivery-orders-mfg" && mayOperate && s(header?.status)
       ? (siTransferBlockReason(header?.status) ?? SI_TRANSFER_MOBILE_ROUTE_HINT)
       : null;
+  const footNote = doNextStepNote ?? piPaymentHint(moduleKey, header);
 
-  const hasRow = statusActions.length > 0 || !!payKind;
-  if (!hasRow && !podEnabled && !doNextStepNote) return null;
+  const hasRow = statusActions.length > 0 || canPay;
+  if (!hasRow && !podEnabled && !footNote) return null;
   const busy = mutation.isPending;
 
   return (
@@ -1396,9 +1345,9 @@ function DocActionFooter({ moduleKey, id, header, invalidate, onPOD, onDeleted }
         <div style={{ position: "absolute", left: 0, right: 0, bottom: hasRow && podEnabled ? 130 : 76, padding: "0 16px", textAlign: "center", fontSize: 11.5, color: "#b23a3a", zIndex: 1, maxWidth: "calc(100% - 32px)" }}>{error}</div>
       )}
       <footer className="actbar" style={{ position: "absolute", left: 0, right: 0, bottom: 0 }}>
-        {doNextStepNote && (
+        {footNote && (
           <p style={{ margin: "0 0 8px", fontSize: 11.5, lineHeight: 1.35, color: "#6b7280" }}>
-            {doNextStepNote}
+            {footNote}
           </p>
         )}
         {podEnabled && (
@@ -1406,7 +1355,7 @@ function DocActionFooter({ moduleKey, id, header, invalidate, onPOD, onDeleted }
         )}
         {hasRow && (
           <div style={{ display: "flex", gap: 9 }}>
-            {payKind && (
+            {canPay && (
               <button className="btn" disabled={busy} onClick={() => { setError(null); setPayOpen(true); }} style={actSkin("solid", busy)}>Record Payment</button>
             )}
             {statusActions.map((a) => (
@@ -1415,8 +1364,8 @@ function DocActionFooter({ moduleKey, id, header, invalidate, onPOD, onDeleted }
           </div>
         )}
       </footer>
-      {payOpen && payKind && (
-        <PaymentSheet kind={payKind} id={id} header={header} onClose={() => setPayOpen(false)} onDone={refresh} />
+      {payOpen && canPay && (
+        <PaymentSheet id={id} header={header} onClose={() => setPayOpen(false)} onDone={refresh} />
       )}
       {zeroCost.sheet}
     </>
@@ -1528,7 +1477,7 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD, flowNav }:
   // POD entry is gated on the operate helper (same as DocActionFooter) so a
   // view-only user gets no POD button — and the footer/scroll padding agree.
   const podEnabled = !!onPOD && mayOperate;
-  const hasStatusActions = !!id && (statusActionsFor(moduleKey, id, header, mayOperate).length > 0 || paymentKind(moduleKey, header) !== null);
+  const hasStatusActions = !!id && (statusActionsFor(moduleKey, id, header, mayOperate).length > 0 || offersRecordPayment(moduleKey, header) || piPaymentHint(moduleKey, header) !== null);
   const hasFooter = hasStatusActions || podEnabled;
   const invalidate = () => { void qc.invalidateQueries({ queryKey: ["mobile-module-detail", map.path, id] }); };
 
@@ -1539,6 +1488,7 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD, flowNav }:
         title={map.title(header)}
         subtitle={map.subtitle?.(header)}
         status={map.status(header)}
+        statusDoc={map.statusDoc}
         onBack={onBack}
         onEdit={onEdit}
         onPdf={onPdf}
@@ -1634,12 +1584,19 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD, flowNav }:
                   : null;
                 const delivered = coverageType ? (deliveredMap.get(code) ?? []) : undefined;
                 const provenance = coverageType ? (provByCode.get(code) ?? []) : undefined;
-                return <LineItem key={s(it?.id) || i} name={l.name} sub={l.sub} qty={l.qty} unitSen={l.unitSen} amountSen={l.amountSen} assigned={assigned} sourceLinked={coverageType ? linkedSkus.has(code) : undefined} provenance={provenance} allocations={allocations} poNumber={s(header?.po_number)} sourcePos={sourcePos} sourceAdj={sourceAdj} delivered={delivered} committedBatch={committedBatch} />;
+                return <LineItem key={s(it?.id) || i} name={l.name} sub={l.sub} remark={l.remark} qty={l.qty} unitSen={l.unitSen} amountSen={l.amountSen} assigned={assigned} sourceLinked={coverageType ? linkedSkus.has(code) : undefined} provenance={provenance} allocations={allocations} poNumber={s(header?.po_number)} sourcePos={sourcePos} sourceAdj={sourceAdj} delivered={delivered} committedBatch={committedBatch} substituted={moduleKey === "delivery-orders-mfg" && Boolean(it?.ac_substituted)} poRef={<MobileLinePoFacts moduleKey={moduleKey} line={it ?? {}} nav={flowNav} />} />;
               }) : <div style={{ fontSize: 11.5, color: "#9aa093", padding: "9px 0" }}>No line items.</div>)}
             </div>
+            {!isLoading && !error && id && <MobileAddLine moduleKey={moduleKey} docId={id} header={header} onAdded={invalidate} />}
           </div>
         )}
       </div>
+      {/* Collected on the ORDER — desktop parity (DeliveryOrderDetailV2's aside
+          card). Read-only on both surfaces: the order is the one place a
+          payment is taken. */}
+      {moduleKey === "delivery-orders-mfg" && s(header?.so_doc_no) && (
+        <MobileCollectedOnOrder soDocNo={s(header?.so_doc_no)} currency={s(header?.currency) || "MYR"} />
+      )}
       {/* CANCELLED = no lifecycle bar (spec); only the desktop-parity recovery
           actions (Reopen / Delete, the sole actions statusActionsFor returns for
           a cancelled doc) survive so a mis-cancel is still recoverable. */}
@@ -1918,7 +1875,7 @@ function SimpleDetail({ moduleKey, row, title, onBack, onEdit }: { moduleKey: st
   const actionRow = row ?? {};
   const actionId = s(row?.id);
   const mayOperate = useMayOperateDoc(moduleKey);
-  const hasFooter = !!actionId && (statusActionsFor(moduleKey, actionId, actionRow, mayOperate).length > 0 || paymentKind(moduleKey, actionRow) !== null);
+  const hasFooter = !!actionId && (statusActionsFor(moduleKey, actionId, actionRow, mayOperate).length > 0 || offersRecordPayment(moduleKey, actionRow) || piPaymentHint(moduleKey, actionRow) !== null);
   const invalidate = () => { void qc.invalidateQueries({ queryKey: ["mobile-module"] }); };
 
   return (
@@ -1927,6 +1884,7 @@ function SimpleDetail({ moduleKey, row, title, onBack, onEdit }: { moduleKey: st
         eyebrow={eyebrow === "—" ? "" : eyebrow}
         title={heading}
         status={status}
+        statusDoc={null}
         onBack={onBack}
         onEdit={onEdit}
       />
@@ -1983,9 +1941,9 @@ export function MobileModuleDetail({ moduleKey, row, title, onBack, onPOD, onEdi
   /** Relationship-Map node navigation (MobileApp). Absent → map nodes inert. */
   flowNav?: FlowNav;
 }) {
-  // Only offer Edit for modules whose form declares an updatePath (create-only
-  // modules like Warehouse show no Edit button even when onEdit is passed).
-  const editable = !!MODULE_CONFIGS[moduleKey]?.form?.updatePath;
+  // Edit is offered for modules whose form declares an updatePath, and for the
+  // Delivery Order, whose header edit is its own screen (MobileDoHeaderEdit).
+  const editable = !!MODULE_CONFIGS[moduleKey]?.form?.updatePath || moduleKey === "delivery-orders-mfg";
   const editHandler = editable ? onEdit : undefined;
   const doc = DOC_MODULES[moduleKey];
   // Document modules host their own sticky footer (status actions + Record
@@ -1999,3 +1957,4 @@ export function MobileModuleDetail({ moduleKey, row, title, onBack, onPOD, onEdi
 }
 
 import { DateField } from "../vendor/scm/components/DateField";
+import { MobileCollectedOnOrder } from "./MobileCollectedOnOrder";

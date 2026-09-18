@@ -46,11 +46,17 @@ const projectsSrc = onlySource(
   "routes/projects.ts",
 );
 
+/* GET /active-venue moved out of mfg-sales-orders.ts into mfg-so-fairs.ts on
+   2026-09-13 (that file is over its size ceiling and could not hold the fair
+   picker's endpoints beside it). The endpoint is unchanged and so is this
+   guard — only the file it reads moved. The anchor below THROWS rather than
+   returning empty if it ever goes missing again, which is what made this move
+   visible instead of silently un-guarding the company predicate. */
 const mfgSoSrc = onlySource(
-  import.meta.glob("../src/scm/routes/mfg-sales-orders.ts", {
+  import.meta.glob("../src/scm/routes/mfg-so-fairs.ts", {
     eager: true, query: "?raw", import: "default",
   }) as Record<string, string>,
-  "scm/routes/mfg-sales-orders.ts",
+  "scm/routes/mfg-so-fairs.ts",
 );
 
 /** The SELECT statement a locator points at, from `SELECT` to its closing

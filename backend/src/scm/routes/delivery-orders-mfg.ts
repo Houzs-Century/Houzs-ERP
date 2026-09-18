@@ -12,13 +12,11 @@
 
 import { Hono } from 'hono';
 import type { Context } from 'hono';
-import { z } from 'zod';
 import { normalizePhone } from '../shared/phone';
 import { firstUndeliverableSo, soNotDeliverableResponse } from '../lib/source-document-gates';
 import { HOLD_COLUMNS, isDocumentHeld } from '../lib/document-hold';
 import { mountHoldRoute } from './document-hold-routes';
 import { DO_STATUS_BUCKETS } from '../lib/do-status-buckets';
-import { PAYMENT_METHOD_CODES } from '../shared/payment-methods';
 import {
   DO_SHIPPED_STATES, DO_STOCK_OUT_STATES, DO_PRESHIP_STATES, doCountsAsDelivered,
   DO_STATUSES as SHARED_DO_STATUSES, CONFIRM_HOP_STATES,
@@ -36,8 +34,8 @@ import { dateOrNull, coerceEmptyDates, normalizeEventDay } from '../lib/date-coe
 import { allocateAcrossBuckets } from '../lib/bucket-cost-allocation';
 import { doHasDownstream } from '../lib/downstream-lock';
 import { claimedSoItemIdsOnDo, fillMissingSoItemIds } from '../lib/derive-do-so-item-id';
-import { DO_AUDIT_FIELDS, DO_AUDIT_SELECT, DO_LINE_AUDIT_FIELDS, DO_IDENTITY_LOCK_COLS, DO_IDENTITY_LABELS } from '../lib/do-audit-fields';
-import { changedLockedCols, identityLockedRefusal } from '../shared/header-inherited-lock';
+import { DO_AUDIT_FIELDS, DO_AUDIT_SELECT, DO_LINE_AUDIT_FIELDS, DO_IDENTITY_LABELS } from '../lib/do-audit-fields';
+import { identityLockedRefusal } from '../shared/header-inherited-lock'; import { doLockedHeaderChanges, DO_HEADER_OPEN_DESCRIPTION } from '../shared/do-header-lock';
 import { enqueueConvert, recordParentlessCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine, type AcEnqueueOutcome } from '../lib/autocount-outbox';
 
 /* ERP -> AutoCount DO edit, the DO's counterpart of mfg-sales-orders'
@@ -71,16 +69,16 @@ import { warehouseLabel } from '../lib/warehouse-label';
 import { todayMyt } from '../lib/my-time';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { netDeliveredBySoItem } from '../lib/do-unlinked-coverage';
+import { buildDoListRows } from '../lib/do-list-rows';
+import { attachDoLines } from '../lib/do-list-lines';
 import {
   resolveDoLineSources,
-  resolveDoHeaderSources,
   resolveDoLineSourcePosImpl,
   resolveDoSourcePosForDosImpl,
-  resolveDoSourceSos,
   soLineShippedSourcePosImpl,
 } from '../lib/source-po-trace';
 export { soLineShippedSources, resolveDoSources } from '../lib/source-po-trace';
-import { escapeForOr, phoneSearchOrParts } from '../lib/postgrest-search';
+import { filterDoList, fromDoList, orderDoList, readDoListParams } from '../lib/do-list-read';
 import { readStatusCounts } from '../lib/status-counts';
 import { resolveSalesScopeIds, salesDocOutOfScope } from '../lib/salesScope';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
@@ -95,7 +93,9 @@ import { freezeShipCost } from '../lib/fulfillment-costing';
 import { validateItemCodes, unknownItemCodeResponse } from '../lib/validate-item-codes';
 import { resolveItemGroups } from '../lib/sku-category';
 import { buildDoItemRow as buildItemRow, loadCarriedSoLinePhotos, carriedPhotoUrls } from '../lib/do-item-row';
-import { checkStockAvailability, shortStockResponse, stockCheckableLines, type StockShortage } from '../lib/check-stock-availability';
+import { soRemainingByItemId } from '../lib/so-remaining-by-item';
+import { lineLinkItemMismatch, assertLinkedLineItemsMatch } from '../lib/line-link-item-identity';
+import { checkStockAvailability, shortStockResponse, stockCheckableLines, uncoveredStockCheckLines, type StockShortage } from '../lib/check-stock-availability';
 import { findSofaLinesWithoutCompleteBatch, sofaNoCompleteBatchResponse, findIncompleteSofaSets, sofaIncompleteSetResponse, detectSofaSoItemIds } from '../lib/sofa-batch-guard';
 import { resolveExpectedBatchBySoItem, buildDropshipOffenders } from '../lib/dropship-batch';
 import {
@@ -106,12 +106,15 @@ import {
 } from '../lib/ship-commitment';
 import { loadSofaBatchStock, sofaStockKey } from '../lib/sofa-set-coverage';
 import { buildDoReversalRows } from '../lib/do-reversal';
+import { resolveDoLineWarehouses } from '../lib/do-line-warehouses';
+import { isMigratedNoStock } from '../lib/migrated-no-stock';
 import { currentDocNoByKey, type CurrentEvent } from '../lib/current-doc';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { recordSoAudit, type FieldChange } from '../lib/so-audit';
 import { advanceSoGeneration } from '../lib/so-generation';
 import { recordEntityAudit, diffFields, compactChanges, fieldChange } from '../lib/entity-audit';
 import { markIdempotencyNoWrite } from '../../middleware/idempotency';
+import { pgrestIn } from '../lib/pgrest-in-list';
 
 export const deliveryOrdersMfg = new Hono<{ Bindings: Env; Variables: Variables }>();
 deliveryOrdersMfg.use('*', supabaseAuth);
@@ -316,6 +319,8 @@ const HEADER =
   /* Mig 0324 — the HOLD MARKER, the DO's first hold ever and the one that
      needed no enum change. docs/modules/delivery-order.md. */
   HOLD_COLUMNS;
+/* The list projection, shared with the export (routes/delivery-order-exports.ts). */
+export const DO_LIST_HEADER = HEADER;
 
 /* FINANCE-GATED header keys — cost / margin / per-category revenue+cost
    subtotals. All are in HEADER (so they travel in the DO list payload) but must
@@ -327,6 +332,13 @@ const DO_FINANCE_KEYS = [
   'mattress_sofa_cost_sen', 'bedframe_cost_sen', 'accessories_cost_sen', 'others_cost_sen', 'service_cost_sen',
   'total_cost_sen', 'total_margin_sen', 'margin_pct_basis',
 ] as const;
+
+/* What the list row builder (lib/do-list-rows.ts) needs from THIS file, passed in
+   rather than imported there, so the lib never imports the route that imports it. */
+export const DO_LIST_ROW_DEPS = {
+  computeDoLifecycle: (sb: unknown, ids: string[]) => computeDoLifecycle(sb, ids),
+  financeKeys: DO_FINANCE_KEYS as readonly string[],
+};
 
 /* KEPT LOCAL, deliberately — do NOT "converge" DO_FINANCE_KEYS onto
    SO_FINANCE_KEYS. It is the finance-shaped subset of THIS file's HEADER select.
@@ -348,12 +360,7 @@ const ITEM =
   /* Mig 0230 — the incoming PO batch this line shipped against before its goods
      arrived. Surfaced so the DO detail can say which PO a short line is bound to
      instead of leaving the operator to infer it from the header badge. */
-  'committed_po_batch_no';
-
-const PAYMENT_COLS =
-  'id, delivery_order_id, paid_at, method, merchant_provider, installment_months, ' +
-  'online_type, approval_code, amount_sen, account_sheet, collected_by, note, ' +
-  'created_at, created_by';
+  'committed_po_batch_no, ac_substituted';
 
 /* scm.delivery_order_crew columns (created in migration 0053) — the FK ids + the
    assign-time name/ic/contact/plate snapshot. Read on the DO detail + returned
@@ -980,53 +987,8 @@ export async function restampDoActualCost(sb: any, deliveryOrderId: string) {
    One (DO, item_code, variant_key) bucket may hold exactly ONE movement row
    of any kind, ever. That is what makes this deduction safe, and it is also
    what resyncInventoryForDo collides with — see the note there. */
-/* ── resolveDoLineWarehouses (Agent D 2026-05-31, TASK #32) ───────────────────
-   PER-WAREHOUSE CORRECTNESS for the OUTBOUND side. A DO line MUST deduct from
-   the warehouse of the Sales Order LINE it delivers (mfg_sales_order_items.
-   warehouse_id, migration 0118) — never a single DO-header default. A KL SO
-   line must ship from KL stock even if the DO header (or the default) points at
-   PG; stock never crosses warehouses (CLAUDE.md locked rule).
-
-   Resolution order per DO line:
-     1. the linked SO line's warehouse_id (so_item_id → mfg_sales_order_items)
-     2. the DO header's warehouse_id (ad-hoc lines with no so_item_id)
-     3. the DO's OWN company's default warehouse (last-resort fallback)
-
-   Returns a map of delivery_order_items.id → warehouse_id (or null when even
-   the fallbacks are absent — the caller skips those lines so a wrong warehouse
-   is never guessed).
-
-   The `id` field is only a correlation key, so this also serves lines that do
-   not exist yet: the pre-flight stock check passes synthetic ids and the request
-   body's soItemId, and gets back exactly the warehouses the OUT will use. */
-async function resolveDoLineWarehouses(
-  sb: any,
-  items: Array<{ id: string; so_item_id?: string | null }>,
-  headerWarehouseId: string | null,
-  /* The DO's company (2026-08-03) — step 3 is per company. It used to be a
-     company-blind draw across every company's is_default warehouses, decided by
-     alphabetical `code` order. */
-  companyId: number | undefined,
-): Promise<Map<string, string | null>> {
-  const out = new Map<string, string | null>();
-  const soItemIds = [...new Set(items
-    .map((it) => it.so_item_id ?? null)
-    .filter((x): x is string => !!x))];
-  const soWh = new Map<string, string | null>();
-  if (soItemIds.length > 0) {
-    const { data: soRows } = await sb.from('mfg_sales_order_items')
-      .select('id, warehouse_id').in('id', soItemIds);
-    for (const r of (soRows ?? []) as Array<{ id: string; warehouse_id: string | null }>) {
-      soWh.set(r.id, r.warehouse_id ?? null);
-    }
-  }
-  const fallback = headerWarehouseId ?? (await defaultWarehouseId(sb, companyId));
-  for (const it of items) {
-    const fromSo = it.so_item_id ? (soWh.get(it.so_item_id) ?? null) : null;
-    out.set(it.id, fromSo ?? fallback);
-  }
-  return out;
-}
+/* resolveDoLineWarehouses moved to scm/lib/do-line-warehouses.ts 2026-09-07,
+   a MOVE not a rewrite. All ten call sites in this file still go through it. */
 
 /* ── checkDoStockAvailability (2026-08-03) ────────────────────────────────────
    THE PRE-FLIGHT CHECK MUST ASK ABOUT THE WAREHOUSE THE GOODS ACTUALLY LEAVE.
@@ -1067,14 +1029,11 @@ async function checkDoStockAvailability(
   headerWarehouseId: string | null,
   companyId: number | undefined,
 ): Promise<StockShortage[]> {
-  const active = stockCheckableLines(lines);
+  const shippable = stockCheckableLines(lines, new Set());
+  if (shippable.length === 0) return [];
+  const lineWh = await resolveDoLineWarehouses(sb, shippable.map((l) => ({ id: l.lineRef, so_item_id: l.soItemId })), headerWarehouseId, companyId);
+  const active = await uncoveredStockCheckLines(sb, shippable, lineWh, companyId);
   if (active.length === 0) return [];
-  const lineWh = await resolveDoLineWarehouses(
-    sb,
-    active.map((l) => ({ id: l.lineRef, so_item_id: l.soItemId })),
-    headerWarehouseId,
-    companyId,
-  );
   const byWh = new Map<string, Array<{ itemCode: string; productName: string | null; variantKey: string; qty: number }>>();
   for (const l of active) {
     const wh = lineWh.get(l.lineRef) ?? null;
@@ -1221,10 +1180,9 @@ async function resolveDoLineRacks(
     );
 
     // Placements for those racks limited to the codes this DO ships.
-    const { data: items, error: iErr } = await sb.from('warehouse_rack_items')
+    const { data: items, error: iErr } = await pgrestIn(sb.from('warehouse_rack_items')
       .select('rack_id, item_code, variant_key')
-      .in('rack_id', [...rackById.keys()])
-      .in('item_code', [...codes]);
+      .in('rack_id', [...rackById.keys()]), 'item_code', [...codes]);
     if (iErr) return new Map();
     for (const ri of (items ?? []) as Array<{ rack_id: string; item_code: string; variant_key: string | null }>) {
       const r = rackById.get(ri.rack_id) as { rack: string | null; warehouse_id: string | null } | undefined;
@@ -1252,14 +1210,26 @@ async function deductInventoryForDo(sb: any, deliveryOrderId: string, performedB
 
   /* Forward-compat (mig 0057): is_dropship column may not exist yet — retry without it. */
   let doHeaderRes = await sb.from('delivery_orders')
-    .select('do_number, warehouse_id, is_dropship, company_id')
+    .select('do_number, warehouse_id, is_dropship, company_id, migrated_no_stock')
     .eq('id', deliveryOrderId).maybeSingle();
   if (doHeaderRes.error && (doHeaderRes.error.message ?? '').includes('is_dropship')) {
+    doHeaderRes = await sb.from('delivery_orders')
+      .select('do_number, warehouse_id, company_id, migrated_no_stock')
+      .eq('id', deliveryOrderId).maybeSingle();
+  }
+  // Same forward-compat for mig 0276's column (see resyncInventoryForDo).
+  if (doHeaderRes.error && (doHeaderRes.error.message ?? '').includes('migrated_no_stock')) {
     doHeaderRes = await sb.from('delivery_orders')
       .select('do_number, warehouse_id, company_id')
       .eq('id', deliveryOrderId).maybeSingle();
   }
   const doHeader = doHeaderRes.data;
+  /* IDEMPOTENCY GUARD #2, and why #1 is not enough: #1 asks "did this DO write
+     an OUT?", and for migrated paperwork the answer is legitimately no, forever
+     — so the guard against double-deducting is the one that lets it in. Reached
+     by reverting a migrated DO to DRAFT (which reverses nothing, correctly) and
+     shipping it again. lib/migrated-no-stock.ts. */
+  if (isMigratedNoStock(doHeader as { migrated_no_stock?: boolean | null } | null)) return [];
   const { data: items } = await sb.from('delivery_order_items')
     .select('id, so_item_id, item_code, description, qty, item_group, variants, rack_id, committed_po_batch_no')
     .eq('delivery_order_id', deliveryOrderId);
@@ -1588,13 +1558,24 @@ export async function returnDoRacksOnCancel(sb: any, deliveryOrderId: string, do
    IDEMPOTENT: re-running with no line changes yields delta 0 everywhere — no
    writes. Cancel-reversal still works via reverseMovements (it nets per
    bucket). Non-shipped DOs skip — deductInventoryForDo handles the first ship. */
-async function resyncInventoryForDo(sb: any, deliveryOrderId: string, performedBy: string) {
+/* EXPORTED like reverseInventoryForDo and restampDoActualCost: it is the DO's
+   stock-correction chokepoint and has to be pinnable without standing up the
+   three route handlers that call it. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- unchanged from before the export; the PostgREST shim has no honest type until schema.pg.ts covers the SCM tables.
+export async function resyncInventoryForDo(sb: any, deliveryOrderId: string, performedBy: string) {
   // Header — need warehouse_id, do_number, status, is_dropship (audit C1).
   /* Forward-compat (mig 0057): is_dropship column may not exist yet — retry without it. */
   let hdrRes = await sb.from('delivery_orders')
-    .select('do_number, status, warehouse_id, is_dropship, company_id')
+    .select('do_number, status, warehouse_id, is_dropship, company_id, migrated_no_stock')
     .eq('id', deliveryOrderId).maybeSingle();
   if (hdrRes.error && (hdrRes.error.message ?? '').includes('is_dropship')) {
+    hdrRes = await sb.from('delivery_orders')
+      .select('do_number, status, warehouse_id, company_id, migrated_no_stock')
+      .eq('id', deliveryOrderId).maybeSingle();
+  }
+  // Forward-compat, same shape as is_dropship: a database without mig 0276 has
+  // no such column, and a resync must not stop dead on a pre-cutover schema.
+  if (hdrRes.error && (hdrRes.error.message ?? '').includes('migrated_no_stock')) {
     hdrRes = await sb.from('delivery_orders')
       .select('do_number, status, warehouse_id, company_id')
       .eq('id', deliveryOrderId).maybeSingle();
@@ -1603,6 +1584,14 @@ async function resyncInventoryForDo(sb: any, deliveryOrderId: string, performedB
   if (!doHeader) return;
   const status = ((doHeader as { status: string | null }).status ?? '').toUpperCase();
   if (!SHIPPED_STATES.includes(status)) return; // not yet shipped → no OUT yet → nothing to sync
+  /* MIGRATED PAPERWORK — the DO twin of the GRN cancel defect, and worse: it
+     fires on an ordinary line edit, not a cancel. The delta below is
+     `target_qty − current_net_out`, and current_net_out is 0 for every bucket of
+     a migrated DO, so ONE line edit writes a full OUT for EVERY line. Returns
+     before computing a delta: there is nothing to sync its ledger TO, and a
+     partial correction on a document with no primary posting is not a safer
+     half-measure. lib/migrated-no-stock.ts. */
+  if (isMigratedNoStock(doHeader as { migrated_no_stock?: boolean | null })) return;
   const headerWarehouseId = (doHeader as { warehouse_id: string | null }).warehouse_id ?? null;
   const doNo = (doHeader as { do_number: string }).do_number;
   const isDropship = (doHeader as { is_dropship?: boolean }).is_dropship === true;
@@ -2651,19 +2640,6 @@ export async function soCurrentDocNo(
    so every DO-line create / add / qty-increase respects the SAME cap the
    line-level picker enforces — no back door. SO lines that no longer exist map
    to 0 (treat as nothing left to deliver). */
-async function soRemainingByItemId(
-  sb: any,
-  soItemIds: Array<string | null | undefined>,
-): Promise<Map<string, number>> {
-  const ids = [...new Set(soItemIds.filter((x): x is string => !!x))];
-  const out = new Map<string, number>();
-  if (ids.length === 0) return out;
-  const { data } = await sb.from('mfg_sales_order_items').select('doc_no').in('id', ids);
-  const docNos = [...new Set(((data ?? []) as Array<{ doc_no: string | null }>).map((r) => r.doc_no).filter((d): d is string => !!d))];
-  const remainingMap = await soDeliverableRemaining(sb, docNos);
-  for (const id of ids) out.set(id, remainingMap.get(id)?.remaining ?? 0);
-  return out;
-}
 
 /* THE SO-MUST-BE-DELIVERABLE GATE MOVED to lib/source-document-gates.ts on
    2026-08-22 (mig 0324), beside the two conversions that ask the same question
@@ -2730,42 +2706,11 @@ deliveryOrdersMfg.get('/', async (c) => {
     const psRaw = Number(c.req.query('pageSize'));
     pageSize = Number.isFinite(psRaw) && psRaw > 0 ? Math.min(100, Math.max(1, Math.trunc(psRaw))) : 50;
 
-    const SORT_COLS = new Set(['do_date', 'do_number', 'debtor_name', 'status', 'customer_delivery_date']);
-    const [rawCol, rawDir] = (c.req.query('sort') ?? 'do_date:desc').split(':');
-    const sortCol = SORT_COLS.has(rawCol) ? rawCol : 'do_date';
-    const sortAsc = rawDir === 'asc';
-
-    let q = sb.from('delivery_orders').select(HEADER, { count: 'exact' }).order(sortCol, { ascending: sortAsc });
-    /* unique tiebreaker so range paging can't skip/repeat rows sharing the sort key */
-    if (sortCol !== 'do_number') q = q.order('do_number', { ascending: sortAsc });
-    q = scopeToCompany(q, c); // per-company document — scope the paginated list too.
-    if (scopeIds) q = q.in('salesperson_id', scopeIds);
-    /* Resolve the incoming `status`: a known bucket key → all its raw statuses;
-       'all'/empty → no filter; otherwise treat it as a raw DB status. */
-    const status = c.req.query('status');
-    /* The `on_hold` tab reads the MARKER (mig 0324) ONLY — never HELD_OR_TERM,
-       whose `status.eq.ON_HOLD` arm 22P02s a do_status that has no such label. */
-    if (status && status !== 'all') {
-      if (status === 'on_hold') q = q.eq('on_hold', true);
-      else if (DO_STATUS_BUCKETS[status]) q = q.in('status', DO_STATUS_BUCKETS[status]);
-      else q = q.eq('status', status);
-    }
-    /* free-text search over the columns the FE list's client-side search matches
-       (MfgDeliveryOrdersListV2 hay) that live on this base table. */
-    const search = c.req.query('q');
-    if (search) {
-      const s = escapeForOr(search);
-      // Match customer NAME (debtor_name), PHONE, and the linked SO REFERENCE
-      // (ref, snapshotted onto the DO) — plus the doc numbers it already covered.
-      if (s) q = q.or([
-        `do_number.ilike.%${s}%`, `so_doc_no.ilike.%${s}%`, `debtor_name.ilike.%${s}%`,
-        `debtor_code.ilike.%${s}%`, `ref.ilike.%${s}%`, `branding.ilike.%${s}%`,
-        `sales_location.ilike.%${s}%`, `driver_name.ilike.%${s}%`,
-        ...phoneSearchOrParts(s, search, normalizePhone),
-      ].join(','));
-    }
-    const from = c.req.query('from'); if (from) q = q.gte('do_date', from);
-    const to = c.req.query('to'); if (to) q = q.lte('do_date', to);
+    /* Tab + search + sort + company + sales scope: the ONE filter the list and
+       the line export share (lib/do-list-read.ts), so the two cannot match
+       different delivery orders. */
+    const listParams = readDoListParams((k) => c.req.query(k));
+    let q = filterDoList(orderDoList(fromDoList(sb, HEADER, { count: 'exact' }), listParams.sort), listParams, c, scopeIds);
     q = q.range(page * pageSize, page * pageSize + pageSize - 1);
     const res = await q;
     data = res.data;
@@ -2802,105 +2747,16 @@ deliveryOrdersMfg.get('/', async (c) => {
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   if (countError) return c.json({ error: 'status_counts_failed', reason: countError }, 500);
 
-  /* Tier 2 downstream-lock — one extra batched read per doc set: pull every
-     non-cancelled DR/SI that points back to a listed DO and stamp has_children
-     on the row. The list grid uses this to hide Edit / Cancel actions on DOs
-     that are downstream-locked (mirrors computeGrnFlags in lib/grn-consumption-flags). */
-  const rows = (data ?? []) as unknown as Array<{ id: string } & Record<string, unknown>>;
-  const childIds = new Set<string>();
-  /* DISPLAY-ONLY transfer-to columns (audit R8): the SI number(s) each DO was
-     invoiced into and the DR number(s) returned against it. Derived from the
-     SAME batched child reads that already stamp has_children — one added column
-     in each select, no extra round-trip, and never touches DO status/lifecycle
-     (which stays computeDoLifecycle below). */
-  const invoicedSiByDo = new Map<string, Set<string>>();
-  const returnedDrByDo = new Map<string, Set<string>>();
-  let lifecycleByDo = new Map<string, DoLifecycle>();
-  if (rows.length > 0) {
-    const ids = rows.map((r) => r.id);
-    const [drRes, siRes, lc] = await Promise.all([
-      sb.from('delivery_returns').select('delivery_order_id, return_number').in('delivery_order_id', ids).neq('status', 'CANCELLED'),
-      sb.from('sales_invoices').select('delivery_order_id, invoice_number').in('delivery_order_id', ids).neq('status', 'CANCELLED'),
-      computeDoLifecycle(sb, ids),
-    ]);
-    lifecycleByDo = lc;
-    for (const d of ((drRes.data ?? []) as Array<{ delivery_order_id: string | null; return_number: string | null }>)) {
-      if (!d.delivery_order_id) continue;
-      childIds.add(d.delivery_order_id);
-      if (d.return_number) {
-        const set = returnedDrByDo.get(d.delivery_order_id) ?? new Set<string>();
-        set.add(d.return_number);
-        returnedDrByDo.set(d.delivery_order_id, set);
-      }
-    }
-    for (const s of ((siRes.data ?? []) as Array<{ delivery_order_id: string | null; invoice_number: string | null }>)) {
-      if (!s.delivery_order_id) continue;
-      childIds.add(s.delivery_order_id);
-      if (s.invoice_number) {
-        const set = invoicedSiByDo.get(s.delivery_order_id) ?? new Set<string>();
-        set.add(s.invoice_number);
-        invoicedSiByDo.set(s.delivery_order_id, set);
-      }
-    }
+  /* Every per-row field the list shows — ONE builder the list and the export
+     share (lib/do-list-rows.ts). The finance gate runs inside it. */
+  const deliveryOrders = await buildDoListRows(sb, c, (data ?? []) as unknown as Array<{ id: string } & Record<string, unknown>>, DO_LIST_ROW_DEPS);
+  if (paginate) {
+    /* The page's lines and AutoCount header spellings, for the grid's line
+       columns — the same read the export uses (lib/do-list-lines.ts). */
+    const withLines = await attachDoLines(sb, c, deliveryOrders);
+    if (withLines.error) return c.json({ error: 'lines_read_failed', reason: withLines.error }, 500);
+    return c.json({ deliveryOrders, total, page, pageSize, statusCounts });
   }
-  const sortedNos = (set: Set<string> | undefined): string[] =>
-    set ? [...set].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })) : [];
-  /* Linked-SO Processing date (mfg_sales_orders.processing_date — the one true
-     user date, one column since 0189 and one name since 0284).
-     The DO quick-view drawer shows it next to the DO's own delivery
-     date; one batched read keyed by so_doc_no, same pattern as the DR/SI child
-     reads above. */
-  const soProcByDoc = new Map<string, string | null>();
-  {
-    const soDocNos = [...new Set(rows.map((r) => r.so_doc_no as string | null).filter((d): d is string => !!d))];
-    if (soDocNos.length > 0) {
-      const { data: soRows } = await sb.from('mfg_sales_orders')
-        .select('doc_no, processing_date').in('doc_no', soDocNos);
-      for (const s of ((soRows ?? []) as Array<{ doc_no: string | null; processing_date: string | null }>)) {
-        if (s.doc_no) soProcByDoc.set(s.doc_no, s.processing_date ?? null);
-      }
-    }
-  }
-  /* Source PO(s) each DO's goods shipped from (owner 2026-07-31): a DO/SI is a
-     SALES-side doc, so it shows the durable batch_no = source-PO hard link, not
-     an Assigned SO. ONE batched ledger pass across the page (the shared
-     resolver — GRN-healed, adjustment-classified).
-     2026-08-02 (2990-DO-2607-017): derived as the UNION OF THE DO'S OWN LINES'
-     traces (resolveDoHeaderSources), never the raw byDo ledger rollup — the old
-     rollup surfaced orphan ledger buckets (re-pointed consumptions / drifted
-     variant keys) as phantom chips no item line could explain. Header ≡ ∪(lines)
-     by construction now; the orphan buckets stay visible to the read-only check
-     (check-so-source-trace.mjs), not to this cell. */
-  const sourceTraceByDo = rows.length > 0
-    ? await resolveDoHeaderSources(sb, rows.map((r) => r.id))
-    : new Map<string, { pos: string[]; adjQty: number }>();
-  /* The SOs this DO's LINES draw on — see resolveDoSourceSos. so_doc_no is a
-     header LABEL (from-sos copies the first pick's SO), so a merged DO shows one
-     source and hides the rest, and two DOs can appear to ship one Sales Order
-     while sharing no quantity at all. */
-  const sourceSosByDo = rows.length > 0
-    ? await resolveDoSourceSos(sb, rows.map((r) => r.id))
-    : new Map<string, string[]>();
-  /* Finance gate — cost / margin / per-category subtotals reach ONLY a
-     finance-viewer; stripped from every row otherwise. */
-  const showFinance = canViewScmFinance(c);
-  const deliveryOrders = rows.map((r) => {
-    const row: Record<string, unknown> = {
-      ...r,
-      has_children: childIds.has(r.id),
-      lifecycle_state: lifecycleByDo.get(r.id) ?? 'shipped',
-      so_processing_date: soProcByDoc.get((r.so_doc_no as string | null) ?? '') ?? null,
-      source_pos: sourceTraceByDo.get(r.id)?.pos ?? [],
-      source_sos: sourceSosByDo.get(r.id) ?? [],
-      source_adj: (sourceTraceByDo.get(r.id)?.adjQty ?? 0) > 0,
-      // Transfer-to (display-only, audit R8): SI(s) invoiced / DR(s) returned.
-      invoiced_si_nos: sortedNos(invoicedSiByDo.get(r.id)),
-      return_nos: sortedNos(returnedDrByDo.get(r.id)),
-    };
-    if (!showFinance) for (const k of DO_FINANCE_KEYS) delete row[k];
-    return row;
-  });
-  if (paginate) return c.json({ deliveryOrders, total, page, pageSize, statusCounts });
   return c.json({ deliveryOrders });
 });
 
@@ -3261,8 +3117,16 @@ deliveryOrdersMfg.post('/', async (c) => {
       .filter((x): x is string => !!x);
     if (lineSoItemIds.length > 0) {
       const { data: lineSoRows } = await sb
-        .from('mfg_sales_order_items').select('doc_no').in('id', lineSoItemIds);
-      for (const r of (lineSoRows ?? []) as Array<{ doc_no: string | null }>) refDocNos.push(r.doc_no);
+        .from('mfg_sales_order_items').select('id, doc_no, item_code').in('id', lineSoItemIds);
+      const soRows = (lineSoRows ?? []) as Array<{ id: string; doc_no: string | null; item_code: string | null }>;
+      for (const r of soRows) refDocNos.push(r.doc_no);
+      /* IDENTITY too — docs/bugs/0672 site 15; the rows are already in hand. A
+         wrong so_item_id ships against the wrong order line, prints that line's
+         photos, and (HARD-BOUND sofa/bedframe) lights the wrong stock. */
+      const idBad = lineLinkItemMismatch(
+        items.filter((it) => it.soItemId).map((it) => ({ linkId: it.soItemId as string, itemCode: it.itemCode })),
+        new Map(soRows.map((r) => [r.id, r.item_code])), { source: 'Sales Order line' });
+      if (idBad) { markIdempotencyNoWrite(c); return c.json(idBad, 409); }
     }
     const offender = await firstUndeliverableSo(sb, refDocNos);
     if (offender) return c.json(soNotDeliverableResponse(offender), 409);
@@ -3988,9 +3852,10 @@ export const createDoFromSoLinesHandler = async (c: Context<{ Bindings: Env; Var
     so_doc_no: firstSoDocNo,
     debtor_code: (head.debtor_code as string | null) ?? null,
     debtor_name: (head.debtor_name as string | null) ?? null,
-    do_date: today,
+    // Owner 2026-09-11 (0807 supersedes 0804): DO dates default to SO's.
+    do_date: (head.customer_delivery_date as string | null) ?? today,
     expected_delivery_at: (head.customer_delivery_date as string | null) ?? today,
-    customer_delivery_date: (head.customer_delivery_date as string | null) ?? null,
+    customer_delivery_date: (head.customer_delivery_date as string | null) ?? today,
     address1: (head.address1 as string | null) ?? null,
     address2: doAddress2,
     city: (head.city as string | null) ?? null,
@@ -4062,9 +3927,8 @@ export const createDoFromSoLinesHandler = async (c: Context<{ Bindings: Env; Var
       line_cost_sen: lineCost,
       line_margin_sen: lineTotal - lineCost,
       variants,
-      /* Migration 0058 — carry the dedicated variant-breakdown columns from the
-         SO line onto the DO line (the picker previously dropped all 8, so sofa/
-         bedframe builds lost their breakdown on SO→DO convert). */
+      line_delivery_date: (head.customer_delivery_date as string | null) ?? null, // 0807
+      // Mig 0058 — variant breakdown columns carried onto the DO line.
       gap_inches: line.gapInches ?? null,
       divan_height_inches: line.divanHeightInches ?? null,
       divan_price_sen: line.divanPriceSen ?? 0,
@@ -4438,16 +4302,15 @@ deliveryOrdersMfg.patch('/:id', async (c) => {
   if (!beforeRow) return c.json(NOT_THIS_COMPANY, 404);
   const before = (beforeRow ?? {}) as unknown as Record<string, unknown>;
 
-  /* Header lock — FIELD-LEVEL (owner 2026-08-20, §8 GAP-1; header-inherited-lock.ts):
-     once a live SI/DR exists only the columns it snapshotted (customer + currency +
-     location + branding) freeze; the DO's own dates / dispatch / addresses / notes
-     stay editable. Downstream read paid only when an inherited column changed. */
-  const doLocked = changedLockedCols(DO_IDENTITY_LOCK_COLS, updates, before);
+  /* Header lock (owner ruling 2026-09-14, supersedes 2026-08-20): once a live SI/DR
+     exists the customer / address / contact / commercial block freezes; only the
+     dispatch-execution fields stay open. ONE rule, shared/do-header-lock.ts, which
+     both screens read too. Downstream read paid only when a locked column changed. */
+  const doLocked = doLockedHeaderChanges(updates, before);
   if (doLocked.length > 0 && (await doHasDownstream(sb, id))) {
     return c.json(identityLockedRefusal({
       error: 'do_identity_locked', fields: doLocked, labels: DO_IDENTITY_LABELS,
-      what: 'Delivery Order', child: 'Sales Invoice or Delivery Return',
-      ownFields: 'delivery dates, dispatch details, addresses and notes',
+      what: 'Delivery Order', child: 'Sales Invoice or Delivery Return', ownFields: DO_HEADER_OPEN_DESCRIPTION,
     }), 409);
   }
 
@@ -4714,6 +4577,9 @@ export const addDeliveryOrderItemHandler = async (c: Context<{ Bindings: Env; Va
   const nextLineNo = typeof (maxNoRow as { line_no?: number | null } | null)?.line_no === 'number'
     ? (maxNoRow as { line_no: number }).line_no + 1
     : null;
+  /* IDENTITY — docs/bugs/0672 site 15, the add-line twin of the create guard. */
+  const soIdc = await assertLinkedLineItemsMatch(sb, 'mfg_sales_order_items', [{ linkId: (it.soItemId as string | undefined) ?? null, itemCode: it.itemCode }], { source: 'Sales Order line' });
+  if (!soIdc.ok) return c.json(soIdc.body, soIdc.status);
   const addPhotos = await loadCarriedSoLinePhotos(sb, [it as { soItemId?: unknown }], (q) => scopeToCompany(q, c));
   const row = buildItemRow(id, it, nextLineNo, addCommitments.get('add') ?? null, addPhotos);
   const { data, error } = await sb.from('delivery_order_items').insert({ ...row, company_id: activeCompanyId(c) }).select(ITEM).single();
@@ -5171,122 +5037,11 @@ deliveryOrdersMfg.delete('/:id/items/:itemId', async (c) => {
   return c.json({ ok: true });
 });
 
-// ── Payments (mirror SO payments ledger) ──────────────────────────────────
-deliveryOrdersMfg.get('/:id/payments', async (c) => {
-  const sb = c.get('supabase'); const id = c.req.param('id');
-  /* Own/downline sales scope (lib/salesScope.ts) — resolve the DO's
-     salesperson_id first so a scoped seller can't read another
-     salesperson's payment ledger by enumerating ids. Out-of-scope /
-     missing → 404. Directors/view-all bypass. */
-  {
-    /* THE PARENT IS THE ONLY GATE THERE CAN BE: scm.delivery_order_payments has
-       no company_id of its own, so it is scoped THROUGH its parent DO
-       (delivery_order_id -> delivery_orders.company_id) — a contract that only
-       holds if the parent read is scoped. The salesperson scope below is a
-       different axis: it bounds WHICH PERSON, never which company, and view-all
-       passes it untouched. */
-    const { data: hdr, error: hdrErr } = await scopeToCompany(
-      sb.from('delivery_orders').select('salesperson_id').eq('id', id), c,
-    ).maybeSingle();
-    if (hdrErr) return c.json({ error: 'lookup_failed', reason: hdrErr.message }, 500);
-    if (!hdr) return c.json({ error: 'not_found' }, 404);
-    const sp = (hdr as { salesperson_id?: number | string | null }).salesperson_id;
-    if (await salesDocOutOfScope(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c), sp)) {
-      return c.json({ error: 'not_found' }, 404);
-    }
-  }
-  const { data, error } = await sb
-    .from('delivery_order_payments')
-    .select(`${PAYMENT_COLS}, staff:collected_by ( name )`)
-    .eq('delivery_order_id', id)
-    .order('paid_at', { ascending: false })
-    .order('created_at', { ascending: false });
-  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  const payments = (data ?? []).map((r: unknown) => {
-    const row = r as Record<string, unknown> & { staff: { name: string } | null };
-    const { staff, ...rest } = row;
-    return { ...rest, collected_by_name: staff?.name ?? null };
-  });
-  return c.json({ payments });
-});
-
-const paymentCreateSchema = z.object({
-  paidAt:             z.string().min(1),
-  /* 2026-06-06 payment-method unify — 'installment' is first-class L1. The
-     accepted set IS shared/payment-methods.ts's PAYMENT_METHOD_CODES, not a
-     re-typed literal: this enum stood in seven route files, so "don't add a
-     5th code without wiring its branch logic" (that module's header) was
-     advice no reader of this line could act on. */
-  method:             z.enum(PAYMENT_METHOD_CODES),
-  merchantProvider:   z.string().trim().min(1).optional().nullable(),
-  installmentMonths:  z.number().int().min(0).max(60).optional().nullable(),
-  onlineType:         z.string().trim().min(1).optional().nullable(),
-  approvalCode:       z.string().optional().nullable(),
-  amountSen:        z.number().int().nonnegative(),
-  accountSheet:       z.string().optional().nullable(),
-  collectedBy:        z.string().uuid().optional().nullable(),
-  note:               z.string().optional().nullable(),
-});
-
-deliveryOrdersMfg.post('/:id/payments', async (c) => {
-  const sb = c.get('supabase'); const id = c.req.param('id'); const user = c.get('user');
-
-  // company-scope: through the parent DO - the payment row carries no
-  // company_id. See the note on GET /:id/payments above.
-  const { data: doc, error: docErr } = await scopeToCompany(
-    sb.from('delivery_orders').select('id').eq('id', id), c,
-  ).maybeSingle();
-  if (docErr) return c.json({ error: 'lookup_failed', reason: docErr.message }, 500);
-  if (!doc) return c.json({ error: 'delivery_order_not_found' }, 404);
-
-  let body: unknown;
-  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
-  const parsed = paymentCreateSchema.safeParse(body);
-  if (!parsed.success) return c.json({ error: 'invalid_body', issues: parsed.error.issues }, 400);
-  const p = parsed.data;
-
-  const merchantLike      = p.method === 'merchant' || p.method === 'installment';
-  const merchantProvider  = merchantLike ? (p.merchantProvider ?? null) : null;
-  const installmentMonths = merchantLike
-    ? (typeof p.installmentMonths === 'number' && p.installmentMonths > 0 ? p.installmentMonths : null)
-    : null;
-  const onlineType        = p.method === 'transfer' ? (p.onlineType ?? null) : null;
-
-  const { data, error } = await sb.from('delivery_order_payments').insert({
-    delivery_order_id:  id,
-    paid_at:            p.paidAt,
-    method:             p.method,
-    merchant_provider:  merchantProvider,
-    installment_months: installmentMonths,
-    online_type:        onlineType,
-    approval_code:      p.approvalCode ?? null,
-    amount_sen:       p.amountSen,
-    account_sheet:      p.accountSheet ?? null,
-    collected_by:       p.collectedBy ?? null,
-    note:               p.note ?? null,
-    created_by:         user.id,
-  }).select(PAYMENT_COLS).single();
-  if (error) return c.json({ error: 'insert_failed', reason: error.message }, 500);
-  return c.json({ payment: data }, 201);
-});
-
-deliveryOrdersMfg.delete('/:id/payments/:paymentId', async (c) => {
-  const sb = c.get('supabase'); const id = c.req.param('id'); const paymentId = c.req.param('paymentId');
-  /* company-scope: through the parent DO. The mismatch check below proves the
-     payment belongs to the DO in the URL, never whose DO that is. See the note
-     on GET /:id/payments above. */
-  const { data: doc, error: docErr } = await scopeToCompany(
-    sb.from('delivery_orders').select('id').eq('id', id), c,
-  ).maybeSingle();
-  if (docErr) return c.json({ error: 'lookup_failed', reason: docErr.message }, 500);
-  if (!doc) return c.json({ error: 'delivery_order_not_found' }, 404);
-  const { data: row } = await sb.from('delivery_order_payments').select('delivery_order_id').eq('id', paymentId).maybeSingle();
-  if (!row) return c.json({ error: 'not_found' }, 404);
-  if ((row as { delivery_order_id: string }).delivery_order_id !== id) return c.json({ error: 'payment_doc_mismatch' }, 400);
-  const { error } = await sb.from('delivery_order_payments').delete().eq('id', paymentId);
-  if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
-  return c.json({ ok: true });
-});
+/* No payment ledger on the delivery order. The sales order is the one place a
+   payment is taken (owner, 2026-09-12: 「SO 的付款要带去 DO 跟 SI」); the DO and
+   the SI show the order's ledger. A DO-side GET/POST/DELETE used to live here
+   over scm.delivery_order_payments, a table production never had — see
+   docs/bugs/0888-the-delivery-order-payment-ledger-served-a-table-production.md. */
 
 // ── Status transition + inventory deduction / reversal ────────────────────
 export const patchDeliveryOrderStatusHandler = async (c: any) => {

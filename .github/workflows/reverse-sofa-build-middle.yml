@@ -1,0 +1,85 @@
+name: Reverse ONE sofa build's middle (plan/apply)
+
+# Put the CORNER back on the right side of a single sofa BUILD, on a document
+# that carries more than one sofa.
+#
+# reverse-sofa-middle-order-2026-09-10 works on a whole DOCUMENT's sofa rows and
+# is right when the document holds one sofa. HC-SO-012025 holds two - book line
+# 829179 is a four-piece sectional, 829180 is a loose 1S - and the ERP stores
+# them interleaved, so the document's "middle" contains a piece belonging to the
+# other sofa. That script correctly refuses the shape, which is why the
+# TV-direction round HELD this document instead of applying it.
+#
+# The unit that has a direction is the BUILD. This one is scoped by
+# linked_ac_dtlkey and moves only that build's rows.
+#
+# MODE defaults to plan. Applying needs CONFIRM=reverse-sofa-build-middle.
+# It moves line_no, never item_code, so a purchase order's so_item_id keeps
+# naming the same compartment. Verification runs on a FRESH connection and
+# asserts the SEQUENCE - a multiset does not change under reordering, which is
+# how docs/bugs/0777 passed while nine sofas were still wrong - plus that every
+# row OUTSIDE the build kept its line_no.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      mode:
+        description: "plan (default) or apply"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: "On apply, type: reverse-sofa-build-middle"
+        required: false
+        default: ""
+      company_id:
+        description: "Company. Blank = 1."
+        required: false
+        default: ""
+
+concurrency:
+  group: reverse-sofa-build-middle-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/reverse-sofa-build-middle-2026-09-10.mjs
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/reverse-sofa-build-middle-2026-09-10.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

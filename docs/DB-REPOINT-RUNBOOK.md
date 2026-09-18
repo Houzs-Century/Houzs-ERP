@@ -25,7 +25,8 @@
 >    2026-06-13 — `wrangler.toml:106`.
 >
 > Owner decision pending (task chip raised): rewrite against the live config,
-> or move to the historical section beside `MIGRATION-D1-TO-SUPABASE.md`.
+> or retire it (the D1→Supabase migration records it sat beside are in the tag
+> `archive/docs-2026-09-15`).
 
 # Runbook: re-point production to the company Supabase project
 
@@ -34,16 +35,16 @@
 > **Corrected 2026-08-13.** Production has moved TWICE since this was written:
 > `xxoszhxglfgkqkokvofa` → `ctbaifabbzghtsrmpirm` → **`anogrigyjbduyzclzjgn`**,
 > which is what `backend/wrangler.toml:126` binds today (Hyperdrive config
-> `f0f9bd0d`, SG company project). `supavisor-pooler-outage-coe.md:126` already
-> flagged this document as stale and nobody acted on it.
+> `f0f9bd0d`, SG company project). The Supavisor pooler outage write-up (tag
+> `archive/docs-2026-09-15`) already flagged this document as stale and nobody acted on it.
 >
 > Why that matters more here than in any other doc: **§1 below tells the operator
 > to put a LIVE connection string into `.dev.vars` and then run the cutover
 > loader against it.** Following these steps today points a
 > `DROP TABLE … CASCADE` at a project that is no longer production — or, with a
 > pasted-in current DSN, at one that is. The loader now fail-closes on any
-> non-loopback target unless `ACK_PROD_WIPE=yes` (see
-> `prod-wipe-by-loader-coe.md`), which is the only reason this is a stale
+> non-loopback target unless `ACK_PROD_WIPE=yes` (see the 2026-06-17 entry in
+> `LESSONS.md`), which is the only reason this is a stale
 > document and not a live hazard.
 >
 > Keep it for the PROCEDURE — the Hyperdrive-origin-update shape is still

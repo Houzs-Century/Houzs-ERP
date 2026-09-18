@@ -73,6 +73,18 @@ import { useCallback, useState } from "react";
 import { api } from "../api/client";
 import { useQuery } from "../hooks/useQuery";
 import { fmtDateTime } from "../vendor/shared/format";
+/* THE ARCHIVE HALF, in its own file for the 2,000-line cap and nothing else —
+   the same reason autocountRegister.ts is separate. One layer, three files. */
+import {
+  archiveAcOutboxDoc,
+  restoreAcOutboxDoc,
+  acShelfDone,
+  acShelfNote,
+  acShelfFailedNote,
+  AC_ARCHIVE_FAILED_LINE,
+  AC_RESTORE_FAILED_LINE,
+  type AcArchiveResult,
+} from "./autocountArchive";
 
 /**
  * The states the page can filter to. FOUR tabs (owner, 2026-08-21: *"4个"*, after
@@ -95,6 +107,7 @@ export const AC_FILTER_STATES = [
   "pending",
   "attention",
   "sent",
+  "archived",
 ] as const;
 export type AcFilterState = (typeof AC_FILTER_STATES)[number];
 
@@ -201,6 +214,8 @@ export interface AcOutboxRow {
    */
   can_send_now: boolean;
   ac_doc_no: string | null;
+  /** When somebody cleared this row off the page. Null = on the page. */
+  archived_at: string | null;
   created_at: string | null;
   updated_at: string | null;
   sent_at: string | null;
@@ -231,6 +246,13 @@ export interface AcOutboxResponse {
     skipped: number;
     requeued: number;
     attention: number;
+    /**
+     * Documents a PERSON has cleared off this page. Not a state of the send —
+     * every other number here is a claim about what AutoCount did, and this one
+     * is a claim about what somebody decided — which is why it is not summed
+     * into `total` either.
+     */
+    archived: number;
     total: number;
   };
   /**
@@ -418,6 +440,7 @@ export interface AcRelinkResult {
 
 export const AC_RELINK_LABEL = "Match up lines";
 export const AC_RELINK_BUSY_LABEL = "Matching";
+
 
 export const AC_SEND_AGAIN_LABEL = "Send again";
 export const AC_SEND_AGAIN_BUSY_LABEL = "Sending";
@@ -668,7 +691,49 @@ export function useAcRequeue(onAccepted: () => void) {
   const sendAgain = useCallback((rowId: string) => run(rowId, requeueAcOutboxRow), [run]);
   const sendNow = useCallback((rowId: string) => run(rowId, sendNowAcOutboxRow), [run]);
 
-  return { sendingId, notes, sendAgain, sendNow, relink };
+  /* THE FOURTH DOOR — and, like `relink`, it takes a DOCUMENT and not a row,
+     so it is not routed through `run` either. It shares the notes map for the
+     reason all four do: whatever a row's button did, its answer appears in the
+     same place, in the page's own voice. `rowId` is only the key the note is
+     written under — the newest send is the line the operator pressed.
+
+     BOTH BRANCHES ARE RENDERED, and the shaping of both lives in
+     `autocountArchive.ts` beside the endpoints, so the page cannot come to word
+     a refusal differently from the check that produced it. */
+  const setDocShelf = useCallback(
+    async (
+      rowId: string,
+      docType: string,
+      docNo: string,
+      call: (t: string, n: string) => Promise<AcArchiveResult>,
+      failedText: string,
+    ) => {
+      setSendingId(rowId);
+      try {
+        const r = await call(docType, docNo);
+        setNotes((prev) => ({ ...prev, [rowId]: acShelfNote(r) }));
+        if (acShelfDone(r)) onAccepted();
+      } catch (e) {
+        setNotes((prev) => ({ ...prev, [rowId]: acShelfFailedNote(failedText, e) }));
+      } finally {
+        setSendingId(null);
+      }
+    },
+    [onAccepted],
+  );
+
+  const archiveDoc = useCallback(
+    (rowId: string, docType: string, docNo: string) =>
+      setDocShelf(rowId, docType, docNo, archiveAcOutboxDoc, AC_ARCHIVE_FAILED_LINE),
+    [setDocShelf],
+  );
+  const restoreDoc = useCallback(
+    (rowId: string, docType: string, docNo: string) =>
+      setDocShelf(rowId, docType, docNo, restoreAcOutboxDoc, AC_RESTORE_FAILED_LINE),
+    [setDocShelf],
+  );
+
+  return { sendingId, notes, sendAgain, sendNow, relink, archiveDoc, restoreDoc };
 }
 
 /**
@@ -713,6 +778,12 @@ export const AC_FILTER_STATE_LABEL: Record<AcFilterState, string> = {
   pending: "Waiting",
   attention: "Not accepted",
   sent: "In AutoCount",
+  /* THE ONLY TAB THAT IS NOT A STATE OF THE SEND. "Cleared" and not "Archived"
+     because the reader's question is what happened to it on THIS page, and
+     "archived" invites the fear this screen must never create — that a record
+     of what the ERP told AutoCount has been thrown away. Nothing is deleted:
+     the tab exists so the rows are one press from coming back. */
+  archived: "Cleared",
 };
 
 /**
@@ -1668,6 +1739,9 @@ export function acDocTypeCounts(groups: AcDocGroup[]): AcDocTypeCounts {
  */
 export function acStateCount(d: AcOutboxResponse | null, s: AcFilterState): number {
   if (!d) return 0;
+  /* `total` counts what is ON the page, so `all` must not be made to include
+     the cleared documents — a reader pressing All and seeing a bigger number
+     than the list holds would be right to distrust every other number here. */
   return s === "all" ? d.counts.total : d.counts[s];
 }
 
@@ -1688,6 +1762,7 @@ export function acGroupsOfType(groups: AcDocGroup[], docType: AcDocType | ""): A
 export function acListCountLine(shown: number, total: number): string {
   return `${shown} of ${total} document${total === 1 ? "" : "s"}`;
 }
+
 
 /**
  * What to add when the server could not scan the whole queue for its counts.

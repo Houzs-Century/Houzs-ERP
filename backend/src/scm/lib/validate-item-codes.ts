@@ -23,6 +23,8 @@
 // stay editable).
 // ----------------------------------------------------------------------------
 
+import { pgrestInList } from './pgrest-in-list';
+
 export type ValidateResult =
   | { ok: true }
   | { ok: false; unknown: string[]; inactive: string[] };
@@ -57,9 +59,24 @@ export async function validateItemCodes(
 ): Promise<ValidateResult> {
   const unique = [...new Set(codes.map((c) => (c ?? '').trim()).filter(Boolean))];
   if (unique.length === 0) return { ok: true };
-  let q = sb.from('mfg_products').select('code, status').in('code', unique);
+  /* postgrest-js `.in()` quotes reserved chars but never ESCAPES, so a catalogued
+     code with a `"` (inch mark) or `\` closes the in-list early and every code
+     after it reads as absent — which this gate would then report as an unknown
+     item code, and which also broke the amendment-submit mix check
+     (docs/bugs/0780). Escape via pgrestInList — byte-identical to `.in()` for a
+     clean list — ONLY when a code actually carries one of those two characters. */
+  let q = sb.from('mfg_products').select('code, status');
+  q = unique.some((code) => /["\\]/.test(code))
+    ? q.filter('code', 'in', pgrestInList(unique))
+    : q.in('code', unique);
   if (companyId != null) q = q.eq('company_id', companyId);
-  const { data } = await q;
+  const { data, error } = await q;
+  /* A failed read must not read as "every code is unknown": log it so a future
+     break is loud, not a silent 409 that sends the requester chasing a code that
+     is really in the catalogue. */
+  if (error) {
+    console.error(`[validate-item-codes] mfg_products read failed (company=${companyId ?? 'unscoped'}):`, (error as { message?: unknown }).message ?? error);
+  }
   const rows = ((data ?? []) as Array<{ code: string; status?: string | null }>);
   const found = new Set(rows.map((r) => r.code));
   const unknown = unique.filter((c) => !found.has(c));
@@ -72,6 +89,43 @@ export async function validateItemCodes(
   return unknown.length === 0 && inactive.length === 0
     ? { ok: true }
     : { ok: false, unknown, inactive };
+}
+
+/**
+ * The catalogue CATEGORY of each code, within one company — keyed by the
+ * trimmed code, absent for a code the catalogue does not hold.
+ *
+ * It exists for a line that has no row of its own yet: an SO amendment ADD. An
+ * existing line carries item_group, but an added one carries only the code it
+ * asks for, and isServiceLine cannot tell a BARE service code (TRANSPORTATION
+ * CHARGES, DISPOSE, STORAGE) from goods without the category — so the lane
+ * split sent HC-SO-012757/A1 to the Purchaser (owner 2026-09-14,
+ * docs/bugs/0895-an-amendment-that-added-a-service-line-went-to-the-purchaser.md).
+ *
+ * Same company predicate and in-list escaping as validateItemCodes, for the
+ * same reasons. `null` when the read FAILED, so the caller refuses instead of
+ * classifying on nothing — an empty map would read as "none of these is a
+ * service", which is the mis-route this exists to stop.
+ */
+export async function catalogCategoriesByCode(
+  sb: any,
+  codes: Array<string | null | undefined>,
+  companyId: number | null | undefined,
+): Promise<Map<string, string | null> | null> {
+  const unique = [...new Set(codes.map((c) => (c ?? '').trim()).filter(Boolean))];
+  const out = new Map<string, string | null>();
+  if (unique.length === 0) return out;
+  let q = sb.from('mfg_products').select('code, category');
+  q = unique.some((code) => /["\\]/.test(code))
+    ? q.filter('code', 'in', pgrestInList(unique))
+    : q.in('code', unique);
+  if (companyId != null) q = q.eq('company_id', companyId);
+  const { data, error } = await q;
+  if (error) return null;
+  for (const r of (data ?? []) as Array<{ code: string; category?: string | null }>) {
+    if (!out.has(r.code) || out.get(r.code) == null) out.set(r.code, r.category ?? null);
+  }
+  return out;
 }
 
 /** Canonical 409 response body for unknown-code rejections. Callers should

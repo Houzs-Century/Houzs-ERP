@@ -51,12 +51,20 @@ export const CONFIG_CACHE_TTL_SECONDS: Record<ConfigCacheFamily, number> = {
   // reads the table directly, never this HTTP cache).
   maintcfg: 120,
   // Per-user banner snapshot. TTL MUST stay COMFORTABLY ABOVE the frontend
-  // poll (60s, useAnnouncementBanner.ts POLL_MS) — do NOT lower it back to 60.
+  // poll — do NOT lower it back to 60.
+  //
+  // CORRECTED 2026-09-02: this said the poll was 60s and reasoned "300s
+  // (5 polls)" from it. useAnnouncementBanner.ts carries POLL_MS = 180_000, so
+  // the real margin is 1.67 polls, not 5 — still above the poll, which is the
+  // property that matters, but not the headroom the sentence claimed. The
+  // number is no longer re-typed here to be re-checked by hand: it is mirrored
+  // in services/auth-fastpath-probe.ts and PINNED against the hook's source by
+  // backend/tests/authFastPathProbe.test.ts, which fails when either moves.
   // A TTL == poll means the entry expires exactly as the next poll arrives, so
   // every poll MISSES and rebuilds the full feed: measured live 2026-08-18 at
   // ~874-984ms on EVERY 60s human poll despite the "cache" being configured
   // (the neighbouring presence note records the same KV-consistency failure at
-  // 15s). 300s (5 polls) leaves every poll landing inside a valid entry even
+  // 15s). 300s leaves every poll landing inside a valid entry even
   // with KV propagation lag, matching `branding`. The catch this buys: the
   // banner filters by department_id/position_id/company grants (userCanSee /
   // companyCanSee), so a longer TTL would serve STALE TARGETING unless those

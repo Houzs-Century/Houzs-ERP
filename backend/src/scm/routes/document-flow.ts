@@ -48,6 +48,8 @@ import { activeCompanyId, scopeToCompany } from '../lib/companyScope';
 import { parseProvenanceNote } from '../shared/transfer-vocabulary';
 import { chunkIn } from '../lib/paginate-all';
 import type { Env, Variables } from '../env';
+import { pgrestIn } from '../lib/pgrest-in-list';
+import { fmtSen } from '../shared/format';
 
 export const documentFlow = new Hono<{ Bindings: Env; Variables: Variables }>();
 documentFlow.use('*', supabaseAuth);
@@ -462,10 +464,13 @@ documentFlow.get('/candidate-pos/:soDocNo', async (c) => {
   if (codes.length === 0) return c.json({ candidates: [] });
 
   // UNLINKED PO lines (so_item_id NULL) carrying any of those codes.
-  const { data: poItems } = await sb.from('purchase_order_items')
-    .select('purchase_order_id')
-    .in('item_code', codes)
+  const { data: poItems, error: poErr } = await pgrestIn(sb.from('purchase_order_items')
+    .select('purchase_order_id'), 'item_code', codes)
     .is('so_item_id', null);
+  if (poErr) {
+    // eslint-disable-next-line no-console
+    console.error('[document-flow] purchase_order_items read failed:', (poErr as { message?: unknown }).message ?? poErr);
+  }
   const poIds = uniq((poItems ?? []).map((r: any) => r.purchase_order_id));
   if (poIds.length === 0) return c.json({ candidates: [] });
 
@@ -750,7 +755,7 @@ documentFlow.get('/:type/:id', async (c) => {
       .select('id, sales_invoice_id, method, approval_code, amount_sen').in('sales_invoice_id', siIds);
     for (const p of (pays ?? []) as any[]) {
       const k = keyOf('payment', p.id);
-      const label = p.approval_code?.trim() ? p.approval_code.trim() : `${(p.method ?? 'Payment')} ${(Number(p.amount_sen ?? 0) / 100).toFixed(0)}`;
+      const label = p.approval_code?.trim() ? p.approval_code.trim() : `${(p.method ?? 'Payment')} ${fmtSen(Number(p.amount_sen ?? 0))}`;
       nodes.set(k, { key: k, type: 'payment', id: p.id, label, status: null, isAnchor: k === anchorKey });
       addEdge(keyOf('si', p.sales_invoice_id), k, 'payment');
     }

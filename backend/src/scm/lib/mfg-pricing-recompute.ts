@@ -32,6 +32,9 @@ import {
   type SpecialAddonDef,
 } from '../shared/mfg-pricing';
 import { chunkIn } from './paginate-all';
+import { pgrestInList } from './pgrest-in-list';
+import { autoDeriveEnabled } from './auto-derive-cost';
+import { resolveMfgProductCostAsOf } from './supplier-price-history';
 import {
   computeSofaSellingSen,
   comboChargedPrices,
@@ -276,8 +279,32 @@ export const erpLineTrust = (
   posTablet: boolean,
   unitPriceSen: number,
   zeroPriceIntended: unknown,
-): TrustSelling =>
-  !posTablet && unitPriceSen === 0 && zeroPriceIntended === true ? 'operator-zero' : !posTablet;
+  /* MIGRATED ORDER? Required, not optional, because it DECIDES (CLAUDE.md): a
+     caller that says nothing would silently keep the old answer, and that is the
+     hole this parameter closes.
+
+     Owner, 2026-09-02: 「我们的 selling price 是根据我们 manually 填入的，不应该
+     被这种影响」 — the specials surcharge, and the fabric surcharge with it, must
+     not move a price a person typed. On an AutoCount-imported line the price is
+     the BOOK's, which is the same statement, and `so-revision.ts` already says
+     it on the amendment path by deriving 'including-zero' from
+     `linked_ac_docno IS NOT NULL`. The plain line PATCH passed a bare `true` and
+     therefore did NOT set `isMigratedTrust` — so on a migrated line priced 0
+     (10,856 of 13,909 of them) an edit could hand it base + surcharges. Two edit
+     paths, two answers about the same order.
+
+     ADD is deliberately excluded by the CALLER, not here: a line typed today has
+     no AutoCount history, and so-revision.ts refuses 'including-zero' on its own
+     ADD arm for the same reason. */
+  soIsMigrated: boolean,
+): TrustSelling => {
+  if (posTablet) return false;
+  /* A migrated line's stored price stands, ZERO INCLUDED — that is the whole
+     difference between this mode and a bare `true`, and it also switches off the
+     chargeable-surcharge arm (see isMigratedTrust). */
+  if (soIsMigrated) return 'including-zero';
+  return unitPriceSen === 0 && zeroPriceIntended === true ? 'operator-zero' : true;
+};
 
 /** Pure mapper from a (product, fabric, variants) snapshot to the
  *  breakdown + DB column values. Used by tests + the route helpers below
@@ -781,10 +808,24 @@ export async function loadProductsByCodes(sb: any, codes: Array<string | null | 
   if (uniq.length === 0) return new Map();
   let q = sb
     .from('mfg_products')
-    .select('code, category, base_price_sen, price1_sen, cost_price_sen, seat_height_prices, sell_price_sen, pwp_price_sen, model_id, size_code, base_model, branding, default_free_gifts')
-    .in('code', uniq);
+    .select('code, category, base_price_sen, price1_sen, cost_price_sen, seat_height_prices, sell_price_sen, pwp_price_sen, model_id, size_code, base_model, branding, default_free_gifts');
+  /* postgrest-js `.in()` quotes reserved chars but never ESCAPES, so a code
+     carrying a `"` (inch mark) or `\` closes the in-list early and every code
+     after it in the batch silently reads as absent (docs/bugs/0780, and the
+     amendment-submit refusal it also caused). Escape via pgrestInList — which is
+     byte-identical to `.in()` for a clean list — ONLY when a code actually
+     carries one of those two characters, so the ordinary read keeps the plain
+     `.in()` path unchanged. */
+  q = uniq.some((code) => /["\\]/.test(code))
+    ? q.filter('code', 'in', pgrestInList(uniq))
+    : q.in('code', uniq);
   if (companyId != null) q = q.eq('company_id', companyId);
-  const { data } = await q;
+  const { data, error } = await q;
+  /* A read that failed is not "no products": say so rather than pricing/gating
+     on a silent empty (the swallowed error was why 0780 stayed invisible). */
+  if (error) {
+    console.error(`[mfg-pricing] loadProductsByCodes read failed (company=${companyId ?? 'unscoped'}):`, (error as { message?: unknown }).message ?? error);
+  }
   const rows = ((data as ProductRowLite[]) ?? []);
   /* More rows than codes means a code still resolves to two products in this
      scope — the Map below would silently keep one. Say so; the pricing that
@@ -1125,10 +1166,10 @@ export async function recomputeOneLine(
      and silently re-pricing against every company's catalogue. */
   cachedConfig: MaintenanceConfig | null | undefined,
   companyId: number | null | undefined,
-  opts?: { trustOperatorSelling?: TrustSelling },
+  opts?: { trustOperatorSelling?: TrustSelling; asOf?: string | null },
 ): Promise<RecomputedLine> {
   const config = cachedConfig ?? await loadMaintenanceConfig(sb);
-  const [product, fabric, sellingTiers, fabricAddonConfig, modelOverrides, compartmentOverrides] = await Promise.all([
+  const [productLoaded, fabric, sellingTiers, fabricAddonConfig, modelOverrides, compartmentOverrides] = await Promise.all([
     loadProductByCode(sb, item.itemCode, companyId),
     loadFabricByCode(sb, item.variants?.fabricCode ?? null),
     loadFabricSellingTiers(sb, item.variants?.fabricId ?? null),
@@ -1136,6 +1177,29 @@ export async function recomputeOneLine(
     loadModelFabricTierOverrides(sb),
     loadCompartmentFabricTierOverrides(sb),
   ]);
+  // Stage 3c (flag-gated): when auto-derive is ON and a derived-cost history row
+  // applies for this order's date, override the product COST so the SO/budget
+  // cost reflects the order's date and historical figures don't move. Flag OFF,
+  // no asOf, or no history row -> the flat product cost, byte-identical to
+  // before. A history-read blip degrades to the flat cost (logged), never blocks.
+  let product = productLoaded;
+  if (productLoaded && companyId != null && opts?.asOf) {
+    try {
+      if (await autoDeriveEnabled(sb)) {
+        const asOfCost = await resolveMfgProductCostAsOf(sb, companyId, item.itemCode, opts.asOf);
+        if (asOfCost) {
+          product = {
+            ...productLoaded,
+            base_price_sen: asOfCost.base_price_sen ?? productLoaded.base_price_sen,
+            price1_sen: asOfCost.price1_sen ?? productLoaded.price1_sen,
+            seat_height_prices: (asOfCost.seat_height_prices as ProductRowLite['seat_height_prices']) ?? productLoaded.seat_height_prices,
+          };
+        }
+      }
+    } catch (e) {
+      console.error(`[auto-derive] as-of cost resolve failed for ${item.itemCode}:`, e instanceof Error ? e.message : e);
+    }
+  }
   const [sofaModulePrices, sofaModuleCostRows] = product?.category === 'SOFA'
     ? await Promise.all([
         loadModelSofaModulePrices(

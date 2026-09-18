@@ -60,7 +60,9 @@ vi.mock('./settlement-queries', () => ({
   }),
   useMarkBatchReceived: () => ({ mutate: receivedMutate, isPending: false, isError: false, error: null }),
   useUndoReceipt: () => ({ mutate: undoMutate, isPending: false }),
-  useInTransit: () => ({ data: { from: '2026-02-17', to: '2026-08-17', totalSen: 357900, ageing: { MBB: { '0-7': { count: 1, sen: 230000 } }, GHL: { 'over-30': { count: 1, sen: 29400 } } }, lines: [
+  useInTransit: () => ({ data: { from: '2026-02-17', to: '2026-08-17', totalSen: 694400, ageing: { MBB: { '0-7': { count: 1, sen: 230000 } }, GHL: { 'over-30': { count: 1, sen: 29400 } }, '未标': { 'over-30': { count: 1, sen: 336500 } } }, lines: [
+    /* Keyed in without a bank — the server lists it once, under no acquirer (docs/bugs/0688). */
+    { acquirerCode: null, source: 'SOPAY', paymentId: 'u1', docNo: 'SO-2606-013', paidOn: '2026-06-14', amountSen: 336500, approvalCode: '009577', recordedBy: null, recordedById: null, ageDays: 64, state: 'NOT_ON_A_STATEMENT' },
     { acquirerCode: 'MBB', source: 'SOPAY', paymentId: 'm1', docNo: 'SO-2608-040', paidOn: '2026-08-14', amountSen: 230000, approvalCode: '861777', recordedBy: 'Siti at the KL till', recordedById: 'u1', ageDays: 3, state: 'MATCHED_NOT_POSTED' },
     { acquirerCode: 'GHL', source: 'SOPAY', paymentId: 'g9', docNo: 'SO-2607-001', paidOn: '2026-07-02', amountSen: 29400, approvalCode: null, recordedBy: null, recordedById: null, ageDays: 46, state: 'NOT_ON_A_STATEMENT' },
     { acquirerCode: 'PBB', source: 'SOPAY', paymentId: 'b3', docNo: 'SO-2608-050', paidOn: '2026-08-12', amountSen: 98500, approvalCode: '114220', recordedBy: null, recordedById: null, ageDays: 5, state: 'RECONCILED_NOT_PAID' },
@@ -71,8 +73,8 @@ vi.mock('./settlement-queries', () => ({
    bank-statement screen is stubbed rather than exercised here. Its own contract
    is BankStatementTab.test.tsx — and the payment-advice tab likewise has its
    own file, PayoutAdviceTab.test.tsx. */
+vi.mock('./BankMonthTab', () => ({ BankMonthTab: () => <div>by month tab</div> }));
 vi.mock('./BankStatementTab', () => ({ BankStatementTab: () => <div>bank statement tab</div> }));
-vi.mock('./PayoutAdviceTab', () => ({ PayoutAdviceTab: () => <div>payment advice tab</div> }));
 
 import { BankRecon } from './BankRecon';
 
@@ -86,12 +88,13 @@ const draw = () => {
 };
 
 describe('the tab strip', () => {
-  /* The advice is where a Public Bank payout starts, so its tab has to be on
-     this screen — one press from the statement it will match. */
-  test('carries the payment advice beside the bank statement', () => {
+  /* The advice is uploaded on the Merchant reconciliation screen only (owner
+     2026-09-12: bank statement reconciliation 的 payment advice 拿掉;
+     docs/bugs/0839) — one door to one table. */
+  test('does not carry the payment advice — that door is on the merchant screen', () => {
     render(<MemoryRouter><BankRecon /></MemoryRouter>);
-    fireEvent.click(screen.getByText('Payment advice'));
-    expect(screen.getByText('payment advice tab')).toBeTruthy();
+    expect(screen.queryByText('Payment advice')).toBeNull();
+    expect(screen.getByText('Bank statement')).toBeTruthy();
   });
 });
 
@@ -165,10 +168,11 @@ describe('paid, not yet in the bank', () => {
     draw();
     fireEvent.click(screen.getByText('Still with the merchants'));
 
-    expect(screen.getByText('RM 3,579.00')).toBeTruthy();          // sitting with acquirers
+    expect(screen.getByText('RM 6,944.00')).toBeTruthy();          // sitting with acquirers
     expect(screen.getByText('SO-2608-040')).toBeTruthy();          // named to the document
     expect(screen.getByText('On a statement, waiting to be confirmed')).toBeTruthy();
-    expect(screen.getByText('The acquirer has not reported it yet')).toBeTruthy();
+    // GHL's line, and the one keyed in without a bank — no report has either.
+    expect(screen.getAllByText('The acquirer has not reported it yet')).toHaveLength(2);
     /* Three states, three different jobs: chase the acquirer, finish the
        reconciling, or wait for a payout that is already agreed. */
     expect(screen.getByText('Reconciled — the payout has not arrived')).toBeTruthy();
@@ -181,6 +185,17 @@ describe('paid, not yet in the bank', () => {
     expect(screen.getByText('over 30 days')).toBeTruthy();
     // 46 days on GHL — the number the operator is meant to chase.
     expect(screen.getByText('46')).toBeTruthy();
+  });
+
+  /* docs/bugs/0688: an instalment keyed in without a bank sat on this list
+     once per merchant, and the total counted it as many times. One row under
+     未标, one ageing line, counted once. */
+  test('money keyed in without a bank sits on the list once, under 未标', () => {
+    draw();
+    fireEvent.click(screen.getByText('Still with the merchants'));
+    expect(screen.getAllByText('未标')).toHaveLength(2); // the ageing row and the line
+    expect(screen.getByText('SO-2606-013')).toBeTruthy();
+    expect(screen.getByText('4 payments')).toBeTruthy();
   });
 });
 

@@ -16,6 +16,7 @@ import {
 import { formatPhone } from "../scm/shared/phone";
 import { fmtDate, fmtDateTime } from "../scm/shared/format";
 import { assrStageLabel } from "../scm/shared/assr-stage-labels";
+import { assrSubStatusLabelOf } from "../scm/shared/assr-sub-statuses";
 
 // Formal service-case document modeled on a standard Malaysian business
 // invoice/service report:
@@ -371,14 +372,15 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
      the case: "Pending Inspection" alone reads as though the customer's sofa is
      waiting on the supplier when it is in fact sitting with us. The two
      supplier states already name the supplier; the two internal ones named
-     nobody. */
-  const SUB_STATUS_LABEL: Record<string, string> = {
+     nobody. Only those two print differently from the screens; the rest come
+     from the shared list, which is how Pending Customer Pickup reaches the
+     report (docs/bugs/0890). */
+  const PRINT_SUB_STATUS_LABEL: Record<string, string> = {
     pending_inspection: "Pending Inspection — our team",
     qc_issue_result: "QC Issue Result — our team",
-    pending_supplier_pickup: "Pending Supplier Pickup",
-    pending_supplier_return: "Pending Supplier Return",
   };
-  const subStatusLabel = SUB_STATUS_LABEL[(cs as any).sub_status ?? ""] || null;
+  const subKey = String((cs as any).sub_status ?? "");
+  const subStatusLabel = PRINT_SUB_STATUS_LABEL[subKey] ?? assrSubStatusLabelOf(subKey);
 
   // Warehouse — auto-detected from the case's delivery area (location
   // code) via the SCM State-to-Warehouse mapping (scm.state_warehouse_

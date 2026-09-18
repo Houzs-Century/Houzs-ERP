@@ -151,3 +151,58 @@ describe("the hook refuses to be used outside the provider", () => {
     spy.mockRestore();
   });
 });
+
+/* A right-click print that hit a chunk the deploy deleted: chunkActionRecovery
+   reloads the tab and stores WHAT was being printed. The list must reopen that
+   document's preview on the load that follows, once, on the same URL only. */
+describe("a print interrupted by a stale-build reload reopens on the next load", () => {
+  const RESUME_KEY = "chunk-print-resume";
+  const SO_TARGET: PrintTarget = { doc: "so", docNo: "HC-SO-012016", key: "HC-SO-012016" };
+  const here = () => `${window.location.pathname}${window.location.search}`;
+
+  beforeEach(() => {
+    sessionStorage.clear();
+  });
+
+  test("reopens the stored document's preview and consumes the resume", async () => {
+    sessionStorage.setItem(RESUME_KEY, JSON.stringify({ kind: "chain", path: here(), at: Date.now(), target: SO_TARGET }));
+    mount();
+    expect(await screen.findByText("HC-SO-012016")).toBeTruthy();
+    expect(fetchPrintBundle).toHaveBeenCalledWith(SO_TARGET);
+    expect(sessionStorage.getItem(RESUME_KEY)).toBeNull();
+  });
+
+  test("ignores a resume written for another page", async () => {
+    sessionStorage.setItem(RESUME_KEY, JSON.stringify({ kind: "chain", path: "/elsewhere", at: Date.now(), target: SO_TARGET }));
+    mount();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByText("Print preview")).toBeNull();
+    expect(fetchPrintBundle).not.toHaveBeenCalled();
+  });
+
+  test("a print the operator starts is tracked, so a stale chunk during it can reload", async () => {
+    const recovery = await import("../../lib/chunkActionRecovery");
+    const reload = vi.fn();
+    const dispose = recovery.installActionChunkRecovery({
+      reload,
+      probe: async () => "absent",
+      now: () => Date.now(),
+      get location() {
+        return window.location;
+      },
+    });
+    fetchPrintBundle.mockImplementation(() => {
+      const event = new Event("vite:preloadError", { cancelable: true });
+      (event as Event & { payload?: unknown }).payload = new Error(
+        `Failed to fetch dynamically imported module: ${window.location.origin}/assets3/sales-order-pdf-C9QaiR37.js`,
+      );
+      window.dispatchEvent(event);
+      return new Promise(() => {});
+    });
+    mount(SO_TARGET);
+    await userEvent.click(screen.getByText("trigger"));
+    await waitFor(() => expect(reload).toHaveBeenCalledTimes(1));
+    expect(JSON.parse(sessionStorage.getItem(RESUME_KEY) ?? "null")).toMatchObject({ kind: "chain", path: here(), target: SO_TARGET });
+    dispose();
+  });
+});

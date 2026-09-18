@@ -20,7 +20,7 @@
 export interface PermissionDef {
   key: string;
   resource: string;
-  verb: "read" | "create" | "write" | "manage";
+  verb: "read" | "create" | "write" | "manage" | "approve";
   label: string;
   description: string;
 }
@@ -124,6 +124,23 @@ export const PERMISSIONS: PermissionDef[] = [
   // positions via the Team > Positions matrix. po_amendment.approve also gates reject.
   { key: "scm.po_amendment.create",  resource: "Supply Chain", verb: "manage", label: "Raise PO amendment",   description: "Raise an amendment request against a Purchase Order (opens the single-approver PO revision flow)" },
   { key: "scm.po_amendment.approve", resource: "Supply Chain", verb: "manage", label: "Approve/reject PO amendment", description: "Approve a Purchase Order amendment — snapshots the prior version, applies the line + header diffs, bumps the PO revision (REQUESTED -> APPROVED) — or reject it (-> REJECTED)" },
+  // Document cancellation approval (owner 2026-09-08, 「SO 和 PO 取消的话需要
+  // approval 2 层 — 已经输入原因」, then 「只有 SO 需要 sales director approval,
+  // PO 不需要 … PO 只要 Purchaser 一个审批」). Cancelling a SALES ORDER is a
+  // REQUEST with a mandatory reason and then TWO signatures — level 1 = Sales
+  // Director, level 2 = Purchaser, two different people, neither the requester
+  // — before its own cancel route may run (scm/shared/document-cancel.ts
+  // APPROVAL_LEVELS). Approve keys also gate reject. Owner + IT Admin +
+  // Managing Director pass via "*" but still cannot sign both levels.
+  //
+  // THE PURCHASE ORDER HAS NO KEY, and that is the rule, not an omission: the
+  // owner cut its approval on 2026-09-09 —「PO cancelled 不需要审批，只需要
+  // remark 原因取消」— so a PO cancel needs only its reason, which the guard
+  // makes mandatory on the cancel call itself. `scm.po_cancel.approve` (and the
+  // `_l1` / `_l2` pair that existed for a few hours on 2026-09-08) are gone;
+  // any role row still carrying one grants nothing, because nothing reads it.
+  { key: "scm.so_cancel.approve_l1", resource: "Supply Chain", verb: "approve", label: "Approve SO cancellation — level 1", description: "Give the FIRST of two approvals (or reject) a request to cancel a Sales Order. The order is not cancelled until level 2 also approves" },
+  { key: "scm.so_cancel.approve_l2", resource: "Supply Chain", verb: "approve", label: "Approve SO cancellation — level 2", description: "Give the SECOND and final approval (or reject) a request to cancel a Sales Order. Must be a different person from the level-1 approver and from the requester; the cancel runs on this signature" },
 
   // Payment Vouchers — standalone AP cash-out document (port of 2990 0189/0202,
   // Phase 1-B MYR). A PV pays a vendor that is NOT a goods invoice (freight
@@ -140,7 +157,29 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: "scm.payment_voucher.cancel", resource: "Supply Chain", verb: "manage", label: "Cancel payment voucher",   description: "Cancel a Payment Voucher (reverses the GL entry + any PI settlement)" },
   // Phase 3 (2026-08-28): money leaves only after a yes. Nobody holds this by
   // default except '*' — the owner grants it per position when he delegates.
-  { key: "scm.payment_voucher.approve", resource: "Supply Chain", verb: "manage", label: "Approve payment voucher", description: "Approve or reject a submitted Payment Voucher — an unapproved voucher cannot post, and a submitted one reserves against Daily Bank's available money" },
+  { key: "scm.payment_voucher.check", resource: "Supply Chain", verb: "manage", label: "Check payment voucher", description: "The first of the two yeses (owner 2026-09-02): check a prepared Payment Voucher — checking locks it and reserves it against Daily Bank's available money; a checker may also reject back to draft" },
+  { key: "scm.payment_voucher.approve", resource: "Supply Chain", verb: "manage", label: "Approve payment voucher", description: "The second yes: approve a checked Payment Voucher — approval posts the GL entry in the same breath; an approver may also reject back to draft" },
+
+  // Correcting a customer payment after the day it was keyed (owner +
+  // management, 2026-09-10: 让权限在finance 这里更改). Sales records the money
+  // and may fix it the same day; from the next day only a holder of this key
+  // can, and the edit reverses and re-books its journal entry as it goes
+  // (acc/payment-repost.ts). It does NOT reach past a RECONCILED payment —
+  // matched on a merchant report, claimed by a bank statement, or sitting in a
+  // closed month is refused to everybody, this key included, because by then
+  // the figure is evidence somebody has signed off. Nobody holds it by default
+  // except '*'; grant it to a ROLE under Team > Roles & Permissions (the Roles
+  // section — it is a flat key, not a position capability).
+  //
+  // HOLDING IT LITERALLY MEANS OWING A REASON (owner 2026-09-14, docs/bugs/0888:
+  // 只要是有关 collection payment 的，我或有权限的用户做的动作都要记录写 reason). A
+  // role that carries this key in its own list — hasPermissionLiterally, the
+  // wildcard alone does not count — gives a reason for EVERY payment action on
+  // a sales order (record, change, remove, attach proof), same day or not, and
+  // every such action is listed on Accounting › Corrections beside who first
+  // recorded the payment. A role without it is as before: same-day fixes free,
+  // a correction after the day only through this key or '*', with a reason.
+  { key: "scm.so_payment.amend", resource: "Supply Chain", verb: "manage", label: "Correct a recorded payment", description: "Change or remove a customer payment after the day it was keyed in — the journal entry is reversed and re-booked with it. Refused once the payment has been reconciled. A role that holds this key gives a reason for EVERY payment it records, changes, removes or attaches proof to, and those actions are listed on Accounting › Corrections." },
 
   // Stock take supervision (owner-approved phase 1, 2026-08-08). A stock take
   // carries an ASSIGNEE (scm.stock_takes.assignee_staff_id — the person
@@ -201,6 +240,16 @@ export const PERMISSIONS: PermissionDef[] = [
   // already exists — a key nobody holds is an endpoint nobody can call).
   // Owner + IT Admin cover it via "*".
   { key: "scm.autocount.read", resource: "Supply Chain", verb: "read", label: "View AutoCount sync queue", description: "See every document the ERP pushed to AutoCount, its state (queued / sent / failed / skipped) and the reason it failed or was skipped" },
+  /* DECLARED 2026-09-08, for the go-live change log the owner asked for when he
+     opened sales orders, delivery orders, purchase orders and goods receipts to
+     staff: 「谁改了东西 谁改了」. It is a SUPERVISION key, not an operational one —
+     the page shows what every colleague changed on every document in the
+     company, so it is deliberately its own key rather than riding
+     scm.autocount.read (watching the account-book queue and watching your
+     colleagues are different grants) and rather than riding an SCM area key (a
+     change log spans every area at once). Owner + IT Admin cover it via "*";
+     settings.manage is the other key the route accepts. */
+  { key: "scm.changelog.read", resource: "Supply Chain", verb: "read", label: "View the change log", description: "See who changed which sales order, delivery order, purchase order or goods receipt, when, and from what to what — with the system's own automated changes counted separately" },
   /* DECLARED 2026-08-16, when the page grew a per-row "Send again" button.
      The read key above used to end "Read-only: re-sending stays in
      requeue-autocount-skipped.yml"; it does not any more, and the two are
@@ -212,6 +261,20 @@ export const PERMISSIONS: PermissionDef[] = [
      accepts settings.manage, which already exists and already owns the AutoCount
      connection, so the button works for its real audience on day one. */
   { key: "scm.autocount.requeue", resource: "Supply Chain", verb: "manage", label: "Re-send a refused AutoCount document", description: "Put one failed or skipped document back in the AutoCount queue once its cause is fixed — writes into the live account book, and is refused outright for a document AutoCount has already accepted" },
+  /* DECLARED 2026-09-12 with the Venture Portal live sales-order feed
+     (mig 20260912T1800). The SAME SPLIT the two AutoCount keys above are drawn
+     on, and for a sharper reason. Reading the queue is watching. Managing it
+     sets the shared SECRET and decides WHICH COMPANIES' sales orders — with
+     their line costs and their margins — leave this system for an external
+     portal where they become the input to somebody's commission. A delivery
+     cannot be recalled, so the manage key is deliberately not implied by the
+     read key, and neither is implied by scm.access: an L2 SCM area key would be
+     an arbitrary owner for a page that spans orders, lines, costs and payments
+     at once. settings.manage is the other key both halves accept — whoever
+     already owns the sync connections owns this one — so the page works for its
+     real audience on day one with no grant migration. Owner + IT Admin hold "*". */
+  { key: "scm.venture_portal.read", resource: "Supply Chain", verb: "read", label: "View Venture Portal feed", description: "See whether the live sales-order feed to the Venture Portal is on, what is queued, what was delivered and why anything failed" },
+  { key: "scm.venture_portal.manage", resource: "Supply Chain", verb: "manage", label: "Manage Venture Portal feed", description: "Turn the live sales-order feed on or off, choose which companies it covers, set or rotate the shared secret, and re-send a delivery — sends sales orders, line costs and cancellations to an external portal" },
 
   // Mail Center — in-ERP shared inbox (/api/mail-center). mail_center.read is the
   // nav/page gate (grant broadly); mail_center.manage gates the alias / access /
@@ -229,6 +292,15 @@ export const PERMISSIONS: PermissionDef[] = [
   // authed user can see + ack their own banner). Owner + IT Admin bypass via "*".
   { key: "announcements.read",  resource: "Announcements", verb: "read",  label: "View announcements",  description: "Open the Announcements list page and see read-receipts" },
   { key: "announcements.write", resource: "Announcements", verb: "write", label: "Manage announcements", description: "Post, edit, hide, remind, and delete announcements" },
+  // The approval desk (mig 20260906T1509): every notice — the MD's own
+  // included — is published by an approve click. Give this to the role that
+  // signs off; re-point it whenever the approver changes.
+  { key: "announcements.approve", resource: "Announcements", verb: "approve", label: "Approve announcements", description: "Approve or reject submitted announcements before they go live; receives the approval-needed notice" },
+
+  // Memos — the department memo register (mig 20260909T0500). Any signed-in
+  // user registers for their own department; this key registers for any
+  // department and voids anyone's memo.
+  { key: "memos.manage", resource: "Memos", verb: "manage", label: "Manage memos", description: "Register a memo for any department and void any memo (the register is otherwise own-department only)" },
 
   // System
   { key: "udf.manage", resource: "Custom Fields", verb: "manage", label: "Manage custom fields", description: "Add or remove user-defined fields on tables" },
@@ -289,6 +361,25 @@ export function hasPermission(
   // satisfy TS's union-narrowing limitation here.
   const set = granted as ReadonlySet<string>;
   return set.has("*") || set.has(required);
+}
+
+/**
+ * Holds `required` LITERALLY — the `*` wildcard does NOT satisfy this.
+ *
+ * The wildcard exists so Owner and IT Admin can DO anything, and every access
+ * gate must keep using `hasPermission` for exactly that reason. This answers the
+ * other question — whose desk a piece of work sits on — for the surfaces that
+ * address work rather than permit it: the amendment notice audience and the
+ * sidebar's pending counts. Lives here, beside its wildcard-honouring twin, so
+ * the two readings of a permission set cannot drift into two files.
+ */
+export function hasPermissionLiterally(
+  granted: ReadonlyArray<string> | ReadonlySet<string>,
+  required: string,
+): boolean {
+  if (Array.isArray(granted)) return granted.includes(required);
+  const set = granted as ReadonlySet<string>;
+  return set.has(required);
 }
 
 export function parsePermissions(json: string | null | undefined): string[] {

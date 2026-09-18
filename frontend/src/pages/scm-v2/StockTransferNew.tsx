@@ -11,7 +11,9 @@
 // Import boundary only: react-router → react-router-dom; ConfirmDialog/
 // NotifyDialog + useWarehouses ← vendored; balances/transfer hooks ←
 // vendored stock-queries; mfg-products-queries via vendored slice; css
-// colocated. Back/Cancel → list, Save → /scm/stock-transfers/:id.
+// colocated. Back/Cancel → list. Save → a result dialog: open the saved
+// transfer, or "New stock transfer", which REMOUNTS the form (FreshMount) so
+// the next transfer gets its own idempotency key (staff request 2026-09-14).
 // ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
@@ -31,6 +33,8 @@ import {
 } from '../../vendor/scm/lib/stock-queries';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
+import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDialog';
+import { FreshMount } from '../../lib/freshMount';
 import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
@@ -168,6 +172,15 @@ function TransferLineRow({
           }}
         />
       </td>
+      <td>
+        <input
+          type="text"
+          value={line.notes ?? ''}
+          onChange={(e) => setLine(line._key, { notes: e.target.value })}
+          placeholder="(optional) — shown as Description 2"
+          className={styles.fieldInput}
+        />
+      </td>
       <td className={styles.actionsCell}>
         <button
           type="button"
@@ -183,16 +196,24 @@ function TransferLineRow({
   );
 }
 
-export const StockTransferNew = () => {
+export const StockTransferNew = () => (
+  <FreshMount>{(startNew) => <StockTransferForm onStartNew={startNew} />}</FreshMount>
+);
+
+const StockTransferForm = ({ onStartNew }: { onStartNew: () => void }) => {
   const navigate = useNavigate();
   const create   = useCreateStockTransfer();
-  /* One key for the one transfer this page is open to raise (lib/idempotency.ts).
-     Route-level form, navigates to the transfer detail on success, so the MOUNT
-     is exactly one transfer. Its mobile twin (MobileStockTransferNew) mints its
-     own — same document, both sides, one PR. */
+  /* One key for the one transfer this form is open to raise (lib/idempotency.ts),
+     so the MOUNT is exactly one transfer. After a successful post the form
+     LOCKS (no Post button) and the only way to raise another is onStartNew,
+     which remounts this component and mints a fresh key — never a navigate to
+     this same route, which would keep the mount and replay transfer #1. Its
+     mobile twin (MobileStockTransferNew) does the same. */
   const idemKey  = useIdempotencyKey();
 
   const notify = useNotify();
+  const [created, setCreated] = useState<{ id: string; transferNo: string } | null>(null);
+  const [resultOpen, setResultOpen] = useState(false);
 
   // ── Header state ─────────────────────────────────────────────────────
   const [fromWarehouseId, setFromWarehouseId] = useState<string>('');
@@ -279,7 +300,7 @@ export const StockTransferNew = () => {
         })),
       },
       {
-        onSuccess: (res) => navigate(`/scm/stock-transfers/${res.id}`),
+        onSuccess: (res) => { setCreated(res); setResultOpen(true); },
         onError:   (err) => notify({ title: 'Save failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' }),
       },
     );
@@ -291,7 +312,16 @@ export const StockTransferNew = () => {
         eyebrow="Warehouse"
         title="New Stock Transfer"
         actions={
-          <>
+          created ? (
+            <div className={styles.actions}>
+              <Button variant="ghost" size="md" onClick={onStartNew}>
+                <Plus {...ICON} /> New stock transfer
+              </Button>
+              <Button variant="primary" size="md" onClick={() => navigate(`/scm/stock-transfers/${created.id}`)}>
+                Open {created.transferNo}
+              </Button>
+            </div>
+          ) : (
             <div className={styles.actions}>
               <Button variant="ghost" size="md" onClick={() => navigate('/scm/stock-transfers')}>
                 <X {...ICON} /> Cancel
@@ -301,9 +331,13 @@ export const StockTransferNew = () => {
                 {create.isPending ? 'Posting…' : 'Post Transfer'}
               </Button>
             </div>
-          </>
+          )
         }
       />
+
+      {/* Posted: the fields stay readable but cannot be edited — there is no
+          Post left to press, so nothing typed here could ever be saved. */}
+      <fieldset disabled={created != null} className="space-y-4" style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
 
       {/* ── Header card ──────────────────────────────────────────────── */}
       <section className={styles.card}>
@@ -396,6 +430,7 @@ export const StockTransferNew = () => {
                 <th>Variant bucket *</th>
                 <th style={{ width: 110, textAlign: 'right' }}>Available</th>
                 <th style={{ width: 110, textAlign: 'right' }}>Qty *</th>
+                <th style={{ width: 200 }}>Remarks</th>
                 <th style={{ width: 40 }} />
               </tr>
             </thead>
@@ -442,6 +477,19 @@ export const StockTransferNew = () => {
           )}
         </div>
       </section>
+      </fieldset>
+
+      {created && resultOpen && (
+        <ActionResultDialog
+          title={`Stock transfer ${created.transferNo} posted`}
+          body="The stock has moved. Open the transfer, or start the next one."
+          primaryLabel="Open transfer"
+          onPrimary={() => navigate(`/scm/stock-transfers/${created.id}`)}
+          secondaryLabel="New stock transfer"
+          onSecondary={onStartNew}
+          onClose={() => setResultOpen(false)}
+        />
+      )}
     </div>
   );
 };

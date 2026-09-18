@@ -228,7 +228,7 @@ describe('brandingCategoryNoun — the superset, refereed against normCategory',
        property test above then covers the new value automatically. */
     expect([...CATEGORY_SOURCES.productEnum]).toEqual([
       'SOFA', 'BEDFRAME', 'ACCESSORY', 'MATTRESS', 'SERVICE',
-      'DINING', 'BEDLINES', 'DIFFUSER', 'CARPET',
+      'DINING', 'BEDLINES', 'DIFFUSER', 'CARPET', 'FABRIC_ACCESSORY',
     ]);
     expect([...CATEGORY_SOURCES.normBuckets]).toEqual([
       'SOFA', 'BEDFRAME', 'MATTRESS', 'ACCESSORY', 'SERVICE', 'OTHERS',

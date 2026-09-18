@@ -6,7 +6,7 @@
 // not.
 //
 // HOOKKA guardrails baked in:
-//   - Per-BUILD namespace (bug 1b/2f): the key carries __BUILD_ID__ so a deploy
+//   - Per-BUILD namespace (bug 1b/2f): the key carries the build id so a deploy
 //     that changes a list's payload SHAPE can't hydrate the previous build's
 //     shape; old-build snapshots are pruned on boot.
 //   - Per-SESSION namespace (off-not-hide, 2026-07-16): the key also carries a
@@ -29,10 +29,9 @@ import {
   hasStoredCompanySelection,
   subscribeActiveCompany,
 } from "./activeCompany";
+import { BUILD_ID } from "./buildId";
 
-// Injected at build time by vite.config `define`. Unique per deploy.
-declare const __BUILD_ID__: string;
-const BUILD_ID = typeof __BUILD_ID__ !== "undefined" ? __BUILD_ID__ : "dev";
+// Unique per deploy; read from index.html (lib/buildId.ts), never compiled in.
 const NS_PREFIX = "houzs-rq-snapshot:";
 const BUILD_PREFIX = `${NS_PREFIX}${BUILD_ID}:`;
 const MAX_BYTES = 1_500_000; // ~1.5 MB — skip the write if the snapshot exceeds it

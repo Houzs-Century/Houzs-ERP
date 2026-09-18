@@ -1,5 +1,5 @@
 // Vendored SLICE of apps/backend/src/lib/flow-queries.ts — ONLY the
-// Delivery-Order (mfg) read / detail / status / item / payment hooks the
+// Delivery-Order (mfg) read / detail / status / item hooks the
 // vendored DO list / new / from-so / detail pages use. The SI / DR hooks that
 // share the same source module are intentionally NOT vendored here.
 //
@@ -22,7 +22,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
 import { idempotentInit } from '../../../lib/idempotency';
 import { serviceNotify } from './dialog-service';
-import { writeFailedAs } from './mutation-error';
 import { invalidateSoLists } from './sales-order-queries';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
 
@@ -213,16 +212,27 @@ export const useMfgDeliveryOrders = (status?: string) => useQuery({
 // the caller maps its compressed filter-pill bucket to a DB status first, and
 // passes undefined for multi-status buckets the single-status filter can't
 // express (open/in_transit/delivered), so those show all rows still counted.
-export function useMfgDeliveryOrdersPaged(params: { page: number; pageSize: number; status?: string; q?: string; sort?: string }) {
-  const { page, pageSize, status, q, sort } = params;
+/** The Delivery Order list's filter as query parameters, no paging: the list
+ *  request and the list's export (do-list-export.ts) send exactly these. */
+export function doListSearchParams(f: { status?: string; q?: string; sort?: string; debtorNames?: string[]; currencies?: string[] }): URLSearchParams {
   const usp = new URLSearchParams();
+  if (f.status) usp.set('status', f.status);
+  if (f.q && f.q.trim()) usp.set('q', f.q.trim());
+  if (f.sort) usp.set('sort', f.sort);
+  // Server-filterable column funnels (owner 2026-09-16): Customer Name /
+  // Currency, JSON arrays (a customer name may contain a comma).
+  if (f.debtorNames && f.debtorNames.length) usp.set('debtorNames', JSON.stringify(f.debtorNames));
+  if (f.currencies && f.currencies.length) usp.set('currencies', JSON.stringify(f.currencies));
+  return usp;
+}
+
+export function useMfgDeliveryOrdersPaged(params: { page: number; pageSize: number; status?: string; q?: string; sort?: string; debtorNames?: string[]; currencies?: string[] }) {
+  const { page, pageSize, status, q, sort, debtorNames, currencies } = params;
+  const usp = doListSearchParams({ status, q, sort, debtorNames, currencies });
   usp.set('page', String(page));
   usp.set('pageSize', String(pageSize));
-  if (status) usp.set('status', status);
-  if (q && q.trim()) usp.set('q', q.trim());
-  if (sort) usp.set('sort', sort);
   return useQuery({
-    queryKey: ['mfg-delivery-orders-paged', page, pageSize, status ?? '', q ?? '', sort ?? ''],
+    queryKey: ['mfg-delivery-orders-paged', page, pageSize, status ?? '', q ?? '', sort ?? '', JSON.stringify(debtorNames ?? []), JSON.stringify(currencies ?? [])],
     queryFn: ({ signal }) => authedFetch<{ deliveryOrders: any[]; total: number; page: number; pageSize: number; statusCounts: { all: number; open: number; in_transit: number; delivered: number; cancelled: number } }>(`/delivery-orders-mfg?${usp.toString()}`, { signal }),
     placeholderData: (prev: any) => prev,
     staleTime: 30_000,
@@ -243,10 +253,8 @@ export const useMfgDeliveryOrderDetail = (id: string | null) => useQuery({
    doNumber — instead of raising a second DO that ships the goods twice.
    Omitting it is exactly today's behaviour (the middleware no-ops).
 
-   Mirrors useAddDeliveryOrderPayment 130 lines below, which has been idempotent
-   since #657 while the DO the payment hangs off was not — the split this PR
-   closes. A duplicate DO is not just a duplicate row: it decrements stock again
-   and carries into SI. */
+   A duplicate DO is not just a duplicate row: it decrements stock again and
+   carries into SI. */
 export const useCreateMfgDeliveryOrder = () => {
   const qc = useQueryClient();
   return useMutation({
@@ -310,18 +318,41 @@ export const useUpdateMfgDeliveryOrderStatus = () => {
       authedFetch(`/delivery-orders-mfg/${id}/status`, {
         method: 'PATCH', body: JSON.stringify({ status, ...(evidence ?? {}) }),
       }),
-    onSuccess: (_, vars) => {
-      qc.invalidateQueries({ queryKey: ['mfg-delivery-orders'] });
-      qc.invalidateQueries({ queryKey: ['mfg-delivery-order-detail', vars.id] });
-      /* A status advance into a shipped state deducts inventory — refresh
-         the inventory queries so the on-hand drilldown reflects the OUT. */
-      qc.invalidateQueries({ queryKey: ['inventory'] });
-      /* CANCEL releases the delivered qty back to the SO. */
-      releaseSoSideQueries(qc);
-    },
+    onSuccess: (_, vars) => refreshAfterDoStatus(qc, vars.id),
     onError: (err) => {
       serviceNotify({ title: 'Status update failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' });
     },
+  });
+};
+
+function refreshAfterDoStatus(qc: ReturnType<typeof useQueryClient>, id: string) {
+  void qc.invalidateQueries({ queryKey: ['mfg-delivery-orders'] });
+  void qc.invalidateQueries({ queryKey: ['mfg-delivery-order-detail', id] });
+  /* A status advance into a shipped state deducts inventory — refresh
+     the inventory queries so the on-hand drilldown reflects the OUT. */
+  void qc.invalidateQueries({ queryKey: ['inventory'] });
+  /* CANCEL releases the delivered qty back to the SO. */
+  releaseSoSideQueries(qc);
+}
+
+/* CANCEL a delivery order — the same status route, with the REASON the server
+   now refuses a cancel without (400 `reason_required`, owner 2026-09-14:
+   「DO cancel need pop out window for reason」; the guard is
+   backend/src/scm/routes/document-cancel-routes.ts). Its own hook so `reason`
+   is REQUIRED by the type rather than an optional field on the status hook a
+   caller could forget. No onError: the one caller
+   (pages/scm-v2/use-do-cancel-action.ts) reports the refusal itself, and a
+   second notice here would say it twice. */
+export const useCancelMfgDeliveryOrder = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason: string }) =>
+      /* `movementErrors` is in-band: the cancel stands when returning the stock
+         partly failed, and the caller must say so rather than claim it is back. */
+      authedFetch<{ deliveryOrder: { id: string; status: string }; movementErrors?: string[] }>(`/delivery-orders-mfg/${id}/status`, {
+        method: 'PATCH', body: JSON.stringify({ status: 'CANCELLED', reason }),
+      }),
+    onSuccess: (_, vars) => refreshAfterDoStatus(qc, vars.id),
   });
 };
 
@@ -411,64 +442,5 @@ export const useDeleteMfgDeliveryOrderItem = () => {
       qc.invalidateQueries({ queryKey: ['mfg-delivery-orders'] });
       releaseSoSideQueries(qc);
     },
-  });
-};
-
-/* DO payments ledger — mirror of the SO payments hooks. The DO Create + Detail
-   screens render the same Houzs PaymentsTable; these hooks back the persisted
-   (Detail) path. */
-export type DoPayment = {
-  id: string;
-  delivery_order_id: string;
-  paid_at: string;
-  method: 'merchant' | 'transfer' | 'cash';
-  merchant_provider: string | null;
-  installment_months: number | null;
-  online_type: string | null;
-  approval_code: string | null;
-  amount_sen: number;
-  account_sheet: string | null;
-  collected_by: string | null;
-  collected_by_name: string | null;
-  note: string | null;
-  created_at: string;
-  created_by: string | null;
-};
-
-export const useDeliveryOrderPayments = (id: string | null) => useQuery({
-  queryKey: ['mfg-delivery-orders', id, 'payments'],
-  queryFn: () => authedFetch<{ payments: DoPayment[] }>(`/delivery-orders-mfg/${id}/payments`).then((r) => r.payments),
-  enabled: Boolean(id),
-  staleTime: 2 * 60_000,
-  retry: retryUnlessClientError,
-  retryDelay: 800,
-});
-
-/* `idempotencyKey` — optional, destructured OUT of the body. See
-   useAddSalesOrderPayment / lib/idempotency.ts for the one-key-per-intent rule. */
-export const useAddDeliveryOrderPayment = () => {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, idempotencyKey, ...body }: { id: string; idempotencyKey?: string } & Record<string, unknown>) =>
-      authedFetch<{ payment: DoPayment }>(`/delivery-orders-mfg/${id}/payments`,
-        idempotentInit(idempotencyKey, { method: 'POST', body: JSON.stringify(body) })),
-    onSuccess: (_, vars) => {
-      qc.invalidateQueries({ queryKey: ['mfg-delivery-orders', vars.id, 'payments'] });
-      qc.invalidateQueries({ queryKey: ['mfg-delivery-order-detail', vars.id] });
-    },
-    onError: writeFailedAs('Payment not recorded'),
-  });
-};
-
-export const useDeleteDeliveryOrderPayment = () => {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, paymentId }: { id: string; paymentId: string }) =>
-      authedFetch<{ ok: boolean }>(`/delivery-orders-mfg/${id}/payments/${paymentId}`, { method: 'DELETE' }),
-    onSuccess: (_, vars) => {
-      qc.invalidateQueries({ queryKey: ['mfg-delivery-orders', vars.id, 'payments'] });
-      qc.invalidateQueries({ queryKey: ['mfg-delivery-order-detail', vars.id] });
-    },
-    onError: writeFailedAs('Payment not deleted'),
   });
 };

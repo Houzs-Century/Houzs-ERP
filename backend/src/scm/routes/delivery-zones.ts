@@ -51,6 +51,7 @@ import { buildSequenceProposal, type SequenceStopInput } from '../lib/sequence-s
 import { loadAvailableLorries } from '../lib/fleet-availability';
 import { assignFleet, type AssignGroup } from '../lib/fleet-assign';
 import { loadDriverLeave } from '../lib/driver-availability';
+import { pgrestIn } from '../lib/pgrest-in-list';
 
 export const deliveryZones = new Hono<{ Bindings: Env; Variables: Variables }>();
 deliveryZones.use('*', supabaseAuth);
@@ -329,9 +330,13 @@ async function loadAndPack(
     for (let i = 0; i < codeList.length; i += 300) {
       const chunk = codeList.slice(i, i + 300);
       if (chunk.length === 0) continue;
-      const { data: prodRows } = await paginateAll<{ code: string; category: string | null }>((from, to) =>
-        scopeToCompany(sb.from('mfg_products').select('code, category').in('code', chunk), c).range(from, to),
+      const { data: prodRows, error: prodErr } = await paginateAll<{ code: string; category: string | null }>((from, to) =>
+        scopeToCompany(pgrestIn(sb.from('mfg_products').select('code, category'), 'code', chunk), c).range(from, to),
       );
+      if (prodErr) {
+        // eslint-disable-next-line no-console
+        console.error('[delivery-zones] mfg_products category read failed:', (prodErr as { message?: unknown }).message ?? prodErr);
+      }
       for (const p of (prodRows ?? [])) if (p.category) productCategory.set(p.code, normCategory(p.category));
     }
   }

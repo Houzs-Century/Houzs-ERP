@@ -20,8 +20,9 @@
 // src/scm/lib/operator-zero-price.test.ts) — it is a code path that never asks.
 // ----------------------------------------------------------------------------
 import { describe, expect, test } from 'vitest';
-import soRoutes from '../src/scm/routes/mfg-sales-orders.ts?raw';
+import { soRouterSource } from './lib/so-router-source';
 import { erpLineTrust } from '../src/scm/lib/mfg-pricing-recompute';
+const soRoutes = soRouterSource();
 
 /** Source with comments stripped — comments quote the shapes this forbids. */
 const SO = soRoutes.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
@@ -35,7 +36,7 @@ describe('SO CREATE decides trust PER LINE, through the shared helper', () => {
 
   test('create passes erpLineTrust with THIS line price and THIS line claim', () => {
     expect(SO).toMatch(
-      /erpLineTrust\(createPosTablet, Number\(it\.unitPriceSen \?\? 0\), it\.zeroPriceIntended\)/,
+      /erpLineTrust\(createPosTablet, Number\(it\.unitPriceSen \?\? 0\), it\.zeroPriceIntended, false\)/,
     );
   });
 

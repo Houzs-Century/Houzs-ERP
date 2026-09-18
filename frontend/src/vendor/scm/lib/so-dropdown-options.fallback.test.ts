@@ -98,8 +98,10 @@ describe('every mobile payment picker sources from the catalog, not a literal', 
 
   it('the Method select renders catalog options', () => {
     const src = readFileSync(SHEET, 'utf8');
+    /* The catalog, the stored value kept, and — docs/bugs/0933 — the one option
+       that is not a maintenance row: money moved from a cancelled order. */
     expect(src).toContain(
-      'const methodOpts = withStoredOption(optionsOrFallback("payment_method"',
+      'const methodOpts = withConvertOption(withStoredOption(optionsOrFallback("payment_method"',
     );
     expect(src).toContain('{methodOpts.map((o) => <option');
   });

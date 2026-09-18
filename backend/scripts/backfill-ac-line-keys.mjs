@@ -45,16 +45,35 @@ async function main() {
   for (const ln of csv) { const f = parseCsvLine(ln); if (f[0]) byAc.set(norm(f[0]), (f[1] || "").trim()); }
 
   // AutoCount side: (docNo|erpCode) -> ordered DtlKeys
+  /* THE BUCKET IS THE TRANSLATED CODE, AND THE TRANSLATION IS NOT INJECTIVE.
+     docs/bugs/0672 site 7. Measured on this tree's own CSV
+     (data/autocount-erp-mapping-1561.csv): 1,577 rows, `ac_code` distinct 1,577,
+     but `erp_code` distinct only 1,445 — 117 ERP codes are claimed by TWO OR
+     MORE AutoCount codes, and 249 rows (15.8%) sit on a shared ERP code. So a
+     bucket keyed `(DocNo, ERP code)` can hold lines that are DIFFERENT PRODUCTS
+     in the account book, and the positional zip below then hands an ERP line a
+     DtlKey belonging to one of the others.
+
+     The equal-count refusal further down does not catch this: the counts agree
+     precisely BECAUSE the merge made them agree. That is the bug class exactly —
+     a check that answers a different question and prints like a clean one.
+
+     So the AutoCount ItemCodes behind each bucket are carried, and a bucket
+     built from more than one of them is refused. A wrong key is strictly worse
+     than no key: no key is refused loudly by AcSyncService's keyless-line
+     guard, while a wrong key silently edits somebody else's line in a live
+     account book. */
   const acKeys = (rows, codeField) => {
     const m = new Map();
     for (const r of rows) {
       const erp = byAc.get(norm(r[codeField]));
       if (!erp) continue;
       const k = `${r.DocNo}|${norm(erp)}`;
-      if (!m.has(k)) m.set(k, []);
-      m.get(k).push(Number(r.DtlKey));
+      if (!m.has(k)) m.set(k, { keys: [], acCodes: new Set() });
+      m.get(k).keys.push(Number(r.DtlKey));
+      m.get(k).acCodes.add(norm(r[codeField]));
     }
-    for (const v of m.values()) v.sort((a, b) => a - b);
+    for (const v of m.values()) v.keys.sort((a, b) => a - b);
     return m;
   };
   const soAc = acKeys(gz("ac-outstanding-so.json.gz"), "ItemCode");
@@ -68,9 +87,18 @@ async function main() {
       erpGrp.get(k).push(r);
     }
     const updates = []; let noMatch = 0, countMismatch = 0, mismatchSkipped = 0, already = 0;
+    /* Buckets refused because the ERP code they are keyed on translates back to
+       several DIFFERENT AutoCount products — see acKeys above. */
+    let mergedBuckets = 0, mergedSkipped = 0;
     for (const [k, list] of erpGrp) {
-      const keys = acMap.get(k);
-      if (!keys) { noMatch += list.length; continue; }
+      const bucket = acMap.get(k);
+      if (!bucket) { noMatch += list.length; continue; }
+      if (bucket.acCodes.size > 1) {
+        mergedBuckets += 1;
+        mergedSkipped += list.length;
+        continue;
+      }
+      const keys = bucket.keys;
       /* A group whose ERP line count and AutoCount line count DISAGREE is not
          zipped at all. The zip's whole licence is the assumption that the two
          sides list the same lines in the same order; once the counts differ
@@ -90,7 +118,7 @@ async function main() {
         updates.push({ id: list[i].id, key: keys[i] });
       }
     }
-    log(`${label}: erp lines ${rows.length}; to set ${updates.length}; already set ${already}; no AC match ${noMatch}; count mismatch ${countMismatch} (skipped ${mismatchSkipped} lines in ambiguous groups)`);
+    log(`${label}: erp lines ${rows.length}; to set ${updates.length}; already set ${already}; no AC match ${noMatch}; count mismatch ${countMismatch} (skipped ${mismatchSkipped} lines in ambiguous groups); MERGED-CODE buckets refused ${mergedBuckets} (skipped ${mergedSkipped} lines whose ERP code maps back to more than one AutoCount product)`);
     if (!APPLY) return;
     for (let i = 0; i < updates.length; i += 200) {
       const b = updates.slice(i, i + 200);

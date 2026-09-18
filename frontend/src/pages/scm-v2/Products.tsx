@@ -29,8 +29,8 @@
 //       effective-date drawer.
 // ----------------------------------------------------------------------------
 
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type HTMLAttributes, type ReactNode } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useRef, useState, type HTMLAttributes, type ReactNode } from 'react';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import {
   Download,
   Upload,
@@ -46,6 +46,7 @@ import {
   Truck,
   Star,
   ChevronDown,
+  Info,
 } from 'lucide-react';
 import { Button } from '../../components/Button';
 import { PageHeader } from '../../components/Layout';
@@ -54,6 +55,7 @@ import { SearchableSelect } from '../../vendor/scm/components/SearchableSelect';
 import { fmtSen, fmtDate, fmtDateTime, maintActiveValues, maintEntryActive, maintEntryValue, maintEntryWithActive, maintEntryWithValue, maintValues, normalizeSofaTier, resolveSofaQuickPresets, SOFA_MODULES, type MaintPoolEntry, type SofaQuickPreset } from '@2990s/shared';
 import {
   useMfgProducts,
+  useMfgProductBoundCodes,
   useUpdateMfgProductPrices,
   useCreateMfgProduct,
   useBatchImportMfgProducts,
@@ -80,12 +82,21 @@ import {
   type SeatHeightPrice,
   type SofaPriceTier,
   type ProductSupplierRow,
+  type ProductCostAnchor,
   type MfgProductPriceChangeRow,
   type SpecialAddonRow,
   type SpecialAddonInput,
   type SpecialAddonGroup,
-  type SpecialAddonsHistoryRow,
+  type SpecialAddonsHistoryRow, mfgCategoryLabel,
 } from '../../vendor/scm/lib/mfg-products-queries';
+import { CategorySwapSelect } from '../../vendor/scm/components/CategorySwapSelect';
+import { costMarker } from './costMarker';
+import { CostAnchorCard } from './CostAnchorCard';
+import { ProductPriceTimeline } from './ProductPriceTimeline';
+import { SkuHistoryTabs } from './SkuHistoryTabs';
+import { AddSupplierBinding } from './AddSupplierBinding';
+import { ImportModelsMoved } from '../../vendor/scm/components/ImportModelsMoved';
+import { MFG_CATEGORY_LABELS, MFG_PRODUCT_CATEGORIES } from '../../vendor/shared/product-categories';
 import { useStaffLookup } from '../../hooks/useStaffLookup';
 import { useFabricTrackings } from '../../vendor/scm/lib/fabric-queries';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
@@ -108,7 +119,8 @@ import { useBrandingPool } from '../../vendor/scm/lib/product-models-queries';
 import { useQueryClient } from '@tanstack/react-query';
 import { parseMoneyToSen } from '../../lib/money';
 import styles from './Products.module.css';
-import { DateField } from "../../vendor/scm/components/DateField";
+import { normalizeImportHeader, looksLikeGridExport, mapGridHeaders, isGridNoPrice, importFailureMessage } from './products-import-headers';
+import { ProductRow, fmtRm, fmtUnit, priceForHeightTier, useSkuGridOrder, saveStagedEdits, stageRowEdit, type ProductEditPatch } from './products/SkuEditRow';
 
 const ICON_PROPS = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -215,23 +227,12 @@ export const Products = () => {
    SKU Master tab
    ════════════════════════════════════════════════════════════════════════ */
 
+// The tabs are the ONE category list, under the ONE label map (shared/product-categories.ts).
 const CATEGORIES: { value: MfgCategory | 'all'; label: string }[] = [
   { value: 'all', label: 'All' },
-  { value: 'ACCESSORY', label: 'Accessory' },
-  { value: 'BEDFRAME', label: 'Bedframe' },
-  { value: 'SOFA', label: 'Sofa' },
-  { value: 'MATTRESS', label: 'Mattress' },
-  { value: 'BEDLINES', label: 'Bedlines' },
-  { value: 'DINING', label: 'Dining' },
-  { value: 'DIFFUSER', label: 'Diffuser' },
-  { value: 'CARPET', label: 'Carpet' },
-  { value: 'SERVICE', label: 'Service' },
+  ...MFG_PRODUCT_CATEGORIES.map((c) => ({ value: c, label: MFG_CATEGORY_LABELS[c] })),
 ];
 
-const fmtRm = (sen: number | null): string => fmtSen(sen);
-
-const fmtUnit = (milli: number): string =>
-  (milli / 1000).toFixed(3);
 
 type Tier = SofaPriceTier;
 
@@ -241,50 +242,7 @@ const TIER_CHIPS: { value: Tier; label: string }[] = [
   { value: 'PRICE_3', label: 'P3' },
 ];
 
-// Look up the priceSen for a given (height, tier) pair. Legacy rows with no
-// `tier` field count as PRICE_2 (HOOKKA's historic default).
-const priceForHeightTier = (
-  arr: SeatHeightPrice[] | null | undefined,
-  height: string,
-  tier: Tier,
-): number | null => {
-  if (!Array.isArray(arr)) return null;
-  const hit = arr.find((p) => p.height === height && (p.tier ?? 'PRICE_2') === tier);
-  return hit ? hit.priceSen : null;
-};
 
-// Replace (or insert) the priceSen for one (height × tier) slot in the array.
-const upsertHeightTier = (
-  arr: SeatHeightPrice[] | null | undefined,
-  height: string,
-  tier: Tier,
-  priceSen: number | null,
-): SeatHeightPrice[] => {
-  const next = Array.isArray(arr) ? [...arr] : [];
-  const idx = next.findIndex(
-    (p) => p.height === height && (p.tier ?? 'PRICE_2') === tier,
-  );
-  if (priceSen == null || priceSen === 0) {
-    if (idx >= 0) next.splice(idx, 1);
-    return next;
-  }
-  const entry: SeatHeightPrice = { height, priceSen, tier };
-  if (idx >= 0) next[idx] = entry;
-  else next.push(entry);
-  return next;
-};
-
-/* Staged inline-edit patch for one SKU row (Edit Prices mode). Mirrors the
-   fields useUpdateMfgProductPrices accepts (minus id). Nothing is sent to the
-   server until Save (Commander 2026-06-15 — no 裸奔). */
-type ProductEditPatch = {
-  code?: string;
-  name?: string;
-  branding?: string | null;
-  seatHeightPrices?: SeatHeightPrice[];
-  basePriceSen?: number | null;
-  price1Sen?: number | null;
-};
 
 // Row windowing (Edit Prices legacy table). Past this many rows we render only
 // the slice scrolled into view; short catalogs render in full (byte-identical
@@ -306,42 +264,71 @@ const SkuMasterTab = () => {
   const updatePrices = useUpdateMfgProductPrices();
   const notify = useNotify();
   const askConfirm = useConfirm();
+  // The stored rows, so a change typed back to what is saved un-stages itself.
+  const rowsByIdRef = useRef(new Map<string, MfgProductRow>());
   const stageEdit = useCallback((id: string, patch: ProductEditPatch) => {
-    setPendingEdits((prev) => ({ ...prev, [id]: { ...prev[id], ...patch } }));
+    setPendingEdits((prev) => stageRowEdit(prev, rowsByIdRef.current.get(id) ?? null, id, patch));
   }, []);
   const dirtyCount = Object.keys(pendingEdits).length;
+  /* Save sends every staged row, then WAITS for the list to reload before
+     leaving edit mode — otherwise the grid repaints from the old cache and the
+     saved text looks lost until the refetch lands. A failed row stays staged
+     and on screen with the reason; only accepted rows are dropped. */
   const saveEdits = async () => {
-    const entries = Object.entries(pendingEdits);
-    if (entries.length === 0) { setEditMode(false); return; }
+    const snapshot = pendingEdits;
+    const total = Object.keys(snapshot).length;
+    if (total === 0) { setEditMode(false); return; }
     setSavingEdits(true);
-    try {
-      for (const [id, patch] of entries) {
-        await updatePrices.mutateAsync({ id, ...patch });
-      }
-      setPendingEdits({});
-      setEditMode(false);
-    } finally {
-      setSavingEdits(false);
+    const { savedIds, failures } = await saveStagedEdits(snapshot, (id, patch) => updatePrices.mutateAsync({ id, ...patch }));
+    setPendingEdits((prev) => {
+      const out = { ...prev };
+      for (const id of savedIds) if (out[id] === snapshot[id]) delete out[id];
+      return out;
+    });
+    if (savedIds.length > 0) await qc.refetchQueries({ queryKey: ['mfg-products'], type: 'active' });
+    setSavingEdits(false);
+    const plural = (n: number) => `${n} SKU${n === 1 ? '' : 's'}`;
+    if (failures.length === 0) {
+      setEditMode(false); if (savedIds.length > 0) bumpGridEpoch();
+      void notify({ title: `Saved ${plural(savedIds.length)}.` });
+      return;
     }
+    void notify({
+      title: `Saved ${savedIds.length} of ${plural(total)}. ${failures.length} not saved.`,
+      body: failures.slice(0, 5).map((f) => `· ${rowsByIdRef.current.get(f.id)?.code ?? f.id}: ${f.message.slice(0, 160)}`).join('\n')
+        + '\n\nThe changes that did not save are still on screen. Fix them and press Save again, or Cancel to drop them.',
+      tone: 'error',
+    });
   };
-  const exitEdit = () => { setPendingEdits({}); setEditMode(false); };
+  const exitEdit = async () => {
+    if (dirtyCount > 0 && !(await askConfirm({
+      title: `Discard ${dirtyCount} unsaved change${dirtyCount === 1 ? '' : 's'}?`,
+      body: 'The edited rows go back to their saved values.',
+      confirmLabel: 'Discard',
+      danger: true,
+    }))) return;
+    setPendingEdits({});
+    setEditMode(false);
+  };
   const [tier, setTier] = useState<Tier>('PRICE_2');
   // PR #39 — Model filter chip row (visible only on Sofa view).
   // Distinct base_model values pulled from current rows. 'all' = no filter.
   const [modelFilter, setModelFilter] = useState<string>('all');
-  // One-shot filter — narrows the grid to one_shot=true rows only.
-  const [oneShotOnly, setOneShotOnly] = useState(false);
+  // "No supplier binding" filter — the gap to fill one by one.
+  const [noSupplierOnly, setNoSupplierOnly] = useState(false);
 
-  // NOTE: this fetch is unbounded — it pulls the full mfg_products set for the
-  // category/search (no limit/pagination). The DOM is now windowed below, but
-  // the payload still scales with catalog size; a server-side cap / cursor is a
-  // separate follow-up (out of scope for this DOM-virtualization change).
+  // Unbounded fetch of the full mfg_products set for this category/search; the
+  // DOM is windowed below, but a server-side cap is a separate follow-up.
   const { data: products, isLoading, isFetching, error } = useMfgProducts({
     category: category === 'all' ? undefined : category,
     search: debouncedSearch.trim() || undefined,
+    // B1 — the SKU Master grid shows the derived-cost anchor marker per row.
+    anchorState: true,
   });
   const searching =
     search.trim() !== debouncedSearch.trim() || (!isLoading && isFetching);
+  // Company-scoped set of item codes that already have a supplier binding.
+  const boundCodes = useMfgProductBoundCodes();
   const config = useMaintenanceConfig('master');
   // Branding datalist options for the inline Mattress branding edit — pool
   // first, DISTINCT fallback. Rendered ONCE below (datalist#branding-pool-sku-master)
@@ -349,6 +336,7 @@ const SkuMasterTab = () => {
   const brandingPool = useBrandingPool();
 
   const allRows = useMemo(() => products ?? [], [products]);
+  useEffect(() => { rowsByIdRef.current = new Map(allRows.map((r) => [r.id, r])); }, [allRows]);
   const isSofaView = category === 'SOFA';
   const isMattressView = category === 'MATTRESS';
   // Memoized so its reference is stable across renders — otherwise the fallback
@@ -361,11 +349,8 @@ const SkuMasterTab = () => {
     [config.data],
   );
 
-  // PR #39 + #107 — distinct base_model values for the current category.
-  // Commander 2026-05-26: "为什么 bedframe 没有像 sofa 那样". Extended from
-  // SOFA-only to BEDFRAME + MATTRESS too so commander can narrow the SKU
-  // list to a single Model (Hilton bedframes, Purezone mattresses, etc.).
-  // ACCESSORY + SERVICE skip the filter — they don't carry a base_model.
+  // Distinct base_model values for the Model filter. Only SOFA / BEDFRAME /
+  // MATTRESS carry a base_model; ACCESSORY + SERVICE skip it.
   const supportsModelFilter = category === 'SOFA' || category === 'BEDFRAME' || category === 'MATTRESS';
   const categoryModels = useMemo<string[]>(() => {
     if (!supportsModelFilter) return [];
@@ -374,18 +359,26 @@ const SkuMasterTab = () => {
     return Array.from(s).sort();
   }, [allRows, supportsModelFilter]);
 
-  // Apply Model filter (only when current category supports it + a specific
-  // model is picked), then apply the one-shot filter.
+  // Apply the Model filter (when supported + a specific model is picked), then
+  // the no-supplier gap filter.
   const rows = useMemo(() => {
     let base = allRows;
     if (supportsModelFilter && modelFilter !== 'all') {
       base = base.filter((r) => r.base_model === modelFilter);
     }
-    if (oneShotOnly) {
-      base = base.filter((r) => r.one_shot === true);
+    // Gap filter: only SKUs with no supplier binding (no-op until loaded).
+    if (noSupplierOnly && boundCodes.data) {
+      base = base.filter((r) => !boundCodes.data!.has(r.code));
     }
     return base;
-  }, [allRows, supportsModelFilter, modelFilter, oneShotOnly]);
+  }, [allRows, supportsModelFilter, modelFilter, noSupplierOnly, boundCodes.data]);
+
+  // How many SKUs in the current view still have no supplier — shown on the toggle.
+  const unboundInView = useMemo(
+    () => (boundCodes.data ? allRows.reduce((n, r) => n + (boundCodes.data!.has(r.code) ? 0 : 1), 0) : null),
+    [allRows, boundCodes.data],
+  );
+  const { setGridRows, gridEpoch, bumpGridEpoch, shownRows } = useSkuGridOrder(rows);
 
   // Reset Model filter when leaving a category that doesn't support it
   useEffect(() => {
@@ -414,7 +407,7 @@ const SkuMasterTab = () => {
   const deleteMut = useDeleteMfgProduct();
   const [statusing, setStatusing] = useState(false);
   const statusMut = useUpdateMfgProductStatus();
-  const visibleIds = useMemo(() => rows.map((r) => r.id), [rows]);
+  const visibleIds = useMemo(() => shownRows.map((r) => r.id), [shownRows]);
   const allSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.has(id));
   const someSelected = !allSelected && visibleIds.some((id) => selectedIds.has(id));
   // Stable identity so it can be passed straight to the memoized ProductRow
@@ -566,7 +559,7 @@ const SkuMasterTab = () => {
   // header behave exactly as before. Row height is measured from a real [data-vrow]
   // row so the spacers can't drift. Gated to editMode + long lists → short catalogs
   // and the existing layout stay byte-identical.
-  const canVirtualize = editMode && !isLoading && !error && rows.length > VIRTUAL_ROW_THRESHOLD;
+  const canVirtualize = editMode && !isLoading && !error && shownRows.length > VIRTUAL_ROW_THRESHOLD;
   const tbodyRef = useRef<HTMLTableSectionElement>(null);
   const rowHeightRef = useRef(SKU_ROW_HEIGHT_ESTIMATE);
   const [winRange, setWinRange] = useState<{ start: number; end: number }>({
@@ -587,7 +580,7 @@ const SkuMasterTab = () => {
       const vh = window.innerHeight;
       const first = Math.max(0, Math.floor(-top / rh) - VIRTUAL_OVERSCAN);
       const count = Math.ceil(vh / rh) + VIRTUAL_OVERSCAN * 2;
-      const last = Math.min(rows.length, first + count);
+      const last = Math.min(shownRows.length, first + count);
       setWinRange((prev) => (prev.start === first && prev.end === last ? prev : { start: first, end: last }));
     };
     const onScroll = () => { if (!raf) raf = requestAnimationFrame(measure); };
@@ -599,9 +592,9 @@ const SkuMasterTab = () => {
       window.removeEventListener('resize', onScroll);
       if (raf) cancelAnimationFrame(raf);
     };
-  }, [canVirtualize, rows.length]);
+  }, [canVirtualize, shownRows.length]);
   const vStart = canVirtualize ? winRange.start : 0;
-  const vEnd = canVirtualize ? Math.min(rows.length, winRange.end) : rows.length;
+  const vEnd = canVirtualize ? Math.min(shownRows.length, winRange.end) : shownRows.length;
 
   /* ── Batch 2: shared DataTable (was DataGrid, owner request 2026-06-12) ──
      Normal viewing renders through DataTable (sorting, per-column filters,
@@ -671,6 +664,23 @@ const SkuMasterTab = () => {
         getValue: (r) => r.base_model ?? '',
         render: (r) => r.base_model ?? '—',
       });
+      /* The two columns that make the exported sheet a TEMPLATE and not a
+         picture of the screen — docs/bugs/0662. Labelled with the importer's
+         own key names, so the round trip needs no alias for either. */
+      cols.push({
+        key: 'category',
+        label: 'category',
+        width: '110px',
+        getValue: (r) => r.category,
+        render: (r) => mfgCategoryLabel(r.category),
+      });
+      cols.push({
+        key: 'price_tier',
+        label: 'price_tier',
+        width: '110px',
+        getValue: () => tier,
+        render: () => <span>{tier}</span>,
+      });
       for (const s of sofaSizes) {
         cols.push({
           key: `size-${s}`,
@@ -710,7 +720,7 @@ const SkuMasterTab = () => {
           getValue: (r) => r.base_price_sen ?? -1,
           render: (r) => (
             <span className={r.base_price_sen ? styles.price : styles.priceEmpty}>
-              {fmtRm(r.base_price_sen)}
+              {fmtRm(r.base_price_sen)}{costMarker(r.costAnchorState)}
             </span>
           ),
         },
@@ -722,7 +732,7 @@ const SkuMasterTab = () => {
           label: 'Category',
           width: '110px',
           getValue: (r) => r.category,
-          render: (r) => <span className={styles.catPill}>{r.category}</span>,
+          render: (r) => <span className={styles.catPill}>{mfgCategoryLabel(r.category)}</span>,
         },
         {
           key: 'size',
@@ -739,7 +749,7 @@ const SkuMasterTab = () => {
           getValue: (r) => r.base_price_sen ?? -1,
           render: (r) => (
             <span className={r.base_price_sen ? styles.price : styles.priceEmpty}>
-              {fmtRm(r.base_price_sen)}
+              {fmtRm(r.base_price_sen)}{costMarker(r.costAnchorState)}
             </span>
           ),
         },
@@ -867,11 +877,11 @@ const SkuMasterTab = () => {
           )}
           {editMode ? (
             <>
-              <Button variant="secondary" onClick={exitEdit} disabled={savingEdits}>
+              <Button variant="secondary" onClick={() => void exitEdit()} disabled={savingEdits}>
                 <X {...ICON_PROPS} />
                 <span>Cancel</span>
               </Button>
-              <Button variant="primary" onClick={saveEdits} disabled={savingEdits || dirtyCount === 0}>
+              <Button variant="primary" onClick={() => void saveEdits()} disabled={savingEdits || dirtyCount === 0}>
                 <Save {...ICON_PROPS} />
                 <span>{savingEdits ? 'Saving…' : dirtyCount > 0 ? `Save (${dirtyCount})` : 'Save'}</span>
               </Button>
@@ -903,12 +913,7 @@ const SkuMasterTab = () => {
         </div>
       </div>
 
-      {/* PR #39 + #107 — Model filter, available on SOFA / BEDFRAME /
-          MATTRESS. ACCESSORY + SERVICE skip — no base_model on those rows.
-          Owner 2026-08-07 ("SKU side also ah"): the pill rail (12 inline +
-          "More (N)" popover) is retired for the system-standard
-          SearchableSelect — one type-to-filter control, "All models" as the
-          empty pick, same idiom as the Variants tab. */}
+      {/* Model filter — type-to-filter SearchableSelect, "All models" = no filter. */}
       {supportsModelFilter && categoryModels.length > 1 && (
         <div style={{ marginTop: 'var(--space-2)', width: 300, maxWidth: '100%' }}>
           <SearchableSelect
@@ -924,6 +929,11 @@ const SkuMasterTab = () => {
           />
         </div>
       )}
+
+      <label style={{ marginTop: 'var(--space-2)', display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 'var(--fs-13)', cursor: 'pointer' }} title="Show only SKUs with no supplier bound yet — the gap to fill">
+        <input type="checkbox" checked={noSupplierOnly} onChange={(e) => setNoSupplierOnly(e.target.checked)} />
+        Only SKUs with no supplier binding{unboundInView != null ? ` (${unboundInView})` : ''}
+      </label>
 
       <p className={styles.eyebrow}>
         {isLoading
@@ -942,19 +952,17 @@ const SkuMasterTab = () => {
         </div>
       )}
 
-      {!editMode && (
-        /* Batch 2: normal viewing — shared DataTable. Row CLICK — or the truck
-           icon — opens the Suppliers drawer (was double-click on DataGrid;
-           same Inventory-Balances convention). Selection is DataTable's
-           first-class checkbox column: header select-all (indeterminate)
-           replaces the old toolbar label, per-row ticks feed the same bulk
-           Delete / status actions as Edit Prices mode. Page search stays the
-           server-backed box above — no table search. */
+      <div hidden={editMode}>{
+        /* Normal viewing. Row click (or the truck icon) opens the Suppliers
+           drawer; the checkbox column feeds the bulk Delete / status actions.
+           Search is the server-backed box above, not a table search. */
         <DataTable<MfgProductRow>
-          tableId={gridTableId}
-          layoutFamily={gridTableId}
+          key={gridEpoch} tableId={gridTableId} layoutFamily={gridTableId}
+          /* Opens with NO column filter, every time: a remembered funnel made SKUs look missing. */
+          persistFilters={false}
           exportName="sku-master"
           rows={isLoading || searching ? null : rows}
+          onFilteredRowsChange={setGridRows}
           loading={isLoading || searching}
           emptyLabel="No products yet. Run the seed import if you just migrated the schema."
           getRowKey={(r) => r.id}
@@ -972,7 +980,7 @@ const SkuMasterTab = () => {
               }),
           }}
         />
-      )}
+      }</div>
 
       {editMode && (
       <div className={styles.tableCard}>
@@ -1029,7 +1037,7 @@ const SkuMasterTab = () => {
                 <td colSpan={colCount} style={{ height: vStart * rowHeightRef.current, padding: 0, border: 0 }} />
               </tr>
             )}
-            {!isLoading && rows.slice(vStart, vEnd).map((row) => (
+            {!isLoading && shownRows.slice(vStart, vEnd).map((row) => (
               <ProductRow
                 key={row.id}
                 row={row}
@@ -1046,12 +1054,12 @@ const SkuMasterTab = () => {
                 brandingPool={brandingPool.pool}
               />
             ))}
-            {canVirtualize && vEnd < rows.length && (
+            {canVirtualize && vEnd < shownRows.length && (
               <tr aria-hidden>
-                <td colSpan={colCount} style={{ height: (rows.length - vEnd) * rowHeightRef.current, padding: 0, border: 0 }} />
+                <td colSpan={colCount} style={{ height: (shownRows.length - vEnd) * rowHeightRef.current, padding: 0, border: 0 }} />
               </tr>
             )}
-            {!isLoading && !error && rows.length === 0 && (
+            {!isLoading && !error && shownRows.length === 0 && (
               <tr>
                 <td colSpan={colCount} style={{ textAlign: 'center', color: '#767b6e', padding: 'var(--space-7)' }}>
                   <Package size={32} strokeWidth={1.5} />
@@ -1068,9 +1076,9 @@ const SkuMasterTab = () => {
         {!isLoading && !error && (
           <div className={styles.tableFoot}>
             <span className={styles.eyebrow}>
-              Record 1 of {rows.length}
+              Record 1 of {shownRows.length}
             </span>
-            <span className={styles.eyebrow}>{rows.length} total products</span>
+            <span className={styles.eyebrow}>{shownRows.length} total products</span>
           </div>
         )}
       </div>
@@ -1100,324 +1108,6 @@ const SkuMasterTab = () => {
   );
 };
 
-const ProductRow = memo(({
-  row, editMode, isSofaView, isMattressView, sofaSizes, tier, onOpenSuppliers,
-  selected, onToggleSelected, patch, onStage, brandingPool,
-}: {
-  row: MfgProductRow;
-  editMode: boolean;
-  isSofaView: boolean;
-  isMattressView: boolean;
-  sofaSizes: string[];
-  tier: Tier;
-  onOpenSuppliers?: (row: MfgProductRow) => void;
-  /** Canonical branding pool (Project Maintenance -> Brands). Drives the
-      Mattress-row Branding <select>. Owner 2026-07-23 rule: no free-text. */
-  brandingPool: string[];
-  /** PR #82 — multi-select state lives on SkuMasterTab; row just renders
-      the checkbox + reports clicks. */
-  selected:         boolean;
-  onToggleSelected: (id: string) => void;
-  /** Edit→Save (Commander 2026-06-15) — staged edits for THIS row (undefined =
-      none yet) + the parent stager. Cells read the staged value over the stored
-      one; nothing commits until the parent's Save. No more blur-auto-save. */
-  patch?: ProductEditPatch;
-  onStage: (id: string, patch: ProductEditPatch) => void;
-}) => {
-  // Effective values — a staged patch wins over the stored row while editing.
-  const seatArr = patch?.seatHeightPrices ?? row.seat_height_prices ?? [];
-  // Prices can be staged as null (a deliberate clear), so test key presence,
-  // not nullishness, before falling back to the stored value.
-  const baseSen = patch && 'basePriceSen' in patch ? patch.basePriceSen ?? null : row.base_price_sen;
-  const p1Sen = patch && 'price1Sen' in patch ? patch.price1Sen ?? null : row.price1_sen;
-  const brandingVal = patch?.branding ?? row.branding ?? '';
-
-  const updateSofaCell = (size: string, newPriceSen: number | null) => {
-    onStage(row.id, { seatHeightPrices: upsertHeightTier(seatArr, size, tier, newPriceSen) });
-  };
-
-  return (
-    <tr
-      data-vrow=""
-      className={styles.rowCompact}
-      onDoubleClick={() => !editMode && onOpenSuppliers?.(row)}
-      title={editMode
-        ? 'Click the truck icon to see suppliers (double-click is disabled in Edit Prices mode)'
-        : 'Double-click row — or click the truck icon — to see suppliers for this product'}
-      style={{ cursor: editMode ? 'default' : 'pointer' }}
-    >
-      {/* PR #82 — row checkbox. stopPropagation so clicking the box
-          doesn't bubble into the double-click "open suppliers" handler. */}
-      <td style={{ width: 32 }} onClick={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
-        <input
-          type="checkbox"
-          aria-label={`Select ${row.code}`}
-          checked={selected}
-          onChange={() => onToggleSelected(row.id)}
-          style={{ cursor: 'pointer' }}
-        />
-      </td>
-      {/* PR #89 — click code chip to edit.
-          PR #95 — Commander 2026-05-26: "容易不小心点到 Edit，你应该点 Edit
-          Price 那边就可以进来修改了". Gate click-to-edit behind editMode so
-          the chip is read-only until commander explicitly hits "Edit Prices".
-          When editMode is off the cell stops bubble propagation but stays
-          a plain text/chip, so accidental clicks during row drilldown can't
-          drop into the input.
-          PR — Commander 2026-05-28 ("双击点不进去，看得到里面的 supplier
-          是谁"): add an explicit Truck icon next to the code chip that ALWAYS
-          opens the Suppliers drawer (including during edit-mode where the
-          row-level double-click is intentionally disabled). */}
-      <td onClick={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-          <button
-            type="button"
-            aria-label={`View suppliers for ${row.code}`}
-            title="View suppliers carrying this SKU"
-            onClick={() => onOpenSuppliers?.(row)}
-            style={{
-              background: 'transparent',
-              border: 'none',
-              padding: 0,
-              margin: 0,
-              cursor: 'pointer',
-              color: '#767b6e',
-              display: 'inline-flex',
-              alignItems: 'center',
-            }}
-          >
-            <Truck size={13} strokeWidth={1.75} />
-          </button>
-          <EditableTextCell
-            value={row.code}
-            chipClassName={styles.codeChip}
-            ariaLabel="Edit product code"
-            editable={editMode}
-            onSave={(val) => onStage(row.id, { code: val })}
-          />
-        </span>
-      </td>
-      {/* PR #89 — click description to edit. Description stored in the
-          `name` column on mfg_products (commander calls it "description"
-          in the UI). */}
-      <td onClick={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
-          <EditableTextCell
-            value={row.name}
-            chipClassName={styles.nameCompact}
-            inline
-            ariaLabel="Edit description"
-            editable={editMode}
-            onSave={(val) => onStage(row.id, { name: val })}
-          />
-          {row.one_shot && (
-            <span
-              className={styles.catPill}
-              title={row.source_doc_no ? `One-shot from ${row.source_doc_no}` : 'One-shot SKU'}
-              style={{ fontSize: 'var(--fs-11)' }}
-            >
-              one-shot
-            </span>
-          )}
-        </span>
-        {row.description && <div className={styles.nameSubCompact}>{row.description}</div>}
-      </td>
-      {isSofaView ? (
-        <>
-          <td className={styles.numCellMuted} style={{ textAlign: 'left' }}>
-            {row.base_model ?? '—'}
-          </td>
-          {sofaSizes.map((s) => {
-            const sen = priceForHeightTier(seatArr, s, tier);
-            // When user is on P1 or P3 and the cell is empty, surface the P2
-            // baseline as a placeholder so they have a reference price.
-            const baselineSen = tier !== 'PRICE_2'
-              ? priceForHeightTier(seatArr, s, 'PRICE_2')
-              : null;
-            return (
-              <td key={s} className={sen ? styles.price : styles.priceEmpty}>
-                {editMode ? (
-                  <PriceInput
-                    valueSen={sen}
-                    baselineSen={baselineSen}
-                    onCommit={(v) => updateSofaCell(s, v)}
-                  />
-                ) : (
-                  fmtRm(sen)
-                )}
-              </td>
-            );
-          })}
-        </>
-      ) : isMattressView ? (
-        <>
-          {/* Branding cell — editable text input in edit mode. */}
-          <td>
-            {editMode ? (
-              <BrandingInput
-                value={brandingVal}
-                pool={brandingPool}
-                onCommit={(v) => onStage(row.id, { branding: v })}
-              />
-            ) : (
-              row.branding
-                ? <span className={styles.catPill}>{row.branding}</span>
-                : <span className={styles.priceEmpty}>—</span>
-            )}
-          </td>
-          <td>{row.size_label ?? '—'}</td>
-          {/* Single Price column for mattress — uses base_price_sen. */}
-          <td className={baseSen ? styles.price : styles.priceEmpty}>
-            {editMode ? (
-              <PriceInput
-                valueSen={baseSen}
-                onCommit={(v) => onStage(row.id, { basePriceSen: v })}
-              />
-            ) : (
-              fmtRm(row.base_price_sen)
-            )}
-          </td>
-        </>
-      ) : (
-        <>
-          <td><span className={styles.catPill}>{row.category}</span></td>
-          <td>{row.size_label ?? '—'}</td>
-          <td className={baseSen ? styles.price : styles.priceEmpty}>
-            {editMode ? (
-              <PriceInput
-                valueSen={baseSen}
-                onCommit={(v) => onStage(row.id, { basePriceSen: v })}
-              />
-            ) : (
-              fmtRm(row.base_price_sen)
-            )}
-          </td>
-          <td className={p1Sen ? styles.price : styles.priceEmpty}>
-            {editMode ? (
-              <PriceInput
-                valueSen={p1Sen}
-                onCommit={(v) => onStage(row.id, { price1Sen: v })}
-              />
-            ) : (
-              fmtRm(row.price1_sen)
-            )}
-          </td>
-        </>
-      )}
-      <td className={styles.numCell}>{fmtUnit(row.unit_m3_milli)}</td>
-    </tr>
-  );
-});
-ProductRow.displayName = 'ProductRow';
-
-/* Dropdown-only branding picker for Mattress rows. Commits on change.
-   Owner 2026-07-23: "根据我们维护那边 dropdown 去做选择的那一个" — no more
-   free-text entry. New brand names have to be added centrally in Project
-   Maintenance -> Brands (which then flows into `useBrandingPool()` and
-   surfaces here on the next fetch). A stored value that isn't in the current
-   pool (legacy) still renders as a selectable option so the row remains
-   editable while the operator picks a proper canonical brand. */
-const BrandingInput = ({
-  value,
-  pool,
-  onCommit,
-}: {
-  value: string;
-  pool: string[];
-  onCommit: (v: string | null) => void;
-}) => {
-  const current = value.trim();
-  const inPool = current && pool.some((b) => b.toUpperCase() === current.toUpperCase());
-  const options = useMemo(() => {
-    const sorted = [...pool].sort((a, b) => a.localeCompare(b));
-    return current && !inPool ? [current, ...sorted] : sorted;
-  }, [pool, current, inPool]);
-  return (
-    <select
-      value={current}
-      onChange={(e) => {
-        const v = e.target.value.trim();
-        if (v === current) return;
-        onCommit(v.length ? v : null);
-      }}
-      title={inPool || !current
-        ? undefined
-        : `"${current}" is not in the current branding pool. Add it in Project Maintenance -> Brands.`}
-      style={{
-        width: 160,
-        fontFamily: 'var(--font-sans)',
-        fontSize: 'var(--fs-13)',
-        background: inPool || !current ? '#f4f6f3' : '#fef3c7',
-        border: `1px solid ${inPool || !current ? '#16695f' : '#b45309'}`,
-        borderRadius: 'var(--radius-sm)',
-        padding: '3px 8px',
-        outline: 'none',
-      }}
-    >
-      <option value="">—</option>
-      {options.map((b) => (
-        <option key={b} value={b}>
-          {b}{current && !inPool && b === current ? ' (legacy)' : ''}
-        </option>
-      ))}
-    </select>
-  );
-};
-
-/* Compact RM input — accepts blank (= clear). Commits on blur or Enter. */
-const PriceInput = ({
-  valueSen,
-  onCommit,
-  baselineSen,
-}: {
-  valueSen: number | null;
-  onCommit: (v: number | null) => void;
-  /** P2-tier baseline to surface as placeholder when P1/P3 cell is empty —
-      shows what the default price would be so user knows the reference. */
-  baselineSen?: number | null;
-}) => {
-  const [local, setLocal] = useState<string>(
-    valueSen == null ? '' : (valueSen / 100).toFixed(2),
-  );
-
-  const commit = () => {
-    const trimmed = local.trim();
-    if (trimmed === '') {
-      onCommit(null);
-      return;
-    }
-    const parsed = Number(trimmed);
-    if (!Number.isFinite(parsed)) return;
-    onCommit(Math.round(parsed * 100));
-  };
-
-  const placeholder = baselineSen && baselineSen > 0
-    ? `P2: ${(baselineSen / 100).toFixed(2)}`
-    : undefined;
-
-  return (
-    <input
-      type="number"
-      step="0.01"
-      value={local}
-      placeholder={placeholder}
-      onChange={(e) => setLocal(e.target.value)}
-      onBlur={commit}
-      onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
-      style={{
-        width: 84,
-        textAlign: 'right',
-        fontFamily: 'var(--font-mono)',
-        fontSize: 'var(--fs-13)',
-        background: '#f4f6f3',
-        border: '1px solid #16695f',
-        borderRadius: 'var(--radius-sm)',
-        padding: '3px 6px',
-        outline: 'none',
-      }}
-    />
-  );
-};
 
 const CategoryChip = ({
   active,
@@ -1835,7 +1525,13 @@ export const MaintenanceTab = ({
                   onClick={() => setActiveKey(t.key)}
                 >
                   <span>{t.label}</span>
-                  <span className={styles.maintCount}>({count})</span>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                    {/* Priced pools carry a single surcharge cost (the "RM" tag,
+                        mirroring the approved Maintenance mockup); unpriced
+                        pools show only their count. */}
+                    {t.priced && <span className={styles.maintRmPill}>RM</span>}
+                    <span className={styles.maintCount}>({count})</span>
+                  </span>
                 </button>
               );
             })}
@@ -2242,15 +1938,12 @@ const SofaCompartmentsList = ({
             {...dragRowProps(i)}
             style={{
               ...(dragRowProps(i).style ?? {}),
-              gridTemplateColumns: '32px 32px 56px 1fr auto auto auto',
+              gridTemplateColumns: '32px 56px 1fr auto auto auto',
               gap: 'var(--space-3)',
               alignItems: 'center',
               opacity: entryIsActive ? 1 : 0.55,
             }}
           >
-            <button type="button" className={styles.maintRowIcon} title="History">
-              <History {...ICON_PROPS} />
-            </button>
             <span className={styles.maintRowIdx} style={editMode ? { cursor: 'grab' } : undefined}>
               {i + 1}
             </span>
@@ -2531,11 +2224,10 @@ const SofaCompartmentsList = ({
           style={{
             background: '#fff',
             borderColor: '#16695f',
-            gridTemplateColumns: '32px 32px 1fr auto',
+            gridTemplateColumns: '32px 1fr auto',
           }}
         >
-          <span className={styles.maintRowIcon}><Plus {...ICON_PROPS} /></span>
-          <span className={styles.maintRowIdx}>+</span>
+          <span className={styles.maintRowIdx}><Plus {...ICON_PROPS} /></span>
           <input
             type="text"
             placeholder="New compartment code (e.g. 1A(LHF))"
@@ -3175,13 +2867,10 @@ const MaintenanceList = ({
             {...dragRowProps(i)}
             style={{
               ...(dragRowProps(i).style ?? {}),
-              gridTemplateColumns: '32px 32px 1fr auto auto',
+              gridTemplateColumns: '32px 1fr auto auto',
               opacity: entryIsActive ? 1 : 0.55,
             }}
           >
-            <button type="button" className={styles.maintRowIcon} title="History">
-              <History {...ICON_PROPS} />
-            </button>
             <span className={styles.maintRowIdx} style={editMode ? { cursor: 'grab' } : undefined}>{i + 1}</span>
             <span className={styles.maintRowValue}>
               {editMode ? (
@@ -3319,11 +3008,10 @@ const MaintenanceList = ({
             style={{
               background: '#fff',
               borderColor: '#16695f',
-              gridTemplateColumns: '32px 32px 1fr auto',
+              gridTemplateColumns: '32px 1fr auto',
             }}
           >
-            <span className={styles.maintRowIcon}><Plus {...ICON_PROPS} /></span>
-            <span className={styles.maintRowIdx}>+</span>
+            <span className={styles.maintRowIdx}><Plus {...ICON_PROPS} /></span>
             {isSizeRow ? (
               /* PR (Commander 2026-06-22) — Bedframe/Mattress ADD row mirrors
                  the inline 3-input editor (code · label · dimensions) so a new
@@ -3461,12 +3149,10 @@ const MaintenanceList = ({
           {...dragRowProps(i)}
           style={{
             ...(dragRowProps(i).style ?? {}),
+            gridTemplateColumns: '32px 1fr auto',
             opacity: opt.active === false ? 0.55 : 1,
           }}
         >
-          <button type="button" className={styles.maintRowIcon} title="History">
-            <History {...ICON_PROPS} />
-          </button>
           <span className={styles.maintRowIdx} style={editMode ? { cursor: 'grab' } : undefined}>{i + 1}</span>
           <span className={styles.maintRowValue}>
             {editMode ? (
@@ -3590,11 +3276,10 @@ const MaintenanceList = ({
           style={{
             background: '#fff',
             borderColor: '#16695f',
-            gridTemplateColumns: '32px 32px 1fr auto',
+            gridTemplateColumns: '32px 1fr auto',
           }}
         >
-          <span className={styles.maintRowIcon}><Plus {...ICON_PROPS} /></span>
-          <span className={styles.maintRowIdx}>+</span>
+          <span className={styles.maintRowIdx}><Plus {...ICON_PROPS} /></span>
           <input
             type="text"
             placeholder="New value"
@@ -3892,7 +3577,7 @@ const NewSkuDrawer = ({ onClose }: { onClose: () => void }) => {
   // Branding datalist — maintenance pool first, DISTINCT fallback. Free text
   // stays possible (datalist, not a hard select) so legacy values aren't blocked.
   const brandingPool = useBrandingPool();
-  type Cat = 'BEDFRAME' | 'SOFA' | 'ACCESSORY' | 'MATTRESS' | 'BEDLINES' | 'DINING' | 'DIFFUSER' | 'CARPET' | 'SERVICE';
+  type Cat = MfgCategory;
   /* 2990 is a trading company — no in-house manufacturing. Production-time
      tracking dropped (was HOOKKA legacy). DB column production_time_minutes
      stays for now but the UI no longer collects it. */
@@ -3945,7 +3630,14 @@ const NewSkuDrawer = ({ onClose }: { onClose: () => void }) => {
       price1Sen: isMattress || isService ? null : toSen(form.price1),
       costPriceSen: toSen(form.costPrice) ?? 0,
       unitM3Milli: toMilli(form.unitM3),
-    }, { onSuccess: onClose });
+    }, {
+      onSuccess: onClose,
+      // Surface the server refusal (duplicate code, bad category, …) instead of
+      // failing silently. This create was only ever "handled" because a sibling
+      // mutation named `create` in the same file carried an onError; that sibling
+      // (ProductPriceTimeline) now lives in its own file, so make it explicit.
+      onError: (e) => notify({ title: e instanceof Error ? e.message : 'Could not create the SKU.', tone: 'error' }),
+    });
   };
 
   return (
@@ -3963,11 +3655,7 @@ const NewSkuDrawer = ({ onClose }: { onClose: () => void }) => {
               <span className={styles.fieldLabel}>Category *</span>
               <select className={styles.fieldSelect} value={form.category}
                 onChange={(e) => set('category', e.target.value as Cat)}>
-                <option value="BEDFRAME">Bedframe</option>
-                <option value="SOFA">Sofa</option>
-                <option value="MATTRESS">Mattress</option>
-                <option value="ACCESSORY">Accessory</option>
-                <option value="SERVICE">Service</option>
+                {CATEGORIES.filter((c) => c.value !== 'all').map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
               </select>
             </label>
             <Field label="Size Label" value={form.sizeLabel} onChange={(v) => set('sizeLabel', v)} />
@@ -4041,165 +3729,21 @@ const Field = ({
 
 const fmtRmSen = (centi: number): string => fmtSen(centi);
 
-/* Effective-dated SELLING price timeline (Pricing "Option B", ph.2). Lives on the
-   SKU detail drawer: shows the current price, a "Next: RM X from <date>" badge for
-   the pending change, the dated history (date · RM · who), and an "add future
-   price" form. Money is integer sen (MoneyInput + fmtSen). Mirrors the
-   maintenance-config effective-date editor's shape.
-
-   NOTE the price amount is held in a REF, not just state: MoneyInput commits on
-   blur, and a click on Schedule blurs the field first — reading the ref in the
-   handler avoids the stale-closure race a disabled-by-amount button would hit. */
-const ProductPriceTimeline = ({ row }: { row: MfgProductRow }) => {
-  const q = useMfgProductPriceChanges(row.id);
-  const create = useCreateMfgProductPriceChange();
-  const [effDate, setEffDate] = useState(todayMyt());
-  const [amountSen, setAmountSen] = useState<number | null>(null);
-  const amountRef = useRef<number | null>(null);
-  const [notes, setNotes] = useState('');
-  const [formError, setFormError] = useState<string | null>(null);
-
-  const today = todayMyt();
-  const history = q.data?.history ?? [];
-  const pending = q.data?.pending ?? null;
-  const current = q.data?.currentSellPriceSen ?? row.sell_price_sen ?? null;
-
-  const setAmount = (sen: number | null) => { amountRef.current = sen; setAmountSen(sen); };
-  const save = () => {
-    setFormError(null);
-    const amount = amountRef.current;
-    if (!effDate) { setFormError('Pick an effective date.'); return; }
-    if (amount == null || !Number.isInteger(amount) || amount < 0) { setFormError('Enter a price.'); return; }
-    create.mutate(
-      { id: row.id, effectiveFrom: effDate, sellPriceSen: amount, notes: notes.trim() || undefined },
-      {
-        onSuccess: () => { setAmount(null); setNotes(''); setEffDate(todayMyt()); },
-        onError: (e) => setFormError(e instanceof Error ? e.message : 'Could not schedule the price.'),
-      },
-    );
-  };
-
-  const h3 = {
-    fontSize: 'var(--fs-12)', fontWeight: 700, textTransform: 'uppercase' as const,
-    letterSpacing: '0.06em', color: '#767b6e', marginBottom: 'var(--space-2)',
-  };
-  const fieldLabel = {
-    fontSize: 'var(--fs-11)', fontWeight: 700, textTransform: 'uppercase' as const,
-    letterSpacing: '0.04em', color: '#767b6e', marginBottom: 4, display: 'block',
-  };
-  const inputBox = {
-    background: '#fff', border: '1px solid #c2c6bd', borderRadius: 'var(--radius-sm)',
-    padding: '4px 8px', fontSize: 'var(--fs-13)', outline: 'none',
-  };
-
-  return (
-    <section style={{ marginBottom: 'var(--space-5)' }}>
-      <h3 style={h3}>Selling price timeline</h3>
-
-      {/* Current + pending badges — "today = current, <future> = new". */}
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 'var(--space-3)' }}>
-        <span style={{
-          display: 'inline-flex', alignItems: 'baseline', gap: 6, padding: '3px 10px',
-          background: '#fff', border: '1px solid #c2c6bd', borderRadius: 'var(--radius-pill)',
-          fontSize: 'var(--fs-12)', color: '#3a3f36',
-        }}>
-          <span style={{ color: '#767b6e', textTransform: 'uppercase', letterSpacing: '0.04em', fontSize: 'var(--fs-11)', fontWeight: 700 }}>Now</span>
-          {fmtSen(current)}
-        </span>
-        {pending && (
-          <span style={{
-            display: 'inline-flex', alignItems: 'baseline', gap: 6, padding: '3px 10px',
-            background: 'rgba(232, 107, 58, 0.08)', border: '1px solid rgba(232, 107, 58, 0.35)',
-            borderRadius: 'var(--radius-pill)', fontSize: 'var(--fs-12)', color: '#b64a1e',
-          }}>
-            <span style={{ textTransform: 'uppercase', letterSpacing: '0.04em', fontSize: 'var(--fs-11)', fontWeight: 700 }}>Next</span>
-            {fmtSen(pending.sellPriceSen)} from {pending.effectiveFrom}
-          </span>
-        )}
-      </div>
-
-      {/* Add a future price. */}
-      <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: 'var(--space-3)' }}>
-        <div>
-          <label style={fieldLabel}>Effective from</label>
-          <DateField value={effDate} onChange={(iso) => setEffDate(iso)} style={{ ...inputBox, fontFamily: 'var(--font-mono)' }}/>
-        </div>
-        <div>
-          <label style={fieldLabel}>New price</label>
-          <MoneyInput
-            bare
-            valueSen={amountSen}
-            onCommit={setAmount}
-            allowBlank
-            selectOnFocus
-            placeholder="0.00"
-            style={{ ...inputBox, width: 120, textAlign: 'right' }}
-          />
-        </div>
-        <div style={{ flex: 1, minWidth: 160 }}>
-          <label style={fieldLabel}>Note (optional)</label>
-          <input
-            type="text"
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            placeholder="e.g. new-year list price"
-            style={{ ...inputBox, width: '100%' }}
-          />
-        </div>
-        <Button variant="primary" onClick={save} disabled={create.isPending}>
-          {create.isPending ? 'Scheduling…' : 'Schedule price'}
-        </Button>
-      </div>
-      {formError && (
-        <p style={{ margin: '0 0 var(--space-3)', color: '#b3261e', fontSize: 'var(--fs-12)' }}>{formError}</p>
-      )}
-
-      {/* Dated history — newest first. */}
-      {q.isLoading ? (
-        <p style={{ color: '#767b6e', fontSize: 'var(--fs-13)' }}>Loading price timeline…</p>
-      ) : history.length === 0 ? (
-        <p style={{ color: '#767b6e', fontSize: 'var(--fs-13)' }}>
-          No scheduled prices yet. The flat price {fmtSen(current)} applies until you schedule one.
-        </p>
-      ) : (
-        <table className={styles.table} style={{ width: '100%' }}>
-          <thead>
-            <tr>
-              <th>Effective from</th>
-              <th style={{ textAlign: 'right' }}>Price</th>
-              <th>Set by</th>
-              <th>Note</th>
-            </tr>
-          </thead>
-          <tbody>
-            {history.map((h: MfgProductPriceChangeRow) => {
-              const isFuture = h.effective_from > today;
-              return (
-                <tr key={h.id} style={{ background: isFuture ? 'rgba(232, 107, 58, 0.06)' : undefined }}>
-                  <td>
-                    <span style={{ fontFamily: 'var(--font-mono)' }}>{h.effective_from}</span>
-                    {isFuture && (
-                      <span className={styles.codeChip} style={{ marginLeft: 6, fontSize: 'var(--fs-11)' }}>Scheduled</span>
-                    )}
-                  </td>
-                  <td className={styles.numCell}>{fmtSen(h.sell_price_sen)}</td>
-                  <td style={{ color: '#3a3f36' }}>{h.created_by || '—'}</td>
-                  <td style={{ color: '#767b6e', fontSize: 'var(--fs-12)' }}>{h.notes || ''}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      )}
-    </section>
-  );
-};
 
 const ProductSuppliersDrawer = ({
   row, onClose,
 }: { row: MfgProductRow; onClose: () => void }) => {
   const q = useMfgProductSuppliers(row.id);
   const suppliers = q.data?.suppliers ?? [];
+  const anchor = q.data?.anchor ?? null;
+  // Cost is fixed on the SUPPLIER side (owner ruling); the anchor card's CTA and
+  // an empty-gap "Fix in Binding" jump to that supplier so the price is fixed at
+  // its source. Closing the drawer first keeps the back-stack clean.
+  const navigate = useNavigate();
+  const openSupplier = (supplierId: string | null) => {
+    onClose();
+    navigate(supplierId ? `/scm/suppliers/${supplierId}` : '/scm/suppliers');
+  };
   // 0166 — editable SKU barcode. Local draft commits on Enter (no blur-auto-save,
   // Commander 2026-06-15) via the shared PATCH hook (verified-save reads back).
   const update = useUpdateMfgProductPrices();
@@ -4223,6 +3767,12 @@ const ProductSuppliersDrawer = ({
           maxHeight: '85vh',
           display: 'flex',
           flexDirection: 'column',
+          /* Clip to the panel so the scroll area (min-height:0 below) shrinks
+             and scrolls inside the 85vh box instead of overflowing it — the
+             pinned footer must never hide the last rows (bottom of the
+             Suppliers table / History / Schedule-price), which the A3 Cost card
+             made worse by adding content height. */
+          overflow: 'hidden',
         }}
       >
         <header className={styles.drawerHeader}>
@@ -4234,6 +3784,16 @@ const ProductSuppliersDrawer = ({
             <p style={{ marginTop: 4, fontSize: 'var(--fs-13)', color: '#767b6e' }}>
               {row.name}{row.description ? ` — ${row.description}` : ''}
             </p>
+            {!row.model_id
+              ? <CategorySwapSelect kind="sku" id={row.id} category={row.category} />
+              : (
+                <div style={{ marginTop: 4 }}>
+                  <CategorySwapSelect kind="model" id={row.model_id} category={row.category} />
+                  <p style={{ marginTop: 2, fontSize: 'var(--fs-11)', color: '#767b6e' }}>
+                    Belongs to model {row.base_model ?? ''} — changing the category moves the whole model and all its SKUs.
+                  </p>
+                </div>
+              )}
             {/* 0166 — barcode lives on the SKU detail drawer (the SKU Master
                 grid column is read-only + default-hidden). Saves on Enter. */}
             <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 6 }}>
@@ -4269,7 +3829,10 @@ const ProductSuppliersDrawer = ({
           </button>
         </header>
 
-        <div style={{ flex: 1, overflowY: 'auto', padding: 'var(--space-4)' }}>
+        {/* minHeight:0 lets this flex child shrink below its content height so
+            it scrolls inside the panel; paddingBottom keeps the last row clear
+            of the pinned footer. */}
+        <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 'var(--space-4)', paddingBottom: 'var(--space-6)' }}>
           {/* Commander 2026-05-29 — "双击点进去要看到 supplier 和 available 什么
               variant". This drill-in now shows BOTH: the model's allowed variant
               options first, then the suppliers carrying the SKU. */}
@@ -4312,6 +3875,14 @@ const ProductSuppliersDrawer = ({
             );
           })()}
 
+          {anchor && (
+            <CostAnchorCard
+              anchor={anchor}
+              onOpenSupplier={openSupplier}
+              fallbackSupplierId={anchor.anchorSupplierId ?? (suppliers.length > 0 ? suppliers[0].supplier_id : null)}
+            />
+          )}
+
           <ProductPriceTimeline row={row} />
 
           <h3 style={{ fontSize: 'var(--fs-12)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: '#767b6e', marginBottom: 'var(--space-2)' }}>
@@ -4330,15 +3901,20 @@ const ProductSuppliersDrawer = ({
             </div>
           )}
           {!q.isLoading && suppliers.length > 0 && (
+            /* Let the table scroll horizontally inside the drawer on narrow
+               widths instead of squeezing the columns (the .table min-width
+               kicks in under 600px). The numeric columns stay content-sized
+               and on one line so the Supplier column takes the slack. */
+            <div style={{ overflowX: 'auto' }}>
             <table className={styles.table} style={{ width: '100%' }}>
               <thead>
                 <tr>
                   <th style={{ width: 32 }}></th>
-                  <th>Supplier</th>
-                  <th>Supplier SKU</th>
-                  <th style={{ textAlign: 'right' }}>Unit Price</th>
-                  <th style={{ textAlign: 'right' }}>Lead (d)</th>
-                  <th style={{ textAlign: 'right' }}>MOQ</th>
+                  <th style={{ whiteSpace: 'nowrap' }}>Supplier</th>
+                  <th style={{ whiteSpace: 'nowrap' }}>Supplier SKU</th>
+                  <th style={{ textAlign: 'right', whiteSpace: 'nowrap', width: '1%' }}>Unit Price</th>
+                  <th style={{ textAlign: 'right', whiteSpace: 'nowrap', width: '1%' }}>Lead</th>
+                  <th style={{ textAlign: 'right', whiteSpace: 'nowrap', width: '1%' }}>MOQ</th>
                 </tr>
               </thead>
               <tbody>
@@ -4364,16 +3940,21 @@ const ProductSuppliersDrawer = ({
                         ? <span className={styles.codeChip}>{s.supplier_sku}</span>
                         : <span style={{ color: '#767b6e' }}>(same as our code)</span>}
                     </td>
-                    <td className={styles.numCell}>
+                    <td className={styles.numCell} style={{ whiteSpace: 'nowrap' }}>
                       {fmtRmSen(s.unit_price_sen)}{s.currency !== 'MYR' ? ` ${s.currency}` : ''}
                     </td>
-                    <td className={styles.numCell}>{s.lead_time_days || '—'}</td>
-                    <td className={styles.numCell}>{s.moq || '—'}</td>
+                    <td className={styles.numCell} style={{ whiteSpace: 'nowrap' }}>{s.lead_time_days || '—'}</td>
+                    <td className={styles.numCell} style={{ whiteSpace: 'nowrap' }}>{s.moq || '—'}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
+            </div>
           )}
+
+          <AddSupplierBinding productCode={row.code} productName={row.name} />
+
+          <SkuHistoryTabs productId={row.id} />
         </div>
 
         <footer className={styles.drawerFooter}>
@@ -4400,11 +3981,11 @@ const ProductSuppliersDrawer = ({
    /special-addons/save), which the backend applies onto the live table. SO
    costing keeps reading the live table via loadSpecialAddons — unchanged.
 
-   ONE price: each add-on shows a SINGLE "Price (RM)" — the surcharge that feeds
-   SO costing — written to BOTH selling_price_sen and cost_price_sen so the
-   displayed price and the costing price never diverge (mirrors the other priced
-   pools, where the single priceSen IS the cost). Follow-up choice extras stay
-   selling-only, as in the configurator.
+   ONE box: each add-on shows a SINGLE "Cost (RM)" — the surcharge that feeds
+   SO costing — written to cost_price_sen ONLY. It used to be written to
+   selling_price_sen too, which charged the cost to the customer (docs/bugs/0859).
+   Selling surcharges are a Sales Director's deliberate value, never a copy.
+   Follow-up choice extras stay selling-only, as in the configurator.
    ════════════════════════════════════════════════════════════════════════ */
 
 const senToRmStr = (sen: number): string =>
@@ -4599,6 +4180,17 @@ const SpecialsMaintenancePanel = ({
         </div>
       </header>
 
+      {/* COST, not selling (approved mockup) — special add-ons carry an internal
+          COST only; the customer is never charged for them (docs/bugs/0859). The
+          single RM figure below is that cost, used for SO costing. */}
+      <div className={styles.maintCostNote}>
+        <Info {...ICON_PROPS} />
+        <span>
+          <strong>This is cost, not selling.</strong> The customer is not charged for these
+          add-ons — the RM figure is the internal cost used for order costing.
+        </span>
+      </div>
+
       {error && <div style={{ color: '#b23a3a', fontSize: 'var(--fs-13)', margin: 'var(--space-3) 0' }} role="alert">{error}</div>}
 
       {list.error ? (
@@ -4626,7 +4218,7 @@ const SpecialsMaintenancePanel = ({
                   </span>
                 )}
               </div>
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-15)', color: '#11140f', textAlign: 'right', whiteSpace: 'nowrap' }}>{senToRmStr(r.sellingPriceSen)}</span>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-15)', color: '#11140f', textAlign: 'right', whiteSpace: 'nowrap' }}>{senToRmStr(r.costPriceSen)}</span>
               <span style={{ fontSize: 'var(--fs-12)', fontWeight: 600, textAlign: 'right', color: r.active ? '#1a7a3a' : '#767b6e' }}>{r.active ? 'Active' : 'Inactive'}</span>
             </div>
           ))}
@@ -4651,11 +4243,11 @@ const SpecialsMaintenancePanel = ({
                   <input style={inputStyle} value={r.label} onChange={(e) => patchRow(i, { label: e.target.value })} placeholder="Right Drawer" />
                 </label>
                 <label style={{ width: 140 }}>
-                  <span style={{ display: 'block', fontSize: 'var(--fs-13)', fontWeight: 600, marginBottom: 4 }}>Price (RM, can be −)</span>
-                  {/* ONE price → written to selling + cost so they never diverge. */}
+                  <span style={{ display: 'block', fontSize: 'var(--fs-13)', fontWeight: 600, marginBottom: 4 }}>Cost (RM, can be −)</span>
+                  {/* COST only: writing selling too charged it to the customer (docs/bugs/0859). */}
                   <input type="number" step={1} style={inputStyle}
-                    value={Math.round(r.sellingPriceSen) / 100}
-                    onChange={(e) => { const sen = Math.round((Number(e.target.value) || 0) * 100); patchRow(i, { sellingPriceSen: sen, costPriceSen: sen }); }} />
+                    value={Math.round(r.costPriceSen) / 100}
+                    onChange={(e) => { const sen = Math.round((Number(e.target.value) || 0) * 100); patchRow(i, { costPriceSen: sen }); }} />
                 </label>
                 <label style={{ display: 'flex', alignItems: 'flex-end', gap: 6, fontSize: 'var(--fs-13)' }}>
                   <input type="checkbox" checked={r.active} onChange={(e) => patchRow(i, { active: e.target.checked })} /> Active
@@ -4760,7 +4352,7 @@ const SpecialsHistoryDialog = ({
               </div>
               {entry.notes && <p style={{ marginTop: 6, fontSize: 'var(--fs-13)', color: '#11140f' }}>Notes: {entry.notes}</p>}
               <pre style={{ marginTop: 8, padding: 'var(--space-2)', background: '#f4f6f3', border: '1px solid #d6d9d2', borderRadius: 'var(--radius-sm)', fontSize: 'var(--fs-11)', overflow: 'auto', maxHeight: 200 }}>
-                {JSON.stringify(slice.map((a) => ({ code: a.code, label: a.label, priceRM: Math.round(a.sellingPriceSen) / 100, active: a.active, followUps: (a.optionGroups ?? []).length })), null, 2)}
+                {JSON.stringify(slice.map((a) => ({ code: a.code, label: a.label, costRM: Math.round(a.costPriceSen) / 100, active: a.active, followUps: (a.optionGroups ?? []).length })), null, 2)}
               </pre>
             </div>
           );
@@ -4889,19 +4481,15 @@ const normalizeHeight = (h: unknown): string => String(h ?? '').replace('"', '')
 
 /** Fixed leading + trailing columns. The per-size price columns are spliced
  *  in between, derived from the live sofaSizes config at export time. */
-// CSV money columns are written in plain RINGGIT (e.g. 1535, or 1535.50 when
-// there are cents) — never raw sen (153500 reads like "RM153,500") and never a
-// forced ".00" tail (the operator types whole-ringgit prices and doesn't want
-// to add decimals every time — Wei Siang 2026-06-09). Round-trip stays exact
-// because money is 2dp: import multiplies by 100 back to sen.
+// CSV money columns are written in plain RINGGIT with two decimals (1535.00) —
+// never raw sen (153500 reads like "RM153,500"). The owner's rule of 2026-09-15
+// (every amount reads the way AutoCount prints it) replaces the earlier
+// no-".00" choice (Wei Siang 2026-06-09); typing "1535" back in still imports.
+// Round-trip stays exact because money is 2dp: import multiplies by 100 back to sen.
 const priceColForSize = (size: string) => `price_${size}`;
-/** sen → "1535" / "1535.50" (blank when unset, no trailing .00). */
-const senToRm = (sen: number | null | undefined): string => {
-  if (sen == null) return '';
-  const ringgit = Math.trunc(sen / 100);
-  const cents = Math.abs(sen % 100);
-  return cents === 0 ? String(ringgit) : `${ringgit}.${String(cents).padStart(2, '0')}`;
-};
+/** sen → "1535.00" / "1535.50" (blank when unset). */
+export const priceSheetRinggit = (sen: number | null | undefined): string =>
+  sen == null ? '' : (sen / 100).toFixed(2);
 
 function exportSkusCsv(rows: MfgProductRow[], sofaSizes: string[], tier: SofaPriceTier, category: MfgCategory | 'all'): void {
   // Columns are TAILORED to the category being exported, so an operator only
@@ -4955,14 +4543,14 @@ function exportSkusCsv(rows: MfgProductRow[], sofaSizes: string[], tier: SofaPri
       }
       const sizeCells: Record<string, unknown> = {};
       for (const size of sofaSizes) {
-        sizeCells[priceColForSize(size)] = senToRm(m.get(normalizeHeight(size)));
+        sizeCells[priceColForSize(size)] = priceSheetRinggit(m.get(normalizeHeight(size)));
       }
       emit({ price_tier: tier, ...sizeCells });
     } else {
       // Bedframe / mattress / accessory / service — flat base + price1.
       emit({
-        base_price: senToRm(r.base_price_sen),
-        price1:     senToRm(r.price1_sen),
+        base_price: priceSheetRinggit(r.base_price_sen),
+        price1:     priceSheetRinggit(r.price1_sen),
       });
     }
   }
@@ -5029,11 +4617,12 @@ function parseSkuCsv(text: string): Array<Record<string, string>> {
   return gridToSkuRecords(grid);
 }
 
-/** Header-key a parsed grid (CSV or Excel) into one object per data row, keyed
- *  by lower-cased trimmed header text. */
+/** Header-key a parsed grid, reading BOTH files this page writes (bugs/0662). */
 function gridToSkuRecords(grid: string[][]): Array<Record<string, string>> {
   if (grid.length < 1) return [];
-  const header = (grid[0] ?? []).map((h) => h.trim().toLowerCase());
+  const raw = (grid[0] ?? []).map(normalizeImportHeader);
+  const fromGrid = looksLikeGridExport(raw);
+  const header = fromGrid ? mapGridHeaders(raw) : raw;
   const out: Array<Record<string, string>> = [];
   for (let r = 1; r < grid.length; r++) {
     const cells = grid[r];
@@ -5042,7 +4631,10 @@ function gridToSkuRecords(grid: string[][]): Array<Record<string, string>> {
     for (let c = 0; c < header.length; c++) {
       const key = header[c];
       if (!key) continue;
-      obj[key] = (cells[c] ?? '').trim();
+      const cell = (cells[c] ?? '').trim();
+      /* -1 is the grid's "no price", never a price — see isGridNoPrice. */
+      if (fromGrid && isGridNoPrice(cell)) continue;
+      obj[key] = cell;
     }
     out.push(obj);
   }
@@ -5072,6 +4664,8 @@ const ImportSkusDialog = ({ sofaSizes, onClose }: { sofaSizes: string[]; onClose
         setBusy(false);
         return;
       }
+      /* The columns as the parser saw them — a row is keyed by header. */
+      const headersSeen = Object.keys(parsed[0] ?? {});
 
       // Group rows by code — a sofa with PRICE_1 / PRICE_2 / PRICE_3 rows
       // becomes ONE product carrying all its size × tier prices.
@@ -5184,7 +4778,7 @@ const ImportSkusDialog = ({ sofaSizes, onClose }: { sofaSizes: string[]; onClose
         if (tierErrors.length > 0) {
           setResult({ upserted: 0, failed: tierErrors.length, failures: tierErrors });
         } else {
-          setErrorMsg('No rows had a code. Every row needs a code, name, and category.');
+          setErrorMsg(importFailureMessage(headersSeen));
         }
         setBusy(false);
         return;
@@ -5212,6 +4806,7 @@ const ImportSkusDialog = ({ sofaSizes, onClose }: { sofaSizes: string[]; onClose
             upserted: res.upserted,
             failed: res.failed + staged.tierErrors.length,
             failures: [...staged.tierErrors, ...(res.failures ?? [])],
+            modelsMoved: res.modelsMoved,
           }
         : res);
       setStaged(null);
@@ -5242,7 +4837,7 @@ const ImportSkusDialog = ({ sofaSizes, onClose }: { sofaSizes: string[]; onClose
         <p style={{ fontSize: 'var(--fs-13)', color: '#767b6e' }}>
           Pick a CSV or Excel file exported from this page. Edit the prices in Excel,
           save, and import it back. A blank cell is left as it was — it never clears a price.
-          Up to 500 SKUs per file.
+          Up to 500 SKUs per file. A new category on a SKU that belongs to a model moves the model and all its SKUs.
         </p>
         <input
           type="file"
@@ -5312,6 +4907,7 @@ const ImportSkusDialog = ({ sofaSizes, onClose }: { sofaSizes: string[]; onClose
                 {result.failures.length > 5 && <li>…and {result.failures.length - 5} more.</li>}
               </ul>
             )}
+            <ImportModelsMoved moves={result.modelsMoved} />
           </div>
         )}
 
@@ -5323,103 +4919,3 @@ const ImportSkusDialog = ({ sofaSizes, onClose }: { sofaSizes: string[]; onClose
   );
 };
 
-/* ════════════════════════════════════════════════════════════════════════
-   PR #89 — Click-to-edit cell for SKU Master code + name columns.
-   Same UX as Fabric Converter DescriptionCell: chip → click → input,
-   Enter / blur saves, Esc cancels. inline=true uses regular text styling
-   (no chip pill); inline=false uses chipClassName for the resting state.
-   ════════════════════════════════════════════════════════════════════════ */
-const EditableTextCell = ({
-  value, chipClassName, ariaLabel, onSave, inline = false, editable = true,
-}: {
-  value:          string;
-  /** CSS-module class — typed loose so `styles.foo` (which TS treats as
-      `string | undefined`) flows in without callers having to coalesce.
-      PR #87 merge fix: PR #89 landed with this typed `string` which broke
-      the build under `tsc -b --noEmit`. */
-  chipClassName:  string | undefined;
-  ariaLabel:      string;
-  onSave:         (val: string) => void;
-  inline?:        boolean;
-  /** PR #95 — Commander 2026-05-26: gate click-to-edit behind the parent
-      table's edit mode. When false, the cell renders as plain text/chip
-      and any click is ignored. Defaults to true so existing callers
-      (Fabric Converter description cell, etc.) keep working. */
-  editable?:      boolean;
-}) => {
-  const [editing, setEditing] = useState(false);
-  const [draft,   setDraft]   = useState(value);
-
-  const commit = () => {
-    const trimmed = draft.trim();
-    if (!trimmed || trimmed === value.trim()) {
-      setEditing(false);
-      setDraft(value);
-      return;
-    }
-    onSave(trimmed);
-    setEditing(false);
-  };
-  const cancel = () => { setDraft(value); setEditing(false); };
-
-  if (!editing) {
-    // PR #95 — Read-only mode. Same visual chip / inline text but no
-    // click target, no cursor pointer, no "Click to edit" tooltip.
-    if (!editable) {
-      return inline ? (
-        <span className={chipClassName}>{value}</span>
-      ) : (
-        <span className={chipClassName}>{value}</span>
-      );
-    }
-    return inline ? (
-      <div
-        role="button"
-        tabIndex={0}
-        className={chipClassName}
-        title="Click to edit"
-        onClick={() => { setDraft(value); setEditing(true); }}
-        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setDraft(value); setEditing(true); } }}
-        style={{ cursor: 'pointer' }}
-      >
-        {value}
-      </div>
-    ) : (
-      <button
-        type="button"
-        className={chipClassName}
-        title="Click to edit"
-        aria-label={ariaLabel}
-        onClick={() => { setDraft(value); setEditing(true); }}
-        style={{ cursor: 'pointer' }}
-      >
-        {value}
-      </button>
-    );
-  }
-  return (
-    <input
-      autoFocus
-      type="text"
-      value={draft}
-      onChange={(e) => setDraft(e.target.value)}
-      onBlur={commit}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter')      { e.preventDefault(); commit(); }
-        else if (e.key === 'Escape') { e.preventDefault(); cancel(); }
-      }}
-      style={{
-        fontFamily: inline ? 'var(--font-sans)' : 'var(--font-mono)',
-        fontSize:   'var(--fs-13)',
-        fontWeight: 600,
-        padding:    '4px 8px',
-        border:     '1px solid #16695f',
-        borderRadius: 'var(--radius-sm)',
-        background: '#f4f6f3',
-        outline:    'none',
-        width:      '100%',
-        maxWidth:   320,
-      }}
-    />
-  );
-};

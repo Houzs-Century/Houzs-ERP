@@ -14,7 +14,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { statusFor, doCancellableStatus, type StatusTab } from "./do-list-status";
 import { deliveryOrderRowMenu } from "./row-menus";
 import { doCountsAsInvoiceable, doCountsAsDelivered } from "../../vendor/shared/do-shipped-states";
-import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
+import { useDoCancelAction } from "./use-do-cancel-action";
 import { brandingToneForLabel } from "../../lib/brandingTone";
 import { canViewScmCosting, canOperateDeliveryOrders } from "../../auth/salesAccess";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -41,7 +41,10 @@ import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { PageHeader } from "../../components/Layout";
 import { StatCard } from "../../components/StatCard";
 import { FilterPills } from "../../components/FilterPills";
-import { DataTable, type Column } from "../../components/DataTable";
+import { DataTable, type Column, type ColumnLayoutPreset } from "../../components/DataTable";
+import { fetchDoExportRows } from "../../vendor/scm/lib/so-list-export";
+import { doLineColumns, financeColumns, moneyColumn } from "./so-do-list-columns";
+import { DO_LABELS, doStatusWord, type DoBookHeader, type DoListLine } from "../../vendor/scm/lib/do-line-export-columns";
 import {
   DocumentLinesExpansion,
   sourcePoTitle,
@@ -49,6 +52,7 @@ import {
   StockAdjChip,
   type DocumentDrillLine,
 } from "../../components/DocumentLinesExpansion";
+import { useMfgCustomers } from "../../vendor/scm/lib/sales-order-queries";
 import { ListPager } from "../../components/ListPager";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { useVisibleRows } from "../../hooks/useVisibleRows";
@@ -85,6 +89,7 @@ import { buildVariantSummary, fmtSen, fmtDate, orderLineIdentity } from "@2990s/
 import { formatPhone } from "@2990s/shared/phone";
 import { useHoldAction } from "./use-hold-action";
 import { StatusWithHold, rowIsHeld, type HoldFields } from "../../vendor/scm/components/HoldChip";
+import { customerRefOf } from '../../lib/customer-ref';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 // Subset of the full DoRow (see MfgDeliveryOrdersList.tsx for the 40-field
@@ -163,20 +168,18 @@ type DoRow = HoldFields & {
   total_cost_sen?: number;
   total_margin_sen?: number;
   margin_pct_basis?: number;
-};
+  /** The delivery order's lines (no money), and its AutoCount spellings (do-list-lines.ts). */
+  lines?: DoListLine[];
+} & Partial<DoBookHeader>;
 
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 const fmtRm = (centi: number): string => fmtSen(centi);
 
-// margin_pct_basis is basis points (margin/total x 10000) → percent string.
-const fmtPctBasis = (basis: number | null | undefined): string =>
-  basis == null ? "—" : `${(basis / 100).toFixed(1)}%`;
 
 // Customer's PO / Ref. Same fallback chain as the SO V2 template.
-const refOf = (r: DoRow): string =>
-  r.po_doc_no || r.customer_so_no || r.ref || "—";
+const refOf = (r: DoRow): string => customerRefOf(r) || "—";
 
 // Origin SO number for the "SO Ref" column — the Delivery Order's most useful
 // cross-doc anchor. Falls back to a dash for direct-issue DOs.
@@ -707,6 +710,23 @@ const SORT_COL_MAP: Record<string, string> = {
   delivery_date: "customer_delivery_date",
 };
 
+/* AutoCount's Delivery Order Detail Listing, layout "LISTING ITEM DETAIL", in
+   its order, without its prices (a delivery order file carries none). Offered
+   in the Columns panel only: NOT a default — the company default an admin saved
+   for this table decides what people see (owner 2026-09-15). Doc No is
+   alwaysVisible, so it is implicit here. */
+const DO_LAYOUT_PRESETS: ColumnLayoutPreset[] = [
+  {
+    id: "do-autocount",
+    label: "AutoCount: LISTING ITEM DETAIL",
+    hint: "One row per line in the Export",
+    columns: [
+      "do_date", "debtor_code", "debtor_name", "salesperson", "currency", "item_code", "detail_description",
+      "detail_description_2", "uom", "line_location", "qty", "po_doc_no", "item_group",
+    ],
+  },
+];
+
 // ─── Row drill-down (DataTable `expandable`) ──────────────────────────────────
 // Inline per-line breakdown for one DO under its parent row when the chevron is
 // toggled (2990 MfgDeliveryOrdersList drill-down parity). Lazy-fetches the DO
@@ -764,6 +784,7 @@ function DoLinesExpansion({ doId }: { doId: string }) {
     <div className="flex flex-col gap-2">
       <DocumentLinesExpansion
         isLoading={detailQ.isLoading}
+        coverage="ready" /* one query fills this drill-down — coverage-state.tsx */
         isError={Boolean(detailQ.error)}
         errorMessage={detailQ.error instanceof Error ? detailQ.error.message : null}
         lines={lines}
@@ -783,7 +804,7 @@ export function MfgDeliveryOrdersListV2() {
   const { nameOf: salespersonNameOf } = useStaffLookup();
   const notify = useNotify();
   const holdAction = useHoldAction("do");
-  const askConfirm = useConfirm();
+  const { cancelDo } = useDoCancelAction();
   const askChoice = useChoice();
   // Active company (top-bar switcher) — the header subtitle reflects it so a
   // per-company list is never mislabelled as another company's (e.g. Houzs).
@@ -816,6 +837,16 @@ export function MfgDeliveryOrdersListV2() {
   // Export button against double-clicks while PDFs generate.
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [exporting, setExporting] = useState(false);
+  /* Server-filterable column funnels the grid pushes down (owner 2026-09-16) so
+     pagination runs over the filtered set: Customer (debtor) Name + Currency.
+     Debtor CODE (grid value prefers ac_debtor_code) and line-level / MRP funnels
+     stay client-side on the loaded page. */
+  const [serverFunnels, setServerFunnels] = useState<{ debtorNames?: string[]; currencies?: string[] }>({});
+  const customersQ = useMfgCustomers();
+  const customerNames = useMemo(
+    () => [...new Set((customersQ.data?.customers ?? []).map((cst) => cst.name).filter((n): n is string => !!n))],
+    [customersQ.data],
+  );
   const [sort, setSort] = useState<string | undefined>(undefined);
   const { requestTerm: debouncedSearch } = useDebouncedSearchTerm(search);
 
@@ -831,6 +862,7 @@ export function MfgDeliveryOrdersListV2() {
     status: apiStatus,
     q: debouncedSearch,
     sort,
+    ...serverFunnels,
   });
   const searchTransition = useSearchResultTransition({
     inputTerm: search,
@@ -924,6 +956,25 @@ export function MfgDeliveryOrdersListV2() {
     }
     setPageParam(0); // sort change → back to page 0
   };
+  /* DataTable reports funnel state; lift the SERVER-FILTERABLE ones (Customer
+     Name, Currency) into the list query. Mirrors setSortAndReset: first
+     (mount-restore) report adopts without clobbering ?page=; later changes reset
+     to page 1. */
+  const funnelSyncedRef = useRef(false);
+  const serverFunnelSigRef = useRef("");
+  const onColFiltersChange = (colFilters: Record<string, string[] | undefined>) => {
+    const pick = (key: string): string[] | undefined => {
+      const v = colFilters[key];
+      return v && v.length > 0 ? v : undefined;
+    };
+    const next = { debtorNames: pick("debtor_name"), currencies: pick("currency") };
+    const sig = JSON.stringify(next);
+    if (sig === serverFunnelSigRef.current) return;
+    serverFunnelSigRef.current = sig;
+    setServerFunnels(next);
+    if (!funnelSyncedRef.current) { funnelSyncedRef.current = true; return; }
+    setPageParam(0);
+  };
   const resetLayout = () => {
     setSort(undefined);
     setParams(new URLSearchParams(), { replace: true });
@@ -960,17 +1011,9 @@ export function MfgDeliveryOrdersListV2() {
   };
   const doConvertToSi = (r: DoRow) => navigate(convertToLink('doToSi', r.id));
   const doConvertToDr = (r: DoRow) => navigate(convertToLink('doToDr', r.id));
-  /* Cancel REVERSES STOCK, so it asks first — the same in-app confirm the Sales
-     Order list's cancel uses, and the same endpoint the detail page posts. */
-  const doCancelDo = async (r: DoRow) => {
-    if (!(await askConfirm({
-      title: `Cancel ${r.do_number}?`,
-      body: "Stock allocated to this delivery order is released back to the Sales Order, and a cancelled delivery order cannot be reactivated — raise a new one to deliver again.",
-      confirmLabel: "Cancel Delivery Order",
-      danger: true,
-    }))) return;
-    updateStatus.mutate({ id: r.id, status: "CANCELLED" });
-  };
+  /* Cancel REVERSES STOCK and costs a REASON (owner 2026-09-14) — the detail
+     page's own prompt and endpoint, from ./use-do-cancel-action. */
+  const doCancelDo = (r: DoRow) => void cancelDo(r.id, r.do_number);
   // Put On Hold / Take Off Hold — the mig-0324 MARKER, never the status. Wording in ./use-hold-action.ts.
   const setDoHold = (r: DoRow, onHold: boolean) => holdAction(r.id, r.do_number, onHold);
   /* Every predicate here is a SHARED one, not a status list typed at this call
@@ -1067,10 +1110,12 @@ export function MfgDeliveryOrdersListV2() {
   const batchPrint = usePrintPreview(deliverSelectedDos);
 
   // Table columns
-  const columns: Column<DoRow>[] = [
+  /* Labels are AutoCount's captions; Doc No / Debtor Code / Agent are the book's
+     spellings where the delivery order is in AutoCount (server-stamped ac_*). */
+  const columns: Column<DoRow, DoListLine>[] = [
     {
       key: "do_number",
-      label: "DO No.",
+      label: DO_LABELS.docNo,
       // 156, not 132 (owner 2026-07-31, "每次都看不完整"). A px width is a
       // hard cap here — DataTable pins min/max to it and clips with an
       // ellipsis — and "2990-DO-2607-001" measured 109.6px at the old
@@ -1084,7 +1129,7 @@ export function MfgDeliveryOrdersListV2() {
       // prefix is the worst case.
       width: "156px",
       alwaysVisible: true,
-      getValue: (r) => r.do_number,
+      getValue: (r) => r.ac_doc_no ?? r.do_number,
       render: (r) => (
         <span
           className={cn(
@@ -1092,14 +1137,20 @@ export function MfgDeliveryOrdersListV2() {
             isCancelledDocStatus(r.status) && "dt-cancel-strike",
           )}
         >
-          {r.do_number}
+          {r.ac_doc_no ?? r.do_number}
         </span>
       ),
     },
     {
+      key: "erp_doc_no", label: DO_LABELS.erpDocNo, width: "156px", defaultHidden: true, disableSort: true,
+      getValue: (r) => r.do_number,
+      render: (r) => <span className="font-docno text-[12.5px] text-ink-secondary">{r.do_number}</span>,
+    },
+    {
       key: "do_date",
-      label: "Date",
+      label: DO_LABELS.docDate,
       width: "108px",
+      exportFormat: "date",
       getValue: (r) => r.do_date,
       render: (r) => (
         <span className="text-[12.5px] text-ink-secondary">{fmtDate(r.do_date)}</span>
@@ -1124,6 +1175,7 @@ export function MfgDeliveryOrdersListV2() {
          Falls back to the header label when a DO has no linked lines (an ad-hoc
          DO legitimately has only the header), so no cell goes blank. */
       getValue: (r) => (r.source_sos?.length ? r.source_sos.join(" ") : r.so_doc_no ?? ""),
+      lineValue: (_r, l) => l.so_doc_no, // the file: the SO THIS line was delivered from
       render: (r) => {
         const sos = r.source_sos?.length ? r.source_sos : (r.so_doc_no ? [r.so_doc_no] : []);
         return sos.length > 0 ? (
@@ -1190,6 +1242,7 @@ export function MfgDeliveryOrdersListV2() {
       width: "150px",
       disableSort: true,
       getValue: (r) => (r.invoiced_si_nos ?? []).join(", "),
+      lineValue: (_r, l) => l.invoice_nos.join(", ") || null,
       render: (r) => {
         const sis = r.invoiced_si_nos ?? [];
         const returns = r.return_nos ?? [];
@@ -1220,8 +1273,11 @@ export function MfgDeliveryOrdersListV2() {
     },
     {
       key: "debtor_name",
-      label: "Customer",
+      label: DO_LABELS.debtorName,
       getValue: (r) => r.debtor_name,
+      // Server-filterable: seed the checklist with every customer (not just the
+      // loaded page's), so a customer whose DOs are all on a later page is pickable.
+      filterSeedValues: customerNames,
       render: (r) => (
         <span className="text-[13px] font-semibold text-ink">
           {r.debtor_name || "—"}
@@ -1230,9 +1286,11 @@ export function MfgDeliveryOrdersListV2() {
     },
     {
       key: "delivery_date",
-      label: "Delivery Date",
+      label: DO_LABELS.deliveryDate,
       width: "128px",
+      exportFormat: "date",
       getValue: (r) => r.customer_delivery_date ?? "",
+      lineValue: (_r, l) => l.delivery_date, // the file: the line's own date, else the order's
       render: (r) => (
         <span className="text-[12.5px] text-ink-secondary">
           {fmtDate(r.customer_delivery_date)}
@@ -1268,26 +1326,21 @@ export function MfgDeliveryOrdersListV2() {
       // Exempt from the cancelled-row fade — the pill is WHY the row is grey.
       className: "dt-cancel-keep",
       getValue: (r) => r.status,
+      exportValue: (r) => doStatusWord(r.status, r.on_hold ?? null),
       render: (r) => {
         const st = statusFor(r.status);
         /* mig 0324 — the Hold marker sits BESIDE the real status pill. */
         return <StatusWithHold tone={st.tone} label={st.label} row={r} />;
       },
     },
+    /* Hidden by default: a delivery order file goes to drivers, 3PLs and
+       customers, so it carries no amount unless someone picks the column
+       (owner 2026-09-15). */
+    moneyColumn<DoRow, DoListLine>({ key: "amount", label: "Amount", width: "128px", defaultHidden: true, strong: true, sen: (r) => r.local_total_sen }),
     {
-      key: "amount",
-      label: "Amount",
-      width: "128px",
-      align: "right",
-      // DO backend sort whitelist has no total column — keep for CSV export but
-      // disable the header sort so we never send an unsupported sort key.
-      disableSort: true,
-      getValue: (r) => r.local_total_sen,
-      render: (r) => (
-        <span className="font-money text-[13px] font-semibold text-ink">
-          {fmtRm(r.local_total_sen)}
-        </span>
-      ),
+      key: "currency", label: DO_LABELS.currency, width: "96px", defaultHidden: true, disableSort: true,
+      getValue: (r) => r.currency,
+      render: (r) => <span className="text-[12.5px] text-ink-secondary">{r.currency}</span>,
     },
     // ── Re-added columns (Phase 1) — data already on the DoRow payload, ported
     //    from the legacy MfgDeliveryOrdersList buildColumns (labels/widths). All
@@ -1296,20 +1349,20 @@ export function MfgDeliveryOrdersListV2() {
     //    these keys aren't in the backend sort whitelist.
     {
       key: "salesperson",
-      label: "Salesperson",
+      label: DO_LABELS.agent,
       width: "148px",
       defaultHidden: true,
       disableSort: true,
-      getValue: (r) => salespersonNameOf(null, r.salesperson_id, ""),
+      getValue: (r) => r.ac_agent ?? salespersonNameOf(null, r.salesperson_id, ""),
       render: (r) => (
         <span className="text-[12.5px] text-ink-secondary">
-          {salespersonNameOf(null, r.salesperson_id, "—")}
+          {r.ac_agent ?? salespersonNameOf(null, r.salesperson_id, "—")}
         </span>
       ),
     },
     {
       key: "sales_location",
-      label: "Location",
+      label: "Sales Location",
       width: "120px",
       defaultHidden: true,
       disableSort: true,
@@ -1382,13 +1435,13 @@ export function MfgDeliveryOrdersListV2() {
     },
     {
       key: "debtor_code",
-      label: "Customer Code",
+      label: DO_LABELS.debtorCode,
       width: "120px",
       defaultHidden: true,
       disableSort: true,
-      getValue: (r) => r.debtor_code ?? "",
+      getValue: (r) => r.ac_debtor_code ?? r.debtor_code ?? "",
       render: (r) => (
-        <span className="font-mono text-[12px] text-ink-secondary">{r.debtor_code || "—"}</span>
+        <span className="font-mono text-[12px] text-ink-secondary">{r.ac_debtor_code ?? r.debtor_code ?? "—"}</span>
       ),
     },
     {
@@ -1494,166 +1547,8 @@ export function MfgDeliveryOrdersListV2() {
     },
     // ── Phase 2 FINANCE columns — cost / margin / per-category subtotals.
     //    DECLARED ONLY for a finance-viewer (backend also omits the keys).
-    ...(canFinance
-      ? ([
-          {
-            key: "mattress_sofa_sen",
-            label: "Mattress/Sofa",
-            width: "120px",
-            align: "right",
-            defaultHidden: true,
-            disableSort: true,
-            getValue: (r) => r.mattress_sofa_sen ?? 0,
-            render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.mattress_sofa_sen ?? 0)}</span>
-            ),
-          },
-          {
-            key: "bedframe_sen",
-            label: "Bedframe",
-            width: "110px",
-            align: "right",
-            defaultHidden: true,
-            disableSort: true,
-            getValue: (r) => r.bedframe_sen ?? 0,
-            render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.bedframe_sen ?? 0)}</span>
-            ),
-          },
-          {
-            key: "accessories_sen",
-            label: "Accessories",
-            width: "110px",
-            align: "right",
-            defaultHidden: true,
-            disableSort: true,
-            getValue: (r) => r.accessories_sen ?? 0,
-            render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.accessories_sen ?? 0)}</span>
-            ),
-          },
-          {
-            key: "others_sen",
-            label: "Others",
-            width: "110px",
-            align: "right",
-            defaultHidden: true,
-            disableSort: true,
-            getValue: (r) => r.others_sen ?? 0,
-            render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.others_sen ?? 0)}</span>
-            ),
-          },
-          {
-            key: "service_sen",
-            label: "Service",
-            width: "110px",
-            align: "right",
-            defaultHidden: true,
-            disableSort: true,
-            getValue: (r) => r.service_sen ?? 0,
-            render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.service_sen ?? 0)}</span>
-            ),
-          },
-          {
-            key: "mattress_sofa_cost_sen",
-            label: "Mattress/Sofa Cost",
-            width: "140px",
-            align: "right",
-            defaultHidden: true,
-            disableSort: true,
-            getValue: (r) => r.mattress_sofa_cost_sen ?? 0,
-            render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.mattress_sofa_cost_sen ?? 0)}</span>
-            ),
-          },
-          {
-            key: "bedframe_cost_sen",
-            label: "Bedframe Cost",
-            width: "130px",
-            align: "right",
-            defaultHidden: true,
-            disableSort: true,
-            getValue: (r) => r.bedframe_cost_sen ?? 0,
-            render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.bedframe_cost_sen ?? 0)}</span>
-            ),
-          },
-          {
-            key: "accessories_cost_sen",
-            label: "Accessories Cost",
-            width: "140px",
-            align: "right",
-            defaultHidden: true,
-            disableSort: true,
-            getValue: (r) => r.accessories_cost_sen ?? 0,
-            render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.accessories_cost_sen ?? 0)}</span>
-            ),
-          },
-          {
-            key: "others_cost_sen",
-            label: "Others Cost",
-            width: "130px",
-            align: "right",
-            defaultHidden: true,
-            disableSort: true,
-            getValue: (r) => r.others_cost_sen ?? 0,
-            render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.others_cost_sen ?? 0)}</span>
-            ),
-          },
-          {
-            key: "service_cost_sen",
-            label: "Service Cost",
-            width: "130px",
-            align: "right",
-            defaultHidden: true,
-            disableSort: true,
-            getValue: (r) => r.service_cost_sen ?? 0,
-            render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.service_cost_sen ?? 0)}</span>
-            ),
-          },
-          {
-            key: "total_cost_sen",
-            label: "Total Cost",
-            width: "120px",
-            align: "right",
-            defaultHidden: true,
-            disableSort: true,
-            getValue: (r) => r.total_cost_sen ?? 0,
-            render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.total_cost_sen ?? 0)}</span>
-            ),
-          },
-          {
-            key: "total_margin_sen",
-            label: "Margin",
-            width: "120px",
-            align: "right",
-            defaultHidden: true,
-            disableSort: true,
-            getValue: (r) => r.total_margin_sen ?? 0,
-            render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.total_margin_sen ?? 0)}</span>
-            ),
-          },
-          {
-            key: "margin_pct_basis",
-            label: "Margin %",
-            width: "100px",
-            align: "right",
-            defaultHidden: true,
-            disableSort: true,
-            getValue: (r) => r.margin_pct_basis ?? 0,
-            render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtPctBasis(r.margin_pct_basis)}</span>
-            ),
-          },
-        ] satisfies Column<DoRow>[])
-      : ([] satisfies Column<DoRow>[])),
+    ...(canFinance ? financeColumns<DoRow, DoListLine>(undefined) : []),
+    ...Object.values(doLineColumns<DoRow>()),
   ];
 
   const statusPillOptions: Array<{ value: StatusTab; label: string }> = (
@@ -1872,11 +1767,12 @@ export function MfgDeliveryOrdersListV2() {
                 </Button>
               </div>
             )}
-            <DataTable<DoRow>
+            <DataTable<DoRow, DoListLine>
               tableId="delivery-orders-v2"
               rows={rows}
               /* Feeds the stat strip so the tiles describe what is on screen. */
               onFilteredRowsChange={visible.onFilteredRowsChange}
+              onColFiltersChange={onColFiltersChange}
               loading={listLoading}
               error={error ? (error as Error).message ?? "Failed to load" : null}
               columns={columns}
@@ -1907,7 +1803,18 @@ export function MfgDeliveryOrdersListV2() {
                   }),
               }}
               contextMenu={doContextMenu}
-            exportName="delivery-orders"
+              documentLabel="Delivery Orders"
+              layoutPresets={DO_LAYOUT_PRESETS}
+              /* The ONE Export (owner 2026-09-15): every delivery order the tab,
+                 search and sort match, not the page; one row per line; the
+                 visible columns, funnels and sort. */
+              exportLines={{
+                fetchRows: () => fetchDoExportRows<DoRow>({ status: apiStatus, q: debouncedSearch, sort }),
+                linesOf: (r) => r.lines ?? [],
+                sheetName: "Delivery Orders",
+                onError: (e) => void notify({ title: "Export failed", body: e.message || "The export could not be completed.", tone: "error" }),
+              }}
+              exportName="delivery-orders"
               serverSort
               onSortChange={setSortAndReset}
               emptyLabel={

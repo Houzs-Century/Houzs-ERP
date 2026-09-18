@@ -1,0 +1,3578 @@
+{
+  "source": "AutoCount export, HOUZS CENTURY SDN BHD, 2026-09-02",
+  "rows": [
+    {
+      "code": "100-0000",
+      "name": "CAPITAL",
+      "accountType": "EQUITY",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "150-0000",
+      "name": "RETAINED EARNING",
+      "accountType": "EQUITY",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": "SRE"
+    },
+    {
+      "code": "151-0000",
+      "name": "RESERVES",
+      "accountType": "EQUITY",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "201-0000",
+      "name": "FURNITURE & FITTINGS",
+      "accountType": "ASSET",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "201-1000",
+      "name": "FURNITURES & FITTINGS (OFFICE)",
+      "accountType": "ASSET",
+      "parentCode": "201-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": "SFA"
+    },
+    {
+      "code": "201-1005",
+      "name": "ACCUM. DEPRN. - FURNITURES & FITTINGS (OFFICE)",
+      "accountType": "ASSET",
+      "parentCode": "201-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": "SAD"
+    },
+    {
+      "code": "201-2000",
+      "name": "FURNITURE & FITTINGS (WAREHOUSE)",
+      "accountType": "ASSET",
+      "parentCode": "201-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": "SFA"
+    },
+    {
+      "code": "201-2005",
+      "name": "ACCUM. DEPRN. FURNITURE & FITTINGS (WAREHOUSE)",
+      "accountType": "ASSET",
+      "parentCode": "201-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": "SAD"
+    },
+    {
+      "code": "202-0000",
+      "name": "EQUIPMENT",
+      "accountType": "ASSET",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "202-1000",
+      "name": "EQUIPMENT (OFFICE)",
+      "accountType": "ASSET",
+      "parentCode": "202-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": "SFA"
+    },
+    {
+      "code": "202-1005",
+      "name": "ACCUM. DEPRN. - EQUIPMENT (OFFICE)",
+      "accountType": "ASSET",
+      "parentCode": "202-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": "SAD"
+    },
+    {
+      "code": "202-2000",
+      "name": "EQUIPMENT (WAREHOUSE)",
+      "accountType": "ASSET",
+      "parentCode": "202-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": "SFA"
+    },
+    {
+      "code": "202-2005",
+      "name": "ACCUM. DEPRN. EQUIPMENT (WAREHOUSE)",
+      "accountType": "ASSET",
+      "parentCode": "202-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": "SAD"
+    },
+    {
+      "code": "202-3000",
+      "name": "EQUIPMENT (SHOWROOM)",
+      "accountType": "ASSET",
+      "parentCode": "202-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": "SFA"
+    },
+    {
+      "code": "202-3005",
+      "name": "ACCUM. DEPRN. EQUIPMENT (SHOWROOM)",
+      "accountType": "ASSET",
+      "parentCode": "202-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": "SAD"
+    },
+    {
+      "code": "203-0000",
+      "name": "SIGNBOARD",
+      "accountType": "ASSET",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "203-1000",
+      "name": "SIGNBOARD (WAREHOUSE)",
+      "accountType": "ASSET",
+      "parentCode": "203-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": "SFA"
+    },
+    {
+      "code": "203-1005",
+      "name": "ACCUM. DEPRN. SIGNBOARD (WAREHOUSE)",
+      "accountType": "ASSET",
+      "parentCode": "203-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": "SAD"
+    },
+    {
+      "code": "203-2000",
+      "name": "SIGNBOARD (SHOWROOM)",
+      "accountType": "ASSET",
+      "parentCode": "203-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": "SFA"
+    },
+    {
+      "code": "203-2005",
+      "name": "ACCUM. DEPRN. - SIGNBOARD (SHOWROOM)",
+      "accountType": "ASSET",
+      "parentCode": "203-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": "SAD"
+    },
+    {
+      "code": "204-0000",
+      "name": "AIR CONDITIONER",
+      "accountType": "ASSET",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "204-1000",
+      "name": "AIR CONDITIONER (OFFICE)",
+      "accountType": "ASSET",
+      "parentCode": "204-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": "SFA"
+    },
+    {
+      "code": "204-1005",
+      "name": "ACCUM. DEPRN. AIR CONDITIONER (OFFICE)",
+      "accountType": "ASSET",
+      "parentCode": "204-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": "SAD"
+    },
+    {
+      "code": "204-2000",
+      "name": "AIR CONDITIONER (WAREHOUSE)",
+      "accountType": "ASSET",
+      "parentCode": "204-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": "SFA"
+    },
+    {
+      "code": "204-2005",
+      "name": "ACCUM. DEPRN. AIR CONDITIONER (WAREHOUSE)",
+      "accountType": "ASSET",
+      "parentCode": "204-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": "SAD"
+    },
+    {
+      "code": "204-3000",
+      "name": "AIR CONDITIONER (SHOWROOM)",
+      "accountType": "ASSET",
+      "parentCode": "204-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": "SFA"
+    },
+    {
+      "code": "204-3005",
+      "name": "ACCUM. DEPRN. AIR CONDITIONER (SHOWROOM)",
+      "accountType": "ASSET",
+      "parentCode": "204-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": "SAD"
+    },
+    {
+      "code": "205-0000",
+      "name": "RENOVATION",
+      "accountType": "ASSET",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "205-1000",
+      "name": "RENOVATION (WAREHOUSE)",
+      "accountType": "ASSET",
+      "parentCode": "205-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": "SFA"
+    },
+    {
+      "code": "205-1005",
+      "name": "ACCUM. DEPRN. RENOVATION (WAREHOUSE)",
+      "accountType": "ASSET",
+      "parentCode": "205-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": "SAD"
+    },
+    {
+      "code": "205-2000",
+      "name": "RENOVATION (SHOWROOM)",
+      "accountType": "ASSET",
+      "parentCode": "205-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": "SFA"
+    },
+    {
+      "code": "205-2005",
+      "name": "ACCUM. DEPRN. RENOVATION (SHOWROOM)",
+      "accountType": "ASSET",
+      "parentCode": "205-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": "SAD"
+    },
+    {
+      "code": "205-3000",
+      "name": "RENOVATION (HOSTEL)",
+      "accountType": "ASSET",
+      "parentCode": "205-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": "SFA"
+    },
+    {
+      "code": "205-3005",
+      "name": "ACCUM. DEPRN. RENOVATION (HOSTEL)",
+      "accountType": "ASSET",
+      "parentCode": "205-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": "SAD"
+    },
+    {
+      "code": "205-4000",
+      "name": "RENOVATION (OFFICE)",
+      "accountType": "ASSET",
+      "parentCode": "205-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": "SFA"
+    },
+    {
+      "code": "205-4005",
+      "name": "ACCUM. DEPRN. RENOVATION (OFFICE)",
+      "accountType": "ASSET",
+      "parentCode": "205-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": "SAD"
+    },
+    {
+      "code": "206-0000",
+      "name": "COMPUTER EQUIPMENT & SOFTWARE",
+      "accountType": "ASSET",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "200-8000",
+      "name": "COMPUTER EQUIPMENT &  SOFTWARE",
+      "accountType": "ASSET",
+      "parentCode": "206-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": "SFA"
+    },
+    {
+      "code": "200-8005",
+      "name": "ACCUM. DEPRN. COMPUTER SOFTWARE",
+      "accountType": "ASSET",
+      "parentCode": "206-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": "SAD"
+    },
+    {
+      "code": "207-0000",
+      "name": "MOTOR VEHICLE",
+      "accountType": "ASSET",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "207-1000",
+      "name": "MOTOR VEHICLE",
+      "accountType": "ASSET",
+      "parentCode": "207-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": "SFA"
+    },
+    {
+      "code": "207-1005",
+      "name": "ACCUM. DEPRN. MOTOR VEHICLE",
+      "accountType": "ASSET",
+      "parentCode": "207-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": "SAD"
+    },
+    {
+      "code": "210-0000",
+      "name": "GOODWILL",
+      "accountType": "ASSET",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "210-2210",
+      "name": "TRADEMARK",
+      "accountType": "ASSET",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "250-0000",
+      "name": "INVESTMENTS IN OTHERS COMPANY",
+      "accountType": "ASSET",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "250-0010",
+      "name": "INVESTMENTS IN SUBSIDIARY",
+      "accountType": "ASSET",
+      "parentCode": "250-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "250-0020",
+      "name": "PROVISION OF IMPAIRMENT LOSS",
+      "accountType": "ASSET",
+      "parentCode": "250-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "300-0000",
+      "name": "ACCOUNT RECEIVEABLE",
+      "accountType": "ASSET",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": "SDC"
+    },
+    {
+      "code": "305-0000",
+      "name": "OTHER DEBTOR",
+      "accountType": "ASSET",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": "SDC"
+    },
+    {
+      "code": "310-0000",
+      "name": "CASH AT BANK",
+      "accountType": "ASSET",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "310-0010",
+      "name": "CASH AT BANK - MAYBANK",
+      "accountType": "ASSET",
+      "parentCode": "310-0000",
+      "accMoney": true,
+      "shared": false,
+      "special": "SBK"
+    },
+    {
+      "code": "310-0020",
+      "name": "CASH AT BANK - HLBB",
+      "accountType": "ASSET",
+      "parentCode": "310-0000",
+      "accMoney": true,
+      "shared": false,
+      "special": "SBK"
+    },
+    {
+      "code": "310-0030",
+      "name": "CASH AT BANK - ALLIANCE",
+      "accountType": "ASSET",
+      "parentCode": "310-0000",
+      "accMoney": true,
+      "shared": false,
+      "special": "SBK"
+    },
+    {
+      "code": "310-0040",
+      "name": "CASH AT BANK - UOB",
+      "accountType": "ASSET",
+      "parentCode": "310-0000",
+      "accMoney": true,
+      "shared": false,
+      "special": "SBK"
+    },
+    {
+      "code": "310-0050",
+      "name": "CASH AT BANK - CIMB",
+      "accountType": "ASSET",
+      "parentCode": "310-0000",
+      "accMoney": true,
+      "shared": false,
+      "special": "SBK"
+    },
+    {
+      "code": "310-0060",
+      "name": "CASH AT BANK - MAYBANK (TRADE FINANCE)",
+      "accountType": "ASSET",
+      "parentCode": "310-0000",
+      "accMoney": true,
+      "shared": false,
+      "special": "SBK"
+    },
+    {
+      "code": "310-0090",
+      "name": "CASH AT BANK - UOB (2093169184)",
+      "accountType": "ASSET",
+      "parentCode": "310-0000",
+      "accMoney": true,
+      "shared": false,
+      "special": "SBK"
+    },
+    {
+      "code": "310-0100",
+      "name": "CASH AT BANK - MBB (564128831776)",
+      "accountType": "ASSET",
+      "parentCode": "310-0000",
+      "accMoney": true,
+      "shared": false,
+      "special": "SBK"
+    },
+    {
+      "code": "320-0000",
+      "name": "CASH IN HAND",
+      "accountType": "ASSET",
+      "parentCode": null,
+      "accMoney": true,
+      "shared": false,
+      "special": "SCH"
+    },
+    {
+      "code": "321-0000",
+      "name": "PETTY CASH - WAREHOUSE",
+      "accountType": "ASSET",
+      "parentCode": null,
+      "accMoney": true,
+      "shared": false,
+      "special": "SCH"
+    },
+    {
+      "code": "322-0000",
+      "name": "VOUCHER RECEIVED",
+      "accountType": "ASSET",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": "SOP"
+    },
+    {
+      "code": "323-0000",
+      "name": "TNG - EWALLET",
+      "accountType": "ASSET",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": "SOP"
+    },
+    {
+      "code": "324-0000",
+      "name": "LALAMOVE - WALLET",
+      "accountType": "ASSET",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": "SOP"
+    },
+    {
+      "code": "325-0000",
+      "name": "PETTY CASH - PAYROLL HR",
+      "accountType": "ASSET",
+      "parentCode": null,
+      "accMoney": true,
+      "shared": false,
+      "special": "SCH"
+    },
+    {
+      "code": "330-0000",
+      "name": "STOCK",
+      "accountType": "ASSET",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": "SBS"
+    },
+    {
+      "code": "340-0000",
+      "name": "DEPOSIT PAID - CA",
+      "accountType": "ASSET",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "340-0010",
+      "name": "DEPOSIT - SHOWROOM & WAREHOUSE",
+      "accountType": "ASSET",
+      "parentCode": "340-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "340-0020",
+      "name": "DEPOSIT - AIRBNB",
+      "accountType": "ASSET",
+      "parentCode": "340-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "340-0030",
+      "name": "DEPOSIT - EXHIBITION / ROADSHOW",
+      "accountType": "ASSET",
+      "parentCode": "340-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "340-0040",
+      "name": "DEPOSIT - OTHERS",
+      "accountType": "ASSET",
+      "parentCode": "340-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "340-0050",
+      "name": "DEPOSIT - OFFICE",
+      "accountType": "ASSET",
+      "parentCode": "340-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "350-0000",
+      "name": "LOAN TO RELATED PARTIES",
+      "accountType": "ASSET",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": false,
+      "special": null
+    },
+    {
+      "code": "350-0010",
+      "name": "LOAN TO RELATED PARTY - THE CONTS SDN BHD",
+      "accountType": "ASSET",
+      "parentCode": "350-0000",
+      "accMoney": false,
+      "shared": false,
+      "special": null
+    },
+    {
+      "code": "350-0011",
+      "name": "LOAN TO RELATED PARTY - THE CONTS (INTEREST IN SUSPENSE)",
+      "accountType": "ASSET",
+      "parentCode": "350-0000",
+      "accMoney": false,
+      "shared": false,
+      "special": null
+    },
+    {
+      "code": "350-0020",
+      "name": "LOAN TO RELATED PARTY - ZANOTTI (M) SDN BHD (ALPHARIS SB)",
+      "accountType": "ASSET",
+      "parentCode": "350-0000",
+      "accMoney": false,
+      "shared": false,
+      "special": null
+    },
+    {
+      "code": "350-0030",
+      "name": "LOAN TO RELATED PARTY - COLIVE SDN. BHD.",
+      "accountType": "ASSET",
+      "parentCode": "350-0000",
+      "accMoney": false,
+      "shared": false,
+      "special": null
+    },
+    {
+      "code": "350-0040",
+      "name": "LOAN TO RELATED PARTY - CARRESS SDN. BHD.",
+      "accountType": "ASSET",
+      "parentCode": "350-0000",
+      "accMoney": false,
+      "shared": false,
+      "special": null
+    },
+    {
+      "code": "350-0050",
+      "name": "LOAN TO RELATED PARTY - HOUZS VENTURES HOLDING SDN. BHD.",
+      "accountType": "ASSET",
+      "parentCode": "350-0000",
+      "accMoney": false,
+      "shared": false,
+      "special": null
+    },
+    {
+      "code": "350-0060",
+      "name": "LOAN TO RELATED PARTY - HOOKKA MANUFACTURING SDN. BHD.",
+      "accountType": "ASSET",
+      "parentCode": "350-0000",
+      "accMoney": false,
+      "shared": false,
+      "special": null
+    },
+    {
+      "code": "350-0070",
+      "name": "LOAN TO RELATED PARTY - 2990 HOME SDN BHD",
+      "accountType": "ASSET",
+      "parentCode": "350-0000",
+      "accMoney": false,
+      "shared": false,
+      "special": null
+    },
+    {
+      "code": "350-0080",
+      "name": "LOAN TO RELATED PARTY - HOOKKA INDUSTRIES SDN BHD",
+      "accountType": "ASSET",
+      "parentCode": "350-0000",
+      "accMoney": false,
+      "shared": false,
+      "special": null
+    },
+    {
+      "code": "350-0090",
+      "name": "LOAN TO RELATED PARTY - OHANA STUDIO MARKETING SDN BHD",
+      "accountType": "ASSET",
+      "parentCode": "350-0000",
+      "accMoney": false,
+      "shared": false,
+      "special": null
+    },
+    {
+      "code": "350-0100",
+      "name": "LOAN TO RELATED PARTY - TAN GUAN YU",
+      "accountType": "ASSET",
+      "parentCode": "350-0000",
+      "accMoney": false,
+      "shared": false,
+      "special": null
+    },
+    {
+      "code": "351-0000",
+      "name": "LOAN TO OTHER PARTY",
+      "accountType": "ASSET",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": false,
+      "special": null
+    },
+    {
+      "code": "351-0010",
+      "name": "LOAN TO OTHER PARTY - ENG SUI HOR",
+      "accountType": "ASSET",
+      "parentCode": "351-0000",
+      "accMoney": false,
+      "shared": false,
+      "special": null
+    },
+    {
+      "code": "351-0020",
+      "name": "LOAN TO OTHER PARTY - MSJ TRANSPORT",
+      "accountType": "ASSET",
+      "parentCode": "351-0000",
+      "accMoney": false,
+      "shared": false,
+      "special": null
+    },
+    {
+      "code": "351-0030",
+      "name": "LOAN TO OTHER PARTY - HOLIKE",
+      "accountType": "ASSET",
+      "parentCode": "351-0000",
+      "accMoney": false,
+      "shared": false,
+      "special": null
+    },
+    {
+      "code": "360-0000",
+      "name": "PREPAYMENT & ADVANCE",
+      "accountType": "ASSET",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "360-0010",
+      "name": "ADVANCE - EXHBITION/ROADSHOW RENTAL",
+      "accountType": "ASSET",
+      "parentCode": "360-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "360-0020",
+      "name": "ADVANCE - LOAN PAYMENT",
+      "accountType": "ASSET",
+      "parentCode": "360-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "360-0030",
+      "name": "ADVANCE - SALARY",
+      "accountType": "ASSET",
+      "parentCode": "360-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "360-0040",
+      "name": "ADVANCE - HRDF",
+      "accountType": "ASSET",
+      "parentCode": "360-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "360-0050",
+      "name": "PREPAYMENT COMMISSION",
+      "accountType": "ASSET",
+      "parentCode": "360-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "360-0060",
+      "name": "ADVANCE - HIRE PURCHASE",
+      "accountType": "ASSET",
+      "parentCode": "360-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "370-0000",
+      "name": "ACCRUAL - GIK TO RECEIVED",
+      "accountType": "ASSET",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "380-0000",
+      "name": "FIXED DEPOSIT",
+      "accountType": "ASSET",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "380-0010",
+      "name": "FIXED DEPOSIT - MAYBANK(SHORT TERM)",
+      "accountType": "ASSET",
+      "parentCode": "380-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "390-0000",
+      "name": "TAX PREPAYMENT",
+      "accountType": "ASSET",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "399-9999",
+      "name": "DEFERRED REVENUE",
+      "accountType": "LIABILITY",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": "SDP"
+    },
+    {
+      "code": "400-0000",
+      "name": "ACCOUNT PAYABLE",
+      "accountType": "LIABILITY",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": "SCC"
+    },
+    {
+      "code": "400-0001",
+      "name": "DEPOSIT",
+      "accountType": "LIABILITY",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": "SCC"
+    },
+    {
+      "code": "405-0000",
+      "name": "OTHER CREDITOS",
+      "accountType": "LIABILITY",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": "SCC"
+    },
+    {
+      "code": "406-0000",
+      "name": "OTHER CREDITOR - AXIA DIGITAL SDN. BHD.",
+      "accountType": "LIABILITY",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": false,
+      "special": null
+    },
+    {
+      "code": "410-0000",
+      "name": "ACCRUALS",
+      "accountType": "LIABILITY",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "410-0010",
+      "name": "ACCRUAL - SALARIES",
+      "accountType": "LIABILITY",
+      "parentCode": "410-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "410-0020",
+      "name": "ACCRUAL - EPF",
+      "accountType": "LIABILITY",
+      "parentCode": "410-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "410-0030",
+      "name": "ACCRUAL - SOCSO",
+      "accountType": "LIABILITY",
+      "parentCode": "410-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "410-0040",
+      "name": "ACCRUAL - EIS",
+      "accountType": "LIABILITY",
+      "parentCode": "410-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "410-0050",
+      "name": "ACCRUAL - PCB",
+      "accountType": "LIABILITY",
+      "parentCode": "410-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "410-0060",
+      "name": "ACCRUAL - OTHERS",
+      "accountType": "LIABILITY",
+      "parentCode": "410-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "410-0070",
+      "name": "ACCRUAL - COMMISSION",
+      "accountType": "LIABILITY",
+      "parentCode": "410-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "410-0080",
+      "name": "ACCRUAL - COST OF GOOD SOLD",
+      "accountType": "LIABILITY",
+      "parentCode": "410-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "410-0090",
+      "name": "ACCRUAL - ZAKAT",
+      "accountType": "LIABILITY",
+      "parentCode": "410-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "410-0100",
+      "name": "ACCRUAL - SPONSORSHIP",
+      "accountType": "LIABILITY",
+      "parentCode": "410-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "420-0000",
+      "name": "SECURITY DEPOSIT",
+      "accountType": "LIABILITY",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "430-0000",
+      "name": "AMOUNT DUE TO DIRECTOR",
+      "accountType": "LIABILITY",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": false,
+      "special": null
+    },
+    {
+      "code": "430-0001",
+      "name": "AMOUNT DUE FROM / (TO) DIRECTOR - LOO WEN WEI",
+      "accountType": "LIABILITY",
+      "parentCode": "430-0000",
+      "accMoney": false,
+      "shared": false,
+      "special": null
+    },
+    {
+      "code": "430-0002",
+      "name": "AMOUNT DUE FROM / (TO) DIRECTOR - LIM WEI SIANG",
+      "accountType": "LIABILITY",
+      "parentCode": "430-0000",
+      "accMoney": false,
+      "shared": false,
+      "special": null
+    },
+    {
+      "code": "430-0003",
+      "name": "AMOUNT DUE FROM / (TO) DIRECTOR - LIM WEI LIANG",
+      "accountType": "LIABILITY",
+      "parentCode": "430-0000",
+      "accMoney": false,
+      "shared": false,
+      "special": null
+    },
+    {
+      "code": "430-0004",
+      "name": "AMOUNT DUE FROM / (TO) DIRECTOR - CHAI MENG KEAT",
+      "accountType": "LIABILITY",
+      "parentCode": "430-0000",
+      "accMoney": false,
+      "shared": false,
+      "special": null
+    },
+    {
+      "code": "430-0005",
+      "name": "DIRECTOR ACCOUNT",
+      "accountType": "LIABILITY",
+      "parentCode": "430-0000",
+      "accMoney": false,
+      "shared": false,
+      "special": null
+    },
+    {
+      "code": "430-0006",
+      "name": "BORROWING",
+      "accountType": "LIABILITY",
+      "parentCode": "430-0000",
+      "accMoney": false,
+      "shared": false,
+      "special": null
+    },
+    {
+      "code": "440-0000",
+      "name": "DEFERRED REVENUE",
+      "accountType": "LIABILITY",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "490-0000",
+      "name": "TEMPORARY ACCOUNT FOR CONTRA",
+      "accountType": "LIABILITY",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "450-0000",
+      "name": "HP CREDITOR",
+      "accountType": "LIABILITY",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": false,
+      "special": null
+    },
+    {
+      "code": "450-H001",
+      "name": "HP CREDITOR- JPL 9058",
+      "accountType": "LIABILITY",
+      "parentCode": "450-0000",
+      "accMoney": false,
+      "shared": false,
+      "special": null
+    },
+    {
+      "code": "450-H002",
+      "name": "HP CREDITOR- VNB 9058",
+      "accountType": "LIABILITY",
+      "parentCode": "450-0000",
+      "accMoney": false,
+      "shared": false,
+      "special": null
+    },
+    {
+      "code": "450-H003",
+      "name": "HP CREDITOR- VPC 9058",
+      "accountType": "LIABILITY",
+      "parentCode": "450-0000",
+      "accMoney": false,
+      "shared": false,
+      "special": null
+    },
+    {
+      "code": "450-H004",
+      "name": "HP CREDITOR - FORKLIFT",
+      "accountType": "LIABILITY",
+      "parentCode": "450-0000",
+      "accMoney": false,
+      "shared": false,
+      "special": null
+    },
+    {
+      "code": "450-H005",
+      "name": "HP CREDITOR - VQE 9058",
+      "accountType": "LIABILITY",
+      "parentCode": "450-0000",
+      "accMoney": false,
+      "shared": false,
+      "special": null
+    },
+    {
+      "code": "451-0000",
+      "name": "HP INTEREST IN SUSPENSE",
+      "accountType": "LIABILITY",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": false,
+      "special": null
+    },
+    {
+      "code": "451-H001",
+      "name": "HP INTEREST IN SUSPENSE - JPL 9058",
+      "accountType": "LIABILITY",
+      "parentCode": "451-0000",
+      "accMoney": false,
+      "shared": false,
+      "special": null
+    },
+    {
+      "code": "451-H002",
+      "name": "HP INTEREST IN SUSPENSE - VNB 9058",
+      "accountType": "LIABILITY",
+      "parentCode": "451-0000",
+      "accMoney": false,
+      "shared": false,
+      "special": null
+    },
+    {
+      "code": "451-H003",
+      "name": "HP INTEREST IN SUSPENSE - VPC 9058",
+      "accountType": "LIABILITY",
+      "parentCode": "451-0000",
+      "accMoney": false,
+      "shared": false,
+      "special": null
+    },
+    {
+      "code": "451-H004",
+      "name": "HP INTEREST IN SUSPENSE - FORKLIFT",
+      "accountType": "LIABILITY",
+      "parentCode": "451-0000",
+      "accMoney": false,
+      "shared": false,
+      "special": null
+    },
+    {
+      "code": "451-H005",
+      "name": "HP INTEREST IN SUSPENSE - VQE 9058",
+      "accountType": "LIABILITY",
+      "parentCode": "451-0000",
+      "accMoney": false,
+      "shared": false,
+      "special": null
+    },
+    {
+      "code": "460-0000",
+      "name": "LOAN/BORROWING",
+      "accountType": "LIABILITY",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": false,
+      "special": null
+    },
+    {
+      "code": "460-0001",
+      "name": "LOAN - MAYBANK",
+      "accountType": "LIABILITY",
+      "parentCode": "460-0000",
+      "accMoney": false,
+      "shared": false,
+      "special": null
+    },
+    {
+      "code": "460-0002",
+      "name": "LOAN - BOOST (200K)",
+      "accountType": "LIABILITY",
+      "parentCode": "460-0000",
+      "accMoney": false,
+      "shared": false,
+      "special": null
+    },
+    {
+      "code": "460-0003",
+      "name": "LOAN - FUNDING SOCIETIES MODALKU (300K)",
+      "accountType": "LIABILITY",
+      "parentCode": "460-0000",
+      "accMoney": false,
+      "shared": false,
+      "special": null
+    },
+    {
+      "code": "460-0004",
+      "name": "LOAN - FUNDAZTIC (100K) - 01.08.24 - 01.07.27",
+      "accountType": "LIABILITY",
+      "parentCode": "460-0000",
+      "accMoney": false,
+      "shared": false,
+      "special": null
+    },
+    {
+      "code": "460-0006",
+      "name": "LOAN - ALLIANCE",
+      "accountType": "LIABILITY",
+      "parentCode": "460-0000",
+      "accMoney": false,
+      "shared": false,
+      "special": null
+    },
+    {
+      "code": "460-0007",
+      "name": "LOAN BOOST (300K)",
+      "accountType": "LIABILITY",
+      "parentCode": "460-0000",
+      "accMoney": false,
+      "shared": false,
+      "special": null
+    },
+    {
+      "code": "460-0008",
+      "name": "LOAN - MAYBANK (1 MIL)",
+      "accountType": "LIABILITY",
+      "parentCode": "460-0000",
+      "accMoney": false,
+      "shared": false,
+      "special": null
+    },
+    {
+      "code": "460-0009",
+      "name": "TRADE FINANCE - MAYBANK",
+      "accountType": "LIABILITY",
+      "parentCode": "460-0000",
+      "accMoney": false,
+      "shared": false,
+      "special": null
+    },
+    {
+      "code": "460-0010",
+      "name": "LOAN - UOB (RM 350K)",
+      "accountType": "LIABILITY",
+      "parentCode": "460-0000",
+      "accMoney": false,
+      "shared": false,
+      "special": null
+    },
+    {
+      "code": "460-0011",
+      "name": "LOAN - YULON",
+      "accountType": "LIABILITY",
+      "parentCode": "460-0000",
+      "accMoney": false,
+      "shared": false,
+      "special": null
+    },
+    {
+      "code": "460-0012",
+      "name": "LOAN - MAYBANK (564128831776)",
+      "accountType": "LIABILITY",
+      "parentCode": "460-0000",
+      "accMoney": false,
+      "shared": false,
+      "special": null
+    },
+    {
+      "code": "465-0000",
+      "name": "LOAN INTEREST IN SUSPENSE",
+      "accountType": "LIABILITY",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "460-H001",
+      "name": "LOAN INTEREST IN SUSPENSE - FUNDING SOCIETIES MODALKU",
+      "accountType": "LIABILITY",
+      "parentCode": "465-0000",
+      "accMoney": false,
+      "shared": false,
+      "special": null
+    },
+    {
+      "code": "460-H002",
+      "name": "LOAN INTEREST IN SUSPENSE - BOOST",
+      "accountType": "LIABILITY",
+      "parentCode": "465-0000",
+      "accMoney": false,
+      "shared": false,
+      "special": null
+    },
+    {
+      "code": "460-H003",
+      "name": "LOAN INTEREST IN SUSPENSE - ALLIANCE BANK",
+      "accountType": "LIABILITY",
+      "parentCode": "465-0000",
+      "accMoney": false,
+      "shared": false,
+      "special": null
+    },
+    {
+      "code": "460-H004",
+      "name": "LOAN INTEREST IN SUSPENSE - FUNDAZTIC",
+      "accountType": "LIABILITY",
+      "parentCode": "465-0000",
+      "accMoney": false,
+      "shared": false,
+      "special": null
+    },
+    {
+      "code": "460-H005",
+      "name": "LOAN INTEREST IN SUSPENSE - MAYBANK",
+      "accountType": "LIABILITY",
+      "parentCode": "465-0000",
+      "accMoney": false,
+      "shared": false,
+      "special": null
+    },
+    {
+      "code": "460-H006",
+      "name": "LOAN INTEREST IN SUSPENSE - UOB",
+      "accountType": "LIABILITY",
+      "parentCode": "465-0000",
+      "accMoney": false,
+      "shared": false,
+      "special": null
+    },
+    {
+      "code": "460-H007",
+      "name": "LOAN INTEREST IN SUSPENSE - YULON",
+      "accountType": "LIABILITY",
+      "parentCode": "465-0000",
+      "accMoney": false,
+      "shared": false,
+      "special": null
+    },
+    {
+      "code": "480-0000",
+      "name": "DEFFERED TAX LIABILITY",
+      "accountType": "LIABILITY",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "500-0000",
+      "name": "RENTAL REVENUE",
+      "accountType": "INCOME",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "501-0000",
+      "name": "SALES OF FURNITURE & FITTINGS",
+      "accountType": "INCOME",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "500-0001",
+      "name": "SALES OF BEDDING",
+      "accountType": "INCOME",
+      "parentCode": "501-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "500-0002",
+      "name": "SALES OF DINNING",
+      "accountType": "INCOME",
+      "parentCode": "501-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "500-0003",
+      "name": "SALES OF SOFA",
+      "accountType": "INCOME",
+      "parentCode": "501-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "500-0004",
+      "name": "SALES OF HOUSEHOLD PRODUCT (OTHERS)",
+      "accountType": "INCOME",
+      "parentCode": "501-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "500-1000",
+      "name": "SALES OF REVENUE",
+      "accountType": "INCOME",
+      "parentCode": "501-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "502-0000",
+      "name": "SALES OF BEDLINES & ACCESSORIES",
+      "accountType": "INCOME",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "509-0000",
+      "name": "DEPOSIT PAY BY CUSTOMER",
+      "accountType": "INCOME",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "510-0000",
+      "name": "RETURN INWARDS",
+      "accountType": "INCOME",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "520-0000",
+      "name": "DISCOUNT ALLOWED",
+      "accountType": "INCOME",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "600-0000",
+      "name": "STOCKS AT THE BEGINNING OF YEAR",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": "SOS"
+    },
+    {
+      "code": "601-0000",
+      "name": "PURCHASE OF FURNITURE & FITTINGS",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "601-0001",
+      "name": "PURCHASES OF BEDDING",
+      "accountType": "EXPENSE",
+      "parentCode": "601-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "601-0002",
+      "name": "PURCHASE OF DINNING",
+      "accountType": "EXPENSE",
+      "parentCode": "601-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "601-0003",
+      "name": "PURCHASE OF SOFA",
+      "accountType": "EXPENSE",
+      "parentCode": "601-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "601-0004",
+      "name": "PURCHASE OF HOUSEHOLD PRODUCT (OTHERS)",
+      "accountType": "EXPENSE",
+      "parentCode": "601-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "602-0000",
+      "name": "PURCHASES OF BEDLINES & ACCESSORIES",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "603-0000",
+      "name": "PURCHASE - TRANSPORT",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "610-0001",
+      "name": "DISCOUNT RECEIVED",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "612-0000",
+      "name": "PURCHASES RETURN",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "613-0000",
+      "name": "PURCHASES OF FOOD AND BEVERAGES",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "615-0000",
+      "name": "CARRIAGE INWARDS",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "619-0000",
+      "name": "COST OF PURCHASE BASED ON DEPOSIT (34%)",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "620-0000",
+      "name": "STOCKS AT THE END OF YEAR",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": "SCS"
+    },
+    {
+      "code": "530-0000",
+      "name": "COMMISSION / REFERRAL FEES RECEVIED",
+      "accountType": "INCOME",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "540-0000",
+      "name": "FOOD AND BEVERAGES",
+      "accountType": "INCOME",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "550-0000",
+      "name": "LATE CHECK OUT PENALTY",
+      "accountType": "INCOME",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "560-0000",
+      "name": "INSURANCE CLAIM",
+      "accountType": "INCOME",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "570-0000",
+      "name": "RENTAL INCOME",
+      "accountType": "INCOME",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "570-0010",
+      "name": "RENTAL INCOME - OFFICE",
+      "accountType": "INCOME",
+      "parentCode": "570-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "570-0020",
+      "name": "RENTAL INCOME - SHOWROOM",
+      "accountType": "INCOME",
+      "parentCode": "570-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "570-0030",
+      "name": "RENTAL INCOME - WH (BALAKONG)",
+      "accountType": "INCOME",
+      "parentCode": "570-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "570-0040",
+      "name": "RENTAL INCOME - PARKING",
+      "accountType": "INCOME",
+      "parentCode": "570-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "570-9999",
+      "name": "RENTAL INCOME",
+      "accountType": "INCOME",
+      "parentCode": "570-0000",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "580-0000",
+      "name": "GAIN ON FOREIGN EXCHANGE",
+      "accountType": "INCOME",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "590-0000",
+      "name": "TRANSPORT INCOME",
+      "accountType": "INCOME",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "591-0000",
+      "name": "SPONSORSHIP",
+      "accountType": "INCOME",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "592-0000",
+      "name": "SALES OF FABRIC",
+      "accountType": "INCOME",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "598-0000",
+      "name": "ROUNDING ADJUSTMENT",
+      "accountType": "INCOME",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "599-0000",
+      "name": "ADDITIONAL INCOME",
+      "accountType": "INCOME",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "599-0001",
+      "name": "SALARY / LABOUR INCOME",
+      "accountType": "INCOME",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "599-0002",
+      "name": "MARKETING INCOME",
+      "accountType": "INCOME",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "599-0003",
+      "name": "HIRING INCOME",
+      "accountType": "INCOME",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "599-0004",
+      "name": "UTILITY EXPENSE",
+      "accountType": "INCOME",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "599-0005",
+      "name": "INTEREST INCOME",
+      "accountType": "INCOME",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "599-0007",
+      "name": "WEBSITE AND SOFTWARE INCOME",
+      "accountType": "INCOME",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "599-0010",
+      "name": "WATER & ELECTRICITY INCOME",
+      "accountType": "INCOME",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "599-0006",
+      "name": "WATER & ELECTRICITY INCOME - OFFICE",
+      "accountType": "INCOME",
+      "parentCode": "599-0010",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "599-0012",
+      "name": "WATER & ELECTRICTY - SHOWROOM",
+      "accountType": "INCOME",
+      "parentCode": "599-0010",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-A001",
+      "name": "ACCOUNTING FEE",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-A002",
+      "name": "ADVERTISEMENT",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-A003",
+      "name": "ADVERTISEMENT - EXHIBITION",
+      "accountType": "EXPENSE",
+      "parentCode": "900-A002",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-A004",
+      "name": "ADVERTISEMENT - MANAGEMENT FEES",
+      "accountType": "EXPENSE",
+      "parentCode": "900-A002",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-A005",
+      "name": "ADVERTISEMENT - VACANCY",
+      "accountType": "EXPENSE",
+      "parentCode": "900-A002",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-A006",
+      "name": "ADVERTISEMENT - SHOWROOM SUNWAY CARNIVAL",
+      "accountType": "EXPENSE",
+      "parentCode": "900-A002",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-A007",
+      "name": "ADVERTISEMENT - SHOWROOM KELANA JAYA (ZANOTTI )",
+      "accountType": "EXPENSE",
+      "parentCode": "900-A002",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-A008",
+      "name": "ADVERTISEMENT - ROADSHOW",
+      "accountType": "EXPENSE",
+      "parentCode": "900-A002",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-A009",
+      "name": "ADVERTISEMENT - PHOTO SHOOTING",
+      "accountType": "EXPENSE",
+      "parentCode": "900-A002",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-A010",
+      "name": "ADVERTISEMENT - ERGOTEX",
+      "accountType": "EXPENSE",
+      "parentCode": "900-A002",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-A011",
+      "name": "AUDIT FEES",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-A012",
+      "name": "ANG PAU",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-A013",
+      "name": "ANNUAL DINNER",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-B001",
+      "name": "BANK CHARGES",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-B002",
+      "name": "BUSINESS CONSULTATION",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-B003",
+      "name": "BOOTH SET UP",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-B004",
+      "name": "BAD DEBT WRITTEN OFF",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-B005",
+      "name": "BOOTH SET UP - NEW DESIGN",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-C002",
+      "name": "CLEANING EXPENSES",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-C003",
+      "name": "COMMISSION ( EVENT )",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-D001",
+      "name": "DEPRECIATION OF FIXED ASSETS",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-D002",
+      "name": "DIRECTOR FEE",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-D003",
+      "name": "DIRECTOR EMOLUMENTS",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-D100",
+      "name": "DIRECTOR REMUNERATION",
+      "accountType": "EXPENSE",
+      "parentCode": "900-D003",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-D200",
+      "name": "DIRECTOR EPF",
+      "accountType": "EXPENSE",
+      "parentCode": "900-D003",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-D300",
+      "name": "DIRECTOR SOCSO",
+      "accountType": "EXPENSE",
+      "parentCode": "900-D003",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-D400",
+      "name": "DIRECTOR EIS",
+      "accountType": "EXPENSE",
+      "parentCode": "900-D003",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-D500",
+      "name": "DIRECTOR ALLOWANCE",
+      "accountType": "EXPENSE",
+      "parentCode": "900-D003",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-D004",
+      "name": "DONATION",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-D005",
+      "name": "DESIGN FEES",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-D006",
+      "name": "DEPOSIT FORFEITED",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-E001",
+      "name": "ENTERTAINMENT",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-E002",
+      "name": "EVENT EXPENSES",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-E003",
+      "name": "EXPENSE - EXH/ OFFICE/ SHOWROOM/WAREHOUSE / HOSTEL",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-E004",
+      "name": "EXHIBITION / ROADSHOW EXP - PACKING FEES",
+      "accountType": "EXPENSE",
+      "parentCode": "900-E003",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-E005",
+      "name": "EXHIBITION / ROADSHOW EXP - MAINTENANCE",
+      "accountType": "EXPENSE",
+      "parentCode": "900-E003",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-E006",
+      "name": "EXHIBITION / ROADSHOW EXP - SUNDRY EXPENSE",
+      "accountType": "EXPENSE",
+      "parentCode": "900-E003",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-E007",
+      "name": "EXPENSE - OFFICE",
+      "accountType": "EXPENSE",
+      "parentCode": "900-E003",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-E008",
+      "name": "EXPENSE - SHOWROOM",
+      "accountType": "EXPENSE",
+      "parentCode": "900-E003",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-E009",
+      "name": "EXPENSE - WAREHOUSE",
+      "accountType": "EXPENSE",
+      "parentCode": "900-E003",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-E010",
+      "name": "EXPENSE - HOSTEL",
+      "accountType": "EXPENSE",
+      "parentCode": "900-E003",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-E011",
+      "name": "EXHIBITION/ROADSHOW EXP - DECORATION",
+      "accountType": "EXPENSE",
+      "parentCode": "900-E003",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-E012",
+      "name": "EXPENSE - WAREHOUSE NEW",
+      "accountType": "EXPENSE",
+      "parentCode": "900-E003",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-E013",
+      "name": "EXPENSE - WAREHOUSE PENANG",
+      "accountType": "EXPENSE",
+      "parentCode": "900-E003",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-E014",
+      "name": "EXPENSE - WAREHOUSE BALAKONG",
+      "accountType": "EXPENSE",
+      "parentCode": "900-E003",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-F001",
+      "name": "FINANCE COST",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-H015",
+      "name": "HP INTEREST",
+      "accountType": "EXPENSE",
+      "parentCode": "900-F001",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-L004",
+      "name": "LOAN INTEREST",
+      "accountType": "EXPENSE",
+      "parentCode": "900-F001",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-G001",
+      "name": "GIFT, GREETING & CONDOLENCES",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-H001",
+      "name": "HOTEL & ACCOMODATION",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-H002",
+      "name": "HOTEL & ACCOMODATION - HOSTEL & OTHERS",
+      "accountType": "EXPENSE",
+      "parentCode": "900-H001",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-H003",
+      "name": "HOTEL & ACCOMODATION - EXHIBITION",
+      "accountType": "EXPENSE",
+      "parentCode": "900-H001",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-H004",
+      "name": "HOTEL & ACCOMODATION - STAFF WH BALAKONG - Tenancy Expire : 31 July 2026",
+      "accountType": "EXPENSE",
+      "parentCode": "900-H001",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-H005",
+      "name": "HOTEL & ACCOMODATION - PARAGON HEIGHT - Tenancy Expire : 30 April 2027",
+      "accountType": "EXPENSE",
+      "parentCode": "900-H001",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-H010",
+      "name": "HOMESTAY EXPENSES",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-H011",
+      "name": "HOMESTAY - UPKEEP",
+      "accountType": "EXPENSE",
+      "parentCode": "900-H010",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-H012",
+      "name": "HOMESTAY - UTLITY BILL",
+      "accountType": "EXPENSE",
+      "parentCode": "900-H010",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-I001",
+      "name": "INCORPORATION FEES",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-I002",
+      "name": "INSURANCE & ROAD TAX",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-I003",
+      "name": "IMPAIRMENT LOSS ON INVESTMENT",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-L001",
+      "name": "LICENSE FEE",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-L002",
+      "name": "FOREIGN EXCHANGE LOSS",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-L003",
+      "name": "LABOUR CHARGES",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-M001",
+      "name": "MARKETING FEES",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-M002",
+      "name": "MEDICAL EXPENSE",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-P001",
+      "name": "PRINTING & STATIONERY",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-P002",
+      "name": "POSTAGES & STAMPS",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-P003",
+      "name": "PROFESSIONAL FEE",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-P005",
+      "name": "PETROL, TOL AND PARKING",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-P006",
+      "name": "PETROL, TOL AND PARKING - LORI VNB 9058",
+      "accountType": "EXPENSE",
+      "parentCode": "900-P005",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-P007",
+      "name": "PETROL, TOL AND PARKING - LORI JPL 9058",
+      "accountType": "EXPENSE",
+      "parentCode": "900-P005",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-P008",
+      "name": "PETROL, TOL AND PARKING - DIRECTOR & OTHERS",
+      "accountType": "EXPENSE",
+      "parentCode": "900-P005",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-P009",
+      "name": "PETROL, TOL AND PARKING - LORI AKT 8973",
+      "accountType": "EXPENSE",
+      "parentCode": "900-P005",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-P010",
+      "name": "PETROL, TOL AND PARKING - VPC 9058",
+      "accountType": "EXPENSE",
+      "parentCode": "900-P005",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-P014",
+      "name": "PETROL, TOL AND PARKING - LORI VQE 9058",
+      "accountType": "EXPENSE",
+      "parentCode": "900-P005",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-P015",
+      "name": "PETROL, TOL AND PARKING - LORI VRH 9058",
+      "accountType": "EXPENSE",
+      "parentCode": "900-P005",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-P011",
+      "name": "PENALTY",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-P012",
+      "name": "PROPERTY, PLANT AND EQUIPMENT WRITTEN OFF",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-P013",
+      "name": "PROCESSING FEES",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-R001",
+      "name": "RENTAL- OTHERS",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-R002",
+      "name": "RENTAL - WAREHOUSE",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-R003",
+      "name": "WAREHOUSE - (AMPANG)- Tenancy Expire : 28.02.26",
+      "accountType": "EXPENSE",
+      "parentCode": "900-R002",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-R004",
+      "name": "WAREHOUSE - (PENANG) - Tenancy Expire : 28.02.27",
+      "accountType": "EXPENSE",
+      "parentCode": "900-R002",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-R005",
+      "name": "WAREHOUSE - (BELAKONG) - Tenancy Expire : 30.09.26",
+      "accountType": "EXPENSE",
+      "parentCode": "900-R002",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-R042",
+      "name": "WAREHOUSE - CHERAS",
+      "accountType": "EXPENSE",
+      "parentCode": "900-R002",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-R046",
+      "name": "WAREHOUSE - (SABAH/SARAWAK) OUTSOURCE",
+      "accountType": "EXPENSE",
+      "parentCode": "900-R002",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-R006",
+      "name": "RENTAL- SHOWROOM",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-R007",
+      "name": "SHOWROOM (KLANG LAMA) Tenancy Expire : 31.07.2025",
+      "accountType": "EXPENSE",
+      "parentCode": "900-R006",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-R008",
+      "name": "SHOWROOM (PENANG) - SUNWAY CARNIVAL",
+      "accountType": "EXPENSE",
+      "parentCode": "900-R006",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-R009",
+      "name": "SHOW ROOM (KELANA JAYA) Tenancy Expire : 15.06.27",
+      "accountType": "EXPENSE",
+      "parentCode": "900-R006",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-R010",
+      "name": "RENTAL - AIRBNB",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-R011",
+      "name": "RENTAL - A-20-05 (Tenancy Expire : 11.01.25)",
+      "accountType": "EXPENSE",
+      "parentCode": "900-R010",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-R012",
+      "name": "RENTAL - A-28-03 (Tenancy Expire : 14.07.25)",
+      "accountType": "EXPENSE",
+      "parentCode": "900-R010",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-R013",
+      "name": "RENTAL - B-15-3A (Tenancy Expire : 11.06.25)",
+      "accountType": "EXPENSE",
+      "parentCode": "900-R010",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-R014",
+      "name": "RENTAL - B-17-3A (Tenancy Expire : 27.10.24)",
+      "accountType": "EXPENSE",
+      "parentCode": "900-R010",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-R015",
+      "name": "RENTAL - B-18-08 (Tenancy Expire : 31.10.24)",
+      "accountType": "EXPENSE",
+      "parentCode": "900-R010",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-R016",
+      "name": "RENTAL - B-26-3A (Tenancy Expire : 31.08.24)REFUND 6800 - 15/9",
+      "accountType": "EXPENSE",
+      "parentCode": "900-R010",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-R017",
+      "name": "RENTAL - B-33-03A (Tenancy Expire : 04.10.23)",
+      "accountType": "EXPENSE",
+      "parentCode": "900-R010",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-R018",
+      "name": "RENTAL - B-33A-02 (Tenancy Expire : 11.12.24)",
+      "accountType": "EXPENSE",
+      "parentCode": "900-R010",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-R019",
+      "name": "RENTAL - B38-03A (Tenancy Expire : 04.10.23 )",
+      "accountType": "EXPENSE",
+      "parentCode": "900-R010",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-R020",
+      "name": "RENTAL - B-33-6 (Tenancy Expire : 15.05.25 )",
+      "accountType": "EXPENSE",
+      "parentCode": "900-R010",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-R021",
+      "name": "RENTAL- B-50-03 (Tenancy Expire : 20.06.24)",
+      "accountType": "EXPENSE",
+      "parentCode": "900-R010",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-R030",
+      "name": "RENTAL COST",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-R031",
+      "name": "RENTAL - ROADSHOW",
+      "accountType": "EXPENSE",
+      "parentCode": "900-R030",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-R032",
+      "name": "RENTAL - EXHIBITION",
+      "accountType": "EXPENSE",
+      "parentCode": "900-R030",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-R040",
+      "name": "RENTAL - OFFICE (KL GATEWAY)",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-R044",
+      "name": "RENTAL - OFFICE E-28-02 (Tenancy Expire : 31.07.2027)",
+      "accountType": "EXPENSE",
+      "parentCode": "900-R040",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-R045",
+      "name": "RENTAL - OFFICE E-28-03 (Tenancy Expire : 31.07.2027)",
+      "accountType": "EXPENSE",
+      "parentCode": "900-R040",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-R047",
+      "name": "RENTAL - OFFICE E-28-03A (Tenancy Expire: 05.12.2026)",
+      "accountType": "EXPENSE",
+      "parentCode": "900-R040",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-R041",
+      "name": "REFERRAL FEES EXPENSE",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-R043",
+      "name": "RENOVATION AND DECORATION - ABNB",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-S002",
+      "name": "SECRETARY FEE",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-S003",
+      "name": "STAFF REFRESHMENT",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-S004",
+      "name": "SEMINAR AND TRAINING",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-S005",
+      "name": "SUBSCRIPTION FEE",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-S008",
+      "name": "SUNDRIES XXX",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-S010",
+      "name": "SALARY & CONTRIBUTION, ALLOWANCE",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-S100",
+      "name": "STAFF SALARIES & OVERTIME",
+      "accountType": "EXPENSE",
+      "parentCode": "900-S010",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-S200",
+      "name": "E'YER EPF",
+      "accountType": "EXPENSE",
+      "parentCode": "900-S010",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-S300",
+      "name": "E'YER SOCSO",
+      "accountType": "EXPENSE",
+      "parentCode": "900-S010",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-S400",
+      "name": "E'YER EIS",
+      "accountType": "EXPENSE",
+      "parentCode": "900-S010",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-S500",
+      "name": "STAFF ALLOWANCE",
+      "accountType": "EXPENSE",
+      "parentCode": "900-S010",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-S600",
+      "name": "STAFF CASUAL WAGES",
+      "accountType": "EXPENSE",
+      "parentCode": "900-S010",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-S700",
+      "name": "STAFF COMMISSION",
+      "accountType": "EXPENSE",
+      "parentCode": "900-S010",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-S800",
+      "name": "STAFF MEDICAL CLAIM",
+      "accountType": "EXPENSE",
+      "parentCode": "900-S010",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-S011",
+      "name": "S)- PART TIME WORKER / WAGES",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-T002",
+      "name": "TRAVELLING EXPENSES -  EXHIBITION/ROADSHOW",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-T003",
+      "name": "TERMINAL RENTAL CHARGES",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-T004",
+      "name": "TRANSPORTATION FEE",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-T005",
+      "name": "TRANSPORT (PNG, PERLIS, KEDAH, KELATAN, TERENGGANU, PAHANG)",
+      "accountType": "EXPENSE",
+      "parentCode": "900-T004",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-T006",
+      "name": "TRANSPORT (KL, SLG, MLK, JHR, OTHERS)",
+      "accountType": "EXPENSE",
+      "parentCode": "900-T004",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-T007",
+      "name": "TRANSPORT (SABAH & SARAWAK)",
+      "accountType": "EXPENSE",
+      "parentCode": "900-T004",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-T015",
+      "name": "TRANSPORT (SGD)",
+      "accountType": "EXPENSE",
+      "parentCode": "900-T004",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-T027",
+      "name": "TRANSPORT SGD - SST 9%",
+      "accountType": "EXPENSE",
+      "parentCode": "900-T004",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-T028",
+      "name": "TRANSPORT SGD - COST 6%",
+      "accountType": "EXPENSE",
+      "parentCode": "900-T004",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-T029",
+      "name": "TRANSPORT SGD - PERMIT",
+      "accountType": "EXPENSE",
+      "parentCode": "900-T004",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-T034",
+      "name": "TRANSPORT SGD - SERVICE",
+      "accountType": "EXPENSE",
+      "parentCode": "900-T004",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-T026",
+      "name": "TRANSPORT (SBH & SWK NEW)",
+      "accountType": "EXPENSE",
+      "parentCode": "900-T004",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-T017",
+      "name": "TRANSPORT (SBH & SWK) - SEAFREIGHT",
+      "accountType": "EXPENSE",
+      "parentCode": "900-T004",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-T018",
+      "name": "TRANSPORT (SBH & SWK) - LOCAL CHARGES",
+      "accountType": "EXPENSE",
+      "parentCode": "900-T004",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-T019",
+      "name": "TRANSPORT (SBH & SWK) - LSS",
+      "accountType": "EXPENSE",
+      "parentCode": "900-T004",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-T020",
+      "name": "TRANSPORT (SBH & SWK) - INLAND",
+      "accountType": "EXPENSE",
+      "parentCode": "900-T004",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-T021",
+      "name": "TRANSPORT (SBH & SWK) - TPT & INSTALLATION FIRST SET",
+      "accountType": "EXPENSE",
+      "parentCode": "900-T004",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-T022",
+      "name": "TRANSPORT (SBH & SWK) - INSTALLATION SUBSEQUENT SE",
+      "accountType": "EXPENSE",
+      "parentCode": "900-T004",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-T023",
+      "name": "TRANSPORT (SBH & SWK) - AGENT FEE",
+      "accountType": "EXPENSE",
+      "parentCode": "900-T004",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-T024",
+      "name": "TRANSPORT (SBH & SWK) - INSURANCE",
+      "accountType": "EXPENSE",
+      "parentCode": "900-T004",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-T025",
+      "name": "TRANSPORT (SBH & SWK) - SST CHARGES",
+      "accountType": "EXPENSE",
+      "parentCode": "900-T004",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-T036",
+      "name": "TRANSPORT (SBH & SWK) - KKPC",
+      "accountType": "EXPENSE",
+      "parentCode": "900-T004",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-T030",
+      "name": "TRANSPORT FAIR - SETUP&DISMANTLE",
+      "accountType": "EXPENSE",
+      "parentCode": "900-T004",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-T031",
+      "name": "TRANSPORT FAIR (KL, SLG, MLK, JHR, OTHERS)",
+      "accountType": "EXPENSE",
+      "parentCode": "900-T004",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-T032",
+      "name": "TRANSPORT FAIR (PNG, PERLIS, KEDAH, KELANTAN, TERENGGANU, PAHANG)",
+      "accountType": "EXPENSE",
+      "parentCode": "900-T004",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-T033",
+      "name": "TRANSPORT FAIR (SBH & SWK)",
+      "accountType": "EXPENSE",
+      "parentCode": "900-T004",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-T035",
+      "name": "BOOTH TRANSPORT (SABAH & SARAWAK)",
+      "accountType": "EXPENSE",
+      "parentCode": "900-T004",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-T008",
+      "name": "TRANSPORTATION FEES - OTHERS",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-T009",
+      "name": "TERMINAL INTEREST CHARGES",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-T010",
+      "name": "TRAVELLING EXPENSES - OTHER",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-T011",
+      "name": "TELEPHONE & INTERNET CHARGES",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-T001",
+      "name": "TELEPHONE & INTERNET OTHERS",
+      "accountType": "EXPENSE",
+      "parentCode": "900-T011",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-T012",
+      "name": "TELEPHONE & INTERNET SHOWROOM",
+      "accountType": "EXPENSE",
+      "parentCode": "900-T011",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-T013",
+      "name": "TELEPHONE & INTERNET WH BALAKONG",
+      "accountType": "EXPENSE",
+      "parentCode": "900-T011",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-T014",
+      "name": "TELEPHONE & INTERNET WH PENANG",
+      "accountType": "EXPENSE",
+      "parentCode": "900-T011",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-U001",
+      "name": "UPKEEP OF WAREHOUSE",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-U002",
+      "name": "UPKEEP OF OFFICE",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-U003",
+      "name": "UPKEEP OF SHOWROOM",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-U004",
+      "name": "UPKEEP OF HOSTEL",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-U006",
+      "name": "UPKEEP OF LORI",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-U007",
+      "name": "UPKEEP OF LORI - JPL 9058",
+      "accountType": "EXPENSE",
+      "parentCode": "900-U006",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-U008",
+      "name": "UPKEEP OF LORI - VNB 9058",
+      "accountType": "EXPENSE",
+      "parentCode": "900-U006",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-U009",
+      "name": "UPKEEP OF LORI - 3RD",
+      "accountType": "EXPENSE",
+      "parentCode": "900-U006",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-U010",
+      "name": "UPKEEP OF LORI - VPC 9058",
+      "accountType": "EXPENSE",
+      "parentCode": "900-U006",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-U011",
+      "name": "UPKEEP OF LORI - VQE 9058",
+      "accountType": "EXPENSE",
+      "parentCode": "900-U006",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-W002",
+      "name": "WEBSITE & SYSTEM EXPENSES",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-W003",
+      "name": "WORSHIPPING EXPENSE",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-W004",
+      "name": "WATER & ELECTRICITY",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-W001",
+      "name": "WATER & ELECTRICITY - OTHERS",
+      "accountType": "EXPENSE",
+      "parentCode": "900-W004",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-W005",
+      "name": "WATER & ELECTRICITY - SHOWROOM",
+      "accountType": "EXPENSE",
+      "parentCode": "900-W004",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-W006",
+      "name": "WATER & ELECTRICTY - OFFICE",
+      "accountType": "EXPENSE",
+      "parentCode": "900-W004",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-W007",
+      "name": "WATER & ELECTRICITY - WH BALAKONG",
+      "accountType": "EXPENSE",
+      "parentCode": "900-W004",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-W008",
+      "name": "WATER & ELECTRICITY - WH PENANG",
+      "accountType": "EXPENSE",
+      "parentCode": "900-W004",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "900-W009",
+      "name": "WATER & ELECTRICITY - WH BALAKONG ACCOMODATION",
+      "accountType": "EXPENSE",
+      "parentCode": "900-W004",
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "919-0000",
+      "name": "BUSINESS EXPENSES XXX",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "922-0000",
+      "name": "OTHER EXPENSES XXX",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "926-0000",
+      "name": "CONSUMABLES XXX",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "930-0000",
+      "name": "MISCELLANEOUS EXPENSES XXX",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "931-0000",
+      "name": "REPAIR AND MAINTENANCE XXX",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "933-0000",
+      "name": "HIRING FEE",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "937-0000",
+      "name": "CLAIM XXX",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "938-0000",
+      "name": "UNKNOWN EXPENSES XXXX",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "947-0000",
+      "name": "LABOR EXPENSES XXX",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    },
+    {
+      "code": "950-0000",
+      "name": "TAXATION",
+      "accountType": "EXPENSE",
+      "parentCode": null,
+      "accMoney": false,
+      "shared": true,
+      "special": null
+    }
+  ]
+}

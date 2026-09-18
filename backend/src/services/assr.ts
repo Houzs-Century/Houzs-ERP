@@ -8,10 +8,12 @@ import { assrOpenStageSql } from "./assrStages";
 import { isServiceLine } from "../scm/shared/service-sku";
 import { AutoCountClient, cleanPhone } from "./autocount";
 import { normalizePhone } from "../scm/shared/phone";
+import { assrSubStatusLabelOf, assrSubStatusSeed } from "../scm/shared/assr-sub-statuses";
 import { resolveCreditorForCase } from "./stockItems";
 import { getActiveStaffToken } from "./caseTracking";
 import { getSupabaseService, isSupabaseConfigured } from "../db/supabase";
 import { assrVisibilityPredicateSql } from "./assrVisibility";
+import { attachOrderPurchaseOrders } from "./assrOrderPos";
 
 // ── Types ─────────────────────────────────────────────────────
 
@@ -713,7 +715,7 @@ export async function getAssrDetail(env: Env, id: number) {
   // SCM fallback) so the detail page's DO field also fills for cases
   // whose hand-entered delivery_order was never set — which is nearly
   // all of them.
-  await attachDeliveryOrders(env, [caseRow]);
+  await Promise.all([attachDeliveryOrders(env, [caseRow]), attachOrderPos(env, [caseRow])]);
 
   const items = await env.DB.prepare(
     `SELECT * FROM assr_items WHERE assr_id = ? ORDER BY id`
@@ -776,6 +778,19 @@ export async function getAssrDetail(env: Env, id: number) {
   // link on panel-open instead of forcing a regenerate each time.
   const portalToken = await getActiveStaffToken(env, id);
 
+  // Nth-person access list (mig 20260911T1600): staff granted row visibility on
+  // this case WITHOUT taking a sales_agent / assigned_to slot. The UI renders
+  // these as chips and manages them via POST/DELETE /api/assr/:id/access.
+  const access = await env.DB.prepare(
+    `SELECT ac.user_id, u.name as user_name, ac.added_by, ac.created_at
+       FROM assr_case_access ac
+       LEFT JOIN users u ON u.id = ac.user_id
+      WHERE ac.assr_id = ?
+      ORDER BY ac.created_at ASC, ac.user_id ASC`
+  )
+    .bind(id)
+    .all();
+
   return {
     case: caseRow,
     // The multi-select form needs the categories as a list; the flat
@@ -788,6 +803,7 @@ export async function getAssrDetail(env: Env, id: number) {
     related_pos: relatedPOs.results ?? [],
     portal_token: portalToken,
     stage_history: stageHistory.results ?? [],
+    access: access.results ?? [],
   };
 }
 
@@ -836,12 +852,11 @@ export async function transitionStage(
   // that has sub-states seeds its first one; every other stage clears
   // the field so a stale value can't leak across stages. Ops switches
   // it afterwards via PATCH sub_status.
-  const subDefault =
-    newStage === "under_verification"
-      ? "pending_inspection"
-      : newStage === "pending_supplier_pickup"
-        ? "pending_supplier_pickup"
-        : null;
+  // The seed is the stage's FIRST sub-status in the shared list — for Pickup /
+  // Return that is the customer-pickup leg (Nico 2026-09-01): the stage begins by
+  // collecting the item FROM the customer; ops advances the sub to supplier
+  // pickup / return as the item moves.
+  const subDefault = assrSubStatusSeed(newStage);
   sets.push("sub_status = ?");
   binds.push(subDefault);
 
@@ -1198,12 +1213,6 @@ export async function patchAssrCase(
   }
 
   if ("sub_status" in body && (prevSubStatus ?? null) !== (body.sub_status ?? null)) {
-    const SUB_LABELS: Record<string, string> = {
-      pending_inspection: "Pending Inspection",
-      qc_issue_result: "QC Issue Result",
-      pending_supplier_pickup: "Pending Supplier Pickup",
-      pending_supplier_return: "Pending Supplier Return",
-    };
     await logActivity(
       env,
       id,
@@ -1211,7 +1220,7 @@ export async function patchAssrCase(
       prevSubStatus,
       body.sub_status ?? null,
       body.sub_status
-        ? `Sub-status → ${SUB_LABELS[body.sub_status] ?? body.sub_status}`
+        ? `Sub-status → ${assrSubStatusLabelOf(body.sub_status) ?? body.sub_status}`
         : "Sub-status cleared",
       userId,
       { category: "system", source_channel: "app" }
@@ -1933,7 +1942,7 @@ export async function listAssrCases(env: Env, f: ListAssrFilters) {
   ]);
 
   const data = rows.results ?? [];
-  await attachDeliveryOrders(env, data as any[]);
+  await Promise.all([attachDeliveryOrders(env, data as any[]), attachOrderPos(env, data)]);
 
   return {
     data,
@@ -1941,6 +1950,11 @@ export async function listAssrCases(env: Env, f: ListAssrFilters) {
     per_page: perPage,
     total: total?.count ?? 0,
   };
+}
+
+/** `order_pos` — see services/assrOrderPos.ts. No scm in the D1 test env. */
+async function attachOrderPos(env: Env, rows: Array<Record<string, unknown>>) {
+  if (isSupabaseConfigured(env)) await attachOrderPurchaseOrders(getSupabaseService(env), rows);
 }
 
 /** Attach live DO numbers as `do_numbers` on each row. The case table's own

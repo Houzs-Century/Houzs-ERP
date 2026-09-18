@@ -428,13 +428,30 @@ export type SoDatePairFacts = {
   origDeliv: string | null;
 };
 
-/** 'YYYY-MM-DD' or null, from a date, a timestamp, '' or null. The stored
- *  columns are DATE in Postgres but reach callers as several shapes of string,
+/** The first ten characters of a stored date, whatever shape it arrived in.
+ *  PostgREST hands a DATE column back as '2026-08-28' and a timestamp as
+ *  '2026-08-28T00:00:00+00:00'; the PostgreSQL command transaction
+ *  (pg-supabase-transaction.ts, postgres.js) hands BOTH back as a JS Date. A
+ *  Date stringifies as 'Fri Aug 28 2026 …', so `String(v).slice(0, 10)` on it
+ *  is 'Fri Aug 28' — which sorts AFTER every '2026-…' string and made the
+ *  approve-so gate refuse a legal Delivery Date amendment (2026-09-04,
+ *  docs/bugs/0636). Every day-comparison on an SO date must come through here,
+ *  not through a local `String(v).slice(0, 10)`. Empty / null / invalid Date →
+ *  '', and an unparseable string is passed through as-is so the pair test
+ *  still counts it as present. */
+export const soDateDay = (v: unknown): string => {
+  if (v == null) return '';
+  if (v instanceof Date) return Number.isNaN(v.getTime()) ? '' : v.toISOString().slice(0, 10);
+  return String(v).trim().slice(0, 10);
+};
+
+/** 'YYYY-MM-DD' or null, from a date, a timestamp, a Date object, '' or null.
+ *  The stored columns are DATE in Postgres but reach callers as several shapes,
  *  so the compare has to be on a normalised day — otherwise an unchanged
  *  '2026-09-01T00:00:00+00:00' would read as a change against '2026-09-01' and
  *  the grandfather carve-out would stop working. */
 export const soDateYmd = (v: unknown): string | null => {
-  const ymd = String(v ?? '').trim().slice(0, 10);
+  const ymd = soDateDay(v);
   return /^\d{4}-\d{2}-\d{2}$/.test(ymd) ? ymd : null;
 };
 

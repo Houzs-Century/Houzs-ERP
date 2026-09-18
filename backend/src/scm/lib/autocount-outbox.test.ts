@@ -780,7 +780,7 @@ describe('an edit carries the fields a create carries', () => {
     const sb = withFlag('1', { mfg_sales_orders: [{ ...so }], mfg_sales_order_items: [{ ...item }] });
     await enqueueEdit(sb as never, { companyId: 1, docType: 'SO', docNo: 'HC-SO-9' });
     const h = outbox(sb)[0].payload.body.Header as Record<string, Record<string, string>>;
-    expect(h.UDF).toEqual({ BRANDING: 'AKEMI', VENUE: 'KSL CITY MALL JOHOR SOLO', ToPONo: 'CUST-PO-7' });
+    expect(h.UDF).toEqual({ BRANDING: 'AKEMI', VENUE: 'KSL CITY MALL JOHOR SOLO' });
   });
 
   test('a field the ERP does not have is OMITTED, never sent as null that would blank the book', async () => {
@@ -828,15 +828,15 @@ describe('a line the ERP just added is declared, never inferred', () => {
     expect(outbox(sb)[0].last_error).toContain('refused, nothing sent');
   });
 
-  test('another line is ALSO keyless: the document is not backfilled, so the declaration is not believed', async () => {
+  test('another line is ALSO keyless: the document REBUILDS instead of refusing (0608)', async () => {
     const sb = withFlag('1', {
       mfg_sales_orders: [{ ...so }],
       mfg_sales_order_items: [{ ...keyed, linked_ac_dtlkey: null, id: 'row-legacy' }, { ...fresh }],
     });
     expect(await enqueueEdit(sb as never, {
       companyId: 1, docType: 'SO', docNo: 'HC-SO-9', newLineIds: ['row-new'],
-    })).toBe(false);
-    expect(outbox(sb)[0].last_error).toContain('refused, nothing sent');
+    })).toBe(true);
+    expect((outbox(sb)[0].payload.body as Record<string, unknown>).Rebuild).toBe(true);
   });
 
   /* THE PURCHASE ORDER HALF, wired 2026-08-31. The contract is the sales
@@ -876,13 +876,13 @@ describe('a line the ERP just added is declared, never inferred', () => {
       expect(lines.find((l) => l.ItemCode === AC_B)?.IsNewLine).toBe(true);
     });
 
-    test('NOT declared: still refused, so a legacy keyless line can never be appended twice', async () => {
+    test('NOT declared: refused, named by the PO NUMBER so a person can act on it (0774)', async () => {
       const sb = withFlag('1', {
         purchase_orders: [{ ...poDoc }], suppliers: [{ ...sup }],
         purchase_order_items: [{ ...oldLine }, { ...newLine }], warehouses: wh,
       }, poCols);
       expect(await enqueueEdit(sb as never, { companyId: 1, docType: 'PO', docId: 'po-1' })).toBe(false);
-      expect(outbox(sb)[0].last_error).toContain('refused, nothing sent');
+      expect(outbox(sb)[0]).toMatchObject({ doc_no: 'HC-PO-9', last_error: expect.stringContaining('refused, nothing sent') });
     });
 
     /* A new detail with no Location dies on FK_PODTL_Location, and the document
@@ -1226,7 +1226,7 @@ describe('the columns the write-back reads are the columns the ERP writes', () =
     expect((await enqueueSoCreate(client(sb), { companyId: 1, docNo: 'HC-SO-A' })).queued).toBe(true);
     const body = outbox(sb)[0].payload.body as Record<string, unknown>;
     expect(body.UDF).toEqual({
-      VENUE: '2990s PJ', BRANDING: 'DUNLOPILLO', ToPONo: 'THEIR-SO-88',
+      VENUE: '2990s PJ', BRANDING: 'DUNLOPILLO',
     });
     expect(body.InvAddr1).toBe('No 1, Jalan Besar');
     expect(body.InvAddr2).toBe('Taman Sentosa');
@@ -1272,7 +1272,7 @@ describe('the columns the write-back reads are the columns the ERP writes', () =
     const sb = withFlag('1', {
       mfg_sales_orders: [{
         ...so, linked_ac_docno: 'SO-000021',
-        debtor_name: null, phone: null, ref: null,
+        debtor_name: null, phone: null, ref: null, customer_so_no: null,
         address1: null, address2: null, city: null, postcode: null, customer_state: null,
       }],
       mfg_sales_order_items: [{ ...item, linked_ac_dtlkey: 991 }],
@@ -1295,7 +1295,7 @@ describe('the columns the write-back reads are the columns the ERP writes', () =
     expect(h.InvAddr3).toBe('43300 Seri Kembangan');
     expect(h.InvAddr4).toBe('Selangor');
     expect(h.UDF).toEqual({
-      VENUE: '2990s PJ', BRANDING: 'DUNLOPILLO', ToPONo: 'THEIR-SO-88',
+      VENUE: '2990s PJ', BRANDING: 'DUNLOPILLO',
     });
   });
 });
@@ -1528,7 +1528,7 @@ describe('the three fields the extract carries and the write-back did not send',
     });
 
     test('an EDIT carries it too, so a reference typed after the create reaches the book', async () => {
-      const sb = seed({ linked_ac_docno: 'SO-000021' }, { linked_ac_dtlkey: 991 }, {
+      const sb = seed({ linked_ac_docno: 'HC-SO-B' }, { linked_ac_dtlkey: 991 }, {   // ERP-numbered: a carried-over order's text is the office's (0934)
         mfg_sales_order_payments: [
           { so_doc_no: 'HC-SO-B', amount_sen: 400_00, is_deposit: true, account_sheet: 'Cash', approval_code: null, paid_at: '2026-08-01', id: 'p1' },
         ],
@@ -1623,11 +1623,11 @@ describe('the three fields the extract carries and the write-back did not send',
       expect(d.Desc2).toBe('PC151-01 Sand / DIVAN 8" + LEG 2" / GAP 12"');
     });
 
-    test('a Further Description over nvarchar(100) is refused into a NAMED skipped row', async () => {
+    test('a Further Description over nvarchar(100) — the COLOUR — is refused into a NAMED skipped row', async () => {
       const sb = seed({}, {
         description2: null,
         item_group: 'bedframe',
-        variants: { fabricCode: 'PC151-01', gap: '12"', specials: ['X'.repeat(120)] },
+        variants: { fabricCode: `PC151-01 ${'X'.repeat(120)}`, gap: '12"' },
       });
       expect((await enqueueSoCreate(client(sb), { companyId: 1, docNo: 'HC-SO-B' })).queued).toBe(false);
       const [row] = outbox(sb);

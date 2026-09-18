@@ -151,14 +151,17 @@ describe("SalesOrderNewFromProducts lands a draft exactly where it must", () => 
     expect(source).toContain("asDraft: landsDraft || undefined,");
   });
 
-  it("keeps the location guard wired, inert only because the create is a draft", () => {
-    /* Same shape as the guided wizard: the day this flow stops drafting it is
-       gated automatically instead of silently minting locationless orders. */
-    const guard = source.slice(
-      source.indexOf("soStockLocationError({"),
-      source.indexOf("if (preErr) {"),
+  it("keeps the location gate wired through the backend validate draft, inert only because the create is a draft", () => {
+    /* Since 2026-09-16 the backend is the sole authority: the surface posts its
+       draft to /mfg-sales-orders/validate and renders the returned problems[].
+       The location gate is fed by the draft's asDraft: landsDraft — still wired,
+       so the day this flow stops drafting the gate applies automatically instead
+       of silently minting locationless orders (same shape as the guided wizard). */
+    const draft = source.slice(
+      source.indexOf("const buildValidateDraft = useCallback(() => ({"),
+      source.indexOf("}), ["),
     );
-    expect(guard).toContain("asDraft: landsDraft,");
+    expect(draft).toContain("asDraft: landsDraft");
   });
 
   it("no longer tells the operator to go and use the Full form", () => {

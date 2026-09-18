@@ -6,6 +6,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
+import type { PoOutstandingLineRow } from './po-outstanding-rollup';
 
 // baseQuery is a custom-hook factory — only ever called from use* hooks below.
 // eslint-disable-next-line react-hooks/rules-of-hooks
@@ -40,6 +41,28 @@ export const useOutstanding = (
   return baseQuery<{ rows: OutstandingRow[] }>(
     ['outstanding', module, params.toString()],
     `/outstanding/${module}?${params.toString()}`,
+  );
+};
+
+/* LINE-LEVEL PO chasing list (GET /outstanding/po-lines). Unlike useOutstanding
+   this is a dedicated cross-company hook: the backend widens to the caller's
+   granted companies and tags each row with company_code, so HOUZS + 2990 arrive
+   in one list with a company column. Same outstanding/from/to contract. Rolling
+   sofa components up into "set" rows is done client-side — see
+   po-outstanding-rollup.ts. */
+export const useOutstandingPoLines = (
+  opts?: { mode?: OutstandingFilterMode; from?: string; to?: string },
+) => {
+  const params = new URLSearchParams();
+  const outstanding = opts?.mode === 'completed' ? 'false'
+                    : opts?.mode === 'all' ? 'all'
+                    : 'true';
+  params.set('outstanding', outstanding);
+  if (opts?.from) params.set('from', opts.from);
+  if (opts?.to)   params.set('to',   opts.to);
+  return baseQuery<{ rows: PoOutstandingLineRow[] }>(
+    ['outstanding', 'po-lines', params.toString()],
+    `/outstanding/po-lines?${params.toString()}`,
   );
 };
 

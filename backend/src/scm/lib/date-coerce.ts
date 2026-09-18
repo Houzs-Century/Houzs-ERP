@@ -83,6 +83,10 @@ export function normalizeEventDay(d: string | null | undefined): string {
 const DATE_COLUMN_RE = /(^|_)dates?(_\d+)?($|_)|_at$|_expiry$|_birthday$/;
 
 export function isDateColumn(column: string): boolean {
+  /* A `_pattern` column stores the RECIPE for finding a date (0336's
+     trading_date_pattern is a regex whose capture group is the trading day),
+     never a date — coercing or gating it as one is a category error. */
+  if (/_pattern$/.test(column)) return false;
   return DATE_COLUMN_RE.test(column);
 }
 

@@ -3,7 +3,16 @@
 //
 // The owner's rule for every address surface: "它可以由上往下，也可以由下往上" —
 // pick a State and City/Postcode narrow to it, OR pick a City or a Postcode
-// first and let the State fill itself in. Both directions, everywhere.
+// first and let the State fill itself in. All three fields are valid starting
+// points, both directions, everywhere (owner 2026-09-18: "从 postcode 或者从
+// state 开始都行").
+//
+// A Malaysian 5-digit postcode maps to one locality, so a bare Postcode is an
+// unambiguous start: pickPostcode back-fills State + City off resolvePostcode.
+// A Postcode-first gate ("一定要选 state 才填写 postcode") shipped 2026-09-12 and
+// was reversed by the owner on 2026-09-18 — do NOT re-add it: postcodeOptionsFor
+// offers the cross-state pool with no State, and no form blocks the field.
+// AMBIGUITY is still refused, never guessed (see the resolvers below).
 //
 // This module exists because that wiring was about to be hand-copied a fourth
 // time. SalesOrderNew, MobileNewSO and SalesOrderDetail each grew their own

@@ -1,0 +1,68 @@
+name: Sofa collapsed "-1S" cause probe (read-only)
+
+# A sofa line on a bare `{model}-1S` is three situations wearing one suffix: the
+# decoder's placeholder (remark says SOFA UNPARSED), a genuine one-seater, and a
+# line that was NEVER DECOMPOSED at all - no marker, and the book's own Desc2
+# states a real multi-piece build. Only the first two had a name. This measures
+# the split, prints the AutoCount item code behind every row of the third class,
+# and lists which `{model}-*` piece SKUs the product master actually holds, so
+# "the decoder could not read it" and "nothing ever asked the decoder" stop
+# being the same number.
+#
+# READ-ONLY: SELECTs only, no DDL, no writes, no transaction, and deliberately
+# no APPLY input.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      company:
+        description: "company_id"
+        required: false
+        default: "1"
+        type: string
+      show:
+        description: "how many class-N rows to print per side"
+        required: false
+        default: "60"
+        type: string
+
+concurrency:
+  group: probe-sofa-collapsed-1s-cause-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/probe-sofa-collapsed-1s-cause.mjs
+        env:
+          COMPANY: ${{ inputs.company }}
+          SHOW: ${{ inputs.show }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/probe-sofa-collapsed-1s-cause.mjs
+        env:
+          COMPANY: ${{ inputs.company }}
+          SHOW: ${{ inputs.show }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

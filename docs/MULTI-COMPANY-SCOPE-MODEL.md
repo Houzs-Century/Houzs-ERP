@@ -63,18 +63,24 @@ Two worth knowing:
 
 - **delivery-tms** — `trips.ts:20-29`: *"CROSS-COMPANY, which is NOT the same as
   unscoped… reads WIDEN to the caller's granted companies, and so do the WRITES."*
-- **fleet-maintenance** — migs `0202`/`0203`/`0204`: `company_id` is *"STAMPED on
-  insert for provenance but NOT used to scope reads"*. A lorry is one physical
-  vehicle whichever book paid for it. `scm.workshops` is the exception and IS
-  per-company.
+- **fleet-maintenance** — migs `0202`/`0203`/`0204`/`0238`: `company_id` is
+  *"STAMPED on insert for provenance but NOT used to scope reads"*. A lorry is one
+  physical vehicle whichever book paid for it, and since 2026-09-02 the same
+  answer is settled for the module's own RECORDS too — compliance vault,
+  maintenance plans, breakdown cases, work orders, components. Owner:
+  「共用的，因为 TMS 是共用的。这个东西 TMS 就像我们的运输公司一样」. Twelve by-id
+  handlers had been scoping them while `GET /dashboard` did not, so the dashboard
+  listed rows that PATCH/DELETE then 404'd; the twelve went.
+  `backend/tests/fleetMaintenanceUnifiedScope.test.ts` enforces it. `scm.workshops`
+  is the exception and IS per-company (mig 0241) — the repair-shop master, not a
+  maintenance record.
 - **address-cascade** — postcodes are the same for every caller.
 - **global-search** — one palette, per-source predicates.
 
 **But the TMS's CONFIGURATION is per-company.** Post-mig-0176 each company holds
 its own regions, zones, residence rules, 3PL master and driver leave
 (`delivery-planning-regions.ts:71-78`). The function is central; its settings are
-not. `docs/MULTICOMPANY-MODULE-MAP.md` still says regions are unified and is stale
-on that point.
+not.
 
 ### C — CENTRALISED WITH ONE SCOPED AXIS (4)
 

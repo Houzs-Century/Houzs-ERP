@@ -38,6 +38,8 @@
 // decoder the cutover importers use — deliberately the same module, because a
 // second copy that drifts would make the gate prove nothing.
 // ----------------------------------------------------------------------------
+import { SPECIAL_ORDER_POINTER } from './autocount-desc2-abbrev';
+import { liveColour } from '../scm/shared/variant-summary';
 import { parseSofa, type SofaParse } from '../../scripts/lib/parse-sofa.mjs';
 
 /**
@@ -75,6 +77,9 @@ export interface CollapsibleLine {
   delivery_date?: string | null;
   variants?: Record<string, unknown> | null;
   linked_ac_dtlkey?: number | string | null;
+  /** The line's place on the ERP document, when its table has one. It states the
+   *  order the pieces were typed; the read order does not (docs/bugs/0920). */
+  line_no?: number | null;
 }
 
 export interface CollapsedLine extends CollapsibleLine {
@@ -144,13 +149,33 @@ function tokenFor(comp: string, i: number, n: number): string | null {
   switch (c) {
     /* A BARE DIGIT IS NOT A SOLO SEAT. Measured against the decoder: "1 (28\")"
        and "2 (28\")" both decode to NOTHING at all, so the bare-digit spelling
-       was a guaranteed refusal for every single-seat build. "1S" and "2S" decode
-       back to exactly themselves. A solo 3S has no spelling at all — "3"
-       decodes to nothing and "3S" decodes to the TWO-piece build
-       [2A(LHF), 1A(RHF)], which is the one outcome that must never be written. */
-    case '1S': return solo ? '1S' : null;
-    case '2S': return solo ? '2S' : null;
-    case '3S': return null;
+       was a guaranteed refusal for every single-seat build.
+
+       3S IS NOW PROPOSED, and the measurement that used to forbid it is the
+       reason it is SAFE to propose. Re-measured 2026-09-10 over the ten models
+       these refusals name: "3S (28\")" decodes to [2A(LHF), 1A(RHF)] — a
+       DIFFERENT sofa — in all twenty, and bare "3S" decodes to [3S] in all
+       twenty. Same for "3S + 1S + 2S". So the spelling is right exactly when
+       there is no seat size to attach, and the gate below is what knows which
+       case it is: a sized build composes "3S (28\")", fails the decode and is
+       refused precisely as before. Withholding the token refused BOTH cases,
+       and HC-SO-001640 [3S] and HC-SO-001472 [3S, 1S, 2S] — neither of which
+       carries a seat size — were refused for the sized case's reason.
+
+       THE `solo` GUARD ON 1S AND 2S IS GONE, and only that. Measured the same
+       way and in the same shape — WITH the size suffix a real build carries,
+       which is what a first pass without it got wrong — "1S (28\")",
+       "2S (28\")" and "1S + 2S (28\")" decode back to exactly themselves, 20 of
+       20 each. So a plain-seat pair had no spelling for no reason, and
+       HC-SO-003189 [1S, 2S] is refused by that and nothing else.
+
+       PROPOSING A SPELLING IS SAFE BY CONSTRUCTION: `composeSofaDesc2` hands
+       every composed string to `decodesTo`, and a build whose text does not
+       decode back to exactly itself is REFUSED rather than written. A wrong
+       proposal costs a refusal; a missing one costs a document. */
+    case '1S': return '1S';
+    case '2S': return '2S';
+    case '3S': return '3S';
     case '1NA': return '1NA';
     case '2NA': return '2NA';
     case 'CNR': return solo ? null : 'C';
@@ -164,8 +189,22 @@ function tokenFor(comp: string, i: number, n: number): string | null {
     case '2B(LHF)': return left ? '2B' : null;
     case '1B(RHF)': return left ? null : '1B';
     case '2B(RHF)': return left ? null : '2B';
-    case 'L(LHF)': return left ? 'L' : null;
-    case 'L(RHF)': return left ? null : 'L';
+    /* A CHAISE ON THE SIDE ITS POSITION DENIES. A bare `L` is sided by
+       POSITION — the book's own convention — so where position already says the
+       right thing it is still written `L` and nothing about the existing corpus
+       moves. Where position would say the OPPOSITE, the explicit `LL` / `LR`
+       says it outright, exactly as `1EL` / `1ER` already do for an armed end.
+
+       That spelling used to be `null`, and three sales orders were refused for
+       it: HC-SO-007399 [2A(RHF), L(LHF)], HC-SO-008460 [L(RHF), 2A(LHF)] and
+       HC-SO-007958 [L(RHF), 1NA, 2A(LHF)].
+
+       The decoder learned `LL` / `LR` in the same change, and it could only be
+       taught safely because the book has never used either: 41,953 committed
+       Desc2 values, not one of them. The fingerprint over all 15,950 SO values
+       is byte-identical before and after. */
+    case 'L(LHF)': return left ? 'L' : 'LL';
+    case 'L(RHF)': return left ? 'LR' : 'L';
     case '1S(R)': return solo ? '1R' : null;
     case '1S(P)': return solo ? '1P' : null;
     case '1A(R)(LHF)': return !solo && left ? 'R' : null;
@@ -216,6 +255,54 @@ export const AC_DESC2_MAX = 100;
 
 const specialKey = (s: string) => String(s ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/NILON/g, 'NYLON');
 
+/** The same pieces, in any order. Used ONLY by the last-resort echo — every
+ *  other comparison in this file is order-sensitive, because the order of a
+ *  sofa's pieces IS the sofa. */
+function sameMultiset(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  const count = (xs: string[]) => xs.reduce<Map<string, number>>(
+    (m, x) => m.set(up(x), (m.get(up(x)) ?? 0) + 1), new Map());
+  const A = count(a);
+  const B = count(b);
+  for (const [k, n] of A) if (B.get(k) !== n) return false;
+  return true;
+}
+
+/* AN ARMED END IS AN END (docs/bugs/0906). The book's decoder reads a plain
+   armed end — 1EL / 2EL / 1ER / 2ER — as the end of the sofa its hand names
+   whatever position the token takes: `CT + 2EL + 1ER` decodes to
+   [2A(LHF), Console, 1A(RHF)]. The ERP lists pieces in the order they were
+   typed, so HC-SO-012736 holds [Console, 2A(LHF), 1A(RHF)] and the composed text
+   was refused for decoding into the only arrangement those pieces can take.
+
+   Returns the decoded arrangement only when it is the ERP's pieces with nothing
+   moved except armed ends, each now at the end its hand names: at most one left
+   and one right armed end, every other piece in the ERP's relative order, the
+   left end first and the right end last. Anything else — two sofas' worth of
+   ends, a middle piece moved, a chaise, a recliner arm — returns null and the
+   exact comparison stands. Handedness is never changed, so this cannot write
+   the mirror. */
+const ARMED_END = /^[12]A\((LHF|RHF)\)$/;
+function armedEndsPlaced(text: string, model: string, erp: string[]): string[] | null {
+  const e = erp.map(up);
+  const lefts = e.filter((p) => ARMED_END.test(p) && p.endsWith('(LHF)'));
+  const rights = e.filter((p) => ARMED_END.test(p) && p.endsWith('(RHF)'));
+  if (lefts.length > 1 || rights.length > 1 || lefts.length + rights.length === 0) return null;
+  let decoded: string[];
+  try {
+    decoded = parseSofa(text, model, hasMechanism(erp)).pieces;
+  } catch {
+    return null;
+  }
+  const d = decoded.map(up);
+  if (!sameMultiset(d, e) || sameSeq(d, e)) return null;
+  const middle = (xs: string[]) => xs.filter((p) => !ARMED_END.test(p));
+  if (!sameSeq(middle(d), middle(e))) return null;
+  if (lefts.length && d[0] !== lefts[0]) return null;
+  if (rights.length && d[d.length - 1] !== rights[0]) return null;
+  return decoded;
+}
+
 function sameSpecials(a: string[], b: string[]): boolean {
   const A = new Set(a.map(specialKey).filter(Boolean));
   const B = new Set(b.map(specialKey).filter(Boolean));
@@ -255,11 +342,31 @@ export function decodesTo(
   if (up(re.color) !== up(expect.colour)) {
     return { ok: false, why: `colour decodes as ${re.color ?? 'none'}, expected ${expect.colour ?? 'none'}` };
   }
-  if (!sameSpecials(re.specials, expect.specials ?? [])) {
+  /* THE POINTER IS NOT A SPECIAL, so it is not checked like one.
+     `parseSofa` reads specials from a FIXED vocabulary — nylon, wooden arm,
+     recliner and the rest — because it was written to decode the account book's
+     own text. It will never read `Special Order: Refer to ERP` back as a
+     special, so comparing it through `sameSpecials` refuses every document the
+     owner's rung was added to rescue.
+     What the gate asks instead is the only thing that matters about a pointer:
+     IS IT THERE. The pieces, the size and the colour above are still compared
+     exactly, and they are what a wrong answer would build. */
+  const expected = expect.specials ?? [];
+  const pointing = expected.length === 1 && expected[0] === SPECIAL_ORDER_POINTER;
+  if (pointing) {
+    if (!text.includes(SPECIAL_ORDER_POINTER)) {
+      return {
+        ok: false,
+        why: 'the special order was replaced by a pointer and the pointer is not in the text',
+      };
+    }
+    return { ok: true };
+  }
+  if (!sameSpecials(re.specials, expected)) {
     return {
       ok: false,
       why: `special orders do not survive: [${re.specials.join('; ') || 'none'}] vs `
-        + `[${(expect.specials ?? []).join('; ') || 'none'}]`,
+        + `[${expected.join('; ') || 'none'}]`,
     };
   }
   return { ok: true };
@@ -303,17 +410,34 @@ function sharedDescription(lines: CollapsibleLine[]): string | null {
 function collapseRun(
   run: { line: CollapsibleLine; index: number; compartment: string }[],
   model: string,
+  /* Did the ACCOUNT BOOK group these lines, by their shared DtlKey, rather than
+     this file's adjacency rule? Required rather than defaulted, because it
+     decides which side states the ARRANGEMENT: a gathered run reaches here in
+     the ERP's insertion order, which says nothing about how the sofa is built,
+     while the book's text says exactly that. Defaulting it either way makes one
+     of the two callers silently wrong (CLAUDE.md, BUG CLASS optional-param-noop). */
+  bookGrouped: boolean,
+  /* Pieces of ANOTHER model the book holds on this line, as `CNR 8069`
+     (docs/bugs/0913). Every one is written into the text and must be present in
+     whatever is sent; `[]` for a build of one model. Required, so a caller that
+     gathers a mixed build cannot forget to say so. */
+  foreign: string[],
 ): { lines: CollapsedLine[] } | { refusal: string } {
+  /* THE DOCUMENT'S LINE ORDER, NOT THE READ ORDER (docs/bugs/0920). The queue
+     reads rows by created_at then row id, and an amendment re-derives a build's
+     pieces at one instant, so their read order is the ids'. HC-SO-002861 was sent
+     `1EL + C + 1B + CT + 1NA` while its lines read 1A(LHF), CNR, 1NA, Console,
+     1B(RHF). Where every piece has a line number, the pieces are spelled in that
+     order; otherwise they stay as they came. */
+  const lineNos = run.map((r) => r.line.line_no);
+  if (lineNos.every((n) => typeof n === 'number' && Number.isFinite(n)) && new Set(lineNos).size === run.length) {
+    run = [...run].sort((a, b) => Number(a.line.line_no) - Number(b.line.line_no));
+  }
   const codes = run.map((r) => r.line.item_code);
+  const namesForeign = (text: string) => foreign.every((f) => text.includes(f));
   const desc2 = String(run[0].line.description2 ?? '').trim();
   if (!desc2) {
     return { refusal: 'no Desc2 on the compartment lines — nothing to carry the build into AutoCount' };
-  }
-  if (desc2.length > AC_DESC2_MAX) {
-    return {
-      refusal: `Desc2 is ${desc2.length} characters and AutoCount's field holds ${AC_DESC2_MAX}; `
-        + 'truncating would silently drop part of the build',
-    };
   }
 
   const qtys = new Set(run.map((r) => Number(r.line.qty)));
@@ -380,10 +504,43 @@ function collapseRun(
   const v = (run[0].line.variants ?? {}) as Record<string, unknown>;
   const sizeRaw = v.seatHeight != null ? String(v.seatHeight).trim() : (ps.size ?? null);
   const size = sizeRaw ? sizeRaw.replace(/["']+$/, '') : null;
-  const colour = v.colourLabel != null && String(v.colourLabel).trim()
+  /* THE LIVE COLOUR, not the dead row's obituary. The fabric library renumbered
+     itself on 2026-08-11 and left `[superseded by X on 2026-08-11]` written into
+     each old row's own LABEL — 39 characters of bookkeeping in the middle of a
+     build specification. `buildVariantSummary` has stripped it since that day;
+     THIS renderer did not, and it is the one three sofa orders go through, which
+     is why they were still refused after the fix that was supposed to clear
+     them: HC-SO-008460 at 112 characters, HC-SO-012513 at 113, HC-SO-012629 at
+     117, against a field that holds 100.
+
+     It is applied to the EXPECTATION as well as to the text, because `colour` is
+     the one value handed to both composeSofaDesc2 and decodesTo. That is the
+     property that keeps the round-trip honest rather than merely passing: the
+     gate compares the decoded colour against the same live name the text was
+     written with. Two documents were refused on exactly that mismatch —
+     HC-SO-004725 and HC-SO-007958, whose composed text lost the brackets the
+     expectation still carried. */
+  const colourRaw = v.colourLabel != null && String(v.colourLabel).trim()
     ? String(v.colourLabel).trim()
     : (ps.color ?? null);
+  const colour = colourRaw ? liveColour(colourRaw) : null;
   const specials = readSpecials(v).length ? readSpecials(v) : ps.specials;
+
+  /* 0. WHEN THE BOOK GROUPED THESE LINES, THE BOOK'S ORDER IS THE SOFA.
+     A gathered run arrives in the ERP's INSERTION order, and that order states
+     nothing about how the sofa is built: HC-SO-001526's two ends arrive
+     [2A(RHF), 1A(LHF)] while the book holds `1EL + 2ER`. Composing from the
+     insertion order round-trips happily and writes the MIRROR of the sofa the
+     book records — the classic wrong answer on this subject, and one nothing
+     downstream would catch.
+
+     So for a gathered run whose pieces are the book's pieces as a MULTISET, the
+     ORDER is taken from the book's own text and everything below composes in
+     that order. The line's money, warehouse and dates still come from the ERP
+     rows, which are not reordered; only the arrangement comes from the book,
+     which is the one thing a row order cannot state. Size, colour and specials
+     are still compared EXACTLY, so a real edit to any of them recomposes. */
+  const pieces = bookGrouped && sameMultiset(build, compartments) ? build : compartments;
 
   /* 1. ECHO — the stored text still decodes to exactly what the ERP holds.
      THE COMPARTMENTS ARE NOT THE WHOLE BUILD. A fabric colour, a seat height or
@@ -392,7 +549,20 @@ function collapseRun(
      account book with nothing anywhere recording that the edit was dropped.
      Whatever the ERP disagrees with its own imported text about falls through to
      compose, which either spells the current build or refuses it visibly. */
-  if (reps > 0 && decodesTo(desc2, model, build, { size, colour, specials }).ok) {
+  /* The length gate belongs to the text that is actually SENT, and this branch
+     is the only one that sends the STORED text. It used to sit at the top of
+     this function, where it refused a document whose stored line text was long
+     even though the composer was about to replace it with something short:
+     HC-SO-013339's stored Desc2 is 107 characters and the text it would have
+     written is 30. Over-long stored text now falls through to compose, which
+     either spells the build inside the column or refuses it visibly. */
+  if ((reps > 0 || pieces !== compartments)
+    && desc2.length <= AC_DESC2_MAX
+    && namesForeign(desc2)
+    && decodesTo(desc2, model, build, { size, colour, specials }).ok) {
+    /* A gathered run is ONE build by the book's own key, so it emits one line;
+       the repeat arithmetic below is for a run that holds N identical sofas. */
+    if (pieces !== compartments) return { lines: [mkLine(run, desc2, 'echo')] };
     const out: CollapsedLine[] = [];
     for (let k = 0; k < reps; k += 1) {
       out.push(mkLine(run.slice(k * build.length, (k + 1) * build.length), desc2, 'echo'));
@@ -400,25 +570,95 @@ function collapseRun(
     return { lines: out };
   }
 
-  // 2. COMPOSE — the build no longer matches the text it was imported with.
-  const composed = composeSofaDesc2(compartments, { size, colour, specials });
-  if (!composed) {
-    return {
-      refusal: `cannot spell [${compartments.join(', ')}] in the AutoCount Desc2 grammar `
-        + `(stored Desc2 "${desc2}" decodes to [${build.join(', ') || 'nothing'}])`,
-    };
+  /* 2. COMPOSE, and 3. POINT AT THE ERP if the special order is what blocks it.
+     One attempt, tried twice: once with the special orders the ERP holds, and —
+     only if that fails and there ARE any — once with the owner's pointer.
+
+     THE POINTER IS TRIED FOR EVERY WAY A SPECIAL CAN BLOCK A DOCUMENT, not only
+     for length. Measured on production 2026-09-10, the special order was the
+     whole obstacle on three more builds and in three different disguises:
+
+       · composeSofaDesc2 REFUSES a special containing `+` or `/`, and the
+         refusal reads "cannot spell [2A(LHF), STOOL]" — which names the pieces
+         and blames them (HC-SO-001526, HC-SO-001445);
+       · the decoder reads specials from a FIXED vocabulary, so `ALL` and
+         `DAYBED` never come back and the round trip fails on a build that is
+         otherwise perfect (HC-SO-008302, HC-SO-004716);
+       · and the text is over the column (the length case, already known).
+
+     The owner's ruling covers all three — 「Special Order 可以不进 ... 最重要是每
+     一张单都可以进到就行了」 — because what it says is that the special order need
+     not reach AutoCount at all, not that it may be shortened when long.
+
+     THE REFUSAL REPORTED IS THE FIRST ATTEMPT'S. When both fail, the honest
+     diagnosis is what went wrong with the document as it stands, not with a
+     rewrite of it. */
+  const attempt = (sp: string[]): { text: string } | { why: string } => {
+    const spelled = composeSofaDesc2(pieces, { size, colour, specials: sp });
+    /* The decoder skips a segment it has no word for, so a foreign piece's name
+       rides after the specials without changing what the text decodes to; the
+       gate below still reads the pieces, size, colour and specials exactly. */
+    const t = spelled == null ? null : [spelled, ...foreign].join(' / ');
+    if (!t) {
+      return {
+        why: `cannot spell [${pieces.join(', ')}] in the AutoCount Desc2 grammar `
+          + `(stored Desc2 "${desc2}" decodes to [${build.join(', ') || 'nothing'}])`,
+      };
+    }
+    if (t.length > AC_DESC2_MAX) {
+      return {
+        why: `composed Desc2 is ${t.length} characters and AutoCount's field holds `
+          + `${AC_DESC2_MAX}; truncating would silently drop part of the build`,
+      };
+    }
+    /* The gate is asked about the text that is ACTUALLY SENT, with the specials
+       that are actually in it. Comparing pointed text against the full special
+       list would fail every time and make the second attempt dead code. */
+    let g = decodesTo(t, model, pieces, { size, colour, specials: sp });
+    /* The one reordering the gate accepts: armed ends read to their own ends,
+       nothing else moved. Size, colour and specials are then compared exactly
+       against that arrangement, by the same gate. */
+    const placed = g.ok ? null : armedEndsPlaced(t, model, pieces);
+    if (placed) g = decodesTo(t, model, placed, { size, colour, specials: sp });
+    if (!g.ok) return { why: `composed Desc2 does not survive a decode: ${g.why}` };
+    if (!namesForeign(t)) return { why: `composed Desc2 does not name the piece(s) of another model: ${foreign.join(', ')}` };
+    return { text: t };
+  };
+
+  const full = attempt(specials);
+  if ('text' in full) return { lines: [mkLine(run, full.text, 'compose')] };
+  if (specials.length) {
+    const pointed = attempt([SPECIAL_ORDER_POINTER]);
+    if ('text' in pointed) return { lines: [mkLine(run, pointed.text, 'compose')] };
   }
-  if (composed.length > AC_DESC2_MAX) {
-    return {
-      refusal: `composed Desc2 is ${composed.length} characters and AutoCount's field holds `
-        + `${AC_DESC2_MAX}; truncating would silently drop part of the build`,
-    };
+
+  /* 4. THE BOOK'S OWN TEXT, as a LAST RESORT and only on a MULTISET match.
+     The alternative here is refusing the whole document, so what this sends is
+     weighed against nothing arriving at all — and what it sends is the text the
+     account book ALREADY HOLDS. On a migrated line `description2` is the book's
+     own Desc2, copied by the importer; re-sending it changes that line by
+     nothing.
+
+     MULTISET, not sequence, and ONLY here. The ERP's line order is insertion
+     order; the book's text states the arrangement. HC-SO-000814 is the case:
+     the ERP holds [L(LHF), 2A(RHF), 1NA] and the book's text decodes to
+     [L(LHF), 1NA, 2A(RHF)] — the same three pieces, and the book's order is the
+     physical one, because an arm piece is an END and nothing follows it.
+
+     WHY IT IS NOT THE ECHO RULE AT THE TOP OF THIS FUNCTION. Relaxing THAT to a
+     multiset would let a genuine re-arrangement keep its old text — a chaise
+     moved from the left end to the right is the same pieces and a different
+     sofa, and the mirror is the classic wrong answer here. Reached only after
+     the composer has failed, this cannot hide an edit: a re-arrangement that
+     composes is written, and one that does not compose was never going to
+     reach the book at all. Size, colour and specials are still compared
+     EXACTLY, by the same decodesTo the composer answers to. */
+  if (desc2.length <= AC_DESC2_MAX && sameMultiset(build, compartments)
+    && namesForeign(desc2)
+    && decodesTo(desc2, model, build, { size, colour, specials }).ok) {
+    return { lines: [mkLine(run, desc2, 'echo')] };
   }
-  const gate = decodesTo(composed, model, compartments, { size, colour, specials });
-  if (!gate.ok) {
-    return { refusal: `composed Desc2 does not survive a decode: ${gate.why}` };
-  }
-  return { lines: [mkLine(run, composed, 'compose')] };
+  return { refusal: full.why };
 }
 
 /**
@@ -429,9 +669,94 @@ function collapseRun(
  * `refusals` with a reason a human can act on; it is the CALLER's job to decide
  * that a document with any refusal does not sync (see toDetails).
  */
+/**
+ * The sofas whose pieces the BOOK says are one line, and this file's own
+ * adjacency rule would not put together.
+ *
+ * A sofa is ONE line in AutoCount and several here, and every piece carries that
+ * one line's DtlKey (`docs/autocount-integration-map.md` 4.2). The runs below
+ * are formed by adjacency, which is right whenever nothing interrupts a sofa and
+ * wrong the moment something does: HC-SO-001526 holds `1EL` and `2ER` of one
+ * sofa with ANOTHER sofa's two lines between them, so each end was collapsed
+ * alone — and `1EL` by itself decodes to a single seat, not a left arm. Four
+ * more documents are the same shape (HC-SO-001255, HC-SO-002315, HC-SO-004716,
+ * HC-SO-012016), measured on production 2026-09-10.
+ *
+ * NON-CONTIGUOUS ONLY, deliberately — or contiguous with DIFFERENT Desc2, which
+ * the adjacency rule splits just the same. A run the adjacency rule already
+ * forms is left to it, so this can only change the documents that are broken
+ * today.
+ *
+ * A PIECE OF ANOTHER MODEL (docs/bugs/0913). A key is the book's line, so pieces
+ * of two models under one key are one sofa the book already holds — HC-SO-002861
+ * is DSL-8060 SOFA 184398, whose amendment turned one piece into an 8069 corner.
+ * Grouping by model as well as key split that sofa in two, and the lone 8069
+ * corner was refused ("cannot spell [CNR]"), so the document could never reach
+ * the book. Now the pieces are gathered under the model that holds a STRICT
+ * majority of them, and every other piece is NAMED in the text (`CNR 8069`), so
+ * the difference is written into the book rather than hidden behind a composed
+ * line. With no majority the models are grouped apart as before, and refused.
+ */
+type Piece = { line: CollapsibleLine; index: number; compartment: string };
+type BookGroup = { pieces: Piece[]; model: string; foreign: string[] };
+
+function scatteredByBookLine(lines: CollapsibleLine[]): Map<number, BookGroup> {
+  const byKey = new Map<string, (Piece & { model: string })[]>();
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const split = splitSofaCode(line.item_code);
+    if (!split) continue;
+    if (line.item_group != null && up(line.item_group) !== 'SOFA') continue;
+    const key = line.linked_ac_dtlkey;
+    if (key == null) continue;
+    const bucket = byKey.get(String(key)) ?? [];
+    bucket.push({ line, index, compartment: split.compartment, model: split.model });
+    byKey.set(String(key), bucket);
+  }
+  const groups: BookGroup[] = [];
+  for (const bucket of byKey.values()) {
+    const perModel = new Map<string, (Piece & { model: string })[]>();
+    for (const p of bucket) perModel.set(up(p.model), [...(perModel.get(up(p.model)) ?? []), p]);
+    const ranked = [...perModel.values()].sort((a, b) => b.length - a.length);
+    const majority = ranked.length > 1 && ranked[0].length > bucket.length - ranked[0].length;
+    if (majority) {
+      const model = ranked[0][0].model;
+      groups.push({
+        pieces: bucket.map(({ line, index, compartment }) => ({ line, index, compartment })),
+        model,
+        foreign: bucket.filter((p) => up(p.model) !== up(model)).map((p) => `${p.compartment} ${p.model}`),
+      });
+      continue;
+    }
+    for (const same of perModel.values()) {
+      groups.push({ pieces: same.map(({ line, index, compartment }) => ({ line, index, compartment })), model: same[0].model, foreign: [] });
+    }
+  }
+  const out = new Map<number, BookGroup>();
+  for (const g of groups) {
+    const group = g.pieces;
+    if (group.length < 2) continue;
+    if (g.foreign.length) { out.set(group[0].index, g); continue; }
+    const contiguous = group.every((x, i) => i === 0 || x.index === group[i - 1].index + 1);
+    /* Left to the adjacency rule only when that rule WILL form the run — and it
+       also breaks a run on a Desc2 change. Adjacent pieces of ONE book line whose
+       texts differ were therefore collapsed one piece at a time and refused:
+       HC-SO-013320 / HC-PO-010008, whose two 8069 pieces carry different special
+       orders after an amendment re-derived their Desc2 ("cannot spell [1A(LHF)]",
+       "cannot spell [1B(RHF)]", requeue plan run 34823021667). */
+    const oneText = new Set(group.map((x) => String(x.line.description2 ?? '').trim())).size === 1;
+    if (contiguous && oneText) continue;
+    out.set(group[0].index, g);
+  }
+  return out;
+}
+
 export function collapseSofaLines(lines: CollapsibleLine[]): CollapseResult {
   const out: CollapsedLine[] = [];
   const refusals: SofaRefusal[] = [];
+  const scattered = scatteredByBookLine(lines);
+  const consumed = new Set<number>();
+  for (const g of scattered.values()) for (const x of g.pieces) consumed.add(x.index);
   let run: { line: CollapsibleLine; index: number; compartment: string }[] = [];
   let runModel: string | null = null;
   let runDesc2: string | null = null;
@@ -472,7 +797,24 @@ export function collapseSofaLines(lines: CollapsibleLine[]): CollapseResult {
     const alreadySeparate = keys.length > 1
       && keys.every((k) => k != null)
       && new Set(keys.map(String)).size === keys.length;
-    if (neverSent || alreadySeparate) {
+    /* A PIECE LINE, NOT A ONE-PIECE BUILD (docs/bugs/0909). A single keyed
+       compartment folds because a folded build of one piece is a real shape.
+       It is not a real shape for a piece the book's grammar has no solo word
+       for — an armed end, a corner, a chaise — while the SAME document holds
+       another piece of that model under a DIFFERENT key: that document stores
+       its pieces as separate book lines. HC-PO-2609-063 carries 8030 1A(LHF)
+       and 1A(RHF) as book lines 929346 and 929348 with a pillow between them,
+       HC-PO-2609-047 carries 9028 L(LHF) and 2A(RHF) as 928220 and 928221 with
+       different specials, and each piece was folded alone and refused
+       ("cannot spell [2A(RHF)]"). Such a piece goes through as itself. */
+    const pieceLine = run.length === 1 && keys[0] != null && !tokenFor(run[0].compartment, 0, 1)
+      && lines.some((l, i) => {
+        if (i === run[0].index || l.linked_ac_dtlkey == null) return false;
+        if (l.item_group != null && up(l.item_group) !== 'SOFA') return false;
+        const sp = splitSofaCode(l.item_code);
+        return sp != null && up(sp.model) === up(runModel) && String(l.linked_ac_dtlkey) !== String(keys[0]);
+      });
+    if (neverSent || alreadySeparate || pieceLine) {
       for (const x of run) out.push({ ...x.line, sourceIndexes: [x.index], via: 'passthrough' });
       run = [];
       runModel = null;
@@ -480,7 +822,7 @@ export function collapseSofaLines(lines: CollapsibleLine[]): CollapseResult {
       return;
     }
 
-    const r = collapseRun(run, runModel);
+    const r = collapseRun(run, runModel, false, []);
     if ('refusal' in r) {
       refusals.push({
         sourceIndexes: run.map((x) => x.index),
@@ -496,6 +838,27 @@ export function collapseSofaLines(lines: CollapsibleLine[]): CollapseResult {
   };
 
   lines.forEach((line, index) => {
+    /* A piece the BOOK has already grouped. The whole build is emitted at the
+       position of its FIRST piece so the document's line order is preserved;
+       the others are skipped, because they are already in that run. */
+    if (consumed.has(index)) {
+      const g = scattered.get(index);
+      if (!g) return;
+      flush();
+      const group = g.pieces;
+      const gModel = g.model;
+      const gr = collapseRun(group, gModel, true, g.foreign);
+      if ('refusal' in gr) {
+        refusals.push({
+          sourceIndexes: group.map((x) => x.index),
+          itemCodes: group.map((x) => x.line.item_code),
+          reason: `sofa ${gModel}: ${gr.refusal}`,
+        });
+      } else {
+        out.push(...gr.lines);
+      }
+      return;
+    }
     const split = splitSofaCode(line.item_code);
     /* item_group is advisory: the cutover importer sets 'sofa' on every
        compartment, but a hand-built line may leave it null. The compartment

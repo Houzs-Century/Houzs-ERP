@@ -1,0 +1,84 @@
+name: Refill POS sofa fabric pools
+
+# The 2990 POS shows no fabric series and no colours on sofa models. Ours reads
+# an empty allowed_options.fabrics as "no restriction"; the POS reads it as the
+# SOURCE and its own comment says "Empty -> No fabrics enabled". The clear on
+# 2026-09-13 emptied it for every company. See docs/bugs/0856.
+#
+# Fills every SOFA Model of ONE company (default 2, the POS) with every ACTIVE
+# colour of that company. PLAN by default; APPLY needs CONFIRM.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "staging"
+        type: choice
+        options: ["staging", "prod"]
+      mode:
+        description: "plan (default, writes NOTHING) or apply"
+        required: true
+        default: "plan"
+        type: choice
+        options: ["plan", "apply"]
+      confirm:
+        description: 'Required for apply: REFILL-POS-FABRICS'
+        required: false
+        default: ""
+      company:
+        description: "Company id (2 = the POS company)"
+        required: false
+        default: "2"
+
+concurrency:
+  group: open-model-option-pools
+  cancel-in-progress: false
+
+jobs:
+  staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/refill-pos-sofa-fabric-pools.mjs
+        env:
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY: ${{ inputs.company }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+  prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/refill-pos-sofa-fabric-pools.mjs
+        env:
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY: ${{ inputs.company }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

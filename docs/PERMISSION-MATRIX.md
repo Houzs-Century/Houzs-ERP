@@ -3,10 +3,13 @@
 Source of truth for the User-Management uplift. Design ported from the owner's
 reference repo `weisiang329-eng/houzs-erp` and refined with the owner in chat,
 then **mapped onto the production page catalogue** (`backend/src/services/pageAccess.ts`
-`PAGES[]`) and tightened to least-privilege. The seed script transcribes this
-verbatim into `position_page_access`.
+`PAGES[]`) and tightened to least-privilege. It is the DESIGN record: the
+per-Title page table it was once seeded into (`position_page_access`) is gone;
+what a Title opens today is its cohort / profile on Roles & Permissions › Titles.
 
 Levels: **-** = none, **V** = view, **E** = edit, **F** = full.
+
+> **Which cohort a Title is in is DATA now**: `position_policy` (one row per Title, keyed by position_id; Roles & Permissions › Titles). The per-position rows below describe the whitelists the `restricted` profiles and the `sales` tiers open; `full` opens every page (money writes only with the Money flag). A Title with no row falls back to the name lists in `positionPolicy.ts`.
 
 ## Cascade convention (important for the seed)
 Pages with sub-tabs are a parent + children. Parent **F** → all children F;
@@ -31,7 +34,8 @@ each child. Any page not listed for a position = **none**.
 - **Admin Assistant**: overview V · projects V, projects.calendar E · team V, team.members V.  🚫 finances, cost, admin.
 
 ### SALES  (rule: only own/assigned projects+customers; never cost/profit-per-item/others' data)
-- **Sales Director**: overview F · projects F · projects.finances V (profit summary) · orders F · sales F · sales_team F · service_cases V · team V, team.members V.  🚫 SKU/per-item cost, settings.
+- **Sales Director**: overview F · projects F · projects.finances V (profit summary) · orders F · sales F · sales_team F · service_cases V · team V, team.members V · **scm.procurement.products E** (owner 2026-09-01 — he maintains product master data: retail price, sofa combos, Model activation / Modular toggles; paired with `canWriteConfig: true`, since those routes gate on BOTH).  🚫 per-item cost, settings.
+  - ⚠ The sales cohort's page map is defined in code (`positionPolicy.ts` `SALES_DIRECTOR_ROWS`, reached through the Title's sales / director profile), so this row cannot be granted or revoked cell by cell.
 - **Sales Manager**: overview V · projects V, projects.list E, projects.calendar V (own team via upline scope) · orders V, orders.sales_orders V · sales_team V (org, no tiers edit).  🚫 finances, cost, other teams.
 - **Sales Executive**: overview V · projects V, projects.list V, projects.calendar V (only assigned) · orders V, orders.sales_orders V (own, scoped).  🚫 finances, cost, sales_team, others' orders.
 - **Sales Person**: same as Sales Executive.
@@ -45,8 +49,11 @@ each child. Any page not listed for a position = **none**.
 - **Logistic**: projects V, projects.list V, projects.calendar V (setup/dismantle schedule) · delivery_orders F · logistics F (trips/fleet).  🚫 finances, cost, purchase, sales.
 - **Storekeeper**: projects V, projects.calendar V · delivery_orders V (out) · purchase_orders V (incoming/GR).  🚫 price, profit, cost-margin, sales, customers. (Dedicated stock page = future.)
 - **Driver / Helper**: NO staff pages (all none). They use the separate **Driver portal** (DriverHome/DriverTrip), gated by role verbs `trips.read.own` etc. — only their own assigned jobs + POD upload.
+- **Outsource Transporter**: the outsourced delivery contractors, on the Driver ROLE. Same whitelist as Driver / Helper (`positionPolicy.ts` `RESTRICTED_ROWS`). Not in `FLEET_POSITIONS`: none has a `scm.drivers.user_id` link, and an unlinked fleet position fails closed to an empty board — link first, then move.
 
 ## Project-detail (PMS) section-level visibility  (layered on top of the page matrix)
+
+> The PMS role below comes from the Title's `position_policy` row — the **Duty** column on Roles & Permissions › Titles (management / finance → Director; purchasing → Purchasing; logistic → Logistic; driver / helper → Driver; the sales cohort → PIC / Sales) — with the old name regexes only as the fallback for a Title with no row.
 
 | PMS role | Sections | Financial | Rental |
 |---|---|---|---|

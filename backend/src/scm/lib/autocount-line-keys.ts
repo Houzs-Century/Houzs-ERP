@@ -12,6 +12,7 @@
  * different line in a live account book), so it earns being readable on its own.
  */
 import type { AcCreatedLine } from '../../services/autocount-writeback';
+import { isConvertOp } from './autocount-convert-lines';
 /* TYPE-ONLY, so it is erased and there is no runtime cycle back to the module
    that imports this one. The table union is the real contract — writing
    `string` here would let a caller name a table with no `linked_ac_dtlkey`. */
@@ -19,7 +20,9 @@ import type { AcLineTable } from './autocount-outbox';
 /* VALUE import, not type-only: the four downstream item tables are read off it
    rather than re-listed. No cycle — autocount-convert-lines imports types from
    services/autocount-writeback, never from this file. */
-import { DOWNSTREAM } from './autocount-convert-lines';
+import { CONVERT_TARGET, DOWNSTREAM, type AcDownstreamSpec } from './autocount-convert-lines';
+// @ts-expect-error - plain .mjs, shared with stamp-conversion-line-keys.mjs so the drain and the backlog stamp hold one pairing rule
+import { planDocumentKeys } from '../../../scripts/lib/conversion-line-key-plan.mjs';
 
 /**
  * The payload and row fields this function reads, named structurally rather than
@@ -31,6 +34,9 @@ export interface LineKeyTarget {
   ids: Array<string | string[]>;
   codes: string[];
   desc2?: Array<string | null>;
+  /** `so_to_po` only: the source sales-line keys AS SENT (`body.DtlKeys`, after
+   *  the drain's backfill). The host creates purchase line N from key N. */
+  sourceDtlKeys?: number[];
 }
 
 /** Just enough of the outbox row to label the log line. */
@@ -67,18 +73,76 @@ type Sb = { from: (table: string) => any };
  * AutoCount and the row IS sent. Failing to record identity is a degradation to
  * be logged, not a reason to re-send a document that already exists.
  */
+/**
+ * WHAT THIS SEND LEFT THE DOCUMENT WITHOUT, as one sentence or null.
+ *
+ * Lives here rather than in the drain because line identity is this module's
+ * subject, and because autocount-outbox.ts is at its 2,000-line cap again —
+ * the same seam `readConvertTargetLines` was moved out to find.
+ *
+ * Two ways a document reaches AutoCount with no identity, and they are
+ * different facts: `persistLineKeys` declined (it says which of its checks
+ * failed), or there was never a target to store onto at all — a conversion
+ * whose own lines could not be read when it was queued, which is
+ * `readConvertTargetLines` returning undefined on any doubt.
+ */
+export async function lineIdentityGap(
+  sb: Sb,
+  row: LineKeyRowLabel,
+  payload: { lineWriteback?: LineKeyTarget },
+  lines: AcCreatedLine[],
+  /** The body that went on the WIRE — a `wait` row's DtlKeys are filled at drain. */
+  sent: { DtlKeys?: unknown } = {},
+): Promise<string | null> {
+  if (payload.lineWriteback) {
+    const sourceDtlKeys = row.op === 'so_to_po' && Array.isArray(sent.DtlKeys)
+      ? sent.DtlKeys.map((k) => Number(k)) : undefined;
+    return persistLineKeys(sb, row, { ...payload.lineWriteback, ...(sourceDtlKeys ? { sourceDtlKeys } : {}) }, lines);
+  }
+  if (!isConvertOp(row.op)) return null;
+  return 'No line identity was stored: the ERP could not read this document\'s own lines when the '
+    + "conversion was queued, so there was nothing to attach the account book's keys to. Match the "
+    + 'lines up before editing this document.';
+}
+
 export async function persistLineKeys(
   sb: Sb,
   row: LineKeyRowLabel,
   target: LineKeyTarget,
   lines: AcCreatedLine[],
-): Promise<void> {
+): Promise<string | null> {
   const label = `[autocount-outbox] ${row.op} ${row.doc_no} line keys`;
+  /* WHY IT RETURNS THE REASON NOW (2026-09-11, docs/bugs/0813).
+     Every branch below used to `return` after a console.error, and the drain
+     discarded it. That console goes to a Worker log this account's token cannot
+     read (`wrangler tail` is denied — the 2026-09-11 handoff records the same
+     blind spot for the relink sweep), so a document went to AutoCount reporting
+     SENT while its lines kept NO identity, and nobody learned that until an
+     operator tried to edit it days later and was refused whole with "The ERP
+     cannot tell which lines AutoCount already has". The caller writes what
+     comes back onto the outbox row, where the health check and the AutoCount
+     Sync screen already look. The console lines stay: they carry detail a
+     one-line reason should not. */
   try {
     /* Not an error. An AcSyncService built before 2026-08-11 returns no lines,
        and the service also degrades to an empty array rather than losing the
        DocNo when its own read-back fails. */
-    if (!lines.length) return;
+    if (!lines.length) {
+      return 'AutoCount reported no lines for this document, so no line identity could be stored. '
+        + 'A service built before 2026-08-11 does not report them, and the service also returns an '
+        + 'empty list rather than losing the DocNo when its own read-back fails.';
+    }
+
+    /* A TRANSFER THE BOOK ITSELF LINKED IS PAIRED BY THAT LINK (docs/bugs/0898).
+       When every line carries the source key AutoCount's DocTransfer names, no
+       count, position or item code is consulted — those are exactly what a
+       conversion does not preserve (a sofa is one book line; the book spells a
+       supplier's code). Absent on a host built before 2026-09-14, and then the
+       checks below run as they always have. */
+    const linkedSpec = transferLinkedSpec(row.op);
+    if (linkedSpec && lines.every((l) => l.FromDocDtlKey != null)) {
+      return await persistByTransferLink(sb, label, target, lines, linkedSpec);
+    }
 
     if (lines.length !== target.ids.length) {
       // eslint-disable-next-line no-console
@@ -86,13 +150,59 @@ export async function persistLineKeys(
         `${label}: NOT STORED — AutoCount reported ${lines.length} line(s), the ERP sent `
         + `${target.ids.length}. Storing them by position would attach a key to the wrong line.`,
       );
-      return;
+      return `AutoCount reported ${lines.length} line(s) and the ERP sent ${target.ids.length}, so `
+        + 'no line identity was stored: matching them by position would attach a key to the wrong line.';
     }
 
     const ordered = [...lines].sort((a, b) => a.Seq - b.Seq);
     const groups = target.ids.map((g) => (Array.isArray(g) ? g : [g]));
     const norm = (s: string | null | undefined) => String(s ?? '').trim().toUpperCase();
-    for (let i = 0; i < ordered.length; i += 1) {
+
+    /* A TRANSFER IS PROVEN BY ITS SOURCE KEY, NOT BY ITS ITEM CODE (2026-09-14).
+       AddSOToPOTransferDetail copies the SALES line's item, so the book holds
+       'HOK-2038 (A) (Q)' where the ERP composed 'CELENE (A)-(Q)' (recorded on
+       HC-PO-2609-089) and the ItemCode check below could never pass for a
+       supplier-coded product: 52 of 74 transfers since go-live kept no keys.
+       The host creates purchase line N from DtlKeys[N] and costs it on exactly
+       that correspondence, so line N belongs to the ERP row whose sales line IS
+       DtlKeys[N] — checked against the database before anything is written. */
+    if (row.op === 'so_to_po') {
+      const keys = target.sourceDtlKeys ?? [];
+      if (keys.length !== groups.length) {
+        return `No line identity was stored: the transfer sent ${keys.length} source key(s) for `
+          + `${groups.length} line(s), so the account book's lines cannot be tied to ours.`;
+      }
+      const allIds = groups.flat();
+      const { data: poRows, error: poErr } = await sb.from(target.table).select('id, so_item_id').in('id', allIds);
+      if (poErr) return `No line identity was stored: the purchase lines could not be read (${poErr.message}).`;
+      const soIds = [...new Set(((poRows ?? []) as Array<{ so_item_id: string | null }>)
+        .map((r) => r.so_item_id).filter((v): v is string => !!v))];
+      const { data: soRows, error: soErr } = soIds.length
+        ? await sb.from('mfg_sales_order_items').select('id, linked_ac_dtlkey').in('id', soIds)
+        : { data: [], error: null };
+      if (soErr) return `No line identity was stored: the sales lines could not be read (${soErr.message}).`;
+      const soKey = new Map(((soRows ?? []) as Array<{ id: string; linked_ac_dtlkey: unknown }>)
+        .map((r) => [String(r.id), Number(r.linked_ac_dtlkey)]));
+      const srcOf = new Map(((poRows ?? []) as Array<{ id: string; so_item_id: string | null }>)
+        .map((r) => [String(r.id), r.so_item_id ? soKey.get(String(r.so_item_id)) : undefined]));
+      for (let i = 0; i < groups.length; i += 1) {
+        const wrong = groups[i].find((id) => srcOf.get(id) !== keys[i]);
+        if (wrong) {
+          // eslint-disable-next-line no-console
+          console.error(`${label}: NOT STORED — ERP row ${wrong} was not transferred from source key ${keys[i]}.`);
+          return `No line identity was stored: line ${i + 1} was transferred from sales line key ${keys[i]}, `
+            + 'which is not the sales line behind the ERP row at that position.';
+        }
+      }
+    }
+    /* A CREATE's order is CONSTRUCTED: the host adds the details in payload order
+       and reads them back in DtlKey order, so position is identity and a repeated
+       code needs no Desc2 to tell it apart. The Desc2 and repeated-code refusals
+       below exist for CONVERSIONS, whose order is only presumed; applied to a
+       create they left HC-PO-2609-064 ('5536-1NA' twice) and HC-PO-2609-098
+       ('AK-BASTION MATT (Q)') with no keys at all. */
+    const byConstruction = row.op === 'create_so' || row.op === 'create_po' || row.op === 'so_to_po';
+    for (let i = 0; i < ordered.length && row.op !== 'so_to_po'; i += 1) {
       const got = norm(ordered[i].ItemCode);
       const want = norm(target.codes[i]);
       /* An older service may omit ItemCode; only a PRESENT and DIFFERENT code
@@ -103,7 +213,8 @@ export async function persistLineKeys(
           `${label}: NOT STORED — position ${i + 1} is '${ordered[i].ItemCode}' in AutoCount but `
           + `'${target.codes[i]}' in the ERP. The two line lists do not correspond.`,
         );
-        return;
+        return `No line identity was stored: line ${i + 1} is '${ordered[i].ItemCode}' in AutoCount `
+          + `but '${target.codes[i]}' here, so the two line lists do not correspond.`;
       }
     }
 
@@ -121,7 +232,7 @@ export async function persistLineKeys(
     const dupes = new Set(
       target.codes.map(norm).filter((c, i, a) => c && a.indexOf(c) !== i),
     );
-    for (let i = 0; i < ordered.length; i += 1) {
+    for (let i = 0; i < ordered.length && !byConstruction; i += 1) {
       const gotD = norm(ordered[i].Desc2);
       const wantD = norm(target.desc2?.[i]);
       /* PREFIX-TOLERANT, because AutoCount's own column truncates. SODTL.Desc2
@@ -138,7 +249,8 @@ export async function persistLineKeys(
           `${label}: NOT STORED — position ${i + 1} carries Desc2 '${ordered[i].Desc2}' in `
           + `AutoCount but '${target.desc2?.[i]}' in the ERP. Same ItemCode, different line.`,
         );
-        return;
+        return `No line identity was stored: line ${i + 1} carries the same item code on both sides `
+          + 'but a different further description, so they are not the same line.';
       }
       if (dupes.has(norm(target.codes[i])) && !(gotD && wantD)) {
         // eslint-disable-next-line no-console
@@ -147,10 +259,12 @@ export async function persistLineKeys(
           + 'position ' + (i + 1) + ' has no Desc2 on both sides to tell them apart. '
           + 'Storing by position here would be a guess.',
         );
-        return;
+        return `No line identity was stored: item code '${target.codes[i]}' is on more than one line `
+          + `and line ${i + 1} has no further description on both sides to tell them apart.`;
       }
     }
 
+    let failed = 0;
     for (let i = 0; i < ordered.length; i += 1) {
       /* Every ERP row behind this AutoCount line gets the SAME key. For a sofa
          that is the build's compartments; composeEdit later accepts the build
@@ -160,15 +274,87 @@ export async function persistLineKeys(
           .update({ linked_ac_dtlkey: ordered[i].DtlKey })
           .eq('id', id);
         if (error) {
+          failed += 1;
           // eslint-disable-next-line no-console
           console.error(`${label}: partial — row ${id} failed: ${error.message}`);
         }
       }
     }
+    /* A PARTIAL IS WORSE THAN A CLEAN MISS and has to say so: composeEdit
+       refuses a document with ANY keyless line, so one failed write costs the
+       whole document its next edit exactly as if nothing had been stored. */
+    return failed
+      ? `Line identity was stored for only part of this document: ${failed} row(s) could not be `
+        + 'written. Its next edit will still be refused until they are matched up.'
+      : null;
   } catch (e) {
     // eslint-disable-next-line no-console
     console.error(`${label}: not stored:`, e instanceof Error ? e.message : String(e));
+    return 'No line identity was stored: the write failed with '
+      + (e instanceof Error ? e.message : String(e));
   }
+}
+
+/** The conversions whose created lines AutoCount links in DocTransfer are the
+ *  four in CONVERT_TARGET, read off it rather than listed again; the spec says
+ *  where each ERP row names its source line. `so_to_po` is not one of them: the
+ *  book records that edge on PODTL, and its source keys travel in the request
+ *  (`sourceDtlKeys`, above). */
+const transferLinkedSpec = (op: string): AcDownstreamSpec | undefined =>
+  Object.hasOwn(CONVERT_TARGET, op) ? DOWNSTREAM[CONVERT_TARGET[op as keyof typeof CONVERT_TARGET]] : undefined;
+
+/**
+ * Pair a converted document's rows with the book's lines by SOURCE line: our
+ * row's `sourceFk` names a source row, that row's `linked_ac_dtlkey` is the
+ * book's source line, and the book line whose `FromDocDtlKey` equals it is ours.
+ * The rule is `conversion-line-key-plan.mjs`, the same one the backlog stamp
+ * runs. Stores only what it proves; a row it cannot prove keeps NULL and is
+ * named in the returned sentence, because composeEdit refuses a document with
+ * any keyless line and the operator has to know why.
+ */
+async function persistByTransferLink(
+  sb: Sb,
+  label: string,
+  target: LineKeyTarget,
+  lines: AcCreatedLine[],
+  spec: AcDownstreamSpec,
+): Promise<string | null> {
+  const ids = [...new Set(target.ids.flat())];
+  const { data: rowData, error: rowErr } = await sb.from(target.table)
+    .select(`id, linked_ac_dtlkey, ${spec.sourceFk}`).in('id', ids);
+  if (rowErr) return `No line identity was stored: the document's own lines could not be read (${rowErr.message}).`;
+  const rows = (rowData ?? []) as Array<Record<string, unknown>>;
+  const sourceIds = [...new Set(rows.map((r) => r[spec.sourceFk]).filter((v): v is string => typeof v === 'string' && !!v))];
+  const { data: srcData, error: srcErr } = sourceIds.length
+    ? await sb.from(spec.sourceItemTable).select('id, linked_ac_dtlkey').in('id', sourceIds)
+    : { data: [], error: null };
+  if (srcErr) return `No line identity was stored: the source lines could not be read (${srcErr.message}).`;
+  const sourceKeyOf = new Map(((srcData ?? []) as Array<Record<string, unknown>>).map((r) => [String(r.id), r.linked_ac_dtlkey]));
+
+  const planned = (planDocumentKeys(
+    rows.map((r) => ({ id: String(r.id), linkedKey: r.linked_ac_dtlkey, sourceKey: sourceKeyOf.get(String(r[spec.sourceFk])) ?? null })),
+    lines.map((l) => ({ toDtlKey: l.DtlKey, fromDtlKey: l.FromDocDtlKey })),
+  ) as { rows: Array<{ id: string; outcome: string; dtlKey: number | null }> }).rows;
+
+  let failed = 0;
+  for (const p of planned) {
+    if (p.outcome !== 'stamp') continue;
+    const { error } = await sb.from(target.table).update({ linked_ac_dtlkey: p.dtlKey }).eq('id', p.id).is('linked_ac_dtlkey', null);
+    if (error) {
+      failed += 1;
+      // eslint-disable-next-line no-console
+      console.error(`${label}: row ${p.id} failed: ${error.message}`);
+    }
+  }
+  const unproved = planned.filter((p) => p.outcome !== 'stamp' && p.outcome !== 'already_correct');
+  const missing = ids.length - planned.length;
+  if (!unproved.length && !failed && !missing) return null;
+  const why = [...new Set(unproved.map((p) => p.outcome))].join(', ');
+  return `Line identity was stored from AutoCount's transfer links for ${planned.length - unproved.length - failed} of ${ids.length} row(s)`
+    + (unproved.length ? `; ${unproved.length} could not be proved (${why})` : '')
+    + (failed ? `; ${failed} could not be written` : '')
+    + (missing ? `; ${missing} could not be read` : '')
+    + '. Its next edit will still be refused until they are matched up.';
 }
 
 /**
@@ -203,8 +389,19 @@ export interface NewLineKeyTarget {
   newIds: string[][];
   /** The AutoCount ItemCode sent for each declared-new line, same order. */
   newCodes: string[];
+  /** The Desc2 sent for each declared-new line, same order. Carried because
+   *  ItemCode ALONE cannot separate two lines of the same model in different
+   *  fabrics — the ordinary sofa case — and this zip is positional. Its sibling
+   *  `persistLineKeys` has compared Desc2 since it was written; this one did
+   *  not, which is docs/bugs/0672 site 12. */
+  newDesc2: string[];
   /** Every DtlKey the payload already carried — the book lines we did NOT add. */
   knownKeys: number[];
+  /** The edit cleared the document and laid every line down in payload order,
+   *  so the book's new keys ascend in that order and position IS identity — the
+   *  reasoning 0890 applied to a create. Decides whether a repeated item code
+   *  with no Desc2 may be stored by position (docs/bugs/0907). */
+  rebuilt: boolean;
 }
 
 export async function persistNewLineKeys(
@@ -236,14 +433,64 @@ export async function persistNewLineKeys(
     }
 
     const norm = (s: string | null | undefined) => String(s ?? '').trim().toUpperCase();
+    /* THE SAME THREE DEFENCES `persistLineKeys` HAS, ninety lines above.
+       docs/bugs/0672 site 12: this function had only the first of them, and
+       even that was written `got && want && got !== want` — so a BLANK code on
+       either side passed as agreement and the key was stored anyway. A blank is
+       not agreement; it is the absence of anything to agree about, and letting
+       it through is the false negative the whole bug class is made of.
+
+       A wrong key is not a mislabelled row: `composeEdit` addresses a book row
+       by `doc.EditDetail(dtlKey)` and STRIPS `ItemCode` off a keyed line, so
+       nothing in flight can ever reveal the mistake. The correctness of
+       `linked_ac_dtlkey` IS the correctness of every future edit of that
+       document, in a live licensed account book. Refusing leaves the rows
+       keyless, which the next edit refuses loudly — recoverable. Storing a
+       wrong one is not. */
+    const dupes = new Set(
+      target.newCodes.map(norm).filter((c, i, a) => c && a.indexOf(c) !== i),
+    );
     for (let i = 0; i < fresh.length; i += 1) {
       const got = norm(fresh[i].ItemCode);
       const want = norm(target.newCodes[i]);
-      if (got && want && got !== want) {
+      if (!got || !want || got !== want) {
         // eslint-disable-next-line no-console
         console.error(
           `${label}: NOT STORED — the new line at position ${i + 1} is '${fresh[i].ItemCode}' in `
           + `AutoCount but '${target.newCodes[i]}' in the ERP.`,
+        );
+        return;
+      }
+      /* PREFIX-TOLERANT, for the reason the sibling records: SODTL.Desc2 is
+         nvarchar(100) and live sofa builds already sit at exactly 100, so the
+         book truncates them itself. An equality test would refuse lines that
+         legitimately match. Two different builds of one model diverge in the
+         first few tokens, not after character 100. */
+      const gotD = norm(fresh[i].Desc2);
+      const wantD = norm(target.newDesc2?.[i]);
+      if (gotD && wantD && !gotD.startsWith(wantD) && !wantD.startsWith(gotD)) {
+        // eslint-disable-next-line no-console
+        console.error(
+          `${label}: NOT STORED — the new line at position ${i + 1} carries Desc2 `
+          + `'${fresh[i].Desc2}' in AutoCount but '${target.newDesc2?.[i]}' in the ERP. `
+          + 'Same ItemCode, different line.',
+        );
+        return;
+      }
+      /* Two added lines of the SAME code — one sofa model in two fabrics is the
+         ordinary case — cannot be told apart by code, so the zip is a coin flip
+         unless Desc2 is present on both sides to break the tie. */
+      /* NOT on a rebuild: the document was cleared and laid down in payload order,
+         so position is identity and the repeat is no coin flip. Refusing it left
+         HC-SO-2609-071 (A01 twice) and HC-PO-2609-098 (four repeated mattress
+         codes) keyless for good, since only a rebuild could key them. The code
+         at each position is still compared above. docs/bugs/0907. */
+      if (!target.rebuilt && dupes.has(want) && !(gotD && wantD)) {
+        // eslint-disable-next-line no-console
+        console.error(
+          `${label}: NOT STORED — ItemCode '${target.newCodes[i]}' was added on more than one `
+          + `line and position ${i + 1} has no Desc2 on both sides to tell them apart. `
+          + 'Storing by position here would be a guess.',
         );
         return;
       }
@@ -297,15 +544,26 @@ export const NEW_LINE_TABLE: Record<string, AcLineTable> = {
 export function newLineTargetOf(docType: string, payload: { body?: unknown }): NewLineKeyTarget | null {
   const table = (NEW_LINE_TABLE as Record<string, AcLineTable | undefined>)[String(docType).toUpperCase()];
   if (!table) return null;
-  const body = (payload.body ?? {}) as { Lines?: unknown };
+  const body = (payload.body ?? {}) as { Lines?: unknown; Rebuild?: unknown };
+  /* A REBUILD cleared the details, so every line came back NEW and not one key
+     the payload carried still exists. Reading it the ordinary way stored
+     nothing — `IsNewLine` is absent — and left the ERP holding dead keys that
+     the next edit would send to EditDetail. docs/bugs/0621. */
+  const rebuilt = body.Rebuild === true;
   const lines = Array.isArray(body.Lines) ? (body.Lines as Array<Record<string, unknown>>) : [];
   const newIds: string[][] = [];
   const newCodes: string[] = [];
+  const newDesc2: string[] = [];
   const knownKeys: number[] = [];
   for (const l of lines) {
+    /* A retired line is not laid down by a rebuild — the host skips it before
+       AddDetail — so it has no book line to pair with and no ERP row to store
+       on. Counting it refused the whole batch and left the dead keys in place:
+       HC-SO-001463 and HC-SO-013209, docs/bugs/0904. */
+    if (rebuilt && l.Retire === true) continue;
     const key = Number(l.DtlKey);
-    if (Number.isFinite(key) && key > 0) knownKeys.push(key);
-    if (l.IsNewLine !== true) continue;
+    if (!rebuilt && Number.isFinite(key) && key > 0) knownKeys.push(key);
+    if (!rebuilt && l.IsNewLine !== true) continue;
     const ids = Array.isArray(l.ErpLineIds)
       ? (l.ErpLineIds as unknown[]).filter((v): v is string => typeof v === 'string' && !!v)
       : [];
@@ -314,6 +572,7 @@ export function newLineTargetOf(docType: string, payload: { body?: unknown }): N
     if (!ids.length) return null;
     newIds.push(ids);
     newCodes.push(String(l.ItemCode ?? ''));
+    newDesc2.push(String(l.Desc2 ?? ''));
   }
-  return newIds.length ? { table, newIds, newCodes, knownKeys } : null;
+  return newIds.length ? { table, newIds, newCodes, newDesc2, knownKeys, rebuilt } : null;
 }

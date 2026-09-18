@@ -1,0 +1,79 @@
+name: Fill sofa leg height from the supplier listing
+
+# Manual. The supplier's own export states the leg it built into each
+# compartment; 68 of our sofa lines across 35 purchase orders carry nothing
+# there (production, 2026-09-11, after the compartment corrections landed).
+# This writes the supplier's height onto the purchase line AND its sales line.
+#
+# It fills ONLY where nothing has been keyed off the blank leg yet — no receipt,
+# no goods-received line, no delivery line, no allocated stock. A sofa's leg is
+# part of its inventory identity (`computeVariantKey` emits `legheight=`), so
+# filling one on a line whose goods are already in points it at a stock bucket no
+# lot carries: that is docs/bugs/0722, which shipped three delivery orders
+# against nothing. Everything it will not write is listed with its reason.
+#
+# DRY-RUN unless apply=1, and apply=1 is refused without the confirm phrase. An
+# APPLY run re-reads every line it wrote on a FRESH connection and says VERIFY OK
+# or VERIFY FAILED.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      company:
+        description: "company_id"
+        required: false
+        default: "1"
+        type: string
+      apply:
+        description: "1 to write, else DRY-RUN"
+        required: false
+        default: "0"
+        type: string
+      confirm:
+        description: 'type exactly: FILL THE SUPPLIER LEG HEIGHTS (only needed when apply=1)'
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: apply-supplier-sofa-leg-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/apply-supplier-sofa-leg.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY_ID: ${{ inputs.company }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/apply-supplier-sofa-leg.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY_ID: ${{ inputs.company }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

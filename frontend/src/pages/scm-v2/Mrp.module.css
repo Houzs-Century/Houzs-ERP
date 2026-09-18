@@ -73,10 +73,22 @@
   border: 1px solid #d6d9d2;
   border-radius: var(--radius-lg);
   background: #fff;
+  /* The bordered BOX only. It carries the sticky offset when the header is
+     frozen (useFrozenTableHeader.boxStyle), so the scrolling moved one level
+     in, to .tableScroll — a sticky element cannot also be the scrollport its
+     own sticky children resolve against. `hidden` keeps the rounded corners
+     clipping the scroller inside it. */
+  overflow: hidden;
+}
+.tableScroll {
   /* Commander 2026-05-29 — "右边卡到了": the table is wider than the page on
      smaller screens, and overflow:hidden cut off the right columns (Main
-     Supplier) + made the expanded SO/date rows unreachable. Scroll instead. */
+     Supplier) + made the expanded SO/date rows unreachable. Scroll instead.
+     overflow-y is what the frozen header needs: with a max-height from
+     useFrozenTableHeader this box becomes the vertical scrollport the sticky
+     thead freezes against. Uncapped it is inert, so the page scrolls as before. */
   overflow-x: auto;
+  overflow-y: auto;
 }
 .table {
   width: 100%;
@@ -99,6 +111,21 @@
   border-bottom: 2px solid #d6d9d2;
   background: #e3e6e0;
   white-space: nowrap;
+}
+/* Frozen header — owner 2026-07-24, "每个table的header都要freeze". Applied to
+   the TOP-LEVEL thead only: the drilldown .childTable renders inside a <td> of
+   this table, so a bare `.table thead th` rule would stick those nested headers
+   too and float them over their own rows.
+
+   The rule is drawn with an inset shadow rather than left to `border-bottom`:
+   .table is border-collapse:collapse, where a sticky cell's collapsed border
+   belongs to the table's border grid and stops painting once the cell leaves
+   its resting place. The background is what stops rows showing through. */
+.stickyHead th {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  box-shadow: inset 0 -2px 0 #d6d9d2;
 }
 .num {
   text-align: right;
@@ -127,7 +154,12 @@
 .skuRowShort:hover { background: rgba(22, 105, 95, 0.13); }
 
 .codeCell { font-weight: 700; white-space: nowrap; }
-.descCell { color: #767b6e; }
+/* DataTable cells default to nowrap+ellipsis; setting white-space on this inner
+   element (the DataTable-sanctioned escape hatch for multi-line cells) overrides
+   the inherited nowrap so long bedframe specs wrap instead of being clipped
+   (owner 2026-09-11). The column also carries a fixed width so it wraps within
+   bounds rather than stretching the table. */
+.descCell { color: #767b6e; white-space: normal; overflow-wrap: anywhere; }
 
 /* Per-warehouse MRP (Commander 2026-05-31) — each Model row is scoped to one
    warehouse; the tag makes the binding visible at a glance. */
@@ -190,17 +222,24 @@
   font-weight: 700;
   white-space: nowrap;
 }
-/* Variant / module label pill — petrol soft (was a blue outlier). */
+/* Variant / module label pill — petrol soft (was a blue outlier). Wraps rather
+   than nowrap (owner 2026-09-11): bedframe specs (DIVAN / LEG / GAP / T.Heights /
+   SPECIAL) run long, so on the Model row's Description column the pill must fold
+   onto more lines instead of forcing the column wide. Short labels (sofa modules,
+   colours) are unaffected — they never reach the wrap point. `radius-md` not the
+   full pill radius so a two-line label reads as a rounded tag, not a lozenge. */
 .variantTag {
   display: inline-block;
   margin-left: var(--space-2);
+  max-width: 100%;
   padding: 1px 8px;
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-md);
   background: #e1efed;
   color: #0c3f39;
   font-size: var(--fs-11);
   font-weight: 700;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 /* Shortage = the actionable "must order" number. Owner 2026-08-03 wanted the
    SAME petrol hue, just deeper so it stands out ("一样颜色的,只是加深一点,让它显得明显").
@@ -242,7 +281,25 @@
 }
 .supplierSelect:hover { border-color: #16695f; }
 
+/* Shortage rows in the report table (now DataTable) — the actionable ones.
+   The same light petrol wash + deep-petrol left bar .skuRowShort gave them on
+   the hand-built table (owner 2026-08-03: obvious, but no solid fill — rejected
+   2026-05-29). #3696 kept only the bar and every row read plain (owner
+   2026-09-15). Both are painted per CELL as inset shadows: a shadow sits above
+   the DataTable zebra, its hover green and a pinned column's inline opaque
+   background, so the wash shows on every cell without making a pinned cell see-
+   through. [data-vrow] = the data row only; DataTable copies this class onto the
+   expanded drill-down row too, which keeps its own grey ground. */
+.rowShort[data-vrow] > td { box-shadow: inset 0 0 0 9999px rgba(22, 105, 95, 0.08); }
+.rowShort[data-vrow] > td:first-child { box-shadow: inset 3px 0 0 #08352e, inset 0 0 0 9999px rgba(22, 105, 95, 0.08); }
+/* The same row as a phone card (DataTable's stacked cards below `sm`). */
+.rowShort[data-mobile-card] { box-shadow: inset 3px 0 0 #08352e, inset 0 0 0 9999px rgba(22, 105, 95, 0.08); }
+
 /* ── Child detail (drilldown) ──────────────────────────────────────── */
+/* The expanded body sits inside DataTable's full-width expanded cell; give it
+   the same soft ground the old inline drilldown row had. The child tables carry
+   their own side margins, so this only needs the tint + a little breathing room. */
+.drilldown { padding: var(--space-2) 0 var(--space-3); background: #f4f6f3; }
 .detailRow > td { padding: 0 0 var(--space-3) 0; background: #f4f6f3; }
 .childTable {
   width: 100%;

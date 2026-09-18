@@ -98,12 +98,19 @@ import {
 } from "../../components/scm-v2/DocumentRelationshipMapModal";
 import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
+import { statusLabel } from "../../vendor/scm/lib/status-pill";
 import { cn } from "../../lib/utils";
 import { buildVariantSummary, fmtDate, fmtMoneySen, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import { clearPaymentRetryHandoff, completePaymentRetryDraft, consumePaymentRetryNavigationState, planPaymentDraftFlush, readPaymentRetryHandoff, readPaymentRetryNavigationState } from "../../lib/paymentRetryHandoff";
 import { transferFromColumnLabel } from "../../lib/convertScope";
+import { customerRefOf } from '../../lib/customer-ref';
 
+import { useSalesInvoiceAddLine } from "./SalesInvoiceAddLine";
+import { salesInvoiceLinesOpen } from "../../vendor/scm/lib/line-add-lock";
+import { ActivityRow } from "./ActivityRow";
+import { DocumentHistoryDrawer } from "./DocumentHistoryDrawer";
+import { isFocLine } from '../../vendor/scm/lib/foc-line';
 // ─── Row shapes (subset — see SalesInvoiceDetail.tsx for the full 40-field
 // header) ───────────────────────────────────────────────────────────────
 
@@ -187,6 +194,8 @@ type SiItem = {
   cancelled?: boolean;
   item_group?: string;
   variants?: Record<string, unknown> | null;
+  /* Per-line delivery date carried from the DO line. */
+  line_delivery_date?: string | null;
 };
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -207,8 +216,7 @@ const daysPast = (iso: string | null | undefined): number => {
   return Math.floor((now - t) / 86_400_000);
 };
 
-const refOf = (h: SiHeader): string =>
-  h.po_doc_no || h.customer_so_no || h.ref || "—";
+const refOf = (h: SiHeader): string => customerRefOf(h) || "—";
 
 const soOf = (h: SiHeader): string => h.so_doc_no || "—";
 
@@ -296,8 +304,8 @@ const EFFECTIVE_TONE: Record<
   },
   sent: {
     tone: "warning",
-    label: "Sent",
-    blurb: "Sent · awaiting payment",
+    label: "Submitted",
+    blurb: "Submitted · awaiting payment",
   },
   partial: {
     tone: "warning",
@@ -323,14 +331,11 @@ const EFFECTIVE_TONE: Record<
 
 // Raw-stage label so the header Badge still shows the exact stored status
 // instead of the bucketed effective label.
-const STAGE_LABEL: Record<string, string> = {
-  DRAFT: "Draft",
-  SENT: "Sent",
-  PARTIALLY_PAID: "Partially paid",
-  PAID: "Paid",
-  OVERDUE: "Overdue",
-  CANCELLED: "Cancelled",
-};
+/* The header BADGE reads its word from vendor/scm/lib/status-pill.ts. It used to
+   read a hand-written STAGE_LABEL here, which said "Sent" for SENT - contradicting the
+   owner's ruling that this rung reads one word on every surface, and invisible to
+   localStatusMapsAgree because a flat map is not the { label } shape it parsed.
+   docs/bugs/0868. The guard now scans that shape too. */
 
 const initialsOf = (name: string | null | undefined): string => {
   if (!name) return "—";
@@ -448,36 +453,6 @@ function PersonRow({
   );
 }
 
-type ActivityDot = "success" | "primary" | "muted";
-const DOT_CLS: Record<ActivityDot, string> = {
-  success: "bg-synced",
-  primary: "bg-primary",
-  muted: "bg-border-strong",
-};
-function ActivityRow({
-  title,
-  meta,
-  dot,
-  isLast,
-}: {
-  title: string;
-  meta: string;
-  dot: ActivityDot;
-  isLast?: boolean;
-}) {
-  return (
-    <div className="flex gap-3 pb-3.5">
-      <div className="flex flex-col items-center">
-        <span className={cn("mt-1 h-2 w-2 rounded-full", DOT_CLS[dot])} />
-        {!isLast && <span className="mt-1 w-[2px] flex-1 bg-border-subtle" />}
-      </div>
-      <div className="min-w-0">
-        <div className="text-[12.5px] font-semibold text-ink">{title}</div>
-        <div className="mt-0.5 text-[11px] text-ink-muted">{meta}</div>
-      </div>
-    </div>
-  );
-}
 
 
 // ─── Invoice total / outstanding hero (dark aside slab) ────────────────────
@@ -735,10 +710,7 @@ export function SalesInvoiceDetailV2() {
   ]);
 
   const eff = salesInvoice ? effectiveOf(salesInvoice, items, depositSen) : null;
-  const stageLabel = salesInvoice
-    ? STAGE_LABEL[(salesInvoice.status || "").toUpperCase()] ??
-      salesInvoice.status
-    : "";
+  const stageLabel = salesInvoice ? statusLabel("si", salesInvoice.status) : "";
   const badgeTone = eff ? EFFECTIVE_TONE[eff].tone : "neutral";
 
   const foldedNote = useMemo(
@@ -762,6 +734,10 @@ export function SalesInvoiceDetailV2() {
   // editor (no navigation; ?edit=1 was dead). invoice_date is only editable
   // while DRAFT; the backend rejects it once issued.
   const siIsDraft = (salesInvoice?.status || "").toUpperCase() === "DRAFT";
+  /* Add line — the SI has no separate editor page to hand off to, so its add
+     row opens in place. Gated on the Edit permission AND on DRAFT, which is
+     exactly what POST /:id/items allows. See SalesInvoiceAddLine.tsx. */
+  const addLine = useSalesInvoiceAddLine(id ?? null, canWriteSi && salesInvoiceLinesOpen({ status: salesInvoice?.status ?? null }));
   const startEditHeader = () => {
     if (!salesInvoice) return;
     setHdrInvoiceDate(salesInvoice.invoice_date.slice(0, 10));
@@ -839,7 +815,7 @@ export function SalesInvoiceDetailV2() {
     }
   };
   const [relMapOpen, setRelMapOpen] = useState(false);
-  const goHistory = () => id && navigate(`/scm/sales-invoices/${id}?tab=history`);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const goRelationshipMap = () => setRelMapOpen(true);
   // Render + download the SI PDF via the shared jspdf generator (client-side),
   // mirroring the V1 SalesInvoiceDetail handler. The old `?print=1` navigation
@@ -875,6 +851,7 @@ export function SalesInvoiceDetailV2() {
             so_doc_no: salesInvoice.so_doc_no,
             customer_so_no: salesInvoice.customer_so_no,
             po_doc_no: salesInvoice.po_doc_no,
+            ref: salesInvoice.ref,
           }
         : null,
     [salesInvoice],
@@ -1058,6 +1035,18 @@ export function SalesInvoiceDetailV2() {
       },
     },
     {
+      key: "delivery",
+      label: "Delivery",
+      width: "104px",
+      align: "left",
+      getValue: (l) => l.line_delivery_date ?? "",
+      render: (l) => (
+        <span className="font-mono text-[12px] text-ink-secondary">
+          {l.line_delivery_date ? fmtDate(l.line_delivery_date) : "—"}
+        </span>
+      ),
+    },
+    {
       key: "qty",
       label: "Qty",
       width: "72px",
@@ -1088,8 +1077,7 @@ export function SalesInvoiceDetailV2() {
       align: "right",
       getValue: (l) => l.discount_sen,
       render: (l) => {
-        const isFoc =
-          l.unit_price_sen === 0 && (l.line_total_sen ?? 0) === 0;
+        const isFoc = isFocLine(l);
         if (isFoc) {
           return (
             <Badge tone="warning" size="xs">
@@ -1288,7 +1276,7 @@ export function SalesInvoiceDetailV2() {
             <Button
               variant="ghost"
               icon={<History size={14} />}
-              onClick={goHistory}
+              onClick={() => setHistoryOpen(true)}
             >
               History
             </Button>
@@ -1635,16 +1623,17 @@ export function SalesInvoiceDetailV2() {
             </Section>
 
             {/* Line items — money-forward, 5 cols. FOC badge on zero-price. */}
-            <Section title={`Line items · ${items.length}`}>
+            <Section title={`Line items · ${items.length}`} actions={addLine.action}>
               <DataTable<SiItem>
                 tableId={`si-lines-${id}`}
-                layoutFamily={DATA_TABLE_LAYOUT_FAMILIES.salesInvoiceLines}
+                layoutFamily={DATA_TABLE_LAYOUT_FAMILIES.salesInvoiceLines} persistSort={false} persistFilters={false}
                 rows={items}
                 loading={false}
                 columns={lineColumns}
                 getRowKey={(l) => l.id}
                 emptyLabel="No line items"
               />
+              {addLine.panel}
             </Section>
 
             {/* Owner 2026-07-17: Totals·Margin (Revenue/Cost/Margin/Margin%)
@@ -1709,6 +1698,7 @@ export function SalesInvoiceDetailV2() {
                     grandTotalSen={total}
                     currency={salesInvoice.currency}
                     locked={!editingPayments || isCancelled}
+                    receiptFor={{ source: "SIPAY", persistedIds: new Set(persistedDrafts.map((d) => d.uid)) }}
                   />
                 )}
               </Section>
@@ -1941,6 +1931,8 @@ export function SalesInvoiceDetailV2() {
           pickChainChoice(d);
         }}
       />
+      {historyOpen && <DocumentHistoryDrawer doc="SALES_INVOICE" id={String(salesInvoice.id)}
+        label={salesInvoice.invoice_number} onClose={() => setHistoryOpen(false)} />}
       <PrintPreviewModal
         open={print.open}
         onClose={print.close}

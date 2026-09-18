@@ -201,14 +201,21 @@ describe('what must never be re-queued', () => {
     expect(pending(sb)).toHaveLength(0);
   });
 
-  test('an EDIT refusal is reported, never re-queued', async () => {
+  /* CHANGED 2026-09-02, docs/bugs/0614. This asserted that an edit refusal is
+     never re-queued, and the reason it gave was sound: a skipped edit's payload
+     is `{}`, so the RETIREMENTS the original save carried are unrecoverable and
+     a re-composed keyed edit would leave those lines live in the account book.
+     A REBUILD needs none of that list - it clears the details and lays the ERP's
+     lines down - so the one hazard the refusal existed for cannot occur. */
+  test('an EDIT refusal is re-queued as a REBUILD, never as a keyed edit', async () => {
     const sb = world({ ...soWithoutLocation(), linked_ac_docno: 'SO-000021' }, [
       skippedRow({ id: 'skip-edit', op: 'edit', last_error: 'refused, nothing sent (KeylessLineError): line 1' }),
     ]);
     const [r] = await requeueSkipped(sb as never, { docNo: SO_DOC, apply: true });
-    expect(r.outcome).toBe('not-recoverable');
-    expect(r.detail).toContain('saving the document again');
-    expect(pending(sb)).toHaveLength(0);
+    expect(r.outcome).toBe('requeued');
+    expect(r.detail).toContain('REBUILD');
+    expect(pending(sb)).toHaveLength(1);
+    expect((pending(sb)[0].payload as { body: Record<string, unknown> }).body.Rebuild).toBe(true);
   });
 
   test('a parentless conversion is reported, never re-queued', async () => {
@@ -547,8 +554,12 @@ describe('requeueOutboxRow — the rest of the by-id ladder', () => {
     expect(pending(sb)).toHaveLength(1);
   });
 
-  test('an edit or a conversion is refused as not-recoverable, not silently ignored', async () => {
-    const sb = world(sendable(), [skippedRow({ id: 'e-1', op: 'edit' })]);
+  /* The edit row is a DELIVERY ORDER's on purpose: since docs/bugs/0614 a sales
+     order's edit IS re-queueable (as a rebuild), and a document built by
+     conversion is the half that stays refused - its lines are where AutoCount
+     records what it came from (docs/bugs/0611). */
+  test('an edit on a converted document is refused as not-recoverable, not silently ignored', async () => {
+    const sb = world(sendable(), [skippedRow({ id: 'e-1', op: 'edit', doc_type: 'DO', doc_id: 'do-1' })]);
     const r = await requeueOutboxRow(asSb(sb), { rowId: 'e-1', companyId: 1 });
     expect(r.outcome).toBe('not-recoverable');
     expect(pending(sb)).toHaveLength(0);
@@ -589,7 +600,16 @@ describe('the outcome vocabulary is complete and matches its catalogue', () => {
     expect(acRowIsRequeueable('create_so', 'sent', null)).toBe(false);
     expect(acRowIsRequeueable('create_so', 'pending', null)).toBe(false);
     expect(acRowIsRequeueable('create_so', 'skipped', marker)).toBe(false);
-    expect(acRowIsRequeueable('edit', 'skipped', 'refused, nothing sent (KeylessLineError): x')).toBe(false);
+    /* FLIPPED 2026-09-02, docs/bugs/0614: a held-back edit is re-sendable, as a
+       REBUILD. The hint is op-shaped and knows no document type, so it also
+       offers the button on a DELIVERY ORDER's edit, which the ladder then
+       refuses in words - the same trade this file already made for conversions
+       five lines down, and for the same reason: a refusal that explains itself
+       beats a control that is simply absent. The three noes below are about the
+       ROW, and re-reading the document cannot make a sent row unsent. */
+    expect(acRowIsRequeueable('edit', 'skipped', 'refused, nothing sent (KeylessLineError): x')).toBe(true);
+    expect(acRowIsRequeueable('edit', 'sent', null)).toBe(false);
+    expect(acRowIsRequeueable('edit', 'skipped', marker)).toBe(false);
     /* A skipped CONVERSION is no longer on this list. Owner 2026-08-24:
        「我的 GR PO 所有文件都要有 Send Now 的 button」— the button is offered and
        the SEND re-resolves the parent (parentedAfterAll), because "there is no

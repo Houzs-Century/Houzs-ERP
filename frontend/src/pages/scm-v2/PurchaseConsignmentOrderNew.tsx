@@ -43,12 +43,14 @@ import {
   type PoPriceMatrix,
 } from '@2990s/shared/mfg-pricing';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
+import { DiscountInput } from '../../vendor/scm/components/DiscountInput';
 import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDialog';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { computeTotalHeight, isTotalHeightCategory, isTotalHeightPart } from '../../vendor/shared/total-height';
 import { DateField } from "../../vendor/scm/components/DateField";
+import { showsVariantEditor } from '../../vendor/scm/lib/variant-editor-groups';
 
 const ICON    = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -548,7 +550,7 @@ export const PurchaseConsignmentOrderNew = () => {
           {lines.map((l, idx) => {
             const lineTotalSen = Math.max(0, l.qty * l.unitPriceSen - (l.discountSen ?? 0));
             const categoryLabel = l.category?.toUpperCase() ?? 'UNSET';
-            const showVariants  = l.category && ['sofa', 'bedframe'].includes(l.category) && maint;
+            const showVariants  = showsVariantEditor(l.category) && maint;
 
             return (
               <div
@@ -753,12 +755,14 @@ export const PurchaseConsignmentOrderNew = () => {
                   </label>
                   <label className={styles.field}>
                     <span className={styles.fieldLabel}>Discount ({currency})</span>
-                    <MoneyInput
+                    <DiscountInput
                       bare
                       valueSen={l.discountSen ?? 0}
+                      baseSen={l.qty * l.unitPriceSen}
                       onCommit={(sen) => setLine(l.rid, { discountSen: sen ?? 0 })}
                       inputClassName={styles.fieldInput}
                       selectOnFocus
+                      currency={currency}
                     />
                   </label>
                   <label className={styles.field}>

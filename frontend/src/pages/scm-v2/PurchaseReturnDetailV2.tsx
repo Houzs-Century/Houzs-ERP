@@ -42,6 +42,7 @@ import { usePrompt } from "../../vendor/scm/components/PromptDialog";
 import { RelationshipMapButton } from "../../vendor/scm/components/RelationshipMapButton";
 import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
+import { statusLabel } from "../../vendor/scm/lib/status-pill";
 import { cn } from "../../lib/utils";
 
 type PrStatus = "DRAFT" | "POSTED" | "COMPLETED" | "CANCELLED" | string;
@@ -105,19 +106,29 @@ const effectiveOf = (h: PrHeader): Effective => {
   return "draft";
 };
 
-const EFFECTIVE_TONE: Record<Effective, { tone: "success" | "warning" | "error" | "neutral"; label: string; blurb: string }> = {
-  draft:     { tone: "warning", label: "Draft",     blurb: "Draft · not yet posted" },
-  posted:    { tone: "warning", label: "Confirmed", blurb: "Confirmed · awaiting credit note" },
-  completed: { tone: "success", label: "Completed", blurb: "Completed · credit note issued" },
-  cancelled: { tone: "error",   label: "Cancelled", blurb: "Cancelled · no further action" },
+/* The LABEL is NOT declared here. Every `Effective` key above is the stored
+   status lowercased, so the word comes from `vendor/scm/lib/status-pill.ts`,
+   the one canonical map — docs/modules/document-status-vocabulary.md §1. What
+   stays is what is genuinely this page's own: the tone palette (four names, not
+   status-pill's six) and the BLURB.
+
+   `draft` is a real purchase-return status the canonical `pr` map does not
+   carry, so it resolves through statusLabel's documented humanise fallback —
+   which answers "Draft", the identical word this map used to hand-write. */
+const EFFECTIVE_TONE: Record<Effective, { tone: "success" | "warning" | "error" | "neutral"; blurb: string }> = {
+  draft:     { tone: "warning", blurb: "Draft · not yet posted" },
+  posted:    { tone: "warning", blurb: "Confirmed · awaiting credit note" },
+  completed: { tone: "success", blurb: "Completed · credit note issued" },
+  cancelled: { tone: "error",   blurb: "Cancelled · no further action" },
 };
 
-const STAGE_LABEL: Record<string, string> = {
-  DRAFT: "Draft",
-  POSTED: "Posted",
-  COMPLETED: "Completed",
-  CANCELLED: "Cancelled",
-};
+const effectiveLabel = (eff: Effective): string => statusLabel("pr", eff.toUpperCase());
+
+/* The header BADGE reads its word from vendor/scm/lib/status-pill.ts. It used to
+   read a hand-written STAGE_LABEL here, which said "Posted" for POSTED - contradicting the
+   owner's ruling that this rung reads one word on every surface, and invisible to
+   localStatusMapsAgree because a flat map is not the { label } shape it parsed.
+   docs/bugs/0868. The guard now scans that shape too. */
 
 const initialsOf = (name: string | null | undefined): string => {
   if (!name) return "—";
@@ -248,9 +259,7 @@ export function PurchaseReturnDetailV2() {
   ]);
 
   const eff = purchaseReturn ? effectiveOf(purchaseReturn) : null;
-  const stageLabel = purchaseReturn
-    ? STAGE_LABEL[(purchaseReturn.status || "").toUpperCase()] ?? purchaseReturn.status
-    : "";
+  const stageLabel = purchaseReturn ? statusLabel("pr", purchaseReturn.status) : "";
   const badgeTone = eff ? EFFECTIVE_TONE[eff].tone : "neutral";
   const refund = purchaseReturn ? refundOf(purchaseReturn) : 0;
 
@@ -537,7 +546,7 @@ export function PurchaseReturnDetailV2() {
             <Section title={`Returned items · ${items.length}`}>
               <DataTable<PrItem>
                 tableId={`pr-lines-${id}`}
-                layoutFamily={DATA_TABLE_LAYOUT_FAMILIES.purchaseReturnLines}
+                layoutFamily={DATA_TABLE_LAYOUT_FAMILIES.purchaseReturnLines} persistSort={false} persistFilters={false}
                 rows={items}
                 loading={false}
                 columns={lineColumns}
@@ -577,7 +586,7 @@ export function PurchaseReturnDetailV2() {
 
               <AsideCard title="Recent activity">
                 <ActivityRow
-                  title={`Return ${EFFECTIVE_TONE[effectiveOf(purchaseReturn)].label.toLowerCase()}`}
+                  title={`Return ${effectiveLabel(effectiveOf(purchaseReturn)).toLowerCase()}`}
                   meta={fmtDate(purchaseReturn.return_date)}
                   dot={EFFECTIVE_TONE[effectiveOf(purchaseReturn)].tone === "success" ? "success" : "primary"}
                 />

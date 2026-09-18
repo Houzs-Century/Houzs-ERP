@@ -89,7 +89,12 @@ const SALES_POSITION = /^sales/i;
 export function isSalesCohort(u: {
   position_name?: string | null;
   department_name?: string | null;
+  /** The Title's stored policy row, when the caller carries one: it decides
+   *  the cohort (Roles & Permissions › Titles); the org-field rule below is the
+   *  fallback for a Title with no row. */
+  position_policy?: { cohort: string } | null;
 }): boolean {
+  if (u.position_policy) return u.position_policy.cohort === "sales";
   const dept = (u.department_name ?? "").toLowerCase();
   if (dept.includes("sales")) return true;
   return SALES_POSITION.test((u.position_name ?? "").trim());
@@ -164,6 +169,7 @@ export interface SalesJdCaller {
   permissions_set?: ReadonlySet<string>;
   position_name?: string | null;
   department_name?: string | null;
+  position_policy?: { cohort: string } | null;
 }
 
 function hasWildcard(u: SalesJdCaller): boolean {
@@ -312,6 +318,7 @@ export function applySalesJdOverride(
     permissions: ReadonlySet<string> | string[];
     position_name: string | null;
     department_name: string | null;
+    position_policy?: { cohort: string } | null;
   },
 ): Record<string, AccessLevel> {
   const perms = Array.isArray(user.permissions)

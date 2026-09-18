@@ -1,0 +1,65 @@
+-- 0342_fabric_trackings_per_company_pk.sql — make the FABRIC CODE per-company.
+--
+-- BUSINESS GOAL (owner, 2026-09-02): 先把两个公司的数据分离 — Houzs Century
+-- (company code HOUZS) and 2990 must each be able to OWN the same fabric code
+-- independently, with no cross-company clash and no silent re-homing.
+--
+-- WHAT WAS WRONG. scm.fabric_trackings.id is a GLOBAL text PRIMARY KEY and the id
+-- IS the fabric code (POST / and /bulk-upsert derive it as
+-- code.toUpperCase().replace(/\s+/g,'_')). company_id was added as a COLUMN only
+-- (mig 0083, backfilled to HOUZS), never as part of the key. So two companies
+-- importing the same code addressed the SAME row: the bulk upsert's ON CONFLICT
+-- (id) DO UPDATE re-homed the other company's row, and a route-level 409 guard
+-- (`fabric_id_belongs_to_another_company`) had to REFUSE the import to stop that.
+-- One company could not hold a code the other already used.
+--
+-- THE FIX. Move the identity to (company_id, id): drop the single-column PK and
+-- add a composite PRIMARY KEY (company_id, id). Now the SAME code under two
+-- companies is two legitimately DIFFERENT rows, the bulk upsert targets
+-- ON CONFLICT (company_id, id), and the 409 guard is removed (this PR's code
+-- change). Existing rows are untouched — company_id was already backfilled to
+-- HOUZS, and (company_id=HOUZS, id) is unique across every existing row, so the
+-- composite PK builds without moving or deleting a single row.
+--
+-- WHY THIS IS SAFE FOR fabric_trackings SPECIFICALLY. NOTHING references
+-- fabric_trackings.id with a FOREIGN KEY — verified by grepping the whole backend
+-- for `REFERENCES ... fabric_trackings` (zero hits) and by reading the vendored
+-- 2990s-full-schema.sql (the only inbound link to a fabric is
+-- products.fabric_color = fabric_code, a plain TEXT column with no constraint).
+-- A PK can only be dropped when no FK depends on it; if prod unexpectedly holds
+-- an inbound FK not present in this repo, the DROP below FAILS LOUDLY and blocks
+-- the deploy — it can never silently half-apply.
+--
+-- fabric_library / fabric_colours are NOT converted here. Their TEXT PKs are
+-- referenced by FOREIGN KEYS (product_fabrics.fabric_id -> fabric_library.id,
+-- and fabric_colours.fabric_id -> fabric_library.id), and the scm DDL that would
+-- carry those FKs is NOT in this repo (the scm schema predates the migration
+-- ledger), so their existence and product_fabrics data-integrity cannot be
+-- verified from here. Converting those PKs would force a drop+rebuild of an
+-- external product-catalog FK on unverifiable prod state — deferred to a
+-- reviewed follow-up. See docs/bugs/0605-*.md and docs/modules/fabric-tracking.md.
+--
+-- STYLE: mirrors 0089_multicompany_extend_scoping.sql — one guarded DO block,
+-- relkind guard (views + absent tables SKIPPED so the file is safe on prod /
+-- staging / a fresh DB), name-agnostic constraint discovery (the scm schema
+-- predates the ledger, so the PK constraint name cannot be assumed). ADDITIVE,
+-- idempotent, re-run-safe. The Houzs deploy runner splits on ';\n', so the whole
+-- DO block stays on ONE line.
+--
+-- REVERSAL:
+--   -- Drop the composite PK and restore the single-column PK on id.
+--   -- SAFE ONLY while no two companies share a fabric id (true until a second
+--   -- company imports a colliding code AFTER this migration). If a collision
+--   -- exists, id is no longer globally unique and the single-column PK cannot be
+--   -- rebuilt without first resolving the duplicate ids — that is the whole point
+--   -- of this migration, so a reversal after real per-company use is a data
+--   -- decision, not a mechanical revert.
+--   DO $$ DECLARE r record; BEGIN IF EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='scm' AND c.relname='fabric_trackings' AND c.relkind IN ('r','p')) THEN FOR r IN SELECT conname FROM pg_constraint con JOIN pg_class t ON t.oid=con.conrelid JOIN pg_namespace n ON n.oid=t.relnamespace WHERE n.nspname='scm' AND t.relname='fabric_trackings' AND con.contype='p' LOOP EXECUTE 'ALTER TABLE scm.fabric_trackings DROP CONSTRAINT ' || quote_ident(r.conname); END LOOP; ALTER TABLE scm.fabric_trackings ADD CONSTRAINT fabric_trackings_pkey PRIMARY KEY (id); END IF; END $$;
+--
+-- Verified against: (filled in the PR body — this migration was NOT dispatched
+-- against production by this session; the parent session reviews and applies it).
+
+-- Drop whatever the current PRIMARY KEY is named, then add the composite PK.
+-- Guarded so a re-run (or a DB that already carries the composite PK) is a no-op:
+-- if a PK on exactly (company_id, id) already exists, do nothing.
+DO $$ DECLARE r record; BEGIN IF EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='scm' AND c.relname='fabric_trackings' AND c.relkind IN ('r','p')) AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='scm' AND table_name='fabric_trackings' AND column_name='company_id') AND NOT EXISTS (SELECT 1 FROM pg_constraint con JOIN pg_class t ON t.oid=con.conrelid JOIN pg_namespace n ON n.oid=t.relnamespace WHERE n.nspname='scm' AND t.relname='fabric_trackings' AND con.contype='p' AND (SELECT array_agg(a.attname::text ORDER BY a.attname) FROM pg_attribute a WHERE a.attrelid=t.oid AND a.attnum=ANY(con.conkey)) = ARRAY['company_id','id']) THEN FOR r IN SELECT conname FROM pg_constraint con JOIN pg_class t ON t.oid=con.conrelid JOIN pg_namespace n ON n.oid=t.relnamespace WHERE n.nspname='scm' AND t.relname='fabric_trackings' AND con.contype='p' LOOP EXECUTE 'ALTER TABLE scm.fabric_trackings DROP CONSTRAINT ' || quote_ident(r.conname); END LOOP; ALTER TABLE scm.fabric_trackings ADD CONSTRAINT fabric_trackings_company_id_pkey PRIMARY KEY (company_id, id); END IF; END $$;

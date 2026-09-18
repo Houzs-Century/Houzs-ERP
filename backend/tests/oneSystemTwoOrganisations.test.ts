@@ -232,7 +232,9 @@ describe("the transferable gate is fed a real status", () => {
   });
 
   test("DO_HEADER selects `status`, so the gate above never sees undefined", () => {
-    const src = read("backend/src/scm/routes/sales-invoices.ts");
+    /* The from-DO conversion lives in lib/si-from-do.ts since docs/bugs/0830 (the
+       delivery reconciler raises the final invoice through the same core). */
+    const src = read("backend/src/scm/lib/si-from-do.ts");
     const m = src.match(/const DO_HEADER =([\s\S]*?);/);
     expect(m).not.toBeNull();
     const cols = m![1].replace(/\s*\+\s*/g, "").replace(/'/g, "")

@@ -14,6 +14,27 @@
 // title — a sales person is "PIC" only on the projects they're assigned to.
 
 import type { AuthUser } from "./auth";
+import type { PositionPolicyRow } from "./positionPolicyRows";
+
+/* 2026-09-16 (Roles & Permissions review, part B follow-up): every predicate
+ * below reads the Title's stored policy row FIRST — `user.position_policy`,
+ * hydrated from position_policy (cohort / profile / duty) — and falls back to
+ * the name lists and regexes only for a Title with no row. The row is what
+ * Roles & Permissions › Titles edits; the names stay as the transition rule. */
+
+/** The Title's row, when the caller carries one. Tolerant of the partial user
+ *  shapes the SCM bridge and the capability adapter build. */
+function policyOf(user: { position_policy?: PositionPolicyRow | null } | null | undefined): PositionPolicyRow | null {
+  return user?.position_policy ?? null;
+}
+
+/** Director tier by ROW: owner tier, a management / finance duty, or the Sales
+ *  Director profile. Mirrors DIRECTOR_POSITION_NAMES by intent. */
+function rowIsDirector(row: PositionPolicyRow): boolean {
+  if (row.cohort === "god") return true;
+  if (row.duty === "management" || row.duty === "finance") return true;
+  return row.cohort === "sales" && row.profile === "director";
+}
 
 export type PmsRole =
   | "DIRECTOR" // owner/IT (*), Super Admin, Sales Director, Finance — full incl. financials
@@ -123,6 +144,8 @@ const SALES_DIRECTOR_POSITION_NAMES: ReadonlySet<string> = new Set(
  */
 export function isSalesDirectorUser(user: AuthUser | null | undefined): boolean {
   if (!user) return false;
+  const row = policyOf(user);
+  if (row) return row.cohort === "sales" && row.profile === "director";
   return SALES_DIRECTOR_POSITION_NAMES.has(normalisePosition(user.position_name));
 }
 
@@ -146,6 +169,8 @@ const SALES_POSITION = /^sales/i;
  */
 export function isSalesUser(user: AuthUser | null | undefined): boolean {
   if (!user) return false;
+  const row = policyOf(user);
+  if (row) return row.cohort === "sales";
   const pos = (user.position_name ?? "").trim();
   if (SALES_POSITION.test(pos)) return true;
   const dept = (user.department_name ?? "").trim().toLowerCase();
@@ -162,6 +187,8 @@ export function isSalesUser(user: AuthUser | null | undefined): boolean {
 export function isDirectorUser(user: AuthUser | null | undefined): boolean {
   if (!user) return false;
   if (user.permissions_set?.has("*")) return true;
+  const row = policyOf(user);
+  if (row) return rowIsDirector(row);
   return isDirectorPositionName(user.position_name);
 }
 
@@ -202,6 +229,8 @@ const PURCHASING_POSITION_NAMES: ReadonlySet<string> = new Set(
 export function isProductCostViewer(user: AuthUser | null | undefined): boolean {
   if (!user) return false;
   if (isDirectorUser(user)) return true;
+  const row = policyOf(user);
+  if (row) return row.duty === "purchasing";
   return PURCHASING_POSITION_NAMES.has(normalisePosition(user.position_name));
 }
 
@@ -212,10 +241,25 @@ export interface ProjectLike {
 
 export function getPmsRole(user: AuthUser | null | undefined, project: ProjectLike): PmsRole {
   if (!user) return "NONE";
+  if (user.permissions_set?.has("*")) return "DIRECTOR";
+  const row = policyOf(user);
+  if (row) {
+    if (rowIsDirector(row)) return "DIRECTOR";
+    if (row.cohort === "sales") {
+      return project.pic_id != null && project.pic_id === user.id ? "PIC" : "SALES";
+    }
+    switch (row.duty) {
+      case "purchasing": return "PURCHASING";
+      case "logistic": return "LOGISTIC";
+      case "driver":
+      case "helper": return "DRIVER";
+      default: return "OTHER";
+    }
+  }
   const pos = (user.position_name ?? "").trim();
 
-  // Wildcard (Owner / IT Admin) or a director/finance position → full.
-  if (user.permissions_set?.has("*") || isDirectorPositionName(pos)) return "DIRECTOR";
+  // A director/finance position (no row — name rule) → full.
+  if (isDirectorPositionName(pos)) return "DIRECTOR";
 
   if (/^(Driver|Helper)$/i.test(pos)) return "DRIVER";
   if (/^Purchasing$/i.test(pos)) return "PURCHASING";
@@ -268,11 +312,28 @@ export function getPmsAccess(user: AuthUser | null | undefined, project: Project
   // EDIT via their role sections; this only newly admits the management tier.
   const canEdit =
     sections.includes("EDIT") || !!user?.permissions_set?.has("projects.manage");
+  /* Granular FINANCIAL grant — the same additive shape as canSensitive and
+     canEdit above, and it was the one missing. `projects.finance.view` has
+     existed since 2026-07-23 for exactly this ("a specific non-director role
+     may be given finance-view explicitly, e.g. the BD role"), isFinanceViewer
+     honours it, and the BD Exec role HOLDS it — but this flag read the section
+     list alone, so the project-detail GET stripped `finance` + `finance_lines`
+     from a user the system had already granted finance view. A permission that
+     three of its four readers ignore is not a permission.
+
+     The damage was not a blank panel. QuickRentalField decides between PATCH
+     and CREATE by counting the rental lines it can SEE, so a holder of this
+     permission typed a rental, got an empty box back, retyped — and booked a
+     duplicate line every time: 12 lines on one project, a rental box reading
+     201,195 for an event whose rental was 18,126 (owner, 2026-09-04, "why
+     since yesterday i key in rental amount suddenly auto deleted"). */
+  const canFinancial =
+    sections.includes("FINANCIAL") || !!user?.permissions_set?.has("projects.finance.view");
   return {
     role,
     canOpen: role !== "NONE",
     canEdit,
-    canFinancial: sections.includes("FINANCIAL"),
+    canFinancial,
     canRental: sections.includes("RENTAL"),
     canPayment: sections.includes("PAYMENT"),
     canSensitive,

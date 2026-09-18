@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'vitest';
-import { soPaidSen, soOutstandingSen, soPaidInputsOf } from './so-outstanding';
+import {
+  soPaidSen, soOutstandingSen, soPaidInputsOf, soBalanceSen, soDisplayTotalSen,
+} from './so-outstanding';
 
 /* WHICH COLUMN is the load-bearing half of this module, not the arithmetic.
    `balance_sen` is the one that looks like the answer — the cutover's own
@@ -19,11 +21,81 @@ describe('the columns the rule reads off a mfg_sales_orders row', () => {
 
   test('an absent or non-numeric column reads as 0 rather than NaN', () => {
     expect(soPaidInputsOf({}, 0, false)).toEqual({
-      totalRevenueSen: 0, headerDepositSen: 0, ledgerPaidSen: 0, depositInLedger: false,
+      totalRevenueSen: 0, localTotalSen: 0, headerDepositSen: 0,
+      ledgerPaidSen: 0, depositInLedger: false,
     });
     expect(soPaidInputsOf({ total_revenue_sen: null, deposit_sen: '5' }, 0, false).totalRevenueSen)
       .toBe(0);
     expect(soPaidInputsOf(null, 0, false).headerDepositSen).toBe(0);
+  });
+
+  /* The SECOND total column, and the reason this fix exists. The cutover
+     importer's header list (`import-ac-outstanding-so.mjs`, HCOLS) writes
+     `local_total_sen` and NOT `total_revenue_sen`, so a migrated order carries
+     the real order value in the column the balance rule was not reading. */
+  test('local_total_sen is read too — a migrated order has no other total', () => {
+    const inputs = soPaidInputsOf(
+      { local_total_sen: 3_200_00, total_revenue_sen: 0, balance_sen: 1_600_00 },
+      1_600_00, true,
+    );
+    expect(inputs.localTotalSen).toBe(3_200_00);
+    expect(inputs.totalRevenueSen).toBe(0);
+  });
+});
+
+/* THE OWNER'S SALES ORDER, 2026-09-08: Total RM 3,200.00, Paid RM 1,600.00,
+   Balance RM 0.00 on his phone — while the SO LIST beside it, reading the
+   view's `balance_sen_live` (= local_total - payments), said RM 1,600.00. */
+describe('the total a human is shown, when only one column has been filled', () => {
+  const migrated = {
+    totalRevenueSen: 0,           // recomputeTotals has never run on an import
+    localTotalSen: 3_200_00,      // what the cutover wrote, and what prints
+    headerDepositSen: 0,
+    ledgerPaidSen: 1_600_00,      // paid = total - UDF_BALANCE, is_deposit row
+    depositInLedger: true,
+  };
+
+  test('a recomputed order still answers off total_revenue_sen', () => {
+    expect(soDisplayTotalSen({ ...migrated, totalRevenueSen: 4_000_00 })).toBe(4_000_00);
+  });
+
+  test('a migrated order falls back to local_total_sen', () => {
+    expect(soDisplayTotalSen(migrated)).toBe(3_200_00);
+  });
+
+  test('and its balance is the money still owed, not 0', () => {
+    expect(soBalanceSen(migrated)).toBe(1_600_00);
+  });
+
+  /* By construction: the importer wrote `paid = total - UDF_BALANCE`, so this
+     subtraction reproduces AutoCount's own outstanding figure. */
+  test('a fully-paid migrated order is still 0 — the fallback is not a floor', () => {
+    expect(soBalanceSen({ ...migrated, ledgerPaidSen: 3_200_00 })).toBe(0);
+  });
+
+  test('an over-collected migrated order goes negative, not clamped to 0', () => {
+    expect(soBalanceSen({ ...migrated, ledgerPaidSen: 4_000_00 })).toBe(-800_00);
+  });
+
+  /* The guard that stays: NO total in either column is UNKNOWN, not "owes
+     nothing", and must not paint an order red for money nobody over-collected. */
+  test('an order with no total at all still answers 0', () => {
+    expect(soBalanceSen({ ...migrated, localTotalSen: 0 })).toBe(0);
+  });
+
+  /* The write-back's rule is deliberately untouched by the fallback, and this
+     pins that it did not move — the screen changed, the licensed ledger's rule
+     did not.
+
+     THE 0 HERE IS NEVER ASKED FOR ANY MORE, which is the follow-up this comment
+     used to promise. `readSoOutstandingSen` (scm/lib/autocount-read.ts) now
+     REFUSES a `total_revenue_sen` that is not greater than zero, so the account
+     book is told nothing at all about a migrated order rather than being told
+     this 0. The arithmetic below is unchanged on purpose: the fix belongs in
+     the reader, which is where the decision "may the ERP speak" lives.
+     docs/bugs/0726-*. */
+  test('the write-back rule does NOT fall back — a migrated order stays 0 there', () => {
+    expect(soOutstandingSen(migrated)).toBe(0);
   });
 });
 

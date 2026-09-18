@@ -127,7 +127,7 @@ AutoCount 2.2 installed.
 
 > **REWRITTEN 2026-08-16, after this script caused a production outage.** Both
 > claims above used to be false in the way that matters, and both cost something
-> the same evening. See `docs/acsync-deploy-rollback-coe.md`.
+> the same evening. See the 2026-08-16 entry in `docs/LESSONS.md`.
 >
 > - **The rollback had never worked.** It killed the new process and copied over
 >   `AcSyncService.exe` on the next line; Windows still held the image open, the
@@ -279,7 +279,7 @@ matter what anybody remembers about deploying it. Before 2026-08-15 `/health`
 returned no build identity at all, so this question had no answer from the
 service, from the repository, or from any document that could be trusted to be
 current — the same blind spot that let a two-week-old staging build pass a
-nightly check for a fortnight (`docs/SECURITY-DX-ROADMAP.md`).
+nightly check for a fortnight (the staging entry in `docs/LESSONS.md`).
 
 `mvid` is unique per compilation. Use it when two timestamps both look
 plausible, or to confirm two hosts are running the same bytes.
@@ -396,8 +396,8 @@ Stop the service, restore `AcSyncService.prev.exe`, start it.
 > ```
 >
 > The last line is not optional. A rollback you did not confirm is a rollback you
-> did not do — that is the whole finding of
-> `docs/acsync-deploy-rollback-coe.md`. `deploy-on-host.ps1` now does all five
+> did not do — that is the whole finding of the
+> 2026-08-16 rollback incident (`docs/LESSONS.md`). `deploy-on-host.ps1` now does all five
 > steps itself, in that order, and will not exit quietly if the final curl would
 > have failed.
 

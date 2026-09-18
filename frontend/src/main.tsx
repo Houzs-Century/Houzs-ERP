@@ -65,6 +65,8 @@ const ResetPassword = lazy(() => import("./pages/ResetPassword").then((m) => ({ 
 // auth/AuthGate.tsx) — same split, same reason: staff sessions never load it.
 const AcceptInviteScreen = lazy(() => import("./auth/AuthScreens").then((m) => ({ default: m.AcceptInviteScreen })));
 const PrivacyPolicy = lazy(() => import("./pages/PrivacyPolicy").then((m) => ({ default: m.PrivacyPolicy })));
+const ContractorCalendar = lazy(() => import("./pages/ContractorCalendar").then((m) => ({ default: m.ContractorCalendar })));
+const BrandCalendar = lazy(() => import("./pages/ContractorCalendar").then((m) => ({ default: m.BrandCalendar })));
 
 function PublicFallback() {
   return <div className="flex min-h-screen items-center justify-center text-sm text-ink-muted">Loading</div>;
@@ -92,6 +94,10 @@ installGlobalErrorReporting();
    boot is not missed. See lib/staleBuild.ts for exactly what is and is not
    covered. */
 installChunkFailureWatch();
+/* A PRINT that hits a chunk a deploy deleted reloads once and reopens its
+   preview (lib/chunkActionRecovery.ts). That listener installs itself on the
+   first tracked print, so it is not imported here: it would add ~0.9 KB gzip to
+   the initial bundle for code only a print needs. */
 /* One-shot: drop the persisted table sorts a bug made permanent, so nobody has
    to find the Columns drawer and press Reset on every list page and device.
    Guarded by its own marker — a sort chosen deliberately after this ships is
@@ -192,6 +198,23 @@ function RootApp() {
     return (
       <LazySlot resetKey={`public:${surface}`} fallback={<PublicFallback />}>
         <PublicDoScanBasket />
+      </LazySlot>
+    );
+  }
+  if (surface === "contractor") {
+    /* A booth contractor's own confirmed schedule, outside AuthGate for the same
+       reason /d/:token is: the contractor has no Houzs account. */
+    return (
+      <LazySlot resetKey={`public:${surface}`} fallback={<PublicFallback />}>
+        <ContractorCalendar />
+      </LazySlot>
+    );
+  }
+  if (surface === "brand") {
+    /* A brand's own confirmed schedule — same no-login token rule as /c/. */
+    return (
+      <LazySlot resetKey={`public:${surface}`} fallback={<PublicFallback />}>
+        <BrandCalendar />
       </LazySlot>
     );
   }

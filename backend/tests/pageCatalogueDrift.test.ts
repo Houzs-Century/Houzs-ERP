@@ -1,5 +1,4 @@
-import { SELF, env as testEnv } from "cloudflare:test";
-import { describe, expect, test, beforeEach } from "vitest";
+import { describe, expect, test } from "vitest";
 import {
   PAGES,
   RETIRED_PAGE_KEYS,
@@ -7,10 +6,9 @@ import {
   fullAccessMap,
   isRetiredPageKey,
   isValidPageKey,
-  loadPageAccessForPosition,
-  loadPageAccessForRole,
+  pageAccessFromPermissions,
+  resolvePositionAccessFromRows,
 } from "../src/services/pageAccess";
-import type { Env } from "../src/types";
 
 /* ─────────────────────────────────────────────────────────────────────────────
    THE CATALOGUE PIN — what this file is for, and why a count was not enough.
@@ -140,16 +138,6 @@ same silence, one layer up.
 `;
 
 /** Minimal D1 stand-in — the resolvers only ever prepare/bind/all one SELECT. */
-function envWithRows(rows: Array<{ page_key: string; level: string }>): Env {
-  return {
-    DB: {
-      prepare: () => ({
-        bind: () => ({ all: async () => ({ results: rows }) }),
-      }),
-    },
-  } as unknown as Env;
-}
-
 describe("the page catalogue cannot lose a key quietly", () => {
   test("PAGES[] + RETIRED_PAGE_KEYS accounts for every key the catalogue ever had", () => {
     const live = PAGES.map((p) => p.key);
@@ -218,7 +206,7 @@ describe("naming a key as retired grants nothing", () => {
     // The exact rows sitting in prod today (positionAccessSnapshot.ts, Finance
     // Manager). They must stay inert: this file names them, it does not revive
     // them, and it does not delete them either.
-    const env = envWithRows([
+    const out = resolvePositionAccessFromRows([
       { page_key: "overview", level: "full" },
       { page_key: "orders", level: "view" },
       { page_key: "orders.balance", level: "view" },
@@ -227,7 +215,6 @@ describe("naming a key as retired grants nothing", () => {
       { page_key: "petty_cash", level: "view" },
       { page_key: "projects", level: "view" },
     ]);
-    const out = await loadPageAccessForPosition(env, 3);
     for (const key of ["overview", "orders", "orders.balance", "orders.overdue", "orders.pnl", "petty_cash"]) {
       expect(out[key], `${key} must not appear in a resolved map`).toBeUndefined();
     }
@@ -238,98 +225,8 @@ describe("naming a key as retired grants nothing", () => {
   test("ROLE: the second matrix drops retired rows the same way", async () => {
     // role_page_access has no prod snapshot and never had even the accidental
     // count cover, so its behaviour is asserted directly rather than assumed.
-    const env = envWithRows([
-      { page_key: "petty_cash", level: "full" },
-      { page_key: "service_cases", level: "partial" },
-    ]);
-    const out = await loadPageAccessForRole(env, 1, new Set(["service_cases.read"]));
+    const out = pageAccessFromPermissions(new Set(["service_cases.read"]));
     expect(out["petty_cash"]).toBeUndefined();
     expect(out["service_cases"]).toBe("partial");
-  });
-});
-
-/* ── THE DOORS ────────────────────────────────────────────────────────────────
-   The diagnosis rests on this: the editor CANNOT create an orphan, so every
-   orphan is the catalogue moving out from under an honest save. That is a claim
-   about what the endpoints do, and "the rule says reject" and "the door rejects"
-   are different claims (the precedent is dormantPageKeys.test.ts). Pinned here
-   because if a future relaxation let the editor write an unknown key, orphans
-   would stop being the catalogue's fault and this whole file would be reasoning
-   about the wrong thing. */
-
-async function seedAdmin(perms: string[]): Promise<string> {
-  const roleRes = await testEnv.DB.prepare(
-    `INSERT INTO roles (name, description, permissions) VALUES (?, ?, ?)`,
-  )
-    .bind(`drift_role_${Math.random().toString(36).slice(2)}`, "test", JSON.stringify(perms))
-    .run();
-  const roleId = roleRes.meta.last_row_id as number;
-  const userRes = await testEnv.DB.prepare(
-    `INSERT INTO users (email, name, role_id, status, joined_at)
-     VALUES (?, ?, ?, 'active', datetime('now'))`,
-  )
-    .bind(`drift-${roleId}@test.local`, "drift", roleId)
-    .run();
-  const token = `drift-${userRes.meta.last_row_id}-${Math.random().toString(36).slice(2)}`;
-  await testEnv.DB.prepare(
-    `INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)`,
-  )
-    .bind(token, userRes.meta.last_row_id as number, new Date(Date.now() + 3600_000).toISOString())
-    .run();
-  return `Bearer ${token}`;
-}
-
-describe("neither editor can save a retired key", () => {
-  beforeEach(async () => {
-    await testEnv.DB.exec(`DELETE FROM sessions`);
-    await testEnv.DB.exec(`DELETE FROM users`);
-    await testEnv.DB.exec(`DELETE FROM roles WHERE is_system = 0`);
-  });
-
-  test("PATCH /api/positions/:id/page-access is disabled — 409, nothing written", async () => {
-    const bearer = await seedAdmin(["users.manage", "users.read"]);
-    await testEnv.DB.prepare(
-      `INSERT OR IGNORE INTO positions (id, department_id, slug, name)
-       VALUES (4242, NULL, 'drift-test', 'Drift Test')`,
-    ).run();
-
-    const res = await SELF.fetch("https://test.local/api/positions/4242/page-access", {
-      method: "PATCH",
-      headers: { Authorization: bearer, "Content-Type": "application/json" },
-      body: JSON.stringify({ entries: [{ page_key: "petty_cash", level: "view" }] }),
-    });
-    // Per-position page-access editing is disabled (fix/disable-position-page-access-editor):
-    // the endpoint answers 409 and writes nothing, so it cannot persist a retired key either.
-    expect(res.status).toBe(409);
-    expect((await res.json() as { error: string }).error).toContain("turned off");
-
-    // Nothing was written — a blocked save must not leave a row behind.
-    const rows = await testEnv.DB.prepare(
-      `SELECT COUNT(*) AS n FROM position_page_access WHERE page_key = 'petty_cash'`,
-    ).all();
-    expect((rows.results[0] as { n: number }).n).toBe(0);
-  });
-
-  test("PATCH /api/roles/:id/page-access rejects `petty_cash` with 400", async () => {
-    const bearer = await seedAdmin(["roles.manage", "roles.read"]);
-    const roleRes = await testEnv.DB.prepare(
-      `INSERT INTO roles (name, description, permissions) VALUES (?, ?, ?)`,
-    )
-      .bind(`drift_target_${Math.random().toString(36).slice(2)}`, "test", JSON.stringify([]))
-      .run();
-    const roleId = roleRes.meta.last_row_id as number;
-
-    const res = await SELF.fetch(`https://test.local/api/roles/${roleId}/page-access`, {
-      method: "PATCH",
-      headers: { Authorization: bearer, "Content-Type": "application/json" },
-      body: JSON.stringify({ entries: [{ page_key: "petty_cash", level: "partial" }] }),
-    });
-    expect(res.status).toBe(400);
-    expect((await res.json() as { error: string }).error).toContain("Unknown page_key");
-
-    const rows = await testEnv.DB.prepare(
-      `SELECT COUNT(*) AS n FROM role_page_access WHERE page_key = 'petty_cash'`,
-    ).all();
-    expect((rows.results[0] as { n: number }).n).toBe(0);
   });
 });

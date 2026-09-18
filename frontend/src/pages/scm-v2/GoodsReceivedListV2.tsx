@@ -25,6 +25,8 @@ import {
   Send,
   ArrowRightLeft,
 } from "lucide-react";
+import { fetchGrnExportRows, GRN_DEFAULT_COLUMN_KEYS, GRN_LABELS, senToRinggit, type GrnListLine } from "../../vendor/scm/lib/grn-list-export";
+import { grnLineColumns } from "./grn-list-line-columns";
 import { PrintPreviewBatchModal, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { PageHeader } from "../../components/Layout";
@@ -38,6 +40,7 @@ import {
   type DocumentDrillLine,
   type DrillItemFields,
 } from "../../components/DocumentLinesExpansion";
+import { coverageStateOf } from "../../components/coverage-state";
 import { usePoSoCoverage, originsByCode, provenanceByCode, storedLinkSkus, deliveredByCode, type OriginAssignment } from "../../vendor/scm/lib/flow-queries";
 import { ListPager } from "../../components/ListPager";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
@@ -47,6 +50,8 @@ import { PullToRefresh } from "../../components/PullToRefresh";
 import { ListErrorPanel, SearchPendingPanel, SearchProgress } from "../../components/SearchProgress";
 import { SearchScopeHint } from "../../components/SearchScopeHint";
 import { useDebouncedSearchTerm, useSearchResultTransition } from "../../hooks/useServerSearch";
+import { useSuppliers } from "../../vendor/scm/lib/suppliers-queries";
+import { useServerColumnFunnels, funnelValues } from "../../hooks/useServerColumnFunnels";
 import {
   useGrnsPaged,
   useEnrichedGrnListRows,
@@ -55,6 +60,7 @@ import {
   useCancelGrn,
 } from "../../vendor/scm/lib/grn-queries";
 import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
+import { withStatusLabels } from "../../vendor/scm/lib/status-pill";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { useChoice } from "../../vendor/scm/components/ChoiceDialog";
@@ -71,6 +77,13 @@ import { grnPrintChain } from "../../lib/printChain";
 type GrnRow = HoldFields & {
   id: string;
   grn_number: string;
+  /** The AutoCount GR number (server: lib/grn-export-rows.ts grnAcDocNo). */
+  ac_doc_no?: string | null;
+  exchange_rate?: number | string | null;
+  subtotal_sen?: number | null;
+  tax_sen?: number | null;
+  /** Every line of the receipt, AutoCount-spelled (GET /grns?page= and /export/rows). */
+  lines?: GrnListLine[];
   status: string;
   received_at: string | null;
   delivery_note_ref: string | null;
@@ -102,8 +115,10 @@ type GrnItem = {
   item_group?: string | null;
   variants?: Record<string, unknown> | null;
   uom?: string;
-  qty?: number;
-  received_qty?: number;
+  // The GRN detail GET returns qty_accepted (landed in stock) + qty_received, NOT
+  // qty/received_qty — reading those rendered 0 on every line in the quick-view.
+  qty_accepted?: number;
+  qty_received?: number;
   unit_price_sen?: number;
   line_total_sen?: number;
   warehouse_code?: string | null;
@@ -125,16 +140,22 @@ const totalOf = (r: GrnRow): number => r.total_sen ?? 0;
 // a real enum member (grn_status = DRAFT / POSTED / CLOSED / CANCELLED) and it
 // files under `posted` because its stock IN stands — only CANCELLED had its
 // receipt reversed.
-const STATUS_TONE: Record<string, { tone: "success" | "warning" | "error" | "neutral"; label: string; bucket: StatusTab }> = {
-  DRAFT:     { tone: "warning", label: "Draft",     bucket: "draft" },
-  POSTED:    { tone: "success", label: "Confirmed", bucket: "posted" },
-  CLOSED:    { tone: "neutral", label: "Closed",    bucket: "posted" },
-  CANCELLED: { tone: "error",   label: "Cancelled", bucket: "cancelled" },
+/* The LABEL is NOT declared here. It comes from `vendor/scm/lib/status-pill.ts`,
+   the one canonical map — docs/modules/document-status-vocabulary.md §1. What
+   stays is what is genuinely this page's own: the tone palette (four names, not
+   status-pill's six) and the filter BUCKET. */
+const STATUS_OWN: Record<string, { tone: "success" | "warning" | "error" | "neutral"; bucket: StatusTab }> = {
+  DRAFT:     { tone: "warning", bucket: "draft" },
+  POSTED:    { tone: "success", bucket: "posted" },
+  CLOSED:    { tone: "neutral", bucket: "posted" },
+  CANCELLED: { tone: "error",   bucket: "cancelled" },
   /* ON_HOLD (mig 0319) — a paperwork pause, NOT a stock event: the inventory
      IN fired at POSTED and a hold moves nothing. A held GRN cannot be
      invoiced, because the billable-GRN read is .eq(status, POSTED). */
-  ON_HOLD:   { tone: "warning", label: "On Hold",   bucket: "on_hold" },
+  ON_HOLD:   { tone: "warning", bucket: "on_hold" },
 };
+
+const STATUS_TONE = withStatusLabels("grn", STATUS_OWN);
 
 const statusFor = (s: string) =>
   STATUS_TONE[(s || "").toUpperCase()] ?? { tone: "neutral" as const, label: s || "—", bucket: "posted" as StatusTab };
@@ -353,7 +374,7 @@ function DetailDrawer({
                         </div>
                       )}
                     </div>
-                    <span className="text-right font-money text-[12.5px] text-ink-secondary">{l.received_qty ?? l.qty ?? 0}</span>
+                    <span className="text-right font-money text-[12.5px] text-ink-secondary">{l.qty_accepted ?? l.qty_received ?? 0}</span>
                     <span className="text-right font-money text-[12.5px] text-ink-secondary">{fmtRm(l.unit_price_sen ?? 0)}</span>
                     <span className="text-right font-money text-[12.5px] font-semibold text-ink">{fmtRm(l.line_total_sen ?? 0)}</span>
                   </div>
@@ -474,7 +495,7 @@ function GrnLinesExpansion({ id }: { id: string }) {
       description: l.description ?? null,
       description2: l.description2 ?? null,
       variants: l.variants ?? null,
-      qty: Number(l.received_qty ?? l.qty ?? 0),
+      qty: Number(l.qty_accepted ?? l.qty_received ?? 0),
       amountSen: l.line_total_sen ?? 0,
       assignedSos: byCode.get(code) ?? [],
       sourceLinked: linkedSkus.has(code),
@@ -486,6 +507,7 @@ function GrnLinesExpansion({ id }: { id: string }) {
     <div className="flex flex-col gap-2">
       <DocumentLinesExpansion
         isLoading={detailQ.isLoading}
+        coverage={coverageStateOf(covQ)}
         isError={Boolean(detailQ.error)}
         errorMessage={detailQ.error instanceof Error ? detailQ.error.message : null}
         lines={lines}
@@ -517,6 +539,14 @@ export function GoodsReceivedListV2() {
   const [sort, setSort] = useState<string | undefined>(undefined);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [printingDocs, setPrintingDocs] = useState(false);
+  // Server-filterable funnels (owner 2026-09-16): Creditor Name/Code + Currency → list query (pager over the filtered set); line/MRP funnels stay client-side. Creditor checklists seeded with every supplier.
+  const suppliersQ = useSuppliers();
+  const supplierNames = useMemo(() => [...new Set((suppliersQ.data ?? []).map((s) => s.name).filter((n): n is string => !!n))], [suppliersQ.data]);
+  const supplierCodes = useMemo(() => [...new Set((suppliersQ.data ?? []).map((s) => s.code).filter((c): c is string => !!c))], [suppliersQ.data]);
+  const { serverFunnels, onColFiltersChange } = useServerColumnFunnels(
+    (cf) => ({ creditorNames: funnelValues(cf, "supplier"), creditorCodes: funnelValues(cf, "supplier_code"), currencies: funnelValues(cf, "currency") }),
+    () => setPageParam(0),
+  );
   const { requestTerm: debouncedSearch } = useDebouncedSearchTerm(search);
 
   // Send the active tab's BUCKET NAME as `status`; the backend resolves it to
@@ -529,6 +559,7 @@ export function GoodsReceivedListV2() {
     status: apiStatus,
     q: debouncedSearch,
     sort,
+    ...serverFunnels,
   });
   const searchTransition = useSearchResultTransition({
     inputTerm: search,
@@ -612,6 +643,20 @@ export function GoodsReceivedListV2() {
 
   const onPullToRefresh = async () => {
     await queryClient.invalidateQueries({ queryKey: ["grns"] });
+  };
+
+  /* The ONE Export (owner 2026-09-15): every receipt the list's tab + search +
+     sort match — not the page on screen — one row per line, with the grid's
+     visible columns, funnels and sort (DataTable `exportLines`). The filter is
+     the one the list request is built from: the settled search term. */
+  const exportFilters = { status: apiStatus, q: debouncedSearch, sort };
+  const exportLines = {
+    fetchRows: (need: { exportKeys: string[]; filterKeys: string[] }) => fetchGrnExportRows<GrnRow>(exportFilters, need),
+    linesOf: (r: GrnRow): readonly GrnListLine[] => r.lines ?? [],
+    sheetName: "Goods Received",
+    onError: (e: Error) => {
+      void notify({ title: "Export failed", body: e.message || "The export could not be completed.", tone: "error" });
+    },
   };
 
   const goNewGrn = () => navigate("/scm/grns/new");
@@ -743,49 +788,123 @@ export function GoodsReceivedListV2() {
     }
   };
 
-  const columns: Column<GrnRow>[] = [
-    {
+  /* Default view = AutoCount's Goods Received Detail Listing, layout "S", in its
+     order (GRN_DEFAULT_COLUMN_KEYS; owner 2026-09-15: a default export equals the
+     AutoCount file). Every other column stays in the chooser, hidden until
+     picked; the export follows whatever the operator shows. */
+  const lineCols = grnLineColumns<GrnRow>();
+  const docNoOf = (r: GrnRow): string => r.ac_doc_no?.trim() || r.grn_number;
+  const moneyCell = (sen: number | null | undefined) => <span className="font-money text-[13px] text-ink">{fmtRm(sen ?? 0)}</span>;
+  const rateOf = (r: GrnRow): number => { const n = Number(r.exchange_rate ?? 1); return Number.isFinite(n) && n > 0 ? n : 1; };
+  const blankCol = (key: string, label: string): Column<GrnRow, GrnListLine> => ({
+    key, label, width: "90px", disableSort: true, getValue: () => "", render: () => <span className="text-[12.5px] text-ink-muted">—</span>,
+  });
+  const byKey: Record<string, Column<GrnRow, GrnListLine>> = {
+    ...lineCols,
+    grn_number: {
       key: "grn_number",
-      label: "GRN No.",
-      // 166 + font-docno (owner 2026-07-31): a GRN no is one char longer than
-      // the DO/SO shape ("2990-GRN-2607-0001" = 131.5px, i.e. 155.5 with the
-      // px-3 padding), so 140 clipped it — see the
-      // measured DO No. note in MfgDeliveryOrdersListV2.
+      /* AutoCount's own GR number when the receipt is in the book, else ours —
+         the ERP number stays on ERP Doc No. */
+      label: GRN_LABELS.docNo,
       width: "166px",
       alwaysVisible: true,
-      getValue: (r) => r.grn_number,
+      getValue: (r) => docNoOf(r),
       render: (r) => (
-        <span
-          className={cn(
-            "font-docno text-[12.5px] font-semibold text-ink",
-            isCancelledDocStatus(r.status) && "dt-cancel-strike",
-          )}
-        >
-          {r.grn_number}
+        <span className={cn("font-docno text-[12.5px] font-semibold text-ink", isCancelledDocStatus(r.status) && "dt-cancel-strike")}>
+          {docNoOf(r)}
         </span>
       ),
     },
-    {
+    dn: {
+      key: "dn",
+      label: GRN_LABELS.supplierDoNo,
+      width: "128px",
+      disableSort: true,
+      getValue: (r) => r.delivery_note_ref ?? "",
+      render: (r) => <span className="font-mono text-[12px] text-ink-secondary">{r.delivery_note_ref || "—"}</span>,
+    },
+    received_at: {
       key: "received_at",
-      label: "Received",
+      label: GRN_LABELS.docDate,
       width: "108px",
       getValue: (r) => r.received_at ?? "",
+      exportFormat: "date",
       render: (r) => <span className="text-[12.5px] text-ink-secondary">{fmtDate(r.received_at)}</span>,
     },
-    {
+    supplier_code: {
+      key: "supplier_code",
+      label: GRN_LABELS.creditorCode,
+      width: "120px",
+      disableSort: true,
+      getValue: (r) => r.supplier?.code ?? "",
+      filterSeedValues: supplierCodes, // server-filterable; seed with every creditor code
+      render: (r) => <span className="font-mono text-[11.5px] text-ink-secondary">{supplierCodeOf(r)}</span>,
+    },
+    supplier: {
+      key: "supplier",
+      label: GRN_LABELS.creditorName,
+      disableSort: true,
+      getValue: (r) => r.supplier?.name ?? "",
+      filterSeedValues: supplierNames, // server-filterable; seed with every creditor name
+      render: (r) => <div className="min-w-0 truncate text-[13px] font-semibold text-ink">{supplierNameOf(r)}</div>,
+    },
+    /* A goods receipt names no purchase agent in this ERP. */
+    agent: blankCol("agent", GRN_LABELS.agent),
+    currency: {
+      key: "currency", label: GRN_LABELS.currCode, width: "90px", disableSort: true,
+      getValue: (r) => r.currency ?? "", render: (r) => <span className="text-[12.5px] text-ink-secondary">{r.currency || "—"}</span>,
+    },
+    exchange_rate: {
+      key: "exchange_rate", label: GRN_LABELS.currRate, width: "90px", disableSort: true, exportFormat: "number",
+      getValue: (r) => rateOf(r), render: (r) => <span className="text-[12.5px] text-ink-secondary">{rateOf(r)}</span>,
+    },
+    /* This ERP keeps no tax-inclusive flag on the document: blank, never a guess. */
+    inclusive: blankCol("inclusive", GRN_LABELS.inclusive),
+    subtotal: {
+      key: "subtotal", label: GRN_LABELS.subTotalEx, width: "128px", align: "right", disableSort: true,
+      getValue: (r) => r.subtotal_sen ?? 0, exportValue: (r) => senToRinggit(r.subtotal_sen ?? 0, 2), exportFormat: "money",
+      render: (r) => moneyCell(r.subtotal_sen),
+    },
+    tax: {
+      key: "tax", label: GRN_LABELS.tax, width: "100px", align: "right", disableSort: true,
+      getValue: (r) => r.tax_sen ?? 0, exportValue: (r) => senToRinggit(r.tax_sen ?? 0, 2), exportFormat: "money",
+      render: (r) => moneyCell(r.tax_sen),
+    },
+    total: {
+      key: "total", label: GRN_LABELS.total, width: "128px", align: "right",
+      getValue: (r) => totalOf(r), exportValue: (r) => senToRinggit(totalOf(r), 2), exportFormat: "money",
+      render: (r) => <span className="font-money text-[13px] font-semibold text-ink">{fmtRm(totalOf(r))}</span>,
+    },
+    local_total: {
+      key: "local_total", label: GRN_LABELS.localTotal, width: "128px", align: "right", disableSort: true,
+      getValue: (r) => Math.round(totalOf(r) * rateOf(r)), exportValue: (r) => senToRinggit(totalOf(r) * rateOf(r), 2), exportFormat: "money",
+      render: (r) => moneyCell(Math.round(totalOf(r) * rateOf(r))),
+    },
+    cancelled: {
+      key: "cancelled", label: GRN_LABELS.cancelled, width: "96px", disableSort: true,
+      getValue: (r) => isCancelledDocStatus(r.status),
+      render: (r) => <span className="text-[12.5px] text-ink-secondary">{isCancelledDocStatus(r.status) ? "Yes" : "No"}</span>,
+    },
+    erp_doc_no: {
+      key: "erp_doc_no", label: GRN_LABELS.erpDocNo, width: "166px", disableSort: true, defaultHidden: true,
+      getValue: (r) => r.grn_number, render: (r) => <span className="font-docno text-[12.5px] text-ink-secondary">{r.grn_number}</span>,
+    },
+    po: {
       key: "po",
       label: transferFromColumnLabel('po'),
+      defaultHidden: true,
       width: "128px",
       disableSort: true,
       getValue: (r) => poOf(r),
       render: (r) => <span className="font-mono text-[12px] text-ink-secondary">{poOf(r)}</span>,
     },
-    {
+    assigned_so: {
       // Owner 2026-07-31: the Sales Order(s) the parent PO's supply is assigned
       // to, inherited onto the GRN. Server-resolved (one pass, same precedence
       // as the drill-down); dashed "~" chip flags an MRP guess vs a stored link.
       key: "assigned_so",
       label: "Assigned SO",
+      defaultHidden: true,
       width: "168px",
       disableSort: true,
       getValue: (r) => (r.assigned_sos ?? []).map((a) => a.soDocNo).join(", "),
@@ -799,11 +918,12 @@ export function GoodsReceivedListV2() {
         />
       ),
     },
-    {
+    delivered: {
       // Owner 2026-07-31: what has been DELIVERED against this GRN's parent PO —
       // the DO(s) that shipped its goods + qty. EVERY DO renders (no collapse).
       key: "delivered",
       label: "Delivered",
+      defaultHidden: true,
       width: "180px",
       disableSort: true,
       getValue: (r) => (r.delivered_dos ?? []).map((d) => d.doNo).join(", "),
@@ -814,57 +934,25 @@ export function GoodsReceivedListV2() {
         />
       ),
     },
-    {
-      // Owner 2026-07-24: supplier NAME and CODE are separate columns on every
-      // procurement table, not a stacked cell — code must be scannable on its
-      // own (same split as the PO list, 2026-07-23).
-      key: "supplier",
-      label: "Supplier",
-      disableSort: true,
-      getValue: (r) => supplierNameOf(r),
-      render: (r) => (
-        <div className="min-w-0 truncate text-[13px] font-semibold text-ink">{supplierNameOf(r)}</div>
-      ),
-    },
-    {
-      key: "supplier_code",
-      label: "Code",
-      width: "108px",
-      disableSort: true,
-      getValue: (r) => supplierCodeOf(r),
-      render: (r) => (
-        <span className="font-mono text-[11.5px] text-ink-secondary">{supplierCodeOf(r)}</span>
-      ),
-    },
-    {
-      key: "dn",
-      label: "Delivery note",
-      width: "128px",
-      disableSort: true,
-      getValue: (r) => r.delivery_note_ref ?? "",
-      render: (r) => <span className="font-mono text-[12px] text-ink-secondary">{r.delivery_note_ref || "—"}</span>,
-    },
-    {
+    status: {
       key: "status",
       label: "Status",
+      defaultHidden: true,
       width: "120px",
       // Exempt from the cancelled-row fade — the pill is WHY the row is grey.
       className: "dt-cancel-keep",
-      getValue: (r) => r.status,
+      // The export writes the word on screen, hold included (owner 2026-09-15).
+      getValue: (r) => { const w = statusFor(r.status).label; return rowIsHeld(r) && r.status.toUpperCase() !== "ON_HOLD" ? `${w} (On Hold)` : w; },
       render: (r) => {
         const st = statusFor(r.status);
         /* mig 0324 — the Hold marker sits BESIDE the real status pill. */
         return <StatusWithHold tone={st.tone} label={st.label} row={r} />;
       },
     },
-    {
-      key: "total",
-      label: "Value",
-      width: "128px",
-      align: "right",
-      getValue: (r) => totalOf(r),
-      render: (r) => <span className="font-money text-[13px] font-semibold text-ink">{fmtRm(totalOf(r))}</span>,
-    },
+  };
+  const columns: Column<GrnRow, GrnListLine>[] = [
+    ...GRN_DEFAULT_COLUMN_KEYS.map((k) => byKey[k]!),
+    ...Object.keys(byKey).filter((k) => !(GRN_DEFAULT_COLUMN_KEYS as readonly string[]).includes(k)).map((k) => byKey[k]!),
   ];
 
   const statusPillOptions: Array<{ value: StatusTab; label: string }> = [
@@ -983,7 +1071,7 @@ export function GoodsReceivedListV2() {
                   </Button>
                 </div>
               )}
-              <DataTable<GrnRow>
+              <DataTable<GrnRow, GrnListLine>
                 tableId="grns-v2"
                 rows={rows}
                 loading={listLoading}
@@ -1004,9 +1092,11 @@ export function GoodsReceivedListV2() {
                   onToggleAll: toggleSelectAll,
                 }}
                 contextMenu={grnContextMenu}
-            exportName="grns"
+                exportName="grns"
+                exportLines={exportLines}
                 serverSort
                 onSortChange={setSortAndReset}
+                onColFiltersChange={onColFiltersChange}
                 emptyLabel={filtersActive ? "No GRNs match — try Reset layout to clear filters." : "No GRNs yet."}
                 search={{ value: search, onChange: setSearch, placeholder: "Search GRN no, delivery note or notes…", debounceMs: 0, searching: searchTransition.isSearching, countPending: isLoading || isPlaceholderData || Boolean(error) || searchTransition.resultsAreStale, scope: "server", totalRecords: total }}
                 resetFilters={{ active: filtersActive, onReset: resetLayout, label: "Reset layout" }}

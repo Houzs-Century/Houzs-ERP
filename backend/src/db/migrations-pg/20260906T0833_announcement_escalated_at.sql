@@ -1,0 +1,20 @@
+-- 20260906T0833_announcement_escalated_at.sql
+-- REVERSAL: ALTER TABLE public.announcements DROP COLUMN IF EXISTS escalated_at;
+-- Verified against: staging (minnapsemfzjmtvnnvdd) through the normal
+--           migrate-before-deploy path on merge; prod (anogrigyjbduyzclzjgn)
+--           carries the same 0058 + 20260905T1125 + 20260906T0639 shape.
+--
+-- WHAT THIS CHANGES, and why it is safe to run against production:
+--   One additive, nullable text column on public.announcements. No backfill,
+--   no constraint, no index. Nothing that shipped before this migration
+--   reads it; NULL means "never escalated", which is what every existing row
+--   is — the cron below treats an old NULL row as due and escalates it once.
+--
+-- WHY (owner, 2026-09-06, "做逾期自动通知主管的 cron"):
+--   The overdue-escalation cron (services/announcementEscalation.ts, the */30
+--   trigger) notifies each supervisor of the people who have not acknowledged
+--   a notice that requires acknowledgement once it is older than the 48h
+--   overdue window. escalated_at records that the escalation ran (cron or
+--   the drawer's manual "Notify their supervisors"), so the job never
+--   re-notifies and the Manage drawer can say when it happened.
+ALTER TABLE public.announcements ADD COLUMN IF NOT EXISTS escalated_at text;

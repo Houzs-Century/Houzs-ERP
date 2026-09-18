@@ -9,6 +9,8 @@
 import { useMemo } from 'react';
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
+import { poListParams } from './po-list-export';
+import type { PoListLine } from './po-line-export-columns';
 import { applyListMrpEnrichment, type EnrichableMrpRow, type ListMrpEnrichment } from '../../../lib/listMrpEnrichment';
 import { writeFailed, writeFailedAs } from './mutation-error';
 import { idempotentInit } from '../../../lib/idempotency';
@@ -18,7 +20,13 @@ import type { OriginAssignment } from './flow-queries';
 import type { OutstandingScope } from '../../../lib/outstandingEmptyReason';
 
 export type SupplierStatus = 'ACTIVE' | 'INACTIVE' | 'BLOCKED';
-export type Currency = 'MYR' | 'RMB' | 'USD' | 'SGD';
+/* CNY joined on 2026-09-07 (mig 20260907T2330). It is the ISO code for the same
+   currency as the older RMB, and both are carried because the AutoCount book
+   states CNY and the migration copies the book's value rather than translating
+   it. This union, the supplier route's CURRENCIES set and the backend's
+   VALID_CURRENCIES are ONE decision — the duplicated-decision gate
+   (backend/scripts/check-duplicated-decisions.mjs) fails when they drift. */
+export type Currency = 'MYR' | 'RMB' | 'CNY' | 'USD' | 'SGD';
 export type MaterialKind = 'mfg_product' | 'fabric' | 'raw';
 // Draft/Confirmed two-state model re-adds DRAFT to po_status (migration 0042
 // re-adds the enum value 0078 removed). A PO can be saved as DRAFT (no SO-quota
@@ -100,6 +108,10 @@ export type BindingRow = {
   supplier_id: string;
   material_kind: MaterialKind;
   item_code: string;
+  /** B4 (2026-09-17) — the AutoCount item code this binding maps to. Free text,
+   *  NULL when unknown; no uniqueness. Used when reconciling a PO/GRN against
+   *  the accounting book. */
+  ac_item_code: string | null;
   material_name: string;
   supplier_sku: string;
   unit_price_sen: number;
@@ -138,6 +150,10 @@ export type PoHoldFields = {
 export type PoHeaderRow = PoHoldFields & {
   id: string;
   po_number: string;
+  /** AutoCount's document number when the PO is in the book (2990 has none). */
+  linked_ac_docno?: string | null;
+  /** Every line, attached by the paged list and the export (lib/po-line-export.ts). */
+  lines?: PoListLine[];
   supplier_id: string;
   status: PoStatus;
   po_date: string;
@@ -451,6 +467,8 @@ export function useUpdateSupplier() {
 export type NewBinding = {
   materialKind: MaterialKind;
   itemCode: string;
+  /** B4 — AutoCount item code (optional, free text). */
+  acItemCode?: string;
   materialName: string;
   supplierSku: string;
   unitPriceSen?: number;
@@ -523,6 +541,50 @@ export function useDeleteBinding() {
     onSuccess: (_, vars) => {
       qc.invalidateQueries({ queryKey: ['supplier-detail', vars.supplierId] });
       qc.invalidateQueries({ queryKey: ['suppliers-for-material'] });
+    },
+    onError: writeFailed,
+  });
+}
+
+// ── B1 — effective-dated supplier price timeline on a binding ────────────────
+export type BindingPriceChange = {
+  id: string;
+  effective_from: string;
+  unit_price_sen: number | null;
+  price_matrix: PriceMatrix | null;
+  notes: string | null;
+  created_by: string | null;
+  created_at: string;
+};
+export type BindingPriceHistory = {
+  history: BindingPriceChange[];
+  currentUnitPriceSen: number | null;
+  currentPriceMatrix: PriceMatrix | null;
+};
+
+/** The binding's price timeline (newest first) + its current flat cost. */
+export function useBindingPriceHistory(supplierId: string, bindingId: string | null) {
+  return useQuery({
+    queryKey: ['binding-price-history', supplierId, bindingId],
+    enabled: !!bindingId,
+    queryFn: () =>
+      authedFetch<BindingPriceHistory>(`/suppliers/${supplierId}/bindings/${bindingId}/price-changes`),
+  });
+}
+
+/** Append one effective-dated cost row (schedule a future/dated supplier price). */
+export function useScheduleBindingPrice() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ supplierId, bindingId, ...body }:
+      { supplierId: string; bindingId: string; effectiveFrom: string; unitPriceSen: number; notes?: string }) =>
+      authedFetch<{ ok: boolean; baselined: boolean }>(
+        `/suppliers/${supplierId}/bindings/${bindingId}/price-changes`,
+        { method: 'POST', body: JSON.stringify(body) },
+      ),
+    onSuccess: (_, vars) => {
+      void qc.invalidateQueries({ queryKey: ['binding-price-history', vars.supplierId, vars.bindingId] });
+      void qc.invalidateQueries({ queryKey: ['supplier-detail', vars.supplierId] });
     },
     onError: writeFailed,
   });
@@ -616,17 +678,15 @@ export type PoStatusCounts = {
      `outstanding` is: an older deployment answers without it. */
   on_hold?: number;
 };
-export function usePurchaseOrdersPaged(params: { page: number; pageSize: number; status?: string; supplierId?: string; q?: string; sort?: string }) {
-  const { page, pageSize, status, supplierId, q, sort } = params;
-  const usp = new URLSearchParams();
+export function usePurchaseOrdersPaged(params: { page: number; pageSize: number; status?: string; supplierId?: string; q?: string; sort?: string; creditorNames?: string[]; creditorCodes?: string[]; currencies?: string[] }) {
+  const { page, pageSize, status, supplierId, q, sort, creditorNames, creditorCodes, currencies } = params;
+  // The filter half is shared with the two exports (po-list-export.ts), so an
+  // export can never be sent a different filter than the list it was pressed on.
+  const usp = poListParams({ status, supplierId, q, sort, creditorNames, creditorCodes, currencies });
   usp.set('page', String(page));
   usp.set('pageSize', String(pageSize));
-  if (status) usp.set('status', status);
-  if (supplierId) usp.set('supplierId', supplierId);
-  if (q && q.trim()) usp.set('q', q.trim());
-  if (sort) usp.set('sort', sort);
   return useQuery({
-    queryKey: ['mfg-purchase-orders-paged', page, pageSize, status ?? '', supplierId ?? '', q ?? '', sort ?? ''],
+    queryKey: ['mfg-purchase-orders-paged', page, pageSize, status ?? '', supplierId ?? '', q ?? '', sort ?? '', JSON.stringify(creditorNames ?? []), JSON.stringify(creditorCodes ?? []), JSON.stringify(currencies ?? [])],
     queryFn: ({ signal }) => authedFetch<{ purchaseOrders: PoHeaderRow[]; total: number; page: number; pageSize: number; statusCounts: PoStatusCounts }>(`/mfg-purchase-orders?${usp.toString()}`, { signal }),
     placeholderData: (prev: any) => prev,
     staleTime: 30_000,
@@ -887,9 +947,10 @@ export function useCreateGrnsFromPoItems() {
   });
 }
 
-/** PR — Multi-select PI-from-GRN picker (task #52). Lists GRN LINES from
-    POSTED GRNs that have NOT yet been invoiced (header-level dedupe per MVP
-    — see /outstanding-grn-items handler for the trade-off note). */
+/** PR — Multi-select PI-from-GRN picker (task #52). Lists the GRN LINES still to
+    bill (accepted - invoiced - returned > 0) on POSTED, not-held notes. The
+    server reads the notes that still have something to bill, not a window of
+    the newest posted notes (backend/src/scm/lib/outstanding-grn-lines.ts). */
 export type OutstandingGrnItem = {
   grnItemId:       string;
   grnId:           string;
@@ -914,12 +975,17 @@ export type OutstandingGrnItem = {
   exchangeRate?:   number | null;
 };
 
+/** `truncated` is the server saying its note read stopped at its ceiling, so
+    `items` is NOT every line still to bill and the screen must say so. A
+    response without the field (a Worker older than the field) reads as false. */
+export type OutstandingGrnItems = { items: OutstandingGrnItem[]; truncated: boolean };
+
 export function useOutstandingGrnItems() {
   return useQuery({
     queryKey: ['purchase-invoices', 'outstanding-grn-items'],
-    queryFn: () => authedFetch<{ items: OutstandingGrnItem[] }>(
+    queryFn: () => authedFetch<{ items: OutstandingGrnItem[]; truncated?: boolean }>(
       `/purchase-invoices/outstanding-grn-items`,
-    ).then((r) => r.items),
+    ).then((r): OutstandingGrnItems => ({ items: r.items, truncated: r.truncated === true })),
     staleTime: 30_000,
   });
 }
@@ -1296,15 +1362,20 @@ export function useConfirmPurchaseOrder() {
   });
 }
 
+/** Cancel a PO. The REASON is mandatory (owner 2026-09-09: 「PO cancelled 不需要
+ *  审批，只需要 remark 原因取消」) — the server's cancel guard refuses a body
+ *  without one (400 reason_required) and records it in the cancellation ledger,
+ *  so every surface has to ask for it. Use usePoCancelAction (pages/scm-v2/
+ *  use-po-cancel-action.ts) rather than calling this with words of your own. */
 export function useCancelPurchaseOrder() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) =>
+    mutationFn: ({ id, reason }: { id: string; reason: string }) =>
       authedFetch<{ purchaseOrder: { id: string; status: PoStatus; cancelled_at: string } }>(
         `/mfg-purchase-orders/${id}/cancel`,
-        { method: 'PATCH' },
+        { method: 'PATCH', body: JSON.stringify({ reason }) },
       ),
-    onSuccess: (_, id) => {
+    onSuccess: (_, { id }) => {
       // Prefix key also matches ['mfg-purchase-orders','outstanding-so-items'],
       // so the released SO lines reappear in the From-SO picker.
       qc.invalidateQueries({ queryKey: ['mfg-purchase-orders'] });

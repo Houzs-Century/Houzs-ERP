@@ -68,8 +68,8 @@ describe("the remedy the refusal names is ON THE SCREEN", () => {
     /* The server's sentence lists them AND each line gets its own card, so both
        spellings of the code are on screen — that is the point, not a duplicate. */
     expect(screen.getAllByText(/AKEMI-QD/).length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/normally about RM450\.00 each/).length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/normally about RM1200\.50 each/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/normally about RM 450\.00 each/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/normally about RM 1,200\.50 each/).length).toBeGreaterThan(0);
   });
 
   it("offers BOTH ways out per line — a price and a Received-free tick", () => {

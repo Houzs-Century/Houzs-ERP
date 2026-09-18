@@ -55,6 +55,11 @@ class Query {
   in(col: string, val: unknown[]) { this.filters.push({ kind: 'in', col, val }); return this; }
   or() { return this; }
   lte() { return this; }
+  /* The frozen-line read (downstream-lock.readSoLineFreeze) pages with range and
+     the header cascades exclude frozen ids with not(); these stores carry no
+     delivery order, so neither changes a result. */
+  range() { return this; }
+  not() { return this; }
   order(col: string, opts?: { ascending?: boolean }) { this.orders.push({ col, asc: opts?.ascending !== false }); return this; }
   limit(n: number) { this.limitN = n; return this; }
   maybeSingle() { this.wantSingle = true; return this; }
@@ -77,6 +82,7 @@ class Query {
 
     if (this.op === 'insert' || this.op === 'upsert') {
       const items: Row[] = Array.isArray(this.payload) ? this.payload : this.payload ? [this.payload] : [];
+      const inserted: Row[] = [];
       for (const it of items) {
         if (this.op === 'upsert') {
           const cols = (this.upsertOpts?.onConflict ?? '').split(',').map((s) => s.trim()).filter(Boolean);
@@ -86,8 +92,12 @@ class Query {
         const row = { ...it };
         if (row.id == null) row.id = `${this.table}-gen-${++this.ids.n}`;
         rows.push(row);
+        inserted.push(row);
       }
-      return (this.result = { data: null, error: null });
+      /* PostgREST returns the inserted rows ONLY when .select() was chained
+         (`insert(...).select('id').single()`); a bare insert returns no data. */
+      const back = this.returning ? (this.wantSingle ? (inserted[0] ?? null) : inserted.map((r) => ({ ...r }))) : null;
+      return (this.result = { data: back, error: null });
     }
 
     const filtered = rows.filter(this.match);
@@ -256,6 +266,31 @@ describe('applySoAmendment — an APPROVED amendment carries the approved unit p
     const added = store.mfg_sales_order_items.find((r) => r.id !== 'L1')!;
     expect(added.unit_price_sen).toBe(4500);
     expect(added.total_sen).toBe(9000);
+  });
+
+  /* docs/bugs/0942: the added line carries no AutoCount key, so the write-back
+     edit the approve route queues must declare it NEW. applySoAmendment is the
+     only place that knows which row it inserted, so it has to hand the id back. */
+  it('returns the id of an ADDED line so the AutoCount edit can declare it new', async () => {
+    const store = baseStore();
+    store.so_amendment_lines = [specLine({
+      id: 'al-add', sales_order_item_id: null, change_type: 'ADD',
+      new_item_code: 'ACC-1', new_qty: 1, new_unit_price_sen: 4500, old_snapshot: null,
+    })];
+
+    const res = await apply(store);
+
+    const added = store.mfg_sales_order_items.find((r) => r.id !== 'L1')!;
+    expect(res.addedLineIds).toEqual([added.id]);
+  });
+
+  it('a SPEC-only amendment adds no line, so there is nothing to declare new', async () => {
+    const store = baseStore();
+    store.so_amendment_lines = [specLine({ new_unit_price_sen: 5000 })];
+
+    const res = await apply(store);
+
+    expect(res.addedLineIds).toEqual([]);
   });
 
   it('the audit trail records the price that actually landed', async () => {
@@ -507,5 +542,40 @@ describe('applySoAmendment — the discount channel (mig 0317)', () => {
     await apply(store);
 
     expect(store.mfg_sales_order_items.find((r) => r.id !== 'L1')!.discount_sen).toBe(0);
+  });
+});
+
+/* ── The NAME must track the CODE on a SPEC change ──────────────────────────
+   A SPEC that swaps item_code rewrote the code but left `description` (the
+   product name) and `description2` (the variant summary) stale, so a code-swap
+   amendment named the line by the OLD product on every name-first surface — the
+   amend editor's SoLineCard picker, the follow-up PO's material_name, and
+   anything reading description. The ADD branch already resolved the name from
+   the catalog (mfg_products.name); SPEC now does too. docs/bugs/0781. */
+describe('applySoAmendment — a SPEC re-syncs the line NAME to the new code\'s catalogue name', () => {
+  it('rewrites description from the swapped-to code\'s catalogue name', async () => {
+    const store = baseStore();
+    // The catalogue product the SPEC swaps TO — a different code, a different name.
+    store.mfg_products.push(product({ code: 'ACC-2', name: 'Nesting Table' }));
+    store.so_amendment_lines = [specLine({ new_item_code: 'ACC-2' })];
+
+    await apply(store);
+
+    const line = lineOf(store);
+    expect(line.item_code).toBe('ACC-2');
+    expect(line.description).toBe('Nesting Table');   // NOT the stale 'Side Table'
+  });
+
+  it('a QTY-only change leaves the name untouched (the write is scoped to SPEC)', async () => {
+    const store = baseStore();
+    store.so_amendment_lines = [specLine({
+      change_type: 'QTY', new_qty: 2, new_unit_price_sen: CATALOGUE_SEN,
+      old_snapshot: { item_code: 'ACC-1', itemGroup: 'accessory', qty: 1, unitPriceSen: CATALOGUE_SEN },
+    })];
+
+    await apply(store);
+
+    expect(lineOf(store).qty).toBe(2);
+    expect(lineOf(store).description).toBe('Side Table');
   });
 });

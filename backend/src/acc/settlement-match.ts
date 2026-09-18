@@ -22,6 +22,7 @@
 // ----------------------------------------------------------------------------
 
 import type { ParsedRow } from './settlement-parse';
+import { fmtSen } from '../scm/shared/format';
 
 export type PaymentCandidate = {
   source: 'SOPAY' | 'SIPAY';
@@ -35,6 +36,12 @@ export type PaymentCandidate = {
       whoever created the row. A uuid here; the name is resolved once, in bulk,
       by whichever screen shows it. */
   recordedById?: string | null;
+  /** Which acquirer the payment was RECORDED as, null when it never was —
+      migration-era rows all are. Carried for the screen (the operator should
+      see he is claiming untagged money) and stamped on by the confirm; the
+      matching itself never reads it, because the loader already refused
+      payments tagged with a different acquirer. */
+  merchantProvider?: string | null;
 };
 
 export type MatchBucket = 'MATCHED' | 'NEEDS_CONFIRM' | 'UNMATCHED' | 'IGNORED';
@@ -203,6 +210,36 @@ export function matchStatement(
     if (trustsRef && row.ref) {
       const hits = (byRef.get(normRef(row.ref)) ?? []).filter((p) => !claimed.has(key(p)));
       if (hits.length === 1) {
+        /* FAR FROM THE DAY IS STILL THE SAME SWIPE, but it is not something to
+           take without asking. Owner, 2026-09-09: four PBB lines read "No
+           payment recorded near …" while the payment sat in the ERP with the
+           identical reference and amount, keyed five to eleven days later
+           because the sale was written up late. The reference is the acquirer's
+           own identifier and does not become less true for that — so the
+           payment is now loaded whatever its date (acc/settlement
+           loadPaymentCandidates) and reaches here.
+
+           Auto-taking it would be a step too far: a reference matching across a
+           two-week gap is also the shape of a code mis-keyed onto a later sale,
+           and this is the one path that books money without a human. So inside
+           the tolerance it is taken as before; outside it, the SAME payment is
+           offered, pre-ticked, with the distance said out loud. */
+        const away = Math.round(dayGap(hits[0]!.paidOn, row.txnDate));
+        if (away > tolerance) {
+          decisions.push({
+            row,
+            bucket: 'NEEDS_CONFIRM',
+            matchReason: 'ref',
+            matched: [],
+            candidates: hits,
+            comboHints: [],
+            suggested: hits,
+            clue: `Reference ${row.ref} matches ${hits[0]!.docNo}, but it was recorded on `
+              + `${hits[0]!.paidOn} — ${away} days from this line, outside the ${tolerance}-day window. `
+              + 'Same reference and same amount usually means the sale was keyed late; check it and confirm.',
+          });
+          continue;
+        }
         claimed.add(key(hits[0]));
         decisions.push({
           row,
@@ -272,7 +309,7 @@ export function matchStatement(
              this line is either a mis-keyed code or a document missing from the
              swipe, and the difference is the clue to which. */
           clue: `${hits.length} payments carry reference ${row.ref}, but no combination of them makes `
-            + `${(row.grossSen / 100).toFixed(2)} (they come to ${(together / 100).toFixed(2)})`
+            + `${fmtSen(row.grossSen)} (they come to ${fmtSen(together)})`
             + ' — pick the ones that belong to it.',
         });
         continue;
@@ -370,4 +407,37 @@ export function recordedNotArrived(
     .filter((p) => !settled.has(`${p.source}:${p.id}`))
     .map((p) => ({ ...p, ageDays: Math.round(dayGap(p.paidOn, asOf)) }))
     .sort((a, b) => b.ageDays - a.ageDays);
+}
+
+/** The list key for card money recorded without a bank — the word the batch
+    detail already puts beside such a candidate (未标 merchant). */
+export const UNTAGGED_LIST = '未标';
+
+/**
+ * Put an UNTAGGED payment on a watch list ONCE. loadPaymentCandidates hands a
+ * payment tagged with nothing to EVERY acquirer's pool — right for matching
+ * (couldBeAcquirers: it could be any of theirs, and each statement must be
+ * able to find it), wrong for a count: the watchlist and the in-transit list
+ * both walked the pools acquirer by acquirer and listed the same RM 3,365 once
+ * per active merchant, so 2990's 43 untagged instalments read as 172 rows and
+ * four times the money (docs/bugs/0688). A tagged payment is in one pool only
+ * and keeps its acquirer; an untagged one is listed under NO acquirer the
+ * first time it is met and skipped after that — the confirm that stamps its
+ * bank is what moves it onto that merchant's list. `listed` is the memory
+ * across the acquirers of one request; the caller owns it.
+ */
+export function listOnce<T extends { source: string; id: string; merchantProvider?: string | null }>(
+  pool: T[],
+  acquirerCode: string,
+  listed: Set<string>,
+): Array<T & { acquirerCode: string | null }> {
+  const out: Array<T & { acquirerCode: string | null }> = [];
+  for (const p of pool) {
+    if (p.merchantProvider != null) { out.push({ ...p, acquirerCode }); continue; }
+    const key = `${p.source}:${p.id}`;
+    if (listed.has(key)) continue;
+    listed.add(key);
+    out.push({ ...p, acquirerCode: null });
+  }
+  return out;
 }

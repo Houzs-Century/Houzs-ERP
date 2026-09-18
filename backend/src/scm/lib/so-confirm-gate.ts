@@ -57,6 +57,7 @@
 // ----------------------------------------------------------------------------
 import type { SaveProblem } from '../shared/so-save-problems';
 import { acAgentProblem } from './ac-preflight';
+import { pgrestIn } from './pgrest-in-list';
 
 /** The gate's own third state: not "confirmable" and not "these things are
  *  wrong", but "we could not check". Rendered by the same SaveProblemsList as
@@ -197,7 +198,7 @@ export async function soConfirmProblemsForDoc(sb: any, docNo: string): Promise<S
   const codes = [...new Set(lines.map((i) => String(i.item_code ?? '').trim()).filter(Boolean))];
   let nonCatalogCodes: string[] = [];
   if (codes.length > 0) {
-    let q = sb.from('mfg_products').select('code').in('code', codes);
+    let q = pgrestIn(sb.from('mfg_products').select('code'), 'code', codes);
     if (h.company_id != null) q = q.eq('company_id', h.company_id);
     const { data: prods, error: prodsErr } = await q;
     if (prodsErr) return [checkFailedProblem(`catalog: ${prodsErr.message}`)];

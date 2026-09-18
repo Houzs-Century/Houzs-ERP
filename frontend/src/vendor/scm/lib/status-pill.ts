@@ -69,7 +69,7 @@ type Entry = { label: string; tone: StatusTone };
 
 const PO: Record<string, Entry> = {
   DRAFT:              { label: 'Draft',              tone: 'pending' },
-  SUBMITTED:          { label: 'Confirmed',          tone: 'info' },
+  SUBMITTED:          { label: 'Submitted',          tone: 'info' },
   PARTIALLY_RECEIVED: { label: 'Partially Received', tone: 'progress' },
   RECEIVED:           { label: 'Received',           tone: 'success' },
   CANCELLED:          { label: 'Cancelled',          tone: 'danger' },
@@ -77,14 +77,14 @@ const PO: Record<string, Entry> = {
 };
 const GRN: Record<string, Entry> = {
   DRAFT:     { label: 'Draft',     tone: 'pending' },
-  POSTED:    { label: 'Confirmed', tone: 'info' },
+  POSTED:    { label: 'Submitted', tone: 'info' },
   CLOSED:    { label: 'Closed',    tone: 'success' },
   CANCELLED: { label: 'Cancelled', tone: 'danger' },
   ON_HOLD:   { label: 'On Hold',   tone: 'pending' },
 };
 const PI: Record<string, Entry> = {
   DRAFT:          { label: 'Draft',          tone: 'pending' },
-  POSTED:         { label: 'Confirmed',      tone: 'info' },
+  POSTED:         { label: 'Submitted',      tone: 'info' },
   PARTIALLY_PAID: { label: 'Partially Paid', tone: 'progress' },
   PAID:           { label: 'Paid',           tone: 'success' },
   VOID:           { label: 'Void',           tone: 'danger' },
@@ -98,8 +98,8 @@ const PR: Record<string, Entry> = {
 };
 const SO: Record<string, Entry> = {
   DRAFT:         { label: 'Draft',         tone: 'pending' },
-  CONFIRMED:     { label: 'Confirmed',     tone: 'info' },
-  IN_PRODUCTION: { label: 'Proceed',       tone: 'progress' },
+  CONFIRMED:     { label: 'Submitted',     tone: 'info' },
+  IN_PRODUCTION: { label: 'In Production', tone: 'progress' },
   READY_TO_SHIP: { label: 'Ready to Ship', tone: 'success' },
   SHIPPED:       { label: 'Shipped',       tone: 'success' },
   DELIVERED:     { label: 'Delivered',     tone: 'success' },
@@ -121,7 +121,7 @@ const DO: Record<string, Entry> = {
 };
 const SI: Record<string, Entry> = {
   DRAFT:          { label: 'Draft',          tone: 'pending' },
-  SENT:           { label: 'Confirmed',      tone: 'info' },
+  SENT:           { label: 'Submitted',      tone: 'info' },
   PARTIALLY_PAID: { label: 'Partially Paid', tone: 'progress' },
   PAID:           { label: 'Paid',           tone: 'success' },
   OVERDUE:        { label: 'Overdue',        tone: 'danger' },
@@ -179,11 +179,14 @@ const PO_AMENDMENT: Record<string, Entry> = {
   REJECTED:  { label: 'Rejected',  tone: 'danger' },
 };
 
-// Payment Voucher (Phase 1-B). DRAFT reads as pending; POSTED is the terminal
-// happy path (posted to the GL); CANCELLED closes it (danger/red).
+// Payment Voucher. The owner's four layers (2026-09-02): Draft → Prepared →
+// Checked → Approved — the middle two live as MARKS on a DRAFT row (the list
+// says them beside the pill), and POSTED is what the second yes leaves
+// behind, so its label is the owner's word for it: Approved. CANCELLED
+// closes it (danger/red).
 const PV: Record<string, Entry> = {
-  DRAFT:     { label: 'Draft',     tone: 'pending' },
-  POSTED:    { label: 'Confirmed', tone: 'success' },
+  DRAFT:     { label: 'Draft',    tone: 'pending' },
+  POSTED:    { label: 'Approved', tone: 'success' },
   CANCELLED: { label: 'Cancelled', tone: 'danger' },
 };
 
@@ -239,9 +242,34 @@ export function statusVocabulary(docType: StatusDocType): string[] {
   return Object.keys(MAPS[docType]);
 }
 
+/** Attach the canonical LABEL to a page's own status map. A list or detail page
+ *  still needs things this file does not carry — its filter bucket, its blurb,
+ *  its own tone palette — so it keeps a map of THOSE, keyed by stored status, and
+ *  gets the word from here instead of hand-writing it. Hand-written copies are
+ *  what produced the 2026-09-13 "one rung, three words" defects (docs/bugs/0851).
+ *
+ *  Resolved once, when the page module loads, rather than per lookup: the page's
+ *  `STATUS_TONE[key] ?? fallback` then keeps its original one-line shape, which is
+ *  the shape `no-unnecessary-condition` exempts (a nullish check straight on an
+ *  index-signature access). Every attempt to attach the label at lookup time went
+ *  through a variable and was flagged — measured with `npm run lint`, 2026-09-13.
+ *
+ *  An unlisted status is not in `own` and so is not in the result: the page's own
+ *  fallback still decides what an unknown status reads, exactly as before. */
+export function withStatusLabels<T extends object>(
+  docType: StatusDocType,
+  own: Record<string, T>,
+): Record<string, T & { label: string }> {
+  const out: Record<string, T & { label: string }> = {};
+  for (const [status, entry] of Object.entries(own)) {
+    out[status] = { ...entry, label: statusLabel(docType, status) };
+  }
+  return out;
+}
+
 // ── Simplified amendment status buckets (owner 2026-07-24) ───────────────────
 // The amendment LIST surfaces (SO + PO queues, desktop + mobile) collapse to just
-// Requested / Approved / All. The SO amendment backend still carries the granular
+// Requested / Approved / Rejected / All. The SO amendment backend still carries the granular
 // two-gate enum (SUPPLIER_PENDING / SO_APPROVED / PO_APPROVED / SENT) that the
 // 2990 mirror + the SO detail stepper depend on — so this ONLY changes what the
 // list shows, never the stored value. The PO amendment enum already IS the
@@ -249,7 +277,8 @@ export function statusVocabulary(docType: StatusDocType): string[] {
 //
 //   REQUESTED bucket = still open / in-flight (REQUESTED, SUPPLIER_PENDING)
 //   APPROVED  bucket = applied            (SO_APPROVED, PO_APPROVED, SENT, APPROVED)
-//   REJECTED  bucket = closed w/o applying (REJECTED — reached via the All chip)
+//   REJECTED  bucket = closed w/o applying (REJECTED — refused by an approver, or
+//               withdrawn by the requester; its own chip since owner 2026-09-17)
 export type AmendmentBucket = 'REQUESTED' | 'APPROVED' | 'REJECTED';
 
 const APPLIED_STATES = ['SO_APPROVED', 'PO_APPROVED', 'SENT', 'APPROVED'];
@@ -273,7 +302,31 @@ const BUCKET_ENTRY: Record<AmendmentBucket, Entry> = {
 export const simplifiedAmendmentPill = (status: string | null | undefined): Entry =>
   BUCKET_ENTRY[amendmentBucketOf(status)];
 
-/** The simplified filter chips every amendment list uses. */
-export const AMENDMENT_LIST_CHIPS = ['all', 'REQUESTED', 'APPROVED'] as const;
 export const amendmentBucketLabel = (bucket: string): string =>
   bucket === 'all' ? 'All' : (BUCKET_ENTRY[bucket as AmendmentBucket]?.label ?? bucket);
+
+/** The order every amendment LIST opens in (staff request 2026-09-14): what
+ *  still needs an action first. Ranks the simplified BUCKET, so SO's
+ *  SUPPLIER_PENDING sits with Requested and SENT with Approved — the same word
+ *  the row's pill shows. Both enums are closed sets (migs 0080, 0194) and
+ *  amendmentBucketOf folds anything else into REQUESTED, so there is no fourth
+ *  rank to place. */
+export const AMENDMENT_BUCKET_ORDER: readonly AmendmentBucket[] = ['REQUESTED', 'APPROVED', 'REJECTED'];
+
+/** The simplified filter chips every amendment list uses: All, then one chip per
+ *  bucket in the order the list itself opens in. Derived, not retyped — a bucket
+ *  the rows can carry always has a chip (owner 2026-09-17: Rejected had none). */
+export const AMENDMENT_LIST_CHIPS: ReadonlyArray<'all' | AmendmentBucket> = ['all', ...AMENDMENT_BUCKET_ORDER];
+
+export const amendmentBucketRank = (status: string | null | undefined): number =>
+  AMENDMENT_BUCKET_ORDER.indexOf(amendmentBucketOf(status));
+
+/** Bucket order, then newest first inside a bucket (a row with no date last).
+ *  Built per row shape because the SO/PO queues and the merged PO inbox name
+ *  their fields differently. */
+export const compareAmendmentsForList = <T,>(
+  statusOf: (row: T) => string | null | undefined,
+  createdAtOf: (row: T) => string | null | undefined,
+) => (a: T, b: T): number =>
+  amendmentBucketRank(statusOf(a)) - amendmentBucketRank(statusOf(b))
+  || String(createdAtOf(b) ?? '').localeCompare(String(createdAtOf(a) ?? ''));

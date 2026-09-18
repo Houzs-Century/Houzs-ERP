@@ -31,6 +31,7 @@ import { useStaffLookup } from "../../hooks/useStaffLookup";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { fmtDate } from "../../vendor/shared/format";
 import { warehouseLabel } from "../../vendor/scm/lib/warehouse-label";
+import { withStatusLabels } from "../../vendor/scm/lib/status-pill";
 import { stockTakeRowMenu } from "./row-menus";
 
 type StatusTab = "all" | "open" | "posted" | "cancelled";
@@ -39,14 +40,20 @@ type StatusTab = "all" | "open" | "posted" | "cancelled";
 const warehouseOf = (r: StockTakeRow): string =>
   warehouseLabel(r.warehouse) || r.warehouse_id || "—";
 
-const STATUS_TONE: Record<
+/* The LABEL is NOT declared here. It comes from `vendor/scm/lib/status-pill.ts`,
+   the one canonical map — docs/modules/document-status-vocabulary.md §1. What
+   stays is what is genuinely this page's own: the tone palette (four names, not
+   status-pill's six) and the filter BUCKET. */
+const STATUS_OWN: Record<
   string,
-  { tone: "success" | "warning" | "error" | "neutral"; label: string; bucket: StatusTab }
+  { tone: "success" | "warning" | "error" | "neutral"; bucket: StatusTab }
 > = {
-  OPEN:      { tone: "warning", label: "Open",      bucket: "open" },
-  POSTED:    { tone: "success", label: "Confirmed", bucket: "posted" },
-  CANCELLED: { tone: "error",   label: "Cancelled", bucket: "cancelled" },
+  OPEN:      { tone: "warning", bucket: "open" },
+  POSTED:    { tone: "success", bucket: "posted" },
+  CANCELLED: { tone: "error",   bucket: "cancelled" },
 };
+const STATUS_TONE = withStatusLabels("stockTake", STATUS_OWN);
+
 const statusFor = (s: string) =>
   STATUS_TONE[(s || "").toUpperCase()] ?? { tone: "neutral" as const, label: s || "—", bucket: "open" as StatusTab };
 

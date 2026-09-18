@@ -1,0 +1,135 @@
+{
+  "_what": "Which LEGACY SPELLING families the owner has authorised folding onto their catalogue code. A value in this file is still only folded when the phrase mapper decodes it to exactly that one code — the list narrows what may be touched, it never widens what a rule decides.",
+  "_why_a_file": "The measurement found 14 such groups over 1,491 document lines. The owner authorised ONE of them. An authorisation that lives in a transcript is an authorisation the next session invents the scope of, so it lives here with the words he used.",
+  "_the_harm_it_bounds": "specials composes computeVariantKey, so folding a spelling onto its code MERGES two stock buckets. That is a stock move, not a tidy-up, and it is refused by the same guard every other spec tool uses (scripts/lib/spec-chain-guard.mjs, docs/bugs/0722 and 0844).",
+  "_measured": "Production run 34728515268, 2026-09-13, company 1: 200 legacy values on 1,491 document lines; 128 of them group onto 14 catalogue codes; 72 (272 lines) the rules can place on no option and which stay as free text.",
+  "authorised": [
+    {
+      "code": "Nylon Fabric",
+      "by": "owner, 2026-09-13, in chat — 「3 统一nylon」, answering the question 'do you want the 1,219 lines of legacy spellings folded onto their catalogue option'",
+      "measured": "32 spellings across 595 document lines — the largest of the 14 groups",
+      "examples": [
+        "Bottom wrap nylon",
+        "BOTTOM USE UMBRELLA FABRIC",
+        "Nilon bottom",
+        "Bottom upgrade to umbrella fabric",
+        "wrap bottom to Nilon",
+        "Bottom wrap by nylon",
+        "Bottom Wrap by Nylon Fabric",
+        "Bottom wrap Nylon Fabric",
+        "Bttm upgrade to umbrella fabric",
+        "BOTTOM USE UMBRELLA FABIRC"
+      ],
+      "why_this_one_is_safe_to_fold": "The owner's own ruling created this code: 「nylon 和 umbrella fabric 一样的 — one request, one code」 (the Nylon Fabric family's `why` in special-order-phrase-map.json). Every spelling above is that one request written differently, so folding them changes no meaning — only the bucket they share."
+    },
+    {
+      "code": "HB Fully Cover",
+      "by": "owner, 2026-09-13, in chat — 「HB DIVAN fullycover那些也可以做啊」, extending the nylon authorisation",
+      "measured": "28 spellings across 288 document lines — the second largest group",
+      "examples": [
+        "fully cover",
+        "HB FullyCover",
+        "HB FULL COVERED",
+        "HB & DIVAN BOTTOM FULLY COVER",
+        "HB&DIVANfullyCovered",
+        "HB FULLY COVERED",
+        "HB AND DIVAN"
+      ],
+      "why_this_one_is_safe_to_fold": "Every spelling is the same request — the headboard covered in fabric — written differently. The phrase map's HB Fully Cover family already vetoes `straight`, so a HB Straight slip cannot land here."
+    },
+    {
+      "code": "Divan Full Cover",
+      "by": "owner, 2026-09-13, in chat — 「HB DIVAN fullycover那些也可以做啊」",
+      "measured": "15 spellings across 47 document lines",
+      "examples": [
+        "HB & DIVAN BOTTOM FULLY COVER",
+        "HB&DIVANfullyCovered",
+        "HB DIVAN FULL COVERED",
+        "HB DIV FULL COVER",
+        "hb and divan fully cover fabric"
+      ],
+      "why_this_one_is_safe_to_fold": "Same request for the divan base. Several of its spellings name the headboard AND the divan in one breath, which is why both codes had to be authorised together — see _both_codes_in_one_phrase."
+    },
+    {
+      "code": "Seat Base Fully Cover with no Leg",
+      "by": "owner, 2026-09-13, in chat — 「是的 批」, answering the question whether the SOFA fully-cover family was included in 「HB DIVAN fullycover那些也可以做啊」. It was asked separately BECAUSE it is a different request on a different category and shares only the words `Fully Cover`.",
+      "measured": "11 spellings across 105 document lines",
+      "examples": [
+        "Fully Covered To floor no leg",
+        "EXTEND TO FLOOR WITH 1'INCH LEG",
+        "Fully Cover to Floor",
+        "fully cover replace the leg",
+        "REMARKS:seat FULLY COVER TO FLOOR",
+        "28 inch per seat (no leg )",
+        "replace the leg by fully cover",
+        "2+C+1(35'INCH)FULLY COVER NO LEG"
+      ],
+      "why_this_one_is_safe_to_fold": "All eleven are the same SOFA request - the seat base covered down to the floor with the legs removed - and the family carries the owner's own 2026-08-10 ruling that `fully cover to floor no leg` and `fully cover replace the leg` mean the same treatment. Its `no` veto excludes the two lines that say the opposite (`REQUEST TO NORMAL LEG AND NOT FULLY COVER`)."
+    },
+    {
+      "code": "HB Straight",
+      "by": "owner, 2026-09-13, in chat — 「那就批完」, authorising every remaining group after the four named ones",
+      "measured": "12 spellings across 62 document lines",
+      "why_this_one_is_safe_to_fold": "Same request written differently; the phrase family that recognises it carries the owner ruling that created it (see its `why` in special-order-phrase-map.json)."
+    },
+    {
+      "code": "Change 8030 Backcushion",
+      "by": "owner, 2026-09-13, in chat — 「那就批完」, authorising every remaining group after the four named ones",
+      "measured": "18 spellings across 61 document lines",
+      "why_this_one_is_safe_to_fold": "Same request written differently; the phrase family that recognises it carries the owner ruling that created it (see its `why` in special-order-phrase-map.json)."
+    },
+    {
+      "code": "5540 Backrest",
+      "by": "owner, 2026-09-13, in chat — 「那就批完」, authorising every remaining group after the four named ones",
+      "measured": "5 spellings across 31 document lines",
+      "why_this_one_is_safe_to_fold": "Same request written differently; the phrase family that recognises it carries the owner ruling that created it (see its `why` in special-order-phrase-map.json)."
+    },
+    {
+      "code": "Seat Behind Extend 5\"",
+      "by": "owner, 2026-09-13, in chat — 「那就批完」, authorising every remaining group after the four named ones",
+      "measured": "1 spellings across 27 document lines",
+      "why_this_one_is_safe_to_fold": "Same request written differently; the phrase family that recognises it carries the owner ruling that created it (see its `why` in special-order-phrase-map.json)."
+    },
+    {
+      "code": "Seat Firmer",
+      "by": "owner, 2026-09-13, in chat — 「那就批完」, authorising every remaining group after the four named ones",
+      "measured": "1 spellings across 12 document lines",
+      "why_this_one_is_safe_to_fold": "Same request written differently; the phrase family that recognises it carries the owner ruling that created it (see its `why` in special-order-phrase-map.json)."
+    },
+    {
+      "code": "No notch on Seat Cushion",
+      "by": "owner, 2026-09-13, in chat — 「那就批完」, authorising every remaining group after the four named ones",
+      "measured": "8 spellings across 11 document lines",
+      "why_this_one_is_safe_to_fold": "Same request written differently; the phrase family that recognises it carries the owner ruling that created it (see its `why` in special-order-phrase-map.json)."
+    },
+    {
+      "code": "Wooden Arm",
+      "by": "owner, 2026-09-13, in chat — 「那就批完」, authorising every remaining group after the four named ones",
+      "measured": "3 spellings across 8 document lines",
+      "why_this_one_is_safe_to_fold": "Same request written differently; the phrase family that recognises it carries the owner ruling that created it (see its `why` in special-order-phrase-map.json)."
+    },
+    {
+      "code": "Seat Cushion No Notch and Plain",
+      "by": "owner, 2026-09-13, in chat — 「那就批完」, authorising every remaining group after the four named ones",
+      "measured": "1 spellings across 4 document lines",
+      "why_this_one_is_safe_to_fold": "Same request written differently; the phrase family that recognises it carries the owner ruling that created it (see its `why` in special-order-phrase-map.json)."
+    },
+    {
+      "code": "No Side Panel",
+      "by": "owner, 2026-09-13, in chat — 「那就批完」, authorising every remaining group after the four named ones",
+      "measured": "2 spellings across 2 document lines",
+      "why_this_one_is_safe_to_fold": "Same request written differently; the phrase family that recognises it carries the owner ruling that created it (see its `why` in special-order-phrase-map.json)."
+    },
+    {
+      "code": "Separate Backrest Packing",
+      "by": "owner, 2026-09-14 — 「查看有什么类似的 seperate packing for backerest 的 special 嘛 没有的话就用 1 这个」",
+      "measured": "1 spelling across 2 document lines",
+      "why_this_one_is_safe_to_fold": "Authorised on the condition that no ACTIVE option already means the same thing. The option is retired today, so the fold tool drops it from scope until reactivate-special-addon.mjs has run - that script performs the look and refuses if an equivalent exists. The order is enforced by the tool, not by whoever runs them."
+    }
+  ],
+  "notAuthorised": [],
+  "_notAuthorised_note": "Listed so the next session can see exactly what was NOT covered and does not have to re-measure it. These stay as they are until the owner says otherwise. Do not fold them because the nylon round went well.",
+  "_both_codes_in_one_phrase": "A legacy value may genuinely ask for TWO things: `HB & DIVAN BOTTOM FULLY COVER` decodes to HB Fully Cover AND Divan Full Cover, and that is not ambiguity - it is what the sentence says. The tool folds such a value into ALL of its codes, but ONLY when every one of them is authorised. If even one is not, the value is left alone and reported: folding it would silently drop the meaning that is out of scope, which is worse than not folding at all. Before the owner authorised HB Fully Cover and Divan Full Cover together on 2026-09-13 these phrases were skipped for exactly that reason.",
+  "_answered_2026_09_13": "The sofa `Seat Base Fully Cover with no Leg` family was asked about separately, because it shares only the words `Fully Cover` with the bedframe ones and is a different request on a different category. Owner answered 「是的 批」. Keep asking that way: a shared word in a code NAME is not evidence that two families are the same request.",
+  "_retired_targets_are_refused": "「那就批完」 did NOT include a RETIRED option, and the tool refuses one anyway. `Separate Backrest Packing` is active=false in scm.special_addons (2 spellings, 2 lines). Folding a live line onto a retired option would put a document on a choice the picker no longer offers - the same rule align-line-specials-to-catalogue states in its own header: \"a retired option is not something to move a live line onto\". If the owner wants those 2 lines folded, the option has to be re-activated first, which is his decision and not a side effect of a fold. UPDATE 2026-09-14: the owner authorised re-activating it if no active equivalent exists. It is listed as authorised, and the fold tool STILL drops it while it is retired, so it cannot be folded before the re-activation has actually happened."
+}

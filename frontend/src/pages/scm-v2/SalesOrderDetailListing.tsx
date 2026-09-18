@@ -268,12 +268,16 @@ const buildColumns = (canFinance: boolean): DataGridColumn<SoDetailListingRow>[]
     /* 10 */ {
       key: 'unit_price', label: 'Unit Price', width: 110, align: 'right', sortable: true,
       accessor: (r) => fmtRm(r.unit_price_sen),
+      exportValue: (r) => r.unit_price_sen / 100,
+      exportFormat: 'rate',
       searchValue: (r) => fmtRm(r.unit_price_sen),
       sortFn: (a, b) => (a.unit_price_sen ?? 0) - (b.unit_price_sen ?? 0),
     },
     /* 11 */ {
       key: 'total', label: 'Total', width: 120, align: 'right', sortable: true,
       accessor: (r) => <span style={{ fontWeight: 600 }}>{fmtRm(r.total_sen)}</span>,
+      exportValue: (r) => r.total_sen / 100,
+      exportFormat: 'money',
       searchValue: (r) => fmtRm(r.total_sen),
       sortFn: (a, b) => (a.total_sen ?? 0) - (b.total_sen ?? 0),
       filterType: 'number', numberValue: (r) => r.total_sen ?? 0,
@@ -287,6 +291,8 @@ const buildColumns = (canFinance: boolean): DataGridColumn<SoDetailListingRow>[]
       /* 12 */ {
         key: 'line_cost', label: 'Line Cost', width: 110, align: 'right', sortable: true,
         accessor: (r) => (r.line_cost_sen ?? 0) > 0 ? fmtRm(r.line_cost_sen) : <span style={{ color: 'var(--fg-muted)' }}>—</span>,
+        exportValue: (r) => r.line_cost_sen / 100,
+        exportFormat: 'money',
         searchValue: (r) => fmtRm(r.line_cost_sen ?? 0),
         sortFn: (a, b) => (a.line_cost_sen ?? 0) - (b.line_cost_sen ?? 0),
       },
@@ -298,6 +304,8 @@ const buildColumns = (canFinance: boolean): DataGridColumn<SoDetailListingRow>[]
           const color = m > 0 ? 'var(--c-secondary-a, #2F5D4F)' : m < 0 ? 'var(--c-festive-b, #B8331F)' : 'var(--fg-muted)';
           return <span style={{ color, fontWeight: 600 }}>{fmtRm(m)}</span>;
         },
+        exportValue: (r) => r.line_margin_sen / 100,
+        exportFormat: 'money',
         searchValue: (r) => fmtRm(r.line_margin_sen ?? 0),
         sortFn: (a, b) => (a.line_margin_sen ?? 0) - (b.line_margin_sen ?? 0),
       },
@@ -328,6 +336,8 @@ const buildColumns = (canFinance: boolean): DataGridColumn<SoDetailListingRow>[]
     /* 15 */ {
       key: 'balance', label: 'Balance', width: 110, align: 'right', sortable: true,
       accessor: (r) => fmtRm(r.balance_sen ?? 0),
+      exportValue: (r) => r.balance_sen / 100,
+      exportFormat: 'money',
       searchValue: (r) => fmtRm(r.balance_sen ?? 0),
       sortFn: (a, b) => (a.balance_sen ?? 0) - (b.balance_sen ?? 0),
     },
@@ -448,6 +458,8 @@ const buildColumns = (canFinance: boolean): DataGridColumn<SoDetailListingRow>[]
     /* 30 */ {
       key: 'paid', label: 'Paid', width: 110, align: 'right', sortable: true,
       accessor: (r) => fmtRm(r.paid_total_sen ?? 0),
+      exportValue: (r) => r.paid_total_sen / 100,
+      exportFormat: 'money',
       searchValue: (r) => fmtRm(r.paid_total_sen ?? 0),
       sortFn: (a, b) => (a.paid_total_sen ?? 0) - (b.paid_total_sen ?? 0),
     },
@@ -514,12 +526,16 @@ const buildColumns = (canFinance: boolean): DataGridColumn<SoDetailListingRow>[]
       key: 'tax_header', label: 'Tax (Header)', width: 100, align: 'right', sortable: false,
       defaultHidden: true,
       accessor: () => fmtRm(0),
+      exportValue: () => 0,
+      exportFormat: 'money',
       searchValue: () => fmtRm(0),
     },
     {
       key: 'tax_line', label: 'Tax (Line)', width: 100, align: 'right', sortable: false,
       defaultHidden: true,
       accessor: () => fmtRm(0),
+      exportValue: () => 0,
+      exportFormat: 'money',
       searchValue: () => fmtRm(0),
     },
     {
@@ -546,6 +562,8 @@ const buildColumns = (canFinance: boolean): DataGridColumn<SoDetailListingRow>[]
       key: 'total_ex', label: 'Total (Ex)', width: 110, align: 'right', sortable: true,
       defaultHidden: true,
       accessor: (r) => fmtRm((r.total_sen ?? 0) - (r.tax_sen ?? 0)),
+      exportValue: (r) => (r.total_sen - r.tax_sen) / 100,
+      exportFormat: 'money',
       searchValue: (r) => fmtRm((r.total_sen ?? 0) - (r.tax_sen ?? 0)),
       sortFn: (a, b) =>
         ((a.total_sen ?? 0) - (a.tax_sen ?? 0)) -

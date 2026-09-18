@@ -3,6 +3,8 @@ import type { MiddlewareHandler } from "hono";
 import { cors } from "hono/cors";
 import { secureHeaders } from "hono/secure-headers";
 import type { Env } from "./types";
+import { GIT_SHA, resolveBuildSha } from "./build-info";
+import { restKeyClaims, restUrlRef } from "./db/rest-key-claims";
 import { auth, requirePermission, requireAnyPermission, requireScmAccess } from "./middleware/auth";
 import { TRANSIENT_CONN_RE } from "./db/d1-compat";
 // Ported 2990's SCM modules (furniture supply chain). Talk to the `scm` Postgres
@@ -28,7 +30,9 @@ import users from "./routes/users";
 import roles from "./routes/roles";
 import positions from "./routes/positions";
 import positionCapabilities from "./routes/position-capabilities";
+import positionPolicy from "./routes/position-policy";
 import departments from "./routes/departments";
+import documentRefs from "./routes/documentRefs";
 import companies from "./routes/companies";
 import tableLayouts from "./routes/tableLayouts";
 import notifications from "./routes/notifications";
@@ -67,6 +71,8 @@ import search from "./routes/search";
 import assrPrint from "./routes/assr_print";
 import assrPortal from "./routes/assrPortal";
 import assrFormIntake from "./routes/assrFormIntake";
+import deliverySheetSync from "./routes/deliverySheetSync";
+import chatCallback from "./routes/chatCallback";
 import survey from "./routes/survey";
 import track from "./routes/track";
 import portal from "./routes/portal";
@@ -82,6 +88,13 @@ import { soMirror } from "./scm/routes/so-mirror";
 import { drainCommands } from "./scm/lib/amendment-command";
 import { drainStockAllocationRecompute } from "./scm/lib/stock-allocation-job";
 import { drainAutoCountOutbox } from "./scm/lib/autocount-outbox";
+import {
+  drainVenturePortalOutbox,
+  reconcileVenturePortalOutbox,
+} from "./scm/lib/venture-portal-outbox";
+import { reconcilePendingFairs } from "./scm/lib/fair-reconcile";
+import { relinkHeldBackSweep } from "./scm/lib/autocount-relink-sweep";
+import { deliveryDateSweep } from "./scm/lib/autocount-delivery-date-sweep";
 import { refreshAllMrpSnapshots } from "./scm/lib/mrp-snapshot";
 import { amendmentMirror } from "./scm/routes/amendment-mirror";
 import { customerMirror } from "./scm/routes/customer-mirror";
@@ -93,6 +106,9 @@ import pos from "./routes/pos";
 // Announcements — office posts every logged-in user sees as a top banner with
 // a "Got it" ack. Ported from Hookka (single-tenant + office-only here).
 import announcements from "./routes/announcements";
+import announcementReceipts from "./routes/announcementReceipts";
+import announcementApproval from "./routes/announcementApproval";
+import memos from "./routes/memos";
 // Agent Console — owner-only fleet console for the HOOKKA-ported agents
 // (Delivery/Document/CS). Skeleton: controls + runs + config proposals +
 // feedback; the engines register themselves in services/agent-scheduler.ts.
@@ -103,10 +119,14 @@ import { supplierTrack } from "./middleware/supplierTrack";
 import { dbInject, withPgDb } from "./middleware/db";
 import { companyContext } from "./middleware/companyContext";
 import { publicDoScan } from "./routes/publicDoScan";
+import { publicContractorCalendar } from "./routes/publicContractorCalendar";
+import { publicBrandCalendar } from "./routes/publicBrandCalendar";
+import { brandShare } from "./routes/brandShare";
 import { drainEmailOutbox } from "./services/email";
 import { runClientErrorDigest } from "./services/clientErrors";
 import { runSlaEscalation } from "./services/assrEscalation";
 import { runAssrAlerts, runAssrDailyDigest } from "./services/assrAlerts";
+import { runOverdueEscalation } from "./services/announcementEscalation";
 import { runScheduledLeadTimeActivations } from "./services/assrLeadTime";
 import { runProjectDueReminders } from "./services/projectReminders";
 // Weekly OCR rule-distill (scan-so self-evolution). Run via the daily 02:00
@@ -115,6 +135,7 @@ import { runProjectDueReminders } from "./services/projectReminders";
 import { distillAllSalespersonRules, warmCatalogCacheForCron, processScanQueueMessage } from "./scm/routes/scan-so";
 import { runAgentHeartbeat } from "./services/agent-scheduler";
 import { getSupabaseService } from "./db/supabase";
+import { sweepStockClose } from "./acc/stock-close";
 import { reapOnce } from "./scm/lib/reaper";
 import { getBranding } from "./services/branding";
 // AutoCount inbound SO pull — restored 2026-07-14. Reads SO from the AutoCount
@@ -224,11 +245,29 @@ app.use(
 app.use("*", dbInject);
 
 app.get("/", (c) => c.json({ ok: true, service: "autocount-sync-api" }));
-// `sha` is the commit this Worker was deployed from — stamped by deploy.yml
-// via `wrangler deploy --var GIT_SHA:<sha>`. A bare local `wrangler deploy`
-// carries no stamp (null), which is exactly what the deploy-watchdog workflow
-// keys on to detect and revert rogue/stale overwrites of the prod Worker.
-app.get("/health", (c) => c.json({ ok: true, sha: c.env.GIT_SHA ?? null }));
+// `sha` is the commit this Worker was built from — the deploy-watchdog compares
+// it to main to catch a rogue/stale overwrite of prod. It now comes from the
+// bundled build stamp (build-info.ts, baked at deploy time), which — unlike the
+// old `--var GIT_SHA` env var — cannot be dropped by the post-deploy secret step
+// (see build-info.ts for the 2026-09-01 null-stamp incident). The env var is
+// kept as a fallback for any Worker still on the old mechanism; "dev" is the
+// un-stamped local placeholder and reports as no stamp (null).
+// `rest_role` / `rest_ref` say what the configured PostgREST key IS — the role
+// claim and project ref read off the key itself (db/rest-key-claims.ts). On
+// staging the service-role secret held an anon-role key for three weeks and
+// every table read worked while every VIEW read said "permission denied";
+// nothing on any surface named the role (docs/bugs/0824). A rehearsal now
+// refuses a key whose role is not service_role. Neither field is the key.
+app.get("/health", (c) => {
+  const claims = restKeyClaims(c.env.SUPABASE_SERVICE_ROLE_KEY);
+  return c.json({
+    ok: true,
+    sha: resolveBuildSha(GIT_SHA, c.env.GIT_SHA),
+    rest_role: claims.role,
+    rest_ref: restUrlRef(c.env.SUPABASE_URL),
+    rest_key_ref: claims.ref,
+  });
+});
 
 // /api/auth/* is unauthenticated (login, bootstrap, accept-invite, status,
 // me, logout). It must be mounted BEFORE the auth middleware below.
@@ -290,6 +329,19 @@ app.route("/api/pos", pos);
 // route's own key check ever ran.
 app.route("/api/assr-form-intake", assrFormIntake);
 
+// HC Delivery sheet ERP sync — PRE-AUTH for the same reason as the form intake:
+// the sheet-bound Apps Script calls it with no staff session, self-guarded by
+// SHEET_SYNC_KEY (X-Intake-Key), HOUZS only. Replaces the sheet's AutoCount pull
+// and push (owner 2026-09-15). See routes/deliverySheetSync.ts.
+app.route("/api/delivery-sheet", deliverySheetSync);
+
+// Houzs Chat (Connect) delivery callback — PRE-AUTH for the same reason as
+// the form intake above: chat.houzscentury.com's servers call it with no staff
+// session, self-guarded by the CHAT_CALLBACK_KEY shared secret (X-Chat-Key
+// header). It RECORDS what the customer tapped into scm.wa_message_log; it
+// never writes a delivery date onto the Sales Order. See routes/chatCallback.ts.
+app.route("/api/chat-callback", chatCallback);
+
 // Auth gate for everything else under /api/*. Mounted AFTER the
 // public API routes above so they stay unauthenticated.
 // PUBLIC image proxies for the cross-origin POS — MUST be mounted BEFORE the
@@ -309,6 +361,18 @@ app.route("/api/scm", publicScmImages);
 // company is taken from the row the token resolves to, never from the request.
 // See routes/publicDoScan.ts and backend/tests/publicDoScan*.test.ts.
 app.route("/api/public/do-scan", publicDoScan);
+
+// PUBLIC no-login CONTRACTOR CALENDAR — also mounted BEFORE the `auth` gate: a
+// booth-setup contractor opens their link with no Houzs account. The gate is the
+// unguessable token in the URL (services/contractorShare.ts) plus the revoke
+// kill switch. The route returns ONLY the confirmed schedule (venue + booth +
+// dates) for the ONE contractor the token resolves to — never finance or any
+// other contractor's events. See routes/publicContractorCalendar.ts.
+app.route("/api/public/contractor-calendar", publicContractorCalendar);
+// PUBLIC no-login BRAND CALENDAR — same shape and the same reasons: a brand's
+// own confirmed events, its display floorplan, its own size and total sales,
+// scoped by the token's brand on every read. See routes/publicBrandCalendar.ts.
+app.route("/api/public/brand-calendar", publicBrandCalendar);
 
 app.use("/api/*", auth);
 
@@ -358,7 +422,11 @@ app.route("/api/users", users);
 app.route("/api/roles", roles);
 app.route("/api/positions", positions);
 app.route("/api/position-capabilities", positionCapabilities);
+app.route("/api/position-policy", positionPolicy);
 app.route("/api/departments", departments);
+// Document reference numbers + document types (mig 20260906T1417): the
+// router carries its own /document-refs and /document-types prefixes.
+app.route("/api", documentRefs);
 app.route("/api/companies", companies);
 // Column layouts: this user's own (synced across their machines) + each
 // company's admin-set default. Any signed-in user reads and writes their OWN
@@ -369,6 +437,9 @@ app.route("/api/notifications", notifications);
 app.route("/api/push", pushDevices);
 app.route("/api/presence", presence);
 app.route("/api/projects", projects);
+// The office side of a brand's share link (generate / revoke). Own file because
+// routes/projects.ts is at its size ceiling. See routes/brandShare.ts.
+app.route("/api/brand-share", brandShare);
 app.route("/api/sales", sales);
 app.route("/api/finance", finance);
 app.route("/api/stockitems", stockItems);
@@ -388,6 +459,14 @@ app.route("/api/mail-center", mailCenter);
 // ADMIN verb and no longer gates reading; CRUD/remind/acks-readout stay on
 // announcements.write.
 app.route("/api/announcements", announcements);
+// The approval + attachment-log routes (submit / approve / reject / files) —
+// same prefix, second router (routes/announcements.ts is at its size ceiling).
+// Read receipts + ack analytics (2026-09-09 split; no path overlaps the router above).
+app.route("/api/announcements", announcementReceipts);
+app.route("/api/announcements", announcementApproval);
+// The department memo register (mig 20260909T0500): numbered at creation on
+// the same <DEPT>-MEMO-<YYMM> series the notices use.
+app.route("/api/memos", memos);
 // Agent Console — owner-only (requirePermission("*") inside the router).
 // Deliberately in the public /api tree, NOT /api/scm (the scm subtree swaps
 // c.get('user') to scm.staff UUIDs — the known staff-UUID bigint trap).
@@ -556,6 +635,63 @@ export default {
           })
           .catch((e) => console.error("[cron ac-writeback]", e))
       );
+      /* ERP -> Venture Portal live sales-order feed drain (mig 20260912T1800).
+         The portal pays Revenue Department commission out of these orders, so a
+         document that does not arrive is a commission that does not get paid.
+         Ships dark THREE times over: no-op while scm.app_config
+         'scm.venture_portal_feed' is off (which the migration seeds it to), and
+         no-op without scm.sync_config vp.url + vp.secret. Best-effort — a drain
+         failure can never break the slot.
+
+         THIS IS THE SENDER THE CONTRACT PUT IN pg_cron + pg_net. Neither
+         extension is installed on production (measured 2026-09-12; the query
+         and its NULL are in the migration header), and a pg_cron job would be
+         invisible to every gate this repo runs. Commission is settled monthly,
+         so five minutes and ten seconds are the same number to it. */
+      ctx.waitUntil(
+        drainVenturePortalOutbox(env)
+          .then((r) => {
+            /* A FAILED row means a sales order exists here and the portal has
+               not got it — somebody's commission is computed from a document
+               the portal cannot see. It can never read as routine. */
+            if (r.failed) console.error(`[cron vp-feed] FAILED ${JSON.stringify(r)}`);
+            else if (r.processed) console.log(`[cron vp-feed] ${JSON.stringify(r)}`);
+          })
+          .catch((e) => console.error("[cron vp-feed]", e))
+      );
+      /* Keyless-conversion backlog sweep. Ships DARK: no-op unless
+         scm.app_config 'scm.autocount_relink_sweep' is 'plan' (report only) or
+         'apply' (stamp the book's line keys, then queue the keyed edit). Reads
+         the live book to match up delivery orders / goods receipts that were
+         converted before the book reported its keys back, so a person no longer
+         has to press "Match up lines" per document. Best-effort — a sweep
+         failure can never break the slot. */
+      ctx.waitUntil(
+        relinkHeldBackSweep(env)
+          .then((r) => {
+            if (r.mode !== "off" && (r.scanned || r.linesStamped || r.docsEnqueued)) {
+              console.log(`[cron ac-relink-sweep] ${JSON.stringify(r)}`);
+            }
+          })
+          .catch((e) => console.error("[cron ac-relink-sweep]", e))
+      );
+      /* Delivery-date sweep. Ships DARK twice over: no-op unless
+         scm.app_config 'scm.autocount_delivery_date_sweep' is 'plan' or
+         'apply', AND the host route /delivery-dates only exists once
+         AcSyncService is rebuilt on the office machine. It closes the
+         one-directional half of the sync: AutoCount keeps the delivery date on
+         the LINE, the inbound pull carries headers only, so a date changed in
+         the book after import never reached us (docs/bugs/0810). Best-effort —
+         a sweep failure can never break the slot. */
+      ctx.waitUntil(
+        deliveryDateSweep(env)
+          .then((r) => {
+            if (r.mode !== "off" && (r.linesWritten || r.headersWritten || r.remaining || r.hostError)) {
+              console.log(`[cron ac-delivery-dates] ${JSON.stringify(r)}`);
+            }
+          })
+          .catch((e) => console.error("[cron ac-delivery-dates]", e))
+      );
       /* SO allocation projection sweep.
 
          This comment used to read "every source-data mutation first queues the
@@ -597,6 +733,25 @@ export default {
           .catch((e) => console.error("[cron mrp-snapshot]", e))
       );
     } else if (event.cron === "*/30 * * * *") {
+      /* Venture Portal feed BACKSTOP — the half of "not one order missed" that
+         is provable rather than hoped for. The capture trigger swallows its own
+         errors on purpose (it must never roll back a salesperson's Save), so a
+         row CAN be missed; this re-queues any in-scope order with no delivered
+         row and the next drain sends it. Steady state is requeued=0.
+
+         The contract asks for hourly; this slot is every 30 minutes, which is
+         strictly better for a backstop and costs one more cheap statement.
+         `includeFailed: false` — a row parked after exhausting its attempts
+         stays parked until a person clears the cause, because re-queueing it
+         automatically would hide the failure behind a retry loop. Ships dark
+         with the feed. */
+      ctx.waitUntil(
+        reconcileVenturePortalOutbox(env, { includeFailed: false })
+          .then((r) => {
+            if (r.requeued) console.warn(`[cron vp-reconcile] requeued=${r.requeued}`);
+          })
+          .catch((e) => console.error("[cron vp-reconcile]", e))
+      );
       // ASSR/QMS v3.1 — per-stage alert scanner (half / approaching / breach).
       // Cheap: one query over open stage_history rows, idempotent via the
       // alerts_fired bit-mask.
@@ -611,6 +766,17 @@ export default {
       );
       // Lead-time scheduled activations (mig 080). Cheap: one indexed SELECT
       // for pending rows whose scheduled_for is past.
+      // Announcements: a notice that requires acknowledgement and is past the
+      // 48h overdue window gets its supervisors notified once (owner
+      // 2026-09-06). Cheap: one indexed-ish SELECT, work only for due rows.
+      ctx.waitUntil(
+        runOverdueEscalation(env)
+          .then((r) => {
+            if (r.escalated > 0 || r.scanned > 0)
+              console.log(`[cron ann-escalation] ${JSON.stringify(r)}`);
+          })
+          .catch((e) => console.error("[cron ann-escalation]", e))
+      );
       ctx.waitUntil(
         runScheduledLeadTimeActivations(env)
           .then((r) => {
@@ -662,6 +828,26 @@ export default {
                   console.log(`[cron push-reminders] ${JSON.stringify(r)}`);
               })
               .catch((e) => console.error("[cron push-reminders]", e))
+          );
+        }
+      }
+      // Fair reconcile (owner 2026-09-13). 23% of exhibitions reach PMS within a
+      // week of opening and 13 of 114 only after they had started, so an order
+      // written on the floor often has no fair to point at yet. It records the
+      // place and waits; this pass links it once the fair exists. Gated to the
+      // 08:00 MYT hour (UTC 0) — a day's latency is the whole point, and the
+      // slot fires twice in that hour, which is harmless because the job only
+      // reads rows still marked PENDING. Best-effort: a failure here can never
+      // break the other crons. scm/lib/fair-reconcile.ts.
+      {
+        const h = new Date(event.scheduledTime).getUTCHours();
+        if (h === 0) {
+          ctx.waitUntil(
+            reconcilePendingFairs(env)
+              .then((r) => {
+                if (r.scanned > 0) console.log(`[cron fair-reconcile] ${JSON.stringify(r)}`);
+              })
+              .catch((e) => console.error("[cron fair-reconcile]", e))
           );
         }
       }
@@ -819,6 +1005,28 @@ export default {
           })(),
         );
       }
+    } else if (event.cron === "5 16 * * *") {
+      // 16:05 UTC = 00:05 MYT — the month-end stock close (GL redesign item 4).
+      // On the 1st this POSTS last month's closing-stock pair the night the
+      // month ends (the owner's 抓实时的); every other night it is the cheap
+      // re-check that heals a late-keyed GRN by reversing and re-posting.
+      // Sweeps the two most recent closed months for every company; every
+      // outcome (including the quiet 'unchanged') lands in
+      // scm.acc_stock_close_runs — the visible trail the owner asked for.
+      ctx.waitUntil(
+        (async () => {
+          const sb = getSupabaseService(env);
+          const { data, error } = await sb.schema("public").from("companies").select("id");
+          if (error) throw new Error(`companies: ${error.message}`);
+          const ids = ((data ?? []) as Array<{ id: number }>).map((r) => Number(r.id));
+          const outcomes = await sweepStockClose(sb, ids, "cron");
+          const changed = outcomes.filter((o) => o.action !== "unchanged");
+          console.log(
+            `[cron stock-close] ${outcomes.length} check(s), ${changed.length} change(s)` +
+            (changed.length ? ` — ${changed.map((o) => `${o.companyId}/${o.month}:${o.action}`).join(", ")}` : ""),
+          );
+        })().catch((e) => console.error("[cron stock-close]", e)),
+      );
     }
   },
   // Cloudflare Queue consumer for the background scan-so OCR pipeline (queue

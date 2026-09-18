@@ -36,7 +36,7 @@ import {
   type ProceedGateCondition,
 } from './order-rules';
 import { soDatePairRefusal } from './so-processing-date';
-import { fmtRM } from './format';
+import { fmtSen } from './format';
 
 /** One machine- + human-readable reason a save was rejected.
  *  - `code`  — stable gate identifier (mirrors the legacy single-error codes:
@@ -142,8 +142,7 @@ const depositProblem = (
   const neededSen = Math.ceil(totalSen * threshold);
   return {
     code: 'processing_date_unpaid',
-    // fmtRM takes whole-MYR — the ledger is centi, so divide by 100.
-    message: `Deposit ${fmtRM(Math.round(paidSen / 100))} of ${fmtRM(Math.round(neededSen / 100))} needed (${pct}%) ${ACT_CLAUSE[act]}`,
+    message: `Deposit ${fmtSen(paidSen)} of ${fmtSen(neededSen)} needed (${pct}%) ${ACT_CLAUSE[act]}`,
     field: 'Deposit',
   };
 };

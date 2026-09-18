@@ -1,0 +1,87 @@
+name: Run a backend script on production (plan / apply)
+
+# One manual runner for backend/scripts tools, instead of one workflow file per script.
+# Only scripts that meet release discipline (plan by default, CONFIRM on apply) can run
+# here: anything on the grandfather list is refused and needs its own workflow.
+
+on:
+  workflow_dispatch:
+    inputs:
+      script:
+        description: "File name in backend/scripts, e.g. check-soak-gate.mjs"
+        required: true
+        type: string
+      mode:
+        description: "plan = read and report; apply = write"
+        required: true
+        default: plan
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: "CONFIRM phrase the script asks for on apply"
+        required: false
+        type: string
+      env:
+        description: "Extra variables the script reads: KEY=VALUE separated by ; (e.g. COMPANY_ID=1;DOC_NOS=HC-SO-1,HC-SO-2)"
+        required: false
+        type: string
+
+concurrency:
+  group: run-script-${{ inputs.script }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - name: Run the script
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SCRIPT: ${{ inputs.script }}
+          MODE_INPUT: ${{ inputs.mode }}
+          CONFIRM_INPUT: ${{ inputs.confirm }}
+          EXTRA_ENV: ${{ inputs.env }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$SCRIPT" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*\.m?js$ ]] || [ ! -f "scripts/$SCRIPT" ]; then
+            echo "::error::backend/scripts/$SCRIPT does not exist"; exit 1
+          fi
+          if node -e 'const g = require("./scripts/release-discipline-grandfathered.json").scripts || {}; process.exit(Object.prototype.hasOwnProperty.call(g, process.argv[1]) ? 0 : 1)' "$SCRIPT"; then
+            echo "::error::$SCRIPT is on the release-discipline grandfather list, so it may write without a plan default or CONFIRM. Fix the script or give it its own workflow."; exit 1
+          fi
+          if [ -z "$DATABASE_URL" ]; then echo "::error::DATABASE_URL is not set"; exit 2; fi
+          export MODE="$MODE_INPUT"
+          if [ "$MODE_INPUT" = apply ]; then export APPLY=1; fi
+          if [ -n "$CONFIRM_INPUT" ]; then export CONFIRM="$CONFIRM_INPUT"; fi
+          IFS=';' read -r -a pairs <<< "$EXTRA_ENV"
+          for pair in "${pairs[@]}"; do
+            [ -z "${pair// /}" ] && continue
+            key="${pair%%=*}"
+            value="${pair#*=}"
+            if [ "$key" = "$pair" ] || ! [[ "$key" =~ ^[A-Z][A-Z0-9_]*$ ]] || [[ "$key" =~ ^(DATABASE_URL|PATH|HOME|NODE_OPTIONS|MODE|APPLY|CONFIRM|LD_.*|GITHUB_.*|RUNNER_.*|ACTIONS_.*)$ ]]; then
+              echo "::error::refusing variable '$key'"; exit 1
+            fi
+            export "$key=$value"
+          done
+          # tsx, not node: a backend script imports the app's TypeScript
+          # (autocount-outbox.ts and its ../../db/supabase chain), which plain
+          # node cannot resolve (ERR_MODULE_NOT_FOUND on the extensionless .ts
+          # import). tsx runs .mjs and .ts alike, so pure-.mjs scripts are
+          # unaffected. Before the workflow consolidation these scripts had
+          # their own tsx workflows; this restores that for the shared runner.
+          npx tsx "scripts/$SCRIPT"

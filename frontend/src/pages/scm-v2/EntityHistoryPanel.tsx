@@ -53,6 +53,10 @@ export const EntityHistoryPanel = memo(({
   onClose,
 }: EntityHistoryPanelProps) => {
   const q = useEntityAuditLog(entityType, entityId);
+  /* `?? []` is safe ONLY because q.error is passed through below. On its own it
+     turns a server refusal into "No history yet.", which on an audit trail reads
+     as "nobody touched this document" — observed on staging 2026-09-13 against a
+     500 saying "permission denied for table entity_audit_log". */
   const entries = (q.data ?? []) as AuditLogEntry[];
 
   /* Mirrors the SO drawer's pill so a status change is scannable without
@@ -72,6 +76,7 @@ export const EntityHistoryPanel = memo(({
       entityName={entityName}
       entries={entries}
       isLoading={q.isLoading}
+      error={q.error}
       labels={labels}
       onClose={onClose}
       renderBadge={renderBadge}

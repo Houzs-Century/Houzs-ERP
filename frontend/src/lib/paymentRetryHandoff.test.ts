@@ -31,6 +31,13 @@ describe("payment retry handoff", () => {
     expect(readPaymentRetryHandoff("so", "SO-1")?.drafts).toEqual([first, second]);
   });
 
+  test("a converted row — money moved from a cancelled order — survives the handoff with its source (docs/bugs/0931)", () => {
+    bindBrowserStorageIdentity(7);
+    const moved = { ...newPaymentDraft(), methodLabel: "Convert from another SO", convertedFromDocNo: "2990-SO-2607-010", amountSen: 30000 };
+    expect(writePaymentRetryHandoff("so", "SO-1", [moved])).toBe(true);
+    expect(readPaymentRetryHandoff("so", "SO-1")?.drafts).toEqual([moved]);
+  });
+
   test("removes only a confirmed row and clears the handoff after the last one", () => {
     bindBrowserStorageIdentity(7);
     const first = { ...newPaymentDraft(), amountSen: 1000 };

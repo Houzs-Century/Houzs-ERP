@@ -35,6 +35,10 @@ export interface Variables {
      *  the director-position sales view-all bypass (canViewAllSales) reads it
      *  from here. null when the user has no position assigned. */
     position_name?: string | null;
+    /** The Title's stored policy row (position_policy) mirrored from the real
+     *  AuthUser — decides cohort / money / config / fleet ahead of the
+     *  position_name fallbacks. */
+    position_policy?: import("../services/positionPolicyRows").PositionPolicyRow | null;
     /** STABLE ORG FIELD (public.users → departments.name) mirrored from the real
      *  AuthUser so SCM handlers can call pmsAccess.isSalesUser against the REAL
      *  caller — isSalesUser matches a "Sales …" position OR a department whose
@@ -54,6 +58,13 @@ export interface Variables {
    *  the guard only proved the caller holds SOME qualifying capability, not
    *  that this specific transition is theirs. Absent/false = normal access. */
   scmWriteBypassed?: boolean;
+  /** Set true by cancelApprovalGuard (routes/document-cancel-routes.ts) when
+   *  the document carries an APPROVED cancellation request AND the caller holds
+   *  one of that document's cancel-approve keys: the area guard's writeBypass
+   *  then admits this ONE cancel write for an approver whose position lacks the
+   *  document's edit level (prod: the Purchaser signs level 2 on a Sales Order
+   *  with Sales Orders at view). Absent/false = normal area rules. */
+  cancelExecutionAdmitted?: boolean;
   // The DOOR this request's session was minted at (mig 0120) — 'pos' when it
   // came from the POS PIN login, undefined otherwise. Set by the GLOBAL
   // middleware/auth (which runs before this sub-app) and, unlike `user`, NOT

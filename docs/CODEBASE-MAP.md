@@ -35,8 +35,8 @@ directions:
   IS gated, stayed byte-perfect.
 
 A PR check is the shape that survives both: it stops the drift at the point
-someone can fix it, and it cannot wedge a deploy. `docs/staging-bench-rot-coe.md`
-carries the class.
+someone can fix it, and it cannot wedge a deploy. The staging-bench entry in
+`docs/LESSONS.md` carries the class.
 
 ---
 
@@ -175,11 +175,10 @@ inside `/scm/fleet`). A file existing is not evidence a feature is live; check
 `App.tsx` for the route. The house rule is "off, not hidden": a gated feature has no
 nav entry, no mounted route and no query firing.
 
-**Docs that are historical.** `docs/archive/MIGRATION-D1-TO-SUPABASE.md` and
-`docs/archive/HANDOFF-supabase-cutover.md` describe the abandoned Supabase project
-and a bound D1. They are records of a past cutover, not descriptions of today —
-which is why they now live under `docs/archive/`. See `docs/README.md` for what is
-authoritative for what.
+**Docs that are historical.** Plans, ledgers, handoffs, audits and the archived
+cutover records (the abandoned Supabase project, the bound D1) were removed from
+`docs/` on 2026-09-15 and are kept under the git tag `archive/docs-2026-09-15`.
+They describe the past, not today. See `docs/README.md` for what remains.
 
 ## 5. Files that are too big to read whole
 
@@ -222,7 +221,8 @@ module: that is now the path of least resistance, by design.
   inspection and verification cards, logistics, print and portal-link menus, cost
   tracking, customer history, and the per-item editors last.
 - **`frontend/src/pages/scm-v2/Products.tsx`** — tabbed: `SkuMasterTab`
-  (with its virtualised row list and inline price editors) occupies the first half,
+  (with its virtualised row list; the Edit Prices row, its inline editors and the
+  stage/save helpers live in `frontend/src/pages/scm-v2/products/SkuEditRow.tsx`) occupies the first half,
   `MaintenanceTab` and its left-rail sub-tabs the second, CSV import/export helpers
   at the end. The `/scm/maintenance` route renders this same file.
 - **`frontend/src/pages/Team.tsx`** — user management. `Team()` shell,
@@ -330,6 +330,7 @@ together, are:
 |---|---|---|
 | New Sales Order | `pages/scm-v2/SalesOrderNew.tsx` | `mobile/MobileNewSO.tsx` |
 | SO list / detail | `pages/scm-v2/MfgSalesOrdersListV2.tsx`, `SalesOrderDetailV2.tsx` | `mobile/MobileSalesOrders.tsx`, `MobileSODetail.tsx` |
+| SO list second-level filters (shared state `vendor/scm/lib/so-list-filter-state.ts`) | `pages/scm-v2/SoListFilterBar.tsx` | `mobile/MobileSoFilterSheet.tsx` |
 | SO amendments | `pages/scm-v2/Amendments.tsx` | `mobile/MobileAmendments.tsx` |
 | Service cases (ASSR) | `pages/ServiceCases.tsx` | `mobile/MobileServiceCase.tsx` |
 | Projects / PMS | `pages/Projects.tsx` | `mobile/MobilePMS.tsx` (+ `MobileGantt.tsx`) |
@@ -368,8 +369,9 @@ re-check the cited file rather than trusting the line.
   (`'1 - scm.sales.orders'`) for the staged go-live lift. Read the current state
   with the **SCM write freeze — status (read-only)** workflow or
   `GET /api/scm/write-freeze`; grammar, the staged sequence and the one-command
-  rollback are in `docs/write-freeze-staged-lift.md`. Do not change the value to
-  test something — it gates a live business.
+  rollback were in the write-freeze runbook, now only in the tag
+  `archive/docs-2026-09-15`. Do not change the value to test something — it gates a
+  live business.
 - **AutoCount has TWO channels and this bullet used to describe only one.** The
   LEGACY relay's writes are hard-off in code — `AUTOCOUNT_WRITES_DISABLED = true`
   in `backend/src/services/autocount.ts`, a code edit to flip — while its inbound
@@ -427,10 +429,10 @@ re-check the cited file rather than trusting the line.
 
 ## 9. Where to look next
 
-- `docs/bugs/` — the bug ledger, one file per entry (`NNNN-slug.md`). Read the
-  entries for a subsystem before changing it; `npm --prefix backend run gen:bug-index`
-  groups them by subsystem and `docs/bugs/README.md` explains the layout. It is the
-  record of what has already been tried and why it failed.
+- `docs/bugs/README.md` — the recurring bug classes, each with the check that now
+  fails on it. The per-bug ledger was removed on 2026-09-15; the tag
+  `archive/docs-2026-09-15` still holds every entry, and the README says how to read
+  one. `docs/LESSONS.md` holds one short entry per serious incident.
 - `docs/generated/route-capability-matrix.csv` — every mounted route with its full
   path, auth boundary, company boundary and gate. The `source` column is the
   declaring FILE only; run
@@ -459,26 +461,20 @@ re-check the cited file rather than trusting the line.
   sofa decomposition, and `Desc2` as the only place a specification lives); what the
   5-minute drain does automatically and the four cases that will **never** be automatic;
   and a table of beliefs that were acted on and turned out false.
-- `docs/autocount-writeback-golive-coe.md` — 2026-08-13, the write-back was switched on
-  and NOTHING reached the account book. Seven faults in one chain, each hiding the next,
-  and the finding worth carrying: three of them are one shape — a fact the ERP holds in
-  two columns, the UI reads both, the write-back reads one (`supplier_sku`, the stock
-  location, the salesperson). Also records what was ruled out, including two theories
-  that were stated and then refuted.
-- `docs/autocount-read-relay-exposure-coe.md` — the legacy `it-houzs.dev` relay answers
-  the public internet with **no key** on two routes, one of them ~52 MB of purchase
-  history. OPEN, needs an owner action. Do not build on that relay.
-- `docs/autocount-cutover-ledger.md` — the permanent record of every row the AutoCount
-  go-live pushed into company 1: how to tell a migrated row from a real one (the exact
-  SQL predicates), what each import wave wrote with its run id, and — the ones that bite —
-  which imported documents carry `received_qty` but deliberately no GRN, and which
-  migrated GRNs and DOs carry `migrated_no_stock = true` and deliberately no inventory
-  movement at all. Posting either would count the same stock twice. Its section 9 records
-  the owner's own cutover decisions in his words — historical documents are NOT imported,
-  whole-sofa stock is NOT imported, and one AutoCount order whose header disagrees with
-  its own lines is recorded rather than corrected. **Read section 9 before "fixing" any
-  gap between AutoCount and the ERP**: most of those gaps are decisions.
-- `docs/archive/scm-v2-vendoring-progress.md` for what was vendored, when, and with
-  what caveats. Archived — the vendoring finished, so read it as history: it still
-  describes temporary `/scm/<x>-v2` routes and an intact native `pages/scm/` tree,
-  and neither exists any more.
+- 2026-08-13, the write-back was switched on and NOTHING reached the account book
+  (`docs/LESSONS.md`). The finding worth carrying: a fact the ERP holds in two columns,
+  the UI reads both, the write-back reads one (`supplier_sku`, the stock location, the
+  salesperson).
+- The legacy `it-houzs.dev` relay answers the public internet with **no key** on two
+  routes, one of them ~52 MB of purchase history. OPEN, needs an owner action
+  (`tasks/TODO.md`). Do not build on that relay.
+- The AutoCount cutover ledger (tag `archive/docs-2026-09-15`) is the record of every
+  row the go-live pushed into company 1. What bites: some imported documents carry
+  `received_qty` but deliberately no GRN, and migrated GRNs and DOs carry
+  `migrated_no_stock = true` and deliberately no inventory movement — posting either
+  counts the same stock twice. The owner's cutover decisions: historical documents are
+  NOT imported and whole-sofa stock is NOT imported. **Most gaps between AutoCount and
+  the ERP are decisions — read that ledger's section 9 before "fixing" one.**
+- The SCM vendoring record (what was vendored, when, with what caveats) is history
+  in the tag `archive/docs-2026-09-15`; its temporary `/scm/<x>-v2` routes and native
+  `pages/scm/` tree no longer exist.

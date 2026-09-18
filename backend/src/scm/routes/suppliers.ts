@@ -27,11 +27,14 @@ import { effectiveDelivery } from '../shared/effective-delivery';
 import { supabaseAuth } from '../middleware/auth';
 import { escapeForOr } from '../lib/postgrest-search';
 import { bindingToProductPatch } from '../lib/cost-anchor-sync';
+import { autoDeriveEnabled, recomputeDerivedProductCostSafe, recordSupplierPriceHistorySafe } from '../lib/auto-derive-cost';
+import { todayMyt } from '../lib/my-time';
 import { paginateAll } from '../lib/paginate-all';
 import { scopeToCompany, activeCompanyId, stampCompany,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY,
   detailMissResponse } from '../lib/companyScope';
 import type { Env, Variables } from '../env';
+import { pgrestIn } from '../lib/pgrest-in-list';
 
 /* Task #91 — small helper: normalize a body field to E.164 phone storage,
    passing through nullish + non-string values untouched. */
@@ -45,7 +48,12 @@ export const suppliers = new Hono<{ Bindings: Env; Variables: Variables }>();
 suppliers.use('*', supabaseAuth);
 
 const SUPPLIER_STATUSES = new Set(['ACTIVE', 'INACTIVE', 'BLOCKED']);
-const CURRENCIES = new Set(['MYR', 'RMB', 'USD', 'SGD']);
+/* CNY added 2026-09-07 (mig 20260907T2330) — the same set as
+   lib/purchase-doc-vocab.ts VALID_CURRENCIES and the frontend's `Currency`
+   union. Kept local rather than imported because a supplier is not a purchase
+   DOCUMENT, but the three are one decision and check-duplicated-decisions.mjs
+   fails when they drift apart. */
+const CURRENCIES = new Set(['MYR', 'RMB', 'CNY', 'USD', 'SGD']);
 const MATERIAL_KINDS = new Set(['mfg_product', 'fabric', 'raw']);
 
 /* PR #40 — full master record (Commander 2026-05-26 AutoCount parity) */
@@ -101,7 +109,7 @@ const STATEMENT_TYPES = new Set(['OPEN_ITEM', 'BALANCE_FORWARD', 'NO_STATEMENT']
 const AGING_BASES = new Set(['INVOICE_DATE', 'DUE_DATE']);
 
 const BINDING_COLS =
-  'id, supplier_id, material_kind, item_code, material_name, supplier_sku, ' +
+  'id, supplier_id, material_kind, item_code, ac_item_code, material_name, supplier_sku, ' +
   'unit_price_sen, currency, lead_time_days, payment_terms_override, moq, ' +
   'price_valid_from, price_valid_to, is_main_supplier, notes, price_matrix, ' +
   'is_cost_anchor, created_at, updated_at';
@@ -253,6 +261,52 @@ async function syncAnchoredProductFromBinding(
   } catch {
     // Best-effort mirror — never surface to the primary write.
   }
+}
+
+/* After a binding write, keep the product cost in step. Auto-derive stage 2b:
+   when the app_config flag is ON, recompute this SKU's derived cost from ALL its
+   suppliers (whole-set max) and write it to the product — this is the mechanism
+   that replaces the is_cost_anchor mirror. When the flag is OFF (the shipped
+   default), run `fallback` instead, which is exactly today's behaviour (the
+   is_cost_anchor mirror at the sites that had one, or nothing at the sites that
+   did not). Best-effort on both legs: a projection failure never fails the
+   supplier-price write that is the source of truth. */
+type BindingSnapshot = {
+  supplier_id?: string | null;
+  unit_price_sen?: number | null;
+  price_matrix?: unknown;
+  is_main_supplier?: boolean | null;
+  price_valid_from?: string | null;
+};
+
+async function afterBindingWrite(
+  supabase: SupabaseClient,
+  companyId: number | null | undefined,
+  itemCode: string | null | undefined,
+  fallback: () => Promise<void>,
+  binding?: BindingSnapshot | null,
+): Promise<void> {
+  if (await autoDeriveEnabled(supabase)) {
+    const code = String(itemCode ?? '').trim();
+    if (code) {
+      // Stage 3b-supplier: snapshot this supplier's price into the source
+      // timeline (prior value kept), then recompute the derived product cost.
+      if (binding?.supplier_id) {
+        await recordSupplierPriceHistorySafe(supabase, {
+          companyId,
+          supplierId: binding.supplier_id,
+          itemCode: code,
+          unitPriceSen: binding.unit_price_sen ?? null,
+          priceMatrix: binding.price_matrix ?? null,
+          isMainSupplier: binding.is_main_supplier ?? null,
+          effectiveFrom: binding.price_valid_from ?? null,
+        });
+      }
+      await recomputeDerivedProductCostSafe(supabase, companyId, code);
+    }
+    return;
+  }
+  await fallback();
 }
 
 // ── List suppliers ────────────────────────────────────────────────────
@@ -591,6 +645,7 @@ export const createSupplierBindingHandler = async (c: any) => {
     supplier_id: supplierId,
     material_kind: kind,
     item_code: body.itemCode,
+    ac_item_code: (body.acItemCode as string | undefined) ?? null,
     material_name: body.materialName,
     supplier_sku: body.supplierSku,
     unit_price_sen: typeof body.unitPriceSen === 'number' ? body.unitPriceSen : 0,
@@ -621,6 +676,9 @@ export const createSupplierBindingHandler = async (c: any) => {
     if (error.code === '42501') return c.json({ error: 'forbidden', reason: error.message }, 403);
     return c.json({ error: 'insert_failed', reason: error.message }, 500);
   }
+  // Auto-derive stage 2b: recompute the product cost from all suppliers when the
+  // flag is ON; OFF is a no-op (today's create did not sync).
+  await afterBindingWrite(supabase, activeCompanyId(c), (data as { item_code?: string } | null)?.item_code, async () => {}, data as unknown as BindingSnapshot);
   return c.json({ binding: data }, 201);
 };
 suppliers.post('/:id/bindings', createSupplierBindingHandler);
@@ -652,11 +710,14 @@ export const createSupplierBindingsBatchHandler = async (c: any) => {
 
   // Pre-check: drop rows already bound for this supplier (avoid 23505).
   const codes = list.map((b) => String(b.itemCode ?? '')).filter(Boolean);
-  const { data: existing } = await supabase
+  const { data: existing, error: existingErr } = await pgrestIn(supabase
     .from('supplier_material_bindings')
     .select('item_code, material_kind')
-    .eq('supplier_id', supplierId)
-    .in('item_code', codes);
+    .eq('supplier_id', supplierId), 'item_code', codes);
+  if (existingErr) {
+    // eslint-disable-next-line no-console
+    console.error('[suppliers] existing bindings read failed:', (existingErr as { message?: unknown }).message ?? existingErr);
+  }
   const seen = new Set<string>(
     ((existing ?? []) as Array<{ item_code: string; material_kind: string }>)
       .map((r) => `${r.material_kind}|${r.item_code}`),
@@ -676,6 +737,7 @@ export const createSupplierBindingsBatchHandler = async (c: any) => {
       supplier_id: supplierId,
       material_kind: kind,
       item_code: b.itemCode,
+      ac_item_code: (b.acItemCode as string | undefined) ?? null,
       material_name: b.materialName,
       supplier_sku: b.supplierSku,
       unit_price_sen: typeof b.unitPriceSen === 'number' ? b.unitPriceSen : 0,
@@ -714,11 +776,33 @@ export const createSupplierBindingsBatchHandler = async (c: any) => {
     if (error.code === '42501') return c.json({ error: 'forbidden', reason: error.message }, 403);
     return c.json({ error: 'insert_failed', reason: error.message }, 500);
   }
+  // Auto-derive stage 2b: recompute each affected SKU's product cost when ON;
+  // OFF is a no-op (today's batch create did not sync).
+  if (await autoDeriveEnabled(supabase)) {
+    const companyId = activeCompanyId(c);
+    // Stage 3b-supplier: snapshot each inserted supplier price into the source
+    // timeline, then recompute each affected SKU's product cost once.
+    for (const r of (data ?? []) as unknown as (BindingSnapshot & { item_code?: string })[]) {
+      const code = String(r.item_code ?? '').trim();
+      if (code && r.supplier_id) {
+        await recordSupplierPriceHistorySafe(supabase, {
+          companyId, supplierId: r.supplier_id, itemCode: code,
+          unitPriceSen: r.unit_price_sen ?? null, priceMatrix: r.price_matrix ?? null,
+          isMainSupplier: r.is_main_supplier ?? null, effectiveFrom: r.price_valid_from ?? null,
+        });
+      }
+    }
+    const rawCodes: string[] = (data ?? []).map((r: { item_code?: string }) => String(r.item_code ?? '').trim());
+    const codes = [...new Set(rawCodes.filter((s) => s.length > 0))];
+    for (const code of codes) await recomputeDerivedProductCostSafe(supabase, companyId, code);
+  }
   return c.json({ inserted: (data ?? []).length, skipped, bindings: data ?? [] }, 201);
 };
 suppliers.post('/:id/bindings/batch', createSupplierBindingsBatchHandler);
 
-suppliers.patch('/:id/bindings/:bindingId', async (c) => {
+// Exported so a cross-tenant test can drive it without the supabaseAuth bridge.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- bare-Hono handler, mirrors createSupplierBindingHandler
+export const patchSupplierBindingHandler = async (c: any) => {
   const bindingId = c.req.param('bindingId');
   let body: Record<string, unknown>;
   try { body = (await c.req.json()) as Record<string, unknown>; } catch {
@@ -727,7 +811,7 @@ suppliers.patch('/:id/bindings/:bindingId', async (c) => {
 
   const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
   const map: Array<[keyof typeof body, string]> = [
-    ['itemCode', 'item_code'], ['materialName', 'material_name'],
+    ['itemCode', 'item_code'], ['acItemCode', 'ac_item_code'], ['materialName', 'material_name'],
     ['supplierSku', 'supplier_sku'], ['unitPriceSen', 'unit_price_sen'],
     ['leadTimeDays', 'lead_time_days'], ['paymentTermsOverride', 'payment_terms_override'],
     ['moq', 'moq'], ['priceValidFrom', 'price_valid_from'], ['priceValidTo', 'price_valid_to'],
@@ -793,14 +877,20 @@ suppliers.patch('/:id/bindings/:bindingId', async (c) => {
   }
   if (!data) return c.json(NOT_THIS_COMPANY, 404);
 
-  /* Cost anchor (0177) — if this binding is the cost anchor for its
-     item_code, mirror its (just-written) cost onto the linked
-     mfg_products row. Best-effort: the binding write above already
-     committed, so a sync failure must not 500 this response. */
-  await syncAnchoredProductFromBinding(supabase, data as unknown as Record<string, unknown>, activeCompanyId(c));
+  /* Keep the product cost in step with this binding write. Flag ON (stage 2b):
+     recompute from all suppliers. Flag OFF (default): the is_cost_anchor mirror,
+     exactly as before. Best-effort: a sync failure must not 500 this response. */
+  await afterBindingWrite(
+    supabase,
+    activeCompanyId(c),
+    (data as { item_code?: string }).item_code,
+    () => syncAnchoredProductFromBinding(supabase, data as unknown as Record<string, unknown>, activeCompanyId(c)),
+    data as unknown as BindingSnapshot,
+  );
 
   return c.json({ binding: data });
-});
+};
+suppliers.patch('/:id/bindings/:bindingId', patchSupplierBindingHandler);
 
 // ── Set / clear the cost anchor for a binding ────────────────────────────
 // PATCH /suppliers/:id/bindings/:bindingId/cost-anchor   body { anchor: boolean }
@@ -862,9 +952,16 @@ suppliers.patch('/:id/bindings/:bindingId/cost-anchor', async (c) => {
       .eq('company_id', co.companyId)
       .neq('id', bindingId);
 
-    // Initial sync — push the binding's current cost onto the product so they
-    // start aligned. Best-effort (never fails the anchor toggle).
-    await syncAnchoredProductFromBinding(supabase, updated as unknown as Record<string, unknown>, activeCompanyId(c));
+    // Initial sync — align the product with this binding. Flag ON (stage 2b):
+    // recompute from all suppliers (whole-set max). Flag OFF: push this anchor's
+    // cost, as before. Best-effort (never fails the anchor toggle).
+    await afterBindingWrite(
+      supabase,
+      activeCompanyId(c),
+      (updated as { item_code?: string }).item_code,
+      () => syncAnchoredProductFromBinding(supabase, updated as unknown as Record<string, unknown>, activeCompanyId(c)),
+      updated as unknown as BindingSnapshot,
+    );
   }
 
   return c.json({ binding: updated });
@@ -878,11 +975,163 @@ suppliers.delete('/:id/bindings/:bindingId', async (c) => {
      bindingId from another company deletes nothing and returns not-found. */
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
-  const { data, error } = await scopeToCompanyId(supabase.from('supplier_material_bindings').delete().eq('id', bindingId), co.companyId).select('id').maybeSingle();
+  const { data, error } = await scopeToCompanyId(supabase.from('supplier_material_bindings').delete().eq('id', bindingId), co.companyId).select('id, item_code').maybeSingle();
   if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
   if (!data) return c.json(NOT_THIS_COMPANY, 404);
+  // Auto-derive stage 2b: a removed supplier can change the max — recompute when
+  // ON (if it was the last supplier the derivation skips, leaving the cost as-is
+  // for the binding-gap report to surface). OFF is a no-op (today's delete).
+  if (await autoDeriveEnabled(supabase)) {
+    const code = String((data as { item_code?: string }).item_code ?? '').trim();
+    if (code) await recomputeDerivedProductCostSafe(supabase, co.companyId, code);
+  }
   return c.body(null, 204);
 });
+
+// ── Supplier binding price timeline (B1, effective-dated) ────────────────────
+// GET  /suppliers/:id/bindings/:bindingId/price-changes  — the binding's price
+//      history (newest first) + the current flat cost, for the timeline panel.
+// POST /suppliers/:id/bindings/:bindingId/price-changes  — append ONE effective-
+//      dated cost row. Auto-baselines the current flat cost at today when
+//      scheduling the FIRST future price for a binding with no history, so the
+//      timeline reads "today = current, <future> = new". Append-only: a wrong
+//      future price is corrected by appending, never by editing the past.
+//
+// Supplier side of docs/pricing-effective-dating-design.md phase 2. These rows
+// are the SAME table auto-derive stage 3b reads as-of (supplier-price-history.ts),
+// so a scheduled price takes effect for the derived product cost on its date.
+// Additive + append-only: no existing row changes, so today's pricing is
+// unchanged until a scheduled date arrives. Company-scoped throughout.
+const PRICE_ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+async function loadBindingForPriceHistory(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Hono ctx, matches the binding handlers
+  c: any,
+  bindingId: string,
+  companyId: number,
+) {
+  const supabase = c.get('supabase');
+  return scopeToCompanyId(
+    supabase
+      .from('supplier_material_bindings')
+      .select('id, supplier_id, material_kind, item_code, unit_price_sen, price_matrix, is_main_supplier')
+      .eq('id', bindingId),
+    companyId,
+  ).maybeSingle();
+}
+
+// Exported so a cross-tenant test can drive it without the supabaseAuth bridge.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- bare-Hono handler, mirrors the binding handlers
+export const listBindingPriceChangesHandler = async (c: any) => {
+  const bindingId = c.req.param('bindingId');
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const supabase = c.get('supabase');
+  const { data: binding, error: bErr } = await loadBindingForPriceHistory(c, bindingId, co.companyId);
+  if (bErr) return c.json({ error: 'load_failed', reason: bErr.message }, 500);
+  if (!binding) return c.json(NOT_THIS_COMPANY, 404);
+  const b = binding as { supplier_id: string; material_kind: string; item_code: string; unit_price_sen: number | null; price_matrix: unknown };
+
+  const { data, error } = await supabase
+    .from('supplier_binding_price_history')
+    .select('id, effective_from, unit_price_sen, price_matrix, notes, created_by, created_at')
+    .eq('company_id', co.companyId)
+    .eq('supplier_id', b.supplier_id)
+    .eq('material_kind', b.material_kind)
+    .eq('item_code', b.item_code)
+    .order('effective_from', { ascending: false })
+    .order('created_at', { ascending: false });
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  return c.json({
+    history: data ?? [],
+    currentUnitPriceSen: b.unit_price_sen ?? null,
+    currentPriceMatrix: b.price_matrix ?? null,
+  });
+};
+suppliers.get('/:id/bindings/:bindingId/price-changes', listBindingPriceChangesHandler);
+
+// Exported so a cross-tenant test can drive it without the supabaseAuth bridge.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- bare-Hono handler, mirrors the binding handlers
+export const createBindingPriceChangeHandler = async (c: any) => {
+  const bindingId = c.req.param('bindingId');
+  let body: { effectiveFrom?: string; unitPriceSen?: number | null; priceMatrix?: unknown; notes?: string };
+  try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
+
+  const effectiveFrom = (body.effectiveFrom ?? '').trim();
+  if (!PRICE_ISO_DATE.test(effectiveFrom)) return c.json({ error: 'effective_from_required', message: 'YYYY-MM-DD' }, 400);
+  const unitPriceSen = body.unitPriceSen;
+  if (typeof unitPriceSen !== 'number' || !Number.isInteger(unitPriceSen) || unitPriceSen < 0) {
+    return c.json({ error: 'unit_price_required', message: 'integer sen >= 0' }, 400);
+  }
+
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const supabase = c.get('supabase');
+  const houzsUser = c.get('houzsUser');
+  const systemUser = c.get('user');
+
+  const { data: binding, error: bErr } = await loadBindingForPriceHistory(c, bindingId, co.companyId);
+  if (bErr) return c.json({ error: 'load_failed', reason: bErr.message }, 500);
+  if (!binding) return c.json(NOT_THIS_COMPANY, 404);
+  const b = binding as { supplier_id: string; material_kind: string; item_code: string; unit_price_sen: number | null; price_matrix: unknown; is_main_supplier: boolean | null };
+
+  // Validate any explicit matrix against the SKU's category (money shape safety);
+  // when omitted, the binding's CURRENT matrix rides along unchanged.
+  let priceMatrix: Record<string, unknown> | null | undefined;
+  if (body.priceMatrix !== undefined) {
+    const cat = await categoryForMaterial(supabase, b.material_kind, b.item_code, co.companyId);
+    try { priceMatrix = validatePriceMatrix(body.priceMatrix, cat); }
+    catch (e) { return c.json({ error: 'invalid_price_matrix', reason: e instanceof Error ? e.message : 'invalid_price_matrix' }, 400); }
+  }
+
+  const createdBy =
+    (houzsUser?.name?.trim() || houzsUser?.email?.trim() ||
+      (houzsUser?.id != null ? String(houzsUser.id) : '')) || systemUser.id;
+  const today = todayMyt();
+
+  // Auto-baseline: scheduling the FIRST future price for a binding with no
+  // history also snapshots the current flat cost at today.
+  const toInsert: Array<Record<string, unknown>> = [];
+  let baselined = false;
+  if (effectiveFrom > today) {
+    const { data: existing, error: exErr } = await supabase
+      .from('supplier_binding_price_history')
+      .select('id')
+      .eq('company_id', co.companyId).eq('supplier_id', b.supplier_id)
+      .eq('material_kind', b.material_kind).eq('item_code', b.item_code)
+      .limit(1).maybeSingle();
+    if (exErr) return c.json({ error: 'load_failed', reason: exErr.message }, 500);
+    if (!existing) {
+      baselined = true;
+      toInsert.push({
+        company_id: co.companyId, supplier_id: b.supplier_id, material_kind: b.material_kind,
+        item_code: b.item_code, unit_price_sen: b.unit_price_sen ?? null, price_matrix: b.price_matrix ?? null,
+        is_main_supplier: Boolean(b.is_main_supplier), effective_from: today,
+        notes: 'Auto-baseline: current cost before the first scheduled change.', created_by: createdBy,
+      });
+    }
+  }
+  toInsert.push({
+    company_id: co.companyId, supplier_id: b.supplier_id, material_kind: b.material_kind,
+    item_code: b.item_code, unit_price_sen: unitPriceSen,
+    price_matrix: priceMatrix !== undefined ? priceMatrix : (b.price_matrix ?? null),
+    is_main_supplier: Boolean(b.is_main_supplier), effective_from: effectiveFrom,
+    notes: body.notes?.trim() ? body.notes.trim() : null, created_by: createdBy,
+  });
+
+  const { data, error } = await supabase
+    .from('supplier_binding_price_history')
+    .insert(toInsert)
+    .select('id, effective_from, unit_price_sen, price_matrix, notes, created_by, created_at');
+  if (error) {
+    if (error.code === '42501') return c.json({ error: 'forbidden', reason: error.message }, 403);
+    return c.json({ error: 'insert_failed', reason: error.message }, 500);
+  }
+  const inserted = (data ?? []) as Array<{ effective_from: string }>;
+  const row = inserted.find((r) => r.effective_from === effectiveFrom) ?? inserted.at(-1) ?? null;
+  return c.json({ ok: true, baselined, row }, 201);
+};
+suppliers.post('/:id/bindings/:bindingId/price-changes', createBindingPriceChangeHandler);
 
 // ── Scorecard: live PO + GRN aggregation for KPI tiles ───────────────
 //

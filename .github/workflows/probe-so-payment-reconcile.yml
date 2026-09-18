@@ -1,0 +1,73 @@
+name: SO payment reconcile (read-only)
+
+# What does the book say this order is worth, what does the ERP say, what did
+# the customer actually pay, and which way does the difference point?
+#
+# SELECT only. No writes, no DDL, no transaction. Manual trigger only - a
+# production DB read on a schedule turns a real query into CI noise nobody
+# reads. Its own concurrency group, so a diagnostic never queues behind or
+# displaces a release. Exit 0 for every legitimate answer.
+#
+# Written after run 34137116270 (repair-so-price-from-autocount) left three
+# migrated orders with paid + balance <> total. The owner asked to SEE them.
+# Nothing here corrects anything: what a customer paid is not an arithmetic
+# consequence of a corrected total.
+#
+# DOCS defaults to the four he asked about. CENSUS=0 turns off the sweep that
+# LISTS every other line where the book states 0.00 and the ERP holds a price.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      docs:
+        description: "ERP doc_no list, comma separated. Blank = the four orders in question."
+        required: false
+        default: ""
+      census:
+        description: "0 to skip the blank-price census. Anything else keeps it."
+        required: false
+        default: ""
+
+concurrency:
+  group: probe-so-payment-reconcile-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/probe-so-payment-reconcile.mjs
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          DOCS: ${{ inputs.docs }}
+          CENSUS: ${{ inputs.census }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/probe-so-payment-reconcile.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DOCS: ${{ inputs.docs }}
+          CENSUS: ${{ inputs.census }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

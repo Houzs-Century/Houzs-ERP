@@ -45,6 +45,7 @@ import { sortByText, sortByNumeric } from '../../vendor/scm/lib/sort-options';
 import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
 import { SpecialOrders } from '../../vendor/scm/components/SpecialOrders';
+import { specialOrderSurface } from '../../vendor/scm/lib/special-order-surface';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
@@ -444,6 +445,22 @@ export const PurchaseReturnNew = () => {
                 isManualLine &&
                 (l.itemGroup === 'bedframe' || l.itemGroup === 'sofa') &&
                 !!maint;
+              /* THE SPECIAL ORDER, for the categories with no variant grid.
+                 Owner 2026-09-10: 「POGR 是不是也是要能看得到这些数据？…全部都是
+                 要带过去的哦」 — a custom pillow's colour and an SP mattress's
+                 size reach the supplier's PDF already (description2 carries the
+                 SPECIAL segment for every category) but were invisible on every
+                 cost document, because each one gates its editor on bedframe or
+                 sofa. One rule, shared: vendor/scm/lib/special-order-surface.ts.
+                 Empty pool on purpose — this document carries no catalogue for
+                 those categories, and choosing WHAT to build is the sales
+                 order's job. SpecialOrders no longer calls a carried pick
+                 "retired" when it has no pool to judge it against. */
+              const specialSurface = specialOrderSurface({
+                category: l.itemGroup ?? '',
+                hasItemCode: Boolean(l.itemCode),
+                pickedSpecialCount: 0,
+              });
               const setVariant = (key: string, value: string) =>
                 setLine(l.rid, { variants: (() => {
                   const variants: Record<string, unknown> = { ...(l.variants ?? {}), [key]: value };
@@ -563,6 +580,16 @@ export const PurchaseReturnNew = () => {
                   {/* Per-category VARIANT EDITOR for MANUAL bedframe/sofa lines —
                       mirrors New PO / New GRN: divan/leg/total height, gap,
                       special, seat size + fabric. Same variant keys the PO/SO store. */}
+                  {specialSurface.block && (
+                    <div style={{ marginTop: 'var(--space-2)' }}>
+                      <SpecialOrders
+                        options={[]}
+                        variants={(l.variants ?? {}) as Record<string, unknown>}
+                        onPatch={(patch) => setLine(l.rid, { variants: { ...(l.variants ?? {}), ...patch } })}
+                        showPrices={false}
+                      />
+                    </div>
+                  )}
                   {showVariantEditor && (
                     <div style={{
                       background: 'var(--c-cream)',

@@ -1,0 +1,132 @@
+{
+  "why": "The colour and seat-size differences the AutoCount reconcile reports on the axes the factory builds from, corrected TO THE BOOK under the owner's rule of 2026-09-08: 「一律跟账本。除了sofa compartment而已啊」 — follow the account book for everything; only sofa compartments need his judgement. Seat size and colour are therefore not questions.",
+  "source": "reconcile run 34200664197 (2026-09-08 15:42 Malaysia), book snapshot ac-reconcile-truth.json.gz exported 2026-09-08T00:03:44.762Z",
+  "not_here_and_why": {
+    "specials": "A fifth writer to variants.specials would reprice historical documents — a picked add-on's surcharge folds into the authoritative unit price (docs/bugs/0013). backfill-specials-into-variants.mjs owns the unpriced codes and record-priced-specials-on-migrated-lines.mjs owns the priced ones. The four remaining specials lines are REPORTED by the plan, never written by it.",
+    "sofa compartments": "another lane (fix/staff-reported-flow), and the owner's only named exception",
+    "ERP_BLANK": "a fill, not a correction. refresh-so-variants.mjs / refresh-po-variants.mjs own filling a blank axis; this file only ever changes a value the ERP already holds.",
+    "SO-011756": "its book seat size was a STOOL FOOTPRINT read as a seat height (docs/bugs/0705). There is no book value to copy; the axis is correctly BOOK-BLANK now."
+  },
+  "entries": [
+    {
+      "type": "SO",
+      "ac_doc": "SO-010120",
+      "erp_doc": "HC-SO-010120",
+      "ac_dtlkey": 687986,
+      "item_code": "9058-1S",
+      "axis": "colour",
+      "erp_now": "BO315-22",
+      "book": "HR805-31",
+      "desc2": "30 inch per seat  8030 back rest  Nilon bottom  no stitching on sitting area  colour : HR805-31",
+      "why": "the book names the colour after an explicit `colour :` label. A DIFFERENT FABRIC FAMILY from what the line holds — HR805 against BO315 — so this is not a shade or a spelling."
+    },
+    {
+      "type": "SO",
+      "ac_doc": "SO-013258",
+      "erp_doc": "HC-SO-013258",
+      "ac_dtlkey": 904643,
+      "item_code": "9058-2A(LHF)",
+      "axis": "colour",
+      "erp_now": "HR805-31",
+      "book": "HR805-10",
+      "desc2": "L SHAPE  30 inch per seat  Col : HR805-10 Nilon bottom",
+      "why": "same family, different colour. The book's `Col :` runs to the end of the segment and swallows the trailing `Nilon bottom`, so the raw text reads `HR805-10 Nilon bottom` — the fabric matcher resolves that to the library row HR805-10, which is the value to copy. The trailing words are a special order and are NOT this file's business."
+    },
+    {
+      "type": "SO",
+      "ac_doc": "SO-009708",
+      "erp_doc": "HC-SO-009708",
+      "ac_dtlkey": 660946,
+      "item_code": "9050-2A(LHF)",
+      "axis": "seat",
+      "erp_now": "30",
+      "book": "28",
+      "desc2": "HR805-90/28\"/3S",
+      "why": "the middle segment of a three-part slip is the seat size, stated with its unit."
+    },
+    {
+      "type": "SO",
+      "ac_doc": "SO-013310",
+      "erp_doc": "HC-SO-013310",
+      "ac_dtlkey": 908744,
+      "item_code": "5535-1S",
+      "axis": "seat",
+      "erp_now": "28",
+      "book": "30",
+      "desc2": "Size:30\"/Col:CHINO-01/Bottom wrap nylon/+2\" leg",
+      "why": "explicitly labelled `Size:30\"`."
+    },
+    {
+      "type": "SO",
+      "ac_doc": "SO-001526",
+      "erp_doc": "HC-SO-001526",
+      "ac_dtlkey": 102957,
+      "item_code": "5526-2A(RHF)",
+      "axis": "seat",
+      "erp_now": "35",
+      "book": "28",
+      "desc2": "[ 2EL(28\") + STOOL(28\")(NO BACK CUSHION) / COL: BEETEX HARRING GD8371 02# BEIGE",
+      "why": "both pieces carry (28\") against the ERP's 35\". NOT PROCEEDED, so it is not urgent — included because the book states a value and we hold a different one, which is the rule."
+    },
+    {
+      "type": "SO",
+      "ac_doc": "SO-013227",
+      "erp_doc": "HC-SO-013227",
+      "ac_dtlkey": 901845,
+      "item_code": "8030-Console",
+      "axis": "seat",
+      "erp_now": "35",
+      "book": "28",
+      "desc2": "TBC/28\"/1R+1R",
+      "why": "the middle segment is the seat size. NOT PROCEEDED. Its lead ERP row is a Console, which variant-axes.mjs exempts from NEEDING a seat height — an exemption from being required is not a licence to hold a wrong one, and the seat value is written to every piece of a build."
+    },
+    {
+      "type": "PO",
+      "ac_doc": "PO-009034",
+      "erp_doc": "HC-PO-009034",
+      "ac_dtlkey": 831373,
+      "item_code": "8050-1A(RHF)",
+      "axis": "seat",
+      "erp_now": "",
+      "book": "24",
+      "desc2": "(read from the book by check-ac-erp-reconcile; the seat axis reports AutoCount \"24\\\"\" vs ERP \"(blank)\")",
+      "why": "THE ERP IS BLANK, so nothing of ours is being overwritten - the book states a seat and we never carried one. Owner rule 2026-09-08: 「一律跟账本。除了sofa compartment而已啊」. Found by the PO tally 2026-09-09 (run 34336722458), which is also where erp_now=\"\" comes from."
+    },
+    {
+      "type": "PO",
+      "ac_doc": "PO-009034",
+      "erp_doc": "HC-PO-009034",
+      "ac_dtlkey": 831375,
+      "item_code": "8050-1A(R)(RHF)",
+      "axis": "seat",
+      "erp_now": "",
+      "book": "24",
+      "desc2": "(second sofa line of the same document; same axis, its own DtlKey)",
+      "why": "The document holds TWO sofa lines and both are blank on seat. They are separate builds with separate line keys, so they are separate entries - one entry cannot address two DtlKeys."
+    },
+    {
+      "type": "PO",
+      "ac_doc": "PO-009652",
+      "erp_doc": "HC-PO-009652",
+      "ac_dtlkey": 877019,
+      "item_code": "5535-1A(RHF)",
+      "axis": "leg",
+      "erp_now": "",
+      "book": "1",
+      "desc2": "2R+1R/Size:30\"/Col:KN390-2/Bottom wrap nylon/After push back align to seat/add 1inch leg",
+      "why": "The book's own text says 'add 1inch leg' and the leg axis reports AutoCount \"1\\\"\" vs ERP \"(blank)\". First use of the leg axis; the ERP key is legHeight, taken from variant-reconcile.mjs:278 rather than guessed."
+    },
+    {
+      "type": "PO",
+      "ac_doc": "PO-010146",
+      "erp_doc": "HC-PO-010146",
+      "ac_dtlkey": 924289,
+      "item_code": "5535-2A(LHF)",
+      "axis": "leg",
+      "erp_now": "",
+      "book": "2",
+      "desc2": "Size:30\"/Col:CHINO-01/Bottom wrap nylon/+2\" leg",
+      "why": "The book's own text says '+2\\\" leg' and the leg axis reports AutoCount \"2\\\"\" vs ERP \"(blank)\". The other two lines of this document are pillows and carry no leg."
+    }
+  ]
+}

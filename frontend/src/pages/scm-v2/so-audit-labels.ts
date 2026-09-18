@@ -33,6 +33,9 @@ const FIELDS: Record<string, string> = {
   unitCostSen: 'Unit cost', totalSen: 'Line total',
   lineCount: 'Lines', localTotalSen: 'Total', cancelled: 'Cancelled',
   remark: 'Remark', salespersonId: 'Salesperson', customerType: 'Customer type',
+  /* Written by the bulk share / withdraw (2026-09-09). Without it the History
+     drawer printed the raw key beside a real change to who can see the order. */
+  collaboratorStaffIds: 'Shared with',
   emergencyContactName: 'Emergency name', emergencyContactPhone: 'Emergency phone',
   emergencyContactRelationship: 'Emergency relationship',
   targetDate: 'Target date', branding: 'Branding', venue: 'Venue', venueId: 'Venue (master)',
@@ -54,7 +57,11 @@ const FIELDS: Record<string, string> = {
   slipKey: 'Payment proof',
 };
 
-const MONEY_FIELDS = new Set([
+/* EXPORTED because the mobile SO timeline renders the same audit rows and must
+   not hold a second opinion about which of them are money — the two sets were
+   byte-identical copies until 2026-09-09, and `audit:duplicated-decisions` is
+   what noticed. One question, one home; mobile imports this. */
+export const SO_AUDIT_MONEY_FIELDS = new Set([
   'unitPriceSen', 'discountSen', 'totalSen', 'depositSen',
   'localTotalSen', 'unitCostSen', 'amountSen',
 ]);
@@ -62,5 +69,5 @@ const MONEY_FIELDS = new Set([
 export const SO_AUDIT_LABELS: AuditLabelDictionary = {
   actions: ACTIONS,
   fields: FIELDS,
-  moneyFields: MONEY_FIELDS,
+  moneyFields: SO_AUDIT_MONEY_FIELDS,
 };

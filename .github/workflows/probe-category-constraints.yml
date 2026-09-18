@@ -1,0 +1,29 @@
+name: Where the live DB fixes the category list (read-only)
+
+# Manual, read-only. Before adding the SOFA_ACCESSORY category: every CHECK
+# constraint and enum on production that lists the product categories, plus the
+# base lead-time rows. The migration files are not a complete answer (the base
+# lead-time CHECK is created by no file in this repo). SELECT only.
+on:
+  workflow_dispatch: {}
+
+concurrency:
+  group: probe-category-constraints
+  cancel-in-progress: false
+
+jobs:
+  prod:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/probe-category-constraints.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      # What moves when models / SKUs change to FABRIC_ACCESSORY (owner 2026-09-14).
+      - run: node scripts/probe-fabric-accessory-population.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

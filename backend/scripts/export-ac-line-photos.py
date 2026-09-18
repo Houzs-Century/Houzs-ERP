@@ -96,6 +96,9 @@ SIDE = os.environ.get("SIDE", "both").lower()
 LIMIT = int(os.environ.get("LIMIT", "0") or 0)
 FORCE = os.environ.get("FORCE") == "1"
 BATCH = int(os.environ.get("BATCH", "25") or 25)
+# DTLKEY_FILE names a file of DtlKeys (one per line, "<side> <key>" or bare key)
+# to extract INSTEAD of walking forward from the checkpoint. See _load_dtlkeys.
+DTLKEY_FILE = os.environ.get("DTLKEY_FILE")
 RTF_CLI = os.path.join(HERE, "further-description-rtf.mjs")
 
 # The two document sides. Header table, detail table, and the manifest the
@@ -334,6 +337,60 @@ def side_dir(side):
     return d
 
 
+def _load_dtlkeys(side):
+    """The explicit DtlKeys to extract, or None for the normal checkpoint walk.
+
+    WHY THIS EXISTS (measured 2026-09-07, go-live day). The checkpoint resume
+    only ever asks for `DtlKey > last`, so it can only find photographs on lines
+    created since the last run. It is BLIND to a photograph added to an OLDER
+    line — and that is not hypothetical: censusing the live book against the
+    2026-08-31 export found 38 SO lines newly carrying a picture, four of them
+    (DtlKey 802568, 824817, 858533, 873097) far BELOW the 917,140 checkpoint.
+    A plain re-run would have reported "new: 0" and been believed.
+
+    FORCE=1 does find them, by re-reading every line from the top. On go-live
+    day that is the wrong tool: it re-downloads thousands of FurtherDescription
+    LOBs (one measured line is 458,878 bytes) against the same SQL instance the
+    ERP write-back uses, and an unbounded scan of that column is exactly what
+    made SalesOrder.InternalSave() time out earlier today.
+
+    So this mode is the bounded one: the caller supplies the keys a read-only
+    census already identified, and the query carries an explicit `IN` list of at
+    most BATCH keys. It is strictly NARROWER than the normal query -- it can
+    only ever read fewer rows -- which is the point.
+    """
+    if not DTLKEY_FILE:
+        return None
+    if not os.path.exists(DTLKEY_FILE):
+        log("DTLKEY_FILE does not exist: %s" % DTLKEY_FILE)
+        sys.exit(2)
+    keys = []
+    with open(DTLKEY_FILE, "r", encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.replace("|", " ").split()
+            # "<side> <key>" rows let ONE file drive both sides; a bare key is
+            # taken for whichever side is being exported.
+            if len(parts) >= 2 and parts[0].lower() in ("so", "po"):
+                if parts[0].lower() != side:
+                    continue
+                cand = parts[1]
+            else:
+                cand = parts[0]
+            try:
+                keys.append(int(cand))
+            except ValueError:
+                log("  (ignoring unparsable DTLKEY_FILE line: %r)" % line[:80])
+    # A targeted run that resolved to nothing must SAY so, not print "new: 0"
+    # and read as a clean book -- the same failure this mode exists to fix.
+    if not keys:
+        log("DTLKEY_FILE %s holds no %s DtlKey -- nothing to do for this side"
+            % (DTLKEY_FILE, side.upper()))
+    return sorted(set(keys))
+
+
 def load_done(side):
     """Rows already extracted, plus the DtlKey to resume after."""
     path = os.path.join(side_dir(side), ".done.jsonl")
@@ -413,20 +470,48 @@ def export_side(cn, side):
         "AND d.DtlKey > ? ORDER BY d.DtlKey"
     ) % (BATCH, desc2, cfg["dtl"], cfg["hdr"])
 
+    targeted = _load_dtlkeys(side)
+    if targeted is not None:
+        log("  TARGETED: %d DtlKey(s) from %s, in chunks of %d"
+            % (len(targeted), DTLKEY_FILE, BATCH))
+
     seen_lines, new_rows, forms, hows, failures = 0, 0, {}, {}, []
     pending = []
+    cursor_pos = 0
     while True:
         cur = cn.cursor()
-        cur.execute(sql, checkpoint)
+        if targeted is not None:
+            chunk = targeted[cursor_pos:cursor_pos + BATCH]
+            cursor_pos += len(chunk)
+            if not chunk:
+                cur.close()
+                break
+            # Parameterised IN list -- the keys never reach the SQL as text.
+            q = (
+                "SELECT LTRIM(RTRIM(h.DocNo)) AS DocNo, d.DtlKey, "
+                "LTRIM(RTRIM(ISNULL(d.ItemCode,''))) AS ItemCode%s, d.FurtherDescription "
+                "FROM %s d JOIN %s h ON h.DocKey = d.DocKey "
+                "WHERE d.DtlKey IN (%s) AND d.FurtherDescription IS NOT NULL "
+                "ORDER BY d.DtlKey"
+            ) % (desc2, cfg["dtl"], cfg["hdr"], ",".join("?" * len(chunk)))
+            cur.execute(q, *chunk)
+        else:
+            cur.execute(sql, checkpoint)
         batch = cur.fetchall()
         cur.close()
         if not batch:
+            if targeted is not None:
+                continue
             break
         for row in batch:
             doc_no, dtlkey, item_code = row[0], int(row[1]), row[2]
             d2 = row[3] if cfg["desc2"] else None
             rtf = row[-1]
-            checkpoint = dtlkey
+            # A targeted run visits keys BELOW the checkpoint on purpose, so it
+            # must never move it -- writing a lower one would make the next
+            # normal run re-scan ground it has already covered.
+            if targeted is None:
+                checkpoint = dtlkey
             seen_lines += 1
             try:
                 with tempfile.TemporaryDirectory() as tmp:

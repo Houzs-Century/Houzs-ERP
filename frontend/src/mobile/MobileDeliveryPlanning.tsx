@@ -85,6 +85,10 @@ type BoardRow = {
   // HC SO-context: the customer's referral / reference tag and the possession
   // ("move") date — both surfaced on the stop detail when present.
   referral: string | null;
+  // Reference — mfg_sales_orders.ref (AutoCount Ref), the desktop board's "Reference" column. SO rows only.
+  so_ref?: string | null;
+  // PO No. — purchase orders raised from the SO (SO rows only).
+  po_nos?: string[];
   possession_date: string | null;
   region: string | null;
   regions?: string[];
@@ -1206,7 +1210,9 @@ function StopDetail({
   const doneAt = hhmm(order.customer_delivered_date);
   const htype = houseTypeOf(order);
   const moveInDate = order.possession_date ? dm(order.possession_date) : "";
-  const referral = (order.referral && order.referral.trim()) || "";
+  // Reference = the order's `ref` (e.g. pg0791). `referral` is the HC referral
+  // channel, empty on every order, and is no longer what this row shows (0934).
+  const referral = (order.so_ref && order.so_ref.trim()) || "";
   const disposal =
     (order.replacement_disposal && order.replacement_disposal.trim()) || "";
   const isSetup = !!disposal; // v2 "job" isn't in the feed; treat disposal as the setup/dismantle signal.
@@ -1850,9 +1856,13 @@ function StopDetail({
             <span className="tnum">{doRef?.do_number || EM}</span>,
             true,
           )}
-          {/* Reference — HC referral tag; dropped when the feed carries none. */}
+          {/* Reference — the order's ref (AutoCount Ref); dropped when the feed carries none. */}
           {referral
             ? pdRow("Reference", <span className="tnum">{referral}</span>, false)
+            : null}
+          {/* PO No. — the purchase orders raised from the SO (desktop board parity). */}
+          {order.po_nos?.length
+            ? pdRow("PO No.", <span className="tnum">{order.po_nos.join(", ")}</span>, false)
             : null}
           {pdRow(
             "Branding",

@@ -27,6 +27,7 @@
 // very table the server just read.
 import { describe, expect, test } from 'vitest';
 import { convertSosToPosCore, type PoConvertContext } from './mfg-purchase-orders';
+import { parsePgrestInList } from '../lib/pgrest-in-list';
 
 type Row = Record<string, unknown>;
 
@@ -48,6 +49,13 @@ function fakeSb(tables: Record<string, Row[]>, captured: Row[]) {
     select() { return this; }
     eq(col: string, val: unknown) { this.rows = this.rows.filter((r) => r[col] === val); return this; }
     in(col: string, vals: unknown[]) { const s = new Set(vals); this.rows = this.rows.filter((r) => s.has(r[col])); return this; }
+    /* The ESCAPED in-list the shared readers now build — supabase-js cannot
+       serialise a value carrying a `"` (docs/bugs/0780). Parsed by the SAME
+       function the app writes with, never a second split(','). */
+    filter(col: string, op: string, val: string) {
+      if (op !== 'in') throw new Error(`fake: filter(${op}) is not implemented`);
+      return this.in(col, parsePgrestInList(val));
+    }
     not() { return this; }
     is(col: string, val: unknown) { if (val === null) this.rows = this.rows.filter((r) => r[col] == null); return this; }
     or() { return this; }

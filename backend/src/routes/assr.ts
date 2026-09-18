@@ -50,10 +50,12 @@ import {
   assrCaseRowInScope, assrCallerIsScoped, stripCreditorFields, listMyCases,
 } from "../services/assrVisibility";
 import { notifyServiceCaseResponsible } from "../services/assrNotify";
+import { grantCaseAccess, revokeCaseAccess } from "./assrAccess";
 import { isDirectorUser } from "../services/pmsAccess";
 import type { AuthUser } from "../services/auth";
 import type { Context, MiddlewareHandler } from "hono";
 import { normalizePhone } from "../scm/shared/phone";
+import { ASSR_SUB_STATUS_KEYS } from "../scm/shared/assr-sub-statuses";
 
 /* The context the extracted handlers below receive. They are exported so the
    route tests can drive them directly; the shape is exactly what app.get/post
@@ -102,7 +104,7 @@ app.use("/:id{[0-9]+}/*", enforceCaseScope);
 //
 // `canAccessServiceCases` passes when the caller holds ANY of the given
 // permissions (the legacy path — unchanged for existing ASSR staff), OR holds
-// the HOUZS company grant, OR is a director (Owner/IT `*`, Super Admin, Sales
+// ANY company grant, OR is a director (Owner/IT `*`, Super Admin, Sales
 // Director, Finance Manager). It is applied ONLY to the read + create endpoints
 // — NOT to write / manage / approve / delete, which keep their original
 // `requirePermission` gate so this never widens mutation access.
@@ -119,7 +121,40 @@ export function canAccessServiceCases(
   if (!user) return false;
   const granted = user.permissions_set ?? user.permissions ?? [];
   if (perms.some((p) => hasPermission(granted, p))) return true;
-  return holdsHouzsCompanyGrant(c) || isDirectorUser(user);
+  return holdsAnyCompanyGrant(c) || isDirectorUser(user);
+}
+
+/**
+ * Does this caller hold a company grant AT ALL?
+ *
+ * THE GATE ASKS "WHICH COMPANY", NOT "WHICH COMPANY IS IT". The 2026-08-20
+ * ruling (docs/SERVICE-CASE-VISIBILITY-DECISION.md) replaced a JOB TITLE with a
+ * COMPANY GRANT — 「我们不 control Agent，可是我们 control Company」,
+ * 「有 Houzs 这家公司的授权 就好（不看职称）」. The load-bearing half is the
+ * parenthesis: the title stops deciding. The fix shipped with the HOUZS literal
+ * because the incident was HOUZS agents losing access, and that literal is
+ * NARROWER than the rule it implements — the 2026-07-20 trail below already
+ * said Service Cases follow the caller's GRANTED companies and anticipated
+ * "a future 2990 rep's is {2990}".
+ *
+ * census-service-case-visibility.mjs §1 had even named the cohort in advance:
+ * "the 2990-only cohort the literal rule would strand". It was measured and
+ * the literal shipped anyway.
+ *
+ * ADMITTING IS NOT SHOWING. Every read in this module is already scoped by
+ * assrCompanySql -> allowedCompaniesSql, so a 2990 grantee admitted here sees
+ * 2990's cases and nothing else; and the AutoCount mirror arm keeps its OWN
+ * HOUZS test (that table holds only HOUZS rows), so opening the door does not
+ * open that book.
+ *
+ * Same three-state sentinel as holdsHouzsCompanyGrant, and it must stay that
+ * way: `undefined` (unresolved / pre-migration / cold start) degrades to YES so
+ * a blip cannot 403 everyone, `[]` (granted nothing) is NO.
+ */
+export function holdsAnyCompanyGrant(c: CompanyScopeCtx): boolean {
+  const allowed = allowedCompanyIds(c);
+  if (allowed === undefined) return true; // unresolved -> legacy single-company
+  return allowed.length > 0;
 }
 
 /**
@@ -780,7 +815,8 @@ app.get("/summary", requirePermission("service_cases.read"), async (c) => {
                   WHEN h.target_days IS NOT NULL AND h.target_days > 0
                    AND (julianday('now') - julianday(h.entered_at)) / h.target_days >= 1
                   THEN 1 ELSE 0 END) AS breached,
-            SUM(CASE WHEN COALESCE(c.sub_status, 'none') = 'pending_supplier_return' THEN 1 ELSE 0 END) AS sub_return
+            SUM(CASE WHEN COALESCE(c.sub_status, 'none') = 'pending_supplier_return' THEN 1 ELSE 0 END) AS sub_return,
+            SUM(CASE WHEN COALESCE(c.sub_status, 'none') = 'pending_customer_pickup' THEN 1 ELSE 0 END) AS sub_customer
        FROM assr_cases c
        LEFT JOIN assr_stage_history h
               ON h.assr_id = c.id AND h.exited_at IS NULL
@@ -789,7 +825,7 @@ app.get("/summary", requirePermission("service_cases.read"), async (c) => {
       GROUP BY c.stage`
     )
       .bind(...visC.binds)
-      .all<{ stage: string; total: number; breached: number; sub_return: number }>(),
+      .all<{ stage: string; total: number; breached: number; sub_return: number; sub_customer: number }>(),
 
     // v3.1 — CSAT 13-week rolling trend (weekly average ratings)
     c.env.DB.prepare(
@@ -1210,7 +1246,7 @@ app.get("/export.csv", requireServiceCaseAccess(), async (c) => {
     // Hand-entered DO wins; the live SCM merge (do_numbers) fills the rest —
     // same precedence as the list's DO No column.
     r.delivery_order = r.delivery_order || r.do_numbers || null;
-    lines.push(fields.map((f) => esc(r[f])).join(","));
+    lines.push(fields.map((f) => esc(f === "po_amount" && r[f] != null && Number.isFinite(Number(r[f])) ? Number(r[f]).toFixed(2) : r[f])).join(","));
   }
   const csv = "\uFEFF" + lines.join("\r\n");
   const date = new Date().toISOString().slice(0, 10);
@@ -1571,6 +1607,10 @@ app.get("/:id{[0-9]+}", requireServiceCaseAccess(), async (c) => {
   return c.json(detail);
 });
 
+// Access list (Nth-person visibility) — literals here (route generator sees the path + gate); bodies in routes/assrAccess.ts for the size ceiling. See §6.
+app.post("/:id{[0-9]+}/access", requirePermission("service_cases.write"), (c) => grantCaseAccess(c, caseInCallerScope));
+app.delete("/:id{[0-9]+}/access/:userId{[0-9]+}", requirePermission("service_cases.write"), (c) => revokeCaseAccess(c, caseInCallerScope));
+
 // ── Supplier rating ──────────────────────────────────────────
 // Posted from the Close-Case prompt when the case had a supplier
 // assigned. Stored on the case row (one rating per case) and
@@ -1821,13 +1861,6 @@ app.post(
 // Same digit-only constraint as the GET — keeps any future literal
 // route under /api/assr (e.g. /metrics, /summary) reachable when the
 // methods overlap.
-const SUB_STATUS_VALUES = new Set([
-  "pending_inspection",
-  "qc_issue_result",
-  "pending_supplier_pickup",
-  "pending_supplier_return",
-]);
-
 app.patch("/:id{[0-9]+}", requirePermission("service_cases.write"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
@@ -1836,7 +1869,9 @@ app.patch("/:id{[0-9]+}", requirePermission("service_cases.write"), async (c) =>
   if (
     body.sub_status !== undefined &&
     body.sub_status !== null &&
-    !SUB_STATUS_VALUES.has(String(body.sub_status))
+    // The one list the screens offer (docs/bugs/0890): a hand-kept copy here
+    // once lacked Pending Customer Pickup and refused the screens' own choice.
+    !ASSR_SUB_STATUS_KEYS.has(String(body.sub_status))
   ) {
     return c.json({ error: "Unknown sub-status" }, 400);
   }

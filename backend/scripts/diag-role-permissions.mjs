@@ -19,7 +19,8 @@
 //       logistic / ops / desk related (the amendment-approver candidates), so
 //       the follow-up grant migration can match exact names.
 //   (3) for each affected role: which of its ACTIVE users would gain the
-//       amendment gate actions (name + position only — no contact PII).
+//       amendment gate actions — by USER ID and position, never by name: this
+//       runs in a public repository's Actions log (docs/bugs/0895).
 //
 // STRICTLY READ-ONLY — SELECTs only, no writes, no DDL, no transaction.
 import { readFileSync } from "node:fs";
@@ -94,18 +95,18 @@ try {
     for (const p of [...perms].sort()) console.log(`      ${p}`);
   }
 
-  notice("── (3) active users on the candidate roles (name + position only) ──");
+  notice("── (3) active users on the candidate roles (user id + position; names stay out of a public log) ──");
   const candidateIds = roles.filter((r) => CANDIDATE_NAME.test(r.name)).map((r) => r.id);
   if (candidateIds.length) {
     const holders = await pg`
-      SELECT u.name AS user_name, r.name AS role_name, p.name AS position_name
+      SELECT u.id AS user_id, r.name AS role_name, p.name AS position_name
       FROM users u
       JOIN roles r ON r.id = u.role_id
       LEFT JOIN positions p ON p.id = u.position_id
       WHERE u.status = 'active' AND u.role_id IN ${pg(candidateIds)}
-      ORDER BY r.name, u.name`;
+      ORDER BY r.name, u.id`;
     for (const h of holders) {
-      console.log(`  ${String(h.role_name).padEnd(24)} | ${String(h.user_name).padEnd(28)} | ${h.position_name ?? "(no position)"}`);
+      console.log(`  ${String(h.role_name).padEnd(24)} | ${`user #${h.user_id}`.padEnd(14)} | ${h.position_name ?? "(no position)"}`);
     }
     if (!holders.length) console.log("  (none)");
   }

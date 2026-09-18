@@ -91,19 +91,81 @@ async function main() {
     raw(`    edit lease held now: ${leaseLive ? `YES (expires ${so.edit_lease_expires_at})` : "no"}`);
   }
 
+  /* ── [L] the lines as they stand, with what would mark an AUTO-ADDED one ── */
+  raw(`
+================ [L] THE LINES, AND WHETHER EACH IS A GIFT ================`);
+  const lines = await sql`
+    SELECT i.line_no, i.item_code, i.item_group, i.description, i.qty, i.unit_price_sen, i.cancelled,
+           i.created_at, i.variants, p.sell_price_sen AS catalog_sell_sen
+      FROM scm.mfg_sales_order_items i
+      LEFT JOIN scm.mfg_products p ON p.code = i.item_code AND p.company_id = i.company_id
+     WHERE i.doc_no = ${DOC}
+     ORDER BY i.line_no NULLS LAST, i.created_at`;
+  const iso = (d) => (d instanceof Date ? d.toISOString().slice(0, 19) : String(d ?? "-"));
+  if (!lines.length) raw(`  no lines`);
+  for (const l of lines) {
+    const v = l.variants && typeof l.variants === "object" ? l.variants : {};
+    raw(`  #${String(l.line_no ?? "-").padEnd(3)} ${String(l.item_code ?? "").padEnd(22)} group=${String(l.item_group ?? "-").padEnd(10)} qty=${String(l.qty).padEnd(3)} unit=RM${(Number(l.unit_price_sen ?? 0) / 100).toFixed(2).padStart(9)}  catalog=RM${l.catalog_sell_sen == null ? "   (none)" : (Number(l.catalog_sell_sen) / 100).toFixed(2).padStart(9)}  freeGift=${v.freeGift == null ? "-" : JSON.stringify(v.freeGift)}  pwpCode=${v.pwpCode ?? "-"}  cancelled=${l.cancelled}  created=${iso(l.created_at)}  ${String(l.description ?? "").slice(0, 40)}`);
+    raw(`        variants: ${JSON.stringify(v).slice(0, 200)}`);
+  }
+  raw(`  READ THIS AS: freeGift=true at RM0.00 is a line the campaign trigger treated as a gift;`);
+  raw(`  a priced line with no tag was picked and priced like any other item. catalog= is the`);
+  raw(`  product's list price today, so unit=RM0.00 with catalog=RM0.00 is "free by list", not a grant.`);
+
+  /* ── [P] is a RM0 pillow the app's habit or this order's? Census of the book ── */
+  const PREFIX = DOC.split("-")[0] + "-";
+  raw(`
+================ [P] SQUARE PILLOW CENSUS, orders LIKE '${PREFIX}%', last 60 days ================`);
+  const [cen] = await sql`
+    WITH so AS (
+      SELECT doc_no, created_at FROM scm.mfg_sales_orders
+       WHERE doc_no LIKE ${PREFIX + "%"} AND created_at > now() - interval '60 days'
+         AND upper(status::text) <> 'CANCELLED'),
+    sofa AS (
+      SELECT DISTINCT doc_no FROM scm.mfg_sales_order_items
+       WHERE doc_no LIKE ${PREFIX + "%"} AND NOT coalesce(cancelled, false)
+         AND item_code <> 'SQUARE PILLOW'
+         AND (lower(coalesce(item_group, '')) = 'sofa' OR description ILIKE 'SOFA %')),
+    pill AS (
+      SELECT i.doc_no, min(i.unit_price_sen) AS unit_min, max(i.unit_price_sen) AS unit_max,
+             bool_or(i.variants->>'freeGift' IS NOT NULL) AS tagged,
+             bool_or(i.created_at > s.created_at + interval '10 seconds') AS added_later
+        FROM scm.mfg_sales_order_items i JOIN so s USING (doc_no)
+       WHERE i.item_code = 'SQUARE PILLOW' AND NOT coalesce(i.cancelled, false)
+       GROUP BY i.doc_no)
+    SELECT count(*)::int                                                              AS orders,
+           count(*) FILTER (WHERE sofa.doc_no IS NOT NULL)::int                       AS sofa_orders,
+           count(*) FILTER (WHERE sofa.doc_no IS NOT NULL AND pill.doc_no IS NOT NULL)::int AS sofa_with_pillow,
+           count(*) FILTER (WHERE sofa.doc_no IS NOT NULL AND pill.unit_max = 0)::int  AS sofa_with_rm0_pillow,
+           count(*) FILTER (WHERE sofa.doc_no IS NOT NULL AND pill.unit_min > 0)::int  AS sofa_with_priced_pillow,
+           count(*) FILTER (WHERE pill.tagged)::int                                    AS pillow_tagged_gift,
+           count(*) FILTER (WHERE pill.added_later)::int                               AS pillow_added_after_create,
+           count(*) FILTER (WHERE sofa.doc_no IS NULL AND pill.doc_no IS NOT NULL)::int AS nonsofa_with_pillow
+      FROM so LEFT JOIN sofa USING (doc_no) LEFT JOIN pill USING (doc_no)`;
+  raw(`  orders in window:                       ${cen.orders}`);
+  raw(`  ..with a sofa line:                     ${cen.sofa_orders}`);
+  raw(`     ..of which carry a SQUARE PILLOW:    ${cen.sofa_with_pillow}`);
+  raw(`        ..pillow at RM0.00:               ${cen.sofa_with_rm0_pillow}`);
+  raw(`        ..pillow priced > RM0:            ${cen.sofa_with_priced_pillow}`);
+  raw(`  pillow carrying a freeGift tag:         ${cen.pillow_tagged_gift}`);
+  raw(`  pillow added >10s AFTER the create:     ${cen.pillow_added_after_create}   <- hand-added or reconciled later; the rest arrived IN the create`);
+  raw(`  non-sofa orders carrying a pillow:      ${cen.nonsofa_with_pillow}`);
+  raw(`  READ THIS AS: if nearly every sofa order has the RM0 pillow in the create itself, the`);
+  raw(`  app that raises the order is putting it there; if it is scattered, people are.`);
+
   /* ── [E1 vs E2] the audit trail — WHO has been writing this order ──────── */
   raw(`\n================ [E1 vs E2] WHO WROTE THIS ORDER ================`);
   const trail = await sql`
     SELECT created_at, action, actor_name_snapshot, source, note, field_changes
       FROM scm.mfg_so_audit_log
-     WHERE doc_no = ${DOC}
+     WHERE so_doc_no = ${DOC}
      ORDER BY created_at DESC LIMIT 40`;
   if (!trail.length) raw(`  no audit rows at all`);
   for (const r of trail) {
     const fc = Array.isArray(r.field_changes)
       ? r.field_changes.map((f) => `${f.field}:${f.from}->${f.to}`).join(" ")
       : "";
-    raw(`  ${String(r.created_at).slice(0, 19)}  ${String(r.action).padEnd(16)} ${String(r.actor_name_snapshot ?? "-").padEnd(24)} ${String(r.source ?? "-").padEnd(11)} ${fc.slice(0, 70)}`);
+    raw(`  ${String(r.created_at).slice(0, 19)}  ${String(r.action).padEnd(16)} ${String(r.actor_name_snapshot ?? "-").padEnd(24)} ${String(r.source ?? "-").padEnd(11)} ${fc.slice(0, 220)}`);
     if (r.note) raw(`      note: ${String(r.note).slice(0, 110)}`);
   }
   raw(`\n  READ THIS AS: rows with source='automation' / 'System (auto-allocate)' are E1`);
@@ -117,7 +179,7 @@ async function main() {
   const auto = await sql`
     SELECT date_trunc('day', created_at)::date AS day,
            count(*)::int                       AS bumps,
-           count(DISTINCT doc_no)::int         AS orders
+           count(DISTINCT so_doc_no)::int      AS orders
       FROM scm.mfg_so_audit_log
      WHERE source = 'automation'
        AND created_at > now() - interval '14 days'
@@ -127,7 +189,7 @@ async function main() {
 
   const [{ n: autoThisDoc }] = await sql`
     SELECT count(*)::int AS n FROM scm.mfg_so_audit_log
-     WHERE doc_no = ${DOC} AND source = 'automation'`;
+     WHERE so_doc_no = ${DOC} AND source = 'automation'`;
   raw(`  automation bumps on ${DOC}: ${autoThisDoc}`);
 
   /* ── [D] how many other orders sit in the same both-doors-shut shape ───── */

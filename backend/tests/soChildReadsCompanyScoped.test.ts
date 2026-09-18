@@ -1,6 +1,6 @@
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { describe, expect, test } from 'vitest';
+import { soRouterSource } from './lib/so-router-source';
+import rawCrossCategorySource from '../src/scm/lib/cross-category-source.ts?raw';
 
 /*
  * Six SO child reads in mfg-sales-orders.ts were keyed on the document number
@@ -28,10 +28,10 @@ import { describe, expect, test } from 'vitest';
  * for the right reason is worse than no test.
  */
 
-const SRC = readFileSync(
-  fileURLToPath(new URL('../src/scm/routes/mfg-sales-orders.ts', import.meta.url)),
-  'utf8',
-).replace(/\r\n/g, '\n');
+const SRC = soRouterSource().replace(/\r\n/g, '\n');
+/* checkCrossCategorySource moved to lib/cross-category-source.ts when the
+   cross-category routes left the router file; its callers stay in the router. */
+const HELPER_SRC = rawCrossCategorySource.replace(/\r\n/g, '\n');
 
 /** Source from this route's registration up to the next `mfgSalesOrders.<verb>(`. */
 function handlerSlice(registration: string): string {
@@ -100,10 +100,10 @@ describe('SO child reads are scoped to the caller company', () => {
 describe('checkCrossCategorySource — the eligibility probe', () => {
   /** The helper body, from its declaration to the next top-level declaration. */
   function helperBody(): string {
-    const start = SRC.indexOf('async function checkCrossCategorySource(');
+    const start = HELPER_SRC.indexOf('async function checkCrossCategorySource(');
     expect(start).toBeGreaterThan(-1);
-    const after = SRC.slice(start);
-    const end = after.search(/\n(async function|function|const|mfgSalesOrders\.)/);
+    const after = HELPER_SRC.slice(start);
+    const end = after.search(/\n(?:export\s+)?(async function|function|const|mfgSalesOrders\.)/);
     return end === -1 ? after : after.slice(0, end);
   }
 
@@ -122,10 +122,11 @@ describe('checkCrossCategorySource — the eligibility probe', () => {
   });
 
   test('it takes the request context, so scoping is possible at all', () => {
-    expect(SRC).toMatch(/async function checkCrossCategorySource\(\s*\n\s*c: any,/);
+    expect(HELPER_SRC).toMatch(/async function checkCrossCategorySource\(\s*\n\s*c: any,/);
     // Every caller must thread it, or the signature change is cosmetic.
-    const calls = SRC.match(/checkCrossCategorySource\(\s*\n?\s*c,/g) ?? [];
-    const allCalls = SRC.match(/await checkCrossCategorySource\(/g) ?? [];
+    const callers = `${SRC}\n${HELPER_SRC}`;
+    const calls = callers.match(/checkCrossCategorySource\(\s*\n?\s*c,/g) ?? [];
+    const allCalls = callers.match(/await checkCrossCategorySource\(/g) ?? [];
     expect(calls.length).toBe(allCalls.length);
     expect(allCalls.length).toBeGreaterThanOrEqual(2);
   });

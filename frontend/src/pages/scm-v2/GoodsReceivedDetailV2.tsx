@@ -20,6 +20,7 @@ import {
   Send,
   Receipt,
   RotateCcw,
+  Plus,
 } from "lucide-react";
 import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
@@ -38,13 +39,16 @@ import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
+import { statusLabel } from "../../vendor/scm/lib/status-pill";
 import { cn } from "../../lib/utils";
 import { convertToLink, transferToLabel, transferFromColumnLabel } from "../../lib/convertScope";
-import { EntityHistoryPanel } from "./EntityHistoryPanel";
-import { GRN_AUDIT_LABELS } from "./entity-audit-labels";
+import { DocumentHistoryDrawer } from "./DocumentHistoryDrawer";
 import { resolveFxRate } from "./fx-rate";
 import { HoldChip, type HoldFields } from "../../vendor/scm/components/HoldChip";
 
+import { FocAmount } from "../../vendor/scm/components/FocAmount";
+import { LinePoRefLink } from "../../vendor/scm/components/LinePoRefLink";
+import { ADD_LINE_LABEL, addLineHref } from "../../vendor/scm/lib/add-line-handoff";
 type GrnStatus = "DRAFT" | "POSTED" | "CANCELLED" | string;
 
 type GrnHeader = HoldFields & {
@@ -85,6 +89,9 @@ type GrnItem = {
   item_code?: string | null;
   /* Supplier's own code, snapshotted per line at receipt (backend returns it). */
   supplier_sku?: string | null;
+  /* The line's own remark (grn_items.notes). The column and the line PATCH that
+     accepts it have both existed since the table did; nothing rendered it. */
+  notes?: string | null;
   description?: string | null;
   description2?: string | null;
   item_group?: string | null;
@@ -98,6 +105,8 @@ type GrnItem = {
   qty_received?: number | null;
   qty_accepted?: number | null;
   ordered_qty?: number | null;
+  source_po_id?: string | null;
+  source_po_number?: string | null;
   unit_price_sen?: number;
   line_total_sen?: number;
   warehouse_code?: string | null;
@@ -130,18 +139,24 @@ const effectiveOf = (h: GrnHeader): Effective => {
   return "draft";
 };
 
-const EFFECTIVE_TONE: Record<Effective, { tone: "success" | "warning" | "error" | "neutral"; label: string; blurb: string }> = {
-  draft: { tone: "warning", label: "Draft", blurb: "Draft · not yet posted" },
-  posted: { tone: "success", label: "Confirmed", blurb: "Confirmed · inventory received" },
-  on_hold: { tone: "warning", label: "On Hold", blurb: "On hold · stock already received, billing paused" },
-  cancelled: { tone: "error", label: "Cancelled", blurb: "Cancelled · receipt reversed" },
+/* No LABEL here, and none is added: it was DEAD. Every reader of this map takes
+   `.tone` or `.blurb` (grep EFFECTIVE_TONE — three call sites, none of them
+   `.label`), and the word on the badge comes from statusLabel("grn", …) below. A fourth
+   hand-written copy of the status vocabulary that renders nowhere is the
+   drift docs/modules/document-status-vocabulary.md §1 exists to stop, so it is
+   removed rather than repointed at status-pill.ts. */
+const EFFECTIVE_TONE: Record<Effective, { tone: "success" | "warning" | "error" | "neutral"; blurb: string }> = {
+  draft: { tone: "warning", blurb: "Draft · not yet posted" },
+  posted: { tone: "success", blurb: "Submitted · inventory received" },
+  on_hold: { tone: "warning", blurb: "On hold · stock already received, billing paused" },
+  cancelled: { tone: "error", blurb: "Cancelled · receipt reversed" },
 };
 
-const STAGE_LABEL: Record<string, string> = {
-  DRAFT: "Draft",
-  POSTED: "Posted",
-  CANCELLED: "Cancelled",
-};
+/* The header BADGE reads its word from vendor/scm/lib/status-pill.ts. It used to
+   read a hand-written STAGE_LABEL here, which said "Posted" for POSTED - contradicting the
+   owner's ruling that this rung reads one word on every surface, and invisible to
+   localStatusMapsAgree because a flat map is not the { label } shape it parsed.
+   docs/bugs/0868. The guard now scans that shape too. */
 
 const initialsOf = (name: string | null | undefined): string => {
   if (!name) return "—";
@@ -335,7 +350,7 @@ function GoodsReceivedDetailV2ReadOnly() {
   );
 
   const eff = grn ? effectiveOf(grn) : null;
-  const stageLabel = grn ? STAGE_LABEL[(grn.status || "").toUpperCase()] ?? grn.status : "";
+  const stageLabel = grn ? statusLabel("grn", grn.status) : "";
   const badgeTone = eff ? EFFECTIVE_TONE[eff].tone : "neutral";
 
   // Back always returns to the Goods Received list (owner 2026-07-24: every
@@ -344,6 +359,10 @@ function GoodsReceivedDetailV2ReadOnly() {
   // filters, so the prior filtered view comes back — no context lost.
   const goBack = () => navigate(scmListReturnTo("/scm/grns"));
   const goEdit = () => id && navigate(`/scm/grns/${id}?edit=1`);
+  /* "Add line" from the page you START on. The affordance existed only
+     inside the editor, under a different name on each document, so the owner
+     read it as missing (docs/bugs/0853). */
+  const goAddLine = () => id && navigate(addLineHref(`/scm/grns/${id}`));
   // Render + download the GRN PDF via the shared jspdf generator (client-side),
   // mirroring the V1 GoodsReceivedDetail handler. The old `?print=1` navigation
   // was dead — nothing consumed that param — so the button did nothing.
@@ -445,6 +464,16 @@ function GoodsReceivedDetailV2ReadOnly() {
       },
     },
     {
+      /* #26 — the purchase order THIS line came from, clickable. Per line, not
+         the header's: one receipt / invoice can span several orders. A line with
+         no PO behind it shows a dash (vendor/scm/lib/line-po-link.ts). */
+      key: "sourcePo",
+      label: "PO",
+      width: "128px",
+      getValue: (l) => l.source_po_number ?? "",
+      render: (l) => <LinePoRefLink line={l} />,
+    },
+    {
       key: "qty_po",
       label: "Ordered",
       width: "84px",
@@ -471,6 +500,28 @@ function GoodsReceivedDetailV2ReadOnly() {
         const full = ordered > 0 && rec >= ordered;
         return <span className={cn("font-money text-[13px] font-semibold", full ? "text-synced" : "text-ink")}>{rec}</span>;
       },
+    },
+    {
+      /* The line's own remark. Owner 2026-09-12: 「行备注（remark）应该也是要一样，
+         因为它们会带过去」 — the warehouse writes one at receipt ("outer carton
+         dented"), the invoice clerk needs to see it, and until now the only
+         place to put a sentence was the document header, where it belongs to
+         every line at once. The COLUMN was always there (grn_items.notes,
+         purchase_invoice_items.notes) and the GRN line PATCH has always
+         accepted it; nothing rendered it. See docs/bugs/0845. */
+      key: "lineNote",
+      label: "Remark",
+      width: "180px",
+      getValue: (l) => l.notes ?? "",
+      render: (l) => (
+        l.notes ? (
+          <span className="block truncate text-[12.5px] italic text-ink-secondary" title={l.notes}>
+            {l.notes}
+          </span>
+        ) : (
+          <span className="text-[12px] text-ink-muted">—</span>
+        )
+      ),
     },
     {
       key: "eta",
@@ -503,13 +554,16 @@ function GoodsReceivedDetailV2ReadOnly() {
       render: (l) => {
         const freight = Number(l.allocated_charge_sen ?? 0);
         return (
-          <span className="inline-flex flex-col items-end">
-            <span className="font-money text-[13px] font-semibold text-ink">{fmtMoney(l.line_total_sen ?? 0, grn?.currency)}</span>
-            {/* Landed-cost allocation (Phase 1-A) — per-line freight (MYR sen). */}
-            {freight > 0 && (
-              <span className="font-money text-[10.5px] text-accent-ink">+freight {fmtMoney(freight, "MYR")}</span>
-            )}
-          </span>
+          <FocAmount
+            line={l}
+            amount={fmtMoney(l.line_total_sen ?? 0, grn?.currency)}
+            /* Landed-cost allocation (Phase 1-A) — per-line freight (MYR sen).
+               Dropped on a free line: a freebie that carries allocated freight
+               still cost nothing to buy, which is what the badge claims. */
+            sub={freight > 0
+              ? <span className="font-money text-[10.5px] text-accent-ink">+freight {fmtMoney(freight, "MYR")}</span>
+              : undefined}
+          />
         );
       },
     },
@@ -614,6 +668,7 @@ function GoodsReceivedDetailV2ReadOnly() {
             {canPost && <Button variant="secondary" icon={<Send size={14} />} onClick={doPost}>Post</Button>}
             {canConvertToPi && <Button variant="secondary" icon={<Receipt size={14} />} onClick={goConvertToPi}>{transferToLabel('pi')}</Button>}
             {canConvertToPr && <Button variant="secondary" icon={<RotateCcw size={14} />} onClick={goConvertToPr}>{transferToLabel('pr')}</Button>}
+            <Button variant="secondary" icon={<Plus size={14} />} onClick={goAddLine}>{ADD_LINE_LABEL}</Button>
             <Button variant="primary" icon={<Edit3 size={14} />} onClick={goEdit}>Edit</Button>
           </div>
         </div>
@@ -668,7 +723,7 @@ function GoodsReceivedDetailV2ReadOnly() {
             <Section title={`Received items · ${items.length}`}>
               <DataTable<GrnItem>
                 tableId={`grn-lines-${id}`}
-                layoutFamily={DATA_TABLE_LAYOUT_FAMILIES.goodsReceivedLines}
+                layoutFamily={DATA_TABLE_LAYOUT_FAMILIES.goodsReceivedLines} persistSort={false} persistFilters={false}
                 rows={items}
                 loading={false}
                 columns={lineColumns}
@@ -702,15 +757,8 @@ function GoodsReceivedDetailV2ReadOnly() {
       {/* History drawer — portals to <body>, so its position here is only
           about lifecycle, not layout. */}
       {historyOpen && (
-        <EntityHistoryPanel
-          entityType="GRN"
-          entityId={String(grn.id)}
-          recordLabel={grn.grn_number}
-          entityName="Goods receipt"
-          labels={GRN_AUDIT_LABELS}
-          statusDocType="grn"
-          onClose={closeHistory}
-        />
+        <DocumentHistoryDrawer doc="GRN" id={String(grn.id)}
+          label={grn.grn_number} onClose={closeHistory} />
       )}
 
       <div className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-surface/95 px-3 pb-6 pt-2.5 shadow-slab backdrop-blur-sm md:hidden">

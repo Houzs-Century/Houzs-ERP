@@ -52,6 +52,28 @@ export type BankCandidate = {
   outstandingSen: number;
 };
 
+/** A posted ledger entry this movement could BE — the answer for everything on
+    a statement that is not card money. Ranked by the server (acc/bank-match):
+    the amount agrees to the sen and in the same direction, the entry is inside
+    a few days, and nothing else has claimed it. */
+export type BankEntryCandidate = {
+  jeNo: string;
+  entryDate: string;
+  sourceType: string | null;
+  sourceDocNo: string | null;
+  debitSen: number;
+  creditSen: number;
+  /** Signed the way the statement signs it: positive is money in. */
+  amountSen: number;
+  daysApart: number;
+  /** Who was paid / who paid, off the entry. */
+  partyName?: string | null;
+  /** The document a person holds — OR · SO, the PV number, "HLB payout dd/mm/yyyy" (docs/bugs/0918). */
+  reference?: string | null;
+  /** The customer, the payee or the merchant (docs/bugs/0918). */
+  who?: string | null;
+};
+
 export type BankLine = {
   id: number;
   line_no: number;
@@ -78,6 +100,7 @@ export type BankLine = {
   note: string | null;
   matches: Array<{ je_no: string; amount_sen: number; match_reason: string | null }>;
   candidates: BankCandidate[];
+  entryCandidates: BankEntryCandidate[];
 };
 
 export type Reconciliation = {
@@ -94,6 +117,19 @@ export type Reconciliation = {
   bankNotInBooks: { count: number; sen: number };
   booksNotOnBank: { count: number; sen: number };
   unmatchedJeNos: string[];
+  /** Earlier periods' entries still not on any statement — what the
+      brought-forward is made of. */
+  carried: { count: number; sen: number };
+  carriedJeNos: string[];
+  clearedFromBeforeSen?: number;
+  broughtForwardExplained: boolean | null;
+  /** The owner's form (docs/bugs/0806): books ± outstanding items = bank. */
+  outstandingPayments: { count: number; sen: number };
+  outstandingReceipts: { count: number; sen: number };
+  outstandingJeNos: string[];
+  computedClosingSen: number;
+  unexplainedSen: number | null;
+  tallies: boolean;
   consistent: boolean;
   inconsistency: string | null;
   reconciled: boolean;
@@ -106,6 +142,16 @@ export type LedgerEntry = {
   sourceDocNo: string | null;
   debitSen: number;
   creditSen: number;
+  /** Who was paid / who paid (owner 2026-09-11: 例如 pay to who). */
+  partyName?: string | null;
+  notes?: string | null;
+  /** The document a person holds — OR · SO, the PV number, "HLB payout dd/mm/yyyy" (docs/bugs/0918). */
+  reference?: string | null;
+  /** The customer, the payee or the merchant (docs/bugs/0918). */
+  who?: string | null;
+  /** Posted before this period and still not on any statement — carried
+      (owner: 之前 in book 还没有 recon 的也要带下来，因为可能下个月才过钱). */
+  carried?: boolean;
 };
 
 export const useBankSetup = () => useQuery({
@@ -142,6 +188,12 @@ export const useBankStatement = (id: number | null) => useQuery({
 const invalidateAfterBankPosting = (qc: ReturnType<typeof useQueryClient>) => {
   void qc.invalidateQueries({ queryKey: ['bank-statement'] });
   void qc.invalidateQueries({ queryKey: ['bank-statements'] });
+  /* The month is the same movements counted a second way, so a decision on one
+     of them is a decision about its month too — and the month view is where
+     the owner works. Missing these leaves a line settled on one screen and
+     still waiting on the other. */
+  void qc.invalidateQueries({ queryKey: ['bank-month'] });
+  void qc.invalidateQueries({ queryKey: ['bank-months'] });
   void qc.invalidateQueries({ queryKey: ['settlement-batch'] });
   void qc.invalidateQueries({ queryKey: ['settlement-batches'] });
   void qc.invalidateQueries({ queryKey: ['settlement-in-transit'] });
@@ -153,12 +205,20 @@ const invalidateAfterBankPosting = (qc: ReturnType<typeof useQueryClient>) => {
 export const useUploadBankStatement = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { accountCode: string; fileName: string; content: string; statementMonth?: string | null }) =>
+    mutationFn: (body: {
+      accountCode: string; fileName: string; content: string; statementMonth?: string | null;
+      /** PDF: `content` is the text pdf.js read off the file, with positions (lib/pdf-text.ts; docs/bugs/0869). */
+      format?: 'CSV' | 'PDF';
+    }) =>
       authedFetch<{
         ok: boolean; statementId: number; lines: number; joinedPairs: number; skippedLines: number;
         /** Movements this account had already recorded from an earlier upload —
             settled on arrival, nothing left to press. */
         alreadyRecorded: number;
+        /** Matched by amount and name on the way in (docs/bugs/0814). */
+        autoMatched: number;
+        /** Pairs the bank itself reversed, left out on the way in (docs/bugs/0817). */
+        contraPairs: number;
         periodFrom: string; periodTo: string; inSen: number; outSen: number;
         openingBalanceSen: number | null; closingBalanceSen: number | null;
         kinds: Record<string, number>;
@@ -198,6 +258,20 @@ export const useMatchBankLine = () => {
   });
 };
 
+/* Several movements are one entry, or one movement is several entries
+   (docs/bugs/0803; owner: 你应该开发让我自由选). The server checks the two sides
+   add up and that no entry is already accounted for. */
+export const useMatchBankGroup = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { lineIds: number[]; jeNos: string[] }) =>
+      authedFetch<{ ok: boolean; status: string; lines: number; entries: number; jeNos: string[] }>(
+        '/accounting/bank/lines/match-group', { method: 'POST', body: JSON.stringify(body) },
+      ),
+    onSuccess: () => invalidateAfterBankPosting(qc),
+  });
+};
+
 export const useIgnoreBankLine = () => {
   const qc = useQueryClient();
   return useMutation({
@@ -218,5 +292,291 @@ export const useUndoBankLine = () => {
       ),
     onSuccess: () => invalidateAfterBankPosting(qc),
     onError: writeFailedAs('Movement not put back'),
+  });
+};
+
+/* ── Recognition rules maintenance (2026-09-02) — the owner's screwdriver for
+   "this credit is PBB's payout". Server-validated: a regex is compiled at
+   write time and refused with the engine's sentence, so a broken one can
+   never silently un-recognise an acquirer's money. */
+export type BankRule = {
+  id: number; acquirer_code: string; pattern: string;
+  match_field: 'description' | 'reference' | 'both';
+  trading_date_pattern: string | null; merchant_pattern: string | null;
+  sort_order: number; is_active: boolean;
+};
+/* ── Which accounts take a statement, and how each file reads (2026-09-08) ─── */
+
+/** One heading, or the several a bank has used for the same column. */
+export type BankHeading = string | string[];
+export type BankColumnMap = Partial<Record<'date' | 'description' | 'reference' | 'amount' | 'debit' | 'credit' | 'indicator' | 'balance' | 'valueDate', BankHeading>>;
+export type BankConfig = {
+  id: number;
+  account_code: string;
+  bank_code: string;
+  account_no: string | null;
+  statement_format: string;
+  delimiter: string | null;
+  amount_format: 'decimal' | 'integer-sen';
+  credit_indicator: string;
+  column_map: BankColumnMap;
+  is_active: boolean;
+};
+
+export const useBankConfigs = () => useQuery({
+  queryKey: ['bank-config'],
+  queryFn: () => authedFetch<{ configs: BankConfig[]; defaultHeadings: Record<string, string[]> }>('/accounting/bank/config'),
+  retry: retryUnlessClientError,
+  retryDelay: 800,
+});
+
+export const useSaveBankConfig = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: {
+      accountCode: string; bankCode: string; accountNo?: string; statementFormat: string; delimiter?: string;
+      amountFormat: string; creditIndicator?: string; isActive?: boolean; columnMap: Record<string, string | string[]>;
+    }) => authedFetch<{ ok: boolean; config: BankConfig }>('/accounting/bank/config', { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['bank-config'] });
+      void qc.invalidateQueries({ queryKey: ['bank-setup'] });
+    },
+  });
+};
+
+export const useBankRules = () => useQuery({
+  queryKey: ['bank-rules'],
+  queryFn: () => authedFetch<{ rules: BankRule[] }>(`/accounting/bank/rules`),
+  staleTime: 30_000,
+  retry: retryUnlessClientError,
+});
+
+export const useSaveBankRule = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...patch }: { id: number } & Partial<{
+      pattern: string; matchField: string; tradingDatePattern: string | null;
+      merchantPattern: string | null; sortOrder: number; isActive: boolean;
+    }>) => authedFetch<{ ok: boolean; rule: BankRule }>(
+      `/accounting/bank/rules/${id}`, { method: 'PATCH', body: JSON.stringify(patch) },
+    ),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['bank-rules'] }); },
+  });
+};
+
+export const useCreateBankRule = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { acquirerCode: string; pattern: string; matchField?: string; sortOrder?: number }) =>
+      authedFetch<{ ok: boolean; rule: BankRule }>(
+        `/accounting/bank/rules`, { method: 'POST', body: JSON.stringify(body) },
+      ),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['bank-rules'] }); },
+  });
+};
+
+/* ── A MONTH of one account, however many files fed it ─────────────────────
+   Owner, 2026-09-08: 每天我上传bank statement 和 merchant report 测试，但是有办法
+   选这个是几月的？因为我发现好像没有. Layer 4 reconciled one FILE, which is a
+   file a day for Hong Leong's any-day export — thirty answers and none of them
+   the answer to "did September agree". The server assembles the month
+   (acc/bank-month) and judges it with the same reconciliation; these are
+   transport only, like everything else in this file. */
+
+export type BankMonth = {
+  accountCode: string;
+  month: string;
+  statementCount: number;
+  lineCount: number;
+  openCount: number;
+  openSen: number;
+  openPayoutCount: number;
+  inSen: number;
+  outSen: number;
+  periodFrom: string | null;
+  periodTo: string | null;
+  openingBalanceSen: number | null;
+  closingBalanceSen: number | null;
+  /** Opening known, closing known, and no break between the files. */
+  complete: boolean;
+  gapCount: number;
+  /** Null means open. Named rather than a bare flag: an operator who finds a
+      month he cannot work needs the name, not a padlock. */
+  locked: { lockedBy: string | null; lockedAt: string } | null;
+};
+
+/** Two files that should have met and did not — a day nobody uploaded. */
+export type BankChainBreak = {
+  beforeId: number; beforeFile: string; beforeTo: string; beforeClosingSen: number;
+  afterId: number; afterFile: string; afterFrom: string; afterOpeningSen: number;
+  gapSen: number;
+};
+
+/** Where a month's opening or closing figure came from: the file it was read
+    off, or — when no file printed one — the person who typed it
+    (docs/bugs/0858). */
+export type BankBalanceSource = {
+  statementId: number | null;
+  fileName: string | null;
+  on: string;
+  typed?: { month: string; by: string | null; at: string; note: string | null };
+};
+
+/** A month-end figure somebody typed off the bank's own statement. */
+export type BankTypedBalance = {
+  month: string;
+  closingSen: number;
+  typedBy: string | null;
+  typedAt: string;
+  note: string | null;
+};
+
+/** This month's typed closing, and the previous month's (where this one opens). */
+export type BankMonthBalances = {
+  closing: BankTypedBalance | null;
+  previousClosing: BankTypedBalance | null;
+};
+
+export type BankMonthAssembly = {
+  month: string;
+  monthFrom: string;
+  monthTo: string;
+  periodFrom: string;
+  periodTo: string;
+  statementOpeningSen: number | null;
+  openingFrom: BankBalanceSource | null;
+  statementClosingSen: number | null;
+  closingFrom: BankBalanceSource | null;
+  spanningIds: number[];
+  breaks: BankChainBreak[];
+  gaps: string[];
+  /** Opening known, closing known (printed or typed), no break between them,
+      and a typed figure agreeing with the movements. */
+  complete: boolean;
+};
+
+export const useBankMonths = () => useQuery({
+  queryKey: ['bank-months'],
+  queryFn: () => authedFetch<{ months: BankMonth[] }>('/accounting/bank/months'),
+  retry: retryUnlessClientError,
+  retryDelay: 800,
+});
+
+export const useBankMonth = (accountCode: string | null, month: string | null) => useQuery({
+  queryKey: ['bank-month', accountCode, month],
+  queryFn: () => authedFetch<{
+    accountCode: string;
+    month: string;
+    assembly: BankMonthAssembly;
+    reconciliation: Reconciliation;
+    lock: BankMonthLock | null;
+    /** The typed month-end figures as stored (docs/bugs/0858). Optional only
+        for the minute a newer screen reads an older server. */
+    balances?: BankMonthBalances;
+    statements: Array<BankStatement & { spanning: boolean }>;
+    lines: Array<BankLine & { file_name: string | null }>;
+    unmatchedEntries: LedgerEntry[];
+  }>(`/accounting/bank/months/${encodeURIComponent(accountCode!)}/${encodeURIComponent(month!)}`),
+  enabled: accountCode != null && month != null,
+  retry: retryUnlessClientError,
+  retryDelay: 800,
+});
+
+/* ── Closing a reconciled month ────────────────────────────────────────────
+   Owner, 2026-09-08: 还有lock 起来不可以随便碰. Every rule about whether a month
+   MAY be closed lives on the server (acc/bank-lock.ts) — these are transport,
+   and the refusals they surface are the server's own sentences. */
+
+export type BankMonthLock = {
+  accountCode: string;
+  month: string;
+  lockedBy: string | null;
+  lockedAt: string;
+  lockNote: string | null;
+  closingStatementSen: number | null;
+  closingLedgerSen: number | null;
+  differenceSen: number | null;
+  statementCount: number;
+  wasComplete: boolean;
+};
+
+/* The obvious matches — one same-amount entry the bank names — run over a
+   statement uploaded before the rule existed (docs/bugs/0814). */
+export const useAutoMatchStatement = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) =>
+      authedFetch<{ ok: boolean; matched: number; jeNos: string[]; contraPairs: number }>(
+        `/accounting/bank/statements/${id}/auto-match`, { method: 'POST', body: '{}' },
+      ),
+    onSuccess: () => invalidateAfterBankPosting(qc),
+  });
+};
+
+/* An old file re-filed as its month's statement, in place (docs/bugs/0806). */
+export const useSetStatementPeriod = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, month }: { id: number; month: string }) =>
+      authedFetch<{ ok: boolean; periodFrom: string; periodTo: string }>(
+        `/accounting/bank/statements/${id}/period`, { method: 'POST', body: JSON.stringify({ month }) },
+      ),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['bank-statement'] });
+      void qc.invalidateQueries({ queryKey: ['bank-statements'] });
+      void qc.invalidateQueries({ queryKey: ['bank-month'] });
+      void qc.invalidateQueries({ queryKey: ['bank-months'] });
+    },
+  });
+};
+
+export const useLockBankMonth = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ accountCode, month, note }: { accountCode: string; month: string; note?: string | null }) =>
+      authedFetch<{ ok: boolean; lock: BankMonthLock; reasonRecorded: boolean }>(
+        `/accounting/bank/months/${encodeURIComponent(accountCode)}/${encodeURIComponent(month)}/lock`,
+        { method: 'POST', body: JSON.stringify({ note: note ?? null }) },
+      ),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['bank-month'] });
+      void qc.invalidateQueries({ queryKey: ['bank-months'] });
+    },
+  });
+};
+
+export const useUnlockBankMonth = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ accountCode, month, note }: { accountCode: string; month: string; note: string }) =>
+      authedFetch<{ ok: boolean; lock: BankMonthLock }>(
+        `/accounting/bank/months/${encodeURIComponent(accountCode)}/${encodeURIComponent(month)}/unlock`,
+        { method: 'POST', body: JSON.stringify({ note }) },
+      ),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['bank-month'] });
+      void qc.invalidateQueries({ queryKey: ['bank-months'] });
+    },
+  });
+};
+
+/* The month-end figure typed off the bank's own statement, for an account
+   whose files print none (docs/bugs/0858). Null removes it. The month's
+   opening is the PREVIOUS month's closing, so the month view saves that one
+   under the previous month. */
+export const useTypeMonthClosing = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ accountCode, month, closingSen, note }: {
+      accountCode: string; month: string; closingSen: number | null; note?: string | null;
+    }) =>
+      authedFetch<{ ok: boolean; balance: BankTypedBalance | null }>(
+        `/accounting/bank/months/${encodeURIComponent(accountCode)}/${encodeURIComponent(month)}/closing`,
+        { method: 'POST', body: JSON.stringify({ closingSen, note: note ?? null }) },
+      ),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['bank-month'] });
+      void qc.invalidateQueries({ queryKey: ['bank-months'] });
+    },
   });
 };

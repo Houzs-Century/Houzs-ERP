@@ -37,6 +37,15 @@ export type SofaComboRule = {
   createdAt: string;
   updatedAt: string;
   createdBy: string | null;
+  /* A1 (2026-09-17) — COST derive-status, set by the backend for the MASTER
+     view only (auto-derive flag ON):
+       auto   — cost auto-derives from a supplier combo (derivedFromSupplier*).
+       manual — cost set by hand; no supplier combo matches.
+       gap    — no supplier combo AND no cost: a binding gap to fill.
+     Absent on supplier-scoped combos and when the flag is off. */
+  costSource?: 'auto' | 'manual' | 'gap';
+  derivedFromSupplierId?: string | null;
+  derivedFromSupplierName?: string | null;
 };
 
 export type NewSofaCombo = {
@@ -155,44 +164,6 @@ export function useDeleteSofaCombo() {
       qc.invalidateQueries({ queryKey: ['sofa-combos'] });
       qc.invalidateQueries({ queryKey: ['sofa-combos-history'] });
     },
-  });
-}
-
-// ── R8 anchors ────────────────────────────────────────────────────────────
-// A base_model can be anchored to ONE supplier (sofa_combo_anchor). While
-// anchored, combo create + price edits mirror between the master (sales-side)
-// combo and that supplier's scope, keeping the Product-Maintenance cost and the
-// anchored supplier's cost in lock-step. See apps/api/src/routes/sofa-combos.ts.
-
-export type SofaComboAnchor = {
-  base_model: string;
-  supplier_id: string;
-};
-
-export function useSofaComboAnchors() {
-  return useQuery({
-    queryKey: ['sofa-combo-anchors'],
-    queryFn: () =>
-      authedFetch<{ anchors: SofaComboAnchor[] }>('/sofa-combos/anchors').then((r) => r.anchors),
-    staleTime: 30_000,
-  });
-}
-
-export function useSetSofaComboAnchor() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ baseModel, supplierId }: { baseModel: string; supplierId: string | null }) =>
-      authedFetch<{ ok: true }>(`/sofa-combos/anchors/${encodeURIComponent(baseModel)}`, {
-        method: 'PUT',
-        body: JSON.stringify({ supplierId }),
-      }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['sofa-combo-anchors'] });
-      // The mirror creates/updates combos on the other side, so the combo lists
-      // (both master + supplier-scoped) must refetch to show them.
-      qc.invalidateQueries({ queryKey: ['sofa-combos'] });
-    },
-    onError: writeFailed,
   });
 }
 

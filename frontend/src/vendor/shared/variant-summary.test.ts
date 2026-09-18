@@ -22,6 +22,7 @@ import { buildVariantSummary, foldRedundantSpecials } from "./variant-summary";
  */
 
 const SOFA = "SOFA";
+const BEDFRAME = "BEDFRAME";
 
 describe("foldRedundantSpecials", () => {
   test("hides the glued twin of a picker code (HC-SO-011733 / 9058-2A(LHF))", () => {
@@ -98,6 +99,39 @@ describe("buildVariantSummary — SPECIAL segment", () => {
       specials: ["nylon", "Nylon Fabric", "Right Drawer"],
       specialChoices: { "Right Drawer": ["10\""] },
     })).toBe("SPECIAL: Nylon Fabric + Right Drawer (10\")");
+  });
+});
+
+describe("buildVariantSummary - recorded-only specials (owner choice 甲, 2026-09-03)", () => {
+  /* An AutoCount-imported line's slip asked for a PRICED option. Recording it
+     must let the factory see what to build without re-charging a closed
+     document, so it lives in variants.specialsRecorded - a key NO pricing path
+     reads (that is the whole safety property; see
+     backend/scripts/record-priced-specials-on-migrated-lines.mjs). Description 2
+     is the surface that carries it to the factory, so it renders HERE. */
+  test("a recorded option prints in the same SPECIAL segment", () => {
+    expect(buildVariantSummary(BEDFRAME, {
+      specialsRecorded: ["HB Fully Cover"],
+    })).toBe("SPECIAL: HB Fully Cover");
+  });
+
+  test("picked and recorded options print together, picked first", () => {
+    expect(buildVariantSummary(BEDFRAME, {
+      specials: ["HB Straight"],
+      specialsRecorded: ["HB Fully Cover"],
+    })).toBe("SPECIAL: HB Straight + HB Fully Cover");
+  });
+
+  test("a code the operator has since PICKED is never printed twice", () => {
+    expect(buildVariantSummary(BEDFRAME, {
+      specials: ["HB Fully Cover"],
+      specialsRecorded: ["HB Fully Cover"],
+    })).toBe("SPECIAL: HB Fully Cover");
+  });
+
+  test("no recorded codes leaves the rendering byte-for-byte unchanged", () => {
+    expect(buildVariantSummary(BEDFRAME, { specials: ["HB Straight"], specialsRecorded: [] }))
+      .toBe(buildVariantSummary(BEDFRAME, { specials: ["HB Straight"] }));
   });
 });
 

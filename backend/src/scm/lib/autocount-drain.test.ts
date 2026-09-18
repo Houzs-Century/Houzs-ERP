@@ -384,6 +384,32 @@ describe('the drain', () => {
     expect(line.Photos).toBeUndefined();
   });
 
+  /* docs/bugs/0899: ONE 4 MB phone photo refused the whole edit with HTTP 413
+     "body too large". The document now goes without that line's pictures, and
+     the sent row says which line was left behind. */
+  test('a photograph too large for the host is left behind, the edit is sent, and the row says so', async () => {
+    const sb = withFlag('1', { autocount_outbox: [{ id: 'ob-1', status: 'pending', attempts: 0 }] });
+    const sent: Array<Record<string, unknown>> = [];
+    const fetchImpl = vi.fn(async (_u: string, init: RequestInit) => {
+      sent.push(JSON.parse(String(init.body)));
+      return jsonRes(200, { ok: true });
+    }) as never;
+
+    const outcome = await dispatchOne(photoEnv({ 'big.jpg': 'x'.repeat(3 * 1024 * 1024) }), sb as never, row({
+      op: 'edit',
+      doc_type: 'SO',
+      payload: {
+        body: { DocType: 'SO', DocNo: 'SO-1', Header: {}, Lines: [{ DtlKey: 9001, ItemCode: 'X' }] },
+        photos: [{ dtlKey: 9001, keys: ['big.jpg'] }],
+      },
+    }), fetchImpl);
+
+    expect(outcome).toBe('sent');
+    const edit = sent[sent.length - 1];
+    expect((edit.Lines as Array<Record<string, unknown>>)[0].Photos).toBeUndefined();
+    expect(String(outbox(sb)[0].last_error)).toContain('PHOTOS NOT SENT: 1 line(s)');
+  });
+
   /* ── WHICH BUILD ANSWERED (migration 0303) ────────────────────────────────
      A feature the host does not have is indistinguishable from a feature that
      ran and found nothing. /health has always known; nothing stored it. */

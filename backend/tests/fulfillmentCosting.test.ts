@@ -411,6 +411,7 @@ describe("payment voucher — line amounts are validated, not clamped", () => {
     expect("error" in a).toBe(false);
     if ("error" in a) return;
     expect(a.total).toBe(40000);
-    expect(a.rows).toEqual([{ pi_id: "pi-1", amount_sen: 40000 }]);
+    /* One target per row: a PI here, so the AP-invoice slot is null (2026-09-06). */
+    expect(a.rows).toEqual([{ pi_id: "pi-1", ap_invoice_id: null, amount_sen: 40000 }]);
   });
 });

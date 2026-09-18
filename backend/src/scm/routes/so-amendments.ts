@@ -25,11 +25,18 @@ import {
   canLaneTransition, LANE_APPROVE_KEY, LANE_LABEL, type AmendmentLane,
 } from '../shared';
 import { applySoAmendment, reviseBoundPo, ReceivedFloorError } from '../lib/so-revision';
+import { chunkIn } from '../lib/paginate-all';
 import { raisePoFollowUps } from '../lib/amendment-po-followup';
-import { hasHouzsPerm, canViewAllSales, canWriteScmConfig } from '../lib/houzs-perms';
-import { resolveSalesScopeIds, salesDocOutOfScope, resolveCallerStaffId } from '../lib/salesScope';
+import { judgeLaneHandover } from '../lib/amendment-lane-handover';
+import { hasHouzsPerm, holdsHouzsPermLiterally, canViewAllSales, canWriteScmConfig } from '../lib/houzs-perms';
+import { resolveSalesScopeIds, applySoScope, soDocOutOfScope, resolveCallerStaffId, resolveUserIdByStaffId } from '../lib/salesScope';
+import {
+  notifySoAmendmentResolved,
+  notifySoAmendmentHandedOver,
+  notifyPoAmendmentRaised,
+} from '../../services/amendmentNotify';
 import { collectProcessingGateProblems } from '../shared/so-save-problems';
-import { canonicaliseSoHeaderChanges, soDatePairRefusal } from '../shared/so-processing-date';
+import { canonicaliseSoHeaderChanges, soDateDay, soDatePairRefusal } from '../shared/so-processing-date';
 import { recordSoAudit } from '../lib/so-audit';
 import { scopeToCompany, isMirroredDocNo, houzsOwns2990, MIRRORED_SO_READONLY, activeCompanyId, requireActiveCompanyId } from '../lib/companyScope';
 import {
@@ -81,17 +88,64 @@ type AmendmentForWrite = {
   apply_lease_expires_at?: string | null;
   /* Needed by the approve-time date-pair re-check (owner 2026-07-28). */
   header_changes?: Record<string, unknown> | null;
+  /* scm.staff uuid of whoever raised it — the audience of the approved /
+     rejected notice (services/amendmentNotify.ts). */
+  requested_by?: string | null;
+  lane_flag_note?: string | null;
 };
 
 /** Lane of a loaded row — narrowed to the two known values, else legacy. */
 const laneOf = (a: AmendmentForWrite): AmendmentLane | null =>
   a.lane === 'LINES' || a.lane === 'DELIVERY' ? a.lane : null;
 
+/* People a RESOLVED amendment is news to (owner 2026-09-02): the person who
+   raised it, and the salesperson whose Sales Order it changes. Both are
+   scm.staff uuids on the documents; the announcements machinery addresses
+   integer public.users ids, so they are translated here — inside the command
+   transaction, because the deferred notice runs after `sb` is gone.
+
+   Fail-soft by construction: an unlinked staff row (AutoCount-imported, no
+   user_id) simply drops out and the notice goes to whoever is left. */
+async function resolvedAmendmentAudience(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SCM client and Hono context are untyped across this router (dispatchMirroredCommand, approveSoCommandHandler); one typed signature here would not make the rest true.
+  sb: any, c: Context<any>,
+  amendment: AmendmentForWrite,
+): Promise<{ requesterUserId: number | null; salespersonUserId: number | null }> {
+  const { data: soRow, error: soErr } = await scopeToCompany(
+    sb.from('mfg_sales_orders').select('salesperson_id').eq('doc_no', amendment.so_doc_no),
+    c,
+  ).maybeSingle();
+  /* A FAILED read is not "this order has no salesperson" — supabase-js does not
+     throw, so an unbound error would silently narrow the audience to one person
+     and look exactly like an order sold by nobody. Say so, and still tell the
+     REQUESTER: their id comes off the amendment row we already hold, so the
+     half of the audience this read cannot reach is the only half we lose. */
+  if (soErr) {
+    console.error(
+      `[amendment-notify] salesperson lookup failed for ${amendment.so_doc_no}: ${soErr.message}`,
+    );
+  }
+  return {
+    requesterUserId: await resolveUserIdByStaffId(sb, amendment.requested_by),
+    salespersonUserId: soErr
+      ? null
+      : await resolveUserIdByStaffId(
+          sb,
+          (soRow as { salesperson_id?: string | null } | null)?.salesperson_id,
+        ),
+  };
+}
+
 /* The refusal every legacy-only gate answers when pointed at a lane row. */
 const NOT_IN_LANE_FLOW = (what: string) => ({
   error: 'not_in_lane_flow',
   reason: `This amendment uses the two-lane flow — ${what}`,
 });
+/* The refusal the lane-only flag answers when pointed at a legacy row. */
+const LEGACY_HAS_NO_DESK = {
+  error: 'legacy_amendment',
+  reason: 'This amendment predates the two-desk flow, so there is no other desk to pass it to.',
+};
 type AmendmentWriteLoad =
   // A Houzs-NATIVE amendment: apply locally, exactly as before.
   | { ok: true; mirrored: false; amendment: AmendmentForWrite }
@@ -109,7 +163,7 @@ type AmendmentWriteLoad =
    so the unscoped load handed one company's user a financial rewrite of the
    other's document. Scope the mutation the way the reads are scoped, and 404
    rather than 403 so an out-of-company id is indistinguishable from a
-   nonexistent one (the convention salesDocOutOfScope already set).
+   nonexistent one (the convention soDocOutOfScope already set).
 
    Second axis: a MIRRORED (2990-) amendment is NOT applied here. Houzs is not
    the writer of 2990's records — applySoAmendment would rewrite a mirrored SO
@@ -127,7 +181,7 @@ async function loadAmendmentForWrite(
 ): Promise<AmendmentWriteLoad> {
   const { data } = await scopeToCompany(
     sb.from('so_amendments')
-      .select('id, so_doc_no, amendment_no, status, version, lane, reason, apply_lease_token, apply_lease_expires_at, header_changes')
+      .select('id, so_doc_no, amendment_no, status, version, lane, reason, apply_lease_token, apply_lease_expires_at, header_changes, requested_by, lane_flag_note')
       .eq('id', id),
     c,
   ).maybeSingle();
@@ -244,7 +298,7 @@ soAmendments.get('/', async (c) => {
   // scopeToCompany: isolate the list to the active company (mig 0080 company_id);
   // no-op pre-activation so single-company Houzs is unchanged.
   const { data, error } = await scopeToCompany(sb.from('so_amendments')
-    .select('id, so_doc_no, amendment_no, status, lane, reason, requested_by, created_at, updated_at'), c)
+    .select('id, so_doc_no, amendment_no, status, lane, reason, lane_flag_note, requested_by, created_at, updated_at'), c)
     .order('created_at', { ascending: false })
     .limit(500);
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
@@ -253,12 +307,12 @@ soAmendments.get('/', async (c) => {
   const scopeIds = await resolveSalesScopeIds(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c));
   if (scopeIds && rows.length > 0) {
     // Resolve which of the listed amendments' SOs the caller may see — a single
-    // bounded query over the ≤500 doc_nos on the page (salesperson_id ∈ scope).
+    // bounded query over the ≤500 doc_nos on the page (access_staff_ids ∩ scope,
+    // so an order SHARED with the caller lists its amendments too).
     const docNos = [...new Set(rows.map((r) => r.so_doc_no).filter((x): x is string => !!x))];
-    const { data: soRows } = await scopeToCompany(sb.from('mfg_sales_orders')
+    const { data: soRows } = await scopeToCompany(applySoScope(sb.from('mfg_sales_orders')
       .select('doc_no')
-      .in('doc_no', docNos)
-      .in('salesperson_id', scopeIds), c);
+      .in('doc_no', docNos), scopeIds), c);
     const allowed = new Set(((soRows ?? []) as Array<{ doc_no: string }>).map((r) => r.doc_no));
     rows = rows.filter((r) => r.so_doc_no != null && allowed.has(r.so_doc_no));
   }
@@ -268,22 +322,30 @@ soAmendments.get('/', async (c) => {
      detail's light bound-PO summary resolves (purchase_order_items.so_item_id →
      mfg_sales_order_items.id). The PO Amendments inbox merges the SO amendments
      that revise a bound PO alongside the direct po_amendments, so the purchasing
-     team sees the whole revision queue in one place. Three bounded queries over
-     the ≤500-row page, never per-row. Fail-soft: enrichment errors leave
-     bound_pos empty rather than failing the list. */
+     team sees the whole revision queue in one place. Three reads over the
+     ≤500-row page, never per-row, each batched by URL budget and paged
+     (chunkIn), because the id lists ride in the request line: on 2026-09-15
+     HOUZS's PO-line read already sent 10.6KB against the tree's 4KB budget,
+     with ~19.5KB known to be refused. A failed read fails the list: both PO
+     Amendments queues list an SO amendment only when bound_pos is non-empty, so
+     an empty field from a failed read looked exactly like "never purchased" and
+     the row left purchasing's queue with nothing to say why
+     (docs/bugs/0930-an-so-amendment-left-the-po-amendments-queue-when-a-bound-po.md). */
   const boundBySo = new Map<string, Array<{ id: string; po_number: string; status: string }>>();
   const allDocNos = [...new Set(rows.map((r) => r.so_doc_no).filter((x): x is string => !!x))];
   if (allDocNos.length > 0) {
-    const { data: soItemRows } = await sb.from('mfg_sales_order_items')
-      .select('id, doc_no').in('doc_no', allDocNos);
+    const { data: soItemRows, error: soItemErr } = await chunkIn(allDocNos, (batch, from, to) =>
+      sb.from('mfg_sales_order_items').select('id, doc_no').in('doc_no', batch).range(from, to));
+    if (soItemErr) return c.json({ error: 'load_failed', reason: soItemErr.message }, 500);
     const soItemToDoc = new Map<string, string>();
-    for (const r of (soItemRows ?? []) as Array<{ id: string; doc_no: string }>) soItemToDoc.set(r.id, r.doc_no);
+    for (const r of soItemRows as Array<{ id: string; doc_no: string }>) soItemToDoc.set(r.id, r.doc_no);
     const soItemIds = [...soItemToDoc.keys()];
     if (soItemIds.length > 0) {
-      const { data: poItemRows } = await sb.from('purchase_order_items')
-        .select('purchase_order_id, so_item_id').in('so_item_id', soItemIds);
+      const { data: poItemRows, error: poItemErr } = await chunkIn(soItemIds, (batch, from, to) =>
+        sb.from('purchase_order_items').select('purchase_order_id, so_item_id').in('so_item_id', batch).range(from, to));
+      if (poItemErr) return c.json({ error: 'load_failed', reason: poItemErr.message }, 500);
       const poToDocs = new Map<string, Set<string>>();
-      for (const r of (poItemRows ?? []) as Array<{ purchase_order_id: string | null; so_item_id: string | null }>) {
+      for (const r of poItemRows as Array<{ purchase_order_id: string | null; so_item_id: string | null }>) {
         const doc = r.so_item_id ? soItemToDoc.get(r.so_item_id) : undefined;
         if (!r.purchase_order_id || !doc) continue;
         const set = poToDocs.get(r.purchase_order_id) ?? new Set<string>();
@@ -292,9 +354,10 @@ soAmendments.get('/', async (c) => {
       }
       const poIds = [...poToDocs.keys()];
       if (poIds.length > 0) {
-        const { data: poRows } = await sb.from('purchase_orders')
-          .select('id, po_number, status').in('id', poIds);
-        for (const po of (poRows ?? []) as Array<{ id: string; po_number: string; status: string }>) {
+        const { data: poRows, error: poErr } = await chunkIn(poIds, (batch, from, to) =>
+          sb.from('purchase_orders').select('id, po_number, status').in('id', batch).range(from, to));
+        if (poErr) return c.json({ error: 'load_failed', reason: poErr.message }, 500);
+        for (const po of poRows as Array<{ id: string; po_number: string; status: string }>) {
           for (const doc of poToDocs.get(po.id) ?? []) {
             const list = boundBySo.get(doc) ?? [];
             list.push(po);
@@ -304,11 +367,97 @@ soAmendments.get('/', async (c) => {
       }
     }
   }
-  const amendments = rows.map((r) => ({
-    ...r,
-    bound_pos: r.so_doc_no ? (boundBySo.get(r.so_doc_no) ?? []) : [],
-  }));
+  /* The queue's Reference column (owner 2026-09-14: 「要加上reference number」) —
+     the SO header's own customer reference. Sent RAW (`ref`, `customer_so_no`):
+     the frontend resolves the cell with customerRefOf, the one display rule the
+     Sales Order list already uses, so the two screens cannot show different
+     references for one order. One read over the page's doc_nos, batched like
+     the three above. A failed read fails the list like the main read does: a
+     blank column would say "this order has no reference", which a failed read
+     does not know. */
+  const refBySo = new Map<string, { ref: string | null; customer_so_no: string | null }>();
+  if (allDocNos.length > 0) {
+    const { data: soRefRows, error: soRefErr } = await chunkIn(allDocNos, (batch, from, to) =>
+      scopeToCompany(sb.from('mfg_sales_orders').select('doc_no, ref, customer_so_no').in('doc_no', batch), c)
+        .range(from, to));
+    if (soRefErr) return c.json({ error: 'load_failed', reason: soRefErr.message }, 500);
+    for (const so of soRefRows as Array<{ doc_no: string; ref: string | null; customer_so_no: string | null }>) {
+      refBySo.set(so.doc_no, so);
+    }
+  }
+  const amendments = rows.map((r) => {
+    const so = r.so_doc_no ? refBySo.get(r.so_doc_no) : undefined;
+    return {
+      ...r,
+      bound_pos: r.so_doc_no ? (boundBySo.get(r.so_doc_no) ?? []) : [],
+      so_ref: so?.ref ?? null,
+      so_customer_so_no: so?.customer_so_no ?? null,
+    };
+  });
   return c.json({ amendments });
+});
+
+/* ── GET /pending-count — how many amendments are waiting for THIS caller ───
+   Feeds the red count on the "Sales Order Amendment" sidebar entry (owner
+   2026-09-09: "根据目前还有多少单需要被审批 — 在需要审批人员账号显示, 审批后就
+   根据目前需要的单号改变").
+
+   THE COUNT IS PER-SIGNER, NOT A GLOBAL BACKLOG. It counts only the lanes this
+   caller can actually sign, so the badge answers "how much is waiting for ME".
+   Someone who holds neither lane key gets 0 and the badge never renders — which
+   is the whole "在需要审批人员账号显示" half of the ask: a number on a menu the
+   reader cannot act on is worse than no number, because it never goes down for
+   them no matter what they do.
+
+   REQUESTED only — that is the one open state a lane row has (amendment-lane.ts
+   state machine); everything else is terminal. Legacy (lane IS NULL) rows are
+   counted for the legacy key holder for the same reason the gates still honour
+   it: a finite backlog that still needs clearing.
+
+   Registered BEFORE `/:id` — Hono matches in order, and a param route above
+   this one would swallow "pending-count" as an amendment id.
+
+   Fails SOFT with 0. A badge is decoration on someone else's screen; a count
+   query that errors must not turn the sidebar into an error state. */
+soAmendments.get('/pending-count', async (c) => {
+  /* holdsHouzsPermLiterally, NOT hasHouzsPerm: the `*` wildcard must not put a
+     count on the Owner account's menu (owner 2026-09-09). Same rule the notice
+     audience already applied — a badge that carries every desk's backlog is a
+     badge its reader learns to ignore, and the wildcard holder can still
+     approve anything and still sees every row inside the module. */
+  const lanes: string[] = [];
+  if (holdsHouzsPermLiterally(c, LANE_APPROVE_KEY.LINES)) lanes.push('LINES');
+  if (holdsHouzsPermLiterally(c, LANE_APPROVE_KEY.DELIVERY)) lanes.push('DELIVERY');
+  const legacy = holdsHouzsPermLiterally(c, 'scm.amendment.approve_so');
+  if (lanes.length === 0 && !legacy) return c.json({ count: 0 });
+
+  const sb = c.get('supabase');
+  try {
+    /* Every OPEN amendment for the company, then split by lane in JS.
+       Deliberately not an `.or('lane.in.(…),lane.is.null')`: `lane` is nullable,
+       so the legacy half cannot ride the same `.in()`, and the two-predicate OR
+       is PostgREST filter-grammar that reads as a string and fails as a string.
+       The set it walks is BOUNDED and small by construction — the partial unique
+       indexes (uq_so_amendment_open_legacy / uq_so_amendment_open_lane, mig 0215)
+       allow at most one open row per SO per lane, and prod carries a handful.
+       A count that is easy to read beats a filter that is clever to write. */
+    const { data, error } = await scopeToCompany(
+      sb.from('so_amendments').select('id, lane').eq('status', 'REQUESTED'),
+      c,
+    );
+    if (error) {
+      console.error('[so-amendment] pending-count failed:', error.message);
+      return c.json({ count: 0 });
+    }
+    const rows = data as Array<{ lane: string | null }>;
+    const mine = rows.filter((r) =>
+      r.lane == null ? legacy : lanes.includes(r.lane),
+    );
+    return c.json({ count: mine.length });
+  } catch (e) {
+    console.error('[so-amendment] pending-count threw:', (e as Error).message);
+    return c.json({ count: 0 });
+  }
 });
 
 /* ── GET /command-diag — the owner's dry-run for the write-back channel ─────
@@ -351,7 +500,7 @@ soAmendments.get('/:id', async (c) => {
   const [amdRes, lineRes] = await Promise.all([
     // scopeToCompany: detail read isolated to the active company (mig 0080); no-op pre-activation.
     scopeToCompany(sb.from('so_amendments')
-      .select('id, so_doc_no, amendment_no, status, lane, reason, requested_by, ' +
+      .select('id, so_doc_no, amendment_no, status, lane, reason, lane_flag_note, requested_by, ' +
         'supplier_confirmed_by, supplier_confirmation_ref, supplier_confirmation_note, ' +
         'supplier_confirmation_attachment_key, so_approved_by, so_approved_at, ' +
         'po_approved_by, po_approved_at, sent_at, created_at, updated_at, ' +
@@ -386,16 +535,16 @@ soAmendments.get('/:id', async (c) => {
   // SO header summary — doc_no, status, revision (+ salesperson_id for the scope
   // check below).
   const { data: soRow } = await sb.from('mfg_sales_orders')
-    .select('doc_no, status, revision, salesperson_id')
+    .select('doc_no, status, revision, salesperson_id, access_staff_ids, open_to_all')
     .eq('doc_no', amendment.so_doc_no).maybeSingle();
   const salesOrder = (soRow ?? null) as
-    { doc_no: string; status: string; revision: number; salesperson_id?: number | string | null } | null;
+    { doc_no: string; status: string; revision: number; salesperson_id?: number | string | null; access_staff_ids?: string[] | null; open_to_all?: boolean | null } | null;
 
   /* Row-level scope (Owner 2026-07-16) — a scoped salesperson may open only an
      amendment for a Sales Order in their own+downline scope; anything else 404s
      (indistinguishable from a nonexistent id), mirroring the SO detail read.
      View-all callers pass. */
-  if (await salesDocOutOfScope(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c), salesOrder?.salesperson_id)) {
+  if (await soDocOutOfScope(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c), { salespersonId: salesOrder?.salesperson_id, accessStaffIds: salesOrder?.access_staff_ids, openToAll: salesOrder?.open_to_all })) {
     return c.json({ error: 'not_found' }, 404);
   }
 
@@ -579,8 +728,14 @@ export async function approveSoCommandHandler(c: any, sb: any): Promise<Response
       .select('processing_date, customer_delivery_date, debtor_name, address1, postcode')
       .eq('doc_no', amendment.so_doc_no)
       .maybeSingle();
-    const cur = (soDates ?? {}) as { processing_date?: string | null; customer_delivery_date?: string | null };
-    const ymd = (v: unknown): string => (v == null ? '' : String(v).slice(0, 10));
+    const cur = (soDates ?? {}) as { processing_date?: string | Date | null; customer_delivery_date?: string | Date | null };
+    /* soDateDay, NOT `String(v).slice(0, 10)`. This handler runs inside
+       runScmPgCommand, whose postgres.js shim returns a DATE column as a JS
+       Date object; `String(date).slice(0, 10)` is 'Fri Aug 28', which sorts
+       after every '2026-…' string, so the order re-check below refused a legal
+       Delivery Date amendment on 2990-SO-2606-011 (2026-09-04) with a message
+       the frontend then dropped as too long. See docs/bugs/0636. */
+    const ymd = soDateDay;
     const nextProc = 'processingDate' in headerChanges
       ? ymd(headerChanges['processingDate'])
       : ymd(cur.processing_date);
@@ -603,8 +758,17 @@ export async function approveSoCommandHandler(c: any, sb: any): Promise<Response
       origDeliv: ymd(cur.customer_delivery_date),
     });
     if (stalePair) {
+      /* `message` is the sentence the operator SEES: authed-fetch's hygiene
+         filter only renders a candidate under 200 characters, and `reason`
+         below is longer than that — so until 2026-09-04 this refusal rendered
+         as the generic "clashes with something already in the system". Keep
+         `message` short; `reason` carries the full explanation for logs. */
       return c.json({
         error: 'amendment_dates_pair_stale',
+        message:
+          `Approving this would leave the order with only one date ` +
+          `(Processing ${nextProc || '—'}, Delivery ${nextDeliv || '—'}). ` +
+          'Reject it and re-request both dates together.',
         reason:
           `Approving this would leave the order with only one of the two dates ` +
           `(Processing ${nextProc || '—'}, Delivery ${nextDeliv || '—'}). ` +
@@ -615,6 +779,9 @@ export async function approveSoCommandHandler(c: any, sb: any): Promise<Response
     if (nextProc !== '' && nextDeliv !== '' && nextProc > nextDeliv) {
       return c.json({
         error: 'amendment_dates_order_stale',
+        message:
+          `Approving this would put the Processing Date (${nextProc}) after the Delivery Date (${nextDeliv}). ` +
+          'Reject it and re-request both dates together.',
         reason:
           `Approving this would put the Processing Date (${nextProc}) after the Delivery Date (${nextDeliv}). ` +
           'The other half of the paired reschedule was rejected, or the order\'s dates have moved since this ' +
@@ -734,7 +901,7 @@ export async function approveSoCommandHandler(c: any, sb: any): Promise<Response
   /* Apply the revision. A hard failure leaves the amendment status unchanged (we
      only advance status AFTER a clean apply) so the operator can retry — the
      snapshot upsert is idempotent on (so_doc_no, revision). */
-  let applied: { soDocNo: string; revision: number };
+  let applied: { soDocNo: string; revision: number; addedLineIds: string[] };
   try {
     /* The sixth argument is this gate's RECEIPT, and it is what lets the apply
        persist the unit prices the amendment requested instead of re-pricing them
@@ -828,7 +995,50 @@ export async function approveSoCommandHandler(c: any, sb: any): Promise<Response
     docType: 'SO',
     docNo: amendment.so_doc_no,
     createdBy: c.get('houzsUser')?.id ?? null,
+    /* Lines this amendment ADDED carry no AutoCount key yet; declare them NEW so
+       composeEdit appends them instead of refusing the whole document as keyless
+       (docs/bugs/0942). Existing lines already carry keys, which is the condition
+       composeEdit requires before it honours a new line. */
+    newLineIds: applied.addedLineIds,
   });
+
+  /* Notices (owner 2026-09-02). AFTER COMMIT — an approval that rolls back
+     must not leave people told their amendment went through. The audience is
+     resolved HERE, inside the transaction, because `sb` does not outlive it;
+     the deferred half only touches env.DB via the announcements helper, which
+     never throws. */
+  {
+    const audience = await resolvedAmendmentAudience(sb, c, amendment);
+    const actorUserId = c.get('houzsUser')?.id ?? null;
+    const actorLabel = c.get('houzsUser')?.name ?? actorName(user);
+    const followUps = poFollowUps.followUps.map((f) => ({
+      amendmentNo: f.amendmentNo,
+      poNumber: f.poNumber,
+    }));
+    deferScmAfterCommit(c, async () => {
+      await notifySoAmendmentResolved(c.env, {
+        amendmentNo: amendment.amendment_no ?? '',
+        soDocNo: amendment.so_doc_no,
+        outcome: 'approved',
+        actorName: actorLabel,
+        actorUserId,
+        requesterUserId: audience.requesterUserId,
+        salespersonUserId: audience.salespersonUserId,
+      });
+      /* The LINES lane's second signature: each follow-up is a fresh to-do on
+         the purchaser's desk that nobody asked for by hand, so it is exactly
+         the kind of row that used to sit unseen. */
+      for (const f of followUps) {
+        await notifyPoAmendmentRaised(c.env, {
+          amendmentNo: f.amendmentNo,
+          poNumber: f.poNumber,
+          companyId: activeCompanyId(c),
+          requesterUserId: actorUserId,
+          sourceSoAmendmentNo: amendment.amendment_no ?? null,
+        });
+      }
+    });
+  }
 
   await scheduleStockAllocationAfterCommand(c, sb, `amendment-approve-so:${amendment.so_doc_no}`);
   return c.json({
@@ -1130,6 +1340,121 @@ soAmendments.patch('/:id/reject', async (c) => {
       { field: 'rejection_reason', to: reason },
     ],
     note: reason,
+  });
+
+  /* Tell the requester WHY (owner 2026-09-02). The reject gate already insists
+     on a reason "because the person who raised it needs to know what to
+     change" — until now that reason lived only on a screen they had no cause
+     to reopen. This route writes outside runScmPgCommand, so the notice fires
+     inline; it never throws. */
+  {
+    const audience = await resolvedAmendmentAudience(sb, c, amendment);
+    await notifySoAmendmentResolved(c.env, {
+      amendmentNo: amendment.amendment_no ?? '',
+      soDocNo: amendment.so_doc_no,
+      outcome: 'rejected',
+      reason,
+      actorName: c.get('houzsUser')?.name ?? actorName(user),
+      actorUserId: c.get('houzsUser')?.id ?? null,
+      requesterUserId: audience.requesterUserId,
+      salespersonUserId: audience.salespersonUserId,
+    });
+  }
+
+  return c.json({ amendment: updated });
+});
+
+/* ── PATCH /:id/flag-lane ──────────────────────────────────────────────────
+   The APPROVER, reviewing a request on their desk, saying it is not theirs to
+   sign — and the request MOVES to the other desk (owner 2026-09-17, option B;
+   the requester cannot judge the desk, the approver reading the change can).
+   Gated on the row's own lane key. lib/amendment-lane-handover decides whether
+   the move is safe: a change the Purchase Order has to follow never leaves the
+   Purchaser. ONCE per amendment — a row that already carries a handover note
+   cannot be passed back, so two desks cannot bounce it between them; the
+   second desk approves or rejects. */
+soAmendments.patch('/:id/flag-lane', async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const sb = c.get('supabase'); const id = c.req.param('id'); const user = c.get('user');
+
+  let body: { note?: string } = {};
+  try { body = (await c.req.json()) as typeof body; } catch { /* validated below */ }
+  const note = typeof body.note === 'string' ? body.note.trim().slice(0, 500) : '';
+  if (!note) {
+    return c.json({
+      error: 'note_required',
+      message: 'Say why this is not yours to approve — that note is what the other desk reads.',
+    }, 400);
+  }
+
+  const loaded = await loadAmendmentForWrite(sb, id, c);
+  if (!loaded.ok) return c.json({ error: 'not_found' }, 404);
+  const lane = laneOf(loaded.amendment);
+  if (!lane) return c.json(LEGACY_HAS_NO_DESK, 409);
+  if (!hasHouzsPerm(c, LANE_APPROVE_KEY[lane])) {
+    return c.json({
+      error: 'flag_forbidden',
+      message: `Only an approver of the ${LANE_LABEL[lane]} lane can pass this amendment to the other desk.`,
+    }, 403);
+  }
+  if (loaded.mirrored) return c.json(MIRRORED_SO_READONLY, 409);
+  const { amendment } = loaded;
+  if (amendment.status !== 'REQUESTED') {
+    return c.json({
+      error: 'bad_transition',
+      reason: 'This amendment has already been acted on, so it can no longer be passed to the other desk.',
+    }, 409);
+  }
+  if ((amendment.lane_flag_note ?? '').trim()) {
+    return c.json({
+      error: 'already_handed_over',
+      reason: 'This amendment was already passed over from the other desk once. Approve it, or reject it with a reason.',
+    }, 409);
+  }
+
+  const verdict = await judgeLaneHandover(sb, c, {
+    id: amendment.id, so_doc_no: amendment.so_doc_no, lane, header_changes: amendment.header_changes ?? null,
+  });
+  if (!verdict.ok) return c.json({ error: verdict.error, reason: verdict.reason }, verdict.status);
+
+  const { data: updated, error: updErr } = await sb.from('so_amendments').update({
+    lane:           verdict.toLane,
+    lane_flag_note: note,
+    version:        Number(amendment.version ?? 1) + 1,
+    updated_at:     new Date().toISOString(),
+  }).eq('id', id)
+    .eq('company_id', co.companyId)
+    .eq('status', 'REQUESTED')
+    .eq('lane', lane)
+    .eq('version', Number(amendment.version ?? 1))
+    .select('id, so_doc_no, amendment_no, status, lane, lane_flag_note, version')
+    .maybeSingle();
+  if (updErr) return c.json({ error: 'update_failed', reason: updErr.message }, 500);
+  if (!updated) return c.json({ error: 'amendment_version_conflict' }, 409);
+
+  await recordSoAudit(sb, {
+    docNo: amendment.so_doc_no,
+    action: 'AMENDMENT_LANE_FLAGGED',
+    actorId: user.id,
+    actorName: c.get('houzsUser')?.name ?? actorName(user),
+    fieldChanges: [
+      { field: 'lane', from: lane, to: verdict.toLane },
+      { field: 'lane_flag_note', to: note },
+    ],
+    note,
+  });
+
+  await notifySoAmendmentHandedOver(c.env, {
+    amendmentNo: amendment.amendment_no ?? '',
+    soDocNo: amendment.so_doc_no,
+    fromLane: lane,
+    toLane: verdict.toLane,
+    companyId: co.companyId,
+    note,
+    actorName: c.get('houzsUser')?.name ?? actorName(user),
+    actorUserId: c.get('houzsUser')?.id ?? null,
+    requesterUserId: await resolveUserIdByStaffId(sb, amendment.requested_by),
   });
 
   return c.json({ amendment: updated });

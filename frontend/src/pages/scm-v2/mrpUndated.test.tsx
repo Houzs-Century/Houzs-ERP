@@ -128,7 +128,10 @@ describe('MRP — undated demand', () => {
     mrpData = response({ lines: 81, shortageUnits: 60, sofaSets: 7, sofaShortageUnits: 5, hidden: true });
     renderPage();                                   // opens on Sofa
     expect(screen.queryByText(/sofa sets/)).toBeNull();
-    expect(screen.queryByText('7')).toBeNull();
+    // The banner's own wording, not a bare "7": the report table now shows a
+    // "Columns · 7" count (7 movable columns), so a naked number would collide
+    // with DataTable chrome rather than prove the banner gone.
+    expect(screen.queryByText(/hidden from this view/i)).toBeNull();
 
     fireEvent.click(screen.getByRole('tab', { name: 'Bedframe' }));
     expect(screen.queryByText(/hidden from this view/)).toBeNull();

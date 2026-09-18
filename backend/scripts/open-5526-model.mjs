@@ -231,6 +231,9 @@ async function main() {
     note("");
     note("re-point (AutoCount source line -> the ERP rows it produced):");
     let nRows = 0, nPo = 0, nGr = 0, nDo = 0;
+    /* Downstream rows that name a repointed parent but do NOT state the code
+       being migrated FROM. Left untouched and REPORTED — docs/bugs/0672 site 5. */
+    let nStray = 0;
     for (const e of REPOINT) {
       const doc = `HC-${e.ac}`;
       let poId = null;
@@ -301,33 +304,61 @@ async function main() {
           else await tx`UPDATE scm.mfg_sales_order_items
             SET item_code = ${p.to}, description = ${name} WHERE id = ${p.row.id}`;
         }
-        touched.push({ id: p.row.id, code: p.to });
+        touched.push({ id: p.row.id, code: p.to, from: p.row.code });
         nRows++; bump("repoint", "row");
       }
 
       /* Downstream documents took a SNAPSHOT of the code when they were created,
          so the parent alone would leave them stating 8038. These rows carry
          migrated_no_stock: this is paperwork, no movement is written. */
-      const grnFollow = async (poItemId, code) => (APPLY
-        ? tx`UPDATE scm.grn_items SET item_code = ${code} WHERE purchase_order_item_id = ${poItemId} RETURNING id`
-        : tx`SELECT id FROM scm.grn_items WHERE purchase_order_item_id = ${poItemId}`);
+      /* EVERY follow-on names its OLD code — docs/bugs/0672 site 5.
+         These statements used to be `SET item_code = <new> WHERE so_item_id =
+         <parent>` with NO predicate on the code the row currently states, which
+         is the bug class inverted: instead of writing a link from a key, it
+         REWRITES the product from a link, on the strength of that link alone.
+         The consequence is worse than a wrong link, because it destroys the
+         evidence: if a downstream row's `so_item_id` points at the wrong
+         parent (docs/bugs/0671 put nine such rows in production), this would
+         silently restamp that row's item_code to the parent's new code — making
+         the two sides AGREE, and making the wrong link permanently
+         indistinguishable from a right one. `probe-link-identity.mjs` compares
+         exactly those two columns, so this script could erase its own findings.
+
+         With `AND item_code = <old>` a row that does not already state the code
+         being migrated FROM is left alone and COUNTED, so a disagreement
+         surfaces as a number instead of being quietly normalised away. */
+      const grnFollow = async (poItemId, from, code) => (APPLY
+        ? tx`UPDATE scm.grn_items SET item_code = ${code}
+              WHERE purchase_order_item_id = ${poItemId} AND item_code = ${from} RETURNING id`
+        : tx`SELECT id FROM scm.grn_items
+              WHERE purchase_order_item_id = ${poItemId} AND item_code = ${from}`);
+      const grnStrayed = async (poItemId, from) => (await tx`SELECT id FROM scm.grn_items
+              WHERE purchase_order_item_id = ${poItemId} AND item_code <> ${from}`).length;
       for (const t of touched) {
         if (e.kind === "po") {
-          const g = await grnFollow(t.id, t.code);
+          const g = await grnFollow(t.id, t.from, t.code);
           if (g.length) { nGr += g.length; note(`      -> ${g.length} GRN line(s) follow ${compOf(t.code)}`); }
+          const stray = await grnStrayed(t.id, t.from);
+          if (stray) { nStray += stray; note(`      !! ${stray} GRN line(s) point at this PO line but do NOT state ${t.from} — LEFT ALONE`); }
         } else {
           const po = APPLY
-            ? await tx`UPDATE scm.purchase_order_items SET item_code = ${t.code} WHERE so_item_id = ${t.id} RETURNING id`
-            : await tx`SELECT id FROM scm.purchase_order_items WHERE so_item_id = ${t.id}`;
+            ? await tx`UPDATE scm.purchase_order_items SET item_code = ${t.code}
+                        WHERE so_item_id = ${t.id} AND item_code = ${t.from} RETURNING id`
+            : await tx`SELECT id FROM scm.purchase_order_items WHERE so_item_id = ${t.id} AND item_code = ${t.from}`;
           if (po.length) {
             nPo += po.length;
             note(`      -> ${po.length} PO line(s) follow ${compOf(t.code)}`);
-            for (const r of po) nGr += (await grnFollow(r.id, t.code)).length;
+            for (const r of po) nGr += (await grnFollow(r.id, t.from, t.code)).length;
           }
+          const poStray = await tx`SELECT id FROM scm.purchase_order_items WHERE so_item_id = ${t.id} AND item_code <> ${t.from}`;
+          if (poStray.length) { nStray += poStray.length; note(`      !! ${poStray.length} PO line(s) name this SO line but do NOT state ${t.from} — LEFT ALONE`); }
           const d = APPLY
-            ? await tx`UPDATE scm.delivery_order_items SET item_code = ${t.code} WHERE so_item_id = ${t.id} RETURNING id`
-            : await tx`SELECT id FROM scm.delivery_order_items WHERE so_item_id = ${t.id}`;
+            ? await tx`UPDATE scm.delivery_order_items SET item_code = ${t.code}
+                        WHERE so_item_id = ${t.id} AND item_code = ${t.from} RETURNING id`
+            : await tx`SELECT id FROM scm.delivery_order_items WHERE so_item_id = ${t.id} AND item_code = ${t.from}`;
           if (d.length) { nDo += d.length; note(`      -> ${d.length} DO line(s) follow ${compOf(t.code)}`); }
+          const dStray = await tx`SELECT id FROM scm.delivery_order_items WHERE so_item_id = ${t.id} AND item_code <> ${t.from}`;
+          if (dStray.length) { nStray += dStray.length; note(`      !! ${dStray.length} DO line(s) name this SO line but do NOT state ${t.from} — LEFT ALONE`); }
         }
       }
 
@@ -347,6 +378,12 @@ async function main() {
 
     note("");
     note(`re-pointed rows ${nRows} · downstream: PO ${nPo} · GRN ${nGr} · DO ${nDo}`);
+    /* A NON-ZERO HERE IS A FINDING, NOT NOISE. These rows name a parent this
+       script just re-pointed and state a DIFFERENT product than the one being
+       migrated from, so either their link or their code is wrong. Before
+       docs/bugs/0672 site 5 they were restamped silently, which made the two
+       sides agree and destroyed the evidence. Left alone, and said out loud. */
+    note(`downstream rows LEFT ALONE because they do not state the code being migrated from: ${nStray}`);
     note(`RESULT (${APPLY ? "APPLY" : "DRY-RUN"}): ${JSON.stringify(counts)}`);
     if (!APPLY) throw new Error("DRY-RUN-ROLLBACK");
   }).catch((e) => {

@@ -11,10 +11,11 @@
 // MONEY — which is precisely the read worth being able to find.
 // ----------------------------------------------------------------------------
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { poSourceRef, poTransferShape, type PoTransferShape } from '../shared/po-transfer-shape';
+import { poTransferShape, type PoTransferShape } from '../shared/po-transfer-shape';
 import { soOutstandingSen } from '../shared/so-outstanding';
 import { bookSpellingOrOwn, type ErpLine } from '../../services/autocount-writeback';
 import { LOCATION_MAP } from '../../services/autocount-master-maps';
+import { inAcLineOrder } from './ac-line-order';
 
 type Sb = SupabaseClient<any, any, any>;
 
@@ -53,21 +54,75 @@ export async function readOrThrow<T>(
  * wrote that as a payments-ledger row, so `total - SUM(payments)` reproduces
  * `UDF_BALANCE` for every imported order by construction.
  *
- * A FAILED READ THROWS rather than degrading to zero, and A MISSING TOTAL
- * ANSWERS `null`. Both guard the same trap from opposite sides: zero is not
- * "unknown", it is "this customer owes nothing", and writing it into a live
- * account book declares a real debt settled. `recomputeTotals` fills
- * `total_revenue_sen` on every write, so a row without one is a legacy or
+ * A FAILED READ THROWS rather than degrading to zero, and A TOTAL THAT IS NOT
+ * A POSITIVE NUMBER ANSWERS `null`. Both guard the same trap from opposite
+ * sides: zero is not "unknown", it is "this customer owes nothing", and writing
+ * it into a live account book declares a real debt settled. `recomputeTotals`
+ * fills `total_revenue_sen` on each write, but an AutoCount-imported order has
+ * only `local_total_sen` (the fallback below); a row with NEITHER is a
  * half-built order the ERP cannot speak for — the key is omitted and the book
  * keeps whatever it holds. The SO detail page reads the same absence as 0
  * because it is drawing a screen; this is writing a ledger.
+ *
+ * ZERO IS THE CASE THAT ACTUALLY HAPPENS, and until 2026-09-09 only NULL was
+ * refused. `scm.mfg_sales_orders.total_revenue_sen` is `integer DEFAULT 0 NOT
+ * NULL`, so the NULL branch cannot fire against the live schema at all, while
+ * every AutoCount-imported order carries a hard 0 — the cutover importer's
+ * header column list (`HCOLS` in `backend/scripts/import-ac-outstanding-so.mjs`)
+ * writes `local_total_sen` and not this column. 0 is not NULL, so the guard
+ * stood aside and this computed `max(0, 0 - paid) = 0`: on the owner's own
+ * order — total RM 3,200.00, received RM 1,600.00 — the ERP would have told a
+ * LICENSED ACCOUNT BOOK the customer owed nothing. `total_revenue_sen` was 0 on
+ * 2,687 of production's 2,824 live orders when that was measured
+ * (`probe-so-overpay.mjs`, run 31938735652; via docs/bugs/0723-*).
+ *
+ * IT NOW FALLS BACK TO `local_total_sen` — the same total the SCREEN uses
+ * (`soBalanceSen` / `soDisplayTotalSen`). Until 2026-09-12 it REFUSED instead,
+ * and the three reasons are kept because ONE ruling retired two of them (owner
+ * 2026-09-12: AutoCount is now PUSH-ONLY — locked to hand-entry, so the ERP is
+ * the only way any figure reaches the book):
+ *
+ *   1. WAS: refusing kept AutoCount's own `UDF_BALANCE`, the value the cutover
+ *      READ. NOW that AutoCount is locked, that value is the STALE one — a
+ *      balance collected in the ERP reaches the book by no other path, so
+ *      keeping the old number is exactly what left 34 migrated orders
+ *      (RM 101,034) reading as owing money already collected, since the delivery
+ *      sheet reads the balance from the book (docs/bugs/0842,
+ *      docs/migrated-so-lock-lifted-coe.md).
+ *   2. RESIDUAL, not gone: the ERP's paid figure is incomplete only for the
+ *      HISTORICAL window where a customer paid DIRECTLY in AutoCount (since
+ *      2026-08-28) and it never reached the ERP (docs/bugs/0678). For such an
+ *      order `local_total_sen - paid` OVERSTATES the debt. The answer stays
+ *      clamped `max(0, ...)`, so the worst case is a too-high balance, never a
+ *      false 0; the backfill that re-pushes these lists any PARTIAL balance for
+ *      a human to check against the book first. Going forward AutoCount takes no
+ *      payments, so the ERP figure is complete.
+ *   3. A screen and a ledger were held apart on purpose; the ruling is that once
+ *      the ERP is the source of truth, the ledger should say what the screen
+ *      says. `soOutstandingSen` still takes `SoPaidInputs` and stays clamped for
+ *      the book — this reader now feeds it the fallback total.
+ *
+ * WHAT IT STILL REFUSES: an order with NO total in EITHER column — both 0 / NULL
+ * / negative. 0 is "unknown", not "owes nothing", and 0 into a ledger declares a
+ * real debt settled. WHAT IT DOES NOT REFUSE: a SETTLED order — a real positive
+ * total and a real 0 balance, which both composers send so a paid order stops
+ * owing money in the book. The guard is on the TOTAL, never on the answer.
+ * Pinned in `autocount-read.test.ts`.
  */
 export async function readSoOutstandingSen(
   sb: Sb,
   h: Record<string, unknown>,
 ): Promise<number | null> {
-  const total = Number(h.total_revenue_sen);
-  if (h.total_revenue_sen == null || !Number.isFinite(total)) return null;
+  /* THE TOTAL, with the SAME fallback the SCREEN uses (soDisplayTotalSen in
+     so-outstanding.ts): `total_revenue_sen` when recomputeTotals has run, else
+     `local_total_sen` — the only total an AutoCount-imported order carries. The
+     header block above says WHY the write-back may take this fallback since
+     2026-09-12 (AutoCount is push-only). REFUSE only when NEITHER column has a
+     positive total: 0 is "unknown", and 0 into a ledger is a false "owes
+     nothing". `!(total > 0)` so NULL / NaN / negative refuse in both columns. */
+  const totalRevenueSen = Number(h.total_revenue_sen);
+  const total = totalRevenueSen > 0 ? totalRevenueSen : Number(h.local_total_sen);
+  if (!(total > 0)) return null;
   const rows = await readOrThrow('mfg_sales_order_payments',
     sb.from('mfg_sales_order_payments')
       .select('amount_sen, is_deposit')
@@ -215,9 +270,22 @@ export async function readSoPaymentRefs(
 export async function readPoTransferFacts(
   sb: Sb,
   poId: string,
-): Promise<Array<{ id: string; so_item_id: string | null; allocationCount: number; sourceAcDtlKey: number | null; sourceSoDocNo: string | null; sourceSoInBook: boolean }>> {
+): Promise<Array<{ id: string; so_item_id: string | null; allocationCount: number; sourceAcDtlKey: number | null; sourceSoDocNo: string | null; sourceSoInBook: boolean; itemCode: string | null; sourceItemCode: string | null }>> {
+  /* `item_code` on BOTH sides — docs/bugs/0672 site 13. The transfer decision
+     refused on cardinality and presence and never on the PRODUCT, and the
+     transfer is addressed by DtlKey alone, so a purchase line naming a
+     sales line for a different bed would have transferred the wrong book row.
+     Both selects were already being taken; this adds one column to each. */
+  /* IN THE COMPOSER'S ORDER, and that is a money rule, not tidiness. The keys
+     this returns become `DtlKeys`, which composeSoToPo zips BY INDEX with the
+     details enqueuePoCreate composed from `inAcLineOrder` rows, and the host
+     applies each Detail's Qty and UnitPrice to the line transferred from that
+     Detail's DtlKey. This read had no ORDER BY, so production handed the rows
+     back in another order: HC-PO-2609-032 told the book CROWN (SS+S) x2 and
+     STAR (SS) x1, each at the other's cost (probe run 34826755295). The drain's
+     backfill for a `wait` row zips the same way. */
   const rows = ((await readOrThrow('purchase_order_items',
-    sb.from('purchase_order_items').select('id, so_item_id').eq('purchase_order_id', poId))) ?? []) as Array<Record<string, unknown>>;
+    inAcLineOrder(sb.from('purchase_order_items').select('id, so_item_id, item_code').eq('purchase_order_id', poId)))) ?? []) as Array<Record<string, unknown>>;
   if (!rows.length) return [];
 
   const ids = rows.map((r) => String(r.id));
@@ -234,15 +302,17 @@ export async function readPoTransferFacts(
     .filter((v): v is string => v !== null))];
   const keyOf = new Map<string, number>();
   const docOf = new Map<string, string>();
+  const codeOf = new Map<string, string | null>();
   const inBook = new Set<string>();
   if (soItemIds.length) {
     const soLines = ((await readOrThrow('mfg_sales_order_items',
-      sb.from('mfg_sales_order_items').select('id, linked_ac_dtlkey, doc_no').in('id', soItemIds))) ?? []) as Array<Record<string, unknown>>;
+      sb.from('mfg_sales_order_items').select('id, linked_ac_dtlkey, doc_no, item_code').in('id', soItemIds))) ?? []) as Array<Record<string, unknown>>;
     for (const l of soLines) {
       const k = Number(l.linked_ac_dtlkey);
       if (Number.isFinite(k) && k > 0) keyOf.set(String(l.id), k);
       const dn = String(l.doc_no ?? '').trim();
       if (dn) docOf.set(String(l.id), dn);
+      codeOf.set(String(l.id), l.item_code == null ? null : String(l.item_code));
     }
 
     /* IS THE SALES ORDER IN THE BOOK YET — the fact that tells a MISSING key
@@ -279,39 +349,24 @@ export async function readPoTransferFacts(
       sourceAcDtlKey: soItemId ? (keyOf.get(soItemId) ?? null) : null,
       sourceSoDocNo: soItemId ? (docOf.get(soItemId) ?? null) : null,
       sourceSoInBook: soItemId ? inBook.has(docOf.get(soItemId) ?? '') : false,
+      itemCode: r.item_code == null ? null : String(r.item_code),
+      sourceItemCode: soItemId ? (codeOf.get(soItemId) ?? null) : null,
     };
   });
 }
 
-/** The sales orders a purchase order was raised for, for its `Ref`. */
-export async function readPoSourceSoDocNos(sb: Sb, poId: string): Promise<string[]> {
-  const rows = ((await readOrThrow('purchase_order_items',
-    sb.from('purchase_order_items').select('so_item_id').eq('purchase_order_id', poId))) ?? []) as Array<Record<string, unknown>>;
-  const ids = [...new Set(rows.map((r) => (r.so_item_id == null ? null : String(r.so_item_id)))
-    .filter((v): v is string => v !== null))];
-  if (!ids.length) return [];
-  const soLines = ((await readOrThrow('mfg_sales_order_items',
-    sb.from('mfg_sales_order_items').select('doc_no').in('id', ids))) ?? []) as Array<Record<string, unknown>>;
-  return soLines.map((l) => String(l.doc_no ?? '')).filter((d) => d !== '');
-}
-
 /**
- * The SO-to-PO decision, and the `Ref` that goes with the answer.
+ * The SO-to-PO decision.
  *
- * Both reads and the rule in ONE call, because they are one question and
- * autocount-outbox.ts is at its size cap — the same reason `mastersOf` and the
- * reads above left that file. The rule itself stays pure in
- * `scm/shared/po-transfer-shape.ts`; this is the IO around it.
+ * The read and the rule in ONE call, because autocount-outbox.ts is at its size
+ * cap — the same reason `mastersOf` and the reads above left that file. The rule
+ * itself stays pure in `scm/shared/po-transfer-shape.ts`; this is the IO around
+ * it. The source orders' numbers and reference no longer ride on the answer:
+ * both arms carry them from `readPoHeader` (docs/bugs/0926).
  */
 export async function readPoEnqueueShape(
   sb: Sb,
   poId: string,
-): Promise<{ shape: PoTransferShape; sourceRef: string | null }> {
-  const shape = poTransferShape(await readPoTransferFacts(sb, poId));
-  /* Only on the create path: a transfer needs no reference, because AutoCount's
-     own DocTransfer link is a stronger one. */
-  const sourceRef = shape.kind === 'transfer'
-    ? null
-    : poSourceRef(await readPoSourceSoDocNos(sb, poId));
-  return { shape, sourceRef };
+): Promise<{ shape: PoTransferShape }> {
+  return { shape: poTransferShape(await readPoTransferFacts(sb, poId)) };
 }

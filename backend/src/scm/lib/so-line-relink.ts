@@ -43,8 +43,22 @@ export type SoLinkTable = (typeof SO_LINK_TABLES)[number];
 /** One downstream row that currently points at an SO line. */
 export type SoLinkRow = { table: SoLinkTable; rowId: string; soItemId: string };
 
-/** The identity a match is made on. `lineNo` only orders same-SKU duplicates. */
-export type SoLineIdentity = { id: string; itemCode: string | null; lineNo?: number | null };
+/** The identity a match is made on. `lineNo` only orders duplicates WITHIN one
+ *  bucket; it never decides which bucket a line is in.
+ *
+ *  `variantSig` is part of the identity, not decoration — docs/bugs/0672 site
+ *  11. Without it two lines of the SAME model in different fabrics (the ordinary
+ *  sofa case, and exactly what a TBC exchange produces) share one bucket and are
+ *  paired by POSITION, so a reordered replacement set re-points the purchase
+ *  order dedicated to the BLUE two-seater at the GREY one. The SKU matches, the
+ *  foreign key is valid, nothing dangles — and the floor is told the wrong sofa
+ *  is covered. Build it with `soLineVariantSig`. */
+export type SoLineIdentity = {
+  id: string;
+  itemCode: string | null;
+  lineNo?: number | null;
+  variantSig?: string | null;
+};
 
 export type SoLineRelinkPlan = {
   /** Rewrite these rows' so_item_id onto the replacement line. */
@@ -55,6 +69,25 @@ export type SoLineRelinkPlan = {
 
 const normCode = (code: string | null | undefined): string => (code ?? '').trim().toUpperCase();
 
+/** The colour a line is FOR, read the way the importers actually write it.
+ *
+ *  `colourId` first (the fabric-colour row's own id, which survives a rename),
+ *  then the label, then the legacy `colourCode`. The same precedence
+ *  probe-link-identity.mjs uses — and the reason it uses it is recorded in
+ *  docs/bugs/0674: an earlier version compared `colourCode` alone, found 0
+ *  comparable pairs on every edge, and that EMPTY answer printed identically to
+ *  a clean one. A line with no colour returns '', so non-sofa lines bucket
+ *  exactly as they did before. */
+export function soLineVariantSig(variants: unknown): string {
+  const v = (variants ?? {}) as Record<string, unknown>;
+  const raw = v.colourId ?? v.colourLabel ?? v.colourCode ?? '';
+  return String(raw).trim().toUpperCase();
+}
+
+/** Bucket identity: the SKU AND the variant. The NUL separator cannot appear in
+ *  either half, so no pair of (code, variant) can collide with another. */
+const bucketKey = (l: SoLineIdentity): string => `${normCode(l.itemCode)}\u0000${(l.variantSig ?? '').trim().toUpperCase()}`;
+
 /* Deterministic order within one SKU bucket: line_no when the document is
    numbered, then id. Both sides are ordered the same way, so the k-th old line
    of a SKU pairs with the k-th new line of that SKU — which is what makes a
@@ -63,7 +96,7 @@ function orderedIds(lines: SoLineIdentity[]): Map<string, string[]> {
   const byCode = new Map<string, SoLineIdentity[]>();
   for (const l of lines) {
     if (!l.id) continue;
-    const key = normCode(l.itemCode);
+    const key = bucketKey(l);
     const bucket = byCode.get(key) ?? [];
     bucket.push(l);
     byCode.set(key, bucket);
@@ -93,10 +126,13 @@ export function planSoLineRelink(
   // old SO line id -> replacement SO line id, paired ordinally inside each SKU.
   const oldToNew = new Map<string, string>();
   const codeOfOld = new Map<string, string>();
+  /* Reported to the caller as a human ITEM CODE, never the bucket key — the
+     dropped list is read by a person deciding what to re-link by hand. */
+  const humanCode = new Map<string, string>(oldLines.filter((l) => l.id).map((l) => [l.id, normCode(l.itemCode)]));
   for (const [code, oldIds] of oldByCode) {
     const newIds = newByCode.get(code) ?? [];
     oldIds.forEach((oldId, i) => {
-      codeOfOld.set(oldId, code);
+      codeOfOld.set(oldId, humanCode.get(oldId) ?? code);
       const replacement = newIds[i];
       if (replacement) oldToNew.set(oldId, replacement);
     });

@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { assrVisibilityPredicateSql } from "../src/services/assrVisibility";
-import { canAccessServiceCases, holdsHouzsCompanyGrant } from "../src/routes/assr";
+import { assrCompanySql, canAccessServiceCases, holdsAnyCompanyGrant, holdsHouzsCompanyGrant } from "../src/routes/assr";
 
 /**
  * Service Case visibility is decided by the COMPANY, not by a job title and not
@@ -53,22 +53,46 @@ function user(fields: Partial<{
 
 const READ = ["service_cases.read"];
 
-describe("admittance is keyed off the HOUZS company grant, not the job title", () => {
+describe("admittance is keyed off a company grant, not the job title", () => {
   test("a HOUZS grantee with no service_cases permission and no Sales title is admitted", () => {
     expect(holdsHouzsCompanyGrant(ctx([1]))).toBe(true);
     expect(canAccessServiceCases(ctx([1]), user({ position_name: "Storekeeper" }), READ)).toBe(true);
   });
 
   test("a Sales TITLE alone no longer admits — this is the input the owner ruled out", () => {
-    // Granted only 2990, so the HOUZS term is false; the position/department are
-    // exactly what isSalesUser used to admit on.
+    /* Granted NO company, so the grant term is false; the position/department are
+       exactly what isSalesUser used to admit on. This case used to be written
+       with ctx([2]) — granted only 2990 — which made it prove two things at once
+       and then be cited as though 2990 were deliberately excluded. It was not:
+       the ruling replaced the TITLE, and the HOUZS literal that shipped with it
+       was narrower than the rule (docs/bugs/0621-*). Granted-nothing is the input
+       that isolates the title. */
     expect(
       canAccessServiceCases(
-        ctx([2]),
+        ctx([]),
         user({ position_name: "Sales Executive", department_name: "Sales Department" }),
         READ,
       ),
     ).toBe(false);
+  });
+
+  test("a 2990 grantee IS admitted — the gate asks WHICH company, not WHICH ONE", () => {
+    /* 2026-07-20 already said Service Cases follow the caller's GRANTED
+       companies and anticipated "a future 2990 rep's is {2990}"; 2026-08-20
+       replaced the job title with a company grant and wrote HOUZS into it.
+       Production had 8 non-archived 2990 cases at the 2026-08-21 census, so this
+       is not a hypothetical tenant. */
+    expect(canAccessServiceCases(ctx([2]), user({ position_name: "Storekeeper" }), READ)).toBe(true);
+    expect(holdsAnyCompanyGrant(ctx([2]))).toBe(true);
+  });
+
+  test("ADMITTING IS NOT SHOWING — the door widens, the rows do not", () => {
+    /* The reason widening the door is safe: every read is scoped by
+       assrCompanySql -> allowedCompaniesSql, so a 2990 grantee sees 2990's
+       cases. This pins the INPUT to that scoping rather than restating the SQL:
+       the same context that admits also reports exactly one allowed company. */
+    expect(assrCompanySql(ctx([2]), "company_id")).toContain("2");
+    expect(assrCompanySql(ctx([2]), "company_id")).not.toContain("1,");
   });
 
   test("the permission holder is admitted regardless of company grant (legacy path, unchanged)", () => {

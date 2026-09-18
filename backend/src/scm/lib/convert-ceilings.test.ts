@@ -213,6 +213,16 @@ describe('SO -> PO ceiling (qty - po_qty_picked)', () => {
     test('the batch create path still calls its own cap', () => {
       expect(poRouterSrc).toContain('findOverConvertOffender(items, soRows)');
     });
+
+    /* A company-1 BOUND line (sofa / bedframe / (SP) mattress / custom pillow) is
+       capped on BOTH paths against every live PO on it, MRP-origin included —
+       the double-ordered custom pillows of 2026-09 (lib/bound-line-ordered.ts). */
+    test('both paths count live purchase orders on a bound line, and MRP does not skip a bound cap', () => {
+      expect(poRouterSrc.match(/loadBoundOrderedQty\(/g)?.length).toBe(2);
+      expect(poRouterSrc).toContain('po_qty_picked: boundAwarePicked(r, boundOrdered)');
+      expect(poRouterSrc).toContain('const remaining = row.qty - boundAwarePicked(row, boundOrdered);');
+      expect(poRouterSrc).toContain('(!fromMrp || isBoundForCompany(activeCompanyId(c) ?? null, row)) && p.qty > remaining');
+    });
   });
 });
 

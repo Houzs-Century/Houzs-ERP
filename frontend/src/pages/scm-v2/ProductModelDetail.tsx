@@ -25,7 +25,7 @@ import { ArrowLeft, ImagePlus, Save, Store, Trash2, Wand2, X, Power, PowerOff } 
 import { LazySlot } from '../../components/LazySlot';
 import { Button } from '../../components/Button';
 import { PageHeader } from '../../components/Layout';
-import { maintActiveValues } from '@2990s/shared';
+import { maintActiveValues, fmtSen } from '@2990s/shared';
 import {
   useProductModel, useUpdateProductModel, useDeleteProductModel, useGenerateModelSkus,
   useActivateOneShot, useBrandingPool, useUploadProductModelPhoto,
@@ -33,6 +33,7 @@ import {
 } from '../../vendor/scm/lib/product-models-queries';
 import { useMaintenanceConfig, useUpdateMfgProductStatus, useSpecialAddons } from '../../vendor/scm/lib/mfg-products-queries';
 import { useFabricLibrary } from '../../vendor/scm/lib/queries';
+import { CategorySwapSelect } from '../../vendor/scm/components/CategorySwapSelect';
 import { useAuth } from '../../auth/AuthContext';
 import { prepareImageForUpload } from '../../lib/imagePipeline';
 import { canViewProductCost } from '../../auth/salesAccess';
@@ -434,10 +435,26 @@ export const ProductModelDetail = ({
               placeholder="e.g. SF 5530 / 1005 / Lotti"
             />
           </label>
-          <label className={styles.field}>
-            <span className="t-eyebrow">Category</span>
-            <input type="text" value={model.category} readOnly className={styles.readonly} />
-          </label>
+          <div className={styles.field}>
+            {/* Editable per the approved Modular mockup — a model's category
+                lives here. CategorySwapSelect (kind="model") carries its own
+                "Category" label and runs the same move-the-whole-model-and-its-
+                SKUs confirmation the SKU drawer uses; the server moves the SKUs
+                with the model. */}
+            {id ? (
+              <>
+                <CategorySwapSelect kind="model" id={id} category={model.category} />
+                <span className={styles.cardSub} style={{ marginTop: 4 }}>
+                  Changing this moves the model and all its SKUs to the new category.
+                </span>
+              </>
+            ) : (
+              <>
+                <span className="t-eyebrow">Category</span>
+                <input type="text" value={model.category} readOnly className={styles.readonly} />
+              </>
+            )}
+          </div>
           <label className={styles.field}>
             <span className="t-eyebrow">Branding (optional)</span>
             <datalist id="branding-pool-model-detail">
@@ -1447,7 +1464,5 @@ function OptionGroup({
 }
 
 function formatRM(sen: number | null | undefined): string {
-  if (sen == null) return '—';
-  const ringgit = sen / 100;
-  return `RM ${ringgit.toFixed(2)}`;
+  return fmtSen(sen);
 }

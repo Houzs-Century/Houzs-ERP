@@ -170,8 +170,15 @@ deliveryMessages.post('/statuses', async (c) => {
   const docNos = [...new Set(parsed.data.docNos)];
 
   const sb = c.get('supabase');
+  // source='delivery-planning' is load-bearing, not tidiness. wa_message_log
+  // also carries INBOUND rows now — routes/chatCallback.ts writes what the
+  // customer tapped with source='chat-callback' — and those are newer than the
+  // send they answer. Without this predicate the "first hit per doc" below
+  // would hand the board the customer's reply as if it were the send status,
+  // i.e. every answered message would report itself as freshly sent.
   const { data, error } = await sb.from('wa_message_log')
     .select('doc_no, success, http_code, created_at')
+    .eq('source', 'delivery-planning')
     .in('doc_no', docNos)
     .order('created_at', { ascending: false })
     .limit(2000);

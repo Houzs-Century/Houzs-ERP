@@ -43,14 +43,18 @@
  *  claim "Assistant Storekeeper", "Warehouse Storekeeper" and anything else an
  *  admin types. Mirrors CREW_SCOPED_POSITIONS in backend projectGates.ts. */
 export const CREW_SCOPED_POSITIONS: readonly string[] = [
+  // "storekeeper supervisor" left the set 2026-09-15: the position is the
+  // defect reviewer, and the owner opened all events to it. Mirrors backend.
   "helper",
   "storekeeper",
-  "storekeeper supervisor",
 ];
 
 export type CrewScopeCarrier = {
   position_name?: string | null;
   permissions?: readonly string[] | null;
+  /** The server-resolved capability set from /auth/me; when present its
+   *  `org.crew.scoped` answer (the Title's Duty) wins over the name list. */
+  capabilities?: Partial<Record<string, boolean>>;
 };
 
 /** Is this user force-scoped to the events they are crewed on?
@@ -61,7 +65,14 @@ export type CrewScopeCarrier = {
  *  they happen to hold. */
 export function isCrewScopedUser(user: CrewScopeCarrier | null | undefined): boolean {
   if (!user) return false;
+  if (user.capabilities) return user.capabilities["org.crew.scoped"] === true;
   const granted = user.permissions ?? [];
   if (granted.includes("*") || granted.includes("projects.write")) return false;
-  return CREW_SCOPED_POSITIONS.includes((user.position_name ?? "").trim().toLowerCase());
+  const pos = (user.position_name ?? "").trim().toLowerCase();
+  // Owner 2026-08-28: the admin-created regional warehouse-crew positions
+  // ("Warehouse Crew KL", …) carry the whole helper/storekeeper cohort now.
+  // PREFIX match (name STARTS with "warehouse crew"), not a substring — an
+  // office position merely mentioning warehouse cannot be caged. Mirrors
+  // backend projectGates.ts.
+  return CREW_SCOPED_POSITIONS.includes(pos) || pos.startsWith("warehouse crew");
 }

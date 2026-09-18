@@ -1,0 +1,74 @@
+name: Stamp the PO price onto purchase-invoice lines
+
+# Manual. Purchase-invoice lines written before migration 20260914T0200 carry no
+# stored PO price; this copies the purchase-order line's price onto them so the
+# trail beside the invoice price no longer moves with a later PO amendment.
+# Lines with no PO behind them stay NULL ("no PO link").
+#
+# MODE=plan unless told otherwise; apply needs the confirm phrase and ends by
+# re-reading every stamped line on a FRESH connection.
+#
+# ORDER: staging first. Production apply only on the owner's go-ahead.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "staging"
+        type: choice
+        options: [staging, prod]
+      company:
+        description: "company_id (blank = every company)"
+        required: false
+        default: ""
+        type: string
+      mode:
+        description: "plan or apply"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: 'type exactly: STAMP THE PO PRICE ON INVOICE LINES (only needed for apply)'
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: backfill-pi-po-unit-price-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/backfill-pi-po-unit-price.mjs
+        env:
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY_ID: ${{ inputs.company }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/backfill-pi-po-unit-price.mjs
+        env:
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY_ID: ${{ inputs.company }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

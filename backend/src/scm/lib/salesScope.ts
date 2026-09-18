@@ -95,6 +95,83 @@ export async function salesDocOutOfScope(
   return salespersonId == null || !ids.includes(String(salespersonId));
 }
 
+/* ── SALES ORDERS ONLY: shared orders + open-to-all ─────────────────────────
+   Owner 2026-09-09: a Sales Order can be shared with several salespeople, who
+   all see and edit it equally ("接手的几位 sales person 都有权限"). Migration
+   20260909T1000 added `collaborator_staff_ids` (what was granted) and the
+   trigger-maintained `access_staff_ids` (salesperson_id + collaborators), and
+   the two helpers below are the ONLY place a scoped SO read should express the
+   rule. Everything else on the sales side — DO, SI, delivery returns,
+   consignment, quotes, reports, AR reconciliation — deliberately keeps
+   `.in('salesperson_id', …)`: those documents snapshot the rep who sold the
+   order, which is what commission is booked from. See docs/modules/
+   so-handover.md §"Reach".
+
+   Owner 2026-09-11: the same two helpers also honour `open_to_all` (boolean,
+   mig 20260911T1500) — an order flagged open is visible to (and, subject to the
+   unchanged state locks, editable by) EVERY caller, bypassing access_staff_ids.
+   It is visibility only: attribution, commission and the per-person money
+   endpoints (/mine, /my-mtd — which scope on the caller's own staff uuid, not
+   these helpers) are untouched. See docs/modules/sales-order.md.              */
+
+/**
+ * Apply the caller's row-level scope to a query over `mfg_sales_orders` or its
+ * payment-totals VIEW. Replaces `.in('salesperson_id', scopeIds)` one-for-one:
+ * a null scope is unrestricted, and the match-nothing sentinel still matches
+ * nothing (no order carries the all-zeros uuid).
+ *
+ * `access_staff_ids` is empty for an order with a NULL salesperson_id, so such
+ * rows stay invisible to a scoped caller exactly as they are today.
+ */
+export function applySoScope<T>(q: T, scopeIds: string[] | null): T {
+  if (!scopeIds) return q;
+  /* "in my scope OR open to all". A single PostgREST or= of one array-overlap
+     (access_staff_ids && scope) plus one scalar (open_to_all is true) — NOT the
+     two-array `in.(…) , ov.{…}` nesting 20260909T1000 deliberately avoided; the
+     only commas here are the array literal's. open_to_all is a boolean on both
+     the base table and the payment-totals VIEW (mig 20260911T1500), so this is
+     valid whether `q` reads the table or the view. The match-nothing sentinel
+     still matches nothing on the overlap term (no order carries the all-zeros
+     uuid); such a caller now additionally sees open orders, which is the point. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SCM PostgREST client is untyped throughout this module.
+  return (q as any).or(
+    `access_staff_ids.ov.{${scopeIds.join(",")}},open_to_all.is.true`,
+  ) as T;
+}
+
+/**
+ * The single-document form, for SO detail / print / mutation gates that answer
+ * 404 rather than 403. Pass the row's `access_staff_ids` — the caller is in
+ * scope if ANY of their staff uuids appears in it.
+ *
+ * `accessStaffIds` absent or empty falls back to the `salespersonId` test, so a
+ * gate whose read has not been given the column keeps TODAY's behaviour rather
+ * than opening up: a collaborator would be refused, never a stranger admitted.
+ *
+ * `openToAll` true short-circuits to in-scope for everyone (mig 20260911T1500).
+ * A gate whose read has not been given the column passes `undefined`, which is
+ * falsy, so it keeps TODAY's behaviour — fail-safe, never fail-open.
+ */
+export async function soDocOutOfScope(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SCM PostgREST client is untyped throughout this module (see the four functions around it); typing it here alone would describe a contract the rest of the file does not keep.
+  sb: any,
+  env: Env,
+  houzsUserId: number | null | undefined,
+  canViewAll: boolean,
+  doc: {
+    salespersonId?: number | string | null;
+    accessStaffIds?: readonly (string | null)[] | null;
+    openToAll?: boolean | null;
+  },
+): Promise<boolean> {
+  if (doc.openToAll) return false; // open to all — in scope for everyone
+  const ids = await resolveSalesScopeIds(sb, env, houzsUserId, canViewAll);
+  if (ids === null) return false; // unrestricted
+  const access = (doc.accessStaffIds ?? []).filter((x): x is string => !!x);
+  if (access.length > 0) return !access.some((a) => ids.includes(String(a)));
+  return doc.salespersonId == null || !ids.includes(String(doc.salespersonId));
+}
+
 /**
  * The caller's OWN scm.staff uuid (mig 0066 deterministic row, linked by
  * staff.user_id), or null when the sync row is missing. Used for
@@ -112,4 +189,34 @@ export async function resolveCallerStaffId(
     .eq("user_id", Number(houzsUserId))
     .maybeSingle();
   return ((data as { id?: string } | null)?.id as string | undefined) ?? null;
+}
+
+/**
+ * The REVERSE of resolveCallerStaffId: the public.users id behind one scm.staff
+ * uuid, or null when there is none — an AutoCount-imported staff row carries no
+ * `user_id`, and so does a deleted account.
+ *
+ * Used to address a NOTIFICATION at the people a document names: its
+ * `requested_by` / `salesperson_id` are staff uuids, while the announcements
+ * machinery targets integer user ids. Returns null (never throws) on a DB
+ * error — every caller is a best-effort notifier, none of them a gate, so a
+ * failed lookup must cost a notice and nothing else.
+ */
+export async function resolveUserIdByStaffId(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SCM PostgREST client is untyped throughout this module (see the four functions above); typing it here alone would describe a contract the rest of the file does not keep.
+  sb: any,
+  staffId: string | null | undefined,
+): Promise<number | null> {
+  if (!staffId) return null;
+  const { data, error } = await sb
+    .from("staff")
+    .select("user_id")
+    .eq("id", staffId)
+    .maybeSingle();
+  if (error) {
+    console.log(`[salesScope] staff -> user lookup failed for ${staffId}: ${error.message}`);
+    return null;
+  }
+  const uid = Number((data as { user_id?: number | string | null } | null)?.user_id);
+  return Number.isFinite(uid) && uid > 0 ? uid : null;
 }

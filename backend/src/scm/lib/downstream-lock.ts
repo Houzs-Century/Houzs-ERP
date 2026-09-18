@@ -32,6 +32,16 @@
 // status <> 'CANCELLED' (the scm status vocabulary is uppercase).
 // ----------------------------------------------------------------------------
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { chunkIn } from './paginate-all';
+import {
+  SO_LINE_FROZEN_REFUSAL,
+  soLineFreezeFrom,
+  soLineFrozen,
+  soOrderFullyFrozen,
+  type SoFreezeDownstreamLine,
+  type SoLineFreeze,
+} from '../shared/so-line-freeze';
+export { SO_FULLY_FROZEN_REFUSAL, SO_LINE_FROZEN_REFUSAL, soLineFrozen } from '../shared/so-line-freeze';
 
 export type LockedDocType = 'SO' | 'PO' | 'DO' | 'GRN';
 
@@ -166,6 +176,120 @@ export async function soHasDownstream(sb: Sb, soDocNo: string): Promise<Downstre
     liveCount(sb, 'sales_invoices', 'so_doc_no', soDocNo),
   ]);
   return verdictFromReads('SO', [['deliveryOrders', deliveryOrders], ['salesInvoices', salesInvoices]]);
+}
+
+/* ── PER-LINE: which SO lines a later document already carries ─────────────
+   The owner's 2026-09-15 ruling (shared/so-line-freeze.ts) narrows the SO lock
+   from the whole order to the lines a live DO / SI names. soHasDownstream above
+   still answers the ORDER question — cancel, and the header identity fields. */
+
+export type SoLineFreezeRead =
+  | {
+      ok: true;
+      freeze: SoLineFreeze;
+      /** Every line of the order, cancelled included, with its sofa build key. */
+      lines: Array<{ id: string; cancelled: boolean; buildKey: string | null }>;
+      /** The verdict for the non-cancelled lines: nothing left to convert. */
+      fullyFrozen: boolean;
+    }
+  | { ok: false; refusal: DownstreamRefusal };
+
+const statusById = async (sb: Sb, table: string, ids: string[]): Promise<{ ok: true; map: Map<string, string | null> } | { ok: false; reason: string }> => {
+  const map = new Map<string, string | null>();
+  if (ids.length === 0) return { ok: true, map };
+  const { data, error } = await chunkIn<{ id: string; status: string | null }>(ids, (batch, from, to) =>
+    sb.from(table).select('id, status').in('id', batch).range(from, to));
+  if (error) return { ok: false, reason: `${table}: ${error.message}` };
+  for (const r of data) map.set(r.id, r.status ?? null);
+  return { ok: true, map };
+};
+
+/** Read the per-line verdict for one Sales Order. Every read that fails refuses
+ *  (downstream_check_failed) — an unreadable DO line must never read as "this
+ *  line was never delivered", which is the absence that authorises the write. */
+export async function readSoLineFreeze(sb: Sb, soDocNo: string): Promise<SoLineFreezeRead> {
+  const fail = (reason: string): SoLineFreezeRead => ({ ok: false, refusal: checkFailedRefusal('SO', reason) });
+
+  const [linesRes, ownDosRes, ownSisRes] = await Promise.all([
+    sb.from('mfg_sales_order_items').select('id, cancelled, variants').eq('doc_no', soDocNo),
+    sb.from('delivery_orders').select('id, status').eq('so_doc_no', soDocNo),
+    sb.from('sales_invoices').select('id, status').eq('so_doc_no', soDocNo),
+  ]);
+  if (linesRes.error) return fail(`mfg_sales_order_items: ${linesRes.error.message}`);
+  if (ownDosRes.error) return fail(`delivery_orders: ${ownDosRes.error.message}`);
+  if (ownSisRes.error) return fail(`sales_invoices: ${ownSisRes.error.message}`);
+
+  const lines = ((linesRes.data as unknown as Array<{ id: string; cancelled: boolean | null; variants: Record<string, unknown> | null }> | null) ?? [])
+    .map((l) => ({
+      id: l.id,
+      cancelled: l.cancelled === true,
+      buildKey: typeof l.variants?.buildKey === 'string' && l.variants.buildKey ? l.variants.buildKey : null,
+    }));
+  const lineIds = lines.map((l) => l.id);
+  const ownDos = (ownDosRes.data as unknown as Array<{ id: string; status: string | null }> | null) ?? [];
+  const ownSis = (ownSisRes.data as unknown as Array<{ id: string; status: string | null }> | null) ?? [];
+  const isLive = (s: string | null) => String(s ?? '').trim().toUpperCase() !== 'CANCELLED';
+  const liveDocumentCount = ownDos.filter((d) => isLive(d.status)).length + ownSis.filter((s) => isLive(s.status)).length;
+
+  type DoLine = { so_item_id: string | null; delivery_order_id: string };
+  type SiLine = { so_item_id: string | null; do_item_id: string | null; sales_invoice_id: string };
+  const [doByLine, doByDoc, siByLine, siByDoc] = await Promise.all([
+    chunkIn<DoLine>(lineIds, (batch, from, to) =>
+      sb.from('delivery_order_items').select('so_item_id, delivery_order_id').in('so_item_id', batch).range(from, to)),
+    chunkIn<DoLine>(ownDos.map((d) => d.id), (batch, from, to) =>
+      sb.from('delivery_order_items').select('so_item_id, delivery_order_id').in('delivery_order_id', batch).range(from, to)),
+    chunkIn<SiLine>(lineIds, (batch, from, to) =>
+      sb.from('sales_invoice_items').select('so_item_id, do_item_id, sales_invoice_id').in('so_item_id', batch).range(from, to)),
+    chunkIn<SiLine>(ownSis.map((s) => s.id), (batch, from, to) =>
+      sb.from('sales_invoice_items').select('so_item_id, do_item_id, sales_invoice_id').in('sales_invoice_id', batch).range(from, to)),
+  ]);
+  for (const [label, r] of [['delivery_order_items', doByLine], ['delivery_order_items', doByDoc], ['sales_invoice_items', siByLine], ['sales_invoice_items', siByDoc]] as const) {
+    if (r.error) return fail(`${label}: ${r.error.message}`);
+  }
+  const doLines = [...doByLine.data, ...doByDoc.data];
+  const siLines = [...siByLine.data, ...siByDoc.data];
+
+  const known = (rows: Array<{ id: string; status: string | null }>) => new Map(rows.map((r) => [r.id, r.status ?? null]));
+  const doStatus = known(ownDos);
+  const siStatus = known(ownSis);
+  const [moreDo, moreSi] = await Promise.all([
+    statusById(sb, 'delivery_orders', [...new Set(doLines.map((l) => l.delivery_order_id).filter((id) => id && !doStatus.has(id)))]),
+    statusById(sb, 'sales_invoices', [...new Set(siLines.map((l) => l.sales_invoice_id).filter((id) => id && !siStatus.has(id)))]),
+  ]);
+  if (!moreDo.ok) return fail(moreDo.reason);
+  if (!moreSi.ok) return fail(moreSi.reason);
+  for (const [k, v] of moreDo.map) doStatus.set(k, v);
+  for (const [k, v] of moreSi.map) siStatus.set(k, v);
+
+  /* A line whose parent document could not be found at all is treated as LIVE:
+     absence of the header is not evidence the shipment was cancelled. */
+  const downstream: SoFreezeDownstreamLine[] = [
+    ...doLines.map((l) => ({ kind: 'DO' as const, so_item_id: l.so_item_id, status: doStatus.get(l.delivery_order_id) ?? null })),
+    ...siLines.map((l) => ({ kind: 'SI' as const, so_item_id: l.so_item_id, do_item_id: l.do_item_id, status: siStatus.get(l.sales_invoice_id) ?? null })),
+  ];
+  const freeze = soLineFreezeFrom(downstream, liveDocumentCount);
+  const fullyFrozen = soOrderFullyFrozen(freeze, lines.filter((l) => !l.cancelled).map((l) => l.id));
+  return { ok: true, freeze, lines, fullyFrozen };
+}
+
+/** The line-write gate: refuse when the read failed, or when any of `lineIds`
+ *  is frozen. `null` means the write may go ahead. */
+export function soLineWriteRefusal(
+  read: SoLineFreezeRead,
+  lineIds: ReadonlyArray<string>,
+): DownstreamRefusal | null {
+  if (!read.ok) return read.refusal;
+  return lineIds.some((id) => soLineFrozen(read.freeze, id)) ? SO_LINE_FROZEN_REFUSAL : null;
+}
+
+/** The ids of every line in the same sofa build as `lineId` (itself included).
+ *  A build is priced and swapped as ONE thing, so a build with a frozen module
+ *  refuses a build-wide write. */
+export function soBuildLineIds(read: SoLineFreezeRead, lineId: string): string[] {
+  if (!read.ok) return [lineId];
+  const self = read.lines.find((l) => l.id === lineId);
+  if (!self?.buildKey) return [lineId];
+  return read.lines.filter((l) => l.buildKey === self.buildKey).map((l) => l.id);
 }
 
 /** A PO locks on any live GRN against it. A Purchase Invoice cannot exist

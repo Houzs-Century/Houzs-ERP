@@ -250,9 +250,26 @@ export function amendmentLineChangedFields(
   l: DiffableAmendmentLine,
 ): AmendmentLineChangedFields {
   // An ADD has no before and a REMOVE has no after — the row itself IS the
-  // change, there is nothing to compare.
-  if (l.change_type === 'ADD' || l.change_type === 'REMOVE') return EVERYTHING;
+  // change, there is nothing to compare. Except the remark and the discount:
+  // both are OPTIONAL on a line, so on a whole-line change each counts only when
+  // the line actually carries one. Flagging them always made every card say
+  // "Remark cleared" / "Discount cleared" about an added line that had neither
+  // (docs/bugs/0919-an-added-amendment-line-said-remark-cleared-and-discount-cle.md).
+  if (l.change_type === 'ADD') {
+    return {
+      ...EVERYTHING,
+      remark: (l.new_remark ?? '').trim() !== '',
+      discount: Math.round(l.new_discount_sen ?? 0) > 0,
+    };
+  }
   const old = amendmentOldSnapshot(l);
+  if (l.change_type === 'REMOVE') {
+    return {
+      ...EVERYTHING,
+      remark: (old.remark ?? '').trim() !== '',
+      discount: Math.round(old.discountSen ?? 0) > 0,
+    };
+  }
   return {
     /* `?? old` mirrors what every surface renders on the Requesting side: an
        omitted new value falls back to the old one, so it READS as unchanged and
@@ -303,6 +320,19 @@ export type AmendmentSigDraft = {
   variants?: unknown;
   remark?: string | null;
   discountSen?: number | null;
+};
+
+/** The variants blob as an AMENDMENT compares and sends it: without the `remark`
+    key. The phone's line editor copies the line remark into `variants.remark`
+    (buildVariants) while the stored blob of an imported line carries none, so a
+    compare of the raw blobs read every remarked line as a spec change and a
+    Delivery Date change on HC-SO-011410 opened a second, Purchaser approval over
+    nothing (owner 2026-09-15). The remark rides `newRemark`, not the variants. */
+export const amendmentVariants = (v: unknown): Record<string, unknown> | null => {
+  if (v == null || typeof v !== 'object' || Array.isArray(v)) return null;
+  const rest = { ...(v as Record<string, unknown>) };
+  delete rest.remark;
+  return Object.keys(rest).length === 0 ? null : rest;
 };
 
 export const amendmentLineSig = (d: AmendmentSigDraft): string => JSON.stringify({

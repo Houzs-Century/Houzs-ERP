@@ -12,6 +12,7 @@ import { transferToLabel, transferFromLabel } from "../lib/convertScope";
 import { outstandingEmptyReason, type OutstandingScope } from "../lib/outstandingEmptyReason";
 import "./mobile.css";
 import { SI_TRANSFERABLE_DO_STATES } from '../vendor/shared/do-shipped-states';
+import { soCanRaiseDo } from '../vendor/shared/so-deliverable-states';
 /* The word, from the desktop picker's own component, so the phone and the desk
    cannot drift into two names for one field. Mobile spells its field labels
    "Label: value" (see "Supplier SKU:" below), not uppercase — the WORD is
@@ -127,7 +128,7 @@ const clampQty = (raw: string, max: number): number => {
 
 // ── Source-list row shapes (only the fields we read) ─────────────────────────
 type SoListRow = {
-  doc_no: string; debtor_name: string | null; status: string | null;
+  doc_no: string; debtor_name: string | null; status: string | null; on_hold?: boolean | null;
   so_date: string | null; local_total_sen: number | null; total_revenue_sen: number | null;
 };
 type DoListRow = {
@@ -304,21 +305,27 @@ export function MobileConvertWizard({
        SI_TRANSFERABLE_DO_STATES; this now does too, so the phone offers exactly
        what the create path accepts. The set includes LOADED (owner 2026-08-19,
        #2485) and excludes INVOICED, which nothing ever writes. */
-    const isProcessible = (status: string | null) =>
+    const isTransferableDo = (status: string | null) =>
       (SI_TRANSFERABLE_DO_STATES as readonly string[]).includes(str(status).toUpperCase());
     const isReceivablePo = (status: string | null) => {
       const s = str(status).toUpperCase();
       return s !== "DRAFT" && s !== "CANCELLED" && s !== "RECEIVED" && s !== "CLOSED";
     };
     const needle = q.trim().toLowerCase();
+    /* A SALES ORDER source asks the Sales Order's own question. The DO set above
+       was applied here too, and a Sales Order is never LOADED or DISPATCHED, so
+       the phone offered only DELIVERED orders — a confirmed order waiting for its
+       delivery never appeared (docs/bugs/0888). soCanRaiseDo is the rule the DO
+       create gate enforces (firstUndeliverableSo), and the PO create gate's set
+       is pinned equal to it. */
     if (meta.source === "so") {
       return ((data?.salesOrders ?? []) as SoListRow[])
-        .filter((r) => isProcessible(r.status))
+        .filter((r) => soCanRaiseDo(r.status, r.on_hold ?? null))
         .filter((r) => !needle || `${str(r.debtor_name)} ${r.doc_no}`.toLowerCase().includes(needle));
     }
     if (meta.source === "do") {
       return ((data?.deliveryOrders ?? []) as DoListRow[])
-        .filter((r) => isProcessible(r.status))
+        .filter((r) => isTransferableDo(r.status))
         .filter((r) => !needle || `${str(r.debtor_name)} ${r.do_number}`.toLowerCase().includes(needle));
     }
     // PO (GRN): filter to one supplier at a time so /grns/from-pos never 400s

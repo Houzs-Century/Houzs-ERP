@@ -12,7 +12,7 @@
 //
 // Mounted at '/delivery-returns' in apps/api/src/index.ts.
 
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { normalizePhone } from '../shared/phone';
 import { buildVariantSummary } from '../shared';
 import { supabaseAuth } from '../middleware/auth';
@@ -21,6 +21,7 @@ import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   crossCompanySourceRefusal,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
 import { writeMovements, defaultWarehouseId } from '../lib/inventory-movements';
+import { assertLinkedLineItemsMatch } from '../lib/line-link-item-identity';
 import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
 import { warehouseLabel } from '../lib/warehouse-label';
@@ -39,31 +40,21 @@ import { SO_ITEM_FINANCE_KEYS } from '../lib/finance-keys';
 import { sourceUnitCostByItemId } from '../lib/source-cost';
 import { resolveSalesScopeIds, salesDocOutOfScope, resolveCallerStaffId } from '../lib/salesScope';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
+import {
+  DR_FINANCE_KEYS,
+  DR_HEADER_COLS,
+  attachDeliveryReturnLines,
+  filterDeliveryReturnList,
+  gateDrListFinance,
+  orderDeliveryReturnList,
+  readDeliveryReturnListFilters,
+  stampDrListBookSpellings,
+  stampDrListSoDocNo,
+  type DrLineHeader,
+} from '../lib/delivery-return-list-read';
 
 export const deliveryReturns = new Hono<{ Bindings: Env; Variables: Variables }>();
 deliveryReturns.use('*', supabaseAuth);
-
-/* FINANCE-GATED header keys — cost / margin / per-category revenue+cost
-   subtotals. All are in HEADER (so they travel in the DR list payload) but must
-   reach ONLY a finance-viewer (lib/houzs-perms.canViewScmFinance). Stripped from
-   every row for a non-finance caller. The DR header carries FOUR categories (no
-   service_sen, unlike SO/DO/SI). Refund/total shown to everyone
-   (local_total_sen / refund_sen) are NOT listed here. */
-const DR_FINANCE_KEYS = [
-  'mattress_sofa_sen', 'bedframe_sen', 'accessories_sen', 'others_sen',
-  'mattress_sofa_cost_sen', 'bedframe_cost_sen', 'accessories_cost_sen', 'others_cost_sen',
-  'total_cost_sen', 'total_margin_sen', 'margin_pct_basis',
-] as const;
-
-/* KEPT LOCAL, deliberately — do NOT "converge" DR_FINANCE_KEYS onto
-   SO_FINANCE_KEYS. It is the finance-shaped subset of THIS file's HEADER select,
-   and the delivery return speaks a narrower money vocabulary than the SO: no
-   service_sen / service_cost_sen and no deposit_sen (a return takes no
-   deposit). refund_sen is in HEADER and deliberately NOT here — the refund is
-   what the customer is owed and everyone who passes the access gate may see it,
-   the same line #625 drew and #632 kept. The per-LINE keys ARE shared: they are
-   byte-identical across all seven sales documents, so they live in
-   lib/finance-keys (SO_ITEM_FINANCE_KEYS) and are imported above. */
 
 /** Strip header + line cost/margin in place for a non-finance caller. */
 function gateDrFinance(
@@ -80,23 +71,7 @@ function gateDrFinance(
   }
 }
 
-/* Full DR header — mirrors the editable DO header shape. The pre-rebuild
-   columns (delivery_order_id / sales_invoice_id / reason / received-inspected-
-   refunded timestamps / inspection_notes) stay; the DO-clone fields added in
-   migration 0102 (debtor metadata / salesperson / address / per-category
-   totals + costs / branding / venue / ref / warehouse) extend it. */
-const HEADER =
-  'id, return_number, do_doc_no, delivery_order_id, sales_invoice_id, ' +
-  'debtor_code, debtor_name, return_date, reason, status, ' +
-  'received_at, inspected_at, refunded_at, refund_sen, inspection_notes, ' +
-  'salesperson_id, agent, email, customer_type, building_type, branding, venue, venue_id, ref, ' +
-  'customer_so_no, sales_location, customer_state, customer_country, note, ' +
-  'address1, address2, city, state, postcode, phone, ' +
-  'emergency_contact_name, emergency_contact_phone, emergency_contact_relationship, ' +
-  'mattress_sofa_sen, bedframe_sen, accessories_sen, others_sen, ' +
-  'mattress_sofa_cost_sen, bedframe_cost_sen, accessories_cost_sen, others_cost_sen, ' +
-  'local_total_sen, total_cost_sen, total_margin_sen, margin_pct_basis, line_count, ' +
-  'currency, warehouse_id, notes, created_at, created_by, updated_at';
+const HEADER = DR_HEADER_COLS;
 
 const ITEM =
   'id, delivery_return_id, do_item_id, item_code, item_group, description, description2, ' +
@@ -756,7 +731,7 @@ function buildItemRow(
 }
 
 // ── List ────────────────────────────────────────────────────────────────
-deliveryReturns.get('/', async (c) => {
+export async function deliveryReturnListHandler(c: Context<{ Bindings: Env; Variables: Variables }>) {
   const sb = c.get('supabase');
   /* Row-level visibility scope — the SAME rule and the SAME source of truth as
      the SO / DO / SI list handlers (lib/salesScope): view-all callers
@@ -773,46 +748,24 @@ deliveryReturns.get('/', async (c) => {
      is the bridge's pinned system staff uuid, and feeding that to the scope
      lookup is the documented non-admin 500. */
   const scopeIds = await resolveSalesScopeIds(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c));
-  let q = sb.from('delivery_returns').select(HEADER).order('return_date', { ascending: false }).limit(500);
-  if (scopeIds) q = q.in('salesperson_id', scopeIds);
-  const status = c.req.query('status'); if (status) q = q.eq('status', status);
-  q = scopeToCompany(q, c); // multi-company: isolate to the active company
-  const { data, error } = await q;
+  /* The screen read — the list's filter + order, shared with GET /export/rows
+     (lib/delivery-return-list-read.ts), capped at 500. */
+  const filters = readDeliveryReturnListFilters((k) => c.req.query(k));
+  const { data, error } = await orderDeliveryReturnList(
+    filterDeliveryReturnList(sb.from('delivery_returns').select(HEADER), filters, c, scopeIds),
+  ).limit(500);
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  /* Convert-from column (display-only, audit R8): the DR list already shows its
-     source DO (do_doc_no); resolve the Sales Order behind that DO so the list
-     can also show "From SO", matching the SO/DO/SI lists. One batched read
-     keyed by delivery_order_id → delivery_orders.so_doc_no; best-effort, never
-     throws (the SO number is ancillary, must not 500 the list). */
-  if (Array.isArray(data) && data.length > 0) {
-    const drRows = data as unknown as Array<Record<string, unknown>>;
-    const doIds = [...new Set(
-      drRows
-        .map((r) => r.delivery_order_id as string | null)
-        .filter((d): d is string => !!d),
-    )];
-    const soByDoId = new Map<string, string>();
-    if (doIds.length > 0) {
-      const { data: doRows } = await sb.from('delivery_orders').select('id, so_doc_no').in('id', doIds);
-      for (const d of ((doRows ?? []) as Array<{ id: string | null; so_doc_no: string | null }>)) {
-        if (d.id && d.so_doc_no) soByDoId.set(d.id, d.so_doc_no);
-      }
-    }
-    for (const r of drRows) {
-      r.so_doc_no = soByDoId.get((r.delivery_order_id as string | null) ?? '') ?? null;
-    }
-  }
-  /* Finance gate — cost / margin / per-category subtotals reach ONLY a
-     finance-viewer; stripped from every row otherwise. */
-  if (!canViewScmFinance(c) && Array.isArray(data)) {
-    for (const r of data) {
-      if (r && typeof r === 'object') {
-        for (const k of DR_FINANCE_KEYS) delete (r as Record<string, unknown>)[k];
-      }
-    }
-  }
-  return c.json({ deliveryReturns: data ?? [] });
-});
+  const rows = (data ?? []) as unknown as Array<DrLineHeader & Record<string, unknown>>;
+  /* The SO number and the book's Agent spelling are ancillary: a failed read
+     leaves them blank and must not 500 the list (the export refuses instead). */
+  await stampDrListSoDocNo(sb, c, rows);
+  await stampDrListBookSpellings(sb, c, rows);
+  gateDrListFinance(rows, canViewScmFinance(c));
+  const attached = await attachDeliveryReturnLines(sb, c, rows);
+  if (attached.error !== null) return c.json({ error: 'load_failed', reason: attached.error }, 500);
+  return c.json({ deliveryReturns: attached.rows });
+}
+deliveryReturns.get('/', deliveryReturnListHandler);
 
 // ── Returnable DO lines (line-level partial-return picker) ────────────────
 /* Commander 2026-05-30 (Phase B) — feeds the line-level DO→Delivery Return
@@ -1127,6 +1080,19 @@ deliveryReturns.post('/', async (c) => {
   {
     const over = await checkDrOverRemaining(sb, items);
     if (over) return c.json(over.body, over.status);
+  }
+
+  /* IDENTITY, not just the key — docs/bugs/0672 site 15. The guards around this
+     one prove the delivery line's company and that the return does not exceed
+     what was delivered; none proves it is the SAME PRODUCT. The return books
+     stock back IN against this link and `doLineRemaining` subtracts it from the
+     source line's remaining, so a wrong link returns goods to the wrong product
+     and re-opens a delivery that was fully invoiced. */
+  {
+    const idc = await assertLinkedLineItemsMatch(sb, 'delivery_order_items',
+      (items as Array<Record<string, unknown>>).map((it) => ({ linkId: (it.doItemId as string | undefined) ?? null, itemCode: it.itemCode })),
+      { source: 'Delivery Order line' });
+    if (!idc.ok) return c.json(idc.body, idc.status);
   }
 
   const { data: header, error: hErr } = await insertHeader(sb, user.id, body, c);
@@ -1547,6 +1513,19 @@ deliveryReturns.post('/:id/items', async (c) => {
   {
     const over = await checkDrOverRemaining(sb, [it]);
     if (over) return c.json(over.body, over.status);
+  }
+
+  /* IDENTITY, not just the key — docs/bugs/0672 site 15. The guards around this
+     one prove the delivery line's company and that the return does not exceed
+     what was delivered; none proves it is the SAME PRODUCT. The return books
+     stock back IN against this link and `doLineRemaining` subtracts it from the
+     source line's remaining, so a wrong link returns goods to the wrong product
+     and re-opens a delivery that was fully invoiced. */
+  {
+    const idc = await assertLinkedLineItemsMatch(sb, 'delivery_order_items',
+      [{ linkId: (it.doItemId as string | undefined) ?? null, itemCode: it.itemCode }],
+      { source: 'Delivery Order line' });
+    if (!idc.ok) return c.json(idc.body, idc.status);
   }
 
   const row = buildItemRow(id, it, await sourceUnitCostByItemId(

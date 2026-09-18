@@ -125,6 +125,66 @@ export function isColourKiv(
 }
 
 /**
+ * The live name of a colour whose fabric row has been superseded.
+ *
+ * MODULE SCOPE AND EXPORTED because the sales-order line is not the only
+ * renderer of a colour. `composeSofaDesc2` builds a sofa's Desc2 by its own
+ * path, and while this helper lived inside buildVariantSummary the sofa path
+ * kept writing the obituary — which is why the three documents this comment
+ * names were still refused after the fix that was supposed to clear them.
+ */
+/* A SUPERSEDED FABRIC ROW CARRIES ITS OWN OBITUARY, and it is not a
+   specification. The fabric library renumbered itself on 2026-08-11 and left
+   each old row in place with `[superseded by X on 2026-08-11]` written into
+   the row's own LABEL — so a line still pointing at the dead row renders 39
+   characters of bookkeeping in the middle of the specification the order is
+   built to, and AutoCount then refuses the whole document for a Desc2 over its
+   nvarchar(100) (HC-SO-012513 at 113, HC-SO-012629 at 117).
+
+   THE SUCCESSOR WINS, which is the owner's ruling of 2026-09-09 (「遇到已被
+   取代的颜色就用新色号」) and also the only reading that keeps the text true:
+   the note names the code that replaced this one.
+
+   SAFE AGAINST THE BOOK, measured rather than assumed: across the committed
+   cutover snapshots — 60,939 SO lines, 18,148 PO lines, 47,329 DO lines —
+   ZERO carry this note. It is ours alone, so removing it can only make our
+   text agree with the book more often. That matters because
+   autocount-line-keys.ts matches this string against the book's own Desc2 to
+   tell one line from another. */
+/* The successor is OPTIONAL in the pattern on purpose: a note that names no
+   replacement is still bookkeeping and still must not travel. It is stripped,
+   leaving the dead code, which is at least a code. */
+const SUPERSEDED_NOTE = /\s*\[\s*superseded\s+by\b\s*([^\]]*?)(?:\s+on\s+\d{4}-\d{2}-\d{2})?\s*\]/i;
+export function liveColour(v: string): string {
+  const m = SUPERSEDED_NOTE.exec(v);
+  if (!m) return v;
+  /* The group always participates when the pattern matches — it is not
+     optional — so a `??` here is dead and the linter is right to say so. */
+  const successor = m[1].trim();
+  return successor || v.replace(SUPERSEDED_NOTE, '').trim();
+}
+
+/* Words that label a colour rather than name one: "Col : cove 13", "Fabric : Cove-03". */
+const COLOUR_LABEL_WORD = /^(?:COL|COLOU?R|CLR|FABRIC|FAB|CODE)$/;
+
+/* Upper-cased word tokens, split at letter/digit boundaries and with leading
+   zeros dropped, so "cove 13", "Cove-13" and "COVE-013" read as one colour. */
+function colourTokens(text: string): string[] {
+  return text.toUpperCase()
+    .replace(/([A-Z])(?=\d)|(\d)(?=[A-Z])/g, '$1$2 ')
+    .split(/[^A-Z0-9]+/)
+    .filter(Boolean)
+    .map((t) => (/^\d+$/.test(t) ? String(Number(t)) : t));
+}
+
+/** True when every non-label word of `note` already appears in `printed`. */
+function noteOnlyRestates(note: string, printed: string): boolean {
+  const have = new Set(colourTokens(printed));
+  const words = colourTokens(note).filter((t) => !COLOUR_LABEL_WORD.test(t));
+  return words.length > 0 && words.every((t) => have.has(t));
+}
+
+/**
  * Build a one-line human summary of a line's variants.
  *
  * Format rules (see task spec, Commander 2026-05-28):
@@ -166,7 +226,7 @@ export function buildVariantSummary(
   // read off variants, missing -> old behaviour), so a line with no supplier code
   // is unchanged. Distinct-only: a supplier code equal to the internal code adds
   // no parens.
-  const fabricCodeRaw = str(variants.fabricCode);
+  const fabricCodeRaw = liveColour(str(variants.fabricCode));
   const fabricSupplierCode = str(variants.fabricSupplierCode);
   // Owner format ruling 2026-07-24 (second pass): the supplier code's parens
   // go at the END of the whole fabric segment - "CG-001 Pearl (KN390-1)" -
@@ -174,7 +234,7 @@ export function buildVariantSummary(
   // duplicated mess, and "CG-001 (KN390-1) Pearl" was still the wrong order).
   // So the parts are composed BARE (the original dedupe rules all hold) and
   // the parens are appended to the finished segment below.
-  const fabricParts = [fabricCodeRaw, str(variants.colorCode), str(variants.colourLabel)];
+  const fabricParts = [fabricCodeRaw, str(variants.colorCode), str(variants.colourLabel)].map(liveColour);
   // Dedupe — when the colour label/code is just the fabric code again (e.g.
   // BF-07 whose colour label is also "BF-07"), don't repeat it ("BF-07 BF-07").
   // GRN / PI / PR / Stock-Adjustment editors store the fabric under fabricColor;
@@ -251,14 +311,27 @@ export function buildVariantSummary(
   // `variants` so no caller signature changes; missing → codes-only (old orders).
   // foldRedundantSpecials: one request must print once — see the rule above.
   // The stored array is untouched; only this rendering drops the glued twin.
-  const specials = foldRedundantSpecials(specialsList(variants.specials ?? variants.special));
+  /* RECORDED-ONLY specials (owner's choice 甲, 2026-09-03). An AutoCount-imported
+     line's Desc2 asked for a PRICED option; recording it must make that option
+     VISIBLE on every printed copy without re-charging a historical document, so
+     the codes live in `variants.specialsRecorded` — a key NO pricing path reads
+     — and are rendered HERE beside the picked ones. Deliberately merged into the
+     same SPECIAL segment: whoever makes the item needs ONE list of the customer's
+     requests, not two. A code the operator has since picked properly wins, so it
+     is never printed twice. See
+     docs/bugs/0636-298-migrated-lines-lost-their-special-order-because-recordin.md
+     and backend/scripts/record-priced-specials-on-migrated-lines.mjs. */
+  const picked = foldRedundantSpecials(specialsList(variants.specials ?? variants.special));
+  const recordedRaw = specialsList(variants.specialsRecorded)
+    .filter((c) => !picked.some((p) => p.toLowerCase() === c.toLowerCase()));
+  const specials = [...picked, ...recordedRaw];
   const choicesMap =
     variants.specialChoices && typeof variants.specialChoices === 'object'
       ? (variants.specialChoices as Record<string, unknown>)
       : null;
   const specialBits = specials.map((code) => {
-    const picked = choicesMap ? specialsList(choicesMap[code]) : [];
-    return picked.length ? `${code} (${picked.join(', ')})` : code;
+    const chosen = choicesMap ? specialsList(choicesMap[code]) : [];
+    return chosen.length ? `${code} (${chosen.join(', ')})` : code;
   });
   // Loo 2026-06-13 — the POS product-page "special add-on" (note + extra charge,
   // variants.extraAddonNote + extraAddonAmountRM) is a FREE-TEXT Special Add-on.
@@ -274,7 +347,15 @@ export function buildVariantSummary(
   // add-on stays visible — only the RM figure is dropped.
   const extraRM = Math.round(Number(variants.extraAddonAmountRM ?? 0));
   const noteText = str(variants.extraAddonNote);
-  if (noteText || extraRM > 0) {
+  /* A note that only restates the printed colour is not a second instruction
+     (2026-09-15: the Sofa Accessory data run wrote fabricCode from the note, so
+     HC-SO-013503 read "COVE-13 / SPECIAL: Col : cove 13"). Dropped only when
+     EVERY word of it is already in the fabric segment and nothing is charged
+     for it; a note with anything more prints whole, so a disagreeing code is
+     never hidden. docs/bugs/0934-a-special-order-note-that-only-repeats-the-line-s-colour-pri.md. */
+  const noteRestatesFabric = noteText !== '' && extraRM <= 0 && fabric !== ''
+    && noteOnlyRestates(noteText, fabric);
+  if ((noteText && !noteRestatesFabric) || extraRM > 0) {
     specialBits.push(noteText || 'Extra add-on');
   }
   if (specialBits.length) segments.push(`SPECIAL: ${specialBits.join(' + ')}`);

@@ -16,6 +16,7 @@ import { supabaseAuth } from '../middleware/auth';
 import { activeCompanyId, scopeToCompany } from '../lib/companyScope';
 import { resolveCallerStaffId } from '../lib/salesScope';
 import type { Env, Variables } from '../env';
+import { pgrestIn } from '../lib/pgrest-in-list';
 
 type AppCtx = Context<{ Bindings: Env; Variables: Variables }>;
 
@@ -338,7 +339,7 @@ pwpCodes.post('/reserve', async (c) => {
         // predicate is repeated here as defence in depth, so a future widening
         // of that read cannot turn this into a cross-company/-owner delete.
         await scopeToCompany(
-          supabase.from('pwp_codes').delete().in('code', surplus).eq('owner_staff_id', userId),
+          pgrestIn(supabase.from('pwp_codes').delete(), 'code', surplus).eq('owner_staff_id', userId),
           c,
         ).eq('status', 'RESERVED');
       }
@@ -358,7 +359,7 @@ pwpCodes.post('/reserve', async (c) => {
     if (strays.length > 0) {
       // Same defence-in-depth predicate as the surplus trim above.
       await scopeToCompany(
-        supabase.from('pwp_codes').delete().in('code', strays).eq('owner_staff_id', userId),
+        pgrestIn(supabase.from('pwp_codes').delete(), 'code', strays).eq('owner_staff_id', userId),
         c,
       ).eq('status', 'RESERVED');
     }

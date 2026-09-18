@@ -15,20 +15,15 @@
 
    WHY A SOURCE TEST: the correct behaviour here is the ABSENCE of a call, and
    the handler is Supabase/Postgres (`c.get('supabase')`), which this suite's
-   environment does not bind. WHY import.meta.glob AND NOT readFileSync: this
+   environment does not bind. WHY `?raw` (tests/lib/so-router-source.ts) AND NOT readFileSync: this
    suite runs in workerd, where fs is not implemented; `?raw` is expanded by
    Vite at TRANSFORM time, in Node. Same technique, and same reasons, as
    tests/scheduleScopeRuling.test.ts. */
 
 import { describe, expect, test } from 'vitest';
+import { soRouterSource } from './lib/so-router-source';
 
-const sources = import.meta.glob('../src/scm/routes/mfg-sales-orders.ts', {
-  query: '?raw',
-  import: 'default',
-  eager: true,
-}) as Record<string, string>;
-
-const routeSource = Object.values(sources)[0] ?? '';
+const routeSource = soRouterSource();
 
 /** Strip comments so the assertions read CODE, not prose — the slip handler's
  *  own docblock explains the ruling and names the routes it differs from. */
@@ -44,7 +39,19 @@ const handlerBody = (method: string, path: string): string => {
   expect(start, `${method.toUpperCase()} ${path} is not registered`).toBeGreaterThan(-1);
   const rest = routeSource.slice(start + 1);
   const next = rest.search(/\nmfgSalesOrders\.(get|post|patch|put|delete)\(/);
-  return stripComments(next === -1 ? rest : rest.slice(0, next));
+  const registration = next === -1 ? rest : rest.slice(0, next);
+  /* A route registered by NAME — `mfgSalesOrders.post(path, someHandler)`,
+     the exported-handler shape the contract tests drive (docs/bugs/0927) —
+     has its body under `export const someHandler = async`, not here. */
+  const named = /^[^\n]*',\s*([A-Za-z0-9_]+)\);/.exec(registration);
+  if (named) {
+    const at = routeSource.indexOf(`export const ${named[1]} = async`);
+    expect(at, `${method.toUpperCase()} ${path}: handler ${named[1]} is not defined in the route file`).toBeGreaterThan(-1);
+    const tail = routeSource.slice(at + 1);
+    const end = tail.search(/\n(export const [A-Za-z0-9_]+ = async|mfgSalesOrders\.(get|post|patch|put|delete)\()/);
+    return stripComments(end === -1 ? tail : tail.slice(0, end));
+  }
+  return stripComments(registration);
 };
 
 describe('payment proof attach route', () => {
@@ -56,14 +63,23 @@ describe('payment proof attach route', () => {
   test('is NOT behind the same-day payment window', () => {
     const attach = handlerBody('post', '/:docNo/payments/:id/slip');
     expect(attach).not.toContain('paymentRowMutable');
+    expect(attach).not.toContain('paymentMayChange');
     expect(attach).not.toContain('PAYMENT_WINDOW_CLOSED_ERROR');
   });
 
   test('the money routes it sits beside ARE behind that window', () => {
-    // Without this, the assertion above could pass on a file that lost the
-    // window entirely — which would be a far worse bug than the one it guards.
-    expect(handlerBody('patch', '/:docNo/payments/:id')).toContain('paymentRowMutable');
-    expect(handlerBody('delete', '/:docNo/payments/:id')).toContain('paymentRowMutable');
+    /* Without this, the assertion above could pass on a file that lost the
+       window entirely — which would be a far worse bug than the one it guards.
+
+       The gate is named `paymentMayChange` since 2026-09-10 (docs/bugs/0780):
+       the two money routes now load whether the payment has been RECONCILED
+       and hand that to `paymentRowMutable`, which is still the only place the
+       rule lives. Asserting on the wrapper rather than the predicate is the
+       stronger check of the two — a route that called the bare predicate again
+       would have quietly dropped both the reconciliation and Finance's right,
+       and this test would say so. */
+    expect(handlerBody('patch', '/:docNo/payments/:id')).toContain('paymentMayChange');
+    expect(handlerBody('delete', '/:docNo/payments/:id')).toContain('paymentMayChange');
   });
 
   test('keeps the guards that are about ownership, not timing', () => {

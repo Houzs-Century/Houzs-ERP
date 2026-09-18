@@ -53,6 +53,15 @@ export const RETIRED_MIGRATIONS = Object.freeze([
      them unverifiable drift and aborted the production deploy. */
   { filename: "0077_multicompany_company_id.sql", archivedChecksum: "sha256:76b8589cb2b8a36a05d01f2a20c3376c2f62859d8c81ad1dd271159d839f0a9e", gitBlob: "be487b68379a16545b23e1cd587bd1273f8f1562" },
   { filename: "0078_multicompany_views.sql", archivedChecksum: "sha256:ac2d9ce3ea54c269743073e6d16474967f7f412d4441634c7b3a41dc401ea8d1", gitBlob: "1e551f7c55e075a263d580a14b5c2f8c1db7078f" },
+  /* Added 2026-09-03. The AutoCount chart relay's first cut: applied on
+     STAGING only (run 33642779806, the #2887-corrected body), then removed
+     from the tree by the #2889 revert after production refused it twice
+     (docs/bugs/0614 + 0615). Production never tracked it. Its replacement,
+     0346_acc_autocount_code_relay.sql, is idempotent over the state this one
+     left behind — so staging needs exactly this record: the row is history,
+     the file is retired, and the redo carries the work. Checksum verified
+     against staging's own DRIFT line (run 33651666423). */
+  { filename: "0344_acc_autocount_code_migration.sql", archivedChecksum: "sha256:e33104acb31e4e7eba46a11d4c81bc6aa6aaa4f3f84bd815579350940c76d5a0", gitBlob: "67455c29ad4fe1ccd6e87b2c9da6b436f0a38c95" },
 ]);
 
 export const RETIRED_MIGRATION_FILENAMES = Object.freeze(

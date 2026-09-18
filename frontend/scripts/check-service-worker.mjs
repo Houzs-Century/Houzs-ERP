@@ -106,6 +106,30 @@ if (cachePutCount !== 0) {
   process.exit(1);
 }
 
+// A chunk from a PREVIOUS build that the deploy carried forward
+// (scripts/retain-previous-assets.mjs): the new worker's activate step has
+// already purged the old caches, so nothing is cached — the worker must pass the
+// request to the network and hand back the JS the deployment still serves.
+// Without this, the retention would be defeated on every installed PWA.
+cachedResponse = null;
+context.fetch = async () =>
+  new Response("export const retained = 1;", {
+    status: 200,
+    headers: { "content-type": "application/javascript" },
+  });
+const retainedChunk = await dispatch(
+  new Request("https://erp.houzscentury.com/assets3/sales-order-pdf-C9QaiR37.js"),
+);
+if (
+  !(retainedChunk instanceof Response) ||
+  retainedChunk.status !== 200 ||
+  !(await retainedChunk.text()).includes("retained")
+) {
+  console.error("[service-worker] a previous build's chunk still on the network was not served through the worker.");
+  process.exit(1);
+}
+cachePutCount = 0;
+
 // A poisoned cache entry from an older worker must also never escape as JS.
 context.fetch = async () => {
   throw new TypeError("offline");

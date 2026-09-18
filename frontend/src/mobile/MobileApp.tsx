@@ -2,7 +2,8 @@ import { lazy, useEffect, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
-import { canOperateDeliveryOrders, canDriverCompleteDelivery, canOperateSalesInvoices, canOperateGoodsReceipts, canOperatePurchaseOrders, canViewFairReport } from "../auth/salesAccess";
+import { canOperateDeliveryOrders, canDriverCompleteDelivery, canOperateSalesInvoices, canOperateGoodsReceipts, canOperatePurchaseOrders, canViewFairReport, isSalesDirectorUser } from "../auth/salesAccess";
+import { memberEditFormFor, memberInviteFormFor } from "./member-invite-form";
 import { capability, type CapabilityKey } from "../auth/capabilities";
 import { NAV_TABS, type NavTab } from "../components/Sidebar";
 import { makeNavVisible } from "../components/navFilter";
@@ -30,12 +31,15 @@ import { mobileDestinationMatches, resolveMobileRoute, type MobileRoute } from "
 import type { FlowDocNav, FlowNav } from "./relationship-map-model";
 import type { SearchNav } from "./MobileSearch";
 import type { MobileScanPrefill } from "./MobileScan";
+import type { MobileConvertPrefill } from "./MobileOrderMoney";
 import type { ConvertTarget } from "./MobileConvertWizard";
+import { MODULE_TO_PURCHASE_DOC, convertInsteadFor, mayCreatePurchaseDoc, type PurchaseDocKind } from "./mobile-purchase-doc";
 const MobileSalesOrders = lazy(() => import("./MobileSalesOrders").then((m) => ({ default: m.MobileSalesOrders })));
 const MobileAmendments = lazy(() => import("./MobileAmendments").then((m) => ({ default: m.MobileAmendments })));
 const MobilePoAmendments = lazy(() => import("./MobilePoAmendments").then((m) => ({ default: m.MobilePoAmendments })));
 const MobilePoAmendmentDetail = lazy(() => import("./MobilePoAmendmentDetail").then((m) => ({ default: m.MobilePoAmendmentDetail })));
 const MobileSODetail = lazy(() => import("./MobileSODetail").then((m) => ({ default: m.MobileSODetail })));
+const MobileDoHeaderEdit = lazy(() => import("./MobileDoHeaderEdit").then((m) => ({ default: m.MobileDoHeaderEdit })));
 const MobileNewSO = lazy(() => import("./MobileNewSO").then((m) => ({ default: m.MobileNewSO })));
 const MobileCalendar = lazy(() => import("./MobileCalendar").then((m) => ({ default: m.MobileCalendar })));
 const MobileSearch = lazy(() => import("./MobileSearch").then((m) => ({ default: m.MobileSearch })));
@@ -43,6 +47,8 @@ const MobileInbox = lazy(() => import("./MobileInbox").then((m) => ({ default: m
 const MobileServiceCase = lazy(() => import("./MobileServiceCase").then((m) => ({ default: m.MobileServiceCase })));
 const MobilePMS = lazy(() => import("./MobilePMS").then((m) => ({ default: m.MobilePMS })));
 const MobileMailCenter = lazy(() => import("./MobileMailCenter").then((m) => ({ default: m.MobileMailCenter })));
+const MobileRoles = lazy(() => import("./MobileRoles").then((m) => ({ default: m.MobileRoles })));
+const MobileTitles = lazy(() => import("./MobileTitles").then((m) => ({ default: m.MobileTitles })));
 const MobileAnnouncements = lazy(() => import("./MobileAnnouncements").then((m) => ({ default: m.MobileAnnouncements })));
 // The unacknowledged-notice pop-up. Lazy like every other mobile screen, and
 // only mounted once the unread badge says something IS waiting — that hook
@@ -59,8 +65,12 @@ const MobileMileageCapture = lazy(() => import("./MobileMileageCapture").then((m
 const MobileProfile = lazy(() => import("./MobileProfile").then((m) => ({ default: m.MobileProfile })));
 const MobileStockCard = lazy(() => import("./MobileStockCard").then((m) => ({ default: m.MobileStockCard })));
 const MobileStockTransferNew = lazy(() => import("./MobileStockTransferNew").then((m) => ({ default: m.MobileStockTransferNew })));
+const MobilePurchaseDocNew = lazy(() => import("./MobilePurchaseDocNew").then((m) => ({ default: m.MobilePurchaseDocNew })));
+const MobileRacks = lazy(() => import("./MobileRacks").then((m) => ({ default: m.MobileRacks })));
 const MobileFairReport = lazy(() => import("./MobileFairReport").then((m) => ({ default: m.MobileFairReport })));
 const MobileAutoCountSync = lazy(() => import("./MobileAutoCountSync").then((m) => ({ default: m.MobileAutoCountSync })));
+const MobileVenturePortalFeed = lazy(() => import("./MobileVenturePortalFeed").then((m) => ({ default: m.MobileVenturePortalFeed })));
+const MobileChangeLog = lazy(() => import("./MobileChangeLog").then((m) => ({ default: m.MobileChangeLog })));
 // SO Maintenance is the SAME desktop page (/scm/sales-orders/maintenance) — the
 // director-only State→Warehouse / Localities / SO-dropdown CRUD surface. Mobile
 // has no route table, so the vendored desktop page is mounted directly inside
@@ -70,7 +80,22 @@ const MobileAutoCountSync = lazy(() => import("./MobileAutoCountSync").then((m) 
 const ScmSalesOrderMaintenance = lazy(() => import("../pages/scm-v2/SalesOrderMaintenance").then((m) => ({ default: m.SalesOrderMaintenance })));
 const Scm2990Shell = lazy(() => import("../pages/scm-v2/Scm2990Shell"));
 import "./mobile.css";
-import { MobileAssistant } from "./MobileAssistant";
+import { LazySlot } from "../components/LazySlot";
+
+/* LAZY, and it costs nothing: this is a modal nobody sees until after the
+   digest request answers, so it has no business in the chunk that has to arrive
+   before the first paint. Eager, it put initial JS at 168.0 KB against a 167.0 KB
+   ceiling and failed frontend-build.
+
+   A LazySlot, never a bare Suspense element — lazySlotAudit.test.ts gates the
+   class, and MobileCrashBoundary.test.tsx forbids a bare one in the mobile
+   shell by name (it reads the file as text, so even naming the tag here would
+   trip it). The resetKey is CONSTANT, for the reason AuthGate's mobile shell gives
+   for its own: there is no navigation above a global reminder to clear a crash
+   with, so keying on anything would be theatre. What the boundary buys here is
+   containment — a failed chunk takes the reminder, not the whole app. */
+const PendingTasksReminder = lazy(() =>
+  import("../components/PendingTasksReminder").then((m) => ({ default: m.PendingTasksReminder })));
 
 type Tab = "orders" | "service" | "calendar" | "profile";
 type Screen =
@@ -83,13 +108,21 @@ type Screen =
   | { t: "so-maintenance" }
   | { t: "fair-report" }
   | { t: "autocount-sync" }
-  | { t: "new-so"; mode: "new" | "edit" | "edit-draft"; docNo?: string; scanPrefill?: MobileScanPrefill }
+  | { t: "venture-portal-feed" }
+  | { t: "change-log" }
+  | { t: "new-so"; mode: "new" | "edit" | "edit-draft"; docNo?: string; scanPrefill?: MobileScanPrefill; addLine?: boolean; convertFrom?: MobileConvertPrefill }
   | { t: "scan" }
   | { t: "module"; key: string; title: string }
   | { t: "module-detail"; key: string; row: any; title: string }
   | { t: "stock-transfer-new"; key: string; row: any; title: string }
   | { t: "module-form"; key: string; mode: "new" | "edit"; row?: any }
+  /* Delivery Order header edit (owner 2026-09-12 parity). Its own screen, not the
+     generic module form: it needs the address cascade and the SI/DR lock. */
+  | { t: "do-edit"; key: string; row: Record<string, unknown>; title: string }
   | { t: "convert"; key: string; title: string; target: ConvertTarget; initialSourceId?: string }
+  /* DIRECT create for PO / GRN / PI (owner 2026-09-12: create directly, not
+     only by converting). Entered from that module list's "+"; returns to it. */
+  | { t: "purchase-doc-new"; key: string; title: string; kind: PurchaseDocKind }
   /* `from` is the return address. Back/Done out of POD normally drops to the
      tab, which is right when POD was opened from a document card — but the
      delivery-planning board sends the driver here MID-RUN, and dumping them on
@@ -99,10 +132,16 @@ type Screen =
      Mobile mounts this for /fleet-health; desktop mounts the full Fleet Health
      admin dashboard at the same URL (one product, two presentations). */
   | { t: "mileage-capture" }
+  /* Warehouse rack LOOKUP — /scm/warehouses/racks. Read-only finder; the
+     desktop Racks & Bins page at the same URL is the edit surface. Rack
+     CREATE stays on MobileModuleList's FORM_RACK, unchanged. */
+  | { t: "racks" }
   | { t: "service"; startNew?: boolean }
   | { t: "delivery-planning" }
   | { t: "pms"; projectId?: number }
   | { t: "mail" }
+  | { t: "roles" }
+  | { t: "titles" }
   | { t: "announcements" }
   | { t: "inbox" }
   /* A real mobile destination this user's position may not open. Reached only
@@ -127,6 +166,8 @@ export function destinationScreen(to: string, label: string): DestinationTarget 
   if (path === "/scm/sales-orders/maintenance") return { t: "so-maintenance" };
   if (path === "/reports/fair-report") return { t: "fair-report" };
   if (path === "/autocount-sync") return { t: "autocount-sync" };
+  if (path === "/venture-portal-feed") return { t: "venture-portal-feed" };
+  if (path === "/change-log") return { t: "change-log" };
   if (path === "/scm/amendments") return { t: "amendments" };
   if (path === "/scm/po-amendments") return { t: "po-amendments" };
   if (path === "/assr") return { t: "service" };
@@ -134,7 +175,10 @@ export function destinationScreen(to: string, label: string): DestinationTarget 
   if (path === "/mail-center") return { t: "mail" };
   if (path === "/announcements") return { t: "announcements" };
   if (path === "/activity-inbox") return { t: "inbox" };
+  if (path === "/roles") return { t: "roles" };
+  if (path === "/titles") return { t: "titles" };
   if (path === "/scm/delivery-planning") return { t: "delivery-planning" };
+  if (path === "/scm/warehouses/racks") return { t: "racks" };
   // Fleet Health on a phone IS the driver's mileage capture; the desktop Fleet
   // Health dashboard (plans admin + board) is the same URL's desktop surface.
   if (path === "/fleet-health") return { t: "mileage-capture" };
@@ -186,11 +230,13 @@ function initialScreenFor(route: MobileRoute): Screen {
 
 // Doc modules whose "+ New" opens a convert wizard (create by converting a
 // source doc), matching desktop. Others with a `form` open MobileModuleForm.
+// Purchase Orders and Goods Receipts USED to be here: since 2026-09-13 their "+"
+// opens the DIRECT create (MODULE_TO_PURCHASE_DOC in mobile-purchase-doc.ts),
+// which offers the convert wizard as its secondary action — so both desktop
+// flows stay reachable, direct first, as the owner asked.
 const MODULE_TO_CONVERT: Record<string, ConvertTarget> = {
   "delivery-orders-mfg": "do",
   "sales-invoices": "si",
-  "grns": "grn",
-  "mfg-purchase-orders": "po",
 };
 
 const ROUTE_TO_CONFIG: Record<string, string> = {
@@ -379,6 +425,12 @@ export const MOBILE_MENU_GROUPS: { group: string; items: MobileMenuItem[] }[] = 
   ]},
   { group: "Warehouse", items: [
     { to: "/scm/warehouses", label: "Warehouse" },
+    /* Racks — the storekeeper's "where is it". Points at the desktop route
+       /scm/warehouses/racks, which is a real NAV_TABS entry (Sidebar.tsx,
+       anyAccess scm.warehouse.inventory, hideForSalesRep), so `allowed()`
+       gates the phone row off the SAME declaration as the desktop page. No
+       gateVia and no second rule. */
+    { to: "/scm/warehouses/racks", label: "Racks" },
     { to: "/scm/inventory", label: "Inventory" },
     { to: "/scm/stock-transfers", label: "Stock Transfers" },
     { to: "/scm/stock-takes", label: "Stock Take" },
@@ -391,6 +443,18 @@ export const MOBILE_MENU_GROUPS: { group: string; items: MobileMenuItem[] }[] = 
      endpoint accepts. */
   { group: "System", items: [
     { to: "/autocount-sync", label: "AutoCount Sync" },
+    /* The Venture Portal feed. On a phone for the same reason the row above it
+       is: "did the portal get my sales orders" decides whether somebody's
+       commission is right, and turning the feed OFF is the one control most
+       plausibly needed away from a desk. Gated by its own live NAV_TABS entry
+       at /venture-portal-feed, carrying the same two keys the endpoint's read
+       half accepts. */
+    { to: "/venture-portal-feed", label: "Venture Portal Feed" },
+    /* The go-live change log. Second row in this group, and it belongs on a
+       phone for the same reason the first one does: "who changed my sales
+       order" is a question the owner asks away from a desk. Gated by its own
+       live NAV_TABS entry at /change-log. */
+    { to: "/change-log", label: "Change Log" },
   ]},
 ];
 
@@ -426,6 +490,16 @@ export const PROFILE_ORG_ITEMS: MobileMenuItem[] = [
      members/departments modules until the handoff's mobile pass (S8). */
   { to: "/team?tab=directory", label: "Directory" },
   { to: "/team?tab=departments2", label: "Departments" },
+  /* Roles & Permissions admin — its own mobile screen (MobileRoles), single-role
+     edit. gateVia the /team hub tab (users.read/roles.read): roles has no nav
+     leaf to borrow, and a distinct /roles path keeps it out of the /team?tab=*
+     set mobileMenuGates.test pins. Screen mounts only for can("roles.read"). */
+  { to: "/roles", label: "Roles", gateVia: "/team?tab=hub" },
+  /* Titles — its own mobile screen (MobileTitles), one Title's position_policy
+     row (cohort / profile / duty / flags). gateVia the /team hub tab like Roles;
+     a distinct /titles path keeps it out of the /team?tab=* set the gate test
+     pins. Reads ride users.read (screen mount); writes need roles.manage. */
+  { to: "/titles", label: "Titles", gateVia: "/team?tab=hub" },
 ];
 
 /** Mobile app shell — bottom tab bar + slide-up module menu, permission-gated
@@ -487,7 +561,6 @@ export function MobileApp() {
             <IosInstallGuide />
             <AndroidInstallGuide />
             <MobileAppInner />
-            <MobileAssistant />
           </ChoiceProvider>
         </PromptProvider>
       </ConfirmProvider>
@@ -560,7 +633,9 @@ function MobileAppInner() {
   // Organisation rows shown inside the Profile screen — gated by the SAME
   // `allowed` check (+ Announcements' alwaysShow bypass) the menu used when
   // these items lived in its Organisation group.
-  const profileOrgItems = PROFILE_ORG_ITEMS.filter((it) => it.alwaysShow || allowed(it.to));
+  const profileOrgItems = PROFILE_ORG_ITEMS.filter((it) =>
+    it.capability ? capability(user, it.capability) : (it.alwaysShow || allowed(it.gateVia ?? it.to)),
+  );
 
   // What this user may open, and what the mobile app implements at all. The
   // difference between the two is the "your position can't open this" answer;
@@ -711,9 +786,9 @@ function MobileAppInner() {
   // boundary (full-screen fallback — an overlay owns the whole viewport anyway).
   let overlay: ReactNode = null;
   if (screen.t === "search") overlay = <MobileSearch onBack={back} onNavigate={onSearchNavigate} />;
-  else if (screen.t === "so-detail") overlay = <MobileSODetail docNo={screen.docNo} onBack={back} onEdit={(d) => setScreen({ t: "new-so", mode: "edit", docNo: d })} flowNav={flowNav} />;
+  else if (screen.t === "so-detail") overlay = <MobileSODetail docNo={screen.docNo} onBack={back} onEdit={(d) => setScreen({ t: "new-so", mode: "edit", docNo: d })} onAddLine={(d) => setScreen({ t: "new-so", mode: "edit", docNo: d, addLine: true })} flowNav={flowNav} onConvert={(convertFrom) => setScreen({ t: "new-so", mode: "new", convertFrom })} />;
   else if (screen.t === "amendments") overlay = <MobileAmendments onBack={back} onOpen={(doc) => setScreen({ t: "so-detail", docNo: doc })} />;
-  else if (screen.t === "po-amendments") overlay = <MobilePoAmendments onBack={back} onOpen={(id) => setScreen({ t: "po-amendment-detail", id })} />;
+  else if (screen.t === "po-amendments") overlay = <MobilePoAmendments onBack={back} onOpen={(id) => setScreen({ t: "po-amendment-detail", id })} onOpenSo={(doc) => setScreen({ t: "so-detail", docNo: doc })} />;
   else if (screen.t === "po-amendment-detail") overlay = <MobilePoAmendmentDetail amendmentId={screen.id} onBack={() => setScreen({ t: "po-amendments" })} />;
   else if (screen.t === "so-maintenance") {
     // Defence-in-depth on the SAME server-decided answer the menu row uses, so
@@ -743,6 +818,13 @@ function MobileAppInner() {
     // Mirrors the desktop FairReport route guard; OFF, not hide.
     overlay = !canViewFairReport(user) ? <TabLocked title="Sales Report" /> : <MobileFairReport onBack={back} />;
   }
+  else if (screen.t === "change-log") {
+    /* Guard the SCREEN, not only the menu row — same two keys the desktop route
+       and the server accept, and the server is still the boundary. OFF, not
+       hidden. */
+    const maySee = can("*") || can("scm.changelog.read") || can("settings.manage");
+    overlay = !maySee ? <TabLocked title="Change Log" /> : <MobileChangeLog onBack={back} />;
+  }
   else if (screen.t === "autocount-sync") {
     /* Guard the SCREEN, not only the menu row: an /autocount-sync URL must not
        mount the page or fire its query for someone the endpoint would 403.
@@ -750,7 +832,17 @@ function MobileAppInner() {
     const mayRead = can("*") || can("scm.autocount.read") || can("settings.manage");
     overlay = !mayRead ? <TabLocked title="AutoCount Sync" /> : <MobileAutoCountSync onBack={back} />;
   }
-  else if (screen.t === "new-so") overlay = <MobileNewSO mode={screen.mode} docNo={screen.docNo} scanPrefill={screen.scanPrefill} onBack={back} onSaved={(d) => setScreen({ t: "so-detail", docNo: d })} />;
+  else if (screen.t === "venture-portal-feed") {
+    /* Guard the SCREEN, not only the menu row, for /autocount-sync's reason: a
+       /venture-portal-feed URL must not mount the page or fire its query for
+       someone the endpoint would 403. Same two keys the desktop route and the
+       server's read half accept; the MANAGE half is checked per request by the
+       server and reflected in `canManage`, so a read-only holder sees the feed
+       and no buttons. OFF, not hidden. */
+    const mayRead = can("*") || can("scm.venture_portal.read") || can("settings.manage");
+    overlay = !mayRead ? <TabLocked title="Venture Portal Feed" /> : <MobileVenturePortalFeed onBack={back} />;
+  }
+  else if (screen.t === "new-so") overlay = <MobileNewSO mode={screen.mode} docNo={screen.docNo} scanPrefill={screen.scanPrefill} convertFrom={screen.convertFrom} openAddLine={screen.addLine === true} onBack={back} onSaved={(d) => setScreen({ t: "so-detail", docNo: d })} />;
   else if (screen.t === "scan") overlay = <MobileScan onBack={back} onDrafted={onScanDrafted} onOpenSo={(docNo) => setScreen({ t: "so-detail", docNo })} />;
   else if (screen.t === "module") {
     const k = screen.key;
@@ -779,7 +871,15 @@ function MobileAppInner() {
             : convertTarget === "po"
               ? canOperatePurchaseOrders(can, pageAccess)
               : true;
-    const onNew = convertTarget
+    /* Direct create (PO / GRN / PI) is checked FIRST and gated by the same
+       per-document helpers as everywhere else (mayCreatePurchaseDoc). Withheld
+       `onNew` = no "+" at all — off, not hidden. */
+    const purchaseKind = MODULE_TO_PURCHASE_DOC[k] as PurchaseDocKind | undefined;
+    const onNew = purchaseKind
+      ? mayCreatePurchaseDoc(purchaseKind, can, pageAccess)
+        ? () => setScreen({ t: "purchase-doc-new", key: k, title: screen.title, kind: purchaseKind })
+        : undefined
+      : convertTarget
       ? mayConvert
         ? () => setScreen({ t: "convert", key: k, title: screen.title, target: convertTarget })
         : undefined
@@ -790,6 +890,16 @@ function MobileAppInner() {
       onOpen={(row) => setScreen({ t: "module-detail", key: k, row, title: screen.title })}
       onNew={onNew}
       aboveList={k === "members" ? <MobileInvitations /> : undefined} />;
+  }
+  else if (screen.t === "purchase-doc-new") {
+    const backToList = () => setScreen({ t: "module", key: screen.key, title: screen.title });
+    const alt = convertInsteadFor(screen.kind);
+    const { key, title } = screen;
+    overlay = <MobilePurchaseDocNew
+      kind={screen.kind}
+      onBack={backToList}
+      onCreated={backToList}
+      onConvertInstead={alt ? { label: alt.label, open: () => setScreen({ t: "convert", key, title, target: alt.target }) } : null} />;
   }
   else if (screen.t === "convert") {
     // Convert is entered from a module list ("+ New") → return to that list
@@ -810,6 +920,7 @@ function MobileAppInner() {
       onBack={() => setScreen({ t: "module", key: screen.key, title: screen.title })}
       onNewTransfer={() => setScreen({ t: "stock-transfer-new", key: screen.key, row: screen.row, title: screen.title })} />;
   }
+  else if (screen.t === "racks") overlay = <MobileRacks onBack={back} />;
   else if (screen.t === "stock-transfer-new") {
     const backToCard = () => setScreen({ t: "module-detail", key: screen.key, row: screen.row, title: screen.title });
     overlay = <MobileStockTransferNew onBack={backToCard} onCreated={backToCard} />;
@@ -828,19 +939,37 @@ function MobileAppInner() {
       (canOperateDeliveryOrders(user, can, pageAccess) || canDriverCompleteDelivery(user));
     overlay = <MobileModuleDetail moduleKey={screen.key} row={screen.row} title={screen.title}
       onBack={() => setScreen({ t: "module", key: screen.key, title: screen.title })}
-      onEdit={() => setScreen({ t: "module-form", key: screen.key, mode: "edit", row: screen.row })}
+      onEdit={screen.key !== "delivery-orders-mfg"
+        ? () => setScreen({ t: "module-form", key: screen.key, mode: "edit", row: screen.row })
+        : canOperateDeliveryOrders(user, can, pageAccess) && screen.row?.id
+          ? () => setScreen({ t: "do-edit", key: screen.key, row: screen.row, title: screen.title })
+          : undefined}
       onPOD={canPod ? () => setScreen({ t: "pod", docNo: String(doNo) }) : undefined}
       flowNav={flowNav} />;
   }
   else if (screen.t === "module-form") {
     const cfg = MODULE_CONFIGS[screen.key];
-    const schema = screen.mode === "edit" && screen.key === "members" ? FORM_MEMBERS_EDIT : cfg?.form;
+    /* A scoped Sales Director's member saves ignore fields: the invite stores the
+       baseline role (docs/bugs/0887), the edit strips role, department, position
+       and email (docs/bugs/0924-a-sales-director-s-phone-edit-of-a-member-s-role-department.md).
+       Each form shows only what its save applies. */
+    const baseForm = cfg?.form;
+    const scopedSalesDirector = isSalesDirectorUser(user) && !can("users.manage");
+    const schema = screen.mode === "edit" && screen.key === "members"
+      ? memberEditFormFor(FORM_MEMBERS_EDIT, scopedSalesDirector)
+      : screen.key === "members" && baseForm
+        ? memberInviteFormFor(baseForm, scopedSalesDirector)
+        : baseForm;
     const title = cfg?.title ?? screen.key;
     overlay = !schema ? <Stub title={title} onBack={back} /> : (
       <MobileModuleForm schema={schema} mode={screen.mode} initial={screen.mode === "edit" ? screen.row : undefined}
         onBack={() => setScreen(screen.mode === "edit" && screen.row ? { t: "module-detail", key: screen.key, row: screen.row, title } : { t: "module", key: screen.key, title })}
         onSaved={() => setScreen({ t: "module", key: screen.key, title })} />
     );
+  }
+  else if (screen.t === "do-edit") {
+    const backToDoc = () => setScreen({ t: "module-detail", key: screen.key, row: screen.row, title: screen.title });
+    overlay = <MobileDoHeaderEdit id={String(screen.row.id)} onBack={backToDoc} onSaved={backToDoc} />;
   }
   else if (screen.t === "pod") {
     const leavePod = screen.from === "delivery-planning"
@@ -853,6 +982,8 @@ function MobileAppInner() {
   else if (screen.t === "delivery-planning") overlay = <MobileDeliveryPlanning onBack={back} onOpen={(doc) => setScreen({ t: "so-detail", docNo: doc })} onPod={(doNumber) => setScreen({ t: "pod", docNo: doNumber, from: "delivery-planning" })} />;
   else if (screen.t === "pms") overlay = <MobilePMS onBack={back} initialProjectId={screen.projectId} />;
   else if (screen.t === "mail") overlay = <MobileMailCenter onBack={back} />;
+  else if (screen.t === "roles") overlay = can("roles.read") ? <MobileRoles onBack={back} /> : <TabLocked title="Roles" />;
+  else if (screen.t === "titles") overlay = can("users.read") ? <MobileTitles onBack={back} /> : <TabLocked title="Titles" />;
   else if (screen.t === "announcements") overlay = <MobileAnnouncements onBack={back} />;
   else if (screen.t === "inbox") overlay = <MobileInbox onBack={back} onOpen={(n) => { const doc = (n as { doc_no?: string }).doc_no; if (doc) setScreen({ t: "so-detail", docNo: doc }); }} />;
   else if (screen.t === "locked") overlay = <UrlLocked label={screen.label} onHome={leaveUrlDeadEnd} />;
@@ -865,6 +996,7 @@ function MobileAppInner() {
         {overlay}
       </MobileCrashBoundary>
       {annPopup}
+      <LazySlot resetKey="pending-reminder" fallback={null}><PendingTasksReminder /></LazySlot>
     </>
   );
 
@@ -987,6 +1119,11 @@ function MobileAppInner() {
       )}
 
       {annPopup}
+      <LazySlot resetKey="pending-reminder" fallback={null}><PendingTasksReminder /></LazySlot>
+      {/* MobileAssistant intentionally NOT rendered — owner 2026-09-11:
+          "那个 assistant 的功能是直接不要的". The whole surface is off on
+          mobile: no launcher, no sheet, no /api/assistant calls fire. The
+          backend service stays for the desktop `/assistant` page. */}
     </div>
   );
 }

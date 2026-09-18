@@ -248,6 +248,11 @@ const MUST_GATE_MERGE = [
      not the deploy. */
   "tests/idempotencyRefusalRelease.test.ts",
   "tests/grnPreWriteRefusalsReleaseKey.test.ts",
+  /* The same pair of properties for adding a sales-order line: a pre-write
+     refusal left on a bare c.json locks the phone's Save on that line until a
+     reload, and a release moved past the PWP claim lets a corrected resubmit
+     add the line twice. */
+  "tests/soLineAddPreWriteRefusalsReleaseKey.test.ts",
   /* The blank-date gate. Its whole reason to exist is that the previous
      version of it passed on an unfixed tree, so a merge that reintroduces an
      uncoerced date write has to be STOPPED, not reported after the fact. */
@@ -263,6 +268,11 @@ const MUST_GATE_MERGE = [
      check green — the script cannot see git history, so this suite is the only
      thing that notices. A boundary must stop the MERGE, not the deploy. */
   "tests/companyScopeConverted.test.mjs",
+  /* The reader every Sales Order source assertion goes through, including the
+     merge gate above. If it quietly stopped following register/mount calls, an
+     absence assertion would pass over handlers moved out of mfg-sales-orders.ts
+     and nothing would turn red. */
+  "tests/soRouterFamily.test.ts",
 ];
 
 test("every merge-gating suite is classified LIGHT, so a required job runs it", async () => {

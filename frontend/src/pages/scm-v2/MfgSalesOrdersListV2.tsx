@@ -20,10 +20,15 @@
 // the tree; App.tsx route swap decides which one users see.
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { shippedProgressColumn, ShippedProgressPill } from "./so-list-shipped-column";
 import { SO_STATUS_TABS, statusFor, type StatusTab } from "./so-list-status";
+import { SoListStatusCell } from "./SoListStatusCell";
+import { SoListFilterBar } from "./SoListFilterBar";
+import { useSoListFilters } from "../../vendor/scm/lib/so-list-filter-state";
 import { salesOrderRowMenu } from "./row-menus";
 import { brandingToneForCategory, type BrandTone } from "../../lib/brandingTone";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import { CancelledMoneyActions } from "./CancelledMoneyActions";
 import {
   Plus,
   ChevronDown,
@@ -46,6 +51,8 @@ import { fetchPrintBundle } from "../../lib/printDocumentPdf";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { PageHeader } from "../../components/Layout";
 import { SoListPoCell, SoSourceChips, SoStockPill } from "../../components/SoSourceChips";
+import { coverageStateOf } from "../../components/coverage-state";
+import { overlaySoLineCoverage } from "../../vendor/scm/lib/so-coverage-overlay";
 import { StockRemarkPill, stockRemarkSortScore } from "../../components/StockRemarkPill";
 import { SoListDoCell } from "../../components/SoListDoCell";
 import { StockAdjChip } from "../../components/DocumentLinesExpansion";
@@ -56,6 +63,10 @@ import {
   type Column,
   type ColumnLayoutPreset,
 } from "../../components/DataTable";
+import { financeColumns, moneyColumn, soLineColumns } from "./so-do-list-columns";
+import { SO_LABELS, senToRinggit, soListStatusWord, type SoBookHeader, type SoListLine } from "../../vendor/scm/lib/so-line-export-columns";
+import { fetchSoExportRows } from "../../vendor/scm/lib/so-list-export";
+import { approvalCodeColumn } from "./so-list-approval-code";
 import { ListPager } from "../../components/ListPager";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { Badge } from "../../components/Badge";
@@ -69,9 +80,10 @@ import { shortCompanyName, getBrandingCompanyCode } from "../../lib/branding";
 import { brandingLabel, isPlaceholderBrandText } from "../../vendor/shared/so-branding-label";
 import { soCanRaiseDo } from "../../vendor/shared/so-deliverable-states";
 import { useDebouncedSearchTerm, useSearchResultTransition } from "../../hooks/useServerSearch";
-import { useMfgSalesOrdersPaged, useUpdateMfgSalesOrderStatus, useMfgSalesOrderDetail, useEnrichedSoListRows } from "../../vendor/scm/lib/sales-order-queries";
+import { useMfgSalesOrdersPaged, useMfgCustomers, useUpdateMfgSalesOrderStatus, useMfgSalesOrderDetail, useEnrichedSoListRows, useSoLineCoverage } from "../../vendor/scm/lib/sales-order-queries";
 import { useSetDocumentHold } from "../../vendor/scm/lib/document-hold-queries";
 import { holdPrompt } from "./use-hold-action";
+import { useCancelRequestAction } from "./use-cancel-request-action";
 import { makeCloseAction } from "./use-close-action";
 import { StatusWithHold, type HoldFields } from "../../vendor/scm/components/HoldChip";
 import { ScanOrderModal } from "../../vendor/scm/components/ScanOrderModal";
@@ -92,6 +104,7 @@ import { canViewScmCosting, canOperateDeliveryOrders } from "../../auth/salesAcc
 import { capability } from "../../auth/capabilities";
 import { buildVariantSummary, fmtSen, fmtDate, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
+import { customerRefOf } from '../../lib/customer-ref';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 // Minimal row shape the listing needs. The full SoRow (in MfgSalesOrdersList
@@ -143,6 +156,12 @@ type SoRow = HoldFields & {
   customer_type: string | null;
   building_type: string | null;
   customer_country: string | null;
+  shipped_qty?: number | null;   // §0.4b — how much has LEFT
+  deliverable_qty?: number | null;
+  /* Server-derived here (mfg-sales-orders.ts:1800-1806); optional because an
+     older bundle carries neither. sales-order.md §0.4c and SoListStatusCell. */
+  delivery_state?: "none" | "partial" | "full" | null;
+  lifecycle_state?: "none" | "delivered" | "invoiced" | "returned" | null;
   do_nos?: string[] | null;
   /** The same delivery orders and the sales invoices raised against this order,
    *  each with the id the right-click "Print Delivery Order" needs — a PDF is
@@ -186,7 +205,11 @@ type SoRow = HoldFields & {
   total_margin_sen?: number;
   margin_pct_basis?: number;
   deposit_sen?: number;
-};
+  currency?: string | null;
+  sales_exemption_expiry?: string | null;
+  /** The order's lines, and its AutoCount spellings (so-list-lines.ts). */
+  lines?: SoListLine[];
+} & Partial<SoBookHeader>;
 
 
 
@@ -194,15 +217,17 @@ type SoRow = HoldFields & {
 
 const fmtRm = (centi: number): string => fmtSen(centi);
 
-// margin_pct_basis is basis points (margin/total x 10000) → percent string.
-const fmtPctBasis = (basis: number | null | undefined): string =>
-  basis == null ? "—" : `${(basis / 100).toFixed(1)}%`;
+/* AutoCount's "SALES ORDER DETAILS-SALES" (SO_DEFAULT_COLUMNS) as grid keys, in
+   its order; Doc No. is always visible and pinned first. */
+const SO_AUTOCOUNT_KEYS = [
+  "so_date", "reference", "salesperson", "debtor_name", "branding", "currency", "amount", "line_location",
+  "balance", "processing_date", "sales_exemption_expiry", "item_group", "item_code", "detail_description",
+  "detail_description_2", "uom", "unit_price", "qty", "venue",
+];
 
 // Customer's PO / Ref number — spec: "Every list must show the customer SO
-// Ref number". Prefer po_doc_no (populated by the SO New form's "Customer
-// PO #"), then customer_so_no, then the legacy `ref` column, then dash.
-const refOf = (r: SoRow): string =>
-  r.po_doc_no || r.customer_so_no || r.ref || "—";
+// Ref number". Resolution order is the ONE rule in lib/customer-ref.ts.
+const refOf = (r: SoRow): string => customerRefOf(r) || "—";
 
 // Branding badge tone. Spec: 2990 SOFA = success (green), AKEMI = neutral,
 // BEDFRAME = accent, other brands = warning (amber). brandOf's old `|| "—"`
@@ -833,6 +858,9 @@ const SORT_COL_MAP: Record<string, string> = {
 // variant summary via buildVariantSummary, matching the drawer + SO full page.
 
 type DrillItem = {
+  /* The coverage overlay keys on it (vendor/scm/lib/so-coverage-overlay); the
+     detail payload has always carried it, this shape just never named it. */
+  id?: string;
   item_code?: string;
   description?: string;
   description2?: string | null;
@@ -863,9 +891,18 @@ type DrillItem = {
 
 function SoLinesExpansion({ docNo }: { docNo: string }) {
   const detailQ = useMfgSalesOrderDetail(docNo);
-  const items =
-    ((detailQ.data as { items?: unknown[] } | undefined)?.items as DrillItem[]) ??
-    [];
+  /* THE MRP-DERIVED HALF ARRIVES SEPARATELY. Since #2834 the detail payload
+     hard-codes `coverage_po: null` / `ready_source_pos: []` and fills them from
+     GET /:docNo/coverage. The detail PAGE made that call and this drill-down did
+     not, so its "Incoming PO" column went permanently blank — chips 3 and 4 both
+     read those fields (docs/modules/sales-order.md §0.8 documents all four).
+     Owner 2026-09-01: 「明明我的 PO No. 那边是有的，可是 Incoming PO 却没有」.
+     Same overlay as the detail page, deliberately — docs/bugs/0596-*. */
+  const coverageQ = useSoLineCoverage(docNo);
+  const items = overlaySoLineCoverage(
+    ((detailQ.data as { items?: unknown[] } | undefined)?.items as DrillItem[]) ?? [],
+    coverageQ.data?.coverage,
+  );
 
   if (detailQ.isLoading) {
     return (
@@ -886,7 +923,7 @@ function SoLinesExpansion({ docNo }: { docNo: string }) {
      and the covering incoming PO + ETA belong ON the line — the payload has
      carried them all along. Min-width + horizontal scroll keeps the grid
      honest on narrow desktop panes. */
-  const grid = "grid grid-cols-[92px_minmax(220px,1fr)_56px_100px_110px_96px_190px] items-start gap-2";
+  const grid = "grid grid-cols-[92px_minmax(220px,1fr)_56px_100px_110px_96px_92px_190px] items-start gap-2";
   return (
     <div className="overflow-x-auto rounded-lg border border-border bg-surface">
       <div className="min-w-[880px]">
@@ -897,6 +934,7 @@ function SoLinesExpansion({ docNo }: { docNo: string }) {
           <span className="text-right">Unit</span>
           <span className="text-right">Amount</span>
           <span>Stock</span>
+          <span>Delivered</span>
           <span>Incoming PO</span>
         </div>
         {items.map((l, i) => {
@@ -940,12 +978,11 @@ function SoLinesExpansion({ docNo }: { docNo: string }) {
               <span>
                 <SoStockPill line={l} />
               </span>
-              {/* Shipped lines show the ACTUAL source PO(s) (batch trail, GRN-
-                  healed); READY lines the FIFO-projected PO(s) / STOCK ADJ;
-                  un-arrived remainder the MRP coverage PO + ETA — the ONE
-                  shared renderer, identical to the SO detail page. */}
+              <span><ShippedProgressPill line={l} /></span>
+              {/* The ONE shared renderer, identical to the SO detail page —
+                  the four chips are documented at sales-order.md §0.8. */}
               <span className="min-w-0">
-                <SoSourceChips line={l} />
+                <SoSourceChips line={l} coverage={coverageStateOf(coverageQ)} />
               </span>
             </div>
           );
@@ -996,6 +1033,7 @@ export function MfgSalesOrdersListV2() {
   // regardless of the URL param (a 9-col DataTable is unreadable on 360dpi).
   const view = (params.get("view") ?? "table") as "table" | "cards";
   const search = params.get("q") ?? "";
+  const { filters: soFilters } = useSoListFilters(); // second-level filters (URL `f`), shared with mobile
   // URL is state — the page index lives in `?page=` (0-based). pageSize is a
   // fixed 50 (backend caps at 100). Both feed the server-pagination hook so
   // search / status counts / sort span the FULL set, not the visible page.
@@ -1027,6 +1065,20 @@ export function MfgSalesOrdersListV2() {
   // Multi-select → batch "Print all". Keys are doc_no (the DataTable rowKey).
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [printingDocs, setPrintingDocs] = useState(false);
+  /* Server-filterable column funnels the grid pushes down (owner 2026-09-16) so
+     pagination runs over the filtered set: Customer (debtor) Name + Currency.
+     Debtor CODE and every line-level / MRP funnel stay client-side on the loaded
+     page (documented — debtor_code's grid value prefers ac_debtor_code, and the
+     line/MRP columns are not base columns on the list view). */
+  const [serverFunnels, setServerFunnels] = useState<{ debtorNames?: string[]; currencies?: string[] }>({});
+  /* Seed the Customer Name funnel with every customer (not only the loaded
+     page's) so a customer whose orders are all on a later page is still
+     pickable — the point of pushing the filter server-side. */
+  const customersQ = useMfgCustomers();
+  const customerNames = useMemo(
+    () => [...new Set((customersQ.data?.customers ?? []).map((c) => c.name).filter((n): n is string => !!n))],
+    [customersQ.data],
+  );
 
   const { data, isLoading, isFetching, isPlaceholderData, error } = useMfgSalesOrdersPaged({
     page,
@@ -1034,7 +1086,9 @@ export function MfgSalesOrdersListV2() {
     status,
     q: debouncedSearch,
     sort,
+    filters: soFilters,
     enabled: sortReady,
+    ...serverFunnels,
   });
   const searchTransition = useSearchResultTransition({
     inputTerm: search,
@@ -1052,6 +1106,7 @@ export function MfgSalesOrdersListV2() {
   const statsPending =
     isLoading || isPlaceholderData || Boolean(error) || searchTransition.resultsAreStale;
   const updateStatus = useUpdateMfgSalesOrderStatus();
+  const requestCancel = useCancelRequestAction("so");
   const setHold = useSetDocumentHold("so");
 
   // The server already filtered (status + search) and sorted this page; the
@@ -1131,12 +1186,31 @@ export function MfgSalesOrdersListV2() {
     }
     setPageParam(0); // sort change → back to page 0
   };
+  /* DataTable reports its funnel state here; we lift the SERVER-FILTERABLE ones
+     (Customer Name, Currency) into the list query. Mirrors setSortAndReset: the
+     first (mount-restore) report adopts the funnel without clobbering a
+     deep-linked ?page=; later changes reset to page 1. */
+  const funnelSyncedRef = useRef(false);
+  const serverFunnelSigRef = useRef("");
+  const onColFiltersChange = (colFilters: Record<string, string[] | undefined>) => {
+    const pick = (key: string): string[] | undefined => {
+      const v = colFilters[key];
+      return v && v.length > 0 ? v : undefined;
+    };
+    const next = { debtorNames: pick("debtor_name"), currencies: pick("currency") };
+    const sig = JSON.stringify(next);
+    if (sig === serverFunnelSigRef.current) return;
+    serverFunnelSigRef.current = sig;
+    setServerFunnels(next);
+    if (!funnelSyncedRef.current) { funnelSyncedRef.current = true; return; }
+    setPageParam(0);
+  };
   const resetLayout = () => {
     setSort(undefined);
     setParams(new URLSearchParams(), { replace: true });
   };
   const filtersActive =
-    status !== "all" || view !== "table" || search.trim().length > 0;
+    status !== "all" || view !== "table" || search.trim().length > 0 || soFilters.length > 0;
 
   // ── Actions wired to real routes / mutations ──────────────────────────
   const goNewSo = () => navigate("/scm/sales-orders/new");
@@ -1194,16 +1268,8 @@ export function MfgSalesOrdersListV2() {
   /* Not setSoStatus: the WORDS are the point — Close sits one menu entry from
      Cancel and they do opposite things to the money. Both live in ./use-close-action. */
   const doCloseSo = makeCloseAction({ askConfirm, notify, mutate: updateStatus.mutate });
-  const doCancelSo = async (r: SoRow) => {
-    if (!(await askConfirm({
-      title: `Cancel ${r.doc_no}?`,
-      body: "A cancelled sales order cannot be reactivated — any deposit becomes customer credit.",
-      confirmLabel: "Cancel Sales Order",
-    }))) return;
-    updateStatus.mutate({ docNo: r.doc_no, status: "CANCELLED", expectedStatus: r.status }, {
-      onError: (e) => notify({ title: "Cancel failed", body: e instanceof Error ? e.message : "Something went wrong.", tone: "error" }),
-    });
-  };
+  /* Cancel is a REQUEST (owner 2026-09-08): reason + two approvals, in ./use-cancel-request-action. */
+  const doCancelSo = (r: SoRow) => void requestCancel(r.doc_no, r.doc_no);
   /* Put On Hold / Take Off Hold — the mig-0324 MARKER, never the status. The
      wording lives in ./use-hold-action; this screen runs it through askConfirm
      because every other action here does. */
@@ -1322,16 +1388,20 @@ export function MfgSalesOrdersListV2() {
      the flat scroll the grouping exists to end. Custom fields is automatic
      (every UDF column joins it). Finance columns are only DECLARED for a
      finance viewer, so that group simply doesn't exist for anyone else. */
-  const columns: Column<SoRow>[] = [
+  /* Labels are AutoCount's captions and Doc No / Agent / Debtor Code / Venue /
+     Branding are the book's spellings where the order is in AutoCount (the
+     server stamps ac_*; 2990 prints its own). The ERP number stays on ERP Doc No. */
+  const soLineColumnList = Object.values(soLineColumns<SoRow>());
+  const columns: Column<SoRow, SoListLine>[] = [
     {
       key: "doc_no",
       group: "Basic",
-      label: "Doc No.",
+      label: SO_LABELS.docNo,
       // 156 + font-docno (owner 2026-07-31): 132 clipped a full doc no by a
       // couple of px — see the measured DO No. note in MfgDeliveryOrdersListV2.
       width: "156px",
       alwaysVisible: true,
-      getValue: (r) => r.doc_no,
+      getValue: (r) => r.ac_doc_no ?? r.doc_no,
       render: (r) => (
         <span
           className={cn(
@@ -1339,15 +1409,21 @@ export function MfgSalesOrdersListV2() {
             isCancelledDocStatus(r.status) && "dt-cancel-strike",
           )}
         >
-          {r.doc_no}
+          {r.ac_doc_no ?? r.doc_no}
         </span>
       ),
     },
     {
+      key: "erp_doc_no", group: "Basic", label: SO_LABELS.erpDocNo, width: "156px", defaultHidden: true, disableSort: true,
+      getValue: (r) => r.doc_no,
+      render: (r) => <span className="font-docno text-[12.5px] text-ink-secondary">{r.doc_no}</span>,
+    },
+    {
       key: "so_date",
       group: "Basic",
-      label: "Date",
+      label: SO_LABELS.date,
       width: "108px",
+      exportFormat: "date",
       getValue: (r) => r.so_date,
       render: (r) => (
         <span className="text-[12.5px] text-ink-secondary">{fmtDate(r.so_date)}</span>
@@ -1356,8 +1432,11 @@ export function MfgSalesOrdersListV2() {
     {
       key: "debtor_name",
       group: "Basic",
-      label: "Customer",
+      label: SO_LABELS.debtorName,
       getValue: (r) => r.debtor_name,
+      // Server-filterable: the funnel is pushed into the list query, so seed the
+      // checklist with every customer (not just the loaded page's).
+      filterSeedValues: customerNames,
       render: (r) => (
         <span className="text-[13px] font-semibold text-ink">
           {r.debtor_name || "—"}
@@ -1367,22 +1446,32 @@ export function MfgSalesOrdersListV2() {
     {
       key: "salesperson",
       group: "Basic",
-      label: "Salesperson",
+      label: SO_LABELS.agent,
       width: "148px",
       // Not in the backend sort whitelist — keep getValue for CSV export but
       // disable the header sort so we never send an unsupported sort key.
       disableSort: true,
-      getValue: (r) => salespersonNameOf(r.agent, r.salesperson_id, ""),
+      getValue: (r) => r.ac_agent ?? salespersonNameOf(r.agent, r.salesperson_id, ""),
       render: (r) => (
         <span className="text-[12.5px] text-ink-secondary">
-          {salespersonNameOf(r.agent, r.salesperson_id, "—")}
+          {r.ac_agent ?? salespersonNameOf(r.agent, r.salesperson_id, "—")}
         </span>
       ),
     },
     {
+      key: "currency", group: "Amounts", label: SO_LABELS.currency, width: "96px", defaultHidden: true, disableSort: true,
+      getValue: (r) => r.currency ?? "MYR",
+      render: (r) => <span className="text-[12.5px] text-ink-secondary">{r.currency ?? "MYR"}</span>,
+    },
+    {
+      key: "sales_exemption_expiry", group: "Basic", label: SO_LABELS.salesExemptionExpiryDate, width: "150px", defaultHidden: true, disableSort: true, exportFormat: "date",
+      getValue: (r) => r.sales_exemption_expiry ?? "",
+      render: (r) => <span className="text-[12.5px] text-ink-secondary">{fmtDate(r.sales_exemption_expiry)}</span>,
+    },
+    {
       key: "sales_location",
       group: "Logistics",
-      label: "Location",
+      label: "Sales Location",
       width: "132px",
       disableSort: true,
       getValue: (r) => resolveSoLocation(r).label ?? "",
@@ -1391,7 +1480,7 @@ export function MfgSalesOrdersListV2() {
     {
       key: "reference",
       group: "Basic",
-      label: "Reference",
+      label: SO_LABELS.ref,
       width: "132px",
       disableSort: true,
       getValue: (r) => refOf(r),
@@ -1402,12 +1491,12 @@ export function MfgSalesOrdersListV2() {
     {
       key: "branding",
       group: "Basic",
-      label: "Branding",
+      label: SO_LABELS.branding,
       width: "112px",
       disableSort: true,
-      getValue: (r) => brandOf(r),
+      getValue: (r) => r.ac_branding ?? brandOf(r),
       render: (r) => {
-        const b = brandOf(r);
+        const b = r.ac_branding ?? brandOf(r);
         return (
           <Badge tone={brandTone(r)} variant="soft" size="xs">
             {b}
@@ -1423,19 +1512,18 @@ export function MfgSalesOrdersListV2() {
       // Exempt from the cancelled-row fade — the pill is WHY the row is grey.
       className: "dt-cancel-keep",
       getValue: (r) => r.status,
-      render: (r) => {
-        const st = statusFor(r.status);
-        /* mig 0324 — the Hold marker sits BESIDE the real status pill. */
-        return <StatusWithHold tone={st.tone} label={st.label} row={r} />;
-      },
+      exportValue: (r) => soListStatusWord(r.status, r.delivery_state ?? null, r.lifecycle_state ?? null, r.on_hold ?? null),
+      render: (r) => <SoListStatusCell row={r} />,
     },
     {
       key: "amount",
       group: "Amounts",
-      label: "Amount",
+      label: SO_LABELS.total,
       width: "128px",
       align: "right",
       getValue: (r) => r.local_total_sen,
+      exportValue: (r) => senToRinggit(r.local_total_sen, 2),
+      exportFormat: "money",
       render: (r) => (
         <span className="font-money text-[13px] font-semibold text-ink">
           {fmtRm(r.local_total_sen)}
@@ -1476,10 +1564,11 @@ export function MfgSalesOrdersListV2() {
            A tooltip is not an answer: if a link exists, a chip must show. */
       key: "po_doc_no",
       group: "Logistics",
-      label: "PO No.",
+      label: SO_LABELS.poDocNo,
       width: "150px",
       disableSort: true,
       getValue: (r) => poCellChips(r).all.join(", "),
+      lineValue: (_r, l) => l.po_nos.join(", ") || null, // the file: the POs raised for THIS line
       render: (r) => <SoListPoCell row={r} />,
     },
     {
@@ -1509,13 +1598,13 @@ export function MfgSalesOrdersListV2() {
     {
       key: "debtor_code",
       group: "Customer",
-      label: "Customer Code",
+      label: SO_LABELS.debtorCode,
       width: "120px",
       defaultHidden: true,
       disableSort: true,
-      getValue: (r) => r.debtor_code ?? "",
+      getValue: (r) => r.ac_debtor_code ?? r.debtor_code ?? "",
       render: (r) => (
-        <span className="font-mono text-[12px] text-ink-secondary">{r.debtor_code || "—"}</span>
+        <span className="font-mono text-[12px] text-ink-secondary">{r.ac_debtor_code ?? r.debtor_code ?? "—"}</span>
       ),
     },
     {
@@ -1595,28 +1684,19 @@ export function MfgSalesOrdersListV2() {
         return <span className="text-[12.5px] text-ink-secondary">{pm || "—"}</span>;
       },
     },
-    {
-      key: "paid",
-      group: "Amounts",
-      label: "Paid",
-      width: "110px",
-      align: "right",
-      defaultHidden: true,
-      disableSort: true,
-      getValue: (r) => r.paid_total_sen ?? r.paid_sen ?? 0,
-      render: (r) => (
-        <span className="font-money text-[13px] text-ink">{fmtRm(r.paid_total_sen ?? r.paid_sen ?? 0)}</span>
-      ),
-    },
+    approvalCodeColumn, // docs/bugs/0909 — its own module: this file may only shrink
+    moneyColumn<SoRow, SoListLine>({ key: "paid", group: "Amounts", label: "Paid", width: "110px", defaultHidden: true, sen: (r) => r.paid_total_sen ?? r.paid_sen ?? 0 }),
     {
       key: "balance",
       group: "Amounts",
-      label: "Balance",
+      label: SO_LABELS.balance,
       width: "110px",
       align: "right",
       defaultHidden: true,
       disableSort: true,
       getValue: (r) => r.balance_sen_live ?? r.balance_sen, // `?? 0` was dead: balance_sen is `number`, never nullish
+      exportValue: (r) => senToRinggit(r.balance_sen_live ?? r.balance_sen, 2),
+      exportFormat: "money",
       render: (r) => ( // negative = over-collected → text-err, the app's negative-money convention (owner 2026-08-16)
         <span className={cn("font-money text-[13px]", (r.balance_sen_live ?? r.balance_sen) < 0 ? "text-err" : "text-ink")}>{fmtRm(r.balance_sen_live ?? r.balance_sen)}</span>
       ),
@@ -1634,18 +1714,19 @@ export function MfgSalesOrdersListV2() {
       defaultHidden: true,
       disableSort: true,
       getValue: (r) => (r.do_nos ?? []).join(", "),
+      lineValue: (_r, l) => l.do_nos.join(", ") || null,
       render: (r) => <SoListDoCell doNos={r.do_nos} />,
     },
     {
       key: "venue",
       group: "Logistics",
-      label: "Venue",
+      label: SO_LABELS.venue,
       width: "150px",
       defaultHidden: true,
       disableSort: true,
-      getValue: (r) => r.venue ?? "",
+      getValue: (r) => r.ac_venue ?? r.venue ?? "",
       render: (r) => (
-        <span className="text-[12.5px] text-ink-secondary">{r.venue || "—"}</span>
+        <span className="text-[12.5px] text-ink-secondary">{r.ac_venue ?? r.venue ?? "—"}</span>
       ),
     },
     {
@@ -1656,16 +1737,19 @@ export function MfgSalesOrdersListV2() {
       defaultHidden: true,
       disableSort: true,                       // client-side; sortValue orders it
       getValue: (r) => r.stock_remark ?? "",   // raw remark for CSV + the funnel
+      lineValue: (_r, l) => l.stock_status,
       sortValue: (r) => stockRemarkSortScore(r.stock_remark),  // fullest first
       render: (r) => <StockRemarkPill remark={r.stock_remark} />,  // was grey text
     },
+    shippedProgressColumn<SoRow>(),
     {
       key: "processing_date",
       group: "Logistics",
-      label: "Processing Date",
+      label: SO_LABELS.processingDate,
       width: "140px",
       defaultHidden: true,
       disableSort: true,
+      exportFormat: "date",
       getValue: (r) => r.processing_date ?? "",
       render: (r) => (
         <span className="text-[12.5px] text-ink-secondary">
@@ -1676,11 +1760,13 @@ export function MfgSalesOrdersListV2() {
     {
       key: "customer_delivery_date",
       group: "Logistics",
-      label: "Delivery Date",
+      label: SO_LABELS.deliveryDate,
       width: "160px",
       defaultHidden: true,
       disableSort: true,
+      exportFormat: "date",
       getValue: (r) => r.customer_delivery_date ?? "",
+      lineValue: (_r, l) => l.delivery_date, // the file: the line's own date, else the order's
       render: (r) => (
         <span className="text-[12.5px] text-ink-secondary">
           {fmtDate(r.customer_delivery_date)}
@@ -1690,7 +1776,7 @@ export function MfgSalesOrdersListV2() {
     {
       key: "note",
       group: "Basic",
-      label: "Note",
+      label: SO_LABELS.note,
       width: "200px",
       defaultHidden: true,
       disableSort: true,
@@ -1740,191 +1826,12 @@ export function MfgSalesOrdersListV2() {
     //    lists an always-empty finance column for a non-finance user; the
     //    backend also omits these keys from the payload (canViewScmFinance).
     ...(canFinance
-      ? ([
-          {
-            key: "mattress_sofa_sen",
-            group: "Finance",
-            label: "Mattress/Sofa",
-            width: "120px",
-            align: "right",
-            defaultHidden: true,
-            disableSort: true,
-            getValue: (r) => r.mattress_sofa_sen ?? 0,
-            render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.mattress_sofa_sen ?? 0)}</span>
-            ),
-          },
-          {
-            key: "bedframe_sen",
-            group: "Finance",
-            label: "Bedframe",
-            width: "110px",
-            align: "right",
-            defaultHidden: true,
-            disableSort: true,
-            getValue: (r) => r.bedframe_sen ?? 0,
-            render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.bedframe_sen ?? 0)}</span>
-            ),
-          },
-          {
-            key: "accessories_sen",
-            group: "Finance",
-            label: "Accessories",
-            width: "110px",
-            align: "right",
-            defaultHidden: true,
-            disableSort: true,
-            getValue: (r) => r.accessories_sen ?? 0,
-            render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.accessories_sen ?? 0)}</span>
-            ),
-          },
-          {
-            key: "others_sen",
-            group: "Finance",
-            label: "Others",
-            width: "110px",
-            align: "right",
-            defaultHidden: true,
-            disableSort: true,
-            getValue: (r) => r.others_sen ?? 0,
-            render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.others_sen ?? 0)}</span>
-            ),
-          },
-          {
-            key: "service_sen",
-            group: "Finance",
-            label: "Service",
-            width: "110px",
-            align: "right",
-            defaultHidden: true,
-            disableSort: true,
-            getValue: (r) => r.service_sen ?? 0,
-            render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.service_sen ?? 0)}</span>
-            ),
-          },
-          {
-            key: "mattress_sofa_cost_sen",
-            group: "Finance",
-            label: "Mattress/Sofa Cost",
-            width: "140px",
-            align: "right",
-            defaultHidden: true,
-            disableSort: true,
-            getValue: (r) => r.mattress_sofa_cost_sen ?? 0,
-            render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.mattress_sofa_cost_sen ?? 0)}</span>
-            ),
-          },
-          {
-            key: "bedframe_cost_sen",
-            group: "Finance",
-            label: "Bedframe Cost",
-            width: "130px",
-            align: "right",
-            defaultHidden: true,
-            disableSort: true,
-            getValue: (r) => r.bedframe_cost_sen ?? 0,
-            render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.bedframe_cost_sen ?? 0)}</span>
-            ),
-          },
-          {
-            key: "accessories_cost_sen",
-            group: "Finance",
-            label: "Accessories Cost",
-            width: "140px",
-            align: "right",
-            defaultHidden: true,
-            disableSort: true,
-            getValue: (r) => r.accessories_cost_sen ?? 0,
-            render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.accessories_cost_sen ?? 0)}</span>
-            ),
-          },
-          {
-            key: "others_cost_sen",
-            group: "Finance",
-            label: "Others Cost",
-            width: "130px",
-            align: "right",
-            defaultHidden: true,
-            disableSort: true,
-            getValue: (r) => r.others_cost_sen ?? 0,
-            render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.others_cost_sen ?? 0)}</span>
-            ),
-          },
-          {
-            key: "service_cost_sen",
-            group: "Finance",
-            label: "Service Cost",
-            width: "130px",
-            align: "right",
-            defaultHidden: true,
-            disableSort: true,
-            getValue: (r) => r.service_cost_sen ?? 0,
-            render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.service_cost_sen ?? 0)}</span>
-            ),
-          },
-          {
-            key: "total_cost_sen",
-            group: "Finance",
-            label: "Total Cost",
-            width: "120px",
-            align: "right",
-            defaultHidden: true,
-            disableSort: true,
-            getValue: (r) => r.total_cost_sen ?? 0,
-            render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.total_cost_sen ?? 0)}</span>
-            ),
-          },
-          {
-            key: "total_margin_sen",
-            group: "Finance",
-            label: "Margin",
-            width: "120px",
-            align: "right",
-            defaultHidden: true,
-            disableSort: true,
-            getValue: (r) => r.total_margin_sen ?? 0,
-            render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.total_margin_sen ?? 0)}</span>
-            ),
-          },
-          {
-            key: "margin_pct_basis",
-            group: "Finance",
-            label: "Margin %",
-            width: "100px",
-            align: "right",
-            defaultHidden: true,
-            disableSort: true,
-            getValue: (r) => r.margin_pct_basis ?? 0,
-            render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtPctBasis(r.margin_pct_basis)}</span>
-            ),
-          },
-          {
-            key: "deposit_sen",
-            group: "Amounts",
-            label: "Deposit",
-            width: "110px",
-            align: "right",
-            defaultHidden: true,
-            disableSort: true,
-            getValue: (r) => r.deposit_sen ?? 0,
-            render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.deposit_sen ?? 0)}</span>
-            ),
-          },
-        ] satisfies Column<SoRow>[])
-      : ([] satisfies Column<SoRow>[])),
+      ? [
+          ...financeColumns<SoRow, SoListLine>("Finance"),
+          moneyColumn<SoRow, SoListLine>({ key: "deposit_sen", group: "Amounts", label: "Deposit", width: "110px", defaultHidden: true, sen: (r) => r.deposit_sen }),
+        ]
+      : []),
+    ...soLineColumnList,
   ];
 
   /* ── Column layouts ──────────────────────────────────────────────────────
@@ -1964,24 +1871,18 @@ export function MfgSalesOrdersListV2() {
           "customer_delivery_date",
         ],
       },
+      /* Owner 2026-09-15: the Houzs default is AutoCount's layout "SALES ORDER
+         DETAILS-SALES", one row per line in the Export. A company default an
+         admin saved from the Columns panel still takes this seed's place. */
       {
         id: "so-houzs",
         label: "Houzs Layout",
-        hint: "Sales desk",
+        hint: "AutoCount: SALES ORDER DETAILS-SALES",
         companyCode: "HOUZS",
         isDefault: !is2990,
-        columns: [
-          "so_date",
-          "debtor_name",
-          "salesperson",
-          "sales_location",
-          "reference",
-          "branding",
-          "status",
-          "amount",
-          "po_doc_no",
-        ],
+        columns: SO_AUTOCOUNT_KEYS,
       },
+      { id: "so-autocount", label: "AutoCount: SALES ORDER DETAILS-SALES", hint: "One row per line in the Export", columns: SO_AUTOCOUNT_KEYS },
     ];
   }, [branding.companyCode]);
 
@@ -2117,6 +2018,7 @@ export function MfgSalesOrdersListV2() {
               value={status}
               onChange={(v) => setStatusChip(v)}
             />
+            <SoListFilterBar q={debouncedSearch} />
             <div className="flex-1" />
             <ViewToggle value={view} onChange={setView} />
           </div>
@@ -2129,7 +2031,7 @@ export function MfgSalesOrdersListV2() {
           type="search"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search SO, customer, phone, ref…"
+          placeholder="Search SO, customer, phone, ref, approval code…"
           className="h-10 w-full rounded-lg border border-border bg-surface px-3.5 text-[14px] text-ink outline-none transition-colors placeholder:text-ink-muted focus:border-primary focus:ring-2 focus:ring-primary/20"
         />
         <SearchProgress
@@ -2147,6 +2049,7 @@ export function MfgSalesOrdersListV2() {
           value={status}
           onChange={(v) => setStatusChip(v)}
         />
+        <SoListFilterBar q={debouncedSearch} />
       </div>
 
       {/* Phone → CardsGrid ALWAYS. Desktop → the view toggle decides. */}
@@ -2204,7 +2107,20 @@ export function MfgSalesOrdersListV2() {
               </Button>
             </div>
           )}
-          <DataTable<SoRow>
+          {selectedIds.size > 0 && !searchTransition.resultsAreStale && (
+            <CancelledMoneyActions onDone={clearSelection}
+              ticked={rows.filter((r) => selectedIds.has(r.doc_no)).map((r) => ({ docNo: r.doc_no, status: r.status.toUpperCase(), customer: r.debtor_name || null }))} />
+          )}
+          <DataTable<SoRow, SoListLine>
+            /* The ONE Export (owner 2026-09-15): every order the tab, search,
+               filters and sort match, not the page; one row per line; the
+               visible columns, funnels and sort (DataTable exportLines). */
+            exportLines={{
+              fetchRows: () => fetchSoExportRows<SoRow>({ status, q: debouncedSearch, sort, filters: soFilters }),
+              linesOf: (r) => r.lines ?? [],
+              sheetName: "Sales Orders",
+              onError: (e) => void notify({ title: "Export failed", body: e.message || "The export could not be completed.", tone: "error" }),
+            }}
             tableId="sales-orders-v2"
             documentLabel="Sales Orders"
             layoutPresets={layoutPresets}
@@ -2230,6 +2146,7 @@ export function MfgSalesOrdersListV2() {
             exportName="sales-orders"
             serverSort
             onSortChange={setSortAndReset}
+            onColFiltersChange={onColFiltersChange}
             emptyLabel={
               filtersActive
                 ? "No sales orders match — try Reset layout to clear filters."
@@ -2238,7 +2155,7 @@ export function MfgSalesOrdersListV2() {
             search={{
               value: search,
               onChange: setSearch,
-              placeholder: "Search doc no, customer, phone, ref…",
+              placeholder: "Search doc no, customer, phone, ref, approval code…",
               debounceMs: 0,
               searching: searchTransition.isSearching,
               countPending: isLoading || isPlaceholderData || Boolean(error) || searchTransition.resultsAreStale,
@@ -2269,7 +2186,7 @@ export function MfgSalesOrdersListV2() {
                 type="search"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search doc no, customer, phone, ref…"
+                placeholder="Search doc no, customer, phone, ref, approval code…"
                 className="h-9 max-w-[320px] flex-1 rounded-md border border-border bg-surface px-3.5 text-[13px] text-ink outline-none transition-colors placeholder:text-ink-muted focus:border-primary focus:ring-2 focus:ring-primary/20"
               />
               <SearchProgress active={searchTransition.isSearching} label="Searching…" />

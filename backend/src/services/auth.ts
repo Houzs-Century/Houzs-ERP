@@ -1,7 +1,7 @@
 import type { Env } from "../types";
 import { parsePermissions } from "./permissions";
 import {
-  loadPageAccessForRole,
+  pageAccessFromPermissions,
   fullAccessMap,
   type AccessLevel,
   type PageAccessMeta,
@@ -20,11 +20,7 @@ import { applySalesJdOverride } from "./salesJdAccess";
 import { issueSessionPass, sessionSigningSecret } from "./session-pass";
 import { sidFor, revokeSession } from "./session-revocation";
 import { resolvePositionPolicy, positionGrantsWildcard } from "./positionPolicy";
-import {
-  applyPageOverrides,
-  loadPositionPageOverrides,
-  type PageOverrideRow,
-} from "./positionPageOverrides";
+import { policyRowFromDb, type PositionPolicyRow } from "./positionPolicyRows";
 
 // ── Crypto helpers ────────────────────────────────────────
 // PBKDF2 via Web Crypto — built into Workers, no WASM needed.
@@ -120,16 +116,36 @@ export function isoIn(seconds: number): string {
 // ── Session helpers ──────────────────────────────────────
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 7; // 7 days
 
+/** "Remember me on this device" (owner 2026-09-02: "cant keep permanently?").
+ *  A rolling window: the session lasts a year, and every request made with more
+ *  than half of it spent pushes the expiry back to a full year again. A device
+ *  in weekly use therefore never signs out; one nobody touches for a year does.
+ *  Permanent in practice, self-cleaning in the abandoned case — and still
+ *  revocable, since disabling the user or changing the password deletes their
+ *  session rows outright. */
+export const REMEMBER_TTL_SECONDS = 60 * 60 * 24 * 365; // 1 year, rolling
+
 // Bump whenever code changes the meaning/resolution of an AuthUser permission
 // envelope without a corresponding DB value changing. Including this revision
 // in the per-request fingerprint makes every pre-policy cache entry stale on
 // its first request after deploy instead of waiting for KV TTL.
 /* v2 (2026-08-22): the fingerprint components gained the position's
  * capability rows (position_capabilities) and SCM page overrides
- * (position_page_overrides) — both editable in the Roles & Permissions
+ * (position_page_overrides, dropped in v4) — both editable in the Roles & Permissions
  * matrix, so an edit must bust every cached session of that position's
  * members on their next request. The bump re-hydrates every session once. */
-export const AUTHZ_ENVELOPE_VERSION = 2;
+/* v3 (2026-09-16): the position's `position_policy` row (cohort / profile /
+ * flags, Roles & Permissions › Titles) joins the fingerprint and rides the
+ * envelope as `position_policy`; a cached v2 envelope has no such field, so
+ * the bump rebuilds each session once rather than serving the name rule to a
+ * Title whose row now says otherwise. */
+/* v4 (2026-09-16): the position_page_overrides layer is gone (table dropped,
+ * never used in production); the fingerprint lost its override arm and the
+ * envelope its override composition, so every cached v3 session rebuilds once. */
+/* v5 (2026-09-17): role_page_access is gone; the fingerprint lost its `page`
+ * arm and a member with no Title resolves pages from the role's permission keys
+ * alone, so every cached v4 session rebuilds once. */
+export const AUTHZ_ENVELOPE_VERSION = 5;
 
 /* Session ORIGIN (mig 0120) — the DOOR a session was minted at. It is NOT a
    property of the person: the same salesperson simultaneously holds a 'pos'
@@ -171,6 +187,11 @@ export interface AuthUser {
    *  transition. */
   position_id: number | null;
   position_name: string | null;
+  /** The Title's stored policy row (`position_policy`, Roles & Permissions ›
+   *  Titles). When present it decided cohort / page access / money / config /
+   *  fleet at hydration; the name-keyed rule in positionPolicy.ts was used only
+   *  if this is null. Optional so pre-v3 literals still type-check. */
+  position_policy?: PositionPolicyRow | null;
   status: string;
   permissions: string[];
   /** O(1) lookup mirror of `permissions`. Hydrated once at session
@@ -274,15 +295,49 @@ export async function createSession(
   userId: number,
   origin?: SessionOrigin,
   ttlSeconds: number = SESSION_TTL_SECONDS,
+  /** Seconds to roll the expiry forward by on use — "Remember me". Null (the
+   *  default) is a fixed session that runs out at `ttlSeconds` and is never
+   *  extended, which is every caller that does not opt in, the 1-hour
+   *  impersonation session included. */
+  renewSeconds: number | null = null,
 ): Promise<string> {
   const token = generateToken();
   const expires = isoIn(ttlSeconds);
   await env.DB.prepare(
-    `INSERT INTO sessions (token, user_id, expires_at, origin) VALUES (?, ?, ?, ?)`
+    `INSERT INTO sessions (token, user_id, expires_at, origin, renew_seconds) VALUES (?, ?, ?, ?, ?)`
   )
-    .bind(token, userId, expires, origin ?? null)
+    .bind(token, userId, expires, origin ?? null, renewSeconds)
     .run();
   return token;
+}
+
+/**
+ * Push a rolling session's expiry back to a full window, once it is more than
+ * halfway spent. Returns the new expiry, or null when nothing was written.
+ *
+ * Called from the authenticated read path, so it must stay CHEAP and it must
+ * never fail a request: at most one UPDATE per session per half-window (about
+ * one write every six months on a 1-year window), and any error is swallowed —
+ * a session that could not be extended is still valid until its stored expiry,
+ * and the next request tries again.
+ */
+async function renewRollingSession(
+  env: Env,
+  token: string,
+  expiresAt: string | null,
+  renewSeconds: number | null,
+): Promise<void> {
+  if (!renewSeconds || renewSeconds <= 0 || !expiresAt) return;
+  const remainingMs = Date.parse(expiresAt) - Date.now();
+  if (!Number.isFinite(remainingMs)) return;
+  if (remainingMs > (renewSeconds * 1000) / 2) return; // still fresh — no write
+  try {
+    await env.DB.prepare(`UPDATE sessions SET expires_at = ? WHERE token = ?`)
+      .bind(isoIn(renewSeconds), token)
+      .run();
+  } catch (e) {
+    console.warn("[auth] rolling session renewal failed", e);
+  }
 }
 
 /**
@@ -335,6 +390,10 @@ interface SessionAuthority {
   status: string;
   expires_at: string | null;
   origin: string | null;
+  /** Rolling-session window in seconds ("Remember me"), or null/absent for a
+   *  fixed session. Read defensively: a database that predates migration 0345
+   *  answers undefined here and every session simply stays fixed. */
+  renew_seconds?: number | null;
   role_id: number;
   position_id: number | null;
   department_id: number | null;
@@ -345,11 +404,20 @@ interface SessionAuthority {
   position_name: string | null;
   position_department_id: number | null;
   position_department_name: string | null;
+  /** The Title's position_policy row, joined on the authority read so an edit
+   *  on Roles & Permissions › Titles changes the fingerprint (and so busts the
+   *  cached envelope) without a further UNION arm — D1 caps compound SELECTs. */
+  policy_cohort: string | null;
+  policy_profile: string | null;
+  policy_money: number | boolean | null;
+  policy_config: number | boolean | null;
+  policy_fleet: number | boolean | null;
+  policy_duty: string | null;
   department_name: string | null;
 }
 
 interface AuthzComponent {
-  kind: "page" | "brand" | "cap" | "pgov";
+  kind: "brand" | "cap";
   owner_key: "role" | "self" | "manager" | "position";
   item_key: string;
   item_value: string;
@@ -389,6 +457,12 @@ function buildAuthzFingerprint(
       authority.position_name,
       authority.position_department_id,
       authority.position_department_name,
+      authority.policy_cohort ?? null,
+      authority.policy_profile ?? null,
+      Number(authority.policy_money ?? 0),
+      Number(authority.policy_config ?? 0),
+      Number(authority.policy_fleet ?? 0),
+      authority.policy_duty ?? null,
     ],
     department: [authority.department_id, authority.department_name],
     brands_for: [authority.user_id, authority.manager_id],
@@ -432,6 +506,18 @@ async function hydrateAuthUser(env: Env, row: any): Promise<AuthUser> {
   const managerId: number | null = row.manager_id ?? null;
   const permissions = parsePermissions(row.role_permissions);
   const permissionsSet = new Set(permissions);
+  // The Title's policy row rides the same SELECT (LEFT JOIN position_policy);
+  // null when the Title has no row, which hands every rule below to its
+  // name-keyed fallback.
+  const policyRow: PositionPolicyRow | null = policyRowFromDb({
+    position_id: row.position_id,
+    cohort: row.policy_cohort,
+    profile: row.policy_profile,
+    can_move_money: row.policy_money,
+    can_write_config: row.policy_config,
+    is_fleet: row.policy_fleet,
+    duty: row.policy_duty,
+  });
   // Position => '*' (owner 2026-07-20): a god-tier POSITION (Super Admin / Owner)
   // is a full super admin with NO roles.permissions grant — step 1 of merging role
   // + position onto ONE position-driven controller. Additive: it only ever ADDS
@@ -439,7 +525,7 @@ async function hydrateAuthUser(env: Env, row: any): Promise<AuthUser> {
   // then flows through the existing wildcard machinery — the page short-circuit
   // below (permissionsSet.has("*") -> fullAccessMap) and every requirePermission
   // site. Exact-name match lives in positionPolicy (never substring).
-  if (!permissionsSet.has("*") && positionGrantsWildcard(row.position_name ?? null)) {
+  if (!permissionsSet.has("*") && positionGrantsWildcard(row.position_name ?? null, policyRow)) {
     permissions.push("*");
     permissionsSet.add("*");
   }
@@ -482,36 +568,31 @@ async function hydrateAuthUser(env: Env, row: any): Promise<AuthUser> {
   } else if (row.position_id != null) {
     // ALL 17 positioned cohorts resolve HERE now — full, restricted, AND sales.
     // The policy is the single page-access source; the legacy position matrix is
-    // no longer read for a positioned user. (loadPageAccessForPosition survives
-    // only for the positionless role-matrix fallback below.)
+    // no longer read for a positioned user. (A member with no Title resolves from the
+    // role's permission keys below.)
     const policy = resolvePositionPolicy({
       position_name: row.position_name ?? null,
       department_name: row.department_name ?? null,
-    });
+    }, policyRow);
     pageAccess = policy.pageAccess;
     scmMeta.explicitScm = policy.scmConfigured;
   } else {
-    pageAccess = await loadPageAccessForRole(env, row.role_id, permissionsSet, scmMeta);
+    // No Title: pages come from the role's permission keys alone.
+    pageAccess = pageAccessFromPermissions(permissionsSet);
   }
 
-  // Editable Roles & Permissions matrix (owner 2026-08-22): the position's
-  // operational capability rows ride the session envelope, and its stored SCM
-  // page OVERRIDES compose over the resolved policy below. A `*` caller skips
-  // both loads — the guards bypass on the wildcard, so the rows would be dead
-  // weight on the hottest path. Positionless users have neither by definition.
+  // Actions matrix (owner 2026-08-22): the position's operational capability
+  // rows ride the session envelope. A `*` caller skips the load — the guard
+  // bypasses on the wildcard, so the rows would be dead weight on the hottest
+  // path. Positionless users have none by definition.
   let positionCapabilities: string[] = [];
-  let pageOverrides: PageOverrideRow[] = [];
   if (row.position_id != null && !permissionsSet.has("*")) {
-    const [capRows, overrideRows] = await Promise.all([
-      env.DB.prepare(
-        `SELECT capability FROM position_capabilities WHERE position_id = ? ORDER BY capability`,
-      )
-        .bind(row.position_id)
-        .all<{ capability: string }>(),
-      loadPositionPageOverrides(env, row.position_id),
-    ]);
+    const capRows = await env.DB.prepare(
+      `SELECT capability FROM position_capabilities WHERE position_id = ? ORDER BY capability`,
+    )
+      .bind(row.position_id)
+      .all<{ capability: string }>();
     positionCapabilities = (capRows.results ?? []).map((r) => r.capability);
-    pageOverrides = overrideRows;
   }
 
   return {
@@ -542,24 +623,15 @@ async function hydrateAuthUser(env: Env, row: any): Promise<AuthUser> {
     // under default-full the operation cohort is full anyway, and for the
     // restricted Storekeeper / Supervisor it was WRONG — it granted warehouse-write
     // edit the owner's manual denies them.
-    // Stored SCM overrides (the editable matrix) compose LAST — after the JD
-    // caps — because they are the owner's explicit per-position ruling. They
-    // cannot WIDEN past a code rule: salesJdDenial / salesJdWriteDenial /
-    // moneyWriteDenial all run before the map inside scmAreaGuard.
-    page_access: applyPageOverrides(
-      applySalesJdOverride(pageAccess, {
-        permissions: permissionsSet,
-        position_name: row.position_name ?? null,
-        department_name: row.department_name ?? null,
-      }),
-      pageOverrides,
-    ),
+    page_access: applySalesJdOverride(pageAccess, {
+      permissions: permissionsSet,
+      position_name: row.position_name ?? null,
+      department_name: row.department_name ?? null,
+      position_policy: policyRow,
+    }),
     position_capabilities: positionCapabilities,
-    // An overridden position is explicitly configured — the area guard must
-    // enforce its composed map even for a default-full cohort (whose map is
-    // the full-access map with only the overridden keys replaced, so nothing
-    // narrows by accident).
-    scm_l2_configured: scmMeta.explicitScm || pageOverrides.length > 0,
+    position_policy: policyRow,
+    scm_l2_configured: scmMeta.explicitScm,
     // sessions.origin — present only on the getUserBySession row (that SELECT
     // already joins `sessions`, so this costs no extra round-trip). getUserById
     // has no session, so `row.origin` is absent there and this lands null =
@@ -607,7 +679,7 @@ export async function getUserBySession(env: Env, token: string): Promise<AuthUse
   const settled = Promise.allSettled([
     getCachedUser(env, token),
     env.DB.prepare(
-      `SELECT s.user_id, s.expires_at, s.origin,
+      `SELECT s.user_id, s.expires_at, s.origin, s.renew_seconds,
               u.email, u.email_alias, u.name,
               u.status, u.role_id, u.position_id, u.department_id, u.manager_id,
               r.name AS role_name, r.permissions AS role_permissions,
@@ -615,12 +687,16 @@ export async function getUserBySession(env: Env, token: string): Promise<AuthUse
               p.name AS position_name,
               p.department_id AS position_department_id,
               pd.name AS position_department_name,
+              pp.cohort AS policy_cohort, pp.profile AS policy_profile,
+              pp.can_move_money AS policy_money, pp.can_write_config AS policy_config,
+              pp.is_fleet AS policy_fleet, pp.duty AS policy_duty,
               d.name AS department_name
        FROM sessions s
        JOIN users u ON u.id = s.user_id
        JOIN roles r ON r.id = u.role_id
        LEFT JOIN positions p ON p.id = u.position_id
        LEFT JOIN departments pd ON pd.id = p.department_id
+       LEFT JOIN position_policy pp ON pp.position_id = u.position_id
        LEFT JOIN departments d ON d.id = u.department_id
        WHERE s.token = ?`
     )
@@ -635,11 +711,6 @@ export async function getUserBySession(env: Env, token: string): Promise<AuthUse
          JOIN users u ON u.id = s.user_id
          WHERE s.token = ?
        )
-       SELECT 'page' AS kind, 'role' AS owner_key,
-              rpa.page_key AS item_key, rpa.level AS item_value
-       FROM principal pr
-       JOIN role_page_access rpa ON rpa.role_id = pr.role_id
-       UNION ALL
        SELECT 'brand' AS kind, 'self' AS owner_key,
               ub.brand AS item_key, '' AS item_value
        FROM principal pr
@@ -654,11 +725,6 @@ export async function getUserBySession(env: Env, token: string): Promise<AuthUse
               pc.capability AS item_key, '' AS item_value
        FROM principal pr
        JOIN position_capabilities pc ON pc.position_id = pr.position_id
-       UNION ALL
-       SELECT 'pgov' AS kind, 'position' AS owner_key,
-              po.page_key AS item_key, po.level AS item_value
-       FROM principal pr
-       JOIN position_page_overrides po ON po.position_id = pr.position_id
        ORDER BY kind, owner_key, item_key, item_value`
     )
       .bind(token)
@@ -706,6 +772,12 @@ export async function getUserBySession(env: Env, token: string): Promise<AuthUse
     return null;
   }
 
+  // "Remember me" keeps rolling forward from here — after the session is proven
+  // live, so an expired or revoked token is never extended, and before the
+  // cached-envelope return below, so a cache HIT renews too (that is the common
+  // path for a daily user, and it is exactly the one that must not sign out).
+  await renewRollingSession(env, token, authority.expires_at, authority.renew_seconds ?? null);
+
   const authzFingerprint = buildAuthzFingerprint(
     authority,
     componentRows.results ?? [],
@@ -742,12 +814,16 @@ export async function getUserBySession(env: Env, token: string): Promise<AuthUse
               r.name as role_name, r.permissions as role_permissions,
               r.scope_to_pic,
               p.name as position_name,
+              pp.cohort as policy_cohort, pp.profile as policy_profile,
+              pp.can_move_money as policy_money, pp.can_write_config as policy_config,
+              pp.is_fleet as policy_fleet, pp.duty as policy_duty,
               d.name as department_name,
               s.expires_at, s.origin
        FROM sessions s
        JOIN users u ON u.id = s.user_id
        JOIN roles r ON r.id = u.role_id
        LEFT JOIN positions p ON p.id = u.position_id
+       LEFT JOIN position_policy pp ON pp.position_id = u.position_id
        LEFT JOIN departments d ON d.id = u.department_id
        WHERE s.token = ?`
     )
@@ -791,10 +867,14 @@ export async function getUserById(env: Env, id: number): Promise<AuthUser | null
             r.name as role_name, r.permissions as role_permissions,
             r.scope_to_pic,
             p.name as position_name,
+              pp.cohort as policy_cohort, pp.profile as policy_profile,
+              pp.can_move_money as policy_money, pp.can_write_config as policy_config,
+              pp.is_fleet as policy_fleet, pp.duty as policy_duty,
             d.name as department_name
      FROM users u
      JOIN roles r ON r.id = u.role_id
      LEFT JOIN positions p ON p.id = u.position_id
+     LEFT JOIN position_policy pp ON pp.position_id = u.position_id
      LEFT JOIN departments d ON d.id = u.department_id
      WHERE u.id = ?`
   )

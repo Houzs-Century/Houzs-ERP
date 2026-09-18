@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import { soRouterSource } from "./lib/so-router-source";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { summariseReadiness, type ReadinessLine } from "../src/scm/lib/so-readiness";
@@ -130,7 +131,7 @@ describe("the two auto-advance writers use the gate, not the bare flag", () => {
   });
 
   test("the manual stock-status toggle gates on isShipReady", () => {
-    const src = read("scm/routes/mfg-sales-orders.ts");
+    const src = soRouterSource();
     expect(src).toContain("const allReady = readiness.isShipReady;");
     expect(src).not.toContain("const allReady = readiness.isMainReady;");
   });

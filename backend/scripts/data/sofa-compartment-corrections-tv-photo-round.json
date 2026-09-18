@@ -1,0 +1,67 @@
+{
+ "_note": "Sofa direction round 2026-09-10. Every not-proceeded at-risk document with a drawing was re-read (129 of 129); these are the builds the drawing says are mirrored.",
+ "_rule": "Owner 2026-09-09/10: TV drawn BELOW the run means the arm on the drawing LEFT is LHF. TV ABOVE means the NAIVE left-to-right read is the mirror - not that our record is wrong. No TV counts as below.",
+ "_coverage": "129 documents read: 109 already correct, 4 mirrored (here), 13 could not be decided from the image, 3 carry no handed piece.",
+ "entries": [
+  {
+   "docs": [
+    "HC-SO-012368"
+   ],
+   "pieces": [
+    "L(LHF)",
+    "2A(RHF)"
+   ],
+   "lineKeys": [
+    "846215"
+   ],
+   "confidence": "certain",
+   "why": "DRAWING RE-READ 2026-09-10, the TV round the owner asked for. TV boxed BELOW. The LEFT box is drawn deeper than the two to its right, which is how a chaise is drawn on these slips - so the chaise is on the LEFT and we hold it on the RIGHT. Turns on reading that left box as the chaise; the red extend-to-floor bracket is on the right The owner's rule: TV drawn BELOW the run means the arm on the drawing's LEFT is LHF.",
+   "source": "tv-round-2026-09-10"
+  },
+  {
+   "docs": [
+    "HC-SO-012760"
+   ],
+   "pieces": [
+    "L(LHF)",
+    "2A(RHF)"
+   ],
+   "lineKeys": [
+    "869181"
+   ],
+   "confidence": "certain",
+   "why": "DRAWING RE-READ 2026-09-10, the TV round the owner asked for. TV boxed BELOW. The LEFT box is drawn deeper than the [18in|18in] pair to its right, so the chaise is on the LEFT and we hold it on the RIGHT The owner's rule: TV drawn BELOW the run means the arm on the drawing's LEFT is LHF.",
+   "source": "tv-round-2026-09-10"
+  },
+  {
+   "docs": [
+    "HC-SO-013075"
+   ],
+   "pieces": [
+    "L(LHF)",
+    "2A(RHF)"
+   ],
+   "lineKeys": [
+    "887995"
+   ],
+   "confidence": "certain",
+   "why": "DRAWING RE-READ 2026-09-10, the TV round the owner asked for. a photo OF A PHONE SCREEN showing the slip: the LEFT box is drawn deeper than the [28in|28in] pair to its right, and the TV is boxed BELOW. Chaise LEFT where we hold it RIGHT. Legible but it is a screen photo, so the depth read is the thing to re-check if this one is ever disputed The owner's rule: TV drawn BELOW the run means the arm on the drawing's LEFT is LHF.",
+   "source": "tv-round-2026-09-10"
+  },
+  {
+   "docs": [
+    "HC-SO-013239"
+   ],
+   "pieces": [
+    "L(LHF)",
+    "2A(RHF)"
+   ],
+   "lineKeys": [
+    "901899"
+   ],
+   "confidence": "certain",
+   "why": "DRAWING RE-READ 2026-09-10, the TV round the owner asked for. TV boxed BELOW. The LEFT box is drawn much deeper than the [35in|35in] pair to its right, so the chaise is on the LEFT and we hold it on the RIGHT The owner's rule: TV drawn BELOW the run means the arm on the drawing's LEFT is LHF.",
+   "source": "tv-round-2026-09-10"
+  }
+ ]
+}

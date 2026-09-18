@@ -262,12 +262,12 @@ async function main() {
         COUNT(*) FILTER (WHERE h.linked_ac_docno IS NOT NULL) AS mig,
         COUNT(*) FILTER (WHERE h.linked_ac_docno IS NULL)     AS live
       FROM scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
-      WHERE h.company_id = ${CO} AND COALESCE(i.variants->'specials','[]'::jsonb) @> ${j}::jsonb`;
+      WHERE h.company_id = ${CO} AND COALESCE(i.variants->'specials','[]'::jsonb) @> ${j}::text::jsonb`;
     const po = await sql`SELECT
         COUNT(*) FILTER (WHERE h.linked_ac_docno IS NOT NULL) AS mig,
         COUNT(*) FILTER (WHERE h.linked_ac_docno IS NULL)     AS live
       FROM scm.purchase_order_items i JOIN scm.purchase_orders h ON h.id = i.purchase_order_id
-      WHERE h.company_id = ${CO} AND COALESCE(i.variants->'specials','[]'::jsonb) @> ${j}::jsonb`;
+      WHERE h.company_id = ${CO} AND COALESCE(i.variants->'specials','[]'::jsonb) @> ${j}::text::jsonb`;
     log(`   ${code.padEnd(34)} ${String(so[0].mig).padStart(7)} ${String(so[0].live).padStart(8)} ` +
         `${String(po[0].mig).padStart(7)} ${String(po[0].live).padStart(8)}`);
   }

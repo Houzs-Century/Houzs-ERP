@@ -31,6 +31,7 @@ import {
 // SofaComboTab from the vendored components. (Was ./SupplierDetailStubs.)
 import { MaintenanceTab, type MaintenanceSection } from './Products';
 import { SofaComboTab } from '../../vendor/scm/components/SofaComboTab';
+import { SupplierLeadTimes } from './SupplierLeadTimes';
 import { FabricTracking } from './FabricTracking';
 import { setActiveCompanyId } from '../../lib/activeCompany';
 import { Button } from '../../components/Button';
@@ -45,6 +46,9 @@ import {
   useUpdateBinding,
   useDeleteBinding,
   useSetCostAnchor,
+  useBindingPriceHistory,
+  useScheduleBindingPrice,
+  type BindingPriceChange,
   type BindingRow,
   type MaterialKind,
   type Currency,
@@ -57,6 +61,12 @@ import {
 } from '../../vendor/scm/lib/suppliers-queries';
 import { useMfgProducts, useMaintenanceConfig, type MfgCategory, type MfgProductRow } from '../../vendor/scm/lib/mfg-products-queries';
 import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
+/* A refused write must SAY so. The five grid cells below fire-and-forget, and
+   useUpdateBinding carries no onError (unlike useDeleteBinding and
+   useSetCostAnchor beside it), so a 503 from the go-live write freeze - or a
+   403, or a 504 - changed nothing and reported nothing. That is the owner's
+   exact report on 2026-09-07: "我点了main 为什么没反应". */
+import { writeFailed } from '../../vendor/scm/lib/mutation-error';
 import { useProductModels, type ProductModelRow } from '../../vendor/scm/lib/product-models-queries';
 import {
   useLocalities,
@@ -66,6 +76,7 @@ import {
   postcodesInState,
   PAYMENT_TERMS_OPTIONS,
 } from '../../vendor/scm/lib/localities-queries';
+import { SgPostcodeField } from '../../vendor/scm/components/SgPostcodeField';
 import { StatePicker } from '../../vendor/scm/components/StatePicker';
 import { composeSupplierSku, looksAmbiguous } from '../../vendor/scm/lib/supplier-sku-helpers';
 import { parseSupplierCategories, displaySupplierCategories } from '../../vendor/scm/lib/supplier-categories';
@@ -79,10 +90,13 @@ import { maintValues, fmtSen, fmtDateOrDash, fmtQty } from '@2990s/shared';
 import { PhoneInput } from '../../vendor/scm/components/PhoneInput';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
 import styles from './SupplierDetail.module.css';
+import { exportBindingsCsv, ImportBindingsDialog } from './SupplierBindingsCsv';
+import { EffectiveDatedHistory } from '../../vendor/scm/components/EffectiveDatedHistory';
+import { todayMyt } from '../../vendor/scm/lib/dates';
+import { DateField } from '../../vendor/scm/components/DateField';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
-const LG_ICON = { size: 20, strokeWidth: 1.75 } as const;
 
 /* CROSS-COMPANY MISS — when the supplier lives in another company the user is
    allowed to see, the backend answers { error: 'in_other_company', companyId,
@@ -261,7 +275,7 @@ function mfgCategoryFromSupplierCategory(
   }
 }
 
-type SupplierDetailTab = 'overview' | 'sku-pricing' | 'maintenance' | 'combos' | 'fabric';
+type SupplierDetailTab = 'overview' | 'sku-pricing' | 'maintenance' | 'combos' | 'fabric' | 'lead-times';
 
 export const SupplierDetail = () => {
   const { id } = useParams<{ id: string }>();
@@ -439,6 +453,12 @@ export const SupplierDetail = () => {
             Fabric Converter
           </SupplierTabButton>
         )}
+        <SupplierTabButton
+          active={activeTab === 'lead-times'}
+          onClick={() => setActiveTab('lead-times')}
+        >
+          Lead Times
+        </SupplierTabButton>
       </div>
 
       {activeTab === 'overview' && (
@@ -463,6 +483,7 @@ export const SupplierDetail = () => {
           supplierCategory={supplierCategory}
         />
       )}
+      {activeTab === 'lead-times' && <SupplierLeadTimes supplierId={id!} />}
       {activeTab === 'combos' && showCombo && (
         <section className={styles.card}>
           <header className={styles.cardHeader}>
@@ -847,15 +868,8 @@ const InfoCell = ({ label, value }: { label: string; value: string }) => (
   </div>
 );
 
-/* ════════════════════════════════════════════════════════════════════════
-   CategorySection — collapsible wrapper for one category's SKU mappings.
-
-   PR — Commander 2026-05-27. Default open; click the header row to toggle.
-   Uses native <details>-style behaviour via useState so we can persist the
-   open/closed state across re-renders (which a raw <details> would lose on
-   key-change). No localStorage — the user's task brief explicitly says
-   "Persist nothing".
-   ════════════════════════════════════════════════════════════════════════ */
+// CategorySection — collapsible wrapper for one category's SKU mappings.
+// Open/closed state is persisted per panel (usePersistedOpen).
 
 const CategorySection = ({
   label,
@@ -1396,11 +1410,10 @@ const MainStarCell = ({
       title={binding.is_main_supplier ? 'Main supplier' : 'Set as main'}
       onClick={(e) => {
         e.stopPropagation();
-        update.mutate({
-          supplierId,
-          bindingId: binding.id,
-          isMainSupplier: !binding.is_main_supplier,
-        });
+        update.mutate(
+          { supplierId, bindingId: binding.id, isMainSupplier: !binding.is_main_supplier },
+          { onError: writeFailed },
+        );
       }}
     >
       <Star
@@ -1570,7 +1583,7 @@ const InlineSupplierSku = ({
     const next = draft.trim();
     if (next === binding.supplier_sku) return;
     if (!next) { setDraft(binding.supplier_sku); return; }
-    update.mutate({ supplierId, bindingId: binding.id, supplierSku: next });
+    update.mutate({ supplierId, bindingId: binding.id, supplierSku: next }, { onError: writeFailed });
   };
   return (
     <input
@@ -1603,7 +1616,7 @@ const InlineUnitPrice = ({
       onCommit={(sen) => {
         const next = sen ?? 0;
         if (next === binding.unit_price_sen) return;
-        update.mutate({ supplierId, bindingId: binding.id, unitPriceSen: next });
+        update.mutate({ supplierId, bindingId: binding.id, unitPriceSen: next }, { onError: writeFailed });
       }}
     />
   );
@@ -1729,7 +1742,7 @@ const InlineSofaMatrixCell = ({
       currency={binding.currency}
       onCommit={(v) => {
         const next = setSofaCell(binding.price_matrix, height, tier, v);
-        update.mutate({ supplierId, bindingId: binding.id, priceMatrix: next });
+        update.mutate({ supplierId, bindingId: binding.id, priceMatrix: next }, { onError: writeFailed });
       }}
     />
   );
@@ -1753,7 +1766,7 @@ const InlineBedframeMatrixCell = ({
       currency={binding.currency}
       onCommit={(v) => {
         const next = setBedframeCell(binding.price_matrix, tier, v);
-        update.mutate({ supplierId, bindingId: binding.id, priceMatrix: next });
+        update.mutate({ supplierId, bindingId: binding.id, priceMatrix: next }, { onError: writeFailed });
       }}
     />
   );
@@ -1831,621 +1844,7 @@ const AutoSuffixButton = ({
   );
 };
 
-/* ════════════════════════════════════════════════════════════════════════
-   Bindings CSV Export + Import (Commander 2026-05-28).
-
-   EXPORT is tidy LONG format — header:
-     internal_code, supplier_sku, category, height, tier, price_rm,
-     lead_time_days, moq, is_main_supplier
-
-   Per binding kind:
-     • other (mattress/accessory/service) → ONE row: category=other, blank
-       height/tier, price_rm = unit_price.
-     • bedframe → one row per tier present (P1/P2): category=bedframe, blank
-       height, tier=P1|P2.
-     • sofa → one row per (height × tier) present: category=sofa, height=24…,
-       tier=P1|P2|P3.
-   A binding with no price set still emits ONE row (blank price) so it round-
-   trips and stays editable. The per-binding scalars (supplier_sku / lead /
-   moq / main) repeat on every row for that binding — standard long-format
-   redundancy; import reads them from the binding's rows (last non-blank wins).
-
-   Sofa seat-heights come from the master maintenance config (same source the
-   sofa SKU mappings table reads), so the export always reflects the current
-   pool. Long format means adding a seat-height no longer changes the column
-   set — it just adds rows.
-
-   IMPORT accepts BOTH formats (back-compat): the new LONG layout AND the old
-   WIDE matrix. We sniff the header — a `price_rm` column ⇒ long; any
-   `sofa_<h>_<t>` / `bedframe_P1` / `unit_price_rm` column ⇒ wide. Suppliers'
-   previously-exported wide CSVs still load unchanged.
-
-   Import is update-only: rows whose internal_code matches an existing binding
-   for this supplier get patched; unknown codes are tallied + reported in a
-   "skipped N" summary. Auto-create would need the new SKU's full descriptor +
-   risks drift across N missing codes if commander edits the wrong column.
-
-   Bulk endpoint isn't worth the round-trip cost yet — loop sequential PATCH
-   with a progress toast. Flag this as a follow-up to convert to a single
-   `POST /suppliers/:id/bindings/bulk-update` if N rows ever grows past ~50.
-   ════════════════════════════════════════════════════════════════════════ */
-
-const SOFA_TIERS_FOR_EXPORT: readonly ('P1' | 'P2' | 'P3')[] = ['P1', 'P2', 'P3'];
-
-/** RFC4180 quote when a cell contains comma / quote / newline. */
-function csvCell(v: unknown): string {
-  if (v == null) return '';
-  const s = String(v);
-  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
-
-/** Sen → RM (2dp). Treat `0`/`null` as blank so the CSV doesn't write
- *  "0.00" into every cell that's never been filled. */
-function fmtRmCell(centi: number | null | undefined): string {
-  if (centi == null || centi === 0) return '';
-  return (centi / 100).toFixed(2);
-}
-
-/** Read centi from a parsed CSV cell. Empty string / "—" → null (skip).
- *  Anything else gets coerced through Number; non-finite → null. */
-function parseRmCell(raw: string | undefined): number | null {
-  if (!raw) return null;
-  const t = raw.trim();
-  if (!t || t === '—' || t === '-') return null;
-  const n = Number(t);
-  if (!Number.isFinite(n) || n < 0) return null;
-  return Math.round(n * 100);
-}
-
-/** Classify a binding's underlying mfg_product so we know which optional
- *  matrix columns it should populate. Mirrors SupplierOverviewPanel.classify
- *  but returns the smaller set the CSV cares about. */
-function bindingKindForCsv(
-  binding: BindingRow,
-  productByCode: Map<string, MfgProductRow>,
-): 'sofa' | 'bedframe' | 'other' {
-  const p = productByCode.get(binding.item_code);
-  if (!p) return 'other';
-  if (p.category === 'SOFA') return 'sofa';
-  if (p.category === 'BEDFRAME') return 'bedframe';
-  return 'other';
-}
-
-/** Long-format header — fixed column set regardless of the seat-height pool. */
-const BINDINGS_LONG_HEADER: readonly string[] = [
-  'internal_code',
-  'supplier_sku',
-  'category',
-  'height',
-  'tier',
-  'price_rm',
-  'lead_time_days',
-  'moq',
-  'is_main_supplier',
-];
-
-function exportBindingsCsv(
-  bindings: BindingRow[],
-  supplierCode: string,
-  sofaHeights: string[],
-  products: MfgProductRow[],
-): void {
-  if (bindings.length === 0) return;
-  const productByCode = new Map<string, MfgProductRow>(
-    products.map((p) => [p.code, p]),
-  );
-
-  // Tidy LONG format — one row per binding × price-point. Adding a seat-height
-  // adds rows, never columns, so the file shape is stable across pool edits.
-  const lines: string[] = [BINDINGS_LONG_HEADER.map(csvCell).join(',')];
-  const scalar = (b: BindingRow) => ({
-    internal_code: b.item_code,
-    supplier_sku: b.supplier_sku,
-    lead_time_days: b.lead_time_days || '',
-    moq: b.moq || '',
-    is_main_supplier: b.is_main_supplier ? 'true' : 'false',
-  });
-  const emit = (
-    b: BindingRow,
-    category: string,
-    height: string,
-    tier: string,
-    priceRm: string,
-  ) => {
-    const row: Record<string, unknown> = {
-      ...scalar(b), category, height, tier, price_rm: priceRm,
-    };
-    lines.push(BINDINGS_LONG_HEADER.map((col) => csvCell(row[col])).join(','));
-  };
-
-  for (const b of bindings) {
-    const kind = bindingKindForCsv(b, productByCode);
-    if (kind === 'sofa') {
-      const matrix = (b.price_matrix ?? {}) as SofaPriceMatrix;
-      let emitted = 0;
-      for (const h of sofaHeights) {
-        const inner = matrix[h] ?? {};
-        for (const t of SOFA_TIERS_FOR_EXPORT) {
-          const cell = fmtRmCell(inner[t]);
-          if (cell) { emit(b, 'sofa', h, t, cell); emitted += 1; }
-        }
-      }
-      // No prices set yet → still emit one anchor row so the binding round-trips.
-      if (emitted === 0) emit(b, 'sofa', '', '', '');
-    } else if (kind === 'bedframe') {
-      const matrix = (b.price_matrix ?? {}) as BedframePriceMatrix;
-      let emitted = 0;
-      for (const t of ['P1', 'P2'] as const) {
-        const cell = fmtRmCell(matrix[t]);
-        if (cell) { emit(b, 'bedframe', '', t, cell); emitted += 1; }
-      }
-      if (emitted === 0) emit(b, 'bedframe', '', '', '');
-    } else {
-      // mattress / accessory / service — a single flat unit price.
-      emit(b, 'other', '', '', fmtRmCell(b.unit_price_sen));
-    }
-  }
-
-  const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `supplier-${supplierCode}-bindings-${new Date().toISOString().slice(0, 10)}.csv`;
-  a.click();
-  URL.revokeObjectURL(url);
-}
-
-/** Minimal CSV parser — handles RFC4180 quoting + escaped quotes. Doesn't
- *  try to be clever about UTF-8 BOM or CRLF / mixed line endings; commander's
- *  workflow is "Export → edit in Excel → save → Import" which produces
- *  comma-separated UTF-8 with quoted strings. */
-/** Read the first sheet of an uploaded Excel workbook (.xlsx/.xls) into rows of
- *  string cells — so an exported CSV that the operator edited and let Excel
- *  re-save as a workbook still imports. CSV stays on parseCsv below. */
-async function readXlsxGrid(file: File): Promise<string[][]> {
-  const XLSX = await import('../../lib/xlsx-runtime');
-  const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
-  const first = wb.SheetNames[0];
-  const sheet = first ? wb.Sheets[first] : undefined;
-  if (!sheet) return [];
-  const aoa = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, raw: false, defval: '' });
-  return aoa
-    .map((r) => (Array.isArray(r) ? r.map((c) => String(c ?? '')) : []))
-    .filter((r) => r.some((c) => c.trim().length > 0));
-}
-
-function parseCsv(text: string): string[][] {
-  const rows: string[][] = [];
-  let row: string[] = [];
-  let cell = '';
-  let inQuotes = false;
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i];
-    if (inQuotes) {
-      if (ch === '"') {
-        if (text[i + 1] === '"') { cell += '"'; i++; }
-        else { inQuotes = false; }
-      } else {
-        cell += ch;
-      }
-      continue;
-    }
-    if (ch === '"') { inQuotes = true; continue; }
-    if (ch === ',') { row.push(cell); cell = ''; continue; }
-    if (ch === '\r') { continue; }
-    if (ch === '\n') { row.push(cell); cell = ''; rows.push(row); row = []; continue; }
-    cell += ch;
-  }
-  // Flush trailing cell + row (no final newline).
-  if (cell.length > 0 || row.length > 0) { row.push(cell); rows.push(row); }
-  return rows.filter((r) => r.some((c) => c.trim().length > 0));
-}
-
-/* ── Import format detection + per-format patch builders (#6 back-compat) ──
-   Both builders accumulate into a Map<bindingId, AccumPatch>, so the executor
-   below is format-agnostic. A binding's scalar fields take the last non-blank
-   value seen; the price matrix is layered cell-by-cell onto the binding's
-   CURRENT matrix (wholesale send) so a partial sheet never wipes other cells. */
-
-type ImportFormat = 'long' | 'wide';
-type AccumPatch = { binding: BindingRow; patch: Partial<NewBinding> };
-type CsvKind = 'sofa' | 'bedframe' | 'other';
-
-/** Sniff the format from the header. A `price_rm` column ⇒ the new long
- *  layout; any wide price column (`unit_price_rm` / `sofa_*` / `bedframe_*`)
- *  ⇒ the legacy wide matrix. Defaults to long (the current export). */
-function detectImportFormat(header: string[]): ImportFormat {
-  if (header.includes('price_rm')) return 'long';
-  if (
-    header.includes('unit_price_rm') ||
-    header.includes('bedframe_P1') ||
-    header.includes('bedframe_P2') ||
-    header.some((h) => /^sofa_.+_(P1|P2|P3)$/.test(h))
-  ) return 'wide';
-  return 'long';
-}
-
-function csvKindForProduct(product: MfgProductRow | undefined): CsvKind {
-  return product?.category === 'SOFA' ? 'sofa'
-    : product?.category === 'BEDFRAME' ? 'bedframe'
-      : 'other';
-}
-
-/** Apply the shared scalar columns (supplier_sku / lead / moq / main) from one
- *  parsed row onto an accumulating patch. Diffs against the binding so no-op
- *  values aren't sent. Returns true if anything changed. */
-function applyScalarCols(
-  r: string[],
-  cols: { supSku: number; lead: number; moq: number; main: number },
-  binding: BindingRow,
-  patch: Partial<NewBinding>,
-): boolean {
-  let changed = false;
-  if (cols.supSku >= 0) {
-    const v = (r[cols.supSku] ?? '').trim();
-    if (v && v !== binding.supplier_sku && patch.supplierSku !== v) { patch.supplierSku = v; changed = true; }
-  }
-  if (cols.lead >= 0) {
-    const raw = (r[cols.lead] ?? '').trim();
-    if (raw) {
-      const n = Number(raw);
-      if (Number.isFinite(n) && n >= 0 && n !== binding.lead_time_days) { patch.leadTimeDays = Math.round(n); changed = true; }
-    }
-  }
-  if (cols.moq >= 0) {
-    const raw = (r[cols.moq] ?? '').trim();
-    if (raw) {
-      const n = Number(raw);
-      if (Number.isFinite(n) && n >= 0 && n !== binding.moq) { patch.moq = Math.round(n); changed = true; }
-    }
-  }
-  if (cols.main >= 0) {
-    const raw = (r[cols.main] ?? '').trim().toLowerCase();
-    if (raw === 'true' || raw === '1') {
-      if (!binding.is_main_supplier) { patch.isMainSupplier = true; changed = true; }
-    } else if (raw === 'false' || raw === '0') {
-      if (binding.is_main_supplier) { patch.isMainSupplier = false; changed = true; }
-    }
-  }
-  return changed;
-}
-
-/** WIDE parser — one row per binding, per-height matrix columns. Mirrors the
- *  legacy import exactly (kept for back-compat with previously-exported CSVs). */
-function buildWidePatches(
-  dataRows: string[][],
-  header: string[],
-  bindingByCode: Map<string, BindingRow>,
-  productByCode: Map<string, MfgProductRow>,
-  sofaHeights: string[],
-): { patches: Map<string, AccumPatch>; skippedUnknown: number } {
-  const idx = (col: string) => header.indexOf(col);
-  const colCode = idx('internal_code');
-  const sofaColIndex = new Map<string, Map<'P1' | 'P2' | 'P3', number>>();
-  for (const h of sofaHeights) {
-    const inner = new Map<'P1' | 'P2' | 'P3', number>();
-    for (const t of SOFA_TIERS_FOR_EXPORT) {
-      const i = idx(`sofa_${h}_${t}`);
-      if (i >= 0) inner.set(t, i);
-    }
-    sofaColIndex.set(h, inner);
-  }
-  const colBedP1 = idx('bedframe_P1');
-  const colBedP2 = idx('bedframe_P2');
-  const colUnitPriceRm = idx('unit_price_rm');
-  const scalarCols = { supSku: idx('supplier_sku'), lead: idx('lead_time_days'), moq: idx('moq'), main: idx('is_main_supplier') };
-
-  const patches = new Map<string, AccumPatch>();
-  let skippedUnknown = 0;
-
-  for (const r of dataRows) {
-    const code = (r[colCode] ?? '').trim();
-    if (!code) continue;
-    const binding = bindingByCode.get(code);
-    if (!binding) { skippedUnknown += 1; continue; }
-    const kind = csvKindForProduct(productByCode.get(code));
-
-    const patch: Partial<NewBinding> = {};
-    applyScalarCols(r, scalarCols, binding, patch);
-    if (kind === 'other' && colUnitPriceRm >= 0) {
-      const sen = parseRmCell(r[colUnitPriceRm]);
-      if (sen != null && sen !== binding.unit_price_sen) patch.unitPriceSen = sen;
-    }
-
-    // Price matrix updates are wholesale (send the merged matrix) so a partial
-    // sheet doesn't wipe other categories' data.
-    if (kind === 'sofa') {
-      const next: SofaPriceMatrix = { ...((binding.price_matrix ?? {}) as SofaPriceMatrix) };
-      let changed = false;
-      for (const h of sofaHeights) {
-        const inner = { ...(next[h] ?? {}) } as { P1?: number; P2?: number; P3?: number };
-        let innerChanged = false;
-        const indices = sofaColIndex.get(h);
-        if (!indices) continue;
-        for (const t of SOFA_TIERS_FOR_EXPORT) {
-          const colIdx = indices.get(t);
-          if (colIdx == null) continue;
-          const sen = parseRmCell(r[colIdx]);
-          if (sen == null) {
-            if (inner[t] !== undefined) { delete inner[t]; innerChanged = true; }
-          } else if (inner[t] !== sen) { inner[t] = sen; innerChanged = true; }
-        }
-        if (innerChanged) {
-          if (Object.keys(inner).length === 0) delete next[h];
-          else next[h] = inner;
-          changed = true;
-        }
-      }
-      if (changed) patch.priceMatrix = Object.keys(next).length === 0 ? null : next;
-    } else if (kind === 'bedframe') {
-      const next: BedframePriceMatrix = { ...((binding.price_matrix ?? {}) as BedframePriceMatrix) };
-      let changed = false;
-      if (colBedP1 >= 0) {
-        const sen = parseRmCell(r[colBedP1]);
-        if (sen == null) { if (next.P1 !== undefined) { delete next.P1; changed = true; } }
-        else if (next.P1 !== sen) { next.P1 = sen; changed = true; }
-      }
-      if (colBedP2 >= 0) {
-        const sen = parseRmCell(r[colBedP2]);
-        if (sen == null) { if (next.P2 !== undefined) { delete next.P2; changed = true; } }
-        else if (next.P2 !== sen) { next.P2 = sen; changed = true; }
-      }
-      if (changed) patch.priceMatrix = Object.keys(next).length === 0 ? null : next;
-    }
-
-    if (Object.keys(patch).length > 0) patches.set(binding.id, { binding, patch });
-  }
-  return { patches, skippedUnknown };
-}
-
-/** LONG parser — one row per binding × price-point. Multiple rows for the same
- *  internal_code merge: scalars take last non-blank; each row layers ONE matrix
- *  cell (sofa height×tier, or bedframe tier, or the flat unit price) onto the
- *  binding's current matrix. Blank price clears that cell. */
-function buildLongPatches(
-  dataRows: string[][],
-  header: string[],
-  bindingByCode: Map<string, BindingRow>,
-  productByCode: Map<string, MfgProductRow>,
-): { patches: Map<string, AccumPatch>; skippedUnknown: number } {
-  const idx = (col: string) => header.indexOf(col);
-  const colCode = idx('internal_code');
-  const colCategory = idx('category');
-  const colHeight = idx('height');
-  const colTier = idx('tier');
-  const colPriceRm = idx('price_rm');
-  const scalarCols = { supSku: idx('supplier_sku'), lead: idx('lead_time_days'), moq: idx('moq'), main: idx('is_main_supplier') };
-
-  const patches = new Map<string, AccumPatch>();
-  // Track the running merged matrix per binding so successive long rows layer
-  // onto the SAME object (not the binding's pristine matrix each time).
-  const sofaMatrices = new Map<string, SofaPriceMatrix>();
-  const bedMatrices = new Map<string, BedframePriceMatrix>();
-  const sofaTouched = new Set<string>();
-  const bedTouched = new Set<string>();
-  const skippedCodes = new Set<string>();
-
-  for (const r of dataRows) {
-    const code = (r[colCode] ?? '').trim();
-    if (!code) continue;
-    const binding = bindingByCode.get(code);
-    if (!binding) { skippedCodes.add(code); continue; }
-
-    const acc = patches.get(binding.id) ?? { binding, patch: {} as Partial<NewBinding> };
-    patches.set(binding.id, acc);
-    applyScalarCols(r, scalarCols, binding, acc.patch);
-
-    // Prefer the row's own `category` column; fall back to the product's kind
-    // (lets a hand-written sheet omit category for non-matrix items).
-    const catCell = colCategory >= 0 ? (r[colCategory] ?? '').trim().toLowerCase() : '';
-    const kind: CsvKind =
-      catCell === 'sofa' ? 'sofa'
-        : catCell === 'bedframe' ? 'bedframe'
-          : catCell === 'other' ? 'other'
-            : csvKindForProduct(productByCode.get(code));
-
-    const sen = colPriceRm >= 0 ? parseRmCell(r[colPriceRm]) : null;
-    const tier = (colTier >= 0 ? (r[colTier] ?? '').trim().toUpperCase() : '');
-    const height = colHeight >= 0 ? (r[colHeight] ?? '').trim() : '';
-
-    if (kind === 'other') {
-      // Flat unit price. Blank price on an "other" row = no change (don't zero
-      // a price just because an anchor row carried no value).
-      if (sen != null && sen !== binding.unit_price_sen) acc.patch.unitPriceSen = sen;
-    } else if (kind === 'bedframe') {
-      if (tier === 'P1' || tier === 'P2') {
-        const m = bedMatrices.get(binding.id) ?? { ...((binding.price_matrix ?? {}) as BedframePriceMatrix) };
-        if (sen == null) delete m[tier]; else m[tier] = sen;
-        bedMatrices.set(binding.id, m);
-        bedTouched.add(binding.id);
-      }
-      // tier blank → anchor row for an empty binding; nothing to layer.
-    } else { // sofa
-      if (height && (tier === 'P1' || tier === 'P2' || tier === 'P3')) {
-        const m = sofaMatrices.get(binding.id) ?? { ...((binding.price_matrix ?? {}) as SofaPriceMatrix) };
-        const inner = { ...(m[height] ?? {}) } as { P1?: number; P2?: number; P3?: number };
-        if (sen == null) delete inner[tier]; else inner[tier] = sen;
-        if (Object.keys(inner).length === 0) delete m[height];
-        else m[height] = inner;
-        sofaMatrices.set(binding.id, m);
-        sofaTouched.add(binding.id);
-      }
-    }
-  }
-
-  // Fold the merged matrices into each binding's patch (wholesale send).
-  for (const id of sofaTouched) {
-    const acc = patches.get(id);
-    if (!acc) continue;
-    const m = sofaMatrices.get(id)!;
-    acc.patch.priceMatrix = Object.keys(m).length === 0 ? null : m;
-  }
-  for (const id of bedTouched) {
-    const acc = patches.get(id);
-    if (!acc) continue;
-    const m = bedMatrices.get(id)!;
-    acc.patch.priceMatrix = Object.keys(m).length === 0 ? null : m;
-  }
-
-  // Drop bindings whose accumulated patch ended up empty (anchor-only rows).
-  for (const [id, acc] of patches) {
-    if (Object.keys(acc.patch).length === 0) patches.delete(id);
-  }
-  return { patches, skippedUnknown: skippedCodes.size };
-}
-
-const ImportBindingsDialog = ({
-  supplierId,
-  bindings,
-  products,
-  sofaHeights,
-  onClose,
-}: {
-  supplierId: string;
-  bindings: BindingRow[];
-  products: MfgProductRow[];
-  sofaHeights: string[];
-  onClose: () => void;
-}) => {
-  const update = useUpdateBinding();
-  const [file, setFile] = useState<File | null>(null);
-  const [running, setRunning] = useState(false);
-  const [progress, setProgress] = useState<{ done: number; total: number }>({ done: 0, total: 0 });
-  const [summary, setSummary] = useState<string | null>(null);
-
-  const productByCode = useMemo(
-    () => new Map<string, MfgProductRow>(products.map((p) => [p.code, p])),
-    [products],
-  );
-
-  const bindingByCode = useMemo(
-    () => new Map<string, BindingRow>(bindings.map((b) => [b.item_code, b])),
-    [bindings],
-  );
-
-  const run = async () => {
-    if (!file || running) return;
-    setRunning(true);
-    setSummary(null);
-    try {
-      const fname = file.name.toLowerCase();
-      let rows: string[][];
-      if (fname.endsWith('.xlsx') || fname.endsWith('.xls')) {
-        rows = await readXlsxGrid(file);
-      } else {
-        let text = await file.text();
-        if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1); // strip Excel UTF-8 BOM
-        rows = parseCsv(text);
-      }
-      if (rows.length < 2) { setSummary('File has no data rows.'); setRunning(false); return; }
-      const header = rows[0]!.map((h) => h.trim());
-      if (header.indexOf('internal_code') < 0) {
-        setSummary('Missing required column: internal_code');
-        setRunning(false);
-        return;
-      }
-      const dataRows = rows.slice(1);
-
-      // #6 back-compat — sniff the layout and dispatch to the matching builder.
-      // Both produce a Map<bindingId, { binding, patch }> so the executor below
-      // is identical regardless of format.
-      const format = detectImportFormat(header);
-      const { patches, skippedUnknown } =
-        format === 'long'
-          ? buildLongPatches(dataRows, header, bindingByCode, productByCode)
-          : buildWidePatches(dataRows, header, bindingByCode, productByCode, sofaHeights);
-
-      let updated = 0;
-      let failed = 0;
-      const accs = Array.from(patches.values());
-      setProgress({ done: 0, total: accs.length });
-      for (let i = 0; i < accs.length; i++) {
-        const { binding, patch } = accs[i]!;
-        try {
-          await update.mutateAsync({ supplierId, bindingId: binding.id, ...patch });
-          updated += 1;
-        } catch {
-          failed += 1;
-        }
-        setProgress({ done: i + 1, total: accs.length });
-      }
-
-      const parts: string[] = [];
-      parts.push(`Updated ${updated} binding${updated === 1 ? '' : 's'}`);
-      parts.push(`${format} format`);
-      if (skippedUnknown > 0) parts.push(`skipped ${skippedUnknown} unknown internal_code${skippedUnknown === 1 ? '' : 's'}`);
-      if (failed > 0) parts.push(`${failed} row${failed === 1 ? '' : 's'} failed`);
-      setSummary(parts.join(' · '));
-    } finally {
-      setRunning(false);
-    }
-  };
-
-  return (
-    <div className={styles.modalBackdrop} onClick={onClose}>
-      <div
-        className={styles.modal}
-        style={{ width: 'min(560px, 95vw)' }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <header className={styles.modalHeader}>
-          <h3 className={styles.modalTitle}>Import Bindings (CSV / Excel)</h3>
-          <button type="button" className={styles.iconBtn} onClick={onClose} aria-label="Close">
-            <X {...ICON} />
-          </button>
-        </header>
-        <div className={styles.modalBody}>
-          <p style={{ fontSize: 'var(--fs-12)', color: '#767b6e', marginBottom: 'var(--space-3)' }}>
-            Upload a CSV or Excel file exported via <strong>Export Bindings</strong>. Both the
-            current <strong>long</strong> layout (one row per price-point:
-            <code> category / height / tier / price_rm</code>) and older
-            <strong> wide</strong> matrix sheets are accepted automatically. Rows whose
-            <code> internal_code </code>matches an existing binding are
-            <strong> updated</strong>; unknown codes are <strong>skipped</strong>
-            (no auto-create — use the SKU Mappings dialog to add new bindings).
-          </p>
-          <input
-            type="file"
-            accept=".csv,.xlsx,.xls,text/csv"
-            disabled={running}
-            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-            style={{ marginBottom: 'var(--space-3)' }}
-          />
-          {progress.total > 0 && (
-            <p style={{ fontSize: 'var(--fs-12)', color: '#767b6e' }}>
-              Updating {progress.done} / {progress.total}…
-            </p>
-          )}
-          {summary && (
-            <p style={{
-              fontSize: 'var(--fs-13)',
-              color: '#11140f',
-              padding: 'var(--space-2) var(--space-3)',
-              background: '#fff',
-              border: '1px solid #d6d9d2',
-              borderRadius: 'var(--radius-md)',
-              marginTop: 'var(--space-2)',
-            }}>
-              {summary}
-            </p>
-          )}
-        </div>
-        <footer className={styles.modalFooter}>
-          <Button variant="ghost" onClick={onClose} disabled={running}>
-            {summary ? 'Close' : 'Cancel'}
-          </Button>
-          <Button variant="primary" onClick={run} disabled={!file || running}>
-            {running ? 'Importing…' : 'Import'}
-          </Button>
-        </footer>
-      </div>
-    </div>
-  );
-};
-
-/* ════════════════════════════════════════════════════════════════════════
-   Last 10 POs table
-   ════════════════════════════════════════════════════════════════════════ */
+// Last 10 POs table.
 
 type LastPo = {
   id: string;
@@ -2519,13 +1918,12 @@ const LastTenPOsTable = ({ rows }: { rows: LastPo[] }) => {
   );
 };
 
-/* ════════════════════════════════════════════════════════════════════════
-   SKU form modal — create or edit a supplier_material_binding
-   ════════════════════════════════════════════════════════════════════════ */
+// SKU form modal — create or edit a supplier_material_binding.
 
 type SkuDraft = {
   materialKind: MaterialKind;
   itemCode: string;
+  acItemCode: string;
   materialName: string;
   supplierSku: string;
   unitPriceSen: number;
@@ -2533,6 +1931,8 @@ type SkuDraft = {
   leadTimeDays: number;
   moq: number;
   isMainSupplier: boolean;
+  paymentTermsOverride: string;
+  notes: string;
 };
 
 const SkuFormDialog = ({
@@ -2547,12 +1947,8 @@ const SkuFormDialog = ({
   const create = useCreateBinding();
   const update = useUpdateBinding();
   const notify = useNotify();
-  /* PR — Commander 2026-05-27 ("为什么不能 auto-bind"): when commander types
-     an internal SKU code and the supplier_sku field is still empty, look up
-     the SKU row in the mfg_products cache and auto-derive the supplier_sku
-     using composeSupplierSku() — same per-SKU suffix rule the Model-first
-     picker uses. The user can still overwrite the autofill manually. We
-     don't stomp an existing supplier_sku and don't run in edit mode. */
+  // Auto-derives supplier_sku from the typed internal code (create flow only,
+  // never overwriting a value the user typed) — see the useEffect below.
   const products = useMfgProducts();
 
   const [draft, setDraft] = useState<SkuDraft>(() =>
@@ -2560,6 +1956,7 @@ const SkuFormDialog = ({
       ? {
           materialKind: editing.material_kind,
           itemCode: editing.item_code,
+          acItemCode: editing.ac_item_code ?? '',
           materialName: editing.material_name,
           supplierSku: editing.supplier_sku,
           unitPriceSen: editing.unit_price_sen,
@@ -2567,10 +1964,13 @@ const SkuFormDialog = ({
           leadTimeDays: editing.lead_time_days,
           moq: editing.moq,
           isMainSupplier: editing.is_main_supplier,
+          paymentTermsOverride: editing.payment_terms_override ?? '',
+          notes: editing.notes ?? '',
         }
       : {
           materialKind: 'mfg_product',
           itemCode: '',
+          acItemCode: '',
           materialName: '',
           supplierSku: '',
           unitPriceSen: 0,
@@ -2578,24 +1978,21 @@ const SkuFormDialog = ({
           leadTimeDays: 0,
           moq: 0,
           isMainSupplier: false,
+          paymentTermsOverride: '',
+          notes: '',
         },
   );
 
-  /* Lazy lookup by code. The mfg_products cache is module-shared across the
-     page (the SKU mappings table + the Model picker already use it), so
-     reading from it here is free. Returns null when the typed code isn't a
-     known internal SKU — keeps the autofill no-op for free-text material
-     codes (raw / fabric / one-off accessory). */
+  // Null when the code isn't a known internal SKU, so autofill no-ops for
+  // free-text material codes (raw / fabric / one-off accessory).
   const findProductByCode = (code: string): MfgProductRow | null => {
     if (!code.trim()) return null;
     const wanted = code.trim().toUpperCase();
     return (products.data ?? []).find((p) => (p.code ?? '').toUpperCase() === wanted) ?? null;
   };
 
-  /* Auto-bind supplier_sku once the typed internal code resolves to a known
-     mfg_products row AND the user hasn't already typed something into the
-     Supplier SKU field. Only fires for the create flow (editing === null);
-     editing an existing binding leaves the supplier_sku alone. */
+  // Create flow only: fill supplier_sku from the resolved product when the
+  // field is still empty; editing an existing binding leaves it alone.
   const supplierSkuRef = useRef(draft.supplierSku);
   supplierSkuRef.current = draft.supplierSku;
   useEffect(() => {
@@ -2608,20 +2005,15 @@ const SkuFormDialog = ({
     if (!next || next === supplierSkuRef.current) return;
     setDraft((s) => ({
       ...s,
-      // Also seed materialName from the resolved product if it was blank,
-      // so the user doesn't have to retype the internal description.
+      // Seed a blank description from the resolved product too.
       materialName: s.materialName.trim() || (p.name ?? s.materialName),
       supplierSku: next,
     }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft.itemCode, draft.materialKind, products.data, editing]);
 
-  /* #5 — live "becomes →" preview (mirrors the New Models bulk form's
-     previewCodes banner). As the operator types the internal code, resolve it
-     against the mfg_products cache and show what composeSupplierSku() will
-     produce — the SAME suffix rule the auto-fill above applies — so the
-     generated Supplier SKU isn't a silent surprise. Only meaningful for
-     manufacturing SKUs that resolve to a known product. */
+  // Live preview of what composeSupplierSku() will derive from the typed code,
+  // so the auto-filled Supplier SKU isn't a silent surprise.
   const skuPreview = useMemo(() => {
     if (draft.materialKind !== 'mfg_product') return null;
     const code = draft.itemCode.trim();
@@ -2642,9 +2034,8 @@ const SkuFormDialog = ({
       notify({ title: 'Internal code, description and supplier SKU are required.', tone: 'error' });
       return;
     }
-    // Staff #7 — on a FAILED bind, keep the dialog OPEN and surface the error
-    // (it used to fail silently → the operator re-typed everything). onClose
-    // fires on success only, so the draft is never lost on error.
+    // Keep the dialog open on a failed save and surface the error, so the
+    // draft is never lost (onClose fires on success only).
     const onError = (err: unknown) => notify({
       title: 'Save failed',
       body: err instanceof Error ? err.message : 'Something went wrong.',
@@ -2732,10 +2123,13 @@ const SkuFormDialog = ({
               />
             </label>
 
-            {/* #5 — live code preview. Shows what composeSupplierSku() derives
-                from the typed internal code (same look as the New Models bulk
-                form's "Will create →" banner) so the auto-filled Supplier SKU
-                isn't silent. Flags when the operator has overridden the rule. */}
+            <label className={styles.field}>
+              <span className={styles.fieldLabel}>AutoCount Item Code</span>
+              <input className={styles.fieldInput} placeholder="Its code in AutoCount (optional)"
+                value={draft.acItemCode} onChange={(e) => set('acItemCode', e.target.value)} />
+            </label>
+
+            {/* Preview of the auto-derived Supplier SKU; flags an override. */}
             {skuPreview && (
               <div
                 className={styles.formGridFull}
@@ -2778,22 +2172,20 @@ const SkuFormDialog = ({
 
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Lead Time (days)</span>
-              <input
-                type="number"
-                className={styles.fieldInput}
-                value={draft.leadTimeDays}
-                onChange={(e) => set('leadTimeDays', Number(e.target.value) || 0)}
-              />
+              <input type="number" className={styles.fieldInput} value={draft.leadTimeDays}
+                onChange={(e) => set('leadTimeDays', Number(e.target.value) || 0)} />
             </label>
 
             <label className={styles.field}>
               <span className={styles.fieldLabel}>MOQ</span>
-              <input
-                type="number"
-                className={styles.fieldInput}
-                value={draft.moq}
-                onChange={(e) => set('moq', Number(e.target.value) || 0)}
-              />
+              <input type="number" className={styles.fieldInput} value={draft.moq}
+                onChange={(e) => set('moq', Number(e.target.value) || 0)} />
+            </label>
+
+            <label className={styles.field}>
+              <span className={styles.fieldLabel}>Payment Terms Override</span>
+              <input className={styles.fieldInput} placeholder="e.g. 30% deposit, balance on delivery"
+                value={draft.paymentTermsOverride} onChange={(e) => set('paymentTermsOverride', e.target.value)} />
             </label>
 
             <div className={`${styles.field} ${styles.formGridFull}`}>
@@ -2808,7 +2200,20 @@ const SkuFormDialog = ({
                 </span>
               </label>
             </div>
+
+            <label className={`${styles.field} ${styles.formGridFull}`}>
+              <span className={styles.fieldLabel}>Notes</span>
+              <textarea
+                className={styles.fieldInput}
+                placeholder="Free-text note for this supplier mapping"
+                value={draft.notes}
+                onChange={(e) => set('notes', e.target.value)}
+                style={{ minHeight: 60, resize: 'vertical' }}
+              />
+            </label>
           </div>
+
+          {editing && <BindingPriceTimeline supplierId={supplierId} binding={editing} />}
         </div>
 
         <footer className={styles.modalFooter}>
@@ -2822,9 +2227,71 @@ const SkuFormDialog = ({
   );
 };
 
-/* ════════════════════════════════════════════════════════════════════════
-   Supplier Info card with inline edit (all fields)
-   ════════════════════════════════════════════════════════════════════════ */
+// ── B1 — effective-dated supplier price timeline for a binding ───────────────
+// The binding's unit cost by date (via the reusable EffectiveDatedHistory) plus
+// a "schedule a future price" form. Append-only: scheduling never rewrites the
+// past. NOTE (owner): these rows are the same table auto-derive reads as-of, so
+// a scheduled price moves the derived product cost on its date.
+const BindingPriceTimeline = ({ supplierId, binding }: { supplierId: string; binding: BindingRow }) => {
+  const history = useBindingPriceHistory(supplierId, binding.id);
+  const schedule = useScheduleBindingPrice();
+  const notify = useNotify();
+  const [effectiveFrom, setEffectiveFrom] = useState(() => todayMyt());
+  const [priceSen, setPriceSen] = useState<number>(binding.unit_price_sen);
+
+  const rows: BindingPriceChange[] = history.data?.history ?? [];
+
+  const submit = () => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(effectiveFrom)) {
+      void notify({ title: 'Pick a valid date.', tone: 'error' });
+      return;
+    }
+    schedule.mutate(
+      { supplierId, bindingId: binding.id, effectiveFrom, unitPriceSen: priceSen },
+      {
+        onSuccess: (r) => notify({ title: r.baselined ? 'Price scheduled (current cost baselined at today).' : 'Price scheduled.' }),
+        onError: (e) => notify({ title: 'Schedule failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' }),
+      },
+    );
+  };
+
+  return (
+    <div className={styles.formGridFull} style={{ marginTop: 'var(--space-4)', borderTop: '1px solid var(--line)', paddingTop: 'var(--space-3)' }}>
+      <span className={styles.fieldLabel}>Supplier price timeline</span>
+      <p style={{ fontSize: 'var(--fs-11)', color: '#767b6e', margin: '2px 0 10px' }}>
+        The unit cost this supplier charges, by date. Scheduling a future price never touches past orders — it applies from its own date.
+      </p>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: 'var(--space-3)' }}>
+        <label className={styles.field} style={{ margin: 0 }}>
+          <span className={styles.fieldLabel}>Effective from</span>
+          <DateField className={styles.fieldInput} value={effectiveFrom} onChange={(iso) => setEffectiveFrom(iso)} />
+        </label>
+        <label className={styles.field} style={{ margin: 0 }}>
+          <span className={styles.fieldLabel}>Unit price</span>
+          <MoneyInput bare valueSen={priceSen} inputClassName={styles.fieldInput} align="left" onCommit={(sen) => setPriceSen(sen ?? 0)} />
+        </label>
+        <Button variant="secondary" onClick={submit} disabled={schedule.isPending}>
+          {schedule.isPending ? 'Scheduling…' : 'Schedule price'}
+        </Button>
+      </div>
+      <EffectiveDatedHistory
+        rows={rows}
+        rowKey={(r) => r.id}
+        effectiveFrom={(r) => r.effective_from}
+        loading={history.isLoading}
+        emptyLabel="No scheduled or past supplier prices yet."
+        renderRow={(r) => (
+          <div style={{ fontSize: 'var(--fs-13)', marginTop: 2 }}>
+            <strong style={{ fontFamily: 'var(--font-mono, monospace)' }}>{fmtSen(r.unit_price_sen ?? 0)}</strong>
+            {r.notes ? <span style={{ color: 'var(--fg-soft)', marginLeft: 8 }}>{r.notes}</span> : null}
+          </div>
+        )}
+      />
+    </div>
+  );
+};
+
+// Supplier Info card with inline edit (all fields).
 
 const SupplierInfoCard = ({
   supplier,
@@ -2864,7 +2331,7 @@ const SupplierInfoCard = ({
     website: supplier.website ?? '',
     whatsappNumber: supplier.whatsapp_number ?? '',
     paymentTerms: supplier.payment_terms ?? '',
-    /* Supplier currency — MYR/RMB/USD/SGD; flows to PO + PI pricing once set. */
+    /* Supplier currency — MYR/RMB/CNY/USD/SGD; flows to PO + PI pricing once set. */
     currency: supplier.currency,
     address: supplier.address ?? '',
     postcode: supplier.postcode ?? '',
@@ -3016,7 +2483,7 @@ const SupplierInfoCard = ({
             <EditField label="Website" value={form.website} onChange={(v) => setF('website', v)} />
             {/* Commercial */}
             <PaymentTermsSelect value={form.paymentTerms} onChange={(v) => setF('paymentTerms', v)} />
-            {/* Supplier currency — fixed MYR/RMB/USD/SGD enum (order canonical,
+            {/* Supplier currency — fixed MYR/RMB/CNY/USD/SGD enum (order canonical,
                 NOT sorted). Flows to PO + PI pricing once set. */}
             <CurrencyEditSelect value={form.currency} onChange={(v) => setF('currency', v)} />
             <EditField label="Business Nature" value={form.businessNature} onChange={(v) => setF('businessNature', v)} />
@@ -3047,7 +2514,7 @@ const SupplierInfoCard = ({
             </label>
             <EditField label="Area" value={form.area} onChange={(v) => setF('area', v)} />
             <CitySelect state={form.state} value={form.city} onChange={(v) => setF('city', v)} />
-            <PostcodeSelect state={form.state} city={form.city} value={form.postcode} onChange={(v) => setF('postcode', v)} />
+            {form.country === 'Singapore' ? <SgPostcodeField value={form.postcode} onChange={(v) => setF('postcode', v)} onResolve={(r) => { setF('address', r.address); if (r.state && r.city) { setF('state', r.state); setF('city', r.city); } }} fieldClassName={styles.field} labelClassName={styles.fieldLabel} inputClassName={styles.fieldInput} /> : <PostcodeSelect state={form.state} city={form.city} value={form.postcode} onChange={(v) => setF('postcode', v)} />}
             <EditField label="Billing Address" value={form.address} onChange={(v) => setF('address', v)} multiline />
             <EditField label="Notes" value={form.notes} onChange={(v) => setF('notes', v)} multiline />
           </div>
@@ -3954,7 +3421,7 @@ const MultiSkuPickerDialog = ({
                           <td>{p.name}</td>
                           <td className={styles.muted}>{p.category}</td>
                           <td className={styles.muted}>{p.size_label ?? '—'}</td>
-                          <td className={styles.priceCell}>{p.base_price_sen ? `RM ${(p.base_price_sen / 100).toFixed(2)}` : '—'}</td>
+                          <td className={styles.priceCell}>{p.base_price_sen ? fmtSen(p.base_price_sen) : '—'}</td>
                         </tr>
                       );
                     })}
@@ -4304,10 +3771,13 @@ const PaymentTermsSelect = ({ value, onChange }: { value: string; onChange: (v: 
   );
 };
 
-/* Supplier currency picker (edit mode). Fixed MYR/RMB/USD/SGD enum — order is
-   canonical, NOT alphabetically sorted. Once saved, supplier.currency flows to
-   PurchaseOrderNew + the PI pages. */
-const CURRENCY_OPTIONS: readonly Currency[] = ['MYR', 'RMB', 'USD', 'SGD'];
+/* Supplier currency picker (edit mode). Fixed MYR/RMB/CNY/USD/SGD enum — order
+   is canonical, NOT alphabetically sorted. Once saved, supplier.currency flows to
+   PurchaseOrderNew + the PI pages. CNY was added 2026-09-07 alongside the DB
+   enum: a supplier the book bills in yuan must be settable to the code the book
+   uses, and a set that disagreed with VALID_CURRENCIES is what the
+   duplicated-decision gate refuses. */
+const CURRENCY_OPTIONS: readonly Currency[] = ['MYR', 'RMB', 'CNY', 'USD', 'SGD'];
 
 const CurrencyEditSelect = ({ value, onChange }: { value: Currency; onChange: (v: Currency) => void }) => (
   <label className={styles.field}>

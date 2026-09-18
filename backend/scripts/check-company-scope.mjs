@@ -48,8 +48,13 @@
 //     itself scoped. Those show up as false positives; annotate with
 //     `// company-scope: <reason>` on the handler line to silence one.
 //   - whether the scope helper is passed the RIGHT company.
-//   - anything outside backend/src/scm/routes (native routes have their own
-//     companyContext middleware).
+//   - anything outside backend/src/scm/routes and backend/src/routes (native
+//     routes have their own companyContext middleware), except a register /
+//     mount function or a by-reference handler those files lead to.
+//   - a helper CALLED by a handler body. A by-reference handler is followed to
+//     its declaration (and a factory to the function passed to it); what that
+//     body calls in turn is not.
+//   - a registration whose path literal is not on the same line as `.get(`.
 //
 // Usage:
 //   node backend/scripts/check-company-scope.mjs           # report
@@ -169,9 +174,23 @@ const newAgainst = (keys, baseSet) => keys.filter((k) => !baseSet.has(k));
 const DELEGATION_GUARDS = [
   "selfScopedSalesBlocked",   // mfg-sales-orders.ts:806  - 18 /:docNo handlers
   "salesDocOutOfScope",       // lib/salesScope.ts
+  /* lib/salesScope.ts — the SO-only twin of the line above, added 2026-09-09
+     with shared Sales Orders. Same body: it calls resolveSalesScopeIds and
+     fails closed on an unreadable scope, and only the membership test differs
+     (the row's access_staff_ids as well as its salesperson_id). Listed because
+     the SO detail / items / amendment-create gates now call THIS one, and a
+     guard that is equivalent but unnamed reads to this checker as a handler
+     that lost its scoping. */
+  "soDocOutOfScope",          // lib/salesScope.ts
   "requireScmCompany",
   "loadAmendmentForWrite",    // so-amendments.ts:122     - all 6 mutation gates
   "resolveAllocationParent",  // mfg-purchase-orders.ts:3354
+  /* routes/document-cancel-routes.ts - reads the open cancel request with
+     `.eq('company_id', companyId)`, and every caller takes companyId from
+     loadDoc (requireActiveCompanyId + scopeToCompanyId). The approve / reject /
+     withdraw writes are keyed by the id that read returned. Verified 2026-09-16,
+     the first run that read those factory bodies at all. */
+  "loadOpenRequest",
 ];
 
 /* SCOPE PRIMITIVES - only count inside an actual  query. */
@@ -344,260 +363,736 @@ function stripComments(lines) {
   });
 }
 
-const findings = [];
-let handlersChecked = 0;
+/* ── WHERE A HANDLER'S BODY LIVES ────────────────────────────────────────────
+   The passes below judge a handler by the lines they read for it. Until
+   2026-09-16 those were "the registration line down to the next registration,
+   in the same flat file", and every way a router can be split made that read
+   the WRONG lines without saying so:
 
-for (const dir of ROUTE_DIRS) {
-const relDir = path.relative(backendRoot, dir).split(path.sep).join("/");
-for (const file of fs.readdirSync(dir).filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts"))) {
-  const full = path.join(dir, file);
-  const raw = fs.readFileSync(full, "utf8").split(/\r?\n/);
-  const code = stripComments(raw);
+   1. A route file in a SUBDIRECTORY (routes/mfg-sales-orders/<topic>.ts) was
+      never opened: readdirSync is not recursive.
+   2. A `register<Topic>Routes(router)` / `mount<Name>Route(router, ...)` body
+      registers on its PARAMETER. The last registration in it ran past the
+      function's closing brace into whatever followed, where a scoped helper
+      could acquit it; and a registration whose path is computed
+      (`router.patch(PATHS[doc], ...)`) matched nothing and was not counted.
+   3. A handler passed BY REFERENCE (`router.get('/x', someHandler)`) was looked
+      up in the registering file only. An IMPORTED one was not found there, so
+      the scan fell back to the lines under the registration - usually that one
+      line - and printed a clean verdict for a body it never read.
 
-  // Slice the file into handlers: from one HANDLER line to the next.
-  const starts = [];
-  code.forEach((l, i) => {
-    if (HANDLER.test(l)) starts.push(i);
-  });
+   So a handler that is not written inline is RESOLVED: the local declaration,
+   or the import followed to the file that declares it (re-exports included),
+   and for a factory call such as `makeHoldHandler(cfg)` or `guarded(h)` the
+   factory's body plus any function passed to it. A reference that cannot be
+   resolved is not skipped. It is reported UNVERIFIABLE - "body not inline,
+   cannot verify company scope" - and fails --strict, --check and --update,
+   because "could not read it" must never print the verdict "read it, scoped".
 
-  starts.forEach((start, k) => {
-    const end = k + 1 < starts.length ? starts[k + 1] : code.length;
-    const body = code.slice(start, end);
-    const rawBody = raw.slice(start, end);
-    const m = HANDLER.exec(code[start]);
-    const method = m[1].toUpperCase();
-    const routePath = m[2];
+   Dependency-free on purpose (no TypeScript parser): the ratchet job runs this
+   before any `npm ci`. The file access goes through `io` so the self-test can
+   scan an in-memory tree with exactly the code that scans the real one. */
 
-    handlersChecked++;
+const VERB_OPEN = /^\s*[A-Za-z_$][\w$]*\s*\.\s*(get|post|put|patch|delete)\s*\(/;
+const REGISTER_FN =
+  /^(?:export\s+)?(?:async\s+)?function\s+(register[A-Z][\w$]*Routes|mount[A-Z][\w$]*Routes?)\s*\(\s*([A-Za-z_$][\w$]*)?/;
+const REGISTER_ARROW =
+  /^(?:export\s+)?const\s+(register[A-Z][\w$]*Routes|mount[A-Z][\w$]*Routes?)\b[^=]*=\s*(?:async\s*)?\(\s*([A-Za-z_$][\w$]*)?/;
+/** A statement calling one: `registerPhotoRoutes(mfgSalesOrders);` */
+const REGISTER_CALL = /^\s*(register[A-Z][\w$]*Routes|mount[A-Z][\w$]*Routes?)\s*\(/;
+const IDENT = /^[A-Za-z_$][\w$]*$/;
+const CALL_EXPR = /^([A-Za-z_$][\w$]*)\s*\(([\s\S]*)\)$/;
+/* How far a registration's argument list is read looking for its handler. A
+   multi-line middleware list fits easily; a call that has not closed and has
+   shown no function literal by then is not something this checker can read. */
+const REG_ARGS_MAX_LINES = 40;
 
-    /* Opt-out: an explicit annotation on any line of the handler.
-       NOTE the deliberate ordering — this first test uses the NAIVE slice
-       (registration to registration) so an annotation written next to the
-       REGISTRATION works. A second, identical test runs after the named-handler
-       resolution below, so an annotation written inside the resolved FUNCTION
-       BODY works too. Both are natural places to put it, and checking only one
-       meant a correctly annotated handler kept being reported — which is how an
-       opt-out mechanism gets ignored. */
-    if (rawBody.some((l) => l.includes("company-scope:"))) return;
+const toPosix = (p) => p.split(path.sep).join("/");
 
-    /* If the registration names a handler declared elsewhere, scan THAT body.
-       Slicing "this registration to the next" would otherwise read the wrong
-       code: payment-vouchers POST /:id/cancel is registered by name, and the
-       naive slice reported it unscoped while the real body - which calls
-       scopeToCompanyId and says so in its own comment - sat further down the
-       file. A checker that mis-slices its unit produces noise, and noise is how
-       a checker gets ignored. */
-    /* THIS BLOCK SILENTLY DID NOTHING until 2026-08-13. Both patterns lost a
-       backslash on the way in: `"...\s+"` inside a double-quoted JS string is
-       not the whitespace class, it is the letter `s`, and `"\b"` is not a word
-       boundary, it is the BACKSPACE character 0x08 — so declRe could never
-       match any real declaration. declAt stayed -1, the code fell back to the
-       naive registration-to-next-registration slice, and the scan read the
-       WRONG BODY for every named handler: payment-vouchers POST /:id/cancel was
-       reported against reversePvAccounting's lines, three functions further
-       down. A regex that cannot match fails silently and looks like a clean
-       result, which is the worst way for a checker to be wrong.
+const diskIo = {
+  isFile: (p) => fs.existsSync(p) && fs.statSync(p).isFile(),
+  read: (p) => fs.readFileSync(p, "utf8"),
+  /** Route files under `dir`, RECURSIVELY; the top level in readdir order as before. */
+  list(dir) {
+    const out = [];
+    const subdirs = [];
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) subdirs.push(full);
+      else if (entry.name.endsWith(".ts") && !entry.name.endsWith(".test.ts")) out.push(full);
+    }
+    for (const sub of subdirs) out.push(...diskIo.list(sub));
+    return out;
+  },
+};
 
-       Built with RegExp escapes doubled, and asserted at startup below so a
-       future edit cannot re-break it quietly. */
-    let scanBody = body;
-    let scanOffset = start;
-    const named = NAMED_HANDLER.exec(code[start]);
-    if (named) {
-      const fnName = named[1];
-      const declRe = declRegex(fnName);
-      const declAt = code.findIndex((l) => declRe.test(l));
-      if (declAt >= 0) {
-        let stop = code.length;
-        for (let k = declAt + 1; k < code.length && k < declAt + 400; k++) {
-          if (NEXT_DECL.test(code[k])) { stop = k; break; }
+/** Split `text` at its top-level commas; quotes are skipped so a ',' in a string does not split. */
+function splitTopLevel(text) {
+  const parts = [];
+  let cur = "";
+  let depth = 0;
+  let quote = null;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (quote) {
+      cur += ch;
+      if (ch === "\\") { cur += text[i + 1] ?? ""; i++; } else if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === "'" || ch === '"' || ch === "`") { quote = ch; cur += ch; continue; }
+    if (ch === "(" || ch === "[" || ch === "{") depth++;
+    else if (ch === ")" || ch === "]" || ch === "}") depth--;
+    else if (ch === "," && depth === 0) { parts.push(cur.trim()); cur = ""; continue; }
+    cur += ch;
+  }
+  if (cur.trim()) parts.push(cur.trim());
+  return parts;
+}
+
+/* The registration opening on line `start`, read argument by argument.
+   { inline: true, args } as soon as a function literal sits at the call's top
+   level (`async (c) => {`, `function (c) {`): the body is the lines below, read
+   exactly as before. { args } once the call closes. { unterminated: true } if it
+   does neither within REG_ARGS_MAX_LINES. */
+function registrationArgs(code, start) {
+  const open = VERB_OPEN.exec(code[start] ?? "");
+  if (!open) return { unterminated: true };
+  const args = [];
+  let cur = "";
+  let depth = 1;
+  let quote = null;
+  for (let ln = start; ln < code.length && ln < start + REG_ARGS_MAX_LINES; ln++) {
+    const text = ln === start ? code[ln].slice(open[0].length) : code[ln];
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      if (quote) {
+        cur += ch;
+        if (ch === "\\") { cur += text[i + 1] ?? ""; i++; } else if (ch === quote) quote = null;
+        continue;
+      }
+      if (ch === "'" || ch === '"' || ch === "`") { quote = ch; cur += ch; continue; }
+      if (depth === 1 && ch === "=" && text[i + 1] === ">") return { inline: true, args };
+      if (depth === 1 && ch === "f" && !/[\w$]/.test(text[i - 1] ?? "") && /^function\b/.test(text.slice(i))) {
+        return { inline: true, args };
+      }
+      if (ch === "(" || ch === "[" || ch === "{") depth++;
+      else if (ch === ")" || ch === "]" || ch === "}") {
+        depth--;
+        if (depth === 0) {
+          if (cur.trim()) args.push(cur.trim());
+          return { args };
         }
-        scanBody = code.slice(declAt, stop);
-        scanOffset = declAt;
+      } else if (ch === "," && depth === 1) { args.push(cur.trim()); cur = ""; continue; }
+      cur += ch;
+    }
+    cur += "\n";
+    /* A '/" string cannot span lines. stripComments cuts `'https://…'` at its
+       `//`, and without this the dangling quote would swallow the file. */
+    if (quote === "'" || quote === '"') quote = null;
+  }
+  return { unterminated: true };
+}
+
+/* register*Routes / mount*Route(s) declarations: the line range of each body and
+   its first parameter (the router it registers on). The end is found by brace
+   depth from the body's opening `{`, not by a column-0 `}` - a parameter type
+   written over several lines closes with `}) {` at column 0. */
+function registerFunctions(code) {
+  const out = [];
+  code.forEach((line, from) => {
+    const m = REGISTER_FN.exec(line) ?? REGISTER_ARROW.exec(line);
+    if (!m) return;
+    let paren = 0;
+    let brace = 0;
+    let opened = false;
+    let quote = null;
+    let to = code.length - 1;
+    scan: for (let k = from; k < code.length; k++) {
+      const text = code[k];
+      for (let i = 0; i < text.length; i++) {
+        const ch = text[i];
+        if (quote) {
+          if (ch === "\\") i++;
+          else if (ch === quote) quote = null;
+          continue;
+        }
+        if (ch === "'" || ch === '"' || ch === "`") { quote = ch; continue; }
+        if (ch === "(") paren++;
+        else if (ch === ")") paren--;
+        else if (ch === "{") {
+          if (paren === 0) opened = true;
+          if (opened) brace++;
+        } else if (ch === "}" && opened) {
+          brace--;
+          if (brace === 0) { to = k; break scan; }
+        }
+      }
+      if (quote === "'" || quote === '"') quote = null;
+    }
+    out.push({ name: m[1], param: m[2] ?? null, from, to });
+  });
+  return out;
+}
+
+/* Value imports of a file: local name -> { specifier, exportName }. Over the
+   comment-stripped text, so multi-line clauses and several imports on one line
+   both parse. `import type` binds no value and is skipped. */
+function importBindings(code) {
+  const map = new Map();
+  const text = code.join("\n");
+  for (const m of text.matchAll(/\bimport\s+(?!type\s)([^;'"`]*?)\s*\bfrom\s*['"]([^'"]+)['"]/g)) {
+    let clause = m[1].trim();
+    const specifier = m[2];
+    const def = /^([A-Za-z_$][\w$]*)\s*(?:,|$)/.exec(clause);
+    if (def) {
+      map.set(def[1], { specifier, exportName: "default" });
+      clause = clause.slice(def[0].length).trim();
+    }
+    const named = /\{([\s\S]*)\}/.exec(clause);
+    if (named) {
+      for (const part of named[1].split(",")) {
+        const pm = /^\s*(?:type\s+)?([A-Za-z_$][\w$]*)(?:\s+as\s+([A-Za-z_$][\w$]*))?\s*$/.exec(part);
+        if (pm) map.set(pm[2] ?? pm[1], { specifier, exportName: pm[1] });
       }
     }
+    const ns = /\*\s*as\s+([A-Za-z_$][\w$]*)/.exec(clause);
+    if (ns) map.set(ns[1], { specifier, exportName: "*" });
+  }
+  return map;
+}
 
-    /* SCOPE IS TESTED PER STATEMENT, NOT PER HANDLER.
-       It used to be `joined.includes(helper)` — the helper name appearing
-       ANYWHERE in the handler counted as scoped. That is a substring match, not
-       a proof, and it let a real leak through: delivery-orders-mfg PATCH /:id
-       writes `update(updates).eq('id', id)` with no predicate at :4411, and the
-       handler passed because `activeCompanyId(c)` appears at :4432 — AFTER the
-       write, as a fallback for an audit row's companyId field. Two independent
-       readers spotted that handler while this script reported "0 WRITE".
+/* A route tree, scanned: one call for the real backend, one for the self-test's
+   in-memory tree. Returns what the report, the ratchet and --strict consume. */
+function scanRouteTrees(io, backendDir, dirs) {
+  const cache = new Map();
+  const load = (abs) => {
+    if (!cache.has(abs)) {
+      const raw = io.read(abs).split(/\r?\n/);
+      cache.set(abs, { abs, raw, code: stripComments(raw), imports: null });
+    }
+    return cache.get(abs);
+  };
+  const relOf = (abs) => `backend/${toPosix(path.relative(backendDir, abs))}`;
+  const importsOf = (f) => (f.imports ??= importBindings(f.code));
 
-       Now each row-touching statement is judged on its own text: the window
-       from its own `.from(` to the end of that statement. A helper mentioned
-       elsewhere in the handler no longer excuses it. */
-    /* Second opt-out pass — see the note on the first. For a NAMED handler the
-       body scanned above is somewhere else in the file, so an annotation
-       written as the function's first line is invisible to the naive slice. */
-    if (raw.slice(scanOffset, scanOffset + scanBody.length).some((l) => l.includes("company-scope:"))) return;
+  function resolveModule(fromAbs, specifier) {
+    if (!specifier.startsWith(".")) return null;
+    const base = path.resolve(path.dirname(fromAbs), specifier.replace(/\.js$/, ""));
+    return [`${base}.ts`, path.join(base, "index.ts"), base].find((p) => p.endsWith(".ts") && io.isFile(p)) ?? null;
+  }
 
-    const joined = scanBody.join("\n");
+  /* Where `name` is declared, seen from file `f`: { file, at } | { error } |
+     null when it is neither declared nor imported there (a parameter, a global). */
+  function findDeclaration(f, name, hops) {
+    if (hops > 8) return { error: `the import chain for ${name} is deeper than 8 files` };
+    const re = declRegex(name);
+    const at = f.code.findIndex((l) => re.test(l));
+    if (at >= 0) return { file: f, at };
+    const binding = importsOf(f).get(name);
+    if (!binding) return null;
+    if (binding.exportName === "*") return { error: `${name} is a namespace import; a handler must be referenced by name` };
+    const target = resolveModule(f.abs, binding.specifier);
+    if (!target) return { error: `${name} is imported from '${binding.specifier}', which does not resolve to a .ts file` };
+    return findExport(load(target), binding.exportName, hops + 1);
+  }
 
-    /** The statement containing line i: from its `.from(` back-anchor forward. */
-    const statementAround = (i) => {
-      /* Anchor on the START OF THE EXPRESSION, not on `.from(`.
-         Anchoring on `.from(` was wrong for this codebase's dominant style —
-
-             const { data } = await scopeToCompanyId(
-               sb.from('payment_vouchers').select(HEADER).eq('id', id),
-               co.companyId,
-             ).maybeSingle();
-
-         the wrapping call sits on the line BEFORE, so a window that begins at
-         `.from(` cannot see it. That mis-slice flagged three handlers this
-         branch had already fixed. Walk back to the nearest statement opener. */
-      let start = i;
-      for (let k = i; k >= 0 && k > i - 8; k--) {
-        const line = scanBody[k] ?? "";
-        if (/\b(const|let|var|await|return)\b|=\s*$/.test(line)) { start = k; break; }
-        if (k < i && /;\s*$/.test(scanBody[k + 1] ?? "")) break;
+  function findExport(f, exportName, hops) {
+    if (hops > 8) return { error: `the import chain for ${exportName} is deeper than 8 files` };
+    if (exportName === "default") {
+      const at = f.code.findIndex((l) => /^export\s+default\s+(?:async\s+)?(?:function\b|\()/.test(l));
+      if (at >= 0) return { file: f, at };
+      const named = f.code.map((l) => /^export\s+default\s+([A-Za-z_$][\w$]*)\s*;?\s*$/.exec(l)).find(Boolean);
+      const hit = named ? findDeclaration(f, named[1], hops) : null;
+      return hit ?? { error: `${relOf(f.abs)} has no default export this checker can read` };
+    }
+    const hit = findDeclaration(f, exportName, hops);
+    if (hit) return hit;
+    const text = f.code.join("\n");
+    for (const m of text.matchAll(/\bexport\s*\{([^}]*)\}\s*from\s*['"]([^'"]+)['"]/g)) {
+      for (const part of m[1].split(",")) {
+        const pm = /^\s*(?:type\s+)?([A-Za-z_$][\w$]*)(?:\s+as\s+([A-Za-z_$][\w$]*))?\s*$/.exec(part);
+        if (!pm || (pm[2] ?? pm[1]) !== exportName) continue;
+        const target = resolveModule(f.abs, m[2]);
+        if (!target) return { error: `${exportName} is re-exported from '${m[2]}', which does not resolve to a .ts file` };
+        return findExport(load(target), pm[1], hops + 1);
       }
-      let end = start;
-      let depth = 0;
-      for (let k = start; k < scanBody.length && k < start + 25; k++) {
-        const line = scanBody[k] ?? "";
-        /* A BLANK LINE ENDS THE WINDOW. Paren-depth alone was not enough: a
-           multi-line chained builder left depth non-zero past its own `;`, the
-           window ran the full 25 lines, and it swept in the NEXT statement.
+    }
+    for (const m of text.matchAll(/\bexport\s*\*\s*from\s*['"]([^'"]+)['"]/g)) {
+      const target = resolveModule(f.abs, m[1]);
+      const viaStar = target ? findExport(load(target), exportName, hops + 1) : null;
+      if (viaStar && !viaStar.error) return viaStar;
+    }
+    return { error: `${exportName} is not declared or re-exported by ${relOf(f.abs)}` };
+  }
 
-           That is not theoretical — it re-excused the DO PATCH. Its
-           `update(updates).eq('id', id)` window reached down to a
-           recordEntityAudit call whose `companyId:` field falls back to
-           `activeCompanyId(c)`, and the audit field counted as the predicate.
-           The same handler, fooled the same way, for the third time today.
+  /** A declaration's body: to the next top-level declaration - the same slice a named handler always got. */
+  function bodyAt(file, at) {
+    let to = file.code.length;
+    for (let k = at + 1; k < file.code.length && k < at + 400; k++) {
+      if (NEXT_DECL.test(file.code[k])) { to = k; break; }
+    }
+    return { file, from: at, to };
+  }
 
-           This codebase separates statements with blank lines consistently, so
-           a blank line is a firmer boundary than counting brackets. */
-        if (k > start && line.trim() === "") break;
-        end = k;
-        for (const ch of line) {
-          if (ch === "(") depth++;
-          else if (ch === ")") depth--;
+  /** The bodies a non-inline handler expression runs: { bodies } | { error }. */
+  function handlerBodies(f, expr) {
+    if (IDENT.test(expr)) {
+      const d = findDeclaration(f, expr, 0);
+      if (!d) return { error: `${expr} is neither declared in this file nor imported` };
+      return d.error ? d : { bodies: [bodyAt(d.file, d.at)] };
+    }
+    const call = CALL_EXPR.exec(expr);
+    if (call) {
+      const d = findDeclaration(f, call[1], 0);
+      if (!d) return { error: `the handler factory ${call[1]} is neither declared in this file nor imported` };
+      if (d.error) return d;
+      const bodies = [bodyAt(d.file, d.at)];
+      for (const arg of splitTopLevel(call[2])) {
+        if (!IDENT.test(arg)) continue;
+        const a = findDeclaration(f, arg, 0);
+        if (a === null) continue; // a parameter or a global: data passed to the factory, not a handler
+        if (a.error) return a;
+        bodies.push(bodyAt(a.file, a.at));
+      }
+      return { bodies };
+    }
+    return { error: `the handler \`${expr.replace(/\s+/g, " ").slice(0, 60)}\` is not a function literal, a name or a call` };
+  }
+
+  const findings = [];
+  const unverifiable = [];
+  let handlersChecked = 0;
+  let byReference = 0;
+
+  const queue = [];
+  const queued = new Set();
+  const enqueue = (abs) => {
+    if (queued.has(abs)) return;
+    queued.add(abs);
+    queue.push(abs);
+  };
+  for (const dir of dirs) for (const abs of io.list(dir)) enqueue(abs);
+
+  for (let qi = 0; qi < queue.length; qi++) {
+    const f = load(queue[qi]);
+    const { raw, code } = f;
+    const rel = relOf(f.abs);
+    const fns = registerFunctions(code);
+    const fnAround = (i) => fns.find((r) => i > r.from && i <= r.to) ?? null;
+
+    /* A register/mount function declared OUTSIDE the scanned trees is followed
+       there, so moving one into lib/ cannot take its routes out of the scan. */
+    code.forEach((line, i) => {
+      const m = REGISTER_CALL.exec(line);
+      if (!m) return;
+      const d = findDeclaration(f, m[1], 0);
+      if (d && !d.error) {
+        enqueue(d.file.abs);
+        return;
+      }
+      unverifiable.push({
+        file: rel,
+        handler: `${m[1]}(...)`,
+        line: i + 1,
+        reason: `route registration function not resolved - ${d?.error ?? `${m[1]} is neither declared in this file nor imported`}`,
+      });
+    });
+
+    // Slice the file into handlers: from one registration to the next.
+    const starts = [];
+    code.forEach((l, i) => {
+      if (HANDLER.test(l)) {
+        starts.push({ i, computed: null });
+        return;
+      }
+      /* Inside a register/mount body every call on its router parameter is a
+         registration, whatever its path looks like. Keyed by the path
+         expression as written, the way a template-literal path already is. */
+      const fn = fnAround(i);
+      if (!fn?.param) return;
+      const onParam = new RegExp(`^\\s*${fn.param.replace(/\$/g, "\\$")}\\s*\\.\\s*(get|post|put|patch|delete)\\s*\\(`).exec(l);
+      if (onParam) starts.push({ i, computed: onParam[1] });
+    });
+
+    starts.forEach(({ i: start, computed }, k) => {
+      let end = k + 1 < starts.length ? starts[k + 1].i : code.length;
+      /* A registration inside a register function ends with that function; one
+         outside it ends where the next one begins. */
+      const fn = fnAround(start);
+      if (fn) end = Math.min(end, fn.to + 1);
+      else {
+        const next = fns.find((r) => r.from > start);
+        if (next) end = Math.min(end, next.from);
+      }
+      const body = code.slice(start, end);
+      const rawBody = raw.slice(start, end);
+      const reg = registrationArgs(code, start);
+      let method;
+      let routePath;
+      if (computed) {
+        method = computed.toUpperCase();
+        routePath = (reg.args?.[0] ?? "<unreadable path>").replace(/\s+/g, " ");
+      } else {
+        const m = HANDLER.exec(code[start]);
+        method = m[1].toUpperCase();
+        routePath = m[2];
+      }
+
+      handlersChecked++;
+
+      /* Opt-out: an explicit annotation on any line of the handler.
+         NOTE the deliberate ordering — this first test uses the NAIVE slice
+         (registration to registration) so an annotation written next to the
+         REGISTRATION works. A second, identical test runs after the named-handler
+         resolution below, so an annotation written inside the resolved FUNCTION
+         BODY works too. Both are natural places to put it, and checking only one
+         meant a correctly annotated handler kept being reported — which is how an
+         opt-out mechanism gets ignored. */
+      if (rawBody.some((l) => l.includes("company-scope:"))) return;
+
+      /* If the registration names a handler declared elsewhere, scan THAT body.
+         Slicing "this registration to the next" would otherwise read the wrong
+         code: payment-vouchers POST /:id/cancel is registered by name, and the
+         naive slice reported it unscoped while the real body - which calls
+         scopeToCompanyId and says so in its own comment - sat further down the
+         file. A checker that mis-slices its unit produces noise, and noise is how
+         a checker gets ignored. */
+      /* THIS BLOCK SILENTLY DID NOTHING until 2026-08-13. Both patterns lost a
+         backslash on the way in: `"...\s+"` inside a double-quoted JS string is
+         not the whitespace class, it is the letter `s`, and `"\b"` is not a word
+         boundary, it is the BACKSPACE character 0x08 — so declRe could never
+         match any real declaration. declAt stayed -1, the code fell back to the
+         naive registration-to-next-registration slice, and the scan read the
+         WRONG BODY for every named handler: payment-vouchers POST /:id/cancel was
+         reported against reversePvAccounting's lines, three functions further
+         down. A regex that cannot match fails silently and looks like a clean
+         result, which is the worst way for a checker to be wrong.
+
+         Built with RegExp escapes doubled, and asserted at startup below so a
+         future edit cannot re-break it quietly. */
+      let segments = [{ file: f, from: start, to: end }];
+      /* A registration with no handler argument (`seen.get('/x')` reads like one)
+         keeps the plain slice it always had: there is nothing to resolve. */
+      if (!reg.inline && !(reg.args && reg.args.length < 2)) {
+        const resolved = reg.unterminated
+          ? { error: `the registration does not close within ${REG_ARGS_MAX_LINES} lines` }
+          : handlerBodies(f, reg.args.at(-1));
+        if (resolved.error) {
+          unverifiable.push({
+            file: rel,
+            handler: `${method} ${routePath}`,
+            line: start + 1,
+            reason: `body not inline, cannot verify company scope - ${resolved.error}`,
+          });
+          return;
         }
-        // A statement ends at a ';' once every paren it opened has closed.
-        if (depth <= 0 && line.includes(";") && k >= i) break;
+        segments = resolved.bodies;
+        byReference++;
       }
-      return scanBody.slice(start, end + 1).join("\n");
-    };
 
-    /* THE RESOLVE-THEN-ACT PATTERN IS LEGITIMATE AND COMMON HERE, and a checker
-       that ignores it is useless. A handler routinely reads the row ONCE through
-       a scoped query, then writes by the id that read returned — hr payout
-       reopen, the so-amendment gates, the PO allocation writers all do exactly
-       that, and each was verified by hand.
+      /* SCOPE IS TESTED PER STATEMENT, NOT PER HANDLER.
+         It used to be `joined.includes(helper)` — the helper name appearing
+         ANYWHERE in the handler counted as scoped. That is a substring match, not
+         a proof, and it let a real leak through: delivery-orders-mfg PATCH /:id
+         writes `update(updates).eq('id', id)` with no predicate at :4411, and the
+         handler passed because `activeCompanyId(c)` appears at :4432 — AFTER the
+         write, as a fallback for an audit row's companyId field. Two independent
+         readers spotted that handler while this script reported "0 WRITE".
 
-       So a row-touching statement is excused when EITHER
-         · the statement itself carries the scope, OR
-         · a SCOPED QUERY appears EARLIER in the same handler.
-       Both halves matter. "Earlier" is what catches delivery-orders-mfg
-       PATCH /:id, whose only `activeCompanyId` sits AFTER the write; "in a
-       query" is what stops an audit field's fallback value from counting as a
-       predicate. Pure statement-level testing would flag 161 writes, most of
-       them correct, and a checker that cries wolf is one somebody turns off. */
-    /* A DELEGATION guard counts wherever it appears — it IS the scoped read,
-       performed inside a named function this file lists because each one was
-       read and verified. A scope PRIMITIVE only counts inside a real `.from(`
-       QUERY: that is the difference between a predicate and a mention, and it
-       is exactly what delivery-orders-mfg PATCH /:id exploited by accident. */
-    const delegated = DELEGATION_GUARDS.some((h) => joined.includes(h));
-    const hasScopedQuery = scanBody.some((l, i) => {
-      if (!l.includes(".from(")) return false;
-      const stmt = stripInsertPayload(statementAround(i));
-      return SCOPE_PRIMITIVES.some((h) => stmt.includes(h)) || MANUAL_SCOPE.test(stmt);
-    });
-    /* THE BUILDER-IN-A-VARIABLE SHAPE, which is legitimate and common:
+         Now each row-touching statement is judged on its own text: the window
+         from its own `.from(` to the end of that statement. A helper mentioned
+         elsewhere in the handler no longer excuses it. */
+      /* Second opt-out pass — see the note on the first. For a NAMED handler the
+         body scanned above is somewhere else in the file, so an annotation
+         written as the function's first line is invisible to the naive slice. */
+      if (segments.some((sg) => sg.file.raw.slice(sg.from, sg.to).some((l) => l.includes("company-scope:")))) return;
 
-           const query = supabase.from('x').update(...).eq('id', id);
-           const { error } = await scopeToCompany(query, c);
+      /* The lines read, and where each came from. Bodies from several places (a
+         factory and the handler passed to it) are joined with a blank line, which
+         ends a statement window, so no window spans two bodies. */
+      const scanBody = [];
+      const origin = [];
+      segments.forEach((sg, n) => {
+        if (n > 0) {
+          scanBody.push("");
+          origin.push(null);
+        }
+        for (let j = sg.from; j < sg.to; j++) {
+          scanBody.push(sg.file.code[j]);
+          origin.push({ file: sg.file, j });
+        }
+      });
+      const hitAt = (i) => {
+        const o = origin[i];
+        return {
+          line: o.j + 1,
+          ...(o.file === f ? {} : { file: relOf(o.file.abs) }),
+          text: (o.file.raw[o.j] ?? "").trim().slice(0, 110),
+        };
+      };
 
-       The scope is applied on a LATER line than the `.from(`, so the
-       statement window cannot see it — personal-quick-picks DELETE /:id is
-       exactly this and is correctly scoped. A primitive called with a BARE
-       IDENTIFIER (not `sb.from(...)`) is wrapping a builder held in a variable,
-       which only happens when someone is scoping it.
+      const joined = scanBody.join("\n");
 
-       RESTRICTED TO THE THREE QUERY-WRAPPING HELPERS. The first cut ran this
-       over every primitive and matched `activeCompanyId(c)` — `c` is a bare
-       identifier too — which silently re-opened the exact hole this whole
-       exercise started from: the DO PATCH passed again. I only found that
-       because I removed the DO fix and re-ran, and the checker said 0.
+      /** The statement containing line i: from its `.from(` back-anchor forward. */
+      const statementAround = (i) => {
+        /* Anchor on the START OF THE EXPRESSION, not on `.from(`.
+           Anchoring on `.from(` was wrong for this codebase's dominant style —
 
-       The comment I wrote at the time claimed the regex could not match a
-       context argument. It could. Asserted below now instead of asserted in
-       prose. */
-    const BUILDER_WRAPPERS = ["scopeToCompany", "scopeToCompanyId", "scopeToAllowedCompanies"];
-    const wrapsABuilder = BUILDER_WRAPPERS.some((h) =>
-      new RegExp(`\\b${h}\\s*\\(\\s*[A-Za-z_$][\\w$]*\\s*[,)]`).test(joined),
-    );
-    if (delegated || hasScopedQuery || wrapsABuilder) return;
+               const { data } = await scopeToCompanyId(
+                 sb.from('payment_vouchers').select(HEADER).eq('id', id),
+                 co.companyId,
+               ).maybeSingle();
 
-    /* Statement-level hit collection is deliberately NOT used to decide the
-       verdict — this codebase wraps builders across many lines and a regex
-       window over them mis-slices, which flagged six handlers I had already
-       verified correct by hand. The window is good enough to LABEL a hit as a
-       write; it is not good enough to acquit one. */
-    const hits = [];
-    /* RAW-SQL pass — a different shape entirely, so it gets its own loop rather
-       than being bolted onto the builder test above. */
-    scanBody.forEach((l, i) => {
-      if (!RAW_SQL_STMT.test(l)) return;
-      /* LOOK BACK, not only forward. The predicate is routinely assembled on the
-         line ABOVE the statement —
+           the wrapping call sits on the line BEFORE, so a window that begins at
+           `.from(` cannot see it. That mis-slice flagged three handlers this
+           branch had already fixed. Walk back to the nearest statement opener. */
+        let start = i;
+        for (let k = i; k >= 0 && k > i - 8; k--) {
+          const line = scanBody[k] ?? "";
+          if (/\b(const|let|var|await|return)\b|=\s*$/.test(line)) { start = k; break; }
+          if (k < i && /;\s*$/.test(scanBody[k + 1] ?? "")) break;
+        }
+        let end = start;
+        let depth = 0;
+        for (let k = start; k < scanBody.length && k < start + 25; k++) {
+          const line = scanBody[k] ?? "";
+          /* A BLANK LINE ENDS THE WINDOW. Paren-depth alone was not enough: a
+             multi-line chained builder left depth non-zero past its own `;`, the
+             window ran the full 25 lines, and it swept in the NEXT statement.
 
-             const companyPred = activeCompanySql(c);
-             const existing = await c.env.DB.prepare(
-               `SELECT ... WHERE LOWER(name) = LOWER(?)${companyPred} LIMIT 1`)
+             That is not theoretical — it re-excused the DO PATCH. Its
+             `update(updates).eq('id', id)` window reached down to a
+             recordEntityAudit call whose `companyId:` field falls back to
+             `activeCompanyId(c)`, and the audit field counted as the predicate.
+             The same handler, fooled the same way, for the third time today.
 
-         — so a window that begins at `.prepare(` sees the interpolation
-         `${companyPred}` and not what it holds, and reports a correctly scoped
-         statement as unscoped. That mis-anchor produced five phantom findings in
-         venues.ts alone, every one of which is scoped. Fourth time in this
-         file's history that a window started too late; the fix is the same each
-         time and it is now the same shape as statementAround's. */
-      const back = Math.max(0, i - 6);
-      const stmt = scanBody.slice(back, Math.min(i + 12, scanBody.length)).join("\n");
-      if (!RAW_SQL_TABLES.test(stmt)) return;
-      if (RAW_SQL_SCOPED.test(stmt)) return;
-      const abs = scanOffset + i;
-      hits.push({
-        line: abs + 1,
-        text: (raw[abs] ?? "").trim().slice(0, 110),
-        writes: /\bUPDATE\b|\bDELETE\b|\bINSERT\b/i.test(stmt),
-        raw: true,
+             This codebase separates statements with blank lines consistently, so
+             a blank line is a firmer boundary than counting brackets. */
+          if (k > start && line.trim() === "") break;
+          end = k;
+          for (const ch of line) {
+            if (ch === "(") depth++;
+            else if (ch === ")") depth--;
+          }
+          // A statement ends at a ';' once every paren it opened has closed.
+          if (depth <= 0 && line.includes(";") && k >= i) break;
+        }
+        return scanBody.slice(start, end + 1).join("\n");
+      };
+
+      /* THE RESOLVE-THEN-ACT PATTERN IS LEGITIMATE AND COMMON HERE, and a checker
+         that ignores it is useless. A handler routinely reads the row ONCE through
+         a scoped query, then writes by the id that read returned — hr payout
+         reopen, the so-amendment gates, the PO allocation writers all do exactly
+         that, and each was verified by hand.
+
+         So a row-touching statement is excused when EITHER
+           · the statement itself carries the scope, OR
+           · a SCOPED QUERY appears EARLIER in the same handler.
+         Both halves matter. "Earlier" is what catches delivery-orders-mfg
+         PATCH /:id, whose only `activeCompanyId` sits AFTER the write; "in a
+         query" is what stops an audit field's fallback value from counting as a
+         predicate. Pure statement-level testing would flag 161 writes, most of
+         them correct, and a checker that cries wolf is one somebody turns off. */
+      /* A DELEGATION guard counts wherever it appears — it IS the scoped read,
+         performed inside a named function this file lists because each one was
+         read and verified. A scope PRIMITIVE only counts inside a real `.from(`
+         QUERY: that is the difference between a predicate and a mention, and it
+         is exactly what delivery-orders-mfg PATCH /:id exploited by accident. */
+      const delegated = DELEGATION_GUARDS.some((h) => joined.includes(h));
+      const hasScopedQuery = scanBody.some((l, i) => {
+        if (!l.includes(".from(")) return false;
+        const stmt = stripInsertPayload(statementAround(i));
+        return SCOPE_PRIMITIVES.some((h) => stmt.includes(h)) || MANUAL_SCOPE.test(stmt);
+      });
+      /* THE BUILDER-IN-A-VARIABLE SHAPE, which is legitimate and common:
+
+             const query = supabase.from('x').update(...).eq('id', id);
+             const { error } = await scopeToCompany(query, c);
+
+         The scope is applied on a LATER line than the `.from(`, so the
+         statement window cannot see it — personal-quick-picks DELETE /:id is
+         exactly this and is correctly scoped. A primitive called with a BARE
+         IDENTIFIER (not `sb.from(...)`) is wrapping a builder held in a variable,
+         which only happens when someone is scoping it.
+
+         RESTRICTED TO THE THREE QUERY-WRAPPING HELPERS. The first cut ran this
+         over every primitive and matched `activeCompanyId(c)` — `c` is a bare
+         identifier too — which silently re-opened the exact hole this whole
+         exercise started from: the DO PATCH passed again. I only found that
+         because I removed the DO fix and re-ran, and the checker said 0.
+
+         The comment I wrote at the time claimed the regex could not match a
+         context argument. It could. Asserted below now instead of asserted in
+         prose. */
+      const BUILDER_WRAPPERS = ["scopeToCompany", "scopeToCompanyId", "scopeToAllowedCompanies"];
+      const wrapsABuilder = BUILDER_WRAPPERS.some((h) =>
+        new RegExp(`\\b${h}\\s*\\(\\s*[A-Za-z_$][\\w$]*\\s*[,)]`).test(joined),
+      );
+      if (delegated || hasScopedQuery || wrapsABuilder) return;
+
+      /* Statement-level hit collection is deliberately NOT used to decide the
+         verdict — this codebase wraps builders across many lines and a regex
+         window over them mis-slices, which flagged six handlers I had already
+         verified correct by hand. The window is good enough to LABEL a hit as a
+         write; it is not good enough to acquit one. */
+      const hits = [];
+      /* RAW-SQL pass — a different shape entirely, so it gets its own loop rather
+         than being bolted onto the builder test above. */
+      scanBody.forEach((l, i) => {
+        if (!RAW_SQL_STMT.test(l)) return;
+        /* LOOK BACK, not only forward. The predicate is routinely assembled on the
+           line ABOVE the statement —
+
+               const companyPred = activeCompanySql(c);
+               const existing = await c.env.DB.prepare(
+                 `SELECT ... WHERE LOWER(name) = LOWER(?)${companyPred} LIMIT 1`)
+
+           — so a window that begins at `.prepare(` sees the interpolation
+           `${companyPred}` and not what it holds, and reports a correctly scoped
+           statement as unscoped. That mis-anchor produced five phantom findings in
+           venues.ts alone, every one of which is scoped. Fourth time in this
+           file's history that a window started too late; the fix is the same each
+           time and it is now the same shape as statementAround's. */
+        const back = Math.max(0, i - 6);
+        const stmt = scanBody.slice(back, Math.min(i + 12, scanBody.length)).join("\n");
+        if (!RAW_SQL_TABLES.test(stmt)) return;
+        if (RAW_SQL_SCOPED.test(stmt)) return;
+        hits.push({
+          ...hitAt(i),
+          writes: /\bUPDATE\b|\bDELETE\b|\bINSERT\b/i.test(stmt),
+          raw: true,
+        });
+      });
+      scanBody.forEach((l, i) => {
+        if (!ID_PREDICATE.test(l)) return;
+        const stmt = statementAround(i);
+        if (!/\.from\(/.test(stmt)) return;
+        hits.push({
+          ...hitAt(i),
+          writes: /\.update\(|\.delete\(|\.insert\(|\.upsert\(/.test(stmt),
+        });
+      });
+      if (!hits.length) return;
+
+      /* An explicit annotation still silences a handler — but ONLY now, after the
+         statement test has something to say. Kept after the hit-collection so an
+         annotated handler that later grows a NEW unscoped statement is not
+         silently covered by an old exemption... it is. Noted honestly: the
+         annotation is per-handler, so re-read it when adding a statement. */
+      const writes = hits.some((h) => h.writes);
+      findings.push({
+        file: rel,
+        handler: `${method} ${routePath}`,
+        line: start + 1,
+        writes,
+        hits: hits.slice(0, 3),
       });
     });
-    scanBody.forEach((l, i) => {
-      if (!ID_PREDICATE.test(l)) return;
-      const stmt = statementAround(i);
-      if (!/\.from\(/.test(stmt)) return;
-      const abs = scanOffset + i;
-      hits.push({
-        line: abs + 1,
-        text: (raw[abs] ?? "").trim().slice(0, 110),
-        writes: /\.update\(|\.delete\(|\.insert\(|\.upsert\(/.test(stmt),
-      });
-    });
-    if (!hits.length) return;
+  }
+  unverifiable.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line);
+  return { findings, unverifiable, handlersChecked, byReference };
+}
 
-    /* An explicit annotation still silences a handler — but ONLY now, after the
-       statement test has something to say. Kept after the hit-collection so an
-       annotated handler that later grows a NEW unscoped statement is not
-       silently covered by an old exemption... it is. Noted honestly: the
-       annotation is per-handler, so re-read it when adding a statement. */
-    const writes = hits.some((h) => h.writes);
-    findings.push({
-      file: `backend/${relDir}/${file}`,
-      handler: `${method} ${routePath}`,
-      line: start + 1,
-      writes,
-      hits: hits.slice(0, 3),
-    });
-  });
+/** `L12`, or `backend/src/scm/lib/x.ts:L12` when a resolved body lives in another file. */
+const hitLabel = (h) => `${h.file ? `${h.file}:` : ""}L${h.line}`;
+
+/* SELF-TEST the resolution above against an in-memory tree, same rule as every
+   pattern self-test in this file: a scan that cannot follow a handler produces a
+   plausible clean report. Each case is one of the three blind spots described at
+   the top of this section, with an unscoped `.update(...).eq('id', ...)` that
+   MUST be reported. */
+{
+  const root = path.resolve(path.sep, "company-scope-self-test", "backend");
+  const at = (...p) => path.join(root, ...p);
+  const files = {
+    [at("src", "scm", "routes", "widgets.ts")]: [
+      "import { Hono } from 'hono';",
+      "import { registerWidgetPhotoRoutes } from './widgets/photos';",
+      "import { patchWidgetHandler, scopedWidgetHandler } from '../lib/widget-handlers';",
+      "import { renamedAway } from '../lib/widget-handlers';",
+      "export const widgets = new Hono();",
+      "widgets.get('/:id', async (c) => {",
+      "  const { data } = await scopeToCompany(c.get('supabase').from('widgets').select('*').eq('id', c.req.param('id')), c).maybeSingle();",
+      "  return c.json(data);",
+      "});",
+      "registerWidgetPhotoRoutes(widgets);",
+      "widgets.patch('/:id/imported', patchWidgetHandler);",
+      "widgets.patch('/:id/scoped-import', scopedWidgetHandler);",
+      "widgets.delete('/:id/unresolvable', renamedAway);",
+    ].join("\n"),
+    // (a) a register function in a SUBDIRECTORY file, followed by a scoped helper past its brace
+    [at("src", "scm", "routes", "widgets", "photos.ts")]: [
+      "export function registerWidgetPhotoRoutes(router: WidgetRouter) {",
+      "  router.patch('/:id/photo', async (c) => {",
+      "    const sb = c.get('supabase');",
+      "    await sb.from('widgets').update({ photo: null }).eq('id', c.req.param('id'));",
+      "    return c.json({ ok: true });",
+      "  });",
+      "}",
+      "",
+      "export async function trailingScopedRead(c) {",
+      "  return await scopeToCompany(c.get('supabase').from('widgets').select('id').eq('id', 1), c);",
+      "}",
+    ].join("\n"),
+    // (b) an IMPORTED handler, and its scoped sibling that must NOT be reported
+    [at("src", "scm", "lib", "widget-handlers.ts")]: [
+      "export const patchWidgetHandler = async (c) => {",
+      "  const sb = c.get('supabase');",
+      "  await sb.from('widgets').update({ name: 'x' }).eq('id', c.req.param('id'));",
+      "  return c.json({ ok: true });",
+      "};",
+      "",
+      "export async function scopedWidgetHandler(c) {",
+      "  const { error } = await scopeToCompany(c.get('supabase').from('widgets').update({ name: 'y' }).eq('id', c.req.param('id')), c);",
+      "  return c.json({ ok: !error });",
+      "}",
+    ].join("\n"),
+    // a mount function whose path is computed and whose handler is an imported factory
+    [at("src", "scm", "routes", "widget-hold.ts")]: [
+      "import { makeWidgetHold } from '../lib/widget-hold';",
+      "const PATHS = { w: '/:id/hold' };",
+      "export function mountWidgetHoldRoute(router: any, doc: 'w'): void {",
+      "  router.patch(PATHS[doc], makeWidgetHold(doc));",
+      "}",
+    ].join("\n"),
+    [at("src", "scm", "lib", "widget-hold.ts")]: [
+      "export function makeWidgetHold(doc: string) {",
+      "  return async (c) => {",
+      "    await c.get('supabase').from('widgets').update({ held: true }).eq('id', c.req.param('id'));",
+      "    return c.json({ ok: true });",
+      "  };",
+      "}",
+    ].join("\n"),
+  };
+  const memIo = {
+    isFile: (p) => Object.hasOwn(files, p),
+    read: (p) => files[p],
+    list: (dir) => Object.keys(files).filter((p) => p.startsWith(dir + path.sep) && !p.endsWith(".test.ts")).sort(),
+  };
+  const got = scanRouteTrees(memIo, root, [at("src", "scm", "routes")]);
+  const finding = (key) => got.findings.find((x) => handlerKeyOf(x) === key);
+  const photo = finding("backend/src/scm/routes/widgets/photos.ts :: PATCH /:id/photo");
+  const imported = finding("backend/src/scm/routes/widgets.ts :: PATCH /:id/imported");
+  const held = finding("backend/src/scm/routes/widget-hold.ts :: PATCH PATHS[doc]");
+  const ok =
+    got.handlersChecked === 6 &&
+    photo?.writes === true &&
+    imported?.writes === true &&
+    imported.hits.some((h) => h.file === "backend/src/scm/lib/widget-handlers.ts") &&
+    held?.writes === true &&
+    got.findings.length === 3 &&
+    got.unverifiable.length === 1 &&
+    got.unverifiable[0].handler === "DELETE /:id/unresolvable" &&
+    got.unverifiable[0].reason.startsWith("body not inline, cannot verify company scope");
+  if (!ok) {
+    console.error("check-company-scope: RESOLUTION self-test FAILED - not reporting.");
+    console.error(JSON.stringify(got, null, 2));
+    process.exit(2);
+  }
 }
-}
+
+const { findings, unverifiable, handlersChecked, byReference } = scanRouteTrees(diskIo, backendRoot, ROUTE_DIRS);
 
 /* ── PASS 3: the LIBRARY tree ───────────────────────────────────────────────
    THE FOURTH BLIND SPOT, found 2026-08-13 by a finding this script had already
@@ -827,7 +1322,7 @@ findings.sort((a, b) => Number(b.writes) - Number(a.writes) || a.file.localeComp
    it produced against the grandfather baseline. */
 const currentKeys = [...findings.map(handlerKeyOf), ...libFindings.map(libKeyOf)].sort();
 const detailFor = new Map([
-  ...findings.map((f) => [handlerKeyOf(f), `${f.writes ? "WRITE" : "read "} L${f.line}  ${f.hits.map((h) => `L${h.line}`).join(" ")}`]),
+  ...findings.map((f) => [handlerKeyOf(f), `${f.writes ? "WRITE" : "read "} L${f.line}  ${f.hits.map(hitLabel).join(" ")}`]),
   ...libFindings.map((f) => [libKeyOf(f), `WRITE L${f.line} by '${f.key}'`]),
 ]);
 
@@ -847,10 +1342,24 @@ function loadBaseline(fatalIfMissing) {
     console.error(`FATAL: ${BASELINE_REL} has no "unscoped" array.`);
     process.exit(2);
   }
+  parsed.unscopedByReference ??= [];
+  if (!Array.isArray(parsed.unscopedByReference)) {
+    console.error(`FATAL: ${BASELINE_REL} has a non-array "unscopedByReference".`);
+    process.exit(2);
+  }
   return parsed;
 }
 
-function writeBaseline(keys) {
+/* The two grandfathered arrays. `unscoped` is the original backlog.
+   `unscopedByReference` holds handlers registered BY REFERENCE whose bodies this
+   checker never read until it learned to follow the reference: the run that
+   learned it found them, and they are debt from before, not new handlers. A
+   separate array, not an addition to `unscoped`, so --ratchet-against keeps
+   meaning exactly what it did for that list; each array carries the same
+   no-growth rule from the commit that introduces it. */
+const BASELINE_ARRAYS = ["unscoped", "unscopedByReference"];
+
+function writeBaseline(keys, byReferenceKeys) {
   const body = {
     "//": [
       "GRANDFATHER BASELINE for backend/scripts/check-company-scope.mjs --check.",
@@ -863,15 +1372,29 @@ function writeBaseline(keys) {
       "`npm --prefix backend run audit:company-scope:update` and commit the smaller list.",
       "Generated ONLY by --update, which refuses to add an entry the committed list does",
       "not already have — the same no-growth rule lint-ratchet.mjs enforces on ceilings.",
+      "unscopedByReference: the same, for handlers registered BY REFERENCE (an imported or",
+      "factory-built handler) whose bodies the checker could not read before it followed the",
+      "reference. Found by that change, not added by a new handler; it may only SHRINK too.",
     ],
     unscoped: keys,
+    unscopedByReference: byReferenceKeys,
   };
   fs.writeFileSync(BASELINE_PATH, `${JSON.stringify(body, null, 2)}\n`);
 }
 
 if (updateMode) {
+  if (unverifiable.length) {
+    console.error(
+      `\ncheck-company-scope: REFUSING to write — ${unverifiable.length} handler(s) could not be read, ` +
+        `so the baseline cannot be computed:\n` +
+        unverifiable.map((u) => `  ${u.file}:L${u.line}  ${u.handler}  ${u.reason}`).join("\n") +
+        `\n\n  ${BASELINE_REL} was NOT written.\n`,
+    );
+    process.exit(1);
+  }
   const existing = loadBaseline(false);
-  const committed = new Set(existing?.unscoped ?? []);
+  const committedByReference = new Set(existing?.unscopedByReference ?? []);
+  const committed = new Set([...(existing?.unscoped ?? []), ...committedByReference]);
   const grew = currentKeys.filter((k) => !committed.has(k));
   // On the introducing run there is no baseline yet, so writing the whole set is
   // how it is born. After that, a key not already grandfathered is a NEW
@@ -890,7 +1413,10 @@ if (updateMode) {
     process.exit(1);
   }
   const removed = [...committed].filter((k) => !currentKeys.includes(k));
-  writeBaseline(currentKeys);
+  writeBaseline(
+    currentKeys.filter((k) => !committedByReference.has(k)),
+    currentKeys.filter((k) => committedByReference.has(k)),
+  );
   console.log(
     `check-company-scope: wrote ${currentKeys.length} grandfathered entr${currentKeys.length === 1 ? "y" : "ies"} ` +
       `to ${BASELINE_REL} (was ${committed.size}).`,
@@ -905,7 +1431,7 @@ if (updateMode) {
 
 if (checkMode) {
   const existing = loadBaseline(true);
-  const baseline = new Set(existing.unscoped);
+  const baseline = new Set(BASELINE_ARRAYS.flatMap((name) => existing[name]));
   const problems = [];
 
   // The primary gate: every current finding must be grandfathered.
@@ -934,18 +1460,29 @@ if (checkMode) {
       console.log(`ratchet: ${BASELINE_REL} did not exist at ${baseSha.slice(0, 8)} — this is the commit that introduces it, nothing to compare.`);
     }
     if (baseText !== null) {
-      const was = new Set(JSON.parse(baseText).unscoped ?? []);
-      const grew = [...baseline].filter((k) => !was.has(k));
-      if (grew.length) {
-        for (const k of grew) problems.push(`the baseline GREW against ${ratchetAgainst}: + ${k}`);
-      } else {
-        console.log(`ratchet: baseline compared against ${baseSha.slice(0, 8)} (${ratchetAgainst}) — no growth.`);
+      const wasFile = JSON.parse(baseText);
+      for (const name of BASELINE_ARRAYS) {
+        if (!Array.isArray(wasFile[name])) {
+          // The commit that introduces this array: nothing to compare it with.
+          console.log(`ratchet: "${name}" did not exist at ${baseSha.slice(0, 8)} — this is the commit that introduces it (${existing[name].length} entr${existing[name].length === 1 ? "y" : "ies"}), nothing to compare.`);
+          continue;
+        }
+        const was = new Set(wasFile[name]);
+        const grew = existing[name].filter((k) => !was.has(k));
+        if (grew.length) {
+          for (const k of grew) problems.push(`the baseline GREW against ${ratchetAgainst}: + ${k}  ("${name}")`);
+        } else {
+          console.log(`ratchet: "${name}" compared against ${baseSha.slice(0, 8)} (${ratchetAgainst}) — no growth.`);
+        }
       }
     }
   }
 
   for (const k of newViolations) {
     problems.push(`NEW unscoped handler (not grandfathered): ${k}   ${detailFor.get(k) ?? ""}`);
+  }
+  for (const u of unverifiable) {
+    problems.push(`UNVERIFIABLE handler: ${u.file} :: ${u.handler} (L${u.line}) — ${u.reason}`);
   }
 
   // Printed on every run — the current count and the grandfathered count.
@@ -979,16 +1516,16 @@ if (checkMode) {
 }
 
 if (jsonOut) {
-  console.log(JSON.stringify({ handlersChecked, findings, libStatementsChecked, libFindings }, null, 2));
+  console.log(JSON.stringify({ handlersChecked, byReference, unverifiable, findings, libStatementsChecked, libFindings }, null, 2));
 } else {
   const w = findings.filter((f) => f.writes).length;
   const baselineNow = loadBaseline(false);
   console.log(
-    `Checked ${handlersChecked} SCM route handlers.\n` +
+    `Checked ${handlersChecked} SCM route handlers (${byReference} registered by reference, each body followed to its declaration).\n` +
       `${findings.length} touch a row by id with no company-scope helper in the handler ` +
       `(${w} of them WRITE).\n` +
       (baselineNow
-        ? `Ratchet: ${currentKeys.length} unscoped now, ${baselineNow.unscoped.length} grandfathered ` +
+        ? `Ratchet: ${currentKeys.length} unscoped now, ${baselineNow.unscoped.length + baselineNow.unscopedByReference.length} grandfathered ` +
           `in ${BASELINE_REL} (run with --check to gate, --update to shrink).\n`
         : `Ratchet: no baseline yet — run with --update to create ${BASELINE_REL}.\n`) +
       `Annotate a verified-safe handler with "// company-scope: <reason>" to silence it.\n`,
@@ -1000,7 +1537,11 @@ if (jsonOut) {
       lastFile = f.file;
     }
     console.log(`  ${f.writes ? "WRITE" : "read "}  L${f.line}  ${f.handler}`);
-    for (const h of f.hits) console.log(`           L${h.line}  ${h.text}`);
+    for (const h of f.hits) console.log(`           ${hitLabel(h)}  ${h.text}`);
+  }
+  if (unverifiable.length) {
+    console.log(`\n\nUNVERIFIABLE: ${unverifiable.length} handler(s) whose body is not inline and could not be followed. --strict, --check and --update fail on these:`);
+    for (const u of unverifiable) console.log(`  ${u.file}:L${u.line}  ${u.handler}\n           ${u.reason}`);
   }
 
   console.log(
@@ -1046,4 +1587,6 @@ const writeFindings = findings.filter((f) => f.writes).length;
    so, and going back to the raw client is a straight undo of a guarantee that
    only exists while nobody does it. No grandfathering — the population is
    whatever this PR chose to put on the list. */
-process.exit(strict && (writeFindings || convertedFindings.length) ? 1 : 0);
+/* And a handler that could not be READ gates as well: an unread body may hold a
+   write, and "could not read it" must not pass where "read it, scoped" would. */
+process.exit(strict && (writeFindings || convertedFindings.length || unverifiable.length) ? 1 : 0);

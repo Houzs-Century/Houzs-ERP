@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
-  validateItemCodes, unknownItemCodeResponse,
+  validateItemCodes, unknownItemCodeResponse, catalogCategoriesByCode,
   findFreeTextSoLines, freeTextSoLineResponse,
 } from './validate-item-codes';
+import { parsePgrestInList } from './pgrest-in-list';
 
 /* ═══════════════════════════════════════════════════════════════════════════
    Owner 2026-08-08 (HC-SO-2607-013 "square pillow"): every SO line is a REAL
@@ -12,6 +13,17 @@ import {
    ═══════════════════════════════════════════════════════════════════════════ */
 
 type Row = Record<string, unknown> & { _table: string };
+
+/* Model the WIRE: postgrest-js `.in()` quotes [,()] but never escapes, so a
+   value carrying `"` (inch mark) or `\` drops itself and every value after it
+   when PostgREST parses the list (docs/bugs/0780); a list without those two
+   characters round-trips unchanged. `.filter(_, 'in', pgrestInList(...))` sends
+   an escaped payload that survives — the fix under test. */
+const wireIn = (vs: readonly unknown[]): unknown[] =>
+  vs.some((v) => typeof v === 'string' && /["\\]/.test(v))
+    ? parsePgrestInList(`(${[...new Set(vs)].map((s) => (typeof s === 'string' && /[,()]/.test(s) ? `"${s}"` : `${s}`)).join(',')})`)
+    : [...vs];
+
 const makeSb = (rows: Row[]) => ({
   from(table: string) {
     const eqs: Array<[string, unknown]> = [];
@@ -23,7 +35,11 @@ const makeSb = (rows: Row[]) => ({
     const builder: any = {
       select: () => builder,
       eq: (col: string, v: unknown) => { eqs.push([col, v]); return builder; },
-      in: (col: string, vs: unknown[]) => { ins.push([col, vs]); return builder; },
+      in: (col: string, vs: unknown[]) => { ins.push([col, wireIn(vs)]); return builder; },
+      filter: (col: string, op: string, payload: string) => {
+        if (op === 'in') ins.push([col, parsePgrestInList(payload)]);
+        return builder;
+      },
       then: (resolve: (v: { data: Row[]; error: null }) => void) =>
         resolve({ data: run(), error: null }),
     };
@@ -60,6 +76,16 @@ describe('validateItemCodes requireActive', () => {
   it('blank codes still skip the lookup (the free-text rule owns them, not this one)', async () => {
     expect(await validateItemCodes(sb(), ['', '  ', null, undefined], 1, { requireActive: true }))
       .toEqual({ ok: true });
+  });
+
+  /* docs/bugs/0780. A catalogued code carrying an inch mark (`"`) must not read
+     as unknown. The old `.in('code', …)` quoted it without escaping, so the read
+     dropped it and this gate reported a real SKU as "not in the catalog". The
+     escaped read finds it. A revert to `.in()` trips the wireIn model and fails. */
+  it('a code carrying an inch mark (") is found, not reported unknown — docs/bugs/0780', async () => {
+    const INCH = 'DUNLOPILLO GENERASI 5" MATT (SS)';
+    const inchSb = makeSb([{ _table: 'mfg_products', code: INCH, company_id: 1, status: 'ACTIVE' }]);
+    expect(await validateItemCodes(inchSb, [INCH], 1, { requireActive: true })).toEqual({ ok: true });
   });
 });
 
@@ -105,5 +131,52 @@ describe('findFreeTextSoLines — the square-pillow shape', () => {
     expect(body.message).toContain('"Square pillow"');
     expect(body.message).toContain('"Round pillow"');
     expect(body.lines).toEqual(['Square pillow', 'Round pillow']);
+  });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   catalogCategoriesByCode (owner 2026-09-14, 「为什么Service line item还是
+   purchaser approve?」): an amendment ADD has no SO line, so the catalogue's
+   CATEGORY is the only thing that says TRANSPORTATION CHARGES is a service.
+   Same company predicate and in-list escaping as validateItemCodes.
+   ═══════════════════════════════════════════════════════════════════════════ */
+describe('catalogCategoriesByCode', () => {
+  const rows = (): Row[] => [
+    { _table: 'mfg_products', code: 'TRANSPORTATION CHARGES', company_id: 1, category: 'SERVICE' },
+    { _table: 'mfg_products', code: 'TRANSPORTATION CHARGES', company_id: 2, category: 'OTHERS' },
+    { _table: 'mfg_products', code: 'CODY-(K)', company_id: 1, category: 'BEDFRAME' },
+    { _table: 'mfg_products', code: '24" PILLOW', company_id: 1, category: 'ACCESSORY' },
+  ];
+
+  it('answers each code\'s category inside the given company, trimmed keys', async () => {
+    const got = await catalogCategoriesByCode(makeSb(rows()), [' TRANSPORTATION CHARGES ', 'CODY-(K)', 'NOPE'], 1);
+    expect(got).not.toBeNull();
+    expect(got!.get('TRANSPORTATION CHARGES')).toBe('SERVICE');
+    expect(got!.get('CODY-(K)')).toBe('BEDFRAME');
+    expect(got!.has('NOPE')).toBe(false);
+  });
+
+  it('never reads another company\'s row', async () => {
+    const got = await catalogCategoriesByCode(makeSb(rows()), ['TRANSPORTATION CHARGES'], 2);
+    expect(got!.get('TRANSPORTATION CHARGES')).toBe('OTHERS');
+  });
+
+  it('keeps a code carrying an inch mark in the list (docs/bugs/0780)', async () => {
+    const got = await catalogCategoriesByCode(makeSb(rows()), ['24" PILLOW', 'TRANSPORTATION CHARGES'], 1);
+    expect(got!.get('24" PILLOW')).toBe('ACCESSORY');
+    expect(got!.get('TRANSPORTATION CHARGES')).toBe('SERVICE');
+  });
+
+  it('asks nothing for no codes, and answers null when the read fails', async () => {
+    const never = { from: () => { throw new Error('must not read'); } };
+    expect((await catalogCategoriesByCode(never, ['', '  '], 1))!.size).toBe(0);
+    const failing = {
+      from: () => {
+        const b: any = { select: () => b, in: () => b, eq: () => b, filter: () => b,
+          then: (resolve: (v: { data: null; error: { message: string } }) => void) => resolve({ data: null, error: { message: 'boom' } }) };
+        return b;
+      },
+    };
+    expect(await catalogCategoriesByCode(failing, ['CODY-(K)'], 1)).toBeNull();
   });
 });

@@ -563,7 +563,7 @@ const CreateForm = ({ onClose }: { onClose: () => void }) => {
     state: '',
     businessNature: '',
     paymentTerms: '',
-    /* Supplier currency — backend supports MYR/RMB/USD/SGD; default MYR.
+    /* Supplier currency — backend supports MYR/RMB/CNY/USD/SGD; default MYR.
        Once set, PurchaseOrderNew + PI pages read supplier.currency. */
     currency: 'MYR',
     rating: 0,
@@ -647,7 +647,7 @@ const SupplierFields = ({
     <p className={styles.eyebrow} style={{ marginTop: 'var(--space-3)' }}>Commercial</p>
     <div className={styles.formGrid}>
       <Field label="Payment Terms" value={(form.paymentTerms as string) ?? ''} onChange={(v) => onChange('paymentTerms', v)} />
-      {/* Supplier currency — fixed enum (MYR/RMB/USD/SGD), order is canonical.
+      {/* Supplier currency — fixed enum (MYR/RMB/CNY/USD/SGD), order is canonical.
           Set RMB here for China suppliers; PO + PI pages pick it up. */}
       <CurrencySelect value={(form.currency as string) ?? 'MYR'} onChange={(v) => onChange('currency', v)} />
       <Field label="Business Nature" value={(form.businessNature as string) ?? ''} onChange={(v) => onChange('businessNature', v)} />
@@ -724,10 +724,10 @@ const Field = ({
   </label>
 );
 
-/* Supplier currency picker. Fixed MYR/RMB/USD/SGD enum (NOT sorted — the
+/* Supplier currency picker. Fixed MYR/RMB/CNY/USD/SGD enum (NOT sorted — the
    order is canonical). The backend defaults to MYR if unset, but we send an
    explicit default so the create payload always carries a currency. */
-const CURRENCY_OPTIONS = ['MYR', 'RMB', 'USD', 'SGD'] as const;
+const CURRENCY_OPTIONS = ['MYR', 'RMB', 'CNY', 'USD', 'SGD'] as const;
 
 const CurrencySelect = ({
   value, onChange,

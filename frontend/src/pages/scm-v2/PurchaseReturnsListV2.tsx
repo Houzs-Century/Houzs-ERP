@@ -27,7 +27,7 @@ import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { PageHeader } from "../../components/Layout";
 import { StatCard } from "../../components/StatCard";
 import { FilterPills } from "../../components/FilterPills";
-import { DataTable, type Column } from "../../components/DataTable";
+import { DataTable } from "../../components/DataTable";
 import {
   DocumentLinesExpansion,
   type DocumentDrillLine,
@@ -44,6 +44,7 @@ import {
   useCancelPurchaseReturn,
 } from "../../vendor/scm/lib/purchase-return-queries";
 import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
+import { withStatusLabels } from "../../vendor/scm/lib/status-pill";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { useChoice } from "../../vendor/scm/components/ChoiceDialog";
@@ -54,6 +55,15 @@ import { transferFromColumnLabel } from "../../lib/convertScope";
 import { purchaseReturnRowMenu } from "./row-menus";
 import { usePrintDocument } from "../../components/scm-v2/PrintChainProvider";
 import { purchaseReturnPrintChain } from "../../lib/printChain";
+import {
+  PR_LINE_COLUMNS,
+  returnCancelledWord,
+  returnCurrencyRate,
+  senToRinggit,
+  type PrListLine,
+} from "../../vendor/scm/lib/return-line-export-columns";
+import { fetchPurchaseReturnExportRows } from "../../vendor/scm/lib/return-list-export";
+import { returnGridColumns, type ReturnColumnValues } from "./return-list-line-columns";
 
 type PrRow = {
   id: string;
@@ -66,8 +76,11 @@ type PrRow = {
   currency?: string;
   supplier?: { id: string; code: string; name: string; contact_person?: string | null; phone?: string | null; email?: string | null; address?: string | null } | null;
   purchase_order?: { id: string; po_number: string } | null;
-  grn?: { id: string; grn_number: string } | null;
+  grn?: { id: string; grn_number: string; currency?: string | null; warehouse_id?: string | null } | null;
+  credit_note_ref?: string | null;
   line_count?: number;
+  /** The return's lines, as GET /purchase-returns and its export send them. */
+  lines?: PrListLine[];
 };
 
 type PrItem = {
@@ -97,15 +110,59 @@ const supplierCodeOf = (r: PrRow): string => r.supplier?.code || "—";
 const sourceOf = (r: PrRow): string => r.grn?.grn_number || r.purchase_order?.po_number || "—";
 const refundOf = (r: PrRow): number => r.refund_sen ?? 0;
 
-const STATUS_TONE: Record<string, { tone: "success" | "warning" | "error" | "neutral"; label: string; bucket: StatusTab }> = {
-  DRAFT:     { tone: "warning", label: "Draft",     bucket: "draft" },
-  POSTED:    { tone: "warning", label: "Confirmed", bucket: "posted" },
-  COMPLETED: { tone: "success", label: "Completed", bucket: "completed" },
-  CANCELLED: { tone: "error",   label: "Cancelled", bucket: "cancelled" },
+/* The LABEL is NOT declared here. It comes from `vendor/scm/lib/status-pill.ts`,
+   the one canonical map — docs/modules/document-status-vocabulary.md §1. What
+   stays is what is genuinely this page's own: the tone palette (four names, not
+   status-pill's six) and the filter BUCKET.
+
+   DRAFT is a real purchase-return status that the canonical `pr` map does not
+   carry, so it resolves through statusLabel's documented humanise fallback —
+   which answers "Draft", the identical word this map used to hand-write. It is
+   NOT added to the canonical map to make this read nicely: that map's tones are
+   live on other surfaces, and inventing an entry to tidy a call site is the
+   forged-evidence failure CLAUDE.md names. */
+const STATUS_OWN: Record<string, { tone: "success" | "warning" | "error" | "neutral"; bucket: StatusTab }> = {
+  DRAFT:     { tone: "warning", bucket: "draft" },
+  POSTED:    { tone: "warning", bucket: "posted" },
+  COMPLETED: { tone: "success", bucket: "completed" },
+  CANCELLED: { tone: "error",   bucket: "cancelled" },
 };
+
+const STATUS_TONE = withStatusLabels("pr", STATUS_OWN);
 
 const statusFor = (s: string) =>
   STATUS_TONE[(s || "").toUpperCase()] ?? { tone: "neutral" as const, label: s || "—", bucket: "posted" as StatusTab };
+
+/* The tab + search the list applies in the browser — to the screen read AND to
+   the export's rows, so the file holds exactly what the tab would show without
+   the 300-row screen cap. */
+function purchaseReturnsInView(rows: PrRow[], status: StatusTab, search: string): PrRow[] {
+  const inTab = status === "all" ? rows : rows.filter((r) => statusFor(r.status).bucket === status);
+  if (!search.trim()) return inTab;
+  const q = search.toLowerCase();
+  return inTab.filter((r) =>
+    [r.return_number, supplierNameOf(r), supplierCodeOf(r), sourceOf(r), r.reason, r.notes]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase()
+      .includes(q),
+  );
+}
+
+const currencyOfPr = (r: PrRow): string | null => r.grn?.currency ?? null;
+const isLocalCurrency = (r: PrRow): boolean => (currencyOfPr(r) ?? "").toUpperCase() === "MYR";
+
+/* A line as the grid holds it: the server's line plus the two document facts a
+   line column reads (the shared line cells pass a column only its line). */
+type PrGridLine = PrListLine & { doc_local: boolean; doc_reason: string | null };
+const gridLinesCache = new WeakMap<PrRow, PrGridLine[]>();
+const linesOfPr = (r: PrRow): readonly PrGridLine[] => {
+  const hit = gridLinesCache.get(r);
+  if (hit) return hit;
+  const out = (r.lines ?? []).map((l) => ({ ...l, doc_local: isLocalCurrency(r), doc_reason: r.reason ?? null }));
+  gridLinesCache.set(r, out);
+  return out;
+};
 
 function SplitDropdown({ onImport, onDuplicate }: { onImport: () => void; onDuplicate: () => void }) {
   const [open, setOpen] = useState(false);
@@ -449,6 +506,7 @@ function PrLinesExpansion({ id }: { id: string }) {
   return (
     <DocumentLinesExpansion
       isLoading={detailQ.isLoading}
+      coverage="ready" /* one query fills this drill-down — coverage-state.tsx */
       isError={Boolean(detailQ.error)}
       errorMessage={detailQ.error instanceof Error ? detailQ.error.message : null}
       lines={lines}
@@ -486,22 +544,7 @@ export function PurchaseReturnsListV2() {
     [data]
   );
 
-  const scopedByBucket = useMemo(() => {
-    if (status === "all") return allRows;
-    return allRows.filter((r) => statusFor(r.status).bucket === status);
-  }, [allRows, status]);
-
-  const filtered = useMemo(() => {
-    if (!search.trim()) return scopedByBucket;
-    const q = search.toLowerCase();
-    return scopedByBucket.filter((r) => {
-      const hay = [r.return_number, supplierNameOf(r), supplierCodeOf(r), sourceOf(r), r.reason, r.notes]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
-      return hay.includes(q);
-    });
-  }, [scopedByBucket, search]);
+  const filtered = useMemo(() => purchaseReturnsInView(allRows, status, search), [allRows, status, search]);
 
   const counts = useMemo(() => {
     const acc = { all: allRows.length, draft: 0, posted: 0, completed: 0, cancelled: 0 };
@@ -679,80 +722,83 @@ export function PurchaseReturnsListV2() {
     canCancel: (r) => !["COMPLETED", "CANCELLED"].includes((r.status || "").toUpperCase()),
   });
 
-  const columns: Column<PrRow>[] = [
-    {
-      key: "return_number",
-      label: "Return No.",
-      // 156 + font-docno (owner 2026-07-31): 140 sat on the clip threshold for
-      // a full doc no — see the measured DO No. note in MfgDeliveryOrdersListV2.
+  /* Default view = AutoCount's Purchase Return Detail Listing, in AutoCount's
+     order (owner 2026-09-15); the rest of the contract is in the chooser, hidden
+     until picked. The ONE Export writes whatever is visible, one row per line. */
+  const docTotal = (r: PrRow) => senToRinggit(refundOf(r), 2);
+  const lineTotal = (l: PrGridLine) => senToRinggit(l.line_refund_sen, 2);
+  const columnValues: Record<string, ReturnColumnValues<PrRow, PrGridLine>> = {
+    doc_no: {
+      doc: (r) => r.return_number,
       width: "156px",
-      alwaysVisible: true,
-      getValue: (r) => r.return_number,
       render: (r) => <span className="font-docno text-[12.5px] font-semibold text-ink">{r.return_number}</span>,
     },
-    {
-      key: "return_date",
-      label: "Date",
-      width: "108px",
-      getValue: (r) => r.return_date ?? "",
-      render: (r) => <span className="text-[12.5px] text-ink-secondary">{fmtDate(r.return_date)}</span>,
+    doc_date: { doc: (r) => r.return_date ?? null, width: "108px" },
+    creditor_code: { doc: (r) => r.supplier?.code || null, width: "120px", mono: true },
+    creditor_name: {
+      doc: (r) => r.supplier?.name || null,
+      width: "220px",
+      render: (r) => <div className="min-w-0 truncate text-[13px] font-semibold text-ink">{supplierNameOf(r)}</div>,
     },
-    {
-      key: "source",
-      label: transferFromColumnLabel('grn'),
-      width: "132px",
-      getValue: (r) => sourceOf(r),
-      render: (r) => <span className="font-mono text-[12px] text-ink-secondary">{sourceOf(r)}</span>,
+    agent: { doc: () => null, width: "100px" },
+    currency_code: { doc: (r) => currencyOfPr(r), width: "90px" },
+    currency_rate: { doc: (r) => returnCurrencyRate(currencyOfPr(r)), width: "90px" },
+    inclusive: { doc: () => null, width: "90px" },
+    subtotal_ex: { doc: docTotal },
+    tax: { doc: () => 0, width: "90px" },
+    total: {
+      doc: docTotal,
+      render: (r) => <span className="font-money text-[13px] font-semibold text-synced">{fmtRm(refundOf(r))}</span>,
     },
-    {
-      // Owner 2026-07-24: supplier NAME and CODE are separate columns on every
-      // procurement table, not a stacked cell — code must be scannable on its
-      // own (same split as the PO list, 2026-07-23).
-      key: "supplier",
-      label: "Supplier",
-      getValue: (r) => supplierNameOf(r),
-      render: (r) => (
-        <div className="min-w-0 truncate text-[13px] font-semibold text-ink">{supplierNameOf(r)}</div>
-      ),
-    },
-    {
-      key: "supplier_code",
-      label: "Code",
-      width: "108px",
-      getValue: (r) => supplierCodeOf(r),
-      render: (r) => (
-        <span className="font-mono text-[11.5px] text-ink-secondary">{supplierCodeOf(r)}</span>
-      ),
-    },
-    {
-      key: "reason",
-      label: "Reason",
-      width: "180px",
-      getValue: (r) => r.reason ?? "",
-      render: (r) =>
-        r.reason
-          ? <span className="truncate text-[12.5px] italic text-ink-secondary">{r.reason}</span>
-          : <span className="text-[12.5px] text-ink-muted">—</span>,
-    },
-    {
-      key: "status",
-      label: "Status",
+    local_total: { doc: (r) => (isLocalCurrency(r) ? docTotal(r) : null) },
+    rounding_adj: { doc: () => 0, width: "100px" },
+    final_total: { doc: docTotal },
+    cancelled: { doc: (r) => returnCancelledWord(r.status), width: "90px" },
+    item_code: { line: (l) => l.item_code, width: "200px", mono: true },
+    detail_description: { line: (l) => l.material_name ?? l.description, width: "240px" },
+    uom: { line: (l) => l.uom, width: "80px" },
+    location: { line: (l) => l.location, width: "90px" },
+    proj_no: { line: () => null, width: "90px" },
+    dept_no: { line: () => null, width: "90px" },
+    batch_no: { line: () => null, width: "100px" },
+    qty: { line: (l) => l.qty_returned, width: "80px" },
+    unit_price: { line: (l) => senToRinggit(l.unit_price_sen, 4) },
+    discount: { line: () => null, width: "100px" },
+    line_total: { line: lineTotal },
+    line_local_total: { line: (l) => (l.doc_local ? lineTotal(l) : null) },
+    tax_code: { line: () => null, width: "90px" },
+    line_tax: { line: () => 0, width: "90px" },
+    line_total_ex: { line: lineTotal },
+    line_total_inc: { line: lineTotal },
+    serial_no_list: { line: () => null, width: "120px" },
+    is_rounding_adj: { doc: () => "No", width: "110px" },
+    status: {
+      doc: (r) => statusFor(r.status).label,
       width: "120px",
-      getValue: (r) => r.status,
       render: (r) => {
         const st = statusFor(r.status);
         return <Badge tone={st.tone} size="xs">{st.label}</Badge>;
       },
     },
-    {
-      key: "credit",
-      label: "Credit",
-      width: "128px",
-      align: "right",
-      getValue: (r) => refundOf(r),
-      render: (r) => <span className="font-money text-[13px] font-semibold text-synced">{fmtRm(refundOf(r))}</span>,
+    supplier_cn_no: { doc: (r) => r.credit_note_ref || null, width: "140px", mono: true },
+    reason: { line: (l) => l.reason ?? l.doc_reason, width: "200px" },
+    transfer_from: { line: (l) => l.grn_no, width: "150px", mono: true },
+    our_po_no: { line: (l) => l.po_no, width: "150px", mono: true },
+    detail_description_2: { line: (l) => l.description2, width: "240px" },
+    remarks: { line: (l) => l.notes, width: "200px" },
+    item_group: { line: (l) => l.item_group, width: "120px" },
+    line_id: { line: (l) => l.id, width: "300px", mono: true },
+  };
+  const columns = returnGridColumns<PrRow, PrGridLine>(PR_LINE_COLUMNS, columnValues, linesOfPr, "doc_no");
+
+  const exportLines = {
+    fetchRows: async () => purchaseReturnsInView(await fetchPurchaseReturnExportRows<PrRow>(), status, search),
+    linesOf: linesOfPr,
+    sheetName: "Purchase Returns",
+    onError: (e: Error) => {
+      void notify({ title: "Export failed", body: e.message || "The export could not be completed.", tone: "error" });
     },
-  ];
+  };
 
   const statusPillOptions: Array<{ value: StatusTab; label: string }> = [
     { value: "all", label: `All · ${counts.all}` },
@@ -860,7 +906,7 @@ export function PurchaseReturnsListV2() {
                   </Button>
                 </div>
               )}
-              <DataTable<PrRow>
+              <DataTable<PrRow, PrGridLine>
                 tableId="purchase-returns-v2"
                 rows={filtered}
                 loading={isLoading}
@@ -879,6 +925,7 @@ export function PurchaseReturnsListV2() {
                   onToggleAll: toggleSelectAll,
                 }}
                 exportName="purchase-returns"
+                exportLines={exportLines}
                 emptyLabel={filtersActive ? "No purchase returns match — try Reset layout to clear filters." : "No purchase returns yet."}
                 search={{ value: search, onChange: setSearch, placeholder: "Search return, supplier, reason, source…", loadedLimit: 300 }}
                 resetFilters={{ active: filtersActive, onReset: resetLayout, label: "Reset layout" }}

@@ -254,6 +254,106 @@ function defaultExportName(parsed) {
   return null;
 }
 
+/* ── ROUTES REGISTERED THROUGH A FUNCTION ───────────────────────────────────
+   A mounted router file may hand its router to `register<Topic>Routes(router)`
+   or `mount<Name>Route(router, ...)`, declared in the same file or imported.
+   Every `router.<verb>(...)` inside that function is a route of the MOUNTED
+   router: same mount prefix, same mount gates, the router's own `.use()` gates
+   that precede the CALL, plus any `.use()` inside the function before the
+   route. The `source` column is the file the route is written in.
+
+   Until this was followed, a route registered this way produced no row at all:
+   `mountHoldRoute` put PATCH .../hold on five routers and none of the five was
+   in the matrix. A call that cannot be followed is an error, never a skip. */
+const REGISTER_FUNCTION = /^(register[A-Z]\w*Routes|mount[A-Z]\w*Routes?)$/;
+const parsedByFile = new Map();
+function parseCached(filePath) {
+  const key = path.normalize(filePath);
+  if (!parsedByFile.has(key)) parsedByFile.set(key, parse(key));
+  return parsedByFile.get(key);
+}
+
+function unwrapExpression(node) {
+  let current = node;
+  while (current && (ts.isAsExpression(current) || ts.isParenthesizedExpression(current) || ts.isSatisfiesExpression?.(current))) {
+    current = current.expression;
+  }
+  return current;
+}
+
+/** A top-level function (declaration, or const arrow / function expression) by name. */
+function topLevelFunction(parsed, name) {
+  for (const statement of parsed.source.statements) {
+    if (ts.isFunctionDeclaration(statement) && statement.name?.text === name && statement.body) return statement;
+    if (!ts.isVariableStatement(statement)) continue;
+    for (const declaration of statement.declarationList.declarations) {
+      const initializer = unwrapExpression(declaration.initializer);
+      if (
+        ts.isIdentifier(declaration.name) && declaration.name.text === name && initializer &&
+        (ts.isArrowFunction(initializer) || ts.isFunctionExpression(initializer))
+      ) return initializer;
+    }
+  }
+  return null;
+}
+
+/** A top-level `const NAME = { key: '...' }` object literal by name. */
+function topLevelObject(parsed, name) {
+  for (const statement of parsed.source.statements) {
+    if (!ts.isVariableStatement(statement)) continue;
+    for (const declaration of statement.declarationList.declarations) {
+      const initializer = unwrapExpression(declaration.initializer);
+      if (ts.isIdentifier(declaration.name) && declaration.name.text === name && initializer && ts.isObjectLiteralExpression(initializer)) {
+        return initializer;
+      }
+    }
+  }
+  return null;
+}
+
+function propertyKey(property, source) {
+  return property.name ? property.name.getText(source).replaceAll(/["'`]/g, "") : null;
+}
+
+/* The function a register call names, and the file it is written in. */
+function resolveRegisterFunction(parsed, name, line) {
+  const local = topLevelFunction(parsed, name);
+  if (local) return { parsed, fn: local };
+  const imported = importMap(parsed).get(name);
+  if (!imported?.filePath) {
+    throw new Error(`Unresolved route registration function ${relativeFile(parsed.filePath)}:${line}: ${name}(...) is neither declared in the file nor a relative import`);
+  }
+  const target = parseCached(imported.filePath);
+  const fn = topLevelFunction(target, imported.exportName);
+  if (!fn) {
+    throw new Error(`Unresolved route registration function ${relativeFile(parsed.filePath)}:${line}: ${relativeFile(target.filePath)} declares no top-level function ${imported.exportName}`);
+  }
+  return { parsed: target, fn };
+}
+
+/* A route path inside a register function: a literal, a parameter bound to a
+   literal at the call site, or `TABLE[param]` over a top-level object literal
+   of literal paths (document-hold-routes.ts's PATHS[doc]). Anything else is
+   refused by the caller. */
+function resolveRegisteredPath(argument, bindings, parsed) {
+  const expression = unwrapExpression(argument);
+  const literal = expression && literalText(expression);
+  if (literal !== null && literal !== undefined) return literal;
+  if (expression && ts.isIdentifier(expression) && bindings.has(expression.text)) return bindings.get(expression.text);
+  if (
+    expression && ts.isElementAccessExpression(expression) &&
+    ts.isIdentifier(expression.expression) && ts.isIdentifier(expression.argumentExpression) &&
+    bindings.has(expression.argumentExpression.text)
+  ) {
+    const table = topLevelObject(parsed, expression.expression.text);
+    const key = bindings.get(expression.argumentExpression.text);
+    const property = table?.properties.find((candidate) => ts.isPropertyAssignment(candidate) && propertyKey(candidate, parsed.source) === key);
+    const value = property && literalText(property.initializer);
+    if (value !== null && value !== undefined) return value;
+  }
+  return null;
+}
+
 const rootIndex = parse(path.join(sourceRoot, "index.ts"));
 const scmIndex = parse(path.join(sourceRoot, "scm", "index.ts"));
 const root = registrations(rootIndex, "");
@@ -273,7 +373,7 @@ const rows = [];
 const coveredRegistrations = new Set();
 const routeFiles = [path.join(sourceRoot, "routes"), path.join(sourceRoot, "scm", "routes")]
   .flatMap(walk)
-  .map(parse);
+  .map(parseCached);
 
 function assertSamePaths(label, actual, expected) {
   const actualSorted = [...actual].sort();
@@ -341,12 +441,146 @@ if (unvalidatedManualRoutes.length > 0) {
   throw new Error(`Manual dynamic routes require source validators:\n${unvalidatedManualRoutes.join("\n")}`);
 }
 
+/* One row per (route, mounted registration). `source` is the file the
+   `.verb(...)` call is written in; `gateLine` is the line in the MOUNTED file
+   that the router's own `.use()` gates must precede (the route itself, or the
+   register call it came through); `innerUses` are `.use()` gates inside a
+   register function that precede the route. */
+function emitRows({ source, node, method, routePaths, router, registrationsForRouter, fileUses, gateLine, innerUses }) {
+  const line = source.source.getLineAndCharacterOfPosition(node.getStart()).line + 1;
+  for (const routePath of routePaths) {
+    for (const registration of registrationsForRouter) {
+      coveredRegistrations.add(registration.key);
+      const fullPath = normalizePath(registration.prefix, routePath === "/" ? "" : routePath);
+      const isScm = fullPath.startsWith("/api/scm/");
+      const directGate = gateFromArgs(node.arguments.slice(1, -1), source.source);
+      const inHandlerGuard = handlerGuard(node.arguments.at(-1), source.source);
+      const appliesTo = (entry) => entry.prefix === "*" || pathHasPrefix(routePath, entry.prefix.replace(/\/\*$/, ""));
+      const localGate = [
+        ...fileUses.filter((entry) => entry.line < gateLine && entry.router === router && appliesTo(entry)),
+        ...innerUses.filter(appliesTo),
+      ]
+        .map((entry) => entry.gate)
+        .filter(Boolean)
+        .join(" + ");
+      const applicableMountUses = isScm
+        ? [
+            ...root.mountedUses.filter((entry) => entry.line < scmRootMountLine),
+            ...scm.mountedUses.filter((entry) => entry.line < registration.line),
+          ]
+        : root.mountedUses.filter((entry) => entry.line < registration.line);
+      const mountGate = applicableMountUses
+        .filter((entry) => pathHasPrefix(fullPath, entry.prefix))
+        .map((entry) => entry.gate)
+        .filter(Boolean)
+        .join(" + ");
+      const allGates = [mountGate, localGate, directGate].filter(Boolean).join(" + ");
+      const routeMiddleware = allGates;
+      const auth = registration.line > root.authLine || isScm || /\b(?:auth|caseTrack|supplierTrack)\b/.test(routeMiddleware)
+        ? "AUTHENTICATED_MIDDLEWARE"
+        : inHandlerGuard
+          ? "HANDLER_CREDENTIAL_REVIEW"
+          : "NO_STATIC_AUTH_GATE";
+      const company = registration.line > root.companyLine || isScm || /\bcompanyContext\b/.test(routeMiddleware)
+        ? "COMPANY_CONTEXT"
+        : "NO_GLOBAL_COMPANY_CONTEXT";
+      const mutation = MUTATION_METHODS.has(method);
+      const hasCapability = hasCapabilityGate(allGates);
+      const reviewState = mutation && !hasCapability
+        ? inHandlerGuard
+          ? "HANDLER_GUARD_REVIEW"
+          : "MUTATION_INHERITED_ONLY"
+        : !hasCapability
+          ? "INHERITED_ONLY"
+          : "DECLARED_GATE";
+      rows.push({
+        method,
+        path: fullPath,
+        auth,
+        company,
+        mountGate,
+        localGate,
+        directGate,
+        handlerGuard: inHandlerGuard,
+        mutation: mutation ? "YES" : "NO",
+        reviewState,
+        // `source` is what the compared artifact carries: the FILE only.
+        // `sourceLine` never leaves this process — it backs the duplicate
+        // checks, the error messages and --locations.
+        source: relativeFile(source.filePath),
+        sourceLine: `${relativeFile(source.filePath)}:${line}`,
+      });
+    }
+  }
+}
+
+/* Follow `register*Routes(router, ...)` / `mount*Route(router, ...)` into the
+   function's body. `routerParam` is the function's first parameter; `bindings`
+   maps its other parameters to the string literals the call passed. Nested
+   register calls on the same parameter are followed too. */
+function followRegisterCall({ mounted, call, router, registrationsForRouter, fileUses, gateLine, depth }) {
+  const callLine = mounted.source.getLineAndCharacterOfPosition(call.getStart()).line + 1;
+  const name = call.expression.text;
+  if (depth > 8) throw new Error(`Route registration functions nest deeper than 8 at ${relativeFile(mounted.filePath)}:${callLine}: ${name}`);
+  const { parsed: target, fn } = resolveRegisterFunction(mounted, name, callLine);
+  const [routerParameter, ...rest] = fn.parameters;
+  if (!routerParameter || !ts.isIdentifier(routerParameter.name)) {
+    throw new Error(`Route registration function ${name} (${relativeFile(target.filePath)}) must take the router as a named first parameter`);
+  }
+  const routerParam = routerParameter.name.text;
+  const bindings = new Map();
+  rest.forEach((parameter, index) => {
+    const argument = call.arguments[index + 1];
+    const value = argument && literalText(unwrapExpression(argument));
+    if (ts.isIdentifier(parameter.name) && value !== null && value !== undefined) bindings.set(parameter.name.text, value);
+  });
+
+  const innerUses = [];
+  let emitted = 0;
+  function visitBody(node) {
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && ts.isIdentifier(node.expression.expression) && node.expression.expression.text === routerParam) {
+      const verb = node.expression.name.text;
+      if (verb === "use") {
+        const prefix = literalText(node.arguments[0]);
+        if (prefix) innerUses.push({ prefix, gate: gateFromArgs(node.arguments.slice(1), target.source) });
+      } else if (HTTP_METHODS.has(verb)) {
+        const line = target.source.getLineAndCharacterOfPosition(node.getStart()).line + 1;
+        const routePath = node.arguments[0] ? resolveRegisteredPath(node.arguments[0], bindings, target) : null;
+        if (routePath === null) {
+          const expression = node.arguments[0] ? printCompact(node.arguments[0], target.source) : "<missing>";
+          throw new Error(`Route registered through ${name}(...) has a path the audit cannot resolve ${relativeFile(target.filePath)}:${line}: ${verb.toUpperCase()} ${expression} (called from ${relativeFile(mounted.filePath)}:${callLine})`);
+        }
+        emitRows({ source: target, node, method: verb.toUpperCase(), routePaths: [routePath], router, registrationsForRouter, fileUses, gateLine, innerUses: [...innerUses] });
+        emitted++;
+      }
+    }
+    if (
+      ts.isCallExpression(node) && ts.isIdentifier(node.expression) && REGISTER_FUNCTION.test(node.expression.text) &&
+      node.arguments[0] && ts.isIdentifier(node.arguments[0]) && node.arguments[0].text === routerParam
+    ) {
+      /* A nested call on the same parameter: the MOUNTED router again, reached
+         through this function. Its literal arguments are read in this file. */
+      emitted += followRegisterCall({ mounted: target, call: node, router, registrationsForRouter, fileUses, gateLine, depth: depth + 1 });
+      return;
+    }
+    ts.forEachChild(node, visitBody);
+  }
+  if (fn.body) visitBody(fn.body);
+  if (emitted === 0) {
+    throw new Error(`Route registration function ${name} (${relativeFile(target.filePath)}) registered no route on its router parameter ${routerParam} (called from ${relativeFile(mounted.filePath)}:${callLine})`);
+  }
+  return emitted;
+}
+
 for (const parsed of routeFiles) {
   const fileRegistrations = registrationsByFile.get(path.normalize(parsed.filePath)) ?? [];
   if (fileRegistrations.length === 0) continue;
   const routerNames = declaredRouterNames(parsed);
   const defaultRouter = defaultExportName(parsed);
   const fileUses = [];
+  const registrationsFor = (router) => fileRegistrations.filter((entry) =>
+    (entry.exportName === "default" ? defaultRouter : entry.exportName) === router
+  );
 
   function collectUses(node) {
     if (
@@ -374,14 +608,24 @@ for (const parsed of routeFiles) {
   function visit(node) {
     if (
       ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      REGISTER_FUNCTION.test(node.expression.text) &&
+      node.arguments[0] &&
+      ts.isIdentifier(node.arguments[0]) &&
+      registrationsFor(node.arguments[0].text).length > 0
+    ) {
+      const router = node.arguments[0].text;
+      const gateLine = parsed.source.getLineAndCharacterOfPosition(node.getStart()).line + 1;
+      followRegisterCall({ mounted: parsed, call: node, router, registrationsForRouter: registrationsFor(router), fileUses, gateLine, depth: 0 });
+    }
+    if (
+      ts.isCallExpression(node) &&
       ts.isPropertyAccessExpression(node.expression) &&
       HTTP_METHODS.has(node.expression.name.text) &&
       ts.isIdentifier(node.expression.expression)
     ) {
       const router = node.expression.expression.text;
-      const registrationsForRouter = fileRegistrations.filter((entry) =>
-        (entry.exportName === "default" ? defaultRouter : entry.exportName) === router
-      );
+      const registrationsForRouter = registrationsFor(router);
       if (registrationsForRouter.length > 0) {
         const method = node.expression.name.text.toUpperCase();
         const line = parsed.source.getLineAndCharacterOfPosition(node.getStart()).line + 1;
@@ -399,68 +643,7 @@ for (const parsed of routeFiles) {
           }
           consumedManualRoutes.add(key);
         }
-
-        for (const routePath of routePaths) {
-          for (const registration of registrationsForRouter) {
-            coveredRegistrations.add(registration.key);
-            const fullPath = normalizePath(registration.prefix, routePath === "/" ? "" : routePath);
-            const isScm = fullPath.startsWith("/api/scm/");
-            const directGate = gateFromArgs(node.arguments.slice(1, -1), parsed.source);
-            const inHandlerGuard = handlerGuard(node.arguments.at(-1), parsed.source);
-            const localGate = fileUses
-              .filter((entry) => entry.line < line && entry.router === router && (entry.prefix === "*" || pathHasPrefix(routePath, entry.prefix.replace(/\/\*$/, ""))))
-              .map((entry) => entry.gate)
-              .filter(Boolean)
-              .join(" + ");
-            const applicableMountUses = isScm
-              ? [
-                  ...root.mountedUses.filter((entry) => entry.line < scmRootMountLine),
-                  ...scm.mountedUses.filter((entry) => entry.line < registration.line),
-                ]
-              : root.mountedUses.filter((entry) => entry.line < registration.line);
-            const mountGate = applicableMountUses
-              .filter((entry) => pathHasPrefix(fullPath, entry.prefix))
-              .map((entry) => entry.gate)
-              .filter(Boolean)
-              .join(" + ");
-            const allGates = [mountGate, localGate, directGate].filter(Boolean).join(" + ");
-            const routeMiddleware = allGates;
-            const auth = registration.line > root.authLine || isScm || /\b(?:auth|caseTrack|supplierTrack)\b/.test(routeMiddleware)
-              ? "AUTHENTICATED_MIDDLEWARE"
-              : inHandlerGuard
-                ? "HANDLER_CREDENTIAL_REVIEW"
-                : "NO_STATIC_AUTH_GATE";
-            const company = registration.line > root.companyLine || isScm || /\bcompanyContext\b/.test(routeMiddleware)
-              ? "COMPANY_CONTEXT"
-              : "NO_GLOBAL_COMPANY_CONTEXT";
-            const mutation = MUTATION_METHODS.has(method);
-            const hasCapability = hasCapabilityGate(allGates);
-            const reviewState = mutation && !hasCapability
-              ? inHandlerGuard
-                ? "HANDLER_GUARD_REVIEW"
-                : "MUTATION_INHERITED_ONLY"
-              : !hasCapability
-                ? "INHERITED_ONLY"
-                : "DECLARED_GATE";
-            rows.push({
-              method,
-              path: fullPath,
-              auth,
-              company,
-              mountGate,
-              localGate,
-              directGate,
-              handlerGuard: inHandlerGuard,
-              mutation: mutation ? "YES" : "NO",
-              reviewState,
-              // `source` is what the compared artifact carries: the FILE only.
-              // `sourceLine` never leaves this process — it backs the duplicate
-              // checks, the error messages and --locations.
-              source: relativeFile(parsed.filePath),
-              sourceLine: `${relativeFile(parsed.filePath)}:${line}`,
-            });
-          }
-        }
+        emitRows({ source: parsed, node, method, routePaths, router, registrationsForRouter, fileUses, gateLine: line, innerUses: [] });
       }
     }
     ts.forEachChild(node, visit);
@@ -493,6 +676,8 @@ const sentinelRoutes = [
   ["POST", "/api/agents/pms/proposals/decide"],
   ["GET", "/api/scm/outstanding/po"],
   ["GET", "/api/scm/outstanding/si"],
+  // Registered through mountHoldRoute(mfgSalesOrders, 'so') with a computed path.
+  ["PATCH", "/api/scm/mfg-sales-orders/:docNo/hold"],
 ];
 for (const [method, routePath] of sentinelRoutes) {
   if (!rows.some((row) => row.method === method && row.path === routePath)) {

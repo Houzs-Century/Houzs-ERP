@@ -15,6 +15,7 @@
 // ----------------------------------------------------------------------------
 
 import { isMissingRpc } from './rpc-missing';
+import { fmtSen } from '../shared/format';
 
 export type CreditSourceType =
   | 'SI_CANCEL_REFUND'   // SI was cancelled with paid_sen > 0 → credit equal to paid_sen
@@ -22,7 +23,9 @@ export type CreditSourceType =
   | 'SO_CANCEL_REFUND'   // SO was cancelled with paid deposit > 0 → credit equal to paid deposit
   | 'OVERPAY'            // payment recorded > remaining due → excess turned into credit
   | 'APPLIED_TO_SI'      // negative entry — credit applied to a new invoice
-  | 'MANUAL_ADJUST';     // operator-entered adjustment
+  | 'MANUAL_ADJUST'      // operator-entered adjustment
+  | 'CUSTOMER_REFUND'    // negative entry — a Customer Refund voucher paid the credit out in cash (lib/pv-refund.ts)
+  | 'CUSTOMER_REFUND_REVERSAL'; // that voucher was cancelled — the credit comes back
 
 export type AddCreditInput = {
   debtorCode: string;
@@ -487,7 +490,7 @@ export async function creditFromCancelledSi(
     sourceType: 'SI_CANCEL_REFUND',
     sourceDocNo: args.siNumber,
     sourceDocId: args.siId,
-    notes: `Cancelled invoice ${args.siNumber} carried ${creditSen / 100} as customer credit.`,
+    notes: `Cancelled invoice ${args.siNumber} carried ${fmtSen(creditSen)} as customer credit.`,
     createdBy: args.createdBy ?? null,
     companyId,
   });

@@ -17,8 +17,9 @@
 // refusal disappearing, which no unit test over one handler would notice.
 // ----------------------------------------------------------------------------
 import { describe, expect, test } from 'vitest';
-import soRoutes from '../src/scm/routes/mfg-sales-orders.ts?raw';
+import { soRouterSource } from './lib/so-router-source';
 import recomputeSrc from '../src/scm/lib/mfg-pricing-recompute.ts?raw';
+const soRoutes = soRouterSource();
 const RECOMPUTE_SRC = recomputeSrc;
 
 /** Source with comments stripped — the comments below deliberately name the
@@ -50,7 +51,10 @@ describe('SO total floor removed', () => {
        claim; see zeroPriceCreatePath.test.ts. */
     const calls = SO.match(/erpLineTrust\([A-Za-z]*[Pp]osTablet\b/g) ?? [];
     expect(calls.length, 'a line-pricing path stopped passing the POS flag').toBe(3);
-    expect(RECOMPUTE_SRC).toMatch(/!posTablet/);
+    /* 2026-09-02 — the helper stopped spelling the negation as `!posTablet` when
+       the migrated arm made it three guarded returns; the POS is now withheld by
+       a leading early return, which is the same invariant said more strictly. */
+    expect(RECOMPUTE_SRC).toMatch(/if \(posTablet\) return false;/);
   });
 
   /* isPosTabletCaller must survive as the one hinge. If a later edit deletes it

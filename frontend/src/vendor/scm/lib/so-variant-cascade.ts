@@ -59,8 +59,48 @@ export const FABRIC_IDENTITY_KEYS: readonly string[] = [
  *  a module of the master's sofa for the free-gift trigger
  *  (backend/src/scm/shared/free-gift.ts) and prints inside its module row on
  *  the PDF (vendor/shared/so-line-display.ts). Both desktop and mobile copied
- *  it before this module existed. */
-export const NEVER_INHERITED_KEYS: readonly string[] = ['remark', 'buildKey'];
+ *  it before this module existed.
+ *
+ *  `extraAddonNote` / `extraAddonAmountRM` / `specials` / `specialLabels` /
+ *  `specialChoices` — the per-line SPECIAL ORDER payload (Custom-other free
+ *  text and ticked add-on codes). Same shape as `remark`: a note the operator
+ *  wrote on ONE line about ONE build, never a category-wide axis to align.
+ *  Owner reported 2026-09-11 against HC-SO-007678: on the mobile SO he added
+ *  a customize-drawer note to HILTON (a bedframe line) and saved; after
+ *  reload FENRIR — a different bedframe line further down the same order —
+ *  carried the identical text and would not let him remove it. Traced: this
+ *  list only excluded `remark` and `buildKey`, so `cascadeMasterVariants`
+ *  FORCED the master's extraAddonNote (and its four siblings) onto every
+ *  follower of the same category, exactly like the "latest wins" rule for a
+ *  sofa's fabric — appropriate for a fabric shared across compartments of
+ *  one physical sofa, wrong for a per-line note. Adding the five keys here
+ *  closes both DESKTOP and MOBILE (both surfaces import this module). */
+export const NEVER_INHERITED_KEYS: readonly string[] = [
+  'remark', 'buildKey',
+  'extraAddonNote', 'extraAddonAmountRM',
+  'specials', 'specialLabels', 'specialChoices',
+];
+
+/** The categories a master's variants may travel across AT ALL — owner ruling
+ *  2026-09-09: 「主行改一次，全部跟着改 … 这个只限于 sofa item」.
+ *
+ *  A SOFA is one physical thing assembled from several lines: its modules share
+ *  a fabric, a leg height and a seat depth by construction, so changing the
+ *  master once and having the rest follow is the whole point.
+ *
+ *  A BEDFRAME is not. Three bedframes on one order are three beds, routinely
+ *  different sizes with different add-ons, and the cascade's first rule is that
+ *  the master's latest change FORCES the follower — so a rep who removed a
+ *  drawer from beds 2 and 3 got it written back the next time she touched bed 1,
+ *  and had to remove it once per master edit. Reported 2026-09-09 against
+ *  HC-SO-012312: 「刚刚我改了两次 about 第二三不需要 drawer，结果还是有，remove
+ *  三次才没有」.
+ *
+ *  BOTH surfaces import this. Mobile used to declare `["sofa","bedframe"]` and
+ *  desktop passed `null` meaning EVERY category (a mattress line's specials
+ *  included) — one rule with two different answers, which is the shape
+ *  `audit:duplicated-decisions` exists to catch. */
+export const CASCADE_CATEGORIES: ReadonlySet<string> = new Set(['sofa']);
 
 /** One line, reduced to what the cascade decides on. `category` is '' for a
  *  line with no SKU picked yet — it neither masters nor follows. */
@@ -114,10 +154,20 @@ export function masterVariantsByCategory(
  */
 export function seedableMasterVariants(
   lines: readonly CascadeLine[],
+  /* REQUIRED, and null means "every category" — the same parameter
+     `cascadeMasterVariants` takes, because the seed and the live cascade must
+     answer the SAME question. It is not optional: a call site that said nothing
+     would silently keep the old every-category behaviour, which is the
+     `optional-param-noop` class (docs/bugs/0098-*). Gating the SEED matters on
+     its own — without it a new bedframe line still arrives pre-filled from bed
+     1 and only stops being RE-forced afterwards, which fixes the second removal
+     and not the first. The seed IS the "自动 duplicate" the rep reported. */
+  categories: ReadonlySet<string> | null,
 ): Record<string, Record<string, unknown>> {
   const out: Record<string, Record<string, unknown>> = {};
   for (const l of lines) {
     if (!l.category) continue;
+    if (categories && !categories.has(l.category)) continue;
     if (l.category in out) continue;
     if (Object.keys(l.variants).length > 0) out[l.category] = l.variants;
   }

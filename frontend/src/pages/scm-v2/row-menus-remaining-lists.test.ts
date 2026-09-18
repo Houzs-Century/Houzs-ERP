@@ -90,6 +90,7 @@ const piMenu = (over: Partial<Parameters<typeof purchaseInvoiceRowMenu<Row>>[0]>
   purchaseInvoiceRowMenu<Row>({
     open: noop,
     edit: noop,
+    copyAsNew: noop,
     print: noop,
     confirm: noop,
     setHold: noop,
@@ -102,13 +103,13 @@ const piMenu = (over: Partial<Parameters<typeof purchaseInvoiceRowMenu<Row>>[0]>
 describe("purchaseInvoiceRowMenu", () => {
   test("a DRAFT offers Confirm, and Cancel below it", () => {
     expect(labels(piMenu()(R({ status: "DRAFT" })))).toEqual([
-      "Open", "Edit", "Print", "—", "Confirm", "—", "Put On Hold", "—", "Cancel Purchase Invoice",
+      "Open", "Edit", "Copy as new", "Print", "—", "Confirm", "—", "Put On Hold", "—", "Cancel Purchase Invoice",
     ]);
   });
 
   test("a confirmed invoice is not offered Confirm a second time", () => {
     expect(labels(piMenu()(R({ status: "POSTED" })))).toEqual([
-      "Open", "Edit", "Print", "—", "Put On Hold", "—", "Cancel Purchase Invoice",
+      "Open", "Edit", "Copy as new", "Print", "—", "Put On Hold", "—", "Cancel Purchase Invoice",
     ]);
   });
 
@@ -118,11 +119,11 @@ describe("purchaseInvoiceRowMenu", () => {
     /* Hold survives: a hold is a MARKER, not a step, and marking a paid invoice
        paused is a legitimate thing to want (document-hold-route.ts deliberately
        does not gate on status). Only the CANCEL goes. */
-    expect(labels(piMenu()(R({ status: "PAID" })))).toEqual(["Open", "Edit", "Print", "—", "Put On Hold"]);
+    expect(labels(piMenu()(R({ status: "PAID" })))).toEqual(["Open", "Edit", "Copy as new", "Print", "—", "Put On Hold"]);
   });
 
   test("a cancelled invoice is not offered a second cancel", () => {
-    expect(labels(piMenu()(R({ status: "CANCELLED" })))).toEqual(["Open", "Edit", "Print", "—", "Put On Hold"]);
+    expect(labels(piMenu()(R({ status: "CANCELLED" })))).toEqual(["Open", "Edit", "Copy as new", "Print", "—", "Put On Hold"]);
   });
 
   test("Confirm calls the page's confirm handler with the row it was opened on", () => {

@@ -5,8 +5,16 @@ import {
   amendmentBucketOf,
   AMENDMENT_LIST_CHIPS,
   amendmentBucketLabel,
+  compareAmendmentsForList,
   type StatusTone,
 } from "../vendor/scm/lib/status-pill";
+import {
+  AMENDMENT_APPROVER_LABEL,
+  AMENDMENT_APPROVER_TONE,
+  soAmendmentApprover,
+  type AmendmentApprover,
+} from "../vendor/scm/lib/amendment-approver";
+import { customerRefOf } from "../lib/customer-ref";
 import { formatDate } from "../lib/utils";
 import { useStaffLookup } from "../hooks/useStaffLookup";
 import "./mobile.css";
@@ -20,21 +28,25 @@ import "./mobile.css";
  *
  * REAL-DATA DISCIPLINE: the list endpoint (GET /so-amendments →
  * { amendments: AmendmentRow[] }) returns id / so_doc_no / amendment_no /
- * status / reason / requested_by / created_at ONLY. It carries no customer
- * name and no per-line change kinds, so the mockup's customer line and
- * QTY/SPEC/ADD/REMOVE change-tags are intentionally dropped rather than
- * paid for with a per-row detail fetch — those live on AmendmentDetail.lines,
- * surfaced on the SO detail's diff view.
+ * status / lane / reason / requested_by / created_at, the bound POs and the
+ * SO's reference. It carries no customer name and no per-line change kinds,
+ * so the mockup's customer line and QTY/SPEC/ADD/REMOVE change-tags are
+ * intentionally dropped rather than paid for with a per-row detail fetch —
+ * those live on AmendmentDetail.lines, surfaced on the SO detail's diff view.
  * ------------------------------------------------------------------ */
 
-// SIMPLIFIED status filter (owner 2026-07-24): Requested / Approved / All — same
-// as the desktop queue. The granular backend enum is collapsed via
-// amendmentBucketOf; the closed (REJECTED) rows are reached through "All".
+// SIMPLIFIED status filter (owner 2026-07-24; Rejected added 2026-09-17): Requested /
+// Approved / Rejected / All — same as the desktop queue. The granular backend enum
+// is collapsed via amendmentBucketOf.
 const STATUS_CHIPS = AMENDMENT_LIST_CHIPS;
 
 // Amendments still awaiting an action — the REQUESTED bucket (open / in-flight);
 // the header "N to action" count.
 const IS_OPEN = (s: string) => amendmentBucketOf(s) === "REQUESTED";
+
+// Requested on top, newest first within a status — the same order the desktop
+// queue opens in (status-pill.ts owns it).
+const OPEN_ORDER = compareAmendmentsForList<AmendmentRow>((a) => a.status, (a) => a.created_at);
 
 // Simplified status TONE → mobile .b-* badge class (info=Requested,
 // success=Approved, danger=Rejected). Mirrors MobileModuleList's TONE_BADGE_CLASS.
@@ -52,6 +64,12 @@ function AmendmentBadge({ status }: { status: string }) {
   return <span className={`badge ${TONE_BADGE_CLASS[tone]}`}>{label}</span>;
 }
 
+// Who signs it — the desktop queue's Approver badge, same word and colour.
+function ApproverBadge({ approver }: { approver: AmendmentApprover }) {
+  const { bg, fg } = AMENDMENT_APPROVER_TONE[approver];
+  return <span className="badge" style={{ background: bg, color: fg }}>{AMENDMENT_APPROVER_LABEL[approver]}</span>;
+}
+
 export function MobileAmendments({
   onBack,
   onOpen,
@@ -64,7 +82,7 @@ export function MobileAmendments({
   // requested_by is a bare scm.staff uuid — same roster resolve as desktop.
   const { actorNameOf } = useStaffLookup();
 
-  const allRows = useMemo<AmendmentRow[]>(() => data?.amendments ?? [], [data]);
+  const allRows = useMemo<AmendmentRow[]>(() => [...(data?.amendments ?? [])].sort(OPEN_ORDER), [data]);
   const rows = useMemo<AmendmentRow[]>(
     () => (chip === "all" ? allRows : allRows.filter((a) => amendmentBucketOf(a.status) === chip)),
     [allRows, chip],
@@ -109,17 +127,31 @@ export function MobileAmendments({
             {rows.map((a) => {
               const amdNo = a.amendment_no != null && String(a.amendment_no).trim() !== "" ? String(a.amendment_no) : null;
               const reason = (a.reason ?? "").trim();
+              const reference = customerRefOf({ ref: a.so_ref, customer_so_no: a.so_customer_so_no });
               return (
                 <button key={a.id} className="amd" onClick={() => onOpen(a.so_doc_no)}>
                   <div className="r1">
                     <span className="sono tnum">{a.so_doc_no}</span>
-                    <AmendmentBadge status={a.status} />
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                      <ApproverBadge approver={soAmendmentApprover(a.lane)} />
+                      <AmendmentBadge status={a.status} />
+                    </span>
                   </div>
+                  {reference && (
+                    <div className="amdno">
+                      Ref <span className="tnum">{reference}</span>
+                    </div>
+                  )}
                   {(amdNo || reason) && (
                     <div className="amdno">
                       {amdNo ? <span className="tnum">Amendment #{amdNo}</span> : null}
                       {amdNo && reason ? " · " : ""}
                       {reason ? `"${reason}"` : ""}
+                    </div>
+                  )}
+                  {(a.lane_flag_note ?? "").trim() && (
+                    <div className="amdno" style={{ color: "var(--amber, #a66a00)" }}>
+                      Passed here by the other approver: "{a.lane_flag_note}"
                     </div>
                   )}
                   <div className="foot">

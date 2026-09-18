@@ -1,0 +1,77 @@
+{
+ "_note": "Owner-directed corrections for PROCEEDED sofa orders that are NOT in the supplier export the owner gave on 2026-09-10 (that file is a snapshot and omits some orders, e.g. new HC-PO-2609-0xx ones whose supplier PO ref is a non-standard code like R04533/ZNT6330). The supplier-listing round could not reach these. Each target is the owner's own drawing + his statement of what his supplier record holds. Applied through apply-sofa-compartment-corrections.mjs (SO and PO together).",
+ "_authority": "Owner 2026-09-11, with the drawing, the ERP screen, and the goods for GR in front of him. He OVERRODE his own 2026-09-10 reading of this same drawing: the THIRD piece is a LOUNGER L(RHF) (the taller box, hatched on the right), not an arm. Confirmed in chat: 「用今天的SO-013503 / Po2609-053 确定」.",
+ "_source": "owner drawing + statement + GR mismatch 2026-09-11; live state from probe-lounger-read-as-arm run 34561370209",
+ "entries": [
+  {
+   "model": "8030",
+   "pieces": ["1A(LHF)", "1NA", "L(RHF)"],
+   "seat": "35",
+   "confidence": "owner",
+   "why": "Owner 2026-09-11, OVERRIDING his own 2026-09-10 reading. On 2026-09-10 he read this drawing himself as 1A(LHF)+1NA+1A(RHF) (recorded verbatim in sofa-compartment-corrections-tv-direction.json, key 926872, confidence owner), and that arm reading is what production held. On 2026-09-11, with the goods in front of him for GR, he re-read it: the third box is the TALLER one (a chaise/lounger, hatched on the right) = L(RHF), and his supplier record reads 1A+1NA+1L too; the GR would not match an arm SKU. Three signals agree (drawing, supplier, physical goods). The superseded 2026-09-10 tv-direction entry for 926872 is removed in this same change so one address carries one answer. Production (probe run 34561370209): HC-SO-013503, received n/a on SO side, the build's three sofa rows all carry line key 926872, 8030-L(RHF) is minted.",
+   "source": "owner-not-in-file-2026-09-11",
+   "docs": ["HC-SO-013503"],
+   "lineKeys": ["926872"]
+  },
+  {
+   "model": "8030",
+   "pieces": ["1A(LHF)", "1NA", "L(RHF)"],
+   "seat": "35",
+   "confidence": "owner",
+   "why": "The purchase order raised from HC-SO-013503, corrected with it so the pair cannot drift. Same owner override as the SO entry above. Production (probe run 34561370209): HC-PO-2609-053, received=0 (safe to change codes), three sofa lines keyed 928403 (1NA), 928404 (1A(RHF)->L(RHF)), 928405 (1A(LHF)). Not in the supplier export.",
+   "source": "owner-not-in-file-2026-09-11",
+   "docs": ["HC-PO-2609-053"],
+   "lineKeys": ["928403", "928404", "928405"]
+  },
+  {
+   "model": "9058",
+   "pieces": ["1A(LHF)", "CNR", "1NA", "1A(RHF)"],
+   "seat": "30",
+   "confidence": "owner",
+   "why": "Owner 2026-09-14, verbatim: 「这个是1AL+C+1NA+1AR」 = 1A(LHF) + CNR + 1NA + 1A(RHF), four pieces, left to right. He was shown the only order-slip photo on the sales-order line (R2 key so-items/HC-SO-013497/336d7acc-d407-4aa5-90a0-27577dd03b4f/ac-926847-1.jpg: \"9058\", \"TV\" written above; drawn left to right a hatched-arm box, then boxes, a wide box at the turn, plus a small hatched box above the right end). SUPERSEDES our 2026-09-10 mirrored reading L(LHF)+1NA+1NA+1A(RHF) (confidence LIKELY in sofa-compartment-corrections-drawings.json, re-mirrored by the TV round in sofa-compartment-corrections-tv-direction.json, both keyed 926847); those two entries are removed in this same change so one address carries one answer. Production before (read-only run 34770252267, check-so-colour-amendment-trace): HC-SO-013497 sofa lines #1 9058-L(LHF), #4 9058-1NA, #5 9058-1NA, #6 9058-1A(RHF). Seat 30 and fabric HR805-90 are the book's own and do not change; only the piece list changes. ALREADY WRITTEN BY STAFF before this entry existed: SO amendment HC-SO-013497/A1 ('ERP convert wrong item code', SO_APPROVED 2026-09-14 01:09 UTC) and its PO follow-up HC-PO-2609-064/A1 (APPROVED 01:19, PO revision 2). Read-only run 34808053694: SO lines #1 9058-1A(LHF), #4 9058-CNR, #5 9058-1NA, #6 9058-1A(RHF); PO lines #1 1A(LHF), #2 CNR, #3 1NA, #4 1A(RHF), received 0, each so_item_id pointing at the SO line of the same piece. So this entry is the RECORD of the ruling and is inert on apply. It is also a GUARD: before it, dry-run 34808142625 on main planned the two removed entries as 'change 1A(LHF) -> L(LHF), change CNR -> 1NA' - any apply run would have reverted the owner's build. HC-PO-2609-064 is not given an entry of its own: its lines carry no account-book line key (probe run 34808006861) and no Desc2 to address them by, and the applier carries an SO piece onto the PO line dedicated to it.",
+   "source": "owner-ruling-2026-09-14",
+   "docs": ["HC-SO-013497"],
+   "lineKeys": ["926847"]
+  },
+  {
+   "model": "8030",
+   "pieces": ["1A(LHF)", "1A(RHF)"],
+   "seat": "35",
+   "confidence": "owner",
+   "why": "Owner 2026-09-14, verbatim: 「这个PO 是1A+1A」, about HC-PO-010086. Evidence he showed: purchasing WhatsApp \"PO10086 we stated 2s / Supplier 1A+1A can double check\", and the customer chat on the PO line photo (R2 po-items/HC-PO-010086/0dd18192-2531-4569-8eeb-7d4690df7c4d/ac-917334-2.jpg): \"ya mean is 2S (1+1)?\" -> \"separate 1+1\", \"Singapore lift\". The order-slip photo on the sales-order line (R2 so-items/HC-SO-013346/73c9eb16-4cd7-4470-bb0e-45330a3774d5/ac-913488-1.jpg, identical bytes to the PO copy ac-917334-1.jpg) draws TWO separate boxes, each marked 35\", the left box with its arm block on its LEFT outer edge and the right box with its arm block on its RIGHT outer edge, and \"TV\" written BELOW the run. TV below = the drawing reads as you see it, so the left piece is 1A(LHF) and the right piece is 1A(RHF): 1A(LHF) + 1A(RHF), two single-arm pieces at 35\". The supplier export agrees (propose-supplier-sofa-corrections run 34799661171: supplier 5540-1A(LHF)+5540-1A(RHF); 5540 is our 8030). SUPERSEDES the owner answer of earlier the same day recorded in owner-decisions-2026-09-14.json decision #4 `amended` (「那就根据amendment的」, keep the amended 8030-2S): that answer was given on the belief that amendment A1 changed the build, and the amendment-content probe (run 34800542371) shows A1 re-stated 8030-2S unchanged (its only real change was the pillow code) - so the 2S was never a decision anybody took, it was the sales key. Production before (read-only trace run 34841394640): HC-SO-013346 #1 8030-2S qty 1 seat 35 CH141-11; HC-PO-010086 #1 8030-2S supplier_sku \"HOK-5540 SOFA 2S\" qty 1 received 0, so_item_id -> that SO line. No correction entry for either document existed before this one in any corrections file. Seat 35 and fabric CH141-11 are unchanged; only the piece list changes. CONFIRMED by the owner the same day, verbatim: 「supplier那边也是1AL+1AR 是对的」 - the supplier also holds 1A(LHF) + 1A(RHF), and that is correct. APPLIED 2026-09-14 from main af3d14b34 (PR #3860): SO apply run 34844181280 (2S -> 1A(LHF), added 1A(RHF), the dedicated PO line followed, supplier_sku HOK-5540 SOFA 2S -> HOK-5540 SOFA 1A(LHF), VERIFY OK, money 546000/546000); PO dry-run 34844272810 then apply run 34844363367 (kept 1A(LHF), added 1A(RHF) with supplier_sku HOK-5540 SOFA 1A(RHF), LINKED to HC-SO-013346 ln 4, VERIFY OK, money 165000/165000). Re-run is inert on the pieces. This entry is the SALES ORDER half, addressed by the sales-order line key 928842 that production carries (a first dry-run addressed it by 913488, the key in the photo file name, and was correctly refused as not on this document - run 34841939147; the PO dry-run 34841942250 named 928842 as the sales-order book line).",
+   "source": "owner-ruling-2026-09-14",
+   "docs": ["HC-SO-013346"],
+   "lineKeys": ["928842"]
+  },
+  {
+   "model": "8030",
+   "pieces": ["1A(LHF)", "1A(RHF)"],
+   "seat": "35",
+   "confidence": "owner",
+   "why": "Owner 2026-09-14, verbatim: 「这个PO 是1A+1A」, about HC-PO-010086. Evidence he showed: purchasing WhatsApp \"PO10086 we stated 2s / Supplier 1A+1A can double check\", and the customer chat on the PO line photo (R2 po-items/HC-PO-010086/0dd18192-2531-4569-8eeb-7d4690df7c4d/ac-917334-2.jpg): \"ya mean is 2S (1+1)?\" -> \"separate 1+1\", \"Singapore lift\". The order-slip photo on the sales-order line (R2 so-items/HC-SO-013346/73c9eb16-4cd7-4470-bb0e-45330a3774d5/ac-913488-1.jpg, identical bytes to the PO copy ac-917334-1.jpg) draws TWO separate boxes, each marked 35\", the left box with its arm block on its LEFT outer edge and the right box with its arm block on its RIGHT outer edge, and \"TV\" written BELOW the run. TV below = the drawing reads as you see it, so the left piece is 1A(LHF) and the right piece is 1A(RHF): 1A(LHF) + 1A(RHF), two single-arm pieces at 35\". The supplier export agrees (propose-supplier-sofa-corrections run 34799661171: supplier 5540-1A(LHF)+5540-1A(RHF); 5540 is our 8030). SUPERSEDES the owner answer of earlier the same day recorded in owner-decisions-2026-09-14.json decision #4 `amended` (「那就根据amendment的」, keep the amended 8030-2S): that answer was given on the belief that amendment A1 changed the build, and the amendment-content probe (run 34800542371) shows A1 re-stated 8030-2S unchanged (its only real change was the pillow code) - so the 2S was never a decision anybody took, it was the sales key. Production before (read-only trace run 34841394640): HC-SO-013346 #1 8030-2S qty 1 seat 35 CH141-11; HC-PO-010086 #1 8030-2S supplier_sku \"HOK-5540 SOFA 2S\" qty 1 received 0, so_item_id -> that SO line. No correction entry for either document existed before this one in any corrections file. Seat 35 and fabric CH141-11 are unchanged; only the piece list changes. CONFIRMED by the owner the same day, verbatim: 「supplier那边也是1AL+1AR 是对的」 - the supplier also holds 1A(LHF) + 1A(RHF), and that is correct. APPLIED 2026-09-14 from main af3d14b34 (PR #3860): SO apply run 34844181280 (2S -> 1A(LHF), added 1A(RHF), the dedicated PO line followed, supplier_sku HOK-5540 SOFA 2S -> HOK-5540 SOFA 1A(LHF), VERIFY OK, money 546000/546000); PO dry-run 34844272810 then apply run 34844363367 (kept 1A(LHF), added 1A(RHF) with supplier_sku HOK-5540 SOFA 1A(RHF), LINKED to HC-SO-013346 ln 4, VERIFY OK, money 165000/165000). Re-run is inert on the pieces. This entry is the PURCHASE ORDER half, raised from HC-SO-013346 (AutoCount PO-010086, sofa line DtlKey 917334), corrected with it so the pair cannot drift; the added 1A(RHF) purchase piece is linked to the sales order 1A(RHF) piece by the applier. HC-PO-010086 line 2 (SQUARE PILLOW -> HC-SO-013346 line 2 AMN-SOFA PILLOW \"Random\") is NOT touched: it is not a sofa line and its link is a separate open question.",
+   "source": "owner-ruling-2026-09-14",
+   "docs": ["HC-PO-010086"],
+   "lineKeys": ["917334"]
+  },
+  {
+   "model": "8030",
+   "pieces": ["1A(LHF)", "1A(RHF)"],
+   "seat": "35",
+   "confidence": "owner",
+   "why": "Owner 2026-09-15, verbatim: 「HC-PO-2609-051 改成跟工厂一样」 - follow the factory, carrying out decision #4 of owner-decisions-2026-09-14.json (「4 要跟工厂一样 A」) on this purchase order. THE FACTORY'S BUILD: supplier listing SO-2609-109 (supplier-so-detail-2026-09-11.json.gz, its Customer PO column writes PO-2609-051 for our HC-PO-2609-051, docs/bugs/0811; ourRef SO-013475) holds FIVE sofa pieces: 5540-1A(LHF) + 5540-1A(RHF) at 910 each, and 5540-1A(LHF) + 5540-1NA + 5540-1A(RHF) at 700/550/700 (5540 is our 8030). propose-supplier-sofa-corrections run 34878453011 (2026-09-14) printed ours 1A(RHF)+1NA+2S+1A(LHF) against the supplier's 1A(LHF)+1A(RHF)+1A(LHF)+1NA+1A(RHF), and could not propose it because the purchase order carries four book line keys. So the ONLY difference is the 35-inch two-seater: we hold ONE 8030-2S, the factory builds 1A(LHF) + 1A(RHF). The 28-inch 1A(LHF)+1NA+1A(RHF) already agrees and is not touched (its sales-order rows are addressed by desc2Match 3S(28\") in sofa-compartment-corrections-2026-09.json; nothing here selects them). Same shape as HC-PO-010086 above, applied the same way. Production before (read-only probe run 34878571364, 2026-09-14T18:05Z): HC-SO-013475 CONFIRMED, #1 8030-2S seat 35 HR805-30 unit/total 833800, book line 924982 alone; no delivery order, no stock movement names it. Nothing received: HC-PO-2609-051 SUBMITTED, 4 sofa rows all received_qty 0, zero GRN lines, zero purchase-order allocations, zero amendments. Money does not move (the applier keeps the lead's price and writes 0 on the added piece); the factory's 910+910 against our 1650 on the PO is a PRICE difference this entry does not decide. This entry is the SALES ORDER half, addressed by the sales-order line key 924982 that only the 2S row carries.",
+   "source": "owner-ruling-2026-09-15",
+   "docs": ["HC-SO-013475"],
+   "lineKeys": ["924982"]
+  },
+  {
+   "model": "8030",
+   "pieces": ["1A(LHF)", "1A(RHF)"],
+   "seat": "35",
+   "confidence": "owner",
+   "why": "Owner 2026-09-15, verbatim: 「HC-PO-2609-051 改成跟工厂一样」. The PURCHASE ORDER half of the entry above, raised from HC-SO-013475 and corrected with it so the pair cannot drift. Supplier listing SO-2609-109 builds the 35-inch two-seater as 5540-1A(LHF) + 5540-1A(RHF) (5540 is our 8030). Production before (read-only probe run 34878571364): HC-PO-2609-051 SUBMITTED, #1 8030-2S supplier_sku 5540-2S seat 35 unit/total 165000, book line key 928399 alone, received_qty 0, so_item_id -> HC-SO-013475 #1; zero GRN lines, zero allocations, zero amendments. Addressed by 928399, which no other row on the document carries, so the 28-inch 1A(LHF)+1NA+1A(RHF) (keys 928400, 928398, 928397) is never selected. Run the sales-order half first: its apply moves this dedicated line from 2S to 1A(LHF), and this half then adds 1A(RHF) and the applier links it to the sales order's added 1A(RHF).",
+   "source": "owner-ruling-2026-09-15",
+   "docs": ["HC-PO-2609-051"],
+   "lineKeys": ["928399"]
+  }
+ ]
+}

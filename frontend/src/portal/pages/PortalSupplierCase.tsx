@@ -30,6 +30,7 @@ import { useDialog } from "../../hooks/useDialog";
 import { PrintPreviewModal, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import type { PortalStatusColor } from "../types";
 import { fmtDate } from "../../vendor/shared/format";
+import { formatCurrency } from "../../lib/utils";
 
 const ALLOWED_EXT = ["jpg", "jpeg", "png", "webp"];
 const MAX_SIZE = 10 * 1024 * 1024;
@@ -99,7 +100,7 @@ const STAGE_LABEL: Record<string, string> = {
   pending_review: "Review",
   under_verification: "Verification",
   pending_solution: "Solution",
-  pending_supplier_pickup: "Supplier Pickup / Return",
+  pending_supplier_pickup: "Pickup / Return",
   pending_item_ready: "Pending Item Ready",
   pending_delivery_service: "Delivery / Service",
   completed: "Completed",
@@ -551,8 +552,8 @@ export function PortalSupplierCasePage() {
           </div>
           {cs.supplier_quote_at && (
             <div className="mt-3 rounded-md bg-synced/10 px-3 py-2 text-[12px] font-semibold text-synced">
-              Quote on file: labour RM {(cs.supplier_quote_labour ?? 0).toFixed(2)} + materials RM{" "}
-              {(cs.supplier_quote_materials ?? 0).toFixed(2)} = RM {quoteTotal.toFixed(2)} · sent{" "}
+              Quote on file: labour {formatCurrency(cs.supplier_quote_labour ?? 0)} + materials{" "}
+              {formatCurrency(cs.supplier_quote_materials ?? 0)} = {formatCurrency(quoteTotal)} · sent{" "}
               {fmtDate(cs.supplier_quote_at)} — resubmit to replace.
             </div>
           )}

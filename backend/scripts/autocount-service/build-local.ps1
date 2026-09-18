@@ -12,6 +12,15 @@
 # owner's desktop. Verified 2026-08-11: a clean build, 36,352 bytes, byte-size
 # identical to the AcSyncService.prev.exe already on the office host.
 #
+# Re-verified 2026-09-02 on the DEVELOPMENT desktop, which turns out to have
+# AutoCount 2.2 installed as well: COMPILES CLEAN, 110,592 bytes. Two things
+# follow, and the second is the one that cost real time. The size is not a
+# fingerprint any more - the service has tripled since August and a build that
+# does not match 36,352 bytes is normal, not suspect. And the sentence
+# "there is no C# toolchain in this environment", written into two bug-ledger
+# entries the same day, was WRONG: the check below had been runnable all along
+# and answers in seconds. Run it before writing UNCOMPILED anywhere.
+#
 # It does NOT run the service and it never touches a database: the connection
 # line is substituted with an obvious dummy. This answers exactly one question,
 # which is the question CI cannot answer - DOES IT COMPILE.
@@ -41,7 +50,12 @@ $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("AcSyncService.compilecheck.
 $exe = [System.IO.Path]::ChangeExtension($tmp, '.exe')
 try {
   $src = Get-Content $Source -Raw
-  [System.IO.File]::WriteAllText($tmp, $src.Replace('__DBLINE__', $dummy).Replace('__BOOK__', 'AED_HOUZS'))
+  # The AutoCount login placeholders take DUMMY values here for the same reason
+  # the connection line does: this script answers "does the source compile",
+  # and it must never need a credential to answer it. deploy-on-host.ps1 is
+  # where the real pair is substituted.
+  [System.IO.File]::WriteAllText($tmp, $src.Replace('__DBLINE__', $dummy).Replace('__BOOK__', 'AED_HOUZS').
+                                            Replace('__ACUSER__', 'DUMMYUSER').Replace('__ACPASS__', 'DUMMYPASS'))
 
   # Stock / ARAP / GeneralMaint / StockMaint carry the MASTER-DATA classes that
   # /ensure-masters drives - ItemDataAccess, DebtorDataAccess, CreditorDataAccess,

@@ -25,6 +25,7 @@ import { beforeEach, describe, expect, test } from 'vitest';
 import { fakeSb, type Row } from '../lib/fake-postgrest';
 import { resetWritebackFlagCache } from '../lib/autocount-writeback-flag';
 import { recordSoPaymentRow } from '../lib/so-payment-row';
+import { composeSoPaymentEdit } from '../lib/ac-so-payment-edit';
 
 /* Cached for 30 seconds by design, and the cache is module-level — without this
    the second test in the file inherits the first one's switch. Same seam
@@ -160,5 +161,74 @@ describe('a recorded payment queues the AutoCount edit that carries the new bala
     const { payment: row, errorMessage } = await recordSoPaymentRow(sb, payment());
     expect(errorMessage).toBeNull();
     expect(row).not.toBeNull();
+  });
+});
+
+/* docs/bugs/0896. A payment moves two header fields and no line, so it sends
+   those two and nothing else — composing the lines is where an edit is refused,
+   and the drain attaches every line photograph to an edit that carries lines.
+   The host's Edit() leaves every line alone when `Lines` is empty and `Rebuild`
+   is absent (AcSyncService.cs, the pre-flight and line loops run over `Lines`). */
+describe('a payment sends only the balance and the references', () => {
+  test('the body is header-only: the two UDFs, an empty line list, no rebuild, no photographs', async () => {
+    const sb = seed('1', { linked_ac_docno: 'HC-SO-P1' }, {   // an ERP-numbered order: a carried-over one gets BALANCE only (0934)
+      mfg_sales_order_items: [{ ...ITEM, photo_urls: ['so-items/HC-SO-P1/a.jpg'] }],
+    });
+    await recordSoPaymentRow(sb, payment({ accountSheet: 'MAYBANK', approvalCode: '111' }));
+
+    const row = outbox(sb)[0];
+    expect(row.status).toBe('pending');
+    expect(row.payload.body).toEqual({
+      DocType: 'SO',
+      DocNo: 'HC-SO-P1',
+      Header: { UDF: { BALANCE: '200.00', PAYEMENT: '(MAYBANK/111)' } },
+      Lines: [],
+    });
+    expect(row.payload.photos).toBeUndefined();
+  });
+
+  /* THE POINT. Before 0896 this payment queued a whole-document edit that
+     composeEdit refused (KeylessLineError), recorded as a skipped row carrying
+     no body — the book never learned the new balance. */
+  test('a line with no AutoCount key no longer holds the payment back', async () => {
+    const sb = seed('1', {}, { mfg_sales_order_items: [{ ...ITEM, linked_ac_dtlkey: null }] });
+    await recordSoPaymentRow(sb, payment());
+
+    const queued = outbox(sb);
+    expect(queued).toHaveLength(1);
+    expect(queued[0].status).toBe('pending');
+    expect(queued[0].last_error ?? null).toBeNull();
+    expect((queued[0].payload.body.Header as { UDF: Record<string, string> }).UDF.BALANCE).toBe('200.00');
+  });
+
+  test('an order still waiting for its create folds the payment into the create, as before', async () => {
+    const sb = seed('1', { linked_ac_docno: null }, {
+      autocount_outbox: [{
+        id: 'create-1', company_id: 1, op: 'create_so', doc_type: 'SO', doc_no: 'HC-SO-P1',
+        status: 'pending', payload: { body: { DocNo: 'HC-SO-P1' } }, created_at: '2026-09-14T00:00:00Z',
+      }],
+    });
+    await recordSoPaymentRow(sb, payment());
+
+    const queued = outbox(sb);
+    expect(queued).toHaveLength(1);
+    expect(queued[0].op).toBe('create_so');
+    expect((queued[0].payload.body as { UDF?: Record<string, string> }).UDF?.BALANCE).toBe('200.00');
+  });
+});
+
+describe('composeSoPaymentEdit', () => {
+  test('a settled order sends 0.00, and no reference omits PAYEMENT', () => {
+    expect(composeSoPaymentEdit('SO-1', 0, [{ account_sheet: null, approval_code: null }]))
+      .toEqual({ DocType: 'SO', DocNo: 'SO-1', Header: { UDF: { BALANCE: '0.00' } }, Lines: [] });
+  });
+
+  test('no total to compute a balance from and no reference: nothing to send', () => {
+    expect(composeSoPaymentEdit('SO-1', null, [])).toBeNull();
+  });
+
+  test('references alone still travel when the balance is unknown', () => {
+    expect(composeSoPaymentEdit('SO-1', null, [{ account_sheet: 'Cash', approval_code: null }]))
+      .toEqual({ DocType: 'SO', DocNo: 'SO-1', Header: { UDF: { PAYEMENT: '(Cash/)' } }, Lines: [] });
   });
 });

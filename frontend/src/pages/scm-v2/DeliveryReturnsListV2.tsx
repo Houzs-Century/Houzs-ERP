@@ -71,6 +71,16 @@ import { deliveryReturnRowMenu } from "./row-menus";
 import { usePrintDocument } from "../../components/scm-v2/PrintChainProvider";
 import { deliveryReturnPrintChain } from "../../lib/printChain";
 import { deliveryReturnPdfBundle } from "../../lib/printDocumentPdf";
+import { customerRefOf } from '../../lib/customer-ref';
+import {
+  DR_LINE_COLUMNS,
+  returnCancelledWord,
+  returnCurrencyRate,
+  senToRinggit,
+  type DrListLine,
+} from "../../vendor/scm/lib/return-line-export-columns";
+import { fetchDeliveryReturnExportRows } from "../../vendor/scm/lib/return-list-export";
+import { returnGridColumns, type ReturnColumnValues } from "./return-list-line-columns";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 // Subset of the DR header (see DeliveryReturnsList.tsx for the full 40-field
@@ -125,9 +135,28 @@ type DrRow = {
   total_cost_sen?: number;
   total_margin_sen?: number;
   margin_pct_basis?: number;
+  /** The account book's spellings, stamped by the server
+   *  (lib/delivery-return-list-read.ts stampDrListBookSpellings). */
+  ac_agent?: string | null;
+  ac_branding?: string | null;
+  ac_venue?: string | null;
+  /** The return's lines, as GET /delivery-returns and its export send them. */
+  lines?: DrListLine[];
 };
 
 type StatusTab = "all" | "open" | "inspected" | "refunded" | "cancelled";
+
+/* A line as the grid holds it: the server's line plus the one document fact a
+   line column reads (the shared line cells pass a column only its line). */
+type DrGridLine = DrListLine & { doc_so_doc_no: string | null };
+const gridLinesCache = new WeakMap<DrRow, DrGridLine[]>();
+const linesOfDr = (r: DrRow): readonly DrGridLine[] => {
+  const hit = gridLinesCache.get(r);
+  if (hit) return hit;
+  const out = (r.lines ?? []).map((l) => ({ ...l, doc_so_doc_no: r.so_doc_no ?? null }));
+  gridLinesCache.set(r, out);
+  return out;
+};
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -138,7 +167,7 @@ const fmtPctBasis = (basis: number | null | undefined): string =>
   basis == null ? "—" : `${(basis / 100).toFixed(1)}%`;
 
 // Customer's PO / Ref. Same fallback chain as SO / DO V2.
-const refOf = (r: DrRow): string => r.customer_so_no || r.ref || "—";
+const refOf = (r: DrRow): string => customerRefOf(r) || "—";
 
 const doOf = (r: DrRow): string => r.do_doc_no || "—";
 
@@ -729,6 +758,7 @@ function DrLinesExpansion({ id }: { id: string }) {
   return (
     <DocumentLinesExpansion
       isLoading={detailQ.isLoading}
+      coverage="ready" /* one query fills this drill-down — coverage-state.tsx */
       isError={Boolean(detailQ.error)}
       errorMessage={detailQ.error instanceof Error ? detailQ.error.message : null}
       lines={lines}
@@ -776,15 +806,16 @@ export function DeliveryReturnsListV2() {
     [data]
   );
 
-  const scopedByBucket = useMemo(() => {
-    if (status === "all") return allRows;
-    return allRows.filter((r) => statusFor(r.status).bucket === status);
-  }, [allRows, status]);
+  const filtered = useMemo(() => deliveryReturnsInView(allRows, status, search), [allRows, status, search]);
 
-  const filtered = useMemo(() => {
-    if (!search.trim()) return scopedByBucket;
-    const q = search.toLowerCase();
-    return scopedByBucket.filter((r) => {
+  /* The tab + search the list applies in the browser — to the screen read AND to
+     the export's rows, so the file holds exactly what the tab would show without
+     the 500-row screen cap. */
+  function deliveryReturnsInView(rows: DrRow[], tab: StatusTab, term: string): DrRow[] {
+    const inTab = tab === "all" ? rows : rows.filter((r) => statusFor(r.status).bucket === tab);
+    if (!term.trim()) return inTab;
+    const q = term.toLowerCase();
+    return inTab.filter((r) => {
       const hay = [
         r.return_number,
         r.do_doc_no,
@@ -802,7 +833,7 @@ export function DeliveryReturnsListV2() {
         .toLowerCase();
       return hay.includes(q);
     });
-  }, [scopedByBucket, search]);
+  }
 
   const counts = useMemo(() => {
     const acc = { all: allRows.length, open: 0, inspected: 0, refunded: 0, cancelled: 0 };
@@ -1054,119 +1085,95 @@ export function DeliveryReturnsListV2() {
     canCancel: (r) => (r.status || "").toUpperCase() !== "CANCELLED",
   });
 
-  // Table columns — Reason gets a first-class spot (a DR-only signal).
-  const columns: Column<DrRow>[] = [
-    {
-      key: "return_number",
-      label: "Return No.",
-      // 156 + font-docno (owner 2026-07-31): 140 sat on the clip threshold for
-      // a full doc no — see the measured DO No. note in MfgDeliveryOrdersListV2.
+  /* Default view = AutoCount's Delivery Return Detail Listing, in AutoCount's
+     order (owner 2026-09-15); the rest of the contract and the ERP-only columns
+     below are in the chooser, hidden until picked. The ONE Export writes
+     whatever is visible, one row per line, money in ringgit. */
+  const docTotal = (r: DrRow) => senToRinggit(r.local_total_sen, 2);
+  const lineTotal = (l: DrGridLine) => senToRinggit(l.line_total_sen, 2);
+  const columnValues: Record<string, ReturnColumnValues<DrRow, DrGridLine>> = {
+    doc_no: {
+      doc: (r) => r.return_number,
       width: "156px",
-      alwaysVisible: true,
-      getValue: (r) => r.return_number,
-      render: (r) => (
-        <span className="font-docno text-[12.5px] font-semibold text-ink">
-          {r.return_number}
-        </span>
-      ),
+      render: (r) => <span className="font-docno text-[12.5px] font-semibold text-ink">{r.return_number}</span>,
     },
-    {
-      key: "return_date",
-      label: "Date",
-      width: "108px",
-      getValue: (r) => r.return_date,
-      render: (r) => (
-        <span className="text-[12.5px] text-ink-secondary">{fmtDate(r.return_date)}</span>
-      ),
+    doc_date: { doc: (r) => r.return_date || null, width: "108px" },
+    debtor_code: { doc: (r) => r.debtor_code || null, width: "120px", mono: true },
+    debtor_name: {
+      doc: (r) => r.debtor_name || null,
+      width: "200px",
+      render: (r) => <span className="text-[13px] font-semibold text-ink">{r.debtor_name || "—"}</span>,
     },
-    {
-      key: "do_doc_no",
-      label: transferFromColumnLabel('do'),
-      width: "128px",
-      getValue: (r) => r.do_doc_no ?? "",
-      render: (r) => (
-        <span className="font-mono text-[12px] text-ink-secondary">{doOf(r)}</span>
-      ),
+    agent: { doc: (r) => r.ac_agent ?? null, width: "140px" },
+    currency_code: { doc: (r) => r.currency || null, width: "90px" },
+    currency_rate: { doc: (r) => returnCurrencyRate(r.currency), width: "90px" },
+    inclusive: { doc: () => null, width: "90px" },
+    subtotal_ex: { doc: docTotal },
+    tax: { doc: () => 0, width: "90px" },
+    total: {
+      doc: docTotal,
+      render: (r) => <span className="font-money text-[13px] font-semibold text-err">{fmtRm(r.local_total_sen)}</span>,
     },
-    {
-      /* Convert-from relation (audit R8): the Sales Order behind this return's
-         DO. Server-resolved (so_doc_no); mirrors the DO/SI lists' "From SO". */
-      key: "so_doc_no",
-      label: transferFromColumnLabel('so'),
-      width: "128px",
-      disableSort: true,
-      getValue: (r) => r.so_doc_no ?? "",
-      render: (r) => (
-        <span className="font-mono text-[12px] text-ink-secondary">{r.so_doc_no || "—"}</span>
-      ),
+    local_total: { doc: docTotal },
+    cancelled: { doc: (r) => returnCancelledWord(r.status), width: "90px" },
+    item_code: { line: (l) => l.item_code, width: "200px", mono: true },
+    detail_description: { line: (l) => l.description, width: "240px" },
+    uom: { line: (l) => l.uom, width: "80px" },
+    location: { line: (l) => l.location, width: "90px" },
+    proj_no: { line: () => null, width: "90px" },
+    dept_no: { line: () => null, width: "90px" },
+    batch_no: { line: () => null, width: "100px" },
+    qty: { line: (l) => l.qty_returned, width: "80px" },
+    unit_price: { line: (l) => senToRinggit(l.unit_price_sen, 4) },
+    discount: { line: (l) => senToRinggit(l.discount_sen, 2), width: "100px" },
+    line_total: { line: lineTotal },
+    tax_code: { line: () => null, width: "90px" },
+    line_tax: { line: () => 0, width: "90px" },
+    line_total_ex: { line: lineTotal },
+    line_total_inc: { line: lineTotal },
+    serial_no_list: { line: () => null, width: "120px" },
+    status: {
+      doc: (r) => statusFor(r.status).label,
+      width: "120px",
+      render: (r) => {
+        const st = statusFor(r.status);
+        return <Badge tone={st.tone} size="xs">{st.label}</Badge>;
+      },
     },
-    {
-      key: "debtor_name",
-      label: "Customer",
-      getValue: (r) => r.debtor_name,
-      render: (r) => (
-        <span className="text-[13px] font-semibold text-ink">
-          {r.debtor_name || "—"}
-        </span>
-      ),
-    },
-    {
-      key: "reason",
-      label: "Reason",
+    ref: { doc: (r) => customerRefOf(r) || null, width: "128px", mono: true },
+    reason: {
+      doc: (r) => r.reason || null,
       width: "180px",
-      getValue: (r) => r.reason ?? "",
       render: (r) =>
-        r.reason ? (
-          <span className="truncate text-[12.5px] italic text-ink-secondary">
-            {r.reason}
-          </span>
-        ) : (
-          <span className="text-[12.5px] text-ink-muted">—</span>
-        ),
+        r.reason
+          ? <span className="truncate text-[12.5px] italic text-ink-secondary">{r.reason}</span>
+          : <span className="text-[12.5px] text-ink-muted">—</span>,
     },
-    {
-      key: "reference",
-      label: "Customer ref",
-      width: "128px",
-      getValue: (r) => refOf(r),
-      render: (r) => (
-        <span className="font-mono text-[12px] text-ink-secondary">{refOf(r)}</span>
-      ),
-    },
+    note: { doc: (r) => r.note || null, width: "200px" },
+    transfer_from: { doc: (r) => r.do_doc_no || null, width: "140px", mono: true },
+    so_doc_no: { line: (l) => l.so_doc_no ?? l.doc_so_doc_no, width: "150px", mono: true },
+    detail_description_2: { line: (l) => l.description2, width: "240px" },
+    remarks: { line: (l) => l.notes, width: "200px" },
+    item_group: { line: (l) => l.item_group, width: "120px" },
+    condition: { line: (l) => l.condition, width: "110px" },
+    line_id: { line: (l) => l.id, width: "300px", mono: true },
+  };
+  /* ERP columns AutoCount's grid has no place for. Money is exported in ringgit. */
+  const moneyExport = (sen: (r: DrRow) => number | undefined) => ({
+    exportValue: (r: DrRow) => senToRinggit(sen(r) ?? 0, 2),
+    exportFormat: "money" as const,
+  });
+  const columns: Column<DrRow, DrGridLine>[] = [
+    ...returnGridColumns<DrRow, DrGridLine>(DR_LINE_COLUMNS, columnValues, linesOfDr, "doc_no"),
     {
       key: "salesperson",
       label: "Salesperson",
       width: "148px",
+      defaultHidden: true,
       getValue: (r) => salespersonNameOf(null, r.salesperson_id, ""),
       render: (r) => (
         <span className="text-[12.5px] text-ink-secondary">
           {salespersonNameOf(null, r.salesperson_id, "—")}
-        </span>
-      ),
-    },
-    {
-      key: "status",
-      label: "Status",
-      width: "120px",
-      getValue: (r) => r.status,
-      render: (r) => {
-        const st = statusFor(r.status);
-        return (
-          <Badge tone={st.tone} size="xs">
-            {st.label}
-          </Badge>
-        );
-      },
-    },
-    {
-      key: "refund",
-      label: "Refund",
-      width: "128px",
-      align: "right",
-      getValue: (r) => r.local_total_sen,
-      render: (r) => (
-        <span className="font-money text-[13px] font-semibold text-err">
-          {fmtRm(r.local_total_sen)}
         </span>
       ),
     },
@@ -1177,7 +1184,7 @@ export function DeliveryReturnsListV2() {
     //    sortable + CSV-exportable without a backend sort key.
     {
       key: "sales_location",
-      label: "Location",
+      label: "Sales Location",
       width: "120px",
       defaultHidden: true,
       getValue: (r) => r.sales_location ?? "",
@@ -1191,6 +1198,7 @@ export function DeliveryReturnsListV2() {
       width: "130px",
       defaultHidden: true,
       getValue: (r) => brandOf(r),
+      exportValue: (r) => r.ac_branding ?? r.branding ?? null,
       render: (r) => {
         const b = brandOf(r);
         return (
@@ -1206,6 +1214,7 @@ export function DeliveryReturnsListV2() {
       width: "180px",
       defaultHidden: true,
       getValue: (r) => r.venue ?? "",
+      exportValue: (r) => r.ac_venue ?? r.venue ?? null,
       render: (r) => (
         <span className="text-[12.5px] text-ink-secondary">{r.venue || "—"}</span>
       ),
@@ -1228,16 +1237,6 @@ export function DeliveryReturnsListV2() {
       getValue: (r) => r.email ?? "",
       render: (r) => (
         <span className="text-[12.5px] text-ink-secondary">{r.email || "—"}</span>
-      ),
-    },
-    {
-      key: "debtor_code",
-      label: "Customer Code",
-      width: "120px",
-      defaultHidden: true,
-      getValue: (r) => r.debtor_code ?? "",
-      render: (r) => (
-        <span className="font-mono text-[12px] text-ink-secondary">{r.debtor_code || "—"}</span>
       ),
     },
     {
@@ -1290,16 +1289,6 @@ export function DeliveryReturnsListV2() {
         <span className="text-[12.5px] text-ink-secondary">{r.customer_state || "—"}</span>
       ),
     },
-    {
-      key: "note",
-      label: "Note",
-      width: "200px",
-      defaultHidden: true,
-      getValue: (r) => r.note ?? "",
-      render: (r) => (
-        <span className="text-[12.5px] text-ink-secondary">{r.note || "—"}</span>
-      ),
-    },
     // ── Re-added columns (Phase 2) — NON-finance fields already on the DR
     //    payload (HEADER). venue + note already exist (Phase 1); add the rest.
     {
@@ -1337,6 +1326,7 @@ export function DeliveryReturnsListV2() {
             defaultHidden: true,
             disableSort: true,
             getValue: (r) => r.mattress_sofa_sen ?? 0,
+            ...moneyExport((r) => r.mattress_sofa_sen),
             render: (r) => (
               <span className="font-money text-[13px] text-ink">{fmtRm(r.mattress_sofa_sen ?? 0)}</span>
             ),
@@ -1349,6 +1339,7 @@ export function DeliveryReturnsListV2() {
             defaultHidden: true,
             disableSort: true,
             getValue: (r) => r.bedframe_sen ?? 0,
+            ...moneyExport((r) => r.bedframe_sen),
             render: (r) => (
               <span className="font-money text-[13px] text-ink">{fmtRm(r.bedframe_sen ?? 0)}</span>
             ),
@@ -1361,6 +1352,7 @@ export function DeliveryReturnsListV2() {
             defaultHidden: true,
             disableSort: true,
             getValue: (r) => r.accessories_sen ?? 0,
+            ...moneyExport((r) => r.accessories_sen),
             render: (r) => (
               <span className="font-money text-[13px] text-ink">{fmtRm(r.accessories_sen ?? 0)}</span>
             ),
@@ -1373,6 +1365,7 @@ export function DeliveryReturnsListV2() {
             defaultHidden: true,
             disableSort: true,
             getValue: (r) => r.others_sen ?? 0,
+            ...moneyExport((r) => r.others_sen),
             render: (r) => (
               <span className="font-money text-[13px] text-ink">{fmtRm(r.others_sen ?? 0)}</span>
             ),
@@ -1385,6 +1378,7 @@ export function DeliveryReturnsListV2() {
             defaultHidden: true,
             disableSort: true,
             getValue: (r) => r.mattress_sofa_cost_sen ?? 0,
+            ...moneyExport((r) => r.mattress_sofa_cost_sen),
             render: (r) => (
               <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.mattress_sofa_cost_sen ?? 0)}</span>
             ),
@@ -1397,6 +1391,7 @@ export function DeliveryReturnsListV2() {
             defaultHidden: true,
             disableSort: true,
             getValue: (r) => r.bedframe_cost_sen ?? 0,
+            ...moneyExport((r) => r.bedframe_cost_sen),
             render: (r) => (
               <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.bedframe_cost_sen ?? 0)}</span>
             ),
@@ -1409,6 +1404,7 @@ export function DeliveryReturnsListV2() {
             defaultHidden: true,
             disableSort: true,
             getValue: (r) => r.accessories_cost_sen ?? 0,
+            ...moneyExport((r) => r.accessories_cost_sen),
             render: (r) => (
               <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.accessories_cost_sen ?? 0)}</span>
             ),
@@ -1421,6 +1417,7 @@ export function DeliveryReturnsListV2() {
             defaultHidden: true,
             disableSort: true,
             getValue: (r) => r.others_cost_sen ?? 0,
+            ...moneyExport((r) => r.others_cost_sen),
             render: (r) => (
               <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.others_cost_sen ?? 0)}</span>
             ),
@@ -1433,6 +1430,7 @@ export function DeliveryReturnsListV2() {
             defaultHidden: true,
             disableSort: true,
             getValue: (r) => r.total_cost_sen ?? 0,
+            ...moneyExport((r) => r.total_cost_sen),
             render: (r) => (
               <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.total_cost_sen ?? 0)}</span>
             ),
@@ -1445,6 +1443,7 @@ export function DeliveryReturnsListV2() {
             defaultHidden: true,
             disableSort: true,
             getValue: (r) => r.total_margin_sen ?? 0,
+            ...moneyExport((r) => r.total_margin_sen),
             render: (r) => (
               <span className="font-money text-[13px] text-ink">{fmtRm(r.total_margin_sen ?? 0)}</span>
             ),
@@ -1457,13 +1456,24 @@ export function DeliveryReturnsListV2() {
             defaultHidden: true,
             disableSort: true,
             getValue: (r) => r.margin_pct_basis ?? 0,
+            exportValue: (r) => (r.margin_pct_basis == null ? null : Number((r.margin_pct_basis / 100).toFixed(1))),
+            exportFormat: "number",
             render: (r) => (
               <span className="font-money text-[13px] text-ink-secondary">{fmtPctBasis(r.margin_pct_basis)}</span>
             ),
           },
-        ] satisfies Column<DrRow>[])
-      : ([] satisfies Column<DrRow>[])),
+        ] satisfies Column<DrRow, DrGridLine>[])
+      : ([] satisfies Column<DrRow, DrGridLine>[])),
   ];
+
+  const exportLines = {
+    fetchRows: async () => deliveryReturnsInView(await fetchDeliveryReturnExportRows<DrRow>(), status, search),
+    linesOf: linesOfDr,
+    sheetName: "Delivery Returns",
+    onError: (e: Error) => {
+      void notify({ title: "Export failed", body: e.message || "The export could not be completed.", tone: "error" });
+    },
+  };
 
   const statusPillOptions: Array<{ value: StatusTab; label: string }> = [
     { value: "all", label: `All · ${counts.all}` },
@@ -1648,7 +1658,7 @@ export function DeliveryReturnsListV2() {
                 </Button>
               </div>
             )}
-            <DataTable<DrRow>
+            <DataTable<DrRow, DrGridLine>
               tableId="delivery-returns-v2"
               rows={filtered}
               loading={isLoading}
@@ -1667,6 +1677,7 @@ export function DeliveryReturnsListV2() {
                 onToggleAll: toggleSelectAll,
               }}
               exportName="delivery-returns"
+              exportLines={exportLines}
               emptyLabel={
                 filtersActive
                   ? "No delivery returns match — try Reset layout to clear filters."

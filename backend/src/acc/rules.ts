@@ -36,41 +36,80 @@
 // books — it books exactly what the system booked before roles existed.
 // ----------------------------------------------------------------------------
 
-export type AccountRole =
-  | 'AR' | 'SALES' | 'INVENTORY' | 'AP'
-  | 'CASH' | 'BANK_DEFAULT' | 'TRANSIT_EDC' | 'TRANSIT_ONLINE' | 'CUSTOMER_DEPOSITS' | 'OVER_SHORT';
+import { accMastersCompanyId } from './masters-company';
 
-/* Fallback = the unified AutoCount-style chart (phase 1, migration 0297;
-   owner decision 2026-08-16). Every company carries these codes, so a company
-   whose roles rows are missing or unreadable still books onto real accounts. */
+export type AccountRole =
+  | 'AR' | 'AR_OTHER' | 'SALES' | 'INVENTORY' | 'AP' | 'AP_OTHER'
+  | 'CASH' | 'BANK_DEFAULT' | 'TRANSIT_EDC' | 'TRANSIT_ONLINE' | 'CUSTOMER_DEPOSITS' | 'OVER_SHORT'
+  | 'CLOSING_STOCK'
+  /* Where a credit note's lines land when the note names no account
+     (docs/bugs/0827): a customer's return, a supplier's return. */
+  | 'SALES_RETURNS' | 'PURCHASE_RETURNS'
+  /* A deposit invoice's credit side (docs/bugs/0828): money received before
+     the final invoice is a sale the day it arrives — the owner's e-invoice
+     reading, 2026-09-12 — booked on the DEPOSIT PAY BY CUSTOMER sales
+     account, never on the deposit LIABILITY (CUSTOMER_DEPOSITS above). */
+  | 'DEPOSIT_INCOME';
+
+/* Fallback = the accountant's own AutoCount codes (migration 0344; owner
+   decision 2026-09-02: 迁到 AutoCount 码). Every company carries these codes,
+   so a company whose roles rows are missing or unreadable still books onto
+   real accounts. 326/327 are the ERP-extension clearing codes parked in
+   AutoCount's free gap — the settlement layer's own accounts. */
 export const DEFAULT_ROLE_CODES: Record<AccountRole, string> = {
-  AR: '300-0000',                // Trade Debtor
-  SALES: '500-0000',             // Sales Revenue
-  INVENTORY: '310-0000',         // Inventory
-  AP: '400-0000',                // Trade Creditor
-  CASH: '335-0000',              // Cash on Hand
-  BANK_DEFAULT: '330-0000',      // Bank — Maybank Current
-  TRANSIT_EDC: '320-0000',       // Card Machine Clearing (EDC)
-  TRANSIT_ONLINE: '325-0000',    // Online Payment Clearing (FPX/e-wallet)
-  CUSTOMER_DEPOSITS: '410-0000', // Customer Deposits (reserved: advance-receipt refinement)
-  OVER_SHORT: '946-0000',        // Cash Over/Short (daily cashup differences)
+  AR: '300-0000',                // ACCOUNT RECEIVEABLE
+  AR_OTHER: '305-0000',          // OTHER DEBTOR (the Other Debtors module's control)
+  SALES: '500-0000',             // Sales Revenue (template; refined by the chart import)
+  INVENTORY: '330-0000',         // STOCK
+  AP: '400-0000',                // ACCOUNT PAYABLE
+  AP_OTHER: '405-0000',          // OTHER CREDITOS (the accountant's spelling)
+  CASH: '320-0000',              // CASH IN HAND
+  BANK_DEFAULT: '310-0010',      // CASH AT BANK - MAYBANK
+  TRANSIT_EDC: '326-0000',       // CARD MACHINE CLEARING (EDC)
+  TRANSIT_ONLINE: '327-0000',    // ONLINE PAYMENT CLEARING (FPX/E-WALLET)
+  CUSTOMER_DEPOSITS: '400-0001', // DEPOSIT (under ACCOUNT PAYABLE)
+  OVER_SHORT: '946-0000',        // Cash Over/Short (ERP extension)
+  CLOSING_STOCK: '620-0000',     // STOCKS AT THE END OF YEAR (month-close P&L leg)
+  SALES_RETURNS: '510-0000',     // RETURN INWARDS (a customer credit note's default line)
+  PURCHASE_RETURNS: '612-0000',  // PURCHASES RETURN (a supplier credit note's default line)
+  DEPOSIT_INCOME: '509-0000',    // DEPOSIT PAY BY CUSTOMER (a deposit invoice's credit side)
 };
 
 /* Control accounts (brief §2.4): system-maintained, and a MANUAL journal may
    not touch them — the engine enforces this. AR and AP today; the
    settlement-in-transit roles join in phase 2. */
-export const CONTROL_ROLES: AccountRole[] = ['AR', 'AP'];
+export const CONTROL_ROLES: AccountRole[] = ['AR', 'AR_OTHER', 'AP', 'AP_OTHER'];
+
+/** Which AP control a supplier's paper belongs to. 405-x supplier codes are
+    AutoCount's OTHER CREDITORS — their bills and payments land on AP_OTHER
+    (405-0000), everyone else on AP (400-0000). The owner's call, 2026-09-03,
+    with the split's blast radius on the table: the supplier LIST and every
+    screen stay exactly as they are; only the GL landing follows the code.
+    ONE home for the prefix — the PV page mirrors the pick for display, and
+    the server validates against THIS. */
+export const apControlRole = (supplierCode: string | null | undefined): 'AP' | 'AP_OTHER' =>
+  supplierCode != null && supplierCode.startsWith('405-') ? 'AP_OTHER' : 'AP';
 
 /** source_type of the contra entry that voids a given source_type. */
 export const REVERSAL_SOURCE: Record<string, string> = {
   SI: 'SI_REVERSAL',
   PI: 'PI_REVERSAL',
+  API: 'API_REVERSAL',
   PV: 'PV_REVERSAL',
   MANUAL: 'MANUAL_REVERSAL',
   SOPAY: 'SOPAY_REVERSAL',
   SIPAY: 'SIPAY_REVERSAL',
   SETTLE: 'SETTLE_REVERSAL',
   SETTLEADJ: 'SETTLEADJ_REVERSAL',
+  SETTLEMOVE: 'SETTLEMOVE_REVERSAL',
+  SETTLECHARGE: 'SETTLECHARGE_REVERSAL',
+  ODB: 'ODB_REVERSAL',
+  ODR: 'ODR_REVERSAL',
+  CN: 'CN_REVERSAL',
+  DN: 'DN_REVERSAL',
+  SCN: 'SCN_REVERSAL',
+  RCT: 'RCT_REVERSAL',
+  DI: 'DI_REVERSAL',
 };
 
 export type RoleCodes = Record<AccountRole, string>;
@@ -90,7 +129,7 @@ export async function resolveRoles(sb: any, companyId: number | null): Promise<R
   const { data, error } = await sb
     .from('acc_account_roles')
     .select('role, account_code')
-    .eq('company_id', companyId == null ? 1 : Number(companyId));
+    .eq('company_id', accMastersCompanyId(companyId, 'resolveRoles'));
   if (error) {
     /* eslint-disable-next-line no-console */
     console.error('[acc/rules] roles read failed — using default codes:', error.message);
@@ -114,12 +153,19 @@ export type RuleLine = {
   notes?: string | null;
 };
 
-/** Sales invoice issued: Dr AR / Cr SALES for the invoice total. */
+/** Sales invoice issued (docs/bugs/0829): Dr AR for the invoice total, the
+    customer as party / Cr one line per PRODUCT GROUP to that group's own
+    sales account (scm.acc_item_group_accounts.sales_account — 2990 keeps
+    SALES OF SOFA / BEDDING / DINING / … as separate leaves and its 500-0000
+    is inactive). The credits arrive in MYR sen already summing EXACTLY to the
+    total (acc/item-group-split owns the rounding remainder), the mirror of
+    piLines below. */
 export function siLines(
   roles: RoleCodes,
   si: { invoice_number: string; debtor_code: string | null; debtor_name: string | null },
-  totalSen: number,
+  groupCredits: Array<{ groupCode: string; accountCode: string; myrSen: number }>,
 ): RuleLine[] {
+  const totalSen = groupCredits.reduce((s, g) => s + g.myrSen, 0);
   return [
     {
       accountCode: roles.AR,
@@ -130,37 +176,146 @@ export function siLines(
       partyName: si.debtor_name,
       notes: `AR for ${si.invoice_number}`,
     },
-    {
-      accountCode: roles.SALES,
+    ...groupCredits.map((g) => ({
+      accountCode: g.accountCode,
       debitSen: 0,
-      creditSen: totalSen,
+      creditSen: g.myrSen,
       partyType: null,
       partyCode: null,
       partyName: null,
-      notes: `Revenue from ${si.invoice_number}`,
+      notes: `Sales — ${g.groupCode} on ${si.invoice_number}`,
+    })),
+  ];
+}
+
+/**
+ * Purchase invoice posted, the AutoCount periodic shape (GL redesign item 2,
+ * owner 2026-09-05: ledger 只根据 invoice 认 — Dr purchase, Cr supplier):
+ * one debit per PRODUCT GROUP on the invoice, each to that group's own
+ * purchase account (scm.acc_item_group_accounts), credited to the supplier's
+ * AP control — AP for trade creditors, AP_OTHER for 405-x (apControlRole).
+ *
+ * Inventory (330-0000) is deliberately NOT here any more: stock value reaches
+ * the GL as the month-end adjustment (item 4), not per document. The debits
+ * arrive already in MYR sen and already summing EXACTLY to the credit — the
+ * caller owns FX and the rounding remainder, because only it knows the
+ * header total the entry must reconcile to.
+ */
+/* ── Credit and debit notes (docs/bugs/0827) ──────────────────────────────
+   Three documents, one shape: the party's control on one side, the note's
+   own lines on the other. Amounts arrive in MYR sen and already sum to the
+   header total — the caller owns that. */
+export type NoteLine = { accountCode: string; amountSen: number; description: string | null };
+export type NoteParty = { code: string | null; name: string | null };
+
+/** Customer credit note posted: Dr each line's account (RETURN INWARDS by
+    default) / Cr AR, party the customer — the customer owes that much less. */
+export function creditNoteLines(roles: RoleCodes, note: { note_number: string }, party: NoteParty, lines: NoteLine[]): RuleLine[] {
+  const totalSen = lines.reduce((s, l) => s + l.amountSen, 0);
+  return [
+    ...lines.map((l) => ({
+      accountCode: l.accountCode, debitSen: l.amountSen, creditSen: 0,
+      partyType: null, partyCode: null, partyName: null,
+      notes: l.description ?? `Credit note ${note.note_number}`,
+    })),
+    {
+      accountCode: roles.AR, debitSen: 0, creditSen: totalSen,
+      partyType: 'CUSTOMER', partyCode: party.code, partyName: party.name,
+      notes: `Credit note ${note.note_number}`,
     },
   ];
 }
 
-/** Purchase invoice posted: Dr INVENTORY / Cr AP for the MYR total. */
-export function piLines(
-  roles: RoleCodes,
-  pi: { invoice_number: string },
-  supplier: { code: string | null; name: string | null },
-  totalSen: number,
-): RuleLine[] {
+/** Customer debit note posted: Dr AR, party the customer / Cr each line's
+    account — the customer owes that much more. */
+export function debitNoteLines(roles: RoleCodes, note: { note_number: string }, party: NoteParty, lines: NoteLine[]): RuleLine[] {
+  const totalSen = lines.reduce((s, l) => s + l.amountSen, 0);
   return [
     {
-      accountCode: roles.INVENTORY,
-      debitSen: totalSen,
+      accountCode: roles.AR, debitSen: totalSen, creditSen: 0,
+      partyType: 'CUSTOMER', partyCode: party.code, partyName: party.name,
+      notes: `Debit note ${note.note_number}`,
+    },
+    ...lines.map((l) => ({
+      accountCode: l.accountCode, debitSen: 0, creditSen: l.amountSen,
+      partyType: null, partyCode: null, partyName: null,
+      notes: l.description ?? `Debit note ${note.note_number}`,
+    })),
+  ];
+}
+
+/** Supplier credit note posted: Dr the supplier's AP control (400 or 405 by
+    the supplier's code, the PI's and the PV's split) / Cr each line's account
+    (PURCHASES RETURN by default) — we owe that supplier that much less. */
+export function supplierCreditNoteLines(roles: RoleCodes, note: { note_number: string }, supplier: NoteParty, lines: NoteLine[]): RuleLine[] {
+  const totalSen = lines.reduce((s, l) => s + l.amountSen, 0);
+  return [
+    {
+      accountCode: roles[apControlRole(supplier.code)], debitSen: totalSen, creditSen: 0,
+      partyType: 'SUPPLIER', partyCode: supplier.code, partyName: supplier.name,
+      notes: `Supplier credit note ${note.note_number}`,
+    },
+    ...lines.map((l) => ({
+      accountCode: l.accountCode, debitSen: 0, creditSen: l.amountSen,
+      partyType: null, partyCode: null, partyName: null,
+      notes: l.description ?? `Supplier credit note ${note.note_number}`,
+    })),
+  ];
+}
+
+/** AP invoice posted (the non-stock supplier bill — AutoCount's A/P Invoice;
+    owner 2026-09-06: other creditor 的 invoice 放过去,不影响 operation 那边的
+    purchase invoice): Dr each line's OWN account (rent, service, whatever the
+    line says) / Cr the supplier's AP control — 400 or 405 by the supplier's
+    code, the same split the PI and the PV use. Amounts arrive in MYR sen. */
+export function apInvoiceLines(
+  roles: RoleCodes,
+  inv: { invoice_number: string },
+  supplier: { code: string | null; name: string | null },
+  debits: Array<{ accountCode: string; myrSen: number; description: string | null }>,
+): RuleLine[] {
+  const totalSen = debits.reduce((s, d) => s + d.myrSen, 0);
+  return [
+    ...debits.map((d) => ({
+      accountCode: d.accountCode,
+      debitSen: d.myrSen,
       creditSen: 0,
       partyType: null,
       partyCode: null,
       partyName: null,
-      notes: `Inventory from ${pi.invoice_number}`,
-    },
+      notes: d.description ?? `AP invoice ${inv.invoice_number}`,
+    })),
     {
-      accountCode: roles.AP,
+      accountCode: roles[apControlRole(supplier.code)],
+      debitSen: 0,
+      creditSen: totalSen,
+      partyType: 'SUPPLIER',
+      partyCode: supplier.code,
+      partyName: supplier.name,
+      notes: `AP invoice ${inv.invoice_number}`,
+    },
+  ];
+}
+
+export function piLines(
+  roles: RoleCodes,
+  pi: { invoice_number: string },
+  supplier: { code: string | null; name: string | null },
+  groupDebits: Array<{ groupCode: string; accountCode: string; myrSen: number }>,
+): RuleLine[] {
+  const totalSen = groupDebits.reduce((s, g) => s + g.myrSen, 0);
+  return [
+    ...groupDebits.map((g) => ({
+      accountCode: g.accountCode,
+      debitSen: g.myrSen,
+      creditSen: 0,
+      partyType: null,
+      partyCode: null,
+      partyName: null,
+      notes: `Purchases — ${g.groupCode} on ${pi.invoice_number}`,
+    })),
+    {
+      accountCode: roles[apControlRole(supplier.code)],
       debitSen: 0,
       creditSen: totalSen,
       partyType: 'SUPPLIER',
@@ -180,17 +335,25 @@ export function pvLines(
   pv: { pv_number: string; payee_name: string; credit_account_code: string },
   debitLegs: Array<{ description: string | null; debit_account_code: string; myrSen: number }>,
   supplier: { code: string | null; name: string | null },
+  /** The supplier's own AP control (a supplier payment): the Dr leg on it IS
+      the supplier's sub-ledger, so it carries the party the way the invoice
+      side's Cr leg does — owner 2026-09-06, AutoCount in hand: the payment
+      must read Dr 405-H001 / Cr bank. null (an expense voucher) stamps none. */
+  apControlCode: string | null = null,
 ): RuleLine[] {
   const totalSen = debitLegs.reduce((s, l) => s + l.myrSen, 0);
-  const lines: RuleLine[] = debitLegs.map((l) => ({
-    accountCode: l.debit_account_code,
-    debitSen: l.myrSen,
-    creditSen: 0,
-    partyType: null,
-    partyCode: null,
-    partyName: null,
-    notes: `${l.description ?? 'Payment'} — ${pv.pv_number}`,
-  }));
+  const lines: RuleLine[] = debitLegs.map((l) => {
+    const onControl = apControlCode != null && l.debit_account_code === apControlCode && !!supplier.code;
+    return {
+      accountCode: l.debit_account_code,
+      debitSen: l.myrSen,
+      creditSen: 0,
+      partyType: onControl ? 'SUPPLIER' : null,
+      partyCode: onControl ? supplier.code : null,
+      partyName: onControl ? (supplier.name ?? pv.payee_name) : null,
+      notes: `${l.description ?? 'Payment'} — ${pv.pv_number}`,
+    };
+  });
   lines.push({
     accountCode: pv.credit_account_code,
     debitSen: 0,
@@ -204,10 +367,64 @@ export function pvLines(
 }
 
 /**
+ * Customer refund posted (a CUSTOMER_REFUND payment voucher, owner 2026-09-07):
+ * the mirror of customerPaymentLines — Dr AR for that customer (undoing the
+ * Cr AR their payment booked), Cr the money account the refund leaves from.
+ * The party rides BOTH legs the way a supplier payment's does: the AR leg is
+ * the sub-ledger, the money leg names who was paid.
+ */
+export function customerRefundLines(
+  pv: { pv_number: string; payee_name: string; credit_account_code: string; refund_source_doc_no: string | null },
+  arControlCode: string,
+  customer: { code: string | null; name: string | null },
+  amountSen: number,
+): RuleLine[] {
+  const party = { partyType: 'CUSTOMER', partyCode: customer.code ?? null, partyName: customer.name ?? pv.payee_name };
+  const doc = pv.refund_source_doc_no ?? 'the customer';
+  return [
+    { accountCode: arControlCode, debitSen: amountSen, creditSen: 0, ...party, notes: `Refund on ${doc} — ${pv.pv_number}` },
+    { accountCode: pv.credit_account_code, debitSen: 0, creditSen: amountSen, ...party, notes: `Refund to ${pv.payee_name} — ${pv.pv_number}` },
+  ];
+}
+
+/**
  * Customer payment collected (SO or SI panel): Dr the account the money landed
  * in, Cr AR. The debit account follows the sales panel's own 3-method model —
  * see the rules table above.
  */
+/** Deposit invoice issued (docs/bugs/0828): Dr AR with the customer as party
+    / Cr DEPOSIT PAY BY CUSTOMER. The payment it answers has already booked
+    Dr money / Cr AR (customerPaymentLines below), so the customer's
+    sub-ledger nets to nothing and the deposit stands as a sale — the
+    e-invoice reading the owner asked for. At the final invoice a credit
+    note per deposit invoice books the mirror. */
+export function depositInvoiceLines(
+  roles: RoleCodes,
+  p: { diNumber: string; docNo: string; customerCode?: string | null; customerName?: string | null },
+  amountSen: number,
+): RuleLine[] {
+  return [
+    {
+      accountCode: roles.AR,
+      debitSen: amountSen,
+      creditSen: 0,
+      partyType: 'CUSTOMER',
+      partyCode: p.customerCode ?? null,
+      partyName: p.customerName ?? null,
+      notes: `Deposit invoice ${p.diNumber} — ${p.docNo}`,
+    },
+    {
+      accountCode: roles.DEPOSIT_INCOME,
+      debitSen: 0,
+      creditSen: amountSen,
+      partyType: null,
+      partyCode: null,
+      partyName: null,
+      notes: `Deposit received on ${p.docNo}`,
+    },
+  ];
+}
+
 export function customerPaymentLines(
   roles: RoleCodes,
   p: {
@@ -241,6 +458,48 @@ export function customerPaymentLines(
       partyCode: p.customerCode ?? null,
       partyName: p.customerName ?? null,
       notes: `Settles ${p.docNo}`,
+    },
+  ];
+}
+
+/**
+ * Money moved from a cancelled order to a new one (owner 2026-09-15; docs/bugs/
+ * 0927) — no money moves in the bank, so no money account moves in the books:
+ *
+ *     Dr AR (the cancelled order's customer)   the amount   releases the credit
+ *         Cr AR (the new order's customer)     the amount   the new order is paid
+ *
+ * The same customer on both sides nets to nothing on the control and still
+ * writes the trail — which order the money left and which it reached.
+ */
+export function orderMoneyTransferLines(
+  roles: RoleCodes,
+  p: {
+    fromDocNo: string;
+    toDocNo: string;
+    from: { code: string | null; name: string | null };
+    to: { code: string | null; name: string | null };
+  },
+  amountSen: number,
+): RuleLine[] {
+  return [
+    {
+      accountCode: roles.AR,
+      debitSen: amountSen,
+      creditSen: 0,
+      partyType: 'CUSTOMER',
+      partyCode: p.from.code ?? null,
+      partyName: p.from.name ?? null,
+      notes: `Money on ${p.fromDocNo} moved to ${p.toDocNo}`,
+    },
+    {
+      accountCode: roles.AR,
+      debitSen: 0,
+      creditSen: amountSen,
+      partyType: 'CUSTOMER',
+      partyCode: p.to.code ?? null,
+      partyName: p.to.name ?? null,
+      notes: `Settles ${p.toDocNo} with money from ${p.fromDocNo}`,
     },
   ];
 }
@@ -357,5 +616,59 @@ export function settlementLines(
       creditSen: refund ? 0 : fee,
       notes: `Fee is no longer receivable — ${tag}`,
     },
+  ];
+}
+
+/**
+ * Card money keyed in WITHOUT a bank was booked to the GENERIC clearing
+ * account (326-0000, 未标银行) because nobody could say whose it was. The
+ * merchant's own statement has now named it, so the money moves onto that
+ * merchant's clearing account on the day the statement did — and the payout
+ * clears it from the same account the fee left (owner 2026-09-07/08: 我想要
+ * 拆账户 … match 了就不见). The generic account reads zero once every untagged
+ * payment has been matched.
+ *
+ *     Dr Clearing — PBB            3,365.00
+ *         Cr Clearing (generic)    3,365.00
+ */
+export function clearingMoveLines(
+  accounts: { fromCode: string; toCode: string },
+  s: { acquirerCode: string; txnDate: string; ref: string | null; amountSen: number },
+): RuleLine[] {
+  return clearingMoveLinesFrom(accounts.toCode, [{ code: accounts.fromCode, amountSen: s.amountSen }], s);
+}
+
+/**
+ * The same move from SEVERAL clearing accounts at once (docs/bugs/0940): a
+ * payment keyed under the wrong bank sits on THAT bank's clearing account, not
+ * the generic one, and one statement line may cover payments keyed three
+ * different ways. One entry, one debit on the merchant's own account, one
+ * credit per account the money is leaving.
+ *
+ *     Dr Clearing — HLB            6,605.00
+ *         Cr Clearing — PBB        3,240.00   (keyed as PBB)
+ *         Cr Clearing (generic)    3,365.00   (keyed without a bank)
+ */
+export function clearingMoveLinesFrom(
+  toCode: string,
+  from: Array<{ code: string; amountSen: number }>,
+  s: { acquirerCode: string; txnDate: string; ref: string | null },
+): RuleLine[] {
+  const tag = `${s.acquirerCode} settlement ${s.txnDate}${s.ref ? ` ref ${s.ref}` : ''}`;
+  const sources = from.filter((f) => Math.abs(f.amountSen) > 0);
+  const total = sources.reduce((sum, f) => sum + Math.abs(f.amountSen), 0);
+  return [
+    {
+      accountCode: toCode,
+      debitSen: total,
+      creditSen: 0,
+      notes: `Named by the merchant's statement — ${tag}`,
+    },
+    ...sources.map((f) => ({
+      accountCode: f.code,
+      debitSen: 0,
+      creditSen: Math.abs(f.amountSen),
+      notes: `Out of clearing ${f.code} — ${tag}`,
+    })),
   ];
 }

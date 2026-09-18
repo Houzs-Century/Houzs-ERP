@@ -48,6 +48,13 @@ export type SettlementCandidate = {
   /** Who paid — on the batch-detail candidates (the matcher carries it); the
       watchlist's do not, so a reader has to ask. */
   customerName?: string | null;
+  /** Which acquirer the payment was recorded as. Null on migration-era rows —
+      shown as 未标 merchant so the operator knows he is claiming untagged
+      money; confirming stamps the tag on. */
+  merchantProvider?: string | null;
+  /** On a "Find the sale" result: the payment's own amount is the line's exact
+      gross — the system's guess, ranked first, never the only choice. */
+  possible?: boolean;
 };
 
 export type SettlementLink = {
@@ -62,6 +69,8 @@ export type SettlementLink = {
   customer_name?: string | null;
   approval_code?: string | null;
 };
+
+export type RefreshedLink = { settlementRowId: number; paymentSource: string; paymentId: string; docNo: string | null; fromSen: number; toSen: number };
 
 export type SettlementRow = {
   id: number;
@@ -192,7 +201,7 @@ export type MaintenanceMerchant = {
   autoMatchable: boolean;
   /* Keyed by company id, and only for the companies the server answered for —
      so a lookup can miss, and every reader has to say what it does then. */
-  byCompany: Record<string, { enabled: boolean; linked: boolean; bankAccountCode: string | null } | undefined>;
+  byCompany: Record<string, { enabled: boolean; linked: boolean; bankAccountCode: string | null; transitAccountCode?: string | null; feeAccountCode?: string | null } | undefined>;
 };
 
 /** One account CODE across every company — the rows of the bank matrix. */
@@ -206,6 +215,14 @@ export type MaintenanceData = {
   companies: MaintenanceCompany[];
   merchants: MaintenanceMerchant[];
   banks: MaintenanceBank[];
+  /** Each company's clearing accounts (326-/327-, not money) — where a
+      machine's card money sits before the payout (owner 2026-09-07: one per
+      bank). Keyed by company id; absent on an older server. */
+  clearings?: Record<string, Array<{ account_code: string; account_name: string }> | undefined>;
+  /** Active EXPENSE leaves per company — what a merchant fee may be booked to.
+      Server-filtered to the same properties the posting gate checks, so a code
+      offered here cannot be one the gate refuses (docs/bugs/0762). */
+  feeAccounts?: Record<string, Array<{ account_code: string; account_name: string }> | undefined>;
 };
 
 export const useSettlementMaintenance = () => useQuery({
@@ -225,7 +242,7 @@ const invalidateMaintenance = (qc: ReturnType<typeof useQueryClient>) => {
 export const useSaveMaintenanceMerchant = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { companyId: number; code: string; enabled?: boolean; bankAccountCode?: string | null }) =>
+    mutationFn: (body: { companyId: number; code: string; enabled?: boolean; bankAccountCode?: string | null; transitAccountCode?: string; feeAccountCode?: string }) =>
       authedFetch<{ ok: boolean; created: boolean }>('/accounting/settlement/maintenance/merchant', {
         method: 'PATCH', body: JSON.stringify(body),
       }),
@@ -264,6 +281,8 @@ export const useSettlementBatch = (batchId: number | null) => useQuery({
     acquirer: { code: string; hasUniqueRef: boolean | null; dateToleranceDays: number };
     buckets: Record<string, number>;
     rows: SettlementRow[];
+    /** Unconfirmed links re-read their payment as the report opens (docs/bugs/0833): what moved. */
+    refreshedLinks?: RefreshedLink[];
   }>(`/accounting/settlement/batches/${batchId}`),
   staleTime: 0,
   retry: retryUnlessClientError,
@@ -275,6 +294,11 @@ export type UploadResult = {
   rows: number;
   /** Summary/total rows in the file that are not transactions. */
   skippedLines: number;
+  /** Lines already on another report of this acquirer — the same trading day,
+      reference and gross — left out of this batch, each naming the report and
+      line they are on (docs/bugs/0823). */
+  alreadyOnReport: number;
+  alreadyOnReportDetail: Array<{ lineNo: number; txnDate: string; ref: string; grossSen: number; batchId: number; fileName: string | null; lineNoThere: number }>;
   statedNetSen: number | null;
   adjustmentSen: number;
   grossSen: number; feeSen: number; netSen: number;
@@ -395,11 +419,21 @@ export type PayoutDay = {
   fileName: string | null;
   /** What the uploaded report itself nets, when there is one. */
   reportNetSen: number | null;
-  /** report − advice. Zero is agreement; anything else is the finding. */
+  /** report − (advice + charge). Zero is agreement; anything else is the finding. */
   differenceSen: number | null;
   reportOpenLines: number | null;
+  /** What the bank deducted from this day's payout and where Finance booked it
+      (docs/bugs/0787) — 0 / null when nothing was. */
+  chargeSen: number;
+  chargeAccountCode: string | null;
+  chargeNote: string | null;
+  chargeJeNo: string | null;
   state: PayoutDayState;
 };
+
+/** An account a bank charge may be booked to: an active expense leaf of this
+    company — the same list the Setup page offers for the merchant fee. */
+export type ChargeAccount = { accountCode: string; accountName: string };
 
 export type PayoutStatus = {
   netSen: number;
@@ -427,11 +461,49 @@ export type Payout = {
 
 export const usePayouts = () => useQuery({
   queryKey: ['settlement-payouts'],
-  queryFn: () => authedFetch<{ payouts: Payout[] }>(`/accounting/settlement/payouts`),
+  queryFn: () => authedFetch<{
+    payouts: Payout[];
+    chargeAccounts: ChargeAccount[];
+    /** Each acquirer's fee account — what the charge dialog defaults to. */
+    feeAccountByAcquirer: Record<string, string | null>;
+  }>(`/accounting/settlement/payouts`),
   staleTime: 15_000,
   retry: retryUnlessClientError,
   retryDelay: 800,
 });
+
+/** The bank deducted a charge from one day of an advice — book it where
+    Finance says (docs/bugs/0787). The journal moves, so the entries list is
+    re-read along with the advices. */
+export const usePostPayoutCharge = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ payoutId, settledOn, ...body }: { payoutId: number; settledOn: string; amountSen?: number | null; accountCode: string; note: string }) =>
+      authedFetch<{ ok: boolean; chargeSen: number; accountCode: string; jeNo: string }>(
+        `/accounting/settlement/payouts/${payoutId}/days/${encodeURIComponent(settledOn)}/charge`,
+        { method: 'POST', body: JSON.stringify(body) },
+      ),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['settlement-payouts'] });
+      void qc.invalidateQueries({ queryKey: ['journal-entries'] });
+    },
+  });
+};
+
+export const useUndoPayoutCharge = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ payoutId, settledOn }: { payoutId: number; settledOn: string }) =>
+      authedFetch<{ ok: boolean }>(
+        `/accounting/settlement/payouts/${payoutId}/days/${encodeURIComponent(settledOn)}/charge`,
+        { method: 'DELETE' },
+      ),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['settlement-payouts'] });
+      void qc.invalidateQueries({ queryKey: ['journal-entries'] });
+    },
+  });
+};
 
 export const useUploadPayoutAdvice = () => {
   const qc = useQueryClient();
@@ -460,14 +532,21 @@ export const useIgnoreSettlementRow = () => {
 
 export type Watchlist = {
   from: string; to: string; clean: boolean;
-  recordedNotArrived: Array<SettlementCandidate & { ageDays: number; acquirerCode: string }>;
+  /** acquirerCode null = keyed in without a bank; the server lists such a
+      payment ONCE (docs/bugs/0688) and the screen shows it as 未标. */
+  /** salespersonName: who sold it, off the order (owner 2026-09-10: 我想要看到
+      salesman 的名字); null when the order names nobody or the payment is an
+      invoice's. */
+  recordedNotArrived: Array<SettlementCandidate & { ageDays: number; acquirerCode: string | null; salespersonName?: string | null }>;
   arrivedNotRecorded: Array<{ id: number; acquirer_code: string; txn_date: string; ref: string | null; gross_sen: number; notes: string | null }>;
 };
 
 export type AgeBucket = '0-7' | '8-14' | '15-30' | 'over-30';
 
 export type InTransitLine = {
-  acquirerCode: string;
+  /** null = keyed in without a bank, listed once (docs/bugs/0688); the
+      ageing table keys such money 未标. */
+  acquirerCode: string | null;
   source: 'SOPAY' | 'SIPAY';
   paymentId: string;
   docNo: string;
@@ -501,6 +580,20 @@ export const useInTransit = () => useQuery({
   queryKey: ['settlement-in-transit'],
   queryFn: () => authedFetch<InTransit>(`/accounting/settlement/in-transit`),
   staleTime: 30_000,
+  retry: retryUnlessClientError,
+  retryDelay: 800,
+});
+
+/* "Find the sale" (docs/bugs/0792): the company's card payments the window
+   could not offer, searched by document / customer / approval / amount. Off
+   until the operator opens the search on a line. */
+export const useFindPayments = (rowId: number | null, q: string) => useQuery({
+  queryKey: ['settlement-find', rowId, q],
+  queryFn: () => authedFetch<{ q: string; payments: Array<SettlementCandidate & { possible: boolean; method: string }> }>(
+    `/accounting/settlement/rows/${rowId}/find?q=${encodeURIComponent(q)}`,
+  ),
+  enabled: rowId != null,
+  staleTime: 10_000,
   retry: retryUnlessClientError,
   retryDelay: 800,
 });

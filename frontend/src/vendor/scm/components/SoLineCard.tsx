@@ -35,6 +35,8 @@ import {
 } from '@2990s/shared/mfg-pricing';
 import { missingVariantAxes } from '@2990s/shared/so-variant-rule';
 import { computeTotalHeight, totalHeightPatch } from '../../shared/total-height';
+import { restrictPricedToPool, restrictStringsToPool } from '../../shared/maintenance-pools';
+import { fabricAllowedByPool } from '../../shared/fabric-pool';
 import { activeOptions, isColourKiv, isDeliveryFeeServiceCode, lineIdentity, maintPickerValues, fmtMoneySen } from '@2990s/shared';
 import {
   useMfgProducts,
@@ -54,6 +56,7 @@ import {
 import { cacheSoLinePhotoSignedUrl, useSoLinePhoto } from '../lib/so-line-photo';
 import { feeAmountSen, feeDiscountForAmount, lockedFeeSemantics } from '../lib/delivery-fee-amount';
 import { useDebouncedValue } from '../lib/hooks';
+import { specialOrderSurface } from '../lib/special-order-surface';
 import { useAuth, isAdminLevel, isHatchSales } from '../lib/auth';
 import { CATEGORY_BADGE } from '../lib/category-badges';
 import { sortByNumeric } from '../lib/sort-options';
@@ -64,6 +67,7 @@ import { useNotify } from './NotifyDialog';
 import { SpecialOrders } from './SpecialOrders';
 import styles from './SoLineCard.module.css';
 import { DateField } from "./DateField";
+import { DiscountInput } from './DiscountInput';
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
 
@@ -187,6 +191,7 @@ const SoLineCardInner = ({
   itemId,
   isEditing = true,
   variantsRequired,
+  seedSofaLegDefault,
   searchHint,
 }: {
   index:     number;
@@ -228,6 +233,33 @@ const SoLineCardInner = ({
          (DO, consignment note/return, delivery return, sales invoice — the
           variants ride in with the items and are not re-specified here) */
   variantsRequired: boolean;
+  /* Whether this document may AUTO-FILL a blank sofa Leg Height with the
+     maintenance "Default" option (owner 2026-07-13).
+
+     MANDATORY PROP, no default, for a harder reason than the one above: the leg
+     height is part of the STOCK BUCKET. computeVariantKey emits `legheight=` for
+     a sofa (shared/variant-key.ts), so seeding the field does not merely fill a
+     box — it moves the line into a different bucket from the goods reserved for
+     it. On 2026-09-08 that blocked HC-SO-012565: the lots stood at BALAKONG
+     under `fabriccode=bo315-31|seatheight=26|special=...`, the delivery form
+     seeded `legHeight: "Default"`, and the pre-flight read the invented bucket
+     as available 0. Three delivery orders that morning (HC-DO-2609-004, -009,
+     -011) were shipped through that dialog and their OUT movements consumed no
+     lot at all. docs/bugs/0722.
+
+     THE RULE:
+       · a document that SPECIFIES the sofa            -> true
+         (SO New/Detail, Consignment Order New/Detail — the key it writes is the
+          one the purchase order and then the lot inherit, so seeding is
+          consistent everywhere downstream)
+       · a document that FULFILS one                   -> false
+         (DO, consignment note/return, delivery return, sales invoice — the goods
+          were already keyed when they were bought; adding an attribute here can
+          only disagree with them)
+
+     Leg Height is `required: false` in shared/so-variant-rule.ts, so a blank one
+     blocks no Confirm gate on either side. */
+  seedSofaLegDefault: boolean;
   /* Scan-Order (Task #73) — the OCR rawText for a NO-MATCH line, shown as the
      SKU picker's placeholder so the operator sees what was on the slip while
      they pick a real SKU. It is a HINT ONLY — never committed as the product
@@ -363,17 +395,19 @@ const SoLineCardInner = ({
      When the SKU's real category is sofa/bedframe but the saved itemGroup is
      generic, rewrite itemGroup so the committed line equals a manually-picked
      one. For sofa, also default Leg Height to the "Default" maintenance option
-     (RM 0.00) when unset, so it is never an empty required field and never
-     blocks Confirm. Edit-mode only — a read-only view still RENDERS the
+     (RM 0.00) when unset — but ONLY where the caller says this document
+     specifies the sofa (`seedSofaLegDefault`; see the prop's own note). A
+     fulfilment document that seeds it re-buckets the line away from the stock
+     reserved for it. Edit-mode only — a read-only view still RENDERS the
      configurator (driven by `category` above) but must not mutate. */
   useEffect(() => {
     if (!isEditing || !draft.itemCode) return;
     const patch: Partial<SoLineDraft> = {};
-    if ((category === 'sofa' || category === 'bedframe')
+    if ((category === 'sofa' || category === 'bedframe' || category === 'fabric_accessory')
         && draft.itemGroup.toLowerCase() !== category) {
       patch.itemGroup = category;
     }
-    if (category === 'sofa' && maint
+    if (seedSofaLegDefault && category === 'sofa' && maint
         && isBlankVariant(draft.variants.legHeight)
         && isBlankVariant(draft.variants.sofaLegHeight)) {
       const def = defaultSofaLegValue(maint);
@@ -381,7 +415,7 @@ const SoLineCardInner = ({
     }
     if (Object.keys(patch).length > 0) onChange(patch);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isEditing, category, draft.itemCode, maint]);
+  }, [isEditing, category, draft.itemCode, maint, seedSofaLegDefault]);
 
   /* PR-F (Task #79) — Per-line photo state.
      Line-card-redesign (Commander 2026-05-27): also support DRAFT mode
@@ -608,10 +642,14 @@ const SoLineCardInner = ({
      them CHANGES WHICH OPTIONS APPEAR — an owner's call, not a bug fix. */
   const allowedByCodeQ = useModelAllowedOptionsByCode(draft.itemCode || undefined);
   const allowOpts = picked?.allowed_options ?? allowedByCodeQ.data ?? null;
+  /* The SHARED restrict helpers, not a private copy. maintenance-pools.ts has
+     said "no editor may inline its own copy again" since it was written, and
+     this file inlined one anyway - which is why the quote-folding that landed
+     there reached mobile and not the desktop. docs/bugs/0814. */
   const restrictP = (opts: Array<{ value: string; priceSen: number }>, pool?: string[] | null) =>
-    (Array.isArray(pool) && pool.length > 0) ? opts.filter((o) => pool.includes(o.value)) : opts;
+    restrictPricedToPool(opts, pool);
   const restrictS = (opts: string[], pool?: string[] | null) =>
-    (Array.isArray(pool) && pool.length > 0) ? opts.filter((o) => pool.includes(o)) : opts;
+    restrictStringsToPool(opts, pool);
 
   /* ── Fabrics picker (SO-parity, Loo 2026-06-06 · SERVER-typeahead 2026-07-14) ──
      Scaling (owner #1 pain): the fabric picker used to pull EVERY active
@@ -622,14 +660,17 @@ const SoLineCardInner = ({
      which applies them to the SERVER results:
        • pool  = Model's allowed_options.fabrics (colour codes). Non-empty =
                  restrict (same as the server gate); empty/null = any active.
-       • inactive = fabric_trackings.is_active===false (Migration 0167) — hidden
-                 from NEW picks; a saved line's deactivated code still displays.
+       • inactive — NO LONGER FILTERED HERE. `GET /fabric-colours` drops a colour
+                 whose fabric_trackings CODE has no active row, so the desktop and
+                 the mobile sheet get one rule from one place. This filter used to
+                 live here and asked the question per ROW: 21 codes carry an
+                 active row beside a retired one for the same code, so the dead
+                 twin hid a fabric the floor sells - 21 active colours hidden,
+                 all 21 wrongly - while mobile, which never filtered, showed them.
+                 That split is how the owner found it. docs/bugs/0818.
      A saved line's fabric ALWAYS renders (the combobox shows the stored code),
      so the picker never blanks a previously-selected fabric. */
-  const inactiveFabricCodes = useMemo(
-    () => new Set(fabrics.filter((f) => f.is_active === false).map((f) => f.fabric_code)),
-    [fabrics],
-  );
+  const inactiveFabricCodes = useMemo(() => new Set<string>(), []);
 
   /* Picking a colour writes the SAME variant keys the POS handover payload
      sends (pos-handover-so.ts buildVariants): fabricCode + colourId satisfy
@@ -699,16 +740,32 @@ const SoLineCardInner = ({
      itemGroup came in generic still renders its fabric/seat/leg configurator and
      requires those variants, exactly like a manually-picked line (owner
      2026-07-13). */
-  const hasVariants = Boolean(draft.itemCode) && Boolean(maint) && (category === 'bedframe' || category === 'sofa');
+  /* fabric_accessory = "Sofa Accessory" (owner 2026-09-14): colour ONLY, from the same
+     fabric master and the same picker as a sofa. tasks/PLAN-sofa-accessories-category.md */
+  const hasVariants = Boolean(draft.itemCode) && Boolean(maint)
+    && (category === 'bedframe' || category === 'sofa' || category === 'fabric_accessory');
   const specials = specialsList(draft.variants.specials ?? draft.variants.special);
-  const posRemarkSpecial = posRemarkSpecialOf(draft.variants);
   /* SO-parity (Loo 2026-06-06) — mattress lines can carry Special Add-ons too
-     (POS prices MATTRESS specials since PR #456). Render JUST the accordion
-     for them — no fabric/height grid. Hidden until a mattress Model has
-     specials ticked in Modular (none today) or the line already carries one
-     (a configured pick OR the POS remark/extra special). */
-  const hasMattressSpecials = Boolean(draft.itemCode) && category === 'mattress'
-    && (specialOptions.length > 0 || specials.length > 0 || posRemarkSpecial != null);
+     (POS prices MATTRESS specials since PR #456). Render JUST the accordion for
+     them — no fabric/height grid.
+
+     WHO GETS THE PANEL, AND WHETHER IT OFFERS CHECKBOXES, is one decision and it
+     lives in lib/special-order-surface.ts with its own tests — read that file
+     for the reasoning, including why free text is safe on a pooled line and a
+     ticked add-on is not. It replaces the condition that used to sit here:
+
+         specialOptions.length > 0 || specials.length > 0 || posRemarkSpecialOf(...) != null
+
+     which asked "is there an add-on to tick?" and answered no for every plain
+     mattress (the catalogue defines none) and every accessory. So the owner had
+     nowhere to write an SP mattress's SIZE or a custom pillow's COLOUR
+     (2026-09-10). The panel now opens on the line's category alone. */
+  const specialSurface = specialOrderSurface({
+    category,
+    hasItemCode: Boolean(draft.itemCode),
+    pickedSpecialCount: specials.length,
+  });
+  const hasSpecialOrder = specialSurface.block;
 
   /* ── Render ─────────────────────────────────────────────────────── */
 
@@ -899,7 +956,7 @@ const SoLineCardInner = ({
           disabled={!isEditing || !canEditPrice}
           title={
             !canEditPrice ? 'Price follows the SKU Master sell price — admin can override'
-              : isFeeLine ? `Delivery fee is derived (RM ${(feeGrossSen / 100).toFixed(2)}). Type the amount to charge — the difference is recorded as a line discount. To charge MORE, add an Additional delivery fee line.`
+              : isFeeLine ? `Delivery fee is derived (${fmtMoneySen(feeGrossSen, 'RM')}). Type the amount to charge — the difference is recorded as a line discount. To charge MORE, add an Additional delivery fee line.`
               : undefined
           }
           onChange={(e) => {
@@ -920,7 +977,37 @@ const SoLineCardInner = ({
           onBlur={() => setPriceText((amountCellSen / 100).toFixed(2))}
         />
 
-        {/* 6. Delivery Date (2990 addition between Unit Price and Amount) */}
+        {/* 6. Discount — owner 2026-09-12: the sales side had no discount field
+             at all while purchasing had one, so a sales discount could only be
+             typed into the price. ONE box: `1000` is ringgit, `25%` is a
+             percentage of qty x unit price (DiscountInput). What is stored is
+             always the resolved sen amount, which is what the server already
+             validates (0 .. qty x unit price).
+
+             A DELIVERY-FEE line is the exception and is disabled here: its
+             amount cell IS the discount — typing the amount to charge writes
+             `discountSen = gross - charged` (feeDiscountForAmount above), so a
+             second control writing the same field would fight it. */}
+        {isFeeLine ? (
+          <span
+            className={styles.priceLabel}
+            title="A delivery fee's discount is derived — type the amount to charge in the price cell."
+            style={{ textAlign: 'right', opacity: 0.55 }}
+          >
+            {draft.discountSen > 0 ? fmtRm(draft.discountSen) : '—'}
+          </span>
+        ) : (
+          <DiscountInput
+            bare
+            align="right"
+            inputClassName={styles.priceInput}
+            valueSen={draft.discountSen}
+            baseSen={draft.qty * draft.unitPriceSen}
+            disabled={!isEditing}
+            onCommit={(sen) => onChange({ discountSen: sen ?? 0 })}
+          />
+        )}
+        {/* 7. Delivery Date (2990 addition between Unit Price and Amount) */}
         <DateField
           fullWidth
           className={styles.input}
@@ -938,10 +1025,10 @@ const SoLineCardInner = ({
           }
         />
 
-        {/* 7. Amount */}
+        {/* 8. Amount */}
         <span className={styles.amount}>{fmtRm(lineTotal)}</span>
 
-        {/* 8. Group badge */}
+        {/* 9. Group badge */}
         <span className={styles.badge} style={{ background: badge.bg, color: badge.fg }}>
           {badge.label}
         </span>
@@ -980,9 +1067,9 @@ const SoLineCardInner = ({
           is now unconditional and bodyRight is pinned to track 2 (see the
           module CSS), so the photo rail holds the right edge on EVERY line and
           the left of a variant-less line is simply the empty track. */}
-      {(picked || hasVariants || hasMattressSpecials || canShowPhotos) && (
+      {(picked || hasVariants || hasSpecialOrder || canShowPhotos) && (
       <div className={styles.body}>
-        {(hasVariants || hasMattressSpecials) && <div className={styles.bodyLeft}>
+        {(hasVariants || hasSpecialOrder) && <div className={styles.bodyLeft}>
       {hasVariants && category === 'bedframe' && (
         <div className={styles.variants}>
           <div className={styles.variantsHead}>BEDFRAME VARIANTS</div>
@@ -993,6 +1080,7 @@ const SoLineCardInner = ({
               disabled={!isEditing}
               pool={allowOpts?.fabrics ?? null}
               inactiveCodes={inactiveFabricCodes}
+              itemCode={draft.itemCode || null}
               onSelect={pickFabricColour}
             />
             <VariantSelect
@@ -1045,6 +1133,22 @@ const SoLineCardInner = ({
         </div>
       )}
 
+      {hasVariants && category === 'fabric_accessory' && (
+        <div className={styles.variants}>
+          <div className={styles.variantsHead}>SOFA ACCESSORY FABRIC</div>
+          <div className={styles.variantsGrid}>
+            <FabricColourCombobox
+              label="Fabrics" required={variantsRequired}
+              value={String(draft.variants.fabricCode ?? '')}
+              disabled={!isEditing}
+              pool={allowOpts?.fabrics ?? null}
+              inactiveCodes={inactiveFabricCodes}
+              itemCode={draft.itemCode || null}
+              onSelect={pickFabricColour}
+            />
+          </div>
+        </div>
+      )}
       {hasVariants && category === 'sofa' && (
         <div className={styles.variants}>
           <div className={styles.variantsHead}>SOFA VARIANTS</div>
@@ -1055,6 +1159,7 @@ const SoLineCardInner = ({
               disabled={!isEditing}
               pool={allowOpts?.fabrics ?? null}
               inactiveCodes={inactiveFabricCodes}
+              itemCode={draft.itemCode || null}
               onSelect={pickFabricColour}
             />
             <VariantSelect
@@ -1105,13 +1210,15 @@ const SoLineCardInner = ({
         </div>
       )}
 
-      {hasMattressSpecials && (
+      {hasSpecialOrder && (
         <div className={styles.variants}>
-          <div className={styles.variantsHead}>MATTRESS ADD-ONS</div>
+          <div className={styles.variantsHead}>
+            {category === 'mattress' ? 'MATTRESS ADD-ONS' : 'SPECIAL ORDER'}
+          </div>
           <SpecialOrders
             open={specialsOpen}
             onToggle={() => setSpecialsOpen((o) => !o)}
-            options={specialOptions}
+            options={specialSurface.optionPicker ? specialOptions : []}
             variants={draft.variants}
             onPatch={setVariants}
             disabled={!isEditing}
@@ -1396,9 +1503,11 @@ const VariantSelect = ({
    ────────────────────────────────────────────────────────────────────── */
 
 const FabricColourCombobox = ({
-  label, value, onSelect, disabled = false, required = false, pool, inactiveCodes,
+  label, value, onSelect, disabled = false, required = false, pool, inactiveCodes, itemCode,
 }: {
   label:    string;
+  /** The line's SKU — the server applies its Model's pool before the 50 cap. */
+  itemCode: string | null;
   /** Selected colour code (draft.variants.fabricCode). Shown verbatim when closed. */
   value:    string;
   /** Non-empty = restrict to these colour codes (Model allowed_options.fabrics). */
@@ -1417,17 +1526,19 @@ const FabricColourCombobox = ({
      only fires while the operator is actively picking. */
   const debounced = useDebouncedValue(search, 200);
   const trimmed   = debounced.trim();
-  const coloursQ  = useFabricColoursSearch(trimmed, { enabled: open && trimmed.length >= 2 });
+  const coloursQ  = useFabricColoursSearch(trimmed, { enabled: open && trimmed.length >= 2, itemCode });
 
   /* Apply the pool + inactive gates to the SERVER results (the old option-list
      prune, moved server-side of the fetch). Cap at 50 like the SKU picker. */
   const results = useMemo(() => {
     const rows = coloursQ.data ?? [];
-    const restricted = Array.isArray(pool) && pool.length > 0;
-    const allow = new Set(pool ?? []);
     return rows
       .filter((c) => !inactiveCodes.has(c.colourId))
-      .filter((c) => !restricted || allow.has(c.colourId))
+      /* A row passes if the pool names its COLOUR or its SERIES (docs/bugs/0814),
+         asked through the SAME module the save gate and the phone sheet read,
+         so the folding of stray spaces and quote glyphs agrees too
+         (docs/bugs/0889). */
+      .filter((c) => fabricAllowedByPool(pool, c.colourId, c.fabricId))
       .slice(0, 50);
   }, [coloursQ.data, pool, inactiveCodes]);
 

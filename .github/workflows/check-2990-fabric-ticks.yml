@@ -1,0 +1,78 @@
+name: Check 2990 fabric tick reconstruction (read-only)
+
+# The owner: 「原本是 28 到 36 个，现在突然变 56 个了」. The clear removed his
+# per-Model fabric ticks and recorded only aggregates. This asks whether those
+# ticks can be worked out again from scm.product_fabrics (the per-SKU series
+# table, never touched), by checking whether the reconstruction lands on the
+# pool sizes the clear's own run recorded.
+#
+# READ-ONLY: four selects, no writes, no DDL. Manual trigger only.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: ["prod", "staging"]
+      company:
+        description: "Company id"
+        required: false
+        default: "2"
+      recorded_sizes:
+        description: "Pool sizes the clear recorded, comma separated"
+        required: false
+        default: "28,36"
+
+concurrency:
+  group: check-2990-fabric-ticks
+  cancel-in-progress: false
+
+jobs:
+  prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-2990-fabric-tick-reconstruction.mjs
+        env:
+          COMPANY: ${{ inputs.company }}
+          RECORDED_SIZES: ${{ inputs.recorded_sizes }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SOURCE_SUPABASE_URL: ${{ secrets.SOURCE_SUPABASE_URL }}
+          SOURCE_SERVICE_ROLE_KEY: ${{ secrets.SOURCE_SERVICE_ROLE_KEY }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+  staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-2990-fabric-tick-reconstruction.mjs
+        env:
+          COMPANY: ${{ inputs.company }}
+          RECORDED_SIZES: ${{ inputs.recorded_sizes }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

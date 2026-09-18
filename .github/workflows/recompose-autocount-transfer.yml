@@ -1,0 +1,62 @@
+name: AutoCount — re-compose a stuck transfer
+
+# The re-queue tool REPLAYS a transfer's stored payload, deliberately: for the
+# case it was written for the snapshot IS the instruction. Its blind spot is the
+# COMPOSER changing, which happened on 2026-09-08 (docs/bugs/0722) — replaying
+# either stuck delivery order re-sends the duplicate sofa key forever.
+#
+# This composes the transfer again through the REAL enqueueConvert, from the
+# documents as they stand now. It touches AutoCount not at all: it queues, and
+# the ordinary 5-minute sweep sends.
+#
+# ONE NAMED DOCUMENT, never a sweep, and APPLY needs the document number typed
+# back. Plan is the default.
+on:
+  workflow_dispatch:
+    inputs:
+      doc_no:
+        description: "The delivery order, e.g. HC-DO-2609-004"
+        required: true
+        type: string
+      apply:
+        description: "1 to compose and queue; anything else is a PLAN"
+        required: false
+        default: "0"
+        type: string
+      confirm_doc:
+        description: "Type the document number again to apply"
+        required: false
+        default: ""
+        type: string
+
+# Its own group. A recovery run must never queue behind — or displace — a deploy.
+concurrency:
+  group: recompose-autocount-transfer
+  cancel-in-progress: false
+
+jobs:
+  recompose:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      # tsx, so the REAL enqueueConvert is imported from src and the composer is
+      # never re-implemented in a script — the same bridge the re-queue tool uses.
+      - run: npx tsx scripts/recompose-autocount-transfer.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DOC_NO: ${{ inputs.doc_no }}
+          APPLY: ${{ inputs.apply }}
+          CONFIRM_DOC: ${{ inputs.confirm_doc }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first

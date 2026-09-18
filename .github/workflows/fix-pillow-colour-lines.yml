@@ -1,0 +1,41 @@
+name: Fix pillow colour lines (plan / apply)
+
+# Owner 2026-09-15: 「这些能看到的颜色就解决掉」. Two typo colours written as the
+# library colour they name, and HC-SO-011561's two-colour pillow line split into
+# one line per colour. PLAN (default) rolls back; APPLY needs the phrase.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (rolled back) or apply"
+        required: true
+        default: plan
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: "For apply only — type: FIX PILLOW COLOURS"
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: fix-pillow-colour-lines
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/fix-pillow-colour-lines.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}

@@ -35,6 +35,7 @@ import {
   useState,
   useSyncExternalStore,
 } from 'react';
+import { stampNumberFormats, type SheetNumberFormat } from '../lib/xlsx-number-format';
 import { Search, Filter, Download, GripVertical, X, ChevronsUpDown, ArrowUp, ArrowDown } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { isoForExport } from '../../shared/format'; // a date cell exports as ISO, never as displayed
@@ -48,7 +49,7 @@ import {
   useCompanyScopedDataGridLayout,
   writeDataGridLayout,
 } from './dataGridLayoutStorage';
-import { readDataGridFilters, writeDataGridFilters } from './dataGridFilterStorage';
+import { purgeStoredDataGridFilters, readDataGridFilters, writeDataGridFilters } from './dataGridFilterStorage';
 import { subscribeActiveCompany, getActiveCompanySnapshot } from '../../../lib/activeCompany';
 import {
   EMPTY_LAYOUT,
@@ -98,6 +99,8 @@ export type DataGridColumn<T> = {
       searchValue → filterValue → groupValue → '' (cells are ReactNode, so we
       never read the rendered node). */
   exportValue?: (row: T) => string | number;
+  /** How a NUMBER from `exportValue` shows in the sheet (money #,##0.00, rate up to 4dp) — pass ringgit, never sen. */
+  exportFormat?: SheetNumberFormat;
   /** Header text written to Excel for this column. Defaults to `label`. Use this
       ONLY when the on-screen `label` is intentionally blank (a pure icon /
       checkbox / indicator column) so the exported sheet still gets a real,
@@ -222,6 +225,13 @@ export type DataGridProps<T> = {
         DO-from-SO picker, where picking one customer locks out every other
         customer's lines (one Delivery Order ships to ONE customer). */
     isDisabled?: (key: string) => boolean;
+    /** Tick ONLY via the checkbox cell (owner 2026-09-03, on the PV list:
+        这个我一点就直接tick 了…做成一定要点那个tick 的格子, 然后我要点开
+        pv 时就是点两次打开). With this set, a row click just highlights —
+        selection needs the checkbox, opening needs the double-click /
+        right-click the page wires. Default OFF: the Commander rule
+        (点行=multi-select) stands everywhere that hasn't asked. */
+    checkboxOnly?: boolean;
   };
   /**
    * Compact mode for grids embedded inside another grid's expansion row
@@ -252,6 +262,8 @@ export type DataGridProps<T> = {
    * rows render exactly as passed — byte-identical behaviour.
    */
   defaultSort?: (a: T, b: T) => number;
+  /** Open on `defaultSort` EVERY time: a clicked header sorts this visit only and is never saved or restored. For queues whose open order is the point (amendments, owner 2026-09-14 — a Status sort remembered from an earlier visit had put Requested at the bottom). */
+  sortForSessionOnly?: boolean;
   /**
    * RENDER-TIME hide overlay (Option B map narrowing, owner 2026-08-08). Keys
    * listed here are hidden IN ADDITION to the user's own hidden set, without
@@ -363,6 +375,7 @@ function DataGridInner<T>({
   hideSearch = false,
   loadedSearchLimit,
   defaultSort,
+  sortForSessionOnly = false,
   overlayHidden,
   onUserAdjustColumns,
   scrollToRow,
@@ -428,20 +441,14 @@ function DataGridInner<T>({
     return layoutStore.defaults[String(cid)]?.[serverTableKey] ?? null;
   }, [storedLayout, layoutStore, serverTableKey]);
 
-  const layout = useMemo<Layout>(
-    () =>
-      companyDefault
-        ? {
-            order: companyDefault.order,
-            hidden: companyDefault.hidden,
-            widths: companyDefault.widths,
-            pinned: companyDefault.pinned,
-            groupBy: companyDefault.groupBy,
-            sort: storedLayout.sort,
-          }
-        : storedLayout,
-    [companyDefault, storedLayout],
-  );
+  const [sessionSort, setSessionSort] = useState<Layout['sort']>(null);
+  const layout = useMemo<Layout>(() => {
+    const base: Layout = companyDefault
+      ? { order: companyDefault.order, hidden: companyDefault.hidden, widths: companyDefault.widths,
+          pinned: companyDefault.pinned, groupBy: companyDefault.groupBy, sort: storedLayout.sort }
+      : storedLayout;
+    return sortForSessionOnly ? { ...base, sort: sessionSort } : base;
+  }, [companyDefault, storedLayout, sortForSessionOnly, sessionSort]);
 
   /* Edits start from what is ON SCREEN, not from the empty stored value — so
      the first toggle on an inherited company default keeps the rest of that
@@ -452,10 +459,10 @@ function DataGridInner<T>({
   const setLayout = useCallback((updater: (l: Layout) => Layout) => {
     setLayoutRaw((prev) => {
       const next = updater(effectiveLayoutRef.current ?? prev);
-      writeDataGridLayout(scopedStorageKey, next);
+      writeDataGridLayout(scopedStorageKey, sortForSessionOnly ? { ...next, sort: null } : next);
       return next;
     });
-  }, [scopedStorageKey]);
+  }, [scopedStorageKey, sortForSessionOnly]);
 
   /* Mirror this grid's layout to the account, debounced in the store. The MOUNT
      pass is skipped: opening a list must not create a saved layout for a table
@@ -507,14 +514,19 @@ function DataGridInner<T>({
   const [columnsMenuOverKey, setColumnsMenuOverKey] = useState<string | null>(null);
   /* Per-column filters (Commander 2026-05-29): value sets, date presets,
      number ranges, custom date ranges; filterMenu anchors the open dropdown.
-     PERSISTED per grid since 2026-08-19 (dataGridFilterStorage, keyed like the
-     layout blob) — DataTable's funnels have been a saved view since 2026-07-29,
-     while these cleared whenever opening a record replaced the workspace tab. */
+     Held in IN-VISIT memory (dataGridFilterStorage, keyed like the layout blob):
+     a funnel survives opening a record and coming back — the owner's 2026-08-19
+     rule — but a fresh page load / F5 opens clean (owner 2026-09-16). The purge
+     effect erases the pre-2026-09-16 dg-filters:* localStorage keys so a stale
+     one cannot re-narrow a list. */
   const [filters, setFilters] = useState<Record<string, string[]>>(() => readDataGridFilters(scopedStorageKey).values);
   const [dateFilters, setDateFilters] = useState<Record<string, DatePreset>>(() => readDataGridFilters(scopedStorageKey).dates as Record<string, DatePreset>);
   const [numberFilters, setNumberFilters] = useState<Record<string, { min?: number; max?: number }>>(() => readDataGridFilters(scopedStorageKey).numbers);
   const [dateRangeFilters, setDateRangeFilters] = useState<Record<string, { from?: string; to?: string }>>(() => readDataGridFilters(scopedStorageKey).dateRanges);
   useEffect(() => { writeDataGridFilters(scopedStorageKey, { values: filters, dates: dateFilters, numbers: numberFilters, dateRanges: dateRangeFilters }); }, [scopedStorageKey, filters, dateFilters, numberFilters, dateRangeFilters]);
+  useEffect(() => {
+    for (const k of [scopedStorageKey, storageKey, legacyStorageKey]) if (k) purgeStoredDataGridFilters(k);
+  }, [scopedStorageKey, storageKey, legacyStorageKey]);
   const [filterMenu, setFilterMenu] = useState<{ colKey: string; x: number; y: number } | null>(null);
   // Type-to-find text for `filterType: 'numbering'` (filters the value list).
   const [filterSearch, setFilterSearch] = useState('');
@@ -1404,6 +1416,7 @@ function DataGridInner<T>({
     });
     const XLSX = await import('../../../lib/xlsx-runtime');
     const ws = XLSX.utils.json_to_sheet(data, { header: cols.map((c) => header(c)) });
+    stampNumberFormats(XLSX, ws, cols.map((c) => c.exportFormat), data.length);
     // Auto-size each column to its widest cell (header included) so the sheet is
     // legible instead of squished into one default width (Wei Siang 2026-06-20
     // "很乱很难看"). Capped so a stray long value can't blow a column out.
@@ -1435,11 +1448,9 @@ function DataGridInner<T>({
 
   // ── Sort handlers ─────────────────────────────────────────────────
   const toggleSort = (key: string) => {
-    setLayout((l) => {
-      if (!l.sort || l.sort.key !== key) return { ...l, sort: { key, dir: 'asc' } };
-      if (l.sort.dir === 'asc') return { ...l, sort: { key, dir: 'desc' } };
-      return { ...l, sort: null };
-    });
+    const cycle = (s: Layout['sort']): Layout['sort'] =>
+      (!s || s.key !== key ? { key, dir: 'asc' } : s.dir === 'asc' ? { key, dir: 'desc' } : null);
+    if (sortForSessionOnly) setSessionSort(cycle); else setLayout((l) => ({ ...l, sort: cycle(l.sort) }));
   };
 
   // ── Group toggle ─────────────────────────────────────────────────
@@ -1544,8 +1555,10 @@ function DataGridInner<T>({
           style={{ ...(rowStyle?.(row)), ...((selectable || onRowClick || expandKey != null) ? { cursor: 'pointer' } : {}) }}
           /* Row-click = multi-select (Commander rule: "点行=multi-select"); L2
              drill-down opens ONLY via the left ▸ chevron (its own handler below,
-             with stopPropagation). Row-click no longer expands. */
-          onClick={() => { setSelectedKey(key); onRowClick?.(row); if (selectable) selectable.onToggle(key); }}
+             with stopPropagation). Row-click no longer expands. checkboxOnly
+             (owner 2026-09-03) turns the toggle half off: the tick then lives
+             in the checkbox cell alone. */
+          onClick={() => { setSelectedKey(key); onRowClick?.(row); if (selectable && !selectable.checkboxOnly) selectable.onToggle(key); }}
           onDoubleClick={() => onRowDoubleClick?.(row)}
           onContextMenu={(e) => {
             if (!contextMenu) return;

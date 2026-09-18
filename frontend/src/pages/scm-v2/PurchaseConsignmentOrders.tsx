@@ -155,6 +155,7 @@ const buildColumns = (): DataGridColumn<PoHeaderRow>[] => [
     /* Accessor is JSX → export the NUMBER in ringgit (not "MYR 1,234.00") so
        Excel can SUM the column. */
     exportValue: (po) => (po.total_sen ?? 0) / 100,
+    exportFormat: 'money',
     sortFn: (a, b) => a.total_sen - b.total_sen,
   },
   {
@@ -330,12 +331,16 @@ const buildDrilldownColumns = (
   {
     key: 'unit_price', label: 'Unit Price', width: 100, align: 'right',
     accessor: (it) => fmtMoney(Number(it.unit_price_sen ?? 0), currency),
+    exportValue: (it) => it.unit_price_sen / 100,
+    exportFormat: 'rate',
     searchValue: (it) => String(it.unit_price_sen ?? 0),
     sortFn: (a, b) => Number(a.unit_price_sen ?? 0) - Number(b.unit_price_sen ?? 0),
   },
   {
     key: 'line_total', label: 'Line Total', width: 110, align: 'right',
     accessor: (it) => <span style={{ fontWeight: 700, color: '#16695f' }}>{fmtMoney(Number(it.line_total_sen ?? 0), currency)}</span>,
+    exportValue: (it) => it.line_total_sen / 100,
+    exportFormat: 'money',
     searchValue: (it) => String(it.line_total_sen ?? 0),
     sortFn: (a, b) => Number(a.line_total_sen ?? 0) - Number(b.line_total_sen ?? 0),
   },

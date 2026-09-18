@@ -21,6 +21,8 @@ import { poCellChips } from "../lib/soPoChips";
 import { useEnrichedSoListRows } from "../vendor/scm/lib/sales-order-queries";
 import { identityStorageKey } from "../lib/storageIdentity";
 import { useDebouncedSearchTerm, useSearchResultTransition } from "../hooks/useServerSearch";
+import { appendSoListFilterParams, useSoListFilters } from "../vendor/scm/lib/so-list-filter-state";
+import { MobileSoFilterSheet } from "./MobileSoFilterSheet";
 import "./mobile.css";
 
 type SoRow = {
@@ -162,7 +164,7 @@ type StatusFilter =
 const STATUS_FILTERS: { key: StatusFilter; label: string }[] = [
   { key: "all", label: "All" },
   { key: "draft", label: "Draft" },
-  { key: "confirmed", label: "Confirmed" },
+  { key: "confirmed", label: "Submitted" },
   { key: "in_production", label: "In Production" },
   { key: "ready_to_ship", label: "Ready to Ship" },
   { key: "shipped", label: "Shipped" },
@@ -198,7 +200,11 @@ export function MobileSalesOrders({ onScan, onOpen, onNew, onNewCase }: { onScan
   // Shared rule with the desktop QuickActionsFAB (auth/salesAccess) — a Sales
   // user always gets the case option; others only with the matrix grant.
   const canNewCase = !!onNewCase && quickActionAccess(user, can, pageAccess).canNewCase;
-  const [status, setStatus] = useState<StatusFilter>("all");
+  /* Status (the FIRST filter) and the second-level rows live in the URL — the
+     SAME shared state layer as the desktop list (so-list-filter-state.ts). */
+  const soFilters = useSoListFilters();
+  const status = soFilters.status as StatusFilter;
+  const filterKey = soFilters.filters.map((r) => `${r.field}:${r.op}:${r.value}`).join("|");
   const [range, setRange] = useState<Range>("all");
   const [filterOpen, setFilterOpen] = useState(false);
 
@@ -233,6 +239,7 @@ export function MobileSalesOrders({ onScan, onOpen, onNew, onNewCase }: { onScan
     if (from) p.set("from", from);
     if (to) p.set("to", to);
     if (debouncedQ) p.set("q", debouncedQ);
+    appendSoListFilterParams(p, soFilters.filters);
     return p.toString();
   };
   type SoListPage = { salesOrders?: SoRow[]; total?: number; page?: number; pageSize?: number; statusCounts?: Record<string, number>; aggregates?: { revenueSen: number; outstandingSen: number; paidSen: number } };
@@ -240,7 +247,7 @@ export function MobileSalesOrders({ onScan, onOpen, onNew, onNewCase }: { onScan
     data, isLoading, isFetching, isPlaceholderData, error, refetch,
     fetchNextPage, hasNextPage, isFetchingNextPage,
   } = useInfiniteQuery({
-    queryKey: ["mobile-so-list-paged", status, range, debouncedQ],
+    queryKey: ["mobile-so-list-paged", status, range, debouncedQ, filterKey],
     queryFn: ({ pageParam, signal }) => authedFetch<SoListPage>(`/mfg-sales-orders?${buildParams(pageParam)}`, { signal }),
     initialPageParam: 0,
     getNextPageParam: (last, pages) => {
@@ -274,8 +281,8 @@ export function MobileSalesOrders({ onScan, onOpen, onNew, onNewCase }: { onScan
      balance to positive (the historical prototype behaviour), and keep "(loaded)". */
   const aggregates = data?.pages[0]?.aggregates;
   /* Full-set per-status counts (page-0 response) — computed server-side over
-     the WHOLE scope+company set, ignoring the status/period/search filters,
-     exactly like the desktop pills. Absent on an old backend → the sheet
+     the scope+company set narrowed by the second-level filters (not by the
+     status/period/search), exactly like the desktop pills. Absent on an old backend → the sheet
      simply omits the numbers instead of showing fake zeros. */
   const statusCounts = data?.pages[0]?.statusCounts;
   const summary = useMemo(() => {
@@ -318,7 +325,7 @@ export function MobileSalesOrders({ onScan, onOpen, onNew, onNewCase }: { onScan
     return () => io.disconnect();
   }, [hasNextPage, isFetchingNextPage, fetchNextPage, rows.length]);
 
-  const filterActive = status !== "all" || range !== "all";
+  const filterActive = status !== "all" || range !== "all" || soFilters.filters.length > 0;
 
   /* ── Item 2 — "SO xxx created as draft" notification ──────────────────────
      On mount, pull this rep's recent scan jobs and toast any DONE job (with a
@@ -669,58 +676,22 @@ export function MobileSalesOrders({ onScan, onOpen, onNew, onNewCase }: { onScan
         )}
       </div>
 
-      {/* Status filter bottom-sheet — replaces the old blind status-cycle. Lists
-          the real SO status options; the selected one shows a check + highlight,
-          and a non-"All" pick keeps the funnel's gold dot lit. */}
+      {/* Filter sheet — status list (first filter) + MORE FILTERS rows (owner-
+          approved layout 2026-09-14). MobileSoFilterSheet.tsx. */}
       {filterOpen && (
-        <div className="sheet-bd" onClick={() => setFilterOpen(false)}>
-          <div className="sheet" onClick={(e) => e.stopPropagation()} style={{ maxHeight: "70%" }}>
-            <div className="grab" />
-            <div className="sheet-head">
-              <div>
-                <div className="eyebrow">Filter</div>
-                <div className="scr-title" style={{ fontSize: 17 }}>Order status</div>
-              </div>
-              <button className="sheet-x" onClick={() => setFilterOpen(false)} aria-label="Close">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
-              </button>
-            </div>
-            <div className="sheet-scroll" style={{ gap: 8 }}>
-              {/* Full vocabulary + live counts (desktop-pill parity). The
-                  "Other" catch-all row appears only when the server counts
-                  rows outside the vocabulary — or while it is the active
-                  filter, so the selection can never vanish from the sheet. */}
-              {[
-                ...STATUS_FILTERS,
-                ...((statusCounts?.other ?? 0) > 0 || status === "other"
-                  ? [{ key: "other" as StatusFilter, label: "Other" }]
-                  : []),
-              ].map(({ key, label }) => {
-                const on = status === key;
-                return (
-                  <button
-                    key={key}
-                    onClick={() => { setStatus(key); setFilterOpen(false); }}
-                    className="mcard"
-                    style={{ justifyContent: "space-between", ...(on ? { borderColor: "var(--brand)", background: "var(--brand-bg)" } : null) }}
-                  >
-                    <span className="ml" style={on ? { color: "var(--brand-d)" } : undefined}>{label}</span>
-                    <span style={{ display: "flex", alignItems: "center", gap: 8, flex: "none" }}>
-                      {statusCounts && (
-                        <span className="money" style={{ fontSize: 12, fontWeight: 700, color: on ? "var(--brand-d)" : "var(--mut)" }}>
-                          {statusCounts[key] ?? 0}
-                        </span>
-                      )}
-                      {on && (
-                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="var(--brand-d)" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5" /></svg>
-                      )}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        </div>
+        <MobileSoFilterSheet
+          appliedStatus={status}
+          appliedFilters={soFilters.filters}
+          statusOptions={[
+            ...STATUS_FILTERS,
+            ...((statusCounts?.other ?? 0) > 0 || status === "other" ? [{ key: "other" as StatusFilter, label: "Other" }] : []),
+          ]}
+          statusCounts={statusCounts}
+          q={debouncedQ}
+          onApply={(next) => { soFilters.apply(next); setFilterOpen(false); }}
+          onClear={() => { soFilters.clear(); setFilterOpen(false); }}
+          onClose={() => setFilterOpen(false)}
+        />
       )}
 
       {/* Floating green "+" FAB. When a Service Case can also be created it opens

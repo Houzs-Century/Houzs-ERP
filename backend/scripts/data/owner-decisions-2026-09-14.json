@@ -1,0 +1,58 @@
+{
+  "_what": "The owner's answers of 2026-09-14 to the five decisions put to him, written the moment they were given (memory owner-answers-must-be-written-down). Each carries his exact words and what it authorises.",
+  "decisions": [
+    {
+      "id": 1,
+      "topic": "HC-SO-013353 `2SIDE DRAWER`",
+      "words": "「1 left right都要」",
+      "means": "A PAIR - Left Drawer AND Right Drawer - reconfirmed after seeing three one-sided drawings. Recorded on the ruling in drawer-side-owner-rulings.json."
+    },
+    {
+      "id": 2,
+      "topic": "the 12 chains refused because their stock bucket is shared",
+      "words": "「2 怎么可能我们的库存是分item的不是吗」",
+      "means": "NOT a choice - a challenge to the explanation, and a fair one. Stock is keyed (warehouse, item_code, variant_key), so it IS per item and per spec, and several orders for the same item and spec draw from ONE pool. His intuition points at the better fix: a received lot records which receipt it came in on, so an order's OWN goods can be told apart from the pool. The next step is to measure, per refused chain, whether its lots are traceable to its own receipt and untouched by any other order's consumption - and move only those, instead of refusing or splitting by guessed quantity."
+    },
+    {
+      "id": 3,
+      "topic": "HC-SO-012046 / HC-SO-013224 - shipped SKUs differ from the factory's build",
+      "words": "「3 确定 from supplier 看那个 code 是正确的 然后处理掉了再做A 可是确保 stocks 是准确的」",
+      "means": "Three steps in order: (1) verify against the supplier export that the supplier's code is the correct one; (2) correct the documents to it; (3) THEN make the stock adjustment - and the stock must end accurate. The adjustment must not write an OUT against stock we do not hold (docs/bugs/0722)."
+    },
+    {
+      "id": 4,
+      "topic": "the 4 sofa POs whose pieces differ from the supplier",
+      "words": "「4 要跟工厂一样 A」",
+      "docs": [
+        "HC-PO-010086",
+        "HC-PO-010041",
+        "HC-PO-2609-051",
+        "HC-PO-010087"
+      ],
+      "means": "Follow the factory. Correct our documents to the supplier's pieces, with the stock-aware discipline wherever goods are already in.",
+      "amended": {
+        "doc": "HC-PO-010086",
+        "finding": "propose-supplier-sofa-corrections run 34799661171 named it in WE AMENDED IT AFTER THEIR CUT: HC-PO-010086/A1 APPROVED, raised 2026-09-10, supplier export SO-2609-021 cut 2026-09-01. Ours 8030-2S, the supplier 5540-1A(LHF)+5540-1A(RHF).",
+        "words": "「那就根据amendment的」",
+        "means": "HC-PO-010086 follows OUR amended purchase order, NOT the supplier export. Decision #4 (follow the factory) applies to the other three only. This is the owner's standing rule that an amendment we raised after the supplier's cut is newer than the export - reaffirmed on the one document where the two rules collided.",
+        "consequence": "If A1 is what made the sofa a 2S, the FACTORY's own record still shows the pre-amendment build and may be producing it. That is a message to the supplier, not a change to our documents - see probe-po-amendment-content.",
+        "superseded": {
+          "words": "「这个PO 是1A+1A」",
+          "when": "2026-09-14, later the same day",
+          "means": "HC-PO-010086 (and its sales order HC-SO-013346) is 1A(LHF)+1A(RHF), two separate single-arm pieces at 35\" - which is also what the supplier export states. The 「那就根据amendment的」 answer above is SUPERSEDED: the amendment never changed the build (probe-po-amendment-content run 34800542371: A1 re-stated 8030-2S; only the pillow code moved), so there was no amended build to follow. Evidence he showed: purchasing \"PO10086 we stated 2s / Supplier 1A+1A can double check\", the customer chat \"separate 1+1\" / \"Singapore lift\", and the slip (two 35\" boxes, arm on each outer end, TV below). Written as a build in sofa-compartment-corrections-owner-not-in-file.json."
+        }
+      },
+      "carriedOut": {
+        "words": "「HC-PO-2609-051 改成跟工厂一样；HC-PO-010041 删掉重复的两行（9058-1A(RHF)、9058-1NA）。这个做掉」",
+        "when": "2026-09-15",
+        "means": "Two of the four, done. HC-PO-2609-051 (with HC-SO-013475): the 35-inch 8030-2S becomes 1A(LHF) + 1A(RHF), the factory's SO-2609-109 build; entries in sofa-compartment-corrections-owner-not-in-file.json. HC-PO-010041: its build already matched the factory (L(LHF)+1NA+1A(RHF)); what differed was two DUPLICATE rows, a second 9058-1A(RHF) and a second 9058-1NA with no sales link, removed by remove-duplicate-sofa-po-rows-2026-09-15.mjs. HC-PO-010086 was done 2026-09-14. HC-PO-010087 is NOT covered by this instruction."
+      }
+    },
+    {
+      "id": 5,
+      "topic": "`Separate Backrest Packing` is retired, 2 lines use a legacy spelling of it",
+      "words": "「5 查看有什么类似的 seperate packing for backerest 的 special 嘛 没有的话就用 1 这个」",
+      "means": "First look for an ACTIVE option that means the same thing; if there is one, fold the 2 lines onto it. If there is none, re-activate `Separate Backrest Packing` and fold onto that."
+    }
+  ]
+}

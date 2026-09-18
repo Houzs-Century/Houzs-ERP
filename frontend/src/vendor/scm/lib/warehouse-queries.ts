@@ -34,6 +34,9 @@ export type Rack = {
   warehouse_id: string;
   rack: string;
   position: string | null;
+  /* Manual floor-plan zone override (e.g. "ZONE A"); null = derive from the
+     rack number (WAREHOUSE_ZONES in warehouse-floorplan.ts). */
+  zone: string | null;
   status: RackStatus;
   reserved: boolean;
   notes: string | null;
@@ -68,6 +71,34 @@ export function useRacks(opts?: { warehouseId?: string }) {
   });
 }
 
+/* ── Cross-company rack view (READ ONLY) ──────────────────────────────────
+   The same physical warehouse exists as one record per company; this feed
+   WIDENS across every company the caller may see and tags each rack with its
+   company + warehouse code, so the UI can show one combined list. Writes stay
+   on the per-company endpoints. */
+export type CrossCompanyRack = Rack & {
+  company_id: number | null;
+  company_code: string | null;
+  warehouse_code: string | null;
+  warehouse_name: string | null;
+};
+
+export type CrossCompanyRacks = {
+  racks: CrossCompanyRack[];
+  warehouses: { code: string; name: string }[];
+  companies: { id: number; code: string | null }[];
+  summary: RackSummary;
+};
+
+export function useCrossCompanyRacks() {
+  return useQuery({
+    queryKey: ['warehouse', 'cross-company'],
+    queryFn: () => authedFetch<CrossCompanyRacks>('/warehouse/cross-company'),
+    staleTime: 30_000,
+    retry: retryUnlessClientError,
+  });
+}
+
 /* ── Rack CRUD ────────────────────────────────────────────────────────────
    HOUZS VENDOR — Desktop Racks & Bins page (feat/desktop-rack-management). The
    original slice pulled in only the useRacks() READ hook (the GRN pages never
@@ -92,8 +123,10 @@ export type RackScope =
   | { allWarehouses: true };
 
 export type CreateRackBody =
-  | (RackScope & { rack: string; position?: string; reserved?: boolean; notes?: string })
-  | (RackScope & { count: number; prefix?: string });
+  | (RackScope & { rack: string; position?: string; zone?: string; reserved?: boolean; notes?: string })
+  /* Seed: `count` alone keeps the flat "<prefix> 1..N"; add `series` +
+     `levels` for the aisle.level grid (shared/rack-labels.ts). */
+  | (RackScope & { count: number; prefix?: string; series?: string; levels?: number });
 
 export function useCreateRack() {
   const qc = useQueryClient();
@@ -111,7 +144,7 @@ export function useCreateRack() {
 export function useUpdateRack() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; rack?: string; position?: string; notes?: string; reserved?: boolean }) =>
+    mutationFn: ({ id, ...body }: { id: string; rack?: string; position?: string; zone?: string | null; notes?: string; reserved?: boolean }) =>
       authedFetch<{ rack: Rack; status: RackStatus }>(`/warehouse/racks/${encodeURIComponent(id)}`, {
         method: 'PATCH',
         body: JSON.stringify(body),

@@ -42,13 +42,69 @@ describe('deriveBalance is signed', () => {
     )).toBe(-25_000);
   });
 
-  /* The floor that must STAY. A zero total is an order whose header has not
-     been recomputed — true of every AutoCount import, where total_revenue_sen
-     is 0 on 2,687 of production's 2,824 live orders — not an order that has
-     been credited. Without this guard the legacy book turns red overnight. */
+  /* The floor that must STAY. NO total at all is an order whose header has not
+     been recomputed, not an order that has been credited. Without this guard
+     such an order turns red for money nobody over-collected. */
   test('a zero total answers 0 rather than a huge false credit', () => {
     expect(deriveBalance({ local_total_sen: 0, paid_sen_total: 990_000 })).toBe(0);
     expect(deriveBalance({ paid_sen_total: 990_000 })).toBe(0);
+  });
+});
+
+/* ── The server 0 that outranked a computable answer ────────────────────────
+   The owner's order, 2026-09-08, on his phone: Total RM 3,200.00, Paid
+   RM 1,600.00, Balance RM 0.00. `balance_sen` is stamped on every response, so
+   `!= null` handed the server's 0 through and this function's own correct
+   fallback was never reached. The server half is fixed too (soBalanceSen now
+   falls back to local_total_sen); these pin the client half, which is what a
+   cached or pre-deploy payload still goes through. */
+describe('a server balance of 0 does not outrank a total we can subtract from', () => {
+  test('the owner\'s order: 3,200 total, 1,600 paid, server says 0', () => {
+    expect(deriveBalance({
+      balance_sen: 0, local_total_sen: 320_000, paid_sen_total: 160_000,
+    })).toBe(160_000);
+  });
+
+  test('over-collection stays signed through the same path', () => {
+    expect(deriveBalance({
+      balance_sen: 0, local_total_sen: 320_000, paid_sen_total: 400_000,
+    })).toBe(-80_000);
+  });
+
+  test('it sums the ledger when the server stamped 0 and no paid total', () => {
+    expect(deriveBalance(
+      { balance_sen: 0, local_total_sen: 320_000 },
+      [{ amount_sen: 160_000 }],
+    )).toBe(160_000);
+  });
+
+  test('a genuinely settled order still reads 0 — same answer, computed', () => {
+    expect(deriveBalance({
+      balance_sen: 0, local_total_sen: 320_000, paid_sen_total: 320_000,
+    })).toBe(0);
+  });
+
+  /* A NON-zero server balance is still authoritative: it is the only figure
+     that carries the legacy header deposit rule (soPaidSen), which the client
+     cannot see. */
+  test('a non-zero server balance still wins over the local subtraction', () => {
+    expect(deriveBalance({
+      balance_sen: 200_000, local_total_sen: 320_000, paid_sen_total: 160_000,
+    })).toBe(200_000);
+  });
+
+  /* A migrated order whose local_total_sen is absent too has no computable
+     answer, so the server's 0 stands rather than becoming a guess. */
+  test('with no total at all the server 0 is still what is shown', () => {
+    expect(deriveBalance({ balance_sen: 0, paid_sen_total: 160_000 })).toBe(0);
+  });
+
+  /* total_revenue_sen is the fallback's fallback — a recomputed order that
+     carries it but no local_total_sen must not read as "no total". */
+  test('total_revenue_sen answers when local_total_sen is absent', () => {
+    expect(deriveBalance({
+      balance_sen: 0, total_revenue_sen: 320_000, paid_sen_total: 160_000,
+    })).toBe(160_000);
   });
 });
 

@@ -15,12 +15,19 @@
 //
 // Everything that decides anything lives on the server (acc/pbb-advice reads
 // the PDF, acc/payout-advice compares); this screen uploads and repeats what
-// the server said, refusals verbatim (§2.14).
+// the server said, refusals verbatim (§2.14). Several advices go up in one
+// pick (owner 2026-09-12: 要支持上传多份; docs/bugs/0839) — each is sent on its
+// own, in the order picked, and answered on its own line, so one unreadable
+// file never hides what the others said. This tab lives on the Merchant
+// reconciliation screen only (owner: merchant reconciliation 那边上传就好).
 // ----------------------------------------------------------------------------
 
 import { useState } from 'react';
 import { AlertTriangle, Upload } from 'lucide-react';
-import { usePayouts, useUploadPayoutAdvice, type Payout, type PayoutDay } from './settlement-queries';
+import {
+  usePayouts, useUploadPayoutAdvice, usePostPayoutCharge, useUndoPayoutCharge,
+  type Payout, type PayoutDay, type ChargeAccount,
+} from './settlement-queries';
 import {
   ICON, fmt, btn, cell, num, table, headRow, rowLine, softText, danger, good, panel, refusalText,
 } from './settlement-ui';
@@ -30,41 +37,54 @@ import grid from './MerchantRecon.module.css';
 export const PayoutAdviceTab = () => {
   const q = usePayouts();
   const upload = useUploadPayoutAdvice();
-  const [file, setFile] = useState<{ name: string; contentBase64: string } | null>(null);
-  const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
+  const [files, setFiles] = useState<Array<{ name: string; contentBase64: string }>>([]);
+  const [results, setResults] = useState<Array<{ name: string; ok: boolean; text: string }>>([]);
+  const [sending, setSending] = useState(false);
 
   const payouts = q.data?.payouts ?? [];
+  /* What the bank-charge dialog needs (docs/bugs/0787): the accounts it may
+     offer, and each acquirer's fee account to start on. */
+  const chargeAccounts = q.data?.chargeAccounts ?? [];
+  const feeAccountByAcquirer = q.data?.feeAccountByAcquirer ?? {};
 
   /* The PDF goes up as base64, not text — a PDF read as text is mangled before
      the server ever sees it. readAsDataURL's prefix is fine; the server strips
      everything up to the comma. */
-  const readFile = (picked: FileList | null) => {
-    setResult(null);
-    const f = picked?.[0];
-    if (!f) { setFile(null); return; }
-    const reader = new FileReader();
-    reader.onload = () => setFile({ name: f.name, contentBase64: String(reader.result ?? '') });
-    reader.readAsDataURL(f);
+  const readFiles = (picked: FileList | null) => {
+    setResults([]);
+    const list = Array.from(picked ?? []);
+    if (list.length === 0) { setFiles([]); return; }
+    Promise.all(list.map((f) => new Promise<{ name: string; contentBase64: string }>((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve({ name: f.name, contentBase64: String(reader.result ?? '') });
+      reader.readAsDataURL(f);
+    }))).then(setFiles).catch(() => setFiles([]));
   };
 
-  const send = () => {
-    if (!file) return;
-    setResult(null);
-    /* Only Public Bank sends an advice this system can read, so nobody is asked
-       which acquirer — the server refuses any other by name. */
-    upload.mutate({ acquirerCode: 'PBB', fileName: file.name, contentBase64: file.contentBase64 }, {
-      onSuccess: (r) => {
-        setFile(null);
-        setResult({
-          ok: true,
+  const send = async () => {
+    if (files.length === 0 || sending) return;
+    setSending(true);
+    setResults([]);
+    const out: Array<{ name: string; ok: boolean; text: string }> = [];
+    for (const file of files) {
+      /* Only Public Bank sends an advice this system can read, so nobody is asked
+         which acquirer — the server refuses any other by name. */
+      try {
+        const r = await upload.mutateAsync({ acquirerCode: 'PBB', fileName: file.name, contentBase64: file.contentBase64 });
+        out.push({
+          name: file.name, ok: true,
           text: `Read: ${fmt(r.status.netSen)} across ${r.status.days.length} settlement day(s).`
             + (r.status.readyToReceive
               ? ' Every day agrees — the bank credit will match itself.'
               : ` ${r.status.blockedBy ?? ''}`),
         });
-      },
-      onError: (err) => setResult({ ok: false, text: refusalText(err, 'The advice could not be read.') }),
-    });
+      } catch (err) {
+        out.push({ name: file.name, ok: false, text: refusalText(err, 'The advice could not be read.') });
+      }
+      setResults([...out]);
+    }
+    setFiles([]);
+    setSending(false);
   };
 
   return (
@@ -77,19 +97,19 @@ export const PayoutAdviceTab = () => {
           credit books itself against those reports on the bank statement screen.
         </div>
         <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
-          <input type="file" accept=".pdf" aria-label="Payment advice PDF"
-            onChange={(e) => readFile(e.target.files)} style={{ fontSize: 'var(--fs-13)' }} />
-          <button type="button" style={btn(true, !file || upload.isPending)}
-            disabled={!file || upload.isPending} onClick={send}>
-            <Upload {...ICON} /> {upload.isPending ? 'Reading…' : 'Upload payment advice'}
+          <input type="file" accept=".pdf" multiple aria-label="Payment advice PDF"
+            onChange={(e) => readFiles(e.target.files)} style={{ fontSize: 'var(--fs-13)' }} />
+          <button type="button" style={btn(true, files.length === 0 || sending)}
+            disabled={files.length === 0 || sending} onClick={() => void send()}>
+            <Upload {...ICON} /> {sending ? 'Reading…' : files.length > 1 ? `Upload ${files.length} payment advices` : 'Upload payment advice'}
           </button>
         </div>
-        {result && (
-          <div style={{ fontSize: 'var(--fs-13)', color: result.ok ? good : danger, display: 'flex', gap: 6 }}>
-            {!result.ok && <AlertTriangle {...ICON} />}
-            <span>{result.text}</span>
+        {results.map((r) => (
+          <div key={r.name} style={{ fontSize: 'var(--fs-13)', color: r.ok ? good : danger, display: 'flex', gap: 6 }}>
+            {!r.ok && <AlertTriangle {...ICON} />}
+            <span><b>{r.name}</b> — {r.text}</span>
           </div>
-        )}
+        ))}
       </section>
 
       <section className="space-y-3">
@@ -101,7 +121,10 @@ export const PayoutAdviceTab = () => {
             it names is checked against the reports already reconciled.
           </div>
         )}
-        {payouts.map((p) => <AdviceCard key={p.id} payout={p} />)}
+        {payouts.map((p) => (
+          <AdviceCard key={p.id} payout={p} chargeAccounts={chargeAccounts}
+            defaultAccount={Object.hasOwn(feeAccountByAcquirer, p.acquirer_code) ? feeAccountByAcquirer[p.acquirer_code] : null} />
+        ))}
       </section>
     </div>
   );
@@ -111,7 +134,9 @@ export const PayoutAdviceTab = () => {
    Re-checked by the server on every read, not read back from upload time: a
    report uploaded since must count, and one re-opened since must block. */
 
-const AdviceCard = ({ payout }: { payout: Payout }) => {
+const AdviceCard = ({ payout, chargeAccounts, defaultAccount }: {
+  payout: Payout; chargeAccounts: ChargeAccount[]; defaultAccount: string | null;
+}) => {
   const s = payout.status;
   const reportCount = new Set(s.days.map((d) => d.batchId).filter((id) => id != null)).size;
 
@@ -163,7 +188,9 @@ const AdviceCard = ({ payout }: { payout: Payout }) => {
               <td style={num}>{fmt(d.adviceNetSen)}</td>
               <td style={cell}>{d.fileName ?? <span className={grid.sub}>—</span>}</td>
               <td style={num}>{d.reportNetSen == null ? '—' : fmt(d.reportNetSen)}</td>
-              <td style={cell}><DayStanding day={d} /></td>
+              <td style={cell}>
+                <DayStanding day={d} payoutId={payout.id} chargeAccounts={chargeAccounts} defaultAccount={defaultAccount} />
+              </td>
             </tr>
           ))}
         </tbody>
@@ -172,13 +199,49 @@ const AdviceCard = ({ payout }: { payout: Payout }) => {
   );
 };
 
-const DayStanding = ({ day }: { day: PayoutDay }) => {
+const DayStanding = ({ day, payoutId, chargeAccounts, defaultAccount }: {
+  day: PayoutDay; payoutId: number; chargeAccounts: ChargeAccount[]; defaultAccount: string | null;
+}) => {
+  const undo = useUndoPayoutCharge();
+  const [asking, setAsking] = useState(false);
   switch (day.state) {
     case 'AGREES':
-      return <span className={grid.good}>agrees</span>;
-    case 'DIFFERS':
-      /* BOTH numbers are already on the row; the finding is their distance. */
-      return <span className={grid.bad}>differs by {fmt(Math.abs(day.differenceSen ?? 0))}</span>;
+      /* A day that agrees BECAUSE a charge was booked says so, with the money
+         and where it went — and can be undone from here (docs/bugs/0787). */
+      return day.chargeSen > 0 ? (
+        <span className={grid.good}>
+          agrees · bank charge {fmt(day.chargeSen)} → {day.chargeAccountCode ?? '?'}
+          {day.chargeNote ? <span className={grid.sub}> ({day.chargeNote})</span> : null}
+          {' '}
+          <button type="button" style={linkBtn} disabled={undo.isPending}
+            onClick={() => undo.mutate({ payoutId, settledOn: day.settledOn })}>
+            {undo.isPending ? 'Undoing…' : 'Undo'}
+          </button>
+          {/* A refusal reaches the person who pressed Undo, in the server's own sentence. */}
+          {undo.isError && (
+            <span style={{ color: danger, fontSize: 'var(--fs-12)', marginLeft: 6 }}>{refusalText(undo.error, 'The charge could not be undone.')}</span>
+          )}
+        </span>
+      ) : <span className={grid.good}>agrees</span>;
+    case 'DIFFERS': {
+      /* BOTH numbers are already on the row; the finding is their distance.
+         When the bank paid LESS than the report, that distance may be a charge
+         it deducted — offered here, on the day, booked to the account Finance
+         picks (owner 2026-09-10: 可以让我点了后选这笔进什么户口吗). */
+      const short = day.differenceSen != null && day.differenceSen > 0 && day.chargeSen === 0;
+      return (
+        <span>
+          <span className={grid.bad}>differs by {fmt(Math.abs(day.differenceSen ?? 0))}</span>
+          {short && !asking && (
+            <button type="button" style={linkBtn} onClick={() => setAsking(true)}>Bank deducted a charge</button>
+          )}
+          {short && asking && (
+            <ChargeForm payoutId={payoutId} day={day} chargeAccounts={chargeAccounts}
+              defaultAccount={defaultAccount} onClose={() => setAsking(false)} />
+          )}
+        </span>
+      );
+    }
     case 'REPORT_MISSING':
       return <span style={{ color: danger }}>no report uploaded for this day</span>;
     case 'REPORT_NOT_RECONCILED':
@@ -188,4 +251,47 @@ const DayStanding = ({ day }: { day: PayoutDay }) => {
         </span>
       );
   }
+};
+
+const linkBtn: React.CSSProperties = {
+  marginLeft: 8, border: '1px solid var(--c-line, rgba(34,31,32,0.3))', background: 'none',
+  borderRadius: 6, padding: '2px 8px', cursor: 'pointer', fontSize: 'var(--fs-12)', fontWeight: 600,
+};
+
+/* The ask: how much the bank deducted (the whole difference unless told
+   otherwise), which account it goes to (Finance's choice, starting on the
+   acquirer's fee account), and what it was for (required — the corrections
+   report prints it). Every refusal is the server's own sentence. */
+const ChargeForm = ({ payoutId, day, chargeAccounts, defaultAccount, onClose }: {
+  payoutId: number; day: PayoutDay; chargeAccounts: ChargeAccount[]; defaultAccount: string | null; onClose: () => void;
+}) => {
+  const post = usePostPayoutCharge();
+  const difference = Math.max(0, day.differenceSen ?? 0);
+  const [amount, setAmount] = useState((difference / 100).toFixed(2));
+  const [account, setAccount] = useState(defaultAccount ?? (chargeAccounts.length > 0 ? chargeAccounts[0].accountCode : ''));
+  const [note, setNote] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const amountSen = Math.round(Number(amount) * 100);
+  const ready = Number.isFinite(amountSen) && amountSen > 0 && account !== '' && note.trim() !== '';
+  return (
+    <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginLeft: 8 }}>
+      <input aria-label="Charge amount" value={amount} onChange={(e) => setAmount(e.target.value)}
+        inputMode="decimal" style={{ width: 90, fontSize: 'var(--fs-12)', padding: '2px 6px' }} />
+      <select aria-label="Charge account" value={account} onChange={(e) => setAccount(e.target.value)}
+        style={{ fontSize: 'var(--fs-12)', padding: '2px 6px', maxWidth: 220 }}>
+        {chargeAccounts.map((a) => <option key={a.accountCode} value={a.accountCode}>{a.accountCode} · {a.accountName}</option>)}
+      </select>
+      <input aria-label="What the bank deducted this for" value={note} onChange={(e) => setNote(e.target.value)}
+        placeholder="PBB card-terminal application fee" style={{ width: 220, fontSize: 'var(--fs-12)', padding: '2px 6px' }} />
+      <button type="button" style={btn(true, !ready || post.isPending)} disabled={!ready || post.isPending}
+        onClick={() => post.mutate(
+          { payoutId, settledOn: day.settledOn, amountSen, accountCode: account, note: note.trim() },
+          { onSuccess: onClose, onError: (e) => setError(refusalText(e, 'The charge could not be booked.')) },
+        )}>
+        {post.isPending ? 'Booking…' : 'Book charge'}
+      </button>
+      <button type="button" style={linkBtn} onClick={onClose}>Cancel</button>
+      {error && <span style={{ color: danger, fontSize: 'var(--fs-12)' }}>{error}</span>}
+    </span>
+  );
 };

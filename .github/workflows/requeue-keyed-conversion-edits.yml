@@ -1,0 +1,57 @@
+name: Re-send refused DO / GR edits once every line is keyed (plan / apply)
+
+# Queues, through the Worker's own enqueueEdit, the delivery order and goods
+# receipt edits the write-back refused for a keyless line, for documents whose
+# lines now all carry their AutoCount key
+# (backend/scripts/requeue-keyed-conversion-edits.mjs). Pairs with
+# stamp-conversion-line-keys.yml, which fills the keys. Default 'plan' queues
+# nothing and lists the documents; 'apply' queues them and verifies.
+#
+# Manual only, own concurrency group.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (default, queues NOTHING) or apply"
+        required: true
+        default: "plan"
+        type: choice
+        options: ["plan", "apply"]
+      confirm:
+        description: "Required for apply: send the refused delivery order and receipt edits again"
+        required: false
+        default: ""
+      doc_nos:
+        description: "Optional: plan exactly these DO / GR numbers, comma separated, refusal or not (HC-GRN-2609-060)"
+        required: false
+        default: ""
+
+concurrency:
+  group: requeue-keyed-conversion-edits
+  cancel-in-progress: false
+
+jobs:
+  requeue:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      # tsx: the script imports the Worker's enqueueEdit from src/.
+      - run: npx tsx scripts/requeue-keyed-conversion-edits.mjs
+        env:
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          DOC_NOS: ${{ inputs.doc_nos }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
+          NODE_OPTIONS: --dns-result-order=ipv4first

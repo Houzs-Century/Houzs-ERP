@@ -34,9 +34,17 @@
 // image/webp). So the bytes are normalised here — decoded via
 // createImageBitmap and re-encoded to a small square JPEG — which also gives
 // the uniform square tiles the mockup shows without distorting aspect ratio
-// (centre-crop). Only `.thumb` objects are ever fetched, never originals:
-// embedding phone-camera originals would balloon the PDF.
+// (centre-crop). The `.thumb` sibling is fetched FIRST, but a line whose thumb
+// 404s falls back to its original (fetchLinePhotoForPdf) — every AutoCount
+// cutover photo (ac-<DtlKey>-<n>) predates the thumbnail pipeline and has no
+// sibling, and a thumb-only fetch dropped exactly those from the print while
+// the row still read " (photo)" (docs/bugs/0815). The fallback is size-safe:
+// blobToSquarePdfImage downscales to PDF_THUMB_PX and never upscales, so the
+// EMBEDDED bytes are the same whichever object was fetched — only the bytes
+// pulled over the wire at print time differ.
 // ----------------------------------------------------------------------------
+
+import { THUMB_KEY_SUFFIX } from '../../../lib/imagePipeline';
 
 /** Appended to a photo-carrying line's first description line. WinAnsi only —
  *  see the header: one CJK char here re-fonts every photo-carrying PDF. */
@@ -326,6 +334,32 @@ export async function blobToSquarePdfImage(blob: Blob): Promise<PdfPhotoImage | 
     }
   } catch {
     return null;
+  }
+}
+
+/**
+ * Thumb-first, base-on-404 — the single sanctioned way a document PDF fetches
+ * one line photo, shared by the SO / PO / DO generators. Mirrors the on-screen
+ * strip's loader (so-line-photo.ts `loadPhotoBlob`): the `.thumb` sibling is
+ * ABSENT for every photo that predates thumbnails or was imported outside the
+ * client compress pipeline — the AutoCount cutover keys, `ac-<DtlKey>-<n>` — so
+ * a thumb-only fetch silently dropped exactly those lines from the print while
+ * their description still read " (photo)" (docs/bugs/0815). Falling back to the
+ * original is size-safe: blobToSquarePdfImage downscales to PDF_THUMB_PX and
+ * never upscales, so the EMBEDDED bytes are the same either way — only the bytes
+ * pulled over the wire at print time differ.
+ *
+ * `fetchExact` is the caller's authed, endpoint-specific reader; it is handed
+ * the FULL key to fetch (the `.thumb` sibling first, then the base key).
+ */
+export async function fetchLinePhotoForPdf(
+  fetchExact: (fullKey: string) => Promise<Blob>,
+  baseKey: string,
+): Promise<Blob> {
+  try {
+    return await fetchExact(baseKey + THUMB_KEY_SUFFIX);
+  } catch {
+    return await fetchExact(baseKey);
   }
 }
 

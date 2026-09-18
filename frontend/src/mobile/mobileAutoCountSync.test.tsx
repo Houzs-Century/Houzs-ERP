@@ -43,6 +43,7 @@ const row = (over: Partial<AcOutboxRow> = {}): AcOutboxRow => ({
   can_requeue: false,
   can_send_now: false,
   ac_doc_no: null,
+  archived_at: null,
   created_at: "2026-08-15T00:00:00.000Z",
   updated_at: "2026-08-15T00:00:00.000Z",
   sent_at: null,
@@ -51,7 +52,7 @@ const row = (over: Partial<AcOutboxRow> = {}): AcOutboxRow => ({
 
 const payload = (over: Partial<AcOutboxResponse> = {}): AcOutboxResponse => ({
   writeback: { value: "1", on: true, scope: "1" },
-  counts: { pending: 0, sent: 0, failed: 0, skipped: 0, requeued: 0, attention: 0, total: 0 },
+  counts: { pending: 0, sent: 0, failed: 0, skipped: 0, requeued: 0, attention: 0, archived: 0, total: 0 },
   oldest_pending: null,
   rows: [],
   truncated: false,
@@ -111,7 +112,7 @@ async function openReplacedGroup() {
 }
 
 const busy = payload({
-  counts: { pending: 1, sent: 1, failed: 1, skipped: 1, requeued: 1, attention: 2, total: 5 },
+  counts: { pending: 1, sent: 1, failed: 1, skipped: 1, requeued: 1, attention: 2, archived: 0, total: 5 },
   rows: [
     row({ id: "f", doc_no: "SO-F", doc_type: "SO", status: "failed", state: "failed", attempts: 6,
       needs_attention: true, can_requeue: true,
@@ -359,7 +360,7 @@ describe("MobileAutoCountSync — a thousand documents", () => {
     await mount(payload({
       rows: [row({ id: "s", doc_no: "GR-S", doc_type: "GR", op: "po_to_gr", status: "sent",
         state: "sent", ac_doc_no: "GR-00123", sent_at: "2026-08-15T01:00:00.000Z" })],
-      counts: { pending: 0, sent: 1, failed: 0, skipped: 0, requeued: 0, attention: 0, total: 1 },
+      counts: { pending: 0, sent: 1, failed: 0, skipped: 0, requeued: 0, attention: 0, archived: 0, total: 1 },
     }));
     await screen.findByText("GR-S");
     const card = cardOf("GR-S");
@@ -371,7 +372,7 @@ describe("MobileAutoCountSync — a thousand documents", () => {
   it("does not put several hundred cards into the page at once", async () => {
     await mount(payload({
       rows: manyRows(400),
-      counts: { pending: 0, sent: 400, failed: 0, skipped: 0, requeued: 0, attention: 0, total: 400 },
+      counts: { pending: 0, sent: 400, failed: 0, skipped: 0, requeued: 0, attention: 0, archived: 0, total: 400 },
     }));
     await screen.findByText("SO-0");
     const mounted = document.querySelectorAll("[data-ac-row]").length;
@@ -382,7 +383,7 @@ describe("MobileAutoCountSync — a thousand documents", () => {
   it("says nothing needs attention rather than telling you to try another filter", async () => {
     await mount(payload({
       rows: [],
-      counts: { pending: 0, sent: 900, failed: 0, skipped: 0, requeued: 0, attention: 0, total: 900 },
+      counts: { pending: 0, sent: 900, failed: 0, skipped: 0, requeued: 0, attention: 0, archived: 0, total: 900 },
     }));
     expect(await screen.findByText(/Nothing needs your attention/)).toBeTruthy();
     expect(screen.queryByText(/Try another status/)).toBeNull();
@@ -410,7 +411,7 @@ describe("MobileAutoCountSync — the same four fixes, one surface over", () => 
     + "TransferedQty=0.00000000 Transferable=T docCancelled=F outstanding=1.00000000";
 
   const both = payload({
-    counts: { pending: 0, sent: 0, failed: 1, skipped: 1, requeued: 0, attention: 2, total: 2 },
+    counts: { pending: 0, sent: 0, failed: 1, skipped: 1, requeued: 0, attention: 2, archived: 0, total: 2 },
     rows: [
       row({ id: "iv", doc_no: "HC-IV-2608-004", doc_type: "IV", op: "do_to_iv",
         status: "skipped", state: "skipped", needs_attention: true,
@@ -452,7 +453,7 @@ describe("MobileAutoCountSync — the same four fixes, one surface over", () => 
 
   it("folds replaced documents out of the list, and shows them when asked", async () => {
     const withHistory = payload({
-      counts: { pending: 0, sent: 0, failed: 1, skipped: 0, requeued: 2, attention: 1, total: 3 },
+      counts: { pending: 0, sent: 0, failed: 1, skipped: 0, requeued: 2, attention: 1, archived: 0, total: 3 },
       rows: [
         row({ id: "live", doc_no: "HC-DO-2608-100", status: "failed", state: "failed",
           needs_attention: true, reason: "Gave up after 6 attempts. Last error: Invalid transfer item." }),
@@ -493,7 +494,7 @@ describe("MobileAutoCountSync — one document, one card", () => {
     row({ status: "sent", state: "sent", ac_doc_no: "SO-00002", ...over });
 
   const hisScreen = payload({
-    counts: { pending: 0, sent: 2, failed: 0, skipped: 0, requeued: 0, attention: 0, total: 2 },
+    counts: { pending: 0, sent: 2, failed: 0, skipped: 0, requeued: 0, attention: 0, archived: 0, total: 2 },
     rows: [
       sent({ id: "s4", op: "edit", doc_no: "HC-SO-2608-002",
         created_at: "2026-08-16T08:31:40.000Z", sent_at: "2026-08-16T08:31:55.000Z" }),
@@ -542,7 +543,7 @@ describe("MobileAutoCountSync — one document, one card", () => {
     await mount(payload({
       counts_complete: false,
       rows: [row({ status: "failed", state: "failed", needs_attention: true, reason: "refused" })],
-      counts: { pending: 0, sent: 0, failed: 1, skipped: 0, requeued: 0, attention: 1, total: 1 },
+      counts: { pending: 0, sent: 0, failed: 1, skipped: 0, requeued: 0, attention: 1, archived: 0, total: 1 },
     }));
     expect(await screen.findByText(/at least this many and possibly more/)).toBeTruthy();
   });
@@ -558,7 +559,7 @@ describe("MobileAutoCountSync — Send now", () => {
      row to it fails a test that has nothing to do with this button. A fixture
      shared by thirty assertions is not a free place to put a thirty-first. */
   const waiting = payload({
-    counts: { pending: 1, sent: 0, failed: 0, skipped: 0, requeued: 0, attention: 0, total: 1 },
+    counts: { pending: 1, sent: 0, failed: 0, skipped: 0, requeued: 0, attention: 0, archived: 0, total: 1 },
     rows: [
       row({ id: "p", doc_no: "SO-P", doc_type: "SO", status: "pending", state: "pending",
         attempts: 2, can_send_now: true,
@@ -662,7 +663,7 @@ describe("MobileAutoCountSync — the register's verdicts, on a phone", () => {
   });
 
   const twoBooked = payload({
-    counts: { pending: 0, sent: 2, failed: 0, skipped: 0, requeued: 0, attention: 0, total: 2 },
+    counts: { pending: 0, sent: 2, failed: 0, skipped: 0, requeued: 0, attention: 0, archived: 0, total: 2 },
     rows: [
       booked({ id: "m", doc_no: "HC-PO-2608-001", doc_type: "PO", op: "create_po",
         ac_doc_no: "PO-009968" }),
@@ -690,17 +691,31 @@ describe("MobileAutoCountSync — the register's verdicts, on a phone", () => {
   });
 
   /* A document already in the account book has nothing to OPEN — the ruling is
-     the same on both surfaces, and the flag must not smuggle an opener in. */
+     the same on both surfaces, and the flag must not smuggle an opener in.
+     Asserted on the OPENERS since 2026-09-08: the card now carries Clear, which
+     opens nothing and takes a finished document off the list. */
   it("flags it without giving the card anything to open", async () => {
     await mount(twoBooked);
     await userEvent.click(chip(/In AutoCount/));
     await screen.findByText("HC-PO-2608-001");
-    expect(within(cardOf("HC-PO-2608-001")).queryByRole("button")).toBeNull();
+    const card = cardOf("HC-PO-2608-001");
+    expect(within(card).queryByRole("button", { expanded: false })).toBeNull();
+    expect(within(card).queryByRole("button", { expanded: true })).toBeNull();
+  });
+
+  /* THE PHONE GETS THE SAME CONTROL AS THE DESKTOP. A control on one surface
+     only is the recurring bug class this repo names, and the owner reads this
+     page on the floor. */
+  it("offers Clear on the phone for a document whose work is finished", async () => {
+    await mount(twoBooked);
+    await userEvent.click(chip(/In AutoCount/));
+    await screen.findByText("HC-PO-2608-001");
+    expect(within(cardOf("HC-PO-2608-001")).getByRole("button", { name: "Clear" })).toBeTruthy();
   });
 
   it("breaks the cards on the day, and closes the list with what is on screen", async () => {
     await mount(payload({
-      counts: { pending: 0, sent: 3, failed: 0, skipped: 0, requeued: 0, attention: 0, total: 3 },
+      counts: { pending: 0, sent: 3, failed: 0, skipped: 0, requeued: 0, attention: 0, archived: 0, total: 3 },
       rows: [
         booked({ id: "a", doc_no: "SO-A", ac_doc_no: "SO-A", created_at: "2026-08-15T02:00:00.000Z", sent_at: "2026-08-15T02:00:00.000Z" }),
         booked({ id: "b", doc_no: "SO-B", ac_doc_no: "SO-B", created_at: "2026-08-14T02:00:00.000Z", sent_at: "2026-08-14T02:00:00.000Z" }),

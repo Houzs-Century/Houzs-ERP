@@ -25,6 +25,22 @@ import { PageSkeleton, RouteCrashBoundary } from "./components/RouteFallback";
 // mount in this file reaches no mobile screen at all.
 import { IosInstallGuide } from "./components/IosInstallGuide";
 import { AndroidInstallGuide } from "./components/AndroidInstallGuide";
+import { LazySlot } from "./components/LazySlot";
+
+/* LAZY, and it costs nothing: this is a modal nobody sees until after the
+   digest request answers, so it has no business in the chunk that has to arrive
+   before the first paint. Eager, it put initial JS at 168.0 KB against a 167.0 KB
+   ceiling and failed frontend-build.
+
+   A LazySlot, never a bare Suspense element — lazySlotAudit.test.ts gates the
+   class, and MobileCrashBoundary.test.tsx forbids a bare one in the mobile
+   shell by name (it reads the file as text, so even naming the tag here would
+   trip it). The resetKey is CONSTANT, for the reason AuthGate's mobile shell gives
+   for its own: there is no navigation above a global reminder to clear a crash
+   with, so keying on anything would be theatre. What the boundary buys here is
+   containment — a failed chunk takes the reminder, not the whole app. */
+const PendingTasksReminder = lazy(() =>
+  import("./components/PendingTasksReminder").then((m) => ({ default: m.PendingTasksReminder })));
 
 // Route-level code splitting: every page becomes its own chunk, fetched on
 // first visit, so the initial bundle carries only the shell. The .then()
@@ -50,6 +66,8 @@ const Settings = lazy(() => import("./pages/Settings").then((m) => ({ default: m
 const Team = lazy(() => import("./pages/Team").then((m) => ({ default: m.Team })));
 const SystemHealth = lazy(() => import("./pages/SystemHealth").then((m) => ({ default: m.SystemHealth })));
 const AutoCountSync = lazy(() => import("./pages/AutoCountSync").then((m) => ({ default: m.AutoCountSync })));
+const VenturePortalFeed = lazy(() => import("./pages/VenturePortalFeed").then((m) => ({ default: m.VenturePortalFeed })));
+const ChangeLog = lazy(() => import("./pages/ChangeLog").then((m) => ({ default: m.ChangeLog })));
 const FleetHealth = lazy(() => import("./pages/FleetHealth").then((m) => ({ default: m.FleetHealth })));
 const LorryRecord = lazy(() => import("./pages/LorryRecord").then((m) => ({ default: m.LorryRecord })));
 const Agents = lazy(() => import("./pages/Agents").then((m) => ({ default: m.Agents })));
@@ -95,6 +113,14 @@ const ScmPurchaseInvoiceFromGrnV2 = lazy(() => import("./pages/scm-v2/PurchaseIn
 const ScmPurchaseInvoiceDetailV2 = lazy(() => import("./pages/scm-v2/PurchaseInvoiceDetailV2").then((m) => ({ default: m.PurchaseInvoiceDetailV2 })));
 const ScmPaymentVouchersV2 = lazy(() => import("./pages/scm-v2/PaymentVouchers").then((m) => ({ default: m.PaymentVouchers })));
 const ScmPaymentVoucherNewV2 = lazy(() => import("./pages/scm-v2/PaymentVoucherNew").then((m) => ({ default: m.PaymentVoucherNew })));
+const ScmPaymentVoucherScanV2 = lazy(() => import("./pages/scm-v2/PaymentVoucherScan").then((m) => ({ default: m.PaymentVoucherScan })));
+const ScmChartOfAccountsV2 = lazy(() => import("./pages/scm-v2/ChartOfAccounts").then((m) => ({ default: m.ChartOfAccounts })));
+const ScmOtherDebtorsV2 = lazy(() => import("./pages/scm-v2/OtherDebtors").then((m) => ({ default: m.OtherDebtors })));
+const ScmReceiptsV2 = lazy(() => import("./pages/scm-v2/Receipts").then((m) => ({ default: m.Receipts })));
+const ScmOfficialReceiptsV2 = lazy(() => import("./pages/scm-v2/OfficialReceipts").then((m) => ({ default: m.OfficialReceipts })));
+const ScmApInvoicesV2 = lazy(() => import("./pages/scm-v2/ApInvoices").then((m) => ({ default: m.ApInvoices })));
+const ScmCreditNotesV2 = lazy(() => import("./pages/scm-v2/CreditNotes").then((m) => ({ default: m.CreditNotes })));
+const ScmDepositInvoicesV2 = lazy(() => import("./pages/scm-v2/DepositInvoices").then((m) => ({ default: m.DepositInvoices })));
 const ScmPaymentVoucherDetailV2 = lazy(() => import("./pages/scm-v2/PaymentVoucherDetail").then((m) => ({ default: m.PaymentVoucherDetail })));
 const ScmStockAdjustmentsV2 = lazy(() => import("./pages/scm-v2/StockAdjustments").then((m) => ({ default: m.StockAdjustments })));
 const ScmStockAdjustmentNewV2 = lazy(() => import("./pages/scm-v2/StockAdjustmentNew").then((m) => ({ default: m.StockAdjustmentNew })));
@@ -154,6 +180,8 @@ const ScmSalesOrderDetailV2 = lazy(() => import("./pages/scm-v2/SalesOrderDetail
 const ScmAmendmentsV2 = lazy(() => import("./pages/scm-v2/Amendments").then((m) => ({ default: m.Amendments })));
 const ScmAmendmentDetailV2 = lazy(() => import("./pages/scm-v2/AmendmentDetailV2").then((m) => ({ default: m.AmendmentDetailV2 })));
 const ScmPoAmendmentsV2 = lazy(() => import("./pages/scm-v2/PoAmendments").then((m) => ({ default: m.PoAmendments })));
+const ScmCancelRequestsV2 = lazy(() => import("./pages/scm-v2/CancelRequests").then((m) => ({ default: m.CancelRequests })));
+const ScmFairPending = lazy(() => import("./pages/scm-v2/FairPending").then((m) => ({ default: m.FairPending })));
 const ScmPoAmendmentDetailV2 = lazy(() => import("./pages/scm-v2/PoAmendmentDetailV2").then((m) => ({ default: m.PoAmendmentDetailV2 })));
 const ScmSoDetailListingV2 = lazy(() => import("./pages/scm-v2/SalesOrderDetailListing").then((m) => ({ default: m.SalesOrderDetailListing })));
 const ScmDoDetailListingV2 = lazy(() => import("./pages/scm-v2/DeliveryOrderDetailListing").then((m) => ({ default: m.DeliveryOrderDetailListing })));
@@ -412,6 +440,7 @@ export default function App() {
       <BreadcrumbsProvider>
       <BrowserPushSink />
       <AnnouncementBanner />
+      <LazySlot resetKey="pending-reminder" fallback={null}><PendingTasksReminder /></LazySlot>
       <QuickActionsFAB />
       <BackToTopFAB />
       <AssistantPanelProvider>
@@ -559,6 +588,32 @@ export default function App() {
             </Guard>
           }
         />
+        {/* Venture Portal Feed — the live sales-order feed to the portal that
+            pays Revenue Department commission, and its settings. anyPerm
+            mirrors the two keys the endpoint's READ half accepts; changing
+            anything needs scm.venture_portal.manage, which the server checks
+            per request and the page reflects in `canManage`. This door only
+            decides whether the page opens. */}
+        <Route
+          path="/venture-portal-feed"
+          element={
+            <Guard anyPerm={["*", "scm.venture_portal.read", "settings.manage"]}>
+              <VenturePortalFeed />
+            </Guard>
+          }
+        />
+        {/* Go-live Change Log — who changed which document since the system was
+            opened to staff. anyPerm mirrors the two keys GET /api/scm/change-log
+            accepts; the server is still the boundary, this only decides whether
+            the door opens. */}
+        <Route
+          path="/change-log"
+          element={
+            <Guard anyPerm={["*", "scm.changelog.read", "settings.manage"]}>
+              <ChangeLog />
+            </Guard>
+          }
+        />
         <Route
           path="/team"
           element={
@@ -635,6 +690,13 @@ export default function App() {
             in the sidebar sense — routes are matched exactly, so order is safe. */}
         <Route path="/scm/po-amendments" element={<ScmGuard area="scm.procurement.po"><Scm2990Shell><ScmPoAmendmentsV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/po-amendments/:id" element={<ScmGuard area="scm.procurement.po"><Scm2990Shell><ScmPoAmendmentDetailV2 /></Scm2990Shell></ScmGuard>} />
+        {/* Cancellation requests (owner 2026-09-08) — one inbox for both documents; a
+            row's actions still hit the per-document routes behind their own area guards. */}
+        <Route path="/scm/cancel-requests" element={<ScmGuard area="scm" allowDirector><Scm2990Shell><ScmCancelRequestsV2 /></Scm2990Shell></ScmGuard>} />
+        {/* Fair links still to settle (owner 2026-09-13). Same guard as the SO
+            list — deciding which exhibition a sale belongs to is a sales-order
+            decision, and the row's own write goes through the SO routes. */}
+        <Route path="/scm/fair-pending" element={<ScmGuard area="scm" allowDirector><Scm2990Shell><ScmFairPending /></Scm2990Shell></ScmGuard>} />
         {/* Vendored 2990's MRP + read/list pages. Each wrapped in <Scm2990Shell>.
             product-models list precedes /:id so the literal segment matches first. */}
         <Route path="/scm/mrp" element={<ScmGuard area="scm.procurement.mrp"><Scm2990Shell><ScmMrpV2 /></Scm2990Shell></ScmGuard>} />
@@ -674,6 +736,16 @@ export default function App() {
             Phase 1-B MYR). Gated on the finance area; /new precedes /:id. */}
         <Route path="/scm/payment-vouchers" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmPaymentVouchersV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/payment-vouchers/new" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmPaymentVoucherNewV2 /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/payment-vouchers/scan" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmPaymentVoucherScanV2 /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/chart-of-accounts" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmChartOfAccountsV2 /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/other-debtors" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmOtherDebtorsV2 /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/receipts" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmReceiptsV2 /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/official-receipts" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmOfficialReceiptsV2 /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/ap-invoices" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmApInvoicesV2 /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/ap-invoices/scan" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmPaymentVoucherScanV2 target="ap" /></Scm2990Shell></ScmGuard>} />
+        {/* Credit and debit notes (owner 2026-09-12; docs/bugs/0827). */}
+        <Route path="/scm/credit-notes" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmCreditNotesV2 /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/deposit-invoices" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmDepositInvoicesV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/payment-vouchers/:id" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmPaymentVoucherDetailV2 /></Scm2990Shell></ScmGuard>} />
         {/* TEMP — vendored 2990's stock-movement pages (wave 4: Adjustments /
             Transfers / Takes), parallel to the native /scm/* below. Each wrapped
@@ -717,9 +789,8 @@ export default function App() {
             所以我都不需要多一个 driver"). Its page is now the Drivers section of
             /scm/fleet, which carries the same scm.transportation.drivers gate.
             Route deliberately NOT mounted — "off, not hide": no nav entry, no
-            route, no prefetch, so nothing mounts and no query fires. The file
-            pages/scm-v2/Drivers.tsx is KEPT on disk (vendored 2990 tree shape)
-            but has no importer. Do not re-add this route. */}
+            route, no prefetch, so nothing mounts and no query fires. Do not
+            re-add this route. */}
         {/* Delivery Planning + TMS Stage 3 — all under the existing scm.transportation.drivers area. */}
         <Route path="/scm/delivery-planning"         element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmDeliveryPlanningV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/dp-orders"                 element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmDpOrdersV2 /></Scm2990Shell></ScmGuard>} />

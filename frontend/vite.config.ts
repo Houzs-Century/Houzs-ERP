@@ -37,9 +37,15 @@ export default defineConfig(({ mode }) => {
     secure: true,
   };
 
-  // One id per build. Used for BOTH the localStorage snapshot namespace
-  // (__BUILD_ID__ define) and the service-worker cache VERSION (stamped into
+  // One id per build. Used for BOTH the page (a <meta> in index.html, read by
+  // src/lib/buildId.ts — the localStorage snapshot namespace, the chunk-recovery
+  // marks, error reports) and the service-worker cache VERSION (stamped into
   // dist/sw.js below), so a deploy can never accidentally reuse either.
+  //
+  // It must NEVER be compiled into a JS chunk (a `define`): a chunk name hashes
+  // its content, so a per-build string there renamed 391 of 561 files on every
+  // build of unchanged code (measured 2026-09-14), and each deploy then deleted
+  // files open tabs still imported. src/lib/buildId.test.ts pins it.
   const buildId = Date.now().toString(36);
 
   return {
@@ -47,13 +53,6 @@ export default defineConfig(({ mode }) => {
       // Array form (find/replacement) — required because the react-router
       // entry uses a regex find; Vite forbids mixing object-map + array forms.
       alias: [
-        // Pin the bare `zod` import to this app's own copy so Rollup resolves
-        // it deterministically on a clean CI build. Exact-match so it doesn't
-        // also rewrite e.g. "zod/lib".
-        {
-          find: /^zod$/,
-          replacement: fileURLToPath(new URL("./node_modules/zod", import.meta.url)),
-        },
         // ── Vendored 2990's SCM slice (Suppliers proof of concept) ──
         // The wholesale-copied 2990 pages/components import these bare
         // specifiers; map them onto the vendored copies under src/vendor.
@@ -152,6 +151,14 @@ export default defineConfig(({ mode }) => {
       // parallel branches even collided on the same vNNN). writeBundle only fires
       // on build, so dev (which doesn't register the SW) is unaffected.
       {
+        name: "build-id-meta",
+        transformIndexHtml() {
+          return [
+            { tag: "meta", attrs: { name: "houzs-build-id", content: buildId }, injectTo: "head-prepend" as const },
+          ];
+        },
+      },
+      {
         name: "sw-build-version",
         writeBundle() {
           try {
@@ -168,12 +175,6 @@ export default defineConfig(({ mode }) => {
         },
       },
     ],
-    // Unique per build — namespaces the localStorage query snapshot
-    // (src/lib/query-persist.ts) so a deploy that changes a list's payload shape
-    // orphans the previous build's snapshot instead of hydrating a stale shape.
-    define: {
-      __BUILD_ID__: JSON.stringify(buildId),
-    },
     build: {
       // 2026-07-31 edge-poison incident: during a deploy race the CDN cached
       // SPA-fallback HTML under several hashed /assets/*.js URLs (immutable,
@@ -214,11 +215,6 @@ export default defineConfig(({ mode }) => {
               {
                 name: "react-vendor",
                 test: /[\\/]node_modules[\\/](?:@tanstack[\\/]|react(?:-dom|-router|-router-dom)?[\\/]|scheduler[\\/])/,
-                priority: 30,
-              },
-              {
-                name: "leaflet",
-                test: /[\\/]node_modules[\\/]leaflet[\\/]/,
                 priority: 30,
               },
               {

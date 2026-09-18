@@ -23,6 +23,8 @@
  * form the allocation lock uses.
  */
 
+import { parsePgrestInList } from '../src/scm/lib/pgrest-in-list';
+
 export type Row = Record<string, unknown>;
 
 /** child table -> { column on the child, parent table, column on the parent }.
@@ -211,6 +213,16 @@ export function makeFakePostgrest(
             case 'neq': filters.push({ op: 'neq', path: String(args[0]), value: args[1] }); return builder;
             case 'gt':  filters.push({ op: 'gt',  path: String(args[0]), value: args[1] }); return builder;
             case 'in':  filters.push({ op: 'in',  path: String(args[0]), value: args[1] }); return builder;
+            /* `.filter(col, 'in', '("a","b\\"c")')` — the ESCAPED in-list the
+               shared readers now build, because supabase-js cannot serialise a
+               value carrying a `"` (docs/bugs/0780). Parsed by the SAME function
+               the app writes with, never by a second `split(',')` here: a fake
+               that split naively would answer the malformed list the way the
+               bug does and report a clean run. */
+            case 'filter':
+              if (args[1] !== 'in') throw new Error(`fakePostgrest: unsupported .filter(${String(args[1])})`);
+              filters.push({ op: 'in', path: String(args[0]), value: parsePgrestInList(String(args[2])) });
+              return builder;
             /* `.is(col, null)` — the positive form of the `.not(col,'is',null)`
                below. Needed to run the unlinked-DO coverage read, which selects
                exactly the lines whose so_item_id was blanked. */

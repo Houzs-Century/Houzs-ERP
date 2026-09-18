@@ -28,6 +28,7 @@ import type { Env } from "../types";
 import { createAssrCase, assrAttachmentKey, saveAttachment } from "../services/assr";
 import { timingSafeEqualStr } from "../services/auth";
 import { checkRateLimit, clientIp } from "../middleware/rateLimit";
+import { intakeCompany } from "../lib/intake-company";
 import { ASSR_SHEET_STATUS } from "../scm/shared/assr-stage-labels";
 import { getSupabaseService, isSupabaseConfigured } from "../db/supabase";
 import { summariseReadiness } from "../scm/lib/so-readiness";
@@ -83,30 +84,6 @@ function intakeKeyCompanyCode(c: any): string | null {
     if (secret && timingSafeEqualStr(provided, secret)) return code;
   }
   return null;
-}
-
-/** Resolve a company code to its id for the raw-SQL predicate.
- *  · `{ master: false }` — the companies master is not readable AT ALL
- *    (pre-migration / the D1 test mirror). The install is single-company, there
- *    is no second tenant to leak to, so the caller degrades to no predicate —
- *    the same three-state contract as scm/lib/companyScope.ts.
- *  · `{ master: true, id: null }` — the master IS readable and has no row for
- *    this code. That is a MISCONFIGURATION, not a legacy state, and the caller
- *    must refuse: falling back to "no predicate" here would re-open the exact
- *    hole on the day someone renames a company code. */
-async function intakeCompany(
-  db: D1Database,
-  code: string,
-): Promise<{ master: boolean; id: number | null }> {
-  try {
-    const row = await db
-      .prepare(`SELECT id FROM companies WHERE code = ? LIMIT 1`)
-      .bind(code)
-      .first<{ id: number | string }>();
-    return { master: true, id: row?.id != null ? Number(row.id) : null };
-  } catch {
-    return { master: false, id: null };
-  }
 }
 
 // Photo relay limits — Apps Script reads the Drive file and streams the
@@ -455,8 +432,19 @@ function sheetDetailStatus(
   if (stage === "pending_supplier_pickup") {
     const s = sub ?? "pending_supplier_pickup";
     if (s === "pending_supplier_return") return "Pending Supplier Return";
-    if (pickupBy === "customer") return "Pending Supplier Pickup (Customer Pickup)";
-    if (pickupBy === "supplier") return "Pending Supplier Pickup (Supplier Direct)";
+    if (s === "pending_customer_pickup") {
+      // The customer-pickup leg (third sub, Nico 2026-09-01) owns the
+      // collect-from-customer dispatch job, so the parenthesised trigger
+      // words moved here — the sheet's trigger map is unchanged (PICKUP
+      // still fires on the same "(Customer Pickup)" word). The bare leg
+      // exports the stage's bare word: Nico ruled the sheet's column-A
+      // vocabulary must not change, and an unknown word would be rejected
+      // by that column's validation (the 2026-08-07 disease). The finer
+      // "Pending Customer Pickup" label lives in the ERP UI only.
+      if (pickupBy === "customer") return "Pending Supplier Pickup (Customer Pickup)";
+      if (pickupBy === "supplier") return "Pending Supplier Pickup (Supplier Direct)";
+      return "Pending Supplier Pickup";
+    }
     return "Pending Supplier Pickup";
   }
   return undefined;

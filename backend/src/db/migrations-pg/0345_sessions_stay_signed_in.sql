@@ -1,0 +1,34 @@
+-- 0345_sessions_stay_signed_in — let "Remember me on this device" mean it.
+--
+-- Every session has been a flat 7 days (SESSION_TTL_SECONDS), and the login
+-- screen's "Remember me on this device" never reached the server: it only chose
+-- localStorage over sessionStorage for the token. So the whole company was
+-- signed out weekly and had to type a password again — on the installed PC app
+-- as much as in a browser (owner 2026-09-02: "why all save email password gone"
+-- → "cant keep permanently?" → "i remember me on app on pc").
+--
+-- `renew_seconds` is the session's own renewal window, in seconds, set at login:
+--   NULL  — no renewal. The 7-day session, unchanged, for an unticked box.
+--   >0    — a ROLLING session. The auth path extends expires_at back to
+--           now + renew_seconds once the remaining life falls below half the
+--           window, so a device that is used stays signed in forever and one
+--           that is abandoned still expires on its own.
+--
+-- 白话（老板版）。以前不管你有没有勾「记住我」，登录都只保 7 天，到期全公司重新输密码。
+-- 这一列让「记住我」变成真的：勾了就一直保持登录（只要你还在用这台机器/这个 app），
+-- 不勾还是 7 天。走人或手机丢了照样能断：停用账号或改密码会立刻清掉他所有的登录。
+--
+-- Reversal: repo-tracking only — the auth path reads this column. To undo on a
+-- throwaway DB: ALTER TABLE sessions DROP COLUMN IF EXISTS renew_seconds;
+-- Dropping it in prod would make every rolling session behave like a plain
+-- session that expires at its current expires_at (no lockout, no error) —
+-- the column is read defensively.
+-- Verified against: the live Supabase prod catalog, where public.sessions holds
+-- exactly token / user_id / expires_at / created_at / origin and no
+-- renew_seconds, so ADD COLUMN IF NOT EXISTS runs once and is a no-op on any
+-- environment that already has it. Additive only — no row is read or rewritten,
+-- and every existing session keeps its current expires_at with renew_seconds
+-- NULL (i.e. exactly today's behaviour until its owner logs in again).
+
+ALTER TABLE sessions
+  ADD COLUMN IF NOT EXISTS renew_seconds INTEGER;

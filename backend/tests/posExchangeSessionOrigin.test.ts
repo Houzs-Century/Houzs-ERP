@@ -2,10 +2,11 @@ import { env } from "cloudflare:test";
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import posRoutes from "../src/routes/pos";
-import rawSoRouteSource from "../src/scm/routes/mfg-sales-orders.ts?raw";
+import { soRouterSource } from "./lib/so-router-source";
 import { auth } from "../src/middleware/auth";
 import { createSession, SESSION_ORIGIN_POS } from "../src/services/auth";
 import type { Env } from "../src/types";
+const rawSoRouteSource = soRouterSource();
 
 /* Line endings normalised ONCE, where the source enters the file, rather than
    at each anchor. This repo is developed on Windows with `core.autocrlf=true`,
@@ -120,7 +121,6 @@ afterEach(async () => {
   mintedTokens.length = 0;
   if (userId) await env.DB.prepare(`DELETE FROM users WHERE id = ?`).bind(userId).run();
   if (roleId) {
-    await env.DB.prepare(`DELETE FROM role_page_access WHERE role_id = ?`).bind(roleId).run();
     await env.DB.prepare(`DELETE FROM roles WHERE id = ?`).bind(roleId).run();
   }
   userId = 0;

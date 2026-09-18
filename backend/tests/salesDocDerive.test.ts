@@ -4,9 +4,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import coSource from '../src/scm/routes/consignment-orders.ts?raw';
-import soSource from '../src/scm/routes/mfg-sales-orders.ts?raw';
+import { soRouterSource } from './lib/so-router-source';
 import { senOrZero } from '../src/scm/lib/sales-doc-derive';
 import { canonicalizeMyState } from '../src/scm/lib/canonical-state';
+const soSource = soRouterSource();
 
 /* Three derivations used to exist in BOTH the Sales Order and the Consignment
    Order routers, and two of them had drifted. They are one module now.

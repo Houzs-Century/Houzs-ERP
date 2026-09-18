@@ -9,6 +9,7 @@ import {
   DEFECT_REVIEW_REGION_STATES,
   approverBrandBlocked,
   isCrewScopedUser,
+  isDefectReviewerPosition,
   isDefectRegionState,
   roleLabelAdmits,
   salesDirectorMayAttach,
@@ -58,6 +59,7 @@ import { scopeSalesReportsForUser } from "../services/orgScope";
 import { audit } from "../services/audit";
 import { hasPermission, holdsChecklistApproval, EXPLICIT_APPROVAL_KEYS } from "../services/permissions";
 import { recomputeAutoCostLines } from "../services/projectCostRates";
+import { issueShareToken, revokeShareTokens } from "../services/contractorShare";
 import { todayMyt } from "../scm/lib/my-time";
 import { canonicalizeVenue } from "../scm/lib/canonical-venue";
 import { getDb } from "../db/client";
@@ -1118,7 +1120,7 @@ app.get("/", requirePageAccess("projects.list"), async (c) => {
       // Executive" is shared with the purchasers Sim/Farra. Scoped to the region
       // states only (exclude = false).
       pendingDefectReview = true;
-    } else if ((user.position_name ?? "").trim().toLowerCase() === "storekeeper supervisor") {
+    } else if (isDefectReviewerPosition(user)) {
       // Shukor (owner 2026-08-07; region split 2026-08-11): the Storekeeper
       // Supervisor triages fresh defects for every state OUTSIDE Nancy's region
       // (the second warehouse). Keyed on POSITION, not role — his role is the
@@ -1339,6 +1341,106 @@ app.delete("/organizers/:id", requirePermission("projects.manage"), async (c) =>
   )
     .bind(id)
     .run();
+  return c.json({ ok: true });
+});
+
+// ── Contractors (lookup) ─────────────────────────────────────
+// Booth setup/dismantle contractors. Same shape as organizers: the
+// projects.contractor column stays free text — this table just keeps the
+// Project Detail picker (and the per-contractor share links) clean.
+
+app.get("/contractors", requirePageAccess("projects"), async (c) => {
+  const rows = await c.env.DB.prepare(
+    `SELECT id, name, notes, active, share_export_scope FROM project_contractors
+      WHERE active = 1 ORDER BY name`
+  ).all();
+  return c.json({ data: rows.results ?? [] });
+});
+
+app.post("/contractors", requirePermission("projects.write"), async (c) => {
+  const user = c.get("user");
+  const body = await c.req.json<{ name?: string; notes?: string }>();
+  const name = (body.name || "").trim();
+  if (!name) return c.json({ error: "name required" }, 400);
+  // Idempotent on (name) — return the existing row if it already exists.
+  const existing = await c.env.DB.prepare(
+    `SELECT id, name FROM project_contractors WHERE LOWER(name) = LOWER(?)`
+  )
+    .bind(name)
+    .first<{ id: number; name: string }>();
+  if (existing) {
+    // Reactivate if previously archived.
+    await c.env.DB.prepare(
+      `UPDATE project_contractors SET active = 1 WHERE id = ?`
+    )
+      .bind(existing.id)
+      .run();
+    return c.json({ id: existing.id, name: existing.name }, 200);
+  }
+  const r = await c.env.DB.prepare(
+    `INSERT INTO project_contractors (name, notes, created_by)
+     VALUES (?, ?, ?)`
+  )
+    .bind(name, body.notes ?? null, user?.id ?? null)
+    .run();
+  return c.json({ id: r.meta.last_row_id, name }, 201);
+});
+
+app.delete("/contractors/:id", requirePermission("projects.manage"), async (c) => {
+  const id = parseInt(c.req.param("id"), 10);
+  if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
+  await c.env.DB.prepare(
+    `UPDATE project_contractors SET active = 0 WHERE id = ?`
+  )
+    .bind(id)
+    .run();
+  return c.json({ ok: true });
+});
+
+// What this contractor's public link exports on one press: the month on screen
+// or the whole year (owner 2026-09-09; mig 20260909T0800). A row setting, not a
+// list of names in code, so the office flips it from Project Maintenance.
+app.patch("/contractors/:id", requirePermission("projects.manage"), async (c) => {
+  const id = parseInt(c.req.param("id"), 10);
+  if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
+  const body = await c.req.json<{ share_export_scope?: string }>();
+  const scope = body.share_export_scope;
+  if (scope !== "month" && scope !== "year") return c.json({ error: "share_export_scope must be month or year" }, 400);
+  await c.env.DB.prepare(`UPDATE project_contractors SET share_export_scope = ? WHERE id = ?`).bind(scope, id).run();
+  return c.json({ ok: true });
+});
+
+// ── Contractor share links ───────────────────────────────────
+// Generate/copy or revoke the unguessable token behind a contractor's public,
+// no-login calendar (routes/publicContractorCalendar.ts). Minted against the
+// contractor NAME — the value projects.contractor stores and the public route
+// filters on — so a rename would need a fresh link, which is correct.
+
+app.post("/contractors/:id/share-link", requirePermission("projects.write"), async (c) => {
+  const user = c.get("user");
+  const id = parseInt(c.req.param("id"), 10);
+  if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
+  const row = await c.env.DB.prepare(
+    `SELECT name FROM project_contractors WHERE id = ?`
+  )
+    .bind(id)
+    .first<{ name: string }>();
+  if (!row) return c.json({ error: "Contractor not found" }, 404);
+  // Get-or-create: repeated clicks reuse the same live token.
+  const token = await issueShareToken(c.env, row.name, user?.id ?? null);
+  return c.json({ token });
+});
+
+app.delete("/contractors/:id/share-link", requirePermission("projects.manage"), async (c) => {
+  const id = parseInt(c.req.param("id"), 10);
+  if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
+  const row = await c.env.DB.prepare(
+    `SELECT name FROM project_contractors WHERE id = ?`
+  )
+    .bind(id)
+    .first<{ name: string }>();
+  if (!row) return c.json({ error: "Contractor not found" }, 404);
+  await revokeShareTokens(c.env, row.name);
   return c.json({ ok: true });
 });
 
@@ -4062,7 +4164,7 @@ app.patch(
     if (!row) return c.json({ error: "Not found" }, 404);
     if (
       !hasPermission(granted, "projects.write") &&
-      !salesDirectorMayAttach(row.title, user?.position_name)
+      !salesDirectorMayAttach(row.title, user?.position_name, user?.position_policy ?? null)
     ) {
       if (!roleLabelAdmits(row.role_label, user?.role_name)) {
         return c.json(
@@ -4112,7 +4214,7 @@ app.post(
     // Supervisor + Nancy the Ops Exec (region states). The purchaser (Sim /
     // Farra) and BD only close escalations. State routing governs My Pending
     // visibility; either reviewer may act, the frontend shows the right one.
-    const isReviewer = position === "storekeeper supervisor" || role === "ops exec";
+    const isReviewer = isDefectReviewerPosition(user) || role === "ops exec";
     const isPurchaser = role.includes("purchaser") || role.includes("bd");
     if (!isAdmin && !isReviewer && !isPurchaser) {
       return c.json(

@@ -37,15 +37,18 @@ import { Trash2 } from 'lucide-react';
 import type { MfgProductRow, MaintenanceConfig, SpecialAddonRow } from '../lib/mfg-products-queries';
 import { useModelAllowedOptionsByCode } from '../lib/mfg-products-queries';
 import { SpecialOrders } from './SpecialOrders';
+import { specialOrderSurface } from '../lib/special-order-surface';
 import type { BindingRow, MaterialKind } from '../lib/suppliers-queries';
 import { activeOptions, maintPickerValues, restrictPricedToPool, restrictStringsToPool } from '@2990s/shared';
 import { fabricOptionLabel, type FabricTrackingRow } from '../lib/fabric-queries';
 import { sortByText, sortByNumeric, byText } from '../lib/sort-options';
 import type { Warehouse } from '../lib/inventory-queries';
 import { MoneyInput } from './MoneyInput';
+import { DiscountInput } from './DiscountInput';
 import { SearchableSelect } from './SearchableSelect';
 import styles from '../../../pages/scm-v2/SalesOrderDetail.module.css';
 import { DateField } from "./DateField";
+import { showsVariantEditor } from '../lib/variant-editor-groups';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -65,6 +68,19 @@ export type PoLineDraft = {
   materialKind: MaterialKind;
   itemCode: string;
   materialName: string;
+  /** Per-line free text — scm.purchase_order_items.notes. The PO twin of the
+      SO line's `remark`, and the column AutoCount's own Description 2 was
+      copied into by the 2026-08-28 migration (measured on production
+      2026-09-04: 923 of 1,117 migrated company-1 PO lines carry the book's
+      wording here — 891 byte-identical to description2, 32 the same text plus
+      a suffix).
+      It is NOT on the AutoCount write-back path — PO_ITEM_COLS
+      (backend/src/scm/lib/autocount-outbox.ts) does not select `notes` — so it
+      is the one place the book's wording survives a save, unlike description2,
+      which the item PATCH regenerates from buildVariantSummary on every write
+      (mfg-purchase-orders.ts, "Description 2 is server-owned"). Until 2026-09-04
+      this card had no field for it at all, so the text was invisible. */
+  notes?: string;
   supplierSku?: string;
   qty: number;
   unitPriceSen: number;
@@ -98,6 +114,7 @@ export const emptyPoLine = (): PoLineDraft => ({
   materialKind: 'mfg_product',
   itemCode: '',
   materialName: '',
+  notes: '',
   qty: 1,
   unitPriceSen: 0,
   variants: {},
@@ -128,6 +145,7 @@ export const PoLineCard = ({
   hidePoFields = false,
   identityReadOnly = false,
   soLinkOptions,
+  showRemarks = false,
   photos = null,
 }: {
   index: number;
@@ -191,6 +209,15 @@ export const PoLineCard = ({
       the SAME /outstanding-so-items shortage view the From-SO picker and the
       mobile convert wizard use, rather than inventing a second query. */
   soLinkOptions?: Array<{ value: string; label: string }>;
+  /** Render the per-line Remarks box (writes `notes`). OPT-IN, and default OFF
+      on purpose: this card is reused by the Purchase Invoice and the
+      Purchase-Consignment Order details, and each of those parents enumerates
+      the fields it sends on add/update. A box those parents do not send would
+      accept typing and silently discard it on save, which is worse than no box
+      at all. Turn it on in a parent only when that parent also carries `notes`
+      in BOTH its add-item and update-item payloads. On today's tree that is
+      the Purchase Order detail. */
+  showRemarks?: boolean;
 }) => {
   const l = line;
   /* Per-Model allowed_options for this line's SKU — the SAME by-code source
@@ -202,7 +229,27 @@ export const PoLineCard = ({
   const categoryLabel = l.category?.toUpperCase() ?? 'UNSET';
   // PR #135 — only sofa / bedframe carry a variant editor (mattress size +
   // branding are encoded in the SKU code itself).
-  const showVariants = Boolean(l.category) && ['sofa', 'bedframe'].includes(l.category ?? '') && Boolean(maint);
+  const showVariants = showsVariantEditor(l.category) && Boolean(maint);
+  /* THE SPECIAL ORDER IS NOT A BEDFRAME/SOFA FEATURE. Owner 2026-09-10, after
+     the field opened on the Sales Order: 「你确定是 CS order 有而已，还是全部吗？
+     我们的包括 DO 等等，全部都是要带过去的哦…POGR 是不是也是要能看得到这些数据？」
+     A mattress's SIZE and a custom pillow's COLOUR reached the supplier's
+     purchase-order PDF (description2 is stamped from buildVariantSummary, which
+     appends the SPECIAL segment for every category) — but this card rendered the
+     editor only inside its bedframe and sofa branches, so on screen the buyer
+     could neither see nor correct it, and `showVariants` above hid the whole box
+     for those categories anyway.
+     ONE rule, shared with the Sales Order and both mobile surfaces
+     (vendor/scm/lib/special-order-surface.ts). The pool is empty here on
+     purpose: this document carries no catalogue for those categories, and
+     choosing WHAT to build is the sales order's job, not the buyer's. Since
+     2026-09-10 SpecialOrders no longer calls a carried pick "retired" when it
+     has no pool to judge it against. */
+  const specialSurface = specialOrderSurface({
+    category: l.category ?? '',
+    hasItemCode: Boolean(l.itemCode),
+    pickedSpecialCount: 0,
+  });
   // T12 — identity (code/SKU/description) + variants lock for GRN-sourced PI
   // lines; the whole card's `disabled` (locked doc) still wins over everything.
   const identityLocked = disabled || identityReadOnly;
@@ -437,6 +484,50 @@ export const PoLineCard = ({
         />
       </label>
 
+      {/* Remarks — full width, opt-in via showRemarks. The PO twin of SoLineCard's "Type remarks…" box
+          (owner 2026-09-04: 「SO line 和 PO line 的 remarks」). Writes
+          purchase_order_items.notes, which is where the AutoCount migration
+          parked the book's own Description 2 — 923 of 1,117 migrated
+          company-1 PO lines already carry it (measured 2026-09-04) and nothing
+          on this screen could show it. NOT gated by identityLocked: a GRN-sourced PI line freezes
+          its identity and variants, but a note is not identity, and locking the
+          only readable copy of the customer's spec text behind a GRN would
+          re-hide what this field exists to surface. */}
+      {showRemarks && (
+        <label className={styles.field}>
+          <span className={styles.fieldLabel}>Remarks</span>
+          <input
+            type="text"
+            value={l.notes ?? ''}
+            disabled={disabled}
+            onChange={(e) => onChange({ notes: e.target.value })}
+            placeholder="Type remarks…"
+            className={styles.fieldInput}
+          />
+        </label>
+      )}
+
+      {/* SPECIAL ORDER for the categories with no variant grid — mattress,
+          accessory, dining. Free text only; see specialSurface above. */}
+      {specialSurface.block && (
+        <div style={{
+          background: 'var(--c-cream)',
+          border: '1px solid var(--line)',
+          borderRadius: 'var(--radius-md)',
+          padding: 'var(--space-3)',
+        }}>
+          <SpecialOrders
+            options={[]}
+            variants={l.variants}
+            onPatch={(patch) => onChange({ variants: { ...l.variants, ...patch } })}
+            showPrices={false}
+            disabled={identityLocked}
+            sourceLinked={Boolean(l.soItemId)}
+            sourceLabel="Sales Order"
+          />
+        </div>
+      )}
+
       {/* Per-category variant editor (PR #126 logic, PR #129 card layout) */}
       {showVariants && (
         <div style={{
@@ -597,13 +688,15 @@ export const PoLineCard = ({
         </label>
         <label className={styles.field}>
           <span className={styles.fieldLabel}>Discount ({currency})</span>
-          <MoneyInput
+          <DiscountInput
             bare
             valueSen={l.discountSen ?? 0}
+            baseSen={l.qty * l.unitPriceSen}
             disabled={disabled}
             onCommit={(sen) => onChange({ discountSen: sen ?? 0 })}
             inputClassName={styles.fieldInput}
             selectOnFocus
+            currency={currency}
           />
         </label>
         {/* T12 — Delivery + Ship-to are PO-only; hidden on the PI card. */}

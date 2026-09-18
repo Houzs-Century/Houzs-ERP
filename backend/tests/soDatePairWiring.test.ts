@@ -16,13 +16,14 @@
 // sure a refactor cannot silently unhook it from a route.
 // ----------------------------------------------------------------------------
 import { describe, expect, test } from 'vitest';
-import soRoutes from '../src/scm/routes/mfg-sales-orders.ts?raw';
+import { soRouterSource } from './lib/so-router-source';
 import coRoutes from '../src/scm/routes/consignment-orders.ts?raw';
 import amendRoutes from '../src/scm/routes/so-amendments.ts?raw';
 import mirrorRoute from '../src/scm/routes/so-mirror.ts?raw';
 import revision from '../src/scm/lib/so-revision.ts?raw';
 import saveProblems from '../src/scm/shared/so-save-problems.ts?raw';
 import unifyScript from '../scripts/unify-processing-date.mjs?raw';
+const soRoutes = soRouterSource();
 
 /** Source with comments removed. Every anchor and every assertion below runs
  *  on THIS, not on the raw file: a rule named only in a comment is not a rule,

@@ -7,12 +7,11 @@ export function cn(...classes: Array<string | false | null | undefined>): string
   return classes.filter(Boolean).join(" ");
 }
 
-export function formatCurrency(n: number | null | undefined, opts?: { compact?: boolean }): string {
+/** A RINGGIT number → "RM 15,000.00", the way AutoCount prints it. There is no
+ *  compact form: it used to abbreviate to "RM 15.0K", and the owner's rule
+ *  (2026-09-15) is that every amount reads in full. docs/bugs/0926-money-on-some-screens-read-as-whole-ringgit-as-rm-15-0k-or-w.md. */
+export function formatCurrency(n: number | null | undefined): string {
   if (n === null || n === undefined || isNaN(n)) return "—";
-  if (opts?.compact) {
-    if (Math.abs(n) >= 1_000_000) return `RM ${(n / 1_000_000).toFixed(2)}M`;
-    if (Math.abs(n) >= 1_000) return `RM ${(n / 1_000).toFixed(1)}K`;
-  }
   return `RM ${n.toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 

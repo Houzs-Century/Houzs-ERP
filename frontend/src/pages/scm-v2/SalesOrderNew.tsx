@@ -25,11 +25,13 @@
 //   • react-router → react-router-dom.
 //   • flow-queries hooks → the vendored sales-order-queries slice.
 //   • The dead `supabase` import is dropped; flushPendingPhotos reads the
+import { cascadeLineDeliveryDate } from '../../vendor/scm/lib/line-delivery-date-cascade';
 import { postScanLearningSample, reportScanLearningSkipped } from '../../vendor/scm/lib/scan-learning';
 import {
   cascadeMasterVariants,
   seedFollowerVariants,
   seedableMasterVariants,
+  CASCADE_CATEGORIES,
   FABRIC_IDENTITY_KEYS,
   type MasterVariantSnapshot,
 } from '../../vendor/scm/lib/so-variant-cascade';
@@ -38,7 +40,7 @@ import {
 //   • Navigation repointed to /scm/sales-orders/*.
 // ----------------------------------------------------------------------------
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery as useTanstackQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Camera, ChevronDown, Plus, Save, X } from 'lucide-react';
@@ -54,8 +56,17 @@ import {
   type DebtorSuggestion,
 } from '../../vendor/scm/lib/sales-order-queries';
 import { zeroPriceClaim } from '../../vendor/scm/lib/zeroPriceClaim';
-import { authedFetch, humanApiError } from '../../vendor/scm/lib/authed-fetch';
-import { notifySaveProblems } from '../../vendor/scm/components/SaveProblemsList';
+import { authedFetch, humanApiError, type SaveProblem } from '../../vendor/scm/lib/authed-fetch';
+import {
+  photoLabel,
+  photoUploadFailure,
+  photoUploadFailureMessage,
+  unmatchedLinePhotos,
+  type PhotoUploadFailure,
+} from '../../vendor/scm/lib/photo-upload-failures';
+import { notifySaveProblems, SaveProblemsList, saveProblemsTitle } from '../../vendor/scm/components/SaveProblemsList';
+import { SaveBlockedIndicator } from '../../vendor/scm/components/SaveBlockedIndicator';
+import { useSoValidate } from '../../vendor/scm/lib/use-so-validate';
 import { notifyAcNotSent } from '../../vendor/scm/lib/ac-not-sent';
 import { useIdempotencyKey } from '../../lib/idempotency';
 import { DebtorSuggestList } from '../../vendor/scm/components/DebtorSuggestList';
@@ -64,10 +75,12 @@ import { completePaymentRetryDraft, paymentRetryNavigationState, writePaymentRet
 import { usePickableStaff } from '../../vendor/scm/lib/admin-queries';
 import { resolveSelfStaff } from '../../vendor/scm/lib/self-staff';
 import { todayMyt } from '../../vendor/scm/lib/dates';
+import { addressLineProps } from '../../lib/acColumnWidths';
 import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
 import { deriveProcessingDate } from '../../lib/processingDate';
-import { sortByText, sortByNumeric } from '../../vendor/scm/lib/sort-options';
+import { sortByText } from '../../vendor/scm/lib/sort-options';
 import { SearchableSelect } from '../../vendor/scm/components/SearchableSelect';
+import { AddressPostcodeField } from '../../vendor/scm/components/AddressPostcodeField';
 import { useAuth } from '../../vendor/scm/lib/auth';
 /* Houzs auth — the REAL logged-in user (name + id). The vendored 2990 auth
    bridge (useAuth above) has no staff row for the owner (id:null), which left
@@ -75,6 +88,7 @@ import { useAuth } from '../../vendor/scm/lib/auth';
    AuthUser to default + name the creator so the field is never blank. */
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import { useVenues, type AutoVenue } from '../../vendor/scm/lib/venues-queries';
+import { FairPicker, type FairPickValue } from '../../components/FairPicker';
 import {
   useLocalities, countryForState,
 } from '../../vendor/scm/lib/localities-queries';
@@ -102,10 +116,10 @@ import { useFabricLibrary } from '../../vendor/scm/lib/queries';
 import { useSpecialAddons, type MfgProductRow } from '../../vendor/scm/lib/mfg-products-queries';
 import { type ScanPrefill, type ExtractedSlip } from '../../vendor/scm/components/ScanOrderModal';
 import {
-  PaymentsTable, labelToApi, draftMethodFields, newPaymentDraft,
+  PaymentsTable, labelToApi, draftMethodFields, newPaymentDraft, convertDraftsFrom,
   missingMethodSubField, parseInstallmentMonths, type PaymentDraft,
 } from '../../vendor/scm/components/PaymentsTable';
-import { soDateGuardError, soStockLocationError, soRequiredFieldErrors, soRequiredFieldsMessage, soProceedingAddressErrors } from '../../vendor/scm/lib/so-form-validate';
+import { useOrdersWithMoney } from '../../vendor/scm/lib/so-money-queries';
 import { useBranding } from '../../hooks/useBranding';
 import styles from './SalesOrderNew.module.css';
 import { fmtMoneySen } from '@2990s/shared';
@@ -310,11 +324,8 @@ export const SalesOrderNew = () => {
   const [scanCity, setScanCity] = useState('');
   const [scanPostcode, setScanPostcode] = useState('');
 
-  /* Copy-to-new-SO seed — runs once when the source SO finishes loading.
-     Fills customer + address + emergency + line items. Deliberately omits
-     processing/delivery dates, payments, customer SO ref, doc no and status
-     so the new order is a clean draft. Guarded so it can't re-seed and stomp
-     edits the operator has already made. */
+  /* Copy-to-new-SO seed — once, when the source loads: customer, address, emergency, lines; never dates,
+     payments, refs, doc no, status (a clean draft); guarded so it cannot re-seed over the operator's edits. */
   const [copySeeded, setCopySeeded] = useState(false);
   useEffect(() => {
     if (!copyFromDocNo || copySeeded) return;
@@ -353,6 +364,8 @@ export const SalesOrderNew = () => {
         remark:         it.remark ?? '',
       })));
     }
+    /* Money moved from cancelled orders (docs/bugs/0931): ?convert=SO-a:sen,… seeds one converted row each. */
+    if (searchParams.get('convert')) setPaymentDrafts(convertDraftsFrom(searchParams.get('convert')));
     setCopySeeded(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [copyFromDocNo, copySeeded, copySource.data]);
@@ -583,11 +596,10 @@ export const SalesOrderNew = () => {
     return current !== base ? styles.edited : '';
   };
 
-  // ── Payments draft state ───────────────────────────────────────────
-  /* Task #105 — Same Houzs PaymentsTable used on Detail, but in DRAFT mode
-     since the SO doesn't have a docNo yet. We hold the rows here, then
-     batch POST them to /:docNo/payments after create succeeds. */
+  // ── Payments draft state (Task #105: the Detail's PaymentsTable in DRAFT mode; the rows batch to /:docNo/payments after create) ──
   const [paymentDrafts, setPaymentDrafts] = useState<PaymentDraft[]>([]);
+  /* This customer's orders with money to give — what a "Convert from another SO" row may draw on (docs/bugs/0931; live orders too since 2026-09-16). */
+  const cancelledForCustomer = useOrdersWithMoney(phone.trim() || null, phone.trim().length >= 6);
   const [createdDocNo, setCreatedDocNo] = useState<string | null>(null);
 
   // ── Debtor autocomplete + warehouse lookup ─────────────────────────
@@ -724,19 +736,12 @@ export const SalesOrderNew = () => {
   };
 
   /* PR-E — Client-side master-follower cascade for delivery date. Mirrors
-     the server-side cascade in PATCH /mfg-sales-orders/:docNo. */
+     the server-side cascade in PATCH /mfg-sales-orders/:docNo. The rule itself
+     moved to vendor/scm/lib/line-delivery-date-cascade on 2026-09-11: it was
+     written HERE and not on the delivery order, and the owner found the gap on
+     a DO whose header and lines disagreed. */
   useEffect(() => {
-    setLines((prev) => {
-      let didUpdate = false;
-      const target = deliveryDate || null;
-      const next = prev.map((l) => {
-        if (l.lineDeliveryDateOverridden) return l;
-        if ((l.lineDeliveryDate ?? null) === target) return l;
-        didUpdate = true;
-        return { ...l, lineDeliveryDate: target };
-      });
-      return didUpdate ? next : prev;
-    });
+    setLines((prev) => cascadeLineDeliveryDate(prev, deliveryDate) ?? prev);
   }, [deliveryDate]);
 
   /* Master-follower cascade for line variants — LINE 1 of each category drives
@@ -759,9 +764,10 @@ export const SalesOrderNew = () => {
     const { variants, masters } = cascadeMasterVariants(
       lines.map((l) => ({ category: l.itemGroup ?? '', variants: (l.variants ?? {}) as Record<string, unknown> })),
       masterSnapshotRef.current,
-      /* Desktop cascades EVERY category — a mattress line's specials included.
-         Passed explicitly because mobile answers this differently. */
-      null,
+      /* The ONE set, shared with mobile (owner 2026-09-09: cascade is for sofa
+         only). This used to be `null` — EVERY category, a mattress line's
+         specials included — while mobile scoped it to sofa + bedframe. */
+      CASCADE_CATEGORIES,
     );
     masterSnapshotRef.current = masters;
     let didUpdate = false;
@@ -788,6 +794,8 @@ export const SalesOrderNew = () => {
   const inheritVariantsByCategory = useMemo(
     () => seedableMasterVariants(
       lines.map((l) => ({ category: l.itemGroup ?? '', variants: (l.variants ?? {}) as Record<string, unknown> })),
+      /* Sofa only — the same set the live cascade below now takes. */
+      CASCADE_CATEGORIES,
     ),
     [lines],
   );
@@ -1026,11 +1034,28 @@ export const SalesOrderNew = () => {
      where Commander locked Venue to the salesperson's home venue, Houzs picks
      Venue manually. Defaults to the salesperson's venue but stays changeable. */
   const [pickedVenueId, setPickedVenueId] = useState<string | null>(null);
-  const effectiveVenueId = pickedVenueId ?? resolvedVenueId;
+  /* FAIR PICKER (owner 2026-09-13) — the operator now picks an EVENT (place +
+     organizer), not a bare place, so the order can record WHICH FAIR it was
+     written at and not merely where. The venue NAME is what the row carries, so
+     it leads here and the master id follows it by name for back-compat with the
+     `venue_id` column and the reports that read it. */
+  const [fairPick, setFairPick] = useState<FairPickValue>({ venue: null, organizer: null });
   const effectiveVenueName: string = useMemo(() => {
-    if (!effectiveVenueId) return '';
-    return (venuesQ.data ?? []).find((r) => r.id === effectiveVenueId)?.name ?? '';
-  }, [effectiveVenueId, venuesQ.data]);
+    if (fairPick.venue) return fairPick.venue;
+    const id = pickedVenueId ?? resolvedVenueId;
+    if (!id) return '';
+    return (venuesQ.data ?? []).find((r) => r.id === id)?.name ?? '';
+  }, [fairPick.venue, pickedVenueId, resolvedVenueId, venuesQ.data]);
+  const effectiveVenueId = useMemo(() => {
+    if (!fairPick.venue) return pickedVenueId ?? resolvedVenueId;
+    const byName = (venuesQ.data ?? []).find(
+      (r) => r.name.trim().toLowerCase() === fairPick.venue!.trim().toLowerCase(),
+    );
+    /* A fair can name a venue the master does not hold. The NAME still stands on
+       the order — refusing it would block a real sale to enforce a list nobody
+       has finished filling in. */
+    return byName?.id ?? null;
+  }, [fairPick.venue, pickedVenueId, resolvedVenueId, venuesQ.data]);
 
   /* Houzs venue auto-fill (owner 2026-06-25) — the logged-in salesperson is
      assigned to an exhibition project (Sales Attending), so the system already
@@ -1053,6 +1078,13 @@ export const SalesOrderNew = () => {
   }, []);
   useEffect(() => {
     if (autoVenue?.venueId && pickedVenueId == null) setPickedVenueId(autoVenue.venueId);
+    /* Seed the fair picker from the same auto-resolve, by NAME — the picker is
+       keyed on the venue name, and `venueId` is null for any venue the master
+       does not hold. Only ever seeds a BLANK: a human pick is a decision and is
+       never overwritten (same rule as canAutoResolveVenue server-side). */
+    if (autoVenue?.venueName && fairPick.venue == null) {
+      setFairPick({ venue: autoVenue.venueName, organizer: null });
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoVenue]);
 
@@ -1087,14 +1119,19 @@ export const SalesOrderNew = () => {
      If the counts ever drift (server-side filtering of bad rows, etc.)
      we surface a soft warning and skip the mismatched lines rather than
      guess. The SO is already created so we don't roll back. */
+  /* RETURNS THE REASONS, not a count. It used to answer `{ failed, skipped }`
+     and the caller rebuilt a sentence out of the sum — the same defect #3303
+     fixed for line writes, on the photo path. Wording and the retry/refusal
+     decision live in vendor/scm/lib/photo-upload-failures.ts, shared with the
+     phone editor so the two surfaces cannot drift apart. */
   const flushPendingPhotos = async (
     docNo: string,
     draftLines: DraftLine[],
-  ): Promise<{ failed: number; skipped: number }> => {
+  ): Promise<PhotoUploadFailure[]> => {
     const linesWithPending = draftLines.filter(
       (l) => (l.pendingPhotoFiles?.length ?? 0) > 0,
     );
-    if (linesWithPending.length === 0) return { failed: 0, skipped: 0 };
+    if (linesWithPending.length === 0) return [];
 
     // HOUZS VENDOR — read the saved item IDs back through the vendored
     // authedFetch (→ /api/scm/mfg-sales-orders/:docNo), bypassing the
@@ -1108,8 +1145,11 @@ export const SalesOrderNew = () => {
     } catch (e) {
       // eslint-disable-next-line no-console
       console.error('[so-line-photos] could not load saved item IDs:', e);
-      void humanApiError;
-      return { failed: linesWithPending.length, skipped: 0 };
+      /* Every staged photo is lost, and the count is now per PHOTO rather than
+         per line — the operator re-attaches photos, not lines, so a line count
+         understated the work whenever a line carried more than one. */
+      return linesWithPending.flatMap((l) => (l.pendingPhotoFiles ?? []).map(
+        (f) => photoUploadFailure(photoLabel(l.itemCode, f.name), e)));
     }
 
     /* Positional match — `validLines` is the same slice we sent to
@@ -1117,8 +1157,7 @@ export const SalesOrderNew = () => {
        `validLines[i]`. We only iterate over validLines so cancelled
        drafts (no itemCode) are skipped without breaking the index. */
     const validLines = draftLines.filter((l) => l.itemCode.trim() && l.qty > 0);
-    let failed = 0;
-    let skipped = 0;
+    const failures: PhotoUploadFailure[] = [];
     for (let i = 0; i < validLines.length; i++) {
       const line = validLines[i]!;
       const files = line.pendingPhotoFiles ?? [];
@@ -1130,7 +1169,10 @@ export const SalesOrderNew = () => {
         console.warn('[so-line-photos] index/item_code mismatch — skipping pending uploads', {
           index: i, expected: line.itemCode, got: saved?.item_code,
         });
-        skipped += files.length;
+        /* A "skip" was never a different outcome to the operator: the photo is
+           not on the order either way. It now says WHY it is not, instead of
+           being folded into a total with the ones the server refused. */
+        failures.push(...unmatchedLinePhotos(line.itemCode, files));
         continue;
       }
       for (const f of files) {
@@ -1139,11 +1181,11 @@ export const SalesOrderNew = () => {
         } catch (err) {
           // eslint-disable-next-line no-console
           console.error('[so-line-photos] upload failed', { file: f.name, err });
-          failed++;
+          failures.push(photoUploadFailure(photoLabel(line.itemCode, f.name), err));
         }
       }
     }
-    return { failed, skipped };
+    return failures;
   };
 
   const paymentIntents = () => paymentDrafts.filter((d) => d.amountSen > 0 && !d.receiptImageKey);
@@ -1333,12 +1375,68 @@ export const SalesOrderNew = () => {
     );
   };
 
+  /* Backend is the sole authority for the submit-blocked problem list (owner
+     2026-09-16: 「跟 backend 串通, frontend 只是显示问题」). buildValidateDraft turns
+     the current form state into the payload the POST /mfg-sales-orders/validate
+     dry-run reads; the frontend holds NO validation rules — every problem + its
+     wording is the server's collectSoSubmitProblems. */
+  const buildValidateDraft = useCallback((asDraftFlag: boolean) => ({
+    debtorName,
+    phone,
+    items: lines.map((l) => ({ itemCode: l.itemCode, itemGroup: l.itemGroup, variants: l.variants, qty: l.qty })),
+    asDraft: asDraftFlag,
+    hasVenue: !!effectiveVenueId,
+    hasSalesperson: !!salespersonId,
+    companyCode: branding.companyCode,
+    salesLocation,
+    customerState: state,
+    processingDate,
+    customerDeliveryDate: deliveryDate,
+    fillAddressLater,
+    address1,
+    postcode,
+    payments: paymentDrafts.map((d) => ({
+      methodLabel: d.methodLabel,
+      merchantProvider: d.merchantProvider,
+      installmentMonthsLabel: d.installmentMonthsLabel,
+      onlineType: d.onlineType,
+      convertedFromDocNo: d.convertedFromDocNo,
+      amountSen: d.amountSen,
+    })),
+  }), [debtorName, phone, lines, effectiveVenueId, salespersonId, branding.companyCode, salesLocation, state, processingDate, deliveryDate, fillAddressLater, address1, postcode, paymentDrafts]);
+
+  /* Live "Can't save — N to fix" list, asked of the backend as the operator
+     types (debounced). Based on the CONFIRMED create (asDraft:false), which is
+     what the owner's complaint is about. Skipped once the order already exists. */
+  const liveValidateDraft = useMemo(() => buildValidateDraft(false), [buildValidateDraft]);
+  const { problems: backendLiveProblems } = useSoValidate(liveValidateDraft, !createdDocNo);
+  /* The ONE genuinely client-only blocker: a NO-MATCH scanned line (Task #73)
+     seeds an empty SKU picker the backend cannot see (it holds scan metadata,
+     not a rule). Merged into the same list so the operator still sees it. */
+  const scannedExtras = useMemo<SaveProblem[]>(() => {
+    const unpicked = lines.filter((l) => !l.itemCode.trim() && (scanLineMeta[l.rid]?.rawText ?? '').trim() !== '');
+    return unpicked.length > 0
+      ? [{
+          code: 'scanned_line_unpicked',
+          message:
+            `${unpicked.length} scanned line${unpicked.length === 1 ? '' : 's'} ` +
+            `${unpicked.length === 1 ? 'has' : 'have'} no product picked — pick a real SKU from the dropdown ` +
+            '(the slip text is shown as a hint) or remove the line.',
+          field: 'Line items',
+        }]
+      : [];
+  }, [lines, scanLineMeta]);
+  const blockingProblems = useMemo(() => [...backendLiveProblems, ...scannedExtras], [backendLiveProblems, scannedExtras]);
+  const openBlockingList = () => {
+    void notify({ title: saveProblemsTitle(blockingProblems.length), body: <SaveProblemsList problems={blockingProblems} />, tone: 'error' });
+  };
+
   /* DRAFT flow — `asDraft` adds `asDraft: true` to the create body so the SO
      lands as DRAFT (excluded from KPI/MRP/PO/DO until Confirmed on Detail).
      The two header buttons both call onSave; only the flag differs. When the
      form was opened from a scan (fromScan), "Save as Draft" is the primary
      button so scanned orders default to draft for operator review. */
-  const onSave = (asDraft = false) => {
+  const onSave = async (asDraft = false) => {
     if (createdDocNo) {
       const intents = paymentIntents();
       if (intents.length === 0) {
@@ -1358,154 +1456,29 @@ export const SalesOrderNew = () => {
       });
       return;
     }
-    /* One-pass required-field check (owner 2026-08-20 live QA: "为什么要慢慢爆呢"
-       — the form popped ONE missing field per click). Collect EVERY always-required
-       field the operator is missing and show them together. The CONDITIONAL guards
-       below (date sanity, scanned-SKU, sofa-mix, Processing-Date proceed gate, the
-       "State has no warehouse" config case, payment sub-fields) still run one at a
-       time, because each only applies once an earlier choice is made. Shared with
-       mobile via soRequiredFieldErrors so the required set can't drift. */
     const validLines = lines.filter((l) => l.itemCode.trim() && l.qty > 0);
-    const missingRequired = soRequiredFieldErrors({
-      customerName: debtorName,
-      phone,
-      hasNamedLine: validLines.length > 0,
-      asDraft,
-      hasVenue: !!effectiveVenueId,
-      hasSalesperson: !!salespersonId,
-      location: { companyCode: branding.companyCode, salesLocation, state, mappingsLoaded: !!stateWarehousesQ.data, asDraft },
-    });
-    /* BOTH lists, ONE dialog. The proceeding-address group's condition is
-       `processingDate`, which is known right here — it only READ like a
-       sequential guard because it sat in a second `if` further down that the
-       return above never reached. Owner 2026-08-23: 「create salesorder 要两
-       次？」 — Venue and State on the first press, address and postcode on the
-       second. */
-    const missingProceeding = soProceedingAddressErrors({
-      processingDate,
-      customerName: debtorName,
-      fillAddressLater,
-      address1,
-      postcode,
-      deliveryDate,
-    });
-    if (missingRequired.length > 0 || missingProceeding.length > 0) {
-      void notify({ ...soRequiredFieldsMessage(missingRequired, missingProceeding), tone: 'error' });
-      return;
-    }
-    // Date sanity (set-together / not-past / processing≤delivery) — shared with
-    // mobile via soDateGuardError so the rule can't drift between surfaces.
-    const dateErr = soDateGuardError({ processingDate, deliveryDate, today });
-    if (dateErr) {
-      void notify({ ...dateErr, tone: 'error' });
-      return;
-    }
-    /* Scan-Order core rule (Task #73) — a NO-MATCH scanned line seeds an empty
-       SKU picker the operator MUST fill from the dropdown ("应该是 dropdown 而
-       不是 manually 填写"). Block the save while any scanned line is still
-       unpicked (it carries the slip rawText but no itemCode) rather than
-       silently dropping it, so the operator is forced to pick a real SKU. */
-    const unpickedScanned = lines.filter((l) => !l.itemCode.trim() && (scanLineMeta[l.rid]?.rawText ?? '').trim() !== '');
-    if (unpickedScanned.length > 0) {
-      void notify({
-        title: 'Pick a SKU for every scanned line.',
-        body:
-          `${unpickedScanned.length} scanned line${unpickedScanned.length === 1 ? '' : 's'} ` +
-          `${unpickedScanned.length === 1 ? "doesn't" : "don't"} have a product picked yet. ` +
-          'Pick a real SKU from the dropdown (the slip text is shown as a hint) or remove the line, then try again.',
-        tone: 'error',
+    /* Backend is the authority for what blocks this submit (owner 2026-09-16).
+       Ask the validate dry-run for the definitive list for THIS press (draft vs
+       confirmed differ), and merge the one client-only extra (a NO-MATCH scanned
+       line, Task #73, whose scan metadata the backend cannot see). A failed
+       validate does not block — the create call below is the authoritative
+       backstop and returns the same problems[] shape. Shown in the SAME
+       SaveProblemsList popup the live indicator and the server refusal use. */
+    let serverProblems: SaveProblem[] = [];
+    try {
+      const r = await authedFetch<{ problems: SaveProblem[] }>('/mfg-sales-orders/validate', {
+        method: 'POST',
+        body: JSON.stringify(buildValidateDraft(asDraft)),
       });
-      return;
+      serverProblems = r.problems;
+    } catch {
+      // silent-write-ok: validate is a READ-ONLY dry-run (it writes nothing); its
+      // failure must not block the operator, and the create call below is the
+      // authoritative gate that surfaces any real refusal.
     }
-    // Sofa is exclusive among main products — the server 400s
-    // `so_sofa_no_other_main` when a sofa line rides with a bedframe/mattress.
-    // Block + warn here so the operator gets one plain sentence, not a raw 400.
-    if (hasSofaMixConflict(validLines.map((l) => l.itemGroup))) {
-      void notify({ title: SOFA_MIX_MESSAGE, tone: 'error' });
-      return;
-    }
-    /* Variant completeness is the PROCEED rule, and only the proceed rule
-       (owner 2026-08-13: "只要是没有 proceed 这一张订单，其实都不一定是需要填写
-       的，除非它是 proceed 了"). A Processing Date IS proceed, so it demands the
-       full axis list — the same rule the server applies (so-variant-check via
-       collectProcessingGateProblems), together with the address / postcode /
-       delivery-date completeness the same date requires.
-
-       It briefly ALSO ran at confirm, date or no date (2026-08-08,
-       HC-SO-2607-008). That made a salesperson unable to book a real order
-       from a real customer who had not yet picked a seat height. Removed:
-       confirm means "this is a real order", proceed means "this is
-       buildable". Save as Draft was never gated either way. */
-    if (processingDate) {
-      /* Delivery completeness is the SAME proceed rule, and the server has
-         enforced it on procDate alone since 2026-07-31 (so-save-problems.ts).
-         Check it HERE too, or a blank address — or "Fill in address later" left
-         ticked, which BLANKS the address out of the payload — comes back as a
-         bare validation_failed naming no field. */
-      /* The address fields moved UP into the one-pass check above — see
-         soProceedingAddressErrors. Nothing is checked twice: reaching here means
-         that list was empty. The "untick Fill in address later" hint went with
-         them into the shared message. */
-      const missOf = (l: SoLineDraft): string[] =>
-        missingRequiredVariants(l.itemGroup, l.variants, l.itemCode);
-      const variantGaps = validLines
-        .map((l) => ({ code: l.itemCode, miss: missOf(l) }))
-        .filter((x) => x.miss.length > 0);
-      if (variantGaps.length > 0) {
-        void notify({
-          title: 'Complete all variant selections before setting a Processing Date:',
-          body: variantGaps.map((x) => `• ${x.code}: ${x.miss.join(', ')}`).join('\n'),
-          tone: 'error',
-        });
-        return;
-      }
-    }
-    /* Confirm gates (owner 2026-08-08) — a confirmed order needs a venue and a
-       salesperson; drafts stay freely saveable. Both are now collected in the
-       one-pass required-field check above (soRequiredFieldErrors), so the backend
-       stays the authoritative gate and the operator sees them alongside the other
-       missing fields rather than in two more separate dialogs. The SELF sentinel
-       counts as a salesperson: the backend stamps the caller's own staff row. */
-    /* Stock-location gate (owner 2026-08-13, company 1 only) — the order must
-       ship from a warehouse or AutoCount refuses the whole document. SHARED
-       with mobile via soStockLocationError; the backend is the authoritative
-       gate (422 validation_failed) and this only saves the operator a
-       round-trip with a form full of typing. Reads the SAME salesLocation the
-       create body sends, so the two can never disagree. */
-    const locationErr = soStockLocationError({
-      companyCode: branding.companyCode,
-      salesLocation,
-      state,
-      mappingsLoaded: !!stateWarehousesQ.data,
-      asDraft,
-    });
-    if (locationErr) {
-      void notify({ ...locationErr, tone: 'error' });
-      return;
-    }
-
-    /* NO SLIP GUARD (Owner 2026-08-13) — "SalesOrder 所有的付款都不强制".
-       A payment slip is optional on every SO path now, so an amount-bearing
-       draft saves without one; the row is still POSTED (flushPaymentDrafts
-       filters on amount, never on the slip), which is the half that matters.
-       A scanned card receipt still rides along on its own path — see
-       receiptDeposit below. */
-
-    /* Cascade guard (spec 1) — a chosen payment method needs its required
-       sub-field(s): Merchant → Bank + Plan; Online → Sub-Type; Cash → none.
-       Block the save and name the first row + missing field so commander knows
-       exactly what to pick. Only checks amount-bearing rows (a zeroed/blank row
-       is dropped at flush time). */
-    const methodGaps = paymentDrafts
-      .map((d, i) => ({ row: i + 1, method: d.methodLabel, missing: d.amountSen > 0 ? missingMethodSubField(d) : null }))
-      .filter((x) => x.missing !== null);
-    if (methodGaps.length > 0) {
-      const g = methodGaps[0]!;
-      void notify({
-        title: `Payment ${g.row} (${g.method}) needs a ${g.missing}.`,
-        body: 'Pick the required sub-field for each payment method before saving.',
-        tone: 'error',
-      });
+    const problems = [...serverProblems, ...scannedExtras];
+    if (problems.length > 0) {
+      void notify({ title: saveProblemsTitle(problems.length), body: <SaveProblemsList problems={problems} />, tone: 'error' });
       return;
     }
 
@@ -1583,6 +1556,10 @@ export const SalesOrderNew = () => {
            for back-compat with reports / PDFs that still read it. */
         venueId: effectiveVenueId ?? undefined,
         venue: effectiveVenueName || undefined,
+        /* The picked event's ORGANIZER. Together with the venue, the order date
+           and the brand derived from the lines, this is what identifies one
+           fair; the server never trusts a project id from here. */
+        fairOrganizer: fairPick.organizer ?? undefined,
         /* Address handling: address1/2 skipped when fill-later is on, but
            State/City/Postcode/BuildingType always submit. */
         address1: fillAddressLater ? undefined : (address1 || undefined),
@@ -1648,8 +1625,7 @@ export const SalesOrderNew = () => {
              after the SO + items exist. Same non-blocking pattern as
              payments: a photo failure leaves the SO intact and we
              surface a warning rather than rolling back. */
-          const { failed: photoFailed, skipped: photoSkipped } =
-            await flushPendingPhotos(res.docNo, validLines);
+          const photoFailures = await flushPendingPhotos(res.docNo, validLines);
           if (failed > 0) {
             await notify({
               title: `Sales order ${res.docNo} was created, but ${failed} ` +
@@ -1660,11 +1636,15 @@ export const SalesOrderNew = () => {
               tone: 'error',
             });
           }
-          if (photoFailed > 0 || photoSkipped > 0) {
+          if (photoFailures.length > 0) {
             await notify({
-              title: `Sales order ${res.docNo} was created, but ${photoFailed + photoSkipped} ` +
-                `staged photo${(photoFailed + photoSkipped) === 1 ? '' : 's'} could not be uploaded.`,
-              body: 'Please re-attach on the Detail page.',
+              title: `Sales order ${res.docNo} was created, but ${photoFailures.length} ` +
+                `staged photo${photoFailures.length === 1 ? '' : 's'} could not be uploaded.`,
+              /* The reason, and re-attach advice ONLY where re-attaching could
+                 work. "Please re-attach on the Detail page" was printed against
+                 a refusal too, which is an instruction to keep doing the thing
+                 that just failed. */
+              body: photoUploadFailureMessage(photoFailures),
               tone: 'error',
             });
           }
@@ -1715,9 +1695,14 @@ export const SalesOrderNew = () => {
             <Button variant="ghost" onClick={() => navigate('/scm/sales-orders')}>
               <X {...ICON} /> Cancel
             </Button>
+            {/* Persistent "Can't save — N to fix · tap to see" (owner 2026-09-16):
+                a blocked Save is never silent. Count + list are backend-authored
+                (useSoValidate), so it clears itself as fields are fixed. Renders
+                nothing when the order is complete. */}
+            <SaveBlockedIndicator problems={blockingProblems} onOpen={openBlockingList} />
             <Button
               variant={fromScan ? 'secondary' : 'primary'}
-              onClick={() => onSave(false)}
+              onClick={() => { void onSave(false); }}
               disabled={create.isPending}
             >
               <Save {...ICON} />
@@ -1729,7 +1714,7 @@ export const SalesOrderNew = () => {
             </Button>
             <Button
               variant={fromScan ? 'primary' : 'secondary'}
-              onClick={() => onSave(true)}
+              onClick={() => { void onSave(true); }}
               disabled={create.isPending || !!createdDocNo}
             >
               <Save {...ICON} />
@@ -1902,45 +1887,33 @@ export const SalesOrderNew = () => {
               </span>
             </label>
             <label className={styles.field}>
-              <span className={styles.fieldLabel}>Venue</span>
-              {/* Houzs 2026-06-22 (owner): Venue is manually pickable (was a
-                  locked 2990 field). Defaults to the salesperson's home venue,
-                  the operator can change it. */}
-              <span className={styles.selectWrap}>
-                <select
-                  className={`${styles.fieldSelect} ${editedClass('venueId', effectiveVenueId ?? '')}`}
-                  value={effectiveVenueId ?? ''}
-                  onChange={(e) => setPickedVenueId(e.target.value || null)}
-                  aria-label="Venue"
-                >
-                  <option value="">—</option>
-                  {(venuesQ.data ?? []).map((v) => (
-                    <option key={v.id} value={v.id}>{v.name}</option>
-                  ))}
-                </select>
-                <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
-              </span>
-              {/* Name the SOURCE, not just the fact of an auto-fill. "Auto-filled
-                  from Ipoh Fair" and "Auto-filled from your showroom" mean
-                  different things, and the operator needs to know which default
-                  they are being offered before deciding to override it. */}
-              {autoVenue?.venueId && autoVenue.source === 'PMS' && autoVenue.projectName && (
+              <span className={styles.fieldLabel}>Fair</span>
+              {/* Owner 2026-09-13: a row is a PLACE plus an ORGANIZER, no dates,
+                  and nothing here is typed — "Others" is a second PICK over the
+                  venue master. The brand is never asked for: the server derives
+                  it from the SKUs and uses it to decide which brand booth at the
+                  picked event this order belongs to. FairPicker.tsx has the
+                  rules; it is the SAME component the mobile form renders. */}
+              <FairPicker
+                id="so-fair"
+                value={fairPick}
+                /* The create form has no SO-date field — the server stamps today in
+                   MYT — so null is the honest value here, not a browser date. */
+                soDate={null}
+                onChange={setFairPick}
+                wrapClassName={styles.selectWrap}
+                selectClassName={`${styles.fieldSelect} ${editedClass('venueId', effectiveVenueId ?? '')}`}
+              />
+              {/* Name the SOURCE of the default, not just that there was one:
+                  "from Ipoh Fair" and "from your showroom" mean different things
+                  and the operator overrides on that. (The "master holds ~38" note
+                  that stood here was stale — measured 2026-09-13 it holds 92 and
+                  covers every venue any 2026 fair uses.) */}
+              {autoVenue?.venueName && (
                 <span style={{ fontSize: '11px', marginTop: '4px', opacity: 0.7 }}>
-                  Auto-filled from {autoVenue.projectName}
-                </span>
-              )}
-              {autoVenue?.venueId && autoVenue.source === 'SHOWROOM' && (
-                <span style={{ fontSize: '11px', marginTop: '4px', opacity: 0.7 }}>
-                  Auto-filled from your showroom{autoVenue.showroomName ? ` (${autoVenue.showroomName})` : ''} — change it if you are somewhere else today
-                </span>
-              )}
-              {/* KNOWN GAP, deliberately tolerated: projects reference ~60
-                  distinct venues and the master holds ~38. The order still
-                  saves with the venue text — refusing it would block real sales
-                  to enforce a list nobody has finished filling in. */}
-              {autoVenue && !autoVenue.venueId && autoVenue.venueName && (
-                <span style={{ fontSize: '11px', marginTop: '4px', color: 'var(--c-festive-b, #B8331F)' }}>
-                  Venue {autoVenue.venueName} is not in the venue list yet — it is still saved on the order; add it in Project Maintenance to show it here.
+                  {autoVenue.venueId
+                    ? `Auto-filled from ${autoVenue.source === 'PMS' ? (autoVenue.projectName ?? 'your fair') : `your showroom${autoVenue.showroomName ? ` (${autoVenue.showroomName})` : ''}`} — change it if you are somewhere else today`
+                    : `${autoVenue.venueName} is not in the venue list yet — it still saves on the order; add it in Project Maintenance to show it here.`}
                 </span>
               )}
             </label>
@@ -2081,6 +2054,7 @@ export const SalesOrderNew = () => {
               <input
                 className={`${styles.fieldInput} ${editedClass('address1', address1)}`}
                 value={address1}
+                {...addressLineProps(setAddress1, { value: address2, set: setAddress2 })}
                 onChange={(e) => setAddress1(e.target.value)}
                 placeholder="Unit, street, area"
               />
@@ -2097,6 +2071,7 @@ export const SalesOrderNew = () => {
               <input
                 className={styles.fieldInput}
                 value={address2}
+                {...addressLineProps(setAddress2, null)}
                 onChange={(e) => setAddress2(e.target.value)}
                 placeholder="Apt, floor, building (optional)"
               />
@@ -2127,20 +2102,17 @@ export const SalesOrderNew = () => {
                 <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
               </span>
             </label>
-            <label className={styles.field}>
-              <span className={styles.fieldLabel}>Postcode</span>
-              <span className={styles.selectWrap}>
-                <SearchableSelect
-                  className={styles.fieldSelect}
-                  value={postcode}
-                  onChange={onPostcodePick}
-                  disabled={loc.isLoading}
-                  placeholder={loc.isLoading ? 'Loading…' : postcodePlaceholder(state, city)}
-                  options={sortByNumeric(postcodeChoices).map((p) => ({ value: p, label: p }))}
-                />
-                <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
-              </span>
-            </label>
+            <AddressPostcodeField
+              country={country}
+              value={postcode}
+              onChange={setPostcode}
+              onCascadePick={onPostcodePick}
+              onResolve={(r) => { setAddress1(r.address); if (r.state && r.city) { setState(r.state); setCity(r.city); } }}
+              postcodeChoices={postcodeChoices}
+              placeholder={loc.isLoading ? 'Loading…' : postcodePlaceholder(state, city)}
+              disabled={loc.isLoading}
+              classes={{ field: styles.field, label: styles.fieldLabel, select: styles.fieldSelect, selectWrap: styles.selectWrap, chevron: styles.selectChevron, input: styles.fieldInput }}
+            />
             {/* Task #121 — Country is auto-derived from the picked state via
                 my_localities. Read-only display; the API re-derives + snaps
                 it onto the SO header on POST. */}
@@ -2207,6 +2179,7 @@ export const SalesOrderNew = () => {
                      ` *` marker + red ring stay off while the order is still a
                      no-date draft (owner 2026-07-14). */
                   variantsRequired={!!processingDate}
+                  seedSofaLegDefault={true}
                   /* Scan-Order (Task #73) — a NO-MATCH scanned line seeds an
                      empty SKU picker; pass the slip rawText as the picker's
                      placeholder hint so the operator can pick a real SKU
@@ -2272,6 +2245,7 @@ export const SalesOrderNew = () => {
         slipUpload
         collectedByAllowedIds={paymentsCollectedByAllowedIds}
         defaultCollectedBy={selfStaffMatch?.id ?? ''}
+        convertSources={cancelledForCustomer.data?.orders ?? []}
       />
       </div>
     </div>

@@ -1,0 +1,57 @@
+name: Put right the leg-default stranded delivery lines (DRY-RUN gated)
+
+# The repair half of docs/bugs/0722. Three delivery orders shipped on "Ship
+# anyway" asking the stock ledger about a bucket the form invented
+# (legheight=default, carried by no lot); their OUT movements consumed no lot and
+# carried no cost, so stock is overstated by 5 pieces and three sales carry no
+# COGS. This strips the invented leg height from the delivery lines, deletes the
+# phantom (zero-consumption) OUT movements, and re-ships through the CANONICAL
+# resyncInventoryForDo + restampSiFromDo so the real lot is consumed at its real
+# cost and the cost flows to the DO lines and the Sales Invoice.
+#
+# DRY-RUN by default. APPLY writes only with apply=1 AND the confirm phrase — the
+# same double-gate as the duplicate-lot repair. Read the PLAN workflow first:
+#   "Delivery lines stranded by the invented leg height — PLAN (read-only)".
+#
+# Manual trigger only. Own concurrency group so it can neither queue behind nor
+# displace a release.
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "1 to WRITE. Anything else = dry-run."
+        required: false
+        default: "0"
+        type: string
+      confirm:
+        description: 'Must equal STAMP THE FIVE STRANDED LINES to write.'
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: apply-do-leg-default-stock
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      # tsx, because the canonical resync/restamp are TS route modules.
+      - run: npx tsx scripts/apply-do-leg-default-stock.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          APPLY: ${{ inputs.apply }}
+          CONFIRM: ${{ inputs.confirm }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

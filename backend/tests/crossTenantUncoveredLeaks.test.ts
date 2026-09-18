@@ -27,13 +27,14 @@
 // byte-unchanged) AND A can still act on its OWN row.
 import { Hono } from 'hono';
 import { describe, expect, test } from 'vitest';
-import routeSource from '../src/scm/routes/mfg-sales-orders.ts?raw';
+import { soRouterSource } from './lib/so-router-source';
 import poSource from '../src/scm/routes/mfg-purchase-orders.ts?raw';
 import { createMfgPurchaseOrderHandler } from '../src/scm/routes/mfg-purchase-orders';
 import { consignmentOverridePriceHandler } from '../src/scm/routes/consignment-orders';
 import { sofaComboPutHandler } from '../src/scm/routes/sofa-combos';
 import { createWarehouseRacksHandler } from '../src/scm/routes/warehouse';
 import { createSupplierBindingHandler, createSupplierBindingsBatchHandler } from '../src/scm/routes/suppliers';
+const routeSource = soRouterSource();
 
 const CO_A = 1; // HOUZS
 const CO_B = 2; // 2990
@@ -306,8 +307,12 @@ describe('PWP voucher burn is company-scoped (createSalesOrderCore)', () => {
     // one resolved company id, refused up front
     expect(block).toContain('const pwpCompanyId = activeCompanyId(c)');
     expect(block).toContain("error: 'company_unresolved'");
-    // read + atomic burn + rollback each scoped
-    expect(hasSquished(block, ".in('code', allPwpCodes).eq('company_id', pwpCompanyId)")).toBe(true);
+    // read + atomic burn + rollback each scoped. docs/bugs/0819: the prefetch
+    // read now goes through pgrestIn (escapes an inch-mark code) rather than a
+    // bare .in('code', …), but the company predicate still sits on the read
+    // itself — pin BOTH, so the tenant boundary cannot be dropped in a later edit.
+    expect(hasSquished(block, "pgrestIn(sb .from('pwp_codes')")).toBe(true);
+    expect(hasSquished(block, "'code', allPwpCodes).eq('company_id', pwpCompanyId)")).toBe(true);
     expect(hasSquished(block, ".eq('code', code).eq('company_id', pwpCompanyId)")).toBe(true);
     expect(hasSquished(block, ".eq('code', code).eq('status', 'USED').eq('company_id', pwpCompanyId)")).toBe(true);
   });

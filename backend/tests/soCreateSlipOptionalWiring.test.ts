@@ -14,14 +14,9 @@
    soLocationGateWiring.test.ts / paymentSlipAttach.test.ts. */
 
 import { describe, expect, test } from 'vitest';
+import { soRouterSource } from './lib/so-router-source';
 
-const sources = import.meta.glob('../src/scm/routes/mfg-sales-orders.ts', {
-  query: '?raw',
-  import: 'default',
-  eager: true,
-}) as Record<string, string>;
-
-const routeSource = Object.values(sources)[0] ?? '';
+const routeSource = soRouterSource();
 
 /** Strip comments so the assertions read CODE, not the prose explaining it. */
 const stripComments = (s: string): string =>
@@ -63,8 +58,8 @@ describe('SO create — payments[]', () => {
     expect(code).toContain('if (sessionIds.length > 0) {');
   });
 
-  test('a row with no slip is inserted with a null slip_key, not skipped', () => {
-    expect(code).toContain('slip_key:           posPaymentSlipKeys![i] ?? null,');
+  test('a row with no slip is inserted with a null slip_key, not skipped — a converted row alone inherits the proof of its source', () => {
+    expect(code).toContain('slip_key:           posPaymentSlipKeys![i] ?? (plan ? plan.slipKey : null),');
     /* The scan receipt belongs to the SINGLE-deposit path; fanning it across
        split rows would stamp one photo onto payments it does not evidence. */
     const insertAt = code.indexOf('slip_key:           posPaymentSlipKeys![i]');

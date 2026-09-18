@@ -11,9 +11,12 @@ concurrency:
 
 jobs:
   # Detect backend changes so a frontend-only push does not redeploy the Worker.
-  # Frontend release is intentionally unconditional: queued main runs can be
-  # collapsed during a merge burst, and a per-push path diff then cannot prove
-  # that the currently live Pages build contains the latest frontend SHA.
+  # Frontend release was unconditional until 2026-09-15 because queued main runs
+  # can be collapsed during a merge burst, and a per-PUSH path diff then cannot
+  # prove that the currently live Pages build contains the latest frontend SHA.
+  # It is now decided against the last run whose frontend JOB succeeded — the
+  # same answer the backend below gives to the same problem — see
+  # `frontend_release`.
   #
   # The backend filter keeps a diff, but NOT against this push. On 2026-07-22
   # three merged backend PRs -- two of them authorisation fixes -- sat
@@ -36,6 +39,7 @@ jobs:
       backend: ${{ steps.filter.outputs.backend }}
       frontend: ${{ steps.filter.outputs.frontend }}
       last_backend_sha: ${{ steps.released.outputs.sha }}
+      frontend_release: ${{ steps.frontend_release.outputs.release }}
     steps:
       # Full history: both the paths filter and the ancestor guard below need to
       # reach a commit that may be many merges back.
@@ -60,24 +64,84 @@ jobs:
         run: |
           set -uo pipefail
           sha=""
+          fe_sha=""
           runs=$(gh api --paginate             "repos/${GITHUB_REPOSITORY}/actions/workflows/deploy.yml/runs?branch=main&per_page=50"             --jq '.workflow_runs[] | select(.status=="completed") | .id' 2>/dev/null | head -40) || true
           for id in $runs; do
-            ok=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${id}/jobs"                   --jq '[.jobs[] | select(.name=="backend" and .conclusion=="success")] | length' 2>/dev/null) || ok=0
-            if [ "${ok:-0}" != "0" ]; then
+            # One jobs call answers both halves: which of `backend` / `frontend`
+            # concluded success in this run.
+            done_jobs=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${id}/jobs"                   --jq '[.jobs[] | select((.name=="backend" or .name=="frontend") and .conclusion=="success") | .name] | join(",")' 2>/dev/null) || done_jobs=""
+            if [ -n "$done_jobs" ]; then
               cand=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${id}" --jq .head_sha 2>/dev/null) || cand=""
               # Only usable if we can still reach it in this clone.
               if [ -n "$cand" ] && git cat-file -e "${cand}^{commit}" 2>/dev/null; then
-                sha="$cand"
-                break
+                case ",$done_jobs," in *,backend,*)  [ -z "$sha" ]    && sha="$cand" ;; esac
+                case ",$done_jobs," in *,frontend,*) [ -z "$fe_sha" ] && fe_sha="$cand" ;; esac
               fi
             fi
+            [ -n "$sha" ] && [ -n "$fe_sha" ] && break
           done
           if [ -z "$sha" ]; then
             echo "::notice::No previous successful backend deploy resolved — the backend will run (fail-open)."
           else
             echo "::notice::Last released backend SHA: ${sha}"
           fi
+          if [ -z "$fe_sha" ]; then
+            echo "::notice::No previous successful frontend deploy resolved — the frontend will run (fail-open)."
+          else
+            echo "::notice::Last released frontend SHA: ${fe_sha}"
+          fi
           echo "sha=${sha}" >> "$GITHUB_OUTPUT"
+          echo "frontend_sha=${fe_sha}" >> "$GITHUB_OUTPUT"
+
+      # IS THERE AN UNRELEASED FRONTEND? (2026-09-15, docs/ci-fast-lane.md)
+      #
+      # The frontend job used to run on every push, and the header above says
+      # why: a per-PUSH diff cannot prove the live Pages build has the latest
+      # frontend when runs are collapsed. That reason holds; it is answered the
+      # way the backend answers it — diff against the last run whose `frontend`
+      # JOB succeeded, not against this push.
+      #
+      # Measured over the 60 merged PRs before this change: the frontend job was
+      # the longest in the run (median 7m40s: typecheck, the whole vitest suite,
+      # build, retention, Pages upload, smoke) and ran for 17 PRs that changed
+      # no frontend file at all (14 backend-only, 3 docs-only).
+      #
+      # The rule is written out, not a paths-filter, for the reason ci.yml's
+      # `changes` job gives: the safe question is "can EVERY changed file be
+      # proven irrelevant to the frontend build", and a filter answers "does SOME
+      # file match". A file is irrelevant only if it is under backend/, docs/,
+      # tasks/, is a *.md, or is a workflow other than this one. Anything else —
+      # a root package.json, scripts/, native/, a new directory — deploys.
+      #
+      # FAILS OPEN, like the backend: no resolved base, a failed diff, an empty
+      # diff, or a manual workflow_dispatch (the one-click recovery path, and the
+      # way to republish after changing a VITE_* repository variable) all deploy.
+      #
+      # WHAT A SKIP DOES NOT TOUCH: the live Pages deployment stays exactly as it
+      # is, so every chunk an open tab may lazy-import is still served — the
+      # stale-chunk retention from #3827 only acts when a new build is uploaded.
+      - id: frontend_release
+        env:
+          BASE: ${{ steps.released.outputs.frontend_sha }}
+        run: |
+          set -uo pipefail
+          release() { echo "::notice::frontend release: $1"; echo "release=true" >> "$GITHUB_OUTPUT"; exit 0; }
+          [ "${{ github.event_name }}" = "workflow_dispatch" ] && release "workflow_dispatch always publishes"
+          [ -n "$BASE" ] || release "no previous successful frontend deploy (fail-open)"
+          files=$(git diff --name-only "$BASE" "$GITHUB_SHA") || release "git diff ${BASE}..${GITHUB_SHA} failed (fail-open)"
+          [ -n "$files" ] || release "empty diff against ${BASE} — a rerun of the live commit publishes"
+          while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            case "$f" in
+              .github/workflows/deploy.yml) release "deploy.yml changed" ;;
+              # First, so a *.md INSIDE frontend/ can never be waved through.
+              frontend/*) release "unreleased frontend file since ${BASE}: $f" ;;
+              backend/*|docs/*|tasks/*|*.md|.github/*) ;;
+              *) release "unreleased non-backend file since ${BASE}: $f" ;;
+            esac
+          done <<< "$files"
+          echo "::notice::frontend release: SKIPPED — nothing since ${BASE} can change the frontend build (backend/, docs/, tasks/, *.md, other workflows only)"
+          echo "release=false" >> "$GITHUB_OUTPUT"
 
       # With no resolved base this evaluates the push range, and the guard below
       # forces the backend on anyway — so the fail-open path cannot skip.
@@ -103,6 +167,33 @@ jobs:
   # Same command, same shard count, same runner image — only the fan-out is new.
   # The shard count comes from strategy.job-total, so changing the matrix here
   # cannot silently disagree with the slicing, exactly as ci.yml does it.
+  #
+  # THE LIGHT SUITE RAN FOUR TIMES HERE, and nobody had asked it to (found
+  # 2026-09-15, docs/ci-fast-lane.md). `npm test` is
+  # `vitest run --config vitest.light.config.mts && vitest run`, and npm appends
+  # `-- --shard=i/4` to the LAST command only — the trap
+  # backend/tests/scaleRealSchemaContract.test.mjs describes for ci.yml. So each
+  # of the four shards ran ALL 811 light files (112-152s each, deploy run
+  # 34874575924's logs) before its quarter of the workers suite. Same files now,
+  # run once: `backend-light-tests` runs the light project whole, this matrix
+  # shards the workers project, and `backend` asserts BOTH succeeded.
+  backend-light-tests:
+    needs: changes
+    if: ${{ github.ref == 'refs/heads/main' && (needs.changes.outputs.backend == 'true' || needs.changes.outputs.last_backend_sha == '') }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npm run test:light
+
   backend-tests:
     needs: changes
     if: ${{ github.ref == 'refs/heads/main' && (needs.changes.outputs.backend == 'true' || needs.changes.outputs.last_backend_sha == '') }}
@@ -125,10 +216,10 @@ jobs:
           cache: npm
           cache-dependency-path: backend/package-lock.json
       - run: npm ci
-      - run: npm test -- --shard=${{ matrix.shard }}/${{ strategy.job-total }}
+      - run: npm run test:workers -- --shard=${{ matrix.shard }}/${{ strategy.job-total }}
 
   backend:
-    needs: [changes, backend-tests]
+    needs: [changes, backend-light-tests, backend-tests]
     if: ${{ github.ref == 'refs/heads/main' && (needs.changes.outputs.backend == 'true' || needs.changes.outputs.last_backend_sha == '') }}
     runs-on: ubuntu-latest
     environment: Production
@@ -185,7 +276,12 @@ jobs:
       # guard, same reasoning, as ci.yml's `backend` roll-up.
       - name: Assert the sharded backend tests succeeded
         run: |
-          echo "backend-tests: ${{ needs.backend-tests.result }}"
+          echo "backend-light-tests: ${{ needs.backend-light-tests.result }}"
+          echo "backend-tests:       ${{ needs.backend-tests.result }}"
+          if [ "${{ needs.backend-light-tests.result }}" != "success" ]; then
+            echo "::error title=Deploy blocked::backend-light-tests did not succeed (result: ${{ needs.backend-light-tests.result }}). A skipped or failed light suite must never publish."
+            exit 1
+          fi
           if [ "${{ needs.backend-tests.result }}" != "success" ]; then
             echo "::error title=Deploy blocked::backend-tests did not succeed (result: ${{ needs.backend-tests.result }}). A skipped or failed test matrix must never publish."
             exit 1
@@ -213,6 +309,21 @@ jobs:
       - run: node scripts/pg-migrate.mjs
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      # Bake the commit sha INTO the Worker bundle (src/build-info.ts) so
+      # GET /health reports it. This is the RELIABLE stamp: the `wrangler secret
+      # bulk` step below can non-deterministically drop the CLI `--var GIT_SHA`
+      # (null-stamp incident 2026-09-01 — see src/build-info.ts), but a value
+      # compiled into the bundle survives every var/secret operation. The `--var`
+      # on the deploy command is kept only as a fallback. Fails loudly if the
+      # stamp did not land, so a silent un-stamped deploy can't reach prod.
+      - name: Stamp the build with the commit sha
+        run: |
+          set -euo pipefail
+          # Replace ONLY the placeholder value on the export line — never the whole
+          # file, so resolveBuildSha() and the header survive. Fails loudly if the
+          # anchor drifts (the grep) so a silent un-stamped deploy can't reach prod.
+          sed -i 's|^export const GIT_SHA: string = "dev";$|export const GIT_SHA: string = "'"$GITHUB_SHA"'";|' src/build-info.ts
+          grep -qF "\"$GITHUB_SHA\"" src/build-info.ts || { echo "::error title=Build stamp failed::src/build-info.ts export line did not become $GITHUB_SHA — did the anchor change?"; exit 1; }
       # DEPLOY FIRST, SECRETS SECOND. These used to be ONE wrangler-action step,
       # and `wrangler-action` uploads `secrets:` BEFORE it runs `command:`. That
       # ordering took production down for 8 hours on 2026-08-17/18:
@@ -253,7 +364,10 @@ jobs:
       # guards the Google Form intake webhook (/api/assr-form-intake).
       # SHEET_SYNC_KEY_2990 is the sheet's 2990 ready-to-ship pull and the only
       # key /so-export accepts — the other two speak for HOUZS and may not open
-      # 2990 customer data (docs/modules/service-case.md).
+      # 2990 customer data (docs/modules/service-case.md). CHAT_CALLBACK_KEY
+      # guards /api/chat-callback (Houzs Chat → ERP) and likewise speaks only
+      # for HOUZS; while the GitHub secret is unset it is OMITTED from the
+      # bundle below rather than pushed as "", and the endpoint 401s.
       #
       # Built with `jq -n --arg` and piped on STDIN so no value ever reaches an
       # argv the runner logs. Actions masks these anyway; this is the second
@@ -267,14 +381,17 @@ jobs:
           FORM_INTAKE_KEY: ${{ secrets.FORM_INTAKE_KEY }}
           SHEET_SYNC_KEY: ${{ secrets.SHEET_SYNC_KEY }}
           SHEET_SYNC_KEY_2990: ${{ secrets.SHEET_SYNC_KEY_2990 }}
+          CHAT_CALLBACK_KEY: ${{ secrets.CHAT_CALLBACK_KEY }}
         run: |
           set -euo pipefail
           jq -n \
             --arg form_intake_key "$FORM_INTAKE_KEY" \
             --arg sheet_sync_key "$SHEET_SYNC_KEY" \
             --arg sheet_sync_key_2990 "$SHEET_SYNC_KEY_2990" \
+            --arg chat_callback_key "$CHAT_CALLBACK_KEY" \
             '{FORM_INTAKE_KEY: $form_intake_key, SHEET_SYNC_KEY: $sheet_sync_key}
-             + (if $sheet_sync_key_2990 == "" then {} else {SHEET_SYNC_KEY_2990: $sheet_sync_key_2990} end)' \
+             + (if $sheet_sync_key_2990 == "" then {} else {SHEET_SYNC_KEY_2990: $sheet_sync_key_2990} end)
+             + (if $chat_callback_key == "" then {} else {CHAT_CALLBACK_KEY: $chat_callback_key} end)' \
             | npx wrangler secret bulk
       # Post-deploy smoke check: confirm the new Worker is serving AND its
       # DB path (Hyperdrive -> Supabase) is alive before calling the deploy
@@ -289,12 +406,16 @@ jobs:
 
   frontend:
     needs: changes
-    if: ${{ github.ref == 'refs/heads/main' }}
-    # Always publish the latest frontend for every completed main run. GitHub
-    # collapses queued runs during a burst of merges; a per-push path diff can
-    # therefore miss frontend files that existed only in an earlier cancelled
-    # run. Rebuilding the latest SHA is the correctness boundary and also makes
-    # workflow_dispatch a reliable one-click recovery path.
+    # `!= 'false'`, not `== 'true'`: if the decision step produced nothing at all
+    # the frontend still publishes. Only an explicit "nothing unreleased" skips.
+    if: ${{ github.ref == 'refs/heads/main' && needs.changes.outputs.frontend_release != 'false' }}
+    # Publish the latest frontend whenever anything since the LAST SUCCESSFUL
+    # frontend deploy could change it (see `frontend_release` in `changes`).
+    # GitHub collapses queued runs during a burst of merges; a per-push path diff
+    # can therefore miss frontend files that existed only in an earlier cancelled
+    # run, which is why the base is the last released SHA and not this push.
+    # Rebuilding the latest SHA is the correctness boundary, and
+    # workflow_dispatch always publishes, so it stays a one-click recovery path.
     runs-on: ubuntu-latest
     environment: Production
     defaults:
@@ -330,6 +451,35 @@ jobs:
       # DEPLOY rather than a PR. The gate belongs on the PR, where it already
       # runs with a baseline.
       - run: npm run check:sw
+      # KEEP THE PREVIOUS BUILDS' CHUNKS FETCHABLE. A Pages deployment is atomic:
+      # it serves exactly the files uploaded with it, so every deploy used to
+      # delete the last build's hashed chunks, and a tab still on that build got
+      # 404 for its next lazy import. On 2026-09-14 staff printing HC-SO-012016
+      # got "Failed to fetch dynamically imported module:
+      # .../assets3/sales-order-pdf-C9QaiR37.js" (now HTTP 404 "Not found").
+      #
+      # This step reads the LIVE deployment's asset-manifest.json, downloads the
+      # hashed files the new build lacks, verifies each against the manifest's
+      # sha256, and writes them into dist beside the new build — never over a
+      # file the new build has (index.html, sw.js and every asset it produced
+      # come from THIS build only). It prunes files no build produced in 7 days
+      # and keeps the deployment under 19,000 files (Pages allows 20,000),
+      # dropping the oldest first. Counts land in the log and the step summary.
+      # Rules and tests: frontend/scripts/lib/asset-retention.mjs,
+      # frontend/scripts/retain-previous-assets.test.mjs.
+      #
+      # FAIL-SAFE BY CONTRACT: a failure here must never block a release. The
+      # script exits 0 on every operational failure with the new build intact;
+      # continue-on-error + timeout cover a crash or hang it did not anticipate.
+      # No new secret — it only GETs the public site the smoke step reads too.
+      - name: Carry previous builds' hashed assets into this deployment
+        continue-on-error: true
+        timeout-minutes: 6
+        run: node scripts/retain-previous-assets.mjs --base "${{ vars.FRONTEND_SMOKE_URL || 'https://erp.houzscentury.com' }}" --retention-days 7 --max-files 19000
+      # A kill mid-write can leave a temp file; it must not be deployed.
+      - name: Drop partial retention writes
+        if: always()
+        run: find dist -name '*.retain-tmp' -delete
       - uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}

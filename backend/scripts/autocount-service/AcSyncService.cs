@@ -155,7 +155,34 @@ class AcSyncService {
   static string Url =
     "http://localhost:" + (File.Exists(@"C:\Temp\ac-svc-port.txt")
       ? File.ReadAllText(@"C:\Temp\ac-svc-port.txt").Trim() : "8900") + "/";
-  const string USER = "ADMIN";
+  /* The AutoCount APPLICATION login the write-back authenticates as, and the
+     name stamped as the ACTOR on everything it writes — CancelDocument,
+     SaveData, SaveDebtor and SaveCreditor all take it.
+
+     It was the literal "ADMIN" until 2026-09-07, and Session() called
+     Login(USER, USER) — the user id sent as its own password — so the account
+     book's ADMIN password was, and had to stay, the string "ADMIN".
+
+     Measured on the live book that day, because the question "is ADMIN a
+     service identity or a person's account?" had never been asked: ADMIN
+     created or last-modified 110,184 documents; MASTER 25; MALL 3; AOTG and
+     LOGISTIC none at all. ADMIN is what the staff work in. Two things followed
+     from that and neither was survivable:
+
+       - AutoCount cannot be made read-only for the staff without locking the
+         write-back out alongside them, because it is the same login.
+       - Nothing in the account book can tell an ERP write from a person's.
+
+     Both are now substituted at deploy time. `C:\Temp\ac-svc-login.txt` (line 1
+     user, line 2 password) is the source; with no such file the deploy falls
+     back to setup.json's own `user` / `password`, which reproduces the previous
+     behaviour exactly — a deploy that is asked for nothing new changes nothing.
+
+     PASS is deliberately its own constant rather than a second read of USER: a
+     login whose password is derivable from its user id cannot be strengthened
+     later without another code change, and that is the trap being removed. */
+  const string USER = "__ACUSER__";
+  const string PASS = "__ACPASS__";
 
   static string ApiKey =
     File.Exists(@"C:\Temp\ac-svc-key.txt") ? File.ReadAllText(@"C:\Temp\ac-svc-key.txt").Trim() : null;
@@ -334,6 +361,10 @@ class AcSyncService {
       /* READ-ONLY, one aggregate. See PictureCensus(). */
       case "/picture-census": Json(ctx, 200, PictureCensus(p)); return;
       /* READ-ONLY, one SELECT on sys.columns. See TableColumns(). */
+      /* READ-ONLY, one SELECT. See LineFingerprints(). */
+      case "/line-fingerprints": Json(ctx, 200, LineFingerprints(p)); return;
+      /* READ-ONLY, one SELECT. See DeliveryDates(). */
+      case "/delivery-dates": Json(ctx, 200, DeliveryDates(p)); return;
       case "/table-columns": Json(ctx, 200, TableColumns(p)); return;
       default: Json(ctx, 404, Err("unknown route " + path)); return;
     }
@@ -744,6 +775,177 @@ class AcSyncService {
     return d;
   }
 
+  /* ── /line-fingerprints — WHICH documents disagree with the ERP, in ONE call ──
+     WHY IT EXISTS. The owner, on finding a third migrated document whose
+     AutoCount lines were in a different order from the ERP's with a deleted line
+     still sitting at Qty 0:
+
+         「之后有问题吗？我不要每次都来 fix 啊」
+
+     He chose to measure the whole population rather than keep fixing one
+     document at a time. The ERP's AutoCount mirror is HEADER-ONLY, so the line
+     order lives nowhere but the account book, and asking `/doc-read` per
+     document is ~2,700 round trips through the tunnel — far past what one Worker
+     request survives. This answers the whole question in one SELECT.
+
+     WHAT IT RETURNS, and why that is the smallest thing that answers it: the
+     document number, its line COUNT, and the ordered ItemCodes joined by `|`.
+     The caller composes the ERP's own expected list (`composeDetails`, which
+     collapses sofa compartments the way a real send does) and compares. A count
+     alone cannot see a re-ORDER, which is half of what is being asked.
+
+     CANCELLED LINES ARE INCLUDED ON PURPOSE. A line the ERP deleted and the book
+     still holds at Qty 0 is exactly one of the mismatches being counted;
+     dropping it would hide the case this was written for.
+
+     READ-ONLY, and mechanically so: one SELECT on one connection, no SDK
+     session, no transaction, and the table names come from an ALLOW-LIST keyed
+     by document type rather than from the caller's string. */
+  static readonly Dictionary<string, string[]> FingerprintTables = new Dictionary<string, string[]> {
+    { "SO", new[] { "SO", "SODTL" } },
+    { "PO", new[] { "PO", "PODTL" } },
+  };
+  /* A ceiling so one call cannot make the service build an unbounded response.
+     The live book holds ~2,700 sales orders, so this is roughly 3x headroom and
+     the caller is TOLD when it bites rather than silently reading a short list. */
+  const int MaxFingerprintDocs = 8000;
+
+  static Dictionary<string, object> LineFingerprints(Dictionary<string, object> p) {
+    var type = Or(Str(p, "Type"), "SO").ToUpperInvariant();
+    if (!FingerprintTables.ContainsKey(type))
+      return Err("Type must be one of SO, PO (got '" + type + "')");
+    var hdr = FingerprintTables[type][0];
+    var dtl = FingerprintTables[type][1];
+
+    var docs = new List<object>();
+    var truncated = false;
+    try {
+      __DBLINE__
+      using (var cn = new System.Data.SqlClient.SqlConnection(db.ConnectionString)) {
+        cn.Open();
+        using (var cmd = cn.CreateCommand()) {
+          cmd.CommandTimeout = 120;
+          /* Seq is AutoCount's own line order — the same order a person sees
+             when they open the document, which is what the owner compared. */
+          cmd.CommandText =
+            "SELECT TOP (" + (MaxFingerprintDocs + 1) + ") h.DocNo, COUNT(*) AS Lines, " +
+            "STUFF((SELECT '|' + ISNULL(d2.ItemCode, '') FROM " + dtl + " d2 " +
+            "WHERE d2.DocKey = h.DocKey ORDER BY d2.Seq FOR XML PATH('')), 1, 1, '') AS Codes " +
+            "FROM " + hdr + " h JOIN " + dtl + " d ON d.DocKey = h.DocKey " +
+            "GROUP BY h.DocNo, h.DocKey ORDER BY h.DocNo";
+          using (var rd = cmd.ExecuteReader()) {
+            while (rd.Read()) {
+              if (docs.Count >= MaxFingerprintDocs) { truncated = true; break; }
+              docs.Add(new Dictionary<string, object> {
+                { "DocNo", rd.IsDBNull(0) ? "" : rd.GetString(0) },
+                { "Lines", rd.IsDBNull(1) ? 0 : rd.GetInt32(1) },
+                { "Codes", rd.IsDBNull(2) ? "" : rd.GetString(2) },
+              });
+            }
+          }
+        }
+      }
+    } catch (Exception ex) {
+      return Err("line-fingerprints failed: " + ex.Message);
+    }
+    return new Dictionary<string, object> {
+      { "ok", true }, { "type", type }, { "count", docs.Count },
+      { "truncated", truncated }, { "docs", docs },
+    };
+  }
+
+  /* -- /delivery-dates -- the one column the INBOUND pull cannot see ----------
+
+     WHY IT EXISTS. AutoCount keeps a document's delivery date on the LINE
+     (SODTL.DeliveryDate, DODTL.DeliveryDate). There is no header delivery date
+     on SO or DO and no UDF holding one -- checked against the live book
+     2026-09-11. The read middleware the ERP pulls through serves a NINE-COLUMN
+     HEADER projection (/DeliveryOrder/getSince), so a delivery date changed in
+     AutoCount after a document was imported never reaches the ERP, while the
+     ERP's own edits DO flow the other way (autocount-outbox maps
+     line_delivery_date onto SODTL.DeliveryDate). One-directional sync on one
+     field is drift by construction, and it was reported as a real defect:
+     HC12445, where the book said 19/09 and the ERP said 05/09 for three months.
+
+     The middleware's source is not in this repository (see
+     docs/autocount-read-relay-exposure-coe.md), so this service -- which IS --
+     serves the column instead. docs/bugs/0810.
+
+     WINDOWED, not a full dump. Measured on the 2026-09-11 export: the book holds
+     51,041 SO lines and 48,291 DO lines with a delivery date, which no single
+     Worker request should carry. Filtering on the DELIVERY DATE itself is both
+     the bound and the right semantics -- a date staff still move belongs to a
+     document delivering soon or delivered recently -- and at SinceDeliveryDate =
+     2026-06-01 it is 8,522 SO lines and 6,075 DO lines.
+
+     READ-ONLY, and mechanically so: one SELECT on one connection, no SDK
+     session, no transaction, and the table names come from an ALLOW-LIST keyed
+     by document type rather than from the caller's string. */
+  static readonly Dictionary<string, string[]> DeliveryDateTables = new Dictionary<string, string[]> {
+    { "SO", new[] { "SO", "SODTL" } },
+    { "DO", new[] { "DO", "DODTL" } },
+  };
+  /* A ceiling so one call cannot make the service build an unbounded response.
+     20,000 is ~2.3x the measured 120-day SO window above, and the caller is TOLD
+     when it bites rather than silently reading a short list. */
+  const int MaxDeliveryDateRows = 20000;
+
+  static Dictionary<string, object> DeliveryDates(Dictionary<string, object> p) {
+    var type = Or(Str(p, "Type"), "SO").ToUpperInvariant();
+    if (!DeliveryDateTables.ContainsKey(type))
+      return Err("Type must be one of SO, DO (got '" + type + "')");
+    var since = Str(p, "SinceDeliveryDate");
+    /* An ISO date or nothing. Parsed here rather than interpolated, so a
+       malformed value is a refusal and never reaches the SELECT. */
+    DateTime sinceDt;
+    if (string.IsNullOrEmpty(since)) return Err("SinceDeliveryDate is required (YYYY-MM-DD)");
+    if (!DateTime.TryParseExact(since, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture,
+                                System.Globalization.DateTimeStyles.None, out sinceDt))
+      return Err("SinceDeliveryDate must be YYYY-MM-DD (got '" + since + "')");
+
+    var hdr = DeliveryDateTables[type][0];
+    var dtl = DeliveryDateTables[type][1];
+    var rows = new List<object>();
+    var truncated = false;
+    try {
+      __DBLINE__
+      using (var cn = new System.Data.SqlClient.SqlConnection(db.ConnectionString)) {
+        cn.Open();
+        using (var cmd = cn.CreateCommand()) {
+          cmd.CommandTimeout = 120;
+          /* DtlKey is the join the ERP already keeps (linked_ac_dtlkey), so the
+             caller needs no item-code matching -- which could not pair a sofa
+             anyway: the book keeps one line where the ERP keeps one per
+             compartment. */
+          cmd.CommandText =
+            "SELECT TOP (" + (MaxDeliveryDateRows + 1) + ") h.DocNo, d.DtlKey, d.DeliveryDate, h.DocDate " +
+            "FROM " + dtl + " d JOIN " + hdr + " h ON h.DocKey = d.DocKey " +
+            "WHERE d.DeliveryDate IS NOT NULL AND d.DeliveryDate >= @since " +
+            "ORDER BY h.DocNo, d.Seq";
+          var ps = cmd.CreateParameter(); ps.ParameterName = "@since"; ps.Value = sinceDt;
+          cmd.Parameters.Add(ps);
+          using (var rd = cmd.ExecuteReader()) {
+            while (rd.Read()) {
+              if (rows.Count >= MaxDeliveryDateRows) { truncated = true; break; }
+              rows.Add(new Dictionary<string, object> {
+                { "DocNo", rd.IsDBNull(0) ? "" : rd.GetString(0) },
+                { "DtlKey", rd.IsDBNull(1) ? 0L : System.Convert.ToInt64(rd.GetValue(1)) },
+                { "DeliveryDate", rd.IsDBNull(2) ? null : rd.GetDateTime(2).ToString("yyyy-MM-dd") },
+                { "DocDate", rd.IsDBNull(3) ? null : rd.GetDateTime(3).ToString("yyyy-MM-dd") },
+              });
+            }
+          }
+        }
+      }
+    } catch (Exception ex) {
+      return Err("delivery-dates failed: " + ex.Message);
+    }
+    return new Dictionary<string, object> {
+      { "ok", true }, { "type", type }, { "since", since },
+      { "count", rows.Count }, { "truncated", truncated }, { "rows", rows },
+    };
+  }
+
   static List<string> ExistingColumns(System.Data.SqlClient.SqlConnection cn, string table, string[] wanted, List<string> missing) {
     var have = new List<string>();
     using (var cmd = cn.CreateCommand()) {
@@ -849,6 +1051,98 @@ class AcSyncService {
     }
   }
 
+  /* ── THE SALES LINE POINTS BACK AT ITS PURCHASE ORDER ────────────────────────
+     The office's plug-in (TechDevs.SOBatchPurchase, "Post SO batch to PO") writes
+     three fields on every sales order line it buys: UDF_PONo (the purchase
+     order's number), UDF_PODocKey (its DocKey) and UDF_Creditor (the supplier).
+     A purchase order this service makes from a sales order left all three blank.
+     Live book, 2026-09-15, purchase orders dated since 2026-08-01: 563 of 564
+     plug-in lines carry UDF_PONo, 1 of 164 lines of ours does.
+
+     WHY IT MATTERS IS NOT PROVEN, and this says so rather than guess. Remark 2
+     ("READY", "BEDFRAME/ACC") is kept by a program running inside AutoCount on
+     the office PC, and every bedframe or sofa line it has marked ready carried
+     UDF_PONo. None of our purchase orders had been received by that date, so
+     whether that program finds a receipt without the field is untested. Filling
+     it the plug-in's way removes the question (owner 2026-09-15: 「同样的方式进去
+     不要东西后面又做不到」).
+
+     ONLY A BLANK IS FILLED. A line that already names another purchase order
+     keeps it: a sales line bought on two orders would otherwise flip on every
+     edit of either, and the plug-in's link is the office's own record. A line
+     that names THIS order has its DocKey and supplier completed.
+
+     Best effort and wrapped, like LogPoSourceLink: the purchase order is saved
+     before this runs and must never be cost by it. What landed is read back and
+     logged, because a UDF write that swallows is how a payment text stayed empty
+     through three sends (docs/bugs/0921-a-payment-text-longer-than-autocount-s-fifty-character-field.md). */
+  static void PointSalesLinesAtPurchase(AutoCount.Authentication.UserSession s, string poDocNo) {
+    if (string.IsNullOrEmpty(poDocNo)) return;
+    try {
+      __DBLINE__
+      var connStr = db.ConnectionString;
+      long poDocKey = 0;
+      var creditor = "";
+      var keysBySo = new Dictionary<string, List<long>>();
+      using (var cn = new System.Data.SqlClient.SqlConnection(connStr)) {
+        cn.Open();
+        using (var cmd = cn.CreateCommand()) {
+          cmd.CommandText =
+            "SELECT h.DocKey AS PoDocKey, h.CreditorCode, s.DocNo AS SoDocNo, d.DtlKey AS SoDtlKey " +
+            "FROM [PO] h JOIN [PODTL] p ON p.DocKey = h.DocKey " +
+            "JOIN [SODTL] d ON d.DtlKey = p.FromSODtlKey JOIN [SO] s ON s.DocKey = d.DocKey " +
+            "WHERE h.DocNo = @d AND (ISNULL(d.UDF_PONo, '') = '' OR (d.UDF_PONo = h.DocNo AND " +
+            "(d.UDF_PODocKey IS NULL OR d.UDF_PODocKey <> h.DocKey OR ISNULL(d.UDF_Creditor, '') = '')))";
+          var pd = cmd.CreateParameter(); pd.ParameterName = "@d"; pd.Value = poDocNo; cmd.Parameters.Add(pd);
+          using (var r = cmd.ExecuteReader()) {
+            while (r.Read()) {
+              poDocKey = System.Convert.ToInt64(r["PoDocKey"]);
+              creditor = r["CreditorCode"] == DBNull.Value ? "" : r["CreditorCode"].ToString().Trim();
+              var soNo = r["SoDocNo"].ToString();
+              if (!keysBySo.ContainsKey(soNo)) keysBySo[soNo] = new List<long>();
+              keysBySo[soNo].Add(System.Convert.ToInt64(r["SoDtlKey"]));
+            }
+          }
+        }
+      }
+      if (keysBySo.Count == 0) return;
+
+      foreach (var kv in keysBySo) {
+        try {
+          dynamic so = AutoCount.Invoicing.Sales.SalesOrder.SalesOrderCommand.Create(s, s.DBSetting).Edit(kv.Key);
+          if (so == null) { Log("  sales lines of " + poDocNo + ": " + kv.Key + " could not be opened"); continue; }
+          AllowZeroValue(so);
+          foreach (var k in kv.Value) {
+            dynamic d = so.EditDetail(k);
+            if (d == null) { Log("  sales lines of " + poDocNo + ": line " + k + " of " + kv.Key + " could not be opened"); continue; }
+            SetUdf("PONo", poDocNo, (key, v) => d.UDF[key] = v);
+            SetUdf("PODocKey", poDocKey.ToString(System.Globalization.CultureInfo.InvariantCulture), (key, v) => d.UDF[key] = v);
+            if (creditor.Length > 0) SetUdf("Creditor", creditor, (key, v) => d.UDF[key] = v);
+          }
+          so.Save();
+        } catch (Exception ex) {
+          Log("  sales lines of " + poDocNo + ": " + kv.Key + " was not pointed at it - " + ex.Message);
+        }
+      }
+
+      using (var cn = new System.Data.SqlClient.SqlConnection(connStr)) {
+        cn.Open();
+        using (var cmd = cn.CreateCommand()) {
+          cmd.CommandText =
+            "SELECT COUNT(*) AS Lines, SUM(CASE WHEN d.UDF_PONo = h.DocNo AND d.UDF_PODocKey = h.DocKey THEN 1 ELSE 0 END) AS Named " +
+            "FROM [PO] h JOIN [PODTL] p ON p.DocKey = h.DocKey JOIN [SODTL] d ON d.DtlKey = p.FromSODtlKey WHERE h.DocNo = @d";
+          var pd = cmd.CreateParameter(); pd.ParameterName = "@d"; pd.Value = poDocNo; cmd.Parameters.Add(pd);
+          using (var r = cmd.ExecuteReader()) {
+            if (r.Read())
+              Log("  sales lines of " + poDocNo + ": " + r["Named"] + " of " + r["Lines"] + " now name it");
+          }
+        }
+      }
+    } catch (Exception ex) {
+      Log("  sales lines of " + poDocNo + " could not be pointed at it: " + ex.Message);
+    }
+  }
+
   static List<Dictionary<string, object>> CreatedLines(string dtlTable, string docNo) {
     var hdr = dtlTable.Substring(0, dtlTable.Length - 3);
     var outp = new List<Dictionary<string, object>>();
@@ -858,12 +1152,24 @@ class AcSyncService {
       using (var cn = new System.Data.SqlClient.SqlConnection(db.ConnectionString)) {
         cn.Open();
         using (var cmd = cn.CreateCommand()) {
+          /* THE SOURCE LINE, FROM THE BOOK'S OWN LINK (docs/bugs/0898). A
+             transfer does not fill FromDocDtlKey on the detail table - 0 of 111
+             DODTL and 0 of 51 GRDTL lines on the write-back's documents,
+             2026-09-14 - but DocTransfer records it for every transferred line.
+             Without it the ERP could only compare item codes, which a
+             conversion copies from the SOURCE line, and it refused. Sent only
+             when exactly ONE transfer row names the line, so a reader can treat
+             a present value as proved; a create has none and sends NULL. */
           cmd.CommandText =
-            "SELECT d.DtlKey, d.ItemCode, d.Desc2 FROM " + dtlTable + " d " +
+            "SELECT d.DtlKey, d.ItemCode, d.Desc2, " +
+            "(SELECT CASE WHEN COUNT(*) = 1 THEN MIN(t.FromDocDtlKey) END FROM DocTransfer t " +
+            " WHERE t.ToDocDtlKey = d.DtlKey AND t.ToDocType = @to) FROM " + dtlTable + " d " +
             "JOIN " + hdr + " h ON h.DocKey = d.DocKey " +
             "WHERE h.DocNo = @no ORDER BY d.DtlKey";
           var pr = cmd.CreateParameter(); pr.ParameterName = "@no"; pr.Value = docNo;
           cmd.Parameters.Add(pr);
+          var pt = cmd.CreateParameter(); pt.ParameterName = "@to"; pt.Value = hdr;
+          cmd.Parameters.Add(pt);
           using (var rd = cmd.ExecuteReader()) {
             var seq = 0;
             while (rd.Read()) {
@@ -872,6 +1178,7 @@ class AcSyncService {
                 { "DtlKey", rd.GetInt64(0) },
                 { "ItemCode", rd.IsDBNull(1) ? "" : rd.GetString(1) },
                 { "Desc2", rd.IsDBNull(2) ? "" : rd.GetString(2) },
+                { "FromDocDtlKey", rd.IsDBNull(3) ? null : (object) System.Convert.ToInt64(rd.GetValue(3)) },
               });
             }
           }
@@ -892,7 +1199,13 @@ class AcSyncService {
   static AutoCount.Authentication.UserSession Session() {
     __DBLINE__
     var s = new AutoCount.Authentication.UserSession(db);
-    if (!s.Login(USER, USER)) throw new Exception("AutoCount login failed");
+    /* Name the user in the failure. The old message was "AutoCount login
+       failed" with nothing else, which is the same sentence for a wrong
+       password, a disabled account and a user id that does not exist — and
+       after 2026-09-07 the user id is a deploy-time value, so "which login did
+       this build actually get?" became a question the error has to answer. The
+       password is never in the message. */
+    if (!s.Login(USER, PASS)) throw new Exception("AutoCount login failed for user '" + USER + "'");
     return s;
   }
 
@@ -1339,11 +1652,23 @@ class AcSyncService {
       var why = DescribeSourceKeys(fromType, dtlKeys);
       Log("  " + fromType + "->" + toType + " refused: " + ex.GetType().FullName + ": " + ex.Message.Trim());
       Log("  source lines as the book holds them: " + why);
+      /* AND WHAT AUTOCOUNT ITSELF SAID ABOUT THE KEYS, which is the half that was
+         missing. DescribeSourceKeys reads the TABLES - it answers "does this line
+         exist, is it outstanding, is the document cancelled", and on every one of
+         these ten documents it answered yes, yes, no, which is why the refusal
+         stayed unexplained for three weeks. x.ItemCheck is the VENDOR's verdict on
+         the same keys, taken before anything was written, and it is the only thing
+         on either side that can say which line is the invalid transfer item.
+         Empty when the check did not run (a FULL transfer never calls it), and
+         that reads differently from a check that found nothing wrong. */
+      var check = x.ItemCheck;
+      Log("  " + (string.IsNullOrEmpty(check) ? "AutoCount's own line check did not run on this shape" : check));
       /* The SDK's own exception is the INNER one, so /last-errors and the log
          still carry its type and stack; the message the ERP stores is the one
          that names the lines. */
       throw new Exception(
-        ex.Message.Trim() + " || source " + fromType + " lines as the book holds them: " + why, ex);
+        ex.Message.Trim() + " || source " + fromType + " lines as the book holds them: " + why
+        + (string.IsNullOrEmpty(check) ? "" : " || " + check), ex);
     }
     throw new Exception("unsupported target " + toType);
   }
@@ -1454,6 +1779,27 @@ class AcSyncService {
     public Action Primitive;
     public Dictionary<long, Dictionary<string, object>> LineCache =
       new Dictionary<long, Dictionary<string, object>>();
+    /* WHAT AUTOCOUNT'S OWN VALIDATOR SAID ABOUT THESE KEYS, kept so the CATCH
+       can put it in the message the ERP stores.
+
+       PreflightValidItems has asked TransferHelper.CheckAndGetValidPartialTransferItem
+       since 2026-08-17 and has only ever written the answer to this host's log
+       file. `Invalid transfer item.` names nothing, so every failing row in
+       scm.autocount_outbox carried eleven useless words while the vendor's own
+       verdict - which of the keys it will not take - sat on a machine reachable
+       only over remote desktop. Six attempts per document, ten documents, and
+       the answer was produced every time and read none of them.
+
+       Null until the check runs, which is deliberate: a FULL transfer never
+       calls it, and "the check did not run" must not read as "the check said
+       nothing was wrong". */
+    public string ItemCheck;
+    /* HOW MANY DOCUMENTED TRANSFER CALLS ACTUALLY RAN on this document.
+       Not a statistic: it is what makes the fallback safe. PartialTransfer
+       is one call PER LINE, so a throw on line 4 of 8 leaves three lines
+       already in the target, and running AddPartialTransferDetail on top of
+       that would add them again in a licensed account book. */
+    public int DocumentedCallsMade;
   }
 
   /* WHOSE DOCUMENT THIS IS, off the SOURCE header in the book — the FALLBACK,
@@ -1535,29 +1881,49 @@ class AcSyncService {
     SubscribeTransferDiagnostics(doc);
     if (!x.Plan.Full) PreflightValidItems(x);
 
-    /* A by-line partial carries no quantity, and every PartialTransfer overload
-       demands one. AddPartialTransferDetail is not a workaround for this shape:
-       it is the documented call for "these lines, at whatever is outstanding",
-       and the only one whose arguments the ERP actually sends. */
-    if (!x.Plan.Full && x.Plan.QtyByKey.Count == 0) {
-      /* SAY WHICH CALL IS NOT BEING MADE, AND WHY. FullTransfer is the one
-         PROVEN against this book (host, 2026-08-17 00:55:30); this path does not
-         use it because it would move EVERY outstanding line on the source and
-         the ERP has named a subset. That is the right call for a real partial
-         and the wrong one for a whole document the ERP merely enumerated — and
-         today enqueueConvert cannot tell the two apart, because
-         readConvertSourceKeys returns the key list whenever every source line
-         HAS a key, partial or not. So if the line below fails, this is where to
-         look: the fix is the ERP saying "whole", not this service inferring it
-         from a row count. */
-      Log("  transfer: AddPartialTransferDetail per source document - the ERP named " + x.DtlKeys.Length +
-          " line(s) and no quantity, so FullTransfer (which would move every outstanding line) is not used");
-      x.Primitive();
-      return;
-    }
+    /* ── THE DOCUMENTED CALL IS TRIED ON EVERY SHAPE NOW ─────────────────────
+       This block used to RETURN here for a by-line plan carrying no quantity,
+       straight into AddPartialTransferDetail, on the reasoning that "every
+       PartialTransfer overload demands a quantity and the ERP sends none". The
+       first half was true and the second half was the mistake: the ERP does not
+       send one, but the BOOK knows it - a by-line transfer means "at whatever is
+       still outstanding", and that number is on the source row. BindTransferArg
+       now reads it, so the shape IS expressible through the documented call.
 
+       WHAT IT COST TO LEARN. Measured on the host 2026-09-08: every SO->DO in
+       the log took this early return, called AddPartialTransferDetail, and was
+       refused with
+
+         AutoCount.Invoicing.InvalidTransferItemException: Invalid transfer item.
+
+       thrown inside GeneralSalesPartialTransferDetail..ctor - ten delivery
+       orders, six attempts each, not one success. And none of the usual
+       explanations survived: the target carried its debtor (`[300-C002]`), every
+       key was present, outstanding, transferable and on ONE source document, and
+       the vendor's own validator accepted all of them (`8 row(s) for 8 key(s)`).
+       The one thing every failure had in common is the call itself.
+
+       AddPartialTransferDetail appears on NO page of AutoCount's programmer wiki
+       (175 pages, read 2026-09-08). FullTransfer and PartialTransfer are both
+       documented, and this host's own assemblies expose a PartialTransfer
+       overload taking the line key alongside the item, uom and quantity - so
+       nothing about naming an exact line is lost by moving to it.
+
+       IT IS STILL THE FALLBACK, not deleted. It is what drains a shape the
+       documented overloads cannot express, and it is the call that put
+       DO-011260 in the book. */
     string why;
     if (TryDocumentedTransfer(doc, x, out why)) return;
+
+    /* NEVER FALL BACK ONTO A DOCUMENT THE SDK HAS ALREADY WRITTEN INTO. A throw
+       part way through the per-line loop leaves the in-memory target holding
+       some of the lines; running the primitive on top of that duplicates them.
+       This used to be guarded only for a partial-QUANTITY plan, which was the
+       only shape that reached here. */
+    if (x.DocumentedCallsMade > 0)
+      throw new Exception("the documented transfer call was refused after it had already moved " +
+        x.DocumentedCallsMade + " line(s) into this document (" + why +
+        "). Refusing rather than falling back, because the fallback would add those lines a second time.");
 
     if (x.Plan.QtyByKey.Count > 0)
       /* NOT falling back, on purpose. AddPartialTransferDetail moves each line's
@@ -1748,17 +2114,56 @@ class AcSyncService {
       var t = x.PurchaseSide
         ? AutoCount.Invoicing.Purchase.TransferHelper.CheckAndGetValidPartialTransferItem(x.FromType, x.DtlKeys, x.S.DBSetting)
         : AutoCount.Invoicing.Sales.TransferHelper.CheckAndGetValidPartialTransferItem(x.FromType, x.DtlKeys, x.S.DBSetting);
-      if (t == null) { Log("  valid-transfer-item check: returned NULL for " + x.DtlKeys.Length + " key(s)"); return; }
+      if (t == null) {
+        x.ItemCheck = "AutoCount's own line check returned NOTHING for the " + x.DtlKeys.Length + " key(s) sent";
+        Log("  valid-transfer-item check: returned NULL for " + x.DtlKeys.Length + " key(s)");
+        return;
+      }
       var cols = new List<string>();
       foreach (System.Data.DataColumn c in t.Columns) cols.Add(c.ColumnName);
       Log("  valid-transfer-item check: " + t.Rows.Count + " row(s) for " + x.DtlKeys.Length +
           " key(s); columns = " + string.Join(", ", cols.ToArray()));
-      if (t.Rows.Count < x.DtlKeys.Length)
+      x.ItemCheck = "AutoCount's own line check accepted " + t.Rows.Count + " of the " +
+                    x.DtlKeys.Length + " key(s) sent";
+      if (t.Rows.Count < x.DtlKeys.Length) {
         Log("  valid-transfer-item check: AutoCount kept FEWER rows than keys given - the shortfall IS the invalid transfer item(s)");
+        /* WHICH KEYS SURVIVED, and therefore which did not. The DataTable is the
+           vendor's own answer and it is the fact eleven production attempts never
+           produced; naming the rejected keys is the entire point of carrying this
+           string back. The DtlKey column is found by NAME rather than by index
+           because a column list this service does not control must not be indexed
+           into positionally - that is the ExistingColumns lesson, one table over. */
+        var kept = KeptKeys(t);
+        if (kept != null) {
+          var rejected = new List<string>();
+          foreach (var k in x.DtlKeys) if (!kept.ContainsKey(k)) rejected.Add(k.ToString());
+          if (rejected.Count > 0)
+            x.ItemCheck += "; it will NOT take line key(s) " + string.Join(", ", rejected.ToArray());
+        }
+      }
     } catch (Exception ex) {
+      x.ItemCheck = "AutoCount's own line check REFUSED these " + x.DtlKeys.Length +
+                    " key(s) outright: " + ex.Message.Trim();
       Log("  valid-transfer-item check THREW " + ex.GetType().FullName + ": " + ex.Message.Trim() +
           " - that is the vendor's own validator refusing these keys, before any document was created");
     }
+  }
+
+  /* The DtlKeys the vendor's validator KEPT, read out of its DataTable by column
+     NAME. Returns null when the table carries no column this service recognises
+     as the line key - in which case nothing is said about which key was refused,
+     because a guess there names an innocent line. */
+  static Dictionary<long, bool> KeptKeys(System.Data.DataTable t) {
+    string col = null;
+    foreach (System.Data.DataColumn c in t.Columns)
+      if (string.Equals(c.ColumnName, "DtlKey", StringComparison.OrdinalIgnoreCase)) { col = c.ColumnName; break; }
+    if (col == null) return null;
+    var outp = new Dictionary<long, bool>();
+    foreach (System.Data.DataRow r in t.Rows) {
+      if (r.IsNull(col)) continue;
+      try { outp[System.Convert.ToInt64(r[col])] = true; } catch { }
+    }
+    return outp;
   }
 
   /* ── the three things the SDK tries to say, and used to say to nobody ─────
@@ -1939,7 +2344,9 @@ class AcSyncService {
 
     try {
       Log("  transfer: calling " + Sig(chosen) + " x" + calls.Count);
-      foreach (var args in calls) chosen.Invoke(doc, args);
+      /* COUNTED AS THEY LAND, not after the loop: the count has to be true
+         at the moment of a throw, which is the only moment it is read. */
+      foreach (var args in calls) { chosen.Invoke(doc, args); x.DocumentedCallsMade++; }
       Log("  transfer: " + chosen.Name + " returned without throwing");
       return true;
     } catch (System.Reflection.TargetInvocationException tie) {
@@ -1994,7 +2401,28 @@ class AcSyncService {
       return true;
     }
     if (t == typeof(decimal)) {
-      if (n.Contains("qty") && x.Plan.QtyByKey.ContainsKey(key)) { value = x.Plan.QtyByKey[key]; return true; }
+      /* FOC FIRST, AND IT IS ALWAYS ZERO. "focQty" contains "qty", so the
+         quantity rule below would have answered it with the quantity being
+         shipped - putting a free-of-charge quantity equal to the sold one on
+         every line of a licensed account book. The ERP has no concept of a FOC
+         quantity and sends none, so the honest answer is nought, and it must be
+         given BEFORE the substring test that would otherwise swallow it. */
+      if (n.Contains("foc")) { value = 0m; return true; }
+      if (n.Contains("qty")) {
+        /* WHAT THE ERP SAID, when it said anything. A "3 of 5" plan carries a
+           number per line and that number is the whole point of the call. */
+        if (x.Plan.QtyByKey.ContainsKey(key)) { value = x.Plan.QtyByKey[key]; return true; }
+        /* OTHERWISE WHAT IS OUTSTANDING, read off the book's own line.
+           A by-line transfer means "these lines, at whatever is still
+           outstanding" - that is exactly what AddPartialTransferDetail does, and
+           the only reason this service reached for that undocumented call is
+           that the documented one demands the number spelled out. It is spelled
+           out here. Refusing when the book cannot say leaves the caller on the
+           old path rather than transferring a guess. */
+        var outstanding = OutstandingQtyOf(x, key);
+        if (outstanding.HasValue && outstanding.Value > 0m) { value = outstanding.Value; return true; }
+        return false;
+      }
       return false;
     }
     if (t == typeof(long)) {
@@ -2020,6 +2448,24 @@ class AcSyncService {
       return true;
     }
     return false;
+  }
+
+  /* HOW MUCH OF A SOURCE LINE IS STILL TO GO, off the book's own row: ordered
+     quantity minus what has already been transferred out of it.
+
+     Null rather than zero on anything it cannot establish - a missing column, a
+     NULL Qty, an unreadable row - because zero is a QUANTITY and would transfer
+     a line as nothing. The caller treats null as "cannot express this line
+     through the documented call" and leaves it on the older path. */
+  static decimal? OutstandingQtyOf(Xfer x, long key) {
+    var qty = SourceLineCell(x, key, "Qty");
+    if (string.IsNullOrEmpty(qty)) return null;
+    try {
+      var q = System.Convert.ToDecimal(qty);
+      var done = SourceLineCell(x, key, "TransferedQty");
+      var t = string.IsNullOrEmpty(done) ? 0m : System.Convert.ToDecimal(done);
+      return q - t;
+    } catch { return null; }
   }
 
   /* Which source document a named line sits on. KeysBySourceDoc already read it
@@ -2055,7 +2501,11 @@ class AcSyncService {
         using (var cn = new System.Data.SqlClient.SqlConnection(db.ConnectionString)) {
           cn.Open();
           var absent = new List<string>();
-          var cols = ExistingColumns(cn, dtl, new string[] { "ItemCode", "Location", "UOM", "BatchNo" }, absent);
+          /* Qty and TransferedQty ride along so OutstandingQtyOf can answer from
+             this same cached row. They are what "at whatever is outstanding"
+             MEANS, and the documented PartialTransfer demands a number for it. */
+          var cols = ExistingColumns(cn, dtl,
+            new string[] { "ItemCode", "Location", "UOM", "BatchNo", "Qty", "TransferedQty" }, absent);
           if (cols.Count == 0) return null;
           using (var cmd = cn.CreateCommand()) {
             cmd.CommandText = "SELECT " + SelectList(cols) + " FROM [" + dtl + "] WHERE DtlKey = @k";
@@ -2476,6 +2926,7 @@ class AcSyncService {
     }
     if (applied > 0) po2.Save();
     Log("  so-to-po " + docNo + ": " + keys.Length + " transferred, " + applied + " line(s) costed in phase two");
+    PointSalesLinesAtPurchase(s, docNo);
     return docNo;
   }
 
@@ -2663,6 +3114,48 @@ class AcSyncService {
       }
     }
     return outp.ToArray();
+  }
+
+  /* HAS ANY LINE OF THIS DOCUMENT BEEN TRANSFERRED? Read from the book's own
+     tables, not from anything the ERP believes.
+
+     It is the gate on REBUILD (Edit, below). AutoCount's troubleshooting for a
+     document whose rows are deleted after transfer is that the source points at
+     nothing, the document goes grey and uneditable, and recovery needs raw SQL
+     plus Management Studio's "Fix Deleted Document Transfer Problem". The ERP's
+     downstream lock already refuses to edit such a document — but that lock is
+     the ERP's, and a person can transfer inside AutoCount without telling it.
+
+     `> 0`, not `IS NOT NULL`: AutoCount writes 0 rather than NULL on a line that
+     has never moved, so a NULL test would call every document transferred and
+     the rebuild would never run at all. */
+  static bool AnyLineTransferred(string type, string docNo) {
+    string dtl, hdr;
+    switch (type) {
+      case "SO": dtl = "SODTL"; hdr = "SO"; break;
+      case "PO": dtl = "PODTL"; hdr = "PO"; break;
+      case "DO": dtl = "DODTL"; hdr = "DO"; break;
+      case "GR": dtl = "GRDTL"; hdr = "GR"; break;
+      default: return true;   // unknown type -> refuse, never rebuild blind
+    }
+    __DBLINE__
+    var cs = db.ConnectionString;
+    using (var cn = new System.Data.SqlClient.SqlConnection(cs)) {
+      cn.Open();
+      using (var cmd = cn.CreateCommand()) {
+        cmd.CommandText =
+          "SELECT COUNT(*) FROM " + dtl + " d JOIN " + hdr + " h ON h.DocKey = d.DocKey " +
+          // TransferedQty is what this document passed ONWARD. A purchase order
+          // raised FROM a sales order records that incoming link in its own
+          // column, and reissuing its keys voids it - 10,338 of 18,148 PODTL
+          // rows in this book carry one (DetailWanted, above). Refuse those too.
+          "WHERE h.DocNo = @no AND (ISNULL(d.TransferedQty,0) > 0" +
+          (type == "PO" ? " OR d.FromSODtlKey IS NOT NULL" : "") + ")";
+        var pr = cmd.CreateParameter(); pr.ParameterName = "@no"; pr.Value = docNo;
+        cmd.Parameters.Add(pr);
+        return System.Convert.ToInt32(cmd.ExecuteScalar()) > 0;
+      }
+    }
   }
 
   // ── cancel ────────────────────────────────────────────────────────────────
@@ -3145,11 +3638,57 @@ class AcSyncService {
        than half-applied and discarded. */
     var lines = new List<Dictionary<string, object>>();
     foreach (var od in List(p, "Lines")) lines.Add((Dictionary<string, object>) od);
-    for (var i = 0; i < lines.Count; i++) {
+    /* THE ERP ASKED FOR A REBUILD - decided ONCE, before the pre-flight loop.
+       It used to be checked INSIDE that loop, in the arm that only runs for a
+       line carrying no DtlKey. So a document whose lines ALL had keys never
+       reached it: `rebuild` stayed false, ClearDetails never ran, and an
+       explicit Rebuild:true was silently downgraded to an ordinary keyed edit.
+       SO-013361 was rebuilt three times that way and kept its deleted line at
+       Qty 0 in the owner's own screen, while the outbox said `sent`. The one
+       document it DID work on had a keyless line, which is the only reason the
+       defect looked like a working feature - docs/bugs/0633.
+
+       A REBUILD NEEDS NO KEY PRE-FLIGHT AT ALL: ClearDetails destroys every key
+       a moment later, so the loop below is skipped entirely rather than run and
+       ignored. */
+    var rebuild = false;
+    if (Bool(p, "Rebuild")) {
+      if (AnyLineTransferred(type, docNo))
+        throw new Exception(
+          "REFUSED: " + type + " " + docNo + " has at least one line already transferred " +
+          "in AutoCount, so its details cannot be rebuilt - deleting a transferred row " +
+          "leaves the source pointing at nothing and the document uneditable. Match the " +
+          "lines up instead.");
+      rebuild = true;
+    }
+    for (var i = 0; i < lines.Count && !rebuild; i++) {
       var it = lines[i];
       var hasKey = it.ContainsKey("DtlKey") && it["DtlKey"] != null;
       if (hasKey) continue;
       if (Bool(it, "IsNewLine")) continue;
+      /* REBUILD INSTEAD OF REFUSING, when the ERP asks for it and the book is
+         safe. Owner 2026-09-02: 「全部跟着 inistate 一模一样」, and the argument
+         that settled it — 「如果做得到 inistate 的东西，那就是我删或者 addline 都
+         可以 sync 进去，就代表这张单也进得去了」.
+
+         He is right, and this is why. The refusal below exists because appending
+         a keyless line DUPLICATES it. A REBUILD does not append — it clears the
+         details and lays the ERP's list down in order, so the duplicate cannot
+         arise and the matching problem disappears with it. A document already
+         stuck because its keys cannot be matched (HC-SO-013394) is exactly the
+         case this recovers, and no amount of matching would have.
+
+         WHAT IT COSTS, stated because it is real: every DtlKey on the document
+         is destroyed and reissued. That is survivable ONLY because nothing
+         downstream holds them — which is what AnyLineTransferred proves, from
+         the book's own tables rather than from anything the ERP believes. The
+         keys are read back after the save exactly as the create path does.
+
+         THE ERP MUST ASK. `Rebuild:true` is never inferred here: a rebuild is
+         destructive, and inferring it from a failure would turn every future
+         mismatch into a silent teardown of a live document. */
+      /* The rebuild escape used to live HERE. It is decided above now, and this
+         loop no longer runs at all when one was asked for - 0633. */
       throw new Exception(
         "REFUSED: line " + (i + 1) + " of " + lines.Count + " on " + type + " " + docNo +
         " (ItemCode '" + Str(it, "ItemCode") + "') carries no DtlKey and does not declare " +
@@ -3158,14 +3697,50 @@ class AcSyncService {
         "(scm.*_items.linked_ac_dtlkey) or mark the line IsNewLine, then retry.");
     }
 
+    /* THE REBUILD. Every existing detail goes, and the ERP's list is laid down
+       in the order it arrived — which is the ERP's own line order, because
+       `inAcLineOrder` (scm/lib/ac-line-order.ts) sorts every payload read.
+
+       Done HERE, before the per-line loop, so the loop that follows sees an
+       empty document and takes its AddDetail arm for every line. That is why
+       the loop needs no rebuild branch of its own: after ClearDetails there are
+       no keys left to edit, and a DtlKey in the payload is simply ignored.
+
+       ClearDetails is on the base document class, so this works for every type
+       — including the three the SDK gives no DeleteDetail. It is the only way a
+       purchase order can lose a line at all. */
+    if (rebuild) {
+      Log("REBUILD " + type + " " + docNo + ": clearing " + lines.Count +
+          " line(s) will be laid down in ERP order (no line transferred)");
+      doc.ClearDetails();
+    }
+
     foreach (var it in lines) {
+      /* ON A REBUILD, A LINE THE ERP NO LONGER HAS IS ALREADY ABSENT — the
+         document was cleared. It must be skipped HERE, before AddDetail: the
+         retire/delete branch sits further down, and reaching it would mean the
+         line had already been ADDED BACK as a blank row. Found by reading the
+         loop order after writing the branch, not by a test — there is no C#
+         toolchain in this environment to have caught it. */
+      if (rebuild && Bool(it, "Retire")) continue;
       dynamic d;
-      if (it.ContainsKey("DtlKey") && it["DtlKey"] != null) {
+      if (!rebuild && it.ContainsKey("DtlKey") && it["DtlKey"] != null) {
         d = doc.EditDetail(System.Convert.ToInt64(it["DtlKey"]));
         if (d == null) throw new Exception("line " + it["DtlKey"] + " not found on " + docNo);
       } else {
         d = doc.AddDetail();
-        Set(() => d.ItemCode = Str(it, "ItemCode"));
+        /* NOT wrapped in Set(), and that is the whole point - 0615. Set()
+           swallows, and a swallowed ItemCode assignment adds a line with a
+           BLANK item code to a live account book with every log line green.
+           Measured on SO-013394 on 2026-09-02: seven of eight rebuilt lines
+           came back with ItemCode = '' and nothing anywhere said so. A new line
+           without an item code is not a line. */
+        var ic = Str(it, "ItemCode");
+        if (string.IsNullOrEmpty(ic)) {
+          throw new Exception("a new line on " + docNo + " carries no ItemCode; refusing rather than "
+            + "adding a blank line to the account book");
+        }
+        d.ItemCode = ic;
         addedALine = true;
       }
 
@@ -3189,6 +3764,20 @@ class AcSyncService {
          printed document, marked; hiding it would be deletion wearing a
          different hat. */
       if (Bool(it, "Retire")) {
+        /* NOT DELETED HERE — REBUILT. Owner 2026-09-02: 「如果我们有 delete
+           line、add line 导致了它的 line 不平整了，我们就整张重建」.
+
+           A line the ERP removed reaches this branch only when the document is
+           NOT being rebuilt, and under that rule it cannot be: composeEdit turns
+           any change to the line SET into a rebuild, so the cleared document
+           simply never carries the line. What is left here is the other member
+           of `Gone` — a line still ON the ERP document and CANCELLED, which must
+           stay visible in the book, marked.
+
+           The earlier version called SalesOrder.DeleteDetail here, guarded on
+           the SDK. That made one operator action behave two ways depending on a
+           capability nobody outside this file could see — 「规则变形」 — and it is
+           gone. The mechanism is now the same for all six types. */
         d.Qty = 0;
         Set(() => d.Transferable = false);
         var keep = it.ContainsKey("Desc2") ? Str(it, "Desc2") : SafeDesc2(d);
@@ -3229,7 +3818,12 @@ class AcSyncService {
         var dd = Date(it, "DeliveryDate"); Set(() => d.DeliveryDate = dd);
       }
     }
+
     doc.Save();
+    /* A purchase order of ours made before the sales lines were pointed at it
+       gets them on its next edit, which is also how the ones already in the book
+       are filled: re-send them (resend-ac-document-edits). */
+    if (type == "PO") PointSalesLinesAtPurchase(s, docNo);
     /* Read the keys back AFTER the save — AutoCount assigns a DtlKey at save
        time, so there is nothing to read before it. Same SQL read-back the create
        path uses, so there is one implementation of "what are this document's

@@ -17,13 +17,14 @@ import { CalendarCheck } from 'lucide-react';
 import { Button } from '../../components/Button';
 import type { AssignedTrip, OverflowGroup, ThreePlCarrier } from '../../vendor/scm/lib/delivery-zones-queries';
 import { findCrewLeave, crewLeaveLabel, type CrewLeaveRow } from '../../vendor/shared/crew-leave';
+import { fmtSen } from '../../vendor/shared/format';
 
 const ICON = { size: 14, strokeWidth: 1.75 } as const;
 
 export type CrewOpt = { id: string; name: string };
 export type LorryOpt = { id: string; plate: string };
 
-export const fmtRm = (centi: number): string => `RM ${(centi / 100).toLocaleString('en-MY', { maximumFractionDigits: 0 })}`;
+export const fmtRm = (centi: number): string => fmtSen(centi);
 
 export const selStyle: CSSProperties = {
   padding: '6px 10px', borderRadius: 8, border: '1px solid var(--border, rgba(0,0,0,0.2))',

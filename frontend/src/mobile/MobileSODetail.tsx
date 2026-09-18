@@ -1,20 +1,26 @@
-import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { formatDate } from "../lib/utils";
-import { SourcePosRowMobile, soStockPillMobile } from "./source-chips";
+import { NonSellingWarehouseNoteMobile, SourcePosRowMobile, soStockPillMobile } from "./source-chips";
 import { MobileRelationshipMap } from "./MobileRelationshipMap";
+import { ADD_LINE_LABEL } from "../vendor/scm/lib/add-line-handoff";
 import type { FlowNav } from "./relationship-map-model";
 import { fmtAmt } from "../lib/scm";
 import { useQueryClient } from "@tanstack/react-query";
 import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
-import { useNotify } from "../vendor/scm/components/NotifyDialog";
-import { usePrompt } from "../vendor/scm/components/PromptDialog";
+import { useNotify } from "../vendor/scm/components/NotifyDialog"; import { notifySaveProblems } from "../vendor/scm/components/SaveProblemsList";
+import { usePrompt } from "../vendor/scm/components/PromptDialog"; import { CancelRequestPanel } from "../vendor/scm/components/CancelRequestPanel"; import { useCancelRequestAction } from "../pages/scm-v2/use-cancel-request-action"; import { WrongApproverFlagButton } from "../pages/scm-v2/WrongApproverFlagButton";
 import { fetchScanSlipImageBlobUrl } from "../vendor/scm/lib/slip";
+import { MobileLinePhotos } from "./MobileLinePhotos";
 import { useStaff, usePickableStaff } from "../vendor/scm/lib/admin-queries";
+import { collaboratorLabel } from "../vendor/scm/lib/so-collaborators";
+import { HIST_FIELD_LABEL, HIST_MONEY_FIELDS } from "./so-history-labels";
 import { statusLabel } from "../vendor/scm/lib/status-pill";
+import { AMENDMENT_APPROVER_LABEL, soAmendmentApprover } from "../vendor/scm/lib/amendment-approver";
 import { useAuth as useHouzsAuth } from "../auth/AuthContext";
 import { ACCESS_RANK } from "../types";
 import {
   useMfgSalesOrderDetail,
+  useSoLineCoverage,
   useSalesOrderPayments,
   useUpdateMfgSalesOrderStatus,
   useDeleteMfgSalesOrder,
@@ -22,14 +28,15 @@ import {
   type SoAuditEntry,
   type SoAuditFieldChange,
 } from "../vendor/scm/lib/sales-order-queries";
+import { overlaySoLineCoverage } from "../vendor/scm/lib/so-coverage-overlay";
 import { buildVariantSummary } from "../vendor/shared/variant-summary";
 import { formatPhone } from "../vendor/shared/phone";
 import { orderLineIdentity } from "@2990s/shared";
 import {
   CANCELLABLE_STATUSES,
-  isLocked as isSoLocked,
+  isLocked as isSoLocked, soDownstreamHardLocked,
   procLockActive as soProcLockActive,
-  amendmentEligible as soAmendmentEligible,
+  amendmentEligible as soAmendmentEligible, migratedReadonly as soMigratedReadonly, migratedReadonlyReason as soMigratedReason,
   deriveBalance,
 } from "../vendor/scm/lib/so-detail-gates";
 import {
@@ -88,8 +95,12 @@ import {
    owns any payment-row markup: that second, read-only copy is exactly what made
    Edit Draft offer LESS than the screen it was opened from. */
 import { AddPaymentSheet, RecordedPaymentsList, type RecordedPayment } from "./RecordedPayments";
+import { OrderMoneyPanel } from "../vendor/scm/components/OrderMoneyPanel"; import type { MobileConvertPrefill } from "./MobileOrderMoney"; // money on a cancelled order (docs/bugs/0933)
+import { owesPaymentReason } from "../vendor/scm/lib/payment-reason";
+import { MobileLineRemark } from "./MobileLineRemark";
 import "./mobile.css";
 
+import { isFocLine } from '../vendor/scm/lib/foc-line';
 /* Shapes are the subset of the /mfg-sales-orders/:docNo + /:docNo/payments
    responses the mobile detail screen reads. The backend camelCases nothing —
    these are the raw snake_case columns. */
@@ -101,6 +112,9 @@ type SoHeader = {
   email: string | null;
   customer_type: string | null;
   salesperson_id: string | number | null;
+  /* Who ELSE may see and edit this order (mig 20260909T1000). Attribution
+     stays salesperson_id above — these people carry none of it. */
+  collaborator_staff_ids: string[] | null;
   sales_location: string | null;
   customer_state: string | null;
   /* Task #121 — country snapshot auto-derived from customer_state (mig 0082).
@@ -142,9 +156,9 @@ type SoHeader = {
   paid_sen_total: number | null;
   balance_sen: number | null;
   /* Tier 2 downstream-lock + delivery progress — stamped by the detail GET
-     (same fields the desktop SO Detail / list read). has_children = a
-     non-cancelled DO/SI references this SO (locks Edit + Cancel). */
-  has_children: boolean | null;
+     (same fields the desktop SO Detail / list read). has_children = a live DO/SI
+     references this SO (locks Cancel); downstream_fully_frozen = every line is on one (locks Edit). */
+  has_children: boolean | null; downstream_fully_frozen?: boolean | null;
   delivery_state: string | null;
   /* SO-amendment gate flags (Phase 1-C, read-only) — the GET /:docNo endpoint
      derives these (backend mfg-sales-orders.ts). amendment_eligible = the SO is
@@ -202,6 +216,8 @@ type SoItem = {
   ready_source_pos?: Array<{ po: string | null; qty: number; kind: "po" | "adjustment" }>;
   delivered_qty?: number | null;
   remaining_qty?: number | null;
+  /* Why the line can never read READY, when the reason is WHERE it stands (2026-09-08). */
+  non_selling_warehouse?: { code: string | null; name: string | null; type: string | null; notice: string } | null;
   /* A retired line — the SO's history, not part of the live order. Returned by
      GET /:docNo like every other row; filtered out at the use site. */
   cancelled?: boolean | null;
@@ -209,6 +225,8 @@ type SoItem = {
      line card's "Type remarks…" box). Served by GET /:docNo all along and
      rendered on neither platform until 2026-08-11 — see the render site. */
   remark?: string | null;
+  photo_urls?: string[] | null;
+  photoUrls?: string[] | null;
 };
 type SoPayment = {
   id: string;
@@ -255,9 +273,11 @@ const total = (h: SoHeader) => h.local_total_sen ?? h.total_revenue_sen ?? 0;
  *  (`#so-detail` + `renderSoDetail`/`openSO`), wired to the real
  *  /mfg-sales-orders/:docNo (header + line items) and /:docNo/payments.
  *  Draft/Submitted actions PATCH /:docNo/status. Design classes only. */
-export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: string; onBack: () => void; onEdit?: (docNo: string) => void;
+export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onConvert }: { docNo: string; onBack: () => void; onEdit?: (docNo: string) => void; onAddLine: ((docNo: string) => void) | null;
   /** Relationship-Map node navigation (MobileApp). Absent → map nodes inert. */
   flowNav?: FlowNav;
+  /** Convert on a cancelled order's money panel: open New SO with this seed (docs/bugs/0933). */
+  onConvert?: (seed: MobileConvertPrefill) => void;
 }) {
   const qc = useQueryClient();
   const confirm = useConfirm();
@@ -283,7 +303,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
   const sendAmendment = useSendAmendment();
   const rejectAmendment = useRejectAmendment();
   const withdrawAmendment = useWithdrawAmendment();
-  const updateStatus = useUpdateMfgSalesOrderStatus();
+  const updateStatus = useUpdateMfgSalesOrderStatus(); const requestCancel = useCancelRequestAction("so"); // cancel = request + two approvals (owner 2026-09-08)
   const deleteDraft = useDeleteMfgSalesOrder();
 
   /* Reads route through the SHARED vendored hooks (vendor/scm/lib/
@@ -292,6 +312,12 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
      invalidate ['mfg-sales-order-detail'] + ['mfg-sales-orders', docNo,
      'payments'] and those invalidations now reach this screen too. */
   const detail = useMfgSalesOrderDetail(docNo);
+  /* The live Stock / Incoming PO / READY-source fields are NOT in GET /:docNo
+     (it returns coverage_po null since docs/bugs/0592); they come from this
+     second call, overlaid below with the SAME function the desktop uses. The
+     phone never made the call, so its line card could not show the incoming
+     purchase order at all (found tracing staff issues #18/#19, 2026-09-14). */
+  const coverage = useSoLineCoverage(docNo);
   const paymentsQ = useSalesOrderPayments(docNo);
 
   const staffQ = useStaff();
@@ -310,7 +336,10 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
      and mobile did not — the one-shared-rule divergence this repo keeps paying
      for. Production held zero cancelled rows until 2026-08-10, so it never
      showed. */
-  const items = ((detail.data?.items ?? []) as SoItem[]).filter((l) => !l.cancelled);
+  const items = useMemo(
+    () => overlaySoLineCoverage(((detail.data?.items ?? []) as SoItem[]).filter((l) => !l.cancelled), coverage.data?.coverage),
+    [detail.data, coverage.data],
+  );
   /* MONEY IS EITHER KNOWN OR UNKNOWN — the MobilePOD (#653) rule, applied to the
      sibling screen that runs the same subtraction. `paymentsQ.data ?? []` folded
      a FAILED payments read into "no payments", and `data` is set only by a
@@ -356,6 +385,10 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
   const salespersonName = h?.salesperson_id != null
     ? (staffQ.data ?? []).find((s) => String(s.id) === String(h.salesperson_id))?.name ?? null
     : null;
+  /* Who else may see and edit it. Null on an unshared order, which is most of
+     them; granting and withdrawing live on SO Maintenance, desktop-only
+     (docs/modules/so-handover.md §8). */
+  const sharedWith = collaboratorLabel(h, staffQ.data);
 
   /* Status change routes through the SHARED useUpdateMfgSalesOrderStatus so
      mobile gets the same optimistic update + audit-log / status-changes
@@ -368,7 +401,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
     try {
       await updateStatus.mutateAsync({ docNo, status, expectedStatus: h?.status ?? null });
     } catch (e) {
-      setActionError(e instanceof Error ? e.message : "Something went wrong. Please try again.");
+      await notifySaveProblems(notifyTop, e, setActionError, "Something went wrong. Please try again.");
     } finally {
       setBusy(false);
     }
@@ -417,12 +450,12 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
      - Cancel is offered only on in-flight statuses (CONFIRMED / IN_PRODUCTION /
        READY_TO_SHIP), never once SHIPPED+ / INVOICED / CLOSED — those carry
        downstream docs (CANCELLABLE_STATUSES).
-     - isLocked = SHIPPED+ terminal status OR a non-cancelled DO/SI references it
-       (has_children). Mirrors SalesOrderDetail.isLocked. */
+     - isLocked = SHIPPED+ terminal status OR every line is on a live DO/SI
+       (soDownstreamHardLocked, owner 2026-09-15). Mirrors SalesOrderDetail.isLocked. */
   const rawStatus = (h?.status ?? "").toUpperCase();
-  const hasChildren = Boolean(h?.has_children);
-  const canCancel = CANCELLABLE_STATUSES.includes(rawStatus);
-  const isLocked = isSoLocked(h?.status, hasChildren);
+  const hasChildren = soDownstreamHardLocked(h);
+  const migratedLocked = soMigratedReadonly(h), canCancel = !migratedLocked && CANCELLABLE_STATUSES.includes(rawStatus);
+  const isLocked = migratedLocked || isSoLocked(h?.status, hasChildren); // migrated sits OUTSIDE: there is no override or amendment route out of it
 
   /* Processing LOCK — the shared procLockActive: once the SO has a Processing
      Date AND that day has passed (compared against todayMyt() — the Malaysia
@@ -710,8 +743,8 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
      processing lock does NOT gate payments either (owner rule 2026-07-05). */
   const isDraftSo = ph === "draft";
   const [payEditing, setPayEditing] = useState(false);
-  const canOfferPayEdit = ph === "submitted" && !paymentLocked;
-  const canEditPayments = isDraftSo || (canOfferPayEdit && payEditing);
+  const canOfferPayEdit = !migratedLocked && ph === "submitted" && !paymentLocked;
+  const canEditPayments = !migratedLocked && (isDraftSo || (canOfferPayEdit && payEditing));
   const canAddPayment = canEditPayments;
   const [payOpen, setPayOpen] = useState(false);
 
@@ -804,12 +837,12 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
                 the reason, mirroring the desktop SO Detail lock banner — and the
                 footer Edit button is disabled below. */}
             {editLocked ? (
-              <div style={{ display: "flex", alignItems: "center", gap: 8, background: "rgba(232,107,58,0.08)", border: "1px solid var(--c-orange, #e86b3a)", borderRadius: 10, padding: "9px 11px", marginBottom: 12, fontSize: 11, color: "#8a4a24" }}>
+              <div data-testid={migratedLocked ? "so-migrated-readonly-banner" : "so-locked-banner"} style={{ display: "flex", alignItems: "flex-start", gap: 8, background: "rgba(232,107,58,0.08)", border: "1px solid var(--c-orange, #e86b3a)", borderRadius: 10, padding: "9px 11px", marginBottom: 12, fontSize: 11, color: "#8a4a24", lineHeight: 1.45 }}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#c66a34" strokeWidth="2" strokeLinecap="round"><rect x="4" y="10" width="16" height="10" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3" /></svg>
-                {processingLocked
-                  ? "Locked — the processing date has passed and this order was proceeded. Line items can't be edited."
+                {migratedLocked ? soMigratedReason(h)
+                  : processingLocked ? "Locked — the processing date has passed and this order was proceeded. Line items can't be edited."
                   : hasChildren
-                  ? "Locked — a delivery order or invoice references this SO. Line items can't be edited."
+                  ? "Locked — every line is already on a delivery order or invoice. Line items can't be edited."
                   : "Locked — this order has moved past editing. Line items can't be edited."}
               </div>
             ) : amendmentEligible ? (
@@ -838,6 +871,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
                 approve the bound PO (SO_APPROVED) / send to supplier (PO_APPROVED)
                 — mirroring the desktop SalesOrderDetail + PurchaseOrderDetail
                 amendment banners so mobile can finish + send the amendment. */}
+            <CancelRequestPanel compact docType="so" docKey={docNo} docNumber={docNo} onExecute={() => setStatus("CANCELLED")} executing={busy} />
             {hasOpenAmendment && openAmendment && (
               <div style={{ display: "flex", flexDirection: "column", gap: 9, background: "rgba(214,158,46,0.14)", border: "1px solid rgba(214,158,46,0.55)", borderRadius: 12, padding: "11px 13px", marginBottom: 12 }}>
                 <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
@@ -870,7 +904,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
                 )}
                 {amendmentLane != null && openAmendment.status === "REQUESTED" && !canApproveLane && (
                   <div style={{ fontSize: 11.5, lineHeight: 1.45, color: "#6d5626" }}>
-                    Waiting for {amendmentLane === "LINES" ? "Purchasing" : "Logistics"} — one signature applies it.
+                    Waiting for {AMENDMENT_APPROVER_LABEL[soAmendmentApprover(amendmentLane)]} — one signature applies it.
                   </div>
                 )}
                 {/* Gate actions — perm + status gated, exactly like desktop.
@@ -941,8 +975,8 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
                     )}
                   </>
                 )}
-                {/* Reject — an approver refusing (reason mandatory). Available at
-                    every pre-approved gate, exactly as desktop AmendmentDetailV2. */}
+                <WrongApproverFlagButton amendment={openAmendmentDetail.data?.amendment} canSign={canApproveLane} variant="mobile" />
+                {/* Reject — an approver refusing (reason mandatory), at every pre-approved gate as on desktop. */}
                 {canOfferReject && (
                   <button
                     type="button"
@@ -986,6 +1020,9 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
               <RoField label="Customer name" value={val(h.debtor_name)} />
               <div style={{ display: "flex", gap: 9 }}><div style={{ flex: 1, minWidth: 0 }}><RoField label="Phone" value={formatPhone(h.phone) || val(h.phone)} mono /></div><div style={{ flex: 1, minWidth: 0 }}><RoField label="Email" value={val(h.email)} /></div></div>
               <div style={{ display: "flex", gap: 9 }}><div style={{ flex: 1, minWidth: 0 }}><RoField label="Customer type" value={val(h.customer_type)} /></div><div style={{ flex: 1, minWidth: 0 }}><RoField label="Salesperson" value={val(salespersonName)} /></div></div>
+              {/* Only when actually shared — a field blank on almost every
+                  order teaches people to stop reading it. */}
+              {sharedWith && <RoField label="Shared with" value={sharedWith} />}
               <RoField label="Customer SO ref" value={val(h.customer_so_no ?? h.ref)} mono />
               {/* Emergency contact — whole row HIDDEN when no phone on file
                   (Build Spec §6 + null-field rule: "hide the row"). Value =
@@ -1067,23 +1104,17 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
                    positive discount_sen renders under the unit price. Without
                    these the row hid the discount and an FOC line looked like a
                    plain "RM 0.00 ×qty". */
-                const isFoc = (it.unit_price_sen ?? 0) === 0 && lineTotalSen(it) === 0;
+                const isFoc = isFocLine({ ...it, line_total_sen: lineTotalSen(it) });
                 const discountSen = it.discount_sen ?? 0;
                 return (
                 <div key={it.id} style={{ display: "flex", justifyContent: "space-between", gap: 10, padding: "11px 13px", borderTop: i ? "1px solid var(--line2)" : "none" }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 13, fontWeight: 700, color: "var(--ink)", overflowWrap: "anywhere" }}>{primary || "—"}</div>
                     {secondary ? <div style={{ fontSize: 11.5, color: "var(--mut)", marginTop: 2, overflowWrap: "anywhere" }}>{secondary}</div> : null}
-                    {/* The line's REMARK — desktop parity (SalesOrderDetailV2's
-                        Item column). Free text that appears nowhere else on the
-                        row: a service line's whole job lives here ("Please take
-                        back Cody Bedframe (King Size) 2 units"). Wraps, never
-                        truncates — half an instruction is worse than none. */}
-                    {(it.remark ?? "").trim() ? (
-                      <div style={{ fontSize: 11, color: "var(--mut)", marginTop: 3, fontStyle: "italic", whiteSpace: "pre-wrap", overflowWrap: "anywhere", lineHeight: 1.35 }}>
-                        {it.remark!.trim()}
-                      </div>
-                    ) : null}
+                    {/* The line's REMARK — one renderer, shared with the phone's
+                        PO surface since 2026-09-04 (see MobileLineRemark). */}
+                    <MobileLineRemark text={it.remark} />
+                    <MobileLinePhotos docNo={docNo} line={it} />
                     {/* UOM only — never the code (see the primary line above). */}
                     {(it.uom ?? "").trim() ? <div className="money" style={{ fontSize: 10, color: "var(--mut2)", marginTop: 3 }}>{it.uom!.trim()}</div> : null}
                     {/* Stock pill + source-PO trace (owner 2026-08-01) — the
@@ -1102,6 +1133,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
                         </div>
                       );
                     })()}
+                    <NonSellingWarehouseNoteMobile note={it.non_selling_warehouse} />
                     <SourcePosRowMobile
                       pos={it.shipped_source_pos ?? []}
                       adj={it.shipped_source_adj}
@@ -1199,6 +1231,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
                   onChanged={refreshAfterPayment}
                 />
               )}
+              <OrderMoneyPanel docNo={docNo} onOpenNewOrder={(copyFrom, picks) => onConvert?.({ copyFrom, picks })} />
             </div>
 
             {/* History — owner requirement (Inistate-style audit timeline): WHO
@@ -1218,17 +1251,18 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
         )}
       </div>
 
-      {/* Standalone ADD-Payment sheet (the card-header "+ Add Payment"). Editing
-          an EXISTING row is owned by RecordedPaymentsList, which mounts the same
-          sheet in edit mode — so the affordance exists wherever the ledger is
-          rendered, including inside Edit Sales Order. Reachable even when the SO
-          is edit-locked, because payment is never lock-gated (only
-          status/downstream via canAddPayment). */}
+      {/* Standalone ADD-Payment sheet (the card-header "+ Add Payment"). Editing an EXISTING row is owned by
+          RecordedPaymentsList, which mounts the same sheet in edit mode — so the affordance exists wherever the ledger
+          is rendered, including inside Edit Sales Order. Reachable even when the SO is edit-locked, because payment is
+          never lock-gated (only status/downstream via canAddPayment). */}
       {payOpen && h && (
         <AddPaymentSheet
           docNo={docNo}
           staff={pickableStaffQ.data ?? []}
           defaultCollectedBy={defaultCollectedBy}
+          /* A role holding the correction right says why it records money
+             (docs/bugs/0888); the list decides the same for its own edits. */
+          reasonWhy={owesPaymentReason(houzsAuth.user) ? "holder" : null}
           onClose={() => setPayOpen(false)}
           onSaved={async () => {
             setPayOpen(false);
@@ -1268,9 +1302,10 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
           {ph === "draft" && canWriteSo && (
             <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
               <div style={{ display: "flex", gap: 9 }}>
-                <button className="btn-ghost" style={{ flex: 1, opacity: busy ? 0.55 : 1 }} disabled={busy} onClick={() => onEdit?.(docNo)}>Edit Draft</button>
-                <button className="btn" style={{ flex: 1.3, opacity: busy ? 0.55 : 1 }} disabled={busy} onClick={() => setStatus("CONFIRMED")}>{busy ? "Working…" : "Create Sales Order"}</button>
+                <button className="btn-ghost" style={{ flex: 1, opacity: busy || migratedLocked ? 0.55 : 1 }} disabled={busy || migratedLocked} onClick={() => onEdit?.(docNo)}>Edit Draft</button>
+                <button className="btn" style={{ flex: 1.3, opacity: busy || migratedLocked ? 0.55 : 1 }} disabled={busy || migratedLocked} onClick={() => setStatus("CONFIRMED")}>{busy ? "Working…" : "Create Sales Order"}</button>
               </div>
+              {onAddLine && <button className="btn-ghost" style={{ opacity: busy || migratedLocked ? 0.55 : 1 }} disabled={busy || migratedLocked} onClick={() => onAddLine(docNo)}>+ {ADD_LINE_LABEL}</button>}
               {/* Discard draft — the escape hatch for a junk draft (esp. a bad
                   scan/OCR draft). Secondary red-outline so it never competes with
                   Create; behind the house confirm dialog. Backend refuses anything
@@ -1295,11 +1330,12 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
                 {/* Cancel — only on in-flight statuses (not SHIPPED+ / INVOICED /
                     CLOSED), matching the desktop's cancellableStatuses. */}
                 {canCancel ? (
-                  <button className="btn-danger" style={{ flex: 1, opacity: busy ? 0.55 : 1 }} disabled={busy} onClick={() => setStatus("CANCELLED", `Cancel ${docNo}? This voids the order.`)}>{busy ? "Working…" : "Cancel Order"}</button>
+                  <button className="btn-danger" style={{ flex: 1, opacity: busy ? 0.55 : 1 }} disabled={busy} onClick={() => void requestCancel(docNo, docNo)}>{busy ? "Working…" : "Request cancel"}</button>
                 ) : (
-                  <div style={{ flex: 1, textAlign: "center", fontSize: 11, color: "var(--mut2)", alignSelf: "center" }}>Locked — downstream documents exist.</div>
+                  <div style={{ flex: 1, textAlign: "center", fontSize: 11, color: "var(--mut2)", alignSelf: "center" }}>Items locked</div>
                 )}
               </div>
+              {onAddLine && canWriteSo && <button className="btn-ghost" style={{ marginTop: 9, opacity: busy || editLocked ? 0.4 : 1 }} disabled={busy || editLocked} onClick={() => onAddLine(docNo)}>+ {ADD_LINE_LABEL}</button>}
             </>
           )}
           {ph === "cancelled" && (
@@ -1472,40 +1508,6 @@ function ScannedThumb({ imageKey, label, onView }: { imageKey: string; label: st
    the accordion opens, so `enabled: Boolean(docNo)` keeps the request unfired.
    Entries arrive newest-first from the backend. */
 
-/* Human labels for the audit `field` keys — subset of desktop's FIELD_LABEL
-   plus the payment / amendment / automation keys the mobile timeline surfaces. */
-const HIST_FIELD_LABEL: Record<string, string> = {
-  debtorName: "Customer", debtorCode: "Customer code", agent: "Agent",
-  phone: "Phone", email: "Email", soDate: "SO date", status: "Status",
-  paymentMethod: "Payment method", depositSen: "Deposit",
-  processingDate: "Processing Date", customerSoNo: "Customer SO ref",
-  customerPo: "Customer PO", customerDeliveryDate: "Delivery Date",
-  amendedDeliveryDate: "Amended delivery date",
-  amendDateFromCustomer: "Amend date (customer)", amendReason: "Amend reason",
-  deliveryState: "Delivery region", possessionDate: "Possession date",
-  houseType: "House type", replacementDisposal: "Replacement / disposal",
-  referral: "Referral", city: "City", postcode: "Postcode",
-  buildingType: "Building type", address1: "Address 1", address2: "Address 2",
-  address3: "Address 3", address4: "Address 4", note: "Note", remark: "Remark",
-  itemCode: "Item", itemGroup: "Group", description: "Description",
-  description2: "Description 2", uom: "UOM", qty: "Qty",
-  unitPriceSen: "Unit price", discountSen: "Discount",
-  unitCostSen: "Unit cost", totalSen: "Line total", lineCount: "Lines",
-  localTotalSen: "Total", amountSen: "Amount", paidAt: "Paid on",
-  method: "Method", merchantProvider: "Bank", installmentMonths: "Installment months",
-  onlineType: "Online type", approvalCode: "Approval code",
-  stockStatus: "Stock status", salespersonId: "Salesperson",
-  customerType: "Customer type", venue: "Venue", venueId: "Venue (master)",
-  salesLocation: "Sales location", customerState: "State", cancelled: "Cancelled",
-  photoAdded: "Photo added", photoRemoved: "Photo removed",
-  tbcVariants: "Variants updated", sofaBuild: "Sofa build",
-  pwpCode: "PWP code", pwpRewardsReverted: "PWP rewards reverted",
-  pwpCodesDeleted: "PWP codes deleted", photosCleaned: "Photos removed",
-};
-const HIST_MONEY_FIELDS = new Set([
-  "unitPriceSen", "discountSen", "totalSen", "depositSen",
-  "localTotalSen", "unitCostSen", "amountSen",
-]);
 const histVal = (field: string, v: unknown): string => {
   if (v === null || v === undefined || v === "") return "—";
   if ((HIST_MONEY_FIELDS.has(field) || /Sen$/.test(field)) && typeof v === "number") return `RM ${rm(v)}`;

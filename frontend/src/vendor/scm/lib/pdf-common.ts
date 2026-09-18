@@ -46,6 +46,33 @@ function splitAddressLines(address: string): string[] {
   return [line1, line2];
 }
 
+/** Wrap one letterhead line to `maxW`, breaking ONLY after a comma.
+ *
+ *  splitTextToSize breaks between WORDS, and an address is not prose: it cut
+ *  "…KL Gateway, No. 2," into "…No." / "2," on the owner's 2990 voucher
+ *  (2026-09-04: 地址整齐一点). A comma-delimited chunk ("No. 2,", "Menara
+ *  SUEZCAP 2,") is the unit a reader parses, so chunks pack greedily into
+ *  lines and never split — except a single chunk that alone exceeds the
+ *  width, which the CALLER word-wraps as the lesser evil. Exported for its
+ *  test. `measure` is the current font's text-width fn, so the wrap always
+ *  matches what will actually be painted. */
+export function wrapAtCommas(line: string, maxW: number, measure: (s: string) => number): string[] {
+  const chunks = (line.match(/[^,]+,?/g) ?? [line]).map((s) => s.trim()).filter(Boolean);
+  const out: string[] = [];
+  let cur = '';
+  for (const chunk of chunks) {
+    const candidate = cur ? `${cur} ${chunk}` : chunk;
+    if (cur && measure(candidate) > maxW) {
+      out.push(cur);
+      cur = chunk;
+    } else {
+      cur = candidate;
+    }
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+
 export const COMPANY = {
   get name(): string {
     return getBrandingCache().companyName;
@@ -121,6 +148,15 @@ const WINANSI_ABOVE_LATIN1 = new Set([
   0x2013, 0x2014, 0x2018, 0x2019, 0x201a, 0x201c, 0x201d, 0x201e, 0x2020, 0x2021,
   0x2022, 0x2026, 0x2030, 0x2039, 0x203a, 0x20ac, 0x2122,
 ]);
+
+/* The generators' own joiners — the arrow between an old and a new value, the
+   minus of a negative figure, the "about" of a converted amount — are outside
+   WinAnsi AND outside both subsets, so a report that is otherwise plain Latin
+   would refuse to print over its own punctuation. Folded to ASCII for paper;
+   the screen keeps the symbols. Applied to a whole cell, a customer's own
+   arrow folds the same way, which is a faithful print, not a corruption. */
+const PAPER_FOLDS: ReadonlyArray<[RegExp, string]> = [[/→/g, '->'], [/←/g, '<-'], [/−/g, '-'], [/≈/g, '~']];
+export const paperText = (s: string): string => PAPER_FOLDS.reduce((acc, [re, to]) => acc.replace(re, to), s);
 
 /** Hanzi proper (vs. CJK punctuation) — picks which subset a document needs. */
 const isHanzi = (cp: number): boolean =>
@@ -451,8 +487,14 @@ export function drawHeader(
   const nameLines = doc.splitTextToSize(COMPANY.name, leftMaxW) as string[];
   doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
   const regLines = doc.splitTextToSize(COMPANY.reg, leftMaxW) as string[];
-  const addressLines = COMPANY.addressLines.flatMap(
-    (line) => doc.splitTextToSize(line, leftMaxW) as string[],
+  /* Comma-aware (see wrapAtCommas): the width wrap must not cut inside a
+     chunk like "No. 2,". Only a chunk that ALONE overflows the measure falls
+     back to the word wrap. Shared letterhead — every document tidies up
+     together. */
+  const addressLines = COMPANY.addressLines.flatMap((line) =>
+    wrapAtCommas(line, leftMaxW, (s) => doc.getTextWidth(s)).flatMap((l) =>
+      doc.getTextWidth(l) > leftMaxW ? (doc.splitTextToSize(l, leftMaxW) as string[]) : [l],
+    ),
   );
 
   let logoBottomY = 0;
@@ -649,12 +691,15 @@ export const safeName = (s: string, maxLen = 32): string => {
 //
 //   'save'    → download it (the historical default; keep it the fallback so an
 //               un-migrated caller behaves exactly as before)
-//   'print'   → blob → hidden iframe → the browser's print dialog. NOTE this is
-//               the ONLY correct way to print a document from this app: the
-//               global @media print block (index.css) hides `body *` and shows
-//               only `.org-print-area`, so window.print() on a detail page
-//               prints a BLANK sheet. The DO preview's "Print now" did exactly
-//               that until 2026-08-06.
+//   'print'   → blob → a new tab showing the document full-size, and the
+//               browser's print dialog opened on it once the viewer has loaded.
+//               A 0×0 hidden iframe's contentWindow.print() is answered by
+//               Chrome's PDF viewer with nothing at all (no dialog, no error)
+//               often enough that it is now only the popup-blocked fallback.
+//               A tab of our OWN pages is never the answer: the global @media
+//               print block (index.css) hides `body *` and shows only
+//               `.org-print-area`, so window.print() on a detail page prints a
+//               BLANK sheet.
 //   'preview' → blob → new tab, i.e. the "View full PDF" escape hatch from the
 //               summary card when the operator wants to see every line first.
 export type PdfAction = 'save' | 'print' | 'preview';
@@ -700,12 +745,48 @@ export function deliverPdf(
     doc.save(filename);
     return;
   }
-  const blobUrl = URL.createObjectURL(doc.output('blob'));
-  if (action === 'preview') {
-    openPdfPreviewTab(doc, blobUrl, filename);
+  deliverPdfBlob(doc.output('blob'), filename, action);
+}
+
+/** The same three exits for a PDF that exists only as BYTES — a jsPDF page
+ *  merged with stored attachments (pdf-attach.ts) is no longer a jsPDF doc,
+ *  and re-parsing it into one just to deliver it would be a lossy detour.
+ *  'save' mirrors doc.save(): an <a download> click. */
+export function deliverPdfBlob(
+  blob: Blob,
+  filename: string,
+  action: PdfAction = 'save',
+): void {
+  if (action === 'save') {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.setTimeout(() => { URL.revokeObjectURL(url); }, 60_000);
     return;
   }
-  renderViaIframe(blobUrl, true);
+  const blobUrl = URL.createObjectURL(blob);
+  if (action === 'preview') {
+    openPdfPreviewTab(blob, blobUrl, filename);
+    return;
+  }
+  openPdfPrintTab(blobUrl, filename);
+}
+
+/* 'print' — the named wrapper page (route 2), never the service-worker path:
+   the viewer sits in a VISIBLE iframe there, the shape Chrome prints reliably,
+   and the page carries a Print button for a second go. Opened synchronously
+   for the same reason the preview's tab is. */
+function openPdfPrintTab(blobUrl: string, filename: string): void {
+  const tab = window.open('', '_blank');
+  if (!tab) {
+    renderViaIframe(blobUrl, true);
+    return;
+  }
+  writeNamedPdfTab(tab, blobUrl, filename, { print: true });
 }
 
 /* ── The preview tab ──────────────────────────────────────────────────────────
@@ -729,7 +810,7 @@ export function deliverPdf(
  *
  * The tab is opened SYNCHRONOUSLY, before any await: a `window.open` that
  * follows an await has lost the user gesture and is blocked as a popup. */
-function openPdfPreviewTab(doc: import('jspdf').jsPDF, blobUrl: string, filename: string): void {
+function openPdfPreviewTab(blob: Blob, blobUrl: string, filename: string): void {
   const tab = window.open('', '_blank');
   if (!tab) {
     // Popup blocked — the raw blob is still better than nothing.
@@ -738,7 +819,7 @@ function openPdfPreviewTab(doc: import('jspdf').jsPDF, blobUrl: string, filename
   }
   void (async () => {
     try {
-      const path = await putPrintPreview(doc, filename);
+      const path = await putPrintPreview(blob, filename);
       if (path) {
         tab.location.replace(path);
         return;
@@ -758,7 +839,7 @@ const PRINT_KEEP = 5;
 /* Put the PDF where the service worker can serve it, and return the path — or
    null when the worker is not in control (see openPdfPreviewTab). */
 async function putPrintPreview(
-  doc: import('jspdf').jsPDF,
+  blob: Blob,
   filename: string,
 ): Promise<string | null> {
   if (typeof caches === 'undefined' || !navigator.serviceWorker?.controller) return null;
@@ -774,7 +855,7 @@ async function putPrintPreview(
   const path = PRINT_PREFIX + encodeURIComponent(filename);
   await cache.put(
     path,
-    new Response(doc.output('blob'), {
+    new Response(blob, {
       headers: {
         'Content-Type': 'application/pdf',
         /* `inline` so the browser RENDERS it rather than downloading; the
@@ -793,7 +874,12 @@ async function putPrintPreview(
    two documents open side by side are indistinguishable and Save proposes the
    GUID. This wrapper cannot fix the address bar (only the service-worker route
    above can) but it does name the tab, the window title and the download. */
-function writeNamedPdfTab(tab: Window, blobUrl: string, filename: string): void {
+/** How long the viewer gets after its load event before the print dialog is
+    asked for — Chrome fires load before the PDF is laid out, and a dialog
+    asked for too early prints a blank sheet. */
+const PRINT_SETTLE_MS = 400;
+
+function writeNamedPdfTab(tab: Window, blobUrl: string, filename: string, opts: { print?: boolean } = {}): void {
   const title = filename.replace(/\.pdf$/i, '');
   const esc = (s: string) =>
     s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -802,14 +888,30 @@ function writeNamedPdfTab(tab: Window, blobUrl: string, filename: string): void 
       `<title>${esc(title)}</title>` +
       `<style>html,body{margin:0;height:100%;background:#3a3a3a}` +
       `iframe{border:0;width:100%;height:100%;display:block}` +
-      `a.dl{position:fixed;right:14px;top:10px;z-index:2;font:600 12px/1 system-ui,sans-serif;` +
-      `background:#0f766e;color:#fff;padding:8px 12px;border-radius:6px;text-decoration:none}</style>` +
+      `.bar{position:fixed;right:14px;top:10px;z-index:2;display:flex;gap:8px}` +
+      `.bar a,.bar button{font:600 12px/1 system-ui,sans-serif;background:#0f766e;color:#fff;padding:8px 12px;border-radius:6px;text-decoration:none;border:0;cursor:pointer}</style>` +
       `</head><body>` +
-      `<a class="dl" href="${esc(blobUrl)}" download="${esc(filename)}">Download PDF</a>` +
+      `<div class="bar"><button type="button" data-print>Print</button>` +
+      `<a href="${esc(blobUrl)}" download="${esc(filename)}">Download PDF</a></div>` +
       `<iframe src="${esc(blobUrl)}" title="${esc(title)}"></iframe>` +
       `</body></html>`,
   );
   tab.document.close();
+  /* Wired from this side: the tab is an about:blank of our origin, so no inline
+     script has to survive whatever policy the page is served under. */
+  const frame = tab.document.querySelector('iframe');
+  const printFrame = () => {
+    try {
+      frame?.contentWindow?.focus();
+      frame?.contentWindow?.print();
+    } catch {
+      /* The viewer refused — the operator still has the button and the download. */
+    }
+  };
+  tab.document.querySelector('[data-print]')?.addEventListener('click', printFrame);
+  if (opts.print && frame) {
+    frame.addEventListener('load', () => { tab.setTimeout(printFrame, PRINT_SETTLE_MS); });
+  }
   /* No revoke timer. The old code revoked after 60 s, which was safe when the
      tab was the blob itself (already loaded) but would quietly break this page's
      Download link the moment the operator took longer than a minute to decide.

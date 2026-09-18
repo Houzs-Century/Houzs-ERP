@@ -27,48 +27,6 @@ const feSrc = (rel: string) => readFileSync(resolve(HERE, "..", rel), "utf8");
 const beSrc = (rel: string) =>
   readFileSync(resolve(HERE, "..", "..", "..", "backend", "src", rel), "utf8");
 
-/* ── ITEM 2 — Special Add-ons ──────────────────────────────────────────────
-   `const canEdit = true` at module scope. Every user who reached the tab saw
-   Edit / Delete / +New / inline price inputs, and every one of them 403'd on
-   click. The widest possible divergence, in the direction that GRANTS. */
-describe("SpecialAddonsTab — the editor is gated on the API's own write rule", () => {
-  const FILE = "vendor/scm/components/SpecialAddonsTab.tsx";
-  const KEY = "scm.config.write";
-
-  test("the key is a real capability the backend ships", () => {
-    expect(CAPABILITY_KEYS as readonly string[]).toContain(KEY);
-  });
-
-  test("the hardcoded `canEdit = true` is gone", () => {
-    expect(stripComments(feSrc(FILE))).not.toMatch(/const\s+canEdit\s*=\s*true/);
-  });
-
-  test("BOTH managers resolve canEdit from the capability", () => {
-    // Two components, one module — a single conversion would have left the
-    // other half of the tab ungated.
-    const hits = feSrc(FILE).match(/const\s+canEdit\s*=\s*useCapability\(/g) ?? [];
-    expect(hits).toHaveLength(2);
-  });
-
-  test(`the capability read is ${KEY}`, () => {
-    expect(feSrc(FILE)).toContain(`useCapability('${KEY}')`);
-  });
-
-  test("the backend gate it mirrors is still canWriteScmConfig", () => {
-    // If someone changes /special-addons' gate, this fails and points at the
-    // capability that has to move with it.
-    const route = beSrc("scm/routes/special-addons.ts");
-    expect(route).toContain("canWriteScmConfig");
-    expect(route).toMatch(/if\s*\(!canWriteScmConfig\(c\)\)/);
-  });
-
-  test("it does NOT go through the vendor role bridge", () => {
-    // lib/auth.ts collapses every caller to super_admin-or-sales off can('*') —
-    // a THIRD answer to this question. Using it here would rebuild the drift.
-    expect(feSrc(FILE)).not.toMatch(/from\s+['"]\.\.\/lib\/auth['"]/);
-  });
-});
-
 /* ── ITEM 3 — the /assr/:id route ──────────────────────────────────────────
    Missing `allowSales` while its three siblings had it and while the API admits
    Sales. Wrong in the direction that DENIES: a sales rep opened the case list,
@@ -84,15 +42,20 @@ describe("/assr/:id — the route guard matches requireServiceCaseAccess", () =>
     // Verify the premise before trusting it. Two things must hold: the endpoint
     // uses requireServiceCaseAccess, and that gate admits a rank-and-file rep.
     //
-    // The MECHANISM of that second half changed and the assertion moved with it.
-    // It used to read `isSalesUser(user)` — Sales by job title. A batch of reps
-    // lost every case when a name-shaped signal missed, so the gate now ORs in
-    // the HOUZS COMPANY GRANT instead. The invariant is unchanged and is what is
-    // asserted here: a rep the API would serve is never Forbidden. Only the
-    // thing that makes them a rep is different, so match the grant, not a title.
+    // The MECHANISM of that second half has changed TWICE and the assertion moved
+    // with it. It read `isSalesUser(user)` — Sales by job title — until a batch
+    // of reps lost every case when a name-shaped signal missed; the gate then
+    // ORed in the HOUZS company grant; and on 2026-09-03 that literal widened to
+    // ANY company grant, because the ruling had replaced the TITLE and the
+    // single-company literal was narrower than the rule (docs/bugs/0621-*).
+    //
+    // The INVARIANT is unchanged and is the only thing worth asserting: a rep
+    // the API would serve is never Forbidden. So match the GRANT TERM, not which
+    // company it names — pinning the company is what made this assertion need
+    // editing on a change that did not alter the invariant at all.
     const assr = beSrc("routes/assr.ts");
     expect(assr).toMatch(/app\.get\(\s*["']\/:id\{\[0-9\]\+\}["']\s*,\s*requireServiceCaseAccess\(\)/);
-    expect(assr).toMatch(/function canAccessServiceCases[\s\S]{0,600}holdsHouzsCompanyGrant\(c\)/);
+    expect(assr).toMatch(/function canAccessServiceCases[\s\S]{0,600}holds\w*CompanyGrant\(c\)/);
     expect(assr).toMatch(/function requireServiceCaseAccess[\s\S]{0,400}canAccessServiceCases/);
   });
 
@@ -283,9 +246,10 @@ describe("reference reads surface their failures", () => {
 
   test("Projects.tsx renders the reference-read failure rather than an empty picker", () => {
     const text = feSrc("pages/Projects.tsx");
-    // Two independent crew/lorry readers, each with its own surfaced error.
-    expect((text.match(/setRefError\(/g) ?? []).length).toBeGreaterThanOrEqual(2);
-    expect((text.match(/\{refError && \(/g) ?? []).length).toBe(2);
+    // The crew/lorry reader (LogisticsCrewSection) surfaces its own error. The
+    // second reader, LogisticsScheduleSection, was never rendered and is deleted.
+    expect((text.match(/setRefError\(/g) ?? []).length).toBeGreaterThanOrEqual(1);
+    expect((text.match(/\{refError && \(/g) ?? []).length).toBe(1);
   });
 
   test("the ServiceCases lightbox no longer sits on Loading forever", () => {

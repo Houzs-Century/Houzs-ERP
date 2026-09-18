@@ -26,7 +26,7 @@
 // ----------------------------------------------------------------------------
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
+import { useConfirm, usePrompt } from "../vendor/scm/components/ConfirmDialog";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
 import { fetchPaymentSlipUrl, uploadSlipFull } from "../vendor/scm/lib/slip";
 import {
@@ -39,7 +39,9 @@ import { todayMyt, mytDayOf } from "../vendor/scm/lib/dates";
 /* The SHARED payment-window predicate — the same function the server and the
    desktop PaymentsTable call, so no surface can disagree about whether the
    same-day window is still open (Owner 2026-07-19). */
-import { paymentRowMutable } from "../vendor/scm/lib/so-field-policy";
+import { paymentRowMutable, type PaymentChangeVia } from "../vendor/scm/lib/so-field-policy";
+import { owesPaymentReason, paymentReasonAsk, reasonWhyFor, type ReasonWhy } from "../vendor/scm/lib/payment-reason";
+import { useAuth as useHouzsAuth } from "../auth/AuthContext";
 import {
   useSoDropdownOptions,
   optionsOrFallback,
@@ -51,6 +53,10 @@ import { missingMethodSubField } from "../vendor/scm/components/PaymentsTable";
 import { fmtSen } from "../lib/scm";
 import { useIdempotencyKey } from "../lib/idempotency";
 import { PaymentInfoBlock, type RecordedPaymentLike } from "./PaymentInfoBlock";
+/* Money moved from a cancelled order (docs/bugs/0933): the method option, its
+   pick, and the body it posts — the phone's pieces of the desktop's rule. */
+import { ConvertSourceField, convertedBody, rmInput, useMobileConvertSources, withConvertOption } from "./MobileOrderMoney";
+import { CONVERT_LABEL, CONVERTED_METHOD } from "../vendor/scm/lib/so-money-queries";
 import { DateField } from "../vendor/scm/components/DateField";
 
 /* A persisted payment as either mobile surface holds it. Superset of
@@ -259,9 +265,16 @@ export function AddPaymentSheet({
   editPayment = null,
   onClose,
   onSaved,
+  reasonWhy = null,
 }: {
   docNo: string;
   staff: Array<{ id: string; name: string }>;
+  /* WHY a reason is owed before the write, decided by the parent — the amend
+     right opened this edit (owner 2026-09-10), or the caller's role holds the
+     right and every payment action asks, the add included (owner 2026-09-14,
+     docs/bugs/0888). Null asks nothing. The sheet cannot decide this itself:
+     the permission and the draft flag live with the list. */
+  reasonWhy?: ReasonWhy | null;
   /* Collected By default for a NEW payment = logged-in user's staff id. */
   defaultCollectedBy?: string;
   /* When set, the sheet EDITS this persisted payment (PATCH) instead of adding
@@ -273,6 +286,7 @@ export function AddPaymentSheet({
   const notify = useNotify();
   const addPaymentMut = useAddSalesOrderPayment();
   const editPaymentMut = useEditSalesOrderPayment();
+  const askReason = usePrompt();
   const isEdit = Boolean(editPayment);
   /* One key for the one payment this sheet is open to record (lib/idempotency.ts).
      The sheet's MOUNT is the intent: both parents render it behind `payOpen` /
@@ -283,6 +297,11 @@ export function AddPaymentSheet({
   const [method, setMethod] = useState<string>(
     () => (editPayment ? CODE_TO_PAY_METHOD[editPayment.method ?? "cash"] ?? "Cash" : "Cash"),
   );
+  /* The cancelled orders this order's customer still has money on — the
+     method is offered only while there is one, and never on an edit (a
+     converted row is not edited; it is deleted to move the money back). */
+  const convertSources = useMobileConvertSources({ docNo: isEdit ? null : docNo });
+  const [convertFrom, setConvertFrom] = useState("");
   const [date, setDate] = useState<string>(
     () => (editPayment?.paid_at ?? "").slice(0, 10) || todayMyt(),
   );
@@ -325,7 +344,7 @@ export function AddPaymentSheet({
      'Installment', which mig 0037 retired as an L1 method, and it could not
      offer anything maintenance added. withStoredOption keeps a grandfathered
      stored value selectable for the same reason the Bank picker needs it. */
-  const methodOpts = withStoredOption(optionsOrFallback("payment_method", useSoDropdownOptions("payment_method").data), method);
+  const methodOpts = withConvertOption(withStoredOption(optionsOrFallback("payment_method", useSoDropdownOptions("payment_method").data), method), !isEdit && convertSources.length > 0);
   const [slipName, setSlipName] = useState("");
   const [slipSession, setSlipSession] = useState("");
   const [slipPhase, setSlipPhase] = useState<"" | "uploading" | "done" | "error">("");
@@ -355,6 +374,7 @@ export function AddPaymentSheet({
         merchantProvider: bank,
         installmentMonthsLabel: plan,
         onlineType: online,
+        convertedFromDocNo: convertFrom,
       })
     : null;
   /* Owner 2026-07-13 — the slip is OPTIONAL now; recording needs only an
@@ -369,8 +389,8 @@ export function AddPaymentSheet({
     /* Same body MobileNewSO.recordNewPayments POSTs — do NOT reimplement
        pricing; the backend recomputes the balance. In EDIT mode the same fields
        PATCH the existing row (slip untouched). */
-    const code = paymentMethodCodeForValue(method) ?? "cash";
-    const body: Record<string, unknown> = {
+    const code = method === CONVERT_LABEL ? CONVERTED_METHOD : paymentMethodCodeForValue(method) ?? "cash";
+    const body: Record<string, unknown> = code === CONVERTED_METHOD ? convertedBody(convertFrom, toSen(amount)) : {
       paidAt: date,
       method: code,
       amountSen: toSen(amount),
@@ -379,10 +399,12 @@ export function AddPaymentSheet({
       collectedBy: collectedBy || null,
     };
     // Slip is optional — only send the session when one was actually uploaded.
-    if (!isEdit && slipSession) body.uploadSessionId = slipSession;
+    if (!isEdit && slipSession && code !== CONVERTED_METHOD) body.uploadSessionId = slipSession;
     if (code === "merchant") { body.merchantProvider = bank || null; body.installmentMonths = planToMonths(plan); }
     else if (code === "installment") { body.merchantProvider = bank || null; body.installmentMonths = planToMonths(plan); }
     else if (code === "transfer") { body.onlineType = online || null; }
+    const reason = reasonWhy ? await askReason(paymentReasonAsk(isEdit ? "edit" : "add", reasonWhy)) : "";
+    if (reason === null) return;
     try {
       /* The shared vendored mutations — mobile shares the desktop payment write
          path (they invalidate the payments ledger key useSalesOrderPayments reads). */
@@ -390,9 +412,9 @@ export function AddPaymentSheet({
         /* No key on the EDIT path, deliberately: a PATCH sets named fields on ONE
            row addressed by id, so firing it twice writes the same row the same
            way. It cannot duplicate money; only the POST below creates a row. */
-        await editPaymentMut.mutateAsync({ docNo, id: editPayment.id, version: editPayment.version, ...body });
+        await editPaymentMut.mutateAsync({ docNo, id: editPayment.id, version: editPayment.version, ...body, ...(reason ? { reason } : {}) });
       } else {
-        await addPaymentMut.mutateAsync({ docNo, ...body, idempotencyKey: idemKey });
+        await addPaymentMut.mutateAsync({ docNo, ...body, ...(reason ? { reason } : {}), idempotencyKey: idemKey });
       }
       await onSaved();
     } catch (e) {
@@ -470,6 +492,12 @@ export function AddPaymentSheet({
                 </div>
               </div>
             )}
+            {/* Money moved from a cancelled order: which one. Picking it fills an
+                empty amount with what is left there (desktop parity). */}
+            {method === CONVERT_LABEL && (
+              <ConvertSourceField sources={convertSources} value={convertFrom}
+                onChange={(d, left) => { setConvertFrom(d); if (toSen(amount) <= 0) setAmount(rmInput(left)); }} />
+            )}
             {method === "Online" && (
               <div className="fld">
                 <span className="fld-l">Sub-type</span>
@@ -538,7 +566,7 @@ export function AddPaymentSheet({
                 missing instead of only greying Save out. */}
             {missingSubField && (
               <div style={{ fontSize: 11.5, color: "#a16a2e", textAlign: "center" }}>
-                Choose the {missingSubField} for this {method.toLowerCase()} payment.
+                {method === CONVERT_LABEL ? "Pick the order the money comes from." : `Choose the ${missingSubField} for this ${method.toLowerCase()} payment.`}
               </div>
             )}
             {error && <div style={{ fontSize: 11.5, color: "var(--red)", textAlign: "center" }}>{error}</div>}
@@ -590,6 +618,17 @@ export function RecordedPaymentsList({
   onChanged: () => void | Promise<void>;
 }) {
   const confirm = useConfirm();
+  /* Owner + management 2026-09-10 — FINANCE may correct a payment after the day
+     it was keyed. The control showing is the courtesy; the endpoint decides,
+     and it refuses one that has already been RECONCILED, which only the server
+     can see. Desktop PaymentsTable asks the same question the same way. */
+  const { can, user: houzsUser } = useHouzsAuth();
+  const mayAmend = can("scm.so_payment.amend");
+  /* A ROLE holding the right literally asks on EVERY action — add, edit,
+     delete, proof — same day or not (docs/bugs/0888); the Owner's wildcard
+     alone does not. Same reading as the desktop table and the server. */
+  const reasonOnEvery = owesPaymentReason(houzsUser);
+  const askReason = usePrompt();
   const deletePaymentMut = useDeleteSalesOrderPayment();
   const attachSlipMut = useAttachSalesOrderPaymentSlip();
   const [editPay, setEditPay] = useState<RecordedPayment | null>(null);
@@ -627,11 +666,15 @@ export function RecordedPaymentsList({
       body: "The slip currently attached will be swapped for the one you just picked. The change is recorded in the order history.",
       confirmLabel: "Replace",
     }))) return;
+    /* A role holding the right says why (docs/bugs/0888) — before the upload,
+       and a dismissed ask abandons it. */
+    const reason = reasonOnEvery ? await askReason(paymentReasonAsk(slipKeyOf(target) ? "proof-replace" : "proof", "holder")) : "";
+    if (reason === null) return;
     setError(null);
     setAttaching(target.id);
     try {
       const { uploadSessionId } = await uploadSlipFull({ file });
-      await attachSlipMut.mutateAsync({ docNo, id: target.id, uploadSessionId });
+      await attachSlipMut.mutateAsync({ docNo, id: target.id, uploadSessionId, ...(reason ? { reason } : {}) });
       await onChanged();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't attach the proof. Please try again.");
@@ -651,7 +694,13 @@ export function RecordedPaymentsList({
   const rowMutable = (p: RecordedPayment): boolean => {
     const day = mytDayOf(createdAtOf(p));
     if (day === null) return false;
-    return paymentRowMutable(day, todayMyt(), draftUnlocked).mutable;
+    return paymentRowMutable(day, todayMyt(), draftUnlocked, { mayAmend }).mutable;
+  };
+  /* WHY a row may change — 'amend' is the one that owes a reason. */
+  const rowVia = (p: RecordedPayment): PaymentChangeVia => {
+    const day = mytDayOf(createdAtOf(p));
+    if (day === null) return null;
+    return paymentRowMutable(day, todayMyt(), draftUnlocked, { mayAmend }).via;
   };
 
   /* Delete a persisted payment — parity with the desktop PaymentsTable trash
@@ -664,12 +713,15 @@ export function RecordedPaymentsList({
       confirmLabel: "Delete",
       danger: true,
     }))) return;
+    const row = payments.find((p) => p.id === paymentId);
+    const why = row ? reasonWhyFor(rowVia(row), reasonOnEvery) : null;
+    const reason = why ? await askReason(paymentReasonAsk("delete", why)) : "";
+    if (reason === null) return;
     setError(null);
     setWorking(true);
     try {
-      const row = payments.find((p) => p.id === paymentId);
       if (!row) throw new Error("Payment is no longer loaded. Refresh before deleting it.");
-      await deletePaymentMut.mutateAsync({ docNo, id: paymentId, version: row.version });
+      await deletePaymentMut.mutateAsync({ docNo, id: paymentId, version: row.version, ...(reason ? { reason } : {}) });
       await onChanged();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't delete the payment. Please try again.");
@@ -732,7 +784,9 @@ export function RecordedPaymentsList({
                 MYT midnight it locks). A DRAFT's rows are never same-day-locked
                 (draftUnlocked), matching the server, which exempts DRAFT from the
                 same-day PATCH lock. */}
-            {canEdit && rowMutable(p) && (
+            {/* A converted row has no pencil (the server refuses the edit): the
+                money goes back by deleting it — the trash beside stays. */}
+            {canEdit && rowMutable(p) && p.method !== CONVERTED_METHOD && (
               <button
                 type="button"
                 onClick={() => setEditPay(p)}
@@ -750,7 +804,8 @@ export function RecordedPaymentsList({
                 this it was gated on canEdit alone, so a months-old payment could
                 be deleted from the phone while the pencil beside it was already
                 locked — and the server had no gate on delete either. */}
-            {canEdit && rowMutable(p) && (
+            {/* A mirror (money that LEFT; negative) follows the converted row or the refund voucher: no hand delete (owner 2026-09-16). */}
+            {canEdit && rowMutable(p) && Number(p.amount_sen ?? 0) >= 0 && (
               <button
                 type="button"
                 onClick={() => void deletePayment(p.id)}
@@ -774,6 +829,7 @@ export function RecordedPaymentsList({
           staff={staff}
           defaultCollectedBy={defaultCollectedBy}
           editPayment={editPay}
+          reasonWhy={reasonWhyFor(rowVia(editPay), reasonOnEvery)}
           onClose={() => setEditPay(null)}
           onSaved={async () => { setEditPay(null); await onChanged(); }}
         />

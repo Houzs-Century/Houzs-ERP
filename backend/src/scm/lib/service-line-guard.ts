@@ -20,6 +20,7 @@
 // ----------------------------------------------------------------------------
 
 import { isServiceLine, isServiceCategory } from '../shared';
+import { pgrestIn } from './pgrest-in-list';
 
 export type ServiceGuardLine = {
   itemCode?: string | null;
@@ -58,10 +59,9 @@ export async function findServiceLineCodes(
     }
   }
   if (lookupCodes.size > 0) {
-    let q = sb
+    let q = pgrestIn(sb
       .from('mfg_products')
-      .select('code, category')
-      .in('code', [...lookupCodes]);
+      .select('code, category'), 'code', [...lookupCodes]);
     if (companyId != null) q = q.eq('company_id', companyId);
     const { data, error } = await q;
     if (error) return { ok: false, reason: error.message ?? 'catalog lookup failed' };

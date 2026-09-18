@@ -64,15 +64,20 @@ import {
   History,
   Wand2,
   CalendarOff,
-  type LucideIcon, Landmark, CreditCard, Banknote } from "lucide-react";
+  type LucideIcon, Landmark, CreditCard, Banknote, Receipt } from "lucide-react";
 import { cn } from "../lib/utils";
 import { booleanRecordPreference, useIdentityPreference } from "../hooks/useIdentityPreference";
 import { useAuth } from "../auth/AuthContext";
+import type { CapabilityKey } from "../auth/capabilities";
 import { makeNavFilter } from "./navFilter";
 import { CompanyMark } from "./CompanyMark";
 import { PresencePanel } from "./PresencePanel";
 import { GlobalSearchTrigger } from "./GlobalSearch";
 import { NotificationBell } from "./NotificationBell";
+import {
+  useApprovalBadgeCounts,
+  type ApprovalBadgeSource,
+} from "../hooks/useAmendmentApprovals";
 
 /* Hover prefetch, behind a dynamic import. The route map in lib/prefetch-routes
    holds an import() per route, so importing it statically drags the whole table
@@ -185,10 +190,20 @@ export interface NavTab {
    *  survives for a rep (its only surviving child is the rep Sales-Orders leaf)
    *  no matter what SCM page-access the rep's position happens to hold. */
   showForSalesRep?: boolean;
-  /** Positions (exact, lowercased) that must NOT see this entry. Checked before
-   *  every `showFor*` bypass, so a show-flag cannot re-open it. The backend is
-   *  still the control — this only avoids offering a tap that 403s. */
-  hideForPositions?: readonly string[];
+  /** Live red count rendered on this entry. The only source today is
+   *  amendments waiting for THIS user's signature, SO or PO (owner 2026-09-09).
+   *  Named rather than passed as a number so the nav tree
+   *  stays a static description: the tree is built in a dozen branches, and a
+   *  count threaded through all of them would have to be fetched whether or not
+   *  the entry survives the visibility filter. Renders nothing at 0, which is
+   *  also what a non-approver and a failed poll both produce. */
+  badge?: ApprovalBadgeSource;
+  /** Hide this entry unless the server resolved this capability to true on
+   *  /auth/me. Checked before every `showFor*` bypass, so a show-flag cannot
+   *  re-open it. The backend is still the control — this only avoids offering a
+   *  tap that 403s. Preferred over a position-name list: the answer is decided
+   *  once, server-side, and cannot drift from the gate it describes. */
+  requireCapability?: CapabilityKey;
   /** Sales-access model: show this entry ONLY to a NON-director Sales user and
    *  hide it from everyone else (office/director). Bypasses the permission
    *  gates. Used for the single rep-facing "Sales Orders" leaf mounted directly
@@ -471,7 +486,7 @@ export const NAV_TABS: NavTab[] = [
           // rep-only leaf above instead, so this carries hideForSalesRep like its
           // DO / SI siblings — belt-and-braces against the parent's flag being
           // removed, which would otherwise render the row TWICE for a rep.
-          { to: "/scm/amendments", label: "Sales Order Amendment", icon: History, anyPerm: ["*", "scm.access", "scm.amendment.create", "scm.amendment.supplier_confirm", "scm.amendment.approve_so", "scm.amendment.approve_po"], anyAccess: ["scm.sales.orders"], hideForSalesRep: true },
+          { to: "/scm/amendments", label: "Sales Order Amendment", icon: History, anyPerm: ["*", "scm.access", "scm.amendment.create", "scm.amendment.supplier_confirm", "scm.amendment.approve_so", "scm.amendment.approve_po"], anyAccess: ["scm.sales.orders"], hideForSalesRep: true, badge: "amendment-approvals" },
           { to: "/scm/delivery-orders", label: "Delivery Orders", icon: Send, anyPerm: ["*", "scm.access"], anyAccess: ["scm.sales.delivery"], hideForSalesRep: true },
           { to: "/scm/sales-invoices", label: "Sales Invoices", icon: FileText, anyPerm: ["*", "scm.access"], anyAccess: ["scm.sales.invoices"], hideForSalesRep: true },
           { to: "/scm/delivery-returns", label: "Delivery Returns", icon: RotateCcw, anyPerm: ["*", "scm.access"], anyAccess: ["scm.sales.returns"], hideForSales: true },
@@ -507,7 +522,8 @@ export const NAV_TABS: NavTab[] = [
           { to: "/scm/suppliers", label: "Suppliers", icon: Truck, anyPerm: ["*", "scm.access"], anyAccess: ["scm.procurement.suppliers"], hideForSalesRep: true },
           { to: "/scm/mrp", label: "MRP · Stock Status", icon: Calculator, anyPerm: ["*", "scm.access"], anyAccess: ["scm.procurement.mrp"], hideForSalesRep: true },
           { to: "/scm/purchase-orders", label: "Purchase Orders", icon: ClipboardList, anyPerm: ["*", "scm.access"], anyAccess: ["scm.procurement.po"], hideForSalesRep: true },
-          { to: "/scm/po-amendments", label: "PO Amendments", icon: History, anyPerm: ["*", "scm.access", "scm.po_amendment.create", "scm.po_amendment.approve"], anyAccess: ["scm.procurement.po"], hideForSalesRep: true },
+          { to: "/scm/po-amendments", label: "PO Amendments", icon: History, anyPerm: ["*", "scm.access", "scm.po_amendment.create", "scm.po_amendment.approve"], anyAccess: ["scm.procurement.po"], hideForSalesRep: true, badge: "po-amendment-approvals" },
+          { to: "/scm/cancel-requests", label: "Cancellation Requests", icon: ClipboardCheck, anyPerm: ["*", "scm.access", "scm.so_cancel.approve_l1", "scm.so_cancel.approve_l2"], anyAccess: ["scm.procurement.po", "scm.sales.orders"], hideForSalesRep: true },
           { to: "/scm/grns", label: "Goods Receipt", icon: PackageCheck, anyPerm: ["*", "scm.access"], anyAccess: ["scm.procurement.grn"], hideForSalesRep: true },
           { to: "/scm/purchase-invoices", label: "Purchase Invoices", icon: ReceiptText, anyPerm: ["*", "scm.access"], anyAccess: ["scm.procurement.pi"], hideForSalesRep: true },
           { to: "/scm/purchase-returns", label: "Purchase Returns", icon: Undo2, anyPerm: ["*", "scm.access"], anyAccess: ["scm.procurement.pr"], hideForSalesRep: true },
@@ -596,6 +612,10 @@ export const NAV_TABS: NavTab[] = [
           // Warehouses master sits at the TOP of the group (2990 parity) — it's
           // the location registry every other warehouse doc binds against.
           { to: "/scm/warehouses", label: "Warehouses", icon: Warehouse, anyPerm: ["*", "scm.access"], anyAccess: ["scm.warehouse.inventory"], hideForSalesRep: true },
+          // Racks & Bins (owner 2026-09-11) — promoted from a button on the
+          // Warehouses page to its own nav item, sitting under Warehouses. Same
+          // gate as Inventory (the rack overview / floor plan + stock I/O page).
+          { to: "/scm/warehouses/racks", label: "Racks & Bins", icon: Boxes, anyPerm: ["*", "scm.access"], anyAccess: ["scm.warehouse.inventory"], hideForSalesRep: true },
           { to: "/scm/inventory", label: "Inventory", icon: Package, anyPerm: ["*", "scm.access"], anyAccess: ["scm.warehouse.inventory"], hideForSalesRep: true },
           // Stock ADJUSTMENT is its own permission now (owner 2026-07-18):
           // POST /inventory/adjustments is gated on scm.warehouse.adjustments by a
@@ -639,33 +659,100 @@ export const NAV_TABS: NavTab[] = [
     anyPerm: ["*", "scm.access"],
     anyAccess: ["scm.finance", "scm.finance.accounting", "scm.finance.outstanding"],
     children: [
-      { to: "/scm/accounting", label: "Accounting", icon: BookOpen, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
-      { to: "/scm/daily-bank", label: "Daily Bank", icon: Landmark, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
-      // The two screens that empty settlement-in-transit, named the way the
-      // owner names the work: the merchant statement first, the bank statement
-      // after. Both gated on the same GL key the backend checks
-      // (scm.payment_voucher.post) — front and back both.
-      { to: "/scm/merchant-recon", label: "Merchant Recon", icon: CreditCard, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.accounting"] },
-      { to: "/scm/bank-recon", label: "Bank Recon", icon: Banknote, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.accounting"] },
-      // Maintained across companies from one screen (owner, 2026-08-18).
-      { to: "/scm/settlement-setup", label: "Recon Setup", icon: SettingsIcon, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.accounting"] },
-      { to: "/scm/payment-vouchers", label: "Payment Vouchers", icon: Wallet, anyPerm: ["*", "scm.access", "scm.payment_voucher.create", "scm.payment_voucher.write", "scm.payment_voucher.post", "scm.payment_voucher.cancel"], anyAccess: ["scm.finance.accounting"] },
-      { to: "/scm/outstanding", label: "Outstanding", icon: AlertCircle, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.outstanding"] },
-      // Delivered-but-not-billed, aged. Sits next to Outstanding and on the
-      // SAME area key: it is the money answer to the question Outstanding's
-      // DO tab asks with a header-status flag and no money column.
-      { to: "/scm/unbilled-deliveries", label: "Not Yet Billed", icon: HandCoins, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.outstanding"] },
-      // Currencies master (Phase 1-A FX) — owner-maintained currency + rate
-      // table for GRN / PI / PV foreign-currency posting. Gated on the flat
-      // scm.currency.manage permission (Owner / IT Admin via *).
-      { to: "/scm/currencies", label: "Currencies", icon: DollarSign, anyPerm: ["*", "scm.currency.manage"] },
-      // Sales Report — moved from the top-level slot (owner 2026-07-22).
-      // Gate: requireFairReport (management + Sales Director cohort). The
-      // parent Finance group's anyPerm/anyAccess would AND onto this child
-      // and hide it from the Sales Director (who has fairReport but often
-      // not the SCM finance areas), so the child ALSO carries its own
-      // anyPerm/anyAccess that admits the fair-report cohort explicitly.
-      { to: "/reports/fair-report", label: "Sales Report", icon: BarChart3, requireFairReport: true, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance", "scm.finance.accounting", "scm.finance.outstanding", "projects.finances"] },
+      // ── SIX GROUPS, BY THE JOB (owner 2026-09-12: finance 的 function 分到很散,
+      //    我希望我要 maintenance 的东西一个子 side bar, report 一个 side bar;
+      //    docs/bugs/0824). Fifteen flat entries and the Accounting page's
+      //    thirteen tabs were two lists to hunt through. Every entry below is
+      //    the SAME entry it was, gates untouched; the Accounting tabs are
+      //    reached by deep link (/scm/accounting?tab=…, read by the page), so
+      //    a report is one click from here. A group carries no gate of its
+      //    own: it is shown when any of its entries is, hidden when none are
+      //    (makeNavFilter), and the outer Finance gate still ANDs onto all.
+      {
+        label: "Money in",
+        icon: HandCoins,
+        groupId: "scm-finance-in",
+        children: [
+          { to: "/scm/official-receipts", label: "Official Receipts", icon: Receipt, anyPerm: ["*", "scm.access", "scm.payment_voucher.post", "scm.sales_order.write"], anyAccess: ["scm.finance.accounting"] },
+          // Deposit invoices (owner 2026-09-12; docs/bugs/0828) — born with a
+          // customer payment when the company's switch is on; beside the
+          // receipt the same payment is born with.
+          { to: "/scm/deposit-invoices", label: "Deposit Invoices", icon: Receipt, anyPerm: ["*", "scm.access", "scm.payment_voucher.post", "scm.sales_order.write"], anyAccess: ["scm.finance.accounting"] },
+          { to: "/scm/receipts", label: "Receipts", icon: SettingsIcon, anyPerm: ["*", "scm.access", "scm.payment_voucher.create"], anyAccess: ["scm.finance.accounting"] },
+          { to: "/scm/other-debtors", label: "Other Debtors", icon: SettingsIcon, anyPerm: ["*", "scm.access", "scm.payment_voucher.create"], anyAccess: ["scm.finance.accounting"] },
+          { to: "/scm/outstanding", label: "Outstanding", icon: AlertCircle, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.outstanding"] },
+          { to: "/scm/unbilled-deliveries", label: "Not Yet Billed", icon: HandCoins, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.outstanding"] },
+          // Credit and debit notes (owner 2026-09-12; docs/bugs/0827) — the
+          // customer's CN / DN and the supplier's SCN; the PV key family, like
+          // the AP invoice they sit beside.
+          { to: "/scm/credit-notes", label: "Credit / Debit Notes", icon: FileText, anyPerm: ["*", "scm.access", "scm.payment_voucher.create"], anyAccess: ["scm.finance.accounting"] },
+        ],
+      },
+      {
+        label: "Money out",
+        icon: Wallet,
+        groupId: "scm-finance-out",
+        children: [
+          { to: "/scm/payment-vouchers", label: "Payment Vouchers", icon: Wallet, anyPerm: ["*", "scm.access", "scm.payment_voucher.create", "scm.payment_voucher.write", "scm.payment_voucher.post", "scm.payment_voucher.cancel"], anyAccess: ["scm.finance.accounting"] },
+          { to: "/scm/ap-invoices", label: "AP Invoices", icon: FileText, anyPerm: ["*", "scm.access", "scm.payment_voucher.create"], anyAccess: ["scm.finance.accounting"] },
+        ],
+      },
+      {
+        label: "Bank & cards",
+        icon: Landmark,
+        groupId: "scm-finance-bank",
+        children: [
+          { to: "/scm/daily-bank", label: "Daily Bank", icon: Landmark, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
+          { to: "/scm/merchant-recon", label: "Merchant Recon", icon: CreditCard, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.accounting"] },
+          { to: "/scm/bank-recon", label: "Bank Recon", icon: Banknote, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.accounting"] },
+        ],
+      },
+      {
+        label: "Books",
+        icon: BookOpen,
+        groupId: "scm-finance-books",
+        children: [
+          { to: "/scm/accounting?tab=je", label: "Journal Entries", icon: BookOpen, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
+          { to: "/scm/accounting?tab=gl", label: "General Ledger", icon: FileText, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
+          { to: "/scm/accounting?tab=tb", label: "Trial Balance", icon: Receipt, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
+          { to: "/scm/accounting?tab=close", label: "Month-end", icon: History, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
+          { to: "/scm/accounting?tab=check", label: "Self-check", icon: ClipboardCheck, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
+        ],
+      },
+      {
+        label: "Reports",
+        icon: BarChart3,
+        groupId: "scm-finance-reports",
+        children: [
+          { to: "/scm/accounting?tab=pnl", label: "P&L", icon: BarChart3, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
+          { to: "/scm/accounting?tab=bs", label: "Balance Sheet", icon: LayoutDashboard, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
+          { to: "/scm/accounting?tab=rp", label: "Cash Flow", icon: Banknote, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
+          { to: "/scm/accounting?tab=ar", label: "AR Aging", icon: HandCoins, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
+          { to: "/scm/accounting?tab=ap", label: "AP Aging", icon: Wallet, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
+          // Finance's corrections to recorded payments (docs/bugs/0785) — a
+          // report, so it lives with the reports (owner: 包括那个 finance 改
+          // sales order 的报告).
+          { to: "/scm/accounting?tab=corrections", label: "Corrections", icon: History, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
+          // Deposit and balance collected per salesman (owner 2026-09-12; docs/bugs/0825).
+          { to: "/scm/accounting?tab=collection", label: "Collection", icon: HandCoins, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
+          // What each acquirer charged against the gross, per month (owner 2026-09-12; docs/bugs/0826).
+          { to: "/scm/accounting?tab=charges", label: "Merchant charges", icon: CreditCard, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
+          // The month's orders per group against a budgeted operating expense (owner 2026-09-12; docs/bugs/0835).
+          { to: "/scm/accounting?tab=performance", label: "Performance P&L", icon: BarChart3, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
+          { to: "/reports/fair-report", label: "Sales Report", icon: BarChart3, requireFairReport: true, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance", "scm.finance.accounting", "scm.finance.outstanding", "projects.finances"] },
+        ],
+      },
+      {
+        label: "Setup",
+        icon: SettingsIcon,
+        groupId: "scm-finance-setup",
+        children: [
+          { to: "/scm/chart-of-accounts", label: "Chart of Accounts", icon: SettingsIcon, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.accounting"] },
+          { to: "/scm/accounting?tab=groups", label: "Item Groups", icon: SettingsIcon, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
+          { to: "/scm/settlement-setup", label: "Recon Setup", icon: SettingsIcon, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.accounting"] },
+          { to: "/scm/currencies", label: "Currencies", icon: DollarSign, anyPerm: ["*", "scm.currency.manage"] },
+        ],
+      },
     ],
   },
 
@@ -773,11 +860,11 @@ export const NAV_TABS: NavTab[] = [
       // URL-reachable (?tab=members / orgchart / departments / mail) during
       // review but are no longer surfaced in navigation.
       { to: "/team?tab=directory", label: "Directory", icon: Users, perm: "users.read", pageAccess: "team", showForSalesDirector: true },
-      // Positions leaf removed from the nav (owner: "那個team的矩陣拆掉") — the
-      // same treatment Roles got, which is why there is no Roles leaf here either.
-      // The position_page_access matrix and its read path are unchanged; the
-      // editor stays live and reachable at /team?tab=positions as its sole-writer
-      // escape hatch, just no longer surfaced in navigation. Re-add to restore.
+      // No Positions leaf (owner: "那個team的矩陣拆掉"), and none for Roles. The
+      // Titles tab came back into the Team page's own strip on 2026-09-15
+      // (docs/bugs/0931-a-new-title-could-not-be-created-anywhere-the-positions-tab.md)
+      // and is reached from there; the phone menu is built from these rows and
+      // keeps Positions out (mobileMenuGates.test.ts), so no leaf here.
       { to: "/team?tab=orgchart2", label: "Org Chart", icon: Network, perm: "users.read", pageAccess: "team", showForSalesDirector: true },
       { to: "/team?tab=departments2", label: "Departments", icon: Building2, perm: "users.read", pageAccess: "team" },
       { to: "/team?tab=mail2", label: "Mailboxes", icon: Mail, perm: "mail_center.manage", pageAccess: "team" },
@@ -803,15 +890,44 @@ export const NAV_TABS: NavTab[] = [
     icon: RefreshCw,
     anyPerm: ["*", "scm.autocount.read", "settings.manage"],
   },
+  // Beside AutoCount Sync because it is the same shape of question pointed at a
+  // different system: that one is "did my document reach the account book",
+  // this one is "did the Venture Portal get my sales orders" — and the portal
+  // works out Revenue Department commission from them, so an order it never
+  // received is money somebody is not paid. The row also carries the feed's
+  // SETTINGS (receiver address, shared secret, which companies, the start
+  // date), because the alternative the hand-off contract assumed was somebody
+  // pasting SQL into a database console. anyPerm mirrors the two keys the
+  // endpoint's READ half accepts; changing anything needs
+  // scm.venture_portal.manage, checked by the server per request.
+  {
+    section: "system",
+    to: "/venture-portal-feed",
+    label: "Venture Portal Feed",
+    icon: Send,
+    anyPerm: ["*", "scm.venture_portal.read", "settings.manage"],
+  },
+  // Beside AutoCount Sync because it answers the neighbouring question. That
+  // one is "did my document reach the account book"; this one is "who changed
+  // my document, and to what" — the supervision the owner asked for when he
+  // opened sales, delivery, purchase and receipt documents to staff.
+  {
+    section: "system",
+    to: "/change-log",
+    label: "Change Log",
+    icon: History,
+    anyPerm: ["*", "scm.changelog.read", "settings.manage"],
+  },
   {
     section: "system",
     to: "/assistant",
     label: "Assistant",
     icon: Bot,
-    // Open to staff, EXCEPT the field crew (owner 2026-07-18). What the rest may
-    // SEE is scoped server-side by position; this list is who gets no surface at
-    // all. Mirrors auth/assistantAccess.ts — a lockstep fixture, not a 2nd source.
-    hideForPositions: ["driver", "helper", "storekeeper", "storekeeper supervisor"],
+    // Open to staff, EXCEPT the field crew + Sales (owner 2026-07-18/19). Who
+    // gets no surface at all is decided server-side (capabilities.org.assistant.use,
+    // composing assistant-scope.canUseAssistant) — the same answer the /assistant
+    // route guard reads, so the nav link and the page can no longer disagree.
+    requireCapability: "org.assistant.use",
   },
   {
     section: "system",
@@ -857,6 +973,11 @@ const SECTION_ORDER = ["workspace", "operations", "system"] as const;
 
 export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: Props) {
   const { user, can, pageAccess, logout } = useAuth();
+  /* One poll per source for the whole rail, read by renderTab's closure. The
+     server answers 0 for anyone who cannot sign, so this is also the "在需要
+     审批人员账号显示" gate — there is no second visibility rule here to keep in
+     step with the backend's. */
+  const badgeCounts = useApprovalBadgeCounts();
   const location = useLocation();
   // On mobile the drawer is always full-width — collapsed state is
   // a desktop-only concept.
@@ -1043,6 +1164,13 @@ export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: Prop
         end={tab.end}
         onClick={markOpenIntentOnPlainClick}
         onMouseEnter={() => prefetchRoute(to)}
+        title={
+          tab.badge && badgeCounts[tab.badge] > 0
+            ? `${tab.label} · ${badgeCounts[tab.badge]} awaiting your approval`
+            : collapsed
+              ? tab.label
+              : undefined
+        }
         // We compute active state ourselves so query strings match.
         className={() =>
           cn(
@@ -1062,7 +1190,24 @@ export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: Prop
           strokeWidth={active ? 2.4 : 2}
           className={active ? "text-primary" : ""}
         />
-        {!collapsed && <span>{tab.label}</span>}
+        {!collapsed && <span className="flex-1">{tab.label}</span>}
+        {tab.badge && badgeCounts[tab.badge] > 0 && (
+          /* Red, because it is work that has stopped moving until this person
+             acts — the same `bg-err` the notification bell's count uses, so the
+             two red numbers on screen mean the same kind of thing. Collapsed,
+             the rail has no room for a label, so the count rides the icon as a
+             corner pip and the title attribute carries the words. */
+          <span
+            className={cn(
+              "flex items-center justify-center rounded-full bg-err font-mono text-[9px] font-bold text-white shadow-sm",
+              collapsed
+                ? "absolute right-1 top-1 h-4 min-w-[16px] px-1"
+                : "h-4 min-w-[18px] px-1"
+            )}
+          >
+            {badgeCounts[tab.badge] > 99 ? "99+" : badgeCounts[tab.badge]}
+          </span>
+        )}
       </NavLink>
     );
   }

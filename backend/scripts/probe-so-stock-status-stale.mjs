@@ -51,14 +51,17 @@ import postgres from "postgres";
 import { computeVariantKey } from "../src/scm/shared/variant-key.ts";
 import { isServiceLine } from "../src/scm/shared/service-sku.ts";
 import { SO_TERMINAL_STATES } from "../src/scm/shared/so-terminal-states.ts";
+/* The bracket arithmetic is SHARED with check-golive-parity.mjs, which needs the
+   same answer to say honestly which system is behind on a disagreement. One copy. */
+import { onHandByBucket, classifyStockLines, stalenessBracket } from "./lib/so-stock-staleness.mjs";
+
+/* SO_TERMINAL_STATES is an ARRAY, not a Set — the query below spreads it into a
+   text[]. Membership needs a Set. */
+const TERMINAL = new Set([...SO_TERMINAL_STATES].map((s) => String(s).toUpperCase()));
 
 const sql = postgres(process.env.DATABASE_URL, { ssl: "require", prepare: false, max: 1 });
 const note = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 const CO = process.env.COMPANY ? Number(process.env.COMPANY) : null;
-const WH_NONE = "NOWH";
-
-const bucketOf = (whId, itemCode, itemGroup, variants) =>
-  `${whId ?? WH_NONE}::${itemCode}::${computeVariantKey(itemGroup, variants)}`;
 
 async function main() {
   note("=== SO stock_status staleness probe (read-only) ===");
@@ -89,27 +92,22 @@ async function main() {
            SUM(qty)::numeric AS qty
       FROM scm.inventory_balances
      GROUP BY warehouse_id, item_code, COALESCE(variant_key, '')`;
-  const onHand = new Map();
-  for (const b of balances) {
-    const key = `${b.warehouse_id ?? WH_NONE}::${b.item_code}::${b.variant_key}`;
-    onHand.set(key, (onHand.get(key) ?? 0) + Number(b.qty ?? 0));
-  }
+  const onHand = onHandByBucket(balances);
   note(`inventory buckets with a balance row: ${onHand.size}`);
 
   /* 3. Classify. The order of these tests matters — a line is attributed to the
         FIRST reason that explains it, so nothing is double-counted and nothing
         correctly-PENDING lands in the staleness bracket. */
-  let ready = 0, service = 0, sofa = 0, gated = 0;
-  const candidates = [];              // non-READY, non-sofa, non-service, proceeded
-  for (const l of lines) {
-    if (!l.item_code) continue;
-    const group = (l.item_group ?? "").toUpperCase();
-    if (isServiceLine({ itemGroup: l.item_group, itemCode: l.item_code, category: null })) { service += 1; continue; }
-    if (group.includes("SOFA")) { sofa += 1; continue; }
-    if ((l.stock_status ?? "").toUpperCase() === "READY") { ready += 1; continue; }
-    if (!l.proceeded_at) { gated += 1; continue; }
-    candidates.push({ ...l, bucket: bucketOf(l.warehouse_id, l.item_code, l.item_group, l.variants) });
-  }
+  /* The query above already excludes terminal SOs, so isTerminalStatus is a
+     no-op here — it is still passed because the shared classifier requires it
+     rather than defaulting, and a caller that skipped it would be widening the
+     population silently. */
+  const { ready, service, sofa, gated, candidates } = classifyStockLines(lines, {
+    isServiceLine,
+    isTerminalStatus: (l) => TERMINAL.has(String(l.so_status ?? "").toUpperCase()),
+    variantKeyOf: (l) => computeVariantKey(l.item_group, l.variants),
+    processedOf: (l) => l.proceeded_at != null,
+  });
   note("");
   note("=== the live population, by why a line is not in the bracket ===");
   note(`  stored READY:                       ${ready}`);
@@ -120,11 +118,7 @@ async function main() {
 
   /* Total outstanding demand per bucket across every candidate, so LOWER can
      rule out FIFO competition rather than assume it away. */
-  const demand = new Map();
-  for (const c of candidates) demand.set(c.bucket, (demand.get(c.bucket) ?? 0) + Number(c.qty ?? 0));
-
-  const upper = candidates.filter((c) => (onHand.get(c.bucket) ?? 0) > 0);
-  const lower = upper.filter((c) => (onHand.get(c.bucket) ?? 0) >= (demand.get(c.bucket) ?? 0));
+  const { upper, lower } = stalenessBracket(candidates, onHand);
 
   note("");
   note("=== HOW MANY LINES ARE LYING TO THE OPERATOR RIGHT NOW ===");

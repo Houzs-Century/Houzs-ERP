@@ -108,19 +108,6 @@ export const push_devices = pgTable("push_devices", {
   last_reminder_sent_on: text("last_reminder_sent_on"),
 });
 
-// ── role_page_access (mig 073) ─────────────────────────────
-export const role_page_access = pgTable(
-  "role_page_access",
-  {
-    role_id: integer("role_id").notNull(),
-    page_key: text("page_key").notNull(),
-    level: text("level").notNull(),
-    created_at: text("created_at").default(nowText),
-    updated_at: text("updated_at").default(nowText),
-  },
-  (t) => ({ pk: primaryKey({ columns: [t.role_id, t.page_key] }) }),
-);
-
 // ── departments ────────────────────────────────────────────
 export const departments = pgTable("departments", {
   id: serial("id").primaryKey(),
@@ -128,6 +115,10 @@ export const departments = pgTable("departments", {
   description: text("description"),
   color: text("color").notNull().default("64748b"),
   sort_order: integer("sort_order").notNull().default(0),
+  // The department's 2–4 letter code (mig 20260906T1417) — the [DEPT] segment
+  // of a document reference number (OPS-ANN-2609-0001). NULL = not assigned
+  // yet; unique case-insensitively (idx_departments_code_upper).
+  code: text("code"),
   // The department's LEAD, an explicit choice (mig-pg 0331) rather than the
   // derived one the Team screens inferred from manager_id. NULL = no lead yet
   // (the red "No lead" state), which is the default. ON DELETE SET NULL so
@@ -155,6 +146,9 @@ export const projects = pgTable("projects", {
   venue: text("venue"),
   venue_address: text("venue_address"),
   brand: text("brand"),
+  // Booth setup/dismantle contractor (free text, mirrors organizer). Picker-backed
+  // by project_contractors; raw-SQL read/write paths reference it by name.
+  contractor: text("contractor"),
   pic_id: integer("pic_id"),
   created_by: integer("created_by"),
   created_at: text("created_at").default(nowText),
@@ -282,19 +276,6 @@ export const positions = pgTable("positions", {
   active: integer("active").notNull().default(1),
   created_at: text("created_at").default(nowText),
 });
-
-// ── position_page_access (mig 094) — 4-level matrix (none/view/edit/full) ──
-export const position_page_access = pgTable(
-  "position_page_access",
-  {
-    position_id: integer("position_id").notNull(),
-    page_key: text("page_key").notNull(),
-    level: text("level").notNull(),
-    created_at: text("created_at").default(nowText),
-    updated_at: text("updated_at").default(nowText),
-  },
-  (t) => ({ pk: primaryKey({ columns: [t.position_id, t.page_key] }) }),
-);
 
 // ── password_resets (mig 027) ──────────────────────────────
 export const password_resets = pgTable("password_resets", {

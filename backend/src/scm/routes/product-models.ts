@@ -33,6 +33,10 @@ import { PRODUCT_FINANCE_KEYS } from '../lib/finance-keys';
 import { todayMyt } from '../lib/my-time';
 import { baseKeyOf, deleteThumbFor, putOptionalThumb } from '../../services/photoThumbs';
 import type { Env, Variables } from '../env';
+import { pgrestIn } from '../lib/pgrest-in-list';
+import { categorySwapAllowed } from '../shared/category-swap';
+import { moveModelCategory } from '../lib/model-category-move';
+import { MFG_PRODUCT_CATEGORIES } from './mfg-products';
 
 export const productModels = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -142,7 +146,9 @@ productModels.get('/:id/photo-gallery/:key', async (c) => {
 
 productModels.use('*', supabaseAuth);
 
-const CATEGORIES = ['SOFA', 'BEDFRAME', 'MATTRESS', 'ACCESSORY', 'SERVICE'] as const;
+/* Every category the column can hold (the product page offers them all); the
+   one home is MFG_PRODUCT_CATEGORIES. */
+const CATEGORIES = MFG_PRODUCT_CATEGORIES;
 
 const CreateBody = z.object({
   // PR #69 — Branding is OPTIONAL across all categories per commander
@@ -164,7 +170,9 @@ const PatchBody = z.object({
   branding:       z.string().trim().max(80).nullable().optional(),
   modelCode:      z.string().trim().min(1).max(32).optional(),
   name:           z.string().trim().min(1).max(200).optional(),
-  // category cannot be patched once set — it would orphan SKUs in the other category.
+  // category: any other category (shared/category-swap.ts), and it moves the
+  // model's SKUs with it so none is orphaned in the other category.
+  category:       z.enum(CATEGORIES).optional(),
   description:    z.string().trim().max(500).nullable().optional(),
   photoUrl:       z.string().trim().url().nullable().optional(),
   allowedOptions: z.record(z.unknown()).optional(),
@@ -324,10 +332,9 @@ productModels.get('/by-code-batch', async (c) => {
   const allNull = () =>
     Object.fromEntries(codes.map((code) => [code, { allowedOptions: null, category: null }]));
 
-  const { data: skus, error: skuErr } = await supabase
+  const { data: skus, error: skuErr } = await pgrestIn(supabase
     .from('mfg_products')
-    .select('code, model_id, category')
-    .in('code', codes)
+    .select('code, model_id, category'), 'code', codes)
     .eq('company_id', activeCompanyId(c));
   if (skuErr) {
     // Parity with the single route: a missing relation degrades to "no Model"
@@ -467,7 +474,7 @@ productModels.post('/', async (c) => {
 });
 
 // ── PATCH /:id ─────────────────────────────────────────────────────────────
-productModels.patch('/:id', async (c) => {
+export const patchProductModelHandler = async (c: Context<{ Bindings: Env; Variables: Variables }>) => {
   const id = c.req.param('id');
   let raw: unknown;
   try { raw = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
@@ -484,6 +491,7 @@ productModels.patch('/:id', async (c) => {
   if (parsed.data.photoUrl !== undefined)       u.photo_url       = parsed.data.photoUrl;
   if (parsed.data.allowedOptions !== undefined) u.allowed_options = parsed.data.allowedOptions;
   if (parsed.data.active !== undefined)         u.active          = parsed.data.active;
+  if (parsed.data.category !== undefined)       u.category        = parsed.data.category;
 
   if (Object.keys(u).length === 0) {
     return c.json({ error: 'empty_patch' }, 400);
@@ -498,20 +506,57 @@ productModels.patch('/:id', async (c) => {
   // just ACTIVATED (sofa auto-SKU rule below — Chairman 2026-06-02).
   const { data: before } = await scopeToCompanyId(supabase
     .from('product_models')
-    .select('allowed_options')
+    .select('allowed_options, category')
     .eq('id', id), co.companyId)
     .maybeSingle();
-  const { data, error } = await scopeToCompanyId(supabase
-    .from('product_models')
-    .update(u)
-    .eq('id', id), co.companyId)
-    .select(COLS)
-    .maybeSingle();
-  if (error) {
-    if (error.code === '23505') {
-      return c.json({ error: 'duplicate_code', reason: error.message }, 409);
+  const beforeCategory = (before as { category?: string } | null)?.category ?? null;
+  if (u.category !== undefined && u.category === beforeCategory) delete u.category;
+  if (u.category !== undefined && !categorySwapAllowed(beforeCategory, String(u.category))) {
+    return c.json({
+      error: 'category_change_not_allowed',
+      reason: `"${String(u.category)}" is not a product category.`,
+    }, 409);
+  }
+  if (Object.keys(u).length === 0) return c.json({ error: 'empty_patch' }, 400);
+  // The category moves through the helper Import SKUs also uses, so the model's SKUs always follow it.
+  const newCategory = u.category === undefined ? undefined : String(u.category);
+  delete u.category;
+  let data: Record<string, unknown> | null = null;
+  if (Object.keys(u).length > 0) {
+    const { data: updated, error } = await scopeToCompanyId(supabase
+      .from('product_models')
+      .update(u)
+      .eq('id', id), co.companyId)
+      .select(COLS)
+      .maybeSingle();
+    if (error) {
+      if (error.code === '23505') {
+        return c.json({ error: 'duplicate_code', reason: error.message }, 409);
+      }
+      return c.json({ error: 'update_failed', reason: error.message }, 500);
     }
-    return c.json({ error: 'update_failed', reason: error.message }, 500);
+    if (!updated) return c.json(NOT_THIS_COMPANY, 404);
+    data = updated as Record<string, unknown>;
+  }
+
+  if (newCategory !== undefined) {
+    const moved = await moveModelCategory(supabase, co.companyId, String(id), newCategory);
+    if (!moved.ok) {
+      return moved.error === 'model_not_found'
+        ? c.json(NOT_THIS_COMPANY, 404)
+        : c.json({ error: moved.error, reason: moved.reason }, 500);
+    }
+    if (data) {
+      data = { ...data, category: newCategory };
+    } else {
+      const { data: reread, error: rereadErr } = await scopeToCompanyId(supabase
+        .from('product_models')
+        .select(COLS)
+        .eq('id', id), co.companyId)
+        .maybeSingle();
+      if (rereadErr) return c.json({ error: 'load_failed', reason: rereadErr.message }, 500);
+      data = (reread as Record<string, unknown> | null) ?? { id, category: newCategory };
+    }
   }
   if (!data) return c.json(NOT_THIS_COMPANY, 404);
 
@@ -575,11 +620,14 @@ productModels.patch('/:id', async (c) => {
         auth: { persistSession: false, autoRefreshToken: false },
       });
       const wantCodes = added.map((comp) => `${codePrefix}-${comp}`);
-      const { data: existing } = await admin
+      const { data: existing, error: existingErr } = await pgrestIn(admin
         .from('mfg_products')
-        .select('code')
-        .in('code', wantCodes)
+        .select('code'), 'code', wantCodes)
         .eq('company_id', activeCompanyId(c));
+      if (existingErr) {
+        // eslint-disable-next-line no-console
+        console.error('[product-models] existing derived-code read failed:', (existingErr as { message?: unknown }).message ?? existingErr);
+      }
       const have = new Set((existing ?? []).map((r) => (r as { code: string }).code));
       const now = new Date().toISOString();
       const rows = added
@@ -612,7 +660,8 @@ productModels.patch('/:id', async (c) => {
   }
 
   return c.json({ model: data, autoCreatedSkus });
-});
+};
+productModels.patch('/:id', patchProductModelHandler);
 
 // ── POST /:id/generate-skus ───────────────────────────────────────────────
 // "Open a code, don't open it 20 times" — bulk-INSERT one mfg_products row per
@@ -936,7 +985,7 @@ productModels.post('/:id/generate-skus', async (c) => {
   // Find which codes already exist so we can report skip count.
   const codes = wantedFiltered.map((w) => w.code);
   const { data: existing } = codes.length
-    ? await supabase.from('mfg_products').select('code').in('code', codes).eq('company_id', activeCompanyId(c))
+    ? await pgrestIn(supabase.from('mfg_products').select('code'), 'code', codes).eq('company_id', activeCompanyId(c))
     : { data: [] as Array<{ code: string }> };
   const existingSet = new Set((existing ?? []).map((r) => r.code as string));
 

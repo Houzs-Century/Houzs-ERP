@@ -1,190 +1,34 @@
-# Module: Combo Pricing (SCM)
+# Combo Pricing
 
-> **Line numbers here are INDICATIVE, not authoritative.** They were correct at
-> `main` @ `c523a02f` and drift with every merge — an audit on 2026-08-13 found
-> every `:NNN` in this directory stale while the paths, methods and permission
-> keys were right. Resolve a route to its current line with the GENERATED
-> artifact, which cannot go stale because it is rebuilt from the tree:
->
-> ```bash
-> npm --prefix backend run gen:route-locator   # then grep docs/generated/route-locator.md
-> ```
+Prices a whole COMBINATION of sofa modules instead of summing the modules individually, and overrides per-model compartment pricing when a line's module set matches. Everything goes through `/api/scm/sofa-combos`.
 
-Products -> **COMBO PRICING**. Prices a whole COMBINATION of sofa modules
-instead of adding the modules up, and overrides per-Model compartment pricing
-when a line's module set matches.
+## Statuses and flow
 
-> Money is in **sen** (integer cents). Everything goes through `/api/scm/sofa-combos`.
-> Ported from HOOKKA, Commander 2026-05-28 ("去查看 hookka 的 combo module 把整个 copy 过来").
+- A combo's scope is a tuple: `base_model` + `modules` (canonicalised into an order-independent set via `comboSlotsKey`) + `tier` (`PRICE_1`/`PRICE_2`/`PRICE_3`/null) + `customer_id` (null = every customer) + `supplier_id` (null = the master/sales-side reference price; a uuid = that supplier's cost).
+- Editing is append-only and effective-dated: `PUT /:id` is a convenience alias for `POST` — it INSERTs a new row with a fresher `effective_from` rather than updating in place, and the latest row in scope wins at lookup. The combo's identity lives in its scope tuple, not its row id. `DELETE` is a soft delete (`deleted_at`).
+- The master combo COST (`prices_by_height` on the `supplier_id NULL` row) **auto-derives from the most-expensive supplier combo** for the same scope tuple, on a supplier-scope combo write, when the `scm.auto_derive_product_cost` flag is ON (cost-only — the master `selling_prices_by_height` is never touched). The old manual per-model "anchor to one supplier" mirror was removed (owner 2026-09-16): it was redundant with the derivation and held 0 rows.
 
-**Every production figure below was read off the live database on 2026-08-12
-with a read-only session, not inferred from a migration file.** That distinction
-is the standing lesson of `docs/system-foundation-coe.md`, and section 6 is a
-case of it biting.
+## Permissions
 
----
+- All writes gate on `requireWriteRole` (the `scm_config_write` permission). This checks permission ONLY, not tenancy — every by-id write (`PUT`/`DELETE /:id`) must separately company-scope its read of the target row, or an edit can clone another company's combo tuple into the active company.
 
-## 1. What a combo is
+## Rules that must not break
 
-A combo says: *for base model X, this exact set of modules, at this tier, for
-this customer scope, the price is N* — instead of pricing `1A(LHF) + 2A +
-1A(RHF)` as three separate compartment prices.
+- Combos must load and match at `PRICE_1` only (`computeSofaSellingSen` pins it) — module seat prices load at `PRICE_1` and every combo is authored at `PRICE_1`; matching against any other tier would make the server price a-la-carte while the POS applied the combo, and the drift gate would then reject a correct order.
+- `computeSofaSellingSen` is the one authoritative selling-total function, shared by the server's drift gate and the POS configurator — never fork a second pricing calculation for either surface.
+- The compartment list a Model offers when PRICING an existing build is derived from its module SKUs, never from the maintenance `sofaCompartments` pool — that pool is only a shortcut for OPENING/authoring codes.
+- Combo COST derivation is flag-gated (`scm.auto_derive_product_cost`, OFF by default) and cost-only: it writes the master `prices_by_height`, never `selling_prices_by_height`. A SKU/combo with no supplier price derives nothing (a gap, left as-is).
+- Both by-id write paths (`PUT /:id`, `DELETE /:id`) must scope their target read to the active company — a foreign id must resolve to nothing (404), never another company's row.
 
-The match is on the module SET, canonicalised so ordering cannot change
-identity: `comboSlotsKey(modules)` (`scm/shared`) is the lookup key, and
-`canonicalizeComboModulesForStorage` normalises what gets written.
+## Gotchas
 
-Scope tuple: `base_model` + `modules` + `tier` + `customer_id` + `supplier_id`.
+- The route file's own header is out of date in places — it still advertises a `copy-to-customer` endpoint that was removed, and cites a migration number that belongs to a different repo's numbering. Verify against the route file itself, not the header comment.
+- The COST derivation appends a fresh effective-dated master row only when the derived cost actually changed (deduped), so a no-op supplier re-save adds no row.
+- The supplier-scoped half of `sofa_combo_pricing` is the majority of the table's rows in production — treat supplier-cost combos as the common case, not an edge case, when reasoning about this data.
 
-| tier | `PRICE_1` \| `PRICE_2` \| `PRICE_3` \| null |
-| `customer_id` | null = every customer; a uuid = that customer only |
-| `supplier_id` | **null = master / sales side** (the selling reference); a uuid = that supplier's COST |
+## Where the code is
 
-**Combos load and match at `PRICE_1`.** `computeSofaSellingSen`
-(`scm/shared/sofa-build.ts`) pins it, because module seat prices load at
-`PRICE_1` and every combo is authored at `PRICE_1` — querying `PRICE_2` there
-would make the server price a-la-carte while the POS applied the combo, and the
-drift gate would then reject a correct order.
-
-## 2. Append-only, effective-dated
-
-Editing does **not** update a row. It INSERTS a new one with a fresher
-`effective_from`; the latest row in scope wins at lookup. `DELETE` is a
-**soft** delete (`deleted_at = now()`).
-
-So `PUT /:id` is a convenience alias for `POST` — it creates a new effective row
-and keeps the logical combo's identity through the scope tuple, not through the
-row id.
-
-## 3. Endpoints
-
-`backend/src/scm/routes/sofa-combos.ts` (694 lines). Registered:
-
-| method | path | notes |
-|---|---|---|
-| GET | `/sofa-combos` | list, filterable; supplier scope via `?supplierId=` (omitted / `null` = sales side) |
-| GET | `/sofa-combos/history` | append-only history rows |
-| GET | `/sofa-combos/anchors` | see section 6 |
-| PUT | `/sofa-combos/anchors/:baseModel` | see section 6 |
-| POST | `/sofa-combos` | create / insert new effective row |
-| PUT | `/sofa-combos/:id` | alias for POST |
-| DELETE | `/sofa-combos/:id` | soft delete |
-
-Writes gate on `requireWriteRole`. Frontend hooks:
-`frontend/src/vendor/scm/lib/sofa-combos-queries.ts`.
-
-`requireWriteRole` checks the `scm_config_write` **permission only, not tenancy**.
-`sofa_combo_pricing` carries `company_id` NOT NULL since mig 0083, and the
-service-role client bypasses RLS, so **both by-id writes must scope by company**.
-`DELETE /:id` was scoped 2026-08-13; `PUT /:id` read its source combo `.eq('id',
-id)` UNSCOPED until 2026-08-19 — so an edit could clone another company's combo
-tuple into a new effective row for the active company. Both now go through
-`scopeToCompany(...)` (a foreign id resolves to nothing → 404). See BUG-HISTORY,
-2026-08-19.
-
-**Two things the file's own header gets wrong — do not trust it over this table:**
-
-- It advertises `POST /sofa-combos/copy-to-customer`. That endpoint was
-  **removed on 2026-05-28** (see the comment at `:771`); the header at `:17` was
-  never updated.
-- It cites `0090_sofa_combo_pricing.sql` [gone] for the schema. In THIS repo `0090` is
-  `0090_scm_purchase_consignment_tables.sql` — the citation is **2990's**
-  migration numbering, carried across with the vendored code. Only `0083`
-  (company_id) and `0114` (per-company config split) mention `sofa_combo*` here.
-
-## 4. Live size (production, company 1, 2026-08-12)
-
-```
-sofa_combo_pricing            270 rows
-  of which supplier-scoped    173
-```
-
-So the supplier-cost half is the majority of the data, which is what makes
-section 6 worth reading rather than skipping.
-
-## 5. Where combos are consumed
-
-`computeSofaSellingSen(cells, depth, modulePrices, combos)` — the authoritative
-selling total for a configured sofa, and the same function the POS configurator
-uses, so the server drift gate and the POS agree by construction rather than by
-convention.
-
-Note the neighbouring trap documented in `sofa-build.ts`: the compartment list a
-Model offers is derived from its module **SKUs**
-(`sofaCompartmentsFromModulePrices` <- `sofaModulePricesFromSkus`), NOT from the
-maintenance `sofaCompartments` pool. The pool is the shortcut used when OPENING
-codes; it is not read when pricing an existing build.
-
-## 6. The anchor mirror (R8) — code without a table
-
-**Absorbed from the standalone `docs/sofa-combo-anchor.md` [gone], which this file
-replaces.** A per-investigation doc at the top of `docs/` was the wrong home for
-it; this module had no guide at all, which is the gap the repo rule says to
-close.
-
-An **anchor** pins one `base_model` to ONE supplier. While anchored, every combo
-CREATE and price EDIT is mirrored **bidirectionally** between the master row
-(`supplier_id NULL`) and that supplier's row, so the Product-Maintenance cost
-reference and the anchored supplier's cost stay in lock-step and the same number
-is never typed twice. Mirroring is append-only (it INSERTs a copy on the other
-side) and best-effort — the primary write already succeeded, so a mirror failure
-reports `mirrored:false` rather than failing the caller
-(`mirrorAnchoredCombo`, `:141`).
-
-**The table does not exist in this database.** Verified on production
-2026-08-12: `to_regclass('scm.sofa_combo_anchor')` returns NULL. R8 came across
-from 2990 with its route AND its frontend query (`useSofaComboAnchors`,
-`staleTime: 30_000`) but without its table.
-
-| surface | state |
-|---|---|
-| `GET /anchors` | returned **500 on every Combo Pricing page load** until 2026-08-12 |
-| `PUT /anchors/:baseModel` | would fail the same way — you cannot set an anchor with no table |
-| combo CREATE / price EDIT | **works** — `loadComboAnchor` drops its error, so a missing table reads as "not anchored" and the write proceeds unmirrored |
-
-Nothing staff do was blocked, which is why it went unreported for months.
-
-**What migration 0114 knew, and the half it got wrong.** 0114 records the same
-`to_regclass` check and concludes *"no migration needed; the route scoping is a
-harmless no-op"*. The table fact was right; the conclusion answered only the
-question being asked — whether the multi-company SCOPING change was safe, which
-it was. Nobody asked whether the ENDPOINT works without the table.
-**Lesson: "no migration needed" answers a schema question, not a code question.**
-
-**Shipped 2026-08-12 (stop the bleeding):** `GET /anchors` returns
-`{ anchors: [] }` when — and only when — the error is `42P01` (relation does not
-exist). Every other error still surfaces as 500, so a genuine permission or
-connection fault cannot hide behind that branch.
-
-**Completed 2026-08-12 (owner decision): the table now exists.** Migration
-`0283_scm_sofa_combo_anchor.sql` creates
-`scm.sofa_combo_anchor (company_id, base_model, supplier_id, created_by,
-created_at, updated_at)`. Everything else had been in place since the vendoring —
-the route, the hooks, and the UI control at `SofaComboTab.tsx:245-253`. Only the
-table was missing.
-
-**Creating it changed nothing on its own.** An empty table means no model is
-anchored, `mirrorAnchoredCombo` is never reached, and every combo write behaves
-exactly as before. Behaviour changes only when someone sets an anchor in the UI.
-
-**The unique key is load-bearing.** `sofa-combos.ts:452` upserts with
-`onConflict: 'company_id,base_model'`, and Postgres matches `ON CONFLICT` against
-a real unique index — so the constraint must stay exactly that pair. Anything
-else makes every `PUT /anchors/:baseModel` fail with `42P10`. That is not
-hypothetical: the identical failure shipped in `special_addons`, where 0087
-replaced a single-column unique with a per-company one while `/save` kept
-upserting `onConflict: 'code'`, and every Save returned 500 for weeks. **If the
-key changes, change the route in the same PR.**
-
-**What to know before anchoring a model:** mirroring INSERTs, so an anchored
-model accumulates effective-dated rows on BOTH sides. That is deliberate — the
-picker takes the latest in scope — but it means turning anchoring on for a model
-with a long price history is not a no-op. There is no FK to `scm.suppliers`
-(nothing in this schema references it, and an anchor is a preference, not a
-dependency); a stale `supplier_id` simply reads as unset in the UI.
-
-## 7. See also
-
-- `BUG-HISTORY.md` — the anchor 500 entry, and the lesson above
-- `docs/modules/sales-order.md` — where combo pricing lands on a document
-- `docs/archive/scm-v2-vendoring-progress.md` — what was vendored and with what caveats (archived; the vendoring is finished)
+- `backend/src/scm/routes/sofa-combos.ts` — main API surface; combo cost auto-derives from the max supplier (flag-gated).
+- `backend/src/scm/shared/sofa-build.ts` — `computeSofaSellingSen`, the compartment-from-SKU derivation.
+- `frontend/src/vendor/scm/lib/sofa-combos-queries.ts` — query hooks.
+- `frontend/src/vendor/scm/components/SofaComboTab.tsx`

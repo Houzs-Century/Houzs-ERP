@@ -46,6 +46,7 @@ import {
 import { recordSoAudit, type FieldChange } from './so-audit';
 import { deriveMfgPoUnitCost } from './po-pricing';
 import { readMfgProductBindings } from './supplier-bindings';
+import { rederivePoLineFromSoLine, type RevisedSoLine } from './po-line-rederive';
 import {
   rederiveDeliveryFee,
   deriveCountryFromState,
@@ -56,9 +57,14 @@ import { activeCompanyId, isMirroredDocNo, houzsOwns2990 } from './companyScope'
 import { todayMyt } from './my-time';
 import { dateOrNull } from './date-coerce';
 import { soWarehouseIdForDoc } from './so-warehouse';
+import { variantsForCompare } from './amendment-noop-lines';
+import { inPoLineOrder, nextPoLineNo, sortBySourceSoLine } from './po-line-order';
+import { soIsMigratedShape } from './so-is-migrated';
 import { routingNote, type AmendmentFieldKind } from '../shared/amendment-routing';
 import { soAmendableHeaderFields } from '../shared/so-field-policy';
 import { canonicaliseSoHeaderChanges } from '../shared/so-processing-date';
+import { readSoLineFreeze, soLineWriteRefusal } from './downstream-lock';
+import { SO_IDENTITY_LOCK_COLS } from '../shared/so-identity-lock';
 
 /* The routable field atoms an SO amendment moves — lines + header — for the audit
    routing note. Mirrors the frontend amendmentLineFieldKinds / soHeaderFieldKind
@@ -75,7 +81,9 @@ function soAmendmentFieldKinds(
     if (change === 'ADD' || change === 'REMOVE') { kinds.push('LINE'); continue; }
     const old = l.old_snapshot ?? {};
     if (l.new_item_code != null && String(l.new_item_code) !== String(old.item_code ?? old.itemCode ?? '')) kinds.push('SPEC');
-    if (l.new_variants != null && JSON.stringify(l.new_variants) !== JSON.stringify(old.variants ?? null)) kinds.push('VARIANT');
+    /* Compared without the `remark` side channel and in canonical key order —
+       a remark copied into variants is not a spec change (HC-SO-011410, 2026-09-15). */
+    if (l.new_variants != null && variantsForCompare(l.new_variants) !== variantsForCompare(old.variants ?? null)) kinds.push('VARIANT');
     if (l.new_qty != null && Number(l.new_qty) !== Number(old.qty ?? NaN)) kinds.push('QTY');
     if (l.new_unit_price_sen != null && Number(l.new_unit_price_sen) !== Number(old.unit_price_sen ?? old.unitPriceSen ?? NaN)) kinds.push('PRICE');
   }
@@ -313,7 +321,7 @@ export async function applySoAmendment(
   c: Context<any> | undefined,
   concurrency: { soVersion: number; leaseToken: string } | null,
   approval: SoAmendmentApproval | null,
-): Promise<{ soDocNo: string; revision: number }> {
+): Promise<{ soDocNo: string; revision: number; addedLineIds: string[] }> {
   // (1) Load amendment + lines + SO header.
   const { data: amdRow, error: amdErr } = await sb
     .from('so_amendments')
@@ -334,6 +342,30 @@ export async function applySoAmendment(
   if (lineErr) throw new Error(`applySoAmendment: amendment lines load failed: ${lineErr.message}`);
   const amendmentLines = (lineRows ?? []) as AmendmentLineRow[];
 
+  /* (1b) FROZEN LINES (owner 2026-09-15, shared/so-line-freeze.ts). A line a live
+     Delivery Order / Sales Invoice carries cannot be changed or removed — and a
+     delivery order raised between SUBMIT and APPROVE freezes it just the same,
+     so the verdict is re-read here, before anything is written. The same read
+     keeps the header cascades below off the frozen lines. */
+  const freezeRead = await readSoLineFreeze(sb, docNo);
+  const frozenRefusal = soLineWriteRefusal(freezeRead, amendmentLines
+    .filter((l) => String(l.change_type).toUpperCase() !== 'ADD' && l.sales_order_item_id)
+    .map((l) => String(l.sales_order_item_id)));
+  if (frozenRefusal) throw new Error(frozenRefusal.message);
+  if (freezeRead.ok && freezeRead.freeze.hasLiveDownstream) {
+    const lockedCols = Object.keys(canonicaliseSoHeaderChanges(amendment.header_changes ?? null) ?? {})
+      .map((k) => AMENDABLE_HEADER_FIELDS[k]).filter((col) => col && SO_IDENTITY_LOCK_COLS.has(col));
+    if (lockedCols.length > 0) {
+      throw new Error(`This Sales Order now has a Delivery Order / Sales Invoice, so customer, address and contact changes can no longer be applied (${lockedCols.join(', ')}).`);
+    }
+  }
+  /* `null` = every line is frozen (a downstream line names no SO line): no cascade at all. */
+  const frozenLineFilter: string | null = !freezeRead.ok || freezeRead.freeze.unlinked
+    ? null
+    : `(${[...freezeRead.freeze.frozenLineIds].map((id) => `"${id}"`).join(',')})`;
+  const skipFrozen = <Q extends { not: (col: string, op: string, v: string) => Q }>(q: Q): Q =>
+    frozenLineFilter && frozenLineFilter !== '()' ? q.not('id', 'in', frozenLineFilter) : q;
+
   // (2) Snapshot the CURRENT SO before touching a single line. Returns the next
   //     revision to stamp once the diffs land.
   const nextRevision = await snapshotSo(sb, docNo, amendmentId, userId, c);
@@ -349,9 +381,12 @@ export async function applySoAmendment(
      mig 0091 gave the column a HOUZS DEFAULT — so a blip books a 2990 order's new
      line to Houzs, silently, exactly as the note on that insert warns. */
   const { data: soHdrCo, error: soHdrCoErr } = await sb.from('mfg_sales_orders')
-    .select('company_id, linked_ac_docno').eq('doc_no', docNo).maybeSingle();
+    .select('company_id, linked_ac_docno, so_date').eq('doc_no', docNo).maybeSingle();
   if (soHdrCoErr) throw new Error(`applySoAmendment: SO company load failed: ${soHdrCoErr.message}`);
   const soCompanyId = (soHdrCo as { company_id?: number | null } | null)?.company_id ?? null;
+  // Stage 3c: re-price a bound line's COST as-of the order's own date (auto-derive,
+  // flag-gated in recomputeOneLine). Null when the header carries no date.
+  const soAsOf = (soHdrCo as { so_date?: string | null } | null)?.so_date ?? null;
 
   /* Is this order MIGRATED from AutoCount? `linked_ac_docno` is the marker that
      actually exists on the SO header (migration 0271); `migrated_no_stock` lives
@@ -369,7 +404,14 @@ export async function applySoAmendment(
      routinely carried as the whole-set price on ONE lead module line with 0 on
      its siblings. Plain `true` reads a stored 0 as "not provided" and hands the
      sibling a catalogue price anyway, which bills the set several times over. */
-  const soIsMigrated = ((soHdrCo as { linked_ac_docno?: string | null } | null)?.linked_ac_docno ?? null) !== null;
+  /* THE PAIR, through the one home. `linked_ac_docno IS NOT NULL` was the test
+     here too, and it is equally wrong here: the write-back stamps that column on
+     an order the ERP priced itself, which would then be trusted as "the BOOK's
+     negotiated price" and stop being re-priced. docs/bugs/0703. */
+  const soIsMigrated = soIsMigratedShape(
+    docNo,
+    (soHdrCo as { linked_ac_docno?: string | null } | null)?.linked_ac_docno ?? null,
+  );
 
   /* THE AMENDMENT HAS TO BE ABLE TO CARRY THE MONEY (owner, 2026-08-16): "Any
      amount can be edited, unless it is locked. If it has proceeded and a day has
@@ -461,6 +503,11 @@ export async function applySoAmendment(
      that changes/adds a priced line is followed by (4) the honest-pricing
      recompute so unit/cost/margin/breakdown columns stay authoritative. */
   const touched: Array<{ change: string; itemCode: string; qty: number }> = [];
+  /* Row ids of the lines this apply INSERTED (an ADD diff). They carry no
+     AutoCount DtlKey yet, so the write-back edit queued after this must declare
+     them NEW — otherwise composeEdit refuses the whole document as keyless and
+     the amendment never reaches the account book (docs/bugs/0942). */
+  const addedLineIds: string[] = [];
 
   /* Per-field from -> to for the SO's OWN audit trail (Owner 2026-07-19: every
      edit anywhere in the system must show who, when, and what changed from ->
@@ -548,7 +595,7 @@ export async function applySoAmendment(
         qty,
         unitPriceSen: Number(diff.new_unit_price_sen ?? 0),
         variants: (variants as MfgItemForRecompute['variants']) ?? null,
-      }, cachedConfig, soCompanyId, { trustOperatorSelling: addLineTrust });
+      }, cachedConfig, soCompanyId, { trustOperatorSelling: addLineTrust, asOf: soAsOf });
 
       const unit = rec.unit_price_sen;
       const lineTotal = qty * unit;
@@ -567,7 +614,7 @@ export async function applySoAmendment(
       // Multi-company (mig 0083/0091): company_id is NOT NULL with a HOUZS
       // DEFAULT — an unstamped insert silently books the line to HOUZS, so the
       // ADD line explicitly inherits the SO header's company.
-      const { error: insErr } = await sb.from('mfg_sales_order_items').insert({
+      const { data: insRow, error: insErr } = await sb.from('mfg_sales_order_items').insert({
         ...(soCompanyId != null ? { company_id: soCompanyId } : {}),
         doc_no:                  docNo,
         line_date:              todayMyt(),
@@ -608,8 +655,9 @@ export async function applySoAmendment(
            landed as an RM0 line saying nothing, and the person meant to execute
            it had no way to read the job. NULL stays NULL. */
         remark:                 diff.new_remark,
-      });
+      }).select('id').single();
       if (insErr) throw new Error(`applySoAmendment: ADD insert failed: ${insErr.message}`);
+      if (insRow?.id) addedLineIds.push(String(insRow.id));
       lineChanges.push({ field: `line_added_${itemCode}`, from: null, to: `qty ${qty}` });
       /* The remark is its OWN audit row — an added line's note is the request in
          a service line's case, so "qty 1" alone would not say what was approved. */
@@ -668,7 +716,7 @@ export async function applySoAmendment(
       qty,
       unitPriceSen: clientUnit,
       variants: (variants as MfgItemForRecompute['variants']) ?? null,
-    }, cachedConfig, soCompanyId, { trustOperatorSelling: amendTrust });
+    }, cachedConfig, soCompanyId, { trustOperatorSelling: amendTrust, asOf: soAsOf });
 
     const unit = rec.unit_price_sen;
     /* Mig 0317 — the request may carry a new discount; otherwise the line keeps
@@ -682,6 +730,30 @@ export async function applySoAmendment(
     const lineTotal = (qty * unit) - discount;
     const unitCost = rec.unit_cost_sen;
     const lineCost = unitCost * qty;
+
+    /* NAME + variant summary must track a SPEC's new code (owner 2026-08-11).
+       This UPDATE rewrote item_code but left description / description2 untouched,
+       so a code-swap amendment left the line naming itself by the OLD product on
+       every name-first surface — the amend editor's SoLineCard picker, the
+       follow-up PO's material_name, and anything reading `description`. The ADD
+       branch above already resolves the name from the catalog (mfg_products.name);
+       SPEC must do the same. Fail-soft: an unknown code keeps the stored name
+       rather than blocking an approved amendment over a display field (the ADD
+       branch refuses a brand-new line with no catalog row; a SPEC line already
+       exists and its code passed the submit gate). */
+    let specDescription: string | null | undefined;   // undefined = leave as-is
+    if (change === 'SPEC') {
+      let pq = sb.from('mfg_products').select('name').eq('code', itemCode);
+      if (soCompanyId != null) pq = pq.eq('company_id', soCompanyId);
+      const { data: prodRows, error: prodErr } = await pq.limit(1);
+      // Bind the read error (audit:swallowed-reads): a real failure ABORTS the
+      // apply — it is NOT "no such code". An EMPTY result is "unknown code" and
+      // stays fail-soft below (the stored name is kept), so a DB blip can never
+      // masquerade as a missing catalogue row and blank/keep a name by accident.
+      if (prodErr) throw new Error(`applySoAmendment: SPEC name lookup failed for ${itemCode}: ${prodErr.message}`);
+      const prod = prodRows?.[0] as { name?: string | null } | undefined;
+      if (prod) specDescription = (prod.name ?? '').trim() || null;
+    }
 
     const { error: updErr } = await sb.from('mfg_sales_order_items').update({
       item_code:               itemCode,
@@ -698,6 +770,11 @@ export async function applySoAmendment(
       leg_price_sen:           rec.leg_price_sen,
       special_order_price_sen: rec.special_order_sen,
       custom_specials:         rec.custom_specials ?? null,
+      /* NAME follows the code on a SPEC; QTY leaves it (item_code unchanged).
+         description2 is the server-built variant summary — the single source of
+         truth POST / and the ADD branch use — rebuilt from the applied variants. */
+      ...(specDescription !== undefined ? { description: specDescription } : {}),
+      ...(change === 'SPEC' ? { description2: buildVariantSummary(itemGroup, variants) || null } : {}),
       /* Mig 0280 — write the REMARK only when the request carries one. NULL is
          "not requested", so spreading it conditionally is what stops an
          amendment raised last week (or any row created before 0280, where the
@@ -797,8 +874,8 @@ export async function applySoAmendment(
        its per-line override flag clears, so MRP's order-by derivation (which
        reads line_delivery_date) stays accurate. Without this an approved date
        amendment would move the header but leave every line on the old date. */
-    if ('customerDeliveryDate' in headerChanges) {
-      const { error: cascErr } = await sb.from('mfg_sales_order_items')
+    if ('customerDeliveryDate' in headerChanges && frozenLineFilter !== null) {
+      const { error: cascErr } = await skipFrozen(sb.from('mfg_sales_order_items')
         .update({
           /* Coerced, not `?? null`: the header loop twenty lines up already
              assumes a stored change can be blank (`value === '' ? null : value`),
@@ -809,7 +886,7 @@ export async function applySoAmendment(
           line_delivery_date: dateOrNull(headerChanges['customerDeliveryDate']),
           line_delivery_date_overridden: false,
         })
-        .eq('doc_no', docNo);
+        .eq('doc_no', docNo));
       if (cascErr) {
         if ((sb as unknown as { __atomicCommand?: boolean }).__atomicCommand === true) {
           throw new Error(`applySoAmendment: delivery-date cascade failed: ${cascErr.message}`);
@@ -831,14 +908,14 @@ export async function applySoAmendment(
        per-line override during a routine edit). Here the change has passed a
        supplier confirmation + an explicit approval, so every non-cancelled line
        follows the approved address. FLAGGED in BUG-HISTORY for owner review. */
-    if ('customerState' in headerChanges && c) {
+    if ('customerState' in headerChanges && c && frozenLineFilter !== null) {
       const reboundWh = await deriveWarehouseIdFromState(sb, headerChanges['customerState'] ?? null, c);
       if (reboundWh) {
-        const { error: whErr } = await sb
+        const { error: whErr } = await skipFrozen(sb
           .from('mfg_sales_order_items')
           .update({ warehouse_id: reboundWh })
           .eq('doc_no', docNo)
-          .eq('cancelled', false);
+          .eq('cancelled', false));
         if (whErr) {
           if ((sb as unknown as { __atomicCommand?: boolean }).__atomicCommand === true) {
             throw new Error(`applySoAmendment: warehouse rebind failed: ${whErr.message}`);
@@ -916,7 +993,7 @@ export async function applySoAmendment(
     ].filter(Boolean).join('; ') || 'no diffs'}`,
   });
 
-  return { soDocNo: docNo, revision: nextRevision };
+  return { soDocNo: docNo, revision: nextRevision, addedLineIds };
 }
 
 /* ── snapshotPo ─────────────────────────────────────────────────────────────
@@ -947,11 +1024,13 @@ export async function snapshotPo(
       ? (header as { revision: number }).revision
       : 1;
 
-  const { data: lines, error: lErr } = await sb
+  /* The document's own order (owner 2026-09-10), not created_at alone: a
+     snapshot is diffed against the next one, and `created_at` is not a total
+     order — every line of a converted sofa shares it (lib/po-line-order.ts). */
+  const { data: lines, error: lErr } = await inPoLineOrder(sb
     .from('purchase_order_items')
     .select('*')
-    .eq('purchase_order_id', poId)
-    .order('created_at', { ascending: true, nullsFirst: true });
+    .eq('purchase_order_id', poId));
   if (lErr) throw new Error(`snapshotPo: lines load failed: ${lErr.message}`);
 
   const snapshot = {
@@ -1208,7 +1287,6 @@ export async function reviseBoundPo(
      silently deferred to that PO's own confirm rather than mis-warned here. */
   const scopedPos = opts?.onlyPoId ? livePos.filter((p) => p.id === opts.onlyPoId) : livePos;
   if (scopedPos.length === 0) return noop();
-  const scopeCoversAll = scopedPos.length === livePos.length;
   const livePoIds = new Set(scopedPos.map((p) => p.id));
 
   // (8) Re-read the NOW-REVISED SO lines keyed by id (the derivation source).
@@ -1218,14 +1296,7 @@ export async function reviseBoundPo(
     .select('id, item_code, item_group, qty, variants, warehouse_id, line_delivery_date, description, photo_urls')
     .in('id', soItemIds);
   if (revErr) throw new Error(`reviseBoundPo: revised SO lines load failed: ${revErr.message}`);
-  type RevisedLine = {
-    item_code: string | null; item_group: string | null; qty: number | null;
-    variants: Record<string, unknown> | null; warehouse_id: string | null;
-    line_delivery_date: string | null; description: string | null;
-    // Owner 2026-08-10 (migration 0274) — an SO line's photos follow it onto the
-    // PO line, the same on this amendment path as on the convert paths.
-    photo_urls: string[] | null;
-  };
+  type RevisedLine = RevisedSoLine;
   const revisedById = new Map<string, RevisedLine>();
   for (const r of (revisedSoRows ?? []) as Array<Record<string, unknown>>) {
     revisedById.set(String(r.id), {
@@ -1300,17 +1371,26 @@ export async function reviseBoundPo(
       const label = (line.description || itemCode || 'a new item').trim();
       const binding = itemCode ? mainBindingByCode.get(itemCode) : undefined;
       if (!binding) {
-        /* Scoped confirm: this warning belongs to whichever confirm can act on
-           it. Emit it only when the scope covers every bound PO, so a partial
-           confirm doesn't false-alarm about a sibling PO's item. */
-        if (scopeCoversAll) warnings.push(`A newly added item (${label}) has no supplier set, so it could not be added to a purchase order. Set its main supplier, then raise a purchase order for it.`);
+        /* No supplier bound at all — this line can reach NO purchase order, so it
+           warns regardless of how many bound POs the recompute scoped. The
+           sibling-PO case (a line whose supplier owns a PO this confirm did not
+           touch) is handled by the out-of-scope `continue` below, never here — so
+           this point is only ever a real gap. It used to be gated on "the scope
+           covers every bound PO", which is never true on a sales order with 2+
+           live POs (the PO-Amendments confirm is always scoped to one), so the
+           buyer was told nothing about an item that would have no order on
+           delivery day. */
+        warnings.push(`A newly added item (${label}) has no supplier set, so it could not be added to a purchase order. Set its main supplier, then raise a purchase order for it.`);
         continue;
       }
+      // Supplier match is resolved against the FULL bound set (livePos), so an
+      // empty `forSupplier` means no open PO on this SO carries this supplier —
+      // a genuine gap, not a scoping artefact — and warns regardless of scope.
       const forSupplier = livePos.filter((p) => p.supplier_id === binding.supplierId);
       const target = forSupplier.find((p) => p.purchase_location_id && p.purchase_location_id === line.warehouse_id)
         ?? forSupplier[0];
       if (!target) {
-        if (scopeCoversAll) warnings.push(`A newly added item (${label}) is from a supplier that has no open purchase order on this sales order, so a purchase order still needs to be raised for it.`);
+        warnings.push(`A newly added item (${label}) is from a supplier that has no open purchase order on this sales order, so a purchase order still needs to be raised for it.`);
         continue;
       }
       // Out-of-scope target = a sibling PO's line; its own confirm inserts it.
@@ -1347,44 +1427,15 @@ export async function reviseBoundPo(
     let linesRemoved = 0;
     let linesAdded = 0;
 
-    // (12a) RE-DERIVE each surviving line in place from its revised SO line.
+    // (12a) RE-DERIVE each surviving line in place from its revised SO line —
+    //       lib/po-line-rederive.ts, the one derivation the realign repair runs too.
     for (const pi of matchedByPo.get(po.id) ?? []) {
       const revised = revisedById.get(pi.so_item_id as string)!;
-      // Read the existing PO line's discount + item_code (the SKU the
-      // supplier binding is keyed on).
-      const { data: existing, error: exErr } = await sb
-        .from('purchase_order_items')
-        .select('item_code, discount_sen')
-        .eq('id', pi.id)
-        .maybeSingle();
-      if (exErr) throw new Error(`reviseBoundPo: PO line load failed: ${exErr.message}`);
-      const discountSen = Number((existing as { discount_sen?: number } | null)?.discount_sen ?? 0);
-      const qty = revised.qty != null ? Math.max(1, revised.qty) : Number(pi.qty ?? 1);
-      const itemGroup = revised.item_group;
-      const variants = revised.variants;
-      // Re-derive the revised PO line's supplier cost from the NOW-REVISED SO
-      // line's spec (SAME cost-anchor "Create PO from SO" runs). The SKU the cost
-      // is keyed on = the revised SO line's item_code (a SPEC change may swap it),
-      // falling back to the PO line's existing item_code.
-      const itemCode = revised.item_code
-        ?? String((existing as { item_code?: string } | null)?.item_code ?? '');
-      const unitPriceSen = await deriveMfgPoUnitCost(sb, {
-        supplierId: po.supplier_id ?? '',
-        itemCode:   itemCode,
-        itemGroup,
-        variants:   variants ?? null,
+      const { patch, warnings: lineWarnings } = await rederivePoLineFromSoLine(sb, {
+        poLineId: pi.id, currentQty: pi.qty, po, soCompanyId, revised,
       });
-
-      const { error: updErr } = await sb.from('purchase_order_items').update({
-        qty,
-        unit_price_sen: unitPriceSen,
-        line_total_sen: qty * unitPriceSen - discountSen,
-        item_group:       itemGroup,
-        variants,
-        description2:     buildVariantSummary(String(itemGroup ?? ''), variants ?? null) || null,
-        warehouse_id:     revised.warehouse_id,
-        delivery_date:    revised.line_delivery_date,
-      }).eq('id', pi.id);
+      warnings.push(...lineWarnings);
+      const { error: updErr } = await sb.from('purchase_order_items').update(patch).eq('id', pi.id);
       if (updErr) throw new Error(`reviseBoundPo: PO line update failed for ${pi.id}: ${updErr.message}`);
       linesRederived += 1;
     }
@@ -1410,7 +1461,19 @@ export async function reviseBoundPo(
        line that already carries a PO line was excluded from addedNeedingPo, so a
        re-run inserts nothing. company_id follows the PO's own company (authoritative
        in a cross-company approve), not the request's active company. */
-    for (const add of addedByPo.get(po.id) ?? []) {
+    /* Owner 2026-09-10 — added lines go at the END of the purchase order, in
+       the order the SALES ORDER holds them (lib/po-line-order.ts). Read once
+       per PO and incremented locally: the rows are inserted one at a time, so
+       re-reading the max between them would cost a round trip per line. */
+    const addsForPo = sortBySourceSoLine(
+      (addedByPo.get(po.id) ?? []).map((a) => ({
+        add: a,
+        soDocNo: (a.line as { doc_no?: string | null }).doc_no ?? null,
+        soLineNo: (a.line as { line_no?: number | null }).line_no ?? null,
+      })),
+    );
+    let nextLineNo = await nextPoLineNo(sb, po.id);
+    for (const { add } of addsForPo) {
       const line = add.line;
       const qty = line.qty != null ? Math.max(1, line.qty) : 1;
       const itemGroup = line.item_group;
@@ -1424,6 +1487,7 @@ export async function reviseBoundPo(
       const { error: insErr } = await sb.from('purchase_order_items').insert({
         ...(po.company_id != null ? { company_id: po.company_id } : {}),
         purchase_order_id: po.id,
+        line_no:           nextLineNo,
         material_kind:     'mfg_product',
         item_code:     line.item_code ?? '',
         material_name:     line.description ?? line.item_code ?? '',
@@ -1442,6 +1506,7 @@ export async function reviseBoundPo(
         from_mrp:          false,
       });
       if (insErr) throw new Error(`reviseBoundPo: added PO line insert failed for SO line ${add.soItemId}: ${insErr.message}`);
+      nextLineNo += 1;
       linesAdded += 1;
     }
 

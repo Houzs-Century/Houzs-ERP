@@ -1,0 +1,83 @@
+name: GRN / PI / SI line export check (read-only)
+
+# Do the Goods Received, Purchase Invoice and Sales Invoice line exports hold
+# EVERY line their list's filter matches?
+# Runs each export's own code (buildGrnLineExport, buildPiLineExport,
+# buildSiLineExport) over the chosen database
+# through the read-only PostgREST stand-in, and compares it with a direct SQL
+# read of the same rows, per company and filter, line id by line id. Also prints
+# the facts the column rules rest on (GR invoiced sum vs stored, SI deposit
+# balance, DO / GRN links, blank due dates).
+# backend/scripts/check-grn-pi-si-line-export.mjs has the detail.
+#
+# Manual trigger only, own concurrency group, read-only session. Exit 0 for every
+# answer; non-zero only when the database cannot be reached.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which database"
+        required: true
+        default: "production"
+        type: choice
+        options:
+          - production
+          - staging
+
+concurrency:
+  group: grn-pi-si-line-export-check-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  production:
+    if: ${{ inputs.target == 'production' }}
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npx tsx scripts/check-grn-pi-si-line-export.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+      # Column by column: which ERP value equals AutoCount's Detail Listing
+      # (committed snapshot data/ac-listing-lines.json.gz, company 1 only).
+      - run: npx tsx scripts/check-ac-listing-parity.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+  staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - name: Assert the target is STAGING
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          case "$DATABASE_URL" in *anogrigyjbduyzclzjgn*) echo "::error::points at PRODUCTION"; exit 1;; esac
+          case "$DATABASE_URL" in *minnapsemfzjmtvnnvdd*) echo "target: staging";; *) echo "::error::not the staging project"; exit 1;; esac
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npx tsx scripts/check-grn-pi-si-line-export.mjs
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

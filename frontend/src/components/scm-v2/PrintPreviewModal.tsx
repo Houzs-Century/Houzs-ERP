@@ -34,6 +34,12 @@ import { ModalOverlay } from "./DocumentRelationshipMapModal";
 import { useBranding } from "../../hooks/useBranding";
 import { shortCompanyName } from "../../lib/branding";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
+import {
+  clearPrintResume,
+  peekPrintResume,
+  registerUrlPrintOpener,
+  trackPrintAction,
+} from "../../lib/chunkActionRecovery";
 
 /* Every print button in the app is the same three lines of state, so they live
    here once. Pass the page's generator call; get back the dialog's open state
@@ -54,19 +60,29 @@ import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 export function usePrintPreview(deliver: (action: PdfAction) => void | Promise<void>) {
   const [open, setOpen] = useState(false);
   const close = useCallback(() => setOpen(false), []);
+  const openPreview = useCallback(() => setOpen(true), []);
+  /* Every exit runs as a TRACKED print (lib/chunkActionRecovery): if the
+     generator's chunk was deleted by a deploy, the tab may reload once and this
+     same preview reopens — but only on a page that consumes the resume through
+     useOpenPrintPreviewFromUrl below. deliver's own catch and toast are
+     untouched. */
+  const tracked = useCallback(
+    (action: PdfAction) => trackPrintAction({ kind: "preview", open: openPreview }, () => deliver(action), Date.now),
+    [deliver, openPreview],
+  );
   const finishWith = useCallback(
     async (action: PdfAction) => {
-      await deliver(action);
+      await tracked(action);
       setOpen(false);
     },
-    [deliver],
+    [tracked],
   );
   return {
     open,
-    openPreview: useCallback(() => setOpen(true), []),
+    openPreview,
     close,
     handlers: {
-      onViewPdf: useCallback(() => deliver("preview"), [deliver]),
+      onViewPdf: useCallback(() => tracked("preview"), [tracked]),
       onPrint: useCallback(() => finishWith("print"), [finishWith]),
       onDownload: useCallback(() => finishWith("save"), [finishWith]),
     },
@@ -80,16 +96,28 @@ export function usePrintPreview(deliver: (action: PdfAction) => void | Promise<v
 
    `ready` gates on the record being loaded, so the dialog never opens over an
    empty header. The ref makes it fire ONCE: closing the preview must not be
-   undone by the next render, and the param stays in the URL. */
+   undone by the next render, and the param stays in the URL.
+
+   The SAME door reopens a print that a stale-build reload interrupted
+   (lib/chunkActionRecovery). Mounting this hook is what registers the page as
+   able to do that — a page without it gets the version banner, never an
+   automatic reload that would drop the operator somewhere else. The resume is
+   sessionStorage, not `?print=1`, so a later manual refresh does not reopen
+   the preview a second time. */
 export function useOpenPrintPreviewFromUrl(open: () => void, ready: boolean) {
   const [params] = useSearchParams();
   const fired = useRef(false);
-  const wanted = params.get("print") === "1";
+  const resumed =
+    typeof window !== "undefined" &&
+    peekPrintResume(`${window.location.pathname}${window.location.search}`, Date.now())?.kind === "preview";
+  const wanted = params.get("print") === "1" || resumed;
+  useEffect(() => registerUrlPrintOpener(open), [open]);
   useEffect(() => {
     if (fired.current || !wanted || !ready) return;
     fired.current = true;
+    if (resumed) clearPrintResume();
     open();
-  }, [wanted, ready, open]);
+  }, [wanted, resumed, ready, open]);
 }
 
 /** One summary line. A row with no `label` renders as a plain muted paragraph —

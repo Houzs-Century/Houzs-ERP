@@ -22,10 +22,12 @@ describe("list search scope contracts", () => {
   // the table renders the scope hint itself, so the marker is the config
   // field, not the DataGrid JSX attribute. Conversions migrate entries from
   // the roster above into this one.
-  test.each([["pages/scm-v2/Accounting.tsx", 500]])(
-    "declares the loaded-only cap via DataTable search config for %s",
+  // The Journal page (docs/bugs/0935) took the journal list out of Accounting.tsx's
+  // DataTable and searches its loaded groups itself — the same cap, declared on the hint.
+  test.each([["pages/scm-v2/JournalEntries.tsx", 500]])(
+    "declares the loaded-only cap on the Journal page's own search for %s",
     (file, limit) => {
-      expect(source(file)).toContain(`loadedLimit: ${limit}`);
+      expect(source(file)).toContain(`loadedLimit={${limit}}`);
     }
   );
 

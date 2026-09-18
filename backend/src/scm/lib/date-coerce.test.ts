@@ -75,4 +75,14 @@ describe('isDateColumn', () => {
     for (const col of ['notes', 'ref', 'transfer_to', 'debtor_name', 'venue'])
       expect(isDateColumn(col)).toBe(false);
   });
+
+  it('a _pattern column is a recipe for finding a date, never a date', () => {
+    /* 0336's trading_date_pattern is a regex whose capture group is the
+       trading day; coercing or gating it as a date is a category error the
+       dateWriteCoercion gate made loudly on 2026-09-02. */
+    expect(isDateColumn('trading_date_pattern')).toBe(false);
+    expect(isDateColumn('some_date_pattern')).toBe(false);
+    /* And the suffix rule must not eat a real date column. */
+    expect(isDateColumn('trading_date')).toBe(true);
+  });
 });

@@ -1,0 +1,64 @@
+name: Side drawers with no hand — worklist (read-only)
+
+# Manual, read-only. Splits the side drawers whose hand nobody wrote into the
+# three buckets the owner's rule creates (2026-09-13):
+# 「要看照片 看有没有 要不然就是还没有 proceed 就不需要看」
+#
+#   READ THE PHOTO  — has a slip photo; the drawing answers it
+#   ASK A PERSON    — no photo, but the order IS proceeded, so it must be settled
+#   LEAVE IT        — no photo, not proceeded; nobody holds the answer and nobody
+#                     needs it yet
+#
+# Membership is decided by the real decoder, not a text search: parse-bedframe
+# reduces every spelling to the marker `Side Drawer (side unknown)`, which the
+# phrase map maps to no catalogue code on purpose (docs/bugs/0843).
+#
+# It writes nothing: SELECTs only, no DDL, no transaction.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      company:
+        description: "company_id"
+        required: false
+        default: "1"
+        type: string
+
+concurrency:
+  group: drawer-side-worklist-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: npx tsx scripts/dump-drawer-side-worklist.mjs
+        env:
+          COMPANY_ID: ${{ inputs.company }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: npx tsx scripts/dump-drawer-side-worklist.mjs
+        env:
+          COMPANY_ID: ${{ inputs.company }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

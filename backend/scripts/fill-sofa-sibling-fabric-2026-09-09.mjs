@@ -1,0 +1,292 @@
+#!/usr/bin/env node
+/* fill-sofa-sibling-fabric-2026-09-09 — a sofa is ONE line in the account book
+ * and SEVERAL rows here, and on some orders only the first row got the colour.
+ *
+ * FOUND BY THE OWNER, 2026-09-09, looking at HC-SO-010120 (`9058: 1A(LHF) + CNR
+ * + 2A(RHF)`): 「为什么这个 sales order 看起来并没有全部东西都一样啊？第一个 item
+ * 不是应该跟第三、第四个 item 全部一样的吗？」 He is right, and the book agrees
+ * with him — its Desc2 is IDENTICAL on all three rows, ending `colour :
+ * HR805-31`. Measured on production (run 34373905203):
+ *
+ *   line 1  9058-1A(LHF)  fabriccode=hr805-31|seatheight=30|special=...(5)
+ *   line 3  9058-CNR      seatheight=30
+ *   line 4  9058-2A(RHF)  seatheight=30
+ *
+ * WHAT IT COSTS. Two things, and neither is cosmetic. The factory sheet for the
+ * corner and the two-seater carries no colour, so the person building them has
+ * to go and ask. And stock buckets by (warehouse, item_code, variant_key), so a
+ * corner asking for `seatheight=30` cannot be filled from fabric-keyed stock of
+ * the very same corner — the pieces of one sofa sit in different buckets.
+ *
+ * HOW BIG. 31 sofas across company 1 have compartments that disagree on the
+ * fabric (same run). The plan run lists every one before anything is written.
+ *
+ * ── WHAT THIS FILLS, AND WHAT IT REFUSES TO ───────────────────────────────
+ * A blank row is filled from its own sofa's donor row ONLY when that sofa has
+ * exactly ONE non-blank fabric among its rows. That is the case where the
+ * answer is forced and nothing is invented.
+ *
+ * A SOFA WITH TWO DIFFERENT NON-BLANK FABRICS IS LEFT ALONE. `parse-sofa.mjs`
+ * returns `perPieceColor`, so a two-tone build is a real thing the business
+ * sells, not a defect — and "make them all the same" would destroy a correct
+ * order. Those are reported, never touched.
+ *
+ * SPECIALS ARE NOT COPIED, and that is a decision, not an oversight. Specials
+ * carry money: `mfg-pricing.ts` computes a `specialsSurchargeSen` per line, so
+ * writing five specials onto two more rows of a migrated order changes what
+ * that order re-prices to. The fabric fill moves no money — this script writes
+ * only inside `variants`, and the verification asserts every line's stored
+ * price and the order totals are byte-identical afterwards. The specials
+ * divergence IS reported, per document, so the owner can rule on it with the
+ * list in front of him. CLAUDE.md's rule: a provable defect gets fixed, a
+ * judgement about money gets options.
+ *
+ * SAFETY (release discipline, CLAUDE.md):
+ *   MODE=plan|apply   default PLAN, printing every row it would touch.
+ *   CONFIRM=<phrase>  required on apply, refused with a non-zero exit.
+ *   Every UPDATE carries `coalesce(variants->>'fabricCode','') = ''`, so a row
+ *   somebody has filled since this was measured is skipped, never overwritten.
+ *   `to_jsonb(x::text)` is used for every write — the double-encoding COE is
+ *   what a bare string binding into jsonb costs.
+ *   Verification re-reads on a FRESH connection and asserts the SHAPE: every
+ *   row this run filled now carries the donor's fabric, its seat height
+ *   survived, no row that already had a fabric changed, and the stored line
+ *   prices and order totals are unchanged.
+ *
+ * RE-RUN: idempotent — a second run finds them filled and reports 0 to write.
+ *
+ * Env:  DATABASE_URL (required)   MODE=plan|apply   CONFIRM (on apply)
+ *       COMPANY_ID (default 1)
+ */
+import postgres from 'postgres';
+
+const MODE = (process.env.MODE ?? 'plan').toLowerCase();
+const CONFIRM_PHRASE = 'fill sofa sibling fabric 2026-09-09';
+const APPLY = MODE === 'apply';
+const CO = Number(process.env.COMPANY_ID || 1);
+const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
+
+if (!process.env.DATABASE_URL) {
+  console.error('DATABASE_URL is required.');
+  process.exit(2);
+}
+if (APPLY && process.env.CONFIRM !== CONFIRM_PHRASE) {
+  console.error(`MODE=apply requires CONFIRM='${CONFIRM_PHRASE}'.`);
+  process.exit(2);
+}
+
+/** The fabric identity, as the cutover importer writes it. All five move
+ *  together or the row is half-labelled: `fabricCode` is what the KEY reads,
+ *  `colourLabel` is what the document PRINTS, and the ids are what the fabric
+ *  library is looked up by. */
+const FABRIC_FIELDS = ['fabricId', 'colourId', 'fabricCode', 'colourLabel', 'fabricLabel'];
+const str = (v) => (v === null || v === undefined ? '' : String(v).trim());
+const specialsOf = (v) => {
+  const s = v && typeof v === 'object' ? v.specials : null;
+  if (!Array.isArray(s)) return [];
+  return s.map((x) => (typeof x === 'string' ? x : (x?.code ?? x?.label ?? ''))).filter(Boolean);
+};
+
+const sql = postgres(process.env.DATABASE_URL, { ssl: 'require', max: 1, prepare: false });
+
+try {
+  log(`MODE=${MODE}  company ${CO}`);
+
+  const rows = await sql`
+    SELECT i.id, i.doc_no, i.line_no, i.item_code, i.linked_ac_dtlkey::text AS dtlkey,
+           i.variants, h.status
+      FROM scm.mfg_sales_order_items i
+      JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
+     WHERE h.company_id = ${CO} AND lower(coalesce(i.item_group, '')) = 'sofa'
+       AND i.linked_ac_dtlkey IS NOT NULL
+       AND coalesce(i.cancelled, false) = false
+     ORDER BY i.doc_no, i.line_no, i.id`;
+  log(`sofa rows carrying a book line: ${rows.length}`);
+
+  const groups = new Map();
+  for (const r of rows) {
+    const k = `${r.doc_no}|${r.dtlkey}`;
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(r);
+  }
+  log(`sofas (one book line each): ${groups.size}`);
+
+  const plan = [];
+  const twoTone = [];
+  const specialsSplit = [];
+  let noBlank = 0;
+  let noDonor = 0;
+
+  for (const [k, g] of groups) {
+    const [doc, dtlkey] = k.split('|');
+    if (g.length < 2) { noBlank += 1; continue; }
+    const donors = g.filter((r) => str(r.variants?.fabricCode) !== '');
+    const blanks = g.filter((r) => str(r.variants?.fabricCode) === '');
+    const distinct = [...new Set(donors.map((r) => str(r.variants.fabricCode)))];
+
+    if (distinct.length > 1) {
+      twoTone.push({ doc, dtlkey, rows: g.length,
+        codes: distinct, blanks: blanks.length });
+      continue;
+    }
+    if (!blanks.length) {
+      /* Fabric agrees. Specials may still not — reported, never written. */
+      const sets = g.map((r) => specialsOf(r.variants).slice().sort().join(' + '));
+      if (new Set(sets).size > 1) {
+        specialsSplit.push({ doc, dtlkey, rows: g.map((r) => ({
+          code: r.item_code, specials: specialsOf(r.variants) })) });
+      }
+      noBlank += 1;
+      continue;
+    }
+    if (!donors.length) { noDonor += 1; continue; }
+
+    const donor = donors[0];
+    const patch = {};
+    for (const f of FABRIC_FIELDS) {
+      const v = str(donor.variants?.[f]);
+      if (v) patch[f] = v;
+    }
+    for (const b of blanks) {
+      plan.push({ id: b.id, doc, dtlkey, code: b.item_code, status: b.status,
+        from: donor.item_code, patch });
+    }
+    const sets = g.map((r) => specialsOf(r.variants).slice().sort().join(' + '));
+    if (new Set(sets).size > 1) {
+      specialsSplit.push({ doc, dtlkey, rows: g.map((r) => ({
+        code: r.item_code, specials: specialsOf(r.variants) })) });
+    }
+  }
+
+  const docs = new Set(plan.map((p) => p.doc));
+  log(`\n=== WOULD FILL: ${plan.length} row(s) across ${docs.size} sales order(s) ===`);
+  let lastDoc = '';
+  for (const p of plan) {
+    if (p.doc !== lastDoc) { log(`  ${p.doc}  (book line ${p.dtlkey}, order ${p.status})`); lastDoc = p.doc; }
+    log(`      ${String(p.code).padEnd(20)} <- ${String(p.from).padEnd(20)} ${JSON.stringify(p.patch)}`);
+  }
+
+  log(`\n=== LEFT ALONE: two different fabrics on one sofa — a two-tone build is real: ${twoTone.length} ===`);
+  for (const t of twoTone) {
+    log(`  ${t.doc}  book line ${t.dtlkey}  ${t.rows} row(s), fabrics ${t.codes.join(' / ')}, ${t.blanks} blank`);
+  }
+  log(`\n  sofas whose fabric already agrees: ${noBlank}`);
+  log(`  sofas where NO row carries a fabric (nothing to copy from): ${noDonor}`);
+
+  log(`\n=== REPORTED, NOT WRITTEN: specials differ across one sofa's pieces: ${specialsSplit.length} ===`);
+  log('  Specials carry money — mfg-pricing.ts computes a specialsSurchargeSen per');
+  log('  line — so copying them changes what a migrated order re-prices to. That is');
+  log('  the owner\'s call, not this script\'s. The book states them once for the');
+  log('  whole line, which is why they look missing rather than absent.');
+  for (const s of specialsSplit.slice(0, 40)) {
+    log(`  ${s.doc}  book line ${s.dtlkey}`);
+    for (const r of s.rows) {
+      log(`      ${String(r.code).padEnd(20)} ${r.specials.length ? r.specials.join(' + ') : '(none)'}`);
+    }
+  }
+  if (specialsSplit.length > 40) log(`  … ${specialsSplit.length - 40} more`);
+
+  if (!APPLY) {
+    log('\nPLAN ONLY — nothing was written.');
+    await sql.end();
+    process.exit(0);
+  }
+
+  const ids = plan.map((p) => p.id);
+  const [before] = await sql`
+    SELECT count(*)::int AS sofa_rows,
+           count(*) FILTER (WHERE coalesce(i.variants->>'fabricCode', '') <> '')::int AS with_fabric,
+           coalesce(sum(i.unit_price_sen), 0)::text AS unit_price_sen,
+           coalesce(sum(i.total_sen), 0)::text AS total_sen,
+           coalesce(sum(i.qty), 0)::text AS qty
+      FROM scm.mfg_sales_order_items i
+      JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
+     WHERE h.company_id = ${CO} AND lower(coalesce(i.item_group, '')) = 'sofa'`;
+  const [headBefore] = await sql`
+    SELECT coalesce(sum(subtotal_sen), 0)::text AS subtotal_sen,
+           coalesce(sum(local_total_sen), 0)::text AS local_total_sen
+      FROM scm.mfg_sales_orders WHERE company_id = ${CO}`;
+
+  let wrote = 0;
+  for (const p of plan) {
+    /* One statement per row, every field through to_jsonb(...::text). A bare
+       string bound straight into a jsonb column is the double-encoding COE. */
+    let expr = sql`coalesce(variants, '{}'::jsonb)`;
+    for (const [f, v] of Object.entries(p.patch)) {
+      expr = sql`jsonb_set(${expr}, ${`{${f}}`}, to_jsonb(${v}::text), true)`;
+    }
+    const done = await sql`
+      UPDATE scm.mfg_sales_order_items SET variants = ${expr}
+       WHERE id = ${p.id} AND coalesce(variants->>'fabricCode', '') = ''
+      RETURNING id`;
+    wrote += done.length;
+  }
+  log(`\nAPPLIED: ${wrote} row(s) filled.`);
+  await sql.end();
+
+  const check = postgres(process.env.DATABASE_URL, { ssl: 'require', max: 1, prepare: false });
+  const [after] = await check`
+    SELECT count(*)::int AS sofa_rows,
+           count(*) FILTER (WHERE coalesce(i.variants->>'fabricCode', '') <> '')::int AS with_fabric,
+           coalesce(sum(i.unit_price_sen), 0)::text AS unit_price_sen,
+           coalesce(sum(i.total_sen), 0)::text AS total_sen,
+           coalesce(sum(i.qty), 0)::text AS qty
+      FROM scm.mfg_sales_order_items i
+      JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
+     WHERE h.company_id = ${CO} AND lower(coalesce(i.item_group, '')) = 'sofa'`;
+  const [headAfter] = await check`
+    SELECT coalesce(sum(subtotal_sen), 0)::text AS subtotal_sen,
+           coalesce(sum(local_total_sen), 0)::text AS local_total_sen
+      FROM scm.mfg_sales_orders WHERE company_id = ${CO}`;
+  const [stillBlank] = await check`
+    SELECT count(*)::int AS n FROM scm.mfg_sales_order_items
+     WHERE id = ANY(${ids}) AND coalesce(variants->>'fabricCode', '') = ''`;
+  /* The written value has to be a STRING in the jsonb, not a quoted string
+     inside a string. jsonb_typeof says which, and a count is blind to it. */
+  const [typed] = await check`
+    SELECT count(*)::int AS n FROM scm.mfg_sales_order_items
+     WHERE id = ANY(${ids}) AND jsonb_typeof(variants->'fabricCode') <> 'string'`;
+  /* Nothing else in the bag may have been dropped by the merge. */
+  const [seat] = await check`
+    SELECT count(*)::int AS n FROM scm.mfg_sales_order_items
+     WHERE id = ANY(${ids}) AND coalesce(variants->>'seatHeight', '') = ''`;
+  const sample = ids.length
+    ? await check`SELECT doc_no, item_code, variants FROM scm.mfg_sales_order_items
+                   WHERE id = ${ids[0]}`
+    : [];
+  await check.end();
+
+  const seatBlankBefore = plan.filter((p) => {
+    const r = rows.find((x) => x.id === p.id);
+    return str(r?.variants?.seatHeight) === '';
+  }).length;
+
+  const ok = {
+    'every row this run filled now carries a fabric': stillBlank.n === 0,
+    'the fabric was written as a jsonb string, not a re-encoded one': typed.n === 0,
+    'no row lost its seat height': seat.n === seatBlankBefore,
+    'the sofa row count is unchanged': after.sofa_rows === before.sofa_rows,
+    'quantities are unchanged': after.qty === before.qty,
+    'the sofa lines keep their unit prices': after.unit_price_sen === before.unit_price_sen,
+    'the sofa lines keep their totals': after.total_sen === before.total_sen,
+    'every sales order subtotal is unchanged': headAfter.subtotal_sen === headBefore.subtotal_sen,
+    'every sales order total is unchanged': headAfter.local_total_sen === headBefore.local_total_sen,
+    'rows with a fabric rose by exactly what was written': after.with_fabric === before.with_fabric + wrote,
+  };
+  log('\n=== VERIFY (fresh connection) ===');
+  let bad = 0;
+  for (const [k, v] of Object.entries(ok)) {
+    if (!v) bad += 1;
+    log(`  ${v ? 'OK   ' : 'WRONG'} ${k}`);
+  }
+  if (sample.length) {
+    log(`  sample: ${sample[0].doc_no} ${sample[0].item_code} -> ${JSON.stringify(sample[0].variants)}`);
+  }
+  log(`  sofa rows with a fabric ${before.with_fabric} -> ${after.with_fabric} of ${after.sofa_rows}`);
+  if (bad) { console.error('VERIFY FAILED.'); process.exit(1); }
+  log('VERIFY OK — one field written inside variants, no money moved.');
+} catch (e) {
+  console.error(e);
+  try { await sql.end(); } catch { /* already closed */ }
+  process.exit(1);
+}

@@ -1,0 +1,87 @@
+name: Label the cutover's fabricated payment dates (plan by default)
+
+# The 2026-08-28 cutover put the ORDER date on every migrated payment row,
+# because AutoCount records only what is still OWED and carries no date on
+# which money arrived. The owner ruled on 2026-09-08: leave the dates, LABEL
+# them. This appends one sentence to the payment row's `note` and touches no
+# amount, no date and no status.
+#
+# Why the label matters: backend/src/acc/daily-close.ts:55-63 buckets payments
+# by paid_at, so an unlabelled fabricated date lands in a day's cash close as
+# though that money were counted that day, and an ageing of a receivable off
+# paid_at reads an order date as a receipt date.
+#
+# A row is labelled ONLY where paid_at provably equals its order's so_date -
+# that equality is the evidence the date is the fabricated one. Anything else
+# is listed and left alone. PLAN unless apply=1 AND the confirm phrase is typed
+# in full. Its own concurrency group, so it never queues behind a release.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      apply:
+        description: "apply to WRITE. Anything else is a plan."
+        required: false
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: 'To WRITE, type exactly: label-fabricated-payment-dates'
+        required: false
+        default: ""
+      company_id:
+        description: "Company. Blank = 1 (Houzs Century)."
+        required: false
+        default: ""
+      list_limit:
+        description: "Rows to enumerate. 0 = all. Blank = 40."
+        required: false
+        default: ""
+
+concurrency:
+  group: label-migrated-payment-dates-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/label-migrated-payment-dates.mjs
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          MODE: ${{ inputs.apply }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          LIST_LIMIT: ${{ inputs.list_limit }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/label-migrated-payment-dates.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODE: ${{ inputs.apply }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          LIST_LIMIT: ${{ inputs.list_limit }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

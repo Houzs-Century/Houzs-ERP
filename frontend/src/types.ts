@@ -149,6 +149,9 @@ export interface AssrCase {
   /** Live DO numbers from scm.delivery_orders (so_doc_no join), merged by
    *  the list/export endpoints; "DO1 · DO2" when the SO has several. */
   do_numbers?: string | null;
+  /** Supplier POs raised from the case's SO (services/assrOrderPos.ts). NOT po_no. */
+  order_pos?: { id: string; po_number: string }[];
+  company_id?: number | string | null;
   do_date: string | null;
   closed_at: string | null;
   created_by: number | null;
@@ -333,6 +336,16 @@ export interface AssrDetail {
   related_pos: PurchaseOrder[];
   portal_token?: string | null;
   stage_history?: AssrStageHistoryRow[];
+  /** Nth-person access list (mig 20260911T1600): staff granted row visibility on
+   *  this case without taking a sales_agent / assigned_to slot. */
+  access?: AssrCaseAccessRow[];
+}
+
+export interface AssrCaseAccessRow {
+  user_id: number;
+  user_name: string | null;
+  added_by: number | null;
+  created_at: string;
 }
 
 export interface ExecutionLog {
@@ -625,6 +638,9 @@ export interface Department {
   color: string;
   sort_order: number;
   member_count: number;
+  /** 2–4 letter reference-number segment (mig 20260906T1417), e.g. "OPS".
+   *  null = not assigned yet; a department without one cannot mint numbers. */
+  code?: string | null;
   /** The department's chosen lead (mig-pg 0331). null = no lead set — the real
    *  lead takes precedence over the derived one; see teamShared.buildDeptNodes. */
   lead_user_id?: number | null;
@@ -686,7 +702,7 @@ export interface Role {
 export interface PermissionDef {
   key: string;
   resource: string;
-  verb: "read" | "write" | "manage";
+  verb: "read" | "create" | "write" | "manage" | "approve";
   label: string;
   description: string;
 }

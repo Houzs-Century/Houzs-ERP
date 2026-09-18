@@ -10,7 +10,7 @@
 // This does not compare the files textually: one is TS with types and the other
 // is JS, so they will never be byte-identical. It compares the VALUES and the
 // BEHAVIOUR, which is what an operator actually reads.
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, test } from 'vitest';
 
 import * as ts from './autocount-outbox-status';
 // @ts-expect-error - the mirror is untyped JS on purpose; that is what it is for.
@@ -89,6 +89,30 @@ describe('autocount-outbox-status', () => {
     expect(ts.acOutboxState('skipped', quoted)).toBe('skipped');
   });
 
+  /* THE SENTENCE THAT MATCHES TWO NEEDLES. `KeylessLineError` writes "N of M
+     line(s) carry no AutoCount DtlKey", which contains the `keyless-line`
+     needle AND the `dtlkey-subset` needle ("carry no AutoCount DtlKey"). The
+     order of AC_SKIP_KINDS is a PRIORITY order — `classifyAcSkip` returns the
+     FIRST match — and this pins that the priority actually resolves this pair,
+     because a reporter that classified per-needle instead printed the losing
+     class as a second, differently-remedied entry (docs/bugs/0606-the-outbox-health-report-counted-one-refusal-under-two-remed.md).
+
+     The two remedies are opposites in practice: keyless-line says backfill THIS
+     document's line keys; dtlkey-subset says backfill the SOURCE document's,
+     and an edit has no source document. */
+  it('a reason matching two needles resolves to ONE kind, the higher-priority one', () => {
+    const both =
+      'refused, nothing sent (KeylessLineError): SO SO-000000: 1 of 8 line(s) '
+      + 'carry no AutoCount DtlKey — line(s) 1.';
+    const keyless = ts.AC_SKIP_KINDS.findIndex((k) => k.kind === 'keyless-line');
+    const subset = ts.AC_SKIP_KINDS.findIndex((k) => k.kind === 'dtlkey-subset');
+    expect(keyless).toBeGreaterThanOrEqual(0);
+    expect(subset).toBeGreaterThan(keyless);
+    expect(both).toContain(ts.AC_SKIP_KINDS[subset].needle);
+    expect(ts.classifyAcSkip(both).kind).toBe('keyless-line');
+    expect(mjs.classifyAcSkip(both)).toEqual(ts.classifyAcSkip(both));
+  });
+
   it('an unrecognised reason is named as such, never folded into a neighbour', () => {
     const { kind, remedy } = ts.classifyAcSkip('a refusal class written next month');
     expect(kind).toBe(ts.AC_SKIP_UNRECOGNISED);
@@ -133,5 +157,49 @@ describe('a re-queued FAILED row is history too', () => {
     /* Only a terminal row can be history. A pending row IS the re-queued work,
        so calling it history would hide the thing actually in flight. */
     expect(ts.acOutboxState('pending', note)).toBe('pending');
+  });
+});
+
+/* ── NOT ACCEPTED MEANS "STILL", NOT "EVER" ──────────────────────────────────
+   HC-DO-2609-004 and HC-DO-2609-009 were refused, fixed, re-composed and
+   accepted — verified in AED_HOUZS itself — and the page still read
+   `NOT ACCEPTED 2` while the same screen counted them under `IN AUTOCOUNT` and
+   its own re-queue answer said "This document is already in AutoCount ...
+   TO DO: Nothing". Twenty-five documents, chips summing to twenty-six. The
+   owner, 2026-09-08: 「明明都进去了」.
+
+   The distinction is ORDER, not set membership, and these pin both directions. */
+describe('a refusal older than the arrival is history', () => {
+  const REFUSED = '2026-09-08T14:41:00.000Z';
+  const ARRIVED = '2026-09-08T15:30:00.000Z';
+
+  test('refused, then accepted -> the refusal is over', () => {
+    expect(ts.acRefusalPredatesArrival(REFUSED, ARRIVED)).toBe(true);
+  });
+
+  /* THE CASE THAT MUST KEEP COUNTING. A document that arrived and was later
+     edited into a refusal IS in the account book AND does need attention —
+     both chips are right about it. A rule written as "has it ever been sent"
+     would have hidden this one, which is the expensive direction. */
+  test('accepted, then refused -> the refusal still stands', () => {
+    expect(ts.acRefusalPredatesArrival(ARRIVED, REFUSED)).toBe(false);
+  });
+
+  test('never arrived -> the refusal stands', () => {
+    expect(ts.acRefusalPredatesArrival(REFUSED, null)).toBe(false);
+    expect(ts.acRefusalPredatesArrival(REFUSED, undefined)).toBe(false);
+    expect(ts.acRefusalPredatesArrival(REFUSED, '')).toBe(false);
+  });
+
+  /* AN UNKNOWN ORDER LEAVES THE REFUSAL STANDING. Hiding a real one costs a
+     document; showing a stale one costs a glance. */
+  test('an unreadable timestamp leaves the refusal standing', () => {
+    expect(ts.acRefusalPredatesArrival('not a date', ARRIVED)).toBe(false);
+    expect(ts.acRefusalPredatesArrival(REFUSED, 'not a date')).toBe(false);
+    expect(ts.acRefusalPredatesArrival(null, ARRIVED)).toBe(false);
+  });
+
+  test('the same instant is not "older"', () => {
+    expect(ts.acRefusalPredatesArrival(ARRIVED, ARRIVED)).toBe(false);
   });
 });

@@ -1,12 +1,24 @@
 import { useMemo, useState } from "react";
-import { usePoAmendments, type PoAmendmentRow } from "../vendor/scm/lib/po-amendment-queries";
+import { usePoAmendments } from "../vendor/scm/lib/po-amendment-queries";
+import { useAmendments } from "../vendor/scm/lib/so-amendment-queries";
+import {
+  buildPoAmendmentInbox,
+  PO_AMENDMENT_INBOX_SOURCE_LABEL,
+  type PoAmendmentInboxRow,
+} from "../vendor/scm/lib/po-amendment-inbox";
 import {
   simplifiedAmendmentPill,
   amendmentBucketOf,
   AMENDMENT_LIST_CHIPS,
   amendmentBucketLabel,
+  compareAmendmentsForList,
   type StatusTone,
 } from "../vendor/scm/lib/status-pill";
+import {
+  AMENDMENT_APPROVER_LABEL,
+  AMENDMENT_APPROVER_TONE,
+  type AmendmentApprover,
+} from "../vendor/scm/lib/amendment-approver";
 import { formatDate } from "../lib/utils";
 import { useStaffLookup } from "../hooks/useStaffLookup";
 import "./mobile.css";
@@ -14,20 +26,28 @@ import "./mobile.css";
 /* ------------------------------------------------------------------ *
  * Mobile PO-Amendments queue — the phone twin of desktop
  * pages/scm-v2/PoAmendments.tsx and the PO sibling of MobileAmendments.
- * One inbox of every Purchase Order amendment; the SIMPLIFIED status chips
- * (Requested / Approved / All) filter it and tapping a card opens the PO
- * amendment job card (MobilePoAmendmentDetail) — the diff + single-approver
- * gate. This screen only lists + routes.
+ * The same two-source inbox as desktop (vendor/scm/lib/po-amendment-inbox.ts):
+ * direct PO amendments plus the SO amendments that revise a bound PO. The
+ * SIMPLIFIED status chips (Requested / Approved / Rejected / All) filter it. Tapping a
+ * direct card opens the PO amendment job card (MobilePoAmendmentDetail); tapping
+ * an SO-driven card opens its Sales Order, whose page hosts the SO amendment
+ * gates — where the phone SO queue sends the same row. This screen only lists +
+ * routes.
  *
- * REAL-DATA DISCIPLINE: the list endpoint (GET /po-amendments) returns id /
- * po_number / amendment_no / status / reason / requested_by / created_at only —
- * no supplier name, no per-line change kinds. Those live on the detail.
+ * REAL-DATA DISCIPLINE: the list endpoints return id / PO or SO number /
+ * amendment_no / status / reason / requested_by / created_at (+ lane and bound
+ * POs on the SO side) — no supplier name, no per-line change kinds. Those live
+ * on the detail.
  * ------------------------------------------------------------------ */
 
 const STATUS_CHIPS = AMENDMENT_LIST_CHIPS;
 
 // Open = the REQUESTED bucket (awaiting approval) — the "N to action" count.
 const IS_OPEN = (s: string) => amendmentBucketOf(s) === "REQUESTED";
+
+// Requested on top, newest first within a status — the same order the desktop
+// queue opens in (status-pill.ts owns it).
+const OPEN_ORDER = compareAmendmentsForList<PoAmendmentInboxRow>((a) => a.status, (a) => a.createdAt);
 
 const TONE_BADGE_CLASS: Record<StatusTone, string> = {
   neutral: "b-grey",
@@ -43,19 +63,34 @@ function AmendmentBadge({ status }: { status: string }) {
   return <span className={`badge ${TONE_BADGE_CLASS[tone]}`}>{label}</span>;
 }
 
+// Who signs it — the desktop queue's Approver badge. A direct PO amendment is
+// Purchaser's; an SO-driven row follows its lane.
+function ApproverBadge({ approver }: { approver: AmendmentApprover }) {
+  const { bg, fg } = AMENDMENT_APPROVER_TONE[approver];
+  return <span className="badge" style={{ background: bg, color: fg }}>{AMENDMENT_APPROVER_LABEL[approver]}</span>;
+}
+
 export function MobilePoAmendments({
   onBack,
   onOpen,
+  onOpenSo,
 }: {
   onBack: () => void;
   onOpen: (amendmentId: string) => void;
+  onOpenSo: (docNo: string) => void;
 }) {
   const [chip, setChip] = useState<string>("all");
-  const { data, isLoading, error } = usePoAmendments();
+  const poQ = usePoAmendments();
+  const soQ = useAmendments();
+  const isLoading = poQ.isLoading || soQ.isLoading;
+  const error = poQ.error ?? soQ.error;
   const { actorNameOf } = useStaffLookup();
 
-  const allRows = useMemo<PoAmendmentRow[]>(() => data?.amendments ?? [], [data]);
-  const rows = useMemo<PoAmendmentRow[]>(
+  const allRows = useMemo<PoAmendmentInboxRow[]>(
+    () => buildPoAmendmentInbox(poQ.data?.amendments ?? [], soQ.data?.amendments ?? []).sort(OPEN_ORDER),
+    [poQ.data, soQ.data],
+  );
+  const rows = useMemo<PoAmendmentInboxRow[]>(
     () => (chip === "all" ? allRows : allRows.filter((a) => amendmentBucketOf(a.status) === chip)),
     [allRows, chip],
   );
@@ -94,17 +129,27 @@ export function MobilePoAmendments({
           </div>
         )}
 
-        {!isLoading && !error && (
+        {/* One source failing must not hide the other's rows — the error line
+            stays above them, as on desktop. */}
+        {!isLoading && (
           <div style={{ display: "flex", flexDirection: "column", gap: 11 }}>
             {rows.map((a) => {
-              const amdNo = a.amendment_no != null && String(a.amendment_no).trim() !== "" ? String(a.amendment_no) : null;
+              const amdNo = a.amendmentNo.trim() !== "" ? a.amendmentNo : null;
               const reason = (a.reason ?? "").trim();
               return (
-                <button key={a.id} className="amd" onClick={() => onOpen(a.id)}>
+                <button key={a.key} className="amd" onClick={() => (a.kind === "so" ? onOpenSo(a.soDocNo) : onOpen(a.id))}>
                   <div className="r1">
-                    <span className="sono tnum">{a.po_number}</span>
-                    <AmendmentBadge status={a.status} />
+                    <span className="sono tnum">{a.poLabel}</span>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                      <ApproverBadge approver={a.approver} />
+                      <AmendmentBadge status={a.status} />
+                    </span>
                   </div>
+                  {a.kind === "so" && (
+                    <div className="amdno">
+                      {PO_AMENDMENT_INBOX_SOURCE_LABEL.so} · <span className="tnum">{a.soDocNo}</span>
+                    </div>
+                  )}
                   {(amdNo || reason) && (
                     <div className="amdno">
                       {amdNo ? <span className="tnum">{amdNo}</span> : null}
@@ -113,18 +158,18 @@ export function MobilePoAmendments({
                     </div>
                   )}
                   <div className="foot">
-                    <span>Requested by {actorNameOf(a.requested_by)}</span>
-                    <span className="tnum">{formatDate(a.created_at)}</span>
+                    <span>Requested by {actorNameOf(a.requestedBy)}</span>
+                    <span className="tnum">{formatDate(a.createdAt)}</span>
                   </div>
                 </button>
               );
             })}
-            {rows.length === 0 && (
+            {rows.length === 0 && !error && (
               <div className="empty">
                 <div className="empty-t">
                   {chip === "all" ? "No amendments yet." : `No ${amendmentBucketLabel(chip).toLowerCase()} amendments.`}
                 </div>
-                <div className="empty-s">Raise one from a Purchase Order on desktop.</div>
+                <div className="empty-s">Raise one from a Purchase Order on desktop, or revise a Sales Order with a bound PO.</div>
               </div>
             )}
           </div>

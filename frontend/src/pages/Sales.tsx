@@ -1087,7 +1087,7 @@ export function EntryPanel({
   }
 
   const headerStatus = (status1 || "Unchecked").toUpperCase();
-  const fmtMoney = (n: number) => `RM ${n.toFixed(2)}`;
+  const fmtMoney = formatCurrency;
   const inputCls =
     "h-9 w-full rounded-md border border-border bg-surface px-3 text-[12.5px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/15 disabled:bg-bg/40 disabled:text-ink-muted";
   const selectCls = inputCls + " appearance-none";

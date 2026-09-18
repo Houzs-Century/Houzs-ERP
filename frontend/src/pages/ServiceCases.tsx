@@ -64,6 +64,7 @@ import { Pagination } from "../components/Pagination";
 import { EmptyState } from "../components/EmptyState";
 import { Badge } from "../components/Badge";
 import { Panel, PanelSection, FieldRow } from "../components/Panel";
+import { CaseAccessSection } from "../components/CaseAccessSection";
 import { InlineEdit } from "../components/InlineEdit";
 import { ExpandableText } from "../components/ExpandableText";
 import { StatCard } from "../components/StatCard";
@@ -120,7 +121,8 @@ import { Forbidden } from "./Forbidden";
 import { PrintPreviewModal, usePrintPreview } from "../components/scm-v2/PrintPreviewModal";
 import { defaultBrandingForCompany, HOUZS_COMPANY_CODE } from "../lib/branding";
 import { resolutionRoute, isStageActive, assrSubStatus, assrSubStatusAddsInfo, assrSubStatusLabel, ASSR_STAGES, ASSR_SUB_STATUSES } from "../vendor/scm/lib/assr/stages";
-import { ASSR_ISSUE_CATEGORIES, ASSR_NOTE_AUDIENCES, assrNoteIsCustomerVisible, type AssrNoteAudience } from "../vendor/scm/lib/assr/case-fields";
+import { ASSR_ISSUE_CATEGORIES, ASSR_NOTE_AUDIENCES, assrNoteIsCustomerVisible, assrMergedPoText, type AssrNoteAudience } from "../vendor/scm/lib/assr/case-fields";
+import { AssrOrderPoLine } from "../components/AssrOrderPoLine";
 import { ASSR_STAGE_LABEL } from "../vendor/scm/lib/assr-stage-labels";
 import type {
   Paginated,
@@ -149,7 +151,7 @@ const STAGE_OPTIONS: { value: StageFilter; label: string }[] = [
   { value: "pending_review", label: "Review" },
   { value: "pending_solution", label: "Solution" },
   { value: "under_verification", label: "Verification" },
-  { value: "pending_supplier_pickup", label: "Supplier Pickup / Return" },
+  { value: "pending_supplier_pickup", label: "Pickup / Return" },
   { value: "pending_item_ready", label: "Pending Item Ready" },
   { value: "pending_delivery_service", label: "Delivery / Service" },
   { value: "completed", label: "Completed" },
@@ -609,9 +611,7 @@ function CasesView({
       filterable: true,
       label: "Stage",
       render: (r) => {
-        // Sub-status rides a second muted line (Nick 2026-07-15). Owner 2026-07-16:
-        // hide a sub that merely restates its stage — except the combined Supplier
-        // stage, where naming the leg is the point (Nico 2026-08-22, chase list).
+        // Sub rides a muted second line; legs always show (Nico 2026-08-22).
         const stageText = caseStageLabel(r.stage);
         const sub = assrSubStatus(r.stage, r.sub_status ?? null);
         const subText =
@@ -659,11 +659,15 @@ function CasesView({
         );
       },
       // caseStageLabel, plus the sub label so the column FILTER and CSV split
-      // the legs (pickup vs return, inspection vs QC issue result).
+      // the legs. All Pickup/Return legs stay listed even at 0 cases (Nico
+      // 2026-09-04: an empty leg must still be pickable in the filter).
       getValue: (r) => {
         const sub = assrSubStatus(r.stage, r.sub_status ?? null);
         return sub ? `${caseStageLabel(r.stage)} — ${sub.label}` : caseStageLabel(r.stage);
       },
+      filterSeedValues: ASSR_SUB_STATUSES.pending_supplier_pickup.map(
+        (s) => `${caseStageLabel("pending_supplier_pickup")} — ${s.label}`,
+      ),
     },
     {
       key: "assr_no",
@@ -699,9 +703,8 @@ function CasesView({
       key: "ref_no",
       filterable: true,
       label: "Ref No",
-      // The SO's customer reference (HC/ZNT/PG…) — what the branches
-      // and suppliers quote back, so it earns a default-visible slot
-      // next to SO No.
+      // The SO's customer reference (HC/ZNT/PG…) — what the branches and
+      // suppliers quote back, so it sits default-visible next to SO No.
       render: (r) => <span className="font-mono text-xs">{r.ref_no || "—"}</span>,
       getValue: (r) => r.ref_no,
     },
@@ -710,22 +713,23 @@ function CasesView({
       filterable: true,
       label: "DO No",
       // Hand-entered DO on the case wins; the server merge fills the rest
-      // ("DO1 · DO2" when the order shipped in parts): Houzs cases from
-      // AutoCount — the SO's own transfer_to chain, widened by the
-      // ref-matched DO mirror — 2990 from the SCM module. Most cases
-      // never get the manual field.
+      // ("DO1 · DO2" when shipped in parts) — AutoCount transfer_to chain +
+      // DO mirror for Houzs, the SCM module for 2990.
       render: (r) => (
         <span className="font-mono text-xs">{r.delivery_order || r.do_numbers || "—"}</span>
       ),
       getValue: (r) => r.delivery_order || r.do_numbers,
     },
     {
-      key: "po_no",
+      key: "po",
       filterable: true,
-      label: "PO No",
-      // The customer's purchase-order reference on the case (Nico 2026-08-14).
-      render: (r) => <span className="font-mono text-xs">{r.po_no || "—"}</span>,
-      getValue: (r) => r.po_no,
+      label: "PO",
+      // ONE column for both PO facts on a case: the SO's supplier "Order PO"s
+      // (order_pos, read-only) and the case's own service PO (po_no), deduped
+      // so a service PO typed without its company prefix does not show twice.
+      // The two stay separate fields — the detail panel edits/mints po_no.
+      render: (r) => <span className="font-mono text-xs">{assrMergedPoText(r) || "—"}</span>,
+      getValue: (r) => assrMergedPoText(r),
     },
     {
       key: "customer_name",
@@ -1225,7 +1229,7 @@ function CasesView({
 // One-line captions under the Stage-funnel filter cards (Nick
 // 2026-07-23: 每个 stage 下面加 description, e.g. Verification → QC
 // issue inspection). Same wording as the detail Workflow funnel.
-type StageFunnelRow = { stage: string; total: number; breached: number; sub_return?: number };
+type StageFunnelRow = { stage: string; total: number; breached: number; sub_return?: number; sub_customer?: number };
 type AssrSummary = {
   total?: number;
   active_count?: number;
@@ -1327,11 +1331,13 @@ function StageStatStrip({
             { value: "ALL" as StageFilter, label: "All", desc: "All stages", total: allTotal, breached: 0 },
             ...stages.map((s) => {
               const row = byStage.get(s.value);
-              // Supplier bucket names its two legs (Nico 2026-08-22) so ops sees
-              // at a glance how many suppliers to chase for pickup vs return.
+              // Supplier bucket names its three legs (Nico 2026-08-22 / 09-01):
+              // one chase count per leg — customer / supplier / return.
+              const cust = row?.sub_customer ?? 0;
+              const ret = row?.sub_return ?? 0;
               const desc =
                 s.value === "pending_supplier_pickup" && ready && row?.total
-                  ? `${row.total - (row.sub_return ?? 0)} await pickup · ${row.sub_return ?? 0} await return`
+                  ? `${cust} customer pickup · ${row.total - cust - ret} supplier pickup · ${ret} supplier return`
                   : STAGE_FUNNEL_DESC[s.value] ?? "";
               return {
                 value: s.value as StageFilter,
@@ -3665,7 +3671,7 @@ function DetailContent({
               onChange={(s) => (s === "voided" ? setShowVoidPrompt(true) : transition(s))}
               disabled={!!c.archived_at}
               subStatus={caseSubStatus(c)}
-              onSubChange={(k) => patch({ sub_status: k })}
+              onSubChange={(k) => { patch({ sub_status: k }).catch((e: unknown) => toast.error(e instanceof Error ? e.message : "Couldn't switch sub-status")); }}
               voidReason={c.void_reason ?? null}
             />
             <StatusSummaryBar
@@ -4024,6 +4030,7 @@ function DetailContent({
             {/* Procurement / PO — product-side info (moved out of
                 Resolution, which now only holds supplier handling). */}
             <div className="mt-2 border-t border-border-subtle pt-2">
+              <AssrOrderPoLine row={c} />
               <InlineEdit
                 label="PO No"
                 value={c.po_no}
@@ -4237,7 +4244,7 @@ function DetailContent({
               c={c}
               priorityMap={priorityMap}
               stageId="pending_supplier_pickup"
-              title="Supplier Pickup / Return"
+              title="Pickup / Return"
               summary={
                 c.supplier_pickup_at
                   ? `Supplier collected ${formatDate(c.supplier_pickup_at)}`
@@ -4551,7 +4558,20 @@ function DetailContent({
               <InlineEdit
                 label="Agent"
                 value={c.sales_agent}
-                onSave={(v) => patch({ sales_agent: v })}
+                onSave={async (v) => {
+                  // Salesperson stays editable, but changing it reassigns sales
+                  // attribution AND row visibility (the original rep loses the
+                  // case unless re-added). Confirm first (owner 2026-09-09); to
+                  // keep the rep and just let others in, use the Access section.
+                  if (
+                    !(await dialog.confirm(
+                      "Change the Salesperson? This reassigns sales attribution and case visibility — the original rep loses access unless re-added. To keep the rep and just give other people access, cancel and use the Access section instead.",
+                    ))
+                  ) {
+                    throw new Error("Salesperson unchanged");
+                  }
+                  await patch({ sales_agent: v });
+                }}
                 placeholder="Sales rep"
               />
               {/* SO + Ref side by side — mirrors the read view's twin
@@ -4706,6 +4726,15 @@ function DetailContent({
               </div>
             )}
           </PanelSection>
+
+          <CaseAccessSection
+            caseId={id}
+            access={detail.data?.access ?? []}
+            onChanged={() => {
+              detail.reload();
+              onUpdated();
+            }}
+          />
 
           {/* SLA — Design PR 2. Full red card + big mono countdown +
               progress bar when overdue. The subtitle keeps the deadline

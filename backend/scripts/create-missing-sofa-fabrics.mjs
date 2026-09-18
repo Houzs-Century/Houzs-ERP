@@ -80,6 +80,25 @@ const WANT = [
      they are the same fabric, delete this row and relabel HN3382 instead. */
   ["HM3383", "HM3383-6", "HM3383-6", ["HM 3383-6", "HM3383-6"], 3],
   ["SL", "SL0095", "SL0095", ["SL0095"], 0],
+  /* Added 2026-09-07. After the whole sofa colour backfill was re-run against
+     prod with the current matcher (run 34135394761), the plan was TO FILL 0 —
+     everything the library can confirm is already bound — and exactly TWO codes
+     came back as NOT IN THE FABRIC LIBRARY. These are them, with the document
+     each was first seen on:
+       "nicca - 02 Oat glow"   HC-SO-012826 9058-1S
+       "CHINO-01"              HC-SO-013310 5535-1S
+     NICCA-01 and NICCA-06 resolve today, so the NICCA series exists and this is
+     one more colour under it. The labels follow the shape the neighbouring rows
+     already use (NICCA-06 is labelled "NICCA-06 FOG"; a code with no name in the
+     document is labelled as itself, like HR805-30).
+     THE NAMING IS THE OWNER'S TO CONFIRM, which is why these sit here as
+     CANDIDATES rather than being created: this script defaults to MODE=dry-run,
+     re-probes the LIVE library before creating anything, and needs
+     CONFIRM="I HAVE REVIEWED THE DRY-RUN" to write. If a brand-new SERIES has to
+     be made for CHINO, it lands tier 'standard' / surcharge 0 — a pricing
+     default, and his call. */
+  ["NICCA", "NICCA-02", "NICCA-02 OAT GLOW", ["nicca - 02 Oat glow", "Nicca 02-Oat Glow"], 1],
+  ["CHINO", "CHINO-01", "CHINO-01", ["CHINO-01", "CHINO -01"], 1],
 ];
 
 async function main() {

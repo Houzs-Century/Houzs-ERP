@@ -124,6 +124,7 @@ test("every script that still audits the Processing Date reads the name from the
     "check-ac-vs-erp-reconcile.mjs",
     "check-cutover-completeness.mjs",
     "check-cutover-metrics.mjs",
+    "check-golive-parity.mjs",
     "check-golive-readiness.mjs",
     "check-po-so-completeness.mjs",
     "check-so-warehouse-venue-final.mjs",

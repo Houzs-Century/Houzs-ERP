@@ -38,8 +38,10 @@ import type { FabricLite } from '../lib/fabric-queries';
 import type { Warehouse } from '../lib/inventory-queries';
 import { PcVariantEditor } from './PcVariantEditor';
 import { MoneyInput } from './MoneyInput';
+import { DiscountInput } from './DiscountInput';
 import styles from '../../../pages/scm-v2/SalesOrderDetail.module.css';
 import { DateField } from "./DateField";
+import { showsVariantEditor } from '../lib/variant-editor-groups';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -149,7 +151,7 @@ export const PcLineCard = ({
   const l = line;
   const lineTotalSen = Math.max(0, l.qty * l.unitPriceSen - (l.discountSen ?? 0));
   const categoryLabel = l.category?.toUpperCase() ?? 'UNSET';
-  const showVariants = Boolean(l.category) && ['sofa', 'bedframe'].includes(l.category ?? '') && Boolean(maint);
+  const showVariants = showsVariantEditor(l.category) && Boolean(maint);
   // The whole card's `disabled` (locked doc) wins over everything; identityLocked
   // additionally freezes the identity + variant inputs on a sourced line.
   const identityLocked = disabled || identityReadOnly;
@@ -368,13 +370,15 @@ export const PcLineCard = ({
         </label>
         <label className={styles.field}>
           <span className={styles.fieldLabel}>Discount ({currency})</span>
-          <MoneyInput
+          <DiscountInput
             bare
             valueSen={l.discountSen ?? 0}
+            baseSen={l.qty * l.unitPriceSen}
             disabled={disabled}
             onCommit={(sen) => onChange({ discountSen: sen ?? 0 })}
             inputClassName={styles.fieldInput}
             selectOnFocus
+            currency={currency}
           />
         </label>
         <label className={styles.field}>

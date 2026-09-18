@@ -31,6 +31,7 @@ import {
   FilePenLine,
   Share2,
   Split,
+  Plus,
 } from "lucide-react";
 import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
@@ -49,7 +50,6 @@ import {
 } from "../../components/DetailLayout";
 import {
   usePurchaseOrderDetail,
-  useCancelPurchaseOrder,
   useReopenPurchaseOrder,
   useConfirmPurchaseOrder,
   useSupplierDetail,
@@ -80,6 +80,7 @@ import { PoAmendmentCreateModal } from "../../components/scm-v2/PoAmendmentCreat
 // SI/DR maps: same shared 5-node canvas, chain + clicks from the PO hook.
 import { DocumentRelationshipMapModal, DocumentChoiceDialog } from "../../components/scm-v2/DocumentRelationshipMapModal";
 import { usePoRelationshipMap } from "./po-relationship-map";
+import { usePoCancelAction } from "./use-po-cancel-action";
 // Per-line SO allocations (mig 0235) — split a consolidated line across the
 // customers (and stock) it serves; sub-numbered PO-xxxx-yy-01, -02, ...
 import { PoLineAllocationsModal } from "../../components/scm-v2/PoLineAllocationsModal";
@@ -91,6 +92,9 @@ import { cn } from "../../lib/utils";
 import { convertToLink, transferToLabel } from "../../lib/convertScope";
 import { HoldChip } from "../../vendor/scm/components/HoldChip";
 
+import { DocumentHistoryDrawer } from "./DocumentHistoryDrawer";
+import { FocAmount } from "../../vendor/scm/components/FocAmount";
+import { ADD_LINE_LABEL, addLineHref } from "../../vendor/scm/lib/add-line-handoff";
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 const fmtMoney = (centi: number, currency = "MYR"): string => fmtMoneySen(centi, currency);
@@ -424,7 +428,7 @@ function PurchaseOrderDetailV2ReadOnly() {
 
   const detail = usePurchaseOrderDetail(id ?? null);
   const confirmPo = useConfirmPurchaseOrder();
-  const cancelPo = useCancelPurchaseOrder();
+  const { cancelPo, isPending: cancelling } = usePoCancelAction();
   const reopenPo = useReopenPurchaseOrder();
   const notify = useNotify();
   const confirm = useConfirm();
@@ -467,6 +471,10 @@ function PurchaseOrderDetailV2ReadOnly() {
   // Relationship map modal — open state only; the chain itself comes from
   // usePoRelationshipMap below (after the header row resolves).
   const [relMapOpen, setRelMapOpen] = useState(false);
+  /* History drawer. The button used to navigate to `?tab=history`, a param
+     nothing in this file reads, so it changed the URL and nothing else — while
+     the backend had been recording this PO's every change all along. */
+  const [historyOpen, setHistoryOpen] = useState(false);
   // Allocation editor (mig 0235) — which line's split is open. Deliberately
   // available at every status except CANCELLED (backend rule): the historical
   // consolidated lines the owner wants to attribute live on RECEIVED POs.
@@ -551,7 +559,10 @@ function PurchaseOrderDetailV2ReadOnly() {
   // filters, so the prior filtered view comes back — no context lost.
   const goBack = () => navigate(scmListReturnTo("/scm/purchase-orders"));
   const goEdit = () => id && navigate(`/scm/purchase-orders/${id}?edit=1`);
-  const goHistory = () => id && navigate(`/scm/purchase-orders/${id}?tab=history`);
+  /* "Add line" from the page you START on — the affordance lived only
+     inside the editor, under a different name per document, so it read as
+     missing (docs/bugs/0853). */
+  const goAddLine = () => id && navigate(addLineHref(`/scm/purchase-orders/${id}`));
   // Render + download the PO PDF via the shared jspdf generator (client-side),
   // mirroring the V1 PurchaseOrderDetail handler. The old `?print=1` navigation
   // was dead — nothing consumed that param — so the button did nothing.
@@ -674,16 +685,12 @@ function PurchaseOrderDetailV2ReadOnly() {
       confirmPo.mutate(id);
     }
   };
+  /* Owner 2026-09-09 — no approval, but the reason is compulsory: the prompt
+     and the words are in ./use-po-cancel-action.ts, shared with the editor, the
+     list menu and mobile, and the server refuses a cancel that carries none. */
   const doCancel = async () => {
     if (!purchaseOrder) return;
-    if (await confirm({
-      title: `Cancel PO ${purchaseOrder.po_number}?`,
-      body: "Any GRN raised against this PO must be cancelled first.",
-      confirmLabel: "Cancel PO",
-      danger: true,
-    })) {
-      cancelPo.mutate(purchaseOrder.id);
-    }
+    void cancelPo(purchaseOrder.id, purchaseOrder.po_number);
   };
   const doReopen = async () => {
     if (!purchaseOrder) return;
@@ -739,6 +746,7 @@ function PurchaseOrderDetailV2ReadOnly() {
           description: l.description || l.material_name,
           variant: buildVariantSummary(l.item_group ?? "others", l.variants) || (l.description2 ?? ""),
         });
+        const remark = (l.notes ?? "").trim();
         return (
           <div className="min-w-0">
             <div className="truncate text-[13px] font-semibold text-ink">
@@ -747,6 +755,22 @@ function PurchaseOrderDetailV2ReadOnly() {
             {secondary && (
               <div className="mt-0.5 flex items-center gap-2 font-mono text-[11px] text-ink-muted">
                 <span className="truncate text-ink-secondary">{secondary}</span>
+              </div>
+            )}
+            {/* The line's REMARK (purchase_order_items.notes) — the SO line's
+                twin, rendered the same way (SalesOrderDetailV2's Item cell).
+                Owner 2026-09-04: 「SO line 和 PO line 的 remarks」. This is not
+                a duplicate of the identity above: it is free text that appears
+                nowhere else on the row, and on the 923 of 1,117 migrated
+                company-1 PO lines that carry it (measured 2026-09-04), it is
+                AutoCount's own Description 2 — the customer's spec text in the
+                salesperson's own words. Nothing on
+                this page rendered it before, so the migration's copy was
+                invisible. It WRAPS rather than truncating: half an instruction
+                is worse than none. */}
+            {remark && (
+              <div className="mt-1 whitespace-pre-wrap break-words text-[11.5px] italic leading-snug text-ink-secondary">
+                {remark}
               </div>
             )}
             {/* SO-drift redline — what the source SO now requests vs what this
@@ -766,6 +790,26 @@ function PurchaseOrderDetailV2ReadOnly() {
               </div>
             )}
           </div>
+        );
+      },
+    },
+    /* Remark as its OWN column — hidden by default because the text already
+       renders under the item above, where it is read. This column exists so the
+       remark is SEARCHABLE, filterable and lands in the CSV export: a `render`
+       has no getValue, so without it the text is invisible to every one of
+       those. Exact twin of SalesOrderDetailV2's Remark column. */
+    {
+      key: "remark",
+      label: "Remark",
+      width: "220px",
+      defaultHidden: true,
+      getValue: (l) => (l.notes ?? "").trim(),
+      render: (l) => {
+        const remark = (l.notes ?? "").trim();
+        return remark ? (
+          <span className="whitespace-pre-wrap break-words text-[12px] text-ink-secondary">{remark}</span>
+        ) : (
+          <span className="text-ink-muted">—</span>
         );
       },
     },
@@ -1005,9 +1049,7 @@ function PurchaseOrderDetailV2ReadOnly() {
       align: "right",
       getValue: (l) => l.line_total_sen,
       render: (l) => (
-        <span className="font-money text-[13px] font-semibold text-ink">
-          {fmtMoney(l.line_total_sen ?? 0, purchaseOrder?.currency)}
-        </span>
+        <FocAmount line={l} amount={fmtMoney(l.line_total_sen ?? 0, purchaseOrder?.currency)} />
       ),
     },
   ];
@@ -1151,7 +1193,7 @@ function PurchaseOrderDetailV2ReadOnly() {
           </div>
           <div className="flex flex-col items-end gap-1.5">
           <div className="flex flex-wrap items-center justify-end gap-2">
-            <Button variant="ghost" icon={<History size={14} />} onClick={goHistory}>
+            <Button variant="ghost" icon={<History size={14} />} onClick={() => setHistoryOpen(true)}>
               History
             </Button>
             <Button variant="ghost" icon={<Share2 size={14} />} onClick={() => setRelMapOpen(true)}>
@@ -1171,7 +1213,7 @@ function PurchaseOrderDetailV2ReadOnly() {
               </Button>
             )}
             {canCancel && (
-              <Button variant="danger" icon={<XCircle size={14} />} onClick={doCancel}>
+              <Button variant="danger" icon={<XCircle size={14} />} onClick={doCancel} disabled={cancelling}>
                 Cancel PO
               </Button>
             )}
@@ -1212,6 +1254,7 @@ function PurchaseOrderDetailV2ReadOnly() {
                 Raise amendment
               </Button>
             )}
+            <Button variant="secondary" icon={<Plus size={14} />} onClick={goAddLine}>{ADD_LINE_LABEL}</Button>
             <Button variant="primary" icon={<Edit3 size={14} />} onClick={goEdit}>
               Edit
             </Button>
@@ -1380,7 +1423,7 @@ function PurchaseOrderDetailV2ReadOnly() {
               )}
               <DataTable<PoItemRow>
                 tableId={`po-lines-${id}`}
-                layoutFamily={DATA_TABLE_LAYOUT_FAMILIES.purchaseOrderLines}
+                layoutFamily={DATA_TABLE_LAYOUT_FAMILIES.purchaseOrderLines} persistSort={false} persistFilters={false}
                 rows={items}
                 loading={false}
                 columns={lineColumns}
@@ -1573,6 +1616,10 @@ function PurchaseOrderDetailV2ReadOnly() {
           pickChainChoice(d);
         }}
       />
+      {historyOpen && (
+        <DocumentHistoryDrawer doc="PURCHASE_ORDER" id={String(purchaseOrder.id)}
+          label={purchaseOrder.po_number} onClose={() => setHistoryOpen(false)} />
+      )}
       <PrintPreviewModal
         open={print.open}
         onClose={print.close}

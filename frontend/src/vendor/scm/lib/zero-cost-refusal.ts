@@ -26,6 +26,8 @@
 // clears the refusal").
 // ----------------------------------------------------------------------------
 
+import { fmtSen } from '../../shared/format';
+
 export const ZERO_COST_RECEIPT_ERROR = 'zero_cost_receipt';
 
 /** The fallback sentence, shown when the body cannot be parsed at all. It says
@@ -110,7 +112,7 @@ export function zeroCostRefusalFrom(err: unknown): ZeroCostRefusal | null {
 export function zeroCostRefusalText(refusal: ZeroCostRefusal | null): string {
   if (!refusal) return ZERO_COST_FALLBACK_MESSAGE;
   const lines = refusal.lines
-    .map((l) => `• ${l.itemCode} x${l.qtyAccepted}\n   normally about RM${(l.knownUnitCostSen / 100).toFixed(2)} each`)
+    .map((l) => `• ${l.itemCode} x${l.qtyAccepted}\n   normally about ${fmtSen(l.knownUnitCostSen)} each`)
     .join('\n');
   const how = refusal.remedy.map((r) => `— ${r}`).join('\n');
   return [refusal.message ?? ZERO_COST_FALLBACK_MESSAGE, lines, how].filter(Boolean).join('\n\n');

@@ -1,251 +1,43 @@
-> ## Corrections — 2026-08-12 code-read sweep
->
-> 1. LIVE BUG (flagged separately): compose VALIDATES and STORES cc/bcc (mail-center.ts:2104-2120,:2219) but the sendEmail call (:2148-2161) passes neither — composed Cc/Bcc recipients never receive the mail while the thread renders them. Reply is correct (:2004-2019).
-> 2. LIVE BUG (same chip): attachment-bearing reply/compose do not set outboxRetry:false (only mfg-purchase-orders.ts:4203 does), so a failed send is re-drained BODY-ONLY by the */5 cron.
-> 3. The cc/bcc outbox columns are migrations 0269/148, not 0254/144 (those were renumbered to assr_product_categories_refresh).
-> 4. Plain-reply To = the newest inbound message's from_address, falling back to counterparty_email (mail-center.ts:1946-1956) — the two diverge when a later inbound came from a different sender.
+# Mail Center
 
-# Module: Mail Center
+Shared team mailboxes inside the ERP — inbound mail lands in threads, and staff reply or compose from the mailbox address rather than from `no-reply@`.
 
-> **Line numbers here are INDICATIVE, not authoritative.** They were correct at
-> `main` @ `c523a02f` and drift with every merge — an audit on 2026-08-13 found
-> every `:NNN` in this directory stale while the paths, methods and permission
-> keys were right. Resolve a route to its current line with the GENERATED
-> artifact, which cannot go stale because it is rebuilt from the tree:
->
-> ```bash
-> npm --prefix backend run gen:route-locator   # then grep docs/generated/route-locator.md
-> ```
+## Statuses and flow
 
-Shared team mailboxes inside the ERP — inbound mail lands in threads, and staff
-reply or compose from the mailbox address rather than from `no-reply@`.
+Sending goes through one durable queue: `sendEmail()` enqueues to `email_outbox` first, then attempts immediate delivery; a failure leaves the row `pending` and a `*/5` cron retries up to 3 attempts. `email_log` records every attempt; the outbox row records the current state.
 
-Written 2026-08-04 while adding multi-recipient support. There was no guide
-before; per CLAUDE.md that gap is the thing to close, so this covers what the
-module IS and the traps found while working in it, not every line of it.
+A message with several recipients is always ONE provider call carrying arrays — never one call per recipient — so a mid-loop failure and its retry cannot deliver a second copy to whoever already received it.
 
-## The pieces
+Reply-all precedence: an explicit `to` from the caller always wins; otherwise To becomes the newest INBOUND message's `from_address` (falling back to the thread's `counterparty_email` only when there is no inbound message at all); when `replyAll: true` and the caller sent no `cc`, Cc is rebuilt from that inbound message's To+Cc, minus the caller's own mailbox-scope addresses and minus anyone already on To. Bcc is never reconstructed (it was blind, it stays blind) and never stored on the message row — only the provider and the ops-only outbox row ever see it.
 
-| Layer | Where |
-|---|---|
-| Inbound webhook + routing | `backend/src/routes/mail-inbound.ts` |
-| Threads, messages, compose, reply | `backend/src/routes/mail-center.ts` (~2100 lines) |
-| Outbound send + durable queue | `backend/src/services/email.ts` |
-| Screens | `frontend/src/pages/MailCenter/` — `Inbox.tsx`, `Thread.tsx`, `Compose.tsx` |
-| Mobile | `frontend/src/mobile/MobileMailCenter.tsx` |
+## Permissions
 
-## Data model
+- `canSendFrom()` — a non-admin may send only from a mailbox in their own scope, or their own alias (`users.email_alias`); admins may send from any mailbox.
+- `purpose` / `isChannelEnabled()` gates delivery at both send time and drain time — a channel switched off after a message is enqueued stops its retry.
+- `isMailAdmin` grants mailbox management rights only — it must never widen the company scope on outbox reads.
 
-| Table | Migration | Notes |
-|---|---|---|
-| `email_threads` | `0039_mail_center.sql` | one per conversation; carries `mailbox_address` and `counterparty_email` |
-| `email_messages` | `0039` | `direction` inbound/outbound, `from_address`, **`to_addresses`**, **`cc_addresses`** (JSON arrays) |
-| `email_outbox` | `0005`, +`0269` | the durable send queue: `to_address`, **`cc_address`**, **`bcc_address`** (both added by `0269_email_outbox_cc_bcc.sql`), `status`, `attempts` |
-| `email_log` | — | per-attempt audit, separate from the queue |
+## Rules that must not break
 
-## Sending: one queue row, one provider call
+- `recipientList()` is the one normaliser for To/Cc/Bcc — it de-duplicates case-insensitively; the same address in To and Cc would otherwise be delivered twice, and a reply-all that includes our own mailbox would loop mail back into its own thread.
+- `to_addresses`/`cc_addresses` are JSON arrays — always read them with `parseJsonArray`; an outbound row written with only one address makes every other recipient invisible in the thread and drops them from the next reply-all.
+- `email_outbox`'s schema exists in two migration trees (`migrations-pg/` for production, `migrations/` for D1 tests) — a column added to only one fails the test suite without a clear schema-related error; add it to both.
+- `GET /outbox` and `GET /outbox/:id` must stay scoped to the active company via `activeCompanyCodePred` — `email_outbox` has no `company_id`, only a `company_code` text column, and `body_html` carries live one-time invite/reset-password links, so a widened predicate is a credential leak, not just a privacy gap.
+- `scopeToCompanyIdOrOpen`'s open-on-null branch is for a helper already handed a resolved id, never for a route — a route must still call `requireActiveCompanyId` and refuse (409) when the company is unresolved, not read across every company.
+- Mobile must call the same shared modules as desktop for recipient parsing, attachments, From-address defaulting, and label colours — three of these were previously re-implemented on the phone and each copy was missing a fix already made on desktop.
 
-`sendEmail()` enqueues to `email_outbox` FIRST, then attempts an immediate
-delivery. A failure leaves the row `pending` and the `*/5` cron
-(`drainEmailOutbox`) retries it up to 3 attempts. `email_log` records every
-attempt; the outbox records the state.
+## Gotchas
 
-**ONE SEND, NEVER N SENDS.** A message with several recipients is a single
-Resend call carrying arrays. This is not a style preference — looping per
-recipient would let a mid-loop failure leave the row `pending`, and the cron
-retry would then deliver a **second copy** to everyone who already had it. The
-recipients live in one row and go out in one call; delivery either happens or
-does not.
+- Composed mail validates and stores Cc/Bcc, but the compose send path does not currently pass them to the provider — the thread renders the Cc/Bcc recipients even though they never received the mail. Reply's Cc/Bcc do go out correctly; don't assume compose behaves the same way without checking.
+- An attachment on a reply or compose is forwarded on the immediate send, but the outbox row is left retryable with no attachment column — if that send fails, the cron's retry delivers the mail BODY-ONLY. Set `outboxRetry: false` on any path where a body-only retry would be worse than no retry (the PO email path already does this).
+- A member whose only sending identity is their `email_alias` (no `email_addresses` row) gets an EMPTY `/addresses` response from the mailbox-scope endpoint — the client must offer the alias explicitly rather than assume the list is complete.
+- `replyAll` and `defaultFrom` are required (non-optional) props on the mobile reply/compose components on purpose — an omitted `replyAll` silently answers only one person on a mail that copied several, and an omitted `defaultFrom` silently falls back to the alphabetically first mailbox.
+- A new label's colour must come from `LABEL_PALETTE`, never a hand-picked hex — the backend maps anything outside its own nine-colour allow-list to brand brown, so an off-palette colour is stored differently from what the picker showed.
 
-**The retry re-sends the same audience.** `cc_address`/`bcc_address` are stored
-for exactly that reason — a retry that quietly dropped the Cc would be worse than
-the failure it is recovering from.
+## Where the code is
 
-## Recipients (2026-08-03/04)
-
-Owner: *"为什么 Email Center 里面的 email 栏那边不能加多个或者 CC 谁吗?"* and
-*"然后那些人回复我的话，我要怎么回复他?"*
-
-Before this, the whole stack was single-recipient at **four layers** — the form
-had one field, the route typed `to` as one string and validated it with a
-single-address regex, `sendEmail` took one string, and the outbox had one column.
-Resend has always accepted arrays and cc/bcc. The capability was there; nothing
-above it asked for it.
-
-`recipientList()` (`services/email.ts`) is the one normaliser: accepts a string,
-an array, or a comma/semicolon-separated string; trims; drops anything without an
-`@`; **de-duplicates case-insensitively**. That de-dup is load-bearing — the same
-address in To and Cc makes the provider deliver twice, and a reply-all that
-includes our own mailbox loops mail back into the thread it came from. Cc is
-filtered against To, and Bcc against both.
-
-### Reply-all
-
-`POST /threads/:id/reply` used to have **no recipient field at all** — it replied
-to `thread.counterparty_email` and nothing else. An email that Cc'd three people
-was answered to one of them, silently, with nothing on screen saying so.
-
-The addresses were never missing: `email_messages.cc_addresses` has stored
-inbound Cc since mig 0039 and was simply never read back.
-
-Precedence, in order:
-
-1. An explicit `to` from the caller wins outright.
-2. No explicit `to` — To becomes the newest **inbound** message's `from_address`,
-   whether or not `replyAll` was asked for. `thread.counterparty_email` is only
-   the fallback when the thread has no inbound message at all.
-3. `replyAll: true` **and** the caller sent no `cc` — Cc is rebuilt from that
-   same inbound message's To + Cc, **minus every address in the caller's mailbox
-   scope (not just this mailbox) and minus anyone already on To**. An explicit
-   `cc` is never overwritten.
-
-**Bcc is never reconstructed.** It was blind; guessing at it would expose a
-recipient the original sender chose to hide.
-
-**Bcc is never stored on the message row** either — a thread is readable by
-anyone on the mailbox, which is the wrong place to record who was quietly copied.
-It reaches the provider and stops there (and in the outbox row, which is
-ops-only, so a retry can reproduce the same send).
-
-## Rules that will bite you
-
-- **`to_addresses` / `cc_addresses` are JSON arrays**, read with
-  `parseJsonArray`. An outbound row written as `JSON.stringify([to])` — one
-  address — makes every other recipient invisible in the thread AND drops them
-  from the next reply-all.
-- **Two migration trees.** `email_outbox` exists in `migrations-pg/` (production)
-  *and* `migrations/` (D1, test-only). The outbox tests exercise the real INSERT,
-  so a column added to only one tree fails the suite with "no outbox row" rather
-  than anything mentioning a schema — see `migrations-pg/0269_email_outbox_cc_bcc.sql`
-  / `migrations/148_email_outbox_cc_bcc.sql`.
-- **From is authorised per user.** `canSendFrom()` — a non-admin may only send
-  from a mailbox in their scope or their own alias. Admins may send from any.
-- **`purpose` gates delivery at both ends.** `isChannelEnabled()` is checked when
-  sending AND again at drain time, so a channel switched off after enqueue stops
-  the retry.
-- **Attachments are not persisted.** `email_outbox` has no attachment column.
-  The Mail Center reply DOES forward attachments to Resend on the immediate send
-  (`contentBase64` → base64 content) but leaves the outbox row retryable, so a
-  drained retry sends that mail BODY-ONLY. `outboxRetry: false` — suppress the
-  outbox row entirely rather than retry it wrong — is used on the PO email path
-  (`scm/routes/mfg-purchase-orders.ts:4223`), not here.
-
-## See also
-
-- `backend/tests/emailOutbox.test.ts` — the queue's retry ladder
-- `docs/modules/` — sibling guides; `sales-order.md` is the shape to follow
-
-## Company scope on the outbox (2026-08-18)
-
-`GET /outbox`, its status roll-up, and `GET /outbox/:id` are scoped to the ACTIVE
-company. `email_outbox` has no `company_id` — its company column is
-`company_code` (mig 0094) — so the predicate is `activeCompanyCodePred(c)` from
-`backend/src/scm/lib/companyScope.ts`, which BINDS rather than interpolating and
-handles the three things that column actually holds: the code, NULL (= the base
-company, per 0094 and the cron drain), and a company id stringified by two
-callers that pass `String(row.company_id)` into `sendEmail`'s `companyCode`.
-
-**Mail admin is NOT a company scope.** `isMailAdmin` grants management rights
-over mailboxes; it never widened the company predicate and must not be made to.
-Before this, both reads returned every company's rows — including `body_html`,
-which carries the one-time `/invite/<token>` and `/reset/<token>` links minted in
-`routes/auth.ts`.
-
-### The scoping helpers this section reaches for, and the third one added 2026-08-21
-
-`activeCompanyCodePred` is one of a small family in
-`backend/src/scm/lib/companyScope.ts`, and picking the wrong member is how a
-scope quietly stops scoping. Three of them take a company **id**:
-
-| helper | takes | when the company is unresolved |
-|---|---|---|
-| `requireActiveCompanyId(c)` | the request ctx | returns `{ok:false, refusal}` — the caller REFUSES with 409. This is what a route does. |
-| `scopeToCompanyId(query, id)` | a **required** `number` | no such branch — the type will not let you reach it without an id |
-| `scopeToCompanyIdOrOpen(query, id)` | `number \| null \| undefined` | returns the query **untouched** — open, matching every company |
-
-`scopeToCompanyIdOrOpen` is new (2026-08-21). It exists because a helper that
-already holds a nullable id would otherwise write `.eq('company_id', null)`,
-and that is not "no company" — it is a **malformed filter that matches
-nothing**, so the caller silently reads an empty set instead of its own rows.
-The new helper collapses the nullable case to the same open branch
-`scopeToCompany` has always used for an unresolved context.
-
-**Do not reach for it from a route.** Its open branch means "the id was never
-resolved", which for a request is the case that must 409, not the case that
-runs wide. It is for a helper *below* the route that has already been handed an
-id — the route above it still calls `requireActiveCompanyId` and refuses.
-Reading a whole company's `email_outbox` rows is exactly the leak the
-2026-08-18 section above records, and an open branch is how you get it back.
-
-## Mobile shares the desktop's rules — it does not re-derive them (2026-08-20)
-
-`frontend/src/mobile/MobileMailCenter.tsx` is the phone twin of the desktop
-screens, and the owner's standing rule is ONE shared logic layer with the two
-surfaces differing only in presentation. Three rules had been re-implemented on
-the phone instead of imported, and each copy was missing the half that had
-already been fixed on desktop. They now come from the same modules:
-
-| rule | shared module both surfaces use |
-|---|---|
-| which mailbox the From defaults to | `frontend/src/pages/MailCenter/mail-from-default.ts` (`pickDefaultFromAddress`) |
-| the auto-sent log's fetchers | `frontend/src/pages/MailCenter/mail-actions.ts` (`fetchOutbox`, `fetchOutboxDetail`) |
-| attaching a file: read, size, extension, the refusal wording | `frontend/src/pages/MailCenter/mail-attach-files.ts` (`pickMailAttachments`, `attachmentPayload`, `humanSize`) over the pure `mail-attachments.ts` |
-| To / Cc / Bcc parsing + the "name the bad address" check | `frontend/src/pages/MailCenter/mail-recipients.ts` (`parseRecipients`, `firstInvalid`) |
-| assigning a thread to a colleague | `frontend/src/pages/MailCenter/mail-actions.ts` (`patchThreadAssignment`) |
-| a label's colour, and the colour a NEW label is created in | `frontend/src/pages/MailCenter/mail-labels.ts` (`labelColorMap`, `colorForLabel`, `chipStyle`, `LABEL_PALETTE`) |
-
-**`replyAll` is a REQUIRED prop on the phone's reply box, and `defaultFrom` is a
-REQUIRED prop on its composer.** Both were written that way on purpose, per the
-`optional-param-noop` rule in `CLAUDE.md`: an omitted `replyAll` silently
-answers one person on a mail that copied several, and an omitted `defaultFrom`
-silently falls back to `addresses[0]`, which is the ALPHABETICALLY first mailbox
-because `GET /addresses` is `ORDER BY address ASC`. Neither failure raises an
-error, so the compiler is the only thing that can catch a new call site that
-forgets one.
-
-**The member's own alias is spliced into the From list on both surfaces.**
-`getMailScope` builds `scope.addresses` from `email_addresses` rows only, while
-`canSendFrom` also accepts the caller's `users.email_alias`. A member whose only
-sending identity is that alias therefore gets an EMPTY `/addresses` response and
-must be offered the alias by the client, or they cannot send at all.
-
-**"Auto-sent" is on the phone too.** Same read-only outbox log as the desktop
-folder, same endpoint, same company scope (see the section above). It is the
-only place a FAILED customer notice is visible — the auto-sent mail goes out
-from a no-reply sender, so there is no thread and no "Sent" copy anywhere else.
-Before this the phone had a fixed six-folder list and a failed invoice email was
-invisible to anyone not at a desk.
-
-### Four more phone-only gaps, closed 2026-08-21
-
-Same class, same remedy — the shared modules are in the table above. What moved
-on the phone's SURFACE:
-
-- **Attachments on new mail and on replies.** A plain `<input type="file">`
-  (`accept="image/*,application/pdf"`), deliberately: it is what opens the
-  native Take Photo / Photo Library / Browse sheet, and the camera is the best
-  attachment source in this business. Both composers render the same `AttachRow`
-  and both refuse a bad file in the SERVER's own words, because the check is the
-  server's own `validateMailAttachments`. Attachments still are NOT persisted on
-  the outbox row (see *Rules that will bite you*) — a drained retry sends the
-  mail body-only from either surface.
-- **Cc / Bcc,** behind a "Cc / Bcc" reveal, exactly as on desktop. The phone's
-  `to` field now posts an ARRAY through `parseRecipients` rather than a raw
-  string, so a comma-separated To works there too.
-- **Assign to,** a dropdown of colleagues from `GET /api/users` (envelope
-  `{ users: [] }`). It writes BOTH `assignedToUserId` and `assignedToName` —
-  the id is what a thread is filtered by and the name is what every row
-  renders, so writing one alone leaves a thread that is assigned and shows
-  nobody. A member without `users.read` gets an empty list and a disabled
-  picker, the same degradation desktop has.
-- **Listing by label.** A second chip strip under the folder chips sets
-  `?label=` on the thread query — the same server-side filter the desktop
-  sidebar uses. Hidden on Drafts and Auto-sent, which do not read the thread
-  list. Before this a conversation could be tagged from a phone and then never
-  found from one.
-
-**A new label is created in `LABEL_PALETTE[0].value`, never a hand-picked hex.**
-`normalizeColor` (`backend/src/routes/mail-center.ts`) maps anything outside its
-nine-entry allow-list to the brand brown, so a colour off that list is stored as
-a DIFFERENT colour than the picker showed. `LABEL_PALETTE` mirrors the backend
-allow-list for exactly this reason; take colours from it on both surfaces.
+- `backend/src/routes/mail-inbound.ts` — inbound webhook + routing.
+- `backend/src/routes/mail-center.ts` — threads, messages, compose, reply.
+- `backend/src/services/email.ts` — `sendEmail`, `recipientList`, outbound queue.
+- `backend/src/scm/lib/companyScope.ts` — the company-scope helper family.
+- `frontend/src/pages/MailCenter/` — `Inbox.tsx`, `Thread.tsx`, `Compose.tsx`, and the shared modules (`mail-recipients.ts`, `mail-attach-files.ts`, `mail-from-default.ts`, `mail-labels.ts`, `mail-actions.ts`).
+- `frontend/src/mobile/MobileMailCenter.tsx` — mobile surface.

@@ -1,15 +1,5 @@
-// SalesInvoicesListV2 — Theme C redesign of the Sales Invoices listing.
-// Mirrors the DO V2 template (which mirrors SO V2); the three-headed sales
-// chain (DO / SI / DR) shares the same chrome so this file focuses on the
-// SI-specific bits: money-centric stats (Outstanding / Paid), a status flow
-// biased around payment (SENT → PARTIALLY_PAID → PAID → CANCELLED), and the
-// SI-specific cross-doc anchors (From SO + From DO instead of just From SO).
-//
-// Route: /scm/sales-invoices.
-// Data:  useSalesInvoices / useSalesInvoiceDetail / useUpdateSalesInvoiceStatus
-//        (all live in the vendored SCM lib; useRecordSiPayment is available
-//         for a follow-up drawer action, not wired here to keep this PR to
-//         chrome only.)
+// SalesInvoicesListV2 — Sales Invoices listing (mirrors DO/SO V2). SI-specific:
+// money stats, payment-biased status flow, From SO/DO anchors. /scm/sales-invoices.
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { siPaymentIntentSearch } from "./siPaymentIntent";
@@ -38,6 +28,8 @@ import {
   RotateCcw,
   ArrowRightLeft,
 } from "lucide-react";
+import { fetchSiExportRows, type SiListLine } from "../../vendor/scm/lib/si-list-export";
+import { siGridColumns } from "./si-list-columns";
 import { PageHeader } from "../../components/Layout";
 import { StatCard } from "../../components/StatCard";
 import { FilterPills } from "../../components/FilterPills";
@@ -67,6 +59,8 @@ import {
   useSalesInvoiceDetail,
   useUpdateSalesInvoiceStatus,
 } from "../../vendor/scm/lib/sales-invoice-queries";
+import { useMfgCustomers } from "../../vendor/scm/lib/sales-order-queries";
+import { useServerColumnFunnels, funnelValues } from "../../hooks/useServerColumnFunnels";
 import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { useChoice } from "../../vendor/scm/components/ChoiceDialog";
@@ -79,7 +73,10 @@ import { useAuth } from "../../auth/AuthContext";
 import { buildVariantSummary, fmtSen, fmtDate, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import { usePrintDocument } from "../../components/scm-v2/PrintChainProvider";
+import { PrintPreviewBatchModal, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
+import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { salesInvoicePrintChain } from "../../lib/printChain";
+import { customerRefOf } from '../../lib/customer-ref';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 // Subset of the full SiRow (see SalesInvoicesList.tsx for the 40-field shape).
@@ -87,6 +84,12 @@ import { salesInvoicePrintChain } from "../../lib/printChain";
 type SiRow = {
   id: string;
   invoice_number: string;
+  linked_ac_docno?: string | null; // the AutoCount invoice number
+  ac_agent?: string | null; // resolveAcAgent, the agent master's spelling
+  /** Every line, AutoCount-spelled (GET /sales-invoices?page= and /export/rows). */
+  lines?: SiListLine[];
+  subtotal_sen?: number | null;
+  tax_sen?: number | null;
   so_doc_no: string | null;
   delivery_order_id: string | null;
   /** Convert-from relation (display-only, audit R8): the readable DO number the
@@ -172,8 +175,7 @@ const fmtPctBasis = (basis: number | null | undefined): string =>
   basis == null ? "—" : `${(basis / 100).toFixed(1)}%`;
 
 // Customer's PO / Ref — same fallback chain as SO/DO V2.
-const refOf = (r: SiRow): string =>
-  r.po_doc_no || r.customer_so_no || r.ref || "—";
+const refOf = (r: SiRow): string => customerRefOf(r) || "—";
 
 const soOf = (r: SiRow): string => r.so_doc_no || "—";
 // Prefer the readable DO number (server-resolved); the raw UUID is not useful
@@ -202,11 +204,11 @@ const STATUS_TONE: Record<
   { tone: "success" | "warning" | "error" | "neutral"; label: string; bucket: StatusTab }
 > = {
   draft:           { tone: "warning", label: "Draft",       bucket: "sent" },
-  sent:            { tone: "warning", label: "Sent",        bucket: "sent" },
-  issued:          { tone: "warning", label: "Confirmed",   bucket: "sent" },
+  sent:            { tone: "warning", label: "Submitted",   bucket: "sent" },
+  issued:          { tone: "warning", label: "Submitted",   bucket: "sent" },
   overdue:         { tone: "error",   label: "Overdue",     bucket: "sent" },
-  partially_paid:  { tone: "warning", label: "Partial pay", bucket: "partial" },
-  partial:         { tone: "warning", label: "Partial pay", bucket: "partial" },
+  partially_paid:  { tone: "warning", label: "Partially paid", bucket: "partial" },
+  partial:         { tone: "warning", label: "Partially paid", bucket: "partial" },
   paid:            { tone: "success", label: "Paid",        bucket: "paid" },
   completed:       { tone: "success", label: "Paid",        bucket: "paid" },
   cancelled:       { tone: "error",   label: "Cancelled",   bucket: "cancelled" },
@@ -819,6 +821,7 @@ function SiLinesExpansion({ id }: { id: string }) {
   return (
     <DocumentLinesExpansion
       isLoading={detailQ.isLoading}
+      coverage="ready" /* one query fills this drill-down — coverage-state.tsx */
       isError={Boolean(detailQ.error)}
       errorMessage={detailQ.error instanceof Error ? detailQ.error.message : null}
       lines={lines}
@@ -863,6 +866,13 @@ export function SalesInvoicesListV2() {
   const [sort, setSort] = useState<string | undefined>(undefined);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [printingDocs, setPrintingDocs] = useState(false);
+  // Server-filterable funnels (owner 2026-09-16): Customer Name + Currency → list query (pager over the filtered set); Debtor CODE + line/MRP funnels stay client-side; Customer checklist seeded with every customer.
+  const customersQ = useMfgCustomers();
+  const customerNames = useMemo(() => [...new Set((customersQ.data?.customers ?? []).map((cst) => cst.name).filter((n): n is string => !!n))], [customersQ.data]);
+  const { serverFunnels, onColFiltersChange } = useServerColumnFunnels(
+    (cf) => ({ debtorNames: funnelValues(cf, "debtor_name"), currencies: funnelValues(cf, "currency") }),
+    () => setPageParam(0),
+  );
   const { requestTerm: debouncedSearch } = useDebouncedSearchTerm(search);
 
   // Send the active tab's BUCKET NAME as `status`; the backend resolves each
@@ -879,6 +889,7 @@ export function SalesInvoicesListV2() {
     status: apiStatus,
     q: debouncedSearch,
     sort,
+    ...serverFunnels,
   });
   const searchTransition = useSearchResultTransition({
     inputTerm: search,
@@ -979,6 +990,20 @@ export function SalesInvoicesListV2() {
     await queryClient.invalidateQueries({ queryKey: ["sales-invoices"] });
   };
 
+  /* The ONE Export (owner 2026-09-15): every invoice the list's tab + search +
+     sort match, under the caller's sales scope — not the page on screen — one
+     row per line, with the grid's visible columns, funnels and sort (DataTable
+     `exportLines`). The filter is the one the list request is built from. */
+  const exportFilters = { status: apiStatus, q: debouncedSearch, sort };
+  const exportLines = {
+    fetchRows: (need: { exportKeys: string[]; filterKeys: string[] }) => fetchSiExportRows<SiRow>(exportFilters, need),
+    linesOf: (r: SiRow): readonly SiListLine[] => r.lines ?? [],
+    sheetName: "Sales Invoices",
+    onError: (e: Error) => {
+      void notify({ title: "Export failed", body: e.message || "The export could not be completed.", tone: "error" });
+    },
+  };
+
   const goNewSi = () => navigate("/scm/sales-invoices/new");
   const goFromDo = () => navigate("/scm/sales-invoices/from-do");
   const goImport = () => navigate("/scm/sales-invoices?import=1");
@@ -1016,9 +1041,9 @@ export function SalesInvoicesListV2() {
     return { header: json.salesInvoice, items: json.items };
   };
 
-  // Batch "Print all" — one ticked SI downloads straight; several prompt
-  // combined-vs-separate.
-  const printSelectedSis = async () => {
+  // Batch "Print all" — through the same Print preview as the other lists; only
+  // the Download exit still prompts combined-vs-separate.
+  const deliverSelectedSis = async (action: PdfAction) => {
     if (printingDocs) return;
     const chosen = rows.filter((r) => selectedIds.has(r.id));
     if (chosen.length === 0) return;
@@ -1028,11 +1053,11 @@ export function SalesInvoicesListV2() {
       if (chosen.length === 1) {
         setPrintingDocs(true);
         const b = await fetchSiBundle(chosen[0]!);
-        await generateSalesInvoicePdf(b.header as never, b.items as never);
+        await generateSalesInvoicePdf(b.header as never, b.items as never, { action });
         clearSelection();
         return;
       }
-      const how = await askChoice({
+      const how = action !== "save" ? "one" : await askChoice({
         title: `Print ${chosen.length} sales invoices`,
         options: [
           { value: "one", label: "One combined PDF" },
@@ -1046,10 +1071,11 @@ export function SalesInvoicesListV2() {
       if (how === "one") {
         await generateCombinedSalesInvoicePdf(bundles as never, {
           fileName: `sales-invoices-${new Date().toISOString().slice(0, 10)}.pdf`,
+          action,
         });
       } else {
         for (const b of bundles)
-          await generateSalesInvoicePdf(b.header as never, b.items as never);
+          await generateSalesInvoicePdf(b.header as never, b.items as never, { action });
       }
       clearSelection();
     } catch (e) {
@@ -1062,6 +1088,7 @@ export function SalesInvoicesListV2() {
       setPrintingDocs(false);
     }
   };
+  const batchPrint = usePrintPreview(deliverSelectedSis);
   /* A cancelled or draft invoice takes no payment — the server refuses both
      with `not_payable`, and the menu simply does not offer what it would
      refuse. */
@@ -1112,7 +1139,7 @@ export function SalesInvoicesListV2() {
     );
   };
 
-  const columns: Column<SiRow>[] = [
+  const erpColumns: Column<SiRow>[] = [
     {
       key: "invoice_number",
       label: "SI No.",
@@ -1213,6 +1240,7 @@ export function SalesInvoicesListV2() {
       key: "debtor_name",
       label: "Customer",
       getValue: (r) => r.debtor_name,
+      filterSeedValues: customerNames, // seeded with every customer (server-filterable)
       render: (r) => (
         <span className="text-[13px] font-semibold text-ink">
           {r.debtor_name || "—"}
@@ -1235,7 +1263,8 @@ export function SalesInvoicesListV2() {
       width: "116px",
       // Exempt from the cancelled-row fade — the pill is WHY the row is grey.
       className: "dt-cancel-keep",
-      getValue: (r) => r.status,
+      // The export writes the word on screen (owner 2026-09-15).
+      getValue: (r) => statusFor(r.status).label,
       render: (r) => {
         const st = statusFor(r.status);
         return (
@@ -1661,6 +1690,9 @@ export function SalesInvoicesListV2() {
       : ([] satisfies Column<SiRow>[])),
   ];
 
+  // AutoCount's Detail Listing columns lead, in its order (si-list-columns.tsx).
+  const columns = siGridColumns<SiRow>(erpColumns);
+
   const statusPillOptions: Array<{ value: StatusTab; label: string }> = [
     { value: "all", label: `All · ${counts.all}` },
     { value: "sent", label: `Sent · ${counts.sent}` },
@@ -1700,31 +1732,35 @@ export function SalesInvoicesListV2() {
             title="Sales Invoices"
             description={`Every ${shortCompanyName(branding.companyName)} sales invoice — Sent to Paid. Click any row for the quick view; open the full page to edit or record a payment.`}
             primaryAction={
-              canWriteSi ? (
-                <div className="flex items-stretch gap-2">
-                  <Button
-                    variant="secondary"
-                    icon={<ArrowRightLeft size={14} />}
-                    onClick={goFromDo}
-                  >
-                    {transferFromLabel('do')}
-                  </Button>
-                  <div className="flex items-stretch">
+              /* Export lines is a READ under the caller's sales scope, so a
+                 reader without write access gets it too. */
+              <div className="flex items-stretch gap-2">
+                {canWriteSi ? (
+                  <>
                     <Button
-                      variant="primary"
-                      icon={<Plus size={14} />}
-                      onClick={goNewSi}
-                      className="rounded-r-none"
+                      variant="secondary"
+                      icon={<ArrowRightLeft size={14} />}
+                      onClick={goFromDo}
                     >
-                      New Sales Invoice
+                      {transferFromLabel('do')}
                     </Button>
-                    <SplitDropdown
-                      onFromDo={goFromDo}
-                      onImport={goImport}
-                    />
-                  </div>
-                </div>
-              ) : undefined
+                    <div className="flex items-stretch">
+                      <Button
+                        variant="primary"
+                        icon={<Plus size={14} />}
+                        onClick={goNewSi}
+                        className="rounded-r-none"
+                      >
+                        New Sales Invoice
+                      </Button>
+                      <SplitDropdown
+                        onFromDo={goFromDo}
+                        onImport={goImport}
+                      />
+                    </div>
+                  </>
+                ) : null}
+              </div>
             }
             secondaryActions={[
               { label: "Delivery Orders", icon: Truck, onClick: goDoList },
@@ -1833,20 +1869,28 @@ export function SalesInvoicesListV2() {
                   variant="primary"
                   icon={<Printer size={14} />}
                   disabled={printingDocs}
-                  onClick={() => void printSelectedSis()}
+                  onClick={batchPrint.openPreview}
                 >
                   {printingDocs ? "Printing…" : `Print all (${selectedIds.size})`}
                 </Button>
+                <PrintPreviewBatchModal
+                  open={batchPrint.open}
+                  onClose={batchPrint.close}
+                  docTitle="Sales Invoices"
+                  docNos={rows.filter((r) => selectedIds.has(r.id)).map((r) => r.invoice_number)}
+                  {...batchPrint.handlers}
+                />
                 <Button variant="ghost" disabled={printingDocs} onClick={clearSelection}>
                   Clear
                 </Button>
               </div>
             )}
-            <DataTable<SiRow>
+            <DataTable<SiRow, SiListLine>
               tableId="sales-invoices-v2"
               rows={rows}
               /* Feeds the stat strip so the tiles describe what is on screen. */
               onFilteredRowsChange={visible.onFilteredRowsChange}
+              onColFiltersChange={onColFiltersChange}
               loading={listLoading}
               error={error ? (error as Error).message ?? "Failed to load" : null}
               columns={columns}
@@ -1865,7 +1909,8 @@ export function SalesInvoicesListV2() {
                 onToggleAll: toggleSelectAll,
               }}
               contextMenu={siContextMenu}
-            exportName="sales-invoices"
+              exportName="sales-invoices"
+              exportLines={exportLines}
               serverSort
               onSortChange={setSortAndReset}
               emptyLabel={

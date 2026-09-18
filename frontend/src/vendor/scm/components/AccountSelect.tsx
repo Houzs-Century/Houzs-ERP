@@ -1,19 +1,20 @@
 // ----------------------------------------------------------------------------
-// AccountSelect — a chart-of-accounts <select>, grouped by account type, used
-// by the Payment Voucher pages to pick a GL account (the "Paid From" credit
-// account on the header + the expense/charge debit account per line).
+// AccountSelect — the chart-of-accounts picker used by the Payment Voucher
+// pages (the "Paid From" credit account on the header + the expense/charge
+// debit account per line).
 //
-// HOUZS VENDOR — verbatim port of 2990's apps/backend/src/components/AccountSelect.tsx.
-// Only the Account type import boundary changed (→ the vendored accounting-queries).
-//
-// Options show "<code> · <name>" and are grouped into ASSET / LIABILITY /
-// EQUITY / INCOME / EXPENSE optgroups so a long chart stays scannable. Pure
-// presentational — the caller passes the already-loaded + filtered accounts
-// (see useAccounts) and owns the value.
+// HOUZS VENDOR — began as a verbatim port of 2990's native <select>. Since
+// 2026-09-02 it is a SearchCombo underneath (the owner: 我无法快速打关键字眼
+// 搜索account): same props, same value-in/value-out contract, but you TYPE to
+// find an account instead of scrolling a 40-row dropdown. Options still show
+// "<code> · <name>" and still group ASSET / LIABILITY / EQUITY / INCOME /
+// EXPENSE, in that order. Pure presentational — the caller passes the
+// already-loaded + filtered accounts (see useAccounts) and owns the value.
 // ----------------------------------------------------------------------------
 
 import { useMemo } from 'react';
-import type { Account } from '../lib/accounting-queries';
+import { isControlSpecial, type Account } from '../lib/accounting-queries';
+import { SearchCombo, type ComboOption } from './SearchCombo';
 
 const TYPE_ORDER: Account['account_type'][] = ['ASSET', 'LIABILITY', 'EQUITY', 'INCOME', 'EXPENSE'];
 const TYPE_LABEL: Record<Account['account_type'], string> = {
@@ -39,34 +40,39 @@ export function AccountSelect({
   placeholder?: string;
   disabled?: boolean;
 }) {
-  const grouped = useMemo(() => {
+  const options = useMemo<ComboOption[]>(() => {
+    /* 父户不记账 (the owner, 2026-09-02): a header with children in this list
+       is a grouping, not a bookable account — it does not appear here at all.
+       And a CONTROL account (AutoCount SDC/SCC/SBS — AR, AP + deposits,
+       stock; the owner 2026-09-03: 锁) posts only through its module, never
+       by hand — hidden too. The server refuses both (requireLeafAccount + the
+       GL gate); hiding is the picker doing its half. The full tree lives on
+       the Chart page. */
+    const parents = new Set(accounts.map((a) => a.parent_code).filter(Boolean));
+    const leaves = accounts.filter((a) => !parents.has(a.account_code)
+      && !isControlSpecial(a.special_type));
     const by = new Map<Account['account_type'], Account[]>();
-    for (const a of accounts) {
+    for (const a of leaves) {
       const list = by.get(a.account_type) ?? [];
       list.push(a);
       by.set(a.account_type, list);
     }
     for (const list of by.values()) list.sort((x, y) => x.account_code.localeCompare(y.account_code));
-    return by;
+    return TYPE_ORDER.flatMap((t) => (by.get(t) ?? []).map((a) => ({
+      value: a.account_code,
+      label: `${a.account_code} · ${a.account_name}`,
+      group: TYPE_LABEL[t],
+    })));
   }, [accounts]);
 
   return (
-    <select
+    <SearchCombo
+      options={options}
       value={value}
-      onChange={(e) => onChange(e.target.value)}
+      onChange={onChange}
       className={className}
+      placeholder={placeholder}
       disabled={disabled}
-    >
-      <option value="">{placeholder}</option>
-      {TYPE_ORDER.filter((t) => (grouped.get(t)?.length ?? 0) > 0).map((t) => (
-        <optgroup key={t} label={TYPE_LABEL[t]}>
-          {(grouped.get(t) ?? []).map((a) => (
-            <option key={a.account_code} value={a.account_code}>
-              {a.account_code} · {a.account_name}
-            </option>
-          ))}
-        </optgroup>
-      ))}
-    </select>
+    />
   );
 }

@@ -1,16 +1,33 @@
-name: SCM write freeze (on/off)
+name: Write freeze (open / close SCM modules)
 
-# Manual. Pauses/resumes create+edit on /api/scm for normal staff while the
-# AutoCount migration lands (owner 2026-08-10). Reads stay open; owner and
-# scm.admin always bypass. Takes effect within ~30s, no deploy needed.
+# Manual. Opens or re-closes SCM modules for staff by writing
+# scm.app_config['scm.write_freeze']. Takes effect within ~30s, no deploy — the
+# middleware caches the row for that long, per isolate.
 #
-# STAGED LIFT: leave `areas` blank to freeze the company outright (today's
-# behaviour). Fill it to reopen those modules while the rest stay paused — the
-# go-live sequence. The value is validated against the real area keys before
-# anything is written, so a typo fails the job instead of reaching the row.
-# Read the current state with "SCM write freeze — status (read-only)".
-# Full runbook, including the one-command rollback:
-# docs/write-freeze-staged-lift.md
+# THIS IS THE SWITCH THAT DECIDES WHETHER THE FLOOR CAN SAVE ANYTHING. It was a
+# SQL statement in a runbook, and CLAUDE.md's standing rule is that the owner is
+# not a database console. It is also the most consequential value in app_config,
+# so it gets a plan step, a confirm phrase and a printed before/after — which a
+# paste into a console never had.
+#
+# THE VALUE IS THE WHOLE LIST OF WHAT IS OPEN, NOT AN ADDITION.
+# `scm.sales.delivery` alone opens delivery orders AND re-closes everything else
+# that is open, including scm.procurement.products, which staff have had since
+# 2026-09-02. The script prints what it CLOSES as loudly as what it opens and
+# refuses to close anything unless allow_close says so out loud.
+#
+# Read the current state, without changing it, with "Write freeze (read-only)".
+#
+# THE CONFIRM PHRASE IS PASSED ALWAYS, AND THAT IS DELIBERATE — SAID OUT LOUD SO
+# NOBODY READS IT AS A GATE IT IS NOT. The script's CONFIRM guards a human typing
+# the command directly. On this path the deliberate acts are choosing mode=apply
+# and, for the dangerous direction only, typing yes into allow_close. Pretending
+# otherwise would be the shape of docs/bugs/0700, where a workflow silently did
+# not pass the phrase its own script required, in the other direction.
+#
+# Reads stay open under every value — the middleware only gates non-GET methods
+# on /api/scm/*, so a frozen module can still be looked at.
+
 on:
   workflow_dispatch:
     inputs:
@@ -20,27 +37,33 @@ on:
         default: "prod"
         type: choice
         options: [staging, prod]
-      state:
-        description: "on = freeze writes, off = resume"
+      mode:
+        description: "plan prints the before/after and writes nothing"
         required: true
-        default: "on"
+        default: "plan"
         type: choice
-        options: ["on", "off"]
-      companies:
-        description: "Company ids to freeze (1 = Houzs only) or 'all'"
-        required: false
-        default: "1"
-        type: string
+        options: [plan, apply]
       areas:
-        description: "Modules to REOPEN, comma separated (blank = freeze everything). e.g. scm.sales.orders,scm.procurement.po"
+        description: "The FULL list of areas to be OPEN, comma separated. Or 'off' (open everything) / 'none' (freeze everything)."
+        required: true
+        default: "scm.procurement.products, scm.sales.delivery"
+        type: string
+      company:
+        description: "Company id the value is scoped to. Blank = 1 (Houzs Century)."
+        required: false
+        default: ""
+      allow_close:
+        description: "Type yes ONLY if this value is meant to take away an area that is open today."
         required: false
         default: ""
         type: string
       message:
-        description: "Message shown to staff (optional)"
+        description: "The sentence staff see when a module is frozen. Blank leaves the existing one alone."
         required: false
+        default: ""
         type: string
 
+# Its own group. A switch flip must never queue behind a deploy, or displace one.
 concurrency:
   group: set-write-freeze-${{ inputs.target }}
   cancel-in-progress: false
@@ -58,11 +81,14 @@ jobs:
       - run: npm ci
       - run: node scripts/set-write-freeze.mjs
         env:
-          STATE: ${{ inputs.state }}
-          COMPANIES: ${{ inputs.companies }}
-          AREAS: ${{ inputs.areas }}
-          MESSAGE: ${{ inputs.message }}
           DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          AREAS: ${{ inputs.areas }}
+          COMPANY: ${{ inputs.company }}
+          ALLOW_CLOSE: ${{ inputs.allow_close }}
+          MESSAGE: ${{ inputs.message }}
+          CONFIRM: SET WRITE FREEZE
+          NODE_OPTIONS: --dns-result-order=ipv4first
 
   run-prod:
     if: ${{ inputs.target == 'prod' }}
@@ -75,8 +101,11 @@ jobs:
       - run: npm ci
       - run: node scripts/set-write-freeze.mjs
         env:
-          STATE: ${{ inputs.state }}
-          COMPANIES: ${{ inputs.companies }}
-          AREAS: ${{ inputs.areas }}
-          MESSAGE: ${{ inputs.message }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          AREAS: ${{ inputs.areas }}
+          COMPANY: ${{ inputs.company }}
+          ALLOW_CLOSE: ${{ inputs.allow_close }}
+          MESSAGE: ${{ inputs.message }}
+          CONFIRM: SET WRITE FREEZE
+          NODE_OPTIONS: --dns-result-order=ipv4first

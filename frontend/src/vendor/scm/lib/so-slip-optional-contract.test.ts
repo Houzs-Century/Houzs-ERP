@@ -64,13 +64,18 @@ describe('the shared save-guard layer carries no slip rule', () => {
     }
   });
 
-  test('the guards that did NOT change are still shared by all four', () => {
+  test('the guards that did NOT change are still shared — no surface diverges', () => {
     /* Removing one rule must not quietly unhook the others from the shared
        layer — desktop and mobile diverging on a save guard is the recurring
-       bug class named in CLAUDE.md. */
+       bug class named in CLAUDE.md.
+
+       Since 2026-09-16 the BACKEND is the sole authority (owner: frontend 只是
+       显示问题). All four create surfaces — desktop, mobile, guided and
+       from-products — post their draft to the ONE validate endpoint and render
+       the returned problems[]; the backend collector (shared/so-submit-problems.ts)
+       owns the date + stock-location guards, so no surface can diverge. */
     for (const source of [desktopSource, mobileSource, guidedSource, fromProductsSource]) {
-      expect(source).toContain('soDateGuardError');
-      expect(source).toContain('soStockLocationError');
+      expect(source).toContain('/mfg-sales-orders/validate');
     }
   });
 });

@@ -185,6 +185,11 @@ function DeptCard({
             style={{ backgroundColor: `#${dept.color}` }}
           />
           <span className="truncate">{dept.name}</span>
+          {dept.code && (
+            <span className="ml-1 flex-none rounded border border-border px-1 font-mono text-[10px] font-semibold text-ink-muted">
+              {dept.code}
+            </span>
+          )}
         </span>
         <span className={cn("font-money text-[13px]", noLead ? "text-err" : "text-ink")}>
           {counts.active}
@@ -278,6 +283,9 @@ function DeptEditor({
   const dialog = useDialog();
   const [name, setName] = useState(dept?.name ?? "");
   const [description, setDescription] = useState(dept?.description ?? "");
+  // The reference-number segment (OPS-ANN-2609-0001): 2–4 letters, unique.
+  const [code, setCode] = useState(dept?.code ?? "");
+  const codeOk = code.trim() === "" || /^[A-Za-z]{2,4}$/.test(code.trim());
   const [color, setColor] = useState(dept?.color ?? DEPT_PALETTE[0]);
   // Lead + headcount target (mig-pg 0331). "" = no lead / no target.
   const [leadUserId, setLeadUserId] = useState<string>(
@@ -299,10 +307,15 @@ function DeptEditor({
   );
 
   async function save() {
-    if (!name.trim() || busy) return;
+    if (!name.trim() || busy || !codeOk) return;
     setBusy(true);
     try {
-      const base = { name: name.trim(), description: description.trim() || null, color };
+      const base = {
+        name: name.trim(),
+        description: description.trim() || null,
+        color,
+        code: code.trim() ? code.trim().toUpperCase() : null,
+      };
       if (dept) {
         // Lead / headcount ride only on the edit path — a new department has no
         // members to lead yet. "" clears each (null).
@@ -363,7 +376,7 @@ function DeptEditor({
             <Button variant="ghost" onClick={onClose}>
               Cancel
             </Button>
-            <Button variant="primary" onClick={save} disabled={busy || !name.trim()}>
+            <Button variant="primary" onClick={save} disabled={busy || !name.trim() || !codeOk}>
               {busy ? "Saving…" : "Save"}
             </Button>
           </div>
@@ -380,6 +393,25 @@ function DeptEditor({
               placeholder="e.g. Operation Department"
               className="mt-1 w-full rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-ink outline-none focus:border-primary"
             />
+          </div>
+          <div>
+            <div className="text-[11.5px] text-ink-muted">Code</div>
+            <input
+              value={code}
+              onChange={(e) => setCode(e.target.value.toUpperCase())}
+              placeholder="e.g. OPS — 2 to 4 letters"
+              maxLength={4}
+              aria-label="Department code"
+              className={cn(
+                "mt-1 w-full rounded-md border bg-surface px-3 py-2 font-mono text-[13px] uppercase text-ink outline-none focus:border-primary",
+                codeOk ? "border-border" : "border-err",
+              )}
+            />
+            <div className={cn("mt-1 text-[10.5px]", codeOk ? "text-ink-muted" : "text-err")}>
+              {codeOk
+                ? "The department segment of document reference numbers (OPS-ANN-2609-0001). Leave blank until the department issues numbered documents."
+                : "2 to 4 letters only."}
+            </div>
           </div>
           <div>
             <div className="text-[11.5px] text-ink-muted">Description</div>

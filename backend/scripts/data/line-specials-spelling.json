@@ -1,0 +1,13 @@
+{
+  "_note": "Lines carrying a special order as FREE TEXT where the picker has a code for exactly that option. One entry per AutoCount line, named by DocNo and DtlKey. The owner's rule is 「没有的才用 customs others 那边写进去」 — free text is for what the picker has NO code for, so where a code exists the line should carry the code. Nothing here invents an option: `to` must already exist in scm.special_addons, be active, carry the line's own category, and be ZERO-PRICED, or the script refuses and names the reason.",
+  "_rules": "MONEY IS EXCLUDED BY THE GATE, NOT CHECKED FOR AFTERWARDS. Only a target whose selling_price_sen AND cost_price_sen are both zero may be written, because a free option cannot reprice anything. A PRICED option stamped into variants.specials is how a document reprices itself on its next edit — the owner's 2026-09-03 ruling 甲 exists for that case and it is a different decision, so this script refuses it by name. Only `variants.specials` is written: `custom_specials` is derived from it and is nulled whenever it is empty, so a value written there directly is one edit from vanishing.",
+  "entries": [
+    {
+      "doc": "HC-SO-013496",
+      "dtlKey": "926843",
+      "from": "CHANGE8030BACKREST",
+      "to": "Change 8030 Backcushion",
+      "why": "the last of the sales-order specials differences (reconcile run 34235091322): the book says \"change 8030 back rest  Nilon bottom  HR 805-90\" and the reconcile reports \"the book asks for Change 8030 Backcushion and the line does not carry it\". MEASURED on prod, probe run 34249150622: `CHANGE8030BACKREST` is not a live option code in ANY category — the one catalogue row that matches is `Change 8030 Backcushion` itself, active, SOFA, selling 0 / cost 0. So the line is carrying a free-text spelling of an option the picker already has a free code for, and correcting the spelling moves no money. The other two specials on the line are left exactly as they are: `Nylon Fabric` is already a live code, and `Nilon bottom` is free text the picker has no code for, which is what the owner said free text is for. The order is NOT PROCEEDED."
+    }
+  ]
+}

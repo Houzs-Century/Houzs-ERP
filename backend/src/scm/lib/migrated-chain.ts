@@ -394,6 +394,31 @@ export function refuseMigratedSources(
   return { ...MIGRATED_LINE_PICK_REFUSAL, docNumbers: migrated };
 }
 
+/**
+ * TRUE when a delivery must be invoiced by mirroring AutoCount, never by hand.
+ *
+ * A DELIVERY AUTOCOUNT NEVER INVOICED IS AN ORDINARY ONE (docs/bugs/0918). Rule 2
+ * above was written on 2026-08-11, while AutoCount still raised the invoices, and
+ * every invoice path went on refusing a migrated delivery on the premise that
+ * AutoCount had billed it. After go-live the ERP raises the invoices, and on
+ * 2026-09-15 the premise held for 2 of the 122 migrated deliveries with no ERP
+ * invoice and failed for 120: delivered orders staff could not bill, HC-DO-011484
+ * among them. For those, none of the three harms the refusal guards against
+ * exists: there is no AutoCount number to keep, no revenue AutoCount booked, and
+ * no invoice in the book for the transfer to duplicate.
+ *
+ * Which deliveries AutoCount never invoiced is measured in the book and committed
+ * (`migrated-deliveries-not-invoiced.generated.ts`), because the Worker cannot
+ * read the book. A delivery not on that list keeps the refusal, so a measurement
+ * that is missing or stale refuses rather than lets through.
+ */
+export function deliveryMustMirrorAutoCount(
+  delivery: { docNo: string; migrated: boolean },
+  neverInvoicedInAutoCount: ReadonlySet<string>,
+): boolean {
+  return delivery.migrated && !neverInvoicedInAutoCount.has(delivery.docNo);
+}
+
 /** Human-readable refusal for the operator-facing convert endpoints. */
 export const MIGRATED_LINE_PICK_REFUSAL = {
   error: 'migrated_source_document',

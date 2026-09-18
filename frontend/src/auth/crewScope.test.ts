@@ -16,12 +16,11 @@
 import { describe, expect, test } from "vitest";
 import { CREW_SCOPED_POSITIONS, isCrewScopedUser } from "./crewScope";
 
-describe("isCrewScopedUser — the three crew positions, matched exactly", () => {
+describe("isCrewScopedUser — the crew positions, matched exactly", () => {
   test("the positions are exactly the ones the server force-scopes", () => {
     expect([...CREW_SCOPED_POSITIONS].sort()).toEqual([
       "helper",
       "storekeeper",
-      "storekeeper supervisor",
     ]);
   });
 
@@ -35,6 +34,10 @@ describe("isCrewScopedUser — the three crew positions, matched exactly", () =>
 
   test("a DRIVER is not — the owner kept them see-all on the projects list", () => {
     expect(isCrewScopedUser({ position_name: "Driver", permissions: [] })).toBe(false);
+  });
+
+  test("STOREKEEPER SUPERVISOR is not — the defect reviewer sees all events (owner 2026-09-15)", () => {
+    expect(isCrewScopedUser({ position_name: "Storekeeper Supervisor", permissions: [] })).toBe(false);
   });
 });
 

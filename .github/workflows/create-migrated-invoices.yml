@@ -42,6 +42,12 @@ on:
         required: false
         default: ""
         type: string
+      allow_total_mismatch:
+        description: "yes = write the invoice from the RECEIPT'S OWN LINES; do not require it to equal the book's invoice total. Owner decision 2026-09-09."
+        required: false
+        default: "no"
+        type: choice
+        options: ["no", "yes"]
 
 concurrency:
   group: create-migrated-invoices-${{ inputs.target }}
@@ -65,6 +71,7 @@ jobs:
           DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
           APPLY: ${{ inputs.mode == 'apply' && '1' || '0' }}
           CONFIRM: ${{ inputs.confirm }}
+          ALLOW_TOTAL_MISMATCH: ${{ inputs.allow_total_mismatch == 'yes' && '1' || '' }}
           KIND: ${{ inputs.kind }}
 
   run-prod:
@@ -81,4 +88,5 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           APPLY: ${{ inputs.mode == 'apply' && '1' || '0' }}
           CONFIRM: ${{ inputs.confirm }}
+          ALLOW_TOTAL_MISMATCH: ${{ inputs.allow_total_mismatch == 'yes' && '1' || '' }}
           KIND: ${{ inputs.kind }}

@@ -258,20 +258,20 @@ export function PnlCalendar({
           {showRevenue && (
             <TotalCell
               label={`${totalsLabel} Revenue`}
-              value={formatCurrency(d.totals.revenue, { compact: true })}
+              value={formatCurrency(d.totals.revenue)}
             />
           )}
           {showCost && (
             <TotalCell
               label={`${totalsLabel} Cost`}
-              value={formatCurrency(d.totals.cost, { compact: true })}
+              value={formatCurrency(d.totals.cost)}
               tone="err"
             />
           )}
           {showRevenue && showCost && (
             <TotalCell
               label={`${totalsLabel} Gross Profit`}
-              value={formatCurrency(d.totals.gross, { compact: true })}
+              value={formatCurrency(d.totals.gross)}
               tone={d.totals.gross >= 0 ? "synced" : "err"}
             />
           )}
@@ -462,7 +462,7 @@ function BucketCard({
       {hasAny ? (
         <>
           <div className={cn("font-mono text-[14px] font-extrabold leading-tight", toneClass)}>
-            {formatCurrency(headline, { compact: true })}
+            {formatCurrency(headline)}
           </div>
           <div className="h-[3px] w-full overflow-hidden rounded-full bg-bg">
             <div
@@ -472,9 +472,9 @@ function BucketCard({
           </div>
           {scope === "all" ? (
             <div className="text-[9.5px] text-ink-muted">
-              <span>Rev {formatCurrency(bucket.revenue, { compact: true })}</span>
+              <span>Rev {formatCurrency(bucket.revenue)}</span>
               {" · "}
-              <span>Cost {formatCurrency(bucket.cost, { compact: true })}</span>
+              <span>Cost {formatCurrency(bucket.cost)}</span>
             </div>
           ) : (
             <div className="text-[9.5px] text-ink-muted">click to see breakdown</div>
@@ -556,15 +556,15 @@ function BucketDetailPanel({
       {d && (
         <>
           <div className="mb-4 grid grid-cols-3 gap-3 rounded-md border border-border bg-bg/60 px-3 py-2 text-[11px]">
-            <TotalCell label="Revenue" value={formatCurrency(salesTotal, { compact: true })} />
+            <TotalCell label="Revenue" value={formatCurrency(salesTotal)} />
             <TotalCell
               label="Cost"
-              value={formatCurrency(totalCost, { compact: true })}
+              value={formatCurrency(totalCost)}
               tone="err"
             />
             <TotalCell
               label="Gross"
-              value={formatCurrency(salesTotal - totalCost, { compact: true })}
+              value={formatCurrency(salesTotal - totalCost)}
               tone={salesTotal - totalCost >= 0 ? "synced" : "err"}
             />
           </div>
@@ -598,7 +598,7 @@ function BucketDetailPanel({
                           <td className="px-2 py-1 truncate">{r.debtor_name || "—"}</td>
                           <td className="px-2 py-1">{formatDate(r.doc_date)}</td>
                           <td className="px-2 py-1 text-right font-mono font-bold text-synced">
-                            {formatCurrency(r.local_total, { compact: true })}
+                            {formatCurrency(r.local_total)}
                           </td>
                         </tr>
                       ))}
@@ -639,7 +639,7 @@ function BucketDetailPanel({
                           </div>
                         </div>
                         <span className="shrink-0 font-mono text-[11px] font-bold text-err">
-                          −{formatCurrency(l.amount, { compact: true })}
+                          −{formatCurrency(l.amount)}
                         </span>
                         <ExternalLink size={11} className="shrink-0 text-ink-muted group-hover:text-accent" />
                       </li>
@@ -701,7 +701,7 @@ function BucketDetailPanel({
                           </div>
                         </div>
                         <span className="shrink-0 font-mono text-[11px] font-bold text-err">
-                          −{formatCurrency(p.amount, { compact: true })}
+                          −{formatCurrency(p.amount)}
                         </span>
                         <ExternalLink size={11} className="shrink-0 text-ink-muted group-hover:text-accent" />
                       </li>
@@ -740,7 +740,7 @@ function BucketDetailPanel({
                           </div>
                         </div>
                         <span className="shrink-0 font-mono text-[11px] font-bold text-err">
-                          −{formatCurrency(c.po_amount, { compact: true })}
+                          −{formatCurrency(c.po_amount)}
                         </span>
                         <ExternalLink size={11} className="shrink-0 text-ink-muted group-hover:text-accent" />
                       </li>

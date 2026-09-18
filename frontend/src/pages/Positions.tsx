@@ -8,32 +8,9 @@ import { useToast } from "../hooks/useToast";
 import { useDialog } from "../hooks/useDialog";
 import { api } from "../api/client";
 import { cn } from "../lib/utils";
-import type { AccessLevel, Department, Position } from "../types";
+import type { Department, Position } from "../types";
 
-// Shape of GET /api/positions/page-access/export (backend/src/routes/positions.ts:208).
-// Declared here rather than in types.ts because that file is owned by another
-// live branch. A PARTIAL description, not an exhaustive one: only `positions` is
-// read (the confirmation count + the empty-export guard). Everything else —
-// `totals`, `orphan_keys`, `missing_keys` — is never touched and rides through to
-// the file verbatim, because the file is a photograph and this page is only the
-// shutter. `entries` (the explicit rows) and `resolved` (inheritance applied) are
-// DIFFERENT facts and neither may ever be flattened into the other.
-type PageAccessExport = {
-  generatedFrom: string;
-  generatedAt: string;
-  totals: { positions: number; explicit_rows: number; orphan_rows: number; gap_cells: number };
-  positions: Array<{
-    id: number;
-    name: string;
-    /** EXPLICIT rows only. An absent key means NO ROW (inherit the parent,
-     *  pageAccess.ts:748) — which is NOT the same fact as a row of "none". */
-    entries: Record<string, string>;
-    /** Derived: inheritance applied. Review aid, never a source of rows. */
-    resolved: Record<string, AccessLevel>;
-  }>;
-};
-
-/** Embedded in the Team (User Management) page as the "Positions" tab. */
+/** Embedded in the Team page as the "Titles" tab (a Title is a `positions` row). */
 export function PositionsTab() {
   const toast = useToast();
   const dialog = useDialog();
@@ -154,59 +131,15 @@ export function PositionsTab() {
     }
   }
 
-  // The owner's live matrix, out of prod and onto his disk in ONE click.
-  //
-  // WHY A BUTTON. The rules are moving out of this table and into backend code,
-  // and the export is their only honest source — but the endpoint needs a bearer
-  // token, which lives in his browser and nowhere anyone can hand over safely
-  // (DASHBOARD_API_KEY is a write-only Cloudflare secret; nobody can read it
-  // back, him included). Asking him to paste a token out of DevTools stalled the
-  // whole workstream for a day. He is already authenticated in this tab — so the
-  // click IS the handover, and no credential ever leaves the browser.
-  const [exporting, setExporting] = useState(false);
-  async function exportPageAccess() {
-    setExporting(true);
-    try {
-      const data = await api.get<PageAccessExport>("/api/positions/page-access/export");
-      // Refuse to hand him a plausible-looking empty file: a snapshot generated
-      // from a photograph of nothing would silently blank real people's access.
-      // Prefer a visible failure over an invisible one (the same bar the
-      // generator sets on itself, export-position-access.mjs:88-99). Explicit
-      // checks, never `?? []` — an unknown must not be defaulted into a fact.
-      if (!Array.isArray(data?.positions) || data.positions.length === 0) {
-        toast.error("The export came back with no positions — nothing was saved. Please try again.");
-        return;
-      }
-      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = "houzs-position-access.json";
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 10_000);
-      toast.success(
-        `Exported ${data.positions.length} positions — saved to your Downloads as houzs-position-access.json`,
-      );
-    } catch (e: any) {
-      // Always a sentence, never a code, and never a silent no-op: the client
-      // has already turned the HTTP status into plain language (humanHttpMessage).
-      toast.error(e?.message || "Couldn't export the page-access matrix. Please try again.");
-    } finally {
-      setExporting(false);
-    }
-  }
-
   async function deletePosition(p: Position) {
     if (p.member_count > 0) {
       toast.error(`${p.name} still has ${p.member_count} member(s) — reassign them first.`);
       return;
     }
-    if (!(await dialog.confirm(`Delete the position “${p.name}”?`))) return;
+    if (!(await dialog.confirm(`Delete the title “${p.name}”?`))) return;
     try {
       await api.del(`/api/positions/${p.id}`);
-      toast.success("Position deleted");
+      toast.success("Title deleted");
       if (selectedId === p.id) setSelectedId(null);
       positionsQ.reload();
     } catch (e: any) {
@@ -218,19 +151,11 @@ export function PositionsTab() {
     <div>
       <div className="mb-3 flex items-center justify-between gap-2">
         <span className="text-[10px] font-bold uppercase tracking-brand text-accent">
-          {positions.length} position{positions.length === 1 ? "" : "s"}
+          {positions.length} title{positions.length === 1 ? "" : "s"}
         </span>
         <div className="flex items-center gap-2">
-          <Button
-            variant="secondary"
-            onClick={exportPageAccess}
-            disabled={exporting}
-            title="Download every position's page-access rows as JSON"
-          >
-            {exporting ? "Exporting…" : "Export"}
-          </Button>
           <Button variant="brass" icon={<Plus size={14} />} onClick={() => setEditing("new")}>
-            New Position
+            New Title
           </Button>
         </div>
       </div>
@@ -336,7 +261,7 @@ export function PositionsTab() {
                       <button
                         type="button"
                         onClick={() => setEditing(p)}
-                        title="Edit position"
+                        title="Edit title"
                         aria-label={`Edit ${p.name}`}
                         className="rounded p-1 text-ink-muted transition-colors hover:bg-accent-soft hover:text-accent"
                       >
@@ -345,7 +270,7 @@ export function PositionsTab() {
                       <button
                         type="button"
                         onClick={() => deletePosition(p)}
-                        title="Delete position"
+                        title="Delete title"
                         aria-label={`Delete ${p.name}`}
                         className="rounded p-1 text-ink-muted transition-colors hover:bg-err/10 hover:text-err"
                       >
@@ -362,7 +287,7 @@ export function PositionsTab() {
           </div>
           {!positionsQ.loading && positions.length === 0 && (
             <div className="rounded-md border border-dashed border-border p-4 text-center text-[11px] text-ink-muted">
-              No positions yet — add one to start.
+              No titles yet — add one to start.
             </div>
           )}
         </div>
@@ -377,7 +302,7 @@ export function PositionsTab() {
             />
           ) : (
             <div className="rounded-lg border border-border bg-surface p-8 text-center text-[12px] text-ink-muted shadow-stone">
-              Select a position to see its details, or{" "}
+              Select a title to see its details, or{" "}
               <button
                 type="button"
                 onClick={() => setEditing("new")}
@@ -473,11 +398,11 @@ function PositionEditPanel({
       toast.error(`Still has ${position.member_count} member(s) — reassign them first.`);
       return;
     }
-    if (!(await dialog.confirm(`Delete the position “${position.name}”?`))) return;
+    if (!(await dialog.confirm(`Delete the title “${position.name}”?`))) return;
     setBusy(true);
     try {
       await api.del(`/api/positions/${position.id}`);
-      toast.success("Position deleted");
+      toast.success("Title deleted");
       onDeleted();
     } catch (e: any) {
       toast.error(e?.message || "Delete failed");
@@ -490,8 +415,8 @@ function PositionEditPanel({
     <Panel
       open
       onClose={onClose}
-      title={isNew ? "New Position" : position!.name}
-      subtitle={isNew ? "Create a position" : "Edit position"}
+      title={isNew ? "New Title" : position!.name}
+      subtitle={isNew ? "Create a title" : "Edit title"}
       width={420}
     >
       <PanelSection title="Details">
@@ -521,14 +446,14 @@ function PositionEditPanel({
             ))}
           </select>
           <div className="mt-1 text-[10px] text-ink-muted">
-            Groups the position under a department. The position drives which pages members can see.
+            Groups the title under a department. A member's title drives which pages they can see.
           </div>
         </div>
       </PanelSection>
 
       <div className="pb-1">
         <Button variant="brass" className="w-full" onClick={save} disabled={busy}>
-          {busy ? "Saving…" : isNew ? "Create Position" : "Save Changes"}
+          {busy ? "Saving…" : isNew ? "Create Title" : "Save Changes"}
         </Button>
       </div>
 
@@ -540,12 +465,12 @@ function PositionEditPanel({
             disabled={busy}
             className="inline-flex w-full items-center justify-center gap-1.5 rounded-md border border-err/30 bg-surface px-3 py-2 text-[12px] font-semibold text-err transition-colors hover:bg-err/10 disabled:opacity-50"
           >
-            <Trash2 size={13} /> Delete position
+            <Trash2 size={13} /> Delete title
             {position!.member_count > 0 ? ` (${position!.member_count} members)` : ""}
           </button>
           {position!.member_count > 0 && (
             <div className="text-[10px] text-ink-muted">
-              Reassign its {position!.member_count} member(s) to another position before deleting.
+              Reassign its {position!.member_count} member(s) to another title before deleting.
             </div>
           )}
         </PanelSection>
@@ -580,7 +505,7 @@ function PositionMatrixEditor({
             <button
               type="button"
               onClick={onEdit}
-              title="Edit position name / department"
+              title="Edit title name / department"
               className="rounded p-1 text-ink-muted transition-colors hover:bg-accent-soft hover:text-accent"
             >
               <Pencil size={12} />
@@ -597,12 +522,11 @@ function PositionMatrixEditor({
           Page access
         </div>
         <p className="text-[12px] leading-relaxed text-ink-secondary">
-          Page access is currently governed by position defaults and cannot be edited here.
-          Members of this position automatically get the pages their position is set up to see.
+          Members of this title see the pages of its cohort — set on Roles & Permissions,
+          under Titles (cohort, profile and duty).
         </p>
         <p className="mt-2 text-[11px] leading-relaxed text-ink-muted">
-          Per-page editing will return when the permissions system is reworked. You can still
-          rename this position or move it to another department with the edit button above.
+          Rename this title or move it to another department with the edit button above.
         </p>
       </div>
     </div>

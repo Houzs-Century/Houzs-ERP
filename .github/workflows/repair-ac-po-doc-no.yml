@@ -1,0 +1,57 @@
+name: Put our PO numbers back in AutoCount's PO Doc No. (plan / apply)
+
+# Queues, through the Worker's own enqueueAcOp, header-only edits that put our
+# purchase order numbers in each sales order's "PO Doc No." (SO.UDF_ToPONo) and
+# the source orders on our purchase orders (UDF_SONo, Ref), on the documents the
+# write-back had written the order's reference into
+# (backend/scripts/repair-ac-po-doc-no.mjs, docs/bugs/0926). Default 'plan'
+# reads and prints; 'apply' queues at most `limit` documents and verifies.
+#
+# Manual only, own concurrency group.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (default, queues NOTHING) or apply"
+        required: true
+        default: "plan"
+        type: choice
+        options: ["plan", "apply"]
+      limit:
+        description: "Documents per run (default 40, at most 200). The drain sends 20 a sweep"
+        required: false
+        default: "40"
+      confirm:
+        description: "Required for apply: put our purchase order numbers back in AutoCount"
+        required: false
+        default: ""
+
+concurrency:
+  group: repair-ac-po-doc-no
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      # tsx: the script imports the Worker's enqueue and readers from src/.
+      - run: npx tsx scripts/repair-ac-po-doc-no.mjs
+        env:
+          MODE: ${{ inputs.mode }}
+          LIMIT: ${{ inputs.limit }}
+          CONFIRM: ${{ inputs.confirm }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
+          NODE_OPTIONS: --dns-result-order=ipv4first

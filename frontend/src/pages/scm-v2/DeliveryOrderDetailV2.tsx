@@ -2,7 +2,7 @@
 // Order detail page, matching the 2026-07-08 design handoff prototypes.
 //
 // The 4 primary actions in the sticky header all open real modal overlays:
-//   · History         — change-history timeline
+//   · History         — the recorded change log (scm.entity_audit_log)
 //   · Relationship Map — a node-graph modal showing the document chain
 //     PO → SO → DO (current) → GRN → Invoice, NOT an inline pipeline
 //   · Print PDF       — print-preview card + Download/Print
@@ -64,14 +64,17 @@ import {
   useUpdateMfgDeliveryOrderStatus,
   useRevertMfgDeliveryOrder,
   useUpdateMfgDeliveryOrderItem,
+  useSalesOrderPayments,
 } from "../../vendor/scm/lib/delivery-order-queries";
 import { useRacks } from "../../vendor/scm/lib/warehouse-queries";
+import { useWarehouses } from "../../vendor/scm/lib/inventory-queries";
+import { warehouseLabel } from "../../vendor/scm/lib/warehouse-label";
 import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
 import { useStaffLookup } from "../../hooks/useStaffLookup";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
-import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { usePrompt } from "../../vendor/scm/components/PromptDialog";
 import { useDoRelationshipMap } from "./sales-doc-relationship-map";
+import { useDoCancelAction } from "./use-do-cancel-action";
 import {
   DocumentRelationshipMapModal,
   DocumentChoiceDialog,
@@ -91,7 +94,11 @@ import { useAuth } from "../../auth/AuthContext";
 import { canOperateDeliveryOrders, canRevertDelivery } from "../../auth/salesAccess";
 import { DO_SHIPPED_STATES } from '../../vendor/shared/do-shipped-states';
 import { HoldChip, type HoldFields } from "../../vendor/scm/components/HoldChip";
+import { customerRefOf } from '../../lib/customer-ref';
 
+import { DocumentHistoryDrawer } from "./DocumentHistoryDrawer";
+import { isFocLine } from '../../vendor/scm/lib/foc-line';
+import { CollectedOnOrderCard } from "../../vendor/scm/components/CollectedOnOrderCard";
 // ─── Header + item shapes (subset — full 40-field row lives in the list V2) ─
 
 type DoLifecycle = "shipped" | "invoiced" | "returned";
@@ -115,6 +122,9 @@ type DoHeader = HoldFields & {
   customer_so_no: string | null;
   po_doc_no: string | null;
   sales_location: string | null;
+  /* The branch that shipped it — the canonical binding beside the free-text
+     `sales_location` snapshot. Owner ruling 2026-09-07: header, not per line. */
+  warehouse_id: string | null;
   address1: string | null;
   address2: string | null;
   city: string | null;
@@ -192,6 +202,17 @@ type DoItem = {
      convert (owner 2026-08-10: 送货时照片要跟着 line). Returned by the detail
      GET's ITEM columns; rendered read-only via DoLinePhotoStrip. */
   photo_urls?: string[];
+  /* Mig 20260907T2340 — AutoCount shipped an item code the named sales order
+     does not carry (the warehouse substituted the product at dispatch). The row
+     deliberately carries NO so_item_id, so this flag is the only thing that
+     tells it apart from an ordinary ad-hoc line. Owner ruling 2026-09-07. */
+  ac_substituted?: boolean;
+  /* Per-line delivery date + whether an operator typed it (as opposed to it
+     following the header). Both have been on the detail GET's ITEM select since
+     the column existed; this page had no field for them, which is why the date
+     was editable in the form and invisible on the document. */
+  line_delivery_date?: string | null;
+  line_delivery_date_overridden?: boolean | null;
 };
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -200,8 +221,7 @@ type DoItem = {
 // (fmtMoneySen) that fed the finance-gated Totals·Margin card is gone with
 // that card (owner 2026-07-17) — the DO detail renders no money figures.
 
-const refOf = (h: DoHeader): string =>
-  h.po_doc_no || h.customer_so_no || h.ref || "—";
+const refOf = (h: DoHeader): string => customerRefOf(h) || "—";
 
 const soOf = (h: DoHeader): string => h.so_doc_no || "—";
 
@@ -596,100 +616,14 @@ function DriverSubCard({ header }: { header: DoHeader }) {
 // below both consume it.
 
 
-// ─── Modal · Change history timeline ───────────────────────────────────────
-
-function HistoryModal({
-  open,
-  onClose,
-  header,
-  itemsCount,
-}: {
-  open: boolean;
-  onClose: () => void;
-  header: DoHeader;
-  itemsCount: number;
-}) {
-  /* `created_by` is a scm.staff uuid and `issued_by_name` is never actually
-     sent by the DO detail endpoint, so the fallback chain printed the raw uuid
-     in the Change-history modal (owner 2026-07-16, same class as the Amendments
-     leak). Resolve through the shared roster; "System" stays the last resort. */
-  const { actorNameOf } = useStaffLookup();
-
-  // Derived timeline from the header's timestamps + status. A future backend
-  // history endpoint can replace this with a proper audit log; for now the
-  // detail endpoint doesn't return one, so we synthesize from what we know.
-  const events: Array<{ title: string; at: string; by: string; dot: "success" | "primary" | "muted" }> =
-    useMemo(() => {
-      const list: Array<{ title: string; at: string; by: string; dot: "success" | "primary" | "muted" }> = [];
-      list.push({
-        title: header.so_doc_no
-          ? `DO created from ${header.so_doc_no}`
-          : "DO created",
-        at: fmtDate(header.created_at || header.do_date),
-        by: header.issued_by_name || actorNameOf(header.created_by, "System"),
-        dot: "success",
-      });
-      if (header.driver_name) {
-        list.push({
-          title: `Driver ${header.driver_name} assigned`,
-          at: fmtDate(header.do_date),
-          by: header.issued_by_name || "System",
-          dot: "primary",
-        });
-      }
-      if (header.customer_delivery_date) {
-        list.push({
-          title: `Delivery scheduled ${fmtDate(header.customer_delivery_date)}`,
-          at: fmtDate(header.do_date),
-          by: header.issued_by_name || "System",
-          dot: "primary",
-        });
-      }
-      list.push({
-        title: `Status → ${EFFECTIVE_TONE[effectiveOf(header)].label}`,
-        at: fmtDate(header.do_date),
-        by: "System",
-        dot: "muted",
-      });
-      list.push({
-        title: `${itemsCount} line item${itemsCount === 1 ? "" : "s"} on this DO`,
-        at: fmtDate(header.do_date),
-        by: "System",
-        dot: "muted",
-      });
-      return list;
-    }, [header, itemsCount, actorNameOf]);
-
-  const DOT_CLS: Record<"success" | "primary" | "muted", string> = {
-    success: "bg-synced",
-    primary: "bg-primary",
-    muted: "bg-border-strong",
-  };
-
-  return (
-    <ModalOverlay open={open} onClose={onClose} title="Change history" icon={<History size={16} />}>
-      <div className="flex flex-col">
-        {events.map((e, i) => {
-          const isLast = i === events.length - 1;
-          return (
-            <div key={i} className="flex gap-3 pb-4 last:pb-0">
-              <div className="flex flex-col items-center">
-                <span className={cn("mt-1 h-2.5 w-2.5 rounded-full", DOT_CLS[e.dot])} />
-                {!isLast && <span className="mt-1 w-[2px] flex-1 bg-border-subtle" />}
-              </div>
-              <div className="min-w-0 flex-1 pb-1">
-                <div className="text-[13px] font-semibold text-ink">{e.title}</div>
-                <div className="mt-0.5 text-[11.5px] text-ink-muted">
-                  {e.at} · {e.by}
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </ModalOverlay>
-  );
-}
+/* The synthesized "Change history" modal that stood here until 2026-09-13 is
+   gone. It built its timeline out of the header's own columns — created_at, the
+   driver name, the delivery date, the status, the line count — so it showed the
+   delivery order as it is NOW, dressed as a list of things that happened. Edit a
+   date and the "history" changed retrospectively with it; nothing that was
+   actually done to the document ever appeared. Its own comment said a real
+   history endpoint should replace it, and that endpoint has been recording this
+   document all along. It is now the shared History drawer. */
 
 // Relationship map — the inline node-graph + ModalOverlay copies that used
 // to live here were moved to a shared component (see the imports at the top
@@ -712,8 +646,8 @@ export function DeliveryOrderDetailV2() {
   const updateStatus = useUpdateMfgDeliveryOrderStatus();
   const { nameOf: salespersonNameOf } = useStaffLookup();
   const notify = useNotify();
-  const askConfirm = useConfirm();
   const askPrompt = usePrompt();
+  const { cancelDo, isPending: cancelPending } = useDoCancelAction();
   const revert = useRevertMfgDeliveryOrder();
   const { user, can, pageAccess } = useAuth();
   // showCustomerPo + node click handling now live inside useDoRelationshipMap.
@@ -724,6 +658,13 @@ export function DeliveryOrderDetailV2() {
   // ONE gate, shared with the lists, the SO drawer and mobile — this was a
   // hand-copied `["edit","full"].includes(...)`, and the copies disagreed.
   const canWriteDo = canOperateDeliveryOrders(user, can, pageAccess);
+  /* Ship-from branch. The header's own warehouse_id is the canonical binding
+     (it is also step 2 of resolveDoLineWarehouses, the answer for any line with
+     no SO line behind it); `sales_location` is the free-text snapshot kept
+     beside it. Labelled through the SHARED warehouseLabel rule — code first,
+     then name — so this reads byte-identical to the SO header and the PDF.
+     Owner ruling 2026-09-07: the delivery location lives on the header. */
+  const warehousesQ = useWarehouses();
 
   const deliveryOrder =
     (detail.data as { deliveryOrder?: DoHeader } | undefined)?.deliveryOrder ??
@@ -743,7 +684,8 @@ export function DeliveryOrderDetailV2() {
     { label: deliveryOrder?.do_number ?? id ?? "Delivery Order" },
   ]);
 
-  const [modal, setModal] = useState<"history" | "relmap" | "print" | null>(null);
+  const [modal, setModal] = useState<"relmap" | "print" | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const closeModal = () => setModal(null);
   const openPrintPreview = useCallback(() => setModal("print"), []);
   useOpenPrintPreviewFromUrl(openPrintPreview, !!deliveryOrder);
@@ -759,6 +701,12 @@ export function DeliveryOrderDetailV2() {
     () => deliveryOrder?.note || deliveryOrder?.notes || null,
     [deliveryOrder?.note, deliveryOrder?.notes]
   );
+
+  /* What the ORDER has collected. Owner 2026-09-12: the money taken on the
+     sales order must be visible on the documents that come out of it, and this
+     page showed nothing at all. Read-only — carry means SHOW, not re-enter, and
+     the order stays the one place a payment is taken (docs/bugs/0850). */
+  const soPaymentsQ = useSalesOrderPayments(deliveryOrder?.so_doc_no ?? null);
 
   // Chain nodes for the shared Relationship Map modal, read from the LIVE
   // `/document-flow` graph (the SO map's source) instead of a hand-built chain.
@@ -776,6 +724,7 @@ export function DeliveryOrderDetailV2() {
             so_doc_no: deliveryOrder.so_doc_no,
             po_doc_no: deliveryOrder.po_doc_no,
             customer_so_no: deliveryOrder.customer_so_no,
+            ref: deliveryOrder.ref,
           }
         : null,
     [deliveryOrder],
@@ -783,6 +732,7 @@ export function DeliveryOrderDetailV2() {
   const {
     nodes: chainNodes,
     onNodeClick: onChainNodeClick,
+    pairing: chainPairing,
     choice: chainChoice,
     closeChoice: closeChainChoice,
     pickChoice: pickChainChoice,
@@ -794,16 +744,10 @@ export function DeliveryOrderDetailV2() {
   // filters, so the prior filtered view comes back — no context lost.
   const goBack = () => navigate(scmListReturnTo("/scm/delivery-orders"));
   const goEdit = () => id && navigate(`/scm/delivery-orders/new?edit=${id}`);
-  const doCancel = async () => {
-    if (!deliveryOrder) return;
-    if (await askConfirm({
-      title: `Cancel delivery order ${deliveryOrder.do_number}?`,
-      body: "Stock allocated to this DO will be released back to the SO.",
-      confirmLabel: "Cancel DO",
-      danger: true,
-    })) {
-      updateStatus.mutate({ id: deliveryOrder.id, status: "CANCELLED" });
-    }
+  /* Asks WHY before it cancels (owner 2026-09-14) — the prompt is the
+     confirmation, and the server refuses a cancel without the reason. */
+  const doCancel = () => {
+    if (deliveryOrder) void cancelDo(deliveryOrder.id, deliveryOrder.do_number);
   };
   /* The Ops-lead REVERT — the safety net for a wrong scan (LOADED) or an
      accidental dispatch (DISPATCHED). The plan is derived from the current
@@ -945,6 +889,20 @@ export function DeliveryOrderDetailV2() {
                 </span>
               </div>
             )}
+            {/* SUBSTITUTED AT DISPATCH (mig 20260907T2340). The delivered code
+                is not on this document's sales order — the warehouse shipped a
+                different product. Shown because the alternative is the system
+                presenting a code that silently does not match the order, which
+                is exactly what the owner's ruling was about. The line carries no
+                so_item_id, so the order's outstanding quantity is unchanged
+                until a person decides which line this replaces. */}
+            {l.ac_substituted && (
+              <div className="mt-1">
+                <Badge tone="warning" size="xs">
+                  Substituted at dispatch — not on the SO
+                </Badge>
+              </div>
+            )}
             {/* Committed batch (mig 0230) — the hard-from-DO anchor. Renders
                 ONLY when the line stored a commitment at DO creation; most
                 lines never commit, so absence renders nothing (no dash). */}
@@ -961,9 +919,9 @@ export function DeliveryOrderDetailV2() {
       key: "type",
       label: "Type",
       width: "88px",
-      getValue: (l) => (Number(l.unit_price_sen ?? 0) === 0 ? "FOC" : "Sale"),
+      getValue: (l) => (isFocLine(l) ? "FOC" : "Sale"),
       render: (l) => {
-        const isFoc = Number(l.unit_price_sen ?? 0) === 0;
+        const isFoc = isFocLine(l);
         return (
           <Badge tone={isFoc ? "warning" : "neutral"} size="xs">
             {isFoc ? "FOC" : "Sale"}
@@ -985,6 +943,41 @@ export function DeliveryOrderDetailV2() {
           </span>
         </span>
       ),
+    },
+    /* Delivery date, per line. The API has returned `line_delivery_date` on
+       every detail GET since the column went in (the ITEM select above), and
+       this page simply never rendered it — so the date an operator could see
+       and edit in the DO form was invisible on the document itself. Owner
+       2026-09-11: 「我看到是有的 可是外面没有」.
+
+       getValue is the ISO string so the column sorts, filters and exports as a
+       date; `render` formats it. An inherited date (the header's, not typed on
+       this line) is shown muted, the same distinction the form's date field
+       makes with its "Auto-inherited" styling. */
+    {
+      key: "lineDeliveryDate",
+      label: "Delivery date",
+      width: "132px",
+      getValue: (l) => l.line_delivery_date ?? "",
+      render: (l) =>
+        l.line_delivery_date ? (
+          <span
+            className={
+              l.line_delivery_date_overridden
+                ? "text-[13px] text-ink"
+                : "text-[13px] text-ink-secondary"
+            }
+            title={
+              l.line_delivery_date_overridden
+                ? "Set on this line"
+                : "Follows the header's customer delivery date"
+            }
+          >
+            {fmtDate(l.line_delivery_date)}
+          </span>
+        ) : (
+          <span className="text-[13px] text-ink-muted">—</span>
+        ),
     },
     /* Photos (mig 20260828T0746) — the line's carried SO reference shots,
        openable. Same column idiom as the SO detail's Photos column: getValue is
@@ -1156,7 +1149,7 @@ export function DeliveryOrderDetailV2() {
             <Button
               variant="ghost"
               icon={<History size={14} />}
-              onClick={() => setModal("history")}
+              onClick={() => setHistoryOpen(true)}
             >
               History
             </Button>
@@ -1179,6 +1172,7 @@ export function DeliveryOrderDetailV2() {
                 variant="danger"
                 icon={<XCircle size={14} />}
                 onClick={doCancel}
+                disabled={cancelPending}
               >
                 Cancel DO
               </Button>
@@ -1426,6 +1420,24 @@ export function DeliveryOrderDetailV2() {
                   }
                   muted={!deliveryOrder.customer_delivery_date}
                 />
+                {/* Which branch shipped it. Resolved id first, then the stored
+                    text snapshot; a document whose location the book could not
+                    answer says so rather than borrowing a default. */}
+                <Field
+                  label="Ship-from warehouse"
+                  value={
+                    warehouseLabel(
+                      (warehousesQ.data ?? []).find(
+                        (w) => w.id === deliveryOrder.warehouse_id
+                      ) ?? null
+                    ) ||
+                    deliveryOrder.sales_location ||
+                    "Not recorded"
+                  }
+                  muted={
+                    !deliveryOrder.warehouse_id && !deliveryOrder.sales_location
+                  }
+                />
               </div>
 
               {/* Driver sub-card — moved into Delivery info per the new design */}
@@ -1454,7 +1466,7 @@ export function DeliveryOrderDetailV2() {
             >
               <DataTable<DoItem>
                 tableId={`do-lines-${id}`}
-                layoutFamily={DATA_TABLE_LAYOUT_FAMILIES.deliveryOrderLines}
+                layoutFamily={DATA_TABLE_LAYOUT_FAMILIES.deliveryOrderLines} persistSort={false} persistFilters={false}
                 rows={items}
                 loading={false}
                 columns={lineColumns}
@@ -1547,6 +1559,23 @@ export function DeliveryOrderDetailV2() {
                   tone="neutral"
                 />
               </AsideCard>
+
+              {/* Collected on the ORDER — its own card rather than extra rows
+                  anywhere else, because these receipts were banked against the
+                  sales order and not against this delivery, and merging the two
+                  would lose exactly the fact the office needs: which document
+                  took the money. Read-only here; it is edited on the order. */}
+              {deliveryOrder.so_doc_no && (
+                <AsideCard title={`Collected on ${deliveryOrder.so_doc_no}`}>
+                  <CollectedOnOrderCard
+                    soDocNo={deliveryOrder.so_doc_no}
+                    payments={soPaymentsQ.data}
+                    error={soPaymentsQ.error}
+                    isLoading={soPaymentsQ.isLoading}
+                    currency={deliveryOrder.currency}
+                  />
+                </AsideCard>
+              )}
 
               {/* Recent activity — synthesized from the header's status +
                   origin info (same source as the History modal; no new
@@ -1669,12 +1698,10 @@ export function DeliveryOrderDetailV2() {
       </div>
 
       {/* Modals */}
-      <HistoryModal
-        open={modal === "history"}
-        onClose={closeModal}
-        header={deliveryOrder}
-        itemsCount={items.length}
-      />
+      {historyOpen && (
+        <DocumentHistoryDrawer doc="DELIVERY_ORDER" id={String(deliveryOrder.id)}
+          label={deliveryOrder.do_number} onClose={() => setHistoryOpen(false)} />
+      )}
       <DocumentRelationshipMapModal
         open={modal === "relmap"}
         onClose={closeModal}
@@ -1684,6 +1711,7 @@ export function DeliveryOrderDetailV2() {
           // closes; an in-app notice keeps it open (renders over the map).
           if (onChainNodeClick(n)) closeModal();
         }}
+        pairing={chainPairing}
       />
       {/* A chain slot standing for several documents opens this chooser instead
           of a notice that only named them. Picking a row navigates, so the map

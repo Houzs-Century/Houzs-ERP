@@ -18,11 +18,19 @@
    touch an array-shaped row in the first place. Seven rows have been sitting
    like this since August, invisible because nothing had ever counted them.
 
-   THE RECONSTRUCTION, and its limit. Two damage shapes are recoverable:
+   THE RECONSTRUCTION, and its limit. THREE damage shapes are recoverable:
 
      [ {...} ]      the object survived, wrapped in a one-element array.
      [ "{...}" ]    the object survived as a STRING inside a one-element array
                     — the double-encoding proper.
+     [ {...}, "{...}" ]
+                    element 0 is the object and the tail is the PATCH that was
+                    being merged when the bad bind turned the merge into an
+                    append. Where the tail only fills slots element 0 leaves
+                    null or empty, it is merged in: taking element 0 alone would
+                    drop the very measurement the write was for (2026-09-11,
+                    docs/bugs/0814). A tail that CONTRADICTS a stated value is
+                    still refused.
 
    Both are unwrapped back to the object. ANYTHING ELSE IS REFUSED and printed
    in full: more than one element, an element that is not an object and does
@@ -113,18 +121,34 @@ function unwrap(arr) {
      element 0 with an equal value. A tail that adds or contradicts anything is
      refused and the difference is named, because "take the first one" applied
      blindly is how a merge silently drops a seat height. */
+  /* A SECOND prod shape, 2026-09-11: the tail is the patch that was being
+     merged, and element 0 has NOTHING in that slot —
+
+       [ {gap: null, divanHeight: "8\"", …}, "{\"gap\":\"10\\\"\"}" ]
+
+     Two rows arrived this way when `apply-supplier-bedframe-variants.mjs` bound
+     a pre-serialized patch (docs/bugs/0814). Taking element 0 alone would be a
+     recovery that silently DROPS the measurement the write was for. Merging an
+     empty slot cannot lose anything, so a tail key whose head value is
+     null/absent/empty is MERGED; a tail key that contradicts a value element 0
+     actually states is still refused, unchanged — that is the case the original
+     rule was written for and it stays exactly as strict. */
   const extras = [];
+  const merged = { ...head };
+  const filled = [];
   for (let i = 1; i < arr.length; i++) {
     const tail = asObject(arr[i]);
     if (!tail) return { ok: false, why: `element ${i} is a ${typeof arr[i]} that is not an object` };
     for (const [k, v] of Object.entries(tail)) {
       const mine = head[k];
-      if (JSON.stringify(mine) !== JSON.stringify(v)) {
-        extras.push(`element ${i} key "${k}": ${JSON.stringify(v)} vs ${JSON.stringify(mine)} in element 0`);
-      }
+      if (JSON.stringify(mine) === JSON.stringify(v)) continue;
+      const empty = mine === undefined || mine === null || String(mine).trim() === '';
+      if (empty) { merged[k] = v; filled.push(`${k}=${JSON.stringify(v)}`); continue; }
+      extras.push(`element ${i} key "${k}": ${JSON.stringify(v)} vs ${JSON.stringify(mine)} in element 0`);
     }
   }
   if (extras.length) return { ok: false, why: `the tail is not redundant — ${extras.join('; ')}` };
+  if (filled.length) return { ok: true, obj: merged, how: `${arr.length} elements, tail merged into empty slots (${filled.join(', ')})` };
   return { ok: true, obj: head, how: `${arr.length} elements, tail proven redundant against element 0` };
 }
 

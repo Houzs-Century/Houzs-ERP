@@ -1,0 +1,60 @@
+name: Sofa + bedframe book text (read-only)
+
+# Manual, read-only. Answers the owner's 2026-09-10 question 「ok 包过sofa
+# bedframe也是要检查」 with a measurement rather than an assumption: for sofa and
+# bedframe sales-order lines, how much of AutoCount's own spec text says
+# something the ERP's purchase order does NOT already say?
+#
+# Sofa and bedframe already carry their spec as STRUCTURED variants, which
+# buildVariantSummary prints as the Fabric / SEAT / LEG / DIVAN / GAP segments
+# that ARE description2 on the purchase order. So copying the book text whole
+# into variants.extraAddonNote would make part of the supplier's document repeat
+# itself, and noise on a supplier document is how a real instruction gets
+# skipped. This job measures the trade-off; it decides nothing and writes
+# nothing.
+#
+# SELECTs only: no DDL, no writes, no transaction. Exits 0 for every legitimate
+# answer including "no rows", because the ANSWER is the output and a red job
+# reads as "the check broke".
+on:
+  workflow_dispatch:
+    inputs:
+      company_id:
+        description: "Company (1 = Houzs Century)"
+        required: false
+        default: "1"
+        type: string
+      examples:
+        description: "Worked examples printed per shape"
+        required: false
+        default: "10"
+        type: string
+
+# Its own group — a diagnostic must never queue behind, or displace, a release.
+concurrency:
+  group: sofa-bedframe-book-text
+  cancel-in-progress: false
+
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      # npm ci, not a single-package install: the script runs under tsx so it can
+      # import the canonical buildVariantSummary from src/ rather than keeping a
+      # second copy of the renderer the whole report is measured against.
+      - run: npm ci
+      - name: Measure the sofa + bedframe book text
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          EXAMPLES: ${{ inputs.examples }}
+        run: npx tsx scripts/check-sofa-bedframe-book-text.mjs

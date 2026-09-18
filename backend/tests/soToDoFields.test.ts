@@ -158,7 +158,8 @@ describe("an absent value is reported, never papered over", () => {
     expect(missing).toContain("Customer Name");
     expect(missing).toContain("Phone");
     expect(missing).toContain("Sales Location");
-    expect(missing.length).toBe(11);
+    expect(missing).toContain("Delivery Date");
+    expect(missing.length).toBe(12);
   });
 
   test("currency is the ONE default, and it matches what the commit writes", () => {

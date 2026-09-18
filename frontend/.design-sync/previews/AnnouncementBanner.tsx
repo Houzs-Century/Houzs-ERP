@@ -75,6 +75,11 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
           createdAt: new Date(Date.now() - 35 * 60 * 1000).toISOString(),
           remindedAt: null,
           category,
+          // The modal pops ONLY for a notice that requires acknowledgement
+          // (2026-09-04 redesign) — WARNING / SOP by default. Set explicitly
+          // so the General / Learning stories still render the modal in
+          // their category colours, as a flagged notice of that category would.
+          requireAck: true,
         },
       ],
       ackedIds: [],

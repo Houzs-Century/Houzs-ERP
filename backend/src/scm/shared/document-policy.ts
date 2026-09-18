@@ -19,6 +19,7 @@
  * their own decision functions. */
 
 import { changedLockedCols, identityLockedRefusal } from './header-inherited-lock';
+import { DO_HEADER_LOCK_COLS, DO_HEADER_LOCK_LABELS, DO_HEADER_OPEN_DESCRIPTION } from './do-header-lock';
 
 export type TxnDocType = 'PO' | 'GRN' | 'DO' | 'CN' | 'PCO' | 'PC_RECEIVE';
 
@@ -41,13 +42,17 @@ const CUSTOMER_LABELS = { debtor_code: 'customer code', debtor_name: 'customer',
 
 export const PO_LOCK_COLS: ReadonlySet<string> = new Set(['supplier_id', 'currency', 'purchase_location_id']);
 export const GRN_LOCK_COLS: ReadonlySet<string> = new Set(['supplier_id', 'currency', 'exchange_rate', 'allocation_method']);
-export const DO_LOCK_COLS: ReadonlySet<string> = new Set(['debtor_code', 'debtor_name', 'currency', 'sales_location', 'branding']);
-export const CN_LOCK_COLS: ReadonlySet<string> = DO_LOCK_COLS;
+/* DO: owner ruling 2026-09-14 (「我的 Sales Invoice 开了，正常上游的单就锁了」) — the
+   whole customer / address / contact / commercial block, defined in do-header-lock.ts
+   because the two screens read it too. CN keeps the 2026-08-20 minimal set it used
+   to share with the DO: that ruling was about the DO and did not move the CN. */
+export const DO_LOCK_COLS: ReadonlySet<string> = DO_HEADER_LOCK_COLS;
+export const CN_LOCK_COLS: ReadonlySet<string> = new Set(['debtor_code', 'debtor_name', 'currency', 'sales_location', 'branding']);
 export const PCO_LOCK_COLS: ReadonlySet<string> = PO_LOCK_COLS;
 export const PCR_LOCK_COLS: ReadonlySet<string> = new Set(['supplier_id', 'currency']);
 
 export const GRN_LOCK_LABELS: Record<string, string> = { supplier_id: 'supplier', currency: 'currency', exchange_rate: 'exchange rate', allocation_method: 'cost allocation method' };
-export const DO_LOCK_LABELS: Record<string, string> = CUSTOMER_LABELS;
+export const DO_LOCK_LABELS: Record<string, string> = DO_HEADER_LOCK_LABELS;
 export const CN_LOCK_LABELS: Record<string, string> = CUSTOMER_LABELS;
 export const PCO_LOCK_LABELS: Record<string, string> = SUPPLIER_LABELS;
 export const PCR_LOCK_LABELS: Record<string, string> = { supplier_id: 'supplier', currency: 'currency' };
@@ -56,7 +61,7 @@ export const PO_LOCK_LABELS: Record<string, string> = SUPPLIER_LABELS;
 export const TXN_HEADER_LOCK: Record<TxnDocType, HeaderLockPolicy> = {
   PO:  { lockCols: PO_LOCK_COLS,  labels: PO_LOCK_LABELS,  error: 'po_identity_locked',          what: 'Purchase Order',             child: 'Goods Receipt',                        ownFields: 'dates and notes' },
   GRN: { lockCols: GRN_LOCK_COLS, labels: GRN_LOCK_LABELS, error: 'grn_header_inherited_locked', what: 'GRN',                        child: 'Purchase Invoice or Purchase Return',  ownFields: 'received date, delivery-note ref, warehouse and notes' },
-  DO:  { lockCols: DO_LOCK_COLS,  labels: DO_LOCK_LABELS,  error: 'do_identity_locked',          what: 'Delivery Order',             child: 'Sales Invoice or Delivery Return',     ownFields: 'delivery dates, dispatch details, addresses and notes' },
+  DO:  { lockCols: DO_LOCK_COLS,  labels: DO_LOCK_LABELS,  error: 'do_identity_locked',          what: 'Delivery Order',             child: 'Sales Invoice or Delivery Return',     ownFields: DO_HEADER_OPEN_DESCRIPTION },
   CN:  { lockCols: CN_LOCK_COLS,  labels: CN_LOCK_LABELS,  error: 'cn_identity_locked',          what: 'Consignment Note',           child: 'Consignment Return',                   ownFields: 'delivery dates, dispatch details and notes' },
   PCO: { lockCols: PCO_LOCK_COLS, labels: PCO_LOCK_LABELS, error: 'pco_identity_locked',         what: 'Purchase-Consignment Order', child: 'PC Receive',                           ownFields: 'dates and notes' },
   PC_RECEIVE: { lockCols: PCR_LOCK_COLS, labels: PCR_LOCK_LABELS, error: 'pc_receive_identity_locked', what: 'PC Receive',            child: 'PC Return',                            ownFields: 'received date, delivery-note ref and notes' },

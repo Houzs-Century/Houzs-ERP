@@ -22,6 +22,11 @@
   ],
   "reviewed": [
     {
+      "file": "frontend/src/pages/scm-v2/ApInvoiceForm.tsx",
+      "text": "{paidSen > 0 ? ` ${fmtSen(paidSen)} is already paid against it, so the total cannot fall below that and the supplier stays.` : ''}",
+      "why": "The edit form's cap sentence for ONE named AP invoice: paidSen is the server's own paid_sen on that invoice's row, handed over with the bill - a figure the server counted, not an inference from an empty read - shown only above zero to explain why the total may not fall below it."
+    },
+    {
       "file": "backend/src/scm/lib/convert-ceilings.test.ts",
       "text": "test('a PO line amended BELOW what was already received refuses any further GRN', () => {",
       "why": "A test NAME describing a fixture, not a string any operator can see."
@@ -278,8 +283,33 @@
     },
     {
       "file": "backend/src/acc/settlement.ts",
-      "text": "reason: `This statement is already fully received — ${(payableSen / 100).toFixed(2)} across ${already.receipts.length} credit(s). If the bank shows more, it belongs to another statement.`,",
+      "text": "reason: `This statement is already fully received — ${fmtSen(payableSen)} across ${already.receipts.length} credit(s). If the bank shows more, it belongs to another statement.`,",
       "why": "A refusal spoken over receipts that were read and summed to the statement payable - the amount and credit count in the sentence are that evidence; an empty receipts read cannot reach it, since nothing sums to a non-zero payable."
+    },
+    {
+      "file": "backend/src/scm/routes/other-debtors.ts",
+      "text": "return c.json({ error: 'bill_has_receipts', message: 'Money was already received against this bill — it cannot be cancelled.' }, 409);",
+      "why": "The refusal states THIS bill's own received_sen > 0 — the document's status, not an empty read reported as finished work; the cancel is being refused, not claimed done."
+    },
+    {
+      "file": "frontend/src/pages/scm-v2/DebtorBillForm.tsx",
+      "text": "{receivedSen > 0 ? ` ${fmtSen(receivedSen)} is already received against it, so the total cannot fall below that.` : ''}",
+      "why": "The edit form's cap sentence for ONE named debtor bill: receivedSen is the server's own received_sen on that bill's row - a counted figure, not an inference from an empty read - shown only above zero to explain why the total may not fall below it."
+    },
+    {
+      "file": "frontend/src/pages/scm-v2/OtherDebtors.test.tsx",
+      "text": "expect(within(d).getByText(/is already received against it/)).toBeTruthy();",
+      "why": "A test asserting the cap sentence renders for a fixture bill that carries received_sen 20000 - it checks the form repeats the server's counted figure; nothing empty is read or claimed."
+    },
+    {
+      "file": "frontend/src/pages/scm-v2/BankMonthTab.tsx",
+      "text": "? <b style={{ color: good }}>Nothing left to decide</b>",
+      "why": "Read off the month's own lines, which arrive WITH the month (rendered only under q.data, so a failed read renders nothing): it counts the OPEN ones among them - the same lines the reconciliation panel's 'N movements on the bank still to decide' and the Still-to-decide table are built from. A month with no line at all is the quiet month (docs/bugs/0794), whose statement was filed with zero movements; nothing left is exactly true of it."
+    },
+    {
+      "file": "frontend/src/pages/scm-v2/BankMonthTab.test.tsx",
+      "text": "expect(screen.getByText('Nothing left to decide')).toBeTruthy();",
+      "why": "A test asserting the sentence renders for a fixture whose one line is POSTED - it checks the count of OPEN lines among those in hand; nothing empty is read or claimed."
     }
   ]
 }

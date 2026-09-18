@@ -18,8 +18,11 @@
 //     negative receipt.
 // ----------------------------------------------------------------------------
 
-import { postJournal, reverseJournal } from './engine';
-import { resolveRoles, customerPaymentLines } from './rules';
+import { postJournal, reverseJournal, validateJournal, type ReverseJournalResult } from './engine';
+import { resolveRoles, customerPaymentLines, orderMoneyTransferLines, type RuleLine } from './rules';
+import { accMastersCompanyId } from './masters-company';
+import { paymentEntryDrift, type EntryFact, type PaymentDrift, type PaymentFact } from './payment-drift';
+import { mytDateOf } from '../scm/lib/my-time';
 
 export type SoPaymentRow = {
   id: string;
@@ -29,11 +32,22 @@ export type SoPaymentRow = {
   merchant_provider: string | null;
   amount_sen: number;
   company_id: number | null;
+  /** A converted row (method `converted`): the cancelled order it moved money from (docs/bugs/0927). */
+  converted_from_so_doc_no?: string | null;
+  /** When the row was keyed — for a converted row, the day the money was moved, which dates the transfer; the row keeps the ORIGINAL paid_at. */
+  created_at?: string | null;
 };
+
+/** The method of a row that moved money from a cancelled order (docs/bugs/0927). */
+export const CONVERTED_METHOD = 'converted';
+/** The transfer's own source type — one entry per converted row, keyed on the row's id like SOPAY. */
+export const CONVERT_SOURCE = 'SOCONV';
 
 export type PostPaymentResult =
   | { ok: true; status: 'posted' | 'already_posted'; jeNo: string; jeId: string }
   | { ok: true; status: 'skipped_imported' | 'skipped_zero' }
+  /** The dry run's answer: the gate would take it, with these lines (docs/bugs/0652). */
+  | { ok: true; status: 'would_post'; entryDate: string; lines: RuleLine[] }
   | { ok: false; status: string; reason?: string };
 
 /** Resolve the acquirer's transit account by the DISPLAY name the sales panel
@@ -48,7 +62,7 @@ async function transitFor(
   const { data, error } = await sb
     .from('acc_acquirers')
     .select('transit_account_code, is_active')
-    .eq('company_id', companyId == null ? 1 : Number(companyId))
+    .eq('company_id', accMastersCompanyId(companyId, 'transitFor'))
     .eq('display_name', merchantProvider.trim())
     .maybeSingle();
   if (error) {
@@ -64,6 +78,18 @@ async function transitFor(
   return (data as { transit_account_code: string }).transit_account_code;
 }
 
+/** The customer's party CODE on an AR line: the debtor code when the business
+    keeps one, else the customer's own id (owner 2026-09-08 — one customer, one
+    code; 2990 keeps no debtor codes and every order carries a customer_id).
+    Blank strings count as absent. One home: the refund voucher and the repair
+    script apply the same rule. */
+export const customerPartyCode = (debtorCode: string | null | undefined, customerId: string | null | undefined): string | null => {
+  const code = String(debtorCode ?? '').trim();
+  if (code !== '') return code;
+  const id = String(customerId ?? '').trim();
+  return id !== '' ? id : null;
+};
+
 /** The date the money moved (§2.5: document date drives reports), falling back
     to nothing — a payment with no paid_at is refused rather than dated today. */
 const paymentDate = (paidAt: string | null): string | null => {
@@ -71,29 +97,42 @@ const paymentDate = (paidAt: string | null): string | null => {
   return /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : null;
 };
 
-export async function postSoPayment(sb: any, p: SoPaymentRow): Promise<PostPaymentResult> {
+export async function postSoPayment(sb: any, p: SoPaymentRow, opts: { dryRun?: boolean } = {}): Promise<PostPaymentResult> {
   if (p.method === 'imported') return { ok: true, status: 'skipped_imported' };
+  /* Money moved from a cancelled order is not money received: it books the
+     transfer between the two customers' AR, never a bank (docs/bugs/0927). */
+  if (p.method === CONVERTED_METHOD) return postConvertedPayment(sb, p, opts);
   const amountSen = Number(p.amount_sen);
   if (!Number.isInteger(amountSen) || amountSen <= 0) return { ok: true, status: 'skipped_zero' };
   const entryDate = paymentDate(p.paid_at);
   if (!entryDate) return { ok: false, status: 'bad_paid_at', reason: `payment ${p.id} has no usable paid_at` };
 
   // The SO carries the company and the customer identity for the AR leg.
+  // The order table names its customer debtor_name (and the phone, phone) —
+  // docs/bugs/0655: this read asked for customer_name, a column it never had,
+  // and every customer payment since the hook landed died here.
+  // The party CODE (owner 2026-09-08: 一个 customer 一个 account code → 做):
+  // the debtor code when the business keeps one (HOUZS), else the order's own
+  // customer_id — every 2990 order has one and no two customers share it —
+  // so the sub-ledger keys on the customer, never on a name that two people
+  // can share or one person can misspell. The name still rides beside it.
   const { data: so, error: soErr } = await sb
     .from('mfg_sales_orders')
-    .select('company_id, customer_name, customer_phone')
+    .select('company_id, debtor_name, phone, customer_id, debtor_code')
     .eq('doc_no', p.so_doc_no)
     .maybeSingle();
   if (soErr) return { ok: false, status: 'so_read_failed', reason: soErr.message };
-  const companyId = (so as { company_id?: number | null } | null)?.company_id ?? p.company_id ?? null;
-  const customerName = (so as { customer_name?: string | null } | null)?.customer_name ?? null;
+  const order = so as { company_id?: number | null; debtor_name?: string | null; customer_id?: string | null; debtor_code?: string | null } | null;
+  const companyId = order?.company_id ?? p.company_id ?? null;
+  const customerName = order?.debtor_name ?? null;
+  const customerCode = customerPartyCode(order?.debtor_code, order?.customer_id);
 
   const roles = await resolveRoles(sb, companyId);
   const transit = p.method === 'merchant' || p.method === 'installment'
     ? await transitFor(sb, companyId, p.merchant_provider)
     : null;
 
-  const r = await postJournal(sb, {
+  const input = {
     companyId,
     entryDate,
     sourceType: 'SOPAY',
@@ -103,10 +142,19 @@ export async function postSoPayment(sb: any, p: SoPaymentRow): Promise<PostPayme
       method: p.method,
       docNo: p.so_doc_no,
       transitAccountCode: transit,
-      customerCode: null,
+      customerCode,
       customerName,
     }, amountSen),
-  });
+  };
+  /* DRY RUN (docs/bugs/0652): "would this post, and if not, why?" — answered
+     by the gate's own checks with nothing written. The hook itself only ever
+     logged its refusals to the console, so this is the diagnosis it never had. */
+  if (opts.dryRun) {
+    const v = await validateJournal(sb, input);
+    if (!v.ok) return { ok: false, status: v.status, reason: v.reason };
+    return { ok: true, status: 'would_post', entryDate, lines: input.lines };
+  }
+  const r = await postJournal(sb, input);
   if (r.ok) {
     if (r.status === 'already_posted') return { ok: true, status: 'already_posted', jeNo: r.jeNo, jeId: r.jeId };
     return { ok: true, status: 'posted', jeNo: r.jeNo, jeId: r.jeId };
@@ -114,17 +162,79 @@ export async function postSoPayment(sb: any, p: SoPaymentRow): Promise<PostPayme
   return { ok: false, status: r.status, reason: r.reason };
 }
 
-/** Void the ledger entry for a DELETED payment row. Idempotent; nothing to
-    reverse (an imported/never-posted row) is a success. */
+/** The order's customer, the way every AR leg names them (docs/bugs/0655): the
+    company, the name, and the party code by the one rule. */
+async function orderCustomer(sb: any, docNo: string): Promise<{ ok: true; companyId: number | null; code: string | null; name: string | null } | { ok: false; reason: string }> {
+  const { data, error } = await sb
+    .from('mfg_sales_orders')
+    .select('company_id, debtor_name, customer_id, debtor_code')
+    .eq('doc_no', docNo)
+    .maybeSingle();
+  if (error) return { ok: false, reason: error.message };
+  const o = data as { company_id?: number | null; debtor_name?: string | null; customer_id?: string | null; debtor_code?: string | null } | null;
+  if (!o) return { ok: false, reason: `${docNo} not found` };
+  return { ok: true, companyId: o.company_id ?? null, code: customerPartyCode(o.debtor_code, o.customer_id), name: o.debtor_name ?? null };
+}
+
+/**
+ * A converted row's entry: Dr AR of the cancelled order's customer / Cr AR of
+ * the new order's customer, dated the day the money was moved (docs/bugs/0927).
+ * Keyed (SOCONV, the converted row's id), so a retry echoes. The row names
+ * the cancelled order; that order names the customer released.
+ */
+async function postConvertedPayment(sb: any, p: SoPaymentRow, opts: { dryRun?: boolean }): Promise<PostPaymentResult> {
+  const amountSen = Number(p.amount_sen);
+  if (!Number.isInteger(amountSen) || amountSen <= 0) return { ok: true, status: 'skipped_zero' };
+  const fromDocNo = String(p.converted_from_so_doc_no ?? '').trim();
+  if (!fromDocNo) return { ok: false, status: 'no_source_order', reason: `converted payment ${p.id} names no order it moved money from` };
+  const [from, to] = await Promise.all([orderCustomer(sb, fromDocNo), orderCustomer(sb, p.so_doc_no)]);
+  if (!from.ok) return { ok: false, status: 'so_read_failed', reason: from.reason };
+  if (!to.ok) return { ok: false, status: 'so_read_failed', reason: to.reason };
+  const companyId = to.companyId ?? p.company_id ?? null;
+  /* The transfer is dated the day it was made; a converted row keeps the
+     original paid_at for the screen, so the entry date rides beside it. */
+  const entryDate = (p.created_at ? mytDateOf(p.created_at) : null) ?? paymentDate(p.paid_at);
+  if (!entryDate) return { ok: false, status: 'bad_paid_at', reason: `converted payment ${p.id} has no usable date` };
+  const roles = await resolveRoles(sb, companyId);
+  const input = {
+    companyId,
+    entryDate,
+    sourceType: CONVERT_SOURCE,
+    sourceDocNo: p.id,
+    narration: `Money on ${fromDocNo} moved to ${p.so_doc_no}${to.name ? ` — ${to.name}` : ''}`,
+    lines: orderMoneyTransferLines(roles, { fromDocNo, toDocNo: p.so_doc_no, from: { code: from.code, name: from.name }, to: { code: to.code, name: to.name } }, amountSen),
+  };
+  if (opts.dryRun) {
+    const v = await validateJournal(sb, input);
+    if (!v.ok) return { ok: false, status: v.status, reason: v.reason };
+    return { ok: true, status: 'would_post', entryDate, lines: input.lines };
+  }
+  const r = await postJournal(sb, input);
+  if (r.ok) {
+    if (r.status === 'already_posted') return { ok: true, status: 'already_posted', jeNo: r.jeNo, jeId: r.jeId };
+    return { ok: true, status: 'posted', jeNo: r.jeNo, jeId: r.jeId };
+  }
+  return { ok: false, status: r.status, reason: r.reason };
+}
+
+/** Void the ledger entry for a DELETED payment row — the payment's own
+    (SOPAY), or the transfer a converted row booked (SOCONV; docs/bugs/0927).
+    Idempotent; nothing to reverse (an imported/never-posted row) is a success. */
 export async function reverseSoPayment(
   sb: any,
   paymentId: string,
   soDocNo: string,
-): Promise<{ ok: boolean; status: string; reason?: string }> {
-  return reverseJournal(sb, {
+): Promise<ReverseJournalResult> {
+  const own = await reverseJournal(sb, {
     sourceType: 'SOPAY',
     sourceDocNo: paymentId,
     narration: (orig) => `Reversal of ${orig.je_no} — payment on ${soDocNo} deleted`,
+  });
+  if (!own.ok || own.status !== 'nothing_to_reverse') return own;
+  return reverseJournal(sb, {
+    sourceType: CONVERT_SOURCE,
+    sourceDocNo: paymentId,
+    narration: (orig) => `Reversal of ${orig.je_no} — money moved to ${soDocNo} moved back`,
   });
 }
 
@@ -188,10 +298,18 @@ export async function postSiPayment(sb: any, p: SiPaymentRow): Promise<PostPayme
    post it. Batched and idempotent: safe to call repeatedly until `remaining`
    is zero; a row that fails is reported, not retried in-loop, and does not
    stop the batch (§2.14: the failure list IS the output). */
+/** One candidate's verdict in a backfill run — real or dry (docs/bugs/0652). */
+export type BackfillRow = { id: string; docNo: string; paidOn: string; method: string; amountSen: number; status: string; reason?: string };
+
 export async function backfillSoPayments(
   sb: any,
   batchLimit = 200,
-): Promise<{ ok: boolean; scanned: number; posted: number; skipped: number; failed: Array<{ id: string; status: string; reason?: string }>; remaining: number; reason?: string }> {
+  /** dryRun: put each candidate through the gate's checks and report; write nothing. */
+  opts: { dryRun?: boolean } = {},
+): Promise<{
+  ok: boolean; dryRun: boolean; scanned: number; posted: number; wouldPost: number; skipped: number;
+  failed: Array<{ id: string; status: string; reason?: string }>; rows: BackfillRow[]; remaining: number; reason?: string;
+}> {
   // Every payment id that already carries an ACTIVE entry.
   const postedIds = new Set<string>();
   {
@@ -204,7 +322,7 @@ export async function backfillSoPayments(
         .eq('source_type', 'SOPAY')
         .order('id')
         .range(from, from + page - 1);
-      if (error) return { ok: false, scanned: 0, posted: 0, skipped: 0, failed: [], remaining: -1, reason: `journal scan: ${error.message}` };
+      if (error) return { ok: false, dryRun: opts.dryRun === true, scanned: 0, posted: 0, wouldPost: 0, skipped: 0, failed: [], rows: [], remaining: -1, reason: `journal scan: ${error.message}` };
       const rows = (data ?? []) as Array<{ source_doc_no: string | null; reversed: boolean | null }>;
       for (const r of rows) if (r.source_doc_no && !r.reversed) postedIds.add(r.source_doc_no);
       if (rows.length < page) break;
@@ -220,12 +338,12 @@ export async function backfillSoPayments(
     for (;;) {
       const { data, error } = await sb
         .from('mfg_sales_order_payments')
-        .select('id, so_doc_no, paid_at, method, merchant_provider, amount_sen, company_id')
+        .select('id, so_doc_no, paid_at, method, merchant_provider, amount_sen, company_id, converted_from_so_doc_no, created_at')
         .neq('method', 'imported')
         .order('paid_at')
         .order('id')
         .range(from, from + page - 1);
-      if (error) return { ok: false, scanned: 0, posted: 0, skipped: 0, failed: [], remaining: -1, reason: `payments scan: ${error.message}` };
+      if (error) return { ok: false, dryRun: opts.dryRun === true, scanned: 0, posted: 0, wouldPost: 0, skipped: 0, failed: [], rows: [], remaining: -1, reason: `payments scan: ${error.message}` };
       const rows = (data ?? []) as SoPaymentRow[];
       for (const r of rows) if (!postedIds.has(r.id)) candidates.push(r);
       if (rows.length < page) break;
@@ -236,20 +354,30 @@ export async function backfillSoPayments(
   const batch = candidates.slice(0, batchLimit);
   let posted = 0;
   let skipped = 0;
+  let wouldPost = 0;
   const failed: Array<{ id: string; status: string; reason?: string }> = [];
+  const rows: BackfillRow[] = [];
   for (const p of batch) {
-    const r = await postSoPayment(sb, p);
+    const r = await postSoPayment(sb, p, opts);
     if (r.ok && (r.status === 'posted' || r.status === 'already_posted')) posted += 1;
+    else if (r.ok && r.status === 'would_post') wouldPost += 1;
     else if (r.ok) skipped += 1;
     else failed.push({ id: p.id, status: r.status, reason: r.reason });
+    rows.push({
+      id: p.id, docNo: p.so_doc_no, paidOn: String(p.paid_at ?? '').slice(0, 10), method: p.method,
+      amountSen: Number(p.amount_sen), status: r.status, ...(r.ok ? {} : { reason: r.reason }),
+    });
   }
 
   return {
     ok: true,
+    dryRun: opts.dryRun === true,
     scanned: candidates.length,
     posted,
+    wouldPost,
     skipped,
     failed,
+    rows,
     remaining: Math.max(0, candidates.length - batch.length) + failed.length,
   };
 }
@@ -325,11 +453,51 @@ export type UnbookedPayment = {
   method: string;
 };
 
+/** What the payment tables hold when NOTHING has ever booked — the same
+    three skips as the poster (imported, zero, undated), so the figure is the
+    money the hook should have moved and did not. */
+export type NeverBooked = { count: number; totalSen: number; firstPaidOn: string | null; lastPaidOn: string | null };
+
+async function neverBookedSummary(sb: any, companyId: number): Promise<{ ok: true; summary: NeverBooked } | { ok: false; reason: string }> {
+  const summary: NeverBooked = { count: 0, totalSen: 0, firstPaidOn: null, lastPaidOn: null };
+  const fold = (raw: Array<Record<string, any>>) => {
+    for (const r of raw) {
+      if (String(r.method ?? '') === 'imported') continue;
+      const amountSen = Number(r.amount_sen ?? 0);
+      if (!Number.isInteger(amountSen) || amountSen <= 0) continue;
+      const paidOn = String(r.paid_at ?? '').slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(paidOn)) continue;
+      summary.count += 1;
+      summary.totalSen += amountSen;
+      if (summary.firstPaidOn == null || paidOn < summary.firstPaidOn) summary.firstPaidOn = paidOn;
+      if (summary.lastPaidOn == null || paidOn > summary.lastPaidOn) summary.lastPaidOn = paidOn;
+    }
+  };
+  for (const table of ['mfg_sales_order_payments', 'sales_invoice_payments'] as const) {
+    let from = 0;
+    const page = 1000;
+    for (;;) {
+      const { data, error } = await sb.from(table)
+        .select('id, paid_at, amount_sen, method')
+        .eq('company_id', companyId)
+        .neq('method', 'imported')
+        .order('id')
+        .range(from, from + page - 1);
+      if (error) return { ok: false, reason: `${table}: ${error.message}` };
+      const rows = (data ?? []) as Array<Record<string, any>>;
+      fold(rows);
+      if (rows.length < page) break;
+      from += page;
+    }
+  }
+  return { ok: true, summary };
+}
+
 export async function unbookedPayments(
   sb: any,
   companyId: number,
 ): Promise<
-  | { ok: true; since: string | null; rows: UnbookedPayment[]; totalSen: number }
+  | { ok: true; since: string | null; rows: UnbookedPayment[]; totalSen: number; neverBooked?: NeverBooked }
   | { ok: false; reason: string }
 > {
   /* Every payment id that already carries an ACTIVE entry, and the earliest
@@ -343,7 +511,8 @@ export async function unbookedPayments(
       const { data, error } = await sb.from('journal_entries')
         .select('source_doc_no, entry_date, reversed, source_type')
         .eq('company_id', companyId)
-        .in('source_type', ['SOPAY', 'SIPAY'])
+        /* A converted row's entry is the transfer (docs/bugs/0927) — booked, by its own name. */
+        .in('source_type', ['SOPAY', 'SIPAY', CONVERT_SOURCE])
         .range(from, from + page - 1);
       if (error) return { ok: false, reason: `journal scan: ${error.message}` };
       const rows = (data ?? []) as Array<{ source_doc_no: string | null; entry_date: string | null; reversed: boolean | null }>;
@@ -359,8 +528,15 @@ export async function unbookedPayments(
   }
 
   /* No payment has EVER been booked here, so there is no boundary to draw and
-     every payment would be listed. Report the state instead of the list. */
-  if (since == null) return { ok: true, since: null, rows: [], totalSen: 0 };
+     every payment would be listed. Report the STATE instead of the list — with
+     how much money that state is holding (docs/bugs/0652: a company whose hook
+     had refused every payment read as "all of them" on the card, because
+     nothing had ever booked and so there was "no period to check"). */
+  if (since == null) {
+    const nb = await neverBookedSummary(sb, companyId);
+    if (!nb.ok) return { ok: false, reason: nb.reason };
+    return { ok: true, since: null, rows: [], totalSen: 0, neverBooked: nb.summary };
+  }
 
   const rows: UnbookedPayment[] = [];
   const take = (
@@ -398,4 +574,92 @@ export async function unbookedPayments(
   /* Oldest first: the one that has been wrong longest is the one to chase. */
   rows.sort((a, b) => a.paidOn.localeCompare(b.paidOn));
   return { ok: true, since, rows, totalSen: rows.reduce((s, r) => s + r.amountSen, 0) };
+}
+
+/* ── A payment that no longer says what its entry says ──────────────────────
+   The reads behind acc/payment-drift's decision. Both payment tables are
+   PAGED in full rather than bounded by a date: the date is one of the things
+   that can have been edited, so a window would hide exactly the row it was
+   looking for. Only ACTIVE (posted, not reversed) SOPAY/SIPAY entries count —
+   a reversed one has already been superseded and says nothing about today. */
+export async function paymentEntryDisagreements(
+  sb: any,
+  companyId: number,
+): Promise<{ ok: true; rows: PaymentDrift[]; scanned: number } | { ok: false; reason: string }> {
+  const entries: EntryFact[] = [];
+  {
+    let from = 0;
+    const page = 1000;
+    for (;;) {
+      const { data, error } = await sb.from('journal_entries')
+        .select('je_no, source_type, source_doc_no, entry_date, total_debit_sen, narration')
+        .eq('company_id', companyId)
+        .in('source_type', ['SOPAY', 'SIPAY'])
+        .eq('posted', true).eq('reversed', false)
+        .order('je_no')
+        .range(from, from + page - 1);
+      if (error) return { ok: false, reason: `journal scan: ${error.message}` };
+      const raw = (data ?? []) as Array<Record<string, any>>;
+      for (const r of raw) {
+        const docNo = String(r.source_doc_no ?? '');
+        if (!docNo) continue;
+        entries.push({
+          source: String(r.source_type) === 'SIPAY' ? 'SIPAY' : 'SOPAY',
+          sourceDocNo: docNo,
+          jeNo: String(r.je_no ?? ''),
+          entryDate: String(r.entry_date ?? '').slice(0, 10),
+          totalDebitSen: Number(r.total_debit_sen ?? 0),
+          narration: String(r.narration ?? ''),
+        });
+      }
+      if (raw.length < page) break;
+      from += page;
+    }
+  }
+  /* Nothing has been booked here, so nothing can disagree. Skipping the two
+     table scans in that case keeps a fresh company cheap. */
+  if (entries.length === 0) return { ok: true, rows: [], scanned: 0 };
+
+  const payments: PaymentFact[] = [];
+  const readAll = async (
+    table: 'mfg_sales_order_payments' | 'sales_invoice_payments',
+    source: 'SOPAY' | 'SIPAY',
+    docColumn: 'so_doc_no' | 'sales_invoice_id',
+  ): Promise<string | null> => {
+    let from = 0;
+    const page = 1000;
+    for (;;) {
+      const { data, error } = await sb.from(table)
+        .select(`id, ${docColumn}, paid_at, amount_sen, method`)
+        .eq('company_id', companyId)
+        .neq('method', 'imported')
+        .order('id')
+        .range(from, from + page - 1);
+      if (error) return `${table}: ${error.message}`;
+      const raw = (data ?? []) as Array<Record<string, any>>;
+      for (const r of raw) {
+        const id = String(r.id ?? '');
+        if (!id) continue;
+        const paidOn = String(r.paid_at ?? '').slice(0, 10);
+        payments.push({
+          source,
+          id,
+          docNo: String(r[docColumn] ?? ''),
+          paidOn: /^\d{4}-\d{2}-\d{2}$/.test(paidOn) ? paidOn : '',
+          amountSen: Number(r.amount_sen ?? 0),
+          method: String(r.method ?? ''),
+        });
+      }
+      if (raw.length < page) break;
+      from += page;
+    }
+    return null;
+  };
+
+  const soErr = await readAll('mfg_sales_order_payments', 'SOPAY', 'so_doc_no');
+  if (soErr) return { ok: false, reason: soErr };
+  const siErr = await readAll('sales_invoice_payments', 'SIPAY', 'sales_invoice_id');
+  if (siErr) return { ok: false, reason: siErr };
+
+  return { ok: true, rows: paymentEntryDrift(payments, entries), scanned: entries.length };
 }

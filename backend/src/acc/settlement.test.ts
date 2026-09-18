@@ -14,19 +14,20 @@
 import { describe, it, expect } from 'vitest';
 import { fakeSb, type Row } from '../scm/lib/fake-postgrest';
 import {
-  loadAcquirer, loadPaymentCandidates, loadSettledKeys, confirmSettlementRow,
+  loadAcquirer, loadPaymentCandidates, loadSettledKeys, confirmSettlementRow, unconfirmSettlementRow,
   postStatementCharge, postBatchReceipt, undoBatchReceipt,
+  couldBeAcquirers, clearOrphanBatch,
 } from './settlement';
 
 /* Two banks, because the interesting question is which one a payout lands in
    when the acquirer's configuration and the bank statement disagree. */
-const CHART: Row[] = ['320-0000', '330-0000', '331-0000', '930-0000'].map((code) => ({
+const CHART: Row[] = ['326-0000', '310-0010', '310-0020', '930-0000'].map((code) => ({
   account_code: code, account_name: code, account_type: 'ASSET', parent_code: null, is_active: true, company_id: 1,
 }));
 
 const ACQUIRER: Row = {
   company_id: 1, code: 'MBB', display_name: 'MBB',
-  transit_account_code: '320-0000', fee_account_code: '930-0000', bank_account_code: '330-0000',
+  transit_account_code: '326-0000', fee_account_code: '930-0000', bank_account_code: '310-0010',
   statement_format: 'CSV', has_unique_ref: true, fee_method: 'stated',
   date_tolerance_days: 3, column_map: null, is_active: true,
 };
@@ -53,6 +54,15 @@ const world = (over: Record<string, Row[]> = {}) => fakeSb(
     acc_settlement_rows: [{ ...SETTLEMENT_ROW }],
     acc_settlement_matches: [],
     acc_settlement_receipts: [],
+    /* The payments a confirm may claim. Since docs/bugs/0792 the confirm reads
+       each chosen payment back — amount and method from the row, not the
+       screen — so the world must hold them. */
+    mfg_sales_order_payments: [
+      { id: 'p1', so_doc_no: 'SO-2608-001', company_id: 1, paid_at: '2026-08-01T10:00:00', amount_sen: 100000, approval_code: 'A1', method: 'merchant', merchant_provider: 'MBB' },
+      { id: 'r1', so_doc_no: 'SO-9', company_id: 1, paid_at: '2026-08-02T10:00:00', amount_sen: -50000, approval_code: null, method: 'merchant', merchant_provider: 'MBB' },
+    ],
+    sales_invoice_payments: [],
+    mfg_so_audit_log: [],
     journal_entries: [],
     journal_entry_lines: [],
     ...over,
@@ -75,7 +85,7 @@ describe('loadAcquirer', () => {
   it('reads the company/global join, and names an acquirer this company does not use', async () => {
     const sb = world();
     const ok = await loadAcquirer(sb, 1, 'MBB');
-    expect(ok.ok && ok.acquirer.transit_account_code).toBe('320-0000');
+    expect(ok.ok && ok.acquirer.transit_account_code).toBe('326-0000');
     const missing = await loadAcquirer(sb, 1, 'GHL');
     expect(missing).toMatchObject({ ok: false });
   });
@@ -104,6 +114,64 @@ describe('loadPaymentCandidates', () => {
     const r = await loadPaymentCandidates(sb, 1, { display_name: 'MBB', date_tolerance_days: 3 }, '2026-08-01', '2026-08-03');
     expect(r.ok).toBe(false);
   });
+
+  /* The owner's first real uploads: four MBB statement lines, four matching
+     sales — every one recorded by the migration with method 'imported' and no
+     merchant tag, and every one invisible to a loader that filtered on the
+     tag. Untagged money must be OFFERED (marked, never auto-decided);
+     another acquirer's money must never be. */
+  it('offers untagged and migration-era payments, and still refuses another acquirer\'s', async () => {
+    const sb = world({
+      mfg_sales_order_payments: [
+        { id: 'p1', so_doc_no: 'SO-1', paid_at: '2026-08-01T10:00:00', amount_sen: 258800, approval_code: 'znt6187', method: 'imported', merchant_provider: null, company_id: 1 },
+        { id: 'p2', so_doc_no: 'SO-2', paid_at: '2026-08-01T11:00:00', amount_sen: 100000, approval_code: 'A2', method: 'merchant', merchant_provider: 'PBB', company_id: 1 },
+        { id: 'p3', so_doc_no: 'SO-3', paid_at: '2026-08-01T12:00:00', amount_sen: 5000, approval_code: null, method: 'merchant', merchant_provider: '  ', company_id: 1 },
+        { id: 'p4', so_doc_no: 'SO-4', paid_at: '2026-08-01T13:00:00', amount_sen: 700, approval_code: null, method: 'cash', merchant_provider: null, company_id: 1 },
+      ],
+      sales_invoice_payments: [],
+    });
+    const r = await loadPaymentCandidates(sb, 1, { display_name: 'MBB', date_tolerance_days: 3 }, '2026-08-01', '2026-08-03');
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    // p2 is PBB's stream; p4 is cash — neither belongs on an MBB screen.
+    expect(r.payments.map((p) => p.id).sort()).toEqual(['p1', 'p3']);
+    // Both reach the screen saying they are untagged (blank counts as untagged).
+    expect(r.payments.map((p) => p.merchantProvider)).toEqual([null, null]);
+  });
+
+  /* Owner 2026-09-12: cancel SO 就 cancel 不显示. The money on a cancelled order
+     is not a sale to reconcile — it waits to be converted to a new order or
+     refunded — so it is nobody's candidate, whatever its tag or date. */
+  it('leaves a cancelled order\'s money out — it is converted or refunded, not reconciled (docs/bugs/0837)', async () => {
+    const sb = world({
+      mfg_sales_order_payments: [
+        { id: 'p1', so_doc_no: 'SO-1', paid_at: '2026-08-01T10:00:00', amount_sen: 100000, approval_code: 'A1', method: 'merchant', merchant_provider: 'MBB', company_id: 1 },
+        { id: 'c1', so_doc_no: 'SO-GONE', paid_at: '2026-08-01T11:00:00', amount_sen: 143300, approval_code: 'A2', method: 'merchant', merchant_provider: 'MBB', company_id: 1 },
+      ],
+      mfg_sales_orders: [
+        { doc_no: 'SO-1', company_id: 1, debtor_name: 'Still Here', status: 'CONFIRMED' },
+        { doc_no: 'SO-GONE', company_id: 1, debtor_name: 'Gone', status: 'CANCELLED' },
+      ],
+      sales_invoice_payments: [],
+    });
+    const r = await loadPaymentCandidates(sb, 1, { display_name: 'MBB', date_tolerance_days: 3 }, '2026-08-01', '2026-08-03', ['A2']);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.payments.map((p) => p.id)).toEqual(['p1']);
+  });
+});
+
+describe('couldBeAcquirers — which recorded payment may belong to this statement', () => {
+  it('answers per method and tag', () => {
+    expect(couldBeAcquirers('merchant', 'MBB', 'MBB')).toBe(true);
+    expect(couldBeAcquirers('installment', null, 'MBB')).toBe(true);   // tag skipped at the till
+    expect(couldBeAcquirers('imported', null, 'MBB')).toBe(true);      // migration-era row
+    expect(couldBeAcquirers('imported', 'MBB', 'MBB')).toBe(true);     // stamped by an earlier confirm
+    expect(couldBeAcquirers('merchant', 'PBB', 'MBB')).toBe(false);    // someone else's stream
+    expect(couldBeAcquirers('imported', 'PBB', 'MBB')).toBe(false);
+    expect(couldBeAcquirers('cash', null, 'MBB')).toBe(false);         // cash never settles through an acquirer
+    expect(couldBeAcquirers('transfer', 'MBB', 'MBB')).toBe(false);
+  });
 });
 
 describe('loadSettledKeys', () => {
@@ -126,10 +194,10 @@ describe('confirmSettlementRow — reconciling the card machine books the FEE, a
     const lines = sb.tables.journal_entry_lines;
     expect(lines).toHaveLength(2);
     expect(lines.find((l) => l.account_code === '930-0000')).toMatchObject({ debit_sen: 1500 });
-    expect(lines.find((l) => l.account_code === '320-0000')).toMatchObject({ credit_sen: 1500 });
+    expect(lines.find((l) => l.account_code === '326-0000')).toMatchObject({ credit_sen: 1500 });
     /* The bank is NOT touched here: the money is still with the acquirer on
        this day, and saying otherwise is the lie the owner caught. */
-    expect(lines.some((l) => l.account_code === '330-0000')).toBe(false);
+    expect(lines.some((l) => l.account_code === '310-0010')).toBe(false);
 
     const je = sb.tables.journal_entries[0];
     expect(je).toMatchObject({ source_type: 'SETTLE', source_doc_no: 'SETTLE-7', entry_date: '2026-08-03' });
@@ -151,11 +219,14 @@ describe('confirmSettlementRow — reconciling the card machine books the FEE, a
     expect(sb.tables.acc_settlement_rows[0]).toMatchObject({ bucket: 'MATCHED', posted_je_no: null });
   });
 
+  /* The payment's OWN amount is what must add up — the screen's figure is
+     ignored (docs/bugs/0792): here the screen claims the full RM 1,000.00 over
+     a payment the books hold at RM 900.00. */
   it('refuses a selection that does not add up, and names the difference', async () => {
-    const sb = world();
+    const sb = world({ mfg_sales_order_payments: [{ id: 'p1', so_doc_no: 'SO-1', company_id: 1, amount_sen: 90000, method: 'merchant', merchant_provider: 'MBB' }] });
     const r = await confirmSettlementRow(sb, {
       companyId: 1, rowId: 7, matchReason: 'manual', userName: null,
-      payments: [{ source: 'SOPAY', id: 'p1', docNo: 'SO-1', amountSen: 90000 }],
+      payments: [{ source: 'SOPAY', id: 'p1', docNo: 'SO-1', amountSen: 100000 }],
     });
     expect(r).toMatchObject({ ok: false, status: 'amount_mismatch' });
     expect((r as { reason: string }).reason).toMatch(/-100\.00/);
@@ -203,7 +274,184 @@ describe('confirmSettlementRow — reconciling the card machine books the FEE, a
     expect(r).toMatchObject({ ok: true, status: 'confirmed' });
     const lines = sb.tables.journal_entry_lines;
     expect(lines.find((l) => l.account_code === '930-0000')).toMatchObject({ credit_sen: 750 });
-    expect(lines.find((l) => l.account_code === '320-0000')).toMatchObject({ debit_sen: 750 });
+    expect(lines.find((l) => l.account_code === '326-0000')).toMatchObject({ debit_sen: 750 });
+  });
+});
+
+describe('confirmSettlementRow — stamping the merchant tag on', () => {
+  /* The merchant's statement has just named whose money this is, and the
+     statement outranks the till (docs/bugs/0940, owner 2026-09-15: 要): an
+     untagged payment gets the tag, a payment keyed under the WRONG bank is
+     corrected — its account sheet following when it was the bank's own name —
+     with a line in the order's history, and a right one is left alone. */
+  it('writes the acquirer onto an untagged payment, corrects a wrongly tagged one with a history line, leaves a right one alone', async () => {
+    const sb = world({
+      mfg_sales_order_payments: [
+        { id: 'p1', company_id: 1, method: 'imported', merchant_provider: null, amount_sen: 60000 },
+        { id: 'p2', so_doc_no: 'SO-2', company_id: 1, method: 'merchant', merchant_provider: 'PBB', account_sheet: 'PBB', amount_sen: 40000 },
+      ],
+    });
+    const r = await confirmSettlementRow(sb, {
+      companyId: 1,
+      rowId: 7,
+      payments: [
+        { source: 'SOPAY', id: 'p1', docNo: 'SO-1', amountSen: 60000 },
+        { source: 'SOPAY', id: 'p2', docNo: 'SO-2', amountSen: 40000 },
+      ],
+      matchReason: 'manual',
+      userName: 'Ah Chew',
+    });
+    expect(r).toMatchObject({ ok: true, status: 'confirmed' });
+    expect(sb.tables.mfg_sales_order_payments.find((p) => p.id === 'p1')).toMatchObject({ merchant_provider: 'MBB' });
+    expect(sb.tables.mfg_sales_order_payments.find((p) => p.id === 'p2')).toMatchObject({ merchant_provider: 'MBB', account_sheet: 'MBB' });
+    /* The correction is on the record — the untagged one was never wrong, so no line for it. */
+    const audit = sb.tables.mfg_so_audit_log.filter((a) => a.action === 'UPDATE_PAYMENT');
+    expect(audit).toHaveLength(1);
+    expect(audit[0]).toMatchObject({ so_doc_no: 'SO-2', payment_id: 'p2', source: 'automation', note: 'Bank corrected by the MBB settlement match: PBB → MBB' });
+    expect(audit[0]!.field_changes).toEqual([{ field: 'merchantProvider', from: 'PBB', to: 'MBB' }, { field: 'accountSheet', from: 'PBB', to: 'MBB' }]);
+  });
+
+  it('a hand-typed account sheet is kept when the bank is corrected; a right tag writes nothing', async () => {
+    const sb = world({
+      mfg_sales_order_payments: [
+        { id: 'p1', so_doc_no: 'SO-1', company_id: 1, method: 'merchant', merchant_provider: 'MBB', account_sheet: 'MBB', amount_sen: 60000 },
+        { id: 'p2', so_doc_no: 'SO-2', company_id: 1, method: 'merchant', merchant_provider: 'PBB', account_sheet: 'Counter 3', amount_sen: 40000 },
+      ],
+    });
+    const r = await confirmSettlementRow(sb, {
+      companyId: 1, rowId: 7, matchReason: 'manual', userName: 'Ah Chew',
+      payments: [{ source: 'SOPAY', id: 'p1', docNo: 'SO-1', amountSen: 60000 }, { source: 'SOPAY', id: 'p2', docNo: 'SO-2', amountSen: 40000 }],
+    });
+    expect(r).toMatchObject({ ok: true, status: 'confirmed' });
+    expect(sb.tables.mfg_sales_order_payments.find((p) => p.id === 'p2')).toMatchObject({ merchant_provider: 'MBB', account_sheet: 'Counter 3' });
+    expect(sb.tables.mfg_so_audit_log.filter((a) => a.action === 'UPDATE_PAYMENT').map((a) => a.so_doc_no)).toEqual(['SO-2']);
+  });
+});
+
+/* 做 B, then 做 2 (owner, 2026-09-07/08: 我想要拆账户 … match 了就不见). A card
+   payment keyed in without a bank was booked to the GENERIC clearing account
+   because nobody could say whose it was; the merchant's statement has now
+   named it, so confirming moves the money onto that merchant's own clearing
+   account — and the payout clears it from there. */
+describe("confirmSettlementRow — money keyed in without a bank moves to the merchant's own clearing account", () => {
+  const OWN_CHART: Row[] = [
+    ...CHART,
+    { account_code: '326-0010', account_name: 'CLEARING — MBB', account_type: 'ASSET', parent_code: null, is_active: true, company_id: 1 },
+  ];
+  const OWN_ACCOUNT: Row = { ...ACQUIRER, transit_account_code: '326-0010' };
+  /* The payment's own booking, the day it was keyed in: Dr clearing / Cr AR. */
+  const booked = (id: string, amountSen: number, account = '326-0000'): Record<string, Row[]> => ({
+    journal_entries: [{ id: `je-${id}`, company_id: 1, je_no: `JE-${id}`, entry_date: '2026-08-01', source_type: 'SOPAY', source_doc_no: id, posted: true, reversed: false }],
+    journal_entry_lines: [
+      { id: `l-${id}-1`, journal_entry_id: `je-${id}`, company_id: 1, line_no: 1, account_code: account, debit_sen: amountSen, credit_sen: 0 },
+      { id: `l-${id}-2`, journal_entry_id: `je-${id}`, company_id: 1, line_no: 2, account_code: '300-0000', debit_sen: 0, credit_sen: amountSen },
+    ],
+  });
+  const confirm = (sb: ReturnType<typeof world>) =>
+    confirmSettlementRow(sb, { companyId: 1, rowId: 7, payments: ONE_PAYMENT, matchReason: 'ref', userName: 'Ah Chew' });
+
+  it("posts Dr own clearing / Cr generic for what the payment booked there, dated by the transaction, keyed to the line", async () => {
+    const sb = world({ accounts: OWN_CHART, acc_acquirers: [OWN_ACCOUNT], ...booked('p1', 100000) });
+    const r = await confirm(sb);
+    expect(r).toMatchObject({ ok: true, status: 'confirmed', movedSen: 100000 });
+    const move = sb.tables.journal_entries.find((e) => e.source_type === 'SETTLEMOVE')!;
+    expect(move).toMatchObject({ source_doc_no: 'SETTLEMOVE-7', entry_date: '2026-08-03', posted: true });
+    expect((r as { moveJeNo?: string }).moveJeNo).toBe(move.je_no);
+    const moveLines = sb.tables.journal_entry_lines.filter((l) => l.journal_entry_id === move.id);
+    expect(moveLines.find((l) => l.account_code === '326-0010')).toMatchObject({ debit_sen: 100000 });
+    expect(moveLines.find((l) => l.account_code === '326-0000')).toMatchObject({ credit_sen: 100000 });
+    /* The generic account is empty of this money; the merchant's own account
+       holds the net after its fee — which is exactly what the payout clears. */
+    expect(balance(sb, '326-0000')).toBe(0);
+    expect(balance(sb, '326-0010')).toBe(98500);
+  });
+
+  it("moves nothing when the payment already sits on the merchant's account, when the merchant sits on the generic account, or when nothing was booked", async () => {
+    const own = world({ accounts: OWN_CHART, acc_acquirers: [OWN_ACCOUNT], ...booked('p1', 100000, '326-0010') });
+    await confirm(own);
+    expect(own.tables.journal_entries.some((e) => e.source_type === 'SETTLEMOVE')).toBe(false);
+
+    const generic = world(booked('p1', 100000)); // ACQUIRER itself sits on 326-0000 (CIMB, AEON, HOUZS)
+    await confirm(generic);
+    expect(generic.tables.journal_entries.some((e) => e.source_type === 'SETTLEMOVE')).toBe(false);
+
+    const unbooked = world({ accounts: OWN_CHART, acc_acquirers: [OWN_ACCOUNT] });
+    expect(await confirm(unbooked)).toMatchObject({ ok: true, status: 'confirmed' });
+    expect(unbooked.tables.journal_entries.some((e) => e.source_type === 'SETTLEMOVE')).toBe(false);
+  });
+
+  /* docs/bugs/0940 — money keyed under the WRONG bank sits on that bank's
+     clearing account; the statement that names it moves it from there. */
+  it(`moves money keyed on another bank's clearing account too — one entry, one credit per account it leaves`, async () => {
+    const chart = [...OWN_CHART, { account_code: '326-0020', account_name: 'CLEARING — PBB', account_type: 'ASSET', parent_code: null, is_active: true, company_id: 1 }];
+    const pbb: Row = { ...ACQUIRER, code: 'PBB', display_name: 'PBB', transit_account_code: '326-0020' };
+    const two = booked('p1', 60000, '326-0020');
+    const other = booked('p2', 40000);
+    const sb = world({
+      accounts: chart, acc_acquirers: [OWN_ACCOUNT, pbb],
+      mfg_sales_order_payments: [
+        { id: 'p1', so_doc_no: 'SO-1', company_id: 1, method: 'merchant', merchant_provider: 'PBB', amount_sen: 60000 },
+        { id: 'p2', so_doc_no: 'SO-2', company_id: 1, method: 'merchant', merchant_provider: null, amount_sen: 40000 },
+      ],
+      journal_entries: [...two.journal_entries!, ...other.journal_entries!],
+      journal_entry_lines: [...two.journal_entry_lines!, ...other.journal_entry_lines!],
+    });
+    const r = await confirmSettlementRow(sb, {
+      companyId: 1, rowId: 7, matchReason: 'ref', userName: 'Ah Chew',
+      payments: [{ source: 'SOPAY', id: 'p1', docNo: 'SO-1', amountSen: 60000 }, { source: 'SOPAY', id: 'p2', docNo: 'SO-2', amountSen: 40000 }],
+    });
+    expect(r).toMatchObject({ ok: true, status: 'confirmed', movedSen: 100000 });
+    const moves = sb.tables.journal_entries.filter((e) => e.source_type === 'SETTLEMOVE');
+    expect(moves).toHaveLength(1);
+    expect(String(moves[0]!.narration)).toContain('keyed in without a bank: moved from 326-0000 to 326-0010');
+    expect(String(moves[0]!.narration)).toContain('keyed on 326-0020: moved from 326-0020 to 326-0010');
+    const lines = sb.tables.journal_entry_lines.filter((l) => l.journal_entry_id === moves[0]!.id);
+    expect(lines.find((l) => l.account_code === '326-0010')).toMatchObject({ debit_sen: 100000, credit_sen: 0 });
+    expect(lines.find((l) => l.account_code === '326-0020')).toMatchObject({ credit_sen: 60000 });
+    expect(lines.find((l) => l.account_code === '326-0000')).toMatchObject({ credit_sen: 40000 });
+    /* Both wrong homes are empty of this money; the merchant's own holds the net after its fee. */
+    expect(balance(sb, '326-0020')).toBe(0);
+    expect(balance(sb, '326-0000')).toBe(0);
+    expect(balance(sb, '326-0010')).toBe(98500);
+    /* And the payment now says whose it is. */
+    expect(sb.tables.mfg_sales_order_payments.find((p) => p.id === 'p1')).toMatchObject({ merchant_provider: 'MBB' });
+  });
+
+  it('taking the confirmation back reverses the move too, and confirming again moves once', async () => {
+    const sb = world({ accounts: OWN_CHART, acc_acquirers: [OWN_ACCOUNT], ...booked('p1', 100000) });
+    await confirm(sb);
+    expect(await unconfirmSettlementRow(sb, 1, 7)).toMatchObject({ ok: true, status: 'unconfirmed' });
+    expect(sb.tables.journal_entries.filter((e) => e.source_type === 'SETTLEMOVE_REVERSAL')).toHaveLength(1);
+    expect(balance(sb, '326-0000')).toBe(100000);
+    expect(balance(sb, '326-0010')).toBe(0);
+
+    await confirm(sb);
+    expect(sb.tables.journal_entries.filter((e) => e.source_type === 'SETTLEMOVE' && e.reversed !== true)).toHaveLength(1);
+    expect(balance(sb, '326-0000')).toBe(0);
+  });
+});
+
+describe('clearOrphanBatch — the wreck a half-failed upload leaves', () => {
+  it('clears a batch with no lines so its file can come in again', async () => {
+    const sb = world({
+      acc_settlement_batches: [{ ...BATCH, file_hash: 'h1' }],
+      acc_settlement_rows: [],
+    });
+    const r = await clearOrphanBatch(sb, 1, 'h1');
+    expect(r).toEqual({ ok: true, state: 'cleared_orphan' });
+    expect(sb.tables.acc_settlement_batches).toHaveLength(0);
+  });
+
+  it('keeps a batch that HAS lines — that one really was uploaded', async () => {
+    const sb = world({ acc_settlement_batches: [{ ...BATCH, file_hash: 'h1' }] });
+    const r = await clearOrphanBatch(sb, 1, 'h1');
+    expect(r).toEqual({ ok: true, state: 'duplicate' });
+    expect(sb.tables.acc_settlement_batches).toHaveLength(1);
+  });
+
+  it('reports a hash nobody holds as clear', async () => {
+    const r = await clearOrphanBatch(world(), 1, 'nobody');
+    expect(r).toEqual({ ok: true, state: 'clear' });
   });
 });
 
@@ -215,8 +463,8 @@ describe('postBatchReceipt — the money actually arrives, in one credit or seve
 
     const lines = sb.tables.journal_entry_lines;
     expect(lines).toHaveLength(2);
-    expect(lines.find((l) => l.account_code === '330-0000')).toMatchObject({ debit_sen: 98500 });
-    expect(lines.find((l) => l.account_code === '320-0000')).toMatchObject({ credit_sen: 98500 });
+    expect(lines.find((l) => l.account_code === '310-0010')).toMatchObject({ debit_sen: 98500 });
+    expect(lines.find((l) => l.account_code === '326-0000')).toMatchObject({ credit_sen: 98500 });
     /* Dated by the bank, four days after the swipe — the whole point of
        splitting the entry in two. */
     expect(sb.tables.journal_entries[0]).toMatchObject({ source_type: 'SETTLEBANK', entry_date: '2026-08-07' });
@@ -242,7 +490,7 @@ describe('postBatchReceipt — the money actually arrives, in one credit or seve
     /* Two entries, two dates, two doc numbers — a second credit is never read
        as a repeat of the first. */
     expect(new Set(sb.tables.journal_entries.map((e) => e.source_doc_no)).size).toBe(2);
-    expect(sb.tables.journal_entry_lines.filter((l) => l.account_code === '330-0000')
+    expect(sb.tables.journal_entry_lines.filter((l) => l.account_code === '310-0010')
       .reduce((s, l) => s + Number(l.debit_sen), 0)).toBe(98500);
 
     const third = await postBatchReceipt(sb, 1, 1, { receivedOn: '2026-08-09', amountSen: 100 });
@@ -256,7 +504,7 @@ describe('postBatchReceipt — the money actually arrives, in one credit or seve
     await postBatchReceipt(sb, 1, 1, { receivedOn: '2026-08-07', amountSen: 50000 });
     await postBatchReceipt(sb, 1, 1, { receivedOn: '2026-08-07', amountSen: 50000 });
     expect(sb.tables.journal_entries).toHaveLength(2);
-    expect(sb.tables.journal_entry_lines.filter((l) => l.account_code === '330-0000')
+    expect(sb.tables.journal_entry_lines.filter((l) => l.account_code === '310-0010')
       .reduce((s, l) => s + Number(l.debit_sen), 0)).toBe(100000);
   });
 
@@ -280,7 +528,7 @@ describe('postBatchReceipt — the money actually arrives, in one credit or seve
     });
     const r = await postBatchReceipt(sb, 1, 1, { receivedOn: '2026-08-10' });
     expect(r).toMatchObject({ ok: true, amountSen: 567384 });
-    expect(sb.tables.journal_entry_lines.find((l) => l.account_code === '330-0000')).toMatchObject({ debit_sen: 567384 });
+    expect(sb.tables.journal_entry_lines.find((l) => l.account_code === '310-0010')).toMatchObject({ debit_sen: 567384 });
   });
 
   it('refuses a date it was not given, rather than stamping today', async () => {
@@ -297,7 +545,7 @@ describe('postBatchReceipt — the money actually arrives, in one credit or seve
   it('an unconfigured receiving bank books to the company default rather than nowhere', async () => {
     const sb = world({ acc_acquirers: [{ ...ACQUIRER, bank_account_code: null }] });
     expect(await postBatchReceipt(sb, 1, 1, { receivedOn: '2026-08-07' })).toMatchObject({ ok: true });
-    expect(sb.tables.journal_entry_lines.find((l) => l.debit_sen === 98500)).toMatchObject({ account_code: '330-0000' });
+    expect(sb.tables.journal_entry_lines.find((l) => l.debit_sen === 98500)).toMatchObject({ account_code: '310-0010' });
   });
 
   /* WHICH BANK, when the two sources disagree. Owner, 2026-08-20: 不确定 maybank
@@ -307,18 +555,18 @@ describe('postBatchReceipt — the money actually arrives, in one credit or seve
      permanently short by that amount. The statement is evidence; the config is
      a guess made before the money moved. */
   it('a bank named by the caller beats the acquirer configuration', async () => {
-    const sb = world({ acc_acquirers: [{ ...ACQUIRER, bank_account_code: '331-0000' }] });
-    expect(await postBatchReceipt(sb, 1, 1, { receivedOn: '2026-08-07', bankAccountCode: '330-0000' }))
+    const sb = world({ acc_acquirers: [{ ...ACQUIRER, bank_account_code: '310-0020' }] });
+    expect(await postBatchReceipt(sb, 1, 1, { receivedOn: '2026-08-07', bankAccountCode: '310-0010' }))
       .toMatchObject({ ok: true });
-    expect(sb.tables.journal_entry_lines.find((l) => l.debit_sen === 98500)).toMatchObject({ account_code: '330-0000' });
+    expect(sb.tables.journal_entry_lines.find((l) => l.debit_sen === 98500)).toMatchObject({ account_code: '310-0010' });
   });
 
   /* And with nobody naming one — the type-it-in-by-hand path, which has no
      statement to read — the configuration is still what carries it. */
   it('the configured bank still carries a credit nobody named a bank for', async () => {
-    const sb = world({ acc_acquirers: [{ ...ACQUIRER, bank_account_code: '331-0000' }] });
+    const sb = world({ acc_acquirers: [{ ...ACQUIRER, bank_account_code: '310-0020' }] });
     expect(await postBatchReceipt(sb, 1, 1, { receivedOn: '2026-08-07' })).toMatchObject({ ok: true });
-    expect(sb.tables.journal_entry_lines.find((l) => l.debit_sen === 98500)).toMatchObject({ account_code: '331-0000' });
+    expect(sb.tables.journal_entry_lines.find((l) => l.debit_sen === 98500)).toMatchObject({ account_code: '310-0020' });
   });
 
   /* A credit keyed against the wrong statement, or on the wrong day. The way
@@ -332,8 +580,8 @@ describe('postBatchReceipt — the money actually arrives, in one credit or seve
     expect(undone).toMatchObject({ ok: true, status: 'undone' });
     expect(sb.tables.acc_settlement_receipts).toHaveLength(0);
     expect(sb.tables.journal_entries.find((e) => e.source_type === 'SETTLEBANK_REVERSAL')).toBeTruthy();
-    expect(balance(sb, '330-0000')).toBe(0);
-    expect(balance(sb, '320-0000')).toBe(0);   // the credit and its contra cancel
+    expect(balance(sb, '310-0010')).toBe(0);
+    expect(balance(sb, '326-0000')).toBe(0);   // the credit and its contra cancel
 
     /* And the statement is receivable again — the fix for "that credit was
        actually the other company's" is to record it where it belongs. */
@@ -347,24 +595,24 @@ describe('postBatchReceipt — the money actually arrives, in one credit or seve
   it('reconciling then receiving takes settlement-in-transit to exactly zero', async () => {
     const sb = world({
       journal_entry_lines: [
-        { account_code: '320-0000', debit_sen: 100000, credit_sen: 0 },
+        { account_code: '326-0000', debit_sen: 100000, credit_sen: 0 },
         { account_code: '300-0000', debit_sen: 0, credit_sen: 100000 },
       ],
     });
-    expect(balance(sb, '320-0000')).toBe(100000);
+    expect(balance(sb, '326-0000')).toBe(100000);
 
     await confirmSettlementRow(sb, { companyId: 1, rowId: 7, payments: ONE_PAYMENT, matchReason: 'ref', userName: null });
     /* In between, in-transit holds exactly what MBB still owes — the fee is
        already lost and is no longer receivable. */
-    expect(balance(sb, '320-0000')).toBe(98500);
+    expect(balance(sb, '326-0000')).toBe(98500);
     expect(balance(sb, '930-0000')).toBe(1500);
 
     await postBatchReceipt(sb, 1, 1, { receivedOn: '2026-08-07', amountSen: 40000 });
-    expect(balance(sb, '320-0000')).toBe(58500);   // half-paid is not paid
+    expect(balance(sb, '326-0000')).toBe(58500);   // half-paid is not paid
 
     await postBatchReceipt(sb, 1, 1, { receivedOn: '2026-08-08', amountSen: 58500 });
-    expect(balance(sb, '320-0000')).toBe(0);
-    expect(balance(sb, '330-0000')).toBe(98500);
+    expect(balance(sb, '326-0000')).toBe(0);
+    expect(balance(sb, '310-0010')).toBe(98500);
   });
 });
 
@@ -385,7 +633,7 @@ describe('postStatementCharge — what the statement kept, that no transaction e
     const lines = sb.tables.journal_entry_lines;
     expect(lines).toHaveLength(2);
     expect(lines.find((l) => l.account_code === '930-0000')).toMatchObject({ debit_sen: 25416 });
-    expect(lines.find((l) => l.account_code === '320-0000')).toMatchObject({ credit_sen: 25416 });
+    expect(lines.find((l) => l.account_code === '326-0000')).toMatchObject({ credit_sen: 25416 });
     expect(sb.tables.journal_entries[0]).toMatchObject({ source_type: 'SETTLEADJ', source_doc_no: 'SETTLEADJ-3', entry_date: '2026-08-14' });
     expect(sb.tables.acc_settlement_batches[0].adjustment_je_no).toBe(sb.tables.journal_entries[0].je_no);
 
@@ -408,7 +656,7 @@ describe('postStatementCharge — what the statement kept, that no transaction e
     });
     expect(await postStatementCharge(sb, 1, 5)).toMatchObject({ ok: true, status: 'posted' });
     const lines = sb.tables.journal_entry_lines;
-    expect(lines.find((l) => l.account_code === '320-0000')).toMatchObject({ debit_sen: 5000 });
+    expect(lines.find((l) => l.account_code === '326-0000')).toMatchObject({ debit_sen: 5000 });
     expect(lines.find((l) => l.account_code === '930-0000')).toMatchObject({ credit_sen: 5000 });
   });
 });

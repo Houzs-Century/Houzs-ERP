@@ -43,6 +43,7 @@ import { formatPhone } from '@2990s/shared/phone';
 import { parseProvenanceNote } from '../../shared/transfer-vocabulary';
 import {
   orderSofaModuleRowsWithinBuilds,
+  sortLinesByStoredLineNo,
   sortSoLinesByGroupRank,
 } from '@2990s/shared/so-line-display';
 import { drawSofaLayout } from './sofa-layout-pdf';
@@ -61,6 +62,7 @@ import {
   buildPhotoGroups,
   collectPhotoImages,
   drawItemPhotosBlock,
+  fetchLinePhotoForPdf,
   PHOTO_MARKER,
   photoKeyOwners,
   photoKeysOf,
@@ -68,7 +70,6 @@ import {
   type PhotoRegion,
 } from './pdf-item-photos';
 import { fetchPoItemPhotoBlob } from './sales-order-queries';
-import { THUMB_KEY_SUFFIX } from '../../../lib/imagePipeline';
 
 type PoHeader = {
   po_number:     string;
@@ -127,6 +128,11 @@ type PoItem = {
   /** Line id (uuid) — pairs with the header id for the photo proxy routes.
       Optional for callers that predate photos on the PO. */
   id?:           string | null;
+  /** Mig 20260910T0547 — the line's stored position on this purchase order.
+      Optional: null on documents that predate the column, and absent entirely
+      for a caller that did not select it, both of which sort first and keep
+      the order they arrived in. */
+  line_no?:      number | null;
   item_code: string;
   material_name: string;
   supplier_sku:  string | null;
@@ -268,19 +274,28 @@ async function renderPurchaseOrderInto(
      const. Canonical SKU/build order (sofa modules LHF→NA→RHF, mains→
      accessories→services) — mirror the sales side. The shared helper keys on
      `item_code`; sort a shimmed view that carries the original row back
-     unchanged (render-time only, no persistence touched). */
+     unchanged (render-time only, no persistence touched).
+
+     `sortLinesByStoredLineNo` is the BASE (owner 2026-09-10: 「我们的 Sales
+     Order 都是从 L 到 R」, 「照片是根据 line item 的顺序来的」) — the document's
+     own stored order, mig 20260910T0547. The two sorts above it are stable, so
+     a line's place survives them, and this const drives BOTH the table and the
+     photo block, which is why the photos scrambled with the lines. It is
+     applied here as well as in the detail route's SQL because a caller may have
+     fetched the items from somewhere with no ORDER BY. */
   const orderedItems = orderSofaModuleRowsWithinBuilds(
     sortSoLinesByGroupRank(
-      items.map((it) => ({ ...it, item_code: it.item_code, __row: it })),
+      sortLinesByStoredLineNo(items.map((it) => ({ ...it, item_code: it.item_code, __row: it }))),
       (r) => r.item_group as string | null | undefined,
     ),
   ).map((r) => r.__row);
 
   /* Owner spec 2026-08 — photos follow the line onto the supplier PO. The
      code beside each row chip is the SUPPLIER code (the code they act on).
-     Only `.thumb` siblings are fetched (never originals — PDF size), each
-     photo best-effort: a key whose fetch or decode fails is skipped and the
-     PDF renders without it. */
+     The `.thumb` sibling is fetched first and a line whose thumb 404s falls
+     back to its original (fetchLinePhotoForPdf — the AutoCount cutover keys
+     have no thumb; docs/bugs/0815), each photo best-effort: a key whose fetch
+     or decode fails is skipped and the PDF renders without it. */
   const poId = (header.id ?? '').trim();
   const photoGroups = buildPhotoGroups(orderedItems.map((it) => ({
     code: supplierCodeFor(it, skuMap),
@@ -296,7 +311,7 @@ async function renderPurchaseOrderInto(
         (key) => {
           const ownerId = photoOwners.get(key);
           if (!ownerId) return Promise.reject(new Error('photo_owner_missing'));
-          return fetchPoItemPhotoBlob(poId, ownerId, key + THUMB_KEY_SUFFIX);
+          return fetchLinePhotoForPdf((k) => fetchPoItemPhotoBlob(poId, ownerId, k), key);
         },
         blobToSquarePdfImage,
       )

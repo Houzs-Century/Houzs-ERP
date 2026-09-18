@@ -60,13 +60,14 @@ import { useLorries } from '../../vendor/scm/lib/lorries-queries';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { DateField } from "../../vendor/scm/components/DateField";
+import { fmtSen } from "../../vendor/shared/format";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
 function todayMY(): string {
   return new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
 }
-const rm = (centi: number): string => `RM ${(centi / 100).toLocaleString('en-MY', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+const rm = (centi: number): string => fmtSen(centi);
 
 const groupLabel = (g: string): string => (g === 'KLANG_VALLEY' ? 'Klang Valley (mixed)' : g);
 

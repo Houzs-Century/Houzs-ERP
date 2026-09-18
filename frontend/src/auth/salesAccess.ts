@@ -73,6 +73,10 @@ export function isDirectorUser(user: AuthUser | null | undefined): boolean {
  */
 export function isSalesStaff(user: AuthUser | null | undefined): boolean {
   if (!user) return false;
+  // The server's answer (pmsAccess.isSalesUser, which reads the Title's policy
+  // row first) wins whenever /auth/me carried a capability set; the org-field
+  // regex below is the fallback for a shell that predates it.
+  if (user.capabilities) return capability(user, "org.sales.staff");
   const dept = (user.department_name ?? "").toLowerCase();
   if (dept.includes("sales")) return true;
   return SALES_POSITION.test((user.position_name ?? "").trim());
@@ -123,6 +127,7 @@ const SALES_DIRECTOR_POSITION_NAMES: ReadonlySet<string> = new Set(
  */
 export function isSalesDirectorUser(user: AuthUser | null | undefined): boolean {
   if (!user) return false;
+  if (user.capabilities) return capability(user, "org.salesDirector");
   return SALES_DIRECTOR_POSITION_NAMES.has(normalisePosition(user.position_name));
 }
 
@@ -279,7 +284,7 @@ export function canRevertDelivery(user: AuthUser | null | undefined): boolean {
 function canOperateScmProcurement(
   can: (perm: string) => boolean,
   pageAccess: (page: string) => AccessLevel,
-  area: "scm.procurement.po" | "scm.procurement.grn",
+  area: "scm.procurement.po" | "scm.procurement.grn" | "scm.procurement.pi",
 ): boolean {
   if (can("*")) return true;
   return ACCESS_RANK[pageAccess(area)] >= ACCESS_RANK.edit;
@@ -299,6 +304,18 @@ export function canOperateGoodsReceipts(
   pageAccess: (page: string) => AccessLevel,
 ): boolean {
   return canOperateScmProcurement(can, pageAccess, "scm.procurement.grn");
+}
+
+/** May this user raise or change a PURCHASE INVOICE? The backend guard is
+ *  `scmAreaGuard("scm.procurement.pi")` on `/purchase-invoices/*`
+ *  (backend/src/scm/index.ts). Added with the phone's direct PI create
+ *  (2026-09-13) — before that no surface asked, because mobile had no PI
+ *  create at all. Same shape as the PO / GRN helpers above, one private rule. */
+export function canOperatePurchaseInvoices(
+  can: (perm: string) => boolean,
+  pageAccess: (page: string) => AccessLevel,
+): boolean {
+  return canOperateScmProcurement(can, pageAccess, "scm.procurement.pi");
 }
 
 /**

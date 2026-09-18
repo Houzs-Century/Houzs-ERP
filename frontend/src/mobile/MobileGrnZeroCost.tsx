@@ -28,6 +28,7 @@
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { authedFetch } from "../vendor/scm/lib/authed-fetch";
+import { fmtSen } from "../vendor/shared/format";
 import {
   zeroCostRefusalFrom,
   zeroCostRefusalText,
@@ -52,7 +53,7 @@ const senOf = (price: string): number | null => {
   return Number.isFinite(sen) && sen > 0 ? sen : null;
 };
 
-const rm = (sen: number): string => `RM${(sen / 100).toFixed(2)}`;
+const rm = (sen: number): string => fmtSen(sen);
 
 const inputStyle: React.CSSProperties = {
   width: "100%", boxSizing: "border-box", height: 40, padding: "0 11px", borderRadius: 10,

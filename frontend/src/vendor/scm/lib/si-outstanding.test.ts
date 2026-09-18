@@ -121,7 +121,9 @@ const SURFACES: Array<{ file: string; anchor: string; span: number; mustCall: st
     file: 'src/mobile/MobileModuleDetail.tsx',
     anchor: 'const balance = siOutstandingSen(total, paid,',
     span: 200,
-    mustCall: 'kind === "si" ? siDepositAppliedSen(header)',
+    /* The sheet is Sales-Invoice-only since docs/bugs/0889 (a purchase invoice is
+       paid with an AP Payment), so the deposit is no longer gated on a kind. */
+    mustCall: 'siOutstandingSen(total, paid, siDepositAppliedSen(header))',
     why: 'the Record-Payment sheet PRE-FILLS this amount — it would ask the customer for the deposit twice',
   },
   {

@@ -17,10 +17,12 @@ import {
   ExternalLink,
   Edit3,
   Printer,
-  CheckCircle2,
   Wallet,
   ArrowRightLeft,
 } from "lucide-react";
+import { fetchPiExportRows, PI_DEFAULT_COLUMN_KEYS, PI_LABELS, senToRinggit, type PiListLine } from "../../vendor/scm/lib/pi-list-export";
+import type { PiPoPriceSummary } from "../../vendor/scm/lib/pi-list-po-price";
+import { piLineColumns } from "./pi-list-line-columns";
 import { transferFromLabel } from '../../lib/convertScope';
 import { PrintPreviewBatchModal, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
@@ -35,6 +37,7 @@ import {
   type DocumentDrillLine,
   type DrillItemFields,
 } from "../../components/DocumentLinesExpansion";
+import { coverageStateOf } from "../../components/coverage-state";
 import { usePoSoCoverage, originsByCode, provenanceByCode, storedLinkSkus, deliveredByCode, type OriginAssignment } from "../../vendor/scm/lib/flow-queries";
 import { ListPager } from "../../components/ListPager";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
@@ -45,14 +48,18 @@ import { PullToRefresh } from "../../components/PullToRefresh";
 import { ListErrorPanel, SearchPendingPanel, SearchProgress } from "../../components/SearchProgress";
 import { SearchScopeHint } from "../../components/SearchScopeHint";
 import { useDebouncedSearchTerm, useSearchResultTransition } from "../../hooks/useServerSearch";
+import { useSuppliers } from "../../vendor/scm/lib/suppliers-queries";
+import { useServerColumnFunnels, funnelValues } from "../../hooks/useServerColumnFunnels";
+import { poPriceMarker, usePiListPoPriceMap } from "../../vendor/scm/lib/pi-list-po-price";
 import {
   usePurchaseInvoicesPaged,
   useEnrichedPiListRows,
   usePurchaseInvoiceDetail,
   useCancelPurchaseInvoice,
   usePostPurchaseInvoice,
-  useRecordPiPayment,
 } from "../../vendor/scm/lib/purchase-invoice-queries";
+import { useAuth as useHouzsAuth } from "../../auth/AuthContext";
+import { apPaymentHrefFor, canOpenApPayment, piAwaitsPayment } from "../../vendor/scm/lib/pi-payment-path";
 import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
@@ -63,13 +70,23 @@ import { isCancelledDocStatus } from "../../lib/scm";
 import { purchaseInvoiceRowMenu } from "./row-menus";
 import { useHoldAction } from "./use-hold-action";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
-import { StatusWithHold, type HoldFields } from "../../vendor/scm/components/HoldChip";
+import { StatusWithHold, rowIsHeld, type HoldFields } from "../../vendor/scm/components/HoldChip";
 import { usePrintDocument } from "../../components/scm-v2/PrintChainProvider";
 import { purchaseInvoicePrintChain } from "../../lib/printChain";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 type PiRow = HoldFields & {
+  /** The AutoCount invoice number, when the invoice is in the book. */
+  linked_ac_docno?: string | null;
+  supplier_invoice_ref?: string | null;
+  exchange_rate?: number | string | null;
+  subtotal_sen?: number | null;
+  tax_sen?: number | null;
+  /** Every line, AutoCount-spelled (GET /purchase-invoices?page= and /export/rows). */
+  lines?: PiListLine[];
+  /** The "vs PO price" summary, stamped on exported rows only (pi-list-export.ts). */
+  po_price_summary?: PiPoPriceSummary;
   id: string;
   invoice_number: string;
   status: string;
@@ -138,7 +155,7 @@ const STATUS_TONE: Record<
   { tone: "success" | "warning" | "error" | "neutral"; label: string; bucket: StatusTab }
 > = {
   DRAFT:          { tone: "warning", label: "Draft",           bucket: "draft" },
-  POSTED:         { tone: "warning", label: "Confirmed",       bucket: "posted" },
+  POSTED:         { tone: "warning", label: "Submitted",       bucket: "posted" },
   PARTIALLY_PAID: { tone: "warning", label: "Partially paid",  bucket: "partial" },
   PAID:           { tone: "success", label: "Paid",            bucket: "paid" },
   CANCELLED:      { tone: "error",   label: "Cancelled",       bucket: "cancelled" },
@@ -321,7 +338,6 @@ function DetailDrawer({
   onEdit,
   onPrint,
   onRecordPayment,
-  onMarkPaid,
 }: {
   row: PiRow | null;
   onClose: () => void;
@@ -329,9 +345,9 @@ function DetailDrawer({
   onEdit: () => void;
   onPrint: () => void;
   onRecordPayment: () => void;
-  onMarkPaid: () => void;
 }) {
   const detailQ = usePurchaseInvoiceDetail(row?.id ?? null);
+  const { can, pageAccess } = useHouzsAuth();
   const items: PiItem[] =
     ((detailQ.data as { items?: PiItem[] } | undefined)?.items ?? []);
 
@@ -459,25 +475,11 @@ function DetailDrawer({
               <Button variant="ghost" icon={<Edit3 size={14} />} onClick={onEdit}>Edit</Button>
               <Button variant="ghost" icon={<Printer size={14} />} onClick={onPrint}>Print</Button>
               <div className="flex-1" />
-              {(() => {
-                const s = (row.status || "").toUpperCase();
-                const notTerminal = s !== "PAID" && s !== "CANCELLED";
-                if (notTerminal && outstanding > 0) {
-                  return (
-                    <Button variant="primary" icon={<Wallet size={14} />} onClick={onRecordPayment}>
-                      Record payment
-                    </Button>
-                  );
-                }
-                if (notTerminal && outstanding === 0) {
-                  return (
-                    <Button variant="primary" icon={<CheckCircle2 size={14} />} onClick={onMarkPaid}>
-                      Mark paid
-                    </Button>
-                  );
-                }
-                return null;
-              })()}
+              {piAwaitsPayment(row) && canOpenApPayment(can, pageAccess) && (
+                <Button variant="primary" icon={<Wallet size={14} />} onClick={onRecordPayment}>
+                  Record payment
+                </Button>
+              )}
             </div>
           </>
         )}
@@ -583,6 +585,7 @@ function PiLinesExpansion({ id }: { id: string }) {
     <div className="flex flex-col gap-2">
       <DocumentLinesExpansion
         isLoading={detailQ.isLoading}
+        coverage={coverageStateOf(covQ)}
         isError={Boolean(detailQ.error)}
         errorMessage={detailQ.error instanceof Error ? detailQ.error.message : null}
         lines={lines}
@@ -616,6 +619,14 @@ export function PurchaseInvoicesListV2() {
   const [sort, setSort] = useState<string | undefined>(undefined);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [printingDocs, setPrintingDocs] = useState(false);
+  // Server-filterable funnels (owner 2026-09-16): Creditor Name/Code + Currency → list query (pager over the filtered set); line/MRP funnels stay client-side. Creditor checklists seeded with every supplier.
+  const suppliersQ = useSuppliers();
+  const supplierNames = useMemo(() => [...new Set((suppliersQ.data ?? []).map((s) => s.name).filter((n): n is string => !!n))], [suppliersQ.data]);
+  const supplierCodes = useMemo(() => [...new Set((suppliersQ.data ?? []).map((s) => s.code).filter((c): c is string => !!c))], [suppliersQ.data]);
+  const { serverFunnels, onColFiltersChange } = useServerColumnFunnels(
+    (cf) => ({ creditorNames: funnelValues(cf, "supplier"), creditorCodes: funnelValues(cf, "supplier_code"), currencies: funnelValues(cf, "currency") }),
+    () => setPageParam(0),
+  );
   const { requestTerm: debouncedSearch } = useDebouncedSearchTerm(search);
 
   // Send the active tab's BUCKET NAME as `status`; the backend resolves it to
@@ -629,6 +640,7 @@ export function PurchaseInvoicesListV2() {
     status: apiStatus,
     q: debouncedSearch,
     sort,
+    ...serverFunnels,
   });
   const searchTransition = useSearchResultTransition({
     inputTerm: search,
@@ -647,7 +659,6 @@ export function PurchaseInvoicesListV2() {
     isLoading || isPlaceholderData || Boolean(error) || searchTransition.resultsAreStale;
   const cancelPi = useCancelPurchaseInvoice();
   const postPi = usePostPurchaseInvoice();
-  const recordPayment = useRecordPiPayment();
 
   // Server already filtered + sorted this page — render verbatim. The four
   // MRP-derived columns (Assigned SO / Delivered) arrive from the deferred
@@ -655,6 +666,9 @@ export function PurchaseInvoicesListV2() {
   // no longer waits on a company-wide computeMrp (perf/pi-list-mrp-off-load).
   const serverRows = (data?.purchaseInvoices ?? []) as PiRow[];
   const rows = useEnrichedPiListRows(serverRows, !listLoading);
+  /* PO price vs invoice price, per invoice (owner 2026-09-14) — a quiet marker,
+     fetched a beat after the page renders, never gating anything. */
+  const poPriceById = usePiListPoPriceMap(useMemo(() => serverRows.map((r) => r.id).filter(Boolean) as string[], [serverRows]), !listLoading);
   const total = data?.total ?? 0;
   const counts = data?.statusCounts ?? {
     all: 0,
@@ -730,6 +744,20 @@ export function PurchaseInvoicesListV2() {
 
   const onPullToRefresh = async () => {
     await queryClient.invalidateQueries({ queryKey: ["purchase-invoices"] });
+  };
+
+  /* The ONE Export (owner 2026-09-15): every invoice the list's tab + search +
+     sort match — not the page on screen — one row per line, with the grid's
+     visible columns, funnels and sort (DataTable `exportLines`). The filter is
+     the one the list request is built from: the settled search term. */
+  const exportFilters = { status: apiStatus, q: debouncedSearch, sort };
+  const exportLines = {
+    fetchRows: (need: { exportKeys: string[]; filterKeys: string[] }) => fetchPiExportRows<PiRow>(exportFilters, need),
+    linesOf: (r: PiRow): readonly PiListLine[] => r.lines ?? [],
+    sheetName: "Purchase Invoices",
+    onError: (e: Error) => {
+      void notify({ title: "Export failed", body: e.message || "The export could not be completed.", tone: "error" });
+    },
   };
 
   const goNewPi = () => navigate("/scm/purchase-invoices/new");
@@ -821,16 +849,8 @@ export function PurchaseInvoicesListV2() {
     }
   };
   const batchPrint = usePrintPreview(deliverSelectedPis);
-  const goRecordPayment = (r: PiRow) =>
-    navigate(`/scm/purchase-invoices/${r.id}?tab=payments&record=1`);
-  const doMarkPaid = async (r: PiRow) => {
-    if (await askConfirm({
-      title: `Mark invoice ${r.invoice_number} as paid?`,
-      confirmLabel: "Mark paid",
-    })) {
-      recordPayment.mutate({ id: r.id, amountSen: outstandingOf(r) }, { onSuccess: () => setSelected(null) });
-    }
-  };
+  /* The AP Payment voucher, this invoice ticked (docs/bugs/0889). */
+  const goRecordPayment = (r: PiRow) => navigate(apPaymentHrefFor(r));
 
   /* CONFIRM + CANCEL, from the right-click menu (owner 2026-08-22).
 
@@ -887,6 +907,7 @@ export function PurchaseInvoicesListV2() {
   const piContextMenu = purchaseInvoiceRowMenu<PiRow>({
     open: goFullPage,
     edit: goEdit,
+    copyAsNew: (r) => navigate(`/scm/purchase-invoices/new?copyFrom=${r.id}`),
     print: printDocument,
     confirm: doConfirm,
     setHold: setPiHold,
@@ -898,42 +919,109 @@ export function PurchaseInvoicesListV2() {
     },
   });
 
-  const columns: Column<PiRow>[] = [
-    {
+  /* Default view = AutoCount's Purchase Invoice Detail Listing, layout "SS", in
+     its order (PI_DEFAULT_COLUMN_KEYS; owner 2026-09-15: a default export equals
+     the AutoCount file). Every other column stays in the chooser, hidden until
+     picked; the export follows whatever the operator shows. */
+  const lineCols = piLineColumns<PiRow>();
+  const docNoOf = (r: PiRow): string => r.linked_ac_docno?.trim() || r.invoice_number;
+  const moneyCell = (sen: number | null | undefined) => <span className="font-money text-[13px] text-ink">{fmtRm(sen ?? 0)}</span>;
+  const rateOf = (r: PiRow): number => { const n = Number(r.exchange_rate ?? 1); return Number.isFinite(n) && n > 0 ? n : 1; };
+  const blankCol = (key: string, label: string): Column<PiRow, PiListLine> => ({
+    key, label, width: "90px", disableSort: true, getValue: () => "", render: () => <span className="text-[12.5px] text-ink-muted">—</span>,
+  });
+  const byKey: Record<string, Column<PiRow, PiListLine>> = {
+    ...lineCols,
+    invoice_number: {
       key: "invoice_number",
-      label: "PI No.",
+      /* AutoCount's own invoice number when the invoice is in the book, else ours —
+         the ERP number stays on ERP Doc No. */
+      label: PI_LABELS.docNo,
       width: "140px",
       alwaysVisible: true,
-      getValue: (r) => r.invoice_number,
+      getValue: (r) => docNoOf(r),
       render: (r) => (
-        <span
-          className={cn(
-            "font-mono text-[12.5px] font-semibold text-ink",
-            isCancelledDocStatus(r.status) && "dt-cancel-strike",
-          )}
-        >
-          {r.invoice_number}
+        <span className={cn("font-mono text-[12.5px] font-semibold text-ink", isCancelledDocStatus(r.status) && "dt-cancel-strike")}>
+          {docNoOf(r)}
         </span>
       ),
     },
-    {
-      key: "invoice_date",
-      label: "Date",
-      width: "108px",
+    supplier_invoice_ref: {
+      key: "supplier_invoice_ref", label: PI_LABELS.supplierInvoiceNo, width: "140px", disableSort: true,
+      getValue: (r) => r.supplier_invoice_ref ?? "",
+      render: (r) => <span className="font-mono text-[12px] text-ink-secondary">{r.supplier_invoice_ref || "—"}</span>,
+    },
+    invoice_date: {
+      key: "invoice_date", label: PI_LABELS.docDate, width: "108px", exportFormat: "date",
       getValue: (r) => r.invoice_date ?? "",
       render: (r) => <span className="text-[12.5px] text-ink-secondary">{fmtDate(r.invoice_date)}</span>,
     },
-    {
+    supplier_code: {
+      key: "supplier_code", label: PI_LABELS.creditorCode, width: "120px", disableSort: true,
+      getValue: (r) => r.supplier?.code ?? "",
+      filterSeedValues: supplierCodes, // server-filterable; seed with every creditor code
+      render: (r) => <span className="font-mono text-[11.5px] text-ink-secondary">{supplierCodeOf(r)}</span>,
+    },
+    supplier: {
+      key: "supplier", label: PI_LABELS.creditorName, disableSort: true,
+      getValue: (r) => r.supplier?.name ?? "",
+      filterSeedValues: supplierNames, // server-filterable; seed with every creditor name
+      render: (r) => <div className="min-w-0 truncate text-[13px] font-semibold text-ink">{supplierNameOf(r)}</div>,
+    },
+    /* A purchase invoice names no purchase agent in this ERP. */
+    agent: blankCol("agent", PI_LABELS.agent),
+    currency: {
+      key: "currency", label: PI_LABELS.currCode, width: "90px", disableSort: true,
+      getValue: (r) => r.currency ?? "", render: (r) => <span className="text-[12.5px] text-ink-secondary">{r.currency || "—"}</span>,
+    },
+    exchange_rate: {
+      key: "exchange_rate", label: PI_LABELS.currRate, width: "90px", disableSort: true, exportFormat: "number",
+      getValue: (r) => rateOf(r), render: (r) => <span className="text-[12.5px] text-ink-secondary">{rateOf(r)}</span>,
+    },
+    /* This ERP keeps no tax-inclusive flag on the document: blank, never a guess. */
+    inclusive: blankCol("inclusive", PI_LABELS.inclusive),
+    subtotal: {
+      key: "subtotal", label: PI_LABELS.subTotalEx, width: "128px", align: "right", disableSort: true,
+      getValue: (r) => r.subtotal_sen ?? 0, exportValue: (r) => senToRinggit(r.subtotal_sen ?? 0, 2), exportFormat: "money",
+      render: (r) => moneyCell(r.subtotal_sen),
+    },
+    tax: {
+      key: "tax", label: PI_LABELS.tax, width: "100px", align: "right", disableSort: true,
+      getValue: (r) => r.tax_sen ?? 0, exportValue: (r) => senToRinggit(r.tax_sen ?? 0, 2), exportFormat: "money",
+      render: (r) => moneyCell(r.tax_sen),
+    },
+    total: {
+      key: "total", label: PI_LABELS.total, width: "128px", align: "right",
+      getValue: (r) => totalOf(r), exportValue: (r) => senToRinggit(totalOf(r), 2), exportFormat: "money",
+      render: (r) => <span className="font-money text-[13px] font-semibold text-ink">{fmtRm(totalOf(r))}</span>,
+    },
+    local_total: {
+      key: "local_total", label: PI_LABELS.localTotal, width: "128px", align: "right", disableSort: true,
+      getValue: (r) => Math.round(totalOf(r) * rateOf(r)), exportValue: (r) => senToRinggit(totalOf(r) * rateOf(r), 2), exportFormat: "money",
+      render: (r) => moneyCell(Math.round(totalOf(r) * rateOf(r))),
+    },
+    cancelled: {
+      key: "cancelled", label: PI_LABELS.cancelled, width: "96px", disableSort: true,
+      getValue: (r) => isCancelledDocStatus(r.status),
+      render: (r) => <span className="text-[12.5px] text-ink-secondary">{isCancelledDocStatus(r.status) ? "Yes" : "No"}</span>,
+    },
+    erp_doc_no: {
+      key: "erp_doc_no", label: PI_LABELS.erpDocNo, width: "140px", disableSort: true, defaultHidden: true,
+      getValue: (r) => r.invoice_number, render: (r) => <span className="font-mono text-[12.5px] text-ink-secondary">{r.invoice_number}</span>,
+    },
+    due_date: {
       key: "due_date",
       label: "Due",
+      defaultHidden: true,
       width: "108px",
       disableSort: true,
       getValue: (r) => r.due_date ?? "",
       render: (r) => <span className="text-[12.5px] text-ink-secondary">{fmtDate(r.due_date)}</span>,
     },
-    {
+    source: {
       key: "source",
       label: "Source",
+      defaultHidden: true,
       width: "132px",
       disableSort: true,
       getValue: (r) => sourceOf(r),
@@ -941,12 +1029,13 @@ export function PurchaseInvoicesListV2() {
         <span className="font-mono text-[12px] text-ink-secondary">{sourceOf(r)}</span>
       ),
     },
-    {
+    assigned_so: {
       // Owner 2026-07-31: the Sales Order(s) the parent PO's supply is assigned
       // to, inherited onto the PI. Server-resolved (one pass, same precedence as
       // the drill-down); dashed "~" chip flags an MRP guess vs a stored link.
       key: "assigned_so",
       label: "Assigned SO",
+      defaultHidden: true,
       width: "168px",
       disableSort: true,
       getValue: (r) => (r.assigned_sos ?? []).map((a) => a.soDocNo).join(", "),
@@ -960,11 +1049,12 @@ export function PurchaseInvoicesListV2() {
         />
       ),
     },
-    {
+    delivered: {
       // Owner 2026-07-31: what has been DELIVERED against this PI's parent PO —
       // the DO(s) that shipped its goods + qty. EVERY DO renders (no collapse).
       key: "delivered",
       label: "Delivered",
+      defaultHidden: true,
       width: "180px",
       disableSort: true,
       getValue: (r) => (r.delivered_dos ?? []).map((d) => d.doNo).join(", "),
@@ -975,49 +1065,32 @@ export function PurchaseInvoicesListV2() {
         />
       ),
     },
-    {
-      // Owner 2026-07-24: supplier NAME and CODE are separate columns on every
-      // procurement table, not a stacked cell — code must be scannable on its
-      // own (same split as the PO list, 2026-07-23).
-      key: "supplier",
-      label: "Supplier",
-      disableSort: true,
-      getValue: (r) => supplierNameOf(r),
-      render: (r) => (
-        <div className="min-w-0 truncate text-[13px] font-semibold text-ink">{supplierNameOf(r)}</div>
-      ),
-    },
-    {
-      key: "supplier_code",
-      label: "Code",
-      width: "108px",
-      disableSort: true,
-      getValue: (r) => supplierCodeOf(r),
-      render: (r) => (
-        <span className="font-mono text-[11.5px] text-ink-secondary">{supplierCodeOf(r)}</span>
-      ),
-    },
-    {
+    status: {
       key: "status",
       label: "Status",
+      defaultHidden: true,
       width: "132px",
       // Exempt from the cancelled-row fade — the pill is WHY the row is grey.
       className: "dt-cancel-keep",
-      getValue: (r) => r.status,
+      // The export writes the word on screen, hold included (owner 2026-09-15).
+      getValue: (r) => { const w = statusFor(r.status).label; return rowIsHeld(r) && r.status.toUpperCase() !== "ON_HOLD" ? `${w} (On Hold)` : w; },
       render: (r) => {
         const st = statusFor(r.status);
         /* mig 0324 — the Hold marker sits BESIDE the real status pill. */
         return <StatusWithHold tone={st.tone} label={st.label} row={r} />;
       },
     },
-    {
+    outstanding: {
       key: "outstanding",
       label: "Owed",
+      defaultHidden: true,
       width: "128px",
       align: "right",
       // Derived (Total − Paid) — not a backend-sortable column.
       disableSort: true,
       getValue: (r) => outstandingOf(r),
+      exportValue: (r) => senToRinggit(outstandingOf(r), 2),
+      exportFormat: "money",
       render: (r) => {
         const o = outstandingOf(r);
         if (o === 0) {
@@ -1026,16 +1099,30 @@ export function PurchaseInvoicesListV2() {
         return <span className="font-money text-[13px] font-semibold text-err">{fmtRm(o)}</span>;
       },
     },
-    {
-      key: "total",
-      label: "Total",
-      width: "128px",
-      align: "right",
-      getValue: (r) => totalOf(r),
-      render: (r) => (
-        <span className="font-money text-[13px] font-semibold text-ink">{fmtRm(totalOf(r))}</span>
-      ),
+    vs_po: {
+      key: "vs_po",
+      label: "vs PO price",
+      defaultHidden: true,
+      width: "132px",
+      disableSort: true,
+      getValue: (r) => poPriceMarker((r.po_price_summary ?? poPriceById.get(String(r.id))))?.label ?? "",
+      render: (r) => {
+        const m = poPriceMarker((r.po_price_summary ?? poPriceById.get(String(r.id))));
+        if (!m) return <span className="text-[12px] text-ink-muted">…</span>;
+        if (m.tone === "differs") {
+          return (
+            <span className="text-[12px] font-semibold" style={{ color: "#a16a2e" }} title={`Net ${m.diffSen > 0 ? "+" : "−"}${fmtRm(Math.abs(m.diffSen))} against the purchase order prices. For reference only.`}>
+              {m.label}
+            </span>
+          );
+        }
+        return <span className={m.tone === "matches" ? "text-[12px] text-ink-secondary" : "text-[12px] text-ink-muted"}>{m.label}</span>;
+      },
     },
+  };
+  const columns: Column<PiRow, PiListLine>[] = [
+    ...PI_DEFAULT_COLUMN_KEYS.map((k) => byKey[k]!),
+    ...Object.keys(byKey).filter((k) => !(PI_DEFAULT_COLUMN_KEYS as readonly string[]).includes(k)).map((k) => byKey[k]!),
   ];
 
   const statusPillOptions: Array<{ value: StatusTab; label: string }> = [
@@ -1204,11 +1291,12 @@ export function PurchaseInvoicesListV2() {
                   </Button>
                 </div>
               )}
-              <DataTable<PiRow>
+              <DataTable<PiRow, PiListLine>
                 tableId="purchase-invoices-v2"
                 rows={rows}
                 /* Feeds the stat strip so the tiles describe what is on screen. */
                 onFilteredRowsChange={visible.onFilteredRowsChange}
+                onColFiltersChange={onColFiltersChange}
                 loading={listLoading}
                 error={error ? (error as Error).message ?? "Failed to load" : null}
                 columns={columns}
@@ -1228,6 +1316,7 @@ export function PurchaseInvoicesListV2() {
                   onToggleAll: toggleSelectAll,
                 }}
                 exportName="purchase-invoices"
+                exportLines={exportLines}
                 serverSort
                 onSortChange={setSortAndReset}
                 emptyLabel={
@@ -1299,7 +1388,6 @@ export function PurchaseInvoicesListV2() {
         onEdit={() => selected && goEdit(selected)}
         onPrint={() => selected && printDocument(purchaseInvoicePrintChain(selected).own)}
         onRecordPayment={() => selected && goRecordPayment(selected)}
-        onMarkPaid={() => selected && doMarkPaid(selected)}
       />
     </PullToRefresh>
   );

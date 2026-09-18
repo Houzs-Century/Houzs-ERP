@@ -30,6 +30,8 @@ import { hasHouzsPerm } from '../lib/houzs-perms';
 import { activeCompanyId } from '../lib/companyScope';
 import { callAcRead } from '../../services/autocount-host-read';
 import { planLineRelink, type BookLine } from '../lib/autocount-relink-lines';
+import { bindingsFor } from '../lib/autocount-outbox';
+import { resolveAcItemCode } from '../../services/autocount-item-code';
 import { NEW_LINE_TABLE } from '../lib/autocount-line-keys';
 
 /* The same keys as Send again and /book-doc, for the same reason: this reads a
@@ -40,8 +42,37 @@ const RELINK_KEYS = ['scm.autocount.requeue', '*'] as const;
    store uses, and for the same reason: these are the two documents whose lines a
    route inserts by hand. Only the parent/header columns are local. */
 const DOC = {
-  SO: { lineTable: NEW_LINE_TABLE.SO, parentCol: 'doc_no', headerTable: 'mfg_sales_orders', headerKey: 'doc_no' },
-  PO: { lineTable: NEW_LINE_TABLE.PO, parentCol: 'purchase_order_id', headerTable: 'purchase_orders', headerKey: 'po_number' },
+  /* `headerCols` is per-document and REQUIRED, because the two headers are not
+     shaped alike: scm.purchase_orders is keyed by a uuid `id` that its lines
+     carry, and scm.mfg_sales_orders has NO `id` column at all — its lines carry
+     `doc_no`. Selecting a common column list asked the sales-order header for a
+     column that does not exist, and PostgREST refused the whole read, so the
+     operator's "Match up lines" reported `column mfg_sales_orders.id does not
+     exist` and nothing was ever matched (docs/bugs/0601). */
+  SO: { lineTable: NEW_LINE_TABLE.SO, parentCol: 'doc_no', headerTable: 'mfg_sales_orders', headerKey: 'doc_no', headerCols: 'linked_ac_docno', resolve: 'docNo' },
+  PO: { lineTable: NEW_LINE_TABLE.PO, parentCol: 'purchase_order_id', headerTable: 'purchase_orders', headerKey: 'po_number', headerCols: 'id, linked_ac_docno', resolve: 'headerId' },
+  /* THE FOUR DOWNSTREAM DOCUMENTS. They are built by CONVERSION, so their lines
+     are never inserted by hand — but a conversion that ran before the service
+     reported its keys, or a partial the ERP could not name, leaves them KEYLESS
+     all the same, and until now there was no way to match them up (the button
+     400'd). The book holds them — `/doc-read` serves all six types
+     (AcSyncService.cs:518) — and planLineRelink is document-type agnostic, so
+     the only thing missing was the header/line wiring here.
+
+     RESOLVE VIA THE OUTBOX `doc_id`, NOT the request's `doc_no`. A conversion's
+     queue `doc_no` is not a uniform shape — an unnumbered delivery order carries
+     its header uuid, a goods receipt carries its business number — so keying the
+     header on `doc_no` would be the docs/bugs/0601 trap again. `enqueueConvert`
+     always stores the header uuid in the outbox row's `doc_id`
+     (autocount-outbox.ts, `readConvertHeaderFacts(sb, docType, docId)`), so that
+     is the one identifier that is the same shape for every type. The lines link
+     by that same header id (`delivery_order_id` / `grn_id` / …), exactly as PO
+     lines link by the PO's id. Columns proven on all four in
+     autocount-convert-lines.ts DOWNSTREAM `itemCols`. */
+  DO: { lineTable: 'delivery_order_items', parentCol: 'delivery_order_id', headerTable: 'delivery_orders', headerKey: 'id', headerCols: 'id, linked_ac_docno', resolve: 'outboxDocId' },
+  GR: { lineTable: 'grn_items', parentCol: 'grn_id', headerTable: 'grns', headerKey: 'id', headerCols: 'id, linked_ac_docno', resolve: 'outboxDocId' },
+  IV: { lineTable: 'sales_invoice_items', parentCol: 'sales_invoice_id', headerTable: 'sales_invoices', headerKey: 'id', headerCols: 'id, linked_ac_docno', resolve: 'outboxDocId' },
+  PI: { lineTable: 'purchase_invoice_items', parentCol: 'purchase_invoice_id', headerTable: 'purchase_invoices', headerKey: 'id', headerCols: 'id, linked_ac_docno', resolve: 'outboxDocId' },
 } as const;
 
 type DocKind = keyof typeof DOC;
@@ -64,8 +95,7 @@ export const autocountRelinkLinesHandler = async (
   if (!spec) {
     return c.json({
       error: 'invalid_doc_type',
-      message: `docType must be one of ${Object.keys(DOC).join(', ')}. The other four are built by `
-        + 'conversion and their lines are never added by hand here.',
+      message: `docType must be one of ${Object.keys(DOC).join(', ')}.`,
     }, 400);
   }
   if (!docNo) return c.json({ error: 'invalid_doc_no', message: '`docNo` is required.' }, 400);
@@ -73,12 +103,33 @@ export const autocountRelinkLinesHandler = async (
   const sb = c.get('supabase');
   const companyId = activeCompanyId(c);
 
+  /* A conversion document's queue doc_no is not a uniform shape (unnumbered DO =
+     header uuid, GR = business number), so its header is found through the
+     outbox row's doc_id — the header uuid enqueueConvert always stores. SO/PO
+     key on the request's docNo directly. */
+  let headerKeyValue = docNo;
+  if (spec.resolve === 'outboxDocId') {
+    const { data: ob, error: obErr } = await sb.from('autocount_outbox')
+      .select('doc_id')
+      .eq('company_id', companyId)
+      .eq('doc_type', docType)
+      .eq('doc_no', docNo)
+      .not('doc_id', 'is', null)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (obErr) return c.json({ error: 'read_failed', reason: obErr.message }, 500);
+    const docId = (ob as { doc_id?: string | null } | null)?.doc_id ?? null;
+    if (!docId) return c.json({ error: 'not_found', message: 'no queued row carries a document id for this document.' }, 404);
+    headerKeyValue = docId;
+  }
+
   /* The document has to be OURS before we read it out of the book — the company
      predicate is the whole tenant boundary on this client (it is the service
      role, so no policy is evaluated). */
   const { data: header, error: headerErr } = await sb.from(spec.headerTable)
-    .select('id, linked_ac_docno')
-    .eq(spec.headerKey, docNo)
+    .select(spec.headerCols)
+    .eq(spec.headerKey, headerKeyValue)
     .eq('company_id', companyId)
     .maybeSingle();
   /* BOUND AND BRANCHED, not `?? null`. A failed read and "no such document" are
@@ -99,9 +150,12 @@ export const autocountRelinkLinesHandler = async (
   }
   const bookLines = Array.isArray(read.body?.lines) ? (read.body?.lines as BookLine[]) : [];
 
-  const parentValue = spec.parentCol === 'purchase_order_id'
-    ? String((header as { id?: unknown }).id ?? '')
-    : docNo;
+  /* Read off the spec for the same reason `headerCols` is: a per-document fact
+     settled by testing a column NAME silently takes the wrong branch the moment
+     a third document type is added, and nothing fails to compile. */
+  const parentValue = spec.resolve === 'docNo'
+    ? docNo
+    : String((header as { id?: unknown }).id ?? '');
   const { data: rows, error: rowsErr } = await sb.from(spec.lineTable)
     .select('id, item_code, description2, linked_ac_dtlkey')
     .eq(spec.parentCol, parentValue);
@@ -110,19 +164,34 @@ export const autocountRelinkLinesHandler = async (
      matched" — a sentence that is indistinguishable from the honest answer. */
   if (rowsErr) return c.json({ error: 'read_failed', reason: rowsErr.message }, 500);
 
-  const erpLines = ((rows ?? []) as Array<Record<string, unknown>>).map((r) => ({
-    id: String(r.id),
-    /* THE RAW ERP CODE, deliberately. The write-back resolves a supplier's own
-       spelling through the bindings, and where that resolution applies the raw
-       code will simply not match the book's — which this planner treats as
-       "cannot be proven" and REFUSES. Fail-closed is the right direction here: a
-       refusal is a line the operator is told about, a wrong match is a line
-       somebody else loses. Resolving properly is the follow-up, not a silent
-       widening. */
-    acItemCode: (r.item_code as string | null) ?? null,
-    desc2: (r.description2 as string | null) ?? null,
-    dtlKey: r.linked_ac_dtlkey == null ? null : Number(r.linked_ac_dtlkey),
-  }));
+  const rowsIn = (rows ?? []) as Array<Record<string, unknown>>;
+  /* THE BOOK'S SPELLING, and this is the follow-up the comment that stood here
+     promised (docs/bugs/0816). It used to pass the RAW ERP code and say
+     "Resolving properly is the follow-up, not a silent widening."
+
+     The ERP holds `AKEMI ARMOUR MATT (SK)`; the book holds
+     `AK-ARMOUR MATT (SK)`, because composeEdit resolves every code through the
+     cutover bindings before sending it. Comparing our spelling to theirs
+     refused every line of every document a supplier spells differently — which
+     is what the first readable relink-sweep report showed on all 13 documents
+     (docs/bugs/0815).
+
+     STILL FAIL-CLOSED: an unresolvable code falls back to the raw one, which
+     refuses exactly as before. Resolution can turn a guaranteed miss into a
+     possible match; it cannot turn a wrong match into a confident one. */
+  const bindings = await bindingsFor(
+    sb, companyId, rowsIn.map((r) => String(r.item_code ?? '')),
+  ).catch(() => new Map<string, string>());
+  const erpLines = rowsIn.map((r) => {
+    const own = (r.item_code as string | null) ?? null;
+    const res = own ? resolveAcItemCode(own, { bindings }) : null;
+    return {
+      id: String(r.id),
+      acItemCode: res?.ok ? res.acItemCode : own,
+      desc2: (r.description2 as string | null) ?? null,
+      dtlKey: r.linked_ac_dtlkey == null ? null : Number(r.linked_ac_dtlkey),
+    };
+  });
 
   const plan = planLineRelink({ bookLines, erpLines });
 
@@ -150,8 +219,20 @@ export const autocountRelinkLinesHandler = async (
     /* NAMED, not counted. Each one is a line the operator still has to deal
        with, and "2 lines could not be matched" sends him hunting. */
     couldNotMatch: [...plan.refused, ...failed],
+    /* NO `canRebuild` FLAG. It was here for part of 2026-09-02, so the screen
+       could offer the operator a rebuild — and `docs/bugs/0610` removed the need
+       for the offer entirely: a document whose lines cannot be matched now
+       rebuilds on its next save, because refusing it was permanent rather than
+       deferred. A flag with no consumer reads like a feature that exists; this
+       one never had one. Owner: 「不需要 match up line 啊，这个 button 都没必要用
+       了」. */
     message: stamped > 0
       ? `${stamped} line(s) matched up against the account book. Save the document again.`
-      : 'Nothing could be matched — the document is unchanged.',
+      : plan.refused.length > 0
+        ? 'These lines cannot be told apart in the account book, so no matcher can '
+          + 'choose between them. The document can still be sent by REBUILDING its '
+          + 'lines from the ERP — that replaces the account book lines with these '
+          + 'ones and cannot be undone.'
+        : 'Nothing could be matched — the document is unchanged.',
   });
 };

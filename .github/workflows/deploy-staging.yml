@@ -63,7 +63,15 @@ on:
     # This workflow still owns the Worker + Pages deploy, and restoring `main`
     # here still requires the new token first; the shared `deploy-staging`
     # concurrency group keeps the two off the tracker table at the same time.
-    branches: [staging]
+    #
+    # RESTORED 2026-09-12: `main` is back. The precondition above ("prove the
+    # new token with workflow_dispatch first") is met — dispatches on main
+    # succeeded on 2026-09-08 (c9d3ea6) and 2026-09-12 (run 34626351932,
+    # 72c21a2, both Worker and Pages). Without `main` here staging had drifted
+    # 430 commits behind production and the nightly rehearsal was proving a
+    # three-day-old build (docs/bugs/0824). A rehearsal that does not track
+    # what ships is the 0083 shape again.
+    branches: [main, staging]
   workflow_dispatch:
     inputs:
       skip_migrate:
@@ -162,6 +170,17 @@ jobs:
           # because it points at a direct-connection hostname that resolves
           # IPv4-only; the pooler is different DNS territory.
           NODE_OPTIONS: --dns-result-order=ipv4first
+      # Bake the commit sha INTO the bundle (src/build-info.ts) — the same
+      # reliable stamp prod uses. GET /health reads this bundled constant, which
+      # no var/secret operation can drop (see backend/src/build-info.ts). The
+      # --var below is kept as a fallback.
+      - name: Stamp the build with the commit sha
+        run: |
+          set -euo pipefail
+          # Replace ONLY the placeholder value — never the whole file, so
+          # resolveBuildSha() survives. Fails loudly if the anchor drifts.
+          sed -i 's|^export const GIT_SHA: string = "dev";$|export const GIT_SHA: string = "'"$GITHUB_SHA"'";|' src/build-info.ts
+          grep -qF "\"$GITHUB_SHA\"" src/build-info.ts || { echo "::error title=Build stamp failed::src/build-info.ts export line did not become $GITHUB_SHA — did the anchor change?"; exit 1; }
       # Deploy the Worker to the staging env block in wrangler.toml
       # ([env.staging] → name autocount-sync-api-staging, isolated Hyperdrive,
       # crons=[]). Same Cloudflare account as prod, so the existing

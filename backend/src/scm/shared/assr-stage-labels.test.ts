@@ -116,7 +116,9 @@ describe('the app + document wording, unchanged from assr_print.ts', () => {
     ['pending_review', 'Pending Review'],
     ['under_verification', 'Under Verification'],
     ['pending_solution', 'Pending Solution'],
-    ['pending_supplier_pickup', 'Supplier Pickup / Return'],
+    // Renamed 2026-09-04 (Nico): the stage spans customer + supplier legs now,
+    // so the name went neutral — the sub-status names the actor.
+    ['pending_supplier_pickup', 'Pickup / Return'],
     ['pending_item_ready', 'Pending Item Ready'],
     ['pending_delivery_service', 'Pending Delivery / Service'],
     ['completed', 'Completed'],
@@ -151,7 +153,7 @@ describe('the ONE wording the portal deliberately keeps to itself', () => {
      moves by accident while the question is open. */
   test('supplier pickup: portal and document say different things, on purpose', () => {
     expect(assrCustomerStatus('pending_supplier_pickup').label).toBe('Pending Supplier Pickup');
-    expect(assrStageLabel('pending_supplier_pickup')).toBe('Supplier Pickup / Return');
+    expect(assrStageLabel('pending_supplier_pickup')).toBe('Pickup / Return');
   });
 
   test('and it is the ONLY one — every other stage agrees', () => {

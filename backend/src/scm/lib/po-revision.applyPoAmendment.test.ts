@@ -11,6 +11,7 @@
 //   • one AMENDMENT_PO_APPROVED row lands on entity_audit_log.
 import { describe, it, expect } from 'vitest';
 import { applyPoAmendment, ReceivedFloorError } from './po-revision';
+import { parsePgrestInList } from './pgrest-in-list';
 
 type Row = Record<string, any>;
 
@@ -30,6 +31,13 @@ class Query {
   in(col: string, val: any[]) { this.filters.push({ kind: 'in', col, val }); return this; }
   order() { return this; }
   limit() { return this; }
+  /* The shared binding reader (lib/supplier-bindings.ts) filters with an escaped
+     in-list and pages with range; the list here is small, so range returns all. */
+  filter(col: string, op: string, val: string) {
+    if (op !== 'in') throw new Error(`fake: filter(${op}) is not implemented`);
+    return this.in(col, parsePgrestInList(val));
+  }
+  range() { return this; }
   maybeSingle() { this.wantSingle = true; return this; }
   single() { this.wantSingle = true; return this; }
   update(payload: any) { this.op = 'update'; this.payload = payload; return this; }
@@ -213,5 +221,134 @@ describe('applyPoAmendment — snapshot + revision + audit', () => {
     expect(store.purchase_orders[0].supplier_id).toBe('S2');
     const audit = store.entity_audit_log.find((a) => a.action === 'AMENDMENT_PO_APPROVED')!;
     expect(JSON.stringify(audit.field_changes)).toContain('supplier_id');
+  });
+});
+
+/* docs/bugs/0887 — a line whose ITEM CODE the amendment moves must take the
+   supplier's code for the new item, from the same binding the convert path
+   reads, or the purchase order goes on telling the factory to build the old
+   piece (HC-PO-2609-064: `5536-L(LHF)` left under `9058-1A(LHF)`). */
+describe('applyPoAmendment — the supplier code follows a changed item code', () => {
+  const bind = (item_code: string, supplier_id: string, supplier_sku: string): Row => ({
+    item_code, supplier_id, supplier_sku, is_main_supplier: true, material_kind: 'mfg_product', company_id: 1,
+  });
+  function sofaStore(): Record<string, Row[]> {
+    const store = baseStore();
+    store.purchase_order_items = [
+      { id: 'POI-1', purchase_order_id: POID, item_code: '9058-L(LHF)', supplier_sku: '5536-L(LHF)', material_name: 'SOFA MAYBATCH L(LHF)', qty: 1, unit_price_sen: 1000, discount_sen: 0, line_total_sen: 1000, received_qty: 0, variants: null, delivery_date: null, company_id: 1 },
+      { id: 'POI-2', purchase_order_id: POID, item_code: '9058-1NA', supplier_sku: '5536-1NA', material_name: 'SOFA MAYBATCH 1NA', qty: 1, unit_price_sen: 2000, discount_sen: 0, line_total_sen: 2000, received_qty: 0, variants: null, delivery_date: null, company_id: 1 },
+    ];
+    store.supplier_material_bindings = [
+      bind('9058-1A(LHF)', 'S1', '5536-1A(LHF)'),
+      bind('9058-CNR', 'S1', '5536-CNR'),
+      bind('9058-CNR', 'S2', 'OTHER-CNR'),
+      bind('9058-1A(RHF)', 'S1', '5536-1A(RHF)'),
+    ];
+    const spec = (id: string, poi: string, code: string, name: string): Row => ({
+      id, amendment_id: AMD, purchase_order_item_id: poi, change_type: 'SPEC', new_qty: null, new_unit_price_sen: null,
+      new_item_code: code, new_material_name: name, new_variants: null, new_delivery_date: null, old_snapshot: {},
+    });
+    store.po_amendment_lines = [
+      spec('AL-1', 'POI-1', '9058-1A(LHF)', 'SOFA MAYBATCH 1A(LHF)'),
+      spec('AL-2', 'POI-2', '9058-CNR', 'SOFA MAYBATCH CNR'),
+    ];
+    return store;
+  }
+
+  it('SPEC: L(LHF) -> 1A(LHF) and 1NA -> CNR carry this supplier\'s codes', async () => {
+    const store = sofaStore();
+    const res = await applyPoAmendment(fakeSb(store), AMD, 'user-1');
+    const byId = (id: string) => store.purchase_order_items.find((i) => i.id === id)!;
+    expect(byId('POI-1')).toMatchObject({ item_code: '9058-1A(LHF)', supplier_sku: '5536-1A(LHF)' });
+    expect(byId('POI-2')).toMatchObject({ item_code: '9058-CNR', supplier_sku: '5536-CNR' });
+    expect(res.warnings).toEqual([]);
+  });
+
+  it('SPEC to an item this supplier has no code for clears the old code and says so', async () => {
+    const store = sofaStore();
+    store.supplier_material_bindings = store.supplier_material_bindings.filter((b) => b.supplier_id !== 'S1');
+    const res = await applyPoAmendment(fakeSb(store), AMD, 'user-1');
+    expect(store.purchase_order_items.find((i) => i.id === 'POI-2')!.supplier_sku).toBeNull();
+    expect(res.warnings.some((w) => w.includes('SOFA MAYBATCH CNR') && w.includes(PONO))).toBe(true);
+  });
+
+  it('ADD carries this supplier\'s code for the added item', async () => {
+    const store = sofaStore();
+    store.po_amendment_lines = [
+      { id: 'AL-3', amendment_id: AMD, purchase_order_item_id: null, change_type: 'ADD', new_qty: 1, new_unit_price_sen: 700, new_item_code: '9058-1A(RHF)', new_material_name: 'SOFA MAYBATCH 1A(RHF)', new_variants: null, new_delivery_date: null, old_snapshot: null },
+    ];
+    await applyPoAmendment(fakeSb(store), AMD, 'user-1');
+    expect(store.purchase_order_items.find((i) => i.item_code === '9058-1A(RHF)')!.supplier_sku).toBe('5536-1A(RHF)');
+  });
+});
+
+/* The SKU decides an amended line's category (2026-09-15). An added line took
+   `new_variants.itemGroup` or `others`; a SPEC-moved code kept the old group. On a
+   company-1 sofa / Sofa Accessory line that group decides whether MRP counts the
+   purchase order at all. */
+describe('applyPoAmendment — the category comes from the SKU', () => {
+  const products = (): Row[] => [
+    { code: 'SQUARE PILLOW', category: 'FABRIC_ACCESSORY', company_id: 1 },
+    { code: '9058-CNR', category: 'SOFA', company_id: 1 },
+  ];
+
+  it('ADD stamps the SKU\'s category, not `others`', async () => {
+    const store = baseStore();
+    store.mfg_products = products();
+    store.po_amendment_lines = [
+      { id: 'AL-1', amendment_id: AMD, purchase_order_item_id: null, change_type: 'ADD', new_qty: 1, new_unit_price_sen: 500, new_item_code: 'SQUARE PILLOW', new_material_name: 'Square Pillow', new_variants: { fabricCode: 'PC151-12' }, new_delivery_date: null, old_snapshot: null },
+    ];
+    await applyPoAmendment(fakeSb(store), AMD, 'user-1');
+    const added = store.purchase_order_items.find((i) => i.item_code === 'SQUARE PILLOW')!;
+    expect(added.item_group).toBe('fabric_accessory');
+    expect(added.description2).toContain('PC151-12');
+  });
+
+  it('ADD of an uncatalogued code keeps the line\'s own group', async () => {
+    const store = baseStore();
+    store.mfg_products = products();
+    store.po_amendment_lines = [
+      { id: 'AL-1', amendment_id: AMD, purchase_order_item_id: null, change_type: 'ADD', new_qty: 1, new_unit_price_sen: 500, new_item_code: 'NEW-THING', new_material_name: 'New', new_variants: { itemGroup: 'mattress' }, new_delivery_date: null, old_snapshot: null },
+    ];
+    await applyPoAmendment(fakeSb(store), AMD, 'user-1');
+    expect(store.purchase_order_items.find((i) => i.item_code === 'NEW-THING')!.item_group).toBe('mattress');
+  });
+
+  it('SPEC moving the code re-reads the category', async () => {
+    const store = baseStore();
+    store.mfg_products = products();
+    store.purchase_order_items[0].item_group = 'others';
+    store.po_amendment_lines = [
+      { id: 'AL-1', amendment_id: AMD, purchase_order_item_id: 'POI-1', change_type: 'SPEC', new_qty: null, new_unit_price_sen: null, new_item_code: '9058-CNR', new_material_name: 'SOFA CNR', new_variants: null, new_delivery_date: null, old_snapshot: {} },
+    ];
+    await applyPoAmendment(fakeSb(store), AMD, 'user-1');
+    expect(store.purchase_order_items.find((i) => i.id === 'POI-1')!.item_group).toBe('sofa');
+  });
+
+  it('refuses a sales-order follow-up, which must apply through reviseBoundPo and its line links', async () => {
+    const store = baseStore();
+    store.po_amendments[0].source_so_amendment_id = 'soamd-1';
+    store.po_amendment_lines = [
+      { id: 'AL-1', amendment_id: AMD, purchase_order_item_id: null, change_type: 'ADD', new_qty: 1, new_unit_price_sen: 500, new_item_code: 'SQUARE PILLOW', new_material_name: 'Square Pillow', new_variants: null, new_delivery_date: null, old_snapshot: null },
+    ];
+    await expect(applyPoAmendment(fakeSb(store), AMD, 'user-1')).rejects.toThrow(/reviseBoundPo/);
+    expect(store.purchase_order_items.some((i) => i.item_code === 'SQUARE PILLOW')).toBe(false);
+  });
+});
+
+describe('applyPoAmendment — a header supplier change decides whose code a moved line takes', () => {
+  it('looks the code up for the supplier the PO has AFTER the amendment', async () => {
+    const store = baseStore();
+    store.po_amendments[0].header_changes = { supplier_id: 'S2' };
+    store.po_amendments[0].old_header_snapshot = { supplier_id: 'S1' };
+    store.supplier_material_bindings = [
+      { item_code: '9058-CNR', supplier_id: 'S1', supplier_sku: '5536-CNR', is_main_supplier: true, material_kind: 'mfg_product', company_id: 1 },
+      { item_code: '9058-CNR', supplier_id: 'S2', supplier_sku: 'OTHER-CNR', is_main_supplier: true, material_kind: 'mfg_product', company_id: 1 },
+    ];
+    store.po_amendment_lines = [
+      { id: 'AL-1', amendment_id: AMD, purchase_order_item_id: 'POI-1', change_type: 'SPEC', new_qty: null, new_unit_price_sen: null, new_item_code: '9058-CNR', new_material_name: 'SOFA MAYBATCH CNR', new_variants: null, new_delivery_date: null, old_snapshot: {} },
+    ];
+    await applyPoAmendment(fakeSb(store), AMD, 'user-1');
+    expect(store.purchase_order_items.find((i) => i.id === 'POI-1')!.supplier_sku).toBe('OTHER-CNR');
   });
 });

@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { soRouterFiles, soRouterSource } from './lib/so-router-source';
 
 /* ═══════════════════════════════════════════════════════════════════════════
    ONE RULE, ONE HOME — "may a sofa share an order with a bedframe or mattress?"
@@ -35,7 +36,10 @@ const SO_ROUTER = 'scm/routes/mfg-sales-orders.ts';
 const CO_ROUTER = 'scm/routes/consignment-orders.ts';
 const HOME = 'scm/lib/main-mix.ts';
 
-const soSource = read(SO_ROUTER);
+const soSource = soRouterSource().replace(/\r\n/g, '\n');
+/* Every file the SO router is written across (router file + register/mount call
+   targets), relative to src/ like the paths the walk below produces. */
+const SO_ROUTER_FAMILY = soRouterFiles().map((f) => f.replace(/^src\//, ''));
 const coSource = read(CO_ROUTER);
 
 /** Every .ts source file under backend/src, tests excluded. */
@@ -126,7 +130,7 @@ describe('every caller is accounted for', () => {
     expect(callers.length, 'nobody calls the rule at all — it has been unwired, not unified')
       .toBeGreaterThan(0);
 
-    const unexpected = callers.filter((f) => f !== SO_ROUTER && f !== CO_ROUTER && !(f in KNOWN_OUTSIDE_ROUTERS));
+    const unexpected = callers.filter((f) => !SO_ROUTER_FAMILY.includes(f) && f !== CO_ROUTER && !(f in KNOWN_OUTSIDE_ROUTERS));
     expect(
       unexpected,
       'these files enforce the sofa-mix rule from outside the two sales routers:\n  '

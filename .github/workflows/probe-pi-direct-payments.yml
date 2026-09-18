@@ -1,0 +1,44 @@
+name: probe-pi-direct-payments
+
+# How many supplier invoices were marked paid WITHOUT a payment voucher?
+#
+# PATCH /purchase-invoices/:id/payment added a typed amount straight onto a
+# purchase invoice's paid_sen: no voucher, so no journal entry, no hold check, no
+# approval. The phone's Record Payment sheet reached it. The route is retired
+# (docs/bugs/0889-supplier-invoice-payments-could-skip-the-payment-voucher-and.md);
+# this counts the payments it recorded, per company and per invoice, beside what
+# posted vouchers paid on the same invoices.
+#
+# Read-only: SELECTs only, no DDL, no writes, no transaction. Prints invoice
+# numbers, dates and amounts; never staff or supplier names (public log).
+# Production only: the repo-level STAGING_DATABASE_URL secret no longer exists.
+# See backend/scripts/probe-pi-direct-payments.mjs.
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: probe-pi-direct-payments
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm ci
+      - name: Count supplier invoice payments recorded without a voucher
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        # pipefail, or `tee` swallows a crash and a truncated answer reads as success
+        run: |
+          set -o pipefail
+          node scripts/probe-pi-direct-payments.mjs | tee pi-direct-payments.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: probe-pi-direct-payments
+          path: backend/pi-direct-payments.txt
+          retention-days: 14

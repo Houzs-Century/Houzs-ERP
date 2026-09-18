@@ -7,6 +7,8 @@ import {
   useCreateStockTransfer,
 } from "../vendor/scm/lib/stock-queries";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
+import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
+import { FreshMount } from "../lib/freshMount";
 import { useIdempotencyKey } from "../lib/idempotency";
 import { MobileSkuPicker, type PickedSku } from "./MobileSkuPicker";
 import { DateField } from "../vendor/scm/components/DateField";
@@ -19,7 +21,7 @@ import { DateField } from "../vendor/scm/components/DateField";
  * useCreateStockTransfer + useInventoryBuckets; no backend change.
  * ------------------------------------------------------------------ */
 
-type LineDraft = { _key: string; itemCode: string; productName: string; variantKey?: string; qty: number };
+type LineDraft = { _key: string; itemCode: string; productName: string; variantKey?: string; qty: number; notes?: string };
 
 // Humanise a variant_key ("fabriccode=bf-16|gap=16|legheight=2") into a compact
 // bucket label. '' = the unclassified / plain-SKU bucket.
@@ -33,12 +35,13 @@ const UNPICKED = "__UNPICKED__";
 // its SKU's real variant buckets (with on-hand qty) at the From warehouse — the
 // operator moves the exact bucket, keeping stock + MRP accurate (owner 2026-07-20).
 function MobileTransferLine({
-  line, fromWarehouseId, setVariant, setQty, removeLine,
+  line, fromWarehouseId, setVariant, setQty, setNotes, removeLine,
 }: {
   line: LineDraft;
   fromWarehouseId: string;
   setVariant: (key: string, variantKey: string | undefined) => void;
   setQty: (key: string, qty: number) => void;
+  setNotes: (key: string, notes: string) => void;
   removeLine: (key: string) => void;
 }) {
   const bucketsQ = useInventoryBuckets(line.itemCode || null, fromWarehouseId || null);
@@ -92,6 +95,13 @@ function MobileTransferLine({
             : `avail ${avail}`}
         </span>
       </div>
+      <input
+        className="cal-sel"
+        style={{ marginTop: 8, fontSize: 13 }}
+        value={line.notes ?? ""}
+        onChange={(e) => setNotes(line._key, e.target.value)}
+        placeholder="Remarks (optional) — shown as Description 2"
+      />
     </div>
   );
 }
@@ -99,18 +109,28 @@ function MobileTransferLine({
 let seq = 0;
 const newKey = () => `l${seq++}`;
 
-export function MobileStockTransferNew({
-  onBack,
-  onCreated,
-}: {
+type MobileStockTransferNewProps = {
   onBack: () => void;
   onCreated?: () => void;
-}) {
+};
+
+export function MobileStockTransferNew(props: MobileStockTransferNewProps) {
+  return <FreshMount>{(startNew) => <MobileStockTransferForm {...props} onStartNew={startNew} />}</FreshMount>;
+}
+
+function MobileStockTransferForm({
+  onBack,
+  onCreated,
+  onStartNew,
+}: MobileStockTransferNewProps & { onStartNew: () => void }) {
   const notify = useNotify();
+  const confirm = useConfirm();
   const create = useCreateStockTransfer();
   /* One key for the one transfer this screen is open to raise
      (lib/idempotency.ts). MobileApp mounts this behind a screen and onCreated /
-     onBack leave it (MobileApp.tsx:457), so the MOUNT is exactly one transfer.
+     onBack leave it, so the MOUNT is exactly one transfer — and "New stock
+     transfer" after a create is onStartNew, a REMOUNT with a fresh key, never a
+     field reset on this mount (which would replay the first transfer).
      The desktop twin (StockTransferNew) mints its own — the same document
      protected on both sides in one PR, since a document covered on one side only
      is a new divergence. */
@@ -151,6 +171,8 @@ export function MobileStockTransferNew({
     setLines((prev) => prev.map((l) => (l._key === key ? { ...l, variantKey } : l)));
   const setQty = (key: string, qty: number) =>
     setLines((prev) => prev.map((l) => (l._key === key ? { ...l, qty: Math.max(1, qty) } : l)));
+  const setLineNotes = (key: string, notes: string) =>
+    setLines((prev) => prev.map((l) => (l._key === key ? { ...l, notes } : l)));
   const removeLine = (key: string) => setLines((prev) => prev.filter((l) => l._key !== key));
 
   const submit = () => {
@@ -162,12 +184,21 @@ export function MobileStockTransferNew({
         toWarehouseId,
         transferDate,
         notes: notes.trim() || undefined,
-        items: validLines.map((l) => ({ itemCode: l.itemCode, productName: l.productName, variantKey: l.variantKey, qty: l.qty })),
+        items: validLines.map((l) => ({ itemCode: l.itemCode, productName: l.productName, variantKey: l.variantKey, qty: l.qty, notes: l.notes?.trim() || undefined })),
       },
       {
         onSuccess: (r) => {
-          void notify({ title: `Stock transfer ${r.transferNo} created` });
-          onCreated ? onCreated() : onBack();
+          void (async () => {
+            const another = await confirm({
+              title: `Stock transfer ${r.transferNo} created`,
+              body: "The stock has moved. Start another transfer?",
+              confirmLabel: "New stock transfer",
+              cancelLabel: "Done",
+            });
+            if (another) onStartNew();
+            else if (onCreated) onCreated();
+            else onBack();
+          })();
         },
         onError: (e) =>
           void notify({ title: e instanceof Error ? e.message : "Couldn't create the transfer.", tone: "error" }),
@@ -226,6 +257,7 @@ export function MobileStockTransferNew({
             fromWarehouseId={fromWarehouseId}
             setVariant={setVariant}
             setQty={setQty}
+            setNotes={setLineNotes}
             removeLine={removeLine}
           />
         ))}

@@ -1,4 +1,6 @@
 // Vendored SLICE of apps/backend/src/lib/flow-queries.ts — ONLY the Sales-Order
+import { appendSoListFilterParams } from './so-list-filter-state';
+import type { SoListFilter } from '../../shared/so-list-filter-model';
 import { writeFailed } from './mutation-error';
 import { resolveCompartmentArtUrl, loadCompartmentArt } from './sofa-compartment-art';
 // read / detail / status / mutation hooks the vendored SO list + detail pages
@@ -66,21 +68,33 @@ export const useMfgSalesOrders = (status?: string) =>
 // useMfgSalesOrders above (no page) still returns all 500 for the dead V1 page.
 // Status tab values in the UI are lowercase (draft/confirmed/cancelled) but the
 // mfg_sales_orders.status column stores UPPERCASE — uppercase here to match.
-export function useMfgSalesOrdersPaged(params: { page: number; pageSize: number; status?: string; q?: string; sort?: string; enabled?: boolean }) {
-  const { page, pageSize, status, q, sort, enabled } = params;
+/** The Sales Order list's filter as query parameters, no paging: the list request
+ *  and the list's export (so-list-export.ts) send exactly these. */
+export function soListSearchParams(f: { status?: string; q?: string; sort?: string; filters?: readonly SoListFilter[]; debtorNames?: string[]; currencies?: string[] }): URLSearchParams {
   const usp = new URLSearchParams();
+  if (f.status && f.status !== 'all') usp.set('status', f.status.toUpperCase());
+  if (f.q && f.q.trim()) usp.set('q', f.q.trim());
+  if (f.sort) usp.set('sort', f.sort);
+  appendSoListFilterParams(usp, f.filters ?? []); // second-level filters (so-list-filter-state.ts)
+  // Server-filterable column funnels (owner 2026-09-16): Customer Name /
+  // Currency, JSON arrays (a customer name may contain a comma).
+  if (f.debtorNames && f.debtorNames.length) usp.set('debtorNames', JSON.stringify(f.debtorNames));
+  if (f.currencies && f.currencies.length) usp.set('currencies', JSON.stringify(f.currencies));
+  return usp;
+}
+
+export function useMfgSalesOrdersPaged(params: { page: number; pageSize: number; status?: string; q?: string; sort?: string; enabled?: boolean; filters?: readonly SoListFilter[]; debtorNames?: string[]; currencies?: string[] }) {
+  const { page, pageSize, status, q, sort, enabled, filters = [], debtorNames, currencies } = params;
+  const usp = soListSearchParams({ status, q, sort, filters, debtorNames, currencies });
   usp.set('page', String(page));
   usp.set('pageSize', String(pageSize));
-  if (status && status !== 'all') usp.set('status', status.toUpperCase());
-  if (q && q.trim()) usp.set('q', q.trim());
-  if (sort) usp.set('sort', sort);
   return useQuery({
     // `enabled` (default true) lets the list page defer the FIRST fetch by one
     // render until the DataTable's one-shot mount sort-report lands, so the
     // initial query already carries any localStorage-restored `sort` instead of
     // firing sort-less, getting aborted, and immediately re-firing with sort.
     enabled: enabled ?? true,
-    queryKey: ['mfg-sales-orders-paged', page, pageSize, status ?? '', q ?? '', sort ?? ''],
+    queryKey: ['mfg-sales-orders-paged', page, pageSize, status ?? '', q ?? '', sort ?? '', usp.getAll('f').join('|'), JSON.stringify(debtorNames ?? []), JSON.stringify(currencies ?? [])],
     // statusCounts carries ONE bucket per backend SO_STATUSES entry (lowercase:
     // draft/confirmed/in_production/ready_to_ship/shipped/delivered/invoiced/
     // closed/on_hold/cancelled) plus `all` and `other` (legacy/unknown
@@ -236,6 +250,18 @@ export const useMfgSalesOrderDetail = (docNo: string | null) => useQuery({
    source-PO chips upgrade in place a moment later. Keyed by the line `id`, one
    entry per line. The detail page overlays these onto its own lines when they
    arrive — never a loading gate. */
+/* Why a line can never read READY, when the reason is WHERE it stands (owner
+   ruling 2026-09-08). Null on every ordinary line. The SENTENCE is composed on
+   the SERVER (backend/src/scm/lib/non-selling-warehouse.ts) and rendered
+   verbatim by both surfaces, so the rule and its wording have ONE home and the
+   desktop and the phone cannot word a refusal differently. */
+export type NonSellingWarehouseNote = {
+  code: string | null;
+  name: string | null;
+  type: string | null;
+  notice: string;
+};
+
 export type SoLineCoverage = {
   id: string;
   stock_state: 'stock' | 'po' | 'shortage' | null;
@@ -243,6 +269,7 @@ export type SoLineCoverage = {
   coverage_eta: string | null;
   ready_source_pos: Array<{ po: string | null; qty: number; kind: 'po' | 'adjustment' }>;
   stock_status_effective: string | null;
+  non_selling_warehouse?: NonSellingWarehouseNote | null;
 };
 
 export const useSoLineCoverage = (docNo: string | null) => useQuery({
@@ -313,7 +340,16 @@ export type SoPayment = {
   id: string;
   so_doc_no: string;
   paid_at: string;
-  method: 'merchant' | 'transfer' | 'cash' | 'installment';
+  /* `converted` = money moved from another order (docs/bugs/0927/0931) — or,
+     with a NEGATIVE amount, a MIRROR: money that left this order (owner
+     2026-09-16), following the converted row it became or the refund voucher. */
+  method: 'merchant' | 'transfer' | 'cash' | 'installment' | 'converted';
+  /** A converted row: the order the money came from. */
+  converted_from_so_doc_no?: string | null;
+  /** A mirror: where the money went, and what it follows. */
+  converted_to_so_doc_no?: string | null;
+  mirror_of_payment_id?: string | null;
+  refund_pv_id?: string | null;
   merchant_provider: string | null;
   installment_months: number | null;
   online_type: string | null;
@@ -474,8 +510,12 @@ export const useUpdateMfgSalesOrderHeader = () => {
     onSuccess: (_, vars) => {
       if (vars.reserveLineWrites === true || vars.__suppressInvalidate === true) return;
       invalidateSoLists(qc);
-      qc.invalidateQueries({ queryKey: ['mfg-sales-order-detail', vars.docNo] });
       qc.invalidateQueries({ queryKey: ['mfg-sales-order-audit-log', vars.docNo] });
+      /* RETURNED, so the caller's own onSuccess waits for the order's re-read
+         (docs/bugs/0936-a-save-that-reported-success-left-the-order-s-lock-behind-so.md). Fired and forgotten, a Save reported done with the
+         pre-save copy still in the cache; Edit pressed in that window pinned its
+         superseded version and the next Save was refused as an older screen. */
+      return qc.invalidateQueries({ queryKey: ['mfg-sales-order-detail', vars.docNo] });
     },
   });
 };
@@ -719,9 +759,11 @@ export const useEditSalesOrderPayment = () => {
 export const useAttachSalesOrderPaymentSlip = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ docNo, id, uploadSessionId }: { docNo: string; id: string; uploadSessionId: string }) =>
+    /* `reason` — owed by a role holding the correction right (docs/bugs/0888);
+       the server refuses such a caller's attach without one. */
+    mutationFn: ({ docNo, id, uploadSessionId, reason }: { docNo: string; id: string; uploadSessionId: string; reason?: string }) =>
       authedFetch<{ payment: SoPayment }>(`/mfg-sales-orders/${docNo}/payments/${id}/slip`, {
-        method: 'POST', body: JSON.stringify({ uploadSessionId }),
+        method: 'POST', body: JSON.stringify({ uploadSessionId, ...(reason ? { reason } : {}) }),
       }),
     onSuccess: (_data, vars) => {
       /* The per-row slip image is cached under its OWN key by the thumbnail
@@ -737,9 +779,12 @@ export const useAttachSalesOrderPaymentSlip = () => {
 export const useDeleteSalesOrderPayment = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ docNo, id, version }: { docNo: string; id: string; version: number }) =>
+    /* `reason` rides the query the way `version` does — a DELETE carries no
+       body here. Required by the server when the amend right opened the door. */
+    mutationFn: ({ docNo, id, version, reason }: { docNo: string; id: string; version: number; reason?: string }) =>
       authedFetch<{ ok: boolean }>(
-        `/mfg-sales-orders/${docNo}/payments/${id}?version=${encodeURIComponent(String(version))}`,
+        `/mfg-sales-orders/${docNo}/payments/${id}?version=${encodeURIComponent(String(version))}`
+          + (reason ? `&reason=${encodeURIComponent(reason)}` : ''),
         { method: 'DELETE' },
       ),
     // The ['mfg-sales-orders'] root prefix-covers this SO's payments ledger and
@@ -1168,3 +1213,38 @@ export async function loadSofaCompartmentPhotos(
   }));
   return out;
 }
+
+/** One salesperson who holds Sales Orders in the ACTIVE company. */
+export type SoHandoverHolder = {
+  staffId: string;
+  name: string | null;
+  staffCode: string | null;
+  active: boolean | null;
+  orders: number;
+};
+
+/**
+ * WHO holds this company's Sales Orders, most first.
+ *
+ * The Salesperson Handover panel's "Orders currently with" picker. It reads
+ * this and NOT the staff roster: `/staff` is scoped by a person's company LINK
+ * (`scm/lib/staffCompanyScope.ts`), which buckets an AutoCount-imported rep with
+ * no ERP login to the other company — so the roster hid 22 holders / 339
+ * non-cancelled orders in HOUZS, every one of them the kind of resigned rep the
+ * panel exists to hand over (production run 34336422828, 2026-09-09). Switching
+ * company does not rescue it: their ORDERS are in HOUZS while their staff rows
+ * answer to 2990.
+ *
+ * A list derived from the orders cannot omit somebody who holds one.
+ */
+export const useSoHandoverHolders = () => useQuery({
+  queryKey: ['so-handover-holders'],
+  /* `holders?` is OPTIONAL because this is the WIRE, not a local object, and
+     the `?? []` is the guard that keeps one odd payload from rendering a picker
+     that throws instead of one that is empty. Declaring it always-present would
+     make that guard read as dead code — which is exactly what the linter said
+     when it was typed that way. */
+  queryFn: () => authedFetch<{ holders?: SoHandoverHolder[] }>('/so-handover/holders')
+    .then((r) => r.holders ?? []),
+  staleTime: 60_000,
+});

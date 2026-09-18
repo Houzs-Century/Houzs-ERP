@@ -29,7 +29,8 @@ import {
 } from "lucide-react";
 import { generateAmendmentPdf } from "../../vendor/scm/lib/amendment-pdf";
 import { amendmentPrintedStatus, poAmendmentToPdfInput } from "../../vendor/scm/lib/amendment-pdf-map";
-import { fmtDateTime, fmtMoneySen } from "@2990s/shared";
+import { fmtDateTime } from "@2990s/shared";
+import { PoAmendmentDiffCard as DiffCard, poAmendmentHeaderDiffRows } from "./po-amendment-diff-card";
 import { Button } from "../../components/Button";
 import {
   DetailGrid,
@@ -43,6 +44,7 @@ import {
   resolveStatusPill,
   type StatusTone,
 } from "../../vendor/scm/lib/status-pill";
+import { AMENDMENT_APPROVER_LABEL, PO_AMENDMENT_APPROVER } from "../../vendor/scm/lib/amendment-approver";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { usePrompt } from "../../vendor/scm/components/PromptDialog";
@@ -56,7 +58,6 @@ import {
   type PoAmendmentLine,
 } from "../../vendor/scm/lib/po-amendment-queries";
 import {
-  RowRoutingChips,
   AmendmentTypeBadges,
   AmendmentRoutingBlock,
 } from "../../vendor/scm/components/AmendmentRouting";
@@ -69,37 +70,15 @@ import { useAuth as useScmAuth } from "../../vendor/scm/lib/auth";
 import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
 import { PrintPreviewModal, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
-import { cn, formatDate } from "../../lib/utils";
+import { cn } from "../../lib/utils";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
-
-/* PO amendment prices are stored in centi (1/100 MYR). */
-const fmtSen = (centi: number | null | undefined): string => fmtMoneySen(centi);
-
-const changeTypeLabel = (t: string): string =>
-  t === "SPEC" ? "Spec change" :
-  t === "QTY" ? "Quantity change" :
-  t === "PRICE" ? "Cost change" :
-  t === "DELIVERY" ? "Delivery change" :
-  t === "ADD" ? "Added line" :
-  t === "REMOVE" ? "Removed line" : t;
 
 const asStr = (v: unknown): string | null => {
   if (v == null) return null;
   const s = String(v).trim();
   return s ? s : null;
 };
-
-/* Read the old_snapshot blob a PO amendment line records. */
-type PoOldSnapshot = {
-  item_code?: string | null;
-  material_name?: string | null;
-  qty?: number | null;
-  unit_price_sen?: number | null;
-  delivery_date?: string | null;
-};
-const oldOf = (l: PoAmendmentLine): PoOldSnapshot =>
-  (l.old_snapshot as PoOldSnapshot | null) ?? {};
 
 /* Every failed gate action reports through here — authedFetch hangs the raw
    status + body off the thrown error, which humanApiError turns into the house
@@ -110,18 +89,6 @@ const plainError = (e: unknown): string => {
     return humanApiError(err.status, err.body);
   }
   return err?.message ?? "Something went wrong. Please try again.";
-};
-
-/* Header change labels — the AMENDABLE_HEADER trust boundary keys. */
-const HEADER_LABEL: Record<string, string> = {
-  supplier_id: "Supplier",
-  expected_at: "Delivery date",
-  notes: "Notes",
-};
-const headerValueDisplay = (key: string, v: string | null): string => {
-  if (v == null || v === "") return "—";
-  if (key === "expected_at") return formatDate(v);
-  return v;
 };
 
 // ─── Revision-status hero (2 stages: Requested -> Approved) ──────────────────
@@ -267,106 +234,6 @@ function RevisionHero({
   );
 }
 
-// ─── Per-line before -> after diff card ─────────────────────────────────────
-
-function DiffCard({ line }: { line: PoAmendmentLine }) {
-  const old = oldOf(line);
-  const isAdd = line.change_type === "ADD";
-  const isRemove = line.change_type === "REMOVE";
-
-  const oldCode = old.item_code ?? null;
-  const oldName = old.material_name ?? null;
-  const newCode = line.new_item_code ?? oldCode;
-  const newName = line.new_material_name ?? oldName;
-
-  const codeChanged = !isAdd && !isRemove && line.new_item_code != null && line.new_item_code !== oldCode;
-  const qtyChanged = !isAdd && !isRemove && line.new_qty != null && line.new_qty !== (old.qty ?? null);
-  const priceChanged = !isAdd && !isRemove && line.new_unit_price_sen != null && line.new_unit_price_sen !== (old.unit_price_sen ?? null);
-  const deliveryChanged = !isAdd && !isRemove && line.new_delivery_date != null && line.new_delivery_date !== (old.delivery_date ?? null);
-
-  const wasCls = (changed: boolean, base: string): string =>
-    cn(base, changed && "line-through decoration-ink-muted/60");
-  const nowCls = (changed: boolean, base: string): string =>
-    cn(base, changed ? "font-semibold text-primary-ink" : "text-ink-muted");
-
-  return (
-    <div className="overflow-hidden rounded-md border border-border">
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border-subtle bg-surface-2 px-3 py-1.5">
-        <span className="font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-secondary">
-          {changeTypeLabel(line.change_type)}
-        </span>
-        <RowRoutingChips kinds={poLineFieldKinds(line)} />
-      </div>
-      <div className="grid grid-cols-2 divide-x divide-border-subtle">
-        {/* Before */}
-        <div className="p-3">
-          <div className="font-mono text-[9px] font-semibold uppercase tracking-brand text-ink-muted">
-            Was
-          </div>
-          {isAdd ? (
-            <div className="mt-1 text-[12px] text-ink-muted">New line — nothing before</div>
-          ) : (
-            <>
-              <div className={wasCls(codeChanged, "mt-1 font-mono text-[13px] font-semibold text-ink")}>
-                {oldCode ?? "—"}
-              </div>
-              {oldName && (
-                <div className={wasCls(codeChanged, "mt-0.5 text-[11px] text-ink-secondary")}>{oldName}</div>
-              )}
-              <div className="mt-0.5 font-money text-[11.5px] text-ink-muted">
-                <span className={wasCls(qtyChanged, "")}>Qty {old.qty ?? "—"}</span>
-                {typeof old.unit_price_sen === "number" ? (
-                  <>
-                    {" · "}
-                    <span className={wasCls(priceChanged, "")}>{fmtSen(old.unit_price_sen)}</span>
-                  </>
-                ) : ""}
-              </div>
-              {old.delivery_date && (
-                <div className={wasCls(deliveryChanged, "mt-1 text-[11px] text-ink-secondary")}>
-                  Delivery {formatDate(old.delivery_date)}
-                </div>
-              )}
-            </>
-          )}
-        </div>
-        {/* After */}
-        <div className="p-3">
-          <div className="font-mono text-[9px] font-semibold uppercase tracking-brand text-ink-muted">
-            Requesting
-          </div>
-          {isRemove ? (
-            <div className="mt-1 text-[12px] font-semibold text-err">Removed</div>
-          ) : (
-            <>
-              <div className={nowCls(codeChanged, "mt-1 font-mono text-[13px]")}>
-                {newCode ?? "—"}
-              </div>
-              {newName && (
-                <div className={nowCls(codeChanged, "mt-0.5 text-[11px]")}>{newName}</div>
-              )}
-              <div className="mt-0.5 font-money text-[11.5px]">
-                <span className={nowCls(qtyChanged, "")}>Qty {line.new_qty ?? old.qty ?? "—"}</span>
-                {typeof line.new_unit_price_sen === "number" ? (
-                  <>
-                    <span className="text-ink-muted">{" · "}</span>
-                    <span className={nowCls(priceChanged, "")}>{fmtSen(line.new_unit_price_sen)}</span>
-                  </>
-                ) : ""}
-              </div>
-              {line.new_delivery_date && (
-                <div className={nowCls(deliveryChanged, "mt-1 text-[11px]")}>
-                  Delivery {formatDate(line.new_delivery_date)}
-                </div>
-              )}
-            </>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // ─── Main page ─────────────────────────────────────────────────────────────
 
 export function PoAmendmentDetailV2() {
@@ -405,17 +272,13 @@ export function PoAmendmentDetailV2() {
 
   /* Header change rows — the AMENDABLE_HEADER keys (supplier / delivery / notes)
      paired against the old snapshot. */
-  const headerDiffs = useMemo(() => {
-    const changes = (amendment?.header_changes ?? null) as Record<string, string | null> | null;
-    const oldSnap = (amendment?.old_header_snapshot ?? null) as Record<string, string | null> | null;
-    if (!changes) return [] as Array<{ key: string; label: string; from: string; to: string }>;
-    return Object.keys(changes).map((k) => ({
-      key: k,
-      label: HEADER_LABEL[k] ?? k,
-      from: headerValueDisplay(k, oldSnap?.[k] ?? null),
-      to: headerValueDisplay(k, changes[k] ?? null),
-    }));
-  }, [amendment]);
+  const headerDiffs = useMemo(
+    () => poAmendmentHeaderDiffRows(
+      (amendment?.header_changes ?? null) as Record<string, string | null> | null,
+      (amendment?.old_header_snapshot ?? null) as Record<string, string | null> | null,
+    ),
+    [amendment],
+  );
 
   const changeCount = headerDiffs.length + lines.length;
 
@@ -840,7 +703,7 @@ export function PoAmendmentDetailV2() {
                   )}
                   {!canApprove && !canWithdraw && (
                     <p className="text-[12px] text-ink-muted">
-                      Awaiting approval.
+                      Awaiting {AMENDMENT_APPROVER_LABEL[PO_AMENDMENT_APPROVER]} approval.
                     </p>
                   )}
                 </div>

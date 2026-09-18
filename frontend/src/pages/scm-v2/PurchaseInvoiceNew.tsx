@@ -29,8 +29,8 @@
 
 import { transferFromLabel } from '../../lib/convertScope';
 import { todayMyt } from '../../vendor/scm/lib/dates';
-import { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { Save, Trash2, X, ChevronDown, ArrowRightLeft } from 'lucide-react';
 import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
 import { Button } from '@2990s/design-system';
@@ -39,13 +39,19 @@ import { activeOptions, buildVariantSummary, isServiceLine, maintPickerValues } 
 import {
   useCreatePurchaseInvoice,
   usePostPurchaseInvoice,
+  usePurchaseInvoiceDetail,
 } from '../../vendor/scm/lib/purchase-invoice-queries';
 import { useIdempotencyKey } from '../../lib/idempotency';
 import { readScmHandoff, removeScmHandoff } from '../../lib/scmHandoffStorage';
 import { useGrnDetail, useGrnDetails } from '../../vendor/scm/lib/grn-queries';
 import { useActiveCurrencies, rateFor } from '../../vendor/scm/lib/currencies-queries';
+import { LinePoRefLink } from '../../vendor/scm/components/LinePoRefLink';
+import { PoPriceReference } from '../../vendor/scm/components/PoPriceReference';
+import { defaultPiUnitPriceSen } from '../../vendor/scm/lib/pi-po-price-rule';
+import { linePoLink, type LinePoFields } from '../../vendor/scm/lib/line-po-link';
 import { CurrencySelect } from '../../vendor/scm/components/CurrencySelect';
 import { SpecialOrders } from '../../vendor/scm/components/SpecialOrders';
+import { specialOrderSurface } from '../../vendor/scm/lib/special-order-surface';
 import { useSuppliers, useSupplierDetail } from '../../vendor/scm/lib/suppliers-queries';
 import { useMfgProducts, useMaintenanceConfig, useSpecialAddons } from '../../vendor/scm/lib/mfg-products-queries';
 import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
@@ -109,6 +115,12 @@ type DraftLine = {
   qty:            number;
   unitPriceSen: number;
   notes:          string;
+  /* #26 — the PO the source receipt line came from (GRN detail serves it);
+     absent on a manual line. Display only, never sent. */
+  sourcePo?:      LinePoFields;
+  /* The PO line's price, shown beside Unit Price for reference (owner
+     2026-09-14). Display only: the server stamps its own copy at insert. */
+  poUnitPriceSen?: number | null;
 };
 
 export const PurchaseInvoiceNew = () => {
@@ -233,8 +245,12 @@ export const PurchaseInvoiceNew = () => {
         itemGroup:      it.item_group ?? null,
         variants:       (it.variants as Record<string, unknown> | null) ?? null,
         qty:            pickQtyById ? (pickQtyById.get(it.id) ?? it._remaining) : it._remaining,
-        unitPriceSen: it.unit_price_sen ?? 0,
+        /* Owner 2026-09-14: 「create 的时候，系统肯定会把 PO 的价钱直接带过来」 —
+           the PO price when the order named one, else the receipt's. */
+        unitPriceSen: defaultPiUnitPriceSen(it.po_unit_price_sen ?? null, it.unit_price_sen ?? 0),
+        poUnitPriceSen: it.po_unit_price_sen ?? null,
         notes:          '',
+        sourcePo:       { source_po_id: it.source_po_id ?? null, source_po_number: it.source_po_number ?? null },
       }));
     setLines(next);
   }, [sourceItems, fromPicks]);
@@ -256,6 +272,84 @@ export const PurchaseInvoiceNew = () => {
       notes:          '',
     }]);
   }, [isManual]);
+
+  /* ── 扫 → bill (the owner, 2026-09-03: 他是扫 bill, 然后帮我录入 bill.
+     几时要还是我会开 ap payment 去还) ──────────────────────────────────────
+     The scan page hands the extraction over via location.state: supplier
+     (when the reader matched one), the supplier's own invoice number and
+     date, and one manual line per read line — RECORDING the debt only;
+     paying stays an AP Payment, later, his call. */
+  const location = useLocation();
+  const scanApplied = useRef(false);
+  useEffect(() => {
+    const scan = (location.state as {
+      scanBill?: {
+        supplierId: string | null;
+        extraction: { invoiceNumber: string | null; invoiceDate: string | null; lines: Array<{ description: string | null; amountSen: number | null }> };
+        lines?: Array<{ description: string | null; amountSen: number | null }>;
+      };
+    } | null)?.scanBill;
+    if (!scan || scanApplied.current || !isManual) return;
+    scanApplied.current = true;
+    if (scan.supplierId) setManualSupplierId(scan.supplierId);
+    if (scan.extraction.invoiceNumber) setSupplierInvoiceRef(scan.extraction.invoiceNumber);
+    if (scan.extraction.invoiceDate) setInvoiceDate(scan.extraction.invoiceDate);
+    const src = (scan.lines ?? scan.extraction.lines).filter((l) => l.amountSen != null && l.amountSen > 0);
+    if (src.length > 0) {
+      setLines(src.map((l, i) => ({
+        rid:          `s${Date.now()}-${i}`,
+        grnItemId:    null,
+        materialKind: 'mfg_product',
+        itemCode:     '',
+        materialName: l.description ?? 'As per bill',
+        itemGroup:    null,
+        variants:     null,
+        qty:          1,
+        unitPriceSen: l.amountSen ?? 0,
+        notes:        '',
+      })));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.state, isManual]);
+
+  /* ── Copy as new (the owner, 2026-09-03, AutoCount in hand) ─────────────
+     ?copyFrom=<piId> pre-fills CONTENT from an existing bill — supplier,
+     lines (category + variants riding along), notes, currency+rate — and
+     NOTHING with an identity: fresh number, today's date, no supplier
+     invoice ref (that belongs to the SOURCE bill's paper), no GRN links
+     (the copy is an independent manual bill). */
+  const copyFrom = params.get('copyFrom');
+  const copyQ = usePurchaseInvoiceDetail(copyFrom);
+  const copyApplied = useRef(false);
+  useEffect(() => {
+    if (!copyFrom || copyApplied.current || !copyQ.data) return;
+    copyApplied.current = true;
+    const v = copyQ.data.purchaseInvoice as Record<string, unknown>;
+    if (v.supplier_id) setManualSupplierId(String(v.supplier_id));
+    if (v.notes) setNotes(String(v.notes));
+    const cur = typeof v.currency === 'string' ? v.currency : null;
+    if (cur && cur !== 'MYR') {
+      setCurrencyOverride(cur);
+      const rate = v.exchange_rate == null ? '' : String(v.exchange_rate);
+      if (rate) { setExchangeRate(rate); setRateTouched(true); }
+    }
+    const items = copyQ.data.items as Array<Record<string, unknown>>;
+    if (items.length > 0) {
+      setLines(items.map((it, i) => ({
+        rid:          `c${Date.now()}-${i}`,
+        grnItemId:    null,
+        materialKind: String(it.material_kind ?? 'mfg_product'),
+        itemCode:     String(it.item_code ?? ''),
+        materialName: String(it.material_name ?? ''),
+        itemGroup:    (it.item_group as string | null) ?? null,
+        variants:     (it.variants as Record<string, unknown> | null) ?? null,
+        qty:          Number(it.qty ?? 1),
+        unitPriceSen: Number(it.unit_price_sen ?? 0),
+        notes:        String(it.notes ?? ''),
+      })));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [copyFrom, copyQ.data]);
 
   const setLine  = (rid: string, patch: Partial<DraftLine>) =>
     setLines((prev) => prev.map((l) => (l.rid === rid ? { ...l, ...patch } : l)));
@@ -749,6 +843,22 @@ export const PurchaseInvoiceNew = () => {
               l.grnItemId === null &&
               (l.itemGroup === 'bedframe' || l.itemGroup === 'sofa') &&
               !!maint;
+              /* THE SPECIAL ORDER, for the categories with no variant grid.
+                 Owner 2026-09-10: 「POGR 是不是也是要能看得到这些数据？…全部都是
+                 要带过去的哦」 — a custom pillow's colour and an SP mattress's
+                 size reach the supplier's PDF already (description2 carries the
+                 SPECIAL segment for every category) but were invisible on every
+                 cost document, because each one gates its editor on bedframe or
+                 sofa. One rule, shared: vendor/scm/lib/special-order-surface.ts.
+                 Empty pool on purpose — this document carries no catalogue for
+                 those categories, and choosing WHAT to build is the sales
+                 order's job. SpecialOrders no longer calls a carried pick
+                 "retired" when it has no pool to judge it against. */
+            const specialSurface = specialOrderSurface({
+              category: l.itemGroup ?? '',
+              hasItemCode: Boolean(l.itemCode),
+              pickedSpecialCount: 0,
+            });
             const setVariant = (key: string, value: string) =>
               setLine(l.rid, { variants: (() => {
                 const variants: Record<string, unknown> = { ...(l.variants ?? {}), [key]: value };
@@ -770,6 +880,11 @@ export const PurchaseInvoiceNew = () => {
                   <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
                     <span style={{ fontFamily: 'var(--font-button)', fontSize: 'var(--fs-12)', fontWeight: 700, letterSpacing: '0.10em', color: 'var(--fg-muted)' }}>LINE {idx + 1}</span>
                     {l.itemGroup && <ItemGroupPill group={l.itemGroup} />}
+                    {l.sourcePo && linePoLink(l.sourcePo) && (
+                      <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
+                        From PO <LinePoRefLink line={l.sourcePo} />
+                      </span>
+                    )}
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
                     <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
@@ -849,6 +964,18 @@ export const PurchaseInvoiceNew = () => {
                 )}
 
                 {/* Per-category VARIANT EDITOR for MANUAL bedframe/sofa lines. */}
+                {specialSurface.block && (
+                  <div style={{ marginTop: 'var(--space-2)' }}>
+                    <SpecialOrders
+                      options={[]}
+                      variants={(l.variants ?? {}) as Record<string, unknown>}
+                      onPatch={(patch) => setLine(l.rid, { variants: { ...(l.variants ?? {}), ...patch } })}
+                      showPrices={false}
+                      sourceLinked={l.grnItemId !== null}
+                      sourceLabel="Purchase Order"
+                    />
+                  </div>
+                )}
                 {showVariantEditor && (
                   <div style={{ background: 'var(--c-cream)', border: '1px solid var(--line)', borderRadius: 'var(--radius-md)', padding: 'var(--space-3)' }}>
                     <div style={{ fontFamily: 'var(--font-button)', fontSize: 'var(--fs-11)', fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: 'var(--fg-muted)', marginBottom: 'var(--space-2)' }}>{l.itemGroup} Variants</div>
@@ -903,6 +1030,9 @@ export const PurchaseInvoiceNew = () => {
                     <MoneyInput bare valueSen={l.unitPriceSen}
                       onCommit={(sen) => setLine(l.rid, { unitPriceSen: sen ?? 0 })}
                       inputClassName={styles.fieldInput} selectOnFocus />
+                    {!isManualLine && (
+                      <PoPriceReference poUnitPriceSen={l.poUnitPriceSen} piUnitPriceSen={l.unitPriceSen} fmt={(sen) => fmtRm(sen, currency)} />
+                    )}
                   </label>
                   <label className={styles.field}>
                     <span className={styles.fieldLabel}>Line Total</span>

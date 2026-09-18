@@ -342,6 +342,8 @@ export const DeliveryOrderFromSo = () => {
           </span>
         );
       },
+      exportValue: (r) => ((Object.hasOwn(picks, r.soItemId) && picks[r.soItemId].picked ? picks[r.soItemId].qty : r.remaining) * r.unitPriceSen) / 100,
+      exportFormat: 'money',
       sortFn: (a, b) => a.remaining * a.unitPriceSen - b.remaining * b.unitPriceSen,
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps -- column accessors derive from the pick/qty state already in deps; listing the helpers would only rebuild the columns for no behavioural change

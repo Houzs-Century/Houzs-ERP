@@ -149,7 +149,7 @@ export async function generateAmendmentPdf(
     `${input.partyLabel}: ${input.partyName || '—'}`,
   ];
   refLines.forEach((l, i) => doc.text(l, margin, y + i * 5));
-  doc.text(`Revision ${input.revisionFrom} → ${input.revisionTo}`, pageW / 2, y);
+  doc.text(`Revision ${input.revisionFrom} to ${input.revisionTo}`, pageW / 2, y);
   y = y + Math.max(refLines.length * 5, 5) + 4;
 
   doc.setDrawColor(200); doc.line(margin, y, pageW - margin, y);
@@ -251,7 +251,7 @@ export async function generateAmendmentPdf(
   const approvalLines = [
     `Requested by: ${input.requestedBy || '—'}${input.requestedAt ? `  (${fmtDocDate(input.requestedAt)})` : ''}`,
     approvedLine,
-    `Revision: ${input.revisionFrom} → ${input.revisionTo}`,
+    `Revision: ${input.revisionFrom} to ${input.revisionTo}`,
   ];
   approvalLines.forEach((l, i) => doc.text(l, margin, y + i * 5));
   y += approvalLines.length * 5 + 3;

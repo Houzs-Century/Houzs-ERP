@@ -10,7 +10,7 @@
 // src/scm/lib/autocount-outbox.test.ts; this makes sure a refactor cannot
 // quietly unhook it.
 import { describe, expect, test } from 'vitest';
-import soRouteRaw from '../src/scm/routes/mfg-sales-orders.ts?raw';
+import { soRouterSource } from './lib/so-router-source';
 import poRouteRaw from '../src/scm/routes/mfg-purchase-orders.ts?raw';
 import outboxRaw from '../src/scm/lib/autocount-outbox.ts?raw';
 import gateRaw from '../src/scm/lib/so-confirm-gate.ts?raw';
@@ -25,11 +25,17 @@ import doRouteRaw from '../src/scm/routes/delivery-orders-mfg.ts?raw';
 import grnRouteRaw from '../src/scm/routes/grns.ts?raw';
 import piRouteRaw from '../src/scm/routes/purchase-invoices.ts?raw';
 import siRouteRaw from '../src/scm/routes/sales-invoices.ts?raw';
+/* The DO -> SI conversion shapes its response in lib/si-from-do.ts since
+   docs/bugs/0830 (the delivery reconciler runs it with no request to hand) and
+   the route returns that outcome as-is — so the sales-invoice surface is the
+   route AND its core, read together. */
+import siFromDoRaw from '../src/scm/lib/si-from-do.ts?raw';
 import preflightRaw from '../src/scm/lib/ac-preflight.ts?raw';
 import feDoRaw from '../../frontend/src/pages/scm-v2/DeliveryOrderNewV2.tsx?raw';
 import feGrnRaw from '../../frontend/src/pages/scm-v2/GrnNew.tsx?raw';
 import fePiRaw from '../../frontend/src/pages/scm-v2/PurchaseInvoiceNew.tsx?raw';
 import feSiRaw from '../../frontend/src/pages/scm-v2/SalesInvoiceNew.tsx?raw';
+const soRouteRaw = soRouterSource();
 
 /* Line endings, for the reason soLocationGateWiring.test.ts records: these are
    source-TEXT anchors and a CRLF checkout must not turn a wired-up repo red. */
@@ -44,7 +50,7 @@ const fePo = n(fePoRaw);
 const doRoute = n(doRouteRaw);
 const grnRoute = n(grnRouteRaw);
 const piRoute = n(piRouteRaw);
-const siRoute = n(siRouteRaw);
+const siRoute = `${n(siRouteRaw)}\n${n(siFromDoRaw)}`;
 const preflight = n(preflightRaw);
 const feDo = n(feDoRaw);
 const feGrn = n(feGrnRaw);

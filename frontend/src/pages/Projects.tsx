@@ -1,29 +1,21 @@
-import { Fragment, createContext, useContext, useState, useMemo, useEffect, useRef, useCallback } from "react";
-import { createPortal } from "react-dom";
-import { Link, useNavigate, useParams, Navigate, useSearchParams } from "react-router-dom";
+import { Fragment, createContext, useContext, useState, useMemo, useEffect, useRef } from "react";
+import { useNavigate, useParams, Navigate, useSearchParams } from "react-router-dom";
 import {
   Plus,
   Calendar,
   Check,
-  ChevronLeft,
   ChevronRight,
   CheckCircle2,
   Circle,
   Ban,
   Lock,
   Trash2,
-  Upload,
   FileText,
-  ImageOff,
-  Image as ImageIcon,
   Upload as UploadIcon,
   X,
   ExternalLink,
   MessageSquare,
   Truck,
-  Banknote,
-  Monitor,
-  Receipt,
   AlertTriangle,
   Info,
   AlertOctagon,
@@ -38,15 +30,12 @@ import {
   Paperclip,
   Eye,
   EyeOff,
-  Play,
   UserCircle2,
   Users,
   Phone,
   ClipboardList,
   DollarSign,
   Wrench,
-  Search,
-  type LucideIcon,
 } from "lucide-react";
 import { PageHeader } from "../components/Layout";
 import { HubGrid } from "../components/HubGrid";
@@ -54,15 +43,13 @@ import { Button } from "../components/Button";
 import { FilterPills } from "../components/FilterPills";
 import { ProjectMaintenanceView } from "./ProjectMaintenance";
 import { TabStrip } from "../components/TabStrip";
-import { getHolidaysOn } from "../lib/holidays";
-import { compareCalendarEvents } from "../lib/calendarSort";
 import { toCSV, downloadCSV } from "../lib/csv";
 import { PnlCalendar } from "../components/PnlCalendar";
 import { DataTable, type Column } from "../components/DataTable";
 import { ListErrorPanel, SearchPendingPanel } from "../components/SearchProgress";
 import { StatusDot } from "../components/StatusDot";
 import { Pagination } from "../components/Pagination";
-import { Panel, PanelSection, FieldRow } from "../components/Panel";
+import { PanelSection, FieldRow } from "../components/Panel";
 import { ProjectChat } from "../components/ProjectChat";
 import { ProjectGantt } from "../components/ProjectGantt";
 import {
@@ -98,112 +85,75 @@ import {
 import { useServerSort } from "../hooks/useServerSort";
 import { useFocusFromUrl } from "../hooks/useFocusFromUrl";
 import { useStickyFilters } from "../hooks/useStickyFilters";
-import { useRafCoalescedHover } from "../hooks/useRafCoalescedHover";
 import { useAuth } from "../auth/AuthContext";
 import { usePageAccess } from "../auth/PageGuard";
 import { isSalesStaff, isDirectorUser, isSalesDirectorUser, canCreateEvent, canLogSalesEntry, canWriteProjectFinance } from "../auth/salesAccess";
 import { readProjectAccess, projectAccessUnresolved, holdsChecklistApproval } from "../auth/projectAccess";
+import { roleLabelAdmitsRole } from "../auth/roleLabelAdmits";
 import { isCrewScopedUser } from "../auth/crewScope";
 import { PMS_STAGE_LABEL, pmsStageVariant } from "../vendor/scm/lib/pms-status";
-import { LEDGER_COST_CATS, LEDGER_INCOME_CATS, ledgerCategoryLabel } from "../vendor/scm/lib/pms-ledger-categories";
+import { ledgerCategoryLabel } from "../vendor/scm/lib/pms-ledger-categories";
 import { isReviewableTitle } from "../vendor/scm/lib/pms-reviewable-titles";
-import { PROJECT_STATUS_OPTIONS, paymentPillOptions, type ProjectStatus as SharedProjectStatus } from "../vendor/scm/lib/pms-project-status";
+import { paymentPillOptions } from "../vendor/scm/lib/pms-project-status";
 import { Forbidden } from "./Forbidden";
 import { useNotifications } from "../hooks/useNotifications";
-import { api, buildQuery, humanHttpMessage, tokenStore } from "../api/client";
+import { api, buildQuery } from "../api/client";
 import { formatPhone } from "../vendor/shared/phone";
-import { companyHeader } from "../lib/activeCompany";
-import {
-  consumeCorrelated,
-  correlateError,
-  correlatedFetch,
-  requestIdFromError,
-  requestIdFromResponse,
-} from "../lib/requestCorrelation";
 import { MediaLightbox } from "../components/MediaLightbox";
-import { ResetFiltersButton } from "../components/ResetFiltersButton";
 import { PrintPreviewModal, usePrintPreview } from "../components/scm-v2/PrintPreviewModal";
-import { formatDate, formatDateTime, formatTimestamp, formatCurrency, cn, relativeTime, todayInAppTz } from "../lib/utils";
-import { fmtDate } from "../vendor/shared/format";
+import { formatDate, formatDateTime, formatCurrency, cn, relativeTime, todayInAppTz } from "../lib/utils";
 import { DateField } from "../vendor/scm/components/DateField";
-import { DateTimeField } from "../vendor/scm/components/DateTimeField";
-
-// ── Types (module-local) ─────────────────────────────────────
-// Kept in this file until something else imports them. Promoting to
-// types.ts is a no-brainer move once a second page needs them.
-
-// Simplified lifecycle (mig 053):
-//   draft → setup → live → dismantle → completed
-// "planning" + "build" collapsed into "setup"; "teardown" → "dismantle";
-// "closed"/"cancelled" → "completed".
-type ProjectStage =
-  | "draft"
-  | "setup"
-  | "live"
-  | "dismantle"
-  | "completed";
-
-type ChecklistStatus = "pending" | "done" | "na" | "blocked";
-
-// mig 088 — boss-facing lifecycle, drives the calendar tint and replaces
-// the old Go Live button. Independent from `stage` which keeps driving
-// the internal workflow + section tracker.
-type ProjectStatus = SharedProjectStatus;
-
-interface ProjectRow {
-  id: number;
-  code: string;
-  name: string;
-  stage: ProjectStage;
-  status: ProjectStatus;
-  brand: string | null;
-  start_date: string | null;
-  end_date: string | null;
-  state: string | null;
-  venue: string | null;
-  organizer: string | null;
-  booth_no: string | null;
-  size_sqm: number | null;
-  archived_at: string | null;
-  event_type_name: string | null;
-  rental: number | null;
-  total_sales: number | null;
-  contractor_cost: number | null;
-  // Ledger-derived per-category finance sums (whole RM integers) from the
-  // list endpoint. Null for finance-hidden users (redacted server-side).
-  // GP / NP / percent columns are derived from these in the column defs.
-  fin_revenue?: number | null;
-  fin_cogs?: number | null;
-  fin_cogs_matt_sofa?: number | null;
-  fin_cogs_bedframe?: number | null;
-  fin_cogs_accessories?: number | null;
-  fin_rental?: number | null;
-  fin_total_cost?: number | null;
-  // Venue physical size (m²) — populated once feat/pms-venue-size-field lands
-  // the `size` column on project_venues and the list joins it. Guarded: the
-  // column renders "—" while this is absent.
-  venue_size?: number | null;
-  progress_pct: number;
-  pic_id: number | null;
-  pic_name: string | null;
-  created_by: number | null;
-  created_by_name: string | null;
-  // Section-driven stage tracker (mig 050). active_section_name is null
-  // when every section is done OR the project has no sections defined.
-  // Combine with sections_total / sections_complete to distinguish
-  // "everything done" from "no sections yet".
-  active_section_name?: string | null;
-  sections_total?: number;
-  sections_complete?: number;
-  // Populated only when a real section is picked in the Status filter (owner
-  // 2026-08-14). Tasks of that section: 'title=status=due' pairs joined by '|',
-  // where due is a bare YYYY-MM-DD or empty. Drives the per-project task badges.
-  section_tasks_map?: string | null;
-}
+import type {
+  ProjectStage,
+  ChecklistStatus,
+  ProjectRow,
+  SalesAttendee,
+  TasklistSection,
+  SectionProgress,
+  TaskAttachment,
+  PaymentStatus,
+  StockTransfer,
+  FinanceLine,
+  ProjectAttachment,
+  ProjectDefect,
+  ProjectTrip,
+  ChecklistItem,
+  ActivityRow,
+  EventType,
+  Paginated,
+} from "./projects/types";
+import { composeDefaultProjectName, viewableMime, googleCalendarUrl } from "./projects/projectHelpers";
+import { STATUS_OPTIONS, ProjectStatusSelect } from "./projects/projectStatus";
+import { OrganizerPicker, VenuePicker } from "./projects/ProjectPickers";
+import { CreateProjectPanel } from "./projects/CreateProjectPanel";
+import { DateRangeFilter, MultiSelectFilter, SectionTaskBadges, ImportCsvPanel } from "./projects/ProjectsListParts";
+import { ProjectsCalendarView } from "./projects/ProjectsCalendarView";
+export { buildCalendarWindow, buildProjectsCalendarModel } from "./projects/calendarModel";
+import { SPEC_INPUT_CLASS, QuickRentalField, SpecTextField, SpecCell, SpecValue } from "./projects/specFields";
+import { LogisticsDateTimeField, GrabHelperBox, type CrewMember } from "./projects/logisticsParts";
+import { type PhasePhoto, PhasePhotosSection, PhotoGroup } from "./projects/phasePhotos";
+import { FinanceAttachmentsSection, SnapshotKpi, SnapshotRow } from "./projects/financeLedgerParts";
+import {
+  type ProfitabilityBreakdown,
+  type ProfitabilityGroupBy,
+  type ProfitabilityFilters,
+  type ProfitabilityDrillState,
+  type ProfitabilityMonthsResponse,
+  type ProfitabilityProjectsResponse,
+  type ProfitabilityResponse,
+  type FinanceTab,
+  FINANCE_TABS,
+  FINANCE_TAB_HEADER,
+  PROJECTS_FINANCES_TAB_KEYS,
+  type FinanceProjectRow,
+  type FinanceByProjectResponse,
+  FINANCE_STAGE_OPTIONS,
+} from "./projects/financeViewModel";
 
 interface ProjectDetail {
   project: ProjectRow & {
     organizer: string | null;
+    contractor: string | null;
     venue_address: string | null;
     event_type_id: number | null;
     notion_url: string | null;
@@ -321,127 +271,6 @@ interface ProjectDetail {
   sales_attendees?: SalesAttendee[];
 }
 
-interface SalesAttendee {
-  sales_rep_id: number;
-  rep_code: string | null;
-  rep_name: string | null;
-  rep_phone: string | null;
-  rep_user_id: number | null;
-  user_name: string | null;
-  created_at: string | null;
-}
-
-interface TasklistSection {
-  id: number;
-  name: string;
-  sort_order: number;
-  /** mig 085 — "list" (default) or "documents" (6-col table layout). */
-  display_mode?: "list" | "documents";
-}
-
-interface SectionProgress {
-  id: number;          // 0 sentinel = "Uncategorised"
-  name: string;
-  sort_order: number;
-  total: number;
-  done: number;
-  na: number;
-  complete: number;    // 0 | 1
-}
-
-interface TaskAttachment {
-  id: number;
-  item_id: number;
-  r2_key: string;
-  file_name: string;
-  content_type: string | null;
-  size_bytes: number | null;
-  uploaded_by: number | null;
-  uploader_name: string | null;
-  uploaded_at: string;
-  caption: string | null;
-}
-
-type PaymentStatus =
-  | "not_started"
-  | "deposit_paid"
-  | "paid"
-  | "refund_pending"
-  | "refunded";
-
-interface StockTransfer {
-  id: number;
-  project_id: number;
-  direction: "out" | "return";
-  transferred_at: string | null;
-  record_r2_key: string | null;
-  file_name: string | null;
-  mime_type: string | null;
-  notes: string | null;
-  confirmed_at: string | null;
-  confirmed_by: number | null;
-  confirmed_by_name: string | null;
-  created_by: number | null;
-  created_by_name: string | null;
-  created_at: string;
-}
-
-interface FinanceLine {
-  id: number;
-  project_id: number;
-  kind: "income" | "cost";
-  category: string;
-  description: string | null;
-  amount: number;
-  occurred_at: string | null;
-  r2_key: string | null;
-  file_name: string | null;
-  mime_type: string | null;
-  notes: string | null;
-  created_by_name: string | null;
-  created_at: string;
-  // Synthesised rows (e.g. from sales_entries) carry a source marker so
-  // the UI can suppress edit/delete — the source table is the truth.
-  source?: "sales_entry";
-  source_id?: number;
-  // Auto-generated by the cost-rate engine (mig 063). UI locks
-  // edit + delete; users adjust the rate card in Project Maintenance.
-  auto_source?: "auto:transport" | "auto:merchandise" | "auto:commission" | null;
-}
-
-type AttachRole = "sales" | "driver" | "design" | "office";
-
-interface ProjectAttachment {
-  id: number;
-  category: string | null;
-  r2_key: string;
-  file_name: string | null;
-  mime_type: string | null;
-  size_bytes: number | null;
-  uploader_name: string | null;
-  uploaded_by_role: AttachRole | null;
-  created_at: string;
-}
-
-interface ProjectDefect {
-  id: number;
-  project_id: number;
-  phase: "setup" | "dismantle";
-  reported_by_role: "sales" | "logistic";
-  item_code: string | null;
-  item_description: string | null;
-  size: string | null;
-  quantity: number | null;
-  reason: string | null;
-  photo_r2_key: string | null;
-  reported_by_name: string | null;
-  reported_at: string;
-  resolved: number;
-  resolved_notes: string | null;
-  linked_assr_id: number | null;
-  linked_assr_no: string | null;
-}
-
 interface ChecklistComment {
   id: number;
   item_id: number;
@@ -451,76 +280,11 @@ interface ChecklistComment {
   created_at: string;
 }
 
-interface ProjectTrip {
-  id: number;
-  code: string;
-  status: string;
-  scheduled_date: string | null;
-  trip_type: string | null;
-  description: string | null;
-}
-
-interface ChecklistItem {
-  id: number;
-  seq: number;
-  title: string;
-  description: string | null;
-  required_perm: string | null;
-  /** mig 085 — display-only owner tag (e.g. "DRIVER", "SALES PIC"). */
-  role_label: string | null;
-  /** mig 086 — when 1, surfaces in the Driver App. */
-  crew_visible: number;
-  due_date: string | null;
-  owner_user_id: number | null;
-  owner_name: string | null;
-  status: ChecklistStatus;
-  review_status: "pending_review" | "rejected" | "amended" | "approved" | null;
-  rejection_reason: string | null;
-  completed_by: number | null;
-  completed_by_name: string | null;
-  completed_at: string | null;
-  notes: string | null;
-  section_id: number | null;
-  /** mig 090 — when set, row renders multi-state payment pills instead
-   *  of the done/pending circle. 'rental_payment' | 'security_deposit'. */
-  pill_kind: string | null;
-  pill_value: string | null;
-}
-
-interface ActivityRow {
-  id: number;
-  action: string;
-  from_value: string | null;
-  to_value: string | null;
-  note: string | null;
-  user_id: number | null;
-  user_name: string | null;
-  created_at: string;
-}
-
-interface EventType {
-  id: number;
-  slug: string;
-  name: string;
-  default_template_id: number | null;
-}
-
-interface Paginated<T> {
-  data: T[];
-  page: number;
-  per_page: number;
-  total: number;
-}
-
-// Canonical event name helper. Builds the `STATE - BRAND - TYPE - VENUE`
-// convention teams use internally. Empty fields are skipped so a
-// half-filled project still produces something readable.
-// ── Organizer picker ─────────────────────────────────────────
-// Combobox-style: select from existing organizers OR add a new one
-// inline. Picks land in projects.organizer (free text) and also get
-// recorded in project_organizers so the next project sees them.
-
-function OrganizerPicker({
+// Same pattern as OrganizerPicker but for the booth setup/dismantle contractor.
+// Picks land in projects.contractor (free text) and get recorded in
+// project_contractors so the next project sees them. Also feeds the
+// per-contractor share links.
+function ContractorPicker({
   value,
   onChange,
   className,
@@ -531,28 +295,28 @@ function OrganizerPicker({
 }) {
   const dialog = useDialog();
   const toast = useToast();
-  const q = useQuery<{ data: { id: number; name: string }[] }>("/api/projects/organizers",
-    () => api.get("/api/projects/organizers"),
+  const q = useQuery<{ data: { id: number; name: string }[] }>("/api/projects/contractors",
+    () => api.get("/api/projects/contractors"),
     []
   );
   const options = q.data?.data ?? [];
 
   async function addNew() {
     const name = await dialog.prompt({
-      title: "Add organizer",
-      message: "Add a new organizer to the picker. Subsequent projects will see it too.",
-      placeholder: "e.g. PIKOM",
+      title: "Add contractor",
+      message: "Add a new contractor to the picker. Subsequent projects will see it too.",
+      placeholder: "e.g. DREAM ART (M) SDN BHD",
       required: true,
       confirmLabel: "Add",
     });
     if (!name) return;
     try {
-      await api.post("/api/projects/organizers", { name });
+      await api.post("/api/projects/contractors", { name });
       await q.reload();
       onChange(name);
       toast.success(`Added ${name}`);
-    } catch (e: any) {
-      toast.error(e?.message || "Failed to add");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to add");
     }
   }
 
@@ -564,9 +328,7 @@ function OrganizerPicker({
       onChange={(e) => {
         const v = e.target.value;
         if (v === SENTINEL_NEW) {
-          // Don't commit the sentinel — open the prompt and let it
-          // call onChange with the actual new name.
-          void addNew(); // same idiom as the other async handlers here (:2116, :7691)
+          void addNew();
           return;
         }
         onChange(v || null);
@@ -576,7 +338,7 @@ function OrganizerPicker({
         "w-full appearance-none rounded-md border border-border bg-surface px-3 py-2 text-[13px]"
       }
     >
-      <option value="">— select organizer —</option>
+      <option value="">— select contractor —</option>
       {/* Surface legacy values that aren't in the lookup yet */}
       {value && !options.some((o) => o.name === value) && (
         <option value={value}>{value}</option>
@@ -586,166 +348,9 @@ function OrganizerPicker({
           {o.name}
         </option>
       ))}
-      <option value={SENTINEL_NEW}>＋ Add new organizer…</option>
+      <option value={SENTINEL_NEW}>＋ Add new contractor…</option>
     </select>
   );
-}
-
-// Same pattern as OrganizerPicker but for project_venues. Includes an
-// optional `state` callback that fires when the picked venue carries a
-// state hint, so the create form can pre-fill the state field.
-function VenuePicker({
-  value,
-  onChange,
-  onStateHint,
-  className,
-}: {
-  value: string | null | undefined;
-  onChange: (next: string | null) => void;
-  onStateHint?: (state: string | null) => void;
-  className?: string;
-}) {
-  const dialog = useDialog();
-  const toast = useToast();
-  const q = useQuery<{
-    data: { id: number; name: string; state: string | null }[];
-  }>("/api/projects/venues", () => api.get("/api/projects/venues"), []);
-  const options = q.data?.data ?? [];
-
-  async function addNew() {
-    const name = await dialog.prompt({
-      title: "Add venue",
-      message:
-        "Add a new venue to the picker. Subsequent projects will see it too.",
-      placeholder: "e.g. KLCC Convention Centre",
-      required: true,
-      confirmLabel: "Add",
-    });
-    if (!name) return;
-    try {
-      const r = await api.post<{ id: number; name: string; state: string | null }>(
-        "/api/projects/venues",
-        { name }
-      );
-      await q.reload();
-      onChange(r.name);
-      if (r.state && onStateHint) onStateHint(r.state);
-      toast.success(`Added ${r.name}`);
-    } catch (e: any) {
-      toast.error(e?.message || "Failed to add");
-    }
-  }
-
-  const SENTINEL_NEW = "__add_new__";
-
-  return (
-    <select
-      value={value || ""}
-      onChange={(e) => {
-        const v = e.target.value;
-        if (v === SENTINEL_NEW) {
-          addNew();
-          return;
-        }
-        onChange(v || null);
-        if (v && onStateHint) {
-          const match = options.find((o) => o.name === v);
-          if (match?.state) onStateHint(match.state);
-        }
-      }}
-      className={
-        className ??
-        "w-full appearance-none rounded-md border border-border bg-surface px-3 py-2 text-[13px]"
-      }
-    >
-      <option value="">— select venue —</option>
-      {value && !options.some((o) => o.name === value) && (
-        <option value={value}>{value}</option>
-      )}
-      {options.map((o) => (
-        <option key={o.id} value={o.name}>
-          {o.name}
-          {o.state ? ` · ${o.state}` : ""}
-        </option>
-      ))}
-      <option value={SENTINEL_NEW}>＋ Add new venue…</option>
-    </select>
-  );
-}
-
-function composeEventName(p: {
-  brand?: string | null;
-  event_type_name?: string | null;
-  venue?: string | null;
-}): string {
-  const parts = [p.brand, p.event_type_name?.toUpperCase(), p.venue]
-    .map((s) => (s || "").trim())
-    .filter(Boolean);
-  return parts.join(" - ");
-}
-
-// Default project-name format used by the create form.
-//   "{state} [{brand}] {organizer | SOLO} @ {venue}"
-// A picked organizer always fills the slot — solo events included (owner
-// 2026-08-17, IOI Mall Damansara: the calendar said SOLO while the Excel
-// organizer column said MALL MGMT). "SOLO" appears only when no organizer is
-// chosen. Mirrors deriveProjectName in backend/src/services/project-naming.ts.
-function composeDefaultProjectName(p: {
-  state?: string | null;
-  brand?: string | null;
-  organizer?: string | null;
-  venue?: string | null;
-  event_type_slug?: string | null;
-}): string {
-  const state = (p.state || "").trim();
-  const brand = (p.brand || "").trim();
-  const organizer = (p.organizer || "").trim();
-  const venue = (p.venue || "").trim();
-  const isSolo = (p.event_type_slug || "").toLowerCase() === "solo";
-  const orgSlot = organizer || (isSolo ? "SOLO" : "");
-
-  const head: string[] = [];
-  // State leads the name UPPERCASE (owner 2026-07-24): the 2026-07-22 canonical
-  // migration stores states Title Case ("Selangor"), but the event-name/bar
-  // convention is all-caps ("SELANGOR [AKEMI] SOLO @ …") to match the older
-  // UPPERCASE-stored names still on non-solo projects.
-  if (state) head.push(state.toUpperCase());
-  if (brand) head.push(`[${brand}]`);
-  if (orgSlot) head.push(orgSlot);
-  const left = head.join(" ");
-  if (!venue) return left;
-  if (!left) return `@ ${venue}`;
-  return `${left} @ ${venue}`;
-}
-
-// Event labels show the STATE in all-caps ("KUALA LUMPUR [AKEMI] …", owner
-// 2026-07-29). Stored names composed after the 2026-07-22 canonical-state
-// migration lead with a Title-Case state ("Kuala Lumpur"), so uppercase that
-// leading state on render. No-op when the name doesn't begin with the state.
-function upcaseLeadingState(name: string, state?: string | null): string {
-  const s = (state || "").trim();
-  if (s && name.toLowerCase().startsWith(s.toLowerCase())) {
-    return s.toUpperCase() + name.slice(s.length);
-  }
-  return name;
-}
-
-// The browser MIME for a file the user should be able to VIEW inline (PDF,
-// image, video). Used to re-type octet-stream blobs before window.open so a
-// "View" actually renders instead of downloading. Returns null for types the
-// browser can't render inline (docx/xlsx) — those fall through to download.
-function viewableMime(name: string): string | null {
-  const m = /\.([a-z0-9]+)$/i.exec(name || "");
-  if (!m) return null;
-  const ext = m[1].toLowerCase();
-  if (["png", "jpg", "jpeg", "webp", "gif", "heic", "bmp"].includes(ext)) {
-    return `image/${ext === "jpg" ? "jpeg" : ext}`;
-  }
-  if (ext === "svg") return "image/svg+xml";
-  if (ext === "pdf") return "application/pdf";
-  if (ext === "mp4" || ext === "webm") return `video/${ext}`;
-  if (ext === "mov") return "video/quicktime";
-  return null;
 }
 
 // Owner 2026-08-04: in the project EXPORT only (not the on-screen table), these
@@ -761,115 +366,12 @@ function exportOrganizer(organizer: string | null): string {
   return EO_ANON_ORGANIZERS.some((n) => low.startsWith(n)) ? "EO" : v;
 }
 
-/* Canonical Malaysian states — aligned to `scm.my_localities` after mig 0172
-   (owner 2026-07-22). PMS used to store an UPPERCASE short list (`JOHOR` /
-   `KL` / `PENANG`) while SCM stored the Title Case full names (`Johor` /
-   `Kuala Lumpur` / `Pulau Pinang`); a shared Sales-by-state report split the
-   same physical state into two buckets. This list IS the SCM one — new rows
-   land canonical, existing UPPERCASE rows are back-filled by the migration. */
-const PROJECT_STATES = [
-  "Johor",
-  "Kedah",
-  "Kelantan",
-  "Kuala Lumpur",
-  "Labuan",
-  "Melaka",
-  "Negeri Sembilan",
-  "Pahang",
-  "Perak",
-  "Perlis",
-  "Pulau Pinang",
-  "Putrajaya",
-  "Sabah",
-  "Sarawak",
-  "Selangor",
-  "Terengganu",
-] as const;
-
 // ── Stage helpers ────────────────────────────────────────────
-
-const STAGE_OPTIONS: { value: "ALL" | ProjectStage; label: string }[] = [
-  { value: "ALL", label: "All" },
-  { value: "draft", label: "Draft" },
-  { value: "setup", label: "Setup" },
-  { value: "live", label: "Live" },
-  { value: "dismantle", label: "Dismantle" },
-  { value: "completed", label: "Completed" },
-];
 
 // Stage label + variant now come from the SHARED vendor/scm/lib/pms-status so
 // desktop + mobile can't drift on the stage vocabulary.
 const STAGE_LABEL: Record<string, string> = PMS_STAGE_LABEL;
 const stageVariant = pmsStageVariant;
-
-// Project status palette — drives the calendar tint, the spec strip
-// pill, and the header dropdown.
-// Premium earth-tone status palette — pine / brass / clay — tuned for the
-// cream canvas + Nature Black brand. Replaces the generic primary
-// blue/amber/red. `hex` drives the calendar bar tint+rail and legend dots;
-// `chip`/`ring` are the matching pill tints used by the list view + the
-// status dropdown.
-// WHICH statuses exist and what they are CALLED live in pms-project-status.ts,
-// shared with mobile. Only the palette is desktop's — mobile styles inline, so
-// the value->label contract is the part that must not drift (the same split
-// pms-status.ts uses for stages).
-const STATUS_TINT: Record<ProjectStatus, { hex: string; chip: string; ring: string }> = {
-  confirmed: { hex: "#3f6b53", chip: "bg-[#e8efe9] text-[#2f5341]", ring: "ring-[#3f6b53]/30" },
-  pending:   { hex: "#c2740f", chip: "bg-[#f7e8d2] text-[#8a4e0e]", ring: "ring-[#c2740f]/30" },
-  cancelled: { hex: "#b23b3b", chip: "bg-[#f4dede] text-[#8a2f2f]", ring: "ring-[#b23b3b]/30" },
-};
-const STATUS_OPTIONS = PROJECT_STATUS_OPTIONS.map((o) => ({ ...o, ...STATUS_TINT[o.value] }));
-
-const STATUS_BY_VALUE: Record<ProjectStatus, typeof STATUS_OPTIONS[number]> = STATUS_OPTIONS.reduce(
-  (acc, s) => ({ ...acc, [s.value]: s }),
-  {} as Record<ProjectStatus, typeof STATUS_OPTIONS[number]>
-);
-
-function statusBarStyle(status: ProjectStatus | null | undefined): React.CSSProperties {
-  const opt = STATUS_BY_VALUE[status ?? "pending"] ?? STATUS_BY_VALUE.pending;
-  // Colour is driven by the `.cal-bar` class off this `--bar` custom
-  // property: a soft tint + status rail + ink text at rest, deepening to
-  // the solid status fill on hover. Keeps the month grid calm/scannable
-  // while preserving the bold colour on the bar you're pointing at.
-  return { ["--bar" as string]: opt.hex } as React.CSSProperties;
-}
-
-function ProjectStatusSelect({
-  value,
-  onChange,
-  disabled,
-}: {
-  value: ProjectStatus;
-  onChange: (next: ProjectStatus) => void;
-  disabled?: boolean;
-}) {
-  const cur = STATUS_BY_VALUE[value] ?? STATUS_BY_VALUE.pending;
-  return (
-    <div className="relative inline-flex">
-      <span
-        className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2"
-        style={{ background: cur.hex, width: 8, height: 8, borderRadius: 999 }}
-        aria-hidden
-      />
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value as ProjectStatus)}
-        disabled={disabled}
-        className={cn(
-          "appearance-none rounded-md border border-border bg-surface py-1.5 pl-6 pr-7 text-[12px] font-semibold uppercase tracking-wide text-ink outline-none transition-colors focus:border-primary focus:ring-1 focus:ring-primary/30 disabled:cursor-not-allowed disabled:opacity-60",
-          cur.chip
-        )}
-      >
-        {STATUS_OPTIONS.map((o) => (
-          <option key={o.value} value={o.value}>
-            {o.label}
-          </option>
-        ))}
-      </select>
-      <ChevronDown size={12} className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-ink-muted" />
-    </div>
-  );
-}
 
 // ── Main page ────────────────────────────────────────────────
 
@@ -1043,279 +545,15 @@ const PROJECTS_LIST_FILTER_KEYS = [
   "brand",
   "year",
   "month",
+  // `from` / `to` — the date-range filter that replaced the year+month
+  // dropdowns (owner 2026-08-14). They were missed off this list when it
+  // shipped, so the range was the ONE filter that did not survive opening a
+  // project and coming back: `pluck()` mirrors only the keys named here.
+  "from",
+  "to",
   "status",
   "page",
 ] as const;
-
-/** Generic multi-select filter (owner 2026-08-07: "add multiple choice for all
- *  dropdown also"). A native <select multiple> is unusable in a filter bar
- *  (ctrl-click, fixed height), so every project-list filter uses this button +
- *  checkbox popover instead. Closes on outside click / Escape. Options may be
- *  grouped (the task filter groups by checklist section); pass one group with a
- *  null name for a flat list. Selection is a string[] the caller comma-joins
- *  into the URL. */
-// Date-range filter (owner 2026-08-11) — a From/To picker chip that replaces the
-// old year + month dropdowns. Two native date inputs; the list scopes to events
-// overlapping the window (start <= to AND end >= from).
-function DateRangeFilter({
-  from,
-  to,
-  onChange,
-}: {
-  from: string;
-  to: string;
-  onChange: (from: string, to: string) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const boxRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const onDoc = (e: MouseEvent) => {
-      if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
-    document.addEventListener("mousedown", onDoc);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDoc);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
-  /* Was a month-NAME array — the exact thing utils.ts says the owner ruled
-     out ("no 'Jun'/'Jul' month names anywhere on the desktop app"). */
-  const fmt = (d: string) => (d ? fmtDate(d) : "…");
-  const active = !!(from || to);
-  return (
-    <div className="relative" ref={boxRef}>
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className={cn(
-          "inline-flex h-8 max-w-[240px] items-center gap-1.5 rounded-md border bg-surface px-2 text-[12px]",
-          active ? "border-accent font-semibold text-accent" : "border-border text-ink",
-        )}
-      >
-        <Calendar size={13} className="shrink-0 opacity-70" />
-        <span className="truncate">{active ? `${fmt(from)} – ${fmt(to)}` : "All dates"}</span>
-        <ChevronDown size={13} className="shrink-0 opacity-70" />
-      </button>
-      {open && (
-        <div className="absolute left-0 top-9 z-30 w-[250px] rounded-md border border-border bg-surface p-3 shadow-slab">
-          <div className="mb-2 flex items-center justify-between border-b border-border-subtle pb-1.5">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-ink-muted">Date range</span>
-            {active && (
-              <button type="button" onClick={() => onChange("", "")} className="text-[10.5px] font-semibold text-ink-secondary hover:text-err">
-                Clear
-              </button>
-            )}
-          </div>
-          <label className="mb-2 block text-[11px] font-semibold text-ink-secondary">
-            From
-            <DateField
-              fullWidth
-              value={from}
-              max={to || undefined}
-              onChange={(iso) => onChange(iso, to)}
-              className="mt-0.5 w-full rounded-md border border-border bg-surface px-2 py-1 text-[12px]"
-            />
-          </label>
-          <label className="block text-[11px] font-semibold text-ink-secondary">
-            To
-            <DateField
-              fullWidth
-              value={to}
-              min={from || undefined}
-              onChange={(iso) => onChange(from, iso)}
-              className="mt-0.5 w-full rounded-md border border-border bg-surface px-2 py-1 text-[12px]"
-            />
-          </label>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function MultiSelectFilter({
-  placeholder,
-  groups,
-  selected,
-  onChange,
-  title,
-  summary,
-  panelWidth = "w-[280px]",
-}: {
-  placeholder: string;
-  groups: { name: string | null; options: { value: string; label: string; count?: number }[] }[];
-  selected: string[];
-  onChange: (next: string[]) => void;
-  title?: string;
-  /** Label when >1 is ticked, e.g. "3 brands". Defaults to "n selected". */
-  summary?: (n: number) => string;
-  panelWidth?: string;
-}) {
-  const [open, setOpen] = useState(false);
-  const boxRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const onDoc = (e: MouseEvent) => {
-      if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
-    document.addEventListener("mousedown", onDoc);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDoc);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
-  const toggle = (v: string) =>
-    onChange(selected.includes(v) ? selected.filter((x) => x !== v) : [...selected, v]);
-  const labelFor = (v: string) => {
-    for (const g of groups) {
-      const hit = g.options.find((o) => o.value === v);
-      if (hit) return hit.label;
-    }
-    return v;
-  };
-  const label =
-    selected.length === 0
-      ? placeholder
-      : selected.length === 1
-        ? labelFor(selected[0])
-        : summary
-          ? summary(selected.length)
-          : `${selected.length} selected`;
-  return (
-    <div className="relative" ref={boxRef}>
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        title={title ?? placeholder}
-        className={cn(
-          "inline-flex h-8 max-w-[260px] items-center gap-1.5 rounded-md border bg-surface px-2 text-[12px]",
-          selected.length ? "border-accent font-semibold text-accent" : "border-border text-ink",
-        )}
-      >
-        <span className="truncate">{label}</span>
-        <ChevronDown size={13} className="shrink-0 opacity-70" />
-      </button>
-      {open && (
-        <div
-          className={cn(
-            "absolute left-0 top-9 z-30 max-h-[420px] overflow-y-auto rounded-md border border-border bg-surface p-2 shadow-slab",
-            panelWidth,
-          )}
-        >
-          <div className="mb-1.5 flex items-center justify-between border-b border-border-subtle pb-1.5">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-ink-muted">
-              {placeholder}
-            </span>
-            {/* Untick-all is ALWAYS shown (owner 2026-08-11) so the affordance is
-                visible even before anything is ticked — it just greys out and is
-                disabled while the list is empty, then activates (with a count)
-                once you tick something. */}
-            <button
-              type="button"
-              onClick={() => onChange([])}
-              disabled={selected.length === 0}
-              className={cn(
-                "text-[10.5px] font-semibold",
-                selected.length === 0
-                  ? "cursor-default text-ink-muted/50"
-                  : "text-ink-secondary hover:text-err",
-              )}
-            >
-              {selected.length > 0 ? `Untick all (${selected.length})` : "Untick all"}
-            </button>
-          </div>
-          {groups.map((g, gi) => (
-            <div key={g.name ?? `g${gi}`} className="mb-1.5">
-              {g.name && (
-                <div className="px-1 py-0.5 text-[9.5px] font-bold uppercase tracking-wider text-ink-muted">
-                  {g.name}
-                </div>
-              )}
-              {g.options.map((o) => (
-                <label
-                  key={o.value}
-                  className="flex cursor-pointer items-center gap-2 rounded px-1 py-1 text-[12px] hover:bg-primary-soft/40"
-                >
-                  <input
-                    type="checkbox"
-                    className="accent-accent"
-                    checked={selected.includes(o.value)}
-                    onChange={() => toggle(o.value)}
-                  />
-                  <span className="flex-1 truncate">{o.label}</span>
-                  {typeof o.count === "number" && (
-                    <span className="shrink-0 tabular-nums text-[11px] text-ink-muted">
-                      {o.count}
-                    </span>
-                  )}
-                </label>
-              ))}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// Per-project task badges for the Status (section) filter (owner 2026-08-14).
-// Reads the backend section_tasks_map ("title=status=due" joined by "|") and
-// renders one pill per task in the chosen section: DONE (green), OVERDUE (red,
-// with days late) or PENDING (amber). Overdue first, then pending, then done.
-// Renders nothing unless a real section is picked (the map is absent otherwise),
-// so the default project list is unchanged.
-function SectionTaskBadges({ map }: { map?: string | null }) {
-  if (!map) return null;
-  const now = new Date();
-  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(
-    now.getDate(),
-  ).padStart(2, "0")}`;
-  const tasks = map
-    .split("|")
-    .filter(Boolean)
-    .map((entry) => {
-      const parts = entry.split("=");
-      const title = parts[0] ?? "";
-      const status = parts[1] ?? "";
-      const due = parts[2] ?? "";
-      let kind: "done" | "overdue" | "pending";
-      let daysLate = 0;
-      if (status === "done") kind = "done";
-      else if (due && due < today) {
-        kind = "overdue";
-        daysLate = Math.max(1, Math.round((Date.parse(today) - Date.parse(due)) / 86_400_000));
-      } else kind = "pending";
-      return { title, kind, daysLate };
-    });
-  if (!tasks.length) return null;
-  const rank = { overdue: 0, pending: 1, done: 2 } as const;
-  tasks.sort((a, b) => rank[a.kind] - rank[b.kind] || b.daysLate - a.daysLate);
-  return (
-    <div className="mt-1 flex flex-wrap gap-1">
-      {tasks.map((t, i) => (
-        <span
-          key={i}
-          title={t.title}
-          className={cn(
-            "inline-flex max-w-[170px] items-center gap-1 rounded px-1.5 py-0.5 text-[9px] font-semibold",
-            t.kind === "done"
-              ? "border border-synced/40 bg-synced/15 text-synced"
-              : t.kind === "overdue"
-                ? "border border-err/40 bg-err/15 text-err"
-                : "border border-amber-500 bg-amber-100 text-amber-800",
-          )}
-        >
-          <span className="truncate">{t.title}</span>
-          {t.kind === "overdue" && <span className="shrink-0 font-mono">{t.daysLate}d</span>}
-        </span>
-      ))}
-    </div>
-  );
-}
 
 function ProjectsListView() {
   const { can, user } = useAuth();
@@ -1520,7 +758,14 @@ function ProjectsListView() {
             phase: restrictedCohort && phase ? phase : undefined,
             assigned_to_me: sendAssignedToMe ? 1 : undefined,
             exclude_done: restrictedCohort ? undefined : excludeDoneParam,
-            // my_pending intentionally OMITTED — export is the full filtered list.
+            // my_pending is sent, like every other chip. It used to be omitted
+            // "because export is the full filtered list", which made EXPORT
+            // disagree with the screen: owner 2026-09-02 filtered Setup &
+            // Dismantle + My pending tasks down to 10 rows, exported, and got
+            // every confirmed event instead. The rule is now simply: the export
+            // is what the toolbar says, and an unfiltered toolbar still exports
+            // everything.
+            my_pending: restrictedCohort ? undefined : myPending ? 1 : undefined,
             search,
             status: restrictedCohort ? undefined : status || undefined,
             page: pg,
@@ -1797,7 +1042,7 @@ function ProjectsListView() {
       align: "right",
       render: (r) => (
         <span className="font-mono text-[11px]">
-          {r.rental != null ? formatCurrency(r.rental, { compact: true }) : "—"}
+          {r.rental != null ? formatCurrency(r.rental) : "—"}
         </span>
       ),
       getValue: (r) => r.rental,
@@ -1808,7 +1053,7 @@ function ProjectsListView() {
       align: "right",
       render: (r) => (
         <span className="font-mono text-[11px]">
-          {r.total_sales != null ? formatCurrency(r.total_sales, { compact: true }) : "—"}
+          {r.total_sales != null ? formatCurrency(r.total_sales) : "—"}
         </span>
       ),
       getValue: (r) => r.total_sales,
@@ -1826,7 +1071,7 @@ function ProjectsListView() {
       defaultHidden: true,
       render: (r) => (
         <span className="font-mono text-[11px]">
-          {r.fin_revenue != null ? formatCurrency(r.fin_revenue, { compact: true }) : "—"}
+          {r.fin_revenue != null ? formatCurrency(r.fin_revenue) : "—"}
         </span>
       ),
       getValue: (r) => r.fin_revenue ?? null,
@@ -1846,7 +1091,7 @@ function ProjectsListView() {
               `Accessories: ${formatCurrency(r.fin_cogs_accessories ?? 0)}`
             }
           >
-            {formatCurrency(r.fin_cogs, { compact: true })}
+            {formatCurrency(r.fin_cogs)}
           </span>
         ) : (
           <span className="font-mono text-[11px]">—</span>
@@ -1860,7 +1105,7 @@ function ProjectsListView() {
       defaultHidden: true,
       render: (r) => (
         <span className="font-mono text-[11px]">
-          {r.fin_cogs_matt_sofa != null ? formatCurrency(r.fin_cogs_matt_sofa, { compact: true }) : "—"}
+          {r.fin_cogs_matt_sofa != null ? formatCurrency(r.fin_cogs_matt_sofa) : "—"}
         </span>
       ),
       getValue: (r) => r.fin_cogs_matt_sofa ?? null,
@@ -1872,7 +1117,7 @@ function ProjectsListView() {
       defaultHidden: true,
       render: (r) => (
         <span className="font-mono text-[11px]">
-          {r.fin_cogs_bedframe != null ? formatCurrency(r.fin_cogs_bedframe, { compact: true }) : "—"}
+          {r.fin_cogs_bedframe != null ? formatCurrency(r.fin_cogs_bedframe) : "—"}
         </span>
       ),
       getValue: (r) => r.fin_cogs_bedframe ?? null,
@@ -1884,7 +1129,7 @@ function ProjectsListView() {
       defaultHidden: true,
       render: (r) => (
         <span className="font-mono text-[11px]">
-          {r.fin_cogs_accessories != null ? formatCurrency(r.fin_cogs_accessories, { compact: true }) : "—"}
+          {r.fin_cogs_accessories != null ? formatCurrency(r.fin_cogs_accessories) : "—"}
         </span>
       ),
       getValue: (r) => r.fin_cogs_accessories ?? null,
@@ -1897,7 +1142,7 @@ function ProjectsListView() {
       render: (r) => (
         <span className="font-mono text-[11px]">
           {r.fin_revenue != null && r.fin_cogs != null
-            ? formatCurrency(r.fin_revenue - r.fin_cogs, { compact: true })
+            ? formatCurrency(r.fin_revenue - r.fin_cogs)
             : "—"}
         </span>
       ),
@@ -1930,7 +1175,7 @@ function ProjectsListView() {
       render: (r) => (
         <span className="font-mono text-[11px]">
           {r.fin_revenue != null && r.fin_total_cost != null
-            ? formatCurrency(r.fin_revenue - r.fin_total_cost, { compact: true })
+            ? formatCurrency(r.fin_revenue - r.fin_total_cost)
             : "—"}
         </span>
       ),
@@ -2439,291 +1684,6 @@ function ProjectsListView() {
   );
 }
 
-// ── Calendar view ────────────────────────────────────────────
-// Month grid: events render as colored bars spanning their date range,
-// overdue checklist items render as dots on their due date. Bars are
-// tinted by project status (mig 088) — see STATUS_OPTIONS + statusBarStyle.
-
-// Per-task chip rendered inside a calendar cell. Compact: status dot,
-// truncated title, owner initials, overdue tint. Click opens the
-// parent project's detail panel.
-function CalendarTaskChip({
-  task,
-  onOpen,
-  onHover,
-  onMove,
-  onLeave,
-}: {
-  task: CalendarTask;
-  onOpen: () => void;
-  onHover?: (e: React.MouseEvent) => void;
-  onMove?: (e: React.MouseEvent) => void;
-  onLeave?: () => void;
-}) {
-  const overdue = task.is_overdue === 1;
-  const initials = (task.owner_name || "")
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((s) => s[0])
-    .join("")
-    .toUpperCase();
-  return (
-    <button
-      onClick={onOpen}
-      onMouseEnter={onHover}
-      onMouseMove={onMove}
-      onMouseLeave={onLeave}
-      className={cn(
-        "group flex w-full items-center gap-1 rounded border px-1 py-0.5 text-left",
-        overdue
-          ? "border-err/40 bg-err/5 hover:bg-err/10"
-          : "border-border bg-surface hover:border-accent/40 hover:bg-accent-soft/30"
-      )}
-    >
-      <span
-        className="h-1.5 w-1.5 shrink-0 rounded-full"
-        style={{ background: (STATUS_BY_VALUE[task.project_status ?? "pending"] ?? STATUS_BY_VALUE.pending).hex }}
-      />
-      <span
-        className={cn(
-          "min-w-0 flex-1 truncate text-[9px] font-medium",
-          overdue ? "text-err" : "text-ink"
-        )}
-      >
-        {task.title}
-      </span>
-      {initials ? (
-        <span
-          className={cn(
-            "shrink-0 rounded-full px-1 text-[8px] font-bold leading-tight",
-            overdue ? "bg-err/15 text-err" : "bg-accent-soft text-accent-ink"
-          )}
-        >
-          {initials}
-        </span>
-      ) : (
-        <span
-          className="shrink-0 rounded-full bg-bg/80 px-1 text-[8px] font-bold leading-tight text-ink-muted"
-          title="Unassigned"
-        >
-          —
-        </span>
-      )}
-    </button>
-  );
-}
-
-interface CalendarProject {
-  id: number;
-  code: string;
-  name: string;
-  stage: ProjectStage;
-  status: ProjectStatus;
-  brand: string | null;
-  organizer: string | null;
-  start_date: string;
-  end_date: string | null;
-  venue: string | null;
-  state: string | null;
-  // Section-driven stage (mig 050). Mirrors the list endpoint's
-  // active_section_name + sections_total.
-  active_section_name?: string | null;
-  sections_total?: number;
-  // Calendar masks the title to the composed default name for solo
-  // event types (backend returns event_type_name on the calendar feed).
-  event_type_name?: string | null;
-}
-
-interface CalendarTask {
-  id: number;
-  project_id: number;
-  project_code: string;
-  project_name: string;
-  brand: string | null;
-  organizer: string | null;
-  title: string;
-  due_date: string;
-  status: string;
-  /** Parent project's status — drives the calendar tint. */
-  project_status: ProjectStatus | null;
-  required_perm: string | null;
-  review_status: string | null;
-  owner_name: string | null;
-  is_overdue: number;
-}
-
-// ── Profitability / analytics ────────────────────────────────
-// Aggregate view across every project. Four cuts (brand / state /
-// event type / month) plus the biggest and smallest events by
-// profit. All data served by /api/projects/analytics/profitability
-// which reads from the finance rollup (already synced by the
-// ledger write path).
-
-interface ProfitabilityBreakdown {
-  key: string;
-  count: number;
-  income: number;
-  // Owner P&L model: Revenue − COGS = GP; GP − Cost = NP. `cost` is the
-  // NON-COGS cost (rental, setup, transport, commission, merchandise,
-  // others); `cogs` is the goods cost; `profit` is Net Profit. `rental` is
-  // the rental slice of `cost`, pulled out so it shows as its own column.
-  cogs: number;
-  cost: number;
-  rental: number;
-  gp: number;
-  profit: number;
-  margin: number | null;
-}
-
-// The dimension a breakdown groups on — drives the drill-down queries.
-type ProfitabilityGroupBy = "brand" | "event_type" | "organizer" | "venue" | "month";
-
-// Filters currently active on the dashboard, forwarded to every drill query so
-// a drill always reflects the same scope as the group table it opened from.
-interface ProfitabilityFilters {
-  date_from?: string;
-  date_to?: string;
-  brand?: string;
-  organizer?: string;
-  event_type_id?: string;
-  // Lifecycle scope — must be forwarded to the drill so a drilled level totals
-  // the same population as the card it was opened from.
-  scope?: string;
-}
-
-// The open drill path, held in the URL (see ProjectsAnalyticsView): which
-// dimension card is expanded (dim), to which value (value), and — for the four
-// real dimensions — which month under it (month). Only one path is open at a
-// time so the URL stays a single shareable drill.
-interface ProfitabilityDrillState {
-  dim: ProfitabilityGroupBy | null;
-  value: string | null;
-  month: string | null;
-  toggleValue: (dim: ProfitabilityGroupBy, key: string) => void;
-  toggleMonth: (key: string) => void;
-}
-
-// Layer 2 (dimension cards): one finance month inside a dimension value. Same
-// P&L columns as the group row; `key` is the YYYY-MM bucket.
-interface ProfitabilityDrillMonth {
-  key: string;
-  count: number;
-  income: number;
-  cogs: number;
-  cost: number;
-  rental: number;
-  gp: number;
-  profit: number;
-  margin: number | null;
-}
-
-interface ProfitabilityMonthsResponse {
-  level: "months";
-  dimension: ProfitabilityGroupBy;
-  value: string;
-  months: ProfitabilityDrillMonth[];
-}
-
-// Layer 3: one project inside a month (or, for the By-Month card, inside the
-// clicked month). Same P&L columns plus identity so the row can navigate to
-// the project page (Layer 4).
-interface ProfitabilityProjectRow {
-  id: number;
-  code: string;
-  name: string;
-  brand: string | null;
-  organizer: string | null;
-  venue: string | null;
-  start_date: string | null;
-  event_type_name: string | null;
-  income: number;
-  cogs: number;
-  cost: number;
-  rental: number;
-  gp: number;
-  profit: number;
-  margin: number | null;
-}
-
-interface ProfitabilityProjectsResponse {
-  level: "projects";
-  dimension: ProfitabilityGroupBy;
-  value: string;
-  month: string | null;
-  projects: ProfitabilityProjectRow[];
-}
-
-interface ProfitabilityResponse {
-  filters: {
-    date_from: string | null;
-    date_to: string | null;
-    brand: string | null;
-    event_type_id: string | null;
-    organizer: string | null;
-    scope: string;
-  };
-  totals: {
-    projects: number;
-    income: number;
-    cogs: number;
-    cost: number;
-    rental: number;
-    gp: number;
-    profit: number;
-    margin_pct: number | null;
-  };
-  by_brand: ProfitabilityBreakdown[];
-  by_organizer: ProfitabilityBreakdown[];
-  by_event_type: ProfitabilityBreakdown[];
-  by_venue: ProfitabilityBreakdown[];
-  by_month: ProfitabilityBreakdown[];
-  top: Array<{
-    id: number;
-    code: string;
-    name: string;
-    brand: string | null;
-    venue: string | null;
-    start_date: string | null;
-    income: number;
-    cogs: number;
-    cost: number;
-    rental: number;
-    gp: number;
-    profit: number;
-    margin: number | null;
-  }>;
-  bottom: ProfitabilityResponse["top"];
-}
-
-// Finances view — tabbed: List (raw ledger lines) / Analytics
-// (per-project profitability) / P&L (monthly trend).
-type FinanceTab = "list" | "analytics" | "pnl";
-const FINANCE_TABS: FinanceTab[] = ["list", "analytics", "pnl"];
-
-const FINANCE_TAB_HEADER: Record<
-  FinanceTab,
-  { title: string; description: string }
-> = {
-  list: {
-    title: "Finance Lines",
-    description:
-      "Every income and cost line across every project. Filter by date, brand, kind, category — or search.",
-  },
-  analytics: {
-    title: "Profitability",
-    description:
-      "Revenue, COGS, gross profit, cost and net profit per project — sliced by brand, venue, type, and month.",
-  },
-  pnl: {
-    title: "P&L Calendar",
-    description:
-      "Total project cost (COGS + other cost lines) across all projects, grouped by month.",
-  },
-};
-
-const PROJECTS_FINANCES_TAB_KEYS = ["tab"] as const;
-
 function ProjectsFinancesView() {
   const [params, setParams] = useStickyFilters(
     "projects-finances-tab",
@@ -2773,60 +1733,6 @@ function ProjectsFinancesView() {
 }
 
 // ── Finance List view (per-project aggregate) ────────────────
-
-interface FinanceProjectRow {
-  id: number;
-  code: string;
-  name: string;
-  brand: string | null;
-  stage: string;
-  start_date: string | null;
-  end_date: string | null;
-  size_sqm: number | null;
-  venue: string | null;
-  organizer: string | null;
-  income: number;
-  sales: number;
-  cost: number;
-  cogs: number;
-  rental: number;
-  setup_cost: number;
-  transport_cost: number;
-  commission_cost: number;
-  merchandise_cost: number;
-  others_cost: number;
-  net: number;
-  net_profit: number;
-  margin_pct: number | null;
-  gp_pct: number | null;
-  sales_per_day: number | null;
-  rent_per_sqm: number | null;
-  line_count: number;
-}
-
-interface FinanceByProjectResponse {
-  data: FinanceProjectRow[];
-  page: number;
-  per_page: number;
-  total: number;
-  totals: {
-    income: number;
-    sales: number;
-    cost: number;
-    cogs: number;
-    rental: number;
-    net: number;
-    net_profit: number;
-  };
-}
-
-const FINANCE_STAGE_OPTIONS = [
-  "draft",
-  "setup",
-  "live",
-  "dismantle",
-  "completed",
-] as const;
 
 const FINANCE_LIST_FILTER_KEYS = [
   "date_from",
@@ -3228,29 +2134,29 @@ function FinanceListView() {
         <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-5">
           <StatCard
             label="Sales"
-            value={formatCurrency(totals.sales, { compact: true })}
+            value={formatCurrency(totals.sales)}
             subtitle="Filtered total"
             tone="success"
           />
           <StatCard
             label="COGS"
-            value={formatCurrency(totals.cogs, { compact: true })}
+            value={formatCurrency(totals.cogs)}
             subtitle="Cost of goods sold"
           />
           <StatCard
             label="Rental"
-            value={formatCurrency(totals.rental, { compact: true })}
+            value={formatCurrency(totals.rental)}
             subtitle="Total rent paid"
           />
           <StatCard
             label="Total cost"
-            value={formatCurrency(totals.cost, { compact: true })}
+            value={formatCurrency(totals.cost)}
             subtitle="All cost categories"
             tone="error"
           />
           <StatCard
             label="Net profit"
-            value={formatCurrency(totals.net_profit, { compact: true })}
+            value={formatCurrency(totals.net_profit)}
             subtitle={totals.net_profit >= 0 ? "Surplus" : "Deficit"}
             tone={totals.net_profit >= 0 ? "success" : "error"}
           />
@@ -3644,12 +2550,12 @@ function ProjectsAnalyticsView() {
           <DashboardGrid cols={5}>
             <StatCard
               label="Revenue"
-              value={formatCurrency(d.totals.income, { compact: true })}
+              value={formatCurrency(d.totals.income)}
               subtitle="Total sales + other income"
             />
             <StatCard
               label="COGS"
-              value={formatCurrency(d.totals.cogs, { compact: true })}
+              value={formatCurrency(d.totals.cogs)}
               subtitle={
                 cogsPctOfRevenue != null
                   ? `${cogsPctOfRevenue.toFixed(0)}% of revenue`
@@ -3659,7 +2565,7 @@ function ProjectsAnalyticsView() {
             />
             <StatCard
               label="Gross profit"
-              value={formatCurrency(d.totals.gp, { compact: true })}
+              value={formatCurrency(d.totals.gp)}
               subtitle={
                 grossMarginPct != null
                   ? `${grossMarginPct.toFixed(1)}% gross margin`
@@ -3669,13 +2575,13 @@ function ProjectsAnalyticsView() {
             />
             <StatCard
               label="Cost"
-              value={formatCurrency(d.totals.cost, { compact: true })}
+              value={formatCurrency(d.totals.cost)}
               subtitle="Rental, setup, transport, commission…"
               tone="error"
             />
             <StatCard
               label="Net profit"
-              value={formatCurrency(d.totals.profit, { compact: true })}
+              value={formatCurrency(d.totals.profit)}
               subtitle={
                 d.totals.margin_pct != null
                   ? `${d.totals.margin_pct.toFixed(1)}% net margin`
@@ -3939,10 +2845,10 @@ function BreakdownCard({
                       </td>
                       <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono">{r.count}</td>
                       <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono">
-                        {formatCurrency(r.income, { compact: true })}
+                        {formatCurrency(r.income)}
                       </td>
                       <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono text-ink-secondary">
-                        {formatCurrency(r.cogs, { compact: true })}
+                        {formatCurrency(r.cogs)}
                       </td>
                       <td
                         className={cn(
@@ -3950,10 +2856,10 @@ function BreakdownCard({
                           r.gp >= 0 ? "text-ink" : "text-err"
                         )}
                       >
-                        {formatCurrency(r.gp, { compact: true })}
+                        {formatCurrency(r.gp)}
                       </td>
                       <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono text-ink-secondary">
-                        {formatCurrency(r.rental, { compact: true })}
+                        {formatCurrency(r.rental)}
                       </td>
                       <td
                         className={cn(
@@ -3961,7 +2867,7 @@ function BreakdownCard({
                           r.profit >= 0 ? "text-synced" : "text-err"
                         )}
                       >
-                        {formatCurrency(r.profit, { compact: true })}
+                        {formatCurrency(r.profit)}
                       </td>
                       <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono text-ink-secondary">
                         {r.margin != null ? `${r.margin.toFixed(1)}%` : "—"}
@@ -4089,10 +2995,10 @@ function BreakdownMonthRows({
               </td>
               <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono">{m.count}</td>
               <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono">
-                {formatCurrency(m.income, { compact: true })}
+                {formatCurrency(m.income)}
               </td>
               <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono text-ink-secondary">
-                {formatCurrency(m.cogs, { compact: true })}
+                {formatCurrency(m.cogs)}
               </td>
               <td
                 className={cn(
@@ -4100,10 +3006,10 @@ function BreakdownMonthRows({
                   m.gp >= 0 ? "text-ink" : "text-err"
                 )}
               >
-                {formatCurrency(m.gp, { compact: true })}
+                {formatCurrency(m.gp)}
               </td>
               <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono text-ink-secondary">
-                {formatCurrency(m.rental, { compact: true })}
+                {formatCurrency(m.rental)}
               </td>
               <td
                 className={cn(
@@ -4111,7 +3017,7 @@ function BreakdownMonthRows({
                   m.profit >= 0 ? "text-synced" : "text-err"
                 )}
               >
-                {formatCurrency(m.profit, { compact: true })}
+                {formatCurrency(m.profit)}
               </td>
               <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono text-ink-secondary">
                 {m.margin != null ? `${m.margin.toFixed(1)}%` : "—"}
@@ -4187,10 +3093,10 @@ function BreakdownProjectRows({
           </td>
           <td className="px-1.5 py-1.5" />
           <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono">
-            {formatCurrency(p.income, { compact: true })}
+            {formatCurrency(p.income)}
           </td>
           <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono text-ink-secondary">
-            {formatCurrency(p.cogs, { compact: true })}
+            {formatCurrency(p.cogs)}
           </td>
           <td
             className={cn(
@@ -4198,10 +3104,10 @@ function BreakdownProjectRows({
               p.gp >= 0 ? "text-ink" : "text-err"
             )}
           >
-            {formatCurrency(p.gp, { compact: true })}
+            {formatCurrency(p.gp)}
           </td>
           <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono text-ink-secondary">
-            {formatCurrency(p.rental, { compact: true })}
+            {formatCurrency(p.rental)}
           </td>
           <td
             className={cn(
@@ -4209,7 +3115,7 @@ function BreakdownProjectRows({
               p.profit >= 0 ? "text-synced" : "text-err"
             )}
           >
-            {formatCurrency(p.profit, { compact: true })}
+            {formatCurrency(p.profit)}
           </td>
           <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono text-ink-secondary">
             {p.margin != null ? `${p.margin.toFixed(1)}%` : "—"}
@@ -4272,9 +3178,9 @@ function RankedCard({
                   </div>
                   {/* Model context: Revenue and GP (COGS = Revenue − GP). */}
                   <div className="mt-0.5 font-mono text-[10px] text-ink-muted">
-                    Rev {formatCurrency(r.income, { compact: true })}
+                    Rev {formatCurrency(r.income)}
                     {" · "}
-                    GP {formatCurrency(r.gp, { compact: true })}
+                    GP {formatCurrency(r.gp)}
                   </div>
                 </div>
                 <div className="shrink-0 text-right">
@@ -4284,7 +3190,7 @@ function RankedCard({
                       tone === "synced" ? "text-synced" : "text-err"
                     )}
                   >
-                    {formatCurrency(r.profit, { compact: true })}
+                    {formatCurrency(r.profit)}
                   </div>
                   <div className="text-[10px] text-ink-muted">
                     {r.margin != null ? `${r.margin.toFixed(1)}% NP` : "—"}
@@ -4306,1557 +3212,6 @@ function formatMonth(yyyy_mm: string): string {
   return `${m}/${y}`;
 }
 
-function daysBetween(fromIso: string, toIso: string): number {
-  const a = Date.UTC(+fromIso.slice(0, 4), +fromIso.slice(5, 7) - 1, +fromIso.slice(8, 10));
-  const b = Date.UTC(+toIso.slice(0, 4), +toIso.slice(5, 7) - 1, +toIso.slice(8, 10));
-  return Math.round((b - a) / 86400000);
-}
-
-type CalendarMode = "month" | "week";
-type CalendarCell = { date: Date; iso: string };
-type CalendarWeekSeg = {
-  project: CalendarProject;
-  startCol: number;
-  endCol: number;
-  clipLeft: boolean;
-  clipRight: boolean;
-  lane: number;
-};
-
-const CALENDAR_BAR_H = 18;
-const CALENDAR_LANE_GAP = 3;
-const CALENDAR_LANE_TOTAL = CALENDAR_BAR_H + CALENDAR_LANE_GAP;
-const EMPTY_CALENDAR_PROJECTS: CalendarProject[] = [];
-const EMPTY_CALENDAR_TASKS: CalendarTask[] = [];
-
-export function buildCalendarWindow(
-  mode: CalendarMode,
-  monthStr: string,
-  weekStartStr: string,
-): {
-  anchor: Date;
-  startDay: Date;
-  endDay: Date;
-  cells: CalendarCell[];
-  weekCount: number;
-  totalCells: number;
-  fromStr: string;
-  toStr: string;
-} {
-  let monthAnchor: Date;
-  if (/^\d{4}-\d{2}$/.test(monthStr)) {
-    monthAnchor = new Date(Number(monthStr.slice(0, 4)), Number(monthStr.slice(5, 7)) - 1, 1);
-  } else {
-    monthAnchor = new Date();
-    monthAnchor.setDate(1);
-  }
-
-  let weekAnchor: Date;
-  if (/^\d{4}-\d{2}-\d{2}$/.test(weekStartStr)) {
-    weekAnchor = new Date(weekStartStr + "T00:00:00Z");
-  } else {
-    weekAnchor = new Date();
-    weekAnchor.setUTCHours(0, 0, 0, 0);
-  }
-  weekAnchor.setUTCDate(weekAnchor.getUTCDate() - ((weekAnchor.getUTCDay() + 6) % 7));
-
-  const anchor = mode === "week" ? weekAnchor : monthAnchor;
-  const weekCount = mode === "week" ? 1 : 6;
-  const totalCells = weekCount * 7;
-  let startDay: Date;
-  if (mode === "week") {
-    startDay = new Date(anchor);
-  } else {
-    const first = new Date(Date.UTC(anchor.getFullYear(), anchor.getMonth(), 1));
-    startDay = new Date(first);
-    startDay.setUTCDate(first.getUTCDate() - ((first.getUTCDay() + 6) % 7));
-  }
-  const endDay = new Date(startDay);
-  endDay.setUTCDate(startDay.getUTCDate() + totalCells - 1);
-  const cells: CalendarCell[] = [];
-  for (let i = 0; i < totalCells; i++) {
-    const date = new Date(startDay);
-    date.setUTCDate(startDay.getUTCDate() + i);
-    cells.push({ date, iso: date.toISOString().slice(0, 10) });
-  }
-  return {
-    anchor,
-    startDay,
-    endDay,
-    cells,
-    weekCount,
-    totalCells,
-    fromStr: startDay.toISOString().slice(0, 10),
-    toStr: endDay.toISOString().slice(0, 10),
-  };
-}
-
-/**
- * Pure calendar projection. Keeping this outside React makes hover/popover and
- * viewport-height renders O(1) with respect to project/task count: React only
- * rebuilds the model when its actual data/filter/window inputs change.
- */
-export function buildProjectsCalendarModel({
-  allProjects,
-  allTasks,
-  cells,
-  weekCount,
-  mode,
-  anchorMonth,
-  brand,
-  status,
-  organizer,
-  q = "",
-  showTasks,
-  expandAll,
-}: {
-  allProjects: CalendarProject[];
-  allTasks: CalendarTask[];
-  cells: CalendarCell[];
-  weekCount: number;
-  mode: CalendarMode;
-  anchorMonth: number;
-  brand: string;
-  status: string;
-  organizer: string;
-  /** Free-text search — matches venue/organizer/brand/project code/name/event
-   *  type. Empty string = no filter. Defaults to "" so callers pre-dating the
-   *  search box (tests) still pass. */
-  q?: string;
-  showTasks: boolean;
-  expandAll: boolean;
-}) {
-  // Filter by project STATUS (owner 2026-07-28) — the calendar's old "section"
-  // dropdown is now confirmed / pending / cancelled.
-  const matchesStatus = (project: CalendarProject): boolean =>
-    !status || (project.status || "").toLowerCase() === status;
-
-  // Free-text search — case-insensitive over the visible/label fields.
-  const needle = q.trim().toLowerCase();
-  const matchesQuery = (project: CalendarProject): boolean => {
-    if (!needle) return true;
-    const hay = [
-      project.code,
-      project.name,
-      project.venue ?? "",
-      project.organizer ?? "",
-      project.brand ?? "",
-      project.state ?? "",
-      project.event_type_name ?? "",
-    ]
-      .join(" ")
-      .toLowerCase();
-    return hay.includes(needle);
-  };
-
-  const projects = allProjects.filter((project) => {
-    if (brand && project.brand !== brand) return false;
-    if (!matchesStatus(project)) return false;
-    if (organizer && (project.organizer || "") !== organizer) return false;
-    if (!matchesQuery(project)) return false;
-    return true;
-  });
-  const projectById = new Map(projects.map((project) => [project.id, project] as const));
-  const tasks = showTasks
-    ? allTasks.filter((task) => {
-        if (brand && task.brand !== brand) return false;
-        if (organizer && (task.organizer || "") !== organizer) return false;
-        // With a search: only render tasks whose parent project passed the
-        // filter — keeps the view consistent (task chips beside their bar).
-        if (needle && !projectById.has(task.project_id)) return false;
-        return !status || projectById.has(task.project_id);
-      })
-    : [];
-
-  const tasksByDate = new Map<string, CalendarTask[]>();
-  for (const task of tasks) {
-    const key = (task.due_date ?? "").slice(0, 10);
-    if (!key) continue;
-    const sameDay = tasksByDate.get(key);
-    if (sameDay) sameDay.push(task);
-    else tasksByDate.set(key, [task]);
-  }
-
-  const totalCells = cells.length;
-  const maxLanes = mode === "week" || expandAll ? Infinity : 3;
-  const weekSegs: CalendarWeekSeg[][] = Array.from({ length: weekCount }, () => []);
-  const overflowByCell: number[] = Array(totalCells).fill(0);
-  let renderedWeeks = 0;
-
-  for (let week = 0; week < weekCount; week++) {
-    const weekCells = cells.slice(week * 7, week * 7 + 7);
-    if (mode !== "month" || weekCells.some((cell) => cell.date.getUTCMonth() === anchorMonth)) {
-      renderedWeeks += 1;
-    }
-    const weekStart = weekCells[0].iso;
-    const weekEnd = weekCells[6].iso;
-    let monthFirstCol = 0;
-    let monthLastCol = 6;
-    if (mode === "month") {
-      monthFirstCol = -1;
-      for (let day = 0; day < 7; day++) {
-        if (weekCells[day].date.getUTCMonth() === anchorMonth) {
-          if (monthFirstCol === -1) monthFirstCol = day;
-          monthLastCol = day;
-        }
-      }
-    }
-
-    const segments: CalendarWeekSeg[] = [];
-    if (mode !== "month" || monthFirstCol !== -1) {
-      for (const project of projects) {
-        const start = project.start_date.slice(0, 10);
-        const end = (project.end_date || project.start_date).slice(0, 10);
-        if (end < weekStart || start > weekEnd) continue;
-        const clipLeft = start < weekStart;
-        const clipRight = end > weekEnd;
-        let startCol = clipLeft ? 0 : daysBetween(weekStart, start);
-        let endCol = clipRight ? 6 : daysBetween(weekStart, end);
-        if (mode === "month") {
-          if (endCol < monthFirstCol || startCol > monthLastCol) continue;
-          startCol = Math.max(startCol, monthFirstCol);
-          endCol = Math.min(endCol, monthLastCol);
-        }
-        segments.push({ project, startCol, endCol, clipLeft, clipRight, lane: 0 });
-      }
-    }
-
-    segments.sort(
-      (a, b) =>
-        compareCalendarEvents(a.project, b.project) ||
-        a.startCol - b.startCol ||
-        b.endCol - b.startCol - (a.endCol - a.startCol),
-    );
-    const lanes: CalendarWeekSeg[][] = [];
-    for (const segment of segments) {
-      let lane = lanes.findIndex((items) =>
-        items.every((item) => item.endCol < segment.startCol || item.startCol > segment.endCol),
-      );
-      if (lane === -1) {
-        lanes.push([segment]);
-        lane = lanes.length - 1;
-      } else {
-        lanes[lane].push(segment);
-      }
-      segment.lane = lane;
-    }
-    for (const segment of segments) {
-      if (segment.lane < maxLanes) {
-        weekSegs[week].push(segment);
-      } else {
-        for (let day = segment.startCol; day <= segment.endCol; day++) {
-          overflowByCell[week * 7 + day] += 1;
-        }
-      }
-    }
-  }
-
-  const barsAreaHByWeek = weekSegs.map((segments) => {
-    const lanesUsed = segments.reduce((max, segment) => Math.max(max, segment.lane + 1), 0);
-    return mode === "week" || expandAll
-      ? Math.max(lanesUsed, 1) * CALENDAR_LANE_TOTAL
-      : 3 * CALENDAR_LANE_TOTAL;
-  });
-  const cellBarsH = Array(totalCells).fill(0);
-  for (let week = 0; week < weekCount; week++) {
-    for (const segment of weekSegs[week]) {
-      for (let col = segment.startCol; col <= segment.endCol; col++) {
-        const index = week * 7 + col;
-        cellBarsH[index] = Math.max(cellBarsH[index], (segment.lane + 1) * CALENDAR_LANE_TOTAL);
-      }
-    }
-  }
-
-  return {
-    projects,
-    projectById,
-    tasks,
-    tasksByDate,
-    weekSegs,
-    overflowByCell,
-    barsAreaHByWeek,
-    cellBarsH,
-    renderedWeeks,
-  };
-}
-
-const PROJECTS_CALENDAR_FILTER_KEYS = [
-  "brand",
-  "stage",
-  "organizer",
-  "month",
-  // 2026-05-08 — week view toggle. `mode=week` swaps the 6×7 month
-  // grid for a single 1×7 row anchored on `week` (Sunday ISO date).
-  "mode",
-  "week",
-  // 2026-05-15 — `section` replaces the legacy `stage` filter (the
-  // tasklist sections are the new stages). `stage` stays in the keys
-  // list so old bookmarks parse without throwing.
-  "section",
-  // 2026-07-20 — free-text search (venue/organizer/brand/code/title).
-  "q",
-] as const;
-
-// Per-day task-count chip in calendar cells. Neutral by default; an
-// overdue day gets a small red dot rather than a fully-red pill so the
-// month grid isn't a wall of alarm-red badges.
-function DayCountBadge({
-  count,
-  overdue,
-  className,
-}: {
-  count: number;
-  overdue: boolean;
-  className?: string;
-}) {
-  return (
-    <span
-      title={`${count} task(s) due${overdue ? " — includes overdue" : ""}`}
-      className={cn(
-        "inline-flex h-4 items-center gap-1 rounded-full bg-surface-dim px-1.5 text-[9px] font-bold text-ink-secondary",
-        className
-      )}
-    >
-      {overdue && <span className="h-1.5 w-1.5 rounded-full bg-err" aria-hidden />}
-      {count}
-    </span>
-  );
-}
-
-function ProjectsCalendarView() {
-  const toast = useToast();
-  const navigate = useNavigate();
-  const [params, setParams] = useStickyFilters(
-    "projects-calendar",
-    PROJECTS_CALENDAR_FILTER_KEYS
-  );
-  const brand = params.get("brand") || "";
-  const status = params.get("status") || "";
-  const organizer = params.get("organizer") || "";
-  // 2026-07-20 — free-text search. Named `search` (not `q`) to avoid a
-  // collision with the useQuery result later in this component that already
-  // owns the identifier `q`. URL key stays "q" for a short, shareable URL.
-  const search = params.get("q") || "";
-  // anchor lives in URL as `month=YYYY-MM` so a refresh / shared link
-  // lands on the same month.
-  function patchParams(patch: Record<string, string>) {
-    const next = new URLSearchParams(params);
-    for (const [k, v] of Object.entries(patch)) {
-      if (v === "") next.delete(k);
-      else next.set(k, v);
-    }
-    setParams(next, { replace: true });
-  }
-  const setBrand = (v: string) => patchParams({ brand: v });
-  const setStatus = (v: string) => patchParams({ status: v });
-  const setOrganizer = (v: string) => patchParams({ organizer: v });
-  const setSearch = (v: string) => patchParams({ q: v });
-
-  // showTasks / showHolidays are personal display prefs (checkbox toggles
-  // on the legend, not data filters), so they stay in localStorage per
-  // CLAUDE.md's URL-state convention.
-  const [showTasks, setShowTasks] = useIdentityPreference(
-    "projects:cal:showTasks",
-    false,
-    booleanPreference,
-  );
-  const [showHolidays, setShowHolidays] = useIdentityPreference(
-    "projects:cal:showHolidays",
-    true,
-    booleanPreference,
-  );
-  // Owner 2026-07-23: the calendar always shows every project bar + task inline
-  // (no "+N more", no Expand-all toggle) — pc and mobile both default-expanded.
-  const expandAll = true;
-  const brandsQ = useQuery<{ data: string[] }>("/api/projects/brands", () =>
-    api.get("/api/projects/brands")
-  );
-  const organizersQ = useQuery<{ data: { id: number; name: string }[] }>("/api/projects/organizers", () =>
-    api.get("/api/projects/organizers")
-  );
-  // Active template's sections, mirroring the list-view pill row.
-  const sectionsListQ = useQuery<{ data: string[] }>("/api/projects/sections-distinct", () =>
-    api.get("/api/projects/sections-distinct")
-  );
-  // ?mode=week swaps the 6×7 month grid for a single 1×7 row anchored
-  // on `?week=YYYY-MM-DD` (Sunday). `?month=YYYY-MM` is the existing
-  // monthly anchor; both URL params persist via stickyFilters.
-  const mode: CalendarMode =
-    params.get("mode") === "week" ? "week" : "month";
-  const monthStr = params.get("month") || "";
-  const weekStartStr = params.get("week") || "";
-
-  // Stable across hover/popover renders: new Date objects here used to
-  // invalidate every downstream calendar projection on each mousemove.
-  const calendarWindow = useMemo(
-    () => buildCalendarWindow(mode, monthStr, weekStartStr),
-    [mode, monthStr, weekStartStr],
-  );
-  const { anchor, startDay, endDay, cells, weekCount, totalCells, fromStr, toStr } = calendarWindow;
-
-  const setAnchor = (next: Date) => {
-    if (mode === "week") {
-      // Save the Monday ISO date.
-      const yyyy = next.getUTCFullYear();
-      const mm = String(next.getUTCMonth() + 1).padStart(2, "0");
-      const dd = String(next.getUTCDate()).padStart(2, "0");
-      patchParams({ week: `${yyyy}-${mm}-${dd}` });
-    } else {
-      const yyyy = next.getFullYear();
-      const mm = String(next.getMonth() + 1).padStart(2, "0");
-      patchParams({ month: `${yyyy}-${mm}` });
-    }
-  };
-  // Day modal — opened by month-view "+N more" expanders to surface every
-  // project / task that lands on a single day without forcing a switch to
-  // week mode. Previously these expanders called expandToWeekForCell()
-  // which navigated the whole view; ops asked for a lighter overlay.
-  const [dayModalIso, setDayModalIso] = useState<string | null>(null);
-  // Hover popover — replaces the native bar `title` tooltip with a
-  // styled card carrying the project's basic info (code, brand, venue,
-  // span, organizer, stage). Anchored to the cursor; cleared on leave.
-  // Mousemove can fire hundreds of times per second. Keep entry/exit immediate,
-  // but coalesce cursor-position updates to one React state update per frame.
-  const barHoverState = useRafCoalescedHover<{
-    project: CalendarProject;
-    x: number;
-    y: number;
-  }>();
-  const taskHoverState = useRafCoalescedHover<{
-    task: CalendarTask;
-    x: number;
-    y: number;
-  }>();
-  const barHover = barHoverState.hover;
-  const taskHover = taskHoverState.hover;
-  const enterBarHover = useCallback(
-    (project: CalendarProject, x: number, y: number) => barHoverState.enter({ project, x, y }),
-    [barHoverState.enter],
-  );
-  const moveBarHover = useCallback(
-    (project: CalendarProject, x: number, y: number) => barHoverState.move({ project, x, y }),
-    [barHoverState.move],
-  );
-  const leaveBarHover = barHoverState.leave;
-  const enterTaskHover = useCallback(
-    (task: CalendarTask, x: number, y: number) => taskHoverState.enter({ task, x, y }),
-    [taskHoverState.enter],
-  );
-  const moveTaskHover = useCallback(
-    (task: CalendarTask, x: number, y: number) => taskHoverState.move({ task, x, y }),
-    [taskHoverState.move],
-  );
-  const leaveTaskHover = taskHoverState.leave;
-
-  // Wheel-over-grid navigates months (month mode). Refs keep the handler
-  // reading the latest anchor/setAnchor without re-binding the listener;
-  // a timestamp throttles to one month per gesture. Non-passive so we can
-  // preventDefault and stop the page scrolling under the cursor.
-  const gridRef = useRef<HTMLDivElement>(null);
-  const wheelTsRef = useRef(0);
-  const anchorRef = useRef(anchor);
-  anchorRef.current = anchor;
-  const setAnchorRef = useRef(setAnchor);
-  setAnchorRef.current = setAnchor;
-  useEffect(() => {
-    const el = gridRef.current;
-    if (!el || mode !== "month") return;
-    const onWheel = (e: WheelEvent) => {
-      if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
-      // Only flip months when scrolling over BLANK calendar space (e.g. the
-      // empty leading cells, or a day with no items). Over a project bar, task
-      // chip, or a "+N more" link the page scrolls normally — so Expand all can
-      // still be scrolled by dragging over its content. Works in both modes.
-      const target = e.target as HTMLElement | null;
-      if (target && target.closest(".cal-bar,[data-cal-content]")) return;
-      /* Owner 2026-07-16 — never hijack the wheel while the page can still
-         scroll in that direction. Owner 2026-07-23 — but the flip must SURVIVE
-         a scrollable page: 6c29e5cc (always expand all bars) made the grid
-         overflow the viewport on any busy month, which turned the old
-         "scrollable ⇒ never flip" guard into a permanent kill-switch — the
-         tip kept promising a scroll-to-change-month that could never fire.
-         Boundary rule instead: wheeling over blank space flips the month only
-         at the edge being pushed past (down at the bottom, up at the top);
-         mid-scroll the page scrolls normally. An empty short calendar is at
-         both edges at once, which is exactly the pre-expand behaviour. */
-      const scroller = el.closest("main");
-      if (scroller && scroller.scrollHeight > scroller.clientHeight + 1) {
-        const atTop = scroller.scrollTop <= 1;
-        const atBottom =
-          scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 1;
-        if (e.deltaY > 0 ? !atBottom : !atTop) return;
-      }
-      e.preventDefault();
-      const now = Date.now();
-      if (now - wheelTsRef.current < 380) return;
-      wheelTsRef.current = now;
-      const d = new Date(anchorRef.current);
-      d.setMonth(d.getMonth() + (e.deltaY > 0 ? 1 : -1));
-      setAnchorRef.current(d);
-    };
-    el.addEventListener("wheel", onWheel, { passive: false });
-    return () => el.removeEventListener("wheel", onWheel);
-  }, [mode]);
-
-  // Month grid fills from its top to the viewport bottom, so the 5–6 week
-  // rows share that height EQUALLY (uniform rows, no tiny empty week, no
-  // dead gap at the bottom). Re-measured on resize / month change since the
-  // grid's top is fixed by the header+toolbar+legend above it.
-  const [availH, setAvailH] = useState<number | null>(null);
-  useEffect(() => {
-    if (mode !== "month") {
-      setAvailH(null);
-      return;
-    }
-    const measure = () => {
-      const el = gridRef.current;
-      if (!el) return;
-      const top = el.getBoundingClientRect().top;
-      setAvailH(Math.max(440, Math.round(window.innerHeight - top - 14)));
-    };
-    measure();
-    window.addEventListener("resize", measure);
-    return () => window.removeEventListener("resize", measure);
-  }, [mode, anchor]);
-
-  const setMode = (next: "month" | "week") => {
-    // When flipping to week mode for the first time, snap the week
-    // anchor to the Monday of "today" so the user lands on the
-    // current week instead of an unrelated one.
-    if (next === "week" && !weekStartStr) {
-      const d = new Date();
-      d.setUTCHours(0, 0, 0, 0);
-      d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
-      const yyyy = d.getUTCFullYear();
-      const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
-      const dd = String(d.getUTCDate()).padStart(2, "0");
-      patchParams({ mode: next, week: `${yyyy}-${mm}-${dd}` });
-    } else {
-      patchParams({ mode: next === "month" ? "" : next });
-    }
-  };
-
-  // Window: month = 6 weeks (42 cells) from the first Monday on/before
-  // the 1st; week = 1 week (7 cells) from the week anchor.
-  const q = useQuery<{ projects: CalendarProject[]; tasks: CalendarTask[] }>("/api/projects/calendar/events?from=:&to=:",
-    () => api.get(`/api/projects/calendar/events?from=${fromStr}&to=${toStr}`),
-    [fromStr, toStr]
-  );
-
-  const allProjects = q.data?.projects ?? EMPTY_CALENDAR_PROJECTS;
-  const allTasks = q.data?.tasks ?? EMPTY_CALENDAR_TASKS;
-  const anchorMonth = anchor.getMonth();
-  const calendarModel = useMemo(
-    () =>
-      buildProjectsCalendarModel({
-        allProjects,
-        allTasks,
-        cells,
-        weekCount,
-        mode,
-        anchorMonth,
-        brand,
-        status,
-        organizer,
-        q: search,
-        showTasks,
-        expandAll,
-      }),
-    [
-      allProjects,
-      allTasks,
-      cells,
-      weekCount,
-      mode,
-      anchorMonth,
-      brand,
-      status,
-      organizer,
-      search,
-      showTasks,
-      expandAll,
-    ],
-  );
-  const {
-    projects,
-    tasks,
-    tasksByDate,
-    weekSegs,
-    overflowByCell,
-    barsAreaHByWeek,
-    cellBarsH,
-    renderedWeeks,
-  } = calendarModel;
-
-  // Calendar header shows the full month name (owner request 2026-07):
-  // "November 2025", not "11/2025". Row/cell dates stay numeric elsewhere.
-  const monthLabel = anchor.toLocaleDateString("en-GB", { month: "long", year: "numeric" });
-  // Period label for the calendar header. Month → "April 2026"; week
-  // → "06 Apr – 12 Apr 2026" so the user knows the exact window.
-  const periodLabel =
-    mode === "week"
-      ? (() => {
-          const start = startDay;
-          const end = new Date(startDay);
-          end.setUTCDate(start.getUTCDate() + 6);
-          const fmt = (d: Date) =>
-            d.toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit" });
-          const yearSuffix = end.getUTCFullYear();
-          return `${fmt(start)} – ${fmt(end)} ${yearSuffix}`;
-        })()
-      : monthLabel;
-  const today = todayInAppTz();
-
-  // Per-week lane-packing. Each project that overlaps a week becomes a
-  // single segment for that week (clipped to the visible Sun..Sat range)
-  // with a lane index. Segments are rendered as absolutely-positioned
-  // bars overlaid on the week row, so a multi-day project shows as ONE
-  // continuous bar from start to end with the project name on it — not
-  // a chain of per-cell pills. Bars wrap at week boundaries; the
-  // clipLeft/clipRight flags drive the rounded-corner + chevron hint.
-  // Layout constants for the per-week bar overlay. BAR_TOP_OFFSET puts the
-  // bars below the day-number row; week mode's pill header needs a bigger one.
-  const BAR_H = CALENDAR_BAR_H;
-  const LANE_TOTAL = CALENDAR_LANE_TOTAL;
-  const BAR_TOP_OFFSET = mode === "week" ? 52 : 24;
-  // Compact month shows up to 3 project-event lanes per cell; extra bars fold
-  // into "+N more". Tasks render separately (2 rows, pinned to the bottom).
-  // Week mode + expand-all never cap — they show everything inline.
-  const MAX_LANES = mode === "week" || expandAll ? Infinity : 3;
-  // Compact month: every row is the SAME height — tall enough for 3 bars + 2
-  // task rows (COMPACT_ROW_MIN), but stretched to fill the viewport when
-  // there's room. If the month needs more than the viewport, the page scrolls
-  // (and the wheel-to-change-month is disabled so scrolling works normally).
-  const BAR_TOP_OFFSET_M = 24;
-  const COMPACT_ROW_MIN =
-    BAR_TOP_OFFSET_M +
-    3 * 21 /* 3 bar lanes */ +
-    16 /* project "+N more" line */ +
-    (showTasks ? 70 : 8) /* 2 task rows when tasks shown, else just padding */;
-  const compactRowH =
-    mode === "month" && !expandAll
-      ? Math.max(
-          COMPACT_ROW_MIN,
-          availH ? Math.floor((availH - 34) / Math.max(renderedWeeks, 1)) : COMPACT_ROW_MIN,
-        )
-      : null;
-  return (
-    <div>
-      <PageHeader
-        eyebrow="Operations · Projects"
-        title="Calendar"
-        dense
-      />
-
-      <div className="mb-2 flex flex-wrap items-center gap-2">
-        <button
-          onClick={() => {
-            const d = new Date(anchor);
-            if (mode === "week") d.setUTCDate(d.getUTCDate() - 7);
-            else d.setMonth(d.getMonth() - 1);
-            setAnchor(d);
-          }}
-          className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border bg-surface text-ink-secondary transition-colors hover:border-primary/40 hover:text-primary"
-          title={mode === "week" ? "Previous week" : "Previous month"}
-        >
-          <ChevronLeft size={16} />
-        </button>
-        <button
-          onClick={() => {
-            if (mode === "week") {
-              const d = new Date();
-              d.setUTCHours(0, 0, 0, 0);
-              d.setUTCDate(d.getUTCDate() - d.getUTCDay());
-              setAnchor(d);
-            } else {
-              const d = new Date();
-              d.setDate(1);
-              setAnchor(d);
-            }
-          }}
-          className="rounded-md border border-border bg-surface px-3 py-1.5 text-[12px] text-ink-secondary transition-colors hover:border-primary/40 hover:text-primary"
-        >
-          Today
-        </button>
-        <button
-          onClick={() => {
-            const d = new Date(anchor);
-            if (mode === "week") d.setUTCDate(d.getUTCDate() + 7);
-            else d.setMonth(d.getMonth() + 1);
-            setAnchor(d);
-          }}
-          className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border bg-surface text-ink-secondary transition-colors hover:border-primary/40 hover:text-primary"
-          title={mode === "week" ? "Next week" : "Next month"}
-        >
-          <ChevronRight size={16} />
-        </button>
-        <span className="ml-2 font-display text-[15px] font-bold leading-tight tracking-tight text-ink">{periodLabel}</span>
-
-        {/* Month / Week toggle */}
-        <div className="ml-3 inline-flex overflow-hidden rounded-md border border-border">
-          {(["month", "week"] as const).map((m) => (
-            <button
-              key={m}
-              onClick={() => setMode(m)}
-              className={cn(
-                "px-3 py-1.5 text-[11px] font-semibold transition-colors",
-                // Theme C: petrol is the FUNCTIONAL accent (active states);
-                // brass is brand-only (owner 2026-07-23 calendar pass).
-                mode === m
-                  ? "bg-primary text-white"
-                  : "bg-surface text-ink-secondary hover:bg-bg/50",
-              )}
-            >
-              {m === "month" ? "Month" : "Week"}
-            </button>
-          ))}
-        </div>
-
-        {/* Filters */}
-        <div className="ml-auto flex flex-wrap items-center gap-2">
-          {/* Free-text search (owner 2026-07-20) — live-filters bars + task
-              chips; URL-persisted (?q=). */}
-          <label className="relative inline-flex h-8 items-center">
-            <Search size={12} className="pointer-events-none absolute left-2 text-ink-muted" />
-            <input
-              type="search"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search venue, organizer, brand…"
-              className="h-8 w-56 rounded-md border border-border bg-surface pl-7 pr-6 text-[11px] text-ink-secondary outline-none transition-colors hover:border-primary/40 focus:border-primary focus:ring-2 focus:ring-primary/15"
-              title="Search events on the calendar"
-            />
-            {search && (
-              <button
-                type="button"
-                onClick={() => setSearch("")}
-                className="absolute right-1 flex h-5 w-5 items-center justify-center rounded text-ink-muted hover:bg-bg/50 hover:text-ink"
-                title="Clear search"
-              >
-                <X size={11} />
-              </button>
-            )}
-          </label>
-          <select
-            value={brand}
-            onChange={(e) => setBrand(e.target.value)}
-            className="h-8 appearance-none rounded-md border border-border bg-surface pl-2 pr-7 text-[11px] text-ink-secondary outline-none transition-colors hover:border-primary/40 focus:border-primary focus:ring-2 focus:ring-primary/15"
-            title="Filter by brand"
-          >
-            <option value="">All brands</option>
-            {(brandsQ.data?.data ?? []).map((b) => (
-              <option key={b} value={b}>
-                {b}
-              </option>
-            ))}
-          </select>
-          <span className="relative inline-flex">
-          <select
-              value={status}
-              onChange={(e) => setStatus(e.target.value)}
-              className="h-8 appearance-none rounded-md border border-border bg-surface pl-2 pr-7 text-[11px] text-ink-secondary outline-none transition-colors hover:border-primary/40 focus:border-primary focus:ring-2 focus:ring-primary/15"
-              title="Filter by status"
-            >
-              <option value="">All statuses</option>
-              <option value="confirmed">Confirmed</option>
-              <option value="pending">Pending</option>
-              <option value="cancelled">Cancelled</option>
-            </select>
-            <ChevronDown size={12} className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-ink-muted" />
-          </span>
-          <span className="relative inline-flex">
-          <select
-              value={organizer}
-              onChange={(e) => setOrganizer(e.target.value)}
-              className="h-8 appearance-none rounded-md border border-border bg-surface pl-2 pr-7 text-[11px] text-ink-secondary outline-none transition-colors hover:border-primary/40 focus:border-primary focus:ring-2 focus:ring-primary/15"
-              title="Filter by organizer"
-            >
-              <option value="">All organizers</option>
-              {(organizersQ.data?.data ?? []).map((o) => (
-                <option key={o.id} value={o.name}>
-                  {o.name}
-                </option>
-              ))}
-            </select>
-            <ChevronDown size={12} className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-ink-muted" />
-          </span>
-          <ResetFiltersButton
-            active={!!(brand || status || organizer || params.get("stage"))}
-            onReset={() => {
-              // Functional form so the latest URL state is read at call
-              // time rather than the closure-captured `params` snapshot
-              // — avoids losing later deletes when React re-renders
-              // between paint and click. Also clears legacy `stage` key
-              // that mig-050 retired but still sits in some sticky
-              // storage entries.
-              setParams(
-                (prev) => {
-                  const next = new URLSearchParams(prev);
-                  ["brand", "status", "organizer", "stage"].forEach((k) =>
-                    next.delete(k)
-                  );
-                  return next;
-                },
-                { replace: true }
-              );
-            }}
-          />
-          {/* Tasks toggle button removed 2026-07-20 per owner request
-              ("remove button task"). Task chips still render when the
-              projects:cal:showTasks localStorage pref is true (default false);
-              a one-line re-add of this <button> restores the toggle if needed. */}
-          <button
-            onClick={() => setShowHolidays(!showHolidays)}
-            className={cn(
-              "inline-flex h-8 items-center gap-1 rounded-md border px-2.5 text-[11px] font-semibold uppercase tracking-wider transition-colors",
-              showHolidays
-                ? "border-primary/40 bg-primary-soft text-primary-ink"
-                : "border-border bg-surface text-ink-muted hover:text-ink"
-            )}
-            title="Show Malaysian federal public holidays"
-          >
-            {showHolidays ? <Check size={12} /> : <Circle size={12} />} MY Holidays
-          </button>
-          {(brand || status || organizer) && (
-            <button
-              onClick={() => {
-                setBrand("");
-                setStatus("");
-                setOrganizer("");
-              }}
-              className="text-[11px] font-semibold uppercase tracking-wider text-ink-muted hover:text-err"
-            >
-              Clear
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* Status legend — bars are tinted by project status (mig 088). */}
-      <div className="mb-1.5 flex flex-wrap items-center gap-3 text-[12px]">
-        {STATUS_OPTIONS.map((s) => (
-          <span key={s.value} className="inline-flex items-center gap-1">
-            <span
-              className="h-2 w-2 rounded-full"
-              style={{ background: s.hex }}
-            />
-            <span className="text-ink-muted">{s.label}</span>
-          </span>
-        ))}
-        {mode === "month" && (
-          <span className="ml-auto text-[10.5px] text-ink-muted">
-            Tip: scroll over empty space to change month
-          </span>
-        )}
-      </div>
-
-      {q.loading && <div className="text-[12px] text-ink-muted">Loading calendar…</div>}
-      {q.error && (
-        <div className="rounded-md border border-err/40 bg-err/5 p-3 text-[12px] text-err">
-          {q.error}
-        </div>
-      )}
-
-      {/* The grid always fits its container: the 7 day columns shrink to
-          the viewport width on mobile rather than scrolling horizontally. */}
-      <div>
-        <div ref={gridRef} className="rounded-md border border-border bg-surface">
-        {/* Weekday header — month view only. In week view each cell
-            renders its own "Day. DD/MM" header with a today pill, so
-            this row would be redundant. */}
-        {mode === "month" && (
-          <div className="grid shrink-0 grid-cols-7 border-b border-border bg-bg/60">
-            {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => (
-              <div
-                key={d}
-                className="px-2 py-1.5 text-[12.5px] font-semibold uppercase tracking-wider text-ink-muted"
-              >
-                {d}
-              </div>
-            ))}
-          </div>
-        )}
-        {/* 6 week rows. Each row is a relative grid so an absolute bar
-            overlay can paint a single continuous pill from start col to
-            end col on top of the day cells. */}
-        {Array.from({ length: weekCount }).map((_, w) => {
-          // Month mode shows only the current month's weeks — a week whose
-          // every cell falls in an adjacent month is dropped entirely.
-          if (
-            mode === "month" &&
-            !Array.from({ length: 7 }).some(
-              (_, d) => cells[w * 7 + d].date.getUTCMonth() === anchor.getMonth()
-            )
-          ) {
-            return null;
-          }
-          const segs = weekSegs[w];
-          const barsAreaH = barsAreaHByWeek[w];
-          // Compact month: every row is the SAME fixed height (compactRowH) —
-          // an empty week (29/30) matches a busy one, and the height always
-          // fits 3 bars + 2 task rows so they never overlap. Week / expand-all:
-          // content-driven min-height so every bar + task shows inline.
-          const rowMinHeight =
-            mode === "week"
-              ? BAR_TOP_OFFSET + barsAreaH + (showTasks ? 320 : 90)
-              : expandAll
-                ? BAR_TOP_OFFSET + barsAreaH + (showTasks ? 40 : 8)
-                : 96;
-          return (
-            <div
-              key={w}
-              className="relative grid grid-cols-7"
-              style={
-                compactRowH != null
-                  ? { height: compactRowH }
-                  : { minHeight: rowMinHeight }
-              }
-            >
-              {Array.from({ length: 7 }).map((_, d) => {
-                const idx = w * 7 + d;
-                const cell = cells[idx];
-                // In week mode every cell is part of the active
-                // window, so don't grey-out anything.
-                const inMonth =
-                  mode === "week"
-                    ? true
-                    : cell.date.getUTCMonth() === anchor.getMonth();
-                const cellTasks = tasksByDate.get(cell.iso) ?? [];
-                const isToday = cell.iso === today;
-                const holidays = showHolidays ? getHolidaysOn(cell.iso) : [];
-                const isHolidayCell = holidays.length > 0;
-                const overflow = overflowByCell[idx];
-                // Week-view per-day header label: "Su. 03/05".
-                const weekHeaderLabel =
-                  mode === "week"
-                    ? `${["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"][cell.date.getUTCDay()]}. ${String(cell.date.getUTCDate()).padStart(2, "0")}/${String(cell.date.getUTCMonth() + 1).padStart(2, "0")}`
-                    : null;
-                // Adjacent-month cells render blank — only the current
-                // month's dates carry content.
-                if (mode === "month" && !inMonth) {
-                  return (
-                    <div
-                      key={idx}
-                      className="border-b border-r border-border bg-surface-dim/25"
-                    />
-                  );
-                }
-                return (
-                  <div
-                    key={idx}
-                    className={cn(
-                      "relative border-b border-r border-border text-[10px]",
-                      mode === "week"
-                        ? "px-2 py-2"
-                        : expandAll
-                          ? "px-1.5 py-1"
-                          : "flex flex-col overflow-hidden px-1.5 py-1",
-                      !inMonth && "bg-bg/40 text-ink-muted",
-                      isHolidayCell && inMonth && "bg-[#e7e8f5]",
-                      // Today highlight only on month view; week view
-                      // moves the highlight onto the header pill so
-                      // the cell body stays neutral. A brass inset ring +
-                      // stronger tint makes today unmistakable.
-                      mode === "month" && isToday && "bg-accent-soft/50 ring-1 ring-inset ring-accent/50",
-                    )}
-                    data-cal-content={
-                      mode === "month" &&
-                      (cellBarsH[idx] > 0 || cellTasks.length > 0 || isHolidayCell)
-                        ? ""
-                        : undefined
-                    }
-                  >
-                    {mode === "week" ? (
-                      // Week-mode header: centred "Day. DD/MM" with a
-                      // filled accent pill on today's column.
-                      <div className="mb-1.5 flex items-center justify-center">
-                        <span
-                          className={cn(
-                            "inline-flex items-center rounded-full px-3 py-1 text-[12px] font-semibold",
-                            isToday
-                              ? "bg-primary text-white"
-                              : "text-ink-secondary",
-                          )}
-                        >
-                          {weekHeaderLabel}
-                        </span>
-                        {cellTasks.length > 0 && (
-                          <DayCountBadge
-                            count={cellTasks.length}
-                            overdue={cellTasks.some((t) => t.is_overdue)}
-                            className="ml-1"
-                          />
-                        )}
-                      </div>
-                    ) : (
-                      <div className="flex items-center gap-1.5">
-                        {isToday ? (
-                          <span className="inline-flex h-[22px] min-w-[22px] shrink-0 items-center justify-center rounded-full bg-primary px-1.5 text-[13px] font-bold text-white">
-                            {cell.date.getUTCDate()}
-                          </span>
-                        ) : (
-                          <span className="shrink-0 text-[14px] font-semibold text-ink">
-                            {cell.date.getUTCDate()}
-                          </span>
-                        )}
-                        {/* Holiday marker sits right beside the date (deeper
-                            tint than before so it reads at a glance). */}
-                        {isHolidayCell && (
-                          <span
-                            className="min-w-0 truncate rounded bg-[#bcc0e6] px-1.5 py-0.5 text-[9.5px] font-semibold text-[#2b3063]"
-                            title={holidays.map((h) => h.name).join(", ")}
-                          >
-                            {holidays[0].name}
-                            {holidays.length > 1 && ` +${holidays.length - 1}`}
-                          </span>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Reserved vertical space for the absolute bar overlay so
-                        cell content (holiday + tasks) sits below this cell's
-                        own bars. Month caps at the visible-lane count so the
-                        overflowing bars don't reserve space ("+N more" instead). */}
-                    <div
-                      className="shrink-0"
-                      style={{
-                        height:
-                          mode === "week" || expandAll
-                            ? cellBarsH[idx]
-                            : MAX_LANES * LANE_TOTAL,
-                      }}
-                      aria-hidden
-                    />
-
-                    {/* Bar overflow — month mode only (week mode has
-                        unlimited lanes). Clicking expands the cell's
-                        week into week view, showing every bar inline
-                        without a popover. Old popover behaviour removed
-                        per the team's request. */}
-                    {mode === "month" && overflow > 0 && (
-                      <button
-                        type="button"
-                        data-cal-content
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setDayModalIso(cell.iso);
-                        }}
-                        className="block w-full pr-0.5 text-right text-[9px] font-semibold text-accent hover:underline"
-                        title="Show every project + task on this day"
-                      >
-                        +{overflow} more
-                      </button>
-                    )}
-
-                    {cellTasks.length > 0 && (
-                      <div
-                        data-cal-content
-                        className={cn(
-                          "space-y-0.5 border-t border-border-subtle pt-1",
-                          // Compact month: pin tasks to the cell bottom so every
-                          // cell's tasks line up on the last rows regardless of
-                          // how many bars (or a "+N more") sit above.
-                          mode === "month" && !expandAll
-                            ? "absolute inset-x-1.5 bottom-1 z-20 bg-inherit"
-                            : "mt-1",
-                        )}
-                      >
-                        {/* Week mode shows every task — there's room.
-                            Month mode keeps a 2-task cap + "+N more"
-                            expander since cells are tighter. */}
-                        {(mode === "week" || expandAll ? cellTasks : cellTasks.slice(0, 2)).map((t) => (
-                          <CalendarTaskChip
-                            key={t.id}
-                            task={t}
-                            onOpen={() => navigate(`/projects/${t.project_id}`)}
-                            onHover={(e) => enterTaskHover(t, e.clientX, e.clientY)}
-                            onMove={(e) => moveTaskHover(t, e.clientX, e.clientY)}
-                            onLeave={leaveTaskHover}
-                          />
-                        ))}
-                        {mode === "month" && !expandAll && cellTasks.length > 2 && (
-                          <button
-                            onClick={() => setDayModalIso(cell.iso)}
-                            title={cellTasks
-                              .slice(2)
-                              .map((t) => `${t.project_code}: ${t.title}`)
-                              .join("\n")}
-                            className="block text-[9px] font-semibold text-accent hover:underline"
-                          >
-                            +{cellTasks.length - 2} more
-                          </button>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-
-              {/* Bar overlay — one absolutely-positioned pill per
-                  segment, spanning startCol..endCol. Pointer events
-                  pass through the wrapper so the underlying cells stay
-                  clickable; the bars themselves opt back in. */}
-              <div
-                className="pointer-events-none absolute left-0 right-0 z-10"
-                style={{ top: BAR_TOP_OFFSET }}
-                aria-hidden={false}
-              >
-                {segs.map((seg) => {
-                  const span = seg.endCol - seg.startCol + 1;
-                  const leftPct = (seg.startCol / 7) * 100;
-                  const widthPct = (span / 7) * 100;
-                  return (
-                    <button
-                      key={`${w}-${seg.project.id}-${seg.startCol}`}
-                      onClick={() => navigate(`/projects/${seg.project.id}`)}
-                      onMouseEnter={(e) =>
-                        enterBarHover(seg.project, e.clientX, e.clientY)
-                      }
-                      onMouseMove={(e) =>
-                        moveBarHover(seg.project, e.clientX, e.clientY)
-                      }
-                      onMouseLeave={leaveBarHover}
-                      style={{
-                        position: "absolute",
-                        left: `calc(${leftPct}% + 4px)`,
-                        width: `calc(${widthPct}% - 8px)`,
-                        top: seg.lane * LANE_TOTAL,
-                        height: BAR_H,
-                        ...statusBarStyle(seg.project.status),
-                      }}
-                      className={cn(
-                        "cal-bar pointer-events-auto truncate px-2 text-left text-[10.5px] font-semibold leading-[18px] hover:-translate-y-px",
-                        seg.clipLeft ? "rounded-l-none" : "rounded-l-md",
-                        seg.clipRight ? "rounded-r-none" : "rounded-r-md"
-                      )}
-                    >
-                      {upcaseLeadingState(
-                        (seg.project.event_type_name || "").toLowerCase() === "solo"
-                          ? composeDefaultProjectName({
-                              state: seg.project.state,
-                              brand: seg.project.brand,
-                              // Bars always say SOLO (owner 2026-08-19); organizer
-                              // stays in the field / lists / stored names (08-17 rule).
-                              organizer: null,
-                              venue: seg.project.venue,
-                              event_type_slug: "solo",
-                            })
-                          : seg.project.name,
-                        seg.project.state,
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          );
-        })}
-        </div>
-      </div>
-
-      {dayModalIso && (
-        <CalendarDayModal
-          iso={dayModalIso}
-          projects={projects.filter((p) => {
-            const s = p.start_date.slice(0, 10);
-            const e = (p.end_date || p.start_date).slice(0, 10);
-            return s <= dayModalIso && e >= dayModalIso;
-          })}
-          tasks={tasksByDate.get(dayModalIso) ?? []}
-          holidays={showHolidays ? getHolidaysOn(dayModalIso) : []}
-          onClose={() => setDayModalIso(null)}
-          onOpenProject={(id) => {
-            setDayModalIso(null);
-            navigate(`/projects/${id}`);
-          }}
-        />
-      )}
-
-      {barHover && <CalendarBarPopover info={barHover} />}
-      {taskHover && <CalendarTaskPopover info={taskHover} />}
-
-    </div>
-  );
-}
-
-// ── Calendar bar hover popover ───────────────────────────────
-// A lightweight, cursor-anchored card showing a project's basic info
-// when the pointer is over its calendar bar. Pointer-events-none so it
-// never steals the hover; flips left/up near the viewport edges.
-function CalendarBarPopover({
-  info,
-}: {
-  info: { project: CalendarProject; x: number; y: number };
-}) {
-  const p = info.project;
-  const opt = STATUS_BY_VALUE[p.status] ?? STATUS_BY_VALUE.pending;
-  const fmt = (iso: string | null) => (iso ? fmtDate(iso) : null);
-  const span =
-    p.end_date && p.end_date.slice(0, 10) !== p.start_date.slice(0, 10)
-      ? `${fmt(p.start_date)} – ${fmt(p.end_date)}`
-      : fmt(p.start_date);
-  const stage =
-    p.active_section_name ??
-    (p.sections_total ? "All sections complete" : null);
-
-  // Anchor near the cursor, flipping when close to the right/bottom edge.
-  const W = 268;
-  const vw = typeof window !== "undefined" ? window.innerWidth : 1280;
-  const vh = typeof window !== "undefined" ? window.innerHeight : 800;
-  const left = info.x + W + 16 > vw ? info.x - W - 12 : info.x + 16;
-  const top = Math.min(info.y + 14, vh - 190);
-
-  const rows: Array<[string, string | null]> = [
-    ["Brand", p.brand],
-    ["Venue", p.venue],
-    ["When", span],
-    ["Organizer", p.organizer],
-    ["Stage", stage],
-  ];
-
-  return createPortal(
-    <div
-      className="pointer-events-none fixed z-[60] w-[268px] rounded-md border border-border bg-surface p-3 shadow-slab"
-      style={{ left, top }}
-    >
-      <div className="flex items-center justify-between gap-2">
-        <span className="font-mono text-[10px] font-semibold uppercase tracking-wider text-accent">
-          {p.code}
-        </span>
-        <span
-          className="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider"
-          style={{
-            backgroundColor: `color-mix(in srgb, ${opt.hex} 15%, white)`,
-            color: opt.hex,
-          }}
-        >
-          <span className="h-1.5 w-1.5 rounded-full" style={{ background: opt.hex }} />
-          {opt.label}
-        </span>
-      </div>
-      <div className="mt-1 font-display text-[13px] font-bold leading-snug tracking-tight text-ink">
-        {upcaseLeadingState(p.name, p.state)}
-      </div>
-      <div className="mt-2 space-y-1">
-        {rows
-          .filter(([, v]) => !!v)
-          .map(([k, v]) => (
-            <div key={k} className="flex gap-2 text-[11px] leading-tight">
-              <span className="w-[58px] shrink-0 text-ink-muted">{k}</span>
-              <span className="min-w-0 flex-1 text-ink-secondary">{v}</span>
-            </div>
-          ))}
-      </div>
-    </div>,
-    document.body
-  );
-}
-
-// ── Calendar task-chip hover popover ─────────────────────────
-// Cursor-anchored card for a checklist task chip: parent project, task
-// title, due date, owner, and an overdue flag. Mirrors the project bar
-// popover so both hovers feel consistent.
-function CalendarTaskPopover({
-  info,
-}: {
-  info: { task: CalendarTask; x: number; y: number };
-}) {
-  const t = info.task;
-  const opt = STATUS_BY_VALUE[t.project_status ?? "pending"] ?? STATUS_BY_VALUE.pending;
-  const overdue = t.is_overdue === 1;
-  const due = (() => {
-    return fmtDate(t.due_date);
-  })();
-
-  const W = 268;
-  const vw = typeof window !== "undefined" ? window.innerWidth : 1280;
-  const vh = typeof window !== "undefined" ? window.innerHeight : 800;
-  const left = info.x + W + 16 > vw ? info.x - W - 12 : info.x + 16;
-  const top = Math.min(info.y + 14, vh - 180);
-
-  const rows: Array<[string, string | null]> = [
-    ["Project", t.project_name],
-    ["Due", due],
-    ["Owner", t.owner_name || "Unassigned"],
-  ];
-
-  return createPortal(
-    <div
-      className="pointer-events-none fixed z-[60] w-[268px] rounded-md border border-border bg-surface p-3 shadow-slab"
-      style={{ left, top }}
-    >
-      <div className="flex items-center justify-between gap-2">
-        <span className="font-mono text-[10px] font-semibold uppercase tracking-wider text-accent">
-          {t.project_code}
-        </span>
-        {overdue ? (
-          <span className="inline-flex items-center gap-1 rounded-full bg-err/15 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-err">
-            <span className="h-1.5 w-1.5 rounded-full bg-err" />
-            Overdue
-          </span>
-        ) : (
-          <span
-            className="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider"
-            style={{
-              backgroundColor: `color-mix(in srgb, ${opt.hex} 15%, white)`,
-              color: opt.hex,
-            }}
-          >
-            <span className="h-1.5 w-1.5 rounded-full" style={{ background: opt.hex }} />
-            {opt.label}
-          </span>
-        )}
-      </div>
-      <div className="mt-1 font-display text-[13px] font-bold leading-snug tracking-tight text-ink">
-        {t.title}
-      </div>
-      <div className="mt-2 space-y-1">
-        {rows
-          .filter(([, v]) => !!v)
-          .map(([k, v]) => (
-            <div key={k} className="flex gap-2 text-[11px] leading-tight">
-              <span className="w-[58px] shrink-0 text-ink-muted">{k}</span>
-              <span className="min-w-0 flex-1 text-ink-secondary">{v}</span>
-            </div>
-          ))}
-      </div>
-    </div>,
-    document.body
-  );
-}
-
-// ── Calendar "+N more" day modal ─────────────────────────────
-// Surfaces every project + task on a single day without forcing the
-// user to swap into week view. Triggered by the month-view "+N more"
-// expanders on bar and task overflow.
-
-function CalendarDayModal({
-  iso,
-  projects,
-  tasks,
-  holidays,
-  onClose,
-  onOpenProject,
-}: {
-  iso: string;
-  projects: CalendarProject[];
-  tasks: CalendarTask[];
-  holidays: Array<{ name: string; type?: string | null }>;
-  onClose: () => void;
-  onOpenProject: (id: number) => void;
-}) {
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
-    }
-    window.addEventListener("keydown", onKey);
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      document.body.style.overflow = prev;
-    };
-  }, [onClose]);
-
-  const heading = (() => {
-    const [y, m, d] = iso.split("-");
-    const weekday = new Date(Number(y), Number(m) - 1, Number(d))
-      .toLocaleDateString("en-GB", { weekday: "long" });
-    return `${weekday} ${fmtDate(iso)}`;
-  })();
-
-  // Portal into document.body so the fixed-position overlay escapes any
-  // transformed ancestor (the calendar's transformed bar segments would
-  // otherwise scope the "fixed" element to the calendar, not the
-  // viewport — leaving the modal offscreen on long calendars).
-  return createPortal(
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 backdrop-blur-sm"
-      role="dialog"
-      aria-modal="true"
-      onClick={onClose}
-    >
-      <div
-        className="thin-scroll max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-xl bg-surface p-5 shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="mb-4 flex items-center justify-between gap-3">
-          <div>
-            <div className="text-[10px] font-semibold uppercase tracking-brand text-accent">
-              Day view
-            </div>
-            <h2 className="font-display text-[16px] font-extrabold tracking-tight text-ink">
-              {heading}
-            </h2>
-          </div>
-          <button
-            onClick={onClose}
-            aria-label="Close"
-            className="rounded-full border border-border bg-bg/40 p-1.5 text-ink-secondary transition-colors hover:border-accent/50 hover:text-accent"
-          >
-            <X size={14} />
-          </button>
-        </div>
-
-        {holidays.length > 0 && (
-          <div className="mb-3 rounded-md border border-[#c9cbe3] bg-[#ecedf6] px-3 py-2 text-[12px] text-[#474d79]">
-            <div className="text-[10px] font-semibold uppercase tracking-wider">
-              Holiday
-            </div>
-            <div className="mt-0.5">{holidays.map((h) => h.name).join(", ")}</div>
-          </div>
-        )}
-
-        <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-ink-muted">
-          Projects · {projects.length}
-        </div>
-        {projects.length === 0 ? (
-          <div className="mb-4 rounded-md border border-dashed border-border px-3 py-3 text-[12px] text-ink-muted">
-            No projects on this day.
-          </div>
-        ) : (
-          <ul className="mb-4 divide-y divide-border-subtle rounded-md border border-border">
-            {projects.map((p) => {
-              const opt = STATUS_BY_VALUE[p.status] ?? STATUS_BY_VALUE.pending;
-              return (
-                <li key={p.id}>
-                  <button
-                    onClick={() => onOpenProject(p.id)}
-                    className="flex w-full items-start gap-2.5 px-3 py-2.5 text-left transition-colors hover:bg-bg/40"
-                  >
-                    <span
-                      className="mt-[5px] h-2.5 w-2.5 shrink-0 rounded-full"
-                      style={{ backgroundColor: opt.hex }}
-                    />
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-[12px] font-medium text-ink">
-                        {upcaseLeadingState(p.name, p.state)}
-                      </div>
-                      <div className="mt-1 flex items-center gap-1.5 text-[10px]">
-                        <span
-                          className={cn(
-                            "shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide",
-                            opt.chip
-                          )}
-                        >
-                          {opt.label}
-                        </span>
-                        {p.brand && (
-                          <span className="shrink-0 font-mono text-ink-muted">
-                            {p.brand}
-                          </span>
-                        )}
-                        {p.venue && (
-                          <span className="min-w-0 truncate text-ink-secondary">
-                            · {p.venue}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-
-        {tasks.length > 0 && (
-          <>
-            <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-ink-muted">
-              Tasks due · {tasks.length}
-            </div>
-            {/* Grouped by project so the (long) project code shows once as a
-                section header instead of repeating on every task row. */}
-            <div className="space-y-2.5">
-              {(() => {
-                const groups: Array<{
-                  id: number;
-                  code: string;
-                  name: string;
-                  status: ProjectStatus | null;
-                  items: CalendarTask[];
-                }> = [];
-                const byId = new Map<number, (typeof groups)[number]>();
-                for (const t of tasks) {
-                  let g = byId.get(t.project_id);
-                  if (!g) {
-                    g = {
-                      id: t.project_id,
-                      code: t.project_code,
-                      name: t.project_name,
-                      status: t.project_status,
-                      items: [],
-                    };
-                    byId.set(t.project_id, g);
-                    groups.push(g);
-                  }
-                  g.items.push(t);
-                }
-                return groups.map((g) => {
-                  const opt =
-                    STATUS_BY_VALUE[g.status ?? "pending"] ??
-                    STATUS_BY_VALUE.pending;
-                  return (
-                    <div
-                      key={g.id}
-                      className="overflow-hidden rounded-md border border-border"
-                    >
-                      <button
-                        onClick={() => onOpenProject(g.id)}
-                        className="flex w-full items-center gap-2 border-b border-border-subtle bg-bg/50 px-3 py-2 text-left transition-colors hover:bg-bg/80"
-                      >
-                        <span
-                          className="h-2.5 w-2.5 shrink-0 rounded-full"
-                          style={{ backgroundColor: opt.hex }}
-                        />
-                        <span className="min-w-0 flex-1 truncate text-[12px] font-semibold text-ink">
-                          {g.name}
-                        </span>
-                        <span className="shrink-0 rounded-full bg-surface px-1.5 py-0.5 text-[9px] font-bold text-ink-muted">
-                          {g.items.length}
-                        </span>
-                      </button>
-                      <ul className="divide-y divide-border-subtle">
-                        {g.items.map((t) => (
-                          <li key={t.id}>
-                            <button
-                              onClick={() => onOpenProject(t.project_id)}
-                              className="flex w-full items-center gap-2 px-3 py-2 pl-[26px] text-left transition-colors hover:bg-bg/40"
-                            >
-                              <span
-                                className="h-1.5 w-1.5 shrink-0 rounded-full"
-                                style={{ backgroundColor: t.is_overdue ? "#b23b3b" : "#cdc8b8" }}
-                              />
-                              <span className="min-w-0 flex-1 truncate text-[12px] text-ink">
-                                {t.title}
-                              </span>
-                              {t.owner_name && (
-                                <span className="shrink-0 text-[10px] text-ink-muted">
-                                  {t.owner_name}
-                                </span>
-                              )}
-                              {t.is_overdue && (
-                                <span className="shrink-0 rounded-full bg-err/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-err">
-                                  Overdue
-                                </span>
-                              )}
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  );
-                });
-              })()}
-            </div>
-          </>
-        )}
-      </div>
-    </div>,
-    document.body
-  );
-}
-
 // ── Progress bar ─────────────────────────────────────────────
 
 function ProgressBar({ pct }: { pct: number }) {
@@ -5874,278 +3229,6 @@ function ProgressBar({ pct }: { pct: number }) {
       </div>
       <span className="font-mono text-[11px] text-ink-secondary">{clamped}%</span>
     </div>
-  );
-}
-
-// ── Create Panel ─────────────────────────────────────────────
-
-function CreateProjectPanel({
-  onClose,
-  onCreated,
-  toast,
-  brands,
-  eventTypes,
-}: {
-  onClose: () => void;
-  onCreated: (id: number) => void;
-  toast: ReturnType<typeof useToast>;
-  brands: string[];
-  eventTypes: EventType[];
-}) {
-  // Owner 2026-08-19: the Ownership/PIC section is REMOVED from creation
-  // (supersedes the 2026-07-18/07-21 back-and-forth on who may assign at
-  // create). The creator does not know the PIC — only the Sales Director
-  // does, and they assign it AFTER creation on the detail page (which also
-  // surfaces the "Set Sales PIC" duty in their My Pending while it is
-  // empty). Projects are therefore always created unassigned; row scope
-  // falls back to created_by via COALESCE(p.pic_id, p.created_by).
-  const [eventTypeId, setEventTypeId] = useState<string>("");
-  const [brand, setBrand] = useState<string>("");
-  const [startDate, setStartDate] = useState("");
-  const [endDate, setEndDate] = useState("");
-  const [venue, setVenue] = useState("");
-  // State is derived from the picked venue (project_venues stores it).
-  // Not user-editable — the venue is the single source of truth.
-  const [stateName, setStateName] = useState("");
-  const [organizer, setOrganizer] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-
-  const eventTypeSlug =
-    eventTypes.find((t) => String(t.id) === eventTypeId)?.slug ?? null;
-
-  // Name is fully derived — user can't override.
-  const derivedName = composeDefaultProjectName({
-    state: stateName,
-    brand,
-    organizer,
-    venue,
-    event_type_slug: eventTypeSlug,
-  });
-
-  const dateInvalid = !!(startDate && endDate && endDate < startDate);
-
-  // The backend derives the project code from state/venue/brand and
-  // throws when any are missing. Validate all three client-side so the
-  // user gets a clear inline message instead of a server round-trip.
-  async function submit() {
-    if (!brand) {
-      toast.error("Brand is required");
-      return;
-    }
-    if (!venue.trim()) {
-      toast.error("Venue is required");
-      return;
-    }
-    if (!stateName.trim()) {
-      toast.error("This venue has no state set. Open Project Maintenance → Venues and add one.");
-      return;
-    }
-    if (!derivedName.trim()) {
-      toast.error("Pick a venue so a name can be derived");
-      return;
-    }
-    if (dateInvalid) {
-      toast.error("End date must be on or after start date");
-      return;
-    }
-    setSubmitting(true);
-    try {
-      const res = await api.post<{ id: number; code: string }>("/api/projects", {
-        name: derivedName.trim(),
-        event_type_id: eventTypeId ? parseInt(eventTypeId, 10) : undefined,
-        brand: brand || undefined,
-        start_date: startDate || undefined,
-        end_date: endDate || undefined,
-        venue: venue.trim(),
-        state: stateName.trim() || undefined,
-        organizer: organizer.trim() || undefined,
-      });
-      toast.success(`Created ${res.code}`);
-      onCreated(res.id);
-    } catch (e: any) {
-      toast.error(e?.message || "Failed to create");
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  return (
-    <Panel
-      open
-      onClose={onClose}
-      title="New Project"
-      subtitle="Picking an event type pre-loads the default checklist"
-      width={480}
-      footer={
-        <div className="flex items-center justify-end gap-2">
-          <button
-            onClick={onClose}
-            className="rounded-md border border-border bg-surface px-3 py-2 text-[12px] text-ink-secondary"
-          >
-            Cancel
-          </button>
-          <Button
-            variant="primary"
-            onClick={submit}
-            disabled={
-              submitting ||
-              !brand ||
-              !venue.trim() ||
-              !stateName.trim() ||
-              !derivedName.trim() ||
-              dateInvalid
-            }
-          >
-            {submitting ? "Creating…" : "Create Project"}
-          </Button>
-        </div>
-      }
-    >
-      <PanelSection title="Basics">
-        <div>
-          <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-ink-muted">
-            Project Name
-          </div>
-          <div className="w-full rounded-md border border-dashed border-border bg-bg px-3 py-2 text-[13px] text-ink-secondary">
-            {derivedName || (
-              <span className="text-ink-muted">
-                Pick brand, organizer and venue to derive…
-              </span>
-            )}
-          </div>
-          <div className="mt-1 text-[10px] text-ink-muted">
-            Auto-derived: <span className="font-mono">{"{state} [{brand}] {organizer | SOLO} @ {venue}"}</span>
-          </div>
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-ink-muted">
-              Event Type
-            </div>
-            <select
-              value={eventTypeId}
-              onChange={(e) => setEventTypeId(e.target.value)}
-              className="w-full appearance-none rounded-md border border-border bg-surface px-3 py-2 text-[13px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
-            >
-              <option value="">— none —</option>
-              {eventTypes.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-ink-muted">
-              Brand<span className="ml-1 text-err">*</span>
-            </div>
-            <select
-              value={brand}
-              onChange={(e) => setBrand(e.target.value)}
-              className="w-full appearance-none rounded-md border border-border bg-surface px-3 py-2 text-[13px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
-            >
-              <option value="">— pick a brand —</option>
-              {brands.map((b) => (
-                <option key={b} value={b}>
-                  {b}
-                </option>
-              ))}
-            </select>
-            {brands.length === 0 && (
-              <div className="mt-1 text-[10px] text-warning-text">
-                No brands configured yet. Add one under Project Maintenance → Brands.
-              </div>
-            )}
-          </div>
-        </div>
-      </PanelSection>
-
-      <PanelSection title="Dates">
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-ink-muted">
-              Start
-            </div>
-            <DateField
-              fullWidth
-              value={startDate}
-              onChange={(iso) => setStartDate(iso)}
-              className="w-full rounded-md border border-border bg-surface px-3 py-2 text-[13px]"
-            />
-          </div>
-          <div>
-            <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-ink-muted">
-              End
-            </div>
-            <DateField
-              fullWidth
-              value={endDate}
-              min={startDate || undefined}
-              onChange={(iso) => setEndDate(iso)}
-              className={cn(
-                "w-full rounded-md border bg-surface px-3 py-2 text-[13px]",
-                dateInvalid ? "border-err" : "border-border"
-              )}
-            />
-          </div>
-        </div>
-        {dateInvalid && (
-          <div className="text-[11px] text-err">
-            End date must be on or after the start date.
-          </div>
-        )}
-      </PanelSection>
-
-      <PanelSection title="Venue">
-        <div>
-          <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-ink-muted">
-            Venue<span className="ml-1 text-err">*</span>
-          </div>
-          <VenuePicker
-            value={venue || null}
-            onChange={(v) => {
-              setVenue(v ?? "");
-              if (!v) setStateName("");
-            }}
-            onStateHint={(s) => setStateName(s ?? "")}
-          />
-        </div>
-        <div>
-          <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-ink-muted">
-            State<span className="ml-1 text-err">*</span>
-          </div>
-          <select
-            value={stateName}
-            onChange={(e) => setStateName(e.target.value)}
-            className="w-full appearance-none rounded-md border border-border bg-surface px-3 py-2 text-[13px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
-          >
-            <option value="">— pick a state —</option>
-            {stateName && !(PROJECT_STATES as readonly string[]).includes(stateName) && (
-              <option value={stateName}>{stateName}</option>
-            )}
-            {PROJECT_STATES.map((s) => (
-              <option key={s} value={s}>{s}</option>
-            ))}
-          </select>
-          <div className="mt-1 text-[10px] text-ink-muted">
-            Auto-fills from the venue's record. Override here if the venue
-            doesn't have one set yet — fix it later in Project Maintenance → Venues.
-          </div>
-        </div>
-        <div>
-          <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-ink-muted">
-            Organizer
-          </div>
-          <OrganizerPicker
-            value={organizer}
-            onChange={(v) => setOrganizer(v ?? "")}
-          />
-        </div>
-      </PanelSection>
-
-      {/* Ownership/PIC section removed at creation (owner 2026-08-19) — the
-          Sales Director assigns the PIC on the detail page after creation. */}
-    </Panel>
   );
 }
 
@@ -6904,88 +3987,6 @@ function ProjectTeamSection({
 // editor classes are used across InlineSpecText / Date / Select /
 // VenuePicker / OrganizerPicker so dropdowns look consistent.
 
-// Shared className for every editable input in the strip — keeps
-// dropdowns + text inputs + date inputs visually identical.
-const SPEC_INPUT_CLASS =
-  "w-full appearance-none rounded border border-border bg-surface px-2 py-1 text-[12.5px] font-medium text-ink outline-none transition-colors focus:border-primary focus:ring-1 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-60";
-
-// Quick Rental (RM) — writes a single `rental` cost line to the finance
-// ledger (the same category the Financial Snapshot's Rental row edits),
-// so keying rental here syncs the Rental row, Total Cost, Net Profit, the
-// Rental KPI card, and the Project List "Rental (RM)" column. Saves on
-// blur / Enter.
-function QuickRentalField({
-  projectId,
-  financeLines,
-  onSaved,
-  toast,
-}: {
-  projectId: number;
-  financeLines: FinanceLine[];
-  onSaved: () => void;
-  toast: ReturnType<typeof useToast>;
-}) {
-  const existing = financeLines.filter(
-    (l) => l.kind === "cost" && (l.category ?? "").trim() === "rental" && !l.auto_source,
-  );
-  const current = existing.reduce((s, l) => s + (l.amount || 0), 0);
-  const [val, setVal] = useState(current ? String(current) : "");
-  const [saving, setSaving] = useState(false);
-  useEffect(() => {
-    setVal(current ? String(current) : "");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [current]);
-
-  const save = async () => {
-    const trimmed = val.trim();
-    const n = trimmed === "" ? 0 : parseFloat(trimmed);
-    if (isNaN(n) || n < 0) {
-      toast.error("Enter a valid rental amount");
-      return;
-    }
-    if (Math.abs(n - current) < 0.005) return; // unchanged
-    setSaving(true);
-    try {
-      if (n <= 0) {
-        for (const l of existing) await api.del(`/api/projects/finance/lines/${l.id}`);
-      } else if (existing.length === 1) {
-        await api.patch(`/api/projects/finance/lines/${existing[0].id}`, { amount: n });
-      } else {
-        // 0 existing → create; >1 → consolidate the duplicates into one.
-        for (const l of existing) await api.del(`/api/projects/finance/lines/${l.id}`);
-        await api.post(`/api/projects/${projectId}/finance/lines`, {
-          kind: "cost",
-          category: "rental",
-          amount: n,
-          description: "Rental",
-        });
-      }
-      toast.success("Rental updated");
-      onSaved();
-    } catch (e: any) {
-      toast.error(e?.message || "Failed to save rental");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <input
-      className={SPEC_INPUT_CLASS}
-      type="number"
-      inputMode="decimal"
-      value={val}
-      placeholder="—"
-      disabled={saving}
-      onChange={(e) => setVal(e.target.value)}
-      onBlur={save}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") e.currentTarget.blur();
-      }}
-    />
-  );
-}
-
 /** Read the total m² off the project's uploaded Display Floor Plan (owner
  *  2026-08-04). The server does the reading; this is the manual trigger +
  *  result feedback. `overwrite=1` because pressing the button IS the operator
@@ -7121,12 +4122,16 @@ function ProjectSpecStrip({
       <div
         className={cn(
           "grid grid-cols-1 divide-x divide-y divide-border-subtle border-y border-border-subtle md:grid-cols-2",
-          // View mode = 5 key fields on one row; Edit mode = 4-col grid for all fields.
+          // View mode = the 5 fields the owner reads at a glance, one row.
+          // Edit mode = a 4-col grid for every field.
           editing ? "lg:grid-cols-4" : "lg:grid-cols-5",
         )}
       >
-        {/* View mode shows only the key fields (Organizer, Start, End, Booth,
-            Venue). Clicking Edit reveals every field. */}
+        {/* Owner 2026-09-03: the resting strip shows START, END, SIZE, BOOTH and
+            RENTAL and nothing else — "other details keep hidden behind edit".
+            Venue, State, Organizer and Contractor were on it too, which pushed
+            the numbers the owner actually checks off the row entirely.
+            Booth came back 2026-09-09. Edit still reveals every field. */}
         {editing && (<>
         <SpecCell label="Brand">
           {editing ? (
@@ -7248,48 +4253,39 @@ function ProjectSpecStrip({
             <SpecValue mono>{p.end_date ?? "—"}</SpecValue>
           )}
         </SpecCell>
-        <SpecCell label="Booth">
-          <SpecTextField
-            editing={editing}
-            value={p.booth_no}
-            placeholder="—"
-            onChange={(v) => patch({ booth_no: v })}
+        {editing && (<>
+        <SpecCell label="Venue *">
+          <VenuePicker
+            value={p.venue}
+            onChange={(v) =>
+              patch(v ? { venue: v } : { venue: null, state: null })
+            }
+            onStateHint={(s) => {
+              if (s && s !== p.state) patch({ state: s });
+            }}
+            className={SPEC_INPUT_CLASS}
           />
         </SpecCell>
-
-        <SpecCell label="Venue *">
-          {editing ? (
-            <VenuePicker
-              value={p.venue}
-              onChange={(v) =>
-                patch(v ? { venue: v } : { venue: null, state: null })
-              }
-              onStateHint={(s) => {
-                if (s && s !== p.state) patch({ state: s });
-              }}
-              className={SPEC_INPUT_CLASS}
-            />
-          ) : (
-            <SpecValue>{p.venue ?? "—"}</SpecValue>
-          )}
-        </SpecCell>
-        {editing && (
         <SpecCell label="State">
           <SpecValue muted mono>{p.state ?? "—"}</SpecValue>
         </SpecCell>
-        )}
         <SpecCell label="Organizer">
-          {editing ? (
-            <OrganizerPicker
-              value={p.organizer}
-              onChange={(v) => patch({ organizer: v })}
-              className={SPEC_INPUT_CLASS}
-            />
-          ) : (
-            <SpecValue>{p.organizer ?? "—"}</SpecValue>
-          )}
+          <OrganizerPicker
+            value={p.organizer}
+            onChange={(v) => patch({ organizer: v })}
+            className={SPEC_INPUT_CLASS}
+          />
         </SpecCell>
-        {editing && (<>
+        <SpecCell label="Contractor">
+          <ContractorPicker
+            value={p.contractor}
+            onChange={(v) => patch({ contractor: v })}
+            className={SPEC_INPUT_CLASS}
+          />
+        </SpecCell>
+        </>)}
+        {/* Size, Booth and Rental stay on the resting strip — what the owner
+            checks without opening anything (owner 2026-09-03/09-09). */}
         <SpecCell label="Size · sqm">
           <div className="flex items-center gap-1.5">
             <SpecTextField
@@ -7311,6 +4307,15 @@ function ProjectSpecStrip({
           </div>
         </SpecCell>
 
+        <SpecCell label="Booth">
+          <SpecTextField
+            editing={editing}
+            value={p.booth_no}
+            placeholder="—"
+            onChange={(v) => patch({ booth_no: v })}
+          />
+        </SpecCell>
+
         <SpecCell label="Rental · RM">
           <QuickRentalField
             projectId={p.id}
@@ -7320,6 +4325,7 @@ function ProjectSpecStrip({
           />
         </SpecCell>
 
+        {editing && (<>
         <SpecCell label="Name" span={p.start_date ? 2 : 3}>
           <SpecTextField
             editing={editing}
@@ -7356,115 +4362,6 @@ function ProjectSpecStrip({
   );
 }
 
-// Text input that flips between read-only display and an editable
-// input depending on `editing`. Centralised here so every text field
-// in the spec strip looks identical.
-function SpecTextField({
-  editing,
-  value,
-  placeholder,
-  type = "text",
-  onChange,
-}: {
-  editing: boolean;
-  value: string | number | null | undefined;
-  placeholder?: string;
-  type?: "text" | "number";
-  onChange: (v: string | null) => Promise<void> | void;
-}) {
-  const [draft, setDraft] = useState<string>(value == null ? "" : String(value));
-  useEffect(() => {
-    setDraft(value == null ? "" : String(value));
-  }, [value]);
-  async function commit() {
-    const original = value == null ? "" : String(value);
-    if (draft === original) return;
-    try {
-      await onChange(draft === "" ? null : draft);
-    } catch {
-      setDraft(original);
-    }
-  }
-  if (!editing) {
-    return (
-      <SpecValue muted={value == null || value === ""}>
-        {value == null || value === "" ? "—" : String(value)}
-      </SpecValue>
-    );
-  }
-  return (
-    <input
-      type={type}
-      value={draft}
-      placeholder={placeholder}
-      onChange={(e) => setDraft(e.target.value)}
-      onBlur={commit}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-        if (e.key === "Escape") {
-          setDraft(value == null ? "" : String(value));
-          (e.target as HTMLInputElement).blur();
-        }
-      }}
-      className={SPEC_INPUT_CLASS}
-    />
-  );
-}
-
-// ── Spec-strip helpers ────────────────────────────────────────────
-// Each cell renders its own label + a children slot for the value
-// (text or input). Designed to be visually flat — the dividing
-// borders come from the parent `divide-x divide-y` on the grid.
-
-function SpecCell({
-  label,
-  span,
-  children,
-}: {
-  label: string;
-  span?: 2 | 3;
-  children: React.ReactNode;
-}) {
-  return (
-    <div
-      className={cn(
-        "min-w-0 px-3.5 py-2.5",
-        span === 2 && "md:col-span-2",
-        span === 3 && "md:col-span-2 lg:col-span-3"
-      )}
-    >
-      <div className="mb-1 font-mono text-[9px] font-semibold uppercase tracking-[0.16em] text-ink-muted">
-        {label}
-      </div>
-      <div className="min-w-0 text-[12.5px] font-medium text-ink">
-        {children}
-      </div>
-    </div>
-  );
-}
-
-function SpecValue({
-  children,
-  muted,
-  mono,
-}: {
-  children: React.ReactNode;
-  muted?: boolean;
-  mono?: boolean;
-}) {
-  return (
-    <div
-      className={cn(
-        "truncate",
-        muted && "text-ink-secondary",
-        mono && "font-mono tracking-tight"
-      )}
-    >
-      {children}
-    </div>
-  );
-}
-
 /**
  * Page wrapper — mounted at /projects/:id. Reads the URL, fetches the
  * brand + event-type lookup lists once, hands the inner content the
@@ -7490,15 +4387,6 @@ export function ProjectDetail() {
       eventTypes={eventTypesQ.data?.data ?? []}
     />
   );
-}
-
-// ── Helpers ──────────────────────────────────────────────────
-function formatBytes(n: number | null | undefined): string {
-  if (n == null) return "—";
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(n / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }
 
 // ── Task attachment row ──────────────────────────────────────
@@ -7532,6 +4420,7 @@ function TaskAttachmentRow({
   canManage,
   showRemark,
   itemTitle,
+  roleLabel,
   onDelete,
   toast,
 }: {
@@ -7541,15 +4430,24 @@ function TaskAttachmentRow({
   /** Title of the checklist item this file belongs to — gates the defect
    *  action timeline to Defect List rows. */
   itemTitle?: string;
+  /** Role badge of the checklist item — a tick-only role may remove files from
+   *  a task badged for ITS OWN function (owner 2026-09-02). */
+  roleLabel?: string | null;
   onDelete: () => void;
   toast?: ReturnType<typeof useToast>;
 }) {
   const defectCtx = useContext(DefectActionsCtx);
-  // Owner 2026-08-04: deleting a file is a MANAGER action. projects.write (held
-  // by Logistic — e.g. Syu — and Sales) can upload and edit, but must NOT remove
-  // files; only projects.manage (BD / managers / directors) sees the trash.
-  const { can } = useAuth();
-  const canDeleteFile = can("projects.manage");
+  const { can, user } = useAuth();
+  // Owner 2026-09-03: "every user can delete/remove file or image from their own
+  // task, both pc and mobile pms" — this REPLACES the 2026-08-05 managers-only
+  // rule. Delete now follows ATTACH: the task you may put a file on is the task
+  // you may take one off, which is what "their own task" means for both kinds of
+  // caller — projects.write edits the row, a tick-only role is scoped to its own
+  // badge. id < 0 is a merged crew photo, never removable from here.
+  const mayDeleteFile =
+    attachment.id > 0 &&
+    (!!canManage ||
+      (can("projects.checklist.tick") && roleLabelAdmitsRole(roleLabel, user?.role_name)));
   const isDefectFile = /^defect (list|item)/i.test((itemTitle ?? "").trim());
   const fileActions = isDefectFile && defectCtx
     ? defectCtx.actions.filter((x) => x.attachment_id === attachment.id)
@@ -7728,7 +4626,7 @@ function TaskAttachmentRow({
           >
             <Download size={10} /> Download
           </button>
-          {canManage && canDeleteFile && (
+          {mayDeleteFile && (
             <button
               onClick={(e) => { e.stopPropagation(); onDelete(); }}
               className="rounded p-0.5 text-ink-muted hover:bg-err/10 hover:text-err"
@@ -8011,122 +4909,6 @@ function ProjectStageStepper({
           );
         })}
       </div>
-    </div>
-  );
-}
-
-// ── Stage progress row ───────────────────────────────────────
-// One pill per tasklist section. Solid + check when every non-NA task
-// in the section is done; partial gradient based on done/total when
-// in-progress; muted outline when nothing's started. Replaces the
-// percentage progress bar (mig 050).
-function StageProgressRow({
-  sections,
-  checklist,
-}: {
-  sections: SectionProgress[];
-  /** Optional — when provided, each pill shows a lead-time chip
-   *  derived from the latest due_date among unfinished items in that
-   *  section. Falls back to a plain "done/N" count when omitted. */
-  checklist?: ChecklistItem[];
-}) {
-  // Pre-bucket the checklist by section so each pill's lead-time calc
-  // is O(items) total, not O(sections × items).
-  const itemsBySection = useMemo(() => {
-    const m = new Map<number, ChecklistItem[]>();
-    for (const it of checklist ?? []) {
-      const key = it.section_id ?? 0;
-      const arr = m.get(key) ?? [];
-      arr.push(it);
-      m.set(key, arr);
-    }
-    return m;
-  }, [checklist]);
-
-  function leadTimeFor(sectionId: number): { days: number; targetIso: string } | null {
-    const items = itemsBySection.get(sectionId);
-    if (!items) return null;
-    const dates = items
-      .filter((i) => i.status !== "done" && i.status !== "na" && !!i.due_date)
-      .map((i) => i.due_date as string);
-    if (dates.length === 0) return null;
-    const latest = dates.sort().slice(-1)[0];
-    const target = new Date(`${latest}T00:00:00Z`);
-    const now = new Date();
-    now.setUTCHours(0, 0, 0, 0);
-    return {
-      days: Math.round((target.getTime() - now.getTime()) / 86400000),
-      targetIso: latest,
-    };
-  }
-
-  return (
-    <div className="flex flex-wrap items-center gap-1.5">
-      {sections.map((s) => {
-        const denom = s.total - s.na;
-        const pct = denom > 0 ? Math.round((s.done / denom) * 100) : 0;
-        const complete = s.complete === 1;
-        const lt = !complete ? leadTimeFor(s.id) : null;
-        const ltTone =
-          lt == null
-            ? null
-            : lt.days < 0
-              ? "overdue"
-              : lt.days <= 3
-                ? "soon"
-                : "ok";
-        return (
-          <span
-            key={s.id || s.name}
-            title={
-              `${s.name} — ${s.done}/${denom || 0} done${s.na ? ` · ${s.na} N/A` : ""}` +
-              (lt
-                ? `\nLatest open task due ${lt.targetIso}${
-                    lt.days < 0 ? ` (${-lt.days}d overdue)` : ` (${lt.days}d left)`
-                  }`
-                : "")
-            }
-            className={cn(
-              "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider transition-colors",
-              complete
-                ? "border-synced bg-synced/15 text-synced"
-                : pct > 0
-                  ? "border-accent/40 bg-accent/10 text-accent"
-                  : "border-border text-ink-muted"
-            )}
-          >
-            {complete ? (
-              <CheckCircle2 size={11} className="text-synced" />
-            ) : (
-              <Circle size={10} />
-            )}
-            <span>{s.name}</span>
-            {!complete && pct > 0 && (
-              <span className="font-mono text-[9px] opacity-70">
-                {s.done}/{denom}
-              </span>
-            )}
-            {lt && (
-              <span
-                className={cn(
-                  "rounded px-1 py-px font-mono text-[8.5px] font-semibold tracking-tight",
-                  ltTone === "overdue"
-                    ? "bg-err/15 text-err"
-                    : ltTone === "soon"
-                      ? "bg-warning-bg text-warning-text"
-                      : "bg-bg/60 text-ink-muted"
-                )}
-              >
-                {lt.days < 0
-                  ? `${-lt.days}d over`
-                  : lt.days === 0
-                    ? "today"
-                    : `${lt.days}d`}
-              </span>
-            )}
-          </span>
-        );
-      })}
     </div>
   );
 }
@@ -9301,6 +6083,7 @@ function DocRow({
                       canManage={canManage && a.id > 0}
                       showRemark={remarkOpen}
                       itemTitle={item.title}
+                      roleLabel={item.role_label}
                       onDelete={() => { if (a.id > 0) removeAtt(a.id); }}
                       toast={toast}
                     />
@@ -9498,54 +6281,6 @@ function ThreeDApprovalBlock({
           )}
         </Fragment>
       ))}
-    </div>
-  );
-}
-
-// Inline remark box rendered under specific checklist items (e.g.
-// "Deco / Coffee Table"). Edits the item's notes field; saves on blur.
-function ChecklistRemark({
-  item,
-  onSaved,
-  toast,
-}: {
-  item: ChecklistItem;
-  onSaved: () => void;
-  toast?: ReturnType<typeof useToast>;
-}) {
-  const [val, setVal] = useState(item.notes ?? "");
-  const [saving, setSaving] = useState(false);
-  const dirty = val !== (item.notes ?? "");
-  async function save() {
-    if (!dirty) return;
-    setSaving(true);
-    try {
-      await api.patch(`/api/projects/checklist/${item.id}`, { notes: val });
-      onSaved();
-    } catch (e: any) {
-      toast?.error(e?.message || "Something went wrong. Please try again.");
-    } finally {
-      setSaving(false);
-    }
-  }
-  return (
-    <div className="rounded-md border border-border bg-bg/40 px-2.5 py-2">
-      <div className="mb-1 font-mono text-[9px] font-semibold uppercase tracking-wider text-ink-muted">
-        Remark
-      </div>
-      <textarea
-        value={val}
-        onChange={(e) => setVal(e.target.value)}
-        onBlur={save}
-        rows={2}
-        placeholder="Theme / items / vendor notes…"
-        className="w-full resize-y rounded-md border border-border bg-surface px-2 py-1.5 text-[11px] text-ink placeholder:text-ink-muted focus:border-primary/40 focus:outline-none"
-      />
-      {dirty && (
-        <div className="mt-1 text-[9.5px] text-ink-muted">
-          {saving ? "Saving…" : "Unsaved — click away to save"}
-        </div>
-      )}
     </div>
   );
 }
@@ -9842,8 +6577,10 @@ function ChecklistRow({
                   </span>
                 </button>
                 {/* Remove file — shown to whoever can attach here (owner
-                    2026-08-11). id < 0 = merged crew photo, never removable. */}
-                {canManage && !readOnlyAttach && a.id > 0 && (
+                    2026-08-11), which since 2026-09-02 includes a tick-only role
+                    on a task badged for its own function. id < 0 = merged crew
+                    photo, never removable. */}
+                {mayAttachRow && !readOnlyAttach && a.id > 0 && (
                   <button
                     type="button"
                     onClick={(e) => { e.stopPropagation(); void removeAttachment(a); }}
@@ -9984,6 +6721,7 @@ function ChecklistRow({
                         canManage={canManage && a.id > 0}
                         showRemark={expanded}
                         itemTitle={item.title}
+                        roleLabel={item.role_label}
                         onDelete={() => { if (a.id > 0) deleteAttachment(a.id); }}
                         toast={toast}
                       />
@@ -10200,185 +6938,6 @@ function commentKindColor(k: string): string {
   }
 }
 
-function AddChecklistItem({
-  projectId,
-  users,
-  sectionId,
-  onAdded,
-  onCancel,
-  toast,
-}: {
-  projectId: number;
-  users: { id: number; name: string }[];
-  sectionId?: number | null;
-  onAdded: () => void;
-  onCancel: () => void;
-  toast: ReturnType<typeof useToast>;
-}) {
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
-  const [dueDate, setDueDate] = useState("");
-  const [ownerId, setOwnerId] = useState<string>("");
-  const [submitting, setSubmitting] = useState(false);
-  async function submit() {
-    if (!title.trim()) return;
-    setSubmitting(true);
-    try {
-      await api.post(`/api/projects/${projectId}/checklist`, {
-        title: title.trim(),
-        description: description.trim() || undefined,
-        due_date: dueDate || undefined,
-        owner_user_id: ownerId ? parseInt(ownerId, 10) : undefined,
-        section_id: sectionId ?? undefined,
-      });
-      onAdded();
-    } catch (e: any) {
-      toast.error(e?.message || "Something went wrong. Please try again.");
-    } finally {
-      setSubmitting(false);
-    }
-  }
-  return (
-    <div className="mt-2 rounded-md border border-border bg-bg/60 p-3">
-      <input
-        value={title}
-        onChange={(e) => setTitle(e.target.value)}
-        placeholder="Task title…"
-        className="mb-2 w-full rounded-md border border-border bg-surface px-2.5 py-1.5 text-[12px] outline-none focus:border-primary"
-      />
-      <textarea
-        value={description}
-        onChange={(e) => setDescription(e.target.value)}
-        placeholder="Description (optional) — context, instructions, acceptance criteria…"
-        rows={2}
-        className="mb-2 w-full resize-y rounded-md border border-border bg-surface px-2.5 py-1.5 text-[11px] outline-none focus:border-primary"
-      />
-      <div className="mb-2 flex items-center gap-2">
-        <DateField
-          fullWidth
-          value={dueDate}
-          onChange={(iso) => setDueDate(iso)}
-          placeholder="Due date"
-          className="rounded-md border border-border bg-surface px-2.5 py-1.5 text-[11px]"
-        />
-        <select
-          value={ownerId}
-          onChange={(e) => setOwnerId(e.target.value)}
-          className="flex-1 rounded-md border border-border bg-surface px-2.5 py-1.5 text-[11px] outline-none focus:border-primary"
-        >
-          <option value="">— assign to —</option>
-          {users.map((u) => (
-            <option key={u.id} value={u.id}>
-              {u.name}
-            </option>
-          ))}
-        </select>
-      </div>
-      <div className="flex items-center gap-2">
-        <button
-          onClick={submit}
-          disabled={submitting || !title.trim()}
-          className="ml-auto rounded-md bg-accent px-3 py-1.5 text-[11px] font-semibold text-white disabled:opacity-50"
-        >
-          Add
-        </button>
-        <button
-          onClick={onCancel}
-          className="rounded-md border border-border bg-surface px-2.5 py-1.5 text-[11px] text-ink-secondary"
-        >
-          Cancel
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// ── Datetime field (inline commit on blur) ───────────────────
-// InlineEdit supports only text/date/number; this is the logistics analog, and
-// NOT the shared DateTimeField also imported here — they differ in CONTRACT.
-
-function LogisticsDateTimeField({
-  label,
-  value,
-  onSave,
-  readOnly = false,
-}: {
-  label: string;
-  value: string | null | undefined;
-  onSave: (next: string | null) => Promise<void> | void;
-  /** View-only for Sales (owner 2026-07): disable inputs, no commit. */
-  readOnly?: boolean;
-}) {
-  // Split into a separate date + time input — the native datetime-local
-  // control is too wide for the Logistics 2-col grid (browser locale +
-  // AM/PM stretches it on Windows). Two narrow controls side-by-side
-  // pack tighter and the unambiguous DD/MM/YYYY HH:mm caption sits
-  // below for confirmation.
-  const initial = toLocalInput(value);
-  const [datePart, setDatePart] = useState(initial.slice(0, 10));
-  const [timePart, setTimePart] = useState(initial.slice(11, 16));
-  useEffect(() => {
-    const v = toLocalInput(value);
-    setDatePart(v.slice(0, 10));
-    setTimePart(v.slice(11, 16));
-  }, [value]);
-
-  const draft = datePart && timePart ? `${datePart}T${timePart}` : datePart;
-
-  async function commit() {
-    // Treat "date only" as midnight-local so the user can still tap a
-    // date and hit save; without this, half-filled inputs would never
-    // persist.
-    const normalized =
-      datePart && !timePart
-        ? `${datePart}T00:00`
-        : datePart && timePart
-          ? `${datePart}T${timePart}`
-          : null;
-    if ((normalized ?? "") === (toLocalInput(value) || "")) return;
-    await onSave(normalized);
-  }
-
-  return (
-    <div>
-      <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-ink-muted">
-        {label}
-      </div>
-      <div className="flex gap-1.5">
-        <DateField
-          fullWidth
-          value={datePart}
-          disabled={readOnly}
-          onChange={(iso) => setDatePart(iso)}
-          onBlur={readOnly ? undefined : commit}
-          className="flex-1 min-w-0 rounded-md border border-border bg-surface px-2 py-1.5 text-[12px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:bg-bg/40 disabled:opacity-70"
-        />
-        <input
-          type="time"
-          value={timePart}
-          disabled={readOnly}
-          onChange={(e) => setTimePart(e.target.value)}
-          onBlur={readOnly ? undefined : commit}
-          className="w-[88px] rounded-md border border-border bg-surface px-2 py-1.5 text-[12px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:bg-bg/40 disabled:opacity-70"
-        />
-      </div>
-      <div className="mt-1 font-mono text-[10px] text-ink-muted">
-        {formatDateTime(draft)}
-      </div>
-    </div>
-  );
-}
-
-// datetime-local inputs expect "YYYY-MM-DDTHH:mm" (no seconds, no Z).
-// Our backend stores ISO strings like "2025-08-25T23:00:00.000Z" OR
-// "2025-08-25T23:00". Strip to the first 16 chars after normalization.
-function toLocalInput(v: string | null | undefined): string {
-  if (!v) return "";
-  // Drop any trailing "Z" or ms — we treat stored values as already
-  // local-ish since the user enters them in local time.
-  return v.slice(0, 16);
-}
-
 // ── Project banner ───────────────────────────────────────────
 // Optional warning/info strip shown above every section.
 
@@ -10415,285 +6974,6 @@ function ProjectBanner({
 // the booth is actually being built / torn down, who's driving, and
 // which lorry is moving stock.
 
-// ── Stock transfer section ───────────────────────────────────
-// OUT (to venue) + RETURN (back to warehouse). Each row has optional
-// attached sheet image/PDF and a confirmed-at stamp separate from
-// transferred_at — "we moved it" vs "someone verified the count".
-
-function StockTransferSection({
-  projectId,
-  transfers,
-  onChange,
-  toast,
-}: {
-  projectId: number;
-  transfers: StockTransfer[];
-  onChange: () => void;
-  toast: ReturnType<typeof useToast>;
-}) {
-  const dialog = useDialog();
-  const [adding, setAdding] = useState<null | "out" | "return">(null);
-  const outgoing = transfers.filter((t) => t.direction === "out");
-  const returning = transfers.filter((t) => t.direction === "return");
-
-  async function toggleConfirm(t: StockTransfer) {
-    try {
-      if (t.confirmed_at) {
-        await api.post(`/api/projects/stock-transfers/${t.id}/unconfirm`, {});
-      } else {
-        await api.post(`/api/projects/stock-transfers/${t.id}/confirm`, {});
-      }
-      onChange();
-    } catch (e: any) {
-      toast.error(e?.message || "Something went wrong. Please try again.");
-    }
-  }
-
-  async function remove(t: StockTransfer) {
-    if (!await dialog.confirm("Remove this transfer record?")) return;
-    try {
-      await api.del(`/api/projects/stock-transfers/${t.id}`);
-      onChange();
-    } catch (e: any) {
-      toast.error(e?.message || "Something went wrong. Please try again.");
-    }
-  }
-
-  async function openFile(t: StockTransfer) {
-    if (!t.record_r2_key) return;
-    try {
-      const url = await api.fetchBlobUrl(`/api/projects/attachments/${t.record_r2_key}`, viewableMime(t.record_r2_key));
-      window.open(url, "_blank");
-      setTimeout(() => URL.revokeObjectURL(url), 30_000);
-    } catch (e: any) {
-      toast.error(e?.message || "Something went wrong. Please try again.");
-    }
-  }
-
-  function Row({ t }: { t: StockTransfer }) {
-    const confirmed = !!t.confirmed_at;
-    return (
-      <div
-        className={cn(
-          "flex items-center gap-2 rounded-md border px-3 py-2 text-[11px]",
-          confirmed ? "border-synced/30 bg-synced/5" : "border-border bg-surface"
-        )}
-      >
-        <span
-          className={cn(
-            "rounded-full px-1.5 py-0.5 text-[9px] font-semibold",
-            t.direction === "out" ? "bg-amber-100 text-amber-800" : "bg-accent/15 text-accent"
-          )}
-        >
-          {t.direction === "out" ? "OUT" : "RETURN"}
-        </span>
-        <div className="flex-1">
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-            {t.transferred_at && (
-              <span>{formatDateTime(t.transferred_at)}</span>
-            )}
-            {t.notes && <span className="text-ink-secondary">— {t.notes}</span>}
-          </div>
-          <div className="text-[10px] text-ink-muted">
-            {t.created_by_name && `Logged by ${t.created_by_name}`}
-            {confirmed && t.confirmed_by_name && (
-              <span className="ml-2 inline-flex items-center gap-1 text-synced">
-                <Check size={11} /> Confirmed by {t.confirmed_by_name} {formatDate(t.confirmed_at)}
-              </span>
-            )}
-          </div>
-        </div>
-        {t.record_r2_key && (
-          <button
-            onClick={() => openFile(t)}
-            className="rounded p-1 text-ink-muted hover:text-accent"
-            title="Open transfer sheet"
-          >
-            <ExternalLink size={12} />
-          </button>
-        )}
-        <button
-          onClick={() => toggleConfirm(t)}
-          className={cn(
-            "rounded p-1",
-            confirmed ? "text-synced hover:bg-synced/10" : "text-ink-muted hover:bg-accent-soft hover:text-accent"
-          )}
-          title={confirmed ? "Unconfirm" : "Confirm"}
-        >
-          <CheckCircle2 size={12} />
-        </button>
-        <button
-          onClick={() => remove(t)}
-          className="rounded p-1 text-ink-muted hover:bg-err/10 hover:text-err"
-          title="Remove"
-        >
-          <Trash2 size={12} />
-        </button>
-      </div>
-    );
-  }
-
-  return (
-    <PanelSection title={`Stock Transfer (${transfers.length})`}>
-      <div className="mb-3">
-        <div className="mb-1.5 flex items-center justify-between">
-          <div className="text-[10px] font-semibold uppercase tracking-wider text-amber-800">
-            OUT — to venue ({outgoing.length})
-          </div>
-          <button
-            onClick={() => setAdding("out")}
-            className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-accent hover:underline"
-          >
-            <Plus size={11} /> Log OUT
-          </button>
-        </div>
-        {outgoing.length === 0 ? (
-          <div className="rounded-md border border-dashed border-border bg-bg/40 px-3 py-2 text-[11px] text-ink-muted">
-            No outbound transfers.
-          </div>
-        ) : (
-          <div className="space-y-1">{outgoing.map((t) => <Row key={t.id} t={t} />)}</div>
-        )}
-      </div>
-
-      <div>
-        <div className="mb-1.5 flex items-center justify-between">
-          <div className="text-[10px] font-semibold uppercase tracking-wider text-accent">
-            RETURN — back to warehouse ({returning.length})
-          </div>
-          <button
-            onClick={() => setAdding("return")}
-            className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-accent hover:underline"
-          >
-            <Plus size={11} /> Log RETURN
-          </button>
-        </div>
-        {returning.length === 0 ? (
-          <div className="rounded-md border border-dashed border-border bg-bg/40 px-3 py-2 text-[11px] text-ink-muted">
-            No return transfers.
-          </div>
-        ) : (
-          <div className="space-y-1">{returning.map((t) => <Row key={t.id} t={t} />)}</div>
-        )}
-      </div>
-
-      {adding && (
-        <AddStockTransferForm
-          projectId={projectId}
-          direction={adding}
-          onCancel={() => setAdding(null)}
-          onSaved={() => {
-            setAdding(null);
-            onChange();
-          }}
-          toast={toast}
-        />
-      )}
-    </PanelSection>
-  );
-}
-
-function AddStockTransferForm({
-  projectId,
-  direction,
-  onCancel,
-  onSaved,
-  toast,
-}: {
-  projectId: number;
-  direction: "out" | "return";
-  onCancel: () => void;
-  onSaved: () => void;
-  toast: ReturnType<typeof useToast>;
-}) {
-  const [transferredAt, setTransferredAt] = useState("");
-  const [notes, setNotes] = useState("");
-  const [file, setFile] = useState<File | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-
-  async function submit() {
-    setSubmitting(true);
-    try {
-      let r2Key: string | undefined;
-      let fileName: string | undefined;
-      let mimeType: string | undefined;
-      if (file) {
-        if (file.size > 10 * 1024 * 1024) {
-          toast.error("File exceeds 10MB");
-          setSubmitting(false);
-          return;
-        }
-        const ext = file.name.split(".").pop()?.toLowerCase() || "jpg";
-        const buf = await file.arrayBuffer();
-        const up = await api.putBinary<{ key: string; mime_type: string }>(
-          `/api/projects/${projectId}/stock-transfers/upload?ext=${ext}`,
-          buf,
-          file.type
-        );
-        r2Key = up.key;
-        fileName = file.name;
-        mimeType = up.mime_type;
-      }
-      await api.post(`/api/projects/${projectId}/stock-transfers`, {
-        direction,
-        transferred_at: transferredAt || undefined,
-        notes: notes.trim() || undefined,
-        record_r2_key: r2Key,
-        file_name: fileName,
-        mime_type: mimeType,
-      });
-      onSaved();
-    } catch (e: any) {
-      toast.error(e?.message || "Something went wrong. Please try again.");
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  return (
-    <div className="mt-3 rounded-md border border-accent/30 bg-accent-soft/20 p-3">
-      <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-accent">
-        New {direction === "out" ? "OUT" : "RETURN"} transfer
-      </div>
-      <div className="grid grid-cols-2 gap-2">
-        <DateTimeField
-          aria-label="Transferred at"
-          value={transferredAt}
-          onChange={setTransferredAt}
-          className="rounded-md border border-border bg-surface px-2.5 py-1.5 text-[11px] outline-none focus:border-primary"
-        />
-        <input
-          type="file"
-          accept=".jpg,.jpeg,.png,.webp,.pdf,.xlsx"
-          onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-          className="rounded-md border border-border bg-surface px-2.5 py-1.5 text-[11px] outline-none"
-        />
-        <input
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
-          placeholder="Notes (item list, qty, driver, etc.)"
-          className="col-span-2 rounded-md border border-border bg-surface px-2.5 py-1.5 text-[11px] outline-none focus:border-primary"
-        />
-      </div>
-      <div className="mt-2 flex items-center gap-2">
-        <button
-          onClick={submit}
-          disabled={submitting}
-          className="rounded-md bg-accent px-3 py-1.5 text-[11px] font-semibold text-white disabled:opacity-50"
-        >
-          {submitting ? "Saving…" : "Save"}
-        </button>
-        <button
-          onClick={onCancel}
-          className="rounded-md border border-border bg-surface px-2.5 py-1.5 text-[11px] text-ink-secondary"
-        >
-          Cancel
-        </button>
-      </div>
-    </div>
-  );
-}
-
 // ── PIC role chip colour by role ──────────────────────────────
 // Shared helper used by the crew section's "LOGISTIC" badge. (The
 // branch also uses this on checklist rows; that doc-mode work is out
@@ -10705,23 +6985,6 @@ function roleLabelParts(label: string): string[] {
   return label.split("&").map((s) => s.trim()).filter(Boolean);
 }
 
-/** Does the task's role badge admit this user's role? MIRRORS the backend
- *  `roleLabelAdmits` (backend/src/services/projectGates.ts) and the mobile copy
- *  in MobilePMS.tsx: exact match on each "&"-separated part, plus DRIVER-badged
- *  field tasks admitting HELPER / STOREKEEPER (no task is ever badged those).
- *  Desktop had no copy of this rule, which is why a tick-only role saw no
- *  Attach button on its OWN badged documents while mobile and the API allowed
- *  the upload — see attachAdmitsRole below. */
-function roleLabelAdmitsRole(
-  label: string | null | undefined,
-  roleName: string | null | undefined,
-): boolean {
-  const r = (roleName ?? "").trim().toUpperCase();
-  if (!r) return false;
-  return roleLabelParts((label ?? "").toUpperCase()).some(
-    (l) => l === r || (l === "DRIVER" && (r === "HELPER" || r === "STOREKEEPER")),
-  );
-}
 
 /** THE Attach / Remark / N/A button shape for the whole desktop PMS (owner
  *  2026-08-11: "one consistent button style for this action group across the
@@ -10935,46 +7198,6 @@ function OutsourcedBox({
           if (!d.name.trim() && !d.plate.trim()) return;
           onAdd(d);
           setD({ name: "", phone: "", plate: "" });
-        }}
-        className="rounded-md bg-synced/90 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-synced"
-      >
-        + Add
-      </button>
-    </div>
-  );
-}
-
-// Grab trip (owner 2026-07-23): instead of a manual name/phone/plate, a Grab
-// trip is two staff helpers riding together, picked from the full helper list.
-function GrabHelperBox({
-  helpers,
-  onAdd,
-}: {
-  helpers: CrewMember[];
-  onAdd: (o: { helper1: string; helper2: string }) => void;
-}) {
-  const [h, setH] = useState({ helper1: "", helper2: "" });
-  const HelperSelect = ({ which, label }: { which: "helper1" | "helper2"; label: string }) => (
-    <select
-      value={h[which]}
-      onChange={(e) => setH({ ...h, [which]: e.target.value })}
-      className="w-full rounded-md border border-border bg-surface px-2 py-1.5 text-[12px]"
-    >
-      <option value="">{label}…</option>
-      {helpers.map((o) => (
-        <option key={o.id} value={o.name}>{o.name}</option>
-      ))}
-    </select>
-  );
-  return (
-    <div className="space-y-2 rounded-md border border-dashed border-border bg-bg/40 p-2">
-      <HelperSelect which="helper1" label="Helper 1" />
-      <HelperSelect which="helper2" label="Helper 2" />
-      <button
-        onClick={() => {
-          if (!h.helper1 && !h.helper2) return;
-          onAdd(h);
-          setH({ helper1: "", helper2: "" });
         }}
         className="rounded-md bg-synced/90 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-synced"
       >
@@ -11475,383 +7698,6 @@ function LogisticsCrewSection({
   );
 }
 
-function LogisticsScheduleSection({
-  project,
-  trips,
-  patch,
-}: {
-  project: ProjectDetail["project"];
-  /** Trips already linked to this project — used to surface a
-   *  clickable chip above each phase that opens the matching
-   *  logistics event. Matched by `trip_type` ("setup" / "dismantle"),
-   *  case-insensitive so a stray capitalisation doesn't break the
-   *  link. */
-  trips: ProjectTrip[];
-  patch: (body: Record<string, any>) => Promise<void>;
-}) {
-  const [crew, setCrew] = useState<CrewMember[]>([]);
-  // Lorries from scm.lorries (UUID id, type enum replaces the old `size` text).
-  const [lorries, setLorries] = useState<{ id: string; plate: string; type: string | null }[]>([]);
-  // /api/fleet/staff filters server-side by role.name IN ('Driver','Helper');
-  // user_type is a parallel column that isn't always populated, so we
-  // discriminate on role_name (the field the server already filters on).
-  const isType = (u: { user_type: string | null; role_name: string | null }, kind: string) =>
-    (u.role_name || "").toLowerCase() === kind ||
-    (u.user_type || "").toLowerCase() === kind;
-  const drivers = useMemo(() => crew.filter((u) => isType(u, "driver") && (u.name || "").trim() !== ""), [crew]);
-  const helpers = useMemo(() => crew.filter((u) => isType(u, "helper") && (u.name || "").trim() !== ""), [crew]);
-
-  // Same swallow, same section: a 403 / 503 / dropped connection used to leave
-  // both lists empty and silent, so the driver and lorry pickers below simply
-  // offered nothing and the phase-header chips resolved to no driver. An empty
-  // list and a failed read must not look identical.
-  const [refError, setRefError] = useState<string | null>(null);
-  useEffect(() => {
-    let live = true;
-    const fail = (e: unknown) => {
-      if (!live) return;
-      setRefError(
-        e instanceof Error && e.message
-          ? e.message
-          : "We couldn't load the crew and lorry lists. Please try again.",
-      );
-    };
-    api
-      .get<{ data: CrewMember[] }>("/api/fleet/staff")
-      .then((r) => { if (live) setCrew(r.data ?? []); })
-      .catch(fail);
-    api
-      .get<{ lorries: { id: string; plate: string; type: string | null }[] }>("/api/scm/lorries")
-      .then((r) => { if (live) setLorries(r.lorries ?? []); })
-      .catch(fail);
-    return () => { live = false; };
-  }, []);
-
-  const setupTrip = trips.find(
-    (t) => (t.trip_type || "").toLowerCase() === "setup"
-  );
-  const dismantleTrip = trips.find(
-    (t) => (t.trip_type || "").toLowerCase() === "dismantle"
-  );
-
-  // Driver resolution for the phase header chips and the info cards. The
-  // select already loaded the full crew list, so reuse it instead of
-  // relying on a denormalised name on the project row.
-  const setupDriver =
-    drivers.find((u) => u.id === project.setup_driver_user_id) ?? null;
-  const dismantleDriver =
-    drivers.find((u) => u.id === project.dismantle_driver_user_id) ?? null;
-  const setupDriverName = setupDriver?.name ?? null;
-  const dismantleDriverName = dismantleDriver?.name ?? null;
-
-  return (
-    <PanelSection title="Logistics Schedule" muted>
-      {refError && (
-        <div
-          role="alert"
-          className="mb-3 rounded-md border border-err/40 bg-err/10 px-3 py-2 text-[12px] text-err"
-        >
-          {refError} Driver and lorry choices may be incomplete — don't save
-          until they load.
-        </div>
-      )}
-      <PhaseHeader
-        phase="Setup"
-        trip={setupTrip}
-        scheduledAt={project.setup_start_at}
-        driverName={setupDriverName}
-      />
-      <div className="grid grid-cols-2 gap-3">
-        <LogisticsDateTimeField
-          label="Setup Start"
-          value={project.setup_start_at}
-          onSave={(v) => patch({ setup_start_at: v })}
-        />
-        <LogisticsDateTimeField
-          label="Setup End"
-          value={project.setup_end_at}
-          onSave={(v) => patch({ setup_end_at: v })}
-        />
-        <div>
-          <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-ink-muted">
-            Setup Driver
-          </div>
-          <select
-            className="w-full appearance-none rounded-md border border-border bg-surface px-3 py-2 text-[13px]"
-            value={project.setup_driver_user_id ?? ""}
-            onChange={(e) =>
-              patch({
-                setup_driver_user_id: e.target.value ? parseInt(e.target.value, 10) : null,
-              })
-            }
-          >
-            <option value="">— none —</option>
-            {drivers.map((u) => (
-              <option key={u.id} value={u.id}>
-                {u.name}
-              </option>
-            ))}
-          </select>
-          {setupDriver && <CrewInfoCard member={setupDriver} />}
-        </div>
-        <div>
-          <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-ink-muted">
-            Setup Lorry
-          </div>
-          <select
-            className="w-full appearance-none rounded-md border border-border bg-surface px-3 py-2 text-[13px]"
-            value={project.setup_lorry_id ?? ""}
-            onChange={(e) =>
-              patch({
-                setup_lorry_id: e.target.value || null,
-              })
-            }
-          >
-            <option value="">— none —</option>
-            {lorries.map((l) => (
-              <option key={l.id} value={l.id}>
-                {l.plate}
-                {l.type && ` · ${l.type}`}
-              </option>
-            ))}
-          </select>
-        </div>
-      </div>
-      <div className="mt-3 grid grid-cols-2 gap-3">
-        <HelperSelect
-          label="Setup Helper 1"
-          value={project.setup_helper_1_id}
-          helpers={helpers}
-          onChange={(v) => patch({ setup_helper_1_id: v })}
-        />
-        <HelperSelect
-          label="Setup Helper 2"
-          value={project.setup_helper_2_id}
-          helpers={helpers}
-          onChange={(v) => patch({ setup_helper_2_id: v })}
-        />
-      </div>
-      <label className="mt-2 inline-flex items-center gap-2 text-[12px] text-ink-secondary">
-        <input
-          type="checkbox"
-          checked={!!project.setup_helper_outsourced}
-          onChange={(e) => patch({ setup_helper_outsourced: e.target.checked ? 1 : 0 })}
-        />
-        Outsourced helpers
-      </label>
-
-      <div className="mt-4 border-t border-border pt-3">
-        <PhaseHeader
-          phase="Dismantle"
-          trip={dismantleTrip}
-          scheduledAt={project.dismantle_start_at}
-          driverName={dismantleDriverName}
-        />
-        <div className="grid grid-cols-2 gap-3">
-        <LogisticsDateTimeField
-          label="Dismantle Start"
-          value={project.dismantle_start_at}
-          onSave={(v) => patch({ dismantle_start_at: v })}
-        />
-        <LogisticsDateTimeField
-          label="Dismantle End"
-          value={project.dismantle_end_at}
-          onSave={(v) => patch({ dismantle_end_at: v })}
-        />
-        <div>
-          <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-ink-muted">
-            Dismantle Driver
-          </div>
-          <select
-            className="w-full appearance-none rounded-md border border-border bg-surface px-3 py-2 text-[13px]"
-            value={project.dismantle_driver_user_id ?? ""}
-            onChange={(e) =>
-              patch({
-                dismantle_driver_user_id: e.target.value ? parseInt(e.target.value, 10) : null,
-              })
-            }
-          >
-            <option value="">— none —</option>
-            {drivers.map((u) => (
-              <option key={u.id} value={u.id}>
-                {u.name}
-              </option>
-            ))}
-          </select>
-          {dismantleDriver && <CrewInfoCard member={dismantleDriver} />}
-        </div>
-        <div>
-          <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-ink-muted">
-            Dismantle Lorry
-          </div>
-          <select
-            className="w-full appearance-none rounded-md border border-border bg-surface px-3 py-2 text-[13px]"
-            value={project.dismantle_lorry_id ?? ""}
-            onChange={(e) =>
-              patch({
-                dismantle_lorry_id: e.target.value || null,
-              })
-            }
-          >
-            <option value="">— none —</option>
-            {lorries.map((l) => (
-              <option key={l.id} value={l.id}>
-                {l.plate}
-                {l.type && ` · ${l.type}`}
-              </option>
-            ))}
-          </select>
-        </div>
-        </div>
-        <div className="mt-3 grid grid-cols-2 gap-3">
-          <HelperSelect
-            label="Dismantle Helper 1"
-            value={project.dismantle_helper_1_id}
-            helpers={helpers}
-            onChange={(v) => patch({ dismantle_helper_1_id: v })}
-          />
-          <HelperSelect
-            label="Dismantle Helper 2"
-            value={project.dismantle_helper_2_id}
-            helpers={helpers}
-            onChange={(v) => patch({ dismantle_helper_2_id: v })}
-          />
-        </div>
-        <label className="mt-2 inline-flex items-center gap-2 text-[12px] text-ink-secondary">
-          <input
-            type="checkbox"
-            checked={!!project.dismantle_helper_outsourced}
-            onChange={(e) => patch({ dismantle_helper_outsourced: e.target.checked ? 1 : 0 })}
-          />
-          Outsourced helpers
-        </label>
-      </div>
-    </PanelSection>
-  );
-}
-
-// Small reusable select for helper rows inside LogisticsScheduleSection.
-function HelperSelect({
-  label,
-  value,
-  helpers,
-  onChange,
-}: {
-  label: string;
-  value: number | null;
-  helpers: CrewMember[];
-  onChange: (id: number | null) => void;
-}) {
-  const selected = helpers.find((u) => u.id === value) ?? null;
-  return (
-    <div>
-      <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-ink-muted">
-        {label}
-      </div>
-      <select
-        className="w-full appearance-none rounded-md border border-border bg-surface px-3 py-2 text-[13px]"
-        value={value ?? ""}
-        onChange={(e) => onChange(e.target.value ? parseInt(e.target.value, 10) : null)}
-      >
-        <option value="">— none —</option>
-        {helpers.map((u) => (
-          <option key={u.id} value={u.id}>
-            {u.name}
-          </option>
-        ))}
-      </select>
-      {selected && <CrewInfoCard member={selected} />}
-    </div>
-  );
-}
-
-// Driver / helper profile surfaced when one is picked in the Logistics
-// Schedule. Fields come straight from /api/fleet/staff (set up in the
-// Driver App or Logistics > Fleet > Driver). Pay rates and IC are
-// intentionally omitted — they don't belong in the project view, and the
-// endpoint no longer serves them to this page's wide Sales-view gate.
-type CrewMember = {
-  id: number;
-  name: string;
-  phone: string | null;
-  user_type: string | null;
-  role_name: string | null;
-};
-
-function CrewInfoCard({ member }: { member: CrewMember }) {
-  return (
-    <div className="mt-1.5 rounded-md border border-border bg-paper px-3 py-2">
-      <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px]">
-        <InfoBit
-          label="Phone"
-          value={formatPhone(member.phone)}
-          href={member.phone ? `tel:${member.phone}` : undefined}
-        />
-      </div>
-    </div>
-  );
-}
-
-function InfoBit({
-  label,
-  value,
-  href,
-}: {
-  label: string;
-  value: string | null | undefined;
-  href?: string;
-}) {
-  return (
-    <div className="flex items-baseline gap-1.5">
-      <span className="text-[10px] font-semibold uppercase tracking-wider text-ink-muted">
-        {label}
-      </span>
-      {href && value ? (
-        <a
-          href={href}
-          className="font-medium text-ink underline-offset-2 hover:underline"
-        >
-          {value}
-        </a>
-      ) : (
-        <span className="font-medium text-ink">{value || "—"}</span>
-      )}
-    </div>
-  );
-}
-
-// ── Phase Photos — crew-uploaded evidence panel (read-only office side) ──
-
-interface PhasePhoto {
-  id: number;
-  phase: "setup" | "dismantle" | "service" | "schedule";
-  r2_key: string;
-  content_type: string | null;
-  caption: string | null;
-  uploaded_by: number | null;
-  uploaded_by_name: string | null;
-  uploaded_at: string;
-}
-
-function PhasePhotosSection({ projectId }: { projectId: number }) {
-  const photos = useQuery<{ photos: PhasePhoto[] }>("/api/projects/:/phase-photos",
-    () => api.get(`/api/projects/${projectId}/phase-photos`),
-    [projectId]
-  );
-  const setup = (photos.data?.photos ?? []).filter((p) => p.phase === "setup");
-  const dismantle = (photos.data?.photos ?? []).filter((p) => p.phase === "dismantle");
-
-  return (
-    <PanelSection title="Phase Photos" muted>
-      <div className="text-[11px] text-ink-muted">
-        Uploaded by setup / dismantle crew from the Driver App.
-      </div>
-      <PhotoGroup label="Setup" photos={setup} onChange={() => photos.reload()} />
-      <PhotoGroup label="Dismantle" photos={dismantle} onChange={() => photos.reload()} />
-    </PanelSection>
-  );
-}
-
 // Schedule reference (owner 2026-07-23) — the mall handbook's official event
 // schedule screenshot, so logistics can read setup/dismantle dates + times off
 // it. Also on mobile since 2026-07-23 (MobilePMS SetupDismantle, same
@@ -12107,578 +7953,6 @@ function ServicePhotos({ projectId, readOnly = false }: { projectId: number; rea
         </div>
       )}
       <PhotoGroup label="Service" photos={service} onChange={() => photos.reload()} />
-    </div>
-  );
-}
-
-function PhotoGroup({
-  label,
-  photos,
-  onChange,
-}: {
-  label: string;
-  photos: PhasePhoto[];
-  onChange: () => void;
-}) {
-  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
-  return (
-    <div className="mt-3">
-      <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-ink-muted">
-        {label} · {photos.length}
-      </div>
-      {photos.length === 0 ? (
-        <div className="text-[12px] text-ink-muted">No {label.toLowerCase()} photos yet.</div>
-      ) : (
-        <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8">
-          {photos.map((p, i) => (
-            <PhasePhotoThumb
-              key={p.id}
-              photo={p}
-              onOpen={() => setLightboxIndex(i)}
-              onDeleted={onChange}
-            />
-          ))}
-        </div>
-      )}
-      {lightboxIndex !== null && (
-        <MediaLightbox
-          items={photos}
-          index={lightboxIndex}
-          onChange={setLightboxIndex}
-          onClose={() => setLightboxIndex(null)}
-          baseUrl="/api/projects/attachments"
-          badge={label}
-        />
-      )}
-    </div>
-  );
-}
-
-function PhasePhotoThumb({
-  photo,
-  onOpen,
-  onDeleted,
-}: {
-  photo: PhasePhoto;
-  onOpen: () => void;
-  onDeleted: () => void;
-}) {
-  const dialog = useDialog();
-  const toast = useToast();
-  const isImage = (photo.content_type || "").startsWith("image/");
-  const isVideo = (photo.content_type || "").startsWith("video/");
-  const [url, setUrl] = useState<string | null>(null);
-  // A thumbnail that fails to load used to render an empty grey square,
-  // indistinguishable from one still loading and from a photo that isn't there.
-  // Keep the reason: the tile shows a broken-image state and the tooltip carries
-  // the plain-language message (api.client throws HttpError whose `.message` is
-  // already humanHttpMessage — a 403 reads "You don't have permission to do
-  // that", not a status dump).
-  const [loadError, setLoadError] = useState<string | null>(null);
-  useEffect(() => {
-    if (!isImage) return;
-    let revoke: string | null = null;
-    setLoadError(null);
-    api
-      .fetchBlobUrl(`/api/projects/attachments/${photo.r2_key}`)
-      .then((u) => {
-        revoke = u;
-        setUrl(u);
-      })
-      .catch((e: unknown) => {
-        setLoadError(
-          e instanceof Error && e.message ? e.message : "This preview couldn't be loaded.",
-        );
-      });
-    return () => {
-      if (revoke) URL.revokeObjectURL(revoke);
-    };
-  }, [photo.r2_key, isImage]);
-
-  const extLabel = (() => {
-    const m = photo.r2_key.match(/\.([a-z0-9]+)$/i);
-    return m ? m[1].toUpperCase() : "FILE";
-  })();
-
-  // Compact card: thumb fills the cell; uploader + delete sit in a tiny
-  // hover-revealed strip so the grid reads as a dense gallery rather
-  // than a stack of metadata cards. Lightbox surfaces the full caption
-  // + uploader, so this surface stays terse on purpose.
-  return (
-    <div className="group relative overflow-hidden rounded-md border border-border bg-surface">
-      <button
-        type="button"
-        onClick={onOpen}
-        aria-label="Open preview"
-        title={
-          [photo.caption, photo.uploaded_by_name, formatTimestamp(photo.uploaded_at)]
-            .filter(Boolean)
-            .join(" · ")
-        }
-        className="block w-full"
-      >
-        <div className="aspect-square bg-bg">
-          {isImage ? (
-            url ? (
-              <img src={url} alt={photo.caption || ""} className="h-full w-full object-cover" />
-            ) : loadError ? (
-              <div
-                className="flex h-full w-full flex-col items-center justify-center gap-0.5 p-1 text-center"
-                title={loadError}
-              >
-                <ImageOff size={18} className="text-err" />
-                <div className="text-[8px] font-semibold uppercase tracking-wide text-err">
-                  Failed
-                </div>
-              </div>
-            ) : (
-              <div className="h-full w-full" />
-            )
-          ) : isVideo ? (
-            <div className="relative flex h-full w-full items-center justify-center bg-ink/90">
-              <div className="flex h-7 w-7 items-center justify-center rounded-full bg-white/90 shadow-md">
-                <Play size={13} className="ml-0.5 text-ink" fill="currentColor" />
-              </div>
-              <span className="absolute bottom-1 right-1 rounded bg-black/70 px-1 text-[7px] font-bold uppercase tracking-wider text-white">
-                {extLabel}
-              </span>
-            </div>
-          ) : (
-            <div className="flex h-full w-full flex-col items-center justify-center gap-0.5 p-1 text-center">
-              <FileText size={18} className="text-ink-secondary" />
-              <div className="text-[8px] font-semibold uppercase tracking-wide text-ink-muted">
-                {extLabel}
-              </div>
-            </div>
-          )}
-        </div>
-      </button>
-      {/* Uploader strip — single line at the bottom edge, very small.
-          Stays visible (not hover-gated) so a glance reads "who took
-          this" without opening the lightbox. */}
-      <div className="flex items-center justify-between gap-1 border-t border-border-subtle bg-bg/40 px-1.5 py-0.5">
-        <span className="truncate text-[9px] text-ink-secondary" title={photo.uploaded_by_name || "Unknown"}>
-          {photo.uploaded_by_name || "—"}
-        </span>
-        <button
-          className="rounded p-0.5 text-ink-muted opacity-0 transition-opacity hover:bg-err/10 hover:text-err group-hover:opacity-100"
-          title="Delete"
-          onClick={async (e) => {
-            e.stopPropagation();
-            const ok = await dialog.confirm({
-              title: "Delete this file?",
-              message:
-                photo.caption ||
-                photo.uploaded_by_name
-                  ? `Uploaded by ${photo.uploaded_by_name || "Unknown"}. This can't be undone.`
-                  : "This can't be undone.",
-              confirmLabel: "Delete",
-              danger: true,
-            });
-            if (!ok) return;
-            // The refresh must not run unless the delete actually happened.
-            // It used to be `.catch(() => {})` followed by an unconditional
-            // onDeleted(): a denied or failed delete re-rendered the grid with
-            // the file still in it and said nothing, so the operator read the
-            // reappearing tile as the UI being slow and clicked again.
-            try {
-              await api.del(`/api/projects/phase-photos/${photo.id}`);
-            } catch (e: any) {
-              toast.error(e?.message || "Couldn't delete this file. It is still there — please try again.");
-              return;
-            }
-            onDeleted();
-          }}
-        >
-          <Trash2 size={10} />
-        </button>
-      </div>
-    </div>
-  );
-}
-
-/**
- * Per-phase header inside the Logistics Schedule section. Reflects
- * whichever logistics surface this phase currently maps to:
- *
- *   1. A real Trip linked via the Linked Trips sub-section
- *      (matching trip_type) → chip links to /trips/:id.
- *   2. A scheduled date on the project itself (setup_start_at /
- *      dismantle_start_at) → chip links to the Logistics Events tab,
- *      which renders the project-derived row alongside manual events.
- *   3. Neither set → muted "Not scheduled" hint.
- *
- * The previous version only handled case (1), which read as "No trip
- * linked" even when the dispatcher had already configured the date +
- * driver and the event was visible in /logistics?tab=events.
- */
-function PhaseHeader({
-  phase,
-  trip,
-  scheduledAt,
-  driverName,
-}: {
-  phase: "Setup" | "Dismantle";
-  trip: ProjectTrip | undefined;
-  /** Project's setup_start_at / dismantle_start_at — the source of
-   *  truth for the synthetic event surfaced in /logistics?tab=events. */
-  scheduledAt: string | null;
-  driverName: string | null;
-}) {
-  // Match Logistics outer (`tab=trips`) + Trips inner (`sub=events`).
-  // Inner sub-tabs use `?sub=` so they don't collide with the outer
-  // `?tab=` that picks between Trips and Fleet.
-  const eventsHref = "/logistics?tab=trips&sub=events";
-
-  return (
-    <div className="mb-2 flex items-center justify-between gap-2">
-      <div className="font-mono text-[10px] font-semibold uppercase tracking-brand text-ink-secondary">
-        {phase} Phase
-      </div>
-      {trip ? (
-        <Link
-          to={`/trips/${trip.id}`}
-          title={`Open trip ${trip.code}${trip.scheduled_date ? ` · ${formatDate(trip.scheduled_date)}` : ""}`}
-          className="inline-flex items-center gap-1 rounded-md border border-accent/40 bg-accent-soft/40 px-2 py-1 font-mono text-[10px] font-semibold tracking-wider text-accent transition-colors hover:bg-accent-soft/70"
-        >
-          <Truck size={11} />
-          <span className="normal-case">{trip.code}</span>
-          {trip.status && (
-            <span className="text-ink-muted/80">· {trip.status}</span>
-          )}
-          <ExternalLink size={10} />
-        </Link>
-      ) : scheduledAt ? (
-        <Link
-          to={eventsHref}
-          title={`Scheduled ${formatDateTime(scheduledAt)}${driverName ? ` · ${driverName}` : ""} — open Logistics Events`}
-          className="inline-flex items-center gap-1 rounded-md border border-accent/40 bg-accent-soft/40 px-2 py-1 font-mono text-[10px] font-semibold tracking-wider text-accent transition-colors hover:bg-accent-soft/70"
-        >
-          <Calendar size={11} />
-          <span>{formatDateTime(scheduledAt)}</span>
-          {driverName && (
-            <span className="text-ink-muted/80 normal-case">
-              · {driverName}
-            </span>
-          )}
-          <ExternalLink size={10} />
-        </Link>
-      ) : (
-        <span className="font-mono text-[9.5px] uppercase tracking-wider text-ink-muted">
-          Not scheduled
-        </span>
-      )}
-    </div>
-  );
-}
-
-// ── Defects ──────────────────────────────────────────────────
-// Two sub-lists per project — one for Setup, one for Dismantle. Each
-// entry records who reported it (Sales vs Logistics) because that
-// distinction is the point: they cross-check each other.
-
-const DEFECT_ROLE_META: Record<
-  "sales" | "logistic",
-  { label: string; Icon: LucideIcon; cls: string }
-> = {
-  sales: { label: "Sales", Icon: Banknote, cls: "text-emerald-700 bg-emerald-50" },
-  logistic: { label: "Logistic", Icon: Truck, cls: "text-amber-800 bg-amber-50" },
-};
-
-function DefectsSection({
-  projectId,
-  defects,
-  onChange,
-  toast,
-}: {
-  projectId: number;
-  defects: ProjectDefect[];
-  onChange: () => void;
-  toast: ReturnType<typeof useToast>;
-}) {
-  const dialog = useDialog();
-  const [adding, setAdding] = useState<null | { phase: "setup" | "dismantle" }>(null);
-  const setupItems = defects.filter((d) => d.phase === "setup");
-  const dismantleItems = defects.filter((d) => d.phase === "dismantle");
-
-  return (
-    <PanelSection title={`Defect Items (${defects.length})`}>
-      <DefectList
-        title="Setup phase"
-        items={setupItems}
-        onAdd={() => setAdding({ phase: "setup" })}
-        onRemove={async (id) => {
-          if (!await dialog.confirm("Remove this defect item?")) return;
-          try {
-            await api.del(`/api/projects/defects/${id}`);
-            onChange();
-          } catch (e: any) {
-            toast.error(e?.message || "Something went wrong. Please try again.");
-          }
-        }}
-        onToggleResolved={async (d) => {
-          try {
-            await api.patch(`/api/projects/defects/${d.id}`, { resolved: d.resolved ? 0 : 1 });
-            onChange();
-          } catch (e: any) {
-            toast.error(e?.message || "Something went wrong. Please try again.");
-          }
-        }}
-      />
-      <DefectList
-        title="Dismantle phase"
-        items={dismantleItems}
-        onAdd={() => setAdding({ phase: "dismantle" })}
-        onRemove={async (id) => {
-          if (!await dialog.confirm("Remove this defect item?")) return;
-          try {
-            await api.del(`/api/projects/defects/${id}`);
-            onChange();
-          } catch (e: any) {
-            toast.error(e?.message || "Something went wrong. Please try again.");
-          }
-        }}
-        onToggleResolved={async (d) => {
-          try {
-            await api.patch(`/api/projects/defects/${d.id}`, { resolved: d.resolved ? 0 : 1 });
-            onChange();
-          } catch (e: any) {
-            toast.error(e?.message || "Something went wrong. Please try again.");
-          }
-        }}
-      />
-      {adding && (
-        <AddDefectForm
-          projectId={projectId}
-          phase={adding.phase}
-          onCancel={() => setAdding(null)}
-          onSaved={() => {
-            setAdding(null);
-            onChange();
-          }}
-          toast={toast}
-        />
-      )}
-    </PanelSection>
-  );
-}
-
-function DefectList({
-  title,
-  items,
-  onAdd,
-  onRemove,
-  onToggleResolved,
-}: {
-  title: string;
-  items: ProjectDefect[];
-  onAdd: () => void;
-  onRemove: (id: number) => void;
-  onToggleResolved: (d: ProjectDefect) => void;
-}) {
-  return (
-    <div className="mb-3">
-      <div className="mb-1.5 flex items-center justify-between">
-        <div className="text-[11px] font-semibold uppercase tracking-wider text-ink-muted">
-          {title} ({items.length})
-        </div>
-        <button
-          onClick={onAdd}
-          className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-accent hover:underline"
-        >
-          <Plus size={11} /> Add
-        </button>
-      </div>
-      {items.length === 0 ? (
-        <div className="text-[11px] text-ink-muted">No defects reported.</div>
-      ) : (
-        <div className="space-y-1">
-          {items.map((d) => (
-            <div
-              key={d.id}
-              className={cn(
-                "flex items-start gap-2 rounded-md border border-border bg-surface px-3 py-2 text-[11px]",
-                d.resolved ? "opacity-60" : ""
-              )}
-            >
-              {(() => {
-                const m = DEFECT_ROLE_META[d.reported_by_role];
-                const I = m.Icon;
-                return (
-                  <span
-                    className={cn(
-                      "inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-semibold",
-                      m.cls
-                    )}
-                  >
-                    <I size={10} /> {m.label}
-                  </span>
-                );
-              })()}
-              <div className="flex-1">
-                <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                  {d.item_code && <span className="font-mono font-semibold">{d.item_code}</span>}
-                  {d.item_description && <span>{d.item_description}</span>}
-                  {d.size && <span className="text-ink-muted">· {d.size}</span>}
-                  {d.quantity != null && d.quantity > 0 && (
-                    <span className="text-ink-muted">× {d.quantity}</span>
-                  )}
-                </div>
-                {d.reason && <div className="mt-0.5 text-ink-secondary">{d.reason}</div>}
-                <div className="mt-0.5 text-[10px] text-ink-muted">
-                  {d.reported_by_name || "—"} · {formatDate(d.reported_at)}
-                  {d.linked_assr_no && (
-                    <span className="ml-2 text-accent">→ {d.linked_assr_no}</span>
-                  )}
-                </div>
-              </div>
-              <div className="flex shrink-0 items-center gap-1">
-                <button
-                  onClick={() => onToggleResolved(d)}
-                  className={cn(
-                    "rounded p-1 hover:bg-synced/10 hover:text-synced",
-                    d.resolved ? "text-synced" : "text-ink-muted"
-                  )}
-                  title={d.resolved ? "Mark unresolved" : "Mark resolved"}
-                >
-                  <CheckCircle2 size={12} />
-                </button>
-                <button
-                  onClick={() => onRemove(d.id)}
-                  className="rounded p-1 text-ink-muted hover:bg-err/10 hover:text-err"
-                  title="Remove"
-                >
-                  <Trash2 size={12} />
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function AddDefectForm({
-  projectId,
-  phase,
-  onCancel,
-  onSaved,
-  toast,
-}: {
-  projectId: number;
-  phase: "setup" | "dismantle";
-  onCancel: () => void;
-  onSaved: () => void;
-  toast: ReturnType<typeof useToast>;
-}) {
-  const [role, setRole] = useState<"sales" | "logistic">("sales");
-  const [itemCode, setItemCode] = useState("");
-  const [desc, setDesc] = useState("");
-  const [size, setSize] = useState("");
-  const [qty, setQty] = useState("1");
-  const [reason, setReason] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-
-  async function submit() {
-    if (!itemCode.trim() && !desc.trim()) {
-      toast.error("Item code or description required");
-      return;
-    }
-    setSubmitting(true);
-    try {
-      await api.post(`/api/projects/${projectId}/defects`, {
-        phase,
-        reported_by_role: role,
-        item_code: itemCode.trim() || null,
-        item_description: desc.trim() || null,
-        size: size.trim() || null,
-        quantity: parseInt(qty, 10) || 1,
-        reason: reason.trim() || null,
-      });
-      onSaved();
-    } catch (e: any) {
-      toast.error(e?.message || "Something went wrong. Please try again.");
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  return (
-    <div className="mt-3 rounded-md border border-accent/30 bg-accent-soft/20 p-3">
-      <div className="mb-2 flex items-center justify-between">
-        <div className="text-[10px] font-semibold uppercase tracking-wider text-accent">
-          New defect — {phase}
-        </div>
-        <div className="flex items-center gap-1">
-          <button
-            onClick={() => setRole("sales")}
-            className={cn(
-              "inline-flex items-center gap-1 rounded px-2 py-1 text-[10px] font-semibold",
-              role === "sales" ? "bg-accent text-white" : "bg-surface text-ink-muted"
-            )}
-          >
-            <Banknote size={11} /> Sales
-          </button>
-          <button
-            onClick={() => setRole("logistic")}
-            className={cn(
-              "inline-flex items-center gap-1 rounded px-2 py-1 text-[10px] font-semibold",
-              role === "logistic" ? "bg-accent text-white" : "bg-surface text-ink-muted"
-            )}
-          >
-            <Truck size={11} /> Logistic
-          </button>
-        </div>
-      </div>
-      <div className="grid grid-cols-2 gap-2">
-        <input
-          value={itemCode}
-          onChange={(e) => setItemCode(e.target.value)}
-          placeholder="Item code"
-          className="rounded-md border border-border bg-surface px-2.5 py-1.5 font-mono text-[11px] outline-none focus:border-primary"
-        />
-        <input
-          value={size}
-          onChange={(e) => setSize(e.target.value)}
-          placeholder="Size"
-          className="rounded-md border border-border bg-surface px-2.5 py-1.5 text-[11px] outline-none focus:border-primary"
-        />
-        <input
-          value={desc}
-          onChange={(e) => setDesc(e.target.value)}
-          placeholder="Description"
-          className="col-span-2 rounded-md border border-border bg-surface px-2.5 py-1.5 text-[11px] outline-none focus:border-primary"
-        />
-        <input
-          type="number"
-          value={qty}
-          onChange={(e) => setQty(e.target.value)}
-          placeholder="Qty"
-          className="rounded-md border border-border bg-surface px-2.5 py-1.5 text-[11px] outline-none focus:border-primary"
-        />
-        <input
-          value={reason}
-          onChange={(e) => setReason(e.target.value)}
-          placeholder="Reason / notes"
-          className="rounded-md border border-border bg-surface px-2.5 py-1.5 text-[11px] outline-none focus:border-primary"
-        />
-      </div>
-      <div className="mt-2 flex items-center gap-2">
-        <button
-          onClick={submit}
-          disabled={submitting}
-          className="rounded-md bg-accent px-3 py-1.5 text-[11px] font-semibold text-white disabled:opacity-50"
-        >
-          {submitting ? "Saving…" : "Save"}
-        </button>
-        <button
-          onClick={onCancel}
-          className="rounded-md border border-border bg-surface px-2.5 py-1.5 text-[11px] text-ink-secondary"
-        >
-          Cancel
-        </button>
-      </div>
     </div>
   );
 }
@@ -13540,7 +8814,7 @@ function FinanceLedgerSection({
           <SnapshotRow label="COGS Total" value={cogs} subtotal />
           <SnapshotRow
             label="Rental"
-            annotation={`RM ${rentPerSqmPerDay.toFixed(0)}/sqm/day`}
+            annotation={`${formatCurrency(rentPerSqmPerDay)}/sqm/day`}
             value={rentalTotal}
             editable={{ onSave: (n) => replaceCategoryAmount("rental", n) }}
             busy={savingCat === "rental"}
@@ -13606,1438 +8880,6 @@ function FinanceLedgerSection({
         Tap a row to set its amount. Individual cost lines and their receipts live in the Cost lines section above. Sales live in the Sales section above; auto rows are computed from the rate card.
       </p>
     </PanelSection>
-  );
-}
-
-// Single Cost Lines section at the bottom of the Financial Snapshot.
-// Lists every non-auto, manually-entered cost line (with or without a
-// receipt) with open / edit / delete affordances, so each can be edited
-// in place and have a receipt attached. "+ Add cost line" opens
-// AddFinanceLineForm, whose category dropdown hides already-used
-// categories so a category never gets a duplicate line.
-function FinanceAttachmentsSection({
-  projectId,
-  lines,
-  adding,
-  onAddOpen,
-  onAddClose,
-  onChange,
-  toast,
-}: {
-  projectId: number;
-  lines: FinanceLine[];
-  adding: boolean;
-  onAddOpen: () => void;
-  onAddClose: () => void;
-  onChange: () => void;
-  toast: ReturnType<typeof useToast>;
-}) {
-  const costLines = lines.filter(
-    (l) => l.kind === "cost" && !l.auto_source && !l.source,
-  );
-  // Categories that already have an editable cost line. The add form
-  // hides these so a category never gets a duplicate line — the user
-  // edits the existing row instead.
-  const usedCategories = new Set(costLines.map((l) => (l.category ?? "").trim()));
-  return (
-    <div className="border-t border-border px-4 py-3">
-      <div className="mb-2 flex items-center justify-between">
-        <h4 className="text-[10.5px] font-bold uppercase tracking-brand text-ink-muted">
-          Cost lines ({costLines.length})
-        </h4>
-        {!adding && (
-          <button
-            onClick={onAddOpen}
-            className="inline-flex items-center gap-1 text-[10.5px] font-semibold text-accent hover:underline"
-          >
-            <Plus size={11} /> Add cost line
-          </button>
-        )}
-      </div>
-      {costLines.length === 0 && !adding && (
-        <div className="text-[11px] text-ink-muted">
-          No cost lines yet. Add one to record a cost and attach a receipt.
-        </div>
-      )}
-      {costLines.length > 0 && (
-        <CategoryDetailLines
-          lines={costLines}
-          onChange={onChange}
-          toast={toast}
-        />
-      )}
-      {adding && (
-        <div className="mt-2">
-          <AddFinanceLineForm
-            projectId={projectId}
-            kind="cost"
-            usedCategories={usedCategories}
-            onCancel={onAddClose}
-            onSaved={() => {
-              onAddClose();
-              onChange();
-            }}
-            toast={toast}
-          />
-        </div>
-      )}
-    </div>
-  );
-}
-
-// EditableSnapshotRow was deleted on 2026-05-08 along with the
-// per-row expand UI — boss preferred a single Attachments section
-// at the bottom of the snapshot card. SnapshotRow's `editable` prop
-// (click-to-edit consolidate) covers the inline edit need; the new
-// FinanceAttachmentsSection above covers receipts.
-
-// Compact list of the underlying lines for one category, with the
-// existing edit/delete/openFile affordances. Lifted from LedgerGroup
-// but stripped of the section chrome so it nests cleanly under a
-// snapshot row.
-function CategoryDetailLines({
-  lines,
-  onChange,
-  toast,
-}: {
-  lines: FinanceLine[];
-  onChange: () => void;
-  toast: ReturnType<typeof useToast>;
-}) {
-  const dialog = useDialog();
-  const [editingId, setEditingId] = useState<number | null>(null);
-  async function del(line: FinanceLine) {
-    if (!await dialog.confirm("Remove this line? Totals will re-compute.")) return;
-    try {
-      await api.del(`/api/projects/finance/lines/${line.id}`);
-      onChange();
-    } catch (e: any) {
-      toast.error(e?.message || "Something went wrong. Please try again.");
-    }
-  }
-  async function openFile(line: FinanceLine) {
-    if (!line.r2_key) return;
-    try {
-      const url = await api.fetchBlobUrl(`/api/projects/attachments/${line.r2_key}`, viewableMime(line.r2_key));
-      window.open(url, "_blank");
-      setTimeout(() => URL.revokeObjectURL(url), 30_000);
-    } catch (e: any) {
-      toast.error(e?.message || "Something went wrong. Please try again.");
-    }
-  }
-  return (
-    <div className="space-y-1">
-      {lines.map((l) =>
-        editingId === l.id ? (
-          <EditFinanceLineRow
-            key={l.id}
-            line={l}
-            onCancel={() => setEditingId(null)}
-            onSaved={() => {
-              setEditingId(null);
-              onChange();
-            }}
-            toast={toast}
-          />
-        ) : (
-          <div
-            key={l.id}
-            className="group flex items-center gap-2 rounded-md border border-border bg-surface px-2 py-1 text-[10.5px]"
-          >
-            <span className="min-w-0 flex-1 truncate" title={l.description || undefined}>
-              {l.description || <span className="text-ink-muted">No description</span>}
-            </span>
-            <span className="font-mono text-[10px] text-ink-muted">
-              {l.occurred_at ? formatDate(l.occurred_at) : formatDate(l.created_at)}
-            </span>
-            <span className="font-mono text-[11px] font-bold text-err">
-              −{formatCurrency(l.amount)}
-            </span>
-            {l.r2_key && (
-              <button
-                onClick={() => openFile(l)}
-                className="rounded p-0.5 text-ink-muted hover:text-accent"
-                title="Open receipt"
-              >
-                <ExternalLink size={11} />
-              </button>
-            )}
-            <button
-              onClick={() => setEditingId(l.id)}
-              className="rounded p-0.5 text-ink-muted opacity-0 hover:bg-accent/10 hover:text-accent group-hover:opacity-100"
-              title="Edit"
-            >
-              <Pencil size={11} />
-            </button>
-            <button
-              onClick={() => del(l)}
-              className="rounded p-0.5 text-ink-muted opacity-0 hover:bg-err/10 hover:text-err group-hover:opacity-100"
-              title="Remove"
-            >
-              <Trash2 size={11} />
-            </button>
-          </div>
-        ),
-      )}
-    </div>
-  );
-}
-
-function TotalCell({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: string;
-  tone?: "synced" | "err";
-}) {
-  return (
-    <div>
-      <div className="text-[9px] font-semibold uppercase tracking-wider text-ink-muted">
-        {label}
-      </div>
-      <div
-        className={cn(
-          "font-mono text-[13px] font-bold",
-          tone === "synced" && "text-synced",
-          tone === "err" && "text-err",
-          !tone && "text-ink"
-        )}
-      >
-        {value}
-      </div>
-    </div>
-  );
-}
-
-// Financial Snapshot tile — large value above a one-line subtitle.
-// Mirrors the Exhibition Report layout the boss vibecoded.
-function SnapshotKpi({
-  label,
-  value,
-  subtitle,
-  tone,
-}: {
-  label: string;
-  value: string;
-  subtitle: string;
-  tone?: "synced" | "err";
-}) {
-  return (
-    <div className="px-4 py-3">
-      <div className="text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
-        {label}
-      </div>
-      <div
-        className={cn(
-          "mt-1 font-display text-[20px] font-extrabold leading-none tracking-tight",
-          tone === "synced" && "text-synced",
-          tone === "err" && "text-err",
-          !tone && "text-ink",
-        )}
-      >
-        {value}
-      </div>
-      <div className="mt-1 text-[10px] text-ink-muted">{subtitle}</div>
-    </div>
-  );
-}
-
-// One row of the itemized cost table. `subtotal` flag bolds the row
-// and tints the background so it reads as a footer — used for COGS
-// Total, Total Cost, and Net Profit rows. `indent` nests the label
-// under its parent subtotal (the COGS sub-rows under COGS Total).
-// When `editable` is set the value cell becomes click-to-edit and
-// calls onSave with the typed amount. `lineCount` + `expanded` +
-// `onToggleExpand` add the chevron affordance for drilling into
-// per-line detail (descriptions / dates / attachments).
-function SnapshotRow({
-  label,
-  value,
-  annotation,
-  subtotal,
-  indent,
-  tone,
-  editable,
-  busy,
-  lineCount,
-  expanded,
-  onToggleExpand,
-}: {
-  label: string;
-  value: number;
-  annotation?: string;
-  subtotal?: boolean;
-  indent?: boolean;
-  tone?: "synced" | "err";
-  editable?: { onSave: (n: number) => Promise<void> };
-  busy?: boolean;
-  lineCount?: number;
-  expanded?: boolean;
-  onToggleExpand?: () => void;
-}) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState("");
-  function startEdit() {
-    if (!editable) return;
-    setDraft(value > 0 ? String(value) : "");
-    setEditing(true);
-  }
-  async function commit() {
-    if (!editable) return;
-    const n = parseFloat(draft.replace(/,/g, ""));
-    if (!Number.isFinite(n) || n < 0) {
-      setEditing(false);
-      return;
-    }
-    setEditing(false);
-    if (Math.abs(n - value) < 0.005) return; // unchanged
-    await editable.onSave(n);
-  }
-  return (
-    <div
-      className={cn(
-        "flex items-center justify-between gap-3 border-b border-border-subtle py-1.5",
-        indent ? "pl-8 pr-4" : "px-4",
-        subtotal && "bg-bg/50",
-        editable && !editing && !busy && "cursor-pointer hover:bg-accent-soft/30",
-      )}
-      onClick={editable && !editing ? startEdit : undefined}
-      title={editable ? "Click to edit" : undefined}
-    >
-      <span
-        className={cn(
-          "truncate",
-          subtotal ? "font-bold text-ink" : "text-ink-secondary",
-        )}
-      >
-        {label}
-        {annotation && (
-          <span className="ml-1.5 font-mono text-[10px] font-normal text-ink-muted">
-            {annotation}
-          </span>
-        )}
-      </span>
-      <div className="flex shrink-0 items-center gap-2">
-        {onToggleExpand && lineCount != null && lineCount > 0 && (
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onToggleExpand();
-            }}
-            className="inline-flex items-center gap-1 rounded px-1 py-0.5 font-mono text-[10px] text-ink-muted hover:bg-bg/60 hover:text-accent"
-            title={expanded ? "Hide line detail" : `Show ${lineCount} line${lineCount === 1 ? "" : "s"} (descriptions / receipts)`}
-          >
-            {expanded ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
-            <span>{lineCount}</span>
-          </button>
-        )}
-        {editing ? (
-          <input
-            type="number"
-            step="0.01"
-            min="0"
-            autoFocus
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onBlur={commit}
-            onClick={(e) => e.stopPropagation()}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") commit();
-              else if (e.key === "Escape") setEditing(false);
-            }}
-            className="w-32 rounded border border-accent bg-surface px-2 py-0.5 text-right font-mono tabular-nums outline-none focus:ring-2 focus:ring-primary/20"
-          />
-        ) : (
-          <span
-            className={cn(
-              "font-mono tabular-nums",
-              subtotal && "font-bold",
-              tone === "synced" && "text-synced",
-              tone === "err" && "text-err",
-              !tone && "text-ink",
-              busy && "opacity-50",
-            )}
-          >
-            {busy ? "…" : formatCurrency(value)}
-          </span>
-        )}
-      </div>
-    </div>
-  );
-}
-
-/** Smaller, denser variant of TotalCell — used in the per-category
- *  breakdown grid below the headline (Sales/Cost/Profit) strip on
- *  the project detail Finance tab. Accepts a number (formatted as
- *  currency, "—" when null/zero-without-data) or a pre-rendered
- *  string (for percentages). */
-function BreakdownCell({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: number | string | null;
-  tone?: "synced" | "err";
-}) {
-  let display: string;
-  if (value == null) {
-    display = "—";
-  } else if (typeof value === "string") {
-    display = value;
-  } else {
-    display = formatCurrency(value);
-  }
-  return (
-    <div className="flex items-baseline justify-between gap-2">
-      <span className="text-[9.5px] font-semibold uppercase tracking-wider text-ink-muted">
-        {label}
-      </span>
-      <span
-        className={cn(
-          "font-mono text-[12px] font-semibold tabular-nums",
-          tone === "synced" && "text-synced",
-          tone === "err" && "text-err",
-          !tone && "text-ink",
-        )}
-      >
-        {display}
-      </span>
-    </div>
-  );
-}
-
-function LedgerGroup({
-  title,
-  tone,
-  lines,
-  onAdd,
-  onChange,
-  toast,
-}: {
-  title: string;
-  tone: "synced" | "err";
-  lines: FinanceLine[];
-  onAdd: () => void;
-  onChange: () => void;
-  toast: ReturnType<typeof useToast>;
-}) {
-  const dialog = useDialog();
-  const total = lines.reduce((s, l) => s + (l.amount || 0), 0);
-  const [editingId, setEditingId] = useState<number | null>(null);
-
-  async function del(line: FinanceLine) {
-    if (!await dialog.confirm("Remove this line? Totals will re-compute.")) return;
-    try {
-      await api.del(`/api/projects/finance/lines/${line.id}`);
-      onChange();
-    } catch (e: any) {
-      toast.error(e?.message || "Something went wrong. Please try again.");
-    }
-  }
-
-  async function openFile(line: FinanceLine) {
-    if (!line.r2_key) return;
-    try {
-      const url = await api.fetchBlobUrl(`/api/projects/attachments/${line.r2_key}`, viewableMime(line.r2_key));
-      window.open(url, "_blank");
-      setTimeout(() => URL.revokeObjectURL(url), 30_000);
-    } catch (e: any) {
-      toast.error(e?.message || "Something went wrong. Please try again.");
-    }
-  }
-
-  return (
-    <div className="mt-4">
-      <div className="mb-1.5 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span
-            className={cn(
-              "text-[10px] font-semibold uppercase tracking-wider",
-              tone === "synced" ? "text-synced" : "text-err"
-            )}
-          >
-            {title}
-          </span>
-          <span className="font-mono text-[10px] text-ink-muted">
-            {lines.length} line{lines.length === 1 ? "" : "s"} · {formatCurrency(total)}
-          </span>
-        </div>
-        <button
-          onClick={onAdd}
-          className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-accent hover:underline"
-        >
-          <Plus size={11} /> Add
-        </button>
-      </div>
-      {lines.length === 0 ? (
-        <div className="rounded-md border border-dashed border-border bg-bg/40 px-3 py-2 text-[11px] text-ink-muted">
-          No {title.toLowerCase()} lines.
-        </div>
-      ) : (
-        <div className="space-y-1">
-          {lines.map((l) =>
-            editingId === l.id ? (
-              <EditFinanceLineRow
-                key={l.id}
-                line={l}
-                onCancel={() => setEditingId(null)}
-                onSaved={() => {
-                  setEditingId(null);
-                  onChange();
-                }}
-                toast={toast}
-              />
-            ) : (
-            <div
-              key={l.id}
-              className="group flex items-center gap-2 rounded-md border border-border bg-surface px-3 py-2 text-[11px]"
-            >
-              <span
-                className={cn(
-                  "rounded-full px-1.5 py-0.5 text-[9px] font-semibold",
-                  tone === "synced" ? "bg-synced/10 text-synced" : "bg-err/10 text-err"
-                )}
-              >
-                {ledgerCategoryLabel(l.category)}
-              </span>
-              <div className="min-w-0 flex-1">
-                <div
-                  className="truncate"
-                  title={l.description || undefined}
-                >
-                  {l.description || <span className="text-ink-muted">No description</span>}
-                </div>
-                <div className="text-[10px] text-ink-muted">
-                  {l.occurred_at ? formatDate(l.occurred_at) : formatDate(l.created_at)}
-                  {l.created_by_name && ` · ${l.created_by_name}`}
-                </div>
-              </div>
-              <span
-                className={cn(
-                  "font-mono text-[12px] font-bold",
-                  tone === "synced" ? "text-synced" : "text-err"
-                )}
-              >
-                {tone === "err" && "−"}
-                {formatCurrency(l.amount)}
-              </span>
-              {l.source === "sales_entry" && (
-                <span
-                  className="rounded-full border border-accent/30 bg-accent-soft/30 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-accent"
-                  title="Synced from Sales — manage this row in the Sales section"
-                >
-                  Sales
-                </span>
-              )}
-              {l.auto_source && (
-                <span
-                  className="rounded-full border border-ink-muted/30 bg-ink-muted/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-ink-muted"
-                  title="Generated by the cost-rate engine — adjust the rate card in Project Maintenance to change."
-                >
-                  Auto
-                </span>
-              )}
-              {l.r2_key && (
-                <button
-                  onClick={() => openFile(l)}
-                  className="rounded p-1 text-ink-muted hover:text-accent"
-                  title="Open attached file"
-                >
-                  <ExternalLink size={12} />
-                </button>
-              )}
-              {!l.source && !l.auto_source && (
-                <button
-                  onClick={() => setEditingId(l.id)}
-                  className="rounded p-1 text-ink-muted opacity-0 hover:bg-accent/10 hover:text-accent group-hover:opacity-100"
-                  title="Edit"
-                >
-                  <Pencil size={12} />
-                </button>
-              )}
-              {!l.source && !l.auto_source && (
-                <button
-                  onClick={() => del(l)}
-                  className="rounded p-1 text-ink-muted opacity-0 hover:bg-err/10 hover:text-err group-hover:opacity-100"
-                  title="Remove"
-                >
-                  <Trash2 size={12} />
-                </button>
-              )}
-            </div>
-            )
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function AddFinanceLineForm({
-  projectId,
-  kind,
-  onCancel,
-  onSaved,
-  toast,
-  categoryDefault,
-  usedCategories,
-}: {
-  projectId: number;
-  kind: "income" | "cost";
-  onCancel: () => void;
-  onSaved: () => void;
-  toast: ReturnType<typeof useToast>;
-  // When set, the category dropdown is pre-selected (and the field
-  // hidden) so the row-level "+ Add detailed line" CTA goes straight
-  // to amount + description + date + receipt.
-  categoryDefault?: string;
-  // Categories that already have a line — hidden from the dropdown so
-  // the user edits the existing row rather than adding a duplicate.
-  usedCategories?: Set<string>;
-}) {
-  const allCategories = kind === "income" ? LEDGER_INCOME_CATS : LEDGER_COST_CATS;
-  const categories = categoryDefault
-    ? allCategories
-    : allCategories.filter((c) => !usedCategories?.has(c));
-  const [category, setCategory] = useState<string>(
-    categoryDefault ?? categories[0] ?? "",
-  );
-  const [amount, setAmount] = useState("");
-  const [description, setDescription] = useState("");
-  const [occurredAt, setOccurredAt] = useState("");
-  const [file, setFile] = useState<File | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-
-  async function submit() {
-    const n = parseFloat(amount);
-    if (!Number.isFinite(n) || n < 0) {
-      toast.error("Amount must be a non-negative number");
-      return;
-    }
-    setSubmitting(true);
-    try {
-      let r2Key: string | undefined;
-      let fileName: string | undefined;
-      let mimeType: string | undefined;
-      if (file) {
-        if (file.size > 10 * 1024 * 1024) {
-          toast.error("File exceeds 10MB");
-          setSubmitting(false);
-          return;
-        }
-        const ext = file.name.split(".").pop()?.toLowerCase() || "jpg";
-        const buf = await file.arrayBuffer();
-        const up = await api.putBinary<{ key: string; mime_type: string }>(
-          `/api/projects/${projectId}/finance/upload?ext=${ext}`,
-          buf,
-          file.type
-        );
-        r2Key = up.key;
-        fileName = file.name;
-        mimeType = up.mime_type;
-      }
-      await api.post(`/api/projects/${projectId}/finance/lines`, {
-        kind,
-        category,
-        amount: n,
-        description: description.trim() || null,
-        occurred_at: occurredAt || null,
-        r2_key: r2Key,
-        file_name: fileName,
-        mime_type: mimeType,
-      });
-      onSaved();
-    } catch (e: any) {
-      toast.error(e?.message || "Something went wrong. Please try again.");
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  if (!categoryDefault && categories.length === 0) {
-    return (
-      <div className="mt-3 rounded-md border border-border bg-surface p-3 text-[11px] text-ink-secondary">
-        Every category already has a line. Edit the existing row to change its
-        amount or attach a receipt instead of adding a duplicate.
-        <div className="mt-2">
-          <button
-            onClick={onCancel}
-            className="rounded-md border border-border bg-surface px-2.5 py-1.5 text-[11px] text-ink-secondary"
-          >
-            Close
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="mt-3 rounded-md border border-accent/30 bg-accent-soft/20 p-3">
-      <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-accent">
-        New {kind} line
-        {categoryDefault && ` · ${ledgerCategoryLabel(categoryDefault)}`}
-      </div>
-      <div className="grid grid-cols-2 gap-2">
-        {!categoryDefault && (
-          <select
-            value={category}
-            onChange={(e) => setCategory(e.target.value)}
-            className="rounded-md border border-border bg-surface px-2.5 py-1.5 text-[11px] outline-none focus:border-primary"
-          >
-            {categories.map((c) => (
-              <option key={c} value={c}>
-                {ledgerCategoryLabel(c)}
-              </option>
-            ))}
-          </select>
-        )}
-        <input
-          type="number"
-          step="0.01"
-          value={amount}
-          onChange={(e) => setAmount(e.target.value)}
-          placeholder="Amount (RM)"
-          className={cn(
-            "rounded-md border border-border bg-surface px-2.5 py-1.5 font-mono text-[11px] outline-none focus:border-primary",
-            categoryDefault && "col-span-2",
-          )}
-        />
-        <input
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          placeholder="Description"
-          className="col-span-2 rounded-md border border-border bg-surface px-2.5 py-1.5 text-[11px] outline-none focus:border-primary"
-        />
-        <DateField
-          fullWidth
-          value={occurredAt}
-          onChange={(iso) => setOccurredAt(iso)}
-          className="rounded-md border border-border bg-surface px-2.5 py-1.5 text-[11px] outline-none focus:border-primary"
-          title="Payment date"
-        />
-        <input
-          type="file"
-          accept=".jpg,.jpeg,.png,.webp,.pdf,.xlsx"
-          onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-          className="rounded-md border border-border bg-surface px-2.5 py-1.5 text-[11px] outline-none"
-        />
-      </div>
-      <div className="mt-2 flex items-center gap-2">
-        <button
-          onClick={submit}
-          disabled={submitting || !amount}
-          className="rounded-md bg-accent px-3 py-1.5 text-[11px] font-semibold text-white disabled:opacity-50"
-        >
-          {submitting ? "Saving…" : "Save"}
-        </button>
-        <button
-          onClick={onCancel}
-          className="rounded-md border border-border bg-surface px-2.5 py-1.5 text-[11px] text-ink-secondary"
-        >
-          Cancel
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function EditFinanceLineRow({
-  line,
-  onCancel,
-  onSaved,
-  toast,
-}: {
-  line: FinanceLine;
-  onCancel: () => void;
-  onSaved: () => void;
-  toast: ReturnType<typeof useToast>;
-}) {
-  const categories = line.kind === "income" ? LEDGER_INCOME_CATS : LEDGER_COST_CATS;
-  const initialCategory = categories.includes(line.category)
-    ? line.category
-    : categories[0];
-  const [category, setCategory] = useState<string>(initialCategory);
-  const [amount, setAmount] = useState<string>(String(line.amount ?? ""));
-  const [description, setDescription] = useState<string>(line.description ?? "");
-  const [occurredAt, setOccurredAt] = useState<string>(
-    line.occurred_at ? line.occurred_at.slice(0, 10) : ""
-  );
-  const [file, setFile] = useState<File | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-
-  async function submit() {
-    const n = parseFloat(amount);
-    if (!Number.isFinite(n) || n < 0) {
-      toast.error("Amount must be a non-negative number");
-      return;
-    }
-    setSubmitting(true);
-    try {
-      const patch: Record<string, any> = {
-        category,
-        amount: n,
-        description: description.trim() || null,
-        occurred_at: occurredAt || null,
-      };
-      // Replacing / attaching a receipt — upload then carry the key on
-      // the patch. An existing r2_key is left untouched when no new file
-      // is picked.
-      if (file) {
-        if (file.size > 10 * 1024 * 1024) {
-          toast.error("File exceeds 10MB");
-          setSubmitting(false);
-          return;
-        }
-        const ext = file.name.split(".").pop()?.toLowerCase() || "jpg";
-        const buf = await file.arrayBuffer();
-        const up = await api.putBinary<{ key: string; mime_type: string }>(
-          `/api/projects/${line.project_id}/finance/upload?ext=${ext}`,
-          buf,
-          file.type,
-        );
-        patch.r2_key = up.key;
-        patch.file_name = file.name;
-        patch.mime_type = up.mime_type;
-      }
-      await api.patch(`/api/projects/finance/lines/${line.id}`, patch);
-      onSaved();
-    } catch (e: any) {
-      toast.error(e?.message || "Something went wrong. Please try again.");
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  return (
-    <div className="rounded-md border border-accent/40 bg-accent-soft/20 p-3">
-      <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-accent">
-        Edit {line.kind} line
-      </div>
-      <div className="grid grid-cols-2 gap-2">
-        <select
-          value={category}
-          onChange={(e) => setCategory(e.target.value)}
-          className="rounded-md border border-border bg-surface px-2.5 py-1.5 text-[11px] outline-none focus:border-primary"
-        >
-          {categories.map((c) => (
-            <option key={c} value={c}>
-              {ledgerCategoryLabel(c)}
-            </option>
-          ))}
-          {!categories.includes(line.category) && (
-            <option value={line.category}>{ledgerCategoryLabel(line.category)}</option>
-          )}
-        </select>
-        <input
-          type="number"
-          step="0.01"
-          value={amount}
-          onChange={(e) => setAmount(e.target.value)}
-          placeholder="Amount (RM)"
-          className="rounded-md border border-border bg-surface px-2.5 py-1.5 font-mono text-[11px] outline-none focus:border-primary"
-        />
-        <input
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          placeholder="Description"
-          className="col-span-2 rounded-md border border-border bg-surface px-2.5 py-1.5 text-[11px] outline-none focus:border-primary"
-        />
-        <DateField
-          fullWidth
-          value={occurredAt}
-          onChange={(iso) => setOccurredAt(iso)}
-          className="rounded-md border border-border bg-surface px-2.5 py-1.5 text-[11px] outline-none focus:border-primary"
-          title="Payment date"
-        />
-        <div className="col-span-2">
-          {line.r2_key && (
-            <div className="mb-1 text-[10px] text-ink-muted">
-              Current receipt: {line.file_name || "attached"} · pick a file to replace
-            </div>
-          )}
-          <input
-            type="file"
-            accept=".jpg,.jpeg,.png,.webp,.pdf,.xlsx"
-            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-            className="w-full rounded-md border border-border bg-surface px-2.5 py-1.5 text-[11px] outline-none"
-            title={line.r2_key ? "Replace receipt" : "Attach receipt"}
-          />
-        </div>
-      </div>
-      <div className="mt-2 flex items-center gap-2">
-        <button
-          onClick={submit}
-          disabled={submitting || !amount}
-          className="rounded-md bg-accent px-3 py-1.5 text-[11px] font-semibold text-white disabled:opacity-50"
-        >
-          {submitting ? "Saving…" : "Save"}
-        </button>
-        <button
-          onClick={onCancel}
-          className="rounded-md border border-border bg-surface px-2.5 py-1.5 text-[11px] text-ink-secondary"
-        >
-          Cancel
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// ── Attachments ──────────────────────────────────────────────
-
-const ATTACH_CATEGORIES: { value: string; label: string }[] = [
-  { value: "floorplan", label: "Floorplan" },
-  { value: "render_3d", label: "3D Render" },
-  { value: "contract", label: "Contract" },
-  { value: "permit", label: "Permit" },
-  { value: "photo", label: "Photo" },
-  { value: "stock_transfer", label: "Stock Transfer" },
-  { value: "other", label: "Other" },
-];
-
-const ATTACH_ROLES: {
-  value: AttachRole;
-  Icon: LucideIcon;
-  label: string;
-}[] = [
-  { value: "design", Icon: Monitor, label: "Design" },
-  { value: "office", Icon: Receipt, label: "Office" },
-  { value: "sales", Icon: Banknote, label: "Sales" },
-  { value: "driver", Icon: Truck, label: "Driver" },
-];
-
-function roleMeta(role: AttachRole | null | undefined) {
-  return ATTACH_ROLES.find((x) => x.value === role) ?? null;
-}
-
-function roleLabel(role: AttachRole | null | undefined): string {
-  return roleMeta(role)?.label ?? "";
-}
-
-function RoleBadge({
-  role,
-  withLabel = true,
-  size = 10,
-}: {
-  role: AttachRole | null | undefined;
-  withLabel?: boolean;
-  size?: number;
-}) {
-  const meta = roleMeta(role);
-  if (!meta) return null;
-  const Icon = meta.Icon;
-  return (
-    <span className="inline-flex items-center gap-1">
-      <Icon size={size} />
-      {withLabel && meta.label}
-    </span>
-  );
-}
-
-function AttachmentsSection({
-  projectId,
-  attachments,
-  onChange,
-  toast,
-}: {
-  projectId: number;
-  attachments: ProjectAttachment[];
-  onChange: () => void;
-  toast: ReturnType<typeof useToast>;
-}) {
-  const [category, setCategory] = useState<string>("floorplan");
-  const [uploadRole, setUploadRole] = useState<AttachRole | "">("");
-  const [filterRole, setFilterRole] = useState<AttachRole | "">("");
-  const [uploading, setUploading] = useState<{ done: number; total: number } | null>(null);
-
-  const filtered = filterRole
-    ? attachments.filter((a) => a.uploaded_by_role === filterRole)
-    : attachments;
-
-  async function onFiles(list: FileList | null) {
-    if (!list || !list.length) return;
-    const files = Array.from(list);
-    const MAX = 25 * 1024 * 1024;
-    const ALLOWED = new Set(["jpg", "jpeg", "png", "webp", "mp4", "pdf", "dwg", "skp"]);
-    const staged: File[] = [];
-    for (const f of files) {
-      const ext = f.name.split(".").pop()?.toLowerCase() || "";
-      if (!ALLOWED.has(ext)) {
-        toast.error(`${f.name}: unsupported type`);
-        continue;
-      }
-      if (f.size > MAX) {
-        toast.error(`${f.name}: exceeds 25MB`);
-        continue;
-      }
-      staged.push(f);
-    }
-    if (!staged.length) return;
-    setUploading({ done: 0, total: staged.length });
-    let failed = 0;
-    for (let i = 0; i < staged.length; i++) {
-      const f = staged[i];
-      try {
-        const ext = f.name.split(".").pop()?.toLowerCase() || "jpg";
-        const buf = await f.arrayBuffer();
-        const roleQs = uploadRole ? `&role=${uploadRole}` : "";
-        await api.putBinary(
-          `/api/projects/${projectId}/attachments?category=${category}&ext=${ext}&name=${encodeURIComponent(f.name)}${roleQs}`,
-          buf,
-          f.type
-        );
-      } catch (e: any) {
-        failed++;
-        console.warn(e);
-      }
-      setUploading({ done: i + 1, total: staged.length });
-    }
-    setUploading(null);
-    if (failed > 0) toast.error(`${failed} upload(s) failed`);
-    else toast.success(`Uploaded ${staged.length} file(s)`);
-    onChange();
-  }
-
-  return (
-    <PanelSection title={`Attachments (${attachments.length})`}>
-      {/* Upload controls */}
-      <div className="flex flex-wrap items-center gap-2">
-        <select
-          value={category}
-          onChange={(e) => setCategory(e.target.value)}
-          className="rounded-md border border-border bg-surface px-2 py-1.5 text-[11px]"
-        >
-          {ATTACH_CATEGORIES.map((c) => (
-            <option key={c.value} value={c.value}>
-              {c.label}
-            </option>
-          ))}
-        </select>
-        <select
-          value={uploadRole}
-          onChange={(e) => setUploadRole(e.target.value as AttachRole | "")}
-          className="rounded-md border border-border bg-surface px-2 py-1.5 text-[11px]"
-          title="Your role for this upload"
-        >
-          <option value="">— no role —</option>
-          {ATTACH_ROLES.map((r) => (
-            <option key={r.value} value={r.value}>
-              {r.label}
-            </option>
-          ))}
-        </select>
-        <label className="inline-flex items-center gap-1 rounded-md border border-border bg-surface px-2.5 py-1.5 text-[11px] font-semibold hover:border-accent/40 hover:text-accent cursor-pointer">
-          <Upload size={11} />
-          Upload
-          <input
-            type="file"
-            multiple
-            className="hidden"
-            onChange={(e) => {
-              onFiles(e.target.files);
-              e.target.value = "";
-            }}
-          />
-        </label>
-        {uploading && (
-          <span className="text-[10px] text-ink-muted">
-            Uploading {uploading.done}/{uploading.total}…
-          </span>
-        )}
-      </div>
-
-      {/* Role filter chips */}
-      {attachments.length > 0 && (
-        <div className="mt-2 flex flex-wrap items-center gap-1">
-          <button
-            onClick={() => setFilterRole("")}
-            className={cn(
-              "rounded-full border inline-flex items-center justify-center min-w-[42px] whitespace-nowrap px-2 py-1 text-[8.5px] font-semibold",
-              filterRole === ""
-                ? "border-accent bg-accent text-white"
-                : "border-border bg-surface text-ink-muted hover:border-accent/40"
-            )}
-          >
-            All ({attachments.length})
-          </button>
-          {ATTACH_ROLES.map((r) => {
-            const count = attachments.filter((a) => a.uploaded_by_role === r.value).length;
-            if (count === 0) return null;
-            const active = filterRole === r.value;
-            const Icon = r.Icon;
-            return (
-              <button
-                key={r.value}
-                onClick={() => setFilterRole(active ? "" : r.value)}
-                className={cn(
-                  "inline-flex items-center gap-1 rounded-full border inline-flex items-center justify-center min-w-[42px] whitespace-nowrap px-2 py-1 text-[8.5px] font-semibold",
-                  active
-                    ? "border-accent bg-accent text-white"
-                    : "border-border bg-surface text-ink-muted hover:border-accent/40"
-                )}
-              >
-                <Icon size={10} /> {r.label} ({count})
-              </button>
-            );
-          })}
-        </div>
-      )}
-
-      {filtered.length === 0 ? (
-        <div className="mt-2 text-[11px] text-ink-muted">
-          {attachments.length === 0 ? "No attachments yet." : "No attachments match that role."}
-        </div>
-      ) : (
-        <div className="mt-3 grid grid-cols-2 gap-2">
-          {filtered.map((a) => (
-            <AttachmentTile key={a.id} attachment={a} onArchive={onChange} toast={toast} />
-          ))}
-        </div>
-      )}
-    </PanelSection>
-  );
-}
-
-function AttachmentTile({
-  attachment,
-  onArchive,
-  toast,
-}: {
-  attachment: ProjectAttachment;
-  onArchive: () => void;
-  toast: ReturnType<typeof useToast>;
-}) {
-  const dialog = useDialog();
-  const [thumb, setThumb] = useState<string | null>(null);
-  // See PhasePhotoThumb: a swallowed thumbnail failure is indistinguishable from
-  // "still loading" and from "not an image". Keep the reason and show it.
-  const [thumbError, setThumbError] = useState<string | null>(null);
-  const isImage = (attachment.mime_type || "").startsWith("image/");
-
-  useEffect(() => {
-    if (!isImage) return;
-    let revoked = false;
-    setThumbError(null);
-    api
-      .fetchBlobUrl(`/api/projects/attachments/${attachment.r2_key}`)
-      .then((url) => {
-        if (revoked) URL.revokeObjectURL(url);
-        else setThumb(url);
-      })
-      .catch((e: unknown) => {
-        if (revoked) return;
-        setThumbError(
-          e instanceof Error && e.message ? e.message : "This preview couldn't be loaded.",
-        );
-      });
-    return () => {
-      revoked = true;
-      if (thumb) URL.revokeObjectURL(thumb);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [attachment.r2_key, isImage]);
-
-  async function openFile() {
-    try {
-      const url = await api.fetchBlobUrl(`/api/projects/attachments/${attachment.r2_key}`, viewableMime(attachment.file_name || attachment.r2_key));
-      window.open(url, "_blank");
-      setTimeout(() => URL.revokeObjectURL(url), 30_000);
-    } catch (e: any) {
-      toast.error(e?.message || "Failed to open");
-    }
-  }
-
-  async function downloadFile() {
-    try {
-      const url = await api.fetchBlobUrl(`/api/projects/attachments/${attachment.r2_key}`);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download =
-        attachment.file_name || attachment.r2_key.split("/").pop() || "download";
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 30_000);
-    } catch (e: any) {
-      toast.error(e?.message || "Download failed");
-    }
-  }
-
-  async function renameFile() {
-    const next = await dialog.prompt({
-      title: "Rename attachment",
-      message: "Pick a new display name. The file content stays the same.",
-      defaultValue: attachment.file_name || "",
-      placeholder: "e.g. floorplan-final-v3.pdf",
-      required: true,
-      confirmLabel: "Rename",
-    });
-    if (!next || next === attachment.file_name) return;
-    try {
-      await api.patch(`/api/projects/attachments/${attachment.id}`, {
-        file_name: next,
-      });
-      toast.success("Renamed");
-      onArchive(); // reuses the parent's reload callback
-    } catch (e: any) {
-      toast.error(e?.message || "Rename failed");
-    }
-  }
-
-  return (
-    <div className="group relative overflow-hidden rounded-md border border-border bg-surface">
-      <button onClick={openFile} className="block w-full text-left">
-        {isImage && thumb ? (
-          <img
-            src={thumb}
-            alt={attachment.file_name || ""}
-            className="h-24 w-full object-cover"
-          />
-        ) : isImage && thumbError ? (
-          <div
-            className="flex h-24 w-full flex-col items-center justify-center gap-1 bg-bg/60 px-2 text-center text-err"
-            title={thumbError}
-          >
-            <ImageOff size={22} />
-            <span className="text-[9px] font-semibold uppercase tracking-wide">
-              Preview failed
-            </span>
-          </div>
-        ) : (
-          <div className="flex h-24 w-full items-center justify-center bg-bg/60 text-ink-muted">
-            {isImage ? <ImageIcon size={24} /> : <FileText size={24} />}
-          </div>
-        )}
-        <div className="px-2 py-1.5">
-          <div className="truncate text-[11px] font-semibold">
-            {attachment.file_name || attachment.r2_key.split("/").pop()}
-          </div>
-          <div className="flex items-center gap-1 text-[9px] uppercase tracking-wider text-ink-muted">
-            <span>{attachment.category || "—"}</span>
-            {attachment.uploaded_by_role && (
-              <>
-                <span>·</span>
-                <span
-                  className="inline-flex items-center gap-0.5"
-                  title={roleLabel(attachment.uploaded_by_role)}
-                >
-                  <RoleBadge role={attachment.uploaded_by_role} size={9} />
-                </span>
-              </>
-            )}
-          </div>
-        </div>
-      </button>
-      {/* Hover action cluster — download / rename / remove. Stays
-          hidden until the tile is hovered so the thumbnail isn't
-          cluttered. */}
-      <div className="absolute right-1 top-1 flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
-        <button
-          onClick={downloadFile}
-          className="rounded bg-surface/80 p-1 text-ink-muted hover:bg-accent-soft hover:text-accent"
-          title="Download"
-        >
-          <Download size={11} />
-        </button>
-        <button
-          onClick={renameFile}
-          className="rounded bg-surface/80 p-1 text-ink-muted hover:bg-accent-soft hover:text-accent"
-          title="Rename"
-        >
-          <Pencil size={11} />
-        </button>
-        <button
-          onClick={async () => {
-            if (!(await dialog.confirm("Remove this attachment?"))) return;
-            try {
-              await api.post(`/api/projects/attachments/${attachment.id}/archive`, {});
-              onArchive();
-            } catch (e: any) {
-              toast.error(e?.message || "Something went wrong. Please try again.");
-            }
-          }}
-          className="rounded bg-surface/80 p-1 text-ink-muted hover:bg-err/10 hover:text-err"
-          title="Remove"
-        >
-          <Trash2 size={11} />
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// ── Google Calendar URL ──────────────────────────────────────
-// Uses the public /calendar/render?action=TEMPLATE endpoint — no OAuth,
-// opens Google Calendar with the event pre-filled. User still has to
-// click "Save" in Google.
-
-function googleCalendarUrl(p: {
-  name: string;
-  code: string;
-  start_date: string | null;
-  end_date: string | null;
-  venue: string | null;
-  venue_address: string | null;
-  organizer: string | null;
-}): string {
-  const fmt = (d: string) => d.replace(/-/g, "");
-  const start = p.start_date ? fmt(p.start_date) : "";
-  // Google wants end date exclusive for all-day events, so +1 day
-  const endRaw = p.end_date || p.start_date || "";
-  const endDate = endRaw ? new Date(endRaw) : null;
-  if (endDate) endDate.setUTCDate(endDate.getUTCDate() + 1);
-  const end = endDate ? endDate.toISOString().slice(0, 10).replace(/-/g, "") : start;
-  const dates = `${start}/${end}`;
-  const details = [
-    `Project: ${p.code}`,
-    p.organizer && `Organizer: ${p.organizer}`,
-  ]
-    .filter(Boolean)
-    .join("\n");
-  const params = new URLSearchParams({
-    action: "TEMPLATE",
-    text: p.name,
-    dates,
-    details,
-    location: [p.venue, p.venue_address].filter(Boolean).join(", "),
-  });
-  return `https://calendar.google.com/calendar/render?${params.toString()}`;
-}
-
-// ── Import CSV panel ─────────────────────────────────────────
-
-function ImportCsvPanel({
-  onClose,
-  onDone,
-  toast,
-}: {
-  onClose: () => void;
-  onDone: () => void;
-  toast: ReturnType<typeof useToast>;
-}) {
-  const [text, setText] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [result, setResult] = useState<{ imported: number; errors: string[]; total_rows: number } | null>(null);
-
-  async function submit() {
-    if (!text.trim()) return;
-    setSubmitting(true);
-    try {
-      // Raw text body (POST text/csv) — api helpers all assume JSON, so
-      // we call the correlated raw-body transport. Auth token is the same one api uses — read it
-      // THROUGH tokenStore, not from localStorage: a session-only login (Remember
-      // me unchecked, or the owner's view-as) keeps the token in sessionStorage,
-      // and the old inline read sent `Bearer ` and 401'd.
-      // No timeout here would hang the dialog forever on a stalled cold-start;
-      // cap it with an upload-length AbortSignal and surface a retryable error.
-      const token = tokenStore.get();
-      let signal: AbortSignal | undefined;
-      try { signal = AbortSignal.timeout(120_000); } catch { signal = undefined; }
-      let resp: Response;
-      try {
-        resp = await correlatedFetch(`${api.baseUrl}/api/projects/import/csv`, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "text/csv",
-            // Without X-Company-Id the backend stamps the hostname-default company
-            // (HOUZS), so importing while "2990" is active would write to the wrong
-            // company. Mirror lib/branding.ts.
-            ...companyHeader(),
-          },
-          body: text,
-          signal,
-        });
-      } catch (err) {
-        if (err instanceof DOMException && (err.name === "TimeoutError" || err.name === "AbortError")) {
-          throw correlateError(
-            new Error("The server took too long to respond. Please check your connection and try again."),
-            requestIdFromError(err),
-          );
-        }
-        throw err;
-      }
-      if (!resp.ok) throw correlateError(
-        new Error(humanHttpMessage(resp.status, await resp.text().catch(() => ""))),
-        requestIdFromResponse(resp),
-      );
-      const data = await consumeCorrelated(
-        resp,
-        () => resp.json() as Promise<{ imported: number; errors: string[]; total_rows: number }>,
-      );
-      setResult(data);
-      if (data.imported > 0) toast.success(`Imported ${data.imported} of ${data.total_rows} row(s)`);
-      onDone();
-    } catch (e: any) {
-      toast.error(e?.message || "Import failed");
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  return (
-    <Panel
-      open
-      onClose={onClose}
-      title="Import Projects from CSV"
-      subtitle="Paste rows from the Google Sheet — header row recognised"
-      width={560}
-      footer={
-        <div className="flex items-center justify-end gap-2">
-          <button onClick={onClose} className="rounded-md border border-border bg-surface px-3 py-2 text-[12px]">
-            Close
-          </button>
-          <Button variant="primary" onClick={submit} disabled={submitting || !text.trim()}>
-            {submitting ? "Importing…" : "Import"}
-          </Button>
-        </div>
-      }
-    >
-      <PanelSection title="Columns">
-        <div className="space-y-1.5 text-[11px] text-ink-secondary">
-          <p>Supported header names (case-insensitive, use underscores or spaces):</p>
-          <ul className="ml-4 list-disc space-y-0.5 font-mono text-[10.5px]">
-            <li>name <span className="text-err">(required)</span></li>
-            <li>brand · event_type · start_date · end_date</li>
-            <li>venue · state · organizer · booth_no · size_sqm</li>
-            <li>rental · total_sales · contractor_cost · license_fee</li>
-            <li>notion_url</li>
-          </ul>
-          <p>Dates may be YYYY-MM-DD or DD/MM/YYYY. Unknown columns are ignored.</p>
-        </div>
-      </PanelSection>
-
-      <PanelSection title="CSV">
-        <textarea
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder={"name,brand,event_type,start_date,end_date,venue,state\nPIKOM PC Fair 2026,AKEMI,exhibition,2026-05-10,2026-05-12,KLCC,Kuala Lumpur"}
-          rows={14}
-          className="w-full rounded-md border border-border bg-surface px-3 py-2 font-mono text-[11px] outline-none focus:border-primary"
-        />
-      </PanelSection>
-
-      {result && (
-        <PanelSection title="Result" muted>
-          <div className="text-[11px]">
-            <span className="font-semibold text-synced">{result.imported}</span> imported,{" "}
-            <span className="font-semibold text-ink-muted">{result.total_rows - result.imported}</span> skipped of{" "}
-            {result.total_rows}
-          </div>
-          {result.errors.length > 0 && (
-            <div className="mt-2 max-h-40 overflow-y-auto rounded-md border border-err/30 bg-err/5 p-2 text-[10px]">
-              {result.errors.map((e, i) => (
-                <div key={i}>{e}</div>
-              ))}
-            </div>
-          )}
-        </PanelSection>
-      )}
-    </Panel>
   );
 }
 

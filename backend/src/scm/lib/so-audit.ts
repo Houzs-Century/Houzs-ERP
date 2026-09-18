@@ -10,6 +10,11 @@
 //     renamed (or deleted), the historic display stays stable.
 //   - `fieldChanges` is a free-form array of { field, from, to } objects.
 //     The render layer maps `field` to a human label.
+//   - `paymentId` tags a payment action (ADD / UPDATE / DELETE_PAYMENT, the
+//     proof attach) with the payment it concerns — mfg_so_audit_log.payment_id,
+//     migration 20260914T1700 — so the Corrections report can name who first
+//     recorded the payment a correction touched (docs/bugs/0888). Optional:
+//     rows about the order itself carry none, and older rows read NULL.
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 
@@ -41,6 +46,7 @@ export async function recordSoAudit(
     statusSnapshot?: string | null;
     source?: string;
     note?: string;
+    paymentId?: string | null;
   },
 ): Promise<void> {
   try {
@@ -79,6 +85,7 @@ export async function recordSoAudit(
       status_snapshot:     args.statusSnapshot ?? null,
       source:              args.source ?? 'web',
       note:                args.note ?? null,
+      ...(args.paymentId ? { payment_id: args.paymentId } : {}),
     });
     if (error) {
       if ((sb as unknown as { __atomicCommand?: boolean }).__atomicCommand === true) {

@@ -273,7 +273,7 @@ describe("LOCKSTEP mirrors — the script-side copies must equal the app's real 
       { specials: [{ code: "X1" }, { label: "y2" }, {}] },
       { fabricCode: "F", specials: ["s2", "s1"] },
     ];
-    const groups = ["sofa", "SOFA", " Sofa ", "bedframe", "mattress", "accessory", "others", "service", "", null, undefined, "unknown-group"];
+    const groups = ["sofa", "SOFA", " Sofa ", "bedframe", "fabric_accessory", "FABRIC_ACCESSORY", "mattress", "accessory", "others", "service", "", null, undefined, "unknown-group"];
     for (const g of groups) {
       for (const a of attrsMatrix) {
         expect(variantKeyMirror(g as string, a), `group=${String(g)} attrs=${JSON.stringify(a)}`)

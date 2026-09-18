@@ -82,7 +82,17 @@ async function main() {
   const RECL = ["-1S(R)", "-1A(R)(LHF)", "-1A(P)(LHF)", "-1S(P)"];
   const reclOf = (m) => RECL.some((s) => codeSet.has(normColour(m + s)));
 
-  const fcRows = await sql`SELECT fabric_id, colour_id, label FROM scm.fabric_colours WHERE company_id = ${CO}`;
+  /* `active` IS selected, and that is load-bearing rather than tidy.
+     fabric-colour-match.mjs reads it TWICE - `claimIndex` lets the live row take
+     a key a live/superseded pair both claim, and `live()` follows a superseded
+     hit to its replacement - and BOTH are no-ops when the caller omits the
+     column, because a row with no `active` property is neither. The library
+     renumbered itself on 2026-08-11 keeping every 1-digit predecessor as
+     `active = false`, so without this a match that lands on a dead row STAYS on
+     the dead row. That is the trap that has already bound a line to a retired
+     colour once. Census 2026-09-07: this was one of ~15 callers omitting it;
+     the others are named in docs/bugs/0669. */
+  const fcRows = await sql`SELECT fabric_id, colour_id, label, active FROM scm.fabric_colours WHERE company_id = ${CO}`;
   const { findColour } = buildFabricColourIndex(fcRows);
   const exactRow = new Map();
   for (const r of fcRows) for (const k of [normColour(r.colour_id), normColour(r.label)]) if (k && !exactRow.has(k)) exactRow.set(k, r);

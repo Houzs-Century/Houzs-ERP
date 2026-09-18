@@ -23,6 +23,9 @@
 
 import { normalizeCompartmentCode } from '../shared/sofa-build';
 import { normaliseTypographicQuotes } from '../shared/mfg-pricing';
+import { fabricAllowedByPool } from '../shared/fabric-pool';
+import { isDivanOnly } from '../shared/so-variant-rule';
+import { pgrestIn } from './pgrest-in-list';
 
 export type AllowedOptionsLite = {
   sizes?:                 string[] | null;
@@ -77,6 +80,12 @@ export type VariantsLite = {
    *  carries the same code from the POS picker. Validated against opts.fabrics. */
   fabricCode?:    string | null;
   colourId?:      string | null;
+  /** The fabric SERIES behind that colour (`fabric_library.id`, e.g. 'BO315'
+   *  for the colour 'BO315-23'). SoLineCard's pickFabricColour has written it on
+   *  every pick since the selling fabric-tier add-on needed it, and 3,732 live
+   *  sales-order lines carry it. The fabric gate reads it because the Modular
+   *  drawer's pool is a list of SERIES, not colours — see the block below. */
+  fabricId?:      string | null;
 } | null | undefined;
 
 /** One input BEHIND a refused field that the operator can actually edit.
@@ -136,10 +145,22 @@ const hasRestriction = (pool: string[] | null | undefined): pool is string[] => 
    only. No trim, no case folding — those are separate behaviour changes, and
    this same string family also composes `variant_key`, the inventory bucket
    identity. */
+/* Folds the GLYPH and TRIMS, because both sides of this comparison are typed by
+   different hands: a pool is typed by a person into the Modular drawer (Windows
+   turns an inch mark into U+201C/U+201D, and a stray space survives a paste),
+   while the line's value is emitted by the editor.
+
+   TRIMMING IS NOT COSMETIC HERE. Measured on production 2026-09-11: all 79 of
+   company 1's sofa Models carry the fabric `"TARONI "` — with a trailing space.
+   The pickers trim (vendor/shared/maintenance-pools.ts), so without this the
+   two sides disagree on TARONI alone: the screen offers it and the save refuses
+   it, which is the exact shape of the defect this whole change is about.
+   docs/bugs/0814. */
+const foldForPool = (s: string): string => normaliseTypographicQuotes(s).trim();
 const inPool = (pool: string[], value: string): boolean => {
   if (pool.includes(value)) return true;
-  const wanted = normaliseTypographicQuotes(value);
-  return pool.some((p) => normaliseTypographicQuotes(p) === wanted);
+  const wanted = foldForPool(value);
+  return pool.some((p) => foldForPool(p) === wanted);
 };
 
 const toSpecialsArray = (s: string[] | string | null | undefined): string[] => {
@@ -261,8 +282,17 @@ export function checkAllowedOptions(
      not refused, it is simply not checked. Before the sixteen private copies of
      that rule were unified, two of them left a STALE height on a cleared line
      instead — and a stale height is exactly what this gate then refuses, naming
-     a field the operator cannot edit. */
+     a field the operator cannot edit.
+
+     A DIVAN ONLY LINE IS NOT CHECKED HERE (owner 2026-08-09 "divan only 不需要
+     gap", asked again 2026-09-15). It has no mattress, so its gap is left blank,
+     and divan + leg + nothing is a height the pool was never written for: the
+     one DIVAN ONLY Model on prod lists totals 10"-28", so an 8" divan with No Leg
+     summed to 8" and was refused (HC-SO-011153, 2026-09-15 12:18 MYT). The only
+     way past was to pick a Gap the product does not have. Its divan and leg
+     picks are still held to their own pools just above and below. */
   if (v.totalHeight && hasRestriction(opts.total_heights)
+      && !isDivanOnly(product.code)
       && !inPool(opts.total_heights, v.totalHeight)) {
     return {
       error: 'variant_not_allowed',
@@ -335,11 +365,33 @@ export function checkAllowedOptions(
     }
   }
 
-  // Fabric (SOFA + BEDFRAME) — the chosen colour code must be enabled on this
-  // Model. opts.fabrics holds fabric_colours.colour_id values; the line carries
-  // it as fabricCode (canonical) or colourId (POS picker). Empty pool = no gate.
+  /* Fabric (SOFA + BEDFRAME) — the chosen fabric must be enabled on this Model.
+     Empty pool = no gate.
+
+     THE POOL IS A LIST OF SERIES, NOT COLOURS, AND BOTH ARE ACCEPTED. This
+     comment used to read "opts.fabrics holds fabric_colours.colour_id values",
+     and the code matched the comment — but the SCREEN THAT FILLS THE POOL offers
+     SERIES: ProductModelDetail hands the drawer
+     `fabricLibQ.data.filter(active).map(f => f.id)`, i.e. fabric_library ids.
+     One field, two vocabularies, and the owner found it the only way anybody
+     could: he opened the allow and his staff still could not pick.
+
+     MEASURED on production 2026-09-11 (company 1): all 79 sofa Models carry the
+     SAME 101-entry pool, 91 of those entries are fabric_library ids and 3 are
+     colour ids, while 851 fabric colours are active. So of 851 colours exactly
+     THREE could be picked, and `GD2502-11` — active, and the one he reported —
+     was refused by every Model.
+
+     Accepting both is the fix rather than rewriting the pool, because the two
+     readings are not in conflict: a SERIES in the pool means "this Model offers
+     this fabric", which is how the business approves a fabric (you approve the
+     cloth, not each shade), and it keeps working when the supplier adds a shade.
+     A COLOUR in the pool still means that one shade. docs/bugs/0814.
+     The rule itself lives in shared/fabric-pool.ts, which the desktop and phone
+     pickers read too, so what they offer is what this saves (docs/bugs/0889). */
   const fabricPick = v.fabricCode ?? v.colourId ?? null;
-  if (fabricPick && hasRestriction(opts.fabrics) && !inPool(opts.fabrics, fabricPick)) {
+  const fabricSeries = v.fabricId ?? null;
+  if (fabricPick && hasRestriction(opts.fabrics) && !fabricAllowedByPool(opts.fabrics, fabricPick, fabricSeries)) {
     return {
       error: 'variant_not_allowed',
       field: 'fabric',
@@ -422,10 +474,9 @@ export async function loadProductsAndModels(
   const codes = Array.from(new Set(itemCodes.map((c) => (c ?? '').trim()).filter(Boolean)));
   if (codes.length === 0) return { byCode: out, lookupError: null };
 
-  let pq = sb
+  let pq = pgrestIn(sb
     .from('mfg_products')
-    .select('code, category, model_id, size_code')
-    .in('code', codes);
+    .select('code, category, model_id, size_code'), 'code', codes);
   if (companyId != null) pq = pq.eq('company_id', companyId);
   const { data: productRows, error: pErr } = await pq;
   if (pErr) return { byCode: out, lookupError: `mfg_products: ${pErr.message}` };

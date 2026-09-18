@@ -26,11 +26,35 @@
 // ----------------------------------------------------------------------------
 
 import { buildVariantSummary } from '@2990s/shared';
+import { AC_DESC2_MAX } from '../../../lib/acColumnWidths';
 
 /** The word the WHOLE system uses for the variant summary. Do not invent a
  *  third name for this string — `pages/scm-v2/so-audit-labels.ts` and every
  *  list column already say "Description 2". */
 export const DESCRIPTION_2_LABEL = 'Description 2';
+
+/* AutoCount stores this string as nvarchar(100) and refuses the WHOLE document
+   when a line is over — not the field, the document. Three sales orders sat
+   outside the account book on 2026-09-09 for four characters each, and nobody
+   could see why from any screen: the refusal was a line in a workflow log.
+
+   THE WARNING LIVES HERE for the reason the label does — twelve screens render
+   this component, and the thirteenth gains it without remembering to. It is a
+   warning and NOT a block: the owner's standing rule is to loosen restrictions
+   rather than wall the workflow, and the ERP has to stay usable on a line the
+   accounts cannot yet take. Nothing is ever truncated — Desc2 is what the
+   factory builds from. */
+const OVERRUN_STYLE = {
+  fontSize: 10,
+  fontWeight: 600,
+  color: '#a1442e',
+  background: '#fbeae6',
+  border: '1px solid #efc9c0',
+  borderRadius: 6,
+  padding: '1px 5px',
+  marginLeft: 6,
+  whiteSpace: 'nowrap',
+} as const;
 
 /* Matches the .fieldLabel treatment the PO / GRN line editors use for their
    own small uppercase labels (10px, 600, .06em, uppercase, muted). Inline
@@ -76,6 +100,11 @@ export const VariantDescription = ({
             read as "Description 2PC151-12 / SEAT 28 / LEG DEFAULT" to anything
             matching on text, tests included. */}
         <span>{summary || 'Standard'}</span>
+        {summary.length > AC_DESC2_MAX && (
+          <span style={OVERRUN_STYLE} title={`AutoCount stores Description 2 as ${AC_DESC2_MAX} characters and refuses the whole document when a line is over. Shorten the special order or the colour text on this line.`}>
+            {summary.length}/{AC_DESC2_MAX} — too long for AutoCount
+          </span>
+        )}
       </div>
     </div>
   );

@@ -10,6 +10,8 @@
 // than its test names claim.
 // ----------------------------------------------------------------------------
 
+import { parsePgrestInList } from './pgrest-in-list';
+
 export type Row = Record<string, any>;
 
 /**
@@ -44,6 +46,13 @@ export function fakeSb(
      one of those handlers answer 400 in tests and pass in production, which is
      the wrong way round for a fake to be wrong. */
   numericIdTables: string[] = [],
+  /* POSTGREST'S OWN RESPONSE CEILING (`db-max-rows`), when a suite needs it.
+     Null means "no ceiling", which is what every existing caller gets. A read
+     that asks for more rows than this gets the ceiling and NO error — the
+     silent truncation that `lib/paginate-all.ts` exists to defeat and that a
+     fake without it cannot reproduce. The exact production number is UNKNOWN
+     (docs/bugs/0447): pass whichever value the test is arguing about. */
+  maxRows: number | null = null,
 ) {
   const from = (table: string) => {
     const mintId = (n: number): string | number => (numericIdTables.includes(table) ? n : `row-${n}`);
@@ -59,6 +68,7 @@ export function fakeSb(
     /** What the last UPDATE actually touched, for `.update(...).select(...)`. */
     let updated: Row[] | null = null;
     let wantCount = false;
+    let headOnly = false;
     let selectCalled = false;
     let lastInserted: Row | null = null;
     /* ORDER BY is applied for real, not ignored. `nextJeNo` mints the next
@@ -68,7 +78,11 @@ export function fakeSb(
        pass while production duplicated a JE. */
     let rangeFrom: number | null = null;
     let rangeTo: number | null = null;
-    const rows = () => {
+    /** Rows the filters match, sorted — BEFORE any window or cap. This is what
+     *  `count: 'exact'` answers with (Content-Range's total), which is why it is
+     *  its own function: a count computed after the window would agree with the
+     *  truncated read and could never reveal it. */
+    const matched = () => {
       const rs = tables[table].filter((r) => filters.every((f) => f(r)));
       for (const { col, asc } of [...sorts].reverse()) {
         rs.sort((a, b) => {
@@ -81,6 +95,10 @@ export function fakeSb(
           return asc ? cmp : -cmp;
         });
       }
+      return rs;
+    };
+    const rows = () => {
+      const rs = matched();
       /* PostgREST `.range(from, to)` is an INCLUSIVE offset window applied
          after sorting — paginateAll (lib/paginate-all.ts) is built on it, so a
          fake without it forces every paged read into bespoke pagination the
@@ -88,7 +106,9 @@ export function fakeSb(
          inclusive of `to`, composable with `.limit()` the way PostgREST
          composes them (limit caps the window). */
       const windowed = rangeFrom != null ? rs.slice(rangeFrom, (rangeTo ?? rs.length - 1) + 1) : rs;
-      return limitN == null ? windowed : windowed.slice(0, limitN);
+      const capped = limitN == null ? windowed : windowed.slice(0, limitN);
+      // The SERVER's ceiling is applied LAST and beats whatever was asked for.
+      return maxRows == null ? capped : capped.slice(0, maxRows);
     };
     /* The insert-time half of a UNIQUE index. Postgres answers 23505 and the
        row is NOT written; enqueueAcOp reads that as "the same intent is already
@@ -117,8 +137,14 @@ export function fakeSb(
       /* head:true asks for the COUNT and no rows. conversionIsPartial reads it
          to decide whether a transfer leaves any of the parent's lines behind,
          and a fake that answered `undefined` would make every test take the
-         refusal branch for the wrong reason. */
-      if (wantCount) return { data: null, count: rows().length, error: null };
+         refusal branch for the wrong reason.
+
+         `count` WITHOUT `head` is a different request and used to be answered
+         as if it were this one — `{ data: null }`, so a paginated list read
+         (`.select(COLS, { count: 'exact' })`, the shape every SCM list page
+         uses) came back with no rows at all under this fake. It falls through
+         to the row return below, which carries the count alongside. */
+      if (headOnly) return { data: null, count: matched().length, error: null };
       if (pendingRows) {
         /* Bulk insert. PostgREST takes an array and writes every row in ONE
            statement; postSiRevenue posts both GL lines that way, so a fake that
@@ -156,8 +182,14 @@ export function fakeSb(
         return { data: null, error: null };
       }
       if (pendingDelete) {
-        const doomed = new Set(rows());
+        const doomedRows = rows();
+        const doomed = new Set(doomedRows);
         tables[table] = tables[table].filter((r) => !doomed.has(r));
+        /* DELETE … RETURNING: a chain that asks (.select().maybeSingle()) is
+           handed what was removed, the way an update is — the payment DELETE
+           reads the returned row to tell a version clash from a delete
+           (docs/bugs/0927). The bare await keeps its null body. */
+        updated = doomedRows;
         return { data: null, error: null };
       }
       if (pendingUpdate) {
@@ -176,19 +208,43 @@ export function fakeSb(
         updated = touched;
         return { data: null, error: null };
       }
-      return { data: rows(), error: null };
+      return wantCount
+        ? { data: rows(), count: matched().length, error: null }
+        : { data: rows(), error: null };
     };
     const builder: any = {
       select(cols?: string, opts?: { count?: string; head?: boolean }) {
         const gone = (missing[table] ?? []).filter((c) => (cols ?? '').split(',').map((x) => x.trim()).includes(c));
         if (gone.length) columnError = { code: '42703', message: `column ${table}.${gone[0]} does not exist` };
         if (opts?.count) wantCount = true;
+        if (opts?.head) headOnly = true;
         selectCalled = true;
         return builder;
       },
       insert(payload: Row | Row[]) {
         if (Array.isArray(payload)) pendingRows = payload;
         else pendingInsert = payload;
+        return builder;
+      },
+      /* PostgREST upsert — insert, or update the row the onConflict columns
+         already name. Modeled the way supabase-js sends it: the conflict key
+         is a comma-joined column list; a hit updates IN PLACE, a miss falls
+         through to the normal insert path (unique checks included). */
+      upsert(payload: Row | Row[], opts?: { onConflict?: string }) {
+        const rows = Array.isArray(payload) ? payload : [payload];
+        const keys = String(opts?.onConflict ?? '').split(',').map((k) => k.trim()).filter(Boolean);
+        const leftover: Row[] = [];
+        for (const r of rows) {
+          const hit = keys.length > 0
+            ? tables[table].find((t) => keys.every((k) => String(t[k]) === String(r[k])))
+            : undefined;
+          if (hit) Object.assign(hit, r);
+          else leftover.push(r);
+        }
+        if (leftover.length > 0) {
+          if (Array.isArray(payload)) pendingRows = leftover;
+          else pendingInsert = leftover[0]!;
+        }
         return builder;
       },
       update(patch: Row) { pendingUpdate = patch; return builder; },
@@ -203,19 +259,56 @@ export function fakeSb(
         filters.push((r) => (val === null ? r[col] === null || r[col] === undefined : r[col] === val));
         return builder;
       },
+      /* THE NEGATION OF `is`, and only of `is`. PostgREST's `.not(col, op,
+         val)` takes any operator, but the only shape this repo asks for is
+         `.not(col, 'is', null)` — "has a value" — so an unknown operator
+         THROWS rather than quietly matching everything. A fake that answered a
+         filter it does not implement by returning every row would make a scope
+         test pass for the wrong reason, which is the exact failure mode this
+         file exists to avoid. */
+      not(col: string, op: string, val: unknown) {
+        if (op !== 'is') throw new Error(`fake-postgrest: not(${op}) is not implemented`);
+        filters.push((r) => !(val === null ? r[col] === null || r[col] === undefined : r[col] === val));
+        return builder;
+      },
       neq(col: string, val: unknown) { filters.push((r) => String(r[col]) !== String(val)); return builder; },
       in(col: string, vals: unknown[]) { filters.push((r) => vals.map(String).includes(String(r[col]))); return builder; },
-      lt(col: string, val: unknown) { filters.push((r) => Number(r[col] ?? 0) < Number(val)); return builder; },
+      /* `.filter(col, 'in', '("a","b\\"c")')` — the ESCAPED in-list the shared
+         readers now build, because supabase-js cannot serialise a value carrying
+         a `"` (docs/bugs/0780). Parsed by the SAME function the app writes with:
+         a second `split(',')` here would swallow the malformed list exactly the
+         way the bug does, and report a clean run. Any other operator THROWS, for
+         the reason `not()` above gives. */
+      filter(col: string, op: string, val: unknown) {
+        if (op !== 'in') throw new Error(`fake-postgrest: filter(${op}) is not implemented`);
+        const vals = parsePgrestInList(String(val));
+        filters.push((r) => vals.includes(String(r[col])));
+        return builder;
+      },
+      /* `lt` compares the way gte/lte below do — by the column's type, NULL
+         matching nothing. It used to be numeric-only with a `?? 0` fold, so an
+         ISO timestamp became NaN and every row silently dropped: a month window
+         written as gte(first) + lt(next-first) — the only correct shape for a
+         timestamptz — returned an empty report against this fake while the
+         real database returned the rows (docs/bugs/0785). */
+      lt(col: string, val: unknown) {
+        filters.push((r) => r[col] != null && (typeof r[col] === 'number' ? Number(r[col]) < Number(val) : String(r[col]) < String(val)));
+        return builder;
+      },
       /* gte/lte compare as PostgREST does for the column's type: numbers
          numerically, everything else lexically — which is exactly how ISO
          date/timestamp strings order, the use these appear in (accounting's
          entry_date and paid_at windows). */
       gte(col: string, val: unknown) {
-        filters.push((r) => (typeof r[col] === 'number' ? Number(r[col]) >= Number(val) : String(r[col] ?? '') >= String(val)));
+        /* NULL matches NO comparison, as in Postgres. The old `?? ''` fold made
+           a null date row pass every `lte(date)` — which double-counted the
+           migration-window rows the stock close deliberately fetches by a
+           SEPARATE is-null query. */
+        filters.push((r) => r[col] != null && (typeof r[col] === 'number' ? Number(r[col]) >= Number(val) : String(r[col]) >= String(val)));
         return builder;
       },
       lte(col: string, val: unknown) {
-        filters.push((r) => (typeof r[col] === 'number' ? Number(r[col]) <= Number(val) : String(r[col] ?? '') <= String(val)));
+        filters.push((r) => r[col] != null && (typeof r[col] === 'number' ? Number(r[col]) <= Number(val) : String(r[col]) <= String(val)));
         return builder;
       },
       /* PostgREST `like` with SQL wildcards. Only `%` is used in this codebase
@@ -233,6 +326,26 @@ export function fakeSb(
       ilike(col: string, pattern: string) {
         const rx = new RegExp(`^${String(pattern).replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/%/g, '.*')}$`, 'i');
         filters.push((r) => rx.test(String(r[col] ?? '')));
+        return builder;
+      },
+      /* PostgREST `or=(a.op.v,b.op.v)`: the row passes when ANY term does. Only
+         the term shapes the list readers send are understood — `ilike` (the
+         search box), `eq` and `is.true|false|null` (the hold marker); anything
+         else THROWS, for the reason `not()` above gives. */
+      or(expr: string) {
+        const terms = String(expr).split(',').map((t) => {
+          const [col, op, ...rest] = t.split('.');
+          const val = rest.join('.');
+          if (op === 'ilike') {
+            const rx = new RegExp(`^${val.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/%/g, '.*')}$`, 'i');
+            return (r: Row) => rx.test(String(r[col!] ?? ''));
+          }
+          if (op === 'eq') return (r: Row) => String(r[col!]) === val;
+          if (op === 'is' && (val === 'true' || val === 'false')) return (r: Row) => r[col!] === (val === 'true');
+          if (op === 'is' && val === 'null') return (r: Row) => r[col!] === null || r[col!] === undefined;
+          throw new Error(`fake-postgrest: or(${t}) is not implemented`);
+        });
+        filters.push((r) => terms.some((f) => f(r)));
         return builder;
       },
       order(col?: string, opts?: { ascending?: boolean }) {
@@ -275,16 +388,47 @@ export function fakeSb(
      fake throws `sb.schema is not a function` and the test would be measuring
      the fake, not the code. See docs/bugs/0522. */
   const schemaCalls: string[] = [];
+  /* `.rpc(name, args)` — Postgres functions the code calls through PostgREST
+     (scm.acc_register_item_group extends the category enums, which no DML can
+     model). Every call is RECORDED for assertions. A function with no handler
+     answers the way PostgREST answers for a function that IS NOT THERE —
+     PGRST202 — because that is a real production state every rpc caller
+     already has a lane for: doc-no's counter degrades to its pre-counter path
+     on exactly this code (lib/rpc-missing.ts), and inventing a different
+     error here made 25 tests about CONFIRMING SETTLEMENTS fail inside the JE
+     minter. A test ABOUT an rpc registers a handler in `rpcHandlers`; the
+     handler's return value is the `data`, a throw becomes the error. */
+  const rpcCalls: Array<{ fn: string; args: Record<string, unknown> }> = [];
   const api: {
     from: (t: string) => any;
     tables: Record<string, Row[]>;
     schema: (s: string) => any;
     schemaCalls: string[];
+    rpc: (fn: string, args?: Record<string, unknown>) => Promise<{ data: unknown; error: { code?: string; message: string } | null }>;
+    rpcCalls: Array<{ fn: string; args: Record<string, unknown> }>;
+    rpcHandlers: Record<string, (args: Record<string, unknown>) => unknown>;
   } = {
     from,
     tables,
     schema: (s: string) => { schemaCalls.push(s); return api; },
     schemaCalls,
+    rpcCalls,
+    rpcHandlers: {},
+    rpc: async (fn: string, args: Record<string, unknown> = {}) => {
+      rpcCalls.push({ fn, args });
+      const handler = api.rpcHandlers[fn];
+      if (!handler) {
+        return {
+          data: null,
+          error: { code: 'PGRST202', message: `Could not find the function public.${fn} in the schema cache` },
+        };
+      }
+      try {
+        return { data: handler(args) ?? null, error: null };
+      } catch (e) {
+        return { data: null, error: { message: String((e as Error)?.message ?? e) } };
+      }
+    },
   };
   return api as never as typeof api;
 }

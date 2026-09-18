@@ -40,6 +40,7 @@ import { TeamOrgChartV2 } from "./team/TeamOrgChartV2";
 import { TeamDepartmentsV2 } from "./team/TeamDepartmentsV2";
 import { TeamMailboxesV2 } from "./team/TeamMailboxesV2";
 import { TeamRolesV2 } from "./team/TeamRolesV2";
+import { EditMemberField, editMemberOffers, editMemberPatchFor } from "./team/editMemberScope";
 import { Forbidden } from "./Forbidden";
 import { RolesTab } from "./Roles";
 import { PositionsTab } from "./Positions";
@@ -281,18 +282,17 @@ export function Team() {
     { value: "directory", label: "Directory", show: canSeeMembers },
     { value: "orgchart2", label: "Org Chart", show: canSeeMembers },
     { value: "departments2", label: "Departments", show: canSeeMembers },
+    // Back in the strip 2026-09-15 (owner, after 0923: a Title could be created
+    // nowhere once #744 switched the tab off on every surface). It creates,
+    // renames, moves and deletes Titles; page access per Title is edited on
+    // Roles & Permissions, and this tab's old matrix is a read-only note
+    // (docs/bugs/0931-a-new-title-could-not-be-created-anywhere-the-positions-tab.md).
+    { value: "positions", label: "Titles", show: canManageUsers },
     { value: "mail2", label: "Mailboxes", show: canManageMail },
     { value: "permissions", label: "Roles & Permissions", show: canRoles },
     // Classic tabs (members / orgchart / departments / mail) are out of the
     // strip but still URL-reachable while the redesign is reviewed — see
     // canViewTab below. Cutover removes them.
-    // Positions tab removed from the strip (owner: "那個team的矩陣拆掉") — the
-    // same treatment the Roles tab got, which is why neither is in the strip.
-    // A positioned user's page access is resolved from position defaults
-    // (services/positionPolicy.ts, read at login), NOT from the 4-level
-    // position_page_access matrix this tab edited — that table is no longer read
-    // for them, so removing the tab changes no one's access. Re-add this line to
-    // restore the tab in the strip (it is also gated off in canViewTab below).
     // Roles tab removed (owner: "删了role") — Position governs page access; a
     // baseline role is auto-assigned on invite. Re-add this line to restore.
   ];
@@ -317,19 +317,11 @@ export function Team() {
     mail2: canManageMail,
     permissions: canRoles,
     members: canSeeMembers,
-    // Positions is turned off entirely (owner: "整個關掉先") — #740 only pulled
-    // it from the nav but left it URL-reachable at /team?tab=positions for a
-    // full admin. Forcing this to `false` closes that escape hatch: a requested
-    // `positions` tab now fails the canViewTab gate below and falls through to
-    // the user's first real tab (or the same Forbidden safe-landing #722 gives
-    // any admitted-but-empty user), so `active` can never resolve to "positions"
-    // and PositionsTab never mounts — its data query never fires. Enforcement is
-    // untouched: a positioned user's access is resolved from position defaults
-    // (services/positionPolicy.ts), which this gate does not affect. The former
-    // writer PATCH /api/positions/:id/page-access is now DISABLED (it short-
-    // circuits without writing); its route and the position_page_access table
-    // are kept for a future rework, and the tab's page-access editor is read-only.
-    positions: false,
+    // Off from #744 ("整個關掉先") to 2026-09-15; see the strip entry above. The
+    // per-position page-access writer stays DISABLED (PATCH
+    // /api/positions/:id/page-access answers 409) and the tab shows a read-only
+    // note in its place, so reopening it changes no one's access.
+    positions: canManageUsers,
     orgchart: canSeeMembers,
     departments: canSeeMembers,
     roles: canRoles,
@@ -398,10 +390,10 @@ export function Team() {
       description: "Manage who can access this workspace and what they can do.",
     },
     positions: {
-      eyebrow: "Workspace · Access by Position",
-      title: "Positions",
+      eyebrow: "Workspace · Titles",
+      title: "Titles",
       description:
-        "Set which pages each position can see (none / view / edit / full) — this drives the menu and blocks direct-URL access.",
+        "The titles a member can hold, grouped by department. A member's title decides the pages they see; edit that on Roles & Permissions.",
     },
     orgchart: {
       eyebrow: "Workspace · Hierarchy",
@@ -417,9 +409,9 @@ export function Team() {
     },
     roles: {
       eyebrow: "Workspace · Access Control",
-      title: "Roles",
+      title: "Roles & Permissions",
       description:
-        "Define what each role can access. System roles are locked; create custom roles for fine-grained control.",
+        "Pick a role on the left, then toggle its grants module by module. Select several roles to edit them together.",
     },
     mail: {
       eyebrow: "Workspace · Mail Center",
@@ -527,10 +519,6 @@ export function Team() {
           salesDirScoped={salesDirScoped}
         />
       )}
-      {/* Unreachable by design: canViewTab.positions is false, so `active` can
-          never resolve to "positions" and this never mounts. Kept (not deleted)
-          so the editor is one line from being restored if the owner turns it
-          back on — flip canViewTab.positions to canManageUsers. */}
       {active === "positions" && canManageUsers && <PositionsTab />}
       {active === "orgchart" && canSeeMembers && <OrgChartTab />}
       {active === "departments" && canSeeMembers && (
@@ -791,9 +779,8 @@ function MembersTab({
   const [resendingId, setResendingId] = useState<number | null>(null);
 
   const canManage = can("users.manage");
-  // `salesDirScoped` arrives as a prop (a dept-scoped Sales Director). It gates
-  // the member-detail Edit + enable/disable actions (backend enforces the
-  // own-dept + no-role/dept/password scope).
+  // `salesDirScoped` (a dept-scoped Sales Director) opens the member-detail Edit +
+  // enable/disable, and narrows the Edit panel to what their writes apply.
 
   // Staging-only "login as member": the backend probe reports enabled only
   // when the worker runs with IMPERSONATION_ENABLED (staging vars block), so
@@ -836,10 +823,6 @@ function MembersTab({
     members.reload();
     invites.reload();
   }
-
-  // Per-field inline editing moved into the Edit Member panel — it sends
-  // one PATCH with all changed fields (name/email/phone/department/
-  // position/reports-to), keeping the members table read-only and tidy.
 
   // Sending a reset link does NOT change the account (backend users.ts
   // /:id/reset-password). The old copy promised a logout that the old handler
@@ -2498,6 +2481,7 @@ function MembersTab({
           }}
           multiCompany={multiCompany}
           companies={companyOpts}
+          salesDirScoped={salesDirScoped}
         />
       )}
 
@@ -3053,13 +3037,11 @@ function MemberCard({
 }
 
 /**
- * Edit Member side panel — the single hub for one member. Replaces the
- * inline per-row <select>s + the four text action buttons that cluttered
- * the table. Editable fields (name/email/phone/department/position/
- * reports-to) save in ONE PATCH; account actions (brands, reset, disable,
- * delete) are handed in from the parent so their confirms/toasts stay put.
+ * Edit Member side panel. Member fields save in ONE PATCH; account actions are
+ * handed in from the parent so their confirms/toasts stay put. Each field and
+ * action is offered per caller (team/editMemberScope).
  */
-function EditMemberPanel({
+export function EditMemberPanel({
   user,
   departments,
   positions,
@@ -3073,6 +3055,7 @@ function EditMemberPanel({
   onRemove,
   multiCompany,
   companies,
+  salesDirScoped,
 }: {
   user: TeamMember;
   departments: Department[];
@@ -3088,6 +3071,7 @@ function EditMemberPanel({
   onRemove: (u: TeamMember) => void | Promise<void>;
   multiCompany: boolean;
   companies: CompanyOpt[];
+  salesDirScoped: boolean;
 }) {
   const toast = useToast();
   const [name, setName] = useState(user.name || "");
@@ -3257,19 +3241,18 @@ function EditMemberPanel({
       patch.password = password.trim();
     }
 
+    const body = editMemberPatchFor(patch, salesDirScoped);
     // Save if EITHER the user fields OR the showroom parking changed. The
     // showroom lives in scm.staff (the separate call below), so an "only the
     // showroom changed" edit has an EMPTY user patch — the old early-return here
     // dropped it silently (owner: picked a venue, hit Save, nothing persisted).
-    if (Object.keys(patch).length === 0 && !showroomDirty) {
+    if (Object.keys(body).length === 0 && !showroomDirty) {
       onClose();
       return;
     }
     setBusy(true);
     try {
-      if (Object.keys(patch).length > 0) {
-        await api.patch(`/api/users/${user.id}`, patch);
-      }
+      if (Object.keys(body).length > 0) await api.patch(`/api/users/${user.id}`, body);
       /* Showroom parking lives in scm.staff, not on the user record, so it is a
          second call — made only when it actually changed, and AFTER the user
          patch succeeded. Its failure is surfaced separately rather than being
@@ -3325,7 +3308,7 @@ function EditMemberPanel({
             email={user.email}
             size={52}
           />
-          <div>
+          <EditMemberField write="profile_pic" scoped={salesDirScoped}>
             <input
               ref={fileRef}
               type="file"
@@ -3345,9 +3328,9 @@ function EditMemberPanel({
               {picBusy ? "Uploading…" : "Change photo"}
             </button>
             <div className="mt-1 text-[10px] text-ink-muted">JPG/PNG, under 5 MB.</div>
-          </div>
+          </EditMemberField>
         </div>
-        <div>
+        <EditMemberField write="name" scoped={salesDirScoped}>
           <label className={labelCls}>Name</label>
           <input
             type="text"
@@ -3357,8 +3340,8 @@ function EditMemberPanel({
             className={inputCls}
             autoFocus
           />
-        </div>
-        <div>
+        </EditMemberField>
+        <EditMemberField write="email" scoped={salesDirScoped}>
           <label className={labelCls}>Email</label>
           <input
             type="email"
@@ -3367,8 +3350,8 @@ function EditMemberPanel({
             placeholder="member@houzscentury.com"
             className={inputCls}
           />
-        </div>
-        <div>
+        </EditMemberField>
+        <EditMemberField write="email_alias" scoped={salesDirScoped}>
           <label className={labelCls}>Email Alias</label>
           <input
             type="email"
@@ -3380,8 +3363,8 @@ function EditMemberPanel({
           <div className="mt-1 text-[10px] text-ink-muted">
             The member's outward Mail Center address — defaults their reply From.
           </div>
-        </div>
-        <div>
+        </EditMemberField>
+        <EditMemberField write="phone" scoped={salesDirScoped}>
           <label className={labelCls}>Phone</label>
           <PhoneInput
             value={phone}
@@ -3389,11 +3372,11 @@ function EditMemberPanel({
             placeholder="12-345 6789 (optional)"
             className={inputCls}
           />
-        </div>
+        </EditMemberField>
       </PanelSection>
 
       <PanelSection title="Organisation">
-        <div>
+        <EditMemberField write="department_id" scoped={salesDirScoped}>
           <label className={labelCls}>Primary department</label>
           <SearchableSelect
             className={inputCls}
@@ -3416,8 +3399,8 @@ function EditMemberPanel({
           <div className="mt-1 text-[10px] text-ink-muted">
             Drives the member's colour and position scope.
           </div>
-        </div>
-        <div>
+        </EditMemberField>
+        <EditMemberField write="department_ids" scoped={salesDirScoped}>
           <label className={labelCls}>Also in</label>
           <div className="flex flex-wrap gap-1.5">
             {departments.length === 0 && (
@@ -3469,8 +3452,8 @@ function EditMemberPanel({
           <div className="mt-1 text-[10px] text-ink-muted">
             A member can belong to several departments. The primary is set above.
           </div>
-        </div>
-        <div>
+        </EditMemberField>
+        <EditMemberField write="position_id" scoped={salesDirScoped}>
           <label className={labelCls}>Position</label>
           <SearchableSelect
             className={inputCls}
@@ -3489,8 +3472,8 @@ function EditMemberPanel({
           <div className="mt-1 text-[10px] text-ink-muted">
             Controls which pages this member can see (least-privilege per position).
           </div>
-        </div>
-        <div>
+        </EditMemberField>
+        <EditMemberField write="role_id" scoped={salesDirScoped}>
           <label className={labelCls}>Role</label>
           <SearchableSelect
             className={inputCls}
@@ -3507,8 +3490,8 @@ function EditMemberPanel({
             Controls what this member can DO (actions + admin). Position above
             controls what they can SEE. "Super Admin" grants everything.
           </div>
-        </div>
-        <div>
+        </EditMemberField>
+        <EditMemberField write="division" scoped={salesDirScoped}>
           <label className={labelCls}>Division</label>
           <input
             list="member-division-options"
@@ -3533,9 +3516,9 @@ function EditMemberPanel({
           <div className="mt-1 text-[10px] text-ink-muted">
             Sub-group within the department — becomes a column in the org chart.
           </div>
-        </div>
+        </EditMemberField>
         {multiCompany && (
-          <div>
+          <EditMemberField write="company_ids" scoped={salesDirScoped}>
             <label className={labelCls}>Company</label>
             <CompanySelect
               companies={companies}
@@ -3546,9 +3529,9 @@ function EditMemberPanel({
               Which company this member works in. "Both" grants access to all
               companies.
             </div>
-          </div>
+          </EditMemberField>
         )}
-        <div>
+        <EditMemberField write="manager_id" scoped={salesDirScoped}>
           <label className={labelCls}>Reports to</label>
           <SearchableSelect
             className={inputCls}
@@ -3569,8 +3552,8 @@ function EditMemberPanel({
                 .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" })),
             ]}
           />
-        </div>
-        <div>
+        </EditMemberField>
+        <EditMemberField write="password" scoped={salesDirScoped}>
           <label className={labelCls}>Set password</label>
           <div className="relative">
             <input
@@ -3595,9 +3578,10 @@ function EditMemberPanel({
             Sets a new password for this member (min 12 chars). They can change it
             later — leave blank to keep their current one.
           </div>
-        </div>
+        </EditMemberField>
       </PanelSection>
 
+      {editMemberOffers("showroom", salesDirScoped) && (
       <PanelSection title="Sales venue">
         <div>
           <label className={labelCls}>Showroom</label>
@@ -3652,6 +3636,7 @@ function EditMemberPanel({
           </div>
         </div>
       </PanelSection>
+      )}
 
       <div className="pb-1">
         <Button variant="brass" className="w-full" onClick={save} disabled={busy}>
@@ -3660,12 +3645,12 @@ function EditMemberPanel({
       </div>
 
       <PanelSection title="Account">
-        {user.status !== "invited" && (
+        {editMemberOffers("reset_link", salesDirScoped) && user.status !== "invited" && (
           <button type="button" onClick={() => onSendReset(user)} className={actionCls}>
             <KeyRound size={13} /> Send password reset link
           </button>
         )}
-        {user.status === "invited" && (
+        {editMemberOffers("resend_invite", salesDirScoped) && user.status === "invited" && (
           <button type="button" onClick={() => onResendInvite(user)} className={actionCls}>
             <Mail size={13} /> Resend invitation
           </button>
@@ -3674,6 +3659,7 @@ function EditMemberPanel({
           {isActive ? <UserX size={13} /> : <UserCheck size={13} />}
           {isActive ? "Disable account" : "Enable account"}
         </button>
+        {editMemberOffers("delete", salesDirScoped) && (
         <button
           type="button"
           onClick={() => onRemove(user)}
@@ -3681,6 +3667,7 @@ function EditMemberPanel({
         >
           <Trash2 size={13} /> Delete permanently
         </button>
+        )}
       </PanelSection>
     </Panel>
   );

@@ -49,6 +49,7 @@ describe("Delivered chips — no x1", () => {
     render(
       <DocumentLinesExpansion
         isLoading={false}
+        coverage="ready"
         showDelivered
         lines={[line({ deliveredDos: [{ doNo: "2990-DO-2607-022", qty: 1 }] })]}
       />,
@@ -65,6 +66,7 @@ describe("Assigned SO — the caption is gone, the warning is not", () => {
     render(
       <DocumentLinesExpansion
         isLoading={false}
+        coverage="ready"
         showAssignment
         lines={[line({ assignedSos: mrpOnly, sourceLinked: false })]}
       />,
@@ -77,6 +79,7 @@ describe("Assigned SO — the caption is gone, the warning is not", () => {
     const { container } = render(
       <DocumentLinesExpansion
         isLoading={false}
+        coverage="ready"
         showAssignment
         lines={[line({ assignedSos: mrpOnly, sourceLinked: false })]}
       />,
@@ -147,6 +150,7 @@ describe("Three chip identities — anchored / provenance / floating", () => {
     const { container } = render(
       <DocumentLinesExpansion
         isLoading={false}
+        coverage="ready"
         showAssignment
         lines={[line({ assignedSos: [anchored, provenance, floating], sourceLinked: true })]}
       />,
@@ -167,6 +171,7 @@ describe("Three chip identities — anchored / provenance / floating", () => {
     const { container } = render(
       <DocumentLinesExpansion
         isLoading={false}
+        coverage="ready"
         showAssignment
         showDelivered
         lines={[line({ assignedSos: [provenance, floating], deliveredDos: [] })]}
@@ -213,6 +218,7 @@ describe("Provenance slot beside execution (PR-3)", () => {
     const { container } = render(
       <DocumentLinesExpansion
         isLoading={false}
+        coverage="ready"
         showAssignment
         lines={[line({ assignedSos: [floating], provenance: [bought] })]}
       />,
@@ -234,6 +240,7 @@ describe("Provenance slot beside execution (PR-3)", () => {
     render(
       <DocumentLinesExpansion
         isLoading={false}
+        coverage="ready"
         showAssignment
         showDelivered
         lines={[line({ assignedSos: [floating], deliveredDos: [], provenance: [bought] })]}
@@ -262,6 +269,7 @@ describe("Provenance slot beside execution (PR-3)", () => {
     const { container } = render(
       <DocumentLinesExpansion
         isLoading={false}
+        coverage="ready"
         showAssignment
         lines={[line({ assignedSos: [stored], provenance: [stored] })]}
       />,
@@ -273,6 +281,7 @@ describe("Provenance slot beside execution (PR-3)", () => {
     const { container } = render(
       <DocumentLinesExpansion
         isLoading={false}
+        coverage="ready"
         showAssignment
         lines={[line({ assignedSos: [floating] })]}
       />,
@@ -289,6 +298,7 @@ describe("Provenance slot beside execution (PR-3)", () => {
     const { container } = render(
       <DocumentLinesExpansion
         isLoading={false}
+        coverage="ready"
         showAssignment
         lines={[line({ assignedSos: [floating], sourceLinked: false, provenance: [bought] })]}
       />,
@@ -313,6 +323,7 @@ describe("Paired per-SO sub-table (2026-08-02 — one row per assigned SO)", () 
     render(
       <DocumentLinesExpansion
         isLoading={false}
+        coverage="ready"
         showAssignment
         showDelivered
         lines={[line({ assignedSos: assigned, deliveredDos: delivered })]}
@@ -333,6 +344,7 @@ describe("Paired per-SO sub-table (2026-08-02 — one row per assigned SO)", () 
     render(
       <DocumentLinesExpansion
         isLoading={false}
+        coverage="ready"
         showAssignment
         showDelivered
         lines={[line({
@@ -365,6 +377,7 @@ describe("STOCK tag — no assignment means surplus stock, not missing data (202
     render(
       <DocumentLinesExpansion
         isLoading={false}
+        coverage="ready"
         showAssignment
         showDelivered
         lines={[line({ assignedSos: [], deliveredDos: [] })]}
@@ -379,6 +392,7 @@ describe("Source PO chips render the stored doc number verbatim", () => {
     render(
       <DocumentLinesExpansion
         isLoading={false}
+        coverage="ready"
         showSourcePo
         lines={[line({ sourcePos: ["2990-PO-2606-003", "PO-2607-002"] })]}
       />,
@@ -422,7 +436,8 @@ describe("Accessory lines collapse their per-order list", () => {
 
   it("shows counts instead of eight SO chips, on the paired purchase view", () => {
     render(
-      <DocumentLinesExpansion isLoading={false} showAssignment showDelivered lines={[acc()]} />,
+      <DocumentLinesExpansion isLoading={false}
+        coverage="ready" showAssignment showDelivered lines={[acc()]} />,
     );
     expect(screen.getByText(/8 orders/)).toBeTruthy();
     expect(screen.getByText(/9 deliveries/)).toBeTruthy();
@@ -433,7 +448,8 @@ describe("Accessory lines collapse their per-order list", () => {
 
   it("points at where the real trail lives", () => {
     render(
-      <DocumentLinesExpansion isLoading={false} showAssignment showDelivered lines={[acc()]} />,
+      <DocumentLinesExpansion isLoading={false}
+        coverage="ready" showAssignment showDelivered lines={[acc()]} />,
     );
     expect(screen.getByText(/see Stock Movement/)).toBeTruthy();
   });
@@ -442,6 +458,7 @@ describe("Accessory lines collapse their per-order list", () => {
     render(
       <DocumentLinesExpansion
         isLoading={false}
+        coverage="ready"
         showAssignment
         showDelivered
         lines={[acc({ assignedSos: eightOrders.slice(0, 1), deliveredDos: nineDos.slice(0, 1) })]}
@@ -456,6 +473,7 @@ describe("Accessory lines collapse their per-order list", () => {
     render(
       <DocumentLinesExpansion
         isLoading={false}
+        coverage="ready"
         showAssignment
         showDelivered
         lines={[line({ itemGroup: "mattress", assignedSos: eightOrders.slice(0, 2), deliveredDos: nineDos.slice(0, 2) })]}
@@ -467,7 +485,8 @@ describe("Accessory lines collapse their per-order list", () => {
 
   it("matches the group case-insensitively", () => {
     render(
-      <DocumentLinesExpansion isLoading={false} showAssignment showDelivered lines={[acc({ itemGroup: "ACCESSORY" })]} />,
+      <DocumentLinesExpansion isLoading={false}
+        coverage="ready" showAssignment showDelivered lines={[acc({ itemGroup: "ACCESSORY" })]} />,
     );
     expect(screen.getByText(/8 orders/)).toBeTruthy();
   });
@@ -476,6 +495,7 @@ describe("Accessory lines collapse their per-order list", () => {
     render(
       <DocumentLinesExpansion
         isLoading={false}
+        coverage="ready"
         showAssignment
         showDelivered
         lines={[acc({ assignedSos: [], deliveredDos: [] })]}
@@ -485,7 +505,8 @@ describe("Accessory lines collapse their per-order list", () => {
   });
 
   it("collapses on an assignment-only view too (no Delivered column)", () => {
-    render(<DocumentLinesExpansion isLoading={false} showAssignment lines={[acc()]} />);
+    render(<DocumentLinesExpansion isLoading={false}
+        coverage="ready" showAssignment lines={[acc()]} />);
     expect(screen.getByText(/8 orders/)).toBeTruthy();
     expect(screen.queryByText("2990-SO-2606-020")).toBeNull();
   });

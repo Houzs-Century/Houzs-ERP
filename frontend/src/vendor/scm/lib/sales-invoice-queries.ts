@@ -8,23 +8,23 @@
 //     hard-block live inside authedFetch (mirrors the source).
 //   - serviceNotify (the non-React error toast bridge) maps to the vendored
 //     dialog-service serviceNotify (used by the status-update onError).
-//   - useMfgDeliveryOrderDetail + useDeliveryOrderPayments are NOT re-defined
-//     here: the New-SI prefill imports them, but they already live in the
-//     vendored delivery-order-queries slice — re-exported below so the page's
-//     single import site keeps working.
+//   - useMfgDeliveryOrderDetail is NOT re-defined here: the New-SI prefill
+//     imports it, but it already lives in the vendored delivery-order-queries
+//     slice — re-exported below so the page's single import site keeps working.
 //   - DoRemainingLine + the invoiceable-line picker are SI-side here; the DR
 //     slice re-exports the type from here to stay a single source of truth.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
+import { siListParams } from './si-list-export';
 import { writeFailed, writeFailedAs } from './mutation-error';
 import { idempotentInit } from '../../../lib/idempotency';
 import { serviceNotify } from './dialog-service';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
 
-// Re-export the DO-side prefill hooks the New-SI page pulls from this module in
-// the source (they live in the vendored DO slice — single source of truth).
-export { useMfgDeliveryOrderDetail, useDeliveryOrderPayments } from './delivery-order-queries';
+// Re-export the DO-side prefill hook the New-SI page pulls from this module in
+// the source (it lives in the vendored DO slice — single source of truth).
+export { useMfgDeliveryOrderDetail } from './delivery-order-queries';
 
 /* ── Sales Invoice ───────────────────────────────────────────────────── */
 export const useSalesInvoices = (status?: string) =>
@@ -44,16 +44,15 @@ export const useSalesInvoices = (status?: string) =>
 // (UPPERCASE) — the caller maps its filter-pill bucket to a DB status first and
 // passes undefined for the multi-status buckets the single-status filter can't
 // express (sent/partial/paid), so those show all rows still counted.
-export function useSalesInvoicesPaged(params: { page: number; pageSize: number; status?: string; q?: string; sort?: string }) {
-  const { page, pageSize, status, q, sort } = params;
-  const usp = new URLSearchParams();
+export function useSalesInvoicesPaged(params: { page: number; pageSize: number; status?: string; q?: string; sort?: string; debtorNames?: string[]; currencies?: string[] }) {
+  const { page, pageSize, status, q, sort, debtorNames, currencies } = params;
+  // The filter half is shared with the two exports (si-list-export.ts), so an
+  // export can never be sent a different filter than the list it was pressed on.
+  const usp = siListParams({ status, q, sort, debtorNames, currencies });
   usp.set('page', String(page));
   usp.set('pageSize', String(pageSize));
-  if (status) usp.set('status', status);
-  if (q && q.trim()) usp.set('q', q.trim());
-  if (sort) usp.set('sort', sort);
   return useQuery({
-    queryKey: ['sales-invoices-paged', page, pageSize, status ?? '', q ?? '', sort ?? ''],
+    queryKey: ['sales-invoices-paged', page, pageSize, status ?? '', q ?? '', sort ?? '', JSON.stringify(debtorNames ?? []), JSON.stringify(currencies ?? [])],
     queryFn: ({ signal }) => authedFetch<{ salesInvoices: any[]; total: number; page: number; pageSize: number; statusCounts: { all: number; sent: number; partial: number; paid: number; cancelled: number } }>(`/sales-invoices?${usp.toString()}`, { signal }),
     placeholderData: (prev: any) => prev,
     staleTime: 30_000,
@@ -149,6 +148,8 @@ export type DoRemainingLine = {
   description: string | null;
   description2: string | null;
   uom: string | null;
+  /** The DO line's per-line delivery date, carried into the SI. */
+  lineDeliveryDate: string | null;
   delivered: number;
   invoiced: number;
   returned: number;

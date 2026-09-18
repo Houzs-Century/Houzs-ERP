@@ -319,8 +319,8 @@ const KEEP = new Set([
   'scm.lorries', 'scm.lorry_components', 'scm.lorry_maintenance_plans', 'scm.threepl_companies',
   'scm.workshops', 'public.lorries',
   // Identity (public)
-  'public.users', 'public.roles', 'public.role_page_access', 'public.positions',
-  'public.position_page_access', 'public.departments', 'public.user_departments',
+  'public.users', 'public.roles', 'public.positions',
+  'public.departments', 'public.user_departments',
   'public.user_brands', 'public.sales_reps', 'public.sales_positions',
   'public.sales_commission_tiers', 'public.sales_rep_brands', 'public.sales_rep_commission_tiers',
   'public.project_brands', 'public.project_cost_rates', 'public.companies',

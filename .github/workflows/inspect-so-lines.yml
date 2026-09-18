@@ -1,0 +1,32 @@
+name: Inspect sales order lines (read-only)
+
+# Manual, read-only. Header status + dates and every line's Description 2,
+# colour, delivery date, delivery orders and purchase chain for the named orders.
+on:
+  workflow_dispatch:
+    inputs:
+      docs:
+        description: "Comma-separated SO numbers, e.g. HC-SO-012927,HC-SO-012046"
+        required: true
+        type: string
+
+concurrency:
+  group: inspect-so-lines-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/inspect-so-lines.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DOCS: ${{ inputs.docs }}
