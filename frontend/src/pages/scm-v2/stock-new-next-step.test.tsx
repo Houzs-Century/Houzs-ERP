@@ -151,12 +151,13 @@ describe('StockAdjustmentNew — the next step after Save', () => {
     </MemoryRouter>,
   );
 
+  // Line-by-line (owner 2026-09-18): no Increase/Decrease toggle — a positive
+  // qty IS an increase, a negative qty a decrease. Type a signed number.
   const fillAndSave = (qty: string) => {
     fireEvent.change(select(/^Warehouse \*/), { target: { value: 'w1' } });
     fireEvent.change(screen.getByPlaceholderText('Type or pick a SKU code…'), { target: { value: 'CH-1' } });
-    fireEvent.click(screen.getByRole('button', { name: /Increase/ }));
-    fireEvent.change(screen.getByLabelText(/Qty \*/), { target: { value: qty } });
-    fireEvent.change(select(/Reason \*/), { target: { value: 'FOUND' } });
+    fireEvent.change(document.querySelector('tbody input[type="number"]') as HTMLInputElement, { target: { value: qty } });
+    fireEvent.change(screen.getByLabelText(/Reason for/) as HTMLSelectElement, { target: { value: 'FOUND' } });
     fireEvent.click(screen.getByRole('button', { name: /Save Adjustment/ }));
   };
 
@@ -169,7 +170,7 @@ describe('StockAdjustmentNew — the next step after Save', () => {
 
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(select(/^Warehouse \*/).value).toBe('');
-    expect(select(/Reason \*/).value).toBe('');
+    expect((screen.getByLabelText(/Reason for/) as HTMLSelectElement).value).toBe('');
 
     fillAndSave('5');
     await screen.findByRole('dialog');
