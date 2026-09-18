@@ -14,8 +14,8 @@
 // ----------------------------------------------------------------------------
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
-import { ArrowRight, History, X, Ban, Printer } from 'lucide-react';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { ArrowRight, History, X, Ban, Printer, Pencil, Save } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { SkeletonDetailPage } from '../../vendor/scm/components/Skeleton';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
@@ -24,9 +24,13 @@ import { StatusPill } from '../../vendor/scm/components/StatusPill';
 import { fmtDate, fmtDateTime, fmtQty } from '@2990s/shared';
 import { useWarehouses } from '../../vendor/scm/lib/inventory-queries';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
+import { useInventoryBuckets } from '../../vendor/scm/lib/stock-queries';
+import { useMfgProducts } from '../../vendor/scm/lib/mfg-products-queries';
+import { variantKeyLabel } from '../../vendor/scm/lib/variant-key-label';
 import {
   useStockTransferDetail,
   useCancelStockTransfer,
+  useUpdateStockTransferNotes,
   type StockTransferItemInput,
   type StockTransferStatus,
 } from '../../vendor/scm/lib/stock-queries';
@@ -41,13 +45,141 @@ import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
-type LineDraft = StockTransferItemInput & { _key: string };
+type LineDraft = StockTransferItemInput & { _key: string; id: string };
 
 const newKey = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+// Sentinel for "no bucket picked yet" — distinct from '' (a real, pickable
+// unclassified bucket). Same contract as StockTransferNew's TransferLineRow.
+const UNPICKED = '__UNPICKED__';
+const humanizeVariantKey = (k: string): string => variantKeyLabel(k, '(unclassified)');
+
+// One editable line: owns its own inventory-bucket query (at the transfer's
+// fixed From warehouse) so it can show live "available: N" and refuse to let
+// qty exceed it — same building blocks as StockTransferNew's TransferLineRow,
+// trimmed (no add/remove line — this edits the existing lines, it does not
+// resize the transfer). `onAvail` reports this row's picked-bucket qty up to
+// the parent so the Save button can be disabled while any row is overdrawn.
+function EditableTransferLineRow({
+  line, fromWarehouseId, skus, onPickCode, setLine, onAvail,
+}: {
+  line: LineDraft;
+  fromWarehouseId: string;
+  skus: Array<{ id: string | number; code: string; name: string }>;
+  onPickCode: (key: string, code: string) => void;
+  setLine: (key: string, patch: Partial<LineDraft>) => void;
+  onAvail: (key: string, avail: number | undefined) => void;
+}) {
+  const bucketsQ = useInventoryBuckets(line.itemCode || null, fromWarehouseId || null);
+  const variantBuckets = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const b of (bucketsQ.data ?? [])) {
+      m.set(b.variant_key, (m.get(b.variant_key) ?? 0) + b.qty);
+    }
+    return [...m.entries()]
+      .map(([variantKey, qty]) => ({ variantKey, qty }))
+      .sort((a, b) => b.qty - a.qty);
+  }, [bucketsQ.data]);
+
+  const avail = line.variantKey === undefined
+    ? undefined
+    : variantBuckets.find((v) => v.variantKey === line.variantKey)?.qty;
+  // Availability here already accounts for THIS transfer's original qty at
+  // this same bucket (the backend adds it back before comparing) only when
+  // the SKU/variant is unchanged — if either changed, `avail` is simply
+  // today's open stock at the new bucket, which is what the backend checks
+  // too in that case. Either way this label and the server's 409 agree.
+  const isOverdrawn = avail != null && line.qty > avail;
+  const ready = Boolean(line.itemCode && fromWarehouseId);
+
+  useEffect(() => { onAvail(line._key, avail); }, [line._key, avail, onAvail]);
+
+  return (
+    <tr>
+      <td>
+        <input
+          type="text"
+          list={`xfer-edit-skus-${line._key}`}
+          value={line.itemCode}
+          onChange={(e) => onPickCode(line._key, e.target.value)}
+          placeholder="Type code…"
+          className={styles.fieldInput}
+          style={{ fontFamily: 'var(--font-mono)' }}
+        />
+        <datalist id={`xfer-edit-skus-${line._key}`}>
+          {sortByText(skus).map((p) => (
+            <option key={p.id} value={p.code}>{p.name}</option>
+          ))}
+        </datalist>
+      </td>
+      <td>{line.productName || <span className={styles.muted}>—</span>}</td>
+      <td>
+        <select
+          value={line.variantKey === undefined ? UNPICKED : line.variantKey}
+          onChange={(e) => setLine(line._key, {
+            variantKey: e.target.value === UNPICKED ? undefined : e.target.value,
+          })}
+          className={styles.fieldInput}
+          disabled={!ready}
+          style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-12)' }}
+        >
+          <option value={UNPICKED} disabled>
+            {!fromWarehouseId ? 'Pick From warehouse first'
+              : !line.itemCode ? 'Pick SKU first'
+              : bucketsQ.isLoading ? 'Loading…'
+              : variantBuckets.length === 0 ? 'No stock at source'
+              : 'Pick variant / bucket…'}
+          </option>
+          {variantBuckets.map((v) => (
+            <option key={v.variantKey || '__plain__'} value={v.variantKey}>
+              {humanizeVariantKey(v.variantKey)} — {v.qty.toLocaleString('en-MY')} avail
+            </option>
+          ))}
+        </select>
+      </td>
+      <td className={styles.tableRight}
+          style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-13)' }}>
+        {!ready ? <span className={styles.muted}>—</span>
+          : bucketsQ.isLoading ? <span className={styles.muted}>…</span>
+          : avail == null ? <span className={styles.muted}>—</span>
+          : <span style={{ color: avail > 0 ? 'var(--c-ink)' : 'var(--fg-muted)' }}>
+              {avail.toLocaleString('en-MY')}
+            </span>}
+      </td>
+      <td className={styles.tableRight}>
+        <input
+          type="number"
+          min={1}
+          step={1}
+          value={line.qty}
+          onChange={(e) => setLine(line._key, {
+            qty: Math.max(0, Math.floor(Number(e.target.value) || 0)),
+          })}
+          className={styles.fieldInput}
+          style={{
+            textAlign: 'right',
+            fontFamily: 'var(--font-mono)',
+            color: isOverdrawn ? 'var(--c-festive-b, #B8331F)' : 'var(--c-ink)',
+          }}
+        />
+      </td>
+      <td>
+        <input
+          type="text"
+          value={line.notes ?? ''}
+          onChange={(e) => setLine(line._key, { notes: e.target.value })}
+          placeholder="(optional) — shown as Description 2"
+          className={styles.fieldInput}
+        />
+      </td>
+    </tr>
+  );
+}
 
 export const StockTransferDetail = () => {
   const { id }   = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
 
   /* History drawer. Stable close handler so the memoized panel is not
      re-created on every parent render. */
@@ -56,11 +188,17 @@ export const StockTransferDetail = () => {
 
   const detail = useStockTransferDetail(id ?? null);
   const cancel = useCancelStockTransfer();
+  const updateNotes = useUpdateStockTransferNotes();
 
   const askConfirm = useConfirm();
   const notify = useNotify();
 
   const warehouses = useWarehouses();
+  const allSkus = useMfgProducts();
+  const skuByCode = useMemo(
+    () => new Map((allSkus.data ?? []).map((p) => [p.code, p])),
+    [allSkus.data],
+  );
 
   // ── Read-only state mirrored from server (no edits post-0078) ────────
   const [fromWarehouseId, setFromWarehouseId] = useState('');
@@ -69,8 +207,19 @@ export const StockTransferDetail = () => {
   const [notes,           setNotes]           = useState('');
   const [lines,           setLines]           = useState<LineDraft[]>([]);
 
-  // Hydrate when detail loads / refreshes.
-  useEffect(() => {
+  // Header Notes edits at any status. Line SKU/variant/qty/notes edit only
+  // while POSTED (backend refuses items on a CANCELLED transfer, since there
+  // are no movements left to reverse cleanly).
+  const [editing, setEditing] = useState(false);
+  // Per-line "available at source" reported up by EditableTransferLineRow —
+  // Save is blocked while any row would go negative (owner: never let this
+  // push a warehouse's stock below zero).
+  const [availByLine, setAvailByLine] = useState<Record<string, number | undefined>>({});
+  const onAvail = useCallback((key: string, avail: number | undefined) => {
+    setAvailByLine((m) => (m[key] === avail ? m : { ...m, [key]: avail }));
+  }, []);
+
+  const hydrateFromServer = useCallback(() => {
     if (!detail.data) return;
     const t = detail.data.transfer;
     setFromWarehouseId(t.from_warehouse_id);
@@ -79,15 +228,74 @@ export const StockTransferDetail = () => {
     setNotes(t.notes ?? '');
     setLines(detail.data.lines.map((l) => ({
       _key:        newKey(),
-      itemCode: l.item_code,
+      id:          l.id,
+      itemCode:    l.item_code,
       productName: l.product_name ?? '',
+      variantKey:  l.variant_key ?? '',
       qty:         l.qty,
       notes:       l.notes ?? '',
     })));
+    setAvailByLine({});
   }, [detail.data]);
+
+  // Hydrate when detail loads / refreshes.
+  useEffect(() => { hydrateFromServer(); }, [hydrateFromServer]);
 
   const status: StockTransferStatus | undefined = detail.data?.transfer.status;
   const isPosted = status === 'POSTED';
+  const itemsEditable = editing && isPosted;
+
+  /* The list's row Edit action navigates here with ?edit=1 — same contract as
+     ?print=1 above — so a click from the main table lands straight in the
+     edit state instead of a second click once the detail loads. */
+  useEffect(() => {
+    if (detail.data && searchParams.get('edit') === '1') setEditing(true);
+  }, [detail.data, searchParams]);
+
+  const setLine = (key: string, patch: Partial<LineDraft>) => {
+    setLines((cur) => cur.map((l) => (l._key === key ? { ...l, ...patch } : l)));
+  };
+  const onPickCode = (key: string, code: string) => {
+    const sku = skuByCode.get(code);
+    // A new SKU invalidates any previously picked variant bucket — same rule
+    // as StockTransferNew, and for the same reason (the old bucket may not
+    // even exist for the new SKU).
+    setLine(key, { itemCode: code, productName: sku?.name ?? '', variantKey: undefined });
+  };
+
+  // A changed line needs its bucket re-picked (variantKey !== undefined);
+  // qty must be positive; and no row may exceed what EditableTransferLineRow
+  // reported as available. Only gates Save while items are actually editable.
+  const itemsInvalid = itemsEditable && lines.some((l) => {
+    if (!l.itemCode.trim() || l.qty <= 0 || l.variantKey === undefined) return true;
+    const avail = availByLine[l._key];
+    return avail != null && l.qty > avail;
+  });
+
+  const onSave = () => {
+    if (!id) return;
+    updateNotes.mutate({
+      id,
+      notes,
+      ...(itemsEditable ? {
+        items: lines.map((l) => ({
+          itemCode: l.itemCode, productName: l.productName,
+          variantKey: l.variantKey, qty: l.qty, notes: l.notes,
+        })),
+      } : {}),
+    }, {
+      onSuccess: () => { setEditing(false); void detail.refetch(); },
+      // The hook's own onError (writeFailed) already toasts the server's
+      // message — including, for insufficient_stock, exactly which SKU/
+      // bucket and by how much (backend builds that sentence per-document).
+      // No second toast needed here.
+    });
+  };
+
+  const onDiscardEdit = () => {
+    setEditing(false);
+    hydrateFromServer();
+  };
 
   /* Print. This document had no print handler at all until now, on any
      surface. (A fabricated owner quote was attached here and has been removed —
@@ -157,7 +365,18 @@ export const StockTransferDetail = () => {
         description={`Created ${fmtDateTime(t.created_at)}${t.posted_at ? ` · Posted ${fmtDateTime(t.posted_at)}` : ''}${t.cancelled_at ? ` · Cancelled ${fmtDateTime(t.cancelled_at)}` : ''}`}
         actions={
           <>
-            {status && <StatusPill docType="stockTransfer" status={status} />}
+            {status && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <StatusPill docType="stockTransfer" status={status} />
+                {/* Rightmost-of-status edit entry (owner request) — same
+                    edit state as the action-bar Edit button below. */}
+                {!editing && (
+                  <Button variant="ghost" size="sm" onClick={() => setEditing(true)} title="Edit">
+                    <Pencil size={13} strokeWidth={1.75} />
+                  </Button>
+                )}
+              </div>
+            )}
             <div className={styles.actions}>
               {/* History drawer toggle. Same header seat on every detail page,
                   and unconditional: a cancelled transfer is exactly when
@@ -170,7 +389,22 @@ export const StockTransferDetail = () => {
               <Button variant="ghost" size="md" onClick={print.openPreview}>
                 <Printer {...ICON} /> Print PDF
               </Button>
-              {isPosted && (
+              {!editing ? (
+                <Button variant="ghost" size="md" onClick={() => setEditing(true)}>
+                  <Pencil {...ICON} /> Edit
+                </Button>
+              ) : (
+                <>
+                  <Button variant="ghost" size="md" onClick={onDiscardEdit} disabled={updateNotes.isPending}>
+                    <X {...ICON} /> Discard
+                  </Button>
+                  <Button variant="primary" size="md" onClick={onSave} disabled={updateNotes.isPending || itemsInvalid}
+                    title={itemsInvalid ? 'Fix the highlighted line(s) first — a bucket must be picked and qty cannot exceed what is available' : undefined}>
+                    <Save {...ICON} /> {updateNotes.isPending ? 'Saving…' : 'Save'}
+                  </Button>
+                </>
+              )}
+              {isPosted && !editing && (
                 <Button variant="ghost" size="md" onClick={onCancel} disabled={cancel.isPending}>
                   <Ban {...ICON} /> {cancel.isPending ? 'Cancelling…' : 'Cancel'}
                 </Button>
@@ -223,48 +457,86 @@ export const StockTransferDetail = () => {
 
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Notes</span>
-              <input type="text" value={notes} className={styles.fieldInput} disabled />
+              <input
+                type="text"
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                className={styles.fieldInput}
+                disabled={!editing}
+              />
             </label>
           </div>
         </div>
       </section>
 
-      {/* ── Lines card (read-only post-0078) ────────────────────────── */}
+      {/* ── Lines card ───────────────────────────────────────────────
+          Read-only post-0078 UNLESS Edit is on and the transfer is POSTED
+          (itemsEditable) — then SKU/variant/qty/notes open up, each row
+          showing live on-hand at the source warehouse so a qty that would
+          take it negative is caught before Save, not after. */}
       <section className={styles.card}>
         <div className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Items</h2>
         </div>
         <div className={styles.cardBody}>
+          {editing && !isPosted && (
+            <p className={styles.muted} style={{ marginBottom: 8 }}>
+              This transfer is {status} — only Notes can be changed here. SKU/qty edits need a POSTED transfer.
+            </p>
+          )}
           <table className={styles.table}>
             <thead>
               <tr>
-                <th style={{ width: '20%' }}>SKU</th>
+                <th style={{ width: '18%' }}>SKU</th>
                 <th>Description</th>
-                <th>Description 2</th>
+                {itemsEditable && <th style={{ width: '20%' }}>Variant / bucket</th>}
+                {itemsEditable && <th style={{ width: 90, textAlign: 'right' }}>Available</th>}
                 <th style={{ width: 110, textAlign: 'right' }}>Qty</th>
+                <th>Description 2</th>
               </tr>
             </thead>
             <tbody>
               {lines.length === 0 && (
-                <tr><td colSpan={4} className={styles.emptyRow}>No lines.</td></tr>
+                <tr><td colSpan={itemsEditable ? 6 : 4} className={styles.emptyRow}>No lines.</td></tr>
               )}
-              {lines.map((ln) => (
-                <tr key={ln._key}>
-                  <td><span className={styles.codeCell}>{ln.itemCode}</span></td>
-                  <td>{ln.productName || <span className={styles.muted}>—</span>}</td>
-                  {/* "Description 2": the Remarks typed on this line at creation
-                      (StockTransferNew's per-line Remarks column). Lines are
-                      read-only post-0078, so this is set once, at Save. */}
-                  <td>
-                    {ln.notes?.trim()
-                      ? <span>{ln.notes}</span>
-                      : <span className={styles.muted}>—</span>}
-                  </td>
-                  <td className={styles.tableRight} style={{ fontFamily: 'var(--font-mono)' }}>
-                    {fmtQty(ln.qty)}
-                  </td>
-                </tr>
-              ))}
+              {itemsEditable
+                ? lines.map((ln) => (
+                    <EditableTransferLineRow
+                      key={ln._key}
+                      line={ln}
+                      fromWarehouseId={fromWarehouseId}
+                      skus={allSkus.data ?? []}
+                      onPickCode={onPickCode}
+                      setLine={setLine}
+                      onAvail={onAvail}
+                    />
+                  ))
+                : lines.map((ln) => (
+                    <tr key={ln._key}>
+                      <td><span className={styles.codeCell}>{ln.itemCode}</span></td>
+                      <td>{ln.productName || <span className={styles.muted}>—</span>}</td>
+                      <td className={styles.tableRight} style={{ fontFamily: 'var(--font-mono)' }}>
+                        {fmtQty(ln.qty)}
+                      </td>
+                      {/* "Description 2": the Remarks typed on this line at
+                          creation (StockTransferNew's per-line Remarks
+                          column) — editable text-only while `editing`, on any
+                          status, via the same PATCH /:id that touches the
+                          header notes. */}
+                      <td>
+                        {editing ? (
+                          <input
+                            type="text"
+                            value={ln.notes ?? ''}
+                            onChange={(e) => setLine(ln._key, { notes: e.target.value })}
+                            className={styles.fieldInput}
+                          />
+                        ) : ln.notes?.trim()
+                          ? <span>{ln.notes}</span>
+                          : <span className={styles.muted}>—</span>}
+                      </td>
+                    </tr>
+                  ))}
             </tbody>
           </table>
         </div>

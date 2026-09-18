@@ -12,6 +12,7 @@ import {
   LayoutGrid,
   Table as TableIcon,
   X as XIcon,
+  Pencil,
 } from "lucide-react";
 import { PageHeader } from "../../components/Layout";
 import { StatCard } from "../../components/StatCard";
@@ -210,6 +211,10 @@ export function StockTransfersListV2() {
      the PDF from a LIST row is not possible here anyway: the row carries the
      warehouse pair and a line COUNT, never the lines. */
   const goPrint = (r: StockTransferRow) => navigate(`/scm/stock-transfers/${r.id}?print=1`);
+  // Same ?edit=1 contract as ?print=1: the detail page opens straight into the
+  // notes-edit state (owner: an Edit entry reachable from the main list, not
+  // just from inside the detail page).
+  const goEdit = (r: StockTransferRow) => navigate(`/scm/stock-transfers/${r.id}?edit=1`);
   const doCancel = async (r: StockTransferRow) => {
     if (await askConfirm({
       title: `Cancel transfer ${r.transfer_no}?`,
@@ -295,6 +300,35 @@ export function StockTransfersListV2() {
         const st = statusFor(r.status);
         return <Badge tone={st.tone} size="xs">{st.label}</Badge>;
       },
+    },
+    {
+      key: "notes",
+      label: "Notes",
+      getValue: (r) => r.notes ?? "",
+      render: (r) => (
+        <span className="truncate text-[12.5px] text-ink-secondary" title={r.notes ?? undefined}>
+          {r.notes || "—"}
+        </span>
+      ),
+    },
+    {
+      key: "edit",
+      label: "",
+      width: "48px",
+      align: "right",
+      disableSort: true,
+      getValue: () => "",
+      render: (r) => (
+        <button
+          type="button"
+          aria-label={`Edit ${r.transfer_no}`}
+          title="Edit notes"
+          className="inline-flex items-center justify-center rounded p-1 text-ink-muted hover:bg-surface-hover hover:text-ink"
+          onClick={(e) => { e.stopPropagation(); goEdit(r); }}
+        >
+          <Pencil size={13} strokeWidth={1.75} />
+        </button>
+      ),
     },
     // Re-added from the legacy StockTransfers list (data already on the row).
     // Default-hidden so the chooser exposes it without changing the default view.
