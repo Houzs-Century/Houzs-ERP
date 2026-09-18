@@ -220,6 +220,7 @@ export type StockTransferLine = {
   stock_transfer_id: string;
   item_code: string;
   product_name: string | null;
+  variant_key: string | null;
   qty: number;
   notes: string | null;
   created_at: string;
@@ -316,19 +317,19 @@ export function useCreateStockTransfer() {
   });
 }
 
-export type UpdateStockTransferInput = {
+// Header notes (any status) and/or, POSTED only, a FULL replace of the line
+// list (SKU/variant/qty/notes) — matching what PATCH /stock-transfers/:id
+// accepts. The warehouse pair is never sent; it is not editable.
+export type UpdateStockTransferNotesInput = {
   id: string;
-  fromWarehouseId?: string;
-  toWarehouseId?: string;
-  transferDate?: string;
   notes?: string | null;
   items?: StockTransferItemInput[];
 };
 
-export function useUpdateStockTransfer() {
+export function useUpdateStockTransferNotes() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, ...body }: UpdateStockTransferInput) =>
+    mutationFn: ({ id, ...body }: UpdateStockTransferNotesInput) =>
       authedFetch<{ transfer: StockTransferRow }>(`/stock-transfers/${id}`, {
         method: 'PATCH', body: JSON.stringify(body),
       }),

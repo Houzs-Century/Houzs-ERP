@@ -14,6 +14,13 @@
 // Endpoints:
 //   GET   /stock-transfers                — list
 //   GET   /stock-transfers/:id            — header + lines + warehouse names
+//   PATCH /stock-transfers/:id            — edit header notes (any status)
+//                                            and/or, POSTED only, a FULL line
+//                                            replace: reverses the existing
+//                                            movements, checks the new lines
+//                                            against on-hand stock, then
+//                                            re-applies. Warehouses are NOT
+//                                            editable (only items/qty/notes).
 //   POST  /stock-transfers                — create + post (writes movements)
 //   PATCH /stock-transfers/:id/post       — idempotent no-op (legacy)
 //   PATCH /stock-transfers/:id/cancel     — POSTED → CANCELLED + reverses the
@@ -144,6 +151,234 @@ stockTransfers.get('/:id', async (c) => {
   if (!headerRes.data) return c.json({ error: 'not_found' }, 404);
 
   return c.json({ transfer: headerRes.data, lines: linesRes.data ?? [] });
+});
+
+// ── Edit ──────────────────────────────────────────────────────────────
+// Two independent things a body can carry:
+//   notes  — header notes, any status, trivial column write.
+//   items  — a FULL replace of the line list (itemCode/variantKey/qty/notes
+//            per line), POSTED only. This is NOT a notes patch: it reverses
+//            every movement this transfer wrote (reverseMovements, the same
+//            helper Cancel uses), replaces the lines, then re-applies fresh
+//            movements via writeTransferMovements — i.e. un-post + re-post
+//            under the same document id/number. Availability is checked
+//            BEFORE anything is written: each new (item, variant) bucket's
+//            requested qty is compared against what would be open at the
+//            source warehouse AFTER the reversal (today's open qty + however
+//            much of that same bucket this transfer's OLD lines already took
+//            — reversing returns exactly that). A bucket that would go
+//            negative 409s and nothing is touched.
+stockTransfers.patch('/:id', async (c) => {
+  const db = scmDb(c);
+  const user = c.get('user');
+  const id = c.req.param('id');
+  let body: Record<string, unknown>;
+  try { body = (await c.req.json()) as Record<string, unknown>; }
+  catch { return c.json({ error: 'invalid_json' }, 400); }
+
+  const hasHeaderNotes = Object.hasOwn(body, 'notes');
+  const itemsInput = body.items as Array<Record<string, unknown>> | undefined;
+  if (!hasHeaderNotes && !itemsInput) return c.json({ error: 'nothing_to_update' }, 400);
+
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+
+  const { data: beforeRow, error: beforeErr } = await db
+    .from('stock_transfers', companyIdScope(co.companyId))
+    .select('transfer_no, notes, status, from_warehouse_id, to_warehouse_id, company_id')
+    .eq('id', id)
+    .maybeSingle();
+  if (beforeErr) return c.json({ error: 'load_failed', reason: beforeErr.message }, 500);
+  if (!beforeRow) return c.json(NOT_THIS_COMPANY, 404);
+  const before = beforeRow as {
+    transfer_no: string; notes: string | null; status: string;
+    from_warehouse_id: string; to_warehouse_id: string; company_id: number | null;
+  };
+
+  if (itemsInput && before.status !== 'POSTED') {
+    return c.json({ error: 'not_posted', message: `Cannot edit items on a ${before.status} transfer.` }, 409);
+  }
+
+  // Validate + shape the new lines up front — every check below runs before
+  // any write, so a bad request never leaves a half-edited transfer.
+  let newLineRows: Array<{ item_code: string; product_name: string | null; variant_key: string; qty: number; notes: string | null }> = [];
+  if (itemsInput) {
+    if (itemsInput.length === 0) return c.json({ error: 'items_required' }, 400);
+    try {
+      newLineRows = itemsInput.map((it) => {
+        const qty = Math.max(0, Math.floor(Number(it.qty ?? 0)));
+        if (qty <= 0) throw new Error('qty must be > 0');
+        if (!it.itemCode) throw new Error('itemCode required per line');
+        return {
+          item_code: String(it.itemCode),
+          product_name: (it.productName as string | undefined) ?? null,
+          variant_key: (it.variantKey as string | undefined) ?? '',
+          qty,
+          notes: (it.notes as string | undefined) ?? null,
+        };
+      });
+    } catch (e) {
+      return c.json({ error: 'invalid_line', message: e instanceof Error ? e.message : String(e) }, 400);
+    }
+  }
+
+  const pf = await assertAuditWritable(db.unscoped(
+    'library hand-off: the audit sink takes the raw client and is told the company explicitly as companyId',
+  ), { entityType: 'STOCK_TRANSFER', entityId: id, action: 'UPDATE', companyId: before.company_id });
+  if (!pf.ok) return c.json(auditUnavailableBody(), 409);
+
+  let oldLineRows: Array<{ id: string; item_code: string; variant_key: string | null; qty: number }> = [];
+  // Same (item_code, variant_key, qty) in the same order as before → nothing
+  // that moves stock actually changed (only notes/productName did, or
+  // nothing at all). Computed below, once oldLineRows is loaded.
+  let sameBuckets = false;
+  if (itemsInput) {
+    const { data: oldLines, error: oldLinesErr } = await db
+      .from('stock_transfer_lines', CENTRALISED(
+        'the header read above already proved this transfer is this company\'s — its own lines are that document\'s by construction',
+      ))
+      .select('id, item_code, variant_key, qty')
+      .eq('stock_transfer_id', id)
+      .order('created_at');
+    // Not defensive: an error here silently reading as "no old lines" would
+    // make sameBuckets false-negative (a same-bucket edit misclassified as a
+    // real change) AND drop every old line's qty from the availability
+    // credit — a stock check that should say "8 available" would say "6",
+    // wrongly refusing (or worse, on a different shape, wrongly allowing) the
+    // edit. Fail loud instead of guessing.
+    if (oldLinesErr) return c.json({ error: 'load_failed', reason: oldLinesErr.message }, 500);
+    oldLineRows = (oldLines ?? []) as typeof oldLineRows;
+
+    sameBuckets = oldLineRows.length === newLineRows.length && oldLineRows.every((o, i) =>
+      o.item_code === newLineRows[i]!.item_code
+      && (o.variant_key ?? '') === newLineRows[i]!.variant_key
+      && Number(o.qty) === newLineRows[i]!.qty);
+
+    if (!sameBuckets) {
+      // Sum qty per (item_code, variant_key) bucket, old vs new — reversal
+      // restores exactly the old-bucket amount to the source warehouse.
+      const bucketKey = (itemCode: string, variantKey: string | null) => `${itemCode}::${variantKey ?? ''}`;
+      const oldByBucket = new Map<string, number>();
+      for (const l of oldLineRows) {
+        const k = bucketKey(l.item_code, l.variant_key);
+        oldByBucket.set(k, (oldByBucket.get(k) ?? 0) + Number(l.qty));
+      }
+      const newByBucket = new Map<string, number>();
+      for (const l of newLineRows) {
+        const k = bucketKey(l.item_code, l.variant_key);
+        newByBucket.set(k, (newByBucket.get(k) ?? 0) + l.qty);
+      }
+
+      const shortages: Array<{ itemCode: string; variantKey: string; requested: number; available: number }> = [];
+      for (const [k, requested] of newByBucket.entries()) {
+        const [itemCode, variantKey] = k.split('::');
+        const { data: lots, error: lotsErr } = await db
+          .from('v_inventory_lots_open', companyScope(c))
+          .select('qty_remaining')
+          .eq('warehouse_id', before.from_warehouse_id)
+          .eq('item_code', itemCode)
+          .eq('variant_key', variantKey);
+        if (lotsErr) return c.json({ error: 'stock_check_failed', reason: lotsErr.message }, 500);
+        const currentOpen = (lots ?? []).reduce((s: number, r: { qty_remaining: number | null }) => s + Number(r.qty_remaining ?? 0), 0);
+        const available = currentOpen + (oldByBucket.get(k) ?? 0);
+        if (requested > available) shortages.push({ itemCode: itemCode!, variantKey: variantKey ?? '', requested, available });
+      }
+      if (shortages.length) {
+        // A per-document, per-SKU sentence — the generic curated 409 fallback
+        // ("refresh and check") gives the operator nothing to act on; this names
+        // exactly which line and by how much (humanApiError prefers `message`).
+        const message = shortages
+          .map((s) => `${s.itemCode}${s.variantKey ? ` (${s.variantKey})` : ''}: requested ${s.requested}, only ${s.available} available at the source warehouse`)
+          .join('; ');
+        return c.json({ error: 'insufficient_stock', message, shortages }, 409);
+      }
+    }
+  }
+
+  if (hasHeaderNotes) {
+    const { error } = await db
+      .from('stock_transfers', companyIdScope(co.companyId))
+      .update({ notes: (body.notes as string | null) ?? null })
+      .eq('id', id);
+    if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
+  }
+
+  let movementErrors: string[] = [];
+  if (itemsInput && sameBuckets) {
+    // Nothing that moves stock changed — update each line's notes/display
+    // name IN PLACE (by id, same order), never touching movements. This is
+    // the common case for "fix a typo in the line remark" and must stay
+    // cheap and riskless, not run the reverse+reapply dance for no reason.
+    for (let i = 0; i < oldLineRows.length; i++) {
+      const { error } = await db
+        .from('stock_transfer_lines', CENTRALISED(
+          'the header read above already proved this transfer is this company\'s — updating its own line by id',
+        ))
+        .update({ product_name: newLineRows[i]!.product_name, notes: newLineRows[i]!.notes })
+        .eq('id', oldLineRows[i]!.id);
+      if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
+    }
+  } else if (itemsInput) {
+    // Un-post: reverse every movement this transfer wrote (same idempotent,
+    // bucket-net helper Cancel uses), then swap the lines and re-apply.
+    const rev = await reverseMovements(db.unscoped(
+      'library hand-off: reverseMovements resolves the rows to reverse from this document id, which the company-scoped read above already proved is ours',
+    ), 'STOCK_TRANSFER', id, user?.id ?? null);
+    if (rev.failed > 0) {
+      return c.json({ error: 'reversal_incomplete', reason: rev.reason ?? 'partial reversal', reversal: rev }, 500);
+    }
+
+    const { error: delErr } = await db
+      .from('stock_transfer_lines', CENTRALISED(
+        'the header read above already proved this transfer is this company\'s — replacing its own lines',
+      ))
+      .delete().eq('stock_transfer_id', id);
+    if (delErr) return c.json({ error: 'lines_replace_failed', reason: delErr.message }, 500);
+
+    const { error: insErr } = await db
+      .from('stock_transfer_lines', companyScope(c))
+      .insert(newLineRows.map((l) => ({ ...l, stock_transfer_id: id })));
+    if (insErr) return c.json({ error: 'lines_replace_failed', reason: insErr.message }, 500);
+
+    movementErrors = await writeTransferMovements(
+      db,
+      { id, transfer_no: before.transfer_no, from_warehouse_id: before.from_warehouse_id, to_warehouse_id: before.to_warehouse_id },
+      user?.id ?? '', before.company_id, c,
+    );
+  }
+
+  await recordEntityAudit(db.unscoped(
+    'library hand-off: the audit writer takes the raw client and is told the company explicitly as companyId',
+  ), {
+    entityType: 'STOCK_TRANSFER',
+    entityId: id,
+    entityDocNo: before.transfer_no,
+    action: 'UPDATE',
+    actor: c.get('houzsUser'),
+    companyId: before.company_id,
+    note: movementErrors.length ? `Item edit — movement re-apply INCOMPLETE: ${movementErrors.join('; ')}` : undefined,
+    fieldChanges: compactChanges([
+      ...(hasHeaderNotes ? [fieldChange('notes', before.notes, (body.notes as string | null) ?? null)] : []),
+      ...(itemsInput ? [
+        fieldChange('lineCount', oldLineRows.length, newLineRows.length),
+        fieldChange('totalQty', oldLineRows.reduce((s, l) => s + Number(l.qty), 0), newLineRows.reduce((s, l) => s + l.qty, 0)),
+      ] : []),
+    ]),
+  });
+
+  if (movementErrors.length) {
+    return c.json({ error: 'transfer_movements_failed', id, transferNo: before.transfer_no, movementErrors }, 422);
+  }
+
+  // The write above already committed — a failure here means only that this
+  // response can't confirm it, not that anything need be rolled back. Still
+  // reported rather than returning `{ transfer: undefined }`, which the
+  // frontend would otherwise read as a silent, unexplained empty transfer.
+  const { data: after, error: afterErr } = await db
+    .from('stock_transfers', companyIdScope(co.companyId))
+    .select(HEADER).eq('id', id).maybeSingle();
+  if (afterErr) return c.json({ error: 'load_failed', reason: afterErr.message }, 500);
+  return c.json({ transfer: after });
 });
 
 /* ── Movement writer (POST) ──────────────────────────────────────────
