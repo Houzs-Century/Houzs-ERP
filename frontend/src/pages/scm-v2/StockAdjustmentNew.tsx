@@ -37,6 +37,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Save, X, Plus, AlertTriangle, ChevronDown, Trash2 } from 'lucide-react';
 import { Button } from '@2990s/design-system';
+import { AddLineButton } from '../../vendor/scm/components/AddLineButton';
+import { useAddLineHotkey } from '../../vendor/scm/lib/useAddLineHotkey';
 import { activeOptions, ADJUSTMENT_REASONS, adjustmentIncreaseErrors, maintPickerValues } from '@2990s/shared';
 import { useWarehouses } from '../../vendor/scm/lib/inventory-queries';
 import { bucketKey, NO_BUCKET_PICKED } from '../../vendor/scm/lib/stock-adjustment-buckets';
@@ -574,6 +576,8 @@ const StockAdjustmentForm = ({ onStartNew }: { onStartNew: () => void }) => {
   }, []);
 
   const addLine = () => setLines((cur) => [...cur, blankLine()]);
+  // Insert adds a line — disabled once saved (form locked).
+  useAddLineHotkey(addLine, !saved);
 
   // Partial, not Record: a line that hasn't reported yet (just added, or its
   // effect hasn't fired) genuinely has no entry.
@@ -744,9 +748,7 @@ const StockAdjustmentForm = ({ onStartNew }: { onStartNew: () => void }) => {
       <section className={styles.card}>
         <div className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Items</h2>
-          <Button variant="ghost" size="sm" onClick={addLine}>
-            <Plus size={14} strokeWidth={1.75} /> Add Line Item
-          </Button>
+          <AddLineButton variant="ghost" onClick={addLine} />
         </div>
         <div className={styles.cardBody}>
           <p style={{ margin: '0 0 var(--space-3)', fontSize: 'var(--fs-13)', color: 'var(--fg-muted)' }}>
@@ -784,9 +786,7 @@ const StockAdjustmentForm = ({ onStartNew }: { onStartNew: () => void }) => {
           </table>
 
           <div className={styles.addLineRow}>
-            <Button variant="ghost" size="sm" onClick={addLine}>
-              <Plus size={14} strokeWidth={1.75} /> Add Line Item
-            </Button>
+            <AddLineButton variant="ghost" onClick={addLine} />
           </div>
         </div>
       </section>

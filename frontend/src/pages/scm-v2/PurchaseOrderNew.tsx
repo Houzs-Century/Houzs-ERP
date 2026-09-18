@@ -20,7 +20,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 // HOUZS VENDOR — Link lives on 'react-router-dom' in react-router v6 (the
 // version Houzs ships). Only the import specifier changed.
 import { Link, useNavigate } from 'react-router-dom';
-import { Plus, Save, Trash2, X, ArrowRightLeft } from 'lucide-react';
+import { Save, Trash2, X, ArrowRightLeft } from 'lucide-react';
+import { AddLineButton } from '../../vendor/scm/components/AddLineButton';
 import { Button } from '@2990s/design-system';
 import { formatPhone } from '@2990s/shared/phone';
 import {
@@ -1465,28 +1466,7 @@ export const PurchaseOrderNew = () => {
             );
           })}
 
-          <button
-            type="button"
-            onClick={addLine}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 6,
-              width: '100%',
-              padding: '12px 14px',
-              border: '1px dashed var(--c-orange)',
-              borderRadius: 'var(--radius-md)',
-              background: 'transparent',
-              color: 'var(--c-orange)',
-              fontFamily: 'var(--font-sans)',
-              fontSize: 'var(--fs-13)',
-              fontWeight: 600,
-              cursor: 'pointer',
-            }}
-          >
-            <Plus {...ICON} /> Add another item
-          </button>
+          <AddLineButton variant="block" onClick={addLine} />
         </div>
       </section>
 
