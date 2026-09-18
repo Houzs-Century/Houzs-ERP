@@ -14,7 +14,7 @@ import { mfgCategoryLabel, parseMfgCategory } from '../shared/product-categories
 
 export type ModelCategoryMove =
   | { ok: true; model: { id: string; model_code: string | null; name: string | null }; skuCodes: string[] }
-  | { ok: false; error: 'model_not_found' | 'model_category_update_failed' | 'sku_category_update_failed'; reason: string };
+  | { ok: false; error: 'model_not_found' | 'model_category_update_failed' | 'sku_category_update_failed' | 'target_category_taken'; reason: string };
 
 export async function moveModelCategory(
   supabase: SupabaseClient,
@@ -27,7 +27,31 @@ export async function moveModelCategory(
     .update({ category })
     .eq('id', modelId), companyId)
     .select('id, model_code, name');
-  if (modelErr) return { ok: false, error: 'model_category_update_failed', reason: modelErr.message };
+  if (modelErr) {
+    /* A separate model already holds this code in the target category — the
+       (company_id, model_code, category) unique index. The move cannot merge
+       two models into one, so name the clash in plain words the operator can
+       act on instead of letting the raw duplicate-key surface as a 500 "the
+       system hit a problem" (owner 2026-09-18: two "SERVICE X SL" models of the
+       same code, changing one to SERVICE hit the other). */
+    if ((modelErr as { code?: string }).code === '23505') {
+      const { data: self } = await scopeToCompanyId(supabase
+        .from('product_models')
+        .select('model_code')
+        .eq('id', modelId), companyId)
+        .maybeSingle();
+      const code = (self as { model_code?: string } | null)?.model_code ?? '';
+      const label = mfgCategoryLabel(category);
+      return {
+        ok: false,
+        error: 'target_category_taken',
+        reason: code
+          ? `A ${label} product with the code "${code}" already exists in this company. Change or remove it first, then move this one to ${label}.`
+          : `A ${label} product with this code already exists in this company. Change or remove it first, then move this one to ${label}.`,
+      };
+    }
+    return { ok: false, error: 'model_category_update_failed', reason: modelErr.message };
+  }
   const model = ((models ?? []) as Array<{ id: string; model_code: string | null; name: string | null }>)[0];
   if (!model) return { ok: false, error: 'model_not_found', reason: `Model ${modelId} is not in this company.` };
 
