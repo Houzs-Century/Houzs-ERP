@@ -38,7 +38,8 @@ import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { resolvePoSoCoveragePerSkuForPos, resolveDeliveredByCodeForPos, summarizeOrigins, type DeliveredDo } from './po-so-coverage';
 import { enqueueConvert, recordParentlessCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
 import { sourceGrnIdsForPi } from '../lib/convert-parent';
-import { refuseMigratedSources } from '../lib/migrated-chain';
+import { refuseMigratedSources, receiptMustMirrorAutoCount } from '../lib/migrated-chain';
+import { MIGRATED_RECEIPTS_NOT_INVOICED_IN_AUTOCOUNT } from '../lib/migrated-receipts-not-invoiced.generated';
 import { attachGrnLineFacts, withPoPriceSnapshot } from '../lib/pi-po-price'; import { loadOutstandingGrnLines } from '../lib/outstanding-grn-lines';
 import { refuseWithoutWriting } from '../lib/no-write-refusal';
 /* The create's refusal bodies and the two rules its exits follow (2026-08-19). */
@@ -309,10 +310,19 @@ async function migratedRefusalForGrnItems(
   }>;
   return {
     ok: true,
-    refusal: refuseMigratedSources(rows.map((r) => ({
-      docNo: r.grn?.grn_number ?? '(unknown receipt)',
-      migrated: r.grn?.migrated_no_stock === true,
-    }))),
+    refusal: refuseMigratedSources(rows.map((r) => {
+      const docNo = r.grn?.grn_number ?? '(unknown receipt)';
+      return {
+        docNo,
+        /* A migrated GRN AutoCount never invoiced is billed here like any other
+           (docs/bugs/0918); one AutoCount did invoice still mirrors. The list is
+           empty until the office measures, so this is INERT today. */
+        migrated: receiptMustMirrorAutoCount(
+          { docNo, migrated: r.grn?.migrated_no_stock === true },
+          MIGRATED_RECEIPTS_NOT_INVOICED_IN_AUTOCOUNT,
+        ),
+      };
+    })),
   };
 }
 
@@ -1295,9 +1305,18 @@ export const createPurchaseInvoicesFromGrnItemsHandler = async (c: Context<{ Bin
      mirror AutoCount's one-for-one, and a hand-picked subset of its lines
      cannot. See lib/migrated-chain.ts. */
   {
-    const refusal = refuseMigratedSources(itemList.map((r) => ({
-      docNo: r.grn?.grn_number ?? r.grn_id, migrated: r.grn?.migrated_no_stock === true,
-    })));
+    const refusal = refuseMigratedSources(itemList.map((r) => {
+      const docNo = r.grn?.grn_number ?? r.grn_id;
+      /* A migrated GRN AutoCount never invoiced is ordinary here (docs/bugs/0918);
+         the allowlist is empty until the office measures, so this stays inert. */
+      return {
+        docNo,
+        migrated: receiptMustMirrorAutoCount(
+          { docNo, migrated: r.grn?.migrated_no_stock === true },
+          MIGRATED_RECEIPTS_NOT_INVOICED_IN_AUTOCOUNT,
+        ),
+      };
+    }));
     if (refusal) return c.json(refusal, 409);
   }
 
@@ -1553,7 +1572,16 @@ export const createPurchaseInvoiceFromGrnHandler = async (c: any) => {
      GRN line's invoiceable quantity, so the mistake could not be corrected
      without cancelling the invoice first. See lib/migrated-chain.ts. */
   {
-    const refusal = refuseMigratedSources([{ docNo: g.grn_number, migrated: g.migrated_no_stock === true }]);
+    /* A migrated GRN AutoCount never invoiced is billed here like any other
+       (docs/bugs/0918); one AutoCount did invoice still mirrors. The allowlist is
+       empty until the office measures, so this is INERT today. */
+    const refusal = refuseMigratedSources([{
+      docNo: g.grn_number,
+      migrated: receiptMustMirrorAutoCount(
+        { docNo: g.grn_number, migrated: g.migrated_no_stock === true },
+        MIGRATED_RECEIPTS_NOT_INVOICED_IN_AUTOCOUNT,
+      ),
+    }]);
     if (refusal) return c.json(refusal, 409);
   }
 
