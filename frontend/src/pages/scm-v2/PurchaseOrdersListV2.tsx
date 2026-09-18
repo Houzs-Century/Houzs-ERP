@@ -1173,7 +1173,12 @@ export function PurchaseOrdersListV2() {
      stays in the chooser, hidden until picked; the export follows whatever the
      operator shows. */
   const lineCols = poLineColumns();
-  const docNoOf = (r: PoGridRow): string => r.linked_ac_docno?.trim() || poDisplayNumber(r.po_number, r.revision);
+  // _R suffix applies to whichever number is shown (owner report 2026-09-18:
+  // an AC-linked PO's revision was invisible because the AC doc no bypassed
+  // poDisplayNumber entirely) — the AC book keeps one document per PO (edited
+  // in place, never a new doc no), so its number needs the same revision
+  // marker the ERP number gets.
+  const docNoOf = (r: PoGridRow): string => poDisplayNumber(r.linked_ac_docno?.trim() || r.po_number, r.revision);
   const columns: PoColumn[] = [
     {
       key: "po_number",
