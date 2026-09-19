@@ -54,6 +54,12 @@ import {
   type ExtractedPayment,
 } from '../lib/scan-receipt-plan';
 import { safeScanDepositSen } from '../lib/scan-header-deposit';
+import {
+  CLAUDE_MODEL,
+  anthropicFetchWithRetry, toBase64, sha256Hex, stripJsonFences, parseScanFiles,
+  type ContentBlock, type UploadedImage,
+} from '../lib/scan-anthropic';
+import { runPiScanJob } from '../lib/pi-scan-run';
 
 // The scm-scoped service client (getSupabaseService, db:{schema:'scm'}) and the
 // middleware-attached c.get('supabase') are both schema-parameterised clients.
@@ -64,65 +70,10 @@ type SupabaseClient = SupabaseClientGeneric<any, any, any>;
 export const scanSo = new Hono<{ Bindings: Env; Variables: Variables }>();
 scanSo.use('*', supabaseAuth);
 
-const MAX_FILE_BYTES = 20 * 1024 * 1024;
-const CLAUDE_MODEL = 'claude-sonnet-4-6';
-const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
-
-// Anthropic (and gateways in front of it) return transient 429 rate-limits and
-// 529 "Overloaded" / 5xx spikes that clear on a retry; a single hit otherwise
-// fails the whole scan/distill with a hard error. Retry those a few times with
-// an exponential-ish backoff. Non-retryable statuses (4xx other than 429) and
-// the final attempt fall straight through to the caller's existing !resp.ok
-// handling, so the response shape is unchanged. Only the transport is retried —
-// the prompt/body and response parsing are untouched.
-const RETRYABLE_ANTHROPIC_STATUS = new Set([429, 500, 502, 503, 529]);
-
-async function anthropicFetchWithRetry(
-  init: RequestInit,
-  tries = 3,
-): Promise<Response> {
-  let resp: Response | null = null;
-  for (let attempt = 0; attempt < tries; attempt += 1) {
-    resp = await fetch(ANTHROPIC_URL, init);
-    if (resp.ok) return resp;
-    // Peek the body for an explicit overloaded_error without consuming the
-    // Response the caller reads — clone so the returned body survives. Some
-    // gateways surface an overloaded body under a status outside the set.
-    let overloaded = false;
-    try {
-      const peek = await resp.clone().text();
-      if (/overloaded/i.test(peek)) overloaded = true;
-    } catch { /* body peek is best-effort */ }
-    const retryable = RETRYABLE_ANTHROPIC_STATUS.has(resp.status) || overloaded;
-    if (!retryable || attempt === tries - 1) return resp;
-    // 400ms, 800ms, 1600ms … keeps the whole retry window well under the
-    // per-call AbortSignal.timeout budget.
-    await new Promise((r) => setTimeout(r, 400 * 2 ** attempt));
-  }
-  return resp as Response;
-}
-
-const IMAGE_MIMES = new Set(['image/jpeg', 'image/png', 'image/webp']);
-
-// ArrayBuffer -> base64. Workers don't expose Node's Buffer; the chunked loop
-// keeps stack usage bounded for large files. (Ported from HOOKKA scan-po.)
-function toBase64(buf: ArrayBuffer): string {
-  const bytes = new Uint8Array(buf);
-  const chunkSize = 0x8000;
-  let binary = '';
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    const chunk = bytes.subarray(i, Math.min(i + chunkSize, bytes.length));
-    binary += String.fromCharCode.apply(null, Array.from(chunk));
-  }
-  return btoa(binary);
-}
-
-async function sha256Hex(buf: ArrayBuffer): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', buf);
-  return Array.from(new Uint8Array(digest))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('');
-}
+// OCR transport (retry policy, base64, sha256, fence-strip, the 20MB ceiling,
+// image MIME set) now lives in lib/scan-anthropic.ts so the SO / GR / PI
+// scanners share ONE copy — see the header there. CLAUDE_MODEL etc. are
+// re-exported downstream via the imports at the top of this file.
 
 // ---------------------------------------------------------------------------
 // Phone normalisation for an extracted slip — E.164, via the SAME normalizePhone
@@ -228,25 +179,6 @@ async function localityForPostcode(
 // sometimes wraps the result in fences, sometimes adds a "Looking at the
 // image…" preamble, sometimes both. Parse a best-effort substring rather
 // than fail the whole extraction.
-function stripJsonFences(text: string): string {
-  let trimmed = text.trim();
-
-  // 1) ```json … ``` or ``` … ```
-  const fenceRe = /^```(?:json)?\s*\n?([\s\S]*?)\n?```\s*$/;
-  const fenceMatch = trimmed.match(fenceRe);
-  if (fenceMatch?.[1]) trimmed = fenceMatch[1].trim();
-
-  // 2) Strip any chain-of-thought preamble. The valid payload always starts
-  //    with `{` — take from the first `{` to the last `}`.
-  const firstBrace = trimmed.indexOf('{');
-  const lastBrace = trimmed.lastIndexOf('}');
-  if (firstBrace > 0 && lastBrace > firstBrace) {
-    trimmed = trimmed.slice(firstBrace, lastBrace + 1).trim();
-  }
-
-  return trimmed;
-}
-
 // ===========================================================================
 // Catalog — pulled live from Supabase on every /extract call.
 // ===========================================================================
@@ -2394,88 +2326,9 @@ scanSo.post('/warm', async (c) => {
 // of the /extract handler — same code, same order — so the two paths can
 // never drift. /extract's endpoint contract is unchanged.
 // ===========================================================================
-type ContentBlock = Record<string, unknown>;
-// Per-IMAGE provenance, indexed by the SAME `index` Claude classifies in the
-// OUTPUT "images" array — fileBlocks is built in file order, so image #N in
-// the model's view is uploadedImages[N]. PDFs are NOT displayable inline on
-// the SO detail page so they are never stored under image_key (they still
-// ride into the prompt as document blocks).
-type UploadedImage = { index: number; buffer: ArrayBuffer; mime: string };
-type ScanFileParse = {
-  // Claude content blocks (image or document per file), in upload order.
-  fileBlocks: ContentBlock[];
-  // Image files only (buffer + mime), for R2 provenance storage.
-  uploadedImages: UploadedImage[];
-  // EVERY accepted file's raw bytes (images AND pdfs) — the enqueue path
-  // persists these to R2 for durability before the job runs.
-  allFiles: Array<{ buffer: ArrayBuffer; mime: string }>;
-  firstBuffer: ArrayBuffer | null;
-  fileCount: number;
-};
-
-// Accept files under any field name ("file", "files", repeated) — the modal
-// sends `file` repeatedly but be liberal in what we accept. Returns a plain
-// bad-request reason string on any rejected input (the caller maps it to its
-// own 400), or the parsed blocks/buffers.
-async function parseScanFiles(
-  formData: FormData,
-): Promise<{ ok: true; parsed: ScanFileParse } | { ok: false; reason: string }> {
-  // (entries cast to unknown: @cloudflare/workers-types narrows
-  // FormDataEntryValue to string, which breaks the instanceof check.)
-  const files: File[] = [];
-  for (const [, v] of formData.entries() as Iterable<[string, unknown]>) {
-    if (v instanceof File && v.size > 0) files.push(v);
-  }
-  if (files.length === 0) return { ok: false, reason: 'No file uploaded.' };
-
-  const fileBlocks: ContentBlock[] = [];
-  const uploadedImages: UploadedImage[] = [];
-  const allFiles: Array<{ buffer: ArrayBuffer; mime: string }> = [];
-  let firstBuffer: ArrayBuffer | null = null;
-  let blockIndex = 0;
-  for (const file of files) {
-    if (file.size > MAX_FILE_BYTES) {
-      return { ok: false, reason: `File too large (${(file.size / 1024 / 1024).toFixed(1)}MB). Max 20MB.` };
-    }
-    const mime = file.type || '';
-    const name = (file.name || '').toLowerCase();
-    const isPdf = mime === 'application/pdf' || name.endsWith('.pdf');
-    const isImage =
-      IMAGE_MIMES.has(mime) ||
-      name.endsWith('.jpg') || name.endsWith('.jpeg') ||
-      name.endsWith('.png') || name.endsWith('.webp');
-    if (!isPdf && !isImage) {
-      return { ok: false, reason: `Unsupported file type "${mime || name}". Use JPEG / PNG / WEBP / PDF.` };
-    }
-    const buf = await file.arrayBuffer();
-    if (!firstBuffer) firstBuffer = buf;
-    const data = toBase64(buf);
-    if (isPdf) {
-      allFiles.push({ buffer: buf, mime: 'application/pdf' });
-      fileBlocks.push({
-        type: 'document',
-        source: { type: 'base64', media_type: 'application/pdf', data },
-      });
-    } else {
-      const mediaType = IMAGE_MIMES.has(mime)
-        ? mime
-        : name.endsWith('.png') ? 'image/png'
-        : name.endsWith('.webp') ? 'image/webp'
-        : 'image/jpeg';
-      allFiles.push({ buffer: buf, mime: mediaType });
-      uploadedImages.push({ index: blockIndex, buffer: buf, mime: mediaType });
-      fileBlocks.push({
-        type: 'image',
-        source: { type: 'base64', media_type: mediaType, data },
-      });
-    }
-    blockIndex += 1;
-  }
-  return {
-    ok: true,
-    parsed: { fileBlocks, uploadedImages, allFiles, firstBuffer, fileCount: files.length },
-  };
-}
+// ContentBlock / UploadedImage / ScanFileParse and parseScanFiles now live in
+// lib/scan-anthropic.ts (imported at the top of this file) — shared with the
+// GR / PI scanners.
 
 // Dynamic (post-cache-boundary) prompt blocks: shared alias dictionary,
 // cross-rep shared rules, the rep's own distilled rules, and the few-shot
@@ -4557,6 +4410,24 @@ export async function processScanQueueMessage(env: Env, jobId: string): Promise<
     return;
   }
 
+  // DOCUMENT-TYPE DISPATCH — a PI scan converts a supplier invoice into a DRAFT
+  // Purchase Invoice off the matching GRN(s); everything else is the SO path.
+  // The GR path lands on the same seam in its own slice. Same durable inputs
+  // either way (identity + photos rebuilt from the row + R2).
+  if (documentType === 'PI') {
+    await runPiScanJob(env, {
+      id,
+      userId: salespersonId,
+      houzsUserId,
+      companyId,
+      fileBlocks: files.fileBlocks,
+      uploadedImages: files.uploadedImages,
+      firstBuffer: files.firstBuffer,
+      imageKeys,
+    });
+    return;
+  }
+
   await runScanJob(env, {
     id,
     salesperson,
@@ -4574,7 +4445,7 @@ export async function processScanQueueMessage(env: Env, jobId: string): Promise<
   });
 }
 
-async function reapStaleScanJobs(
+export async function reapStaleScanJobs(
   env: Env,
   svc: ReturnType<typeof serviceClient>,
   // The calling poll handler's executionCtx.waitUntil (try/catch-wrapped for
@@ -4650,6 +4521,21 @@ async function reapStaleScanJobs(
           return;
         }
         console.warn('[scan-so jobs] re-running stale job (retry 1/1):', id);
+        // Document-type dispatch (see processScanQueueMessage) — a PI retry
+        // re-runs the invoice→DRAFT-PI pipeline, everything else the SO path.
+        if (documentType === 'PI') {
+          await runPiScanJob(env, {
+            id,
+            userId: salespersonId,
+            houzsUserId,
+            companyId,
+            fileBlocks: files.fileBlocks,
+            uploadedImages: files.uploadedImages,
+            firstBuffer: files.firstBuffer,
+            imageKeys,
+          });
+          return;
+        }
         await runScanJob(env, {
           id,
           salesperson,

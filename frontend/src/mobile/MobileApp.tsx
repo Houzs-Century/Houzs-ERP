@@ -34,6 +34,7 @@ import type { MobileScanPrefill } from "./MobileScan";
 import type { MobileConvertPrefill } from "./MobileOrderMoney";
 import type { ConvertTarget } from "./MobileConvertWizard";
 import { MODULE_TO_PURCHASE_DOC, convertInsteadFor, mayCreatePurchaseDoc, type PurchaseDocKind } from "./mobile-purchase-doc";
+import { ScanInvoiceLauncher } from "./MobileScanInvoiceLauncher";
 const MobileSalesOrders = lazy(() => import("./MobileSalesOrders").then((m) => ({ default: m.MobileSalesOrders })));
 const MobileAmendments = lazy(() => import("./MobileAmendments").then((m) => ({ default: m.MobileAmendments })));
 const MobilePoAmendments = lazy(() => import("./MobilePoAmendments").then((m) => ({ default: m.MobilePoAmendments })));
@@ -59,6 +60,7 @@ const MobileModuleDetail = lazy(() => import("./MobileModuleDetail").then((m) =>
 const MobileModuleForm = lazy(() => import("./MobileModuleForm").then((m) => ({ default: m.MobileModuleForm })));
 const MobileDeliveryPlanning = lazy(() => import("./MobileDeliveryPlanning").then((m) => ({ default: m.MobileDeliveryPlanning })));
 const MobileScan = lazy(() => import("./MobileScan").then((m) => ({ default: m.MobileScan })));
+const MobileScanInvoice = lazy(() => import("./MobileScanInvoice").then((m) => ({ default: m.MobileScanInvoice })));
 const MobileConvertWizard = lazy(() => import("./MobileConvertWizard").then((m) => ({ default: m.MobileConvertWizard })));
 const MobilePOD = lazy(() => import("./MobilePOD").then((m) => ({ default: m.MobilePOD })));
 const MobileMileageCapture = lazy(() => import("./MobileMileageCapture").then((m) => ({ default: m.MobileMileageCapture })));
@@ -112,6 +114,7 @@ type Screen =
   | { t: "change-log" }
   | { t: "new-so"; mode: "new" | "edit" | "edit-draft"; docNo?: string; scanPrefill?: MobileScanPrefill; addLine?: boolean; convertFrom?: MobileConvertPrefill }
   | { t: "scan" }
+  | { t: "scan-pi" }
   | { t: "module"; key: string; title: string }
   | { t: "module-detail"; key: string; row: any; title: string }
   | { t: "stock-transfer-new"; key: string; row: any; title: string }
@@ -844,6 +847,7 @@ function MobileAppInner() {
   }
   else if (screen.t === "new-so") overlay = <MobileNewSO mode={screen.mode} docNo={screen.docNo} scanPrefill={screen.scanPrefill} convertFrom={screen.convertFrom} openAddLine={screen.addLine === true} onBack={back} onSaved={(d) => setScreen({ t: "so-detail", docNo: d })} />;
   else if (screen.t === "scan") overlay = <MobileScan onBack={back} onDrafted={onScanDrafted} onOpenSo={(docNo) => setScreen({ t: "so-detail", docNo })} />;
+  else if (screen.t === "scan-pi") overlay = <MobileScanInvoice onBack={back} onOpenPi={() => setScreen({ t: "module", key: "purchase-invoices", title: MODULE_CONFIGS["purchase-invoices"]?.title ?? "Purchase Invoices" })} />;
   else if (screen.t === "module") {
     const k = screen.key;
     const convertTarget = MODULE_TO_CONVERT[k];
@@ -886,10 +890,19 @@ function MobileAppInner() {
       : MODULE_CONFIGS[k]?.form
         ? () => setScreen({ t: "module-form", key: k, mode: "new" })
         : undefined;
+    // Scan a supplier invoice into a DRAFT PI — Purchase Invoices only, and only
+    // for a user who may create one (same gate as the "+"). Rendered above the
+    // list (no MobileModuleList change); withheld = absent (off, not hidden).
+    const canScanPi = purchaseKind === "pi" && mayCreatePurchaseDoc("pi", can, pageAccess);
+    const aboveList = k === "members"
+      ? <MobileInvitations />
+      : canScanPi
+        ? <ScanInvoiceLauncher onClick={() => setScreen({ t: "scan-pi" })} />
+        : undefined;
     overlay = <MobileModuleList config={MODULE_CONFIGS[k]} onBack={back}
       onOpen={(row) => setScreen({ t: "module-detail", key: k, row, title: screen.title })}
       onNew={onNew}
-      aboveList={k === "members" ? <MobileInvitations /> : undefined} />;
+      aboveList={aboveList} />;
   }
   else if (screen.t === "purchase-doc-new") {
     const backToList = () => setScreen({ t: "module", key: screen.key, title: screen.title });

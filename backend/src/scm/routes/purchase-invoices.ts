@@ -51,6 +51,8 @@ import { insertFailed, loadFailed, rollbackPi, committedAnyway } from '../lib/pi
 import { recomputePiTotals, reallocatePiCharges } from '../lib/pi-money-rollups';
 import { PI_AUDIT_FIELDS, loadPiAuditMeta, recordPiCreate } from '../lib/pi-audit-trail';
 import { attachPiAssignedSos } from '../lib/pi-assigned-sos';
+import { getSupabaseService } from '../../db/supabase';
+import { notePiScanAccepted } from '../lib/scan-sample-review';
 
 /* ERP -> AutoCount Purchase Invoice edit. AcSyncService.cs:446 is `case "PI"`.
    See queueAcDoEdit for the shape. */
@@ -1053,6 +1055,12 @@ export const postPurchaseInvoiceHandler = async (c: any) => {
   }
   // Costing B — the now-confirmed PI is the authoritative cost: re-cost lots/DO/SI.
   await recostForPi(sb, id);
+  // OCR self-learning (slice 5) — if this PI came from an invoice scan, the
+  // DRAFT -> POSTED confirm is the operator's verdict on the read: an unchanged
+  // draft promotes its extraction to the few-shot pool. Best-effort, never
+  // blocks the POST. Uses the service client (the audit-log + samples reads must
+  // not depend on the caller's request scope).
+  await notePiScanAccepted(getSupabaseService(c.env), { piId: id, invoiceNumber: curRow.invoice_number });
   return c.json({ purchaseInvoice: data });
 };
 purchaseInvoices.patch('/:id/post', postPurchaseInvoiceHandler);
