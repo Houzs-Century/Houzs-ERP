@@ -6,8 +6,10 @@ import { PI_HEADER_COLS, PI_LIST_SELECT, piListSelect, filterPiList, orderPiList
 import { attachPiLines } from '../lib/pi-export-rows';
 import { HELD_OR_TERM } from '../lib/document-hold'; import { grnNotBillableRefusal } from '../lib/source-document-gates'; import { mountHoldRoute } from './document-hold-routes';
 import type { Context } from 'hono';
+import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
+import { getSupabaseService } from '../../db/supabase';
 import { qtyCapRefusal } from '../lib/qty-cap';
 import { buildVariantSummary, isServiceLine } from '../shared';
 import { allocateLandedCharges, normalizeAllocationMethod } from '../lib/landed-allocation';
@@ -1228,28 +1230,65 @@ export const cancelPurchaseInvoiceHandler = async (c: any) => {
 purchaseInvoices.patch('/:id/cancel', cancelPurchaseInvoiceHandler);
 
 mountHoldRoute(purchaseInvoices, 'pi'); // the mig-0324 MARKER, never `status`
-/* ── POST /from-grn-items ───────────────────────────────────────────────
-   Body: { picks: [{ grnItemId, qty }], supplierInvoiceNumber?, invoiceDate?,
-           notes? }.
-   Server logic:
-     1. Load all selected GRN items with parent GRN (for supplier_id + po_id)
-     2. Group by SUPPLIER + currency + FX rate — a supplier who delivers three
-        times and bills ONCE gets ONE PI covering all three notes (owner
-        2026-08-06). Splitting by currency/rate is not a policy choice: the
-        header carries a single currency + exchange_rate, so notes that landed
-        under different FX cannot share one document.
-     3. Create + auto-post one PI per group.
-   MULTI-GRN MODEL (mirrors purchase_returns/from-grns): the header's grn_id is
-   the PRIMARY note ref only; the authoritative linkage is per LINE via
-   purchase_invoice_items.grn_item_id. Every consumption / costing path already
-   reads the line level (recomputeGrnInvoiced, verifyGrnLinesNotOverInvoiced,
-   computeGrnFlags (lib/grn-consumption-flags), recostForPi), so they are multi-GRN correct unchanged.
-   PI does NOT touch inventory (PI is AP-only — inventory landed at GRN time).
-   Returns { created: [{ id, invoiceNumber, supplierId, grnCount, lineCount }], total }. */
-// Exported for the scope tests: supabaseAuth cannot run in the vitest harness.
-export const createPurchaseInvoicesFromGrnItemsHandler = async (c: Context<{ Bindings: Env; Variables: Variables }>) => {
+/* ── Server-callable core: create DRAFT Purchase Invoice(s) by converting GRN lines ──
+   The multi-select GRN->PI conversion — supplier+FX bucketing, doc-no minting,
+   line mapping (discount pro-rate), post-insert over-invoice rollback — factored
+   out of createPurchaseInvoicesFromGrnItemsHandler so a caller with NO Hono
+   request (the OCR scan-queue consumer) can raise the SAME draft the UI raises.
+   The exact MIRROR of createDraftGrnsFromPoItemsCore (grns.ts, PR #4146): the
+   HTTP route wires its real context through verbatim, and the headless entry
+   below builds a synthetic one from Env.
+
+   DRAFT-ONLY, by construction: this inserts the PI as status DRAFT / posted_at
+   null and NEVER flips it to POSTED — so it books NO AP and consumes NO GRN qty
+   (a DRAFT PI is excluded from both verifyGrnLinesNotOverInvoiced and
+   recomputeGrnInvoiced). The auto-post the UI create performs — the status flip,
+   recomputeGrnInvoiced, reallocatePiCharges, recostFromGrn, the AutoCount
+   gr_to_pi transfer and the CREATE audit — all stays in the HTTP handler, after
+   the core returns. Callers of this core (the scan queue) raise a draft for a
+   human to confirm, and record their own CREATE.
+
+   The over-invoice verify DOES force-count this draft (`countDraftPiId: h.id`),
+   so it catches an over-billing pick at creation time exactly as the inline
+   POSTED insert did — see verifyGrnLinesNotOverInvoiced's countDraftPiId note. */
+export type PiFromGrnItemsContext = {
+  req: { json(): Promise<unknown> };
+  /* supabase keeps the REAL client type so the query-builder callbacks below
+     infer (an `any` turns every `.map((r) => ...)` into an implicit-any). */
+  get(key: 'supabase'): Variables['supabase'];
+  get(key: 'user'): { id: string };
+  /* Multi-company (mig 0061). Undefined pre-migration / cold-start / headless,
+     so scoping + stamping no-op exactly as scopeToCompany documents. */
+  get(key: 'companyId'): number | undefined;
+  get(key: 'allowedCompanyIds'): number[] | undefined;
+  /** STRING or undefined, never an object — see companyDocPrefix's doc-prefix scar. */
+  get(key: 'companyCode'): string | undefined;
+};
+
+/* One created DRAFT PI. `grnIds` / `grnNumbers` carry EVERY source GRN the bucket
+   billed (multi-GRN -> one PI), and `grnItemIds` the GRN LINE ids it bills, so the
+   caller can run recomputeGrnInvoiced + the AutoCount gr_to_pi transfer naming all
+   of them when it posts the draft. */
+export type DraftPiFromGrnItems = {
+  id: string;
+  invoiceNumber: string;
+  supplierId: string;
+  purchaseOrderId: string | null;
+  grnIds: string[];
+  grnNumbers: string[];
+  grnItemIds: string[];
+  lineCount: number;
+};
+
+export type CreateDraftPisFromGrnItemsResult =
+  | { ok: true; created: DraftPiFromGrnItems[] }
+  | { ok: false; status: ContentfulStatusCode; body: Record<string, unknown> };
+
+export async function createDraftPisFromGrnItemsCore(
+  c: PiFromGrnItemsContext,
+): Promise<CreateDraftPisFromGrnItemsResult> {
   /* company-scope: the only by-id write here is the ROLLBACK of the header this
-     handler just inserted, so that id is not caller-supplied. */
+     core just inserted, so that id is not caller-supplied. */
   const sb = c.get('supabase'); const user = c.get('user');
   let body: {
     picks?: Array<{ grnItemId: string; qty: number }>;
@@ -1258,9 +1297,9 @@ export const createPurchaseInvoicesFromGrnItemsHandler = async (c: Context<{ Bin
     dueDate?: string;
     notes?: string;
   };
-  try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
+  try { body = (await c.req.json()) as typeof body; } catch { return { ok: false, status: 400, body: { error: 'invalid_json' } }; }
   const picks = body.picks ?? [];
-  if (picks.length === 0) return c.json({ error: 'picks_required' }, 400);
+  if (picks.length === 0) return { ok: false, status: 400, body: { error: 'picks_required' } };
 
   /* SOURCE LOAD, SCOPED — the caller's grn_item ids enter here, so this read is
      what the conversion can see: another company's line resolves to NO ROW and
@@ -1281,7 +1320,7 @@ export const createPurchaseInvoicesFromGrnItemsHandler = async (c: Context<{ Bin
       grn:grns!inner ( id, grn_number, supplier_id, purchase_order_id, status, on_hold, currency, exchange_rate, migrated_no_stock, company_id )
     `)
     .in('id', ids), c);
-  if (itemsErr) return c.json({ error: 'load_failed', reason: itemsErr.message }, 500);
+  if (itemsErr) return { ok: false, status: 500, body: { error: 'load_failed', reason: itemsErr.message } };
 
   type ItemRow = {
     id: string; grn_id: string; material_kind: string; item_code: string;
@@ -1317,21 +1356,21 @@ export const createPurchaseInvoicesFromGrnItemsHandler = async (c: Context<{ Bin
         ),
       };
     }));
-    if (refusal) return c.json(refusal, 409);
+    if (refusal) return { ok: false, status: 409, body: refusal as unknown as Record<string, unknown> };
   }
 
   for (const p of picks) {
     const row = byId.get(p.grnItemId);
-    if (!row) return c.json({ error: 'item_not_found', grnItemId: p.grnItemId }, 400);
-    if (p.qty <= 0) return c.json({ error: 'qty_must_be_positive', grnItemId: p.grnItemId }, 400);
+    if (!row) return { ok: false, status: 400, body: { error: 'item_not_found', grnItemId: p.grnItemId } };
+    if (p.qty <= 0) return { ok: false, status: 400, body: { error: 'qty_must_be_positive', grnItemId: p.grnItemId } };
     // Cap each pick at the GRN line's REMAINING (qty_accepted - invoiced_qty -
     // returned_qty), not raw qty_accepted — a line can be invoiced across
     // multiple PIs, and returned-to-supplier qty is no longer invoiceable.
     const remaining = (row.qty_accepted ?? 0) - (row.invoiced_qty ?? 0) - (row.returned_qty ?? 0);
     if (p.qty > remaining) {
-      return c.json({ error: 'qty_exceeds_remaining', grnItemId: p.grnItemId, requested: p.qty, remaining }, 409);
+      return { ok: false, status: 409, body: { error: 'qty_exceeds_remaining', grnItemId: p.grnItemId, requested: p.qty, remaining } };
     }
-    { const nb = grnNotBillableRefusal(row.grn, { grnItemId: p.grnItemId }); if (nb) return c.json(nb, 409); }
+    { const nb = grnNotBillableRefusal(row.grn, { grnItemId: p.grnItemId }); if (nb) return { ok: false, status: 409, body: nb as unknown as Record<string, unknown> }; }
   }
 
   /* Group picks by SUPPLIER + currency + FX rate (owner 2026-08-06). One
@@ -1392,7 +1431,7 @@ export const createPurchaseInvoicesFromGrnItemsHandler = async (c: Context<{ Bin
   let counter = parseInt(firstNext.slice(`${cp}PI-${yymm}-`.length), 10) - 1;
 
   const invoiceDate = dateOrNull(body.invoiceDate) ?? todayMyt();
-  const created: Array<{ id: string; invoiceNumber: string; supplierId: string; grnCount: number; lineCount: number }> = [];
+  const created: DraftPiFromGrnItems[] = [];
 
   /* PI discount unification (audit 2026-06-11 M3) — ONE rule on every PI line
      write path: line_total_sen = qty × unit − discount, discount stored.
@@ -1423,9 +1462,12 @@ export const createPurchaseInvoicesFromGrnItemsHandler = async (c: Context<{ Bin
       subtotal_sen: subtotal,
       tax_sen: 0,
       total_sen: subtotal,
-      // Auto-post per Commander preference (matches GRN/PO behaviour).
-      status: 'POSTED',
-      posted_at: new Date().toISOString(),
+      /* DRAFT-ONLY core — the HTTP handler flips this to POSTED after the core
+         returns (the UI create is auto-posted per Commander preference); the scan
+         queue leaves it DRAFT for a human to confirm. Explicit like the POST /
+         draft path, not relying on the column default. */
+      status: 'DRAFT',
+      posted_at: null,
       notes: (() => {
         // Every note this PI bills, so the document says what it covers.
         const from = `Multi-pick from ${bucket.grnNumbers.join(', ')}`;
@@ -1483,9 +1525,12 @@ export const createPurchaseInvoicesFromGrnItemsHandler = async (c: Context<{ Bin
     /* Post-insert over-invoice verification (race guard) — the per-pick pre-check
        above is read-before-write; re-sum live invoiced per GRN line now that this
        bucket's lines are committed. On overshoot, delete THIS PI (cascades its
-       lines) and skip the bucket rather than over-bill the GRN line. */
+       lines) and skip the bucket rather than over-bill the GRN line.
+       `countDraftPiId: h.id` force-counts THIS draft — a DRAFT PI is otherwise
+       excluded from the sum — so the verdict is byte-identical to the old inline
+       POSTED insert, and a single over-billing pick is still caught at creation. */
     {
-      const verify = await verifyGrnLinesNotOverInvoiced(sb, bucket.lines.map(({ row }) => row.id));
+      const verify = await verifyGrnLinesNotOverInvoiced(sb, bucket.lines.map(({ row }) => row.id), h.id);
       // eslint-disable-next-line no-console
       if (verify.error) console.error(`[pi over-invoice verify] ${h.id}: ${verify.error}`);
       const over = verify.over;
@@ -1495,40 +1540,179 @@ export const createPurchaseInvoicesFromGrnItemsHandler = async (c: Context<{ Bin
       }
     }
     /* This bucket's PI cleared both of its own rollbacks (the two `continue`s
-       above), so it survives the request even if a LATER bucket is rolled back —
-       each bucket is its own document and its own CREATE row. */
+       above), so it is a committed DRAFT. Return its handle — every source GRN,
+       its GRN LINE ids and its line count — and let the caller record CREATE,
+       post it, consume the GRN lines and enqueue the AutoCount transfer. Each
+       bucket is its own document. */
+    created.push({
+      id: h.id,
+      invoiceNumber: h.invoice_number,
+      supplierId: bucket.supplierId,
+      purchaseOrderId: bucket.purchaseOrderId,
+      grnIds: bucket.grnIds,
+      grnNumbers: bucket.grnNumbers,
+      grnItemIds: bucket.lines.map(({ row }) => row.id),
+      lineCount: bucket.lines.length,
+    });
+  }
+
+  return { ok: true, created };
+}
+
+/* ── createDraftPiFromGrnItems — headless GRN->PI for the OCR scan queue ──────
+   Runs the SAME core an operator's click runs (supplier+FX bucketing, doc-no
+   minting, line mapping, over-invoice rollback) with NO request: the scan job
+   captures the caller's identities at enqueue and replays them here through a
+   synthetic context, exactly as createDraftGrnFromPoItems / createDraftSalesOrder
+   do.
+
+   ALWAYS DRAFT — this raises the invoice for a human to confirm; it never flips
+   to POSTED, so it books NO AP and consumes NO GRN qty. The CREATE audit row IS
+   written here (draft-safe: nothing is posted, so no post-time rollback to
+   outlive), so a scanned draft is not anonymous. */
+export async function createDraftPiFromGrnItems(
+  env: Env,
+  opts: {
+    /** scm auth-bridge identity, stamped created_by on the PI header. */
+    userId: string;
+    /** public users bigint, the audit-row WHO. Undefined -> unattributed. */
+    houzsUserId?: number | null;
+    /** The company the scan was raised under. Undefined -> unresolved, and the
+     *  stamping / scoping no-op exactly as pre-migration. */
+    companyId?: number | null;
+    allowedCompanyIds?: number[] | null;
+    /** MUST be the company CODE string, never the company row — companyDocPrefix
+     *  stringifies whatever it is handed (the "[object Object]-..." scar). */
+    companyCode?: string | null;
+    picks: Array<{ grnItemId: string; qty: number }>;
+    supplierInvoiceNumber?: string | null;
+    invoiceDate?: string | null;
+    dueDate?: string | null;
+    notes?: string | null;
+  },
+): Promise<CreateDraftPisFromGrnItemsResult> {
+  const svc = getSupabaseService(env);
+  /* EXPLICIT per key, no fall-through — a fall-through is how the scan job once
+     handed a company OBJECT to companyDocPrefix and minted a bad doc number. */
+  const syntheticGet = (key: string): unknown => {
+    if (key === 'supabase') return svc;
+    if (key === 'user') return { id: opts.userId };
+    if (key === 'companyId') return opts.companyId ?? undefined;
+    if (key === 'allowedCompanyIds') return opts.allowedCompanyIds ?? undefined;
+    if (key === 'companyCode') return typeof opts.companyCode === 'string' ? opts.companyCode : undefined;
+    return undefined;
+  };
+  const res = await createDraftPisFromGrnItemsCore({
+    req: { json: async () => ({
+      picks: opts.picks,
+      supplierInvoiceNumber: opts.supplierInvoiceNumber ?? undefined,
+      invoiceDate: opts.invoiceDate ?? undefined,
+      dueDate: opts.dueDate ?? undefined,
+      notes: opts.notes ?? undefined,
+    }) },
+    get: syntheticGet as unknown as PiFromGrnItemsContext['get'],
+  });
+  /* Record CREATE per draft, at the moment it becomes final (there is no post
+     here — it stays DRAFT). Uses the houzsUser captured at enqueue as the WHO;
+     degrades to an unattributed row when absent, like recordPiCreate itself. */
+  if (res.ok) {
+    const actor = opts.houzsUserId != null ? ({ id: opts.houzsUserId } as unknown as Variables['houzsUser']) : undefined;
+    for (const draft of res.created) {
+      await recordPiCreate(svc, actor, opts.companyId ?? null, draft.id, draft.lineCount, `Converted from Goods Receipt ${draft.grnNumbers.join(', ')}`);
+    }
+  }
+  return res;
+}
+
+/* ── POST /from-grn-items ───────────────────────────────────────────────
+   Body: { picks: [{ grnItemId, qty }], supplierInvoiceNumber?, invoiceDate?,
+           notes? }.
+   Server logic:
+     1. Load all selected GRN items with parent GRN (for supplier_id + po_id)
+     2. Group by SUPPLIER + currency + FX rate — a supplier who delivers three
+        times and bills ONCE gets ONE PI covering all three notes (owner
+        2026-08-06). Splitting by currency/rate is not a policy choice: the
+        header carries a single currency + exchange_rate, so notes that landed
+        under different FX cannot share one document.
+     3. Create one DRAFT PI per group (in the shared core) then auto-post it.
+   MULTI-GRN MODEL (mirrors purchase_returns/from-grns): the header's grn_id is
+   the PRIMARY note ref only; the authoritative linkage is per LINE via
+   purchase_invoice_items.grn_item_id. Every consumption / costing path already
+   reads the line level (recomputeGrnInvoiced, verifyGrnLinesNotOverInvoiced,
+   computeGrnFlags (lib/grn-consumption-flags), recostForPi), so they are multi-GRN correct unchanged.
+   PI does NOT touch inventory (PI is AP-only — inventory landed at GRN time).
+   Returns { created: [{ id, invoiceNumber, supplierId, grnCount, lineCount }], total }. */
+// Exported for the scope tests: supabaseAuth cannot run in the vitest harness.
+export const createPurchaseInvoicesFromGrnItemsHandler = async (c: Context<{ Bindings: Env; Variables: Variables }>) => {
+  /* company-scope: the source load, the active-company stamp and the doc-no
+     prefix all happen inside createDraftPisFromGrnItemsCore (scoped to this
+     company via the wired context); every by-id write below acts only on a draft
+     id THAT core just created and returned for this company. */
+  /* Delegate the DRAFT creation to the shared core so the HTTP path and the
+     headless scan queue raise the SAME draft. The real Hono context is wired
+     through verbatim, so company scoping, stamping and doc-no minting behave
+     exactly as they did inline. */
+  const coreRes = await createDraftPisFromGrnItemsCore({
+    req: { json: () => c.req.json() },
+    get: ((key: 'supabase' | 'user' | 'companyId' | 'allowedCompanyIds' | 'companyCode') =>
+      c.get(key as 'supabase')) as unknown as PiFromGrnItemsContext['get'],
+  });
+  /* Every core refusal (invalid_json, picks_required, load_failed, the migrated
+     refusal, item_not_found, qty_must_be_positive, qty_exceeds_remaining and the
+     not-billable gate) is emitted BEFORE the core's first write, and the original
+     surfaced them all with c.json — so the same bodies + status codes flow out
+     here. (This path has no idempotency-key middleware, so there is nothing to
+     release, exactly as before.) */
+  if (!coreRes.ok) return c.json(coreRes.body, coreRes.status);
+
+  const sb = c.get('supabase');
+  const created: Array<{ id: string; invoiceNumber: string; supplierId: string; grnCount: number; lineCount: number }> = [];
+
+  for (const draft of coreRes.created) {
+    /* Auto-post (the UI create is auto-posted; the draft-only core left this to
+       the handler). This path books NO AP — the original from-grn-items set
+       status POSTED in the insert and never called postPiAccounting — so the flip
+       reproduces that exactly. It MUST precede recomputeGrnInvoiced, which
+       excludes DRAFT PIs from the invoiced_qty recount. */
+    await sb.from('purchase_invoices').update({
+      status: 'POSTED', posted_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+    }).eq('id', draft.id);
+
+    /* CREATE recorded HERE, past the flip, so its status snapshot reads POSTED
+       exactly as when the insert stamped POSTED inline. Each bucket is its own
+       document and its own CREATE row. */
     await recordPiCreate(
-      sb, c.get('houzsUser'), activeCompanyId(c), h.id, bucket.lines.length,
-      `Converted from Goods Receipt ${bucket.grnNumbers.join(', ')}`,
+      sb, c.get('houzsUser'), activeCompanyId(c), draft.id, draft.lineCount,
+      `Converted from Goods Receipt ${draft.grnNumbers.join(', ')}`,
     );
 
     /* ERP -> AutoCount GRN->Purchase Invoice, per bucket: each bucket IS its
        own document, and a bucket billing several GRNs names every one of them.
        The bucket is already grouped by supplier, so all its sources share one
        creditor — which is what makes the merged transfer well-formed. */
-    const bucketAc = bucket.grnIds.length ? await enqueueConvert(sb, {
+    const bucketAc = draft.grnIds.length ? await enqueueConvert(sb, {
         companyId: activeCompanyId(c),
         op: 'gr_to_pi',
-        from: bucket.grnIds.map((id) => ({ table: 'grns' as const, keyCol: 'id', key: id })),
-        to: { table: 'purchase_invoices', keyCol: 'id', key: h.id },
+        from: draft.grnIds.map((id) => ({ table: 'grns' as const, keyCol: 'id', key: id })),
+        to: { table: 'purchase_invoices', keyCol: 'id', key: draft.id },
         docType: 'PI',
-        docNo: h.invoice_number,
-        docId: h.id,
+        docNo: draft.invoiceNumber,
+        docId: draft.id,
         createdBy: c.get('houzsUser')?.id ?? null,
     }) : null;
     // Consume the GRN lines: recount invoiced_qty from live PI lines.
-    await recomputeGrnInvoiced(sb, bucket.lines.map(({ row }) => row.id));
+    await recomputeGrnInvoiced(sb, draft.grnItemIds);
     // Split any PI-native freight before the recost reads it. This path copies GRN
     // lines only, so a service line among them stays GRN-owned (already in the lot)
     // and the pool is 0 — kept for the invariant, not for an expected charge.
-    await reallocatePiCharges(sb, h.id, undefined, activeCompanyId(c));
+    await reallocatePiCharges(sb, draft.id, undefined, activeCompanyId(c));
     // Costing B — push the billed price down to the lots / DO / SI of EVERY note
     // this PI bills (was: the single bucket GRN; a multi-note PI must re-cost
     // them all or the unbilled notes keep their GR price).
-    for (const grnId of bucket.grnIds) await recostFromGrn(sb, grnId);
+    for (const grnId of draft.grnIds) await recostFromGrn(sb, grnId);
     created.push({
-      id: h.id, invoiceNumber: h.invoice_number,
-      supplierId: bucket.supplierId, grnCount: bucket.grnIds.length, lineCount: bucket.lines.length,
+      id: draft.id, invoiceNumber: draft.invoiceNumber,
+      supplierId: draft.supplierId, grnCount: draft.grnIds.length, lineCount: draft.lineCount,
       ...(bucketAc?.problems.length ? { acNotSent: bucketAc.problems } : {}),
     });
   }

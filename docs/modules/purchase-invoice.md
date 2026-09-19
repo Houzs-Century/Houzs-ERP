@@ -34,7 +34,7 @@ The AP (accounts payable) document billing a supplier for goods received — con
 
 ## Where the code is
 
-- `backend/src/scm/routes/purchase-invoices.ts` — main API surface, insert paths, PO price snapshot writer.
+- `backend/src/scm/routes/purchase-invoices.ts` — main API surface, insert paths, PO price snapshot writer. The from-GRN-items convert logic lives in the off-request core `createDraftPisFromGrnItemsCore` (draft-only, never posts, never books AP) so the OCR scan queue raises the same draft via `createDraftPiFromGrnItems`; the HTTP `/from-grn-items` handler calls the core then auto-posts.
 - `backend/src/scm/lib/pi-po-price.ts`, `pi-po-price-rule.ts` — PO price snapshot + diff rule (mirrored to frontend).
 - `backend/src/scm/lib/outstanding-grn-lines.ts` — GRN lines still to bill.
 - `backend/src/scm/lib/pi-export-rows.ts` — line-level export.
