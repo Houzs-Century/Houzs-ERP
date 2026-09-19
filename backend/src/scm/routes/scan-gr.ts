@@ -303,6 +303,11 @@ async function runGrnScanJob(
 // multipart contract as /scan-so/enqueue (repeated `file` field).
 // ---------------------------------------------------------------------------
 scanGr.post('/enqueue', async (c) => {
+  /* company-scope: the scan_jobs row is stamped with the active company on
+     insert (company_id: activeCompanyId(c) below); the later by-id reads/writes
+     the checker attributes to this handler (the image_keys update, and the
+     processGrnScanQueueMessage / reaper reads) act only on that just-minted row,
+     which cannot belong to another company. Mirrors scan-so.ts's /enqueue. */
   let formData: FormData;
   try {
     formData = await c.req.formData();
@@ -521,8 +526,12 @@ scanGr.get('/jobs/:id', async (c) => {
   if (!id) return c.json({ error: 'bad_request', reason: 'Missing job id.' }, 400);
   const svc = serviceClient(c.env);
   await reapStaleGrnScanJobs(c.env, svc, (p) => { try { c.executionCtx.waitUntil(p); } catch { /* tests */ } });
+  // company-scope: by-id read scoped to the caller's active company, so one
+  // company cannot poll another's scan job (the list read below is scoped the
+  // same way). scan_jobs.company_id is NOT NULL (mig 0083, HOUZS default 0091).
   const { data, error } = await svc
-    .from('scan_jobs').select(JOB_SELECT).eq('id', id).eq('document_type', 'GR').limit(1).maybeSingle();
+    .from('scan_jobs').select(JOB_SELECT).eq('id', id).eq('document_type', 'GR')
+    .eq('company_id', activeCompanyId(c)).limit(1).maybeSingle();
   if (error) {
     if (isMissingTable(error)) return c.json({ error: 'table_missing', reason: SCAN_JOBS_MISSING_MSG }, 503);
     return c.json({ error: 'query_failed', reason: 'Could not load the scan job. Please try again.' }, 500);
