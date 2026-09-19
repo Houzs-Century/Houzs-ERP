@@ -65,7 +65,14 @@ Two independent faults, both in the SCM fair layer:
   "Recently closed (last 4 weeks)"; sorted newest first.
 - **Every row shows its dates**, reversing the owner's 2026-09-13 "no dates" ruling — he
   reversed it himself describing the task: 「它是一号到三号的，我就点那个」. `showDates` is deleted
-  rather than widened.
+  rather than widened. He asked for no year — 「日期不需要年份」 — which the window makes safe:
+  nothing inside 28 days needs one. His first spelling was 「放 Aug 13 - 17 这样」, which
+  `check-date-formatting.mjs` fails a build over: he had ruled on 2026-08-18 that this app has
+  ONE date format and month names are not it. That is two of his own instructions in conflict, so
+  it went back to him rather than through the gate's allowlist, and he chose `13/08 - 17/08`.
+  The formatter is `fmtDayMonthRange` in `shared/format.ts` — beside the rule it varies, mirrored
+  on both sides, and inside the range `format.date.canonical.test.ts` already compares byte for
+  byte, so the two copies cannot drift. A one-day fair renders `13/08`.
 - **The booth key now carries the period**, so REX/AKEMI at one venue twice inside the window no
   longer collapses to the lower id and posts the second fair's sales to the first fair's P&L —
   a hazard the old date filter had masked.

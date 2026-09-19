@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, test } from 'vitest';
-import { fmtDate, fmtDateTime, fmtDateOrDash, fmtTime } from './format';
+import { fmtDate, fmtDateTime, fmtDateOrDash, fmtTime, fmtDayMonth, fmtDayMonthRange } from './format';
 
 /* The date rule had five spellings in this tree and the owner was shown two of
    them on one screen. These tests pin the ONE rule, and specifically pin the
@@ -108,6 +108,50 @@ describe('fmtDateTime — the same rule, one export further', () => {
   test('fmtTime is the time half of the same parse', () => {
     expect(fmtTime('2026-08-16T06:30:00Z')).toBe('14:30');
     expect(fmtTime(null)).toBe('—');
+  });
+});
+
+describe('fmtDayMonth / fmtDayMonthRange — the year dropped, the shape kept', () => {
+  /* Owner 2026-09-19, on the SO fair picker: *"日期不需要年份"*. The list there
+     only ever spans the 28 days behind the order date, so a year disambiguates
+     nothing in it. He was offered `Aug 13 - 17` and chose this instead, so the
+     app still has exactly ONE date shape and `check-date-formatting.mjs` has
+     nothing new to allow. */
+  test('day-first, zero-padded, no year', () => {
+    expect(fmtDayMonth('2026-08-13')).toBe('13/08');
+    expect(fmtDayMonth('2026-08-04')).toBe('04/08');
+  });
+
+  test('a range renders BOTH ends in full', () => {
+    /* "13/08 - 17" would save three characters and cost the reader the month on
+       the end most likely to differ. */
+    expect(fmtDayMonthRange('2026-08-13', '2026-08-17')).toBe('13/08 - 17/08');
+    expect(fmtDayMonthRange('2026-08-30', '2026-09-02')).toBe('30/08 - 02/09');
+    /* Across New Year, which a 28-day window reaches every December. */
+    expect(fmtDayMonthRange('2026-12-30', '2027-01-02')).toBe('30/12 - 02/01');
+  });
+
+  test('one day is one date, not a range against itself', () => {
+    expect(fmtDayMonthRange('2026-08-13', '2026-08-13')).toBe('13/08');
+    expect(fmtDayMonthRange('2026-08-13', null)).toBe('13/08');
+  });
+
+  test('an unreadable end falls back to the start, never "13/08 - —"', () => {
+    /* A dash on the end reads as a fair that never finished. */
+    expect(fmtDayMonthRange('2026-08-13', 'not-a-date')).toBe('13/08');
+    expect(fmtDayMonth(null)).toBe('—');
+  });
+
+  test('does not shift a date-only value across a timezone', () => {
+    /* The bug the whole date rule exists for: `new Date('2026-08-16')` is UTC
+       midnight, so anything west of Greenwich renders the day before. */
+    const tz = process.env.TZ;
+    try {
+      process.env.TZ = 'America/Los_Angeles';
+      expect(fmtDayMonth('2026-08-16')).toBe('16/08');
+    } finally {
+      process.env.TZ = tz;
+    }
   });
 });
 

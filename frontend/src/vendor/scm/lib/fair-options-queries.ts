@@ -12,6 +12,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
 import { writeFailedAs } from './mutation-error';
+import { fmtDayMonthRange } from '../../shared/format';
 
 /** One row in the picker: a place, an organizer and the event's PERIOD. */
 export type FairOption = {
@@ -73,9 +74,7 @@ export type FairOptionsResponse = {
  *  rationale in the backend twin, `scm/lib/fair-options.ts::fairOptionLabel`;
  *  the two must render the same string. */
 export function fairLabel(o: Pick<FairOption, 'venue' | 'organizer' | 'solo' | 'startDate' | 'endDate'>): string {
-  const base = `${o.venue} — ${o.solo ? 'SOLO' : o.organizer}`;
-  const end = o.endDate && o.endDate !== o.startDate ? ` ~ ${o.endDate}` : '';
-  return `${base} (${o.startDate}${end})`;
+  return `${o.venue} — ${o.solo ? 'SOLO' : o.organizer} (${fmtDayMonthRange(o.startDate, o.endDate)})`;
 }
 
 /**

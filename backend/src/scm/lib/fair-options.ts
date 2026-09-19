@@ -28,12 +28,42 @@
 // the company's 92-row venue master. Free text is what produced the mess this
 // module replaces.
 //
-// ── THE ONE CASE THAT STILL NEEDS A DATE ────────────────────────────────────
-// Same month, same venue, SAME organizer, twice — e.g. MVEC SOUTHKEY / REX ran
-// 8-10 Aug and 14-16 Aug 2026. Four occurrences in seven months. Those two rows
-// would be identical on screen, so THOSE rows (only) carry their dates. Every
-// other row stays clean, which is what the owner asked for.
+// ── WHAT THE OWNER CHANGED ON 2026-09-19 ────────────────────────────────────
+// The rule above was written for a list of ONE CALENDAR MONTH, where at most one
+// fair per venue+organizer was ever live and a date was noise. That list could
+// not do the job he actually has:
+//
+//   *"我可能是下个星期，才开给上个星期 event 的 sales order"*
+//
+// An order keyed on 2 Oct for a fair that ran 18-20 Sep fell outside the month
+// AND outside "running today", so it appeared nowhere and the sale could not be
+// attributed at all. Three things follow, and they replace the paragraph above
+// rather than sitting beside it:
+//
+//   1. THE WINDOW IS 28 DAYS BACK from the order date, never forward —
+//      *"应该是当个日期的往前推四个星期…跟着 week 来算"*, and
+//      *"日期还没到，还没开单，不可能嘛"*. See `lookbackWindow`.
+//   2. EVERY ROW CARRIES ITS DATES, which reverses the "不需要日期" ruling above.
+//      He reversed it himself, describing the task: *"今天是 10 号…我需要点 1 号
+//      的 event…它是一号到三号的，我就点那个"*. A four-week list is mostly CLOSED
+//      fairs and several can share a venue and an organizer, so the label has to
+//      say which occurrence. He asked for the YEAR dropped — *"日期不需要年份"* —
+//      which the window makes safe: nothing in 28 days needs a year to tell it
+//      apart. He was offered `Aug 13 - 17` and chose `13/08 - 17/08`, keeping the
+//      system-wide date shape rather than opening a second one. The formatter is
+//      `fmtDayMonthRange` in shared/format.ts, beside the rule it varies.
+//      DO NOT re-spell it here: `check-date-formatting.mjs` fails the build on a
+//      month name, and that gate exists because this tree grew five date formats.
+//   3. THE PERIOD IS PART OF THE PICK, not decoration. It travels to the server,
+//      which matches that exact occurrence instead of re-deriving one from the
+//      order date — the order date being the day it was KEYED, since neither
+//      create form has a date field at all.
+//
+// An ARCHIVED project is never offered (`fair-binding.ts`): it is one the office
+// withdrew from, and its revenue lands in a project the P&L excludes.
 // ----------------------------------------------------------------------------
+
+import { fmtDayMonthRange } from '../shared/format';
 
 /** One PMS project row, as the loader reads it. A project is one BRAND's booth
  *  at one organizer's event: the fair the owner talks about is several of these. */
@@ -408,7 +438,5 @@ function oneBoothOrNothing(rows: FairProjectRow[], candidateIds: number[]): Fair
  * ORGANIZER on 2026-09-15 and it had to be put back the next morning.
  */
 export function fairOptionLabel(o: Pick<FairOption, 'venue' | 'organizer' | 'solo' | 'startDate' | 'endDate'>): string {
-  const base = `${o.venue} — ${labelOrganizer(o)}`;
-  const end = o.endDate && o.endDate !== o.startDate ? ` ~ ${o.endDate}` : '';
-  return `${base} (${o.startDate}${end})`;
+  return `${o.venue} — ${labelOrganizer(o)} (${fmtDayMonthRange(o.startDate, o.endDate)})`;
 }

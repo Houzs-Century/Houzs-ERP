@@ -109,10 +109,10 @@ describe('FairPicker — a row is a place plus an organizer', () => {
        reversing his earlier "no dates" ruling — the list became four weeks of
        closed fairs, where picking a row means saying which occurrence. */
     renderPicker({ venue: null, organizer: null, startDate: null, endDate: null });
-    expect(screen.getByText('MID VALLEY — REX (2026-09-11 ~ 2026-09-13)')).toBeTruthy();
-    expect(screen.getByText('THE COMMUNE KULAI — INHOME (2026-09-11 ~ 2026-09-13)')).toBeTruthy();
+    expect(screen.getByText('MID VALLEY — REX (11/09 - 13/09)')).toBeTruthy();
+    expect(screen.getByText('THE COMMUNE KULAI — INHOME (11/09 - 13/09)')).toBeTruthy();
     expect(
-      screen.getByText('SUNWAY PYRAMID CONVENTION CENTRE — BIGHOME (2026-09-04 ~ 2026-09-06)'),
+      screen.getByText('SUNWAY PYRAMID CONVENTION CENTRE — BIGHOME (04/09 - 06/09)'),
     ).toBeTruthy();
   });
 
@@ -127,9 +127,9 @@ describe('FairPicker — a row is a place plus an organizer', () => {
     renderPicker({ venue: null, organizer: null, startDate: null, endDate: null }, '2026-10-08');
     const fairs = fairOptionLabels().filter((l) => l.startsWith('MID VALLEY'));
     expect(fairs).toEqual([
-      'MID VALLEY — BIGHOME (2026-10-02 ~ 2026-10-04)',
-      'MID VALLEY — MLE (2026-09-25 ~ 2026-09-27)',
-      'MID VALLEY — HOMELOVE (2026-09-17 ~ 2026-09-20)',
+      'MID VALLEY — BIGHOME (02/10 - 04/10)',
+      'MID VALLEY — MLE (25/09 - 27/09)',
+      'MID VALLEY — HOMELOVE (17/09 - 20/09)',
     ]);
     expect(new Set(fairs).size).toBe(3);
   });
@@ -145,8 +145,8 @@ describe('FairPicker — a row is a place plus an organizer', () => {
     };
     const { onChange } = renderPicker({ venue: null, organizer: null, startDate: null, endDate: null });
     const labels = fairOptionLabels();
-    expect(labels).toContain('IOI MALL PUTRAJAYA — SOLO (2026-09-11 ~ 2026-09-13)');
-    expect(labels).toContain('MID VALLEY — REX (2026-09-11 ~ 2026-09-13)');
+    expect(labels).toContain('IOI MALL PUTRAJAYA — SOLO (11/09 - 13/09)');
+    expect(labels).toContain('MID VALLEY — REX (11/09 - 13/09)');
     expect(labels.some((l) => l.includes('MALL MGT'))).toBe(false);
     /* Only the wording changed: the pick still carries the real organizer, which
        is what the server resolves the project from. */
@@ -321,6 +321,6 @@ describe('FairPicker — a place already on the order IS the value (owner 2026-0
       />,
     );
     const texts = [...container.querySelectorAll('optgroup option')].map((o) => o.textContent);
-    expect(texts).toContain('MID VALLEY — REX (2026-09-11 ~ 2026-09-13)');
+    expect(texts).toContain('MID VALLEY — REX (11/09 - 13/09)');
   });
 });
