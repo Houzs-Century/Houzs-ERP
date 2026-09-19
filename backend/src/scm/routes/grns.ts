@@ -10,6 +10,7 @@ import { isReceivablePo } from '../lib/source-document-gates'; import { mountHol
 import type { Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
+import { createDraftGrnsFromPoItemsCore, type GrnFromPoItemsContext } from '../lib/grn-from-po-core';
 import { writeMovements, defaultWarehouseId, reconcileDropshipBatches } from '../lib/inventory-movements';
 import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { grnHasDownstream } from '../lib/downstream-lock';
@@ -135,7 +136,7 @@ const GRN_AUDIT_SELECT =
  * CREATE row can never describe a rolled-back document even if a future edit
  * moves this call earlier by mistake.
  */
-async function recordGrnCreate(
+export async function recordGrnCreate(
   sb: Variables['supabase'],
   actor: Variables['houzsUser'],
   fallbackCompanyId: number | null | undefined,
@@ -240,7 +241,7 @@ export async function resolvePoBatchByItem(
    auto-fills from the currency MASTER (rate_to_myr) unless the body sends one.
    normalizeExchangeRate forces MYR → 1 and a foreign rate → finite > 0 (else 1),
    so an all-MYR GRN is exchange_rate 1 (a strict no-op). */
-async function resolveGrnFx(
+export async function resolveGrnFx(
   sb: any,
   poId: string | null | undefined,
   bodyCurrency: unknown,
@@ -709,7 +710,7 @@ const nextNumber = async (sb: ReturnType<Variables['supabase']['valueOf']> exten
    Fails CLOSED and never throws (2026-07-17) — same contract as the SO's
    recomputeTotals (mfg-sales-orders.ts), which carries the full rationale.
    See BUG-HISTORY 2026-07-17 (fix/zeroing-twins). */
-async function recomputeGrnTotals(sb: any, grnId: string) {
+export async function recomputeGrnTotals(sb: any, grnId: string) {
   const { data: items, error: itemsErr } = await sb.from('grn_items')
     .select('line_total_sen')
     .eq('grn_id', grnId);
@@ -745,7 +746,7 @@ async function recomputeGrnTotals(sb: any, grnId: string) {
    GRN it just created and signal a 409. Best-effort consistent with the rest of
    the file. Returns the over-receipt detail (same shape as the add-line 409) or
    null when every affected PO line is within cap. */
-async function verifyGrnOverReceipt(
+export async function verifyGrnOverReceipt(
   sb: any,
   grnId: string,
   poItemIds: Array<string | null | undefined>,
@@ -1993,237 +1994,48 @@ grns.patch('/:id/post', postGrnHandler);
 /* Exported so the company-scope tests can drive it without supabaseAuth, which
    cannot run in the vitest harness. The registration below is unchanged. */
 export const createGrnsFromPoItemsHandler = async (c: Context<{ Bindings: Env; Variables: Variables }>) => {
-  /* company-scope: the only by-id write here is the ROLLBACK of the header this
-     handler just inserted; the insert stamps the active company, so the id is
-     not caller-supplied. */
+  // company-scope: the source load, the active-company stamp and the doc-no
+  // prefix all happen inside createDraftGrnsFromPoItemsCore (scoped to this
+  // company via the wired context); every by-id write below acts only on a draft
+  // id THAT core just created and returned for this company, and postGrnAndRollup
+  // re-scopes by the header's own company_id — no caller-supplied id is touched.
+  /* Delegate the DRAFT creation to the shared core (createDraftGrnsFromPoItemsCore
+     above) so the HTTP path and the headless scan queue raise the SAME draft. The
+     real Hono context is wired through verbatim, so company scoping, stamping and
+     doc-no minting behave exactly as they did inline. */
+  const coreRes = await createDraftGrnsFromPoItemsCore({
+    req: { json: () => c.req.json() },
+    get: ((key: 'supabase' | 'user' | 'companyId' | 'allowedCompanyIds' | 'companyCode') =>
+      c.get(key as 'supabase')) as unknown as GrnFromPoItemsContext['get'],
+  });
+  /* Every core refusal (invalid_json, picks_required, item_not_found,
+     qty_must_be_positive, qty_exceeds_remaining, po_not_receivable, the
+     audit-writable + foreign-rate probes) is emitted BEFORE the core's first
+     write, so surfacing it through refuseWithoutWriting releases the idempotency
+     claim exactly as the inline guards did — same bodies, same status codes. */
+  if (!coreRes.ok) return refuseWithoutWriting(c, coreRes.body, coreRes.status);
+
   const sb = c.get('supabase'); const user = c.get('user');
-  let body: { picks?: Array<{ poItemId: string; qty: number }>; notes?: string; receivedDate?: string };
-  try { body = (await c.req.json()) as typeof body; } catch { return refuseWithoutWriting(c, { error: 'invalid_json' }, 400); }
-  const picks = body.picks ?? [];
-  if (picks.length === 0) return refuseWithoutWriting(c, { error: 'picks_required' }, 400);
-
-  /* SOURCE LOAD, SCOPED — the picked PO LINES are where the caller's ids enter,
-     so this read is what the conversion can see. Another company's poItemId
-     resolves to NO ROW and falls out at the per-pick `item_not_found` below; the
-     parent PO rides the `!inner` embed, so it cannot arrive from outside the
-     company either. That is also why the firstCrossCompanyPo refusal that used
-     to stand below the validation loop can no longer fire.
-     THE COST: `item_not_found` rather than "belongs to 2990, switch company" —
-     same trade as /:id/convert-from-so. */
-  const ids = picks.map((p) => p.poItemId);
-  const { data: itemsData, error: itemsErr } = await scopeToCompany(sb
-    .from('purchase_order_items')
-    .select(`
-      id, purchase_order_id, material_kind, item_code, material_name,
-      item_group, description, description2, uom, qty, received_qty,
-      unit_price_sen, variants, gap_inches, divan_height_inches, divan_price_sen,
-      leg_height_inches, leg_price_sen, custom_specials, line_suffix,
-      special_order_price_sen, discount_sen, delivery_date,
-      supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4,
-      po:purchase_orders!inner ( id, po_number, supplier_id, status, on_hold, purchase_location_id, currency )
-    `)
-    .in('id', ids), c);
-  if (itemsErr) return refuseWithoutWriting(c, { error: 'load_failed', reason: itemsErr.message }, 500);
-
-  type ItemRow = {
-    id: string; purchase_order_id: string; material_kind: string; item_code: string;
-    material_name: string; item_group: string | null; description: string | null;
-    description2: string | null; uom: string | null;
-    qty: number; received_qty: number; unit_price_sen: number;
-    variants: unknown; gap_inches: number | null; divan_height_inches: number | null;
-    divan_price_sen: number; leg_height_inches: number | null; leg_price_sen: number;
-    custom_specials: unknown; line_suffix: string | null; special_order_price_sen: number;
-    discount_sen: number; delivery_date: string | null;
-    // Migration 0180 — per-line revised dates for the effective GRN line date.
-    supplier_delivery_date_2: string | null;
-    supplier_delivery_date_3: string | null;
-    supplier_delivery_date_4: string | null;
-    po: { id: string; po_number: string; supplier_id: string; status: string; purchase_location_id: string | null; currency?: string | null };
-  };
-
-  const itemList = (itemsData ?? []) as unknown as ItemRow[];
-  const byId = new Map<string, ItemRow>();
-  for (const r of itemList) byId.set(r.id, r);
-
-  // Validate every pick — qty > 0 and qty ≤ remaining.
-  for (const p of picks) {
-    const row = byId.get(p.poItemId);
-    if (!row) return refuseWithoutWriting(c, { error: 'item_not_found', poItemId: p.poItemId }, 400);
-    if (p.qty <= 0) return refuseWithoutWriting(c, { error: 'qty_must_be_positive', poItemId: p.poItemId }, 400);
-    const remaining = row.qty - (row.received_qty ?? 0);
-    if (p.qty > remaining) {
-      return refuseWithoutWriting(c, { error: 'qty_exceeds_remaining', poItemId: p.poItemId, requested: p.qty, remaining }, 409);
-    }
-    if (!isReceivablePo(row.po)) {
-      return refuseWithoutWriting(c, { error: 'po_not_receivable', poItemId: p.poItemId, status: row.po.status, onHold: isDocumentHeld(row.po) }, 409);
-    }
-  }
-
-  /* One probe for the whole batch, not one per bucket: every bucket below writes
-     to the same sink, and a refusal here leaves the entire multi-GRN receive
-     untouched rather than half-created. */
-  const pf = await assertAuditWritable(sb, { entityType: 'GRN', action: 'CREATE', companyId: activeCompanyId(c) });
-  if (!pf.ok) return refuseWithoutWriting(c, auditUnavailableBody(), 409);
-
-  // Group picks by SUPPLIER → one GRN per supplier (Commander 2026-05-29:
-  // "不同 supplier 不能 under 同一张 GRN" + "multi-select → 一张 GRN"). A
-  // supplier's lines may span several POs; the GRN header references the first
-  // PO (grns.purchase_order_id is single-FK) while each grn_item keeps its own
-  // purchase_order_item_id, so received_qty still rolls up to EVERY source PO.
-  /* `poIds` alongside `poNumbers` because the AutoCount transfer names its
-     sources by ERP ROW, not by printed number: enqueueConvert resolves each
-     ref through linked_ac_docno, and `primaryPoId` alone would name one of
-     the several purchase orders this bucket actually received. */
-  type Bucket = { supplierId: string; primaryPoId: string; poIds: Set<string>; poNumbers: Set<string>; warehouseId: string | null; currency: string | null; lines: Array<{ row: ItemRow; qty: number }> };
-  const buckets = new Map<string, Bucket>();
-  for (const p of picks) {
-    const row = byId.get(p.poItemId)!;
-    const key = row.po.supplier_id;
-    const cur = buckets.get(key) ?? {
-      supplierId: row.po.supplier_id, primaryPoId: row.po.id, poIds: new Set<string>(), poNumbers: new Set<string>(),
-      warehouseId: row.po.purchase_location_id, currency: row.po.currency ?? null, lines: [],
-    };
-    cur.poIds.add(row.po.id);
-    cur.poNumbers.add(row.po.po_number);
-    cur.lines.push({ row, qty: p.qty });
-    buckets.set(key, cur);
-  }
-
-  // Generate GRN numbers sequentially within this batch.
-  const d = new Date();
-  const yymm = `${String(d.getFullYear()).slice(2)}${String(d.getMonth() + 1).padStart(2, '0')}`;
-  // Seed from max(suffix), NOT count — count+1 is non-self-healing (a mid-month
-  // delete re-mints a surviving number → UNIQUE collision). Derive the next
-  // suffix via mintMonthlyDocNo, then counter starts one below it.
-  const cp = companyDocPrefix(c);
-  const firstNext = await mintMonthlyDocNo(sb, 'grns', 'grn_number', `${cp}GRN-${yymm}`);
-  let counter = parseInt(firstNext.slice(`${cp}GRN-${yymm}-`.length), 10) - 1;
-
-  const receivedAt = dateOrNull(body.receivedDate) ?? todayMyt(); // "" is not undefined: nullish left it for Postgres, and a failed bucket here is dropped silently
   const created: Array<{ id: string; grnNumber: string; purchaseOrderId: string; poNumber: string; lineCount: number; posted?: boolean; postError?: string; movementErrors?: string[]; recountError?: string }> = [];
-  // Track any bucket rolled back by the post-insert over-receipt verification so
-  // we can surface a 409 with the same error shape the add-line path uses.
-  let overReceipt: { poItemId: string; requested: number; remaining: number } | null = null;
+  // The over-receipt rollback happens in the core (draft-side); carry its verdict
+  // out so the 409 below keeps the add-line error shape.
+  const overReceipt = coreRes.overReceipt;
   let zeroCostRefusal: ZeroCostRefusal | null = null;
 
-  /* R2 money-path guard — validate EVERY bucket's currency up front, before any
-     GRN is inserted, so an un-rated foreign PO can't leave a partially-committed
-     batch. Each bucket inherits its primary PO currency with no operator rate. */
-  for (const bucket of buckets.values()) {
-    const rateGuard = await assertForeignRatePostable(sb, { currency: bucket.currency ?? undefined, operatorRate: undefined, docLabel: 'GRN' });
-    if (!rateGuard.ok) return refuseWithoutWriting(c, rateGuard.body, 422);
-  }
-
-  for (const bucket of buckets.values()) {
-    counter += 1;
-    /* Migration 0082 — GRN currency = its primary PO's; rate auto-fills from the
-       master; allocation_method defaults QTY. MYR ⇒ rate 1, no-op. */
-    const bucketFx = await resolveGrnFx(sb, bucket.primaryPoId, bucket.currency ?? undefined, undefined);
-    const grnPayload = {
-      company_id: activeCompanyId(c), // multi-company: stamp the active company
-      purchase_order_id: bucket.primaryPoId,
-      supplier_id: bucket.supplierId,
-      received_at: receivedAt,
-      warehouse_id: bucket.warehouseId,
-      currency: bucketFx.currency,
-      exchange_rate: bucketFx.exchange_rate,
-      allocation_method: normalizeAllocationMethod((body as { allocationMethod?: unknown }).allocationMethod),
-      notes: body.notes
-        ? `Received from ${[...bucket.poNumbers].join(', ')} · ${body.notes}`
-        : `Received from ${[...bucket.poNumbers].join(', ')}`,
-      created_by: user.id,
-    };
-    /* Audit (ported from 2990 b30f0bb1) — the GRN suffix is an in-memory counter
-       off a non-locking COUNT snapshot, so a CONCURRENT multi-GRN receive can
-       mint the same grn_number (UNIQUE). A collision previously hit
-       `if (hErr) continue` and SILENTLY DROPPED the bucket (its inventory-IN
-       lost, caller still got 201). Retry on 23505: re-derive the next free
-       suffix from a fresh live count + bump. */
-    let h: { id: string; grn_number: string; company_id: number } | null = null;
-    for (let attempt = 0; attempt < 8 && !h; attempt += 1) {
-      const grnNumber = `${cp}GRN-${yymm}-${String(counter).padStart(3, '0')}`;
-      const { data: header, error: hErr } = await sb.from('grns')
-        .insert({ grn_number: grnNumber, ...grnPayload })
-        .select('id, grn_number, company_id').single();
-      if (!hErr && header) { h = header as unknown as { id: string; grn_number: string; company_id: number }; break; }
-      if (!hErr || (hErr as { code?: string }).code !== '23505') break;
-      const liveNext = await mintMonthlyDocNo(sb, 'grns', 'grn_number', `${cp}GRN-${yymm}`);
-      counter = parseInt(liveNext.slice(`${cp}GRN-${yymm}-`.length), 10);
-    }
-    if (!h) continue;
-
-    const rows = bucket.lines.map(({ row, qty }) => {
-      const discountSen = row.discount_sen ?? 0;
-      return {
-        grn_id: h.id,
-        purchase_order_item_id: row.id,
-        material_kind: row.material_kind,
-        item_code: row.item_code,
-        material_name: row.material_name,
-        qty_received: qty,
-        qty_accepted: qty,
-        qty_rejected: 0,
-        unit_price_sen: row.unit_price_sen,
-        /* Migration 0101 — GRN line money: qty_received * unit - discount. */
-        // Audit (ported from 2990 20190257) — clamp like the PO create path (negative-money guard).
-        line_total_sen: Math.max(0, (qty * row.unit_price_sen) - discountSen),
-        // PR #44 — preserve variants from PO line
-        item_group: row.item_group,
-        description: row.description,
-        description2: row.description2,
-        uom: row.uom ?? 'UNIT',
-        variants: row.variants,
-        gap_inches: row.gap_inches,
-        divan_height_inches: row.divan_height_inches,
-        divan_price_sen: row.divan_price_sen ?? 0,
-        leg_height_inches: row.leg_height_inches,
-        leg_price_sen: row.leg_price_sen ?? 0,
-        custom_specials: row.custom_specials,
-        line_suffix: row.line_suffix,
-        special_order_price_sen: row.special_order_price_sen ?? 0,
-        discount_sen: discountSen,
-        /* Deliverable 5 — carry the PO line's delivery date into the GRN line.
-           Migration 0180 — use the EFFECTIVE (latest revised) line date. */
-        delivery_date: effectiveDelivery(
-          row.delivery_date,
-          row.supplier_delivery_date_2,
-          row.supplier_delivery_date_3,
-          row.supplier_delivery_date_4,
-        ),
-      };
-    });
-    const { error: iErr } = await sb.from('grn_items').insert(stampCompany(rows, c));
-    if (iErr) {
-      await sb.from('grns').delete().eq('id', h.id);
-      continue;
-    }
-    /* Post-insert over-receipt verification — the per-pick pre-check above is a
-       read-then-write race with concurrent receives. Re-sum live received per PO
-       line; if THIS bucket's GRN broke a cap, roll it back (delete its lines +
-       header) and record the over-receipt so we 409 below. Must run BEFORE
-       postGrnAndRollup so no inventory IN / received_qty rollup is written for a
-       rejected receipt. */
-    const over = await verifyGrnOverReceipt(sb, h.id, bucket.lines.map(({ row }) => row.id));
-    if (over) {
-      await sb.from('grn_items').delete().eq('grn_id', h.id);
-      await sb.from('grns').delete().eq('id', h.id);
-      overReceipt = over;
-      continue;
-    }
+  for (const draft of coreRes.created) {
     // Immediately post — rolls up received_qty, flips PO status, writes inventory.
-    const postRes = await postGrnAndRollup(sb, h.id, user.id, h.company_id);
-    /* ZERO-COST refusal — this path also inserts POSTED before posting, so roll
-       the bucket's document back exactly like the over-receipt branch above and
-       carry the refusal out of the loop. Buckets that received cleanly keep
-       their documents; only the uncosted one is undone. */
+    // The UI create is auto-posted; the draft-only core left this to the handler.
+    const postRes = await postGrnAndRollup(sb, draft.id, user.id, draft.companyId);
+    /* ZERO-COST refusal — the core inserted this draft, so roll it back exactly
+       like the over-receipt branch inside the core and carry the refusal out of
+       the loop. Buckets that received cleanly keep their documents; only the
+       uncosted one is undone. */
     if (!postRes.ok && postRes.zeroCost) {
-      await sb.from('grn_items').delete().eq('grn_id', h.id);
-      await sb.from('grns').delete().eq('id', h.id);
+      await sb.from('grn_items').delete().eq('grn_id', draft.id);
+      await sb.from('grns').delete().eq('id', draft.id);
       zeroCostRefusal = postRes.zeroCost;
       continue;
     }
-    // Migration 0101 — populate header money rollups from the inserted lines.
-    await recomputeGrnTotals(sb, h.id);
     if (!postRes.ok) {
       // Post failed — leave the GRN as DRAFT (it's created), report counts.
       // Don't delete — commander can inspect and post manually.
@@ -2232,35 +2044,35 @@ export const createGrnsFromPoItemsHandler = async (c: Context<{ Bindings: Env; V
        inventory IN silently fail (writeMovements {ok:false}), or fail the post
        outright. Surface both per entry so a partial multi-PO receive is LOUD
        instead of the whole call returning a flat 201. */
-    /* This bucket's GRN cleared its own over-receipt rollback (the `continue`
-       above), so it survives the request even if a LATER bucket is rolled back —
-       each bucket is its own document and its own CREATE row. */
+    /* CREATE recorded HERE, past the post — the core deliberately leaves it to
+       the caller so a bucket the post rolls back (zero-cost above) never leaves
+       an orphan CREATE row. Each bucket is its own document and its own CREATE. */
     await recordGrnCreate(
-      sb, c.get('houzsUser'), activeCompanyId(c), h.id, bucket.lines.length,
-      `Received from ${[...bucket.poNumbers].join(', ')}`,
+      sb, c.get('houzsUser'), activeCompanyId(c), draft.id, draft.lineCount,
+      `Received from ${draft.poNumbers.join(', ')}`,
     );
 
     /* ERP -> AutoCount PO->GR, per bucket: each bucket IS its own document, and
        it names every purchase order it received against. The bucket is grouped
        by supplier, so all its sources share one creditor. */
-    const bucketPoIds = bucket.poIds.size ? [...bucket.poIds] : (bucket.primaryPoId ? [bucket.primaryPoId] : []);
+    const bucketPoIds = draft.poIds.length ? draft.poIds : (draft.primaryPoId ? [draft.primaryPoId] : []);
     const bucketAc = bucketPoIds.length ? await enqueueConvert(sb, {
         companyId: activeCompanyId(c),
         op: 'po_to_gr',
         from: bucketPoIds.map((id) => ({ table: 'purchase_orders' as const, keyCol: 'id', key: id })),
-        to: { table: 'grns', keyCol: 'id', key: h.id },
+        to: { table: 'grns', keyCol: 'id', key: draft.id },
         docType: 'GR',
-        docNo: h.grn_number,
-        docId: h.id,
+        docNo: draft.grnNumber,
+        docId: draft.id,
         createdBy: c.get('houzsUser')?.id ?? null,
     }) : null;
     const postFailReason = postRes.ok ? undefined : postRes.reason;
     const bucketMovementErrors = postRes.ok ? postRes.movementErrors : undefined;
     const bucketRecountError = postRes.ok ? postRes.recountError : undefined;
     created.push({
-      id: h.id, grnNumber: h.grn_number,
-      purchaseOrderId: bucket.primaryPoId, poNumber: [...bucket.poNumbers].join(', '),
-      lineCount: bucket.lines.length,
+      id: draft.id, grnNumber: draft.grnNumber,
+      purchaseOrderId: draft.primaryPoId, poNumber: draft.poNumbers.join(', '),
+      lineCount: draft.lineCount,
       posted: postRes.ok,
       ...(postFailReason ? { postError: postFailReason } : {}),
       ...(bucketMovementErrors?.length ? { movementErrors: bucketMovementErrors } : {}),

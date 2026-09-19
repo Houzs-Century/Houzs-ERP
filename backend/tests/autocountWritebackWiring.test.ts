@@ -94,7 +94,11 @@ describe('the six flows are hooked at the point the document becomes permanent',
     expect(wholePo).toContain('poList.map(');
     expect(wholePo).not.toContain('recordConvertSkipped');
 
-    const perLine = between(grnSource, 'Received from ${[...bucket.poNumbers]', 'const postFailReason');
+    /* The per-line convert's DRAFT creation (bucketing, notes) moved to the lib
+       core (grn-from-po-core.ts), but the po_to_gr enqueue stays in the HTTP
+       handler's post loop — so this anchors on the handler's bucketPoIds block,
+       which is where the assertions below actually live. */
+    const perLine = between(grnSource, 'const bucketPoIds = draft.poIds.length', 'const postFailReason');
     expect(perLine).toContain("op: 'po_to_gr'");
     /* The bucket's own PO IDS, not `primaryPoId`. A bucket can hold several
        purchase orders and `primaryPoId` is whichever one opened it. */
