@@ -243,12 +243,12 @@ describe('the P&L on its layout', () => {
     expect(b.layout.stored).toBe(true);
     expect(b.layout.baseSen).toBe(100_000);
     expect(flat(b.layout.expenses)).toEqual([
-      ['category', 'Marketing', 12_000, 12, [['account', '900-A001 — 900-A001', 12_000, 12]]],
-      ['unassigned', 'Unassigned', 3_000, 3, [['account', '900-A014 — 900-A014', 3_000, 3]]],
+      ['category', 'Marketing', 12_000, 12, [['account', '900-A001 · 900-A001', 12_000, 12]]],
+      ['unassigned', 'Unassigned', 3_000, 3, [['account', '900-A014 · 900-A014', 3_000, 3]]],
     ]);
     expect(b.layout.expenses.reduce((s, n) => s + n.amountSen, 0)).toBe(b.totals.expensesSen);
     /* An empty stored block still lays the section's figures out — under Unassigned. */
-    expect(flat(b.layout.tradingIncome)).toEqual([['unassigned', 'Unassigned', 100_000, 100, [['account', '501-0000 — 501-0000', 100_000, 100]]]]);
+    expect(flat(b.layout.tradingIncome)).toEqual([['unassigned', 'Unassigned', 100_000, 100, [['account', '501-0000 · 501-0000', 100_000, 100]]]]);
   });
 
   test('nothing stored: the chart\'s own tree, headers as categories with subtotals', async () => {
@@ -257,8 +257,8 @@ describe('the P&L on its layout', () => {
     expect(b.layout.stored).toBe(false);
     expect(flat(b.layout.expenses)).toEqual([
       ['category', 'Operating Expense', 15_000, 15, [
-        ['account', '900-A001 — 900-A001', 12_000, 12],
-        ['category', 'ADVERTISEMENT', 3_000, 3, [['account', '900-A014 — 900-A014', 3_000, 3]]],
+        ['account', '900-A001 · 900-A001', 12_000, 12],
+        ['category', 'ADVERTISEMENT', 3_000, 3, [['account', '900-A014 · 900-A014', 3_000, 3]]],
       ]],
     ]);
   });
