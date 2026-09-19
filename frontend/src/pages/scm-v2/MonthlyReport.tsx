@@ -13,6 +13,9 @@
 // the whole range, a month's figure opens that month alone. Rows wear a
 // dashed hairline, light up under the mouse, and the name column stays put
 // while the months scroll (his pick of the two samples, style one).
+// Owner 2026-09-19: a subtotal or total row wears a shade of its own, apart
+// from the account rows; an opened account's lines a lighter one, cut at the
+// column's width, their figures under the amount slot, never under the %.
 // ----------------------------------------------------------------------------
 
 import { Fragment, useEffect, useMemo, useState } from 'react';
@@ -26,7 +29,7 @@ import {
   type FlatLine, type MonthColumn, type MonthlyLine,
 } from '../../vendor/scm/lib/report-monthly';
 import { LevelButtons, useReportTree, type Level } from './ReportLayoutTree';
-import { AccountMonthRows } from './AccountMonthRows';
+import { AccountMonthRows, pctSlotStyle } from './AccountMonthRows';
 import styles from './MonthlyReport.module.css';
 
 const soft: React.CSSProperties = { fontSize: 'var(--fs-13)', color: 'var(--text-soft, #8a8578)' };
@@ -36,7 +39,10 @@ const card: React.CSSProperties = {
 const num: React.CSSProperties = { textAlign: 'right', whiteSpace: 'nowrap', padding: '2px 10px', fontVariantNumeric: 'tabular-nums' };
 /* The % under an amount — the same figure the % toggle prints alone. */
 /* The % rides BESIDE the amount, on the same line (owner 2026-09-18: percentage 应该在 amount 旁边而不是下面). */
-const pctBeside: React.CSSProperties = { fontSize: 'var(--fs-11, 11px)', color: 'var(--text-soft, #8a8578)', fontWeight: 400, marginLeft: 6, display: 'inline-block', minWidth: 46, textAlign: 'right' };
+const pctBeside: React.CSSProperties = { ...pctSlotStyle, fontSize: 'var(--fs-11, 11px)', color: 'var(--text-soft, #8a8578)', fontWeight: 400, textAlign: 'right' };
+/* A row's dress: every line row dashed and frozen; a total and a subtotal (net) shaded apart from the account rows; a block plain. */
+const rowClass = (kind: MonthlyLine['kind']): string | undefined =>
+  (kind === 'block' ? undefined : [styles.row, kind === 'total' ? styles.total : kind === 'net' ? styles.net : ''].join(' ').trim());
 const chevron: React.CSSProperties = { background: 'none', border: 'none', padding: '0 4px 0 0', cursor: 'pointer', font: 'inherit', color: 'var(--text-soft, #8a8578)', width: 18, display: 'inline-block', textAlign: 'left' };
 const nameBtn: React.CSSProperties = { background: 'none', border: 'none', padding: 0, cursor: 'pointer', font: 'inherit', color: 'inherit' };
 const figureBtn: React.CSSProperties = { ...nameBtn, fontVariantNumeric: 'tabular-nums' };
@@ -160,7 +166,7 @@ export function MonthlyReport<T>({ report, title, withCumulative, fetchColumn, l
                 const drilled = drillable && Boolean(tree.drilled[l.id]);
                 return (
                   <Fragment key={l.id}>
-                    <tr data-kind={l.kind} data-depth={l.depth} className={l.kind === 'block' ? undefined : styles.row} style={l.kind === 'net' || l.kind === 'total' ? { borderTop: l.kind === 'net' ? '2px solid var(--c-ink, #221f20)' : '1px solid var(--border-weak, #e3e1da)' } : undefined}>
+                    <tr data-kind={l.kind} data-depth={l.depth} className={rowClass(l.kind)} style={l.kind === 'net' || l.kind === 'total' ? { borderTop: l.kind === 'net' ? '2px solid var(--c-ink, #221f20)' : '1px solid var(--border-weak, #e3e1da)' } : undefined}>
                       <td className={styles.name} style={{ padding: `2px 10px 2px ${10 + 14 * Math.max(0, l.depth)}px`, ...style(l) }}>
                         {folder && <button type="button" style={chevron} aria-label={`${open ? 'Collapse' : 'Expand'} ${l.label}`} aria-expanded={open} onClick={() => tree.toggle(l.id, open)}>{open ? '▾' : '▸'}</button>}
                         {drillable
@@ -191,7 +197,7 @@ export function MonthlyReport<T>({ report, title, withCumulative, fetchColumn, l
                     </tr>
                     {drilled && l.code && (
                       <AccountMonthRows code={l.code} columns={columns} from={range.from} to={range.to} month={drillMonth[l.id] ?? null}
-                        rowSen={l.cells.cumulative?.amountSen ?? Object.values(l.cells).reduce((sum, cell) => sum + (cell?.amountSen ?? 0), 0)} fmt={fmt} />
+                        rowSen={l.cells.cumulative?.amountSen ?? Object.values(l.cells).reduce((sum, cell) => sum + (cell?.amountSen ?? 0), 0)} fmt={fmt} pctSlot={!showPct} />
                     )}
                   </Fragment>
                 );
