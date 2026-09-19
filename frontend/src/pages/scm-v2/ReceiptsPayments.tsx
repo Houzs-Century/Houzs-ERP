@@ -7,7 +7,9 @@
 // that account's own column beside it, on paper as on the screen;
 // rows in the owner's own accounts (a supplier payment read through what it
 // settled, rule A), or by debtor/creditor on the toggle. Pick the period,
-// tick the accounts, click a figure to see the entries behind it, Print.
+// tick the accounts, click a figure to see the entries behind it; Excel and
+// PDF carry the table AS SHOWN — the ticked columns, the lines at the level
+// chosen (owner 2026-09-19: 我这页显示什么就要 export 什么).
 // The rows sit on the report's LAYOUT (docs/bugs/0912 — the big groups the
 // owner asked for on 2026-09-07, showroom 费用 / operation 费用 …) — since
 // 2026-09-18 the Cash Flow tree: every top category is In or Out and prints
@@ -19,7 +21,7 @@
 // ----------------------------------------------------------------------------
 
 import { Fragment, useMemo, useState } from 'react';
-import { Printer } from 'lucide-react';
+import { Download, Printer } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { useAuth } from '../../auth/AuthContext';
 import { useAccounts } from '../../vendor/scm/lib/accounting-queries';
@@ -27,7 +29,7 @@ import { rpReportPath, useRpReport, type RpReport } from '../../vendor/scm/lib/r
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import { rpLines, type MonthColumn } from '../../vendor/scm/lib/report-monthly';
 import { ByMonthButton, MonthlyReport } from './MonthlyReport';
-import { fmtRp, generateRpPdf } from '../../vendor/scm/lib/rp-report-pdf';
+import { downloadRpXlsx, fmtRp, generateRpPdf } from '../../vendor/scm/lib/rp-report-pdf';
 import { fmtPct, laidDepth, leafKeys, type LaidNode } from '../../vendor/scm/lib/report-layout';
 import { DateField } from '../../vendor/scm/components/DateField';
 import { fmtDateOrDash } from '../../vendor/shared/format';
@@ -114,8 +116,11 @@ export const ReceiptsPaymentsTab = () => {
           <Button variant="ghost" size="sm" onClick={() => setEditing((e) => !e)} aria-pressed={editing}>Layout</Button>
         )}
         <span style={{ flex: 1 }} />
-        <Button variant="ghost" size="sm" onClick={() => { if (r) void generateRpPdf(r, { columns: columnCodes }); }} disabled={!r || monthly}>
-          <Printer size={16} strokeWidth={1.75} /> Print
+        <Button variant="ghost" size="sm" onClick={() => { if (r) void downloadRpXlsx(r, { columns: columnCodes, level, open: tree.open }); }} disabled={!r || monthly}>
+          <Download size={16} strokeWidth={1.75} /> Excel
+        </Button>
+        <Button variant="ghost" size="sm" onClick={() => { if (r) void generateRpPdf(r, { columns: columnCodes, level, open: tree.open }); }} disabled={!r || monthly}>
+          <Printer size={16} strokeWidth={1.75} /> PDF
         </Button>
       </div>
       {editing && <ReportLayoutEditor report="rp" onClose={() => setEditing(false)} />}

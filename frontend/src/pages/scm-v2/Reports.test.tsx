@@ -74,6 +74,11 @@ vi.mock('./MonthlyReport', () => ({
   ByMonthButton: ({ on, onToggle }: { on: boolean; onToggle: () => void }) => <button type="button" aria-pressed={on} onClick={onToggle}>By month</button>,
 }));
 
+const xlsx = vi.fn(async (..._a: unknown[]) => {});
+const pdf = vi.fn(async (..._a: unknown[]) => {});
+vi.mock('../../vendor/scm/lib/report-sheet-xlsx', () => ({ downloadReportXlsx: (...a: unknown[]) => xlsx(...a) }));
+vi.mock('../../vendor/scm/lib/report-sheet-pdf', () => ({ generateReportPdf: (...a: unknown[]) => pdf(...a) }));
+
 import { PnLTab, BalanceSheetTab } from './Reports';
 
 describe('the standard statements', () => {
@@ -212,4 +217,35 @@ describe('the standard statements', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Layout' }));
     expect(screen.getByRole('dialog', { name: 'Layout · P&L' })).toBeTruthy();
   });
+
+  /* EXPORTS (owner 2026-09-19: 我这页显示什么就要 export 什么): Excel and PDF carry
+     the statement as shown — the lines at the level chosen, no RM. */
+  test('Excel and PDF carry the statement as shown — the lines at the level chosen', () => {
+    type Sheet = { title: string; subtitle: string; tables: Array<{ columns: Array<{ label: string }>; rows: Array<{ label: string; kind: string; depth: number; cells: unknown[] }> }> };
+    render(<PnLTab />);
+    fireEvent.click(screen.getByRole('button', { name: 'L1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Excel' }));
+    expect(xlsx).toHaveBeenCalledTimes(1);
+    const [sheet, name] = xlsx.mock.calls[0]! as [Sheet, string];
+    expect(name).toMatch(/^pnl-\d{4}-\d{2}-\d{2}-to-\d{4}-\d{2}-\d{2}\.xlsx$/);
+    expect(sheet.title).toBe('P&L');
+    expect(sheet.subtitle).toContain('level 1');
+    expect(sheet.tables[0]!.columns.map((c) => c.label)).toEqual(['Amount', '% of sales']);
+    const labels = sheet.tables[0]!.rows.map((r) => r.label);
+    expect(labels).toContain('Operating Expense');
+    /* Folded away at L1, as on the screen. */
+    expect(labels).not.toContain('900-A001 — ADVERT');
+    expect(sheet.tables[0]!.rows.find((r) => r.label === 'NET PROFIT')).toMatchObject({ kind: 'net', cells: [41_500, 41.5] });
+    fireEvent.click(screen.getByRole('button', { name: 'PDF' }));
+    expect(pdf).toHaveBeenCalledTimes(1);
+    expect((pdf.mock.calls[0]![1] as { fileName: string }).fileName).toMatch(/^pnl-.*\.pdf$/);
+    xlsx.mockClear();
+    render(<BalanceSheetTab />);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Excel' })[1]!);
+    const [bs, bsName] = xlsx.mock.calls[0]! as [Sheet, string];
+    expect(bs.title).toBe('Balance Sheet');
+    expect(bsName).toMatch(/^balance-sheet-\d{4}-\d{2}-\d{2}\.xlsx$/);
+    expect(bs.tables[0]!.rows.find((r) => r.label === 'BALANCED')).toMatchObject({ kind: 'net', cells: [103_000, 100] });
+  });
+
 });

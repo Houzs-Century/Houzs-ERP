@@ -1,7 +1,8 @@
-/* The printed Cash Flow table is the screen's table — pure, so this reads
-   the cells without rendering a PDF. */
+/* The Cash Flow's exports carry the sheet the screen shows (owner
+   2026-09-19: 显示什么就 export 什么) — pure here: the sheet's title, period,
+   letterhead lines and money dress; the table itself is report-sheet.test.ts. */
 import { describe, expect, it } from 'vitest';
-import { fmtRp, rpTable } from './rp-report-pdf';
+import { cashFlowSheet, fmtRp } from './rp-report-pdf';
 import type { RpReport } from './rp-report-queries';
 
 const r: RpReport = {
@@ -16,9 +17,7 @@ const r: RpReport = {
     stored: false, inSen: 50000, outSen: 30000,
     tree: [
       { kind: 'category', id: 'side:in', label: 'RECEIPTS', flow: 'in', totalLabel: 'Total receipts', amountSen: 50000, pct: 100, cells: { '310-0010': 50000 }, children: [
-        { kind: 'category', id: 'in:sec:CURRENT ASSETS', label: 'CURRENT ASSETS', amountSen: 50000, pct: 100, cells: { '310-0010': 50000 }, children: [
-          { kind: 'account', id: 'in:acc:300-0000', label: '300-0000 · AR', code: '300-0000', key: '300-0000', flow: 'in', amountSen: 50000, pct: 100, cells: { '310-0010': 50000 }, children: [] },
-        ] },
+        { kind: 'account', id: 'in:acc:300-0000', label: '300-0000 · AR', code: '300-0000', key: '300-0000', flow: 'in', amountSen: 50000, pct: 100, cells: { '310-0010': 50000 }, children: [] },
       ] },
       { kind: 'category', id: 'side:out', label: 'PAYMENTS', flow: 'out', totalLabel: 'Total payments', amountSen: 30000, pct: 100, cells: { '310-0010': 30000 }, children: [
         { kind: 'account', id: 'out:acc:ADV', label: 'Supplier advances (预付)', code: 'ADV', key: 'ADV', flow: 'out', amountSen: 30000, pct: 100, cells: { '310-0010': 30000 }, children: [] },
@@ -27,30 +26,25 @@ const r: RpReport = {
   },
 };
 
-describe('rpTable', () => {
-  it('lays each section with its own subtotal name, then Cash Surplus, Balance b/f and c/f — the rows as the tree, indented, one column per account plus Total and %', () => {
-    const t = rpTable(r);
-    expect(t.head).toEqual(['', '310-0010\nBANK', 'Total', '%']);
-    expect(t.lines.map((l) => [l.kind, l.label])).toEqual([
-      ['section', 'RECEIPTS'], ['category', 'CURRENT ASSETS'], ['row', '   300-0000 · AR'], ['balance', 'Total receipts'],
-      ['section', 'PAYMENTS'], ['row', 'Supplier advances (预付)'], ['balance', 'Total payments'],
-      ['balance', 'Cash Surplus / (Deficit)'], ['balance', 'Balance b/f'], ['balance', 'Balance c/f'],
+describe('cashFlowSheet', () => {
+  it('names the report, its period and its rows; Total alone when nothing is ticked, the ticked column before Total otherwise', () => {
+    const s = cashFlowSheet(r);
+    expect(s.title).toBe('Cash Flow');
+    expect(s.subtitle).toBe("01/07/2026 – 31/07/2026 · every bank and cash account · by the owner's accounts · % of the side's total");
+    expect(s.meta).toEqual([
+      { label: 'Period', value: '01/07/2026 – 31/07/2026' },
+      { label: 'Accounts', value: '310-0010' },
+      { label: 'Rows', value: "By the owner's accounts" },
     ]);
-    expect(t.lines[1]!.cells).toEqual(['500.00', '500.00', '100.0%']);
-    expect(t.lines[3]!.cells).toEqual(['500.00', '500.00', '100.0%']);
-    expect(t.lines[6]!.cells).toEqual(['300.00', '300.00', '100.0%']);
-    expect(t.lines[7]!.cells).toEqual(['200.00', '200.00', '']);
-    expect(t.lines[8]!.cells).toEqual(['(100.00)', '(100.00)', '']);
-    expect(t.lines[9]!.cells).toEqual(['100.00', '100.00', '']);
-  });
-
-  /* The paper follows the screen (owner 2026-09-18: default 看 total): no ticks, Total alone. */
-  it('prints only the columns the screen shows — Total alone when nothing is ticked', () => {
-    const alone = rpTable(r, []);
-    expect(alone.head).toEqual(['', 'Total', '%']);
-    expect(alone.lines[8]!.cells).toEqual(['(100.00)', '']);
-    expect(alone.lines[1]!.cells).toEqual(['500.00', '100.0%']);
-    expect(rpTable(r, ['310-0010']).head).toEqual(rpTable(r).head);
+    expect(s.tables[0]!.columns.map((c) => c.label)).toEqual(['Total', '%']);
+    expect(s.tables[0]!.rows.map((x) => [x.kind, x.label])).toEqual([
+      ['block', 'RECEIPTS'], ['row', '300-0000 · AR'], ['total', 'Total receipts'],
+      ['block', 'PAYMENTS'], ['row', 'Supplier advances (预付)'], ['total', 'Total payments'],
+      ['net', 'Cash Surplus / (Deficit)'], ['total', 'Balance b/f'], ['net', 'Balance c/f'],
+    ]);
+    expect(cashFlowSheet(r, { columns: ['310-0010'] }).tables[0]!.columns.map((c) => c.label)).toEqual(['310-0010 BANK', 'Total', '%']);
+    expect(cashFlowSheet({ ...r, byParty: true }).meta[2]).toEqual({ label: 'Rows', value: 'By debtor / creditor' });
+    expect(s.fmt).toBe(fmtRp);
   });
 
   it('fmtRp brackets a negative and keeps the thousands', () => {

@@ -2,7 +2,7 @@
    one request per column, 累计 leftmost then newest → oldest; a line a month
    has and the range lacks still prints, a dash in both slots where a month
    has nothing (owner 2026-09-18); the % toggle; the months buttons; the
-   levels; Export writes the CSV; an account's lines open under its row in
+   levels; Excel and PDF carry the table as shown; an account's lines open under its row in
    the month grid, each under its month, a month's figure alone; a total or
    subtotal row shaded apart from the account rows, the lines shaded lighter,
    cut at the column, their figures under the amount slot (2026-09-19). The
@@ -42,10 +42,12 @@ vi.mock('@tanstack/react-query', () => ({
     return data ? { data, isLoading: false, isError: false } : { data: undefined, isLoading: false, isError: true };
   }),
 }));
-const download = vi.fn();
+const xlsx = vi.fn(async (..._a: unknown[]) => {});
+const pdf = vi.fn(async (..._a: unknown[]) => {});
 const useLedger = vi.fn();
 vi.mock('../../vendor/scm/lib/ledger-queries', async (orig) => ({ ...(await orig<Record<string, unknown>>()), useLedger: (...a: unknown[]) => useLedger(...a) }));
-vi.mock('../../lib/csv', () => ({ downloadCSV: (...a: unknown[]) => download(...a) }));
+vi.mock('../../vendor/scm/lib/report-sheet-xlsx', () => ({ downloadReportXlsx: (...a: unknown[]) => xlsx(...a) }));
+vi.mock('../../vendor/scm/lib/report-sheet-pdf', () => ({ generateReportPdf: (...a: unknown[]) => pdf(...a) }));
 
 import { MonthlyReport } from './MonthlyReport';
 
@@ -86,7 +88,7 @@ describe('the monthly view', () => {
     expect(rows.findIndex((t) => t.startsWith('ADVERT'))).toBe(rows.findIndex((t) => t.startsWith('RENT')) + 1);
   });
 
-  test('3 months makes the range 累计 of three; the % toggle prints each cell\'s %; L1 folds; Export writes the CSV', () => {
+  test('3 months makes the range 累计 of three; the % toggle prints each cell\'s %; L1 folds; Excel and PDF carry the table as shown', () => {
     vi.useFakeTimers({ now: new Date('2026-09-15T04:00:00Z'), toFake: ['Date'] });
     try {
       draw();
@@ -109,10 +111,26 @@ describe('the monthly view', () => {
     expect(within(screen.getByText('Expenses').closest('tr')!).getAllByRole('cell').map((c) => c.textContent)).toEqual(['Expenses', '', '', '', '']);
     /* One level deep: nothing to fold. */
     expect(screen.queryByRole('group', { name: 'Levels' })).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Export' }));
-    expect(download).toHaveBeenCalledTimes(1);
-    expect(String(download.mock.calls[0]![0])).toBe('pnl-monthly-2026-07-2026-09.csv');
-    expect(String(download.mock.calls[0]![1])).toContain('RENT,30.0%,25.0%,40.0%,20.0%');
+    /* Excel and PDF carry the table as shown — these columns; in % mode the % alone (owner 2026-09-19: 我这页显示什么就要 export 什么). */
+    type Sheet = { title: string; subtitle: string; tables: Array<{ columns: Array<{ label: string; kind: string }>; rows: Array<{ label: string; kind: string; cells: unknown[] }> }> };
+    fireEvent.click(screen.getByRole('button', { name: 'Excel' }));
+    expect(xlsx).toHaveBeenCalledTimes(1);
+    const [sheet, name] = xlsx.mock.calls[0]! as [Sheet, string];
+    expect(name).toBe('pnl-monthly-2026-07-2026-09.xlsx');
+    expect(sheet.title).toBe('P&L');
+    expect(sheet.subtitle).toContain('07/2026 – 09/2026');
+    expect(sheet.tables[0]!.columns.map((c) => c.label)).toEqual(['累计 07/2026 – 09/2026', '09/2026', '08/2026', '07/2026']);
+    expect(sheet.tables[0]!.columns.every((c) => c.kind === 'pct')).toBe(true);
+    expect(sheet.tables[0]!.rows.find((r) => r.label === 'RENT')!.cells).toEqual([30, 25, 40, 20]);
+    /* Amounts mode: an amount column with the % beside it per month; a block line carries no cells. */
+    fireEvent.click(screen.getByRole('button', { name: 'RM' }));
+    fireEvent.click(screen.getByRole('button', { name: 'PDF' }));
+    expect(pdf).toHaveBeenCalledTimes(1);
+    const [printed, o] = pdf.mock.calls[0]! as [Sheet, { fileName: string }];
+    expect(o.fileName).toBe('pnl-monthly-2026-07-2026-09.pdf');
+    expect(printed.tables[0]!.columns.map((c) => c.label)).toEqual(['累计 07/2026 – 09/2026', '%', '09/2026', '%', '08/2026', '%', '07/2026', '%']);
+    expect(printed.tables[0]!.rows.find((r) => r.label === 'RENT')!.cells).toEqual([300_000, 30, 100_000, 25, 100_000, 40, 100_000, 20]);
+    expect(printed.tables[0]!.rows.find((r) => r.label === 'Expenses')!.cells).toEqual([]);
   });
 
   test('a category folds and unfolds by its chevron past the level; an account name opens its lines under their months; a month\'s figure opens that month alone', () => {
