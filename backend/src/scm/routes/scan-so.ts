@@ -66,8 +66,9 @@ import {
   type ContentBlock,
   type UploadedImage,
 } from '../lib/scan-ocr';
-// GR scan pipeline — the SO queue consumer delegates GR-typed jobs here.
+// GR / PI scan pipelines — the SO queue consumer delegates GR/PI-typed jobs here.
 import { processGrnScanQueueMessage } from './scan-gr';
+import { processPiScanQueueMessage } from './scan-pi';
 
 // The scm-scoped service client (getSupabaseService, db:{schema:'scm'}) and the
 // middleware-attached c.get('supabase') are both schema-parameterised clients.
@@ -4347,11 +4348,12 @@ export async function processScanQueueMessage(env: Env, jobId: string): Promise<
   // Legacy rows predating the column read back null -> coerce to 'SO'.
   const documentType = coerceScanDocumentType(r.documentType ?? r.document_type);
 
-  // GR jobs run the GR pipeline, not this SO one. One-way delegation (scan-gr
-  // never imports scan-so, so no cycle); the GR consumer re-reads the row and
-  // owns its own idempotency. PI lands here too until slice 5 builds it — until
-  // then a non-SO, non-GR job is acked with a warning rather than mis-run as SO.
+  // GR / PI jobs run their own pipelines, not this SO one. One-way delegation
+  // (scan-gr / scan-pi never import scan-so, so no cycle); each consumer re-reads
+  // the row, loads its own photos and owns its own idempotency. A non-SO, non-GR,
+  // non-PI job is acked with a warning rather than mis-run as SO.
   if (documentType === 'GR') { await processGrnScanQueueMessage(env, id); return; }
+  if (documentType === 'PI') { await processPiScanQueueMessage(env, id); return; }
   if (documentType !== 'SO') {
     console.warn('[scan-queue] no consumer for document_type yet, acking:', documentType, id);
     return;

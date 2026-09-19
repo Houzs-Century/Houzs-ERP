@@ -566,3 +566,99 @@ export async function noteScanDraftAccepted(
     console.warn('[scan-sample-review] review note failed (non-fatal):', docNo, (e as Error).message);
   }
 }
+
+// ---------------------------------------------------------------------------
+// notePiScanAccepted — the PI mirror of noteScanDraftAccepted, fired on a
+// Purchase Invoice's DRAFT -> POSTED transition (routes/purchase-invoices.ts
+// postPurchaseInvoiceHandler). The confirm is the operator's verdict on the
+// invoice OCR that produced this draft.
+//
+// A scanned PI is CONVERTED from its GRN, so its lines carry the GRN's own item
+// codes / quantities / prices, NOT a lossy back-mapping of the invoice OCR.
+// That makes the two verdicts asymmetric, and deliberately so:
+//
+//   confirmed UNCHANGED -> ACCEPTED, corrected = extracted. The read is
+//     ground-truth for the few-shot pool (loadPiFewShot reads it on the very
+//     next scan). This is the signal that matters for invoice OCR.
+//
+//   confirmed WITH EDITS -> nothing written. Unlike the SO slip, there is no
+//     faithful inversion from a GRN-derived PI back to the invoice's own
+//     item-code / qty / unit-price / tax fields — the convert repriced and
+//     re-keyed them off the receipt. Writing corrected = extracted would assert
+//     the OCR read correctly about a draft a human just edited; rebuilding a
+//     "corrected" invoice from the PI would manufacture a mapping nobody wrote.
+//     So we honour noteScanDraftAccepted's rule (never claim the AI was right
+//     about an edited draft) by writing NOTHING. Losing that signal is
+//     acceptable; a wrong pair is not.
+//
+// Best-effort and silent: never throws, never blocks the POST.
+// ---------------------------------------------------------------------------
+export async function notePiScanAccepted(
+  svc: SupabaseClient,
+  args: { piId: string; invoiceNumber: string },
+): Promise<void> {
+  try {
+    const { piId, invoiceNumber } = args;
+    // 1. Did this PI come from a background invoice scan? The scan job writes
+    //    the produced doc number to linked_doc_no (mig 20260919T1000), scoped to
+    //    document_type='PI'.
+    const { data: jobRow, error: jobErr } = await svc
+      .from('scan_jobs')
+      .select('sample_id')
+      .eq('linked_doc_no', invoiceNumber)
+      .eq('document_type', 'PI')
+      .not('sample_id', 'is', null)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    // Fail toward NOT learning: a read blip must never be read as "not a scan"
+    // AND must never risk mislabelling a sample. Bail on any error.
+    if (jobErr || !jobRow) return;
+    const j = jobRow as { sampleId?: string | null; sample_id?: string | null };
+    const sampleId = j.sampleId ?? j.sample_id ?? null;
+    if (!sampleId) return;
+
+    // 2. Did a human edit the draft before confirming? The PI's own audit trail
+    //    (entity_audit_log, entity_type='PURCHASE_INVOICE') records CREATE and
+    //    POST as the pipeline/transition's own events; any OTHER action
+    //    (UPDATE header/lines, etc.) is an operator touching the substance.
+    const { data: edits, error: editsErr } = await svc
+      .from('entity_audit_log')
+      .select('id')
+      .eq('entity_type', 'PURCHASE_INVOICE')
+      .eq('entity_id', piId)
+      .not('action', 'in', '("CREATE","POST")')
+      .limit(1);
+    // Unknown edit-history fails toward NOT learning — never promote a sample to
+    // ACCEPTED (asserting the OCR was right) on an unread audit log.
+    if (editsErr) return;
+    const wasEdited = Array.isArray(edits) && edits.length > 0;
+
+    // 3. Read the sample (status='EXTRACTED' is the double-confirm guard — a PI
+    //    re-posted after a cancel/re-confirm matches 0 rows and does nothing).
+    const { data: sample, error: sampleErr } = await svc
+      .from('so_scan_samples')
+      .select('extracted, status, document_type')
+      .eq('id', sampleId)
+      .maybeSingle();
+    if (sampleErr) return;
+    const s = sample as { extracted?: unknown; status?: string | null; document_type?: string | null } | null;
+    if (!s || s.status !== SAMPLE_EXTRACTED || s.document_type !== 'PI' || s.extracted == null) return;
+
+    // 4a. Unchanged — promote EXTRACTED -> ACCEPTED, carrying `extracted` across
+    //     verbatim (the few-shot ground-truth feed).
+    if (!wasEdited) {
+      await svc
+        .from('so_scan_samples')
+        .update({ corrected: s.extracted, status: SAMPLE_ACCEPTED })
+        .eq('id', sampleId)
+        .eq('status', SAMPLE_EXTRACTED);
+      return;
+    }
+    // 4b. Edited — write nothing (see the header). We never assert the OCR read
+    //     correctly about a draft a human corrected.
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.warn('[scan-sample-review] PI review note failed (non-fatal):', args.invoiceNumber, (e as Error).message);
+  }
+}

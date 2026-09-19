@@ -51,6 +51,8 @@ import { insertFailed, loadFailed, rollbackPi, committedAnyway } from '../lib/pi
 import { recomputePiTotals, reallocatePiCharges } from '../lib/pi-money-rollups';
 import { PI_AUDIT_FIELDS, loadPiAuditMeta, recordPiCreate } from '../lib/pi-audit-trail';
 import { attachPiAssignedSos } from '../lib/pi-assigned-sos';
+import { getSupabaseService } from '../../db/supabase';
+import { notePiScanAccepted } from '../lib/scan-sample-review';
 
 /* ERP -> AutoCount Purchase Invoice edit. AcSyncService.cs:446 is `case "PI"`.
    See queueAcDoEdit for the shape. */
@@ -1053,6 +1055,19 @@ export const postPurchaseInvoiceHandler = async (c: any) => {
   }
   // Costing B — the now-confirmed PI is the authoritative cost: re-cost lots/DO/SI.
   await recostForPi(sb, id);
+  // OCR self-learning (slice 5) — if this PI came from an invoice scan, the
+  // DRAFT -> POSTED confirm is the operator's verdict on the read: an unchanged
+  // draft promotes its extraction to the few-shot pool. Best-effort, never
+  // blocks the POST: notePiScanAccepted is itself fail-open, but building the
+  // service client is the one step that can throw (no SUPABASE_URL in a D1 test
+  // env), so the whole call is guarded. Uses the service client because the
+  // audit-log + samples reads must not depend on the caller's request scope.
+  try {
+    await notePiScanAccepted(getSupabaseService(c.env), { piId: id, invoiceNumber: curRow.invoice_number });
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.warn('[pi scan learning] note skipped (non-fatal):', curRow.invoice_number, (e as Error).message);
+  }
   return c.json({ purchaseInvoice: data });
 };
 purchaseInvoices.patch('/:id/post', postPurchaseInvoiceHandler);

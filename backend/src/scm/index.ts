@@ -107,6 +107,7 @@ import { venues } from "./routes/venues";
 import { reports } from "./routes/reports";
 import { scanSo } from "./routes/scan-so";
 import { scanGr } from "./routes/scan-gr";
+import { scanPi } from "./routes/scan-pi";
 import { scanPayment } from "./routes/scan-payment";
 import { scanLorryInvoice } from "./routes/scan-lorry-invoice";
 import { slips } from "./routes/slips";
@@ -902,6 +903,12 @@ scm.route("/scan-so", scanSo);
 // posts stock. The real post (grns PATCH /:id/post) keeps its default gate.
 scm.use("/scan-gr/*", scmAreaGuard("scm.procurement.grn", { writeLevel: "view" }));
 scm.route("/scan-gr", scanGr);
+// scan-pi (OCR slice 5): photo a supplier invoice -> DRAFT Purchase Invoice by
+// converting the matching GRN(s). Same view-level rationale as scan-so/scan-gr
+// (enqueue only stages a background OCR that lands a DRAFT the operator confirms),
+// gated to the PI area.
+scm.use("/scan-pi/*", scmAreaGuard("scm.procurement.pi", { writeLevel: "view" }));
+scm.route("/scan-pi", scanPi);
 // Re-added 2026-06-23 — card-terminal / EPP receipt OCR for the Payments panel.
 // The receipt IS the payment row's slip (one upload, both uses): the frontend
 // POSTs the image here in parallel with the slip upload and fill-blanks-only
