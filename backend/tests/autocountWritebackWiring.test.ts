@@ -120,10 +120,15 @@ describe('the six flows are hooked at the point the document becomes permanent',
     const wholeGrn = between(piSource, 'Converted from Goods Receipt ${g.grn_number', 'return c.json({ id: h.id, invoiceNumber: h.invoice_number');
     expect(wholeGrn).toContain("op: 'gr_to_pi'");
 
-    const perLine = between(piSource, 'Converted from Goods Receipt ${bucket.grnNumbers', '// Consume the GRN lines');
+    /* The per-line GRN->PI create now delegates draft creation to
+       createDraftPisFromGrnItemsCore and posts + wires AutoCount in the handler
+       loop over the returned drafts (refactor/pi-from-grn-core), so the bucket
+       became `draft`. Anchor on the enqueue comment, which is unique to this
+       per-line handler. */
+    const perLine = between(piSource, 'ERP -> AutoCount GRN->Purchase Invoice, per bucket', '// Consume the GRN lines');
     expect(perLine).toContain("op: 'gr_to_pi'");
     // Every goods receipt the bucket bills; the bucket is already one supplier.
-    expect(perLine).toContain('bucket.grnIds.map(');
+    expect(perLine).toContain('draft.grnIds.map(');
     expect(perLine).not.toContain('recordConvertSkipped');
   });
 });
