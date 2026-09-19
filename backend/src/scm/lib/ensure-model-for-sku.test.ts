@@ -104,7 +104,7 @@ describe('ensureModelForSku — find-or-create', () => {
     expect(r.created).toBe(true);
     expect(r.modelId).not.toBe('model-co2');
     expect(tables.product_models).toHaveLength(2);
-    const mine = tables.product_models.find((m) => m.company_id === 1)!;
+    const mine = tables.product_models.find((m) => m.id === r.modelId)!;
     expect(mine.model_code).toBe('ACC-01');
   });
 
