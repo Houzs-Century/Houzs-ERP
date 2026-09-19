@@ -146,14 +146,14 @@ describe('GET /accounting/reports/pnl', () => {
     expect(b.layout.stored).toBe(false);
     expect(b.layout.baseSen).toBe(100_000);
     /* Two sections in the block → a category per section; 700-0000 is a header → a category with a subtotal. */
-    expect(flat(b.layout.tradingIncome)).toEqual([['SALES', 100_000, 100, [['501-0000 — 501-0000', 100_000, 100]]]]);
+    expect(flat(b.layout.tradingIncome)).toEqual([['SALES', 100_000, 100, [['501-0000 · 501-0000', 100_000, 100]]]]);
     expect(flat(b.layout.otherIncome)).toEqual([['OTHER INCOMES', 7_000, 7, [
-      ['530-0000 — 530-0000', 2_000, 2],
-      ['Other Income', 5_000, 5, [['590-0000 — 590-0000', 5_000, 5]]],
+      ['530-0000 · 530-0000', 2_000, 2],
+      ['Other Income', 5_000, 5, [['590-0000 · 590-0000', 5_000, 5]]],
     ]]]);
     /* 900-A001's header (900-0000) is not on this chart → it is a root line. */
-    expect(flat(b.layout.expenses)).toEqual([['900-A001 — 900-A001', 12_000, 12]]);
-    expect(flat(b.layout.costOfSales)).toEqual([['601-0003 — 601-0003', 60_000, 60], ['615-0000 — 615-0000', 1_000, 1], ['620-0000 — 620-0000', -10_000, -10]]);
+    expect(flat(b.layout.expenses)).toEqual([['900-A001 · 900-A001', 12_000, 12]]);
+    expect(flat(b.layout.costOfSales)).toEqual([['601-0003 · 601-0003', 60_000, 60], ['615-0000 · 615-0000', 1_000, 1], ['620-0000 · 620-0000', -10_000, -10]]);
     for (const [block, key] of [['costOfSales', 'costOfSalesSen'], ['expenses', 'expensesSen'], ['otherIncome', 'otherIncomeSen'], ['taxation', 'taxationSen']] as const) {
       expect(b.layout[block].reduce((s, n) => s + n.amountSen, 0)).toBe(b.totals[key]);
     }
@@ -206,9 +206,9 @@ describe('GET /accounting/reports/balance-sheet', () => {
     const flat = (nodes: Laid[]): unknown[] => nodes.map((n) => [n.label, n.amountSen, n.pct, ...(n.children.length > 0 ? [flat(n.children)] : [])]);
     expect(b.layout.stored).toBe(false);
     expect(b.layout.baseSen).toBe(101_000);
-    expect(flat(b.layout.assets)).toEqual([['CURRENT ASSETS', 101_000, 100, [['310-0010 — 310-0010', 91_000, 90.1], ['330-0000 — 330-0000', 10_000, 9.9]]]]);
+    expect(flat(b.layout.assets)).toEqual([['CURRENT ASSETS', 101_000, 100, [['310-0010 · 310-0010', 91_000, 90.1], ['330-0000 · 330-0000', 10_000, 9.9]]]]);
     /* The liability's % is of total assets too — 60,000 / 101,000. */
-    expect(flat(b.layout.liabilities)).toEqual([['CURRENT LIABILITIES', 60_000, 59.4, [['400-0000 — 400-0000', 60_000, 59.4]]]]);
+    expect(flat(b.layout.liabilities)).toEqual([['CURRENT LIABILITIES', 60_000, 59.4, [['400-0000 · 400-0000', 60_000, 59.4]]]]);
     expect(b.layout.equity).toEqual([]);
   });
 });
