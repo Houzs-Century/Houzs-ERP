@@ -12,7 +12,7 @@
     },
     {
       "check": "D1",
-      "key": "IMAGE/JPEG,IMAGE/PNG,IMAGE/WEBP|backend/src/scm/routes/product-models.ts backend/src/scm/routes/scan-lorry-invoice.ts backend/src/scm/routes/scan-payment.ts backend/src/scm/routes/scan-so.ts backend/src/services/vision-blocks.ts frontend/src/vendor/scm/components/SlipUploadField.tsx",
+      "key": "IMAGE/JPEG,IMAGE/PNG,IMAGE/WEBP|backend/src/scm/lib/scan-ocr.ts backend/src/scm/routes/product-models.ts backend/src/scm/routes/scan-lorry-invoice.ts backend/src/scm/routes/scan-payment.ts backend/src/services/vision-blocks.ts frontend/src/vendor/scm/components/SlipUploadField.tsx",
       "why": "AN UPLOAD WHITELIST, per endpoint, and deliberately not one list: each surface decides what IT accepts (portal vs staff vs mail vs OCR). 6 homes: GALLERY_MIME, IMAGE_MIMES, ASSISTANT_IMAGE_MIMES, IMAGE_SLIP_MIMES. Divergence costs a refused upload, never money or stock."
     },
     {

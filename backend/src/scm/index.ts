@@ -106,6 +106,7 @@ import { soDropdownOptions } from "./routes/so-dropdown-options";
 import { venues } from "./routes/venues";
 import { reports } from "./routes/reports";
 import { scanSo } from "./routes/scan-so";
+import { scanGr } from "./routes/scan-gr";
 import { scanPayment } from "./routes/scan-payment";
 import { scanLorryInvoice } from "./routes/scan-lorry-invoice";
 import { slips } from "./routes/slips";
@@ -894,6 +895,13 @@ scm.route("/reports", reports);
 // (mfg-sales-orders) keeps the default 'edit' gate.
 scm.use("/scan-so/*", scmAreaGuard("scm.sales.orders", { writeLevel: "view" }));
 scm.route("/scan-so", scanSo);
+// scan-gr — supplier DELIVERY ORDER OCR -> DRAFT Goods Receipt by converting
+// from the matching open PO (tasks/PLAN-ocr-scan-gr-pi.md). Gated as the GRN
+// area at 'view' level for the same reason as scan-so: enqueue only stages an
+// upload + background OCR that lands a DRAFT the operator later posts; it never
+// posts stock. The real post (grns PATCH /:id/post) keeps its default gate.
+scm.use("/scan-gr/*", scmAreaGuard("scm.procurement.grn", { writeLevel: "view" }));
+scm.route("/scan-gr", scanGr);
 // Re-added 2026-06-23 — card-terminal / EPP receipt OCR for the Payments panel.
 // The receipt IS the payment row's slip (one upload, both uses): the frontend
 // POSTs the image here in parallel with the slip upload and fill-blanks-only
