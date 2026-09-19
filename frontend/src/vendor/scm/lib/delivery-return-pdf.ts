@@ -18,6 +18,7 @@ import { formatPhone } from '@2990s/shared/phone';
 import { COMPANY, DOC_TABLE_HEAD_STYLES, DOC_TABLE_STYLES, deliverPdf, drawHeader, drawInfoColumns, drawSignatureBoxes, ensurePdfCjkFont, fmtRm, safeName, fmtDocDate, type PdfAction } from './pdf-common';
 import { billToBlock } from './pdf-party-blocks';
 import { docVariantLine, loadCustomerFabricMaps } from './supplier-doc-data';
+import { stripBookText } from './book-text';
 /* The status WORD comes from the one home for it, never from a caser here:
    what this document prints and what the screen shows must be the same word.
    docs/modules/document-status-vocabulary.md §1. */
@@ -134,7 +135,7 @@ export async function renderDeliveryReturnInto(
   const rows = orderedItems.map((it, idx) => [
     String(idx + 1),
     it.item_code,
-    [it.description, docVariantLine(it, fabric.ext, fabric.desc)].filter(Boolean).join('\n') || '—',
+    stripBookText([it.description, docVariantLine(it, fabric.ext, fabric.desc)].filter(Boolean).join('\n')) || '—',
     String(it.qty_returned),
     it.condition ?? '—',
     fmtRm(it.unit_price_sen),
