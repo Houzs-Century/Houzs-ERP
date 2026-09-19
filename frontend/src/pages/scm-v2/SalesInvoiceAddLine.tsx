@@ -53,7 +53,8 @@ import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
 import { NumberInput } from '../../vendor/scm/components/NumberInput';
 import { ADD_LINE_LABEL } from '../../vendor/scm/lib/add-line-handoff';
 import { useAddSalesInvoiceItem } from '../../vendor/scm/lib/sales-invoice-queries';
-import { useMfgProducts, mfgCategoryLabel } from '../../vendor/scm/lib/mfg-products-queries';
+import { useMfgProducts } from '../../vendor/scm/lib/mfg-products-queries';
+import { mfgCategoryLabel } from '../../vendor/shared/product-categories';
 
 export type SalesInvoiceAddLine = {
   /** Goes in the Line items Section's `actions` slot. `null` when not offered. */

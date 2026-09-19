@@ -1873,11 +1873,10 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     // Spec #products: .ph thumbnail + name + "{{category}}" sub-line + right
     // "RM {{price_sen}}". base_price_sen is the base selling price (SEN); uom
     // has no mfg column → omitted.
-    // Description ONCE, code NOT displayed — the shared rule
-    // (vendor/shared/line-identity.ts). This is the browse twin of the
-    // MobileSkuPicker rows converged in #626 ("description only — one scannable
-    // line per SKU"), so it reads the same way. CATEGORY is not a duplicate and
-    // stays. The code still BINDS — `search` still matches code / sku / barcode.
+    // Description ONCE, code NOT displayed — the shared line-identity rule. The
+    // browse twin of the MobileSkuPicker rows converged in #626 ("description
+    // only — one scannable line per SKU"), so it reads the same. CATEGORY stays
+    // (not a duplicate); the code still BINDS via `search` (code / sku / barcode).
     variant: "product",
     subline: (r) => join(mfgCategoryLabel(pick(r, "category"))),
     price: (r) => pick(r, "basePriceSen", "base_price_sen") ?? "",
