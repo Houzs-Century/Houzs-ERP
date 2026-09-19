@@ -74,7 +74,7 @@ export function MobileGrnScan({ onBack }: { onBack: () => void }) {
       const form = new FormData();
       for (const f of compressed) form.append("file", f);
       const r = await authedFetch<EnqueueResp>("/scan-gr/enqueue", { method: "POST", body: form });
-      if (r?.job_id) {
+      if (r.job_id) {
         setEnqueuedJobIds((prev) => [...prev, r.job_id]);
         setFiles([]);
       }

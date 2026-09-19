@@ -100,7 +100,7 @@ export function ScanGrnModal({ onClose }: { onClose: () => void }) {
       const fd = new FormData();
       for (const f of files) fd.append('file', await compressForOcr(f));
       const r = await authedFetch<EnqueueResp>('/scan-gr/enqueue', { method: 'POST', body: fd });
-      if (r?.job_id) {
+      if (r.job_id) {
         setEnqueuedJobIds((prev) => [...prev, r.job_id]);
         setFiles([]); // ready for the next delivery order
       }
