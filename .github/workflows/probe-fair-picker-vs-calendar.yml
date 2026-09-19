@@ -1,0 +1,59 @@
+name: Fair picker vs calendar (read-only)
+
+# Answers "why does the New Sales Order dropdown offer a fair that is not on the
+# Projects calendar?" without anyone opening a SQL console.
+#
+# Both screens read `public.projects`. They disagree on two columns — a NULL end
+# date, and `archived_at` — and this job measures how far apart that puts them
+# today. See backend/scripts/probe-fair-picker-vs-calendar.mjs for both rules
+# quoted from their source.
+#
+# Manual trigger only — it is a question, not a gate, and a production DB read
+# must never become routine CI noise nobody reads.
+on:
+  workflow_dispatch:
+    inputs:
+      company:
+        description: "Company id (1 = Houzs Century, 2 = 2990's Home)"
+        required: false
+        default: "1"
+      venue:
+        description: "Venue substring to inspect in section 1"
+        required: false
+        default: "PAVILION BUKIT JALIL"
+      as_of:
+        description: "Pretend today is this MYT date (YYYY-MM-DD). Blank = today."
+        required: false
+        default: ""
+
+# Deliberately NOT in the deploy concurrency group: this touches nothing and
+# must never queue behind — or displace — a release.
+concurrency:
+  group: probe-fair-picker-vs-calendar
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/probe-fair-picker-vs-calendar.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMPANY: ${{ inputs.company }}
+          VENUE: ${{ inputs.venue }}
+          AS_OF: ${{ inputs.as_of }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first
