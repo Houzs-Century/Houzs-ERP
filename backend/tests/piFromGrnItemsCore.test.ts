@@ -21,7 +21,7 @@
  *      CREATE audit row (the caller records that at its own final moment).
  */
 import { describe, expect, test } from 'vitest';
-import { createDraftPisFromGrnItemsCore } from '../src/scm/routes/purchase-invoices';
+import { createDraftPisFromGrnItemsCore } from '../src/scm/lib/pi-from-grn-core';
 import { parsePgrestInList } from '../src/scm/lib/pgrest-in-list';
 
 const CO_A = 1; // HOUZS

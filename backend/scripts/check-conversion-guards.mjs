@@ -148,8 +148,9 @@ const SOURCES = {
     source: ["purchase_consignment_receives", "purchase_consignment_receive_items"],
   },
   "backend/src/scm/routes/purchase-invoices.ts::POST /from-grn-items": {
-    doc: "GRN -> PI (picked lines; parent GRN rides an !inner embed)",
+    doc: "GRN -> PI (picked lines; parent GRN rides an !inner embed). The route is a door on the lib core, which does the scoped source read — the scan queue runs the same core off-request.",
     source: ["grn_items"],
+    core: { file: "backend/src/scm/lib/pi-from-grn-core.ts", fn: "createDraftPisFromGrnItemsCore" },
   },
   "backend/src/scm/routes/purchase-invoices.ts::POST /from-grn": {
     doc: "GRN -> PI (whole GRN)",
