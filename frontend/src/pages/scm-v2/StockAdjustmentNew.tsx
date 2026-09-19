@@ -47,7 +47,7 @@ import {
   useInventoryProductBreakdown,
   useInventoryBuckets,
 } from '../../vendor/scm/lib/stock-queries';
-import { useMfgProducts, useMaintenanceConfig, useSpecialAddons, type MaintenanceConfig, type SpecialAddonRow } from '../../vendor/scm/lib/mfg-products-queries';
+import { useMfgProducts, useMaintenanceConfig, useSpecialAddons, mfgCategoryLabel, type MaintenanceConfig, type SpecialAddonRow } from '../../vendor/scm/lib/mfg-products-queries';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
@@ -264,7 +264,7 @@ function AdjustmentLineRow({
           />
           <datalist id={`stock-adjustment-skus-${line._key}`}>
             {sortByText(allSkus).map((p) => (
-              <option key={p.id} value={p.code}>{p.name} · {p.category}</option>
+              <option key={p.id} value={p.code}>{p.name} · {mfgCategoryLabel(p.category)}</option>
             ))}
           </datalist>
         </td>

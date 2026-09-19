@@ -59,7 +59,7 @@ import {
   type SofaPriceMatrix,
   type BedframePriceMatrix,
 } from '../../vendor/scm/lib/suppliers-queries';
-import { useMfgProducts, useMaintenanceConfig, type MfgCategory, type MfgProductRow } from '../../vendor/scm/lib/mfg-products-queries';
+import { useMfgProducts, useMaintenanceConfig, mfgCategoryLabel, type MfgCategory, type MfgProductRow } from '../../vendor/scm/lib/mfg-products-queries';
 import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
 /* A refused write must SAY so. The five grid cells below fire-and-forget, and
    useUpdateBinding carries no onError (unlike useDeleteBinding and
@@ -2983,7 +2983,7 @@ const ModelSkuPickerDialog = ({
                               </span>
                             )}
                           </td>
-                          <td className={styles.muted}>{model.category}</td>
+                          <td className={styles.muted}>{mfgCategoryLabel(model.category)}</td>
                           <td className={`${styles.tableRight} ${styles.muted}`}>{skus.length}</td>
                           <td>
                             <span
@@ -3422,7 +3422,7 @@ const MultiSkuPickerDialog = ({
                           </td>
                           <td className={styles.codeCell}>{p.code}</td>
                           <td>{p.name}</td>
-                          <td className={styles.muted}>{p.category}</td>
+                          <td className={styles.muted}>{mfgCategoryLabel(p.category)}</td>
                           <td className={styles.muted}>{p.size_label ?? '—'}</td>
                           <td className={styles.priceCell}>{p.base_price_sen ? fmtSen(p.base_price_sen) : '—'}</td>
                         </tr>

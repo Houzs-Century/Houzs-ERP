@@ -40,7 +40,7 @@ import { readScmHandoff, removeScmHandoff, writeScmHandoff } from '../../lib/scm
 import { useActiveCurrencies, rateFor } from '../../vendor/scm/lib/currencies-queries';
 import { CurrencySelect } from '../../vendor/scm/components/CurrencySelect';
 import { usePurchaseOrderDetail, usePurchaseOrders, useSuppliers, useSupplierDetail } from '../../vendor/scm/lib/suppliers-queries';
-import { useMfgProducts, useMaintenanceConfig, useSpecialAddons } from '../../vendor/scm/lib/mfg-products-queries';
+import { useMfgProducts, useMaintenanceConfig, useSpecialAddons, mfgCategoryLabel } from '../../vendor/scm/lib/mfg-products-queries';
 import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
 import { useWarehouses } from '../../vendor/scm/lib/inventory-queries';
 import { useRacks } from '../../vendor/scm/lib/warehouse-queries';
@@ -1175,7 +1175,7 @@ export const GrnNew = () => {
                                   </option>
                                 ))
                               : sortByText(productsQ.data ?? []).map((p) => (
-                                  <option key={p.id} value={p.code}>{p.name} · {p.category}</option>
+                                  <option key={p.id} value={p.code}>{p.name} · {mfgCategoryLabel(p.category)}</option>
                                 ))}
                           </datalist>
                         </>

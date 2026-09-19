@@ -39,7 +39,7 @@ import {
   usePurchaseConsignmentOrders,
 } from '../../vendor/scm/lib/purchase-consignment-order-queries';
 import { useSuppliers, useSupplierDetail } from '../../vendor/scm/lib/suppliers-queries';
-import { useMfgProducts, useMaintenanceConfig } from '../../vendor/scm/lib/mfg-products-queries';
+import { useMfgProducts, useMaintenanceConfig, mfgCategoryLabel } from '../../vendor/scm/lib/mfg-products-queries';
 import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
 import { useFabricTrackings } from '../../vendor/scm/lib/fabric-queries';
 import { PcVariantEditor } from '../../vendor/scm/components/PcVariantEditor';
@@ -356,7 +356,7 @@ export const PurchaseConsignmentReceiveNew = () => {
     const q = pickerSearch.trim().toLowerCase();
     const base = (supplierId && bindings.length > 0)
       ? bindings.map((b) => ({ code: b.item_code, name: b.material_name, sub: `${b.supplier_sku ?? ''} · ${fmtRm(b.unit_price_sen, b.currency)}` }))
-      : (allSkusQ.data ?? []).map((p) => ({ code: p.code, name: p.name, sub: p.category }));
+      : (allSkusQ.data ?? []).map((p) => ({ code: p.code, name: p.name, sub: mfgCategoryLabel(p.category) }));
     if (!q) return base;
     return base.filter((it) => it.code.toLowerCase().includes(q) || it.name.toLowerCase().includes(q));
   }, [supplierId, bindings, allSkusQ.data, pickerSearch]);
@@ -702,7 +702,7 @@ export const PurchaseConsignmentReceiveNew = () => {
                                   </option>
                                 ))
                               : sortByText(productsQ.data ?? []).map((p) => (
-                                  <option key={p.id} value={p.code}>{p.name} · {p.category}</option>
+                                  <option key={p.id} value={p.code}>{p.name} · {mfgCategoryLabel(p.category)}</option>
                                 ))}
                           </datalist>
                         </>

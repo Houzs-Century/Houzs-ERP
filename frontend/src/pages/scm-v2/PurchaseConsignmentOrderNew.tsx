@@ -34,7 +34,7 @@ import {
   type NewPoItem,
   type MaterialKind,
 } from '../../vendor/scm/lib/suppliers-queries';
-import { useMfgProducts, useMaintenanceConfig } from '../../vendor/scm/lib/mfg-products-queries';
+import { useMfgProducts, useMaintenanceConfig, mfgCategoryLabel } from '../../vendor/scm/lib/mfg-products-queries';
 import { useFabricTrackings } from '../../vendor/scm/lib/fabric-queries';
 import { PcVariantEditor } from '../../vendor/scm/components/PcVariantEditor';
 import { useWarehouses } from '../../vendor/scm/lib/inventory-queries';
@@ -649,7 +649,7 @@ export const PurchaseConsignmentOrderNew = () => {
                           ))
                         : sortByText(allSkus.data ?? []).map((p) => (
                             <option key={p.id} value={p.code}>
-                              {p.name} · {p.category}
+                              {p.name} · {mfgCategoryLabel(p.category)}
                             </option>
                           ))
                       }
@@ -719,7 +719,7 @@ export const PurchaseConsignmentOrderNew = () => {
                       color: 'var(--fg-muted)',
                       marginBottom: 'var(--space-2)',
                     }}>
-                      {l.category} Variants
+                      {mfgCategoryLabel(l.category)} Variants
                     </div>
 
                     <PcVariantEditor

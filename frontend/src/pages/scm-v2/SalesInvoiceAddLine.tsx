@@ -54,6 +54,7 @@ import { NumberInput } from '../../vendor/scm/components/NumberInput';
 import { ADD_LINE_LABEL } from '../../vendor/scm/lib/add-line-handoff';
 import { useAddSalesInvoiceItem } from '../../vendor/scm/lib/sales-invoice-queries';
 import { useMfgProducts } from '../../vendor/scm/lib/mfg-products-queries';
+import { mfgCategoryLabel } from '../../vendor/shared/product-categories';
 
 export type SalesInvoiceAddLine = {
   /** Goes in the Line items Section's `actions` slot. `null` when not offered. */
@@ -173,7 +174,7 @@ export function useSalesInvoiceAddLine(
           <datalist id={DATALIST_ID}>
             {(products.data ?? []).map((p) => (
               <option key={p.id} value={p.code}>
-                {p.name} · {p.category}
+                {p.name} · {mfgCategoryLabel(p.category)}
               </option>
             ))}
           </datalist>

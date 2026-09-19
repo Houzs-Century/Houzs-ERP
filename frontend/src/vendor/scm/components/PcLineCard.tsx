@@ -33,6 +33,7 @@
 
 import { Trash2 } from 'lucide-react';
 import type { MfgProductRow, MaintenanceConfig } from '../lib/mfg-products-queries';
+import { mfgCategoryLabel } from '../lib/mfg-products-queries';
 import type { BindingRow, MaterialKind } from '../lib/suppliers-queries';
 import type { FabricLite } from '../lib/fabric-queries';
 import type { Warehouse } from '../lib/inventory-queries';
@@ -255,7 +256,7 @@ export const PcLineCard = ({
                 ))
               : allSkus.map((p) => (
                   <option key={p.id} value={p.code}>
-                    {p.name} · {p.category}
+                    {p.name} · {mfgCategoryLabel(p.category)}
                   </option>
                 ))
             }
@@ -329,7 +330,7 @@ export const PcLineCard = ({
             color: 'var(--fg-muted)',
             marginBottom: 'var(--space-2)',
           }}>
-            {l.category} Variants
+            {mfgCategoryLabel(l.category)} Variants
           </div>
 
           <PcVariantEditor

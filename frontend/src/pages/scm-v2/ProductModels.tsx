@@ -867,7 +867,7 @@ export function NewModelDialog({
     const codeList = rows.map((r) => r.modelCode.trim()).filter(Boolean).join(', ');
     if (!(await askConfirm({
       title: `Create ${skuTotal} SKU${skuTotal === 1 ? '' : 's'}?`,
-      body: `New ${category} model${rows.length === 1 ? '' : 's'}: ${codeList}`
+      body: `New ${mfgCategoryLabel(category)} model${rows.length === 1 ? '' : 's'}: ${codeList}`
         + (sizeCount > 0 ? ` × ${sizeCount} size${sizeCount === 1 ? '' : 's'}` : '')
         + `. This creates ${skuTotal} SKU${skuTotal === 1 ? '' : 's'}.`,
       confirmLabel: `Create ${skuTotal} SKU${skuTotal === 1 ? '' : 's'}`,

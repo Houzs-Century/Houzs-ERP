@@ -37,7 +37,7 @@ import {
 import { useIdempotencyKey } from '../../lib/idempotency';
 import { serviceConfirm } from '../../vendor/scm/lib/dialog-service';
 import { readScmHandoff, removeScmHandoff, writeScmHandoff } from '../../lib/scmHandoffStorage';
-import { useMfgProducts, useMaintenanceConfig, useSpecialAddons } from '../../vendor/scm/lib/mfg-products-queries';
+import { useMfgProducts, useMaintenanceConfig, useSpecialAddons, mfgCategoryLabel } from '../../vendor/scm/lib/mfg-products-queries';
 import { activeOptions, maintPickerValues } from '@2990s/shared';
 import { useFabricTrackings, fabricOptionLabel } from '../../vendor/scm/lib/fabric-queries';
 import { missingRequiredVariants } from '../../vendor/scm/components/SoLineCard';
@@ -1141,7 +1141,7 @@ export const PurchaseOrderNew = () => {
                           ))
                         : sortByText(allSkus.data ?? []).map((p) => (
                             <option key={p.id} value={p.code}>
-                              {p.name} · {p.category}
+                              {p.name} · {mfgCategoryLabel(p.category)}
                             </option>
                           ))
                       }
@@ -1248,7 +1248,7 @@ export const PurchaseOrderNew = () => {
                       color: 'var(--fg-muted)',
                       marginBottom: 'var(--space-2)',
                     }}>
-                      {l.category} Variants
+                      {mfgCategoryLabel(l.category)} Variants
                     </div>
 
                     {/* BEDFRAME — Commander 2026-05-28: mirror the Sales Order

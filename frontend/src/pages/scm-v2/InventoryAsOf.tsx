@@ -16,6 +16,7 @@ import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import { DateField } from '../../vendor/scm/components/DateField';
 import { StatCard } from '../../components/StatCard';
 import styles from './Inventory.module.css';
+import { mfgCategoryLabel } from '../../vendor/shared/product-categories';
 
 const STAT_GRID = 'grid grid-cols-2 md:grid-cols-4 gap-3';
 const soft: React.CSSProperties = { fontSize: 'var(--fs-13)', color: 'var(--text-soft, #8a8578)' };
@@ -88,7 +89,7 @@ const AsOfView = ({ asOf, category, search }: { asOf: string; category: string; 
       <div style={{ margin: 'var(--space-2) 0', display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
         {subtotals.map((s) => (
           <span key={s.category} className={styles.chip} data-active={category === s.category}>
-            {s.category}: {fmtQty(s.qty)} · {fmtSen(s.valueSen)}
+            {mfgCategoryLabel(s.category)}: {fmtQty(s.qty)} · {fmtSen(s.valueSen)}
           </span>
         ))}
       </div>
@@ -108,7 +109,7 @@ const AsOfView = ({ asOf, category, search }: { asOf: string; category: string; 
               <tr key={r.item_code} style={{ borderTop: '1px solid var(--border-weak, #e3e1da)' }}>
                 <td style={{ padding: '6px 10px', whiteSpace: 'nowrap' }}>{r.item_code}</td>
                 <td style={{ padding: '6px 10px' }}>{r.product_name ?? '—'}</td>
-                <td style={{ padding: '6px 10px' }}>{r.category ?? '—'}</td>
+                <td style={{ padding: '6px 10px' }}>{mfgCategoryLabel(r.category) || '—'}</td>
                 <td style={{ padding: '6px 10px', textAlign: 'right' }}>{fmtQty(r.qty)}</td>
                 <td style={{ padding: '6px 10px', textAlign: 'right' }}>{fmtSen(r.value_sen)}</td>
               </tr>

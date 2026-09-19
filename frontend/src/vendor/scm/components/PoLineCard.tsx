@@ -35,7 +35,7 @@
 
 import { Trash2 } from 'lucide-react';
 import type { MfgProductRow, MaintenanceConfig, SpecialAddonRow } from '../lib/mfg-products-queries';
-import { useModelAllowedOptionsByCode } from '../lib/mfg-products-queries';
+import { useModelAllowedOptionsByCode, mfgCategoryLabel } from '../lib/mfg-products-queries';
 import { SpecialOrders } from './SpecialOrders';
 import { specialOrderSurface } from '../lib/special-order-surface';
 import type { BindingRow, MaterialKind } from '../lib/suppliers-queries';
@@ -400,7 +400,7 @@ export const PoLineCard = ({
                 ))
               : sortByText(allSkus).map((p) => (
                   <option key={p.id} value={p.code}>
-                    {p.name} · {p.category}
+                    {p.name} · {mfgCategoryLabel(p.category)}
                   </option>
                 ))
             }
@@ -546,7 +546,7 @@ export const PoLineCard = ({
             color: 'var(--fg-muted)',
             marginBottom: 'var(--space-2)',
           }}>
-            {l.category} Variants
+            {mfgCategoryLabel(l.category)} Variants
           </div>
 
           {/* BEDFRAME — Fabrics · Gaps · Divan · Leg (dropdowns) + Special Orders.
