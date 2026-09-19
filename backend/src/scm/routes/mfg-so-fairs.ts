@@ -29,12 +29,12 @@ import { supabaseAuth } from '../middleware/auth';
 import { activeCompanySql, scopeToCompany, activeCompanyId } from '../lib/companyScope';
 import { todayMyt } from '../lib/my-time';
 import {
-  loadFairsForMonth,
+  loadFairsInWindow,
   loadFairsAtVenue,
   loadVenueMaster,
   type FairDb,
 } from '../lib/fair-binding';
-import { buildFairOptions, periodContains, isPickableFair } from '../lib/fair-options';
+import { buildFairOptions, isPickableFair } from '../lib/fair-options';
 /* GET /active-venue moved here from mfg-sales-orders.ts on 2026-09-13. It is the
    same concern as the picker — which exhibition is this rep at — and that file
    is over its size ceiling, so the endpoint could not stay beside its new
@@ -72,18 +72,18 @@ function orderDate(raw: string | undefined): string {
  */
 mfgSoFairs.get('/fair-options', async (c) => {
   const soDate = orderDate(c.req.query('date'));
-  const empty = { date: soDate, running: [], month: [], venues: [] };
+  const empty = { date: soDate, running: [], earlier: [], venues: [] };
   try {
     const db = c.env.DB as unknown as FairDb;
     /* Company scope is the ENTIRE tenant boundary on both reads: the fair list
        names other companies' venues and organizers, and the venue master is the
        same list the 2026-08-20 sweep found leaking across companies. */
     const [fairs, venues] = await Promise.all([
-      loadFairsForMonth(db, activeCompanySql(c, 'p.company_id'), soDate),
+      loadFairsInWindow(db, activeCompanySql(c, 'p.company_id'), soDate),
       loadVenueMaster(db, activeCompanySql(c)),
     ]);
     const groups = buildFairOptions(fairs, soDate);
-    return c.json({ date: soDate, running: groups.running, month: groups.month, venues });
+    return c.json({ date: soDate, running: groups.running, earlier: groups.earlier, venues });
   } catch {
     return c.json(empty);
   }
@@ -195,12 +195,21 @@ mfgSoFairs.post('/:docNo/fair', async (c) => {
       status: (row.status as string | null) ?? null,
     };
     if (!isPickableFair(fair)) return c.json({ error: 'fair_cancelled_or_incomplete' }, 409);
-    if (!periodContains(fair, soDate)) {
-      /* Refused, not warned. Linking an order to a fair that was not running
-         that day is precisely the error this whole feature exists to stop, and
-         it is invisible once written. */
-      return c.json({ error: 'fair_not_running_on_so_date', soDate }, 409);
-    }
+    /* THE "WAS IT RUNNING THAT DAY" REFUSAL IS GONE (owner 2026-09-19).
+       It used to answer 409 `fair_not_running_on_so_date` here. The intent was
+       right — an order attributed to a fair that was not on is invisible once
+       written — but the rule was enforced against the wrong date. `so_date` is
+       the day the order was KEYED, and the New Sales Order form has no date
+       field at all, so it is always the day of keying. The owner writes orders
+       up after the fact — *"我可能是下个星期，才开给上个星期 event 的 sales
+       order"* — which made this screen refuse every one of them. A person
+       settling a fair link BY HAND, on a screen that exists for nothing else,
+       was told no because a date the form never let them set disagreed.
+       The period is now part of the pick rather than a veto over it: the row
+       names its event, and an order dated outside that event's run is still
+       recorded against it. Such an order stays visible — `so_date` against the
+       project's own start/end says so at any time, with no flag to keep in
+       step — so a report can find them without this route having to guess. */
   }
 
   const { error: updErr } = await scopeToCompany(

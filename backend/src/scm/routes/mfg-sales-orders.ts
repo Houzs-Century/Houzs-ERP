@@ -154,6 +154,7 @@ import {
   type VenueBindingSb,
 } from '../lib/venue-binding';
 import { bindVenueOnCreate, resolveFairForSave, type FairDb } from '../lib/fair-binding';
+import { fairPickedPeriod } from '../lib/fair-options';
 import { recordSoAudit, diffFields, type FieldChange } from '../lib/so-audit';
 /* What changed on a LINE, for the audit trail — derived from the update about to
    be persisted rather than a hand-kept field list (owner 2026-08-12; see the
@@ -4545,6 +4546,13 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
         typeof body.fairOrganizer === 'string' && body.fairOrganizer.trim()
           ? body.fairOrganizer.trim()
           : null,
+      /* The PICKED row's period, straight off the dropdown the operator used.
+         Sent since 2026-09-19 because the server has no other way to know WHICH
+         occurrence they meant: the order date is the day it was keyed, which for
+         a fair written up afterwards is not a day that fair was on. With the
+         period the pick resolves exactly; without it the server falls back to
+         the venue window, which is a guess between the fairs that were there. */
+      picked: fairPickedPeriod(body),
       soDate: soDateForVenue,
       brand: effectiveBrand,
     });
