@@ -19,7 +19,7 @@
 import type { SupabaseClient as SupabaseClientGeneric } from '@supabase/supabase-js';
 import {
   CLAUDE_MODEL, anthropicFetchWithRetry, stripJsonFences, type ContentBlock,
-} from './scan-anthropic';
+} from './scan-ocr';
 
 // The scm service client is schema-parameterised (db:{schema:'scm'}); the bare
 // generic does not accept it, so the loosened alias every scan module uses.

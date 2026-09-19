@@ -1,25 +1,18 @@
 // ---------------------------------------------------------------------------
-// scan-anthropic — the document-type-agnostic OCR transport shared by every
-// scanner (SO slip, supplier Delivery Order → GR, supplier Invoice → PI).
+// scan-ocr — document-type-agnostic OCR transport primitives.
 //
-// These helpers used to live INSIDE scan-so.ts and were copied byte-for-byte
-// into scan-lorry-invoice.ts ("kept private so scan-so's surface does not
-// widen"). The GR/PI slices (tasks/PLAN-ocr-scan-gr-pi.md) add two more
-// scanners on the SAME transport, so a third and fourth copy is one too many:
-// the retry policy, the 20MB ceiling, the base64 chunking and the multipart
-// parse are the parts that MUST behave identically on every surface. They are
-// pure — no catalog, no SO shape, no request — so they factor out cleanly, and
-// scan-so.ts now imports them from here instead of declaring its own.
+// Factored out of scan-so.ts (byte-for-byte, no behaviour change) so the GR /
+// PI scanners (tasks/PLAN-ocr-scan-gr-pi.md, slices 3+) reuse the SAME transport
+// instead of copying it: the Anthropic fetch-with-retry, the base64/sha helpers,
+// the JSON-fence stripper, the multipart file parser, and the R2 replay loader
+// the queue consumer + reaper rebuild a job's inputs from. Everything here is
+// generic — it knows nothing about sale orders, delivery orders or invoices; the
+// per-document prompt + normaliser live in each scanner's own module.
 // ---------------------------------------------------------------------------
 
-const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
-
-// The vision model every scanner calls. One constant so a model bump moves all
-// of them together (SO, GR, PI).
 export const CLAUDE_MODEL = 'claude-sonnet-4-6';
-
+export const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
 export const MAX_FILE_BYTES = 20 * 1024 * 1024;
-export const IMAGE_MIMES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 
 // Anthropic (and gateways in front of it) return transient 429 rate-limits and
 // 529 "Overloaded" / 5xx spikes that clear on a retry; a single hit otherwise
@@ -55,6 +48,8 @@ export async function anthropicFetchWithRetry(
   return resp as Response;
 }
 
+export const IMAGE_MIMES = new Set(['image/jpeg', 'image/png', 'image/webp']);
+
 // ArrayBuffer -> base64. Workers don't expose Node's Buffer; the chunked loop
 // keeps stack usage bounded for large files. (Ported from HOOKKA scan-po.)
 export function toBase64(buf: ArrayBuffer): string {
@@ -75,8 +70,6 @@ export async function sha256Hex(buf: ArrayBuffer): Promise<string> {
     .join('');
 }
 
-// Strip a ```json fence and any chain-of-thought preamble: take from the first
-// `{` to the last `}`. The valid OCR payload is always one JSON object.
 export function stripJsonFences(text: string): string {
   let trimmed = text.trim();
 
@@ -96,18 +89,21 @@ export function stripJsonFences(text: string): string {
   return trimmed;
 }
 
-// A Claude content block (image or document per uploaded file). Loose by
-// design — the caller assembles the messages array around it.
+export type AnthropicResponse = {
+  content?: Array<{ type: string; text?: string }>;
+  error?: { type: string; message: string };
+  usage?: { cache_creation_input_tokens?: number; cache_read_input_tokens?: number };
+};
+
+// A Claude content block (image or document per file), in upload order.
 export type ContentBlock = Record<string, unknown>;
-
-// Per-IMAGE provenance, indexed by the SAME `index` the model classifies in its
-// output "images" array — fileBlocks is built in file order, so image #N in the
-// model's view is uploadedImages[N]. PDFs are NOT displayable inline so they are
-// never stored as an image (they still ride into the prompt as document blocks).
+// Per-IMAGE provenance, indexed by the SAME `index` Claude classifies in the
+// OUTPUT "images" array — fileBlocks is built in file order, so image #N in
+// the model's view is uploadedImages[N]. PDFs are NOT displayable inline so
+// they are never stored under an image key (they still ride the prompt as
+// document blocks).
 export type UploadedImage = { index: number; buffer: ArrayBuffer; mime: string };
-
 export type ScanFileParse = {
-  // Claude content blocks (image or document per file), in upload order.
   fileBlocks: ContentBlock[];
   // Image files only (buffer + mime), for R2 provenance storage.
   uploadedImages: UploadedImage[];
@@ -180,4 +176,47 @@ export async function parseScanFiles(
     ok: true,
     parsed: { fileBlocks, uploadedImages, allFiles, firstBuffer, fileCount: files.length },
   };
+}
+
+// Rebuild a scan job's file inputs from the durable R2 copies — the inverse of
+// parseScanFiles for a retry / queue redelivery (the original in-memory buffers
+// died with the isolate). Block order matches upload order because image_keys
+// was appended in file order; the stored contentType decides image vs document
+// block, same mapping as parseScanFiles. Returns null (caller errors the job)
+// if the bucket is unbound or ANY key is missing.
+export async function loadScanJobFilesFromR2(
+  bucket: R2Bucket | undefined,
+  keys: string[],
+): Promise<{
+  fileBlocks: ContentBlock[];
+  uploadedImages: UploadedImage[];
+  firstBuffer: ArrayBuffer | null;
+} | null> {
+  if (!bucket || keys.length === 0) return null;
+  const fileBlocks: ContentBlock[] = [];
+  const uploadedImages: UploadedImage[] = [];
+  let firstBuffer: ArrayBuffer | null = null;
+  let blockIndex = 0;
+  for (const key of keys) {
+    const obj = await bucket.get(key);
+    if (!obj) return null;
+    const buf = await obj.arrayBuffer();
+    if (!firstBuffer) firstBuffer = buf;
+    const mime = obj.httpMetadata?.contentType || 'image/jpeg';
+    const data = toBase64(buf);
+    if (mime === 'application/pdf') {
+      fileBlocks.push({
+        type: 'document',
+        source: { type: 'base64', media_type: 'application/pdf', data },
+      });
+    } else {
+      uploadedImages.push({ index: blockIndex, buffer: buf, mime });
+      fileBlocks.push({
+        type: 'image',
+        source: { type: 'base64', media_type: mime, data },
+      });
+    }
+    blockIndex += 1;
+  }
+  return { fileBlocks, uploadedImages, firstBuffer };
 }

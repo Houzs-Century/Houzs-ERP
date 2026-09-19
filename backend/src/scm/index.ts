@@ -106,6 +106,7 @@ import { soDropdownOptions } from "./routes/so-dropdown-options";
 import { venues } from "./routes/venues";
 import { reports } from "./routes/reports";
 import { scanSo } from "./routes/scan-so";
+import { scanGr } from "./routes/scan-gr";
 import { scanPi } from "./routes/scan-pi";
 import { scanPayment } from "./routes/scan-payment";
 import { scanLorryInvoice } from "./routes/scan-lorry-invoice";
@@ -895,10 +896,17 @@ scm.route("/reports", reports);
 // (mfg-sales-orders) keeps the default 'edit' gate.
 scm.use("/scan-so/*", scmAreaGuard("scm.sales.orders", { writeLevel: "view" }));
 scm.route("/scan-so", scanSo);
+// scan-gr — supplier DELIVERY ORDER OCR -> DRAFT Goods Receipt by converting
+// from the matching open PO (tasks/PLAN-ocr-scan-gr-pi.md). Gated as the GRN
+// area at 'view' level for the same reason as scan-so: enqueue only stages an
+// upload + background OCR that lands a DRAFT the operator later posts; it never
+// posts stock. The real post (grns PATCH /:id/post) keeps its default gate.
+scm.use("/scan-gr/*", scmAreaGuard("scm.procurement.grn", { writeLevel: "view" }));
+scm.route("/scan-gr", scanGr);
 // scan-pi (OCR slice 5): photo a supplier invoice -> DRAFT Purchase Invoice by
-// converting the matching GRN(s). Same view-level rationale as scan-so (enqueue
-// only stages a background OCR that lands a DRAFT the operator confirms), gated
-// to the PI area rather than sales orders.
+// converting the matching GRN(s). Same view-level rationale as scan-so/scan-gr
+// (enqueue only stages a background OCR that lands a DRAFT the operator confirms),
+// gated to the PI area.
 scm.use("/scan-pi/*", scmAreaGuard("scm.procurement.pi", { writeLevel: "view" }));
 scm.route("/scan-pi", scanPi);
 // Re-added 2026-06-23 — card-terminal / EPP receipt OCR for the Payments panel.

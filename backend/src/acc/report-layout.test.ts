@@ -230,14 +230,14 @@ describe('layOutBlock — the period on the tree', () => {
     const laid = layOutBlock(tree, lines, 2, 1_000_000);
     expect(flat(laid)).toEqual([
       ['category', 'Operating Expense', 105_000, 10.5, [
-        ['account', '900-A001 — ACCOUNTING FEE', 120_000, 12],
+        ['account', '900-A001 · ACCOUNTING FEE', 120_000, 12],
         ['category', 'ADVERTISEMENT', -15_000, -1.5, [
-          ['account', '900-A014 — ADVERTISEMENT - SHOWROOM', -15_000, -1.5],
+          ['account', '900-A014 · ADVERTISEMENT - SHOWROOM', -15_000, -1.5],
         ]],
       ]],
-      ['account', '900-O001 — OPERATIING EXPENSE', 50_000, 5],
+      ['account', '900-O001 · OPERATIING EXPENSE', 50_000, 5],
       ['unassigned', 'Unassigned', 7_700, 0.8, [
-        ['account', '900-N001 — NEW SINCE THE SAVE', 7_700, 0.8],
+        ['account', '900-N001 · NEW SINCE THE SAVE', 7_700, 0.8],
       ]],
     ]);
     /* The block's total is exactly the sum of what is printed. */
@@ -249,7 +249,7 @@ describe('layOutBlock — the period on the tree', () => {
     const ticked: LayoutItem[] = JSON.parse(JSON.stringify(tree));
     (ticked[0] as { hiddenFor?: number[] }).hiddenFor = [2];
     const forTwo = layOutBlock(ticked, lines, 2, null);
-    expect(forTwo.map((n) => n.label)).toEqual(['900-O001 — OPERATIING EXPENSE', 'Unassigned']);
+    expect(forTwo.map((n) => n.label)).toEqual(['900-O001 · OPERATIING EXPENSE', 'Unassigned']);
     expect(forTwo[1]!.children.map((n) => n.code)).toEqual(['900-A001', '900-A014', '900-N001']);
     expect(forTwo.reduce((s, n) => s + n.amountSen, 0)).toBe(162_700);
     /* The other company still sees it. */
@@ -301,7 +301,7 @@ describe('layOutBlock — the period on the tree', () => {
   test('laidLineNode — a line as a leaf, keyed by its own key', () => {
     const n = laidLineNode({ code: 'ADV', key: 'ADV', name: 'Supplier advances (预付)', label: 'Supplier advances (预付)', amountSen: 30_000, cells: { '310-0010': 30_000 } }, 120_000);
     expect(n).toEqual({ kind: 'account', id: 'acc:ADV', label: 'Supplier advances (预付)', code: 'ADV', key: 'ADV', amountSen: 30_000, pct: 25, cells: { '310-0010': 30_000 }, children: [] });
-    expect(laidLineNode({ code: '900-A001', name: 'ACCOUNTING FEE', amountSen: 1 }, null)).toMatchObject({ id: 'acc:900-A001', key: '900-A001', label: '900-A001 — ACCOUNTING FEE', pct: null });
+    expect(laidLineNode({ code: '900-A001', name: 'ACCOUNTING FEE', amountSen: 1 }, null)).toMatchObject({ id: 'acc:900-A001', key: '900-A001', label: '900-A001 · ACCOUNTING FEE', pct: null });
   });
 });
 
@@ -392,16 +392,16 @@ describe('the Cash Flow tree (owner 2026-09-18)', () => {
     expect(flat(laid.nodes)).toEqual([
       ['category', 'Source of funds', 'in', 89_000, 66.4, [
         ['category', 'Deposit received', null, 89_000, 66.4, [
-          ['account', '300-0000 — TRADE DEBTORS', 'in', 90_000, 67.2],
-          ['account', '300-0000 — TRADE DEBTORS', 'out', -1_000, -0.7],
+          ['account', '300-0000 · TRADE DEBTORS', 'in', 90_000, 67.2],
+          ['account', '300-0000 · TRADE DEBTORS', 'out', -1_000, -0.7],
         ]],
       ]],
-      ['category', 'Expenses', 'out', 45_000, 92.4, [['account', '900-A001 — ACCOUNTING FEE', 'out', 45_000, 92.4]]],
+      ['category', 'Expenses', 'out', 45_000, 92.4, [['account', '900-A001 · ACCOUNTING FEE', 'out', 45_000, 92.4]]],
       ['subtotal', 'Net operation surplus / (deficit)', null, 44_000, null],
-      ['category', 'Loan From / (Repayment)', 'in', 40_000, 29.9, [['account', '350-0010 — HOUZS VENTURE', 'net', 40_000, 29.9]]],
-      ['unassigned', 'Unassigned receipts', 'in', 5_000, 3.7, [['account', '530-0000 — INTEREST INCOME', 'in', 5_000, 3.7]]],
+      ['category', 'Loan From / (Repayment)', 'in', 40_000, 29.9, [['account', '350-0010 · HOUZS VENTURE', 'net', 40_000, 29.9]]],
+      ['unassigned', 'Unassigned receipts', 'in', 5_000, 3.7, [['account', '530-0000 · INTEREST INCOME', 'in', 5_000, 3.7]]],
       ['unassigned', 'Unassigned payments', 'out', 3_700, 7.6, [
-        ['account', '905-0000 — TRAVELLING', 'out', 700, 1.4],
+        ['account', '905-0000 · TRAVELLING', 'out', 700, 1.4],
         ['account', 'Supplier advances (预付)', 'out', 3_000, 6.2],
       ]],
     ]);

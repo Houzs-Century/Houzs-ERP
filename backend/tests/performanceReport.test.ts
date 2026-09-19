@@ -156,11 +156,11 @@ describe('the Performance P&L', () => {
     const flat = (nodes: Laid[]): unknown[] => nodes.map((n) => [n.key, n.label, n.amountSen, n.pct, ...(n.children.length > 0 ? [flat(n.children)] : [])]);
     expect(body.layout.stored).toBe(false);
     expect(body.layout.baseSen).toBe(523000);
-    expect(flat(body.layout.otherIncome)).toEqual([[undefined, 'OTHER INCOMES', 50000, 9.6, [['590-0000', '590-0000 — RENT RECEIVED', 50000, 9.6]]]]);
+    expect(flat(body.layout.otherIncome)).toEqual([[undefined, 'OTHER INCOMES', 50000, 9.6, [['590-0000', '590-0000 · RENT RECEIVED', 50000, 9.6]]]]);
     expect(flat(body.layout.expenses)).toEqual([
-      ['900-A014', '900-A014 — ADVERTISEMENT - SHOWROOM', 100000, 19.1],
+      ['900-A014', '900-A014 · ADVERTISEMENT - SHOWROOM', 100000, 19.1],
       ['900-O001', 'Operating expense — 16.00% of sales excluding service (5,000.00), in place of 900-O001 OPERATIING EXPENSE', 80000, 15.3],
-      ['900-R048', '900-R048 — RENTAL OF SHOWROOM', 4500000, 860.4],
+      ['900-R048', '900-R048 · RENTAL OF SHOWROOM', 4500000, 860.4],
     ]);
   });
 

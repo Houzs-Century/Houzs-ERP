@@ -24,10 +24,12 @@ import {
   RotateCcw,
   Send,
   ArrowRightLeft,
+  ScanLine,
 } from "lucide-react";
 import { fetchGrnExportRows, GRN_DEFAULT_COLUMN_KEYS, GRN_LABELS, senToRinggit, type GrnListLine } from "../../vendor/scm/lib/grn-list-export";
 import { grnLineColumns } from "./grn-list-line-columns";
 import { PrintPreviewBatchModal, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
+import { ScanGrnModal } from "../../vendor/scm/components/ScanGrnModal";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { PageHeader } from "../../components/Layout";
 import { StatCard } from "../../components/StatCard";
@@ -663,6 +665,8 @@ export function GoodsReceivedListV2() {
   const goFromPo = () => navigate("/scm/grns/from-po");
   const goPos = () => navigate("/scm/purchase-orders");
   const goSuppliers = () => navigate("/scm/suppliers");
+  const [showScan, setShowScan] = useState(false);
+  const goScanGrn = () => setShowScan(true);
   const goEdit = (r: GrnRow) => navigate(`/scm/grns/${r.id}?edit=1`);
   const printDocument = usePrintDocument();
   const goFullPage = (r: GrnRow) => navigate(`/scm/grns/${r.id}`);
@@ -994,6 +998,7 @@ export function GoodsReceivedListV2() {
               </div>
             }
             secondaryActions={[
+              { label: "Scan Delivery Order", icon: ScanLine, onClick: goScanGrn },
               { label: "Purchase Orders", icon: ClipboardList, onClick: goPos },
               { label: "Suppliers", icon: Users, onClick: goSuppliers },
             ]}
@@ -1151,6 +1156,7 @@ export function GoodsReceivedListV2() {
         onConvertToPi={() => selected && goConvertToPi(selected)}
         onConvertToPr={() => selected && goConvertToPr(selected)}
       />
+      {showScan && <ScanGrnModal onClose={() => setShowScan(false)} />}
     </PullToRefresh>
   );
 }

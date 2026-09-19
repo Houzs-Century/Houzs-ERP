@@ -3,8 +3,10 @@
    has and the range lacks still prints, a dash in both slots where a month
    has nothing (owner 2026-09-18); the % toggle; the months buttons; the
    levels; Export writes the CSV; an account's lines open under its row in
-   the month grid, each under its month, a month's figure alone. The lines
-   themselves: vendor/scm/lib/report-monthly.test.ts. */
+   the month grid, each under its month, a month's figure alone; a total or
+   subtotal row shaded apart from the account rows, the lines shaded lighter,
+   cut at the column, their figures under the amount slot (2026-09-19). The
+   lines themselves: vendor/scm/lib/report-monthly.test.ts. */
 
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
@@ -28,6 +30,7 @@ const TREE: Data = { period: 'tree', lines: [
   { ...line('rent', '900-A001 — RENT', 100_000, 10, 2), code: '900-A001' },
   { ...line('advert', '900-A014 — ADVERT', 30_000, 3, 2), code: '900-A014' },
   line('tot', 'Total expenses', 130_000, 13, 0, 'total'),
+  line('net', 'NET PROFIT', -130_000, -13, 0, 'net'),
 ] };
 let treeMode = false;
 const seen: string[] = [];
@@ -71,6 +74,9 @@ describe('the monthly view', () => {
     expect(rent.className).toMatch(/row/);
     expect(within(rent).getAllByRole('cell')[0]!.className).toMatch(/name/);
     expect(screen.getByText('Expenses').closest('tr')!.className).toBe('');
+    /* A total row wears a shade of its own, apart from the account rows (owner 2026-09-19). */
+    expect(screen.getByText('Total expenses').closest('tr')!.className).toMatch(/total/);
+    expect(rent.className).not.toMatch(/total/);
     const advert = screen.getByText('ADVERT').closest('tr')!;
     expect(within(advert).getAllByRole('cell').map(amountOf)).toEqual(['ADVERT', '-', '-', 'RM 50.00', '-', '-', '-', '-']);
     /* A dash in the % slot too — nothing is left blank (owner 2026-09-18, method B). */
@@ -124,6 +130,8 @@ describe('the monthly view', () => {
     expect(screen.queryByText('900-A001 — RENT')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Expand OPERATING EXPENSE' }));
     expect(screen.getByText('900-A001 — RENT')).toBeTruthy();
+    /* A subtotal (net) row wears the stronger shade (owner 2026-09-19). */
+    expect(screen.getByText('NET PROFIT').closest('tr')!.className).toMatch(/(^|[\s_])net([\s_]|$)/);
     /* The amount keeps its % under it on the opened rows too. */
     expect(within(screen.getByText('900-A001 — RENT').closest('tr')!).getAllByRole('cell').map(pctBeside)).toEqual(['', '10.0%', '10.0%', '10.0%', '10.0%']);
     fireEvent.click(screen.getByRole('button', { name: 'Lines of 900-A001 — RENT' }));
@@ -136,6 +144,12 @@ describe('the monthly view', () => {
     expect(within(lineRows()[1]!).getAllByRole('cell').map((c) => c.textContent)).toEqual(['02/09/2026 · Rent SeptemberPV-2', 'RM 1000.00', 'RM 1000.00', '-', '-']);
     const foot = () => document.querySelector('tr[data-lines-foot="900-A001"]') as HTMLElement;
     expect(within(foot()).getAllByRole('cell').map((c) => c.textContent)).toEqual(['共 2 笔在 GL 打开', 'RM 2000.00', 'RM 1000.00', 'RM 1000.00', '-']);
+    /* The lines wear their own shade; the description is cut at the column, the whole text its tooltip; every figure keeps the % slot empty, so it sits under the amount, never under the % (owner 2026-09-19). */
+    expect(august.className).toMatch(/lines/);
+    expect(within(august).getAllByRole('cell')[0]!.className).toMatch(/clip/);
+    expect(within(august).getAllByRole('cell')[0]!.getAttribute('title')).toBe('05/08/2026 · Rent August · PV-1');
+    expect(within(august).getAllByRole('cell').slice(1).map((c) => c.querySelector('span[data-pct]')?.textContent)).toEqual(['', '', '', '']);
+    expect(within(foot()).getAllByRole('cell').slice(1).every((c) => c.querySelector('span[data-pct]') !== null)).toBe(true);
     /* August's figure: that month's line alone; the same figure again closes; the name reopens the range. */
     fireEvent.click(screen.getByRole('button', { name: 'Lines of 900-A001 — RENT · 08/2026' }));
     expect(lineRows()).toHaveLength(1);
@@ -147,6 +161,10 @@ describe('the monthly view', () => {
     expect(lineRows()).toHaveLength(1);
     fireEvent.click(screen.getByRole('button', { name: 'Lines of 900-A001 — RENT' }));
     expect(lineRows()).toHaveLength(2);
+    /* In % mode the account rows carry no % slot, so neither do the lines. */
+    fireEvent.click(screen.getByRole('button', { name: '%' }));
+    expect(within(lineRows()[0]!).getAllByRole('cell')[1]!.querySelector('span[data-pct]')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'RM' }));
     fireEvent.click(screen.getByRole('button', { name: 'Collapse OPERATING EXPENSE' }));
     expect(screen.queryByText('900-A001 — RENT')).toBeNull();
     treeMode = false;

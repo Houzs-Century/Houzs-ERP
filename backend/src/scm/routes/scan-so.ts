@@ -54,12 +54,21 @@ import {
   type ExtractedPayment,
 } from '../lib/scan-receipt-plan';
 import { safeScanDepositSen } from '../lib/scan-header-deposit';
+// Document-type-agnostic OCR transport, shared with the GR/PI scanners.
 import {
   CLAUDE_MODEL,
-  anthropicFetchWithRetry, toBase64, sha256Hex, stripJsonFences, parseScanFiles,
-  type ContentBlock, type UploadedImage,
-} from '../lib/scan-anthropic';
-import { runPiScanJob } from '../lib/pi-scan-run';
+  anthropicFetchWithRetry,
+  sha256Hex,
+  stripJsonFences,
+  parseScanFiles,
+  loadScanJobFilesFromR2,
+  type AnthropicResponse,
+  type ContentBlock,
+  type UploadedImage,
+} from '../lib/scan-ocr';
+// GR / PI scan pipelines — the SO queue consumer delegates GR/PI-typed jobs here.
+import { processGrnScanQueueMessage } from './scan-gr';
+import { processPiScanQueueMessage } from './scan-pi';
 
 // The scm-scoped service client (getSupabaseService, db:{schema:'scm'}) and the
 // middleware-attached c.get('supabase') are both schema-parameterised clients.
@@ -69,11 +78,6 @@ type SupabaseClient = SupabaseClientGeneric<any, any, any>;
 
 export const scanSo = new Hono<{ Bindings: Env; Variables: Variables }>();
 scanSo.use('*', supabaseAuth);
-
-// OCR transport (retry policy, base64, sha256, fence-strip, the 20MB ceiling,
-// image MIME set) now lives in lib/scan-anthropic.ts so the SO / GR / PI
-// scanners share ONE copy — see the header there. CLAUDE_MODEL etc. are
-// re-exported downstream via the imports at the top of this file.
 
 // ---------------------------------------------------------------------------
 // Phone normalisation for an extracted slip — E.164, via the SAME normalizePhone
@@ -1026,12 +1030,6 @@ type ExtractedSlip = {
   // pre-multi behaviour is preserved byte-for-byte.
   payments: ExtractedPayment[];
   lines: ExtractedLine[];
-};
-
-type AnthropicResponse = {
-  content?: Array<{ type: string; text?: string }>;
-  error?: { type: string; message: string };
-  usage?: { cache_creation_input_tokens?: number; cache_read_input_tokens?: number };
 };
 
 type Warning = { field: string; value: string; message: string; lineIdx?: number };
@@ -2326,10 +2324,6 @@ scanSo.post('/warm', async (c) => {
 // of the /extract handler — same code, same order — so the two paths can
 // never drift. /extract's endpoint contract is unchanged.
 // ===========================================================================
-// ContentBlock / UploadedImage / ScanFileParse and parseScanFiles now live in
-// lib/scan-anthropic.ts (imported at the top of this file) — shared with the
-// GR / PI scanners.
-
 // Dynamic (post-cache-boundary) prompt blocks: shared alias dictionary,
 // cross-rep shared rules, the rep's own distilled rules, and the few-shot
 // pool. All best-effort — a missing row/table just skips that block.
@@ -4299,49 +4293,6 @@ scanSo.post('/enqueue', async (c) => {
 const SCAN_JOB_STALE_MINUTES = 3;
 const STALE_JOB_ERROR = 'The scan took too long and was stopped. Please scan this slip again.';
 
-// Rebuild runScanJob's file inputs from the durable R2 copies — the inverse of
-// parseScanFiles for a retry (the original in-memory buffers died with the
-// isolate). Block order matches upload order because image_keys was appended
-// in file order; the stored contentType decides image vs document block, same
-// mapping as parseScanFiles. Returns null (caller errors the job) if the
-// bucket is unbound or ANY key is missing.
-async function loadScanJobFilesFromR2(
-  bucket: Env['SO_ITEM_PHOTOS'] | undefined,
-  keys: string[],
-): Promise<{
-  fileBlocks: ContentBlock[];
-  uploadedImages: UploadedImage[];
-  firstBuffer: ArrayBuffer | null;
-} | null> {
-  if (!bucket || keys.length === 0) return null;
-  const fileBlocks: ContentBlock[] = [];
-  const uploadedImages: UploadedImage[] = [];
-  let firstBuffer: ArrayBuffer | null = null;
-  let blockIndex = 0;
-  for (const key of keys) {
-    const obj = await bucket.get(key);
-    if (!obj) return null;
-    const buf = await obj.arrayBuffer();
-    if (!firstBuffer) firstBuffer = buf;
-    const mime = obj.httpMetadata?.contentType || 'image/jpeg';
-    const data = toBase64(buf);
-    if (mime === 'application/pdf') {
-      fileBlocks.push({
-        type: 'document',
-        source: { type: 'base64', media_type: 'application/pdf', data },
-      });
-    } else {
-      uploadedImages.push({ index: blockIndex, buffer: buf, mime });
-      fileBlocks.push({
-        type: 'image',
-        source: { type: 'base64', media_type: mime, data },
-      });
-    }
-    blockIndex += 1;
-  }
-  return { fileBlocks, uploadedImages, firstBuffer };
-}
-
 // ---------------------------------------------------------------------------
 // Cloudflare Queue consumer entry point (called from index.ts `queue()`). The
 // message carries ONLY { jobId } — everything else is rebuilt from the durable
@@ -4397,6 +4348,17 @@ export async function processScanQueueMessage(env: Env, jobId: string): Promise<
   // Legacy rows predating the column read back null -> coerce to 'SO'.
   const documentType = coerceScanDocumentType(r.documentType ?? r.document_type);
 
+  // GR / PI jobs run their own pipelines, not this SO one. One-way delegation
+  // (scan-gr / scan-pi never import scan-so, so no cycle); each consumer re-reads
+  // the row, loads its own photos and owns its own idempotency. A non-SO, non-GR,
+  // non-PI job is acked with a warning rather than mis-run as SO.
+  if (documentType === 'GR') { await processGrnScanQueueMessage(env, id); return; }
+  if (documentType === 'PI') { await processPiScanQueueMessage(env, id); return; }
+  if (documentType !== 'SO') {
+    console.warn('[scan-queue] no consumer for document_type yet, acking:', documentType, id);
+    return;
+  }
+
   const files = salespersonId ? await loadScanJobFilesFromR2(env.SO_ITEM_PHOTOS, imageKeys) : null;
   if (!files) {
     // No durable photos (enqueue-time R2 put failed / bucket unbound) or no
@@ -4407,24 +4369,6 @@ export async function processScanQueueMessage(env: Env, jobId: string): Promise<
       .from('scan_jobs')
       .update({ status: 'error', error: STALE_JOB_ERROR, updated_at: new Date().toISOString() })
       .eq('id', id);
-    return;
-  }
-
-  // DOCUMENT-TYPE DISPATCH — a PI scan converts a supplier invoice into a DRAFT
-  // Purchase Invoice off the matching GRN(s); everything else is the SO path.
-  // The GR path lands on the same seam in its own slice. Same durable inputs
-  // either way (identity + photos rebuilt from the row + R2).
-  if (documentType === 'PI') {
-    await runPiScanJob(env, {
-      id,
-      userId: salespersonId,
-      houzsUserId,
-      companyId,
-      fileBlocks: files.fileBlocks,
-      uploadedImages: files.uploadedImages,
-      firstBuffer: files.firstBuffer,
-      imageKeys,
-    });
     return;
   }
 
@@ -4445,7 +4389,7 @@ export async function processScanQueueMessage(env: Env, jobId: string): Promise<
   });
 }
 
-export async function reapStaleScanJobs(
+async function reapStaleScanJobs(
   env: Env,
   svc: ReturnType<typeof serviceClient>,
   // The calling poll handler's executionCtx.waitUntil (try/catch-wrapped for
@@ -4464,6 +4408,10 @@ export async function reapStaleScanJobs(
       .from('scan_jobs')
       .select('id, salesperson, salesperson_id, houzs_user_id, image_keys, retry_count, company_id, document_type')
       .in('status', ['queued', 'running'])
+      // GR/PI stale jobs are reaped by their own poll endpoints — this SO
+      // reaper must never replay one through the SO pipeline (mig 20260919T1000
+      // backfilled every existing row to 'SO', so no null slips through).
+      .eq('document_type', 'SO')
       .lt('updated_at', cutoff)
       .eq('retry_count', 0)
       .limit(5);
@@ -4476,6 +4424,7 @@ export async function reapStaleScanJobs(
         .from('scan_jobs')
         .update({ status: 'error', error: STALE_JOB_ERROR, updated_at: nowIso })
         .in('status', ['queued', 'running'])
+        .eq('document_type', 'SO')
         .lt('updated_at', cutoff);
       return;
     }
@@ -4521,21 +4470,6 @@ export async function reapStaleScanJobs(
           return;
         }
         console.warn('[scan-so jobs] re-running stale job (retry 1/1):', id);
-        // Document-type dispatch (see processScanQueueMessage) — a PI retry
-        // re-runs the invoice→DRAFT-PI pipeline, everything else the SO path.
-        if (documentType === 'PI') {
-          await runPiScanJob(env, {
-            id,
-            userId: salespersonId,
-            houzsUserId,
-            companyId,
-            fileBlocks: files.fileBlocks,
-            uploadedImages: files.uploadedImages,
-            firstBuffer: files.firstBuffer,
-            imageKeys,
-          });
-          return;
-        }
         await runScanJob(env, {
           id,
           salesperson,
@@ -4559,6 +4493,7 @@ export async function reapStaleScanJobs(
       .from('scan_jobs')
       .update({ status: 'error', error: STALE_JOB_ERROR, updated_at: nowIso })
       .in('status', ['queued', 'running'])
+      .eq('document_type', 'SO')
       .lt('updated_at', cutoff)
       .gte('retry_count', 1);
   } catch (e) {

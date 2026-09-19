@@ -30,7 +30,7 @@ import {
   matchInvoiceLinesToGrnLines, docRefMatches, normalizeCode,
   type PiMatchGrnLine,
 } from './pi-scan-match';
-import type { ContentBlock, UploadedImage } from './scan-anthropic';
+import type { ContentBlock, UploadedImage } from './scan-ocr';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- schema-parameterised scm client, same alias as scan-so.ts / scan-sample-review.ts
 type SupabaseClient = SupabaseClientGeneric<any, any, any>;
