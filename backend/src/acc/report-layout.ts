@@ -279,7 +279,7 @@ export type LaidLine = {
   /** The row's own key where one code carries several rows (a control
       account by party, a transfer) — the code when absent. */
   key?: string;
-  /** What to print instead of "code — name". */
+  /** What to print instead of "code · name". */
   label?: string;
   /** A figure per money column (Receipts & Payments); amountSen is their total. */
   cells?: Record<string, number>;
@@ -310,11 +310,13 @@ export const pctOf = (sen: number, baseSen: number | null): number | null =>
 
 const keyOf = (l: LaidLine): string => l.key ?? l.code;
 
-/** One line as a leaf of the tree. */
+/** One line as a leaf of the tree — named "code · name", the Cash Flow's own
+    spelling, on every report alike (owner 2026-09-19: P&L 那边的 account 显示要和
+    cash flow 一样). */
 export const laidLineNode = (l: LaidLine, baseSen: number | null): LaidNode => {
   const key = keyOf(l);
   const node: LaidNode = {
-    kind: 'account', id: `acc:${key}`, label: l.label ?? `${l.code} — ${l.name}`, code: l.code, key,
+    kind: 'account', id: `acc:${key}`, label: l.label ?? `${l.code} · ${l.name}`, code: l.code, key,
     amountSen: l.amountSen, pct: pctOf(l.amountSen, baseSen), children: [],
   };
   if (l.cells) node.cells = { ...l.cells };
