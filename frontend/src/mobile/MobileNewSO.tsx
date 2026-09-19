@@ -1153,10 +1153,15 @@ export function MobileNewSO({
      a row is a place plus an organizer, nothing is typed, and the brand is
      derived from the SKUs server-side. The venue NAME leads and the master id
      follows it by name, because a fair can name a venue the master lacks. */
-  const [fairPick, setFairPick] = useState<FairPickValue>({ venue: null, organizer: null });
+  const [fairPick, setFairPick] = useState<FairPickValue>({
+    venue: null, organizer: null, startDate: null, endDate: null,
+  });
   useEffect(() => {
     /* Seeds a BLANK only — a human pick is a decision and is never overwritten. */
-    if (fairPick.venue == null && resolvedVenueName) setFairPick({ venue: resolvedVenueName, organizer: null });
+    /* A PLACE, not an event — see the desktop twin. */
+    if (fairPick.venue == null && resolvedVenueName) {
+      setFairPick({ venue: resolvedVenueName, organizer: null, startDate: null, endDate: null });
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resolvedVenueName]);
   const effectiveVenueId = fairPick.venue
@@ -2062,6 +2067,9 @@ export function MobileNewSO({
            re-derives the fair whenever the venue changes, so the patch must not
            carry it (soHeaderPatchFrom feeds the edit diff as well). */
         fairOrganizer: fairPick.organizer ?? undefined,
+        /* The picked event's PERIOD — same contract as the desktop form. */
+        fairStart: fairPick.startDate ?? undefined,
+        fairEnd: fairPick.endDate ?? undefined,
         /* EXPLICIT draft flag — the backend statuses DRAFT only on
            body.asDraft === true; nulling the dates alone saves CONFIRMED. */
         asDraft: asDraft === true,

@@ -106,6 +106,11 @@ export async function reconcilePendingFairs(
          organizers share one venue on one day — 3 days in all of 2026 — and
          those come back AMBIGUOUS for a person rather than being guessed. */
       organizer: null,
+      /* No picked event either, for the same reason: this order carries a place
+         and nothing else, so there is no occurrence to match and the venue
+         window is all there is. Explicit null rather than an omitted argument —
+         its absence decides which lookup runs. */
+      picked: null,
       soDate,
       brand: raw.branding ?? null,
     });

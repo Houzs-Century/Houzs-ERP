@@ -3433,7 +3433,11 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
                   Those land on the pending screen for a person, not on a guess. */}
               <FairPicker
                 id="so-detail-fair"
-                value={{ venue: form.venue || null, organizer: null }}
+                /* A saved order stores a PLACE, never an occurrence, so this
+                   screen has no period to offer — explicit nulls. Editing the
+                   fair here still drops the link to PENDING for the nightly
+                   reconcile; only the CREATE forms send a picked event today. */
+                value={{ venue: form.venue || null, organizer: null, startDate: null, endDate: null }}
                 soDate={header.so_date}
                 disabled={inputsDisabled}
                 onChange={(next) => setForm((s) => ({
