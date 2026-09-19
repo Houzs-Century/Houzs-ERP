@@ -21,6 +21,7 @@ import {
 import type { FormSchema } from "./MobileModuleForm";
 import { MobileVirtualList } from "./MobileVirtualList";
 import { warehouseLabel } from "../vendor/scm/lib/warehouse-label";
+import { mfgCategoryLabel } from "../vendor/shared/product-categories";
 import "./mobile.css";
 
 // ---------------------------------------------------------------------------
@@ -1346,7 +1347,7 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     endpoint: "/inventory?showAll=true",
     listKey: "balances",
     primary: (r) => lineIdentity({ code: r.item_code, description: r.product_name }).primary,
-    secondary: (r) => join(r.item_code, r.category, r.warehouse_code ?? r.warehouse_name),
+    secondary: (r) => join(r.item_code, mfgCategoryLabel(r.category), r.warehouse_code ?? r.warehouse_name),
     right: (r) => (r.qty == null ? "" : `${r.qty}`),
     search: (r) => join(r.product_name, r.item_code, r.category, r.warehouse_name),
     pill: (r) => stockLevel(pick(r, "qty")),
@@ -1864,11 +1865,11 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     endpoint: "/mfg-products",
     listKey: "products",
     primary: (r) => lineIdentity({ code: pick(r, "code", "sku"), description: r.name }).primary,
-    secondary: (r) => join(pick(r, "code", "sku"), pick(r, "category"), pick(r, "sizeLabel", "size_label")),
+    secondary: (r) => join(pick(r, "code", "sku"), mfgCategoryLabel(pick(r, "category")), pick(r, "sizeLabel", "size_label")),
     right: (r) => pick(r, "basePriceSen", "base_price_sen") ?? "",
     rightMoney: true,
     search: (r) => join(r.name, pick(r, "code", "sku"), pick(r, "category"), pick(r, "branding"), pick(r, "barcode")),
-    pill: (r) => humanize(pick(r, "category")),
+    pill: (r) => mfgCategoryLabel(pick(r, "category")),
     // Spec #products: .ph thumbnail + name + "{{category}}" sub-line + right
     // "RM {{price_sen}}". base_price_sen is the base selling price (SEN); uom
     // has no mfg column → omitted.
@@ -1878,12 +1879,12 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     // line per SKU"), so it reads the same way. CATEGORY is not a duplicate and
     // stays. The code still BINDS — `search` still matches code / sku / barcode.
     variant: "product",
-    subline: (r) => join(pick(r, "category")),
+    subline: (r) => join(mfgCategoryLabel(pick(r, "category"))),
     price: (r) => pick(r, "basePriceSen", "base_price_sen") ?? "",
     priceMoney: true,
     fields: [
       [(r) => pick(r, "code", "sku") ?? "—", "SKU"],
-      [(r) => pick(r, "category") ?? "—", "Category"],
+      [(r) => mfgCategoryLabel(pick(r, "category")) || "—", "Category"],
       [(r) => rmField(pick(r, "basePriceSen", "base_price_sen")), "Base Price"],
       [(r) => rmField(pick(r, "sellPriceSen", "sell_price_sen")), "Selling Price"],
       [(r) => rmField(pick(r, "costPriceSen", "cost_price_sen")), "Cost Price", "cost"],
@@ -1917,7 +1918,7 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
         code: pick(r, "itemCode", "item_code"),
         description: pick(r, "description"),
       }).primary || "—",
-    secondary: (r) => join(pick(r, "itemCode", "item_code"), pick(r, "category"), pick(r, "warehouseCode", "warehouse_code", "warehouseName", "warehouse_name")),
+    secondary: (r) => join(pick(r, "itemCode", "item_code"), mfgCategoryLabel(pick(r, "category")), pick(r, "warehouseCode", "warehouse_code", "warehouseName", "warehouse_name")),
     search: (r) => join(pick(r, "description"), pick(r, "itemCode", "item_code"), pick(r, "category")),
     pill: (r) => mrpState(r),
     // Spec #mrp: name + state badge, 4-col KPI grid (Demand / On hand /

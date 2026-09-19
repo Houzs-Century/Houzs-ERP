@@ -3856,7 +3856,7 @@ const ProductSuppliersDrawer = ({
                 </h3>
                 {groups.length === 0 ? (
                   <p style={{ fontSize: 'var(--fs-13)', color: '#767b6e' }}>
-                    No variant options configured for this model{row.category ? ` (${row.category})` : ''}.
+                    No variant options configured for this model{row.category ? ` (${mfgCategoryLabel(row.category)})` : ''}.
                   </p>
                 ) : (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
@@ -4137,8 +4137,8 @@ const SpecialsMaintenancePanel = ({
     const others = row.categories.filter((x) => x !== category);
     if (others.length > 0) {
       if (!(await askConfirm({
-        title: `Remove "${lbl || 'this add-on'}" from ${category}?`,
-        body: `It stays available under ${others.join(', ')}, and existing orders are unaffected.`,
+        title: `Remove "${lbl || 'this add-on'}" from ${mfgCategoryLabel(category)}?`,
+        body: `It stays available under ${others.map(mfgCategoryLabel).join(', ')}, and existing orders are unaffected.`,
         confirmLabel: 'Remove from this list',
       }))) return;
       setDetached((d) => [...d, { ...row, categories: others }]);

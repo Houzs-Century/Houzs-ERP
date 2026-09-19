@@ -32,7 +32,7 @@ import {
   useActivateOneShot, useBrandingPool, useUploadProductModelPhoto,
   type AllowedOptions, type AllowedOptions as AOpts,
 } from '../../vendor/scm/lib/product-models-queries';
-import { useMaintenanceConfig, useUpdateMfgProductStatus, useSpecialAddons } from '../../vendor/scm/lib/mfg-products-queries';
+import { useMaintenanceConfig, useUpdateMfgProductStatus, useSpecialAddons, mfgCategoryLabel } from '../../vendor/scm/lib/mfg-products-queries';
 import { useFabricLibrary } from '../../vendor/scm/lib/queries';
 import { CategorySwapSelect } from '../../vendor/scm/components/CategorySwapSelect';
 import { useAuth } from '../../auth/AuthContext';
@@ -361,7 +361,7 @@ export const ProductModelDetail = ({
              decorative <Layers> glyph went away with the bespoke title row;
              PageHeader's eyebrow rail carries that job now.) */
           <div className="flex flex-wrap items-center gap-2">
-            <span className={styles.catPill}>{model.category}</span>
+            <span className={styles.catPill}>{mfgCategoryLabel(model.category)}</span>
             <span className={`${styles.statusPill} ${model.active ? styles.active : styles.inactive}`}>
               {model.active ? 'ACTIVE' : 'INACTIVE'}
             </span>
@@ -452,7 +452,7 @@ export const ProductModelDetail = ({
             ) : (
               <>
                 <span className="t-eyebrow">Category</span>
-                <input type="text" value={model.category} readOnly className={styles.readonly} />
+                <input type="text" value={mfgCategoryLabel(model.category)} readOnly className={styles.readonly} />
               </>
             )}
           </div>
@@ -655,7 +655,7 @@ export const ProductModelDetail = ({
 
         {(model.category === 'ACCESSORY' || model.category === 'SERVICE') && (
           <p className={styles.cardSub}>
-            No configurable options for {model.category.toLowerCase()} models —
+            No configurable options for {mfgCategoryLabel(model.category).toLowerCase()} models —
             SKU rows track everything directly.
           </p>
         )}

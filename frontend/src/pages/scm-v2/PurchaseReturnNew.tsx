@@ -40,7 +40,7 @@ import { useIdempotencyKey } from '../../lib/idempotency';
 import { readConvertScope, UnrecognisedScopeNotice } from '../../lib/convertScope';
 import { useGrnDetail } from '../../vendor/scm/lib/grn-queries';
 import { usePurchaseOrderDetail, useSuppliers } from '../../vendor/scm/lib/suppliers-queries';
-import { useMfgProducts, useMaintenanceConfig, useSpecialAddons } from '../../vendor/scm/lib/mfg-products-queries';
+import { useMfgProducts, useMaintenanceConfig, useSpecialAddons, mfgCategoryLabel } from '../../vendor/scm/lib/mfg-products-queries';
 import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
 import { sortByText, sortByNumeric } from '../../vendor/scm/lib/sort-options';
 import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
@@ -545,7 +545,7 @@ export const PurchaseReturnNew = () => {
                           />
                           <datalist id={`pr-products-${l.rid}`}>
                             {sortByText(productsQ.data ?? []).map((p) => (
-                              <option key={p.id} value={p.code}>{p.name} · {p.category}</option>
+                              <option key={p.id} value={p.code}>{p.name} · {mfgCategoryLabel(p.category)}</option>
                             ))}
                           </datalist>
                         </>
