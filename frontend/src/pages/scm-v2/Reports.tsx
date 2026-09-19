@@ -27,21 +27,42 @@
 // the single period for MonthlyReport — the same endpoint asked once per
 // column, 累计 leftmost then newest → oldest, a % toggle; the balance sheet's
 // columns are month-end balances and it has no cumulative column.
+//
+// EXPORTS (owner 2026-09-19: 我这页显示什么就要 export 什么 … finance 这里的 report
+// 都是要这样): Excel and PDF carry the statement AS SHOWN — the lines at the
+// level chosen, the same shades — through the shared report sheet.
 // ----------------------------------------------------------------------------
 
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
+import { Download, Printer } from 'lucide-react';
 import { Button } from '@2990s/design-system';
-import { fmtSenPlain } from '../../vendor/shared/format';
+import { fmtDate, fmtSenPlain } from '../../vendor/shared/format';
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import { DateField } from '../../vendor/scm/components/DateField';
 import { useAuth } from '../../auth/AuthContext';
-import { fmtPct, laidDepth, leafCodes, ledgerHref, pctOf, type LaidNode } from '../../vendor/scm/lib/report-layout';
+import { fmtPct, laidDepth, leafCodes, ledgerHref, linesVisible, pctOf, type LaidNode } from '../../vendor/scm/lib/report-layout';
 import { LaidBlock, LaidTotalRow, LevelButtons, useReportTree, type Level } from './ReportLayoutTree';
 import { ReportLayoutEditor } from './ReportLayoutEditor';
 import { ByMonthButton, MonthlyReport } from './MonthlyReport';
 import { balanceSheetLines, pnlLines, type MonthColumn } from '../../vendor/scm/lib/report-monthly';
+import { statementTable, type ReportSheet } from '../../vendor/scm/lib/report-sheet';
+import { downloadReportXlsx } from '../../vendor/scm/lib/report-sheet-xlsx';
+import { generateReportPdf } from '../../vendor/scm/lib/report-sheet-pdf';
+
+/** The Excel and PDF buttons a statement wears while one period is shown. */
+const ExportButtons = ({ sheet, fileBase }: { sheet: () => ReportSheet | null; fileBase: string }) => (
+  <>
+    <span style={{ flex: 1 }} />
+    <Button variant="ghost" size="sm" onClick={() => { const s = sheet(); if (s) void downloadReportXlsx(s, `${fileBase}.xlsx`); }}>
+      <Download size={16} strokeWidth={1.75} /> Excel
+    </Button>
+    <Button variant="ghost" size="sm" onClick={() => { const s = sheet(); if (s) void generateReportPdf(s, { fileName: `${fileBase}.pdf` }); }}>
+      <Printer size={16} strokeWidth={1.75} /> PDF
+    </Button>
+  </>
+);
 
 const card: React.CSSProperties = {
   padding: 'var(--space-4)',
@@ -109,6 +130,14 @@ export const PnLTab = () => {
   const lay = q.data?.layout;
   const depth = lay ? Math.max(laidDepth(lay.tradingIncome), laidDepth(lay.costOfSales), laidDepth(lay.otherIncome), laidDepth(lay.expenses), laidDepth(lay.taxation)) : 0;
   const base = lay ? lay.baseSen : null;
+  /* Excel and PDF carry the statement as shown — the lines at this level (owner 2026-09-19). */
+  const period = `${fmtDate(from)} – ${fmtDate(to)}`;
+  const sheet = (): ReportSheet | null => (q.data && lay ? {
+    title: 'P&L',
+    subtitle: `${period} · % of sales · ${lay.stored ? 'on the saved layout' : "on the chart's own tree"}${level === 'all' ? '' : ` · level ${level}`}`,
+    meta: [{ label: 'Period', value: period }],
+    tables: [statementTable(linesVisible(pnlLines(q.data), level, tree.open), '% of sales')],
+  } : null);
 
   return (
     <div className="space-y-3">
@@ -124,6 +153,7 @@ export const PnLTab = () => {
         {canArrange && (
           <Button variant="ghost" size="sm" onClick={() => setEditing((v) => !v)} aria-pressed={editing}>Layout</Button>
         )}
+        {!monthly && q.data && <ExportButtons sheet={sheet} fileBase={`pnl-${from}-to-${to}`} />}
       </div>
       {editing && <ReportLayoutEditor report="pnl" onClose={() => setEditing(false)} />}
       {monthly && <MonthlyReport<PnlResponse> report="pnl" title="P&L" withCumulative fetchColumn={fetchPnlColumn} linesOf={pnlLines} fmt={fmtSenPlain} pctTitle="% of sales" />}
@@ -200,6 +230,13 @@ export const BalanceSheetTab = () => {
   const lay = q.data?.layout;
   const depth = lay ? Math.max(laidDepth(lay.assets), laidDepth(lay.liabilities), laidDepth(lay.equity)) : 0;
   const base = lay ? lay.baseSen : null;
+  /* Excel and PDF carry the statement as shown — the lines at this level (owner 2026-09-19). */
+  const sheet = (): ReportSheet | null => (q.data && lay ? {
+    title: 'Balance Sheet',
+    subtitle: `As at ${fmtDate(asOf)} · % of total assets · ${lay.stored ? 'on the saved layout' : "on the chart's own tree"}${level === 'all' ? '' : ` · level ${level}`}`,
+    meta: [{ label: 'As at', value: fmtDate(asOf) }],
+    tables: [statementTable(linesVisible(balanceSheetLines(q.data), level, tree.open), '% of total assets')],
+  } : null);
 
   return (
     <div className="space-y-3">
@@ -214,6 +251,7 @@ export const BalanceSheetTab = () => {
         {canArrange && (
           <Button variant="ghost" size="sm" onClick={() => setEditing((v) => !v)} aria-pressed={editing}>Layout</Button>
         )}
+        {!monthly && q.data && <ExportButtons sheet={sheet} fileBase={`balance-sheet-${asOf}`} />}
       </div>
       {editing && <ReportLayoutEditor report="balance_sheet" onClose={() => setEditing(false)} />}
       {monthly && <MonthlyReport<BsResponse> report="balance-sheet" title="Balance Sheet (as at month end)" withCumulative={false} fetchColumn={fetchBsColumn} linesOf={balanceSheetLines} fmt={fmtSenPlain} pctTitle="% of total assets" />}

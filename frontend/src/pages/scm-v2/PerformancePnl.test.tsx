@@ -2,7 +2,7 @@
    group with sales, cost, gross profit and %; the summary from gross profit
    through the computed operating expense (named for the account it stands
    in for) and the booked expenses to net; the notes; the rate and account
-   saved from the strip; the CSV off the same lines. The server half is
+   saved from the strip; Excel and PDF off the same lines. The server half is
    backend/tests/performanceReport.test.ts. */
 
 import { fireEvent, render, screen, within } from '@testing-library/react';
@@ -54,13 +54,14 @@ const report: PerformanceReport = {
 const lastPath = { value: '' };
 const saveMutate = vi.fn();
 const pdfMock = vi.fn(async (..._args: unknown[]) => {});
+const xlsxMock = vi.fn(async (..._args: unknown[]) => {});
 
 vi.mock('../../vendor/scm/lib/performance-report-queries', async (importOriginal) => ({
   ...(await importOriginal() as object),
   usePerformanceReport: (from: string, to: string) => { lastPath.value = `${from}|${to}`; return { data: report, isLoading: false, isError: false, error: null }; },
   useSavePerformanceSettings: () => ({ mutate: saveMutate, isPending: false }),
 }));
-vi.mock('../../vendor/scm/lib/performance-pnl-pdf', () => ({ generatePerformancePdf: pdfMock }));
+vi.mock('../../vendor/scm/lib/performance-pnl-pdf', () => ({ generatePerformancePdf: pdfMock, downloadPerformanceXlsx: xlsxMock }));
 vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ can: () => true }) }));
 vi.mock('./ReportLayoutEditor', () => ({ ReportLayoutEditor: () => <div role="dialog" aria-label="Layout · Performance P&L">editor</div> }));
 /* The monthly view has its own contract (MonthlyReport.test.tsx); here it only has to be reached. */
@@ -69,7 +70,7 @@ vi.mock('./MonthlyReport', () => ({
   ByMonthButton: ({ on, onToggle }: { on: boolean; onToggle: () => void }) => <button type="button" aria-pressed={on} onClick={onToggle}>By month</button>,
 }));
 
-const { PerformanceTab, performanceCsv } = await import('./PerformancePnl');
+const { PerformanceTab } = await import('./PerformancePnl');
 
 describe('the Performance P&L tab', () => {
   test('a row per group with sales, cost, gross profit and %; the total names the orders; the summary runs to net', () => {
@@ -135,7 +136,7 @@ describe('the Performance P&L tab', () => {
     fireEvent.click(within(strip).getByText('Save'));
     expect(saveMutate.mock.calls[0]?.[0]).toEqual({ rateBp: 1800, account: '900-O001' });
     fireEvent.click(screen.getByText('PDF'));
-    expect(pdfMock).toHaveBeenCalledWith(report);
+    expect(pdfMock).toHaveBeenCalledWith(report, { level: 'all', open: {} });
   });
 
   test('L1 folds the account part to its categories, All opens it; the Layout button opens the editor', () => {
@@ -169,20 +170,10 @@ describe('the Performance P&L tab', () => {
     expect(screen.getByLabelText('Performance settings')).toBeTruthy();
   });
 
-  test('the CSV carries the groups, the summary — indented by level — and the notes', () => {
-    const csv = performanceCsv(report);
-    expect(csv).toContain('Group,Sales,Cost of sales,Gross profit,GP %');
-    expect(csv).toContain('Sofa,"3,000.00","1,800.00","1,200.00",40.0%');
-    expect(csv).toContain('Accessory,0.00,120.00,(120.00),—');
-    expect(csv).toContain('Total,"5,230.00","3,010.00","2,220.00",42.4%');
-    expect(csv).toContain('Line,Amount,% of sales');
-    expect(csv).toContain('Fixed costs,"45,800.00",875.7%');
-    expect(csv).toContain('"  Operating expense — 16.00% of sales excluding service (5,000.00), in place of 900-O001 OPERATIING EXPENSE",800.00,15.3%');
-    expect(csv).toContain('590-0000 — RENT RECEIVED,500.00,9.6%');
-    expect(csv).toContain('Total other income (as booked),500.00,9.6%');
-    expect(csv).toContain('Total expenses (operating expense at 16.00% + as booked),"46,800.00",894.8%');
-    expect(csv).toContain('NET PERFORMANCE,"(44,080.00)",-842.8%');
-    expect(csv).toContain('Notes');
-    expect(csv).toContain('in place of account 900-O001');
+  test('Excel carries the tables as shown — folded to the level chosen (owner 2026-09-19: 显示什么就 export 什么)', () => {
+    render(<PerformanceTab />);
+    fireEvent.click(screen.getByRole('button', { name: 'L1' }));
+    fireEvent.click(screen.getByText('Excel'));
+    expect(xlsxMock).toHaveBeenCalledWith(report, { level: 1, open: {} });
   });
 });
