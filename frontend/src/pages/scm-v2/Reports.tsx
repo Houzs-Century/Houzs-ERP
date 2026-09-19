@@ -10,7 +10,8 @@
 // an expense is a cost, not a negative — and only a line whose credits beat
 // its debits in the period (a reversal, a closing-stock credit) prints in
 // parentheses; a loss is a negative net and reads the same way. The four
-// Finance reports share this rule through fmtSenParen / fmtPerf.
+// Finance reports share this rule through fmtSenPlain — 1,234.56, no RM, as the
+// Cash Flow reads (owner 2026-09-19: P&L 的 RM 前缀拿掉，和 cash flow 一样).
 //
 // LAYOUT (owner 2026-09-14, docs/bugs/0911: 我想要有 level，父子 account 分层 …
 // 我要能自己调动排版 … P&L 那边不是每个 expense 都有 percentage): the P&L draws each
@@ -32,7 +33,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Button } from '@2990s/design-system';
-import { fmtSenParen } from '../../vendor/shared/format';
+import { fmtSenPlain } from '../../vendor/shared/format';
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import { DateField } from '../../vendor/scm/components/DateField';
 import { useAuth } from '../../auth/AuthContext';
@@ -125,7 +126,7 @@ export const PnLTab = () => {
         )}
       </div>
       {editing && <ReportLayoutEditor report="pnl" onClose={() => setEditing(false)} />}
-      {monthly && <MonthlyReport<PnlResponse> report="pnl" title="P&L" withCumulative fetchColumn={fetchPnlColumn} linesOf={pnlLines} fmt={fmtSenParen} pctTitle="% of sales" />}
+      {monthly && <MonthlyReport<PnlResponse> report="pnl" title="P&L" withCumulative fetchColumn={fetchPnlColumn} linesOf={pnlLines} fmt={fmtSenPlain} pctTitle="% of sales" />}
       {!monthly && q.isLoading && <div style={soft}>Working the period out…</div>}
       {!monthly && q.isError && <div style={{ fontSize: 'var(--fs-13)', color: 'var(--c-danger, #a33)' }}>The statement did not load — adjust the dates to retry.</div>}
       {!monthly && q.data && lay && (
@@ -215,7 +216,7 @@ export const BalanceSheetTab = () => {
         )}
       </div>
       {editing && <ReportLayoutEditor report="balance_sheet" onClose={() => setEditing(false)} />}
-      {monthly && <MonthlyReport<BsResponse> report="balance-sheet" title="Balance Sheet (as at month end)" withCumulative={false} fetchColumn={fetchBsColumn} linesOf={balanceSheetLines} fmt={fmtSenParen} pctTitle="% of total assets" />}
+      {monthly && <MonthlyReport<BsResponse> report="balance-sheet" title="Balance Sheet (as at month end)" withCumulative={false} fetchColumn={fetchBsColumn} linesOf={balanceSheetLines} fmt={fmtSenPlain} pctTitle="% of total assets" />}
       {!monthly && q.isLoading && <div style={soft}>Adding the ledger up…</div>}
       {!monthly && q.isError && <div style={{ fontSize: 'var(--fs-13)', color: 'var(--c-danger, #a33)' }}>The statement did not load — pick the date again to retry.</div>}
       {!monthly && q.data && lay && (
@@ -234,7 +235,7 @@ export const BalanceSheetTab = () => {
               <LaidBlock title="Equity" nodes={lay.equity} level={level} totalLabel="Total equity" totalSen={q.data.totals.equitySen} baseSen={base} onPick={openLedger} tree={tree} drill={drill} />
               <tr>
                 <td style={{ padding: '4px 10px' }}>Current period earnings</td>
-                <td style={{ padding: '4px 10px', textAlign: 'right', whiteSpace: 'nowrap' }}>{fmtSenParen(q.data.totals.earningsSen)}</td>
+                <td style={{ padding: '4px 10px', textAlign: 'right', whiteSpace: 'nowrap' }}>{fmtSenPlain(q.data.totals.earningsSen)}</td>
                 <td style={{ padding: '4px 10px', textAlign: 'right', whiteSpace: 'nowrap', ...soft }}>{fmtPct(pctOf(q.data.totals.earningsSen, base))}</td>
               </tr>
               <tr style={{ borderTop: '2px solid var(--c-ink, #221f20)' }}>
@@ -242,7 +243,7 @@ export const BalanceSheetTab = () => {
                   {q.data.totals.checkSen === 0 ? 'BALANCED' : 'OUT OF BALANCE'}
                 </td>
                 <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 700, whiteSpace: 'nowrap', color: q.data.totals.checkSen === 0 ? 'var(--c-good, #2f5d4f)' : 'var(--c-danger, #a33)' }}>
-                  {q.data.totals.checkSen === 0 ? fmtSenParen(q.data.totals.assetsSen) : fmtSenParen(q.data.totals.checkSen)}
+                  {q.data.totals.checkSen === 0 ? fmtSenPlain(q.data.totals.assetsSen) : fmtSenPlain(q.data.totals.checkSen)}
                 </td>
                 <td style={{ padding: '8px 10px', textAlign: 'right', whiteSpace: 'nowrap', ...soft }}>{q.data.totals.checkSen === 0 ? fmtPct(pctOf(q.data.totals.assetsSen, base)) : ''}</td>
               </tr>

@@ -239,3 +239,14 @@ export const fmtSenParen = (centi: number | null | undefined): string => {
   if (centi == null || !Number.isFinite(n)) return '—';
   return n < 0 ? `(${fmtSen(-n)})` : fmtSen(n);
 };
+
+/** 1,234.56 with a bracketed negative and NO currency — the Finance reports'
+    one money dress, the Cash Flow's own (owner 2026-09-19: P&L 的 RM 前缀拿掉，
+    和 cash flow 一样): the P&L, the Balance Sheet, the Performance P&L and the
+    Cash Flow, on the screen, By month, in Excel and on paper alike. */
+export const fmtSenPlain = (centi: number | null | undefined): string => {
+  const n = Number(centi);
+  if (centi == null || !Number.isFinite(n)) return '—';
+  const s = (Math.abs(n) / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return n < 0 ? `(${s})` : s;
+};

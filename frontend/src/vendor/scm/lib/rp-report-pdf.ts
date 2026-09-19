@@ -13,14 +13,11 @@ import {
   fmtDocDate, fmtDocStamp, type PdfAction,
 } from './pdf-common';
 import type { RpReport } from './rp-report-queries';
+import { fmtSenPlain } from '../../shared/format';
 import { flattenLaid, fmtPct, type LaidNode } from './report-layout';
 
-/** 1,234.56 with a bracketed negative — the report's own money dress. */
-export const fmtRp = (sen: number): string => {
-  const abs = Math.abs(sen) / 100;
-  const s = abs.toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  return sen < 0 ? `(${s})` : s;
-};
+/** 1,234.56 with a bracketed negative — the Finance reports' one money dress (fmtSenPlain). */
+export const fmtRp = (sen: number): string => fmtSenPlain(sen);
 
 type Line = { kind: 'section' | 'row' | 'category' | 'balance'; label: string; cells: string[] };
 
