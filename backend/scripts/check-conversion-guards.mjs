@@ -124,8 +124,9 @@ const SOURCES = {
     source: ["purchase_orders", "purchase_order_items"],
   },
   "backend/src/scm/routes/grns.ts::POST /from-po-items": {
-    doc: "PO -> GRN (picked lines; parent PO rides an !inner embed)",
+    doc: "PO -> GRN (picked lines; parent PO rides an !inner embed). The route is a door on the lib core, which does the scoped source read — the scan queue runs the same core off-request.",
     source: ["purchase_order_items"],
+    core: { file: "backend/src/scm/lib/grn-from-po-core.ts", fn: "createDraftGrnsFromPoItemsCore" },
   },
   "backend/src/scm/routes/mfg-purchase-orders.ts::POST /from-sos": {
     doc: "SO -> PO, through the shared convertSosToPosCore",

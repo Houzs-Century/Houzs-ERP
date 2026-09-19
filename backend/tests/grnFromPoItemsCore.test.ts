@@ -18,7 +18,7 @@
  *      did (same error codes / statuses), writing nothing.
  */
 import { describe, expect, test } from 'vitest';
-import { createDraftGrnsFromPoItemsCore } from '../src/scm/routes/grns';
+import { createDraftGrnsFromPoItemsCore } from '../src/scm/lib/grn-from-po-core';
 import { parsePgrestInList } from '../src/scm/lib/pgrest-in-list';
 
 const CO_A = 1; // HOUZS
