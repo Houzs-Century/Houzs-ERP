@@ -23,6 +23,7 @@ import { parseScanFiles, loadScanJobFilesFromR2 } from '../lib/scan-ocr';
 import { runPiScanJob } from '../lib/pi-scan-run';
 import { jobToJson } from './scan-so-serialize';
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- schema-parameterised scm client, same alias as scan-so.ts / scan-gr.ts
 type SupabaseClient = SupabaseClientGeneric<any, any, any>;
 
 export const scanPi = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -198,7 +199,7 @@ async function runPiJobFromRow(
 // row acks without re-running (a redelivery must not create a 2nd PI).
 // ---------------------------------------------------------------------------
 export async function processPiScanQueueMessage(env: Env, jobId: string): Promise<void> {
-  const id = String(jobId ?? '');
+  const id = jobId;
   if (!id) return;
   const svc = serviceClient(env);
   const { data: row, error } = await svc
@@ -247,15 +248,15 @@ async function reapStalePiScanJobs(
         .eq('document_type', 'PI').in('status', ['queued', 'running']).lt('updated_at', cutoff);
       return;
     }
-    for (const r of (retryRows ?? []) as Array<Record<string, unknown>>) {
-      const id = String(r.id ?? '');
+    for (const r of (retryRows as Array<Record<string, unknown>> | null) ?? []) {
+      const id = String((r.id as string | undefined) ?? '');
       if (!id) continue;
       const { data: claimed, error: claimErr } = await svc
         .from('scan_jobs')
         .update({ status: 'queued', retry_count: 1, updated_at: nowIso })
         .eq('id', id).eq('retry_count', 0).in('status', ['queued', 'running'])
         .select('id');
-      if (claimErr || !claimed || claimed.length === 0) continue;
+      if (claimErr || !Array.isArray(claimed) || claimed.length === 0) continue;
       runInBackground((async () => {
         console.warn('[scan-pi jobs] re-running stale job (retry 1/1):', id);
         const outcome = await runPiJobFromRow(env, id, r);
