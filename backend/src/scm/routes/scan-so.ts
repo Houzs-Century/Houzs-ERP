@@ -44,11 +44,8 @@ import { postPersonalNotice } from '../../services/personalNotice';
 import { createDraftSalesOrder, recordSoPaymentRow } from './mfg-sales-orders';
 import { todayMyt } from '../lib/my-time';
 import { activeCompanyId } from '../lib/companyScope';
-import {
-  type ScanDocumentType,
-  DEFAULT_SCAN_DOCUMENT_TYPE,
-  coerceScanDocumentType,
-} from '../lib/scan-document-type';
+import { type ScanDocumentType, DEFAULT_SCAN_DOCUMENT_TYPE, coerceScanDocumentType } from '../lib/scan-document-type';
+import { jobToJson } from './scan-so-serialize';
 import { normalizePhone, fmtSen } from '../shared';
 import { resolveCallerStaffId } from '../lib/salesScope';
 import {
@@ -2825,8 +2822,7 @@ async function insertScanSample(
     parsed: ExtractedSlip | null;
     errorMsg: string | null;
     claudeText: string;
-    // Which document type this learning sample belongs to. The SO callers pass
-    // 'SO' explicitly (the pipeline's outer default); GR/PI slices pass theirs.
+    // Which document type this learning sample belongs to ('SO' here).
     documentType: ScanDocumentType;
   },
 ): Promise<{ sampleId: string | null; sampleInsertError: string | null }> {
@@ -3200,34 +3196,6 @@ const JOB_MSG = {
   unreadable: 'The slip photo could not be read. Please retake the photo and try again.',
   createFallback: 'The draft order could not be created. Please enter this order manually.',
 } as const;
-
-// Snake/camel-tolerant job row -> API shape (dual-read both casings — the #1
-// recurring result-column bug class).
-function jobToJson(r: Record<string, unknown>): Record<string, unknown> {
-  return {
-    id: r.id ?? null,
-    status: r.status ?? null,
-    salesperson: r.salesperson ?? null,
-    soDocNo: r.soDocNo ?? r.so_doc_no ?? null,
-    // Document-type dimension (migration 20260919T1000). documentType defaults
-    // to 'SO' for rows predating the column; linkedDocNo is the generic
-    // produced-doc link (== soDocNo for SO scans).
-    documentType: coerceScanDocumentType(r.documentType ?? r.document_type),
-    linkedDocNo: r.linkedDocNo ?? r.linked_doc_no ?? r.soDocNo ?? r.so_doc_no ?? null,
-    error: r.error ?? null,
-    sampleId: r.sampleId ?? r.sample_id ?? null,
-    // Duplicate-upload warning (migration 0068) — doc_no of the suspected
-    // original SO; the mobile Scan screen surfaces it on the job card.
-    duplicateOf: r.duplicateOf ?? r.duplicate_of ?? null,
-    imageKeys: r.imageKeys ?? r.image_keys ?? [],
-    // Multi-receipt (migration 0141) — the R2 keys of the uploads the OCR
-    // classified as payment receipts (one payment booked per key). [] for a
-    // draft-only scan or a row predating the column.
-    receiptImageKeys: r.receiptImageKeys ?? r.receipt_image_keys ?? [],
-    createdAt: r.createdAt ?? r.created_at ?? null,
-    updatedAt: r.updatedAt ?? r.updated_at ?? null,
-  };
-}
 
 // ---------------------------------------------------------------------------
 // Duplicate-upload detection (owner 2026-07-04: 重复上传预警 / "已经开过单").
@@ -3938,9 +3906,7 @@ async function runScanJob(
     salespersonId: string;
     salespersonName: string | null;
     houzsUserId: number | null;
-    /** Which document type this job produces. Threaded explicitly from the
-     *  scan_jobs row (SO callers default it to 'SO'); this slice carries it but
-     *  does not yet branch on it — GR/PI routing lands in later slices. */
+    /** Which document type this job produces (SO here; GR/PI route in later slices). */
     documentType: ScanDocumentType;
     /** Multi-company: the ACTIVE company captured on the scan_jobs row at
      *  enqueue time — replayed onto the draft SO create. null = legacy row. */
@@ -4152,8 +4118,7 @@ async function runScanJob(
       // plain "please complete" note so the Orders-open toast tells the rep, and
       // stop here (no receipt-payment pass on a draft the model couldn't read).
       if (shellNote) {
-        // Write BOTH the SO-specific and the generic link column (they carry the
-        // same doc_no for SO); nothing that reads so_doc_no changes.
+        // Write both the SO-specific and generic link column (same doc_no for SO).
         await touch({ status: 'done', so_doc_no: docNo, linked_doc_no: docNo, error: shellNote });
         await postScanNotice(env, {
           houzsUserId: job.houzsUserId,

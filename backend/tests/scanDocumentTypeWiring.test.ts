@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import scanSoSrc from '../src/scm/routes/scan-so.ts?raw';
+import scanSoSerializeSrc from '../src/scm/routes/scan-so-serialize.ts?raw';
 
 // OCR slice 1 (tasks/PLAN-ocr-scan-gr-pi.md) adds a document_type dimension to
 // the SO scan pipeline WITHOUT changing SO behaviour. scm.scan_jobs has no D1
@@ -82,7 +83,7 @@ describe('the poll reads expose document_type and linked_doc_no', () => {
   });
 
   test('jobToJson maps documentType and linkedDocNo', () => {
-    const fn = between(scanSoSrc, 'function jobToJson', 'createdAt:');
+    const fn = between(scanSoSerializeSrc, 'function jobToJson', 'createdAt:');
     expect(fn).toContain('documentType: coerceScanDocumentType(r.documentType ?? r.document_type)');
     expect(fn).toContain('linkedDocNo:');
   });
