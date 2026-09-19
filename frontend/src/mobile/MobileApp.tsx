@@ -59,6 +59,7 @@ const MobileModuleDetail = lazy(() => import("./MobileModuleDetail").then((m) =>
 const MobileModuleForm = lazy(() => import("./MobileModuleForm").then((m) => ({ default: m.MobileModuleForm })));
 const MobileDeliveryPlanning = lazy(() => import("./MobileDeliveryPlanning").then((m) => ({ default: m.MobileDeliveryPlanning })));
 const MobileScan = lazy(() => import("./MobileScan").then((m) => ({ default: m.MobileScan })));
+const MobileGrnScan = lazy(() => import("./MobileGrnScan").then((m) => ({ default: m.MobileGrnScan })));
 const MobileConvertWizard = lazy(() => import("./MobileConvertWizard").then((m) => ({ default: m.MobileConvertWizard })));
 const MobilePOD = lazy(() => import("./MobilePOD").then((m) => ({ default: m.MobilePOD })));
 const MobileMileageCapture = lazy(() => import("./MobileMileageCapture").then((m) => ({ default: m.MobileMileageCapture })));
@@ -112,6 +113,7 @@ type Screen =
   | { t: "change-log" }
   | { t: "new-so"; mode: "new" | "edit" | "edit-draft"; docNo?: string; scanPrefill?: MobileScanPrefill; addLine?: boolean; convertFrom?: MobileConvertPrefill }
   | { t: "scan" }
+  | { t: "grn-scan"; key: string; title: string }
   | { t: "module"; key: string; title: string }
   | { t: "module-detail"; key: string; row: any; title: string }
   | { t: "stock-transfer-new"; key: string; row: any; title: string }
@@ -844,6 +846,7 @@ function MobileAppInner() {
   }
   else if (screen.t === "new-so") overlay = <MobileNewSO mode={screen.mode} docNo={screen.docNo} scanPrefill={screen.scanPrefill} convertFrom={screen.convertFrom} openAddLine={screen.addLine === true} onBack={back} onSaved={(d) => setScreen({ t: "so-detail", docNo: d })} />;
   else if (screen.t === "scan") overlay = <MobileScan onBack={back} onDrafted={onScanDrafted} onOpenSo={(docNo) => setScreen({ t: "so-detail", docNo })} />;
+  else if (screen.t === "grn-scan") overlay = <MobileGrnScan onBack={() => setScreen({ t: "module", key: screen.key, title: screen.title })} />;
   else if (screen.t === "module") {
     const k = screen.key;
     const convertTarget = MODULE_TO_CONVERT[k];
@@ -886,10 +889,23 @@ function MobileAppInner() {
       : MODULE_CONFIGS[k]?.form
         ? () => setScreen({ t: "module-form", key: k, mode: "new" })
         : undefined;
+    // GRN gets a delivery-order scanner (mirrors desktop's "Scan Delivery
+    // Order"), gated by the same goods-receipt operate helper. Rendered via the
+    // list's existing aboveList slot (a top-of-list CTA) so MobileModuleList
+    // stays unchanged and under its size ceiling.
+    const grnScanEntry = k === "grns" && canOperateGoodsReceipts(can, pageAccess) ? (
+      <button
+        onClick={() => setScreen({ t: "grn-scan", key: k, title: screen.title })}
+        style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", justifyContent: "center", height: 44, borderRadius: 12, border: "1px solid #16695f", background: "#fff", color: "#16695f", fontFamily: "inherit", fontSize: 13.5, fontWeight: 700, cursor: "pointer", marginBottom: 12 }}
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#16695f" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2M3 12h18" /></svg>
+        Scan delivery order
+      </button>
+    ) : undefined;
     overlay = <MobileModuleList config={MODULE_CONFIGS[k]} onBack={back}
       onOpen={(row) => setScreen({ t: "module-detail", key: k, row, title: screen.title })}
       onNew={onNew}
-      aboveList={k === "members" ? <MobileInvitations /> : undefined} />;
+      aboveList={k === "members" ? <MobileInvitations /> : grnScanEntry} />;
   }
   else if (screen.t === "purchase-doc-new") {
     const backToList = () => setScreen({ t: "module", key: screen.key, title: screen.title });

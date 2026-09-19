@@ -11,6 +11,8 @@ import type { Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { createDraftGrnsFromPoItemsCore, type GrnFromPoItemsContext } from '../lib/grn-from-po-core';
+import { getSupabaseService } from '../../db/supabase';
+import { noteGrnScanAccepted } from '../lib/grn-scan-review';
 import { writeMovements, defaultWarehouseId, reconcileDropshipBatches } from '../lib/inventory-movements';
 import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { grnHasDownstream } from '../lib/downstream-lock';
@@ -1977,6 +1979,19 @@ export const postGrnHandler = async (c: any) => {
       fieldChange('lineCount', null, poItemIds.length),
     ]),
   });
+
+  /* OCR self-learning — if this GRN came from a scanned supplier delivery order,
+     the DRAFT -> POSTED it just made is the operator vouching the extraction was
+     read well enough to receive. Promote that scan sample to ACCEPTED so it
+     feeds the GR few-shot pool. Best-effort: noteGrnScanAccepted no-ops for the
+     ~all GRNs that never came from a scan, and never costs the operator their
+     post. Uses the service client (scan_jobs / so_scan_samples are the scan
+     pipeline's own tables). */
+  try {
+    const grnScanNote = noteGrnScanAccepted(getSupabaseService(c.env), row.grn_number);
+    try { c.executionCtx.waitUntil(grnScanNote); }
+    catch { /* non-Workers runtime (tests) — let the floating promise run */ }
+  } catch { /* learning is best-effort (e.g. no service client configured) — never blocks the post */ }
 
   return c.json({ grn: data, movementErrors: res.movementErrors?.length ? res.movementErrors : undefined, recountError: res.recountError });
 };
