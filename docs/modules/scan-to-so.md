@@ -21,6 +21,11 @@ Lives in the `scm` Postgres schema, reached under `/api/scm/scan-so/*`.
   row → dispatched on a Cloudflare Queue → `runScanJob` extracts, creates the
   DRAFT SO via the shared `createDraftSalesOrder` core, records any receipt
   payments, posts a private completion notice to the scanning rep.
+- The pipeline carries a `document_type` (`scm.scan_jobs` / `so_scan_samples` /
+  `so_scan_rules`, default `SO`) so the same queue serves the Goods Receipt and
+  Purchase Invoice scanners; the SO path threads `SO` explicitly and writes
+  `linked_doc_no` alongside `so_doc_no`. See `lib/scan-document-type.ts` and
+  `tasks/PLAN-ocr-scan-gr-pi.md`.
 
 ## Permissions
 

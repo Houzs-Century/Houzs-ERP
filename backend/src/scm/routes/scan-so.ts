@@ -44,6 +44,11 @@ import { postPersonalNotice } from '../../services/personalNotice';
 import { createDraftSalesOrder, recordSoPaymentRow } from './mfg-sales-orders';
 import { todayMyt } from '../lib/my-time';
 import { activeCompanyId } from '../lib/companyScope';
+import {
+  type ScanDocumentType,
+  DEFAULT_SCAN_DOCUMENT_TYPE,
+  coerceScanDocumentType,
+} from '../lib/scan-document-type';
 import { normalizePhone, fmtSen } from '../shared';
 import { resolveCallerStaffId } from '../lib/salesScope';
 import {
@@ -2820,6 +2825,9 @@ async function insertScanSample(
     parsed: ExtractedSlip | null;
     errorMsg: string | null;
     claudeText: string;
+    // Which document type this learning sample belongs to. The SO callers pass
+    // 'SO' explicitly (the pipeline's outer default); GR/PI slices pass theirs.
+    documentType: ScanDocumentType;
   },
 ): Promise<{ sampleId: string | null; sampleInsertError: string | null }> {
   let sampleId: string | null = null;
@@ -2832,6 +2840,7 @@ async function insertScanSample(
         salesperson: args.salesperson,
         extracted: args.parsed ?? { error: args.errorMsg, claudeText: args.claudeText },
         status: args.parsed ? 'EXTRACTED' : 'FAILED',
+        document_type: args.documentType,
       })
       .select('id')
       .single();
@@ -3073,6 +3082,8 @@ scanSo.post('/extract', async (c) => {
   const sampleSalesperson = repGiven || normalizeRepKey(parsed?.salesRep) || null;
   const { sampleId, sampleInsertError } = await insertScanSample(svc, {
     imageSha256, salesperson: sampleSalesperson, parsed, errorMsg, claudeText,
+    // Interactive SO extract — the pipeline's default document type.
+    documentType: DEFAULT_SCAN_DOCUMENT_TYPE,
   });
 
   // Original slip / receipt R2 persistence — storeScanImages, shared with the
@@ -3198,6 +3209,11 @@ function jobToJson(r: Record<string, unknown>): Record<string, unknown> {
     status: r.status ?? null,
     salesperson: r.salesperson ?? null,
     soDocNo: r.soDocNo ?? r.so_doc_no ?? null,
+    // Document-type dimension (migration 20260919T1000). documentType defaults
+    // to 'SO' for rows predating the column; linkedDocNo is the generic
+    // produced-doc link (== soDocNo for SO scans).
+    documentType: coerceScanDocumentType(r.documentType ?? r.document_type),
+    linkedDocNo: r.linkedDocNo ?? r.linked_doc_no ?? r.soDocNo ?? r.so_doc_no ?? null,
     error: r.error ?? null,
     sampleId: r.sampleId ?? r.sample_id ?? null,
     // Duplicate-upload warning (migration 0068) — doc_no of the suspected
@@ -3922,6 +3938,10 @@ async function runScanJob(
     salespersonId: string;
     salespersonName: string | null;
     houzsUserId: number | null;
+    /** Which document type this job produces. Threaded explicitly from the
+     *  scan_jobs row (SO callers default it to 'SO'); this slice carries it but
+     *  does not yet branch on it — GR/PI routing lands in later slices. */
+    documentType: ScanDocumentType;
     /** Multi-company: the ACTIVE company captured on the scan_jobs row at
      *  enqueue time — replayed onto the draft SO create. null = legacy row. */
     companyId: number | null;
@@ -3984,6 +4004,7 @@ async function runScanJob(
       parsed,
       errorMsg: call.errorMsg,
       claudeText: call.claudeText,
+      documentType: job.documentType,
     });
     if (sampleId) await touch({ sample_id: sampleId });
     const { imageKey, receiptImageKey } = await storeScanImages(
@@ -4131,7 +4152,9 @@ async function runScanJob(
       // plain "please complete" note so the Orders-open toast tells the rep, and
       // stop here (no receipt-payment pass on a draft the model couldn't read).
       if (shellNote) {
-        await touch({ status: 'done', so_doc_no: docNo, error: shellNote });
+        // Write BOTH the SO-specific and the generic link column (they carry the
+        // same doc_no for SO); nothing that reads so_doc_no changes.
+        await touch({ status: 'done', so_doc_no: docNo, linked_doc_no: docNo, error: shellNote });
         await postScanNotice(env, {
           houzsUserId: job.houzsUserId,
           category: 'WARNING',
@@ -4142,7 +4165,7 @@ async function runScanJob(
       }
       // Past the shell paths, a null parse has already returned above — narrow
       // `parsed` to non-null for the receipt-payment pass (defensive fallback).
-      if (!parsed) { await touch({ status: 'done', so_doc_no: docNo }); return; }
+      if (!parsed) { await touch({ status: 'done', so_doc_no: docNo, linked_doc_no: docNo }); return; }
       // Payments from receipt OCR — one ledger row per classified payment
       // receipt, via the SAME recordSoPaymentRow core the interactive route
       // uses. GUARD: never fail the job — the DRAFT stands; a failure only
@@ -4173,6 +4196,7 @@ async function runScanJob(
       await touch({
         status: 'done',
         so_doc_no: docNo,
+        linked_doc_no: docNo,
         ...(paymentNote ? { error: paymentNote } : {}),
       });
       // Private "your scan is a draft now" notice. Duplicate/payment caveats
@@ -4330,6 +4354,10 @@ scanSo.post('/enqueue', async (c) => {
     .from('scan_jobs')
     .insert({
       status: 'queued',
+      // The SO scanner is the pipeline's default document type. GR/PI enqueue
+      // routes (later slices) validate and stamp their own type here; the
+      // queue consumer and reaper replay whatever this column holds.
+      document_type: DEFAULT_SCAN_DOCUMENT_TYPE,
       salesperson: repGiven || null,
       // The uploader's own staff id (see resolveScanUploaderStaffId) so the
       // headless create attributes the SO to whoever scanned it. The queue
@@ -4407,6 +4435,7 @@ scanSo.post('/enqueue', async (c) => {
       salespersonId: uploaderStaffId,
       salespersonName,
       houzsUserId,
+      documentType: DEFAULT_SCAN_DOCUMENT_TYPE,
       companyId: activeCompanyId(c) ?? null,
       fileBlocks,
       uploadedImages,
@@ -4516,7 +4545,7 @@ export async function processScanQueueMessage(env: Env, jobId: string): Promise<
 
   const { data: row, error } = await svc
     .from('scan_jobs')
-    .select('id, status, salesperson, salesperson_id, houzs_user_id, image_keys, company_id')
+    .select('id, status, salesperson, salesperson_id, houzs_user_id, image_keys, company_id, document_type')
     .eq('id', id)
     .single();
   if (error) {
@@ -4547,6 +4576,8 @@ export async function processScanQueueMessage(env: Env, jobId: string): Promise<
   const houzsUserId = huRaw != null && Number.isFinite(Number(huRaw)) ? Number(huRaw) : null;
   const coRaw = r.companyId ?? r.company_id;
   const companyId = coRaw != null && Number.isFinite(Number(coRaw)) ? Number(coRaw) : null;
+  // Legacy rows predating the column read back null -> coerce to 'SO'.
+  const documentType = coerceScanDocumentType(r.documentType ?? r.document_type);
 
   const files = salespersonId ? await loadScanJobFilesFromR2(env.SO_ITEM_PHOTOS, imageKeys) : null;
   if (!files) {
@@ -4569,6 +4600,7 @@ export async function processScanQueueMessage(env: Env, jobId: string): Promise<
     salespersonName: salesperson || null,
     salespersonId,
     houzsUserId,
+    documentType,
     companyId,
     fileBlocks: files.fileBlocks,
     uploadedImages: files.uploadedImages,
@@ -4594,7 +4626,7 @@ async function reapStaleScanJobs(
     //    next poll (the screen polls every 4s while jobs are active).
     const { data: retryRows, error: retryErr } = await svc
       .from('scan_jobs')
-      .select('id, salesperson, salesperson_id, houzs_user_id, image_keys, retry_count, company_id')
+      .select('id, salesperson, salesperson_id, houzs_user_id, image_keys, retry_count, company_id, document_type')
       .in('status', ['queued', 'running'])
       .lt('updated_at', cutoff)
       .eq('retry_count', 0)
@@ -4635,6 +4667,8 @@ async function reapStaleScanJobs(
       const houzsUserId = huRaw != null && Number.isFinite(Number(huRaw)) ? Number(huRaw) : null;
       const coRaw = r.companyId ?? r.company_id;
       const companyId = coRaw != null && Number.isFinite(Number(coRaw)) ? Number(coRaw) : null;
+      // Legacy rows predating the column read back null -> coerce to 'SO'.
+      const documentType = coerceScanDocumentType(r.documentType ?? r.document_type);
 
       // Heavy part (R2 reads + the whole pipeline) runs AFTER the poll
       // responds — never inline in the GET.
@@ -4659,6 +4693,7 @@ async function reapStaleScanJobs(
           // normalized rep display name is the closest replay identity.
           salespersonName: salesperson || null,
           houzsUserId,
+          documentType,
           companyId,
           fileBlocks: files.fileBlocks,
           uploadedImages: files.uploadedImages,
@@ -4696,7 +4731,7 @@ scanSo.get('/jobs', async (c) => {
   });
   let q = svc
     .from('scan_jobs')
-    .select('id, status, salesperson, so_doc_no, error, sample_id, duplicate_of, image_keys, created_at, updated_at')
+    .select('id, status, salesperson, so_doc_no, linked_doc_no, document_type, error, sample_id, duplicate_of, image_keys, created_at, updated_at')
     .eq('company_id', activeCompanyId(c))
     .order('created_at', { ascending: false })
     .limit(20);
@@ -4726,7 +4761,7 @@ scanSo.get('/jobs/:id', async (c) => {
   });
   const { data, error } = await svc
     .from('scan_jobs')
-    .select('id, status, salesperson, so_doc_no, error, sample_id, duplicate_of, image_keys, created_at, updated_at')
+    .select('id, status, salesperson, so_doc_no, linked_doc_no, document_type, error, sample_id, duplicate_of, image_keys, created_at, updated_at')
     .eq('id', id)
     .limit(1)
     .maybeSingle();
