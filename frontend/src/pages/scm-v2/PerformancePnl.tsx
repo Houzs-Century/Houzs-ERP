@@ -7,8 +7,8 @@
 // profit 和 %; docs/bugs/0835). The numbers come from
 // GET /accounting/reports/performance, computed live on every read; the rate
 // and the account it stands in for are the company's settings, edited here.
-// Export writes the CSV, PDF the printable — both off the same pure lines
-// the screen draws. The account part below the groups sits on the report's
+// Excel and PDF export the tables AS SHOWN — the same lines the screen draws,
+// folded to the same level (owner 2026-09-19: 显示什么就 export 什么). The account part below the groups sits on the report's
 // own layout (docs/bugs/0912): categories with subtotals, L1..Ln buttons,
 // the Layout button for whoever may read the statements; the product-group
 // table above stays as it is.
@@ -18,14 +18,13 @@ import { Fragment, useState } from 'react';
 import { Download, Printer } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { DateField } from '../../vendor/scm/components/DateField';
-import { downloadCSV, toCSV } from '../../lib/csv';
 import { useAuth } from '../../auth/AuthContext';
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import {
   fmtPerf, fmtPerfPct, performanceNotes, performanceReportPath, performanceSummaryLines, usePerformanceReport, useSavePerformanceSettings,
   type PerformanceReport,
 } from '../../vendor/scm/lib/performance-report-queries';
-import { generatePerformancePdf } from '../../vendor/scm/lib/performance-pnl-pdf';
+import { downloadPerformanceXlsx, generatePerformancePdf } from '../../vendor/scm/lib/performance-pnl-pdf';
 import { foldsChildren, folderOpen, laidDepth, linesVisible } from '../../vendor/scm/lib/report-layout';
 import { performanceLines, type MonthColumn } from '../../vendor/scm/lib/report-monthly';
 import { LevelButtons, useReportTree, type Level } from './ReportLayoutTree';
@@ -47,29 +46,6 @@ const chevron: React.CSSProperties = { background: 'none', border: 'none', paddi
 const nameBtn: React.CSSProperties = { background: 'none', border: 'none', padding: 0, cursor: 'pointer', font: 'inherit', color: 'inherit' };
 const good = 'var(--c-secondary-a, #2F5D4F)';
 const input: React.CSSProperties = { padding: '4px 8px', fontSize: 'var(--fs-13)', border: '1px solid var(--border-weak, #e3e1da)', borderRadius: 6 };
-
-/* The CSV: the groups table, the summary lines, the notes — the same lines
-   the screen and the PDF read. */
-export const performanceCsv = (r: PerformanceReport): string => {
-  const groupRows = [
-    ...r.groups.map((g) => ({ label: g.label, salesSen: g.salesSen, cogsSen: g.cogsSen, gpSen: g.gpSen, gpPct: g.gpPct })),
-    { label: 'Total', salesSen: r.totals.salesSen, cogsSen: r.totals.cogsSen, gpSen: r.totals.gpSen, gpPct: r.totals.gpPct },
-  ];
-  const groups = toCSV(groupRows, [
-    { key: 'group', label: 'Group', getValue: (x) => x.label },
-    { key: 'sales', label: 'Sales', getValue: (x) => fmtPerf(x.salesSen) },
-    { key: 'cogs', label: 'Cost of sales', getValue: (x) => fmtPerf(x.cogsSen) },
-    { key: 'gp', label: 'Gross profit', getValue: (x) => fmtPerf(x.gpSen) },
-    { key: 'pct', label: 'GP %', getValue: (x) => fmtPerfPct(x.gpPct) },
-  ]);
-  const summary = toCSV(performanceSummaryLines(r), [
-    { key: 'line', label: 'Line', getValue: (l) => `${'  '.repeat(Math.max(0, l.depth - 1))}${l.label}` },
-    { key: 'amount', label: 'Amount', getValue: (l) => fmtPerf(l.amountSen) },
-    { key: 'pct', label: '% of sales', getValue: (l) => fmtPerfPct(l.pct) },
-  ]);
-  const notes = toCSV(performanceNotes(r).map((n) => ({ n })), [{ key: 'note', label: 'Notes', getValue: (x) => x.n }]);
-  return `${toCSV([{ p: `${r.from} to ${r.to}` }], [{ key: 'p', label: 'Performance P&L', getValue: (x) => x.p }])}\r\n\r\n${groups}\r\n\r\n${summary}\r\n\r\n${notes}`;
-};
 
 export const PerformanceTab = () => {
   const [from, setFrom] = useState(monthStart());
@@ -113,10 +89,10 @@ export const PerformanceTab = () => {
           <Button variant="ghost" size="sm" onClick={() => setEditing((e) => !e)} aria-pressed={editing}>Layout</Button>
         )}
         <span style={{ flex: 1 }} />
-        <Button variant="ghost" size="sm" onClick={() => { if (r) downloadCSV(`performance-pnl-${from}-${to}.csv`, performanceCsv(r)); }} disabled={!r}>
-          <Download size={16} strokeWidth={1.75} /> Export
+        <Button variant="ghost" size="sm" onClick={() => { if (r) void downloadPerformanceXlsx(r, { level, open: tree.open }); }} disabled={!r || monthly}>
+          <Download size={16} strokeWidth={1.75} /> Excel
         </Button>
-        <Button variant="ghost" size="sm" onClick={() => { if (r) void generatePerformancePdf(r); }} disabled={!r}>
+        <Button variant="ghost" size="sm" onClick={() => { if (r) void generatePerformancePdf(r, { level, open: tree.open }); }} disabled={!r || monthly}>
           <Printer size={16} strokeWidth={1.75} /> PDF
         </Button>
       </div>
