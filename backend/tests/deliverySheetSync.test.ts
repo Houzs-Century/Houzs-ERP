@@ -68,6 +68,7 @@ const HEAD: FeedHeadRow = {
   linked_ac_docno: "SO-013495",
   so_date: "2026-08-20",
   ref: "HC12481",
+  customer_so_no: "HC12481",
   branding: "AKEMI",
   debtor_name: "Wendy",
   phone: "60127712155",
@@ -126,6 +127,15 @@ describe("toSheetRecord — the AutoCount-named record the sheet writes", () => 
     expect(r.Region).toBe("WEST");
     expect(r.SOUDF_VENUE).toBe("Balakong Showroom");
     expect(r.LastModified).toBe(HEAD.last_modified_text);
+    expect(r.Ref).toBe("HC12481");
+  });
+
+  test("Ref = ref, else customer_so_no: a native order (ref NULL) carries its reference in customer_so_no", () => {
+    // ERP frontend customerRefOf reads ref || customer_so_no; every native ERP
+    // order has ref NULL, so ref alone left them blank on the sheet.
+    expect(toSheetRecord({ ...HEAD, ref: null, customer_so_no: "ZNT6068" }, []).Ref).toBe("ZNT6068");
+    expect(toSheetRecord({ ...HEAD, ref: "HC12481", customer_so_no: "SO-SRC" }, []).Ref).toBe("HC12481");
+    expect(toSheetRecord({ ...HEAD, ref: null, customer_so_no: null }, []).Ref).toBeNull();
   });
 
   test("a native order keys on its own number; a Singapore address routes SG; a stored Remarks 2 wins", () => {
