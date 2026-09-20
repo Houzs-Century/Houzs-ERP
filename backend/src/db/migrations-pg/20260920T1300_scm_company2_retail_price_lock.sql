@@ -73,10 +73,13 @@
 -- runner will re-run it: every statement is CREATE OR REPLACE / IF NOT EXISTS /
 -- DROP ... IF EXISTS, and re-running changes nothing.
 --
--- ─── REVERSAL ─────────────────────────────────────────────────────────────
---   DROP TRIGGER IF EXISTS trg_mfg_products_retail_price_lock ON scm.mfg_products;
---   DROP FUNCTION IF EXISTS scm.mfg_products_retail_price_lock();
---   -- scm.retail_price_guard_log is evidence; keep it or drop it separately.
+-- REVERSAL: DROP TRIGGER IF EXISTS trg_mfg_products_retail_price_lock ON scm.mfg_products;
+--           DROP FUNCTION IF EXISTS scm.mfg_products_retail_price_lock();
+--           scm.retail_price_guard_log is evidence of every intervention, so it
+--           is left standing; drop it separately and deliberately if you mean to
+--           throw that away. Reversing costs nothing else: the trigger only ever
+--           rewrites the value being written, and it stores nothing the rest of
+--           the schema reads.
 
 SET search_path = public, scm;
 
