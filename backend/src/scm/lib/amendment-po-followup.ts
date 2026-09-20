@@ -31,6 +31,7 @@ import type { Context } from 'hono';
 import { isServiceLine } from '../shared/service-sku';
 import { activeCompanyId, stampCompany } from './companyScope';
 import { catalogCategoriesByCode } from './validate-item-codes';
+import { readMfgProductBindings } from './supplier-bindings';
 
 type Sb = any;
 
@@ -207,24 +208,24 @@ export async function raisePoFollowUps(
      link, or its frozen orphan home when the change removed it — minus
      CANCELLED. Owner 2026-09-09: this used to be EVERY PO bound to the SO, so
      a one-line change on a multi-PO order raised a 0-change amendment against
-     each untouched PO as well. Confirming one was harmless (reviseBoundPo
-     re-derives that PO from the SO and finds nothing to change) but it is a
-     signature the purchaser had to clear for nothing.
+     each untouched PO as well.
 
-     NARROWING ONLY APPLIES WHEN EVERY CHANGED LINE ALREADY HAS A PO HOME. A
-     changed line that has none may still NEED one — an ADD by construction (a
-     brand-new SO line has no link yet), and equally an existing line that was
-     never on a PO, including one a SPEC edit just turned from a service SKU
-     into real goods. For those the full bound set stays in play and the supplier
-     matching happens at confirm, in reviseBoundPo, exactly as before; narrowing
-     them away would mean new goods never reach a supplier. */
+     Plus, for a brand-new ADD, the bound PO(s) whose supplier can actually MAKE
+     it — the SAME main-supplier match reviseBoundPo applies at confirm
+     (so-revision.ts (10)), pulled forward. Owner 2026-09-20: a sales-side "swap 1
+     mattress to Equinox" added the mattress (supplier DIGLANT) as a revision onto
+     a bedframe PO (supplier OHANA); confirming it would bump that PO's printed _R
+     for nothing — reviseBoundPo can place the mattress on no OHANA line — while
+     the real DIGLANT order went unraised. An ADD whose supplier serves no bound PO
+     is now WARNED (raise a separate PO), never forced onto the wrong one. A
+     changed EXISTING line with no live PO home is likewise not fanned out: it
+     produced only empty follow-ups, because reviseBoundPo re-applies a line only
+     when its id is NEW, so a pre-existing homeless line is never placed at
+     confirm. */
   const changedSoItemIds = new Set(soLines
     .map((l) => l.sales_order_item_id).filter((x): x is string => Boolean(x)));
   const linkedSoItemIds = new Set(livePoItems
     .map((r) => r.so_item_id).filter((x): x is string => Boolean(x)));
-  const needsHome = soLines.some((l) =>
-    String(l.change_type).toUpperCase() === 'ADD'
-    || !(l.sales_order_item_id && linkedSoItemIds.has(l.sales_order_item_id)));
 
   const boundPoIds = [...new Set([
     ...livePoItems.map((r) => r.purchase_order_id),
@@ -239,24 +240,77 @@ export async function raisePoFollowUps(
   for (const r of orphanItems) {
     if (r.purchase_order_id && orphanIdsForChanged.has(r.id)) touchedPoIds.add(r.purchase_order_id);
   }
-  /* When narrowing applies, touchedPoIds cannot be empty: every changed line
-     has a live link, so at least one PO hosts one. */
-  const candidatePoIds = needsHome ? boundPoIds : [...touchedPoIds];
-  if (candidatePoIds.length === 0) {
+
+  if (boundPoIds.length === 0) {
     return { followUps: [], warnings: ['No purchase order is bound to this Sales Order yet, so there is nothing to revise on the purchasing side.'] };
   }
   const { data: poHeaderRows, error: poHeadErr } = await sb.from('purchase_orders')
-    .select('id, po_number, status')
-    .in('id', candidatePoIds);
+    .select('id, po_number, status, supplier_id')
+    .in('id', boundPoIds);
   if (poHeadErr) throw new Error(`raisePoFollowUps: PO headers load failed: ${poHeadErr.message}`);
-  const livePos = ((poHeaderRows ?? []) as Array<{ id: string; po_number: string; status: string }>)
+  const boundPos = ((poHeaderRows ?? []) as Array<{ id: string; po_number: string; status: string; supplier_id: string | null }>)
     .filter((p) => String(p.status).toUpperCase() !== 'CANCELLED');
-  if (livePos.length === 0) {
+  if (boundPos.length === 0) {
     return { followUps: [], warnings: ['Every purchase order bound to this Sales Order is cancelled — raise a fresh PO for the revised lines.'] };
   }
 
   const warnings: string[] = [];
   const followUps: PoFollowUpResult['followUps'] = [];
+
+  /* (5b) Each changed line with no live PO home, resolved to its MAIN supplier the
+     way reviseBoundPo resolves an ADD at confirm — through the shared reader so a
+     mattress code's inch-mark cannot silently drop the row (pgrest-in-list). */
+  const isAdd = (l: SoAmendLine) => String(l.change_type).toUpperCase() === 'ADD';
+  const isHomeless = (l: SoAmendLine) =>
+    isAdd(l) || !(l.sales_order_item_id && linkedSoItemIds.has(l.sales_order_item_id));
+  const codeOf = (l: SoAmendLine): string =>
+    (l.new_item_code
+      ?? (l.sales_order_item_id ? identityById.get(l.sales_order_item_id)?.item_code : null)
+      ?? '').trim();
+  const homelessLines = soLines.filter(isHomeless);
+  const supplierByCode = new Map<string, string>();
+  const homelessCodes = [...new Set(homelessLines.map(codeOf).filter((code) => code.length > 0))];
+  if (homelessCodes.length > 0) {
+    const { data: bRows, error: bErr } = await readMfgProductBindings<{ item_code: string; supplier_id: string }>(
+      sb, { codes: homelessCodes, companyId: activeCompanyId(c), select: 'item_code, supplier_id, is_main_supplier' });
+    if (bErr) throw new Error(`raisePoFollowUps: added-line supplier binding load failed: ${bErr.message}`);
+    // is_main_supplier DESC (the reader's order) → first row seen per code is main.
+    for (const b of bRows) if (!supplierByCode.has(b.item_code)) supplierByCode.set(b.item_code, b.supplier_id);
+  }
+
+  /* (5c) An ADD escalates only the bound PO(s) whose supplier can make it. A
+     matched supplier folds the new line into that open PO; an unmatched one warns
+     to raise a fresh PO rather than revise a PO the supplier does not serve. */
+  const addSupplierIds = new Set(soLines.filter(isAdd)
+    .map((l) => supplierByCode.get(codeOf(l))).filter((x): x is string => Boolean(x)));
+  const supplierMatchedPoIds = new Set(boundPos
+    .filter((p) => p.supplier_id && addSupplierIds.has(p.supplier_id)).map((p) => p.id));
+
+  for (const l of soLines.filter(isAdd)) {
+    const code = codeOf(l);
+    const supplierId = supplierByCode.get(code);
+    if (!supplierId) {
+      warnings.push(`${code || 'A new line'} has no main supplier set, so it cannot join a purchase order — set its supplier, then raise a PO for it.`);
+    } else if (!boundPos.some((p) => p.supplier_id === supplierId)) {
+      warnings.push(`${code} is from a supplier with no open purchase order on this Sales Order — raise a separate PO for it.`);
+    }
+  }
+  /* A changed EXISTING line with no PO home and a real supplier is new goods the
+     confirm cannot place — warn so purchasing raises a PO; a homeless line with no
+     binding is a stock/non-purchased line, left silent. */
+  for (const hl of homelessLines.filter((l) => !isAdd(l))) {
+    const code = codeOf(hl);
+    if (code && supplierByCode.get(code)) {
+      warnings.push(`${code} is not on an open purchase order, so its change could not be forwarded — raise a purchase order for it if needed.`);
+    }
+  }
+
+  const candidateIdSet = new Set<string>([...touchedPoIds, ...supplierMatchedPoIds]);
+  const livePos = boundPos.filter((p) => candidateIdSet.has(p.id));
+  if (livePos.length === 0) {
+    // Nothing survives to escalate — every relevant lane was warned above.
+    return { followUps: [], warnings };
+  }
 
   const poItemsByPo = new Map<string, PoItem[]>();
   for (const pi of [...livePoItems, ...orphanItems]) {
@@ -335,9 +389,11 @@ export async function raisePoFollowUps(
     for (const l of soLines) {
       const t = String(l.change_type).toUpperCase();
       if (t === 'ADD') {
-        // Supplier matching happens at confirm (reviseBoundPo); attach the ADD
-        // preview only in the unambiguous single-PO case.
-        if (livePos.length === 1) {
+        // Attach the ADD preview only on a PO whose supplier can make it — the
+        // same main-supplier match reviseBoundPo applies at confirm. A supplier
+        // that serves no bound PO was warned above and escalates nothing.
+        const addSupplier = supplierByCode.get((l.new_item_code ?? '').trim());
+        if (addSupplier && po.supplier_id === addSupplier) {
           previewRows.push({
             amendment_id: amendmentId,
             purchase_order_item_id: null,
