@@ -127,7 +127,7 @@ AutoCount and integrations
 
 Desktop / mobile parity
 - Desktop (`SalesOrderNew`, `SalesOrderDetail`) and phone (`MobileNewSO`) share one module each for: variant cascade, address cascade, `FairPicker`, `so-form-validate.ts`, `so-amendment-submit.ts`, `fabric-pool.ts`, `special-order-surface.ts`, `zeroPriceClaim.ts`, `self-staff.ts`, `line-write-failures.ts`.
-- Every surface that shows the Stock / Incoming PO column (detail, list drill-down, `MobileSODetail`) must call `GET /:docNo/coverage` and merge the result with `vendor/scm/lib/so-coverage-overlay.ts`. An empty overlay leaves stored values alone.
+- Every surface that shows the per-line Stock or Incoming PO cell (detail, list drill-down, the list quick-view drawer, `MobileSODetail`) must call `GET /:docNo/coverage` and merge the result with `vendor/scm/lib/so-coverage-overlay.ts`, so the coverage-healed verdict is what renders. An empty overlay leaves stored values alone. The quick-view drawer shows the Stock pill only (not the Incoming PO chips), but shares the same overlaid data path as its drill-down twin so the two cannot disagree.
 - A cell filled by a second query shows WORKING... while loading and NOT LOADED on failure, never `STOCK` or a dash.
 - On SO surfaces the variant cascade is sofa-only (`CASCADE_CATEGORIES`). The first line's latest change overwrites the follower lines; blank follower values get filled; anything else stays. `remark` and `buildKey` are never copied.
 - The sofa Leg Height default (`seedSofaLegDefault`, a required prop) is true on SO and Consignment Order forms and false on DO, returns, consignment notes and SI, because it changes the stock bucket.
