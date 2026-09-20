@@ -184,6 +184,17 @@ if (APPLY && process.env.CONFIRM !== CONFIRM_PHRASE) {
 }
 const CO = Number(process.env.COMPANY_ID || 1);
 if (!Number.isInteger(CO) || CO <= 0) { console.error("COMPANY_ID must be a positive integer"); process.exit(2); }
+/* CREATE_ONLY — the SAFE, ADDITIVE repair. Writes ONLY the newly-admitted
+   missing pair-documents (an in-scope GR's lines against a PO the ERP holds but
+   scope excludes because it is already fully received — the includePo widening),
+   and SUPPRESSES every UPDATE and every CANCEL. This exists because the full
+   convergent reshape rebuilds the WHOLE migrated-GR population to the committed
+   book cut, and re-running it long after that cut is destructive (it re-dates
+   and rewrites receipts, and zeroes lines received after the cut). CREATE_ONLY
+   touches nothing that exists: it only fills the gaps this fix newly admits.
+   Owner 2026-09-20: complete the receipts whose PO is already in the ERP, add
+   only, do not disturb anything else, do not touch stock. */
+const CREATE_ONLY = process.env.CREATE_ONLY === "1";
 const DUMP_DIR = process.env.DUMP_DIR || path.join(here, "..", "grn-dump");
 const SHOW = Math.max(1, Number(process.env.SHOW || 20));
 const SYS_USER = "00000000-0000-4000-8000-000000000001";
@@ -601,7 +612,11 @@ async function main() {
       }
       allGrnNumbers.add(number);
     }
-    plan.push({ key, gr: p.gr, po: p.po, date: p.date, erpPo: po, existing, number, items });
+    /* newlyAdmitted: this pair is in the plan ONLY because includePo now admits a
+       PO the ERP holds but scope (outstanding-only) excludes. These are exactly
+       the completeness gaps CREATE_ONLY fills. */
+    plan.push({ key, gr: p.gr, po: p.po, date: p.date, erpPo: po, existing, number, items,
+      newlyAdmitted: !scope.PO.has(p.po) });
   }
 
   const creates = plan.filter((d) => !d.existing);
@@ -618,6 +633,19 @@ async function main() {
   log(`PLAN — ${plan.length} pair documents: ${creates.length} to CREATE, ${updates.length} to UPDATE IN PLACE; ` +
     `${retire.length} existing document(s) to CANCEL as superseded; ${untouched.length} left untouched (their purchase order is outside the book cut)`);
   say(`  lines to write: ${planLines}; units: ${planUnits}`);
+  const additive = creates.filter((d) => d.newlyAdmitted);
+  const additiveLines = additive.reduce((s, d) => s + d.items.length, 0);
+  const additiveUnits = additive.reduce((s, d) => s + d.items.reduce((t, i) => t + i.qty, 0), 0);
+  if (CREATE_ONLY) {
+    log(`CREATE_ONLY — this run WRITES ONLY the ${additive.length} newly-admitted pair-document(s) ` +
+      `(${additiveLines} line(s), ${additiveUnits} unit(s)) whose PO the ERP already holds. The ` +
+      `${updates.length} UPDATE(s) and ${retire.length} CANCEL(s) the full plan lists are SUPPRESSED — ` +
+      `nothing that already exists is touched.`);
+    for (const d of additive.slice(0, SHOW)) {
+      say(`     CREATE ${pad(d.number, 30)} ${pad(d.erpPo.po_number, 16)} received ${d.date}  ${d.items.length} line(s), ${d.items.reduce((s, i) => s + i.qty, 0)} unit(s)`);
+    }
+    if (additive.length > SHOW) say(`     ... ${additive.length - SHOW} more`);
+  }
   if (skippedNoPo.length) {
     say(`  pairs the ERP has no purchase order for: ${skippedNoPo.length} — ${skippedNoPo.slice(0, SHOW).join(", ")}`);
     say("    (the receipt is in the book against a purchase order this migration never carried; not this writer's to invent)");
@@ -916,7 +944,12 @@ async function main() {
   let created = 0;
   let updated = 0;
   let cancelled = 0;
-  for (const d of plan) {
+  /* CREATE_ONLY writes only the newly-admitted, not-yet-existing pair-documents;
+     the full run writes the whole convergent plan. */
+  const applyDocs = CREATE_ONLY ? additive : plan;
+  const applyRetire = CREATE_ONLY ? [] : retire;
+  if (CREATE_ONLY) log(`CREATE_ONLY apply — writing ${applyDocs.length} new document(s) only; 0 updates, 0 cancels.`);
+  for (const d of applyDocs) {
     const rows = d.rows;
     const total = d.total;
     const warehouse = d.warehouse;
@@ -953,9 +986,9 @@ async function main() {
                   ${r.supplier_sku}, ${r.invoiced}, ${r.notes}, ${CO})`;
       }
     });
-    if ((created + updated) % 50 === 0) log(`  ..${created + updated}/${plan.length}`);
+    if ((created + updated) % 50 === 0) log(`  ..${created + updated}/${applyDocs.length}`);
   }
-  for (const g of retire) {
+  for (const g of applyRetire) {
     /* A DIRECT status flip, deliberately not PATCH /grns/:id/cancel — that route
        would write a reversing inventory OUT for every line. */
     const note = `SUPERSEDED by the account book's own receipts for ${g._poAc}: AutoCount received this ` +
@@ -983,7 +1016,9 @@ async function main() {
     WHERE g.company_id = ${CO} AND g.migrated_no_stock = true AND g.status <> 'CANCELLED'
     GROUP BY g.id, g.grn_number, g.status, g.received_at, g.linked_ac_gr_docno, g.migrated_no_stock, p.linked_ac_docno`;
   const byPair = new Map(back.map((r) => [`${String(r.ac_gr ?? "").trim()}|${String(r.po_ac ?? "").trim()}`, r]));
-  for (const d of plan) {
+  /* Verify only what this run WROTE. In CREATE_ONLY the UPDATE pairs were left
+     untouched on purpose, so checking them against the book would wrongly fail. */
+  for (const d of applyDocs) {
     const r = byPair.get(d.key);
     if (!r) { bad += 1; say(`  VERIFY FAILED — ${d.key} (${d.number}): no live migrated receipt reads back for this pair`); continue; }
     const wantUnits = d.items.reduce((s, i) => s + i.qty, 0);
@@ -1014,7 +1049,7 @@ async function main() {
   await v.end();
   await sql.end();
   if (bad) { console.error(`${bad} verification failure(s).`); process.exit(1); }
-  log(`VERIFIED on a fresh connection — ${plan.length} pair documents read back with the book's own date, line count and quantity, and zero inventory movements.`);
+  log(`VERIFIED on a fresh connection — ${applyDocs.length} pair document(s) read back with the book's own date, line count and quantity, and zero inventory movements.`);
 }
 
 main().catch(async (e) => { console.error(e); await sql.end().catch(() => {}); process.exit(1); });
