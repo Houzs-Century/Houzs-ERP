@@ -238,10 +238,15 @@ describe('DO -> Sales Invoice refuses when the Pending ledger cannot be read', (
 });
 
 describe('DO -> Delivery Return refuses when the Pending ledger cannot be read', () => {
-  test('CONTROL: with the ledger readable, returning 10 already-invoiced units is refused', async () => {
+  test('CONTROL: with the ledger readable, returning MORE than was delivered is refused as over_remaining', async () => {
+    /* The return ceiling is delivered − returned (owner 2026-09-20 — invoicing no
+       longer removes a unit from the returnable pool), so this fully-invoiced line
+       still has its 10 returnable; the genuine over-return is a pick of 11. That
+       is what proves the fixture reaches the ceiling, so the 503 in the next test
+       can only be the unreadable ledger, not an over-return the fixture contained. */
     const t = tables();
     const res = await postJson(harness(t), '/delivery-returns/from-dos', {
-      picks: [{ doItemId: 'dl-1', qty: 10 }],
+      picks: [{ doItemId: 'dl-1', qty: 11 }],
     });
     expect(res.status).toBe(409);
     expect(t.delivery_returns).toHaveLength(0);

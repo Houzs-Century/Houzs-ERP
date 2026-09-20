@@ -7,13 +7,15 @@
 // Instead of ticking a whole Delivery Order, the operator picks individual DO
 // LINES, each with a return qty 1..remaining (and a condition). A DO line can be
 // returned across SEVERAL Delivery Returns until its remaining (delivered −
-// invoiced − returned, derived LIVE by the server) reaches 0:
+// returned, derived LIVE by the server) reaches 0:
 //   - Still returnable (remaining > 0) → the line is pickable.
-//   - Fully invoiced/returned (remaining == 0) → the line drops out.
-//   - Cancelling a return (or an invoice) RAISES remaining again automatically.
+//   - Fully returned (remaining == 0) → the line drops out.
+//   - Cancelling a return RAISES remaining again automatically.
 //
-// Invoicing + returning compete for the SAME Pending pool, so an invoiced unit
-// can't be returned — it never appears here.
+// Returnability is INDEPENDENT of invoicing (owner 2026-09-20): a fully-invoiced
+// — even fully-paid — DO line still appears here and can be returned; only prior
+// returns and the delivered qty cap it. (A return moves stock only; the money
+// side of returning invoiced goods is a separate, deferred phase.)
 //
 // A customer-lock keeps the merge clean: once one line is ticked, lines of a
 // DIFFERENT customer grey out — a return is for ONE customer.
