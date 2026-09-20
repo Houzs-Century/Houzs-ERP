@@ -250,10 +250,10 @@ export function feedLinesSql(docCount: number): string {
  *  doc_no), this company, live orders only — the reconcile prune-check reads
  *  each on-sheet row's live readiness. Bare `?`: bind company_id, then the doc
  *  numbers TWICE (once per IN list). */
-export type FeedReadinessHead = { doc_no: string; linked_ac_docno: string | null; remark2: string | null };
+export type FeedReadinessHead = { doc_no: string; linked_ac_docno: string | null; remark2: string | null; status: string };
 export function feedByDocNosSql(docCount: number): string {
   const marks = Array.from({ length: docCount }, () => "?").join(", ");
-  return `SELECT so.doc_no, so.linked_ac_docno, so.remark2
+  return `SELECT so.doc_no, so.linked_ac_docno, so.remark2, so.status::text AS status
             FROM scm.mfg_sales_orders so
            WHERE so.company_id = ?
              AND so.status::text NOT IN ('DRAFT', 'CANCELLED')
