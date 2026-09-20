@@ -286,7 +286,7 @@ async function afterBindingWrite(
   fallback: () => Promise<void>,
   binding?: BindingSnapshot | null,
 ): Promise<void> {
-  if (await autoDeriveEnabled(supabase)) {
+  if (await autoDeriveEnabled(supabase, companyId)) {
     const code = String(itemCode ?? '').trim();
     if (code) {
       // Stage 3b-supplier: snapshot this supplier's price into the source
@@ -778,7 +778,7 @@ export const createSupplierBindingsBatchHandler = async (c: any) => {
   }
   // Auto-derive stage 2b: recompute each affected SKU's product cost when ON;
   // OFF is a no-op (today's batch create did not sync).
-  if (await autoDeriveEnabled(supabase)) {
+  if (await autoDeriveEnabled(supabase, activeCompanyId(c))) {
     const companyId = activeCompanyId(c);
     // Stage 3b-supplier: snapshot each inserted supplier price into the source
     // timeline, then recompute each affected SKU's product cost once.
@@ -1004,7 +1004,7 @@ suppliers.delete('/:id/bindings/:bindingId', async (c) => {
   // Auto-derive stage 2b: a removed supplier can change the max — recompute when
   // ON (if it was the last supplier the derivation skips, leaving the cost as-is
   // for the binding-gap report to surface). OFF is a no-op (today's delete).
-  if (await autoDeriveEnabled(supabase)) {
+  if (await autoDeriveEnabled(supabase, co.companyId)) {
     const code = String((data as { item_code?: string }).item_code ?? '').trim();
     if (code) await recomputeDerivedProductCostSafe(supabase, co.companyId, code);
   }

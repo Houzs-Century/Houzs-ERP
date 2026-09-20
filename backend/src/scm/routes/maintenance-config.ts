@@ -362,7 +362,7 @@ export const createChangeHandler = async (c: McCtx) => {
   // raises the master config's cost surcharges to the most expensive supplier
   // (cost-only; selling untouched). Runs before the version bump below so the
   // one orphan covers both the supplier row and any derived master row.
-  if (scope.startsWith('supplier:') && (await autoDeriveEnabled(supabase))) {
+  if (scope.startsWith('supplier:') && (await autoDeriveEnabled(supabase, activeCompanyId(c)))) {
     await recomputeMasterConfigCostFromSuppliers(supabase, activeCompanyId(c), user.id);
   }
 

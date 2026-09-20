@@ -240,7 +240,7 @@ sofaCombos.get('/', async (c) => {
   const scopeKeyOf = (r: Row) => JSON.stringify([r.base_model, comboSlotsKey(r.modules ?? []), r.tier, r.customer_id]);
   const isMasterView = !(supplierIdRaw !== undefined && supplierIdRaw !== '' && supplierIdRaw !== 'null');
   let winnerByScope: Map<string, { supplierId: string; supplierName: string | null }> | null = null;
-  if (isMasterView && out.length > 0 && (await autoDeriveEnabled(supabase))) {
+  if (isMasterView && out.length > 0 && (await autoDeriveEnabled(supabase, activeCompanyId(c)))) {
     let sq = scopeToCompany(
       supabase.from('sofa_combo_pricing')
         .select('base_model, modules, tier, customer_id, supplier_id, prices_by_height, effective_from, created_at')
@@ -597,7 +597,7 @@ sofaCombos.post('/', async (c) => {
   // mirror is removed — 0 models were ever anchored, so it never fired, and the
   // derivation replaces it (owner 2026-09-16). `mirrored` stays for response
   // shape and is always false now.
-  if (savedRow.supplier_id != null && (await autoDeriveEnabled(supabase))) {
+  if (savedRow.supplier_id != null && (await autoDeriveEnabled(supabase, activeCompanyId(c)))) {
     await recomputeMasterComboCostFromSuppliers(supabase, savedRow, activeCompanyId(c), user.id);
   }
   return c.json({ ...rowToWire(savedRow), mirrored }, 201);
@@ -726,7 +726,7 @@ export const sofaComboPutHandler = async (c: any) => {
   // COST from the most-expensive supplier. Anchor mirror removed (see POST).
   const savedRow = data as unknown as Row;
   const mirrored = false;
-  if (savedRow.supplier_id != null && (await autoDeriveEnabled(supabase))) {
+  if (savedRow.supplier_id != null && (await autoDeriveEnabled(supabase, activeCompanyId(c)))) {
     await recomputeMasterComboCostFromSuppliers(supabase, savedRow, activeCompanyId(c), user.id);
   }
   return c.json({ ...rowToWire(savedRow), mirrored }, 201);

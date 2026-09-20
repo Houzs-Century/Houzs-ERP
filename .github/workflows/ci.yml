@@ -402,6 +402,15 @@ jobs:
       # violations still on main when this was added, one of them written by the
       # repair script for the damage. docs/jsonb-double-encoding-coe.md.
       - run: npm run audit:jsonb-binds
+      # Two owners in ONE jsonb value. scm.mfg_products.seat_height_prices holds
+      # `priceSen` (COST, ours) beside `sellingPriceSen` (RETAIL, authored only
+      # from 2990's POS SKU Master); nothing in the column's type keeps them
+      # apart, so a writer that ASSIGNS the whole array deletes the other team's
+      # money, silently, and only they can see it. Twice now — the PATCH route
+      # in June, then auto-derive erasing 193 of 2990's retail prices over four
+      # days in September. An enumerated allowlist of write sites: a new one
+      # fails here and gets read by a human who is told what the column holds.
+      - run: npm run audit:multi-owner-jsonb
       # A read whose failure is discarded (`const { data }` with no `error`,
       # `.catch(() => {})`). Ratchet, not ban: 954 sites predate it. It is here
       # because the class GREW from 785 to 954 in the four weeks after it was

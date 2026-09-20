@@ -1,6 +1,7 @@
 {
   "source": "production information_schema via backend/scripts/probe-product-code-columns.mjs, read-only run 34970682915",
   "capturedAt": "2026-09-15",
+  "amendedSince": "2026-09-20: scm.retail_price_guard_log.item_code added by hand (20260920T1300 applied to production ahead of its file landing), read back from production information_schema before writing it here — text, company_id present, no material_kind. A full re-probe supersedes this line.",
   "newestMigrationAtCapture": "20260915T1800_so_payment_conversions.sql",
   "columns": [
     {"schema":"public","table":"addons","column":"service_sku","companyId":false,"materialKind":false},
@@ -79,6 +80,7 @@
     {"schema":"scm","table":"purchase_return_items","column":"item_code","companyId":true,"materialKind":true},
     {"schema":"scm","table":"pwp_codes","column":"redeemed_item_code","companyId":true,"materialKind":false},
     {"schema":"scm","table":"pwp_codes","column":"trigger_item_code","companyId":true,"materialKind":false},
+    {"schema":"scm","table":"retail_price_guard_log","column":"item_code","companyId":true,"materialKind":false},
     {"schema":"scm","table":"sales_invoice_items","column":"item_code","companyId":true,"materialKind":false},
     {"schema":"scm","table":"so_amendment_lines","column":"new_item_code","companyId":true,"materialKind":false},
     {"schema":"scm","table":"stock_take_lines","column":"item_code","companyId":true,"materialKind":false},

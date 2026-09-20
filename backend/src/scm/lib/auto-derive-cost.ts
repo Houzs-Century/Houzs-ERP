@@ -38,17 +38,33 @@ export const AUTO_DERIVE_FLAG_KEY = 'scm.auto_derive_product_cost';
 type Sb = { from: (t: string) => any }; // eslint-disable-line @typescript-eslint/no-explicit-any
 
 /**
- * Is the auto-derive mechanism switched on? Reads the app_config flag; a missing
- * row or any value other than on/1/true is OFF. Fails CLOSED on a read error, so
- * a database blip leaves the routes on their existing (is_cost_anchor) path
- * rather than silently switching mechanism mid-outage.
+ * Is the auto-derive mechanism switched on FOR THIS COMPANY? Reads the
+ * app_config flag; a missing row or any value other than on/1/true is OFF.
+ * Fails CLOSED on a read error, so a database blip leaves the routes on their
+ * existing (is_cost_anchor) path rather than silently switching mechanism
+ * mid-outage.
+ *
+ * ⚠️ `companyId` is NOT optional, and the reason is an incident. scm.app_config
+ * is per-company (company_id is NOT NULL), but this read used to carry no
+ * company predicate. The stage-4 GO wrote ONE row, under company 1 — and it
+ * switched the mechanism on over company 2 (2990) as well, whose catalogue is
+ * maintained in a different system by a different team that never opted in.
+ * The derive then erased 193 of 2990's RETAIL prices (see
+ * writeProductCost below and BUG-HISTORY 2026-09-20). A company that has not
+ * set its own row is OFF, which is what "off by default" was always supposed
+ * to mean.
+ *
+ * A null/undefined companyId also reads OFF: without a company there is no row
+ * to consult, and guessing is how this went wrong the first time.
  */
-export async function autoDeriveEnabled(sb: Sb): Promise<boolean> {
+export async function autoDeriveEnabled(sb: Sb, companyId: number | null | undefined): Promise<boolean> {
+  if (companyId == null) return false;
   try {
     const { data, error } = await sb
       .from('app_config')
       .select('value')
       .eq('key', AUTO_DERIVE_FLAG_KEY)
+      .eq('company_id', companyId)
       .maybeSingle();
     if (error) return false;
     const v = String((data as { value?: unknown } | null)?.value ?? '')
@@ -58,6 +74,60 @@ export async function autoDeriveEnabled(sb: Sb): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/** One slot of the sofa seat grid. The two money fields have DIFFERENT OWNERS:
+ *  `priceSen` is COST (this file derives it), `sellingPriceSen` is RETAIL
+ *  (authored only from 2990's POS SKU Master). They share a jsonb array and
+ *  nothing in the column's type keeps them apart, which is the whole reason
+ *  `mergeRetailOntoDerivedSeatGrid` exists. */
+type SeatGridSlot = {
+  height?: unknown;
+  tier?: unknown;
+  priceSen?: unknown;
+  sellingPriceSen?: unknown;
+};
+
+const slotKey = (s: SeatGridSlot): string => `${String(s.height ?? '')}|${String(s.tier ?? 'PRICE_2')}`;
+const asSlots = (v: unknown): SeatGridSlot[] =>
+  Array.isArray(v) ? (v.filter((x) => x && typeof x === 'object') as SeatGridSlot[]) : [];
+
+/**
+ * Lay a freshly derived COST grid over the stored one WITHOUT losing the RETAIL
+ * dimension. Pure; exported for the tests.
+ *
+ * The rule is key presence, per (height, tier) slot — the same rule the company-2
+ * database trigger enforces (migration 20260920T1300), so app and database agree
+ * by construction rather than by comment:
+ *
+ *   · derived slot names `sellingPriceSen`  → it wins (this never happens today;
+ *                                             the derivation is cost-only)
+ *   · derived slot omits it, stored has one → the stored retail price carries
+ *   · stored slot absent from derived       → re-appended retail-only, because a
+ *                                             cost grid that no longer lists a
+ *                                             height is a statement about COST
+ *
+ * An explicitly stored `null` carries across too: null is "the operator cleared
+ * this", which is not the same as "never priced", and only the POS may change it.
+ */
+export function mergeRetailOntoDerivedSeatGrid(stored: unknown, derived: unknown): SeatGridSlot[] {
+  const storedSlots = asSlots(stored);
+  const derivedSlots = asSlots(derived);
+  const storedByKey = new Map(storedSlots.map((s) => [slotKey(s), s] as const));
+
+  const merged: SeatGridSlot[] = derivedSlots.map((d) => {
+    if ('sellingPriceSen' in d) return d;
+    const s = storedByKey.get(slotKey(d));
+    return s && 'sellingPriceSen' in s ? { ...d, sellingPriceSen: s.sellingPriceSen } : d;
+  });
+
+  const derivedKeys = new Set(derivedSlots.map(slotKey));
+  for (const s of storedSlots) {
+    if (derivedKeys.has(slotKey(s))) continue;
+    if (!('sellingPriceSen' in s) || s.sellingPriceSen == null) continue;
+    merged.push({ height: s.height, tier: s.tier ?? 'PRICE_2', sellingPriceSen: s.sellingPriceSen });
+  }
+  return merged;
 }
 
 /** The I/O this recompute needs, as a seam so the orchestrator can be unit
@@ -195,7 +265,32 @@ export function makeSupabaseDerivedCostIO(sb: Sb): DerivedCostIO {
       const update: Record<string, unknown> = { updated_at: new Date().toISOString() };
       if ('base_price_sen' in patch) update.base_price_sen = patch.base_price_sen ?? null;
       if ('price1_sen' in patch) update.price1_sen = patch.price1_sen ?? null;
-      if (patch.seat_height_prices !== undefined) update.seat_height_prices = patch.seat_height_prices;
+      if (patch.seat_height_prices !== undefined) {
+        /* ⚠️ seat_height_prices carries TWO owners. `priceSen` is the COST this
+           derivation produces; `sellingPriceSen` is the RETAIL price authored
+           ONLY from 2990's POS SKU Master. Assigning the derived array outright
+           — which is what this line used to do — deletes every retail price on
+           the SKU, because sofaSeatRowsFromMatrix emits {height, tier, priceSen}
+           and nothing else. That is exactly what happened: the 2026-09-16
+           stage-4 run plus four days of the ON hook erased 193 retail prices
+           across 82 company-2 SKUs (restored 2026-09-20 from
+           scm.master_price_history; see BUG-HISTORY).
+
+           So: read what is stored and carry the retail dimension across. Cost is
+           still wholly ours to replace. */
+        const { data: stored, error } = await sb
+          .from('mfg_products')
+          .select('seat_height_prices')
+          .eq('id', productId)
+          .maybeSingle();
+        // Bind the error rather than merging onto an assumed-empty grid: a failed
+        // read must not look like "this SKU had no retail price".
+        if (error) throw new Error(`seat grid read failed for ${productId}: ${error.message}`);
+        update.seat_height_prices = mergeRetailOntoDerivedSeatGrid(
+          (stored as { seat_height_prices?: unknown } | null)?.seat_height_prices,
+          patch.seat_height_prices,
+        );
+      }
       // Keyed by the product's own id (PK) — the loadProduct read already scoped
       // to the active company, so the id belongs to this company.
       await sb.from('mfg_products').update(update).eq('id', productId);
