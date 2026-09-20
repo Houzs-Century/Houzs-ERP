@@ -638,6 +638,52 @@ describe("the READY gate", () => {
   });
 });
 
+/* Reconcile support (owner 2026-09-20): live readiness for the DocNos a tab
+ * currently holds, so the Apps Script can flip stale product-words to READY and
+ * delete the genuinely-not-ready rows, while LEAVING rows the ERP does not own. */
+describe("POST /prune-check", () => {
+  test("live readiness per doc: stale header flips READY, a short main is not ready, an unknown doc is found:false", async () => {
+    const { db, seen } = fakeDb((sql) => {
+      if (/FROM companies/i.test(sql)) return { id: HOUZS };
+      if (/FROM scm\.mfg_sales_orders so/.test(sql))
+        return [
+          { doc_no: "HC-SO-013495", linked_ac_docno: "SO-013495", remark2: "BEDFRAME" }, // frozen word, lines all in -> READY
+          { doc_no: "HC-SO-2609-078", linked_ac_docno: "HC-SO-2609-078", remark2: null }, // main line pending -> not ready
+        ];
+      if (/FROM scm\.mfg_sales_order_items WHERE doc_no IN/.test(sql))
+        return [
+          { doc_no: "HC-SO-013495", item_group: "BEDFRAME", item_code: "B1", stock_status: "READY", cancelled: false },
+          { doc_no: "HC-SO-2609-078", item_group: "BEDFRAME", item_code: "B2", stock_status: "PENDING", cancelled: false },
+        ];
+      return [];
+    });
+    const res = await app.request(
+      "/prune-check",
+      { method: "POST", headers: { "X-Intake-Key": KEY, "content-type": "application/json" }, body: JSON.stringify({ doc_nos: ["SO-013495", "HC-SO-2609-078", "SO-999999", "SO-013495"] }) },
+      env(db),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    expect(body.count).toBe(3); // duplicate SO-013495 de-duped
+    expect(body.found).toBe(2);
+    expect(body.would_remove).toBe(1);
+    const by = Object.fromEntries(body.results.map((r: any) => [r.DocNo, r]));
+    expect(by["SO-013495"]).toMatchObject({ found: true, Ready: true, Remark2: "READY", ErpDocNo: "HC-SO-013495" });
+    expect(by["HC-SO-2609-078"]).toMatchObject({ found: true, Ready: false });
+    expect(by["SO-999999"]).toMatchObject({ found: false, Ready: false, ErpDocNo: null });
+    const heads = seen.find((s) => /FROM scm\.mfg_sales_orders so/.test(s.sql))!;
+    expect(heads.binds[0]).toBe(HOUZS);
+    expect(heads.sql).toContain("so.company_id = ?");
+  });
+
+  test("a wrong key is 401 before any read; a body without doc_nos is 400", async () => {
+    const { db, seen } = fakeDb((sql) => (/FROM companies/i.test(sql) ? { id: HOUZS } : []));
+    expect((await app.request("/prune-check", { method: "POST", headers: { "X-Intake-Key": "wrong", "content-type": "application/json" }, body: "{}" }, env(db))).status).toBe(401);
+    expect(seen).toHaveLength(0);
+    expect((await app.request("/prune-check", { method: "POST", headers: { "X-Intake-Key": KEY, "content-type": "application/json" }, body: JSON.stringify({ foo: 1 }) }, env(db))).status).toBe(400);
+  });
+});
+
 /* Owner 2026-09-17: a Service Case's inspection / pickup / delivery legs reach
  * the sheet only when OUR OWN team drives them. The SQL runs against real
  * Postgres in tests-pg/deliverySheetAssrFeedSql.pg.test.ts; here the mapper's

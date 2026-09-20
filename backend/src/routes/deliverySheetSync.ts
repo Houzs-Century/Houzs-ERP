@@ -39,6 +39,9 @@ import {
   UPDATES_MAX,
   updateFromSheetSql,
   feedLinesSql,
+  feedByDocNosSql,
+  isSheetReady,
+  resolveSheetRemark2,
   normSheetDate,
   parseFromDate,
   parseLimit,
@@ -47,6 +50,7 @@ import {
   type DeliverySheetRecord,
   type FeedHeadRow,
   type FeedLineRow,
+  type FeedReadinessHead,
 } from "../lib/delivery-sheet-feed";
 import {
   FEED_OUTSTANDING_PO_SQL,
@@ -203,6 +207,85 @@ app.get("/ready-open", async (c) => {
   if ("refusal" in loaded) return loaded.refusal;
   const records = loaded.records.filter((r) => r.Ready);
   return c.json({ count: records.length, scanned: loaded.records.length, from, records });
+});
+
+/* Reconcile support (owner 2026-09-20): the delivery tabs keep only orders whose
+   LIVE Remarks 2 is READY / READY (PARTIAL). Given the DocNos currently on a
+   tab, this returns each one's live readiness so the Apps Script can refresh the
+   cell (stale product-word -> READY) and DELETE the rows that are genuinely not
+   ready. A DocNo not found in this company's live order book is `found:false`
+   and the Apps Script LEAVES it — never delete a row the ERP does not own
+   (service/pickup legs, pre-go-live delivered rows, any non-ERP row). */
+const PRUNE_CHECK_MAX = 2000;
+app.post("/prune-check", async (c) => {
+  const denied = await badSheetKey(c);
+  if (denied) return denied;
+  const co = await sheetCompanyId(c);
+  if ("refusal" in co) return co.refusal;
+
+  let body: any;
+  try {
+    body = await c.req.json();
+  } catch {
+    body = null;
+  }
+  const raw = Array.isArray(body?.doc_nos) ? (body.doc_nos as unknown[]) : null;
+  if (!raw) return c.json({ error: "bad_body", message: "expected { doc_nos: string[] }" }, 400);
+  const docNos = [...new Set(raw.map((d) => String(d ?? "").trim()).filter(Boolean))];
+  if (!docNos.length) return c.json({ error: "no_doc_nos" }, 400);
+  if (docNos.length > PRUNE_CHECK_MAX) return c.json({ error: "too_many", max: PRUNE_CHECK_MAX }, 413);
+
+  // company-scope: first bind is the secret's company id; the doc numbers are
+  // matched on linked_ac_docno OR doc_no (the sheet key is linked_ac_docno).
+  let heads: FeedReadinessHead[];
+  try {
+    const res = (await c.env.DB.prepare(feedByDocNosSql(docNos.length))
+      .bind(co.id, ...docNos, ...docNos)
+      .all()) as { results?: FeedReadinessHead[] };
+    heads = res.results ?? [];
+  } catch (e) {
+    return c.json({ error: "read_failed", message: e instanceof Error ? e.message : String(e) }, 502);
+  }
+
+  const linesByDoc = new Map<string, FeedLineRow[]>();
+  const foundDocNos = heads.map((h) => h.doc_no);
+  for (let i = 0; i < foundDocNos.length; i += 100) {
+    const chunk = foundDocNos.slice(i, i + 100);
+    if (!chunk.length) break;
+    try {
+      const res = (await c.env.DB.prepare(feedLinesSql(chunk.length)).bind(...chunk).all()) as { results?: FeedLineRow[] };
+      for (const l of res.results ?? []) {
+        const arr = linesByDoc.get(l.doc_no) ?? [];
+        arr.push(l);
+        linesByDoc.set(l.doc_no, arr);
+      }
+    } catch (e) {
+      return c.json({ error: "lines_read_failed", message: e instanceof Error ? e.message : String(e) }, 502);
+    }
+  }
+
+  // Key each found order by BOTH its ERP number and its sheet key, so an input
+  // that used either one resolves.
+  const stateByKey = new Map<string, { ErpDocNo: string; Remark2: string | null; Ready: boolean }>();
+  for (const h of heads) {
+    const remark2 = resolveSheetRemark2(h.remark2, linesByDoc.get(h.doc_no) ?? []);
+    const st = { ErpDocNo: h.doc_no, Remark2: remark2, Ready: isSheetReady(remark2) };
+    stateByKey.set(h.doc_no, st);
+    if (h.linked_ac_docno) stateByKey.set(h.linked_ac_docno, st);
+  }
+
+  const results = docNos.map((d) => {
+    const st = stateByKey.get(d);
+    return st
+      ? { DocNo: d, found: true, ErpDocNo: st.ErpDocNo, Ready: st.Ready, Remark2: st.Remark2 }
+      : { DocNo: d, found: false, ErpDocNo: null as string | null, Ready: false, Remark2: null as string | null };
+  });
+  return c.json({
+    count: results.length,
+    found: results.filter((r) => r.found).length,
+    would_remove: results.filter((r) => r.found && !r.Ready).length,
+    results,
+  });
 });
 
 /* Service-Case (ASSR) legs (owner 2026-09-17): each open case's inspection /
