@@ -22,7 +22,7 @@ import { escapeForOr } from '../lib/postgrest-search';
 import { paginateAll } from '../lib/paginate-all';
 import { findSkuUsage, usageCheckFailedBody } from '../lib/sku-usage';
 import { productToBindingPatch, type ProductSeatCost } from '../lib/cost-anchor-sync';
-import { autoDeriveEnabled } from '../lib/auto-derive-cost';
+import { autoDeriveEnabled, mergeRetailOntoDerivedSeatGrid } from '../lib/auto-derive-cost';
 import { resolveProductCostAnchor, comparableCostSen, type SupplierBindingCost } from '../lib/derive-product-cost-from-suppliers';
 import { readMfgProductBindings } from '../lib/supplier-bindings';
 import { moduleCodeFromSku, normalizeSofaTier, parseDefaultFreeGifts } from '../shared';
@@ -547,7 +547,13 @@ export const batchImportMfgProductsHandler = async (c: AppContext) => {
           ? (existing as { seat_height_prices: SeatEntry[] }).seat_height_prices
           : []);
         const kept = existingSeat.filter((e) => !incomingTiers.has(tierOf(e)));
-        row.seat_height_prices = [...kept, ...incomingSeat];
+        /* …and merge the RETAIL dimension back onto the tiers it DOES carry.
+           SeatEntry has no `sellingPriceSen` and the import sheet has no column
+           for one — retail is 2990's POS SKU Master's alone — so replacing a
+           tier outright deletes every retail price in it. PRICE_1 is exactly
+           where that money lives. Same rule as the PATCH merge below and as the
+           company-2 trigger (migration 20260920T1300). */
+        row.seat_height_prices = mergeRetailOntoDerivedSeatGrid(existingSeat, [...kept, ...incomingSeat]);
       }
       ({ error } = await supabase.from('mfg_products').update(row).eq('code', code).eq('company_id', activeCompanyId(c)));
     } else {
@@ -922,6 +928,24 @@ export const patchMfgProductHandler = async (c: AppContext) => {
        omitted dimension carries forward (an explicit incoming value still wins). */
     const oldByKey = new Map(oldArr.map((s) => [keyOf(s), s] as const));
     const mergedArr: Slot[] = newArr.map((s) => ({ ...oldByKey.get(keyOf(s)), ...s }));
+
+    /* The merge above only reaches slots the incoming array MENTIONS. A slot the
+       client leaves out is dropped whole — which for `priceSen` is correct (a
+       cost grid that no longer lists a height is a statement about cost) but for
+       `sellingPriceSen` is a silent deletion of a RETAIL price this route is not
+       the owner of. Only 2990's POS SKU Master authors those, and it sends the
+       full array, so an absent slot here is always some OTHER writer's partial
+       payload — a bulk import, a cost-side grid, a script.
+       Re-append those retail prices, selling-only. Same rule as the company-2
+       trigger (migration 20260920T1300) and as mergeRetailOntoDerivedSeatGrid,
+       so all three agree by construction. An explicit null is left dropped: null
+       means the operator cleared it, and nothing is lost by not restating it. */
+    const incomingKeys = new Set(newArr.map(keyOf));
+    for (const s of oldArr) {
+      if (incomingKeys.has(keyOf(s))) continue;
+      if (s.sellingPriceSen == null) continue;
+      mergedArr.push({ height: s.height, tier: s.tier ?? 'PRICE_2', sellingPriceSen: s.sellingPriceSen } as Slot);
+    }
     updates.seat_height_prices = mergedArr;
 
     const oldMap = new Map(oldArr.map((s) => [keyOf(s), s.priceSen] as const));
@@ -1066,7 +1090,7 @@ export const patchMfgProductHandler = async (c: AppContext) => {
   // and the product cost is derived from it, so a product edit must NOT push back
   // onto the binding (that would overwrite the supplier's real price with a
   // derived value). Fall through to the is_cost_anchor mirror only while OFF.
-  if (costFieldChanged && !(await autoDeriveEnabled(supabase))) {
+  if (costFieldChanged && !(await autoDeriveEnabled(supabase, activeCompanyId(c)))) {
     // Use the FINAL values. `'key' in updates` (not ??) so an explicit clear to
     // null is honoured rather than falling back to the old value.
     await syncAnchorBindingFromProduct(supabase, finalCode, {
