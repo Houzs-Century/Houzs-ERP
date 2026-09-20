@@ -82,6 +82,13 @@ just `completed`.
 - The pre-auth form-intake endpoints scope strictly by the caller's **secret**
   → company mapping; an unmapped secret 503s, it must never fall back to "no
   predicate" (that would leak both companies' PII).
+- A logistics leg reaches the HC Delivery sheet ONLY when its own-team marker
+  AND its date are both set: inspection (`inspection_by='own'` +
+  `inspection_visit_at`), pickup (`pickup_by='customer'` + `customer_pickup_at`),
+  delivery (`delivery_by='own'` + `do_date`). Supplier / 3PL / unset legs never
+  sync. `GET /api/delivery-sheet/assr-legs` is the own-team-gated feed
+  (`delivery-sheet-assr-feed.ts`); the Delivery Planning board is deliberately
+  NOT gated (it shows every dated leg), so board and sheet differ on purpose.
 
 ## Gotchas
 
@@ -110,7 +117,9 @@ just `completed`.
   stage pipeline (`stages.ts`), the sub-status list, stage labels, intake
   required fields (server guard is the source), enum option lists, the
   note-audience wording, the Order PO reader, `PATCH_FIELDS`, product
-  category, survey-email fallback, SO typeahead, attachment upload, access
+  category, the own-team leg markers (`inspection_by` / `pickup_by` /
+  `delivery_by`) that gate the delivery-sheet sync, survey-email fallback,
+  SO typeahead, attachment upload, access
   gating, and the "a Sales rep may not edit" redirect
   (`auth/salesAccess.isSalesNonDirector`). Hand-copying any of these is what
   drifted before.

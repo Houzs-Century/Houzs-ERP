@@ -29,6 +29,7 @@ import {
 } from "../vendor/scm/lib/assr/stages";
 import { splitCategories } from "../lib/assrProductCategories";
 import { MobileAssrCategoryChips } from "./MobileAssrCategoryChips";
+import { LegOwnerToggle } from "./AssrLegOwnerToggle";
 import { type SoHit, SoSearchField, useSoSearch } from "./MobileAssrSoField";
 /* Pure row readers + formatters. Extracted so this screen could take the
    category picker and the survey-email field without growing past its recorded
@@ -1045,31 +1046,10 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
                 column exists but ships no UI — Nick 2026-07-14: date +
                 photos suffice; the verdict is the Outcome above. */}
             <EditRow label="QC issue date" type="date" value={get(c, "qcReceiptDate", "qc_receipt_date")} busy={busy} disabled={dis} onSave={(v) => patchCase({ qc_receipt_date: v }, "Couldn't save QC issue date")} />
-            {/* Inspect by — own team or supplier (inspection_by, mig 0073). */}
-            <div className="fld-l" style={{ marginTop: 10, marginBottom: 8 }}>Inspect by</div>
-            <div style={{ display: "flex", gap: 8, marginBottom: 4 }}>
-              {([{ v: "own", label: "Own team" }, { v: "supplier", label: "Supplier" }] as const).map((o) => {
-                const on = String(get(c, "inspectionBy", "inspection_by") ?? "") === o.v;
-                return (
-                  <button
-                    key={o.v}
-                    onClick={() => { if (!dis) patchCase({ inspection_by: on ? null : o.v }, "Couldn't save inspect-by"); }}
-                    disabled={dis}
-                    style={{
-                      flex: 1, height: 40, borderRadius: 10, cursor: dis ? "default" : "pointer", fontFamily: "inherit",
-                      fontSize: 13, fontWeight: 600, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6,
-                      border: `1px solid ${on ? BROWN : LINE}`, background: on ? BROWN_SOFT : "#fff", color: on ? BROWN_FG : INK_SEC,
-                      opacity: dis ? 0.6 : 1,
-                    }}
-                  >
-                    {on && (
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={BROWN_FG} strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12l5 5L20 6" /></svg>
-                    )}
-                    {o.label}
-                  </button>
-                );
-              })}
-            </div>
+            {/* Inspect by — own team routes the visit to the HC Delivery sheet. */}
+            <LegOwnerToggle label="Inspect by" current={get(c, "inspectionBy", "inspection_by")} disabled={dis}
+              options={[{ v: "own", label: "Own team" }, { v: "supplier", label: "Supplier" }]}
+              onPick={(v) => patchCase({ inspection_by: v }, "Couldn't save inspect-by")} />
             {/* QC issue photos — on-receipt evidence, same category as the
                 desktop Verification card (receipt_evidence). */}
             <PhotoGrid
@@ -1111,6 +1091,10 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
             <StageSubChip c={c} stage="pending_supplier_pickup" busy={busy} disabled={dis} patchCase={patchCase} />
             <KV label="Supplier" value={String(get(c, "creditorName", "creditor_name") ?? creditorCode ?? "—")} />
             <KV label="Supplier code" value={creditorCode ? String(creditorCode) : "—"} mono />
+            {/* Pickup by — own team ('customer') collects, syncing the PICKUP leg to the sheet. */}
+            <LegOwnerToggle label="Pickup by" current={get(c, "pickupBy", "pickup_by")} disabled={dis}
+              options={[{ v: "customer", label: "Own team pickup" }, { v: "supplier", label: "Supplier direct" }]}
+              onPick={(v) => patchCase({ pickup_by: v }, "Couldn't save pickup-by")} />
             {/* Folded in from the retired Item Pickup stage (mig 0110). */}
             <EditRow label="Customer pickup date" type="date" value={get(c, "customerPickupAt", "customer_pickup_at")} busy={busy} disabled={dis} onSave={(v) => patchCase({ customer_pickup_at: v }, "Couldn't save pickup date")} />
             <EditRow label="Supplier pickup date" type="date" value={get(c, "supplierPickupAt", "supplier_pickup_at")} busy={busy} disabled={dis} onSave={(v) => patchCase({ supplier_pickup_at: v }, "Couldn't save pickup date")} />
@@ -1159,6 +1143,10 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
         return (
           <>
             <EditRow label="Delivery order" value={get(c, "deliveryOrder", "delivery_order")} mono busy={busy} disabled={dis} onSave={(v) => patchCase({ delivery_order: v }, "Couldn't save delivery order")} />
+            {/* Delivery by — own team delivers, syncing the DELIVERY leg to the sheet on the DO date. */}
+            <LegOwnerToggle label="Delivery by" current={get(c, "deliveryBy", "delivery_by")} disabled={dis}
+              options={[{ v: "own", label: "Own team" }, { v: "supplier", label: "Supplier" }]}
+              onPick={(v) => patchCase({ delivery_by: v }, "Couldn't save delivery-by")} />
             <EditRow label="DO date" type="date" value={get(c, "doDate", "do_date")} busy={busy} disabled={dis} onSave={(v) => patchCase({ do_date: v }, "Couldn't save DO date")} />
             <EditRow label="Ref No" value={get(c, "refNo", "ref_no")} mono busy={busy} disabled={dis} onSave={(v) => patchCase({ ref_no: v }, "Couldn't save Ref No")} />
           </>
