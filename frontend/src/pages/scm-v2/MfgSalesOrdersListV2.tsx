@@ -468,26 +468,18 @@ function DetailDrawer({
   // were simply not read here), so widen the local type and render the LIVE
   // variant summary (shared buildVariantSummary, same helper the SO full page +
   // mobile use) under the item name.
-  const items: Array<{
-    item_code?: string;
-    description?: string;
-    description2?: string | null;
-    item_group?: string | null;
-    variants?: Record<string, unknown> | null;
-    qty?: number;
-    unit_price_sen?: number;
-    total_sen?: number;
-  }> =
-    (detailQ.data as { items?: unknown[] } | undefined)?.items as Array<{
-      item_code?: string;
-      description?: string;
-      description2?: string | null;
-      item_group?: string | null;
-      variants?: Record<string, unknown> | null;
-      qty?: number;
-      unit_price_sen?: number;
-      total_sen?: number;
-    }> ?? [];
+  /* Per-line stock readiness rides the SAME detail payload — DrillItem (the twin
+     type below) already names the fields. The quick view is the TWIN of the
+     SoLinesExpansion drill-down, so it uses the IDENTICAL data path: the base
+     detail payload defers MRP (stock_state null), and GET /:docNo/coverage heals
+     the effective verdict the Stock pill reads (so-coverage-overlay). Sharing
+     one path is why the two surfaces can never hold two opinions for the same
+     order — owner 2026-09-20: the quick view showed only item/qty/amount. */
+  const coverageQ = useSoLineCoverage(row?.doc_no ?? null);
+  const items = overlaySoLineCoverage(
+    ((detailQ.data as { items?: unknown[] } | undefined)?.items as DrillItem[]) ?? [],
+    coverageQ.data?.coverage,
+  );
 
   const open = !!row;
   const st = row ? statusFor(row.status) : null;
@@ -612,10 +604,11 @@ function DetailDrawer({
               {/* order lines */}
               <SectionHeading>Order lines</SectionHeading>
               <div className="overflow-hidden rounded-lg border border-border">
-                <div className="grid grid-cols-[1fr_52px_92px] gap-2 border-b border-border-subtle bg-surface-2 px-4 py-2 font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">
+                <div className="grid grid-cols-[minmax(0,1fr)_30px_92px_76px] gap-2 border-b border-border-subtle bg-surface-2 px-4 py-2 font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">
                   <span>Item</span>
                   <span className="text-right">Qty</span>
                   <span className="text-right">Amount</span>
+                  <span>Stock</span>
                 </div>
                 {detailQ.isLoading && (
                   <div className="px-4 py-8 text-center text-[12px] text-ink-muted">
@@ -644,7 +637,7 @@ function DetailDrawer({
                   return (
                     <div
                       key={i}
-                      className="grid grid-cols-[1fr_52px_92px] items-start gap-2 border-b border-border-subtle px-4 py-3 last:border-b-0"
+                      className="grid grid-cols-[minmax(0,1fr)_30px_92px_76px] items-start gap-2 border-b border-border-subtle px-4 py-3 last:border-b-0"
                     >
                       <div className="min-w-0">
                         {/* Weight/size tuned down to sit with the qty/amount
@@ -663,6 +656,12 @@ function DetailDrawer({
                       </span>
                       <span className="text-right font-money text-[12.5px] font-semibold text-ink">
                         {fmtRm(amt)}
+                      </span>
+                      {/* Per-line stock pill — the SAME renderer as the drill-down
+                          twin and the SO detail page (soLineStockPill), reading the
+                          coverage-healed effective status. */}
+                      <span className="min-w-0">
+                        <SoStockPill line={l} />
                       </span>
                     </div>
                   );
