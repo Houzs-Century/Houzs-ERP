@@ -26,7 +26,7 @@ import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
 import { warehouseLabel } from '../lib/warehouse-label';
 import { computeVariantKey, type VariantAttrs } from '../shared';
-import { doLineRemaining, resolveCandidateDoIds, custKeyOf, remainingUnavailableResponse, type DoRemainingLine, type DoRemainingResult } from '../lib/do-line-remaining';
+import { doLineRemaining, returnableRemainingFrom, resolveCandidateDoIds, custKeyOf, remainingUnavailableResponse, type DoRemainingLine, type DoRemainingResult } from '../lib/do-line-remaining';
 import { todayMyt } from '../lib/my-time';
 import { validateItemCodes, unknownItemCodeResponse } from '../lib/validate-item-codes';
 import { resolveItemGroups } from '../lib/sku-category';
@@ -615,18 +615,33 @@ async function reopenSoFromReturn(
 }
 
 /* Commander 2026-05-30 (Phase B) — LINE-LEVEL, QUANTITY-BASED DO → Delivery
-   Return remaining. Wraps the shared Pending formula (do-line-remaining.ts):
-   remaining_to_return = delivered − invoiced − returned. The SAME pool as
-   remaining_to_invoice — invoiced units can't be returned + vice-versa.
-   Cancelling a return releases its qty back to Pending. */
+   Return remaining.
+
+     remaining_to_return = delivered − returned          (owner 2026-09-20)
+
+   NOT delivered − invoiced − returned. Returning used to share ONE pool with
+   invoicing, so a fully-invoiced DO had remaining_to_return = 0 — the picker
+   showed nothing and no return could be started. That blocked the ordinary
+   retail flow: the customer pays, the DO is invoiced, THEN part of it comes
+   back. Whether goods can come back is a fact about what physically shipped, not
+   about billing, so this subtracts only prior returns and caps total returns at
+   what was delivered.
+
+   The INVOICE pool is unchanged — doLineRemaining/'invoiceable' still subtracts
+   returned — so returned goods still can't be invoiced and nothing double-bills.
+   The MONEY side of returning invoiced goods (credit note / AR reversal) is a
+   separate, deferred phase; this only lets stock come back. Cancelling a return
+   releases its qty (it drops out of `returned`). */
 async function doReturnableRemaining(sb: any, doIds: string[]): Promise<DoRemainingResult> {
   /* 'delivered' — goods still on the lorry never left, so nothing can come
      back. The owner's 2026-08-20 ruling widened the INVOICE pool only. */
-  return doLineRemaining(sb, doIds, 'delivered');
+  const base = await doLineRemaining(sb, doIds, 'delivered');
+  if (!base.ok) return base;
+  return { ok: true, lines: returnableRemainingFrom(base.lines) };
 }
 
 /* Over-return guard for the bulk create POST. Every DO-linked line must respect
-   the live Pending pool (delivered − invoiced − returned). Callers reject lines
+   the returnable pool (delivered − returned). Callers reject lines
    with no doItemId BEFORE calling this (bug #16 — "no DO, no Return"), so any line
    reaching here is DO-linked. Mirrors the convert-from-DO picker's per-line check
    so the New-Return form is not a back door that returns more than was delivered.
@@ -672,7 +687,7 @@ async function checkDrOverRemaining(
     status: 409,
     body: {
       error: 'over_remaining',
-      message: 'One or more lines return more than the remaining (delivered − invoiced − returned) quantity.',
+      message: 'One or more lines return more than the remaining (delivered − returned) quantity.',
       lines: offenders,
     },
   };
@@ -770,7 +785,8 @@ deliveryReturns.get('/', deliveryReturnListHandler);
 // ── Returnable DO lines (line-level partial-return picker) ────────────────
 /* Commander 2026-05-30 (Phase B) — feeds the line-level DO→Delivery Return
    picker. Returns each DO LINE that can still be returned (remaining > 0),
-   where remaining = delivered − invoiced − returned (derived live). With
+   where remaining = delivered − returned (derived live — invoicing does NOT
+   remove a unit from the returnable pool, owner 2026-09-20). With
    ?doIds= it scopes to those DOs; without it, every non-cancelled DO.
 
    IMPORTANT (route ordering): this STATIC path MUST be registered BEFORE the
@@ -1179,8 +1195,8 @@ deliveryReturns.post('/', async (c) => {
    the SO→DO /from-sos picker. Pick individual DO LINES (each with a qty
    1..remaining_to_return) of ONE customer and combine them into ONE Delivery
    Return. A DO line can be returned across SEVERAL returns until its remaining
-   (delivered − invoiced − returned, derived live) reaches 0. Invoiced units
-   can't be returned — they're already out of the Pending pool.
+   (delivered − returned, derived live) reaches 0. Invoicing no longer removes a
+   unit from the returnable pool (owner 2026-09-20) — see doReturnableRemaining.
 
    Body: { picks: [{ doItemId, qty, condition? }] }.
 

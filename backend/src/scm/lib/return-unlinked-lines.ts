@@ -14,7 +14,7 @@
 // A return line with a null link still MOVES THE STOCK — a Delivery Return
 // brings goods back IN, a Purchase Return sends them OUT — but it counts toward
 // no parent line, so the remaining pools those chains are governed by
-// (`delivered - invoiced - returned` for DR, `qty_accepted - returned_qty` for
+// (`delivered - returned` for DR, `qty_accepted - returned_qty` for
 // PR) never see it. The same goods can therefore be returned twice.
 //
 // A production scan on 2026-08-04 found ZERO rows of this shape on both chains,
