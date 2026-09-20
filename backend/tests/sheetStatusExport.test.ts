@@ -51,11 +51,11 @@ describe("GET /status-export", () => {
     expect(body.cases.find((c) => c.assr_no === "ASSR/TEST-9102")).toBeUndefined();
   });
 
-  test("the customer-pickup leg owns the PICKUP trigger word (Nico 2026-09-01)", async () => {
-    // The sheet's vocabulary must not change (Nico: A列不要修改): the bare
-    // customer-pickup leg exports the stage's bare word, and with Pickup
-    // by = customer it emits the sheet's UNCHANGED trigger word, so the
-    // Delivery PICKUP job still fires without any Apps Script change.
+  test("the own-team pickup leg owns the PICKUP trigger word (owner 2026-09-20)", async () => {
+    // pickup_by = 'customer' is the stored value for "our own team collects"
+    // (the ERP button reads "Own team pickup"), so the leg emits the
+    // parenthesised (Own Team Pickup) word the Delivery PICKUP job fires on.
+    // The bare leg exports the stage's bare word, which fires nothing.
     const setSub = (sub: string | null, pickupBy: string | null) =>
       env.DB.prepare(`UPDATE assr_cases SET sub_status = ?, pickup_by = ? WHERE id = 9101`)
         .bind(sub, pickupBy)
@@ -72,7 +72,7 @@ describe("GET /status-export", () => {
     await setSub("pending_customer_pickup", null);
     expect(await statusOf()).toBe("Pending Supplier Pickup");
     await setSub("pending_customer_pickup", "customer");
-    expect(await statusOf()).toBe("Pending Supplier Pickup (Customer Pickup)");
+    expect(await statusOf()).toBe("Pending Supplier Pickup (Own Team Pickup)");
     // The supplier-handover leg stays bare even with pickup_by set — the
     // dispatch job belongs to the customer-collection leg alone.
     await setSub("pending_supplier_pickup", "customer");
