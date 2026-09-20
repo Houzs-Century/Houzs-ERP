@@ -91,4 +91,15 @@ export const MIGRATED_RECEIPTS_NOT_INVOICED_IN_AUTOCOUNT: ReadonlySet<string> = 
   'HC-GR-005382-PO-010056',
   'HC-GR-005382-PO-010061',
   'HC-GR-005382-PO-010066',
+  // Added 2026-09-21: migrated GRs whose ERP row never got its AutoCount GR
+  // number stamped (linked_ac_gr_docno NULL), so the first pass missed them.
+  // Derived the AutoCount GR from the grn_number (HC-GR-<n>) and confirmed
+  // NEVER invoiced against the same 2026-09-09 book cut. GR-005305 is the
+  // DORSETTLOFT receipt the owner was stuck on (ticket 36).
+  'HC-GR-005239-PO-009587',
+  'HC-GR-005239-PO-009815',
+  'HC-GR-005239-PO-009822',
+  'HC-GR-005239-PO-009824',
+  'HC-GR-005264',
+  'HC-GR-005305',
 ]);
