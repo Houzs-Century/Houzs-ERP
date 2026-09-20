@@ -184,6 +184,17 @@ if (APPLY && process.env.CONFIRM !== CONFIRM_PHRASE) {
 }
 const CO = Number(process.env.COMPANY_ID || 1);
 if (!Number.isInteger(CO) || CO <= 0) { console.error("COMPANY_ID must be a positive integer"); process.exit(2); }
+/* CREATE_ONLY — the SAFE, ADDITIVE repair. Writes ONLY the newly-admitted
+   missing pair-documents (an in-scope GR's lines against a PO the ERP holds but
+   scope excludes because it is already fully received — the includePo widening),
+   and SUPPRESSES every UPDATE and every CANCEL. This exists because the full
+   convergent reshape rebuilds the WHOLE migrated-GR population to the committed
+   book cut, and re-running it long after that cut is destructive (it re-dates
+   and rewrites receipts, and zeroes lines received after the cut). CREATE_ONLY
+   touches nothing that exists: it only fills the gaps this fix newly admits.
+   Owner 2026-09-20: complete the receipts whose PO is already in the ERP, add
+   only, do not disturb anything else, do not touch stock. */
+const CREATE_ONLY = process.env.CREATE_ONLY === "1";
 const DUMP_DIR = process.env.DUMP_DIR || path.join(here, "..", "grn-dump");
 const SHOW = Math.max(1, Number(process.env.SHOW || 20));
 const SYS_USER = "00000000-0000-4000-8000-000000000001";
@@ -244,8 +255,21 @@ function loadAcToErp(inCatalog) {
 }
 
 /* ── the book, at pair grain ─────────────────────────────────────────────── */
-/** `Map<"GR|PO", {gr, po, date, lines}>` from ac-convert-edges. */
-function bookPairsFromEdges(scope) {
+/** `Map<"GR|PO", {gr, po, date, lines}>` from ac-convert-edges.
+ *
+ * `includePo(po)` decides which of an in-scope GR's source POs contribute lines.
+ * A GR is admitted by `scope.GR` because it names an OUTSTANDING PO, but a single
+ * AutoCount receipt routinely covers several POs at once — some outstanding, some
+ * already fully received. The old rule kept only the OUTSTANDING POs' lines
+ * (`scope.PO.has(po)`), so a receipt straddling an outstanding PO and a
+ * fully-received one came in HALF: e.g. GR-005352 covers PO-010074 (outstanding,
+ * 3 lines) and PO-009893 (fully received, 5 lines) and only the 3 arrived, so
+ * GRN->PI could never tally. Owner 2026-09-20 「跟 autocount 一样 / PO GR 一定要进完」:
+ * an in-scope GR must carry ALL its lines. `includePo` therefore admits a PO that
+ * is outstanding OR that the ERP already holds as a migrated PO — the fully-
+ * received ones the ERP carries but scope excludes. A PO neither outstanding nor
+ * in the ERP still falls out downstream (skippedNoPo), unchanged. */
+function bookPairsFromEdges(scope, includePo) {
   const ce = gz("ac-convert-edges.json.gz");
   const LF = ce.line_fields;
   const HF = ce.header_fields;
@@ -272,7 +296,7 @@ function bookPairsFromEdges(scope) {
     if (!scope.GR.has(gr)) continue;
     if (String(r[iFT] ?? "").trim() !== "PO") continue;
     const po = String(r[iFN] ?? "").trim();
-    if (!scope.PO.has(po)) continue;
+    if (!includePo(po)) continue;
     const h = heads.get(gr);
     if (!h || h.cancelled) { skippedCancelled += 1; continue; }
     const k = `${gr}|${po}`;
@@ -288,12 +312,14 @@ function bookPairsFromEdges(scope) {
   return { pairs, exportedAt: ce.exported_at, skippedCancelled };
 }
 
-/** The same pair set, cut independently, for the cross-check. */
-function bookPairsFromTruth(book, scope) {
+/** The same pair set, cut independently, for the cross-check. Uses the SAME
+ *  `includePo` rule as bookPairsFromEdges, so the two cuts cannot disagree about
+ *  which of an in-scope GR's POs contribute. */
+function bookPairsFromTruth(book, scope, includePo) {
   const out = new Set();
   for (const gr of scope.GR) {
     for (const l of book.GR.lines.get(gr) || []) {
-      if (l.fromDocType !== "PO" || !l.fromDocNo || !scope.PO.has(l.fromDocNo)) continue;
+      if (l.fromDocType !== "PO" || !l.fromDocNo || !includePo(l.fromDocNo)) continue;
       out.add(`${gr}|${l.fromDocNo}`);
     }
   }
@@ -321,8 +347,18 @@ async function main() {
   const snap = JSON.parse(zlib.gunzipSync(fs.readFileSync(SNAP)).toString("utf8"));
   const book = decodeSnapshot(snap);
   const scope = buildScope(book);
-  const edges = bookPairsFromEdges(scope);
-  const truthPairs = bookPairsFromTruth(book, scope);
+  /* The migrated POs the ERP already holds — an in-scope GR's fully-received POs
+     are here even though scope (outstanding-only) excludes them. This is what
+     lets a receipt come in COMPLETE without widening the shared scope the
+     reconcile checker reads. See bookPairsFromEdges' includePo. */
+  const erpPoAcRows = await sql`SELECT DISTINCT linked_ac_docno AS ac
+    FROM scm.purchase_orders WHERE company_id = ${CO} AND linked_ac_docno IS NOT NULL`;
+  const erpPoAc = new Set(erpPoAcRows.map((r) => String(r.ac).trim()).filter(Boolean));
+  const includePo = (po) => scope.PO.has(po) || erpPoAc.has(po);
+  const edges = bookPairsFromEdges(scope, includePo);
+  const truthPairs = bookPairsFromTruth(book, scope, includePo);
+  log(`GR COMPLETION — an in-scope receipt carries lines for every PO it names that the ERP holds ` +
+    `(outstanding OR already fully received): ${scope.PO.size} outstanding + ${erpPoAc.size} ERP migrated PO(s) admitted.`);
   const priceByKey = bookGrPriceByKey(book, scope);
 
   rule("THE BOOK — the receipts AutoCount actually made, at pair grain");
@@ -576,7 +612,11 @@ async function main() {
       }
       allGrnNumbers.add(number);
     }
-    plan.push({ key, gr: p.gr, po: p.po, date: p.date, erpPo: po, existing, number, items });
+    /* newlyAdmitted: this pair is in the plan ONLY because includePo now admits a
+       PO the ERP holds but scope (outstanding-only) excludes. These are exactly
+       the completeness gaps CREATE_ONLY fills. */
+    plan.push({ key, gr: p.gr, po: p.po, date: p.date, erpPo: po, existing, number, items,
+      newlyAdmitted: !scope.PO.has(p.po) });
   }
 
   const creates = plan.filter((d) => !d.existing);
@@ -593,6 +633,19 @@ async function main() {
   log(`PLAN — ${plan.length} pair documents: ${creates.length} to CREATE, ${updates.length} to UPDATE IN PLACE; ` +
     `${retire.length} existing document(s) to CANCEL as superseded; ${untouched.length} left untouched (their purchase order is outside the book cut)`);
   say(`  lines to write: ${planLines}; units: ${planUnits}`);
+  const additive = creates.filter((d) => d.newlyAdmitted);
+  const additiveLines = additive.reduce((s, d) => s + d.items.length, 0);
+  const additiveUnits = additive.reduce((s, d) => s + d.items.reduce((t, i) => t + i.qty, 0), 0);
+  if (CREATE_ONLY) {
+    log(`CREATE_ONLY — this run WRITES ONLY the ${additive.length} newly-admitted pair-document(s) ` +
+      `(${additiveLines} line(s), ${additiveUnits} unit(s)) whose PO the ERP already holds. The ` +
+      `${updates.length} UPDATE(s) and ${retire.length} CANCEL(s) the full plan lists are SUPPRESSED — ` +
+      `nothing that already exists is touched.`);
+    for (const d of additive.slice(0, SHOW)) {
+      say(`     CREATE ${pad(d.number, 30)} ${pad(d.erpPo.po_number, 16)} received ${d.date}  ${d.items.length} line(s), ${d.items.reduce((s, i) => s + i.qty, 0)} unit(s)`);
+    }
+    if (additive.length > SHOW) say(`     ... ${additive.length - SHOW} more`);
+  }
   if (skippedNoPo.length) {
     say(`  pairs the ERP has no purchase order for: ${skippedNoPo.length} — ${skippedNoPo.slice(0, SHOW).join(", ")}`);
     say("    (the receipt is in the book against a purchase order this migration never carried; not this writer's to invent)");
@@ -891,7 +944,12 @@ async function main() {
   let created = 0;
   let updated = 0;
   let cancelled = 0;
-  for (const d of plan) {
+  /* CREATE_ONLY writes only the newly-admitted, not-yet-existing pair-documents;
+     the full run writes the whole convergent plan. */
+  const applyDocs = CREATE_ONLY ? additive : plan;
+  const applyRetire = CREATE_ONLY ? [] : retire;
+  if (CREATE_ONLY) log(`CREATE_ONLY apply — writing ${applyDocs.length} new document(s) only; 0 updates, 0 cancels.`);
+  for (const d of applyDocs) {
     const rows = d.rows;
     const total = d.total;
     const warehouse = d.warehouse;
@@ -928,9 +986,9 @@ async function main() {
                   ${r.supplier_sku}, ${r.invoiced}, ${r.notes}, ${CO})`;
       }
     });
-    if ((created + updated) % 50 === 0) log(`  ..${created + updated}/${plan.length}`);
+    if ((created + updated) % 50 === 0) log(`  ..${created + updated}/${applyDocs.length}`);
   }
-  for (const g of retire) {
+  for (const g of applyRetire) {
     /* A DIRECT status flip, deliberately not PATCH /grns/:id/cancel — that route
        would write a reversing inventory OUT for every line. */
     const note = `SUPERSEDED by the account book's own receipts for ${g._poAc}: AutoCount received this ` +
@@ -958,7 +1016,9 @@ async function main() {
     WHERE g.company_id = ${CO} AND g.migrated_no_stock = true AND g.status <> 'CANCELLED'
     GROUP BY g.id, g.grn_number, g.status, g.received_at, g.linked_ac_gr_docno, g.migrated_no_stock, p.linked_ac_docno`;
   const byPair = new Map(back.map((r) => [`${String(r.ac_gr ?? "").trim()}|${String(r.po_ac ?? "").trim()}`, r]));
-  for (const d of plan) {
+  /* Verify only what this run WROTE. In CREATE_ONLY the UPDATE pairs were left
+     untouched on purpose, so checking them against the book would wrongly fail. */
+  for (const d of applyDocs) {
     const r = byPair.get(d.key);
     if (!r) { bad += 1; say(`  VERIFY FAILED — ${d.key} (${d.number}): no live migrated receipt reads back for this pair`); continue; }
     const wantUnits = d.items.reduce((s, i) => s + i.qty, 0);
@@ -989,7 +1049,7 @@ async function main() {
   await v.end();
   await sql.end();
   if (bad) { console.error(`${bad} verification failure(s).`); process.exit(1); }
-  log(`VERIFIED on a fresh connection — ${plan.length} pair documents read back with the book's own date, line count and quantity, and zero inventory movements.`);
+  log(`VERIFIED on a fresh connection — ${applyDocs.length} pair document(s) read back with the book's own date, line count and quantity, and zero inventory movements.`);
 }
 
 main().catch(async (e) => { console.error(e); await sql.end().catch(() => {}); process.exit(1); });
