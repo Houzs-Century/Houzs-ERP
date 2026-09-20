@@ -69,7 +69,7 @@ async function resetFixture(s: Sql): Promise<void> {
     CREATE TABLE scm.staff (id uuid PRIMARY KEY, name text);
     CREATE TABLE scm.mfg_sales_orders (
       doc_no text PRIMARY KEY, linked_ac_docno text, company_id bigint NOT NULL,
-      so_date date NOT NULL DEFAULT now(), ref text, branding text, debtor_name text NOT NULL, phone text,
+      so_date date NOT NULL DEFAULT now(), ref text, customer_so_no text, branding text, debtor_name text NOT NULL, phone text,
       sales_location text, agent text, salesperson_id uuid,
       local_total_sen integer NOT NULL DEFAULT 0,
       remark2 text, remark3 text, remark4 text, note text,

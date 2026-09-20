@@ -25,6 +25,7 @@ export type FeedHeadRow = {
   linked_ac_docno: string | null;
   so_date: string | null;
   ref: string | null;
+  customer_so_no: string | null;
   branding: string | null;
   debtor_name: string | null;
   phone: string | null;
@@ -139,7 +140,7 @@ export function parseLimit(raw: string | undefined | null): number {
  *  Each feed wraps this and adds its own outer predicate and order. */
 const FEED_BASE_SQL = `
   SELECT so.doc_no, so.linked_ac_docno,
-         so.so_date::text AS so_date, so.ref, so.branding, so.debtor_name, so.phone,
+         so.so_date::text AS so_date, so.ref, so.customer_so_no, so.branding, so.debtor_name, so.phone,
          so.sales_location, so.agent, sp.name AS salesperson_name,
          so.local_total_sen,
          so.local_total_sen - COALESCE(pay.paid_sen, 0) AS balance_sen_live,
@@ -330,7 +331,10 @@ export function toSheetRecord(row: FeedHeadRow, lines: ReadonlyArray<FeedLineRow
     ErpDocNo: row.doc_no,
     TransferTo: blankToNull(row.do_numbers),
     DocDate: row.so_date,
-    Ref: blankToNull(row.ref),
+    // The sheet's Ref = the ERP's "Reference", which frontend customerRefOf reads
+    // as ref || customer_so_no: a native ERP order has ref NULL and carries its
+    // reference in customer_so_no, so ref alone left every native order blank.
+    Ref: blankToNull(row.ref) ?? blankToNull(row.customer_so_no),
     SOUDF_BRANDING: blankToNull(row.branding),
     DebtorName: blankToNull(row.debtor_name),
     Phone1: blankToNull(row.phone),
