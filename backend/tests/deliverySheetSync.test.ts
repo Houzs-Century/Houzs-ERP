@@ -642,38 +642,41 @@ describe("the READY gate", () => {
  * currently holds, so the Apps Script can flip stale product-words to READY and
  * delete the genuinely-not-ready rows, while LEAVING rows the ERP does not own. */
 describe("POST /prune-check", () => {
-  test("live readiness per doc: stale header flips READY, a short main is not ready, an unknown doc is found:false", async () => {
+  test("live readiness + delivered-safe Deletable: stale flips READY, undelivered-short is deletable, delivered is kept, unknown is found:false", async () => {
     const { db, seen } = fakeDb((sql) => {
       if (/FROM companies/i.test(sql)) return { id: HOUZS };
       if (/FROM scm\.mfg_sales_orders so/.test(sql))
         return [
-          { doc_no: "HC-SO-013495", linked_ac_docno: "SO-013495", remark2: "BEDFRAME" }, // frozen word, lines all in -> READY
-          { doc_no: "HC-SO-2609-078", linked_ac_docno: "HC-SO-2609-078", remark2: null }, // main line pending -> not ready
+          { doc_no: "HC-SO-013495", linked_ac_docno: "SO-013495", remark2: "BEDFRAME", status: "READY_TO_SHIP" }, // frozen word, lines all in -> READY (keep)
+          { doc_no: "HC-SO-2609-078", linked_ac_docno: "HC-SO-2609-078", remark2: null, status: "CONFIRMED" }, // undelivered, main pending -> DELETE
+          { doc_no: "HC-SO-000012", linked_ac_docno: "SO-000012", remark2: null, status: "DELIVERED" }, // delivered + main pending -> KEEP (record)
         ];
       if (/FROM scm\.mfg_sales_order_items WHERE doc_no IN/.test(sql))
         return [
           { doc_no: "HC-SO-013495", item_group: "BEDFRAME", item_code: "B1", stock_status: "READY", cancelled: false },
           { doc_no: "HC-SO-2609-078", item_group: "BEDFRAME", item_code: "B2", stock_status: "PENDING", cancelled: false },
+          { doc_no: "HC-SO-000012", item_group: "BEDFRAME", item_code: "B3", stock_status: "PENDING", cancelled: false },
         ];
       return [];
     });
     const res = await app.request(
       "/prune-check",
-      { method: "POST", headers: { "X-Intake-Key": KEY, "content-type": "application/json" }, body: JSON.stringify({ doc_nos: ["SO-013495", "HC-SO-2609-078", "SO-999999", "SO-013495"] }) },
+      { method: "POST", headers: { "X-Intake-Key": KEY, "content-type": "application/json" }, body: JSON.stringify({ doc_nos: ["SO-013495", "HC-SO-2609-078", "SO-000012", "SO-999999"] }) },
       env(db),
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as any;
-    expect(body.count).toBe(3); // duplicate SO-013495 de-duped
-    expect(body.found).toBe(2);
-    expect(body.would_remove).toBe(1);
+    expect(body.count).toBe(4);
+    expect(body.found).toBe(3);
+    expect(body.would_remove).toBe(1); // only the undelivered, main-short one
     const by = Object.fromEntries(body.results.map((r: any) => [r.DocNo, r]));
-    expect(by["SO-013495"]).toMatchObject({ found: true, Ready: true, Remark2: "READY", ErpDocNo: "HC-SO-013495" });
-    expect(by["HC-SO-2609-078"]).toMatchObject({ found: true, Ready: false });
-    expect(by["SO-999999"]).toMatchObject({ found: false, Ready: false, ErpDocNo: null });
+    expect(by["SO-013495"]).toMatchObject({ found: true, Ready: true, Remark2: "READY", ErpDocNo: "HC-SO-013495", Deletable: false });
+    expect(by["HC-SO-2609-078"]).toMatchObject({ found: true, Ready: false, Status: "CONFIRMED", Deletable: true });
+    expect(by["SO-000012"]).toMatchObject({ found: true, Ready: false, Status: "DELIVERED", Deletable: false }); // delivered protected
+    expect(by["SO-999999"]).toMatchObject({ found: false, Deletable: false });
     const heads = seen.find((s) => /FROM scm\.mfg_sales_orders so/.test(s.sql))!;
     expect(heads.binds[0]).toBe(HOUZS);
-    expect(heads.sql).toContain("so.company_id = ?");
+    expect(heads.sql).toContain("so.status::text AS status");
   });
 
   test("a wrong key is 401 before any read; a body without doc_nos is 400", async () => {

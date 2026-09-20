@@ -52,6 +52,7 @@ import {
   type FeedLineRow,
   type FeedReadinessHead,
 } from "../lib/delivery-sheet-feed";
+import { SO_DELIVERED_OR_BEYOND } from "../scm/shared/so-deliverable-states";
 import {
   FEED_OUTSTANDING_PO_SQL,
   PO_OUTSTANDING_STATUSES,
@@ -266,10 +267,16 @@ app.post("/prune-check", async (c) => {
 
   // Key each found order by BOTH its ERP number and its sheet key, so an input
   // that used either one resolves.
-  const stateByKey = new Map<string, { ErpDocNo: string; Remark2: string | null; Ready: boolean }>();
+  const deliveredSet = new Set<string>([...SO_DELIVERED_OR_BEYOND]);
+  const stateByKey = new Map<string, { ErpDocNo: string; Remark2: string | null; Ready: boolean; Status: string; Deletable: boolean }>();
   for (const h of heads) {
     const remark2 = resolveSheetRemark2(h.remark2, linesByDoc.get(h.doc_no) ?? []);
-    const st = { ErpDocNo: h.doc_no, Remark2: remark2, Ready: isSheetReady(remark2) };
+    const ready = isSheetReady(remark2);
+    // Delete only an UNDELIVERED order whose stock is not in. A delivered /
+    // invoiced / closed order is a record — never pruned, even if its (possibly
+    // frozen) line flags read not-ready.
+    const deletable = !ready && !deliveredSet.has(h.status);
+    const st = { ErpDocNo: h.doc_no, Remark2: remark2, Ready: ready, Status: h.status, Deletable: deletable };
     stateByKey.set(h.doc_no, st);
     if (h.linked_ac_docno) stateByKey.set(h.linked_ac_docno, st);
   }
@@ -277,13 +284,13 @@ app.post("/prune-check", async (c) => {
   const results = docNos.map((d) => {
     const st = stateByKey.get(d);
     return st
-      ? { DocNo: d, found: true, ErpDocNo: st.ErpDocNo, Ready: st.Ready, Remark2: st.Remark2 }
-      : { DocNo: d, found: false, ErpDocNo: null as string | null, Ready: false, Remark2: null as string | null };
+      ? { DocNo: d, found: true, ErpDocNo: st.ErpDocNo, Ready: st.Ready, Remark2: st.Remark2, Status: st.Status, Deletable: st.Deletable }
+      : { DocNo: d, found: false, ErpDocNo: null as string | null, Ready: false, Remark2: null as string | null, Status: null as string | null, Deletable: false };
   });
   return c.json({
     count: results.length,
     found: results.filter((r) => r.found).length,
-    would_remove: results.filter((r) => r.found && !r.Ready).length,
+    would_remove: results.filter((r) => r.Deletable).length,
     results,
   });
 });

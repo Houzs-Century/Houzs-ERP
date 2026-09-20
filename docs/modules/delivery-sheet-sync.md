@@ -44,7 +44,7 @@ Feeds the dispatch team's working Google Sheet ("HC Delivery Updated": tabs *Del
 
 ## Where the code is
 
-- `backend/src/routes/deliverySheetSync.ts` — the pre-auth routes (SO feed + write-back, overdue, balance collection, outstanding PO + PO dates, and `POST /prune-check`: given a tab's DocNos, returns each order's LIVE Remarks 2 + Ready, or `found:false` when the ERP does not own the row, so the Apps Script can refresh stale rows and remove the genuinely not-ready ones while leaving non-ERP rows).
+- `backend/src/routes/deliverySheetSync.ts` — the pre-auth routes (SO feed + write-back, overdue, balance collection, outstanding PO + PO dates, and `POST /prune-check`: given a tab's DocNos, returns each order's LIVE Remarks 2, Ready, status, and a delivered-safe `Deletable` (= not Ready AND not delivered/invoiced/closed), or `found:false` when the ERP does not own the row — so the Apps Script refreshes stale rows to READY, removes only the `Deletable` ones, and leaves delivered rows and non-ERP rows untouched).
 - `backend/src/lib/delivery-sheet-feed.ts` — SO pull SQL, field mapper, parsers; `backend/src/lib/delivery-sheet-po-feed.ts` — the Outstanding PO SQL, record mapper and heads read; `backend/src/lib/delivery-sheet-assr-feed.ts` — the own-team Service-Case leg SQL + record mapper (`GET /assr-legs`).
 - `backend/src/lib/intake-company.ts` — shared company resolution (also used by ASSR form intake).
 - `reference/ERPDeliverySync.gs`, `reference/ERPOverdueBalance.gs`, `reference/ERPOutstandingPo.gs`, `reference/GetAutoCountData.gs`, `reference/PO_Outstanding.gs` — the Apps Script sides (ERP-fed regional tabs, ERP-fed Overdue / Balance Collection, ERP-fed Outstanding PO, and the two legacy AutoCount-fed originals).
