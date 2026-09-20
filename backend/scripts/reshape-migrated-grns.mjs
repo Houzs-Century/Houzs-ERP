@@ -244,8 +244,21 @@ function loadAcToErp(inCatalog) {
 }
 
 /* ── the book, at pair grain ─────────────────────────────────────────────── */
-/** `Map<"GR|PO", {gr, po, date, lines}>` from ac-convert-edges. */
-function bookPairsFromEdges(scope) {
+/** `Map<"GR|PO", {gr, po, date, lines}>` from ac-convert-edges.
+ *
+ * `includePo(po)` decides which of an in-scope GR's source POs contribute lines.
+ * A GR is admitted by `scope.GR` because it names an OUTSTANDING PO, but a single
+ * AutoCount receipt routinely covers several POs at once — some outstanding, some
+ * already fully received. The old rule kept only the OUTSTANDING POs' lines
+ * (`scope.PO.has(po)`), so a receipt straddling an outstanding PO and a
+ * fully-received one came in HALF: e.g. GR-005352 covers PO-010074 (outstanding,
+ * 3 lines) and PO-009893 (fully received, 5 lines) and only the 3 arrived, so
+ * GRN->PI could never tally. Owner 2026-09-20 「跟 autocount 一样 / PO GR 一定要进完」:
+ * an in-scope GR must carry ALL its lines. `includePo` therefore admits a PO that
+ * is outstanding OR that the ERP already holds as a migrated PO — the fully-
+ * received ones the ERP carries but scope excludes. A PO neither outstanding nor
+ * in the ERP still falls out downstream (skippedNoPo), unchanged. */
+function bookPairsFromEdges(scope, includePo) {
   const ce = gz("ac-convert-edges.json.gz");
   const LF = ce.line_fields;
   const HF = ce.header_fields;
@@ -272,7 +285,7 @@ function bookPairsFromEdges(scope) {
     if (!scope.GR.has(gr)) continue;
     if (String(r[iFT] ?? "").trim() !== "PO") continue;
     const po = String(r[iFN] ?? "").trim();
-    if (!scope.PO.has(po)) continue;
+    if (!includePo(po)) continue;
     const h = heads.get(gr);
     if (!h || h.cancelled) { skippedCancelled += 1; continue; }
     const k = `${gr}|${po}`;
@@ -288,12 +301,14 @@ function bookPairsFromEdges(scope) {
   return { pairs, exportedAt: ce.exported_at, skippedCancelled };
 }
 
-/** The same pair set, cut independently, for the cross-check. */
-function bookPairsFromTruth(book, scope) {
+/** The same pair set, cut independently, for the cross-check. Uses the SAME
+ *  `includePo` rule as bookPairsFromEdges, so the two cuts cannot disagree about
+ *  which of an in-scope GR's POs contribute. */
+function bookPairsFromTruth(book, scope, includePo) {
   const out = new Set();
   for (const gr of scope.GR) {
     for (const l of book.GR.lines.get(gr) || []) {
-      if (l.fromDocType !== "PO" || !l.fromDocNo || !scope.PO.has(l.fromDocNo)) continue;
+      if (l.fromDocType !== "PO" || !l.fromDocNo || !includePo(l.fromDocNo)) continue;
       out.add(`${gr}|${l.fromDocNo}`);
     }
   }
@@ -321,8 +336,18 @@ async function main() {
   const snap = JSON.parse(zlib.gunzipSync(fs.readFileSync(SNAP)).toString("utf8"));
   const book = decodeSnapshot(snap);
   const scope = buildScope(book);
-  const edges = bookPairsFromEdges(scope);
-  const truthPairs = bookPairsFromTruth(book, scope);
+  /* The migrated POs the ERP already holds — an in-scope GR's fully-received POs
+     are here even though scope (outstanding-only) excludes them. This is what
+     lets a receipt come in COMPLETE without widening the shared scope the
+     reconcile checker reads. See bookPairsFromEdges' includePo. */
+  const erpPoAcRows = await sql`SELECT DISTINCT linked_ac_docno AS ac
+    FROM scm.purchase_orders WHERE company_id = ${CO} AND linked_ac_docno IS NOT NULL`;
+  const erpPoAc = new Set(erpPoAcRows.map((r) => String(r.ac).trim()).filter(Boolean));
+  const includePo = (po) => scope.PO.has(po) || erpPoAc.has(po);
+  const edges = bookPairsFromEdges(scope, includePo);
+  const truthPairs = bookPairsFromTruth(book, scope, includePo);
+  log(`GR COMPLETION — an in-scope receipt carries lines for every PO it names that the ERP holds ` +
+    `(outstanding OR already fully received): ${scope.PO.size} outstanding + ${erpPoAc.size} ERP migrated PO(s) admitted.`);
   const priceByKey = bookGrPriceByKey(book, scope);
 
   rule("THE BOOK — the receipts AutoCount actually made, at pair grain");
