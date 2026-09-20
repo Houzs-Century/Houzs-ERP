@@ -13,6 +13,8 @@ import { api } from "../api/client";
 import { formatPhone } from "../vendor/shared/phone";
 import { useAuth } from "../auth/AuthContext";
 import { usePageAccess } from "../auth/PageGuard";
+import { canSeeSoloOrganizer } from "../auth/salesAccess";
+import { salesOrderProjectName, type SoloMaskProject } from "./projects/soloOrganizerMask";
 import { formatCurrency, formatDate, formatDateTime, cn, todayInAppTz } from "../lib/utils";
 import { parseMoneyToSen, parseQuantity, senToRm, scaledToQuantity } from "../lib/money";
 import { DataTable, type Column } from "../components/DataTable";
@@ -872,7 +874,10 @@ export function EntryPanel({
   // fallback not shown; pic_id wiring on projects means reps already see
   // only their PIC's projects here. Fires even when locked — harmless
   // and avoids a conditional hook call.
-  const projectsQ = useQuery<{ data: Array<{ id: number; code: string; name: string }> }>("/api/projects?per_page=200",
+  // The list payload also carries organizer / venue / event_type_name — read
+  // here so a solo roadshow's organizer is masked in the option text for
+  // everyone outside BD / Owner / weisiang (owner 2026-09-18).
+  const projectsQ = useQuery<{ data: Array<SoloMaskProject & { id: number; code: string }> }>("/api/projects?per_page=200",
     () => api.get("/api/projects?per_page=200")
   );
 
@@ -1283,7 +1288,7 @@ export function EntryPanel({
                 <option value="">— none —</option>
                 {(projectsQ.data?.data ?? []).map((p) => (
                   <option key={p.id} value={p.id}>
-                    {p.name}
+                    {salesOrderProjectName(p, canSeeSoloOrganizer(auth.user))}
                   </option>
                 ))}
               </select>

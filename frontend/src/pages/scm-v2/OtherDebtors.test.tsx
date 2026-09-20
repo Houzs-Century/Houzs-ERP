@@ -43,6 +43,8 @@ vi.mock('../../vendor/scm/lib/accounting-queries', async (importOriginal) => ({
 vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ can: () => true }) }));
 const confirmFn = vi.fn(async (_a: unknown) => true);
 vi.mock('../../vendor/scm/components/ConfirmDialog', () => ({ useConfirm: () => confirmFn }));
+const pdfMock = vi.fn(async (_d: unknown, _o: unknown) => {});
+vi.mock('../../vendor/scm/lib/debtor-bill-pdf', () => ({ generateDebtorBillPdf: (d: unknown, o: unknown) => pdfMock(d, o) }));
 vi.mock('../../vendor/scm/components/NotifyDialog', () => ({ useNotify: () => vi.fn() }));
 
 import { OtherDebtors } from './OtherDebtors';
@@ -77,6 +79,23 @@ describe('the registry', () => {
     fireEvent.click(screen.getByText('AHMAD BIN ALI'));
     expect(screen.getByText('Bills')).toBeTruthy();
     expect(screen.getByText('HC-ODB-2609-001')).toBeTruthy();
+  });
+});
+
+describe('the bill print (owner 2026-09-18: 需要打印功能)', () => {
+  test('Print hands the bill, its debtor and the account names to the PDF, to print', () => {
+    detail = baseDetail();
+    pdfMock.mockClear();
+    draw();
+    fireEvent.click(screen.getByText('AHMAD BIN ALI'));
+    fireEvent.click(screen.getByLabelText('Print HC-ODB-2609-001'));
+    expect(pdfMock).toHaveBeenCalledTimes(1);
+    const [d, o] = pdfMock.mock.calls[0]!;
+    expect((d as { bill: { bill_number: string } }).bill.bill_number).toBe('HC-ODB-2609-001');
+    expect((d as { debtor: { name: string } }).debtor.name).toBe('AHMAD BIN ALI');
+    expect((d as { accountName: (c: string) => string | null }).accountName('700-0000')).toBe('Other Income');
+    expect((d as { accountName: (c: string) => string | null }).accountName('nope')).toBeNull();
+    expect(o).toEqual({ action: 'print' });
   });
 });
 

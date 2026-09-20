@@ -3,6 +3,15 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <!-- The app is LIGHT-ONLY: it ships no dark theme, so anything dark the
+         user sees came from the BROWSER (Dark Reader-style extensions or
+         Chrome/Edge "auto dark mode for web contents"), which inverts our
+         palette into unreadable washed-out pills (owner report 2026-09-17:
+         Adrian's laptop calendar). `color-scheme: light` tells auto-darkening
+         browsers the page is intentionally light; `darkreader-lock` is the
+         documented opt-out Dark Reader honours. -->
+    <meta name="color-scheme" content="light" />
+    <meta name="darkreader-lock" />
     <!-- Browser-tab favicon: black mark on transparent (clean on light tab bars).
          The installed PWA app icon is the clean white HC mark on the brand-dark
          slab (matching the custom install banner) — those come from the web

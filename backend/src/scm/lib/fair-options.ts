@@ -28,12 +28,42 @@
 // the company's 92-row venue master. Free text is what produced the mess this
 // module replaces.
 //
-// ── THE ONE CASE THAT STILL NEEDS A DATE ────────────────────────────────────
-// Same month, same venue, SAME organizer, twice — e.g. MVEC SOUTHKEY / REX ran
-// 8-10 Aug and 14-16 Aug 2026. Four occurrences in seven months. Those two rows
-// would be identical on screen, so THOSE rows (only) carry their dates. Every
-// other row stays clean, which is what the owner asked for.
+// ── WHAT THE OWNER CHANGED ON 2026-09-19 ────────────────────────────────────
+// The rule above was written for a list of ONE CALENDAR MONTH, where at most one
+// fair per venue+organizer was ever live and a date was noise. That list could
+// not do the job he actually has:
+//
+//   *"我可能是下个星期，才开给上个星期 event 的 sales order"*
+//
+// An order keyed on 2 Oct for a fair that ran 18-20 Sep fell outside the month
+// AND outside "running today", so it appeared nowhere and the sale could not be
+// attributed at all. Three things follow, and they replace the paragraph above
+// rather than sitting beside it:
+//
+//   1. THE WINDOW IS 28 DAYS BACK from the order date, never forward —
+//      *"应该是当个日期的往前推四个星期…跟着 week 来算"*, and
+//      *"日期还没到，还没开单，不可能嘛"*. See `lookbackWindow`.
+//   2. EVERY ROW CARRIES ITS DATES, which reverses the "不需要日期" ruling above.
+//      He reversed it himself, describing the task: *"今天是 10 号…我需要点 1 号
+//      的 event…它是一号到三号的，我就点那个"*. A four-week list is mostly CLOSED
+//      fairs and several can share a venue and an organizer, so the label has to
+//      say which occurrence. He asked for the YEAR dropped — *"日期不需要年份"* —
+//      which the window makes safe: nothing in 28 days needs a year to tell it
+//      apart. He was offered `Aug 13 - 17` and chose `13/08 - 17/08`, keeping the
+//      system-wide date shape rather than opening a second one. The formatter is
+//      `fmtDayMonthRange` in shared/format.ts, beside the rule it varies.
+//      DO NOT re-spell it here: `check-date-formatting.mjs` fails the build on a
+//      month name, and that gate exists because this tree grew five date formats.
+//   3. THE PERIOD IS PART OF THE PICK, not decoration. It travels to the server,
+//      which matches that exact occurrence instead of re-deriving one from the
+//      order date — the order date being the day it was KEYED, since neither
+//      create form has a date field at all.
+//
+// An ARCHIVED project is never offered (`fair-binding.ts`): it is one the office
+// withdrew from, and its revenue lands in a project the P&L excludes.
 // ----------------------------------------------------------------------------
+
+import { fmtDayMonthRange } from '../shared/format';
 
 /** One PMS project row, as the loader reads it. A project is one BRAND's booth
  *  at one organizer's event: the fair the owner talks about is several of these. */
@@ -49,6 +79,9 @@ export type FairProjectRow = {
   /** `YYYY-MM-DD`, MYT, INCLUSIVE. NULL = open-ended. */
   endDate: string | null;
   status: string | null;
+  /** `project_event_types.slug` — "exhibition" / "solo". Optional: only the
+   *  picker's LABEL reads it, so a loader that resolves a fair need not carry it. */
+  eventType?: string | null;
 };
 
 /** One row in the dropdown. `key` is what the client sends back on save. */
@@ -59,11 +92,17 @@ export type FairOption = {
   key: string;
   venue: string;
   organizer: string;
+  /** TRUE for a solo roadshow. The label then reads "SOLO" in the organizer's
+   *  place (owner 2026-09-18: a solo roadshow has no organizer to name, the mall
+   *  management is only who the space was rented from). `organizer` itself is
+   *  untouched — it is still what the save path resolves the project from. */
+  solo: boolean;
+  /** The event's period. It travels with the pick and is what the save path
+   *  matches the event on — see `loadFairsForEvent`. Not decoration: it is half
+   *  the row's identity, and dropping it is what made a fair that had already
+   *  closed impossible to attribute a sale to. */
   startDate: string;
   endDate: string | null;
-  /** TRUE only when another row in the same list would otherwise read identically
-   *  (same venue, same organizer, same month). The label then shows the dates. */
-  showDates: boolean;
   /** The project ids this row covers, one per brand. For display/debug only —
    *  the server re-resolves on save and never trusts an id from the client. */
   projectIds: number[];
@@ -72,8 +111,12 @@ export type FairOption = {
 export type FairOptionGroups = {
   /** Fairs whose period CONTAINS the order date. Normally where the rep is. */
   running: FairOption[];
-  /** Everything else in the same calendar month, newest event first. */
-  month: FairOption[];
+  /** The rest of the lookback window — fairs that have already CLOSED, newest
+   *  first. Never anything in the future: the window ends at the order date.
+   *  Was `month` until 2026-09-19, when the window stopped being a calendar
+   *  month; the name changed with it so it cannot quietly describe the wrong
+   *  thing. */
+  earlier: FairOption[];
 };
 
 const clean = (v: string | null | undefined): string =>
@@ -84,19 +127,94 @@ export function fairKeyPart(v: string | null | undefined): string {
   return clean(v).toLowerCase().replace(/\s+/g, ' ');
 }
 
-/** Does `date` fall inside the project's period? Same contract as
- *  venue-binding.ts::periodContains — plain lexicographic MYT date compare, no
- *  `Date` objects, because `new Date('2026-07-19')` is 08:00 MYT and the
- *  arithmetic from there re-introduces the midnight off-by-one that attributes
- *  an order to the wrong exhibition. `end_date` is INCLUSIVE (the last day of a
- *  fair is a trading day); a NULL start has no period and contains nothing. */
+/** How far back the picker looks. Owner 2026-09-19: *"应该是当个日期的往前推四个
+ *  星期… 跟着 week 来算"*. */
+export const FAIR_LOOKBACK_DAYS = 28;
+
+/**
+ * The picker's window: `days` back from the ORDER DATE, inclusive, and never
+ * forward.
+ *
+ * REPLACED THE CALENDAR MONTH (owner 2026-09-19). The old window was the order
+ * date's whole calendar month, which was wrong in both directions:
+ *
+ *   TOO NARROW — an order written on 2 Oct for a fair that ran 18-20 Sep saw
+ *   nothing. September is not October's month and the fair was not running on
+ *   2 Oct, so it appeared in neither group and the sale could not be attributed
+ *   at all. The owner writes these routinely: *"我可能是下个星期，才开给上个星期
+ *   event 的 sales order"*.
+ *
+ *   TOO WIDE, in the useless direction — on the 10th it also offered fairs
+ *   starting on the 20th. Nobody keys an order before the event happens:
+ *   *"日期还没到，还没开单，不可能嘛"*. Offering one is a wrong pick waiting to be
+ *   made, so the window ENDS at the order date and the future is simply absent.
+ *
+ * Day arithmetic goes through `Date.UTC` on the PARTS and comes straight back
+ * out as a date string, so no value is ever an instant in a zone and the MYT
+ * calendar date survives. Everything downstream compares plain strings, which
+ * is an exact MYT-to-MYT comparison.
+ */
+export function lookbackWindow(
+  date: string,
+  days: number = FAIR_LOOKBACK_DAYS,
+): { start: string; end: string } {
+  const end = clean(date).slice(0, 10);
+  const y = Number(end.slice(0, 4));
+  const m = Number(end.slice(5, 7));
+  const d = Number(end.slice(8, 10));
+  const start = new Date(Date.UTC(y, m - 1, d - days)).toISOString().slice(0, 10);
+  return { start, end };
+}
+
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * The picked row's period as it arrives on a create/patch body, or null when
+ * the caller picked a PLACE rather than an event ("Others"), or is an older
+ * client that does not send one yet.
+ *
+ * Validated rather than trusted: a malformed date must degrade to "no event
+ * picked", which falls back to the venue window, never to a lookup that matches
+ * nothing and reports PENDING for a reason nobody can see. A missing END is
+ * legitimate and distinct from a missing start — it is a one-day fair.
+ */
+export function fairPickedPeriod(body: {
+  fairStart?: unknown;
+  fairEnd?: unknown;
+}): { startDate: string; endDate: string | null } | null {
+  const start = typeof body.fairStart === 'string' ? body.fairStart.slice(0, 10) : '';
+  if (!ISO_DATE.test(start)) return null;
+  const end = typeof body.fairEnd === 'string' ? body.fairEnd.slice(0, 10) : '';
+  return { startDate: start, endDate: ISO_DATE.test(end) ? end : null };
+}
+
+/** Does `date` fall inside the project's period? Plain lexicographic MYT date
+ *  compare, no `Date` objects, because `new Date('2026-07-19')` is 08:00 MYT and
+ *  the arithmetic from there re-introduces the midnight off-by-one that
+ *  attributes an order to the wrong exhibition. `end_date` is INCLUSIVE (the
+ *  last day of a fair is a trading day); a NULL start has no period and contains
+ *  nothing.
+ *
+ *  A NULL END IS ONE DAY, NOT FOREVER (changed 2026-09-19). It used to mean
+ *  open-ended, so a fair that started in March and never declared an end stayed
+ *  under "Running now" in September — while `GET /api/projects/calendar/events`
+ *  read the same blank as `COALESCE(end_date, start_date)` and drew a one-day
+ *  bar back in March. Two screens, one column, opposite answers; this side was
+ *  the wrong one, because a fair the calendar says is over must not be offered
+ *  as running. Houzs Century has 0 blank end dates today (probe run
+ *  35432690927), so this shuts a trap rather than moving a number.
+ *
+ *  venue-binding.ts::periodContains keeps the open-ended reading DELIBERATELY —
+ *  it resolves a rep's standing assignment, where an undated project is a
+ *  background campaign that really does continue. Same name, different question;
+ *  they are not a duplicated rule to unify. */
 export function periodContains(
   row: Pick<FairProjectRow, 'startDate' | 'endDate'>,
   date: string,
 ): boolean {
   if (!row.startDate) return false;
   if (row.startDate > date) return false;
-  if (row.endDate && row.endDate < date) return false;
+  if ((row.endDate ?? row.startDate) < date) return false;
   return true;
 }
 
@@ -111,6 +229,16 @@ export function isPickableFair(row: FairProjectRow): boolean {
   return true;
 }
 
+function isSoloRow(row: FairProjectRow): boolean {
+  return clean(row.eventType).toLowerCase() === 'solo';
+}
+
+/** The organizer half of the label. An EXHIBITION names its organizer — that is
+ *  what tells two fairs at one venue apart. A SOLO roadshow reads "SOLO". */
+function labelOrganizer(o: Pick<FairOption, 'organizer' | 'solo'>): string {
+  return o.solo ? 'SOLO' : o.organizer;
+}
+
 function optionKey(venue: string, organizer: string, start: string, end: string | null): string {
   return [fairKeyPart(venue), fairKeyPart(organizer), start, end ?? ''].join('|');
 }
@@ -118,17 +246,17 @@ function optionKey(venue: string, organizer: string, start: string, end: string 
 /**
  * Build the two dropdown groups for one order date.
  *
- * @param rows    Every non-cancelled project for the CALLER'S COMPANY in the
- *                relevant window. Scoping is the loader's job; this function
+ * @param rows    Every pickable project for the CALLER'S COMPANY that overlaps
+ *                the lookback window. Scoping is the loader's job; this function
  *                never sees a company id and must not invent one.
- * @param soDate  The ORDER's date (`YYYY-MM-DD`, MYT) — not today's. A backdated
- *                slip must offer the fair that was running the day it was
- *                written, or last week's orders point at this week's exhibition.
+ * @param soDate  The ORDER's date (`YYYY-MM-DD`, MYT). The window is measured
+ *                back from THIS date, and it is also the line between the two
+ *                groups: a fair still running on it, or one already closed.
  */
 export function buildFairOptions(rows: FairProjectRow[], soDate: string): FairOptionGroups {
   const date = clean(soDate).slice(0, 10);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { running: [], month: [] };
-  const month = date.slice(0, 7);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { running: [], earlier: [] };
+  const { start: windowStart } = lookbackWindow(date);
 
   const byKey = new Map<string, FairOption>();
   for (const row of rows) {
@@ -138,10 +266,11 @@ export function buildFairOptions(rows: FairProjectRow[], soDate: string): FairOp
     const start = row.startDate as string;
     const end = row.endDate ? clean(row.endDate) : null;
 
-    /* In scope: the order's own month, plus anything still running on the order
-       date even if it started last month (a fair can straddle a month end). */
-    const inMonth = start.slice(0, 7) === month || (end ?? start).slice(0, 7) === month;
-    if (!inMonth && !periodContains(row, date)) continue;
+    /* Overlaps [windowStart, orderDate]. The upper bound is what keeps fairs
+       that have not happened yet out of the list — there is no separate
+       "no future" rule to forget. */
+    if (start > date) continue;
+    if ((end ?? start) < windowStart) continue;
 
     const key = optionKey(venue, organizer, start, end);
     const existing = byKey.get(key);
@@ -150,8 +279,7 @@ export function buildFairOptions(rows: FairProjectRow[], soDate: string): FairOp
       continue;
     }
     byKey.set(key, {
-      key, venue, organizer, startDate: start, endDate: end,
-      showDates: false,
+      key, venue, organizer, solo: isSoloRow(row), startDate: start, endDate: end,
       projectIds: [row.projectId],
     });
   }
@@ -159,35 +287,26 @@ export function buildFairOptions(rows: FairProjectRow[], soDate: string): FairOp
   const all = [...byKey.values()];
   for (const o of all) o.projectIds.sort((a, b) => a - b);
 
-  /* The date exception. Two rows sharing venue+organizer inside one month would
-     read identically, so BOTH get their dates — and only those. Owner: no dates
-     otherwise. */
-  const sameLabel = new Map<string, FairOption[]>();
-  for (const o of all) {
-    const k = `${fairKeyPart(o.venue)}|${fairKeyPart(o.organizer)}`;
-    const list = sameLabel.get(k);
-    if (list) list.push(o); else sameLabel.set(k, [o]);
-  }
-  for (const list of sameLabel.values()) {
-    if (list.length > 1) for (const o of list) o.showDates = true;
-  }
-
   const running: FairOption[] = [];
-  const rest: FairOption[] = [];
+  const earlier: FairOption[] = [];
   for (const o of all) {
     if (periodContains({ startDate: o.startDate, endDate: o.endDate }, date)) running.push(o);
-    else rest.push(o);
+    else earlier.push(o);
   }
 
   running.sort((a, b) => a.venue.localeCompare(b.venue) || a.organizer.localeCompare(b.organizer));
-  rest.sort(
+  /* NEWEST FIRST in the closed group. The window is four weeks of history and
+     the fair that just ended is overwhelmingly the one being written up; the
+     old ascending order put the oldest at the top, which is the least likely
+     answer. */
+  earlier.sort(
     (a, b) =>
-      a.startDate.localeCompare(b.startDate) ||
+      b.startDate.localeCompare(a.startDate) ||
       a.venue.localeCompare(b.venue) ||
       a.organizer.localeCompare(b.organizer),
   );
 
-  return { running, month: rest };
+  return { running, earlier };
 }
 
 // ── Resolution: from a PICKED row back to one project ────────────────────────
@@ -235,30 +354,35 @@ export type FairResolution = {
  */
 export function resolveFair(input: {
   candidates: FairProjectRow[];
-  soDate: string;
   brand: string | null;
   organizer: string | null;
 }): FairResolution {
-  const date = clean(input.soDate).slice(0, 10);
   const wantOrg = fairKeyPart(input.organizer);
   const wantBrand = fairKeyPart(input.brand);
 
-  const inPeriod = input.candidates
+  /* NO DATE FILTER HERE ANY MORE (2026-09-19). The caller has already narrowed
+     the candidates — to the exact event the operator picked, or to the venue's
+     fairs inside the lookback window — and re-checking "was it running on the
+     order date" here would undo that. It is precisely what it used to do, and
+     it is why an order written a week after its fair closed could not be
+     attributed by any path in the system: the save refused it, the nightly
+     reconcile refused it again, and the settle-by-hand screen refused it a
+     third time, all from this one line. */
+  const narrowed = input.candidates
     .filter(isPickableFair)
-    .filter((r) => periodContains(r, date))
     .filter((r) => (wantOrg ? fairKeyPart(r.organizer) === wantOrg : true));
 
-  const candidateIds = [...new Set(inPeriod.map((r) => r.projectId))].sort((a, b) => a - b);
-  if (inPeriod.length === 0) return { projectId: null, match: 'PENDING', candidateIds };
+  const candidateIds = [...new Set(narrowed.map((r) => r.projectId))].sort((a, b) => a - b);
+  if (narrowed.length === 0) return { projectId: null, match: 'PENDING', candidateIds };
 
   if (wantBrand) {
-    const onBrand = inPeriod.filter((r) => fairKeyPart(r.brand) === wantBrand);
+    const onBrand = narrowed.filter((r) => fairKeyPart(r.brand) === wantBrand);
     if (onBrand.length === 0) return { projectId: null, match: 'UNMATCHED', candidateIds };
     return oneBoothOrNothing(onBrand, candidateIds);
   }
 
   /* No brand to narrow with. One booth is still an answer; several is not. */
-  return oneBoothOrNothing(inPeriod, candidateIds);
+  return oneBoothOrNothing(narrowed, candidateIds);
 }
 
 /** A BOOTH is one organizer's stand for one brand. Two project rows that agree
@@ -275,17 +399,44 @@ export function resolveFair(input: {
  *  MID VALLEY on 2026-03-20 had MLE and REX side by side. That case answers
  *  AMBIGUOUS and a person decides. */
 function oneBoothOrNothing(rows: FairProjectRow[], candidateIds: number[]): FairResolution {
-  const booths = new Set(rows.map((r) => `${fairKeyPart(r.organizer)}|${fairKeyPart(r.brand)}`));
+  /* THE PERIOD IS PART OF THE BOOTH KEY (added 2026-09-19). Without it, REX /
+     AKEMI at one venue twice inside the lookback window read as ONE booth and
+     collapsed to the lower id — silently posting the second fair's sales to the
+     first fair's P&L. That could not happen while the caller filtered to fairs
+     running on the order date, because only one of them ever was; the window
+     made two of them reachable at once, so the key has to carry what now tells
+     them apart. Two rows that differ only by period are DIFFERENT FAIRS. */
+  const booths = new Set(
+    rows.map((r) => `${fairKeyPart(r.organizer)}|${fairKeyPart(r.brand)}|${r.startDate ?? ''}|${r.endDate ?? ''}`),
+  );
   if (booths.size > 1) return { projectId: null, match: 'AMBIGUOUS', candidateIds };
   const pick = rows.reduce((lo, r) => (r.projectId < lo.projectId ? r : lo));
   return { projectId: pick.projectId, match: 'PICKED', candidateIds };
 }
 
-/** Human label for one row, used by the picker and by the pending screen so the
- *  two can never describe the same event differently. */
-export function fairOptionLabel(o: Pick<FairOption, 'venue' | 'organizer' | 'startDate' | 'endDate' | 'showDates'>): string {
-  const base = `${o.venue} — ${o.organizer}`;
-  if (!o.showDates) return base;
-  const end = o.endDate && o.endDate !== o.startDate ? ` ~ ${o.endDate}` : '';
-  return `${base} (${o.startDate}${end})`;
+/**
+ * Human label for one row, used by the picker and by the pending screen so the
+ * two can never describe the same event differently.
+ *
+ * EVERY ROW CARRIES ITS DATES (owner 2026-09-19). This REVERSES his 2026-09-13
+ * ruling — *"我觉得不需要日期啦…只需要选 event 和 organizer 就好了"* — and the
+ * reversal is his, stated while describing what he needs to do:
+ *
+ *   *"今天是 10 号，我在 10 号的时候我开单，然后我需要点 1 号的 event。所以我一号
+ *   看到是有那个 venue，有那个 organizer，然后它是一号到三号的，我就点那个"*
+ *
+ * The first ruling was correct FOR ITS LIST. That list was one calendar month
+ * with at most one live fair per venue+organizer, so the dates were noise and
+ * only the four collisions in seven months needed them. The list is now four
+ * weeks of CLOSED fairs, several of which can share a venue and an organizer,
+ * and the whole point of picking one is to say WHICH occurrence — a choice the
+ * label has to show or the operator is guessing.
+ *
+ * So the narrow `showDates` exception is gone rather than widened: with every
+ * row dated there is nothing left for it to decide. Do not reintroduce it, and
+ * do not strip the dates back off as tidying — that is what happened to the
+ * ORGANIZER on 2026-09-15 and it had to be put back the next morning.
+ */
+export function fairOptionLabel(o: Pick<FairOption, 'venue' | 'organizer' | 'solo' | 'startDate' | 'endDate'>): string {
+  return `${o.venue} — ${labelOrganizer(o)} (${fmtDayMonthRange(o.startDate, o.endDate)})`;
 }

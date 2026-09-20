@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Plus, Copy, Trash2, UserX, UserCheck, X, KeyRound, Pencil, Check, RefreshCw, Search, ArrowUp, ArrowDown, ChevronsUpDown, ChevronRight, ChevronDown, Printer, LayoutGrid, List, Phone, Mail, AtSign, ArrowLeft, SlidersHorizontal, Eye, EyeOff, Users, ShieldCheck, Network, Building2, LogIn, type LucideIcon } from "lucide-react";
 import { PageHeader } from "../components/Layout";
+import { NumberInput } from "../vendor/scm/components/NumberInput";
 import { TabStrip, type TabOption } from "../components/TabStrip";
 import { Button } from "../components/Button";
 import { ColorPicker } from "../components/ColorPicker";
@@ -5127,10 +5128,11 @@ function DepartmentEditor({
           <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
             Sort order
           </label>
-          <input
-            type="number"
+          <NumberInput
+            sign="unsigned"
+            decimal={false}
             value={sortOrder}
-            onChange={(e) => setSortOrder(parseInt(e.target.value, 10) || 0)}
+            onValueChange={(n) => setSortOrder(n ?? 0)}
             className="h-9 w-24 rounded-md border border-border bg-surface px-3 text-[13px]"
           />
           <div className="mt-1 text-[10px] text-ink-muted">

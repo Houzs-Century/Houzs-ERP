@@ -21,7 +21,7 @@ import { DateField } from "../vendor/scm/components/DateField";
  * useCreateStockTransfer + useInventoryBuckets; no backend change.
  * ------------------------------------------------------------------ */
 
-type LineDraft = { _key: string; itemCode: string; productName: string; variantKey?: string; qty: number };
+type LineDraft = { _key: string; itemCode: string; productName: string; variantKey?: string; qty: number; notes?: string };
 
 // Humanise a variant_key ("fabriccode=bf-16|gap=16|legheight=2") into a compact
 // bucket label. '' = the unclassified / plain-SKU bucket.
@@ -35,12 +35,13 @@ const UNPICKED = "__UNPICKED__";
 // its SKU's real variant buckets (with on-hand qty) at the From warehouse — the
 // operator moves the exact bucket, keeping stock + MRP accurate (owner 2026-07-20).
 function MobileTransferLine({
-  line, fromWarehouseId, setVariant, setQty, removeLine,
+  line, fromWarehouseId, setVariant, setQty, setNotes, removeLine,
 }: {
   line: LineDraft;
   fromWarehouseId: string;
   setVariant: (key: string, variantKey: string | undefined) => void;
   setQty: (key: string, qty: number) => void;
+  setNotes: (key: string, notes: string) => void;
   removeLine: (key: string) => void;
 }) {
   const bucketsQ = useInventoryBuckets(line.itemCode || null, fromWarehouseId || null);
@@ -94,6 +95,13 @@ function MobileTransferLine({
             : `avail ${avail}`}
         </span>
       </div>
+      <input
+        className="cal-sel"
+        style={{ marginTop: 8, fontSize: 13 }}
+        value={line.notes ?? ""}
+        onChange={(e) => setNotes(line._key, e.target.value)}
+        placeholder="Remarks (optional) — shown as Description 2"
+      />
     </div>
   );
 }
@@ -163,6 +171,8 @@ function MobileStockTransferForm({
     setLines((prev) => prev.map((l) => (l._key === key ? { ...l, variantKey } : l)));
   const setQty = (key: string, qty: number) =>
     setLines((prev) => prev.map((l) => (l._key === key ? { ...l, qty: Math.max(1, qty) } : l)));
+  const setLineNotes = (key: string, notes: string) =>
+    setLines((prev) => prev.map((l) => (l._key === key ? { ...l, notes } : l)));
   const removeLine = (key: string) => setLines((prev) => prev.filter((l) => l._key !== key));
 
   const submit = () => {
@@ -174,7 +184,7 @@ function MobileStockTransferForm({
         toWarehouseId,
         transferDate,
         notes: notes.trim() || undefined,
-        items: validLines.map((l) => ({ itemCode: l.itemCode, productName: l.productName, variantKey: l.variantKey, qty: l.qty })),
+        items: validLines.map((l) => ({ itemCode: l.itemCode, productName: l.productName, variantKey: l.variantKey, qty: l.qty, notes: l.notes?.trim() || undefined })),
       },
       {
         onSuccess: (r) => {
@@ -247,6 +257,7 @@ function MobileStockTransferForm({
             fromWarehouseId={fromWarehouseId}
             setVariant={setVariant}
             setQty={setQty}
+            setNotes={setLineNotes}
             removeLine={removeLine}
           />
         ))}

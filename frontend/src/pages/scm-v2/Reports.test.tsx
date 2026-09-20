@@ -74,6 +74,11 @@ vi.mock('./MonthlyReport', () => ({
   ByMonthButton: ({ on, onToggle }: { on: boolean; onToggle: () => void }) => <button type="button" aria-pressed={on} onClick={onToggle}>By month</button>,
 }));
 
+const xlsx = vi.fn(async (..._a: unknown[]) => {});
+const pdf = vi.fn(async (..._a: unknown[]) => {});
+vi.mock('../../vendor/scm/lib/report-sheet-xlsx', () => ({ downloadReportXlsx: (...a: unknown[]) => xlsx(...a) }));
+vi.mock('../../vendor/scm/lib/report-sheet-pdf', () => ({ generateReportPdf: (...a: unknown[]) => pdf(...a) }));
+
 import { PnLTab, BalanceSheetTab } from './Reports';
 
 describe('the standard statements', () => {
@@ -82,28 +87,29 @@ describe('the standard statements', () => {
     expect(screen.getByText('Trading income')).toBeTruthy();
     expect(screen.getByText(/Cost of sales/)).toBeTruthy();
     const gross = screen.getByText('GROSS PROFIT').closest('tr')!;
-    expect(gross.textContent).toContain('RM 500.00');
+    expect(gross.textContent).toContain('500.00');
     /* Tax posted → profit before tax, the Taxation section, then net AFTER tax. */
-    expect(screen.getByText('PROFIT BEFORE TAX').closest('tr')!.textContent).toContain('RM 445.00');
+    expect(screen.getByText('PROFIT BEFORE TAX').closest('tr')!.textContent).toContain('445.00');
     expect(screen.getByText('Taxation')).toBeTruthy();
     const net = screen.getByText('NET PROFIT').closest('tr')!;
-    expect(net.textContent).toContain('RM 415.00');
+    expect(net.textContent).toContain('415.00');
     expect(screen.getByText(/620-0000/)).toBeTruthy();
   });
 
   /* SIGNS (owner 2026-09-14, docs/bugs/0910): an expense is the positive
      figure it is; only a period whose credits beat its debits prints in
-     parentheses — and never "(RM -1,139.19)", a minus inside the brackets. */
+     parentheses — and never "(-1,139.19)", a minus inside the brackets. No RM
+     prefix, as the Cash Flow reads (owner 2026-09-19). */
   test('P&L: expenses print plain, a reversed line in parentheses with no minus inside them', () => {
     render(<PnLTab />);
-    expect(screen.getByText(/900-A001/).closest('tr')!.textContent).toContain('RM 120.00');
+    expect(screen.getByText(/900-A001/).closest('tr')!.textContent).toContain('120.00');
     expect(screen.getByText(/900-A001/).closest('tr')!.textContent).not.toContain('(');
-    expect(screen.getByText(/900-A014/).closest('tr')!.textContent).toContain('(RM 15.00)');
+    expect(screen.getByText(/900-A014/).closest('tr')!.textContent).toContain('(15.00)');
     /* The closing-stock credit inside cost of sales is a credit too. */
-    expect(screen.getByText(/620-0000/).closest('tr')!.textContent).toContain('(RM 100.00)');
-    expect(screen.getByText(/601-0003/).closest('tr')!.textContent).toContain('RM 600.00');
-    expect(screen.getByText('Total expenses').closest('tr')!.textContent).toContain('RM 105.00');
-    expect(document.body.textContent).not.toMatch(/\(RM -/);
+    expect(screen.getByText(/620-0000/).closest('tr')!.textContent).toContain('(100.00)');
+    expect(screen.getByText(/601-0003/).closest('tr')!.textContent).toContain('600.00');
+    expect(screen.getByText('Total expenses').closest('tr')!.textContent).toContain('105.00');
+    expect(document.body.textContent).not.toMatch(/\(-/);
   });
 
   /* LAYOUT (owner 2026-09-14, docs/bugs/0911): category subtotals, % of
@@ -113,7 +119,7 @@ describe('the standard statements', () => {
     expect(screen.getByText('% of sales')).toBeTruthy();
     const op = screen.getByText('Operating Expense').closest('tr')!;
     expect(op.getAttribute('data-kind')).toBe('category');
-    expect(op.textContent).toContain('RM 105.00');
+    expect(op.textContent).toContain('105.00');
     expect(op.textContent).toContain('10.5%');
     expect(screen.getByText(/900-A001/).closest('tr')!.textContent).toContain('12.0%');
     expect(screen.getByText(/900-A014/).closest('tr')!.textContent).toContain('-1.5%');
@@ -144,7 +150,7 @@ describe('the standard statements', () => {
     expect(screen.queryByText(/900-A001/)).toBeNull();
     expect(screen.queryByText('ADVERTISEMENT')).toBeNull();
     /* The subtotal stands while the rows are folded. */
-    expect(screen.getByText('Operating Expense').closest('tr')!.textContent).toContain('RM 105.00');
+    expect(screen.getByText('Operating Expense').closest('tr')!.textContent).toContain('105.00');
     fireEvent.click(screen.getByRole('button', { name: 'L2' }));
     expect(screen.getByText(/900-A001/)).toBeTruthy();
     expect(screen.queryByText(/900-A014/)).toBeNull();
@@ -179,12 +185,13 @@ describe('the standard statements', () => {
 
   test('Balance sheet: earnings inside equity and BALANCED at zero check', () => {
     render(<BalanceSheetTab />);
-    expect(screen.getByText('Current period earnings').closest('tr')!.textContent).toContain('RM 430.00');
+    expect(screen.getByText('Current period earnings').closest('tr')!.textContent).toContain('430.00');
     const check = screen.getByText('BALANCED').closest('tr')!;
-    expect(check.textContent).toContain('RM 1,030.00');
-    /* A credit-side balance on the wrong side prints in parentheses, not "RM -". */
-    expect(screen.getByText(/410-0010/).closest('tr')!.textContent).toContain('(RM 20.00)');
-    expect(document.body.textContent).not.toMatch(/RM -/);
+    expect(check.textContent).toContain('1,030.00');
+    /* A credit-side balance on the wrong side prints in parentheses, never a minus. */
+    expect(screen.getByText(/410-0010/).closest('tr')!.textContent).toContain('(20.00)');
+    expect(document.body.textContent).not.toMatch(/\(-/);
+    expect(document.body.textContent).not.toContain('RM ');
   });
 
   /* LAYOUT (docs/bugs/0912): the balance sheet on its tree, every line's %
@@ -194,7 +201,7 @@ describe('the standard statements', () => {
     expect(screen.getByText('% of total assets')).toBeTruthy();
     const assets = screen.getByText('CURRENT ASSETS').closest('tr')!;
     expect(assets.getAttribute('data-kind')).toBe('category');
-    expect(assets.textContent).toContain('RM 1,030.00');
+    expect(assets.textContent).toContain('1,030.00');
     expect(assets.textContent).toContain('100.0%');
     expect(screen.getByText(/330-0000/).closest('tr')!.textContent).toContain('9.7%');
     /* A liability's % is of total assets. */
@@ -204,10 +211,41 @@ describe('the standard statements', () => {
     expect(screen.getByText('BALANCED').closest('tr')!.textContent).toContain('100.0%');
     fireEvent.click(screen.getByRole('button', { name: 'L1' }));
     expect(screen.queryByText(/330-0000/)).toBeNull();
-    expect(screen.getByText('CURRENT ASSETS').closest('tr')!.textContent).toContain('RM 1,030.00');
+    expect(screen.getByText('CURRENT ASSETS').closest('tr')!.textContent).toContain('1,030.00');
     fireEvent.click(screen.getByRole('button', { name: 'All' }));
     expect(screen.getByText(/330-0000/)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Layout' }));
     expect(screen.getByRole('dialog', { name: 'Layout · P&L' })).toBeTruthy();
   });
+
+  /* EXPORTS (owner 2026-09-19: 我这页显示什么就要 export 什么): Excel and PDF carry
+     the statement as shown — the lines at the level chosen, no RM. */
+  test('Excel and PDF carry the statement as shown — the lines at the level chosen', () => {
+    type Sheet = { title: string; subtitle: string; tables: Array<{ columns: Array<{ label: string }>; rows: Array<{ label: string; kind: string; depth: number; cells: unknown[] }> }> };
+    render(<PnLTab />);
+    fireEvent.click(screen.getByRole('button', { name: 'L1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Excel' }));
+    expect(xlsx).toHaveBeenCalledTimes(1);
+    const [sheet, name] = xlsx.mock.calls[0]! as [Sheet, string];
+    expect(name).toMatch(/^pnl-\d{4}-\d{2}-\d{2}-to-\d{4}-\d{2}-\d{2}\.xlsx$/);
+    expect(sheet.title).toBe('P&L');
+    expect(sheet.subtitle).toContain('level 1');
+    expect(sheet.tables[0]!.columns.map((c) => c.label)).toEqual(['Amount', '% of sales']);
+    const labels = sheet.tables[0]!.rows.map((r) => r.label);
+    expect(labels).toContain('Operating Expense');
+    /* Folded away at L1, as on the screen. */
+    expect(labels).not.toContain('900-A001 — ADVERT');
+    expect(sheet.tables[0]!.rows.find((r) => r.label === 'NET PROFIT')).toMatchObject({ kind: 'net', cells: [41_500, 41.5] });
+    fireEvent.click(screen.getByRole('button', { name: 'PDF' }));
+    expect(pdf).toHaveBeenCalledTimes(1);
+    expect((pdf.mock.calls[0]![1] as { fileName: string }).fileName).toMatch(/^pnl-.*\.pdf$/);
+    xlsx.mockClear();
+    render(<BalanceSheetTab />);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Excel' })[1]!);
+    const [bs, bsName] = xlsx.mock.calls[0]! as [Sheet, string];
+    expect(bs.title).toBe('Balance Sheet');
+    expect(bsName).toMatch(/^balance-sheet-\d{4}-\d{2}-\d{2}\.xlsx$/);
+    expect(bs.tables[0]!.rows.find((r) => r.label === 'BALANCED')).toMatchObject({ kind: 'net', cells: [103_000, 100] });
+  });
+
 });

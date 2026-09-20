@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { describe, expect, test } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { AssrOrderPoLine } from "./AssrOrderPoLine";
-import { assrOrderPoHref, assrOrderPos, assrOrderPoText } from "../vendor/scm/lib/assr/case-fields";
+import { assrMergedPos, assrMergedPoText, assrOrderPoHref, assrOrderPos, assrOrderPoText } from "../vendor/scm/lib/assr/case-fields";
 
 /* "Order PO" on a service case — the supplier purchase orders raised from the
  * case's SALES ORDER (server field `order_pos`, backend services/assrOrderPos.ts).
@@ -49,6 +49,38 @@ describe("assrOrderPos / assrOrderPoText", () => {
   });
 });
 
+/* The desktop list column "PO" is ONE value: the order POs and the service PO
+ * (po_no) shown together, deduped so a service PO hand-typed as the order PO
+ * without its company prefix does not double up. The data stays two fields. */
+describe("assrMergedPos / assrMergedPoText", () => {
+  test("order POs first, then the service PO when they differ", () => {
+    const row = { order_pos: [{ id: "a", po_number: "2990-PO-2608-014" }], po_no: "APO/2609-001" };
+    expect(assrMergedPoText(row)).toBe("2990-PO-2608-014 · APO/2609-001");
+  });
+
+  test("a service PO typed without its company prefix collapses into the order PO", () => {
+    // HC-PO-009918 (order) and PO-009918 (hand-typed po_no) are the same PO.
+    const row = { order_pos: [{ id: "a", po_number: "HC-PO-009918" }], po_no: "PO-009918" };
+    expect(assrMergedPos(row)).toEqual([{ id: "a", po_number: "HC-PO-009918" }]);
+    expect(assrMergedPoText(row)).toBe("HC-PO-009918");
+  });
+
+  test("a genuinely different service PO is kept", () => {
+    const row = { order_pos: [{ id: "a", po_number: "HC-PO-009122" }], po_no: "SVC-PO-0042" };
+    expect(assrMergedPoText(row)).toBe("HC-PO-009122 · SVC-PO-0042");
+  });
+
+  test("only one side present shows just that side; none shows nothing", () => {
+    expect(assrMergedPoText({ order_pos: [{ id: "a", po_number: "HC-PO-009990" }] })).toBe("HC-PO-009990");
+    expect(assrMergedPoText({ po_no: "PO-009635" })).toBe("PO-009635");
+    expect(assrMergedPoText({})).toBe("");
+  });
+
+  test("reads a camelCased payload too (the phone)", () => {
+    expect(assrMergedPoText({ orderPos: [{ id: "x", poNumber: "HC-PO-1" }], poNo: "PO-1" })).toBe("HC-PO-1");
+  });
+});
+
 describe("AssrOrderPoLine (desktop case detail)", () => {
   test("each purchase order is a link to its PO page", () => {
     render(<AssrOrderPoLine row={HOUZS_CASE} />);
@@ -78,17 +110,18 @@ describe("where Order PO appears", () => {
   const desktop = code("src/pages/ServiceCases.tsx");
   const mobile = code("src/mobile/MobileServiceCase.tsx");
 
-  test("desktop list: an Order PO column right after DO No, filterable, PO No kept", () => {
+  test("desktop list: one merged PO column after DO No, filterable; the two split columns are gone", () => {
     const doCol = desktop.indexOf('key: "do_numbers"');
-    const orderCol = desktop.indexOf('key: "order_pos"');
-    const poCol = desktop.indexOf('key: "po_no"');
+    const poCol = desktop.indexOf('key: "po"');
     expect(doCol).toBeGreaterThan(-1);
-    expect(orderCol).toBeGreaterThan(doCol);
-    expect(poCol).toBeGreaterThan(orderCol);
-    const block = desktop.slice(orderCol, poCol);
-    expect(block).toContain('label: "Order PO"');
+    expect(poCol).toBeGreaterThan(doCol);
+    const block = desktop.slice(poCol, poCol + 600);
+    expect(block).toContain('label: "PO"');
     expect(block).toContain("filterable: true");
-    expect(block).toContain("assrOrderPoText(r)");
+    expect(block).toContain("assrMergedPoText(r)");
+    // the list no longer carries the two separate PO columns
+    expect(desktop).not.toContain('key: "order_pos"');
+    expect(desktop).not.toContain('key: "po_no"');
   });
 
   test("desktop detail: the read-only line sits above the editable PO No", () => {

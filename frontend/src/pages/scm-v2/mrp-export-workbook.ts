@@ -1,5 +1,7 @@
 // MRP Stock Status Report — Excel export (v7 layout, owner-approved
-// C:\...\MRP-Export-Layout-Mockup-v7.xlsx, 2026-09-16).
+// C:\...\MRP-Export-Layout-Mockup-v7.xlsx, 2026-09-16; v8 splits Coverage /
+// PO Outstanding into two columns, 2026-09-17, to match the on-screen group
+// row's own split).
 //
 // ONE workbook, one SHEET per category tab (Sofa, Bedframe, Mattress,
 // Accessories, Others). Each sheet mirrors what that tab shows on screen
@@ -11,8 +13,18 @@
 //     set composition + customer/state/dates + total qty), then the module
 //     pieces (and any cover / pillow riders) underneath.
 // The header row is dark green; group headers light green; any SHORTAGE demand
-// row is tinted light red. Coverage is ONE column, exactly the on-screen chip:
-// "stock" / "HC-PO-xxxx  ·  ETA dd/mm/yyyy" / "needs PO".
+// row is tinted light red. Coverage and PO Outstanding are TWO columns (v8,
+// owner-approved 2026-09-17 — matches the on-screen group row's own Stock /
+// PO Outstanding / Shortage split), and each reads DIFFERENTLY on the two row
+// kinds:
+//   • Demand row — Coverage is the word ("stock" / "needs PO"); PO Outstanding
+//     is that line's own PO + ETA string. Stock stays blank (it's a SKU-level
+//     total, not a per-line one) and Shortage stays blank off an actual
+//     shortage line, rather than printing 0.
+//   • Group header (green) — Stock / PO Outstanding / Shortage are QTY
+//     rollups for everything under it (PO Outstanding is g.poOutstanding, the
+//     same figure the on-screen group row shows); Coverage stays blank on the
+//     header — it only ever carries the demand-row word.
 //
 // Parity is by CONSTRUCTION: every sheet is fetched with that tab's OWN
 // `?category=` (a category filter changes the allocation inputs, so the full
@@ -29,27 +41,36 @@ import {
   computeTabModels, type ModelGroup, type MrpFilters, type AccessoryBySoDoc,
 } from './mrp-model-pipeline';
 
-/* Column order = the approved v7 layout (A..O). */
+/* Column order = the approved v8 layout (A..P), Customer moved to the last
+   column (owner 2026-09-18: was F, wanted at the end). */
 export const MRP_EXPORT_HEADERS = [
   'Warehouse', 'Item Code', 'Description', 'Item Description 2', 'SO No',
-  'Customer', 'State', 'Processing Date', 'Delivery Date', 'Qty Needed',
-  'Stock', 'Coverage', 'Shortage', 'Status', 'Supplier',
+  'State', 'Processing Date', 'Delivery Date', 'Qty Needed',
+  'Stock', 'Coverage', 'PO Outstanding', 'Shortage', 'Status', 'Supplier', 'Customer',
 ] as const;
-const COL = MRP_EXPORT_HEADERS.length; // 15
+const COL = MRP_EXPORT_HEADERS.length; // 16
 
 type Cell = string | number | null;
 export type SheetRow =
   | { kind: 'group'; cells: Cell[] }
   | { kind: 'demand'; cells: Cell[]; shortage: boolean };
 
-/* The MRP coverage chip, verbatim as a string. `·` is U+00B7 with two spaces
-   either side, matching the v7 mockup. */
+/* Coverage: 'stock' / 'needs PO', blank for a PO-covered line — that text now
+   lives in PO Outstanding (poOutstandingText below). */
 export function coverageText(l: Pick<MrpLine, 'source' | 'poNumber' | 'poEta'>): string {
   if (l.source === 'stock') return 'stock';
   if (l.source === 'shortage') return 'needs PO';
-  // 'po' — allocSourceOf guarantees a PO number here; guard defensively anyway.
+  return '';
+}
+
+/* The covering PO, verbatim as a string. `·` is U+00B7 with two spaces either
+   side, matching the mockup. Blank unless the line is actually PO-covered —
+   the text used to live in Coverage; it now has its own column. */
+export function poOutstandingText(l: Pick<MrpLine, 'source' | 'poNumber' | 'poEta'>): string {
+  if (l.source !== 'po') return '';
+  // allocSourceOf guarantees a PO number here; guard defensively anyway.
   if (!l.poNumber) return '';
-  return l.poEta ? `${l.poNumber}  \u00b7  ETA ${fmtDate(l.poEta)}` : l.poNumber;
+  return l.poEta ? `${l.poNumber}  ·  ETA ${fmtDate(l.poEta)}` : l.poNumber;
 }
 
 /* Readiness word, derived from the ONE coverage signal the MRP screen has (there
@@ -86,7 +107,7 @@ export function sofaSpec(itemCode: string, variantLabel: string | null): string 
 const isoDay = (iso: string | null): string => (iso ? iso.slice(0, 10) : '');
 const blankRow = (): Cell[] => Array<Cell>(COL).fill(null);
 
-/* Build one demand/piece row (columns A..O). `warehouse`/`stock`/`spec` come
+/* Build one demand/piece row (columns A..P). `warehouse`/`stock`/`spec` come
    from the SKU; the rest from the SO line. */
 function demandRow(opts: {
   warehouse: string; itemCode: Cell; spec: string; sku: MrpSku; line: MrpLine;
@@ -98,17 +119,22 @@ function demandRow(opts: {
   // col 2 (Description) stays blank on a demand row — it lives on the group header.
   cells[3] = spec;
   cells[4] = line.soDocNo;
-  cells[5] = line.debtorName ?? '';
-  cells[6] = line.customerState ?? '';
-  cells[7] = isoDay(line.processingDate);
+  cells[5] = line.customerState ?? '';
+  cells[6] = isoDay(line.processingDate);
   // An undated line is planned LAST — the page tags it "No date" rather than blank.
-  cells[8] = line.deliveryDate ? isoDay(line.deliveryDate) : 'No date';
-  cells[9] = line.qty;
-  cells[10] = sku.stock;
-  cells[11] = coverageText(line);
-  cells[12] = line.source === 'shortage' ? line.shortageQty : 0;
+  cells[7] = line.deliveryDate ? isoDay(line.deliveryDate) : 'No date';
+  cells[8] = line.qty;
+  // col 9 (Stock) stays blank on a demand row — it's a SKU-level total, and
+  // repeating it on every line under the group header was noise (owner
+  // 2026-09-17: "idw repetitive below just 6 on first row can already").
+  cells[10] = coverageText(line);
+  cells[11] = poOutstandingText(line);
+  // A covered line's Shortage stays blank rather than a literal 0 — same
+  // owner note: only an actual shortage figure is worth printing.
+  cells[12] = line.source === 'shortage' ? line.shortageQty : null;
   cells[13] = statusText(line.source);
   cells[14] = supplierText(sku, line);
+  cells[15] = line.debtorName ?? '';
   return { kind: 'demand', cells, shortage: line.source === 'shortage' && line.shortageQty > 0 };
 }
 
@@ -135,13 +161,17 @@ export function buildSheetRows(
       head[0] = g.warehouseCode ?? g.warehouseName ?? '';
       head[1] = g.itemCode; // the SO doc no
       head[2] = g.description ?? '';
-      head[5] = first.debtorName ?? '';
-      head[6] = first.customerState ?? '';
-      head[7] = isoDay(first.processingDate);
-      head[8] = first.deliveryDate ? isoDay(first.deliveryDate) : 'No date';
-      head[9] = g.qtyNeeded;
-      head[10] = g.stock;
+      head[5] = first.customerState ?? '';
+      head[6] = isoDay(first.processingDate);
+      head[7] = first.deliveryDate ? isoDay(first.deliveryDate) : 'No date';
+      head[8] = g.qtyNeeded;
+      head[9] = g.stock;
+      // PO Outstanding on the header is the SAME rollup the on-screen group row
+      // shows (g.poOutstanding — total qty covered by a PO across every line
+      // below), not the individual PO strings a demand row carries.
+      head[11] = g.poOutstanding;
       head[12] = g.shortage;
+      head[15] = first.debtorName ?? '';
       out.push({ kind: 'group', cells: head });
       for (const v of g.variants) {
         for (const l of v.lines) {
@@ -166,8 +196,9 @@ export function buildSheetRows(
       const head = blankRow();
       head[1] = g.itemCode;
       head[2] = g.description ?? '';
-      head[9] = g.qtyNeeded;
-      head[10] = g.stock;
+      head[8] = g.qtyNeeded;
+      head[9] = g.stock;
+      head[11] = g.poOutstanding; // rollup, same as the sofa branch above
       head[12] = g.shortage;
       out.push({ kind: 'group', cells: head });
       for (const v of g.variants) {
@@ -201,8 +232,8 @@ const C_SHORT_FONT = '#9E2B22';
 const C_TITLE_FONT = '#0C4D31';
 const C_SUBTITLE_FONT = '#6A6F66';
 
-const COL_WIDTHS = [11, 21, 32, 36, 15, 14, 16, 15, 15, 11, 8, 26, 10, 17, 30];
-const NUM_COLS = new Set([9, 10, 12]); // Qty Needed, Stock, Shortage (0-based)
+const COL_WIDTHS = [11, 21, 32, 36, 15, 16, 15, 15, 11, 8, 12, 26, 10, 17, 30, 14];
+const NUM_COLS = new Set([8, 9, 12]); // Qty Needed, Stock, Shortage (0-based)
 
 function subtitle(view: MrpView, asOf: string | null, warehouseLabel: string, filters: MrpFilters): string {
   const grouped = view.value === 'sofa'
@@ -228,8 +259,13 @@ export type SheetSpec = { view: MrpView; rows: SheetRow[] };
    empty cell in such a row still carries the fill; an empty cell in a plain row
    is `null` (empty, unstyled). */
 function toXlsxCell(value: Cell, col: number, fill: string | null, groupBold: boolean): WxlCell {
-  const isNum = NUM_COLS.has(col);
   const has = value !== null && value !== '';
+  // PO Outstanding (col 11) carries a NUMBER on a group header row (the qty
+  // rollup) and a STRING on a demand row (the PO + ETA text) — so type is
+  // decided per-value there, not by a fixed column. Every other numeric
+  // column is number-only, so NUM_COLS still decides for a blank cell (no
+  // value to read a type from).
+  const isNum = has ? typeof value === 'number' : NUM_COLS.has(col);
   if (!has && !fill) return null;
   const cell: NonNullable<WxlCell> = {};
   if (has) {

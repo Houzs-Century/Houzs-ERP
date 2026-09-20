@@ -21,7 +21,7 @@
 import { useMemo, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import {
-  ArrowLeft, Boxes, ArrowDownLeft, ArrowUpRight, ChevronDown, ChevronRight,
+  ArrowLeft, Boxes, ArrowDownLeft, ArrowUpRight, ChevronDown, ChevronRight, Search,
 } from 'lucide-react';
 import {
   useInventoryMovements,
@@ -34,10 +34,23 @@ import {
 } from '../../vendor/scm/lib/inventory-queries';
 import { adjustmentReasonLabel, fmtSen, fmtDate, fmtDateTime, fmtQty } from '@2990s/shared';
 import { DataTable, type Column } from '../../components/DataTable';
+import { DateField } from '../../vendor/scm/components/DateField';
+import {
+  EMPTY_MOVEMENT_FILTER,
+  filterMovements,
+  isMovementFilterActive,
+  type MovementFilter,
+  type MovementType,
+} from './stockMovementFilter';
 import styles from './Inventory.module.css';
 import chrome from './SalesOrderDetail.module.css';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
+
+// Type toggles for the movements filter. TRANSFER is a real movement_type but
+// inventory writes it as a signed ADJUSTMENT here, so only these three ever
+// appear in the ledger — the owner named exactly IN / OUT / ADJUSTMENT.
+const MOVEMENT_TYPE_OPTIONS: readonly MovementType[] = ['IN', 'OUT', 'ADJUSTMENT'];
 
 const fmtRm = (sen: number | null | undefined): string => fmtSen(sen);
 
@@ -241,18 +254,53 @@ export const StockCard = () => {
     ];
   }, [whName]);
 
-  /* Loaded-only search over the ledger — the page filters (DataTable renders
-     box + hint), matching the old DataGrid's built-in search fields. */
+  /* Compact structured filter over the loaded ledger (owner 2026-09-18):
+     Type / Warehouse / Date range / Source doc. Client-side over the already
+     -loaded per-SKU rows; the predicate lives in stockMovementFilter.ts so it
+     is unit-tested apart from this component. The RUNNING balance column is
+     left as the TRUE full-history balance — each surviving row keeps the
+     balance it was computed with above — so filtering never rewrites it; a
+     note under the toolbar says so when a filter is active. */
+  const [movementFilter, setMovementFilter] = useState<MovementFilter>(EMPTY_MOVEMENT_FILTER);
+  const filterActive = isMovementFilterActive(movementFilter);
+
+  // Warehouse options for the select — the distinct warehouses that actually
+  // appear in the loaded movements, by their SHORT code (the canonical label).
+  const movementWarehouses = useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const m of movementsWithBalance) {
+      if (!seen.has(m.warehouse_id)) seen.set(m.warehouse_id, whName(m.warehouse_id));
+    }
+    return [...seen.entries()]
+      .map(([id, code]) => ({ id, code }))
+      .sort((a, b) => a.code.localeCompare(b.code));
+  }, [movementsWithBalance, whName]);
+
+  /* Free-text search box (kept — it also matches notes / reason / qty, which the
+     structured filter does not) plus the structured filter. Both narrow. */
   const [movementSearch, setMovementSearch] = useState('');
   const visibleMovements = useMemo(() => {
+    const filtered = filterMovements(movementsWithBalance, movementFilter);
     const term = movementSearch.trim().toLowerCase();
-    if (!term) return movementsWithBalance;
-    return movementsWithBalance.filter((m) =>
+    if (!term) return filtered;
+    return filtered.filter((m) =>
       `${fmtDateTime(m.created_at)} ${m.movement_type} ${m.source_doc_no ?? ''} ${whName(m.warehouse_id)} ${m.qty} ${m.reason_code ? adjustmentReasonLabel(m.reason_code) : ''} ${m.notes ?? ''}`
         .toLowerCase()
         .includes(term),
     );
-  }, [movementsWithBalance, movementSearch, whName]);
+  }, [movementsWithBalance, movementFilter, movementSearch, whName]);
+
+  const toggleType = (t: MovementType) => setMovementFilter((f) => ({
+    ...f,
+    types: f.types.includes(t) ? f.types.filter((x) => x !== t) : [...f.types, t],
+  }));
+  const clearMovementFilter = () => {
+    setMovementFilter(EMPTY_MOVEMENT_FILTER);
+    setMovementSearch('');
+  };
+  // "showing X of N" is meaningful whenever EITHER the structured filter or the
+  // free-text search has narrowed the loaded rows.
+  const anyNarrowing = filterActive || movementSearch.trim() !== '';
 
   // ── Stats (always reflect the active warehouse filter) ────────────────
   const productName =
@@ -413,6 +461,99 @@ export const StockCard = () => {
             Movements ({movementsWithBalance.length}{warehouseId ? ' · filtered' : ''})
           </h2>
         </header>
+        {!movementsQ.isLoading && !movementsQ.error && movementsWithBalance.length > 0 && (
+          <>
+            <div className={styles.movementFilters}>
+              <div className={styles.mvGroup}>
+                <span className={styles.mvGroupLabel}>Type</span>
+                <div className={styles.mvTypeChips}>
+                  {MOVEMENT_TYPE_OPTIONS.map((t) => (
+                    <button
+                      key={t}
+                      type="button"
+                      className={styles.chip}
+                      data-active={movementFilter.types.includes(t)}
+                      aria-pressed={movementFilter.types.includes(t)}
+                      onClick={() => toggleType(t)}
+                    >
+                      {t}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className={styles.mvGroup}>
+                <span className={styles.mvGroupLabel}>Warehouse</span>
+                <select
+                  className={styles.mvSelect}
+                  aria-label="Filter by warehouse"
+                  value={movementFilter.warehouseId ?? ''}
+                  onChange={(e) => setMovementFilter((f) => ({
+                    ...f,
+                    warehouseId: e.target.value || null,
+                  }))}
+                >
+                  <option value="">All warehouses</option>
+                  {movementWarehouses.map((w) => (
+                    <option key={w.id} value={w.id}>{w.code}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className={styles.mvGroup}>
+                <span className={styles.mvGroupLabel}>Date range</span>
+                <div className={styles.mvDateRange}>
+                  <DateField
+                    aria-label="From date"
+                    value={movementFilter.dateFrom}
+                    max={movementFilter.dateTo || undefined}
+                    onChange={(iso) => setMovementFilter((f) => ({ ...f, dateFrom: iso }))}
+                  />
+                  <span className={styles.mvDateSep}>–</span>
+                  <DateField
+                    aria-label="To date"
+                    value={movementFilter.dateTo}
+                    min={movementFilter.dateFrom || undefined}
+                    onChange={(iso) => setMovementFilter((f) => ({ ...f, dateTo: iso }))}
+                  />
+                </div>
+              </div>
+
+              <div className={styles.mvGroup}>
+                <span className={styles.mvGroupLabel}>Source doc</span>
+                <div className={styles.mvSourceSearch}>
+                  <Search {...ICON} className={styles.searchIcon} />
+                  <input
+                    type="search"
+                    className={styles.searchInput}
+                    placeholder="e.g. HC-DO-"
+                    aria-label="Filter by source document"
+                    value={movementFilter.sourceDoc}
+                    onChange={(e) => setMovementFilter((f) => ({ ...f, sourceDoc: e.target.value }))}
+                  />
+                </div>
+              </div>
+
+              <div className={styles.mvMeta}>
+                <span className={styles.mvCount}>
+                  {anyNarrowing
+                    ? `Showing ${visibleMovements.length} of ${movementsWithBalance.length}`
+                    : `${movementsWithBalance.length} movements`}
+                </span>
+                {anyNarrowing && (
+                  <button type="button" className={styles.mvClearBtn} onClick={clearMovementFilter}>
+                    Clear filters
+                  </button>
+                )}
+              </div>
+            </div>
+            {filterActive && (
+              <p className={styles.mvRunningNote}>
+                Running Balance reflects the full unfiltered history at each row, not the filtered subset.
+              </p>
+            )}
+          </>
+        )}
         {!movementsQ.isLoading && movementsQ.error ? (
           <div className={styles.bannerWarn} style={{ margin: 'var(--space-3)' }}>
             <strong>Failed to load.</strong>{' '}
@@ -427,7 +568,7 @@ export const StockCard = () => {
             exportName="stock-card-movements"
             rows={movementsQ.isLoading ? null : visibleMovements}
             loading={movementsQ.isLoading}
-            emptyLabel="No movements for this SKU yet."
+            emptyLabel={anyNarrowing ? 'No movements match the filter.' : 'No movements for this SKU yet.'}
             getRowKey={(m) => m.id}
             columns={movementColumns}
             search={{

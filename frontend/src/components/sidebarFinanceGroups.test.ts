@@ -64,6 +64,6 @@ describe('the Finance sidebar', () => {
   it('puts the reports together, the Corrections report among them', () => {
     const reports = finance?.children?.find((g) => g.label === 'Reports');
     const labels = (reports?.children ?? []).map((t) => t.label);
-    expect(labels).toEqual(expect.arrayContaining(['P&L', 'Balance Sheet', 'Receipts & Payments', 'AR Aging', 'AP Aging', 'Corrections', 'Sales Report']));
+    expect(labels).toEqual(expect.arrayContaining(['P&L', 'Balance Sheet', 'Cash Flow', 'AR Aging', 'AP Aging', 'Corrections', 'Sales Report']));
   });
 });

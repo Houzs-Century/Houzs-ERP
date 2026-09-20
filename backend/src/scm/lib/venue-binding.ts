@@ -289,10 +289,22 @@ async function loadPmsCandidates(db: VenueBindingDb, userId: number): Promise<Pm
        bounded by "projects this one person is assigned to", which is small. */
     const rows = await db
       .prepare(
+        /* ARCHIVED AND CANCELLED PROJECTS ARE NOT A VENUE (owner 2026-09-19).
+           This query had NEITHER guard — the loosest read of `projects` in the
+           system — so a fair the office had withdrawn from, or cancelled
+           outright, could still be stamped onto a new sales order AUTOMATICALLY,
+           with nobody clicking anything. That is worse than the dropdown fault
+           it was found beside (project 359, archived six weeks before its event,
+           offered under "Running now"): a wrong default is silent, and venue
+           feeds exhibition P&L and commission, so it is paid to a real person.
+           The module's own rule is that a failure here must yield NOTHING
+           rather than a guess — an archived project is a guess. */
         `SELECT p.id AS id, p.name AS projectname, p.venue AS venue,
                 p.start_date AS startdate, p.end_date AS enddate
            FROM projects p
           WHERE p.venue IS NOT NULL AND p.venue <> ''
+            AND p.archived_at IS NULL
+            AND lower(coalesce(p.status, '')) <> 'cancelled'
             AND (
               p.pic_id = ?
               OR EXISTS (

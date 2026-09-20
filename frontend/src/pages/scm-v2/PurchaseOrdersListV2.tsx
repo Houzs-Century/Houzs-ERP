@@ -584,7 +584,22 @@ function DetailDrawer({
               </div>
 
               <div className="mt-4 rounded-lg border border-border bg-surface px-5 py-4">
-                <TotalRow k="PO total" v={fmtRm(total)} strong />
+                <div className="flex items-center justify-between gap-3 border-b border-border-subtle pb-3">
+                  <QtyTotal label="Ordered" value={items.reduce((s, l) => s + l.qty, 0)} />
+                  <QtyTotal
+                    label="Received"
+                    value={items.reduce((s, l) => s + l.received_qty, 0)}
+                    tone="synced"
+                  />
+                  <QtyTotal
+                    label="Balance"
+                    value={items.reduce((s, l) => s + Math.max(0, l.qty - l.received_qty), 0)}
+                    tone="balance"
+                  />
+                </div>
+                <div className="pt-3">
+                  <TotalRow k="Grand total" v={fmtRm(total)} strong />
+                </div>
               </div>
             </div>
 
@@ -662,6 +677,31 @@ function RowKV({ k, v }: { k: string; v: ReactNode }) {
       <span className="flex-1 text-[13px] font-semibold leading-relaxed text-ink">
         {v}
       </span>
+    </div>
+  );
+}
+
+function QtyTotal({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: number;
+  tone?: "synced" | "balance";
+}) {
+  const color =
+    tone === "synced" && value > 0
+      ? "text-synced"
+      : tone === "balance" && value > 0
+        ? "text-accent-bright"
+        : "text-ink";
+  return (
+    <div className="flex flex-col items-center gap-0.5">
+      <span className="font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">
+        {label}
+      </span>
+      <span className={cn("font-money text-[15px] font-bold", color)}>{value}</span>
     </div>
   );
 }
@@ -1133,7 +1173,12 @@ export function PurchaseOrdersListV2() {
      stays in the chooser, hidden until picked; the export follows whatever the
      operator shows. */
   const lineCols = poLineColumns();
-  const docNoOf = (r: PoGridRow): string => r.linked_ac_docno?.trim() || poDisplayNumber(r.po_number, r.revision);
+  // _R suffix applies to whichever number is shown (owner report 2026-09-18:
+  // an AC-linked PO's revision was invisible because the AC doc no bypassed
+  // poDisplayNumber entirely) — the AC book keeps one document per PO (edited
+  // in place, never a new doc no), so its number needs the same revision
+  // marker the ERP number gets.
+  const docNoOf = (r: PoGridRow): string => poDisplayNumber(r.linked_ac_docno?.trim() || r.po_number, r.revision);
   const columns: PoColumn[] = [
     {
       key: "po_number",

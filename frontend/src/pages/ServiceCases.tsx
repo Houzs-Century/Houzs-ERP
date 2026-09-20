@@ -43,6 +43,7 @@ import {
 } from "lucide-react";
 import { HubGrid } from "../components/HubGrid";
 import { PageHeader } from "../components/Layout";
+import { NumberInput } from "../vendor/scm/components/NumberInput";
 import {
   DetailLayout,
   DetailGrid,
@@ -122,7 +123,7 @@ import { Forbidden } from "./Forbidden";
 import { PrintPreviewModal, usePrintPreview } from "../components/scm-v2/PrintPreviewModal";
 import { defaultBrandingForCompany, HOUZS_COMPANY_CODE } from "../lib/branding";
 import { resolutionRoute, isStageActive, assrSubStatus, assrSubStatusAddsInfo, assrSubStatusLabel, ASSR_STAGES, ASSR_SUB_STATUSES } from "../vendor/scm/lib/assr/stages";
-import { ASSR_ISSUE_CATEGORIES, ASSR_NOTE_AUDIENCES, assrNoteIsCustomerVisible, assrOrderPoText, type AssrNoteAudience } from "../vendor/scm/lib/assr/case-fields";
+import { ASSR_ISSUE_CATEGORIES, ASSR_NOTE_AUDIENCES, assrNoteIsCustomerVisible, assrMergedPoText, type AssrNoteAudience } from "../vendor/scm/lib/assr/case-fields";
 import { AssrOrderPoLine } from "../components/AssrOrderPoLine";
 import { ASSR_STAGE_LABEL } from "../vendor/scm/lib/assr-stage-labels";
 import type {
@@ -722,20 +723,15 @@ function CasesView({
       getValue: (r) => r.delivery_order || r.do_numbers,
     },
     {
-      key: "order_pos",
+      key: "po",
       filterable: true,
-      label: "Order PO",
-      // Supplier POs raised from the case's SO (server merge). PO No below is the case's own service PO.
-      render: (r) => <span className="font-mono text-xs">{assrOrderPoText(r) || "—"}</span>,
-      getValue: (r) => assrOrderPoText(r),
-    },
-    {
-      key: "po_no",
-      filterable: true,
-      label: "PO No",
-      // The customer's purchase-order reference on the case (Nico 2026-08-14).
-      render: (r) => <span className="font-mono text-xs">{r.po_no || "—"}</span>,
-      getValue: (r) => r.po_no,
+      label: "PO",
+      // ONE column for both PO facts on a case: the SO's supplier "Order PO"s
+      // (order_pos, read-only) and the case's own service PO (po_no), deduped
+      // so a service PO typed without its company prefix does not show twice.
+      // The two stay separate fields — the detail panel edits/mints po_no.
+      render: (r) => <span className="font-mono text-xs">{assrMergedPoText(r) || "—"}</span>,
+      getValue: (r) => assrMergedPoText(r),
     },
     {
       key: "customer_name",
@@ -2971,14 +2967,13 @@ function CreatePanel({
                       onClick={(e) => e.preventDefault()}
                     >
                       <span className="text-[10px] uppercase tracking-brand text-ink-muted">Qty</span>
-                      <input
-                        type="number"
-                        min={1}
+                      <NumberInput
+                        sign="unsigned"
+                        decimal={false}
                         value={itemQty[item.item_code] ?? (item.qty && item.qty > 0 ? item.qty : 1)}
                         onClick={(e) => e.stopPropagation()}
-                        onChange={(e) => {
-                          const n = parseInt(e.target.value, 10);
-                          setItemQty((q) => ({ ...q, [item.item_code]: Number.isFinite(n) && n > 0 ? n : 1 }));
+                        onValueChange={(n) => {
+                          setItemQty((q) => ({ ...q, [item.item_code]: n != null && n > 0 ? n : 1 }));
                         }}
                         className="w-14 rounded-md border border-border bg-bg px-2 py-1 text-right text-[12px] outline-none focus:border-primary"
                       />
@@ -8366,11 +8361,11 @@ function ItemQtyStepper({ caseId, item, disabled, onSaved, toast }: {
       >
         −
       </button>
-      <input
-        type="number"
-        min={1}
+      <NumberInput
+        sign="unsigned"
+        decimal={false}
         value={qty}
-        onChange={(e) => set(parseInt(e.target.value, 10) || 1)}
+        onValueChange={(n) => set(n ?? 1)}
         disabled={saving}
         className="w-8 border-x border-border bg-transparent py-0.5 text-center text-[11px] font-semibold text-ink outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
         title="Quantity"
@@ -8426,11 +8421,11 @@ function ItemCartonStepper({ caseId, item, disabled, onSaved, toast }: {
       >
         −
       </button>
-      <input
-        type="number"
-        min={1}
+      <NumberInput
+        sign="unsigned"
+        decimal={false}
         value={qtyCarton}
-        onChange={(e) => set(parseInt(e.target.value, 10) || 1)}
+        onValueChange={(n) => set(n ?? 1)}
         disabled={saving}
         className="w-8 border-x border-border bg-transparent py-0.5 text-center text-[11px] font-semibold text-ink outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
         title="Cartons"

@@ -14,8 +14,8 @@
 
 import { describe, expect, test } from 'vitest';
 import {
-  REPORT_BLOCKS, defaultLayout, laidDepth, laidLineNode, layOutBlock, pctOf, validateLayout,
-  type ChartAccount, type LaidLine, type LaidNode, type Layout, type LayoutItem,
+  REPORT_BLOCKS, defaultLayout, isCashFlowTyped, laidDepth, laidLineNode, layOutBlock, layOutCashFlow, pctOf, upgradeCashFlowLayout, validateLayout,
+  type ChartAccount, type LaidLine, type LaidNode, type Layout, type LayoutCategory, type LayoutItem,
 } from './report-layout';
 
 const acc = (code: string, name: string, type: string, parentCode: string | null, section: string | null): ChartAccount =>
@@ -41,7 +41,7 @@ const CHART: ChartAccount[] = [
 ];
 
 const shape = (items: LayoutItem[]): unknown[] =>
-  items.map((it) => (it.kind === 'account' ? it.code : { [it.id]: shape(it.children) }));
+  items.map((it) => (it.kind === 'account' ? it.code : it.kind === 'subtotal' ? { subtotal: it.label } : { [it.id]: shape(it.children) }));
 
 describe('defaultLayout — the chart as a tree', () => {
   const layout = defaultLayout('pnl', CHART);
@@ -112,18 +112,25 @@ describe('defaultLayout — the chart as a tree', () => {
   test('the performance layout has the P&L\'s other income and expenses blocks and nothing else', () => {
     const perf = defaultLayout('performance', CHART);
     expect(Object.keys(perf.blocks)).toEqual(['otherIncome', 'expenses']);
-    expect(shape(perf.blocks.expenses!)).toEqual(defaultLayout('pnl', CHART).blocks.expenses!.map((it) => (it.kind === 'account' ? it.code : { [it.id]: shape(it.children) })));
+    expect(shape(perf.blocks.expenses!)).toEqual(shape(defaultLayout('pnl', CHART).blocks.expenses!));
   });
 
-  test('receipts & payments: ONE block, the whole chart with a section layer, in the chart\'s order', () => {
+  test('cash flow: ONE block — RECEIPTS (In) over PAYMENTS (Out), each the whole chart with a section layer in the chart\'s order, every line directed', () => {
     const rp = defaultLayout('rp', BS_CHART);
     expect(Object.keys(rp.blocks)).toEqual(['accounts']);
     expect(REPORT_BLOCKS.rp[0]!.sections.length).toBe(16);
-    const sections = rp.blocks.accounts!.map((it) => (it.kind === 'category' ? it.id : it.code));
-    expect(sections).toEqual([
-      'sec:CAPITAL', 'sec:RETAINED EARNING', 'sec:FIXED ASSETS', 'sec:CURRENT ASSETS', 'sec:CURRENT LIABILITIES', 'sec:LONG TERM LIABILITIES',
-      'sec:SALES', 'sec:SALES ADJUSTMENTS', 'sec:COST OF GOODS SOLD', 'sec:OTHER INCOMES', 'sec:EXPENSES', 'sec:TAXATION',
+    const tops = rp.blocks.accounts! as LayoutCategory[];
+    expect(tops.map((t) => [t.id, t.label, t.flow, t.totalLabel])).toEqual([['side:in', 'RECEIPTS', 'in', 'Total receipts'], ['side:out', 'PAYMENTS', 'out', 'Total payments']]);
+    const sections = (side: 'in' | 'out') => (tops[side === 'in' ? 0 : 1]!.children).map((it) => (it.kind === 'category' ? it.id : it.kind));
+    expect(sections('in')).toEqual([
+      'in:sec:CAPITAL', 'in:sec:RETAINED EARNING', 'in:sec:FIXED ASSETS', 'in:sec:CURRENT ASSETS', 'in:sec:CURRENT LIABILITIES', 'in:sec:LONG TERM LIABILITIES',
+      'in:sec:SALES', 'in:sec:SALES ADJUSTMENTS', 'in:sec:COST OF GOODS SOLD', 'in:sec:OTHER INCOMES', 'in:sec:EXPENSES', 'in:sec:TAXATION',
     ]);
+    expect(sections('out').map((id) => String(id).replace(/^out:/, 'in:'))).toEqual(sections('in'));
+    const flows = new Set<string>();
+    const walk = (items: LayoutItem[]): void => { for (const it of items) { if (it.kind === 'account') flows.add(String(it.flow)); else if (it.kind === 'category') walk(it.children); } };
+    walk(tops[0]!.children); expect([...flows]).toEqual(['in']);
+    flows.clear(); walk(tops[1]!.children); expect([...flows]).toEqual(['out']);
   });
 
   test('a tree the chart built always validates — section names carry spaces and a slash', () => {
@@ -223,14 +230,14 @@ describe('layOutBlock — the period on the tree', () => {
     const laid = layOutBlock(tree, lines, 2, 1_000_000);
     expect(flat(laid)).toEqual([
       ['category', 'Operating Expense', 105_000, 10.5, [
-        ['account', '900-A001 — ACCOUNTING FEE', 120_000, 12],
+        ['account', '900-A001 · ACCOUNTING FEE', 120_000, 12],
         ['category', 'ADVERTISEMENT', -15_000, -1.5, [
-          ['account', '900-A014 — ADVERTISEMENT - SHOWROOM', -15_000, -1.5],
+          ['account', '900-A014 · ADVERTISEMENT - SHOWROOM', -15_000, -1.5],
         ]],
       ]],
-      ['account', '900-O001 — OPERATIING EXPENSE', 50_000, 5],
+      ['account', '900-O001 · OPERATIING EXPENSE', 50_000, 5],
       ['unassigned', 'Unassigned', 7_700, 0.8, [
-        ['account', '900-N001 — NEW SINCE THE SAVE', 7_700, 0.8],
+        ['account', '900-N001 · NEW SINCE THE SAVE', 7_700, 0.8],
       ]],
     ]);
     /* The block's total is exactly the sum of what is printed. */
@@ -242,7 +249,7 @@ describe('layOutBlock — the period on the tree', () => {
     const ticked: LayoutItem[] = JSON.parse(JSON.stringify(tree));
     (ticked[0] as { hiddenFor?: number[] }).hiddenFor = [2];
     const forTwo = layOutBlock(ticked, lines, 2, null);
-    expect(forTwo.map((n) => n.label)).toEqual(['900-O001 — OPERATIING EXPENSE', 'Unassigned']);
+    expect(forTwo.map((n) => n.label)).toEqual(['900-O001 · OPERATIING EXPENSE', 'Unassigned']);
     expect(forTwo[1]!.children.map((n) => n.code)).toEqual(['900-A001', '900-A014', '900-N001']);
     expect(forTwo.reduce((s, n) => s + n.amountSen, 0)).toBe(162_700);
     /* The other company still sees it. */
@@ -294,6 +301,116 @@ describe('layOutBlock — the period on the tree', () => {
   test('laidLineNode — a line as a leaf, keyed by its own key', () => {
     const n = laidLineNode({ code: 'ADV', key: 'ADV', name: 'Supplier advances (预付)', label: 'Supplier advances (预付)', amountSen: 30_000, cells: { '310-0010': 30_000 } }, 120_000);
     expect(n).toEqual({ kind: 'account', id: 'acc:ADV', label: 'Supplier advances (预付)', code: 'ADV', key: 'ADV', amountSen: 30_000, pct: 25, cells: { '310-0010': 30_000 }, children: [] });
-    expect(laidLineNode({ code: '900-A001', name: 'ACCOUNTING FEE', amountSen: 1 }, null)).toMatchObject({ id: 'acc:900-A001', key: '900-A001', label: '900-A001 — ACCOUNTING FEE', pct: null });
+    expect(laidLineNode({ code: '900-A001', name: 'ACCOUNTING FEE', amountSen: 1 }, null)).toMatchObject({ id: 'acc:900-A001', key: '900-A001', label: '900-A001 · ACCOUNTING FEE', pct: null });
+  });
+});
+
+describe('the Cash Flow tree (owner 2026-09-18)', () => {
+  const legacy = (): Layout => ({ version: 1, blocks: { accounts: [
+    { kind: 'category', id: 'sec:CURRENT ASSETS', label: 'CURRENT ASSETS', hiddenFor: [1], children: [{ kind: 'account', code: '300-0000' }] },
+    { kind: 'account', code: '900-A001' },
+  ] } });
+
+  test('a tree from before directions is read as RECEIPTS (In) over PAYMENTS (Out), ids prefixed, ticks kept; a typed tree is left alone', () => {
+    expect(isCashFlowTyped(legacy().blocks.accounts)).toBe(false);
+    const up = upgradeCashFlowLayout(legacy()) as Layout;
+    expect(isCashFlowTyped(up.blocks.accounts)).toBe(true);
+    const r = validateLayout('rp', legacy());
+    expect(r.ok).toBe(true);
+    const tops = (r as { layout: Layout }).layout.blocks.accounts as LayoutCategory[];
+    expect(tops.map((t) => [t.id, t.label, t.flow, t.totalLabel])).toEqual([['side:in', 'RECEIPTS', 'in', 'Total receipts'], ['side:out', 'PAYMENTS', 'out', 'Total payments']]);
+    expect(shape(tops[0]!.children)).toEqual([{ 'in:sec:CURRENT ASSETS': ['300-0000'] }, '900-A001']);
+    expect(shape(tops[1]!.children)).toEqual([{ 'out:sec:CURRENT ASSETS': ['300-0000'] }, '900-A001']);
+    expect((tops[0]!.children[0] as LayoutCategory).hiddenFor).toEqual([1]);
+    expect((tops[1]!.children[1] as { flow?: string }).flow).toBe('out');
+    expect(upgradeCashFlowLayout(up)).toBe(up);
+  });
+
+  test('the rules: every account inside an In or Out category, a top category with a side, a subtotal only at the top, each side of an account placed once', () => {
+    const cf = (accounts: unknown[]): unknown => ({ version: 1, blocks: { accounts } });
+    const typed = (...items: unknown[]) => cf([{ kind: 'category', id: 'side:in', label: 'Source of funds', flow: 'in', totalLabel: 'Total Cash In', children: items }]);
+    const bad = (raw: unknown) => (validateLayout('rp', raw) as { ok: false; reason: string }).reason;
+    /* Half-marked is not legacy: a typed side beside a bare account is refused, not wrapped. */
+    expect(bad(cf([{ kind: 'category', id: 'side:in', label: 'In', flow: 'in', children: [] }, { kind: 'account', code: '300-0000' }]))).toBe('Cash Flow: 300-0000 must sit inside an In or Out category.');
+    expect(bad(cf([{ kind: 'category', id: 'side:in', label: 'In', flow: 'in', children: [] }, { kind: 'category', id: 'c', label: 'No side', children: [] }]))).toBe('Cash Flow: No side must be In or Out.');
+    expect(bad(typed({ kind: 'category', id: 'c', label: 'Deep', children: [{ kind: 'subtotal', id: 's', label: 'Net' }] }))).toBe('Category Deep: a subtotal line belongs to the Cash Flow layout, at the top level.');
+    expect(bad(typed({ kind: 'account', code: '300-0000' }, { kind: 'account', code: '300-0000', flow: 'net' }))).toBe("300-0000's money in is placed twice.");
+    expect(bad(typed({ kind: 'account', code: '300-0000', flow: 'out' }, { kind: 'account', code: '300-0000', flow: 'net' }))).toBe("300-0000's money out is placed twice.");
+    expect(bad(cf([{ kind: 'subtotal', id: 's', label: '' }]))).toBe('Subtotal s has no name.');
+    /* Good: the same account In and Out, a subtotal at the top, the category's own subtotal name; a sub-category's stray side is dropped. */
+    const ok = validateLayout('rp', cf([
+      { kind: 'category', id: 'side:in', label: 'Source of funds', flow: 'in', totalLabel: ' Total Cash In ', children: [
+        { kind: 'account', code: '300-0000' }, { kind: 'account', code: '300-0000', flow: 'out' },
+        { kind: 'category', id: 'sub', label: 'Sub', flow: 'out', children: [{ kind: 'account', code: '350-0010', flow: 'net' }] },
+      ] },
+      { kind: 'subtotal', id: 'sub:ops', label: 'Net operation surplus' },
+      { kind: 'category', id: 'side:out', label: 'Expenses', flow: 'out', children: [{ kind: 'account', code: '900-A001' }] },
+    ]));
+    expect(ok.ok).toBe(true);
+    const items = (ok as { layout: Layout }).layout.blocks.accounts!;
+    expect(items.map((it) => it.kind)).toEqual(['category', 'subtotal', 'category']);
+    const src = items[0] as LayoutCategory;
+    expect(src.totalLabel).toBe('Total Cash In');
+    expect(src.children.map((it) => (it.kind === 'account' ? it.flow : it.kind))).toEqual(['in', 'out', 'category']);
+    expect((src.children[2] as LayoutCategory).flow).toBeUndefined();
+    expect(((src.children[2] as LayoutCategory).children[0] as { flow?: string }).flow).toBe('net');
+    expect(((items[2] as LayoutCategory).children[0] as { flow?: string }).flow).toBe('out');
+    /* Directions belong to the Cash Flow alone. */
+    expect((validateLayout('pnl', { version: 1, blocks: { expenses: [{ kind: 'subtotal', id: 's', label: 'x' }] } }) as { reason: string }).reason).toBe('Block expenses: a subtotal line belongs to the Cash Flow layout, at the top level.');
+  });
+
+  test('laid out: signs by side, a Net line, a running subtotal, an unticked category to Unassigned, % of the side; in − out = receipts − payments', () => {
+    const tree: LayoutItem[] = [
+      { kind: 'category', id: 'src', label: 'Source of funds', flow: 'in', totalLabel: 'Total Cash In', children: [
+        { kind: 'category', id: 'dep', label: 'Deposit received', children: [
+          { kind: 'account', code: '300-0000', flow: 'in' }, { kind: 'account', code: '300-0000', flow: 'out' },
+        ] },
+      ] },
+      { kind: 'category', id: 'exp', label: 'Expenses', flow: 'out', totalLabel: 'Total Cash Out', children: [{ kind: 'account', code: '900-A001', flow: 'out' }] },
+      { kind: 'subtotal', id: 'ops', label: 'Net operation surplus / (deficit)' },
+      { kind: 'category', id: 'fund', label: 'Loan From / (Repayment)', flow: 'in', totalLabel: 'Net Loan', children: [{ kind: 'account', code: '350-0010', flow: 'net' }] },
+      { kind: 'category', id: 'hid', label: 'Hidden here', flow: 'out', hiddenFor: [2], children: [{ kind: 'account', code: '905-0000', flow: 'out' }] },
+    ];
+    const receipts: LaidLine[] = [
+      { code: '300-0000', name: 'TRADE DEBTORS', amountSen: 90_000, cells: { '310-0010': 90_000 } },
+      { code: '350-0010', name: 'HOUZS VENTURE', amountSen: 60_000, cells: { '310-0010': 60_000 } },
+      { code: '530-0000', name: 'INTEREST INCOME', amountSen: 5_000, cells: { '310-0010': 5_000 } },
+    ];
+    const payments: LaidLine[] = [
+      { code: '300-0000', name: 'TRADE DEBTORS', amountSen: 1_000, cells: { '310-0010': 1_000 } },
+      { code: '900-A001', name: 'ACCOUNTING FEE', amountSen: 45_000, cells: { '310-0010': 45_000 } },
+      { code: '350-0010', name: 'HOUZS VENTURE', amountSen: 20_000, cells: { '320-0000': 20_000 } },
+      { code: '905-0000', name: 'TRAVELLING', amountSen: 700, cells: { '320-0000': 700 } },
+      { code: 'ADV', key: 'ADV', name: 'Supplier advances (预付)', label: 'Supplier advances (预付)', amountSen: 3_000, cells: { '310-0010': 3_000 } },
+    ];
+    const laid = layOutCashFlow(tree, receipts, payments, 2);
+    const flat = (nodes: LaidNode[]): unknown[] => nodes.map((n) => [n.kind, n.label, n.flow ?? null, n.amountSen, n.pct, ...(n.children.length > 0 ? [flat(n.children)] : [])]);
+    /* Money in 155,000, money out 69,700; the tree reads in 134,000 − out 48,700 — the same 85,300. */
+    expect(laid.inSen).toBe(134_000);
+    expect(laid.outSen).toBe(48_700);
+    expect(laid.inSen - laid.outSen).toBe(155_000 - 69_700);
+    expect(flat(laid.nodes)).toEqual([
+      ['category', 'Source of funds', 'in', 89_000, 66.4, [
+        ['category', 'Deposit received', null, 89_000, 66.4, [
+          ['account', '300-0000 · TRADE DEBTORS', 'in', 90_000, 67.2],
+          ['account', '300-0000 · TRADE DEBTORS', 'out', -1_000, -0.7],
+        ]],
+      ]],
+      ['category', 'Expenses', 'out', 45_000, 92.4, [['account', '900-A001 · ACCOUNTING FEE', 'out', 45_000, 92.4]]],
+      ['subtotal', 'Net operation surplus / (deficit)', null, 44_000, null],
+      ['category', 'Loan From / (Repayment)', 'in', 40_000, 29.9, [['account', '350-0010 · HOUZS VENTURE', 'net', 40_000, 29.9]]],
+      ['unassigned', 'Unassigned receipts', 'in', 5_000, 3.7, [['account', '530-0000 · INTEREST INCOME', 'in', 5_000, 3.7]]],
+      ['unassigned', 'Unassigned payments', 'out', 3_700, 7.6, [
+        ['account', '905-0000 · TRAVELLING', 'out', 700, 1.4],
+        ['account', 'Supplier advances (预付)', 'out', 3_000, 6.2],
+      ]],
+    ]);
+    expect(laid.nodes[0]).toMatchObject({ totalLabel: 'Total Cash In', cells: { '310-0010': 89_000 } });
+    expect(laid.nodes[2]!.cells).toEqual({ '310-0010': 44_000 });
+    expect(laid.nodes[3]!.children[0]!.cells).toEqual({ '310-0010': 60_000, '320-0000': -20_000 });
+    /* One account, two lines, two ids — the monthly merge keys by id. */
+    const dep = laid.nodes[0]!.children[0]!;
+    expect(dep.children.map((n) => n.id)).toEqual(['in:acc:300-0000', 'out:acc:300-0000']);
+    expect(laid.nodes[3]!.children[0]!.id).toBe('net:acc:350-0010');
   });
 });

@@ -20,7 +20,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 // HOUZS VENDOR — Link lives on 'react-router-dom' in react-router v6 (the
 // version Houzs ships). Only the import specifier changed.
 import { Link, useNavigate } from 'react-router-dom';
-import { Plus, Save, Trash2, X, ArrowRightLeft } from 'lucide-react';
+import { Save, Trash2, X, ArrowRightLeft } from 'lucide-react';
+import { AddLineButton } from '../../vendor/scm/components/AddLineButton';
 import { Button } from '@2990s/design-system';
 import { formatPhone } from '@2990s/shared/phone';
 import {
@@ -36,7 +37,7 @@ import {
 import { useIdempotencyKey } from '../../lib/idempotency';
 import { serviceConfirm } from '../../vendor/scm/lib/dialog-service';
 import { readScmHandoff, removeScmHandoff, writeScmHandoff } from '../../lib/scmHandoffStorage';
-import { useMfgProducts, useMaintenanceConfig, useSpecialAddons } from '../../vendor/scm/lib/mfg-products-queries';
+import { useMfgProducts, useMaintenanceConfig, useSpecialAddons, mfgCategoryLabel } from '../../vendor/scm/lib/mfg-products-queries';
 import { activeOptions, maintPickerValues } from '@2990s/shared';
 import { useFabricTrackings, fabricOptionLabel } from '../../vendor/scm/lib/fabric-queries';
 import { missingRequiredVariants } from '../../vendor/scm/components/SoLineCard';
@@ -48,6 +49,7 @@ import {
   type PoPriceMatrix,
 } from '@2990s/shared/mfg-pricing';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
+import { NumberInput } from '../../vendor/scm/components/NumberInput';
 import { DiscountInput } from '../../vendor/scm/components/DiscountInput';
 import { SpecialOrders } from '../../vendor/scm/components/SpecialOrders';
 import { specialOrderSurface } from '../../vendor/scm/lib/special-order-surface';
@@ -1139,7 +1141,7 @@ export const PurchaseOrderNew = () => {
                           ))
                         : sortByText(allSkus.data ?? []).map((p) => (
                             <option key={p.id} value={p.code}>
-                              {p.name} · {p.category}
+                              {p.name} · {mfgCategoryLabel(p.category)}
                             </option>
                           ))
                       }
@@ -1246,7 +1248,7 @@ export const PurchaseOrderNew = () => {
                       color: 'var(--fg-muted)',
                       marginBottom: 'var(--space-2)',
                     }}>
-                      {l.category} Variants
+                      {mfgCategoryLabel(l.category)} Variants
                     </div>
 
                     {/* BEDFRAME — Commander 2026-05-28: mirror the Sales Order
@@ -1404,10 +1406,11 @@ export const PurchaseOrderNew = () => {
                 <div className={styles.formGrid4} style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))' }}>
                   <label className={styles.field}>
                     <span className={styles.fieldLabel}>Qty</span>
-                    <input
-                      type="number" min={0} step={1}
+                    <NumberInput
                       value={l.qty}
-                      onChange={(e) => setLine(l.rid, { qty: Number(e.target.value) })}
+                      sign="unsigned"
+                      decimal={false}
+                      onValueChange={(n) => setLine(l.rid, { qty: n ?? 0 })}
                       className={styles.fieldInput}
                       style={{ textAlign: 'right' }}
                     />
@@ -1465,28 +1468,7 @@ export const PurchaseOrderNew = () => {
             );
           })}
 
-          <button
-            type="button"
-            onClick={addLine}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 6,
-              width: '100%',
-              padding: '12px 14px',
-              border: '1px dashed var(--c-orange)',
-              borderRadius: 'var(--radius-md)',
-              background: 'transparent',
-              color: 'var(--c-orange)',
-              fontFamily: 'var(--font-sans)',
-              fontSize: 'var(--fs-13)',
-              fontWeight: 600,
-              cursor: 'pointer',
-            }}
-          >
-            <Plus {...ICON} /> Add another item
-          </button>
+          <AddLineButton variant="block" onClick={addLine} />
         </div>
       </section>
 

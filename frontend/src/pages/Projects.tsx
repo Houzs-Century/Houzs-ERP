@@ -87,7 +87,7 @@ import { useFocusFromUrl } from "../hooks/useFocusFromUrl";
 import { useStickyFilters } from "../hooks/useStickyFilters";
 import { useAuth } from "../auth/AuthContext";
 import { usePageAccess } from "../auth/PageGuard";
-import { isSalesStaff, isDirectorUser, isSalesDirectorUser, canCreateEvent, canLogSalesEntry, canWriteProjectFinance } from "../auth/salesAccess";
+import { isSalesStaff, isDirectorUser, isSalesDirectorUser, canCreateEvent, canSeeSoloOrganizer, canLogSalesEntry, canWriteProjectFinance } from "../auth/salesAccess";
 import { readProjectAccess, projectAccessUnresolved, holdsChecklistApproval } from "../auth/projectAccess";
 import { roleLabelAdmitsRole } from "../auth/roleLabelAdmits";
 import { isCrewScopedUser } from "../auth/crewScope";
@@ -123,6 +123,7 @@ import type {
   Paginated,
 } from "./projects/types";
 import { composeDefaultProjectName, viewableMime, googleCalendarUrl } from "./projects/projectHelpers";
+import { salesOrderProjectLabel, type SoloMaskProject } from "./projects/soloOrganizerMask";
 import { STATUS_OPTIONS, ProjectStatusSelect } from "./projects/projectStatus";
 import { OrganizerPicker, VenuePicker } from "./projects/ProjectPickers";
 import { CreateProjectPanel } from "./projects/CreateProjectPanel";
@@ -3595,8 +3596,7 @@ function ProjectDetailContent({
             <DetailMain>
               <ProjectSalesEntriesSection
                 projectId={id}
-                projectCode={p.code}
-                projectName={p.name}
+                project={p}
                 canManage={can("sales.manage")}
                 currentTotalSales={detail.data?.finance?.total_sales ?? null}
                 onTotalSaved={() => detail.reload()}
@@ -4122,16 +4122,16 @@ function ProjectSpecStrip({
       <div
         className={cn(
           "grid grid-cols-1 divide-x divide-y divide-border-subtle border-y border-border-subtle md:grid-cols-2",
-          // View mode = the 4 fields the owner reads at a glance, one row.
+          // View mode = the 5 fields the owner reads at a glance, one row.
           // Edit mode = a 4-col grid for every field.
-          "lg:grid-cols-4",
+          editing ? "lg:grid-cols-4" : "lg:grid-cols-5",
         )}
       >
-        {/* Owner 2026-09-03: the resting strip shows START, END, RENTAL and SIZE
-            and nothing else — "other details keep hidden behind edit". Booth,
+        {/* Owner 2026-09-03: the resting strip shows START, END, SIZE, BOOTH and
+            RENTAL and nothing else — "other details keep hidden behind edit".
             Venue, State, Organizer and Contractor were on it too, which pushed
-            the two numbers the owner actually checks off the row entirely.
-            Clicking Edit still reveals every field. */}
+            the numbers the owner actually checks off the row entirely.
+            Booth came back 2026-09-09. Edit still reveals every field. */}
         {editing && (<>
         <SpecCell label="Brand">
           {editing ? (
@@ -4254,15 +4254,6 @@ function ProjectSpecStrip({
           )}
         </SpecCell>
         {editing && (<>
-        <SpecCell label="Booth">
-          <SpecTextField
-            editing={editing}
-            value={p.booth_no}
-            placeholder="—"
-            onChange={(v) => patch({ booth_no: v })}
-          />
-        </SpecCell>
-
         <SpecCell label="Venue *">
           <VenuePicker
             value={p.venue}
@@ -4293,8 +4284,8 @@ function ProjectSpecStrip({
           />
         </SpecCell>
         </>)}
-        {/* Size and Rental stay on the resting strip — the two numbers the
-            owner checks without opening anything (owner 2026-09-03). */}
+        {/* Size, Booth and Rental stay on the resting strip — what the owner
+            checks without opening anything (owner 2026-09-03/09-09). */}
         <SpecCell label="Size · sqm">
           <div className="flex items-center gap-1.5">
             <SpecTextField
@@ -4314,6 +4305,15 @@ function ProjectSpecStrip({
               toast={toast}
             />
           </div>
+        </SpecCell>
+
+        <SpecCell label="Booth">
+          <SpecTextField
+            editing={editing}
+            value={p.booth_no}
+            placeholder="—"
+            onChange={(v) => patch({ booth_no: v })}
+          />
         </SpecCell>
 
         <SpecCell label="Rental · RM">
@@ -7966,16 +7966,15 @@ function ServicePhotos({ projectId, readOnly = false }: { projectId: number; rea
 
 function ProjectSalesEntriesSection({
   projectId,
-  projectCode,
-  projectName,
+  project,
   canManage,
   currentTotalSales,
   onTotalSaved,
   toast,
 }: {
   projectId: number;
-  projectCode: string | null;
-  projectName: string;
+  /** code + name + what soloOrganizerMask needs to label the Sales Order panel. */
+  project: SoloMaskProject;
   canManage: boolean;
   currentTotalSales: number | null;
   onTotalSaved: () => void;
@@ -8112,7 +8111,7 @@ function ProjectSalesEntriesSection({
 
   const rows = list.data?.data ?? [];
   const totals = list.data?.totals;
-  const projectLabel = projectCode ? `${projectCode} · ${projectName}` : projectName;
+  const projectLabel = salesOrderProjectLabel(project, canSeeSoloOrganizer(auth.user)); // solo: organizer masked outside BD/Owner/weisiang (owner 2026-09-18)
 
   // When an event has no individual sales entries, fall back to the project's
   // lump-sum total (project_finance.total_sales) so this box matches the
@@ -8172,7 +8171,7 @@ function ProjectSalesEntriesSection({
                 }`;
                 await api.downloadFile(
                   `/api/sales/entries/export?${qs}`,
-                  `sales_${projectCode || projectId}.csv`
+                  `sales_${project.code || projectId}.csv`
                 );
               } catch (e: any) {
                 toast.error(e?.message || "Export failed");

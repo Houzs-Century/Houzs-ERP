@@ -125,7 +125,7 @@ import {
   pickCity,
   pickPostcode,
   cityPlaceholder,
-  postcodePlaceholder, POSTCODE_NEEDS_STATE,
+  postcodePlaceholder,
 } from '../../vendor/scm/lib/address-cascade';
 import { StatePicker } from '../../vendor/scm/components/StatePicker';
 import {
@@ -3433,7 +3433,11 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
                   Those land on the pending screen for a person, not on a guess. */}
               <FairPicker
                 id="so-detail-fair"
-                value={{ venue: form.venue || null, organizer: null }}
+                /* A saved order stores a PLACE, never an occurrence, so this
+                   screen has no period to offer — explicit nulls. Editing the
+                   fair here still drops the link to PENDING for the nightly
+                   reconcile; only the CREATE forms send a picked event today. */
+                value={{ venue: form.venue || null, organizer: null, startDate: null, endDate: null }}
                 soDate={header.so_date}
                 disabled={inputsDisabled}
                 onChange={(next) => setForm((s) => ({
@@ -3634,7 +3638,6 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
               onResolve={(r) => setForm((s) => ({ ...s, address1: r.address, ...(r.state && r.city ? { state: r.state, city: r.city } : {}) }))}
               postcodeChoices={postcodeChoices}
               placeholder={postcodePlaceholder(form.state, form.city)}
-              blockedReason={form.state ? undefined : POSTCODE_NEEDS_STATE}
               disabled={inputsDisabled || stateLocked}
               title={stateLocked ? 'Processing has passed — Postcode is locked (it drives the PO delivery location).' : undefined}
               classes={{ field: styles.field, label: styles.fieldLabel, select: styles.fieldSelect, selectWrap: styles.selectWrap, chevron: styles.selectChevron, input: styles.fieldInput }}

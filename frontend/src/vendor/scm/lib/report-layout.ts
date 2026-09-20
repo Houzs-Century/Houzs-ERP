@@ -14,10 +14,20 @@ import { authedFetch } from './authed-fetch';
 export type ReportKey = 'pnl' | 'balance_sheet' | 'performance' | 'rp';
 
 export const REPORT_TITLES: Record<ReportKey, string> = {
-  pnl: 'P&L', balance_sheet: 'Balance Sheet', performance: 'Performance P&L', rp: 'Receipts & Payments',
+  pnl: 'P&L', balance_sheet: 'Balance Sheet', performance: 'Performance P&L', rp: 'Cash Flow',
 };
 
-export type LayoutAccount = { kind: 'account'; code: string };
+/** Cash Flow: which way a line reads — money in, money out, or in − out. */
+export type Flow = 'in' | 'out' | 'net';
+/** Cash Flow: a top category's side — it feeds Total Cash In or Total Cash Out. */
+export type Side = 'in' | 'out';
+
+export type LayoutAccount = {
+  kind: 'account';
+  code: string;
+  /** Cash Flow only: the line's direction. */
+  flow?: Flow;
+};
 export type LayoutCategory = {
   kind: 'category';
   id: string;
@@ -26,9 +36,15 @@ export type LayoutCategory = {
   code?: string;
   /** Companies that UNTICKED it — absent means every company shows it. */
   hiddenFor?: number[];
+  /** Cash Flow only: a TOP category's side (sub-categories follow their parent). */
+  flow?: Side;
+  /** Cash Flow only: what the category's subtotal line prints; absent = "Total <label>". */
+  totalLabel?: string;
   children: LayoutItem[];
 };
-export type LayoutItem = LayoutAccount | LayoutCategory;
+/** Cash Flow only: a running-sum line at the top level — everything above it, In less Out. */
+export type LayoutSubtotal = { kind: 'subtotal'; id: string; label: string };
+export type LayoutItem = LayoutAccount | LayoutCategory | LayoutSubtotal;
 export type Layout = { version: 1; blocks: Record<string, LayoutItem[]> };
 
 export type LayoutBlockDef = { key: string; title: string; sections: string[] };
@@ -51,16 +67,20 @@ export type ReportLayoutResponse = {
 
 /** A block of the report as the server laid the period on the tree. */
 export type LaidNode = {
-  kind: 'category' | 'account' | 'unassigned';
+  kind: 'category' | 'account' | 'unassigned' | 'subtotal';
   id: string;
   label: string;
   code?: string;
-  /** The row's key on a line (Receipts & Payments: the drill-down's handle). */
+  /** The row's key on a line (Cash Flow: the drill-down's handle). */
   key?: string;
   amountSen: number;
   pct: number | null;
-  /** A figure per money column (Receipts & Payments), summed on a category. */
+  /** A figure per money column (Cash Flow), summed on a category. */
   cells?: Record<string, number>;
+  /** Cash Flow: an account line's direction; a top category's or unassigned group's side. */
+  flow?: Flow;
+  /** Cash Flow: what a top category's subtotal line prints. */
+  totalLabel?: string;
   children: LaidNode[];
 };
 
@@ -162,9 +182,11 @@ export const laidDepth = (nodes: LaidNode[]): number =>
 
 /* ── the editor's operations ──────────────────────────────────────────────── */
 
-/** One key per item: a category by its id, an account by its code. */
-export const accountKey = (code: string): string => `a:${code}`;
-export const itemKey = (it: LayoutItem): string => (it.kind === 'account' ? accountKey(it.code) : it.id);
+/** One key per item: a category or a subtotal by its id, an account by its
+    code — and on the Cash Flow by its direction too, since one account may
+    sit twice (its money in, its money out). */
+export const accountKey = (code: string, flow?: Flow): string => (flow ? `a:${flow}:${code}` : `a:${code}`);
+export const itemKey = (it: LayoutItem): string => (it.kind === 'account' ? accountKey(it.code, it.flow) : it.id);
 
 const clone = <T>(x: T): T => JSON.parse(JSON.stringify(x)) as T;
 
@@ -207,7 +229,7 @@ export function renameCategory(layout: Layout, id: string, label: string): Layou
   const next = clone(layout);
   for (const items of Object.values(next.blocks)) {
     const hit = locate(items, id);
-    if (hit && hit.item.kind === 'category') { hit.item.label = label; return next; }
+    if (hit && (hit.item.kind === 'category' || hit.item.kind === 'subtotal')) { hit.item.label = label; return next; }
   }
   return layout;
 }
@@ -267,6 +289,8 @@ export function placeItem(layout: Layout, block: string, item: LayoutItem, targe
   const key = itemKey(item);
   if (target.kind === 'into' && (target.categoryId === key || contains(item, target.categoryId))) return layout;
   if (target.kind === 'before' && (target.key === key || contains(item, target.key))) return layout;
+  /* A subtotal line lives at the top level only — never inside a category. */
+  if (item.kind === 'subtotal' && (target.kind === 'into' || (target.kind === 'before' && !(layout.blocks[block] ?? []).some((it) => itemKey(it) === target.key)))) return layout;
   const next = clone(layout);
   const items = next.blocks[block] ?? (next.blocks[block] = []);
   const was = locate(items, key);
@@ -286,9 +310,9 @@ export function placeItem(layout: Layout, block: string, item: LayoutItem, targe
 }
 
 /** An account leaf out of the tree — it goes back to Unassigned, never away. */
-export function unplaceAccount(layout: Layout, block: string, code: string): Layout {
+export function unplaceAccount(layout: Layout, block: string, code: string, flow?: Flow): Layout {
   const next = clone(layout);
-  const hit = locate(next.blocks[block] ?? [], accountKey(code));
+  const hit = locate(next.blocks[block] ?? [], accountKey(code, flow));
   if (!hit || hit.item.kind !== 'account') return layout;
   hit.list.splice(hit.index, 1);
   return next;
@@ -298,20 +322,97 @@ export function unplaceAccount(layout: Layout, block: string, code: string): Lay
 const placedCodes = (items: LayoutItem[], into = new Set<string>()): Set<string> => {
   for (const it of items) {
     if (it.kind === 'account') into.add(it.code);
-    else { if (it.code) into.add(it.code); placedCodes(it.children, into); }
+    else if (it.kind === 'category') { if (it.code) into.add(it.code); placedCodes(it.children, into); }
   }
+  return into;
+};
+
+/** Cash Flow: the account codes whose money on `side` the tree already
+    places — an account line reading that way (or Net, which reads both), or a
+    category's header account on a top category of that side. */
+const placedOnSide = (items: LayoutItem[], wanted: Side): Set<string> => {
+  const into = new Set<string>();
+  const walk = (list: LayoutItem[], side: Side): void => {
+    for (const it of list) {
+      if (it.kind === 'subtotal') continue;
+      if (it.kind === 'account') { const f = it.flow ?? side; if (f === wanted || f === 'net') into.add(it.code); continue; }
+      if (it.code && side === wanted) into.add(it.code);
+      walk(it.children, side);
+    }
+  };
+  for (const it of items) if (it.kind === 'category') walk([it], it.flow ?? 'in');
   return into;
 };
 
 /** The block's accounts (by the chart's section) the tree does not place —
     what the report prints under Unassigned, and what the editor offers to
-    drag in. */
-export function unplacedAccounts(layout: Layout, block: LayoutBlockDef, accounts: LayoutAccountRow[]): LayoutAccountRow[] {
-  const placed = placedCodes(layout.blocks[block.key] ?? []);
+    drag in. On the Cash Flow a side is asked for: the accounts whose money
+    in (or out) no line reads yet. */
+export function unplacedAccounts(layout: Layout, block: LayoutBlockDef, accounts: LayoutAccountRow[], side?: Side): LayoutAccountRow[] {
+  const items = layout.blocks[block.key] ?? [];
+  const placed = side ? placedOnSide(items, side) : placedCodes(items);
   return accounts
     .filter((a) => a.section !== null && block.sections.includes(a.section) && !placed.has(a.code))
     .sort((a, b) => a.code.localeCompare(b.code));
 }
+
+/* ── the Cash Flow's own operations (owner 2026-09-18) ───────────────────── */
+
+/** A top category's side — In feeds Total Cash In, Out feeds Total Cash Out;
+    a category deeper down follows its parent, so it is left alone. */
+export function setCategoryFlow(layout: Layout, id: string, side: Side): Layout {
+  const next = clone(layout);
+  for (const items of Object.values(next.blocks)) {
+    const top = items.find((it) => it.kind === 'category' && it.id === id);
+    if (top && top.kind === 'category') { top.flow = side; return next; }
+  }
+  return layout;
+}
+
+/** What a category's subtotal line prints (Total Cash In, Net Loan …); a
+    blank name goes back to "Total <label>". Kept as typed — the server trims. */
+export function setTotalLabel(layout: Layout, id: string, label: string): Layout {
+  const next = clone(layout);
+  for (const items of Object.values(next.blocks)) {
+    const hit = locate(items, id);
+    if (!hit || hit.item.kind !== 'category') continue;
+    if (label.trim()) hit.item.totalLabel = label; else delete hit.item.totalLabel;
+    return next;
+  }
+  return layout;
+}
+
+/** An account line's direction: In, Out, or Net (in − out). Its key changes
+    with it — one account's In line and Out line are two lines. */
+export function setAccountFlow(layout: Layout, block: string, key: string, flow: Flow): Layout {
+  const next = clone(layout);
+  const hit = locate(next.blocks[block] ?? [], key);
+  if (!hit || hit.item.kind !== 'account') return layout;
+  hit.item.flow = flow;
+  return next;
+}
+
+/** A running subtotal at the end of the block's top level — everything above it, In less Out. */
+export function addSubtotal(layout: Layout, block: string, label: string, id: string): Layout {
+  const next = clone(layout);
+  const items = next.blocks[block] ?? (next.blocks[block] = []);
+  items.push({ kind: 'subtotal', id, label });
+  return next;
+}
+
+/** A subtotal line goes; it held nothing. */
+export function removeSubtotal(layout: Layout, id: string): Layout {
+  const next = clone(layout);
+  for (const items of Object.values(next.blocks)) {
+    const at = items.findIndex((it) => it.kind === 'subtotal' && it.id === id);
+    if (at >= 0) { items.splice(at, 1); return next; }
+  }
+  return layout;
+}
+
+/** A fresh subtotal id — the category scheme, its own prefix. */
+export const newSubtotalId = (now = Date.now(), salt = Math.floor(Math.random() * 46_656)): string =>
+  `sub:${now.toString(36)}${salt.toString(36).padStart(3, '0')}`;
 
 /** Every category id of a tree — Fold all / Unfold all in the editor. */
 export const categoryIds = (layout: Layout): string[] => {

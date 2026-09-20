@@ -42,6 +42,13 @@ vi.mock('../../vendor/scm/lib/stock-queries', async (importOriginal) => ({
       adjustCalls.push(vars);
       opts.onSuccess({ movement: { id: `mv-${adjustCalls.length}` } });
     },
+    // StockAdjustmentNew's multi-item Save loop posts each item sequentially
+    // via mutateAsync (owner 2026-09-18) — react-query's real useMutation
+    // always provides both; this stub needs to as well.
+    mutateAsync: async (vars: (typeof adjustCalls)[number]) => {
+      adjustCalls.push(vars);
+      return { movement: { id: `mv-${adjustCalls.length}` } };
+    },
   }),
 }));
 vi.mock('../../vendor/scm/lib/inventory-queries', async (importOriginal) => ({
@@ -91,7 +98,9 @@ describe('StockTransferNew — the next step after Post', () => {
     fireEvent.change(screen.getByPlaceholderText('Type code…'), { target: { value: 'CH-1' } });
     const bucket = document.querySelector('tbody select') as HTMLSelectElement;
     fireEvent.change(bucket, { target: { value: '' } });
-    fireEvent.change(document.querySelector('tbody input[type="number"]') as HTMLInputElement, { target: { value: qty } });
+    const qtyInput = document.querySelector('tbody input[aria-label^="Qty for"]') as HTMLInputElement;
+    fireEvent.focus(qtyInput);
+    fireEvent.change(qtyInput, { target: { value: qty } });
     fireEvent.click(screen.getByRole('button', { name: /Post Transfer/ }));
   };
 
@@ -144,12 +153,15 @@ describe('StockAdjustmentNew — the next step after Save', () => {
     </MemoryRouter>,
   );
 
+  // Line-by-line (owner 2026-09-18): no Increase/Decrease toggle — a positive
+  // qty IS an increase, a negative qty a decrease. Type a signed number.
   const fillAndSave = (qty: string) => {
     fireEvent.change(select(/^Warehouse \*/), { target: { value: 'w1' } });
     fireEvent.change(screen.getByPlaceholderText('Type or pick a SKU code…'), { target: { value: 'CH-1' } });
-    fireEvent.click(screen.getByRole('button', { name: /Increase/ }));
-    fireEvent.change(screen.getByLabelText(/Qty \*/), { target: { value: qty } });
-    fireEvent.change(select(/Reason \*/), { target: { value: 'FOUND' } });
+    const qtyInput = document.querySelector('tbody input[aria-label^="Qty for"]') as HTMLInputElement;
+    fireEvent.focus(qtyInput);
+    fireEvent.change(qtyInput, { target: { value: qty } });
+    fireEvent.change(screen.getByLabelText(/Reason for/) as HTMLSelectElement, { target: { value: 'FOUND' } });
     fireEvent.click(screen.getByRole('button', { name: /Save Adjustment/ }));
   };
 
@@ -162,7 +174,7 @@ describe('StockAdjustmentNew — the next step after Save', () => {
 
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(select(/^Warehouse \*/).value).toBe('');
-    expect(select(/Reason \*/).value).toBe('');
+    expect((screen.getByLabelText(/Reason for/) as HTMLSelectElement).value).toBe('');
 
     fillAndSave('5');
     await screen.findByRole('dialog');

@@ -37,6 +37,7 @@ import type { Env, Variables } from '../env';
 import { categorySwapAllowed } from '../shared/category-swap';
 import { PRODUCT_CODE_CASCADE } from '../lib/product-code-rename';
 import { moveModelCategory, planModelCategoryMoves, type ImportModelMove } from '../lib/model-category-move';
+import { ensureModelForSku, modelCodeForSku } from '../lib/ensure-model-for-sku';
 import { MFG_PRODUCT_CATEGORIES, MFG_CATEGORY_LABELS, mfgCategoryLabel, parseMfgCategory } from '../shared/product-categories';
 
 export const mfgProducts = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -320,6 +321,11 @@ mfgProducts.post('/', async (c) => {
   if (!name)  return c.json({ error: 'name_required' }, 400);
   if (!VALID_CATEGORIES.has(category)) return c.json({ error: 'invalid_category', allowed: [...VALID_CATEGORIES] }, 400);
 
+  // Company is the only scope boundary (service role bypasses RLS), and
+  // ensureModelForSku needs it — require it up front.
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+
   const supabase = c.get('supabase');
   // Generate a stable id matching the existing seed convention. crypto is
   // global in CF Workers; fall back if absent.
@@ -349,7 +355,21 @@ mfgProducts.post('/', async (c) => {
        fabric_color removed (not used by 2990's retail catalogue). */
   };
 
-  const { data, error } = await supabase.from('mfg_products').insert({ ...row, company_id: activeCompanyId(c) }).select('id, code').single();
+  // Every SKU belongs to a Model (owner 2026-09-18) — find-or-create it and
+  // stamp model_id so this bare create is uniform with the New-SKU/Model dialog
+  // and the batch import. A variant (base_model set) links to the shared model;
+  // a flat product is its own 1:1 model.
+  const ensured = await ensureModelForSku(supabase, {
+    companyId: co.companyId,
+    code,
+    name,
+    category,
+    baseModel: (body.baseModel as string) ?? null,
+  });
+  if (!ensured.ok) return c.json({ error: 'model_ensure_failed', reason: ensured.reason }, 500);
+  row.model_id = ensured.modelId;
+
+  const { data, error } = await supabase.from('mfg_products').insert({ ...row, company_id: co.companyId }).select('id, code').single();
   if (error) {
     if (error.code === '23505') return c.json({ error: 'duplicate_code', reason: error.message }, 409);
     /* DEAD BRANCH -- here and at EVERY other 42501 site in this file. 42501 is
@@ -390,6 +410,10 @@ export const batchImportMfgProductsHandler = async (c: AppContext) => {
   if (!plan.ok) return c.json({ error: 'load_failed', reason: plan.reason }, 500);
   const modelsMoved: ImportModelMove[] = [];
   const moveFailed = new Map<string, string>();
+  // One find-or-create per (category, model_code) for the WHOLE batch: many
+  // SKUs share a base_model, so the first new SKU mints the model and the rest
+  // reuse its id from here instead of a read (and a possible insert) per row.
+  const modelIdCache = new Map<string, string>();
 
   // Data-loss-safe upsert (Wei Siang). Only fields PRESENT and non-empty in
   // the body row are written. On an ON CONFLICT update that means a column the
@@ -528,6 +552,31 @@ export const batchImportMfgProductsHandler = async (c: AppContext) => {
       ({ error } = await supabase.from('mfg_products').update(row).eq('code', code).eq('company_id', activeCompanyId(c)));
     } else {
       if (incomingSeat.length > 0) row.seat_height_prices = incomingSeat;
+      // Every NEW SKU belongs to a Model (owner 2026-09-18). name + category are
+      // guaranteed present on a create by the guard above; base_model links a
+      // variant's SKUs to one shared model, a flat product is its own 1:1 model.
+      // Only the INSERT branch touches model_id — an UPDATE of an existing SKU
+      // never has its model_id changed.
+      const skuCategory = String(row.category);
+      const skuBaseModel = typeof row.base_model === 'string' ? row.base_model : null;
+      const cacheKey = `${skuCategory}|${modelCodeForSku(skuBaseModel, code)}`;
+      let modelId = modelIdCache.get(cacheKey);
+      if (modelId === undefined) {
+        const ensured = await ensureModelForSku(supabase, {
+          companyId: co.companyId,
+          code,
+          name,
+          category: skuCategory,
+          baseModel: skuBaseModel,
+        });
+        if (!ensured.ok) {
+          failures.push({ code, reason: ensured.reason });
+          continue;
+        }
+        modelId = ensured.modelId;
+        modelIdCache.set(cacheKey, modelId);
+      }
+      row.model_id = modelId;
       const rand = (typeof crypto !== 'undefined' && crypto.randomUUID)
         ? crypto.randomUUID()
         : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;

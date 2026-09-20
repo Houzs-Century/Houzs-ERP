@@ -46,6 +46,7 @@ import {
   Truck,
   Star,
   ChevronDown,
+  Info,
 } from 'lucide-react';
 import { Button } from '../../components/Button';
 import { PageHeader } from '../../components/Layout';
@@ -94,6 +95,7 @@ import { CostAnchorCard } from './CostAnchorCard';
 import { ProductPriceTimeline } from './ProductPriceTimeline';
 import { SkuHistoryTabs } from './SkuHistoryTabs';
 import { AddSupplierBinding } from './AddSupplierBinding';
+import { DeleteBindingButton } from './DeleteBindingButton';
 import { ImportModelsMoved } from '../../vendor/scm/components/ImportModelsMoved';
 import { MFG_CATEGORY_LABELS, MFG_PRODUCT_CATEGORIES } from '../../vendor/shared/product-categories';
 import { useStaffLookup } from '../../hooks/useStaffLookup';
@@ -1524,7 +1526,13 @@ export const MaintenanceTab = ({
                   onClick={() => setActiveKey(t.key)}
                 >
                   <span>{t.label}</span>
-                  <span className={styles.maintCount}>({count})</span>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                    {/* Priced pools carry a single surcharge cost (the "RM" tag,
+                        mirroring the approved Maintenance mockup); unpriced
+                        pools show only their count. */}
+                    {t.priced && <span className={styles.maintRmPill}>RM</span>}
+                    <span className={styles.maintCount}>({count})</span>
+                  </span>
                 </button>
               );
             })}
@@ -1931,15 +1939,12 @@ const SofaCompartmentsList = ({
             {...dragRowProps(i)}
             style={{
               ...(dragRowProps(i).style ?? {}),
-              gridTemplateColumns: '32px 32px 56px 1fr auto auto auto',
+              gridTemplateColumns: '32px 56px 1fr auto auto auto',
               gap: 'var(--space-3)',
               alignItems: 'center',
               opacity: entryIsActive ? 1 : 0.55,
             }}
           >
-            <button type="button" className={styles.maintRowIcon} title="History">
-              <History {...ICON_PROPS} />
-            </button>
             <span className={styles.maintRowIdx} style={editMode ? { cursor: 'grab' } : undefined}>
               {i + 1}
             </span>
@@ -2220,11 +2225,10 @@ const SofaCompartmentsList = ({
           style={{
             background: '#fff',
             borderColor: '#16695f',
-            gridTemplateColumns: '32px 32px 1fr auto',
+            gridTemplateColumns: '32px 1fr auto',
           }}
         >
-          <span className={styles.maintRowIcon}><Plus {...ICON_PROPS} /></span>
-          <span className={styles.maintRowIdx}>+</span>
+          <span className={styles.maintRowIdx}><Plus {...ICON_PROPS} /></span>
           <input
             type="text"
             placeholder="New compartment code (e.g. 1A(LHF))"
@@ -2864,13 +2868,10 @@ const MaintenanceList = ({
             {...dragRowProps(i)}
             style={{
               ...(dragRowProps(i).style ?? {}),
-              gridTemplateColumns: '32px 32px 1fr auto auto',
+              gridTemplateColumns: '32px 1fr auto auto',
               opacity: entryIsActive ? 1 : 0.55,
             }}
           >
-            <button type="button" className={styles.maintRowIcon} title="History">
-              <History {...ICON_PROPS} />
-            </button>
             <span className={styles.maintRowIdx} style={editMode ? { cursor: 'grab' } : undefined}>{i + 1}</span>
             <span className={styles.maintRowValue}>
               {editMode ? (
@@ -3008,11 +3009,10 @@ const MaintenanceList = ({
             style={{
               background: '#fff',
               borderColor: '#16695f',
-              gridTemplateColumns: '32px 32px 1fr auto',
+              gridTemplateColumns: '32px 1fr auto',
             }}
           >
-            <span className={styles.maintRowIcon}><Plus {...ICON_PROPS} /></span>
-            <span className={styles.maintRowIdx}>+</span>
+            <span className={styles.maintRowIdx}><Plus {...ICON_PROPS} /></span>
             {isSizeRow ? (
               /* PR (Commander 2026-06-22) — Bedframe/Mattress ADD row mirrors
                  the inline 3-input editor (code · label · dimensions) so a new
@@ -3150,12 +3150,10 @@ const MaintenanceList = ({
           {...dragRowProps(i)}
           style={{
             ...(dragRowProps(i).style ?? {}),
+            gridTemplateColumns: '32px 1fr auto',
             opacity: opt.active === false ? 0.55 : 1,
           }}
         >
-          <button type="button" className={styles.maintRowIcon} title="History">
-            <History {...ICON_PROPS} />
-          </button>
           <span className={styles.maintRowIdx} style={editMode ? { cursor: 'grab' } : undefined}>{i + 1}</span>
           <span className={styles.maintRowValue}>
             {editMode ? (
@@ -3279,11 +3277,10 @@ const MaintenanceList = ({
           style={{
             background: '#fff',
             borderColor: '#16695f',
-            gridTemplateColumns: '32px 32px 1fr auto',
+            gridTemplateColumns: '32px 1fr auto',
           }}
         >
-          <span className={styles.maintRowIcon}><Plus {...ICON_PROPS} /></span>
-          <span className={styles.maintRowIdx}>+</span>
+          <span className={styles.maintRowIdx}><Plus {...ICON_PROPS} /></span>
           <input
             type="text"
             placeholder="New value"
@@ -3771,6 +3768,12 @@ const ProductSuppliersDrawer = ({
           maxHeight: '85vh',
           display: 'flex',
           flexDirection: 'column',
+          /* Clip to the panel so the scroll area (min-height:0 below) shrinks
+             and scrolls inside the 85vh box instead of overflowing it — the
+             pinned footer must never hide the last rows (bottom of the
+             Suppliers table / History / Schedule-price), which the A3 Cost card
+             made worse by adding content height. */
+          overflow: 'hidden',
         }}
       >
         <header className={styles.drawerHeader}>
@@ -3827,7 +3830,10 @@ const ProductSuppliersDrawer = ({
           </button>
         </header>
 
-        <div style={{ flex: 1, overflowY: 'auto', padding: 'var(--space-4)' }}>
+        {/* minHeight:0 lets this flex child shrink below its content height so
+            it scrolls inside the panel; paddingBottom keeps the last row clear
+            of the pinned footer. */}
+        <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 'var(--space-4)', paddingBottom: 'var(--space-6)' }}>
           {/* Commander 2026-05-29 — "双击点进去要看到 supplier 和 available 什么
               variant". This drill-in now shows BOTH: the model's allowed variant
               options first, then the suppliers carrying the SKU. */}
@@ -3850,7 +3856,7 @@ const ProductSuppliersDrawer = ({
                 </h3>
                 {groups.length === 0 ? (
                   <p style={{ fontSize: 'var(--fs-13)', color: '#767b6e' }}>
-                    No variant options configured for this model{row.category ? ` (${row.category})` : ''}.
+                    No variant options configured for this model{row.category ? ` (${mfgCategoryLabel(row.category)})` : ''}.
                   </p>
                 ) : (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
@@ -3896,15 +3902,21 @@ const ProductSuppliersDrawer = ({
             </div>
           )}
           {!q.isLoading && suppliers.length > 0 && (
+            /* Let the table scroll horizontally inside the drawer on narrow
+               widths instead of squeezing the columns (the .table min-width
+               kicks in under 600px). The numeric columns stay content-sized
+               and on one line so the Supplier column takes the slack. */
+            <div style={{ overflowX: 'auto' }}>
             <table className={styles.table} style={{ width: '100%' }}>
               <thead>
                 <tr>
                   <th style={{ width: 32 }}></th>
-                  <th>Supplier</th>
-                  <th>Supplier SKU</th>
-                  <th style={{ textAlign: 'right' }}>Unit Price</th>
-                  <th style={{ textAlign: 'right' }}>Lead (d)</th>
-                  <th style={{ textAlign: 'right' }}>MOQ</th>
+                  <th style={{ whiteSpace: 'nowrap' }}>Supplier</th>
+                  <th style={{ whiteSpace: 'nowrap' }}>Supplier SKU</th>
+                  <th style={{ textAlign: 'right', whiteSpace: 'nowrap', width: '1%' }}>Unit Price</th>
+                  <th style={{ textAlign: 'right', whiteSpace: 'nowrap', width: '1%' }}>Lead</th>
+                  <th style={{ textAlign: 'right', whiteSpace: 'nowrap', width: '1%' }}>MOQ</th>
+                  <th style={{ width: 32 }} aria-label="Remove"></th>
                 </tr>
               </thead>
               <tbody>
@@ -3930,15 +3942,23 @@ const ProductSuppliersDrawer = ({
                         ? <span className={styles.codeChip}>{s.supplier_sku}</span>
                         : <span style={{ color: '#767b6e' }}>(same as our code)</span>}
                     </td>
-                    <td className={styles.numCell}>
+                    <td className={styles.numCell} style={{ whiteSpace: 'nowrap' }}>
                       {fmtRmSen(s.unit_price_sen)}{s.currency !== 'MYR' ? ` ${s.currency}` : ''}
                     </td>
-                    <td className={styles.numCell}>{s.lead_time_days || '—'}</td>
-                    <td className={styles.numCell}>{s.moq || '—'}</td>
+                    <td className={styles.numCell} style={{ whiteSpace: 'nowrap' }}>{s.lead_time_days || '—'}</td>
+                    <td className={styles.numCell} style={{ whiteSpace: 'nowrap' }}>{s.moq || '—'}</td>
+                    <td style={{ textAlign: 'center' }}>
+                      <DeleteBindingButton
+                        supplierId={s.supplier_id}
+                        bindingId={s.id}
+                        supplierName={s.suppliers?.name ?? s.supplier_id}
+                      />
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+            </div>
           )}
 
           <AddSupplierBinding productCode={row.code} productName={row.name} />
@@ -4117,8 +4137,8 @@ const SpecialsMaintenancePanel = ({
     const others = row.categories.filter((x) => x !== category);
     if (others.length > 0) {
       if (!(await askConfirm({
-        title: `Remove "${lbl || 'this add-on'}" from ${category}?`,
-        body: `It stays available under ${others.join(', ')}, and existing orders are unaffected.`,
+        title: `Remove "${lbl || 'this add-on'}" from ${mfgCategoryLabel(category)}?`,
+        body: `It stays available under ${others.map(mfgCategoryLabel).join(', ')}, and existing orders are unaffected.`,
         confirmLabel: 'Remove from this list',
       }))) return;
       setDetached((d) => [...d, { ...row, categories: others }]);
@@ -4168,6 +4188,17 @@ const SpecialsMaintenancePanel = ({
           </Button>
         </div>
       </header>
+
+      {/* COST, not selling (approved mockup) — special add-ons carry an internal
+          COST only; the customer is never charged for them (docs/bugs/0859). The
+          single RM figure below is that cost, used for SO costing. */}
+      <div className={styles.maintCostNote}>
+        <Info {...ICON_PROPS} />
+        <span>
+          <strong>This is cost, not selling.</strong> The customer is not charged for these
+          add-ons — the RM figure is the internal cost used for order costing.
+        </span>
+      </div>
 
       {error && <div style={{ color: '#b23a3a', fontSize: 'var(--fs-13)', margin: 'var(--space-3) 0' }} role="alert">{error}</div>}
 

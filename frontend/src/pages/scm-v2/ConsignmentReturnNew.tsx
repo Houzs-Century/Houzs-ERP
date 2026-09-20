@@ -24,7 +24,9 @@ import { transferFromLabel } from '../../lib/convertScope';
 import { todayMyt } from '../../vendor/scm/lib/dates';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowRightLeft, ChevronDown, Plus, Save, X } from 'lucide-react';
+import { ArrowRightLeft, ChevronDown, Save, X } from 'lucide-react';
+import { AddLineButton } from '../../vendor/scm/components/AddLineButton';
+import { useAddLineHotkey } from '../../vendor/scm/lib/useAddLineHotkey';
 import { Button } from '@2990s/design-system';
 import { PhoneInput } from '../../vendor/scm/components/PhoneInput';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
@@ -36,7 +38,7 @@ import { usePickableStaff } from '../../vendor/scm/lib/admin-queries';
 import { useLocalities } from '../../vendor/scm/lib/localities-queries';
 import {
   useAddressCascade, pickState, pickCity, pickPostcode,
-  cityPlaceholder, postcodePlaceholder, POSTCODE_NEEDS_STATE,
+  cityPlaceholder, postcodePlaceholder,
 } from '../../vendor/scm/lib/address-cascade';
 import { StatePicker } from '../../vendor/scm/components/StatePicker';
 import {
@@ -239,6 +241,7 @@ export const ConsignmentReturnNew = () => {
   const updateLine = (rid: string, patch: Partial<SoLineDraft>) =>
     setLines((prev) => prev.map((l) => (l.rid === rid ? { ...l, ...patch } : l)));
   const addLine = () => setLines((prev) => [...prev, newLine()]);
+  useAddLineHotkey(addLine);
   const dropLine = (rid: string) => setLines((prev) => prev.filter((l) => l.rid !== rid));
 
   const subtotalSen = useMemo(
@@ -252,7 +255,7 @@ export const ConsignmentReturnNew = () => {
     if (!canSave) { notify({ title: 'Customer name is required.', tone: 'error' }); return; }
     const validLines = lines.filter((l) => l.itemCode.trim() && l.qty > 0);
     if (validLines.length === 0) {
-      notify({ title: 'Add at least one item via "+ Add Line Item".', tone: 'error' });
+      notify({ title: 'Add at least one item via "Add line".', tone: 'error' });
       return;
     }
 
@@ -504,7 +507,6 @@ export const ConsignmentReturnNew = () => {
                   value={postcode}
                   onChange={onPostcodePick}
                   placeholder={postcodePlaceholder(state, city)}
-                  blockedReason={state ? undefined : POSTCODE_NEEDS_STATE}
                   options={sortByNumeric(postcodes).map((p) => ({ value: p, label: p }))}
                 />
                 <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
@@ -538,15 +540,7 @@ export const ConsignmentReturnNew = () => {
               seedSofaLegDefault={false}
             />
           ))}
-          <button type="button" onClick={addLine}
-            style={{
-              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, width: '100%',
-              padding: '12px 14px', background: 'transparent', border: '1px dashed var(--c-orange)',
-              borderRadius: 'var(--radius-md)', color: 'var(--c-orange)', fontFamily: 'var(--font-sans)',
-              fontSize: 'var(--fs-13)', fontWeight: 600, cursor: 'pointer',
-            }}>
-            <Plus {...ICON} /> Add Line Item
-          </button>
+          <AddLineButton variant="block" onClick={addLine} />
           <div style={{
             display: 'flex', justifyContent: 'flex-end', marginTop: 'var(--space-2)', paddingTop: 'var(--space-3)',
             borderTop: '1px solid var(--line)', fontFamily: 'var(--font-mark)', fontSize: 'var(--fs-20)',

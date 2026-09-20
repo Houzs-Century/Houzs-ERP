@@ -45,6 +45,7 @@ import {
 } from '../../../lib/branding';
 import { DO_SIZE as S, DO_THEME as T, SANS, charSpace, pt, type Rgb } from './delivery-order-theme';
 import { docVariantLine, loadCustomerFabricMaps } from './supplier-doc-data';
+import { stripBookText } from './book-text';
 import { drawQrIntoPdf } from './pdf-qr';
 /* Owner spec 2026-08 — photos follow the line onto the printed document
    (SO → PO → DO). Same shared block the SO/PO PDFs print through; keys are
@@ -687,7 +688,8 @@ export async function renderDeliveryOrderInto(
     /* Owner spec: a row carries NO image — the " (photo)" marker on the first
        description line points the reader at the ITEM PHOTOS block below. */
     const lines = photoKeysOf(it.photo_urls).length > 0 ? appendPhotoMarker(composed) : composed;
-    return lines.join('\n');
+    // Guard the customer copy against migrated AutoCount book text — see book-text.ts.
+    return stripBookText(lines.join('\n')) || EM_DASH;
   };
   const m3Of = (it: DoItem): string => (it.m3_milli != null ? (it.m3_milli / 1000).toFixed(3) : EM_DASH);
 

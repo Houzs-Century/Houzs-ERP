@@ -33,11 +33,13 @@
 
 import { Trash2 } from 'lucide-react';
 import type { MfgProductRow, MaintenanceConfig } from '../lib/mfg-products-queries';
+import { mfgCategoryLabel } from '../lib/mfg-products-queries';
 import type { BindingRow, MaterialKind } from '../lib/suppliers-queries';
 import type { FabricLite } from '../lib/fabric-queries';
 import type { Warehouse } from '../lib/inventory-queries';
 import { PcVariantEditor } from './PcVariantEditor';
 import { MoneyInput } from './MoneyInput';
+import { NumberInput } from './NumberInput';
 import { DiscountInput } from './DiscountInput';
 import styles from '../../../pages/scm-v2/SalesOrderDetail.module.css';
 import { DateField } from "./DateField";
@@ -254,7 +256,7 @@ export const PcLineCard = ({
                 ))
               : allSkus.map((p) => (
                   <option key={p.id} value={p.code}>
-                    {p.name} · {p.category}
+                    {p.name} · {mfgCategoryLabel(p.category)}
                   </option>
                 ))
             }
@@ -328,7 +330,7 @@ export const PcLineCard = ({
             color: 'var(--fg-muted)',
             marginBottom: 'var(--space-2)',
           }}>
-            {l.category} Variants
+            {mfgCategoryLabel(l.category)} Variants
           </div>
 
           <PcVariantEditor
@@ -348,11 +350,12 @@ export const PcLineCard = ({
       <div className={styles.formGrid4} style={{ gridTemplateColumns: 'repeat(5, 1fr)' }}>
         <label className={styles.field}>
           <span className={styles.fieldLabel}>Qty</span>
-          <input
-            type="number" min={0} step={1}
+          <NumberInput
             value={l.qty}
+            sign="unsigned"
+            decimal={false}
             disabled={disabled}
-            onChange={(e) => onChange({ qty: Number(e.target.value) })}
+            onValueChange={(n) => onChange({ qty: n ?? 0 })}
             className={styles.fieldInput}
             style={{ textAlign: 'right' }}
           />

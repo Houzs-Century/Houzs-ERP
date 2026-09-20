@@ -204,8 +204,10 @@ export const NewJournalForm = ({ onDone, initial, editing }: { onDone: () => voi
 
       {lines.map((l, i) => (
         <div key={i} style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap', alignItems: 'center' }}>
-          <span style={{ minWidth: 300, flex: 1 }}>
-            <SearchCombo options={options} value={l.accountCode} onChange={(code) => setLine(i, { accountCode: code })}
+          {/* The account fills its column, and the column is the widest on the line
+              (owner 2026-09-18: JE 显示 hide 掉名字了 — the box clipped the name). */}
+          <span style={{ minWidth: 300, flex: 2 }}>
+            <SearchCombo fill options={options} value={l.accountCode} onChange={(code) => setLine(i, { accountCode: code })}
               placeholder="Type a code or a name…" aria-label={`Line ${i + 1} account`} />
           </span>
           <input style={{ ...fieldStyle, width: 120 }} placeholder="Debit RM" inputMode="decimal" aria-label={`Line ${i + 1} debit`}

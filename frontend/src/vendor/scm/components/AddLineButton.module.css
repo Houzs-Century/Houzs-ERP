@@ -1,0 +1,26 @@
+/* The block ("card") add-line affordance — a full-width dashed button that sits
+   under a stack of line CARDS (SO / Sales Invoice / Consignment / DO new).
+   Verbatim from the inline styles those forms each hand-rolled, lifted into one
+   place so every card editor shows the SAME add-line control. Colours are the
+   house orange accent; disabled dims + blocks the pointer. */
+.block {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  padding: 12px 14px;
+  background: transparent;
+  border: 1px dashed var(--c-orange);
+  border-radius: var(--radius-md);
+  color: var(--c-orange);
+  font-family: var(--font-sans);
+  font-size: var(--fs-13);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.block:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

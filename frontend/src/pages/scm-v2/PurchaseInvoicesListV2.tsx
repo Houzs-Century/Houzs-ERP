@@ -68,6 +68,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
 import { isCancelledDocStatus } from "../../lib/scm";
 import { purchaseInvoiceRowMenu } from "./row-menus";
+import { ScanInvoiceModal } from "../../vendor/scm/components/ScanInvoiceModal";
 import { useHoldAction } from "./use-hold-action";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 import { StatusWithHold, rowIsHeld, type HoldFields } from "../../vendor/scm/components/HoldChip";
@@ -180,10 +181,12 @@ function SplitDropdown({
   onFromGrn,
   onImport,
   onDuplicate,
+  onScan,
 }: {
   onFromGrn: () => void;
   onImport: () => void;
   onDuplicate: () => void;
+  onScan: () => void;
 }) {
   const [open, setOpen] = useState(false);
   return (
@@ -203,6 +206,9 @@ function SplitDropdown({
           <div role="menu" className="absolute right-0 top-full z-[81] mt-1.5 min-w-[220px] rounded-md border border-border bg-surface py-1 shadow-slab">
             <button type="button" className="block w-full px-3.5 py-2 text-left text-[12.5px] text-ink hover:bg-primary-soft" onClick={() => { setOpen(false); onFromGrn(); }}>
               New from GRN
+            </button>
+            <button type="button" className="block w-full px-3.5 py-2 text-left text-[12.5px] text-ink hover:bg-primary-soft" onClick={() => { setOpen(false); onScan(); }}>
+              Scan invoice
             </button>
             <button type="button" className="block w-full px-3.5 py-2 text-left text-[12.5px] text-ink hover:bg-primary-soft" onClick={() => { setOpen(false); onImport(); }}>
               Import from file
@@ -619,6 +625,7 @@ export function PurchaseInvoicesListV2() {
   const [sort, setSort] = useState<string | undefined>(undefined);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [printingDocs, setPrintingDocs] = useState(false);
+  const [showScan, setShowScan] = useState(false);
   // Server-filterable funnels (owner 2026-09-16): Creditor Name/Code + Currency → list query (pager over the filtered set); line/MRP funnels stay client-side. Creditor checklists seeded with every supplier.
   const suppliersQ = useSuppliers();
   const supplierNames = useMemo(() => [...new Set((suppliersQ.data ?? []).map((s) => s.name).filter((n): n is string => !!n))], [suppliersQ.data]);
@@ -1169,7 +1176,7 @@ export function PurchaseInvoicesListV2() {
                   <Button variant="primary" icon={<Plus size={14} />} onClick={goNewPi} className="rounded-r-none">
                     New Purchase Invoice
                   </Button>
-                  <SplitDropdown onFromGrn={goFromGrn} onImport={goImport} onDuplicate={goDuplicate} />
+                  <SplitDropdown onFromGrn={goFromGrn} onImport={goImport} onDuplicate={goDuplicate} onScan={() => setShowScan(true)} />
                 </div>
               </div>
             }
@@ -1389,6 +1396,8 @@ export function PurchaseInvoicesListV2() {
         onPrint={() => selected && printDocument(purchaseInvoicePrintChain(selected).own)}
         onRecordPayment={() => selected && goRecordPayment(selected)}
       />
+
+      {showScan && <ScanInvoiceModal onClose={() => setShowScan(false)} />}
     </PullToRefresh>
   );
 }

@@ -68,6 +68,7 @@ import { SpecialOrders } from './SpecialOrders';
 import styles from './SoLineCard.module.css';
 import { DateField } from "./DateField";
 import { DiscountInput } from './DiscountInput';
+import { NumberInput } from './NumberInput';
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
 
@@ -929,19 +930,14 @@ const SoLineCardInner = ({
         />
 
         {/* 4. Qty */}
-        <input
-          type="number"
-          min={1}
+        <NumberInput
+          sign="unsigned"
+          decimal={false}
           className={styles.numericInput}
-          value={draft.qty === 0 ? '' : draft.qty}
+          value={draft.qty === 0 ? null : draft.qty}
           disabled={!isEditing}
-          onChange={(e) => {
-            const v = e.target.value;
-            onChange({ qty: v === '' ? 0 : (parseInt(v) || 0) });
-          }}
-          onBlur={(e) => {
-            if (!e.target.value || parseInt(e.target.value) <= 0) onChange({ qty: 1 });
-          }}
+          onValueChange={(n) => onChange({ qty: n ?? 0 })}
+          onBlur={() => { if (draft.qty <= 0) onChange({ qty: 1 }); }}
         />
 
         {/* 5. Unit Price — D4: locked to the SKU Master sell price below admin.

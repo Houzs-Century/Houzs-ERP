@@ -61,7 +61,7 @@ import {
   pickCity,
   pickPostcode,
   cityPlaceholder,
-  postcodePlaceholder, POSTCODE_NEEDS_STATE,
+  postcodePlaceholder,
 } from "../vendor/scm/lib/address-cascade";
 import { StatePicker } from "../vendor/scm/components/StatePicker";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
@@ -1153,10 +1153,15 @@ export function MobileNewSO({
      a row is a place plus an organizer, nothing is typed, and the brand is
      derived from the SKUs server-side. The venue NAME leads and the master id
      follows it by name, because a fair can name a venue the master lacks. */
-  const [fairPick, setFairPick] = useState<FairPickValue>({ venue: null, organizer: null });
+  const [fairPick, setFairPick] = useState<FairPickValue>({
+    venue: null, organizer: null, startDate: null, endDate: null,
+  });
   useEffect(() => {
     /* Seeds a BLANK only — a human pick is a decision and is never overwritten. */
-    if (fairPick.venue == null && resolvedVenueName) setFairPick({ venue: resolvedVenueName, organizer: null });
+    /* A PLACE, not an event — see the desktop twin. */
+    if (fairPick.venue == null && resolvedVenueName) {
+      setFairPick({ venue: resolvedVenueName, organizer: null, startDate: null, endDate: null });
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resolvedVenueName]);
   const effectiveVenueId = fairPick.venue
@@ -2062,6 +2067,9 @@ export function MobileNewSO({
            re-derives the fair whenever the venue changes, so the patch must not
            carry it (soHeaderPatchFrom feeds the edit diff as well). */
         fairOrganizer: fairPick.organizer ?? undefined,
+        /* The picked event's PERIOD — same contract as the desktop form. */
+        fairStart: fairPick.startDate ?? undefined,
+        fairEnd: fairPick.endDate ?? undefined,
         /* EXPLICIT draft flag — the backend statuses DRAFT only on
            body.asDraft === true; nulling the dates alone saves CONFIRMED. */
         asDraft: asDraft === true,
@@ -2428,7 +2436,7 @@ export function MobileNewSO({
                       <Field label={addressRequired ? "Postcode *" : "Postcode"} style={{ flex: 1 }} error={touched && addressRequired && !postcode.trim()} scanned={scanned("postcode", postcode)}>
                         {country === 'Singapore'
                           ? <SgPostcodeField bare inputClassName="fld-i" value={postcode} onChange={setPostcode} onResolve={(r) => { setAddr1(r.address); if (r.state && r.city) { setState(r.state); setCity(r.city); } }} disabled={addressIdentityLocked} />
-                          : (<select className="fld-i" value={postcode} disabled={addressIdentityLocked || (!!state && postcodeChoices.length === 0)} onMouseDown={!state && !addressIdentityLocked ? (e) => { e.preventDefault(); void notify({ title: "Select State first", body: POSTCODE_NEEDS_STATE, tone: "info" }); } : undefined} onChange={(e) => onPostcodeChange(e.target.value)}>
+                          : (<select className="fld-i" value={postcode} disabled={addressIdentityLocked || postcodeChoices.length === 0} onChange={(e) => onPostcodeChange(e.target.value)}>
                               <option value="">{postcodeChoices.length === 0 ? "No postcodes seeded" : postcodePlaceholder(state, city)}</option>
                               {postcodeChoices.map((p) => <option key={p} value={p}>{p}</option>)}
                             </select>)}

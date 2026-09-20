@@ -12,18 +12,22 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
 import { writeFailedAs } from './mutation-error';
+import { fmtDayMonthRange } from '../../shared/format';
 
-/** One row in the picker: a place plus an organizer. Owner 2026-09-13 — no
- *  dates, *"只需要选 event 和 organizer 就好了"*. `showDates` is set by the
- *  server for the one case that needs them: the same venue and organizer twice
- *  inside one month (four occurrences in the seven months to Sep 2026). */
+/** One row in the picker: a place, an organizer and the event's PERIOD. */
 export type FairOption = {
   key: string;
   venue: string;
   organizer: string;
+  /** Set by the server for a solo roadshow: the label reads "SOLO" where an
+   *  exhibition names its organizer. Optional so a response cached from before
+   *  the field existed still renders. */
+  solo?: boolean;
+  /** The event's PERIOD. Half the row's identity, not decoration: it is sent
+   *  back on save (`fairStart` / `fairEnd`) and is what lets the server match
+   *  the exact occurrence the operator picked. */
   startDate: string;
   endDate: string | null;
-  showDates: boolean;
   projectIds: number[];
 };
 
@@ -34,8 +38,9 @@ export type FairOptionsResponse = {
   /** Fairs running on the order's date. Nothing pre-selects one: an order with
    *  only a place shows that place (FairPicker rule 5). */
   running: FairOption[];
-  /** Every other fair in the same calendar month — the ones already over too. */
-  month: FairOption[];
+  /** The rest of the lookback window: fairs that have already CLOSED, newest
+   *  first. Never anything in the future — the window ends at the order date. */
+  earlier: FairOption[];
   /** The company's venue master — the list behind "Others". */
   venues: VenueMasterRow[];
 };
@@ -52,14 +57,24 @@ export type FairOptionsResponse = {
  *  production 2026-09-16: of Houzs Century's 163 venue-months in 2026, 15 hold
  *  two or more organizers at the SAME venue — 31 dropdown rows that read
  *  identically on the venue alone. October 2026 at MID VALLEY is three of them
- *  (BIGHOME 10-02, HOMELOVE 10-15, MLE 10-23), and `showDates` does not rescue
- *  those: the server sets it only when the venue AND the organizer repeat inside
- *  one month. */
-export function fairLabel(o: Pick<FairOption, 'venue' | 'organizer' | 'startDate' | 'endDate' | 'showDates'>): string {
-  const base = `${o.venue} — ${o.organizer}`;
-  if (!o.showDates) return base;
-  const end = o.endDate && o.endDate !== o.startDate ? ` ~ ${o.endDate}` : '';
-  return `${base} (${o.startDate}${end})`;
+ *  (BIGHOME 10-02, HOMELOVE 10-15, MLE 10-23).
+ *
+ *  SOLO ROADSHOWS READ "SOLO" (owner 2026-09-18: "for solo roadshow change to
+ *  solo dont mention mall mgt. for exhibition remain same"). This is NOT the
+ *  organizer being dropped again: an exhibition still names its organizer. A solo
+ *  roadshow has none — MALL MGT / MALL MGMT is only who the floor was rented
+ *  from.
+ *
+ *  EVERY ROW CARRIES ITS DATES (owner 2026-09-19), reversing his 2026-09-13
+ *  "no dates" ruling — *"我一号看到是有那个 venue，有那个 organizer，然后它是一号到
+ *  三号的，我就点那个"*. The list is no longer one month of mostly-live fairs; it
+ *  is four weeks of CLOSED ones, where picking a row means saying WHICH
+ *  occurrence. The old `showDates` exception is gone rather than widened —
+ *  with every row dated there is nothing left for it to decide. Keep the full
+ *  rationale in the backend twin, `scm/lib/fair-options.ts::fairOptionLabel`;
+ *  the two must render the same string. */
+export function fairLabel(o: Pick<FairOption, 'venue' | 'organizer' | 'solo' | 'startDate' | 'endDate'>): string {
+  return `${o.venue} — ${o.solo ? 'SOLO' : o.organizer} (${fmtDayMonthRange(o.startDate, o.endDate)})`;
 }
 
 /**

@@ -545,28 +545,39 @@ documentFlow.get('/:type/:id', async (c) => {
     // is never blank. (Rare: an ad-hoc invoice with no SO/DO link.)
     nodes.set(anchorKey, { key: anchorKey, type, id, label: id, status: null, isAnchor: true });
 
-    /* …except a PURCHASE ORDER (owner 2026-07-27): a stock buy / unlinked PO is
+    /* …except the PURCHASE side (owner 2026-07-27): a stock buy / unlinked PO is
        still the head of its own receipt chain — grns.purchase_order_id hangs off
-       the PO regardless of any SO, and hiding those painted "Not created" over
-       real receipts (the same lying-node class audit R8 killed on the sales
+       the PO regardless of any SO, and hiding those would paint "Not created"
+       over real receipts (the same lying-node class audit R8 killed on the sales
        maps). So a PO anchor expands its own downstream (PO ▶ GRN ▶ PI / PR)
-       before returning; every other orphan type keeps the lone-anchor shape.
-       Reads mirror sections 6/7/9 below and are company-scoped on the PO/GRN
-       hops, so a foreign PO id still collapses to the bare anchor. The GRN edge
-       keeps real partial/full coverage; PI/PR edges default 'full' (coverage
-       colouring matters on the receipt hop — billing splits on a stock buy are
-       cosmetic). */
+       before returning; a GRN anchor on such a PO expands the SAME subtree off
+       its parent PO, so the GRN map still shows the PO it came from and the
+       PI / PR it became — differing only in which node carries isAnchor. Every
+       other orphan type keeps the lone-anchor shape. Reads mirror sections 6/7/9
+       below and are company-scoped on the PO/GRN hops, so a foreign id still
+       collapses to the bare anchor. The GRN edge keeps real partial/full
+       coverage; PI/PR edges default 'full' (coverage colouring matters on the
+       receipt hop — billing splits on a stock buy are cosmetic). */
     let poAmendments: Array<{ id: string; poId: string; poNumber: string; amendmentNo: number | string; status: string | null; createdAt: string | null }> = [];
-    if (type === 'po') {
-      const { data: poHdr } = await scopeToCompany(sb.from('purchase_orders').select('po_number, status').eq('id', id), c).maybeSingle();
+    // The PO that heads this orphan purchase subtree: the anchor PO itself, or
+    // the parent PO of an orphan GRN.
+    const expandPoId =
+      type === 'po'
+        ? id
+        : type === 'grn'
+          ? (await scopeToCompany(sb.from('grns').select('purchase_order_id').eq('id', id), c).maybeSingle()).data?.purchase_order_id ?? null
+          : null;
+    if (expandPoId) {
+      const poKey = keyOf('po', expandPoId);
+      const { data: poHdr } = await scopeToCompany(sb.from('purchase_orders').select('po_number, status').eq('id', expandPoId), c).maybeSingle();
       if (poHdr) {
-        nodes.set(anchorKey, { key: anchorKey, type, id, label: poHdr.po_number ?? id, status: poHdr.status ?? null, isAnchor: true });
+        nodes.set(poKey, { key: poKey, type: 'po', id: expandPoId, label: poHdr.po_number ?? expandPoId, status: poHdr.status ?? null, isAnchor: poKey === anchorKey });
       }
-      const { data: poLines } = await scopeToCompany(sb.from('purchase_order_items').select('id, qty').eq('purchase_order_id', id), c);
+      const { data: poLines } = await scopeToCompany(sb.from('purchase_order_items').select('id, qty').eq('purchase_order_id', expandPoId), c);
       const poItemQty = new Map<string, number>();
       for (const l of (poLines ?? []) as any[]) poItemQty.set(l.id, Number(l.qty ?? 0));
 
-      const { data: grnHdrs } = await scopeToCompany(sb.from('grns').select('id, grn_number, status').eq('purchase_order_id', id), c);
+      const { data: grnHdrs } = await scopeToCompany(sb.from('grns').select('id, grn_number, status').eq('purchase_order_id', expandPoId), c);
       const grnIds = uniq(((grnHdrs ?? []) as any[]).map((g) => g.id));
       const grnLines = grnIds.length
         ? (await sb.from('grn_items').select('grn_id, purchase_order_item_id, qty').in('grn_id', grnIds)).data ?? []
@@ -581,10 +592,10 @@ documentFlow.get('/:type/:id', async (c) => {
       }
       for (const g of (grnHdrs ?? []) as any[]) {
         const k = keyOf('grn', g.id);
-        nodes.set(k, { key: k, type: 'grn', id: g.id, label: g.grn_number ?? g.id, status: g.status ?? null, isAnchor: false });
+        nodes.set(k, { key: k, type: 'grn', id: g.id, label: g.grn_number ?? g.id, status: g.status ?? null, isAnchor: k === anchorKey });
         const agg = poToGrn.get(g.id);
         const parentQty = agg ? [...agg.parentItems].reduce((s, pi) => s + (poItemQty.get(pi) ?? 0), 0) : 0;
-        addEdge(anchorKey, k, agg ? cover(agg.childQty, parentQty) : 'full');
+        addEdge(poKey, k, agg ? cover(agg.childQty, parentQty) : 'full');
       }
       if (grnIds.length) {
         /* Multi-GRN PIs — same union as the main builder: a PI reaches this
@@ -624,18 +635,21 @@ documentFlow.get('/:type/:id', async (c) => {
         }
       }
       // PO amendments still branch off an orphan PO (same shape as section 11).
-      const { data: poAmendRows } = await sb.from('po_amendments')
-        .select('id, po_id, po_number, amendment_no, status, created_at')
-        .eq('po_id', id)
-        .order('amendment_no', { ascending: true });
-      poAmendments = ((poAmendRows ?? []) as any[]).map((a) => ({
-        id: String(a.id),
-        poId: String(a.po_id),
-        poNumber: a.po_number,
-        amendmentNo: a.amendment_no,
-        status: a.status ?? null,
-        createdAt: a.created_at ?? null,
-      }));
+      // Only for a PO anchor: the GRN map has no amendments row.
+      if (type === 'po') {
+        const { data: poAmendRows } = await sb.from('po_amendments')
+          .select('id, po_id, po_number, amendment_no, status, created_at')
+          .eq('po_id', expandPoId)
+          .order('amendment_no', { ascending: true });
+        poAmendments = ((poAmendRows ?? []) as any[]).map((a) => ({
+          id: String(a.id),
+          poId: String(a.po_id),
+          poNumber: a.po_number,
+          amendmentNo: a.amendment_no,
+          status: a.status ?? null,
+          createdAt: a.created_at ?? null,
+        }));
+      }
     }
     return c.json({ nodes: [...nodes.values()], edges, rootSos, amendments: [], poAmendments });
   }

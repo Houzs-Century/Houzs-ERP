@@ -59,7 +59,7 @@ import {
   type SofaPriceMatrix,
   type BedframePriceMatrix,
 } from '../../vendor/scm/lib/suppliers-queries';
-import { useMfgProducts, useMaintenanceConfig, type MfgCategory, type MfgProductRow } from '../../vendor/scm/lib/mfg-products-queries';
+import { useMfgProducts, useMaintenanceConfig, mfgCategoryLabel, type MfgCategory, type MfgProductRow } from '../../vendor/scm/lib/mfg-products-queries';
 import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
 /* A refused write must SAY so. The five grid cells below fire-and-forget, and
    useUpdateBinding carries no onError (unlike useDeleteBinding and
@@ -89,6 +89,7 @@ import { formatPhone } from '@2990s/shared/phone';
 import { maintValues, fmtSen, fmtDateOrDash, fmtQty } from '@2990s/shared';
 import { PhoneInput } from '../../vendor/scm/components/PhoneInput';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
+import { NumberInput } from '../../vendor/scm/components/NumberInput';
 import styles from './SupplierDetail.module.css';
 import { exportBindingsCsv, ImportBindingsDialog } from './SupplierBindingsCsv';
 import { EffectiveDatedHistory } from '../../vendor/scm/components/EffectiveDatedHistory';
@@ -2172,14 +2173,14 @@ const SkuFormDialog = ({
 
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Lead Time (days)</span>
-              <input type="number" className={styles.fieldInput} value={draft.leadTimeDays}
-                onChange={(e) => set('leadTimeDays', Number(e.target.value) || 0)} />
+              <NumberInput sign="unsigned" decimal={false} className={styles.fieldInput} value={draft.leadTimeDays}
+                onValueChange={(n) => set('leadTimeDays', n ?? 0)} />
             </label>
 
             <label className={styles.field}>
               <span className={styles.fieldLabel}>MOQ</span>
-              <input type="number" className={styles.fieldInput} value={draft.moq}
-                onChange={(e) => set('moq', Number(e.target.value) || 0)} />
+              <NumberInput sign="unsigned" decimal={false} className={styles.fieldInput} value={draft.moq}
+                onValueChange={(n) => set('moq', n ?? 0)} />
             </label>
 
             <label className={styles.field}>
@@ -2982,7 +2983,7 @@ const ModelSkuPickerDialog = ({
                               </span>
                             )}
                           </td>
-                          <td className={styles.muted}>{model.category}</td>
+                          <td className={styles.muted}>{mfgCategoryLabel(model.category)}</td>
                           <td className={`${styles.tableRight} ${styles.muted}`}>{skus.length}</td>
                           <td>
                             <span
@@ -3129,18 +3130,20 @@ const ModelSkuPickerDialog = ({
                               />
                             </td>
                             <td className={styles.tableRight}>
-                              <input
-                                type="number"
+                              <NumberInput
+                                sign="unsigned"
+                                decimal={false}
                                 value={d.leadTimeDays}
-                                onChange={(e) => setDraft(d.modelId, { leadTimeDays: Number(e.target.value) || 0 })}
+                                onValueChange={(n) => setDraft(d.modelId, { leadTimeDays: n ?? 0 })}
                                 style={{ ...smallInputStyle, width: 60, textAlign: 'right' }}
                               />
                             </td>
                             <td className={styles.tableRight}>
-                              <input
-                                type="number"
+                              <NumberInput
+                                sign="unsigned"
+                                decimal={false}
                                 value={d.moq}
-                                onChange={(e) => setDraft(d.modelId, { moq: Number(e.target.value) || 0 })}
+                                onValueChange={(n) => setDraft(d.modelId, { moq: n ?? 0 })}
                                 style={{ ...smallInputStyle, width: 60, textAlign: 'right' }}
                               />
                             </td>
@@ -3419,7 +3422,7 @@ const MultiSkuPickerDialog = ({
                           </td>
                           <td className={styles.codeCell}>{p.code}</td>
                           <td>{p.name}</td>
-                          <td className={styles.muted}>{p.category}</td>
+                          <td className={styles.muted}>{mfgCategoryLabel(p.category)}</td>
                           <td className={styles.muted}>{p.size_label ?? '—'}</td>
                           <td className={styles.priceCell}>{p.base_price_sen ? fmtSen(p.base_price_sen) : '—'}</td>
                         </tr>
@@ -3485,18 +3488,20 @@ const MultiSkuPickerDialog = ({
                           />
                         </td>
                         <td className={styles.tableRight}>
-                          <input
-                            type="number"
+                          <NumberInput
+                            sign="unsigned"
+                            decimal={false}
                             value={d.leadTimeDays}
-                            onChange={(e) => setDraft(d.itemCode, { leadTimeDays: Number(e.target.value) || 0 })}
+                            onValueChange={(n) => setDraft(d.itemCode, { leadTimeDays: n ?? 0 })}
                             style={{ ...smallInputStyle, width: 60, textAlign: 'right' }}
                           />
                         </td>
                         <td className={styles.tableRight}>
-                          <input
-                            type="number"
+                          <NumberInput
+                            sign="unsigned"
+                            decimal={false}
                             value={d.moq}
-                            onChange={(e) => setDraft(d.itemCode, { moq: Number(e.target.value) || 0 })}
+                            onValueChange={(n) => setDraft(d.itemCode, { moq: n ?? 0 })}
                             style={{ ...smallInputStyle, width: 60, textAlign: 'right' }}
                           />
                         </td>

@@ -107,11 +107,9 @@ describe('the layout routes', () => {
     expect((await blocksOf('performance')).keys).toEqual(['otherIncome', 'expenses']);
     const rp = await blocksOf('rp');
     expect(rp.keys).toEqual(['accounts']);
-    /* The chart of the harness: sales and expenses only — so the R&P tree is those two sections. */
-    expect(shape(rp.tree.accounts!)).toEqual([
-      { 'sec:SALES': ['501-0000'] },
-      { 'sec:EXPENSES': [{ 'acc:900-0000': ['900-A001', { 'acc:900-A002': ['900-A014'] }, '900-H010'] }] },
-    ]);
+    /* The chart of the harness: sales and expenses only — so the Cash Flow tree is those two sections, once as RECEIPTS (In) and once as PAYMENTS (Out). */
+    const sides = (side: 'in' | 'out') => [{ [`${side}:sec:SALES`]: ['501-0000'] }, { [`${side}:sec:EXPENSES`]: [{ [`${side}:acc:900-0000`]: ['900-A001', { [`${side}:acc:900-A002`]: ['900-A014'] }, '900-H010'] }] }];
+    expect(shape(rp.tree.accounts!)).toEqual([{ 'side:in': sides('in') }, { 'side:out': sides('out') }]);
     /* Saving the performance tree touches no other report's row. */
     const perfTree = { version: 1, blocks: { otherIncome: [], expenses: [{ kind: 'category', id: 'cat:ops', label: 'Ops', children: [{ kind: 'account', code: '900-A001' }] }] } };
     expect((await put(app, perfTree, 'performance')).status).toBe(200);
@@ -119,6 +117,20 @@ describe('the layout routes', () => {
     expect(tables.acc_report_layouts.map((r) => r.report).sort()).toEqual(['performance', 'pnl']);
     expect(shape((await blocksOf('performance')).tree.expenses!)).toEqual([{ 'cat:ops': ['900-A001'] }]);
     expect(shape((await blocksOf('pnl')).tree.expenses!)).toEqual([{ 'cat:mkt': ['900-A001'] }]);
+  });
+
+  test('a Cash Flow tree saved before directions existed reads as RECEIPTS (In) over PAYMENTS (Out) — stored, ticks kept, never refused (2026-09-18)', async () => {
+    const legacy = { version: 1, blocks: { accounts: [{ kind: 'category', id: 'cat:x', label: 'X', hiddenFor: [1], children: [{ kind: 'account', code: '900-A001' }] }] } };
+    const { app } = harness({ layouts: [{ report: 'rp', tree: legacy, updated_at: null, updated_by: 'T' }] });
+    const res = await app.request('/accounting/reports/layout?report=rp');
+    const b = (await res.json()) as { stored: boolean; layout: { blocks: Record<string, Array<Item & { flow?: string; totalLabel?: string }>> } };
+    expect(b.stored).toBe(true);
+    expect(shape(b.layout.blocks.accounts!)).toEqual([{ 'side:in': [{ 'in:cat:x': ['900-A001'] }] }, { 'side:out': [{ 'out:cat:x': ['900-A001'] }] }]);
+    expect(b.layout.blocks.accounts!.map((t) => [t.flow, t.totalLabel, t.children?.[0]?.hiddenFor])).toEqual([['in', 'Total receipts', [1]], ['out', 'Total payments', [1]]]);
+    /* A PUT of that legacy shape is upgraded the same way and saved typed. */
+    expect((await put(app, legacy, 'rp')).status).toBe(200);
+    const again = (await (await app.request('/accounting/reports/layout?report=rp')).json()) as { layout: { blocks: Record<string, Item[]> } };
+    expect(shape(again.layout.blocks.accounts!)[0]).toEqual({ 'side:in': [{ 'in:cat:x': ['900-A001'] }] });
   });
 
   test('nothing saved: the chart\'s own tree, the union with each company\'s tick, the companies', async () => {
@@ -231,12 +243,12 @@ describe('the P&L on its layout', () => {
     expect(b.layout.stored).toBe(true);
     expect(b.layout.baseSen).toBe(100_000);
     expect(flat(b.layout.expenses)).toEqual([
-      ['category', 'Marketing', 12_000, 12, [['account', '900-A001 — 900-A001', 12_000, 12]]],
-      ['unassigned', 'Unassigned', 3_000, 3, [['account', '900-A014 — 900-A014', 3_000, 3]]],
+      ['category', 'Marketing', 12_000, 12, [['account', '900-A001 · 900-A001', 12_000, 12]]],
+      ['unassigned', 'Unassigned', 3_000, 3, [['account', '900-A014 · 900-A014', 3_000, 3]]],
     ]);
     expect(b.layout.expenses.reduce((s, n) => s + n.amountSen, 0)).toBe(b.totals.expensesSen);
     /* An empty stored block still lays the section's figures out — under Unassigned. */
-    expect(flat(b.layout.tradingIncome)).toEqual([['unassigned', 'Unassigned', 100_000, 100, [['account', '501-0000 — 501-0000', 100_000, 100]]]]);
+    expect(flat(b.layout.tradingIncome)).toEqual([['unassigned', 'Unassigned', 100_000, 100, [['account', '501-0000 · 501-0000', 100_000, 100]]]]);
   });
 
   test('nothing stored: the chart\'s own tree, headers as categories with subtotals', async () => {
@@ -245,8 +257,8 @@ describe('the P&L on its layout', () => {
     expect(b.layout.stored).toBe(false);
     expect(flat(b.layout.expenses)).toEqual([
       ['category', 'Operating Expense', 15_000, 15, [
-        ['account', '900-A001 — 900-A001', 12_000, 12],
-        ['category', 'ADVERTISEMENT', 3_000, 3, [['account', '900-A014 — 900-A014', 3_000, 3]]],
+        ['account', '900-A001 · 900-A001', 12_000, 12],
+        ['category', 'ADVERTISEMENT', 3_000, 3, [['account', '900-A014 · 900-A014', 3_000, 3]]],
       ]],
     ]);
   });

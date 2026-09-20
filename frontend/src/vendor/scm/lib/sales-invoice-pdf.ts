@@ -14,8 +14,9 @@
 // ship_to/bill_to/install_to trio — see the SiHeader note.
 import { formatPhone } from '@2990s/shared/phone';
 import { siDepositAppliedSen } from './si-outstanding';
-import { COMPANY, DOC_TABLE_HEAD_STYLES, DOC_TABLE_STYLES, deliverPdf, drawHeader, drawInfoColumns, drawSignatureBoxes, ensurePdfCjkFont, fmtRm, safeName, fmtDocDate, type PdfAction } from './pdf-common';
+import { DOC_TABLE_HEAD_STYLES, DOC_TABLE_STYLES, deliverPdf, drawHeader, drawInfoColumns, ensurePdfCjkFont, fmtRm, safeName, fmtDocDate, type PdfAction } from './pdf-common';
 import { billToBlock } from './pdf-party-blocks';
+import { stripBookText } from './book-text';
 import { docVariantLine, loadCustomerFabricMaps } from './supplier-doc-data';
 /* The status WORD comes from the one home for it, never from a caser here:
    what this document prints and what the screen shows must be the same word.
@@ -145,7 +146,7 @@ export async function renderSalesInvoiceInto(
   const rows = items.map((it, idx) => [
     String(idx + 1),
     it.item_code,
-    [it.description, docVariantLine(it, fabric.ext, fabric.desc)].filter(Boolean).join('\n') || '—',
+    stripBookText([it.description, docVariantLine(it, fabric.ext, fabric.desc)].filter(Boolean).join('\n')) || '—',
     String(it.qty),
     fmtRm(it.unit_price_sen, header.currency),
     (it.discount_sen ?? 0) > 0 ? fmtRm(it.discount_sen ?? 0, header.currency) : '—',
@@ -208,21 +209,21 @@ export async function renderSalesInvoiceInto(
      owed, so `paid + deposit <= total` whenever `paid <= total`. */
   drawRow('Outstanding',
           fmtRm(header.total_sen - header.paid_sen - siDeposit, header.currency), ty + 4, true);
-  ty += 12;
-
-  ty = drawSignatureBoxes(doc, ty, 'Customer Acknowledgement', `${COMPANY.name} Authorised Signature`);
+  /* Signature boxes removed (owner 2026-09-20): the invoice ends on the Terms
+     line right under the totals — no dangling gap where the two boxes were. */
+  ty += 10;
 
   doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(110);
   doc.text('Terms: Payment due as per invoice. Late payments may incur a service charge.', margin, ty);
   doc.setTextColor(0);
 
-  // Footer: doc no · portal · page n of m on every page of THIS invoice
+  /* Footer: doc no · page n of m on every page of THIS invoice. The centred
+     "<portal> · <date>" line was removed (owner 2026-09-20). */
   const pageCount = doc.getNumberOfPages();
   for (let p = startPage; p <= pageCount; p += 1) {
     doc.setPage(p);
     doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(110);
     doc.text(header.invoice_number, margin, 290);
-    doc.text(`${COMPANY.portalLabel} · ${fmtDocDate(header.invoice_date)}`, pageW / 2, 290, { align: 'center' });
     doc.text(`Page ${p} of ${pageCount}`, pageW - margin, 290, { align: 'right' });
     doc.setTextColor(0);
   }

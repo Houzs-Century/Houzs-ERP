@@ -82,7 +82,7 @@ export const monthColumns = (latest: string, count: number, withCumulative: bool
 /** A laid tree as flat lines, one level below `depth` — the tree's own ids. */
 export const treeLines = (nodes: LaidNode[], depth = 1): FlatLine[] =>
   flattenLaid(nodes, depth).map(({ node, depth: d }) => ({
-    id: node.id, label: node.label, kind: node.kind === 'account' ? 'row' : node.kind, depth: d, amountSen: node.amountSen, pct: node.pct,
+    id: node.id, label: node.label, kind: node.kind === 'account' ? 'row' : node.kind === 'subtotal' ? 'net' : node.kind, depth: d, amountSen: node.amountSen, pct: node.pct,
     ...(node.code ? { code: node.code } : {}),
   }));
 
@@ -204,25 +204,27 @@ export const performanceLines = (r: PerfLike, summary: PerfSummaryLike[]): FlatL
 };
 
 type RpLike = {
-  layout: { receipts: LaidNode[]; payments: LaidNode[] };
+  layout: { tree: LaidNode[]; inSen: number; outSen: number };
   totals: { openingTotalSen: number; receiptsTotalSen: number; paymentsTotalSen: number; closingTotalSen: number };
 };
 
-/** Receipts & Payments as lines, the Total column only — opening, the
-    receipts tree and its total, the payments tree and its total, closing;
-    every % of that side's total. */
+/** The Cash Flow as lines, the Total column only: each top category as a
+    block, its tree, its own subtotal line; a running subtotal as a bold
+    line; then Cash Surplus / (Deficit), Balance b/f and Balance c/f last
+    (owner 2026-09-18: b/f and c/f at the foot). % of the side's total. */
 export const rpLines = (r: RpLike): FlatLine[] => {
   const t = r.totals;
-  return [
-    fixedLine('bal:opening', 'Opening balance', 'total', t.openingTotalSen, null),
-    fixedLine('blk:receipts', 'RECEIPTS', 'block', 0, null),
-    ...treeLines(r.layout.receipts).map((l) => ({ ...l, id: `R:${l.id}` })),
-    fixedLine('tot:receipts', 'Total receipts', 'total', t.receiptsTotalSen, pctOfBase(t.receiptsTotalSen, t.receiptsTotalSen || null)),
-    fixedLine('blk:payments', 'PAYMENTS', 'block', 0, null),
-    ...treeLines(r.layout.payments).map((l) => ({ ...l, id: `P:${l.id}` })),
-    fixedLine('tot:payments', 'Total payments', 'total', t.paymentsTotalSen, pctOfBase(t.paymentsTotalSen, t.paymentsTotalSen || null)),
-    fixedLine('bal:closing', 'Closing balance', 'net', t.closingTotalSen, null),
-  ];
+  const out: FlatLine[] = [];
+  for (const n of r.layout.tree) {
+    if (n.kind === 'subtotal') { out.push(fixedLine(n.id, n.label, 'net', n.amountSen, null)); continue; }
+    out.push(fixedLine(`blk:${n.id}`, n.label, 'block', 0, null));
+    out.push(...treeLines(n.children));
+    out.push(fixedLine(`tot:${n.id}`, n.totalLabel ?? `Total ${n.label}`, 'total', n.amountSen, n.pct));
+  }
+  out.push(fixedLine('net:surplus', 'Cash Surplus / (Deficit)', 'net', t.receiptsTotalSen - t.paymentsTotalSen, null));
+  out.push(fixedLine('bal:opening', 'Balance b/f', 'total', t.openingTotalSen, null));
+  out.push(fixedLine('bal:closing', 'Balance c/f', 'net', t.closingTotalSen, null));
+  return out;
 };
 
 /* ── The CSV ─────────────────────────────────────────────────────────────── */

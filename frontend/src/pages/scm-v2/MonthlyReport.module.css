@@ -1,0 +1,45 @@
+/* By month rows (owner 2026-09-18, style one of the two samples): a dashed
+   hairline under every row, the whole row lit while the mouse is on it, the
+   name column frozen at the left while the months scroll. Every cell of a
+   row carries a SOLID colour — a translucent one let the figures scrolling
+   under the frozen cell show through it (owner 2026-09-19: 划过去时会这样).
+   A subtotal or total row wears a shade of its own, apart from the account
+   rows (每个 subtotal 和 total 的 background colour 要不一样); an account's
+   opened lines a lighter one. The hover is an overlay, so it reads the same
+   on every shade. */
+
+.row td {
+  border-bottom: 1px dashed var(--border-weak, #e3e1da);
+  background-color: var(--c-cream, #fff);
+}
+
+.total td {
+  background-color: var(--bg-subtle, #eceeea);
+}
+
+.net td {
+  background-color: var(--c-beige, #e3e6e0);
+}
+
+.lines td {
+  background-color: var(--c-paper, #f4f6f3);
+}
+
+.row:hover td {
+  background-image: linear-gradient(rgba(17, 20, 15, 0.06), rgba(17, 20, 15, 0.06));
+}
+
+.name {
+  position: sticky;
+  left: 0;
+  background-color: var(--c-cream, #fff);
+  white-space: nowrap;
+}
+
+/* A line's description can run long: cut at the column's own width, the
+   whole text in the cell's tooltip. */
+.clip {
+  max-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

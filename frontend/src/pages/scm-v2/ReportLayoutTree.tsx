@@ -4,14 +4,14 @@
 // expense 都有 percentage). Category rows carry their subtotal, every row its
 // % of the report's base, and the L1..Ln buttons open the tree to a depth —
 // L1 is the categories alone, All is every account. Signs follow the four
-// reports' one rule (fmtSenParen): plain, parentheses only where credits beat
-// debits. Receipts & Payments (docs/bugs/0912) draws the same rows with a
+// reports' one rule (fmtSenPlain — no RM, owner 2026-09-19): plain, parentheses
+// only where credits beat debits. Receipts & Payments (docs/bugs/0912) draws the same rows with a
 // figure per money column before the total, in its own money dress, and a
 // figure that opens the entries behind it.
 // ----------------------------------------------------------------------------
 
 import { Fragment, useEffect, useState } from 'react';
-import { fmtSenParen } from '../../vendor/shared/format';
+import { fmtSenPlain } from '../../vendor/shared/format';
 import { fmtPct, pctOf, type LaidNode } from '../../vendor/scm/lib/report-layout';
 import { AccountLinesRow } from './AccountLinesRow';
 
@@ -79,7 +79,7 @@ const pickBtn: React.CSSProperties = { background: 'none', border: 'none', paddi
     the level reaches them, its subtotal stands either way. With `columns`
     every row prints a figure per column before its total; `fmt` is the
     report's own money dress; `onPick` makes a figure open its entries. */
-export const LaidRows = ({ nodes, level, depth = 1, columns, fmt = fmtSenParen, onPick, activeId, tree, drill }: {
+export const LaidRows = ({ nodes, level, depth = 1, columns, fmt = fmtSenPlain, onPick, activeId, tree, drill }: {
   nodes: LaidNode[]; level: Level; depth?: number;
   columns?: string[]; fmt?: (sen: number) => string; onPick?: LaidPick; activeId?: string | null;
   /** Hand-opened categories and accounts; with `drill`, an account's name opens its lines for the period. */
@@ -134,7 +134,7 @@ export const LaidBlock = ({ title, nodes, level, totalLabel, totalSen, baseSen, 
     {nodes.length === 0 && <tr><td colSpan={3} style={{ padding: '2px 10px 2px 24px', ...soft }}>—</td></tr>}
     <tr style={{ borderTop: '1px solid var(--border-weak, #e3e1da)' }}>
       <td style={{ padding: '4px 10px', fontWeight: 600 }}>{totalLabel}</td>
-      <td style={{ padding: '4px 10px', textAlign: 'right', fontWeight: 700, whiteSpace: 'nowrap' }}>{fmtSenParen(totalSen)}</td>
+      <td style={{ padding: '4px 10px', textAlign: 'right', fontWeight: 700, whiteSpace: 'nowrap' }}>{fmtSenPlain(totalSen)}</td>
       <td style={{ padding: '4px 10px', textAlign: 'right', whiteSpace: 'nowrap', ...soft }}>{fmtPct(pctOf(totalSen, baseSen))}</td>
     </tr>
   </>
@@ -144,7 +144,7 @@ export const LaidBlock = ({ title, nodes, level, totalLabel, totalSen, baseSen, 
 export const LaidTotalRow = ({ label, amountSen, baseSen, strong = false }: { label: string; amountSen: number; baseSen: number | null; strong?: boolean }) => (
   <tr style={{ borderTop: '2px solid var(--c-ink, #221f20)' }}>
     <td style={{ padding: strong ? '8px 10px' : '6px 10px', fontWeight: 700 }}>{label}</td>
-    <td style={{ padding: strong ? '8px 10px' : '6px 10px', textAlign: 'right', fontWeight: 700, whiteSpace: 'nowrap' }}>{fmtSenParen(amountSen)}</td>
+    <td style={{ padding: strong ? '8px 10px' : '6px 10px', textAlign: 'right', fontWeight: 700, whiteSpace: 'nowrap' }}>{fmtSenPlain(amountSen)}</td>
     <td style={{ padding: strong ? '8px 10px' : '6px 10px', textAlign: 'right', whiteSpace: 'nowrap', ...soft }}>{fmtPct(pctOf(amountSen, baseSen))}</td>
   </tr>
 );

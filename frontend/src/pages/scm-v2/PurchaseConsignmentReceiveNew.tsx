@@ -24,7 +24,8 @@ import { transferFromLabel } from '../../lib/convertScope';
 import { todayMyt } from '../../vendor/scm/lib/dates';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowRightLeft, ListChecks, Plus, Save, Trash2, X, ChevronDown } from 'lucide-react';
+import { ArrowRightLeft, ListChecks, Save, Trash2, X, ChevronDown } from 'lucide-react';
+import { AddLineButton } from '../../vendor/scm/components/AddLineButton';
 import { Button } from '@2990s/design-system';
 import { buildVariantSummary, fmtDateOrDash } from '@2990s/shared';
 import {
@@ -38,7 +39,7 @@ import {
   usePurchaseConsignmentOrders,
 } from '../../vendor/scm/lib/purchase-consignment-order-queries';
 import { useSuppliers, useSupplierDetail } from '../../vendor/scm/lib/suppliers-queries';
-import { useMfgProducts, useMaintenanceConfig } from '../../vendor/scm/lib/mfg-products-queries';
+import { useMfgProducts, useMaintenanceConfig, mfgCategoryLabel } from '../../vendor/scm/lib/mfg-products-queries';
 import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
 import { useFabricTrackings } from '../../vendor/scm/lib/fabric-queries';
 import { PcVariantEditor } from '../../vendor/scm/components/PcVariantEditor';
@@ -355,7 +356,7 @@ export const PurchaseConsignmentReceiveNew = () => {
     const q = pickerSearch.trim().toLowerCase();
     const base = (supplierId && bindings.length > 0)
       ? bindings.map((b) => ({ code: b.item_code, name: b.material_name, sub: `${b.supplier_sku ?? ''} · ${fmtRm(b.unit_price_sen, b.currency)}` }))
-      : (allSkusQ.data ?? []).map((p) => ({ code: p.code, name: p.name, sub: p.category }));
+      : (allSkusQ.data ?? []).map((p) => ({ code: p.code, name: p.name, sub: mfgCategoryLabel(p.category) }));
     if (!q) return base;
     return base.filter((it) => it.code.toLowerCase().includes(q) || it.name.toLowerCase().includes(q));
   }, [supplierId, bindings, allSkusQ.data, pickerSearch]);
@@ -701,7 +702,7 @@ export const PurchaseConsignmentReceiveNew = () => {
                                   </option>
                                 ))
                               : sortByText(productsQ.data ?? []).map((p) => (
-                                  <option key={p.id} value={p.code}>{p.name} · {p.category}</option>
+                                  <option key={p.id} value={p.code}>{p.name} · {mfgCategoryLabel(p.category)}</option>
                                 ))}
                           </datalist>
                         </>
@@ -815,19 +816,7 @@ export const PurchaseConsignmentReceiveNew = () => {
               >
                 <ListChecks {...ICON} /> Pick items (multi-select)
               </button>
-              <button
-                type="button"
-                onClick={addEmptyManualLine}
-                style={{
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-                  flex: 1, padding: '12px 14px',
-                  border: '1px dashed var(--c-orange)', borderRadius: 'var(--radius-md)',
-                  background: 'transparent', color: 'var(--c-orange)',
-                  fontFamily: 'var(--font-sans)', fontSize: 'var(--fs-13)', fontWeight: 600, cursor: 'pointer',
-                }}
-              >
-                <Plus {...ICON} /> Add another item
-              </button>
+              <AddLineButton variant="ghost" onClick={addEmptyManualLine} />
             </div>
           )}
         </div>

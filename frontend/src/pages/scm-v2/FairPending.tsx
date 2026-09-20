@@ -98,7 +98,7 @@ function PendingRow(props: {
      running last week, or the screen offers an attribution that is wrong by
      construction. */
   const optionsQ = useFairOptions(row.so_date);
-  const options = [...(optionsQ.data?.running ?? []), ...(optionsQ.data?.month ?? [])];
+  const options = [...(optionsQ.data?.running ?? []), ...(optionsQ.data?.earlier ?? [])];
   /* Only fairs at the venue the order already records. The place is evidence
      from the floor; this screen decides WHICH BOOTH, never where the sale
      happened. */

@@ -33,6 +33,7 @@ import { SkuPreviewStrip } from '../../vendor/scm/components/SkuPreviewStrip';
 import { composeSupplierSku } from '../../vendor/scm/lib/supplier-sku-helpers';
 import { MultiSupplierPicker } from '../../vendor/scm/components/MultiSupplierPicker';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
+import { NumberInput } from '../../vendor/scm/components/NumberInput';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
@@ -64,7 +65,6 @@ if (typeof window !== 'undefined' && window.localStorage.getItem(PM_GRID_KEY) ==
 export const ProductModels = () => {
   const [filter, setFilter] = useState<MfgCategory | 'all'>('all');
   const [search, setSearch] = useState('');
-  const [creating, setCreating] = useState(false);
   // PR #119 — Commander 2026-05-26: clicking a Model in Modular tab opens
   // a right-side drawer with the detail content (photo / allowed options /
   // SKU variants) instead of navigating away to /product-models/{id}. The
@@ -314,11 +314,6 @@ export const ProductModels = () => {
             />
           </div>
         }
-        primaryAction={
-          <Button variant="primary" icon={<Plus {...ICON} />} onClick={() => setCreating(true)}>
-            New Model
-          </Button>
-        }
       />
 
       {/* Category filter chips */}
@@ -415,7 +410,7 @@ export const ProductModels = () => {
         loadedSearchLimit={1000}
         onRowDoubleClick={(m) => setOpenModelId(m.id)}
         isLoading={isLoading}
-        emptyMessage='No models match. Try clearing filters, or click "+ New Model" to create one.'
+        emptyMessage='No models match. Try clearing filters. New models are created from SKU Master → New SKU.'
         toolbar={
           <label className="inline-flex cursor-pointer items-center gap-1.5 text-[12px] text-ink-muted">
             <input
@@ -430,8 +425,6 @@ export const ProductModels = () => {
           </label>
         }
       />
-
-      {creating && <NewModelDialog onClose={() => setCreating(false)} />}
 
       {/* Owner request 2026-06-12 — quick per-model Edit dialog. */}
       {editModel && (
@@ -874,7 +867,7 @@ export function NewModelDialog({
     const codeList = rows.map((r) => r.modelCode.trim()).filter(Boolean).join(', ');
     if (!(await askConfirm({
       title: `Create ${skuTotal} SKU${skuTotal === 1 ? '' : 's'}?`,
-      body: `New ${category} model${rows.length === 1 ? '' : 's'}: ${codeList}`
+      body: `New ${mfgCategoryLabel(category)} model${rows.length === 1 ? '' : 's'}: ${codeList}`
         + (sizeCount > 0 ? ` × ${sizeCount} size${sizeCount === 1 ? '' : 's'}` : '')
         + `. This creates ${skuTotal} SKU${skuTotal === 1 ? '' : 's'}.`,
       confirmLabel: `Create ${skuTotal} SKU${skuTotal === 1 ? '' : 's'}`,
@@ -2133,18 +2126,20 @@ export function ModularAssignSupplierDialog({
                               />
                             </td>
                             <td style={{ ...tdStyle, textAlign: 'right' }}>
-                              <input
-                                type="number"
+                              <NumberInput
+                                sign="unsigned"
+                                decimal={false}
                                 value={d.leadTimeDays}
-                                onChange={(e) => setDraft(d.key, { leadTimeDays: Number(e.target.value) || 0 })}
+                                onValueChange={(n) => setDraft(d.key, { leadTimeDays: n ?? 0 })}
                                 style={{ ...inputStyle, width: 60, textAlign: 'right' }}
                               />
                             </td>
                             <td style={{ ...tdStyle, textAlign: 'right' }}>
-                              <input
-                                type="number"
+                              <NumberInput
+                                sign="unsigned"
+                                decimal={false}
                                 value={d.moq}
-                                onChange={(e) => setDraft(d.key, { moq: Number(e.target.value) || 0 })}
+                                onValueChange={(n) => setDraft(d.key, { moq: n ?? 0 })}
                                 style={{ ...inputStyle, width: 60, textAlign: 'right' }}
                               />
                             </td>

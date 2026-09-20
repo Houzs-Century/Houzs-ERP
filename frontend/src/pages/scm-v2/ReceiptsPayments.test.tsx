@@ -1,15 +1,17 @@
-/* The Receipts & Payments tab (owner 2026-09-06/07): a column per money
-   account plus Total, receipts above payments, opening and closing per
-   column, rows in the owner's accounts, a figure that opens its entries. The
-   server half is backend/tests/rpReport.test.ts. */
+/* The Cash Flow tab (owner 2026-09-06/07, named 2026-09-18): a column per
+   money account plus Total, the tree's top categories as sections with
+   their own subtotal names, a running subtotal as a bold line, the
+   unassigned groups last, then Cash Surplus / (Deficit), Balance b/f and
+   Balance c/f; rows in the owner's accounts, a figure that opens its
+   entries. The server half is backend/tests/rpReport.test.ts. */
 
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, test, vi } from 'vitest';
 import type { RpReport } from '../../vendor/scm/lib/rp-report-queries';
 import type { LaidNode } from '../../vendor/scm/lib/report-layout';
 
-const line = (key: string, code: string, label: string, cells: Record<string, number>, pct: number): LaidNode =>
-  ({ kind: 'account', id: `acc:${key}`, label, code, key, amountSen: Object.values(cells).reduce((s, v) => s + v, 0), pct, cells, children: [] });
+const line = (key: string, code: string, label: string, cells: Record<string, number>, pct: number, flow: 'in' | 'out' = 'out'): LaidNode =>
+  ({ kind: 'account', id: `${flow}:acc:${key}`, label, code, key, flow, amountSen: Object.values(cells).reduce((s, v) => s + v, 0), pct, cells, children: [] });
 
 const report: RpReport = {
   from: '2026-07-01', to: '2026-07-31', byParty: false,
@@ -33,22 +35,28 @@ const report: RpReport = {
     { jeNo: 'JE-3', entryDate: '2026-07-15', sourceType: 'PV', sourceDocNo: 'PV-3', narration: null, party: 'FOSHAN CHAIRS', side: 'P', rowKey: '601-0003', column: '310-0010', sen: 40000 },
     { jeNo: 'JE-3', entryDate: '2026-07-15', sourceType: 'PV', sourceDocNo: 'PV-3', narration: null, party: 'FOSHAN CHAIRS', side: 'P', rowKey: 'ADV', column: '310-0010', sen: 30000 },
   ],
-  /* The rows on the tree (docs/bugs/0912): the owner's "Purchases" holds the
-     sofa row; the advance follows the tree. */
+  /* The rows on the Cash Flow tree (docs/bugs/0912): RECEIPTS (In) and
+     PAYMENTS (Out) with their own subtotal names; the owner's "Purchases"
+     holds the sofa row; the advance was never placed, so it prints under
+     Unassigned payments, last. */
   layout: {
-    stored: true,
-    receipts: [
-      { kind: 'category', id: 'sec:CURRENT ASSETS', label: 'CURRENT ASSETS', amountSen: 70000, pct: 100, cells: { '310-0010': 50000, '320-0000': 20000 }, children: [
-        line('300-0000', '300-0000', '300-0000 · ACCOUNT RECEIVEABLE', { '310-0010': 50000 }, 71.4),
-        line('XFER:310-0010', '310-0010', 'Transfer from 310-0010 · CASH AT BANK - MAYBANK', { '320-0000': 20000 }, 28.6),
+    stored: true, inSen: 70000, outSen: 76000,
+    tree: [
+      { kind: 'category', id: 'side:in', label: 'RECEIPTS', flow: 'in', totalLabel: 'Total receipts', amountSen: 70000, pct: 100, cells: { '310-0010': 50000, '320-0000': 20000 }, children: [
+        { kind: 'category', id: 'in:sec:CURRENT ASSETS', label: 'CURRENT ASSETS', amountSen: 70000, pct: 100, cells: { '310-0010': 50000, '320-0000': 20000 }, children: [
+          line('300-0000', '300-0000', '300-0000 · ACCOUNT RECEIVEABLE', { '310-0010': 50000 }, 71.4, 'in'),
+          line('XFER:310-0010', '310-0010', 'Transfer from 310-0010 · CASH AT BANK - MAYBANK', { '320-0000': 20000 }, 28.6, 'in'),
+        ] },
       ] },
-    ],
-    payments: [
-      { kind: 'category', id: 'cat:purchases', label: 'Purchases', amountSen: 40000, pct: 52.6, cells: { '310-0010': 40000 }, children: [
-        line('601-0003', '601-0003', '601-0003 · PURCHASE OF SOFA', { '310-0010': 40000 }, 52.6),
+      { kind: 'category', id: 'side:out', label: 'PAYMENTS', flow: 'out', totalLabel: 'Total payments', amountSen: 46000, pct: 60.5, cells: { '310-0010': 40000, '320-0000': 6000 }, children: [
+        { kind: 'category', id: 'out:cat:purchases', label: 'Purchases', amountSen: 40000, pct: 52.6, cells: { '310-0010': 40000 }, children: [
+          line('601-0003', '601-0003', '601-0003 · PURCHASE OF SOFA', { '310-0010': 40000 }, 52.6),
+        ] },
+        line('910-0000', '910-0000', '910-0000 · UTILITIES', { '320-0000': 6000 }, 7.9),
       ] },
-      line('910-0000', '910-0000', '910-0000 · UTILITIES', { '320-0000': 6000 }, 7.9),
-      line('ADV', 'ADV', 'Supplier advances (预付)', { '310-0010': 30000 }, 39.5),
+      { kind: 'unassigned', id: 'unassigned:out', label: 'Unassigned payments', flow: 'out', totalLabel: 'Total unassigned payments', amountSen: 30000, pct: 39.5, cells: { '310-0010': 30000 }, children: [
+        line('ADV', 'ADV', 'Supplier advances (预付)', { '310-0010': 30000 }, 39.5),
+      ] },
     ],
   },
 };
@@ -71,6 +79,7 @@ vi.mock('../../vendor/scm/lib/accounting-queries', () => ({
 vi.mock('../../vendor/scm/lib/rp-report-pdf', async (importOriginal) => ({
   ...(await importOriginal() as object),
   generateRpPdf: vi.fn(async () => undefined),
+  downloadRpXlsx: vi.fn(async () => undefined),
 }));
 vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ can: () => true }) }));
 vi.mock('./ReportLayoutEditor', () => ({ ReportLayoutEditor: () => <div role="dialog" aria-label="Layout · Receipts & Payments">editor</div> }));
@@ -81,18 +90,28 @@ vi.mock('./MonthlyReport', () => ({
 }));
 
 import { ReceiptsPaymentsTab } from './ReceiptsPayments';
-import { generateRpPdf } from '../../vendor/scm/lib/rp-report-pdf';
+import { downloadRpXlsx, generateRpPdf } from '../../vendor/scm/lib/rp-report-pdf';
 
-describe('the Receipts & Payments tab', () => {
-  test('columns per money account, receipts above payments, the four balance lines, brackets for a negative', () => {
+describe('the Cash Flow tab', () => {
+  test('Total alone by default, a ticked account adds its own column, receipts above payments, each section its own subtotal name, the balance lines at the foot, brackets for a negative', () => {
     render(<ReceiptsPaymentsTab />);
+    /* Total alone by default (owner 2026-09-18: default 看 total); a tick adds the account's own column. */
+    expect(screen.queryByText('310-0010', { selector: 'th' })).toBeNull();
+    expect(screen.getByText('Total', { selector: 'th' })).toBeTruthy();
+    fireEvent.click(screen.getByLabelText('Column 310-0010'));
     expect(screen.getByText('310-0010', { selector: 'th' })).toBeTruthy();
     expect(screen.getByText('RECEIPTS')).toBeTruthy();
     expect(screen.getByText('PAYMENTS')).toBeTruthy();
-    expect(screen.getByText('Opening balance').closest('tr')!.textContent).toContain('(100.00)');
     expect(screen.getByText('Total receipts').closest('tr')!.textContent).toContain('700.00');
-    expect(screen.getByText('Total payments').closest('tr')!.textContent).toContain('760.00');
-    expect(screen.getByText('Closing balance').closest('tr')!.textContent).toContain('(160.00)');
+    expect(screen.getByText('Total payments').closest('tr')!.textContent).toContain('460.00');
+    expect(screen.getByText('Unassigned payments')).toBeTruthy();
+    expect(screen.getByText('Total unassigned payments').closest('tr')!.textContent).toContain('300.00');
+    /* The foot (owner 2026-09-18): Cash Surplus / (Deficit) = receipts − payments, then b/f and c/f. */
+    expect(screen.getByText('Cash Surplus / (Deficit)').closest('tr')!.textContent).toContain('(60.00)');
+    expect(screen.getByText('Balance b/f').closest('tr')!.textContent).toContain('(100.00)');
+    expect(screen.getByText('Balance c/f').closest('tr')!.textContent).toContain('(160.00)');
+    expect(screen.queryByText('Opening balance')).toBeNull();
+    expect(screen.queryByText('Closing balance')).toBeNull();
     expect(screen.getByText('601-0003 · PURCHASE OF SOFA')).toBeTruthy();
     expect(screen.getByText('Supplier advances (预付)')).toBeTruthy();
     /* The tree (docs/bugs/0912): the category with its per-column subtotal
@@ -104,12 +123,14 @@ describe('the Receipts & Payments tab', () => {
     expect(purchases.textContent).toContain('52.6%');
     expect(screen.getByText('601-0003 · PURCHASE OF SOFA').closest('tr')!.getAttribute('data-depth')).toBe('2');
     expect(screen.getByText('Supplier advances (预付)').closest('tr')!.textContent).toContain('39.5%');
-    expect(screen.getByText('Total payments').closest('tr')!.textContent).toContain('100.0%');
+    expect(screen.getByText('Total payments').closest('tr')!.textContent).toContain('60.5%');
+    expect(screen.getByText('Total receipts').closest('tr')!.textContent).toContain('100.0%');
     expect(screen.getByText('%', { selector: 'th' })).toBeTruthy();
   });
 
-  test('a figure opens the entries behind it — a category\'s figure, every row under it; the toggle and the account ticks change the read', () => {
+  test('a figure opens the entries behind it — a category\'s figure, every row under it; the toggle changes the read; a tick adds a column', () => {
     render(<ReceiptsPaymentsTab />);
+    fireEvent.click(screen.getByLabelText('Column 310-0010'));
     fireEvent.click(screen.getByLabelText('601-0003 · PURCHASE OF SOFA 310-0010'));
     expect(screen.getByText(/601-0003 · PURCHASE OF SOFA · 310-0010 — 1 entry/)).toBeTruthy();
     expect(screen.getByText('FOSHAN CHAIRS')).toBeTruthy();
@@ -120,22 +141,29 @@ describe('the Receipts & Payments tab', () => {
 
     fireEvent.click(screen.getByLabelText('Show debtor and creditor names'));
     expect(lastPath.value.endsWith('|true')).toBe(true);
+    /* A tick shows a column; the read itself still covers every account. */
     fireEvent.click(screen.getByLabelText('Column 320-0000'));
-    expect(lastPath.value).toContain('|310-0010|');
+    expect(screen.getByText('320-0000', { selector: 'th' })).toBeTruthy();
+    expect(lastPath.value).not.toContain('320-0000');
+    expect(lastPath.value).not.toContain('310-0010');
   });
 
-  test('Print hands the report to the PDF', () => {
+  test('PDF and Excel hand the report, its ticked columns and its fold to the exports (owner 2026-09-19: 显示什么就 export 什么)', () => {
     render(<ReceiptsPaymentsTab />);
-    fireEvent.click(screen.getByText('Print'));
-    expect(vi.mocked(generateRpPdf)).toHaveBeenCalledWith(report);
+    fireEvent.click(screen.getByText('PDF'));
+    expect(vi.mocked(generateRpPdf)).toHaveBeenCalledWith(report, { columns: [], level: 'all', open: {} });
+    fireEvent.click(screen.getByLabelText('Column 310-0010'));
+    fireEvent.click(screen.getByRole('button', { name: 'L1' }));
+    fireEvent.click(screen.getByText('Excel'));
+    expect(vi.mocked(downloadRpXlsx)).toHaveBeenCalledWith(report, { columns: ['310-0010'], level: 1, open: {} });
   });
 
-  test('By month opens the monthly view with 累计; Print steps aside; the account ticks still narrow the read (docs/bugs/0916)', () => {
+  test('By month opens the monthly view with 累计; PDF steps aside; the column ticks stay (docs/bugs/0916)', () => {
     render(<ReceiptsPaymentsTab />);
     fireEvent.click(screen.getByRole('button', { name: 'By month' }));
-    expect(screen.getByRole('region', { name: /Monthly · Receipts & Payments/ }).textContent).toBe('with 累计');
-    expect(screen.queryByText('Closing balance')).toBeNull();
-    expect((screen.getByText('Print').closest('button') as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByRole('region', { name: /Monthly · Cash Flow/ }).textContent).toBe('with 累计');
+    expect(screen.queryByText('Balance c/f')).toBeNull();
+    expect((screen.getByText('PDF').closest('button') as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByLabelText('Column 310-0010')).toBeTruthy();
   });
 

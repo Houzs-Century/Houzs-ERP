@@ -20,6 +20,8 @@ import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowRight, Save, X, Plus, Trash2, AlertTriangle } from 'lucide-react';
 import { Button } from '@2990s/design-system';
+import { AddLineButton } from '../../vendor/scm/components/AddLineButton';
+import { useAddLineHotkey } from '../../vendor/scm/lib/useAddLineHotkey';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useWarehouses } from '../../vendor/scm/lib/inventory-queries';
 import { useInventoryBuckets } from '../../vendor/scm/lib/stock-queries';
@@ -33,6 +35,7 @@ import {
 } from '../../vendor/scm/lib/stock-queries';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
+import { NumberInput } from '../../vendor/scm/components/NumberInput';
 import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDialog';
 import { FreshMount } from '../../lib/freshMount';
 import { DateField } from "../../vendor/scm/components/DateField";
@@ -156,20 +159,27 @@ function TransferLineRow({
             </span>}
       </td>
       <td className={styles.tableRight}>
-        <input
-          type="number"
-          min={1}
-          step={1}
+        <NumberInput
+          sign="unsigned"
+          decimal={false}
           value={line.qty}
-          onChange={(e) => setLine(line._key, {
-            qty: Math.max(0, Math.floor(Number(e.target.value) || 0)),
-          })}
+          onValueChange={(n) => setLine(line._key, { qty: Math.max(0, n ?? 0) })}
+          aria-label={`Qty for ${line.itemCode || 'line'}`}
           className={styles.fieldInput}
           style={{
             textAlign: 'right',
             fontFamily: 'var(--font-mono)',
             color: isOverdrawn ? 'var(--c-festive-b, #B8331F)' : 'var(--c-ink)',
           }}
+        />
+      </td>
+      <td>
+        <input
+          type="text"
+          value={line.notes ?? ''}
+          onChange={(e) => setLine(line._key, { notes: e.target.value })}
+          placeholder="(optional) — shown as Description 2"
+          className={styles.fieldInput}
         />
       </td>
       <td className={styles.actionsCell}>
@@ -242,6 +252,8 @@ const StockTransferForm = ({ onStartNew }: { onStartNew: () => void }) => {
   };
 
   const addLine    = () => setLines((cur) => [...cur, blankLine()]);
+  // Insert adds a line — disabled once the transfer is posted (form locked).
+  useAddLineHotkey(addLine, created == null);
   const removeLine = (key: string) =>
     setLines((cur) => (cur.length <= 1 ? cur : cur.filter((l) => l._key !== key)));
 
@@ -409,9 +421,7 @@ const StockTransferForm = ({ onStartNew }: { onStartNew: () => void }) => {
       <section className={styles.card}>
         <div className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Items</h2>
-          <Button variant="ghost" size="sm" onClick={addLine}>
-            <Plus size={14} strokeWidth={1.75} /> Add Line Item
-          </Button>
+          <AddLineButton variant="ghost" onClick={addLine} />
         </div>
         <div className={styles.cardBody}>
           <table className={styles.table}>
@@ -421,6 +431,7 @@ const StockTransferForm = ({ onStartNew }: { onStartNew: () => void }) => {
                 <th>Variant bucket *</th>
                 <th style={{ width: 110, textAlign: 'right' }}>Available</th>
                 <th style={{ width: 110, textAlign: 'right' }}>Qty *</th>
+                <th style={{ width: 200 }}>Remarks</th>
                 <th style={{ width: 40 }} />
               </tr>
             </thead>
@@ -441,9 +452,7 @@ const StockTransferForm = ({ onStartNew }: { onStartNew: () => void }) => {
           </table>
 
           <div className={styles.addLineRow}>
-            <Button variant="ghost" size="sm" onClick={addLine}>
-              <Plus size={14} strokeWidth={1.75} /> Add Line Item
-            </Button>
+            <AddLineButton variant="ghost" onClick={addLine} />
           </div>
 
           {needsBucket && (
