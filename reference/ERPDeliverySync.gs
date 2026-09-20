@@ -560,3 +560,61 @@ function erpDeleteAppendedRows() {
     Log.info('cleanup', '[' + r.name + '] deleted rows ' + r.firstRow + '-' + r.lastRow + ' (' + r.count + ' rows, ' + r.firstDoc + ' .. ' + r.lastDoc + ')');
   });
 }
+
+// ── Reconcile: keep only READY / READY (PARTIAL) on the delivery tabs (owner 2026-09-20) ──
+// Applied once 2026-09-20 (delete 22, refresh 46). Chunked /prune-check (BATCH=400) so it
+// handles the >2000-row Delivery Details tab; deletes ONLY undelivered main-not-ready rows
+// (Deletable = ERP owns it AND not ready AND not delivered/invoiced/closed); delivered,
+// historical and non-ERP (found:false) rows are left untouched; refreshes a READY row's
+// Remarks 2 only when the live value differs. Run erpReconcileDryRun() before erpReconcileApply().
+function erpReconcile_(dryRun) {
+  var rid = Utilities.getUuid();
+  var cfg = erpConfig_();
+  var ss = getTargetSs();
+  var START = 4, DOCNO_COL = 2, REMARK2_COL = 13, BATCH = 400;
+  var isStockSo = function (d) {
+    d = String(d || "").trim().toUpperCase();
+    var s = d.indexOf("HC-SO-") === 0 ? d.slice(6) : (d.indexOf("SO-") === 0 ? d.slice(3) : null);
+    return s !== null && s.length > 0 && /^[0-9-]+$/.test(s);
+  };
+  var out = [];
+  [CONFIG.WEST_SHEET, CONFIG.EAST_SHEET, CONFIG.SG_SHEET].forEach(function (tabName) {
+    var sheet = ss.getSheetByName(tabName);
+    if (!sheet) { out.push(tabName + ": (tab not found)"); return; }
+    var lastRow = sheet.getLastRow();
+    if (lastRow < START) { out.push(tabName + ": (empty)"); return; }
+    var n = lastRow - START + 1;
+    var data = sheet.getRange(START, DOCNO_COL, n, 12).getValues(); // cols B..M
+    var rows = [];
+    for (var i = 0; i < n; i++) {
+      var d = String(data[i][0] || "").trim();
+      if (isStockSo(d)) rows.push({ row: START + i, doc: d, cur: String(data[i][11] == null ? "" : data[i][11]) });
+    }
+    if (!rows.length) { out.push(tabName + ": no stock rows"); return; }
+    var byDoc = {};
+    for (var b = 0; b < rows.length; b += BATCH) {
+      var chunk = rows.slice(b, b + BATCH).map(function (r) { return r.doc; });
+      var res = erpFetch_(cfg, "/api/delivery-sheet/prune-check", { method: "post", contentType: "application/json", payload: JSON.stringify({ doc_nos: chunk }) }, rid);
+      if (res.getResponseCode() !== 200) throw new Error(tabName + " prune-check " + res.getResponseCode() + ": " + res.getContentText().slice(0, 200));
+      (JSON.parse(res.getContentText()).results || []).forEach(function (r) { byDoc[r.DocNo] = r; });
+    }
+    var toDelete = [], toRefresh = [];
+    rows.forEach(function (r) {
+      var st = byDoc[r.doc];
+      if (!st || !st.found) return;                 // ERP does not own it -> leave
+      if (st.Deletable) { toDelete.push({ row: r.row, doc: r.doc }); }
+      else if (st.Ready) { var want = st.Remark2 == null ? "" : String(st.Remark2); if (want !== r.cur) toRefresh.push({ row: r.row, remark2: want }); }
+    });
+    if (!dryRun) {
+      toRefresh.forEach(function (x) { sheet.getRange(x.row, REMARK2_COL).setValue(x.remark2); });
+      toDelete.slice().sort(function (a, b) { return b.row - a.row; }).forEach(function (x) { sheet.deleteRow(x.row); });
+    }
+    out.push(tabName + ": delete " + toDelete.length + ", refresh " + toRefresh.length + (dryRun ? " (DRY-RUN, unchanged)" : " (APPLIED)"));
+    if (toDelete.length) out.push("   delete -> " + toDelete.map(function (x) { return x.doc; }).slice(0, 60).join(", "));
+  });
+  var text = out.join(String.fromCharCode(10));
+  Logger.log(text);
+  return text;
+}
+function erpReconcileDryRun() { return erpReconcile_(true); }
+function erpReconcileApply() { return erpReconcile_(false); }
