@@ -78,6 +78,36 @@ describe("GET /status-export", () => {
     await setSub("pending_supplier_pickup", "customer");
     expect(await statusOf()).toBe("Pending Supplier Pickup");
   });
+
+  test("the delivery-back leg reaches the sheet only when Own team delivers (owner 2026-09-20)", async () => {
+    // Mirrors the pickup gate: the parenthesised (Own Team) word is the
+    // Delivery SERVICE trigger; supplier / not-yet-chosen stays bare and fires
+    // nothing, so a supplier / 3PL delivery is never appended to a Delivery tab.
+    const setDelivery = (deliveryBy: string | null) =>
+      env.DB.prepare(
+        `UPDATE assr_cases SET stage = 'pending_delivery_service', sub_status = NULL, delivery_by = ? WHERE id = 9101`
+      )
+        .bind(deliveryBy)
+        .run();
+    const statusOf = async () => {
+      const res = await intake.request(
+        "/status-export",
+        { headers: { "X-Intake-Key": KEY } },
+        authedEnv
+      );
+      const body = (await res.json()) as { cases: any[] };
+      return body.cases.find((c) => c.assr_no === "ASSR/TEST-9101")?.status;
+    };
+    // Not yet chosen: the bare seeded word, which the trigger map ignores.
+    await setDelivery(null);
+    expect(await statusOf()).toBe("Pending Delivery/Service");
+    // Own team: the parenthesised trigger word.
+    await setDelivery("own");
+    expect(await statusOf()).toBe("Pending Delivery/Service (Own Team)");
+    // Supplier: its own word, distinct from the trigger, fires nothing.
+    await setDelivery("supplier");
+    expect(await statusOf()).toBe("Pending Delivery/Service (Supplier)");
+  });
 });
 
 // Delivery-date write-back (Nico 2026-08-12) — the sheet POSTs each

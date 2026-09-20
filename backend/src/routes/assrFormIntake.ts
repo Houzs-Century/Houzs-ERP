@@ -421,6 +421,7 @@ function sheetDetailStatus(
   sub: string | null,
   inspectionBy: string | null,
   pickupBy: string | null,
+  deliveryBy: string | null,
 ): string | undefined {
   if (stage === "under_verification") {
     const s = sub ?? "pending_inspection";
@@ -446,6 +447,15 @@ function sheetDetailStatus(
       return "Pending Supplier Pickup";
     }
     return "Pending Supplier Pickup";
+  }
+  if (stage === "pending_delivery_service") {
+    // The delivery-back leg mirrors inspection / pickup: it reaches the
+    // Delivery sheet only when OUR OWN team delivers. The parenthesised word is
+    // the trigger; the bare word (supplier, or not yet chosen) fires nothing,
+    // so a supplier / 3PL delivery is never appended to a Delivery tab.
+    if (deliveryBy === "own") return "Pending Delivery/Service (Own Team)";
+    if (deliveryBy === "supplier") return "Pending Delivery/Service (Supplier)";
+    return undefined;
   }
   return undefined;
 }
@@ -485,7 +495,7 @@ app.get("/status-export", async (c) => {
   // Same trust boundary: key-protected, and the sheet already owns
   // these customer columns for every existing row.
   const rows = await c.env.DB.prepare(
-    `SELECT assr_no, doc_no, ref_no, complained_date, stage, sub_status, inspection_by, pickup_by, completion_date, closed_at,
+    `SELECT assr_no, doc_no, ref_no, complained_date, stage, sub_status, inspection_by, pickup_by, delivery_by, completion_date, closed_at,
             customer_name, phone, location, sales_agent, po_no, complaint_issue,
             addr1, addr2, addr3, addr4,
             (SELECT group_concat(i.item_code, ', ')
@@ -503,6 +513,7 @@ app.get("/status-export", async (c) => {
     sub_status: string | null;
     inspection_by: string | null;
     pickup_by: string | null;
+    delivery_by: string | null;
     completion_date: string | null;
     closed_at: string | null;
     customer_name: string | null;
@@ -529,7 +540,7 @@ app.get("/status-export", async (c) => {
     // columns and this endpoint never sends them.
     complained_date: r.complained_date,
     status:
-      sheetDetailStatus(r.stage, r.sub_status, r.inspection_by, r.pickup_by) ??
+      sheetDetailStatus(r.stage, r.sub_status, r.inspection_by, r.pickup_by, r.delivery_by) ??
       ASSR_SHEET_STATUS[r.stage] ??
       r.stage.replace(/_/g, " ").replace(/\b\w/g, (ch) => ch.toUpperCase()),
     completed_date: r.completion_date ?? r.closed_at ?? null,
