@@ -412,12 +412,21 @@ describe('receiptMustMirrorAutoCount — the PURCHASE-side mirror', () => {
     expect(receiptMustMirrorAutoCount({ docNo: 'HC-GR-000201-PO-000273', migrated: true }, new Set())).toBe(true);
   });
 
-  it('SHIPS INERT: the committed allowlist is empty and unmeasured, so no migrated GRN is unblocked yet', () => {
-    expect(MIGRATED_RECEIPTS_NOT_INVOICED_IN_AUTOCOUNT.size).toBe(0);
-    expect(MIGRATED_RECEIPTS_NOT_INVOICED_AS_OF).toBe('not-yet-measured');
-    // proven against the SHIPPED set, not a fixture: today it changes nothing
+  it('ACTIVATED (2026-09-21): the committed allowlist unblocks the 25 never-invoiced migrated GRs, and only those', () => {
+    // Computed from the committed reconcile-truth (2026-09-09 cut): of 214
+    // migrated GRs the ERP holds, 25 had no AutoCount purchase invoice.
+    expect(MIGRATED_RECEIPTS_NOT_INVOICED_IN_AUTOCOUNT.size).toBeGreaterThan(0);
+    expect(MIGRATED_RECEIPTS_NOT_INVOICED_AS_OF).not.toBe('not-yet-measured');
+    // The owner's blocked receipts are unblocked (both halves of the split GR).
     expect(receiptMustMirrorAutoCount(
-      { docNo: 'HC-GR-000034', migrated: true }, MIGRATED_RECEIPTS_NOT_INVOICED_IN_AUTOCOUNT,
+      { docNo: 'HC-GR-005352', migrated: true }, MIGRATED_RECEIPTS_NOT_INVOICED_IN_AUTOCOUNT,
+    )).toBe(false);
+    expect(receiptMustMirrorAutoCount(
+      { docNo: 'HC-GR-005352-PO-009893', migrated: true }, MIGRATED_RECEIPTS_NOT_INVOICED_IN_AUTOCOUNT,
+    )).toBe(false);
+    // A GR AutoCount ALREADY invoiced stays locked — re-billing it double-books.
+    expect(receiptMustMirrorAutoCount(
+      { docNo: 'HC-GR-000201-PO-000273', migrated: true }, MIGRATED_RECEIPTS_NOT_INVOICED_IN_AUTOCOUNT,
     )).toBe(true);
   });
 });
