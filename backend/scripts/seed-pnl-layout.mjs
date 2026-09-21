@@ -29,7 +29,7 @@ import { defaultSectionFor } from '../src/scm/lib/account-sections.ts';
 const MODE = (process.env.MODE ?? 'plan').toLowerCase();
 const APPLY = MODE === 'apply';
 const CONFIRM_PHRASE = 'seed the P&L layouts from the cash flow tree';
-const WHO = 'Claude — seeded from the Cash Flow tree (2026-09-19)';
+const WHO = 'Claude — seeded from the Cash Flow tree (2026-09-21: Administrative expense)';
 const ALLOWED = ['pnl', 'performance'];
 const REPORTS = (process.env.REPORTS ?? 'pnl,performance').split(',').map((s) => s.trim()).filter(Boolean);
 
