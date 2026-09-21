@@ -11,9 +11,10 @@
 // ----------------------------------------------------------------------------
 
 import {
-  drawHeader, drawTwoColInfo, drawSignatureBoxes, deliverPdf, deliverPdfBlob,
+  drawHeader, drawTwoColInfo, drawPaymentDetails, drawSignatureBoxes, deliverPdf, deliverPdfBlob,
   amountInWordsMyr, fmtRm, fmtDocDate, safeName, type PdfAction,
 } from './pdf-common';
+import { getBrandingCache } from '../../../lib/branding';
 import { PAYMENT_METHOD_DEFAULT_LABELS } from './payment-methods';
 
 export type DepositInvoicePdfData = {
@@ -67,6 +68,9 @@ export function renderDepositInvoiceInto(doc: JsPdf, d: DepositInvoicePdfData): 
   doc.text(`Deposit received against sales order ${d.so_doc_no}, recognised as a sale on receipt; closed by a credit note when the final invoice is issued.`, 14, y + 2, { maxWidth: doc.internal.pageSize.getWidth() - 28 });
   doc.setTextColor(0);
   y += 8;
+
+  /* Where the customer pays (owner 2026-09-21): the CUSTOMER set from Settings › Branding; blank prints nothing. */
+  y = drawPaymentDetails(doc, y + 2, getBrandingCache().customerPaymentDetails);
 
   drawSignatureBoxes(doc, y + 2, 'Issued by', 'Company chop');
 

@@ -491,6 +491,8 @@ const BRANDING_FIELDS: {
   placeholder: string;
   hint?: string;
   optional?: boolean;
+  /** A textarea of this many rows instead of a one-line box. */
+  rows?: number;
 }[] = [
   { key: "companyName", label: "Company name", placeholder: "Houzs Century Sdn Bhd" },
   {
@@ -531,6 +533,30 @@ const BRANDING_FIELDS: {
     placeholder: "operation@houzscentury.com",
     hint: "Printed beside the customer service phone. Leave blank to omit it.",
     optional: true,
+  },
+  {
+    key: "customerPaymentDetails",
+    label: "Customer payment details",
+    placeholder: "Maybank 5644 1875 9397\nHOUZS CENTURY SDN BHD",
+    hint: "Where a customer pays: bank, account name, account number — one item per line. Printed as PAYMENT DETAILS on the Deposit Invoice and the Sales Invoice. Leave blank to omit the block.",
+    optional: true,
+    rows: 3,
+  },
+  {
+    key: "debtorPaymentDetails",
+    label: "Other Debtor payment details",
+    placeholder: "CIMB 8000 1234 5678\nHOUZS CENTURY SDN BHD",
+    hint: "Where an Other Debtor pays — this may be a different account from the customers'. Printed on the Other Debtor invoice. Leave blank to omit the block.",
+    optional: true,
+    rows: 3,
+  },
+  {
+    key: "debtorInvoiceTerms",
+    label: "Other Debtor invoice terms & conditions",
+    placeholder: "Payment within 14 days of the invoice date.\nCheques payable to HOUZS CENTURY SDN BHD.",
+    hint: "One term per line; printed numbered under the payment details on the Other Debtor invoice. Leave blank to omit the block.",
+    optional: true,
+    rows: 4,
   },
 ];
 
@@ -822,7 +848,7 @@ function BrandingTab() {
       {form && (
         <div className="space-y-4">
           {BRANDING_FIELDS.map((f) => {
-            const isAddress = f.key === "address";
+            const isAddress = f.key === "address" || (f.rows ?? 0) > 0;
             const value = form[f.key];
             return (
               <div key={f.key}>
@@ -838,7 +864,7 @@ function BrandingTab() {
                     disabled={!canEdit || saving}
                     onChange={(e) => set(f.key, e.target.value)}
                     placeholder={f.placeholder}
-                    rows={2}
+                    rows={f.rows ?? 2}
                     className="w-full resize-y rounded-md border border-border bg-surface px-3 py-2 text-[13px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/15 disabled:opacity-60"
                   />
                 ) : (

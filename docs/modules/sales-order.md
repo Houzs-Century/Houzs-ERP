@@ -46,7 +46,7 @@ Line and derived states:
 - `scm.so.price_override`: the audited `POST /:docNo/items/:itemId/override` and admin backfill routes. Normal line pricing is gated by session type, not by this key.
 - `scm.so_payment.amend`: Finance may edit or delete a payment after its same-day window (never a reconciled one). A role that holds this key literally must give a reason on every payment action (`lib/so-payment-reason.ts`).
 - `scm.amendment.create`: raise an SO amendment (Sales-org users and lane approvers may also raise one).
-- `scm.amendment.approve_lines` (Purchaser lane) and `scm.amendment.approve_delivery` (Logistic lane), mapped in `LANE_APPROVE_KEY` (`shared/amendment-lane.ts`). `scm.amendment.approve_so` is the legacy fallback; `scm.amendment.approve_po` is for the PO side.
+- `scm.amendment.approve_lines` (Purchaser lane), `scm.amendment.approve_delivery` (Logistic lane), and `scm.amendment.approve_price` (Finance / Kris — the 2990 price-only lane), mapped in `LANE_APPROVE_KEY` (`shared/amendment-lane.ts`). `scm.amendment.approve_so` is the legacy fallback; `scm.amendment.approve_po` is for the PO side.
 - `*` / `scm.admin`: bypass the write freeze and the migrated-order lock.
 - On the client, the line price input is editable when `isAdminLevel || isHatchSales` (the bridge sets `isHatchSales` for `sales` and `super_admin`).
 

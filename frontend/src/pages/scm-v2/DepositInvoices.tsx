@@ -214,6 +214,10 @@ const InvoiceDetail = ({ id, onClose }: { id: string; onClose: () => void }) => 
   const pay = q.data?.payment ?? null;
   const busy = cancel.isPending || post.isPending;
   const failed = cancel.isError ? cancel.error : post.isError ? post.error : null;
+  /* A credit note against the invoice — the final invoice's close-out, a refund's
+     or a conversion's — means it is never cancelled or re-issued (the server
+     refuses invoice_noted; the closed-DI guard, owner 2026-09-21). */
+  const noted = inv ? Boolean(inv.credit_note_id) || (inv.refund_notes ?? []).some((n) => n.status !== 'CANCELLED') : false;
   const [printing, setPrinting] = useState(false);
   const [printError, setPrintError] = useState<string | null>(null);
   /* A cancelled invoice prints too — as void, with its reason (docs/bugs/0834). */
@@ -231,7 +235,7 @@ const InvoiceDetail = ({ id, onClose }: { id: string; onClose: () => void }) => 
         <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
           <Button variant="ghost" size="sm" onClick={() => void printOne()} disabled={busy || printing}>{printing ? 'Preparing…' : 'Print'}</Button>
           {inv.status === 'ISSUED' && !inv.je_no && <Button size="sm" onClick={() => post.mutate(inv.id)} disabled={busy}>{post.isPending ? 'Posting…' : 'Post to ledger'}</Button>}
-          {inv.status === 'ISSUED' && (
+          {inv.status === 'ISSUED' && !noted && (
             <>
               <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="why it is cancelled" aria-label="Cancel reason" style={input} />
               <Button variant="ghost" size="sm" disabled={busy || reason.trim() === ''} onClick={() => cancel.mutate({ id: inv.id, reason: reason.trim() })}>
@@ -264,6 +268,11 @@ const InvoiceDetail = ({ id, onClose }: { id: string; onClose: () => void }) => 
                     {n.note_number} · {fmtSen(n.total_sen)} · {n.status}{n.pv_number ? ` · refund ${n.pv_number}` : ''}
                   </div>
                 ))}
+              </div>
+            )}
+            {inv.status === 'ISSUED' && noted && (
+              <div style={{ gridColumn: '1 / -1', ...soft }}>
+                A credit note stands against this invoice, so it cannot be cancelled or re-issued; cancelling the final invoice or the refund voucher takes the note back first.
               </div>
             )}
             {inv.status === 'CANCELLED' && (

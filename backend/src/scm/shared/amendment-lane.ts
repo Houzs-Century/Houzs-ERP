@@ -1,17 +1,24 @@
-// amendment-lane — PURE classification of an SO amendment's changes into the
-// TWO APPROVAL LANES of the owner's 2026-07-27 rework:
+// amendment-lane — PURE classification of an SO amendment's changes into its
+// APPROVAL LANES (the owner's 2026-07-27 rework, plus the 2026-09-21 PRICE lane):
 //
-//   LINES    — product-line changes (SKU/spec, colour/fabric, qty, sell price,
-//              add/remove a product line). Approved by Purchasing
-//              (scm.amendment.approve_lines); applying may spawn a follow-up
-//              PO Amendment for the purchaser to confirm.
+//   LINES    — product-line changes (SKU/spec, colour/fabric, qty, add/remove a
+//              product line — and sell price EXCEPT the price-lane carve-out
+//              below). Approved by Purchasing (scm.amendment.approve_lines);
+//              applying may spawn a follow-up PO Amendment for the purchaser.
 //   DELIVERY — delivery/customer-side changes (schedule dates, State/Postcode/
 //              City — and, later phases, address lines / disposal / transport
 //              charges). Approved by Logistics
 //              (scm.amendment.approve_delivery); applying never touches a PO.
+//   PRICE    — a PRICE-ONLY product-line change (only unit price and/or discount
+//              moved; SKU/colour/qty/remark unchanged) on the 2990 company only.
+//              Owner 2026-09-21: the sell price is Finance's (Kris), not the
+//              Purchaser's — it changes what the CUSTOMER pays and carries
+//              nothing for the PO to follow. Approved by
+//              scm.amendment.approve_price; applying never touches a PO. HOUZS
+//              keeps a price change on LINES. See PRICE_LANE_COMPANY_CODE.
 //
-// A submission that mixes both classes is SPLIT at create time into two
-// amendment documents, one per lane, each with its own approver and lifecycle
+// A submission that mixes lanes is SPLIT at create time into one amendment
+// document per lane, each with its own approver and lifecycle
 // (the lanes never wait for each other). This module is the single source of
 // truth for "which lane does this change belong to" — the create route, the
 // gates and the frontend all key off the SAME table, so a field can never be
@@ -42,18 +49,26 @@
 
 import { isServiceLine } from './service-sku';
 
-export type AmendmentLane = 'LINES' | 'DELIVERY';
+export type AmendmentLane = 'LINES' | 'DELIVERY' | 'PRICE';
+
+/** The ONE company whose SO amendments carve a price-only line into the PRICE
+ *  lane (owner 2026-09-21). Keyed on companies.code, never the numeric id — ids
+ *  drift between prod / staging / test, the code does not (mig 0216 grants target
+ *  roles by name for the same reason). HOUZS keeps a price change on LINES. */
+export const PRICE_LANE_COMPANY_CODE = '2990';
 
 /** Flat permission key that approves a given lane (services/permissions.ts). */
 export const LANE_APPROVE_KEY: Record<AmendmentLane, string> = {
   LINES: 'scm.amendment.approve_lines',
   DELIVERY: 'scm.amendment.approve_delivery',
+  PRICE: 'scm.amendment.approve_price',
 };
 
 /** Human label used in audit rows + API refusal messages. */
 export const LANE_LABEL: Record<AmendmentLane, string> = {
   LINES: 'product lines',
   DELIVERY: 'delivery / customer info',
+  PRICE: 'price',
 };
 
 /* Header payloadKey → lane. Every CONTROLLED key in so-field-policy MUST have a
@@ -144,25 +159,42 @@ export type LaneSplit<L> = {
  * and its catalogue category; SPEC/QTY/REMOVE → the SO line's current item_code
  * + item_group, looked up by the caller). item_group or category is what routes
  * a bare-code service line to DELIVERY.
+ *
+ * `linePriceOnly` answers, for a line the caller resolved as a product line,
+ * whether the ONLY thing it moves is the sell price / discount (SKU / colour /
+ * qty / remark unchanged); `priceLaneEnabled` is true only on
+ * PRICE_LANE_COMPANY_CODE. When both hold, that product line carves off into
+ * the PRICE lane instead of LINES. Both are REQUIRED so the price carve-out is
+ * never a silent default — a caller with no price lane passes `() => false` and
+ * `false`, and the split is exactly the two-lane behaviour it always had.
  */
 export function splitAmendmentByLane<L>(
   headerChanges: Record<string, string | null>,
   lines: L[],
   lineIdentity: (line: L) => LineLaneIdentity,
+  linePriceOnly: (line: L) => boolean,
+  priceLaneEnabled: boolean,
 ): LaneSplit<L> {
   const mk = () => ({ headerChanges: {} as Record<string, string | null>, headerKeys: [] as string[], lines: [] as L[] });
-  const perLane: LaneSplit<L>['perLane'] = { LINES: mk(), DELIVERY: mk() };
+  const perLane: LaneSplit<L>['perLane'] = { LINES: mk(), DELIVERY: mk(), PRICE: mk() };
 
   for (const [k, v] of Object.entries(headerChanges)) {
+    // Header keys only ever answer LINES or DELIVERY — a price is a line-level
+    // value, so classifyHeaderKey never routes to PRICE.
     const lane = classifyHeaderKey(k);
     perLane[lane].headerChanges[k] = v;
     perLane[lane].headerKeys.push(k);
   }
   for (const line of lines) {
-    perLane[classifyLine(lineIdentity(line))].lines.push(line);
+    let lane = classifyLine(lineIdentity(line));
+    // A price-only product-line change is Finance's, not the Purchaser's, on a
+    // price-lane company: the sell price carries nothing for the PO to follow.
+    // Service lines are already DELIVERY and never reach this branch.
+    if (lane === 'LINES' && priceLaneEnabled && linePriceOnly(line)) lane = 'PRICE';
+    perLane[lane].lines.push(line);
   }
 
-  const lanes = (['LINES', 'DELIVERY'] as AmendmentLane[]).filter(
+  const lanes = (['LINES', 'DELIVERY', 'PRICE'] as AmendmentLane[]).filter(
     (l) => perLane[l].headerKeys.length > 0 || perLane[l].lines.length > 0,
   );
   return { lanes, perLane };

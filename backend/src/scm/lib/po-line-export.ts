@@ -180,7 +180,11 @@ export async function buildPoExportRows(
     orderPoList(filterPoList(sb.from('purchase_orders').select(poListSelect(filters)), filters, c, validStatuses), filters.sort)
       .range(from, to));
   if (read.error) return { error: `purchase orders: ${read.error.message}` };
-  const stamped = await stampPoListGrns(sb, read.data ?? []);
+  // includeLineLinked=false: the export stamps every PO a tab matches, so the
+  // per-line reads the line link needs would blow the Worker subrequest budget.
+  // The header FK stays (unchanged export behaviour); the paged list carries the
+  // fuller line-linked set (see stampPoListGrns).
+  const stamped = await stampPoListGrns(sb, read.data ?? [], false);
   if (stamped.error) return { error: `GRNs: ${stamped.error}` };
   const withLines = await attachPoLines(sb, c, stamped.rows);
   if (withLines.error) return { error: withLines.error };

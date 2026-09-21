@@ -20,11 +20,17 @@
 
 import { splitAmendmentByLane, type LaneSplit, type AmendmentLane } from '../shared/amendment-lane';
 import { catalogCategoriesByCode } from './validate-item-codes';
+import { amendmentLinePriceOnly, type NoopCheckLine, type StoredLine } from './amendment-noop-lines';
 
-export type LaneResolvableLine = {
-  salesOrderItemId?: string | null;
-  newItemCode?: string | null;
-};
+/** A submitted line, from the caller's payload — the same shape the no-op drop
+ *  reads, because the price-lane carve-out compares the SAME requested fields
+ *  against the stored line that no-op detection does. */
+export type LaneResolvableLine = NoopCheckLine;
+
+/** The stored SO line, read once: its identity (item_code / item_group) answers
+ *  service-vs-product, and its money/spec fields let amendmentLinePriceOnly tell
+ *  a price-only change from a spec one. */
+type StoredLineRow = StoredLine & { item_group: string | null };
 
 export async function resolveAmendmentLaneSplit<L extends LaneResolvableLine>(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SCM PostgREST client is untyped at every call site in this tree.
@@ -33,26 +39,45 @@ export async function resolveAmendmentLaneSplit<L extends LaneResolvableLine>(
   companyId: number | null | undefined,
   headerChanges: Record<string, string | null>,
   lines: L[],
+  /** True only on PRICE_LANE_COMPANY_CODE (owner 2026-09-21). Required so the
+   *  price carve-out is never a silent default — the caller reads the ACTIVE
+   *  company code and decides. */
+  priceLaneEnabled: boolean,
 ): Promise<LaneSplit<L> | null> {
   const referencedIds = [...new Set(lines
     .map((l) => l.salesOrderItemId)
     .filter((x): x is string => typeof x === 'string' && x.length > 0))];
-  const identityById = new Map<string, { itemCode: string | null; itemGroup: string | null }>();
+  const storedById = new Map<string, StoredLineRow>();
   if (referencedIds.length > 0) {
     const { data, error } = await sb.from('mfg_sales_order_items')
-      .select('id, item_code, item_group').eq('doc_no', docNo).in('id', referencedIds);
+      .select('id, item_code, item_group, qty, unit_price_sen, variants, remark, discount_sen')
+      .eq('doc_no', docNo).in('id', referencedIds);
     if (error) return null;
-    for (const r of (data ?? []) as Array<{ id: string; item_code: string | null; item_group: string | null }>) {
-      identityById.set(r.id, { itemCode: r.item_code, itemGroup: r.item_group });
-    }
+    for (const r of (data ?? []) as StoredLineRow[]) storedById.set(r.id, r);
   }
   const addedCategory = await catalogCategoriesByCode(
     sb, lines.filter((l) => !l.salesOrderItemId).map((l) => l.newItemCode), companyId,
   );
   if (!addedCategory) return null;
-  return splitAmendmentByLane(headerChanges, lines, (l) => (l.salesOrderItemId
-    ? identityById.get(l.salesOrderItemId) ?? {}
-    : { itemCode: l.newItemCode, category: addedCategory.get((l.newItemCode ?? '').trim()) ?? null }));
+  return splitAmendmentByLane(
+    headerChanges,
+    lines,
+    (l) => {
+      if (l.salesOrderItemId) {
+        const stored = storedById.get(l.salesOrderItemId);
+        return stored ? { itemCode: stored.item_code, itemGroup: stored.item_group } : {};
+      }
+      return { itemCode: l.newItemCode, category: addedCategory.get((l.newItemCode ?? '').trim()) ?? null };
+    },
+    (l) => {
+      // Price-only is a property of a CHANGE to an EXISTING line: an ADD has no
+      // stored line to compare against, so it is never price-only (it is a whole
+      // new LINE that a service/product classification already placed).
+      const stored = l.salesOrderItemId ? storedById.get(l.salesOrderItemId) : undefined;
+      return stored ? amendmentLinePriceOnly(l, stored) : false;
+    },
+    priceLaneEnabled,
+  );
 }
 
 /** The preview's answer: which lanes, and how much of the request each takes.
@@ -67,5 +92,5 @@ export function summarizeLaneSplit<L>(split: LaneSplit<L>): LaneSplitSummary {
     lineCount: split.perLane[lane].lines.length,
     headerKeys: [...split.perLane[lane].headerKeys],
   });
-  return { lanes: [...split.lanes], perLane: { LINES: one('LINES'), DELIVERY: one('DELIVERY') } };
+  return { lanes: [...split.lanes], perLane: { LINES: one('LINES'), DELIVERY: one('DELIVERY'), PRICE: one('PRICE') } };
 }

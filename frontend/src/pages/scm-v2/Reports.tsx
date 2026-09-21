@@ -99,6 +99,8 @@ type PnlResponse = {
   tradingIncome: Line[]; costOfSales: Line[]; otherIncome: Line[]; expenses: Line[];
   /** TAXATION section rows — a profit-before-tax line appears when any posted. */
   taxation?: Line[];
+  /** The closing stock is the stock engine's as of the last day (2026-09-21); provisional until the month-end close books it. */
+  stock?: { closingProvisional: boolean; asOf: string };
   /** The same figures on the report's layout. */
   layout: PnlLayout;
   totals: {
@@ -172,6 +174,13 @@ export const PnLTab = () => {
             <tbody>
               <LaidBlock title="Trading income" nodes={lay.tradingIncome} level={level} totalLabel="Total income" totalSen={q.data.totals.tradingIncomeSen} baseSen={base} onPick={openLedger} tree={tree} drill={drill} />
               <LaidBlock title="Cost of sales (purchases + opening − closing)" nodes={lay.costOfSales} level={level} totalLabel="Total cost of sales" totalSen={q.data.totals.costOfSalesSen} baseSen={base} onPick={openLedger} tree={tree} drill={drill} />
+              {q.data.stock?.closingProvisional && (
+                <tr>
+                  <td colSpan={3} style={{ padding: '4px 10px 8px', fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
+                    Closing stock is what the shelves hold as of {q.data.stock.asOf} — provisional until the month-end close books it.
+                  </td>
+                </tr>
+              )}
               <LaidTotalRow label="GROSS PROFIT" amountSen={q.data.totals.grossProfitSen} baseSen={base} />
               <LaidBlock title="Other income" nodes={lay.otherIncome} level={level} totalLabel="Total other income" totalSen={q.data.totals.otherIncomeSen} baseSen={base} onPick={openLedger} tree={tree} drill={drill} />
               <LaidBlock title="Expenses" nodes={lay.expenses} level={level} totalLabel="Total expenses" totalSen={q.data.totals.expensesSen} baseSen={base} onPick={openLedger} tree={tree} drill={drill} />

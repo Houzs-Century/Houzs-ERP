@@ -133,8 +133,15 @@ describe('the registry — 资料 lives here, never in the chart', () => {
   test('create, list with outstanding, and update', async () => {
     const tables = baseTables();
     const app = harness(tables);
-    const created = await post(app, '/', { name: 'LIM AH KOW', phone: '012-3456789' });
+    const created = await post(app, '/', {
+      name: 'LIM AH KOW', phone: '012-3456789', tinNumber: 'IG12345678090', contactPerson: 'LIM',
+      address1: '12, JALAN SATU', city: 'PETALING JAYA', postcode: '47810', state: 'Selangor', country: 'Malaysia', email: '   ',
+    });
     expect(created.status).toBe(201);
+    /* The party's data as the supplier master carries it (owner 2026-09-21: 他要填的资料就和 supplier 的一样) — same columns; a blank is NULL. */
+    const lim = tables.acc_debtors.find((d) => d.name === 'LIM AH KOW')!;
+    expect([lim.tin_number, lim.contact_person, lim.address1, lim.city, lim.postcode, lim.state, lim.country, lim.email, lim.address2])
+      .toEqual(['IG12345678090', 'LIM', '12, JALAN SATU', 'PETALING JAYA', '47810', 'Selangor', 'Malaysia', null, null]);
 
     await makeBill(app, tables);
     const list = await app.request('/');
@@ -144,10 +151,16 @@ describe('the registry — 资料 lives here, never in the chart', () => {
     expect(body.debtors.find((d) => d.name === 'LIM AH KOW')!.outstanding_sen).toBe(0);
 
     const upd = await app.request('/d1', {
-      method: 'PATCH', body: JSON.stringify({ phone: '019-888' }), headers: { 'content-type': 'application/json' },
+      method: 'PATCH', body: JSON.stringify({ phone: '019-888', address2: 'TAMAN DUA', attention: 'MR AHMAD', fax: '' }), headers: { 'content-type': 'application/json' },
     });
     expect(upd.status).toBe(200);
-    expect(tables.acc_debtors.find((d) => d.id === 'd1')!.phone).toBe('019-888');
+    const ahmadRow = tables.acc_debtors.find((d) => d.id === 'd1')!;
+    expect([ahmadRow.phone, ahmadRow.address2, ahmadRow.attention, ahmadRow.fax]).toEqual(['019-888', 'TAMAN DUA', 'MR AHMAD', null]);
+    /* The list and the detail hand the party's data back, so the page and the print can carry it. */
+    const listed = ((await (await app.request('/')).json()) as { debtors: Row[] }).debtors.find((d) => d.id === 'd1')!;
+    expect([listed.address2, listed.attention]).toEqual(['TAMAN DUA', 'MR AHMAD']);
+    const detail = (await (await app.request('/d1')).json()) as { debtor: Row };
+    expect([detail.debtor.address2, detail.debtor.attention]).toEqual(['TAMAN DUA', 'MR AHMAD']);
   });
 });
 
@@ -195,6 +208,55 @@ describe('the Debtor Bill — posts directly, Dr control / Cr the lines', () => 
    invoice's rule carried here). A debtor bill is on the books from birth, so
    an edit RE-POSTS: contra the old entry dated as the old bill, then a fresh
    ODB dated as saved. */
+describe('text lines (owner 2026-09-21: 有一些我只想放 description 罢了，就是给人看到 detail)', () => {
+  test('a line with a description alone is kept on the bill without an account, booked by nobody, outside the total; text lines alone refuse; an empty line refuses', async () => {
+    const tables = baseTables();
+    const app = harness(tables);
+    const res = await post(app, '/d1/bills', {
+      billDate: '2026-09-03',
+      lines: [
+        { description: 'Rental September', creditAccountCode: '700-0000', amountSen: 40000 },
+        { description: 'Unit 3A, ground floor, as agreed on 01/09' },
+        { description: 'Utilities', creditAccountCode: '910-0000', amountSen: 10000 },
+      ],
+    });
+    expect(res.status, await res.clone().text()).toBe(201);
+    const bill = (await res.json() as { bill: { id: string; billNumber: string; totalSen: number } }).bill;
+    expect(bill.totalSen).toBe(50000);
+    const rows = tables.acc_debtor_bill_lines.filter((l) => l.bill_id === bill.id).map((l) => [l.line_no, l.description, l.credit_account_code, l.amount_sen]);
+    expect(rows).toEqual([
+      [1, 'Rental September', '700-0000', 40000],
+      [2, 'Unit 3A, ground floor, as agreed on 01/09', null, 0],
+      [3, 'Utilities', '910-0000', 10000],
+    ]);
+    const je = tables.journal_entries.find((j) => j.source_type === 'ODB' && j.source_doc_no === bill.billNumber)!;
+    const jl = tables.journal_entry_lines.filter((l) => l.journal_entry_id === je.id).map((l) => [l.account_code, Number(l.debit_sen), Number(l.credit_sen)]);
+    expect(jl).toEqual([['305-0000', 50000, 0], ['700-0000', 0, 40000], ['910-0000', 0, 10000]]);
+    /* The detail hands the text line back with no account, so Edit and Copy carry it. */
+    const detail = (await (await app.request('/d1')).json()) as { bills: Array<{ id: string; lines: Row[] }> };
+    const got = detail.bills.find((b) => b.id === bill.id)!.lines.map((l) => [l.line_no, l.credit_account_code, l.amount_sen]);
+    expect(got).toEqual([[1, '700-0000', 40000], [2, null, 0], [3, '910-0000', 10000]]);
+
+    const textOnly = await post(app, '/d1/bills', { billDate: '2026-09-03', lines: [{ description: 'nothing to charge' }] });
+    expect(textOnly.status).toBe(400);
+    expect((await textOnly.json() as { error: string }).error).toBe('lines_required');
+    const emptyLine = await post(app, '/d1/bills', { billDate: '2026-09-03', lines: [{ description: 'Rental', creditAccountCode: '700-0000', amountSen: 100 }, { description: '' }] });
+    expect(emptyLine.status).toBe(400);
+    expect((await emptyLine.json() as { error: string }).error).toBe('bad_line');
+
+    /* An edit keeps a text line through the re-post: stored without an account, absent from the fresh journal. */
+    const edited = await app.request(`/bills/${bill.id}`, {
+      method: 'PATCH', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ lines: [{ description: 'Rental September', creditAccountCode: '700-0000', amountSen: 45000 }, { description: 'Unit 3A, ground floor' }] }),
+    });
+    expect(edited.status, await edited.clone().text()).toBe(200);
+    expect(tables.acc_debtor_bill_lines.filter((l) => l.bill_id === bill.id).map((l) => [l.credit_account_code, l.amount_sen])).toEqual([['700-0000', 45000], [null, 0]]);
+    const live = tables.journal_entries.filter((j) => j.source_type === 'ODB' && j.source_doc_no === bill.billNumber && !j.reversed);
+    expect(live).toHaveLength(1);
+    expect(tables.journal_entry_lines.filter((l) => l.journal_entry_id === live[0]!.id).map((l) => [l.account_code, Number(l.credit_sen)])).toEqual([['305-0000', 0], ['700-0000', 45000]]);
+  });
+});
+
 describe('editing a bill — every field, the journal re-posted', () => {
   const patchBill = (app: Hono, billId: string, body: Row) => app.request(`/bills/${billId}`, {
     method: 'PATCH', body: JSON.stringify(body), headers: { 'content-type': 'application/json' },

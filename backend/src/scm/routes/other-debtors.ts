@@ -41,6 +41,21 @@ type Row = Record<string, any>;
 
 const now = () => new Date().toISOString();
 
+/* The party's data as the supplier master carries it (owner 2026-09-21: 他要填的
+   资料就和 supplier 的一样): identity, contact and the structured address the
+   printed invoice's BILL TO reads — body key → column, the columns named as
+   scm.suppliers names them. A blank is stored as NULL. */
+export const DEBTOR_PARTY_FIELDS: ReadonlyArray<readonly [string, string]> = [
+  ['tinNumber', 'tin_number'], ['businessRegNo', 'business_reg_no'], ['contactPerson', 'contact_person'], ['attention', 'attention'],
+  ['email', 'email'], ['phone2', 'phone2'], ['mobile', 'mobile'], ['whatsappNumber', 'whatsapp_number'], ['fax', 'fax'],
+  ['address1', 'address1'], ['address2', 'address2'], ['address3', 'address3'], ['address4', 'address4'],
+  ['city', 'city'], ['postcode', 'postcode'], ['state', 'state'], ['country', 'country'],
+];
+const DEBTOR_PARTY_COLS = DEBTOR_PARTY_FIELDS.map(([, col]) => col).join(', ');
+const partyText = (v: unknown): string | null => { const s = String(v ?? '').trim(); return s ? s : null; };
+/** Every party column from a create body — absent and blank alike are NULL. */
+const partyColumns = (body: Row): Row => Object.fromEntries(DEBTOR_PARTY_FIELDS.map(([key, col]) => [col, partyText(body[key])]));
+
 /* Same door as the PV's Paid From: the receiving account must BE money. */
 const requireMoneyIn = async (c: any, code: string): Promise<Response | null> => {
   const sb = c.get('supabase');
@@ -59,7 +74,7 @@ const requireMoneyIn = async (c: any, code: string): Promise<Response | null> =>
 const loadDebtor = async (c: any, id: string): Promise<{ debtor: Row } | { resp: Response }> => {
   const sb = c.get('supabase');
   const { data, error } = await scopeToCompany(
-    sb.from('acc_debtors').select('id, company_id, name, phone, notes, is_active').eq('id', id), c,
+    sb.from('acc_debtors').select(`id, company_id, name, phone, notes, is_active, ${DEBTOR_PARTY_COLS}`).eq('id', id), c,
   ).maybeSingle();
   if (error) return { resp: c.json({ error: 'load_failed', reason: error.message }, 500) };
   if (!data) return { resp: c.json({ error: 'not_found' }, 404) };
@@ -71,7 +86,7 @@ const loadDebtor = async (c: any, id: string): Promise<{ debtor: Row } | { resp:
 export const listDebtorsHandler = async (c: any): Promise<Response> => {
   const sb = c.get('supabase');
   const { data: debtors, error } = await scopeToCompany(
-    sb.from('acc_debtors').select('id, name, phone, notes, is_active, created_at'), c,
+    sb.from('acc_debtors').select(`id, name, phone, notes, is_active, created_at, ${DEBTOR_PARTY_COLS}`), c,
   ).order('name');
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   const { data: bills, error: bErr } = await scopeToCompany(
@@ -102,6 +117,7 @@ export const createDebtorHandler = async (c: any): Promise<Response> => {
     name,
     phone: body.phone ? String(body.phone).trim() : null,
     notes: body.notes ? String(body.notes).trim() : null,
+    ...partyColumns(body),
     created_by: String(c.get('user')?.id ?? ''),
   }).select('id, name').single();
   if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
@@ -124,6 +140,7 @@ export const updateDebtorHandler = async (c: any): Promise<Response> => {
   }
   if (body.phone !== undefined) patch.phone = body.phone ? String(body.phone).trim() : null;
   if (body.notes !== undefined) patch.notes = body.notes ? String(body.notes).trim() : null;
+  for (const [key, col] of DEBTOR_PARTY_FIELDS) if (body[key] !== undefined) patch[col] = partyText(body[key]);
   if (body.isActive !== undefined) patch.is_active = body.isActive === true;
   if (Object.keys(patch).length === 0) return c.json({ error: 'nothing_to_change' }, 400);
   const sb = c.get('supabase');
@@ -164,10 +181,15 @@ export const debtorDetailHandler = async (c: any): Promise<Response> => {
 
 /* ── Debtor Bill — posts directly (the owner: bill 直接过账) ───────────────── */
 
-type BillLine = { description: string | null; code: string; amountSen: number };
+/** A MONEY line names a credit account and a positive sen; a TEXT line (code
+    null, amount 0) carries a description alone — it prints, books nothing. */
+type BillLine = { description: string | null; code: string | null; amountSen: number };
+const isMoneyLine = (l: BillLine): l is BillLine & { code: string } => l.code !== null;
 
-/** 1–50 lines, each a credit account and a positive integer sen — the one
-    parser behind raising a bill and editing one. */
+/** 1–50 lines: money lines (an account and a positive integer sen) and text
+    lines (owner 2026-09-21: 有一些我只想放 description 罢了 — a description, no
+    account, no amount). At least one money line. The one parser behind
+    raising a bill and editing one. */
 function buildBillLines(raw: unknown): { lines: BillLine[]; total: number } | { error: string; message: string } {
   const rawLines = Array.isArray(raw) ? raw : [];
   if (rawLines.length === 0 || rawLines.length > 50) {
@@ -176,12 +198,22 @@ function buildBillLines(raw: unknown): { lines: BillLine[]; total: number } | { 
   const lines: BillLine[] = [];
   for (const [i, l] of rawLines.entries()) {
     const code = String(l?.creditAccountCode ?? '').trim();
-    const amount = Number(l?.amountSen);
+    const description = l?.description ? String(l.description).trim() : '';
+    const blankAmount = l?.amountSen === undefined || l?.amountSen === null || l?.amountSen === '';
+    const amount = blankAmount ? 0 : Number(l?.amountSen);
+    if (!code && amount === 0) {
+      if (!description) return { error: 'bad_line', message: `Line ${i + 1} is empty — a text line needs a description.` };
+      lines.push({ description, code: null, amountSen: 0 });
+      continue;
+    }
     if (!code) return { error: 'bad_line', message: `Line ${i + 1} has no account.` };
     if (!Number.isInteger(amount) || amount <= 0) {
       return { error: 'bad_line', message: `Line ${i + 1}: amountSen must be a positive integer (got ${String(l?.amountSen)}).` };
     }
-    lines.push({ description: l?.description ? String(l.description).trim() : null, code, amountSen: amount });
+    lines.push({ description: description || null, code, amountSen: amount });
+  }
+  if (!lines.some(isMoneyLine)) {
+    return { error: 'lines_required', message: 'A bill needs at least one line with an account and an amount — text lines alone book nothing.' };
   }
   return { lines, total: lines.reduce((s, l) => s + l.amountSen, 0) };
 }
@@ -195,7 +227,7 @@ function debtorBillRuleLines(roles: { AR_OTHER: string }, debtorName: string, bi
       partyType: 'ODEBTOR', partyCode: null, partyName: debtorName,
       notes: `Other debtor ${debtorName} — ${billNumber}`,
     },
-    ...lines.map((l) => ({
+    ...lines.filter(isMoneyLine).map((l) => ({
       accountCode: l.code, debitSen: 0, creditSen: l.amountSen,
       partyType: null, partyCode: null, partyName: null,
       notes: l.description ?? billNumber,
@@ -221,7 +253,7 @@ export const createDebtorBillHandler = async (c: any): Promise<Response> => {
   const coId = co.companyId;
   /* Each credit line takes only ordinary LEAVES — the same door the PV's
      debit walks: headers refuse (父户不记账), controls refuse (由模块过账). */
-  for (const code of [...new Set(lines.map((l) => l.code))]) {
+  for (const code of [...new Set(lines.filter(isMoneyLine).map((l) => l.code))]) {
     const leafErr = await requireLeafAccount(c, coId, code);
     if (leafErr) return leafErr;
   }
@@ -311,7 +343,7 @@ export const updateDebtorBillHandler = async (c: any): Promise<Response> => {
     if (built.total < received) {
       return c.json({ error: 'total_below_received', message: `${billNumber} already has ${fmtSen(received)} received against it — the total cannot fall below that.` }, 409);
     }
-    for (const code of [...new Set(built.lines.map((l) => l.code))]) {
+    for (const code of [...new Set(built.lines.filter(isMoneyLine).map((l) => l.code))]) {
       const leafErr = await requireLeafAccount(c, coId, code);
       if (leafErr) return leafErr;
     }
@@ -354,7 +386,7 @@ export const updateDebtorBillHandler = async (c: any): Promise<Response> => {
       sb.from('acc_debtor_bill_lines').select('line_no, description, credit_account_code, amount_sen').eq('bill_id', bill.id), c,
     ).order('line_no');
     if (lErr) return c.json({ error: 'load_failed', reason: lErr.message }, 500);
-    lines = ((rows ?? []) as Row[]).map((l) => ({ description: l.description ?? null, code: String(l.credit_account_code), amountSen: Number(l.amount_sen) }));
+    lines = ((rows ?? []) as Row[]).map((l) => ({ description: l.description ?? null, code: l.credit_account_code ? String(l.credit_account_code) : null, amountSen: Number(l.amount_sen) }));
   }
   const roles = await resolveRoles(sb, coId);
   const r = await postJournal(sb, {

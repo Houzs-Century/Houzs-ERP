@@ -28,10 +28,17 @@ import { isPendingColour } from "./fabric-colour-match.mjs";
 function parseBedframe(d2) {
   /* AutoCount Desc2 is free text typed by many people over years. Normalise the
      wrappers and misspellings FIRST so one set of patterns can read them all:
-     strip [..]/(..) wrappers, "diavan"->divan, "mattressgap"/"mgap"->m.gap. */
+     strip [..]/(..) wrappers, "diavan"->divan, "mattressgap"/"mgap"->m.gap.
+     "DIVAN GAP" names the DIVAN height, never the mattress gap: a line reads
+     "DIVAN GAP: 8" ... M.GAP: 12"" (owner 2026-09-21, HC-SO-010005), and the
+     un-anchored gap rule below would otherwise grab the leading "DIVAN GAP: 8"
+     and never reach M.GAP. Fold it to plain "DIVAN" here so the divan rule reads
+     the height and the gap rule reads M.GAP. Runs after the DIAVAN fix so
+     "DIAVAN GAP" folds too; the real gap always carries its own M./MATTRESS tag. */
   let s = (d2 || "").replace(/\s+/g, " ").trim();
   s = s.replace(/^[[(]\s*/, "").replace(/\s*[\])]\s*$/, "");
-  s = s.replace(/DIAVAN/gi, "DIVAN").replace(/MATTRESS\s*GAP/gi, "M.GAP").replace(/\bM\s?GAP/gi, "M.GAP")
+  s = s.replace(/DIAVAN/gi, "DIVAN").replace(/DIVAN\s*GAP/gi, "DIVAN")
+       .replace(/MATTRESS\s*GAP/gi, "M.GAP").replace(/\bM\s?GAP/gi, "M.GAP")
        .replace(/HYDROLIC|HYDRAULLIC|HYDRAILIC/gi, "HYDRAULIC")
        .replace(/NOLEG/gi, "NO LEG");
   const o = { raw: (d2 || "").replace(/\s+/g, " ").trim(), specials: [] };

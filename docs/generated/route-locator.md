@@ -1425,9 +1425,9 @@ Total: 1320 route registrations across 186 files.
 - L136  DELETE /:modelId
 
 ## backend/src/scm/routes/mrp-supplier-lead-times.ts  (3)
-- L53  GET    /
-- L80  PUT    /
-- L106  DELETE /
+- L55  GET    /
+- L89  PUT    /
+- L119  DELETE /
 
 ## backend/src/scm/routes/outstanding.ts  (3)
 - L63  GET    /${slug}
@@ -1520,8 +1520,8 @@ Total: 1320 route registrations across 186 files.
 - L62  GET    /mine
 
 ## backend/src/scm/routes/mrp-lead-times.ts  (2)
-- L48  GET    /
-- L69  PUT    /
+- L49  GET    /
+- L77  PUT    /
 
 ## backend/src/scm/routes/mrp.ts  (2)
 - L1826  GET    /

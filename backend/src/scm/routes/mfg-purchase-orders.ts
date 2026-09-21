@@ -470,7 +470,11 @@ mfgPurchaseOrders.get('/', async (c) => {
      OMITTED here — not blanked (C16). The client heals them a beat after render
      via GET /mfg-purchase-orders/list-mrp-enrichment
      (routes/mfg-purchase-orders-list-enrichment.ts + lib/listMrpEnrichment.ts). */
-  const stamped = await stampPoListGrns(supabase, (data ?? []) as Array<{ id: string } & Record<string, unknown>>);
+  // includeLineLinked=true: the list shows every GRN that received a PO's lines,
+  // not just the one whose header names it (a supplier multi-receive spans POs).
+  // Bounded read set (page <= 100, legacy path .limit(500)), so the extra per-line
+  // reads stay within budget; the export omits them (see stampPoListGrns).
+  const stamped = await stampPoListGrns(supabase, (data ?? []) as Array<{ id: string } & Record<string, unknown>>, true);
   if (stamped.error) return c.json({ error: 'grn_read_failed', reason: stamped.error }, 500);
   if (paginate) {
     /* The page's lines, for the grid's line columns (Item Code, Qty, Delivery

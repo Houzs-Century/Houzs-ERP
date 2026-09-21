@@ -11,6 +11,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, test, vi } from 'vitest';
 
 const createDebtorAsync = vi.fn(async (_b: unknown) => ({ ok: true, debtor: { id: 'd9' } }));
+const updateDebtorAsync = vi.fn(async (_b: unknown) => ({ ok: true }));
 const createBillAsync = vi.fn(async (_b: unknown) => ({ ok: true, bill: { billNumber: 'HC-ODB-2609-001', totalSen: 50000 } }));
 const updateBillAsync = vi.fn(async (_b: unknown) => ({ ok: true, bill: { id: 'b1', billNumber: 'HC-ODB-2609-001', totalSen: 65000 }, reposted: true, jeNo: 'HC-JE-2609-031' }));
 const createReceiptAsync = vi.fn(async (_b: unknown) => ({ ok: true, receipt: { receiptNumber: 'HC-ODR-2609-001' } }));
@@ -33,7 +34,7 @@ vi.mock('../../vendor/scm/lib/accounting-queries', async (importOriginal) => ({
   ] }, isLoading: false }),
   useDebtorDetail: (id: string | null) => ({ data: id ? detail : undefined, isLoading: false }),
   useCreateDebtor: () => ({ mutateAsync: createDebtorAsync, isPending: false }),
-  useUpdateDebtor: () => ({ mutateAsync: vi.fn(async () => ({})), isPending: false }),
+  useUpdateDebtor: () => ({ mutateAsync: updateDebtorAsync, isPending: false }),
   useCreateDebtorBill: () => ({ mutateAsync: createBillAsync, isPending: false }),
   useUpdateDebtorBill: () => ({ mutateAsync: updateBillAsync, isPending: false }),
   useCancelDebtorBill: () => ({ mutateAsync: cancelBillAsync, isPending: false }),
@@ -82,6 +83,42 @@ describe('the registry', () => {
   });
 });
 
+describe("the debtor's own data (owner 2026-09-21: 他要填的资料就和 supplier 的一样)", () => {
+  test('New debtor is a pop-out with identity, contact and address; Save sends every box, the country Malaysia by default', async () => {
+    detail = undefined;
+    draw();
+    fireEvent.click(screen.getByRole('button', { name: /New debtor/ }));
+    const d = dialog();
+    for (const [label, value] of [['Name', 'LIM AH KOW'], ['TIN Number', 'IG12345678090'], ['Address line 1', '12, JALAN SATU'], ['City', 'PETALING JAYA'], ['Postcode', '47810'], ['State', 'Selangor']]) {
+      fireEvent.change(within(d).getByLabelText(label), { target: { value } });
+    }
+    fireEvent.click(within(d).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(createDebtorAsync).toHaveBeenCalled());
+    expect(createDebtorAsync).toHaveBeenLastCalledWith(expect.objectContaining({
+      name: 'LIM AH KOW', tinNumber: 'IG12345678090', address1: '12, JALAN SATU', city: 'PETALING JAYA', postcode: '47810', state: 'Selangor', country: 'Malaysia', phone: '',
+    }));
+  });
+
+  test('the detail shows the address the invoice will carry; Edit debtor opens it filled and sends the change', async () => {
+    const base = baseDetail();
+    detail = { ...base, debtor: { ...base.debtor, address1: '12, JALAN SATU', city: 'PETALING JAYA', postcode: '47810', state: 'Selangor', country: 'Malaysia', email: 'ahmad@example.com', tin_number: 'IG12345678090' } };
+    draw();
+    fireEvent.click(screen.getByText('AHMAD BIN ALI'));
+    expect(screen.getByText('12, JALAN SATU')).toBeTruthy();
+    expect(screen.getByText('47810 PETALING JAYA')).toBeTruthy();
+    expect(screen.getByText('Selangor, Malaysia')).toBeTruthy();
+    expect(screen.getByText(/TIN IG12345678090/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /Edit debtor/ }));
+    const d = dialog();
+    expect((within(d).getByLabelText('Address line 1') as HTMLInputElement).value).toBe('12, JALAN SATU');
+    expect((within(d).getByLabelText('Email') as HTMLInputElement).value).toBe('ahmad@example.com');
+    fireEvent.change(within(d).getByLabelText('City'), { target: { value: 'KLANG' } });
+    fireEvent.click(within(d).getByRole('button', { name: /Save/ }));
+    await waitFor(() => expect(updateDebtorAsync).toHaveBeenCalled());
+    expect(updateDebtorAsync).toHaveBeenLastCalledWith(expect.objectContaining({ id: 'd1', name: 'AHMAD BIN ALI', city: 'KLANG', address1: '12, JALAN SATU', email: 'ahmad@example.com' }));
+  });
+});
+
 describe('the bill print (owner 2026-09-18: 需要打印功能)', () => {
   test('Print hands the bill, its debtor and the account names to the PDF, to print', () => {
     detail = baseDetail();
@@ -121,6 +158,29 @@ describe('the Debtor Bill — a pop-out form whose lines pick their own account'
     expect(sent.billDate).toMatch(ISO_DATE);
     expect(sent.lines).toEqual([{ description: '转租九月', creditAccountCode: '700-0000', amountSen: 45000 }]);
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  });
+
+  test('a line with a description alone is a text line: sent without an account, at zero, beside the money line (owner 2026-09-21)', async () => {
+    detail = baseDetail();
+    createBillAsync.mockClear();
+    draw();
+    fireEvent.click(screen.getByText('AHMAD BIN ALI'));
+    fireEvent.click(screen.getByText('New bill'));
+    const d = dialog();
+    fireEvent.change(within(d).getByLabelText('line 1 description'), { target: { value: 'Rental September' } });
+    fireEvent.focus(within(d).getAllByRole('combobox')[0]!);
+    fireEvent.mouseDown(screen.getByText('700-0000 · Other Income'));
+    setAmount(d, 'line 1 amount', '450');
+    fireEvent.keyDown(within(d).getByLabelText('line 1 amount'), { key: 'Insert' });
+    fireEvent.change(within(d).getByLabelText('line 2 description'), { target: { value: 'Unit 3A, ground floor' } });
+    expect(within(d).getByText(/a description alone is a text line/)).toBeTruthy();
+    fireEvent.click(within(d).getByText('Post bill'));
+    await waitFor(() => expect(createBillAsync).toHaveBeenCalledTimes(1));
+    const sent = createBillAsync.mock.calls[0]![0] as { lines: unknown[] };
+    expect(sent.lines).toEqual([
+      { description: 'Rental September', creditAccountCode: '700-0000', amountSen: 45000 },
+      { description: 'Unit 3A, ground floor', amountSen: 0 },
+    ]);
   });
 
   test("the lines are a table in the owner's order; Insert adds a line and lands on its account; Enter on an amount moves down; a line can be removed", () => {

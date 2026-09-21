@@ -4,7 +4,9 @@
    company never uses are unticked for it; a group nothing fills (Purchases,
    Accounts payable — other blocks' money) is pruned; the whole layout
    validates for the P&L and the Performance P&L with every other block the
-   chart's own; laid out, the tree prints the Cash Flow's groups (the lines
+   chart's own; laid out, the tree prints the Cash Flow's groups — Transport &
+   logistics and Commission under Administrative expense, the P&L's own home for
+   them since 2026-09-21, no Cost of funds group (the lines
    carry their own labels here — the default spelling is pinned in
    src/acc/report-layout.test.ts), and a
    company's hidden group sends its lines to Unassigned. The lay-out itself
@@ -49,17 +51,21 @@ const allCodes = (items: LayoutItem[]): string[] => items.flatMap((it) => (it.ki
 
 describe('the seeded P&L expense tree', () => {
   it('files every expense by the Cash Flow rule, prunes the groups other blocks own, and unticks the Houzs-only groups for 2990', () => {
-    expect(expenseHomeOf('900-T006')).toEqual({ id: 'pl:cost:transport', unmatched: false });
+    expect(expenseHomeOf('900-T006')).toEqual({ id: 'pl:general:transport', unmatched: false });
     expect(expenseHomeOf('900-S100')).toEqual({ id: 'pl:general:salary', unmatched: false });
     expect(expenseHomeOf('900-T009')).toEqual({ id: 'pl:finance', unmatched: false });
     expect(expenseHomeOf('999-9999')).toEqual({ id: 'pl:general:office', unmatched: true });
 
     const { items, mapping, unmatched } = buildPnlExpenseTree(expenses);
-    expect(topIdsOf(items)).toEqual(['pl:cost', 'pl:exh', 'pl:showroom', 'pl:warehouse', 'pl:general', 'pl:finance']);
-    /* Purchases and Accounts payable are cost of sales and creditors — nothing of the EXPENSES section fills them, so they are gone. */
-    expect(find(items, 'pl:cost')!.children.map((c) => (c.kind === 'category' ? c.id : c.kind))).toEqual(['pl:cost:transport', 'pl:cost:commission']);
-    expect(codesOf(find(items, 'pl:cost:transport'))).toEqual(['900-T006']);
-    expect(codesOf(find(items, 'pl:cost:commission'))).toEqual(['900-C003']);
+    expect(topIdsOf(items)).toEqual(['pl:exh', 'pl:showroom', 'pl:warehouse', 'pl:general', 'pl:finance']);
+    /* No Cost of funds group on the P&L (owner 2026-09-21): Transport & logistics and Commission sit under Administrative expense, after the office lines. */
+    expect(find(items, 'pl:cost')).toBeNull();
+    expect(find(items, 'pl:general')!.label).toBe('Administrative expense');
+    expect(find(items, 'pl:general')!.children.map((c) => (c.kind === 'category' ? c.id : c.kind))).toEqual([
+      'pl:general:salary', 'pl:general:rental', 'pl:general:marketing', 'pl:general:professional', 'pl:general:office', 'pl:general:transport', 'pl:general:commission',
+    ]);
+    expect(codesOf(find(items, 'pl:general:transport'))).toEqual(['900-T006']);
+    expect(codesOf(find(items, 'pl:general:commission'))).toEqual(['900-C003']);
     expect(codesOf(find(items, 'pl:exh'))).toEqual(['900-R031']);
     expect(codesOf(find(items, 'pl:showroom'))).toEqual(['900-W005']);
     expect(codesOf(find(items, 'pl:warehouse'))).toEqual(['900-R002']);
@@ -80,18 +86,17 @@ describe('the seeded P&L expense tree', () => {
     expect(unmatched).toEqual(['999-9999']);
     expect(mapping.find((m) => m.code === '999-9999')).toEqual({ code: '999-9999', name: 'SOMETHING NEW ON THE CHART', group: 'pl:general:office', unmatched: true });
     expect(outline(items)).toEqual([
-      'Cost of funds · 2 lines',
-      '  Transport & logistics · 1 line',
-      '  Commission · 1 line',
       'Exhibition & roadshow expense (hidden for 2) · 1 line',
       'Showrooms expense · 1 line',
       'Warehouse expense (hidden for 2) · 1 line',
-      'General expense · 6 lines',
+      'Administrative expense · 8 lines',
       '  Salary & related · 1 line',
       '  Rental - office & others · 1 line',
       '  Advertising & marketing · 1 line',
       '  Professional & statutory · 1 line',
       '  Office & admin · 2 lines',
+      '  Transport & logistics · 1 line',
+      '  Commission · 1 line',
       'Finance cost · 1 line',
     ]);
   });
@@ -103,7 +108,7 @@ describe('the seeded P&L expense tree', () => {
       const checked = validateLayout(report, layout);
       expect(checked.ok, report).toBe(true);
       if (!checked.ok) return;
-      expect(topIdsOf(checked.layout.blocks.expenses)).toEqual(['pl:cost', 'pl:exh', 'pl:showroom', 'pl:warehouse', 'pl:general', 'pl:finance']);
+      expect(topIdsOf(checked.layout.blocks.expenses)).toEqual(['pl:exh', 'pl:showroom', 'pl:warehouse', 'pl:general', 'pl:finance']);
       expect(allCodes(checked.layout.blocks.otherIncome ?? [])).toEqual(['590-0000']);
     }
     const pnl = withExpenseTree(defaultLayout('pnl', chart), items);
@@ -123,16 +128,16 @@ describe('the seeded P&L expense tree', () => {
     ];
     const flat = (nodes: LaidNode[]): unknown[] => nodes.map((n) => (n.children.length > 0 ? [n.kind, n.label, n.amountSen, flat(n.children)] : [n.kind, n.label, n.amountSen]));
     expect(flat(layOutBlock(items as LayoutItem[], lines, 1, null))).toEqual([
-      ['category', 'Cost of funds', 178_630, [['category', 'Transport & logistics', 178_630, [['account', '900-T006 · TRANSPORT (KL, SLG, MLK, JHR, OTHERS)', 178_630]]]]],
       ['category', 'Exhibition & roadshow expense', 50_000, [['account', '900-R031 · RENTAL - ROADSHOW', 50_000]]],
-      ['category', 'General expense', 1_067_742, [
+      ['category', 'Administrative expense', 1_246_372, [
         ['category', 'Salary & related', 1_067_642, [['account', '900-S100 · STAFF SALARIES & OVERTIME', 1_067_642]]],
         ['category', 'Office & admin', 100, [['account', '999-9999 · SOMETHING NEW ON THE CHART', 100]]],
+        ['category', 'Transport & logistics', 178_630, [['account', '900-T006 · TRANSPORT (KL, SLG, MLK, JHR, OTHERS)', 178_630]]],
       ]],
     ]);
     /* 2990 (company 2) never ticks Exhibition: its roadshow rent is not lost, it prints under Unassigned. */
     const forTwo = layOutBlock(items as LayoutItem[], lines, 2, null);
-    expect(forTwo.map((n) => n.label)).toEqual(['Cost of funds', 'General expense', 'Unassigned']);
-    expect(forTwo[2]!.children.map((n) => n.label)).toEqual(['900-R031 · RENTAL - ROADSHOW']);
+    expect(forTwo.map((n) => n.label)).toEqual(['Administrative expense', 'Unassigned']);
+    expect(forTwo[1]!.children.map((n) => n.label)).toEqual(['900-R031 · RENTAL - ROADSHOW']);
   });
 });

@@ -18,6 +18,8 @@
 
 Racks (`scm.warehouse_racks`) live one level under a warehouse, unique per `(warehouse_id, rack)`; a rack can carry a `zone` override of its default number-based zone grouping. A cross-company, read-only view backs an "All Companies" rack tab and the mobile rack-lookup screen — there is no cross-company write; editing, stock and zone stay per-company.
 
+`stock_bucket` (mig 20260921T2000; null / `customer` / `display` / `service`) names the CLOSING STOCK the month-end close books a warehouse's goods on; blank follows the type (warehouse, others → customer; showroom, display → display; service → service — `backend/src/scm/lib/stock-bucket.ts`). HOUZS's two Cash & Carry segment locations carry `customer` (owner 2026-09-21). Set it on the warehouse form.
+
 ## Rules that must not break
 
 - Set `type`, never `is_showroom` directly — a trigger overwrites `is_showroom` from `type` on every insert/update, so a raw update of the flag alone is silently reverted.

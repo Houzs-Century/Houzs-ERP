@@ -9,6 +9,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
 import { writeFailedAs } from './mutation-error';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
+import type { DebtorPartyColumns, DebtorPartyValues } from './debtor-party';
 
 // baseQuery is a custom-hook factory — only ever called from use* hooks below.
 // eslint-disable-next-line react-hooks/rules-of-hooks
@@ -403,11 +404,13 @@ export const useChartDelete = () => {
    Counterparty registry + Debtor Bills (post directly) + Receipts (the PV's
    four layers, AP-Payment-style knock-off, partial included). The GL keeps
    one control (305-0000); per-party truth lives in these tables. */
+/** A debtor: the registry row, plus the party's data as the supplier master carries it (2026-09-21, `debtor-party.ts`). */
 export type OtherDebtor = {
   id: string; name: string; phone: string | null; notes: string | null;
   is_active: boolean; outstanding_sen: number;
-};
-export type DebtorBillLine = { id: string; line_no: number; description: string | null; credit_account_code: string; amount_sen: number };
+} & Partial<DebtorPartyColumns>;
+/** A bill line: a money line names its account; a TEXT line (2026-09-21) has no account and a zero amount — description only. */
+export type DebtorBillLine = { id: string; line_no: number; description: string | null; credit_account_code: string | null; amount_sen: number };
 export type DebtorBill = {
   id: string; bill_number: string; bill_date: string;
   total_sen: number; received_sen: number; status: string; notes: string | null;
@@ -440,7 +443,7 @@ const invalidateDebtors = (qc: ReturnType<typeof useQueryClient>) => {
 export const useCreateDebtor = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { name: string; phone?: string; notes?: string }) =>
+    mutationFn: (body: { name: string; phone?: string; notes?: string } & Partial<DebtorPartyValues>) =>
       authedFetch<{ ok: boolean; debtor: { id: string } }>(`/other-debtors`, { method: 'POST', body: JSON.stringify(body) }),
     onSuccess: () => invalidateDebtors(qc),
   });
@@ -448,7 +451,7 @@ export const useCreateDebtor = () => {
 export const useUpdateDebtor = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; name?: string; phone?: string; notes?: string; isActive?: boolean }) =>
+    mutationFn: ({ id, ...body }: { id: string; name?: string; phone?: string; notes?: string; isActive?: boolean } & Partial<DebtorPartyValues>) =>
       authedFetch(`/other-debtors/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
     onSuccess: () => invalidateDebtors(qc),
   });
@@ -458,7 +461,7 @@ export const useCreateDebtorBill = () => {
   return useMutation({
     mutationFn: ({ debtorId, ...body }: {
       debtorId: string; billDate?: string; notes?: string;
-      lines: Array<{ description?: string; creditAccountCode: string; amountSen: number }>;
+      lines: Array<{ description?: string; creditAccountCode?: string; amountSen: number }>;
     }) => authedFetch<{ ok: boolean; bill: { billNumber: string; totalSen: number } }>(
       `/other-debtors/${debtorId}/bills`, { method: 'POST', body: JSON.stringify(body) },
     ),
@@ -471,7 +474,7 @@ export const useUpdateDebtorBill = () => {
   return useMutation({
     mutationFn: ({ billId, body }: {
       billId: string;
-      body: { billDate?: string; notes?: string; lines?: Array<{ description?: string; creditAccountCode: string; amountSen: number }> };
+      body: { billDate?: string; notes?: string; lines?: Array<{ description?: string; creditAccountCode?: string; amountSen: number }> };
     }) => authedFetch<{ ok: boolean; bill: { id: string; billNumber: string; totalSen: number }; reposted?: boolean; jeNo?: string }>(
       `/other-debtors/bills/${billId}`, { method: 'PATCH', body: JSON.stringify(body) },
     ),

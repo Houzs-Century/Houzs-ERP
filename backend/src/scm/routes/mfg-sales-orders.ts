@@ -19,7 +19,7 @@ import {
   resolveFabricTierOverride,
   type RuleLineInput,
   passesRefinementColumns,
-  LANE_LABEL, type AmendmentLane,
+  LANE_LABEL, PRICE_LANE_COMPANY_CODE, type AmendmentLane,
 } from '../shared';
 import { computeSoDeliveryFee, type SoDeliveryFeeResult } from '../shared/pricing';
 /* Special delivery fee rules (migration 0024, #691 RuleTarget) — the model |
@@ -10987,13 +10987,16 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
      (docs/bugs/0895-an-amendment-that-added-a-service-line-went-to-the-purchaser.md). */
   /* Shared with the lane PREVIEW route (lib/amendment-lane-resolve) so the desk the
      requester was shown is the desk the row lands on. */
-  const split = await resolveAmendmentLaneSplit(sb, docNo, activeCompanyId(c), headerChanges, submittedLines);
+  // Price-lane carve-out is 2990's alone (owner 2026-09-21). Read the ACTIVE
+  // company code, not the id — ids drift between environments.
+  const priceLaneEnabled = c.get('companyCode') === PRICE_LANE_COMPANY_CODE;
+  const split = await resolveAmendmentLaneSplit(sb, docNo, activeCompanyId(c), headerChanges, submittedLines, priceLaneEnabled);
   if (!split) return c.json(LINE_BUILD_ERRORS.unreadable, 500);
 
   // Guard 4b — per-lane openness: each lane admits ONE amendment awaiting its
-  // approver. The other lane stays free — that is the whole point of the split.
+  // approver. The other lanes stay free — that is the whole point of the split.
   const openLanes = new Set(prior
-    .filter((a) => (a.lane === 'LINES' || a.lane === 'DELIVERY') && a.status === 'REQUESTED')
+    .filter((a) => (a.lane === 'LINES' || a.lane === 'DELIVERY' || a.lane === 'PRICE') && a.status === 'REQUESTED')
     .map((a) => a.lane as AmendmentLane));
   const blockedLanes = split.lanes.filter((l) => openLanes.has(l));
   if (blockedLanes.length > 0) {

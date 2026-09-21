@@ -39,6 +39,20 @@
 // to that date shown inside equity as current earnings — and its own
 // self-check line: assets − liabilities − equity − earnings must be exactly
 // zero or the report says so in red rather than pretending.
+//
+// STOCK (owner 2026-09-21: by right 抓的就是 live 的 closing stock — 报表选
+// 8月31号就应该显示当时 stock 拥有的 amount, 9月21号就应该是 9月21号). The
+// stock lines do NOT come from the GL's month-close pair: they come from the
+// stock engine as of the date (acc/stock-close.ts, the same replay the close
+// books from — owned goods, by bucket). The P&L prints Opening stock (the
+// engine the day before the range) and Closing stock (the engine on its last
+// day), one line per bucket on the bucket's own accounts; the balance sheet's
+// STOCK is the engine as at its date. The GL's own 330 / 600 / 620 lines are
+// set aside so nothing counts twice, and the earnings figure is adjusted by
+// the same difference, so the self-check still reads zero. At a month-end
+// the close has booked, engine and ledger are the same number; anywhere
+// else (the open month, a mid-month date) the closing is flagged
+// PROVISIONAL — it is what the shelves hold today, not yet a journal.
 // ----------------------------------------------------------------------------
 
 import { hasHouzsPerm } from '../lib/houzs-perms';
@@ -48,11 +62,14 @@ import { ACCOUNT_SECTIONS, defaultSectionFor } from '../lib/account-sections';
 import { layOutBlock, type LaidNode } from '../../acc/report-layout';
 import { countsInTheBooks } from '../../acc/reversal-pairs';
 import { allowedIds, resolveLayout } from './accounting-report-layouts';
+import { resolveRoles, STOCK_BUCKET_ROLES, type AccountRole } from '../../acc/rules';
+import { stockValueByBucketAsOf } from '../../acc/stock-close';
+import { STOCK_BUCKETS, type StockBucket } from '../lib/stock-bucket';
 
 const requirePerm = (c: any): boolean => hasHouzsPerm(c, 'scm.payment_voucher.post');
 const NO_PERM = { error: "You don't have permission to read the financial statements." };
 
-export type AccountRow = { account_code: string; account_type: string; section: string | null };
+export type AccountRow = { account_code: string; account_name?: string | null; account_type: string; section: string | null };
 export type SumRow = { code: string; name: string; type: string; drSen: number; crSen: number };
 
 /** Sum the GL lines the books count per account inside [from, to] — posted,
@@ -89,7 +106,7 @@ export async function loadSums(
 
 /** The chart of the active company, read once per report. */
 export async function loadAccounts(sb: any, companyId: number): Promise<{ ok: true; accounts: AccountRow[] } | { ok: false; reason: string }> {
-  const { data, error } = await sb.from('accounts').select('account_code, account_type, section').eq('company_id', companyId);
+  const { data, error } = await sb.from('accounts').select('account_code, account_name, account_type, section').eq('company_id', companyId);
   if (error) return { ok: false, reason: String((error as { message?: string }).message ?? error) };
   return { ok: true, accounts: (data ?? []) as AccountRow[] };
 }
@@ -118,6 +135,70 @@ const inSections = (rows: Sectioned[], sections: string[]): Sectioned[] => rows.
 const credit = (r: SumRow): number => r.crSen - r.drSen;
 const debit = (r: SumRow): number => r.drSen - r.crSen;
 
+/* ── The stock lines, from the engine ─────────────────────────────────────── */
+
+/** The day before a date, YYYY-MM-DD. */
+const dayBefore = (iso: string): string => new Date(Date.parse(`${iso}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
+/** The last day of a date's month, YYYY-MM-DD. */
+const monthEndOf = (iso: string): string => {
+  const [y, m] = iso.split('-').map(Number) as [number, number];
+  return `${iso.slice(0, 7)}-${String(new Date(Date.UTC(y, m, 0)).getUTCDate()).padStart(2, '0')}`;
+};
+/** The name a stock line prints when the chart has no row for its code yet (the seed not run). */
+const STOCK_ROLE_NAMES: Partial<Record<AccountRole, string>> = {
+  INVENTORY_CUSTOMER: 'STOCK - CUSTOMER', INVENTORY_DISPLAY: 'STOCK - DISPLAY', INVENTORY_SERVICE: 'STOCK - SERVICE',
+  OPENING_STOCK_CUSTOMER: 'STOCKS AT THE BEGINNING OF YEAR - CUSTOMER', OPENING_STOCK_DISPLAY: 'STOCKS AT THE BEGINNING OF YEAR - DISPLAY', OPENING_STOCK_SERVICE: 'STOCKS AT THE BEGINNING OF YEAR - SERVICE',
+  CLOSING_STOCK_CUSTOMER: 'STOCKS AT THE END OF YEAR - CUSTOMER', CLOSING_STOCK_DISPLAY: 'STOCKS AT THE END OF YEAR - DISPLAY', CLOSING_STOCK_SERVICE: 'STOCKS AT THE END OF YEAR - SERVICE',
+};
+/** Every code the ledger books stock on — the legacy one-account pair and the nine bucket accounts. */
+const stockCodesOf = (roles: Record<AccountRole, string>): Set<string> => new Set([
+  roles.INVENTORY, roles.CLOSING_STOCK,
+  ...STOCK_BUCKETS.flatMap((b) => [roles[STOCK_BUCKET_ROLES[b].inventory], roles[STOCK_BUCKET_ROLES[b].opening], roles[STOCK_BUCKET_ROLES[b].closing]]),
+]);
+
+type StockLines = {
+  /** What the range OPENED on (the engine the day before it) and CLOSED on (the engine on its last day), per bucket. */
+  opening: Record<StockBucket, number>; closing: Record<StockBucket, number>;
+  /** The engine's total on the last day — what the balance sheet's stock reads. */
+  closingTotalSen: number;
+  /** True unless the ledger has booked a closing for that very month-end. */
+  closingProvisional: boolean;
+  roles: Record<AccountRole, string>;
+  codes: Set<string>;
+};
+
+/** The engine's opening and closing per bucket for [from, to]; a null from = since always (no opening). */
+async function loadStockLines(sb: any, companyId: number, from: string | null, to: string): Promise<{ ok: true; stock: StockLines } | { ok: false; reason: string }> {
+  const roles = await resolveRoles(sb, companyId);
+  const [openingR, closingR] = await Promise.all([
+    from ? stockValueByBucketAsOf(sb, companyId, dayBefore(from)) : Promise.resolve({ ok: true as const, buckets: { customer: 0, display: 0, service: 0 }, totalSen: 0 }),
+    stockValueByBucketAsOf(sb, companyId, to),
+  ]);
+  if (!openingR.ok) return { ok: false, reason: `opening stock: ${openingR.reason}` };
+  if (!closingR.ok) return { ok: false, reason: `closing stock: ${closingR.reason}` };
+  /* Booked = an active STOCKADJ closing entry for the month AND the date is that month's end. */
+  let booked = false;
+  if (to === monthEndOf(to)) {
+    const { data, error } = await sb.from('journal_entries')
+      .select('id, reversed')
+      .eq('company_id', companyId).eq('source_type', 'STOCKADJ').eq('source_doc_no', `STOCKADJ-${companyId}-${to.slice(0, 7)}`);
+    if (error) return { ok: false, reason: `closing entry: ${error.message}` };
+    booked = ((data ?? []) as Array<{ reversed: boolean | null }>).some((j) => !j.reversed);
+  }
+  return { ok: true, stock: { opening: openingR.buckets, closing: closingR.buckets, closingTotalSen: closingR.totalSen, closingProvisional: !booked, roles, codes: stockCodesOf(roles) } };
+}
+
+/** A stock line on the statement: the role's account, its chart name (or the role's own when the chart lacks the row). */
+const stockLine = (stock: StockLines, names: Map<string, string>, role: AccountRole, section: string, amountSen: number): ReportLine => {
+  const code = stock.roles[role];
+  return { code, name: names.get(code) ?? STOCK_ROLE_NAMES[role] ?? code, section, amountSen };
+};
+/** The P&L's stock lines, in bucket order: the openings (debits), then the closings (credits). */
+const stockPnlLines = (stock: StockLines, names: Map<string, string>): ReportLine[] => [
+  ...STOCK_BUCKETS.filter((b) => stock.opening[b] !== 0).map((b) => stockLine(stock, names, STOCK_BUCKET_ROLES[b].opening, 'COST OF GOODS SOLD', stock.opening[b])),
+  ...STOCK_BUCKETS.filter((b) => stock.closing[b] !== 0).map((b) => stockLine(stock, names, STOCK_BUCKET_ROLES[b].closing, 'COST OF GOODS SOLD', -stock.closing[b])),
+];
+
 /* ── GET /accounting/reports/pnl?from=YYYY-MM-DD&to=YYYY-MM-DD ────────────── */
 export const pnlReport = async (c: any): Promise<Response> => {
   if (!requirePerm(c)) return c.json(NO_PERM, 403);
@@ -129,19 +210,24 @@ export const pnlReport = async (c: any): Promise<Response> => {
     return c.json({ error: 'bad_range', message: 'from and to must be YYYY-MM-DD.' }, 400);
   }
   const sb = c.get('supabase');
-  const [sums, accs, laid] = await Promise.all([
+  const [sums, accs, laid, stockR] = await Promise.all([
     loadSums(sb, co.companyId, from, to),
     loadAccounts(sb, co.companyId),
     resolveLayout(sb, allowedIds(c), 'pnl'),
+    loadStockLines(sb, co.companyId, from, to),
   ]);
   if (!sums.ok) return c.json({ error: 'load_failed', reason: sums.reason }, 500);
   if (!accs.ok) return c.json({ error: 'load_failed', reason: accs.reason }, 500);
   if (!laid.ok) return c.json({ error: 'load_failed', reason: laid.reason }, 500);
+  if (!stockR.ok) return c.json({ error: 'load_failed', reason: stockR.reason }, 500);
+  const stock = stockR.stock;
   const secOf = sectionResolver(accs.accounts);
-  const rows: Sectioned[] = sums.sums.map((r) => ({ r, section: secOf(r) }));
+  /* The GL's own stock lines are set aside: the engine's take their place. */
+  const rows: Sectioned[] = sums.sums.filter((r) => !stock.codes.has(r.code)).map((r) => ({ r, section: secOf(r) }));
+  const names = new Map(accs.accounts.map((a) => [a.account_code, a.account_name ?? a.account_code]));
 
   const tradingIncome = lines(inSections(rows, ['SALES', 'SALES ADJUSTMENTS']), credit);
-  const costOfSales = lines(inSections(rows, ['COST OF GOODS SOLD']), debit);
+  const costOfSales = [...lines(inSections(rows, ['COST OF GOODS SOLD']), debit), ...stockPnlLines(stock, names)];
   const otherIncome = lines(inSections(rows, ['OTHER INCOMES', 'EXTRA-ORDINARY INCOME']), credit);
   const expenses = lines(inSections(rows, ['EXPENSES']), debit);
   const taxation = lines(inSections(rows, ['TAXATION']), debit);
@@ -158,6 +244,8 @@ export const pnlReport = async (c: any): Promise<Response> => {
   return c.json({
     from, to,
     tradingIncome, costOfSales, otherIncome, expenses, taxation,
+    /* The closing stock is the engine's as of `to`; provisional until the close books that month-end. */
+    stock: { closingProvisional: stock.closingProvisional, asOf: to },
     layout: {
       stored: laid.stored,
       baseSen,
@@ -190,25 +278,36 @@ export const balanceSheetReport = async (c: any): Promise<Response> => {
     return c.json({ error: 'bad_date', message: 'asOf must be YYYY-MM-DD.' }, 400);
   }
   const sb = c.get('supabase');
-  const [sums, accs, laid] = await Promise.all([
+  const [sums, accs, laid, stockR] = await Promise.all([
     loadSums(sb, co.companyId, null, asOf),
     loadAccounts(sb, co.companyId),
     resolveLayout(sb, allowedIds(c), 'balance_sheet'),
+    loadStockLines(sb, co.companyId, null, asOf),
   ]);
   if (!sums.ok) return c.json({ error: 'load_failed', reason: sums.reason }, 500);
   if (!accs.ok) return c.json({ error: 'load_failed', reason: accs.reason }, 500);
   if (!laid.ok) return c.json({ error: 'load_failed', reason: laid.reason }, 500);
+  if (!stockR.ok) return c.json({ error: 'load_failed', reason: stockR.reason }, 500);
+  const stock = stockR.stock;
   const secOf = sectionResolver(accs.accounts);
-  const rows: Sectioned[] = sums.sums.map((r) => ({ r, section: secOf(r) }));
+  const names = new Map(accs.accounts.map((a) => [a.account_code, a.account_name ?? a.account_code]));
+  /* The GL's own stock lines are set aside — on the asset side AND inside
+     earnings, where the close's pair moves the same money — and the engine's
+     stand in their place on both, so the sheet still balances. */
+  const rows: Sectioned[] = sums.sums.filter((r) => !stock.codes.has(r.code)).map((r) => ({ r, section: secOf(r) }));
+  const stockAssetLines = STOCK_BUCKETS.filter((b) => stock.closing[b] !== 0)
+    .map((b) => stockLine(stock, names, STOCK_BUCKET_ROLES[b].inventory, 'CURRENT ASSETS', stock.closing[b]));
 
-  const assets = lines(inSections(rows, sectionsOfType('ASSET')), debit);
+  const assets = [...lines(inSections(rows, sectionsOfType('ASSET')), debit), ...stockAssetLines];
   const liabilities = lines(inSections(rows, sectionsOfType('LIABILITY')), credit);
   const equity = lines(inSections(rows, sectionsOfType('EQUITY')), credit);
   /* Every ringgit the P&L has recognised to this date lives in equity as the
      period's earnings — that is what makes the sheet balance under double
      entry, and splitting it out is how the standard statement reads. */
   const earningsSen = inSections(rows, sectionsOfType('INCOME')).reduce((s, x) => s + credit(x.r), 0)
-    - inSections(rows, sectionsOfType('EXPENSE')).reduce((s, x) => s + debit(x.r), 0);
+    - inSections(rows, sectionsOfType('EXPENSE')).reduce((s, x) => s + debit(x.r), 0)
+    /* The engine's closing stock is the stock effect on earnings to this date — the GL's pair was taken out of `rows` above. */
+    + stock.closingTotalSen;
 
   const assetsSen = total(assets);
   const liabilitiesSen = total(liabilities);
@@ -221,6 +320,7 @@ export const balanceSheetReport = async (c: any): Promise<Response> => {
   return c.json({
     asOf,
     assets, liabilities, equity,
+    stock: { closingProvisional: stock.closingProvisional, asOf },
     layout: {
       stored: laid.stored,
       baseSen,

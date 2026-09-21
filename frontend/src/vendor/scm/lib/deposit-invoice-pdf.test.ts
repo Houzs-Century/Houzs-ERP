@@ -5,7 +5,7 @@
    cancelled invoice's watermark and reason. */
 
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { DEFAULT_BRANDING, clearBrandingLogoCache, setBrandingCache } from '../../../lib/branding';
+import { DEFAULT_BRANDING, clearBrandingLogoCache, setBrandingCache, type Branding } from '../../../lib/branding';
 import type { DepositInvoicePdfData } from './deposit-invoice-pdf';
 
 type JsPdf = import('jspdf').jsPDF;
@@ -23,7 +23,7 @@ function captureTextDraws(doc: JsPdf): TextDraw[] {
   }) as typeof doc.text);
   return draws;
 }
-const setUpBranding = () => setBrandingCache({ ...DEFAULT_BRANDING, logoR2Key: '' }, 'HOUZS');
+const setUpBranding = (brand: Partial<Branding> = {}) => setBrandingCache({ ...DEFAULT_BRANDING, logoR2Key: '', ...brand }, 'HOUZS');
 afterEach(() => {
   setBrandingCache({ ...DEFAULT_BRANDING }, 'HOUZS');
   clearBrandingLogoCache();
@@ -36,8 +36,8 @@ const DI: DepositInvoicePdfData = {
   method: 'cash', amount_sen: 100000, je_no: '2990-JE-2609-0011', credit_note_number: null, cancel_reason: null,
 };
 
-async function render(over: Partial<DepositInvoicePdfData> = {}): Promise<TextDraw[]> {
-  setUpBranding();
+async function render(over: Partial<DepositInvoicePdfData> = {}, brand: Partial<Branding> = {}): Promise<TextDraw[]> {
+  setUpBranding(brand);
   const [{ jsPDF }, { renderDepositInvoiceInto }] = await Promise.all([import('jspdf'), import('./deposit-invoice-pdf')]);
   const doc = new jsPDF({ unit: 'mm', format: 'a5', orientation: 'landscape' });
   const draws = captureTextDraws(doc);
@@ -45,6 +45,20 @@ async function render(over: Partial<DepositInvoicePdfData> = {}): Promise<TextDr
   return draws;
 }
 const has = (draws: TextDraw[], needle: string): boolean => draws.some((d) => d.text.includes(needle));
+
+describe("the customer's payment details (owner 2026-09-21)", () => {
+  test("prints the customer set from Settings › Branding above the signature boxes — not the other debtor's; blank prints nothing", async () => {
+    const draws = await render({}, { customerPaymentDetails: 'CIMB 8000 1234 5678\n2990 HOME SDN BHD', debtorPaymentDetails: 'Maybank 5644 1875 9397' });
+    expect(has(draws, 'PAYMENT DETAILS')).toBe(true);
+    expect(has(draws, 'CIMB 8000 1234 5678')).toBe(true);
+    expect(has(draws, '2990 HOME SDN BHD')).toBe(true);
+    expect(has(draws, 'Maybank 5644 1875 9397')).toBe(false);
+    const y = (needle: string) => draws.find((d) => d.text.includes(needle))!.y;
+    expect(y('PAYMENT DETAILS')).toBeLessThan(y('Issued by'));
+    const bare = await render({}, { debtorPaymentDetails: 'Maybank 5644 1875 9397' });
+    expect(has(bare, 'PAYMENT DETAILS')).toBe(false);
+  });
+});
 
 describe('the deposit invoice sheet', () => {
   test('says what it is, for whom, against which order, how it was paid, and how much — in figures and in words', async () => {

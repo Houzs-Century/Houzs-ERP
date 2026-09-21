@@ -7,14 +7,18 @@
 //
 // The shape (one tree, both companies; a group a company never uses is
 // unticked for it, as on the Cash Flow):
-//   Cost of funds → Transport & logistics · Commission
-//     (Purchases and Accounts payable are cost of sales and creditors — other
-//      blocks, other statements — so they never fill here and are pruned)
 //   Exhibition & roadshow expense (Houzs only) · Showrooms expense
 //   Warehouse expense (Houzs only)
-//   General expense → Salary & related · Rental · Homestay · Marketing ·
-//     Professional & statutory · Office & admin
+//   Administrative expense → Salary & related · Rental · Homestay · Marketing ·
+//     Professional & statutory · Office & admin · Transport & logistics ·
+//     Commission
 //   Finance cost
+// The Cash Flow's Cost of funds group has no P&L twin (owner 2026-09-21: 移去
+// general expense, 改成 administrative expense): its Transport and Commission
+// members file under Administrative expense, and its Purchases and Accounts
+// payable are cost of sales and creditors — other blocks, other statements —
+// so an expense the rules send there is listed as unmatched and lands in
+// Office & admin.
 // An account goes where the Cash Flow's rule sends it (groupOf — ONE rule
 // table for both statements, so the two can never file an expense apart);
 // an expense the rules place outside these groups — none on today's chart —
@@ -28,10 +32,8 @@ const HOUZS_ONLY = [2]; // hidden for 2990 HOME (company 2)
 
 /** The Cash Flow group an expense rule names → its home on the P&L tree. */
 const HOME = {
-  'cf:ops:cost:purchases': 'pl:cost:purchases',
-  'cf:ops:cost:ap': 'pl:cost:ap',
-  'cf:ops:cost:transport': 'pl:cost:transport',
-  'cf:ops:cost:commission': 'pl:cost:commission',
+  'cf:ops:cost:transport': 'pl:general:transport',
+  'cf:ops:cost:commission': 'pl:general:commission',
   'cf:ops:exh': 'pl:exh',
   'cf:ops:showroom': 'pl:showroom',
   'cf:ops:warehouse': 'pl:warehouse',
@@ -49,22 +51,18 @@ const cat = (id, label, children, extra = {}) => ({ kind: 'category', id, label,
 
 function skeleton() {
   return [
-    cat('pl:cost', 'Cost of funds', [
-      cat('pl:cost:purchases', 'Purchases', []),
-      cat('pl:cost:ap', 'Accounts payable & creditors', []),
-      cat('pl:cost:transport', 'Transport & logistics', []),
-      cat('pl:cost:commission', 'Commission', []),
-    ]),
     cat('pl:exh', 'Exhibition & roadshow expense', [], { hiddenFor: HOUZS_ONLY }),
     cat('pl:showroom', 'Showrooms expense', []),
     cat('pl:warehouse', 'Warehouse expense', [], { hiddenFor: HOUZS_ONLY }),
-    cat('pl:general', 'General expense', [
+    cat('pl:general', 'Administrative expense', [
       cat('pl:general:salary', 'Salary & related', []),
       cat('pl:general:rental', 'Rental - office & others', []),
       cat('pl:general:homestay', 'Homestay, hostel & accommodation', []),
       cat('pl:general:marketing', 'Advertising & marketing', []),
       cat('pl:general:professional', 'Professional & statutory', []),
       cat('pl:general:office', 'Office & admin', []),
+      cat('pl:general:transport', 'Transport & logistics', []),
+      cat('pl:general:commission', 'Commission', []),
     ]),
     cat('pl:finance', 'Finance cost', []),
   ];

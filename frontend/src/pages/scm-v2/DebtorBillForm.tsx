@@ -5,7 +5,9 @@
 // posts the moment it exists, so New and Copy read "Post bill"; an Edit
 // re-posts (the route writes the contra and the fresh entry). Lines in the
 // owner's order — account, description, amount — Insert adds a line and lands
-// on it, Enter on an amount moves down, amounts read 1,800.00.
+// on it, Enter on an amount moves down, amounts read 1,800.00. A line with a
+// description and neither account nor amount is a TEXT line (owner 2026-09-21:
+// 有一些我只想放 description 罢了): it prints on the invoice and books nothing.
 // ----------------------------------------------------------------------------
 
 import { useEffect, useRef, useState } from 'react';
@@ -23,18 +25,23 @@ import styles from './SalesOrderDetail.module.css';
 export type BillFormLine = { rid: number; description: string; creditAccountCode: string; amountSen: number };
 export type BillFormValues = { billDate: string; notes: string; lines: BillFormLine[] };
 export type BillFormMode = 'new' | 'edit' | 'copy';
-export type BillFormSubmit = { billDate: string; notes?: string; lines: Array<{ description?: string; creditAccountCode: string; amountSen: number }> };
+export type BillFormSubmit = { billDate: string; notes?: string; lines: Array<{ description?: string; creditAccountCode?: string; amountSen: number }> };
 
 const myt = (): string => new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
 export const emptyBillLine = (rid: number): BillFormLine => ({ rid, description: '', creditAccountCode: '', amountSen: 0 });
 export const emptyBillForm = (): BillFormValues => ({ billDate: myt(), notes: '', lines: [emptyBillLine(1)] });
 
+/** A description with neither account nor amount: text on the paper, nothing in the books. */
+export const isTextLine = (l: BillFormLine): boolean => !l.creditAccountCode && l.amountSen <= 0 && l.description.trim().length > 0;
+
 export const toBillSubmit = (v: BillFormValues): BillFormSubmit => ({
   billDate: v.billDate,
   ...(v.notes.trim() ? { notes: v.notes.trim() } : {}),
   lines: v.lines
-    .filter((l) => l.creditAccountCode && l.amountSen > 0)
-    .map((l) => ({ ...(l.description.trim() ? { description: l.description.trim() } : {}), creditAccountCode: l.creditAccountCode, amountSen: l.amountSen })),
+    .filter((l) => (l.creditAccountCode && l.amountSen > 0) || isTextLine(l))
+    .map((l) => (isTextLine(l)
+      ? { description: l.description.trim(), amountSen: 0 }
+      : { ...(l.description.trim() ? { description: l.description.trim() } : {}), creditAccountCode: l.creditAccountCode, amountSen: l.amountSen })),
 });
 
 const soft: React.CSSProperties = { fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' };
@@ -150,7 +157,7 @@ export const DebtorBillForm = ({ mode, initial, accounts, receivedSen = 0, savin
           <tr style={{ borderTop: '1px solid var(--border-weak, #e3e1da)' }}>
             <td colSpan={2} style={td}>
               <AddLineButton variant="ghost" onClick={() => addLine(true)} />
-              <span style={{ ...soft, marginLeft: 'var(--space-3)' }}>Insert adds a line · Enter on an amount moves down</span>
+              <span style={{ ...soft, marginLeft: 'var(--space-3)' }}>Insert adds a line · Enter on an amount moves down · a description alone is a text line: it prints, books nothing</span>
             </td>
             <td style={{ ...td, ...right, fontWeight: 700, color: belowReceived ? 'var(--c-festive-b, #B8331F)' : undefined }}>Total {fmtSen(total)}</td>
             <td />

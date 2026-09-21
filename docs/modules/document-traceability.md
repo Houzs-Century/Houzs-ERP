@@ -99,6 +99,14 @@ permission (e.g. `scm.procurement.po`).
   DR intentionally keep 5 nodes (Payments / the Return itself have no 7-node
   slot). A 6-node array silently drops the 6th node — define a new canvas
   position before adding one.
+- A PO's GRN nodes — and the PO-list "GRN No" column and its `has_children`
+  lock — are the union of the PO's own lines' `grn_items` links and the header
+  FK, never the header FK alone: a supplier multi-receive (grns
+  `/from-po-items`) heads ONE GRN at the first source PO while its lines span
+  many, so a header-only rollup hid that receipt on every OTHER source PO (it
+  read "received with no GRN"). The PO export keeps the header FK only, on
+  purpose — the per-line reads would blow the Worker subrequest budget over
+  every PO a tab matches.
 - Customer reference display has one resolver, `customerRefOf` (`ref ||
   customer_so_no || po_doc_no`) via `CustomerRefHeader` — a locally-typed
   header missing `ref` silently degrades to the wrong fallback and
