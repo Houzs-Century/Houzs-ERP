@@ -175,3 +175,34 @@ describe("branding logo slots", () => {
     expect(letterheadLogoKey(a.branding)).toBe(a.branding.logoR2Key);
   });
 });
+
+// ── Payment details and terms (owner 2026-09-21) ─────────────────────────────
+describe("payment details and terms", () => {
+  const put = (body: Record<string, unknown>) =>
+    request("/api/branding", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  const read = async () => ((await (await request("/api/branding")).json()) as { branding: Record<string, string> }).branding;
+
+  test("PUT stores the three multi-line settings for the company; a partial PUT keeps them; a blank clears one", async () => {
+    const saved = await put({
+      companyName: "Logo Co",
+      customerPaymentDetails: "CIMB 8000 1234 5678\n2990 HOME SDN BHD",
+      debtorPaymentDetails: "Maybank 5644 1875 9397\nHOUZS CENTURY SDN BHD",
+      debtorInvoiceTerms: "Payment within 14 days of the invoice date.\nCheques payable to HOUZS CENTURY SDN BHD.",
+    });
+    expect(saved.status).toBe(200);
+    let b = await read();
+    expect(b.customerPaymentDetails).toBe("CIMB 8000 1234 5678\n2990 HOME SDN BHD");
+    expect(b.debtorPaymentDetails).toBe("Maybank 5644 1875 9397\nHOUZS CENTURY SDN BHD");
+    expect(b.debtorInvoiceTerms).toBe("Payment within 14 days of the invoice date.\nCheques payable to HOUZS CENTURY SDN BHD.");
+
+    expect((await put({ csEmail: "desk@logo.test" })).status).toBe(200);
+    b = await read();
+    expect(b.csEmail).toBe("desk@logo.test");
+    expect(b.debtorPaymentDetails).toBe("Maybank 5644 1875 9397\nHOUZS CENTURY SDN BHD");
+
+    expect((await put({ debtorInvoiceTerms: "" })).status).toBe(200);
+    b = await read();
+    expect(b.debtorInvoiceTerms).toBe("");
+    expect(b.debtorPaymentDetails).toBe("Maybank 5644 1875 9397\nHOUZS CENTURY SDN BHD");
+  });
+});
