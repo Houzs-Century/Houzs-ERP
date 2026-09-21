@@ -6,7 +6,8 @@
    group); months add up; the ratios divide by nothing gracefully. */
 import { describe, expect, test } from 'vitest';
 import {
-  addFigures, addMonths, costGroupOfItemGroup, costGroupOfPerformance, costStructureList, emptyCostStructure, emptyFigures,
+  addFigures, addMonths, compareAccountsOf, compareGroupOfItemGroup, compareGroupOfPerformance, compareGroupOfPurchaseAccount, compareGroupOfSalesAccount,
+  compareList, compareTotals, costGroupOfItemGroup, costGroupOfPerformance, costStructureList, emptyCompare, emptyCostStructure, emptyFigures,
   monthEnd, monthsBetween, periodsFor, quarterStart, ratiosOf,
 } from './dashboard';
 
@@ -106,5 +107,66 @@ describe('figures and ratios', () => {
     expect(ratiosOf(actual, bs)).toEqual({ grossMarginPct: 45, netMarginPct: 7.5, currentRatio: 2.5, quickRatio: 1.75, roePct: 2.5, roaPct: 1.5 });
     expect(ratiosOf(null, null)).toEqual({ grossMarginPct: null, netMarginPct: null, currentRatio: null, quickRatio: null, roePct: null, roaPct: null });
     expect(ratiosOf({ ...emptyFigures() }, { ...bs, currentLiabilitiesSen: 0, assetsSen: 0 })).toMatchObject({ grossMarginPct: null, currentRatio: null, roaPct: null });
+  });
+});
+
+describe('performance vs forecast — the compare groups (owner 2026-09-22)', () => {
+  test('an item group files under its compare group: Bedding = mattress + bedframe, Service its own, the rest Others', () => {
+    expect(compareGroupOfItemGroup('MATTRESS')).toBe('bedding');
+    expect(compareGroupOfItemGroup('BEDFRAME')).toBe('bedding');
+    expect(compareGroupOfItemGroup('SOFA')).toBe('sofa');
+    expect(compareGroupOfItemGroup('DINING')).toBe('dining');
+    expect(compareGroupOfItemGroup('BEDLINES')).toBe('accessories');
+    expect(compareGroupOfItemGroup('SERVICE')).toBe('service');
+    expect(compareGroupOfItemGroup('SVC-TRANSPORT')).toBe('service');
+    expect(compareGroupOfItemGroup('OTHERS')).toBe('others');
+    expect(compareGroupOfItemGroup(null)).toBe('others');
+    expect(compareGroupOfPerformance('mattress')).toBe('bedding');
+    expect(compareGroupOfPerformance('accessory')).toBe('accessories');
+    expect(compareGroupOfPerformance('service')).toBe('service');
+    expect(compareGroupOfPerformance('others')).toBe('others');
+  });
+
+  test('the bindings give each group its accounts once, where first bound; an unclaimed account is Others', () => {
+    const accounts = compareAccountsOf([
+      { group_code: 'SOFA', sales_account: '500-0003', sales_return_account: '510-0003', purchase_account: '601-0003' },
+      { group_code: 'MATTRESS', sales_account: '500-0001', sales_return_account: null, purchase_account: '601-0001' },
+      { group_code: 'BEDFRAME', sales_account: '500-0001', sales_return_account: null, purchase_account: '601-0001' },
+      { group_code: 'ACCESSORY', sales_account: '502-0000', sales_return_account: null, purchase_account: '602-0000' },
+      { group_code: 'OTHERS', sales_account: '502-0000', sales_return_account: null, purchase_account: '601-0004' },
+      { group_code: 'SERVICE', sales_account: '503-0000', sales_return_account: null, purchase_account: '604-0000' },
+    ]);
+    expect([...accounts.sales.get('sofa')!]).toEqual(['500-0003', '510-0003']);
+    expect([...accounts.sales.get('bedding')!]).toEqual(['500-0001']);
+    /* 502-0000 was bound to the accessories first: the OTHERS binding does not claim it again. */
+    expect([...accounts.sales.get('accessories')!]).toEqual(['502-0000']);
+    expect(accounts.sales.get('others')).toBeUndefined();
+    expect([...accounts.purchase.get('others')!]).toEqual(['601-0004']);
+    expect(compareGroupOfSalesAccount('500-0001', accounts)).toBe('bedding');
+    expect(compareGroupOfSalesAccount('509-0000', accounts)).toBe('others');
+    expect(compareGroupOfPurchaseAccount('604-0000', accounts)).toBe('service');
+    expect(compareGroupOfPurchaseAccount('620-0000', accounts)).toBe('others');
+  });
+
+  test('the list reads each side, derives GP and GP %, keeps a missing side null, and hides an empty Others', () => {
+    const by = emptyCompare();
+    by.sofa.actualSalesSen = 90_000;
+    by.sofa.performanceSalesSen = 100_000; by.sofa.performanceCostSen = 60_000;
+    by.sofa.forecastSalesSen = 120_000; by.sofa.forecastCostSen = 72_000;
+    by.service.performanceSalesSen = 5_000;
+    const list = compareList(by, { actual: true, forecast: true });
+    expect(list.map((g) => g.key)).toEqual(['sofa', 'bedding', 'dining', 'accessories', 'service']);
+    expect(list[0]).toMatchObject({ actualSalesSen: 90_000, performanceGpSen: 40_000, performanceGpPct: 40, forecastGpSen: 48_000, forecastGpPct: 40 });
+    expect(list[1]).toMatchObject({ actualSalesSen: 0, performanceGpSen: 0, performanceGpPct: null, forecastSalesSen: 0, forecastGpPct: null });
+    expect(list[4]).toMatchObject({ performanceGpSen: 5_000, performanceGpPct: 100 });
+    expect(compareTotals(by, { actual: true, forecast: true })).toEqual({
+      actualSalesSen: 90_000, performanceSalesSen: 105_000, performanceCostSen: 60_000, performanceGpSen: 45_000, performanceGpPct: 42.9,
+      forecastSalesSen: 120_000, forecastCostSen: 72_000, forecastGpSen: 48_000, forecastGpPct: 40,
+    });
+    /* A future period: no actual, no performance — null, never 0; a period with no forecast row: no forecast. */
+    expect(compareTotals(by, { actual: false, forecast: true })).toMatchObject({ actualSalesSen: null, performanceSalesSen: null, performanceGpPct: null, forecastSalesSen: 120_000 });
+    expect(compareList(by, { actual: true, forecast: false })[0]).toMatchObject({ actualSalesSen: 90_000, forecastSalesSen: null, forecastCostSen: null, forecastGpSen: null, forecastGpPct: null });
+    by.others.actualSalesSen = 1;
+    expect(compareList(by, { actual: true, forecast: true }).map((g) => g.key)).toContain('others');
   });
 });

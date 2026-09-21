@@ -130,9 +130,9 @@ function world(over: Record<string, Row[]> = {}) {
     ],
     acc_company_settings: [],
     acc_item_group_accounts: [
-      { company_id: CO, group_code: 'SOFA', purchase_account: '601-0003' },
-      { company_id: CO, group_code: 'MATTRESS', purchase_account: '601-0001' },
-      { company_id: CO, group_code: 'BEDFRAME', purchase_account: '601-0001' },
+      { company_id: CO, group_code: 'SOFA', sales_account: '500-0003', sales_return_account: null, purchase_account: '601-0003' },
+      { company_id: CO, group_code: 'MATTRESS', sales_account: '500-0001', sales_return_account: null, purchase_account: '601-0001' },
+      { company_id: CO, group_code: 'BEDFRAME', sales_account: '500-0001', sales_return_account: null, purchase_account: '601-0001' },
     ],
     mfg_products: [
       { company_id: CO, code: 'SOFA-1', category: 'SOFA' },
@@ -241,6 +241,32 @@ describe('buildDashboard — months', () => {
       ['accessories', 0, 0, 0],
       ['dining', 0, 0, 0],
     ]);
+  });
+
+  test('performance vs forecast per group: the ledger through the groups\' sales accounts, the Performance P&L by SO date, the forecast through the same accounts — and the sides add up to the statements\' own totals', async () => {
+    const { payload } = await build();
+    expect(payload.groups.compare.map((g) => g.key)).toEqual(['sofa', 'bedding', 'dining', 'accessories', 'service', 'others']);
+    const [aug, sep, oct, nov] = payload.periods;
+    /* August: the SI on 500-0003 is the sofa's actual; the two orders are the performance; no forecast row. */
+    expect(aug!.compare!.groups.map((g) => [g.key, g.actualSalesSen, g.performanceSalesSen, g.performanceCostSen, g.performanceGpPct, g.forecastSalesSen])).toEqual([
+      ['sofa', 100_000, 300_000, 180_000, 40, null],
+      ['bedding', 0, 100_000, 60_000, 40, null],
+      ['dining', 0, 0, 0, null, null],
+      ['accessories', 0, 0, 0, null, null],
+      ['service', 0, 0, 0, null, null],
+    ]);
+    expect(aug!.compare!.totals).toEqual({
+      actualSalesSen: aug!.actual!.salesSen, performanceSalesSen: aug!.performance!.salesSen, performanceCostSen: aug!.performance!.cogsSen, performanceGpSen: aug!.performance!.gpSen, performanceGpPct: aug!.performance!.totalGpPct,
+      forecastSalesSen: null, forecastCostSen: null, forecastGpSen: null, forecastGpPct: null,
+    });
+    /* September: the forecast's sofa sales and its purchase account's 60 %. */
+    const sofa = sep!.compare!.groups.find((g) => g.key === 'sofa')!;
+    expect(sofa).toMatchObject({ actualSalesSen: 50_000, performanceSalesSen: 200_000, performanceCostSen: 120_000, forecastSalesSen: 120_000, forecastCostSen: 72_000, forecastGpSen: 48_000, forecastGpPct: 40 });
+    expect(sep!.compare!.totals).toMatchObject({ actualSalesSen: sep!.actual!.salesSen, performanceSalesSen: sep!.performance!.salesSen, forecastSalesSen: sep!.forecast!.salesSen, forecastCostSen: sep!.forecast!.costOfSalesSen, forecastGpSen: sep!.forecast!.grossProfitSen });
+    /* The future: no actual and no performance (null, never 0); October has no forecast row, November does. */
+    expect(oct!.compare!.totals).toEqual({ actualSalesSen: null, performanceSalesSen: null, performanceCostSen: null, performanceGpSen: null, performanceGpPct: null, forecastSalesSen: null, forecastCostSen: null, forecastGpSen: null, forecastGpPct: null });
+    expect(nov!.compare!.totals).toMatchObject({ actualSalesSen: null, performanceSalesSen: null, forecastSalesSen: 150_000, forecastCostSen: 90_000, forecastGpSen: 60_000, forecastGpPct: 40 });
+    expect(nov!.compare!.groups.find((g) => g.key === 'sofa')).toMatchObject({ actualSalesSen: null, performanceGpPct: null, forecastSalesSen: 150_000 });
   });
 
   test('the forecast is the grid\'s arithmetic per month, staff cost by the same category, null where no row; a future period has no actuals', async () => {
