@@ -25,6 +25,12 @@ const ROWS: DepositInvoice[] = [
     status: 'CANCELLED', je_no: '2990-JE-2609-0012', credit_note_id: null, cancel_reason: 'payment on 2990-SO-2609-002 edited — re-issued',
     created_at: '2026-09-06T00:00:00Z', created_by: 'u-1', cancelled_at: '2026-09-07T00:00:00Z', cancelled_by: 'Chew',
   },
+  {
+    id: 'd3', company_id: 2, di_number: '2990-DI-2609-003', payment_source: 'SOPAY', payment_id: 'p-3', so_doc_no: '2990-SO-2609-003',
+    party_code: 'cust-seng', party_name: 'Ah Seng', invoice_date: '2026-09-08', amount_sen: 100000, method: 'cash',
+    status: 'ISSUED', je_no: '2990-JE-2609-0013', credit_note_id: null, cancel_reason: null,
+    created_at: '2026-09-08T00:00:00Z', created_by: 'u-1', cancelled_at: null, cancelled_by: null,
+  },
 ];
 const saveMutate = vi.fn();
 const issueMutate = vi.fn();
@@ -102,7 +108,7 @@ describe('the Deposit Invoices page', () => {
 
   test('an invoice opens with its payment; Cancel invoice waits for a reason, then sends it; a posted invoice offers no Post', () => {
     render(<MemoryRouter><DepositInvoices /></MemoryRouter>);
-    fireEvent.click(screen.getByText('2990-DI-2609-001'));
+    fireEvent.click(screen.getByText('2990-DI-2609-003'));
     const dialog = screen.getByLabelText('Deposit invoice');
     expect(within(dialog).getByText(/cash · .* · RM 1,000\.00/)).toBeTruthy();
     expect(within(dialog).queryByText('Post to ledger')).toBeNull();
@@ -110,7 +116,16 @@ describe('the Deposit Invoices page', () => {
     expect(cancelBtn.disabled).toBe(true);
     fireEvent.change(within(dialog).getByLabelText('Cancel reason'), { target: { value: 'Customer changed order' } });
     fireEvent.click(within(dialog).getByText('Cancel invoice'));
-    expect(cancelMutate).toHaveBeenCalledWith({ id: 'd1', reason: 'Customer changed order' });
+    expect(cancelMutate).toHaveBeenCalledWith({ id: 'd3', reason: 'Customer changed order' });
+  });
+
+  test('an invoice with a credit note against it offers no Cancel and says why (the closed-DI guard, owner 2026-09-21)', () => {
+    render(<MemoryRouter><DepositInvoices /></MemoryRouter>);
+    fireEvent.click(screen.getByText('2990-DI-2609-001'));
+    const dialog = screen.getByLabelText('Deposit invoice');
+    expect(within(dialog).queryByText('Cancel invoice')).toBeNull();
+    expect(within(dialog).queryByLabelText('Cancel reason')).toBeNull();
+    expect(within(dialog).getByText(/A credit note stands against this invoice, so it cannot be cancelled or re-issued/)).toBeTruthy();
   });
 
   test('a cancelled invoice shows its reason and offers neither Post nor Cancel', () => {

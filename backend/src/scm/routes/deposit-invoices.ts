@@ -183,6 +183,8 @@ export const cancelDepositInvoiceHandler = async (c: Ctx): Promise<Response> => 
   const reason = String(body.reason ?? '').trim();
   if (!reason) return c.json({ error: 'reason_required', message: 'Say why this deposit invoice is cancelled — it stays on file with the reason.' }, 400);
   const r = await cancelDepositInvoice(c.get('supabase'), { companyId: co.companyId, id: found.di.id, reason, actor: who(c) });
+  /* A credit note stands against it: the invoice stays (the closed-DI guard, owner 2026-09-21). */
+  if (!r.ok && r.status === 'noted') return c.json({ error: 'invoice_noted', reason: r.reason }, 409);
   if (!r.ok) return c.json({ error: 'cancel_failed', reason: r.reason }, r.status === 'not_found' ? 404 : 500);
   return c.json({ ok: true, status: r.status, contraJeNo: r.status === 'cancelled' ? r.contraJeNo : null });
 };
