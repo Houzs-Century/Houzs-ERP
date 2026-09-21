@@ -154,7 +154,10 @@ go through `/api/scm/grns`.
 ## Where the code is
 
 - Routes: `backend/src/scm/routes/grns.ts` (mounted at `/api/scm/grns`),
-  `backend/src/scm/routes/grn-exports.ts`.
+  `backend/src/scm/routes/grn-exports.ts`. The from-PO-items convert logic lives
+  in the off-request core `createDraftGrnsFromPoItemsCore` (draft-only, no post)
+  so the OCR scan queue raises the same draft via `createDraftGrnFromPoItems`; the
+  HTTP `/from-po-items` handler calls the core then posts.
 - Backend libs: `backend/src/scm/lib/outstanding-po-lines.ts` (from-PO picker read),
   `grn-unlinked-po-lines.ts`, `zero-cost-receipt-guard.ts`,
   `line-link-item-identity.ts`, `grn-inherited-lock.ts`, `ac-grn-outbox.ts`,

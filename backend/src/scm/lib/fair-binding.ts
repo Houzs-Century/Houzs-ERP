@@ -11,6 +11,7 @@
 // ----------------------------------------------------------------------------
 
 import {
+  lookbackWindow,
   resolveFair,
   type FairProjectRow,
   type FairResolution,
@@ -68,63 +69,96 @@ const FAIR_COLUMNS =
   /* The event type decides the picker LABEL only (a solo roadshow reads "SOLO"). */
   '(SELECT et.slug FROM project_event_types et WHERE et.id = p.event_type_id) AS eventtype';
 
+/* ARCHIVED IS NOT PICKABLE (owner 2026-09-19).
+   An archived project is one the office has withdrawn — pulled out of the fair,
+   or a duplicate row someone closed. Every OTHER reader of `projects` in this
+   system already drops them: the projects list, the Projects calendar, the
+   brand/contractor share calendars, project P&L, inbox, search, finance and
+   delivery planning all carry `archived_at IS NULL`. This module and
+   venue-binding.ts were the only two that did not, and the bill arrived as
+   `PAVILION BUKIT JALIL — MEGAHOME` sitting under "Running now" on the New
+   Sales Order form while the calendar showed nothing: project 359, archived
+   2026-08-03, six weeks before the event it describes was due to open.
+   Measured the same day (probe-fair-picker-vs-calendar, run 35432690927):
+   2 of the 7 rows the picker called "Running now" were archived, and 155 of
+   Houzs Century's 924 projects are archived. An archived fair must never take
+   a new sale — its revenue lands in a project the P&L excludes by definition,
+   so the money silently disappears from exhibition reporting. */
 const LIVE_FAIR = `p.venue IS NOT NULL AND trim(p.venue) <> ''
      AND p.start_date IS NOT NULL
+     AND p.archived_at IS NULL
      AND lower(coalesce(p.status, '')) <> 'cancelled'`;
 
-/** First and last day of `date`'s calendar month, as MYT date strings. Pure
- *  string arithmetic — never `Date`, which is UTC midnight = 08:00 MYT and
- *  re-introduces the off-by-one this codebase has already paid for twice. */
-export function monthBounds(date: string): { start: string; end: string } {
-  const y = Number(date.slice(0, 4));
-  const m = Number(date.slice(5, 7));
-  const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
-  const mm = String(m).padStart(2, '0');
-  return { start: `${y}-${mm}-01`, end: `${y}-${mm}-${String(lastDay).padStart(2, '0')}` };
-}
+/* The window itself is a RULE, so it lives in the pure module beside the one
+   that groups the rows — importing it keeps the SQL and the grouping working
+   from one definition instead of two that can drift apart. */
 
 /**
- * Every fair that could appear in the picker for one order date: the order's own
- * calendar month, plus anything still RUNNING on that date even if it started
- * last month. Bounded on both halves so this never degenerates into a full scan.
+ * Every fair that could appear in the picker for one order date: anything that
+ * OVERLAPS the lookback window, which ends at the order date itself.
+ *
+ * The overlap is the whole predicate — a fair qualifies when it started on or
+ * before the window's end and had not finished before its start. `p.start_date
+ * <= end` is also what keeps FUTURE fairs out, so "no fairs that have not
+ * happened yet" needs no second rule to forget.
+ *
+ * `coalesce(p.end_date, p.start_date)` reads a blank end date as a ONE-DAY
+ * event, which is what `GET /api/projects/calendar/events` has always done
+ * (routes/projects.ts). The picker used to read it as "never ends" and so kept
+ * such a fair under "Running now" for ever while the calendar drew nothing —
+ * the same two-surfaces-two-answers fault as the archived one above. Houzs
+ * Century has 0 such rows today (probe run 35432690927), so this closes a trap
+ * rather than changing a number.
  *
  * @param companySql A ready-to-interpolate ` AND p.company_id = N` fragment from
  *   `activeCompanySql(c, 'p.company_id')`. It is the ENTIRE tenant boundary here
  *   — the fair list names other companies' venues and organizers, which is
  *   exactly the leak the 2026-08-20 venue sweep closed.
  */
-export async function loadFairsForMonth(
+export async function loadFairsInWindow(
   db: FairDb,
   companySql: string,
   soDate: string,
 ): Promise<FairProjectRow[]> {
-  const { start, end } = monthBounds(soDate);
+  const { start, end } = lookbackWindow(soDate);
   const rows = await db
     .prepare(
       `SELECT ${FAIR_COLUMNS}
          FROM projects p
         WHERE ${LIVE_FAIR}
-          AND (
-            (p.start_date >= ? AND p.start_date <= ?)
-            OR (p.start_date <= ? AND (p.end_date IS NULL OR p.end_date >= ?))
-          )${companySql}`,
+          AND p.start_date <= ?
+          AND coalesce(p.end_date, p.start_date) >= ?${companySql}`,
     )
-    .bind(start, end, soDate, soDate)
+    .bind(end, start)
     .all<Record<string, unknown>>();
   return ((rows.results ?? []) as Array<Record<string, unknown>>)
     .map(toFairRow)
     .filter((r) => Number.isFinite(r.projectId));
 }
 
-/** Every fair at ONE venue whose period contains the order date. The venue match
- *  is case/space-insensitive because the picker writes the master's spelling but
- *  historical rows and PMS rows were typed by hand. */
+/**
+ * Every fair at ONE venue inside the lookback window. The venue match is
+ * case/space-insensitive because the picker writes the master's spelling but
+ * historical rows and PMS rows were typed by hand.
+ *
+ * This is the VENUE-ONLY path: the operator came through "Others" and named a
+ * place but no event, or the nightly reconcile is retrying an order that has
+ * only a place recorded. It used to demand that the fair's period CONTAIN the
+ * order date, which made every order written after its fair closed permanently
+ * unresolvable — by this path, by the reconcile that retries it, and by the
+ * person trying to settle it by hand. The window is the same one the dropdown
+ * offers, so what a person can see is what the server can resolve.
+ *
+ * When the operator DID pick an event, use `loadFairsForEvent` — their answer
+ * is more precise than anything re-derived from a date.
+ */
 export async function loadFairsAtVenue(
   db: FairDb,
   companySql: string,
   venue: string,
   soDate: string,
 ): Promise<FairProjectRow[]> {
+  const { start, end } = lookbackWindow(soDate);
   const rows = await db
     .prepare(
       `SELECT ${FAIR_COLUMNS}
@@ -132,9 +166,55 @@ export async function loadFairsAtVenue(
         WHERE ${LIVE_FAIR}
           AND lower(trim(p.venue)) = lower(trim(?))
           AND p.start_date <= ?
-          AND (p.end_date IS NULL OR p.end_date >= ?)${companySql}`,
+          AND coalesce(p.end_date, p.start_date) >= ?${companySql}`,
     )
-    .bind(venue, soDate, soDate)
+    .bind(venue, end, start)
+    .all<Record<string, unknown>>();
+  return ((rows.results ?? []) as Array<Record<string, unknown>>)
+    .map(toFairRow)
+    .filter((r) => Number.isFinite(r.projectId));
+}
+
+/**
+ * The booths of ONE event, addressed exactly as the operator picked it: venue,
+ * organizer and period. Every brand booth at that event comes back; which one
+ * the order belongs to is still decided from the order's own lines.
+ *
+ * ── WHY THIS EXISTS (owner 2026-09-19) ──────────────────────────────────────
+ * *"我在 10 号开单，然后我需要点 1 号的 event… 基本上你就可以记录到它是那个 event
+ * 的 sales 了，这样子不能吗?"* — and it could not, because the server threw the
+ * answer away. The dropdown row carries venue + organizer + period, the client
+ * sent only the first two, and the server then re-derived the event from
+ * (venue, organizer, TODAY). A fair that had closed matched nothing, so a
+ * deliberate, correct human pick was recorded as PENDING and no later pass
+ * could recover it.
+ *
+ * THE PICK IS THE ANSWER, NOT A HINT. This module's sibling already states the
+ * rule for the venue default — *"The picker's choice is a human decision and
+ * always wins"* (venue-binding.ts) — and the fair half simply did not honour
+ * it. The period travels with the pick and is matched, not re-inferred.
+ *
+ * STILL NEVER TRUSTS A PROJECT ID FROM THE CLIENT. The identity matched here is
+ * the four things a person can SEE on the row and verify; the company predicate
+ * is applied on top, which is the whole reason a client-supplied id was refused
+ * in the first place. `project_id` carries no company predicate of its own.
+ */
+export async function loadFairsForEvent(
+  db: FairDb,
+  companySql: string,
+  event: { venue: string; organizer: string; startDate: string; endDate: string | null },
+): Promise<FairProjectRow[]> {
+  const rows = await db
+    .prepare(
+      `SELECT ${FAIR_COLUMNS}
+         FROM projects p
+        WHERE ${LIVE_FAIR}
+          AND lower(trim(p.venue)) = lower(trim(?))
+          AND lower(trim(coalesce(p.organizer, ''))) = lower(trim(?))
+          AND p.start_date = ?
+          AND coalesce(p.end_date, '') = coalesce(?, '')${companySql}`,
+    )
+    .bind(event.venue, event.organizer, event.startDate, event.endDate)
     .all<Record<string, unknown>>();
   return ((rows.results ?? []) as Array<Record<string, unknown>>)
     .map(toFairRow)
@@ -180,16 +260,33 @@ export async function resolveFairForSave(args: {
   companySql: string;
   venue: string | null;
   organizer: string | null;
+  /** The PICKED row's period. Present whenever the operator chose an EVENT from
+   *  the dropdown, absent when they came through "Others" and named a place
+   *  only, or when the nightly reconcile is retrying a place-only order.
+   *  REQUIRED rather than optional on purpose: its absence changes which path
+   *  resolves the order, and an optional argument whose absence changes the
+   *  answer is the bug class this repo keeps paying for. Pass null explicitly. */
+  picked: { startDate: string; endDate: string | null } | null;
   soDate: string;
   brand: string | null;
 }): Promise<FairResolution> {
   const venue = (args.venue ?? '').trim();
   if (!venue) return { projectId: null, match: 'PENDING', candidateIds: [] };
+  const organizer = (args.organizer ?? '').trim();
   try {
-    const candidates = await loadFairsAtVenue(args.db, args.companySql, venue, args.soDate);
+    /* An EVENT was picked: match it exactly. A PLACE only: fall back to the
+       window at that venue, where the date is all there is to go on. */
+    const candidates =
+      args.picked && organizer
+        ? await loadFairsForEvent(args.db, args.companySql, {
+            venue,
+            organizer,
+            startDate: args.picked.startDate,
+            endDate: args.picked.endDate,
+          })
+        : await loadFairsAtVenue(args.db, args.companySql, venue, args.soDate);
     return resolveFair({
       candidates,
-      soDate: args.soDate,
       brand: args.brand,
       organizer: args.organizer,
     });

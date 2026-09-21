@@ -94,7 +94,11 @@ describe('the six flows are hooked at the point the document becomes permanent',
     expect(wholePo).toContain('poList.map(');
     expect(wholePo).not.toContain('recordConvertSkipped');
 
-    const perLine = between(grnSource, 'Received from ${[...bucket.poNumbers]', 'const postFailReason');
+    /* The per-line convert's DRAFT creation (bucketing, notes) moved to the lib
+       core (grn-from-po-core.ts), but the po_to_gr enqueue stays in the HTTP
+       handler's post loop — so this anchors on the handler's bucketPoIds block,
+       which is where the assertions below actually live. */
+    const perLine = between(grnSource, 'const bucketPoIds = draft.poIds.length', 'const postFailReason');
     expect(perLine).toContain("op: 'po_to_gr'");
     /* The bucket's own PO IDS, not `primaryPoId`. A bucket can hold several
        purchase orders and `primaryPoId` is whichever one opened it. */
@@ -116,10 +120,15 @@ describe('the six flows are hooked at the point the document becomes permanent',
     const wholeGrn = between(piSource, 'Converted from Goods Receipt ${g.grn_number', 'return c.json({ id: h.id, invoiceNumber: h.invoice_number');
     expect(wholeGrn).toContain("op: 'gr_to_pi'");
 
-    const perLine = between(piSource, 'Converted from Goods Receipt ${bucket.grnNumbers', '// Consume the GRN lines');
+    /* The per-line GRN->PI create now delegates draft creation to
+       createDraftPisFromGrnItemsCore and posts + wires AutoCount in the handler
+       loop over the returned drafts (refactor/pi-from-grn-core), so the bucket
+       became `draft`. Anchor on the enqueue comment, which is unique to this
+       per-line handler. */
+    const perLine = between(piSource, 'ERP -> AutoCount GRN->Purchase Invoice, per bucket', '// Consume the GRN lines');
     expect(perLine).toContain("op: 'gr_to_pi'");
     // Every goods receipt the bucket bills; the bucket is already one supplier.
-    expect(perLine).toContain('bucket.grnIds.map(');
+    expect(perLine).toContain('draft.grnIds.map(');
     expect(perLine).not.toContain('recordConvertSkipped');
   });
 });
@@ -273,15 +282,20 @@ describe('a cancel that reached AutoCount is final', () => {
     expect(rawSdk).toContain('CancelDocument');
   });
 
-  test('the SO status route refuses to leave CANCELLED once linked_ac_docno is set', () => {
-    /* Anchor changed 2026-08-18: the handler is now the named export
-       patchMfgSalesOrderStatusHandler, MOUNTED at the bottom of the file, so the old
-       `mfgSalesOrders.patch(...)` anchor lands on the one-line mount and slices nothing. */
+  test('a MIGRATED cancelled SO can be reopened (owner 2026-09-18); a non-migrated one stays final', () => {
+    /* Reversal of the old blanket refusal. The owner chose to let a carried-over
+       (migrated) order be reopened and reconcile AutoCount by hand — AutoCount
+       still has no un-cancel, so the reopen pushes nothing back. A NON-migrated
+       cancel ran the full ERP flow (credit + vouchers + stock), so it stays final. */
     const h = rawSo.slice(rawSo.indexOf('export const patchMfgSalesOrderStatusHandler'));
-    const guard = h.slice(0, h.indexOf('const currentVersion'));
-    expect(guard).toContain('cancel_is_final');
-    expect(guard).toContain("fromNorm === 'CANCELLED'");
-    expect(guard).toContain('linked_ac_docno');
+    // The old migrated-blocking guard is gone.
+    expect(h).not.toContain('cancel_is_final');
+    // A non-migrated cancelled SO is still refused — and ONLY a non-migrated one.
+    expect(h).toContain('so_cancelled_final');
+    expect(h).toContain("!(prev as { linked_ac_docno?: string | null }).linked_ac_docno");
+    // A reopen claws back any standing deposit->credit refund, so the customer's
+    // money is never counted twice.
+    expect(h).toContain('reverseCancelledSoCredit');
   });
 
   test('the PO reopen route refuses the same way', () => {

@@ -79,6 +79,7 @@ vi.mock('../../vendor/scm/lib/accounting-queries', () => ({
 vi.mock('../../vendor/scm/lib/rp-report-pdf', async (importOriginal) => ({
   ...(await importOriginal() as object),
   generateRpPdf: vi.fn(async () => undefined),
+  downloadRpXlsx: vi.fn(async () => undefined),
 }));
 vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ can: () => true }) }));
 vi.mock('./ReportLayoutEditor', () => ({ ReportLayoutEditor: () => <div role="dialog" aria-label="Layout · Receipts & Payments">editor</div> }));
@@ -89,7 +90,7 @@ vi.mock('./MonthlyReport', () => ({
 }));
 
 import { ReceiptsPaymentsTab } from './ReceiptsPayments';
-import { generateRpPdf } from '../../vendor/scm/lib/rp-report-pdf';
+import { downloadRpXlsx, generateRpPdf } from '../../vendor/scm/lib/rp-report-pdf';
 
 describe('the Cash Flow tab', () => {
   test('Total alone by default, a ticked account adds its own column, receipts above payments, each section its own subtotal name, the balance lines at the foot, brackets for a negative', () => {
@@ -147,18 +148,22 @@ describe('the Cash Flow tab', () => {
     expect(lastPath.value).not.toContain('310-0010');
   });
 
-  test('Print hands the report to the PDF', () => {
+  test('PDF and Excel hand the report, its ticked columns and its fold to the exports (owner 2026-09-19: 显示什么就 export 什么)', () => {
     render(<ReceiptsPaymentsTab />);
-    fireEvent.click(screen.getByText('Print'));
-    expect(vi.mocked(generateRpPdf)).toHaveBeenCalledWith(report, { columns: [] });
+    fireEvent.click(screen.getByText('PDF'));
+    expect(vi.mocked(generateRpPdf)).toHaveBeenCalledWith(report, { columns: [], level: 'all', open: {} });
+    fireEvent.click(screen.getByLabelText('Column 310-0010'));
+    fireEvent.click(screen.getByRole('button', { name: 'L1' }));
+    fireEvent.click(screen.getByText('Excel'));
+    expect(vi.mocked(downloadRpXlsx)).toHaveBeenCalledWith(report, { columns: ['310-0010'], level: 1, open: {} });
   });
 
-  test('By month opens the monthly view with 累计; Print steps aside; the column ticks stay (docs/bugs/0916)', () => {
+  test('By month opens the monthly view with 累计; PDF steps aside; the column ticks stay (docs/bugs/0916)', () => {
     render(<ReceiptsPaymentsTab />);
     fireEvent.click(screen.getByRole('button', { name: 'By month' }));
     expect(screen.getByRole('region', { name: /Monthly · Cash Flow/ }).textContent).toBe('with 累计');
     expect(screen.queryByText('Balance c/f')).toBeNull();
-    expect((screen.getByText('Print').closest('button') as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByText('PDF').closest('button') as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByLabelText('Column 310-0010')).toBeTruthy();
   });
 

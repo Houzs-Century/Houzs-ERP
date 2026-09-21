@@ -43,6 +43,7 @@
     "test:workers": "vitest run",
     "audit:test-projects": "node scripts/audit-test-projects.mjs",
     "audit:jsonb-binds": "node scripts/check-jsonb-binds.mjs",
+    "audit:multi-owner-jsonb": "node scripts/check-multi-owner-jsonb.mjs",
     "audit:swallowed-reads": "node scripts/check-swallowed-reads.mjs",
     "audit:decision-params": "node scripts/check-optional-decision-params.mjs",
     "audit:generators": "node scripts/check-generators-run.mjs",

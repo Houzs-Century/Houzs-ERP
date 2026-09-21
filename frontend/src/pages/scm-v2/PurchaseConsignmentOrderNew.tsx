@@ -20,7 +20,8 @@
 import { todayMyt } from '../../vendor/scm/lib/dates';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Save, Trash2, X } from 'lucide-react';
+import { Save, Trash2, X } from 'lucide-react';
+import { AddLineButton } from '../../vendor/scm/components/AddLineButton';
 import { Button } from '@2990s/design-system';
 import { formatPhone } from '@2990s/shared/phone';
 import { useCreatePurchaseConsignmentOrder } from '../../vendor/scm/lib/purchase-consignment-order-queries';
@@ -33,7 +34,7 @@ import {
   type NewPoItem,
   type MaterialKind,
 } from '../../vendor/scm/lib/suppliers-queries';
-import { useMfgProducts, useMaintenanceConfig } from '../../vendor/scm/lib/mfg-products-queries';
+import { useMfgProducts, useMaintenanceConfig, mfgCategoryLabel } from '../../vendor/scm/lib/mfg-products-queries';
 import { useFabricTrackings } from '../../vendor/scm/lib/fabric-queries';
 import { PcVariantEditor } from '../../vendor/scm/components/PcVariantEditor';
 import { useWarehouses } from '../../vendor/scm/lib/inventory-queries';
@@ -43,6 +44,7 @@ import {
   type PoPriceMatrix,
 } from '@2990s/shared/mfg-pricing';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
+import { NumberInput } from '../../vendor/scm/components/NumberInput';
 import { DiscountInput } from '../../vendor/scm/components/DiscountInput';
 import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDialog';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
@@ -647,7 +649,7 @@ export const PurchaseConsignmentOrderNew = () => {
                           ))
                         : sortByText(allSkus.data ?? []).map((p) => (
                             <option key={p.id} value={p.code}>
-                              {p.name} · {p.category}
+                              {p.name} · {mfgCategoryLabel(p.category)}
                             </option>
                           ))
                       }
@@ -717,7 +719,7 @@ export const PurchaseConsignmentOrderNew = () => {
                       color: 'var(--fg-muted)',
                       marginBottom: 'var(--space-2)',
                     }}>
-                      {l.category} Variants
+                      {mfgCategoryLabel(l.category)} Variants
                     </div>
 
                     <PcVariantEditor
@@ -735,10 +737,11 @@ export const PurchaseConsignmentOrderNew = () => {
                 <div className={styles.formGrid4} style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))' }}>
                   <label className={styles.field}>
                     <span className={styles.fieldLabel}>Qty</span>
-                    <input
-                      type="number" min={0} step={1}
+                    <NumberInput
                       value={l.qty}
-                      onChange={(e) => setLine(l.rid, { qty: Number(e.target.value) })}
+                      sign="unsigned"
+                      decimal={false}
+                      onValueChange={(n) => setLine(l.rid, { qty: n ?? 0 })}
                       className={styles.fieldInput}
                       style={{ textAlign: 'right' }}
                     />
@@ -792,28 +795,7 @@ export const PurchaseConsignmentOrderNew = () => {
             );
           })}
 
-          <button
-            type="button"
-            onClick={addLine}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 6,
-              width: '100%',
-              padding: '12px 14px',
-              border: '1px dashed var(--c-orange)',
-              borderRadius: 'var(--radius-md)',
-              background: 'transparent',
-              color: 'var(--c-orange)',
-              fontFamily: 'var(--font-sans)',
-              fontSize: 'var(--fs-13)',
-              fontWeight: 600,
-              cursor: 'pointer',
-            }}
-          >
-            <Plus {...ICON} /> Add another item
-          </button>
+          <AddLineButton variant="block" onClick={addLine} />
         </div>
       </section>
 

@@ -26,6 +26,7 @@ import { billToBlock } from './pdf-party-blocks';
 import { mfgCategoryLabel } from '../../shared/product-categories';
 import { loadFabricDescriptionMap, loadFabricSupplierMap } from './supplier-doc-data';
 import { composeSoLineDescription } from './so-line-description';
+import { stripBookText } from './book-text';
 import {
   appendPhotoMarker,
   blobToSquarePdfImage,
@@ -581,7 +582,9 @@ export async function renderSalesOrderInto(
       description: it.description ?? it.item_code,
       description2: (it.description2 ?? '').trim(),
       specs: variantLine(it, fabricDescMap, fabricExtMap) ?? '',
-      remark: typeof it.remark === 'string' ? it.remark : null,
+      /* The migrated AutoCount book text (`账本原文: …`) is stripped from the
+         CUSTOMER's copy here; it stays on the ERP screen. See book-text.ts. */
+      remark: stripBookText(typeof it.remark === 'string' ? it.remark : null) || null,
       notes,
     });
     /* Owner spec: a row carries NO image — the " (photo)" marker on the first

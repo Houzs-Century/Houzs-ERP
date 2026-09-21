@@ -12,10 +12,12 @@
 // opens in a pop-out form (DebtorBillForm — Insert adds a line, amounts read
 // 1,800.00), every bill can be EDITED (the route re-posts) or COPIED, and the
 // receipt's amounts wear the same money dress.
+// 2026-09-18 (owner: 需要打印功能): every bill PRINTS — the INVOICE the other
+// party receives (debtor-bill-pdf), a cancelled one with its watermark.
 // ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
-import { Ban, CheckCircle2, Copy, Pencil, Plus, RotateCcw, Send, XCircle } from 'lucide-react';
+import { Ban, CheckCircle2, Copy, Pencil, Plus, Printer, RotateCcw, Send, XCircle } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import {
   useAccounts, useOtherDebtors, useDebtorDetail, useCreateDebtor, useUpdateDebtor,
@@ -32,6 +34,7 @@ import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { DebtorBillForm, emptyBillForm, type BillFormMode, type BillFormSubmit, type BillFormValues } from './DebtorBillForm';
+import { generateDebtorBillPdf } from '../../vendor/scm/lib/debtor-bill-pdf';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 const myt = (): string => new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
@@ -78,6 +81,11 @@ export const OtherDebtors = () => {
   /* The whole chart goes in: a header whose children are all retired is still
      a header (docs/bugs/0693). */
   const accounts = useMemo<Account[]>(() => postableAccounts(accountsQ.data?.accounts ?? []), [accountsQ.data]);
+  /* The chart's name for a line's account — what a line left blank prints as. */
+  const accountNameOf = useMemo(() => {
+    const names = new Map((accountsQ.data?.accounts ?? []).map((a) => [a.account_code, a.account_name]));
+    return (code: string): string | null => names.get(code) ?? null;
+  }, [accountsQ.data]);
   const moneyAccounts = useMemo(() => accounts.filter((a) => a.acc_money === true), [accounts]);
 
   const createDebtor = useCreateDebtor();
@@ -354,6 +362,11 @@ export const OtherDebtors = () => {
                           </td>
                           <td style={{ padding: '4px 8px', fontSize: 'var(--fs-11)' }}>{b.status}</td>
                           <td style={{ padding: '4px 8px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                            <button type="button" aria-label={`Print ${b.bill_number}`} title="Print the invoice"
+                              onClick={() => void generateDebtorBillPdf({ bill: b, debtor: detail.debtor, accountName: accountNameOf }, { action: 'print' })}
+                              style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--fg-muted)', padding: 2 }}>
+                              <Printer size={14} strokeWidth={1.75} />
+                            </button>
                             {canCreate && b.status !== 'CANCELLED' && (
                               <button type="button" aria-label={`Edit ${b.bill_number}`} title="Edit" onClick={() => openEditBill(b)}
                                 style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--fg-muted)', padding: 2 }}>

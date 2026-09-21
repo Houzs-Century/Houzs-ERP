@@ -27,7 +27,8 @@
 import { todayMyt } from '../../vendor/scm/lib/dates';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowRightLeft, Plus, Save, Trash2, X, ChevronDown } from 'lucide-react';
+import { ArrowRightLeft, Save, Trash2, X, ChevronDown } from 'lucide-react';
+import { AddLineButton } from '../../vendor/scm/components/AddLineButton';
 import { Button } from '@2990s/design-system';
 import { activeOptions, buildVariantSummary, maintPickerValues } from '@2990s/shared';
 import {
@@ -39,11 +40,12 @@ import { useIdempotencyKey } from '../../lib/idempotency';
 import { readConvertScope, UnrecognisedScopeNotice } from '../../lib/convertScope';
 import { useGrnDetail } from '../../vendor/scm/lib/grn-queries';
 import { usePurchaseOrderDetail, useSuppliers } from '../../vendor/scm/lib/suppliers-queries';
-import { useMfgProducts, useMaintenanceConfig, useSpecialAddons } from '../../vendor/scm/lib/mfg-products-queries';
+import { useMfgProducts, useMaintenanceConfig, useSpecialAddons, mfgCategoryLabel } from '../../vendor/scm/lib/mfg-products-queries';
 import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
 import { sortByText, sortByNumeric } from '../../vendor/scm/lib/sort-options';
 import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
+import { NumberInput } from '../../vendor/scm/components/NumberInput';
 import { SpecialOrders } from '../../vendor/scm/components/SpecialOrders';
 import { specialOrderSurface } from '../../vendor/scm/lib/special-order-surface';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
@@ -429,7 +431,7 @@ export const PurchaseReturnNew = () => {
           {lines.length === 0 ? (
             <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-13)', padding: 'var(--space-3) 0' }}>
               {isManual
-                ? 'Pick a supplier in the header, then use “Add another item” below to add returns by hand.'
+                ? 'Pick a supplier in the header, then use “Add line” below to add returns by hand.'
                 : grn
                   ? 'No accepted lines on this GRN to return.'
                   : 'No lines on this PO to return.'}
@@ -543,7 +545,7 @@ export const PurchaseReturnNew = () => {
                           />
                           <datalist id={`pr-products-${l.rid}`}>
                             {sortByText(productsQ.data ?? []).map((p) => (
-                              <option key={p.id} value={p.code}>{p.name} · {p.category}</option>
+                              <option key={p.id} value={p.code}>{p.name} · {mfgCategoryLabel(p.category)}</option>
                             ))}
                           </datalist>
                         </>
@@ -653,8 +655,8 @@ export const PurchaseReturnNew = () => {
                   <div className={styles.formGrid4}>
                     <label className={styles.field}>
                       <span className={styles.fieldLabel}>Qty Returned</span>
-                      <input type="number" min={0} value={l.qtyReturned}
-                        onChange={(e) => setLine(l.rid, { qtyReturned: Math.max(0, Number(e.target.value) || 0) })}
+                      <NumberInput value={l.qtyReturned} sign="unsigned" decimal={false}
+                        onValueChange={(n) => setLine(l.rid, { qtyReturned: Math.max(0, n ?? 0) })}
                         className={styles.fieldInput} style={{ textAlign: 'right' }} />
                     </label>
                     <label className={styles.field}>
@@ -688,28 +690,7 @@ export const PurchaseReturnNew = () => {
 
           {/* "Add another item" — free-form mode (mirrors New PO / New GRN). */}
           {isManual && (
-            <button
-              type="button"
-              onClick={addLine}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 6,
-                width: '100%',
-                padding: '12px 14px',
-                border: '1px dashed var(--c-orange)',
-                borderRadius: 'var(--radius-md)',
-                background: 'transparent',
-                color: 'var(--c-orange)',
-                fontFamily: 'var(--font-sans)',
-                fontSize: 'var(--fs-13)',
-                fontWeight: 600,
-                cursor: 'pointer',
-              }}
-            >
-              <Plus {...ICON} /> Add another item
-            </button>
+            <AddLineButton variant="block" onClick={addLine} />
           )}
         </div>
       </section>

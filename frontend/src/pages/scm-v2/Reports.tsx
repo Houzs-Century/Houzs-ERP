@@ -10,7 +10,8 @@
 // an expense is a cost, not a negative — and only a line whose credits beat
 // its debits in the period (a reversal, a closing-stock credit) prints in
 // parentheses; a loss is a negative net and reads the same way. The four
-// Finance reports share this rule through fmtSenParen / fmtPerf.
+// Finance reports share this rule through fmtSenPlain — 1,234.56, no RM, as the
+// Cash Flow reads (owner 2026-09-19: P&L 的 RM 前缀拿掉，和 cash flow 一样).
 //
 // LAYOUT (owner 2026-09-14, docs/bugs/0911: 我想要有 level，父子 account 分层 …
 // 我要能自己调动排版 … P&L 那边不是每个 expense 都有 percentage): the P&L draws each
@@ -26,21 +27,42 @@
 // the single period for MonthlyReport — the same endpoint asked once per
 // column, 累计 leftmost then newest → oldest, a % toggle; the balance sheet's
 // columns are month-end balances and it has no cumulative column.
+//
+// EXPORTS (owner 2026-09-19: 我这页显示什么就要 export 什么 … finance 这里的 report
+// 都是要这样): Excel and PDF carry the statement AS SHOWN — the lines at the
+// level chosen, the same shades — through the shared report sheet.
 // ----------------------------------------------------------------------------
 
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
+import { Download, Printer } from 'lucide-react';
 import { Button } from '@2990s/design-system';
-import { fmtSenParen } from '../../vendor/shared/format';
+import { fmtDate, fmtSenPlain } from '../../vendor/shared/format';
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import { DateField } from '../../vendor/scm/components/DateField';
 import { useAuth } from '../../auth/AuthContext';
-import { fmtPct, laidDepth, leafCodes, ledgerHref, pctOf, type LaidNode } from '../../vendor/scm/lib/report-layout';
+import { fmtPct, laidDepth, leafCodes, ledgerHref, linesVisible, pctOf, type LaidNode } from '../../vendor/scm/lib/report-layout';
 import { LaidBlock, LaidTotalRow, LevelButtons, useReportTree, type Level } from './ReportLayoutTree';
 import { ReportLayoutEditor } from './ReportLayoutEditor';
 import { ByMonthButton, MonthlyReport } from './MonthlyReport';
 import { balanceSheetLines, pnlLines, type MonthColumn } from '../../vendor/scm/lib/report-monthly';
+import { statementTable, type ReportSheet } from '../../vendor/scm/lib/report-sheet';
+import { downloadReportXlsx } from '../../vendor/scm/lib/report-sheet-xlsx';
+import { generateReportPdf } from '../../vendor/scm/lib/report-sheet-pdf';
+
+/** The Excel and PDF buttons a statement wears while one period is shown. */
+const ExportButtons = ({ sheet, fileBase }: { sheet: () => ReportSheet | null; fileBase: string }) => (
+  <>
+    <span style={{ flex: 1 }} />
+    <Button variant="ghost" size="sm" onClick={() => { const s = sheet(); if (s) void downloadReportXlsx(s, `${fileBase}.xlsx`); }}>
+      <Download size={16} strokeWidth={1.75} /> Excel
+    </Button>
+    <Button variant="ghost" size="sm" onClick={() => { const s = sheet(); if (s) void generateReportPdf(s, { fileName: `${fileBase}.pdf` }); }}>
+      <Printer size={16} strokeWidth={1.75} /> PDF
+    </Button>
+  </>
+);
 
 const card: React.CSSProperties = {
   padding: 'var(--space-4)',
@@ -108,6 +130,14 @@ export const PnLTab = () => {
   const lay = q.data?.layout;
   const depth = lay ? Math.max(laidDepth(lay.tradingIncome), laidDepth(lay.costOfSales), laidDepth(lay.otherIncome), laidDepth(lay.expenses), laidDepth(lay.taxation)) : 0;
   const base = lay ? lay.baseSen : null;
+  /* Excel and PDF carry the statement as shown — the lines at this level (owner 2026-09-19). */
+  const period = `${fmtDate(from)} – ${fmtDate(to)}`;
+  const sheet = (): ReportSheet | null => (q.data && lay ? {
+    title: 'P&L',
+    subtitle: `${period} · % of sales · ${lay.stored ? 'on the saved layout' : "on the chart's own tree"}${level === 'all' ? '' : ` · level ${level}`}`,
+    meta: [{ label: 'Period', value: period }],
+    tables: [statementTable(linesVisible(pnlLines(q.data), level, tree.open), '% of sales')],
+  } : null);
 
   return (
     <div className="space-y-3">
@@ -123,9 +153,10 @@ export const PnLTab = () => {
         {canArrange && (
           <Button variant="ghost" size="sm" onClick={() => setEditing((v) => !v)} aria-pressed={editing}>Layout</Button>
         )}
+        {!monthly && q.data && <ExportButtons sheet={sheet} fileBase={`pnl-${from}-to-${to}`} />}
       </div>
       {editing && <ReportLayoutEditor report="pnl" onClose={() => setEditing(false)} />}
-      {monthly && <MonthlyReport<PnlResponse> report="pnl" title="P&L" withCumulative fetchColumn={fetchPnlColumn} linesOf={pnlLines} fmt={fmtSenParen} pctTitle="% of sales" />}
+      {monthly && <MonthlyReport<PnlResponse> report="pnl" title="P&L" withCumulative fetchColumn={fetchPnlColumn} linesOf={pnlLines} fmt={fmtSenPlain} pctTitle="% of sales" />}
       {!monthly && q.isLoading && <div style={soft}>Working the period out…</div>}
       {!monthly && q.isError && <div style={{ fontSize: 'var(--fs-13)', color: 'var(--c-danger, #a33)' }}>The statement did not load — adjust the dates to retry.</div>}
       {!monthly && q.data && lay && (
@@ -199,6 +230,13 @@ export const BalanceSheetTab = () => {
   const lay = q.data?.layout;
   const depth = lay ? Math.max(laidDepth(lay.assets), laidDepth(lay.liabilities), laidDepth(lay.equity)) : 0;
   const base = lay ? lay.baseSen : null;
+  /* Excel and PDF carry the statement as shown — the lines at this level (owner 2026-09-19). */
+  const sheet = (): ReportSheet | null => (q.data && lay ? {
+    title: 'Balance Sheet',
+    subtitle: `As at ${fmtDate(asOf)} · % of total assets · ${lay.stored ? 'on the saved layout' : "on the chart's own tree"}${level === 'all' ? '' : ` · level ${level}`}`,
+    meta: [{ label: 'As at', value: fmtDate(asOf) }],
+    tables: [statementTable(linesVisible(balanceSheetLines(q.data), level, tree.open), '% of total assets')],
+  } : null);
 
   return (
     <div className="space-y-3">
@@ -213,9 +251,10 @@ export const BalanceSheetTab = () => {
         {canArrange && (
           <Button variant="ghost" size="sm" onClick={() => setEditing((v) => !v)} aria-pressed={editing}>Layout</Button>
         )}
+        {!monthly && q.data && <ExportButtons sheet={sheet} fileBase={`balance-sheet-${asOf}`} />}
       </div>
       {editing && <ReportLayoutEditor report="balance_sheet" onClose={() => setEditing(false)} />}
-      {monthly && <MonthlyReport<BsResponse> report="balance-sheet" title="Balance Sheet (as at month end)" withCumulative={false} fetchColumn={fetchBsColumn} linesOf={balanceSheetLines} fmt={fmtSenParen} pctTitle="% of total assets" />}
+      {monthly && <MonthlyReport<BsResponse> report="balance-sheet" title="Balance Sheet (as at month end)" withCumulative={false} fetchColumn={fetchBsColumn} linesOf={balanceSheetLines} fmt={fmtSenPlain} pctTitle="% of total assets" />}
       {!monthly && q.isLoading && <div style={soft}>Adding the ledger up…</div>}
       {!monthly && q.isError && <div style={{ fontSize: 'var(--fs-13)', color: 'var(--c-danger, #a33)' }}>The statement did not load — pick the date again to retry.</div>}
       {!monthly && q.data && lay && (
@@ -234,7 +273,7 @@ export const BalanceSheetTab = () => {
               <LaidBlock title="Equity" nodes={lay.equity} level={level} totalLabel="Total equity" totalSen={q.data.totals.equitySen} baseSen={base} onPick={openLedger} tree={tree} drill={drill} />
               <tr>
                 <td style={{ padding: '4px 10px' }}>Current period earnings</td>
-                <td style={{ padding: '4px 10px', textAlign: 'right', whiteSpace: 'nowrap' }}>{fmtSenParen(q.data.totals.earningsSen)}</td>
+                <td style={{ padding: '4px 10px', textAlign: 'right', whiteSpace: 'nowrap' }}>{fmtSenPlain(q.data.totals.earningsSen)}</td>
                 <td style={{ padding: '4px 10px', textAlign: 'right', whiteSpace: 'nowrap', ...soft }}>{fmtPct(pctOf(q.data.totals.earningsSen, base))}</td>
               </tr>
               <tr style={{ borderTop: '2px solid var(--c-ink, #221f20)' }}>
@@ -242,7 +281,7 @@ export const BalanceSheetTab = () => {
                   {q.data.totals.checkSen === 0 ? 'BALANCED' : 'OUT OF BALANCE'}
                 </td>
                 <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 700, whiteSpace: 'nowrap', color: q.data.totals.checkSen === 0 ? 'var(--c-good, #2f5d4f)' : 'var(--c-danger, #a33)' }}>
-                  {q.data.totals.checkSen === 0 ? fmtSenParen(q.data.totals.assetsSen) : fmtSenParen(q.data.totals.checkSen)}
+                  {q.data.totals.checkSen === 0 ? fmtSenPlain(q.data.totals.assetsSen) : fmtSenPlain(q.data.totals.checkSen)}
                 </td>
                 <td style={{ padding: '8px 10px', textAlign: 'right', whiteSpace: 'nowrap', ...soft }}>{q.data.totals.checkSen === 0 ? fmtPct(pctOf(q.data.totals.assetsSen, base)) : ''}</td>
               </tr>

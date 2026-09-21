@@ -43,7 +43,9 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery as useTanstackQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Camera, ChevronDown, Plus, Save, X } from 'lucide-react';
+import { ArrowLeft, Camera, ChevronDown, Save, X } from 'lucide-react';
+import { AddLineButton } from '../../vendor/scm/components/AddLineButton';
+import { useAddLineHotkey } from '../../vendor/scm/lib/useAddLineHotkey';
 import { Button } from '../../components/Button';
 import { PageHeader } from '../../components/Layout';
 import { api } from '../../api/client';
@@ -706,6 +708,7 @@ export const SalesOrderNew = () => {
      below keeps non-overridden lines in sync with subsequent header
      changes. */
   const addLine  = () => setLines((prev) => [...prev, newLine(deliveryDate || null)]);
+  useAddLineHotkey(addLine);
   const dropLine = (rid: string) => setLines((prev) => prev.filter((l) => l.rid !== rid));
 
   /* Desktop sofa multi-add (MobileSkuPicker.onPickMany parity). SoLineCard's
@@ -1039,7 +1042,9 @@ export const SalesOrderNew = () => {
      written at and not merely where. The venue NAME is what the row carries, so
      it leads here and the master id follows it by name for back-compat with the
      `venue_id` column and the reports that read it. */
-  const [fairPick, setFairPick] = useState<FairPickValue>({ venue: null, organizer: null });
+  const [fairPick, setFairPick] = useState<FairPickValue>({
+    venue: null, organizer: null, startDate: null, endDate: null,
+  });
   const effectiveVenueName: string = useMemo(() => {
     if (fairPick.venue) return fairPick.venue;
     const id = pickedVenueId ?? resolvedVenueId;
@@ -1083,7 +1088,10 @@ export const SalesOrderNew = () => {
        does not hold. Only ever seeds a BLANK: a human pick is a decision and is
        never overwritten (same rule as canAutoResolveVenue server-side). */
     if (autoVenue?.venueName && fairPick.venue == null) {
-      setFairPick({ venue: autoVenue.venueName, organizer: null });
+      /* An auto-filled venue is a PLACE, never an event — no organizer and no
+         period. Seeding a period here would tell the server the operator chose
+         an occurrence they never saw. */
+      setFairPick({ venue: autoVenue.venueName, organizer: null, startDate: null, endDate: null });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoVenue]);
@@ -1560,6 +1568,12 @@ export const SalesOrderNew = () => {
            and the brand derived from the lines, this is what identifies one
            fair; the server never trusts a project id from here. */
         fairOrganizer: fairPick.organizer ?? undefined,
+        /* The picked event's PERIOD. Venue + organizer + period is what names
+           ONE occurrence; the order date cannot stand in for it, because this
+           form has no date field and so the order is always dated the day it
+           was keyed — not a day the fair was necessarily on. */
+        fairStart: fairPick.startDate ?? undefined,
+        fairEnd: fairPick.endDate ?? undefined,
         /* Address handling: address1/2 skipped when fill-later is on, but
            State/City/Postcode/BuildingType always submit. */
         address1: fillAddressLater ? undefined : (address1 || undefined),
@@ -2190,28 +2204,7 @@ export const SalesOrderNew = () => {
             );
           })}
 
-          <button
-            type="button"
-            onClick={addLine}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 6,
-              width: '100%',
-              padding: '12px 14px',
-              background: 'transparent',
-              border: '1px dashed var(--c-orange)',
-              borderRadius: 'var(--radius-md)',
-              color: 'var(--c-orange)',
-              fontFamily: 'var(--font-sans)',
-              fontSize: 'var(--fs-13)',
-              fontWeight: 600,
-              cursor: 'pointer',
-            }}
-          >
-            <Plus {...ICON} /> Add Line Item
-          </button>
+          <AddLineButton variant="block" onClick={addLine} />
 
           <div style={{
             display: 'flex',

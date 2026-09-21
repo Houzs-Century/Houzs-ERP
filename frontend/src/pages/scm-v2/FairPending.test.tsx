@@ -22,9 +22,9 @@ const ROWS: FairPendingRow[] = [
 const OPTIONS: FairOptionsResponse = {
   date: '2026-09-13',
   running: [
-    { key: 'mid valley|rex|2026-09-11|2026-09-13', venue: 'MID VALLEY', organizer: 'REX', startDate: '2026-09-11', endDate: '2026-09-13', showDates: false, projectIds: [340, 341] },
+    { key: 'mid valley|rex|2026-09-11|2026-09-13', venue: 'MID VALLEY', organizer: 'REX', startDate: '2026-09-11', endDate: '2026-09-13', projectIds: [340, 341] },
   ],
-  month: [],
+  earlier: [],
   venues: [],
 };
 
@@ -51,8 +51,8 @@ describe('FairPending', () => {
     render(<FairPending />);
     const sel = screen.getByLabelText('Fair for HC-SO-2609-064') as HTMLSelectElement;
     const labels = [...sel.options].map((o) => o.text);
-    expect(labels).toContain('MID VALLEY — REX #340');
-    expect(labels).toContain('MID VALLEY — REX #341');
+    expect(labels).toContain('MID VALLEY — REX (11/09 - 13/09) #340');
+    expect(labels).toContain('MID VALLEY — REX (11/09 - 13/09) #341');
   });
 
   it('offers NOTHING for an order whose place has no fair that day', () => {

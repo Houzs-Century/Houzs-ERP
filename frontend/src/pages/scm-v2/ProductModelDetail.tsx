@@ -25,13 +25,14 @@ import { ArrowLeft, ImagePlus, Save, Store, Trash2, Wand2, X, Power, PowerOff } 
 import { LazySlot } from '../../components/LazySlot';
 import { Button } from '../../components/Button';
 import { PageHeader } from '../../components/Layout';
+import { NumberInput } from '../../vendor/scm/components/NumberInput';
 import { maintActiveValues, fmtSen } from '@2990s/shared';
 import {
   useProductModel, useUpdateProductModel, useDeleteProductModel, useGenerateModelSkus,
   useActivateOneShot, useBrandingPool, useUploadProductModelPhoto,
   type AllowedOptions, type AllowedOptions as AOpts,
 } from '../../vendor/scm/lib/product-models-queries';
-import { useMaintenanceConfig, useUpdateMfgProductStatus, useSpecialAddons } from '../../vendor/scm/lib/mfg-products-queries';
+import { useMaintenanceConfig, useUpdateMfgProductStatus, useSpecialAddons, mfgCategoryLabel } from '../../vendor/scm/lib/mfg-products-queries';
 import { useFabricLibrary } from '../../vendor/scm/lib/queries';
 import { CategorySwapSelect } from '../../vendor/scm/components/CategorySwapSelect';
 import { useAuth } from '../../auth/AuthContext';
@@ -360,7 +361,7 @@ export const ProductModelDetail = ({
              decorative <Layers> glyph went away with the bespoke title row;
              PageHeader's eyebrow rail carries that job now.) */
           <div className="flex flex-wrap items-center gap-2">
-            <span className={styles.catPill}>{model.category}</span>
+            <span className={styles.catPill}>{mfgCategoryLabel(model.category)}</span>
             <span className={`${styles.statusPill} ${model.active ? styles.active : styles.inactive}`}>
               {model.active ? 'ACTIVE' : 'INACTIVE'}
             </span>
@@ -451,7 +452,7 @@ export const ProductModelDetail = ({
             ) : (
               <>
                 <span className="t-eyebrow">Category</span>
-                <input type="text" value={model.category} readOnly className={styles.readonly} />
+                <input type="text" value={mfgCategoryLabel(model.category)} readOnly className={styles.readonly} />
               </>
             )}
           </div>
@@ -616,20 +617,17 @@ export const ProductModelDetail = ({
             <div className={styles.optHead}>
               <span className="t-eyebrow">Mattress thickness (cm)</span>
             </div>
-            <input
-              type="number"
-              min={0}
-              max={99}
-              step={1}
+            <NumberInput
+              sign="unsigned"
+              decimal={false}
               value={
                 typeof (allowed as { mattress_thickness_cm?: number }).mattress_thickness_cm === 'number'
                   ? (allowed as { mattress_thickness_cm: number }).mattress_thickness_cm
-                  : ''
+                  : null
               }
-              onChange={(e) => {
-                const v = e.target.value === '' ? null : Number(e.target.value);
+              onValueChange={(v) => {
                 const next: AllowedOptions = { ...allowed };
-                if (v == null || Number.isNaN(v)) {
+                if (v == null) {
                   delete (next as { mattress_thickness_cm?: number }).mattress_thickness_cm;
                 } else {
                   (next as { mattress_thickness_cm: number }).mattress_thickness_cm = v;
@@ -657,7 +655,7 @@ export const ProductModelDetail = ({
 
         {(model.category === 'ACCESSORY' || model.category === 'SERVICE') && (
           <p className={styles.cardSub}>
-            No configurable options for {model.category.toLowerCase()} models —
+            No configurable options for {mfgCategoryLabel(model.category).toLowerCase()} models —
             SKU rows track everything directly.
           </p>
         )}

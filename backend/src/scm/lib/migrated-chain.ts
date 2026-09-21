@@ -419,6 +419,33 @@ export function deliveryMustMirrorAutoCount(
   return delivery.migrated && !neverInvoicedInAutoCount.has(delivery.docNo);
 }
 
+/**
+ * TRUE when a goods receipt (GRN) must be invoiced into a purchase invoice by
+ * mirroring AutoCount, never by hand — the PURCHASE-side mirror of
+ * deliveryMustMirrorAutoCount.
+ *
+ * A GRN AUTOCOUNT NEVER INVOICED IS AN ORDINARY ONE (docs/bugs/0918). Rule 2
+ * above refused every migrated GRN on the premise that AutoCount had raised the
+ * purchase invoice from it. That holds for a GRN AutoCount did bill; it fails
+ * for a GRN carried over at cutover that AutoCount never invoiced — a payable
+ * staff must be able to bill by hand. For those, none of the three harms the
+ * refusal guards against exists: there is no AutoCount PI number to keep, no
+ * payable AutoCount booked, and no invoice in the book for the gr_to_pi transfer
+ * to duplicate.
+ *
+ * Which GRNs AutoCount never invoiced is measured in the book and committed
+ * (`migrated-receipts-not-invoiced.generated.ts`), because the Worker cannot read
+ * the book. A GRN not on that list keeps the refusal, so a measurement that is
+ * missing or stale refuses rather than lets through. The allowlist ships EMPTY,
+ * so this is INERT until the office measures: every migrated GRN still mirrors.
+ */
+export function receiptMustMirrorAutoCount(
+  receipt: { docNo: string; migrated: boolean },
+  neverInvoicedInAutoCount: ReadonlySet<string>,
+): boolean {
+  return receipt.migrated && !neverInvoicedInAutoCount.has(receipt.docNo);
+}
+
 /** Human-readable refusal for the operator-facing convert endpoints. */
 export const MIGRATED_LINE_PICK_REFUSAL = {
   error: 'migrated_source_document',

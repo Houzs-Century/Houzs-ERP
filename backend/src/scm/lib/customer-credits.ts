@@ -21,6 +21,7 @@ export type CreditSourceType =
   | 'SI_CANCEL_REFUND'   // SI was cancelled with paid_sen > 0 → credit equal to paid_sen
   | 'SI_REOPEN_CONTRA'   // a cancelled SI was reopened → reverse the SI_CANCEL_REFUND credit
   | 'SO_CANCEL_REFUND'   // SO was cancelled with paid deposit > 0 → credit equal to paid deposit
+  | 'SO_REOPEN_CONTRA'   // a cancelled SO was reopened → reverse the SO_CANCEL_REFUND credit
   | 'OVERPAY'            // payment recorded > remaining due → excess turned into credit
   | 'APPLIED_TO_SI'      // negative entry — credit applied to a new invoice
   | 'MANUAL_ADJUST'      // operator-entered adjustment
@@ -570,18 +571,24 @@ export async function creditFromCancelledSo(
      null, falls through, and credits the cancelled SO's deposit to the customer a
      SECOND time. An SO that has genuinely never been credited resolves
      error === null with data === [] and must still fall through. */
+  /* Net SO_CANCEL_REFUND against any SO_REOPEN_CONTRA (written when the order
+     was reopened): net > 0 means a live credit already stands → no-op; net ≤ 0
+     means it was never credited OR was reversed on a prior reopen, so a fresh
+     cancel after reopen correctly credits again. Mirrors the SI cancel-refund
+     netting so cancel↔reopen↔re-cancel stays balanced. */
   const { data: existing, error: existErr } = await sb
     .from('customer_credits')
-    .select('id')
-    .eq('source_type', 'SO_CANCEL_REFUND')
+    .select('amount_sen')
     .eq('source_doc_no', args.docNo)
-    .limit(1);
+    .in('source_type', ['SO_CANCEL_REFUND', 'SO_REOPEN_CONTRA']);
   if (existErr) {
     /* eslint-disable-next-line no-console */
     console.error('[customer-credit] SO cancel-refund guard read failed — NOT credited:', args.docNo, existErr.message);
     return { credited: 0, reason: 'guard_read_failed' };
   }
-  if (existing && existing.length > 0) {
+  const standingCredit = ((existing ?? []) as Array<{ amount_sen: number }>)
+    .reduce((s, r) => s + Number(r.amount_sen ?? 0), 0);
+  if (standingCredit > 0) {
     return { credited: 0, reason: 'already_credited' };
   }
 
@@ -617,4 +624,53 @@ export async function creditFromCancelledSo(
     companyId,
   });
   return r.ok ? { credited: total } : { credited: 0, reason: r.reason };
+}
+
+/**
+ * Reverse the SO_CANCEL_REFUND credit when a cancelled Sales Order is REOPENED.
+ * On reopen the order goes live again and its deposit payments count against it
+ * once more — so the credit handed out at cancel must be clawed back, or the
+ * customer's money is counted twice. Writes a NEGATIVE contra row
+ * (SO_REOPEN_CONTRA) of the net standing cancel-refund. Idempotent: once
+ * net ≤ 0 (never credited, or already reversed) it is a no-op. Mirrors
+ * reverseCancelledSiCredit on the invoice side.
+ */
+export async function reverseCancelledSoCredit(
+  sb: any,
+  args: { docNo: string; debtorCode: string | null; debtorName: string | null; createdBy?: string | null },
+): Promise<{ reversed: number; reason?: string }> {
+  if (!args.debtorCode || !args.debtorCode.trim()) return { reversed: 0, reason: 'no_debtor' };
+  const { data: rows, error: rowsErr } = await sb
+    .from('customer_credits')
+    .select('amount_sen, company_id')
+    .eq('source_doc_no', args.docNo)
+    .in('source_type', ['SO_CANCEL_REFUND', 'SO_REOPEN_CONTRA']);
+  /* A failed read folds to standing = 0 and takes the nothing_to_reverse branch,
+     which would let the reopened order go live while the customer KEEPS the
+     cancel refund. Report the failure honestly instead of a clean no-op — the
+     outcome (no contra row) is the same, but it is now findable. */
+  if (rowsErr) {
+    /* eslint-disable-next-line no-console */
+    console.error('[customer-credit] standing-credit read failed — SO cancel refund NOT clawed back on reopen:', args.docNo, rowsErr.message);
+    return { reversed: 0, reason: 'standing_read_failed' };
+  }
+  const creditRows = (rows ?? []) as Array<{ amount_sen: number; company_id?: number | null }>;
+  const standing = creditRows.reduce((s, r) => s + Number(r.amount_sen ?? 0), 0);
+  if (standing <= 0) return { reversed: 0, reason: 'nothing_to_reverse' };
+
+  // The contra inherits the company stamped on the cancel-refund it reverses
+  // (mig 0061 / 0083 — customer_credits.company_id is NOT NULL).
+  const companyId = creditRows.find((r) => r.company_id != null)?.company_id ?? null;
+
+  const r = await addCustomerCredit(sb, {
+    debtorCode: args.debtorCode,
+    debtorName: args.debtorName ?? null,
+    amountSen: -standing,
+    sourceType: 'SO_REOPEN_CONTRA',
+    sourceDocNo: args.docNo,
+    notes: `Reopened Sales Order ${args.docNo} — cancel-refund credit (${standing / 100}) reversed.`,
+    createdBy: args.createdBy ?? null,
+    companyId,
+  });
+  return r.ok ? { reversed: standing } : { reversed: 0, reason: r.reason };
 }

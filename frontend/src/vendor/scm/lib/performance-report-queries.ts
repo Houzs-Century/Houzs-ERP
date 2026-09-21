@@ -9,7 +9,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
-import { fmtDateOrDash } from '../../shared/format';
+import { fmtDateOrDash, fmtSenPlain } from '../../shared/format';
 import { flattenLaid, type LaidNode } from './report-layout';
 
 export type PerformanceSettings = { rateBp: number; account: string };
@@ -57,12 +57,8 @@ export const useSavePerformanceSettings = () => {
 
 /* ── The report's own dress — ONE home for the screen, the CSV and the PDF ── */
 
-/** 1,234.56 with a bracketed negative. */
-export const fmtPerf = (sen: number): string => {
-  const abs = Math.abs(sen) / 100;
-  const s = abs.toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  return sen < 0 ? `(${s})` : s;
-};
+/** 1,234.56 with a bracketed negative — the Finance reports' one money dress (fmtSenPlain). */
+export const fmtPerf = (sen: number): string => fmtSenPlain(sen);
 export const fmtPerfPct = (pct: number | null): string => (pct == null ? '—' : `${pct.toFixed(1)}%`);
 const ratePct = (bp: number): string => `${(bp / 100).toFixed(2)}%`;
 

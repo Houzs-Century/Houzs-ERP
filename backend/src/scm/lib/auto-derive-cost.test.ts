@@ -1,40 +1,59 @@
 import { describe, expect, it } from 'vitest';
 import {
   autoDeriveEnabled,
+  mergeRetailOntoDerivedSeatGrid,
   recomputeDerivedProductCost,
   recordSupplierPriceHistorySafe,
   type DerivedCostIO,
 } from './auto-derive-cost';
 import type { SupplierBindingCost } from './derive-product-cost-from-suppliers';
 
-// ── autoDeriveEnabled — the inert-by-default flag ────────────────────────────
-function fakeConfigSb(row: { value: unknown } | null, error = false) {
-  return {
-    from: () => ({
-      select: () => ({
-        eq: () => ({
-          maybeSingle: async () => (error ? { data: null, error: { message: 'boom' } } : { data: row, error: null }),
-        }),
-      }),
-    }),
+// ── autoDeriveEnabled — the inert-by-default, PER-COMPANY flag ─────────────
+/** scm.app_config is keyed (key, company_id). The fake answers with `row` only
+ *  when the read filtered on BOTH — a read that forgets company_id gets null,
+ *  which is what makes the "another company's row" test below meaningful. */
+function fakeConfigSb(row: { value: unknown } | null, error = false, rowCompanyId = 1) {
+  const filters: Record<string, unknown> = {};
+  const chain: any = { // eslint-disable-line @typescript-eslint/no-explicit-any
+    eq: (col: string, val: unknown) => { filters[col] = val; return chain; },
+    maybeSingle: async () => {
+      if (error) return { data: null, error: { message: 'boom' } };
+      const scoped = filters.company_id === rowCompanyId;
+      return { data: scoped ? row : null, error: null };
+    },
   };
+  return { from: () => ({ select: () => chain }) };
 }
 
 describe('autoDeriveEnabled — OFF unless explicitly on', () => {
   it('missing config row -> OFF (inert default)', async () => {
-    expect(await autoDeriveEnabled(fakeConfigSb(null))).toBe(false);
+    expect(await autoDeriveEnabled(fakeConfigSb(null), 1)).toBe(false);
   });
   it("'on' / '1' / 'true' -> ON", async () => {
-    expect(await autoDeriveEnabled(fakeConfigSb({ value: 'on' }))).toBe(true);
-    expect(await autoDeriveEnabled(fakeConfigSb({ value: '1' }))).toBe(true);
-    expect(await autoDeriveEnabled(fakeConfigSb({ value: 'TRUE' }))).toBe(true);
+    expect(await autoDeriveEnabled(fakeConfigSb({ value: 'on' }), 1)).toBe(true);
+    expect(await autoDeriveEnabled(fakeConfigSb({ value: '1' }), 1)).toBe(true);
+    expect(await autoDeriveEnabled(fakeConfigSb({ value: 'TRUE' }), 1)).toBe(true);
   });
   it("'off' / anything else -> OFF", async () => {
-    expect(await autoDeriveEnabled(fakeConfigSb({ value: 'off' }))).toBe(false);
-    expect(await autoDeriveEnabled(fakeConfigSb({ value: 'yes-please' }))).toBe(false);
+    expect(await autoDeriveEnabled(fakeConfigSb({ value: 'off' }), 1)).toBe(false);
+    expect(await autoDeriveEnabled(fakeConfigSb({ value: 'yes-please' }), 1)).toBe(false);
   });
   it('read error -> OFF (fails closed, stays on today behaviour)', async () => {
-    expect(await autoDeriveEnabled(fakeConfigSb(null, true))).toBe(false);
+    expect(await autoDeriveEnabled(fakeConfigSb(null, true), 1)).toBe(false);
+  });
+
+  /* The 2026-09-20 incident, as a test. ONE row was written, under company 1,
+     and the read carried no company predicate — so it switched the mechanism on
+     over company 2 (2990), whose catalogue another team maintains and who never
+     opted in. The derive then erased 193 of their retail prices. */
+  it("another company's ON row does NOT switch this company on", async () => {
+    const sb = fakeConfigSb({ value: 'on' }, false, 1); // company 1 opted in
+    expect(await autoDeriveEnabled(sb, 1)).toBe(true);
+    expect(await autoDeriveEnabled(sb, 2)).toBe(false); // company 2 never did
+  });
+  it('no company -> OFF (never guess which catalogue this is)', async () => {
+    expect(await autoDeriveEnabled(fakeConfigSb({ value: 'on' }), null)).toBe(false);
+    expect(await autoDeriveEnabled(fakeConfigSb({ value: 'on' }), undefined)).toBe(false);
   });
 });
 
@@ -187,5 +206,76 @@ describe('recordSupplierPriceHistorySafe — dedup', () => {
     await recordSupplierPriceHistorySafe(sb, args(9500));
     expect(inserts).toHaveLength(1);
     expect(inserts[0]).toMatchObject({ unit_price_sen: 9500 });
+  });
+});
+
+// ── mergeRetailOntoDerivedSeatGrid — the cost/retail boundary ────────────────
+/* seat_height_prices is one jsonb array with two owners per (height, tier):
+   priceSen = COST (derived here), sellingPriceSen = RETAIL (2990's POS SKU
+   Master only). writeProductCost used to assign the derived array outright,
+   which deleted every retail price it did not happen to restate — 193 of them
+   across 82 company-2 SKUs between 2026-09-16 and 09-20. These assertions are
+   the same rule the company-2 database trigger enforces (migration
+   20260920T1300), so app and database cannot drift apart silently. */
+describe('mergeRetailOntoDerivedSeatGrid', () => {
+  const stored = [
+    { height: '24', tier: 'PRICE_2', priceSen: 51975, sellingPriceSen: 99000 },
+    { height: '28', tier: 'PRICE_1', sellingPriceSen: 149000 },
+    { height: '30', tier: 'PRICE_2', priceSen: 62370 },
+  ];
+
+  it('carries the retail price onto a cost-only derived slot', () => {
+    const out = mergeRetailOntoDerivedSeatGrid(stored, [
+      { height: '24', tier: 'PRICE_2', priceSen: 60000 },
+    ]);
+    expect(out).toContainEqual({ height: '24', tier: 'PRICE_2', priceSen: 60000, sellingPriceSen: 99000 });
+  });
+
+  it('re-appends a retail slot the derived grid dropped entirely', () => {
+    const out = mergeRetailOntoDerivedSeatGrid(stored, [
+      { height: '24', tier: 'PRICE_2', priceSen: 60000 },
+    ]);
+    expect(out).toContainEqual({ height: '28', tier: 'PRICE_1', sellingPriceSen: 149000 });
+  });
+
+  it('NEVER loses a retail price, whatever the derivation sends', () => {
+    const retail = (rows: unknown[]) =>
+      rows.filter((r) => typeof (r as { sellingPriceSen?: unknown }).sellingPriceSen === 'number').length;
+    for (const derived of [[], [{ height: '99', tier: 'PRICE_2', priceSen: 1 }], null, undefined, 'nonsense']) {
+      expect(retail(mergeRetailOntoDerivedSeatGrid(stored, derived))).toBe(retail(stored));
+    }
+  });
+
+  it('replaces the COST freely — cost is the derivation to own', () => {
+    const out = mergeRetailOntoDerivedSeatGrid(stored, [
+      { height: '24', tier: 'PRICE_2', priceSen: 77777 },
+    ]);
+    expect(out.find((r) => r.height === '24')?.priceSen).toBe(77777);
+    // a dropped cost slot stays dropped; only its retail comes back
+    expect(out.find((r) => r.height === '30')).toBeUndefined();
+  });
+
+  it('honours a retail price the derivation explicitly names (it never does today)', () => {
+    const out = mergeRetailOntoDerivedSeatGrid(stored, [
+      { height: '24', tier: 'PRICE_2', priceSen: 1, sellingPriceSen: 123456 },
+    ]);
+    expect(out[0]!.sellingPriceSen).toBe(123456);
+  });
+
+  it('keeps an explicit null as cleared, and does not resurrect it as a slot', () => {
+    const cleared = [{ height: '24', tier: 'PRICE_1', sellingPriceSen: null }];
+    // present in the derived grid: the stored null carries across
+    expect(mergeRetailOntoDerivedSeatGrid(cleared, [{ height: '24', tier: 'PRICE_1', priceSen: 5 }]))
+      .toEqual([{ height: '24', tier: 'PRICE_1', priceSen: 5, sellingPriceSen: null }]);
+    // absent from it: nothing worth putting back
+    expect(mergeRetailOntoDerivedSeatGrid(cleared, [])).toEqual([]);
+  });
+
+  it('treats a missing tier as PRICE_2 on both sides', () => {
+    const out = mergeRetailOntoDerivedSeatGrid(
+      [{ height: '24', sellingPriceSen: 99000 }],
+      [{ height: '24', tier: 'PRICE_2', priceSen: 100 }],
+    );
+    expect(out).toEqual([{ height: '24', tier: 'PRICE_2', priceSen: 100, sellingPriceSen: 99000 }]);
   });
 });

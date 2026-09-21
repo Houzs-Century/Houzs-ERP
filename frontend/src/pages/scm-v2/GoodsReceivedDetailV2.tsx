@@ -21,6 +21,7 @@ import {
   Receipt,
   RotateCcw,
   Plus,
+  Share2,
 } from "lucide-react";
 import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
@@ -43,6 +44,8 @@ import { statusLabel } from "../../vendor/scm/lib/status-pill";
 import { cn } from "../../lib/utils";
 import { convertToLink, transferToLabel, transferFromColumnLabel } from "../../lib/convertScope";
 import { DocumentHistoryDrawer } from "./DocumentHistoryDrawer";
+import { DocumentRelationshipMapModal, DocumentChoiceDialog } from "../../components/scm-v2/DocumentRelationshipMapModal";
+import { useGrnRelationshipMap } from "./grn-relationship-map";
 import { resolveFxRate } from "./fx-rate";
 import { HoldChip, type HoldFields } from "../../vendor/scm/components/HoldChip";
 
@@ -314,6 +317,10 @@ function GoodsReceivedDetailV2ReadOnly() {
      handler so the memoized panel is not re-created on every parent render. */
   const [historyOpen, setHistoryOpen] = useState(false);
   const closeHistory = useCallback(() => setHistoryOpen(false), []);
+  // Relationship map — the receipt-side twin of the PO map (same shared 5-node
+  // canvas), so staff can see what this GRN converted FROM (PO/SO) and TO
+  // (PI/PR). Consumed after `grn` resolves below.
+  const [relMapOpen, setRelMapOpen] = useState(false);
 
   const detail = useGrnDetail(id ?? null);
   const postGrn = usePostGrn();
@@ -326,6 +333,17 @@ function GoodsReceivedDetailV2ReadOnly() {
     () => ((detail.data as { items?: GrnItem[] } | undefined)?.items ?? []),
     [detail.data]
   );
+
+  // The 5-node receipt chain + what each node does when clicked (shared hook,
+  // one logic layer — mirrors how the PO / DO detail pages consume their map).
+  const {
+    nodes: chainNodes,
+    onNodeClick: onChainNodeClick,
+    pairing: chainPairing,
+    choice: chainChoice,
+    closeChoice: closeChainChoice,
+    pickChoice: pickChainChoice,
+  } = useGrnRelationshipMap(grn);
 
   useSetBreadcrumbs([
     { label: "Goods Received", to: "/scm/grns" },
@@ -663,6 +681,7 @@ function GoodsReceivedDetailV2ReadOnly() {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="ghost" icon={<History size={14} />} onClick={() => setHistoryOpen(true)}>History</Button>
+            <Button variant="ghost" icon={<Share2 size={14} />} onClick={() => setRelMapOpen(true)}>Relationship Map</Button>
             <Button variant="secondary" icon={<Printer size={14} />} onClick={print.openPreview}>Print PDF</Button>
             {canCancel && <Button variant="danger" icon={<XCircle size={14} />} onClick={doCancel}>Cancel GRN</Button>}
             {canPost && <Button variant="secondary" icon={<Send size={14} />} onClick={doPost}>Post</Button>}
@@ -761,6 +780,32 @@ function GoodsReceivedDetailV2ReadOnly() {
           label={grn.grn_number} onClose={closeHistory} />
       )}
 
+      {/* Relationship map modal — the receipt-side twin of the PO map (same
+          shared 5-node canvas, read as the receipt chain). */}
+      <DocumentRelationshipMapModal
+        open={relMapOpen}
+        onClose={() => setRelMapOpen(false)}
+        nodes={chainNodes}
+        onNodeClick={(n) => {
+          // Close only when the click actually navigated away; an in-app notice
+          // (multi-doc lists / access gates) renders OVER the map.
+          if (onChainNodeClick(n)) setRelMapOpen(false);
+        }}
+        rowLabels={{ primary: "Receipt chain", secondary: "After goods receipt" }}
+        pairing={chainPairing}
+      />
+      {/* A chain slot standing for several documents opens this chooser instead
+          of a notice that only named them. Picking a row navigates, so the map
+          closes with it. */}
+      <DocumentChoiceDialog
+        prompt={chainChoice}
+        onClose={closeChainChoice}
+        onPick={(d) => {
+          setRelMapOpen(false);
+          pickChainChoice(d);
+        }}
+      />
+
       <div className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-surface/95 px-3 pb-6 pt-2.5 shadow-slab backdrop-blur-sm md:hidden">
         <div className="flex items-center gap-2">
           {canPost ? (
@@ -776,6 +821,9 @@ function GoodsReceivedDetailV2ReadOnly() {
               <Edit3 size={16} /> Edit
             </button>
           )}
+          <button type="button" onClick={() => setRelMapOpen(true)} className="inline-flex h-11 w-11 items-center justify-center rounded-lg bg-surface-2 text-primary-ink hover:bg-primary-soft" aria-label="Relationship Map">
+            <Share2 size={17} />
+          </button>
           <button type="button" onClick={print.openPreview} className="inline-flex h-11 w-11 items-center justify-center rounded-lg bg-surface-2 text-primary-ink hover:bg-primary-soft" aria-label="Print PDF">
             <Printer size={17} />
           </button>

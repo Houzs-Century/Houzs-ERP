@@ -32,6 +32,7 @@ import { todayMyt } from '../../vendor/scm/lib/dates';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { Save, Trash2, X, ChevronDown, ArrowRightLeft } from 'lucide-react';
+import { AddLineButton } from '../../vendor/scm/components/AddLineButton';
 import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
 import { Button } from '@2990s/design-system';
 import { formatPhone } from '@2990s/shared/phone';
@@ -53,10 +54,11 @@ import { CurrencySelect } from '../../vendor/scm/components/CurrencySelect';
 import { SpecialOrders } from '../../vendor/scm/components/SpecialOrders';
 import { specialOrderSurface } from '../../vendor/scm/lib/special-order-surface';
 import { useSuppliers, useSupplierDetail } from '../../vendor/scm/lib/suppliers-queries';
-import { useMfgProducts, useMaintenanceConfig, useSpecialAddons } from '../../vendor/scm/lib/mfg-products-queries';
+import { useMfgProducts, useMaintenanceConfig, useSpecialAddons, mfgCategoryLabel } from '../../vendor/scm/lib/mfg-products-queries';
 import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
 import { sortByText, sortByNumeric } from '../../vendor/scm/lib/sort-options';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
+import { NumberInput } from '../../vendor/scm/components/NumberInput';
 import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDialog';
 import styles from './SalesOrderDetail.module.css';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
@@ -821,7 +823,7 @@ export const PurchaseInvoiceNew = () => {
           {lines.length === 0 && (
             <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-13)', padding: 'var(--space-3) 0' }}>
               {isManual
-                ? 'Pick a supplier in the header, then use “Add another item” below to add lines by hand.'
+                ? 'Pick a supplier in the header, then use “Add line” below to add lines by hand.'
                 : 'No accepted items on this GRN.'}
             </p>
           )}
@@ -940,7 +942,7 @@ export const PurchaseInvoiceNew = () => {
                                   {b.material_name} · {b.supplier_sku} · {fmtRm(b.unit_price_sen, b.currency)}
                                 </option>
                               ))
-                            : sortByText(productsQ.data ?? []).map((p) => (<option key={p.id} value={p.code}>{p.name} · {p.category}</option>))}
+                            : sortByText(productsQ.data ?? []).map((p) => (<option key={p.id} value={p.code}>{p.name} · {mfgCategoryLabel(p.category)}</option>))}
                         </datalist>
                       </>
                     ) : (
@@ -1021,8 +1023,8 @@ export const PurchaseInvoiceNew = () => {
                 <div className={styles.formGrid4} style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))' }}>
                   <label className={styles.field}>
                     <span className={styles.fieldLabel}>Qty</span>
-                    <input type="number" min={0} value={l.qty}
-                      onChange={(e) => setLine(l.rid, { qty: Math.max(0, Number(e.target.value) || 0) })}
+                    <NumberInput value={l.qty} sign="unsigned" decimal={false}
+                      onValueChange={(n) => setLine(l.rid, { qty: Math.max(0, n ?? 0) })}
                       className={styles.fieldInput} style={{ textAlign: 'right' }} />
                   </label>
                   <label className={styles.field}>
@@ -1046,10 +1048,7 @@ export const PurchaseInvoiceNew = () => {
 
           {/* "Add another item" — manual mode (mirrors New PO, always shown). */}
           {isManual && (
-            <button type="button" onClick={addEmptyManualLine}
-              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, width: '100%', padding: '12px 14px', border: '1px dashed var(--c-orange)', borderRadius: 'var(--radius-md)', background: 'transparent', color: 'var(--c-orange)', fontFamily: 'var(--font-sans)', fontSize: 'var(--fs-13)', fontWeight: 600, cursor: 'pointer' }}>
-              + Add another item
-            </button>
+            <AddLineButton variant="block" onClick={addEmptyManualLine} />
           )}
         </div>
       </section>

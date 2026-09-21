@@ -58,12 +58,13 @@ import {
 } from '../../vendor/scm/lib/suppliers-queries';
 import { useWarehouses } from '../../vendor/scm/lib/inventory-queries';
 import { useRacks } from '../../vendor/scm/lib/warehouse-queries';
-import { useMaintenanceConfig, useSpecialAddons, useMfgProducts } from '../../vendor/scm/lib/mfg-products-queries';
+import { useMaintenanceConfig, useSpecialAddons, useMfgProducts, mfgCategoryLabel } from '../../vendor/scm/lib/mfg-products-queries';
 import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
 import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
 import { LinePoRefLink } from '../../vendor/scm/components/LinePoRefLink';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
+import { NumberInput } from '../../vendor/scm/components/NumberInput';
 import { DiscountInput } from '../../vendor/scm/components/DiscountInput';
 import { SpecialOrders } from '../../vendor/scm/components/SpecialOrders';
 import { specialOrderSurface } from '../../vendor/scm/lib/special-order-surface';
@@ -963,11 +964,11 @@ export const GoodsReceivedDetail = () => {
                     <label className={styles.field}>
                       <span className={styles.fieldLabel}>Received</span>
                       {isEditing ? (
-                        <input
-                          type="number" min={0}
+                        <NumberInput
+                          sign="unsigned" decimal={false}
                           className={styles.fieldInput} style={{ textAlign: 'right' }}
                           value={d.qty} disabled={isLocked}
-                          onChange={(e) => setLine(it, { qty: Number(e.target.value) || 0 })}
+                          onValueChange={(n) => setLine(it, { qty: n ?? 0 })}
                         />
                       ) : (
                         <input
@@ -1149,7 +1150,7 @@ export const GoodsReceivedDetail = () => {
                             </option>
                           ))
                         : sortByText(productsQ.data ?? []).map((p) => (
-                            <option key={p.id} value={p.code}>{p.name} · {p.category}</option>
+                            <option key={p.id} value={p.code}>{p.name} · {mfgCategoryLabel(p.category)}</option>
                           ))}
                     </datalist>
                   </label>
@@ -1178,11 +1179,11 @@ export const GoodsReceivedDetail = () => {
                 <div className={styles.formGrid4}>
                   <label className={styles.field}>
                     <span className={styles.fieldLabel}>Received</span>
-                    <input
-                      type="number" min={0}
+                    <NumberInput
+                      sign="unsigned" decimal={false}
                       className={styles.fieldInput} style={{ textAlign: 'right' }}
                       value={addDraft.qty}
-                      onChange={(e) => setAddDraft((d) => ({ ...d, qty: Number(e.target.value) || 0 }))}
+                      onValueChange={(n) => setAddDraft((d) => ({ ...d, qty: n ?? 0 }))}
                     />
                   </label>
                   <label className={styles.field}>

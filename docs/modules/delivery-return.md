@@ -28,6 +28,8 @@ No dedicated mobile screen — the generic `MobileModuleList` / `MobileModuleDet
 ## Rules that must not break
 
 - Every non-service return line with `qty_returned > 0` moves stock IN — this is not paperwork.
+- Returnable quantity per DO line = `delivered − returned`, **independent of invoicing**: a fully-invoiced — even fully-paid — DO can still have a Delivery Return raised against it. Only prior returns and total delivered cap it. Computed by `doReturnableRemaining` → `returnableRemainingFrom` (`do-line-remaining.ts`); the invoice pool stays `delivered − invoiced − returned` and is untouched, so returned goods still cannot be invoiced.
+- A return moves **stock only** — it does **not** reduce the linked Sales Invoice, its AR, or GL revenue. No credit note or refund is posted from a Delivery Return; `sales_invoice_id`, `refund_centi` and the `CREDIT_NOTED` status are display/state only. Reversing the money for returned-and-invoiced goods is a separate, not-yet-built phase.
 - A line naming no DO line (`do_item_id` null) is refused outright on create and add-item (409 `do_link_required`) — the column stays nullable in the DDL for legacy rows only.
 - `resyncInventoryForReturn` is a delta walk to a computed TARGET per `(warehouse, product, variant_key, batch_no)`, not an incremental adjustment — a CANCELLED return's target is zero, draining every bucket back out.
 - SERVICE lines never write stock IN, checked via `isServiceLine` (item_group + code) with a catalog fallback (`findServiceLineCodes`); if that check itself fails, all four write paths refuse the line (409 `service_check_failed`) rather than admit it unchecked.

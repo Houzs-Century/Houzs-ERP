@@ -13,7 +13,7 @@
 // path is a single write unit (the RPC), the fallback is the two-write path, and
 // a live RPC error never silently degrades to the non-atomic path.
 import { describe, expect, test } from 'vitest';
-import { applyCustomerCreditToSi } from './customer-credits';
+import { applyCustomerCreditToSi, creditFromCancelledSo, reverseCancelledSoCredit } from './customer-credits';
 
 type Row = Record<string, unknown>;
 
@@ -483,5 +483,116 @@ describe('settlePiPaidSen — routes through the atomic function, falls back onl
     const res = await settlePiPaidSen(f.sb, 'pi-1', 5_000);
     expect(res.ok).toBe(false);
     expect(res.appliedSen).toBe(0);
+  });
+});
+
+// ============================================================================
+// SALES-ORDER CANCEL ↔ REOPEN — the deposit refund must net to zero across the
+// cycle, or a reopened order counts the customer's deposit twice (once as the
+// standing SO_CANCEL_REFUND credit, once as the restored live deposit).
+//
+// A cancel writes +deposit (SO_CANCEL_REFUND); a reopen writes −standing
+// (SO_REOPEN_CONTRA); a re-cancel credits again only because the net is back to
+// zero. These pin that ledger algebra directly — the route handler cannot be
+// driven here (scm rides Supabase Postgres, the harness is D1), same reason the
+// SI money rules above are pinned on their pure functions.
+// ============================================================================
+type SoCreditStore = {
+  creditRows: Array<{ amount_sen: number; company_id?: number | null }>;
+  payRows: Array<{ amount_sen: number; company_id?: number | null }>;
+  inserts: Array<{ table: string; payload: Record<string, unknown> }>;
+};
+
+function fakeSoSb(store: SoCreditStore) {
+  class Q {
+    table: string;
+    op: 'select' | 'insert' = 'select';
+    singleRow = false;
+    payload: Record<string, unknown> | null = null;
+    constructor(table: string) { this.table = table; }
+    select() { return this; }
+    insert(p: Record<string, unknown>) { this.op = 'insert'; this.payload = p; return this; }
+    eq() { return this; }
+    in() { return this; }
+    limit() { return this; }
+    maybeSingle() { this.singleRow = true; return this; }
+    single() { this.singleRow = true; return this; }
+    private result(): { data: unknown; error: unknown } {
+      if (this.op === 'insert') {
+        store.inserts.push({ table: this.table, payload: this.payload ?? {} });
+        return { data: { id: 'new-id' }, error: null };
+      }
+      if (this.table === 'customer_credits') return { data: store.creditRows, error: null };
+      if (this.table === 'mfg_sales_order_payments') return { data: store.payRows, error: null };
+      return { data: this.singleRow ? null : [], error: null };
+    }
+    then<T>(onF: (v: { data: unknown; error: unknown }) => T) {
+      return Promise.resolve(this.result()).then(onF);
+    }
+  }
+  return { from: (table: string) => new Q(table) };
+}
+
+const SO_ARGS = { docNo: 'HC-SO-013276', debtorCode: 'CUST-1', debtorName: 'Alice', createdBy: 'staff-1' };
+
+describe('creditFromCancelledSo — nets the cancel refund against any reopen contra', () => {
+  test('first cancel with a deposit writes one SO_CANCEL_REFUND for the paid total', async () => {
+    const store: SoCreditStore = { creditRows: [], payRows: [{ amount_sen: 200_000, company_id: 1 }], inserts: [] };
+    const res = await creditFromCancelledSo(fakeSoSb(store), SO_ARGS);
+    expect(res).toEqual({ credited: 200_000 });
+    const led = store.inserts.find((i) => i.table === 'customer_credits');
+    expect(led?.payload).toMatchObject({ amount_sen: 200_000, source_type: 'SO_CANCEL_REFUND', source_doc_no: 'HC-SO-013276' });
+  });
+
+  test('a standing credit is never doubled — a second cancel no-ops', async () => {
+    const store: SoCreditStore = { creditRows: [{ amount_sen: 200_000 }], payRows: [{ amount_sen: 200_000, company_id: 1 }], inserts: [] };
+    const res = await creditFromCancelledSo(fakeSoSb(store), SO_ARGS);
+    expect(res).toEqual({ credited: 0, reason: 'already_credited' });
+    expect(store.inserts).toHaveLength(0);
+  });
+
+  test('after a reopen reversed the credit (net 0), a fresh cancel credits again', async () => {
+    const store: SoCreditStore = {
+      creditRows: [{ amount_sen: 200_000 }, { amount_sen: -200_000 }],
+      payRows: [{ amount_sen: 200_000, company_id: 1 }],
+      inserts: [],
+    };
+    const res = await creditFromCancelledSo(fakeSoSb(store), SO_ARGS);
+    expect(res).toEqual({ credited: 200_000 });
+  });
+});
+
+describe('reverseCancelledSoCredit — claws the deposit refund back on reopen', () => {
+  test('a standing cancel refund is reversed with a negative SO_REOPEN_CONTRA', async () => {
+    const store: SoCreditStore = { creditRows: [{ amount_sen: 200_000, company_id: 1 }], payRows: [], inserts: [] };
+    const res = await reverseCancelledSoCredit(fakeSoSb(store), SO_ARGS);
+    expect(res).toEqual({ reversed: 200_000 });
+    const led = store.inserts.find((i) => i.table === 'customer_credits');
+    expect(led?.payload).toMatchObject({ amount_sen: -200_000, source_type: 'SO_REOPEN_CONTRA', source_doc_no: 'HC-SO-013276' });
+  });
+
+  test('the common migrated case — no credit ever written — is a clean no-op', async () => {
+    const store: SoCreditStore = { creditRows: [], payRows: [], inserts: [] };
+    const res = await reverseCancelledSoCredit(fakeSoSb(store), SO_ARGS);
+    expect(res).toEqual({ reversed: 0, reason: 'nothing_to_reverse' });
+    expect(store.inserts).toHaveLength(0);
+  });
+
+  test('an already-reversed credit (net 0) is not reversed twice', async () => {
+    const store: SoCreditStore = {
+      creditRows: [{ amount_sen: 200_000 }, { amount_sen: -200_000 }],
+      payRows: [],
+      inserts: [],
+    };
+    const res = await reverseCancelledSoCredit(fakeSoSb(store), SO_ARGS);
+    expect(res).toEqual({ reversed: 0, reason: 'nothing_to_reverse' });
+    expect(store.inserts).toHaveLength(0);
+  });
+
+  test('no debtor → no_debtor, nothing read or written', async () => {
+    const store: SoCreditStore = { creditRows: [{ amount_sen: 200_000 }], payRows: [], inserts: [] };
+    const res = await reverseCancelledSoCredit(fakeSoSb(store), { ...SO_ARGS, debtorCode: '  ' });
+    expect(res).toEqual({ reversed: 0, reason: 'no_debtor' });
+    expect(store.inserts).toHaveLength(0);
   });
 });

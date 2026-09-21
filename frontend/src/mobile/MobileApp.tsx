@@ -34,6 +34,7 @@ import type { MobileScanPrefill } from "./MobileScan";
 import type { MobileConvertPrefill } from "./MobileOrderMoney";
 import type { ConvertTarget } from "./MobileConvertWizard";
 import { MODULE_TO_PURCHASE_DOC, convertInsteadFor, mayCreatePurchaseDoc, type PurchaseDocKind } from "./mobile-purchase-doc";
+import { ScanInvoiceLauncher } from "./MobileScanInvoiceLauncher";
 const MobileSalesOrders = lazy(() => import("./MobileSalesOrders").then((m) => ({ default: m.MobileSalesOrders })));
 const MobileAmendments = lazy(() => import("./MobileAmendments").then((m) => ({ default: m.MobileAmendments })));
 const MobilePoAmendments = lazy(() => import("./MobilePoAmendments").then((m) => ({ default: m.MobilePoAmendments })));
@@ -59,6 +60,8 @@ const MobileModuleDetail = lazy(() => import("./MobileModuleDetail").then((m) =>
 const MobileModuleForm = lazy(() => import("./MobileModuleForm").then((m) => ({ default: m.MobileModuleForm })));
 const MobileDeliveryPlanning = lazy(() => import("./MobileDeliveryPlanning").then((m) => ({ default: m.MobileDeliveryPlanning })));
 const MobileScan = lazy(() => import("./MobileScan").then((m) => ({ default: m.MobileScan })));
+const MobileScanInvoice = lazy(() => import("./MobileScanInvoice").then((m) => ({ default: m.MobileScanInvoice })));
+const MobileGrnScan = lazy(() => import("./MobileGrnScan").then((m) => ({ default: m.MobileGrnScan })));
 const MobileConvertWizard = lazy(() => import("./MobileConvertWizard").then((m) => ({ default: m.MobileConvertWizard })));
 const MobilePOD = lazy(() => import("./MobilePOD").then((m) => ({ default: m.MobilePOD })));
 const MobileMileageCapture = lazy(() => import("./MobileMileageCapture").then((m) => ({ default: m.MobileMileageCapture })));
@@ -112,6 +115,8 @@ type Screen =
   | { t: "change-log" }
   | { t: "new-so"; mode: "new" | "edit" | "edit-draft"; docNo?: string; scanPrefill?: MobileScanPrefill; addLine?: boolean; convertFrom?: MobileConvertPrefill }
   | { t: "scan" }
+  | { t: "scan-pi" }
+  | { t: "grn-scan"; key: string; title: string }
   | { t: "module"; key: string; title: string }
   | { t: "module-detail"; key: string; row: any; title: string }
   | { t: "stock-transfer-new"; key: string; row: any; title: string }
@@ -844,6 +849,8 @@ function MobileAppInner() {
   }
   else if (screen.t === "new-so") overlay = <MobileNewSO mode={screen.mode} docNo={screen.docNo} scanPrefill={screen.scanPrefill} convertFrom={screen.convertFrom} openAddLine={screen.addLine === true} onBack={back} onSaved={(d) => setScreen({ t: "so-detail", docNo: d })} />;
   else if (screen.t === "scan") overlay = <MobileScan onBack={back} onDrafted={onScanDrafted} onOpenSo={(docNo) => setScreen({ t: "so-detail", docNo })} />;
+  else if (screen.t === "scan-pi") overlay = <MobileScanInvoice onBack={back} onOpenPi={() => setScreen({ t: "module", key: "purchase-invoices", title: "Purchase Invoices" })} />;
+  else if (screen.t === "grn-scan") overlay = <MobileGrnScan onBack={() => setScreen({ t: "module", key: screen.key, title: screen.title })} />;
   else if (screen.t === "module") {
     const k = screen.key;
     const convertTarget = MODULE_TO_CONVERT[k];
@@ -886,10 +893,29 @@ function MobileAppInner() {
       : MODULE_CONFIGS[k]?.form
         ? () => setScreen({ t: "module-form", key: k, mode: "new" })
         : undefined;
+    // Document scanners rendered via the list's existing aboveList slot (a
+    // top-of-list CTA) so MobileModuleList stays unchanged and under its size
+    // ceiling. GRN -> delivery-order scanner; Purchase Invoices -> invoice
+    // scanner. Each gated by the same operate/create helper as its "+".
+    const grnScanEntry = k === "grns" && canOperateGoodsReceipts(can, pageAccess) ? (
+      <button
+        onClick={() => setScreen({ t: "grn-scan", key: k, title: screen.title })}
+        style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", justifyContent: "center", height: 44, borderRadius: 12, border: "1px solid #16695f", background: "#fff", color: "#16695f", fontFamily: "inherit", fontSize: 13.5, fontWeight: 700, cursor: "pointer", marginBottom: 12 }}
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#16695f" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2M3 12h18" /></svg>
+        Scan delivery order
+      </button>
+    ) : undefined;
+    const canScanPi = purchaseKind === "pi" && mayCreatePurchaseDoc("pi", can, pageAccess);
+    const aboveList = k === "members"
+      ? <MobileInvitations />
+      : canScanPi
+        ? <ScanInvoiceLauncher onClick={() => setScreen({ t: "scan-pi" })} />
+        : grnScanEntry;
     overlay = <MobileModuleList config={MODULE_CONFIGS[k]} onBack={back}
       onOpen={(row) => setScreen({ t: "module-detail", key: k, row, title: screen.title })}
       onNew={onNew}
-      aboveList={k === "members" ? <MobileInvitations /> : undefined} />;
+      aboveList={aboveList} />;
   }
   else if (screen.t === "purchase-doc-new") {
     const backToList = () => setScreen({ t: "module", key: screen.key, title: screen.title });

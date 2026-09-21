@@ -44,6 +44,8 @@ import { postPersonalNotice } from '../../services/personalNotice';
 import { createDraftSalesOrder, recordSoPaymentRow } from './mfg-sales-orders';
 import { todayMyt } from '../lib/my-time';
 import { activeCompanyId } from '../lib/companyScope';
+import { type ScanDocumentType, DEFAULT_SCAN_DOCUMENT_TYPE, coerceScanDocumentType } from '../lib/scan-document-type';
+import { jobToJson } from './scan-so-serialize';
 import { normalizePhone, fmtSen } from '../shared';
 import { resolveCallerStaffId } from '../lib/salesScope';
 import {
@@ -52,6 +54,21 @@ import {
   type ExtractedPayment,
 } from '../lib/scan-receipt-plan';
 import { safeScanDepositSen } from '../lib/scan-header-deposit';
+// Document-type-agnostic OCR transport, shared with the GR/PI scanners.
+import {
+  CLAUDE_MODEL,
+  anthropicFetchWithRetry,
+  sha256Hex,
+  stripJsonFences,
+  parseScanFiles,
+  loadScanJobFilesFromR2,
+  type AnthropicResponse,
+  type ContentBlock,
+  type UploadedImage,
+} from '../lib/scan-ocr';
+// GR / PI scan pipelines — the SO queue consumer delegates GR/PI-typed jobs here.
+import { processGrnScanQueueMessage } from './scan-gr';
+import { processPiScanQueueMessage } from './scan-pi';
 
 // The scm-scoped service client (getSupabaseService, db:{schema:'scm'}) and the
 // middleware-attached c.get('supabase') are both schema-parameterised clients.
@@ -61,66 +78,6 @@ type SupabaseClient = SupabaseClientGeneric<any, any, any>;
 
 export const scanSo = new Hono<{ Bindings: Env; Variables: Variables }>();
 scanSo.use('*', supabaseAuth);
-
-const MAX_FILE_BYTES = 20 * 1024 * 1024;
-const CLAUDE_MODEL = 'claude-sonnet-4-6';
-const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
-
-// Anthropic (and gateways in front of it) return transient 429 rate-limits and
-// 529 "Overloaded" / 5xx spikes that clear on a retry; a single hit otherwise
-// fails the whole scan/distill with a hard error. Retry those a few times with
-// an exponential-ish backoff. Non-retryable statuses (4xx other than 429) and
-// the final attempt fall straight through to the caller's existing !resp.ok
-// handling, so the response shape is unchanged. Only the transport is retried —
-// the prompt/body and response parsing are untouched.
-const RETRYABLE_ANTHROPIC_STATUS = new Set([429, 500, 502, 503, 529]);
-
-async function anthropicFetchWithRetry(
-  init: RequestInit,
-  tries = 3,
-): Promise<Response> {
-  let resp: Response | null = null;
-  for (let attempt = 0; attempt < tries; attempt += 1) {
-    resp = await fetch(ANTHROPIC_URL, init);
-    if (resp.ok) return resp;
-    // Peek the body for an explicit overloaded_error without consuming the
-    // Response the caller reads — clone so the returned body survives. Some
-    // gateways surface an overloaded body under a status outside the set.
-    let overloaded = false;
-    try {
-      const peek = await resp.clone().text();
-      if (/overloaded/i.test(peek)) overloaded = true;
-    } catch { /* body peek is best-effort */ }
-    const retryable = RETRYABLE_ANTHROPIC_STATUS.has(resp.status) || overloaded;
-    if (!retryable || attempt === tries - 1) return resp;
-    // 400ms, 800ms, 1600ms … keeps the whole retry window well under the
-    // per-call AbortSignal.timeout budget.
-    await new Promise((r) => setTimeout(r, 400 * 2 ** attempt));
-  }
-  return resp as Response;
-}
-
-const IMAGE_MIMES = new Set(['image/jpeg', 'image/png', 'image/webp']);
-
-// ArrayBuffer -> base64. Workers don't expose Node's Buffer; the chunked loop
-// keeps stack usage bounded for large files. (Ported from HOOKKA scan-po.)
-function toBase64(buf: ArrayBuffer): string {
-  const bytes = new Uint8Array(buf);
-  const chunkSize = 0x8000;
-  let binary = '';
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    const chunk = bytes.subarray(i, Math.min(i + chunkSize, bytes.length));
-    binary += String.fromCharCode.apply(null, Array.from(chunk));
-  }
-  return btoa(binary);
-}
-
-async function sha256Hex(buf: ArrayBuffer): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', buf);
-  return Array.from(new Uint8Array(digest))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('');
-}
 
 // ---------------------------------------------------------------------------
 // Phone normalisation for an extracted slip — E.164, via the SAME normalizePhone
@@ -226,25 +183,6 @@ async function localityForPostcode(
 // sometimes wraps the result in fences, sometimes adds a "Looking at the
 // image…" preamble, sometimes both. Parse a best-effort substring rather
 // than fail the whole extraction.
-function stripJsonFences(text: string): string {
-  let trimmed = text.trim();
-
-  // 1) ```json … ``` or ``` … ```
-  const fenceRe = /^```(?:json)?\s*\n?([\s\S]*?)\n?```\s*$/;
-  const fenceMatch = trimmed.match(fenceRe);
-  if (fenceMatch?.[1]) trimmed = fenceMatch[1].trim();
-
-  // 2) Strip any chain-of-thought preamble. The valid payload always starts
-  //    with `{` — take from the first `{` to the last `}`.
-  const firstBrace = trimmed.indexOf('{');
-  const lastBrace = trimmed.lastIndexOf('}');
-  if (firstBrace > 0 && lastBrace > firstBrace) {
-    trimmed = trimmed.slice(firstBrace, lastBrace + 1).trim();
-  }
-
-  return trimmed;
-}
-
 // ===========================================================================
 // Catalog — pulled live from Supabase on every /extract call.
 // ===========================================================================
@@ -1092,12 +1030,6 @@ type ExtractedSlip = {
   // pre-multi behaviour is preserved byte-for-byte.
   payments: ExtractedPayment[];
   lines: ExtractedLine[];
-};
-
-type AnthropicResponse = {
-  content?: Array<{ type: string; text?: string }>;
-  error?: { type: string; message: string };
-  usage?: { cache_creation_input_tokens?: number; cache_read_input_tokens?: number };
 };
 
 type Warning = { field: string; value: string; message: string; lineIdx?: number };
@@ -2392,89 +2324,6 @@ scanSo.post('/warm', async (c) => {
 // of the /extract handler — same code, same order — so the two paths can
 // never drift. /extract's endpoint contract is unchanged.
 // ===========================================================================
-type ContentBlock = Record<string, unknown>;
-// Per-IMAGE provenance, indexed by the SAME `index` Claude classifies in the
-// OUTPUT "images" array — fileBlocks is built in file order, so image #N in
-// the model's view is uploadedImages[N]. PDFs are NOT displayable inline on
-// the SO detail page so they are never stored under image_key (they still
-// ride into the prompt as document blocks).
-type UploadedImage = { index: number; buffer: ArrayBuffer; mime: string };
-type ScanFileParse = {
-  // Claude content blocks (image or document per file), in upload order.
-  fileBlocks: ContentBlock[];
-  // Image files only (buffer + mime), for R2 provenance storage.
-  uploadedImages: UploadedImage[];
-  // EVERY accepted file's raw bytes (images AND pdfs) — the enqueue path
-  // persists these to R2 for durability before the job runs.
-  allFiles: Array<{ buffer: ArrayBuffer; mime: string }>;
-  firstBuffer: ArrayBuffer | null;
-  fileCount: number;
-};
-
-// Accept files under any field name ("file", "files", repeated) — the modal
-// sends `file` repeatedly but be liberal in what we accept. Returns a plain
-// bad-request reason string on any rejected input (the caller maps it to its
-// own 400), or the parsed blocks/buffers.
-async function parseScanFiles(
-  formData: FormData,
-): Promise<{ ok: true; parsed: ScanFileParse } | { ok: false; reason: string }> {
-  // (entries cast to unknown: @cloudflare/workers-types narrows
-  // FormDataEntryValue to string, which breaks the instanceof check.)
-  const files: File[] = [];
-  for (const [, v] of formData.entries() as Iterable<[string, unknown]>) {
-    if (v instanceof File && v.size > 0) files.push(v);
-  }
-  if (files.length === 0) return { ok: false, reason: 'No file uploaded.' };
-
-  const fileBlocks: ContentBlock[] = [];
-  const uploadedImages: UploadedImage[] = [];
-  const allFiles: Array<{ buffer: ArrayBuffer; mime: string }> = [];
-  let firstBuffer: ArrayBuffer | null = null;
-  let blockIndex = 0;
-  for (const file of files) {
-    if (file.size > MAX_FILE_BYTES) {
-      return { ok: false, reason: `File too large (${(file.size / 1024 / 1024).toFixed(1)}MB). Max 20MB.` };
-    }
-    const mime = file.type || '';
-    const name = (file.name || '').toLowerCase();
-    const isPdf = mime === 'application/pdf' || name.endsWith('.pdf');
-    const isImage =
-      IMAGE_MIMES.has(mime) ||
-      name.endsWith('.jpg') || name.endsWith('.jpeg') ||
-      name.endsWith('.png') || name.endsWith('.webp');
-    if (!isPdf && !isImage) {
-      return { ok: false, reason: `Unsupported file type "${mime || name}". Use JPEG / PNG / WEBP / PDF.` };
-    }
-    const buf = await file.arrayBuffer();
-    if (!firstBuffer) firstBuffer = buf;
-    const data = toBase64(buf);
-    if (isPdf) {
-      allFiles.push({ buffer: buf, mime: 'application/pdf' });
-      fileBlocks.push({
-        type: 'document',
-        source: { type: 'base64', media_type: 'application/pdf', data },
-      });
-    } else {
-      const mediaType = IMAGE_MIMES.has(mime)
-        ? mime
-        : name.endsWith('.png') ? 'image/png'
-        : name.endsWith('.webp') ? 'image/webp'
-        : 'image/jpeg';
-      allFiles.push({ buffer: buf, mime: mediaType });
-      uploadedImages.push({ index: blockIndex, buffer: buf, mime: mediaType });
-      fileBlocks.push({
-        type: 'image',
-        source: { type: 'base64', media_type: mediaType, data },
-      });
-    }
-    blockIndex += 1;
-  }
-  return {
-    ok: true,
-    parsed: { fileBlocks, uploadedImages, allFiles, firstBuffer, fileCount: files.length },
-  };
-}
-
 // Dynamic (post-cache-boundary) prompt blocks: shared alias dictionary,
 // cross-rep shared rules, the rep's own distilled rules, and the few-shot
 // pool. All best-effort — a missing row/table just skips that block.
@@ -2820,6 +2669,8 @@ async function insertScanSample(
     parsed: ExtractedSlip | null;
     errorMsg: string | null;
     claudeText: string;
+    // Which document type this learning sample belongs to ('SO' here).
+    documentType: ScanDocumentType;
   },
 ): Promise<{ sampleId: string | null; sampleInsertError: string | null }> {
   let sampleId: string | null = null;
@@ -2832,6 +2683,7 @@ async function insertScanSample(
         salesperson: args.salesperson,
         extracted: args.parsed ?? { error: args.errorMsg, claudeText: args.claudeText },
         status: args.parsed ? 'EXTRACTED' : 'FAILED',
+        document_type: args.documentType,
       })
       .select('id')
       .single();
@@ -3073,6 +2925,8 @@ scanSo.post('/extract', async (c) => {
   const sampleSalesperson = repGiven || normalizeRepKey(parsed?.salesRep) || null;
   const { sampleId, sampleInsertError } = await insertScanSample(svc, {
     imageSha256, salesperson: sampleSalesperson, parsed, errorMsg, claudeText,
+    // Interactive SO extract — the pipeline's default document type.
+    documentType: DEFAULT_SCAN_DOCUMENT_TYPE,
   });
 
   // Original slip / receipt R2 persistence — storeScanImages, shared with the
@@ -3189,29 +3043,6 @@ const JOB_MSG = {
   unreadable: 'The slip photo could not be read. Please retake the photo and try again.',
   createFallback: 'The draft order could not be created. Please enter this order manually.',
 } as const;
-
-// Snake/camel-tolerant job row -> API shape (dual-read both casings — the #1
-// recurring result-column bug class).
-function jobToJson(r: Record<string, unknown>): Record<string, unknown> {
-  return {
-    id: r.id ?? null,
-    status: r.status ?? null,
-    salesperson: r.salesperson ?? null,
-    soDocNo: r.soDocNo ?? r.so_doc_no ?? null,
-    error: r.error ?? null,
-    sampleId: r.sampleId ?? r.sample_id ?? null,
-    // Duplicate-upload warning (migration 0068) — doc_no of the suspected
-    // original SO; the mobile Scan screen surfaces it on the job card.
-    duplicateOf: r.duplicateOf ?? r.duplicate_of ?? null,
-    imageKeys: r.imageKeys ?? r.image_keys ?? [],
-    // Multi-receipt (migration 0141) — the R2 keys of the uploads the OCR
-    // classified as payment receipts (one payment booked per key). [] for a
-    // draft-only scan or a row predating the column.
-    receiptImageKeys: r.receiptImageKeys ?? r.receipt_image_keys ?? [],
-    createdAt: r.createdAt ?? r.created_at ?? null,
-    updatedAt: r.updatedAt ?? r.updated_at ?? null,
-  };
-}
 
 // ---------------------------------------------------------------------------
 // Duplicate-upload detection (owner 2026-07-04: 重复上传预警 / "已经开过单").
@@ -3922,6 +3753,8 @@ async function runScanJob(
     salespersonId: string;
     salespersonName: string | null;
     houzsUserId: number | null;
+    /** Which document type this job produces (SO here; GR/PI route in later slices). */
+    documentType: ScanDocumentType;
     /** Multi-company: the ACTIVE company captured on the scan_jobs row at
      *  enqueue time — replayed onto the draft SO create. null = legacy row. */
     companyId: number | null;
@@ -3984,6 +3817,7 @@ async function runScanJob(
       parsed,
       errorMsg: call.errorMsg,
       claudeText: call.claudeText,
+      documentType: job.documentType,
     });
     if (sampleId) await touch({ sample_id: sampleId });
     const { imageKey, receiptImageKey } = await storeScanImages(
@@ -4131,7 +3965,8 @@ async function runScanJob(
       // plain "please complete" note so the Orders-open toast tells the rep, and
       // stop here (no receipt-payment pass on a draft the model couldn't read).
       if (shellNote) {
-        await touch({ status: 'done', so_doc_no: docNo, error: shellNote });
+        // Write both the SO-specific and generic link column (same doc_no for SO).
+        await touch({ status: 'done', so_doc_no: docNo, linked_doc_no: docNo, error: shellNote });
         await postScanNotice(env, {
           houzsUserId: job.houzsUserId,
           category: 'WARNING',
@@ -4142,7 +3977,7 @@ async function runScanJob(
       }
       // Past the shell paths, a null parse has already returned above — narrow
       // `parsed` to non-null for the receipt-payment pass (defensive fallback).
-      if (!parsed) { await touch({ status: 'done', so_doc_no: docNo }); return; }
+      if (!parsed) { await touch({ status: 'done', so_doc_no: docNo, linked_doc_no: docNo }); return; }
       // Payments from receipt OCR — one ledger row per classified payment
       // receipt, via the SAME recordSoPaymentRow core the interactive route
       // uses. GUARD: never fail the job — the DRAFT stands; a failure only
@@ -4173,6 +4008,7 @@ async function runScanJob(
       await touch({
         status: 'done',
         so_doc_no: docNo,
+        linked_doc_no: docNo,
         ...(paymentNote ? { error: paymentNote } : {}),
       });
       // Private "your scan is a draft now" notice. Duplicate/payment caveats
@@ -4330,6 +4166,10 @@ scanSo.post('/enqueue', async (c) => {
     .from('scan_jobs')
     .insert({
       status: 'queued',
+      // The SO scanner is the pipeline's default document type. GR/PI enqueue
+      // routes (later slices) validate and stamp their own type here; the
+      // queue consumer and reaper replay whatever this column holds.
+      document_type: DEFAULT_SCAN_DOCUMENT_TYPE,
       salesperson: repGiven || null,
       // The uploader's own staff id (see resolveScanUploaderStaffId) so the
       // headless create attributes the SO to whoever scanned it. The queue
@@ -4407,6 +4247,7 @@ scanSo.post('/enqueue', async (c) => {
       salespersonId: uploaderStaffId,
       salespersonName,
       houzsUserId,
+      documentType: DEFAULT_SCAN_DOCUMENT_TYPE,
       companyId: activeCompanyId(c) ?? null,
       fileBlocks,
       uploadedImages,
@@ -4452,49 +4293,6 @@ scanSo.post('/enqueue', async (c) => {
 const SCAN_JOB_STALE_MINUTES = 3;
 const STALE_JOB_ERROR = 'The scan took too long and was stopped. Please scan this slip again.';
 
-// Rebuild runScanJob's file inputs from the durable R2 copies — the inverse of
-// parseScanFiles for a retry (the original in-memory buffers died with the
-// isolate). Block order matches upload order because image_keys was appended
-// in file order; the stored contentType decides image vs document block, same
-// mapping as parseScanFiles. Returns null (caller errors the job) if the
-// bucket is unbound or ANY key is missing.
-async function loadScanJobFilesFromR2(
-  bucket: Env['SO_ITEM_PHOTOS'] | undefined,
-  keys: string[],
-): Promise<{
-  fileBlocks: ContentBlock[];
-  uploadedImages: UploadedImage[];
-  firstBuffer: ArrayBuffer | null;
-} | null> {
-  if (!bucket || keys.length === 0) return null;
-  const fileBlocks: ContentBlock[] = [];
-  const uploadedImages: UploadedImage[] = [];
-  let firstBuffer: ArrayBuffer | null = null;
-  let blockIndex = 0;
-  for (const key of keys) {
-    const obj = await bucket.get(key);
-    if (!obj) return null;
-    const buf = await obj.arrayBuffer();
-    if (!firstBuffer) firstBuffer = buf;
-    const mime = obj.httpMetadata?.contentType || 'image/jpeg';
-    const data = toBase64(buf);
-    if (mime === 'application/pdf') {
-      fileBlocks.push({
-        type: 'document',
-        source: { type: 'base64', media_type: 'application/pdf', data },
-      });
-    } else {
-      uploadedImages.push({ index: blockIndex, buffer: buf, mime });
-      fileBlocks.push({
-        type: 'image',
-        source: { type: 'base64', media_type: mime, data },
-      });
-    }
-    blockIndex += 1;
-  }
-  return { fileBlocks, uploadedImages, firstBuffer };
-}
-
 // ---------------------------------------------------------------------------
 // Cloudflare Queue consumer entry point (called from index.ts `queue()`). The
 // message carries ONLY { jobId } — everything else is rebuilt from the durable
@@ -4516,7 +4314,7 @@ export async function processScanQueueMessage(env: Env, jobId: string): Promise<
 
   const { data: row, error } = await svc
     .from('scan_jobs')
-    .select('id, status, salesperson, salesperson_id, houzs_user_id, image_keys, company_id')
+    .select('id, status, salesperson, salesperson_id, houzs_user_id, image_keys, company_id, document_type')
     .eq('id', id)
     .single();
   if (error) {
@@ -4547,6 +4345,19 @@ export async function processScanQueueMessage(env: Env, jobId: string): Promise<
   const houzsUserId = huRaw != null && Number.isFinite(Number(huRaw)) ? Number(huRaw) : null;
   const coRaw = r.companyId ?? r.company_id;
   const companyId = coRaw != null && Number.isFinite(Number(coRaw)) ? Number(coRaw) : null;
+  // Legacy rows predating the column read back null -> coerce to 'SO'.
+  const documentType = coerceScanDocumentType(r.documentType ?? r.document_type);
+
+  // GR / PI jobs run their own pipelines, not this SO one. One-way delegation
+  // (scan-gr / scan-pi never import scan-so, so no cycle); each consumer re-reads
+  // the row, loads its own photos and owns its own idempotency. A non-SO, non-GR,
+  // non-PI job is acked with a warning rather than mis-run as SO.
+  if (documentType === 'GR') { await processGrnScanQueueMessage(env, id); return; }
+  if (documentType === 'PI') { await processPiScanQueueMessage(env, id); return; }
+  if (documentType !== 'SO') {
+    console.warn('[scan-queue] no consumer for document_type yet, acking:', documentType, id);
+    return;
+  }
 
   const files = salespersonId ? await loadScanJobFilesFromR2(env.SO_ITEM_PHOTOS, imageKeys) : null;
   if (!files) {
@@ -4569,6 +4380,7 @@ export async function processScanQueueMessage(env: Env, jobId: string): Promise<
     salespersonName: salesperson || null,
     salespersonId,
     houzsUserId,
+    documentType,
     companyId,
     fileBlocks: files.fileBlocks,
     uploadedImages: files.uploadedImages,
@@ -4594,8 +4406,12 @@ async function reapStaleScanJobs(
     //    next poll (the screen polls every 4s while jobs are active).
     const { data: retryRows, error: retryErr } = await svc
       .from('scan_jobs')
-      .select('id, salesperson, salesperson_id, houzs_user_id, image_keys, retry_count, company_id')
+      .select('id, salesperson, salesperson_id, houzs_user_id, image_keys, retry_count, company_id, document_type')
       .in('status', ['queued', 'running'])
+      // GR/PI stale jobs are reaped by their own poll endpoints — this SO
+      // reaper must never replay one through the SO pipeline (mig 20260919T1000
+      // backfilled every existing row to 'SO', so no null slips through).
+      .eq('document_type', 'SO')
       .lt('updated_at', cutoff)
       .eq('retry_count', 0)
       .limit(5);
@@ -4608,6 +4424,7 @@ async function reapStaleScanJobs(
         .from('scan_jobs')
         .update({ status: 'error', error: STALE_JOB_ERROR, updated_at: nowIso })
         .in('status', ['queued', 'running'])
+        .eq('document_type', 'SO')
         .lt('updated_at', cutoff);
       return;
     }
@@ -4635,6 +4452,8 @@ async function reapStaleScanJobs(
       const houzsUserId = huRaw != null && Number.isFinite(Number(huRaw)) ? Number(huRaw) : null;
       const coRaw = r.companyId ?? r.company_id;
       const companyId = coRaw != null && Number.isFinite(Number(coRaw)) ? Number(coRaw) : null;
+      // Legacy rows predating the column read back null -> coerce to 'SO'.
+      const documentType = coerceScanDocumentType(r.documentType ?? r.document_type);
 
       // Heavy part (R2 reads + the whole pipeline) runs AFTER the poll
       // responds — never inline in the GET.
@@ -4659,6 +4478,7 @@ async function reapStaleScanJobs(
           // normalized rep display name is the closest replay identity.
           salespersonName: salesperson || null,
           houzsUserId,
+          documentType,
           companyId,
           fileBlocks: files.fileBlocks,
           uploadedImages: files.uploadedImages,
@@ -4673,6 +4493,7 @@ async function reapStaleScanJobs(
       .from('scan_jobs')
       .update({ status: 'error', error: STALE_JOB_ERROR, updated_at: nowIso })
       .in('status', ['queued', 'running'])
+      .eq('document_type', 'SO')
       .lt('updated_at', cutoff)
       .gte('retry_count', 1);
   } catch (e) {
@@ -4696,7 +4517,7 @@ scanSo.get('/jobs', async (c) => {
   });
   let q = svc
     .from('scan_jobs')
-    .select('id, status, salesperson, so_doc_no, error, sample_id, duplicate_of, image_keys, created_at, updated_at')
+    .select('id, status, salesperson, so_doc_no, linked_doc_no, document_type, error, sample_id, duplicate_of, image_keys, created_at, updated_at')
     .eq('company_id', activeCompanyId(c))
     .order('created_at', { ascending: false })
     .limit(20);
@@ -4726,7 +4547,7 @@ scanSo.get('/jobs/:id', async (c) => {
   });
   const { data, error } = await svc
     .from('scan_jobs')
-    .select('id, status, salesperson, so_doc_no, error, sample_id, duplicate_of, image_keys, created_at, updated_at')
+    .select('id, status, salesperson, so_doc_no, linked_doc_no, document_type, error, sample_id, duplicate_of, image_keys, created_at, updated_at')
     .eq('id', id)
     .limit(1)
     .maybeSingle();

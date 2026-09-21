@@ -13,12 +13,18 @@
 //   returned  = Σ delivery_return_items.qty_returned  linked via do_item_id to
 //                                            a NON-cancelled delivery_return
 //
-//   remaining = delivered − invoiced − returned          (= Pending)
+//   remaining = delivered − invoiced − returned          (= Pending to invoice)
 //
-// remaining_to_invoice and remaining_to_return are the SAME number: invoicing
-// and returning COMPETE for the same Pending pool, so a unit that's been
-// invoiced can't be returned and vice-versa (the invoice⊕return exclusion the
-// user asked for — it falls straight out of this one formula, no extra flag).
+// THIS FORMULA IS THE INVOICE POOL. Returning used to share it — one number for
+// both, so a unit that had been invoiced could not also be returned. That
+// blocked the ordinary retail flow (customer pays, the DO is invoiced, THEN part
+// of it comes back), so on 2026-09-20 the RETURN pool was split off:
+//   remaining_to_return = delivered − returned          (independent of invoicing)
+// See returnableRemainingFrom below and doReturnableRemaining in
+// routes/delivery-returns.ts. The invoice pool is UNCHANGED and still subtracts
+// returned, so returned goods still can't be invoiced and nothing double-bills.
+// (The MONEY side of returning invoiced goods — credit note / AR reversal — is a
+// separate, deferred phase; the split only lets stock come back.)
 //
 // CANCEL releases: cancelling an invoice or a return drops its rows out of the
 // non-cancelled filter, so the qty re-derives back into Pending automatically —
@@ -107,7 +113,8 @@ export type DoRemainingLine = {
   delivered: number;
   invoiced: number;
   returned: number;
-  /** delivered − invoiced − returned (= Pending = remaining to invoice OR return) */
+  /** delivered − invoiced − returned (= Pending to invoice). The RETURN pool
+   *  re-keys this to delivered − returned — see returnableRemainingFrom. */
   remaining: number;
   unitPriceSen: number;
   unitCostSen: number;
@@ -347,6 +354,23 @@ export async function doLineRemaining(
     });
   }
   return { ok: true, lines: out };
+}
+
+/**
+ * Re-key a Pending ledger onto the RETURN pool: remaining = delivered − returned,
+ * independent of invoicing (owner 2026-09-20). `doLineRemaining` computes
+ * `remaining` as the INVOICE pool (delivered − invoiced − returned); returning is
+ * about goods that physically shipped, so a fully-invoiced DO line must still be
+ * returnable up to what was delivered and not yet returned — otherwise a customer
+ * who paid, was invoiced, and then sends part back can never have a return raised.
+ * Every other field (delivered / invoiced / returned) is preserved; only the
+ * derived `remaining` changes. doReturnableRemaining (routes/delivery-returns.ts)
+ * is the one caller, and feeds it into the picker and every over-return guard.
+ */
+export function returnableRemainingFrom(lines: Map<string, DoRemainingLine>): Map<string, DoRemainingLine> {
+  const out = new Map<string, DoRemainingLine>();
+  for (const [id, l] of lines) out.set(id, { ...l, remaining: l.delivered - l.returned });
+  return out;
 }
 
 /**

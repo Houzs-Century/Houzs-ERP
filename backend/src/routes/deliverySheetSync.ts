@@ -39,6 +39,9 @@ import {
   UPDATES_MAX,
   updateFromSheetSql,
   feedLinesSql,
+  feedByDocNosSql,
+  isSheetReady,
+  resolveSheetRemark2,
   normSheetDate,
   parseFromDate,
   parseLimit,
@@ -47,7 +50,9 @@ import {
   type DeliverySheetRecord,
   type FeedHeadRow,
   type FeedLineRow,
+  type FeedReadinessHead,
 } from "../lib/delivery-sheet-feed";
+import { SO_DELIVERED_OR_BEYOND } from "../scm/shared/so-deliverable-states";
 import {
   FEED_OUTSTANDING_PO_SQL,
   PO_OUTSTANDING_STATUSES,
@@ -57,6 +62,11 @@ import {
   type PoFeedRow,
   type PoHeadForSheet,
 } from "../lib/delivery-sheet-po-feed";
+import {
+  FEED_ASSR_LEGS_SQL,
+  toAssrLegRecords,
+  type AssrFeedRow,
+} from "../lib/delivery-sheet-assr-feed";
 import { getSupabaseService, isSupabaseConfigured } from "../db/supabase";
 import { SUPPLIER_DATE_SLOT_COL, cascadePoSupplierDate } from "../scm/lib/po-supplier-date-cascade";
 import { poHasDownstream } from "../scm/lib/downstream-lock";
@@ -198,6 +208,129 @@ app.get("/ready-open", async (c) => {
   if ("refusal" in loaded) return loaded.refusal;
   const records = loaded.records.filter((r) => r.Ready);
   return c.json({ count: records.length, scanned: loaded.records.length, from, records });
+});
+
+/* Reconcile support (owner 2026-09-20): the delivery tabs keep only orders whose
+   LIVE Remarks 2 is READY / READY (PARTIAL). Given the DocNos currently on a
+   tab, this returns each one's live readiness so the Apps Script can refresh the
+   cell (stale product-word -> READY) and DELETE the rows that are genuinely not
+   ready. A DocNo not found in this company's live order book is `found:false`
+   and the Apps Script LEAVES it — never delete a row the ERP does not own
+   (service/pickup legs, pre-go-live delivered rows, any non-ERP row). */
+const PRUNE_CHECK_MAX = 2000;
+app.post("/prune-check", async (c) => {
+  const denied = await badSheetKey(c);
+  if (denied) return denied;
+  const co = await sheetCompanyId(c);
+  if ("refusal" in co) return co.refusal;
+
+  let body: any;
+  try {
+    body = await c.req.json();
+  } catch {
+    body = null;
+  }
+  const raw = Array.isArray(body?.doc_nos) ? (body.doc_nos as unknown[]) : null;
+  if (!raw) return c.json({ error: "bad_body", message: "expected { doc_nos: string[] }" }, 400);
+  const docNos = [...new Set(raw.map((d) => String(d ?? "").trim()).filter(Boolean))];
+  if (!docNos.length) return c.json({ error: "no_doc_nos" }, 400);
+  if (docNos.length > PRUNE_CHECK_MAX) return c.json({ error: "too_many", max: PRUNE_CHECK_MAX }, 413);
+
+  // company-scope: first bind is the secret's company id; the doc numbers are
+  // matched on linked_ac_docno OR doc_no (the sheet key is linked_ac_docno).
+  let heads: FeedReadinessHead[];
+  try {
+    const res = (await c.env.DB.prepare(feedByDocNosSql(docNos.length))
+      .bind(co.id, ...docNos, ...docNos)
+      .all()) as { results?: FeedReadinessHead[] };
+    heads = res.results ?? [];
+  } catch (e) {
+    return c.json({ error: "read_failed", message: e instanceof Error ? e.message : String(e) }, 502);
+  }
+
+  const linesByDoc = new Map<string, FeedLineRow[]>();
+  const foundDocNos = heads.map((h) => h.doc_no);
+  for (let i = 0; i < foundDocNos.length; i += 100) {
+    const chunk = foundDocNos.slice(i, i + 100);
+    if (!chunk.length) break;
+    try {
+      const res = (await c.env.DB.prepare(feedLinesSql(chunk.length)).bind(...chunk).all()) as { results?: FeedLineRow[] };
+      for (const l of res.results ?? []) {
+        const arr = linesByDoc.get(l.doc_no) ?? [];
+        arr.push(l);
+        linesByDoc.set(l.doc_no, arr);
+      }
+    } catch (e) {
+      return c.json({ error: "lines_read_failed", message: e instanceof Error ? e.message : String(e) }, 502);
+    }
+  }
+
+  // Key each found order by BOTH its ERP number and its sheet key, so an input
+  // that used either one resolves.
+  const deliveredSet = new Set<string>([...SO_DELIVERED_OR_BEYOND]);
+  const stateByKey = new Map<string, { ErpDocNo: string; Remark2: string | null; Ready: boolean; Status: string; Deletable: boolean }>();
+  for (const h of heads) {
+    const remark2 = resolveSheetRemark2(h.remark2, linesByDoc.get(h.doc_no) ?? []);
+    const ready = isSheetReady(remark2);
+    // Delete only an UNDELIVERED order whose stock is not in. A delivered /
+    // invoiced / closed order is a record — never pruned, even if its (possibly
+    // frozen) line flags read not-ready.
+    const deletable = !ready && !deliveredSet.has(h.status);
+    const st = { ErpDocNo: h.doc_no, Remark2: remark2, Ready: ready, Status: h.status, Deletable: deletable };
+    stateByKey.set(h.doc_no, st);
+    if (h.linked_ac_docno) stateByKey.set(h.linked_ac_docno, st);
+  }
+
+  const results = docNos.map((d) => {
+    const st = stateByKey.get(d);
+    return st
+      ? { DocNo: d, found: true, ErpDocNo: st.ErpDocNo, Ready: st.Ready, Remark2: st.Remark2, Status: st.Status, Deletable: st.Deletable }
+      : { DocNo: d, found: false, ErpDocNo: null as string | null, Ready: false, Remark2: null as string | null, Status: null as string | null, Deletable: false };
+  });
+  return c.json({
+    count: results.length,
+    found: results.filter((r) => r.found).length,
+    would_remove: results.filter((r) => r.Deletable).length,
+    results,
+  });
+});
+
+/* Service-Case (ASSR) legs (owner 2026-09-17): each open case's inspection /
+   pickup / delivery-back leg that OUR OWN team drives is emitted here so the
+   sheet appends it beside the Sales-Order rows for the same region. Own-team
+   gated by design (see delivery-sheet-assr-feed.ts); the Delivery Planning
+   board stays un-gated, so board and sheet intentionally differ. Incremental,
+   same `since`/`limit` cursor as /so-since — but the LIMIT counts CASES, each
+   expanding to up to three leg rows. */
+app.get("/assr-legs", async (c) => {
+  const denied = await badSheetKey(c);
+  if (denied) return denied;
+  const since = parseSince(c.req.query("since"));
+  if (!since) return c.json({ error: "bad_since", message: "since must be a timestamp (yyyy-mm-dd hh:mm:ss[.ffffff][+hh])" }, 400);
+  const limit = parseLimit(c.req.query("limit"));
+  const co = await sheetCompanyId(c);
+  if ("refusal" in co) return co.refusal;
+
+  let cases: AssrFeedRow[];
+  try {
+    // company-scope: ?1 is the secret's company id, resolved from the master.
+    const res = (await c.env.DB.prepare(FEED_ASSR_LEGS_SQL).bind(co.id, since, limit).all()) as { results?: AssrFeedRow[] };
+    cases = res.results ?? [];
+  } catch (e) {
+    return c.json({ error: "feed_read_failed", message: e instanceof Error ? e.message : String(e) }, 502);
+  }
+  const records = cases.flatMap(toAssrLegRecords);
+  return c.json({
+    count: records.length,
+    // The page is a CASE page; the checkpoint and has_more are measured in
+    // cases so paging is correct even though each case emits up to three legs.
+    cases: cases.length,
+    limit,
+    since,
+    next_since: cases.length ? cases[cases.length - 1]!.last_modified_text : null,
+    has_more: cases.length >= limit,
+    records,
+  });
 });
 
 type SheetUpdate = { DocNo?: unknown; Remark4?: unknown; ExpiryDate?: unknown };

@@ -164,6 +164,40 @@ export const fmtDateTime = (d: Date | string | number | null | undefined): strin
   return p === null ? DASH : `${p.dd}/${p.mm}/${p.yyyy} ${p.hh}:${p.mi}`;
 };
 
+/** "13/08" — {@link fmtDate} with the YEAR trimmed, for a label that already
+ *  sits inside a bounded window. Same digits in the same order as every other
+ *  date in this app: a month NAME would be a SECOND format, which is the thing
+ *  the owner ruled out on 2026-08-18 (*"全套系统的 date format 没有统一"*) and
+ *  which `check-date-formatting.mjs` fails a build over. Null / unparseable is
+ *  "—", exactly as {@link fmtDate}. */
+export const fmtDayMonth = (d: Date | string | number | null | undefined): string => {
+  const p = dateParts(d);
+  return p === null ? DASH : `${p.dd}/${p.mm}`;
+};
+
+/** A PERIOD as one label: "13/08 - 17/08", and just "13/08" when it is one day.
+ *
+ *  Built for the SO fair picker, where the owner asked for the year dropped
+ *  (2026-09-19) because that list only ever spans the 28 days behind the order
+ *  date — a year cannot disambiguate anything inside it. It lives HERE, beside
+ *  the format it is a variant of, rather than inside the picker: a date shape
+ *  with its own private home is how this tree grew five of them and needed a
+ *  gate to find them again.
+ *
+ *  BOTH ENDS ARE RENDERED IN FULL. "13/08 - 17" saves three characters and costs
+ *  the reader the month on the end that is most likely to differ.
+ *
+ *  An unreadable end falls back to the start rather than printing "13/08 - —",
+ *  which reads as a fair that never finished. */
+export const fmtDayMonthRange = (
+  from: Date | string | number | null | undefined,
+  to: Date | string | number | null | undefined,
+): string => {
+  const start = fmtDayMonth(from);
+  const end = to == null ? start : fmtDayMonth(to);
+  return end === start || end === DASH ? start : `${start} - ${end}`;
+};
+
 /** "14:30" — the time half of the one rule, for rows that already show the day. */
 export const fmtTime = (d: Date | string | number | null | undefined): string => {
   const p = dateParts(d);

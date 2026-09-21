@@ -73,6 +73,7 @@ const SUPPLIER = "the supplier's own model code for our item, not ours";
 
 export const PRODUCT_CODE_KEEPS_VALUE: readonly KeptColumn[] = [
   { column: 'scm.mfg_so_item_deletions.item_code', why: 'forensic record of a deleted SO line as it was at the moment of deletion (0302)' },
+  { column: 'scm.retail_price_guard_log.item_code', why: 'evidence of one intervention: the SKU as the offending writer named it, at that moment (20260920T1300)' },
   { column: 'scm.supplier_material_bindings.ac_item_code', why: AUTOCOUNT },
   { column: 'scm.supplier_material_bindings.supplier_sku', why: SUPPLIER },
   { column: 'scm.purchase_order_items.supplier_sku', why: SUPPLIER },

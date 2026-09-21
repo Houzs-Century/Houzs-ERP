@@ -1185,7 +1185,7 @@ export async function recomputeOneLine(
   let product = productLoaded;
   if (productLoaded && companyId != null && opts?.asOf) {
     try {
-      if (await autoDeriveEnabled(sb)) {
+      if (await autoDeriveEnabled(sb, companyId)) {
         const asOfCost = await resolveMfgProductCostAsOf(sb, companyId, item.itemCode, opts.asOf);
         if (asOfCost) {
           product = {

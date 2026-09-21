@@ -95,6 +95,7 @@ import { CostAnchorCard } from './CostAnchorCard';
 import { ProductPriceTimeline } from './ProductPriceTimeline';
 import { SkuHistoryTabs } from './SkuHistoryTabs';
 import { AddSupplierBinding } from './AddSupplierBinding';
+import { DeleteBindingButton } from './DeleteBindingButton';
 import { ImportModelsMoved } from '../../vendor/scm/components/ImportModelsMoved';
 import { MFG_CATEGORY_LABELS, MFG_PRODUCT_CATEGORIES } from '../../vendor/shared/product-categories';
 import { useStaffLookup } from '../../hooks/useStaffLookup';
@@ -3855,7 +3856,7 @@ const ProductSuppliersDrawer = ({
                 </h3>
                 {groups.length === 0 ? (
                   <p style={{ fontSize: 'var(--fs-13)', color: '#767b6e' }}>
-                    No variant options configured for this model{row.category ? ` (${row.category})` : ''}.
+                    No variant options configured for this model{row.category ? ` (${mfgCategoryLabel(row.category)})` : ''}.
                   </p>
                 ) : (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
@@ -3915,6 +3916,7 @@ const ProductSuppliersDrawer = ({
                   <th style={{ textAlign: 'right', whiteSpace: 'nowrap', width: '1%' }}>Unit Price</th>
                   <th style={{ textAlign: 'right', whiteSpace: 'nowrap', width: '1%' }}>Lead</th>
                   <th style={{ textAlign: 'right', whiteSpace: 'nowrap', width: '1%' }}>MOQ</th>
+                  <th style={{ width: 32 }} aria-label="Remove"></th>
                 </tr>
               </thead>
               <tbody>
@@ -3945,6 +3947,13 @@ const ProductSuppliersDrawer = ({
                     </td>
                     <td className={styles.numCell} style={{ whiteSpace: 'nowrap' }}>{s.lead_time_days || '—'}</td>
                     <td className={styles.numCell} style={{ whiteSpace: 'nowrap' }}>{s.moq || '—'}</td>
+                    <td style={{ textAlign: 'center' }}>
+                      <DeleteBindingButton
+                        supplierId={s.supplier_id}
+                        bindingId={s.id}
+                        supplierName={s.suppliers?.name ?? s.supplier_id}
+                      />
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -4128,8 +4137,8 @@ const SpecialsMaintenancePanel = ({
     const others = row.categories.filter((x) => x !== category);
     if (others.length > 0) {
       if (!(await askConfirm({
-        title: `Remove "${lbl || 'this add-on'}" from ${category}?`,
-        body: `It stays available under ${others.join(', ')}, and existing orders are unaffected.`,
+        title: `Remove "${lbl || 'this add-on'}" from ${mfgCategoryLabel(category)}?`,
+        body: `It stays available under ${others.map(mfgCategoryLabel).join(', ')}, and existing orders are unaffected.`,
         confirmLabel: 'Remove from this list',
       }))) return;
       setDetached((d) => [...d, { ...row, categories: others }]);

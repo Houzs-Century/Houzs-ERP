@@ -25,6 +25,7 @@ export type FeedHeadRow = {
   linked_ac_docno: string | null;
   so_date: string | null;
   ref: string | null;
+  customer_so_no: string | null;
   branding: string | null;
   debtor_name: string | null;
   phone: string | null;
@@ -139,7 +140,7 @@ export function parseLimit(raw: string | undefined | null): number {
  *  Each feed wraps this and adds its own outer predicate and order. */
 const FEED_BASE_SQL = `
   SELECT so.doc_no, so.linked_ac_docno,
-         so.so_date::text AS so_date, so.ref, so.branding, so.debtor_name, so.phone,
+         so.so_date::text AS so_date, so.ref, so.customer_so_no, so.branding, so.debtor_name, so.phone,
          so.sales_location, so.agent, sp.name AS salesperson_name,
          so.local_total_sen,
          so.local_total_sen - COALESCE(pay.paid_sen, 0) AS balance_sen_live,
@@ -245,6 +246,20 @@ export function feedLinesSql(docCount: number): string {
             FROM scm.mfg_sales_order_items WHERE doc_no IN (${marks})`;
 }
 
+/** Heads for an explicit list of sheet DocNos (matching linked_ac_docno OR
+ *  doc_no), this company, live orders only — the reconcile prune-check reads
+ *  each on-sheet row's live readiness. Bare `?`: bind company_id, then the doc
+ *  numbers TWICE (once per IN list). */
+export type FeedReadinessHead = { doc_no: string; linked_ac_docno: string | null; remark2: string | null; status: string };
+export function feedByDocNosSql(docCount: number): string {
+  const marks = Array.from({ length: docCount }, () => "?").join(", ");
+  return `SELECT so.doc_no, so.linked_ac_docno, so.remark2, so.status::text AS status
+            FROM scm.mfg_sales_orders so
+           WHERE so.company_id = ?
+             AND so.status::text NOT IN ('DRAFT', 'CANCELLED')
+             AND (so.doc_no IN (${marks}) OR so.linked_ac_docno IN (${marks}))`;
+}
+
 /**
  * The write leg — ONE statement for a whole batch. Bare `?` binds, in order:
  * for each row `(sheet doc no, remark4 or null = keep, yyyy-mm-dd or null =
@@ -309,28 +324,34 @@ export function isSheetReady(remark2: string | null): boolean {
   return /^READY\b/i.test((remark2 ?? "").trim());
 }
 
+/** The sheet's Remarks 2 from the header snapshot + the live lines. The live
+ *  line state is the truth: a migrated order's header remark2 is a one-time
+ *  AutoCount import snapshot the ERP never updates, so when stock arrives the
+ *  lines flip to READY (and the SO to READY_TO_SHIP) while the header keeps its
+ *  old "BEDFRAME"/"ACC/BEDFRAME" wording. When the lines prove READY / READY
+ *  (PARTIAL), that wins over a frozen partial-groups word; otherwise the header
+ *  snapshot, then the derived word, then blank. Shared by toSheetRecord and the
+ *  reconcile prune-check so they never drift. */
+export function resolveSheetRemark2(remark2Header: string | null, lines: ReadonlyArray<FeedLineRow>): string | null {
+  const derived = lines.length ? sheetReadinessWording(summariseReadiness([...lines]).stockRemark) : null;
+  const header = blankToNull(remark2Header);
+  return header && !isSheetReady(header) && derived && isSheetReady(derived) ? derived : (header ?? derived);
+}
+
 export function toSheetRecord(row: FeedHeadRow, lines: ReadonlyArray<FeedLineRow>): DeliverySheetRecord {
   const salesLocation = bookSpellingOrOwn(row.sales_location, LOCATION_MAP);
   const addr3 = blankToNull(row.address3) ?? blankToNull([row.postcode, row.city].filter(Boolean).join(" "));
   const addr4 = blankToNull(row.address4) ?? blankToNull(row.customer_state);
-  // The sheet's Remarks 2 is the stock-readiness wording ("READY", "PARTIAL",
-  // "MATTRESS"). The live LINE state is the truth: a migrated order's header
-  // remark2 is a one-time AutoCount import snapshot the ERP never updates, so
-  // when stock arrives the lines flip to READY (and the SO to READY_TO_SHIP)
-  // while the header keeps its old "BEDFRAME"/"ACC/BEDFRAME" wording. When the
-  // lines prove the order is READY / READY (PARTIAL), that wins over a frozen
-  // partial-groups word; otherwise keep the header snapshot (what a genuinely
-  // partial migrated order carries), then the derived word, then blank.
-  const derived = lines.length ? sheetReadinessWording(summariseReadiness([...lines]).stockRemark) : null;
-  const header = blankToNull(row.remark2);
-  const remark2 =
-    header && !isSheetReady(header) && derived && isSheetReady(derived) ? derived : (header ?? derived);
+  const remark2 = resolveSheetRemark2(row.remark2, lines);
   return {
     DocNo: row.linked_ac_docno ?? row.doc_no,
     ErpDocNo: row.doc_no,
     TransferTo: blankToNull(row.do_numbers),
     DocDate: row.so_date,
-    Ref: blankToNull(row.ref),
+    // The sheet's Ref = the ERP's "Reference", which frontend customerRefOf reads
+    // as ref || customer_so_no: a native ERP order has ref NULL and carries its
+    // reference in customer_so_no, so ref alone left every native order blank.
+    Ref: blankToNull(row.ref) ?? blankToNull(row.customer_so_no),
     SOUDF_BRANDING: blankToNull(row.branding),
     DebtorName: blankToNull(row.debtor_name),
     Phone1: blankToNull(row.phone),

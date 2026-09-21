@@ -24,8 +24,16 @@
 // ENDPOINTS (backend/src/routes/deliverySheetSync.ts, X-Intake-Key = SHEET_SYNC_KEY):
 //   GET  {ERP_BASE_URL}/api/delivery-sheet/so-since?since=<checkpoint>&limit=300
 //   POST {ERP_BASE_URL}/api/delivery-sheet/updates   {updates:[{DocNo, Remark4, ExpiryDate}]}
+//   GET  {ERP_BASE_URL}/api/delivery-sheet/assr-legs?since=<checkpoint>&limit=300
+//        Service-Case legs the ERP marked OWN-TEAM (inspection / pickup /
+//        delivery-back). Appended to the SAME regional tabs, DocNo =
+//        "<ASSR-NO>#<KIND>". Own-team gated by the ERP; the leg rows are never
+//        pushed back (erpCollectUpdates_ skips a DocNo with '#').
 
 const ERP_CHECKPOINT_PROP = "ERP_SYNC_CHECKPOINT";
+// Service-Case legs ride their own cursor so a stuck ASSR page never holds up
+// the Sales-Order pull and vice-versa.
+const ERP_ASSR_CHECKPOINT_PROP = "ERP_ASSR_CHECKPOINT";
 const ERP_PAGE_LIMIT = 300;
 // Apps Script kills a run at 6 minutes; ~300 rows write in about a minute.
 // The checkpoint advances per page, so a run that stops early resumes.
@@ -278,6 +286,9 @@ function erpCollectUpdates_(sheet, sConfig, all) {
     const row = data[i];
     const docNo = String(row[1] || "").trim();
     if (!docNo) continue;
+    // ASSR leg rows carry "<ASSR-NO>#<KIND>" and have no SO to update — never
+    // push them back (they would only ever come back as skipped 'no_order').
+    if (docNo.indexOf("#") >= 0) continue;
     if (!all && row[sConfig.statusCol - 1] !== "PENDING") continue;
     out.push({ rowIndex: i + 1, DocNo: docNo, Remark4: String(row[0] == null ? "" : row[0]), ExpiryDate: erpDateText_(row[14]) });
   }
@@ -395,12 +406,92 @@ function erpSeedFromSheet() {
 }
 
 /** Push first so a pending edit is never overwritten by the pull that follows. */
+/**
+ * Pull the Service-Case (ASSR) legs the ERP marked OWN-TEAM and write them to
+ * the regional tabs beside the Sales-Order rows. Each open case emits up to
+ * three legs (inspection / pickup / delivery-back), keyed
+ * DocNo = "<ASSR-NO>#<KIND>", so they never collide with an SO number and a
+ * re-pull updates the same row. There is NO readiness / append-from gate: the
+ * own-team mark IS the entry condition, applied by the ERP feed, so every
+ * returned record is written. Own cursor, own execution-log line.
+ */
+function runErpAssrPull(triggerType) {
+  const rid = Utilities.getUuid();
+  const startTime = new Date();
+  const props = PropertiesService.getScriptProperties();
+  const ss = getTargetSs();
+  const userEmail = Session.getActiveUser().getEmail();
+  let status = "PENDING";
+  let message = "";
+  let pulled = 0;
+  let failed = 0;
+
+  try {
+    const cfg = erpConfig_();
+    for (let page = 0; page < ERP_MAX_PAGES_PER_RUN; page++) {
+      const since = props.getProperty(ERP_ASSR_CHECKPOINT_PROP) || "";
+      Log.info(rid, "ERP ASSR pull page " + (page + 1) + " since [" + since + "]");
+      const res = erpFetch_(cfg, "/api/delivery-sheet/assr-legs?since=" + encodeURIComponent(since) + "&limit=" + ERP_PAGE_LIMIT, null, rid);
+      if (res.getResponseCode() !== 200) throw new Error("ERP returned " + res.getResponseCode() + ": " + res.getContentText().slice(0, 200));
+      const data = JSON.parse(res.getContentText());
+      const records = data.records || [];
+      if (records.length === 0) break;
+
+      const buckets = { WEST: [], EAST: [], SG: [] };
+      let dropped = 0;
+      records.forEach(function (o) {
+        o.Attention = "SEAMPIFY";
+        const region = erpRegionOf_(o);
+        if (region) buckets[region].push(o); else dropped++;
+      });
+      if (dropped) Log.warn(rid, dropped + " ASSR leg(s) had no region and were not written.");
+
+      let pageFail = 0;
+      ["WEST", "EAST", "SG"].forEach(function (region) {
+        if (!buckets[region].length) return;
+        const sheetName = erpSheetFor_(region);
+        const sheet = ss.getSheetByName(sheetName);
+        if (!sheet) return;
+        // writeDataToTargetSheet finds each DocNo (col B) or appends it, so an
+        // existing leg row is updated in place and a new one is appended.
+        const r = writeDataToTargetSheet(ss, sheetName, buckets[region], rid);
+        pulled += r.success;
+        pageFail += r.fail;
+      });
+      failed += pageFail;
+
+      // next_since / has_more count CASES, not legs (see the /assr-legs route),
+      // so the checkpoint advances one case-page at a time exactly like the SO pull.
+      if (pageFail === 0 && data.next_since) {
+        props.setProperty(ERP_ASSR_CHECKPOINT_PROP, data.next_since);
+        Log.info(rid, "ASSR checkpoint advanced to " + data.next_since);
+      } else if (pageFail > 0) {
+        Log.warn(rid, pageFail + " ASSR leg(s) failed on this page. Checkpoint NOT advanced; stopping.");
+        break;
+      }
+      if (!data.has_more) break;
+    }
+    if (pulled === 0 && failed === 0) { status = "SKIPPED"; message = "No ASSR legs changed since the checkpoint."; }
+    else { status = failed > 0 ? "PARTIAL" : "SYNCED"; message = "Pulled " + pulled + " ASSR leg(s) from the ERP. Failed " + failed + "."; }
+  } catch (e) {
+    status = "FAILED";
+    message = e.message;
+    Log.error(rid, "ERP ASSR pull failed", e);
+  } finally {
+    Log.info(rid, "ERP ASSR pull finished: " + status + " - " + message);
+    recordExecutionLog(ss, rid, triggerType === "MANUAL" ? "ERP_ASSR_PULL_MANUAL" : "ERP_ASSR_PULL", startTime, new Date(), status, message, userEmail);
+    if (triggerType === "MANUAL") SpreadsheetApp.getUi().alert("ERP ASSR pull " + status + "\n" + message);
+  }
+}
+
 function scheduledErpSync() {
   pushUpdatesToErp("SCHEDULED");
   runErpPullProcess("SCHEDULED");
+  runErpAssrPull("SCHEDULED");
 }
 function manualErpPull() { runErpPullProcess("MANUAL"); }
 function manualErpPush() { pushUpdatesToErp("MANUAL"); }
+function manualErpAssrPull() { runErpAssrPull("MANUAL"); }
 
 /** Clears the ERP checkpoint so the next pull re-reads every order. */
 function resetErpCheckpoint() {
@@ -469,3 +560,61 @@ function erpDeleteAppendedRows() {
     Log.info('cleanup', '[' + r.name + '] deleted rows ' + r.firstRow + '-' + r.lastRow + ' (' + r.count + ' rows, ' + r.firstDoc + ' .. ' + r.lastDoc + ')');
   });
 }
+
+// ── Reconcile: keep only READY / READY (PARTIAL) on the delivery tabs (owner 2026-09-20) ──
+// Applied once 2026-09-20 (delete 22, refresh 46). Chunked /prune-check (BATCH=400) so it
+// handles the >2000-row Delivery Details tab; deletes ONLY undelivered main-not-ready rows
+// (Deletable = ERP owns it AND not ready AND not delivered/invoiced/closed); delivered,
+// historical and non-ERP (found:false) rows are left untouched; refreshes a READY row's
+// Remarks 2 only when the live value differs. Run erpReconcileDryRun() before erpReconcileApply().
+function erpReconcile_(dryRun) {
+  var rid = Utilities.getUuid();
+  var cfg = erpConfig_();
+  var ss = getTargetSs();
+  var START = 4, DOCNO_COL = 2, REMARK2_COL = 13, BATCH = 400;
+  var isStockSo = function (d) {
+    d = String(d || "").trim().toUpperCase();
+    var s = d.indexOf("HC-SO-") === 0 ? d.slice(6) : (d.indexOf("SO-") === 0 ? d.slice(3) : null);
+    return s !== null && s.length > 0 && /^[0-9-]+$/.test(s);
+  };
+  var out = [];
+  [CONFIG.WEST_SHEET, CONFIG.EAST_SHEET, CONFIG.SG_SHEET].forEach(function (tabName) {
+    var sheet = ss.getSheetByName(tabName);
+    if (!sheet) { out.push(tabName + ": (tab not found)"); return; }
+    var lastRow = sheet.getLastRow();
+    if (lastRow < START) { out.push(tabName + ": (empty)"); return; }
+    var n = lastRow - START + 1;
+    var data = sheet.getRange(START, DOCNO_COL, n, 12).getValues(); // cols B..M
+    var rows = [];
+    for (var i = 0; i < n; i++) {
+      var d = String(data[i][0] || "").trim();
+      if (isStockSo(d)) rows.push({ row: START + i, doc: d, cur: String(data[i][11] == null ? "" : data[i][11]) });
+    }
+    if (!rows.length) { out.push(tabName + ": no stock rows"); return; }
+    var byDoc = {};
+    for (var b = 0; b < rows.length; b += BATCH) {
+      var chunk = rows.slice(b, b + BATCH).map(function (r) { return r.doc; });
+      var res = erpFetch_(cfg, "/api/delivery-sheet/prune-check", { method: "post", contentType: "application/json", payload: JSON.stringify({ doc_nos: chunk }) }, rid);
+      if (res.getResponseCode() !== 200) throw new Error(tabName + " prune-check " + res.getResponseCode() + ": " + res.getContentText().slice(0, 200));
+      (JSON.parse(res.getContentText()).results || []).forEach(function (r) { byDoc[r.DocNo] = r; });
+    }
+    var toDelete = [], toRefresh = [];
+    rows.forEach(function (r) {
+      var st = byDoc[r.doc];
+      if (!st || !st.found) return;                 // ERP does not own it -> leave
+      if (st.Deletable) { toDelete.push({ row: r.row, doc: r.doc }); }
+      else if (st.Ready) { var want = st.Remark2 == null ? "" : String(st.Remark2); if (want !== r.cur) toRefresh.push({ row: r.row, remark2: want }); }
+    });
+    if (!dryRun) {
+      toRefresh.forEach(function (x) { sheet.getRange(x.row, REMARK2_COL).setValue(x.remark2); });
+      toDelete.slice().sort(function (a, b) { return b.row - a.row; }).forEach(function (x) { sheet.deleteRow(x.row); });
+    }
+    out.push(tabName + ": delete " + toDelete.length + ", refresh " + toRefresh.length + (dryRun ? " (DRY-RUN, unchanged)" : " (APPLIED)"));
+    if (toDelete.length) out.push("   delete -> " + toDelete.map(function (x) { return x.doc; }).slice(0, 60).join(", "));
+  });
+  var text = out.join(String.fromCharCode(10));
+  Logger.log(text);
+  return text;
+}
+function erpReconcileDryRun() { return erpReconcile_(true); }
+function erpReconcileApply() { return erpReconcile_(false); }

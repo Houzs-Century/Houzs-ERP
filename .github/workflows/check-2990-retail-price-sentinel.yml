@@ -1,0 +1,67 @@
+name: 2990 retail prices — sentinel (read-only)
+
+# Is anything still rewriting company 2's (2990's) RETAIL prices?
+#
+# WHY A SENTINEL AND NOT ONLY THE TRIGGER. 2990's POS SKU Master is the only
+# surface allowed to author their retail prices. Inside `seat_height_prices`,
+# `trg_mfg_products_retail_price_lock` can enforce that, because a writer that
+# omits the `sellingPriceSen` key has said something the trigger can read. The
+# FLAT columns — `sell_price_sen`, `pwp_price_sen` — carry no such signal: an
+# UPDATE that sets one to a wrong value is spelled exactly like an UPDATE that
+# means to. So they are watched instead, against `scm.master_price_history`,
+# which the auto-derive never writes and which is therefore the only record
+# that survived the 2026-09-16 incident intact.
+#
+# THE INCIDENT THIS ANSWERS. A cost mechanism deleted 193 of their retail prices
+# over four days. Nothing here noticed. It was found because sofas started
+# quoting RM 0 on a tablet in another company's showroom — which is to say, by a
+# customer nearly buying one.
+#
+# NOISE. A production DB read on a schedule turns a question into CI noise
+# nobody reads; that is the standing rule. It is answered rather than overruled:
+# ALARM=1 makes the script exit non-zero ONLY on a finding, so a healthy day
+# sends no mail and there is nothing to read. The failure e-mail names the SKU
+# and the two numbers.
+#
+# 01:30 UTC = 09:30 in Kuala Lumpur — on screen before the first order of the
+# day is raised, and clear of the 01:00 queue-health run.
+on:
+  workflow_dispatch:
+    inputs:
+      company_id:
+        description: "Company to check (2 = 2990)"
+        required: false
+        default: "2"
+        type: string
+  schedule:
+    - cron: "30 1 * * *"
+
+# Touches nothing. Must never queue behind — or displace — a release.
+concurrency:
+  group: check-2990-retail-price-sentinel
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-2990-retail-price-sentinel.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMPANY_ID: ${{ inputs.company_id || '2' }}
+          # A finding fails the run, scheduled or manual — the e-mail IS the
+          # alarm. Drop ALARM to read the same report without failing anything.
+          ALARM: "1"
+          NODE_OPTIONS: --dns-result-order=ipv4first

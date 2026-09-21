@@ -12,6 +12,7 @@
 import { useMemo, useState } from 'react';
 import { Plus, X } from 'lucide-react';
 import { Button } from '@2990s/design-system';
+import { AddLineButton } from '../../vendor/scm/components/AddLineButton';
 import { PageHeader } from '../../components/Layout';
 import { Modal } from '../../vendor/scm/components/Modal';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
@@ -350,7 +351,7 @@ const NoteForm = ({ mode, id, initial, onClose, onSaved }: { mode: 'new' | 'edit
             ))}
             <tr>
               <td colSpan={2} style={td}>
-                <Button variant="ghost" size="sm" onClick={() => setV({ ...v, lines: [...v.lines, emptyLine(Math.max(0, ...v.lines.map((x) => x.rid)) + 1)] })}><Plus size={14} /> Add line</Button>
+                <AddLineButton variant="ghost" onClick={() => setV({ ...v, lines: [...v.lines, emptyLine(Math.max(0, ...v.lines.map((x) => x.rid)) + 1)] })} />
               </td>
               <td style={{ ...td, ...num, fontWeight: 700 }}>{fmtSen(totalSen)}</td>
               <td style={td} />

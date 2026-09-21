@@ -51,11 +51,11 @@ describe("GET /status-export", () => {
     expect(body.cases.find((c) => c.assr_no === "ASSR/TEST-9102")).toBeUndefined();
   });
 
-  test("the customer-pickup leg owns the PICKUP trigger word (Nico 2026-09-01)", async () => {
-    // The sheet's vocabulary must not change (Nico: A列不要修改): the bare
-    // customer-pickup leg exports the stage's bare word, and with Pickup
-    // by = customer it emits the sheet's UNCHANGED trigger word, so the
-    // Delivery PICKUP job still fires without any Apps Script change.
+  test("the own-team pickup leg owns the PICKUP trigger word (owner 2026-09-20)", async () => {
+    // pickup_by = 'customer' is the stored value for "our own team collects"
+    // (the ERP button reads "Own team pickup"), so the leg emits the
+    // parenthesised (Own Team Pickup) word the Delivery PICKUP job fires on.
+    // The bare leg exports the stage's bare word, which fires nothing.
     const setSub = (sub: string | null, pickupBy: string | null) =>
       env.DB.prepare(`UPDATE assr_cases SET sub_status = ?, pickup_by = ? WHERE id = 9101`)
         .bind(sub, pickupBy)
@@ -72,11 +72,41 @@ describe("GET /status-export", () => {
     await setSub("pending_customer_pickup", null);
     expect(await statusOf()).toBe("Pending Supplier Pickup");
     await setSub("pending_customer_pickup", "customer");
-    expect(await statusOf()).toBe("Pending Supplier Pickup (Customer Pickup)");
+    expect(await statusOf()).toBe("Pending Supplier Pickup (Own Team Pickup)");
     // The supplier-handover leg stays bare even with pickup_by set — the
     // dispatch job belongs to the customer-collection leg alone.
     await setSub("pending_supplier_pickup", "customer");
     expect(await statusOf()).toBe("Pending Supplier Pickup");
+  });
+
+  test("the delivery-back leg reaches the sheet only when Own team delivers (owner 2026-09-20)", async () => {
+    // Mirrors the pickup gate: the parenthesised (Own Team) word is the
+    // Delivery SERVICE trigger; supplier / not-yet-chosen stays bare and fires
+    // nothing, so a supplier / 3PL delivery is never appended to a Delivery tab.
+    const setDelivery = (deliveryBy: string | null) =>
+      env.DB.prepare(
+        `UPDATE assr_cases SET stage = 'pending_delivery_service', sub_status = NULL, delivery_by = ? WHERE id = 9101`
+      )
+        .bind(deliveryBy)
+        .run();
+    const statusOf = async () => {
+      const res = await intake.request(
+        "/status-export",
+        { headers: { "X-Intake-Key": KEY } },
+        authedEnv
+      );
+      const body = (await res.json()) as { cases: any[] };
+      return body.cases.find((c) => c.assr_no === "ASSR/TEST-9101")?.status;
+    };
+    // Not yet chosen: the bare seeded word, which the trigger map ignores.
+    await setDelivery(null);
+    expect(await statusOf()).toBe("Pending Delivery/Service");
+    // Own team: the parenthesised trigger word.
+    await setDelivery("own");
+    expect(await statusOf()).toBe("Pending Delivery/Service (Own Team)");
+    // Supplier: its own word, distinct from the trigger, fires nothing.
+    await setDelivery("supplier");
+    expect(await statusOf()).toBe("Pending Delivery/Service (Supplier)");
   });
 });
 

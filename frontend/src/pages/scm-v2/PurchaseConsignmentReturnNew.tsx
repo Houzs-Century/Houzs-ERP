@@ -19,7 +19,8 @@ import { transferFromLabel } from '../../lib/convertScope';
 import { todayMyt } from '../../vendor/scm/lib/dates';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowRightLeft, Plus, Save, Trash2, X, ChevronDown } from 'lucide-react';
+import { ArrowRightLeft, Save, Trash2, X, ChevronDown } from 'lucide-react';
+import { AddLineButton } from '../../vendor/scm/components/AddLineButton';
 import { Button } from '@2990s/design-system';
 import { buildVariantSummary } from '@2990s/shared';
 import {
@@ -31,12 +32,13 @@ import { readScmHandoff, removeScmHandoff } from '../../lib/scmHandoffStorage';
 import { usePurchaseConsignmentReceiveDetail } from '../../vendor/scm/lib/purchase-consignment-receive-queries';
 import { usePurchaseConsignmentOrderDetail } from '../../vendor/scm/lib/purchase-consignment-order-queries';
 import { useSuppliers } from '../../vendor/scm/lib/suppliers-queries';
-import { useMfgProducts, useMaintenanceConfig } from '../../vendor/scm/lib/mfg-products-queries';
+import { useMfgProducts, useMaintenanceConfig, mfgCategoryLabel } from '../../vendor/scm/lib/mfg-products-queries';
 import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
 import { useFabricTrackings } from '../../vendor/scm/lib/fabric-queries';
 import { PcVariantEditor } from '../../vendor/scm/components/PcVariantEditor';
 import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
+import { NumberInput } from '../../vendor/scm/components/NumberInput';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
 import styles from './SalesOrderDetail.module.css';
@@ -386,7 +388,7 @@ export const PurchaseConsignmentReturnNew = () => {
           {lines.length === 0 ? (
             <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-13)', padding: 'var(--space-3) 0' }}>
               {isManual
-                ? 'Pick a supplier in the header, then use “Add another item” below to add returns by hand.'
+                ? 'Pick a supplier in the header, then use “Add line” below to add returns by hand.'
                 : grn
                   ? 'No accepted lines on this Receive to return.'
                   : 'No lines on this Order to return.'}
@@ -477,7 +479,7 @@ export const PurchaseConsignmentReturnNew = () => {
                           />
                           <datalist id={`pct-products-${l.rid}`}>
                             {sortByText(productsQ.data ?? []).map((p) => (
-                              <option key={p.id} value={p.code}>{p.name} · {p.category}</option>
+                              <option key={p.id} value={p.code}>{p.name} · {mfgCategoryLabel(p.category)}</option>
                             ))}
                           </datalist>
                         </>
@@ -536,8 +538,8 @@ export const PurchaseConsignmentReturnNew = () => {
                   <div className={styles.formGrid4}>
                     <label className={styles.field}>
                       <span className={styles.fieldLabel}>Qty Returned</span>
-                      <input type="number" min={0} value={l.qtyReturned}
-                        onChange={(e) => setLine(l.rid, { qtyReturned: Math.max(0, Number(e.target.value) || 0) })}
+                      <NumberInput value={l.qtyReturned} sign="unsigned" decimal={false}
+                        onValueChange={(n) => setLine(l.rid, { qtyReturned: Math.max(0, n ?? 0) })}
                         className={styles.fieldInput} style={{ textAlign: 'right' }} />
                     </label>
                     <label className={styles.field}>
@@ -570,28 +572,7 @@ export const PurchaseConsignmentReturnNew = () => {
           )}
 
           {isManual && (
-            <button
-              type="button"
-              onClick={addLine}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 6,
-                width: '100%',
-                padding: '12px 14px',
-                border: '1px dashed var(--c-orange)',
-                borderRadius: 'var(--radius-md)',
-                background: 'transparent',
-                color: 'var(--c-orange)',
-                fontFamily: 'var(--font-sans)',
-                fontSize: 'var(--fs-13)',
-                fontWeight: 600,
-                cursor: 'pointer',
-              }}
-            >
-              <Plus {...ICON} /> Add another item
-            </button>
+            <AddLineButton variant="block" onClick={addLine} />
           )}
         </div>
       </section>

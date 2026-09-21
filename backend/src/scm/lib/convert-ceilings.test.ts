@@ -23,12 +23,15 @@
 // ----------------------------------------------------------------------------
 import { describe, expect, test } from 'vitest';
 import { findOverConvertOffender, soLineHeadroom } from './po-over-convert';
-import { doLineRemaining, doRemainingByItemId } from './do-line-remaining';
+import { doLineRemaining, doRemainingByItemId, returnableRemainingFrom } from './do-line-remaining';
 import { soDeliverableRemaining } from '../routes/delivery-orders-mfg';
 import { soLineOverConvertRefusal } from '../routes/mfg-purchase-orders';
 // Source text of the PO router, so the WIRING of the guard is asserted too — a
 // guard nothing calls is the exact failure mode this lane exists to catch.
 import poRouterSrc from '../routes/mfg-purchase-orders.ts?raw';
+// Same, for the Delivery Return router: the return ceiling must actually compose
+// doLineRemaining('delivered') with returnableRemainingFrom (PATH 4 below).
+import drRouterSrc from '../routes/delivery-returns.ts?raw';
 
 type Row = Record<string, unknown>;
 
@@ -321,12 +324,12 @@ describe('SO -> DO ceiling (qty - delivered + returned)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// PATH 3 + 4 — DO -> Sales Invoice and DO -> Delivery Return.
-//   Ceiling: delivered - invoiced - returned (ONE shared pool, so invoicing and
-//   returning compete). do-line-remaining.ts:218, enforced at
-//   sales-invoices.ts:423 (checkSiOverRemaining) and delivery-returns.ts:1126.
+// PATH 3 — DO -> Sales Invoice.
+//   Ceiling: delivered - invoiced - returned. do-line-remaining.ts, enforced at
+//   checkSiOverRemaining (sales-invoices.ts). Returning USED to share this pool;
+//   since 2026-09-20 the return pool is delivered - returned — PATH 4 below.
 // ---------------------------------------------------------------------------
-describe('DO -> Invoice / Return ceiling (delivered - invoiced - returned)', () => {
+describe('DO -> Invoice ceiling (delivered - invoiced - returned)', () => {
   const base = (over: Partial<Record<string, Row[]>> = {}) => ({
     delivery_orders: [{ id: 'do-1', do_number: 'DO-1', status: 'POSTED', debtor_code: 'C1', debtor_name: 'Cust' }],
     delivery_order_items: [{ id: 'dl-1', delivery_order_id: 'do-1', item_code: 'AKEMI-Q', qty: 10 }],
@@ -372,7 +375,9 @@ describe('DO -> Invoice / Return ceiling (delivered - invoiced - returned)', () 
     }))).toBe(0);
   });
 
-  test('invoicing and returning COMPETE for one pool — an invoiced unit cannot also be returned', async () => {
+  test('the INVOICE pool still subtracts returns — 7 invoiced + 3 returned leaves 0 to invoice', async () => {
+    // The two pools diverged in 2026-09-20 (returns no longer block invoicing),
+    // but the invoice pool still nets returns: returned goods must not be billed.
     expect(await pending(base({
       sales_invoices: [{ id: 'si-1', status: 'POSTED' }],
       sales_invoice_items: [{ do_item_id: 'dl-1', sales_invoice_id: 'si-1', qty: 7 }],
@@ -404,6 +409,73 @@ describe('DO -> Invoice / Return ceiling (delivered - invoiced - returned)', () 
 
   test('a DO line that no longer exists resolves to 0, never to unlimited', async () => {
     expect(await pendingOf(base(), 'ghost')).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PATH 4 — DO -> Delivery Return.
+//   Ceiling: delivered - returned, INDEPENDENT of invoicing (owner 2026-09-20).
+//   A customer pays, the DO is invoiced, then part comes back — so a fully-
+//   invoiced DO line must still be returnable. returnableRemainingFrom re-keys
+//   the pool; doReturnableRemaining (delivery-returns.ts) is the one caller, and
+//   the picker + every over-return guard read its `remaining`.
+// ---------------------------------------------------------------------------
+describe('DO -> Return ceiling (delivered - returned, independent of invoicing)', () => {
+  const base = (over: Partial<Record<string, Row[]>> = {}) => ({
+    delivery_orders: [{ id: 'do-1', do_number: 'DO-1', status: 'POSTED', debtor_code: 'C1', debtor_name: 'Cust' }],
+    delivery_order_items: [{ id: 'dl-1', delivery_order_id: 'do-1', item_code: 'AKEMI-Q', qty: 10 }],
+    sales_invoices: [], sales_invoice_items: [],
+    delivery_returns: [], delivery_return_items: [],
+    ...over,
+  });
+
+  /* doReturnableRemaining IS this composition: doLineRemaining(..., 'delivered')
+     then returnableRemainingFrom. Driving the two lib functions together pins the
+     number the route serves without booting the Hono route (scm rides Supabase
+     Postgres; this harness rebuilds only the D1 side). The wiring test below
+     proves the route actually composes them. */
+  async function returnable(tables: Record<string, Row[]>, id = 'dl-1') {
+    const led = await doLineRemaining(fakeSb(tables) as any, ['do-1'], 'delivered');
+    if (!led.ok) throw new Error(`expected a readable ledger, got: ${led.reason}`);
+    return returnableRemainingFrom(led.lines).get(id)?.remaining;
+  }
+
+  test('a FULLY-INVOICED DO line is still fully returnable — invoicing no longer blocks the return', async () => {
+    expect(await returnable(base({
+      sales_invoices: [{ id: 'si-1', status: 'POSTED' }],
+      sales_invoice_items: [{ do_item_id: 'dl-1', sales_invoice_id: 'si-1', qty: 10 }],
+    }))).toBe(10);
+  });
+
+  test('prior returns reduce what is still returnable (7 already back leaves 3), invoiced or not', async () => {
+    expect(await returnable(base({
+      sales_invoices: [{ id: 'si-1', status: 'POSTED' }],
+      sales_invoice_items: [{ do_item_id: 'dl-1', sales_invoice_id: 'si-1', qty: 10 }],
+      delivery_returns: [{ id: 'dr-1', status: 'POSTED' }],
+      delivery_return_items: [{ do_item_id: 'dl-1', delivery_return_id: 'dr-1', qty_returned: 7 }],
+    }))).toBe(3);
+  });
+
+  test('total returns stay capped at delivered — 8 already back leaves only 2', async () => {
+    expect(await returnable(base({
+      delivery_returns: [{ id: 'dr-1', status: 'POSTED' }],
+      delivery_return_items: [{ do_item_id: 'dl-1', delivery_return_id: 'dr-1', qty_returned: 8 }],
+    }))).toBe(2);
+  });
+
+  test('a CANCELLED return releases its qty back to returnable', async () => {
+    expect(await returnable(base({
+      delivery_returns: [{ id: 'dr-1', status: 'CANCELLED' }],
+      delivery_return_items: [{ do_item_id: 'dl-1', delivery_return_id: 'dr-1', qty_returned: 3 }],
+    }))).toBe(10);
+  });
+
+  /* WIRING — the route must actually compose the two. Asserted on source because
+     the route cannot be booted here; without it, doReturnableRemaining could
+     revert to the shared invoice pool and every test above would stay green. */
+  test('doReturnableRemaining feeds the delivered pool through returnableRemainingFrom', () => {
+    expect(drRouterSrc).toContain("doLineRemaining(sb, doIds, 'delivered')");
+    expect(drRouterSrc).toContain('returnableRemainingFrom(base.lines)');
   });
 });
 

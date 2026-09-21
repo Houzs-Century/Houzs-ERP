@@ -35,7 +35,7 @@
 
 import { Trash2 } from 'lucide-react';
 import type { MfgProductRow, MaintenanceConfig, SpecialAddonRow } from '../lib/mfg-products-queries';
-import { useModelAllowedOptionsByCode } from '../lib/mfg-products-queries';
+import { useModelAllowedOptionsByCode, mfgCategoryLabel } from '../lib/mfg-products-queries';
 import { SpecialOrders } from './SpecialOrders';
 import { specialOrderSurface } from '../lib/special-order-surface';
 import type { BindingRow, MaterialKind } from '../lib/suppliers-queries';
@@ -44,6 +44,7 @@ import { fabricOptionLabel, type FabricTrackingRow } from '../lib/fabric-queries
 import { sortByText, sortByNumeric, byText } from '../lib/sort-options';
 import type { Warehouse } from '../lib/inventory-queries';
 import { MoneyInput } from './MoneyInput';
+import { NumberInput } from './NumberInput';
 import { DiscountInput } from './DiscountInput';
 import { SearchableSelect } from './SearchableSelect';
 import styles from '../../../pages/scm-v2/SalesOrderDetail.module.css';
@@ -399,7 +400,7 @@ export const PoLineCard = ({
                 ))
               : sortByText(allSkus).map((p) => (
                   <option key={p.id} value={p.code}>
-                    {p.name} · {p.category}
+                    {p.name} · {mfgCategoryLabel(p.category)}
                   </option>
                 ))
             }
@@ -545,7 +546,7 @@ export const PoLineCard = ({
             color: 'var(--fg-muted)',
             marginBottom: 'var(--space-2)',
           }}>
-            {l.category} Variants
+            {mfgCategoryLabel(l.category)} Variants
           </div>
 
           {/* BEDFRAME — Fabrics · Gaps · Divan · Leg (dropdowns) + Special Orders.
@@ -663,11 +664,12 @@ export const PoLineCard = ({
       <div className={styles.formGrid4} style={{ gridTemplateColumns: hidePoFields ? 'repeat(3, 1fr)' : 'repeat(5, 1fr)' }}>
         <label className={styles.field}>
           <span className={styles.fieldLabel}>Qty</span>
-          <input
-            type="number" min={0} step={1}
+          <NumberInput
             value={l.qty}
+            sign="unsigned"
+            decimal={false}
             disabled={disabled}
-            onChange={(e) => onChange({ qty: Number(e.target.value) })}
+            onValueChange={(n) => onChange({ qty: n ?? 0 })}
             className={styles.fieldInput}
             style={{ textAlign: 'right' }}
           />

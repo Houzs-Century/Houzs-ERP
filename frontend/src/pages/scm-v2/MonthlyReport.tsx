@@ -4,7 +4,8 @@
 // figure — not on the balance sheet), then the newest month on the left and
 // older months to the right; a % toggle prints every cell as its % of that
 // column's base instead of the amount; L1..Ln folds the layout's levels;
-// Export writes the same table as CSV. Each column is ONE request to the
+// Excel and PDF export the same table AS SHOWN — these columns, these lines
+// at this level, amounts or % (owner 2026-09-19: 我这页显示什么就要 export 什么). Each column is ONE request to the
 // report's own endpoint for that period, so a month can never disagree with
 // the single-period screen for the same month. Nothing is stored.
 // Owner 2026-09-18: a cell with nothing in it prints a dash in both its slots
@@ -13,20 +14,25 @@
 // the whole range, a month's figure opens that month alone. Rows wear a
 // dashed hairline, light up under the mouse, and the name column stays put
 // while the months scroll (his pick of the two samples, style one).
+// Owner 2026-09-19: a subtotal or total row wears a shade of its own, apart
+// from the account rows; an opened account's lines a lighter one, cut at the
+// column's width, their figures under the amount slot, never under the %.
 // ----------------------------------------------------------------------------
 
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { useQueries } from '@tanstack/react-query';
-import { Download } from 'lucide-react';
+import { Download, Printer } from 'lucide-react';
 import { Button } from '@2990s/design-system';
-import { downloadCSV } from '../../lib/csv';
 import { fmtPct, foldsChildren, folderOpen, linesVisible } from '../../vendor/scm/lib/report-layout';
 import {
-  mergeColumns, monthColumns, monthlyCsv, monthlyDepth,
+  mergeColumns, monthColumns, monthLabel, monthlyDepth,
   type FlatLine, type MonthColumn, type MonthlyLine,
 } from '../../vendor/scm/lib/report-monthly';
 import { LevelButtons, useReportTree, type Level } from './ReportLayoutTree';
-import { AccountMonthRows } from './AccountMonthRows';
+import { AccountMonthRows, pctSlotStyle } from './AccountMonthRows';
+import { monthlyTable, type ReportSheet } from '../../vendor/scm/lib/report-sheet';
+import { downloadReportXlsx } from '../../vendor/scm/lib/report-sheet-xlsx';
+import { generateReportPdf } from '../../vendor/scm/lib/report-sheet-pdf';
 import styles from './MonthlyReport.module.css';
 
 const soft: React.CSSProperties = { fontSize: 'var(--fs-13)', color: 'var(--text-soft, #8a8578)' };
@@ -36,7 +42,10 @@ const card: React.CSSProperties = {
 const num: React.CSSProperties = { textAlign: 'right', whiteSpace: 'nowrap', padding: '2px 10px', fontVariantNumeric: 'tabular-nums' };
 /* The % under an amount — the same figure the % toggle prints alone. */
 /* The % rides BESIDE the amount, on the same line (owner 2026-09-18: percentage 应该在 amount 旁边而不是下面). */
-const pctBeside: React.CSSProperties = { fontSize: 'var(--fs-11, 11px)', color: 'var(--text-soft, #8a8578)', fontWeight: 400, marginLeft: 6, display: 'inline-block', minWidth: 46, textAlign: 'right' };
+const pctBeside: React.CSSProperties = { ...pctSlotStyle, fontSize: 'var(--fs-11, 11px)', color: 'var(--text-soft, #8a8578)', fontWeight: 400, textAlign: 'right' };
+/* A row's dress: every line row dashed and frozen; a total and a subtotal (net) shaded apart from the account rows; a block plain. */
+const rowClass = (kind: MonthlyLine['kind']): string | undefined =>
+  (kind === 'block' ? undefined : [styles.row, kind === 'total' ? styles.total : kind === 'net' ? styles.net : ''].join(' ').trim());
 const chevron: React.CSSProperties = { background: 'none', border: 'none', padding: '0 4px 0 0', cursor: 'pointer', font: 'inherit', color: 'var(--text-soft, #8a8578)', width: 18, display: 'inline-block', textAlign: 'left' };
 const nameBtn: React.CSSProperties = { background: 'none', border: 'none', padding: 0, cursor: 'pointer', font: 'inherit', color: 'inherit' };
 const figureBtn: React.CSSProperties = { ...nameBtn, fontVariantNumeric: 'tabular-nums' };
@@ -109,6 +118,16 @@ export function MonthlyReport<T>({ report, title, withCumulative, fetchColumn, l
   const shown = linesVisible(lines, level, tree.open);
   /* An account's lines open for the whole range on screen. */
   const range = { from: columns.reduce((a, c) => (c.from < a ? c.from : a), columns[0]?.from ?? ''), to: columns.reduce((a, c) => (c.to > a ? c.to : a), columns[0]?.to ?? '') };
+  /* The exports carry the table as shown — these columns, these lines at this level, amounts or % (owner 2026-09-19). */
+  const oldest = columns[columns.length - 1]?.key ?? '';
+  const fileBase = `${report}-monthly-${oldest}-${latest}`;
+  const sheet = (): ReportSheet => ({
+    title,
+    subtitle: `By month · ${monthLabel(oldest)} – ${monthLabel(latest)} · ${showPct ? pctTitle : `amounts, ${pctTitle} beside`}${level === 'all' ? '' : ` · level ${level}`}`,
+    meta: [{ label: 'Months', value: `${monthLabel(oldest)} – ${monthLabel(latest)}` }, { label: 'Figures', value: showPct ? pctTitle : `Amounts with ${pctTitle}` }],
+    tables: [monthlyTable(columns, shown, showPct)],
+    fmt,
+  });
 
   const style = (l: MonthlyLine): React.CSSProperties =>
     l.kind === 'block' ? { fontWeight: 700, paddingTop: 10 }
@@ -133,9 +152,11 @@ export function MonthlyReport<T>({ report, title, withCumulative, fetchColumn, l
         </span>
         <LevelButtons depth={depth} level={level} onLevel={setLevel} />
         <span style={{ flex: 1 }} />
-        <Button variant="ghost" size="sm" disabled={lines.length === 0}
-          onClick={() => downloadCSV(`${report}-monthly-${columns[columns.length - 1]?.key ?? ''}-${latest}.csv`, monthlyCsv(title, columns, shown, showPct, fmt, fmtPct))}>
-          <Download size={16} strokeWidth={1.75} /> Export
+        <Button variant="ghost" size="sm" disabled={lines.length === 0} onClick={() => void downloadReportXlsx(sheet(), `${fileBase}.xlsx`)}>
+          <Download size={16} strokeWidth={1.75} /> Excel
+        </Button>
+        <Button variant="ghost" size="sm" disabled={lines.length === 0} onClick={() => void generateReportPdf(sheet(), { fileName: `${fileBase}.pdf` })}>
+          <Printer size={16} strokeWidth={1.75} /> PDF
         </Button>
       </div>
       {loading && <div style={soft}>Working the months out…</div>}
@@ -160,7 +181,7 @@ export function MonthlyReport<T>({ report, title, withCumulative, fetchColumn, l
                 const drilled = drillable && Boolean(tree.drilled[l.id]);
                 return (
                   <Fragment key={l.id}>
-                    <tr data-kind={l.kind} data-depth={l.depth} className={l.kind === 'block' ? undefined : styles.row} style={l.kind === 'net' || l.kind === 'total' ? { borderTop: l.kind === 'net' ? '2px solid var(--c-ink, #221f20)' : '1px solid var(--border-weak, #e3e1da)' } : undefined}>
+                    <tr data-kind={l.kind} data-depth={l.depth} className={rowClass(l.kind)} style={l.kind === 'net' || l.kind === 'total' ? { borderTop: l.kind === 'net' ? '2px solid var(--c-ink, #221f20)' : '1px solid var(--border-weak, #e3e1da)' } : undefined}>
                       <td className={styles.name} style={{ padding: `2px 10px 2px ${10 + 14 * Math.max(0, l.depth)}px`, ...style(l) }}>
                         {folder && <button type="button" style={chevron} aria-label={`${open ? 'Collapse' : 'Expand'} ${l.label}`} aria-expanded={open} onClick={() => tree.toggle(l.id, open)}>{open ? '▾' : '▸'}</button>}
                         {drillable
@@ -191,7 +212,7 @@ export function MonthlyReport<T>({ report, title, withCumulative, fetchColumn, l
                     </tr>
                     {drilled && l.code && (
                       <AccountMonthRows code={l.code} columns={columns} from={range.from} to={range.to} month={drillMonth[l.id] ?? null}
-                        rowSen={l.cells.cumulative?.amountSen ?? Object.values(l.cells).reduce((sum, cell) => sum + (cell?.amountSen ?? 0), 0)} fmt={fmt} />
+                        rowSen={l.cells.cumulative?.amountSen ?? Object.values(l.cells).reduce((sum, cell) => sum + (cell?.amountSen ?? 0), 0)} fmt={fmt} pctSlot={!showPct} />
                     )}
                   </Fragment>
                 );

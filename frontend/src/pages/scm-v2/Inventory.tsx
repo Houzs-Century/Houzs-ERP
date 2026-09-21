@@ -31,6 +31,7 @@ import { useDebouncedSearchTerm, useSearchResultTransition } from '../../hooks/u
 import { adjustmentReasonLabel, fmtSen, fmtDate, fmtDateTime, fmtQty, formatVariantKey } from '@2990s/shared';
 import { DataTable, type Column } from '../../components/DataTable';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
+import { mfgCategoryLabel } from '../../vendor/shared/product-categories';
 import {
   useWarehouses,
   useInventoryProductTotals,
@@ -592,7 +593,7 @@ const BALANCE_COLUMNS: Column<InventoryProductTotal>[] = [
     label: 'Category',
     width: '100px',
     getValue: (r) => r.category,
-    render: (r) => <span className={styles.numCellZero}>{r.category}</span>,
+    render: (r) => <span className={styles.numCellZero}>{mfgCategoryLabel(r.category)}</span>,
   },
   {
     key: 'stock',
@@ -776,8 +777,8 @@ const BALANCE_COLUMNS: Column<InventoryProductTotal>[] = [
         <span
           className={`${styles.movementPill} ${mto ? styles.pillDeadStock : styles.pillFreeSoft}`}
           title={mto
-            ? `Make-to-order (${r.category}): ${fmtQty(idle)} spare on hand with no Sales Order — dead-stock candidate${parkedNote}. Open the drawer for the exact assigned/free lots.`
-            : `Make-to-stock (${r.category}): ${fmtQty(idle)} spare is expected for a shelf item${parkedNote}. Softer signal.`}
+            ? `Make-to-order (${mfgCategoryLabel(r.category)}): ${fmtQty(idle)} spare on hand with no Sales Order — dead-stock candidate${parkedNote}. Open the drawer for the exact assigned/free lots.`
+            : `Make-to-stock (${mfgCategoryLabel(r.category)}): ${fmtQty(idle)} spare is expected for a shelf item${parkedNote}. Softer signal.`}
         >
           {mto ? 'Dead' : 'Spare'} {fmtQty(idle)}
         </span>

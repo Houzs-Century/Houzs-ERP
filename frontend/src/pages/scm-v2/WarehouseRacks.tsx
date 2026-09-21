@@ -33,6 +33,7 @@ import {
 import { Button } from '../../components/Button';
 import { DataTable, type Column } from '../../components/DataTable';
 import { PageHeader } from '../../components/Layout';
+import { NumberInput } from '../../vendor/scm/components/NumberInput';
 import { fmtDate, fmtQty } from '@2990s/shared';
 import { useWarehouses } from '../../vendor/scm/lib/inventory-queries';
 import {
@@ -504,8 +505,8 @@ function StockIoTab({
           </label>
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Quantity</span>
-            <input className={styles.fieldInput} type="number" min={1} value={siQty}
-              onChange={(e) => setSiQty(Number(e.target.value))} />
+            <NumberInput className={styles.fieldInput} sign="unsigned" decimal={false} value={siQty}
+              onValueChange={(n) => setSiQty(n ?? 0)} />
           </label>
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Notes</span>
@@ -866,13 +867,13 @@ function SeedRacksModal({
           </label>
           <label className={formStyles.field}>
             <span className={formStyles.fieldLabel}>How many {Number(levels) > 1 ? 'aisles' : 'racks'}</span>
-            <input className={formStyles.fieldInput} type="number" min={1} max={MAX_SEED_RACKS} value={count}
-              onChange={(e) => setCount(Number(e.target.value))} />
+            <NumberInput className={formStyles.fieldInput} sign="unsigned" decimal={false} value={count}
+              onValueChange={(n) => setCount(n ?? 0)} />
           </label>
           <label className={formStyles.field}>
             <span className={formStyles.fieldLabel}>Levels per aisle</span>
-            <input className={formStyles.fieldInput} type="number" min={1} max={20} value={levels}
-              onChange={(e) => setLevels(Number(e.target.value))} />
+            <NumberInput className={formStyles.fieldInput} sign="unsigned" decimal={false} value={levels}
+              onValueChange={(n) => setLevels(n ?? 0)} />
           </label>
           <RackScopeField
             warehouses={warehouses}

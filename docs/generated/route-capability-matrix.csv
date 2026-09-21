@@ -187,10 +187,12 @@ POST,/api/chat-callback,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,YES,MU
 POST,/api/client-errors,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/clientErrors.ts
 GET,/api/client-errors/summary,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""*"")",,NO,DECLARED_GATE,backend/src/routes/clientErrors.ts
 GET,/api/companies,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/companies.ts
+GET,/api/delivery-sheet/assr-legs,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,NO,INHERITED_ONLY,backend/src/routes/deliverySheetSync.ts
 GET,/api/delivery-sheet/balance-collection,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,NO,INHERITED_ONLY,backend/src/routes/deliverySheetSync.ts
 GET,/api/delivery-sheet/outstanding-po,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,NO,INHERITED_ONLY,backend/src/routes/deliverySheetSync.ts
 GET,/api/delivery-sheet/overdue,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,NO,INHERITED_ONLY,backend/src/routes/deliverySheetSync.ts
 POST,/api/delivery-sheet/po-dates,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/deliverySheetSync.ts
+POST,/api/delivery-sheet/prune-check,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/deliverySheetSync.ts
 GET,/api/delivery-sheet/ready-open,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,NO,INHERITED_ONLY,backend/src/routes/deliverySheetSync.ts
 GET,/api/delivery-sheet/so-since,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,NO,INHERITED_ONLY,backend/src/routes/deliverySheetSync.ts
 POST,/api/delivery-sheet/updates,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/deliverySheetSync.ts
@@ -1145,8 +1147,18 @@ PATCH,/api/scm/sales-invoices/:id/status,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEX
 GET,/api/scm/sales-invoices/export/rows,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.sales.invoices"", { readInheritsFrom: ""scm.sales.orders"" })",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/sales-invoice-exports.ts
 POST,/api/scm/sales-invoices/from-dos,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.sales.invoices"", { readInheritsFrom: ""scm.sales.orders"" })",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/sales-invoices.ts
 GET,/api/scm/sales-invoices/invoiceable-do-lines,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.sales.invoices"", { readInheritsFrom: ""scm.sales.orders"" })",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/sales-invoices.ts
+POST,/api/scm/scan-gr/enqueue,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.grn"", { writeLevel: ""view"" })",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/scan-gr.ts
+GET,/api/scm/scan-gr/jobs,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.grn"", { writeLevel: ""view"" })",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/scan-gr.ts
+GET,/api/scm/scan-gr/jobs/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.grn"", { writeLevel: ""view"" })",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/scan-gr.ts
+POST,/api/scm/scan-gr/jobs/clear-failed,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.grn"", { writeLevel: ""view"" })",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/scan-gr.ts
+GET,/api/scm/scan-gr/slip-image,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.grn"", { writeLevel: ""view"" })",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/scan-gr.ts
 POST,/api/scm/scan-lorry-invoice/extract,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.transportation.drivers"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/scan-lorry-invoice.ts
 POST,/api/scm/scan-payment/extract,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.sales.orders"", { writeLevel: ""view"" })",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/scan-payment.ts
+POST,/api/scm/scan-pi/enqueue,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.pi"", { writeLevel: ""view"" })",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/scan-pi.ts
+GET,/api/scm/scan-pi/jobs,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.pi"", { writeLevel: ""view"" })",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/scan-pi.ts
+GET,/api/scm/scan-pi/jobs/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.pi"", { writeLevel: ""view"" })",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/scan-pi.ts
+POST,/api/scm/scan-pi/jobs/clear-failed,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.pi"", { writeLevel: ""view"" })",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/scan-pi.ts
+GET,/api/scm/scan-pi/slip-image,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.pi"", { writeLevel: ""view"" })",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/scan-pi.ts
 POST,/api/scm/scan-so/enqueue,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.sales.orders"", { writeLevel: ""view"" })",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/scan-so.ts
 POST,/api/scm/scan-so/extract,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.sales.orders"", { writeLevel: ""view"" })",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/scan-so.ts
 GET,/api/scm/scan-so/jobs,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.sales.orders"", { writeLevel: ""view"" })",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/scan-so.ts

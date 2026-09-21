@@ -37,6 +37,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Save, X, Plus, AlertTriangle, ChevronDown, Trash2 } from 'lucide-react';
 import { Button } from '@2990s/design-system';
+import { AddLineButton } from '../../vendor/scm/components/AddLineButton';
+import { useAddLineHotkey } from '../../vendor/scm/lib/useAddLineHotkey';
 import { activeOptions, ADJUSTMENT_REASONS, adjustmentIncreaseErrors, maintPickerValues } from '@2990s/shared';
 import { useWarehouses } from '../../vendor/scm/lib/inventory-queries';
 import { bucketKey, NO_BUCKET_PICKED } from '../../vendor/scm/lib/stock-adjustment-buckets';
@@ -45,7 +47,7 @@ import {
   useInventoryProductBreakdown,
   useInventoryBuckets,
 } from '../../vendor/scm/lib/stock-queries';
-import { useMfgProducts, useMaintenanceConfig, useSpecialAddons, type MaintenanceConfig, type SpecialAddonRow } from '../../vendor/scm/lib/mfg-products-queries';
+import { useMfgProducts, useMaintenanceConfig, useSpecialAddons, mfgCategoryLabel, type MaintenanceConfig, type SpecialAddonRow } from '../../vendor/scm/lib/mfg-products-queries';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
@@ -54,6 +56,7 @@ import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDialog';
 import { FreshMount } from '../../lib/freshMount';
 import { SpecialOrders } from '../../vendor/scm/components/SpecialOrders';
+import { NumberInput } from '../../vendor/scm/components/NumberInput';
 import { computeTotalHeight, isTotalHeightCategory, isTotalHeightPart } from '../../vendor/shared/total-height';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
@@ -261,7 +264,7 @@ function AdjustmentLineRow({
           />
           <datalist id={`stock-adjustment-skus-${line._key}`}>
             {sortByText(allSkus).map((p) => (
-              <option key={p.id} value={p.code}>{p.name} · {p.category}</option>
+              <option key={p.id} value={p.code}>{p.name} · {mfgCategoryLabel(p.category)}</option>
             ))}
           </datalist>
         </td>
@@ -280,16 +283,17 @@ function AdjustmentLineRow({
 
         {/* Qty — SIGNED. + increases, − decreases. On a DECREASE capped to the picked lot. */}
         <td className={styles.tableRight}>
-          <input
-            type="number"
-            step={1}
-            min={bucketQtyCap != null ? -bucketQtyCap : undefined}
+          {/* SIGNED — the only signed numeric field in the system (negative =
+              decrease). Empty / lone "-" reads as 0; a picked-lot decrease is
+              capped to the lot. */}
+          <NumberInput
             value={line.qty}
-            onChange={(e) => {
-              let n = Math.trunc(Number(e.target.value) || 0);
-              // Keep a picked-lot decrease from exceeding the lot.
-              if (n < 0 && bucketQtyCap != null) n = Math.max(n, -bucketQtyCap);
-              setLine(line._key, { qty: n });
+            sign="signed"
+            decimal={false}
+            onValueChange={(n) => {
+              let q = n ?? 0;
+              if (q < 0 && bucketQtyCap != null) q = Math.max(q, -bucketQtyCap);
+              setLine(line._key, { qty: q });
             }}
             className={styles.fieldInput}
             aria-label={`Qty for ${line.itemCode || 'line'}`}
@@ -574,6 +578,8 @@ const StockAdjustmentForm = ({ onStartNew }: { onStartNew: () => void }) => {
   }, []);
 
   const addLine = () => setLines((cur) => [...cur, blankLine()]);
+  // Insert adds a line — disabled once saved (form locked).
+  useAddLineHotkey(addLine, !saved);
 
   // Partial, not Record: a line that hasn't reported yet (just added, or its
   // effect hasn't fired) genuinely has no entry.
@@ -744,9 +750,7 @@ const StockAdjustmentForm = ({ onStartNew }: { onStartNew: () => void }) => {
       <section className={styles.card}>
         <div className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Items</h2>
-          <Button variant="ghost" size="sm" onClick={addLine}>
-            <Plus size={14} strokeWidth={1.75} /> Add Line Item
-          </Button>
+          <AddLineButton variant="ghost" onClick={addLine} />
         </div>
         <div className={styles.cardBody}>
           <p style={{ margin: '0 0 var(--space-3)', fontSize: 'var(--fs-13)', color: 'var(--fg-muted)' }}>
@@ -784,9 +788,7 @@ const StockAdjustmentForm = ({ onStartNew }: { onStartNew: () => void }) => {
           </table>
 
           <div className={styles.addLineRow}>
-            <Button variant="ghost" size="sm" onClick={addLine}>
-              <Plus size={14} strokeWidth={1.75} /> Add Line Item
-            </Button>
+            <AddLineButton variant="ghost" onClick={addLine} />
           </div>
         </div>
       </section>
