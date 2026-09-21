@@ -13,16 +13,18 @@
 // how you clear one. Never write a 0 row for a category the owner did not set:
 // that would silently zero the base for that supplier.
 //
-// Endpoints (all gated scm.procurement.mrp, same as the base /mrp-lead-times):
+// Endpoints (all mounted under scm.procurement.mrp; the two WRITES are ALSO
+// config-write gated — see the PUT note below, same as the base /mrp-lead-times):
 //   GET    /?supplierId=<uuid> — { leadTimes: { sofa: n|null, … } } for one
 //                                supplier; null = not overridden (base applies)
-//   PUT    /  — body { supplierId, category, leadDays } → upsert the override
-//   DELETE /  — body { supplierId, category } → clear the override (base applies)
+//   PUT    /  — body { supplierId, category, leadDays } → upsert (config-write)
+//   DELETE /  — body { supplierId, category } → clear the override (config-write)
 // ----------------------------------------------------------------------------
 
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { supabaseAuth } from '../middleware/auth';
+import { canWriteScmConfig } from '../lib/houzs-perms';
 import { activeCompanyId, scopeToCompany } from '../lib/companyScope';
 import { LEAD_CATEGORIES, type LeadCategory } from '../lib/lead-time';
 import type { Env, Variables } from '../env';
@@ -77,7 +79,17 @@ mrpSupplierLeadTimes.get('/', async (c) => {
 
 // PUT / — upsert one (supplier, category) override. Uniqueness is
 // (company_id, supplier_id, category).
+//
+// Config-write gated (canWriteScmConfig — flat `scm.config.write` OR the position
+// policy canWriteConfig flag, see houzs-perms.ts), like the base /mrp-lead-times
+// PUT. The /mrp-supplier-lead-times/* area guard is scm.procurement.mrp, which
+// falls through for a non-L2-configured caller (a flat scm.access holder), so the
+// coarse umbrella alone would let any SCM user rewrite overrides. GET stays open —
+// the supplier page reads the overrides.
 mrpSupplierLeadTimes.put('/', async (c) => {
+  if (!canWriteScmConfig(c)) {
+    return c.json({ error: 'forbidden', reason: 'missing_scm_config_write' }, 403);
+  }
   let body: unknown;
   try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
   const parsed = putSchema.safeParse(body);
@@ -102,8 +114,12 @@ mrpSupplierLeadTimes.put('/', async (c) => {
 
 // DELETE / — clear one override so the base applies again. The company_id +
 // supplier_id + category predicate is the whole tenant boundary on this write
-// (the SCM client is service-role and bypasses RLS).
+// (the SCM client is service-role and bypasses RLS). Config-write gated, same as
+// PUT above — a DELETE here is a master-data write like the upsert.
 mrpSupplierLeadTimes.delete('/', async (c) => {
+  if (!canWriteScmConfig(c)) {
+    return c.json({ error: 'forbidden', reason: 'missing_scm_config_write' }, 403);
+  }
   let body: unknown;
   try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
   const parsed = deleteSchema.safeParse(body);
