@@ -12,9 +12,9 @@
  * The numbering is unit-tested for real; the wiring is source-anchored (same
  * style as acNotSentWiring.test.ts) because there is no DB in this suite. */
 import { describe, expect, test } from 'vitest';
-import { nextSupplierReturnRoundNo } from '../src/services/assr';
+import { nextSupplierReturnRoundNo } from '../src/services/assrSupplierReturns';
 import routeRaw from '../src/routes/assr.ts?raw';
-import svcRaw from '../src/services/assr.ts?raw';
+import svcRaw from '../src/services/assrSupplierReturns.ts?raw';
 
 describe('nextSupplierReturnRoundNo', () => {
   test('no trips yet -> 1', () => {

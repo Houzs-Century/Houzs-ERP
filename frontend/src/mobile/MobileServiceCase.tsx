@@ -27,7 +27,8 @@ import {
   assrSubStatus,
   ASSR_SUB_STATUSES,
 } from "../vendor/scm/lib/assr/stages";
-import { roundLabel, roundCount, currentRound, QC_RESULTS, type SupplierReturn } from "../vendor/scm/lib/assr/returns";
+import type { SupplierReturn } from "../vendor/scm/lib/assr/returns";
+import { MobileFactoryTrips } from "./MobileFactoryTrips";
 import { splitCategories } from "../lib/assrProductCategories";
 import { MobileAssrCategoryChips } from "./MobileAssrCategoryChips";
 import { LegOwnerToggle } from "./AssrLegOwnerToggle";
@@ -755,20 +756,6 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
       await api.patch(`/api/assr/${id}`, body);
     }, failTitle);
 
-  // 返厂 — add a factory trip (reopens the case server-side), edit a trip, or
-  // remove a mistaken one.
-  const addFactoryReturn = (reason: string | null) =>
-    runWrite(async () => {
-      await api.post(`/api/assr/${id}/supplier-returns`, { reason });
-    }, "Couldn't add factory return");
-  const patchSupplierReturn = (roundId: number, body: Record<string, string | null>) =>
-    runWrite(async () => {
-      await api.patch(`/api/assr/${id}/supplier-returns/${roundId}`, body);
-    }, "Couldn't save the trip");
-  const archiveSupplierReturn = (roundId: number) =>
-    runWrite(async () => {
-      await api.del(`/api/assr/${id}/supplier-returns/${roundId}`);
-    }, "Couldn't remove the trip");
 
   const addNote = useMutation({
     mutationFn: (payload: { note: string; category: NoteAudience }) =>
@@ -1118,11 +1105,10 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
                 supplier_pickup_at / items_ready_at for the board + sheet. */}
             <MobileFactoryTrips
               returns={(data?.supplier_returns ?? []) as SupplierReturn[]}
+              caseId={id}
               busy={busy}
               disabled={dis}
-              onAdd={addFactoryReturn}
-              onPatch={patchSupplierReturn}
-              onArchive={archiveSupplierReturn}
+              runWrite={runWrite}
             />
             <EditRow label="Supplier status update" type="textarea" value={get(c, "actionRemark", "action_remark")} busy={busy} disabled={dis} onSave={(v) => patchCase({ action_remark: v }, "Couldn't save status update")} />
           </>
@@ -2537,81 +2523,6 @@ function Acc({
       </summary>
       <div className="pbody">{children}</div>
     </details>
-  );
-}
-
-// 返厂 (owner 2026-09-21) — the mobile presentation of the factory-return list.
-// Every trip is a row (added freely, no limit); the latest is the current trip.
-// Same logic as desktop via vendor/scm/lib/assr/returns; mobile uses its own
-// EditRow/KV primitives for the presentation.
-const QC_ROW_OPTIONS = [{ value: "", label: "—" }, ...QC_RESULTS];
-function MobileFactoryTrips({
-  returns,
-  busy,
-  disabled,
-  onAdd,
-  onPatch,
-  onArchive,
-}: {
-  returns: SupplierReturn[];
-  busy: boolean;
-  disabled: boolean;
-  onAdd: (reason: string | null) => void;
-  onPatch: (roundId: number, patch: Record<string, string | null>) => void;
-  onArchive: (roundId: number) => void;
-}) {
-  const [adding, setAdding] = useState(false);
-  const [reason, setReason] = useState("");
-  const rows = (returns ?? [])
-    .filter((r) => !r.archived_at)
-    .sort((a, b) => (a.round_no ?? 0) - (b.round_no ?? 0));
-  const count = roundCount(returns ?? []);
-  const cur = currentRound(returns ?? []);
-  const firstTrip = count === 0;
-  const add = () => { onAdd(reason.trim() || null); setReason(""); setAdding(false); };
-  return (
-    <div style={{ marginTop: 10, borderTop: `1px solid ${LINE}`, paddingTop: 8 }}>
-      <div className="fld-l">Supplier Returns{count > 0 ? ` · ${count === 1 ? "1 trip" : `${count} trips`}` : ""}</div>
-      {rows.map((r) => (
-        <div key={r.id} style={{ border: `1px solid ${cur && cur.id === r.id ? BLUE : LINE}`, borderRadius: 8, padding: "6px 10px", marginTop: 6 }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <span style={{ fontSize: 12.5, fontWeight: 700, color: INK }}>
-              {roundLabel(r.round_no)}{cur && cur.id === r.id ? " · Current" : ""}
-            </span>
-            {!disabled ? (
-              <button className="tinybtn" disabled={busy} onClick={() => onArchive(r.id)}>Remove</button>
-            ) : null}
-          </div>
-          <EditRow label="Sent to Supplier" type="date" value={r.pickup_at} busy={busy} disabled={disabled} onSave={(v) => onPatch(r.id, { pickup_at: v })} />
-          <EditRow label="Back from Supplier" type="date" value={r.returned_at} busy={busy} disabled={disabled} onSave={(v) => onPatch(r.id, { returned_at: v })} />
-          <EditRow label="QC Result" type="select" options={QC_ROW_OPTIONS} value={r.qc_result} busy={busy} disabled={disabled} onSave={(v) => onPatch(r.id, { qc_result: v })} />
-          <EditRow label="Supplier" value={r.creditor_code} busy={busy} disabled={disabled} onSave={(v) => onPatch(r.id, { creditor_code: v })} />
-          <EditRow label={r.round_no > 1 ? "Why Sent Back Again" : "Reason"} value={r.reason} busy={busy} disabled={disabled} onSave={(v) => onPatch(r.id, { reason: v })} />
-          <EditRow label="Note" type="textarea" value={r.note} busy={busy} disabled={disabled} onSave={(v) => onPatch(r.id, { note: v })} />
-        </div>
-      ))}
-      {!disabled ? (
-        adding && !firstTrip ? (
-          <div style={{ marginTop: 8 }}>
-            <input
-              value={reason}
-              autoFocus
-              placeholder="Why sent back again (QC failed / broke again…)"
-              onChange={(e) => setReason(e.target.value)}
-              style={{ width: "100%", boxSizing: "border-box", padding: "8px 10px", border: `1px solid ${LINE}`, borderRadius: 8, fontSize: 13 }}
-            />
-            <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
-              <button className="tinybtn" disabled={busy} onClick={add}>Add Return</button>
-              <button className="tinybtn" onClick={() => { setAdding(false); setReason(""); }}>Cancel</button>
-            </div>
-          </div>
-        ) : (
-          <button className="tinybtn" style={{ marginTop: 8 }} disabled={busy} onClick={() => (firstTrip ? add() : setAdding(true))}>
-            + Add Supplier Return
-          </button>
-        )
-      ) : null}
-    </div>
   );
 }
 
