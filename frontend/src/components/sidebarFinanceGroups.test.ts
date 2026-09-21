@@ -10,8 +10,10 @@ import { ACCOUNTING_TABS } from '../pages/scm-v2/accounting-tabs';
  * the Accounting page became six groups: Money in, Money out, Bank & cards,
  * Books, Reports, Setup. The Accounting page's tabs are reached by deep link
  * (`/scm/accounting?tab=…`), so the sidebar can name a report directly.
+ * A seventh, Forecasting, joined on 2026-09-21 (the Forecast P&L; the
+ * Dashboard follows) — targets, not books, so it sits after the reports.
  *
- * Pinned here: the six groups in the owner's order; every destination that
+ * Pinned here: the seven groups in the owner's order; every destination that
  * existed before still exists (nothing lost in the move); every deep link
  * names a tab the page knows; no destination twice.
  */
@@ -21,10 +23,10 @@ const flatten = (tabs: readonly NavTab[]): NavTab[] =>
 const finance = NAV_TABS.find((t) => t.groupId === 'scm-finance');
 
 describe('the Finance sidebar', () => {
-  it('is six groups, in the order the money moves', () => {
+  it('is seven groups, in the order the money moves', () => {
     expect(finance).toBeDefined();
     expect((finance?.children ?? []).map((g) => g.label)).toEqual([
-      'Money in', 'Money out', 'Bank & cards', 'Books', 'Reports', 'Setup',
+      'Money in', 'Money out', 'Bank & cards', 'Books', 'Reports', 'Forecasting', 'Setup',
     ]);
     for (const g of finance?.children ?? []) {
       expect(g.children?.length ?? 0, `${g.label} has entries`).toBeGreaterThan(0);
@@ -40,8 +42,8 @@ describe('the Finance sidebar', () => {
       '/scm/settlement-setup', '/scm/chart-of-accounts', '/scm/other-debtors', '/scm/ap-invoices',
       '/scm/receipts', '/scm/payment-vouchers', '/scm/outstanding', '/scm/unbilled-deliveries',
       '/scm/currencies', '/reports/fair-report',
-      /* And the ones added since (docs/bugs/0827, 0828). */
-      '/scm/credit-notes', '/scm/deposit-invoices',
+      /* And the ones added since (docs/bugs/0827, 0828; the Forecast P&L 2026-09-21). */
+      '/scm/credit-notes', '/scm/deposit-invoices', '/scm/forecast',
     ]) expect(tos, `${to} is still reachable`).toContain(to);
     /* The Accounting page's tabs, now reachable by name. */
     for (const tab of ['je', 'gl', 'tb', 'close', 'check', 'pnl', 'bs', 'rp', 'ar', 'ap', 'corrections', 'collection', 'charges', 'groups', 'performance']) {

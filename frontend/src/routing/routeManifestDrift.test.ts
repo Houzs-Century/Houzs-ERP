@@ -78,7 +78,9 @@ describe("executable route contract", () => {
     // 160 since 2026-09-13: /scm/fair-pending — the sales orders whose FAIR link
     // the system could not settle on its own (two booths fit, or the order's
     // brand has no booth at that event). docs/bugs/0862.
-    expect(STAFF_ROUTE_PATTERNS).toHaveLength(160);
+    // 161 since 2026-09-21: /scm/forecast — the Forecast P&L, targets per
+    // account on the P&L's own tree, the Dashboard's forecast side.
+    expect(STAFF_ROUTE_PATTERNS).toHaveLength(161);
     expect(new Set(STAFF_ROUTE_PATTERNS).size).toBe(STAFF_ROUTE_PATTERNS.length);
     expect([...STAFF_ROUTE_PATTERNS].sort()).toEqual([...appPages].sort());
   });
@@ -116,7 +118,8 @@ describe("executable route contract", () => {
     // 167 since 2026-09-12 — /scm/deposit-invoices; see the staff-route count above.
     // 168 since 2026-09-12 — /venture-portal-feed; see the staff-route count.
     // 169 since 2026-09-13 — /scm/fair-pending; see the staff-route count above.
-    expect(ROUTE_CONTRACT).toHaveLength(169);
+    // 170 since 2026-09-21 — /scm/forecast; see the staff-route count above.
+    expect(ROUTE_CONTRACT).toHaveLength(170);
   });
 
   it("keeps every desktop nav destination on a live staff route", () => {

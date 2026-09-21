@@ -743,6 +743,17 @@ export const NAV_TABS: NavTab[] = [
         ],
       },
       {
+        // ── Forecasting (owner 2026-09-21: the Hookka Forecast P&L + Dashboard,
+        //    trading edition — targets per account on the P&L's own tree; the
+        //    Dashboard reads them beside the statements' actuals).
+        label: "Forecasting",
+        icon: BarChart3,
+        groupId: "scm-finance-forecast",
+        children: [
+          { to: "/scm/forecast", label: "Forecast P&L", icon: BarChart3, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.accounting"] },
+        ],
+      },
+      {
         label: "Setup",
         icon: SettingsIcon,
         groupId: "scm-finance-setup",

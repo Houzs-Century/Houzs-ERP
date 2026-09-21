@@ -78,6 +78,7 @@ export const STAFF_ROUTE_PATTERNS = [
   "/scm/ap-invoices/scan",
   "/scm/credit-notes",
   "/scm/deposit-invoices",
+  "/scm/forecast",
   "/scm/payment-vouchers/:id",
   "/scm/stock-adjustments",
   "/scm/stock-adjustments/new",
