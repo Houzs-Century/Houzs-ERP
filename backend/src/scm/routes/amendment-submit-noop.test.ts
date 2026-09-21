@@ -26,7 +26,7 @@ describe('the submit route drops no-op lines first', () => {
       'if (!noopSplit) return c.json(LINE_BUILD_ERRORS.unreadable, 500);',
       'const submittedLines = noopSplit.kept;',
       "error: 'amendment_empty'",
-      'await resolveAmendmentLaneSplit(sb, docNo, activeCompanyId(c), headerChanges, submittedLines)',
+      'await resolveAmendmentLaneSplit(sb, docNo, activeCompanyId(c), headerChanges, submittedLines, priceLaneEnabled)',
     ))).toBe(true);
   });
 });
@@ -38,7 +38,7 @@ describe('the lane preview drops the same lines before it splits', () => {
     }
     expect(ascending(order(rawPreview,
       'await dropNoopAmendmentLines(sb, docNo, rawLines)',
-      'await resolveAmendmentLaneSplit(sb, docNo, activeCompanyId(c), headerChanges, noopSplit.kept)',
+      'await resolveAmendmentLaneSplit(sb, docNo, activeCompanyId(c), headerChanges, noopSplit.kept, priceLaneEnabled)',
     ))).toBe(true);
   });
 });
