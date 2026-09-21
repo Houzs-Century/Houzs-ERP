@@ -40,6 +40,8 @@ const BILL: DebtorBillPdfData = {
     lines: [
       { id: 'l1', line_no: 1, description: 'Sublet of showroom corner', credit_account_code: '570-0020', amount_sen: 45000 },
       { id: 'l2', line_no: 2, description: null, credit_account_code: '599-0006', amount_sen: 5000 },
+      /* A text line (owner 2026-09-21): the description alone, no number, no amount. */
+      { id: 'l3', line_no: 3, description: 'Ground floor, unit 3A', credit_account_code: null, amount_sen: 0 },
     ],
   },
   debtor: {
@@ -79,6 +81,10 @@ describe('the Other Debtor bill sheet', () => {
     expect(has(draws, 'MYR 450.00')).toBe(true);
     /* A blank description prints the account's name — never the code. */
     expect(has(draws, 'WATER & ELECTRICITY INCOME - OFFICE')).toBe(true);
+    /* The text line prints its words and nothing else: no MYR 0.00, no third number. */
+    expect(has(draws, 'Ground floor, unit 3A')).toBe(true);
+    expect(has(draws, 'MYR 0.00')).toBe(false);
+    expect(draws.some((d) => d.text === '3')).toBe(false);
     expect(has(draws, '599-0006')).toBe(false);
     expect(has(draws, '570-0020')).toBe(false);
     expect(has(draws, 'TOTAL')).toBe(true);

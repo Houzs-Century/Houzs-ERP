@@ -181,10 +181,15 @@ export const debtorDetailHandler = async (c: any): Promise<Response> => {
 
 /* ── Debtor Bill — posts directly (the owner: bill 直接过账) ───────────────── */
 
-type BillLine = { description: string | null; code: string; amountSen: number };
+/** A MONEY line names a credit account and a positive sen; a TEXT line (code
+    null, amount 0) carries a description alone — it prints, books nothing. */
+type BillLine = { description: string | null; code: string | null; amountSen: number };
+const isMoneyLine = (l: BillLine): l is BillLine & { code: string } => l.code !== null;
 
-/** 1–50 lines, each a credit account and a positive integer sen — the one
-    parser behind raising a bill and editing one. */
+/** 1–50 lines: money lines (an account and a positive integer sen) and text
+    lines (owner 2026-09-21: 有一些我只想放 description 罢了 — a description, no
+    account, no amount). At least one money line. The one parser behind
+    raising a bill and editing one. */
 function buildBillLines(raw: unknown): { lines: BillLine[]; total: number } | { error: string; message: string } {
   const rawLines = Array.isArray(raw) ? raw : [];
   if (rawLines.length === 0 || rawLines.length > 50) {
@@ -193,12 +198,22 @@ function buildBillLines(raw: unknown): { lines: BillLine[]; total: number } | { 
   const lines: BillLine[] = [];
   for (const [i, l] of rawLines.entries()) {
     const code = String(l?.creditAccountCode ?? '').trim();
-    const amount = Number(l?.amountSen);
+    const description = l?.description ? String(l.description).trim() : '';
+    const blankAmount = l?.amountSen === undefined || l?.amountSen === null || l?.amountSen === '';
+    const amount = blankAmount ? 0 : Number(l?.amountSen);
+    if (!code && amount === 0) {
+      if (!description) return { error: 'bad_line', message: `Line ${i + 1} is empty — a text line needs a description.` };
+      lines.push({ description, code: null, amountSen: 0 });
+      continue;
+    }
     if (!code) return { error: 'bad_line', message: `Line ${i + 1} has no account.` };
     if (!Number.isInteger(amount) || amount <= 0) {
       return { error: 'bad_line', message: `Line ${i + 1}: amountSen must be a positive integer (got ${String(l?.amountSen)}).` };
     }
-    lines.push({ description: l?.description ? String(l.description).trim() : null, code, amountSen: amount });
+    lines.push({ description: description || null, code, amountSen: amount });
+  }
+  if (!lines.some(isMoneyLine)) {
+    return { error: 'lines_required', message: 'A bill needs at least one line with an account and an amount — text lines alone book nothing.' };
   }
   return { lines, total: lines.reduce((s, l) => s + l.amountSen, 0) };
 }
@@ -212,7 +227,7 @@ function debtorBillRuleLines(roles: { AR_OTHER: string }, debtorName: string, bi
       partyType: 'ODEBTOR', partyCode: null, partyName: debtorName,
       notes: `Other debtor ${debtorName} — ${billNumber}`,
     },
-    ...lines.map((l) => ({
+    ...lines.filter(isMoneyLine).map((l) => ({
       accountCode: l.code, debitSen: 0, creditSen: l.amountSen,
       partyType: null, partyCode: null, partyName: null,
       notes: l.description ?? billNumber,
@@ -238,7 +253,7 @@ export const createDebtorBillHandler = async (c: any): Promise<Response> => {
   const coId = co.companyId;
   /* Each credit line takes only ordinary LEAVES — the same door the PV's
      debit walks: headers refuse (父户不记账), controls refuse (由模块过账). */
-  for (const code of [...new Set(lines.map((l) => l.code))]) {
+  for (const code of [...new Set(lines.filter(isMoneyLine).map((l) => l.code))]) {
     const leafErr = await requireLeafAccount(c, coId, code);
     if (leafErr) return leafErr;
   }
@@ -328,7 +343,7 @@ export const updateDebtorBillHandler = async (c: any): Promise<Response> => {
     if (built.total < received) {
       return c.json({ error: 'total_below_received', message: `${billNumber} already has ${fmtSen(received)} received against it — the total cannot fall below that.` }, 409);
     }
-    for (const code of [...new Set(built.lines.map((l) => l.code))]) {
+    for (const code of [...new Set(built.lines.filter(isMoneyLine).map((l) => l.code))]) {
       const leafErr = await requireLeafAccount(c, coId, code);
       if (leafErr) return leafErr;
     }
@@ -371,7 +386,7 @@ export const updateDebtorBillHandler = async (c: any): Promise<Response> => {
       sb.from('acc_debtor_bill_lines').select('line_no, description, credit_account_code, amount_sen').eq('bill_id', bill.id), c,
     ).order('line_no');
     if (lErr) return c.json({ error: 'load_failed', reason: lErr.message }, 500);
-    lines = ((rows ?? []) as Row[]).map((l) => ({ description: l.description ?? null, code: String(l.credit_account_code), amountSen: Number(l.amount_sen) }));
+    lines = ((rows ?? []) as Row[]).map((l) => ({ description: l.description ?? null, code: l.credit_account_code ? String(l.credit_account_code) : null, amountSen: Number(l.amount_sen) }));
   }
   const roles = await resolveRoles(sb, coId);
   const r = await postJournal(sb, {

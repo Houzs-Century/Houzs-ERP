@@ -409,7 +409,8 @@ export type OtherDebtor = {
   id: string; name: string; phone: string | null; notes: string | null;
   is_active: boolean; outstanding_sen: number;
 } & Partial<DebtorPartyColumns>;
-export type DebtorBillLine = { id: string; line_no: number; description: string | null; credit_account_code: string; amount_sen: number };
+/** A bill line: a money line names its account; a TEXT line (2026-09-21) has no account and a zero amount — description only. */
+export type DebtorBillLine = { id: string; line_no: number; description: string | null; credit_account_code: string | null; amount_sen: number };
 export type DebtorBill = {
   id: string; bill_number: string; bill_date: string;
   total_sen: number; received_sen: number; status: string; notes: string | null;
@@ -460,7 +461,7 @@ export const useCreateDebtorBill = () => {
   return useMutation({
     mutationFn: ({ debtorId, ...body }: {
       debtorId: string; billDate?: string; notes?: string;
-      lines: Array<{ description?: string; creditAccountCode: string; amountSen: number }>;
+      lines: Array<{ description?: string; creditAccountCode?: string; amountSen: number }>;
     }) => authedFetch<{ ok: boolean; bill: { billNumber: string; totalSen: number } }>(
       `/other-debtors/${debtorId}/bills`, { method: 'POST', body: JSON.stringify(body) },
     ),
@@ -473,7 +474,7 @@ export const useUpdateDebtorBill = () => {
   return useMutation({
     mutationFn: ({ billId, body }: {
       billId: string;
-      body: { billDate?: string; notes?: string; lines?: Array<{ description?: string; creditAccountCode: string; amountSen: number }> };
+      body: { billDate?: string; notes?: string; lines?: Array<{ description?: string; creditAccountCode?: string; amountSen: number }> };
     }) => authedFetch<{ ok: boolean; bill: { id: string; billNumber: string; totalSen: number }; reposted?: boolean; jeNo?: string }>(
       `/other-debtors/bills/${billId}`, { method: 'PATCH', body: JSON.stringify(body) },
     ),

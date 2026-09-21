@@ -86,11 +86,17 @@ export async function renderDebtorBillInto(doc: JsPdf, autoTable: AutoTable, d: 
 
   /* The reader's view of a line: what it was for and how much — our account
      is the bookkeeping behind it and stays off the paper. */
-  const rows = lines.map((l, idx) => [
-    String(idx + 1),
-    l.description?.trim() ? l.description : (d.accountName?.(l.credit_account_code) ?? '—'),
-    fmtRm(Number(l.amount_sen)),
-  ]);
+  /* A TEXT line (no account, amount zero) is words alone — no number, no amount; the money lines count on. */
+  let n = 0;
+  const rows = lines.map((l) => {
+    if (l.credit_account_code == null && Number(l.amount_sen) === 0) return ['', l.description ?? '', ''];
+    n += 1;
+    return [
+      String(n),
+      l.description?.trim() ? l.description : (l.credit_account_code ? (d.accountName?.(l.credit_account_code) ?? '—') : '—'),
+      fmtRm(Number(l.amount_sen)),
+    ];
+  });
   autoTable(doc, {
     startY: y,
     head: [['#', 'Description', 'Amount']],
