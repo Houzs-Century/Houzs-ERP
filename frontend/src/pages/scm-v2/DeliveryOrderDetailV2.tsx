@@ -805,6 +805,14 @@ export function DeliveryOrderDetailV2() {
   // window.print(), which prints a BLANK sheet here (index.css's @media print
   // reveals only .org-print-area); it now prints the real document.
   const doDeliverPdf = (action: PdfAction) => {
+    if (!deliveryOrder) return Promise.resolve();
+    // Resolve the salesperson name the SAME way the on-screen field does (the PDF
+    // cannot run the staff lookup); blank ⇒ the DO omits the row rather than
+    // printing "Unassigned".
+    const salesperson =
+      deliveryOrder.salesperson_name ||
+      salespersonNameOf(deliveryOrder.agent, deliveryOrder.salesperson_id, "") ||
+      null;
     return import("../../vendor/scm/lib/delivery-order-pdf")
       .then(async ({ generateDeliveryOrderPdf }) => {
         // armDoScanToken puts the PUBLIC scan token on the header — the print's
@@ -814,7 +822,7 @@ export function DeliveryOrderDetailV2() {
           deliveryOrder as Record<string, unknown>,
           (deliveryOrder as { id?: string }).id ?? "",
         );
-        return generateDeliveryOrderPdf(header as never, items as never, { action });
+        return generateDeliveryOrderPdf({ ...header, salesperson } as never, items as never, { action });
       })
       .then(() => {
         // Downloads and prints are terminal — close behind them. A new-tab
