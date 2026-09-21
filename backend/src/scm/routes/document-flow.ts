@@ -81,6 +81,39 @@ const cover = (childQty: number, parentQty: number): EdgeKind =>
 const uniq = (xs: Array<string | null | undefined>) =>
   [...new Set(xs.filter((x): x is string => !!x))];
 
+/* A PO's goods receipts are its LINES' receipts, never the GRN header FK. The
+   receive flow (grns POST /from-po-items) groups multi-selected picks by
+   SUPPLIER into ONE GRN whose header names only the FIRST source PO, while every
+   grn_item keeps its own purchase_order_item_id — so one GRN routinely receives
+   lines across many POs. Keying a PO's GRNs off grns.purchase_order_id therefore
+   hides that receipt on every source PO but the header one. Derive the PO ▸ GRN
+   coverage from the grn_items line link instead, per (PO, GRN); the header FK is
+   only a fallback for a GRN that received nothing on record. Same union the
+   multi-GRN PI resolver already uses. Pure so the mapping is unit-testable. */
+export function derivePoGrnCoverage(
+  poItemQty: ReadonlyMap<string, { poId: string; qty: number }>,
+  grnLines: ReadonlyArray<{ grn_id: string; purchase_order_item_id: string | null; qty: number }>,
+): Map<string, { childQty: number; parentQty: number }> {
+  const agg = new Map<string, { childQty: number; parentItems: Set<string> }>(); // `${poId}|${grnId}`
+  for (const l of grnLines) {
+    const itemId = l.purchase_order_item_id;
+    if (!itemId || !l.grn_id) continue;
+    const pm = poItemQty.get(itemId);
+    if (!pm) continue;
+    const k = `${pm.poId}|${l.grn_id}`;
+    const a = agg.get(k) ?? { childQty: 0, parentItems: new Set<string>() };
+    a.childQty += Number(l.qty ?? 0);
+    a.parentItems.add(itemId);
+    agg.set(k, a);
+  }
+  const out = new Map<string, { childQty: number; parentQty: number }>();
+  for (const [k, a] of agg) {
+    const parentQty = [...a.parentItems].reduce((s, pi) => s + (poItemQty.get(pi)?.qty ?? 0), 0);
+    out.set(k, { childQty: a.childQty, parentQty });
+  }
+  return out;
+}
+
 /* A PO's "From SOs: …" note records source SO doc numbers with the company
    prefix stripped ("2990-SO-2606-033" → "SO-2606-033"); Houzs docs have no
    prefix and pass through unchanged. Strip a leading "<digits>-" so the token
@@ -574,28 +607,41 @@ documentFlow.get('/:type/:id', async (c) => {
         nodes.set(poKey, { key: poKey, type: 'po', id: expandPoId, label: poHdr.po_number ?? expandPoId, status: poHdr.status ?? null, isAnchor: poKey === anchorKey });
       }
       const { data: poLines } = await scopeToCompany(sb.from('purchase_order_items').select('id, qty').eq('purchase_order_id', expandPoId), c);
-      const poItemQty = new Map<string, number>();
-      for (const l of (poLines ?? []) as any[]) poItemQty.set(l.id, Number(l.qty ?? 0));
+      const poItemQty = new Map<string, { poId: string; qty: number }>();
+      for (const l of (poLines ?? []) as any[]) poItemQty.set(l.id, { poId: expandPoId, qty: Number(l.qty ?? 0) });
+      const poItemIds = [...poItemQty.keys()];
 
-      const { data: grnHdrs } = await scopeToCompany(sb.from('grns').select('id, grn_number, status').eq('purchase_order_id', expandPoId), c);
-      const grnIds = uniq(((grnHdrs ?? []) as any[]).map((g) => g.id));
-      const grnLines = grnIds.length
-        ? (await sb.from('grn_items').select('grn_id, purchase_order_item_id, qty').in('grn_id', grnIds)).data ?? []
+      /* GRNs reached by this PO's LINES (a supplier multi-receive headers one PO
+         but receives many) ∪ the header FK, so a cross-PO receipt shows and a
+         receipt-less header GRN still does. Mirrors the main builder's section 6. */
+      const grnLines = poItemIds.length
+        ? (await sb.from('grn_items').select('grn_id, purchase_order_item_id, qty').in('purchase_order_item_id', poItemIds)).data ?? []
         : [];
-      const poToGrn = new Map<string, { childQty: number; parentItems: Set<string> }>();
-      for (const l of (grnLines as any[])) {
-        if (!l.purchase_order_item_id || !poItemQty.has(l.purchase_order_item_id)) continue;
-        const agg = poToGrn.get(l.grn_id) ?? { childQty: 0, parentItems: new Set<string>() };
-        agg.childQty += Number(l.qty ?? 0);
-        agg.parentItems.add(l.purchase_order_item_id);
-        poToGrn.set(l.grn_id, agg);
+      const grnById = new Map<string, any>();
+      const { data: grnHdrs } = await scopeToCompany(sb.from('grns').select('id, grn_number, status, purchase_order_id').eq('purchase_order_id', expandPoId), c);
+      for (const g of (grnHdrs ?? []) as any[]) grnById.set(g.id, g);
+      const missingGrnIds = uniq((grnLines as any[]).map((l) => l.grn_id)).filter((gid) => !grnById.has(gid));
+      if (missingGrnIds.length) {
+        const { data: grnByLine, error: grnByLineErr } = await scopeToCompany(sb.from('grns').select('id, grn_number, status, purchase_order_id').in('id', missingGrnIds), c);
+        // Advisory map: a failed header fetch just omits those line-linked GRN nodes.
+        if (!grnByLineErr) for (const g of (grnByLine ?? []) as any[]) if (!grnById.has(g.id)) grnById.set(g.id, g);
       }
-      for (const g of (grnHdrs ?? []) as any[]) {
+      const grnIds = [...grnById.keys()];
+      const poGrnCoverage = derivePoGrnCoverage(poItemQty, grnLines as any[]);
+      for (const g of grnById.values()) {
         const k = keyOf('grn', g.id);
         nodes.set(k, { key: k, type: 'grn', id: g.id, label: g.grn_number ?? g.id, status: g.status ?? null, isAnchor: k === anchorKey });
-        const agg = poToGrn.get(g.id);
-        const parentQty = agg ? [...agg.parentItems].reduce((s, pi) => s + (poItemQty.get(pi) ?? 0), 0) : 0;
-        addEdge(poKey, k, agg ? cover(agg.childQty, parentQty) : 'full');
+      }
+      const grnEdged = new Set<string>();
+      for (const [ck, cov] of poGrnCoverage) {
+        const [pid, gid] = ck.split('|');
+        if (!pid || !gid || !nodes.has(keyOf('po', pid)) || !grnById.has(gid)) continue;
+        addEdge(keyOf('po', pid), keyOf('grn', gid), cover(cov.childQty, cov.parentQty));
+        grnEdged.add(gid);
+      }
+      for (const g of grnById.values()) {
+        if (grnEdged.has(g.id)) continue;
+        addEdge(poKey, keyOf('grn', g.id), 'full');
       }
       if (grnIds.length) {
         /* Multi-GRN PIs — same union as the main builder: a PI reaches this
@@ -814,13 +860,11 @@ documentFlow.get('/:type/:id', async (c) => {
   //       creation. It is the ONLY link for POs raised before so_item_id existed
   //       (a shared stock buy stamps every SO it was raised for), and it is an
   //       authoritative record, not a guess — so note-linked POs are surfaced as
-  //       REAL nodes, and their GRN/PI chain expands through the header FKs below
-  //       exactly like a so_item_id-linked PO's does.
+  //       REAL nodes, and their GRN/PI chain expands (grn_items line link ∪ the
+  //       header FK) below exactly like a so_item_id-linked PO's does.
   const poItemLinks = soItemIds.length
     ? (await sb.from('purchase_order_items').select('id, purchase_order_id, so_item_id, qty').in('so_item_id', soItemIds)).data ?? []
     : [];
-  const poItemMeta = new Map<string, { poId: string; qty: number }>();
-  for (const l of (poItemLinks as any[])) poItemMeta.set(l.id, { poId: l.purchase_order_id, qty: Number(l.qty ?? 0) });
 
   /* (b) Note-recorded links. Notes exist in BOTH shapes and both are real:
      the writer stamps the SO doc number VERBATIM (mfg-purchase-orders.ts:
@@ -917,35 +961,53 @@ documentFlow.get('/:type/:id', async (c) => {
   }
 
   // ── 6. GRNs ─────────────────────────────────────────────────────────────
-  const poItemIds = [...poItemMeta.keys()];
+  /* Discover over ALL lines of every PO in the graph, not just the SO-linked
+     ones: a note-linked PO contributes no so_item_id line, and a supplier
+     multi-receive headers one PO while receiving many, so both the header FK and
+     the grn_items line link are real and only their UNION is complete. */
+  const allPoItemRows = poIds.length
+    ? (await sb.from('purchase_order_items').select('id, purchase_order_id, qty').in('purchase_order_id', poIds)).data ?? []
+    : [];
+  const poItemQtyAll = new Map<string, { poId: string; qty: number }>();
+  for (const r of (allPoItemRows as any[])) poItemQtyAll.set(r.id, { poId: r.purchase_order_id, qty: Number(r.qty ?? 0) });
+  const allPoItemIds = [...poItemQtyAll.keys()];
+  const grnLineLinks = allPoItemIds.length
+    ? (await sb.from('grn_items').select('id, grn_id, purchase_order_item_id, qty').in('purchase_order_item_id', allPoItemIds)).data ?? []
+    : [];
   const grnByHeader = poIds.length
     ? (await sb.from('grns').select('id, grn_number, status, purchase_order_id').in('purchase_order_id', poIds)).data ?? []
     : [];
-  const grnLineLinks = poItemIds.length
-    ? (await sb.from('grn_items').select('id, grn_id, purchase_order_item_id, qty').in('purchase_order_item_id', poItemIds)).data ?? []
-    : [];
   const grnById = new Map<string, any>();
   for (const g of (grnByHeader as any[])) grnById.set(g.id, g);
-  const grnItemMeta = new Map<string, { grnId: string; qty: number }>();
-  const poToGrn = new Map<string, { childQty: number; parentItems: Set<string> }>(); // `${poId}|${grnId}`
-  for (const l of (grnLineLinks as any[])) {
-    grnItemMeta.set(l.id, { grnId: l.grn_id, qty: Number(l.qty ?? 0) });
-    const pm = poItemMeta.get(l.purchase_order_item_id);
-    if (!pm) continue;
-    const k = `${pm.poId}|${l.grn_id}`;
-    const agg = poToGrn.get(k) ?? { childQty: 0, parentItems: new Set<string>() };
-    agg.childQty += Number(l.qty ?? 0);
-    agg.parentItems.add(l.purchase_order_item_id);
-    poToGrn.set(k, agg);
+  // A GRN reached only by line link (its header names another PO) still needs
+  // its header row for the node label/status.
+  const missingGrnIds = uniq((grnLineLinks as any[]).map((l) => l.grn_id)).filter((gid) => !grnById.has(gid));
+  if (missingGrnIds.length) {
+    const { data: grnByLine, error: grnByLineErr } = await sb.from('grns').select('id, grn_number, status, purchase_order_id').in('id', missingGrnIds);
+    // Advisory map: a failed header fetch just omits those line-linked GRN nodes.
+    if (!grnByLineErr) for (const g of (grnByLine ?? []) as any[]) if (!grnById.has(g.id)) grnById.set(g.id, g);
   }
+  const grnItemMeta = new Map<string, { grnId: string; qty: number }>();
+  for (const l of (grnLineLinks as any[])) grnItemMeta.set(l.id, { grnId: l.grn_id, qty: Number(l.qty ?? 0) });
+  const poGrnCoverage = derivePoGrnCoverage(poItemQtyAll, grnLineLinks as any[]);
   for (const g of grnById.values()) {
     const k = keyOf('grn', g.id);
     nodes.set(k, { key: k, type: 'grn', id: g.id, label: g.grn_number ?? g.id, status: g.status ?? null, isAnchor: k === anchorKey });
-    if (g.purchase_order_id) {
-      const agg = poToGrn.get(`${g.purchase_order_id}|${g.id}`);
-      const parentQty = agg ? [...agg.parentItems].reduce((s, pi) => s + (poItemMeta.get(pi)?.qty ?? 0), 0) : 0;
-      addEdge(keyOf('po', g.purchase_order_id), k, agg ? cover(agg.childQty, parentQty) : 'full');
-    }
+  }
+  /* PO ▸ GRN edges from the line link — one per PO whose line this GRN received,
+     each with its own coverage. The header FK adds a fallback edge only for a GRN
+     that recorded no receiving line (nothing to key a line edge off). */
+  const grnEdged = new Set<string>();
+  for (const [k, cov] of poGrnCoverage) {
+    const [poId, grnId] = k.split('|');
+    if (!poId || !grnId || !nodes.has(keyOf('po', poId)) || !grnById.has(grnId)) continue;
+    addEdge(keyOf('po', poId), keyOf('grn', grnId), cover(cov.childQty, cov.parentQty));
+    grnEdged.add(k);
+  }
+  for (const g of grnById.values()) {
+    if (!g.purchase_order_id || !nodes.has(keyOf('po', g.purchase_order_id))) continue;
+    if (grnEdged.has(`${g.purchase_order_id}|${g.id}`)) continue;
+    addEdge(keyOf('po', g.purchase_order_id), keyOf('grn', g.id), 'full');
   }
 
   // ── 7. Purchase Invoices ────────────────────────────────────────────────

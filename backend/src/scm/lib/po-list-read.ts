@@ -193,6 +193,49 @@ type GrnReader = {
   };
 };
 
+type PoItemRow = { id: string; purchase_order_id: string | null };
+type GrnItemRow = { purchase_order_item_id: string | null; grn_id: string };
+type GrnStatusRow = { id: string; grn_number: string | null; status: string | null };
+/* The `.from(t).select(c).in(col, vals).order(col, opts).range(from, to)` shape
+   the extra line-link reads use — the GrnReader above carries an extra `.neq`. */
+type PlainInReader<Row> = {
+  from(table: string): {
+    select(cols: string): {
+      in(col: string, vals: string[]): {
+        order(col: string, opts: { ascending: boolean }): {
+          range(from: number, to: number): PromiseLike<{ data: Row[] | null; error: { message: string; code?: string } | null }>;
+        };
+      };
+    };
+  };
+};
+
+/* Merge a PO's GRNs from BOTH linkage sources — the header FK (a GRN raised
+   against the PO) and the grn_items line link (a GRN that RECEIVED one of the
+   PO's lines, even when its header names another PO, as a supplier multi-receive
+   through grns POST /from-po-items does). The union is monotonic: it only ever
+   ADDS a GRN or a childId, so a PO the header pass already locked stays locked
+   and a GRN already shown stays shown. Header rows are pre-filtered
+   non-cancelled; line rows carry status so a cancelled receipt is dropped here.
+   Pure so it is unit-testable without a DB. */
+export function mergePoGrnLinks(
+  headerLinks: ReadonlyArray<{ poId: string; grnId: string; grnNumber: string | null }>,
+  lineLinks: ReadonlyArray<{ poId: string; grnId: string; grnNumber: string | null; cancelled: boolean }>,
+): { childIds: Set<string>; grnsByPo: Map<string, Array<{ id: string; grnNumber: string }>> } {
+  const childIds = new Set<string>();
+  const grnsByPo = new Map<string, Array<{ id: string; grnNumber: string }>>();
+  const add = (poId: string, grnId: string, grnNumber: string | null) => {
+    childIds.add(poId);
+    if (!grnNumber) return;
+    const arr = grnsByPo.get(poId) ?? [];
+    if (!arr.some((x) => x.id === grnId)) arr.push({ id: grnId, grnNumber });
+    grnsByPo.set(poId, arr);
+  };
+  for (const h of headerLinks) add(h.poId, h.grnId, h.grnNumber);
+  for (const l of lineLinks) if (!l.cancelled) add(l.poId, l.grnId, l.grnNumber);
+  return { childIds, grnsByPo };
+}
+
 /* Tier 2 downstream-lock (mirror computeGrnFlags in lib/grn-consumption-flags):
    the non-cancelled GRNs each PO was received into. Powers both `has_children`
    (the list hides Edit / Cancel on a downstream-locked PO) and the "GRN No"
@@ -200,41 +243,106 @@ type GrnReader = {
    (owner 2026-07-31). The GRN read carries no company predicate of its own: it
    is keyed by PO ids that were themselves read under the company scope.
 
-   Batched by URL size (chunkIn): the list asks for one page (at most 100 POs),
-   the header export for every PO a tab matches, and an `in.(…)` list of that
-   many uuids is refused at the gateway (lib/paginate-all.ts). Each batch holds
-   whole POs, so a PO's GRNs still arrive in grn_number order. */
+   A GRN belongs to a PO two ways, and both are real: the header FK, and — since
+   a supplier multi-receive (grns POST /from-po-items) bundles picks across POs
+   under one header — the grn_items line link. `includeLineLinked` runs the line
+   pass: the paged LIST passes true (bounded: page ≤ 100, legacy path .limit(500)),
+   the EXPORT passes false because it stamps every PO a tab matches and the extra
+   per-line reads would blow the Worker subrequest budget (lib/paginate-all.ts).
+
+   Batched by URL size (chunkIn): an `in.(…)` list of many uuids is refused at
+   the gateway, so each read chunks its ids. */
 export async function stampPoListGrns<R extends { id: string }>(
   sb: unknown,
   rows: R[],
+  includeLineLinked: boolean,
 ): Promise<{
   error: string | null;
   rows: Array<R & { has_children: boolean; transfer_to_grns: Array<{ id: string; grnNumber: string }> }>;
 }> {
-  const childIds = new Set<string>();
-  const grnsByPo = new Map<string, Array<{ id: string; grnNumber: string }>>();
-  if (rows.length > 0) {
-    const { data: grnRows, error } = await chunkIn<GrnRow>(rows.map((r) => r.id), (batch, from, to) =>
-      (sb as GrnReader)
-        .from('grns')
-        .select('id, purchase_order_id, grn_number')
+  if (rows.length === 0) {
+    return { error: null, rows: rows.map((r) => ({ ...r, has_children: false, transfer_to_grns: [] })) };
+  }
+  const poIds = rows.map((r) => r.id);
+
+  // Header FK: the non-cancelled GRNs raised against each PO.
+  const { data: headerRows, error: hErr } = await chunkIn<GrnRow>(poIds, (batch, from, to) =>
+    (sb as GrnReader)
+      .from('grns')
+      .select('id, purchase_order_id, grn_number')
+      .in('purchase_order_id', batch)
+      .neq('status', 'CANCELLED')
+      .order('grn_number', { ascending: true })
+      .order('id', { ascending: true })
+      .range(from, to));
+  /* A failed read is REPORTED, never served as "no GRNs": has_children is the
+     downstream lock, and reading it as false would offer Edit / Cancel on a
+     received order. */
+  if (hErr) return { error: hErr.message, rows: [] };
+  const headerLinks = headerRows
+    .filter((g) => g.purchase_order_id)
+    .map((g) => ({ poId: g.purchase_order_id as string, grnId: g.id, grnNumber: g.grn_number }));
+
+  let lineLinks: Array<{ poId: string; grnId: string; grnNumber: string | null; cancelled: boolean }> = [];
+  if (includeLineLinked) {
+    // Every line of these POs → which PO it belongs to.
+    const { data: itemRows, error: iErr } = await chunkIn<PoItemRow>(poIds, (batch, from, to) =>
+      (sb as PlainInReader<PoItemRow>)
+        .from('purchase_order_items')
+        .select('id, purchase_order_id')
         .in('purchase_order_id', batch)
-        .neq('status', 'CANCELLED')
-        .order('grn_number', { ascending: true })
         .order('id', { ascending: true })
         .range(from, to));
-    /* A failed read is REPORTED, never served as "no GRNs": has_children is the
-       downstream lock, and reading it as false would offer Edit / Cancel on a
-       received order. */
-    if (error) return { error: error.message, rows: [] };
-    for (const g of grnRows) {
-      if (!g.purchase_order_id) continue;
-      childIds.add(g.purchase_order_id);
-      if (!g.grn_number) continue;
-      const arr = grnsByPo.get(g.purchase_order_id) ?? [];
-      if (!arr.some((x) => x.grnNumber === g.grn_number)) arr.push({ id: g.id, grnNumber: g.grn_number });
-      grnsByPo.set(g.purchase_order_id, arr);
-    }
+    if (iErr) return { error: iErr.message, rows: [] };
+    const itemToPo = new Map<string, string>();
+    for (const it of itemRows) if (it.purchase_order_id) itemToPo.set(it.id, it.purchase_order_id);
+    const itemIds = [...itemToPo.keys()];
+
+    // Which GRN received each of those lines.
+    const { data: grnItemRows, error: giErr } = itemIds.length
+      ? await chunkIn<GrnItemRow>(itemIds, (batch, from, to) =>
+          (sb as PlainInReader<GrnItemRow>)
+            .from('grn_items')
+            .select('purchase_order_item_id, grn_id')
+            .in('purchase_order_item_id', batch)
+            .order('grn_id', { ascending: true })
+            .range(from, to))
+      : { data: [] as GrnItemRow[], error: null };
+    if (giErr) return { error: giErr.message, rows: [] };
+
+    /* Number + status for the line-linked GRNs the header pass did NOT already
+       resolve (those it did are known non-cancelled with a number in hand). */
+    const headerIds = new Set(headerRows.map((g) => g.id));
+    const lineGrnIds = [...new Set(grnItemRows.map((r) => r.grn_id).filter((x): x is string => !!x))]
+      .filter((gid) => !headerIds.has(gid));
+    const { data: lineGrnRows, error: lgErr } = lineGrnIds.length
+      ? await chunkIn<GrnStatusRow>(lineGrnIds, (batch, from, to) =>
+          (sb as PlainInReader<GrnStatusRow>)
+            .from('grns')
+            .select('id, grn_number, status')
+            .in('id', batch)
+            .order('id', { ascending: true })
+            .range(from, to))
+      : { data: [] as GrnStatusRow[], error: null };
+    if (lgErr) return { error: lgErr.message, rows: [] };
+    const grnMeta = new Map<string, { grnNumber: string | null; cancelled: boolean }>();
+    for (const g of headerRows) grnMeta.set(g.id, { grnNumber: g.grn_number, cancelled: false });
+    for (const g of lineGrnRows) if (!grnMeta.has(g.id)) grnMeta.set(g.id, { grnNumber: g.grn_number, cancelled: (g.status ?? '').toUpperCase() === 'CANCELLED' });
+
+    lineLinks = grnItemRows.flatMap((r) => {
+      const poId = r.purchase_order_item_id ? itemToPo.get(r.purchase_order_item_id) : undefined;
+      const meta = r.grn_id ? grnMeta.get(r.grn_id) : undefined;
+      if (!poId || !meta) return [];
+      return [{ poId, grnId: r.grn_id, grnNumber: meta.grnNumber, cancelled: meta.cancelled }];
+    });
   }
-  return { error: null, rows: rows.map((r) => ({ ...r, has_children: childIds.has(r.id), transfer_to_grns: grnsByPo.get(r.id) ?? [] })) };
+
+  const { childIds, grnsByPo } = mergePoGrnLinks(headerLinks, lineLinks);
+  /* Stable display order: the header read is grn_number-ordered, but the union
+     can append a line-linked GRN out of order, so re-sort each PO's list. */
+  for (const arr of grnsByPo.values()) arr.sort((a, b) => a.grnNumber.localeCompare(b.grnNumber));
+  return {
+    error: null,
+    rows: rows.map((r) => ({ ...r, has_children: childIds.has(r.id), transfer_to_grns: grnsByPo.get(r.id) ?? [] })),
+  };
 }
