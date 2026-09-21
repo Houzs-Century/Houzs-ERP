@@ -3338,28 +3338,6 @@ function DetailContent({
     onUpdated();
   }
 
-  // Factory returns (返厂 rounds). Each write reloads the detail so the case's
-  // mirrored supplier_pickup_at / items_ready_at refresh with the current trip.
-  const [returnBusy, setReturnBusy] = useState(false);
-  async function runReturnWrite(fn: () => Promise<unknown>) {
-    setReturnBusy(true);
-    try {
-      await fn();
-      detail.reload();
-      onUpdated();
-    } catch (e: any) {
-      toast.error(e?.message || "Couldn't save the factory return");
-    } finally {
-      setReturnBusy(false);
-    }
-  }
-  const addFactoryReturn = (reason: string | null) =>
-    runReturnWrite(() => api.post(`/api/assr/${id}/supplier-returns`, { reason }));
-  const patchSupplierReturn = (roundId: number, body: Record<string, string | null>) =>
-    runReturnWrite(() => api.patch(`/api/assr/${id}/supplier-returns/${roundId}`, body));
-  const archiveSupplierReturn = (roundId: number) =>
-    runReturnWrite(() => api.del(`/api/assr/${id}/supplier-returns/${roundId}`));
-
   async function transition(stage: AssrStage) {
     setTransitioning(true);
     try {
@@ -4329,10 +4307,9 @@ function DetailContent({
                 <SupplierReturnsList
                   returns={supplierReturns}
                   canWrite={!c.archived_at}
-                  busy={returnBusy}
-                  onAdd={addFactoryReturn}
-                  onPatch={patchSupplierReturn}
-                  onArchive={archiveSupplierReturn}
+                  caseId={id}
+                  onChanged={() => { detail.reload(); onUpdated(); }}
+                  onError={(m) => toast.error(m)}
                   formatDate={formatDate}
                   confirm={dialog.confirm}
                 />

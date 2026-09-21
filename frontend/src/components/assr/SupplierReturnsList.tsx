@@ -5,8 +5,8 @@
 // CURRENT trip and the case's Supplier Pickup / Return columns mirror it for the
 // delivery board + HC sheet. The logic (labels, next number, count, which is
 // current) lives in vendor/scm/lib/assr/returns.ts and is shared with the
-// server. Data + callbacks only, no fetching — so it drops into a harness with
-// mock rows.
+// server. Self-contained: it owns its writes (caseId + api) so the host surface
+// only supplies the rows + a reload/error hook.
 import { useState } from "react";
 import {
   type SupplierReturn,
@@ -17,19 +17,17 @@ import {
   qcResultLabel,
 } from "../../vendor/scm/lib/assr/returns";
 import { DateField } from "../../vendor/scm/components/DateField";
+import { api } from "../../api/client";
 
 export interface SupplierReturnsListProps {
   returns: SupplierReturn[];
   canWrite: boolean;
-  /** True while a round mutation is in flight — disables the controls. */
-  busy?: boolean;
-  /** Add another factory trip (round N+1) and reopen the case onto the supplier
-   *  stage. `reason` = why it goes back (blank for the first trip). */
-  onAdd: (reason: string | null) => void | Promise<void>;
-  /** Edit one trip's fields. */
-  onPatch: (roundId: number, patch: Record<string, string | null>) => void | Promise<void>;
-  /** Remove a mistaken trip. */
-  onArchive: (roundId: number) => void | Promise<void>;
+  /** The service-case id these trips belong to. */
+  caseId: number;
+  /** Refetch the case after a successful write. */
+  onChanged: () => void;
+  /** Surface a write failure to the user. */
+  onError: (msg: string) => void;
   /** DD/MM/YYYY formatter from the host surface; falls back to the raw string. */
   formatDate?: (s: string | null | undefined) => string;
   /** Confirm gate for the two destructive-ish actions (add, remove). */
@@ -61,7 +59,13 @@ function TripCard({
 }: {
   r: SupplierReturn;
   isCurrent: boolean;
-} & Pick<SupplierReturnsListProps, "canWrite" | "busy" | "onPatch" | "onArchive" | "formatDate" | "confirm">) {
+  canWrite: boolean;
+  busy: boolean;
+  onPatch: (roundId: number, patch: Record<string, string | null>) => void;
+  onArchive: (roundId: number) => void;
+  formatDate?: (s: string | null | undefined) => string;
+  confirm?: (msg: string) => boolean | Promise<boolean>;
+}) {
   const fmt = formatDate ?? ((s) => s || "—");
   // Uncontrolled inputs keyed by the persisted value: a save + parent reload
   // resets them; text saves on blur so a reload never yanks focus mid-word.
@@ -187,26 +191,37 @@ function TripCard({
 export function SupplierReturnsList({
   returns,
   canWrite,
-  busy,
-  onAdd,
-  onPatch,
-  onArchive,
+  caseId,
+  onChanged,
+  onError,
   formatDate,
   confirm,
 }: SupplierReturnsListProps) {
   const [reason, setReason] = useState("");
   const [adding, setAdding] = useState(false);
+  const [busy, setBusy] = useState(false);
   const ordered = [...returns].sort((a, b) => a.round_no - b.round_no);
   const cur = currentRound(returns);
   const count = roundCount(returns);
   const firstTrip = count === 0;
+
+  const run = (fn: () => Promise<unknown>) => {
+    setBusy(true);
+    void fn()
+      .then(() => onChanged())
+      .catch((e: unknown) => onError(e instanceof Error ? e.message : "Couldn't save the supplier return"))
+      .finally(() => setBusy(false));
+  };
+  const onAdd = (r: string | null) => run(() => api.post(`/api/assr/${caseId}/supplier-returns`, { reason: r }));
+  const onPatch = (roundId: number, patch: Record<string, string | null>) => run(() => api.patch(`/api/assr/${caseId}/supplier-returns/${roundId}`, patch));
+  const onArchive = (roundId: number) => run(() => api.del(`/api/assr/${caseId}/supplier-returns/${roundId}`));
 
   const add = async () => {
     const ok = firstTrip || !confirm
       ? true
       : await confirm("Add another supplier return? This reopens the case onto the supplier stage and starts a new return.");
     if (!ok) return;
-    await onAdd(reason.trim() || null);
+    onAdd(reason.trim() || null);
     setReason("");
     setAdding(false);
   };

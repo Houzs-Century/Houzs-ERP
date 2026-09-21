@@ -38,9 +38,9 @@ export function MobileFactoryTrips({
 }) {
   const [adding, setAdding] = useState(false);
   const [reason, setReason] = useState("");
-  const rows = (returns ?? []).filter((r) => !r.archived_at).sort((a, b) => a.round_no - b.round_no);
-  const count = roundCount(returns ?? []);
-  const cur = currentRound(returns ?? []);
+  const rows = returns.filter((r) => !r.archived_at).sort((a, b) => a.round_no - b.round_no);
+  const count = roundCount(returns);
+  const cur = currentRound(returns);
   const firstTrip = count === 0;
 
   const patch = (roundId: number, body: Record<string, string | null>) =>

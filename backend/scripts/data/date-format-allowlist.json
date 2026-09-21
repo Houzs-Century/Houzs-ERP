@@ -123,16 +123,6 @@
       "why": "A type=\"date\" PROP on a wrapper component (InlineEdit / EditRow / TextInput / Field / RMLikeInput), not a native input. Each of those renders <DateField> for this branch, so the display is DD/MM/YYYY on every machine."
     },
     {
-      "file": "frontend/src/mobile/MobileServiceCase.tsx",
-      "text": "<EditRow label=\"Sent to Supplier\" type=\"date\" value={r.pickup_at} busy={busy} disabled={disabled} onSave={(v) => onPatch(r.id, { pickup_at: v })} />",
-      "why": "A type=\"date\" PROP on the EditRow wrapper (a supplier-return trip date), not a native input. EditRow renders <DateField> for this branch, so the display is DD/MM/YYYY on every machine."
-    },
-    {
-      "file": "frontend/src/mobile/MobileServiceCase.tsx",
-      "text": "<EditRow label=\"Back from Supplier\" type=\"date\" value={r.returned_at} busy={busy} disabled={disabled} onSave={(v) => onPatch(r.id, { returned_at: v })} />",
-      "why": "A type=\"date\" PROP on the EditRow wrapper (a supplier-return trip date), not a native input. EditRow renders <DateField> for this branch, so the display is DD/MM/YYYY on every machine."
-    },
-    {
       "file": "frontend/src/pages/ServiceCaseDeliveryBy.tsx",
       "text": "type=\"date\"",
       "why": "A type=\"date\" PROP on the InlineEdit wrapper (the ASSR delivery-back date), not a native input. InlineEdit renders <DateField> for this branch, so the display is DD/MM/YYYY on every machine."
