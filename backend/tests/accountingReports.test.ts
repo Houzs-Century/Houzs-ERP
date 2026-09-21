@@ -15,7 +15,14 @@
 //   • bad dates are 400 sentences;
 //   • the P&L hands the same figures back on the report's layout — the
 //     chart's own tree when nothing is stored — with % of sales on every line
-//     (docs/bugs/0911; the layout routes themselves: reportLayouts.test.ts).
+//     (docs/bugs/0911; the layout routes themselves: reportLayouts.test.ts);
+//   • 2026-09-21: the stock lines come from the STOCK ENGINE as of the date,
+//     not from the month-close pair in the GL — Opening stock as of the day
+//     before the range, Closing stock as of its last day, one line per bucket
+//     (customer / display / service), the GL's own 330 / 600 / 620 lines set
+//     aside; the balance sheet's stock the same way, its earnings adjusted so
+//     the self-check still reads zero; a closing the ledger has not booked
+//     yet (the open month, a mid-month date) is flagged provisional.
 
 import { Hono } from 'hono';
 import { describe, expect, test } from 'vitest';
@@ -37,6 +44,13 @@ const ACCOUNTS: Row[] = [
   /* Older than the migration: NO section — the default shelf for a 6xx EXPENSE is cost of goods sold. */
   { company_id: CO, account_code: '615-0000', account_name: 'CARRIAGE INWARDS', account_type: 'EXPENSE', parent_code: null, section: null },
   { company_id: CO, account_code: '620-0000', account_name: 'STOCKS AT END', account_type: 'EXPENSE', parent_code: null, section: 'COST OF GOODS SOLD' },
+  { company_id: CO, account_code: '600-0000', account_name: 'STOCKS AT BEGINNING', account_type: 'EXPENSE', parent_code: null, section: 'COST OF GOODS SOLD' },
+  /* The bucket children the seed opens (2026-09-21): the engine's lines sit under their parents on the chart's tree. */
+  ...['CUSTOMER', 'DISPLAY', 'SERVICE'].flatMap((b, i) => [
+    { company_id: CO, account_code: `330-000${i + 1}`, account_name: `STOCK - ${b}`, account_type: 'ASSET', parent_code: '330-0000', section: 'CURRENT ASSETS' },
+    { company_id: CO, account_code: `600-000${i + 1}`, account_name: `STOCKS AT THE BEGINNING OF YEAR - ${b}`, account_type: 'EXPENSE', parent_code: '600-0000', section: 'COST OF GOODS SOLD' },
+    { company_id: CO, account_code: `620-000${i + 1}`, account_name: `STOCKS AT THE END OF YEAR - ${b}`, account_type: 'EXPENSE', parent_code: '620-0000', section: 'COST OF GOODS SOLD' },
+  ]),
   { company_id: CO, account_code: '900-A001', account_name: 'ADVERT', account_type: 'EXPENSE', parent_code: '900-0000', section: 'EXPENSES' },
   { company_id: CO, account_code: '950-0000', account_name: 'TAXATION', account_type: 'EXPENSE', parent_code: null, section: 'TAXATION' },
 ];
@@ -47,8 +61,18 @@ const gl = (code: string, type: string, dr: number, cr: number, over: Row = {}):
   entry_date: '2026-08-15', posted: true, reversed: false, ...over,
 });
 
-function harness(glRows: Row[]) {
-  const sb = fakeSb({ v_gl_entries: glRows, accounts: ACCOUNTS.map((r) => ({ ...r })), acc_report_layouts: [] });
+/* The stock engine's side of the same month: RM100 of goods received on 10 August
+   into no particular warehouse (= customer stock), the GL pair above being what
+   the close booked for it. The reports read THIS for the stock lines. */
+const MOVES: Row[] = [
+  { company_id: CO, movement_type: 'IN', qty: 1, total_cost_sen: 10_000, movement_date: '2026-08-10', created_at: '2026-08-10T02:00:00Z', item_code: 'SOFA-1', warehouse_id: null },
+];
+
+function harness(glRows: Row[], moves: Row[] = MOVES, warehouses: Row[] = []) {
+  const sb = fakeSb({
+    v_gl_entries: glRows, accounts: ACCOUNTS.map((r) => ({ ...r })), acc_report_layouts: [],
+    inventory_movements: moves.map((r) => ({ ...r })), warehouses: warehouses.map((r) => ({ ...r })), acc_account_roles: [], journal_entries: [],
+  });
   const app = new Hono();
   app.use('*', async (c, next) => {
     c.set('supabase' as never, sb as never);
@@ -60,7 +84,7 @@ function harness(glRows: Row[]) {
   });
   app.get('/accounting/reports/pnl', pnlReport as never);
   app.get('/accounting/reports/balance-sheet', balanceSheetReport as never);
-  return { app };
+  return { app, sb };
 }
 
 /* One trading month in miniature: RM1,000 sale, RM600 purchases + RM10
@@ -117,10 +141,13 @@ describe('GET /accounting/reports/pnl', () => {
       totals: Record<string, number>;
     };
     expect(b.tradingIncome.map((l) => [l.code, l.amountSen])).toEqual([['501-0000', 100_000]]);
-    /* 615 has NO stored section — the default shelf for a 6xx EXPENSE; 620's
-       CREDIT reduces cost of sales — purchases + opening − closing. */
-    expect(b.costOfSales.map((l) => [l.code, l.amountSen])).toEqual([['601-0003', 60_000], ['615-0000', 1_000], ['620-0000', -10_000]]);
+    /* 615 has NO stored section — the default shelf for a 6xx EXPENSE; the
+       closing stock is the ENGINE's RM100 as of 31 August on the customer
+       bucket's account (the GL's own 620-0000 line is set aside), a CREDIT
+       that reduces cost of sales — purchases + opening − closing. */
+    expect(b.costOfSales.map((l) => [l.code, l.amountSen])).toEqual([['601-0003', 60_000], ['615-0000', 1_000], ['620-0001', -10_000]]);
     expect(b.costOfSales.map((l) => l.section)).toEqual(['COST OF GOODS SOLD', 'COST OF GOODS SOLD', 'COST OF GOODS SOLD']);
+    expect(b.costOfSales.find((l) => l.code === '620-0001')).toMatchObject({ name: 'STOCKS AT THE END OF YEAR - CUSTOMER' });
     /* 530 sits at the root, not under 700 — its SECTION is what files it here. */
     expect(b.otherIncome.map((l) => l.code)).toEqual(['530-0000', '590-0000']);
     expect(b.expenses.map((l) => l.code)).toEqual(['900-A001']);
@@ -153,7 +180,8 @@ describe('GET /accounting/reports/pnl', () => {
     ]]]);
     /* 900-A001's header (900-0000) is not on this chart → it is a root line. */
     expect(flat(b.layout.expenses)).toEqual([['900-A001 · 900-A001', 12_000, 12]]);
-    expect(flat(b.layout.costOfSales)).toEqual([['601-0003 · 601-0003', 60_000, 60], ['615-0000 · 615-0000', 1_000, 1], ['620-0000 · 620-0000', -10_000, -10]]);
+    /* The closing stock sits under its parent header on the chart's tree. */
+    expect(flat(b.layout.costOfSales)).toEqual([['601-0003 · 601-0003', 60_000, 60], ['615-0000 · 615-0000', 1_000, 1], ['STOCKS AT END', -10_000, -10, [['620-0001 · STOCKS AT THE END OF YEAR - CUSTOMER', -10_000, -10]]]]);
     for (const [block, key] of [['costOfSales', 'costOfSalesSen'], ['expenses', 'expensesSen'], ['otherIncome', 'otherIncomeSen'], ['taxation', 'taxationSen']] as const) {
       expect(b.layout[block].reduce((s, n) => s + n.amountSen, 0)).toBe(b.totals[key]);
     }
@@ -175,8 +203,44 @@ describe('a reversal pair is nothing in either month (docs/bugs/0923)', () => {
   test('the balance sheet as at 30 September carries neither leg on the bank', async () => {
     const { app } = harness([...WORLD, ...PAIR]);
     const b = await (await app.request('/accounting/reports/balance-sheet?asOf=2026-09-30')).json() as { assets: Line[]; totals: Record<string, number> };
-    expect(b.assets.map((l) => [l.code, l.amountSen])).toEqual([['310-0010', 91_000], ['330-0000', 10_000]]);
+    expect(b.assets.map((l) => [l.code, l.amountSen])).toEqual([['310-0010', 91_000], ['330-0001', 10_000]]);
     expect(b.totals).toMatchObject({ assetsSen: 101_000, earningsSen: 41_000, checkSen: 0 });
+  });
+});
+
+describe('the stock lines read the engine as of the date (owner 2026-09-21: 报表选 8月31号就应该显示当时 stock 拥有的 amount)', () => {
+  test('a range that starts after goods arrived opens on them and closes on what is left; the buckets each print their own line; the month-close pair in the GL never counts twice', async () => {
+    const { app } = harness(WORLD, [
+      ...MOVES,                                                                                                                  // customer 100.00 on 10 Aug
+      { company_id: CO, movement_type: 'IN', qty: 1, total_cost_sen: 3_000, movement_date: '2026-08-20', created_at: '2026-08-20T02:00:00Z', item_code: 'MAT-1', warehouse_id: 'wh-show' },   // display 30.00
+      { company_id: CO, movement_type: 'OUT', qty: 1, total_cost_sen: 2_500, movement_date: '2026-09-05', created_at: '2026-09-05T02:00:00Z', item_code: 'SOFA-1', warehouse_id: null },     // customer −25.00 in Sept
+    ], [{ id: 'wh-show', company_id: CO, type: 'showroom', stock_bucket: null }]);
+    /* September: opening = the engine as of 31 Aug (customer 100, display 30), closing = as of 30 Sept (customer 75, display 30). */
+    const sep = await (await app.request('/accounting/reports/pnl?from=2026-09-01&to=2026-09-30')).json() as { costOfSales: Line[]; totals: Record<string, number>; stock: { closingProvisional: boolean; asOf: string } };
+    expect(sep.costOfSales.map((l) => [l.code, l.amountSen])).toEqual([['600-0001', 10_000], ['600-0002', 3_000], ['620-0001', -7_500], ['620-0002', -3_000]]);
+    expect(sep.totals.costOfSalesSen).toBe(2_500);
+    /* No closing entry on file for September in this world: provisional. */
+    expect(sep.stock).toEqual({ closingProvisional: true, asOf: '2026-09-30' });
+    /* A mid-month date is always provisional, and reads the engine that day. */
+    const mid = await (await app.request('/accounting/reports/pnl?from=2026-09-01&to=2026-09-21')).json() as { costOfSales: Line[]; stock: { closingProvisional: boolean } };
+    expect(mid.costOfSales.map((l) => [l.code, l.amountSen])).toEqual([['600-0001', 10_000], ['600-0002', 3_000], ['620-0001', -7_500], ['620-0002', -3_000]]);
+    expect(mid.stock.closingProvisional).toBe(true);
+    /* August: no opening (nothing before 1 Aug), closing = both buckets. */
+    const aug = await (await app.request('/accounting/reports/pnl?from=2026-08-01&to=2026-08-31')).json() as { costOfSales: Line[]; totals: Record<string, number> };
+    expect(aug.costOfSales.map((l) => [l.code, l.amountSen])).toEqual([['601-0003', 60_000], ['615-0000', 1_000], ['620-0001', -10_000], ['620-0002', -3_000]]);
+    expect(aug.totals.costOfSalesSen).toBe(48_000);
+    /* The balance sheet as at 30 Sept: stock 75 + 30 on the buckets' accounts; the self-check still reads zero. */
+    const bs = await (await app.request('/accounting/reports/balance-sheet?asOf=2026-09-30')).json() as { assets: Line[]; totals: Record<string, number> };
+    expect(bs.assets.map((l) => [l.code, l.amountSen])).toEqual([['310-0010', 91_000], ['330-0001', 7_500], ['330-0002', 3_000]]);
+    expect(bs.totals.checkSen).toBe(0);
+    expect(bs.totals.assetsSen).toBe(101_500);
+  });
+
+  test('a closing the ledger has booked is not provisional', async () => {
+    const { app, sb } = harness(WORLD);
+    sb.tables.journal_entries.push({ id: 'je-adj', company_id: CO, source_type: 'STOCKADJ', source_doc_no: `STOCKADJ-${CO}-2026-08`, reversed: false, je_no: '2990-JE-2608-0099', total_debit_sen: 10_000 });
+    const aug = await (await app.request('/accounting/reports/pnl?from=2026-08-01&to=2026-08-31')).json() as { stock: { closingProvisional: boolean; asOf: string } };
+    expect(aug.stock).toEqual({ closingProvisional: false, asOf: '2026-08-31' });
   });
 });
 
@@ -186,8 +250,9 @@ describe('GET /accounting/reports/balance-sheet', () => {
     const res = await app.request('/accounting/reports/balance-sheet?asOf=2026-08-31');
     expect(res.status).toBe(200);
     const b = await res.json() as { totals: Record<string, number>; assets: Line[]; liabilities: Line[] };
-    // Bank 100k − 1k + 5k + 2k − 12k − 3k = 91k; stock 10k.
-    expect(b.assets.map((l) => [l.code, l.amountSen])).toEqual([['310-0010', 91_000], ['330-0000', 10_000]]);
+    // Bank 100k − 1k + 5k + 2k − 12k − 3k = 91k; stock 10k — the engine's, on the customer bucket's account.
+    expect(b.assets.map((l) => [l.code, l.amountSen])).toEqual([['310-0010', 91_000], ['330-0001', 10_000]]);
+    expect(b.assets.find((l) => l.code === '330-0001')).toMatchObject({ name: 'STOCK - CUSTOMER' });
     expect(b.assets.map((l) => l.section)).toEqual(['CURRENT ASSETS', 'CURRENT ASSETS']);
     expect(b.liabilities.map((l) => [l.code, l.section])).toEqual([['400-0000', 'CURRENT LIABILITIES']]);
     expect(b.totals).toMatchObject({
@@ -206,7 +271,7 @@ describe('GET /accounting/reports/balance-sheet', () => {
     const flat = (nodes: Laid[]): unknown[] => nodes.map((n) => [n.label, n.amountSen, n.pct, ...(n.children.length > 0 ? [flat(n.children)] : [])]);
     expect(b.layout.stored).toBe(false);
     expect(b.layout.baseSen).toBe(101_000);
-    expect(flat(b.layout.assets)).toEqual([['CURRENT ASSETS', 101_000, 100, [['310-0010 · 310-0010', 91_000, 90.1], ['330-0000 · 330-0000', 10_000, 9.9]]]]);
+    expect(flat(b.layout.assets)).toEqual([['CURRENT ASSETS', 101_000, 100, [['310-0010 · 310-0010', 91_000, 90.1], ['STOCK', 10_000, 9.9, [['330-0001 · STOCK - CUSTOMER', 10_000, 9.9]]]]]]);
     /* The liability's % is of total assets too — 60,000 / 101,000. */
     expect(flat(b.layout.liabilities)).toEqual([['CURRENT LIABILITIES', 60_000, 59.4, [['400-0000 · 400-0000', 60_000, 59.4]]]]);
     expect(b.layout.equity).toEqual([]);
