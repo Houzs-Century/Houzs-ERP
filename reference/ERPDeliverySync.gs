@@ -152,6 +152,49 @@ function erpExistingDocNos_(sheet, cfg) {
   return map;
 }
 
+// Manual restore (owner 2026-09-21): put specific orders back on their tab, even
+// ones that are NOT ready (the ready-open sweep only re-adds READY orders dated
+// on/after ERP_APPEND_FROM, so an older or not-yet-ready order cannot return on
+// its own). Fetches full sheet records for the given DocNos and appends the ones
+// not already on the tab, reusing the same region routing + writer as the pull.
+function erpRestoreByDocNos_(docNos) {
+  var rid = Utilities.getUuid();
+  var cfg = erpConfig_();
+  var ss = getTargetSs();
+  var out = { appended: 0, failed: 0, skipped: 0, notFound: 0 };
+  var res = erpFetch_(cfg, "/api/delivery-sheet/feed-by-docnos", { method: "post", contentType: "application/json", payload: JSON.stringify({ doc_nos: docNos }) }, rid);
+  if (res.getResponseCode() !== 200) throw new Error("feed-by-docnos " + res.getResponseCode() + ": " + res.getContentText().slice(0, 200));
+  var records = JSON.parse(res.getContentText()).records || [];
+  out.notFound = docNos.length - records.length;
+  var buckets = { WEST: [], EAST: [], SG: [] };
+  records.forEach(function (o) {
+    o.Attention = "SEAMPIFY";
+    var region = erpRegionOf_(o);
+    if (region) buckets[region].push(o);
+  });
+  ["WEST", "EAST", "SG"].forEach(function (region) {
+    if (!buckets[region].length) return;
+    var sheetName = erpSheetFor_(region);
+    var sheet = ss.getSheetByName(sheetName);
+    if (!sheet) return;
+    var existing = erpExistingDocNos_(sheet, getSheetConfig(sheetName));
+    var fresh = buckets[region].filter(function (o) { return !existing[String(o.DocNo).trim()]; });
+    out.skipped += buckets[region].length - fresh.length;
+    if (!fresh.length) return;
+    var r = writeDataToTargetSheet(ss, sheetName, fresh, rid);
+    out.appended += r.success;
+    out.failed += r.fail;
+  });
+  var msg = "restore: appended " + out.appended + ", skipped(already on tab) " + out.skipped + ", not-in-ERP " + out.notFound + ", failed " + out.failed;
+  Logger.log(msg);
+  return msg;
+}
+// One-off: the orders removed by the 2026-09-20 reconcile that the owner wants
+// back (4 now READY + HC12896 / HC12874 he tracks despite a pending mattress).
+function erpRestoreDeletedOrders() {
+  return erpRestoreByDocNos_(["SO-007223", "SO-007718", "SO-012654", "SO-012596", "SO-013020", "SO-012319"]);
+}
+
 /**
  * The ERP only overwrites a cell when it KNOWS the value. For every field the
  * writer touches, a null from the ERP keeps what the sheet already holds — so
