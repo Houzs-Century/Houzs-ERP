@@ -17,10 +17,12 @@ import {
   ensurePdfCjkFont, fmtDocDate, fmtRm, safeName, type PdfAction,
 } from './pdf-common';
 import type { DebtorBill, OtherDebtor } from './accounting-queries';
+import { partyAddressLines, type DebtorPartyColumns } from './debtor-party';
 
 export type DebtorBillPdfData = {
   bill: DebtorBill;
-  debtor: Pick<OtherDebtor, 'name' | 'phone'>;
+  /** The registry row: the name and phone, and the party's data where filled (2026-09-21) — BILL TO prints what is there. */
+  debtor: Pick<OtherDebtor, 'name' | 'phone'> & Partial<DebtorPartyColumns>;
   /** The chart's name for a line's account — the fallback description of a line left blank. */
   accountName?: (code: string) => string | null | undefined;
 };
@@ -60,7 +62,13 @@ export async function renderDebtorBillInto(doc: JsPdf, autoTable: AutoTable, d: 
       title: 'BILL TO',
       rows: [
         ['Name', d.debtor.name],
-        ['Phone', d.debtor.phone ?? null],
+        /* The address as the registry holds it; a blank label keeps the continuation lines under the first. */
+        ...partyAddressLines(d.debtor).map((line, i): [string, string] => [i === 0 ? 'Address' : ' ', line]),
+        ['Attention', d.debtor.attention || d.debtor.contact_person || null],
+        ['Phone', [d.debtor.phone, d.debtor.mobile].filter((s) => s && s.trim()).join(' / ') || null],
+        ['Email', d.debtor.email ?? null],
+        ['TIN', d.debtor.tin_number ?? null],
+        ['Reg No', d.debtor.business_reg_no ?? null],
       ],
     },
     {

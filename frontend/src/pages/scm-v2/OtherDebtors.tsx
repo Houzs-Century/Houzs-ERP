@@ -14,6 +14,9 @@
 // receipt's amounts wear the same money dress.
 // 2026-09-18 (owner: 需要打印功能): every bill PRINTS — the INVOICE the other
 // party receives (debtor-bill-pdf), a cancelled one with its watermark.
+// 2026-09-21 (owner: 他要填的资料就和 supplier 的一样): the registry takes the
+// party's data as the supplier master carries it — one pop-out form for New
+// and Edit (DebtorPartyForm) — and the INVOICE's BILL TO prints the address.
 // ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
@@ -35,6 +38,8 @@ import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { DebtorBillForm, emptyBillForm, type BillFormMode, type BillFormSubmit, type BillFormValues } from './DebtorBillForm';
 import { generateDebtorBillPdf } from '../../vendor/scm/lib/debtor-bill-pdf';
+import { DebtorPartyForm } from './DebtorPartyForm';
+import { debtorPartyBody, debtorPartyFrom, emptyDebtorParty, partyAddressLines, type DebtorPartyValues } from '../../vendor/scm/lib/debtor-party';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 const myt = (): string => new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
@@ -96,20 +101,20 @@ export const OtherDebtors = () => {
   const createReceipt = useCreateDebtorReceipt();
   const receiptAction = useDebtorReceiptAction();
 
-  /* New-debtor card. */
-  const [adding, setAdding] = useState(false);
-  const [newName, setNewName] = useState('');
-  const [newPhone, setNewPhone] = useState('');
-  const [newNotes, setNewNotes] = useState('');
-  const saveDebtor = async () => {
+  /* The debtor's own data — New and Edit share one pop-out form (2026-09-21:
+     他要填的资料就和 supplier 的一样). Every box is sent: a blank on Edit clears
+     the field, which the server stores as NULL. */
+  const [partyForm, setPartyForm] = useState<'new' | 'edit' | null>(null);
+  const savePartyForm = async (values: DebtorPartyValues) => {
+    const body = debtorPartyBody(values);
     try {
-      const res = await createDebtor.mutateAsync({
-        name: newName.trim(),
-        ...(newPhone.trim() ? { phone: newPhone.trim() } : {}),
-        ...(newNotes.trim() ? { notes: newNotes.trim() } : {}),
-      });
-      setAdding(false); setNewName(''); setNewPhone(''); setNewNotes('');
-      setSelectedId(res.debtor.id);
+      if (partyForm === 'edit' && selectedId) {
+        await updateDebtor.mutateAsync({ id: selectedId, ...body });
+      } else {
+        const res = await createDebtor.mutateAsync(body);
+        setSelectedId(res.debtor.id);
+      }
+      setPartyForm(null);
     } catch (e) {
       void notify({ title: 'Save failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
     }
@@ -201,38 +206,12 @@ export const OtherDebtors = () => {
         eyebrow="Finance"
         title="Other Debtors"
         actions={canCreate ? (
-          <button type="button" onClick={() => setAdding(true)}
+          <button type="button" onClick={() => setPartyForm('new')}
             style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--c-orange)', fontWeight: 600, cursor: 'pointer', fontSize: 'var(--fs-13)', background: 'none', border: 'none', padding: 0 }}>
             <Plus {...ICON} /> New debtor
           </button>
         ) : undefined}
       />
-
-      {adding && (
-        <section className={styles.card}>
-          <div className={styles.cardHeader}><h2 className={styles.cardTitle}>New debtor</h2></div>
-          <div className={styles.cardBody} style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-3)', alignItems: 'flex-end', fontSize: 'var(--fs-13)' }}>
-            <label className={styles.field} style={{ flex: '1 1 220px' }}>
-              <span className={styles.fieldLabel}>Name</span>
-              <input className={styles.fieldInput} value={newName} onChange={(e) => setNewName(e.target.value)} />
-            </label>
-            <label className={styles.field} style={{ width: 170 }}>
-              <span className={styles.fieldLabel}>Phone</span>
-              <input className={styles.fieldInput} value={newPhone} onChange={(e) => setNewPhone(e.target.value)} />
-            </label>
-            <label className={styles.field} style={{ flex: '1 1 220px' }}>
-              <span className={styles.fieldLabel}>Notes</span>
-              <input className={styles.fieldInput} value={newNotes} onChange={(e) => setNewNotes(e.target.value)} />
-            </label>
-            <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
-              <Button variant="primary" size="sm" onClick={() => void saveDebtor()} disabled={createDebtor.isPending || !newName.trim()}>
-                {createDebtor.isPending ? 'Saving…' : 'Save'}
-              </Button>
-              <Button variant="ghost" size="sm" onClick={() => setAdding(false)} disabled={createDebtor.isPending}>Cancel</Button>
-            </div>
-          </div>
-        </section>
-      )}
 
       <section className={styles.card}>
         <div className={styles.cardHeader}>
@@ -281,11 +260,16 @@ export const OtherDebtors = () => {
             <h2 className={styles.cardTitle}>{detail.debtor.name}</h2>
             <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
               {canWrite && (
+                <Button variant="ghost" size="sm" onClick={() => setPartyForm('edit')}>
+                  <Pencil {...ICON} /> Edit debtor
+                </Button>
+              )}
+              {canWrite && (
                 <Button variant="ghost" size="sm"
                   onClick={() => void updateDebtor.mutateAsync({ id: selectedId, isActive: !detail.debtor.is_active }).catch((e: unknown) => {
                     void notify({ title: 'Update failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
                   })}>
-                  <Pencil {...ICON} /> {detail.debtor.is_active ? 'Deactivate' : 'Reactivate'}
+                  {detail.debtor.is_active ? <Ban {...ICON} /> : <RotateCcw {...ICON} />} {detail.debtor.is_active ? 'Deactivate' : 'Reactivate'}
                 </Button>
               )}
               {canCreate && (
@@ -301,6 +285,19 @@ export const OtherDebtors = () => {
             </div>
           </div>
           <div className={styles.cardBody} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+
+            {/* The party's data as the invoice's BILL TO will print it. */}
+            <div style={{ fontSize: 'var(--fs-13)', color: 'var(--fg-muted)', display: 'flex', flexDirection: 'column', gap: 2 }}>
+              {partyAddressLines(detail.debtor).map((line, i) => <span key={i}>{line}</span>)}
+              {(() => {
+                const contact = [detail.debtor.attention || detail.debtor.contact_person, detail.debtor.phone, detail.debtor.mobile, detail.debtor.email].filter(Boolean).join(' · ');
+                return contact ? <span>{contact}</span> : null;
+              })()}
+              {(() => {
+                const ids = [detail.debtor.tin_number && `TIN ${detail.debtor.tin_number}`, detail.debtor.business_reg_no && `Reg ${detail.debtor.business_reg_no}`].filter(Boolean).join(' · ');
+                return ids ? <span>{ids}</span> : null;
+              })()}
+            </div>
 
             {receipting && (
               <div style={{ border: '1px solid var(--border-weak, #e3e1da)', borderRadius: 8, padding: 'var(--space-3)', display: 'flex', flexDirection: 'column', gap: 'var(--space-2)', fontSize: 'var(--fs-13)' }}>
@@ -436,6 +433,24 @@ export const OtherDebtors = () => {
             </div>
           </div>
         </section>
+      )}
+
+      {partyForm && (
+        <Modal
+          title={partyForm === 'edit' ? `Edit debtor — ${detail?.debtor.name ?? ''}` : 'New debtor'}
+          onClose={() => setPartyForm(null)}
+          ariaLabel={partyForm === 'edit' ? 'Edit debtor' : 'New debtor'}
+          width="min(900px, 100%)"
+        >
+          <DebtorPartyForm
+            key={`${partyForm}-${selectedId ?? 'new'}`}
+            mode={partyForm}
+            initial={partyForm === 'edit' && detail ? debtorPartyFrom(detail.debtor) : emptyDebtorParty()}
+            saving={createDebtor.isPending || updateDebtor.isPending}
+            onSubmit={savePartyForm}
+            onCancel={() => setPartyForm(null)}
+          />
+        </Modal>
       )}
 
       {billForm && selectedId && (

@@ -133,8 +133,15 @@ describe('the registry — 资料 lives here, never in the chart', () => {
   test('create, list with outstanding, and update', async () => {
     const tables = baseTables();
     const app = harness(tables);
-    const created = await post(app, '/', { name: 'LIM AH KOW', phone: '012-3456789' });
+    const created = await post(app, '/', {
+      name: 'LIM AH KOW', phone: '012-3456789', tinNumber: 'IG12345678090', contactPerson: 'LIM',
+      address1: '12, JALAN SATU', city: 'PETALING JAYA', postcode: '47810', state: 'Selangor', country: 'Malaysia', email: '   ',
+    });
     expect(created.status).toBe(201);
+    /* The party's data as the supplier master carries it (owner 2026-09-21: 他要填的资料就和 supplier 的一样) — same columns; a blank is NULL. */
+    const lim = tables.acc_debtors.find((d) => d.name === 'LIM AH KOW')!;
+    expect([lim.tin_number, lim.contact_person, lim.address1, lim.city, lim.postcode, lim.state, lim.country, lim.email, lim.address2])
+      .toEqual(['IG12345678090', 'LIM', '12, JALAN SATU', 'PETALING JAYA', '47810', 'Selangor', 'Malaysia', null, null]);
 
     await makeBill(app, tables);
     const list = await app.request('/');
@@ -144,10 +151,16 @@ describe('the registry — 资料 lives here, never in the chart', () => {
     expect(body.debtors.find((d) => d.name === 'LIM AH KOW')!.outstanding_sen).toBe(0);
 
     const upd = await app.request('/d1', {
-      method: 'PATCH', body: JSON.stringify({ phone: '019-888' }), headers: { 'content-type': 'application/json' },
+      method: 'PATCH', body: JSON.stringify({ phone: '019-888', address2: 'TAMAN DUA', attention: 'MR AHMAD', fax: '' }), headers: { 'content-type': 'application/json' },
     });
     expect(upd.status).toBe(200);
-    expect(tables.acc_debtors.find((d) => d.id === 'd1')!.phone).toBe('019-888');
+    const ahmadRow = tables.acc_debtors.find((d) => d.id === 'd1')!;
+    expect([ahmadRow.phone, ahmadRow.address2, ahmadRow.attention, ahmadRow.fax]).toEqual(['019-888', 'TAMAN DUA', 'MR AHMAD', null]);
+    /* The list and the detail hand the party's data back, so the page and the print can carry it. */
+    const listed = ((await (await app.request('/')).json()) as { debtors: Row[] }).debtors.find((d) => d.id === 'd1')!;
+    expect([listed.address2, listed.attention]).toEqual(['TAMAN DUA', 'MR AHMAD']);
+    const detail = (await (await app.request('/d1')).json()) as { debtor: Row };
+    expect([detail.debtor.address2, detail.debtor.attention]).toEqual(['TAMAN DUA', 'MR AHMAD']);
   });
 });
 

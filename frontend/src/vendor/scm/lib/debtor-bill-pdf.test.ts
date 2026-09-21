@@ -2,7 +2,8 @@
    DRAWS, captured off `doc.text` the way deposit-invoice-pdf.test.ts does.
    Pinned: the title, the number and date, the debtor, the lines as
    description and amount (a blank description falls back to the account's
-   name, the account code itself never prints), the total, received and the
+   name, the account code itself never prints), the debtor's address,
+   attention, email and TIN in BILL TO (2026-09-21), the total, received and the
    balance due, the amount in words, the note, the status word, and a
    cancelled bill's watermark. Ordinary ASCII in the fixture: no CJK font
    fetch, no logo fetch, no network. */
@@ -41,16 +42,19 @@ const BILL: DebtorBillPdfData = {
       { id: 'l2', line_no: 2, description: null, credit_account_code: '599-0006', amount_sen: 5000 },
     ],
   },
-  debtor: { name: 'AHMAD BIN ALI', phone: '012-345 6789' },
+  debtor: {
+    name: 'AHMAD BIN ALI', phone: '012-345 6789', attention: 'MR AHMAD', email: 'ahmad@example.com', tin_number: 'IG12345678090',
+    address1: '12, JALAN SATU', address2: 'TAMAN DUA', city: 'PETALING JAYA', postcode: '47810', state: 'Selangor', country: 'Malaysia',
+  },
   accountName: (code) => (code === '599-0006' ? 'WATER & ELECTRICITY INCOME - OFFICE' : null),
 };
 
-async function render(over: Partial<DebtorBillPdfData['bill']> = {}): Promise<TextDraw[]> {
+async function render(over: Partial<DebtorBillPdfData['bill']> = {}, debtor: Partial<DebtorBillPdfData['debtor']> = {}): Promise<TextDraw[]> {
   setUpBranding();
   const [{ jsPDF }, autoTableModule, { renderDebtorBillInto }] = await Promise.all([import('jspdf'), import('jspdf-autotable'), import('./debtor-bill-pdf')]);
   const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
   const draws = captureTextDraws(doc);
-  await renderDebtorBillInto(doc, autoTableModule.default as unknown as (d: JsPdf, o: Record<string, unknown>) => void, { ...BILL, bill: { ...BILL.bill, ...over } });
+  await renderDebtorBillInto(doc, autoTableModule.default as unknown as (d: JsPdf, o: Record<string, unknown>) => void, { ...BILL, bill: { ...BILL.bill, ...over }, debtor: { ...BILL.debtor, ...debtor } });
   return draws;
 }
 const has = (draws: TextDraw[], needle: string): boolean => draws.some((d) => d.text.includes(needle));
@@ -63,6 +67,14 @@ describe('the Other Debtor bill sheet', () => {
     expect(has(draws, '03/09/2026')).toBe(true);
     expect(has(draws, 'AHMAD BIN ALI')).toBe(true);
     expect(has(draws, '012-345 6789')).toBe(true);
+    /* BILL TO carries the party's address as the registry holds it (owner 2026-09-21). */
+    expect(has(draws, '12, JALAN SATU')).toBe(true);
+    expect(has(draws, 'TAMAN DUA')).toBe(true);
+    expect(has(draws, '47810 PETALING JAYA')).toBe(true);
+    expect(has(draws, 'Selangor, Malaysia')).toBe(true);
+    expect(has(draws, 'MR AHMAD')).toBe(true);
+    expect(has(draws, 'ahmad@example.com')).toBe(true);
+    expect(has(draws, 'IG12345678090')).toBe(true);
     expect(has(draws, 'Sublet of showroom corner')).toBe(true);
     expect(has(draws, 'MYR 450.00')).toBe(true);
     /* A blank description prints the account's name — never the code. */
@@ -86,6 +98,14 @@ describe('the Other Debtor bill sheet', () => {
     expect(has(cancelled, 'CANCELLED')).toBe(true);
     expect(has(cancelled, 'Cancelled')).toBe(true);
     expect(has(cancelled, 'BALANCE DUE')).toBe(false);
+  });
+
+  test('a debtor with no address on file prints the name and phone alone — no empty address labels', async () => {
+    const draws = await render({}, { attention: null, email: null, tin_number: null, address1: null, address2: null, city: null, postcode: null, state: null, country: null });
+    expect(has(draws, 'AHMAD BIN ALI')).toBe(true);
+    expect(has(draws, '012-345 6789')).toBe(true);
+    expect(draws.some((d) => d.text === 'Address')).toBe(false);
+    expect(draws.some((d) => d.text === 'Attention' || d.text === 'Email' || d.text === 'TIN')).toBe(false);
   });
 
   test('the status word follows the money', () => {
