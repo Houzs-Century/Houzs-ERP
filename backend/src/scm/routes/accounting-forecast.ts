@@ -60,7 +60,7 @@ export async function loadForecastAccounts(sb: any, companyId: number): Promise<
   return { ok: true, accounts };
 }
 
-async function loadGrid(sb: any, companyId: number): Promise<{ ok: true; grid: ForecastGrid } | { ok: false; reason: string }> {
+export async function loadGrid(sb: any, companyId: number): Promise<{ ok: true; grid: ForecastGrid } | { ok: false; reason: string }> {
   const { data, error } = await sb.from('acc_forecast_pnl').select('month, lines').eq('company_id', companyId);
   if (error) return { ok: false, reason: String((error as { message?: string }).message ?? error) };
   const grid: ForecastGrid = {};

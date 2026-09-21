@@ -122,7 +122,7 @@ async function ownedMovementsAsOf(sb: any, companyId: number, date: string): Pro
 /** Signs: IN adds, OUT subtracts, ADJUSTMENT follows its own qty sign
     (write-offs negative). AC_CUTOVER — the migrated opening — is an
     ADJUSTMENT like any other. */
-const signedCost = (r: MovementRow): number => {
+export const signedCost = (r: MovementRow): number => {
   const cost = Math.abs(Number(r.total_cost_sen ?? 0));
   const type = String(r.movement_type);
   if (type === 'IN') return cost;
@@ -131,7 +131,7 @@ const signedCost = (r: MovementRow): number => {
 };
 
 /** The bucket each of the company's warehouses files under. */
-async function bucketByWarehouse(sb: any, companyId: number): Promise<{ ok: true; of: (warehouseId: unknown) => StockBucket } | { ok: false; reason: string }> {
+export async function bucketByWarehouse(sb: any, companyId: number): Promise<{ ok: true; of: (warehouseId: unknown) => StockBucket } | { ok: false; reason: string }> {
   const { data, error } = await sb
     .from('warehouses')
     .select('id, type, stock_bucket')
@@ -158,6 +158,77 @@ export async function stockValueByBucketAsOf(
   const buckets = emptyBuckets();
   for (const r of moves.rows) buckets[wh.of(r.warehouse_id)] += signedCost(r);
   return { ok: true, buckets, totalSen: STOCK_BUCKETS.reduce((s, b) => s + buckets[b], 0) };
+}
+
+/* ── The replay, preloaded once and folded per date (the Dashboard) ───────── */
+
+export type OwnedMovement = MovementRow & { movement_date?: string | null; created_at?: string | null };
+/* The PostgREST client is untyped throughout the acc layer; borrow its type rather than write any. */
+type Sb = Parameters<typeof resolveRoles>[0];
+
+/**
+ * Every OWNED movement up to END OF `date`, with its dates, so a caller that
+ * reads many dates at once (the Dashboard's periods) folds them in memory
+ * instead of replaying the table once per date. Same rows, same consignment
+ * exclusion, same dateless fallback as ownedMovementsAsOf.
+ */
+export async function loadOwnedMovementsUpTo(sb: Sb, companyId: number, date: string): Promise<{ ok: true; rows: OwnedMovement[] } | { ok: false; reason: string }> {
+  const cols = `${REPLAY_COLS}, movement_date, created_at`;
+  const { data, error } = await paginateAll((from, to) => sb
+    .from('inventory_movements')
+    .select(cols)
+    .eq('company_id', companyId)
+    .lte('movement_date', date)
+    .range(from, to));
+  if (error) return { ok: false, reason: (error as { message?: string }).message ?? String(error) };
+  const { data: dateless, error: dlErr } = await sb
+    .from('inventory_movements')
+    .select(cols)
+    .eq('company_id', companyId)
+    .is('movement_date', null)
+    .lte('created_at', `${date}T23:59:59.999`);
+  if (dlErr) return { ok: false, reason: dlErr.message };
+  const rows = [...((data ?? []) as OwnedMovement[]), ...((dateless ?? []) as OwnedMovement[])]
+    .filter((r) => !isConsignmentLotSource(r.source_doc_type, r.source_doc_no));
+  return { ok: true, rows };
+}
+
+/** Whether a preloaded movement counts as of END OF `date` — by its business
+    date, else by its keyed time (the pre-item-4 meaning), the lte's own rule. */
+export const movementCountsAsOf = (r: OwnedMovement, date: string): boolean =>
+  r.movement_date != null && r.movement_date !== ''
+    ? String(r.movement_date).slice(0, 10) <= date
+    : String(r.created_at ?? '') <= `${date}T23:59:59.999`;
+
+/** stockValueByBucketAsOf, over preloaded rows. */
+export function foldStockByBucket(rows: OwnedMovement[], of: (warehouseId: unknown) => StockBucket, date: string): { buckets: Record<StockBucket, number>; totalSen: number } {
+  const buckets = emptyBuckets();
+  for (const r of rows) if (movementCountsAsOf(r, date)) buckets[of(r.warehouse_id)] += signedCost(r);
+  return { buckets, totalSen: STOCK_BUCKETS.reduce((s, b) => s + buckets[b], 0) };
+}
+
+/** Quantity, signed the way signedCost signs money. */
+const signedQty = (r: MovementRow): number => {
+  const q = Number(r.qty ?? 0);
+  const type = String(r.movement_type);
+  if (type === 'IN') return Math.abs(q);
+  if (type === 'OUT') return -Math.abs(q);
+  return q;
+};
+
+/** stockBreakdownAsOf, over preloaded rows: per item, the quantity and value as of END OF `date`. */
+export function foldStockByItem(rows: OwnedMovement[], date: string): Map<string, { qty: number; valueSen: number }> {
+  const items = new Map<string, { qty: number; valueSen: number }>();
+  for (const r of rows) {
+    if (!movementCountsAsOf(r, date)) continue;
+    const code = String(r.item_code ?? '');
+    if (!code) continue;
+    const at = items.get(code) ?? { qty: 0, valueSen: 0 };
+    at.qty += signedQty(r);
+    at.valueSen += signedCost(r);
+    items.set(code, at);
+  }
+  return items;
 }
 
 /** The stock value as of END OF `date` — the three buckets in one figure. */
