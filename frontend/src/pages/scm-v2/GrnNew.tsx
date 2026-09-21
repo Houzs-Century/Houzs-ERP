@@ -433,6 +433,11 @@ export const GrnNew = () => {
     () => lines.reduce((s, l) => s + l.qtyReceived * l.unitPriceSen, 0),
     [lines],
   );
+  // Freight/service lines are charges, not units received.
+  const totalQty = lines
+    .filter((l) => l.itemCode.trim() && !isServiceLine({ itemGroup: l.itemGroup, itemCode: l.itemCode }))
+    .reduce((s, l) => s + l.qtyReceived, 0);
+  const qtyLabel = `(${totalQty} ${totalQty === 1 ? 'item' : 'items'})`;
 
   /* Landed-cost allocation preview (Phase 1-A) — mirror the server math so the
      operator SEES the freight ("平摊") split across goods lines before posting.
@@ -1395,11 +1400,11 @@ export const GrnNew = () => {
         <section className={styles.card} style={{ maxWidth: 360, width: '100%' }}>
           <div className={styles.cardBody}>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--fs-14)', marginBottom: 'var(--space-2)' }}>
-              <span>Subtotal</span>
+              <span>Subtotal {qtyLabel}</span>
               <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(subtotalSen, currency)}</span>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--fs-16)', fontWeight: 700, borderTop: '1px solid var(--line)', paddingTop: 'var(--space-2)' }}>
-              <span>Total</span>
+              <span>Total {qtyLabel}</span>
               <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(subtotalSen, currency)}</span>
             </div>
             {/* Landed-cost core — MYR inventory cost for a foreign GRN. */}
