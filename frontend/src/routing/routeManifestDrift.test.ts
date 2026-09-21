@@ -80,7 +80,9 @@ describe("executable route contract", () => {
     // brand has no booth at that event). docs/bugs/0862.
     // 161 since 2026-09-21: /scm/forecast — the Forecast P&L, targets per
     // account on the P&L's own tree, the Dashboard's forecast side.
-    expect(STAFF_ROUTE_PATTERNS).toHaveLength(161);
+    // 162 since 2026-09-21: /scm/finance-dashboard — the statements' actuals
+    // beside the forecast, per month or quarter.
+    expect(STAFF_ROUTE_PATTERNS).toHaveLength(162);
     expect(new Set(STAFF_ROUTE_PATTERNS).size).toBe(STAFF_ROUTE_PATTERNS.length);
     expect([...STAFF_ROUTE_PATTERNS].sort()).toEqual([...appPages].sort());
   });
@@ -119,7 +121,8 @@ describe("executable route contract", () => {
     // 168 since 2026-09-12 — /venture-portal-feed; see the staff-route count.
     // 169 since 2026-09-13 — /scm/fair-pending; see the staff-route count above.
     // 170 since 2026-09-21 — /scm/forecast; see the staff-route count above.
-    expect(ROUTE_CONTRACT).toHaveLength(170);
+    // 171 since 2026-09-21 — /scm/finance-dashboard; see the staff-route count above.
+    expect(ROUTE_CONTRACT).toHaveLength(171);
   });
 
   it("keeps every desktop nav destination on a live staff route", () => {

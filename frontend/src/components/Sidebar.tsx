@@ -751,6 +751,7 @@ export const NAV_TABS: NavTab[] = [
         groupId: "scm-finance-forecast",
         children: [
           { to: "/scm/forecast", label: "Forecast P&L", icon: BarChart3, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.accounting"] },
+          { to: "/scm/finance-dashboard", label: "Dashboard", icon: LayoutDashboard, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.accounting"] },
         ],
       },
       {
