@@ -266,21 +266,21 @@ Total: 1320 route registrations across 186 files.
 - L2689  POST   /:id/generate-po
 - L2748  POST   /:id/approve
 - L2803  POST   /:id/transition
-- L2879  POST   /:id/supplier-returns
-- L2880  PATCH  /:id/supplier-returns/:roundId{[0-9]+}
-- L2881  DELETE /:id/supplier-returns/:roundId{[0-9]+}
-- L2894  POST   /:id/notes
-- L2922  POST   /:id/notes/:noteId/correct
-- L2952  GET    /:id/timeline.csv
-- L3037  POST   /:id/items
-- L3048  DELETE /:id/items/:itemId
-- L3057  PATCH  /:id/items/:itemId
-- L3148  PUT    /:id/attachments
-- L3195  PUT    /:id/attachments/thumb
-- L3222  GET    /attachments/:key{.+}
-- L3263  GET    /logistics/all
-- L3321  POST   /:id/logistics
-- L3336  PATCH  /:id/logistics/:logId
+- L2878  POST   /:id/supplier-returns
+- L2879  PATCH  /:id/supplier-returns/:roundId{[0-9]+}
+- L2880  DELETE /:id/supplier-returns/:roundId{[0-9]+}
+- L2893  POST   /:id/notes
+- L2921  POST   /:id/notes/:noteId/correct
+- L2951  GET    /:id/timeline.csv
+- L3036  POST   /:id/items
+- L3047  DELETE /:id/items/:itemId
+- L3056  PATCH  /:id/items/:itemId
+- L3147  PUT    /:id/attachments
+- L3194  PUT    /:id/attachments/thumb
+- L3221  GET    /attachments/:key{.+}
+- L3262  GET    /logistics/all
+- L3320  POST   /:id/logistics
+- L3335  PATCH  /:id/logistics/:logId
 
 ## backend/src/scm/routes/mfg-sales-orders.ts  (35)
 - L1140  GET    /
