@@ -80,13 +80,17 @@ const blockFor = (bf) => {
 };
 
 /* One UPDATE shape per table (all four carry the same columns). Merges the patch
-   into variants and moves the inch columns only where they were populated. */
+   into variants and moves the inch columns only where they were populated.
+   The ::int on each param is required: in `CASE WHEN ... THEN NULL ELSE $n END`
+   the NULL branch gives Postgres no type to infer, so an un-cast $n defaults to
+   text and assigning it to the integer column fails ("gap_inches is of type
+   integer but expression is of type text"). All three columns are integer. */
 async function updateRow(tx, tbl, id, patch, inch) {
   const set = (t) => t`
         SET variants = variants || ${tx.json(patch)},
-            gap_inches          = CASE WHEN gap_inches          IS NULL THEN NULL ELSE ${inch.gap}   END,
-            divan_height_inches = CASE WHEN divan_height_inches IS NULL THEN NULL ELSE ${inch.divan} END,
-            leg_height_inches   = CASE WHEN leg_height_inches   IS NULL THEN NULL ELSE ${inch.leg}   END
+            gap_inches          = CASE WHEN gap_inches          IS NULL THEN NULL ELSE ${inch.gap}::int   END,
+            divan_height_inches = CASE WHEN divan_height_inches IS NULL THEN NULL ELSE ${inch.divan}::int END,
+            leg_height_inches   = CASE WHEN leg_height_inches   IS NULL THEN NULL ELSE ${inch.leg}::int   END
       WHERE id = ${id}::uuid AND jsonb_typeof(variants) = 'object'
   RETURNING id::text AS id`;
   switch (tbl) {
