@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 /* Correct the mattress GAP on the bedframe lines whose AutoCount Desc2 wrote the
    divan height as "DIVAN GAP: N" AHEAD of the real "M.GAP" / "MATTRESS GAP".
-   DRY-RUN by default; APPLY=1 writes.
+   MODE=plan (default) reports and writes nothing; MODE=apply with
+   CONFIRM="I HAVE REVIEWED THE DRY-RUN" writes. Runs on the shared runner
+   (Actions -> "Run a backend script on production").
 
    WHY. parse-bedframe.mjs read an un-anchored GAP, so on
    "COL: PC151-12 /DIVAN GAP: 8"+NO LEGS / M.GAP: 12"" it grabbed the leading
@@ -38,10 +40,16 @@ import { parseBedframe } from "./lib/parse-bedframe.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
-const APPLY = process.env.APPLY === "1";
+const APPLY = (process.env.MODE || "plan").toLowerCase() === "apply" || process.env.APPLY === "1";
+const CONFIRM_PHRASE = "I HAVE REVIEWED THE DRY-RUN";
 const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 const err = (m) => console.log(process.env.GITHUB_ACTIONS ? `::error::${m}` : `ERROR: ${m}`);
 const j = (v) => JSON.stringify(v);
+
+if (APPLY && process.env.CONFIRM !== CONFIRM_PHRASE) {
+  err(`MODE=apply requires CONFIRM="${CONFIRM_PHRASE}"`);
+  process.exit(2);
+}
 
 /* The owner-confirmed set (2026-09-21). EXPECTED_GAP is the reviewed answer the
    fixed parser must produce from that line's Desc2 before any write happens. */
@@ -92,7 +100,7 @@ async function updateRow(tx, tbl, id, patch, inch) {
 }
 
 async function main() {
-  log(`mode=${APPLY ? "APPLY" : "DRY-RUN"}`);
+  log(`mode=${APPLY ? "APPLY" : "PLAN (writes nothing)"}`);
   const sql = postgres(DST, { ssl: "require", prepare: false, max: 1 });
 
   const soRows = await sql`
@@ -149,7 +157,7 @@ async function main() {
   }
   if (refusals.length) { err(`${refusals.length} target(s) refused — aborting without writing.`); await sql.end(); process.exit(1); }
 
-  if (!APPLY) { log(""); log("DRY-RUN — set APPLY=1 to write."); await sql.end(); return; }
+  if (!APPLY) { log(""); log(`PLAN ONLY: nothing written. Re-run with MODE=apply CONFIRM="${CONFIRM_PHRASE}".`); await sql.end(); return; }
 
   let returned = 0, missed = 0;
   await sql.begin(async (tx) => {
