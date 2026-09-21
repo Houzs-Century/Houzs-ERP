@@ -57,7 +57,7 @@ describe('the Forecast P&L page', () => {
     expect(screen.getByText('Trading income')).toBeTruthy();
     expect(screen.getByText('Administrative expense')).toBeTruthy();
     expect(screen.getByText('Salary & related')).toBeTruthy();
-    expect(screen.getByText('SALES OF SOFA')).toBeTruthy();
+    expect(screen.getByText('500-0003 · SALES OF SOFA')).toBeTruthy();
     /* Saved: sales 100,000 as an amount; cost 60% with its implied 60,000; salary 20,000 with its implied 20%. */
     expect(amount('2026-09', '500-0003').value).toBe('100,000.00');
     expect(percent('2026-09', '601-0003').value).toBe('60');
@@ -70,10 +70,10 @@ describe('the Forecast P&L page', () => {
     expect(rowText('pl:general:salary')).toContain('20,000.00');
     /* A sales line has no % box; ADVERT and the discount, never keyed, are hidden until asked. */
     expect(screen.queryByLabelText('2026-09 500-0003 percent')).toBeNull();
-    expect(screen.queryByText('ADVERT')).toBeNull();
+    expect(screen.queryByText('900-A001 · ADVERT')).toBeNull();
     fireEvent.click(screen.getByText('Show empty lines'));
-    expect(screen.getByText('ADVERT')).toBeTruthy();
-    expect(screen.getByText('DISCOUNT ALLOWED')).toBeTruthy();
+    expect(screen.getByText('900-A001 · ADVERT')).toBeTruthy();
+    expect(screen.getByText('520-0000 · DISCOUNT ALLOWED')).toBeTruthy();
   });
 
   test('keying an amount moves every implied figure; keying the other box clears the first; the page says it is not saved', () => {

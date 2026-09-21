@@ -383,9 +383,9 @@ export const ForecastPnl = () => {
                     </tr>
                   ) : (
                     <tr key={r.id} data-row={r.id}>
-                      <td style={{ ...td, ...nameCol, paddingLeft: 8 + (r.depth - 1) * 16 + 18, lineHeight: 1.25 }}>
-                        <span>{r.account.code}</span><br /><span style={{ fontSize: 'var(--fs-12)', color: 'var(--c-ink-soft, #555)' }}>{r.account.name}</span>
-                      </td>
+                      {/* One line, `code · name`, the report trees' own label (owner 2026-09-22:
+                          the two-line shape belongs to the journal and GL line tables). */}
+                      <td style={{ ...td, ...nameCol, paddingLeft: 8 + (r.depth - 1) * 16 + 18 }}>{r.account.code} · {r.account.name}</td>
                       {months.map((m) => {
                         const cell = cellOf(m, r.account.code);
                         const line = lineOf(m, r.account.code);
