@@ -63,10 +63,6 @@ import {
   type PdfPhotoImage,
 } from './pdf-item-photos';
 import { fetchDoItemPhotoBlob } from './sales-order-queries';
-/* The status WORD comes from the one home for it, never from a caser here:
-   what this document prints and what the screen shows must be the same word.
-   docs/modules/document-status-vocabulary.md §1. */
-import { statusLabel } from './status-pill';
 
 type DoHeader = {
   /* Row id — the photo proxy route is keyed by it. Optional so the
@@ -108,6 +104,11 @@ type DoHeader = {
   po_doc_no?: string | null;
   customer_so_no?: string | null;
   ref?: string | null;
+  /* Resolved salesperson display name for the DELIVERY DETAILS block. The PDF
+     cannot run the staff lookup, so the caller passes the same name it shows on
+     screen (salesperson_name, else the staff-lookup of agent / salesperson_id).
+     Optional: blank / absent ⇒ the row is omitted, like Driver / Vehicle. */
+  salesperson?: string | null;
 };
 
 type DoItem = {
@@ -220,8 +221,11 @@ function drawDoHeader(
      reads from across a desk. It used to be a brass pill. */
   const docNoBaseline = ty - pt(S.title * 1.1) + pt(S.docNo) + 2.5;
   font(doc, S.docNo, 'bold');
-  doc.text(header.do_number, rightEdge, docNoBaseline, { align: 'right' });
-  rightW = Math.max(rightW, doc.getTextWidth(header.do_number));
+  // Owner 2026-09-21: label the number "No. :" so it reads as the document
+  // number, not a bare code.
+  const docNoText = `No. : ${header.do_number}`;
+  doc.text(docNoText, rightEdge, docNoBaseline, { align: 'right' });
+  rightW = Math.max(rightW, doc.getTextWidth(docNoText));
 
   const issuedBaseline = docNoBaseline + pt(S.meta) + 2;
   const issued = `Issued ${fmtDocDate(header.do_date)}`;
@@ -345,13 +349,23 @@ function drawDoHeader(
     .map((v) => (v || '').trim())
     .filter(Boolean);
   if (cs.length > 0) {
+    font(doc, S.meta);
     const label = 'Customer Service';
     const labelW = doc.getTextWidth(label) + 2;
-    const csLines = doc.splitTextToSize(cs.join('  ·  '), Math.max(30, leftMaxW - labelW)) as string[];
-    csLines.forEach((line, i) => {
+    const valueW = Math.max(30, leftMaxW - labelW);
+    const oneLine = cs.join('  ·  ');
+    /* One line when phone + e-mail fit beside the label. Otherwise each channel
+       takes its own line, and any that is too wide for the indented column (a
+       long e-mail, once the logo + QR have narrowed this column) drops to the
+       full-width left edge so it is NEVER force-broken mid-word — the bug that
+       printed operation@houzscentury.com as "operation@houzsce" / "ntury.com". */
+    const csRows: Array<[number, string]> = doc.getTextWidth(oneLine) <= valueW
+      ? [[textX + labelW, oneLine]]
+      : cs.map((v, i) => [i > 0 && doc.getTextWidth(v) > valueW ? textX : textX + labelW, v]);
+    csRows.forEach(([x, text], i) => {
       y += i === 0 ? 2 + pt(S.meta) : pt(S.meta * LINE);
       if (i === 0) doc.text(label, textX, y);
-      doc.text(line, textX + labelW, y);
+      doc.text(text, x, y);
     });
   }
 
@@ -378,10 +392,8 @@ function drawCaption(doc: Doc, text: string, x: number, top: number): number {
  */
 function drawInfoPanel(doc: Doc, top: number, header: DoHeader): number {
   const PAD_X = 5;
-  const PAD_Y = 4.5;
+  const PAD_Y = 3;
   const GAP = 8;
-  /* Space between the customer name and the debtor code that follows it. */
-  const CODE_GAP = 3;
   const innerW = CONTENT_W - PAD_X * 2;
   const colW = (innerW - GAP) / 2;
   const leftX = M + PAD_X;
@@ -413,39 +425,9 @@ function drawInfoPanel(doc: Doc, top: number, header: DoHeader): number {
       y += pt(S.customer) * 1.2;
       if (draw) { setInk(doc, T.ink); doc.text(line, leftX, y); }
     }
-    /* The debtor code rides on the name's last line — it is how the warehouse
-       and the customer's own AP team match the account, and it costs no height
-       there. Omitted rather than dashed when a record has none.
-
-       IT ONLY RIDES IF IT FITS. `splitTextToSize` wraps the NAME to colW, so a
-       name whose last line ends near the column edge left no room, and the code
-       was drawn past it — straight over "SO No" in the details column
-       (docs/bugs/0550). When it does not fit it takes its own line instead, and
-       the MEASURE pass counts that line too, so the panel grows with it rather
-       than the code falling out of the bottom. */
-    const codeFits = (): boolean => {
-      if (!header.debtor_code) return true;
-      const lastLine = nameLines[nameLines.length - 1] ?? '';
-      font(doc, S.customer, 'bold');
-      const nameW = doc.getTextWidth(lastLine);
-      font(doc, S.body);
-      return nameW + CODE_GAP + doc.getTextWidth(header.debtor_code) <= colW;
-    };
-    if (header.debtor_code) {
-      const inline = codeFits();
-      const lastLine = nameLines[nameLines.length - 1] ?? '';
-      let codeX = leftX;
-      if (inline) {
-        font(doc, S.customer, 'bold');
-        codeX = leftX + doc.getTextWidth(lastLine) + CODE_GAP;
-      } else {
-        y += pt(S.body) * 1.2;
-      }
-      if (draw) {
-        font(doc, S.body);
-        doc.text(header.debtor_code, codeX, y);
-      }
-    }
+    // Customer account code (debtor_code) is deliberately NOT printed on the
+    // customer's copy (owner 2026-09-21) — it is an internal account number. The
+    // field is still carried on DoHeader for search / dedup elsewhere.
 
     font(doc, S.body);
     // The address measure is capped so it never crowds the details column.
@@ -503,6 +485,11 @@ function drawInfoPanel(doc: Doc, top: number, header: DoHeader): number {
 
   const rows: Array<{ label: string; value: string | null; bold?: boolean }> = [
     ...soRows,
+    // Who sold the order — printed once the record carries it, omitted (not
+    // dashed) otherwise, the rule the Driver / Vehicle rows follow.
+    ...(header.salesperson && header.salesperson.trim()
+      ? [{ label: 'Salesperson', value: header.salesperson.trim() }]
+      : []),
     { label: 'Issued Date', value: fmtDocDate(header.do_date) },
     {
       label: 'Delivery Date',
@@ -512,13 +499,9 @@ function drawInfoPanel(doc: Doc, top: number, header: DoHeader): number {
     // a dashed "Driver —" on an unassigned DO is noise on the driver's sheet.
     ...(header.driver_name ? [{ label: 'Driver', value: header.driver_name }] : []),
     ...(header.vehicle ? [{ label: 'Vehicle', value: header.vehicle }] : []),
-    /* The status WORD, bold and upper-cased. It used to be a teal pill, which
-       an impact printer turns into a speckled box. */
-    {
-      label: 'Status',
-      value: header.status ? statusLabel('do', header.status).toUpperCase() : null,
-      bold: true,
-    },
+    // Status is intentionally NOT shown on the customer's copy (owner
+    // 2026-09-21): the DO states what is delivered, not the order's workflow
+    // state. The status still drives the header QR / on-screen views.
   ];
 
   const drawRight = (draw: boolean): number => {
@@ -552,12 +535,18 @@ function drawInfoPanel(doc: Doc, top: number, header: DoHeader): number {
 
 // ── Closing block geometry, shared by the drawer and the page-break check ────
 const FOOTER_RULE_Y = PAGE_H - PAD_BOTTOM - 6;
-const SIG_BOX_H = 20;
+/* The MINIMUM blank signing space reserved above the signature rule — a page-
+   break threshold, NOT a drawn box: drawClosing always strikes the rule at
+   SIG_TITLE_TOP, so a short DO keeps a large blank above it either way. At 20mm
+   (+6mm gap = 26mm reserved) even a five-line DO spilled a near-empty second
+   Letter sheet. Trimmed to 8mm (+4mm gap = 12mm floor, owner 2026-09-21): still
+   room to sign, and normal DOs now close on one page. */
+const SIG_BOX_H = 8;
 const SIG_FIELD_ROW = pt(S.sigField) + 3.6;
 const SIG_TITLE_TOP = FOOTER_RULE_Y - 6 - SIG_FIELD_ROW * 2 - 2 - pt(S.sigTitle) - 2.5;
 const SIG_BOX_TOP = SIG_TITLE_TOP - SIG_BOX_H;
 /** Content must end above this or the closing block takes a fresh page. */
-const CLOSING_TOP = SIG_BOX_TOP - 6;
+const CLOSING_TOP = SIG_BOX_TOP - 4;
 
 /** Signature blocks + footer, pinned to the bottom of the page they close. */
 function drawClosing(doc: Doc, header: DoHeader, pageOf: { page: number; total: number }): void {
@@ -597,7 +586,7 @@ function drawClosing(doc: Doc, header: DoHeader, pageOf: { page: number; total: 
     M,
     footBaseline,
   );
-  doc.text(`${header.do_number} · Page ${pageOf.page} of ${pageOf.total}`, PAGE_W - M, footBaseline, { align: 'right' });
+  doc.text(`${header.do_number} · Page : ${pageOf.page} of ${pageOf.total}`, PAGE_W - M, footBaseline, { align: 'right' });
 }
 
 /** The footer alone — every page that is not the one carrying the signature. */
@@ -607,7 +596,7 @@ function drawFooterOnly(doc: Doc, header: DoHeader, pageOf: { page: number; tota
   font(doc, S.footer);
   setInk(doc, T.ink);
   doc.text(`${COMPANY.portalLabel} · ${fmtDocDate(header.do_date)}`, M, footBaseline);
-  doc.text(`${header.do_number} · Page ${pageOf.page} of ${pageOf.total}`, PAGE_W - M, footBaseline, { align: 'right' });
+  doc.text(`${header.do_number} · Page : ${pageOf.page} of ${pageOf.total}`, PAGE_W - M, footBaseline, { align: 'right' });
 }
 
 /* Draw ONE delivery order's content into `doc`. Does NOT create the doc or
@@ -670,7 +659,7 @@ export async function renderDeliveryOrderInto(
     docTitle: opts?.docTitle ?? 'DELIVERY ORDER',
     logo: opts?.logo,
   });
-  const panelBottom = drawInfoPanel(doc, ruleY + 6, header);
+  const panelBottom = drawInfoPanel(doc, ruleY + 4, header);
 
   // ── Line items ────────────────────────────────────────────────────
   // Description cell = SKU description + the UNIFIED variant line (same composer
@@ -742,7 +731,7 @@ export async function renderDeliveryOrderInto(
   const rightAlignedHead = new Set(showPicking ? [5, 6] : [3, 4]);
 
   autoTable(doc, {
-    startY: panelBottom + 7,
+    startY: panelBottom + 4,
     head: [headRow],
     body: rows,
     foot,

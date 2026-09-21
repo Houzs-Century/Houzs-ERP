@@ -1051,8 +1051,14 @@ export function MfgDeliveryOrdersListV2() {
      DO's detail endpoint and that its header must carry `loadScanId` to arm the
      print's "scan to mark loaded" QR. The row menu's print reads the same
      function, so batch and single cannot drift apart. */
-  const fetchDoBundle = (row: DoRow): Promise<{ header: unknown; items: unknown[] }> =>
-    fetchPrintBundle({ doc: "do", docNo: row.do_number, key: row.id });
+  const fetchDoBundle = async (row: DoRow): Promise<{ header: unknown; items: unknown[] }> => {
+    const bundle = await fetchPrintBundle({ doc: "do", docNo: row.do_number, key: row.id });
+    // Attach the resolved salesperson name for the PDF's DELIVERY DETAILS block —
+    // the generator can't run the staff lookup. Resolved the same way the list
+    // column is (ac_agent, else the staff lookup); blank ⇒ the row is omitted.
+    const salesperson = row.ac_agent ?? salespersonNameOf(null, row.salesperson_id, "");
+    return { ...bundle, header: { ...(bundle.header as Record<string, unknown>), salesperson } };
+  };
 
   const clearSelection = () => setSelectedIds(new Set());
 

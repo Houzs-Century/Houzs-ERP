@@ -60,6 +60,9 @@ const LOGO: BrandingLogo = {
 const HEADER = {
   do_number: '2990-DO-2608-006',
   status: 'dispatched',
+  // Null by default; the one-page test sets it so the "SCAN AT EACH STEP" QR is
+  // part of the letterhead height, as it is on a real DO.
+  scanToken: null as string | null,
   do_date: '2026-08-06',
   so_doc_no: '2990-SO-2606-015',
   debtor_code: 'C-001',
@@ -220,7 +223,7 @@ describe('Delivery Order — Theme C template', () => {
     // The right column: the two title words, the doc number and the issued
     // date — everything drawn above the header rule at the right edge.
     const meta = spans.filter(
-      (s) => ['DELIVERY', 'ORDER', HEADER.do_number, 'Issued 06/08/2026'].includes(s.text) && s.y < 50,
+      (s) => ['DELIVERY', 'ORDER', `No. : ${HEADER.do_number}`, 'Issued 06/08/2026'].includes(s.text) && s.y < 50,
     );
     expect(meta.length).toBeGreaterThanOrEqual(4);
     const metaLeft = Math.min(...meta.map((s) => s.left));
@@ -236,59 +239,15 @@ describe('Delivery Order — Theme C template', () => {
     expect(Math.min(...company.map((s) => s.left))).toBeGreaterThan(20);
   });
 
-  test('the debtor code never runs into the delivery-details column', async () => {
-    /* The code is drawn AFTER the customer name, at name-width + 3mm. The name
-       is wrapped to the left column's width, so a name whose last line ends
-       near the column edge left the code nowhere to go — and jsPDF does not
-       clip: it drew straight over "SO No" in the right column. Seen on a real
-       Houzs sheet, 2026-08-26 (docs/bugs/0550).
-
-       SWEPT rather than pinned to one magic name: the overflow only happens in
-       the narrow band where the last line nearly fills the column, and a single
-       fixture sits in that band only by luck — the first version of this test
-       passed with the fix REMOVED because its name happened to wrap early.
-       Growing the name one character at a time crosses the band for certain.
-
-       Measured against the right column's OWN spans rather than a hardcoded
-       81mm, so re-proportioning the panel cannot quietly retire the check. */
-    const LABELS = ['SO No', 'Ref No.', 'Issued Date', 'Delivery Date', 'Status'];
-    let crossedTheBand = false;
-
-    for (let n = 18; n <= 46; n += 1) {
-      const { spans } = await renderDo([itemAt(1)], {
-        ...HEADER,
-        debtor_name: `${'Evergreen Living Furniture Trading Sdn Bhd'.slice(0, n)}`,
-        debtor_code: 'C-01427',
-      });
-
-      const code = spans.find((s) => s.text === 'C-01427');
-      expect(code).toBeDefined();
-
-      const details = spans.filter((s) => LABELS.includes(s.text.trim()));
-      expect(details.length).toBeGreaterThanOrEqual(3);
-      const detailsLeft = Math.min(...details.map((s) => s.left));
-
-      const name = spans.filter((s) => s.text.startsWith('Customer :') || s.y === code!.y);
-      const nameRight = Math.max(...name.filter((s) => s !== code).map((s) => s.right), 0);
-      if (nameRight > detailsLeft - 14) crossedTheBand = true;
-
-      expect(code!.right, `debtor name of ${n} chars`).toBeLessThan(detailsLeft);
-    }
-
-    // The sweep is only a proof if it actually reached the tight cases.
-    expect(crossedTheBand).toBe(true);
-  });
-
-  test('a debtor code that fits still rides on the name, costing no height', async () => {
-    /* The fix must not push EVERY code onto its own line — the short-name case
-       is the common one, and the panel would grow a row on every sheet. */
-    const { spans } = await renderDo([itemAt(1)]);
-    const name = spans.find((s) => s.text.startsWith('Customer :'));
-    const code = spans.find((s) => s.text === 'C-001');
-    expect(name).toBeDefined();
-    expect(code).toBeDefined();
-    expect(code!.y).toBe(name!.y);
-    expect(code!.left).toBeGreaterThan(name!.right);
+  test('the customer account code is not printed on the customer copy', async () => {
+    /* Owner 2026-09-21: debtor_code is an internal account number and no longer
+       rides beside the customer name on the copy the customer receives. The
+       field is still carried on the header for search / dedup, so a value is
+       supplied here to prove it is DROPPED, not merely missing from the fixture. */
+    const { spans } = await renderDo([itemAt(1)], { ...HEADER, debtor_code: 'C-01427' });
+    expect(spans.some((s) => s.text.startsWith('Customer :'))).toBe(true);
+    expect(spans.some((s) => s.text === 'C-01427')).toBe(false);
+    expect(spans.some((s) => s.text === HEADER.debtor_code)).toBe(false);
   });
 
   /* The sheet goes through an Epson LQ-310 (24-pin, black ribbon) onto 9.5 x 11
@@ -392,7 +351,7 @@ describe('Delivery Order — Theme C template', () => {
 
     const total = doc.getNumberOfPages();
     for (let p = 1; p <= total; p += 1) {
-      expect(spans.some((s) => s.page === p && s.text === `${HEADER.do_number} · Page ${p} of ${total}`))
+      expect(spans.some((s) => s.page === p && s.text === `${HEADER.do_number} · Page : ${p} of ${total}`))
         .toBe(true);
     }
   });
@@ -420,8 +379,8 @@ describe('Delivery Order — Theme C template', () => {
       { logo: LOGO },
     );
 
-    expect(spans.some((s) => s.text === '2990-DO-2608-006 · Page 1 of 1')).toBe(true);
-    expect(spans.some((s) => s.text === '2990-DO-2608-007 · Page 1 of 1')).toBe(true);
+    expect(spans.some((s) => s.text === '2990-DO-2608-006 · Page : 1 of 1')).toBe(true);
+    expect(spans.some((s) => s.text === '2990-DO-2608-007 · Page : 1 of 1')).toBe(true);
   });
 
   test('Houzs splits SO No from the customer Ref No.; 2990 keeps one SO Ref', async () => {
@@ -465,9 +424,12 @@ describe('Delivery Order — Theme C template', () => {
     expect(refOnly.spans.some((s) => s.text === 'REF-1')).toBe(true);
   });
 
-  test('driver, vehicle, customer code and the delivery note print when the record has them', async () => {
-    /* All four were dropped by the handoff's block and put back on the owner's
-       call (2026-08-07): the driver's sheet is exactly where they are needed. */
+  test('driver, vehicle and the delivery note print when the record has them', async () => {
+    /* Driver, vehicle and the note were dropped by the handoff's block and put
+       back on the owner's call (2026-08-07): the driver's sheet is exactly where
+       they are needed. The customer code was on that list too until the owner had
+       it removed (2026-09-21) — an internal account number off the customer copy
+       — so it is asserted ABSENT below. */
     setBrandingCache({ ...BRANDING_2990 }, '2990');
     const { spans } = await renderDo(
       [itemAt(1)],
@@ -482,7 +444,7 @@ describe('Delivery Order — Theme C template', () => {
     expect(spans.some((s) => s.text === 'Ah Seng')).toBe(true);
     expect(spans.some((s) => s.text === 'Vehicle')).toBe(true);
     expect(spans.some((s) => s.text === 'WXY 1234')).toBe(true);
-    expect(spans.some((s) => s.text === HEADER.debtor_code)).toBe(true);
+    expect(spans.some((s) => s.text === HEADER.debtor_code)).toBe(false);
     expect(spans.some((s) => s.text === 'Note:')).toBe(true);
     expect(spans.some((s) => s.text.includes('guardhouse'))).toBe(true);
   });
@@ -495,6 +457,76 @@ describe('Delivery Order — Theme C template', () => {
     expect(spans.some((s) => s.text === 'Driver')).toBe(false);
     expect(spans.some((s) => s.text === 'Vehicle')).toBe(false);
     expect(spans.some((s) => s.text === 'Note:')).toBe(false);
+  });
+
+  test('the Salesperson row prints in DELIVERY DETAILS only when the record carries one', async () => {
+    /* Owner 2026-09-21: the delivery-details block gains "who sold it". The PDF
+       cannot run the staff lookup, so the caller passes the resolved name; the
+       row is omitted (not dashed) when absent, the Driver / Vehicle rule. */
+    setBrandingCache({ ...BRANDING_2990 }, '2990');
+    const withRep = await renderDo([itemAt(1)], { ...HEADER, salesperson: 'Wei Siang' } as typeof HEADER);
+    expect(withRep.spans.some((s) => s.text === 'Salesperson')).toBe(true);
+    expect(withRep.spans.some((s) => s.text === 'Wei Siang')).toBe(true);
+
+    const without = await renderDo([itemAt(1)]);
+    expect(without.spans.some((s) => s.text === 'Salesperson')).toBe(false);
+  });
+
+  test('the DELIVERY DETAILS block does not print a Status row', async () => {
+    /* Owner 2026-09-21: the customer's copy states what is delivered, not the
+       order's workflow state. HEADER.status is 'dispatched', so a value exists
+       to prove the row is dropped, not merely blank. */
+    setBrandingCache({ ...BRANDING_2990 }, '2990');
+    const { spans } = await renderDo([itemAt(1)]);
+    expect(spans.some((s) => s.text === 'Status')).toBe(false);
+    expect(spans.some((s) => s.text.toUpperCase() === 'DISPATCHED')).toBe(false);
+  });
+
+  test('a DO whose table runs into the lower third closes on ONE Letter page', async () => {
+    /* Owner 2026-09-21: real Houzs DOs (e.g. HC-DO-2609-167) spilled a near-empty
+       second Letter sheet because the closing block reserved ~26mm of blank above
+       the signature rule. The reserve is now ~12mm (the rule is still struck at a
+       fixed baseline, so a short DO's signing space is unchanged), plus a little
+       vertical tightening, so a DO whose table runs into the lower third keeps
+       its signature on the SAME page. This mix ends well past the OLD threshold.
+       Uses Houzs branding (a normal-length letterhead) so the case mirrors the
+       real HC-DO-2609-167; 2990's very long address is its own taller letterhead. */
+    setBrandingCache(
+      {
+        ...DEFAULT_BRANDING,
+        companyName: 'Houzs Century Sdn Bhd',
+        address:
+          'LOT 1831-(B), Jalan KPB 1, Kawasan Perindustrian Balakong, '
+          + '43300 Seri Kembangan, Selangor',
+        csPhone: '011-6155 6133',
+        csEmail: 'operation@houzscentury.com',
+      },
+      'HOUZS',
+    );
+    const tall = (i: number, ft: string, cm: string) => ({
+      ...itemAt(i),
+      description: `JAGER BEDFRAME (${ft}) (${cm}) PC151-01 / DIVAN 8" + LEG 0" / GAP 12" / T.Heights 20"`,
+    });
+    const short = (i: number, desc: string) => ({ ...itemAt(i), description: desc, source_pos: [], racks: [] });
+    const items = [
+      short(1, 'ERGOTEX FLEXICARE-C MATTRESS (152X190X30CM)'),
+      short(2, 'ERGOTEX PUREZONE-S MATTRESS (183X190X35CM)'),
+      tall(3, '6FT', '183X190CM'),
+      tall(4, '5FT', '152X190CM'),
+      short(5, 'NTYR-MEMORY FOAM CONTOUR PILLOW'),
+      short(6, 'MATTRESS PROTECTOR TENCEL (KING)'),
+    ];
+    // A real DO carries a scan token, so the "SCAN AT EACH STEP" QR is part of
+    // the letterhead height — the case only reproduces HC-DO-2609-167 with it.
+    const { doc, spans } = await renderDo(items, { ...HEADER, scanToken: 'a'.repeat(64) });
+    // The table must genuinely run into the band the old ~26mm reserve rejected
+    // (content past ~207mm spilled before), or this proves nothing.
+    const finalY = (doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? 0;
+    expect(finalY).toBeGreaterThan(206.8);
+    expect(doc.getNumberOfPages()).toBe(1);
+    const sig = spans.filter((s) => s.text === 'Customer Acknowledged Receipt');
+    expect(sig).toHaveLength(1);
+    expect(sig[0]!.page).toBe(1);
   });
 
   test('a stacked logo gets the same presence as a wide one', async () => {

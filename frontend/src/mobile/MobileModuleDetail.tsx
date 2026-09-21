@@ -16,6 +16,7 @@ import { flowAnchorForModule, type FlowNav } from "./relationship-map-model";
 import { idempotentInit, useIdempotencyKey } from "../lib/idempotency";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
+import { useStaffLookup } from "../hooks/useStaffLookup";
 import { MobileAddLine } from "./MobileAddLine";
 import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
 import { usePrompt } from "../vendor/scm/components/PromptDialog";
@@ -1409,6 +1410,7 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD, flowNav }:
     enabled: !!id,
     staleTime: 15_000,
   });
+  const { nameOf: salespersonNameOf } = useStaffLookup();
 
   // While loading / on error, keep the header populated from the list `row` so
   // the screen never flashes empty.
@@ -1453,7 +1455,14 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD, flowNav }:
         // armDoScanToken puts the PUBLIC scan token on the header (desktop parity).
         const { armDoScanToken } = await import("../vendor/scm/lib/do-scan-token-arm");
         const doId = (header as { id?: string }).id ?? "";
-        await generateDeliveryOrderPdf(await armDoScanToken(header as Record<string, unknown>, doId) as never, items as never, { action });
+        // Resolve the salesperson name for the DELIVERY DETAILS block (desktop
+        // parity); blank ⇒ the row is omitted on the PDF.
+        const salesperson =
+          header.salesperson_name ||
+          salespersonNameOf(header.agent ?? null, header.salesperson_id ?? null, "") ||
+          null;
+        const armed = await armDoScanToken(header as Record<string, unknown>, doId);
+        await generateDeliveryOrderPdf({ ...armed, salesperson } as never, items as never, { action });
       } else {
         const { generateSalesInvoicePdf } = await import("../vendor/scm/lib/sales-invoice-pdf");
         await generateSalesInvoicePdf(header as never, items as never, { action });

@@ -113,9 +113,11 @@ afterEach(() => {
 
    NOT in this table, each for a reason: `po` — purchase-order-pdf.ts accepts
    header.status and draws no Status row at all, a supplier's order sheet states
-   no internal state; `pv`, `dpOrder`, `soAmendment*`, `poAmendment` — no
-   generator of their own. All of them are still covered by the source scan at
-   the bottom of this file. */
+   no internal state; `do` — delivery-order-pdf.ts stopped printing a Status row
+   (owner 2026-09-21), the customer's copy states what is delivered, not the
+   order's workflow state (its own absence is pinned below); `pv`, `dpOrder`,
+   `soAmendment*`, `poAmendment` — no generator of their own. All of them are
+   still covered by the source scan at the bottom of this file. */
 type PrintedDoc = {
   docType: StatusDocType;
   title: string;
@@ -139,27 +141,6 @@ async function newDoc() {
 }
 
 const PRINTED_DOCS: PrintedDoc[] = [
-  {
-    docType: 'do',
-    title: 'Delivery Order',
-    uppercaseChip: true,
-    render: async (status) => {
-      const { doc, autoTable, draws } = await newDoc();
-      const { renderDeliveryOrderInto } = await import('./delivery-order-pdf');
-      await renderDeliveryOrderInto(doc, autoTable, {
-        do_number: 'HC-DO-2608-001', status, do_date: '2026-08-20',
-        so_doc_no: 'HC-SO-2608-001', debtor_code: 'C-1', debtor_name: 'Test Sdn Bhd',
-        expected_delivery_at: '2026-08-22', dispatched_at: null, signed_at: null,
-        delivered_at: null, driver_name: null, vehicle: null,
-        address1: '1 Jalan Test', address2: null, city: 'Seri Kembangan',
-        state: 'Selangor', postcode: '43300', phone: null, notes: null,
-        m3_total_milli: null,
-      }, [
-        { item_code: 'DO-A', description: 'Bedframe', qty: 1, m3_milli: null, unit_price_sen: 0 },
-      ]);
-      return printedStatus(draws);
-    },
-  },
   {
     docType: 'dr',
     title: 'Delivery Return',
@@ -303,7 +284,7 @@ describe('the harness itself', () => {
      statusVocabulary(); if that ever returned [] the whole file would pass
      having compared nothing. */
   test('every printed document has a non-empty vocabulary to check', () => {
-    expect(PRINTED_DOCS.length).toBe(9);
+    expect(PRINTED_DOCS.length).toBe(8);
     for (const d of PRINTED_DOCS) {
       expect(statusVocabulary(d.docType).length, d.title).toBeGreaterThan(1);
     }
@@ -315,8 +296,11 @@ describe('the harness itself', () => {
      reading paper: an unmapped key prints humanised, and the check below sees
      that humanised word rather than anything statusLabel decided in advance. */
   test('printedStatus reads the drawn word, not the expected one', async () => {
-    const printed = await PRINTED_DOCS[0].render('SOME_LEGACY_VALUE');
-    expect(printed).toBe('SOME LEGACY VALUE');
+    const d = PRINTED_DOCS[0];
+    const printed = await d.render('SOME_LEGACY_VALUE');
+    // An unmapped key humanises (status-pill.ts): title-cased, or upper-cased
+    // again for a chip document. Read from the drawn word, not from statusLabel.
+    expect(printed).toBe(d.uppercaseChip ? 'SOME LEGACY VALUE' : 'Some Legacy Value');
   });
 });
 
@@ -334,14 +318,29 @@ describe('a printed document states the status the screen states', () => {
 });
 
 describe('the delivery order trap the owner was holding', () => {
-  /* THE WHOLE POINT, by name. Since 2026-08-26 stored DISPATCHED READS "Loaded"
-     (docs/modules/document-status-vocabulary.md §1). Before this fix the sheet
-     printed LOADED for stored LOADED — the state every screen calls Confirmed —
-     so the word "Loaded" named two different rungs at once. */
-  test('LOADED prints Confirmed and DISPATCHED prints Loaded', async () => {
-    const doPdf = PRINTED_DOCS.find((d) => d.docType === 'do')!;
-    expect(await doPdf.render('LOADED')).toBe('CONFIRMED');
-    expect(await doPdf.render('DISPATCHED')).toBe('LOADED');
+  /* The DO carried the 2026-08-26 status trap: stored DISPATCHED read "Loaded"
+     while stored LOADED also read "Loaded" on the old sheet, so one word named
+     two rungs (docs/modules/document-status-vocabulary.md §1). The owner removed
+     the Status row from the DO entirely (2026-09-21) — the customer's copy states
+     what is delivered, not the workflow rung — so the trap cannot recur. Pinned
+     as an ABSENCE: render a status that used to print, assert no Status word lands. */
+  test('the delivery order prints no Status row at all', async () => {
+    const { doc, autoTable, draws } = await newDoc();
+    const { renderDeliveryOrderInto } = await import('./delivery-order-pdf');
+    await renderDeliveryOrderInto(doc, autoTable, {
+      do_number: 'HC-DO-2608-001', status: 'DISPATCHED', do_date: '2026-08-20',
+      so_doc_no: 'HC-SO-2608-001', debtor_code: 'C-1', debtor_name: 'Test Sdn Bhd',
+      expected_delivery_at: '2026-08-22', dispatched_at: null, signed_at: null,
+      delivered_at: null, driver_name: null, vehicle: null,
+      address1: '1 Jalan Test', address2: null, city: 'Seri Kembangan',
+      state: 'Selangor', postcode: '43300', phone: null, notes: null,
+      m3_total_milli: null,
+    }, [
+      { item_code: 'DO-A', description: 'Bedframe', qty: 1, m3_milli: null, unit_price_sen: 0 },
+    ]);
+    expect(draws.some((d) => d.text === 'Status')).toBe(false);
+    // Stored DISPATCHED used to read "Loaded"; that word must not appear either.
+    expect(draws.some((d) => d.text === 'Loaded')).toBe(false);
   });
 
   /* The confirm step prints WHAT THE SCREEN SAYS, which is the whole assertion,
@@ -353,7 +352,7 @@ describe('the delivery order trap the owner was holding', () => {
      without having to know which is which. */
   test('every document\'s confirm step prints the word its screen shows', async () => {
     const CONFIRM_STEP: Array<[StatusDocType, string]> = [
-      ['do', 'LOADED'], ['grn', 'POSTED'], ['pi', 'POSTED'], ['pr', 'POSTED'],
+      ['grn', 'POSTED'], ['pi', 'POSTED'], ['pr', 'POSTED'],
       ['si', 'SENT'], ['so', 'CONFIRMED'],
       ['stockTake', 'POSTED'], ['stockTransfer', 'POSTED'],
     ];
