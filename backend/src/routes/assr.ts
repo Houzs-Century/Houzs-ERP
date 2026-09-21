@@ -17,6 +17,9 @@ import {
   saveAttachment,
   createLogistics,
   patchLogistics,
+  openSupplierReturn,
+  patchSupplierReturn,
+  archiveSupplierReturn,
   logActivity,
   nextServicePONumber,
   setCaseCreditorManual,
@@ -2873,6 +2876,50 @@ function surveyEmailHtml(name: string, assrNo: string, link: string, companyName
       </p>
     </div>`;
 }
+
+// ── Supplier factory returns (返厂轮次) ────────────────────────
+// Each row is one factory round-trip. Opening a round reopens the case onto the
+// supplier pickup stage (services/assr.ts handles the completed/voided reopen).
+// All three sit under /:id{...} so enforceCaseScope has already applied company
+// + row scope; the write permission is the same as the rest of the case.
+
+app.post("/:id/supplier-returns", requirePermission("service_cases.write"), async (c) => {
+  const id = parseInt(c.req.param("id"), 10);
+  if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
+  const userId = (c as any).get?.("userId") ?? 0;
+  const body = await c.req.json<{
+    pickup_at?: string | null;
+    returned_at?: string | null;
+    qc_receipt_date?: string | null;
+    qc_result?: string | null;
+    creditor_code?: string | null;
+    reason?: string | null;
+    note?: string | null;
+  }>().catch(() => ({}));
+  const round = await openSupplierReturn(c.env, id, userId, body);
+  if (!round) return c.json({ error: "Not found" }, 404);
+  return c.json({ ok: true, round });
+});
+
+app.patch("/:id/supplier-returns/:roundId{[0-9]+}", requirePermission("service_cases.write"), async (c) => {
+  const id = parseInt(c.req.param("id"), 10);
+  const roundId = parseInt(c.req.param("roundId"), 10);
+  if (isNaN(id) || isNaN(roundId)) return c.json({ error: "Invalid ID" }, 400);
+  const body = await c.req.json<Record<string, unknown>>().catch(() => ({}));
+  const ok = await patchSupplierReturn(c.env, id, roundId, body);
+  if (!ok) return c.json({ error: "Not found" }, 404);
+  return c.json({ ok: true });
+});
+
+app.delete("/:id/supplier-returns/:roundId{[0-9]+}", requirePermission("service_cases.write"), async (c) => {
+  const id = parseInt(c.req.param("id"), 10);
+  const roundId = parseInt(c.req.param("roundId"), 10);
+  if (isNaN(id) || isNaN(roundId)) return c.json({ error: "Invalid ID" }, 400);
+  const userId = (c as any).get?.("userId") ?? 0;
+  const ok = await archiveSupplierReturn(c.env, id, roundId, userId);
+  if (!ok) return c.json({ error: "Not found" }, 404);
+  return c.json({ ok: true });
+});
 
 // ── Notes ─────────────────────────────────────────────────────
 
