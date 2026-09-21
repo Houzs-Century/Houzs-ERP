@@ -64,6 +64,30 @@ const labelOf = (p: DashboardPeriod): string => (p.partial ? `${p.label} *` : p.
 
 /* ── The pieces every card shares ────────────────────────────────────────── */
 
+/** A Show pill (owner 2026-09-22: 我要这样的按钮，而不是打勾): a bordered button with the series' colour swatch, pressed = on the chart, dimmed when off. */
+const pillBtn = (on: boolean): React.CSSProperties => ({
+  display: 'inline-flex', alignItems: 'center', gap: 5, padding: '2px 8px', fontSize: 'var(--fs-11)', borderRadius: 'var(--radius-sm, 4px)', cursor: 'pointer', font: 'inherit',
+  border: '1px solid var(--border-weak, #e3e1da)', background: on ? 'var(--c-paper, #fff)' : 'var(--c-surface-2, #f0ece9)', color: on ? 'inherit' : 'var(--fg-muted)',
+});
+const ShowPills = ({ options, on, onToggle, onAll, onNone }: { options: Array<{ key: string; label: string; color: string }>; on: Set<string>; onToggle: (k: string) => void; onAll: () => void; onNone: () => void }) => {
+  const offCount = options.filter((o) => !on.has(o.key)).length;
+  return (
+    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 'var(--space-2)', alignItems: 'center' }}>
+      <span style={soft}>Show</span>
+      {options.map((o) => {
+        const isOn = on.has(o.key);
+        return (
+          <button key={o.key} type="button" aria-pressed={isOn} aria-label={`Show ${o.label}`} title={isOn ? `Hide ${o.label} from the chart` : `Show ${o.label} on the chart`} style={pillBtn(isOn)} onClick={() => onToggle(o.key)}>
+            <span style={{ width: 8, height: 8, background: isOn ? o.color : 'var(--c-line, #d8d3ce)', borderRadius: 2, display: 'inline-block' }} />{o.label}
+          </button>
+        );
+      })}
+      {offCount > 0 && <button type="button" style={{ ...pillBtn(true), color: 'var(--c-secondary-a, #2F5D4F)' }} onClick={onAll}>Show all</button>}
+      {offCount < options.length && <button type="button" style={{ ...pillBtn(true), color: 'var(--fg-muted)' }} onClick={onNone}>Clear</button>}
+    </div>
+  );
+};
+
 const Tabs = ({ options, value, onChange }: { options: Array<{ key: string; label: string }>; value: string; onChange: (k: string) => void }) => (
   <div role="tablist" style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
     {options.map((o) => (
@@ -281,15 +305,7 @@ const CostStructureCard = ({ periods, groups }: { periods: DashboardPeriod[]; gr
   const toggle = (key: string) => setTicked((t) => { const n = new Set(t); if (n.has(key)) n.delete(key); else n.add(key); return n; });
   return (
     <CardShell title="Cost structure by product group" controls={<Tabs options={MEASURES} value={measure} onChange={(k) => setMeasure(k as Measure)} />}>
-      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 'var(--space-2)', alignItems: 'center' }}>
-        <span style={soft}>Show</span>
-        {present.map((g) => (
-          <label key={g.key} style={{ ...soft, display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
-            <input type="checkbox" checked={ticked.has(g.key)} onChange={() => toggle(g.key)} aria-label={`Show ${g.label}`} />
-            <span style={{ width: 10, height: 10, background: colorOf(g.key), borderRadius: 2, display: 'inline-block' }} />{g.label}
-          </label>
-        ))}
-      </div>
+      <ShowPills options={present.map((g) => ({ key: g.key, label: g.label, color: colorOf(g.key) }))} on={ticked} onToggle={toggle} onAll={() => setTicked(new Set(present.map((g) => g.key)))} onNone={() => setTicked(new Set())} />
       <DashboardChart labels={periods.map(labelOf)} bars={bars} stacked lines={lines} ariaLabel={`${MEASURES.find((m) => m.key === measure)?.label ?? ''} per product group`} />
       <FiguresTable periods={periods} rows={rows} ariaLabel="Cost structure figures" />
       <div style={soft}>Spend = the orders' cost per group; Purchase = the groups' purchase accounts in the period; Closing stock = the stock engine by product category on the period's last day. Bedding = mattress + bedframe.</div>
