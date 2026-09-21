@@ -180,7 +180,9 @@ list. Holding `projects.write` escapes crew scoping entirely on both.
 - Mobile: `frontend/src/mobile/MobilePMS.tsx` (list, detail, checklist, crew,
   photos, defects — single file, no separate detail file), `MobileCalendar.tsx`,
   `MobileFairReport.tsx`, `MobilePmsDefectActions.tsx`,
-  `MobilePmsFloorPlanTiles.ts`.
+  `MobilePmsFloorPlanTiles.ts`, `MobileEditProjectSheet.tsx` (the detail-header
+  Edit control — name/booth/venue/organizer/start/end on one sheet, gated by
+  `canWrite && access.canEdit`, saved through the same project PATCH).
 - Backend routes: `backend/src/routes/projects.ts` (~90 routes — see
   `docs/generated/route-capability-matrix.csv` for the full inventory),
   `projects_print.ts`, `finance.ts`, `notifications.ts`,
