@@ -35,6 +35,11 @@
 // other money account sits on the tree; the supplier-advance row, which is
 // no account, prints under Unassigned payments. The flat rows stay as they
 // were: the screen's drill-down and the tests read them.
+//
+// BUILDER (2026-09-21, the Dashboard): buildReceiptsPayments is the report
+// over an RpSources that says where the ledger lines and the layout come
+// from — the route hands it the database, the Dashboard its preloaded
+// window — so a Cash Flow card is the report's own figure.
 // ----------------------------------------------------------------------------
 
 import { hasHouzsPerm } from '../lib/houzs-perms';
@@ -42,48 +47,79 @@ import { requireActiveCompanyId } from '../lib/companyScope';
 import { paginateAll } from '../lib/paginate-all';
 import { resolveRoles } from '../../acc/rules';
 import { countsInTheBooks } from '../../acc/reversal-pairs';
-import { layOutCashFlow, type LaidLine } from '../../acc/report-layout';
-import { allowedIds, resolveLayout } from './accounting-report-layouts';
+import { layOutCashFlow, type LaidLine, type LaidNode } from '../../acc/report-layout';
+import { allowedIds, resolveLayout, type ResolvedLayout } from './accounting-report-layouts';
 
 const requirePerm = (c: any): boolean => hasHouzsPerm(c, 'scm.payment_voucher.post');
 const NO_PERM = { error: "You don't have permission to read the financial statements." };
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
-type GlLine = {
+export type RpGlLine = {
   je_no: string; entry_date: string; source_type: string | null; source_doc_no: string | null;
   account_code: string; account_name: string | null; debit_sen: number; credit_sen: number;
   party_type: string | null; party_code?: string | null; party_name: string | null; notes: string | null;
   posted: boolean | null; reversed: boolean | null; reversed_by_je?: string | null;
 };
+type GlLine = RpGlLine;
 
 export type RpRow = { key: string; code: string | null; name: string; cells: Record<string, number>; totalSen: number };
 export type RpEntry = {
   jeNo: string; entryDate: string; sourceType: string | null; sourceDocNo: string | null;
   narration: string | null; party: string | null; side: 'R' | 'P'; rowKey: string; column: string; sen: number;
 };
+export type RpTotals = {
+  receipts: Record<string, number>; payments: Record<string, number>; closing: Record<string, number>;
+  openingTotalSen: number; receiptsTotalSen: number; paymentsTotalSen: number; closingTotalSen: number;
+};
+export type RpReport = {
+  from: string; to: string; byParty: boolean;
+  columns: Array<{ code: string; name: string }>;
+  opening: Record<string, number>;
+  receipts: RpRow[]; payments: RpRow[];
+  layout?: { stored: boolean; tree: LaidNode[]; inSen: number; outSen: number };
+  /** Empty when the company has no money account to report on. */
+  totals: RpTotals | Record<string, never>;
+  entries: RpEntry[];
+};
+export type RpQuery = { from: string; to: string; byParty: boolean; wanted: string[] };
 
 const ADVANCE_KEY = 'ADV';
 /* Neither side of a reversal pair is a receipt or a payment (docs/bugs/0923). */
 const live = (l: GlLine) => countsInTheBooks(l);
 const sen = (l: GlLine) => Number(l.debit_sen ?? 0) - Number(l.credit_sen ?? 0);
 
+type Fail = { ok: false; reason: string };
+/* The PostgREST client is untyped throughout the acc layer; borrow its type rather than write any. */
+type Sb = Parameters<typeof resolveRoles>[0];
+
 /** Every posted line the company has on the MONEY accounts up to `to` (the
     opening is the ones before `from`), and every line inside [from, to]. */
-async function loadLines(sb: any, companyId: number, moneyCodes: string[], from: string, to: string) {
+async function loadLines(sb: any, companyId: number, moneyCodes: string[], from: string, to: string): Promise<{ ok: true; money: GlLine[]; period: GlLine[] } | Fail> {
   const money = await paginateAll<GlLine>((f, t) =>
     sb.from('v_gl_entries')
       .select('je_no, entry_date, source_type, source_doc_no, account_code, account_name, debit_sen, credit_sen, party_type, party_code, party_name, notes, posted, reversed, reversed_by_je')
       .eq('company_id', companyId).in('account_code', moneyCodes).lte('entry_date', to)
       .order('line_id').range(f, t));
-  if (money.error) return { ok: false as const, reason: String((money.error as { message?: string }).message ?? money.error) };
+  if (money.error) return { ok: false, reason: String((money.error as { message?: string }).message ?? money.error) };
   const period = await paginateAll<GlLine>((f, t) =>
     sb.from('v_gl_entries')
       .select('je_no, entry_date, source_type, source_doc_no, account_code, account_name, debit_sen, credit_sen, party_type, party_code, party_name, notes, posted, reversed, reversed_by_je')
       .eq('company_id', companyId).gte('entry_date', from).lte('entry_date', to)
       .order('line_id').range(f, t));
-  if (period.error) return { ok: false as const, reason: String((period.error as { message?: string }).message ?? period.error) };
-  return { ok: true as const, money: (money.data ?? []).filter(live), period: (period.data ?? []).filter(live) };
+  if (period.error) return { ok: false, reason: String((period.error as { message?: string }).message ?? period.error) };
+  return { ok: true, money: (money.data ?? []).filter(live), period: (period.data ?? []).filter(live) };
 }
+
+/** Where the report reads from. */
+export type RpSources = {
+  lines: (moneyCodes: string[], from: string, to: string) => Promise<{ ok: true; money: GlLine[]; period: GlLine[] } | Fail>;
+  layout: () => Promise<({ ok: true } & ResolvedLayout) | Fail>;
+};
+/** The database, as the route reads it. */
+export const rpDbSources = (sb: Sb, companyId: number, layoutIds: number[]): RpSources => ({
+  lines: (codes, from, to) => loadLines(sb, companyId, codes, from, to),
+  layout: () => resolveLayout(sb, layoutIds, 'rp'),
+});
 
 type Split = { code: string; name: string; sen: number };
 
@@ -183,36 +219,24 @@ async function supplierPurposeSplits(
   return { ok: true, byPv };
 }
 
-/* ── GET /accounting/reports/receipts-payments?from&to&accounts=a,b&party=1 ── */
-export const receiptsPaymentsReport = async (c: any): Promise<Response> => {
-  if (!requirePerm(c)) return c.json(NO_PERM, 403);
-  const co = requireActiveCompanyId(c);
-  if (!co.ok) return c.json(co.refusal, 409);
-  const from = String(c.req.query('from') ?? '').trim();
-  const to = String(c.req.query('to') ?? '').trim();
-  if (!DATE.test(from) || !DATE.test(to) || from > to) {
-    return c.json({ error: 'bad_range', message: 'from and to must be YYYY-MM-DD, from on or before to.' }, 400);
-  }
-  const byParty = String(c.req.query('party') ?? '') === '1';
-  const wanted = String(c.req.query('accounts') ?? '').split(',').map((s) => s.trim()).filter(Boolean);
-  const sb = c.get('supabase');
-  const companyId = co.companyId;
-
+/** The Receipts & Payments report for [from, to] — the route's figures, and the Dashboard's. */
+export async function buildReceiptsPayments(sb: Sb, companyId: number, q: RpQuery, src: RpSources): Promise<{ ok: true; report: RpReport } | Fail> {
+  const { from, to, byParty, wanted } = q;
   const { data: moneyRaw, error: mErr } = await sb.from('accounts')
     .select('account_code, account_name').eq('company_id', companyId).eq('acc_money', true).eq('is_active', true).order('account_code');
-  if (mErr) return c.json({ error: 'load_failed', reason: mErr.message }, 500);
+  if (mErr) return { ok: false, reason: mErr.message };
   const allMoney = ((moneyRaw ?? []) as Array<{ account_code: string; account_name: string }>).map((a) => ({ code: String(a.account_code), name: String(a.account_name ?? a.account_code) }));
   const columns = wanted.length > 0 ? allMoney.filter((a) => wanted.includes(a.code)) : allMoney;
   const moneySet = new Set(allMoney.map((a) => a.code));
   const colSet = new Set(columns.map((a) => a.code));
-  if (columns.length === 0) return c.json({ from, to, byParty, columns: [], opening: {}, receipts: [], payments: [], totals: {}, entries: [] });
+  if (columns.length === 0) return { ok: true, report: { from, to, byParty, columns: [], opening: {}, receipts: [], payments: [], totals: {}, entries: [] } };
 
   const roles = await resolveRoles(sb, companyId);
   const controlCodes = new Set([roles.AR, roles.AP, roles.AP_OTHER, roles.AR_OTHER].filter(Boolean) as string[]);
   const apControls = new Set([roles.AP, roles.AP_OTHER].filter(Boolean) as string[]);
 
-  const loaded = await loadLines(sb, companyId, columns.map((a) => a.code), from, to);
-  if (!loaded.ok) return c.json({ error: 'load_failed', reason: loaded.reason }, 500);
+  const loaded = await src.lines(columns.map((a) => a.code), from, to);
+  if (!loaded.ok) return { ok: false, reason: loaded.reason };
 
   const opening: Record<string, number> = {};
   for (const col of columns) opening[col.code] = 0;
@@ -229,7 +253,7 @@ export const receiptsPaymentsReport = async (c: any): Promise<Response> => {
     if (first.source_doc_no) supplierPvs.push(first.source_doc_no);
   }
   const splits = byParty ? { ok: true as const, byPv: new Map<string, Split[]>() } : await supplierPurposeSplits(sb, companyId, [...new Set(supplierPvs)], controlCodes);
-  if (!splits.ok) return c.json({ error: 'load_failed', reason: splits.reason }, 500);
+  if (!splits.ok) return { ok: false, reason: splits.reason };
 
   const receipts = new Map<string, RpRow>();
   const payments = new Map<string, RpRow>();
@@ -316,7 +340,7 @@ export const receiptsPaymentsReport = async (c: any): Promise<Response> => {
   const receiptRows = sortRows(receipts);
   const paymentRows = sortRows(payments);
   const sumCol = (rows: RpRow[], code: string) => rows.reduce((s, r) => s + (r.cells[code] ?? 0), 0);
-  const totals = {
+  const totals: RpTotals = {
     receipts: Object.fromEntries(columns.map((col) => [col.code, sumCol(receiptRows, col.code)])) as Record<string, number>,
     payments: Object.fromEntries(columns.map((col) => [col.code, sumCol(paymentRows, col.code)])) as Record<string, number>,
     closing: {} as Record<string, number>,
@@ -331,12 +355,30 @@ export const receiptsPaymentsReport = async (c: any): Promise<Response> => {
   }
   entries.sort((a, b) => a.entryDate.localeCompare(b.entryDate) || a.jeNo.localeCompare(b.jeNo));
 
-  const laid = await resolveLayout(sb, allowedIds(c), 'rp');
-  if (!laid.ok) return c.json({ error: 'load_failed', reason: laid.reason }, 500);
+  const laid = await src.layout();
+  if (!laid.ok) return { ok: false, reason: laid.reason };
   const tree = laid.layout.blocks.accounts ?? [];
   const cf = layOutCashFlow(tree, cashFlowLines(receiptRows), cashFlowLines(paymentRows), companyId);
   const layout = { stored: laid.stored, tree: cf.nodes, inSen: cf.inSen, outSen: cf.outSen };
-  return c.json({ from, to, byParty, columns, opening, receipts: receiptRows, payments: paymentRows, layout, totals, entries });
+  return { ok: true, report: { from, to, byParty, columns, opening, receipts: receiptRows, payments: paymentRows, layout, totals, entries } };
+}
+
+/* ── GET /accounting/reports/receipts-payments?from&to&accounts=a,b&party=1 ── */
+export const receiptsPaymentsReport = async (c: any): Promise<Response> => {
+  if (!requirePerm(c)) return c.json(NO_PERM, 403);
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const from = String(c.req.query('from') ?? '').trim();
+  const to = String(c.req.query('to') ?? '').trim();
+  if (!DATE.test(from) || !DATE.test(to) || from > to) {
+    return c.json({ error: 'bad_range', message: 'from and to must be YYYY-MM-DD, from on or before to.' }, 400);
+  }
+  const byParty = String(c.req.query('party') ?? '') === '1';
+  const wanted = String(c.req.query('accounts') ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+  const sb = c.get('supabase');
+  const r = await buildReceiptsPayments(sb, co.companyId, { from, to, byParty, wanted }, rpDbSources(sb, co.companyId, allowedIds(c)));
+  if (!r.ok) return c.json({ error: 'load_failed', reason: r.reason }, 500);
+  return c.json(r.report);
 };
 
 /** One side's rows as lines for the tree: a coded row sits where its code

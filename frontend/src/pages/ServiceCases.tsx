@@ -66,6 +66,7 @@ import { EmptyState } from "../components/EmptyState";
 import { Badge } from "../components/Badge";
 import { Panel, PanelSection, FieldRow } from "../components/Panel";
 import { CaseAccessSection } from "../components/CaseAccessSection";
+import { SupplierReturnsList } from "../components/assr/SupplierReturnsList";
 import { InlineEdit } from "../components/InlineEdit";
 import { DeliveryByCard } from "./ServiceCaseDeliveryBy";
 import { ExpandableText } from "../components/ExpandableText";
@@ -3328,6 +3329,7 @@ function DetailContent({
   const attachments = detail.data?.attachments ?? [];
   const activity = detail.data?.activity ?? [];
   const logistics = detail.data?.logistics ?? [];
+  const supplierReturns = detail.data?.supplier_returns ?? [];
   const relatedPOs = detail.data?.related_pos ?? [];
 
   async function patch(body: Record<string, any>) {
@@ -4296,20 +4298,20 @@ function DetailContent({
                   value={c.customer_pickup_at}
                   onSave={(v) => patch({ customer_pickup_at: v || null })}
                 />
-                <InlineEdit
-                  label="Supplier Pickup Date"
-                  type="date"
-                  value={c.supplier_pickup_at}
-                  onSave={(v) => patch({ supplier_pickup_at: v || null })}
-                />
-                {/* Nick 2026-07-05 — the return leg lives here too:
-                    when the supplier brings the item back. Same field
-                    the Item Ready QC reads (items_ready_at). */}
-                <InlineEdit
-                  label="Supplier Return Date"
-                  type="date"
-                  value={c.items_ready_at}
-                  onSave={(v) => patch({ items_ready_at: v || null })}
+                {/* 返厂 (owner 2026-09-21). Every factory trip is a row; ops
+                    adds as many as needed (a real case has been back 4 times).
+                    The latest row is the current trip, and the case's
+                    supplier_pickup_at / items_ready_at columns mirror it for the
+                    delivery board + HC sheet. Adding a return on a completed
+                    case reopens it onto the supplier stage. */}
+                <SupplierReturnsList
+                  returns={supplierReturns}
+                  canWrite={!c.archived_at}
+                  caseId={id}
+                  onChanged={() => { detail.reload(); onUpdated(); }}
+                  onError={(m) => toast.error(m)}
+                  formatDate={formatDate}
+                  confirm={dialog.confirm}
                 />
                 {/* Mig 106 — send-out slip that goes with the item
                     when supplier collects. Supplier sees this on
@@ -6097,14 +6099,15 @@ function InspectionCard({
           )}
         </div>
       </div>
-      <InlineEdit
-        label="QC Date after supplier return"
-        type="date"
-        value={c.items_ready_at}
-        onSave={(v) => patch({ items_ready_at: v || null })}
-      />
+      {/* The return date is the CURRENT factory round's "back" date now, edited
+          in the Factory Returns list under the Supplier stage and mirrored to
+          items_ready_at. Read-only here for QC context so the two can't drift. */}
+      <div className="flex flex-col gap-1">
+        <span className="text-[10px] font-semibold uppercase tracking-brand text-ink-muted">Return date (current trip)</span>
+        <span className="text-[13px] text-ink-secondary">{c.items_ready_at ? formatDate(c.items_ready_at) : "—"}</span>
+      </div>
       <p className="-mt-1 text-[10.5px] leading-snug text-ink-muted">
-        Pass + date → becomes the Item Ready date. Fail → stays pending supplier item-ready.
+        Edit the return date in Factory Returns (Supplier stage). Pass here confirms the item ready.
       </p>
       {/* Mig 106 — the service note the supplier hands back with the
           item on return. Supplier edits this from their portal;

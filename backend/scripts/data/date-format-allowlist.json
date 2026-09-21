@@ -123,16 +123,6 @@
       "why": "A type=\"date\" PROP on a wrapper component (InlineEdit / EditRow / TextInput / Field / RMLikeInput), not a native input. Each of those renders <DateField> for this branch, so the display is DD/MM/YYYY on every machine."
     },
     {
-      "file": "frontend/src/mobile/MobileServiceCase.tsx",
-      "text": "<EditRow label=\"Supplier pickup date\" type=\"date\" value={get(c, \"supplierPickupAt\", \"supplier_pickup_at\")} busy={busy} disabled={dis} onSave={(v) => patchCase({ supplier_pickup_at: v }, \"Couldn't save pickup date\")} />",
-      "why": "A type=\"date\" PROP on a wrapper component (InlineEdit / EditRow / TextInput / Field / RMLikeInput), not a native input. Each of those renders <DateField> for this branch, so the display is DD/MM/YYYY on every machine."
-    },
-    {
-      "file": "frontend/src/mobile/MobileServiceCase.tsx",
-      "text": "<EditRow label=\"Supplier return date\" type=\"date\" value={get(c, \"itemsReadyAt\", \"items_ready_at\")} busy={busy} disabled={dis} onSave={(v) => patchCase({ items_ready_at: v }, \"Couldn't save return date\")} />",
-      "why": "A type=\"date\" PROP on a wrapper component (InlineEdit / EditRow / TextInput / Field / RMLikeInput), not a native input. Each of those renders <DateField> for this branch, so the display is DD/MM/YYYY on every machine."
-    },
-    {
       "file": "frontend/src/pages/ServiceCaseDeliveryBy.tsx",
       "text": "type=\"date\"",
       "why": "A type=\"date\" PROP on the InlineEdit wrapper (the ASSR delivery-back date), not a native input. InlineEdit renders <DateField> for this branch, so the display is DD/MM/YYYY on every machine."
