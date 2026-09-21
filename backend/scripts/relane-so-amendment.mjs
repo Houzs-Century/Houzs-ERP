@@ -2,8 +2,9 @@
 // approval lane, when the lane it was stored with is not the lane the rule
 // gives it today.
 //
-// WHY THIS EXISTS. The lane (LINES = Purchaser, DELIVERY = Logistic) is decided
-// ONCE, at submit, and stored on scm.so_amendments.lane. A rule fix therefore
+// WHY THIS EXISTS. The lane (LINES = Purchaser, DELIVERY = Logistic, PRICE =
+// Finance on 2990's price-only carve-out) is decided ONCE, at submit, and stored
+// on scm.so_amendments.lane. A rule fix therefore
 // reaches only amendments raised AFTER it deploys: HC-SO-012757/A1 added
 // TRANSPORTATION CHARGES (catalogue category SERVICE) on 2026-09-14 and was
 // stored LINES; the fix that reads the catalogue category for an added line
@@ -23,6 +24,10 @@
 //     item_group 'service' on an existing SO line;
 //   - moving to LINES when every line IS a service line (that would recreate
 //     the exact mis-route 0816 / 0895 fixed).
+//   - moving to PRICE on any company but 2990, or when any line is NOT a
+//     price-only product change (unit price and/or discount moved; SKU, quantity,
+//     colour/fabric and remark unchanged) — the PRICE lane is 2990's price-only
+//     carve-out (shared/amendment-lane.ts, owner 2026-09-21), Finance's to sign.
 //
 // WHAT IT WRITES (APPLY=1 only), in ONE transaction: the lane on the amendment
 // row, and one mfg_so_audit_log row (action AMENDMENT_RELANED) so the order's
@@ -37,7 +42,7 @@
 //
 //   DATABASE_URL    required (env, or .dev.vars for local use)
 //   AMENDMENT_NO    e.g. HC-SO-012757/A1
-//   TO_LANE         LINES | DELIVERY
+//   TO_LANE         LINES | DELIVERY | PRICE
 //   APPLY=1         write. Anything else is a dry run.
 //   CONFIRM         "I HAVE REVIEWED THE DRY-RUN" — required with APPLY=1.
 //
@@ -54,13 +59,16 @@ const AMENDMENT_NO = (process.env.AMENDMENT_NO || "").trim();
 const TO_LANE = (process.env.TO_LANE || "").trim().toUpperCase();
 const APPLY = process.env.APPLY === "1";
 const CONFIRM_PHRASE = "I HAVE REVIEWED THE DRY-RUN";
+/* The ONE company whose amendments carry a PRICE lane (shared/amendment-lane.ts
+   PRICE_LANE_COMPANY_CODE). Keyed on companies.code, never the numeric id. */
+const PRICE_LANE_COMPANY_CODE = "2990";
 
 if (!AMENDMENT_NO) {
   console.error("AMENDMENT_NO is required (e.g. HC-SO-012757/A1). Aborting.");
   process.exit(2);
 }
-if (TO_LANE !== "LINES" && TO_LANE !== "DELIVERY") {
-  console.error(`TO_LANE must be LINES or DELIVERY (got "${TO_LANE}"). Aborting.`);
+if (TO_LANE !== "LINES" && TO_LANE !== "DELIVERY" && TO_LANE !== "PRICE") {
+  console.error(`TO_LANE must be LINES, DELIVERY or PRICE (got "${TO_LANE}"). Aborting.`);
   process.exit(2);
 }
 if (APPLY && process.env.CONFIRM !== CONFIRM_PHRASE) {
@@ -93,6 +101,38 @@ function isServiceLine(line) {
   const category = (line.category || "").trim().toUpperCase();
   const code = (line.item_code || "").trim().toUpperCase();
   return group === "service" || category === "SERVICE" || code.startsWith("SVC-");
+}
+
+/* Same signal as lib/amendment-noop-lines.ts amendmentLinePriceOnly, restated for
+   SQL rows: the ONLY thing the line moves is unit price and/or discount — SKU,
+   quantity, colour/fabric and remark all still equal the stored line. Variants
+   compare WITHOUT the `remark` side channel and with an empty object reading as
+   none, exactly as the app compares them. An ADD / REMOVE is never price-only. */
+function canonicalJson(o) {
+  if (o == null) return "null";
+  if (typeof o !== "object") return JSON.stringify(o);
+  if (Array.isArray(o)) return `[${o.map(canonicalJson).join(",")}]`;
+  return `{${Object.keys(o).sort().map((k) => `${JSON.stringify(k)}:${canonicalJson(o[k])}`).join(",")}}`;
+}
+function variantsForCompare(v) {
+  if (v == null || typeof v !== "object" || Array.isArray(v)) return canonicalJson(v ?? null);
+  const rest = { ...v };
+  delete rest.remark;
+  return Object.keys(rest).length === 0 ? "null" : canonicalJson(rest);
+}
+function isPriceOnly(line) {
+  const t = String(line.change_type || "").toUpperCase();
+  if (t === "ADD" || t === "REMOVE") return false;
+  const priceMoved =
+    (line.new_unit_price_sen != null && Math.round(Number(line.new_unit_price_sen)) !== Math.round(Number(line.cur_unit_price_sen ?? 0)))
+    || (line.new_discount_sen != null && Math.round(Number(line.new_discount_sen)) !== Math.round(Number(line.cur_discount_sen ?? 0)));
+  if (!priceMoved) return false;
+  const otherMoved =
+    (line.new_item_code != null && String(line.new_item_code).trim() !== String(line.cur_item_code ?? "").trim())
+    || (line.new_qty != null && Number(line.new_qty) !== Number(line.cur_qty ?? 1))
+    || (line.new_remark != null && String(line.new_remark).trim() !== String(line.cur_remark ?? "").trim())
+    || (line.new_variants != null && variantsForCompare(line.new_variants) !== variantsForCompare(line.cur_variants));
+  return !otherMoved;
 }
 
 async function main() {
@@ -147,7 +187,15 @@ async function main() {
     SELECT l.change_type,
            COALESCE(l.new_item_code, i.item_code) AS item_code,
            i.item_group,
-           p.category
+           p.category,
+           l.new_item_code, l.new_qty, l.new_unit_price_sen, l.new_discount_sen,
+           l.new_variants, l.new_remark,
+           i.item_code      AS cur_item_code,
+           i.qty            AS cur_qty,
+           i.unit_price_sen AS cur_unit_price_sen,
+           i.discount_sen   AS cur_discount_sen,
+           i.variants       AS cur_variants,
+           i.remark         AS cur_remark
       FROM scm.so_amendment_lines l
       LEFT JOIN scm.mfg_sales_order_items i ON i.id = l.sales_order_item_id
       LEFT JOIN scm.mfg_products p
@@ -168,6 +216,23 @@ async function main() {
   if (TO_LANE === "LINES" && serviceCount === lines.length) {
     log("REFUSED: every line is a service line; that is exactly the Logistic desk's (docs/bugs/0816, 0895).");
     return;
+  }
+  if (TO_LANE === "PRICE") {
+    /* The PRICE lane is 2990's alone (owner 2026-09-21). Read the company CODE,
+       not the id — ids drift between environments. */
+    const [co] = await pg`SELECT code FROM public.companies WHERE id = ${row.company_id}`;
+    if ((co?.code ?? null) !== PRICE_LANE_COMPANY_CODE) {
+      log(`REFUSED: the PRICE lane is ${PRICE_LANE_COMPANY_CODE}'s only; this order's company is ${co?.code ?? row.company_id}.`);
+      return;
+    }
+    /* Mirror the split: PRICE takes a NON-service line whose only move is the
+       price/discount. A service line is Logistic's; a spec/qty/add/remove is the
+       Purchaser's. */
+    const wrong = lines.filter((l) => isServiceLine(l) || !isPriceOnly(l)).length;
+    if (wrong > 0) {
+      log(`REFUSED: ${wrong} line(s) are not a price-only product change; only a pure price/discount change is Finance's.`);
+      return;
+    }
   }
 
   log(`PLAN: ${AMENDMENT_NO} lane ${row.lane} -> ${TO_LANE}, plus one AMENDMENT_RELANED history row on ${row.so_doc_no}.`);
@@ -197,7 +262,7 @@ async function main() {
            { field: "lane", from: row.lane, to: TO_LANE },
          ])},
          'repair',
-         ${`Approval lane moved ${row.lane} -> ${TO_LANE}: the amendment was raised before the rule that routes an added service line to Logistic (docs/bugs/0895) and kept the lane it was stored with.`})`;
+         ${`Approval lane moved ${row.lane} -> ${TO_LANE}: the amendment was raised before the rule that gives it the ${TO_LANE} lane today and kept the lane it was stored with.`})`;
   });
   log(`APPLIED: ${AMENDMENT_NO} lane ${row.lane} -> ${TO_LANE}.`);
 
