@@ -14,19 +14,34 @@
 // amendment has ONE approve key, and Purchaser is the role that holds it.
 // ----------------------------------------------------------------------------
 
-export type AmendmentApprover = 'PURCHASER' | 'LOGISTIC' | 'LEGACY';
+export type AmendmentApprover = 'PURCHASER' | 'LOGISTIC' | 'FINANCE' | 'LEGACY';
 
 export function soAmendmentApprover(lane: string | null | undefined): AmendmentApprover {
   if (lane === 'LINES') return 'PURCHASER';
   if (lane === 'DELIVERY') return 'LOGISTIC';
+  // PRICE lane (owner 2026-09-21): a 2990 price-only change signs with Finance
+  // (Kris), not the Purchaser. See backend/src/scm/shared/amendment-lane.ts.
+  if (lane === 'PRICE') return 'FINANCE';
   return 'LEGACY';
 }
 
 export const PO_AMENDMENT_APPROVER: AmendmentApprover = 'PURCHASER';
 
+/** Flat permission key that approves (and rejects) each lane — the frontend
+ *  mirror of the backend's LANE_APPROVE_KEY
+ *  (backend/src/scm/shared/amendment-lane.ts). The SO amendment detail + mobile
+ *  sheet gate their approve / reject buttons on it, so a button never shows to a
+ *  desk the server would refuse. */
+export const SO_AMENDMENT_LANE_APPROVE_PERM: Record<'LINES' | 'DELIVERY' | 'PRICE', string> = {
+  LINES: 'scm.amendment.approve_lines',
+  DELIVERY: 'scm.amendment.approve_delivery',
+  PRICE: 'scm.amendment.approve_price',
+};
+
 export const AMENDMENT_APPROVER_LABEL: Record<AmendmentApprover, string> = {
   PURCHASER: 'Purchaser',
   LOGISTIC: 'Logistic',
+  FINANCE: 'Finance',
   LEGACY: 'Legacy',
 };
 
@@ -37,5 +52,9 @@ export const AMENDMENT_APPROVER_LABEL: Record<AmendmentApprover, string> = {
 export const AMENDMENT_APPROVER_TONE: Record<AmendmentApprover, { bg: string; fg: string }> = {
   PURCHASER: { bg: 'rgba(53, 82, 163, 0.14)', fg: '#3552a3' },
   LOGISTIC: { bg: 'rgba(123, 63, 120, 0.14)', fg: '#7b3f78' },
+  // Finance is a deep teal — clear of Purchaser blue and Logistic purple, and of
+  // every status colour (success is green, Requested burnt), so it never reads as
+  // a fourth status pill.
+  FINANCE: { bg: 'rgba(15, 118, 110, 0.14)', fg: '#0f766e' },
   LEGACY: { bg: 'rgba(34, 31, 32, 0.08)', fg: '#6b6f66' },
 };

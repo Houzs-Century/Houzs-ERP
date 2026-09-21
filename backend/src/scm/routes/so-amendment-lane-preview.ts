@@ -24,6 +24,7 @@ import { soAmendableHeaderFields } from '../shared/so-field-policy';
 import { resolveAmendmentLaneSplit, summarizeLaneSplit } from '../lib/amendment-lane-resolve';
 import { dropNoopAmendmentLines, type NoopCheckLine } from '../lib/amendment-noop-lines';
 import { LINE_BUILD_ERRORS } from '../lib/amendment-lines';
+import { PRICE_LANE_COMPANY_CODE } from '../shared/amendment-lane';
 
 const AMENDABLE_HEADER_FIELDS: Record<string, string> = soAmendableHeaderFields();
 
@@ -79,7 +80,10 @@ soAmendmentLanePreview.post('/:docNo/amendments/lane-preview', async (c) => {
      a desk the submit will never ask. */
   const noopSplit = await dropNoopAmendmentLines(sb, docNo, rawLines);
   if (!noopSplit) return c.json(LINE_BUILD_ERRORS.unreadable, 500);
-  const split = await resolveAmendmentLaneSplit(sb, docNo, activeCompanyId(c), headerChanges, noopSplit.kept);
+  // Price-lane carve-out is 2990's alone (owner 2026-09-21). Read the ACTIVE
+  // company code, not the id — ids drift between environments.
+  const priceLaneEnabled = c.get('companyCode') === PRICE_LANE_COMPANY_CODE;
+  const split = await resolveAmendmentLaneSplit(sb, docNo, activeCompanyId(c), headerChanges, noopSplit.kept, priceLaneEnabled);
   if (!split) return c.json(LINE_BUILD_ERRORS.unreadable, 500);
   return c.json({ ...summarizeLaneSplit(split), droppedNoopLines: noopSplit.dropped.length });
 });

@@ -34,7 +34,10 @@ export type LaneHandoverVerdict =
   | { ok: true; toLane: AmendmentLane }
   | { ok: false; status: 409 | 500; error: string; reason: string };
 
-const DESK: Record<AmendmentLane, string> = { LINES: 'Purchaser', DELIVERY: 'Logistic' };
+// PRICE is here only for type-completeness: the flag-lane route refuses a
+// handover on a PRICE amendment (Finance approves or rejects it in place), so
+// judgeLaneHandover / otherLane never receive it.
+const DESK: Record<AmendmentLane, string> = { LINES: 'Purchaser', DELIVERY: 'Logistic', PRICE: 'Finance' };
 
 export const otherLane = (lane: AmendmentLane): AmendmentLane => (lane === 'LINES' ? 'DELIVERY' : 'LINES');
 

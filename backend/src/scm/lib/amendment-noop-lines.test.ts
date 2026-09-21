@@ -7,7 +7,7 @@
  * kept; ADD / REMOVE are always kept; a failed read is null, not "keep all". */
 import { describe, expect, it } from 'vitest';
 import {
-  amendmentLineIsNoop, dropNoopAmendmentLines, variantsForCompare, canonicalJson,
+  amendmentLineIsNoop, amendmentLinePriceOnly, dropNoopAmendmentLines, variantsForCompare, canonicalJson,
 } from './amendment-noop-lines';
 
 const stored = {
@@ -67,6 +67,45 @@ describe('amendmentLineIsNoop', () => {
   it('ADD and REMOVE are whole-line changes, never no-ops', () => {
     expect(amendmentLineIsNoop({ changeType: 'ADD', newItemCode: 'JAGER-(K)' }, stored)).toBe(false);
     expect(amendmentLineIsNoop({ salesOrderItemId: 'li-bed', changeType: 'REMOVE' }, stored)).toBe(false);
+  });
+});
+
+describe('amendmentLinePriceOnly', () => {
+  // A full no-op baseline (every field equals `stored`), so patching ONE field
+  // isolates that field as the only thing that moved.
+  const base = {
+    salesOrderItemId: 'li-bed', changeType: 'SPEC', newItemCode: 'JAGER-(K)',
+    newVariants: phoneBlob, newQty: 1, newUnitPriceSen: 0, newRemark: stored.remark, newDiscountSen: 0,
+  };
+
+  it('a change that moves only the unit price is price-only', () => {
+    expect(amendmentLinePriceOnly({ ...base, newUnitPriceSen: 25000 }, stored)).toBe(true);
+  });
+
+  it('a change that moves only the discount is price-only', () => {
+    expect(amendmentLinePriceOnly({ ...base, newDiscountSen: 5000 }, stored)).toBe(true);
+  });
+
+  it('a no-op line (nothing moved) is NOT price-only', () => {
+    expect(amendmentLinePriceOnly(base, stored)).toBe(false);
+  });
+
+  it('a remark-only change is NOT price-only (no money moved)', () => {
+    expect(amendmentLinePriceOnly({ ...base, newRemark: 'deliver after 6pm' }, stored)).toBe(false);
+  });
+
+  it.each([
+    ['sku', { newItemCode: 'JAGER-(Q)' }],
+    ['qty', { newQty: 2 }],
+    ['remark', { newRemark: 'deliver after 6pm' }],
+    ['variants', { newVariants: { ...phoneBlob, gap: '12"' } }],
+  ])('a price move alongside a %s move is NOT price-only', (_label, patch) => {
+    expect(amendmentLinePriceOnly({ ...base, newUnitPriceSen: 25000, ...patch }, stored)).toBe(false);
+  });
+
+  it('ADD and REMOVE are whole-line changes, never price-only', () => {
+    expect(amendmentLinePriceOnly({ changeType: 'ADD', newItemCode: 'JAGER-(K)', newUnitPriceSen: 25000 }, stored)).toBe(false);
+    expect(amendmentLinePriceOnly({ salesOrderItemId: 'li-bed', changeType: 'REMOVE' }, stored)).toBe(false);
   });
 });
 
