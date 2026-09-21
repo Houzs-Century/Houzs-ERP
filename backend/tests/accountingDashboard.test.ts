@@ -310,3 +310,36 @@ describe('GET /accounting/dashboard', () => {
     expect(fresh.cached).toBeUndefined();
   });
 });
+
+
+/* Owner 2026-09-22 (loading 很慢): the preload read its tables one after
+   another and the Performance / Cash Flow builders went back to the database
+   for every period. Pinned: the window is read ONCE — the tables that were
+   read per period are read a single time, and the number of reads does not
+   grow with the number of periods. */
+describe('buildDashboard — reads', () => {
+  const countReads = async (periods: number) => {
+    const { sb } = harness();
+    const reads: string[] = [];
+    const counted = { ...sb, from: (name: string) => { reads.push(name); return sb.from(name); } };
+    const r = await buildDashboard(counted, CO, [CO], { granularity: 'month', periods, from: null, to: null }, TODAY);
+    if (!r.ok) throw new Error(r.reason);
+    return reads;
+  };
+
+  test('the window is read once — the orders, their lines, the settings and the ledger a single time, not once per period', async () => {
+    const reads = await countReads(6);
+    const count = (table: string) => reads.filter((n) => n === table).length;
+    expect(count('mfg_sales_orders')).toBe(1);
+    expect(count('mfg_sales_order_items')).toBe(1);
+    expect(count('acc_company_settings')).toBe(1);
+    expect(count('v_gl_entries')).toBe(1);
+    expect(count('acc_forecast_pnl')).toBe(1);
+  });
+
+  test('the number of reads does not grow with the number of periods', async () => {
+    const two = await countReads(2);
+    const twelve = await countReads(12);
+    expect(twelve.length).toBe(two.length);
+  });
+});

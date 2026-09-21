@@ -19,7 +19,10 @@
 // are read ONCE for the whole window and handed to the builders as
 // in-memory sources (ReportSources / RpSources / PerfSources) instead of
 // each period replaying the tables; the payload is cached in the Worker
-// for 60 s per company and query. The figures are the builders'.
+// for 60 s per company and query. The figures are the builders'. Since
+// 2026-09-22 the window's sales orders, supplier vouchers and settings ride
+// the same preload, read in two parallel waves — the owner found the page
+// slow while every period went back to the tables (~150 round trips a year).
 //
 // A period not finished today is PARTIAL (the running month, a quarter not
 // yet ended, a future one); a future period carries no actuals — null, so a
@@ -37,12 +40,13 @@ import { countsInTheBooks } from '../../acc/reversal-pairs';
 import { resolveRoles, type AccountRole } from '../../acc/rules';
 import { bucketByWarehouse, foldStockByBucket, foldStockByItem, loadOwnedMovementsUpTo, type OwnedMovement } from '../../acc/stock-close';
 import type { LaidNode, LayoutItem, ReportKey } from '../../acc/report-layout';
-import { PERFORMANCE_GROUPS } from '../../acc/performance-pnl';
+import { PERFORMANCE_GROUPS, type PerfLine, type PerfOrder, type PerformanceSettings } from '../../acc/performance-pnl';
 import { monthFigures, sortedMonths, type ForecastAccount, type ForecastGrid } from '../shared/forecast-pnl';
+import { SO_NOT_AN_ORDER } from '../shared/so-deliverable-states';
 import { allowedIds, resolveLayout, type ResolvedLayout } from './accounting-report-layouts';
 import { buildBalanceSheet, buildPnl, loadAccounts, sumGlRows, type AccountRow, type PnlReport, type ReportLine, type ReportSources } from './accounting-reports';
-import { buildReceiptsPayments, type RpGlLine, type RpSources, type RpTotals } from './accounting-rp';
-import { buildPerformance, type PerfSources, type PerformancePayload } from './accounting-performance';
+import { buildReceiptsPayments, rpDbSources, supplierVouchersOf, type RpGlLine, type RpSources, type RpSplit, type RpTotals } from './accounting-rp';
+import { buildPerformance, perfDbSources, type PerfSources, type PerformancePayload } from './accounting-performance';
 import { loadForecastAccounts, loadGrid } from './accounting-forecast';
 import {
   COST_GROUPS, MONTH_RE, STAFF_COST_CATEGORY_ID, addFigures, costGroupOfItemGroup, costGroupOfPerformance, costStructureList, emptyCostStructure,
@@ -132,60 +136,114 @@ type Preload = {
   purchaseAccountsOf: Map<CostGroupKey, Set<string>>;
   /** item code → the product's category, for the closing stock by group. */
   categoryOfItem: Map<string, string | null>;
+  /** The Performance P&L's own inputs, read once for the window: the sales orders and their lines, the rate and account, the rate's account row. */
+  perf: { settings: PerformanceSettings; orders: PerfOrder[]; lines: PerfLine[]; rateAccount: { code: string; name: string } | null };
+  /** The Cash Flow's own inputs, read once: the money accounts and what the window's supplier-payment vouchers settled. */
+  rp: { moneyAccounts: Array<{ code: string; name: string }>; splits: Map<string, RpSplit[]> };
 };
 
-async function preload(sb: Sb, companyId: number, layoutIds: number[], windowEnd: string, grid: ForecastGrid): Promise<{ ok: true; pre: Preload } | Fail> {
-  const gl = await paginateAll<GlRow>((f, t) => sb.from('v_gl_entries').select(GL_COLS).eq('company_id', companyId).lte('entry_date', windowEnd).order('line_id').range(f, t));
+/* Two waves of parallel reads (2026-09-22, the owner's "loading 很慢": the
+   preload read its tables one after another, and the Performance and Cash
+   Flow builders went back to the database for every period — a dozen round
+   trips a month, some 150 for a year, on a ledger the database answers in
+   milliseconds). Wave 1 needs only the window; wave 2 needs what wave 1
+   named. The figures are the builders' own either way. */
+async function preload(sb: Sb, companyId: number, layoutIds: number[], windowStart: string, windowEnd: string, grid: ForecastGrid): Promise<{ ok: true; pre: Preload } | Fail> {
+  const perfDb = perfDbSources(sb, companyId, layoutIds);
+  const rpDb = rpDbSources(sb, companyId, layoutIds);
+  const readClosings = async (): Promise<{ ok: true; closingBooked: Map<string, boolean> } | Fail> => {
+    const { data: adj, error: adjErr } = await sb.from('journal_entries').select('source_doc_no, reversed').eq('company_id', companyId).eq('source_type', 'STOCKADJ');
+    if (adjErr) return { ok: false, reason: `closing entries: ${failed(adjErr)}` };
+    const closingBooked = new Map<string, boolean>();
+    for (const j of (adj ?? []) as Array<{ source_doc_no: string | null; reversed: boolean | null }>) {
+      const m = /^STOCKADJ-\d+-(\d{4}-\d{2})$/.exec(String(j.source_doc_no ?? ''));
+      if (m && !j.reversed) closingBooked.set(m[1]!, true);
+    }
+    return { ok: true, closingBooked };
+  };
+  const readBindings = async (): Promise<{ ok: true; purchaseAccountsOf: Map<CostGroupKey, Set<string>> } | Fail> => {
+    const { data: bindings, error: bErr } = await sb.from('acc_item_group_accounts').select('group_code, purchase_account').eq('company_id', companyId);
+    if (bErr) return { ok: false, reason: `item groups: ${failed(bErr)}` };
+    const purchaseAccountsOf = new Map<CostGroupKey, Set<string>>();
+    const taken = new Set<string>();
+    for (const b of (bindings ?? []) as Array<{ group_code: string; purchase_account: string | null }>) {
+      const key = costGroupOfItemGroup(b.group_code);
+      const code = String(b.purchase_account ?? '').trim();
+      if (!key || !code || taken.has(code)) continue;
+      taken.add(code);
+      const set = purchaseAccountsOf.get(key) ?? new Set<string>();
+      set.add(code);
+      purchaseAccountsOf.set(key, set);
+    }
+    return { ok: true, purchaseAccountsOf };
+  };
+
+  /* Wave 1 — the window's tables. */
+  const [gl, moves, wh, accs, roles, closings, laidPnl, laidBs, laidPerf, laidRp, fAccounts, bindings, settings, orders, money] = await Promise.all([
+    paginateAll<GlRow>((f, t) => sb.from('v_gl_entries').select(GL_COLS).eq('company_id', companyId).lte('entry_date', windowEnd).order('line_id').range(f, t)),
+    loadOwnedMovementsUpTo(sb, companyId, windowEnd),
+    bucketByWarehouse(sb, companyId),
+    loadAccounts(sb, companyId),
+    resolveRoles(sb, companyId),
+    readClosings(),
+    resolveLayout(sb, layoutIds, 'pnl'),
+    resolveLayout(sb, layoutIds, 'balance_sheet'),
+    resolveLayout(sb, layoutIds, 'performance'),
+    resolveLayout(sb, layoutIds, 'rp'),
+    loadForecastAccounts(sb, companyId),
+    readBindings(),
+    perfDb.settings(),
+    perfDb.orders(windowStart, windowEnd),
+    rpDb.moneyAccounts(),
+  ]);
   if (gl.error) return { ok: false, reason: `ledger: ${failed(gl.error)}` };
-  const moves = await loadOwnedMovementsUpTo(sb, companyId, windowEnd);
   if (!moves.ok) return { ok: false, reason: `stock: ${moves.reason}` };
-  const wh = await bucketByWarehouse(sb, companyId);
   if (!wh.ok) return { ok: false, reason: `warehouses: ${wh.reason}` };
-  const accs = await loadAccounts(sb, companyId);
   if (!accs.ok) return { ok: false, reason: accs.reason };
-  const roles = await resolveRoles(sb, companyId);
-  const { data: adj, error: adjErr } = await sb.from('journal_entries').select('source_doc_no, reversed').eq('company_id', companyId).eq('source_type', 'STOCKADJ');
-  if (adjErr) return { ok: false, reason: `closing entries: ${failed(adjErr)}` };
-  const closingBooked = new Map<string, boolean>();
-  for (const j of (adj ?? []) as Array<{ source_doc_no: string | null; reversed: boolean | null }>) {
-    const m = /^STOCKADJ-\d+-(\d{4}-\d{2})$/.exec(String(j.source_doc_no ?? ''));
-    if (m && !j.reversed) closingBooked.set(m[1]!, true);
-  }
-  const layouts: Preload['layouts'] = {};
-  for (const report of ['pnl', 'balance_sheet', 'performance', 'rp'] as ReportKey[]) {
-    const laid = await resolveLayout(sb, layoutIds, report);
-    if (!laid.ok) return { ok: false, reason: laid.reason };
-    layouts[report] = laid;
-  }
-  const fAccounts = await loadForecastAccounts(sb, companyId);
+  if (!closings.ok) return closings;
+  if (!laidPnl.ok) return { ok: false, reason: laidPnl.reason };
+  if (!laidBs.ok) return { ok: false, reason: laidBs.reason };
+  if (!laidPerf.ok) return { ok: false, reason: laidPerf.reason };
+  if (!laidRp.ok) return { ok: false, reason: laidRp.reason };
   if (!fAccounts.ok) return { ok: false, reason: `forecast accounts: ${fAccounts.reason}` };
-  const { data: bindings, error: bErr } = await sb.from('acc_item_group_accounts').select('group_code, purchase_account').eq('company_id', companyId);
-  if (bErr) return { ok: false, reason: `item groups: ${failed(bErr)}` };
-  const purchaseAccountsOf = new Map<CostGroupKey, Set<string>>();
-  const taken = new Set<string>();
-  for (const b of (bindings ?? []) as Array<{ group_code: string; purchase_account: string | null }>) {
-    const key = costGroupOfItemGroup(b.group_code);
-    const code = String(b.purchase_account ?? '').trim();
-    if (!key || !code || taken.has(code)) continue;
-    taken.add(code);
-    const set = purchaseAccountsOf.get(key) ?? new Set<string>();
-    set.add(code);
-    purchaseAccountsOf.set(key, set);
-  }
+  if (!bindings.ok) return bindings;
+  if (!settings.ok) return { ok: false, reason: `performance settings: ${settings.reason}` };
+  if (!orders.ok) return { ok: false, reason: `orders: ${orders.reason}` };
+  if (!money.ok) return { ok: false, reason: `money accounts: ${money.reason}` };
+  const layouts: Preload['layouts'] = { pnl: laidPnl, balance_sheet: laidBs, performance: laidPerf, rp: laidRp };
+  const glRows = (gl.data ?? []).filter((r) => countsInTheBooks(r));
+
+  /* Wave 2 — what wave 1 named: the live orders' lines, the moved items'
+     products, the rate's account, and what the window's supplier-payment
+     vouchers settled (the report's own rule, over every money account — the
+     card asks for every column). */
+  const liveDocs = orders.orders.filter((o) => !SO_NOT_AN_ORDER.has(String(o.status))).map((o) => o.doc_no);
   const itemCodes = [...new Set(moves.rows.map((r) => String(r.item_code ?? '')).filter(Boolean))];
+  const controlCodes = new Set([roles.AR, roles.AP, roles.AP_OTHER, roles.AR_OTHER].filter(Boolean) as string[]);
+  const apControls = new Set([roles.AP, roles.AP_OTHER].filter(Boolean) as string[]);
+  const moneySet = new Set(money.accounts.map((a) => a.code));
+  const vouchers = supplierVouchersOf(glRows.filter((r) => r.entry_date >= windowStart && r.entry_date <= windowEnd), moneySet, apControls);
+  const [lines, prods, rateAccount, splits] = await Promise.all([
+    perfDb.lines(liveDocs),
+    chunkIn<{ code: string; category: string | null }>(itemCodes, (batch, f, t) =>
+      sb.from('mfg_products').select('code, category').eq('company_id', companyId).in('code', batch).range(f, t)),
+    perfDb.rateAccount(settings.settings.account),
+    rpDb.splits(vouchers, controlCodes),
+  ]);
+  if (!lines.ok) return { ok: false, reason: `order lines: ${lines.reason}` };
+  if (prods.error) return { ok: false, reason: `products: ${prods.error.message}` };
+  if (!rateAccount.ok) return { ok: false, reason: `rate account: ${rateAccount.reason}` };
+  if (!splits.ok) return { ok: false, reason: `supplier payments: ${splits.reason}` };
   const categoryOfItem = new Map<string, string | null>();
-  if (itemCodes.length > 0) {
-    const prods = await chunkIn<{ code: string; category: string | null }>(itemCodes, (batch, f, t) =>
-      sb.from('mfg_products').select('code, category').eq('company_id', companyId).in('code', batch).range(f, t));
-    if (prods.error) return { ok: false, reason: `products: ${prods.error.message}` };
-    for (const p of prods.data) categoryOfItem.set(String(p.code), p.category == null ? null : String(p.category));
-  }
+  for (const p of prods.data) categoryOfItem.set(String(p.code), p.category == null ? null : String(p.category));
   return {
     ok: true,
     pre: {
-      gl: (gl.data ?? []).filter((r) => countsInTheBooks(r)),
-      moves: moves.rows, bucketOf: wh.of, accounts: accs.accounts, roles, closingBooked, layouts,
-      forecast: { grid, accounts: fAccounts.accounts }, purchaseAccountsOf, categoryOfItem,
+      gl: glRows,
+      moves: moves.rows, bucketOf: wh.of, accounts: accs.accounts, roles, closingBooked: closings.closingBooked, layouts,
+      forecast: { grid, accounts: fAccounts.accounts }, purchaseAccountsOf: bindings.purchaseAccountsOf, categoryOfItem,
+      perf: { settings: settings.settings, orders: orders.orders, lines: lines.lines, rateAccount: rateAccount.account },
+      rp: { moneyAccounts: money.accounts, splits: splits.byPv },
     },
   };
 }
@@ -210,8 +268,29 @@ function sourcesOf(pre: Preload): { report: ReportSources; rp: RpSources; perf: 
       return { ok: true as const, money: pre.gl.filter((r) => money.has(r.account_code) && r.entry_date <= to), period: pre.gl.filter((r) => r.entry_date >= from && r.entry_date <= to) };
     },
     layout: () => layout('rp'),
+    moneyAccounts: async () => ({ ok: true as const, accounts: pre.rp.moneyAccounts }),
+    roles: async () => pre.roles,
+    /* The window's map, cut to the vouchers asked for — a voucher with no
+       allocation is absent, as the database read leaves it. */
+    splits: async (pvNumbers) => {
+      const byPv = new Map<string, RpSplit[]>();
+      for (const n of pvNumbers) {
+        const s = pre.rp.splits.get(n);
+        if (s) byPv.set(n, s);
+      }
+      return { ok: true as const, byPv };
+    },
   };
-  const perf: PerfSources = { sums, accounts, layout: () => layout('performance') };
+  const perf: PerfSources = {
+    sums, accounts, layout: () => layout('performance'),
+    settings: async () => ({ ok: true as const, settings: pre.perf.settings }),
+    orders: async (from, to) => ({ ok: true as const, orders: pre.perf.orders.filter((o) => o.so_date >= from && o.so_date <= to) }),
+    lines: async (docNos) => {
+      const want = new Set(docNos);
+      return { ok: true as const, lines: pre.perf.lines.filter((l) => want.has(l.doc_no)) };
+    },
+    rateAccount: async () => ({ ok: true as const, account: pre.perf.rateAccount }),
+  };
   return { report, rp, perf };
 }
 
@@ -289,8 +368,9 @@ export async function buildDashboard(sb: Sb, companyId: number, layoutIds: numbe
   if (!grid.ok) return { ok: false, reason: `forecast: ${grid.reason}` };
   const forecastMonths = sortedMonths(grid.grid);
   const periods = periodsFor({ granularity: q.granularity, periods: q.periods, from: q.from, to: q.to, today, forecastMonths });
+  const windowStart = periods[0]!.from;
   const windowEnd = periods[periods.length - 1]!.to;
-  const loaded = await preload(sb, companyId, layoutIds, windowEnd, grid.grid);
+  const loaded = await preload(sb, companyId, layoutIds, windowStart, windowEnd, grid.grid);
   if (!loaded.ok) return loaded;
   const pre = loaded.pre;
   const src = sourcesOf(pre);
@@ -307,7 +387,7 @@ export async function buildDashboard(sb: Sb, companyId: number, layoutIds: numbe
     if (!pnl.ok) return { ok: false, reason: `P&L ${p.key}: ${pnl.reason}` };
     const actual = actualOf(pnl.report);
 
-    const perf = await buildPerformance(sb, companyId, p.from, p.to, src.perf);
+    const perf = await buildPerformance(companyId, p.from, p.to, src.perf);
     if (!perf.ok) return { ok: false, reason: `Performance ${p.key}: ${perf.reason}` };
     const performance: DashboardPerformance = {
       groups: perf.report.groups.map((g) => ({ key: g.key, label: g.label, salesSen: g.salesSen, cogsSen: g.cogsSen, gpSen: g.gpSen, gpPct: g.gpPct })),
@@ -316,7 +396,7 @@ export async function buildDashboard(sb: Sb, companyId: number, layoutIds: numbe
     const cost = await costStructureOf(pre, src.report, perf.report, p);
     if (!cost.ok) return { ok: false, reason: `Cost structure ${p.key}: ${cost.reason}` };
 
-    const cf = await buildReceiptsPayments(sb, companyId, { from: p.from, to: p.to, byParty: false, wanted: [] }, src.rp);
+    const cf = await buildReceiptsPayments(companyId, { from: p.from, to: p.to, byParty: false, wanted: [] }, src.rp);
     if (!cf.ok) return { ok: false, reason: `Cash Flow ${p.key}: ${cf.reason}` };
     const t = cf.report.totals as Partial<RpTotals>;
     const inSen = t.receiptsTotalSen ?? 0;

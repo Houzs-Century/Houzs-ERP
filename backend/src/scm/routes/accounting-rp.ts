@@ -44,8 +44,8 @@
 
 import { hasHouzsPerm } from '../lib/houzs-perms';
 import { requireActiveCompanyId } from '../lib/companyScope';
-import { paginateAll } from '../lib/paginate-all';
-import { resolveRoles } from '../../acc/rules';
+import { chunkIn, paginateAll } from '../lib/paginate-all';
+import { resolveRoles, type RoleCodes } from '../../acc/rules';
 import { countsInTheBooks } from '../../acc/reversal-pairs';
 import { layOutCashFlow, type LaidLine, type LaidNode } from '../../acc/report-layout';
 import { allowedIds, resolveLayout, type ResolvedLayout } from './accounting-report-layouts';
@@ -91,6 +91,7 @@ const sen = (l: GlLine) => Number(l.debit_sen ?? 0) - Number(l.credit_sen ?? 0);
 type Fail = { ok: false; reason: string };
 /* The PostgREST client is untyped throughout the acc layer; borrow its type rather than write any. */
 type Sb = Parameters<typeof resolveRoles>[0];
+const failed = (e: unknown): string => String((e as { message?: string }).message ?? e);
 
 /** Every posted line the company has on the MONEY accounts up to `to` (the
     opening is the ones before `from`), and every line inside [from, to]. */
@@ -110,18 +111,53 @@ async function loadLines(sb: any, companyId: number, moneyCodes: string[], from:
   return { ok: true, money: (money.data ?? []).filter(live), period: (period.data ?? []).filter(live) };
 }
 
-/** Where the report reads from. */
+export type RpSplit = { code: string; name: string; sen: number };
+type Split = RpSplit;
+
+/** The supplier-payment vouchers among `period`'s journals: a PV (or its
+    reversal) with a leg on a selected money account and a leg on a creditor
+    control — the ones read through what they settled. One rule for its two
+    readers: the report per period, the Dashboard once for its whole window. */
+export function supplierVouchersOf(period: GlLine[], colSet: Set<string>, apControls: Set<string>): string[] {
+  const byJe = new Map<string, GlLine[]>();
+  for (const l of period) byJe.set(l.je_no, [...(byJe.get(l.je_no) ?? []), l]);
+  const out: string[] = [];
+  for (const lines of byJe.values()) {
+    const first = lines[0]!;
+    if (String(first.source_type ?? '').replace(/_REVERSAL$/, '') !== 'PV') continue;
+    if (!lines.some((l) => colSet.has(l.account_code)) || !lines.some((l) => apControls.has(l.account_code))) continue;
+    if (first.source_doc_no) out.push(first.source_doc_no);
+  }
+  return [...new Set(out)];
+}
+
+/** Where the report reads from. Every read the report needs is a source, so
+    the Dashboard can answer all of them from one preloaded window
+    (2026-09-22, the owner's "loading 很慢": the money accounts, the roles
+    and the vouchers' purpose were read again for every period). */
 export type RpSources = {
   lines: (moneyCodes: string[], from: string, to: string) => Promise<{ ok: true; money: GlLine[]; period: GlLine[] } | Fail>;
   layout: () => Promise<({ ok: true } & ResolvedLayout) | Fail>;
+  /** The company's active money accounts, by code. */
+  moneyAccounts: () => Promise<{ ok: true; accounts: Array<{ code: string; name: string }> } | Fail>;
+  roles: () => Promise<RoleCodes>;
+  /** What each named supplier-payment voucher settled (rule A), keyed by pv_number. */
+  splits: (pvNumbers: string[], controlCodes: Set<string>) => Promise<{ ok: true; byPv: Map<string, RpSplit[]> } | Fail>;
 };
 /** The database, as the route reads it. */
 export const rpDbSources = (sb: Sb, companyId: number, layoutIds: number[]): RpSources => ({
   lines: (codes, from, to) => loadLines(sb, companyId, codes, from, to),
   layout: () => resolveLayout(sb, layoutIds, 'rp'),
+  moneyAccounts: async () => {
+    const { data, error } = await sb.from('accounts')
+      .select('account_code, account_name').eq('company_id', companyId).eq('acc_money', true).eq('is_active', true).order('account_code');
+    if (error) return { ok: false, reason: failed(error) };
+    const rows = (data ?? []) as Array<{ account_code: string; account_name: string | null }>;
+    return { ok: true, accounts: rows.map((a) => ({ code: String(a.account_code), name: String(a.account_name ?? a.account_code) })) };
+  },
+  roles: () => resolveRoles(sb, companyId),
+  splits: (pvNumbers, controlCodes) => supplierPurposeSplits(sb, companyId, pvNumbers, controlCodes),
 });
-
-type Split = { code: string; name: string; sen: number };
 
 /** What each supplier-payment voucher settled, read through the documents it
     settled — the purpose split (rule A). Keyed by pv_number. A voucher that
@@ -131,17 +167,19 @@ async function supplierPurposeSplits(
 ): Promise<{ ok: true; byPv: Map<string, Split[]> } | { ok: false; reason: string }> {
   const byPv = new Map<string, Split[]>();
   if (pvNumbers.length === 0) return { ok: true, byPv };
-  const { data: pvs, error: pvErr } = await sb.from('payment_vouchers').select('id, pv_number').eq('company_id', companyId).in('pv_number', pvNumbers);
-  if (pvErr) return { ok: false, reason: pvErr.message };
+  /* Every in-list below is chunked to PostgREST's URL budget and every read paginated — the Dashboard names a whole window's vouchers at once. */
+  const pvs = await chunkIn<{ id: string; pv_number: string }>(pvNumbers, (batch, f, t) =>
+    sb.from('payment_vouchers').select('id, pv_number').eq('company_id', companyId).in('pv_number', batch).range(f, t));
+  if (pvs.error) return { ok: false, reason: pvs.error.message };
   const numberById = new Map<string, string>();
-  for (const p of (pvs ?? []) as Array<{ id: string; pv_number: string }>) numberById.set(String(p.id), String(p.pv_number));
+  for (const p of pvs.data) numberById.set(String(p.id), String(p.pv_number));
   if (numberById.size === 0) return { ok: true, byPv };
-  const { data: allocs, error: aErr } = await sb.from('pv_allocations')
-    .select('pv_id, pi_id, ap_invoice_id, amount_sen, applied_sen, from_advance')
-    .eq('company_id', companyId).in('pv_id', [...numberById.keys()]);
-  if (aErr) return { ok: false, reason: aErr.message };
   type Alloc = { pv_id: string; pi_id: string | null; ap_invoice_id: string | null; amount_sen: number; applied_sen: number | null; from_advance: boolean | null };
-  const rows = ((allocs ?? []) as Alloc[]).filter((a) => a.from_advance !== true);
+  const allocs = await chunkIn<Alloc>([...numberById.keys()], (batch, f, t) => sb.from('pv_allocations')
+    .select('pv_id, pi_id, ap_invoice_id, amount_sen, applied_sen, from_advance')
+    .eq('company_id', companyId).in('pv_id', batch).range(f, t));
+  if (allocs.error) return { ok: false, reason: allocs.error.message };
+  const rows = allocs.data.filter((a) => a.from_advance !== true);
   const piIds = [...new Set(rows.flatMap((a) => (a.pi_id ? [String(a.pi_id)] : [])))];
   const apiIds = [...new Set(rows.flatMap((a) => (a.ap_invoice_id ? [String(a.ap_invoice_id)] : [])))];
 
@@ -149,18 +187,19 @@ async function supplierPurposeSplits(
      periodic shape: one debit per product group). */
   const piSplit = new Map<string, Split[]>();
   if (piIds.length > 0) {
-    const { data: pis, error: piErr } = await sb.from('purchase_invoices').select('id, invoice_number').eq('company_id', companyId).in('id', piIds);
-    if (piErr) return { ok: false, reason: piErr.message };
-    const numbers = ((pis ?? []) as Array<{ id: string; invoice_number: string }>);
+    const pis = await chunkIn<{ id: string; invoice_number: string }>(piIds, (batch, f, t) =>
+      sb.from('purchase_invoices').select('id, invoice_number').eq('company_id', companyId).in('id', batch).range(f, t));
+    if (pis.error) return { ok: false, reason: pis.error.message };
+    const numbers = pis.data;
     const idByNumber = new Map(numbers.map((p) => [String(p.invoice_number), String(p.id)]));
     if (numbers.length > 0) {
-      const jl = await paginateAll<GlLine>((f, t) =>
+      const jl = await chunkIn<GlLine>(numbers.map((p) => p.invoice_number), (batch, f, t) =>
         sb.from('v_gl_entries')
           .select('je_no, entry_date, source_type, source_doc_no, account_code, account_name, debit_sen, credit_sen, party_type, party_code, party_name, notes, posted, reversed, reversed_by_je')
-          .eq('company_id', companyId).eq('source_type', 'PI').in('source_doc_no', numbers.map((p) => p.invoice_number))
+          .eq('company_id', companyId).eq('source_type', 'PI').in('source_doc_no', batch)
           .order('line_id').range(f, t));
-      if (jl.error) return { ok: false, reason: String((jl.error as { message?: string }).message ?? jl.error) };
-      for (const l of (jl.data ?? []).filter(live)) {
+      if (jl.error) return { ok: false, reason: failed(jl.error) };
+      for (const l of jl.data.filter(live)) {
         if (Number(l.debit_sen ?? 0) <= 0 || controlCodes.has(l.account_code)) continue;
         const id = idByNumber.get(String(l.source_doc_no ?? ''));
         if (!id) continue;
@@ -173,17 +212,19 @@ async function supplierPurposeSplits(
   /* An AP invoice's purpose = its own lines. */
   const apiSplit = new Map<string, Split[]>();
   if (apiIds.length > 0) {
-    const { data: lines, error: lErr } = await sb.from('ap_invoice_lines')
-      .select('invoice_id, debit_account_code, amount_sen').eq('company_id', companyId).in('invoice_id', apiIds);
-    if (lErr) return { ok: false, reason: lErr.message };
-    const codes = [...new Set(((lines ?? []) as Array<{ debit_account_code: string }>).map((l) => String(l.debit_account_code)))];
+    type ApLine = { invoice_id: string; debit_account_code: string; amount_sen: number };
+    const lines = await chunkIn<ApLine>(apiIds, (batch, f, t) => sb.from('ap_invoice_lines')
+      .select('invoice_id, debit_account_code, amount_sen').eq('company_id', companyId).in('invoice_id', batch).range(f, t));
+    if (lines.error) return { ok: false, reason: lines.error.message };
+    const codes = [...new Set(lines.data.map((l) => String(l.debit_account_code)))];
     const names = new Map<string, string>();
     if (codes.length > 0) {
-      const { data: accs, error: accErr } = await sb.from('accounts').select('account_code, account_name').eq('company_id', companyId).in('account_code', codes);
-      if (accErr) return { ok: false, reason: accErr.message };
-      for (const a of (accs ?? []) as Array<{ account_code: string; account_name: string }>) names.set(String(a.account_code), String(a.account_name));
+      const accs = await chunkIn<{ account_code: string; account_name: string }>(codes, (batch, f, t) =>
+        sb.from('accounts').select('account_code, account_name').eq('company_id', companyId).in('account_code', batch).range(f, t));
+      if (accs.error) return { ok: false, reason: accs.error.message };
+      for (const a of accs.data) names.set(String(a.account_code), String(a.account_name));
     }
-    for (const l of (lines ?? []) as Array<{ invoice_id: string; debit_account_code: string; amount_sen: number }>) {
+    for (const l of lines.data) {
       const list = apiSplit.get(String(l.invoice_id)) ?? [];
       list.push({ code: String(l.debit_account_code), name: names.get(String(l.debit_account_code)) ?? String(l.debit_account_code), sen: Number(l.amount_sen ?? 0) });
       apiSplit.set(String(l.invoice_id), list);
@@ -220,18 +261,17 @@ async function supplierPurposeSplits(
 }
 
 /** The Receipts & Payments report for [from, to] — the route's figures, and the Dashboard's. */
-export async function buildReceiptsPayments(sb: Sb, companyId: number, q: RpQuery, src: RpSources): Promise<{ ok: true; report: RpReport } | Fail> {
+export async function buildReceiptsPayments(companyId: number, q: RpQuery, src: RpSources): Promise<{ ok: true; report: RpReport } | Fail> {
   const { from, to, byParty, wanted } = q;
-  const { data: moneyRaw, error: mErr } = await sb.from('accounts')
-    .select('account_code, account_name').eq('company_id', companyId).eq('acc_money', true).eq('is_active', true).order('account_code');
-  if (mErr) return { ok: false, reason: mErr.message };
-  const allMoney = ((moneyRaw ?? []) as Array<{ account_code: string; account_name: string }>).map((a) => ({ code: String(a.account_code), name: String(a.account_name ?? a.account_code) }));
+  const money = await src.moneyAccounts();
+  if (!money.ok) return { ok: false, reason: money.reason };
+  const allMoney = money.accounts;
   const columns = wanted.length > 0 ? allMoney.filter((a) => wanted.includes(a.code)) : allMoney;
   const moneySet = new Set(allMoney.map((a) => a.code));
   const colSet = new Set(columns.map((a) => a.code));
   if (columns.length === 0) return { ok: true, report: { from, to, byParty, columns: [], opening: {}, receipts: [], payments: [], totals: {}, entries: [] } };
 
-  const roles = await resolveRoles(sb, companyId);
+  const roles = await src.roles();
   const controlCodes = new Set([roles.AR, roles.AP, roles.AP_OTHER, roles.AR_OTHER].filter(Boolean) as string[]);
   const apControls = new Set([roles.AP, roles.AP_OTHER].filter(Boolean) as string[]);
 
@@ -245,14 +285,8 @@ export async function buildReceiptsPayments(sb: Sb, companyId: number, q: RpQuer
   /* Group the period by journal; keep the ones with a selected money leg. */
   const byJe = new Map<string, GlLine[]>();
   for (const l of loaded.period) byJe.set(l.je_no, [...(byJe.get(l.je_no) ?? []), l]);
-  const supplierPvs: string[] = [];
-  for (const lines of byJe.values()) {
-    const first = lines[0]!;
-    if (String(first.source_type ?? '').replace(/_REVERSAL$/, '') !== 'PV') continue;
-    if (!lines.some((l) => colSet.has(l.account_code)) || !lines.some((l) => apControls.has(l.account_code))) continue;
-    if (first.source_doc_no) supplierPvs.push(first.source_doc_no);
-  }
-  const splits = byParty ? { ok: true as const, byPv: new Map<string, Split[]>() } : await supplierPurposeSplits(sb, companyId, [...new Set(supplierPvs)], controlCodes);
+  const supplierPvs = supplierVouchersOf(loaded.period, colSet, apControls);
+  const splits = byParty ? { ok: true as const, byPv: new Map<string, Split[]>() } : await src.splits(supplierPvs, controlCodes);
   if (!splits.ok) return { ok: false, reason: splits.reason };
 
   const receipts = new Map<string, RpRow>();
@@ -376,7 +410,7 @@ export const receiptsPaymentsReport = async (c: any): Promise<Response> => {
   const byParty = String(c.req.query('party') ?? '') === '1';
   const wanted = String(c.req.query('accounts') ?? '').split(',').map((s) => s.trim()).filter(Boolean);
   const sb = c.get('supabase');
-  const r = await buildReceiptsPayments(sb, co.companyId, { from, to, byParty, wanted }, rpDbSources(sb, co.companyId, allowedIds(c)));
+  const r = await buildReceiptsPayments(co.companyId, { from, to, byParty, wanted }, rpDbSources(sb, co.companyId, allowedIds(c)));
   if (!r.ok) return c.json({ error: 'load_failed', reason: r.reason }, 500);
   return c.json(r.report);
 };
