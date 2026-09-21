@@ -40,6 +40,7 @@ import {
   updateFromSheetSql,
   feedLinesSql,
   feedByDocNosSql,
+  feedFullByDocNosSql,
   isSheetReady,
   resolveSheetRemark2,
   normSheetDate,
@@ -293,6 +294,39 @@ app.post("/prune-check", async (c) => {
     would_remove: results.filter((r) => r.Deletable).length,
     results,
   });
+});
+
+/* Manual restore (owner 2026-09-21): full sheet records for an explicit DocNo
+   list, NO readiness gate — the "put these specific orders back on the tab"
+   tool for rows removed by mistake or wanted despite not being ready. The
+   normal since / ready-open feeds only append READY orders and only from
+   ERP_APPEND_FROM onward, so an older or not-yet-ready order cannot re-enter on
+   its own; this returns exactly the requested orders (this company, live only)
+   as sheet records so the Apps Script can append the ones missing from the tab. */
+const FEED_BY_DOCNOS_MAX = 500;
+app.post("/feed-by-docnos", async (c) => {
+  const denied = await badSheetKey(c);
+  if (denied) return denied;
+  const co = await sheetCompanyId(c);
+  if ("refusal" in co) return co.refusal;
+
+  let body: any;
+  try {
+    body = await c.req.json();
+  } catch {
+    body = null;
+  }
+  const raw = Array.isArray(body?.doc_nos) ? (body.doc_nos as unknown[]) : null;
+  if (!raw) return c.json({ error: "bad_body", message: "expected { doc_nos: string[] }" }, 400);
+  const docNos = [...new Set(raw.map((d) => String(d ?? "").trim()).filter(Boolean))];
+  if (!docNos.length) return c.json({ error: "no_doc_nos" }, 400);
+  if (docNos.length > FEED_BY_DOCNOS_MAX) return c.json({ error: "too_many", max: FEED_BY_DOCNOS_MAX }, 413);
+
+  // company-scope: ?1 is the secret's company id; the doc numbers match doc_no
+  // OR linked_ac_docno (the sheet key is linked_ac_docno), bound once at ?2..
+  const loaded = await loadRecords(c, feedFullByDocNosSql(docNos.length), [co.id, ...docNos]);
+  if ("refusal" in loaded) return loaded.refusal;
+  return c.json({ count: loaded.records.length, requested: docNos.length, records: loaded.records });
 });
 
 /* Service-Case (ASSR) legs (owner 2026-09-17): each open case's inspection /

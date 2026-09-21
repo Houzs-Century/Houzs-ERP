@@ -24,6 +24,7 @@ import {
   FEED_OVERDUE_SQL,
   FEED_READY_OPEN_SQL,
   FEED_SINCE_SQL,
+  feedFullByDocNosSql,
   feedLinesSql,
   updateFromSheetSql,
   toSheetRecord,
@@ -233,6 +234,17 @@ describePg('HC Delivery sheet feed SQL — real Postgres', () => {
     expect(await open(1, '2026-08-20')).toEqual(['HC-SO-013495']);
     expect(await open(1, '2026-08-21')).toEqual([]);
     expect(await open(2, '2026-01-01')).toEqual(['2990-SO-000013', '2990-SO-2609-001']);
+  });
+
+  test('feed-by-docnos: full records for the requested numbers, no date/ready/delivered gate, this company, either key', async () => {
+    // Requests an OLD order (000010, before any from-date), a DELIVERED order
+    // (2609-078) and another company's number (2990-...). Unlike ready-open,
+    // the old and delivered ones DO come back; the other company's does not.
+    const rows = (await sql.unsafe(
+      toPgPlaceholders(feedFullByDocNosSql(4)),
+      [1, 'SO-013495', 'SO-000010', 'HC-SO-2609-078', '2990-SO-2609-001'] as never[],
+    )) as unknown as FeedHeadRow[];
+    expect(rows.map((r) => r.doc_no).sort()).toEqual(['HC-SO-000010', 'HC-SO-013495', 'HC-SO-2609-078']);
   });
 
   test('balance-collection: delivered orders still owing, this company only', async () => {

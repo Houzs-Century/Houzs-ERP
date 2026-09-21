@@ -260,6 +260,22 @@ export function feedByDocNosSql(docCount: number): string {
              AND (so.doc_no IN (${marks}) OR so.linked_ac_docno IN (${marks}))`;
 }
 
+/** FULL sheet records for an explicit list of sheet DocNos (matching
+ *  linked_ac_docno OR doc_no), this company, live orders only. Unlike the
+ *  since/ready-open feeds this applies NO readiness gate — it is the manual
+ *  "put these specific orders back on the tab" restore, so the caller decides
+ *  which DocNos to append. Wraps FEED_BASE_SQL (which reads company_id as ?1),
+ *  so the DocNo list is bound ONCE at ?2.. and reused for both IN lists (`?N`
+ *  reuse survives toPgPlaceholders). Bind: company_id, then the doc numbers. */
+export function feedFullByDocNosSql(docCount: number): string {
+  const marks = Array.from({ length: docCount }, (_, i) => `?${i + 2}`).join(", ");
+  return `SELECT t.*, t.last_modified::text AS last_modified_text
+FROM (${FEED_BASE_SQL}
+) t
+WHERE t.doc_no IN (${marks}) OR t.linked_ac_docno IN (${marks})
+ORDER BY t.so_date, t.doc_no`;
+}
+
 /**
  * The write leg — ONE statement for a whole batch. Bare `?` binds, in order:
  * for each row `(sheet doc no, remark4 or null = keep, yyyy-mm-dd or null =

@@ -687,6 +687,45 @@ describe("POST /prune-check", () => {
   });
 });
 
+describe("POST /feed-by-docnos — manual restore, full records, NO readiness gate", () => {
+  test("returns full records for the requested DocNos incl. a not-ready one, company-scoped, DocNos bound once", async () => {
+    const { db, seen } = fakeDb((sql) => {
+      if (/FROM companies/i.test(sql)) return { id: HOUZS };
+      if (/FROM scm\.mfg_sales_orders so/.test(sql))
+        return [
+          { ...HEAD, doc_no: "HC-SO-012596", linked_ac_docno: "SO-012596", remark2: null }, // main all ready
+          { ...HEAD, doc_no: "HC-SO-013020", linked_ac_docno: "SO-013020", remark2: "BEDFRAME" }, // a mattress still pending
+        ];
+      if (/FROM scm\.mfg_sales_order_items WHERE doc_no IN/.test(sql))
+        return [
+          { doc_no: "HC-SO-012596", item_group: "BEDFRAME", item_code: "B1", stock_status: "READY", cancelled: false },
+          { doc_no: "HC-SO-013020", item_group: "MATTRESS", item_code: "M1", stock_status: "PENDING", cancelled: false },
+        ];
+      return [];
+    });
+    const res = await app.request(
+      "/feed-by-docnos",
+      { method: "POST", headers: { "X-Intake-Key": KEY, "content-type": "application/json" }, body: JSON.stringify({ doc_nos: ["SO-012596", "SO-013020", "SO-012596"] }) },
+      env(db),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    expect(body.requested).toBe(2); // deduped
+    expect(body.count).toBe(2); // BOTH returned, including the not-ready one (no gate)
+    expect(body.records.map((r: any) => r.DocNo).sort()).toEqual(["SO-012596", "SO-013020"]);
+    const feed = seen.find((s) => /FROM scm\.mfg_sales_orders so/.test(s.sql))!;
+    expect(feed.binds[0]).toBe(HOUZS); // company scope first
+    expect(feed.binds).toHaveLength(3); // company + the 2 doc numbers bound ONCE (?2.. reused for both IN lists)
+  });
+
+  test("a wrong key is 401 before any read; a body without doc_nos is 400", async () => {
+    const { db, seen } = fakeDb((sql) => (/FROM companies/i.test(sql) ? { id: HOUZS } : []));
+    expect((await app.request("/feed-by-docnos", { method: "POST", headers: { "X-Intake-Key": "wrong", "content-type": "application/json" }, body: "{}" }, env(db))).status).toBe(401);
+    expect(seen).toHaveLength(0);
+    expect((await app.request("/feed-by-docnos", { method: "POST", headers: { "X-Intake-Key": KEY, "content-type": "application/json" }, body: JSON.stringify({ foo: 1 }) }, env(db))).status).toBe(400);
+  });
+});
+
 /* Owner 2026-09-17: a Service Case's inspection / pickup / delivery legs reach
  * the sheet only when OUR OWN team drives them. The SQL runs against real
  * Postgres in tests-pg/deliverySheetAssrFeedSql.pg.test.ts; here the mapper's
