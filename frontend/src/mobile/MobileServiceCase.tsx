@@ -27,6 +27,8 @@ import {
   assrSubStatus,
   ASSR_SUB_STATUSES,
 } from "../vendor/scm/lib/assr/stages";
+import type { SupplierReturn } from "../vendor/scm/lib/assr/returns";
+import { MobileFactoryTrips } from "./MobileFactoryTrips";
 import { splitCategories } from "../lib/assrProductCategories";
 import { MobileAssrCategoryChips } from "./MobileAssrCategoryChips";
 import { LegOwnerToggle } from "./AssrLegOwnerToggle";
@@ -754,6 +756,7 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
       await api.patch(`/api/assr/${id}`, body);
     }, failTitle);
 
+
   const addNote = useMutation({
     mutationFn: (payload: { note: string; category: NoteAudience }) =>
       api.post<Any>(`/api/assr/${id}/notes`, payload),
@@ -1097,8 +1100,16 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
               onPick={(v) => patchCase({ pickup_by: v }, "Couldn't save pickup-by")} />
             {/* Folded in from the retired Item Pickup stage (mig 0110). */}
             <EditRow label="Customer pickup date" type="date" value={get(c, "customerPickupAt", "customer_pickup_at")} busy={busy} disabled={dis} onSave={(v) => patchCase({ customer_pickup_at: v }, "Couldn't save pickup date")} />
-            <EditRow label="Supplier pickup date" type="date" value={get(c, "supplierPickupAt", "supplier_pickup_at")} busy={busy} disabled={dis} onSave={(v) => patchCase({ supplier_pickup_at: v }, "Couldn't save pickup date")} />
-            <EditRow label="Supplier return date" type="date" value={get(c, "itemsReadyAt", "items_ready_at")} busy={busy} disabled={dis} onSave={(v) => patchCase({ items_ready_at: v }, "Couldn't save return date")} />
+            {/* 返厂 (owner 2026-09-21) — every factory trip is a row, add as many
+                as needed. The latest row is the current trip; its dates mirror to
+                supplier_pickup_at / items_ready_at for the board + sheet. */}
+            <MobileFactoryTrips
+              returns={(data?.supplier_returns ?? []) as SupplierReturn[]}
+              caseId={id}
+              busy={busy}
+              disabled={dis}
+              runWrite={runWrite}
+            />
             <EditRow label="Supplier status update" type="textarea" value={get(c, "actionRemark", "action_remark")} busy={busy} disabled={dis} onSave={(v) => patchCase({ action_remark: v }, "Couldn't save status update")} />
           </>
         );
@@ -2515,7 +2526,6 @@ function Acc({
   );
 }
 
-// key/value row inside an accordion.
 function KV({ label, value, multiline, mono }: { label: string; value: string; multiline?: boolean; mono?: boolean }) {
   return (
     <div style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "6px 0", borderTop: `1px solid #f4f5f2` }}>

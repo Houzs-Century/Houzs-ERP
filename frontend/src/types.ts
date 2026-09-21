@@ -1,3 +1,5 @@
+import type { SupplierReturn } from "./vendor/scm/lib/assr/returns";
+
 export type Region = "WEST" | "EAST" | "SG";
 export type SyncStatus = "SYNCED" | "ERROR";
 
@@ -337,6 +339,8 @@ export interface AssrDetail {
   attachments: AssrAttachment[];
   activity: AssrActivity[];
   logistics: AssrLogistics[];
+  /** Factory/supplier return trips (返厂 rounds), one row per trip. */
+  supplier_returns?: SupplierReturn[];
   related_pos: PurchaseOrder[];
   portal_token?: string | null;
   stage_history?: AssrStageHistoryRow[];

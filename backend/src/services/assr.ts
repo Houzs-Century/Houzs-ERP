@@ -2,6 +2,7 @@ import type { Env } from "../types";
 // Case-level SLA clock — its own module (see assrSla.ts header). Re-exported
 // because callers and tests have imported slaHoursFor from here since mig 065.
 import { slaHoursFor, slaHoursForPriority } from "./assrSla";
+import { listSupplierReturns } from "./assrSupplierReturns";
 export { slaHoursFor, slaHoursForPriority };
 import { todayMyt } from "../scm/lib/my-time";
 import { assrOpenStageSql } from "./assrStages";
@@ -754,6 +755,11 @@ export async function getAssrDetail(env: Env, id: number) {
     .bind(id)
     .all();
 
+  // Factory/supplier returns — one row per trip (round_no 1..N). The three
+  // summary columns on the case mirror the CURRENT (highest) round; this list
+  // is the full history so a case sent back twice keeps both trips' dates.
+  const supplierReturns = await listSupplierReturns(env, id);
+
   // v3.1 — per-stage lifecycle for the Workflow Progress Tracker.
   // Returns one row per stage (entered + exited timestamps), ordered
   // chronologically. The Tracker UI walks this list to colour completed
@@ -800,6 +806,7 @@ export async function getAssrDetail(env: Env, id: number) {
     attachments: attachments.results ?? [],
     activity: activity.results ?? [],
     logistics: logistics.results ?? [],
+    supplier_returns: supplierReturns,
     related_pos: relatedPOs.results ?? [],
     portal_token: portalToken,
     stage_history: stageHistory.results ?? [],
