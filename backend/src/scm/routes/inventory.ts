@@ -50,6 +50,7 @@ import { loadLeadBuffers } from '../../services/agents/procurement-learning';
 import type { Env, Variables } from '../env';
 import { canViewScmFinance } from '../lib/houzs-perms';
 import { pgrestIn } from '../lib/pgrest-in-list';
+import { isStockBucket } from '../lib/stock-bucket';
 
 /* FINANCE GATE — owner decision 2026-08-13, asked directly: "加财务门,仓管看
    不到成本".
@@ -136,7 +137,7 @@ inventory.get('/warehouses', async (c) => {
   const sb = c.get('supabase');
   const includeInactive = c.req.query('includeInactive') === 'true';
   let q = scopeToCompany(
-    sb.from('warehouses').select('id, code, name, location, country, state, postcode, city, is_active, is_default, is_showroom, venue_name, type'),
+    sb.from('warehouses').select('id, code, name, location, country, state, postcode, city, is_active, is_default, is_showroom, venue_name, type, stock_bucket'),
     c,
   ).order('code');
   if (!includeInactive) q = q.eq('is_active', true);
@@ -208,7 +209,9 @@ inventory.post('/warehouses', async (c) => {
     venue_name: typeof body.venueName === 'string' && body.venueName.trim()
       ? body.venueName.trim() : null,
     type: finalType,
-  }).select('id, code, name, location, country, state, postcode, city, is_active, is_default, is_showroom, venue_name, type').single();
+    /* The closing-stock bucket (owner 2026-09-21): one of the three, or null = by type. */
+    stock_bucket: isStockBucket(body.stockBucket) ? body.stockBucket : null,
+  }).select('id, code, name, location, country, state, postcode, city, is_active, is_default, is_showroom, venue_name, type, stock_bucket').single();
   if (error) {
     if (error.code === '23505') return c.json({ error: 'duplicate_code' }, 409);
     return c.json({ error: 'insert_failed', reason: error.message }, 500);
@@ -300,6 +303,13 @@ export const patchWarehouseHandler = async (c: any) => {
     const v = typeof body.venueName === 'string' ? body.venueName.trim() : '';
     updates.venue_name = v || null;
   }
+  /* The closing-stock bucket (owner 2026-09-21): one of the three, or null = by type. */
+  if (body.stockBucket !== undefined) {
+    if (body.stockBucket !== null && !isStockBucket(body.stockBucket)) {
+      return c.json({ error: 'bad_stock_bucket', message: 'stockBucket must be customer, display, service or null (by type).' }, 400);
+    }
+    updates.stock_bucket = body.stockBucket;
+  }
   if (Object.keys(updates).length === 0) return c.json({ error: 'no_changes' }, 400);
 
   const co = requireActiveCompanyId(c);
@@ -308,7 +318,7 @@ export const patchWarehouseHandler = async (c: any) => {
   const { data, error } = await scopeToCompanyId(
     sb.from('warehouses').update(updates).eq('id', id),
     co.companyId,
-  ).select('id, code, name, location, country, state, postcode, city, is_active, is_default, is_showroom, venue_name, type').maybeSingle();
+  ).select('id, code, name, location, country, state, postcode, city, is_active, is_default, is_showroom, venue_name, type, stock_bucket').maybeSingle();
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
   // No row matched id + company: not this company's warehouse, or gone.
   if (!data) return c.json(NOT_THIS_COMPANY, 404);
