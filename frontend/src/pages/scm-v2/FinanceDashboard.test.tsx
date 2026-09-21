@@ -4,8 +4,8 @@
    forecast, its % of FORECAST revenue, the gap in RM and in points coloured
    by better / worse, vs last period — and the tabs; the forecast line
    breaks where a period has no forecast; Monthly / Quarterly and the range
-   reach the query; the cost structure's measures and chips (a chip removes
-   a group from the chart, never from the table); the cash flow's tabs and
+   reach the query; the cost structure's measures and Show pills (a pill off takes
+   a group from the chart, never from the table; Show all / Clear); the cash flow's tabs and
    detail; the Performance card's three readings per group, its group and
    metric tabs; the ratios. The server half is backend/tests/accountingDashboard.test.ts. */
 import { fireEvent, render, screen, within } from '@testing-library/react';
@@ -192,9 +192,25 @@ describe('the Financial Dashboard page', () => {
     expect(cells('total')).toEqual(['68,000.00', '0.00', '—']);
     /* Purchase with every group ticked draws the forecast's cost of sales. */
     expect(document.querySelectorAll('[data-segment="forecast"]').length).toBeGreaterThanOrEqual(1);
-    fireEvent.click(screen.getByLabelText('Show Bedding'));
-    expect(inCard('Cost structure by product group', '[data-group="bedding"]')).toBe(0);
+    /* The Show pills (owner 2026-09-22: buttons, not ticks): pressed = on the chart; a pill off dims, never leaves the table. */
+    const COST = 'Cost structure by product group';
+    const pill = (name: string) => within(screen.getByLabelText(COST)).getByRole('button', { name: `Show ${name}`, pressed: undefined });
+    expect(pill('Bedding').getAttribute('aria-pressed')).toBe('true');
+    expect(within(screen.getByLabelText(COST)).queryByRole('button', { name: 'Show all' })).toBeNull();
+    fireEvent.click(pill('Bedding'));
+    expect(pill('Bedding').getAttribute('aria-pressed')).toBe('false');
+    expect(inCard(COST, '[data-group="bedding"]')).toBe(0);
     expect(rowText('bedding')).toContain('8,000.00');
+    /* One off → the forecast line leaves with it; Show all brings every pill and the line back; Clear empties the chart. */
+    expect(inCard(COST, '[data-segment="forecast"]')).toBe(0);
+    fireEvent.click(within(screen.getByLabelText(COST)).getByRole('button', { name: 'Show all' }));
+    expect(pill('Bedding').getAttribute('aria-pressed')).toBe('true');
+    expect(inCard(COST, '[data-segment="forecast"]')).toBeGreaterThanOrEqual(1);
+    fireEvent.click(within(screen.getByLabelText(COST)).getByRole('button', { name: 'Clear' }));
+    expect(inCard(COST, '[data-group="sofa"]')).toBe(0);
+    expect(within(screen.getByLabelText(COST)).queryByRole('button', { name: 'Clear' })).toBeNull();
+    expect(rowText('sofa')).toContain('60,000.00');
+    fireEvent.click(within(screen.getByLabelText(COST)).getByRole('button', { name: 'Show all' }));
     fireEvent.click(screen.getByRole('tab', { name: 'Closing stock' }));
     expect(cells('sofa')).toEqual(['10,000.00', '10,000.00', '—']);
   });
