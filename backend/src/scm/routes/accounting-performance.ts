@@ -14,13 +14,13 @@ import type { Context } from 'hono';
 import type { Env, Variables } from '../env';
 import { hasHouzsPerm } from '../lib/houzs-perms';
 import { requireActiveCompanyId } from '../lib/companyScope';
-import { paginateAll } from '../lib/paginate-all';
+import { chunkIn, paginateAll } from '../lib/paginate-all';
 import { SO_NOT_AN_ORDER } from '../shared/so-deliverable-states';
 import { loadAccounts, loadSums, sectionResolver, type AccountRow, type SumRow } from './accounting-reports';
 import { allowedIds, resolveLayout, type ResolvedLayout } from './accounting-report-layouts';
 import {
   buildPerformanceReport, loadPerformanceSettings, performanceLayout, savePerformanceSettings,
-  type PerfExpense, type PerfLine, type PerfOrder, type PerformanceLayout, type PerformanceReport,
+  type PerfExpense, type PerfLine, type PerfOrder, type PerformanceLayout, type PerformanceReport, type PerformanceSettings,
 } from '../../acc/performance-pnl';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
@@ -38,42 +38,69 @@ export type PerfSources = {
   sums: (from: string | null, to: string | null) => Promise<{ ok: true; sums: SumRow[] } | { ok: false; reason: string }>;
   accounts: () => Promise<{ ok: true; accounts: AccountRow[] } | { ok: false; reason: string }>;
   layout: () => Promise<({ ok: true } & ResolvedLayout) | { ok: false; reason: string }>;
+  /** The company's rate and account. */
+  settings: () => Promise<{ ok: true; settings: PerformanceSettings } | { ok: false; reason: string }>;
+  /** Every sales order dated in [from, to], any status, by SO date then doc_no. */
+  orders: (from: string, to: string) => Promise<{ ok: true; orders: PerfOrder[] } | { ok: false; reason: string }>;
+  /** The lines of the named orders. */
+  lines: (docNos: string[]) => Promise<{ ok: true; lines: PerfLine[] } | { ok: false; reason: string }>;
+  /** The account the rate stands in for, as the chart names it; null when the chart has no such code. */
+  rateAccount: (code: string) => Promise<{ ok: true; account: { code: string; name: string } | null } | { ok: false; reason: string }>;
 };
+/** The database, as the route reads it. Every read the report needs is a
+    source, so the Dashboard can answer all of them from one preloaded window
+    (2026-09-22, the owner's "loading 很慢": the orders, their lines, the
+    settings and the rate's account were read again for every period). */
 export const perfDbSources = (sb: Sb, companyId: number, layoutIds: number[]): PerfSources => ({
   sums: (from, to) => loadSums(sb, companyId, from, to),
   accounts: () => loadAccounts(sb, companyId),
   layout: () => resolveLayout(sb, layoutIds, 'performance'),
+  settings: () => loadPerformanceSettings(sb, companyId),
+  orders: async (from, to) => {
+    /* The orders of the period, by SO date. Status is an enum the fake client
+       cannot be trusted to compare; the DRAFT/CANCELLED filter is in code. */
+    const sos = await paginateAll<PerfOrder>((f, t) =>
+      sb.from('mfg_sales_orders')
+        .select('doc_no, so_date, status, delivery_fee_sen')
+        .eq('company_id', companyId).gte('so_date', from).lte('so_date', to)
+        .order('so_date').order('doc_no').range(f, t));
+    if (sos.error) return { ok: false, reason: failed(sos.error) };
+    return { ok: true, orders: (sos.data ?? []) as PerfOrder[] };
+  },
+  lines: async (docNos) => {
+    /* Their lines, in chunks — PostgREST's `in` list has a length limit. */
+    const its = await chunkIn<PerfLine>(docNos, (batch, f, t) =>
+      sb.from('mfg_sales_order_items')
+        .select('doc_no, item_group, item_code, qty, total_sen, unit_cost_sen, line_cost_sen, cancelled')
+        .eq('company_id', companyId).in('doc_no', batch)
+        .order('id').range(f, t));
+    if (its.error) return { ok: false, reason: failed(its.error) };
+    return { ok: true, lines: its.data };
+  },
+  rateAccount: async (code) => {
+    const { data: acct, error: acctErr } = await sb.from('accounts')
+      .select('account_code, account_name')
+      .eq('company_id', companyId).eq('account_code', code)
+      .maybeSingle();
+    if (acctErr) return { ok: false, reason: failed(acctErr) };
+    const row = acct as { account_code: string; account_name?: string | null } | null;
+    return { ok: true, account: row ? { code: String(row.account_code), name: String(row.account_name ?? '') } : null };
+  },
 });
 export type PerformancePayload = PerformanceReport & { layout: PerformanceLayout };
 
 /** The Performance P&L for [from, to] — the route's figures, and the Dashboard's. */
-export async function buildPerformance(sb: Sb, companyId: number, from: string, to: string, src: PerfSources): Promise<{ ok: true; report: PerformancePayload } | { ok: false; reason: string }> {
-  const st = await loadPerformanceSettings(sb, companyId);
+export async function buildPerformance(companyId: number, from: string, to: string, src: PerfSources): Promise<{ ok: true; report: PerformancePayload } | { ok: false; reason: string }> {
+  const st = await src.settings();
   if (!st.ok) return { ok: false, reason: st.reason };
 
-  /* The orders of the period, by SO date. Status is an enum the fake client
-     cannot be trusted to compare; the DRAFT/CANCELLED filter is in code. */
-  const sos = await paginateAll<PerfOrder>((f, t) =>
-    sb.from('mfg_sales_orders')
-      .select('doc_no, so_date, status, delivery_fee_sen')
-      .eq('company_id', companyId).gte('so_date', from).lte('so_date', to)
-      .order('so_date').order('doc_no').range(f, t));
-  if (sos.error) return { ok: false, reason: failed(sos.error) };
-  const orders = (sos.data ?? []) as PerfOrder[];
+  const sos = await src.orders(from, to);
+  if (!sos.ok) return { ok: false, reason: sos.reason };
+  const orders = sos.orders;
   const liveDocs = orders.filter((o) => !SO_NOT_AN_ORDER.has(String(o.status))).map((o) => o.doc_no);
-
-  /* Their lines, in chunks — PostgREST's `in` list has a length limit. */
-  const lines: PerfLine[] = [];
-  for (let i = 0; i < liveDocs.length; i += 150) {
-    const chunk = liveDocs.slice(i, i + 150);
-    const its = await paginateAll<PerfLine>((f, t) =>
-      sb.from('mfg_sales_order_items')
-        .select('doc_no, item_group, item_code, qty, total_sen, unit_cost_sen, line_cost_sen, cancelled')
-        .eq('company_id', companyId).in('doc_no', chunk)
-        .order('id').range(f, t));
-    if (its.error) return { ok: false, reason: failed(its.error) };
-    lines.push(...((its.data ?? []) as PerfLine[]));
-  }
+  const its = await src.lines(liveDocs);
+  if (!its.ok) return { ok: false, reason: its.reason };
+  const lines = its.lines;
 
   /* The expense side: the ledger's EXPENSES section for the same dates, the
      way the standard P&L reads it (one source, one section rule). */
@@ -90,17 +117,13 @@ export async function buildPerformance(sb: Sb, companyId: number, from: string, 
     .map((r) => ({ code: r.code, name: r.name, amountSen: r.crSen - r.drSen }));
 
   /* The account the rate stands in for, as the chart names it. */
-  const { data: acct, error: acctErr } = await sb.from('accounts')
-    .select('account_code, account_name')
-    .eq('company_id', companyId).eq('account_code', st.settings.account)
-    .maybeSingle();
-  if (acctErr) return { ok: false, reason: failed(acctErr) };
-  const account = acct ? { code: String((acct as { account_code: string }).account_code), name: String((acct as { account_name?: string | null }).account_name ?? '') } : null;
+  const acct = await src.rateAccount(st.settings.account);
+  if (!acct.ok) return { ok: false, reason: acct.reason };
 
   /* The account part on the report's own layout (docs/bugs/0912). */
   const laid = await src.layout();
   if (!laid.ok) return { ok: false, reason: laid.reason };
-  const report = buildPerformanceReport({ from, to, orders, lines, expenses, otherIncome, settings: st.settings, account });
+  const report = buildPerformanceReport({ from, to, orders, lines, expenses, otherIncome, settings: st.settings, account: acct.account });
   return { ok: true, report: { ...report, layout: performanceLayout(report, laid.layout, companyId, laid.stored) } };
 }
 
@@ -115,7 +138,7 @@ export const performanceReport = async (c: Ctx): Promise<Response> => {
     return c.json({ error: 'bad_range', message: 'from and to must be YYYY-MM-DD, from on or before to.' }, 400);
   }
   const sb = c.get('supabase');
-  const r = await buildPerformance(sb, co.companyId, from, to, perfDbSources(sb, co.companyId, allowedIds(c)));
+  const r = await buildPerformance(co.companyId, from, to, perfDbSources(sb, co.companyId, allowedIds(c)));
   if (!r.ok) return c.json({ error: 'load_failed', reason: r.reason }, 500);
   return c.json(r.report);
 };
