@@ -41,6 +41,21 @@ type Row = Record<string, any>;
 
 const now = () => new Date().toISOString();
 
+/* The party's data as the supplier master carries it (owner 2026-09-21: 他要填的
+   资料就和 supplier 的一样): identity, contact and the structured address the
+   printed invoice's BILL TO reads — body key → column, the columns named as
+   scm.suppliers names them. A blank is stored as NULL. */
+export const DEBTOR_PARTY_FIELDS: ReadonlyArray<readonly [string, string]> = [
+  ['tinNumber', 'tin_number'], ['businessRegNo', 'business_reg_no'], ['contactPerson', 'contact_person'], ['attention', 'attention'],
+  ['email', 'email'], ['phone2', 'phone2'], ['mobile', 'mobile'], ['whatsappNumber', 'whatsapp_number'], ['fax', 'fax'],
+  ['address1', 'address1'], ['address2', 'address2'], ['address3', 'address3'], ['address4', 'address4'],
+  ['city', 'city'], ['postcode', 'postcode'], ['state', 'state'], ['country', 'country'],
+];
+const DEBTOR_PARTY_COLS = DEBTOR_PARTY_FIELDS.map(([, col]) => col).join(', ');
+const partyText = (v: unknown): string | null => { const s = String(v ?? '').trim(); return s ? s : null; };
+/** Every party column from a create body — absent and blank alike are NULL. */
+const partyColumns = (body: Row): Row => Object.fromEntries(DEBTOR_PARTY_FIELDS.map(([key, col]) => [col, partyText(body[key])]));
+
 /* Same door as the PV's Paid From: the receiving account must BE money. */
 const requireMoneyIn = async (c: any, code: string): Promise<Response | null> => {
   const sb = c.get('supabase');
@@ -59,7 +74,7 @@ const requireMoneyIn = async (c: any, code: string): Promise<Response | null> =>
 const loadDebtor = async (c: any, id: string): Promise<{ debtor: Row } | { resp: Response }> => {
   const sb = c.get('supabase');
   const { data, error } = await scopeToCompany(
-    sb.from('acc_debtors').select('id, company_id, name, phone, notes, is_active').eq('id', id), c,
+    sb.from('acc_debtors').select(`id, company_id, name, phone, notes, is_active, ${DEBTOR_PARTY_COLS}`).eq('id', id), c,
   ).maybeSingle();
   if (error) return { resp: c.json({ error: 'load_failed', reason: error.message }, 500) };
   if (!data) return { resp: c.json({ error: 'not_found' }, 404) };
@@ -71,7 +86,7 @@ const loadDebtor = async (c: any, id: string): Promise<{ debtor: Row } | { resp:
 export const listDebtorsHandler = async (c: any): Promise<Response> => {
   const sb = c.get('supabase');
   const { data: debtors, error } = await scopeToCompany(
-    sb.from('acc_debtors').select('id, name, phone, notes, is_active, created_at'), c,
+    sb.from('acc_debtors').select(`id, name, phone, notes, is_active, created_at, ${DEBTOR_PARTY_COLS}`), c,
   ).order('name');
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   const { data: bills, error: bErr } = await scopeToCompany(
@@ -102,6 +117,7 @@ export const createDebtorHandler = async (c: any): Promise<Response> => {
     name,
     phone: body.phone ? String(body.phone).trim() : null,
     notes: body.notes ? String(body.notes).trim() : null,
+    ...partyColumns(body),
     created_by: String(c.get('user')?.id ?? ''),
   }).select('id, name').single();
   if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
@@ -124,6 +140,7 @@ export const updateDebtorHandler = async (c: any): Promise<Response> => {
   }
   if (body.phone !== undefined) patch.phone = body.phone ? String(body.phone).trim() : null;
   if (body.notes !== undefined) patch.notes = body.notes ? String(body.notes).trim() : null;
+  for (const [key, col] of DEBTOR_PARTY_FIELDS) if (body[key] !== undefined) patch[col] = partyText(body[key]);
   if (body.isActive !== undefined) patch.is_active = body.isActive === true;
   if (Object.keys(patch).length === 0) return c.json({ error: 'nothing_to_change' }, 400);
   const sb = c.get('supabase');
