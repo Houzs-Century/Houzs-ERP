@@ -452,6 +452,11 @@
     },
     {
       "check": "D1",
+      "key": "DELIVERY,LINES,PRICE|backend/src/scm/lib/amendment-lane-handover.ts backend/src/scm/shared/amendment-lane.ts backend/src/services/amendmentNotify.ts frontend/src/pages/scm-v2/AmendmentDetailV2.tsx frontend/src/vendor/scm/lib/amendment-approver.ts",
+      "why": "THE SO AMENDMENT LANE VOCABULARY — LINES / DELIVERY / PRICE (the PRICE lane landed 2026-09-21, which made the set three-valued and so visible to this check). shared/amendment-lane.ts is the ONE home that decides which lane a change belongs to (LANE_APPROVE_KEY / LANE_LABEL / the split's perLane); the other homes render or mirror it, each with a referee. amendment-lane-handover.ts DESK and amendmentNotify.ts LANE_NOTICE_LABEL / LANE_APPROVE_PERM are literals because a Houzs-side notice service must not import the SCM bundle — amendmentNotify.test.ts asserts LANE_APPROVE_PERM equals LANE_APPROVE_KEY. AmendmentDetailV2.tsx LANE_TITLE and amendment-approver.ts SO_AMENDMENT_LANE_APPROVE_PERM are the frontend copies the browser needs; amendment-approver.test.ts pins SO_AMENDMENT_LANE_APPROVE_PERM to the same keys. Divergence costs a mis-routed approval, which those tests catch, not a wrong number."
+    },
+    {
+      "check": "D1",
       "key": "DELIVERY,OUTSTATION,SERVICE_CALL,SITE_WORK|backend/src/scm/lib/rate-rule-taxonomy.ts frontend/src/vendor/scm/lib/rate-rule-taxonomy.ts",
       "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it. check-shared-mirrors.mjs compares this pair function-by-function and fails on DIVERGED. Symbols: RATE_RULE_CATEGORIES, CATEGORY_LABEL, CATEGORY_HINT."
     },

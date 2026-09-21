@@ -628,11 +628,9 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
       title: `Approve ${amendmentLane ? "amendment" : "SO revision"} for ${docNo}?`,
       body: amendmentLane === "LINES"
         ? "Check with the supplier BEFORE approving — your signature records the change is workable. The Sales Order is revised at once and a follow-up PO Amendment is raised for you to confirm in PO Amendments. This cannot be undone."
-        : amendmentLane === "DELIVERY"
-          ? "This applies the delivery changes to the Sales Order at once (the current version is snapshotted into Revisions). The purchase order is not touched. This cannot be undone."
-          : amendmentLane === "PRICE"
-            ? "This applies the price change to the Sales Order at once (the current version is snapshotted into Revisions). The purchase order is not touched. This cannot be undone."
-            : "This applies the supplier-confirmed changes: the Sales Order is re-derived and the current version is snapshotted into Revisions. This cannot be undone.",
+        : amendmentLane === "DELIVERY" || amendmentLane === "PRICE"
+          ? `This applies the ${amendmentLane === "PRICE" ? "price change" : "delivery changes"} to the Sales Order at once (the current version is snapshotted into Revisions). The purchase order is not touched. This cannot be undone.`
+          : "This applies the supplier-confirmed changes: the Sales Order is re-derived and the current version is snapshotted into Revisions. This cannot be undone.",
       confirmLabel: amendmentLane ? "Approve & apply" : "Approve revision",
     }))) return;
     setBusy(true);
