@@ -67,6 +67,8 @@ export const WarehouseFormDrawer = ({
     isDefault: editing?.is_default ?? false,
     type: initialType,
     venueName: editing?.venue_name ?? '',
+    /* The closing-stock bucket (owner 2026-09-21); '' = by type. */
+    stockBucket: editing?.stock_bucket ?? '',
   });
 
   /* Country / State / City / Postcode cascade off scm.my_localities — same
@@ -122,6 +124,7 @@ export const WarehouseFormDrawer = ({
         isDefault: form.isDefault,
         type: form.type,
         venueName: isShowroom ? form.venueName.trim() : null,
+        stockBucket: (form.stockBucket || null) as 'customer' | 'display' | 'service' | null,
       }, { onSuccess: done });
     } else {
       create.mutate({
@@ -135,6 +138,7 @@ export const WarehouseFormDrawer = ({
         isDefault: form.isDefault,
         type: form.type,
         venueName: isShowroom ? form.venueName.trim() : null,
+        stockBucket: (form.stockBucket || null) as 'customer' | 'display' | 'service' | null,
       }, { onSuccess: done });
     }
   };
@@ -245,6 +249,22 @@ export const WarehouseFormDrawer = ({
               {TYPE_OPTIONS.map((o) => (
                 <option key={o.value} value={o.value}>{o.label}</option>
               ))}
+            </select>
+          </label>
+          {/* The closing-stock bucket (owner 2026-09-21): which of the three
+              closing stocks this warehouse's goods book on at month end. Blank
+              follows the type — warehouse / others → customer, showroom /
+              display → display, service → service. */}
+          <label style={{ display: 'block', marginBottom: 'var(--space-3)' }}>
+            <div className={styles.eyebrow}>Closing stock bucket</div>
+            <select className={styles.searchInput} style={{ width: '100%' }} aria-label="Closing stock bucket"
+              value={form.stockBucket}
+              onChange={(e) => setForm((s) => ({ ...s, stockBucket: e.target.value }))}
+            >
+              <option value="">Auto (by type)</option>
+              <option value="customer">Customer stock</option>
+              <option value="display">Display stock</option>
+              <option value="service">Service stock</option>
             </select>
           </label>
           {form.type === 'showroom' && (
