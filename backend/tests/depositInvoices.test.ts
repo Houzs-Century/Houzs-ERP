@@ -8,6 +8,10 @@
      • issuing twice for one payment finds the standing invoice;
      • an edit that moves the amount cancels by contra and issues the next
        number; one that moves nothing is left alone; a delete cancels;
+     • an invoice with a credit note against it — the final invoice's
+       close-out, a refund's or a conversion's note — is never cancelled or
+       re-issued: the edit and the delete leave it, the page refuses
+       invoice_noted (owner 2026-09-21: closed-DI guard 做);
      • the routes: the list and its status filter, the switch (a start day is
        required to switch on), the backlog count and button, cancel with a
        reason, post again, and the permission gate.
@@ -56,6 +60,7 @@ function harness(opts: { settings?: Row[]; perms?: readonly string[]; payments?:
     acc_account_roles: [],
     acc_company_settings: (opts.settings ?? []).map((r) => ({ ...r })),
     acc_deposit_invoices: [],
+    acc_credit_notes: [],
     journal_entries: [], journal_entry_lines: [],
   }, {}, [], ['journal_entry_lines']);
   const app = new Hono();
@@ -181,6 +186,58 @@ describe('the invoice follows the payment', () => {
     /* Nothing standing: a second delete has nothing to cancel and says nothing. */
     await cancelDepositInvoiceForPaymentBestEffort(sb, { paymentId: 'p-1', reason: 'again' });
     expect(jes(sb)).toHaveLength(3);
+  });
+});
+
+describe('an invoice with a credit note against it stays (the closed-DI guard, owner 2026-09-21)', () => {
+  /* A note naming the invoice: the final invoice's close-out by default; a refund's or a conversion's note with the voucher / row that raised it. */
+  const noteOn = (sb: ReturnType<typeof harness>['sb'], di: Row, over: Row = {}) => {
+    (sb.tables.acc_credit_notes as Row[]).push({
+      id: 'cn-1', company_id: CO, note_number: '2990-CN-2609-003', kind: 'CN', status: 'POSTED', source_doc_no: di.di_number,
+      total_sen: di.amount_sen, refund_pv_id: null, converted_payment_id: null, note_date: '2026-09-20', ...over,
+    });
+  };
+
+  test('closed by the final invoice: a payment edit issues nothing and contras nothing, a delete leaves it, the page refuses and names the note', async () => {
+    const { app, sb } = harness({ settings: [ON] });
+    await bookSoPaymentBestEffort(sb, payment('p-1'), 'payment');
+    const di = dis(sb)[0]!;
+    noteOn(sb, di);
+    di.credit_note_id = 'cn-1';
+    await reissueDepositInvoiceBestEffort(sb, { paymentId: 'p-1', docNo: '2990-SO-2609-001', paidAt: '2026-09-05', amountSen: 80_000, method: 'cash' });
+    expect(dis(sb).map((d) => [d.di_number, d.status, d.amount_sen, d.credit_note_id])).toEqual([['2990-DI-2609-001', 'ISSUED', 100_000, 'cn-1']]);
+    expect(jes(sb).map((j) => j.source_type)).toEqual(['SOPAY', 'DI']);
+    await cancelDepositInvoiceForPaymentBestEffort(sb, { paymentId: 'p-1', reason: 'payment on 2990-SO-2609-001 deleted' });
+    expect(dis(sb)[0]).toMatchObject({ status: 'ISSUED' });
+    expect(dis(sb)[0]!.cancel_reason ?? null).toBeNull();
+    expect(jes(sb)).toHaveLength(2);
+    const refused = await json(app, `/deposit-invoices/${di.id}/cancel`, 'POST', { reason: 'Customer changed order' });
+    expect(refused.status).toBe(409);
+    const body = await refused.json() as { error: string; reason: string };
+    expect(body.error).toBe('invoice_noted');
+    expect(body.reason).toContain('2990-DI-2609-001');
+    expect(body.reason).toContain('2990-CN-2609-003');
+    /* The client filter passes a refusal sentence only under 200 characters (docs/bugs/0821). */
+    expect(body.reason.length).toBeLessThan(200);
+    expect(dis(sb)[0]).toMatchObject({ status: 'ISSUED' });
+  });
+
+  test('a partial refund note is a note too: the invoice stands for the remainder, an edit re-issues nothing, the page refuses', async () => {
+    const { app, sb } = harness({ settings: [ON] });
+    await bookSoPaymentBestEffort(sb, payment('p-1'), 'payment');
+    const di = dis(sb)[0]!;
+    noteOn(sb, di, { id: 'cn-2', note_number: '2990-CN-2609-004', total_sen: 30_000, refund_pv_id: 'pv-1' });
+    await reissueDepositInvoiceBestEffort(sb, { paymentId: 'p-1', docNo: '2990-SO-2609-001', paidAt: '2026-09-05', amountSen: 80_000, method: 'cash' });
+    expect(dis(sb).map((d) => [d.di_number, d.status, d.amount_sen])).toEqual([['2990-DI-2609-001', 'ISSUED', 100_000]]);
+    expect(jes(sb).map((j) => j.source_type)).toEqual(['SOPAY', 'DI']);
+    const refused = await json(app, `/deposit-invoices/${di.id}/cancel`, 'POST', { reason: 'Customer changed order' });
+    expect(refused.status).toBe(409);
+    expect((await refused.json() as { reason: string }).reason).toContain('2990-CN-2609-004');
+    /* A cancelled note is no note: with it gone the invoice may be cancelled again. */
+    (sb.tables.acc_credit_notes as Row[])[0]!.status = 'CANCELLED';
+    const cancelled = await json(app, `/deposit-invoices/${di.id}/cancel`, 'POST', { reason: 'Customer changed order' });
+    expect(cancelled.status).toBe(200);
+    expect(dis(sb)[0]).toMatchObject({ status: 'CANCELLED' });
   });
 });
 

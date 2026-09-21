@@ -279,7 +279,28 @@ export async function postDepositInvoice(
 export type CancelResult =
   | { ok: true; status: 'cancelled'; diNumber: string; contraJeNo: string | null }
   | { ok: true; status: 'already_cancelled'; diNumber: string }
+  | { ok: false; status: 'noted'; reason: string }
   | { ok: false; status: 'not_found' | 'read_failed' | 'reversal_failed' | 'update_failed'; reason: string };
+
+/** The credit notes standing against an invoice: the one that closed it
+    (`credit_note_id` — the final invoice's close-out, or a refund in full) and
+    any partial refund or conversion note naming it. */
+export async function notesAgainst(
+  sb: Db, companyId: number, di: Pick<DepositInvoiceRow, 'di_number' | 'credit_note_id'>,
+): Promise<{ ok: true; numbers: string[] } | { ok: false; reason: string }> {
+  const numbers: string[] = [];
+  if (di.credit_note_id) {
+    const { data, error } = await sb.from('acc_credit_notes')
+      .select('note_number').eq('company_id', companyId).eq('id', di.credit_note_id).maybeSingle();
+    if (error) return { ok: false, reason: `closing note: ${error.message}` };
+    /* Linked is noted, even when the note cannot be read: the link is the fact. */
+    numbers.push(String((data as { note_number?: string } | null)?.note_number ?? di.credit_note_id));
+  }
+  const partial = await refundedByInvoice(sb, companyId, [di.di_number]);
+  if (!partial.ok) return { ok: false, reason: partial.reason };
+  for (const n of partial.notes.get(di.di_number) ?? []) if (!numbers.includes(n.noteNumber)) numbers.push(n.noteNumber);
+  return { ok: true, numbers };
+}
 
 /** Cancel one invoice: the contra for its journal (dated the day of the
     cancel), the row kept on file as CANCELLED with the reason. An invoice
@@ -294,6 +315,19 @@ export async function cancelDepositInvoice(
   const di = data as DepositInvoiceRow | null;
   if (!di) return { ok: false, status: 'not_found', reason: p.id };
   if (di.status === 'CANCELLED') return { ok: true, status: 'already_cancelled', diNumber: di.di_number };
+  /* An invoice with a credit note against it — the final invoice's close-out,
+     a refund's or a conversion's note — is never cancelled (owner 2026-09-21:
+     closed-DI guard 做). The invoice and its notes stay and net as they do; a
+     cancel would leave the notes naming a void paper and the customer's AR
+     short by the deposit, and a re-issue an open invoice on an invoiced
+     order. Cancelling the final invoice or the refund voucher takes the note
+     back first; only then does this door open. One door for every caller:
+     the page, the payment's edit and the payment's delete. */
+  const noted = await notesAgainst(sb, p.companyId, di);
+  if (!noted.ok) return { ok: false, status: 'read_failed', reason: noted.reason };
+  if (noted.numbers.length > 0) {
+    return { ok: false, status: 'noted', reason: `${di.di_number} has credit note ${noted.numbers.join(', ')} against it and stays — cancel that note first, or raise a credit note instead` };
+  }
 
   let contraJeNo: string | null = null;
   if (di.je_no) {
@@ -355,8 +389,11 @@ export async function reissueDepositInvoiceBestEffort(
       const c = await cancelDepositInvoice(sb, {
         companyId: cur.row.company_id, id: cur.row.id, reason: `payment on ${p.docNo} edited — re-issued`, actor: p.actor ?? null,
       });
-      /* A cancel that failed leaves the old invoice standing; issuing a second
+      /* An invoice with a credit note against it stays as it is — the pair
+         nets already; the payment's own entry re-posts elsewhere. Otherwise a
+         cancel that failed leaves the old invoice standing; issuing a second
          beside it would be two invoices for one payment. Stop, out loud. */
+      if (!c.ok && c.status === 'noted') { log('edit: invoice left standing —', c.reason); return; }
       if (!c.ok) { log('edit: standing invoice not cancelled:', cur.row.di_number, c.status, c.reason); return; }
     }
     const r = await issueDepositInvoice(sb, {
@@ -379,6 +416,7 @@ export async function cancelDepositInvoiceForPaymentBestEffort(
     if (cur.error) { log('delete: standing invoice not read:', p.paymentId, cur.error); return; }
     if (!cur.row) return;
     const c = await cancelDepositInvoice(sb, { companyId: cur.row.company_id, id: cur.row.id, reason: p.reason, actor: p.actor ?? null });
+    if (!c.ok && c.status === 'noted') { log('delete: invoice left standing —', c.reason); return; }
     if (!c.ok) log('delete: deposit invoice not cancelled:', cur.row.di_number, c.status, c.reason);
   } catch (e) {
     log('delete: deposit invoice hook threw:', e);
