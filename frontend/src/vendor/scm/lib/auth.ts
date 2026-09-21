@@ -53,9 +53,19 @@ export interface StaffProfile {
 
 /** Bridge to Houzs auth: a user who `can('*')` (owner / super-admin) maps to
  *  the 2990 'super_admin' role so isAdminLevel() returns true; everyone else
- *  reads as a non-admin role. */
-export function useAuth(): { staff: StaffProfile | null } {
-  const { can } = useHouzsAuth();
+ *  reads as a non-admin role.
+ *
+ *  `canWriteScmConfig` is the SAME "may write SCM master data" answer SO
+ *  Maintenance gates on: the backend-resolved `user.scm_config_writer` (the flat
+ *  `scm.config.write` perm OR the position policy's canWriteConfig flag), falling
+ *  back to the flat key on an older backend that predates the field. The MRP
+ *  page's "Lead Times" dialog gates on this, so a Procurement / Operation
+ *  position can manage lead times without holding the '*' wildcard. */
+export function useAuth(): { staff: StaffProfile | null; canWriteScmConfig: boolean } {
+  const { can, user } = useHouzsAuth();
   const role: StaffRole = can('*') ? 'super_admin' : 'sales';
-  return { staff: { id: null, role, name: null, staffCode: null, venueId: null } };
+  const canWriteScmConfig = user?.scm_config_writer === undefined
+    ? can('scm.config.write')
+    : user.scm_config_writer;
+  return { staff: { id: null, role, name: null, staffCode: null, venueId: null }, canWriteScmConfig };
 }
