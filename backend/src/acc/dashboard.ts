@@ -226,3 +226,125 @@ export function ratiosOf(actual: Figures | null, bs: BalanceSummary | null): Rat
     roaPct: actual && bs ? pct1(actual.netProfitSen, bs.assetsSen) : null,
   };
 }
+
+/* ── Performance vs forecast, per product group (owner 2026-09-22) ──────── */
+
+/** The card's groups: the Performance P&L's six with Bedding = mattress +
+    bedframe, in the owner's order (Sofa / Bedding / Dining / Accessories /
+    Service / Others), Others for what none of the five names. Three
+    readings per group, one grammar: the ledger's ACTUAL through the item
+    groups' sales accounts, the PERFORMANCE P&L's sales by SO date, and the
+    FORECAST through the same accounts — so the six add up to the P&L's
+    revenue, the Performance P&L's total and the Forecast P&L's sales. */
+export const COMPARE_GROUPS = [
+  { key: 'sofa', label: 'Sofa' },
+  { key: 'bedding', label: 'Bedding' },
+  { key: 'dining', label: 'Dining' },
+  { key: 'accessories', label: 'Accessories' },
+  { key: 'service', label: 'Service' },
+  { key: 'others', label: 'Others' },
+] as const;
+export type CompareGroupKey = (typeof COMPARE_GROUPS)[number]['key'];
+
+/** An item group's compare group — the cost groups' rule, with Service its own group. */
+export function compareGroupOfItemGroup(itemGroup: string | null | undefined): CompareGroupKey {
+  const g = String(itemGroup ?? '').trim().toUpperCase();
+  if (g.includes('SERVICE') || g.startsWith('SVC')) return 'service';
+  return costGroupOfItemGroup(g) ?? 'others';
+}
+
+/** The Performance P&L's group → the compare group. */
+export function compareGroupOfPerformance(key: PerformanceGroupKey): CompareGroupKey {
+  switch (key) {
+    case 'sofa': return 'sofa';
+    case 'mattress': case 'bedframe': return 'bedding';
+    case 'accessory': return 'accessories';
+    case 'dining': return 'dining';
+    case 'service': return 'service';
+    default: return 'others';
+  }
+}
+
+/** One binding of an item group to its accounts, as scm.acc_item_group_accounts carries it. */
+export type GroupAccountBinding = { group_code: string; sales_account: string | null; sales_return_account: string | null; purchase_account: string | null };
+/** The accounts each compare group owns: an account counts ONCE, under the
+    group it was first bound to (HOUZS binds OTHERS to 502-0000 beside the
+    accessories — the binding's doing, not this file's). */
+export type CompareAccounts = { sales: Map<CompareGroupKey, Set<string>>; purchase: Map<CompareGroupKey, Set<string>> };
+export function compareAccountsOf(bindings: GroupAccountBinding[]): CompareAccounts {
+  const sales = new Map<CompareGroupKey, Set<string>>();
+  const purchase = new Map<CompareGroupKey, Set<string>>();
+  const takenSales = new Set<string>();
+  const takenPurchase = new Set<string>();
+  const put = (map: Map<CompareGroupKey, Set<string>>, taken: Set<string>, key: CompareGroupKey, raw: string | null | undefined) => {
+    const code = String(raw ?? '').trim();
+    if (!code || taken.has(code)) return;
+    taken.add(code);
+    const set = map.get(key) ?? new Set<string>();
+    set.add(code);
+    map.set(key, set);
+  };
+  for (const b of bindings) {
+    const key = compareGroupOfItemGroup(b.group_code);
+    put(sales, takenSales, key, b.sales_account);
+    put(sales, takenSales, key, b.sales_return_account);
+    put(purchase, takenPurchase, key, b.purchase_account);
+  }
+  return { sales, purchase };
+}
+
+/** A trading-income account no group claims files under Others, so the six add up to the P&L's revenue. */
+export const compareGroupOfSalesAccount = (code: string, accounts: CompareAccounts): CompareGroupKey => {
+  for (const [key, set] of accounts.sales) if (set.has(code)) return key;
+  return 'others';
+};
+/** A cost-of-sales account no group claims files under Others the same way. */
+export const compareGroupOfPurchaseAccount = (code: string, accounts: CompareAccounts): CompareGroupKey => {
+  for (const [key, set] of accounts.purchase) if (set.has(code)) return key;
+  return 'others';
+};
+
+/** What a period adds up per group before the sides are read. */
+export type CompareAcc = { actualSalesSen: number; performanceSalesSen: number; performanceCostSen: number; forecastSalesSen: number; forecastCostSen: number };
+export const emptyCompare = (): Record<CompareGroupKey, CompareAcc> =>
+  Object.fromEntries(COMPARE_GROUPS.map((g) => [g.key, { actualSalesSen: 0, performanceSalesSen: 0, performanceCostSen: 0, forecastSalesSen: 0, forecastCostSen: 0 }])) as Record<CompareGroupKey, CompareAcc>;
+
+/** Which sides a period has: a future period has no actual and no
+    performance (null, never 0); a period whose months carry no forecast row
+    has no forecast. */
+export type CompareHas = { actual: boolean; forecast: boolean };
+
+export type CompareTotals = {
+  /** The ledger: the group's sales accounts, credit-positive (a sales return keyed there reduces it). */
+  actualSalesSen: number | null;
+  /** The Performance P&L: the orders' sales and cost for the group, by SO date. */
+  performanceSalesSen: number | null; performanceCostSen: number | null; performanceGpSen: number | null; performanceGpPct: number | null;
+  /** The Forecast P&L: the group's accounts. */
+  forecastSalesSen: number | null; forecastCostSen: number | null; forecastGpSen: number | null; forecastGpPct: number | null;
+};
+export type CompareGroup = CompareTotals & { key: CompareGroupKey; label: string };
+
+const sidesOf = (a: CompareAcc, has: CompareHas): CompareTotals => ({
+  actualSalesSen: has.actual ? a.actualSalesSen : null,
+  performanceSalesSen: has.actual ? a.performanceSalesSen : null,
+  performanceCostSen: has.actual ? a.performanceCostSen : null,
+  performanceGpSen: has.actual ? a.performanceSalesSen - a.performanceCostSen : null,
+  performanceGpPct: has.actual ? pct1(a.performanceSalesSen - a.performanceCostSen, a.performanceSalesSen) : null,
+  forecastSalesSen: has.forecast ? a.forecastSalesSen : null,
+  forecastCostSen: has.forecast ? a.forecastCostSen : null,
+  forecastGpSen: has.forecast ? a.forecastSalesSen - a.forecastCostSen : null,
+  forecastGpPct: has.forecast ? pct1(a.forecastSalesSen - a.forecastCostSen, a.forecastSalesSen) : null,
+});
+
+/** The groups in the owner's order, each side read; Others only when something landed there. */
+export function compareList(by: Record<CompareGroupKey, CompareAcc>, has: CompareHas): CompareGroup[] {
+  return COMPARE_GROUPS
+    .filter((g) => g.key !== 'others' || Object.values(by.others).some((v) => v !== 0))
+    .map((g) => ({ key: g.key, label: g.label, ...sidesOf(by[g.key], has) }));
+}
+
+/** The totals over every group, Others included whether shown or not. */
+export function compareTotals(by: Record<CompareGroupKey, CompareAcc>, has: CompareHas): CompareTotals {
+  const sum = (f: keyof CompareAcc): number => Object.values(by).reduce((s, a) => s + a[f], 0);
+  return sidesOf({ actualSalesSen: sum('actualSalesSen'), performanceSalesSen: sum('performanceSalesSen'), performanceCostSen: sum('performanceCostSen'), forecastSalesSen: sum('forecastSalesSen'), forecastCostSen: sum('forecastCostSen') }, has);
+}

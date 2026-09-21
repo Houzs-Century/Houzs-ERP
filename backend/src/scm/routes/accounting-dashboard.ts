@@ -44,14 +44,16 @@ import { PERFORMANCE_GROUPS, type PerfLine, type PerfOrder, type PerformanceSett
 import { monthFigures, sortedMonths, type ForecastAccount, type ForecastGrid } from '../shared/forecast-pnl';
 import { SO_NOT_AN_ORDER } from '../shared/so-deliverable-states';
 import { allowedIds, resolveLayout, type ResolvedLayout } from './accounting-report-layouts';
-import { buildBalanceSheet, buildPnl, loadAccounts, sumGlRows, type AccountRow, type PnlReport, type ReportLine, type ReportSources } from './accounting-reports';
+import { buildBalanceSheet, buildPnl, loadAccounts, sectionResolver, sumGlRows, type AccountRow, type PnlReport, type ReportLine, type ReportSources, type SumRow } from './accounting-reports';
 import { buildReceiptsPayments, rpDbSources, supplierVouchersOf, type RpGlLine, type RpSources, type RpSplit, type RpTotals } from './accounting-rp';
 import { buildPerformance, perfDbSources, type PerfSources, type PerformancePayload } from './accounting-performance';
 import { loadForecastAccounts, loadGrid } from './accounting-forecast';
 import {
-  COST_GROUPS, MONTH_RE, STAFF_COST_CATEGORY_ID, addFigures, costGroupOfItemGroup, costGroupOfPerformance, costStructureList, emptyCostStructure,
+  COMPARE_GROUPS, COST_GROUPS, MONTH_RE, STAFF_COST_CATEGORY_ID, addFigures, compareAccountsOf, compareGroupOfPerformance, compareGroupOfPurchaseAccount, compareGroupOfSalesAccount,
+  compareList, compareTotals, costGroupOfItemGroup, costGroupOfPerformance, costStructureList, emptyCompare, emptyCostStructure,
   monthsBetween, pct1, periodsFor, ratiosOf,
-  type BalanceSummary, type CostGroupKey, type CostStructureGroup, type DashboardPeriod, type Figures, type Granularity, type Ratios,
+  type BalanceSummary, type CompareAccounts, type CompareGroup, type CompareHas, type CompareTotals, type CostGroupKey, type CostStructureGroup, type DashboardPeriod, type Figures,
+  type Granularity, type GroupAccountBinding, type Ratios,
 } from '../../acc/dashboard';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
@@ -96,10 +98,14 @@ export type DashboardPerformance = {
   totalGpPct: number | null;
 };
 export type DashboardCashFlow = { inSen: number; outSen: number; netSen: number; openingSen: number; closingSen: number; tree: LaidNode[] };
+/** Performance vs forecast per product group (owner 2026-09-22): three readings a group — the ledger's actual, the Performance P&L's, the forecast's — and their totals. */
+export type DashboardCompare = { groups: CompareGroup[]; totals: CompareTotals };
 export type DashboardPeriodPayload = DashboardPeriod & {
   actual: Figures | null;
   forecast: Figures | null;
   performance: DashboardPerformance | null;
+  /** Null only when the compare cannot be read at all; a future period carries its forecast side with the other two null. */
+  compare: DashboardCompare | null;
   costStructure: { groups: CostStructureGroup[] } | null;
   cashFlow: DashboardCashFlow | null;
   balanceSheet: BalanceSummary | null;
@@ -112,7 +118,7 @@ export type DashboardPayload = {
   today: string;
   window: { from: string; to: string };
   forecastMonths: string[];
-  groups: { performance: Array<{ key: string; label: string }>; costStructure: Array<{ key: string; label: string }> };
+  groups: { performance: Array<{ key: string; label: string }>; compare: Array<{ key: string; label: string }>; costStructure: Array<{ key: string; label: string }> };
   periods: DashboardPeriodPayload[];
 };
 
@@ -136,6 +142,8 @@ type Preload = {
   purchaseAccountsOf: Map<CostGroupKey, Set<string>>;
   /** item code → the product's category, for the closing stock by group. */
   categoryOfItem: Map<string, string | null>;
+  /** The compare groups' sales and purchase accounts, from the same bindings. */
+  compareAccounts: CompareAccounts;
   /** The Performance P&L's own inputs, read once for the window: the sales orders and their lines, the rate and account, the rate's account row. */
   perf: { settings: PerformanceSettings; orders: PerfOrder[]; lines: PerfLine[]; rateAccount: { code: string; name: string } | null };
   /** The Cash Flow's own inputs, read once: the money accounts and what the window's supplier-payment vouchers settled. */
@@ -161,12 +169,13 @@ async function preload(sb: Sb, companyId: number, layoutIds: number[], windowSta
     }
     return { ok: true, closingBooked };
   };
-  const readBindings = async (): Promise<{ ok: true; purchaseAccountsOf: Map<CostGroupKey, Set<string>> } | Fail> => {
-    const { data: bindings, error: bErr } = await sb.from('acc_item_group_accounts').select('group_code, purchase_account').eq('company_id', companyId);
+  const readBindings = async (): Promise<{ ok: true; purchaseAccountsOf: Map<CostGroupKey, Set<string>>; compareAccounts: CompareAccounts } | Fail> => {
+    const { data: bindings, error: bErr } = await sb.from('acc_item_group_accounts').select('group_code, sales_account, sales_return_account, purchase_account').eq('company_id', companyId);
     if (bErr) return { ok: false, reason: `item groups: ${failed(bErr)}` };
+    const rows = (bindings ?? []) as GroupAccountBinding[];
     const purchaseAccountsOf = new Map<CostGroupKey, Set<string>>();
     const taken = new Set<string>();
-    for (const b of (bindings ?? []) as Array<{ group_code: string; purchase_account: string | null }>) {
+    for (const b of rows) {
       const key = costGroupOfItemGroup(b.group_code);
       const code = String(b.purchase_account ?? '').trim();
       if (!key || !code || taken.has(code)) continue;
@@ -175,7 +184,7 @@ async function preload(sb: Sb, companyId: number, layoutIds: number[], windowSta
       set.add(code);
       purchaseAccountsOf.set(key, set);
     }
-    return { ok: true, purchaseAccountsOf };
+    return { ok: true, purchaseAccountsOf, compareAccounts: compareAccountsOf(rows) };
   };
 
   /* Wave 1 — the window's tables. */
@@ -241,7 +250,7 @@ async function preload(sb: Sb, companyId: number, layoutIds: number[], windowSta
     pre: {
       gl: glRows,
       moves: moves.rows, bucketOf: wh.of, accounts: accs.accounts, roles, closingBooked: closings.closingBooked, layouts,
-      forecast: { grid, accounts: fAccounts.accounts }, purchaseAccountsOf: bindings.purchaseAccountsOf, categoryOfItem,
+      forecast: { grid, accounts: fAccounts.accounts }, purchaseAccountsOf: bindings.purchaseAccountsOf, categoryOfItem, compareAccounts: bindings.compareAccounts,
       perf: { settings: settings.settings, orders: orders.orders, lines: lines.lines, rateAccount: rateAccount.account },
       rp: { moneyAccounts: money.accounts, splits: splits.byPv },
     },
@@ -359,6 +368,32 @@ async function costStructureOf(pre: Preload, src: ReportSources, perf: Performan
   return { ok: true, groups: costStructureList(by) };
 }
 
+/** Performance vs forecast per group: the ledger's trading income through the
+    groups' sales accounts (the P&L's own section rule, credit-positive), the
+    Performance P&L's groups, the forecast's lines through the same accounts. */
+function compareOf(pre: Preload, secOf: (r: SumRow) => string, sums: SumRow[], perf: PerformancePayload | null, months: string[]): DashboardCompare {
+  const by = emptyCompare();
+  for (const r of sums) {
+    const section = secOf(r);
+    if (section !== 'SALES' && section !== 'SALES ADJUSTMENTS') continue;
+    by[compareGroupOfSalesAccount(r.code, pre.compareAccounts)].actualSalesSen += r.crSen - r.drSen;
+  }
+  for (const g of perf?.groups ?? []) {
+    const key = compareGroupOfPerformance(g.key);
+    by[key].performanceSalesSen += g.salesSen;
+    by[key].performanceCostSen += g.cogsSen;
+  }
+  const have = months.filter((m) => Object.prototype.hasOwnProperty.call(pre.forecast.grid, m));
+  for (const m of have) {
+    for (const l of monthFigures(pre.forecast.grid[m] ?? {}, pre.forecast.accounts).lines) {
+      if (l.block === 'tradingIncome') by[compareGroupOfSalesAccount(l.code, pre.compareAccounts)].forecastSalesSen += l.amountSen;
+      else if (l.block === 'costOfSales') by[compareGroupOfPurchaseAccount(l.code, pre.compareAccounts)].forecastCostSen += l.amountSen;
+    }
+  }
+  const has: CompareHas = { actual: perf != null, forecast: have.length > 0 };
+  return { groups: compareList(by, has), totals: compareTotals(by, has) };
+}
+
 const sumSection = (ls: ReportLine[], section: string): number => ls.filter((l) => l.section === section).reduce((s, l) => s + l.amountSen, 0);
 
 /* ── The build ───────────────────────────────────────────────────────────── */
@@ -375,12 +410,13 @@ export async function buildDashboard(sb: Sb, companyId: number, layoutIds: numbe
   const pre = loaded.pre;
   const src = sourcesOf(pre);
   const staffCodes = new Set(codesUnder(pre.layouts.pnl?.layout.blocks.expenses ?? [], STAFF_COST_CATEGORY_ID));
+  const secOf = sectionResolver(pre.accounts);
 
   const out: DashboardPeriodPayload[] = [];
   for (const p of periods) {
     const forecast = forecastOf(pre, staffCodes, p.months);
     if (p.from > today) {
-      out.push({ ...p, actual: null, forecast, performance: null, costStructure: null, cashFlow: null, balanceSheet: null, ratios: ratiosOf(null, null), stock: { closingProvisional: true } });
+      out.push({ ...p, actual: null, forecast, performance: null, compare: compareOf(pre, secOf, [], null, p.months), costStructure: null, cashFlow: null, balanceSheet: null, ratios: ratiosOf(null, null), stock: { closingProvisional: true } });
       continue;
     }
     const pnl = await buildPnl(src.report, companyId, p.from, p.to);
@@ -395,6 +431,9 @@ export async function buildDashboard(sb: Sb, companyId: number, layoutIds: numbe
     };
     const cost = await costStructureOf(pre, src.report, perf.report, p);
     if (!cost.ok) return { ok: false, reason: `Cost structure ${p.key}: ${cost.reason}` };
+    const periodSums = await src.report.sums(p.from, p.to);
+    if (!periodSums.ok) return { ok: false, reason: `Compare ${p.key}: ${periodSums.reason}` };
+    const compare = compareOf(pre, secOf, periodSums.sums, perf.report, p.months);
 
     const cf = await buildReceiptsPayments(companyId, { from: p.from, to: p.to, byParty: false, wanted: [] }, src.rp);
     if (!cf.ok) return { ok: false, reason: `Cash Flow ${p.key}: ${cf.reason}` };
@@ -413,7 +452,7 @@ export async function buildDashboard(sb: Sb, companyId: number, layoutIds: numbe
     };
 
     out.push({
-      ...p, actual, forecast, performance, costStructure: { groups: cost.groups }, cashFlow, balanceSheet,
+      ...p, actual, forecast, performance, compare, costStructure: { groups: cost.groups }, cashFlow, balanceSheet,
       ratios: ratiosOf(actual, balanceSheet), stock: { closingProvisional: pnl.report.stock.closingProvisional },
     });
   }
@@ -425,6 +464,7 @@ export async function buildDashboard(sb: Sb, companyId: number, layoutIds: numbe
       forecastMonths,
       groups: {
         performance: PERFORMANCE_GROUPS.map((g) => ({ key: g.key, label: g.label })),
+        compare: COMPARE_GROUPS.map((g) => ({ key: g.key, label: g.label })),
         costStructure: COST_GROUPS.map((g) => ({ key: g.key, label: g.label })),
       },
       periods: out,

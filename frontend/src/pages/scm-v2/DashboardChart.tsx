@@ -21,6 +21,8 @@ export type ChartSeries = {
   values: Array<number | null>;
   /** The tooltip per period, when the figure alone is not enough (the % share rides here). */
   tips?: Array<string | null>;
+  /** Series naming the same stack pile up in one column; one without a stack stands in its own (the Performance card: an actual bar beside the groups' stack). */
+  stack?: string;
 };
 export type ChartLine = ChartSeries & {
   dashed?: boolean;
@@ -30,7 +32,7 @@ export type ChartLine = ChartSeries & {
 export type DashboardChartProps = {
   labels: string[];
   bars: ChartSeries[];
-  /** Several bar series stack (the cost structure); otherwise they sit side by side. */
+  /** Every bar series stacks in one column (the cost structure); otherwise each series stands in its own column unless it names a `stack`. */
   stacked?: boolean;
   lines?: ChartLine[];
   /** What the left axis counts: sen (RM), a % or a plain ratio. */
@@ -85,43 +87,41 @@ export const DashboardChart = ({ labels, bars, stacked = false, lines = [], unit
   const padRight = rightLines.length > 0 ? 48 : PAD.right;
   const plotW = W - PAD.left - padRight;
   const plotH = height - PAD.top - PAD.bottom;
-  /* The left axis spans every bar (stacked: the stacked totals) and every left line. */
-  const stackTops = labels.map((_, i) => {
-    if (!stacked) return bars.flatMap((s) => [s.values[i] ?? null]);
+  /* The columns a period draws: one pile of every series, or a pile per named stack and a column per loose series, in first appearance. */
+  const columns: ChartSeries[][] = stacked ? [bars] : (() => {
+    const piles = new Map<string, ChartSeries[]>();
+    for (const s of bars) { const k = s.stack ?? `solo:${s.key}`; piles.set(k, [...(piles.get(k) ?? []), s]); }
+    return [...piles.values()];
+  })();
+  /* The left axis spans every column's piled totals and every left line. */
+  const stackTops = labels.flatMap((_, i) => columns.flatMap((col) => {
     let up = 0; let down = 0;
-    for (const s of bars) { const v = s.values[i]; if (v == null) continue; if (v >= 0) up += v; else down += v; }
+    for (const s of col) { const v = s.values[i]; if (v == null) continue; if (v >= 0) up += v; else down += v; }
     return [up, down];
-  });
-  const left = scaleOf([...stackTops.flat(), ...leftLines.flatMap((l) => l.values)]);
+  }));
+  const left = scaleOf([...stackTops, ...leftLines.flatMap((l) => l.values)]);
   const right = scaleOf(rightLines.flatMap((l) => l.values));
   const yOf = (v: number, s: Scale): number => PAD.top + plotH - ((v - s.lo) / (s.hi - s.lo)) * plotH;
   const slot = n > 0 ? plotW / n : plotW;
   const xCenter = (i: number): number => PAD.left + slot * i + slot / 2;
-  const zeroY = yOf(0, left);
 
   const barRects: Array<{ key: string; x: number; y: number; w: number; h: number; color: string; tip: string; group: string; period: number }> = [];
   const groupW = Math.min(slot * 0.72, 64);
+  const each = columns.length > 0 ? groupW / columns.length : groupW;
+  const colW = columns.length > 1 ? Math.max(each - 2, 2) : groupW;
   labels.forEach((label, i) => {
-    if (stacked) {
+    columns.forEach((col, j) => {
       let up = 0; let down = 0;
-      for (const s of bars) {
+      for (const s of col) {
         const v = s.values[i];
         if (v == null || v === 0) continue;
         const from = v >= 0 ? up : down;
         const to = from + v;
         if (v >= 0) up = to; else down = to;
         const y1 = yOf(from, left); const y2 = yOf(to, left);
-        barRects.push({ key: `${s.key}:${i}`, x: xCenter(i) - groupW / 2, y: Math.min(y1, y2), w: groupW, h: Math.abs(y2 - y1), color: s.color, tip: s.tips?.[i] ?? `${label} · ${s.label}: ${fmtAxis(v, unit)}`, group: s.key, period: i });
+        barRects.push({ key: `${s.key}:${i}`, x: xCenter(i) - groupW / 2 + each * j, y: Math.min(y1, y2), w: colW, h: Math.abs(y2 - y1), color: s.color, tip: s.tips?.[i] ?? `${label} · ${s.label}: ${fmtAxis(v, unit)}`, group: s.key, period: i });
       }
-    } else {
-      const each = bars.length > 0 ? groupW / bars.length : groupW;
-      bars.forEach((s, j) => {
-        const v = s.values[i];
-        if (v == null) return;
-        const y = yOf(v, left);
-        barRects.push({ key: `${s.key}:${i}`, x: xCenter(i) - groupW / 2 + each * j, y: Math.min(y, zeroY), w: Math.max(each - 2, 2), h: Math.abs(zeroY - y), color: s.color, tip: s.tips?.[i] ?? `${label} · ${s.label}: ${fmtAxis(v, unit)}`, group: s.key, period: i });
-      });
-    }
+    });
   });
 
   /** A line's segments: consecutive present points join; a null breaks the line. */

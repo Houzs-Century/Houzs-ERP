@@ -21,6 +21,14 @@ export type DashboardPerformance = {
   salesSen: number; cogsSen: number; gpSen: number; totalGpPct: number | null;
 };
 export type CostStructureGroup = { key: string; label: string; spendSen: number; purchaseSen: number; closingStockSen: number };
+/** Performance vs forecast per product group (owner 2026-09-22): the ledger's actual through the group's sales accounts, the Performance P&L's sales and cost by SO date, the forecast through the same accounts — a side the period lacks is null, never 0. */
+export type CompareTotals = {
+  actualSalesSen: number | null;
+  performanceSalesSen: number | null; performanceCostSen: number | null; performanceGpSen: number | null; performanceGpPct: number | null;
+  forecastSalesSen: number | null; forecastCostSen: number | null; forecastGpSen: number | null; forecastGpPct: number | null;
+};
+export type CompareGroup = CompareTotals & { key: string; label: string };
+export type DashboardCompare = { groups: CompareGroup[]; totals: CompareTotals };
 export type DashboardCashFlow = { inSen: number; outSen: number; netSen: number; openingSen: number; closingSen: number; tree: LaidNode[] };
 export type BalanceSummary = {
   assetsSen: number; liabilitiesSen: number; equitySen: number; earningsSen: number;
@@ -39,6 +47,7 @@ export type DashboardPeriod = {
   actual: DashboardFigures | null;
   forecast: DashboardFigures | null;
   performance: DashboardPerformance | null;
+  compare: DashboardCompare | null;
   costStructure: { groups: CostStructureGroup[] } | null;
   cashFlow: DashboardCashFlow | null;
   balanceSheet: BalanceSummary | null;
@@ -50,7 +59,7 @@ export type DashboardPayload = {
   today: string;
   window: { from: string; to: string };
   forecastMonths: string[];
-  groups: { performance: Array<{ key: string; label: string }>; costStructure: Array<{ key: string; label: string }> };
+  groups: { performance: Array<{ key: string; label: string }>; compare: Array<{ key: string; label: string }>; costStructure: Array<{ key: string; label: string }> };
   periods: DashboardPeriod[];
   cached?: boolean;
 };

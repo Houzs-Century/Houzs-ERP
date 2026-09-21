@@ -23,7 +23,7 @@ import { fmtSenPlain } from '../../vendor/shared/format';
 import type { LaidNode } from '../../vendor/scm/lib/report-layout';
 import {
   useFinanceDashboard,
-  type CostStructureGroup, type DashboardFigures, type DashboardPeriod, type Granularity,
+  type CompareGroup, type CompareTotals, type CostStructureGroup, type DashboardFigures, type DashboardPeriod, type Granularity,
 } from '../../vendor/scm/lib/dashboard-queries';
 import { DashboardChart, type ChartLine, type ChartSeries } from './DashboardChart';
 
@@ -155,38 +155,101 @@ const IncomeStatementCard = ({ periods }: { periods: DashboardPeriod[] }) => {
   );
 };
 
-/* ── 2 · Performance P&L by product group ───────────────────────────────── */
+/* ── 2 · Performance vs forecast, per product group ─────────────────────── */
 
+type CompareMetric = 'sales' | 'gp' | 'gpPct';
+const COMPARE_METRICS: Array<{ key: CompareMetric; label: string }> = [{ key: 'sales', label: 'Sales' }, { key: 'gp', label: 'Gross profit' }, { key: 'gpPct', label: 'GP %' }];
+/** The Performance P&L's blue beside the ledger's gold. */
+const PERF = '#5B7FA8';
+const fmtSignedPct = (p: number | null): string => (p == null ? '—' : `${p > 0 ? '+' : ''}${p.toFixed(1)}%`);
+/** (a − b) ÷ |b| in %, one decimal; null without both sides or with nothing to divide by. */
+const gapPct = (a: number | null, b: number | null): number | null => (a == null || b == null || b === 0 ? null : Math.round(((a - b) / Math.abs(b)) * 1000) / 10);
+const gapSen = (a: number | null, b: number | null): number | null => (a == null || b == null ? null : a - b);
+const toneUp = (g: number | null): 'good' | 'bad' | null => (g == null || g === 0 ? null : g > 0 ? 'good' : 'bad');
+
+/** Owner 2026-09-22: actual (the ledger, gold) and performance (the orders,
+    blue) as bars side by side, the forecast a red dashed line — per product
+    group, or All. On All the performance bar stacks the groups so the mix
+    stays visible. Sales has three readings; gross profit and GP % have two —
+    the ledger's cost of sales is periodic, one figure, never per group, so no
+    actual GP is invented here. */
 const PerformanceCard = ({ periods, groups }: { periods: DashboardPeriod[]; groups: Array<{ key: string; label: string }> }) => {
-  const groupOf = (p: DashboardPeriod, key: string) => p.performance?.groups.find((g) => g.key === key);
-  const shown = groups.filter((g) => periods.some((p) => { const x = groupOf(p, g.key); return x != null && (x.salesSen !== 0 || x.cogsSen !== 0); }));
-  const bars: ChartSeries[] = shown.map((g) => ({
-    key: g.key, label: g.label, color: colorOf(g.key),
-    values: periods.map((p) => (p.performance ? (groupOf(p, g.key)?.salesSen ?? 0) : null)),
-    tips: periods.map((p) => { const x = groupOf(p, g.key); return x ? `${labelOf(p)} · ${g.label} sales: RM ${fmtSenPlain(x.salesSen)} · cost RM ${fmtSenPlain(x.cogsSen)} · GP ${fmtPct(x.gpPct)}` : null; }),
-  }));
-  const gpPct = periods.map((p) => p.performance?.totalGpPct ?? null);
-  const forecastGpPct = periods.map((p) => (p.forecast ? pct1(p.forecast.grossProfitSen, p.forecast.salesSen) : null));
+  const [metric, setMetric] = useState<CompareMetric>('sales');
+  const [groupKey, setGroupKey] = useState('all');
+  const present = groups.filter((g) => periods.some((p) => p.compare?.groups.some((x) => x.key === g.key)));
+  const groupOf = (p: DashboardPeriod, key: string): CompareGroup | undefined => p.compare?.groups.find((g) => g.key === key);
+  const figures: Array<CompareTotals | null> = periods.map((p) => (p.compare ? (groupKey === 'all' ? p.compare.totals : groupOf(p, groupKey) ?? null) : null));
+  const read = (f: (x: CompareTotals) => number | null): Array<number | null> => figures.map((x) => (x ? f(x) : null));
+  const actualSales = read((x) => x.actualSalesSen);
+  const perfSales = read((x) => x.performanceSalesSen);
+  const perfCost = read((x) => x.performanceCostSen);
+  const perfGp = read((x) => x.performanceGpSen);
+  const perfGpPct = read((x) => x.performanceGpPct);
+  const forecastSales = read((x) => x.forecastSalesSen);
+  const forecastCost = read((x) => x.forecastCostSen);
+  const forecastGp = read((x) => x.forecastGpSen);
+  const forecastGpPct = read((x) => x.forecastGpPct);
+  const metricLabel = COMPARE_METRICS.find((m) => m.key === metric)?.label ?? '';
+  const groupLabel = groupKey === 'all' ? 'All groups' : present.find((g) => g.key === groupKey)?.label ?? groupKey;
+  const perfOf = (g: CompareGroup): number | null => (metric === 'sales' ? g.performanceSalesSen : metric === 'gp' ? g.performanceGpSen : g.performanceGpPct);
+  const fmtMetric = (v: number | null): string => (metric === 'gpPct' ? fmtPct(v) : fmtOrDash(v));
+
+  /* The bars: the performance side stacks the groups on All (sales and gross profit — a % does not stack). */
+  const perfBars: ChartSeries[] = groupKey === 'all' && metric !== 'gpPct'
+    ? present.map((g) => ({
+      key: g.key, label: g.label, color: colorOf(g.key), stack: 'performance',
+      values: periods.map((p) => { const x = groupOf(p, g.key); return x ? perfOf(x) : null; }),
+      tips: periods.map((p) => { const x = groupOf(p, g.key); return x && x.performanceSalesSen != null ? `${labelOf(p)} · Performance · ${g.label}: sales RM ${fmtSenPlain(x.performanceSalesSen)} · cost RM ${fmtSenPlain(x.performanceCostSen ?? 0)} · GP ${fmtPct(x.performanceGpPct)}` : null; }),
+    }))
+    : [{ key: 'performance', label: `Performance ${metricLabel}`, color: PERF, values: metric === 'sales' ? perfSales : metric === 'gp' ? perfGp : perfGpPct }];
+  const bars: ChartSeries[] = metric === 'sales'
+    ? [{ key: 'actual', label: 'Actual sales (P&L)', color: GOLD, values: actualSales, tips: periods.map((p, i) => (actualSales[i] == null ? null : `${labelOf(p)} · Actual sales (P&L) · ${groupLabel}: RM ${fmtSenPlain(actualSales[i])}`)) }, ...perfBars]
+    : perfBars;
   const lines: ChartLine[] = [
-    { key: 'gp-pct', label: 'GP %', color: GOLD, axis: 'right', values: gpPct },
-    { key: 'forecast-gp-pct', label: 'Forecast GP %', color: RED, axis: 'right', dashed: true, values: forecastGpPct },
+    metric === 'sales'
+      ? { key: 'forecast-sales', label: 'Forecast sales', color: RED, dashed: true, values: forecastSales }
+      : metric === 'gp'
+        ? { key: 'forecast-gp', label: 'Forecast gross profit', color: RED, dashed: true, values: forecastGp }
+        : { key: 'forecast-gp-pct', label: 'Forecast GP %', color: RED, dashed: true, values: forecastGpPct },
   ];
-  const rows: TableRow[] = [
-    ...shown.flatMap((g) => [
-      { id: `${g.key}-sales`, label: `${g.label} — sales`, cells: periods.map((p) => (p.performance ? fmtOrDash(groupOf(p, g.key)?.salesSen ?? 0) : '—')) },
-      { id: `${g.key}-gp`, label: `${g.label} — GP %`, cells: periods.map((p) => (p.performance ? fmtPct(groupOf(p, g.key)?.gpPct ?? null) : '—')) },
-    ]),
-    { id: 'total-sales', label: 'TOTAL sales', cells: periods.map((p) => fmtOrDash(p.performance?.salesSen)), strong: true },
-    { id: 'total-cost', label: 'TOTAL cost', cells: periods.map((p) => fmtOrDash(p.performance?.cogsSen)), strong: true },
-    { id: 'total-gp', label: 'TOTAL GP', cells: periods.map((p) => fmtOrDash(p.performance?.gpSen)), strong: true },
-    { id: 'total-gp-pct', label: 'TOTAL GP %', cells: gpPct.map(fmtPct), strong: true },
-    { id: 'forecast-gp-pct', label: 'Forecast GP %', cells: forecastGpPct.map(fmtPct) },
-  ];
+
+  const rows: TableRow[] = metric === 'sales'
+    ? [
+      { id: 'actual-sales', label: 'Actual sales (P&L)', cells: actualSales.map(fmtOrDash), strong: true },
+      { id: 'performance-sales', label: 'Performance sales (SO)', cells: perfSales.map(fmtOrDash), strong: true },
+      { id: 'forecast-sales', label: 'Forecast sales', cells: forecastSales.map(fmtOrDash) },
+      { id: 'actual-vs-forecast', label: 'Actual vs Forecast (RM)', cells: periods.map((_, i) => fmtSigned(gapSen(actualSales[i] ?? null, forecastSales[i] ?? null))), tone: periods.map((_, i) => toneUp(gapSen(actualSales[i] ?? null, forecastSales[i] ?? null))) },
+      { id: 'actual-vs-forecast-pct', label: 'Actual vs Forecast (%)', cells: periods.map((_, i) => fmtSignedPct(gapPct(actualSales[i] ?? null, forecastSales[i] ?? null))), tone: periods.map((_, i) => toneUp(gapPct(actualSales[i] ?? null, forecastSales[i] ?? null))) },
+      { id: 'performance-vs-forecast', label: 'Performance vs Forecast (RM)', cells: periods.map((_, i) => fmtSigned(gapSen(perfSales[i] ?? null, forecastSales[i] ?? null))), tone: periods.map((_, i) => toneUp(gapSen(perfSales[i] ?? null, forecastSales[i] ?? null))) },
+      { id: 'performance-vs-forecast-pct', label: 'Performance vs Forecast (%)', cells: periods.map((_, i) => fmtSignedPct(gapPct(perfSales[i] ?? null, forecastSales[i] ?? null))), tone: periods.map((_, i) => toneUp(gapPct(perfSales[i] ?? null, forecastSales[i] ?? null))) },
+      { id: 'actual-vs-performance', label: 'Actual vs Performance (RM)', cells: periods.map((_, i) => fmtSigned(gapSen(actualSales[i] ?? null, perfSales[i] ?? null))) },
+    ]
+    : metric === 'gp'
+      ? [
+        { id: 'performance-gp', label: 'Performance gross profit', cells: perfGp.map(fmtOrDash), strong: true },
+        { id: 'forecast-gp', label: 'Forecast gross profit', cells: forecastGp.map(fmtOrDash) },
+        { id: 'gp-vs-forecast', label: 'vs Forecast (RM)', cells: periods.map((_, i) => fmtSigned(gapSen(perfGp[i] ?? null, forecastGp[i] ?? null))), tone: periods.map((_, i) => toneUp(gapSen(perfGp[i] ?? null, forecastGp[i] ?? null))) },
+        { id: 'gp-vs-forecast-pct', label: 'vs Forecast (%)', cells: periods.map((_, i) => fmtSignedPct(gapPct(perfGp[i] ?? null, forecastGp[i] ?? null))), tone: periods.map((_, i) => toneUp(gapPct(perfGp[i] ?? null, forecastGp[i] ?? null))) },
+        { id: 'performance-cost', label: 'Performance cost', cells: perfCost.map(fmtOrDash) },
+        { id: 'forecast-cost', label: 'Forecast cost', cells: forecastCost.map(fmtOrDash) },
+      ]
+      : [
+        { id: 'performance-gp-pct', label: 'Performance GP %', cells: perfGpPct.map(fmtPct), strong: true },
+        { id: 'forecast-gp-pct', label: 'Forecast GP %', cells: forecastGpPct.map(fmtPct) },
+        { id: 'gp-pct-vs-forecast', label: 'vs Forecast (pp)', cells: periods.map((_, i) => fmtPp(perfGpPct[i] != null && forecastGpPct[i] != null ? Math.round((perfGpPct[i]! - forecastGpPct[i]!) * 10) / 10 : null)), tone: periods.map((_, i) => toneUp(perfGpPct[i] != null && forecastGpPct[i] != null ? perfGpPct[i]! - forecastGpPct[i]! : null)) },
+      ];
+  /* On All, one row per group for the metric's performance side. */
+  const groupRows: TableRow[] = groupKey === 'all'
+    ? present.map((g) => ({ id: `${g.key}-performance`, label: `${g.label} — performance ${metricLabel.toLowerCase()}`, cells: periods.map((p) => { const x = groupOf(p, g.key); return x ? fmtMetric(perfOf(x)) : '—'; }) }))
+    : [];
   return (
-    <CardShell title="Performance P&L by product group">
-      <DashboardChart labels={periods.map(labelOf)} bars={bars} stacked lines={lines} ariaLabel="Sales per product group, GP % on the right axis" />
-      <FiguresTable periods={periods} rows={rows} ariaLabel="Performance figures" />
-      <div style={soft}>Sales and cost from the sales orders dated in the period (delivered or not); the forecast GP % is the Forecast P&L's own, keyed per account.</div>
+    <CardShell title="Performance vs forecast by product group" controls={<Tabs options={COMPARE_METRICS} value={metric} onChange={(k) => setMetric(k as CompareMetric)} />}>
+      <div style={{ marginBottom: 'var(--space-2)' }}>
+        <Tabs options={[{ key: 'all', label: 'All' }, ...present]} value={groupKey} onChange={setGroupKey} />
+      </div>
+      <DashboardChart labels={periods.map(labelOf)} bars={bars} lines={lines} unit={metric === 'gpPct' ? 'pct' : 'sen'} ariaLabel={`${metricLabel} — ${groupLabel}: actual and performance bars, forecast line`} />
+      <FiguresTable periods={periods} rows={[...rows, ...groupRows]} ariaLabel="Performance figures" />
+      <div style={soft}>Actual = the ledger's trading income through each group's sales accounts (the P&L's own figure); Performance = the sales orders dated in the period (delivered or not), sales and cost per group; Forecast = the Forecast P&L through the same accounts. Bedding = mattress + bedframe; the ledger's cost of sales is one periodic figure, so gross profit compares the orders with the forecast only.</div>
     </CardShell>
   );
 };
@@ -353,7 +416,7 @@ export const FinanceDashboard = () => {
       {q.data && periods.length > 0 && (
         <>
           <IncomeStatementCard periods={periods} />
-          <PerformanceCard periods={periods} groups={q.data.groups.performance} />
+          <PerformanceCard periods={periods} groups={q.data.groups.compare} />
           <CostStructureCard periods={periods} groups={q.data.groups.costStructure} />
           <CashFlowCard periods={periods} />
           <BalanceSheetCard periods={periods} />
