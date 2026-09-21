@@ -386,7 +386,7 @@ function DetailDrawer({
 
               <div className="mt-4 rounded-lg border border-border bg-surface px-5 py-4">
                 <TotalRow
-                  k="Total qty"
+                  k="Total Quantity"
                   v={String(items
                     .filter((l) => !isServiceLine({ itemGroup: l.item_group ?? null, itemCode: l.item_code ?? "" }))
                     .reduce((s, l) => s + Number(l.qty_accepted ?? l.qty_received ?? 0), 0))}
