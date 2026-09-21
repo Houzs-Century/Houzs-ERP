@@ -1517,8 +1517,8 @@ Total: 1317 route registrations across 186 files.
 - L62  GET    /mine
 
 ## backend/src/scm/routes/mrp-lead-times.ts  (2)
-- L48  GET    /
-- L69  PUT    /
+- L49  GET    /
+- L77  PUT    /
 
 ## backend/src/scm/routes/mrp.ts  (2)
 - L1826  GET    /
