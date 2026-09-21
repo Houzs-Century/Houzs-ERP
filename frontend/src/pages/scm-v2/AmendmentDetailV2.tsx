@@ -50,7 +50,7 @@ import {
   resolveStatusPill,
   type StatusTone,
 } from "../../vendor/scm/lib/status-pill";
-import { AMENDMENT_APPROVER_LABEL, soAmendmentApprover } from "../../vendor/scm/lib/amendment-approver";
+import { AMENDMENT_APPROVER_LABEL, soAmendmentApprover, SO_AMENDMENT_LANE_APPROVE_PERM } from "../../vendor/scm/lib/amendment-approver";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { usePrompt } from "../../vendor/scm/components/PromptDialog";
@@ -141,7 +141,7 @@ const stageIndexOf = (status: string): number => {
 /* Two-lane rework (2026-07-27): a LANE amendment is ONE signature — its whole
    life is Requested → Applied (SO_APPROVED as terminal). The legacy 4-stage
    chain above stays for pre-rework (lane NULL) rows. */
-export type SoAmendmentLaneValue = "LINES" | "DELIVERY";
+export type SoAmendmentLaneValue = "LINES" | "DELIVERY" | "PRICE";
 const LANE_STAGES: Stage[] = [
   { key: "REQUESTED", label: "Requested" },
   { key: "APPLIED", label: "Applied" },
@@ -156,6 +156,7 @@ const laneStageIndexOf = (status: string): number => {
 export const LANE_TITLE: Record<SoAmendmentLaneValue, string> = {
   LINES: `Product lines · ${AMENDMENT_APPROVER_LABEL[soAmendmentApprover("LINES")]}`,
   DELIVERY: `Delivery · ${AMENDMENT_APPROVER_LABEL[soAmendmentApprover("DELIVERY")]}`,
+  PRICE: `Price · ${AMENDMENT_APPROVER_LABEL[soAmendmentApprover("PRICE")]}`,
 };
 
 /* Hero accent dot per status tone — the dark hero can't use the light-surface
@@ -479,10 +480,11 @@ export function AmendmentDetailV2() {
     created_at?: string | null;
     so_doc_no?: string;
   }) | null;
-  /* Two-lane rework: 'LINES' | 'DELIVERY' on post-rework rows; NULL keeps the
-     legacy supplier-confirmed two-gate UI below untouched. */
+  /* Lane rework: 'LINES' | 'DELIVERY' | 'PRICE' (2990 price-only) on post-rework
+     rows; NULL keeps the legacy supplier-confirmed two-gate UI below untouched. */
   const lane: SoAmendmentLaneValue | null =
-    amendment?.lane === "LINES" || amendment?.lane === "DELIVERY" ? amendment.lane : null;
+    amendment?.lane === "LINES" || amendment?.lane === "DELIVERY" || amendment?.lane === "PRICE"
+      ? amendment.lane : null;
   /* The follow-up PO Amendments this amendment auto-raised when its LINES lane
      applied (the purchaser's second signature). REJECTED here = "PO not
      followed up" — the SO changed but the PO deliberately did not. */
@@ -586,12 +588,11 @@ export function AmendmentDetailV2() {
   /* Legacy (lane NULL) keys — untouched. */
   const canSupplierConfirm = !lane && can("scm.amendment.supplier_confirm");
   const canApproveSo = !lane && can("scm.amendment.approve_so");
-  /* Two-lane rework: ONE signature per lane — LINES is purchasing's
-     (approve_lines), DELIVERY is logistics' (approve_delivery). Super admin
-     passes via the * wildcard. */
+  /* Lane rework: ONE signature per lane — LINES is purchasing's (approve_lines),
+     DELIVERY is logistics' (approve_delivery), PRICE is Finance's (approve_price,
+     2990 price-only). Super admin passes via the * wildcard. */
   const canApproveLane =
-    lane != null
-    && can(lane === "LINES" ? "scm.amendment.approve_lines" : "scm.amendment.approve_delivery");
+    lane != null && can(SO_AMENDMENT_LANE_APPROVE_PERM[lane]);
   /* Reject rides the row's own approver gate: the lane key on lane rows, the
      legacy purchasing gate (approve_po) on pre-rework rows — mirroring the
      backend exactly so the button cannot appear for someone the server will
@@ -697,8 +698,11 @@ export function AmendmentDetailV2() {
           : lane === "DELIVERY"
             ? "This applies the delivery changes to the Sales Order at once (the current version "
               + "is snapshotted into Revisions). The purchase order is not touched. This cannot be undone."
-            : "This applies the supplier-confirmed changes: the Sales Order is re-derived and the "
-              + "current version is snapshotted into Revisions. This cannot be undone.",
+            : lane === "PRICE"
+              ? "This applies the price change to the Sales Order at once (the current version is "
+                + "snapshotted into Revisions). The purchase order is not touched. This cannot be undone."
+              : "This applies the supplier-confirmed changes: the Sales Order is re-derived and the "
+                + "current version is snapshotted into Revisions. This cannot be undone.",
         confirmLabel: lane ? "Approve & apply" : "Approve revision",
       }))
     )
@@ -1026,7 +1030,9 @@ export function AmendmentDetailV2() {
                     >
                       {approveSo.isPending
                         ? "Applying…"
-                        : lane === "LINES" ? "Approve product changes" : "Approve delivery changes"}
+                        : lane === "LINES" ? "Approve product changes"
+                          : lane === "PRICE" ? "Approve price change"
+                            : "Approve delivery changes"}
                     </Button>
                   )}
                   {status === "REQUESTED" && !canApproveLane && (
@@ -1039,6 +1045,12 @@ export function AmendmentDetailV2() {
                     <p className="text-[12px] text-ink-muted">
                       Applied — the delivery details are updated on the Sales Order. The
                       purchase order was not touched.
+                    </p>
+                  )}
+                  {status === "SO_APPROVED" && lane === "PRICE" && (
+                    <p className="text-[12px] text-ink-muted">
+                      Applied — the price is updated on the Sales Order. The purchase order
+                      was not touched.
                     </p>
                   )}
                   {status === "SO_APPROVED" && lane === "LINES" && (

@@ -49,13 +49,16 @@ const { usersHoldingPermission } = await import('./permissionHolders');
 const { LANE_APPROVE_KEY } = await import('../scm/shared/amendment-lane');
 
 /* One role table, one user table, one grant table — enough for the resolver.
-   Roles: 10 Purchaser (lines), 11 Logistic (delivery), 12 Owner ('*').
+   Roles: 10 Purchaser (lines), 11 Logistic (delivery), 12 Owner ('*'),
+   13 Finance/price approver (the 2990 PRICE lane, owner 2026-09-21).
    Users: 41 purchaser (Houzs+2990), 42 purchaser (2990 only), 43 logistics
-   (no grants at all — the single-company shape), 44 owner. */
+   (no grants at all — the single-company shape), 44 owner, 46 price approver
+   (Houzs+2990, like Kris). */
 const ROLES = [
   { id: 10, permissions: '["scm.amendment.approve_lines","scm.po_amendment.approve"]' },
   { id: 11, permissions: '["scm.amendment.approve_delivery"]' },
   { id: 12, permissions: '["*"]' },
+  { id: 13, permissions: '["scm.amendment.approve_price"]' },
 ];
 const USERS = [
   { id: 41, role_id: 10, status: 'active' },
@@ -63,11 +66,14 @@ const USERS = [
   { id: 43, role_id: 11, status: 'active' },
   { id: 44, role_id: 12, status: 'active' },
   { id: 45, role_id: 10, status: 'disabled' },
+  { id: 46, role_id: 13, status: 'active' },
 ];
 const GRANTS = [
   { user_id: 41, company_id: 1 },
   { user_id: 41, company_id: 2 },
   { user_id: 42, company_id: 2 },
+  { user_id: 46, company_id: 1 },
+  { user_id: 46, company_id: 2 },
 ];
 
 function fakeEnv() {
@@ -118,9 +124,17 @@ describe('amendment notice audience', () => {
     });
     expect(posted[0].userIds).toEqual([43]);
 
+    posted.length = 0;
+    // A 2990 PRICE lane reaches the price approver (46), not the purchaser (41/42).
+    await notifySoAmendmentRaised(fakeEnv(), {
+      amendmentNo: '2990-SO-1/A3', soDocNo: '2990-SO-1', lane: 'PRICE', companyId: 2,
+    });
+    expect(posted[0].userIds).toEqual([46]);
+
     // And the two tables agree, key for key.
     expect(LANE_APPROVE_KEY.LINES).toBe('scm.amendment.approve_lines');
     expect(LANE_APPROVE_KEY.DELIVERY).toBe('scm.amendment.approve_delivery');
+    expect(LANE_APPROVE_KEY.PRICE).toBe('scm.amendment.approve_price');
   });
 
   it('never notifies the wildcard (owner / IT admin) roles', async () => {

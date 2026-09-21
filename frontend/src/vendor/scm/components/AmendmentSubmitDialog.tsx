@@ -149,7 +149,7 @@ export const AmendmentSubmitDialog = ({ ask, onConfirm, onCancel }: AmendmentSub
           ))}
           {lanes.length > 1 && (
             <span style={{ color: 'var(--c-ink-muted, #6b6f66)' }}>
-              Two desks are involved, so this is raised as two amendments, one per approver.
+              {lanes.length} desks are involved, so this is raised as {lanes.length} amendments, one per approver.
             </span>
           )}
         </div>

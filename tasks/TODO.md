@@ -3,6 +3,7 @@
 One line per open item: what — waiting on — since. Delete the line when it is done. Older items were dropped on 2026-09-15; they are in tag `archive/docs-2026-09-15`.
 
 ## Waiting on owner
+- 2990 price-lane amendments: after this PR deploys, assign Kris (only) to the new "Sales Director (Price Approver)" role in Team > Roles — his login e-mail is PII, so the migration creates the role but does not reassign the user. Until then a 2990 price-only SO amendment stays on the Purchaser's queue — 2026-09-21
 - Outsourced transport in Members: remove the 3 invited accounts (JAN #94, SHAKTI #93, Cheah #92) in Team, then dedupe their Fleet driver rows under a 3PL company (all 0 trips, safe). Going forward the invite/profile Title picker now warns to build outsourced drivers in Fleet, not Members — 2026-09-17
 - Roles & Permissions part B follow-ups: `crewScope.ts` keeps a position-name FALLBACK behind `org.crew.scoped` ON PURPOSE (owner 2026-09-17: it only styles the Projects filter bar, the real scope is server-side, and it is the fixture for the FE==BE referee test) — not to be removed. Phone Titles editor DONE (`mobile/MobileTitles.tsx`). Actions matrix stays desktop-only. — 2026-09-17
 - Hookka supplier account 400-H004 belongs to another company in the book: A (recommended) map to 400-O002 and move 94 POs; B 400-H003; C keep. HC-GRN-2609-081 is refused until then — 2026-09-15

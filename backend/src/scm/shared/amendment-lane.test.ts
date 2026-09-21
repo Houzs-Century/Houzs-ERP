@@ -97,12 +97,15 @@ describe('classifyLineItemCode', () => {
 describe('splitAmendmentByLane', () => {
   type L = { id: string; code: string | null };
   const byCode = (l: L) => ({ itemCode: l.code });
+  // No price lane: the two-lane behaviour the split has always had (HOUZS, and
+  // every caller before the 2026-09-21 PRICE lane).
+  const noPrice = () => false;
 
   it('splits a mixed submission into both lanes (proc date rides LINES)', () => {
     const split = splitAmendmentByLane<L>(
       { customerDeliveryDate: '2026-08-01', processingDate: '2026-07-30' },
       [{ id: 'a', code: 'PC151-01' }, { id: 'b', code: 'SVC-DELIVERY' }],
-      byCode,
+      byCode, noPrice, false,
     );
     expect(split.lanes).toEqual(['LINES', 'DELIVERY']);
     expect(split.perLane.LINES.lines.map((l) => l.id)).toEqual(['a']);
@@ -114,7 +117,7 @@ describe('splitAmendmentByLane', () => {
   });
 
   it('a product-only submission yields only LINES', () => {
-    const split = splitAmendmentByLane<L>({}, [{ id: 'a', code: 'PC151-01' }], byCode);
+    const split = splitAmendmentByLane<L>({}, [{ id: 'a', code: 'PC151-01' }], byCode, noPrice, false);
     expect(split.lanes).toEqual(['LINES']);
     expect(split.perLane.DELIVERY.lines).toEqual([]);
     expect(split.perLane.DELIVERY.headerKeys).toEqual([]);
@@ -124,7 +127,7 @@ describe('splitAmendmentByLane', () => {
     const split = splitAmendmentByLane<L>(
       { customerDeliveryDate: '2026-08-01', processingDate: '2026-07-30' },
       [],
-      byCode,
+      byCode, noPrice, false,
     );
     expect(split.lanes).toEqual(['LINES', 'DELIVERY']);
     expect(split.perLane.LINES.headerKeys).toEqual(['processingDate']);
@@ -135,7 +138,7 @@ describe('splitAmendmentByLane', () => {
     const split = splitAmendmentByLane<L>(
       { address1: '12 Jalan Baru', replacementDisposal: 'Old sofa 1pc' },
       [],
-      byCode,
+      byCode, noPrice, false,
     );
     expect(split.lanes).toEqual(['DELIVERY']);
   });
@@ -148,11 +151,60 @@ describe('splitAmendmentByLane', () => {
     const split = splitAmendmentByLane<LG>(
       {},
       [{ id: 'a', code: '9028-L(RHF)', group: 'sofa' }, { id: 'b', code: 'DISPOSE', group: 'service' }],
-      (l) => ({ itemCode: l.code, itemGroup: l.group }),
+      (l) => ({ itemCode: l.code, itemGroup: l.group }), () => false, false,
     );
     expect(split.lanes).toEqual(['LINES', 'DELIVERY']);
     expect(split.perLane.LINES.lines.map((l) => l.id)).toEqual(['a']);
     expect(split.perLane.DELIVERY.lines.map((l) => l.id)).toEqual(['b']);
+  });
+
+  // ── PRICE lane (owner 2026-09-21) ──────────────────────────────────────────
+  // A price-only product line on 2990 carves off to Finance instead of the
+  // Purchaser. The split takes the price-only verdict + the company toggle as
+  // inputs; the diff itself and the 2990 gate are proven in
+  // amendment-noop-lines.test.ts / amendment-lane-resolve.test.ts.
+  it('carves a price-only product line into PRICE when the price lane is enabled', () => {
+    const priceOnly = (l: L) => l.id === 'p';
+    const split = splitAmendmentByLane<L>(
+      {},
+      [{ id: 'a', code: 'PC151-01' }, { id: 'p', code: 'JAGER-(K)' }],
+      byCode, priceOnly, true,
+    );
+    expect(split.lanes).toEqual(['LINES', 'PRICE']);
+    expect(split.perLane.LINES.lines.map((l) => l.id)).toEqual(['a']);
+    expect(split.perLane.PRICE.lines.map((l) => l.id)).toEqual(['p']);
+  });
+
+  it('keeps a price-only line on LINES when the price lane is OFF (HOUZS)', () => {
+    const split = splitAmendmentByLane<L>(
+      {},
+      [{ id: 'p', code: 'JAGER-(K)' }],
+      byCode, () => true, false,
+    );
+    expect(split.lanes).toEqual(['LINES']);
+    expect(split.perLane.PRICE.lines).toEqual([]);
+  });
+
+  it('a service line stays DELIVERY even if flagged price-only (service wins first)', () => {
+    const split = splitAmendmentByLane<L>(
+      {},
+      [{ id: 's', code: 'SVC-DELIVERY' }],
+      byCode, () => true, true,
+    );
+    expect(split.lanes).toEqual(['DELIVERY']);
+    expect(split.perLane.PRICE.lines).toEqual([]);
+  });
+
+  it('a header key never routes to PRICE, even on a price-lane company', () => {
+    const split = splitAmendmentByLane<L>(
+      { processingDate: '2026-07-30' },
+      [{ id: 'p', code: 'JAGER-(K)' }],
+      byCode, () => true, true,
+    );
+    expect(split.lanes).toEqual(['LINES', 'PRICE']);
+    expect(split.perLane.LINES.headerKeys).toEqual(['processingDate']);
+    expect(split.perLane.LINES.lines).toEqual([]);
+    expect(split.perLane.PRICE.lines.map((l) => l.id)).toEqual(['p']);
   });
 });
 
@@ -184,8 +236,9 @@ describe('lane state machine', () => {
     expect(laneIsOpen('REJECTED')).toBe(false);
   });
 
-  it('lane approve keys are the two new flat permissions', () => {
+  it('lane approve keys are the flat permissions each desk signs with', () => {
     expect(LANE_APPROVE_KEY.LINES).toBe('scm.amendment.approve_lines');
     expect(LANE_APPROVE_KEY.DELIVERY).toBe('scm.amendment.approve_delivery');
+    expect(LANE_APPROVE_KEY.PRICE).toBe('scm.amendment.approve_price');
   });
 });
