@@ -91,6 +91,11 @@ async function resetFixture(s: Sql): Promise<void> {
       id uuid PRIMARY KEY, doc_no text NOT NULL, item_group text, item_code text, stock_status text NOT NULL DEFAULT 'PENDING',
       cancelled boolean DEFAULT false
     );
+    DROP TABLE IF EXISTS scm.mfg_so_status_changes CASCADE;
+    CREATE TABLE scm.mfg_so_status_changes (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(), doc_no text NOT NULL,
+      from_status text, to_status text, created_at timestamptz NOT NULL DEFAULT now()
+    );
     DROP TABLE IF EXISTS scm.suppliers CASCADE;
     DROP TABLE IF EXISTS scm.warehouses CASCADE;
     CREATE TABLE scm.suppliers (id uuid PRIMARY KEY, code text, name text);
@@ -143,6 +148,11 @@ async function resetFixture(s: Sql): Promise<void> {
       ('HC-DO-2609-002', 'HC-SO-013495', 'CANCELLED', '2026-09-06 00:00:00+00');
     INSERT INTO scm.mfg_sales_order_items (id, doc_no, item_group, item_code, stock_status) VALUES
       ('${ITEM1}', 'HC-SO-013495', 'MATTRESS', 'M1', 'READY');
+    -- HC-SO-013495 is dated 2026-08-20 but only ENTERED READY_TO_SHIP on
+    -- 2026-08-25 (KL) — the pre-cutover-order-became-ready case the ready-open
+    -- readiness arm exists for (prod: HC-SO-013389 / 013504 / 013391).
+    INSERT INTO scm.mfg_so_status_changes (doc_no, from_status, to_status, created_at) VALUES
+      ('HC-SO-013495', 'IN_PRODUCTION', 'READY_TO_SHIP', '2026-08-25 12:00:00+08');
     INSERT INTO scm.suppliers VALUES ('${SUP1}', '400-S001', 'Sleep Well Sdn Bhd');
     INSERT INTO scm.warehouses VALUES ('${WH_KL}', 'KL', 'KL Warehouse'), ('${WH_PG}', 'PG', 'Penang');
     INSERT INTO scm.purchase_orders (id, po_number, status, cancelled_at, company_id, linked_ac_docno, supplier_id, purchase_location_id, po_date, expected_at, supplier_delivery_date_2) VALUES
@@ -226,13 +236,18 @@ describePg('HC Delivery sheet feed SQL — real Postgres', () => {
     await sql`UPDATE scm.mfg_sales_orders SET customer_delivery_date = '2026-01-05' WHERE doc_no = 'HC-SO-000010'`;
   });
 
-  test('ready-open: undelivered orders dated on/after the from-date, this company only, oldest first', async () => {
+  test('ready-open: dated on/after the from-date OR became READY_TO_SHIP on/after it, this company only, oldest first', async () => {
     const open = async (company: number, from: string) =>
-      ((await sql.unsafe(toPgPlaceholders(FEED_READY_OPEN_SQL), [company, from] as never[])) as unknown as FeedHeadRow[]).map((r) => r.doc_no);
+      ((await sql.unsafe(toPgPlaceholders(FEED_READY_OPEN_SQL), [company, from, from] as never[])) as unknown as FeedHeadRow[]).map((r) => r.doc_no);
     // DELIVERED (000011, 000012, 2609-078), DRAFT and CANCELLED never appear.
     expect(await open(1, '2026-01-01')).toEqual(['HC-SO-000010', 'HC-SO-013495']);
     expect(await open(1, '2026-08-20')).toEqual(['HC-SO-013495']);
-    expect(await open(1, '2026-08-21')).toEqual([]);
+    // HC-SO-013495 is dated 2026-08-20 but ENTERED READY_TO_SHIP on 2026-08-25
+    // (KL): a from-date past its order date still catches it via the readiness
+    // arm — the pre-cutover order that became ready afterwards.
+    expect(await open(1, '2026-08-21')).toEqual(['HC-SO-013495']);
+    // ...but a from-date past the transition day drops it: neither arm matches.
+    expect(await open(1, '2026-08-26')).toEqual([]);
     expect(await open(2, '2026-01-01')).toEqual(['2990-SO-000013', '2990-SO-2609-001']);
   });
 

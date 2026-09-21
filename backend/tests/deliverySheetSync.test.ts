@@ -624,9 +624,14 @@ describe("the READY gate", () => {
     expect(body).toMatchObject({ count: 1, scanned: 2, from: "2026-09-15" });
     expect(body.records[0]).toMatchObject({ DocNo: "SO-013495", Ready: true });
     const feed = seen.find((s) => /FROM scm\.mfg_sales_orders so/.test(s.sql))!;
-    expect(feed.binds).toEqual([HOUZS, "2026-09-15"]);
+    // ?2 = order date, ?3 = became-ready day; both bound to the from-date.
+    expect(feed.binds).toEqual([HOUZS, "2026-09-15", "2026-09-15"]);
     expect(feed.sql).toContain("t.status NOT IN ('CLOSED', 'DELIVERED', 'INVOICED')");
     expect(feed.sql).toContain("t.so_date::date >= ?2::date");
+    // The became-ready arm: a pre-cutover order that entered READY_TO_SHIP after it.
+    expect(feed.sql).toContain("FROM scm.mfg_so_status_changes sc");
+    expect(feed.sql).toContain("sc.to_status = 'READY_TO_SHIP'");
+    expect(feed.sql).toContain("?3::date");
   });
 
   test("/ready-open: a bad from is 400 before any read; a wrong key is 401", async () => {
