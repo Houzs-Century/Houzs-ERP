@@ -63,10 +63,9 @@ import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
-const fmtRm = (centi: number | null | undefined, currency = 'MYR'): string => {
-  const v = centi ?? 0;
-  return `${currency} ${(v / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-};
+const fmtAmt = (centi: number | null | undefined): string =>
+  ((centi ?? 0) / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmtRm = (centi: number | null | undefined, currency = 'MYR'): string => `${currency} ${fmtAmt(centi)}`;
 
 /* Commander 2026-05-29 — "PO 那边根据 Category 会叫我填写我的 Variant，这个
    (GRN) 怎么没有？" Manual GRN lines whose product is a bedframe/sofa now get
@@ -1393,23 +1392,46 @@ export const GrnNew = () => {
         </div>
       </section>
 
-      {/* Totals card aligned right — identical to New PO / New Purchase Invoice.
+      {/* Line Summary — one row per line + Total Quantity / Total Amount, so the
+          receiver can check the whole GRN at a glance (AutoCount-style footer).
           lg:pr-32 clears the fixed FAB cluster. */}
       <div className="lg:pr-32" style={{ display: 'flex', justifyContent: 'flex-end' }}>
-        <section className={styles.card} style={{ maxWidth: 360, width: '100%' }}>
-          <div className={styles.cardBody}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--fs-14)', marginBottom: 'var(--space-2)' }}>
-              <span>Subtotal</span>
-              <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(subtotalSen, currency)}</span>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--fs-14)', borderTop: '1px solid var(--line)', paddingTop: 'var(--space-2)', marginBottom: 'var(--space-2)' }}>
-              <span>Total Quantity</span>
-              <span style={{ fontFamily: 'var(--font-mono)' }}>{totalQty}</span>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--fs-16)', fontWeight: 700 }}>
-              <span>Total Amount</span>
-              <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(subtotalSen, currency)}</span>
-            </div>
+        <section className={styles.card} style={{ maxWidth: 640, width: '100%' }}>
+          <div className={styles.cardHeader}>
+            <h2 className={styles.cardTitle}>Line Summary</h2>
+          </div>
+          <div className={styles.cardBody} style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
+              <thead>
+                <tr style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-12)', borderBottom: '1px solid var(--line)' }}>
+                  <th style={{ textAlign: 'left', fontWeight: 600, padding: '6px 8px 6px 0' }}>Item Code</th>
+                  <th style={{ textAlign: 'right', fontWeight: 600, padding: '6px 8px' }}>Qty</th>
+                  <th style={{ textAlign: 'right', fontWeight: 600, padding: '6px 8px' }}>Unit Price ({currency})</th>
+                  <th style={{ textAlign: 'right', fontWeight: 600, padding: '6px 0 6px 8px' }}>Subtotal</th>
+                </tr>
+              </thead>
+              <tbody style={{ fontFamily: 'var(--font-mono)' }}>
+                {lines.filter((l) => l.itemCode.trim()).map((l) => (
+                  <tr key={l.rid} style={{ borderBottom: '1px dashed var(--line)' }}>
+                    <td style={{ padding: '6px 8px 6px 0', maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={l.itemCode}>{l.itemCode}</td>
+                    <td style={{ textAlign: 'right', padding: '6px 8px' }}>{l.qtyReceived}</td>
+                    <td style={{ textAlign: 'right', padding: '6px 8px' }}>{fmtAmt(l.unitPriceSen)}</td>
+                    <td style={{ textAlign: 'right', padding: '6px 0 6px 8px' }}>{fmtAmt(l.qtyReceived * l.unitPriceSen)}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot style={{ fontFamily: 'var(--font-mono)' }}>
+                <tr style={{ borderTop: '2px solid var(--line)' }}>
+                  <td style={{ padding: '8px 8px 4px 0', fontFamily: 'var(--font-sans, inherit)', fontWeight: 600 }}>Total Quantity</td>
+                  <td style={{ textAlign: 'right', padding: '8px 8px 4px', fontWeight: 700 }}>{totalQty}</td>
+                  <td colSpan={2} />
+                </tr>
+                <tr style={{ fontSize: 'var(--fs-16)', fontWeight: 700 }}>
+                  <td colSpan={3} style={{ padding: '4px 8px 4px 0', fontFamily: 'var(--font-sans, inherit)' }}>Total Amount</td>
+                  <td style={{ textAlign: 'right', padding: '4px 0 4px 8px', whiteSpace: 'nowrap' }}>{fmtRm(subtotalSen, currency)}</td>
+                </tr>
+              </tfoot>
+            </table>
             {/* Landed-cost core — MYR inventory cost for a foreign GRN. */}
             {isForeign && (
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--fs-13)', color: 'var(--fg-muted)', marginTop: 'var(--space-2)' }}>
