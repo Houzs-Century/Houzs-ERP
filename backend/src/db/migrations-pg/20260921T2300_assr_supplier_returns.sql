@@ -1,4 +1,4 @@
--- 20260921T1000_assr_supplier_returns.sql
+-- 20260921T2300_assr_supplier_returns.sql
 -- REVERSAL: DROP TABLE IF EXISTS public.assr_supplier_returns;
 --   assr_cases.supplier_pickup_at / items_ready_at still carry the CURRENT trip,
 --   so dropping this table loses only the per-trip history for cases sent to the
