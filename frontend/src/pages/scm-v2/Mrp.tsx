@@ -203,7 +203,7 @@ const shortageLinesOf = (s: MrpSku) => s.lines.filter((l) => l.source === 'short
 
 export const Mrp = () => {
   const navigate = useNavigate();
-  const { staff } = useAuth();
+  const { staff, canWriteScmConfig } = useAuth();
   const isAdmin = isAdminLevel(staff?.role);
   const [backfilling, setBackfilling] = useState(false);
   const [showLeadTimes, setShowLeadTimes] = useState(false);
@@ -892,7 +892,13 @@ export const Mrp = () => {
                   {backfilling ? 'Re-binding…' : 'Re-bind WH'}
                 </button>
               )}
-              {isAdmin && (
+              {/* Lead Times is SCM master-data config (order-N-days-early per
+                  category), so it gates on canWriteScmConfig — the same
+                  position-driven "may write SCM config" answer SO Maintenance
+                  uses — NOT isAdmin, which only Owner/IT-Admin ('*') pass. That
+                  left Procurement/Operation unable to set the lead times their
+                  own Proceed PO consumes. */}
+              {canWriteScmConfig && (
                 <button type="button" className={TOOLBAR_BTN} onClick={() => setShowLeadTimes(true)}
                   title="Set how many days early each category's PO is ordered (applied when you Proceed PO)">
                   <Clock {...ICON} /> Lead Times
