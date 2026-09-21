@@ -59,6 +59,16 @@ export interface Branding {
   // never print a houzscentury.com address.
   csPhone: string;
   csEmail: string;
+  /** Where a CUSTOMER pays (owner 2026-09-21: 给顾客的是要进什么户口): bank,
+   *  account name and number, one item per line, printed as PAYMENT DETAILS
+   *  on the Deposit Invoice and the Sales Invoice. "" omits the block. */
+  customerPaymentDetails: string;
+  /** Where an OTHER DEBTOR pays — a different account from the customers'
+   *  (给 other debtor 的户口又不一样) — printed on the Other Debtor invoice. */
+  debtorPaymentDetails: string;
+  /** Terms & conditions for the Other Debtor invoice, one term per line,
+   *  printed numbered under the payment details. "" omits the block. */
+  debtorInvoiceTerms: string;
 }
 
 const BRANDING_KEY = "branding";
@@ -93,6 +103,9 @@ export const DEFAULT_BRANDING: Branding = {
   printLogoR2Key: "",
   csPhone: "",
   csEmail: "",
+  customerPaymentDetails: "",
+  debtorPaymentDetails: "",
+  debtorInvoiceTerms: "",
 };
 
 // Default branding for the 2990 company row. companyName mirrors the
@@ -113,6 +126,9 @@ export const DEFAULT_BRANDING_2990: Branding = {
   printLogoR2Key: "",
   csPhone: "",
   csEmail: "",
+  customerPaymentDetails: "",
+  debtorPaymentDetails: "",
+  debtorInvoiceTerms: "",
 };
 
 /** Compile-time defaults per company code. Unknown codes get a name-only
@@ -206,6 +222,9 @@ function normalize(raw: unknown, defaults: Branding = DEFAULT_BRANDING): Brandin
     // never inherited from another company's default).
     csPhone: str(r.csPhone, ""),
     csEmail: str(r.csEmail, ""),
+    customerPaymentDetails: str(r.customerPaymentDetails, ""),
+    debtorPaymentDetails: str(r.debtorPaymentDetails, ""),
+    debtorInvoiceTerms: str(r.debtorInvoiceTerms, ""),
   };
 }
 

@@ -14,7 +14,8 @@
 // ship_to/bill_to/install_to trio — see the SiHeader note.
 import { formatPhone } from '@2990s/shared/phone';
 import { siDepositAppliedSen } from './si-outstanding';
-import { DOC_TABLE_HEAD_STYLES, DOC_TABLE_STYLES, deliverPdf, drawHeader, drawInfoColumns, ensurePdfCjkFont, fmtRm, safeName, fmtDocDate, type PdfAction } from './pdf-common';
+import { DOC_TABLE_HEAD_STYLES, DOC_TABLE_STYLES, deliverPdf, drawHeader, drawInfoColumns, drawPaymentDetails, ensurePdfCjkFont, fmtRm, safeName, fmtDocDate, type PdfAction } from './pdf-common';
+import { getBrandingCache } from '../../../lib/branding';
 import { billToBlock } from './pdf-party-blocks';
 import { stripBookText } from './book-text';
 import { docVariantLine, loadCustomerFabricMaps } from './supplier-doc-data';
@@ -212,6 +213,9 @@ export async function renderSalesInvoiceInto(
   /* Signature boxes removed (owner 2026-09-20): the invoice ends on the Terms
      line right under the totals — no dangling gap where the two boxes were. */
   ty += 10;
+
+  /* Where the customer pays (owner 2026-09-21): the CUSTOMER set from Settings › Branding; blank prints nothing. */
+  ty = drawPaymentDetails(doc, ty, getBrandingCache().customerPaymentDetails, margin);
 
   doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(110);
   doc.text('Terms: Payment due as per invoice. Late payments may incur a service charge.', margin, ty);

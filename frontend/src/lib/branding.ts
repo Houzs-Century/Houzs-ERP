@@ -53,6 +53,16 @@ export interface Branding {
   csPhone: string;
   /** Customer-service email, same contract as csPhone. */
   csEmail: string;
+  /** Where a CUSTOMER pays (owner 2026-09-21): bank, account name and number,
+   *  one item per line — PAYMENT DETAILS on the Deposit Invoice and the Sales
+   *  Invoice. "" omits the block. */
+  customerPaymentDetails: string;
+  /** Where an OTHER DEBTOR pays — a different account from the customers' —
+   *  printed on the Other Debtor invoice. */
+  debtorPaymentDetails: string;
+  /** Terms & conditions for the Other Debtor invoice, one term per line,
+   *  printed numbered under the payment details. "" omits the block. */
+  debtorInvoiceTerms: string;
 }
 
 /** Seeded defaults — VERBATIM the values that were hardcoded before this change
@@ -75,6 +85,9 @@ export const DEFAULT_BRANDING: Branding = {
   printLogoR2Key: "",
   csPhone: "",
   csEmail: "",
+  customerPaymentDetails: "",
+  debtorPaymentDetails: "",
+  debtorInvoiceTerms: "",
 };
 
 /** 2990 company defaults — mirrors the backend's DEFAULT_BRANDING_2990 and
@@ -93,6 +106,9 @@ export const DEFAULT_BRANDING_2990: Branding = {
   printLogoR2Key: "",
   csPhone: "",
   csEmail: "",
+  customerPaymentDetails: "",
+  debtorPaymentDetails: "",
+  debtorInvoiceTerms: "",
 };
 
 /** Defaults for the given company code (GET /api/branding echoes the active
@@ -169,6 +185,10 @@ export function normalizeBranding(
     // inheriting another company's.
     csPhone: ((r.csPhone ?? r.cs_phone) as string | undefined)?.toString().trim() ?? "",
     csEmail: ((r.csEmail ?? r.cs_email) as string | undefined)?.toString().trim() ?? "",
+    // Multi-line settings (2026-09-21): blank stays blank, the paper omits the block.
+    customerPaymentDetails: ((r.customerPaymentDetails ?? r.customer_payment_details) as string | undefined)?.toString().trim() ?? "",
+    debtorPaymentDetails: ((r.debtorPaymentDetails ?? r.debtor_payment_details) as string | undefined)?.toString().trim() ?? "",
+    debtorInvoiceTerms: ((r.debtorInvoiceTerms ?? r.debtor_invoice_terms) as string | undefined)?.toString().trim() ?? "",
   };
 }
 
