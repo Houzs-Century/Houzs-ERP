@@ -876,6 +876,7 @@ type DrillItem = {
   stock_state?: "stock" | "po" | "shortage" | null; // live MRP verdict
   coverage_po?: string | null; // incoming PO covering this line…
   coverage_eta?: string | null; // …and its effective ETA
+  bound_source_pos?: string[]; // the line's OWN PO (raised against this so_item) — wins
   shipped_source_pos?: string[]; // actual source PO(s) once shipped
   shipped_source_adj?: boolean; // shipped from a PO-less stock adjustment
   ready_source_pos?: Array<{ po: string | null; qty: number; kind: "po" | "adjustment" }>;
@@ -981,6 +982,10 @@ function SoLinesExpansion({ docNo }: { docNo: string }) {
               {/* The ONE shared renderer, identical to the SO detail page —
                   the four chips are documented at sales-order.md §0.8. */}
               <span className="min-w-0">
+                {/* The line's OWN incoming PO (bound_source_pos, off the same
+                    GET /:docNo payload) wins over the shipped-batch trace (owner
+                    2026-09-22) — the same rule as the detail page, so the drill
+                    and the detail never disagree. */}
                 <SoSourceChips line={l} coverage={coverageStateOf(coverageQ)} />
               </span>
             </div>

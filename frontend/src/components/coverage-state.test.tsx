@@ -62,6 +62,31 @@ describe('a drill-down cell never states an answer it does not have', () => {
   });
 });
 
+describe("the SO Incoming PO chip prefers the line's OWN purchase order (owner 2026-09-22)", () => {
+  test("a bound PO wins over the shipped-batch trace (which can be another order's PO)", () => {
+    // SO-013160's HILTON line: its own PO is HC-PO-009863, but its goods shipped
+    // from a FIFO lot received under HC-PO-010095 (another order, AKHC3727).
+    render(
+      <SoSourceChips
+        line={{ bound_source_pos: ['HC-PO-009863'], shipped_source_pos: ['HC-PO-010095'], delivered_qty: 1, remaining_qty: 0 }}
+        coverage="ready"
+      />,
+    );
+    expect(screen.getByText('HC-PO-009863')).toBeTruthy();
+    expect(screen.queryByText('HC-PO-010095')).toBeNull();
+  });
+
+  test('with no bound PO, it falls back to the shipped-batch trace', () => {
+    render(
+      <SoSourceChips
+        line={{ shipped_source_pos: ['HC-PO-010095'], delivered_qty: 1, remaining_qty: 0 }}
+        coverage="ready"
+      />,
+    );
+    expect(screen.getByText('HC-PO-010095')).toBeTruthy();
+  });
+});
+
 describe('coverageStateOf maps a query to the three states', () => {
   test('loading beats error beats ready', () => {
     expect(coverageStateOf({ isLoading: true, isError: true })).toBe('loading');
