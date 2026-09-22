@@ -43,9 +43,9 @@ async function resetFixture(s: Sql): Promise<void> {
       delivery_by text, do_date text,
       closed_at text, archived_at text,
       -- TEXT in production, NOT timestamptz. This once diverged (the fixture had
-      -- timestamptz), so the feed's raw `updated_at > ?::timestamptz` passed here
-      -- while 502ing in prod (text > timestamptz, 42883). Keep it text so the
-      -- feed's ::timestamptz cast stays under test.
+      -- timestamptz), so the feed comparing updated_at against a timestamptz
+      -- passed here while 502ing in prod (text vs timestamptz, 42883). Keep it
+      -- text so the feed's ::timestamptz cast stays under test.
       updated_at text
     );
     INSERT INTO public.assr_cases
