@@ -27,6 +27,7 @@ import {
 } from "../services/assr";
 import { normalizeSlaHours } from "../services/assrSla";
 import { openSupplierReturnRoute, patchSupplierReturnRoute, archiveSupplierReturnRoute } from "../services/assrSupplierReturns";
+import { reopenCaseRoute } from "../services/assrReopen";
 import { runSlaEscalation } from "../services/assrEscalation";
 import { issueStaffToken, issueSalesToken, revokeCaseTokens } from "../services/caseTracking";
 import { sendEmail, publicUrl } from "../services/email";
@@ -2874,11 +2875,10 @@ function surveyEmailHtml(name: string, assrNo: string, link: string, companyName
       </p>
     </div>`;
 }
-
 app.post("/:id/supplier-returns", requirePermission("service_cases.write"), openSupplierReturnRoute);
 app.patch("/:id/supplier-returns/:roundId{[0-9]+}", requirePermission("service_cases.write"), patchSupplierReturnRoute);
 app.delete("/:id/supplier-returns/:roundId{[0-9]+}", requirePermission("service_cases.write"), archiveSupplierReturnRoute);
-
+app.post("/:id/reopen", requirePermission("service_cases.write"), reopenCaseRoute);
 // ── Notes ─────────────────────────────────────────────────────
 
 // Manual-note audience buckets (mig 0108). Legacy 'purchasing' from

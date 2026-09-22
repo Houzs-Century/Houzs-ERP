@@ -207,6 +207,11 @@
     },
     {
       "check": "D1",
+      "key": "PENDING_REVIEW,PENDING_SOLUTION,UNDER_VERIFICATION|backend/src/services/assrReopen.ts frontend/src/mobile/MobileServiceCase.tsx",
+      "why": "TWO DIFFERENT QUESTIONS that share three stages. REOPEN_STAGES (assrReopen.ts) is the business rule for WHICH assessment stage a completed/voided case may reopen into; PHASE_DEFS's Intake phase (MobileServiceCase.tsx) is the mobile Stage-tab's PRESENTATION grouping of the seven-stage pipeline into Intake/Repair/Return. They coincide today because the three pre-supplier stages are both 'the Intake phase' and 'the stages a reopen restarts at', but they answer different questions and move independently — regrouping the mobile phases, or letting a reopen re-enter at the supplier leg, would separate them. The reopen set has ONE home (backend REOPEN_STAGES, pinned by assrReopen.test.ts; both UI surfaces import its options from vendor/scm/lib/assr/reopen, pinned by reopen-controls.test.ts). Not a rule enforced at N-1 of N places."
+    },
+    {
+      "check": "D1",
       "key": ",1ST,2ND,3RD,4TH,5TH|backend/src/scm/shared/service-sku.ts frontend/src/vendor/shared/service-sku.ts",
       "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it. check-shared-mirrors.mjs compares this pair function-by-function and fails on DIVERGED. Symbols: FLOOR_ORDINALS."
     },

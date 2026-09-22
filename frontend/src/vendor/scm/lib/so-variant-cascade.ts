@@ -61,23 +61,36 @@ export const FABRIC_IDENTITY_KEYS: readonly string[] = [
  *  the PDF (vendor/shared/so-line-display.ts). Both desktop and mobile copied
  *  it before this module existed.
  *
- *  `extraAddonNote` / `extraAddonAmountRM` / `specials` / `specialLabels` /
- *  `specialChoices` — the per-line SPECIAL ORDER payload (Custom-other free
- *  text and ticked add-on codes). Same shape as `remark`: a note the operator
- *  wrote on ONE line about ONE build, never a category-wide axis to align.
- *  Owner reported 2026-09-11 against HC-SO-007678: on the mobile SO he added
- *  a customize-drawer note to HILTON (a bedframe line) and saved; after
- *  reload FENRIR — a different bedframe line further down the same order —
- *  carried the identical text and would not let him remove it. Traced: this
- *  list only excluded `remark` and `buildKey`, so `cascadeMasterVariants`
- *  FORCED the master's extraAddonNote (and its four siblings) onto every
- *  follower of the same category, exactly like the "latest wins" rule for a
- *  sofa's fabric — appropriate for a fabric shared across compartments of
- *  one physical sofa, wrong for a per-line note. Adding the five keys here
- *  closes both DESKTOP and MOBILE (both surfaces import this module). */
+ *  `extraAddonNote` / `extraAddonAmountRM` — the FREE-TEXT special add-on (a
+ *  note the operator typed on ONE line, and the money folded into that line).
+ *  Never a category-wide axis to align. Owner reported 2026-09-11 against
+ *  HC-SO-007678: on the mobile SO he added a customize-drawer note to HILTON (a
+ *  bedframe line) and saved; after reload FENRIR — a different bedframe line
+ *  further down the same order — carried the identical text and would not let
+ *  him remove it. It stays here so a hand-typed one-off note (and its charge)
+ *  never travels.
+ *
+ *  The STRUCTURED special-order picks (`specials` / `specialLabels` /
+ *  `specialChoices`) moved to SPECIAL_ORDER_KEYS below: the owner's 2026-09-22
+ *  ruling is that a sofa SET's compartments SHARE their special orders, so those
+ *  DO travel — but scoped to ONE physical sofa (buildKey), exactly like fabric,
+ *  so two different sofa sets on one order never leak specials into each other,
+ *  which is the same failure mode as the bedframe note above. */
 export const NEVER_INHERITED_KEYS: readonly string[] = [
   'remark', 'buildKey',
   'extraAddonNote', 'extraAddonAmountRM',
+];
+
+/** The structured SPECIAL ORDER payload — the ticked add-on codes, their labels
+ *  and their per-code option-group choices. Owner 2026-09-22: a modular sofa
+ *  SET's compartment lines share ONE set of special orders, so picking them on
+ *  the first line propagates to the siblings. Scoped to ONE physical sofa
+ *  (buildKey) via the `differentSofa` guard in followerVariants — like
+ *  FABRIC_IDENTITY_KEYS — so specials travel between the compartments of one
+ *  build and never across two different sofas on the same order. Stripped at
+ *  SEED time (seedFollowerVariants) so a fresh line starts blank and the live
+ *  cascade fills it a tick later only when the two lines are the same sofa. */
+export const SPECIAL_ORDER_KEYS: readonly string[] = [
   'specials', 'specialLabels', 'specialChoices',
 ];
 
@@ -101,6 +114,19 @@ export const NEVER_INHERITED_KEYS: readonly string[] = [
  *  included) — one rule with two different answers, which is the shape
  *  `audit:duplicated-decisions` exists to catch. */
 export const CASCADE_CATEGORIES: ReadonlySet<string> = new Set(['sofa']);
+
+/** The category whose master a fabric-follower line takes its colour from. */
+export const SOFA_CATEGORY = 'sofa';
+
+/** Categories that are NOT sofas but must wear the sofa's COLOUR/FABRIC so a
+ *  matching cover reads as part of the set. Owner 2026-09-22: a sofa accessory
+ *  (`fabric_accessory` — the fabric-carrying cover / matching item) follows the
+ *  sofa's colour/fabric ONLY, never its structural specials (a cover has no divan
+ *  height / leg / gap). Unlike a sofa compartment, an accessory carries no
+ *  buildKey, so it cannot be scoped to one physical sofa — it follows the FIRST
+ *  sofa on the order (best effort; the operator can still set a contrast cover by
+ *  hand, and it stands until the sofa's colour is changed again). */
+export const FABRIC_FOLLOWER_CATEGORIES: ReadonlySet<string> = new Set(['fabric_accessory']);
 
 /** One line, reduced to what the cascade decides on. `category` is '' for a
  *  line with no SKU picked yet — it neither masters nor follows. */
@@ -186,6 +212,12 @@ export function seedFollowerVariants(
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(masterVariants)) {
     if (NEVER_INHERITED_KEYS.includes(k)) continue;
+    /* Special orders are build-scoped, and at SEED time a fresh follower has no
+       buildKey yet, so we cannot tell whether it is the same sofa as the master.
+       Leave them out of the seed and let the live cascade fill them a tick later
+       once the follower's own build is known — that keeps a NEW sofa's specials
+       from being pre-copied off a DIFFERENT sofa's master. */
+    if (SPECIAL_ORDER_KEYS.includes(k)) continue;
     out[k] = v;
   }
   return out;
@@ -221,9 +253,38 @@ export function followerVariants(
   let changed = false;
   for (const [k, masterVal] of Object.entries(master)) {
     if (NEVER_INHERITED_KEYS.includes(k)) continue;
-    if (differentSofa && FABRIC_IDENTITY_KEYS.includes(k)) continue;
+    /* Fabric identity AND the structured special orders are scoped to ONE
+       physical sofa: they cross between the compartments of one build (same or
+       absent buildKey) but never between two different sofas on one order. */
+    if (differentSofa && (FABRIC_IDENTITY_KEYS.includes(k) || SPECIAL_ORDER_KEYS.includes(k))) continue;
     if (isBlank(masterVal)) continue;
     const masterMoved = previousMaster !== undefined && previousMaster[k] !== masterVal;
+    if (!masterMoved && !isBlank(follower[k])) continue;
+    if (follower[k] === masterVal) continue;
+    patch[k] = masterVal;
+    changed = true;
+  }
+  return changed ? { ...follower, ...patch } : follower;
+}
+
+/**
+ * The variants a FABRIC-FOLLOWER line (a sofa accessory) should now carry: the
+ * sofa master's COLOUR/FABRIC keys only, under the same force/fill/leave rule as
+ * followerVariants but restricted to FABRIC_IDENTITY_KEYS. Nothing structural
+ * (seat / leg / gap / specials) travels — a cover has none of those. Returns the
+ * follower's own object unchanged when nothing applies.
+ */
+export function fabricFollowerVariants(
+  sofaMaster: Record<string, unknown>,
+  follower: Record<string, unknown>,
+  previousSofaMaster: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  const patch: Record<string, unknown> = {};
+  let changed = false;
+  for (const k of FABRIC_IDENTITY_KEYS) {
+    const masterVal = sofaMaster[k];
+    if (isBlank(masterVal)) continue;
+    const masterMoved = previousSofaMaster !== undefined && previousSofaMaster[k] !== masterVal;
     if (!masterMoved && !isBlank(follower[k])) continue;
     if (follower[k] === masterVal) continue;
     patch[k] = masterVal;
@@ -256,8 +317,20 @@ export function cascadeMasterVariants(
     masterIdx[l.category] = idx;
   });
 
+  /* Whether the sofa cascade is active on this surface — a fabric-follower
+     accessory only takes the sofa's colour when the sofa itself is cascading. */
+  const sofaCascading = cascadeCategories === null || cascadeCategories.has(SOFA_CATEGORY);
+
   const variants = lines.map((l, idx) => {
     if (!l.category) return l.variants;
+    /* A sofa accessory follows the SOFA master's colour/fabric only (owner
+       2026-09-22), independent of the same-category cascade below. No sofa on the
+       order, or the surface is not cascading sofas -> leave it untouched. */
+    if (FABRIC_FOLLOWER_CATEGORIES.has(l.category)) {
+      if (!sofaCascading || !(SOFA_CATEGORY in masterIdx)) return l.variants;
+      const sofaIdx = masterIdx[SOFA_CATEGORY]!;
+      return fabricFollowerVariants(lines[sofaIdx]!.variants, l.variants, previousMasters[SOFA_CATEGORY]);
+    }
     if (cascadeCategories !== null && !cascadeCategories.has(l.category)) return l.variants;
     if (masterIdx[l.category] === idx) return l.variants;
     const master = lines[masterIdx[l.category]!]!.variants;

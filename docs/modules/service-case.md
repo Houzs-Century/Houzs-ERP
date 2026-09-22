@@ -101,6 +101,16 @@ just `completed`.
   `POST`/`PATCH`/`DELETE /api/assr/:id/supplier-returns` (`service_cases.write`,
   under the `enforceCaseScope` `/:id` guard). `qc_receipt_date` stays a
   Verification-stage field, NOT a supplier-return date.
+- **Reopen for a DIFFERENT complaint** (`POST /api/assr/:id/reopen`,
+  `service_cases.write`): a completed/voided case that comes back with a new
+  problem keeps its number. The OLD `complaint_issue` is logged to the timeline
+  as `case_reopened` BEFORE the field is overwritten with the new complaint; the
+  case clears `closed_at` + `completion_date`, status → In Progress, and
+  transitions to the chosen assessment stage (`under_verification` /
+  `pending_solution` / `pending_review`, `REOPEN_STAGES`). Prior supplier returns
+  stay as history. Distinct from "+ Add Supplier Return" (same complaint, another
+  factory trip); the Reopen button (`ReopenCaseControl` / `MobileReopenControl`)
+  shows only on a closed case.
 
 ## Gotchas
 
@@ -132,8 +142,10 @@ just `completed`.
   category, the own-team leg markers (`inspection_by` / `pickup_by` /
   `delivery_by`) that gate the delivery-sheet sync, the Supplier Returns list
   (`components/assr/SupplierReturnsList.tsx` desktop, `MobileFactoryTrips` in
-  `MobileServiceCase.tsx` mobile — shared logic in `assr/returns.ts`),
-  survey-email fallback, SO typeahead, attachment upload, access
+  `MobileServiceCase.tsx` mobile — shared logic in `assr/returns.ts`), the
+  Reopen control (`ReopenCaseControl` desktop / `MobileReopenControl` mobile —
+  same stage options + closed-case gate), survey-email fallback, SO typeahead,
+  attachment upload, access
   gating, and the "a Sales rep may not edit" redirect
   (`auth/salesAccess.isSalesNonDirector`). Hand-copying any of these is what
   drifted before.
