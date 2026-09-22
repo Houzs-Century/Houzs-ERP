@@ -31,6 +31,7 @@ import { EditProjectSheet } from "./MobileEditProjectSheet";
 import { DefectActionsCtx, DefectFileActions, type AttachmentAction } from "./MobilePmsDefectActions";
 import { PlanFileChips } from "./MobilePmsPlanFileChips";
 import { floorPlanTileVisible } from "./MobilePmsFloorPlanTiles";
+import { SoloSafeName, useCanSeeSoloOrganizer, isSoloMasked, shownProjectName } from "../pages/projects/SoloSafeName";
 
 /* ------------------------------------------------------------------ *
  * Mobile Project (PMS) — list + detail.
@@ -618,7 +619,7 @@ function ProjectListView({ onOpen, onBack }: { onOpen: (id: number) => void; onB
                     {/* Build Spec §27: project_title wraps 2 lines (no ellipsis) +
                         stage badge right; branding/venue chips; dates · PIC meta. */}
                     <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
-                      <span style={{ fontSize: 13, fontWeight: 800, color: "var(--ink)", lineHeight: 1.3 }}>{r.name || "—"}</span>
+                      <span style={{ fontSize: 13, fontWeight: 800, color: "var(--ink)", lineHeight: 1.3 }}><SoloSafeName p={r} /></span>
                       {salesList ? (
                         (r.sales_tasks_total ?? 0) > 0 ? (
                           <span
@@ -883,7 +884,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
     }
   };
 
-  const p = data?.project;
+  const p = data?.project; const soloMasked = isSoloMasked(p ?? { name: "" }, useCanSeeSoloOrganizer()); // solo organizer: BD/Owner/weisiang only (owner 2026-09-18)
   const archived = !!p?.archived_at;
   // Show finance only when the server says canFinancial AND it actually returned
   // the finance block (it strips it server-side for a role whose PMS position
@@ -1156,7 +1157,9 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
                 with every field on screen (name, booth, venue, organizer, both
                 dates) — the old back-to-back prompts ended the moment any one was
                 dismissed, so the operator never reached the date fields. Same
-                gate, same fields, same PATCH. */}
+                gate, same fields, same PATCH. `soloMasked` still drops name +
+                organizer for a user who may not see a solo event's organizer
+                (owner 2026-09-18), exactly as the old prompt flow did. */}
             {p && canWrite && access.canEdit && (
               <button
                 className="tinybtn"
@@ -1182,7 +1185,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
             <StageBadge stage={p.stage} lower />
           </div>
         )}
-        <div style={{ fontSize: 16, fontWeight: 800, color: "#fff", lineHeight: 1.3, marginTop: 7 }}>{p?.name ? titleCaseName(p.name) : "—"}</div>
+        <div style={{ fontSize: 16, fontWeight: 800, color: "#fff", lineHeight: 1.3, marginTop: 7 }}><SoloSafeName p={p} format={titleCaseName} /></div>
         {p && (
           <div className="money" style={{ fontSize: 12.5, fontWeight: 700, color: "#e7eae4", marginTop: 5 }}>
             {dm(p.start_date)} – {dm(p.end_date)}
@@ -1214,6 +1217,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
         <EditProjectSheet
           project={p}
           busy={busy}
+          hideNameOrganizer={soloMasked}
           onClose={() => setEditOpen(false)}
           onSave={patchProject}
         />

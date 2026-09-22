@@ -90,4 +90,19 @@ describe("EditProjectSheet — every event field is editable at once", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
     expect(onSave).toHaveBeenCalledWith({ organizer: null });
   });
+
+  it("hides name + organizer when the solo organizer is masked, and never sends them", () => {
+    // A user who may not see a solo event's organizer (owner 2026-09-18): the
+    // composed name embeds the organizer, so both fields are withheld — but the
+    // dates, venue and booth stay editable.
+    const onSave = vi.fn().mockResolvedValue(true);
+    render(<EditProjectSheet project={PROJECT} hideNameOrganizer onClose={vi.fn()} onSave={onSave} />);
+    expect(screen.queryByLabelText("Event name")).toBeNull();
+    expect(screen.queryByLabelText("Organizer")).toBeNull();
+    expect(screen.getByLabelText("Venue")).toBeTruthy();
+    expect(screen.getByLabelText("Start date")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("End date"), { target: { value: "08/09/2026" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    expect(onSave).toHaveBeenCalledWith({ end_date: "2026-09-08" });
+  });
 });

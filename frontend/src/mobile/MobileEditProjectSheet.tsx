@@ -37,10 +37,15 @@ function dayOnly(v: string | null | undefined): string {
 }
 
 export function EditProjectSheet({
-  project, busy, onClose, onSave,
+  project, busy, hideNameOrganizer = false, onClose, onSave,
 }: {
   project: EditableProject;
   busy?: boolean;
+  /** Owner 2026-09-18: a user who may not see a solo event's organizer does not
+   *  get the name or organizer field either — the composed name embeds the
+   *  organizer. The old prompt flow filtered these two out; the sheet hides them
+   *  and never sends them in the patch, so the rest of the fields still save. */
+  hideNameOrganizer?: boolean;
   onClose: () => void;
   /** Resolves true when the patch saved, so the sheet can close itself. */
   onSave: (patch: Record<string, unknown>) => Promise<boolean>;
@@ -53,7 +58,8 @@ export function EditProjectSheet({
   const [endDate, setEndDate] = useState(dayOnly(project.end_date));
   const [saving, setSaving] = useState(false);
 
-  const nameBlank = !name.trim();
+  // The name field is hidden (and unvalidated) when name+organizer are masked.
+  const nameBlank = !hideNameOrganizer && !name.trim();
   // Same rule the backend enforces (end_date >= start_date) — caught here so the
   // save button explains it rather than the PATCH coming back 400.
   const dateInvalid = !!(startDate && endDate && endDate < startDate);
@@ -67,10 +73,13 @@ export function EditProjectSheet({
       const t = next.trim();
       if (t !== (cur ?? "")) patch[key] = t || null;
     };
-    if (name.trim() !== project.name) patch.name = name.trim();
+    // name + organizer are never sent when masked — they are not on screen.
+    if (!hideNameOrganizer) {
+      if (name.trim() !== project.name) patch.name = name.trim();
+      put("organizer", organizer, project.organizer);
+    }
     put("booth_no", booth, project.booth_no);
     put("venue", venue, project.venue);
-    put("organizer", organizer, project.organizer);
     put("start_date", startDate, dayOnly(project.start_date));
     put("end_date", endDate, dayOnly(project.end_date));
     if (Object.keys(patch).length === 0) { onClose(); return; }
@@ -106,11 +115,13 @@ export function EditProjectSheet({
           </button>
         </div>
         <div className="sheet-scroll" style={{ gap: 11, display: "flex", flexDirection: "column" }}>
-          <div>
-            <label style={labelStyle}>Event name</label>
-            <input style={fieldStyle} value={name} onChange={(e) => setName(e.target.value)} placeholder="Event name" aria-label="Event name" />
-            {nameBlank && <div style={{ fontSize: 11.5, color: "#b23a3a", marginTop: 3 }}>The event name can't be blank.</div>}
-          </div>
+          {!hideNameOrganizer && (
+            <div>
+              <label style={labelStyle}>Event name</label>
+              <input style={fieldStyle} value={name} onChange={(e) => setName(e.target.value)} placeholder="Event name" aria-label="Event name" />
+              {nameBlank && <div style={{ fontSize: 11.5, color: "#b23a3a", marginTop: 3 }}>The event name can't be blank.</div>}
+            </div>
+          )}
           <div>
             <label style={labelStyle}>Booth number</label>
             <input style={fieldStyle} value={booth} onChange={(e) => setBooth(e.target.value)} placeholder="e.g. A01-A04" aria-label="Booth number" />
@@ -119,10 +130,12 @@ export function EditProjectSheet({
             <label style={labelStyle}>Venue</label>
             <input style={fieldStyle} value={venue} onChange={(e) => setVenue(e.target.value)} placeholder="Venue" aria-label="Venue" />
           </div>
-          <div>
-            <label style={labelStyle}>Organizer</label>
-            <input style={fieldStyle} value={organizer} onChange={(e) => setOrganizer(e.target.value)} placeholder="Organizer" aria-label="Organizer" />
-          </div>
+          {!hideNameOrganizer && (
+            <div>
+              <label style={labelStyle}>Organizer</label>
+              <input style={fieldStyle} value={organizer} onChange={(e) => setOrganizer(e.target.value)} placeholder="Organizer" aria-label="Organizer" />
+            </div>
+          )}
           <div style={{ display: "flex", gap: 9 }}>
             <div style={{ flex: 1 }}>
               <label style={labelStyle}>Start date</label>

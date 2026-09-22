@@ -280,3 +280,40 @@ describe('checkAllowedOptions — a DIVAN ONLY line has no gap, so no total-heig
       .toBe('leg_height');
   });
 });
+
+describe('checkAllowedOptions — leg height: the zero-inch glyph is "No Leg"', () => {
+  // 1,149 imported bedframe lines / 765 orders store legHeight 0" while the
+  // Modular pools spell zero "No Leg" (prod, 2026-09-22). Picking a fabric
+  // PATCHes the line, which re-validated the UNTOUCHED 0" leg and 400'd — so the
+  // fabric never landed AND the order could never take a Processing Date, a
+  // catch-22 the operator could not escape (HC-SO-012831). Same fold-safety
+  // shape as the glyph fold above: only a value that already 400s can start
+  // matching, and only against a pool that offers the equivalent zero.
+  it('accepts a line\'s 0" against a pool that offers "No Leg"', () => {
+    expect(checkAllowedOptions(product(), prodModel, { legHeight: '0"' })).toBeNull();
+  });
+
+  it('accepts a bare "0" too', () => {
+    expect(checkAllowedOptions(product(), prodModel, { legHeight: '0' })).toBeNull();
+  });
+
+  it('gives sofaLegHeight the same equivalence (one leg pool per Model)', () => {
+    expect(checkAllowedOptions(product(), prodModel, { sofaLegHeight: '0"' })).toBeNull();
+  });
+
+  it('is symmetric — a line\'s "No Leg" passes a pool that spells zero 0"', () => {
+    const m = model({ leg_heights: ['0"', '1"', '2"'] });
+    expect(checkAllowedOptions(product(), m, { legHeight: 'No Leg' })).toBeNull();
+  });
+
+  it('DOES NOT weaken the gate — a real leg height the pool omits is still refused', () => {
+    const err = checkAllowedOptions(product(), prodModel, { legHeight: '9"' });
+    expect(err?.error).toBe('variant_not_allowed');
+    expect(err?.field).toBe('leg_height');
+  });
+
+  it('does NOT invent "No Leg" — a pool offering neither zero spelling still refuses 0"', () => {
+    const m = model({ leg_heights: ['1"', '2"', '4"'] });
+    expect(checkAllowedOptions(product(), m, { legHeight: '0"' })?.field).toBe('leg_height');
+  });
+});

@@ -22,7 +22,7 @@ The AP (accounts payable) document billing a supplier for goods received — con
 - The line-add lock (`purchaseInvoiceLinesLocked`) is the single shared source for whether the document still accepts new lines — desktop and mobile both call it; don't reimplement it inline.
 - The "which prices differ" comparison (a PO price of 0 never counts as differing) lives in one byte-identical file mirrored to frontend and backend — edit both or neither.
 - Every read behind the "Bill a GRN" picker and the export is company-scoped, and a failed read must answer a server error, never a silently empty list.
-- A GRN carried over from AutoCount (`migrated_no_stock`) is refused by every bill path (`from-grn`, `from-grn-items`, the `?grnId=` draft create, `POST /:id/items`) — its invoice must mirror AutoCount's — EXCEPT a GRN AutoCount never invoiced, which bills like any other, but only when it is on `migrated-receipts-not-invoiced.generated.ts` (`receiptMustMirrorAutoCount`). That allow-list ships empty, so the exemption is inert until the office measures the book.
+- A GRN carried over from AutoCount (`migrated_no_stock`) bills into a purchase invoice by hand like any native one — the ERP is the sole book (`AUTOCOUNT_IS_ACTIVE_BOOK = false`, owner 2026-09-22), so `receiptMustMirrorAutoCount` returns false for all. No double-book: the `gr_to_pi` write-back stays suppressed for a migrated source (nothing reaches AutoCount) and the ordinary remaining-qty check still blocks re-billing a GRN the ERP already invoiced. Flip `AUTOCOUNT_IS_ACTIVE_BOOK` back to true to restore the mirror regime, where the `migrated-receipts-not-invoiced.generated.ts` allow-list governs the exceptions.
 
 ## Gotchas
 

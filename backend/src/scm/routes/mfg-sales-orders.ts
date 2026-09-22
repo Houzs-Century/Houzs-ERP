@@ -277,6 +277,7 @@ import { deriveDisplayBrandingRowByDoc } from '../lib/so-display-branding';
 import { mintMonthlyDocNo, insertWithDocNoRetry, companyCodeById } from '../lib/doc-no';
 import { soDeliverableRemaining, soLineDeliveries, computeSoLifecycle, soCurrentDocNo, soLineShippedSources } from './delivery-orders-mfg';
 import { soLineReadySourcePos } from '../lib/source-po-trace';
+import { soLineBoundPoNumbers } from '../lib/so-converted-po';
 /* Shared 4-state delivery-planning derivation — the SO list emits planning_state
    (the mobile Orders-list card's status) from the SAME helper the Delivery
    Planning board uses, so the two can never drift. */
@@ -1896,7 +1897,7 @@ mfgSalesOrders.get('/:docNo', async (c) => {
      stands as the verdict, and the client fetches the live coverage from
      `GET /:docNo/coverage` after the doc renders. The computation is UNCHANGED,
      just moved off the critical path — see that endpoint below. */
-  const [remainingMap, deliveriesMap, shippedTraceMap, nonSellingWh] = await Promise.all([
+  const [remainingMap, deliveriesMap, shippedTraceMap, nonSellingWh, boundPoMap] = await Promise.all([
     soDeliverableRemaining(sb, [docNo]),
     soLineDeliveries(sb, itemRows.map((it) => it.id)),
     /* Traceability — the source PO(s) each line's SHIPPED goods came from,
@@ -1908,6 +1909,11 @@ mfgSalesOrders.get('/:docNo', async (c) => {
     // Owner ruling 2026-09-08: a 16-row read, alongside the three above so the
     // detail's critical path costs no extra round trip.
     loadNonSellingWarehouses(sb),
+    /* Owner 2026-09-22: the line's OWN incoming PO (the PO raised against this
+       so_item), so the "Incoming PO" chip names this order's PO, not the PO whose
+       FIFO batch its goods happened to ship from (another order's PO on shared
+       stock). Same cheap batched link, scoped to the company. */
+    soLineBoundPoNumbers(sb, itemRows.map((it) => it.id), activeCompanyId(c) ?? null),
   ]);
   const orderProcessed = !!(h.data as { processing_date?: string | null }).processing_date;
   const items = itemRows.map((it) => {
@@ -1952,6 +1958,9 @@ mfgSalesOrders.get('/:docNo', async (c) => {
       shipped_source_adj: (shippedTrace?.adjQty ?? 0) > 0,
       // READY trace is MRP-derived — filled by GET /:docNo/coverage.
       ready_source_pos: [],
+      /* The line's OWN incoming PO (raised against this so_item). The SO
+         "Incoming PO" chip prefers this over the shipped-batch trace. */
+      bound_source_pos: boundPoMap.get(it.id) ?? [],
     };
   });
   const totalDelivered = items.reduce((s, it) => s + Number(it.delivered_qty ?? 0), 0);
@@ -2053,6 +2062,8 @@ mfgSalesOrders.get('/:docNo/items', async (c) => {
   ]);
   const coverageMap = cov.coverage;
   const readyPosMap = await soLineReadySourcePos(sb, activeCompanyId(c) ?? null, cov.mrp, itemRows as Array<{ id: string; item_group?: string | null; qty?: number | null; stock_status?: string | null; allocated_batch_no?: string | null }>);
+  // Owner 2026-09-22: the line's OWN incoming PO — see the /:docNo detail note.
+  const boundPoMap = await soLineBoundPoNumbers(sb, itemRows.map((it) => it.id), activeCompanyId(c) ?? null);
   const orderProcessed = !!(h.data as { processing_date?: string | null }).processing_date;
   const items = itemRows.map((it) => {
     const rem = remainingMap.get(it.id);
@@ -2095,6 +2106,7 @@ mfgSalesOrders.get('/:docNo/items', async (c) => {
       shipped_source_pos: shippedPos,
       shipped_source_adj: (shippedTrace?.adjQty ?? 0) > 0,
       ready_source_pos: readyPosMap.get(it.id) ?? [],
+      bound_source_pos: boundPoMap.get(it.id) ?? [],
     };
   });
   gateSoFinance(c, null, items);

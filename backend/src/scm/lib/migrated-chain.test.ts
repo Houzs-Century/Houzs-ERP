@@ -8,6 +8,8 @@ import {
   refuseMigratedSources,
   deliveryMustMirrorAutoCount,
   receiptMustMirrorAutoCount,
+  mustMirrorAutoCount,
+  AUTOCOUNT_IS_ACTIVE_BOOK,
   MIGRATED_WRITEBACK_SKIP_REASON,
   type MigratedSourceDoc,
 } from './migrated-chain';
@@ -352,26 +354,28 @@ describe('a migrated invoice posts no journal entry', () => {
   });
 });
 
-/* docs/bugs/0918 — a delivery carried over from AutoCount that AutoCount never
-   invoiced is billed like any other; one AutoCount invoiced still mirrors. The
-   numbers are production's on 2026-09-15. */
-describe('a migrated delivery AutoCount never invoiced', () => {
-  it('HC-DO-011484 is not refused: AutoCount holds no invoice from it', () => {
-    const docNo = 'HC-DO-011484';
-    const migrated = deliveryMustMirrorAutoCount({ docNo, migrated: true }, MIGRATED_DELIVERIES_NOT_INVOICED_IN_AUTOCOUNT);
-    expect(migrated).toBe(false);
-    expect(refuseMigratedSources([{ docNo, migrated }])).toBeNull();
+/* Owner 2026-09-22: the ERP is the sole accounting book, so AUTOCOUNT_IS_ACTIVE_BOOK
+   is off and EVERY migrated delivery bills by hand — the mirror guard is open. The
+   mirror LOGIC is still exercised (mustMirrorAutoCount with the flag forced on) so a
+   future AutoCount re-activation is safe. Numbers are production's on 2026-09-15. */
+describe('migrated delivery mirror — open while the ERP is the sole book', () => {
+  it('current state: AUTOCOUNT_IS_ACTIVE_BOOK is off, so no migrated delivery is refused', () => {
+    expect(AUTOCOUNT_IS_ACTIVE_BOOK).toBe(false);
+    for (const docNo of ['HC-DO-011484', 'HC-DO-000097', 'HC-DO-003699']) {
+      const migrated = deliveryMustMirrorAutoCount({ docNo, migrated: true }, MIGRATED_DELIVERIES_NOT_INVOICED_IN_AUTOCOUNT);
+      expect(migrated).toBe(false);
+      expect(refuseMigratedSources([{ docNo, migrated }])).toBeNull();
+    }
   });
 
-  it('HC-DO-000097, which AutoCount invoiced as I-000213, is still refused', () => {
-    const docNo = 'HC-DO-000097';
-    const migrated = deliveryMustMirrorAutoCount({ docNo, migrated: true }, MIGRATED_DELIVERIES_NOT_INVOICED_IN_AUTOCOUNT);
-    expect(refuseMigratedSources([{ docNo, migrated }])).not.toBeNull();
-  });
-
-  it('a migrated delivery missing from the measurement is refused, and an ordinary one never is', () => {
-    expect(deliveryMustMirrorAutoCount({ docNo: 'HC-DO-011484', migrated: true }, new Set())).toBe(true);
-    expect(deliveryMustMirrorAutoCount({ docNo: 'HC-DO-2609-103', migrated: false }, new Set())).toBe(false);
+  it('mirror LOGIC with the flag forced on: an AutoCount-invoiced delivery mirrors, a never-invoiced one is ordinary', () => {
+    // HC-DO-011484 is on the never-invoiced list -> ordinary even when AutoCount is the book.
+    expect(mustMirrorAutoCount(true, { docNo: 'HC-DO-011484', migrated: true }, MIGRATED_DELIVERIES_NOT_INVOICED_IN_AUTOCOUNT)).toBe(false);
+    // HC-DO-000097 (AutoCount invoiced it as I-000213) is NOT on the list -> mirrors.
+    expect(mustMirrorAutoCount(true, { docNo: 'HC-DO-000097', migrated: true }, MIGRATED_DELIVERIES_NOT_INVOICED_IN_AUTOCOUNT)).toBe(true);
+    // A migrated delivery missing from the measurement fails closed (mirrors); an ordinary one never does.
+    expect(mustMirrorAutoCount(true, { docNo: 'HC-DO-011484', migrated: true }, new Set())).toBe(true);
+    expect(mustMirrorAutoCount(true, { docNo: 'HC-DO-2609-103', migrated: false }, new Set())).toBe(false);
   });
 
   it('the measured list holds only migrated delivery numbers, and not the two AutoCount invoiced', () => {
@@ -383,50 +387,30 @@ describe('a migrated delivery AutoCount never invoiced', () => {
   });
 });
 
-/* docs/bugs/0918, purchase-side mirror — a GRN carried over from AutoCount that
-   AutoCount never invoiced is billed into a purchase invoice like any other; one
-   AutoCount invoiced still mirrors. receiptMustMirrorAutoCount is the exact shape
-   of deliveryMustMirrorAutoCount, one table over. */
-describe('receiptMustMirrorAutoCount — the PURCHASE-side mirror', () => {
+/* Purchase-side mirror, same rule one table over. Owner 2026-09-22: with the ERP
+   the sole book every migrated GRN bills into a purchase invoice by hand. */
+describe('migrated GRN mirror — open while the ERP is the sole book', () => {
   const onList = new Set(['HC-GR-000034']);
 
-  it('a migrated GRN NOT on the never-invoiced list still mirrors (stays refused)', () => {
-    const must = receiptMustMirrorAutoCount({ docNo: 'HC-GR-000201-PO-000273', migrated: true }, onList);
-    expect(must).toBe(true);
-    expect(refuseMigratedSources([{ docNo: 'HC-GR-000201-PO-000273', migrated: must }])).not.toBeNull();
+  it('current state: AUTOCOUNT_IS_ACTIVE_BOOK is off, so every migrated GRN bills by hand (not refused)', () => {
+    expect(AUTOCOUNT_IS_ACTIVE_BOOK).toBe(false);
+    for (const docNo of ['HC-GR-000201-PO-000273', 'HC-GR-005352', 'HC-GR-005352-PO-009893', 'HC-GR-000034']) {
+      const must = receiptMustMirrorAutoCount({ docNo, migrated: true }, MIGRATED_RECEIPTS_NOT_INVOICED_IN_AUTOCOUNT);
+      expect(must).toBe(false);
+      expect(refuseMigratedSources([{ docNo, migrated: must }])).toBeNull();
+    }
   });
 
-  it('a migrated GRN ON the never-invoiced list is ordinary (NOT refused)', () => {
-    const must = receiptMustMirrorAutoCount({ docNo: 'HC-GR-000034', migrated: true }, onList);
-    expect(must).toBe(false);
-    expect(refuseMigratedSources([{ docNo: 'HC-GR-000034', migrated: must }])).toBeNull();
+  it('mirror LOGIC with the flag forced on: an AutoCount-invoiced GRN mirrors, a never-invoiced one is ordinary', () => {
+    expect(mustMirrorAutoCount(true, { docNo: 'HC-GR-000201-PO-000273', migrated: true }, onList)).toBe(true);
+    expect(mustMirrorAutoCount(true, { docNo: 'HC-GR-000034', migrated: true }, onList)).toBe(false);
+    // fail-closed with an empty measurement; an ordinary (non-migrated) GRN never mirrors
+    expect(mustMirrorAutoCount(true, { docNo: 'HC-GR-000034', migrated: true }, new Set())).toBe(true);
+    expect(mustMirrorAutoCount(true, { docNo: 'GRN-2608-001', migrated: false }, onList)).toBe(false);
   });
 
-  it('a non-migrated GRN is ordinary whether or not it is on the list', () => {
-    expect(receiptMustMirrorAutoCount({ docNo: 'GRN-2608-001', migrated: false }, onList)).toBe(false);
-    expect(receiptMustMirrorAutoCount({ docNo: 'HC-GR-000034', migrated: false }, onList)).toBe(false);
-  });
-
-  it('FAIL-CLOSED: with an EMPTY list every migrated GRN still mirrors — the inert-ship invariant', () => {
-    expect(receiptMustMirrorAutoCount({ docNo: 'HC-GR-000034', migrated: true }, new Set())).toBe(true);
-    expect(receiptMustMirrorAutoCount({ docNo: 'HC-GR-000201-PO-000273', migrated: true }, new Set())).toBe(true);
-  });
-
-  it('ACTIVATED (2026-09-21): the committed allowlist unblocks the 25 never-invoiced migrated GRs, and only those', () => {
-    // Computed from the committed reconcile-truth (2026-09-09 cut): of 214
-    // migrated GRs the ERP holds, 25 had no AutoCount purchase invoice.
+  it('the committed allowlist stays populated (kept for a possible AutoCount re-activation)', () => {
     expect(MIGRATED_RECEIPTS_NOT_INVOICED_IN_AUTOCOUNT.size).toBeGreaterThan(0);
     expect(MIGRATED_RECEIPTS_NOT_INVOICED_AS_OF).not.toBe('not-yet-measured');
-    // The owner's blocked receipts are unblocked (both halves of the split GR).
-    expect(receiptMustMirrorAutoCount(
-      { docNo: 'HC-GR-005352', migrated: true }, MIGRATED_RECEIPTS_NOT_INVOICED_IN_AUTOCOUNT,
-    )).toBe(false);
-    expect(receiptMustMirrorAutoCount(
-      { docNo: 'HC-GR-005352-PO-009893', migrated: true }, MIGRATED_RECEIPTS_NOT_INVOICED_IN_AUTOCOUNT,
-    )).toBe(false);
-    // A GR AutoCount ALREADY invoiced stays locked — re-billing it double-books.
-    expect(receiptMustMirrorAutoCount(
-      { docNo: 'HC-GR-000201-PO-000273', migrated: true }, MIGRATED_RECEIPTS_NOT_INVOICED_IN_AUTOCOUNT,
-    )).toBe(true);
   });
 });

@@ -213,6 +213,7 @@ type SoItem = {
   photo_urls?: string[] | null;
   coverage_po?: string | null;
   coverage_eta?: string | null;
+  bound_source_pos?: string[];
   shipped_source_pos?: string[];
   shipped_source_adj?: boolean;
   ready_source_pos?: Array<{ po: string | null; qty: number; kind: "po" | "adjustment" }>;
@@ -1000,11 +1001,14 @@ function SalesOrderDetailV2ReadOnly() {
       label: "Incoming PO",
       width: "200px",
       getValue: (l) =>
-        [
-          ...(l.shipped_source_pos ?? []),
-          ...(l.ready_source_pos ?? []).map((r) => r.po ?? "STOCK ADJ"),
-          ...(l.coverage_po ? [l.coverage_po] : []),
-        ].join(", "),
+        (l.bound_source_pos && l.bound_source_pos.length > 0
+          ? l.bound_source_pos
+          : [
+              ...(l.shipped_source_pos ?? []),
+              ...(l.ready_source_pos ?? []).map((r) => r.po ?? "STOCK ADJ"),
+              ...(l.coverage_po ? [l.coverage_po] : []),
+            ]
+        ).join(", "),
       render: (l) => <SoSourceChips line={l} coverage={coverageStateOf(coverage)} />,
     },
   ];

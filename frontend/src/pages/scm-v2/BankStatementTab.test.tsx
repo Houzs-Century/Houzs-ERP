@@ -177,6 +177,12 @@ describe('choosing an entry for several movements at once', () => {
     fireEvent.click(screen.getByLabelText('Pick line 18'));
     fireEvent.click(screen.getByLabelText('Pick line 17'));
     const bar = screen.getByRole('region', { name: 'Match the ticked movements and entries' });
+    /* The bar lives in the page column, stuck to the foot of the scrolling pane, the
+       bottom-right button cluster kept clear — not fixed across the window, where the
+       sidebar covered its left and the + / Assistant discs its buttons (owner 2026-09-22). */
+    expect(bar.style.position).toBe('sticky');
+    expect(bar.style.left).toBe('');
+    expect(bar.className).toContain('lg:pr-36');
     expect(bar.textContent).toContain('2 movements');
     expect(bar.textContent).toContain('RM 39,000.00');
     expect(bar.textContent).toContain('Tick the entry');

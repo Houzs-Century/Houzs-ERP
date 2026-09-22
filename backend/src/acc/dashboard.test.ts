@@ -60,6 +60,17 @@ describe('periodsFor', () => {
   test('a range ending before it starts collapses to its first period', () => {
     expect(periodsFor({ granularity: 'month', periods: 1, from: '2026-05', to: '2026-03', today }).map((p) => p.key)).toEqual(['2026-05']);
   });
+
+  test('the default window starts no earlier than the first month with sales (owner 2026-09-22: 从 06/2026 开始); a named range ignores it', () => {
+    expect(periodsFor({ granularity: 'month', periods: 12, today, earliest: '2026-06' }).map((p) => p.key)).toEqual(['2026-06', '2026-07', '2026-08', '2026-09']);
+    /* A quarter view keeps the whole quarter the first sales month falls in. */
+    const quarters = periodsFor({ granularity: 'quarter', periods: 8, today, earliest: '2026-06' });
+    expect(quarters.map((p) => p.from)).toEqual(['2026-04-01', '2026-07-01']);
+    /* Sales older than the window: the window is the window. */
+    expect(periodsFor({ granularity: 'month', periods: 3, today, earliest: '2026-01' }).map((p) => p.key)).toEqual(['2026-07', '2026-08', '2026-09']);
+    expect(periodsFor({ granularity: 'month', periods: 12, from: '2026-02', to: '2026-04', today, earliest: '2026-06' }).map((p) => p.key)).toEqual(['2026-02', '2026-03', '2026-04']);
+    expect(periodsFor({ granularity: 'month', periods: 2, today, earliest: null }).map((p) => p.key)).toEqual(['2026-08', '2026-09']);
+  });
 });
 
 describe('cost structure groups', () => {

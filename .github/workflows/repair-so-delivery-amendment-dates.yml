@@ -1,0 +1,82 @@
+name: Repair SO delivery-amendment dates
+
+# Manual. Restamps approved DELIVERY-lane SO amendments that an AutoCount book
+# re-sync silently reverted (BUG-HISTORY 2026-09-22, HC-SO-011177): it puts the
+# approved date back into customer_delivery_date AND amended_delivery_date and
+# marks the lines overridden, i.e. the exact state the fixed applySoAmendment now
+# writes at approve time. The customer's ORIGINAL date is left untouched in the
+# amendment's old_header_snapshot + the AMENDMENT_SO_APPROVED audit row.
+#
+# PLAN is the default and writes nothing: it prints every order whose approved
+# delivery amendment is not reflected in the header, and what it would set. APPLY
+# needs mode=apply AND confirm typed in full; the script re-reads on a fresh
+# connection and asserts both header columns afterwards. Own concurrency group so
+# a repair can never queue behind or displace a release.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      mode:
+        description: "plan (default, writes nothing) or apply"
+        required: false
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: 'type exactly: RESTAMP-DELIVERY-AMENDMENTS (only needed when mode=apply)'
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: repair-so-delivery-amendment-dates-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - name: Restamp approved delivery amendments
+        env:
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
+          NODE_OPTIONS: --dns-result-order=ipv4first
+        run: node scripts/repair-so-delivery-amendment-dates.mjs
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - name: Restamp approved delivery amendments
+        env:
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+        run: node scripts/repair-so-delivery-amendment-dates.mjs

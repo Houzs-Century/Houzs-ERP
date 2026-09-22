@@ -1,54 +1,40 @@
 import { act, cleanup, render } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { assetHashFrom, latestBuildIdFrom, useVersionCheck } from "./useVersionCheck";
+import { latestBuildIdFrom, useVersionCheck } from "./useVersionCheck";
 
-// The 2026-07-31 edge-poison outage moved build.assetsDir "assets" -> "assets2"
-// -> "assets3" inside an hour. This hook had "/assets/" hard-coded, so it
-// stopped detecting new builds the moment the namespace moved — silently, on
-// the exact deploy where a "reload for the new version" prompt mattered most.
-// These pin the parse to the SHAPE of a hashed entry module, never to a name.
-describe("useVersionCheck entry-chunk parsing", () => {
-  const html = (src: string) =>
+// A new build is detected by the <meta name="houzs-build-id"> stamp, NOT by the
+// entry-chunk filename. The filename approach compared the FIRST <script
+// type=module>, which under Rolldown is rolldown-runtime-<hash>.js — a chunk
+// whose hash is stable across app builds, so the prompt went silently dead for
+// everyone. These pin the parse to the per-deploy stamp so that cannot recur.
+describe("useVersionCheck build-id parsing", () => {
+  const html = (buildId: string, entry: string) =>
     `<!doctype html><html><head>` +
+    `<meta name="houzs-build-id" content="${buildId}">` +
     `<link rel="modulepreload" href="/assets3/react-vendor-CNN4Jg4e.js">` +
-    `<script type="module" crossorigin src="${src}"></script>` +
+    `<script type="module" crossorigin src="${entry}"></script>` +
     `</head><body></body></html>`;
 
-  it("reads the entry hash from any assetsDir name", () => {
-    for (const dir of ["assets", "assets2", "assets3", "static"]) {
-      expect(assetHashFrom(`https://erp.houzscentury.com/${dir}/index-AbC123.js`)).toBe(
-        "index-AbC123.js",
-      );
-      expect(latestBuildIdFrom(html(`/${dir}/index-AbC123.js`))).toBe("index-AbC123.js");
-    }
+  it("reads the per-deploy meta stamp, regardless of assetsDir or chunk name", () => {
+    // Same STABLE entry chunk (rolldown-runtime), two different builds: the old
+    // filename compare saw no change here; the meta stamp does.
+    expect(latestBuildIdFrom(html("mucdr5ss", "/assets3/rolldown-runtime-BHe.js"))).toBe("mucdr5ss");
+    expect(latestBuildIdFrom(html("mucbr8iy", "/assets3/rolldown-runtime-BHe.js"))).toBe("mucbr8iy");
+    expect(latestBuildIdFrom(html("xyz789", "/assets9/rolldown-runtime-BHe.js"))).toBe("xyz789");
   });
 
-  it("does not mistake the host for the asset directory", () => {
-    expect(assetHashFrom("https://erp.houzscentury.com/assets3/index-AbC123.js")).toBe(
-      "index-AbC123.js",
-    );
-    expect(assetHashFrom("http://localhost:5173/assets3/index-AbC123.js")).toBe(
-      "index-AbC123.js",
-    );
-  });
-
-  it("skips the check in dev instead of guessing wrong", () => {
-    // The dev server serves the un-hashed source entry and nested prebundles;
-    // neither is a build id, and returning null makes the hook a no-op.
-    expect(assetHashFrom("http://localhost:5173/src/main.tsx")).toBeNull();
-    expect(assetHashFrom("http://localhost:5173/node_modules/.vite/deps/react.js")).toBeNull();
+  it("returns null when the html carries no build stamp", () => {
+    // The dev server serves an un-stamped index.html; a stampless page must
+    // never read as "a new build is live".
     expect(latestBuildIdFrom(`<script type="module" src="/src/main.tsx"></script>`)).toBeNull();
-  });
-
-  it("takes the entry script, not a modulepreload link", () => {
-    // A preload hash differs from the entry's, so matching one would report a
-    // new build on every single poll.
-    expect(latestBuildIdFrom(html("/assets3/index-AbC123.js"))).toBe("index-AbC123.js");
-  });
-
-  it("returns null when the html has no module entry at all", () => {
     expect(latestBuildIdFrom("<!doctype html><html><body>nothing</body></html>")).toBeNull();
+  });
+
+  it("does not confuse a modulepreload hash for the build id", () => {
+    // A preload link changes independently of the stamp; matching one would
+    // false-positive every poll (the failure mode the entry-chunk regex had).
+    expect(latestBuildIdFrom(html("mucdr5ss", "/assets3/initial-app-Dkp.js"))).toBe("mucdr5ss");
   });
 });
 
@@ -59,35 +45,40 @@ describe("useVersionCheck entry-chunk parsing", () => {
 // 404-then-reload flashes in one session. These pin the two things that shrank
 // the window, because both are silent when they regress.
 describe("useVersionCheck detection window", () => {
-  const BOOT_ENTRY = "/assets3/index-AbC123.js";
-  const indexHtml = (entry: string) =>
-    `<!doctype html><html><head><script type="module" crossorigin src="${entry}"></script></head><body></body></html>`;
+  const BOOT_ID = "boot0000";
+  const indexHtml = (buildId: string) =>
+    `<!doctype html><html><head><meta name="houzs-build-id" content="${buildId}">` +
+    `<script type="module" crossorigin src="/assets3/rolldown-runtime-BHe.js"></script>` +
+    `</head><body></body></html>`;
   const fetchMock = vi.fn();
-  let bootScript: HTMLScriptElement;
+  let bootMeta: HTMLMetaElement;
+  let lastUpdateReady = false;
 
   function Harness({ routeKey }: { routeKey: string }) {
-    useVersionCheck({ routeKey });
+    lastUpdateReady = useVersionCheck({ routeKey }).updateReady;
     return null;
   }
 
   beforeEach(() => {
     vi.useFakeTimers();
-    bootScript = document.createElement("script");
-    bootScript.type = "module";
-    bootScript.src = BOOT_ENTRY;
-    document.head.appendChild(bootScript);
+    lastUpdateReady = false;
+    // The build this tab BOOTED with — read at call time by bootBuildId().
+    bootMeta = document.createElement("meta");
+    bootMeta.name = "houzs-build-id";
+    bootMeta.content = BOOT_ID;
+    document.head.appendChild(bootMeta);
     fetchMock.mockReset().mockResolvedValue({
       ok: true,
-      // Same entry as the boot script, so updateReady stays false and the hook
-      // keeps checking — this measures cadence, not detection.
-      text: async () => indexHtml(BOOT_ENTRY),
+      // Same build as boot, so updateReady stays false and the hook keeps
+      // checking — this measures cadence, not detection.
+      text: async () => indexHtml(BOOT_ID),
     });
     vi.stubGlobal("fetch", fetchMock);
   });
 
   afterEach(() => {
     cleanup();
-    bootScript.remove();
+    bootMeta.remove();
     vi.unstubAllGlobals();
     vi.useRealTimers();
   });
@@ -150,5 +141,16 @@ describe("useVersionCheck detection window", () => {
 
     // 1 mount + 3 navigations + the 60s interval tick that survived them.
     expect(fetchMock).toHaveBeenCalledTimes(5);
+  });
+
+  it("flags updateReady when only the <meta> id changed (stable entry chunk)", async () => {
+    // The regression this hook exists to prevent: the deployed entry chunk is
+    // byte-identical to boot (rolldown-runtime), yet a newer build IS live. The
+    // meta stamp differs, so detection must fire even though the chunk did not.
+    fetchMock.mockResolvedValue({ ok: true, text: async () => indexHtml("newbuild9") });
+    render(createElement(Harness, { routeKey: "/scm/sales-orders" }));
+    await flush();
+
+    expect(lastUpdateReady).toBe(true);
   });
 });

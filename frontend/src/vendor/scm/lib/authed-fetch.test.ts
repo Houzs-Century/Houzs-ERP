@@ -93,3 +93,53 @@ describe("authedFetch cancellation", () => {
     }
   });
 });
+
+/* Owner 2026-09-22: a transient gateway 504 on a SAVE must be ridden out, not
+   surfaced as a failure the operator's edit gets lost behind — but only when a
+   replay is safe (an Idempotency-Key dedupes the write). */
+describe("authedFetch rides out a transient 502/504", () => {
+  const jsonOk = (body: unknown) =>
+    new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+
+  test("a 504 on an IDEMPOTENT mutation retries, then succeeds", async () => {
+    vi.useFakeTimers();
+    let calls = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(() => {
+      calls++;
+      return Promise.resolve(calls === 1 ? new Response("gateway timeout", { status: 504 }) : jsonOk({ ok: true }));
+    });
+    const p = authedFetch("/mfg-sales-orders/HC-SO-1/amendments", {
+      method: "POST", body: JSON.stringify({ a: 1 }), headers: { "Idempotency-Key": "k-1" },
+    });
+    await vi.advanceTimersByTimeAsync(3000);
+    await expect(p).resolves.toEqual({ ok: true });
+    expect(calls).toBe(2);
+    vi.useRealTimers();
+  });
+
+  test("a 504 on a mutation with NO idempotency key is NOT retried (replay could double-write)", async () => {
+    let calls = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(() => {
+      calls++;
+      return Promise.resolve(new Response("gateway timeout", { status: 504 }));
+    });
+    await expect(authedFetch("/mfg-sales-orders/HC-SO-1/items", {
+      method: "POST", body: JSON.stringify({ a: 1 }),
+    })).rejects.toBeTruthy();
+    expect(calls).toBe(1);
+  });
+
+  test("a 504 on a GET retries (reads are always safe to replay)", async () => {
+    vi.useFakeTimers();
+    let calls = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(() => {
+      calls++;
+      return Promise.resolve(calls === 1 ? new Response("gateway timeout", { status: 504 }) : jsonOk({ items: [] }));
+    });
+    const p = authedFetch("/mfg-sales-orders/HC-SO-1");
+    await vi.advanceTimersByTimeAsync(3000);
+    await expect(p).resolves.toEqual({ items: [] });
+    expect(calls).toBe(2);
+    vi.useRealTimers();
+  });
+});

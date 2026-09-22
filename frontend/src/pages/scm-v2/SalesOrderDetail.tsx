@@ -145,8 +145,9 @@ import { useStateWarehouseMappings } from '../../vendor/scm/lib/state-warehouse-
 import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
 import { generateSalesOrderPdf } from '../../vendor/scm/lib/sales-order-pdf';
 import { newIdempotencyKey } from '../../lib/idempotency';
+import { useSoVariantCascade, useSoLineDeliveryDateCascade } from './use-so-variant-cascade';
 import {
-  cascadeStagedDeliveryDate, dropStagedAdd, firstBlankStagedAdd, namedStagedAdds,
+  dropStagedAdd, firstBlankStagedAdd, namedStagedAdds,
   patchStagedAdd, runSoLineWrites, stagedAddDrafts, stagedAddLabel, visibleLineCounts,
   type StagedAddLine,
 } from './so-add-lines';
@@ -561,6 +562,7 @@ export const SalesOrderDetail = () => {
 
   const header = (detail.data?.salesOrder as SoHeader | undefined) ?? null;
   const items = useMemo(() => (detail.data?.items as SoItem[] | undefined) ?? [], [detail.data]);
+  const itemIdsInOrder = useMemo(() => items.map((it) => it.id), [items]); // stable render-order ids for the variant cascade
   const frozenIdsRef = useRef<ReadonlySet<string>>(new Set()); frozenIdsRef.current = new Set(items.filter(soItemFrozen).map((it) => it.id)); // the header date cascade skips these
 
   /* Pinned when this document is loaded, then advanced only by this editor's
@@ -1309,30 +1311,24 @@ export const SalesOrderDetail = () => {
     });
   }, []);
 
-  /* Fix A — Live header→line Delivery Date cascade. The backend already
-     re-cascades non-overridden lines on Save, but inside the edit view the
-     line rows didn't "jump" until that Save round-trip. This pushes the new
-     header date into every line draft that hasn't been manually overridden
-     the moment the user changes the header Delivery Date input — matching the
-     New SO behaviour. Overridden lines keep their own value untouched. EVERY
-     staged add follows too, on the same not-overridden rule. */
-  const cascadeDeliveryDateToLines = useCallback((date: string) => {
-    const next = date || null;
-    setEditingDrafts((prev) => {
-      let changed = false;
-      const out: Record<string, SoLineDraft> = {};
-      for (const [id, d] of Object.entries(prev)) {
-        if (!d.lineDeliveryDateOverridden && d.lineDeliveryDate !== next && !frozenIdsRef.current.has(id)) {
-          out[id] = { ...d, lineDeliveryDate: next };
-          changed = true;
-        } else {
-          out[id] = d;
-        }
-      }
-      return changed ? out : prev;
-    });
-    setAddingDrafts((prev) => cascadeStagedDeliveryDate(prev, next));
-  }, []);
+  /* Fix A — Live header→line Delivery Date cascade, and the master-follower
+     VARIANT cascade for a sofa SET. Both are the edit-view twins of the New-SO
+     behaviour and now live in ./use-so-variant-cascade so the page stays under
+     its size ceiling. The date cascade pushes a changed header date onto every
+     non-overridden line (persisted + staged), skipping frozen ones. The variant
+     cascade keeps a sofa set's compartment lines in step: picking fabric / seat
+     / leg / special on the first compartment propagates to its siblings (owner
+     2026-09-22), scoped to one physical sofa, with frozen lines never rewritten.
+     Before this the cascade ran only on New SO, so an EXISTING sofa edited here
+     never followed line 1. */
+  const cascadeDeliveryDateToLines = useSoLineDeliveryDateCascade(
+    setEditingDrafts, setAddingDrafts, frozenIdsRef,
+  );
+  useSoVariantCascade({
+    isEditing, orderedIds: itemIdsInOrder,
+    editingDrafts, addingDrafts, frozenIds: frozenIdsRef.current,
+    setEditingDrafts, setAddingDrafts,
+  });
 
   /* Per-row delete. On a persisted line this fires the delete mutation
      immediately (and drops the row's draft on success) — deletes are not

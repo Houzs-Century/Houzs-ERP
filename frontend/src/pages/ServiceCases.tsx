@@ -67,6 +67,7 @@ import { Badge } from "../components/Badge";
 import { Panel, PanelSection, FieldRow } from "../components/Panel";
 import { CaseAccessSection } from "../components/CaseAccessSection";
 import { SupplierReturnsList } from "../components/assr/SupplierReturnsList";
+import { ReopenCaseControl } from "../components/assr/ReopenCaseControl";
 import { InlineEdit } from "../components/InlineEdit";
 import { DeliveryByCard } from "./ServiceCaseDeliveryBy";
 import { ExpandableText } from "../components/ExpandableText";
@@ -3607,6 +3608,7 @@ function DetailContent({
                 <ChevronRight size={12} />
               </HeaderButton>
             )}
+            <ReopenCaseControl caseId={id} stage={c.stage} canWrite={!c.archived_at} onReopened={() => { detail.reload(); onUpdated(); }} onError={(m) => toast.error(m)} />
           </>
         ) : undefined
       }

@@ -81,11 +81,15 @@ export type PeriodWindow = {
   today: string;
   /** Every month that carries a forecast row — a future one extends the default window. */
   forecastMonths?: string[];
+  /** YYYY-MM, the company's first month with sales: the default window starts no earlier
+      (owner 2026-09-22: 可以从 06/2026 开始吗 — the books' empty months stay out); a named range ignores it. */
+  earliest?: string | null;
 };
 
 /**
  * The periods a Dashboard shows, oldest first. Without a range: the last N
- * periods ending on today's, plus every later period a forecast month falls
+ * periods ending on today's — starting no earlier than the first month with
+ * sales, when that is known — plus every later period a forecast month falls
  * in, so a keyed target is visible before its month arrives. With a range:
  * exactly the months named (a quarter view rounds to whole quarters).
  */
@@ -101,6 +105,7 @@ export function periodsFor(w: PeriodWindow): DashboardPeriod[] {
     end = lastForecast && lastForecast > thisMonth ? lastForecast : thisMonth;
     const n = Math.max(1, w.periods);
     start = w.granularity === 'quarter' ? addMonths(quarterStart(thisMonth), -3 * (n - 1)) : addMonths(thisMonth, -(n - 1));
+    if (w.earliest && MONTH_RE.test(w.earliest) && w.earliest > start) start = w.earliest;
   }
   if (w.granularity === 'quarter') {
     start = quarterStart(start);
