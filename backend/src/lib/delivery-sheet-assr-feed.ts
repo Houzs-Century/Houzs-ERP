@@ -74,6 +74,13 @@ export type AssrLegRecord = DeliverySheetRecord & { Kind: AssrLegKind };
  * `PATCH /api/assr/:id` stamps `updated_at`, so a leg's own-team flag or date
  * changing always moves it — no GREATEST() over children is needed (unlike the
  * SO feed, whose payments and DOs do not touch the header).
+ *
+ * `assr_cases.updated_at` is stored as TEXT in production (not timestamptz), so
+ * the cursor predicate and ORDER BY cast it: comparing the raw text column
+ * against `?2::timestamptz` is `text > timestamptz`, which Postgres rejects
+ * (42883), and the route surfaced that as a 502 the first time the sheet
+ * actually pulled this feed. The pg fixture mirrors the TEXT column so the cast
+ * is under test.
  */
 export const FEED_ASSR_LEGS_SQL = `
 SELECT assr_no,
@@ -97,8 +104,8 @@ SELECT assr_no,
         (pickup_by     = 'customer' AND customer_pickup_at  IS NOT NULL) OR
         (delivery_by   = 'own'      AND do_date             IS NOT NULL)
        )
-   AND updated_at > ?2::timestamptz
- ORDER BY updated_at, assr_no
+   AND updated_at::timestamptz > ?2::timestamptz
+ ORDER BY updated_at::timestamptz, assr_no
  LIMIT ?3`;
 
 const blankToNull = (v: string | null | undefined): string | null => {
