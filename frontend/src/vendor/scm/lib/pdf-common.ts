@@ -917,3 +917,43 @@ function writeNamedPdfTab(tab: Window, blobUrl: string, filename: string, opts: 
      Download link the moment the operator took longer than a minute to decide.
      The blob dies with the opener page instead. */
 }
+
+/** The lines of a multi-line setting: trimmed, blank lines dropped. */
+export const settingLines = (text: string | null | undefined): string[] =>
+  String(text ?? '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+
+/** Where to pay (Settings › Branding, per company): a titled block of the
+    lines as typed; nothing when blank. Moves to a fresh page when the block
+    would not clear the foot. Returns the next y. */
+export function drawPaymentDetails(doc: import('jspdf').jsPDF, y: number, text: string | null | undefined, marginX = 14): number {
+  const lines = settingLines(text);
+  if (lines.length === 0) return y;
+  const pageH = doc.internal.pageSize.getHeight();
+  const need = 6 + lines.length * 4;
+  if (y + need > pageH - 40) { doc.addPage(); y = marginX; }
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(0);
+  doc.text('PAYMENT DETAILS', marginX, y);
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5);
+  doc.text(lines, marginX, y + 4);
+  return y + 4 + lines.length * 4 + 2;
+}
+
+/** Terms & conditions (Settings › Branding): one term per line, numbered and
+    wrapped; nothing when blank. Returns the next y. */
+export function drawTermsBlock(doc: import('jspdf').jsPDF, y: number, text: string | null | undefined, marginX = 14): number {
+  const terms = settingLines(text);
+  if (terms.length === 0) return y;
+  const pageW = doc.internal.pageSize.getWidth();
+  const pageH = doc.internal.pageSize.getHeight();
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5);
+  const wrapped = terms.map((t, i) => doc.splitTextToSize(`${i + 1}. ${t}`, pageW - marginX * 2) as string[]);
+  const need = 6 + wrapped.reduce((sum, w) => sum + w.length * 3.2 + 0.8, 0);
+  if (y + need > pageH - 40) { doc.addPage(); y = marginX; }
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(0);
+  doc.text('TERMS & CONDITIONS', marginX, y);
+  y += 4;
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(110);
+  for (const w of wrapped) { doc.text(w, marginX, y); y += w.length * 3.2 + 0.8; }
+  doc.setTextColor(0);
+  return y + 2;
+}

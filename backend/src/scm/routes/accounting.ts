@@ -68,6 +68,8 @@ import { receiptsPaymentsReport } from './accounting-rp';
 import { collectionReport } from './accounting-collection';
 import { merchantChargesReport } from './accounting-merchant-charges';
 import { performanceReport, savePerformanceSettingsHandler } from './accounting-performance';
+import { forecastFiguresHandler, forecastGetHandler, forecastPutHandler } from './accounting-forecast';
+import { dashboardHandler } from './accounting-dashboard';
 import { numberingGet, numberingPut } from './accounting-numbering';
 import { receiptsList, receiptEnsure, receiptFormalise } from './accounting-receipts';
 import { receiptsCheck } from './accounting-receipts-check';
@@ -177,6 +179,12 @@ accounting.delete('/reports/layout', reportLayoutReset);
    expense in place of one ledger account, the rest as booked (owner
    2026-09-12; docs/bugs/0835). Handlers in accounting-performance.ts. */
 accounting.get('/reports/performance', performanceReport);
+/* The Forecast P&L (owner 2026-09-21): a planning grid beside the statements; nothing posts. */
+accounting.get('/forecast', forecastGetHandler);
+accounting.put('/forecast', forecastPutHandler);
+accounting.get('/forecast/figures', forecastFiguresHandler);
+/* The Financial Dashboard (owner 2026-09-21): the statements per period, beside the forecast. */
+accounting.get('/dashboard', dashboardHandler);
 accounting.post('/reports/performance/settings', savePerformanceSettingsHandler);
 /* Voucher numbering — the owner's own levers (GL redesign item 8a): per-bank
    letters + suffix width. Handlers in accounting-numbering.ts. */

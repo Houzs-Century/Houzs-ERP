@@ -204,8 +204,9 @@ app.get("/ready-open", async (c) => {
   if (!from) return c.json({ error: "bad_from", message: "from must be yyyy-mm-dd" }, 400);
   const co = await sheetCompanyId(c);
   if ("refusal" in co) return co.refusal;
-  // company-scope: ?1 is the secret's company id.
-  const loaded = await loadRecords(c, FEED_READY_OPEN_SQL, [co.id, from]);
+  // company-scope: ?1 is the secret's company id. ?2 (order date) and ?3
+  // (became-ready day) are both the from-date — see FEED_READY_OPEN_SQL.
+  const loaded = await loadRecords(c, FEED_READY_OPEN_SQL, [co.id, from, from]);
   if ("refusal" in loaded) return loaded.refusal;
   const records = loaded.records.filter((r) => r.Ready);
   return c.json({ count: records.length, scanned: loaded.records.length, from, records });

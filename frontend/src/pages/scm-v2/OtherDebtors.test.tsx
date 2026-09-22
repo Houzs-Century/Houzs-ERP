@@ -160,6 +160,29 @@ describe('the Debtor Bill — a pop-out form whose lines pick their own account'
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
 
+  test('a line with a description alone is a text line: sent without an account, at zero, beside the money line (owner 2026-09-21)', async () => {
+    detail = baseDetail();
+    createBillAsync.mockClear();
+    draw();
+    fireEvent.click(screen.getByText('AHMAD BIN ALI'));
+    fireEvent.click(screen.getByText('New bill'));
+    const d = dialog();
+    fireEvent.change(within(d).getByLabelText('line 1 description'), { target: { value: 'Rental September' } });
+    fireEvent.focus(within(d).getAllByRole('combobox')[0]!);
+    fireEvent.mouseDown(screen.getByText('700-0000 · Other Income'));
+    setAmount(d, 'line 1 amount', '450');
+    fireEvent.keyDown(within(d).getByLabelText('line 1 amount'), { key: 'Insert' });
+    fireEvent.change(within(d).getByLabelText('line 2 description'), { target: { value: 'Unit 3A, ground floor' } });
+    expect(within(d).getByText(/a description alone is a text line/)).toBeTruthy();
+    fireEvent.click(within(d).getByText('Post bill'));
+    await waitFor(() => expect(createBillAsync).toHaveBeenCalledTimes(1));
+    const sent = createBillAsync.mock.calls[0]![0] as { lines: unknown[] };
+    expect(sent.lines).toEqual([
+      { description: 'Rental September', creditAccountCode: '700-0000', amountSen: 45000 },
+      { description: 'Unit 3A, ground floor', amountSen: 0 },
+    ]);
+  });
+
   test("the lines are a table in the owner's order; Insert adds a line and lands on its account; Enter on an amount moves down; a line can be removed", () => {
     detail = baseDetail();
     draw();

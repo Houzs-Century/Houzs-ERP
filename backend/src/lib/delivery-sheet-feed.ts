@@ -219,17 +219,40 @@ ORDER BY t.customer_delivery_date NULLS LAST, t.doc_no`;
  * 2026-09-17: 「我只要 Ready / ready partial 才同步进去」). An order that was not
  * ready when it was last modified is not appended by the since-feed, and the
  * allocator flipping its lines to READY later does not touch the header — so
- * nothing would ever re-send it. This list is the sweep: every undelivered
- * order dated on/after `?2` (the script's ERP_APPEND_FROM), which the route
- * then narrows to the READY ones once the lines are read. Binds: ?1
- * company_id, ?2 from-date. Bounded by the open order book since the cutover.
+ * nothing would ever re-send it. This list is the sweep: the route narrows it
+ * to the READY ones once the lines are read.
+ *
+ * Two ways onto the sweep, both bounded by the script's ERP_APPEND_FROM day:
+ *   · dated on/after it (`?2`) — a genuinely new order; OR
+ *   · it ENTERED READY_TO_SHIP on/after it (`?3`, Malaysian calendar day) — an
+ *     order dated BEFORE the cutover that only became ready afterwards. Its
+ *     so_date never reaches `?2`, and stock arriving flips its LINES, not its
+ *     header, so without this arm neither the since-feed nor the so_date arm
+ *     would ever offer it (3 real orders on 2026-09-21: HC-SO-013389 / 013504 /
+ *     013391, dated 08-28 / 09-07 but READY only after the 09-15 cutover).
+ *     mfg_so_status_changes is the readiness clock the header lacks; keyed on
+ *     the transition, NOT `updated_at`, which a bulk touch had moved on 229 of
+ *     232 pre-cutover open orders — useless as a "became ready" signal. The
+ *     go-live orders imported READY in 2024 have no such recent transition, so
+ *     they stay off the sheet (the whole reason ERP_APPEND_FROM exists).
+ *
+ * Binds: ?1 company_id, ?2 from-date (order date), ?3 from-date (became-ready
+ * day). Bounded by the open order book since the cutover.
  */
 export const FEED_READY_OPEN_SQL = `
 SELECT t.*, t.last_modified::text AS last_modified_text
 FROM (${FEED_BASE_SQL}
 ) t
 WHERE t.status NOT IN (${inList(SO_DELIVERED_OR_BEYOND)})
-  AND t.so_date::date >= ?2::date
+  AND (
+        t.so_date::date >= ?2::date
+     OR EXISTS (
+          SELECT 1 FROM scm.mfg_so_status_changes sc
+           WHERE sc.doc_no = t.doc_no
+             AND sc.to_status = 'READY_TO_SHIP'
+             AND (sc.created_at AT TIME ZONE 'Asia/Kuala_Lumpur')::date >= ?3::date
+        )
+      )
 ORDER BY t.so_date, t.doc_no`;
 
 /** `from=yyyy-mm-dd`, exactly; anything else is refused before `::date`. */

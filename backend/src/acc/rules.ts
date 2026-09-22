@@ -37,11 +37,18 @@
 // ----------------------------------------------------------------------------
 
 import { accMastersCompanyId } from './masters-company';
+import type { StockBucket } from '../scm/lib/stock-bucket';
 
 export type AccountRole =
   | 'AR' | 'AR_OTHER' | 'SALES' | 'INVENTORY' | 'AP' | 'AP_OTHER'
   | 'CASH' | 'BANK_DEFAULT' | 'TRANSIT_EDC' | 'TRANSIT_ONLINE' | 'CUSTOMER_DEPOSITS' | 'OVER_SHORT'
   | 'CLOSING_STOCK'
+  /* The three closing stocks by warehouse bucket (owner 2026-09-21: closing
+     stock - customer / display / service): each bucket's stock, opening and
+     closing account — children of 330-0000 / 600-0000 / 620-0000. */
+  | 'INVENTORY_CUSTOMER' | 'INVENTORY_DISPLAY' | 'INVENTORY_SERVICE'
+  | 'OPENING_STOCK_CUSTOMER' | 'OPENING_STOCK_DISPLAY' | 'OPENING_STOCK_SERVICE'
+  | 'CLOSING_STOCK_CUSTOMER' | 'CLOSING_STOCK_DISPLAY' | 'CLOSING_STOCK_SERVICE'
   /* Where a credit note's lines land when the note names no account
      (docs/bugs/0827): a customer's return, a supplier's return. */
   | 'SALES_RETURNS' | 'PURCHASE_RETURNS'
@@ -69,10 +76,26 @@ export const DEFAULT_ROLE_CODES: Record<AccountRole, string> = {
   TRANSIT_ONLINE: '327-0000',    // ONLINE PAYMENT CLEARING (FPX/E-WALLET)
   CUSTOMER_DEPOSITS: '400-0001', // DEPOSIT (under ACCOUNT PAYABLE)
   OVER_SHORT: '946-0000',        // Cash Over/Short (ERP extension)
-  CLOSING_STOCK: '620-0000',     // STOCKS AT THE END OF YEAR (month-close P&L leg)
+  CLOSING_STOCK: '620-0000',     // STOCKS AT THE END OF YEAR (month-close P&L leg, the one-account shape before 2026-09-21)
+  INVENTORY_CUSTOMER: '330-0001',      // STOCK - CUSTOMER
+  INVENTORY_DISPLAY: '330-0002',       // STOCK - DISPLAY
+  INVENTORY_SERVICE: '330-0003',       // STOCK - SERVICE
+  OPENING_STOCK_CUSTOMER: '600-0001',  // STOCKS AT THE BEGINNING OF YEAR - CUSTOMER (the month's opening)
+  OPENING_STOCK_DISPLAY: '600-0002',   // STOCKS AT THE BEGINNING OF YEAR - DISPLAY
+  OPENING_STOCK_SERVICE: '600-0003',   // STOCKS AT THE BEGINNING OF YEAR - SERVICE
+  CLOSING_STOCK_CUSTOMER: '620-0001',  // STOCKS AT THE END OF YEAR - CUSTOMER
+  CLOSING_STOCK_DISPLAY: '620-0002',   // STOCKS AT THE END OF YEAR - DISPLAY
+  CLOSING_STOCK_SERVICE: '620-0003',   // STOCKS AT THE END OF YEAR - SERVICE
   SALES_RETURNS: '510-0000',     // RETURN INWARDS (a customer credit note's default line)
   PURCHASE_RETURNS: '612-0000',  // PURCHASES RETURN (a supplier credit note's default line)
   DEPOSIT_INCOME: '509-0000',    // DEPOSIT PAY BY CUSTOMER (a deposit invoice's credit side)
+};
+
+/** The accounts each closing-stock bucket books on (acc/stock-close.ts). */
+export const STOCK_BUCKET_ROLES: Record<StockBucket, { inventory: AccountRole; opening: AccountRole; closing: AccountRole }> = {
+  customer: { inventory: 'INVENTORY_CUSTOMER', opening: 'OPENING_STOCK_CUSTOMER', closing: 'CLOSING_STOCK_CUSTOMER' },
+  display: { inventory: 'INVENTORY_DISPLAY', opening: 'OPENING_STOCK_DISPLAY', closing: 'CLOSING_STOCK_DISPLAY' },
+  service: { inventory: 'INVENTORY_SERVICE', opening: 'OPENING_STOCK_SERVICE', closing: 'CLOSING_STOCK_SERVICE' },
 };
 
 /* Control accounts (brief §2.4): system-maintained, and a MANUAL journal may

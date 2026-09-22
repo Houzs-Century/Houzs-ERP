@@ -13,9 +13,10 @@
 // ----------------------------------------------------------------------------
 
 import {
-  DOC_TABLE_HEAD_STYLES, DOC_TABLE_STYLES, amountInWordsMyr, deliverPdf, drawHeader, drawInfoColumns, drawSignatureBoxes,
-  ensurePdfCjkFont, fmtDocDate, fmtRm, safeName, type PdfAction,
+  DOC_TABLE_HEAD_STYLES, DOC_TABLE_STYLES, amountInWordsMyr, deliverPdf, drawHeader, drawInfoColumns, drawPaymentDetails, drawSignatureBoxes,
+  drawTermsBlock, ensurePdfCjkFont, fmtDocDate, fmtRm, safeName, type PdfAction,
 } from './pdf-common';
+import { getBrandingCache } from '../../../lib/branding';
 import type { DebtorBill, OtherDebtor } from './accounting-queries';
 import { partyAddressLines, type DebtorPartyColumns } from './debtor-party';
 
@@ -86,11 +87,17 @@ export async function renderDebtorBillInto(doc: JsPdf, autoTable: AutoTable, d: 
 
   /* The reader's view of a line: what it was for and how much — our account
      is the bookkeeping behind it and stays off the paper. */
-  const rows = lines.map((l, idx) => [
-    String(idx + 1),
-    l.description?.trim() ? l.description : (d.accountName?.(l.credit_account_code) ?? '—'),
-    fmtRm(Number(l.amount_sen)),
-  ]);
+  /* A TEXT line (no account, amount zero) is words alone — no number, no amount; the money lines count on. */
+  let n = 0;
+  const rows = lines.map((l) => {
+    if (l.credit_account_code == null && Number(l.amount_sen) === 0) return ['', l.description ?? '', ''];
+    n += 1;
+    return [
+      String(n),
+      l.description?.trim() ? l.description : (l.credit_account_code ? (d.accountName?.(l.credit_account_code) ?? '—') : '—'),
+      fmtRm(Number(l.amount_sen)),
+    ];
+  });
   autoTable(doc, {
     startY: y,
     head: [['#', 'Description', 'Amount']],
@@ -139,6 +146,13 @@ export async function renderDebtorBillInto(doc: JsPdf, autoTable: AutoTable, d: 
     doc.text(d.bill.notes, margin, ty + 4, { maxWidth: pageW - margin * 2 });
     ty += 10;
   }
+
+  /* Where to pay and on what terms (owner 2026-09-21: 不然别人不知道要还哪里):
+     the OTHER DEBTOR set from Settings › Branding — a different account from
+     the customers' — then the terms; a blank setting prints nothing. */
+  const brand = getBrandingCache();
+  ty = drawPaymentDetails(doc, ty + 2, brand.debtorPaymentDetails);
+  ty = drawTermsBlock(doc, ty, brand.debtorInvoiceTerms);
 
   drawSignatureBoxes(doc, ty + 4, 'Issued by', 'Company chop');
 

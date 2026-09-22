@@ -58,6 +58,7 @@ const ROWS = (): Row[] => [
   am('d7', 'HC-SO-7', 'DELIVERY'),
   am('l7', 'HC-SO-7', 'LINES', { amendment_no: 'HC-SO-7/A2' }),   // the target desk is already busy on this order
   am('l8', 'HC-SO-8', 'LINES', { lane_flag_note: 'came from Logistic' }),
+  am('p9', 'HC-SO-9', 'PRICE'),                                   // a 2990 price-only lane — never handed over
 ];
 
 function appFor(permissions: string[]) {
@@ -79,6 +80,7 @@ const pass = (permissions: string[], id: string, body: unknown = { note: 'not mi
 const row = (id: string) => (sb.tables.so_amendments as Row[]).find((r) => r.id === id)!;
 const LOGISTIC = ['scm.amendment.approve_delivery'];
 const PURCHASER = ['scm.amendment.approve_lines'];
+const FINANCE = ['scm.amendment.approve_price'];
 
 beforeEach(() => {
   sb.tables.so_amendments = ROWS();
@@ -108,6 +110,15 @@ describe('PATCH /so-amendments/:id/flag-lane', () => {
     ]);
     expect(handed).toHaveLength(1);
     expect(handed[0]).toMatchObject({ amendmentNo: 'HC-SO-1/A1', fromLane: 'DELIVERY', toLane: 'LINES' });
+  });
+
+  it('refuses a handover on a PRICE lane row — a price-only change is Finance\'s alone', async () => {
+    const res = await pass(FINANCE, 'p9');
+    expect(res.status).toBe(409);
+    expect((await res.json() as { error: string }).error).toBe('price_lane_no_handover');
+    expect(row('p9').lane).toBe('PRICE');
+    expect(audits).toHaveLength(0);
+    expect(handed).toHaveLength(0);
   });
 
   it('refuses the requester and the OTHER desk — only the row\'s own approver passes it on', async () => {

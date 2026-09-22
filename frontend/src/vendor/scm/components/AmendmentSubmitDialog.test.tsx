@@ -59,7 +59,8 @@ describe('AmendmentSubmitDialog', () => {
     expect(box.textContent).toContain('approves 2 line changes, Processing Date');
     expect(box.textContent).toContain('Logistic');
     expect(box.textContent).toContain('approves 1 line change');
-    expect(box.textContent).toContain('two amendments');
+    expect(box.textContent).toContain('2 desks are involved');
+    expect(box.textContent).toContain('2 amendments');
   });
 
   test('a blank reason cannot be confirmed; a reason alone is the whole answer', async () => {
@@ -106,7 +107,22 @@ describe('describeLanePreview', () => {
   test('lists only the lanes present, counting lines and naming header fields', () => {
     expect(describeLanePreview({
       lanes: ['DELIVERY'],
-      perLane: { LINES: { lineCount: 0, headerKeys: [] }, DELIVERY: { lineCount: 0, headerKeys: ['customerDeliveryDate', 'postcode'] } },
+      perLane: {
+        LINES: { lineCount: 0, headerKeys: [] },
+        DELIVERY: { lineCount: 0, headerKeys: ['customerDeliveryDate', 'postcode'] },
+        PRICE: { lineCount: 0, headerKeys: [] },
+      },
     })).toEqual([{ lane: 'DELIVERY', text: 'Delivery Date, Postcode' }]);
+  });
+
+  test('describes a PRICE lane (2990 price-only) by its line count', () => {
+    expect(describeLanePreview({
+      lanes: ['PRICE'],
+      perLane: {
+        LINES: { lineCount: 0, headerKeys: [] },
+        DELIVERY: { lineCount: 0, headerKeys: [] },
+        PRICE: { lineCount: 1, headerKeys: [] },
+      },
+    })).toEqual([{ lane: 'PRICE', text: '1 line change' }]);
   });
 });

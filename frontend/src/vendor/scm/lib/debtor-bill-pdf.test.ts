@@ -9,7 +9,7 @@
    fetch, no logo fetch, no network. */
 
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { DEFAULT_BRANDING, clearBrandingLogoCache, setBrandingCache } from '../../../lib/branding';
+import { DEFAULT_BRANDING, clearBrandingLogoCache, setBrandingCache, type Branding } from '../../../lib/branding';
 import { billStatusWord, type DebtorBillPdfData } from './debtor-bill-pdf';
 
 type JsPdf = import('jspdf').jsPDF;
@@ -27,7 +27,7 @@ function captureTextDraws(doc: JsPdf): TextDraw[] {
   }) as typeof doc.text);
   return draws;
 }
-const setUpBranding = () => setBrandingCache({ ...DEFAULT_BRANDING, logoR2Key: '' }, 'HOUZS');
+const setUpBranding = (brand: Partial<Branding> = {}) => setBrandingCache({ ...DEFAULT_BRANDING, logoR2Key: '', ...brand }, 'HOUZS');
 afterEach(() => {
   setBrandingCache({ ...DEFAULT_BRANDING }, 'HOUZS');
   clearBrandingLogoCache();
@@ -40,6 +40,8 @@ const BILL: DebtorBillPdfData = {
     lines: [
       { id: 'l1', line_no: 1, description: 'Sublet of showroom corner', credit_account_code: '570-0020', amount_sen: 45000 },
       { id: 'l2', line_no: 2, description: null, credit_account_code: '599-0006', amount_sen: 5000 },
+      /* A text line (owner 2026-09-21): the description alone, no number, no amount. */
+      { id: 'l3', line_no: 3, description: 'Ground floor, unit 3A', credit_account_code: null, amount_sen: 0 },
     ],
   },
   debtor: {
@@ -49,8 +51,8 @@ const BILL: DebtorBillPdfData = {
   accountName: (code) => (code === '599-0006' ? 'WATER & ELECTRICITY INCOME - OFFICE' : null),
 };
 
-async function render(over: Partial<DebtorBillPdfData['bill']> = {}, debtor: Partial<DebtorBillPdfData['debtor']> = {}): Promise<TextDraw[]> {
-  setUpBranding();
+async function render(over: Partial<DebtorBillPdfData['bill']> = {}, debtor: Partial<DebtorBillPdfData['debtor']> = {}, brand: Partial<Branding> = {}): Promise<TextDraw[]> {
+  setUpBranding(brand);
   const [{ jsPDF }, autoTableModule, { renderDebtorBillInto }] = await Promise.all([import('jspdf'), import('jspdf-autotable'), import('./debtor-bill-pdf')]);
   const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
   const draws = captureTextDraws(doc);
@@ -79,6 +81,10 @@ describe('the Other Debtor bill sheet', () => {
     expect(has(draws, 'MYR 450.00')).toBe(true);
     /* A blank description prints the account's name — never the code. */
     expect(has(draws, 'WATER & ELECTRICITY INCOME - OFFICE')).toBe(true);
+    /* The text line prints its words and nothing else: no MYR 0.00, no third number. */
+    expect(has(draws, 'Ground floor, unit 3A')).toBe(true);
+    expect(has(draws, 'MYR 0.00')).toBe(false);
+    expect(draws.some((d) => d.text === '3')).toBe(false);
     expect(has(draws, '599-0006')).toBe(false);
     expect(has(draws, '570-0020')).toBe(false);
     expect(has(draws, 'TOTAL')).toBe(true);
@@ -106,6 +112,30 @@ describe('the Other Debtor bill sheet', () => {
     expect(has(draws, '012-345 6789')).toBe(true);
     expect(draws.some((d) => d.text === 'Address')).toBe(false);
     expect(draws.some((d) => d.text === 'Attention' || d.text === 'Email' || d.text === 'TIN')).toBe(false);
+  });
+
+  test("the foot carries the company's payment details and terms for a party outside the trade — the debtor's set, never the customer's; blank prints nothing (owner 2026-09-21)", async () => {
+    const draws = await render({}, {}, {
+      debtorPaymentDetails: `Maybank 5644 1875 9397
+HOUZS CENTURY SDN BHD`,
+      debtorInvoiceTerms: 'Payment within 14 days of the invoice date.\nCheques payable to HOUZS CENTURY SDN BHD.',
+      customerPaymentDetails: 'CIMB 8000 1234 5678',
+    });
+    expect(has(draws, 'PAYMENT DETAILS')).toBe(true);
+    expect(has(draws, 'Maybank 5644 1875 9397')).toBe(true);
+    expect(has(draws, 'HOUZS CENTURY SDN BHD')).toBe(true);
+    expect(has(draws, 'CIMB 8000 1234 5678')).toBe(false);
+    expect(has(draws, 'TERMS & CONDITIONS')).toBe(true);
+    expect(has(draws, '1. Payment within 14 days of the invoice date.')).toBe(true);
+    expect(has(draws, '2. Cheques payable to HOUZS CENTURY SDN BHD.')).toBe(true);
+    /* The blocks sit above the signature boxes. */
+    const y = (needle: string) => draws.find((d) => d.text.includes(needle))!.y;
+    expect(y('PAYMENT DETAILS')).toBeLessThan(y('TERMS & CONDITIONS'));
+    expect(y('TERMS & CONDITIONS')).toBeLessThan(y('Issued by'));
+
+    const bare = await render({}, {}, { customerPaymentDetails: 'CIMB 8000 1234 5678' });
+    expect(has(bare, 'PAYMENT DETAILS')).toBe(false);
+    expect(has(bare, 'TERMS & CONDITIONS')).toBe(false);
   });
 
   test('the status word follows the money', () => {

@@ -93,3 +93,38 @@ describe('bedframe variant lookup must key on the LINE, not the document', () =>
     expect(perDoc.has('PC151-01|gap10|divan8|leg4')).toBe(false);
   });
 });
+
+/* "DIVAN GAP" names the DIVAN height, never the mattress gap (owner 2026-09-21,
+   HC-SO-010005). The gap rule is un-anchored, so on "DIVAN GAP: 8" ... M.GAP: 12""
+   it grabbed the leading DIVAN GAP figure and M.GAP never landed - the ERP then
+   printed GAP 8" on the SO, its DO (HC-DO-2609-170) and every downstream doc. The
+   Desc2 below are verbatim production text; the real gap always carries its own
+   M./MATTRESS tag, and a DIVAN GAP with no such tag states no mattress gap. */
+describe('DIVAN GAP is the divan height, not the mattress gap', () => {
+  test('DIVAN GAP + M.GAP: divan reads the DIVAN GAP figure, gap reads M.GAP', () => {
+    // HC-SO-010005 L2 - the reported line
+    expect(parseBedframe('COL: PC151-12 /DIVAN GAP: 8"+NO LEGS (ADD DRAWER LEFT SIDE) / M.GAP: 12"'))
+      .toMatchObject({ divan: 8, leg: 0, gap: 12 });
+    // HC-SO-012921 L2 - the right-drawer mirror
+    expect(parseBedframe('COL: PC151-12 /DIVAN GAP: 8"+NO LEGS (ADD DRAWER RIGHT SIDE) / M.GAP: 12"'))
+      .toMatchObject({ divan: 8, leg: 0, gap: 12 });
+  });
+
+  test('DIVAN GAP + spelled-out MATTRESS GAP reads the mattress gap (HC-SO-004193)', () => {
+    expect(parseBedframe('QUEEN SIZE\nDIVAN GAP: 10" + NO LEG,\nMATTRESS GAP: 13"\nCOL: PC 151-03'))
+      .toMatchObject({ divan: 10, leg: 0, gap: 13 });
+  });
+
+  test('DIVAN GAP with NO mattress gap states no gap (HC-SO-000013)', () => {
+    const bf = parseBedframe('KING SIZE DIVAN GAP: 10" + NO LEG/ DIVAN COL: AMBER 01');
+    expect(bf.divan).toBe(10);
+    expect(bf.leg).toBe(0);
+    expect(bf.gap).toBeUndefined();
+  });
+
+  test('a "divan)/Gap" word boundary is not a DIVAN GAP - the real Gap still wins', () => {
+    // HC-SO-008444: "(add stopper below divan)/Gap:12" must stay divan 8 / gap 12
+    expect(parseBedframe('Color: PC151-01/Divan: 8”no leg(add stopper below divan)/Gap:12”'))
+      .toMatchObject({ divan: 8, leg: 0, gap: 12 });
+  });
+});

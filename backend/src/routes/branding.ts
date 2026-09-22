@@ -130,6 +130,10 @@ app.put("/", requirePermission("settings.manage"), async (c) => {
     // formatting rather than concatenating two numbers into nonsense.
     csPhone: canonicalizeSinglePhone(str(body.csPhone, current.csPhone)),
     csEmail: str(body.csEmail, current.csEmail),
+    // Multi-line text as typed (one item per line); only the ends are trimmed.
+    customerPaymentDetails: str(body.customerPaymentDetails, current.customerPaymentDetails),
+    debtorPaymentDetails: str(body.debtorPaymentDetails, current.debtorPaymentDetails),
+    debtorInvoiceTerms: str(body.debtorInvoiceTerms, current.debtorInvoiceTerms),
   };
   if (next.companyName === "") {
     return c.json({ error: "companyName is required" }, 400);

@@ -28,7 +28,7 @@ describe('the amendment submit route classifies through the shared lane resolver
   });
 
   it('asks the resolver in the order\'s company, refusing on a failed read', () => {
-    expect(handler).toMatch(/const split = await resolveAmendmentLaneSplit\(sb, docNo, activeCompanyId\(c\), headerChanges, submittedLines\);/);
+    expect(handler).toMatch(/const split = await resolveAmendmentLaneSplit\(sb, docNo, activeCompanyId\(c\), headerChanges, submittedLines, priceLaneEnabled\);/);
     expect(handler).toMatch(/if \(!split\) return c\.json\(LINE_BUILD_ERRORS\.unreadable, 500\);/);
   });
 
@@ -45,7 +45,7 @@ describe('the amendment submit route classifies through the shared lane resolver
 
 describe('the lane preview route answers from the SAME resolver', () => {
   it('calls the resolver in the order\'s company and refuses on a failed read', () => {
-    expect(rawPreview).toMatch(/resolveAmendmentLaneSplit\(sb, docNo, activeCompanyId\(c\), headerChanges, noopSplit\.kept\)/);
+    expect(rawPreview).toMatch(/resolveAmendmentLaneSplit\(sb, docNo, activeCompanyId\(c\), headerChanges, noopSplit\.kept, priceLaneEnabled\)/);
     expect(rawPreview).toMatch(/if \(!split\) return c\.json\(LINE_BUILD_ERRORS\.unreadable, 500\);/);
     expect(rawPreview).not.toContain('splitAmendmentByLane(');
   });

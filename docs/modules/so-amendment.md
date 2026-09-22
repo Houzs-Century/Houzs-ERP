@@ -4,15 +4,17 @@ How a processing-locked Sales Order gets changed. Once an SO is locked (date-loc
 
 ## Statuses and flow
 
-Two lanes, split by what changed:
+Lanes, split by what changed:
 
 | Lane | Covers | Signed by (role) | Touches a PO? |
 |---|---|---|---|
-| `LINES` | SKU/spec, colour/fabric, qty, sell price, added/removed product lines, Processing Date | `scm.amendment.approve_lines` (Purchaser) | yes — approving auto-raises a PO Amendment follow-up |
+| `LINES` | SKU/spec, colour/fabric, qty, added/removed product lines, Processing Date, and sell price EXCEPT the `PRICE` carve-out below | `scm.amendment.approve_lines` (Purchaser) | yes — approving auto-raises a PO Amendment follow-up |
 | `DELIVERY` | Delivery Date, address block, disposal, customer contact, service lines | `scm.amendment.approve_delivery` (Logistic) | never |
+| `PRICE` | a price-ONLY product-line change (unit price and/or discount; SKU/colour/qty/remark unchanged), **2990 only** | `scm.amendment.approve_price` (Finance / Kris) | never |
 
-- A mixed submission is SPLIT at create time into two separate amendment documents, one per lane, each with its own approver and lifecycle — they never wait on each other. Both share the SO's one `/A{n}` numbering sequence.
+- A mixed submission is SPLIT at create time into separate amendment documents, one per lane, each with its own approver and lifecycle — they never wait on each other. All share the SO's one `/A{n}` numbering sequence.
 - A LINE change routes by whether it is a SERVICE line (the full identity signal — `item_group` / catalogue category / `SVC-` code — not the prefix alone); an unknown identity defaults to `LINES` rather than silently skipping review. An ADDED line (no SO row yet) is judged by its code's catalogue category, resolved server-side at submit; that read failing refuses the submit rather than guessing.
+- On the **2990** company only, a product-line change whose ONLY movement is the sell price and/or discount carves off to the `PRICE` lane (Finance / Kris) instead of `LINES` — a sell-price change carries nothing for the PO to follow. Any SKU/colour/qty/add/remove move keeps it on `LINES`; a service line stays `DELIVERY`. HOUZS keeps every price change on `LINES`. The company is keyed on `companies.code = '2990'` (`PRICE_LANE_COMPANY_CODE`), never the numeric id (ids drift between environments). Price-only is the same field-by-field diff `dropNoopAmendmentLines` uses, so the two never disagree about what "changed".
 - A stored lane moves two ways only. (1) The row's own APPROVER passes it to the other desk (`flag-lane`, below) — once per amendment, and never a change the Purchase Order has to follow. (2) The repair script, for a `REQUESTED`, lane-bearing, line-only amendment whose lines all agree with the target lane under today's service-line signal. A requester never chooses or moves a lane.
 - Legacy rows (`lane IS NULL`, pre-rework) keep the original supplier-confirm two-gate chain and its own permission keys — a closed set, no new null-lane row can be created.
 
@@ -21,8 +23,8 @@ State machine (a lane row lives inside the existing status enum): `REQUESTED -> 
 ## Permissions
 
 - `POST .../amendments` — `scm.amendment.create`, OR the salesperson on their own order, OR a lane approver. A reason is required before the SO is even read. The lane is COMPUTED, not chosen; the submit dialog shows the requester which desk it goes to, and asks nothing about it.
-- `PATCH .../approve-so` and `/reject` — the row's own lane key (`approve_lines` or `approve_delivery`; legacy rows use `approve_so`/`approve_po`).
-- `PATCH .../flag-lane` — the row's own lane key, `REQUESTED` lane rows only. The APPROVER saying "this is not mine to approve": a required note (`so_amendments.lane_flag_note`, trimmed, ≤500 chars) and the row MOVES to the other lane, still `REQUESTED`, version bumped. The receiving desk gets a needs-approval notice carrying the note; the requester is told. Refused (409) when: the row already carries a handover note (it moves once — no bouncing between desks); the other desk already has an open request on the order; or it is `LINES -> DELIVERY` and the request holds a LINES header key (Processing Date) or a PO-relevant change to a non-service line. The requester is never offered this: they cannot judge the desk.
+- `PATCH .../approve-so` and `/reject` — the row's own lane key (`approve_lines`, `approve_delivery`, or `approve_price`; legacy rows use `approve_so`/`approve_po`).
+- `PATCH .../flag-lane` — the row's own lane key, `REQUESTED` lane rows only. The APPROVER saying "this is not mine to approve": a required note (`so_amendments.lane_flag_note`, trimmed, ≤500 chars) and the row MOVES to the other lane, still `REQUESTED`, version bumped. The receiving desk gets a needs-approval notice carrying the note; the requester is told. Refused (409) when: the row already carries a handover note (it moves once — no bouncing between desks); the other desk already has an open request on the order; or it is `LINES -> DELIVERY` and the request holds a LINES header key (Processing Date) or a PO-relevant change to a non-service line. A `PRICE` lane row cannot be handed over at all (`price_lane_no_handover`) — a price-only change is Finance's alone, approved or rejected in place. The requester is never offered handover: they cannot judge the desk.
 - `PATCH .../withdraw` — the requester, or anyone who could reject it.
 - `GET .../pending-count` asks the lane keys LITERALLY — a `*` wildcard holder gets 0 unless their role was separately granted the literal keys (done for the Owner's shared login so it gets both the badge and the notice). This is deliberate and is the one place in the SCM routes that does not honour the wildcard for visibility; a wildcard holder can still see and approve every row.
 
@@ -42,7 +44,7 @@ State machine (a lane row lives inside the existing status enum): `REQUESTED -> 
 - Don't infer an amendment's lane from what changed — infer it from whether the line is a service line; a delivery/disposal/storage/transport line must route to `DELIVERY` even though it looks like a normal line item.
 - Don't hand-move a stored lane by editing the row — the approver's handover or the repair script are the only ways; the script refuses anything not cleanly `REQUESTED` and line-only, and posts no notice (the target desk's inbox re-reads by lane on its own).
 - A single click on the desktop queue opens a read-only quick-view drawer; approve/reject/withdraw only exist on the full job card. The drawer reuses the job card's own diff-card components — don't build a second renderer for the same diff.
-- The Approver badge (Purchaser / Logistic / Legacy) and the Reference column both read from shared helpers also used elsewhere (the SO list, the PO Amendments queue) — don't recompute either locally, or a document can show two different answers to the same question.
+- The Approver badge (Purchaser / Logistic / Finance / Legacy) and the Reference column both read from shared helpers also used elsewhere (the SO list, the PO Amendments queue) — don't recompute either locally, or a document can show two different answers to the same question.
 
 ## Where the code is
 

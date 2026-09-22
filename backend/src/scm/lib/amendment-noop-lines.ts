@@ -42,7 +42,7 @@ export type NoopCheckLine = {
   newDiscountSen?: number | null;
 };
 
-type StoredLine = {
+export type StoredLine = {
   id: string;
   item_code: string | null;
   qty: number | null;
@@ -81,6 +81,29 @@ export function amendmentLineIsNoop(l: NoopCheckLine, cur: StoredLine): boolean 
   if (l.newDiscountSen != null && Math.round(Number(l.newDiscountSen)) !== Math.round(Number(cur.discount_sen ?? 0))) return false;
   if (l.newVariants != null && variantsForCompare(l.newVariants) !== variantsForCompare(cur.variants)) return false;
   return true;
+}
+
+/** True when the ONLY value this line moves is the sell price and/or discount —
+ *  SKU / quantity / colour-fabric / remark all still equal the stored line. This
+ *  is the price-lane carve-out signal (shared/amendment-lane.ts PRICE lane): a
+ *  price-only change on a 2990 product line signs with Finance, not the
+ *  Purchaser. It uses the SAME field-by-field comparison as amendmentLineIsNoop,
+ *  so the two can never disagree about what "changed"; a no-op line (nothing
+ *  moved) is not price-only. ADD / REMOVE are whole-line changes, never
+ *  price-only. */
+export function amendmentLinePriceOnly(l: NoopCheckLine, cur: StoredLine): boolean {
+  const type = String(l.changeType ?? '').toUpperCase();
+  if (type === 'ADD' || type === 'REMOVE') return false;
+  const priceMoved =
+    (l.newUnitPriceSen != null && Math.round(Number(l.newUnitPriceSen)) !== Math.round(Number(cur.unit_price_sen ?? 0)))
+    || (l.newDiscountSen != null && Math.round(Number(l.newDiscountSen)) !== Math.round(Number(cur.discount_sen ?? 0)));
+  if (!priceMoved) return false;
+  const nonPriceMoved =
+    (l.newItemCode != null && l.newItemCode.trim() !== (cur.item_code ?? '').trim())
+    || (l.newQty != null && Number(l.newQty) !== Number(cur.qty ?? 1))
+    || (l.newRemark != null && l.newRemark.trim() !== (cur.remark ?? '').trim())
+    || (l.newVariants != null && variantsForCompare(l.newVariants) !== variantsForCompare(cur.variants));
+  return !nonPriceMoved;
 }
 
 /**

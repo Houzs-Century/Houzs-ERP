@@ -15,7 +15,7 @@ import { useStaff, usePickableStaff } from "../vendor/scm/lib/admin-queries";
 import { collaboratorLabel } from "../vendor/scm/lib/so-collaborators";
 import { HIST_FIELD_LABEL, HIST_MONEY_FIELDS } from "./so-history-labels";
 import { statusLabel } from "../vendor/scm/lib/status-pill";
-import { AMENDMENT_APPROVER_LABEL, soAmendmentApprover } from "../vendor/scm/lib/amendment-approver";
+import { AMENDMENT_APPROVER_LABEL, soAmendmentApprover, SO_AMENDMENT_LANE_APPROVE_PERM } from "../vendor/scm/lib/amendment-approver";
 import { useAuth as useHouzsAuth } from "../auth/AuthContext";
 import { ACCESS_RANK } from "../types";
 import {
@@ -528,11 +528,11 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
      life is REQUESTED → applied. The legacy chain keys below stay for
      pre-rework (lane null) rows only. */
   const amendmentLane =
-    openAmendment?.lane === "LINES" || openAmendment?.lane === "DELIVERY"
+    openAmendment?.lane === "LINES" || openAmendment?.lane === "DELIVERY" || openAmendment?.lane === "PRICE"
       ? openAmendment.lane : null;
   const canApproveLane =
     amendmentLane != null
-    && houzsAuth.can(amendmentLane === "LINES" ? "scm.amendment.approve_lines" : "scm.amendment.approve_delivery");
+    && houzsAuth.can(SO_AMENDMENT_LANE_APPROVE_PERM[amendmentLane]);
   const canRejectAmendment = amendmentLane
     ? canApproveLane
     : houzsAuth.can("scm.amendment.approve_po");
@@ -628,8 +628,8 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
       title: `Approve ${amendmentLane ? "amendment" : "SO revision"} for ${docNo}?`,
       body: amendmentLane === "LINES"
         ? "Check with the supplier BEFORE approving — your signature records the change is workable. The Sales Order is revised at once and a follow-up PO Amendment is raised for you to confirm in PO Amendments. This cannot be undone."
-        : amendmentLane === "DELIVERY"
-          ? "This applies the delivery changes to the Sales Order at once (the current version is snapshotted into Revisions). The purchase order is not touched. This cannot be undone."
+        : amendmentLane === "DELIVERY" || amendmentLane === "PRICE"
+          ? `This applies the ${amendmentLane === "PRICE" ? "price change" : "delivery changes"} to the Sales Order at once (the current version is snapshotted into Revisions). The purchase order is not touched. This cannot be undone.`
           : "This applies the supplier-confirmed changes: the Sales Order is re-derived and the current version is snapshotted into Revisions. This cannot be undone.",
       confirmLabel: amendmentLane ? "Approve & apply" : "Approve revision",
     }))) return;
@@ -899,7 +899,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
                     className="money"
                     style={{ border: "1px solid #bcdcd7", background: "#e1efed", color: "#16695f", fontFamily: "inherit", fontSize: 12, fontWeight: 700, borderRadius: 9, padding: "9px 11px", cursor: "pointer", opacity: busy ? 0.5 : 1 }}
                   >
-                    {busy ? "Working…" : amendmentLane === "LINES" ? "Approve product changes" : "Approve delivery changes"}
+                    {busy ? "Working…" : amendmentLane === "LINES" ? "Approve product changes" : amendmentLane === "PRICE" ? "Approve price change" : "Approve delivery changes"}
                   </button>
                 )}
                 {amendmentLane != null && openAmendment.status === "REQUESTED" && !canApproveLane && (

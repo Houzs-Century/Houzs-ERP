@@ -94,9 +94,9 @@ type AmendmentForWrite = {
   lane_flag_note?: string | null;
 };
 
-/** Lane of a loaded row — narrowed to the two known values, else legacy. */
+/** Lane of a loaded row — narrowed to the known lane values, else legacy. */
 const laneOf = (a: AmendmentForWrite): AmendmentLane | null =>
-  a.lane === 'LINES' || a.lane === 'DELIVERY' ? a.lane : null;
+  a.lane === 'LINES' || a.lane === 'DELIVERY' || a.lane === 'PRICE' ? a.lane : null;
 
 /* People a RESOLVED amendment is news to (owner 2026-09-02): the person who
    raised it, and the salesperson whose Sales Order it changes. Both are
@@ -428,6 +428,7 @@ soAmendments.get('/pending-count', async (c) => {
   const lanes: string[] = [];
   if (holdsHouzsPermLiterally(c, LANE_APPROVE_KEY.LINES)) lanes.push('LINES');
   if (holdsHouzsPermLiterally(c, LANE_APPROVE_KEY.DELIVERY)) lanes.push('DELIVERY');
+  if (holdsHouzsPermLiterally(c, LANE_APPROVE_KEY.PRICE)) lanes.push('PRICE');
   const legacy = holdsHouzsPermLiterally(c, 'scm.amendment.approve_so');
   if (lanes.length === 0 && !legacy) return c.json({ count: 0 });
 
@@ -1392,6 +1393,15 @@ soAmendments.patch('/:id/flag-lane', async (c) => {
   if (!loaded.ok) return c.json({ error: 'not_found' }, 404);
   const lane = laneOf(loaded.amendment);
   if (!lane) return c.json(LEGACY_HAS_NO_DESK, 409);
+  // The PRICE lane has no "other desk" — a price-only change is Finance's alone
+  // (owner 2026-09-21), approved or rejected in place. Handover is the
+  // LINES<->DELIVERY move; a price amendment is never passed on.
+  if (lane === 'PRICE') {
+    return c.json({
+      error: 'price_lane_no_handover',
+      reason: "A price amendment is Finance's to approve or reject — it cannot be passed to another desk.",
+    }, 409);
+  }
   if (!hasHouzsPerm(c, LANE_APPROVE_KEY[lane])) {
     return c.json({
       error: 'flag_forbidden',

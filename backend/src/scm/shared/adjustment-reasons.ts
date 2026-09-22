@@ -12,6 +12,7 @@ export const ADJUSTMENT_REASONS = [
   { code: 'FOUND', label: 'Found' },
   { code: 'COUNT', label: 'Count Correction' },
   { code: 'SAMPLE', label: 'Sample' },
+  { code: 'FREEGIFT', label: 'Free Gift' },
   { code: 'WRITEOFF', label: 'Write-off' },
   { code: 'OTHER', label: 'Other' },
 ] as const;

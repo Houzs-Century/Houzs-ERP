@@ -89,6 +89,18 @@ just `completed`.
   sync. `GET /api/delivery-sheet/assr-legs` is the own-team-gated feed
   (`delivery-sheet-assr-feed.ts`); the Delivery Planning board is deliberately
   NOT gated (it shows every dated leg), so board and sheet differ on purpose.
+- **Supplier returns (返厂)** are rows in `assr_supplier_returns` (`round_no`
+  1..N, added freely; an archived trip keeps its number, never reused). The list
+  is the source of truth for each trip's out/back dates; the case's
+  `supplier_pickup_at` / `items_ready_at` MIRROR the current (highest `round_no`)
+  row via `reprojectLatestSupplierReturn` — the Delivery board + HC sheet read
+  those two columns, so never write them directly, edit the trip in the Supplier
+  Returns list (the Item-Ready InspectionCard shows the return date read-only so
+  the two can't drift). Adding a return on a completed/voided case reopens it
+  onto `pending_supplier_pickup` (clears `closed_at`). Endpoints:
+  `POST`/`PATCH`/`DELETE /api/assr/:id/supplier-returns` (`service_cases.write`,
+  under the `enforceCaseScope` `/:id` guard). `qc_receipt_date` stays a
+  Verification-stage field, NOT a supplier-return date.
 
 ## Gotchas
 
@@ -118,8 +130,10 @@ just `completed`.
   required fields (server guard is the source), enum option lists, the
   note-audience wording, the Order PO reader, `PATCH_FIELDS`, product
   category, the own-team leg markers (`inspection_by` / `pickup_by` /
-  `delivery_by`) that gate the delivery-sheet sync, survey-email fallback,
-  SO typeahead, attachment upload, access
+  `delivery_by`) that gate the delivery-sheet sync, the Supplier Returns list
+  (`components/assr/SupplierReturnsList.tsx` desktop, `MobileFactoryTrips` in
+  `MobileServiceCase.tsx` mobile — shared logic in `assr/returns.ts`),
+  survey-email fallback, SO typeahead, attachment upload, access
   gating, and the "a Sales rep may not edit" redirect
   (`auth/salesAccess.isSalesNonDirector`). Hand-copying any of these is what
   drifted before.

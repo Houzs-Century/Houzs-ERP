@@ -19,6 +19,7 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { supabaseAuth } from '../middleware/auth';
+import { canWriteScmConfig } from '../lib/houzs-perms';
 import { activeCompanyId, scopeToCompany } from '../lib/companyScope';
 import type { Env, Variables } from '../env';
 
@@ -66,7 +67,17 @@ mrpLeadTimes.get('/', async (c) => {
 
 // PUT / — upsert one (warehouse, category)'s lead days. warehouseId null = the
 // global default. Uniqueness is (warehouse_id, category) (migration 0184).
+//
+// Config-write gated (canWriteScmConfig — flat `scm.config.write` OR the position
+// policy canWriteConfig flag, see houzs-perms.ts), mirroring the FE "Lead Times"
+// button. The /mrp-lead-times/* area guard is scm.procurement.mrp, which falls
+// through for a non-L2-configured caller (a flat scm.access holder), so the coarse
+// umbrella alone would let any SCM user rewrite lead times without this gate. GET
+// stays open — the MRP page reads lead times for its order-by-date calc.
 mrpLeadTimes.put('/', async (c) => {
+  if (!canWriteScmConfig(c)) {
+    return c.json({ error: 'forbidden', reason: 'missing_scm_config_write' }, 403);
+  }
   let body: unknown;
   try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
   const parsed = putSchema.safeParse(body);
