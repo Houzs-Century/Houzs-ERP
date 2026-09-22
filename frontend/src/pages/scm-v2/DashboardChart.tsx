@@ -11,7 +11,7 @@
 // bar and point carries a tooltip with the figure AND its share; a partial
 // period's label already wears its " *" when the card hands it in.
 // ----------------------------------------------------------------------------
-import { Fragment } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 
 export type ChartSeries = {
   key: string;
@@ -77,11 +77,30 @@ export const scaleOf = (values: Array<number | null>): Scale => {
   return { lo, hi: hi === lo ? lo + step : hi, ticks };
 };
 
-const W = 760;
+/** Before the card is measured (and under jsdom, which has no ResizeObserver). */
+const DEFAULT_W = 760;
+/** The narrowest canvas: under it the figure scrolls sideways rather than shrinking its text (the finance pages are desktop pages). */
+const MIN_W = 700;
 const PAD = { top: 14, right: 16, bottom: 34, left: 60 };
 
-export const DashboardChart = ({ labels, bars, stacked = false, lines = [], unit = 'sen', height = 240, ariaLabel }: DashboardChartProps) => {
+export const DashboardChart = ({ labels, bars, stacked = false, lines = [], unit = 'sen', height = 260, ariaLabel }: DashboardChartProps) => {
   const n = labels.length;
+  /* Drawn at the card's own width, one SVG unit per CSS pixel. The canvas used
+     to be a fixed 760 scaled to the card, so a wide screen blew the chart up
+     and its 11px labels with it while the table beneath stayed 13px (owner
+     2026-09-22: 图很大，字很小). */
+  const holder = useRef<HTMLElement>(null);
+  const [W, setW] = useState(DEFAULT_W);
+  useEffect(() => {
+    const el = holder.current;
+    if (!el || typeof ResizeObserver === 'undefined') return undefined;
+    const ro = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width ?? 0;
+      if (width > 0) setW(Math.max(MIN_W, Math.round(width)));
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   const rightLines = lines.filter((l) => l.axis === 'right');
   const leftLines = lines.filter((l) => l.axis !== 'right');
   const padRight = rightLines.length > 0 ? 48 : PAD.right;
@@ -138,10 +157,10 @@ export const DashboardChart = ({ labels, bars, stacked = false, lines = [], unit
   };
 
   const axisColor = 'var(--c-line, rgba(34,31,32,0.25))';
-  const textStyle = { fontSize: 11, fill: 'currentColor', opacity: 0.75 } as const;
+  const textStyle = { fontSize: 12, fill: 'currentColor', opacity: 0.75 } as const;
   return (
-    <figure style={{ margin: 0 }}>
-      <svg viewBox={`0 0 ${W} ${height}`} role="img" aria-label={ariaLabel} style={{ width: '100%', height: 'auto', display: 'block', color: 'inherit' }}>
+    <figure ref={holder} style={{ margin: 0, overflowX: 'auto' }}>
+      <svg viewBox={`0 0 ${W} ${height}`} width={W} height={height} role="img" aria-label={ariaLabel} style={{ display: 'block', color: 'inherit', maxWidth: 'none' }}>
         {/* The left axis' ticks and grid. */}
         {left.ticks.map((t) => (
           <Fragment key={`l${t}`}>

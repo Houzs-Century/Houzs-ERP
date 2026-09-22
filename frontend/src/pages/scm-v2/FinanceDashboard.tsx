@@ -2,7 +2,7 @@
 // FinanceDashboard — /scm/finance-dashboard (owner 2026-09-21: the Hookka
 // Dashboard, trading edition — P&L, performance P&L, Cost structure by
 // product group, cash flow; 两个都可以，做). Read-only cards: the statements'
-// ACTUALS (ink bars) beside the Forecast P&L's TARGETS (red dashed line),
+// ACTUALS (petrol bars) beside the Forecast P&L's TARGETS (red dashed line),
 // a figures table under every chart. Every figure comes from ONE read,
 // GET /accounting/dashboard, whose actuals are the report routes' own
 // builders — the P&L, the Cash Flow, the Performance P&L and the balance
@@ -41,25 +41,30 @@ const tabBtn = (active: boolean): React.CSSProperties => ({
   padding: '3px 10px', fontSize: 'var(--fs-12)', borderRadius: 'var(--radius-sm, 4px)', cursor: 'pointer',
   border: '1px solid var(--c-line, rgba(34,31,32,0.2))', background: active ? 'var(--c-ink, #221f20)' : 'transparent', color: active ? 'var(--c-cream, #fff)' : 'inherit',
 });
-/** The chart's dress (owner 2026-09-22: 整体颜色不符 → 跟 app 的 petrol 主题):
+/** The chart's dress (owner 2026-09-22: 跟 app 的 petrol 主题, then 我不要黑色):
     the theme's own Theme C values (vendor/design-system/tokens.css), as hex
     because SVG presentation attributes take no var(). The ledger's ACTUAL is
-    ink; the orders' PERFORMANCE and the Sofa are petrol, the app's primary;
-    the forecast stays red so the target jumps out; the groups keep one colour
-    each across every card, Bedding = mattress + bedframe one blue. */
-const INK = '#11140f';      // --c-ink
+    petrol, the app's primary — money in and the assets wear it too; the
+    orders' PERFORMANCE is the secondary blue, and the product groups stack in
+    blues, amber, sage and greys so none of them wears the actual's petrol;
+    the forecast stays red so the target jumps out; one colour a group across
+    every card, Bedding = mattress + bedframe. */
 const PETROL = '#16695f';   // --fg-accent (--c-orange, Theme C primary)
+const FOREST = '#2F5D4F';   // --c-secondary-a
 const BLUE = '#1F3A8A';     // --c-secondary-b
+const SKY = '#7FA3C9';
 const AMBER = '#B76B00';    // --c-warn
 const SAGE = '#7FA58A';
 const SOFT = '#9aa093';     // --fg-soft
 const MIST = '#c8ccc3';
 const RED = '#B8331F';      // --c-festive-b
-const IN = '#2F5D4F';       // --c-secondary-a
+const ACTUAL = PETROL;
+const IN = PETROL;
 const OUT = AMBER;
+const NET = FOREST;
 const GROUP_COLORS: Record<string, string> = {
-  sofa: PETROL, bedding: BLUE, accessories: SAGE, dining: AMBER, others: MIST, service: SOFT,
-  mattress: BLUE, bedframe: BLUE, accessory: SAGE,
+  sofa: BLUE, bedding: SKY, accessories: SAGE, dining: AMBER, others: MIST, service: SOFT,
+  mattress: SKY, bedframe: SKY, accessory: SAGE,
 };
 const colorOf = (key: string): string => GROUP_COLORS[key] ?? MIST;
 
@@ -171,7 +176,7 @@ const IncomeStatementCard = ({ periods }: { periods: DashboardPeriod[] }) => {
     const cur = actual[i]; const prev = i > 0 ? actual[i - 1] : null;
     return cur != null && prev != null && prev !== 0 ? Math.round(((cur - prev) / Math.abs(prev)) * 1000) / 10 : null;
   });
-  const bars: ChartSeries[] = [{ key: 'actual', label: `Actual ${metric.label}`, color: INK, values: actual, tips: periods.map((p, i) => (actual[i] == null ? null : `${labelOf(p)} · Actual ${metric.label}: RM ${fmtSenPlain(actual[i])} (${fmtPct(actualPct[i])} of revenue)`)) }];
+  const bars: ChartSeries[] = [{ key: 'actual', label: `Actual ${metric.label}`, color: ACTUAL, values: actual, tips: periods.map((p, i) => (actual[i] == null ? null : `${labelOf(p)} · Actual ${metric.label}: RM ${fmtSenPlain(actual[i])} (${fmtPct(actualPct[i])} of revenue)`)) }];
   const lines: ChartLine[] = [{ key: 'forecast', label: `Forecast ${metric.label}`, color: RED, dashed: true, values: forecast, tips: periods.map((p, i) => (forecast[i] == null ? null : `${labelOf(p)} · Forecast ${metric.label}: RM ${fmtSenPlain(forecast[i])} (${fmtPct(forecastPct[i])} of forecast revenue)`)) }];
   const rows: TableRow[] = [
     { id: 'actual', label: 'Actual', cells: actual.map(fmtOrDash), strong: true },
@@ -194,16 +199,16 @@ const IncomeStatementCard = ({ periods }: { periods: DashboardPeriod[] }) => {
 
 type CompareMetric = 'sales' | 'gp' | 'gpPct';
 const COMPARE_METRICS: Array<{ key: CompareMetric; label: string }> = [{ key: 'sales', label: 'Sales' }, { key: 'gp', label: 'Gross profit' }, { key: 'gpPct', label: 'GP %' }];
-/** The Performance P&L's petrol beside the ledger's ink. */
-const PERF = PETROL;
+/** The Performance P&L's blue beside the ledger's petrol. */
+const PERF = BLUE;
 const fmtSignedPct = (p: number | null): string => (p == null ? '—' : `${p > 0 ? '+' : ''}${p.toFixed(1)}%`);
 /** (a − b) ÷ |b| in %, one decimal; null without both sides or with nothing to divide by. */
 const gapPct = (a: number | null, b: number | null): number | null => (a == null || b == null || b === 0 ? null : Math.round(((a - b) / Math.abs(b)) * 1000) / 10);
 const gapSen = (a: number | null, b: number | null): number | null => (a == null || b == null ? null : a - b);
 const toneUp = (g: number | null): 'good' | 'bad' | null => (g == null || g === 0 ? null : g > 0 ? 'good' : 'bad');
 
-/** Owner 2026-09-22: actual (the ledger, ink) and performance (the orders,
-    petrol) as bars side by side, the forecast a red dashed line — per product
+/** Owner 2026-09-22: actual (the ledger, petrol) and performance (the orders,
+    blue) as bars side by side, the forecast a red dashed line — per product
     group, or All. On All the performance bar stacks the groups so the mix
     stays visible. Sales has three readings; gross profit and GP % have two —
     the ledger's cost of sales is periodic, one figure, never per group, so no
@@ -238,7 +243,7 @@ const PerformanceCard = ({ periods, groups }: { periods: DashboardPeriod[]; grou
     }))
     : [{ key: 'performance', label: `Performance ${metricLabel}`, color: PERF, values: metric === 'sales' ? perfSales : metric === 'gp' ? perfGp : perfGpPct }];
   const bars: ChartSeries[] = metric === 'sales'
-    ? [{ key: 'actual', label: 'Actual sales (P&L)', color: INK, values: actualSales, tips: periods.map((p, i) => (actualSales[i] == null ? null : `${labelOf(p)} · Actual sales (P&L) · ${groupLabel}: RM ${fmtSenPlain(actualSales[i])}`)) }, ...perfBars]
+    ? [{ key: 'actual', label: 'Actual sales (P&L)', color: ACTUAL, values: actualSales, tips: periods.map((p, i) => (actualSales[i] == null ? null : `${labelOf(p)} · Actual sales (P&L) · ${groupLabel}: RM ${fmtSenPlain(actualSales[i])}`)) }, ...perfBars]
     : perfBars;
   const lines: ChartLine[] = [
     metric === 'sales'
@@ -344,7 +349,7 @@ const CashFlowCard = ({ periods }: { periods: DashboardPeriod[] }) => {
   const [tab, setTab] = useState('in');
   const [detail, setDetail] = useState(false);
   const pick = (p: DashboardPeriod): number | null => (p.cashFlow ? (tab === 'in' ? p.cashFlow.inSen : tab === 'out' ? p.cashFlow.outSen : p.cashFlow.netSen) : null);
-  const color = tab === 'in' ? IN : tab === 'out' ? OUT : PETROL;
+  const color = tab === 'in' ? IN : tab === 'out' ? OUT : NET;
   const bars: ChartSeries[] = [{ key: tab, label: `Cash ${tab}`, color, values: periods.map(pick) }];
   /* Detail: the Cash Flow tree's top categories, one row each, in the order they first appear. */
   const labels: string[] = [];
@@ -437,7 +442,7 @@ export const FinanceDashboard = () => {
   return (
     <div className="space-y-4">
       <PageHeader eyebrow="Finance · Forecasting" title="Dashboard"
-        description="The statements' actuals (ink) beside the Forecast P&L's targets (red, dashed), per month or quarter. Every figure is the report's own — the P&L, the Cash Flow, the Performance P&L, the balance sheet — read once per period. Nothing here writes." />
+        description="The statements' actuals (petrol) beside the Forecast P&L's targets (red, dashed), per month or quarter, from the first month with sales. Every figure is the report's own — the P&L, the Cash Flow, the Performance P&L, the balance sheet — read once per period. Nothing here writes." />
       <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap' }}>
         <Tabs options={[{ key: 'month', label: 'Monthly' }, { key: 'quarter', label: 'Quarterly' }]} value={granularity} onChange={(k) => setGranularity(k as Granularity)} />
         <span style={soft}>Period</span>
