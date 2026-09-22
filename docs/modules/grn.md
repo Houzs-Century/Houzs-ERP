@@ -59,6 +59,13 @@ go through `/api/scm/grns`.
   `single()`, so a genuine zero-row (out-of-company) match reports 404, not 500.
 - Cross-company PO is refused at create (`firstCrossCompanyPo`) — receiving another
   company's PO would post its stock and cost into the active company's books.
+- A GRN may be created **without a parent PO** — a manual receipt (repair charge,
+  one-off fee, freight-only): `POST /` requires only a supplier, and the header's
+  `purchase_order_id` is **nullable** (each line still carries its own
+  `purchase_order_item_id`, or null). The DB column shipped NOT NULL while the
+  route already wrote `null`, so every manual receipt 500'd as the generic "system
+  hit a problem" — `20260922T0900_grns_purchase_order_id_nullable.sql` (#4222)
+  dropped it. Keep it nullable; do not re-add the constraint.
 - A non-MYR GRN must have a positive exchange rate (master or operator-entered)
   before it can post — `422 foreign_rate_unset`. Never default an unset rate to 1.
 - A line that would receive stock at zero cost, for a SKU previously received at a
