@@ -209,13 +209,12 @@ type SoItem = {
      exactly like the desktop (one-product rule). */
   stock_status?: string | null;
   stock_state?: "stock" | "po" | "shortage" | null;
-  coverage_po?: string | null;
-  coverage_eta?: string | null;
+  coverage_po?: string | null; coverage_eta?: string | null;
+  bound_source_pos?: string[];
   shipped_source_pos?: string[];
   shipped_source_adj?: boolean;
   ready_source_pos?: Array<{ po: string | null; qty: number; kind: "po" | "adjustment" }>;
-  delivered_qty?: number | null;
-  remaining_qty?: number | null;
+  delivered_qty?: number | null; remaining_qty?: number | null;
   /* Why the line can never read READY, when the reason is WHERE it stands (2026-09-08). */
   non_selling_warehouse?: { code: string | null; name: string | null; type: string | null; notice: string } | null;
   /* A retired line — the SO's history, not part of the live order. Returned by
@@ -1134,11 +1133,12 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
                       );
                     })()}
                     <NonSellingWarehouseNoteMobile note={it.non_selling_warehouse} />
+                    {/* Bound PO wins over the shipped batch (owner 2026-09-22), like desktop SoSourceChips. */}
                     <SourcePosRowMobile
-                      pos={it.shipped_source_pos ?? []}
+                      pos={(it.bound_source_pos && it.bound_source_pos.length > 0) ? it.bound_source_pos : (it.shipped_source_pos ?? [])}
                       adj={it.shipped_source_adj}
-                      ready={(it.delivered_qty ?? 0) > 0 && (it.remaining_qty ?? null) === 0 ? [] : (it.ready_source_pos ?? [])}
-                      incoming={it.stock_state === "po" && it.coverage_po ? { po: it.coverage_po, eta: it.coverage_eta ? dl(it.coverage_eta) : null } : null}
+                      ready={(it.bound_source_pos && it.bound_source_pos.length > 0) ? [] : ((it.delivered_qty ?? 0) > 0 && (it.remaining_qty ?? null) === 0 ? [] : (it.ready_source_pos ?? []))}
+                      incoming={(it.bound_source_pos && it.bound_source_pos.length > 0) ? null : (it.stock_state === "po" && it.coverage_po ? { po: it.coverage_po, eta: it.coverage_eta ? dl(it.coverage_eta) : null } : null)}
                     />
                   </div>
                   <div style={{ textAlign: "right", whiteSpace: "nowrap", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
