@@ -58,6 +58,12 @@ const MAY_PUSH = [
   // Re-pushes a sales order's corrected balance after a direct SQL repair left
   // the book stale (docs/bugs/0785, the orphan scan-deposit fix).
   'enqueue-so-writeback.mts',
+  // Removes ONE service/charge line from a processing-locked / delivered SO whose
+  // in-app delete route refuses it, and enqueues the AutoCount RETIRE so the book
+  // does not keep the removed line live and outstanding. The send is HALF the
+  // repair: retiredLineOf + enqueueEdit({retire}) let composeSoState build the
+  // exact payload the delete route would, so nothing accounting-side is hand-made.
+  'remove-so-storage-line.mts',
   // Puts our purchase order numbers back in the book's PO Doc No. where the
   // write-back had written the order's reference (docs/bugs/0926, 0927) - the
   // send IS the repair; it writes no ERP value.
