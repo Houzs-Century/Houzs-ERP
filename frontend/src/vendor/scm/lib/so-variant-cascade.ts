@@ -115,6 +115,19 @@ export const SPECIAL_ORDER_KEYS: readonly string[] = [
  *  `audit:duplicated-decisions` exists to catch. */
 export const CASCADE_CATEGORIES: ReadonlySet<string> = new Set(['sofa']);
 
+/** The category whose master a fabric-follower line takes its colour from. */
+export const SOFA_CATEGORY = 'sofa';
+
+/** Categories that are NOT sofas but must wear the sofa's COLOUR/FABRIC so a
+ *  matching cover reads as part of the set. Owner 2026-09-22: a sofa accessory
+ *  (`fabric_accessory` — the fabric-carrying cover / matching item) follows the
+ *  sofa's colour/fabric ONLY, never its structural specials (a cover has no divan
+ *  height / leg / gap). Unlike a sofa compartment, an accessory carries no
+ *  buildKey, so it cannot be scoped to one physical sofa — it follows the FIRST
+ *  sofa on the order (best effort; the operator can still set a contrast cover by
+ *  hand, and it stands until the sofa's colour is changed again). */
+export const FABRIC_FOLLOWER_CATEGORIES: ReadonlySet<string> = new Set(['fabric_accessory']);
+
 /** One line, reduced to what the cascade decides on. `category` is '' for a
  *  line with no SKU picked yet — it neither masters nor follows. */
 export type CascadeLine = {
@@ -255,6 +268,32 @@ export function followerVariants(
 }
 
 /**
+ * The variants a FABRIC-FOLLOWER line (a sofa accessory) should now carry: the
+ * sofa master's COLOUR/FABRIC keys only, under the same force/fill/leave rule as
+ * followerVariants but restricted to FABRIC_IDENTITY_KEYS. Nothing structural
+ * (seat / leg / gap / specials) travels — a cover has none of those. Returns the
+ * follower's own object unchanged when nothing applies.
+ */
+export function fabricFollowerVariants(
+  sofaMaster: Record<string, unknown>,
+  follower: Record<string, unknown>,
+  previousSofaMaster: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  const patch: Record<string, unknown> = {};
+  let changed = false;
+  for (const k of FABRIC_IDENTITY_KEYS) {
+    const masterVal = sofaMaster[k];
+    if (isBlank(masterVal)) continue;
+    const masterMoved = previousSofaMaster !== undefined && previousSofaMaster[k] !== masterVal;
+    if (!masterMoved && !isBlank(follower[k])) continue;
+    if (follower[k] === masterVal) continue;
+    patch[k] = masterVal;
+    changed = true;
+  }
+  return changed ? { ...follower, ...patch } : follower;
+}
+
+/**
  * Run the cascade over a whole document's lines.
  *
  * `cascadeCategories` is REQUIRED and may be null, because its absence
@@ -278,8 +317,20 @@ export function cascadeMasterVariants(
     masterIdx[l.category] = idx;
   });
 
+  /* Whether the sofa cascade is active on this surface — a fabric-follower
+     accessory only takes the sofa's colour when the sofa itself is cascading. */
+  const sofaCascading = cascadeCategories === null || cascadeCategories.has(SOFA_CATEGORY);
+
   const variants = lines.map((l, idx) => {
     if (!l.category) return l.variants;
+    /* A sofa accessory follows the SOFA master's colour/fabric only (owner
+       2026-09-22), independent of the same-category cascade below. No sofa on the
+       order, or the surface is not cascading sofas -> leave it untouched. */
+    if (FABRIC_FOLLOWER_CATEGORIES.has(l.category)) {
+      if (!sofaCascading || !(SOFA_CATEGORY in masterIdx)) return l.variants;
+      const sofaIdx = masterIdx[SOFA_CATEGORY]!;
+      return fabricFollowerVariants(lines[sofaIdx]!.variants, l.variants, previousMasters[SOFA_CATEGORY]);
+    }
     if (cascadeCategories !== null && !cascadeCategories.has(l.category)) return l.variants;
     if (masterIdx[l.category] === idx) return l.variants;
     const master = lines[masterIdx[l.category]!]!.variants;

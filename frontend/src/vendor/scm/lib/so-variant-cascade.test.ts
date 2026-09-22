@@ -336,3 +336,44 @@ describe('followerVariants directly', () => {
       .toEqual({ seatHeight: '21' });
   });
 });
+
+describe('sofa accessory follows the sofa colour/fabric only (owner 2026-09-22)', () => {
+  const accessory = (variants: Record<string, unknown> = {}): CascadeLine =>
+    ({ category: 'fabric_accessory', variants });
+
+  test('takes the sofa master colour/fabric, never seat / leg / specials', () => {
+    const lines = [
+      sofa({ fabricCode: 'AMOR-12', colourId: 'c9', seatHeight: '21', legHeight: '4', specials: ['Piping'] }),
+      accessory({}),
+    ];
+    const out = run(lines, {}, CASCADE_CATEGORIES);
+    expect(out.variants[1]).toEqual({ fabricCode: 'AMOR-12', colourId: 'c9' });
+    expect(out.variants[1]).not.toHaveProperty('seatHeight');
+    expect(out.variants[1]).not.toHaveProperty('legHeight');
+    expect(out.variants[1]).not.toHaveProperty('specials');
+  });
+
+  test('when the sofa colour changes, the accessory follows (master-latest-wins)', () => {
+    let lines = [sofa({ fabricCode: 'AMOR-12' }), accessory({})];
+    let out = run(lines, {}, CASCADE_CATEGORIES);
+    expect(out.variants[1]).toEqual({ fabricCode: 'AMOR-12' });
+    lines = [sofa({ fabricCode: 'COVE-13' }), accessory(out.variants[1]!)];
+    out = run(lines, out.masters, CASCADE_CATEGORIES);
+    expect(out.variants[1]).toEqual({ fabricCode: 'COVE-13' });
+  });
+
+  test('no sofa on the order -> the accessory is left untouched (same ref)', () => {
+    const lines = [accessory({ fabricCode: 'OWN-1' })];
+    const out = run(lines, {}, CASCADE_CATEGORIES);
+    expect(out.variants[0]).toBe(lines[0]!.variants);
+  });
+
+  test('a hand-set contrast cover stands until the sofa colour moves again', () => {
+    let lines = [sofa({ fabricCode: 'AMOR-12' }), accessory({})];
+    let out = run(lines, {}, CASCADE_CATEGORIES);
+    expect(out.variants[1]).toEqual({ fabricCode: 'AMOR-12' });
+    lines = [sofa({ fabricCode: 'AMOR-12' }), accessory({ fabricCode: 'CONTRAST-9' })];
+    out = run(lines, out.masters, CASCADE_CATEGORIES);
+    expect(out.variants[1]).toEqual({ fabricCode: 'CONTRAST-9' });
+  });
+});
