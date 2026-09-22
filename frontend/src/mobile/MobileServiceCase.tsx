@@ -29,6 +29,7 @@ import {
 } from "../vendor/scm/lib/assr/stages";
 import type { SupplierReturn } from "../vendor/scm/lib/assr/returns";
 import { MobileFactoryTrips } from "./MobileFactoryTrips";
+import { MobileReopenControl } from "./MobileReopenControl";
 import { splitCategories } from "../lib/assrProductCategories";
 import { MobileAssrCategoryChips } from "./MobileAssrCategoryChips";
 import { LegOwnerToggle } from "./AssrLegOwnerToggle";
@@ -1795,7 +1796,7 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
           )}
         </div>
       )}
-
+      <MobileReopenControl caseId={id} stage={stageOf(c)} disabled={busy || isArchived} onReopened={refetch} notify={notify} />
       {/* Advance sheet — current → next chips + confirm. */}
       {advOpen && nextStage && (
         <SheetShell title="Advance stage" onClose={() => setAdvOpen(false)}>
