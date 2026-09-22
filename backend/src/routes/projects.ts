@@ -367,12 +367,18 @@ app.patch("/brands/:id", requirePermission("projects.manage"), async (c) => {
        row still holds the old name — otherwise this company's rename would
        rewrite another company's grants, and leaving them stale is the safer
        half of that trade. */
+    // company-scope: deliberately cross-company — this asks whether ANY other
+    // company still owns the old name, which a company predicate would hide,
+    // and that answer is what decides the two unscoped cascades below.
     const otherOwner = await c.env.DB.prepare(
       `SELECT 1 AS hit FROM project_brands WHERE name = ? AND id <> ? LIMIT 1`
     )
       .bind(oldName, id)
       .first<{ hit: number }>();
     if (!otherOwner) {
+      // company-scope: user_brands and project_cost_rates carry no company_id
+      // (nor does users), so no predicate exists to write. The otherOwner check
+      // above is what makes this safe: exactly one company owns the old name.
       await c.env.DB.prepare(`UPDATE user_brands SET brand = ? WHERE brand = ?`)
         .bind(newName, oldName)
         .run();
