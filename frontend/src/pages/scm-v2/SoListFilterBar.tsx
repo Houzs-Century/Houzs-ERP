@@ -61,8 +61,12 @@ export function SoListFilterBar({ q }: { q: string }) {
         {filters.length > 0 ? `Filters · ${filters.length}` : "More filters"}
       </button>
       {open && (
+        // Anchor right on desktop so the 560px panel opens LEFTWARD into view: the
+        // button sits mid-row (after the status pills), so left-0 pushed the panel
+        // past the right edge, where <main>'s overflow-x-hidden clipped it (looked
+        // narrow + cut off). The narrow md:hidden bar keeps left-0 (button near left).
         <div role="dialog" aria-label="More filters"
-          className="absolute left-0 top-full z-30 mt-2 flex max-h-[70vh] w-[560px] max-w-[calc(100vw-2rem)] flex-col rounded-lg border border-border bg-surface shadow-lg">
+          className="absolute left-0 top-full z-30 mt-2 flex max-h-[70vh] w-[560px] max-w-[calc(100vw-2rem)] flex-col rounded-lg border border-border bg-surface shadow-lg md:left-auto md:right-0">
           <div className="flex items-center gap-2 border-b border-border px-4 py-2.5">
             <span className={k.label}>More filters · {complete.length}</span>
           </div>
