@@ -85,6 +85,16 @@ describe("SoListFilterBar", () => {
     expect(new URLSearchParams(search).getAll("f")).toEqual([]);
   });
 
+  it("opens the popover with fixed positioning so it escapes the list's overflow clip", async () => {
+    // Regression for the clipped/cut-off popover: the panel must be position:fixed
+    // (not absolute) so it is not clipped by the ancestors' overflow-x hidden/clip,
+    // and can be clamped into the viewport at any button position. See SoListFilterBar.tsx.
+    const user = userEvent.setup();
+    renderBar("/scm/sales-orders");
+    await user.click(screen.getByRole("button", { name: "More filters" }));
+    expect(screen.getByRole("dialog", { name: "More filters" }).style.position).toBe("fixed");
+  });
+
   it("an applied Warehouse row reads as the warehouse's name", async () => {
     renderBar("/scm/sales-orders?f=warehouse:is:e309c399-697c-4174-967f-ae2c888ad999&f=branding:contains:AKEMI");
     expect(await screen.findByText(/is KL WAREHOUSE/)).toBeTruthy();
