@@ -45,6 +45,13 @@ export type SoLineSourceFields = {
   stock_status_effective?: "READY" | "PARTIAL" | "PENDING" | null;
   coverage_po?: string | null;
   coverage_eta?: string | null;
+  /** The line's OWN incoming PO(s) — the PO raised against this so_item. On the
+   *  SO surface this WINS over the shipped-batch trace below (owner 2026-09-22):
+   *  the chip must name this order's PO, not the PO whose FIFO batch the goods
+   *  happened to ship from (shared stock can pull another order's lot). Absent
+   *  (no PO raised for the line) falls through to the shipped/ready/coverage
+   *  trace, so a stock-only line still shows where its goods came from. */
+  bound_source_pos?: string[];
   shipped_source_pos?: string[];
   shipped_source_adj?: boolean;
   ready_source_pos?: ReadySourceChip[];
@@ -139,6 +146,28 @@ export function SoSourceChips({
      「我以为是 bugs」. */
   coverage: CoverageState;
 }) {
+  /* The line's OWN incoming PO wins on the SO surface (owner 2026-09-22): a bound
+     PO is what THIS order raised for the line. The shipped-batch trace — the PO
+     whose FIFO lot the goods physically came out of, which on shared stock can be
+     ANOTHER order's PO — stays on the DO / SI surfaces, not here. */
+  const boundPos = line.bound_source_pos ?? [];
+  if (boundPos.length > 0) {
+    return (
+      <span className="flex min-w-0 flex-wrap items-center gap-1">
+        {boundPos.map((po) => (
+          <span
+            key={`b-${po}`}
+            title={`${sourcePoTitle(po)} This order's purchase order for this line.`}
+            className={chipBase}
+          >
+            {po}
+          </span>
+        ))}
+        {line.shipped_source_adj && <StockAdjChip />}
+      </span>
+    );
+  }
+
   const shippedPos = line.shipped_source_pos ?? [];
   const shippedSet = new Set(shippedPos);
   const fullyShipped = (line.delivered_qty ?? 0) > 0 && (line.remaining_qty ?? null) === 0;

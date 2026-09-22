@@ -197,6 +197,18 @@ describe('buildDashboard — months', () => {
     expect(payload.groups.costStructure.map((g) => g.key)).toEqual(['sofa', 'bedding', 'accessories', 'dining', 'others']);
   });
 
+  test('the default window starts no earlier than the first month with sales — the books\' empty months stay out (owner 2026-09-22); a named range is what was asked', async () => {
+    const { sb } = harness();
+    const r = await buildDashboard(sb, CO, [CO], { granularity: 'month', periods: 12, from: null, to: null }, TODAY);
+    if (!r.ok) throw new Error(r.reason);
+    /* The first sales credit is the SI of 2026-08-15; January's capital journal does not count. */
+    expect(r.payload.periods.map((p) => p.key)).toEqual(['2026-08', '2026-09', '2026-10', '2026-11']);
+    expect(r.payload.window).toEqual({ from: '2026-08-01', to: '2026-11-30' });
+    const ranged = await buildDashboard(sb, CO, [CO], { granularity: 'month', periods: 12, from: '2026-05', to: '2026-06' }, TODAY);
+    if (!ranged.ok) throw new Error(ranged.reason);
+    expect(ranged.payload.periods.map((p) => p.key)).toEqual(['2026-05', '2026-06']);
+  });
+
   test('August\'s actuals are the statements\' own figures — P&L, staff cost off the layout, Cash Flow, Performance, balance sheet', async () => {
     const { payload, app } = await build();
     const aug = payload.periods[0]!;

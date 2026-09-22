@@ -17,63 +17,41 @@
 // ---------------------------------------------------------------------------
 
 import { useEffect, useRef, useState } from "react";
+import { BUILD_ID_META, readBuildId } from "../lib/buildId";
 
-// Vite emits ONE hashed entry module (e.g. /assets3/index-AbC123.js). Its
-// filename changes on every build, so it's a free build id.
+// HOW A NEW BUILD IS DETECTED. Every build stamps a unique id
+// (Date.now().toString(36)) into <meta name="houzs-build-id"> in index.html
+// (vite.config.ts) — the SAME id lib/buildId.ts reads for the SW / localStorage
+// namespace. We compare the id THIS tab booted with against the id in a
+// freshly-fetched index.html; a difference means a newer build is live.
 //
-// The DIRECTORY is build.assetsDir and it moves: the 2026-07-31 edge-poison
-// outage took it "assets" -> "assets2" -> "assets3" inside an hour, and this
-// hook had "/assets/" written into three places — so the update prompt went
-// silently dead on the very deploy where "a new version is live, reload"
-// mattered most. Match ANY single-segment directory instead of naming it.
-//
-// The pattern is anchored to the WHOLE pathname and allows exactly ONE
-// directory segment, which is what a Vite asset URL looks like. That anchoring
-// is load-bearing: unanchored, it also matches the dev server's
-// /node_modules/.vite/deps/react.js (on its /deps/ segment) and this hook would
-// compare "react.js" against the deployed entry forever.
-const ENTRY_ASSET = /^\/[A-Za-z0-9_-]+\/([A-Za-z0-9_.-]+\.js)$/;
+// This used to compare the FILENAME of the first <script type=module> instead,
+// on the assumption (stated in this comment) that the entry chunk's hash changes
+// every build — true for Vite's index-AbC123.js. Under Rolldown the first module
+// script is rolldown-runtime-<hash>.js, whose content-hash is STABLE across app
+// builds, so boot === latest on every deploy and the prompt went silently dead
+// for everyone. The <meta> id is purpose-built per deploy and immune to bundler
+// chunk-naming AND to an assetsDir move (assets -> assets2 -> assets3, the
+// 2026-07-31 outage) alike. buildId.ts records the twin lesson: it moved OFF a
+// hashed chunk for exactly this reason; this hook was the one reader left behind.
 
-/** Exported for the unit test: the assetsDir-agnostic parse is the whole point
-    of this hook working after a namespace move, and nothing else would catch it
-    going silently dead again. */
-export function assetHashFrom(src: string): string | null {
-  let pathname: string;
-  try {
-    // Accepts both the absolute src the DOM gives us and the root-relative path
-    // parsed out of the served index.html; the base is never used for the
-    // former and irrelevant for the latter.
-    pathname = new URL(src, "http://build-id.invalid").pathname;
-  } catch {
-    return null;
-  }
-  const m = pathname.match(ENTRY_ASSET);
-  return m?.[1] ?? null;
-}
-
-/** The entry-chunk filename this tab booted with (null if we can't tell — e.g.
-    the dev server serves /src/main.tsx, not a hashed asset — then version
-    checking is simply skipped, never wrong). */
-function bootBuildId(): string | null {
-  const scripts = Array.from(
-    document.querySelectorAll('script[type="module"][src]'),
-  ) as HTMLScriptElement[];
-  for (const s of scripts) {
-    const h = assetHashFrom(s.src);
-    if (h) return h;
-  }
-  return null;
-}
-
-/** Exported for the unit test — see assetHashFrom above. */
+/** The build id stamped into a served index.html's <meta name="houzs-build-id">,
+    or null when the html carries no stamp (never treat a stampless page as a new
+    build). Exported for the unit test — a silent regression here is the whole
+    failure mode, so it is pinned directly. */
 export function latestBuildIdFrom(html: string): string | null {
-  // Match the ENTRY module <script ... src="/<assetsDir>/xxx.js"> specifically,
-  // so we compare like-for-like with bootBuildId() (NOT a <link modulepreload>,
-  // which would differ from the entry and false-positive every check).
-  const m = html.match(
-    /<script[^>]+type=["']module["'][^>]*\bsrc=["'](\/[A-Za-z0-9_-]+\/[A-Za-z0-9_.-]+\.js)["']/i,
-  );
-  return m?.[1] ? assetHashFrom(m[1]) : null;
+  const tag = html.match(new RegExp(`<meta[^>]*\\bname=["']${BUILD_ID_META}["'][^>]*>`, "i"))?.[0];
+  const content = tag?.match(/\bcontent=["']([^"']*)["']/i)?.[1]?.trim();
+  return content ? content : null;
+}
+
+/** The build id this tab booted with, or null on the dev server, where the meta
+    is absent (readBuildId → "dev") and version checking is simply skipped. Read
+    at call time, not import time, so a test can stamp the document first. */
+function bootBuildId(): string | null {
+  if (typeof document === "undefined") return null;
+  const id = readBuildId(document);
+  return id !== "dev" ? id : null;
 }
 
 export interface VersionCheckOptions {

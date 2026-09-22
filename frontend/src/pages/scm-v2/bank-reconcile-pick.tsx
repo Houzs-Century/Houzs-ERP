@@ -71,11 +71,17 @@ const MatchBar = ({ lines, entries }: { lines: BankLine[]; entries: LedgerEntry[
   const n = (count: number, word: string) => `${count} ${word}${count === 1 ? '' : (word === 'entry' ? 'ies' : 's')}`.replace('entryies', 'entries');
 
   return (
-    <div role="region" aria-label="Match the ticked movements and entries"
+    /* In the page column, stuck to the foot of the scrolling pane (the provider
+       renders it after the tab's content, so it stays in flow); the right padding
+       keeps the bottom-right + / Assistant / Back-to-top cluster (~144px) off the
+       buttons — the New PI page's own rule. It was `position: fixed` across the
+       window: the sidebar covered its left, the cluster its buttons (owner
+       2026-09-22 screenshot: 被挡着，超出了格子). */
+    <div role="region" aria-label="Match the ticked movements and entries" className="pr-4 lg:pr-36"
       style={{
-        position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 20,
+        position: 'sticky', bottom: 0, zIndex: 20, marginTop: 'var(--space-3)',
         display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap',
-        padding: 'var(--space-2) var(--space-4)', background: 'var(--c-paper, #fff)',
+        paddingTop: 'var(--space-2)', paddingBottom: 'var(--space-2)', paddingLeft: 'var(--space-4)', background: 'var(--c-paper, #fff)',
         borderTop: '2px solid var(--c-ink, #221f20)', boxShadow: '0 -4px 12px rgba(0,0,0,0.08)', fontSize: 'var(--fs-13)',
       }}>
       <span>
