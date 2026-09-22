@@ -91,6 +91,10 @@ async function fetchWithTimeout(url: string, init: RequestInit, path: string): P
     });
   } catch (e) {
     const requestId = requestIdFromError(e);
+    /* Mark an error TRANSIENT so authedFetch's loop replays it — for a GET, or a
+       mutation whose Idempotency-Key makes a replay safe (owner 2026-09-22: a save
+       must ride out a slow spell, not fail at the first stall). */
+    const markTransient = <E>(err: E): E => { (err as E & { transient?: boolean }).transient = true; return err; };
     if (callerSignal?.aborted) throw e;
     if (deadlineSignal?.aborted && e instanceof DOMException && (e.name === 'TimeoutError' || e.name === 'AbortError')) {
       /* A timed-out READ is just a read — "try again" is sound advice. A timed-out
@@ -109,13 +113,13 @@ async function fetchWithTimeout(url: string, init: RequestInit, path: string): P
         const hasIdemKey = Boolean(
           (init.headers as Record<string, string> | undefined)?.['Idempotency-Key'],
         );
-        throw correlateError(new Error(
+        throw markTransient(correlateError(new Error(
           hasIdemKey
             ? "That took too long, so we couldn't confirm whether it saved. Please retry this same action once; its safety key will check the original request instead of creating a duplicate."
             : "That took too long and we couldn't confirm whether it saved. Please refresh and check before trying again — saving twice may create a duplicate.",
-        ), requestId);
+        ), requestId));
       }
-      throw correlateError(new Error('The request took too long — please check your connection and try again.'), requestId);
+      throw markTransient(correlateError(new Error('The request took too long — please check your connection and try again.'), requestId));
     }
     /* A genuine network failure — offline, DNS, CORS, the server unreachable —
        surfaces as a TypeError ("Failed to fetch"), NOT a DOMException abort.
@@ -125,7 +129,7 @@ async function fetchWithTimeout(url: string, init: RequestInit, path: string): P
        DOMException, never a TypeError, so it never matches this and is re-thrown
        verbatim below — real aborts/timeouts keep today's behaviour. */
     if (e instanceof TypeError) {
-      throw correlateError(new Error('Network error — please check your connection and try again.'), requestId);
+      throw markTransient(correlateError(new Error('Network error — please check your connection and try again.'), requestId));
     }
     throw e;
   }
@@ -263,6 +267,16 @@ export async function authedFetch<T>(path: string, init?: RequestInit): Promise<
   // client — the earlier widen missed them, so a cold window still dumped
   // "Couldn't load orders" here. ~10s of spaced retries now rides it out.
   const isGet = !init?.method || String(init.method).toUpperCase() === 'GET';
+  /* A mutation that carries an Idempotency-Key is safe to REPLAY: the server
+     returns the original outcome instead of minting a second document. That is what
+     lets a transient gateway timeout (502/504) or a dropped connection on a SAVE be
+     ridden out below, exactly like a GET (owner 2026-09-22, "改单 saving 拿很久" +
+     504). Every SO save / payment / convert path already sends one. */
+  const hasIdemKey = Boolean((headers as Record<string, string>)['Idempotency-Key']);
+  // Bound once so the new retry backoffs below don't repeat `init?.signal` — an
+  // optional-parameter chain eslint's flow analysis mis-reads as always-present.
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- init is an optional parameter
+  const abortSignal = init?.signal;
   let res: Response;
   for (let attempt = 0; ; attempt++) {
     try {
@@ -270,6 +284,12 @@ export async function authedFetch<T>(path: string, init?: RequestInit): Promise<
     } catch (e) {
       if (init?.signal?.aborted) throw e;
       if (isGet && attempt < 4) { await abortableDelay(600 + attempt * 1200, init?.signal); continue; }
+      /* A timed-out / dropped IDEMPOTENT mutation is safe to replay (the key
+         dedupes), so ride out a transient stall instead of failing the save. */
+      const transientThrow = typeof e === 'object' && e !== null && (e as { transient?: unknown }).transient === true;
+      if (!isGet && hasIdemKey && attempt < 4 && transientThrow) {
+        await abortableDelay(600 + attempt * 1200, abortSignal); continue;
+      }
       throw e;
     }
     if (res.status === 503 && isGet && attempt < 4) { await abortableDelay(600 + attempt * 1200, init?.signal); continue; }
@@ -282,6 +302,13 @@ export async function authedFetch<T>(path: string, init?: RequestInit): Promise<
       if (/briefly unavailable|warming up|try again in a moment/i.test(warmText)) {
         await abortableDelay(600 + attempt * 1200, init?.signal); continue;
       }
+    }
+    /* A 502/504 is a transient GATEWAY timeout — a busy Worker or a cold Hyperdrive
+       pool that answered late (the owner's "saving 拿很久" then 504). A GET is always
+       safe to replay; a mutation is safe only with an Idempotency-Key, which makes
+       the server return the original outcome, never a second document. */
+    if ((res.status === 502 || res.status === 504) && (isGet || hasIdemKey) && attempt < 4) {
+      await abortableDelay(600 + attempt * 1200, abortSignal); continue;
     }
     break;
   }
