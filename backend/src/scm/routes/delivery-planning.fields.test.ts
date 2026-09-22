@@ -6,7 +6,7 @@
 // never leak into this list (it was added here twice by mistake and removed).
 import { describe, expect, it } from 'vitest';
 
-import { HC_MESSAGE_STATUS_VALUES } from './delivery-planning';
+import { HC_MESSAGE_STATUS_VALUES } from './delivery-planning-fields';
 
 describe('delivery_message_status whitelist', () => {
   it('is the 23-value workflow set, with no duplicates', () => {
