@@ -45,7 +45,7 @@ export function EditProjectSheet({
   /** Resolves true when the patch saved, so the sheet can close itself. */
   onSave: (patch: Record<string, unknown>) => Promise<boolean>;
 }) {
-  const [name, setName] = useState(project.name ?? "");
+  const [name, setName] = useState(project.name);
   const [booth, setBooth] = useState(project.booth_no ?? "");
   const [venue, setVenue] = useState(project.venue ?? "");
   const [organizer, setOrganizer] = useState(project.organizer ?? "");
@@ -67,7 +67,7 @@ export function EditProjectSheet({
       const t = next.trim();
       if (t !== (cur ?? "")) patch[key] = t || null;
     };
-    if (name.trim() !== (project.name ?? "")) patch.name = name.trim();
+    if (name.trim() !== project.name) patch.name = name.trim();
     put("booth_no", booth, project.booth_no);
     put("venue", venue, project.venue);
     put("organizer", organizer, project.organizer);
