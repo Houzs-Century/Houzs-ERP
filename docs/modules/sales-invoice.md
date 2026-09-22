@@ -37,9 +37,13 @@ accounting staff. Money is integer sen.
 - Migrated (AutoCount cutover) invoices are flagged `migrated_no_stock`:
   `postSiRevenue` and `applyCustomerCreditToSi` both check the flag and
   short-circuit — no GL journal, no customer-credit spend — because
-  AutoCount already accounted for that money. A carried-over delivery
-  AutoCount never invoiced can still be invoiced normally, but only when it
-  is on the generated not-yet-invoiced allow-list.
+  AutoCount already accounted for that money. A carried-over delivery is
+  invoiced by hand like any native one — the ERP is the sole book
+  (`AUTOCOUNT_IS_ACTIVE_BOOK = false`, owner 2026-09-22), so
+  `deliveryMustMirrorAutoCount` returns false for all; the `do_to_iv`
+  write-back stays suppressed for a migrated source so nothing double-books in
+  AutoCount. Flip the flag back to true to restore the mirror regime, where the
+  `migrated-deliveries-not-invoiced.generated.ts` allow-list governs exceptions.
 - Stock is **never** moved by this document, at any status — the goods left
   at the Delivery Order; the SI only ever moves money and the ledger.
 
@@ -124,11 +128,11 @@ accounting staff. Money is integer sen.
 - Do not render a uuid-fragment fallback when a linked document's readable
   number is missing — show a dash; a hex fragment reads as a real (wrong)
   reference and can be mistaken for a broken link.
-- Do not assume every migrated delivery can be invoiced — only ones on
-  `migrated-deliveries-not-invoiced.generated.ts`; one migrated line
-  anywhere in a batch pick refuses the **whole** invoice rather than
-  silently narrowing it (a partial invoice cannot carry AutoCount's
-  number).
+- Every migrated delivery is invoiceable by hand now (`AUTOCOUNT_IS_ACTIVE_BOOK
+  = false`). Were AutoCount reinstated as the book, only deliveries on
+  `migrated-deliveries-not-invoiced.generated.ts` bill freely and one migrated
+  line anywhere in a batch pick would refuse the **whole** invoice (a partial
+  invoice cannot carry AutoCount's number).
 - Do not treat a short/incomplete migrated invoice as an SI-side bug — an
   absent migrated invoice is a symptom of a short Delivery Order (a missing
   line or price); fix the delivery, and the invoice writes itself.
