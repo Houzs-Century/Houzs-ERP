@@ -61,23 +61,36 @@ export const FABRIC_IDENTITY_KEYS: readonly string[] = [
  *  the PDF (vendor/shared/so-line-display.ts). Both desktop and mobile copied
  *  it before this module existed.
  *
- *  `extraAddonNote` / `extraAddonAmountRM` / `specials` / `specialLabels` /
- *  `specialChoices` — the per-line SPECIAL ORDER payload (Custom-other free
- *  text and ticked add-on codes). Same shape as `remark`: a note the operator
- *  wrote on ONE line about ONE build, never a category-wide axis to align.
- *  Owner reported 2026-09-11 against HC-SO-007678: on the mobile SO he added
- *  a customize-drawer note to HILTON (a bedframe line) and saved; after
- *  reload FENRIR — a different bedframe line further down the same order —
- *  carried the identical text and would not let him remove it. Traced: this
- *  list only excluded `remark` and `buildKey`, so `cascadeMasterVariants`
- *  FORCED the master's extraAddonNote (and its four siblings) onto every
- *  follower of the same category, exactly like the "latest wins" rule for a
- *  sofa's fabric — appropriate for a fabric shared across compartments of
- *  one physical sofa, wrong for a per-line note. Adding the five keys here
- *  closes both DESKTOP and MOBILE (both surfaces import this module). */
+ *  `extraAddonNote` / `extraAddonAmountRM` — the FREE-TEXT special add-on (a
+ *  note the operator typed on ONE line, and the money folded into that line).
+ *  Never a category-wide axis to align. Owner reported 2026-09-11 against
+ *  HC-SO-007678: on the mobile SO he added a customize-drawer note to HILTON (a
+ *  bedframe line) and saved; after reload FENRIR — a different bedframe line
+ *  further down the same order — carried the identical text and would not let
+ *  him remove it. It stays here so a hand-typed one-off note (and its charge)
+ *  never travels.
+ *
+ *  The STRUCTURED special-order picks (`specials` / `specialLabels` /
+ *  `specialChoices`) moved to SPECIAL_ORDER_KEYS below: the owner's 2026-09-22
+ *  ruling is that a sofa SET's compartments SHARE their special orders, so those
+ *  DO travel — but scoped to ONE physical sofa (buildKey), exactly like fabric,
+ *  so two different sofa sets on one order never leak specials into each other,
+ *  which is the same failure mode as the bedframe note above. */
 export const NEVER_INHERITED_KEYS: readonly string[] = [
   'remark', 'buildKey',
   'extraAddonNote', 'extraAddonAmountRM',
+];
+
+/** The structured SPECIAL ORDER payload — the ticked add-on codes, their labels
+ *  and their per-code option-group choices. Owner 2026-09-22: a modular sofa
+ *  SET's compartment lines share ONE set of special orders, so picking them on
+ *  the first line propagates to the siblings. Scoped to ONE physical sofa
+ *  (buildKey) via the `differentSofa` guard in followerVariants — like
+ *  FABRIC_IDENTITY_KEYS — so specials travel between the compartments of one
+ *  build and never across two different sofas on the same order. Stripped at
+ *  SEED time (seedFollowerVariants) so a fresh line starts blank and the live
+ *  cascade fills it a tick later only when the two lines are the same sofa. */
+export const SPECIAL_ORDER_KEYS: readonly string[] = [
   'specials', 'specialLabels', 'specialChoices',
 ];
 
@@ -186,6 +199,12 @@ export function seedFollowerVariants(
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(masterVariants)) {
     if (NEVER_INHERITED_KEYS.includes(k)) continue;
+    /* Special orders are build-scoped, and at SEED time a fresh follower has no
+       buildKey yet, so we cannot tell whether it is the same sofa as the master.
+       Leave them out of the seed and let the live cascade fill them a tick later
+       once the follower's own build is known — that keeps a NEW sofa's specials
+       from being pre-copied off a DIFFERENT sofa's master. */
+    if (SPECIAL_ORDER_KEYS.includes(k)) continue;
     out[k] = v;
   }
   return out;
@@ -221,7 +240,10 @@ export function followerVariants(
   let changed = false;
   for (const [k, masterVal] of Object.entries(master)) {
     if (NEVER_INHERITED_KEYS.includes(k)) continue;
-    if (differentSofa && FABRIC_IDENTITY_KEYS.includes(k)) continue;
+    /* Fabric identity AND the structured special orders are scoped to ONE
+       physical sofa: they cross between the compartments of one build (same or
+       absent buildKey) but never between two different sofas on one order. */
+    if (differentSofa && (FABRIC_IDENTITY_KEYS.includes(k) || SPECIAL_ORDER_KEYS.includes(k))) continue;
     if (isBlank(masterVal)) continue;
     const masterMoved = previousMaster !== undefined && previousMaster[k] !== masterVal;
     if (!masterMoved && !isBlank(follower[k])) continue;

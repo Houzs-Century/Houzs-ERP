@@ -81,6 +81,26 @@ const isReordering = (target: string, parts: string[]): boolean => {
   return walk(parts, target);
 };
 
+/* ── Canonical special order (owner 2026-09-22) ─────────────────────────────
+   Every line of a sofa SET must list the same add-ons in the SAME order — the
+   compartment lines used to print them in whatever order the operator ticked
+   them, so line 1 read "Backcushion Firmer + Nylon Fabric + Seat Base" while a
+   sibling read them reversed. The fixed attribute segments (fabric / seat /
+   divan / gap / leg) are already emitted in a fixed sequence by
+   buildVariantSummary; this pins the ONE remaining free axis — the specials —
+   to a deterministic order by sorting the labels.
+
+   Codepoint comparison, NOT localeCompare: localeCompare is ICU-dependent and
+   can differ between the Worker runtime and Node/test, which would defeat the
+   whole point of a single canonical string. mfg-pricing-recompute imports the
+   same comparator for the persisted `custom_specials` column, so the rendered
+   SPECIAL segment and the stored composition can never disagree on order. */
+export const compareSpecialLabels = (a: string, b: string): number =>
+  (a < b ? -1 : a > b ? 1 : 0);
+
+export const canonicalSpecialOrder = (labels: string[]): string[] =>
+  labels.slice().sort(compareSpecialLabels);
+
 export function foldRedundantSpecials(list: string[]): string[] {
   if (list.length < 2) return list;
   const info = list.map((v, i) => ({ v, i, id: SPECIAL_ID(v), n: SPECIAL_PARTS(v).length }));
@@ -324,7 +344,11 @@ export function buildVariantSummary(
   const picked = foldRedundantSpecials(specialsList(variants.specials ?? variants.special));
   const recordedRaw = specialsList(variants.specialsRecorded)
     .filter((c) => !picked.some((p) => p.toLowerCase() === c.toLowerCase()));
-  const specials = [...picked, ...recordedRaw];
+  // Owner 2026-09-22: print the add-ons in ONE canonical order so a sofa SET's
+  // compartment lines match each other and match the persisted custom_specials.
+  // The free-text extra add-on NOTE is pushed onto specialBits AFTER this, so it
+  // always trails the sorted picks (it is a note, not a catalogued add-on).
+  const specials = canonicalSpecialOrder([...picked, ...recordedRaw]);
   const choicesMap =
     variants.specialChoices && typeof variants.specialChoices === 'object'
       ? (variants.specialChoices as Record<string, unknown>)

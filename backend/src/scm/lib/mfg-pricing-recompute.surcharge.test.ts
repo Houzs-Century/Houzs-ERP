@@ -124,6 +124,57 @@ describe('SOFA: a priced add-on is now CHARGED, not only costed', () => {
   });
 });
 
+/* ── custom_specials prints in ONE canonical order (owner 2026-09-22) ────────
+   The compartment lines of a sofa SET each carried the same add-ons, but the
+   printed `custom_specials` listed them in whatever order the operator ticked
+   them per line — so line 1 read "Backcushion Firmer + Nylon Fabric + Seat Base"
+   while a sibling read them reversed. The composition is now sorted by label, so
+   every line (and the DO/SI/PDF copies that read this column) match. */
+describe('custom_specials is composed in a canonical, per-line-independent order', () => {
+  const CANON: SpecialAddonDef[] = [
+    { code: 'Backcushion Firmer', sellingPriceSen: 0, costPriceSen: 0 },
+    { code: 'Nylon Fabric', sellingPriceSen: 0, costPriceSen: 0 },
+    { code: 'Seat Base Fully Cover with no Leg', sellingPriceSen: 0, costPriceSen: 0 },
+  ];
+  const runWith = (specials: string[]) =>
+    recomputeFromSnapshot(
+      line('SF-1', 'sofa', { cells: SOFA_CELLS, depth: '24', specials }),
+      sofa, null, EMPTY_CONFIG, [], SOFA_MODULE_PRICES, null, null, null, null,
+      CANON, null, null, null, false,
+    );
+  const labels = (r: ReturnType<typeof runWith>) =>
+    (r.custom_specials ?? []).map((s) => s.description);
+
+  it('two lines with the same picks in a DIFFERENT order print identically', () => {
+    const lineOne = runWith(['Backcushion Firmer', 'Nylon Fabric', 'Seat Base Fully Cover with no Leg']);
+    const sibling = runWith(['Seat Base Fully Cover with no Leg', 'Nylon Fabric', 'Backcushion Firmer']);
+    expect(labels(lineOne)).toEqual(labels(sibling));
+  });
+
+  it('the canonical order is sorted by label', () => {
+    const r = runWith(['Seat Base Fully Cover with no Leg', 'Backcushion Firmer', 'Nylon Fabric']);
+    expect(labels(r)).toEqual([
+      'Backcushion Firmer',
+      'Nylon Fabric',
+      'Seat Base Fully Cover with no Leg',
+    ]);
+  });
+
+  it('the free-text extra add-on note trails the sorted picks', () => {
+    const r = recomputeFromSnapshot(
+      line('SF-1', 'sofa', {
+        cells: SOFA_CELLS, depth: '24',
+        specials: ['Nylon Fabric', 'Backcushion Firmer'],
+        extraAddonNote: 'AAA custom note',
+      }),
+      sofa, null, EMPTY_CONFIG, [], SOFA_MODULE_PRICES, null, null, null, null,
+      CANON, null, null, null, false,
+    );
+    // "AAA…" sorts first alphabetically, but must stay LAST as the free-text note.
+    expect(labels(r)).toEqual(['Backcushion Firmer', 'Nylon Fabric', 'AAA custom note']);
+  });
+});
+
 describe('sell_price_sen = 0 no longer exempts a line from its own surcharge', () => {
   it('a 0-priced product with a priced add-on charges the add-on', () => {
     expect(runBedframe(['Hydraulic'], 0).unit_price_sen).toBe(ADDON_SEN);

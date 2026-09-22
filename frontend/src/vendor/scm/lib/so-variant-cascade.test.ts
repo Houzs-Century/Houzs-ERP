@@ -15,6 +15,7 @@ import {
   seedFollowerVariants,
   CASCADE_CATEGORIES,
   NEVER_INHERITED_KEYS,
+  SPECIAL_ORDER_KEYS,
   type CascadeLine,
   type MasterVariantSnapshot,
 } from './so-variant-cascade';
@@ -95,31 +96,21 @@ describe('what never travels', () => {
     expect(out.variants[1]).toEqual({ seatHeight: '21' });
   });
 
-  test('the SPECIAL-ORDER payload stays per line — HC-SO-007678 leak', () => {
-    // Owner 2026-09-11: a customize-drawer note added to HILTON leaked to
-    // FENRIR on the same order. The five keys below hold that payload; none
-    // is a category-wide axis, so none may travel between lines.
+  test('the FREE-TEXT special add-on note + its charge stay per line — HC-SO-007678 leak', () => {
+    // Owner 2026-09-11: a customize-drawer NOTE added to HILTON leaked to FENRIR
+    // on the same order. The free-text note and its folded charge are a one-off
+    // an operator typed on ONE line, so they never travel.
     const out = run(
       [
-        sofa({
-          extraAddonNote: 'add drawer left + right',
-          extraAddonAmountRM: 150,
-          specials: ['SP-01', 'SP-02'],
-          specialLabels: ['Drawer L', 'Drawer R'],
-          specialChoices: { 'SP-01': ['12"'] },
-          seatHeight: '21',
-        }),
+        sofa({ extraAddonNote: 'add drawer left + right', extraAddonAmountRM: 150, seatHeight: '21' }),
         sofa(),
       ],
       {},
     );
-    // Seat height IS category-wide, so it travels; the special payload does not.
+    // Seat height IS category-wide, so it travels; the free-text add-on does not.
     expect(out.variants[1]).toEqual({ seatHeight: '21' });
     expect(out.variants[1]).not.toHaveProperty('extraAddonNote');
     expect(out.variants[1]).not.toHaveProperty('extraAddonAmountRM');
-    expect(out.variants[1]).not.toHaveProperty('specials');
-    expect(out.variants[1]).not.toHaveProperty('specialLabels');
-    expect(out.variants[1]).not.toHaveProperty('specialChoices');
   });
 
   test('the never-inherit list is exactly the per-line keys we know about', () => {
@@ -128,6 +119,8 @@ describe('what never travels', () => {
       'extraAddonAmountRM',
       'extraAddonNote',
       'remark',
+    ]);
+    expect([...SPECIAL_ORDER_KEYS].sort()).toEqual([
       'specialChoices',
       'specialLabels',
       'specials',
@@ -155,6 +148,61 @@ describe('what never travels', () => {
       {},
     );
     expect(out.variants[1]).toEqual({ buildKey: 'B-1', fabricCode: 'AMOR-12' });
+  });
+});
+
+describe('a sofa SET shares its special orders (owner 2026-09-22)', () => {
+  test('picking specials on the first compartment propagates to the siblings', () => {
+    // The owner's report: model 8030 SOFFIO carried as 4 compartment lines; the
+    // special ticked on line 1 must appear on 8030-CNR / 8030-1NA / 8030-1A(RHF).
+    // These lines carry no buildKey yet (one build being assembled), so they are
+    // the same sofa and the picks travel.
+    const master = sofa({
+      specials: ['Backcushion Firmer', 'Nylon Fabric', 'Seat Base Fully Cover with no Leg'],
+      specialLabels: ['Backcushion Firmer', 'Nylon Fabric', 'Seat Base Fully Cover with no Leg'],
+      specialChoices: { 'Backcushion Firmer': ['Firm'] },
+      seatHeight: '35',
+      legHeight: '1"',
+    });
+    const out = run([master, sofa(), sofa()], { sofa: {} });
+    expect(out.variants[1]).toEqual(master.variants);
+    expect(out.variants[2]).toEqual(master.variants);
+  });
+
+  test('specials do NOT cross between two DIFFERENT sofas on one order', () => {
+    // Same isolation the fabric colour gets: two builds, two buildKeys.
+    const out = run(
+      [
+        sofa({ buildKey: 'B-1', specials: ['Nylon Fabric'], seatHeight: '35' }),
+        sofa({ buildKey: 'B-2' }),
+      ],
+      {},
+    );
+    // Seat size is category-wide and travels; the specials are build-scoped and do not.
+    expect(out.variants[1]).toEqual({ buildKey: 'B-2', seatHeight: '35' });
+    expect(out.variants[1]).not.toHaveProperty('specials');
+  });
+
+  test('a sibling that hand-overrode its special is pulled back when line 1 moves again', () => {
+    const first = sofa({ specials: ['Nylon Fabric'] });
+    let out = run([first, sofa()], { sofa: {} });
+    expect(out.variants[1]).toEqual({ specials: ['Nylon Fabric'] });
+
+    // Sibling hand-changed; nothing on the master moved, so it stands.
+    const handEdited = sofa({ specials: ['Wooden Arm'] });
+    out = run([first, handEdited], out.masters);
+    expect(out.variants[1]).toBe(handEdited.variants);
+
+    // Line 1 re-picks; the master's latest wins (owner 2026-08-21 ruling).
+    const moved = sofa({ specials: ['Nylon Fabric', 'Backcushion Firmer'] });
+    out = run([moved, handEdited], out.masters);
+    expect(out.variants[1]).toEqual({ specials: ['Nylon Fabric', 'Backcushion Firmer'] });
+  });
+
+  test('seedFollowerVariants leaves specials out — the live cascade fills them build-scoped', () => {
+    expect(
+      seedFollowerVariants({ specials: ['Nylon Fabric'], specialChoices: { x: ['y'] }, seatHeight: '35' }),
+    ).toEqual({ seatHeight: '35' });
   });
 });
 
