@@ -61,12 +61,12 @@ export function useSoVariantCascade(args: {
     const editIds = orderedIds.filter((id) => id in editingDrafts);
     const lines = [
       ...editIds.map((id) => ({
-        category: editingDrafts[id]!.itemGroup ?? '',
-        variants: (editingDrafts[id]!.variants ?? {}) as Record<string, unknown>,
+        category: editingDrafts[id]!.itemGroup,
+        variants: editingDrafts[id]!.variants,
       })),
       ...addingDrafts.map((row) => ({
-        category: row.draft.itemGroup ?? '',
-        variants: (row.draft.variants ?? {}) as Record<string, unknown>,
+        category: row.draft.itemGroup,
+        variants: row.draft.variants,
       })),
     ];
     if (lines.length === 0) return;
@@ -76,30 +76,28 @@ export function useSoVariantCascade(args: {
     );
     masterSnapshotRef.current = masters;
 
-    // Write the persisted-line results back, skipping frozen lines (locked) and
-    // any line whose variants object is unchanged (=== the input ref).
+    /* Write the persisted-line results back, skipping frozen lines (locked) and
+       any line whose variants object is unchanged (=== the input ref). "Did
+       anything move" is read off the RESULT by reference, not a flag a callback
+       mutates — the repo's pattern (so-add-lines.ts), which control-flow analysis
+       can follow and React can `===`-bail on. */
     setEditingDrafts((prev) => {
-      let changed = false;
       const next: Record<string, SoLineDraft> = { ...prev };
       editIds.forEach((id, i) => {
         const v = variants[i]!;
-        if (v === lines[i]!.variants || frozenIds.has(id) || !prev[id]) return;
+        if (v === lines[i]!.variants || frozenIds.has(id) || !(id in prev)) return;
         next[id] = { ...prev[id]!, variants: v };
-        changed = true;
       });
-      return changed ? next : prev;
+      return editIds.some((id) => next[id] !== prev[id]) ? next : prev;
     });
 
     // Then the staged adds (never frozen — they are not yet persisted).
     setAddingDrafts((prev) => {
-      let changed = false;
       const next = prev.map((row, j) => {
         const v = variants[editIds.length + j]!;
-        if (v === row.draft.variants) return row;
-        changed = true;
-        return { ...row, draft: { ...row.draft, variants: v } };
+        return v === row.draft.variants ? row : { ...row, draft: { ...row.draft, variants: v } };
       });
-      return changed ? next : prev;
+      return next.some((row, j) => row !== prev[j]) ? next : prev;
     });
     // editingDrafts / addingDrafts identity change is what re-runs this; frozenIds
     // and the setters are stable.

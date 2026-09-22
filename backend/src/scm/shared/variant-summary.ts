@@ -346,9 +346,10 @@ export function buildVariantSummary(
     .filter((c) => !picked.some((p) => p.toLowerCase() === c.toLowerCase()));
   // Owner 2026-09-22: print the add-ons in ONE canonical order so a sofa SET's
   // compartment lines match each other and match the persisted custom_specials.
-  // The free-text extra add-on NOTE is pushed onto specialBits AFTER this, so it
-  // always trails the sorted picks (it is a note, not a catalogued add-on).
-  const specials = canonicalSpecialOrder([...picked, ...recordedRaw]);
+  // Sorted WITHIN each group, not across: the picked add-ons still print before
+  // the recorded-only ones (owner's choice 甲, 2026-09-03), and the free-text
+  // extra add-on NOTE is pushed onto specialBits AFTER this, so it always trails.
+  const specials = [...canonicalSpecialOrder(picked), ...canonicalSpecialOrder(recordedRaw)];
   const choicesMap =
     variants.specialChoices && typeof variants.specialChoices === 'object'
       ? (variants.specialChoices as Record<string, unknown>)
