@@ -841,6 +841,17 @@ export async function applySoAmendment(
       if (!Object.prototype.hasOwnProperty.call(AMENDABLE_HEADER_FIELDS, key)) continue;
       const col = AMENDABLE_HEADER_FIELDS[key];
       headerUpdates[col] = value === '' ? null : value;
+      /* A delivery-date amendment ALSO stamps `amended_delivery_date`, not only the
+         `customer_delivery_date` it replaces. The visible surfaces render the raw
+         `customer_delivery_date` (the SO detail's "Delivery Date" and the HC
+         delivery sheet both read it directly), so the approved date has to land
+         there to be SEEN. But every AutoCount -> ERP delivery-date re-sync skips a
+         header ONLY when `amended_delivery_date` is set, so without also stamping it
+         those syncs clobbered the approved reschedule back to the AutoCount book
+         value (BUG-HISTORY 2026-09-22, HC-SO-011177). The customer's ORIGINAL date
+         is preserved in the amendment's `old_header_snapshot` and the
+         `AMENDMENT_SO_APPROVED` audit row, so replacing it stays fully auditable. */
+      if (key === 'customerDeliveryDate') headerUpdates['amended_delivery_date'] = value === '' ? null : value;
       headerApplied.push(`${col}=${value ?? 'cleared'}`);
     }
 
@@ -869,11 +880,13 @@ export async function applySoAmendment(
       if (hUpdErr) throw new Error(`applySoAmendment: header change apply failed: ${hUpdErr.message}`);
     }
 
-    /* Delivery-date master-follower cascade — mirrors the header PATCH: when the
-       header's customer_delivery_date moves, EVERY line takes the new date and
-       its per-line override flag clears, so MRP's order-by derivation (which
-       reads line_delivery_date) stays accurate. Without this an approved date
-       amendment would move the header but leave every line on the old date. */
+    /* Delivery-date master-follower cascade — every line takes the new date so the
+       SO detail's per-line date matches the header, and the override flag is set
+       TRUE (not cleared): an approved amendment IS a deliberate date, and marking it
+       stops the book LINE re-sync (which reverts non-overridden lines to the
+       AutoCount value) from re-opening the header/line split — the line-level twin
+       of `amended_delivery_date` protecting the header. See BUG-HISTORY 2026-09-22
+       (HC-SO-011177). */
     if ('customerDeliveryDate' in headerChanges && frozenLineFilter !== null) {
       const { error: cascErr } = await skipFrozen(sb.from('mfg_sales_order_items')
         .update({
@@ -884,7 +897,7 @@ export async function applySoAmendment(
              is non-fatal outside atomic mode, so a 500 here would commit the
              header amendment and silently leave every line on its OLD date. */
           line_delivery_date: dateOrNull(headerChanges['customerDeliveryDate']),
-          line_delivery_date_overridden: false,
+          line_delivery_date_overridden: true,
         })
         .eq('doc_no', docNo));
       if (cascErr) {
