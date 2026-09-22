@@ -123,7 +123,8 @@ import type {
   Paginated,
 } from "./projects/types";
 import { composeDefaultProjectName, viewableMime, googleCalendarUrl } from "./projects/projectHelpers";
-import { salesOrderProjectLabel, type SoloMaskProject } from "./projects/soloOrganizerMask";
+import { salesOrderProjectLabel, shownProjectName, shownOrganizer, isSoloMasked, maskSoloOrganizer, SOLO_ORGANIZER_MASK, type SoloMaskProject } from "./projects/soloOrganizerMask";
+import { SoloSafeName, useCanSeeSoloOrganizer } from "./projects/SoloSafeName";
 import { STATUS_OPTIONS, ProjectStatusSelect } from "./projects/projectStatus";
 import { OrganizerPicker, VenuePicker } from "./projects/ProjectPickers";
 import { CreateProjectPanel } from "./projects/CreateProjectPanel";
@@ -558,6 +559,7 @@ const PROJECTS_LIST_FILTER_KEYS = [
 
 function ProjectsListView() {
   const { can, user } = useAuth();
+  const seeOrg = canSeeSoloOrganizer(user); // solo roadshow organizer: BD / Owner / weisiang only (owner 2026-09-18)
   const toast = useToast();
   const navigate = useNavigate();
   const { unreadByProject } = useNotifications();
@@ -806,7 +808,7 @@ function ProjectsListView() {
         .map((c) => ({ key: c.key, label: c.label || c.key, getValue: c.getValue! }));
       // Owner 2026-07-23: add an Organizer column to the EXPORT only (not the
       // on-screen table), placed right after Brand.
-      const orgCol = { key: "organizer", label: "Organizer", getValue: (r: ProjectRow) => exportOrganizer(r.organizer) };
+      const orgCol = { key: "organizer", label: "Organizer", getValue: (r: ProjectRow) => exportOrganizer(shownOrganizer(r, seeOrg)) };
       const brandIdx = csvCols.findIndex((c) => c.label === "Brand");
       if (brandIdx >= 0) csvCols.splice(brandIdx + 1, 0, orgCol);
       else csvCols.push(orgCol);
@@ -908,7 +910,7 @@ function ProjectsListView() {
                   {unread > 9 ? "9+" : unread}
                 </span>
               )}
-              {r.name}
+              {shownProjectName(r, seeOrg)}
               {r.archived_at && (
                 <span className="inline-flex items-center rounded-full border border-ink-muted/40 bg-ink-muted/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-ink-muted">
                   Archived
@@ -920,7 +922,7 @@ function ProjectsListView() {
           </div>
         );
       },
-      getValue: (r) => r.name,
+      getValue: (r) => shownProjectName(r, seeOrg),
     },
     {
       key: "stage",
@@ -1524,7 +1526,7 @@ function ProjectsListView() {
                       )}
                     </div>
                     <div className="mt-1 truncate font-display text-[15px] font-bold text-ink group-hover:text-primary">
-                      {r.name}
+                      <SoloSafeName p={r} />
                     </div>
                     {meta && <div className="mt-0.5 truncate text-[11.5px] text-ink-muted">{meta}</div>}
                     {/* Crew cards outside My Pending mode: the caller's own due
@@ -1627,7 +1629,7 @@ function ProjectsListView() {
                         className="group flex w-full items-center justify-between gap-2 text-left"
                       >
                         <span className="min-w-0 flex-1 truncate text-[12px] font-semibold text-ink group-hover:text-primary">
-                          {r.name}
+                          <SoloSafeName p={r} />
                         </span>
                         <span className="shrink-0 font-mono text-[10.5px] text-ink-muted">
                           {formatDate(r.start_date)}
@@ -1842,12 +1844,12 @@ function FinanceListView() {
       render: (r) => (
         <div>
           <div className="truncate text-[12px] font-semibold text-ink">
-            {r.name}
+            <SoloSafeName p={r} />
           </div>
           {r.venue && (
             <div className="truncate text-[10.5px] text-ink-muted">
               {r.venue}
-              {r.organizer ? ` · ${r.organizer}` : ""}
+              {shownOrganizer(r, canSeeSoloOrganizer(user)) ? ` · ${shownOrganizer(r, canSeeSoloOrganizer(user))}` : ""}
             </div>
           )}
         </div>
@@ -3306,6 +3308,7 @@ function ProjectDetailContent({
   const [archiveMenuOpen, setArchiveMenuOpen] = useState(false);
 
   const p = detail.data?.project;
+  const detailName = p ? shownProjectName({ ...p, event_type_slug: eventTypes.find((t) => t.id === p.event_type_id)?.slug ?? null }, canSeeSoloOrganizer(user)) : null; // solo organizer masked outside BD/Owner/weisiang (owner 2026-09-18)
 
   // PIC picker source — ALL Sales-department members, regardless of
   // brand (owner: Option A). The backend ?department= filter matches the
@@ -3415,10 +3418,10 @@ function ProjectDetailContent({
     <DetailLayout
       breadcrumbs={[
         { label: "Projects", to: "/projects" },
-        { label: p?.name || "Loading…" },
+        { label: detailName || "Loading…" },
       ]}
       eyebrow="Project"
-      title={p?.name || "Loading…"}
+      title={detailName || "Loading…"}
       description={p ? `${STAGE_LABEL[p.stage]}${p.brand ? ` · ${p.brand}` : ""}${p.venue ? ` · ${p.venue}` : ""}${p.duration_days ? ` · ${p.duration_days} day${p.duration_days === 1 ? "" : "s"}` : ""}` : undefined}
       // Owner 2026-07-29: keep the event title (+ actions) pinned while
       // scrolling the project detail — same sticky chrome ASSR detail uses.
@@ -3495,7 +3498,7 @@ function ProjectDetailContent({
               docTitle="Project"
               docNo={p.code ?? String(id)}
               rows={[
-                { label: "Project", value: p.name || "—" },
+                { label: "Project", value: detailName || "—" },
                 { label: "Status", value: p.status || "—" },
                 { value: "Print now opens the print view in a new tab." },
               ]}
@@ -4072,6 +4075,7 @@ function ProjectSpecStrip({
 }) {
   const [editing, setEditing] = useState(false);
   const slug = eventTypes.find((t) => t.id === p.event_type_id)?.slug ?? null;
+  const soloMasked = isSoloMasked({ ...p, event_type_slug: slug }, useCanSeeSoloOrganizer()); // Name + Organizer read-only and masked
   const suggested = composeDefaultProjectName({
     state: p.state,
     brand: p.brand,
@@ -4270,11 +4274,7 @@ function ProjectSpecStrip({
           <SpecValue muted mono>{p.state ?? "—"}</SpecValue>
         </SpecCell>
         <SpecCell label="Organizer">
-          <OrganizerPicker
-            value={p.organizer}
-            onChange={(v) => patch({ organizer: v })}
-            className={SPEC_INPUT_CLASS}
-          />
+          {soloMasked ? <SpecValue muted>{SOLO_ORGANIZER_MASK}</SpecValue> : <OrganizerPicker value={p.organizer} onChange={(v) => patch({ organizer: v })} className={SPEC_INPUT_CLASS} />}
         </SpecCell>
         <SpecCell label="Contractor">
           <ContractorPicker
@@ -4328,12 +4328,12 @@ function ProjectSpecStrip({
         {editing && (<>
         <SpecCell label="Name" span={p.start_date ? 2 : 3}>
           <SpecTextField
-            editing={editing}
-            value={p.name}
+            editing={!soloMasked}
+            value={soloMasked ? maskSoloOrganizer(p) : p.name}
             placeholder="—"
             onChange={(v) => patch({ name: v })}
           />
-          {editing && hasAutoSuggestion && (
+          {editing && hasAutoSuggestion && !soloMasked && (
             <button
               onClick={() => patch({ name: suggested! })}
               className="mt-1.5 inline-flex max-w-full items-center gap-1 truncate rounded border border-dashed border-accent/40 bg-accent-soft/20 px-1.5 py-0.5 text-[9.5px] font-semibold text-accent transition-colors hover:bg-accent-soft/40"

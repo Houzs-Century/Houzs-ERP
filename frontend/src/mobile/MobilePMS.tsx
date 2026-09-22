@@ -30,6 +30,7 @@ import { DateField } from "../vendor/scm/components/DateField";
 import { DefectActionsCtx, DefectFileActions, type AttachmentAction } from "./MobilePmsDefectActions";
 import { PlanFileChips } from "./MobilePmsPlanFileChips";
 import { floorPlanTileVisible } from "./MobilePmsFloorPlanTiles";
+import { SoloSafeName, useCanSeeSoloOrganizer, isSoloMasked, shownProjectName } from "../pages/projects/SoloSafeName";
 
 /* ------------------------------------------------------------------ *
  * Mobile Project (PMS) — list + detail.
@@ -617,7 +618,7 @@ function ProjectListView({ onOpen, onBack }: { onOpen: (id: number) => void; onB
                     {/* Build Spec §27: project_title wraps 2 lines (no ellipsis) +
                         stage badge right; branding/venue chips; dates · PIC meta. */}
                     <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
-                      <span style={{ fontSize: 13, fontWeight: 800, color: "var(--ink)", lineHeight: 1.3 }}>{r.name || "—"}</span>
+                      <span style={{ fontSize: 13, fontWeight: 800, color: "var(--ink)", lineHeight: 1.3 }}><SoloSafeName p={r} /></span>
                       {salesList ? (
                         (r.sales_tasks_total ?? 0) > 0 ? (
                           <span
@@ -881,7 +882,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
     }
   };
 
-  const p = data?.project;
+  const p = data?.project; const soloMasked = isSoloMasked(p ?? { name: "" }, useCanSeeSoloOrganizer()); // solo organizer: BD/Owner/weisiang only (owner 2026-09-18)
   const archived = !!p?.archived_at;
   // Show finance only when the server says canFinancial AND it actually returned
   // the finance block (it strips it server-side for a role whose PMS position
@@ -1161,14 +1162,14 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
                   if (busy) return;
                   // Sequential single-field prompts (usePrompt returns one
                   // value); each null/cancel ends the flow, blanks are skipped.
-                  const fields: Array<[string, string, string | null | undefined]> = [
+                  const fields = ([
                     ["name", "Project name", p.name],
                     ["booth_no", "Booth number", p.booth_no],
                     ["venue", "Venue", p.venue],
                     ["organizer", "Organizer", p.organizer],
                     ["start_date", "Start date (YYYY-MM-DD)", p.start_date],
                     ["end_date", "End date (YYYY-MM-DD)", p.end_date],
-                  ];
+                  ] as Array<[string, string, string | null | undefined]>).filter((fld) => !(soloMasked && (fld[0] === "name" || fld[0] === "organizer")));
                   const patch: Record<string, unknown> = {};
                   for (const [key, label, cur] of fields) {
                     const val = await prompt({ title: `Edit ${label}`, placeholder: label, defaultValue: (cur ?? "") as string });
@@ -1197,7 +1198,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
             <StageBadge stage={p.stage} lower />
           </div>
         )}
-        <div style={{ fontSize: 16, fontWeight: 800, color: "#fff", lineHeight: 1.3, marginTop: 7 }}>{p?.name ? titleCaseName(p.name) : "—"}</div>
+        <div style={{ fontSize: 16, fontWeight: 800, color: "#fff", lineHeight: 1.3, marginTop: 7 }}><SoloSafeName p={p} format={titleCaseName} /></div>
         {p && (
           <div className="money" style={{ fontSize: 12.5, fontWeight: 700, color: "#e7eae4", marginTop: 5 }}>
             {dm(p.start_date)} – {dm(p.end_date)}

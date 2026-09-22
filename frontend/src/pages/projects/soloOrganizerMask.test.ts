@@ -11,9 +11,12 @@ import { describe, expect, test } from "vitest";
 
 import {
   isSoloEvent,
+  isSoloMasked,
   maskSoloOrganizer,
   salesOrderProjectLabel,
   salesOrderProjectName,
+  shownOrganizer,
+  shownProjectName,
 } from "./soloOrganizerMask";
 
 const solo = {
@@ -89,5 +92,26 @@ describe("salesOrderProjectName", () => {
     expect(salesOrderProjectName(solo, false)).toBe("JOHOR [AKEMI] SOLO @ SUNWAY KLUANG MALL");
     expect(salesOrderProjectName(solo, true)).toBe(solo.name);
     expect(salesOrderProjectName(exhibition, false)).toBe(exhibition.name);
+  });
+});
+
+describe("shownProjectName / shownOrganizer / isSoloMasked (project title + list, owner 2026-09-18 second ask)", () => {
+  test("a solo project's name and organizer read SOLO for a non-BD viewer", () => {
+    expect(shownProjectName(solo, false)).toBe("JOHOR [AKEMI] SOLO @ SUNWAY KLUANG MALL");
+    expect(shownOrganizer(solo, false)).toBe("SOLO");
+    expect(isSoloMasked(solo, false)).toBe(true);
+  });
+  test("BD / Owner / weisiang read the real name and organizer", () => {
+    expect(shownProjectName(solo, true)).toBe(solo.name);
+    expect(shownOrganizer(solo, true)).toBe(solo.organizer);
+    expect(isSoloMasked(solo, true)).toBe(false);
+  });
+  test("an exhibition is never masked for anyone", () => {
+    expect(shownProjectName(exhibition, false)).toBe(exhibition.name);
+    expect(shownOrganizer(exhibition, false)).toBe(exhibition.organizer);
+    expect(isSoloMasked(exhibition, false)).toBe(false);
+  });
+  test("shownOrganizer returns null when a masked-off viewer's project has no organizer", () => {
+    expect(shownOrganizer({ name: "x", organizer: null, event_type_name: "Exhibition" }, false)).toBeNull();
   });
 });

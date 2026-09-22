@@ -58,9 +58,27 @@ export function maskSoloOrganizer(p: SoloMaskProject): string {
   return venue ? `${SOLO_ORGANIZER_MASK} @ ${venue}` : SOLO_ORGANIZER_MASK;
 }
 
-/** The project's NAME as this viewer may read it. Exhibitions are untouched. */
-export const salesOrderProjectName = (p: SoloMaskProject, canSeeOrganizer: boolean): string =>
+/** The project's NAME as this viewer may read it. Exhibitions are untouched.
+ *  Owner 2026-09-18 (second ask, on the project page header reading
+ *  "Selangor [ZANOTTI] KAI HAO (KL, CHEN) @ AEON BIG PUCHONG"): "title inside
+ *  project also ... other user only show solo for all solo roadshow" — so the
+ *  same rule now labels the project page and the project list, not only the
+ *  Sales Order panel. */
+export const shownProjectName = (p: SoloMaskProject, canSeeOrganizer: boolean): string =>
   (isSoloEvent(p) && !canSeeOrganizer ? maskSoloOrganizer(p) : p.name);
+
+/** The ORGANIZER field as this viewer may read it: SOLO on a masked solo event. */
+export const shownOrganizer = (p: SoloMaskProject, canSeeOrganizer: boolean): string | null =>
+  (isSoloEvent(p) && !canSeeOrganizer ? SOLO_ORGANIZER_MASK : (p.organizer ?? null));
+
+/** True when this viewer reads this project masked — the edit form uses it to
+ *  hold the Name and Organizer fields read-only, so a masked value is never
+ *  typed over the stored one. */
+export const isSoloMasked = (p: SoloMaskProject, canSeeOrganizer: boolean): boolean =>
+  isSoloEvent(p) && !canSeeOrganizer;
+
+/** The Sales Order picker's option text — the same rule under its first name. */
+export const salesOrderProjectName = shownProjectName;
 
 /** The locked "Project" field of the Sales Order panel: "code · name", or the
  *  masked name alone (see the header for why the code goes). */
