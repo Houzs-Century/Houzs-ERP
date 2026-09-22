@@ -58,6 +58,78 @@ export async function soConvertedPoNumbers(
   return out;
 }
 
+/**
+ * Per SO LINE (so_item_id) the system PO numbers raised AGAINST THAT LINE — the
+ * line's OWN incoming PO, the same `purchase_order_items.so_item_id` link
+ * `soConvertedPos` walks, but keyed per line instead of rolled up to the doc.
+ *
+ * This is what the Sales Order detail's "Incoming PO" chip should show: the PO
+ * this line was ordered on, NOT the PO whose physical FIFO batch its goods later
+ * shipped from (a shared-stock line can consume a lot received under another
+ * order's PO — correct for costing, misleading as "this line's PO"). CANCELLED
+ * POs are dropped. Best-effort: any read error yields an empty map, never a throw.
+ *
+ * `companyId` is REQUIRED (number | null); when a number it scopes every read,
+ * the only boundary under the service-role client.
+ */
+export async function soLineBoundPoNumbers(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  sb: any,
+  soItemIds: Array<string | null | undefined>,
+  companyId: number | null,
+): Promise<Map<string, string[]>> {
+  const out = new Map<string, string[]>();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const scoped = (q: any) => (companyId == null ? q : q.eq('company_id', companyId));
+  const ids = [...new Set(soItemIds.filter((d): d is string => !!d))];
+  if (ids.length === 0) return out;
+  try {
+    const links: Array<{ so_item_id: string; purchase_order_id: string }> = [];
+    const poIds = new Set<string>();
+    for (const part of chunk(ids, IN_CHUNK)) {
+      const { data, error } = await scoped(sb
+        .from('purchase_order_items')
+        .select('so_item_id, purchase_order_id'))
+        .in('so_item_id', part)
+        .not('purchase_order_id', 'is', null);
+      if (error) return out;
+      for (const r of (data ?? []) as Array<{ so_item_id: string | null; purchase_order_id: string | null }>) {
+        if (r.so_item_id && r.purchase_order_id) {
+          links.push({ so_item_id: r.so_item_id, purchase_order_id: r.purchase_order_id });
+          poIds.add(r.purchase_order_id);
+        }
+      }
+    }
+    if (links.length === 0) return out;
+    const numById = new Map<string, string>();
+    for (const part of chunk([...poIds], IN_CHUNK)) {
+      const { data, error } = await scoped(sb
+        .from('purchase_orders')
+        .select('id, po_number, status'))
+        .in('id', part);
+      if (error) return out;
+      for (const p of (data ?? []) as Array<{ id: string; po_number: string | null; status: string | null }>) {
+        if ((p.status ?? '').toUpperCase() === 'CANCELLED') continue;
+        if (p.po_number) numById.set(p.id, p.po_number);
+      }
+    }
+    const bySoItem = new Map<string, Set<string>>();
+    for (const l of links) {
+      const num = numById.get(l.purchase_order_id);
+      if (!num) continue;
+      let s = bySoItem.get(l.so_item_id);
+      if (!s) { s = new Set(); bySoItem.set(l.so_item_id, s); }
+      s.add(num);
+    }
+    for (const [itemId, s] of bySoItem) {
+      out.set(itemId, [...s].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })));
+    }
+    return out;
+  } catch {
+    return out;
+  }
+}
+
 export async function soConvertedPos(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   sb: any,

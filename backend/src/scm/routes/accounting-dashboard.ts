@@ -394,6 +394,19 @@ function compareOf(pre: Preload, secOf: (r: SumRow) => string, sums: SumRow[], p
   return { groups: compareList(by, has), totals: compareTotals(by, has) };
 }
 
+/** YYYY-MM of the earliest posted credit on a SALES / SALES ADJUSTMENTS account; null while the books carry no sales. */
+function firstSalesMonth(rows: GlRow[], secOf: (r: SumRow) => string): string | null {
+  let first: string | null = null;
+  for (const r of rows) {
+    if (r.credit_sen <= 0) continue;
+    const section = secOf({ code: r.account_code, name: '', type: String(r.account_type ?? ''), drSen: 0, crSen: 0 });
+    if (section !== 'SALES' && section !== 'SALES ADJUSTMENTS') continue;
+    const m = String(r.entry_date).slice(0, 7);
+    if (first === null || m < first) first = m;
+  }
+  return first;
+}
+
 const sumSection = (ls: ReportLine[], section: string): number => ls.filter((l) => l.section === section).reduce((s, l) => s + l.amountSen, 0);
 
 /* ── The build ───────────────────────────────────────────────────────────── */
@@ -402,15 +415,21 @@ export async function buildDashboard(sb: Sb, companyId: number, layoutIds: numbe
   const grid = await loadGrid(sb, companyId);
   if (!grid.ok) return { ok: false, reason: `forecast: ${grid.reason}` };
   const forecastMonths = sortedMonths(grid.grid);
-  const periods = periodsFor({ granularity: q.granularity, periods: q.periods, from: q.from, to: q.to, today, forecastMonths });
-  const windowStart = periods[0]!.from;
-  const windowEnd = periods[periods.length - 1]!.to;
+  /* The window as the query alone names it; its end is final, its start may
+     move forward once the ledger says when the sales began (below). */
+  const wide = periodsFor({ granularity: q.granularity, periods: q.periods, from: q.from, to: q.to, today, forecastMonths });
+  const windowStart = wide[0]!.from;
+  const windowEnd = wide[wide.length - 1]!.to;
   const loaded = await preload(sb, companyId, layoutIds, windowStart, windowEnd, grid.grid);
   if (!loaded.ok) return loaded;
   const pre = loaded.pre;
   const src = sourcesOf(pre);
   const staffCodes = new Set(codesUnder(pre.layouts.pnl?.layout.blocks.expenses ?? [], STAFF_COST_CATEGORY_ID));
   const secOf = sectionResolver(pre.accounts);
+  /* The default window starts no earlier than the company's first month with
+     sales (owner 2026-09-22: 可以从 06/2026 开始吗 — the books' empty months
+     stay out); a named range is exactly what was asked. */
+  const periods = q.from && q.to ? wide : periodsFor({ granularity: q.granularity, periods: q.periods, from: null, to: null, today, forecastMonths, earliest: firstSalesMonth(pre.gl, secOf) });
 
   const out: DashboardPeriodPayload[] = [];
   for (const p of periods) {

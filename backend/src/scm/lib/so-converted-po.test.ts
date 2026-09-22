@@ -4,7 +4,7 @@
 // rebuilds only the D1 side), so these pin the pure resolution rules through a
 // minimal fake PostgREST client (same shape as dropship-batch.test.ts).
 import { describe, expect, test } from 'vitest';
-import { soConvertedPoNumbers, soConvertedPos } from './so-converted-po';
+import { soConvertedPoNumbers, soConvertedPos, soLineBoundPoNumbers } from './so-converted-po';
 
 type Row = Record<string, unknown>;
 
@@ -124,6 +124,51 @@ describe('soConvertedPoNumbers', () => {
       { id: 'po-1', po_number: 'PO-2607-013' },
       { id: 'po-2', po_number: 'PO-2607-014' },
     ]);
+  });
+
+  test("soLineBoundPoNumbers keys the line's OWN PO by so_item_id, cancelled dropped", async () => {
+    const sb = fakeSb({
+      purchase_order_items: [
+        poItem('si-1', 'po-2'),
+        poItem('si-1', 'po-1'),    // same line, a second PO
+        poItem('si-1', 'po-dead'), // cancelled -> dropped
+        poItem('si-2', 'po-1'),
+      ],
+      purchase_orders: [
+        po('po-1', 'HC-PO-009863', 'RECEIVED'),
+        po('po-2', 'HC-PO-010200', 'SUBMITTED'),
+        po('po-dead', 'HC-PO-009000', 'CANCELLED'),
+      ],
+    });
+    const out = await soLineBoundPoNumbers(sb, ['si-1', 'si-2'], null);
+    expect(out.get('si-1')).toEqual(['HC-PO-009863', 'HC-PO-010200']);
+    expect(out.get('si-2')).toEqual(['HC-PO-009863']);
+  });
+
+  test("the owner's case: a line resolves to its OWN PO, never another line's PO", async () => {
+    // 010095 is raised against ANOTHER SO's line; it must not appear on this one,
+    // even though the goods physically shipped from its batch (that lives on the DO).
+    const sb = fakeSb({
+      purchase_order_items: [
+        poItem('hilton-013160', 'po-own'),
+        poItem('hilton-002558', 'po-foreign'),
+      ],
+      purchase_orders: [
+        po('po-own', 'HC-PO-009863', 'RECEIVED'),
+        po('po-foreign', 'HC-PO-010095', 'RECEIVED'),
+      ],
+    });
+    const out = await soLineBoundPoNumbers(sb, ['hilton-013160'], null);
+    expect(out.get('hilton-013160')).toEqual(['HC-PO-009863']);
+    expect(out.has('hilton-002558')).toBe(false);
+  });
+
+  test('soLineBoundPoNumbers: empty input short-circuits without a query', async () => {
+    let touched = false;
+    const sb = { from: () => { touched = true; return {}; } };
+    const out = await soLineBoundPoNumbers(sb, [], null);
+    expect(out.size).toBe(0);
+    expect(touched).toBe(false);
   });
 
   test('a company id puts company_id = <id> on the three reads', async () => {

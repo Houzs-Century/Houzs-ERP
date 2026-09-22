@@ -18,10 +18,13 @@ AUTOCOUNT_API_URL = "https://it-houzs.dev/"
 # (cron SO/PO/overdue/creditors/stock + manual /api/sync/pull). Non-AutoCount
 # cron jobs keep running. Disabled "true" 2026-06-13 at owner request ("暂时关闭,
 # 不需要数据进来"); re-enabled "false" 2026-07-14 at owner request to resume
-# inbound sync. Flip back to "true" + redeploy to halt pulls again. NOTE:
-# outbound writes stay OFF (AUTOCOUNT_WRITES_DISABLED, autocount.ts) — this
-# only re-opens reads from AutoCount, not writes back to it.
-AUTOCOUNT_SYNC_DISABLED = "false"
+# inbound sync. DISABLED "true" AGAIN 2026-09-22 at owner request — the ERP is
+# now independent ("我们ERP独立了 ... Autocount sync进来ERP的都不需要maintain了 ...
+# 因为我发现很多从autocount sync进来"): the ERP no longer takes data back from
+# AutoCount. The ERP -> AutoCount write-back is a SEPARATE control and stays ON,
+# so the ERP still MIRRORS its documents into AutoCount; only the reverse pull is
+# halted. Flip back to "false" + redeploy to resume inbound sync.
+AUTOCOUNT_SYNC_DISABLED = "true"
 # ERP -> AutoCount WRITE-BACK (outbound; the opposite direction to the two
 # settings above, which are the legacy inbound pull). Base URL of AcSyncService,
 # the service that runs ON the AutoCount host and drives the licensed 2.2 SDK.
