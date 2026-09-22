@@ -6,17 +6,13 @@
 import { useState } from "react";
 import { createPortal } from "react-dom";
 import { api } from "../api/client";
+import { REOPEN_STAGE_OPTIONS } from "../vendor/scm/lib/assr/reopen";
 
 const INK = "#11140f";
 const MUTED = "#767b6e";
 const LINE = "#d6d9d2";
 const TEAL = "#0f6d63";
 
-const STAGE_OPTIONS = [
-  { value: "under_verification", label: "Verify (inspect the new problem)" },
-  { value: "pending_solution", label: "Solution (decide the fix)" },
-  { value: "pending_review", label: "Review (start from the top)" },
-];
 const inp: React.CSSProperties = { width: "100%", boxSizing: "border-box", padding: "9px 11px", border: `1px solid ${LINE}`, borderRadius: 9, fontSize: 14, marginTop: 4 };
 
 export function MobileReopenControl({
@@ -83,7 +79,7 @@ export function MobileReopenControl({
                 <textarea style={{ ...inp, minHeight: 70 }} autoFocus value={complaint} placeholder="What is the customer reporting this time?" onChange={(e) => setComplaint(e.target.value)} />
                 <div style={{ fontSize: 11, color: MUTED, marginTop: 10 }}>Reopen at stage</div>
                 <select style={inp} value={reopenStage} onChange={(e) => setReopenStage(e.target.value)}>
-                  {STAGE_OPTIONS.map((o) => (
+                  {REOPEN_STAGE_OPTIONS.map((o) => (
                     <option key={o.value} value={o.value}>{o.label}</option>
                   ))}
                 </select>

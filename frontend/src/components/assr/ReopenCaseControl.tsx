@@ -6,12 +6,7 @@
 import { useState } from "react";
 import { RotateCcw } from "lucide-react";
 import { api } from "../../api/client";
-
-const STAGE_OPTIONS = [
-  { value: "under_verification", label: "Verify (inspect the new problem)" },
-  { value: "pending_solution", label: "Solution (decide the fix)" },
-  { value: "pending_review", label: "Review (start from the top)" },
-];
+import { REOPEN_STAGE_OPTIONS } from "../../vendor/scm/lib/assr/reopen";
 
 export function ReopenCaseControl({
   caseId,
@@ -80,7 +75,7 @@ export function ReopenCaseControl({
               value={reopenStage}
               onChange={(e) => setReopenStage(e.target.value)}
             >
-              {STAGE_OPTIONS.map((o) => (
+              {REOPEN_STAGE_OPTIONS.map((o) => (
                 <option key={o.value} value={o.value}>{o.label}</option>
               ))}
             </select>
