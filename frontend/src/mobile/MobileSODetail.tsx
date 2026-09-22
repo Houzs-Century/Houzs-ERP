@@ -209,14 +209,12 @@ type SoItem = {
      exactly like the desktop (one-product rule). */
   stock_status?: string | null;
   stock_state?: "stock" | "po" | "shortage" | null;
-  coverage_po?: string | null;
-  coverage_eta?: string | null;
+  coverage_po?: string | null; coverage_eta?: string | null;
   bound_source_pos?: string[];
   shipped_source_pos?: string[];
   shipped_source_adj?: boolean;
   ready_source_pos?: Array<{ po: string | null; qty: number; kind: "po" | "adjustment" }>;
-  delivered_qty?: number | null;
-  remaining_qty?: number | null;
+  delivered_qty?: number | null; remaining_qty?: number | null;
   /* Why the line can never read READY, when the reason is WHERE it stands (2026-09-08). */
   non_selling_warehouse?: { code: string | null; name: string | null; type: string | null; notice: string } | null;
   /* A retired line — the SO's history, not part of the live order. Returned by
@@ -1135,10 +1133,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
                       );
                     })()}
                     <NonSellingWarehouseNoteMobile note={it.non_selling_warehouse} />
-                    {/* The line's OWN incoming PO wins (owner 2026-09-22), same as
-                        desktop SoSourceChips: show this order's PO, not the PO whose
-                        FIFO batch the goods shipped from. Falls back to the shipped
-                        trace when no PO was raised for the line. */}
+                    {/* Bound PO wins over the shipped batch (owner 2026-09-22), like desktop SoSourceChips. */}
                     <SourcePosRowMobile
                       pos={(it.bound_source_pos && it.bound_source_pos.length > 0) ? it.bound_source_pos : (it.shipped_source_pos ?? [])}
                       adj={it.shipped_source_adj}
