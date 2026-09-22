@@ -163,6 +163,26 @@ const inPool = (pool: string[], value: string): boolean => {
   return pool.some((p) => foldForPool(p) === wanted);
 };
 
+/* Leg height carries TWO vocabularies for the same "no leg" build: the label
+   "No Leg" that the Modular drawer lists, and the zero-inch glyph 0" that
+   imported / legacy bedframe lines store (1,149 lines / 765 orders on prod,
+   2026-09-22 — the single most common leg value, none of it in a pool that
+   spells zero "No Leg"). They are the same physical build, so a line holding one
+   must pass a pool that offers the other.
+
+   Same fold-safety argument as inPool: 0" matches no leg pool today, so it
+   already 400s, and this only lets it start matching a pool that offers "No Leg"
+   — nothing that matches today changes meaning, and WHICH heights a Model
+   permits is untouched. Symmetric, so a pool that spells zero 0" also accepts a
+   line's "No Leg". Scoped to leg height alone: "No Leg" is the zero label only
+   here; divan / total / gap have no such second word. */
+const isZeroLeg = (s: string): boolean => {
+  const f = foldForPool(s).toLowerCase().replace(/\s+/g, '');
+  return f === 'noleg' || /^0(?:\.0+)?"?$/.test(f);
+};
+const legInPool = (pool: string[], value: string): boolean =>
+  inPool(pool, value) || (isZeroLeg(value) && pool.some(isZeroLeg));
+
 const toSpecialsArray = (s: string[] | string | null | undefined): string[] => {
   if (!s) return [];
   if (Array.isArray(s)) return s.map((x) => String(x).trim()).filter(Boolean);
@@ -323,7 +343,7 @@ export function checkAllowedOptions(
   // Model regardless of category.
   const legPick = v.legHeight ?? v.sofaLegHeight ?? null;
   if (legPick && hasRestriction(opts.leg_heights)
-      && !inPool(opts.leg_heights, legPick)) {
+      && !legInPool(opts.leg_heights, legPick)) {
     return {
       error: 'variant_not_allowed',
       field: 'leg_height',

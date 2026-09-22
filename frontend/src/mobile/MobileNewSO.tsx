@@ -2026,7 +2026,15 @@ export function MobileNewSO({
         if (!lineEditingBlocked) {
           if (leaseToken) {
             const failures = await applyLineDiff(docNo, leaseToken);
-            if (failures.length > 0) throw new Error(lineWriteSaveMessage(failures));
+            if (failures.length > 0) {
+              /* Carry the failures to the catch so it shows them in the prominent
+                 popup, not the inline line a phone scrolls past: on HC-SO-012831
+                 the reason WAS on screen, under the fold above the Save button,
+                 and the operator retried for two days. */
+              const err = new Error(lineWriteSaveMessage(failures)) as Error & { lineWriteFailures?: LineWriteFailure[] };
+              err.lineWriteFailures = failures;
+              throw err;
+            }
           }
           await uploadStagedPhotos(docNo, leaseToken);
         }
@@ -2121,10 +2129,19 @@ export function MobileNewSO({
         } catch { /* silent-write-ok: RECOVERY arm of an outer catch that already told the operator the save failed; the lease expires anyway. */ }
         activeLineLeaseRef.current = null;
       }
-      /* Aggregated save-gate failure (validation_failed) — show EVERY reason at
-         once, same popup + list as desktop (owner 2026-07-18). Anything else
-         keeps the inline error line. */
-      void notifySaveProblems(notify, e, setError, "Couldn't save the sales order. Please try again.");
+      /* A line write that did not land carries its own per-line reason
+         (line-write-failures.ts). Show it in the SAME prominent popup the
+         aggregated gate uses — not the inline line under the fold that a phone
+         editor scrolled to the lines never saw (HC-SO-012831). */
+      const lineWriteFailures = (e as { lineWriteFailures?: LineWriteFailure[] } | null)?.lineWriteFailures;
+      if (lineWriteFailures && lineWriteFailures.length > 0) {
+        void notify({ title: "Couldn't save your changes", body: lineWriteSaveMessage(lineWriteFailures), tone: "error" });
+      } else {
+        /* Aggregated save-gate failure (validation_failed) — show EVERY reason at
+           once, same popup + list as desktop (owner 2026-07-18). Anything else
+           keeps the inline error line. */
+        void notifySaveProblems(notify, e, setError, "Couldn't save the sales order. Please try again.");
+      }
     } finally {
       setSubmitting(false);
     }
