@@ -31,6 +31,7 @@ import {
   type MfgSeatHeightPrice,
   type SpecialAddonDef,
 } from '../shared/mfg-pricing';
+import { compareSpecialLabels } from '../shared/variant-summary';
 import { chunkIn } from './paginate-all';
 import { pgrestInList } from './pgrest-in-list';
 import { autoDeriveEnabled } from './auto-derive-cost';
@@ -468,6 +469,17 @@ export function recomputeFromSnapshot(
     const hit = specialsPool.find((o) => o.value === s);
     return { description: s, surchargeSen: hit?.sellingPriceSen ?? 0 };
   });
+  /* Owner 2026-09-22 — specials must print in ONE canonical order on every line,
+     so the compartment lines of a sofa SET (and the DO / SI / PDF copies that
+     read this column) never list the same add-ons in a different order per line.
+     The picked order is whatever order the operator ticked them, which differs
+     line to line; sort the COMPOSITION with the SAME shared comparator the
+     rendered SPECIAL segment uses (compareSpecialLabels — codepoint, not
+     ICU-dependent localeCompare), so the persisted column and every printed
+     surface agree on order. Display order only: the surcharge is a Σ and the
+     pricing `specials` array is untouched, so no price moves. The free-text
+     extra add-on note is appended AFTER this sort below, so it trails the picks. */
+  pickedSpecials.sort((a, b) => compareSpecialLabels(a.description, b.description));
 
   /* Declared extra charge (spec 2026-06-06 D1) — whole MYR → sen, clamped ≥ 0.
      Added to BOTH authoritative branches below, symmetric with the POS folding
