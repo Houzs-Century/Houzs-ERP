@@ -29,8 +29,9 @@ const AUG_COMPARE: DashboardCompare = {
 };
 const SEP_COMPARE: DashboardCompare = {
   groups: [
-    compareGroup('sofa', 'Sofa', { actualSalesSen: 5_000_000, performanceSalesSen: 20_000_000, performanceCostSen: 12_000_000, performanceGpSen: 8_000_000, performanceGpPct: 40, forecastSalesSen: 12_000_000, forecastCostSen: 7_200_000, forecastGpSen: 4_800_000, forecastGpPct: 40 }),
+    compareGroup('sofa', 'Sofa', { actualSalesSen: 5_000_000, performanceSalesSen: 20_000_000, performanceCostSen: 12_000_000, performanceGpSen: 8_000_000, performanceGpPct: 40, forecastSalesSen: 10_000_000, forecastCostSen: 6_000_000, forecastGpSen: 4_000_000, forecastGpPct: 40 }),
     compareGroup('bedding', 'Bedding', { forecastSalesSen: 0, forecastCostSen: 0, forecastGpSen: 0, forecastGpPct: null }),
+    compareGroup('dining', 'Dining', { forecastSalesSen: 2_000_000, forecastCostSen: 1_200_000, forecastGpSen: 800_000, forecastGpPct: 40 }),
   ],
   totals: { actualSalesSen: 5_000_000, performanceSalesSen: 20_000_000, performanceCostSen: 12_000_000, performanceGpSen: 8_000_000, performanceGpPct: 40, forecastSalesSen: 12_000_000, forecastCostSen: 7_200_000, forecastGpSen: 4_800_000, forecastGpPct: 40 },
 };
@@ -190,10 +191,11 @@ describe('the Financial Dashboard page', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'Purchase' }));
     expect(cells('bedding')).toEqual(['8,000.00', '0.00', '—']);
     expect(cells('total')).toEqual(['68,000.00', '0.00', '—']);
-    /* Purchase with every group ticked draws the forecast's cost of sales. */
-    expect(document.querySelectorAll('[data-segment="forecast"]').length).toBeGreaterThanOrEqual(1);
-    /* The Show pills (owner 2026-09-22: buttons, not ticks): pressed = on the chart; a pill off dims, never leaves the table. */
+    /* Purchase draws the forecast's purchase — the Forecast P&L's cost of sales through the groups' purchase accounts — summed over the groups on the chart (owner 2026-09-22: 做2). */
     const COST = 'Cost structure by product group';
+    expect(cells('forecast-purchase')).toEqual(['—', '72,000.00', '90,000.00']);
+    expect(inCard(COST, '[data-point="forecast"]')).toBe(2);
+    /* The Show pills (owner 2026-09-22: buttons, not ticks): pressed = on the chart; a pill off dims, never leaves the table. */
     const pill = (name: string) => within(screen.getByLabelText(COST)).getByRole('button', { name: `Show ${name}`, pressed: undefined });
     expect(pill('Bedding').getAttribute('aria-pressed')).toBe('true');
     expect(within(screen.getByLabelText(COST)).queryByRole('button', { name: 'Show all' })).toBeNull();
@@ -201,13 +203,18 @@ describe('the Financial Dashboard page', () => {
     expect(pill('Bedding').getAttribute('aria-pressed')).toBe('false');
     expect(inCard(COST, '[data-group="bedding"]')).toBe(0);
     expect(rowText('bedding')).toContain('8,000.00');
-    /* One off → the forecast line leaves with it; Show all brings every pill and the line back; Clear empties the chart. */
-    expect(inCard(COST, '[data-segment="forecast"]')).toBe(0);
+    /* The line follows the pills: Bedding off changes nothing (its forecast is 0); Sofa off too leaves Dining's September alone; Show all brings the total back; Clear empties the chart, line included. */
+    expect(cells('forecast-purchase')).toEqual(['—', '72,000.00', '90,000.00']);
+    fireEvent.click(pill('Sofa'));
+    expect(cells('forecast-purchase')).toEqual(['—', '12,000.00', '—']);
+    expect(inCard(COST, '[data-point="forecast"]')).toBe(1);
     fireEvent.click(within(screen.getByLabelText(COST)).getByRole('button', { name: 'Show all' }));
     expect(pill('Bedding').getAttribute('aria-pressed')).toBe('true');
-    expect(inCard(COST, '[data-segment="forecast"]')).toBeGreaterThanOrEqual(1);
+    expect(cells('forecast-purchase')).toEqual(['—', '72,000.00', '90,000.00']);
     fireEvent.click(within(screen.getByLabelText(COST)).getByRole('button', { name: 'Clear' }));
     expect(inCard(COST, '[data-group="sofa"]')).toBe(0);
+    expect(inCard(COST, '[data-point="forecast"]')).toBe(0);
+    expect(cells('forecast-purchase')).toEqual(['—', '—', '—']);
     expect(within(screen.getByLabelText(COST)).queryByRole('button', { name: 'Clear' })).toBeNull();
     expect(rowText('sofa')).toContain('60,000.00');
     fireEvent.click(within(screen.getByLabelText(COST)).getByRole('button', { name: 'Show all' }));
