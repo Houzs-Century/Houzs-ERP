@@ -73,11 +73,11 @@ export const SendDeliveryMessageModal = ({ rows, onClose, kind = 'delivery' }: {
         // date; now we wait for the customer). The SEND status becomes "Done All"
         // separately, derived from the wa_message_log send record. Fire-and-forget
         // per successfully-sent doc; the board re-reads on invalidate.
-        if (kind === 'delivery') {
-          for (const s of res.sent) {
-            for (const id of s.docNos) {
-              updateFields.mutate({ type: 'so', id, deliveryMessageStatus: 'Pending Customer Reply (D)' });
-            }
+        // submit() returned early unless sendEnabled (kind === 'delivery'), so
+        // every successful send that reaches here is a delivery-date send.
+        for (const s of res.sent) {
+          for (const id of s.docNos) {
+            updateFields.mutate({ type: 'so', id, deliveryMessageStatus: 'Pending Customer Reply (D)' });
           }
         }
         const parts: string[] = [];
