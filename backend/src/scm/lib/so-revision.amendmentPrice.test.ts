@@ -579,3 +579,47 @@ describe('applySoAmendment — a SPEC re-syncs the line NAME to the new code\'s 
     expect(lineOf(store).description).toBe('Side Table');
   });
 });
+
+/* ── A delivery-date amendment (the reschedule road) ────────────────────────
+   BUG-HISTORY 2026-09-22 (HC-SO-011177): an approved "deliver earlier" amendment
+   wrote ONLY customer_delivery_date and left amended_delivery_date null, so the
+   next AutoCount -> ERP delivery-date re-sync (which skips a header ONLY when
+   amended_delivery_date is set) clobbered the approved date back to the book
+   value. The visible surfaces read the RAW customer_delivery_date (SO detail, HC
+   delivery sheet), so the date must land there to be SEEN; amended_delivery_date
+   is what makes it STICK. These pin both, plus the line-level override. */
+describe('applySoAmendment — an approved delivery-date amendment is both SEEN and STICKS', () => {
+  const APPROVE_DELIVERY: SoAmendmentApproval = { approvedByUserId: 'user-approver', approvalPermission: 'scm.amendment.approve_delivery' };
+  const seedDeliveryAmendment = () => {
+    const store = baseStore();
+    (store.mfg_sales_orders[0] as Row).customer_delivery_date = '2026-11-02';
+    (store.mfg_sales_orders[0] as Row).amended_delivery_date = null;
+    (store.mfg_sales_order_items[0] as Row).line_delivery_date = '2026-11-02';
+    (store.mfg_sales_order_items[0] as Row).line_delivery_date_overridden = false;
+    (store.so_amendments[0] as Row).header_changes = { customerDeliveryDate: '2026-10-19' };
+    store.so_amendment_lines = [];
+    return store;
+  };
+
+  it('stamps BOTH customer_delivery_date (SEEN) and amended_delivery_date (STICKS)', async () => {
+    const store = seedDeliveryAmendment();
+
+    await apply(store, APPROVE_DELIVERY);
+
+    const header = store.mfg_sales_orders[0] as Row;
+    // The visible surfaces (SO detail, HC delivery sheet) read customer_delivery_date raw.
+    expect(header.customer_delivery_date).toBe('2026-10-19');
+    // amended_delivery_date is what every AutoCount -> ERP re-sync guard checks.
+    expect(header.amended_delivery_date).toBe('2026-10-19');
+  });
+
+  it('cascades to the lines with the override flag SET, so a book re-sync cannot revert them', async () => {
+    const store = seedDeliveryAmendment();
+
+    await apply(store, APPROVE_DELIVERY);
+
+    const line = lineOf(store);
+    expect(line.line_delivery_date).toBe('2026-10-19');
+    expect(line.line_delivery_date_overridden).toBe(true);
+  });
+});
