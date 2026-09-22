@@ -30,6 +30,35 @@ export const DELIVERY_STATE_LABEL: Record<DeliveryState, string> = {
   DELIVERED: 'Delivered',
 };
 
+/* The customer-message follow-up workflow statuses shown/edited in the "Delivery
+   Status" column (owner 2026-09-22). The backend whitelists this exact set; the
+   label IS the value. `(D)` = original delivery-date round, `(A)` = amended round.
+   The coarse DELIVERY_STATES above (the top state tabs) is a SEPARATE, derived
+   field — the tabs get their own rework later. */
+export const MESSAGE_STATUSES = [
+  'To Send Delivery Date', 'Pending Customer Reply (D)', 'Pending Reschedule (D)',
+  'Done Scheduling', 'Not Sent (D)', 'Pending Reschedule (A)', 'Not Sent (A)',
+  'Invalid Data', '3 Days Reminder Sent (Time)', '1 Day Reminder Sent (Driver)',
+  '7 Days Balance Reminder Sent', 'To Send Delivery Time', 'Done Delivery Time',
+  'To Send Driver Info', 'Done Driver Information', 'To Send Collect Balance',
+  'Done Balance Collection', 'To Send Postpone Reason', 'Done Postpone Reason',
+  'To Remind Customer Reply (1)', 'To Remind Customer Reply (2)',
+  'To Remind Customer Reply (3)', 'Done Remind',
+] as const;
+export type MessageStatus = (typeof MESSAGE_STATUSES)[number];
+
+/* Preset amend / reschedule reasons (owner 2026-09-22) — the reason the amend
+   message gives the customer. Picked from a dropdown; free text still allowed. */
+export const AMEND_REASONS = [
+  'Unexpected transport scheduling issues',
+  'Unforeseen medical leave for our assigned driver',
+  'Sudden mechanical breakdown of our delivery vehicle',
+  'Unavoidable technical issues with our transport arrangement',
+  'Our strict quality control checks',
+  'Materials being temporarily out of stock',
+  'Unforeseen production constraints',
+] as const;
+
 // A region is a CONFIG-DRIVEN bucket code (migration 0053) derived from the
 // customer's STATE (not the line warehouse). The live buckets are the geographic
 // regions KL/SEL · Northern · Southern · East Coast · EM (East Malaysia:
@@ -78,6 +107,12 @@ export type PlanningOrder = {
   status: string;
   delivery_state: DeliveryState;
   delivery_state_override: string | null;
+  /* The customer-message follow-up workflow status (owner 2026-09-22) — one of
+     MESSAGE_STATUSES or null. SO rows only; null on ASSR / DP / project rows. */
+  delivery_message_status: string | null;
+  /* Delivery-planning admin free-text fields (owner 2026-09-22). SO rows only. */
+  disposal_request: string | null;
+  dp_remark: string | null;
   balance_sen: number;
   /* Live balance (= local_total − Σpayments, from the SO-list payment-totals
      view); null when the view has no row → fall back to balance_sen. */
@@ -317,6 +352,10 @@ export type HcFieldsPatch = {
   houseType?: string | null;
   replacementDisposal?: string | null;
   referral?: string | null;
+  deliveryMessageStatus?: string | null;  // one of MESSAGE_STATUSES, or '' / null to clear
+  disposalRequest?: string | null;
+  dpRemark?: string | null;
+  amendReason?: string | null;
   // DO-execution (→ delivery_orders, when a DO exists)
   timeRange?: string | null;
   timeConfirmed?: boolean | null;

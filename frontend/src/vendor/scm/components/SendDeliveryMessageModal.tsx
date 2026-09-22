@@ -18,6 +18,7 @@ import { X, MessageSquare } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import {
   useSendDeliveryMessages,
+  useUpdateDeliveryFields,
   type PlanningOrder,
 } from '../lib/delivery-planning-queries';
 import { useNotify } from './NotifyDialog';
@@ -34,9 +35,22 @@ const phoneKey = (raw: string | null | undefined): string | null => {
 const effectiveDate = (o: PlanningOrder): string =>
   (o.amended_delivery_date ?? o.customer_delivery_date ?? '').slice(0, 10) || '—';
 
-export const SendDeliveryMessageModal = ({ rows, onClose }: { rows: PlanningOrder[]; onClose: () => void }) => {
+/* Which message the header button asked to send (owner 2026-09-22). Only the
+   delivery message has a working send path today; amend / one-time messages are
+   sent through chat.houzscentury.com, wired in the next phase — so they preview
+   here but the send stays disabled until that connection lands. */
+export type SendMessageKind = 'delivery' | 'amend' | 'onetime';
+const KIND_TITLE: Record<SendMessageKind, string> = {
+  delivery: 'Send delivery message',
+  amend: 'Send amend / reschedule message',
+  onetime: 'Send a one-time message',
+};
+
+export const SendDeliveryMessageModal = ({ rows, onClose, kind = 'delivery' }: { rows: PlanningOrder[]; onClose: () => void; kind?: SendMessageKind }) => {
   const send = useSendDeliveryMessages();
+  const updateFields = useUpdateDeliveryFields();
   const notify = useNotify();
+  const sendEnabled = kind === 'delivery';
 
   // Preview grouping — mirrors the backend's phone grouping.
   const groups = new Map<string, PlanningOrder[]>();
@@ -51,9 +65,21 @@ export const SendDeliveryMessageModal = ({ rows, onClose }: { rows: PlanningOrde
   const sendableDocs = [...groups.values()].flat().map((r) => r.so_doc_no);
 
   const submit = () => {
-    if (sendableDocs.length === 0 || send.isPending) return;
+    if (sendableDocs.length === 0 || send.isPending || !sendEnabled) return;
     send.mutate({ docNos: sendableDocs }, {
       onSuccess: (res) => {
+        // Send Now completed → the customer-message workflow advances to
+        // "Pending Customer Reply (D)" (owner 2026-09-22: we've sent the delivery
+        // date; now we wait for the customer). The SEND status becomes "Done All"
+        // separately, derived from the wa_message_log send record. Fire-and-forget
+        // per successfully-sent doc; the board re-reads on invalidate.
+        if (kind === 'delivery') {
+          for (const s of res.sent) {
+            for (const id of s.docNos) {
+              updateFields.mutate({ type: 'so', id, deliveryMessageStatus: 'Pending Customer Reply (D)' });
+            }
+          }
+        }
         const parts: string[] = [];
         if (res.sent.length) parts.push(`Sent ${res.sent.length} message${res.sent.length === 1 ? '' : 's'} (${res.sent.reduce((n, s) => n + s.docNos.length, 0)} orders).`);
         if (res.failed.length) parts.push(`Failed ${res.failed.length}: ${res.failed.map((f) => `${f.phone} (${f.error})`).join('; ')}.`);
@@ -77,7 +103,7 @@ export const SendDeliveryMessageModal = ({ rows, onClose }: { rows: PlanningOrde
     <div className={styles.backdrop} onClick={onClose}>
       <div className={styles.drawer} onClick={(e) => e.stopPropagation()}>
         <div className={styles.drawerHeader}>
-          <h2 className={styles.drawerTitle}>Send WhatsApp message</h2>
+          <h2 className={styles.drawerTitle}>{KIND_TITLE[kind]}</h2>
           <button type="button" onClick={onClose} className={styles.codeChip}><X {...ICON} /></button>
         </div>
 
@@ -109,9 +135,14 @@ export const SendDeliveryMessageModal = ({ rows, onClose }: { rows: PlanningOrde
           )}
         </div>
 
+        {!sendEnabled && (
+          <div style={{ padding: '0 var(--space-4)', color: 'var(--c-burnt)', fontSize: 'var(--fs-12)' }}>
+            This message type is sent through chat.houzscentury.com — connect it to enable sending. Preview only for now.
+          </div>
+        )}
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--space-3)', padding: 'var(--space-4)' }}>
           <Button variant="ghost" size="md" onClick={onClose}>Cancel</Button>
-          <Button variant="primary" size="md" onClick={submit} disabled={sendableDocs.length === 0 || send.isPending}>
+          <Button variant="primary" size="md" onClick={submit} disabled={sendableDocs.length === 0 || send.isPending || !sendEnabled}>
             {send.isPending ? 'Sending…' : `Send ${groups.size} message${groups.size === 1 ? '' : 's'}`}
           </Button>
         </div>

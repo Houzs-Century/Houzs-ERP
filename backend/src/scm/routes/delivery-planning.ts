@@ -452,6 +452,11 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
     possession_date: string | null; house_type: string | null;
     replacement_disposal: string | null; referral: string | null; ref: string | null;
     possessionDate?: string | null; houseType?: string | null; replacementDisposal?: string | null;
+    // HC delivery MESSAGE status (the follow-up workflow status, owner 2026-09-22).
+    delivery_message_status: string | null; deliveryMessageStatus?: string | null;
+    // Delivery-planning admin free-text fields (owner 2026-09-22). dual-read.
+    disposal_request: string | null; disposalRequest?: string | null;
+    dp_remark: string | null; dpRemark?: string | null;
   };
   /* CROSS-COMPANY = the caller's GRANTED companies; unscoped, this read took every tenant's. */
   const { data: soRowsRaw, error: soErr } = await paginateAll<SoHeaderRow>((from, to) =>
@@ -460,7 +465,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         /* NO `id` column here: scm.mfg_sales_orders is keyed by doc_no (TEXT PK) and
            has no `id` column: selecting it makes PostgREST reject the whole query and
            the board 500s. Identity here is doc_no; every join below keys on it. */
-        .select('doc_no, company_id, debtor_code, debtor_name, phone, branding, status, delivery_state, agent, salesperson_id, venue, customer_state, customer_country, customer_delivery_date, amend_date_from_customer, amended_delivery_date, amend_reason, processing_date, so_date, address1, address2, postcode, building_type, local_total_sen, balance_sen, possession_date, house_type, replacement_disposal, referral, ref')
+        .select('doc_no, company_id, debtor_code, debtor_name, phone, branding, status, delivery_state, agent, salesperson_id, venue, customer_state, customer_country, customer_delivery_date, amend_date_from_customer, amended_delivery_date, amend_reason, processing_date, so_date, address1, address2, postcode, building_type, local_total_sen, balance_sen, possession_date, house_type, replacement_disposal, referral, ref, delivery_message_status, disposal_request, dp_remark')
         .neq('status', 'DRAFT')
         .neq('status', 'CANCELLED')
         .order('customer_delivery_date', { ascending: true, nullsFirst: false }),
@@ -969,6 +974,11 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
       house_type: r.houseType ?? r.house_type ?? null,
       replacement_disposal: r.replacementDisposal ?? r.replacement_disposal ?? null,
       referral: r.referral ?? null,
+      // HC delivery MESSAGE status (the follow-up workflow status, owner
+      // 2026-09-22) — one of the 23 values or null. dual-read camelCase.
+      delivery_message_status: r.deliveryMessageStatus ?? r.delivery_message_status ?? null,
+      disposal_request: r.disposalRequest ?? r.disposal_request ?? null,
+      dp_remark: r.dpRemark ?? r.dp_remark ?? null,
       // HC DO-execution raw-data fields — from the latest DO, null when this SO
       // has no (non-DRAFT/CANCELLED) DO yet.
       time_range: doExecByDoc.get(docNo)?.time_range ?? null,
@@ -1132,6 +1142,9 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           house_type: null,
           replacement_disposal: null,
           referral: null,
+          delivery_message_status: null,
+          disposal_request: null,
+          dp_remark: null,
           time_range: null,
           time_confirmed: null,
           arrival_at: null,
@@ -1294,6 +1307,9 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         house_type: null,
         replacement_disposal: null,
         referral: null,
+        delivery_message_status: null,
+        disposal_request: null,
+        dp_remark: null,
         time_range: null,
         time_confirmed: null,
         arrival_at: null,
@@ -1430,6 +1446,9 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           house_type: null,
           replacement_disposal: null,
           referral: null,
+          delivery_message_status: null,
+          disposal_request: null,
+          dp_remark: null,
           time_range: null,
           time_confirmed: null,
           arrival_at: null,
@@ -1892,12 +1911,31 @@ const HC_SUBSTATUS_VALUES = [
   'Done Delivered', 'Confirm', 'House Not Ready', 'Request Hold',
 ] as const;
 
+/* The customer-message follow-up workflow statuses shown/edited in the "Delivery
+   Status" column (owner 2026-09-22). One of these 23 values, or blank. The
+   coarse scm.delivery_state (the top state tabs) is a separate, derived field
+   and is NOT one of these — the tabs get their own rework later. */
+export const HC_MESSAGE_STATUS_VALUES = [
+  'To Send Delivery Date', 'Pending Customer Reply (D)', 'Pending Reschedule (D)',
+  'Done Scheduling', 'Not Sent (D)', 'Pending Reschedule (A)', 'Not Sent (A)',
+  'Invalid Data', '3 Days Reminder Sent (Time)', '1 Day Reminder Sent (Driver)',
+  '7 Days Balance Reminder Sent', 'To Send Delivery Time', 'Done Delivery Time',
+  'To Send Driver Info', 'Done Driver Information', 'To Send Collect Balance',
+  'Done Balance Collection', 'To Send Postpone Reason', 'Done Postpone Reason',
+  'To Remind Customer Reply (1)', 'To Remind Customer Reply (2)',
+  'To Remind Customer Reply (3)', 'Done Remind',
+] as const;
+
 const fieldsSchema = z.object({
   // SO-context (→ mfg_sales_orders)
   possessionDate: z.string().nullable().optional(),       // YYYY-MM-DD
   houseType: z.string().nullable().optional(),            // New House / Replacement (free text)
   replacementDisposal: z.string().nullable().optional(),
   referral: z.string().nullable().optional(),
+  deliveryMessageStatus: z.string().nullable().optional(),  // one of the 23 workflow values, or blank
+  disposalRequest: z.string().nullable().optional(),
+  dpRemark: z.string().nullable().optional(),
+  amendReason: z.string().nullable().optional(),  // preset reason or free text
   // Amendment dates — the customer's ORIGINAL customer_delivery_date is NEVER
   // edited here; only the amendment columns are.
   amendDateFromCustomer: z.string().nullable().optional(),  // YYYY-MM-DD (customer's ask)
@@ -1920,6 +1958,10 @@ const SO_FIELD_COLS: Record<string, string> = {
   houseType: 'house_type',
   replacementDisposal: 'replacement_disposal',
   referral: 'referral',
+  deliveryMessageStatus: 'delivery_message_status',
+  disposalRequest: 'disposal_request',
+  dpRemark: 'dp_remark',
+  amendReason: 'amend_reason',
   // Amendment dates — NEVER customer_delivery_date (the original).
   amendDateFromCustomer: 'amend_date_from_customer',
   amendedDeliveryDate: 'amended_delivery_date',
@@ -1950,6 +1992,12 @@ deliveryPlanning.patch('/:type/:id/fields', async (c) => {
   if (p.deliverySubstatus != null && p.deliverySubstatus !== '' &&
       !(HC_SUBSTATUS_VALUES as readonly string[]).includes(String(p.deliverySubstatus))) {
     return c.json({ error: 'invalid_substatus', reason: `delivery_substatus must be one of: ${HC_SUBSTATUS_VALUES.join(', ')} (or blank).` }, 400);
+  }
+
+  // Whitelist delivery_message_status to the 23 known workflow values (blank/null ok).
+  if (p.deliveryMessageStatus != null && p.deliveryMessageStatus !== '' &&
+      !(HC_MESSAGE_STATUS_VALUES as readonly string[]).includes(String(p.deliveryMessageStatus))) {
+    return c.json({ error: 'invalid_message_status', reason: 'delivery_message_status is not one of the allowed workflow values.' }, 400);
   }
 
   const sb = c.get('supabase');
