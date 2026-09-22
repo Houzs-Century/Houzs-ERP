@@ -289,18 +289,29 @@ const CostStructureCard = ({ periods, groups }: { periods: DashboardPeriod[]; gr
   const [ticked, setTicked] = useState<Set<string>>(() => new Set(groups.map((g) => g.key)));
   const groupOf = (p: DashboardPeriod, key: string) => p.costStructure?.groups.find((g) => g.key === key);
   const present = groups.filter((g) => g.key !== 'others' || periods.some((p) => groupOf(p, g.key) != null));
-  const allTicked = present.every((g) => ticked.has(g.key));
-  const bars: ChartSeries[] = present.filter((g) => ticked.has(g.key)).map((g) => ({
+  const onGroups = present.filter((g) => ticked.has(g.key));
+  const bars: ChartSeries[] = onGroups.map((g) => ({
     key: g.key, label: g.label, color: colorOf(g.key),
     values: periods.map((p) => (p.costStructure ? measureOf(groupOf(p, g.key) ?? { key: g.key, label: g.label, spendSen: 0, purchaseSen: 0, closingStockSen: 0 }, measure) : null)),
   }));
-  /* The forecast keys cost of sales per purchase account, not per group: its line sums the whole, so it draws only on Purchase with every group ticked. */
-  const lines: ChartLine[] = measure === 'purchase' && allTicked
-    ? [{ key: 'forecast', label: 'Forecast cost of sales', color: RED, dashed: true, values: periods.map((p) => p.forecast?.costOfSalesSen ?? null) }]
+  /* The forecast's purchase per group — the Forecast P&L's cost of sales through each group's purchase accounts, the compare's own reading (#4206) — summed over the groups on the chart, so the line follows the pills: one group on, that group's forecast; all on, the groups' total (owner 2026-09-22: 做2). Null where the period has no forecast; Service is no cost group, so its purchase account stays out here as it does in the bars. */
+  const forecastPurchase = periods.map((p) => {
+    if (!p.compare || onGroups.length === 0) return null;
+    let sum = 0; let any = false;
+    for (const g of onGroups) {
+      const v = p.compare.groups.find((x) => x.key === g.key)?.forecastCostSen;
+      if (v != null) { sum += v; any = true; }
+    }
+    return any ? sum : null;
+  });
+  const onLabel = onGroups.length === present.length ? 'all groups' : onGroups.map((g) => g.label).join(' + ');
+  const lines: ChartLine[] = measure === 'purchase'
+    ? [{ key: 'forecast', label: 'Forecast purchase', color: RED, dashed: true, values: forecastPurchase, tips: periods.map((p, i) => (forecastPurchase[i] == null ? null : `${labelOf(p)} · Forecast purchase (${onLabel}): RM ${fmtSenPlain(forecastPurchase[i])}`)) }]
     : [];
   const rows: TableRow[] = [
     ...present.map((g) => ({ id: g.key, label: g.label, cells: periods.map((p) => (p.costStructure ? fmtSenPlain(measureOf(groupOf(p, g.key) ?? { key: g.key, label: g.label, spendSen: 0, purchaseSen: 0, closingStockSen: 0 }, measure)) : '—')) })),
     { id: 'total', label: 'TOTAL', strong: true, cells: periods.map((p) => (p.costStructure ? fmtSenPlain(p.costStructure.groups.reduce((s, g) => s + measureOf(g, measure), 0)) : '—')) },
+    ...(measure === 'purchase' ? [{ id: 'forecast-purchase', label: `Forecast purchase (${onLabel})`, cells: forecastPurchase.map(fmtOrDash) }] : []),
   ];
   const toggle = (key: string) => setTicked((t) => { const n = new Set(t); if (n.has(key)) n.delete(key); else n.add(key); return n; });
   return (
@@ -308,7 +319,7 @@ const CostStructureCard = ({ periods, groups }: { periods: DashboardPeriod[]; gr
       <ShowPills options={present.map((g) => ({ key: g.key, label: g.label, color: colorOf(g.key) }))} on={ticked} onToggle={toggle} onAll={() => setTicked(new Set(present.map((g) => g.key)))} onNone={() => setTicked(new Set())} />
       <DashboardChart labels={periods.map(labelOf)} bars={bars} stacked lines={lines} ariaLabel={`${MEASURES.find((m) => m.key === measure)?.label ?? ''} per product group`} />
       <FiguresTable periods={periods} rows={rows} ariaLabel="Cost structure figures" />
-      <div style={soft}>Spend = the orders' cost per group; Purchase = the groups' purchase accounts in the period; Closing stock = the stock engine by product category on the period's last day. Bedding = mattress + bedframe.</div>
+      <div style={soft}>Spend = the orders' cost per group; Purchase = the groups' purchase accounts in the period, its dashed line the Forecast P&L's cost of sales through the same accounts for the groups shown; Closing stock = the stock engine by product category on the period's last day. Bedding = mattress + bedframe.</div>
     </CardShell>
   );
 };
