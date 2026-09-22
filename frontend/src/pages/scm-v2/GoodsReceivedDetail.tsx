@@ -42,7 +42,7 @@ import { Button } from '@2990s/design-system';
 import { formatPhone } from '@2990s/shared/phone';
 import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
 import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
-import { activeOptions, buildVariantSummary, fmtDateOrDash, maintPickerValues } from '@2990s/shared';
+import { activeOptions, buildVariantSummary, fmtDateOrDash, isServiceLine, maintPickerValues } from '@2990s/shared';
 import {
   useGrnDetail,
   useUpdateGrnHeader,
@@ -378,6 +378,11 @@ export const GoodsReceivedDetail = () => {
   };
   const itemsSubtotal = visibleItems.reduce((s, it) => s + lineTotalOf(it), 0);
   const grandTotal = itemsSubtotal + (grn.tax_sen ?? 0);
+  // Freight/service lines are charges, not units received (mirror New GRN's Line Summary).
+  const totalQty = visibleItems.reduce((s, it) => {
+    const d = lineOf(it);
+    return isServiceLine({ itemGroup: d.itemGroup, itemCode: it.item_code }) ? s : s + (isEditing ? d.qty : it.qty_received);
+  }, 0);
 
   const headerView = headerDraft ?? headerSnapshot(grn);
 
@@ -1217,24 +1222,50 @@ export const GoodsReceivedDetail = () => {
         )}
       </section>
 
-      {/* ── Totals ────────────────────────────────────────────────── */}
+      {/* ── Line Summary — mirror New GRN: one row per line + Total Quantity /
+          Total Amount, computed LIVE from the visible line items (incl.
+          unsaved draft edits). GRN has no tax. ─────────────────────────── */}
       <section className={styles.card}>
         <header className={styles.cardHeader}>
-          <h2 className={styles.cardTitle}>Totals</h2>
+          <h2 className={styles.cardTitle}>Line Summary</h2>
         </header>
-        <div className={styles.cardBody}>
-          {/* Subtotal/total computed LIVE from the visible line items (incl.
-              unsaved draft edits). GRN has no tax. */}
-          <div className={styles.totalsGrid}>
-            <div className={styles.totalRow}>
-              <span className={styles.totalLabel}>Subtotal</span>
-              <span className={styles.totalValue}>{fmtRm(itemsSubtotal, grn.currency)}</span>
-            </div>
-            <div className={`${styles.totalRow} ${styles.grandTotalRow}`}>
-              <span className={styles.totalLabel}>Total</span>
-              <span className={`${styles.totalValue} ${styles.grandTotal}`}>{fmtRm(grandTotal, grn.currency)}</span>
-            </div>
-          </div>
+        <div className={styles.cardBody} style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
+            <thead>
+              <tr style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-12)', borderBottom: '1px solid var(--line)' }}>
+                <th style={{ textAlign: 'left', fontWeight: 600, padding: '6px 8px 6px 0' }}>Item Code</th>
+                <th style={{ textAlign: 'right', fontWeight: 600, padding: '6px 8px' }}>Qty</th>
+                <th style={{ textAlign: 'right', fontWeight: 600, padding: '6px 8px' }}>Unit Price ({grn.currency})</th>
+                <th style={{ textAlign: 'right', fontWeight: 600, padding: '6px 0 6px 8px' }}>Subtotal</th>
+              </tr>
+            </thead>
+            <tbody style={{ fontFamily: 'var(--font-mono)' }}>
+              {visibleItems.map((it) => {
+                const d = lineOf(it);
+                const qty = isEditing ? d.qty : it.qty_received;
+                const unitPriceSen = isEditing ? d.unitPriceSen : it.unit_price_sen;
+                return (
+                  <tr key={it.id} style={{ borderBottom: '1px dashed var(--line)' }}>
+                    <td style={{ padding: '6px 8px 6px 0', maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={it.item_code}>{it.item_code}</td>
+                    <td style={{ textAlign: 'right', padding: '6px 8px' }}>{qty}</td>
+                    <td style={{ textAlign: 'right', padding: '6px 8px' }}>{fmtRm(unitPriceSen, grn.currency).slice(grn.currency.length + 1)}</td>
+                    <td style={{ textAlign: 'right', padding: '6px 0 6px 8px' }}>{fmtRm(lineTotalOf(it), grn.currency).slice(grn.currency.length + 1)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+            <tfoot style={{ fontFamily: 'var(--font-mono)' }}>
+              <tr style={{ borderTop: '2px solid var(--line)' }}>
+                <td style={{ padding: '8px 8px 4px 0', fontFamily: 'var(--font-sans, inherit)', fontWeight: 600 }}>Total Quantity</td>
+                <td style={{ textAlign: 'right', padding: '8px 8px 4px', fontWeight: 700 }}>{totalQty}</td>
+                <td colSpan={2} />
+              </tr>
+              <tr style={{ fontSize: 'var(--fs-16)', fontWeight: 700 }}>
+                <td colSpan={3} style={{ padding: '4px 8px 4px 0', fontFamily: 'var(--font-sans, inherit)' }}>Total Amount</td>
+                <td style={{ textAlign: 'right', padding: '4px 0 4px 8px', whiteSpace: 'nowrap' }}>{fmtRm(grandTotal, grn.currency)}</td>
+              </tr>
+            </tfoot>
+          </table>
         </div>
       </section>
     </div>
