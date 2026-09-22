@@ -350,11 +350,36 @@ app.patch("/brands/:id", requirePermission("projects.manage"), async (c) => {
 
   // Cascade rename to historical projects.brand values (this company only).
   if (oldName && body.name && oldName !== body.name.trim()) {
+    const newName = body.name.trim();
     await c.env.DB.prepare(
       `UPDATE projects SET brand = ?, updated_at = datetime('now') WHERE brand = ?${brandCoSql}`
     )
-      .bind(body.name.trim(), oldName)
+      .bind(newName, oldName)
       .run();
+    /* user_brands and project_cost_rates hold the same name as free text and
+       were left out of this cascade, so a rename silently unmatched them:
+       approverBrandBlocked compares user_brands.brand to projects.brand by
+       exact string, so a restricted director stops being able to approve the
+       brand they were granted, with no message saying why.
+
+       Neither table carries company_id (and users has none either), so they
+       cannot take a company predicate. Cascade them only when NO other brand
+       row still holds the old name — otherwise this company's rename would
+       rewrite another company's grants, and leaving them stale is the safer
+       half of that trade. */
+    const otherOwner = await c.env.DB.prepare(
+      `SELECT 1 AS hit FROM project_brands WHERE name = ? AND id <> ? LIMIT 1`
+    )
+      .bind(oldName, id)
+      .first<{ hit: number }>();
+    if (!otherOwner) {
+      await c.env.DB.prepare(`UPDATE user_brands SET brand = ? WHERE brand = ?`)
+        .bind(newName, oldName)
+        .run();
+      await c.env.DB.prepare(`UPDATE project_cost_rates SET brand = ? WHERE brand = ?`)
+        .bind(newName, oldName)
+        .run();
+    }
   }
   return c.json({ ok: true });
 });
