@@ -764,8 +764,11 @@ export function DeliveryPlanningBoard({
       // What proves it, and what it's worth (owner 2026-08-19: + Total Amount)
       'do', 'total_amount',
       // Cross-border, shown ONLY on the EM / SG region tabs (defaultHidden:
-      // !isEmSg) — noise on the other four, essential on those two.
+      // !isEmSg) — noise on the other four, essential on those two. The 9 EM
+      // transport-status columns (owner 2026-09-23) sit in the same block.
       'shipout_date', 'eta_arriving_port', 'arrives_em_warehouse_date',
+      'em_delivery_status', 'consignment_no', 'vessel_voyage', 'etd_port_klang',
+      'bs_delivery_date', 'esb_remarks', 'bs_remarks', 'ctn', 'em_delivered_date',
 
       /* ── DEFAULT-HIDDEN from here down, grouped by theme so the Columns
             drawer reads as blocks rather than one long alphabet. ──────────── */
@@ -1112,6 +1115,61 @@ export function DeliveryPlanningBoard({
       searchValue: (o) => o.arrives_em_warehouse_date ?? '',
       sortFn: (a, b) => String(a.arrives_em_warehouse_date ?? '').localeCompare(String(b.arrives_em_warehouse_date ?? '')),
       filterType: 'date', dateValue: (o) => o.arrives_em_warehouse_date,
+    },
+    /* EM cross-border transport (owner 2026-09-23) — the two 3PL legs (ESB
+       sea-freight + BS last-mile), edited in the "Edit HC fields" drawer and
+       read-only here. Auto-SHOW on the EM / SG region tabs (defaultHidden:
+       !isEmSg), like shipout / ETA / arrives-warehouse. Costs are phase 2. */
+    {
+      key: 'em_delivery_status', label: 'EM Delivery Status', width: 170, groupable: true, defaultHidden: !isEmSg,
+      accessor: (o) => o.em_delivery_status ?? '—',
+      searchValue: (o) => o.em_delivery_status ?? '',
+    },
+    {
+      key: 'consignment_no', label: 'Consignment No', width: 150, defaultHidden: !isEmSg,
+      accessor: (o) => o.consignment_no ?? '—',
+      searchValue: (o) => o.consignment_no ?? '',
+    },
+    {
+      key: 'vessel_voyage', label: 'Vessel & Voyage', width: 170, defaultHidden: !isEmSg,
+      accessor: (o) => o.vessel_voyage ?? '—',
+      searchValue: (o) => o.vessel_voyage ?? '',
+    },
+    {
+      key: 'etd_port_klang', label: 'ETD Port Klang', width: 130, sortable: true, defaultHidden: !isEmSg,
+      accessor: (o) => detail(fmtDateOrDash(o.etd_port_klang)),
+      searchValue: (o) => o.etd_port_klang ?? '',
+      sortFn: (a, b) => String(a.etd_port_klang ?? '').localeCompare(String(b.etd_port_klang ?? '')),
+      filterType: 'date', dateValue: (o) => o.etd_port_klang,
+    },
+    {
+      key: 'bs_delivery_date', label: 'BS Delivery Date', width: 140, sortable: true, defaultHidden: !isEmSg,
+      accessor: (o) => detail(fmtDateOrDash(o.bs_delivery_date)),
+      searchValue: (o) => o.bs_delivery_date ?? '',
+      sortFn: (a, b) => String(a.bs_delivery_date ?? '').localeCompare(String(b.bs_delivery_date ?? '')),
+      filterType: 'date', dateValue: (o) => o.bs_delivery_date,
+    },
+    {
+      key: 'esb_remarks', label: 'ESB Remarks', width: 180, defaultHidden: !isEmSg,
+      accessor: (o) => o.esb_remarks ?? '—',
+      searchValue: (o) => o.esb_remarks ?? '',
+    },
+    {
+      key: 'bs_remarks', label: 'BS Remarks', width: 180, defaultHidden: !isEmSg,
+      accessor: (o) => o.bs_remarks ?? '—',
+      searchValue: (o) => o.bs_remarks ?? '',
+    },
+    {
+      key: 'ctn', label: 'CTN', width: 90, defaultHidden: !isEmSg,
+      accessor: (o) => o.ctn ?? '—',
+      searchValue: (o) => o.ctn ?? '',
+    },
+    {
+      key: 'em_delivered_date', label: 'Done Delivery', width: 130, sortable: true, defaultHidden: !isEmSg,
+      accessor: (o) => detail(fmtDateOrDash(o.em_delivered_date)),
+      searchValue: (o) => o.em_delivered_date ?? '',
+      sortFn: (a, b) => String(a.em_delivered_date ?? '').localeCompare(String(b.em_delivered_date ?? '')),
+      filterType: 'date', dateValue: (o) => o.em_delivered_date,
     },
     /* Crew — split into the HC delivery-sheet columns. Driver + Lorry show by
        default; IC / contact / driver 2 / helpers are in the show/hide menu. */

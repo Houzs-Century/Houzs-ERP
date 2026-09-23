@@ -80,7 +80,7 @@ Crew leave and 3PL
 - Lorry `lengthFt/widthFt/heightFt` all supplied -> `capacity_m3` re-derived.
 
 HC delivery fields (`PATCH /delivery-planning/:type/:id/fields`)
-- SO-context fields (possession date, house type, referral, replacement/disposal) write the SO header and need no DO; DO-execution fields (time range/confirmed, arrival, departure, shipout, customer-delivered date, port ETA, sub-status) write the latest DO and return `no_do_hint` when there is none.
+- SO-context fields (possession date, house type, referral, replacement/disposal) write the SO header and need no DO; DO-execution fields (time range/confirmed, arrival, departure, shipout, customer-delivered date, port ETA, sub-status, and the EM cross-border set back-filled by the two 3PL transporters — ESB sea-freight: em delivery status, consignment no, vessel & voyage, ETD Port Klang, ESB remarks; BS last-mile: BS delivery date, BS remarks; plus CTN and done-delivery date) write the latest DO and return `no_do_hint` when there is none. The EM columns default-show only on the East Malaysia / Singapore region tabs (`!isEmSg`), and are edited in the desktop `DeliveryFieldsDrawer` only for now — the mobile card's parity for this set, and the shipping-cost breakdown (-> 3PL COGS), are deferred (owner 2026-09-23).
 - A genuine `replacementDisposal` change on a processing- or PO-locked SO -> 409 `so_locked_processing`. Both surfaces detect the lock with `procLockActive` (needs server-computed `po_locked` on the row) and send it as a header-only SO amendment (`useCreateAmendment`), warning as soon as the order is locked.
 - Mobile sends a changed-only diff from `buildDeliveryFieldsPatch`; desktop posts the whole form.
 

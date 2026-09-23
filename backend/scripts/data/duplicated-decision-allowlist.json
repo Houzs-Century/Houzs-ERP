@@ -127,8 +127,8 @@
     },
     {
       "check": "D1",
-      "key": "ARRIVES EM WAREHOUSE,CONFIRM,DONE DELIVERED,DONE SHIPOUT,HOUSE NOT READY,PENDING PICKUP,REQUEST HOLD|backend/src/scm/routes/delivery-orders-mfg.ts backend/src/scm/routes/delivery-planning.ts frontend/src/vendor/scm/lib/delivery-planning-queries.ts",
-      "why": "THE HC DELIVERY SUB-STATUS VALUES — the owner's own words, carried on the DO, the planning board and the frontend query layer (HC_SUBSTATUS_VALUES). Free text to the business, a closed set to the code; three homes and no referee."
+      "key": "ARRIVES EM WAREHOUSE,CONFIRM,DONE DELIVERED,DONE SHIPOUT,HOUSE NOT READY,PENDING PICKUP,REQUEST HOLD|backend/src/scm/routes/delivery-orders-mfg.ts backend/src/scm/routes/delivery-planning-fields.ts frontend/src/vendor/scm/lib/delivery-planning-queries.ts",
+      "why": "THE HC DELIVERY SUB-STATUS VALUES — the owner's own words, carried on the DO, the planning board and the frontend query layer (HC_SUBSTATUS_VALUES). Free text to the business, a closed set to the code; three homes and no referee. The planning-board home MOVED from delivery-planning.ts into delivery-planning-fields.ts when that router hit its file-size ceiling (2026-09-23)."
     },
     {
       "check": "D1",
