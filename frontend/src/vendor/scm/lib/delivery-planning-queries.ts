@@ -166,6 +166,18 @@ export type PlanningOrder = {
   /* EM-region cross-border transit-warehouse arrival date (migration 0199),
      from the latest DO; null when no DO. */
   arrives_em_warehouse_date: string | null;
+  /* EM cross-border transport status (owner 2026-09-23) — the ESB sea-freight
+     leg + the BS last-mile leg, back-filled by the two 3PL transporters. From
+     the latest DO; null when no DO. */
+  em_delivery_status: string | null;
+  consignment_no: string | null;
+  vessel_voyage: string | null;
+  etd_port_klang: string | null;
+  bs_delivery_date: string | null;
+  esb_remarks: string | null;
+  bs_remarks: string | null;
+  ctn: string | null;
+  em_delivered_date: string | null;
   /* The latest DO's OWN document date (delivery_orders.do_date); null when this
      SO has no (non-DRAFT/CANCELLED) DO yet — drives the "DO Date" grid column. */
   do_date: string | null;
@@ -365,6 +377,16 @@ export type HcFieldsPatch = {
   customerDeliveredDate?: string | null;
   etaArrivingPort?: string | null;
   deliverySubstatus?: string | null;
+  // EM cross-border transport status (owner 2026-09-23) — ESB + BS legs.
+  emDeliveryStatus?: string | null;
+  consignmentNo?: string | null;
+  vesselVoyage?: string | null;
+  etdPortKlang?: string | null;
+  bsDeliveryDate?: string | null;
+  esbRemarks?: string | null;
+  bsRemarks?: string | null;
+  ctn?: string | null;
+  emDeliveredDate?: string | null;
 };
 
 export type HcFieldsResult = {
