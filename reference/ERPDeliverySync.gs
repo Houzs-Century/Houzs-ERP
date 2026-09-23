@@ -27,8 +27,10 @@
 //   GET  {ERP_BASE_URL}/api/delivery-sheet/assr-legs?since=<checkpoint>&limit=300
 //        Service-Case legs the ERP marked OWN-TEAM (inspection / pickup /
 //        delivery-back). Appended to the SAME regional tabs, DocNo =
-//        "<ASSR-NO>#<KIND>". Own-team gated by the ERP; the leg rows are never
-//        pushed back (erpCollectUpdates_ skips a DocNo with '#').
+//        "<S/O>-<SERVICE|PICKUP|INSPECTION>" (keyed like a Farra leg so the
+//        sheet's date write-back finds it). Own-team gated by the ERP; the leg
+//        rows are never pushed back (erpCollectUpdates_ skips '#' and the
+//        "-<KIND>" leg key).
 
 const ERP_CHECKPOINT_PROP = "ERP_SYNC_CHECKPOINT";
 // Service-Case legs ride their own cursor so a stuck ASSR page never holds up
@@ -329,9 +331,10 @@ function erpCollectUpdates_(sheet, sConfig, all) {
     const row = data[i];
     const docNo = String(row[1] || "").trim();
     if (!docNo) continue;
-    // ASSR leg rows carry "<ASSR-NO>#<KIND>" and have no SO to update — never
-    // push them back (they would only ever come back as skipped 'no_order').
-    if (docNo.indexOf("#") >= 0) continue;
+    // ASSR leg rows carry "<ASSR-NO>#<KIND>" (legacy) or, since the ERP pull,
+    // "<S/O>-<SERVICE|PICKUP|INSPECTION>" (keyed like a Farra leg) and have no SO
+    // to update — never push them back (they only come back as skipped 'no_order').
+    if (docNo.indexOf("#") >= 0 || /-(?:PICKUP|SERVICE|INSPECTION)$/.test(docNo)) continue;
     if (!all && row[sConfig.statusCol - 1] !== "PENDING") continue;
     out.push({ rowIndex: i + 1, DocNo: docNo, Remark4: String(row[0] == null ? "" : row[0]), ExpiryDate: erpDateText_(row[14]) });
   }
