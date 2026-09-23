@@ -178,7 +178,7 @@ Desktop / mobile parity
 - Leaving `?edit=1` must clear the URL (`returnToDetail` with replace). Submitting an amendment keeps the editor open.
 - History drawers must pass `q.error`, so a failed read never shows "No history yet".
 - `tests-pg` fixtures must use production column types. Backend typecheck does not cover `tests-pg/`.
-- Venue picker (`frontend/src/components/FairPicker.tsx`): a place already on the order is shown as itself, never as "Others"; "Others — pick a place instead" is an action, not a value.
+- Venue picker (`frontend/src/components/FairPicker.tsx`): a place already on the order is shown as itself, never as "Others"; "Others — pick a place instead" is an action, not a value. On edit a saved venue (text alone counts: most orders have no `venue_id`) beats the salesperson's or user's default, which fills only an order with no venue.
 - Save lock: a header PATCH carrying the save's lease token with nothing left to write releases the lock and returns `version`; the same person takes their own lock back instead of waiting.
 - The list search is one PostgREST `.or()` built once in `backend/src/scm/lib/so-list-read.ts` (`prepareSoListRead`) and shared by the page rows, the money strip and the line export (`GET /api/scm/mfg-sales-orders/export/rows`); never hand-copy it.
 

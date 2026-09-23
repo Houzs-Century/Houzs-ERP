@@ -1143,10 +1143,15 @@ export function MobileNewSO({
   }, [isEdit]);
 
   /* Venue derives from the picked salesperson's staff.venue_id (falls back to
-     the auth user's own venue, the persisted venue on edit, or the active
-     project's venue). Mirrors SalesOrderNew resolvedVenue*. */
+     the auth user's own venue, or the active project's venue). Mirrors
+     SalesOrderNew resolvedVenue*. On EDIT a venue already saved on the order
+     wins: a default fills only an order with none (owner 2026-06-23, "never
+     override a manual or loaded pick"). A saved venue with no venue_id used to
+     rank below the salesperson's default — dormant only while those default ids
+     match nothing in useVenues(). */
+  const savedVenue = isEdit && (prefillVenueId != null || prefillVenueName.trim() !== "");
   const resolvedVenueId: string | null =
-    prefillVenueId ?? selectedStaff?.venueId ?? authStaff?.venueId ?? autoVenue?.venueId ?? null;
+    prefillVenueId ?? (savedVenue ? null : selectedStaff?.venueId ?? authStaff?.venueId ?? autoVenue?.venueId) ?? null;
   const resolvedVenueName: string = useMemo(() => {
     if (resolvedVenueId) {
       const v = (venuesQ.data ?? []).find((r) => r.id === resolvedVenueId);
@@ -1171,12 +1176,15 @@ export function MobileNewSO({
   });
   useEffect(() => {
     /* Seeds a BLANK only — a human pick is a decision and is never overwritten.
-       A place, plus the order's linked event when it has one (fairPick.ts). */
+       A place, plus the order's linked event when it has one (fairPick.ts).
+       On edit, not until the order has loaded: a default seeded first would
+       block the saved venue for good. */
+    if (isEdit && loading) return;
     if (fairPick.venue == null && resolvedVenueName) {
       setFairPick(fairPickValue(resolvedVenueName, linkedEvent(resolvedVenueName, linkedFair)));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resolvedVenueName]);
+  }, [resolvedVenueName, loading]);
   const effectiveVenueId = fairPick.venue
     ? ((venuesQ.data ?? []).find((r) => r.name.trim().toLowerCase() === fairPick.venue!.trim().toLowerCase())?.id ?? null)
     : (pickedVenueId ?? resolvedVenueId);
