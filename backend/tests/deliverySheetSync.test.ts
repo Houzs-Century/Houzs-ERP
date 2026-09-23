@@ -737,6 +737,7 @@ describe("POST /feed-by-docnos — manual restore, full records, NO readiness ga
  * expansion and the route's shape / gating are pinned. */
 const ASSR: AssrFeedRow = {
   assr_no: "ASSR/2609-012",
+  doc_no: "SO-2609-012",
   status: "In Progress",
   customer_name: "Wendy",
   phone: "60127712155",
@@ -757,18 +758,20 @@ const ASSR: AssrFeedRow = {
 };
 
 describe("toAssrLegRecords — one own-team leg per set date, in the sheet's record shape", () => {
-  test("all three legs: keyed <ASSR-NO>#<KIND>, each on its own date, only DELIVERY carries the DO", () => {
+  test("all three legs: col B keyed <S/O>-<SERVICE|PICKUP|INSPECTION>, col C the ASSR number, each on its own date", () => {
     const legs = toAssrLegRecords(ASSR);
     expect(legs.map((l) => l.Kind)).toEqual(["INSPECT", "PICKUP", "DELIVERY"]);
     const by = Object.fromEntries(legs.map((l) => [l.Kind, l]));
+    // col B = S/O-<word> (delivery-back = SERVICE); col C (TransferTo) = the ASSR
+    // number, which syncDeliveryDateToASSR reads to write a scheduled date back.
     expect(by.INSPECT).toMatchObject({
-      DocNo: "ASSR/2609-012#INSPECT", ErpDocNo: "ASSR/2609-012", Remark2: "SERVICE INSPECTION",
-      SalesExemptionExpiryDate: "2026-09-20", TransferTo: null, DebtorName: "Wendy", Phone1: "60127712155",
+      DocNo: "SO-2609-012-INSPECTION", ErpDocNo: "ASSR/2609-012", Remark2: "SERVICE INSPECTION",
+      SalesExemptionExpiryDate: "2026-09-20", TransferTo: "ASSR/2609-012", DebtorName: "Wendy", Phone1: "60127712155",
       SalesLocation: "KL", SalesAgent: "LUCAS", Region: "WEST", Status: "PENDING", Ready: false,
       InvAddr1: "12 Jalan Satu", InvAddr4: "Selangor", Total: 0, SOUDF_BALANCE: 0, LastModified: ASSR.last_modified_text,
     });
-    expect(by.PICKUP).toMatchObject({ DocNo: "ASSR/2609-012#PICKUP", Remark2: "SERVICE PICKUP", SalesExemptionExpiryDate: "2026-09-21", TransferTo: null });
-    expect(by.DELIVERY).toMatchObject({ DocNo: "ASSR/2609-012#DELIVERY", Remark2: "SERVICE DELIVERY", SalesExemptionExpiryDate: "2026-09-25", TransferTo: "HC-DO-2609-050" });
+    expect(by.PICKUP).toMatchObject({ DocNo: "SO-2609-012-PICKUP", Remark2: "SERVICE PICKUP", SalesExemptionExpiryDate: "2026-09-21", TransferTo: "ASSR/2609-012" });
+    expect(by.DELIVERY).toMatchObject({ DocNo: "SO-2609-012-SERVICE", Remark2: "SERVICE DELIVERY", SalesExemptionExpiryDate: "2026-09-25", TransferTo: "ASSR/2609-012" });
   });
 
   test("the own-team gate is per leg: supplier / 3PL / unconfirmed or a missing date emits nothing", () => {
@@ -808,7 +811,7 @@ describe("GET /assr-legs", () => {
     const body = (await res.json()) as any;
     expect(body.cases).toBe(1);
     expect(body.count).toBe(3);
-    expect(body.records.map((r: any) => r.DocNo)).toEqual(["ASSR/2609-012#INSPECT", "ASSR/2609-012#PICKUP", "ASSR/2609-012#DELIVERY"]);
+    expect(body.records.map((r: any) => r.DocNo)).toEqual(["SO-2609-012-INSPECTION", "SO-2609-012-PICKUP", "SO-2609-012-SERVICE"]);
     expect(body.next_since).toBe(ASSR.last_modified_text);
     expect(body.has_more).toBe(false);
     const feed = seen.find((s) => /FROM assr_cases/.test(s.sql))!;
