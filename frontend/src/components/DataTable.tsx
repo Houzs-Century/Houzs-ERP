@@ -64,7 +64,7 @@ import {
 } from "../lib/tableLayouts";
 import { useUdf, type UseUdfResult } from "../hooks/useUdf";
 import { downloadCSV, isoForExport, toCSV, type CSVColumn } from "../lib/csv";
-import { applyColumnFilters, filterKeyOf, filterKeysOf, sortTableRows } from "./dataTableRows";
+import { applyColumnFilters, facetedFilterValues, sortTableRows } from "./dataTableRows";
 import {
   buildLineExportMatrix,
   exportableColumns,
@@ -3163,31 +3163,19 @@ function DataTableInner<T, L>({
         (() => {
           const col = allColumns.find((c) => c.key === filterMenu.colKey);
           if (!col?.getValue) return null;
-          const getter = col.getValue;
-          const multi = col.getFilterValues;
-          const counts = new Map<string, number>();
-          for (const r of rows ?? []) {
-            // A multi-value row counts once against EACH of its values, so
-            // the funnel lists "Bedframe" and "Mattress" separately rather
-            // than a composite "Bedframe, Mattress" entry.
-            for (const k of multi ? filterKeysOf(multi(r)) : [filterKeyOf(getter(r))]) {
-              counts.set(k, (counts.get(k) ?? 0) + 1);
-            }
-          }
-          // Seed the always-listed vocabulary (0-count entries stay pickable).
-          for (const seed of col.filterSeedValues ?? []) {
-            const k = filterKeyOf(seed);
-            if (!counts.has(k)) counts.set(k, 0);
-          }
-          const values = [...counts.entries()].sort((a, b) =>
-            a[0].localeCompare(b[0], undefined, { numeric: true })
-          );
+          /* FACETED value list (owner 2026-09-23, "越筛越少") — the options are
+             counted over the rows that survive every OTHER active column filter,
+             so once Date = 23/9 is picked the Creditor funnel lists only
+             creditors present that day, and each further filter narrows the rest.
+             See facetedFilterValues for the exact rule (0-count options drop
+             unless they are fixed vocabulary or currently ticked). */
+          const values = facetedFilterValues(rows ?? [], colFilters, col, allColumns);
+          const selected = new Set(colFilters[col.key] ?? []);
           const q = filterQuery.trim().toLowerCase();
           const shown = q
             ? values.filter(([v]) => v.toLowerCase().includes(q))
             : values;
           const shownValues = shown.map(([v]) => v);
-          const selected = new Set(colFilters[col.key] ?? []);
           const canSort = canSortColumn(col);
           const sortActive = sort?.key === col.key ? sort.dir : null;
 

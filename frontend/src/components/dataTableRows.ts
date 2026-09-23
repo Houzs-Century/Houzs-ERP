@@ -16,6 +16,9 @@ export type RowRuleColumn<T> = {
   getValue?: (row: T) => CellValue;
   sortValue?: (row: T) => CellValue;
   getFilterValues?: (row: T) => (string | number | null | undefined)[];
+  /* A fixed vocabulary the funnel always offers (e.g. a status set), listed even
+     when no row currently carries the value. */
+  filterSeedValues?: CellValue[];
   disableSort?: boolean;
 };
 
@@ -77,6 +80,48 @@ export function applyColumnFilters<T>(
     .filter((g): g is { values: (r: T) => string[]; allowed: Set<string> } => g !== null);
   if (getters.length === 0) return rows;
   return rows.filter((r) => getters.every((g) => g.values(r).some((v) => g.allowed.has(v))));
+}
+
+/** The FACETED value list for one column's funnel, as `[value, count]` sorted
+ *  naturally. Counts are taken over the rows that survive every OTHER active
+ *  column filter (this column's own filter is excluded), so the choices narrow
+ *  as other filters are applied — pick Date = 23/9 and the Creditor funnel lists
+ *  only creditors present that day (owner 2026-09-23: "越筛越少"). An option that
+ *  cannot be reached under the other filters (0 rows) is dropped, UNLESS it is
+ *  part of the column's fixed vocabulary (`filterSeedValues`) or is currently
+ *  ticked — a ticked value must stay listed so it can be un-ticked. Pure, so the
+ *  grid and its tests run the same rule. */
+export function facetedFilterValues<T>(
+  rows: readonly T[],
+  colFilters: Readonly<Record<string, readonly string[]>>,
+  col: RowRuleColumn<T>,
+  columns: readonly RowRuleColumn<T>[],
+): Array<[string, number]> {
+  if (!col.getValue) return [];
+  const getter = col.getValue;
+  const multi = col.getFilterValues;
+  const selected = new Set(colFilters[col.key] ?? []);
+  const otherFilters: Record<string, string[]> = {};
+  for (const [k, v] of Object.entries(colFilters)) {
+    if (k !== col.key && v.length > 0) otherFilters[k] = [...v];
+  }
+  const facetRows = applyColumnFilters([...rows], otherFilters, columns);
+  const counts = new Map<string, number>();
+  for (const r of facetRows) {
+    for (const k of multi ? filterKeysOf(multi(r)) : [filterKeyOf(getter(r))]) {
+      counts.set(k, (counts.get(k) ?? 0) + 1);
+    }
+  }
+  const seededKeys = new Set<string>();
+  for (const seed of col.filterSeedValues ?? []) {
+    const k = filterKeyOf(seed);
+    seededKeys.add(k);
+    if (!counts.has(k)) counts.set(k, 0);
+  }
+  for (const v of selected) if (!counts.has(v)) counts.set(v, 0);
+  return [...counts.entries()]
+    .filter(([k, n]) => n > 0 || seededKeys.has(k) || selected.has(k))
+    .sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true }));
 }
 
 /** The grid's sort. On a `serverSort` table a server-sortable column is already
