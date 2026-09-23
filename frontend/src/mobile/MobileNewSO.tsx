@@ -207,6 +207,7 @@ type SoHeader = {
   version: number;
   debtor_name: string | null;
   status: string | null;
+  so_date: string | null;
   /* The staff row this order is credited to. Served by the detail route and read
      by MobileSODetail already; this form was typed without it, which is part of
      why it never seeded the picker. */
@@ -891,6 +892,11 @@ export function MobileNewSO({
   const activeLineLeaseRef = useRef<string | null>(null);
   const [prefillVenueId, setPrefillVenueId] = useState<string | null>(null);
   const [prefillVenueName, setPrefillVenueName] = useState<string>("");
+  /* The loaded order's own date; null on a new order, which the server dates
+     today. The fair list is the four weeks behind THIS date: a venue backfilled
+     a month later must offer the fairs that were on when the order was written,
+     not the ones on today (owner 2026-09-23). Desktop passes header.so_date. */
+  const [orderDate, setOrderDate] = useState<string | null>(null);
   // SKU picker sheet — the line key it was opened for, or null when closed.
   const [pickerFor, setPickerFor] = useState<string | null>(null);
   // Fabric picker sheet — the line key it was opened for, or null when closed.
@@ -967,6 +973,7 @@ export function MobileNewSO({
         setBuildingType(h.building_type ?? "");
         setPrefillVenueId(h.venueId ?? h.venue_id ?? null);
         setPrefillVenueName(h.venue ?? "");
+        setOrderDate(h.so_date ? h.so_date.slice(0, 10) : null);
         setProcDate((h.processing_date ?? "").slice(0, 10));
         setOrigProcDate((h.processing_date ?? "").slice(0, 10));
         setDelivDate((h.customer_delivery_date ?? "").slice(0, 10));
@@ -2340,7 +2347,7 @@ export function MobileNewSO({
                     <FairPicker
                       id="mob-so-fair"
                       value={fairPick}
-                      soDate={null}
+                      soDate={orderDate}
                       onChange={setFairPick} disabled={identityLocked}
                       selectClassName="fld-i"
                     />
