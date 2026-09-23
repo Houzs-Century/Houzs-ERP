@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useMfgProducts, type MfgCategory, type MfgProductRow } from "../vendor/scm/lib/mfg-products-queries";
+import { useMfgProducts, matchesProductQuery, type MfgCategory, type MfgProductRow } from "../vendor/scm/lib/mfg-products-queries";
 import "./mobile.css";
 
 /* Perf cap (parity with SalesOrderNewFromProducts, PR #342) — never render more
@@ -86,26 +86,27 @@ export function MobileSkuPicker({
      SKU) so "Add N products" hands back selections in the order tapped. */
   const [picked, setPicked] = useState<Array<{ id: string; sku: PickedSku }>>([]);
 
-  // The catalog read. Category "" omits the filter; search is a server-side
-  // code/name match (GET /mfg-products?category=&search=).
-  //
-  // Server-typeahead gate (owner #1 scaling pain, 2026-07-14) — the "All / no
-  // search" read used to pull the WHOLE ~1141-SKU catalog on every open. It is
-  // now bounded: the query only fires once the operator has typed >= 2 chars OR
-  // narrowed to a category chip (a category-scoped read is bounded to that
-  // category). Below the gate we show a prompt instead of fetching everything.
+  // Load the full catalog ONCE and filter it LOCALLY. This uses the SAME cache
+  // key as the desktop picker (['mfg-products', company, 'all', '', '']), so the
+  // list is fetched at most once per company and the sheet no longer fires a
+  // `/mfg-products?search=` request per keystroke — typing stays responsive even
+  // while the Worker is slow or dropping connections (owner 2026-09-23: "product
+  // code search slow"). The gate still governs what we SHOW: below >=2 chars and
+  // no category chip we prompt instead of listing arbitrary rows, and RENDER_CAP
+  // still bounds the DOM so a wide match can't freeze the sheet.
   const trimmedSearch = search.trim();
   const gateOpen = trimmedSearch.length >= 2 || cat !== "";
-  const productsQ = useMfgProducts({
-    category: cat || undefined,
-    search: trimmedSearch || undefined,
-    enabled: gateOpen,
-  });
+  const productsQ = useMfgProducts({ enabled: true });
 
-  const rows = useMemo<MfgProductRow[]>(
-    () => (productsQ.data ?? []).filter((p) => p.status !== "INACTIVE"),
-    [productsQ.data],
-  );
+  const rows = useMemo<MfgProductRow[]>(() => {
+    if (!gateOpen) return [];
+    return (productsQ.data ?? []).filter(
+      (p) =>
+        p.status !== "INACTIVE" &&
+        (!cat || p.category === cat) &&
+        (trimmedSearch.length < 2 || matchesProductQuery(p, trimmedSearch)),
+    );
+  }, [productsQ.data, gateOpen, cat, trimmedSearch]);
   // Cap the DOM to RENDER_CAP rows so an "All / no search" set can't freeze the
   // sheet; the hint below tells the operator to narrow when rows are hidden.
   const shown = useMemo(() => rows.slice(0, RENDER_CAP), [rows]);
