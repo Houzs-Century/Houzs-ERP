@@ -26,6 +26,7 @@ import { fakeSb, type Row } from '../lib/fake-postgrest';
 import { resetWritebackFlagCache } from '../lib/autocount-writeback-flag';
 import { recordSoPaymentRow } from '../lib/so-payment-row';
 import { composeSoPaymentEdit } from '../lib/ac-so-payment-edit';
+import { todayMyt } from '../lib/my-time';
 
 /* Cached for 30 seconds by design, and the cache is module-level — without this
    the second test in the file inherits the first one's switch. Same seam
@@ -76,7 +77,10 @@ const outbox = (sb: { tables: Record<string, Row[]> }) => sb.tables.autocount_ou
 
 const payment = (over: Row = {}) => ({
   docNo: 'HC-SO-P1',
-  paidAt: '2026-08-15',
+  /* TODAY, not a fixed day: since 2026-09-23 the write core refuses a slip
+     dated more than 14 days back (shared/payment-slip-date), and this file is
+     about the AutoCount wiring, not about dates. */
+  paidAt: todayMyt(),
   method: 'cash' as const,
   amountSen: 300_00,
   slipKey: null,

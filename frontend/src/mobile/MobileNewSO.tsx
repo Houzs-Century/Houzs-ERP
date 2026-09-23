@@ -98,7 +98,8 @@ import { RecordedPaymentsList, type RecordedPayment } from "./RecordedPayments";
    makes. This screen owns the only OTHER payment editor (the pre-create PayCard
    below), so it is the one surface a rule landing on the shared/detail ledger
    keeps missing (#583, then again in fix/b3-pay). */
-import { missingMethodSubField } from "../vendor/scm/components/PaymentsTable";
+import { missingMethodSubField, slipDateProblem } from "../vendor/scm/components/PaymentsTable";
+import { paymentSlipDateWindow } from "../vendor/scm/lib/payment-slip-date";
 /* Money moved from a cancelled order (docs/bugs/0933): the method option, its pick, the body, the seed. */
 import { ConvertSourceField, convertedBody, rmInput, useMobileConvertSources, withConvertOption, type MobileConvertPrefill } from "./MobileOrderMoney";
 import { CONVERT_LABEL, type ConvertSource } from "../vendor/scm/lib/so-money-queries";
@@ -1393,10 +1394,25 @@ export function MobileNewSO({
     })),
   }), [name, phone, namedLines, isEdit, outgoingVenueName, outgoingVenueId, canChangeSalesperson, outgoingSalespersonId, selfStaffMatch, branding.companyCode, salesLocation, state, procDate, delivDate, addr1, postcode, origProcDate, origDelivDate, origItems, pays]);
 
+  /* The payment rows whose slip date falls outside the window (owner 2026-09-23).
+     A blocker rather than a post-create failure: the payments are posted AFTER
+     the order is created, so without this the order lands and the money does
+     not. The server refuses the same row with the same sentence. */
+  const outOfWindowPayments = useMemo(
+    () => pays
+      .filter((p) => toSen(p.amount) > 0)
+      .map((p) => slipDateProblem({ paidAt: p.date, methodLabel: p.method }, todayMyt(), can("scm.payment.backdate")))
+      .filter((m): m is string => m !== null),
+    [pays, can],
+  );
+
   /* Two genuinely client-only blockers the backend cannot see: an invalid email
      format, and a line with no product picked. Merged into the same list. */
   const soClientExtras = useMemo<SaveProblem[]>(() => [
     ...(emailErr ? [{ code: "email_invalid", message: "Enter a valid email, or leave it blank.", field: "Email" }] : []),
+    ...(outOfWindowPayments.length > 0
+      ? [{ code: "slip_date_out_of_window", message: outOfWindowPayments[0]!, field: "Payment date" }]
+      : []),
     ...(unpickedLines.length > 0
       ? [{
           code: "line_unpicked",
@@ -1404,7 +1420,7 @@ export function MobileNewSO({
           field: "Line items",
         }]
       : []),
-  ], [emailErr, unpickedLines]);
+  ], [emailErr, unpickedLines, outOfWindowPayments]);
 
   const liveSoValidateDraft = useMemo(() => buildSoValidateDraft(false), [buildSoValidateDraft]);
   const { problems: soBackendProblems } = useSoValidate(liveSoValidateDraft, true);
@@ -3560,6 +3576,13 @@ function PayCard({ pay, staff, convertSources, onChange, onRemove }: { pay: Paym
   const bankOpts = optionsOrFallback("payment_merchant", useSoDropdownOptions("payment_merchant").data);
   const planOpts = optionsOrFallback("installment_plan", useSoDropdownOptions("installment_plan").data);
   const onlineOpts = optionsOrFallback("online_type", useSoDropdownOptions("online_type").data);
+  /* Slip-date window (owner 2026-09-23) — the same rule, sentence and exception
+     as the desktop panel and the payments sheet. The row is bounded here so the
+     order is not created before the money's date is refused. */
+  const { can: canPay } = useHouzsAuth();
+  const mayBackdateSlip = canPay("scm.payment.backdate");
+  const slipWindow = paymentSlipDateWindow(todayMyt());
+  const slipProblem = slipDateProblem({ paidAt: pay.date, methodLabel: pay.method }, todayMyt(), mayBackdateSlip);
   const onPickSlip = async (f: File | null) => {
     if (!f) return;
     onChange({ slipName: f.name, slipSession: "", slipPhase: "uploading" });
@@ -3583,7 +3606,18 @@ function PayCard({ pay, staff, convertSources, onChange, onRemove }: { pay: Paym
       <div style={{ display: "flex", flexDirection: "column", gap: 7, padding: 10 }}>
         <div style={{ display: "flex", gap: 9, alignItems: "flex-end" }}>
           <Field label="Date" style={{ flex: 1.1 }} onClear={pay.date ? () => onChange({ date: "" }) : undefined}>
-            <DateField fullWidth className="fld-i" value={pay.date} onChange={(iso) => onChange({ date: iso })}/>
+            <DateField
+              fullWidth
+              className="fld-i"
+              value={pay.date}
+              min={mayBackdateSlip ? undefined : slipWindow.min}
+              max={mayBackdateSlip ? undefined : slipWindow.max}
+              invalid={slipProblem !== null}
+              onChange={(iso) => onChange({ date: iso })}
+            />
+            {slipProblem && (
+              <span style={{ fontSize: 11, lineHeight: 1.3, color: "var(--red)" }}>{slipProblem}</span>
+            )}
           </Field>
           <Field label="Amount" style={{ flex: 1.1 }}>
             <input className="fld-i money" value={pay.amount} onChange={(e) => onChange({ amount: e.target.value })} />
