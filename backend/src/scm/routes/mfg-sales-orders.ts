@@ -7,6 +7,7 @@ import type { Context } from 'hono';
 import { z } from 'zod';
 import { createClient } from '@supabase/supabase-js';
 import { normalizePhone } from '../shared/phone';
+import { checkPaymentSlipDate } from '../shared/payment-slip-date';
 import {
   pickComboMatch, spreadComboTotal, splitSofaCode, sofaHeightKey,
   buildVariantSummary, comboChargedPrices, matchComboSubset, type SofaComboRow, type SofaPriceTier,
@@ -68,7 +69,7 @@ import {
   lockedColumnsChanged,
   PAYMENT_WINDOW_CLOSED_ERROR,
 } from '../shared/so-field-policy';
-import { paymentMayChange, SO_PAYMENT_AMEND } from '../../acc/payment-reconciled';
+import { paymentMayChange, SLIP_DATE_OVERRIDE_NOTE, SO_PAYMENT_AMEND, SO_PAYMENT_BACKDATE } from '../../acc/payment-reconciled';
 import { AMEND_SOURCE, ledgerFieldChange } from '../../acc/payment-corrections';
 import { paymentReasonRule } from '../lib/so-payment-reason';
 import { paymentVersionGuard, soCasGrace, soCasGraceOpen } from '../lib/so-cas';
@@ -3922,6 +3923,22 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     const g = await convertGuard(sb, Number(companyId), { fromDocNo: p.convertedFromDocNo, toDocNo: '', amountSen: p.amountSen });
     if (!g.ok) { await rollbackPwpClaims(); return c.json({ error: g.error, message: g.message }, g.status); }
     convertPlans.set(i, g.plan);
+  }
+
+  /* Slip-date window on CREATE (owner 2026-09-23) — the New-SO form carries ONE
+     payment date for every row it books, so it is judged once, here, before any
+     row is written. Rows that are money MOVED from another order take the source
+     order's date and are exempt, exactly as on the payments panel. The headless
+     scan job carries no permissions, so an OCR'd old receipt is refused and goes
+     to a human — the owner's call. */
+  const booksMoneyOnCreate = (posPayments ?? []).some((p) => p.method !== 'converted')
+    || (typeof body.depositSen === 'number' && body.depositSen > 0);
+  if (booksMoneyOnCreate) {
+    const verdict = checkPaymentSlipDate(dateOrNull(body.paymentDate) ?? todayMyt(), todayMyt());
+    if (!verdict.ok && !hasHouzsPerm(c, SO_PAYMENT_BACKDATE)) {
+      await rollbackPwpClaims();
+      return c.json({ error: 'slip_date_out_of_window', reason: verdict.reason }, 400);
+    }
   }
 
   /* Resolve each split payment's slip session → R2 key up front, for the rows
@@ -9951,6 +9968,22 @@ export const postSoPaymentHandler = async (c: any) => {
   const owed = paymentReasonRule(c, { reason: p.reason });
   if (owed.refusal) return c.json(owed.refusal, 400);
 
+  /* Slip-date window (owner 2026-09-23) — the rule is scm/shared/payment-slip-date;
+     `scm.payment.backdate` is the exception, and an exercised exception says so
+     in the audit note (unless a reason is already owed, which says more). A
+     CONVERTED row is money that moved, not a slip somebody keyed: its date comes
+     from the source order's first payment, so it is not window-checked here (the
+     write core skips it by method too). */
+  const mayBackdateSlip = hasHouzsPerm(c, SO_PAYMENT_BACKDATE);
+  let slipDateOverride = false;
+  if (p.method !== 'converted') {
+    const verdict = checkPaymentSlipDate(p.paidAt, todayMyt());
+    if (!verdict.ok) {
+      if (!mayBackdateSlip) return c.json({ error: 'slip_date_out_of_window', reason: verdict.reason }, 400);
+      slipDateOverride = true;
+    }
+  }
+
   /* FIX 3 (2026-07-16) — method ⇒ bank/account mapping, enforced server-side.
      The desktop New-SO / Payments cascade blocks saving a Merchant payment with
      no Bank or an Online (transfer) payment with no Sub-Type
@@ -10051,6 +10084,7 @@ export const postSoPaymentHandler = async (c: any) => {
     createdBy:         user.id,
     actorName:         (user.user_metadata as { name?: string } | undefined)?.name ?? null,
     ...(owed.owed ? { auditSource: AMEND_SOURCE, auditNote: p.reason } : {}),
+    ...(slipDateOverride ? { allowOutOfWindowSlipDate: true, ...(owed.owed ? {} : { auditNote: SLIP_DATE_OVERRIDE_NOTE }) } : {}),
   });
   if (errorMessage) return c.json({ error: 'insert_failed', reason: errorMessage }, 500);
 
@@ -10184,6 +10218,17 @@ mfgSalesOrders.patch('/:docNo/payments/:id', async (c) => {
   const nextOnline = nextMethod === 'transfer' ? (rawOnline ?? null) : null;
   const nextAmount = p.amountSen ?? before.amount_sen;
   const nextPaidAt = p.paidAt ?? before.paid_at;
+  /* Re-dating a payment goes through the same window as keying one (owner
+     2026-09-23) — otherwise "save it today, then change the date" is the way
+     around the rule. Only a CHANGE is judged: a row whose stored date is
+     already outside the window (legacy, or keyed on the backdate right) must
+     still be correctable for its amount or its bank. */
+  if (nextPaidAt !== before.paid_at) {
+    const verdict = checkPaymentSlipDate(nextPaidAt, todayMyt());
+    if (!verdict.ok && !hasHouzsPerm(c, SO_PAYMENT_BACKDATE)) {
+      return c.json({ error: 'slip_date_out_of_window', reason: verdict.reason }, 400);
+    }
+  }
   const nextApproval = p.approvalCode !== undefined ? (p.approvalCode ?? null) : before.approval_code;
   const nextCollectedBy = p.collectedBy !== undefined ? (p.collectedBy ?? null) : before.collected_by;
   /* Account Sheet on EDIT (owner 2026-07-16, "Acc sheet 亂填?") — the sheet is

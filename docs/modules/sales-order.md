@@ -45,6 +45,7 @@ Line and derived states:
 - `scm.so.remove_processing_date`: clear a Processing Date (otherwise `processing_date_remove_forbidden`).
 - `scm.so.price_override`: the audited `POST /:docNo/items/:itemId/override` and admin backfill routes. Normal line pricing is gated by session type, not by this key.
 - `scm.so_payment.amend`: Finance may edit or delete a payment after its same-day window (never a reconciled one). A role that holds this key literally must give a reason on every payment action (`lib/so-payment-reason.ts`).
+- `scm.payment.backdate`: key or re-date a payment whose slip date falls outside the 14-day window (400 `slip_date_out_of_window` without it). The audit row says the right was used.
 - `scm.amendment.create`: raise an SO amendment (Sales-org users and lane approvers may also raise one).
 - `scm.amendment.approve_lines` (Purchaser lane), `scm.amendment.approve_delivery` (Logistic lane), and `scm.amendment.approve_price` (Finance / Kris — the 2990 price-only lane), mapped in `LANE_APPROVE_KEY` (`shared/amendment-lane.ts`). `scm.amendment.approve_so` is the legacy fallback; `scm.amendment.approve_po` is for the PO side.
 - `*` / `scm.admin`: bypass the write freeze and the migrated-order lock.
@@ -121,6 +122,7 @@ AutoCount and integrations
 - Money left on a cancelled order is computed, not stored (`orderMoney`, `lib/so-money.ts`). Refund raises a draft Customer Refund voucher. Convert books a `converted` payment row with `convertedFromDocNo` on the new order, after `convertGuard`. Converted rows can be deleted but never PATCHed. Desktop and phone share `OrderMoneyPanel`.
 - Payment writers (`lib/so-payment-row.ts`) re-roll linked invoice statuses and book to the GL best-effort (create deposits book too). An edit reposts, but only amount, paid_at, method and merchant change the books.
 - `paymentMayChange` (`backend/src/acc/payment-reconciled.ts`) decides payment edits: reconciled -> nobody; same day -> whoever keyed it; otherwise `scm.so_payment.amend`. It fails closed.
+- Slip date: a keyed payment must be dated within the last 14 days, and never in the future (`shared/payment-slip-date.ts`, byte-mirrored to `vendor/scm/lib/`). Enforced on POST, on a PATCH that CHANGES the date, on the SO-create payment date and in the write core; `converted` rows are exempt (they carry the source order's day). A scanned receipt outside the window is not booked — the job says so and the operator adds it. `scm.payment.backdate` is the exception.
 - A slip is optional on every payment path. Writers filter drafts by amount only. An upload session that is claimed but doesn't resolve is 400 `slip_required`.
 - Payment methods: Merchant, Online and Cash are selectable; `Installment` is kept for history. Pickers read `scm.so_dropdown_options` via `optionsOrFallback`. An edit starts from the stored row exactly as saved.
 - Doc numbers: counter `scm.next_doc_no_n` (atomic; never below the current live max). A cancelled order keeps its number, and deleted numbers are never reused. `insertWithDocNoRetry` retries up to 8 times, or once when a PWP code was claimed.

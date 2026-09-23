@@ -119,7 +119,7 @@ import { useSpecialAddons, type MfgProductRow } from '../../vendor/scm/lib/mfg-p
 import { type ScanPrefill, type ExtractedSlip } from '../../vendor/scm/components/ScanOrderModal';
 import {
   PaymentsTable, labelToApi, draftMethodFields, newPaymentDraft, convertDraftsFrom,
-  missingMethodSubField, parseInstallmentMonths, type PaymentDraft,
+  missingMethodSubField, parseInstallmentMonths, slipDateProblem, type PaymentDraft,
 } from '../../vendor/scm/components/PaymentsTable';
 import { useOrdersWithMoney } from '../../vendor/scm/lib/so-money-queries';
 import { useBranding } from '../../hooks/useBranding';
@@ -1434,7 +1434,25 @@ export const SalesOrderNew = () => {
         }]
       : [];
   }, [lines, scanLineMeta]);
-  const blockingProblems = useMemo(() => [...backendLiveProblems, ...scannedExtras], [backendLiveProblems, scannedExtras]);
+  /* The other client-only blocker: a payment row dated outside the slip window
+     (owner 2026-09-23). The validate dry-run carries the rows but not their
+     DATES, so the backend cannot author this one — and it has to block the SAVE,
+     not just the row, because the payments are posted after the order is
+     created. Mobile's New SO carries the same extra. */
+  const slipDateExtras = useMemo<SaveProblem[]>(() => {
+    const mayBackdate = can('scm.payment.backdate');
+    const problems = paymentDrafts
+      .filter((d) => d.amountSen > 0)
+      .map((d) => slipDateProblem(d, todayMyt(), mayBackdate))
+      .filter((m): m is string => m !== null);
+    return problems.length > 0
+      ? [{ code: 'slip_date_out_of_window', message: problems[0]!, field: 'Payment date' }]
+      : [];
+  }, [paymentDrafts, can]);
+  const blockingProblems = useMemo(
+    () => [...backendLiveProblems, ...scannedExtras, ...slipDateExtras],
+    [backendLiveProblems, scannedExtras, slipDateExtras],
+  );
   const openBlockingList = () => {
     void notify({ title: saveProblemsTitle(blockingProblems.length), body: <SaveProblemsList problems={blockingProblems} />, tone: 'error' });
   };
@@ -1484,7 +1502,7 @@ export const SalesOrderNew = () => {
       // failure must not block the operator, and the create call below is the
       // authoritative gate that surfaces any real refusal.
     }
-    const problems = [...serverProblems, ...scannedExtras];
+    const problems = [...serverProblems, ...scannedExtras, ...slipDateExtras];
     if (problems.length > 0) {
       void notify({ title: saveProblemsTitle(problems.length), body: <SaveProblemsList problems={problems} />, tone: 'error' });
       return;

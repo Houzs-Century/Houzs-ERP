@@ -49,7 +49,8 @@ import {
   type SoDropdownOption,
 } from "../vendor/scm/lib/so-dropdown-options-queries";
 import { paymentMethodCodeForValue, PAYMENT_METHOD_CODE_TO_VALUE } from "../vendor/scm/lib/payment-methods";
-import { missingMethodSubField } from "../vendor/scm/components/PaymentsTable";
+import { missingMethodSubField, slipDateProblem } from "../vendor/scm/components/PaymentsTable";
+import { paymentSlipDateWindow } from "../vendor/scm/lib/payment-slip-date";
 import { fmtSen } from "../lib/scm";
 import { useIdempotencyKey } from "../lib/idempotency";
 import { PaymentInfoBlock, type RecordedPaymentLike } from "./PaymentInfoBlock";
@@ -284,6 +285,9 @@ export function AddPaymentSheet({
   onSaved: () => void | Promise<void>;
 }) {
   const notify = useNotify();
+  /* The backdate exception, read the way the server reads it (flat key or the
+     wildcard) — same call as the desktop panel's `mayBackdateSlip`. */
+  const { can: canSheet } = useHouzsAuth();
   const addPaymentMut = useAddSalesOrderPayment();
   const editPaymentMut = useEditSalesOrderPayment();
   const askReason = usePrompt();
@@ -363,6 +367,13 @@ export function AddPaymentSheet({
   };
 
   const amtOk = toSen(amount) > 0;
+  /* Slip-date window (owner 2026-09-23) — the SAME rule and the same sentence as
+     the desktop panel and the server, so the phone is never the surface that
+     lets a three-week-old slip through. `scm.payment.backdate` is the exception,
+     read exactly as the server reads it. */
+  const maySheetBackdate = canSheet("scm.payment.backdate");
+  const slipWindow = paymentSlipDateWindow(todayMyt());
+  const slipProblem = slipDateProblem({ paidAt: date, methodLabel: method }, todayMyt(), maySheetBackdate);
   /* Method ⇒ sub-field cascade, via the SHARED desktop rule (missingMethodSubField,
      PaymentsTable) rather than a mobile re-implementation: Merchant needs a Bank
      + Plan, Online needs a Sub-Type. The server enforces the same on write
@@ -380,7 +391,7 @@ export function AddPaymentSheet({
   /* Owner 2026-07-13 — the slip is OPTIONAL now; recording needs only an
      amount > 0 (+ method/date + the method's own sub-fields). The slip upload
      stays available for when one IS on hand. */
-  const canSave = amtOk && !missingSubField && !busy && slipPhase !== "uploading";
+  const canSave = amtOk && !missingSubField && !slipProblem && !busy && slipPhase !== "uploading";
 
   const save = async () => {
     if (!canSave) return;
@@ -446,7 +457,20 @@ export function AddPaymentSheet({
             <div style={{ display: "flex", gap: 9 }}>
               <label className="fld" style={{ flex: 1.1 }}>
                 <span className="fld-l">Date</span>
-                <DateField fullWidth className="fld-i" value={date} onChange={(iso) => setDate(iso)}/>
+                <DateField
+                  fullWidth
+                  className="fld-i"
+                  value={date}
+                  /* Bounded for everyone but a backdater, so the picker cannot
+                     offer a day the save would bounce. */
+                  min={maySheetBackdate ? undefined : slipWindow.min}
+                  max={maySheetBackdate ? undefined : slipWindow.max}
+                  invalid={slipProblem !== null}
+                  onChange={(iso) => setDate(iso)}
+                />
+                {slipProblem && (
+                  <span style={{ fontSize: 11, lineHeight: 1.3, color: "var(--red)" }}>{slipProblem}</span>
+                )}
               </label>
               <label className="fld" style={{ flex: 1.1 }}>
                 <span className="fld-l">Amount</span>

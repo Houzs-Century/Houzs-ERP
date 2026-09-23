@@ -23,6 +23,7 @@ import { createReceiptForPayment } from '../../acc/receipts';
 import { cancelDepositInvoiceForPaymentBestEffort, issueDepositInvoiceBestEffort, reissueDepositInvoiceBestEffort } from '../../acc/deposit-invoices';
 import { companyCodeById } from './doc-no';
 import { recomputeSiPaidForOrder } from './si-order-deposit';
+import { checkPaymentSlipDate } from '../shared/payment-slip-date';
 
 /* Account Sheet auto-fill (Loo 2026-06-07) — "where did the money land".
    Derived from the payment's own method fields whenever the operator didn't
@@ -94,6 +95,15 @@ export type SoPaymentRowInput = {
   isDeposit?: boolean;
   auditSource?: string;
   auditNote?: string;
+  /* Slip-date window escape (owner 2026-09-23). A keyed-in payment may not be
+     dated more than PAYMENT_SLIP_WINDOW_DAYS back — enforced HERE, below every
+     writer, so the gate cannot be forgotten by the next caller. The routes set
+     this from the caller's `scm.payment.backdate` permission; the background
+     scan job never does, so an OCR'd receipt older than the window is refused
+     and goes to a human (owner's call). `converted` rows — money moved from
+     another order, refund and move MIRRORS — carry the ORIGINAL money's date
+     and are never keyed, so they skip the window by method, not by this flag. */
+  allowOutOfWindowSlipDate?: boolean;
 };
 
 /** Book an SO payment row through the one posting gate, best-effort — the
@@ -251,6 +261,15 @@ export async function recordSoPaymentRow(
   //                 mirrors the SO-create deposit path, which keeps both)
   //   transfer    → online_type
   //   cash        → no extras
+  /* Slip-date window, before anything is written. Skipped for CONVERTED rows
+     (system money movement — see allowOutOfWindowSlipDate) and for a caller the
+     route already cleared as a backdater. The message is the shared module's,
+     so the panel, the phone and this refusal all say the same sentence. */
+  if (p.method !== CONVERTED_METHOD && !p.allowOutOfWindowSlipDate) {
+    const verdict = checkPaymentSlipDate(p.paidAt, todayMyt());
+    if (!verdict.ok) return { payment: null, errorMessage: verdict.reason };
+  }
+
   const merchantLike      = p.method === 'merchant' || p.method === 'installment';
   const merchantProvider  = merchantLike ? (p.merchantProvider ?? null) : null;
   // 0 = "One-off" — store as NULL so the integer column carries semantic

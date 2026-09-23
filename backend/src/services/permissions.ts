@@ -94,6 +94,11 @@ export const PERMISSIONS: PermissionDef[] = [
   // to one super_admin row), so gate on this admin-level key instead. Owner + IT
   // Admin cover it via "*"; grant other positions via the Team > Positions matrix.
   { key: "scm.so.remove_processing_date", resource: "Supply Chain", verb: "manage", label: "Remove SO Processing Date", description: "Clear an already-set Processing Date on a SCM Sales Order (admin-level; pulls the order back out of the Proceed lane)" },
+  // Owner 2026-09-23 — a keyed-in payment's transaction-slip date must fall in
+  // the last 14 days (scm/shared/payment-slip-date.ts owns the window). This key
+  // is the exception: Finance / management keying a receipt that surfaced late.
+  // Owner + IT Admin cover it via "*"; grant others in the Team > Positions matrix.
+  { key: "scm.payment.backdate", resource: "Supply Chain", verb: "manage", label: "Backdate a payment slip", description: "Record or re-date a Sales Order payment whose transaction-slip date is older than the 14-day window (or in the future); the entry is audited as an override" },
   // SO amendment / revision workflow — TWO-LANE model (owner rework 2026-07-27).
   // A processing-locked SO changes only through an amendment; at submit the
   // request is auto-classified (and, when mixed, SPLIT) into two independent
