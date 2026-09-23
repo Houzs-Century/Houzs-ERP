@@ -31,7 +31,7 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useStickyFilters } from '../../hooks/useStickyFilters';
-import { MapPinned, Truck, Plus, MessageSquare, CalendarClock } from 'lucide-react';
+import { MapPinned, Truck, Plus, MessageSquare, CalendarClock, ChevronDown } from 'lucide-react';
 import { Button } from '../../components/Button';
 import { PageHeader } from '../../components/Layout';
 import { DeliveryFieldsDrawer } from '../../vendor/scm/components/DeliveryFieldsDrawer';
@@ -39,7 +39,7 @@ import { NewDpOrderDrawer } from '../../vendor/scm/components/NewDpOrderDrawer';
 import { SetJobDateDrawer } from '../../vendor/scm/components/SetJobDateDrawer';
 import { ScheduleDpOrderDrawer } from '../../vendor/scm/components/ScheduleDpOrderDrawer';
 import { ScheduleTripDrawer } from '../../vendor/scm/components/ScheduleTripDrawer';
-import { SendDeliveryMessageModal } from '../../vendor/scm/components/SendDeliveryMessageModal';
+import { SendDeliveryMessageModal, type SendMessageKind } from '../../vendor/scm/components/SendDeliveryMessageModal';
 import {
   DeliveryPlanningBoard,
   regionTabsFrom,
@@ -257,9 +257,12 @@ export const DeliveryPlanning = () => {
   /* The rows the Send-Message modal previews (open when non-null). SO-only,
      like every bulk action on this board. */
   const [sendingRows, setSendingRows] = useState<PlanningOrder[] | null>(null);
-  const openSendModal = () => {
+  const [sendKind, setSendKind] = useState<SendMessageKind>('delivery');
+  const [sendMenuOpen, setSendMenuOpen] = useState(false);
+  const openSendModal = (kind: SendMessageKind) => {
     const docs = new Set(selectedSoDocNos());
     if (docs.size === 0) return;
+    setSendKind(kind);
     setSendingRows(allOrders.filter((o) => o.row_type === 'so' && docs.has(o.so_doc_no)));
   };
 
@@ -274,18 +277,53 @@ export const DeliveryPlanning = () => {
             {/* Send Message — standing header button (owner picked design B,
                 2026-07-22): always visible, WhatsApp green, counts the selected
                 SO rows; disabled until something is ticked. */}
-            <Button
-              variant="primary"
-              style={{ background: '#1D9E75', borderColor: '#1D9E75' }}
-              disabled={selectedSoDocNos().length === 0}
-              title={selectedSoDocNos().length === 0
-                ? 'Tick the orders to message first'
-                : 'WhatsApp the delivery details to the selected customers (one message per phone)'}
-              onClick={openSendModal}
-            >
-              <MessageSquare size={16} strokeWidth={1.75} />
-              Send Message ({selectedSoDocNos().length})
-            </Button>
+            <div style={{ position: 'relative' }}>
+              <Button
+                variant="primary"
+                style={{ background: '#1D9E75', borderColor: '#1D9E75' }}
+                disabled={selectedSoDocNos().length === 0}
+                title={selectedSoDocNos().length === 0 ? 'Tick the orders to message first' : 'Send a WhatsApp message to the selected customers'}
+                onClick={() => setSendMenuOpen((v) => !v)}
+              >
+                <MessageSquare size={16} strokeWidth={1.75} />
+                Send Message ({selectedSoDocNos().length})
+                <ChevronDown size={14} strokeWidth={1.75} />
+              </Button>
+              {sendMenuOpen && (
+                <>
+                  <div onClick={() => setSendMenuOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 40 }} />
+                  <div
+                    role="menu"
+                    style={{
+                      position: 'absolute', top: 'calc(100% + 4px)', right: 0, zIndex: 41, minWidth: 220,
+                      background: '#fff', border: '1px solid var(--line)', borderRadius: 'var(--radius-md, 10px)',
+                      boxShadow: '0 8px 28px rgba(34, 31, 32, 0.14)', padding: 4,
+                    }}
+                  >
+                    {([
+                      ['delivery', 'Send Now', 'Delivery-date message'],
+                      ['amend', 'Amend Now', 'Amend / reschedule message'],
+                      ['onetime', 'One Time Send Now', 'Delivery time · driver info · balance …'],
+                    ] as const).map(([k, label, hint]) => (
+                      <button
+                        key={k}
+                        type="button"
+                        role="menuitem"
+                        onClick={() => { setSendMenuOpen(false); openSendModal(k); }}
+                        style={{ display: 'block', width: '100%', padding: '8px 10px', background: 'transparent', border: 'none', borderRadius: 8, cursor: 'pointer', textAlign: 'left' }}
+                        onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg, #f4f2ec)'; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                      >
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 'var(--fs-13, 13px)', fontWeight: 600, color: 'var(--ink, #221f20)' }}>
+                          <MessageSquare size={14} strokeWidth={1.75} /> {label}
+                        </span>
+                        <span style={{ display: 'block', marginLeft: 22, fontSize: 'var(--fs-12, 11px)', color: 'var(--c-muted, #767b6e)' }}>{hint}</span>
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
             {/* New DP Order — manual setup / dismantle / supplier-pickup jobs (and
                 any ad-hoc delivery), created straight onto the board. */}
             <Button variant="primary" onClick={() => setShowNewDp(true)}>
@@ -363,7 +401,7 @@ export const DeliveryPlanning = () => {
           : [
               { label: 'Schedule…', onClick: () => setSchedulingOne(row) },
               { label: 'Edit HC fields…', onClick: () => setEditing(row) },
-              { label: 'Send WhatsApp…', onClick: () => setSendingRows([row]) },
+              { label: 'Send WhatsApp…', onClick: () => { setSendKind('delivery'); setSendingRows([row]); } },
               ...(canConvertToDo
                 ? [{ label: transferToLabel('do'), onClick: () => convertOne(row) }]
                 : []),
@@ -402,7 +440,7 @@ export const DeliveryPlanning = () => {
       )}
 
       {sendingRows && sendingRows.length > 0 && (
-        <SendDeliveryMessageModal rows={sendingRows} onClose={() => setSendingRows(null)} />
+        <SendDeliveryMessageModal rows={sendingRows} kind={sendKind} onClose={() => setSendingRows(null)} />
       )}
 
       {editing && (
