@@ -55,7 +55,7 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/position-policy.ts` | 3 | 184 |
 | `backend/src/routes/positions.ts` | 5 | 241 |
 | `backend/src/routes/presence.ts` | 2 | 201 |
-| `backend/src/routes/projects.ts` | 115 | 5154 |
+| `backend/src/routes/projects.ts` | 115 | 5185 |
 | `backend/src/routes/projects_print.ts` | 1 | 1314 |
 | `backend/src/routes/publicBrandCalendar.ts` | 6 | 138 |
 | `backend/src/routes/publicContractorCalendar.ts` | 5 | 148 |
@@ -258,7 +258,7 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (2860 files, 848044 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (2863 files, 848143 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -269,7 +269,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `backend/src/services/autocount-sofa-corpus.ts` | 8581 |
 | `frontend/src/pages/Team.tsx` | 5675 |
 | `backend/src/scm/routes/delivery-orders-mfg.ts` | 5356 |
-| `backend/src/routes/projects.ts` | 5154 |
+| `backend/src/routes/projects.ts` | 5185 |
 | `frontend/src/pages/scm-v2/Products.tsx` | 4930 |
 | `backend/src/scm/routes/scan-so.ts` | 4716 |
 | `frontend/src/mobile/MobilePMS.tsx` | 4488 |

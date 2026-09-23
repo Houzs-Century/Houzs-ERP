@@ -123,6 +123,7 @@ import type {
   Paginated,
 } from "./projects/types";
 import { composeDefaultProjectName, viewableMime, googleCalendarUrl } from "./projects/projectHelpers";
+import { itemComplete } from "./projects/checklistDone";
 import { salesOrderProjectLabel, shownProjectName, shownOrganizer, isSoloMasked, maskSoloOrganizer, SOLO_ORGANIZER_MASK, type SoloMaskProject } from "./projects/soloOrganizerMask";
 import { SoloSafeName, useCanSeeSoloOrganizer } from "./projects/SoloSafeName";
 import { STATUS_OPTIONS, ProjectStatusSelect } from "./projects/projectStatus";
@@ -4846,10 +4847,9 @@ function ProjectStageStepper({
     if (st.titles.length === 0) return false; // final "Done" handled below
     const present = items.filter((i) => st.titles.includes(i.title));
     if (present.length === 0) return true; // no signal → pass-through
-    // A stage is satisfied when every mapped item is done OR N/A — an item
-    // marked N/A (not applicable for this event) must not block the flow,
-    // mirroring the section progress bar which also excludes N/A.
-    return present.every((i) => i.status === "done" || i.status === "na");
+    // Every mapped item done / N/A / approved (see itemComplete): status alone
+    // kept an approved 3D bullet red for months (owner 2026-09-23, KL ZANOTTI REX).
+    return present.every(itemComplete);
   };
   const lastIdx = PROJECT_STAGES.length - 1;
   let currentIdx = PROJECT_STAGES.findIndex((_, i) => i < lastIdx && !stepDone(i));
