@@ -17,8 +17,9 @@ export type RowRuleColumn<T> = {
   sortValue?: (row: T) => CellValue;
   getFilterValues?: (row: T) => (string | number | null | undefined)[];
   /* A fixed vocabulary the funnel always offers (e.g. a status set), listed even
-     when no row currently carries the value. */
-  filterSeedValues?: CellValue[];
+     when no row currently carries the value. `readonly` + widened element so the
+     grid's own Column type (`readonly string[]`) stays assignable to this. */
+  filterSeedValues?: readonly CellValue[];
   disableSort?: boolean;
 };
 
