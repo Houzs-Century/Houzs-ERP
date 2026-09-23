@@ -27,6 +27,7 @@ import { PROJECT_STATUS_OPTIONS, paymentPillOptions } from "../vendor/scm/lib/pm
 import "./mobile.css";
 import { fmtTime } from "../vendor/shared/format";
 import { DateField } from "../vendor/scm/components/DateField";
+import { EditProjectSheet } from "./MobileEditProjectSheet";
 import { DefectActionsCtx, DefectFileActions, type AttachmentAction } from "./MobilePmsDefectActions";
 import { PlanFileChips } from "./MobilePmsPlanFileChips";
 import { floorPlanTileVisible } from "./MobilePmsFloorPlanTiles";
@@ -725,6 +726,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
   // Owner 2026-07-21: the system project code is unreadable at full length —
   // the header meta collapses to one ellipsised line, tap toggles the full string.
   const [metaExpanded, setMetaExpanded] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["mobile-pms-detail", id],
@@ -1151,35 +1153,20 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
             )}
             {/* Edit lived on the (removed) Project card's summary — the card
                 is gone (owner 2026-07-22: header carries all its info), so the
-                sequential-prompt editor moved up here. Same flow, same gate. */}
+                editor moved up here. Owner 2026-09-21: it opens a single sheet
+                with every field on screen (name, booth, venue, organizer, both
+                dates) — the old back-to-back prompts ended the moment any one was
+                dismissed, so the operator never reached the date fields. Same
+                gate, same fields, same PATCH. `soloMasked` still drops name +
+                organizer for a user who may not see a solo event's organizer
+                (owner 2026-09-18), exactly as the old prompt flow did. */}
             {p && canWrite && access.canEdit && (
               <button
                 className="tinybtn"
                 disabled={busy}
                 aria-label="Edit project"
                 style={{ background: "rgba(255,255,255,.08)", borderColor: "rgba(231,234,228,.18)", color: "#e7eae4" }}
-                onClick={async () => {
-                  if (busy) return;
-                  // Sequential single-field prompts (usePrompt returns one
-                  // value); each null/cancel ends the flow, blanks are skipped.
-                  const fields = ([
-                    ["name", "Project name", p.name],
-                    ["booth_no", "Booth number", p.booth_no],
-                    ["venue", "Venue", p.venue],
-                    ["organizer", "Organizer", p.organizer],
-                    ["start_date", "Start date (YYYY-MM-DD)", p.start_date],
-                    ["end_date", "End date (YYYY-MM-DD)", p.end_date],
-                  ] as Array<[string, string, string | null | undefined]>).filter((fld) => !(soloMasked && (fld[0] === "name" || fld[0] === "organizer")));
-                  const patch: Record<string, unknown> = {};
-                  for (const [key, label, cur] of fields) {
-                    const val = await prompt({ title: `Edit ${label}`, placeholder: label, defaultValue: (cur ?? "") as string });
-                    if (val == null) break; // cancelled — stop the flow
-                    const t = val.trim();
-                    if (key === "name" && !t) continue; // name can't be blanked
-                    if (t !== (cur ?? "")) patch[key] = t || null;
-                  }
-                  if (Object.keys(patch).length > 0) await patchProject(patch);
-                }}
+                onClick={() => { if (!busy) setEditOpen(true); }}
               >
                 Edit
               </button>
@@ -1225,6 +1212,16 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
           {p?.code || "—"}
         </div>
       </header>
+
+      {p && canWrite && access.canEdit && editOpen && (
+        <EditProjectSheet
+          project={p}
+          busy={busy}
+          hideNameOrganizer={soloMasked}
+          onClose={() => setEditOpen(false)}
+          onSave={patchProject}
+        />
+      )}
 
       <div className="scroll" style={{ padding: 14, paddingBottom: 120 }}>
         {isLoading && <div style={{ textAlign: "center", color: "#9aa093", fontSize: 12, padding: "26px 0" }}>Loading…</div>}
