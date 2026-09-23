@@ -44,6 +44,9 @@ import { todayMyt, mytDayOf } from '../lib/dates';
    the button and the endpoint cannot disagree about whether the window is open
    (Owner 2026-07-19). */
 import { paymentRowMutable, type PaymentChangeVia } from '../lib/so-field-policy';
+/* The slip-date window, byte-identical to the backend's copy — the picker's
+   bounds, the inline refusal and the server's 400 are one rule. */
+import { checkPaymentSlipDate, paymentSlipDateWindow } from '../lib/payment-slip-date';
 import { useAuth as useHouzsAuth } from '../../../auth/AuthContext';
 import { owesPaymentReason, paymentReasonAsk, reasonWhyFor } from '../lib/payment-reason';
 import { usePrompt } from './ConfirmDialog';
@@ -338,6 +341,22 @@ export const missingMethodSubField = (
   return null;
 };
 
+/* WHY THIS ROW'S DATE CANNOT BE SAVED, or null. The window lives in
+   lib/payment-slip-date (the backend reads the same file); this adds the two
+   things the rule itself must not know — who may go outside it, and that money
+   MOVED from another order carries the source order's date, never a keyed slip.
+   Exported so the New SO / DO / SI batch-save guard asks the same question the
+   panel's own Save button does. */
+export const slipDateProblem = (
+  d: Pick<PaymentDraft, 'paidAt' | 'methodLabel'>,
+  today: string,
+  mayBackdate: boolean,
+): string | null => {
+  if (mayBackdate || d.methodLabel === CONVERT_LABEL) return null;
+  const verdict = checkPaymentSlipDate(d.paidAt, today);
+  return verdict.ok ? null : verdict.reason;
+};
+
 /* Method-scoped L2 fields for a draft row — shared by commitDraft below and
    every page that batches PaymentDraft[] to a payments endpoint (New SO /
    DO / SI / consignment flows), so the installment branch lives in exactly
@@ -540,6 +559,11 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
      fact only the server can read, so this side never claims to know it. */
   const { can, user: houzsUser } = useHouzsAuth();
   const mayAmend = can('scm.so_payment.amend');
+  /* Owner 2026-09-23 — a slip may not be dated more than 14 days back. The
+     exception is a permission, read here the same way the server reads it
+     (flat key or the wildcard), so the field and the endpoint agree. */
+  const mayBackdateSlip = can('scm.payment.backdate');
+  const slipWindow = paymentSlipDateWindow(todayMyt());
   /* A correction on the amend right owes a reason, asked BEFORE the write and
      required (owner 2026-09-10: 靠权限改的来决定). A same-day fix asks nothing —
      unless the caller's ROLE holds the right LITERALLY (owner 2026-09-14,
@@ -926,6 +950,14 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
       });
       return;
     }
+    /* Slip-date window (owner 2026-09-23). The field is already bounded, but a
+       row seeded from a scanned receipt carries the receipt's own date and a
+       stale draft can outlive the window while the page sits open. */
+    const outOfWindow = slipDateProblem(d, todayMyt(), mayBackdateSlip);
+    if (outOfWindow) {
+      void notify({ title: 'Check the slip date', body: outOfWindow, tone: 'error' });
+      return;
+    }
     let method: PaymentMethod;
     try { ({ method } = labelToApi(d.methodLabel)); }
     catch (e) { void notify({ title: 'Payment method not recognised', body: e instanceof Error ? e.message : String(e), tone: 'error' }); return; }
@@ -992,6 +1024,8 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
       if (d.amountSen <= 0) { blocked.push(`${d.methodLabel}: no amount`); continue; }
       const missing = missingMethodSubField(d);
       if (missing) { blocked.push(`${d.methodLabel}: pick the ${missing}`); continue; }
+      const outOfWindow = slipDateProblem(d, todayMyt(), mayBackdateSlip);
+      if (outOfWindow) { blocked.push(`${d.methodLabel}: ${outOfWindow}`); continue; }
       let method: PaymentMethod;
       try { ({ method } = labelToApi(d.methodLabel)); }
       catch (e) { blocked.push(`${d.methodLabel}: ${e instanceof Error ? e.message : 'payment method not recognised'}`); continue; }
@@ -1473,7 +1507,11 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                 (owner 2026-08-07, live on prod). The row now says what it is,
                 in words, in the reading position, and carries a Save button
                 with a label. */}
-            {drafts.map((d) => (
+            {drafts.map((d) => {
+              /* The window refusal for THIS row — shown under the field and, in
+                 the same words, by every Save path that would refuse it. */
+              const slipProblem = slipDateProblem(d, todayMyt(), mayBackdateSlip);
+              return (
               <div className={paymentsStyles.row} key={d.uid}>
                 <span className={`${paymentsStyles.cell} ${unsavedCls}`} data-label="Date"
                       style={{ flexDirection: 'column', alignItems: 'stretch', gap: 2 }}>
@@ -1489,8 +1527,16 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                     className={paymentsStyles.inlineInput}
                     value={d.paidAt ?? ''}
                     disabled={locked}
+                    /* The calendar cannot offer a day the save would bounce.
+                       A backdater gets no bounds at all — the field is theirs. */
+                    min={mayBackdateSlip ? undefined : slipWindow.min}
+                    max={mayBackdateSlip ? undefined : slipWindow.max}
+                    invalid={slipProblem !== null}
                     onChange={(iso) => patchDraft(d.uid, { paidAt: iso })}
                   />
+                  {slipProblem && (
+                    <span className={paymentsStyles.fieldProblem}>{slipProblem}</span>
+                  )}
                 </span>
                 <span className={`${paymentsStyles.cell} ${unsavedCls}`} data-label="Method" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 4 }}>
                   {/* L1 — Method (always visible) */}
@@ -1785,12 +1831,14 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                          required sub-field(s). */
                       const noAmount = d.amountSen <= 0;
                       const missing  = missingMethodSubField(d);
-                      const blocked  = noAmount || missing !== null;
+                      const blocked  = noAmount || missing !== null || slipProblem !== null;
                       const title = noAmount
                         ? 'Enter an amount > 0 first'
                         : missing
                           ? `Pick the ${missing} for this ${d.methodLabel} payment first`
-                          : d.editingPersistedId ? 'Save changes' : 'Save payment';
+                          : slipProblem
+                            ? slipProblem
+                            : d.editingPersistedId ? 'Save changes' : 'Save payment';
                       /* A LABELLED button, not a bare glyph — see the note on
                          the drafts block. `title` still carries the reason the
                          button is unavailable, which a label cannot. */
@@ -1836,7 +1884,8 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                   </div>
                 </span>
               </div>
-            ))}
+              );
+            })}
           </div>
           </div>
 
