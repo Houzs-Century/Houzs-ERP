@@ -1535,10 +1535,17 @@ grns.post('/', async (c) => {
     exchange_rate: grnFx.exchange_rate,
     allocation_method: normalizeAllocationMethod(body.allocationMethod),
     notes: (body.notes as string) ?? null,
-    // Draft/Confirmed — DRAFT commits nothing; the confirm transition (PATCH
-    // /:id/post) flips it to POSTED and runs the stock IN + PO rollup there.
-    status: asDraft ? 'DRAFT' : 'POSTED',
-    posted_at: asDraft ? null : new Date().toISOString(),
+    /* ATOMICITY (2026-09-23) — ALWAYS insert DRAFT, even for a create-as-posted
+       request. postGrnAndRollup below (run when !asDraft) is the ONE chokepoint
+       that flips DRAFT -> POSTED and, in the SAME call, recounts the PO
+       received_qty and writes stock IN. Inserting the row as POSTED here and
+       posting in a separate step left a phantom POSTED GRN — status POSTED but no
+       posted_at, no stock, no PO rollup — whenever the request died in between
+       (HC-GRN-2609-118, the 2026-09-22 Worker crashes: the PO kept showing
+       outstanding for goods the GRN said were received). A DRAFT left behind by
+       such a death is inert and safe to retry or delete. */
+    status: 'DRAFT',
+    posted_at: null,
     created_by: user.id,
     }).select(`${HEADER}, company_id`).single(),
   );
@@ -1611,14 +1618,21 @@ grns.post('/', async (c) => {
      Skip it for a draft; the confirm transition (PATCH /:id/post) runs it. */
   let postRes: Awaited<ReturnType<typeof postGrnAndRollup>> | undefined;
   if (!asDraft) postRes = await postGrnAndRollup(sb, h.id, user.id, h.company_id);
-  /* ZERO-COST refusal on a create-as-POSTED path. This route inserts the row
-     with status POSTED and then calls the chokepoint, so a refusal would
-     otherwise leave a POSTED GRN carrying no stock — the worst of both. Undo
-     the document exactly like the over-receipt rollback above and 409. */
-  if (postRes && !postRes.ok && postRes.zeroCost) {
+  /* ATOMIC CREATE — the row was inserted DRAFT, so any post failure means the
+     chokepoint did NOT flip it: it is still DRAFT with no stock and no PO
+     rollup. Roll the whole create back rather than leave a half-made document.
+     postGrnAndRollup only returns !ok BEFORE its status flip (zero-cost gate,
+     a lost CAS, a not-found, or a DB error on the flip), so nothing it did needs
+     unwinding beyond the rows this handler inserted. zero-cost keeps its own
+     refusal message; every other reason surfaces so the operator retries instead
+     of seeing a "posted" receipt that never posted. */
+  if (postRes && !postRes.ok) {
     await sb.from('grn_items').delete().eq('grn_id', h.id);
     await sb.from('grns').delete().eq('id', h.id);
-    return refuseZeroCostReceipt(c, postRes.zeroCost, { nothingWritten: true });
+    if (postRes.zeroCost) {
+      return refuseZeroCostReceipt(c, postRes.zeroCost, { nothingWritten: true });
+    }
+    return c.json({ error: 'post_failed', reason: postRes.reason }, (postRes.status ?? 409) as 409 | 500);
   }
   // Migration 0101 — populate header money rollups from the inserted lines.
   // (Money only — no stock — so it's safe to run for a draft too.)
