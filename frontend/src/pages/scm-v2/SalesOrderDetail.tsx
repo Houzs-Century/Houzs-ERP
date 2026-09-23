@@ -141,6 +141,7 @@ import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import { useAuth } from '../../vendor/scm/lib/auth';
 import { useVenues } from '../../vendor/scm/lib/venues-queries';
 import { FairPicker } from '../../components/FairPicker';
+import { fairEditPatch, fairEventOf, fairPickValue, linkedEvent, type LinkedFair } from '../../components/fairPick';
 import { useStateWarehouseMappings } from '../../vendor/scm/lib/state-warehouse-queries';
 import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
 import { generateSalesOrderPdf } from '../../vendor/scm/lib/sales-order-pdf';
@@ -282,6 +283,7 @@ type SoHeader = {
   /* Migration 0086 — venue master FK. Auto-stamped from staff.venue_id on
      POST/PATCH when the row's salesperson belongs to a venue. */
   venue_id: string | null;
+  fair?: LinkedFair | null; // the linked event (owner 2026-09-24); absent on an older server
   branding: string | null;
   transfer_to: string | null;
   address1: string | null;
@@ -2884,6 +2886,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
        master link is durable. */
     venue: h.venue ?? '',
     venueId: h.venue_id ?? '',
+    fair: linkedEvent(h.venue, h.fair),
     phone: h.phone ?? '',
     address1: h.address1 ?? '',
     address2: h.address2 ?? '',
@@ -2927,6 +2930,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
        staff.venue_id. We persist both the FK + the resolved name. */
     venue: f.venue,
     venueId: f.venueId || null,
+    ...fairEditPatch(f.fair),
     phone: f.phone,
     address1: f.address1,
     address2: f.address2,
@@ -3032,7 +3036,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
     if (!resolvedId) return;
     const resolvedName = (venuesQ.data ?? []).find((v) => v.id === resolvedId)?.name;
     if (!resolvedName) return; // 0591: `?? ''` blanked a loaded venue, permanently
-    setForm((s) => ({ ...s, venueId: resolvedId, venue: resolvedName }));
+    setForm((s) => ({ ...s, venueId: resolvedId, venue: resolvedName, fair: null }));
   }, [form.salespersonId, staffList, venuesQ.data, form.venueId]);
 
   /* Commander 2026-05-27 (Fix 5) — State → Sales Location cascade. When the
@@ -3421,23 +3425,17 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Fair</span>
-              {/* Owner 2026-09-13 — same picker as the create forms. The ORGANIZER
-                  is deliberately not sent on a header PATCH: a venue change drops
-                  the fair link to PENDING and the nightly reconcile re-derives it
-                  from venue + date + brand, which is unique except where two
-                  organizers share a venue on one day (3 days in all of 2026).
-                  Those land on the pending screen for a person, not on a guess. */}
+              {/* Same picker as the create forms. A picked EVENT is saved and linked
+                  exactly (owner 2026-09-24); the order's link reads back as its row.
+                  Both halves live in components/fairPick.ts, shared with the phone. */}
               <FairPicker
                 id="so-detail-fair"
-                /* A saved order stores a PLACE, never an occurrence, so this
-                   screen has no period to offer — explicit nulls. Editing the
-                   fair here still drops the link to PENDING for the nightly
-                   reconcile; only the CREATE forms send a picked event today. */
-                value={{ venue: form.venue || null, organizer: null, startDate: null, endDate: null }}
+                value={fairPickValue(form.venue || null, form.fair)}
                 soDate={header.so_date}
                 disabled={inputsDisabled}
                 onChange={(next) => setForm((s) => ({
                   ...s,
+                  fair: fairEventOf(next),
                   venue: next.venue ?? '',
                   venueId: (venuesQ.data ?? []).find(
                     (v) => v.name.trim().toLowerCase() === (next.venue ?? '').trim().toLowerCase(),

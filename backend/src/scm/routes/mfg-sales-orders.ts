@@ -154,7 +154,7 @@ import {
   type VenueSource,
   type VenueBindingSb,
 } from '../lib/venue-binding';
-import { bindVenueOnCreate, resolveFairForSave, type FairDb } from '../lib/fair-binding';
+import { bindVenueOnCreate, fairLinkForEdit, loadLinkedFair, resolveFairForSave, type FairDb } from '../lib/fair-binding';
 import { fairPickedPeriod } from '../lib/fair-options';
 import { recordSoAudit, diffFields, type FieldChange } from '../lib/so-audit';
 /* What changed on a LINE, for the audit trail — derived from the update about to
@@ -1641,7 +1641,7 @@ mfgSalesOrders.get('/:docNo', async (c) => {
        LIST route reads that view, so the base-table detail read is the only
        place they are valid. (`proceeded_at` was appended here until 2026-08-18,
        feeding a "Proceed Date" the desktop deleted on 2026-06-05.) */
-    scopeToCompany(sb.from('mfg_sales_orders').select(`${HEADER}, amend_date_from_customer, amended_delivery_date, amend_reason, revision, signature_b64, slip_key, slip_state, slip_image_key, receipt_image_key, version, linked_ac_docno, collaborator_staff_ids, access_staff_ids, open_to_all`).eq('doc_no', docNo), c).maybeSingle(),
+    scopeToCompany(sb.from('mfg_sales_orders').select(`${HEADER}, amend_date_from_customer, amended_delivery_date, amend_reason, revision, signature_b64, slip_key, slip_state, slip_image_key, receipt_image_key, version, linked_ac_docno, collaborator_staff_ids, access_staff_ids, open_to_all, project_id`).eq('doc_no', docNo), c).maybeSingle(),
     /* line_no = the persisted listing order (0165); NULLS LAST so pre-0165
        docs fall back to created_at + the rule re-derive below. */
     sb.from('mfg_sales_order_items').select(ITEM).eq('doc_no', docNo)
@@ -1790,6 +1790,9 @@ mfgSalesOrders.get('/:docNo', async (c) => {
        CLAMPED `soOutstandingSen`: a screen can say "you hold RM 250 of his
        money", AutoCount's UDF_BALANCE cannot. Same inputs, two audiences. */
     balance_sen: soBalanceSen(paidInputs),
+    /* The event the order is linked to, so a recorded pick reads back as venue,
+       organizer and dates (owner 2026-09-24). Null = show the venue alone. */
+    fair: await loadLinkedFair(c.env.DB as unknown as FairDb, activeCompanySql(c, 'p.company_id'), (h.data as { project_id?: unknown }).project_id),
   };
   /* Owner batch 2026-07 — resolve the salesperson's display name + contact
      phone (scm.staff) so the SO PDF's ORDER DETAILS can print "Salesperson:
@@ -5931,12 +5934,20 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
      follower side effect. `reserveLineWrites` is the one explicit exception:
      the desktop composite-save uses it to acquire a CAS token before lines. */
   const beforeCols = map.map(([, snake]) => snake)
-    .concat(['status', 'version', 'edit_lease_token', 'edit_lease_expires_at', 'edit_lease_user_id'])
+    .concat(['status', 'version', 'edit_lease_token', 'edit_lease_expires_at', 'edit_lease_user_id', 'project_id', 'fair_match'])
     .join(', ');
   const { data: before, error: beforeError } = await sb.from('mfg_sales_orders').select(beforeCols).eq('doc_no', docNo).maybeSingle();
   if (beforeError) return c.json({ error: 'load_failed', reason: beforeError.message }, 500);
   if (!before) return c.json({ error: 'not_found' }, 404);
   const beforeRecord = before as unknown as Record<string, unknown>;
+  /* A picked EVENT is recorded exactly (owner 2026-09-24). Resolved BEFORE the
+     unchanged fields drop out: another event at the same venue changes no mapped
+     column, and the save would otherwise answer "nothing to do". */
+  const fairLink = await fairLinkForEdit({ db: c.env?.DB as unknown as FairDb, companySql: activeCompanySql(c, 'p.company_id'), body, stored: beforeRecord });
+  if (fairLink && (fairLink.project_id !== (beforeRecord.project_id == null ? null : Number(beforeRecord.project_id)) || fairLink.fair_match !== beforeRecord.fair_match)) {
+    updates['project_id'] = fairLink.project_id;
+    updates['fair_match'] = fairLink.fair_match;
+  }
   for (const [from, to] of map) {
     if (!(to in updates) || norm(updates[to]) !== norm(beforeRecord[to])) continue;
     delete updates[to];
@@ -6026,13 +6037,12 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
     updates['venue_source'] = 'MANUAL' satisfies VenueSource;
     /* FAIR LINK (owner 2026-09-13) — the venue just moved, so whatever fair this
        order was linked to is now a claim about a place it was not written at.
-       Dropping the link and marking it PENDING hands it to the nightly reconcile
-       (and, failing that, to the pending screen) instead of leaving a stale
-       attribution in exhibition P&L. Re-resolving it here would need the order's
-       brand, which means reading its lines on the critical path of every header
-       save; PENDING is the honest, cheap answer and it self-heals. */
-    updates['project_id'] = null;
-    updates['fair_match'] = 'PENDING';
+       A picked EVENT was linked above; a place alone (Others) drops the link to
+       PENDING for the nightly reconcile and, failing that, the pending screen. */
+    if (!fairLink) {
+      updates['project_id'] = null;
+      updates['fair_match'] = 'PENDING';
+    }
   }
 
   /* Task #121 — when customerState changes, re-derive customer_country

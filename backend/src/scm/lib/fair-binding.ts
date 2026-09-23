@@ -11,10 +11,14 @@
 // ----------------------------------------------------------------------------
 
 import {
+  editFairPick,
+  linkedFairOf,
   lookbackWindow,
   resolveFair,
+  type FairMatch,
   type FairProjectRow,
   type FairResolution,
+  type LinkedFair,
 } from './fair-options';
 import {
   loadVenueBindingInputs,
@@ -295,6 +299,64 @@ export async function resolveFairForSave(args: {
        "unresolved, try again", which is what the reconcile job acts on; a
        silent UNMATCHED would be a verdict this never computed. */
     return { projectId: null, match: 'PENDING', candidateIds: [] };
+  }
+}
+
+/**
+ * The fair link a header EDIT writes when the operator picked an EVENT (owner
+ * 2026-09-24). It used to be dropped: the edit sent the place only, the link
+ * went PENDING, and the next morning's reconcile guessed from venue + date +
+ * brand. Now the pick is matched exactly, as on create.
+ *
+ * Null when the body picked no event, so the caller keeps its venue rule. A pick
+ * that cannot be linked still answers — PENDING / AMBIGUOUS / UNMATCHED — so the
+ * pending screen can show why.
+ */
+export async function fairLinkForEdit(args: {
+  db: FairDb;
+  companySql: string;
+  body: Record<string, unknown>;
+  stored: Record<string, unknown>;
+}): Promise<{ project_id: number | null; fair_match: FairMatch } | null> {
+  const storedVenue = typeof args.stored.venue === 'string' ? args.stored.venue : null;
+  const pick = editFairPick(args.body, storedVenue);
+  if (!pick) return null;
+  const brand = typeof args.body.branding === 'string' ? args.body.branding : args.stored.branding;
+  const fair = await resolveFairForSave({
+    db: args.db,
+    companySql: args.companySql,
+    venue: pick.venue,
+    organizer: pick.organizer,
+    picked: pick.picked,
+    soDate: String(args.stored.so_date ?? '').slice(0, 10),
+    brand: typeof brand === 'string' ? brand : null,
+  });
+  return { project_id: fair.projectId, fair_match: fair.projectId != null ? 'PICKED' : fair.match };
+}
+
+/**
+ * The event behind an order's `project_id`, for the detail read (owner
+ * 2026-09-24): a recorded pick must read back as venue, organizer AND dates,
+ * not as the bare venue the order column holds. Company-scoped, because
+ * `project_id` carries no company predicate of its own. Null on any miss or
+ * failure — the screens then show the venue alone, as before.
+ */
+export async function loadLinkedFair(
+  db: FairDb,
+  companySql: string,
+  projectId: unknown,
+): Promise<LinkedFair | null> {
+  const id = Number(projectId);
+  if (projectId == null || !Number.isInteger(id)) return null;
+  try {
+    const rows = await db
+      .prepare(`SELECT ${FAIR_COLUMNS} FROM projects p WHERE p.id = ?${companySql}`)
+      .bind(id)
+      .all<Record<string, unknown>>();
+    const raw: Record<string, unknown> | undefined = rows.results?.[0];
+    return raw ? linkedFairOf(toFairRow(raw)) : null;
+  } catch {
+    return null;
   }
 }
 

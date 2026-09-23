@@ -53,21 +53,24 @@
 //     already started. Those orders go through Others and the nightly reconcile
 //     links them once the fair exists.
 //  6. A PLACE ALREADY ON THE ORDER IS THE VALUE (owner, 2026-09-15, looking at
-//     HC-SO-2609-071 in edit mode: 「应该是venue的」). No order stores an
-//     organizer, so the edit form, mobile edit and every auto-filled default all
-//     arrive here as a place with no organizer — which this control used to
-//     render as the "Others" sentinel with the place pushed into a second box,
-//     on every order that has a venue. "Others" is an ACTION the operator takes
-//     to open the venue master, never the resting state of a saved answer.
+//     HC-SO-2609-071 in edit mode: 「应该是venue的」). An order with no fair link,
+//     and every auto-filled default, arrives here as a place with no organizer —
+//     which this control used to render as the "Others" sentinel with the place
+//     pushed into a second box. "Others" is an ACTION the operator takes to open
+//     the venue master, never the resting state of a saved answer.
+//  7. A RECORDED PICK READS BACK AS ITS EVENT (owner 2026-09-24). The edit forms
+//     seed the organizer and dates from the order's fair link (`fairPick.ts`), so
+//     the row that was picked is the row shown; the edit save sends the picked
+//     event and the server links exactly that one.
 // ----------------------------------------------------------------------------
 
 import { useState, type ReactNode } from 'react';
 import { useFairOptions, fairLabel, type FairOption } from '../vendor/scm/lib/fair-options-queries';
 
 /** What the SO form stores. `organizer` is null whenever the form holds a place
- *  but no fair row: a pick through Others, an order opened for edit (no order
- *  stores an organizer), or an auto-filled default. The server resolves a null
- *  organizer from venue + date + brand; the picker shows that place as itself. */
+ *  but no fair row: a pick through Others, an order with no fair link, or an
+ *  auto-filled default. The server resolves a null organizer from venue + date +
+ *  brand; the picker shows that place as itself. */
 export type FairPickValue = {
   venue: string | null;
   organizer: string | null;
@@ -143,7 +146,11 @@ export function FairPicker(props: FairPickerProps) {
      AS the value. It is never re-read as a fair: picking the row from the venue
      alone could name a fair that was not running on the order's date. */
   const selected = picked ? optionValue(picked) : place ? PLACE : choosingPlace ? OTHERS : '';
-  const placeLabel = value.organizer ? `${place} — ${value.organizer}` : place;
+  /* A linked event outside this order's list (e.g. archived since) still reads
+     back whole — venue, organizer and dates — never as a bare venue. */
+  const placeLabel = value.organizer && value.startDate
+    ? fairLabel({ venue: place, organizer: value.organizer, startDate: value.startDate, endDate: value.endDate })
+    : value.organizer ? `${place} — ${value.organizer}` : place;
   const showPlaceList = !picked && choosingPlace;
 
   /* An order can carry a venue the master no longer lists (renamed, deactivated,

@@ -100,6 +100,8 @@ import { customerRefOf } from '../../lib/customer-ref';
 import { isFocLine } from '../../vendor/scm/lib/foc-line';
 import { OrderSlipPhoto } from "../../vendor/scm/components/OrderSlipPhoto";
 import { ADD_LINE_LABEL, addLineHref } from "../../vendor/scm/lib/add-line-handoff";
+import { fairLabel } from "../../vendor/scm/lib/fair-options-queries";
+import { linkedEvent, type LinkedFair } from "../../components/fairPick";
 // ─── Row types (subset — see MfgSalesOrdersList.tsx for the full SoRow) ────
 
 type SoHeader = {
@@ -143,6 +145,8 @@ type SoHeader = {
   customer_type: string | null;
   building_type: string | null;
   venue: string | null;
+  // The linked fair event (owner 2026-09-24); absent on an older server.
+  fair?: LinkedFair | null;
   // The processing-date column the lock reads. Label, API field and column are
   // finally the same word (mig 0284 renamed it from internal_expected_dd).
   processing_date?: string | null;
@@ -1336,9 +1340,11 @@ function SalesOrderDetailV2ReadOnly() {
                   value={salesOrder.building_type || "—"}
                   muted={!salesOrder.building_type}
                 />
+                {/* A recorded pick reads back as its event — venue, organizer and
+                    dates (owner 2026-09-24); shown only under the order's own venue. */}
                 <Field
-                  label="Venue"
-                  value={salesOrder.venue || "—"}
+                  label="Fair"
+                  value={salesOrder.fair && linkedEvent(salesOrder.venue, salesOrder.fair) ? fairLabel(salesOrder.fair) : salesOrder.venue || "—"}
                   muted={!salesOrder.venue}
                 />
                 <Field

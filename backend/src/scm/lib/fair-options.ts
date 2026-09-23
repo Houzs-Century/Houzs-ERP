@@ -188,6 +188,29 @@ export function fairPickedPeriod(body: {
   return { startDate: start, endDate: ISO_DATE.test(end) ? end : null };
 }
 
+/**
+ * The EVENT a header edit picked (owner 2026-09-24: 「我选了那个场…它就自动记下是
+ * 那个场地的，包括 venue, organiser 和那个日期」), or null when it picked no event:
+ * a place through Others, a clear, or a client that sends none.
+ *
+ * `fairVenue` is the picked ROW's venue — the project's own spelling, which is
+ * what `loadFairsForEvent` matches. It leads because the edit forms only send
+ * `venue` when it differs from the stored one, and the stored venue is the last
+ * resort: the same place, but canonicalised by a trigger.
+ */
+export function editFairPick(
+  body: { fairVenue?: unknown; venue?: unknown; fairOrganizer?: unknown; fairStart?: unknown; fairEnd?: unknown },
+  storedVenue: string | null,
+): { venue: string; organizer: string; picked: { startDate: string; endDate: string | null } } | null {
+  const organizer = typeof body.fairOrganizer === 'string' ? body.fairOrganizer.trim() : '';
+  const picked = fairPickedPeriod(body);
+  const venue = [body.fairVenue, body.venue, storedVenue]
+    .map((v) => (typeof v === 'string' ? v.trim() : ''))
+    .find((v) => v !== '');
+  if (!organizer || !picked || !venue) return null;
+  return { venue, organizer, picked };
+}
+
 /** Does `date` fall inside the project's period? Plain lexicographic MYT date
  *  compare, no `Date` objects, because `new Date('2026-07-19')` is 08:00 MYT and
  *  the arithmetic from there re-introduces the midnight off-by-one that
@@ -439,4 +462,21 @@ function oneBoothOrNothing(rows: FairProjectRow[], candidateIds: number[]): Fair
  */
 export function fairOptionLabel(o: Pick<FairOption, 'venue' | 'organizer' | 'solo' | 'startDate' | 'endDate'>): string {
   return `${o.venue} — ${labelOrganizer(o)} (${fmtDayMonthRange(o.startDate, o.endDate)})`;
+}
+
+/** The event an order's `project_id` points at, in the picker row's own terms, so
+ *  a recorded pick reads back as the row that was picked (owner 2026-09-24). */
+export type LinkedFair = Pick<FairOption, 'venue' | 'organizer' | 'solo' | 'startDate' | 'endDate'>;
+
+/** Null for a project that could never have been a picker row (no venue, no
+ *  organizer or no start): the screens then show the venue alone, as before. A
+ *  project cancelled or archived AFTER the link was made still reads back — it is
+ *  what the order is attributed to until someone changes that. */
+export function linkedFairOf(row: FairProjectRow): LinkedFair | null {
+  const venue = clean(row.venue);
+  const organizer = clean(row.organizer);
+  const start = clean(row.startDate).slice(0, 10);
+  if (!venue || !organizer || !ISO_DATE.test(start)) return null;
+  const end = clean(row.endDate).slice(0, 10);
+  return { venue, organizer, solo: isSoloRow(row), startDate: start, endDate: ISO_DATE.test(end) ? end : null };
 }
