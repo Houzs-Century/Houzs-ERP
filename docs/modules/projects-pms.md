@@ -106,6 +106,15 @@ list. Holding `projects.write` escapes crew scoping entirely on both.
   canonical-venue TS module, its PG migration function, the D1 parity file,
   and the backfill script — a DB trigger also re-applies it on any direct
   write, so a route bypass cannot reintroduce the alias.
+- A checklist item counts as **complete** for progress and the stage tracker
+  when `status` is `done`/`na` **OR** `review_status = approved` — a gated
+  document (3D Design, Display Floor Plan, Stock In/Out) is finished by approval
+  and keeps `status = pending`, so reading status alone leaves an approved task
+  stuck red. One rule, two homes that must agree:
+  `backend/src/services/checklistProgress.ts` (`checklistRowDone`, feeds the
+  progress % / section bars / mobile pipeline) and
+  `frontend/src/pages/projects/checklistDone.ts` (`itemComplete`, the desktop
+  stage stepper). Mirrors the My-Pending SQL `status='done' OR review_status='approved'`.
 - Checklist-tick UI controls must gate on the **role-label badge**
   (`roleLabelAdmits`, shared by desktop and mobile), not on `projects.write`
   alone — a `projects.checklist.tick`-only holder (e.g. Purchaser) is
