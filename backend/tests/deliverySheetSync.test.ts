@@ -738,6 +738,9 @@ describe("POST /feed-by-docnos — manual restore, full records, NO readiness ga
 const ASSR: AssrFeedRow = {
   assr_no: "ASSR/2609-012",
   doc_no: "SO-2609-012",
+  complained_date: "2026-09-10",
+  ref_no: "REF012",
+  po_no: "PO-012",
   status: "In Progress",
   customer_name: "Wendy",
   phone: "60127712155",
@@ -764,14 +767,16 @@ describe("toAssrLegRecords — one own-team leg per set date, in the sheet's rec
     const by = Object.fromEntries(legs.map((l) => [l.Kind, l]));
     // col B = S/O-<word> (delivery-back = SERVICE); col C (TransferTo) = the ASSR
     // number, which syncDeliveryDateToASSR reads to write a scheduled date back.
+    // Farra parity: col D complaint date, col E "<ref>-<word>", col F the word, col AA the PO.
     expect(by.INSPECT).toMatchObject({
       DocNo: "SO-2609-012-INSPECTION", ErpDocNo: "ASSR/2609-012", Remark2: "SERVICE INSPECTION",
       SalesExemptionExpiryDate: "2026-09-20", TransferTo: "ASSR/2609-012", DebtorName: "Wendy", Phone1: "60127712155",
       SalesLocation: "KL", SalesAgent: "LUCAS", Region: "WEST", Status: "PENDING", Ready: false,
+      DocDate: "2026-09-10", Ref: "REF012-INSPECTION", SOUDF_BRANDING: "INSPECTION", SOUDF_ToPONo: "PO-012",
       InvAddr1: "12 Jalan Satu", InvAddr4: "Selangor", Total: 0, SOUDF_BALANCE: 0, LastModified: ASSR.last_modified_text,
     });
-    expect(by.PICKUP).toMatchObject({ DocNo: "SO-2609-012-PICKUP", Remark2: "SERVICE PICKUP", SalesExemptionExpiryDate: "2026-09-21", TransferTo: "ASSR/2609-012" });
-    expect(by.DELIVERY).toMatchObject({ DocNo: "SO-2609-012-SERVICE", Remark2: "SERVICE DELIVERY", SalesExemptionExpiryDate: "2026-09-25", TransferTo: "ASSR/2609-012" });
+    expect(by.PICKUP).toMatchObject({ DocNo: "SO-2609-012-PICKUP", Remark2: "SERVICE PICKUP", SalesExemptionExpiryDate: "2026-09-21", TransferTo: "ASSR/2609-012", DocDate: "2026-09-10", Ref: "REF012-PICKUP", SOUDF_BRANDING: "PICKUP", SOUDF_ToPONo: "PO-012" });
+    expect(by.DELIVERY).toMatchObject({ DocNo: "SO-2609-012-SERVICE", Remark2: "SERVICE DELIVERY", SalesExemptionExpiryDate: "2026-09-25", TransferTo: "ASSR/2609-012", DocDate: "2026-09-10", Ref: "REF012-SERVICE", SOUDF_BRANDING: "SERVICE", SOUDF_ToPONo: "PO-012" });
   });
 
   test("the own-team gate is per leg: supplier / 3PL / unconfirmed or a missing date emits nothing", () => {
