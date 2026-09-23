@@ -259,6 +259,26 @@ export function useMfgProducts(opts?: {
   });
 }
 
+/** Client-side product search — matches the SAME fields the `/mfg-products?search`
+ *  server filter does: code / name / description / barcode, case-insensitive
+ *  substring (backend routes/mfg-products.ts:204). The SKU pickers filter the
+ *  cached list with THIS instead of firing a per-keystroke `?search=` request,
+ *  which stalled or dropped the connection while the Worker was slow (owner
+ *  2026-09-23: "product code search slow"). Pure, so it is unit-tested. */
+export function matchesProductQuery(
+  p: Pick<MfgProductRow, 'code' | 'name' | 'description' | 'barcode'>,
+  query: string,
+): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return false;
+  return (
+    p.code.toLowerCase().includes(q)
+    || p.name.toLowerCase().includes(q)
+    || (p.description ?? '').toLowerCase().includes(q)
+    || (p.barcode ?? '').toLowerCase().includes(q)
+  );
+}
+
 /* SKU codes (this company) that already carry at least one supplier binding.
    Powers the SKU Master "no supplier binding" filter so staff can find the SKUs
    still missing a supplier and fill them one by one. Company-keyed cache so a
