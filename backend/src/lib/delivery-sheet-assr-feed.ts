@@ -44,6 +44,9 @@ export type AssrLegKind = "INSPECT" | "PICKUP" | "DELIVERY";
 export type AssrFeedRow = {
   assr_no: string;
   doc_no: string | null;
+  complained_date: string | null;
+  ref_no: string | null;
+  po_no: string | null;
   status: string | null;
   customer_name: string | null;
   phone: string | null;
@@ -89,6 +92,9 @@ export type AssrLegRecord = DeliverySheetRecord & { Kind: AssrLegKind };
 export const FEED_ASSR_LEGS_SQL = `
 SELECT assr_no,
        doc_no,
+       complained_date,
+       ref_no,
+       po_no,
        status,
        customer_name,
        phone,
@@ -127,7 +133,9 @@ function legBase(row: AssrFeedRow): Omit<AssrLegRecord, "Kind" | "DocNo" | "Tran
   const addr3 = blankToNull(row.addr3);
   return {
     ErpDocNo: row.assr_no,
-    DocDate: null,
+    // Farra parity: col D the complaint date, col AA the case PO. Ref (col E) and
+    // SOUDF_BRANDING (col F) carry the leg word, so they are set per leg below.
+    DocDate: blankToNull(row.complained_date),
     Ref: null,
     SOUDF_BRANDING: null,
     DebtorName: blankToNull(row.customer_name),
@@ -140,7 +148,7 @@ function legBase(row: AssrFeedRow): Omit<AssrLegRecord, "Kind" | "DocNo" | "Tran
     Remark4: null,
     Remark3: null,
     SOUDF_Note: null,
-    SOUDF_ToPONo: null,
+    SOUDF_ToPONo: blankToNull(row.po_no),
     InvAddr1: blankToNull(row.addr1),
     InvAddr2: blankToNull(row.addr2),
     InvAddr3: addr3,
@@ -182,16 +190,20 @@ export function toAssrLegRecords(row: AssrFeedRow): AssrLegRecord[] {
   // The S/O carries the leg key; fall back to the ASSR number only if a case
   // somehow has no doc_no (NOT NULL in the schema, so this is belt-and-braces).
   const keyDoc = blankToNull(row.doc_no) ?? row.assr_no;
+  const ref = blankToNull(row.ref_no);
   const legKey = (kind: AssrLegKind): string => `${keyDoc}-${LEG_KEY_WORD[kind]}`;
+  // col E (Ref) mirrors the Farra refTag: "<ref>-<word>", or the bare word when
+  // the case has no reference. col F (SOUDF_BRANDING) is the bare word.
+  const legRef = (kind: AssrLegKind): string => (ref ? `${ref}-${LEG_KEY_WORD[kind]}` : LEG_KEY_WORD[kind]);
   const legs: AssrLegRecord[] = [];
   if (row.inspection_by === "own" && blankToNull(row.inspection_visit_at)) {
-    legs.push({ ...base, Kind: "INSPECT", DocNo: legKey("INSPECT"), TransferTo: row.assr_no, Remark2: "SERVICE INSPECTION", SalesExemptionExpiryDate: row.inspection_visit_at });
+    legs.push({ ...base, Kind: "INSPECT", DocNo: legKey("INSPECT"), TransferTo: row.assr_no, Ref: legRef("INSPECT"), SOUDF_BRANDING: LEG_KEY_WORD.INSPECT, Remark2: "SERVICE INSPECTION", SalesExemptionExpiryDate: row.inspection_visit_at });
   }
   if (row.pickup_by === "customer" && blankToNull(row.customer_pickup_at)) {
-    legs.push({ ...base, Kind: "PICKUP", DocNo: legKey("PICKUP"), TransferTo: row.assr_no, Remark2: "SERVICE PICKUP", SalesExemptionExpiryDate: row.customer_pickup_at });
+    legs.push({ ...base, Kind: "PICKUP", DocNo: legKey("PICKUP"), TransferTo: row.assr_no, Ref: legRef("PICKUP"), SOUDF_BRANDING: LEG_KEY_WORD.PICKUP, Remark2: "SERVICE PICKUP", SalesExemptionExpiryDate: row.customer_pickup_at });
   }
   if (row.delivery_by === "own" && blankToNull(row.do_date)) {
-    legs.push({ ...base, Kind: "DELIVERY", DocNo: legKey("DELIVERY"), TransferTo: row.assr_no, Remark2: "SERVICE DELIVERY", SalesExemptionExpiryDate: row.do_date });
+    legs.push({ ...base, Kind: "DELIVERY", DocNo: legKey("DELIVERY"), TransferTo: row.assr_no, Ref: legRef("DELIVERY"), SOUDF_BRANDING: LEG_KEY_WORD.DELIVERY, Remark2: "SERVICE DELIVERY", SalesExemptionExpiryDate: row.do_date });
   }
   return legs;
 }

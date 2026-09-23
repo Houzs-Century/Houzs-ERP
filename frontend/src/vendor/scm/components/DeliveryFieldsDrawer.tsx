@@ -93,6 +93,16 @@ export const DeliveryFieldsDrawer = ({
     customerDeliveredDate: toDateInput(order.customer_delivered_date),
     etaArrivingPort: order.eta_arriving_port ?? '',
     deliverySubstatus: order.delivery_substatus ?? '',
+    // EM cross-border (ESB sea-freight + BS last-mile) — owner 2026-09-23
+    emDeliveryStatus: order.em_delivery_status ?? '',
+    consignmentNo: order.consignment_no ?? '',
+    vesselVoyage: order.vessel_voyage ?? '',
+    etdPortKlang: toDateInput(order.etd_port_klang),
+    bsDeliveryDate: toDateInput(order.bs_delivery_date),
+    esbRemarks: order.esb_remarks ?? '',
+    bsRemarks: order.bs_remarks ?? '',
+    ctn: order.ctn ?? '',
+    emDeliveredDate: toDateInput(order.em_delivered_date),
   });
 
   const set = <K extends keyof typeof form>(k: K, v: (typeof form)[K]) =>
@@ -127,6 +137,15 @@ export const DeliveryFieldsDrawer = ({
         customerDeliveredDate: form.customerDeliveredDate || null,
         etaArrivingPort: form.etaArrivingPort || null,
         deliverySubstatus: form.deliverySubstatus || null,
+        emDeliveryStatus: form.emDeliveryStatus || null,
+        consignmentNo: form.consignmentNo || null,
+        vesselVoyage: form.vesselVoyage || null,
+        etdPortKlang: form.etdPortKlang || null,
+        bsDeliveryDate: form.bsDeliveryDate || null,
+        esbRemarks: form.esbRemarks || null,
+        bsRemarks: form.bsRemarks || null,
+        ctn: form.ctn || null,
+        emDeliveredDate: form.emDeliveredDate || null,
       });
     }
     update.mutate(body as Parameters<typeof update.mutate>[0], {
@@ -306,6 +325,64 @@ export const DeliveryFieldsDrawer = ({
                 <option value="">—</option>
                 {HC_SUBSTATUS_VALUES.map((v) => <option key={v} value={v}>{v}</option>)}
               </select>
+            </label>
+
+            {/* ── EM cross-border transport (owner 2026-09-23): the two 3PL legs,
+                   ESB (sea-freight, Port Klang → EM port) and BS (EM last-mile),
+                   back-filled by hand. Costs are phase 2, not here. ─────────── */}
+            <div className={styles.eyebrow} style={{ margin: 'var(--space-3) 0 var(--space-2)', color: 'var(--c-burnt)' }}>
+              EM transport (ESB / BS)
+            </div>
+            <label style={fieldRow}>
+              <div className={styles.eyebrow}>EM Delivery Status (ESB)</div>
+              <input className={styles.searchInput} style={inputStyle}
+                value={form.emDeliveryStatus} placeholder="ESB shipment status / note"
+                onChange={(e) => set('emDeliveryStatus', e.target.value)} />
+            </label>
+            <label style={fieldRow}>
+              <div className={styles.eyebrow}>Consignment No (ESB)</div>
+              <input className={styles.searchInput} style={inputStyle}
+                value={form.consignmentNo} placeholder="Bill of lading no"
+                onChange={(e) => set('consignmentNo', e.target.value)} />
+            </label>
+            <label style={fieldRow}>
+              <div className={styles.eyebrow}>Vessel &amp; Voyage (ESB)</div>
+              <input className={styles.searchInput} style={inputStyle}
+                value={form.vesselVoyage} placeholder="Vessel name & voyage"
+                onChange={(e) => set('vesselVoyage', e.target.value)} />
+            </label>
+            <label style={fieldRow}>
+              <div className={styles.eyebrow}>ETD Port Klang (ESB)</div>
+              <DateField fullWidth className={styles.searchInput} style={inputStyle}
+                value={form.etdPortKlang} onChange={(iso) => set('etdPortKlang', iso)} />
+            </label>
+            <label style={fieldRow}>
+              <div className={styles.eyebrow}>ESB Remarks</div>
+              <input className={styles.searchInput} style={inputStyle}
+                value={form.esbRemarks} placeholder="ESB remark"
+                onChange={(e) => set('esbRemarks', e.target.value)} />
+            </label>
+            <label style={fieldRow}>
+              <div className={styles.eyebrow}>BS Delivery Date (BS)</div>
+              <DateField fullWidth className={styles.searchInput} style={inputStyle}
+                value={form.bsDeliveryDate} onChange={(iso) => set('bsDeliveryDate', iso)} />
+            </label>
+            <label style={fieldRow}>
+              <div className={styles.eyebrow}>BS Remarks</div>
+              <input className={styles.searchInput} style={inputStyle}
+                value={form.bsRemarks} placeholder="BS remark"
+                onChange={(e) => set('bsRemarks', e.target.value)} />
+            </label>
+            <label style={fieldRow}>
+              <div className={styles.eyebrow}>CTN (cartons)</div>
+              <input className={styles.searchInput} style={inputStyle}
+                value={form.ctn} placeholder="Carton count e.g. 10"
+                onChange={(e) => set('ctn', e.target.value)} />
+            </label>
+            <label style={fieldRow}>
+              <div className={styles.eyebrow}>Done Delivery Date</div>
+              <DateField fullWidth className={styles.searchInput} style={inputStyle}
+                value={form.emDeliveredDate} onChange={(iso) => set('emDeliveredDate', iso)} />
             </label>
           </fieldset>
         </div>
