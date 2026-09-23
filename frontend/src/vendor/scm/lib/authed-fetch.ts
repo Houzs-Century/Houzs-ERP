@@ -561,6 +561,14 @@ const ERROR_CODE_MESSAGES: Record<string, string> = {
      there would surface to the operator raw". */
   migrated_source_document:
     'This delivery or receipt was carried over from AutoCount, so its invoice has to mirror the AutoCount one exactly — run the migrated-invoice converter instead of building it by hand.',
+  /* GOODS RECEIPT over-receipt (backend grns.ts qty_exceeds_remaining). The line
+     is already fully received on its purchase order, so the receive is refused —
+     and the body carries no `message`, so until now it fell to the status-409
+     catch-all "That clashes... please refresh." Refreshing never helps: the PO
+     line's received quantity does not change, so the operator retried and got the
+     same wall (office, 2026-09-23). Name the real reason instead. */
+  qty_exceeds_remaining:
+    'This line is already fully received on its purchase order, so no more can be received against it — refreshing will not change that. Receive the purchase-order line that still has an outstanding balance instead.',
   duplicate_code:   'That code is already in use. Please choose a different one.',
   phone_required:   'A phone number is required.',
   not_found:        'That item could no longer be found. Please refresh.',
