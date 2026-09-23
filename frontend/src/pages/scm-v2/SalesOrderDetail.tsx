@@ -3030,14 +3030,14 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
     if (!form.salespersonId) return;
     /* Houzs 2026-06-23 (owner): Venue is manually pickable — only auto-fill the
        DEFAULT when it is still empty; never override a manual or loaded pick. */
-    if (form.venueId) return;
+    if (form.venueId || form.venue.trim()) return; // a saved venue often has no venue_id: its TEXT is the loaded pick
     const picked = staffList.find((s) => s.id === form.salespersonId);
     const resolvedId = picked?.venueId ?? '';
     if (!resolvedId) return;
     const resolvedName = (venuesQ.data ?? []).find((v) => v.id === resolvedId)?.name;
     if (!resolvedName) return; // 0591: `?? ''` blanked a loaded venue, permanently
-    setForm((s) => ({ ...s, venueId: resolvedId, venue: resolvedName, fair: null }));
-  }, [form.salespersonId, staffList, venuesQ.data, form.venueId]);
+    setForm((s) => (s.venueId || s.venue.trim() ? s : { ...s, venueId: resolvedId, venue: resolvedName, fair: null }));
+  }, [form.salespersonId, staffList, venuesQ.data, form.venueId, form.venue]);
 
   /* Commander 2026-05-27 (Fix 5) — State → Sales Location cascade. When the
      user picks a delivery state, look up state_warehouse_mappings and set
