@@ -9,7 +9,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
 import { useNotify } from "../vendor/scm/components/NotifyDialog"; import { notifySaveProblems } from "../vendor/scm/components/SaveProblemsList";
 import { usePrompt } from "../vendor/scm/components/PromptDialog"; import { CancelRequestPanel } from "../vendor/scm/components/CancelRequestPanel"; import { useCancelRequestAction } from "../pages/scm-v2/use-cancel-request-action"; import { WrongApproverFlagButton } from "../pages/scm-v2/WrongApproverFlagButton";
-import { fetchScanSlipImageBlobUrl } from "../vendor/scm/lib/slip";
+import { fetchScanSlipImageBlobUrl } from "../vendor/scm/lib/slip"; import { fairLabel } from "../vendor/scm/lib/fair-options-queries"; import { linkedEvent, type LinkedFair } from "../components/fairPick";
 import { MobileLinePhotos } from "./MobileLinePhotos";
 import { useStaff, usePickableStaff } from "../vendor/scm/lib/admin-queries";
 import { collaboratorLabel } from "../vendor/scm/lib/so-collaborators";
@@ -131,10 +131,10 @@ type SoHeader = {
   emergency_contact_phone: string | null;
   emergency_contact_relationship: string | null;
   building_type: string | null;
-  /* venue = free-text venue name (customer-facing, on PDFs); venue_id = the
-     master FK (mig 0086). Desktop reads the name for display, id as fallback. */
+  /* venue = the free-text name (on PDFs); venue_id = the master FK (mig 0086); fair = the linked event. */
   venue: string | null;
   venue_id: string | null;
+  fair?: LinkedFair | null;
   note: string | null;
   /* Delivery address columns — the desktop SO form maps these to labelled
      lines (address1/2 = free-text; address3 = city fallback; address4 =
@@ -1033,7 +1033,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
 
             {/* Order info */}
             <div className="card"><div className="card-h"><span className="card-t">Order info</span></div><div className="card-b">
-              <div style={{ display: "flex", gap: 9 }}><div style={{ flex: 1, minWidth: 0 }}><RoField label="Building type" value={val(h.building_type)} /></div><div style={{ flex: 1, minWidth: 0 }}><RoField label="Venue" value={val(h.venue ?? h.venue_id)} /></div></div>
+              <div style={{ display: "flex", gap: 9 }}><div style={{ flex: 1, minWidth: 0 }}><RoField label="Building type" value={val(h.building_type)} /></div><div style={{ flex: 1, minWidth: 0 }}><RoField label="Fair" value={h.fair && linkedEvent(h.venue, h.fair) ? fairLabel(h.fair) : val(h.venue ?? h.venue_id)} /></div></div>
               <div style={{ display: "flex", gap: 9 }}><div style={{ flex: 1, minWidth: 0 }}><RoField label="Processing Date" value={dl(h.processing_date)} mono /></div><div style={{ flex: 1, minWidth: 0 }}><RoField label="Delivery Date" value={dl(h.customer_delivery_date)} mono /></div></div>
               <RoField label="Sales location" value={val(h.sales_location ?? h.customer_state)} />
               {/* Note — a non-empty note is emphasised as an amber callout (desktop

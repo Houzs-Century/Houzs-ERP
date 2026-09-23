@@ -24,6 +24,7 @@ import { useAuth, isAdminLevel, isHatchSales } from "../vendor/scm/lib/auth";
 import { useAuth as useHouzsAuth } from "../auth/AuthContext";
 import { useVenues, type AutoVenue } from "../vendor/scm/lib/venues-queries";
 import { FairPicker, type FairPickValue } from "../components/FairPicker";
+import { fairEditPatch, fairEventOf, fairPickValue, linkedEvent, type LinkedFair } from "../components/fairPick";
 import { useStateWarehouseMappings } from "../vendor/scm/lib/state-warehouse-queries";
 import { todayMyt } from "../vendor/scm/lib/dates";
 import { addressLineProps } from "../lib/acColumnWidths";
@@ -221,6 +222,7 @@ type SoHeader = {
   venue: string | null;
   venue_id?: string | null;
   venueId?: string | null;
+  fair?: LinkedFair | null; // the linked event (owner 2026-09-24); absent on an older server
   sales_location?: string | null;
   note: string | null;
   address1: string | null;
@@ -897,6 +899,7 @@ export function MobileNewSO({
      a month later must offer the fairs that were on when the order was written,
      not the ones on today (owner 2026-09-23). Desktop passes header.so_date. */
   const [orderDate, setOrderDate] = useState<string | null>(null);
+  const [linkedFair, setLinkedFair] = useState<LinkedFair | null>(null); // seeds the picker's event
   // SKU picker sheet — the line key it was opened for, or null when closed.
   const [pickerFor, setPickerFor] = useState<string | null>(null);
   // Fabric picker sheet — the line key it was opened for, or null when closed.
@@ -974,6 +977,7 @@ export function MobileNewSO({
         setPrefillVenueId(h.venueId ?? h.venue_id ?? null);
         setPrefillVenueName(h.venue ?? "");
         setOrderDate(h.so_date ? h.so_date.slice(0, 10) : null);
+        setLinkedFair(h.fair ?? null);
         setProcDate((h.processing_date ?? "").slice(0, 10));
         setOrigProcDate((h.processing_date ?? "").slice(0, 10));
         setDelivDate((h.customer_delivery_date ?? "").slice(0, 10));
@@ -1008,7 +1012,8 @@ export function MobileNewSO({
            to {} and still sends nothing. */
         setSalespersonId(h.salesperson_id != null ? String(h.salesperson_id) : "");
         setOrigSalespersonId(h.salesperson_id != null ? String(h.salesperson_id) : "");
-        originalHeaderPatchRef.current = soHeaderPatchFrom({
+        // The fair keys are seeded like every field, so an untouched picker sends nothing.
+        originalHeaderPatchRef.current = { ...fairEditPatch(linkedEvent(h.venue ?? null, h.fair)), ...soHeaderPatchFrom({
           name: h.debtor_name ?? "",
           custRef: h.customer_so_no ?? h.ref ?? "",
           phone: toE164(h.phone),
@@ -1032,7 +1037,7 @@ export function MobileNewSO({
           /* Matches the seed above, not a hard null: the baseline has to describe
              the form as it now stands, or a form nobody touched reads as dirty. */
           salespersonId: h.salesperson_id != null ? String(h.salesperson_id) : null,
-        });
+        }) };
         const liveItems = (detail.items ?? []).filter((it) => !it.cancelled);
         setOrigItems(liveItems);
         const editable = liveItems.map(lineFromItem);
@@ -1165,10 +1170,10 @@ export function MobileNewSO({
     venue: null, organizer: null, startDate: null, endDate: null,
   });
   useEffect(() => {
-    /* Seeds a BLANK only — a human pick is a decision and is never overwritten. */
-    /* A PLACE, not an event — see the desktop twin. */
+    /* Seeds a BLANK only — a human pick is a decision and is never overwritten.
+       A place, plus the order's linked event when it has one (fairPick.ts). */
     if (fairPick.venue == null && resolvedVenueName) {
-      setFairPick({ venue: resolvedVenueName, organizer: null, startDate: null, endDate: null });
+      setFairPick(fairPickValue(resolvedVenueName, linkedEvent(resolvedVenueName, linkedFair)));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resolvedVenueName]);
@@ -1909,7 +1914,8 @@ export function MobileNewSO({
     setSubmitting(true);
     try {
       if (isEdit && docNo) {
-        const patch: Record<string, unknown> = soHeaderPatchFrom(headerPatchInput);
+        // The picked fair EVENT rides the edit too (owner 2026-09-24) — fairPick.ts.
+        const patch: Record<string, unknown> = { ...fairEditPatch(fairEventOf(fairPick)), ...soHeaderPatchFrom(headerPatchInput) };
         /* AMENDMENT MODE (Phase 1-C, desktop SalesOrderDetail.submitAmendment
            parity) — the SO is processing-locked but amendment_eligible. The edit
            splits in two:
@@ -2341,8 +2347,8 @@ export function MobileNewSO({
                     </select>
                   </Field>
                   {/* Owner 2026-09-13 — the venue select became the FAIR picker:
-                      place + organizer, no dates, nothing typed. Same component
-                      as desktop SalesOrderNew, which is the point. */}
+                      place + organizer + dates, nothing typed. Same component
+                      as the desktop forms, which is the point. */}
                   <Field label="Fair" style={{ flex: 1 }}>
                     <FairPicker
                       id="mob-so-fair"
