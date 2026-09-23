@@ -35,7 +35,7 @@ async function resetFixture(s: Sql): Promise<void> {
   await s.unsafe(`
     DROP TABLE IF EXISTS public.assr_cases CASCADE;
     CREATE TABLE public.assr_cases (
-      id bigserial PRIMARY KEY, assr_no text NOT NULL, company_id bigint NOT NULL, status text,
+      id bigserial PRIMARY KEY, assr_no text NOT NULL, doc_no text, company_id bigint NOT NULL, status text,
       customer_name text, phone text, location text, sales_agent text, delivery_order text,
       addr1 text, addr2 text, addr3 text, addr4 text,
       inspection_by text, inspection_visit_at text,
@@ -49,30 +49,30 @@ async function resetFixture(s: Sql): Promise<void> {
       updated_at text
     );
     INSERT INTO public.assr_cases
-      (assr_no, company_id, status, customer_name, phone, location, sales_agent, delivery_order,
+      (assr_no, doc_no, company_id, status, customer_name, phone, location, sales_agent, delivery_order,
        addr1, addr2, addr3, addr4, inspection_by, inspection_visit_at, pickup_by, customer_pickup_at,
        delivery_by, do_date, closed_at, archived_at, updated_at)
     VALUES
-      -- All three own-team legs, dated → 3 legs.
-      ('ASSR/2609-010', 1, 'In Progress', 'Wendy', '60127712155', 'KL WAREHOUSE', 'LUCAS', 'HC-DO-2609-050',
+      -- All three own-team legs, dated → 3 legs. Its S/O carries the leg key.
+      ('ASSR/2609-010', 'SO-9010', 1, 'In Progress', 'Wendy', '60127712155', 'KL WAREHOUSE', 'LUCAS', 'HC-DO-2609-050',
        '12 Jalan Satu', 'Taman Dua', NULL, 'Selangor', 'own', '2026-09-20', 'customer', '2026-09-21',
        'own', '2026-09-25', NULL, NULL, '2026-09-10 00:00:00+00'),
-      -- Only own-team pickup dated → 1 leg.
-      ('ASSR/2609-011', 1, 'In Progress', 'Ali', '60130000000', 'PG WAREHOUSE', 'SALLY', NULL,
+      -- Only own-team pickup dated → 1 leg. Native-order doc_no (HC-SO-...).
+      ('ASSR/2609-011', 'HC-SO-9011', 1, 'In Progress', 'Ali', '60130000000', 'PG WAREHOUSE', 'SALLY', NULL,
        'A', NULL, NULL, NULL, NULL, NULL, 'customer', '2026-09-22', NULL, NULL, NULL, NULL, '2026-09-11 00:00:00+00'),
       -- Every leg supplier-driven → excluded even though all dated.
-      ('ASSR/2609-012', 1, 'In Progress', 'Sup', NULL, 'KL WAREHOUSE', NULL, NULL,
+      ('ASSR/2609-012', 'SO-9012', 1, 'In Progress', 'Sup', NULL, 'KL WAREHOUSE', NULL, NULL,
        NULL, NULL, NULL, NULL, 'supplier', '2026-09-20', 'supplier', '2026-09-21', 'supplier', '2026-09-25', NULL, NULL, '2026-09-12 00:00:00+00'),
       -- Own-team marks but no dates → excluded.
-      ('ASSR/2609-013', 1, 'In Progress', 'NoDate', NULL, 'KL WAREHOUSE', NULL, NULL,
+      ('ASSR/2609-013', 'SO-9013', 1, 'In Progress', 'NoDate', NULL, 'KL WAREHOUSE', NULL, NULL,
        NULL, NULL, NULL, NULL, 'own', NULL, 'customer', NULL, 'own', NULL, NULL, NULL, '2026-09-13 00:00:00+00'),
       -- Closed / archived cases → excluded even with an own-team dated leg.
-      ('ASSR/2609-014', 1, 'Closed', 'Done', NULL, 'KL WAREHOUSE', NULL, NULL,
+      ('ASSR/2609-014', 'SO-9014', 1, 'Closed', 'Done', NULL, 'KL WAREHOUSE', NULL, NULL,
        NULL, NULL, NULL, NULL, NULL, NULL, 'customer', '2026-09-21', NULL, NULL, '2026-09-14 00:00:00+00', NULL, '2026-09-14 00:00:00+00'),
-      ('ASSR/2609-015', 1, 'In Progress', 'Gone', NULL, 'KL WAREHOUSE', NULL, NULL,
+      ('ASSR/2609-015', 'SO-9015', 1, 'In Progress', 'Gone', NULL, 'KL WAREHOUSE', NULL, NULL,
        NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'own', '2026-09-25', NULL, '2026-09-15 00:00:00+00', '2026-09-15 00:00:00+00'),
       -- Other company → excluded for company 1.
-      ('ASSR/2609-016', 2, 'In Progress', 'OtherCo', NULL, 'KL WAREHOUSE', NULL, NULL,
+      ('ASSR/2609-016', 'SO-9016', 2, 'In Progress', 'OtherCo', NULL, 'KL WAREHOUSE', NULL, NULL,
        NULL, NULL, NULL, NULL, NULL, NULL, 'customer', '2026-09-21', NULL, NULL, NULL, NULL, '2026-09-16 00:00:00+00');
   `);
 }
@@ -104,12 +104,17 @@ describePg('HC Delivery sheet ASSR leg feed SQL — real Postgres', () => {
   test('the mapper expands the page into its legs', async () => {
     const rows = await page(1, FEED_EPOCH, 10);
     const legs = rows.flatMap(toAssrLegRecords);
+    // col B key is the S/O with the Farra-linkage word (delivery-back = SERVICE),
+    // so the delivery tabs treat an ERP-pulled leg as the same row a Farra edit
+    // would have made, not a duplicate.
     expect(legs.map((l) => l.DocNo)).toEqual([
-      'ASSR/2609-010#INSPECT', 'ASSR/2609-010#PICKUP', 'ASSR/2609-010#DELIVERY',
-      'ASSR/2609-011#PICKUP',
+      'SO-9010-INSPECTION', 'SO-9010-PICKUP', 'SO-9010-SERVICE',
+      'HC-SO-9011-PICKUP',
     ]);
     const del = legs.find((l) => l.Kind === 'DELIVERY')!;
-    expect(del).toMatchObject({ TransferTo: 'HC-DO-2609-050', SalesExemptionExpiryDate: '2026-09-25', Region: 'WEST' });
+    // col C (TransferTo) is the ASSR number so syncDeliveryDateToASSR can key a
+    // date write-back to the case, not the DO number the SO feed puts there.
+    expect(del).toMatchObject({ TransferTo: 'ASSR/2609-010', SalesExemptionExpiryDate: '2026-09-25', Region: 'WEST' });
   });
 
   test('the cursor is strict — a page never re-sends its own last case', async () => {
