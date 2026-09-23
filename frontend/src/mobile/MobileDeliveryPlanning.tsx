@@ -63,6 +63,10 @@ type BoardRow = {
   branding: string | null;
   status: string | null;
   delivery_state: Bucket;
+  /* Customer-message follow-up workflow status (owner 2026-09-22) — one of the
+     23 desktop MESSAGE_STATUSES or null. Read-only on the phone (dispatch edits
+     it on the desktop board); shown as a small pill on the job card. */
+  delivery_message_status: string | null;
   balance_sen: number | null;
   balance_sen_live: number | null;
   local_total_sen: number | null;
@@ -1863,6 +1867,11 @@ function StopDetail({
           {/* PO No. — the purchase orders raised from the SO (desktop board parity). */}
           {order.po_nos?.length
             ? pdRow("PO No.", <span className="tnum">{order.po_nos.join(", ")}</span>, false)
+            : null}
+          {/* Delivery status — the customer-message workflow status; read-only on
+              the phone (dispatch edits it on the desktop board). */}
+          {order.delivery_message_status
+            ? pdRow("Delivery status", order.delivery_message_status, false)
             : null}
           {pdRow(
             "Branding",

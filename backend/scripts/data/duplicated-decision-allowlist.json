@@ -128,7 +128,12 @@
     {
       "check": "D1",
       "key": "ARRIVES EM WAREHOUSE,CONFIRM,DONE DELIVERED,DONE SHIPOUT,HOUSE NOT READY,PENDING PICKUP,REQUEST HOLD|backend/src/scm/routes/delivery-orders-mfg.ts backend/src/scm/routes/delivery-planning-fields.ts frontend/src/vendor/scm/lib/delivery-planning-queries.ts",
-      "why": "THE HC DELIVERY SUB-STATUS VALUES — the owner's own words, carried on the DO, the planning board and the frontend query layer (HC_SUBSTATUS_VALUES). Free text to the business, a closed set to the code; three homes and no referee. The planning-board home MOVED from delivery-planning.ts into delivery-planning-fields.ts when that router hit its file-size ceiling (2026-09-23)."
+      "why": "THE HC DELIVERY SUB-STATUS VALUES — the owner's own words, carried on the DO, the planning board and the frontend query layer (HC_SUBSTATUS_VALUES). Free text to the business, a closed set to the code; three homes and no referee. The planning-board home MOVED from delivery-planning.ts into delivery-planning-fields.ts when that router hit its file-size ceiling (2026-09-22); the /fields whitelists live there now."
+    },
+    {
+      "check": "D1",
+      "key": "1 DAY REMINDER SENT (DRIVER),3 DAYS REMINDER SENT (TIME),7 DAYS BALANCE REMINDER SENT,DONE BALANCE COLLECTION,DONE DELIVERY TIME,DONE DRIVER INFORMATION,DONE POSTPONE REASON,DONE REMIND,DONE SCHEDULING,INVALID DATA,NOT SENT (A),NOT SENT (D),PENDING CUSTOMER REPLY (D),PENDING RESCHEDULE (A),PENDING RESCHEDULE (D),TO REMIND CUSTOMER REPLY (1),TO REMIND CUSTOMER REPLY (2),TO REMIND CUSTOMER REPLY (3),TO SEND COLLECT BALANCE,TO SEND DELIVERY DATE,TO SEND DELIVERY TIME,TO SEND DRIVER INFO,TO SEND POSTPONE REASON|backend/src/scm/routes/delivery-planning-fields.ts frontend/src/vendor/scm/lib/delivery-planning-queries.ts",
+      "why": "THE DELIVERY MESSAGE-STATUS VALUES (owner 2026-09-22) — the 23-step customer-communication workflow shown and edited in the 'Delivery Message Status' column. HC_MESSAGE_STATUS_VALUES (delivery-planning-fields.ts) is the server whitelist the /fields route validates against; MESSAGE_STATUSES (delivery-planning-queries.ts) is the frontend dropdown's option list. Same shape as HC_SUBSTATUS_VALUES above: front and back share no build graph, the set is closed to the code, and a drift costs a refused edit (400 invalid_message_status), never a wrong number. The backend list is pinned by delivery-planning.fields.test.ts."
     },
     {
       "check": "D1",

@@ -136,6 +136,10 @@ export function decodeDataGridLayout(raw: string): DecodedDataGridLayout {
  */
 export const SHARED_DATA_GRID_STORAGE_KEYS: ReadonlySet<string> = new Set([
   "dg-delivery-planning",
+  // v2 (owner 2026-09-22 column redesign): a fresh key retires the saved layouts
+  // in one move, so the new default column set + order actually show. The old key
+  // stays listed so any un-migrated entry keeps its shared (unscoped) semantics.
+  "dg-delivery-planning-v2",
   "dg-date-arrangement-v2",
   "dg-trips-time-arrangement-v2",
   "dg-last-mile",

@@ -82,6 +82,10 @@ const TABLE_KEY_RE = /^[a-z0-9][a-z0-9.:_-]{0,79}$/i;
  */
 const SHARED_TABLE_KEYS = new Set([
   "dg:dg-delivery-planning",
+  // v2 (owner 2026-09-22 column redesign) — the frontend bumped the board's
+  // storageKey to retire the saved layouts at once; keep the row shared/pinned
+  // so the cross-company fork does not come back. Old key stays for un-migrated rows.
+  "dg:dg-delivery-planning-v2",
   "dg:dg-date-arrangement-v2",
   "dg:dg-trips-time-arrangement-v2",
   "dg:dg-last-mile",

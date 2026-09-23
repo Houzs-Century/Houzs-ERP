@@ -1,13 +1,28 @@
-// Field metadata for PATCH /delivery-planning/:type/:id/fields — the delivery
-// sub-status whitelist, the zod body schema, and the camelCase-key -> snake_case
-// column maps split by table (SO header vs DO row). Lives here, not in the
-// router, to keep delivery-planning.ts under its file-size ceiling; imported
-// back by the route.
+// Field metadata for PATCH /delivery-planning/:type/:id/fields — the value
+// whitelists, the zod body schema, and the camelCase-key -> snake_case-column
+// maps split by table (SO header vs DO row). Lives here, not in the router, to
+// keep delivery-planning.ts under its file-size ceiling; imported back by the
+// route and by delivery-planning.fields.test.ts / delivery-planning-fields.test.ts.
 import { z } from 'zod';
 
 export const HC_SUBSTATUS_VALUES = [
   'Pending Pickup', 'Done Shipout', 'Arrives EM Warehouse',
   'Done Delivered', 'Confirm', 'House Not Ready', 'Request Hold',
+] as const;
+
+/* The customer-message follow-up workflow statuses shown/edited in the "Delivery
+   Status" column (owner 2026-09-22). One of these 23 values, or blank. The
+   coarse scm.delivery_state (the top state tabs) is a separate, derived field
+   and is NOT one of these — the tabs get their own rework later. */
+export const HC_MESSAGE_STATUS_VALUES = [
+  'To Send Delivery Date', 'Pending Customer Reply (D)', 'Pending Reschedule (D)',
+  'Done Scheduling', 'Not Sent (D)', 'Pending Reschedule (A)', 'Not Sent (A)',
+  'Invalid Data', '3 Days Reminder Sent (Time)', '1 Day Reminder Sent (Driver)',
+  '7 Days Balance Reminder Sent', 'To Send Delivery Time', 'Done Delivery Time',
+  'To Send Driver Info', 'Done Driver Information', 'To Send Collect Balance',
+  'Done Balance Collection', 'To Send Postpone Reason', 'Done Postpone Reason',
+  'To Remind Customer Reply (1)', 'To Remind Customer Reply (2)',
+  'To Remind Customer Reply (3)', 'Done Remind',
 ] as const;
 
 export const fieldsSchema = z.object({
@@ -16,6 +31,10 @@ export const fieldsSchema = z.object({
   houseType: z.string().nullable().optional(),            // New House / Replacement (free text)
   replacementDisposal: z.string().nullable().optional(),
   referral: z.string().nullable().optional(),
+  deliveryMessageStatus: z.string().nullable().optional(),  // one of the 23 workflow values, or blank
+  disposalRequest: z.string().nullable().optional(),
+  dpRemark: z.string().nullable().optional(),
+  amendReason: z.string().nullable().optional(),  // preset reason or free text
   // Amendment dates — the customer's ORIGINAL customer_delivery_date is NEVER
   // edited here; only the amendment columns are.
   amendDateFromCustomer: z.string().nullable().optional(),  // YYYY-MM-DD (customer's ask)
@@ -49,6 +68,10 @@ export const SO_FIELD_COLS: Record<string, string> = {
   houseType: 'house_type',
   replacementDisposal: 'replacement_disposal',
   referral: 'referral',
+  deliveryMessageStatus: 'delivery_message_status',
+  disposalRequest: 'disposal_request',
+  dpRemark: 'dp_remark',
+  amendReason: 'amend_reason',
   // Amendment dates — NEVER customer_delivery_date (the original).
   amendDateFromCustomer: 'amend_date_from_customer',
   amendedDeliveryDate: 'amended_delivery_date',
@@ -72,4 +95,33 @@ export const DO_FIELD_COLS: Record<string, string> = {
   bsRemarks: 'bs_remarks',
   ctn: 'ctn',
   emDeliveredDate: 'em_delivered_date',
+};
+
+/* The raw scm.delivery_orders row the board read shapes into the per-DO exec
+   fields — dual-read snake + camelCase (the pg driver camelCases result
+   columns). Declared here (rather than inline in the router) to keep
+   delivery-planning.ts under its file-size ceiling. */
+export type DeliveryOrderExecRow = {
+  id: string; do_number: string | null; so_doc_no: string | null; status: string | null;
+  driver_id: string | null; driverId?: string | null;
+  delivery_state: string | null; customer_delivery_date: string | null; do_date: string | null;
+  time_range: string | null; time_confirmed: boolean | null;
+  arrival_at: string | null; departure_at: string | null;
+  shipout_date: string | null; customer_delivered_date: string | null;
+  eta_arriving_port: string | null; delivery_substatus: string | null;
+  arrives_em_warehouse_date: string | null;
+  em_delivery_status: string | null; consignment_no: string | null;
+  vessel_voyage: string | null; etd_port_klang: string | null;
+  bs_delivery_date: string | null; esb_remarks: string | null;
+  bs_remarks: string | null; ctn: string | null; em_delivered_date: string | null;
+  doDate?: string | null;
+  timeRange?: string | null; timeConfirmed?: boolean | null;
+  arrivalAt?: string | null; departureAt?: string | null;
+  shipoutDate?: string | null; customerDeliveredDate?: string | null;
+  etaArrivingPort?: string | null; deliverySubstatus?: string | null;
+  arrivesEmWarehouseDate?: string | null;
+  emDeliveryStatus?: string | null; consignmentNo?: string | null;
+  vesselVoyage?: string | null; etdPortKlang?: string | null;
+  bsDeliveryDate?: string | null; esbRemarks?: string | null;
+  bsRemarks?: string | null; emDeliveredDate?: string | null;
 };
