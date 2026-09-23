@@ -45,7 +45,7 @@ type AppContext = Context<{ Bindings: Env; Variables: Variables }>;
 // gates on the flat permission key `scm.config.write` against the REAL caller
 // (the 2990 staff_role lookup is dead in Houzs — the SCM bridge pins every
 // caller to one super_admin row). Owner + IT Admin pass via `*`; grant
-// individual positions via the Team > Positions matrix. GET stays open (the
+// the key to a ROLE under Team > Roles & Permissions. GET stays open (the
 // POS salesperson must read combos to price builds); only writes are gated.
 
 async function requireWriteRole(c: AppContext): Promise<{ ok: true } | { ok: false; res: Response }> {

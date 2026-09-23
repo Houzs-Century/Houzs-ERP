@@ -34,7 +34,8 @@ deliveryFees.use('*', supabaseAuth);
 // Houzs-flavoured: gate via canWriteScmConfig (flat `scm.config.write` OR the position policy canWriteConfig flag, see houzs-perms.ts) against
 // the REAL caller (the 2990 staff_role lookup is dead in Houzs — the SCM
 // bridge pins every caller to one super_admin row). Owner + IT Admin pass via
-// `*`; grant individual positions via the Team > Positions matrix.
+// `*`; grant the flat key to a ROLE, or set the Title's canWriteConfig flag,
+// under Team > Roles & Permissions (the Roles and Titles tabs).
 
 // Same form holds fees + lead days. Each field is independent so the PATCH
 // can partial-update either group without nuking the other.
