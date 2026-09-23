@@ -310,6 +310,11 @@
       "file": "frontend/src/pages/scm-v2/BankMonthTab.test.tsx",
       "text": "expect(screen.getByText('Nothing left to decide')).toBeTruthy();",
       "why": "A test asserting the sentence renders for a fixture whose one line is POSTED - it checks the count of OPEN lines among those in hand; nothing empty is read or claimed."
+    },
+    {
+      "file": "frontend/src/vendor/scm/lib/authed-fetch.ts",
+      "text": "'This line is already fully received on its purchase order, so no more can be received against it — refreshing will not change that. Receive the purchase-order line that still has an outstanding balance instead.',",
+      "why": "Not an empty read - this is the server's over-receipt REFUSAL message (grns.ts qty_exceeds_remaining), shown only when the PO line's own counted received_qty already equals its ordered qty. It reports that named document's status, which is why the receive was refused, not an inference from an absent result."
     }
   ]
 }

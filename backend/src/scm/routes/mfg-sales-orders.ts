@@ -666,8 +666,8 @@ async function isPosTabletCaller(c: PosCallerSource): Promise<boolean> {
    /override route). Houzs-flavoured: gate on the flat permission key
    `scm.so.price_override` against the REAL caller; the original
    scm.staff.role lookup is dead in Houzs (bridge pins to one super_admin
-   row). Owner + IT Admin pass via `*`; grant to other positions via the
-   Team > Positions matrix. Signature takes the Hono context so we can read
+   row). Owner + IT Admin pass via `*`; grant it to a ROLE under Team >
+   Roles & Permissions. Signature takes the Hono context so we can read
    the real user's permissions stash. */
 async function isPriceOverrideCaller(c: any): Promise<boolean> {
   return hasHouzsPerm(c, 'scm.so.price_override');
@@ -2465,8 +2465,8 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      hole). Houzs-flavoured: gate on the flat permission key
      `scm.so.attribute_other` against the REAL caller (the 2990 scm.staff.role
      lookup is dead in Houzs — the SCM bridge pins every caller to one
-     super_admin row). Owner + IT Admin pass via `*`; grant to other positions
-     via the Team > Positions matrix. */
+     super_admin row). Owner + IT Admin pass via `*`; grant it to a ROLE under
+     Team > Roles & Permissions. */
   /* An OMITTED salespersonId falls back to the caller's own staff row, for the
      same reason the self-scoped branch below already does: the creator IS the
      salesperson unless they name someone else. The frontend states this contract

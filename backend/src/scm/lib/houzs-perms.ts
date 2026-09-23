@@ -80,7 +80,7 @@ export function holdsHouzsPermLiterally(c: HouzsUserSource, perm: string): boole
  * grants, OR-ed together (additive — this never removes the existing permission
  * bypass, only widens):
  *   1. the flat permission key `scm.so.view_all` (legacy path — Owner / IT Admin
- *      pass via `*`, other positions via the Team > Positions matrix), OR
+ *      pass via `*`; it is granted to a ROLE under Team > Roles & Permissions), OR
  *   2. a DIRECTOR by STABLE ORG FIELD — Super Admin / Sales Director / Finance
  *      Manager (pmsAccess.isDirectorUser). This aligns Sales Orders with Service
  *      Cases (assr.ts) and Finance, which ALREADY grant the director-position
