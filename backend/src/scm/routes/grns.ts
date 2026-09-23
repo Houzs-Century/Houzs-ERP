@@ -1629,7 +1629,9 @@ grns.post('/', async (c) => {
   if (postRes && !postRes.ok) {
     await sb.from('grn_items').delete().eq('grn_id', h.id);
     await sb.from('grns').delete().eq('id', h.id);
-    if (postRes.zeroCost) return refuseZeroCostReceipt(c, postRes.zeroCost, { nothingWritten: true });
+    if (postRes.zeroCost) {
+      return refuseZeroCostReceipt(c, postRes.zeroCost, { nothingWritten: true });
+    }
     return c.json({ error: 'post_failed', reason: postRes.reason }, (postRes.status ?? 409) as 409 | 500);
   }
   // Migration 0101 — populate header money rollups from the inserted lines.
