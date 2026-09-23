@@ -22,7 +22,7 @@ const VALID = new Set(['SUBMITTED', 'PARTIALLY_RECEIVED', 'DRAFT', 'RECEIVED', '
 
 const base: PoListFilters = {
   status: null, supplierId: null, q: null, from: null, to: null, sort: null,
-  creditorNames: null, creditorCodes: null, currencies: null,
+  creditorNames: null, creditorCodes: null, currencies: null, docDates: null,
 };
 
 describe('readPoListFilters — server-filterable funnel params', () => {
@@ -70,6 +70,13 @@ describe('filterPoList — pushes the server-filterable funnels into the query',
     expect(calls.find((c) => c.m === 'in' && c.col === 'supplier.code')?.vals).toEqual(['400-D001']);
     expect(calls.find((c) => c.m === 'in' && c.col === 'currency')?.vals).toEqual(['USD']);
     expect(calls.find((c) => c.m === 'eq' && c.col === 'company_id')?.vals).toBe(1);
+  });
+
+  it('filters by Doc Date on the base po_date column, so paging runs over every matching PO', () => {
+    const { self, calls } = recorder();
+    filterPoList(self, { ...base, docDates: ['2026-09-15', '2026-09-16'] }, ctx, VALID);
+    expect(calls.find((c) => c.m === 'in' && c.col === 'po_date')?.vals).toEqual(['2026-09-15', '2026-09-16']);
+    expect(readPoListFilters((k) => (k === 'docDates' ? '["2026-09-15"]' : undefined)).docDates).toEqual(['2026-09-15']);
   });
 
   it('applies no creditor/currency filter when none are set', () => {

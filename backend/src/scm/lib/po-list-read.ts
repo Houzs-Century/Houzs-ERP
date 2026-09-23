@@ -59,6 +59,8 @@ export type PoListFilters = {
   creditorNames: string[] | null;
   creditorCodes: string[] | null;
   currencies: string[] | null;
+  /** Doc Date funnel: ISO `YYYY-MM-DD` values of the base `po_date` column. */
+  docDates: string[] | null;
 };
 
 const param = (v: string | undefined): string | null => (v === undefined || v === '' ? null : v);
@@ -89,6 +91,7 @@ export function readPoListFilters(query: (key: string) => string | undefined): P
     creditorNames: jsonArrayParam(query('creditorNames')),
     creditorCodes: jsonArrayParam(query('creditorCodes')),
     currencies: jsonArrayParam(query('currencies')),
+    docDates: jsonArrayParam(query('docDates')),
   };
 }
 
@@ -163,6 +166,7 @@ export function filterPoList<Q>(q: Q, f: PoListFilters, c: CompanyScopeCtx, vali
   if (f.creditorNames && f.creditorNames.length > 0) out = out.in('supplier.name', f.creditorNames);
   if (f.creditorCodes && f.creditorCodes.length > 0) out = out.in('supplier.code', f.creditorCodes);
   if (f.currencies && f.currencies.length > 0) out = out.in('currency', f.currencies);
+  if (f.docDates && f.docDates.length > 0) out = out.in('po_date', f.docDates);
   out = scopeToCompany(out, c); // multi-company: isolate to the active company
   /* free-text search over the base-table text columns. Supplier name / code are
      embedded resources, not base purchase_orders columns, so they can't be

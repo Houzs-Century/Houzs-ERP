@@ -26,6 +26,7 @@ export type PoListFilterParams = {
   creditorNames?: string[];
   creditorCodes?: string[];
   currencies?: string[];
+  docDates?: string[];
 };
 
 /** The list's filter as query parameters — no paging. */
@@ -38,6 +39,7 @@ export function poListParams(f: PoListFilterParams): URLSearchParams {
   if (f.creditorNames && f.creditorNames.length) usp.set('creditorNames', JSON.stringify(f.creditorNames));
   if (f.creditorCodes && f.creditorCodes.length) usp.set('creditorCodes', JSON.stringify(f.creditorCodes));
   if (f.currencies && f.currencies.length) usp.set('currencies', JSON.stringify(f.currencies));
+  if (f.docDates && f.docDates.length) usp.set('docDates', JSON.stringify(f.docDates));
   return usp;
 }
 

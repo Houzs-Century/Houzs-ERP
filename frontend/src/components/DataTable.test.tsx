@@ -1075,6 +1075,37 @@ describe("DataTable header filter + sort menu", () => {
     expect(rowCount(container)).toBe(6);
   });
 
+  it("lists only the values left by the OTHER columns' filters, seeds included", () => {
+    setViewport(1280);
+    // Order 1/3/5 are Closed, 2/4/6 Open. Seed the Order column with a name
+    // on no loaded row (a creditor whose POs are all on a later page).
+    const seeded: Column<Row>[] = [{ ...columns[0], filterSeedValues: ["Order 99"] }, columns[1]];
+    render(
+      <DataTable tableId="filter-cascade" rows={rows.slice(0, 6)} columns={seeded} getRowKey={(r) => r.id} />,
+    );
+    // The value span carries the value as `title`; the count is a sibling.
+    const listed = () =>
+      (screen.getAllByRole("checkbox") as HTMLInputElement[]).map(
+        (b) => b.closest("label")!.querySelector("span[title]")!.getAttribute("title"),
+      );
+
+    // No other filter: every seed is pickable, 0-count included.
+    openFunnel("Order");
+    expect(listed()).toEqual(["Order 1", "Order 2", "Order 3", "Order 4", "Order 5", "Order 6", "Order 99"]);
+
+    // Status = Open, then Order lists only the Open rows' names; the seed is gone.
+    openFunnel("Status");
+    fireEvent.click(screen.getByRole("checkbox", { name: /Open/ }));
+    openFunnel("Order");
+    expect(listed()).toEqual(["Order 2", "Order 4", "Order 6"]);
+
+    // Its own filter never narrows its own list, so unticking stays possible.
+    fireEvent.click(screen.getByRole("checkbox", { name: /Order 2/ }));
+    openFunnel("Status");
+    openFunnel("Order");
+    expect(listed()).toEqual(["Order 2", "Order 4", "Order 6"]);
+  });
+
   it("search limits the checklist without touching values outside it", () => {
     setViewport(1280);
     render(

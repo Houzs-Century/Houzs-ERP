@@ -3157,16 +3157,22 @@ function DataTableInner<T, L>({
           overflow clip + sticky stacking); closes on outside/Esc/scroll. */}
       {/* ── Column filter + sort popover — every getValue column (owner
           2026-07-24), portalled like the menu. Sort A→Z/Z→A, live search over
-          distinct getValue results across LOADED rows (pre-filter so unticking
-          works), Select all / Invert / Clear, checklist with counts. */}
+          distinct getValue results across the rows that pass the OTHER
+          columns' filters (Excel-style cascade; this column's own filter is
+          ignored so unticking works), Select all / Invert / Clear, checklist
+          with counts. */}
       {filterMenu &&
         (() => {
           const col = allColumns.find((c) => c.key === filterMenu.colKey);
           if (!col?.getValue) return null;
           const getter = col.getValue;
           const multi = col.getFilterValues;
+          const otherFilters = Object.fromEntries(
+            Object.entries(colFilters).filter(([k, v]) => k !== col.key && v.length > 0),
+          );
+          const othersActive = Object.keys(otherFilters).length > 0;
           const counts = new Map<string, number>();
-          for (const r of rows ?? []) {
+          for (const r of applyColumnFilters(rows ?? [], otherFilters, allColumns)) {
             // A multi-value row counts once against EACH of its values, so
             // the funnel lists "Bedframe" and "Mattress" separately rather
             // than a composite "Bedframe, Mattress" entry.
@@ -3174,10 +3180,18 @@ function DataTableInner<T, L>({
               counts.set(k, (counts.get(k) ?? 0) + 1);
             }
           }
-          // Seed the always-listed vocabulary (0-count entries stay pickable).
-          for (const seed of col.filterSeedValues ?? []) {
-            const k = filterKeyOf(seed);
-            if (!counts.has(k)) counts.set(k, 0);
+          // Seed the always-listed vocabulary (0-count entries stay pickable)
+          // only while no other column narrows the grid: once one does, the
+          // list is the narrowed set, not every creditor in the company.
+          if (!othersActive) {
+            for (const seed of col.filterSeedValues ?? []) {
+              const k = filterKeyOf(seed);
+              if (!counts.has(k)) counts.set(k, 0);
+            }
+          }
+          // This column's ticked values always stay listed so they can be unticked.
+          for (const v of colFilters[col.key] ?? []) {
+            if (!counts.has(v)) counts.set(v, 0);
           }
           const values = [...counts.entries()].sort((a, b) =>
             a[0].localeCompare(b[0], undefined, { numeric: true })
