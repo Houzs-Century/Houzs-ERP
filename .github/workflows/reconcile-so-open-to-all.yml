@@ -1,0 +1,90 @@
+name: Reconcile SO open-to-all (outstanding only)
+
+# Manual. Makes `scm.mfg_sales_orders.open_to_all` agree with the owner's
+# 2026-09-23 ruling — imported AutoCount orders that are STILL OUTSTANDING stay
+# open to everyone; delivered / closed / cancelled ones have the flag withdrawn.
+# The flag is not visibility alone: the SO write gate reads it too, so a finished
+# order left open is editable by every user.
+#
+# Run mode=dry-run first (reads, classifies, prints the plan, writes nothing);
+# read the plan in the run annotations; then re-run with mode=apply AND the
+# confirm phrase. The script refuses to write without it, re-reads on a fresh
+# connection afterwards and asserts every row agrees with the rule.
+#
+# Re-runnable: it converges in both directions, so running it again after more
+# orders are delivered simply withdraws those. Nothing withdraws automatically.
+#
+# Inputs reach the script ONLY through the ENVIRONMENT, never `${{ }}`
+# interpolated into a run body — a dispatch input is attacker-shaped text.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "dry-run prints the plan and writes nothing; apply performs it"
+        required: true
+        default: "dry-run"
+        type: choice
+        options: [dry-run, apply]
+      confirm:
+        description: 'CONFIRM phrase to apply — must be exactly: open outstanding sales orders only'
+        required: false
+        default: ""
+        type: string
+      target:
+        description: "Which DB"
+        required: true
+        default: "staging"
+        type: choice
+        options: [staging, prod]
+
+# Its own group: a repair must never queue behind, or displace, a release, and
+# never be cancelled mid-write.
+concurrency:
+  group: reconcile-so-open-to-all-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+        working-directory: backend
+      - name: Reconcile
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+        # npx tsx, not node: the script imports the migrated-shape rule from its
+        # one home in src/scm/lib/so-is-migrated.ts.
+        run: npx tsx scripts/reconcile-so-open-to-all.mjs
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+        working-directory: backend
+      - name: Reconcile
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+        run: npx tsx scripts/reconcile-so-open-to-all.mjs
