@@ -19,6 +19,7 @@ import { fileURLToPath } from "node:url";
 import { slipDateProblem } from "./PaymentsTable";
 import { CONVERT_LABEL } from "../lib/so-money-queries";
 import { PAYMENT_SLIP_WINDOW_DAYS, shiftIsoDay } from "../lib/payment-slip-date";
+import { humanApiError } from "../lib/authed-fetch";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const src = (rel: string) => readFileSync(resolve(HERE, rel), "utf8");
@@ -73,5 +74,28 @@ describe("every surface that keys a payment date bounds its own field", () => {
     const text = src("../../../mobile/MobileNewSO.tsx");
     expect(text).toContain("slip_date_out_of_window");
     expect(text).toMatch(/soClientExtras[\s\S]{0,900}outOfWindowPayments/);
+  });
+});
+
+/* The server's refusal has to REACH the operator. humanApiError drops a reason
+   that reads like internals and falls back to the status line ("Some of the
+   details weren't accepted"), which would hide the one fact that lets someone
+   act — which date is the earliest. An uncurated code like this one depends
+   entirely on the sentence staying plain, so it is pinned. */
+describe("the server's refusal survives the client's error filter", () => {
+  test("the too-old sentence renders verbatim, not as the generic 400 line", () => {
+    const body = JSON.stringify({
+      error: "slip_date_out_of_window",
+      reason: "Slip date is more than 14 days old. The earliest you can key in is 09/09/2026.",
+    });
+    expect(humanApiError(400, body)).toContain("earliest you can key in is 09/09/2026");
+  });
+
+  test("the future sentence too", () => {
+    const body = JSON.stringify({
+      error: "slip_date_out_of_window",
+      reason: "Slip date cannot be in the future. The latest you can key in is 23/09/2026.",
+    });
+    expect(humanApiError(400, body)).toContain("cannot be in the future");
   });
 });
