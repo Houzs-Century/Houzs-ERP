@@ -43,6 +43,12 @@ export type CancelRequestRow = {
   doc_key: string;
   doc_number: string;
   doc_status_at_request: string | null;
+  /* The Sales Order's own customer reference, RAW — resolved for display by
+     customerRefOf, the rule the SO list and the amendment queue already use.
+     Sent for SO rows only (a PO / DO has no such field), null when the order
+     carries neither. */
+  doc_ref?: string | null;
+  doc_customer_so_no?: string | null;
   status: 'REQUESTED' | 'L1_APPROVED' | 'APPROVED' | 'EXECUTED' | 'REJECTED' | 'WITHDRAWN';
   reason: string;
   requested_by: number;

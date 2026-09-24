@@ -49,6 +49,7 @@ The cancel handlers themselves (`mfg-sales-orders.ts`, `mfg-purchase-orders.ts`,
 - The PO's cancel card was removed from its editor along with the approval step — a PO can no longer have an open request to show; only a legacy pre-cutover `APPROVED` PO request can still be finished, via "Cancel now" on the inbox row.
 - A cancelled Purchase Order can still be reopened (`PATCH .../reopen`) — a subsequent cancel then needs a fresh request.
 - Don't add new fields to the cancel handlers to carry the reason — the reason is recorded by the guard, in its own row, specifically so the size-capped handler files never need to change.
+- `GET /cancel-requests` enriches `doc_type = 'SO'` rows with the order's `ref` / `customer_so_no` (as `doc_ref` / `doc_customer_so_no`) so the SO Amendment queue can print its Reference column. Sent RAW — the display rule (`customerRefOf`) lives on the client, in one place. A failed enrich read FAILS the list rather than blanking the column: blank would claim the order has no reference.
 - The inbox's `/cancel-requests` route is guarded only by coarse `scm.access` (it spans multiple document areas and cannot pick one) — do not tighten it to a single document's area permission.
 
 ## Where the code is

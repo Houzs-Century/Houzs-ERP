@@ -28,6 +28,7 @@ import {
   type CancelRequestRow,
 } from './document-cancel-queries';
 import { AMENDMENT_APPROVER_LABEL, AMENDMENT_APPROVER_TONE, soAmendmentApprover } from './amendment-approver';
+import { customerRefOf } from '../../../lib/customer-ref';
 import { amendmentBucketOf, compareAmendmentsForList, simplifiedAmendmentPill, type AmendmentBucket } from './status-pill';
 
 export type AmendmentQueueKind = 'AMENDMENT' | 'CANCEL';
@@ -40,7 +41,8 @@ export type AmendmentQueueRow = {
   /** What the row is, in the queue's own words. */
   kindLabel: string;
   soDocNo: string;
-  /** The SO's customer reference; a cancellation row carries none. */
+  /** The SO's customer reference, by the Sales Order list's own rule — carried
+   *  for BOTH kinds of row since the cancellation endpoint began sending it. */
   reference: string;
   /** "A3" for an amendment, the SO's number for a cancellation. */
   numberLabel: string;
@@ -126,7 +128,7 @@ export const cancelQueueRowOf = (r: CancelRequestRow): AmendmentQueueRow => ({
   kind: 'CANCEL',
   kindLabel: 'Cancellation',
   soDocNo: r.doc_number || r.doc_key,
-  reference: '',
+  reference: customerRefOf({ ref: r.doc_ref ?? null, customer_so_no: r.doc_customer_so_no ?? null }),
   numberLabel: 'Cancel',
   approverKey: cancelApproverKey(r),
   approverLabel: cancelApproverLabel(r),
