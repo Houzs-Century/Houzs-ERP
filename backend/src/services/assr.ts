@@ -5,6 +5,7 @@ import { slaHoursFor, slaHoursForPriority } from "./assrSla";
 import { listSupplierReturns } from "./assrSupplierReturns";
 export { slaHoursFor, slaHoursForPriority };
 import { todayMyt } from "../scm/lib/my-time";
+import { claimFromCounter, yymmFor } from "./documentRefs";
 import { assrOpenStageSql } from "./assrStages";
 import { isServiceLine } from "../scm/shared/service-sku";
 import { AutoCountClient, cleanPhone } from "./autocount";
@@ -219,11 +220,12 @@ export async function nextServicePONumber(env: Env): Promise<string> {
 
 // ── ASSR number generator ─────────────────────────────────────
 
-export async function nextAssrNumber(env: Env): Promise<string> {
-  const now = new Date();
-  const yy = String(now.getUTCFullYear()).slice(-2);
-  const mm = String(now.getUTCMonth() + 1).padStart(2, "0");
-  const prefix = `ASSR/${yy}${mm}`;
+// ASSR/YYMM-NNN, month in MYT (07:00 on the 1st is the new month). The number
+// comes from the atomic counter (scm.next_doc_no_n) floored at the live max, so
+// simultaneous creates cannot read the same max; without it (D1 mirror) max + 1,
+// still guarded by the unique index + retry in createAssrCase.
+export async function nextAssrNumber(env: Env, nowMs = Date.now()): Promise<string> {
+  const prefix = `ASSR/${yymmFor(nowMs)}`;
 
   const row = await env.DB.prepare(
     `SELECT assr_no FROM assr_cases WHERE assr_no LIKE ? ORDER BY assr_no DESC LIMIT 1`
@@ -231,12 +233,13 @@ export async function nextAssrNumber(env: Env): Promise<string> {
     .bind(`${prefix}-%`)
     .first<{ assr_no: string }>();
 
-  let next = 1;
+  let floor = 0;
   if (row?.assr_no) {
     const parts = row.assr_no.split("-");
     const seq = parseInt(parts[1] || "", 10);
-    if (!isNaN(seq)) next = seq + 1;
+    if (!isNaN(seq)) floor = seq;
   }
+  const next = (await claimFromCounter(env, prefix, floor)) ?? floor + 1;
   return `${prefix}-${String(next).padStart(3, "0")}`;
 }
 
