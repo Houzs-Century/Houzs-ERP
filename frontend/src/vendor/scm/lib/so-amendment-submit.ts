@@ -90,9 +90,24 @@ export function amendmentSubmittedNotice(
   if (plan === 'DIRECT_ONLY') {
     return { title: AMENDMENT_DIRECT_ONLY_SAVED_TITLE, body: AMENDMENT_DIRECT_ONLY_SAVED_BODY };
   }
-  const created = (createdRes as {
+  const res = createdRes as {
     amendments?: Array<{ amendment_no?: string | null; lane?: string | null }>;
-  } | null | undefined)?.amendments ?? [];
+    autoApplied?: number;
+  } | null | undefined;
+  const created = res?.amendments ?? [];
+  /* Applied on the spot, no signature waiting (owner 2026-09-24): the Logistic
+     desk changing a delivery date / customer detail on a locked order. Say it
+     APPLIED — 'submitted, waiting for Logistic' would send them looking for a
+     queue row that is already signed. A partial (one half applied, the other
+     still with its desk) falls through to the split message below, which names
+     both halves and is true of it. */
+  const applied = res?.autoApplied ?? 0;
+  if (applied > 0 && applied === created.length) {
+    return {
+      title: created.length > 1 ? 'Changes applied' : 'Change applied',
+      body: 'Applied to the order straight away — the delivery desk signs its own changes, so no approval was needed.',
+    };
+  }
   const lane = (l?: string | null) =>
     (l === 'LINES' || l === 'DELIVERY' ? AMENDMENT_APPROVER_LABEL[soAmendmentApprover(l)] : '');
   if (created.length > 1) {
