@@ -33,6 +33,11 @@ export type FairOption = {
 
 export type VenueMasterRow = { id: string; name: string };
 
+/** The event an order is linked to, as the order detail sends it
+ *  (`salesOrder.fair`, owner 2026-09-24). Backend twin: `LinkedFair` in
+ *  scm/lib/fair-options.ts. */
+export type LinkedFair = Pick<FairOption, 'venue' | 'organizer' | 'solo' | 'startDate' | 'endDate'>;
+
 export type FairOptionsResponse = {
   date: string;
   /** Fairs running on the order's date. Nothing pre-selects one: an order with

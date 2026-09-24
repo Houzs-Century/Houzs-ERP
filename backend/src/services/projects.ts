@@ -5,6 +5,7 @@ import { todayMyt } from "../scm/lib/my-time";
 import { canonicalizeMyState } from "../scm/lib/canonical-state";
 import { canonicalizeVenue } from "../scm/lib/canonical-venue";
 import { deriveProjectCode, deriveProjectName, syncedNameForOrganizerChange } from "./project-naming";
+import { checklistRowDone } from "./checklistProgress";
 export { deriveProjectCode, deriveProjectName };
 
 /** Disambiguate against existing codes by appending -2, -3, … */
@@ -762,11 +763,10 @@ export async function getProjectDetail(env: Env, id: number, companyId?: number)
   )
     .bind(id)
     .all();
-
-  // Progress: % of non-NA items marked done. Trip & finance excluded.
+  // Progress: % of non-NA items done or approved. Trip & finance excluded.
   const counts = {
     total: (checklist.results ?? []).length,
-    done: (checklist.results ?? []).filter((r: any) => r.status === "done").length,
+    done: (checklist.results ?? []).filter((r: any) => checklistRowDone(r)).length,
     na: (checklist.results ?? []).filter((r: any) => r.status === "na").length,
   };
   const denom = counts.total - counts.na;
@@ -914,7 +914,7 @@ export async function getProjectDetail(env: Env, id: number, companyId?: number)
       (r: any) => r.section_id === s.id
     );
     const total = items.length;
-    const done = items.filter((r: any) => r.status === "done").length;
+    const done = items.filter((r: any) => checklistRowDone(r)).length;
     const na = items.filter((r: any) => r.status === "na").length;
     const denom = total - na;
     const complete = denom > 0 && done === denom;
@@ -932,7 +932,7 @@ export async function getProjectDetail(env: Env, id: number, companyId?: number)
   );
   if (uncatItems.length > 0) {
     const total = uncatItems.length;
-    const done = uncatItems.filter((r: any) => r.status === "done").length;
+    const done = uncatItems.filter((r: any) => checklistRowDone(r)).length;
     const na = uncatItems.filter((r: any) => r.status === "na").length;
     const denom = total - na;
     sectionProgress.push({

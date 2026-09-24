@@ -1,5 +1,25 @@
 import { SELF, env } from "cloudflare:test";
-import { describe, expect, test, beforeEach } from "vitest";
+import { describe, expect, test, beforeEach, it } from "vitest";
+import { checklistRowDone } from "../src/services/checklistProgress";
+
+// A gated document (3D Design, Display Floor Plan, Stock In/Out) is completed by
+// APPROVAL and keeps status='pending', so progress must count approved as done —
+// the same rule My-Pending already uses. Owner 2026-09-23: an approved 3D task
+// showed its stage bullet red/overdue because progress read status alone.
+describe("checklistRowDone — approved counts as done", () => {
+  it("counts a done row", () => {
+    expect(checklistRowDone({ status: "done", review_status: null })).toBe(true);
+  });
+  it("counts an APPROVED row whose status is still pending", () => {
+    expect(checklistRowDone({ status: "pending", review_status: "approved" })).toBe(true);
+  });
+  it("does not count a row only submitted for review", () => {
+    expect(checklistRowDone({ status: "pending", review_status: "pending_review" })).toBe(false);
+  });
+  it("does not count a plain pending row", () => {
+    expect(checklistRowDone({ status: "pending", review_status: null })).toBe(false);
+  });
+});
 
 // ── Test helpers ─────────────────────────────────────────────────
 

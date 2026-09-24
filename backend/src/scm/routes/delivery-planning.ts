@@ -65,6 +65,7 @@
 
 import { Hono, type Context } from 'hono';
 import { z } from 'zod';
+import { HC_SUBSTATUS_VALUES, HC_MESSAGE_STATUS_VALUES, fieldsSchema, SO_FIELD_COLS, DO_FIELD_COLS, type DeliveryOrderExecRow } from './delivery-planning-fields';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { todayMyt } from '../lib/my-time';
@@ -452,6 +453,11 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
     possession_date: string | null; house_type: string | null;
     replacement_disposal: string | null; referral: string | null; ref: string | null;
     possessionDate?: string | null; houseType?: string | null; replacementDisposal?: string | null;
+    // HC delivery MESSAGE status (the follow-up workflow status, owner 2026-09-22).
+    delivery_message_status: string | null; deliveryMessageStatus?: string | null;
+    // Delivery-planning admin free-text fields (owner 2026-09-22). dual-read.
+    disposal_request: string | null; disposalRequest?: string | null;
+    dp_remark: string | null; dpRemark?: string | null;
   };
   /* CROSS-COMPANY = the caller's GRANTED companies; unscoped, this read took every tenant's. */
   const { data: soRowsRaw, error: soErr } = await paginateAll<SoHeaderRow>((from, to) =>
@@ -460,7 +466,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         /* NO `id` column here: scm.mfg_sales_orders is keyed by doc_no (TEXT PK) and
            has no `id` column: selecting it makes PostgREST reject the whole query and
            the board 500s. Identity here is doc_no; every join below keys on it. */
-        .select('doc_no, company_id, debtor_code, debtor_name, phone, branding, status, delivery_state, agent, salesperson_id, venue, customer_state, customer_country, customer_delivery_date, amend_date_from_customer, amended_delivery_date, amend_reason, processing_date, so_date, address1, address2, postcode, building_type, local_total_sen, balance_sen, possession_date, house_type, replacement_disposal, referral, ref')
+        .select('doc_no, company_id, debtor_code, debtor_name, phone, branding, status, delivery_state, agent, salesperson_id, venue, customer_state, customer_country, customer_delivery_date, amend_date_from_customer, amended_delivery_date, amend_reason, processing_date, so_date, address1, address2, postcode, building_type, local_total_sen, balance_sen, possession_date, house_type, replacement_disposal, referral, ref, delivery_message_status, disposal_request, dp_remark')
         .neq('status', 'DRAFT')
         .neq('status', 'CANCELLED')
         .order('customer_delivery_date', { ascending: true, nullsFirst: false }),
@@ -624,31 +630,19 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
     eta_arriving_port: string | null; delivery_substatus: string | null;
     // EM-region transit arrival date.
     arrives_em_warehouse_date: string | null;
+    // EM cross-border transport status (owner 2026-09-23) — the ESB sea-freight
+    // leg + the BS last-mile leg, back-filled by the two 3PL transporters.
+    em_delivery_status: string | null; consignment_no: string | null;
+    vessel_voyage: string | null; etd_port_klang: string | null;
+    bs_delivery_date: string | null; esb_remarks: string | null;
+    bs_remarks: string | null; ctn: string | null; em_delivered_date: string | null;
     // The latest DO's OWN document date (delivery_orders.do_date) — surfaced as
     // the planning grid "DO Date" column. From the SAME latest-DO lookup as crew.
     do_date: string | null;
   };
-  const { data: doRowsRaw, error: doErr } = await chunkIn<{
-    id: string; do_number: string | null; so_doc_no: string | null; status: string | null;
-    // driver_id — the DO header's quick-field driver, one half of the row-scope
-    // assignment (the crew snapshot below carries the rest). dual-read camelCase.
-    driver_id: string | null; driverId?: string | null;
-    delivery_state: string | null; customer_delivery_date: string | null; do_date: string | null;
-    time_range: string | null; time_confirmed: boolean | null;
-    arrival_at: string | null; departure_at: string | null;
-    shipout_date: string | null; customer_delivered_date: string | null;
-    eta_arriving_port: string | null; delivery_substatus: string | null;
-    arrives_em_warehouse_date: string | null;
-    // camelCase aliases (pg driver) for dual-read
-    doDate?: string | null;
-    timeRange?: string | null; timeConfirmed?: boolean | null;
-    arrivalAt?: string | null; departureAt?: string | null;
-    shipoutDate?: string | null; customerDeliveredDate?: string | null;
-    etaArrivingPort?: string | null; deliverySubstatus?: string | null;
-    arrivesEmWarehouseDate?: string | null;
-  }>(docNos, (batch, from, to) =>
+  const { data: doRowsRaw, error: doErr } = await chunkIn<DeliveryOrderExecRow>(docNos, (batch, from, to) =>
     sb.from('delivery_orders')
-      .select('id, do_number, so_doc_no, status, driver_id, delivery_state, customer_delivery_date, do_date, time_range, time_confirmed, arrival_at, departure_at, shipout_date, customer_delivered_date, eta_arriving_port, delivery_substatus, arrives_em_warehouse_date')
+      .select('id, do_number, so_doc_no, status, driver_id, delivery_state, customer_delivery_date, do_date, time_range, time_confirmed, arrival_at, departure_at, shipout_date, customer_delivered_date, eta_arriving_port, delivery_substatus, arrives_em_warehouse_date, em_delivery_status, consignment_no, vessel_voyage, etd_port_klang, bs_delivery_date, esb_remarks, bs_remarks, ctn, em_delivered_date')
       .in('so_doc_no', batch).order('id').range(from, to),
   );
   noteDegradedRead('do_headers', doErr);
@@ -681,6 +675,15 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
       eta_arriving_port: d.etaArrivingPort ?? d.eta_arriving_port ?? null,
       delivery_substatus: d.deliverySubstatus ?? d.delivery_substatus ?? null,
       arrives_em_warehouse_date: d.arrivesEmWarehouseDate ?? d.arrives_em_warehouse_date ?? null,
+      em_delivery_status: d.emDeliveryStatus ?? d.em_delivery_status ?? null,
+      consignment_no: d.consignmentNo ?? d.consignment_no ?? null,
+      vessel_voyage: d.vesselVoyage ?? d.vessel_voyage ?? null,
+      etd_port_klang: d.etdPortKlang ?? d.etd_port_klang ?? null,
+      bs_delivery_date: d.bsDeliveryDate ?? d.bs_delivery_date ?? null,
+      esb_remarks: d.esbRemarks ?? d.esb_remarks ?? null,
+      bs_remarks: d.bsRemarks ?? d.bs_remarks ?? null,
+      ctn: d.ctn ?? null,
+      em_delivered_date: d.emDeliveredDate ?? d.em_delivered_date ?? null,
       do_date: d.doDate ?? d.do_date ?? null,
     });
   }
@@ -969,6 +972,11 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
       house_type: r.houseType ?? r.house_type ?? null,
       replacement_disposal: r.replacementDisposal ?? r.replacement_disposal ?? null,
       referral: r.referral ?? null,
+      // HC delivery MESSAGE status (the follow-up workflow status, owner
+      // 2026-09-22) — one of the 23 values or null. dual-read camelCase.
+      delivery_message_status: r.deliveryMessageStatus ?? r.delivery_message_status ?? null,
+      disposal_request: r.disposalRequest ?? r.disposal_request ?? null,
+      dp_remark: r.dpRemark ?? r.dp_remark ?? null,
       // HC DO-execution raw-data fields — from the latest DO, null when this SO
       // has no (non-DRAFT/CANCELLED) DO yet.
       time_range: doExecByDoc.get(docNo)?.time_range ?? null,
@@ -981,6 +989,16 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
       delivery_substatus: doExecByDoc.get(docNo)?.delivery_substatus ?? null,
       // EM-region transit arrival date, from the latest DO.
       arrives_em_warehouse_date: doExecByDoc.get(docNo)?.arrives_em_warehouse_date ?? null,
+      // EM cross-border transport status (owner 2026-09-23), from the latest DO.
+      em_delivery_status: doExecByDoc.get(docNo)?.em_delivery_status ?? null,
+      consignment_no: doExecByDoc.get(docNo)?.consignment_no ?? null,
+      vessel_voyage: doExecByDoc.get(docNo)?.vessel_voyage ?? null,
+      etd_port_klang: doExecByDoc.get(docNo)?.etd_port_klang ?? null,
+      bs_delivery_date: doExecByDoc.get(docNo)?.bs_delivery_date ?? null,
+      esb_remarks: doExecByDoc.get(docNo)?.esb_remarks ?? null,
+      bs_remarks: doExecByDoc.get(docNo)?.bs_remarks ?? null,
+      ctn: doExecByDoc.get(docNo)?.ctn ?? null,
+      em_delivered_date: doExecByDoc.get(docNo)?.em_delivered_date ?? null,
       // The latest DO's OWN document date (delivery_orders.do_date), null when
       // this SO has no (non-DRAFT/CANCELLED) DO yet — drives the "DO Date" column.
       do_date: doExecByDoc.get(docNo)?.do_date ?? null,
@@ -1132,6 +1150,9 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           house_type: null,
           replacement_disposal: null,
           referral: null,
+          delivery_message_status: null,
+          disposal_request: null,
+          dp_remark: null,
           time_range: null,
           time_confirmed: null,
           arrival_at: null,
@@ -1141,6 +1162,9 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           eta_arriving_port: null,
           delivery_substatus: null,
           arrives_em_warehouse_date: null,
+          em_delivery_status: null, consignment_no: null, vessel_voyage: null,
+          etd_port_klang: null, bs_delivery_date: null, esb_remarks: null,
+          bs_remarks: null, ctn: null, em_delivered_date: null,
           do_date: leg.jobKind === 'delivery' ? leg.date : null,
           // Stock columns are not meaningful for a Service Case.
           ...NO_STOCK_ROW,
@@ -1294,6 +1318,9 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         house_type: null,
         replacement_disposal: null,
         referral: null,
+        delivery_message_status: null,
+        disposal_request: null,
+        dp_remark: null,
         time_range: null,
         time_confirmed: null,
         arrival_at: null,
@@ -1303,6 +1330,9 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         eta_arriving_port: null,
         delivery_substatus: null,
         arrives_em_warehouse_date: null,
+        em_delivery_status: null, consignment_no: null, vessel_voyage: null,
+        etd_port_klang: null, bs_delivery_date: null, esb_remarks: null,
+        bs_remarks: null, ctn: null, em_delivered_date: null,
         do_date: null,
         ...NO_STOCK_ROW,
         company_code: null,
@@ -1430,6 +1460,9 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           house_type: null,
           replacement_disposal: null,
           referral: null,
+          delivery_message_status: null,
+          disposal_request: null,
+          dp_remark: null,
           time_range: null,
           time_confirmed: null,
           arrival_at: null,
@@ -1439,6 +1472,9 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           eta_arriving_port: null,
           delivery_substatus: null,
           arrives_em_warehouse_date: null,
+          em_delivery_status: null, consignment_no: null, vessel_voyage: null,
+          etd_port_klang: null, bs_delivery_date: null, esb_remarks: null,
+          bs_remarks: null, ctn: null, em_delivered_date: null,
           do_date: null,
           ...NO_STOCK_ROW,
           company_code: null,
@@ -1887,54 +1923,8 @@ function emptyCounts(): Record<'ALL' | DeliveryState, number> {
      non-DRAFT/CANCELLED DO for the SO. Skipped (with a hint) when no DO exists.
    Field names are whitelisted; only present keys are written; idempotent.
    ─────────────────────────────────────────────────────────────────────────*/
-const HC_SUBSTATUS_VALUES = [
-  'Pending Pickup', 'Done Shipout', 'Arrives EM Warehouse',
-  'Done Delivered', 'Confirm', 'House Not Ready', 'Request Hold',
-] as const;
-
-const fieldsSchema = z.object({
-  // SO-context (→ mfg_sales_orders)
-  possessionDate: z.string().nullable().optional(),       // YYYY-MM-DD
-  houseType: z.string().nullable().optional(),            // New House / Replacement (free text)
-  replacementDisposal: z.string().nullable().optional(),
-  referral: z.string().nullable().optional(),
-  // Amendment dates — the customer's ORIGINAL customer_delivery_date is NEVER
-  // edited here; only the amendment columns are.
-  amendDateFromCustomer: z.string().nullable().optional(),  // YYYY-MM-DD (customer's ask)
-  amendedDeliveryDate: z.string().nullable().optional(),    // YYYY-MM-DD (we confirm)
-  // DO-execution (→ delivery_orders)
-  timeRange: z.string().nullable().optional(),
-  timeConfirmed: z.boolean().nullable().optional(),
-  arrivalAt: z.string().nullable().optional(),            // ISO datetime
-  departureAt: z.string().nullable().optional(),
-  shipoutDate: z.string().nullable().optional(),          // YYYY-MM-DD
-  customerDeliveredDate: z.string().nullable().optional(),
-  etaArrivingPort: z.string().nullable().optional(),      // port / shipment ref
-  deliverySubstatus: z.string().nullable().optional(),    // HC "Remark 4" (whitelisted, blank allowed)
-  arrivesEmWarehouseDate: z.string().nullable().optional(),  // YYYY-MM-DD
-});
-
-/* Map the camelCase request keys → the snake_case columns, split by table. */
-const SO_FIELD_COLS: Record<string, string> = {
-  possessionDate: 'possession_date',
-  houseType: 'house_type',
-  replacementDisposal: 'replacement_disposal',
-  referral: 'referral',
-  // Amendment dates — NEVER customer_delivery_date (the original).
-  amendDateFromCustomer: 'amend_date_from_customer',
-  amendedDeliveryDate: 'amended_delivery_date',
-};
-const DO_FIELD_COLS: Record<string, string> = {
-  timeRange: 'time_range',
-  timeConfirmed: 'time_confirmed',
-  arrivalAt: 'arrival_at',
-  departureAt: 'departure_at',
-  shipoutDate: 'shipout_date',
-  customerDeliveredDate: 'customer_delivered_date',
-  etaArrivingPort: 'eta_arriving_port',
-  deliverySubstatus: 'delivery_substatus',
-  arrivesEmWarehouseDate: 'arrives_em_warehouse_date',
-};
+// The /fields whitelists (HC_SUBSTATUS_VALUES + HC_MESSAGE_STATUS_VALUES), the zod
+// schema and column maps live in ./delivery-planning-fields (router size ceiling).
 
 deliveryPlanning.patch('/:type/:id/fields', async (c) => {
   const type = c.req.param('type').toLowerCase();
@@ -1950,6 +1940,12 @@ deliveryPlanning.patch('/:type/:id/fields', async (c) => {
   if (p.deliverySubstatus != null && p.deliverySubstatus !== '' &&
       !(HC_SUBSTATUS_VALUES as readonly string[]).includes(String(p.deliverySubstatus))) {
     return c.json({ error: 'invalid_substatus', reason: `delivery_substatus must be one of: ${HC_SUBSTATUS_VALUES.join(', ')} (or blank).` }, 400);
+  }
+
+  // Whitelist delivery_message_status to the 23 known workflow values (blank/null ok).
+  if (p.deliveryMessageStatus != null && p.deliveryMessageStatus !== '' &&
+      !(HC_MESSAGE_STATUS_VALUES as readonly string[]).includes(String(p.deliveryMessageStatus))) {
+    return c.json({ error: 'invalid_message_status', reason: 'delivery_message_status is not one of the allowed workflow values.' }, 400);
   }
 
   const sb = c.get('supabase');

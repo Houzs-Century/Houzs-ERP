@@ -268,8 +268,8 @@ describe('FairPicker — Others is a PICK, never a text box', () => {
 describe('FairPicker — a place already on the order IS the value (owner 2026-09-15)', () => {
   it('HC-SO-2609-071 in edit mode reads MID VALLEY, not "Others — pick a place instead"', () => {
     fixture.data = DATA_2026_09_14;
-    /* Exactly what SalesOrderDetail passes: the stored venue, and organizer null
-       because an order does not store one. */
+    /* Exactly what SalesOrderDetail passes for an order with no fair link: the
+       stored venue, and organizer null. */
     renderPicker({ venue: 'MID VALLEY', organizer: null, startDate: null, endDate: null }, '2026-09-14');
     expect(fairSelect().value).not.toBe('__others__');
     expect(shownText(fairSelect())).toBe('MID VALLEY');
@@ -322,5 +322,23 @@ describe('FairPicker — a place already on the order IS the value (owner 2026-0
     );
     const texts = [...container.querySelectorAll('optgroup option')].map((o) => o.textContent);
     expect(texts).toContain('MID VALLEY — REX (11/09 - 13/09)');
+  });
+});
+
+/* Owner 2026-09-24: 「我选了那个场…选了过后，它就自动记下是那个场地的，包括 venue,
+   organiser 和那个日期」. The edit forms seed the order's linked event (fairPick.ts). */
+describe('FairPicker — a recorded pick reads back as its event', () => {
+  it('an order linked to MLE 25/09 - 27/09 shows that row, not its neighbours at the same venue', () => {
+    fixture.data = DATA_2026_10_MID_VALLEY;
+    renderPicker({ venue: 'MID VALLEY', organizer: 'MLE', startDate: '2026-09-25', endDate: '2026-09-27' }, '2026-10-08');
+    expect(fairSelect().value).toBe('fair:mid valley|mle|2026-09-25|2026-09-27');
+    expect(shownText(fairSelect())).toBe('MID VALLEY — MLE (25/09 - 27/09)');
+  });
+
+  it('a linked event no longer in the list still reads back whole', () => {
+    /* e.g. archived since it was picked: the list leaves it out, the order keeps it. */
+    fixture.data = DATA_2026_09_14;
+    renderPicker({ venue: 'MID VALLEY', organizer: 'MLE', startDate: '2026-08-08', endDate: '2026-08-09' }, '2026-09-14');
+    expect(shownText(fairSelect())).toBe('MID VALLEY — MLE (08/08 - 09/08)');
   });
 });

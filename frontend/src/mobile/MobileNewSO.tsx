@@ -24,6 +24,7 @@ import { useAuth, isAdminLevel, isHatchSales } from "../vendor/scm/lib/auth";
 import { useAuth as useHouzsAuth } from "../auth/AuthContext";
 import { useVenues, type AutoVenue } from "../vendor/scm/lib/venues-queries";
 import { FairPicker, type FairPickValue } from "../components/FairPicker";
+import { fairEditPatch, fairEventOf, fairPickValue, linkedEvent, type LinkedFair } from "../components/fairPick";
 import { useStateWarehouseMappings } from "../vendor/scm/lib/state-warehouse-queries";
 import { todayMyt } from "../vendor/scm/lib/dates";
 import { addressLineProps } from "../lib/acColumnWidths";
@@ -98,7 +99,8 @@ import { RecordedPaymentsList, type RecordedPayment } from "./RecordedPayments";
    makes. This screen owns the only OTHER payment editor (the pre-create PayCard
    below), so it is the one surface a rule landing on the shared/detail ledger
    keeps missing (#583, then again in fix/b3-pay). */
-import { missingMethodSubField } from "../vendor/scm/components/PaymentsTable";
+import { missingMethodSubField, slipDateProblem } from "../vendor/scm/components/PaymentsTable";
+import { paymentSlipDateWindow } from "../vendor/scm/lib/payment-slip-date";
 /* Money moved from a cancelled order (docs/bugs/0933): the method option, its pick, the body, the seed. */
 import { ConvertSourceField, convertedBody, rmInput, useMobileConvertSources, withConvertOption, type MobileConvertPrefill } from "./MobileOrderMoney";
 import { CONVERT_LABEL, type ConvertSource } from "../vendor/scm/lib/so-money-queries";
@@ -206,6 +208,7 @@ type SoHeader = {
   version: number;
   debtor_name: string | null;
   status: string | null;
+  so_date: string | null;
   /* The staff row this order is credited to. Served by the detail route and read
      by MobileSODetail already; this form was typed without it, which is part of
      why it never seeded the picker. */
@@ -219,6 +222,7 @@ type SoHeader = {
   venue: string | null;
   venue_id?: string | null;
   venueId?: string | null;
+  fair?: LinkedFair | null; // the linked event (owner 2026-09-24); absent on an older server
   sales_location?: string | null;
   note: string | null;
   address1: string | null;
@@ -890,6 +894,12 @@ export function MobileNewSO({
   const activeLineLeaseRef = useRef<string | null>(null);
   const [prefillVenueId, setPrefillVenueId] = useState<string | null>(null);
   const [prefillVenueName, setPrefillVenueName] = useState<string>("");
+  /* The loaded order's own date; null on a new order, which the server dates
+     today. The fair list is the four weeks behind THIS date: a venue backfilled
+     a month later must offer the fairs that were on when the order was written,
+     not the ones on today (owner 2026-09-23). Desktop passes header.so_date. */
+  const [orderDate, setOrderDate] = useState<string | null>(null);
+  const [linkedFair, setLinkedFair] = useState<LinkedFair | null>(null); // seeds the picker's event
   // SKU picker sheet — the line key it was opened for, or null when closed.
   const [pickerFor, setPickerFor] = useState<string | null>(null);
   // Fabric picker sheet — the line key it was opened for, or null when closed.
@@ -966,6 +976,8 @@ export function MobileNewSO({
         setBuildingType(h.building_type ?? "");
         setPrefillVenueId(h.venueId ?? h.venue_id ?? null);
         setPrefillVenueName(h.venue ?? "");
+        setOrderDate(h.so_date ? h.so_date.slice(0, 10) : null);
+        setLinkedFair(h.fair ?? null);
         setProcDate((h.processing_date ?? "").slice(0, 10));
         setOrigProcDate((h.processing_date ?? "").slice(0, 10));
         setDelivDate((h.customer_delivery_date ?? "").slice(0, 10));
@@ -1000,7 +1012,8 @@ export function MobileNewSO({
            to {} and still sends nothing. */
         setSalespersonId(h.salesperson_id != null ? String(h.salesperson_id) : "");
         setOrigSalespersonId(h.salesperson_id != null ? String(h.salesperson_id) : "");
-        originalHeaderPatchRef.current = soHeaderPatchFrom({
+        // The fair keys are seeded like every field, so an untouched picker sends nothing.
+        originalHeaderPatchRef.current = { ...fairEditPatch(linkedEvent(h.venue ?? null, h.fair)), ...soHeaderPatchFrom({
           name: h.debtor_name ?? "",
           custRef: h.customer_so_no ?? h.ref ?? "",
           phone: toE164(h.phone),
@@ -1024,7 +1037,7 @@ export function MobileNewSO({
           /* Matches the seed above, not a hard null: the baseline has to describe
              the form as it now stands, or a form nobody touched reads as dirty. */
           salespersonId: h.salesperson_id != null ? String(h.salesperson_id) : null,
-        });
+        }) };
         const liveItems = (detail.items ?? []).filter((it) => !it.cancelled);
         setOrigItems(liveItems);
         const editable = liveItems.map(lineFromItem);
@@ -1130,10 +1143,15 @@ export function MobileNewSO({
   }, [isEdit]);
 
   /* Venue derives from the picked salesperson's staff.venue_id (falls back to
-     the auth user's own venue, the persisted venue on edit, or the active
-     project's venue). Mirrors SalesOrderNew resolvedVenue*. */
+     the auth user's own venue, or the active project's venue). Mirrors
+     SalesOrderNew resolvedVenue*. On EDIT a venue already saved on the order
+     wins: a default fills only an order with none (owner 2026-06-23, "never
+     override a manual or loaded pick"). A saved venue with no venue_id used to
+     rank below the salesperson's default — dormant only while those default ids
+     match nothing in useVenues(). */
+  const savedVenue = isEdit && (prefillVenueId != null || prefillVenueName.trim() !== "");
   const resolvedVenueId: string | null =
-    prefillVenueId ?? selectedStaff?.venueId ?? authStaff?.venueId ?? autoVenue?.venueId ?? null;
+    prefillVenueId ?? (savedVenue ? null : selectedStaff?.venueId ?? authStaff?.venueId ?? autoVenue?.venueId) ?? null;
   const resolvedVenueName: string = useMemo(() => {
     if (resolvedVenueId) {
       const v = (venuesQ.data ?? []).find((r) => r.id === resolvedVenueId);
@@ -1157,13 +1175,16 @@ export function MobileNewSO({
     venue: null, organizer: null, startDate: null, endDate: null,
   });
   useEffect(() => {
-    /* Seeds a BLANK only — a human pick is a decision and is never overwritten. */
-    /* A PLACE, not an event — see the desktop twin. */
+    /* Seeds a BLANK only — a human pick is a decision and is never overwritten.
+       A place, plus the order's linked event when it has one (fairPick.ts).
+       On edit, not until the order has loaded: a default seeded first would
+       block the saved venue for good. */
+    if (isEdit && loading) return;
     if (fairPick.venue == null && resolvedVenueName) {
-      setFairPick({ venue: resolvedVenueName, organizer: null, startDate: null, endDate: null });
+      setFairPick(fairPickValue(resolvedVenueName, linkedEvent(resolvedVenueName, linkedFair)));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resolvedVenueName]);
+  }, [resolvedVenueName, loading]);
   const effectiveVenueId = fairPick.venue
     ? ((venuesQ.data ?? []).find((r) => r.name.trim().toLowerCase() === fairPick.venue!.trim().toLowerCase())?.id ?? null)
     : (pickedVenueId ?? resolvedVenueId);
@@ -1393,10 +1414,25 @@ export function MobileNewSO({
     })),
   }), [name, phone, namedLines, isEdit, outgoingVenueName, outgoingVenueId, canChangeSalesperson, outgoingSalespersonId, selfStaffMatch, branding.companyCode, salesLocation, state, procDate, delivDate, addr1, postcode, origProcDate, origDelivDate, origItems, pays]);
 
+  /* The payment rows whose slip date falls outside the window (owner 2026-09-23).
+     A blocker rather than a post-create failure: the payments are posted AFTER
+     the order is created, so without this the order lands and the money does
+     not. The server refuses the same row with the same sentence. */
+  const outOfWindowPayments = useMemo(
+    () => pays
+      .filter((p) => toSen(p.amount) > 0)
+      .map((p) => slipDateProblem({ paidAt: p.date, methodLabel: p.method }, todayMyt(), can("scm.payment.backdate")))
+      .filter((m): m is string => m !== null),
+    [pays, can],
+  );
+
   /* Two genuinely client-only blockers the backend cannot see: an invalid email
      format, and a line with no product picked. Merged into the same list. */
   const soClientExtras = useMemo<SaveProblem[]>(() => [
     ...(emailErr ? [{ code: "email_invalid", message: "Enter a valid email, or leave it blank.", field: "Email" }] : []),
+    ...(outOfWindowPayments.length > 0
+      ? [{ code: "slip_date_out_of_window", message: outOfWindowPayments[0]!, field: "Payment date" }]
+      : []),
     ...(unpickedLines.length > 0
       ? [{
           code: "line_unpicked",
@@ -1404,7 +1440,7 @@ export function MobileNewSO({
           field: "Line items",
         }]
       : []),
-  ], [emailErr, unpickedLines]);
+  ], [emailErr, unpickedLines, outOfWindowPayments]);
 
   const liveSoValidateDraft = useMemo(() => buildSoValidateDraft(false), [buildSoValidateDraft]);
   const { problems: soBackendProblems } = useSoValidate(liveSoValidateDraft, true);
@@ -1886,7 +1922,8 @@ export function MobileNewSO({
     setSubmitting(true);
     try {
       if (isEdit && docNo) {
-        const patch: Record<string, unknown> = soHeaderPatchFrom(headerPatchInput);
+        // The picked fair EVENT rides the edit too (owner 2026-09-24) — fairPick.ts.
+        const patch: Record<string, unknown> = { ...fairEditPatch(fairEventOf(fairPick)), ...soHeaderPatchFrom(headerPatchInput) };
         /* AMENDMENT MODE (Phase 1-C, desktop SalesOrderDetail.submitAmendment
            parity) — the SO is processing-locked but amendment_eligible. The edit
            splits in two:
@@ -2318,13 +2355,13 @@ export function MobileNewSO({
                     </select>
                   </Field>
                   {/* Owner 2026-09-13 — the venue select became the FAIR picker:
-                      place + organizer, no dates, nothing typed. Same component
-                      as desktop SalesOrderNew, which is the point. */}
+                      place + organizer + dates, nothing typed. Same component
+                      as the desktop forms, which is the point. */}
                   <Field label="Fair" style={{ flex: 1 }}>
                     <FairPicker
                       id="mob-so-fair"
                       value={fairPick}
-                      soDate={null}
+                      soDate={orderDate}
                       onChange={setFairPick} disabled={identityLocked}
                       selectClassName="fld-i"
                     />
@@ -3560,6 +3597,13 @@ function PayCard({ pay, staff, convertSources, onChange, onRemove }: { pay: Paym
   const bankOpts = optionsOrFallback("payment_merchant", useSoDropdownOptions("payment_merchant").data);
   const planOpts = optionsOrFallback("installment_plan", useSoDropdownOptions("installment_plan").data);
   const onlineOpts = optionsOrFallback("online_type", useSoDropdownOptions("online_type").data);
+  /* Slip-date window (owner 2026-09-23) — the same rule, sentence and exception
+     as the desktop panel and the payments sheet. The row is bounded here so the
+     order is not created before the money's date is refused. */
+  const { can: canPay } = useHouzsAuth();
+  const mayBackdateSlip = canPay("scm.payment.backdate");
+  const slipWindow = paymentSlipDateWindow(todayMyt());
+  const slipProblem = slipDateProblem({ paidAt: pay.date, methodLabel: pay.method }, todayMyt(), mayBackdateSlip);
   const onPickSlip = async (f: File | null) => {
     if (!f) return;
     onChange({ slipName: f.name, slipSession: "", slipPhase: "uploading" });
@@ -3583,7 +3627,18 @@ function PayCard({ pay, staff, convertSources, onChange, onRemove }: { pay: Paym
       <div style={{ display: "flex", flexDirection: "column", gap: 7, padding: 10 }}>
         <div style={{ display: "flex", gap: 9, alignItems: "flex-end" }}>
           <Field label="Date" style={{ flex: 1.1 }} onClear={pay.date ? () => onChange({ date: "" }) : undefined}>
-            <DateField fullWidth className="fld-i" value={pay.date} onChange={(iso) => onChange({ date: iso })}/>
+            <DateField
+              fullWidth
+              className="fld-i"
+              value={pay.date}
+              min={mayBackdateSlip ? undefined : slipWindow.min}
+              max={mayBackdateSlip ? undefined : slipWindow.max}
+              invalid={slipProblem !== null}
+              onChange={(iso) => onChange({ date: iso })}
+            />
+            {slipProblem && (
+              <span style={{ fontSize: 11, lineHeight: 1.3, color: "var(--red)" }}>{slipProblem}</span>
+            )}
           </Field>
           <Field label="Amount" style={{ flex: 1.1 }}>
             <input className="fld-i money" value={pay.amount} onChange={(e) => onChange({ amount: e.target.value })} />

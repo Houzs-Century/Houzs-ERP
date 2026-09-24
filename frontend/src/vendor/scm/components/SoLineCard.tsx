@@ -40,6 +40,7 @@ import { fabricAllowedByPool } from '../../shared/fabric-pool';
 import { activeOptions, isColourKiv, isDeliveryFeeServiceCode, lineIdentity, maintPickerValues, fmtMoneySen } from '@2990s/shared';
 import {
   useMfgProducts,
+  matchesProductQuery,
   useMaintenanceConfig,
   useSpecialAddons,
   useModelAllowedOptionsByCode,
@@ -358,24 +359,27 @@ const SoLineCardInner = ({
      from the canonical centi only when it changes from outside, e.g. a
      product pick resets it to 0. */
   const [priceText, setPriceText] = useState((amountCellSen / 100).toFixed(2));
-  /* Task #102 — Same gate the debtor autocomplete got in PR #99. Without
-     this the product picker fired one /mfg-products?search=… request per
-     keystroke even when the picker wasn't open (every render of an
-     already-saved line re-issued the query for the description text). The
-     200 ms debounce smooths fast typists; the length>=2 + showPicker
-     enabled-flag guards the closed-picker + single-character cases. */
-  const debouncedSearch = useDebouncedValue(search, 200);
-  const trimmedSearch   = debouncedSearch.trim();
-  const productsQuery = useMfgProducts({
-    search:  trimmedSearch || undefined,
-    enabled: showPicker && trimmedSearch.length >= 2,
-  });
-  const candidates = productsQuery.data ?? [];
+  /* Load the full catalog ONCE (cached 5 min) and filter it LOCALLY — the picker
+     no longer fires a `/mfg-products?search=` request per keystroke, so typing
+     stays instant even while the Worker is slow or dropping connections (owner
+     2026-09-23: "product code search slow"). The catalog is small (~2.7k rows)
+     and the single list load is retried on a transient 504 by authedFetch. The
+     >=2-char gate keeps the dropdown quiet until the query is real; enabled only
+     while the picker is open so a saved line's render never fetches. */
+  const trimmedSearch = search.trim();
+  const productsQuery = useMfgProducts({ enabled: showPicker });
+  const allProducts = productsQuery.data ?? [];
+  const candidates = useMemo(
+    () => (trimmedSearch.length >= 2
+      ? allProducts.filter((p) => matchesProductQuery(p, trimmedSearch))
+      : []),
+    [allProducts, trimmedSearch],
+  );
   /* Owner 2026-08-08 ("square pillow", HC-SO-2607-013) — typed text the
      catalog does not match must read as an ERROR, not sit quietly in the box:
      the operator once read the silence as "saved". True only when the line has
      no committed product, the search term is a real query (>=2 chars), and the
-     server answered it with zero candidates. */
+     loaded catalog produced zero matches. */
   const unmatchedFreeText =
     !draft.itemCode && trimmedSearch.length >= 2 &&
     productsQuery.isSuccess && !productsQuery.isFetching && candidates.length === 0;

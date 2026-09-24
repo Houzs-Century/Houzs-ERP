@@ -82,7 +82,7 @@ export const PERMISSIONS: PermissionDef[] = [
   // Granular SCM write gates — replace the inherited 2990 staff_role checks
   // (which trivially pass in Houzs because the SCM bridge pins every caller
   // to one super_admin row). Owner + IT Admin already cover all four via "*";
-  // grant individual positions later via the Team > Positions matrix.
+  // grant it to a ROLE later under Team > Roles & Permissions.
   { key: "scm.config.write",        resource: "Supply Chain", verb: "write",  label: "Edit SCM master data",         description: "Edit SCM master data: products, sofa combos, delivery fees, fabric library + tier add-ons, PWP rules, sofa quick picks, special add-ons, Maintenance config, category hero images" },
   { key: "scm.so.price_override",   resource: "Supply Chain", verb: "manage", label: "Override SO line unit price",  description: "Hand-override the unit price on a SCM Sales Order line (audited, admin-level)" },
   { key: "scm.so.view_all",         resource: "Supply Chain", verb: "read",   label: "View all salespersons' SOs",   description: "View every salesperson's My-Orders board (bypass per-rep attribution scoping)" },
@@ -92,8 +92,13 @@ export const PERMISSIONS: PermissionDef[] = [
   // lock that says "this is what we PO to the supplier"). 2990 restricts it to
   // super_admin; Houzs has no live staff_role (the SCM bridge pins every caller
   // to one super_admin row), so gate on this admin-level key instead. Owner + IT
-  // Admin cover it via "*"; grant other positions via the Team > Positions matrix.
+  // Admin cover it via "*"; grant the ROLE it belongs to under Team > Roles & Permissions.
   { key: "scm.so.remove_processing_date", resource: "Supply Chain", verb: "manage", label: "Remove SO Processing Date", description: "Clear an already-set Processing Date on a SCM Sales Order (admin-level; pulls the order back out of the Proceed lane)" },
+  // Owner 2026-09-23 — a keyed-in payment's transaction-slip date must fall in
+  // the last 14 days (scm/shared/payment-slip-date.ts owns the window). This key
+  // is the exception: Finance / management keying a receipt that surfaced late.
+  // Owner + IT Admin cover it via "*"; grant the ROLE under Team > Roles & Permissions.
+  { key: "scm.payment.backdate", resource: "Supply Chain", verb: "manage", label: "Backdate a payment slip", description: "Record or re-date a Sales Order payment whose transaction-slip date is older than the 14-day window (or in the future); the entry is audited as an override" },
   // SO amendment / revision workflow — TWO-LANE model (owner rework 2026-07-27).
   // A processing-locked SO changes only through an amendment; at submit the
   // request is auto-classified (and, when mixed, SPLIT) into two independent
@@ -121,8 +126,8 @@ export const PERMISSIONS: PermissionDef[] = [
   // add or remove a line, or the header supplier / delivery / notes) through a
   // SIMPLIFIED single-approver gate: REQUESTED -> APPROVED (approve APPLIES the
   // change), or REQUESTED -> REJECTED (reject / withdraw). No supplier-confirm,
-  // no two-gate, no send. Owner + IT Admin cover all via "*"; grant purchasing
-  // positions via the Team > Positions matrix. po_amendment.approve also gates reject.
+  // no two-gate, no send. Owner + IT Admin cover all via "*"; grant the
+  // purchasing ROLE under Team > Roles & Permissions. po_amendment.approve also gates reject.
   { key: "scm.po_amendment.create",  resource: "Supply Chain", verb: "manage", label: "Raise PO amendment",   description: "Raise an amendment request against a Purchase Order (opens the single-approver PO revision flow)" },
   { key: "scm.po_amendment.approve", resource: "Supply Chain", verb: "manage", label: "Approve/reject PO amendment", description: "Approve a Purchase Order amendment — snapshots the prior version, applies the line + header diffs, bumps the PO revision (REQUESTED -> APPROVED) — or reject it (-> REJECTED)" },
   // Document cancellation approval (owner 2026-09-08, 「SO 和 PO 取消的话需要
@@ -150,8 +155,8 @@ export const PERMISSIONS: PermissionDef[] = [
   // value. Reading the list rides the coarse scm.access + the scm.finance area
   // guard; these flat keys gate the write transitions against the REAL caller
   // (2990's scm.staff.role gates are dead — the SCM bridge pins every caller to
-  // one super_admin row). Owner + IT Admin cover all via "*"; grant finance /
-  // purchasing positions via the Team > Positions matrix.
+  // one super_admin row). Owner + IT Admin cover all via "*"; grant the
+  // finance / purchasing ROLE under Team > Roles & Permissions.
   { key: "scm.payment_voucher.create", resource: "Supply Chain", verb: "write",  label: "Create payment voucher",  description: "Create a draft Payment Voucher (pay a non-goods vendor: freight forwarder, one-off service)" },
   { key: "scm.payment_voucher.write",  resource: "Supply Chain", verb: "write",  label: "Edit payment voucher",    description: "Edit a DRAFT Payment Voucher (payee, accounts, lines, PI settlement allocations)" },
   { key: "scm.payment_voucher.post",   resource: "Supply Chain", verb: "manage", label: "Post payment voucher",     description: "Post a Payment Voucher to the General Ledger (DRAFT -> POSTED; settles any linked PIs)" },
@@ -197,7 +202,7 @@ export const PERMISSIONS: PermissionDef[] = [
   // rate_to_myr (multi-currency FX, migration 0082). Reading the list is open to
   // any authed SCM caller (the GRN/PI/PV currency dropdowns need it); this flat
   // key gates create/edit of a currency + its rate. Owner + IT Admin cover it via
-  // "*"; grant finance / purchasing positions via the Team > Positions matrix.
+  // "*"; grant the finance / purchasing ROLE under Team > Roles & Permissions.
   { key: "scm.currency.manage",        resource: "Supply Chain", verb: "manage", label: "Manage currencies",        description: "Add or edit a currency in the master and set its exchange rate to MYR (used by GRN / PI / Payment Voucher foreign-currency posting)" },
 
   // HR / Commission (port of 2990 0171 + apps/api/src/routes/hr.ts). Computes

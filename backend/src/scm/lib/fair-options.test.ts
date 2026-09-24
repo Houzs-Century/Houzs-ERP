@@ -7,6 +7,8 @@ import {
   periodContains,
   lookbackWindow,
   fairPickedPeriod,
+  editFairPick,
+  linkedFairOf,
   type FairProjectRow,
 } from './fair-options';
 
@@ -345,5 +347,50 @@ describe('resolveFair — the brand decides which booth, and it is never guessed
       brand: 'AKEMI', organizer: 'REX',
     });
     expect(r.match).toBe('PENDING');
+  });
+});
+
+/* Owner 2026-09-24, backfilling an old order: 「我选了那个场（Mid Valley，MLE，8 号到
+   9 号），选了过后，它就自动记下是那个场地的…包括 venue, organiser 和那个日期」. */
+describe('editFairPick — what an edit save picked', () => {
+  it('an event: the picked row\'s venue, organizer and period', () => {
+    expect(editFairPick({
+      fairVenue: 'MID VALLEY', venue: 'Mid Valley Exhibition Centre',
+      fairOrganizer: ' MLE ', fairStart: '2026-08-08', fairEnd: '2026-08-09',
+    }, 'MID VALLEY')).toEqual({ venue: 'MID VALLEY', organizer: 'MLE', picked: { startDate: '2026-08-08', endDate: '2026-08-09' } });
+  });
+
+  it('without the row venue, the sent venue and then the stored one name the place', () => {
+    const event = { fairOrganizer: 'MLE', fairStart: '2026-08-08', fairEnd: null };
+    expect(editFairPick({ ...event, venue: 'IOI CITY MALL' }, 'MID VALLEY')?.venue).toBe('IOI CITY MALL');
+    expect(editFairPick(event, 'MID VALLEY')?.venue).toBe('MID VALLEY');
+    expect(editFairPick(event, 'MID VALLEY')?.picked).toEqual({ startDate: '2026-08-08', endDate: null });
+  });
+
+  it('a place alone, a clear, or an incomplete event picks nothing', () => {
+    expect(editFairPick({ venue: 'MID VALLEY' }, 'MID VALLEY')).toBeNull();
+    expect(editFairPick({ fairVenue: null, fairOrganizer: null, fairStart: null, fairEnd: null }, 'MID VALLEY')).toBeNull();
+    expect(editFairPick({ fairOrganizer: 'MLE', fairStart: '08/08/2026' }, 'MID VALLEY')).toBeNull();
+    expect(editFairPick({ fairOrganizer: '  ', fairStart: '2026-08-08' }, 'MID VALLEY')).toBeNull();
+    expect(editFairPick({ fairOrganizer: 'MLE', fairStart: '2026-08-08' }, null)).toBeNull();
+  });
+});
+
+describe('linkedFairOf — a recorded pick reads back as the row that was picked', () => {
+  it('carries the venue, organizer, SOLO flag and period', () => {
+    expect(linkedFairOf(fair({ projectId: 500, organizer: 'MLE', startDate: '2026-08-08', endDate: '2026-08-09' })))
+      .toEqual({ venue: 'MID VALLEY', organizer: 'MLE', solo: false, startDate: '2026-08-08', endDate: '2026-08-09' });
+    expect(linkedFairOf(fair({ projectId: 501, organizer: 'MALL MGT', eventType: 'solo', endDate: null })))
+      .toEqual({ venue: 'MID VALLEY', organizer: 'MALL MGT', solo: true, startDate: '2026-09-11', endDate: null });
+  });
+
+  it('a project that could never have been a row reads back as nothing', () => {
+    expect(linkedFairOf(fair({ projectId: 502, venue: null }))).toBeNull();
+    expect(linkedFairOf(fair({ projectId: 503, organizer: '' }))).toBeNull();
+    expect(linkedFairOf(fair({ projectId: 504, startDate: null }))).toBeNull();
+  });
+
+  it('a fair cancelled after the link still reads back — it is what the order is attributed to', () => {
+    expect(linkedFairOf(fair({ projectId: 505, status: 'cancelled' }))?.organizer).toBe('REX');
   });
 });

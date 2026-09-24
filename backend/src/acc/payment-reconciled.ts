@@ -39,6 +39,16 @@ import { postSoPayment } from './payments';
     keyed. Named here so the two routes and any later surface spell it once. */
 export const SO_PAYMENT_AMEND = 'scm.so_payment.amend';
 
+/** The permission that lets a slip be dated outside the 14-day window
+    (scm/shared/payment-slip-date). Same reason as the key above: the three
+    write paths and the capability registry spell it once. */
+export const SO_PAYMENT_BACKDATE = 'scm.payment.backdate';
+
+/** What the audit row says when that right was exercised and the write owed no
+    reason of its own — so "why is this dated three weeks back" has an answer in
+    the SO's own history, not only in a permission table. */
+export const SLIP_DATE_OVERRIDE_NOTE = 'Slip date outside the 14-day window, recorded on the backdate right.';
+
 /* Borrowed from the poster rather than spelled out again — a new file's lint
    ceiling is zero, and a second name for the same client would be worse. */
 type Db = Parameters<typeof postSoPayment>[0];

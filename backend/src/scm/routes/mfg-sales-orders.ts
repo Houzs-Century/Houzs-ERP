@@ -7,6 +7,7 @@ import type { Context } from 'hono';
 import { z } from 'zod';
 import { createClient } from '@supabase/supabase-js';
 import { normalizePhone } from '../shared/phone';
+import { checkPaymentSlipDate } from '../shared/payment-slip-date';
 import {
   pickComboMatch, spreadComboTotal, splitSofaCode, sofaHeightKey,
   buildVariantSummary, comboChargedPrices, matchComboSubset, type SofaComboRow, type SofaPriceTier,
@@ -68,7 +69,7 @@ import {
   lockedColumnsChanged,
   PAYMENT_WINDOW_CLOSED_ERROR,
 } from '../shared/so-field-policy';
-import { paymentMayChange, SO_PAYMENT_AMEND } from '../../acc/payment-reconciled';
+import { paymentMayChange, SLIP_DATE_OVERRIDE_NOTE, SO_PAYMENT_AMEND, SO_PAYMENT_BACKDATE } from '../../acc/payment-reconciled';
 import { AMEND_SOURCE, ledgerFieldChange } from '../../acc/payment-corrections';
 import { paymentReasonRule } from '../lib/so-payment-reason';
 import { paymentVersionGuard, soCasGrace, soCasGraceOpen } from '../lib/so-cas';
@@ -153,7 +154,7 @@ import {
   type VenueSource,
   type VenueBindingSb,
 } from '../lib/venue-binding';
-import { bindVenueOnCreate, resolveFairForSave, type FairDb } from '../lib/fair-binding';
+import { bindVenueOnCreate, fairLinkForEdit, loadLinkedFair, resolveFairForSave, type FairDb } from '../lib/fair-binding';
 import { fairPickedPeriod } from '../lib/fair-options';
 import { recordSoAudit, diffFields, type FieldChange } from '../lib/so-audit';
 /* What changed on a LINE, for the audit trail — derived from the update about to
@@ -665,8 +666,8 @@ async function isPosTabletCaller(c: PosCallerSource): Promise<boolean> {
    /override route). Houzs-flavoured: gate on the flat permission key
    `scm.so.price_override` against the REAL caller; the original
    scm.staff.role lookup is dead in Houzs (bridge pins to one super_admin
-   row). Owner + IT Admin pass via `*`; grant to other positions via the
-   Team > Positions matrix. Signature takes the Hono context so we can read
+   row). Owner + IT Admin pass via `*`; grant it to a ROLE under Team >
+   Roles & Permissions. Signature takes the Hono context so we can read
    the real user's permissions stash. */
 async function isPriceOverrideCaller(c: any): Promise<boolean> {
   return hasHouzsPerm(c, 'scm.so.price_override');
@@ -1640,7 +1641,7 @@ mfgSalesOrders.get('/:docNo', async (c) => {
        LIST route reads that view, so the base-table detail read is the only
        place they are valid. (`proceeded_at` was appended here until 2026-08-18,
        feeding a "Proceed Date" the desktop deleted on 2026-06-05.) */
-    scopeToCompany(sb.from('mfg_sales_orders').select(`${HEADER}, amend_date_from_customer, amended_delivery_date, amend_reason, revision, signature_b64, slip_key, slip_state, slip_image_key, receipt_image_key, version, linked_ac_docno, collaborator_staff_ids, access_staff_ids, open_to_all`).eq('doc_no', docNo), c).maybeSingle(),
+    scopeToCompany(sb.from('mfg_sales_orders').select(`${HEADER}, amend_date_from_customer, amended_delivery_date, amend_reason, revision, signature_b64, slip_key, slip_state, slip_image_key, receipt_image_key, version, linked_ac_docno, collaborator_staff_ids, access_staff_ids, open_to_all, project_id`).eq('doc_no', docNo), c).maybeSingle(),
     /* line_no = the persisted listing order (0165); NULLS LAST so pre-0165
        docs fall back to created_at + the rule re-derive below. */
     sb.from('mfg_sales_order_items').select(ITEM).eq('doc_no', docNo)
@@ -1789,6 +1790,9 @@ mfgSalesOrders.get('/:docNo', async (c) => {
        CLAMPED `soOutstandingSen`: a screen can say "you hold RM 250 of his
        money", AutoCount's UDF_BALANCE cannot. Same inputs, two audiences. */
     balance_sen: soBalanceSen(paidInputs),
+    /* The event the order is linked to, so a recorded pick reads back as venue,
+       organizer and dates (owner 2026-09-24). Null = show the venue alone. */
+    fair: await loadLinkedFair(c.env.DB as unknown as FairDb, activeCompanySql(c, 'p.company_id'), (h.data as { project_id?: unknown }).project_id),
   };
   /* Owner batch 2026-07 — resolve the salesperson's display name + contact
      phone (scm.staff) so the SO PDF's ORDER DETAILS can print "Salesperson:
@@ -2461,8 +2465,8 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      hole). Houzs-flavoured: gate on the flat permission key
      `scm.so.attribute_other` against the REAL caller (the 2990 scm.staff.role
      lookup is dead in Houzs — the SCM bridge pins every caller to one
-     super_admin row). Owner + IT Admin pass via `*`; grant to other positions
-     via the Team > Positions matrix. */
+     super_admin row). Owner + IT Admin pass via `*`; grant it to a ROLE under
+     Team > Roles & Permissions. */
   /* An OMITTED salespersonId falls back to the caller's own staff row, for the
      same reason the self-scoped branch below already does: the creator IS the
      salesperson unless they name someone else. The frontend states this contract
@@ -3922,6 +3926,22 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     const g = await convertGuard(sb, Number(companyId), { fromDocNo: p.convertedFromDocNo, toDocNo: '', amountSen: p.amountSen });
     if (!g.ok) { await rollbackPwpClaims(); return c.json({ error: g.error, message: g.message }, g.status); }
     convertPlans.set(i, g.plan);
+  }
+
+  /* Slip-date window on CREATE (owner 2026-09-23) — the New-SO form carries ONE
+     payment date for every row it books, so it is judged once, here, before any
+     row is written. Rows that are money MOVED from another order take the source
+     order's date and are exempt, exactly as on the payments panel. The headless
+     scan job carries no permissions, so an OCR'd old receipt is refused and goes
+     to a human — the owner's call. */
+  const booksMoneyOnCreate = (posPayments ?? []).some((p) => p.method !== 'converted')
+    || (typeof body.depositSen === 'number' && body.depositSen > 0);
+  if (booksMoneyOnCreate) {
+    const verdict = checkPaymentSlipDate(dateOrNull(body.paymentDate) ?? todayMyt(), todayMyt());
+    if (!verdict.ok && !hasHouzsPerm(c, SO_PAYMENT_BACKDATE)) {
+      await rollbackPwpClaims();
+      return c.json({ error: 'slip_date_out_of_window', reason: verdict.reason }, 400);
+    }
   }
 
   /* Resolve each split payment's slip session → R2 key up front, for the rows
@@ -5914,12 +5934,20 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
      follower side effect. `reserveLineWrites` is the one explicit exception:
      the desktop composite-save uses it to acquire a CAS token before lines. */
   const beforeCols = map.map(([, snake]) => snake)
-    .concat(['status', 'version', 'edit_lease_token', 'edit_lease_expires_at', 'edit_lease_user_id'])
+    .concat(['status', 'version', 'edit_lease_token', 'edit_lease_expires_at', 'edit_lease_user_id', 'project_id', 'fair_match'])
     .join(', ');
   const { data: before, error: beforeError } = await sb.from('mfg_sales_orders').select(beforeCols).eq('doc_no', docNo).maybeSingle();
   if (beforeError) return c.json({ error: 'load_failed', reason: beforeError.message }, 500);
   if (!before) return c.json({ error: 'not_found' }, 404);
   const beforeRecord = before as unknown as Record<string, unknown>;
+  /* A picked EVENT is recorded exactly (owner 2026-09-24). Resolved BEFORE the
+     unchanged fields drop out: another event at the same venue changes no mapped
+     column, and the save would otherwise answer "nothing to do". */
+  const fairLink = await fairLinkForEdit({ db: c.env?.DB as unknown as FairDb, companySql: activeCompanySql(c, 'p.company_id'), body, stored: beforeRecord });
+  if (fairLink && (fairLink.project_id !== (beforeRecord.project_id == null ? null : Number(beforeRecord.project_id)) || fairLink.fair_match !== beforeRecord.fair_match)) {
+    updates['project_id'] = fairLink.project_id;
+    updates['fair_match'] = fairLink.fair_match;
+  }
   for (const [from, to] of map) {
     if (!(to in updates) || norm(updates[to]) !== norm(beforeRecord[to])) continue;
     delete updates[to];
@@ -6009,13 +6037,12 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
     updates['venue_source'] = 'MANUAL' satisfies VenueSource;
     /* FAIR LINK (owner 2026-09-13) — the venue just moved, so whatever fair this
        order was linked to is now a claim about a place it was not written at.
-       Dropping the link and marking it PENDING hands it to the nightly reconcile
-       (and, failing that, to the pending screen) instead of leaving a stale
-       attribution in exhibition P&L. Re-resolving it here would need the order's
-       brand, which means reading its lines on the critical path of every header
-       save; PENDING is the honest, cheap answer and it self-heals. */
-    updates['project_id'] = null;
-    updates['fair_match'] = 'PENDING';
+       A picked EVENT was linked above; a place alone (Others) drops the link to
+       PENDING for the nightly reconcile and, failing that, the pending screen. */
+    if (!fairLink) {
+      updates['project_id'] = null;
+      updates['fair_match'] = 'PENDING';
+    }
   }
 
   /* Task #121 — when customerState changes, re-derive customer_country
@@ -9951,6 +9978,22 @@ export const postSoPaymentHandler = async (c: any) => {
   const owed = paymentReasonRule(c, { reason: p.reason });
   if (owed.refusal) return c.json(owed.refusal, 400);
 
+  /* Slip-date window (owner 2026-09-23) — the rule is scm/shared/payment-slip-date;
+     `scm.payment.backdate` is the exception, and an exercised exception says so
+     in the audit note (unless a reason is already owed, which says more). A
+     CONVERTED row is money that moved, not a slip somebody keyed: its date comes
+     from the source order's first payment, so it is not window-checked here (the
+     write core skips it by method too). */
+  const mayBackdateSlip = hasHouzsPerm(c, SO_PAYMENT_BACKDATE);
+  let slipDateOverride = false;
+  if (p.method !== 'converted') {
+    const verdict = checkPaymentSlipDate(p.paidAt, todayMyt());
+    if (!verdict.ok) {
+      if (!mayBackdateSlip) return c.json({ error: 'slip_date_out_of_window', reason: verdict.reason }, 400);
+      slipDateOverride = true;
+    }
+  }
+
   /* FIX 3 (2026-07-16) — method ⇒ bank/account mapping, enforced server-side.
      The desktop New-SO / Payments cascade blocks saving a Merchant payment with
      no Bank or an Online (transfer) payment with no Sub-Type
@@ -10051,6 +10094,7 @@ export const postSoPaymentHandler = async (c: any) => {
     createdBy:         user.id,
     actorName:         (user.user_metadata as { name?: string } | undefined)?.name ?? null,
     ...(owed.owed ? { auditSource: AMEND_SOURCE, auditNote: p.reason } : {}),
+    ...(slipDateOverride ? { allowOutOfWindowSlipDate: true, ...(owed.owed ? {} : { auditNote: SLIP_DATE_OVERRIDE_NOTE }) } : {}),
   });
   if (errorMessage) return c.json({ error: 'insert_failed', reason: errorMessage }, 500);
 
@@ -10184,6 +10228,17 @@ mfgSalesOrders.patch('/:docNo/payments/:id', async (c) => {
   const nextOnline = nextMethod === 'transfer' ? (rawOnline ?? null) : null;
   const nextAmount = p.amountSen ?? before.amount_sen;
   const nextPaidAt = p.paidAt ?? before.paid_at;
+  /* Re-dating a payment goes through the same window as keying one (owner
+     2026-09-23) — otherwise "save it today, then change the date" is the way
+     around the rule. Only a CHANGE is judged: a row whose stored date is
+     already outside the window (legacy, or keyed on the backdate right) must
+     still be correctable for its amount or its bank. */
+  if (nextPaidAt !== before.paid_at) {
+    const verdict = checkPaymentSlipDate(nextPaidAt, todayMyt());
+    if (!verdict.ok && !hasHouzsPerm(c, SO_PAYMENT_BACKDATE)) {
+      return c.json({ error: 'slip_date_out_of_window', reason: verdict.reason }, 400);
+    }
+  }
   const nextApproval = p.approvalCode !== undefined ? (p.approvalCode ?? null) : before.approval_code;
   const nextCollectedBy = p.collectedBy !== undefined ? (p.collectedBy ?? null) : before.collected_by;
   /* Account Sheet on EDIT (owner 2026-07-16, "Acc sheet 亂填?") — the sheet is
