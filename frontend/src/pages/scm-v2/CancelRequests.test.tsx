@@ -87,7 +87,10 @@ describe('CancelRequests', () => {
     fireEvent.click(await screen.findByText('Cancel now'));
     await waitFor(() => expect(cancelPo).toHaveBeenCalledWith({ id: 'po-7', reason: 'Supplier cannot deliver' }));
     expect(cancelSo).not.toHaveBeenCalled();
-    expect(notify).toHaveBeenCalledWith(expect.objectContaining({ title: 'Purchase Order PO-7 cancelled' }));
+    /* The toast names the DOCUMENT, not its type: the number already carries it,
+       and a table of type nouns in the shared action flow would be one more home
+       for the {SO, PO, DO} set (owner-facing copy unchanged otherwise). */
+    expect(notify).toHaveBeenCalledWith(expect.objectContaining({ title: 'PO-7 cancelled' }));
   });
 
   /* Owner 2026-09-14 — a delivery order is cancelled on its reason alone, and

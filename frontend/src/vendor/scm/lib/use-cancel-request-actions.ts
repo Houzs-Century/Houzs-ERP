@@ -35,12 +35,6 @@ import {
   type CancelRequestRow,
 } from './document-cancel-queries';
 
-const DOC_LABEL: Record<CancelRequestRow['doc_type'], string> = {
-  SO: 'Sales Order',
-  PO: 'Purchase Order',
-  DO: 'Delivery Order',
-};
-
 export type CancelRequestActions = {
   approve: (row: CancelRequestRow) => Promise<void>;
   reject: (row: CancelRequestRow) => Promise<void>;
@@ -95,7 +89,11 @@ export function useCancelRequestActions(
       await cancelPo.mutateAsync({ id: row.doc_key, reason: row.reason });
     }
     changed();
-    void serviceNotify({ title: `${DOC_LABEL[row.doc_type]} ${row.doc_number} cancelled`, body: 'The approval is complete and the cancellation has run.' });
+    /* The document NUMBER, not a noun for its type: every number here already
+       carries its document (HC-SO- / PO- / DO-), and a table of type nouns in
+       this file would be one more home for the {SO, PO, DO} set that
+       shared/document-cancel.ts already answers. */
+    void serviceNotify({ title: `${row.doc_number} cancelled`, body: 'The approval is complete and the cancellation has run.' });
   };
 
   const approve = async (row: CancelRequestRow) => {
