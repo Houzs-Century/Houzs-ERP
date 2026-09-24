@@ -17,6 +17,7 @@ import {
   resolveSoWarehouseId,
   resolveLineWarehouseId,
   warehousesDiffer,
+  soWarehouseIdForDoc,
   type SoWarehouseMasters,
 } from './so-warehouse';
 
@@ -77,5 +78,43 @@ describe('warehousesDiffer — only a real, distinct pair counts as drift', () =
 
   test('two different real warehouses ARE drift', () => {
     expect(warehousesDiffer('kl', 'pj')).toBe(true);
+  });
+});
+
+// Regression (HC-SO-013495): every company has its own "KL WAREHOUSE". The
+// amendment ADD line resolved the header's sales_location against EVERY
+// company's warehouses and took the first name match — another company's KL —
+// so the Houzs MRP showed "—" for those lines and split the order into two POs.
+describe('soWarehouseIdForDoc — resolves inside the SO own company only', () => {
+  type Row = Record<string, unknown>;
+  const tables: Record<string, Row[]> = {
+    mfg_sales_orders: [
+      { doc_no: 'HC-SO-1', company_id: 1, sales_location: 'KL WAREHOUSE', customer_state: 'Selangor' },
+    ],
+    warehouses: [
+      { id: 'kl-2990', code: 'KL WAREHOUSE', name: 'KL WAREHOUSE', company_id: 2 },
+      { id: 'kl-houzs', code: 'KL WAREHOUSE', name: 'KL WAREHOUSE', company_id: 1 },
+    ],
+    state_warehouse_mappings: [],
+  };
+  const fakeSb = {
+    from(table: string) {
+      let rows = tables[table] ?? [];
+      const q = {
+        select: () => q,
+        eq: (col: string, val: unknown) => { rows = rows.filter((r) => r[col] === val); return q; },
+        maybeSingle: async () => ({ data: rows[0] ?? null, error: null }),
+        then: (res: (v: { data: Row[]; error: null }) => unknown) => res({ data: rows, error: null }),
+      };
+      return q;
+    },
+  };
+
+  test('picks the warehouse of the SO company, not the first name match', async () => {
+    expect(await soWarehouseIdForDoc(fakeSb, 'HC-SO-1', 1)).toBe('kl-houzs');
+  });
+
+  test('an unknown company resolves to null instead of reading every company', async () => {
+    expect(await soWarehouseIdForDoc(fakeSb, 'HC-SO-1', null)).toBeNull();
   });
 });

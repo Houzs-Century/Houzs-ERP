@@ -32,6 +32,8 @@
 // unit-testable without a database.
 // ----------------------------------------------------------------------------
 
+import { scopeToCompanyId } from './companyScope';
+
 export type WarehouseRow = { id: string; code?: string | null; name?: string | null };
 export type StateWarehouseMappingRow = { state?: string | null; warehouse_id?: string | null };
 
@@ -173,13 +175,17 @@ export function chooseCreateWarehouseDefault(i: {
    loads the warehouse list for its own labels) do not re-read them. `scope`
    is the caller's own company-scoping wrapper — MRP's `scoped()`, or
    scopeToCompany bound to a Context — so this file never needs a Context and
-   works from the headless write paths too. */
+   works from the headless write paths too.
+
+   `scope` is REQUIRED. It used to default to "no filter", and every company has
+   its own "KL WAREHOUSE": an unscoped name match bound Houzs order lines to
+   another company's warehouse (HC-SO-013495), which the Houzs MRP cannot see,
+   so the order showed "—" and split into two POs. */
 type Scope = <T>(q: T) => T;
-const identityScope: Scope = (q) => q;
 
 export async function loadSoWarehouseMasters(
   sb: any,
-  scope: Scope = identityScope,
+  scope: Scope,
 ): Promise<SoWarehouseMasters> {
   const { data: warehouses } = await scope(sb.from('warehouses').select('id, code, name'));
   const { data: stateMappings } = await scope(
@@ -193,18 +199,20 @@ export async function loadSoWarehouseMasters(
 
 /** One-shot: the warehouse a NEW line of `docNo` should inherit. Used by the
  *  write paths that previously inserted warehouse_id NULL. Fail-soft — a
- *  missing header or master simply yields null, which is the behaviour those
- *  paths had before. */
+ *  missing header, master or company simply yields null, which is the
+ *  behaviour those paths had before. Null company never reads wide. */
 export async function soWarehouseIdForDoc(
   sb: any,
   docNo: string,
-  scope: Scope = identityScope,
+  companyId: number | null,
 ): Promise<string | null> {
+  if (companyId == null) return null;
+  const scope: Scope = (q) => scopeToCompanyId(q, companyId);
   try {
-    const { data: hdr } = await sb
+    const { data: hdr } = await scope(sb
       .from('mfg_sales_orders')
       .select('sales_location, customer_state')
-      .eq('doc_no', docNo)
+      .eq('doc_no', docNo))
       .maybeSingle();
     if (!hdr) return null;
     const masters = await loadSoWarehouseMasters(sb, scope);
