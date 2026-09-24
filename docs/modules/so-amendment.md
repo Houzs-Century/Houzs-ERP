@@ -18,6 +18,8 @@ Lanes, split by what changed:
 - A stored lane moves two ways only. (1) The row's own APPROVER passes it to the other desk (`flag-lane`, below) — once per amendment, and never a change the Purchase Order has to follow. (2) The repair script, for a `REQUESTED`, lane-bearing, line-only amendment whose lines all agree with the target lane under today's service-line signal. A requester never chooses or moves a lane.
 - Legacy rows (`lane IS NULL`, pre-rework) keep the original supplier-confirm two-gate chain and its own permission keys — a closed set, no new null-lane row can be created.
 
+**Cancellation requests share this queue** (owner 2026-09-24: 「当有 SO request cancel bill - 需要在 SO amendment 出现」). A request to cancel a Sales Order is NOT an amendment — it stays a row in `scm.document_cancel_requests` with its own two signatures (`docs/modules/document-cancel-approval.md`) — but it waits on the same desks, so the queue lists it, marked `Cancellation` in the Type column, with approve / reject / withdraw / "Cancel now" ON the row. The approver never leaves the queue; the separate Cancellation Requests inbox keeps working and is still the only place a PO / DO cancellation shows. The merge is one shared projection (`frontend/src/vendor/scm/lib/amendment-queue-rows.ts`) read by the desktop grid and the phone, and the actions are one shared flow (`use-cancel-request-actions.ts`) also used by the inbox, so no surface can end up with a different rule. `GET /so-amendments/pending-count` counts these rows too, for the sidebar badge over the queue.
+
 State machine (a lane row lives inside the existing status enum): `REQUESTED -> approve-so -> SO_APPROVED` (terminal); `REQUESTED -> reject -> REJECTED` (reason required); `REQUESTED -> withdraw -> REJECTED` (resolution `WITHDRAWN`). `SUPPLIER_PENDING` / `PO_APPROVED` / `SENT` are legacy-only and unreachable by a lane row.
 
 ## Permissions
@@ -31,6 +33,8 @@ State machine (a lane row lives inside the existing status enum): `REQUESTED -> 
 ## Rules that must not break
 
 - `GET /pending-count` must count only lanes the caller can sign, from the exact same table the approval gate itself reads — the badge and the approve button must never disagree.
+- A cancellation row in this queue must bucket through `cancelBucketOf`, never `amendmentBucketOf`: the amendment table knows nothing of `L1_APPROVED` / `EXECUTED` / `WITHDRAWN` and would file a withdrawn request under Requested, i.e. as something still on a desk. Only `doc_type = SO` rows belong here.
+- The cancellation half of `pending-count` runs `approvalRefusal` — the approve route’s own rule — so the badge cannot count a row the caller would be refused (their own request, or a level 2 they already signed at level 1). It counts `REQUESTED` / `L1_APPROVED` only: an `APPROVED` request waits to be RUN, not signed, and would leave a number its reader cannot clear.
 - Only the `LINES` lane's approval raises the follow-up PO Amendment, so a change the PO has to follow must never be signable on `DELIVERY` — `judgeLaneHandover` reuses `raisePoFollowUps`' own predicates (`poRelevant`, `serviceOnlyChange`) so "the PO follows this" has one definition.
 - Approval/rejection/raise notices go only to LITERAL key holders (never a `*` wildcard) — extending an account's visibility means granting it the specific lane keys via its role, not exempting the wildcard.
 - Nobody is notified of their own action, and a withdrawal is silent on purpose; a notification must never be able to fail the underlying write (best-effort, deferred until after commit).
@@ -61,3 +65,6 @@ State machine (a lane row lives inside the existing status enum): `REQUESTED -> 
 - `backend/src/scm/lib/amendment-lane-handover.ts` — whether an approver may pass a request to the other desk.
 - `frontend/src/pages/scm-v2/WrongApproverFlagButton.tsx` — the approver's "not mine to approve" handover, one component for the desktop job card and the phone's amendment card.
 - `frontend/src/hooks/useAmendmentApprovals.ts` — sidebar badge count.
+- `frontend/src/vendor/scm/lib/amendment-queue-rows.ts` — the merged queue row (amendments + SO cancellation requests), shared by `pages/scm-v2/Amendments.tsx` and `mobile/MobileAmendments.tsx`.
+- `frontend/src/vendor/scm/lib/use-cancel-request-actions.ts` — the approve / reject / withdraw / cancel-now flow those rows and the Cancellation Requests inbox all run.
+- `backend/src/scm/lib/cancel-pending-count.ts` — the cancellation half of the sidebar badge count.

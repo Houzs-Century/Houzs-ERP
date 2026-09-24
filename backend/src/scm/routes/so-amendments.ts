@@ -28,6 +28,9 @@ import { applySoAmendment, reviseBoundPo, ReceivedFloorError } from '../lib/so-r
 import { chunkIn } from '../lib/paginate-all';
 import { raisePoFollowUps } from '../lib/amendment-po-followup';
 import { judgeLaneHandover } from '../lib/amendment-lane-handover';
+import { countCancelRequestsAwaitingSigner } from '../lib/cancel-pending-count';
+import { approveKeysFor } from '../shared/document-cancel';
+import { CANCEL_REQUESTS_TABLE } from './document-cancel-routes';
 import { hasHouzsPerm, holdsHouzsPermLiterally, canViewAllSales, canWriteScmConfig } from '../lib/houzs-perms';
 import { resolveSalesScopeIds, applySoScope, soDocOutOfScope, resolveCallerStaffId, resolveUserIdByStaffId } from '../lib/salesScope';
 import {
@@ -430,35 +433,64 @@ soAmendments.get('/pending-count', async (c) => {
   if (holdsHouzsPermLiterally(c, LANE_APPROVE_KEY.DELIVERY)) lanes.push('DELIVERY');
   if (holdsHouzsPermLiterally(c, LANE_APPROVE_KEY.PRICE)) lanes.push('PRICE');
   const legacy = holdsHouzsPermLiterally(c, 'scm.amendment.approve_so');
-  if (lanes.length === 0 && !legacy) return c.json({ count: 0 });
+  /* Cancellations sit in this queue too since owner 2026-09-24 (「当有 SO request
+     cancel bill - 需要在 SO amendment 出现」), so the badge over it counts them
+     as well — a number that stops at the amendments under-states the desk. */
+  const cancelKeys = approveKeysFor('SO').filter((k) => holdsHouzsPermLiterally(c, k));
+  if (lanes.length === 0 && !legacy && cancelKeys.length === 0) return c.json({ count: 0 });
 
   const sb = c.get('supabase');
-  try {
-    /* Every OPEN amendment for the company, then split by lane in JS.
-       Deliberately not an `.or('lane.in.(…),lane.is.null')`: `lane` is nullable,
-       so the legacy half cannot ride the same `.in()`, and the two-predicate OR
-       is PostgREST filter-grammar that reads as a string and fails as a string.
-       The set it walks is BOUNDED and small by construction — the partial unique
-       indexes (uq_so_amendment_open_legacy / uq_so_amendment_open_lane, mig 0215)
-       allow at most one open row per SO per lane, and prod carries a handful.
-       A count that is easy to read beats a filter that is clever to write. */
-    const { data, error } = await scopeToCompany(
-      sb.from('so_amendments').select('id, lane').eq('status', 'REQUESTED'),
-      c,
-    );
-    if (error) {
-      console.error('[so-amendment] pending-count failed:', error.message);
-      return c.json({ count: 0 });
+  let amendments = 0;
+  let cancellations = 0;
+  if (lanes.length > 0 || legacy) {
+    try {
+      /* Every OPEN amendment for the company, then split by lane in JS.
+         Deliberately not an `.or('lane.in.(…),lane.is.null')`: `lane` is nullable,
+         so the legacy half cannot ride the same `.in()`, and the two-predicate OR
+         is PostgREST filter-grammar that reads as a string and fails as a string.
+         The set it walks is BOUNDED and small by construction — the partial unique
+         indexes (uq_so_amendment_open_legacy / uq_so_amendment_open_lane, mig 0215)
+         allow at most one open row per SO per lane, and prod carries a handful.
+         A count that is easy to read beats a filter that is clever to write. */
+      const { data, error } = await scopeToCompany(
+        sb.from('so_amendments').select('id, lane').eq('status', 'REQUESTED'),
+        c,
+      );
+      if (error) {
+        console.error('[so-amendment] pending-count failed:', error.message);
+      } else {
+        const rows = data as Array<{ lane: string | null }>;
+        amendments = rows.filter((r) => (r.lane == null ? legacy : lanes.includes(r.lane))).length;
+      }
+    } catch (e) {
+      console.error('[so-amendment] pending-count threw:', (e as Error).message);
     }
-    const rows = data as Array<{ lane: string | null }>;
-    const mine = rows.filter((r) =>
-      r.lane == null ? legacy : lanes.includes(r.lane),
-    );
-    return c.json({ count: mine.length });
-  } catch (e) {
-    console.error('[so-amendment] pending-count threw:', (e as Error).message);
-    return c.json({ count: 0 });
   }
+  if (cancelKeys.length > 0) {
+    try {
+      /* Only the two statuses that are still waiting for a signature — an
+         APPROVED request waits for the cancel to be RUN, not signed, and would
+         make the badge a number its reader cannot clear by approving. */
+      const { data, error } = await scopeToCompany(
+        sb.from(CANCEL_REQUESTS_TABLE)
+          .select('doc_type, status, requested_by, l1_by')
+          .eq('doc_type', 'SO')
+          .in('status', ['REQUESTED', 'L1_APPROVED']),
+        c,
+      );
+      if (error) {
+        console.error('[so-amendment] pending-count cancel read failed:', error.message);
+      } else {
+        cancellations = countCancelRequestsAwaitingSigner(
+          (data ?? []) as Array<{ doc_type: string; status: string; requested_by: number | null; l1_by: number | null }>,
+          { userId: c.get('houzsUser')?.id ?? null, holds: (k) => holdsHouzsPermLiterally(c, k) },
+        );
+      }
+    } catch (e) {
+      console.error('[so-amendment] pending-count cancel read threw:', (e as Error).message);
+    }
+  }
+  return c.json({ count: amendments + cancellations, amendments, cancellations });
 });
 
 /* ── GET /command-diag — the owner's dry-run for the write-back channel ─────

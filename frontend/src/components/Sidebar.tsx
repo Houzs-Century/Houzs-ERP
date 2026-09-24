@@ -486,7 +486,7 @@ export const NAV_TABS: NavTab[] = [
           // rep-only leaf above instead, so this carries hideForSalesRep like its
           // DO / SI siblings — belt-and-braces against the parent's flag being
           // removed, which would otherwise render the row TWICE for a rep.
-          { to: "/scm/amendments", label: "Sales Order Amendment", icon: History, anyPerm: ["*", "scm.access", "scm.amendment.create", "scm.amendment.supplier_confirm", "scm.amendment.approve_so", "scm.amendment.approve_po"], anyAccess: ["scm.sales.orders"], hideForSalesRep: true, badge: "amendment-approvals" },
+          { to: "/scm/amendments", label: "Sales Order Amendment", icon: History, anyPerm: ["*", "scm.access", "scm.amendment.create", "scm.amendment.supplier_confirm", "scm.amendment.approve_so", "scm.amendment.approve_po", "scm.so_cancel.approve_l1", "scm.so_cancel.approve_l2"], anyAccess: ["scm.sales.orders"], hideForSalesRep: true, badge: "amendment-approvals" },
           { to: "/scm/delivery-orders", label: "Delivery Orders", icon: Send, anyPerm: ["*", "scm.access"], anyAccess: ["scm.sales.delivery"], hideForSalesRep: true },
           { to: "/scm/sales-invoices", label: "Sales Invoices", icon: FileText, anyPerm: ["*", "scm.access"], anyAccess: ["scm.sales.invoices"], hideForSalesRep: true },
           { to: "/scm/delivery-returns", label: "Delivery Returns", icon: RotateCcw, anyPerm: ["*", "scm.access"], anyAccess: ["scm.sales.returns"], hideForSales: true },

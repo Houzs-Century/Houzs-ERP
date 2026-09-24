@@ -21,29 +21,28 @@ import { useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { fmtDateTime } from '../../vendor/shared/format';
 import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
-import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
-import { usePrompt } from '../../vendor/scm/components/PromptDialog';
-import { serviceNotify } from '../../vendor/scm/lib/dialog-service';
 import { STATUS_TONES } from '../../vendor/scm/lib/status-pill';
-import { useUpdateMfgSalesOrderStatus } from '../../vendor/scm/lib/sales-order-queries';
-import { useCancelPurchaseOrder } from '../../vendor/scm/lib/suppliers-queries';
 import {
-  approveLabel,
   cancelRequestLine,
   docTypeOfRow,
-  isFinalLevel,
   levelsFor,
   isOpenCancelStatus,
-  pendingLevel,
-  useApproveCancelRequest,
   useCancelRequests,
-  useRejectCancelRequest,
-  useWithdrawCancelRequest,
   viewerCanApprove,
   viewerCanReject,
   viewerCanWithdraw,
   type CancelRequestRow,
 } from '../../vendor/scm/lib/document-cancel-queries';
+/* The four actions are the SHARED flow — the SO Amendment queue (desktop and
+   phone) puts the same buttons on the same rows since owner 2026-09-24, and a
+   second hand-written copy of "the final approve must then run the document's
+   own cancel" is exactly the copy that would forget to. */
+import {
+  approveButtonLabel,
+  approveIsFinal,
+  useCancelRequestActions,
+} from '../../vendor/scm/lib/use-cancel-request-actions';
+
 import { PageHeader } from '../../components/Layout';
 import { FilterPills } from '../../components/FilterPills';
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
@@ -98,69 +97,7 @@ export const CancelRequests = () => {
   const q = useCancelRequests(scope);
   const { user, can } = useHouzsAuth();
   const viewer = useMemo(() => ({ userId: user?.id ?? null, can }), [user?.id, can]);
-  const askPrompt = usePrompt();
-  const askConfirm = useConfirm();
-
-  const approveSo = useApproveCancelRequest('so');
-  const approvePo = useApproveCancelRequest('po');
-  const rejectSo = useRejectCancelRequest('so');
-  const rejectPo = useRejectCancelRequest('po');
-  const withdrawSo = useWithdrawCancelRequest('so');
-  const withdrawPo = useWithdrawCancelRequest('po');
-  const cancelSo = useUpdateMfgSalesOrderStatus();
-  const cancelPo = useCancelPurchaseOrder();
-
-  const fail = (title: string, err: unknown) =>
-    serviceNotify({ title, body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' });
-
-  /** The document's own cancel — the executor behind a level-2 approve. */
-  const execute = async (row: CancelRequestRow) => {
-    if (row.doc_type === 'SO') {
-      await cancelSo.mutateAsync({ docNo: row.doc_key, status: 'CANCELLED', expectedStatus: row.doc_status_at_request ?? null });
-    } else {
-      /* The row's own words are the reason the cancel now requires (owner
-         2026-09-09). Only a request raised before the PO's approval was cut can
-         still reach this branch — nothing raises a new one. */
-      await cancelPo.mutateAsync({ id: row.doc_key, reason: row.reason });
-    }
-    void serviceNotify({ title: `${DOC_LABEL[row.doc_type]} ${row.doc_number} cancelled`, body: 'The approval is complete and the cancellation has run.' });
-  };
-
-  const doApprove = async (row: CancelRequestRow) => {
-    const level = pendingLevel(row.status);
-    const final = level != null && isFinalLevel(docTypeOfRow(row), level);
-    if (!(await askConfirm({
-      title: final ? `Approve and cancel ${row.doc_number}?` : `Give level-1 approval to cancel ${row.doc_number}?`,
-      body: final
-        ? 'This is the final approval. The document is cancelled on your signature.'
-        : 'Level 2 still has to approve after you. Nothing is cancelled yet.',
-      confirmLabel: final ? 'Approve & cancel' : 'Approve (level 1)',
-      danger: final,
-    }))) return;
-    try {
-      const res = await (docTypeOfRow(row) === 'so' ? approveSo : approvePo).mutateAsync({ key: row.doc_key });
-      if (res.execute) await execute(row);
-    } catch (err) {
-      void fail('Could not approve', err);
-    }
-  };
-
-  const doReject = async (row: CancelRequestRow) => {
-    const reason = await askPrompt({
-      title: `Reject the cancellation of ${row.doc_number}?`,
-      body: 'The document keeps its status. Say why, so the person who raised it knows — they will see this.',
-      multiline: true,
-      confirmLabel: 'Reject request',
-      validate: (v) => (v.trim().length < 5 ? 'Give a reason the requester can act on — at least a few words.' : null),
-    });
-    if (reason == null) return;
-    try { await (docTypeOfRow(row) === 'so' ? rejectSo : rejectPo).mutateAsync({ key: row.doc_key, reason: reason.trim() }); } catch (err) { void fail('Could not reject', err); }
-  };
-
-  const doWithdraw = async (row: CancelRequestRow) => {
-    if (!(await askConfirm({ title: `Withdraw the cancellation request on ${row.doc_number}?`, confirmLabel: 'Withdraw request' }))) return;
-    try { await (docTypeOfRow(row) === 'so' ? withdrawSo : withdrawPo).mutateAsync({ key: row.doc_key }); } catch (err) { void fail('Could not withdraw', err); }
-  };
+  const actions = useCancelRequestActions();
 
   const openRow = (row: CancelRequestRow) => {
     navigate(DOC_PATH[row.doc_type](row.doc_key));
@@ -220,28 +157,27 @@ export const CancelRequests = () => {
     },
     {
       key: 'actions', label: 'Actions', width: 260,
-      accessor: (r) => {
-        const level = pendingLevel(r.status);
-        const final = level != null && isFinalLevel(docTypeOfRow(r), level);
-        return (
-          <span style={{ display: 'inline-flex', gap: 6, flexWrap: 'wrap' }} onDoubleClick={(e) => e.stopPropagation()}>
-            {viewerCanApprove(r, viewer) && level != null && (
-              <button type="button" style={{ ...actionBtn, ...(final ? { borderColor: 'var(--c-festive-b, #B8331F)', color: 'var(--c-festive-b, #B8331F)' } : {}) }} onClick={() => void doApprove(r)}>
-                {final ? 'Approve & cancel' : approveLabel(docTypeOfRow(r), level)}
-              </button>
-            )}
-            {r.status === 'APPROVED' && (
-              <button type="button" style={{ ...actionBtn, borderColor: 'var(--c-festive-b, #B8331F)', color: 'var(--c-festive-b, #B8331F)' }} onClick={() => void execute(r).catch((err) => fail('Cancel failed', err))}>Cancel now</button>
-            )}
-            {viewerCanReject(r, viewer) && <button type="button" style={actionBtn} onClick={() => void doReject(r)}>Reject</button>}
-            {viewerCanWithdraw(r, viewer) && <button type="button" style={actionBtn} onClick={() => void doWithdraw(r)}>Withdraw</button>}
-          </span>
-        );
-      },
+      accessor: (r) => (
+        <span style={{ display: 'inline-flex', gap: 6, flexWrap: 'wrap' }} onDoubleClick={(e) => e.stopPropagation()}>
+          {viewerCanApprove(r, viewer) && (
+            <button
+              type="button"
+              style={approveIsFinal(r) ? { ...actionBtn, borderColor: 'var(--c-festive-b, #B8331F)', color: 'var(--c-festive-b, #B8331F)' } : actionBtn}
+              disabled={actions.busy}
+              onClick={() => void actions.approve(r)}
+            >{approveButtonLabel(r)}</button>
+          )}
+          {r.status === 'APPROVED' && (
+            <button type="button" style={{ ...actionBtn, borderColor: 'var(--c-festive-b, #B8331F)', color: 'var(--c-festive-b, #B8331F)' }} disabled={actions.busy} onClick={() => void actions.executeNow(r)}>Cancel now</button>
+          )}
+          {viewerCanReject(r, viewer) && <button type="button" style={actionBtn} disabled={actions.busy} onClick={() => void actions.reject(r)}>Reject</button>}
+          {viewerCanWithdraw(r, viewer) && <button type="button" style={actionBtn} disabled={actions.busy} onClick={() => void actions.withdraw(r)}>Withdraw</button>}
+        </span>
+      ),
       exportValue: () => '',
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the action closures read the latest hooks on click; the column set itself is static
-  ], [viewer]);
+  ], [viewer, actions]);
 
   const rows = q.data?.requests ?? [];
   const openCount = rows.filter((r) => isOpenCancelStatus(r.status)).length;

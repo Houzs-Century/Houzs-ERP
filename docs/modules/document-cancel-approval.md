@@ -25,6 +25,8 @@ A guard sits in front of the cancel itself and wakes only when the PATCH body as
 
 The cancel handlers themselves (`mfg-sales-orders.ts`, `mfg-purchase-orders.ts`, `delivery-orders-mfg.ts`) are never edited for this — the whole rule lives at the mount, so a script or stray client sending `CANCELLED` directly is refused the same way a screen is.
 
+**Where an open request SHOWS.** Three places, all reading the same rows: the document’s own `CancelRequestPanel`, the `Cancellation Requests` inbox (all three document types), and — since owner 2026-09-24 (「当有 SO request cancel bill - 需要在 SO amendment 出现」) — the **SO Amendment queue**, desktop and phone, for `doc_type = SO` only. That queue carries the same approve / reject / withdraw / "Cancel now" buttons and counts unsigned requests in its sidebar badge, so a Sales Director or Purchaser signs without opening a second screen. Nothing about the flow changed for it: the queue calls the same routes, and the final approve still runs the document’s own cancel.
+
 ## Permissions
 
 - `scm.so_cancel.approve_l1` / `scm.so_cancel.approve_l2` (verb `approve`) are the only cancel-approval keys that exist. There is no PO or DO key — those approve/reject paths fail closed structurally (a `*` wildcard grants nothing there because there is nothing to grant).
@@ -40,6 +42,8 @@ The cancel handlers themselves (`mfg-sales-orders.ts`, `mfg-purchase-orders.ts`,
 - One open cancel request per document — never bypass the partial unique index with a raw insert.
 
 ## Gotchas
+
+- A cancellation row shown inside the SO Amendment queue is still a `document_cancel_requests` row — never give it an `so_amendments` id, a lane, or an amendment number. The queue keys it `cancel:<id>` against the amendments’ `amendment:<id>` precisely so the two can never be confused by a click handler.
 
 - A Purchase Order or Delivery Order cancel notifies nobody at any step — there is no approval desk to tell. Only the Sales Order's request/approve/reject events post bell notices.
 - The PO's cancel card was removed from its editor along with the approval step — a PO can no longer have an open request to show; only a legacy pre-cutover `APPROVED` PO request can still be finished, via "Cancel now" on the inbox row.
