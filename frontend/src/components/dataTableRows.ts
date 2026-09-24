@@ -20,6 +20,9 @@ export type RowRuleColumn<T> = {
      when no row currently carries the value. `readonly` + widened element so the
      grid's own Column type (`readonly string[]`) stays assignable to this. */
   filterSeedValues?: readonly CellValue[];
+  /* Option counts from the server over EVERY matching row, not just the loaded
+     page. When present they replace the page count (a server-filtered column). */
+  filterCounts?: readonly (readonly [string, number])[];
   disableSort?: boolean;
 };
 
@@ -106,11 +109,12 @@ export function facetedFilterValues<T>(
   for (const [k, v] of Object.entries(colFilters)) {
     if (k !== col.key && v.length > 0) otherFilters[k] = [...v];
   }
-  const facetRows = applyColumnFilters([...rows], otherFilters, columns);
-  const counts = new Map<string, number>();
-  for (const r of facetRows) {
-    for (const k of multi ? filterKeysOf(multi(r)) : [filterKeyOf(getter(r))]) {
-      counts.set(k, (counts.get(k) ?? 0) + 1);
+  const counts = new Map<string, number>(col.filterCounts ?? []);
+  if (!col.filterCounts) {
+    for (const r of applyColumnFilters([...rows], otherFilters, columns)) {
+      for (const k of multi ? filterKeysOf(multi(r)) : [filterKeyOf(getter(r))]) {
+        counts.set(k, (counts.get(k) ?? 0) + 1);
+      }
     }
   }
   const seededKeys = new Set<string>();

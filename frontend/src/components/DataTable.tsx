@@ -107,6 +107,10 @@ export interface Column<T, L = never> {
   /** Values the filter menu ALWAYS lists, 0-count included — for enum-shaped
    *  columns whose full vocabulary must stay pickable (Nico 2026-09-04). */
   filterSeedValues?: readonly string[];
+  /** Server option counts over every matching row (see dataTableRows). */
+  filterCounts?: readonly (readonly [string, number])[];
+  /** How the filter menu shows a value (e.g. 2026-09-22 -> 22/09/2026). */
+  filterLabel?: (value: string) => string;
   /** Excluded from the column chooser AND pinned to the front (unreorderable). */
   alwaysVisible?: boolean;
   /** Opt-out of sort for columns that have getValue but aren't meaningfully
@@ -3173,7 +3177,7 @@ function DataTableInner<T, L>({
           const selected = new Set(colFilters[col.key] ?? []);
           const q = filterQuery.trim().toLowerCase();
           const shown = q
-            ? values.filter(([v]) => v.toLowerCase().includes(q))
+            ? values.filter(([v]) => (col.filterLabel?.(v) ?? v).toLowerCase().includes(q))
             : values;
           const shownValues = shown.map(([v]) => v);
           const canSort = canSortColumn(col);
@@ -3322,7 +3326,7 @@ function DataTableInner<T, L>({
                       onChange={() => toggleFilterValue(col.key, v)}
                       className="accent-accent"
                     />
-                    <span className="min-w-0 flex-1 truncate" title={v}>{v}</span>
+                    <span className="min-w-0 flex-1 truncate" title={v}>{col.filterLabel?.(v) ?? v}</span>
                     <span className="shrink-0 font-mono text-[10px] text-ink-muted">{n}</span>
                   </label>
                 ))}
