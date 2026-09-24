@@ -72,8 +72,41 @@ import { getSupabaseService, isSupabaseConfigured } from "../db/supabase";
 import { SUPPLIER_DATE_SLOT_COL, cascadePoSupplierDate } from "../scm/lib/po-supplier-date-cascade";
 import { poHasDownstream } from "../scm/lib/downstream-lock";
 import { enqueueEdit } from "../scm/lib/autocount-outbox";
+import { recordSheetUsage, sheetUsageEndpoint } from "../lib/sheet-sync-usage";
 
-const app = new Hono<{ Bindings: Env }>();
+/** `sheetAuthed` is set once the shared secret matched; `usageRows` is how
+ *  many records the handler is about to answer with. Both feed the usage
+ *  counter below and nothing else. */
+type SheetVars = { sheetAuthed?: boolean; usageRows?: number };
+
+const app = new Hono<{ Bindings: Env; Variables: SheetVars }>();
+
+/**
+ * Per-endpoint usage counters (scm.sheet_sync_usage). The owner's audit of the
+ * sheet's scripts (2026-09-24) needs "how often, and how much" to survive
+ * longer than three months, which is the one question nothing here could
+ * answer — see the migration's header for why neither the sheet's own log nor
+ * Analytics Engine can stand in.
+ *
+ * Counted only once the shared secret matched: a wrong key must keep touching
+ * no database at all (rate limit + 401), or this counter becomes a way to make
+ * an unauthenticated caller write to Postgres. Recorded after the response is
+ * decided, on `waitUntil` where the runtime offers one, and a failure to count
+ * can never fail the sync.
+ */
+app.use("*", async (c, next) => {
+  await next();
+  if (!c.get("sheetAuthed")) return;
+  const endpoint = sheetUsageEndpoint(c.req.method, c.req.routePath || new URL(c.req.url).pathname);
+  const write = recordSheetUsage(c.env.DB, endpoint, c.get("usageRows") ?? 0, c.res.status >= 400);
+  try {
+    c.executionCtx.waitUntil(write);
+  } catch {
+    // No execution context (some test harnesses, and `scheduled`): await it
+    // rather than leaving a floating promise the runtime may cancel.
+    await write;
+  }
+});
 
 /** The company the sheet's secret speaks for. */
 const SHEET_KEY_COMPANY = "HOUZS";
@@ -81,7 +114,10 @@ const SHEET_KEY_COMPANY = "HOUZS";
 async function badSheetKey(c: any): Promise<Response | null> {
   const provided = c.req.header("X-Intake-Key") || "";
   const expected = c.env.SHEET_SYNC_KEY || "";
-  if (expected && timingSafeEqualStr(provided, expected)) return null;
+  if (expected && timingSafeEqualStr(provided, expected)) {
+    c.set("sheetAuthed", true);
+    return null;
+  }
   const limited = await checkRateLimit(c, "intake_badkey", clientIp(c), 10, 900);
   await new Promise((r) => setTimeout(r, 250));
   if (limited) return limited;
@@ -154,6 +190,7 @@ app.get("/so-since", async (c) => {
   const loaded = await loadRecords(c, FEED_SINCE_SQL, [co.id, since, limit]);
   if ("refusal" in loaded) return loaded.refusal;
   const { records } = loaded;
+  c.set("usageRows", records.length);
   return c.json({
     count: records.length,
     limit,
@@ -179,6 +216,7 @@ app.get("/overdue", async (c) => {
   // company-scope: ?1 is the secret's company id.
   const loaded = await loadRecords(c, FEED_OVERDUE_SQL, [co.id]);
   if ("refusal" in loaded) return loaded.refusal;
+  c.set("usageRows", loaded.records.length);
   return c.json({ count: loaded.records.length, records: loaded.records });
 });
 
@@ -190,6 +228,7 @@ app.get("/balance-collection", async (c) => {
   // company-scope: ?1 is the secret's company id.
   const loaded = await loadRecords(c, FEED_BALANCE_COLLECTION_SQL, [co.id]);
   if ("refusal" in loaded) return loaded.refusal;
+  c.set("usageRows", loaded.records.length);
   return c.json({ count: loaded.records.length, records: loaded.records });
 });
 
@@ -209,6 +248,7 @@ app.get("/ready-open", async (c) => {
   const loaded = await loadRecords(c, FEED_READY_OPEN_SQL, [co.id, from, from]);
   if ("refusal" in loaded) return loaded.refusal;
   const records = loaded.records.filter((r) => r.Ready);
+  c.set("usageRows", records.length);
   return c.json({ count: records.length, scanned: loaded.records.length, from, records });
 });
 
@@ -289,6 +329,7 @@ app.post("/prune-check", async (c) => {
       ? { DocNo: d, found: true, ErpDocNo: st.ErpDocNo, Ready: st.Ready, Remark2: st.Remark2, Status: st.Status, Deletable: st.Deletable }
       : { DocNo: d, found: false, ErpDocNo: null as string | null, Ready: false, Remark2: null as string | null, Status: null as string | null, Deletable: false };
   });
+  c.set("usageRows", results.length);
   return c.json({
     count: results.length,
     found: results.filter((r) => r.found).length,
@@ -327,6 +368,7 @@ app.post("/feed-by-docnos", async (c) => {
   // OR linked_ac_docno (the sheet key is linked_ac_docno), bound once at ?2..
   const loaded = await loadRecords(c, feedFullByDocNosSql(docNos.length), [co.id, ...docNos]);
   if ("refusal" in loaded) return loaded.refusal;
+  c.set("usageRows", loaded.records.length);
   return c.json({ count: loaded.records.length, requested: docNos.length, records: loaded.records });
 });
 
@@ -355,6 +397,7 @@ app.get("/assr-legs", async (c) => {
     return c.json({ error: "feed_read_failed", message: e instanceof Error ? e.message : String(e) }, 502);
   }
   const records = cases.flatMap(toAssrLegRecords);
+  c.set("usageRows", records.length);
   return c.json({
     count: records.length,
     // The page is a CASE page; the checkpoint and has_more are measured in
@@ -439,6 +482,7 @@ app.post("/updates", async (c) => {
     }
   }
   const written = results.filter((r) => r.ok === true).length;
+  c.set("usageRows", results.length);
   return c.json({ count: results.length, written, results });
 });
 
@@ -463,6 +507,7 @@ app.get("/outstanding-po", async (c) => {
     return c.json({ error: "feed_read_failed", message: e instanceof Error ? e.message : String(e) }, 502);
   }
   const records = rows.map(toOutstandingPoRecord);
+  c.set("usageRows", records.length);
   return c.json({ count: records.length, records });
 });
 
@@ -615,6 +660,7 @@ app.post("/po-dates", async (c) => {
   }
 
   const count = results.filter((r) => r.ok === true && r.unchanged !== true && r.dry_run !== true).length;
+  c.set("usageRows", results.length);
   return c.json({ count: results.length, written: count, dry_run: dryRun, results });
 });
 
