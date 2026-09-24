@@ -84,5 +84,7 @@ describe('raising an amendment the raiser may apply', () => {
     const res = await submit();
     expect(res.amendment).toMatchObject({ id: 'a1' });
     expect(res.autoApplied).toBe(0);
+    // RECORDED, not swallowed — the caller can say which half is still waiting.
+    expect(res.notApplied).toEqual(['a1']);
   });
 });

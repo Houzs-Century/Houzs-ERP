@@ -269,6 +269,8 @@ export type CreateAmendmentResult = {
   lanes?: string[];
   selfApprovable?: string[];
   autoApplied?: number;
+  /** Ids whose apply was REFUSED — still raised, still in the queue. */
+  notApplied?: string[];
 };
 
 /* THE SHORTCUT THE SERVER OFFERS (owner 2026-09-24: 「如果是 Logistic admin 修改
@@ -303,17 +305,23 @@ async function createAmendmentThenApplyOwn(
     idempotentInit(idempotencyKey, { method: 'POST', body: JSON.stringify(body) }),
   );
   const ids = created.selfApprovable ?? [];
-  if (ids.length === 0) return { ...created, autoApplied: 0 };
+  if (ids.length === 0) return { ...created, autoApplied: 0, notApplied: [] };
   let autoApplied = 0;
+  const notApplied: string[] = [];
   for (const id of ids) {
     try {
       await authedFetch(`/so-amendments/${id}/approve-so`, { method: 'PATCH' });
       autoApplied += 1;
     } catch {
-      /* Left REQUESTED on purpose — see above. */
+      /* RECORDED, not swallowed: the id rides back on the result, `autoApplied`
+         stays short of the halves raised, and the submit notice then says the
+         desk is waiting — which is true, because the row is sitting in the
+         queue as REQUESTED for that desk to sign. Nothing is lost and nobody is
+         told a change applied when it did not. */
+      notApplied.push(id);
     }
   }
-  return { ...created, autoApplied };
+  return { ...created, autoApplied, notApplied };
 }
 
 export const useCreateAmendment = () => {
