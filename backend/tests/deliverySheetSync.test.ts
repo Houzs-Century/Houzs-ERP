@@ -186,7 +186,9 @@ describe("GET /so-since", () => {
     const { db, seen } = fakeDb(() => []);
     const res = await app.request("/so-since?since=last%20week", { headers: { "X-Intake-Key": KEY } }, env(db));
     expect(res.status).toBe(400);
-    expect(seen).toHaveLength(0);
+    // The usage counter rides every AUTHENTICATED call, including this refusal
+    // (that is what its errors column is for); nothing else may be issued.
+    expect(seen.filter((s) => !/sheet_sync_usage/.test(s.sql))).toHaveLength(0);
   });
 
   test("refuses with 503 when the companies master has no HOUZS row", async () => {
@@ -638,7 +640,9 @@ describe("the READY gate", () => {
     const { db, seen } = fakeDb(() => []);
     expect((await app.request("/ready-open?from=yesterday", { headers: { "X-Intake-Key": KEY } }, env(db))).status).toBe(400);
     expect((await app.request("/ready-open", { headers: { "X-Intake-Key": KEY } }, env(db))).status).toBe(400);
-    expect(seen).toHaveLength(0);
+    // Both refusals are authenticated, so the usage counter records them; no
+    // feed statement may be issued.
+    expect(seen.filter((s) => !/sheet_sync_usage/.test(s.sql))).toHaveLength(0);
     expect((await app.request("/ready-open?from=2026-09-15", { headers: { "X-Intake-Key": "wrong" } }, env(db))).status).toBe(401);
   });
 });
@@ -848,5 +852,64 @@ describe("GET /assr-legs", () => {
       return [];
     });
     expect((await app.request("/assr-legs", { headers: { "X-Intake-Key": KEY } }, env(db))).status).toBe(502);
+  });
+});
+
+/* Usage counters (owner 2026-09-24): the ERP's own count of how often the
+ * sheet calls each endpoint and how much it carries, because the sheet's log
+ * counts SCRIPT RUNS (one run = several requests) and a script that stops
+ * logging vanishes from it while still running. */
+describe("scm.sheet_sync_usage — the endpoint counter", () => {
+  const usageOf = (seen: Recorded[]) => seen.filter((s) => /sheet_sync_usage/.test(s.sql));
+
+  test("one upsert per authenticated call, labelled by route PATTERN, carrying the record count", async () => {
+    const { db, seen } = fakeDb((sql) => {
+      if (/FROM companies/i.test(sql)) return { id: HOUZS };
+      if (/FROM scm\.mfg_sales_orders so/.test(sql)) return [HEAD];
+      return [];
+    });
+    const res = await app.request(
+      "/so-since?since=2026-09-15%2000:00:00&limit=300",
+      { headers: { "X-Intake-Key": KEY } },
+      env(db),
+    );
+    expect(res.status).toBe(200);
+    const usage = usageOf(seen);
+    expect(usage).toHaveLength(1);
+    // The pattern, never the URL: `since` is a timestamp and /feed-by-docnos
+    // carries order numbers, and this row is kept forever.
+    expect(usage[0]!.binds[0]).toBe("GET /api/delivery-sheet/so-since");
+    expect(usage[0]!.binds[1]).toBe(1); // rows_out = the one record served
+    expect(usage[0]!.binds[2]).toBe(0); // errors
+    expect(usage[0]!.sql).toContain("Asia/Kuala_Lumpur");
+    expect(usage[0]!.sql).toContain("ON CONFLICT (endpoint, day)");
+  });
+
+  test("a wrong key counts NOTHING — an unauthenticated caller must never reach the database", async () => {
+    const { db, seen } = fakeDb(() => []);
+    const res = await app.request("/so-since", { headers: { "X-Intake-Key": "wrong" } }, env(db));
+    expect(res.status).toBe(401);
+    expect(usageOf(seen)).toHaveLength(0);
+  });
+
+  test("an authenticated refusal is counted as an error, with no rows", async () => {
+    const { db, seen } = fakeDb(() => []);
+    const res = await app.request("/ready-open?from=yesterday", { headers: { "X-Intake-Key": KEY } }, env(db));
+    expect(res.status).toBe(400);
+    const usage = usageOf(seen);
+    expect(usage).toHaveLength(1);
+    expect(usage[0]!.binds).toEqual(["GET /api/delivery-sheet/ready-open", 0, 1]);
+  });
+
+  test("a counter failure can never fail the sync", async () => {
+    const { db } = fakeDb((sql) => {
+      if (/sheet_sync_usage/.test(sql)) throw new Error("counter table missing");
+      if (/FROM companies/i.test(sql)) return { id: HOUZS };
+      if (/FROM scm\.mfg_sales_orders so/.test(sql)) return [HEAD];
+      return [];
+    });
+    const res = await app.request("/so-since?since=2026-09-15%2000:00:00", { headers: { "X-Intake-Key": KEY } }, env(db));
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as any).count).toBe(1);
   });
 });
