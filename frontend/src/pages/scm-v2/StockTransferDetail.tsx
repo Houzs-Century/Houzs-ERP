@@ -15,7 +15,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { ArrowRight, History, X, Ban, Printer, Pencil, Save } from 'lucide-react';
+import { ArrowRight, History, X, Ban, Printer, Pencil, Save, Trash2 } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { SkeletonDetailPage } from '../../vendor/scm/components/Skeleton';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
@@ -37,6 +37,8 @@ import {
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { NumberInput } from '../../vendor/scm/components/NumberInput';
+import { AddLineButton } from '../../vendor/scm/components/AddLineButton';
+import { useAddLineHotkey } from '../../vendor/scm/lib/useAddLineHotkey';
 import { EntityHistoryPanel } from './EntityHistoryPanel';
 import { STOCK_TRANSFER_AUDIT_LABELS } from './entity-audit-labels';
 import { DateField } from "../../vendor/scm/components/DateField";
@@ -50,6 +52,16 @@ type LineDraft = StockTransferItemInput & { _key: string; id: string };
 
 const newKey = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
+// Added during edit — no server id yet; the backend's items replace mints one.
+const blankLine = (): LineDraft => ({
+  _key: newKey(),
+  id: '',
+  itemCode: '',
+  productName: '',
+  qty: 1,
+  notes: '',
+});
+
 // Sentinel for "no bucket picked yet" — distinct from '' (a real, pickable
 // unclassified bucket). Same contract as StockTransferNew's TransferLineRow.
 const UNPICKED = '__UNPICKED__';
@@ -57,12 +69,12 @@ const humanizeVariantKey = (k: string): string => variantKeyLabel(k, '(unclassif
 
 // One editable line: owns its own inventory-bucket query (at the transfer's
 // fixed From warehouse) so it can show live "available: N" and refuse to let
-// qty exceed it — same building blocks as StockTransferNew's TransferLineRow,
-// trimmed (no add/remove line — this edits the existing lines, it does not
-// resize the transfer). `onAvail` reports this row's picked-bucket qty up to
+// qty exceed it — same building blocks as StockTransferNew's TransferLineRow.
+// Lines can be added/removed while editing: the backend's items replace takes
+// any line count (reverse all movements, swap lines, re-apply). `onAvail` reports this row's picked-bucket qty up to
 // the parent so the Save button can be disabled while any row is overdrawn.
 function EditableTransferLineRow({
-  line, fromWarehouseId, skus, onPickCode, setLine, onAvail,
+  line, fromWarehouseId, skus, onPickCode, setLine, onAvail, removeLine, canRemove,
 }: {
   line: LineDraft;
   fromWarehouseId: string;
@@ -70,6 +82,8 @@ function EditableTransferLineRow({
   onPickCode: (key: string, code: string) => void;
   setLine: (key: string, patch: Partial<LineDraft>) => void;
   onAvail: (key: string, avail: number | undefined) => void;
+  removeLine: (key: string) => void;
+  canRemove: boolean;
 }) {
   const bucketsQ = useInventoryBuckets(line.itemCode || null, fromWarehouseId || null);
   const variantBuckets = useMemo(() => {
@@ -169,6 +183,17 @@ function EditableTransferLineRow({
           placeholder="(optional) — shown as Description 2"
           className={styles.fieldInput}
         />
+      </td>
+      <td className={styles.actionsCell}>
+        <button
+          type="button"
+          onClick={() => removeLine(line._key)}
+          className={`${styles.iconBtn} ${styles.iconBtnDanger}`}
+          disabled={!canRemove}
+          title="Remove line"
+        >
+          <Trash2 size={14} strokeWidth={1.75} />
+        </button>
       </td>
     </tr>
   );
@@ -270,6 +295,11 @@ export const StockTransferDetail = () => {
     // even exist for the new SKU).
     setLine(key, { itemCode: code, productName: sku?.name ?? '', variantKey: undefined });
   };
+  const addLine = () => setLines((cur) => [...cur, blankLine()]);
+  useAddLineHotkey(addLine, itemsEditable);
+  // At least one line stays — the backend refuses an empty items replace.
+  const removeLine = (key: string) =>
+    setLines((cur) => (cur.length <= 1 ? cur : cur.filter((l) => l._key !== key)));
 
   // A changed line needs its bucket re-picked (variantKey !== undefined);
   // qty must be positive; and no row may exceed what EditableTransferLineRow
@@ -286,13 +316,16 @@ export const StockTransferDetail = () => {
   // (the backend's only path for line-level notes is the full replace), so a
   // line-notes-only edit still needs `items` sent — but that only fires while
   // itemsEditable (POSTED), matching what the backend accepts.
-  const linesChanged = itemsEditable && lines.some((l) => {
-    // originalLines is populated for every _key at the same hydrate that
-    // creates `lines` (hydrateFromServer), so a miss here can't happen.
-    const o = originalLines[l._key]!;
-    return o.itemCode !== l.itemCode || o.variantKey !== l.variantKey || o.qty !== l.qty
-      || (l.notes ?? '') !== (detail.data?.lines.find((sl) => sl.id === l.id)?.notes ?? '');
-  });
+  const linesChanged = itemsEditable && (
+    lines.length !== (detail.data?.lines.length ?? 0)
+    || lines.some((l) => {
+      // No snapshot = a line added during this edit.
+      const o = originalLines[l._key] as (typeof originalLines)[string] | undefined;
+      if (!o) return true;
+      return o.itemCode !== l.itemCode || o.variantKey !== l.variantKey || o.qty !== l.qty
+        || (l.notes ?? '') !== (detail.data?.lines.find((sl) => sl.id === l.id)?.notes ?? '');
+    })
+  );
 
   const onSave = () => {
     if (!id) return;
@@ -499,6 +532,7 @@ export const StockTransferDetail = () => {
       <section className={styles.card}>
         <div className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Items</h2>
+          {itemsEditable && <AddLineButton variant="ghost" onClick={addLine} />}
         </div>
         <div className={styles.cardBody}>
           {editing && !isPosted && (
@@ -515,11 +549,12 @@ export const StockTransferDetail = () => {
                 {itemsEditable && <th style={{ width: 90, textAlign: 'right' }}>Available</th>}
                 <th style={{ width: 110, textAlign: 'right' }}>Qty</th>
                 <th>Description 2</th>
+                {itemsEditable && <th style={{ width: 40 }} />}
               </tr>
             </thead>
             <tbody>
               {lines.length === 0 && (
-                <tr><td colSpan={itemsEditable ? 6 : 4} className={styles.emptyRow}>No lines.</td></tr>
+                <tr><td colSpan={itemsEditable ? 7 : 4} className={styles.emptyRow}>No lines.</td></tr>
               )}
               {itemsEditable
                 ? lines.map((ln) => (
@@ -531,6 +566,8 @@ export const StockTransferDetail = () => {
                       onPickCode={onPickCode}
                       setLine={setLine}
                       onAvail={onAvail}
+                      removeLine={removeLine}
+                      canRemove={lines.length > 1}
                     />
                   ))
                 : lines.map((ln) => (
@@ -557,6 +594,11 @@ export const StockTransferDetail = () => {
                   ))}
             </tbody>
           </table>
+          {itemsEditable && (
+            <div className={styles.addLineRow}>
+              <AddLineButton variant="ghost" onClick={addLine} />
+            </div>
+          )}
         </div>
       </section>
 
