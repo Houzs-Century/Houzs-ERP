@@ -6,10 +6,19 @@ import { AMENDMENT_APPROVER_LABEL, AMENDMENT_APPROVER_TONE, type AmendmentApprov
 import styles from './StatusPill.module.css';
 
 export function AmendmentApproverBadge({ approver }: { approver: AmendmentApprover }) {
-  const { bg, fg } = AMENDMENT_APPROVER_TONE[approver];
   return (
-    <span className={styles.pill} style={{ background: bg, color: fg }} data-approver={approver}>
-      {AMENDMENT_APPROVER_LABEL[approver]}
+    <QueueApproverBadge approverKey={approver} label={AMENDMENT_APPROVER_LABEL[approver]} tone={AMENDMENT_APPROVER_TONE[approver]} />
+  );
+}
+
+/** The same badge for a desk that is NOT an amendment lane — a cancellation
+ *  request waits on the Sales Director, then the Purchaser, and it shares this
+ *  queue since owner 2026-09-24. Keyed the same way (`data-approver`) so one
+ *  selector still reads whose row it is. */
+export function QueueApproverBadge({ approverKey, label, tone }: { approverKey: string; label: string; tone: { bg: string; fg: string } }) {
+  return (
+    <span className={styles.pill} style={{ background: tone.bg, color: tone.fg }} data-approver={approverKey}>
+      {label}
     </span>
   );
 }
