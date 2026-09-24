@@ -21,6 +21,9 @@
    Those are counted and listed, never touched. Open PO lines pointing at
    another company's warehouse are also reported, read-only.
 
+   DOC_NOS (optional, comma-separated) limits the WRITE to those orders; every
+   other cross-company line is still listed, marked "not in DOC_NOS".
+
    MODE=plan (default) writes nothing. MODE=apply needs
    CONFIRM="REBIND CROSS-COMPANY WAREHOUSES", writes one row at a time (guarded
    on the old warehouse_id), and re-reads on a fresh connection that every
@@ -34,6 +37,7 @@ const DSN = process.env.DATABASE_URL;
 if (!DSN) { console.error('need DATABASE_URL'); process.exit(2); }
 const APPLY = (process.env.MODE || 'plan').toLowerCase() === 'apply';
 const CONFIRM_PHRASE = 'REBIND CROSS-COMPANY WAREHOUSES';
+const DOC_NOS = (process.env.DOC_NOS ?? '').split(',').map((d) => d.trim()).filter(Boolean);
 const CLOSED = ['CANCELLED', 'CLOSED', 'SHIPPED', 'DELIVERED', 'INVOICED'];
 
 const sql = postgres(DSN, { ssl: 'require', prepare: false, max: 1 });
@@ -58,16 +62,17 @@ const crossCompanyLines = (client) => client`
    ORDER BY i.doc_no, i.line_no NULLS LAST, i.id`;
 
 async function main() {
-  note(`mode=${APPLY ? 'APPLY' : 'PLAN (writes nothing)'}`);
+  note(`mode=${APPLY ? 'APPLY' : 'PLAN (writes nothing)'}  DOC_NOS=${DOC_NOS.length ? DOC_NOS.join(',') : '(all)'}`);
 
   const warehouses = await sql`SELECT id::text AS id, code, name, company_id FROM scm.warehouses`;
   const rows = await crossCompanyLines(sql);
   note(`\n=== SO LINES ON ANOTHER COMPANY'S WAREHOUSE: ${rows.length} ===`);
 
-  const fix = [], refuse = [], history = [];
+  const fix = [], refuse = [], history = [], outOfScope = [];
   for (const r of rows) {
     const where = `${r.doc_no} ${String(r.item_code ?? '-').padEnd(20)} line co ${r.line_co} -> ${r.wh_code ?? r.wh_name} (co ${r.wh_co})`;
     if (r.cancelled || CLOSED.includes(r.so_status)) { history.push({ ...r, where }); continue; }
+    if (DOC_NOS.length && !DOC_NOS.includes(r.doc_no)) { outOfScope.push({ ...r, where }); continue; }
     const own = warehouses.filter((w) => Number(w.company_id) === Number(r.line_co));
     let hits = own.filter((w) => r.wh_code && norm(w.code) === norm(r.wh_code));
     if (!hits.length) hits = own.filter((w) => r.wh_name && norm(w.name) === norm(r.wh_name));
@@ -125,7 +130,7 @@ async function main() {
     const left = await crossCompanyLines(check);
     const openLeft = left.filter((r) => !r.cancelled && !CLOSED.includes(r.so_status)).length;
     note(`  written lines now on their own company's warehouse: ${after.length - wrong} of ${after.length}`);
-    note(`  open-order lines still cross-company: ${openLeft} (${refuse.length} of those are the refused rows)`);
+    note(`  open-order lines still cross-company: ${openLeft} (${refuse.length} refused, ${outOfScope.length} not in DOC_NOS)`);
     if (wrong) process.exitCode = 1;
   } finally {
     await check.end({ timeout: 5 });
