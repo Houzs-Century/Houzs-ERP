@@ -801,12 +801,12 @@ export function PurchaseOrdersListV2() {
   /* The SERVER-FILTERABLE column funnels, reported by DataTable's
      onColFiltersChange and pushed into the list query so pagination runs over
      the filtered set (owner 2026-09-16): Creditor Name (the "supplier" column),
-     Creditor Code, Currency. Every other funnel (line-level: Item Code,
+     Creditor Code, Currency, Doc Date. Every other funnel (line-level: Item Code,
      Description, Location, Item Group, Delivery Date, Remaining/Qty/…, SO Doc No;
-     the Doc Date value-set; and the MRP-derived Assigned SO / Delivered) stays
+     and the MRP-derived Assigned SO / Delivered) stays
      client-side on the loaded page — those columns are line- or MRP-level and
      the list query cannot express them cheaply. */
-  const [serverFunnels, setServerFunnels] = useState<{ creditorNames?: string[]; creditorCodes?: string[]; currencies?: string[] }>({});
+  const [serverFunnels, setServerFunnels] = useState<{ creditorNames?: string[]; creditorCodes?: string[]; currencies?: string[]; docDates?: string[] }>({});
   /* Seed the Creditor Name / Code funnel checklists with EVERY supplier (not
      only those on the loaded page), so a creditor whose POs are all on a later
      page is still pickable — the point of pushing the filter server-side. */
@@ -914,6 +914,7 @@ export function PurchaseOrdersListV2() {
       creditorNames: pick("supplier"),
       creditorCodes: pick("creditor_code"),
       currencies: pick("currency"),
+      docDates: pick("po_date"),
     };
     const sig = JSON.stringify(next);
     if (sig === serverFunnelSigRef.current) return;
