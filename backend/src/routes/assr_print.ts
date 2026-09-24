@@ -37,6 +37,16 @@ const app = new Hono<{ Bindings: Env }>();
 
 type Variant = "office" | "customer" | "supplier";
 
+/* Sign-off panels and footer contact name the entity on the letterhead, not
+   the case's company — a 2990 case printed on Houzs paper used to say
+   "2990 HOME Representative" under a Houzs Century heading. `both` heads with
+   Houzs, so Houzs signs. */
+export function signoffCompanyCode(entity: string, companyCode: string): string {
+  const caseEntity = companyCode === HOUZS_COMPANY_CODE ? "houzs" : "2990";
+  if (entity === caseEntity) return companyCode;
+  return entity === "2990" ? "2990" : HOUZS_COMPANY_CODE;
+}
+
 function esc(s: unknown): string {
   if (s === null || s === undefined) return "";
   return String(s)
@@ -206,12 +216,7 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
     (cs as any).company_id ?? c.get("companyCode"),
   );
   const branding = await getBrandingForCompany(c.env, companyCode);
-  const coShort = shortCompanyName(branding.companyName);
   const coAddressLines = brandingAddressLines(composeBrandingAddress(branding));
-  // Warehouse/CS contact line: the historical HOUZS CS number is not part of
-  // the Branding config, so HOUZS keeps its literal (unchanged output); other
-  // companies show their branding phone (blank → line renders without one).
-  const csPhone = companyCode === HOUZS_COMPANY_CODE ? "011-6155 6133" : branding.phone;
 
   // Uploaded per-company letterhead logo wins; the bundled Houzs wordmark is
   // HOUZS-only (it must never head another company's paper); otherwise the
@@ -296,6 +301,16 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
     logo: logoUri,
     square: companyCode === HOUZS_COMPANY_CODE,
   };
+
+  const signCode = signoffCompanyCode(entity, companyCode);
+  const signBranding = signCode === companyCode
+    ? branding
+    : await getBrandingForCompany(c.env, signCode);
+  const coShort = shortCompanyName(signBranding.companyName);
+  // Warehouse/CS contact line: the historical HOUZS CS number is not part of
+  // the Branding config, so HOUZS keeps its literal (unchanged output); other
+  // companies show their branding phone (blank → line renders without one).
+  const csPhone = signCode === HOUZS_COMPANY_CODE ? "011-6155 6133" : signBranding.phone;
 
   const imageAttachments = attachments.filter((a: any) =>
     (a.content_type || "").startsWith("image/")
