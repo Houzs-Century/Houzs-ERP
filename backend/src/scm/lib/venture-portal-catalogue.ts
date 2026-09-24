@@ -277,6 +277,64 @@ async function postPart(
   }
 }
 
+// ---------------------------------------------------------------------------
+// LIVE, NOT EVERY FIVE MINUTES (owner 2026-09-24: "i want it live, like current
+// sales order sync, not 5 min").
+//
+// A write to any table the catalogue is built from — the SKU master, Modular,
+// the maintenance config, specials, fabrics, combos — adds a row to
+// scm.venture_portal_catalogue_changes in the SAME transaction (statement
+// triggers, migration *_scm_vp_catalogue_live.sql; only the columns the
+// catalogue sends count, so a cost or stock update marks nothing). After every
+// SCM write the kick drains the order queue and then runs
+// pushVenturePortalCatalogueOnChange: while a mark is there, the digest is
+// asked and the catalogue sent if it changed — seconds after the Save, however
+// the change was made. The */5 cron still runs the same push and stays the
+// safety net for a change made outside a request.
+// ---------------------------------------------------------------------------
+
+/** How many marks one run clears. A burst beyond it is cleared by the next run. */
+export const VP_CATALOGUE_CHANGES_BATCH = 1_000;
+
+/**
+ * Clear the change marks this run covers. Called FIRST by every push — the kick
+ * and the cron alike — so a mark written while the run builds survives it and
+ * earns the next one, and the table stays small even while the feed is off.
+ * A failure is logged and ignored: a mark left behind costs one more digest.
+ */
+async function clearCatalogueChanges(sb: ScmClient): Promise<void> {
+  const { data, error } = await sb
+    .from('venture_portal_catalogue_changes')
+    .select('id')
+    .order('id', { ascending: true })
+    .limit(VP_CATALOGUE_CHANGES_BATCH);
+  if (error) {
+    console.error('[vp-catalogue] could not read the change marks', error.message);
+    return;
+  }
+  const ids = ((data as Array<{ id: number | string }> | null) ?? []).map((r) => r.id);
+  if (!ids.length) return;
+  const { error: delErr } = await sb.from('venture_portal_catalogue_changes').delete().in('id', ids);
+  if (delErr) console.error('[vp-catalogue] could not clear the change marks', delErr.message);
+}
+
+/**
+ * The kick's step after the order drain: send the catalogue if a catalogue table
+ * changed. While the feed is off it costs the one cached flag read the drain
+ * already made; with no mark, one read of an empty table.
+ */
+export async function pushVenturePortalCatalogueOnChange(
+  env: Env,
+  fetchImpl: typeof fetch = fetch,
+): Promise<VpCatalogueSummary> {
+  const sb = getSupabaseService(env);
+  if ((await readFeedScope(sb)) === 'off') return { skipped: 'feed_off', companies: [] };
+  const { data, error } = await sb.from('venture_portal_catalogue_changes').select('id').limit(1);
+  if (error) return { skipped: 'changes_read_failed', companies: [] };
+  if (!(data as unknown[] | null)?.length) return { skipped: 'unchanged', companies: [] };
+  return pushVenturePortalCatalogue(env, { force: false }, fetchImpl);
+}
+
 /**
  * Send each in-scope company's catalogue if it changed since the portal last
  * accepted it — or regardless, when `force` (the admin page's "send now").
@@ -291,6 +349,8 @@ export async function pushVenturePortalCatalogue(
   fetchImpl: typeof fetch = fetch,
 ): Promise<VpCatalogueSummary> {
   const sb = getSupabaseService(env);
+
+  await clearCatalogueChanges(sb);
 
   const scope = await readFeedScope(sb);
   if (scope === 'off') return { skipped: 'feed_off', companies: [] };

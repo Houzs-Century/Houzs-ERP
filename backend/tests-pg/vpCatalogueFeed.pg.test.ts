@@ -6,8 +6,9 @@ import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import { splitSqlStatements } from '../scripts/lib/split-sql.mjs';
 import { assertDisposableTestDatabase } from './lib/doc-no-fixture';
 
-/* EXECUTES the Venture Portal catalogue feed's SQL (migration
- * *_scm_vp_catalogue_feed.sql) against real Postgres.
+/* EXECUTES the Venture Portal catalogue feed's SQL (migrations
+ * *_scm_vp_catalogue_feed.sql and *_scm_vp_catalogue_live.sql) against real
+ * Postgres.
  *
  * The property that matters is that NO PRICE OR COST LEAVES THE DATABASE, and
  * it is a property of SQL: the Worker only forwards what these functions
@@ -36,10 +37,10 @@ type Obj = { [k: string]: Json };
 
 let sql: Sql;
 
-async function applyMigration(s: Sql): Promise<number> {
-  const files = (await readdir(migrationsDir)).filter((f) => f.endsWith('_scm_vp_catalogue_feed.sql'));
+async function applyMigration(s: Sql, suffix: string): Promise<number> {
+  const files = (await readdir(migrationsDir)).filter((f) => f.endsWith(suffix));
   if (files.length !== 1) {
-    throw new Error(`expected exactly one *_scm_vp_catalogue_feed.sql migration, found ${files.length}: ${files.join(', ')}`);
+    throw new Error(`expected exactly one *${suffix} migration, found ${files.length}: ${files.join(', ')}`);
   }
   const stmts = splitSqlStatements(await readFile(join(migrationsDir, files[0]!), 'utf8')) as string[];
   await s.begin(async (tx) => { for (const st of stmts) await tx.unsafe(st); });
@@ -73,6 +74,8 @@ const arr = (o: Obj, k: string): Obj[] => (o[k] ?? []) as Obj[];
    soListLineFilterFields builds it, so either suite can drop the other's. */
 const DROP_FIXTURE = `
   DROP TABLE IF EXISTS scm.venture_portal_catalogue_state CASCADE;
+  DROP TABLE IF EXISTS scm.venture_portal_catalogue_changes CASCADE;
+  DROP FUNCTION IF EXISTS scm.vp_catalogue_mark_changed() CASCADE;
   DROP VIEW IF EXISTS scm.mfg_sales_orders_with_payment_totals CASCADE;
   DROP TABLE IF EXISTS scm.mfg_products, scm.product_models, scm.maintenance_config_history,
     scm.special_addons, scm.fabric_trackings, scm.sofa_combo_pricing, scm.mfg_sales_orders,
@@ -137,7 +140,8 @@ describePg('the Venture Portal feeds, built in SQL', () => {
         created_at timestamptz DEFAULT now());
     `);
 
-    await applyMigration(sql);
+    await applyMigration(sql, '_scm_vp_catalogue_feed.sql');
+    await applyMigration(sql, '_scm_vp_catalogue_live.sql');
 
     await sql.unsafe(`
       INSERT INTO scm.mfg_products (id, code, name, category, status, base_model, size_code, size_label,
@@ -405,6 +409,63 @@ describePg('the Venture Portal feeds, built in SQL', () => {
       expect(Object.keys(line1!).sort()).toEqual(
         ['created_at', 'description2', 'doc_no', 'id', 'item_code', 'line_cost_sen', 'line_no', 'remark', 'variants'],
       );
+    });
+  });
+
+  /* LIVE, NOT EVERY FIVE MINUTES. The kick sends the catalogue only while a mark
+     is here, so a missed mark is a change that waits for the cron — and a mark
+     on a cost update is a digest for nothing. Both directions are pinned. */
+  describe('a catalogue change is marked in the transaction that made it', () => {
+    const marks = async (): Promise<string[]> =>
+      (await sql`SELECT source FROM scm.venture_portal_catalogue_changes ORDER BY id`).map((r) => r.source as string);
+    const clear = async () => { await sql`DELETE FROM scm.venture_portal_catalogue_changes`; };
+
+    test('the fixture`s own inserts marked every table the catalogue is built from', async () => {
+      expect([...new Set(await marks())].sort()).toEqual([
+        'fabric_trackings', 'maintenance_config_history', 'mfg_products',
+        'product_models', 'sofa_combo_pricing', 'special_addons',
+      ]);
+    });
+
+    test('a column the catalogue sends marks it — once per statement, however many rows', async () => {
+      await clear();
+      await sql`UPDATE scm.mfg_products SET name = name || ' ' WHERE company_id = ${CO}`;
+      await sql`UPDATE scm.product_models SET allowed_options = allowed_options || '{"gaps":["4in"]}'::jsonb
+                 WHERE id = '00000000-0000-0000-0000-00000000000a'`;
+      await sql`UPDATE scm.fabric_trackings SET sofa_price_tier = 'PRICE_3' WHERE id = 'fab-1'`;
+      await sql`UPDATE scm.special_addons SET label = 'Left Drawer (L)' WHERE code = 'LEFT_DRAWER'`;
+      await sql`UPDATE scm.sofa_combo_pricing SET deleted_at = now() WHERE label = '1A + 2A'`;
+      await sql`UPDATE scm.maintenance_config_history SET config = config WHERE id = 'mch-current'`;
+      expect(await marks()).toEqual([
+        'mfg_products', 'product_models', 'fabric_trackings',
+        'special_addons', 'sofa_combo_pricing', 'maintenance_config_history',
+      ]);
+    });
+
+    test('a cost, price, stock, photo or note update marks nothing', async () => {
+      await clear();
+      await sql`UPDATE scm.mfg_products SET cost_price_sen = 1, sell_price_sen = 2, seat_height_prices = '[]'::jsonb`;
+      await sql`UPDATE scm.fabric_trackings SET price_sen = 1, soh_sen = 2, supplier = 'NEW SUPPLIER'`;
+      await sql`UPDATE scm.product_models SET photo_url = 'x.jpg'`;
+      await sql`UPDATE scm.special_addons SET selling_price_sen = 1, option_groups = '[]'::jsonb`;
+      await sql`UPDATE scm.sofa_combo_pricing SET selling_prices_by_height = '{}'::jsonb, notes = 'n'`;
+      await sql`UPDATE scm.maintenance_config_history SET notes = 'n'`;
+      expect(await marks()).toEqual([]);
+    });
+
+    test('a new row and a deleted one each mark it; a write that rolls back marks nothing', async () => {
+      await clear();
+      await sql`INSERT INTO scm.mfg_products (id, code, name, category, status, company_id)
+                 VALUES ('mfg-new', 'NEW-1', 'a new SKU', 'ACCESSORY', 'ACTIVE', ${CO})`;
+      await sql`DELETE FROM scm.mfg_products WHERE id = 'mfg-new'`;
+      /* A thrown JS error, not a failing statement: the library rolls the
+         transaction back itself, so no SQL error precedes the query after it. */
+      await sql.begin(async (tx) => {
+        await tx`INSERT INTO scm.special_addons (id, code, label, categories, active, sort_order, company_id)
+                 VALUES ('00000000-0000-0000-0000-0000000000d9', 'GONE', 'Gone', ARRAY['SOFA'], true, 9, ${CO})`;
+        throw new Error('roll it back');
+      }).catch(() => undefined);
+      expect(await marks()).toEqual(['mfg_products', 'mfg_products']);
     });
   });
 

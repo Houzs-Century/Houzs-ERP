@@ -138,12 +138,19 @@ apply.
 - **Receiver**: `vp.url` (https) with its trailing `/sales-orders` replaced by
   `/products`. Any other `vp.url` → nothing is sent and `GET /status` shows
   `catalogue.urlProblem`. Never guess another URL.
-- **Cadence**: the `*/5` cron, started only after the order drain has settled
-  and caught on its own, so it can never delay or break the orders. Each run
-  asks `scm.vp_catalogue_digest` (md5 of the body) and builds and sends only
-  when it differs from `delivered_digest` in `scm.venture_portal_catalogue_state`.
-  The body is fetched with `scm.vp_catalogue_snapshot`, which returns the
-  digest of that same build — record that one, never the digest asked first.
+- **Cadence: live.** A write to any source table marks
+  `scm.venture_portal_catalogue_changes` in the same transaction (statement
+  triggers that name only the columns the catalogue sends — a cost, price,
+  stock, photo or note update marks nothing). The SCM write kick runs the push
+  after its order drain, in the same task, while a mark is present, so a Save
+  reaches the portal in seconds; the `*/5` cron runs the same push after its
+  drain and stays the safety net for a change made outside a request. Every
+  push first clears the marks it covers (a mark written during it earns the
+  next push). Each push asks `scm.vp_catalogue_digest` (md5 of the body) and
+  builds and sends only when it differs from `delivered_digest` in
+  `scm.venture_portal_catalogue_state`. The body is fetched with
+  `scm.vp_catalogue_snapshot`, which returns the digest of that same build —
+  record that one, never the digest asked first.
 - **Split by section only.** One POST unless the body exceeds
   `VP_CATALOGUE_MAX_POST_BYTES` (the portal's host refuses a body over 4.5 MB);
   then whole sections are packed into several POSTs, each with `full: true`.
@@ -171,13 +178,15 @@ company's row.
 - `backend/src/db/migrations-pg/20260923T1843_scm_vp_catalogue_feed.sql` —
   the catalogue builder, digest, snapshot and money guard, the state table, and
   `vp_build_payloads` with the `variants` allowlist.
+- `backend/src/db/migrations-pg/20260924T1100_scm_vp_catalogue_live.sql` —
+  the change marks and the statement triggers that write them.
 - `backend/src/scm/lib/venture-portal-catalogue.ts` — the catalogue sender
   (URL, digest decision, section split, response verdict); its SQL is
   executed by `backend/tests-pg/vpCatalogueFeed.pg.test.ts`.
 - `backend/src/scm/lib/venture-portal-outbox.ts` — sender, response
   taxonomy, reconcile, secret minting.
 - `backend/src/scm/lib/venture-portal-kick.ts` — the request-triggered drain
-  middleware.
+  middleware; the catalogue step rides the same task.
 - `backend/src/scm/lib/venture-portal-feed-flag.ts` — switch + company
   scope, cached, fails closed to off.
 - `backend/src/scm/routes/venture-portal-feed.ts` — the route surface.

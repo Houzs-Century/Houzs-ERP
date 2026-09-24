@@ -157,6 +157,27 @@ describe('which requests earn a drain', () => {
     expect(await res.json()).toEqual({ ok: true });
   });
 
+  /* THE CATALOGUE, LIVE. The step is wired in the middleware, not in a handler,
+     so a Save anywhere under /api/scm reaches it. Proven by its first act —
+     clearing the marks — with no portal configured, so nothing is posted. */
+  test('a successful write runs the catalogue step after the drain', async () => {
+    currentSb = fakeSb(
+      {
+        app_config: [{ key: 'scm.venture_portal_feed', value: '1' }],
+        venture_portal_catalogue_changes: [{ id: 1, source: 'mfg_products' }],
+      },
+      {},
+      [],
+    );
+    resetFeedFlagCache();
+    const c = fakeCtx();
+    expect((await call('POST', '/connection', c)).status).toBe(200);
+    expect(c.count()).toBe(1);
+    await c.settle();
+    const sb = currentSb as { tables: Record<string, unknown[] | undefined> };
+    expect(sb.tables.venture_portal_catalogue_changes ?? []).toEqual([]);
+  });
+
   test('a waitUntil that throws does not fail the request either', async () => {
     const angry: KickCtx = {
       waitUntil: () => { throw new Error('this context is dead'); },

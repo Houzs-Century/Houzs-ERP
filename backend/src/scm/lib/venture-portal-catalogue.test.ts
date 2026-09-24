@@ -26,6 +26,7 @@ const {
   classifyVpCatalogueResponse,
   planVpCatalogueParts,
   pushVenturePortalCatalogue,
+  pushVenturePortalCatalogueOnChange,
   vpCatalogueDecision,
   vpCatalogueUrl,
   vpCatalogueVerdict,
@@ -68,6 +69,8 @@ function db(opts: {
   snapshotDigests?: Record<number, string>;
   bodies?: Record<number, Body>;
   missing?: Record<string, string[]>;
+  /** scm.venture_portal_catalogue_changes — the marks the triggers leave. */
+  changes?: Row[];
 }) {
   const sb = fakeSb(
     {
@@ -75,6 +78,7 @@ function db(opts: {
       sync_config: opts.config ?? [URL_ROW, SECRET_ROW],
       venture_portal_catalogue_state: opts.state ?? [],
       companies: opts.companies ?? [{ id: 1 }, { id: 2 }],
+      venture_portal_catalogue_changes: opts.changes ?? [],
     },
     opts.missing ?? {},
   );
@@ -152,6 +156,101 @@ describe('the receiver is the order feed`s sibling', () => {
     ]) {
       expect(vpCatalogueUrl(bad)).toBeNull();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// LIVE: the SCM write kick runs pushVenturePortalCatalogueOnChange after the
+// order drain. It must send when a catalogue table was marked — the owner's
+// "live, not five minutes" — and cost next to nothing when none was.
+
+const marks = (sb: { tables: Partial<Record<string, Row[]>> }) =>
+  (sb.tables.venture_portal_catalogue_changes ?? []).map((r) => Number(r.id));
+const MARK = (id: number): Row => ({ id, source: 'mfg_products' });
+
+describe('live: the kick sends the catalogue when a catalogue table changed', () => {
+  test('a mark sends the changed catalogue at once and clears the mark', async () => {
+    const sb = db({ flag: '1', changes: [MARK(1), MARK(2)] });
+    currentSb = sb;
+    const { fetchImpl, calls } = portal(200);
+
+    const r = await pushVenturePortalCatalogueOnChange(env, fetchImpl);
+
+    expect(r.companies).toEqual([expect.objectContaining({ companyId: 1, action: 'sent' })]);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.url).toBe(PRODUCTS_URL);
+    expect(marks(sb)).toEqual([]);
+  });
+
+  /* THE COMMON CASE. Every SCM write ends in this step, and almost none of them
+     touched the catalogue: no mark must mean no digest and no post. */
+  test('no mark: no digest is asked and nothing is posted', async () => {
+    const sb = db({ flag: '1' });
+    currentSb = sb;
+    const { fetchImpl, calls } = portal(200);
+
+    const r = await pushVenturePortalCatalogueOnChange(env, fetchImpl);
+
+    expect(r).toEqual({ skipped: 'unchanged', companies: [] });
+    expect(rpcNames(sb)).toEqual([]);
+    expect(calls).toHaveLength(0);
+  });
+
+  test('the feed off: the marks are not even read, let alone sent', async () => {
+    const sb = db({ flag: 'off', changes: [MARK(1)] });
+    currentSb = sb;
+    const { fetchImpl, calls } = portal(200);
+
+    expect(await pushVenturePortalCatalogueOnChange(env, fetchImpl)).toEqual({ skipped: 'feed_off', companies: [] });
+    expect(calls).toHaveLength(0);
+    expect(marks(sb)).toEqual([1]);
+  });
+
+  /* A mark on a column the digest does not see (the trigger lists only what
+     the catalogue sends, so this is a race or a no-op UPDATE) still costs one
+     digest — and sends nothing. */
+  test('a mark on an unchanged catalogue asks the digest, posts nothing, and clears the mark', async () => {
+    const sb = db({
+      flag: '1',
+      changes: [MARK(1)],
+      state: [{ company_id: 1, delivered_digest: 'd-new', last_digest: 'd-new', last_outcome: 'sent' }],
+    });
+    currentSb = sb;
+    const { fetchImpl, calls } = portal(200);
+
+    const r = await pushVenturePortalCatalogueOnChange(env, fetchImpl);
+
+    expect(r.companies).toEqual([expect.objectContaining({ companyId: 1, action: 'unchanged' })]);
+    expect(calls).toHaveLength(0);
+    expect(marks(sb)).toEqual([]);
+  });
+
+  /* A Save that lands while the catalogue is being built must not be lost:
+     the run clears only the marks that were there when it started, so the new
+     one earns the next push. */
+  test('a mark written while the run builds survives it', async () => {
+    const sb = db({ flag: '1', changes: [MARK(1)] });
+    currentSb = sb;
+    const asked = sb.rpcHandlers.vp_catalogue_digest!;
+    sb.rpcHandlers.vp_catalogue_digest = (args) => {
+      sb.tables.venture_portal_catalogue_changes!.push(MARK(2));
+      return asked(args);
+    };
+
+    await pushVenturePortalCatalogueOnChange(env, portal(200).fetchImpl);
+
+    expect(marks(sb)).toEqual([2]);
+  });
+
+  /* The cron runs the same push every five minutes whatever the flag says, so
+     marks written while the feed is off cannot pile up. */
+  test('every push clears the marks it covers — the cron too, with the feed off', async () => {
+    const sb = db({ flag: 'off', changes: [MARK(1), MARK(2), MARK(3)] });
+    currentSb = sb;
+
+    expect(await pushVenturePortalCatalogue(env, { force: false }, portal(200).fetchImpl))
+      .toEqual({ skipped: 'feed_off', companies: [] });
+    expect(marks(sb)).toEqual([]);
   });
 });
 
