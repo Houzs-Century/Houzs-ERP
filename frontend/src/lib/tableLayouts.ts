@@ -91,6 +91,17 @@ export interface NamedLayout {
   layout: StoredLayout;
 }
 
+/** A read-only, code-shipped layout a page offers in the picker for everyone —
+ *  independent of the per-user saved layouts and the per-company default above.
+ *  Instances live with the page that defines them (e.g. the Delivery Planning
+ *  board); the grid renders them first and copies one into the live arrangement
+ *  when picked, exactly like a saved layout, but they cannot be edited. */
+export interface LayoutSeed {
+  id: string;
+  label: string;
+  layout: StoredLayout;
+}
+
 export interface TableLayoutsSnapshot {
   /** True once the boot fetch has succeeded. Everything below is empty until. */
   ready: boolean;

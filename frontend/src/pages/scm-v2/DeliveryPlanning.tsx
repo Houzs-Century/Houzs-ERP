@@ -49,6 +49,7 @@ import {
   dpLabel,
   soDocNosFromSelection,
 } from '../../vendor/scm/components/DeliveryPlanningBoard';
+import { DELIVERY_PLANNING_LAYOUT_PRESETS } from '../../vendor/scm/lib/deliveryPlanningLayouts';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { transferToLabel } from '../../lib/convertScope';
@@ -340,6 +341,7 @@ export const DeliveryPlanning = () => {
 
       <DeliveryPlanningBoard
         orders={allOrders}
+        layoutPresets={DELIVERY_PLANNING_LAYOUT_PRESETS}
         counts={counts}
         regionTabs={regionTabs}
         activeRegion={activeRegion}

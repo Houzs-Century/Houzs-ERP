@@ -39,13 +39,13 @@ import {
   AMEND_REASONS,
   dpJobTypeLabel,
   assrJobKindLabel,
-  arrangementStageLabel,
   dateArrangementOf,
   DATE_ARRANGEMENT_LABEL,
   ARRANGEMENT_STAGE_LABEL,
   type DeliveryState,
   type PlanningOrder,
 } from '../lib/delivery-planning-queries';
+import type { LayoutSeed } from '../../../lib/tableLayouts';
 import { type DriverRow } from '../lib/drivers-queries';
 import { type LorryRow } from '../lib/lorries-queries';
 import { useStaffLookup } from '../../../hooks/useStaffLookup';
@@ -209,16 +209,6 @@ export function regionTabsFrom(
 /* The 4 state tabs (the top row). */
 const STATE_TABS = DELIVERY_STATES;
 
-/* Per-state tint for the Status cell's editable select — the same cream palette
-   the old inline pill used, applied as the select's text/background so an
-   overridden state still reads at a glance. */
-const DSTATE_TONE: Record<DeliveryState, { bg: string; fg: string }> = {
-  PENDING_DELIVERY: { bg: 'rgba(34, 31, 32, 0.06)', fg: '#767b6e' },
-  PENDING_SCHEDULE: { bg: 'rgba(232, 107, 58, 0.12)', fg: '#0c3f39' },
-  OVERDUE:          { bg: 'rgba(184, 51, 31, 0.12)', fg: '#b8331f' },
-  DELIVERED:        { bg: 'rgba(47, 93, 79, 0.12)', fg: '#2f5d4f' },
-};
-
 /* ── Inline (Excel-style) cell editors ────────────────────────────────────────
    Each cell IS the control (no drill-in). All of them stopPropagation on click /
    double-click so editing a cell never selects the row or triggers the row's
@@ -241,42 +231,6 @@ const stopRow = {
   onClick: (e: ReactMouseEvent) => e.stopPropagation(),
   onDoubleClick: (e: ReactMouseEvent) => e.stopPropagation(),
 };
-
-function StatusEditCell({ order, sched }: { order: PlanningOrder; sched: SchedMutation }) {
-  const tone = DSTATE_TONE[order.delivery_state];
-  /* ASSR + DP rows: the delivery-state override is not wired for these yet, so
-     show the state read-only (as a tinted pill) instead of an editable select. */
-  if (isAssr(order) || isDp(order) || isProject(order)) {
-    return (
-      <span
-        className={styles.dstatePill}
-        style={{ background: tone.bg, color: tone.fg }}
-        title={isProject(order) ? 'PMS project window — scheduled in Projects' : isDp(order) ? 'DP-job state (schedule it from the DP Order)' : 'Service-case state (override not wired for ASSR)'}
-      >
-        {DELIVERY_STATE_LABEL[order.delivery_state]}
-      </span>
-    );
-  }
-  return (
-    <select
-      className={styles.inlineEdit}
-      style={{ background: tone.bg, color: tone.fg, fontWeight: 600 }}
-      value={order.delivery_state}
-      disabled={sched.isPending}
-      title="Manual delivery-state override (wins over the derived state)"
-      {...stopRow}
-      onChange={(e) => {
-        const deliveryState = e.target.value as DeliveryState;
-        if (deliveryState === order.delivery_state) return;
-        sched.mutate({ type: 'so', id: order.so_doc_no, deliveryState });
-      }}
-    >
-      {DELIVERY_STATES.map((s) => (
-        <option key={s} value={s}>{DELIVERY_STATE_LABEL[s]}</option>
-      ))}
-    </select>
-  );
-}
 
 type UpdateFieldsMutation = ReturnType<typeof useUpdateDeliveryFields>;
 
@@ -656,6 +610,10 @@ export type DeliveryPlanningBoardProps = {
   exportName?: string;
   searchPlaceholder?: string;
   emptyMessage?: string;
+  /* Code-shipped, read-only layout presets for the Columns picker — passed only
+     by the full Delivery Planning board (the date/time/crew sub-pages have their
+     own storage keys and narrower views). */
+  layoutPresets?: LayoutSeed[];
 
   /* Default ordering while NO column sort is active — forwarded to the
      DataGrid. The two arrangement queues pass arrangementQueueCompare
@@ -701,6 +659,7 @@ export function DeliveryPlanningBoard({
   searchPlaceholder = 'Search SO / ref / customer / phone…',
   emptyMessage = 'No orders need delivering in this view.',
   defaultSort,
+  layoutPresets,
 }: DeliveryPlanningBoardProps) {
   const askConfirm = useConfirm();
   const notify = useNotify();
@@ -852,13 +811,14 @@ export function DeliveryPlanningBoard({
       // EM transport status (owner 2026-09-23) — the two 3PL legs, same
       // cross-border block (default-show only on the EM / SG tabs).
       'em_delivery_status', 'consignment_no', 'vessel_voyage', 'etd_port_klang',
-      'bs_delivery_date', 'esb_remarks', 'bs_remarks', 'ctn', 'em_delivered_date',
+      'bs_delivery_date', 'esb_remarks', 'bs_remarks', 'ctn',
       // Crew — assigned later, default-hidden
       'trip_no', 'lorry', 'driver', 'driver_ic', 'driver_contact', 'driver_2', 'helper_1', 'helper_2',
       // Admin remark, document date
       'dp_remark', 'do_date',
-      // Send status, then the coarse / derived states (hidden — the tabs show them)
-      'wa_message', 'delivery_state', 'arrangement_stage', 'delivery_substatus',
+      // Send status, then the message sub-status (delivery_state / arrangement_stage
+      // are no longer board columns — still derived server-side for the top tabs).
+      'wa_message', 'delivery_substatus',
     ];
     const pos = new Map(DP_DEFAULT_ORDER.map((k, i) => [k, i] as const));
     const cols: DataGridColumn<PlanningOrder>[] = [
@@ -1123,34 +1083,11 @@ export function DeliveryPlanningBoard({
       exportValue: (o) => o.delivery_message_status ?? '',
       sortFn: (a, b) => (a.delivery_message_status ?? '').localeCompare(b.delivery_message_status ?? ''),
     },
-    {
-      /* The coarse, derived scm.delivery_state (Pending Delivery / Schedule /
-         Overdue / Delivered) — the field the top state tabs use. Kept as a
-         default-hidden column so its manual override editor stays reachable; the
-         tabs get their own rework later (owner 2026-09-22). */
-      key: 'delivery_state', label: 'Delivery State', width: 160, sortable: true, groupable: true, defaultHidden: true,
-      accessor: (o) => <StatusEditCell order={o} sched={sched} />,
-      searchValue: (o) => DELIVERY_STATE_LABEL[o.delivery_state],
-      groupValue: (o) => DELIVERY_STATE_LABEL[o.delivery_state],
-      exportValue: (o) => DELIVERY_STATE_LABEL[o.delivery_state],
-      sortFn: (a, b) => a.delivery_state.localeCompare(b.delivery_state),
-    },
-    /* ── Arrangement pipeline (derived server-side, lib/arrangement-stage.ts) —
-       the sub-state WITHIN Pending Schedule (Pending Date Arrangement /
-       Pending Time Arrangement / Time arranged) and the live trip the order
-       sits on. Default-hidden (the Pending Schedule sub-count row and the Date /
-       Time Arrangement pages carry the split); groupable so the board can be
-       grouped by stage from the Columns menu. */
-    {
-      key: 'arrangement_stage', label: 'Arrangement', width: 180, groupable: true, defaultHidden: true,
-      accessor: (o) => {
-        const label = arrangementStageLabel(o);
-        return label ? label : <NotApplicable />;
-      },
-      searchValue: (o) => arrangementStageLabel(o),
-      groupValue: (o) => arrangementStageLabel(o) || '(not in pipeline)',
-      exportValue: (o) => arrangementStageLabel(o),
-    },
+    /* delivery_state (coarse Pending/Schedule/Overdue/Delivered) and
+       arrangement_stage (its Pending-Schedule sub-state) are no longer board
+       columns (owner 2026-09-24) — both are still derived server-side and drive
+       the top state tabs; the manual state override lives on the bulk "Status"
+       action. */
     {
       /* The live (non-CANCELLED) trip carrying this order's DELIVERY stop —
          "Time arranged" made concrete. '—' until the order is on a trip. */
@@ -1266,13 +1203,9 @@ export function DeliveryPlanningBoard({
       accessor: (o) => o.ctn ?? '—',
       searchValue: (o) => o.ctn ?? '',
     },
-    {
-      key: 'em_delivered_date', label: 'Done Delivery', width: 130, sortable: true, defaultHidden: !isEmSg,
-      accessor: (o) => detail(fmtDateOrDash(o.em_delivered_date)),
-      searchValue: (o) => o.em_delivered_date ?? '',
-      sortFn: (a, b) => String(a.em_delivered_date ?? '').localeCompare(String(b.em_delivered_date ?? '')),
-      filterType: 'date', dateValue: (o) => o.em_delivered_date,
-    },
+    /* em_delivered_date ("Done Delivery") dropped as a board column (owner
+       2026-09-24 — BS Delivery Date is the EM last-mile date); the field stays
+       editable in the fields drawer. */
     /* Crew — split into the HC delivery-sheet columns. Default-HIDDEN per the
        owner's 2026-09-22 column pass (crew is assigned later, not at planning);
        re-show Driver / Lorry / helpers from the Columns drawer. */
@@ -1593,6 +1526,7 @@ export function DeliveryPlanningBoard({
         rows={rows}
         columns={columns}
         storageKey={storageKey}
+        layoutPresets={layoutPresets}
         exportName={exportName}
         rowKey={rowIdOf}
         searchPlaceholder={searchPlaceholder}

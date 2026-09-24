@@ -658,7 +658,7 @@ export function ColumnsDrawer({
               {[l.hint, `${l.count} columns`].filter(Boolean).join(" · ")}
             </span>
           </span>
-          {(onDuplicateLayout || onRenameLayout) && (
+          {(onDuplicateLayout || onRenameLayout) && !l.readOnly && (
             <span
               role="button"
               tabIndex={0}

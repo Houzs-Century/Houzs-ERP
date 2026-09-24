@@ -43,28 +43,15 @@ import { useDebouncedValue } from '../lib/hooks';
 import { SkeletonRows } from './Skeleton';
 import { DateField } from './DateField';
 import {
-  DEFAULT_DATA_GRID_LAYOUT,
-  type DataGridLayout, isSharedDataGridStorageKey,
-  materializeDataGridLayout,
-  useCompanyScopedDataGridLayout,
-  writeDataGridLayout,
+  DEFAULT_DATA_GRID_LAYOUT, type DataGridLayout, isSharedDataGridStorageKey,
+  materializeDataGridLayout, useCompanyScopedDataGridLayout, writeDataGridLayout,
 } from './dataGridLayoutStorage';
 import { purgeStoredDataGridFilters, readDataGridFilters, writeDataGridFilters } from './dataGridFilterStorage';
 import { subscribeActiveCompany, getActiveCompanySnapshot } from '../../../lib/activeCompany';
 import {
-  EMPTY_LAYOUT,
-  createNamedLayout,
-  dataGridTableKey,
-  deleteNamedLayout,
-  renameCompanyDefault,
-  renameNamedLayout,
-  updateNamedLayout,
-  getTableLayoutsSnapshot,
-  saveCompanyDefault,
-  saveMyLayout,
-  serializeLayout,
-  subscribeTableLayouts,
-  type StoredLayout,
+  EMPTY_LAYOUT, createNamedLayout, dataGridTableKey, deleteNamedLayout, renameCompanyDefault,
+  renameNamedLayout, updateNamedLayout, getTableLayoutsSnapshot, saveCompanyDefault, saveMyLayout,
+  serializeLayout, subscribeTableLayouts, type StoredLayout, type LayoutSeed,
 } from '../../../lib/tableLayouts';
 import { shortCompanyName } from '../../../lib/branding';
 import { inferColumnGroup } from '../../../lib/columnGroups';
@@ -292,6 +279,10 @@ export type DataGridProps<T> = {
    * the trigger, the key just names the row).
    */
   scrollToRow?: { key: string; nonce: number } | null;
+  /** Read-only, code-shipped layouts shown FIRST in the Columns > Layout picker
+   *  (page-defined, team-wide). Picking one copies it into the live arrangement,
+   *  same as a saved layout; they cannot be renamed / updated / deleted. */
+  layoutPresets?: LayoutSeed[];
 };
 
 type Layout = DataGridLayout;
@@ -309,12 +300,9 @@ const coerceSearchString = (v: ReactNode): string => {
    math via the getUTCDate / setUTCDate family is correct. */
 export type DatePreset = 'today' | 'tomorrow' | 'thisWeek' | 'thisMonth' | 'lastMonth' | 'overdue';
 const DATE_PRESETS: { key: DatePreset; label: string }[] = [
-  { key: 'today',     label: 'Today' },
-  { key: 'tomorrow',  label: 'Tomorrow' },
-  { key: 'thisWeek',  label: 'This week' },
-  { key: 'thisMonth', label: 'This month' },
-  { key: 'lastMonth', label: 'Last month' },
-  { key: 'overdue',   label: 'Overdue' },
+  { key: 'today', label: 'Today' }, { key: 'tomorrow', label: 'Tomorrow' },
+  { key: 'thisWeek', label: 'This week' }, { key: 'thisMonth', label: 'This month' },
+  { key: 'lastMonth', label: 'Last month' }, { key: 'overdue', label: 'Overdue' },
 ];
 const dateMatchesPreset = (iso: string | null | undefined, preset: DatePreset): boolean => {
   if (!iso) return false;
@@ -379,6 +367,7 @@ function DataGridInner<T>({
   overlayHidden,
   onUserAdjustColumns,
   scrollToRow,
+  layoutPresets,
 }: DataGridProps<T>) {
   /* HOUZS-style inline expansion (PR so-list-houzs-port). Tracks the set of
      expanded row ids; rendering inserts a colSpan sub-<tr> directly under
@@ -793,6 +782,15 @@ function DataGridInner<T>({
       pinned: layout.pinned,
       groupBy: layout.groupBy,
     });
+    /* Code-shipped page seeds lead the picker: the curated views ship in the
+       build, ahead of company defaults and the user's own saved layouts. */
+    for (const s of layoutPresets ?? []) {
+      rows.push({
+        id: `seed:${s.id}`, label: s.label, readOnly: true, isDefault: false,
+        count: Math.max(0, columns.length - s.layout.hidden.length),
+        active: serializeLayout(s.layout) === currentSignature,
+      });
+    }
     for (const co of layoutStore.companies) {
       const saved = layoutStore.defaults[String(co.id)]?.[serverTableKey];
       if (!saved) continue;
@@ -818,11 +816,13 @@ function DataGridInner<T>({
       });
     }
     return rows.length > 0 ? withSingleActive(rows) : undefined;
-  }, [layoutStore, serverTableKey, layout, columns.length]);
+  }, [layoutStore, serverTableKey, layout, columns.length, layoutPresets]);
 
   const applyGridPreset = useCallback((id: string) => {
     const [kind, rawId] = id.split(':');
-    const saved = kind === 'saved'
+    const saved = kind === 'seed'
+      ? layoutPresets?.find((p) => p.id === rawId)?.layout
+      : kind === 'saved'
       ? layoutStore.myLayouts[serverTableKey]?.find((l) => l.id === Number(rawId))?.layout
       : layoutStore.defaults[String(Number(rawId))]?.[serverTableKey];
     if (!saved) return;
@@ -836,7 +836,7 @@ function DataGridInner<T>({
       // Picking a layout must not re-sort the list under the operator.
       sort: l.sort,
     }));
-  }, [layoutStore, serverTableKey, setLayout, onUserAdjustColumns]);
+  }, [layoutStore, serverTableKey, setLayout, onUserAdjustColumns, layoutPresets]);
 
 
   const showAllColumns = useCallback(() => {

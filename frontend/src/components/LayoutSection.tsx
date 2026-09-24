@@ -29,6 +29,10 @@ export interface LayoutPresetOption {
    *  Absent for a company default or a page seed, which they cannot rename or
    *  delete. */
   savedId?: number;
+  /** A code-shipped page seed: pickable, but never renamed / updated / deleted,
+   *  so the row shows no actions menu (a company default has no savedId either
+   *  but IS editable, so absence of savedId alone can't mean read-only). */
+  readOnly?: boolean;
 }
 
 export interface LayoutDefaultManager {
