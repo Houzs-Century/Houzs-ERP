@@ -22,7 +22,7 @@ const VALID = new Set(['SUBMITTED', 'PARTIALLY_RECEIVED', 'DRAFT', 'RECEIVED', '
 
 const base: PoListFilters = {
   status: null, supplierId: null, q: null, from: null, to: null, sort: null,
-  creditorNames: null, creditorCodes: null, currencies: null,
+  creditorNames: null, creditorCodes: null, currencies: null, docDates: null,
 };
 
 describe('readPoListFilters — server-filterable funnel params', () => {
@@ -76,5 +76,19 @@ describe('filterPoList — pushes the server-filterable funnels into the query',
     const { self, calls } = recorder();
     filterPoList(self, base, ctx, VALID);
     expect(calls.some((c) => c.col === 'supplier.name' || c.col === 'supplier.code' || c.col === 'currency')).toBe(false);
+  });
+});
+
+describe('Doc Date funnel — pushed server-side so the pager counts the filtered set', () => {
+  it('reads docDates, dropping anything that is not YYYY-MM-DD', () => {
+    const q: Record<string, string> = { docDates: JSON.stringify(['2026-09-23', '—', "1' or 1=1"]) };
+    expect(readPoListFilters((k) => q[k]).docDates).toEqual(['2026-09-23']);
+    expect(readPoListFilters((k) => (k === 'docDates' ? '["—"]' : undefined)).docDates).toBeNull();
+  });
+
+  it('filters po_date by the ticked dates', () => {
+    const { self, calls } = recorder();
+    filterPoList(self, { ...base, docDates: ['2026-09-23'] }, ctx, VALID);
+    expect(calls.find((c) => c.m === 'in' && c.col === 'po_date')?.vals).toEqual(['2026-09-23']);
   });
 });

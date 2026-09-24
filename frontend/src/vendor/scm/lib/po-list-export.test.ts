@@ -21,5 +21,10 @@ describe("poListParams — server-filterable funnels", () => {
     expect(usp.has("creditorNames")).toBe(false);
     expect(usp.has("creditorCodes")).toBe(false);
     expect(usp.has("currencies")).toBe(false);
+    expect(usp.has("docDates")).toBe(false);
+  });
+
+  it("sends the Doc Date funnel so the pager total counts the filtered set", () => {
+    expect(poListParams({ docDates: ["2026-09-23"] }).get("docDates")).toBe(JSON.stringify(["2026-09-23"]));
   });
 });
