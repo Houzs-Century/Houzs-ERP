@@ -17,6 +17,9 @@
  *      in a key that is kept forever.
  */
 
+import type { MiddlewareHandler } from "hono";
+import type { Env } from "../types";
+
 /** Where the router is mounted, so a label reads as the full path. */
 const MOUNT = "/api/delivery-sheet";
 
@@ -69,3 +72,27 @@ export async function recordSheetUsage(
     console.error(`[sheet-usage] ${endpoint}: ${e instanceof Error ? e.message : String(e)}`);
   }
 }
+
+/** What the router's handlers set for this middleware to read. */
+export type SheetUsageVars = { sheetAuthed?: boolean; usageRows?: number };
+
+/**
+ * The counter itself, as ONE named middleware rather than an inline arrow:
+ * `docs/generated/route-capability-matrix.csv` records a route's router gate
+ * verbatim, and a gate that reads `sheetUsageCounter` says what it is, where
+ * an inlined body would bury the fact that these routes have no auth gate (the
+ * shared-secret check lives in each handler).
+ */
+export const sheetUsageCounter: MiddlewareHandler<{ Bindings: Env; Variables: SheetUsageVars }> = async (c, next) => {
+  await next();
+  if (!c.get("sheetAuthed")) return;
+  const endpoint = sheetUsageEndpoint(c.req.method, c.req.routePath || new URL(c.req.url).pathname);
+  const write = recordSheetUsage(c.env.DB, endpoint, c.get("usageRows") ?? 0, c.res.status >= 400);
+  try {
+    c.executionCtx.waitUntil(write);
+  } catch {
+    // No execution context (some test harnesses): await it rather than leaving
+    // a floating promise the runtime may cancel.
+    await write;
+  }
+};

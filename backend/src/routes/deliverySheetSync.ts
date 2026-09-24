@@ -72,41 +72,22 @@ import { getSupabaseService, isSupabaseConfigured } from "../db/supabase";
 import { SUPPLIER_DATE_SLOT_COL, cascadePoSupplierDate } from "../scm/lib/po-supplier-date-cascade";
 import { poHasDownstream } from "../scm/lib/downstream-lock";
 import { enqueueEdit } from "../scm/lib/autocount-outbox";
-import { recordSheetUsage, sheetUsageEndpoint } from "../lib/sheet-sync-usage";
+import { sheetUsageCounter, type SheetUsageVars } from "../lib/sheet-sync-usage";
 
 /** `sheetAuthed` is set once the shared secret matched; `usageRows` is how
  *  many records the handler is about to answer with. Both feed the usage
- *  counter below and nothing else. */
-type SheetVars = { sheetAuthed?: boolean; usageRows?: number };
-
-const app = new Hono<{ Bindings: Env; Variables: SheetVars }>();
+ *  counter and nothing else. */
+const app = new Hono<{ Bindings: Env; Variables: SheetUsageVars }>();
 
 /**
  * Per-endpoint usage counters (scm.sheet_sync_usage). The owner's audit of the
  * sheet's scripts (2026-09-24) needs "how often, and how much" to survive
  * longer than three months, which is the one question nothing here could
  * answer — see the migration's header for why neither the sheet's own log nor
- * Analytics Engine can stand in.
- *
- * Counted only once the shared secret matched: a wrong key must keep touching
- * no database at all (rate limit + 401), or this counter becomes a way to make
- * an unauthenticated caller write to Postgres. Recorded after the response is
- * decided, on `waitUntil` where the runtime offers one, and a failure to count
- * can never fail the sync.
+ * Analytics Engine can stand in. Counted only once the shared secret matched,
+ * so a wrong key still touches no database at all.
  */
-app.use("*", async (c, next) => {
-  await next();
-  if (!c.get("sheetAuthed")) return;
-  const endpoint = sheetUsageEndpoint(c.req.method, c.req.routePath || new URL(c.req.url).pathname);
-  const write = recordSheetUsage(c.env.DB, endpoint, c.get("usageRows") ?? 0, c.res.status >= 400);
-  try {
-    c.executionCtx.waitUntil(write);
-  } catch {
-    // No execution context (some test harnesses, and `scheduled`): await it
-    // rather than leaving a floating promise the runtime may cancel.
-    await write;
-  }
-});
+app.use("*", sheetUsageCounter);
 
 /** The company the sheet's secret speaks for. */
 const SHEET_KEY_COMPANY = "HOUZS";
