@@ -147,6 +147,8 @@ type SoHeader = {
   venue: string | null;
   // The linked fair event (owner 2026-09-24); absent on an older server.
   fair?: LinkedFair | null;
+  // The day of that fair the order was written on; null = not recorded.
+  fair_date?: string | null;
   // The processing-date column the lock reads. Label, API field and column are
   // finally the same word (mig 0284 renamed it from internal_expected_dd).
   processing_date?: string | null;
@@ -1344,9 +1346,13 @@ function SalesOrderDetailV2ReadOnly() {
                     dates (owner 2026-09-24); shown only under the order's own venue. */}
                 <Field
                   label="Fair"
-                  value={salesOrder.fair && linkedEvent(salesOrder.venue, salesOrder.fair) ? fairLabel(salesOrder.fair) : salesOrder.venue || "—"}
+                  value={salesOrder.fair && linkedEvent(salesOrder.venue, salesOrder.fair, null) ? fairLabel(salesOrder.fair) : salesOrder.venue || "—"}
                   muted={!salesOrder.venue}
                 />
+                {/* Which day of the fair (owner 2026-09-24) — only once one is recorded. */}
+                {salesOrder.fair_date && (
+                  <Field label="Fair day" value={fmtDate(salesOrder.fair_date)} />
+                )}
                 <Field
                   label="Processing Date"
                   value={fmtDate(salesOrder.processing_date)}

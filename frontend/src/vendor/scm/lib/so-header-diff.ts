@@ -58,9 +58,11 @@ const comparable = (v: unknown): boolean =>
     are sent. A picked fair event (owner 2026-09-24, components/fairPick.ts) is
     its venue, organizer and period together. Sent by halves, a new organizer
     with an unchanged end date would reach the server without the end, which it
-    reads as a one-day fair — a different event, or none. */
+    reads as a one-day fair — a different event, or none. The DAY of it rides
+    along too: the server keeps a day only as a day of the event in the same
+    body, so a day sent alone could not be checked. */
 const TRAVEL_TOGETHER: readonly (readonly string[])[] = [
-  ['fairVenue', 'fairOrganizer', 'fairStart', 'fairEnd'],
+  ['fairVenue', 'fairOrganizer', 'fairStart', 'fairEnd', 'fairDate'],
 ];
 
 /**

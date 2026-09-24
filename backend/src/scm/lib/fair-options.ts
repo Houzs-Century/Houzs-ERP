@@ -211,6 +211,46 @@ export function editFairPick(
   return { venue, organizer, picked };
 }
 
+/**
+ * The DAY of the picked event this order was written on (owner 2026-09-24: the
+ * event runs 7-9, 「他一选完那个 event，这边下拉菜单就要拉出来 7、8、9 三天给他
+ * 选」), or null.
+ *
+ * Kept only beside the event it belongs to: the SAME body must pick an event
+ * (organizer + period), and the day must fall inside that period and not after
+ * the order date — the fair's dates are what the picker offered, and an order
+ * cannot have been written after the day it was keyed. Anything else is null: no
+ * event, a place alone (Others), a malformed or stray day. Never an error — no
+ * fair problem may block a sale; `fairDayMissing` is what asks for a day.
+ *
+ * `soDate` is REQUIRED: pass null only where the order has no date to cap by.
+ */
+export function fairDayOnSave(
+  body: { fairOrganizer?: unknown; fairStart?: unknown; fairEnd?: unknown; fairDate?: unknown },
+  soDate: string | null,
+): string | null {
+  const organizer = typeof body.fairOrganizer === 'string' ? body.fairOrganizer.trim() : '';
+  const picked = fairPickedPeriod(body);
+  const day = typeof body.fairDate === 'string' ? body.fairDate.slice(0, 10) : '';
+  if (!organizer || !picked || !ISO_DATE.test(day)) return null;
+  /* A NULL end is ONE day, as everywhere else in this module. */
+  if (day < picked.startDate || day > (picked.endDate ?? picked.startDate)) return null;
+  const cap = clean(soDate).slice(0, 10);
+  if (ISO_DATE.test(cap) && day > cap) return null;
+  return day;
+}
+
+/** True when the body picked an EVENT but carries no day of it that
+ *  `fairDayOnSave` would keep. A place alone, or no pick at all, needs no day. */
+export function fairDayMissing(
+  body: { fairOrganizer?: unknown; fairStart?: unknown; fairEnd?: unknown; fairDate?: unknown },
+  soDate: string | null,
+): boolean {
+  const organizer = typeof body.fairOrganizer === 'string' ? body.fairOrganizer.trim() : '';
+  if (!organizer || !fairPickedPeriod(body)) return false;
+  return fairDayOnSave(body, soDate) === null;
+}
+
 /** Does `date` fall inside the project's period? Plain lexicographic MYT date
  *  compare, no `Date` objects, because `new Date('2026-07-19')` is 08:00 MYT and
  *  the arithmetic from there re-introduces the midnight off-by-one that

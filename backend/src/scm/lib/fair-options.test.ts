@@ -8,6 +8,8 @@ import {
   lookbackWindow,
   fairPickedPeriod,
   editFairPick,
+  fairDayOnSave,
+  fairDayMissing,
   linkedFairOf,
   type FairProjectRow,
 } from './fair-options';
@@ -373,6 +375,61 @@ describe('editFairPick — what an edit save picked', () => {
     expect(editFairPick({ fairOrganizer: 'MLE', fairStart: '08/08/2026' }, 'MID VALLEY')).toBeNull();
     expect(editFairPick({ fairOrganizer: '  ', fairStart: '2026-08-08' }, 'MID VALLEY')).toBeNull();
     expect(editFairPick({ fairOrganizer: 'MLE', fairStart: '2026-08-08' }, null)).toBeNull();
+  });
+});
+
+/* Owner 2026-09-24: the event runs 7-9, 「他一选完那个 event，这边下拉菜单就要拉出来 7、8、9
+   三天给他选。这样我就可以确切知道他这张单是在哪一天开的」. */
+describe('fairDayOnSave — the day kept is a day of the picked event', () => {
+  const EVENT = { fairOrganizer: 'MLE', fairStart: '2026-09-07', fairEnd: '2026-09-09' };
+
+  it('keeps any day of the event, first and last included', () => {
+    expect(fairDayOnSave({ ...EVENT, fairDate: '2026-09-07' }, '2026-09-20')).toBe('2026-09-07');
+    expect(fairDayOnSave({ ...EVENT, fairDate: '2026-09-08' }, '2026-09-20')).toBe('2026-09-08');
+    expect(fairDayOnSave({ ...EVENT, fairDate: '2026-09-09' }, '2026-09-20')).toBe('2026-09-09');
+  });
+
+  it('drops a day outside the event, or after the order date', () => {
+    expect(fairDayOnSave({ ...EVENT, fairDate: '2026-09-06' }, '2026-09-20')).toBeNull();
+    expect(fairDayOnSave({ ...EVENT, fairDate: '2026-09-10' }, '2026-09-20')).toBeNull();
+    /* Keyed on the 8th: the 9th had not happened yet. */
+    expect(fairDayOnSave({ ...EVENT, fairDate: '2026-09-09' }, '2026-09-08')).toBeNull();
+    expect(fairDayOnSave({ ...EVENT, fairDate: '2026-09-08' }, '2026-09-08')).toBe('2026-09-08');
+  });
+
+  it('a one-day fair (no end) has exactly one day', () => {
+    const oneDay = { fairOrganizer: 'MLE', fairStart: '2026-09-07', fairEnd: null };
+    expect(fairDayOnSave({ ...oneDay, fairDate: '2026-09-07' }, '2026-09-20')).toBe('2026-09-07');
+    expect(fairDayOnSave({ ...oneDay, fairDate: '2026-09-08' }, '2026-09-20')).toBeNull();
+  });
+
+  it('keeps no day without an event beside it, and none that is not a date', () => {
+    expect(fairDayOnSave({ fairDate: '2026-09-08' }, '2026-09-20')).toBeNull();
+    expect(fairDayOnSave({ fairStart: '2026-09-07', fairEnd: '2026-09-09', fairDate: '2026-09-08' }, '2026-09-20')).toBeNull();
+    expect(fairDayOnSave({ ...EVENT, fairDate: '08/09/2026' }, '2026-09-20')).toBeNull();
+    expect(fairDayOnSave({ ...EVENT, fairDate: null }, '2026-09-20')).toBeNull();
+    expect(fairDayOnSave({ ...EVENT }, '2026-09-20')).toBeNull();
+  });
+
+  it('with no order date to cap by, the event alone bounds the day', () => {
+    expect(fairDayOnSave({ ...EVENT, fairDate: '2026-09-09' }, null)).toBe('2026-09-09');
+  });
+});
+
+describe('fairDayMissing — an event picked without a day of it', () => {
+  const EVENT = { fairOrganizer: 'MLE', fairStart: '2026-09-07', fairEnd: '2026-09-09' };
+
+  it('asks for the day when an event is picked without one, or with a stray one', () => {
+    expect(fairDayMissing({ ...EVENT }, '2026-09-20')).toBe(true);
+    expect(fairDayMissing({ ...EVENT, fairDate: null }, '2026-09-20')).toBe(true);
+    expect(fairDayMissing({ ...EVENT, fairDate: '2026-09-12' }, '2026-09-20')).toBe(true);
+    expect(fairDayMissing({ ...EVENT, fairDate: '2026-09-08' }, '2026-09-20')).toBe(false);
+  });
+
+  it('a place alone, or no pick at all, needs no day', () => {
+    expect(fairDayMissing({}, '2026-09-20')).toBe(false);
+    expect(fairDayMissing({ fairOrganizer: null, fairStart: null, fairEnd: null, fairDate: null }, '2026-09-20')).toBe(false);
+    expect(fairDayMissing({ fairOrganizer: 'MLE' }, '2026-09-20')).toBe(false);
   });
 });
 

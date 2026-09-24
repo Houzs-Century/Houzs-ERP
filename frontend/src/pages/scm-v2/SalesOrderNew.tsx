@@ -90,7 +90,8 @@ import { useAuth } from '../../vendor/scm/lib/auth';
    AuthUser to default + name the creator so the field is never blank. */
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import { useVenues, type AutoVenue } from '../../vendor/scm/lib/venues-queries';
-import { FairPicker, type FairPickValue } from '../../components/FairPicker';
+import { FairDayPicker, FairPicker, type FairPickValue } from '../../components/FairPicker';
+import { fairDayCheck, fairEditPatch, fairEventOf } from '../../components/fairPick';
 import {
   useLocalities, countryForState,
 } from '../../vendor/scm/lib/localities-queries';
@@ -1043,7 +1044,7 @@ export const SalesOrderNew = () => {
      it leads here and the master id follows it by name for back-compat with the
      `venue_id` column and the reports that read it. */
   const [fairPick, setFairPick] = useState<FairPickValue>({
-    venue: null, organizer: null, startDate: null, endDate: null,
+    venue: null, organizer: null, startDate: null, endDate: null, day: null,
   });
   const effectiveVenueName: string = useMemo(() => {
     if (fairPick.venue) return fairPick.venue;
@@ -1091,7 +1092,7 @@ export const SalesOrderNew = () => {
       /* An auto-filled venue is a PLACE, never an event — no organizer and no
          period. Seeding a period here would tell the server the operator chose
          an occurrence they never saw. */
-      setFairPick({ venue: autoVenue.venueName, organizer: null, startDate: null, endDate: null });
+      setFairPick({ venue: autoVenue.venueName, organizer: null, startDate: null, endDate: null, day: null });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoVenue]);
@@ -1394,6 +1395,7 @@ export const SalesOrderNew = () => {
     items: lines.map((l) => ({ itemCode: l.itemCode, itemGroup: l.itemGroup, variants: l.variants, qty: l.qty })),
     asDraft: asDraftFlag,
     hasVenue: !!effectiveVenueId,
+    ...fairDayCheck(fairEditPatch(fairEventOf(fairPick)), {}),
     hasSalesperson: !!salespersonId,
     companyCode: branding.companyCode,
     salesLocation,
@@ -1411,7 +1413,7 @@ export const SalesOrderNew = () => {
       convertedFromDocNo: d.convertedFromDocNo,
       amountSen: d.amountSen,
     })),
-  }), [debtorName, phone, lines, effectiveVenueId, salespersonId, branding.companyCode, salesLocation, state, processingDate, deliveryDate, fillAddressLater, address1, postcode, paymentDrafts]);
+  }), [debtorName, phone, lines, effectiveVenueId, fairPick, salespersonId, branding.companyCode, salesLocation, state, processingDate, deliveryDate, fillAddressLater, address1, postcode, paymentDrafts]);
 
   /* Live "Can't save — N to fix" list, asked of the backend as the operator
      types (debounced). Based on the CONFIRMED create (asDraft:false), which is
@@ -1592,6 +1594,8 @@ export const SalesOrderNew = () => {
            was keyed — not a day the fair was necessarily on. */
         fairStart: fairPick.startDate ?? undefined,
         fairEnd: fairPick.endDate ?? undefined,
+        /* Which DAY of that event (owner 2026-09-24) — kept only as one of its days. */
+        fairDate: fairPick.day ?? undefined,
         /* Address handling: address1/2 skipped when fill-later is on, but
            State/City/Postcode/BuildingType always submit. */
         address1: fillAddressLater ? undefined : (address1 || undefined),
@@ -1918,7 +1922,7 @@ export const SalesOrderNew = () => {
                 <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
               </span>
             </label>
-            <label className={styles.field}>
+            <label className={styles.field} style={{ gridColumn: 'span 2' }}>
               <span className={styles.fieldLabel}>Fair</span>
               {/* Owner 2026-09-13: a row is a PLACE plus an ORGANIZER, no dates,
                   and nothing here is typed — "Others" is a second PICK over the
@@ -1949,6 +1953,15 @@ export const SalesOrderNew = () => {
                 </span>
               )}
             </label>
+            {/* Which DAY of the picked event (owner 2026-09-24) — shown once an
+                event is picked, in the slot the row keeps free for it. */}
+            {fairEventOf(fairPick) && (
+              <label className={styles.field}>
+                <span className={styles.fieldLabel}>Fair Day</span>
+                <FairDayPicker id="so-fair-day" value={fairPick} soDate={null} onChange={setFairPick}
+                  wrapClassName={styles.selectWrap} selectClassName={styles.fieldSelect} />
+              </label>
+            )}
             <label className={styles.field} style={{ gridColumn: 'span 2' }}>
               <span className={styles.fieldLabel}>Processing Date</span>
               <DateField

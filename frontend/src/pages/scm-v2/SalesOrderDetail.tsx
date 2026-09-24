@@ -140,8 +140,8 @@ import { soStatusDisplay, type DeliveryState, type SoLifecycle } from '../../ven
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import { useAuth } from '../../vendor/scm/lib/auth';
 import { useVenues } from '../../vendor/scm/lib/venues-queries';
-import { FairPicker } from '../../components/FairPicker';
-import { fairEditPatch, fairEventOf, fairPickValue, linkedEvent, type LinkedFair } from '../../components/fairPick';
+import { FairDayPicker, FairPicker } from '../../components/FairPicker';
+import { fairDayCheck, fairEditPatch, fairEventOf, fairPickValue, linkedEvent, type LinkedFair } from '../../components/fairPick';
 import { useStateWarehouseMappings } from '../../vendor/scm/lib/state-warehouse-queries';
 import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
 import { generateSalesOrderPdf } from '../../vendor/scm/lib/sales-order-pdf';
@@ -284,6 +284,7 @@ type SoHeader = {
      POST/PATCH when the row's salesperson belongs to a venue. */
   venue_id: string | null;
   fair?: LinkedFair | null; // the linked event (owner 2026-09-24); absent on an older server
+  fair_date?: string | null; // the day of that event the order was written on
   branding: string | null;
   transfer_to: string | null;
   address1: string | null;
@@ -810,7 +811,7 @@ export const SalesOrderDetail = () => {
     const proc = header?.processing_date ? String(header.processing_date).slice(0, 10) : '';
     const deliv = header?.customer_delivery_date ? String(header.customer_delivery_date).slice(0, 10) : '';
     return {
-      isEdit: true, hasVenue: true, hasSalesperson: true, fillAddressLater: false, companyCode: null, salesLocation: '', payments: [],
+      isEdit: true, hasVenue: true, hasSalesperson: true, fillAddressLater: false, companyCode: null, salesLocation: '', payments: [], ...customerCardRef.current?.fairDayKeys(),
       phone: customerCardRef.current?.getPhone() ?? header?.phone, debtorName: header?.debtor_name,
       address1: header?.address1, postcode: header?.postcode, customerState: header?.customer_state,
       items: editedDraftGroups.map((d) => ({ itemCode: d.itemCode, itemGroup: d.itemGroup, variants: d.variants, qty: d.qty })),
@@ -1149,7 +1150,7 @@ export const SalesOrderDetail = () => {
       const r = await authedFetch<{ problems: SaveProblem[] }>('/mfg-sales-orders/validate', {
         method: 'POST',
         body: JSON.stringify({
-          isEdit: true, hasVenue: true, hasSalesperson: true, fillAddressLater: false, companyCode: null, salesLocation: '', payments: [],
+          isEdit: true, hasVenue: true, hasSalesperson: true, fillAddressLater: false, companyCode: null, salesLocation: '', payments: [], ...handle.fairDayKeys(),
           processingDate: '', customerDeliveryDate: '', phone: handle.getPhone(), debtorName: header?.debtor_name,
           items: items.map((it) => ({ itemCode: it.item_code, itemGroup: it.item_group, variants: {}, qty: it.qty })),
           origItemGroups: items.map((it) => it.item_group),
@@ -2739,6 +2740,8 @@ type CustomerCardHandle = {
   /** Is the DIRECT half dirty? Tells "nothing to submit" apart from "nothing
       needs APPROVAL" — the two the old single return could not. */
   hasDirectHeaderChanges: () => boolean;
+  /** The fair keys the submit check needs when this edit picked or changed the event or its day (fairPick.ts). */
+  fairDayKeys: () => Record<string, string | null>;
 };
 
 type CustomerCardProps = {
@@ -2886,7 +2889,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
        master link is durable. */
     venue: h.venue ?? '',
     venueId: h.venue_id ?? '',
-    fair: linkedEvent(h.venue, h.fair),
+    fair: linkedEvent(h.venue, h.fair, h.fair_date ?? null),
     phone: h.phone ?? '',
     address1: h.address1 ?? '',
     address2: h.address2 ?? '',
@@ -3265,6 +3268,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
     getLockedHeaderChanges: () =>
       buildAmendmentHeaderChanges(lockedHeaderNow, lockedHeaderOriginal),
     hasDirectHeaderChanges: () => hasHeaderChanges(directHeaderPatch()),
+    fairDayKeys: () => fairDayCheck(buildPayload(), originalPayloadRef.current),
   }));
 
   /* Read-only outside edit mode or on a locked SO; the identity fields also freeze once a live DO / SI exists (the date pair + note do not). */
@@ -3423,7 +3427,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
                 <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
               </span>
             </label>
-            <label className={styles.field}>
+            <label className={styles.field} style={{ gridColumn: 'span 2' }}>
               <span className={styles.fieldLabel}>Fair</span>
               {/* Same picker as the create forms. A picked EVENT is saved and linked
                   exactly (owner 2026-09-24); the order's link reads back as its row.
@@ -3445,7 +3449,10 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
                 selectClassName={styles.fieldSelect}
               />
             </label>
-            <label className={styles.field}>
+            {form.fair && (/* which DAY of the picked event (owner 2026-09-24) */
+              <label className={styles.field}><span className={styles.fieldLabel}>Fair Day</span><FairDayPicker id="so-detail-fair-day" value={fairPickValue(form.venue || null, form.fair)} soDate={header.so_date} disabled={inputsDisabled}
+                onChange={(next) => setForm((s) => ({ ...s, fair: fairEventOf(next) }))} wrapClassName={styles.selectWrap} selectClassName={styles.fieldSelect} /></label>)}
+            <label className={styles.field} style={{ gridColumn: 'span 2' }}>
               <span className={styles.fieldLabel}>Processing Date</span>
               <DateField
                 fullWidth
@@ -3466,7 +3473,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
                 </span>
               )}
             </label>
-            <label className={styles.field}>
+            <label className={styles.field} style={{ gridColumn: 'span 2' }}>
               <span className={styles.fieldLabel}>Delivery Date</span>
               <DateField
                 fullWidth

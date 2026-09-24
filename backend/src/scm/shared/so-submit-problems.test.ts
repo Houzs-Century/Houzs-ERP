@@ -14,6 +14,7 @@ const OK: SoSubmitFacts = {
   asDraft: false,
   hasVenue: true,
   hasSalesperson: true,
+  fairDayMissing: false,
   gateLocation: true,
   companyCode: 'HOUZS',
   salesLocation: 'HQ-WH',
@@ -50,11 +51,18 @@ describe('collectSoSubmitProblems', () => {
     expect(ps.every((p) => p.code === 'required_field')).toBe(true);
   });
 
-  it('a draft does not need the confirm-only fields (venue, salesperson, location)', () => {
+  it('an event picked without its day asks for the day, after the venue (owner 2026-09-24)', () => {
+    expect(messages({ ...OK, fairDayMissing: true })).toEqual(['Fair day is required.']);
+    expect(messages({ ...OK, hasVenue: false, fairDayMissing: true, hasSalesperson: false }))
+      .toEqual(['Venue is required.', 'Fair day is required.', 'Salesperson is required.']);
+  });
+
+  it('a draft does not need the confirm-only fields (venue, fair day, salesperson, location)', () => {
     const ps = collectSoSubmitProblems({
       ...OK,
       asDraft: true,
       hasVenue: false,
+      fairDayMissing: true,
       hasSalesperson: false,
       gateLocation: false,
       salesLocation: '',

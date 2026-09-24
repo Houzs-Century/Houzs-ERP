@@ -155,7 +155,7 @@ import {
   type VenueBindingSb,
 } from '../lib/venue-binding';
 import { bindVenueOnCreate, fairLinkForEdit, loadLinkedFair, resolveFairForSave, type FairDb } from '../lib/fair-binding';
-import { fairPickedPeriod } from '../lib/fair-options';
+import { fairDayMissing, fairDayOnSave, fairPickedPeriod } from '../lib/fair-options';
 import { recordSoAudit, diffFields, type FieldChange } from '../lib/so-audit';
 /* What changed on a LINE, for the audit trail — derived from the update about to
    be persisted rather than a hand-kept field list (owner 2026-08-12; see the
@@ -1641,7 +1641,7 @@ mfgSalesOrders.get('/:docNo', async (c) => {
        LIST route reads that view, so the base-table detail read is the only
        place they are valid. (`proceeded_at` was appended here until 2026-08-18,
        feeding a "Proceed Date" the desktop deleted on 2026-06-05.) */
-    scopeToCompany(sb.from('mfg_sales_orders').select(`${HEADER}, amend_date_from_customer, amended_delivery_date, amend_reason, revision, signature_b64, slip_key, slip_state, slip_image_key, receipt_image_key, version, linked_ac_docno, collaborator_staff_ids, access_staff_ids, open_to_all, project_id`).eq('doc_no', docNo), c).maybeSingle(),
+    scopeToCompany(sb.from('mfg_sales_orders').select(`${HEADER}, amend_date_from_customer, amended_delivery_date, amend_reason, revision, signature_b64, slip_key, slip_state, slip_image_key, receipt_image_key, version, linked_ac_docno, collaborator_staff_ids, access_staff_ids, open_to_all, project_id, fair_date`).eq('doc_no', docNo), c).maybeSingle(),
     /* line_no = the persisted listing order (0165); NULLS LAST so pre-0165
        docs fall back to created_at + the rule re-derive below. */
     sb.from('mfg_sales_order_items').select(ITEM).eq('doc_no', docNo)
@@ -4117,6 +4117,9 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
        to, resolved above via the active-fair resolver. NULL when the salesperson
        has no active fair; never blocks creation. */
     project_id: projectIdToStamp,
+    /* The DAY of the picked event the order was written on (owner 2026-09-24),
+       kept only as a day of that event, never after the order date. */
+    fair_date: dateOrNull(fairDayOnSave(body, soDateForVenue)),
     /* Fitted to the book's 40-char columns on save — scm/lib/so-address-on-save.ts, docs/bugs/0738. */
     ...fitSoAddress([(body.address1 as string) ?? null, (body.address2 as string) ?? null,
       (body.address3 as string) ?? null, (body.address4 as string) ?? null]),
@@ -4810,6 +4813,10 @@ mfgSalesOrders.post('/validate', async (c) => {
     asDraft,
     hasVenue: str(body.venueId).trim() !== '' || body.hasVenue === true,
     hasSalesperson: str(body.salespersonId).trim() !== '' || body.hasSalesperson === true,
+    /* The surfaces send the fair keys only when this draft picks or changes an
+       event (components/fairPick.ts), so an old order's untouched pick never
+       asks for a day it was saved without. */
+    fairDayMissing: fairDayMissing(body, str(body.soDate).slice(0, 10) || todayMY),
     gateLocation: !asDraft && !isEdit && companyRequiresStockLocation(companyCode),
     companyCode,
     salesLocation: str(body.salesLocation),
@@ -5806,6 +5813,8 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
     ['debtorCode', 'debtor_code'], ['debtorName', 'debtor_name'], ['agent', 'agent'],
     ['salesLocation', 'sales_location'], ['ref', 'ref'],
     ['venue', 'venue'], ['venueId', 'venue_id'], ['branding', 'branding'], ['transferTo', 'transfer_to'],
+    /* The fair DAY — written only beside its event; see the fair block below. */
+    ['fairDate', 'fair_date'],
     ['address1', 'address1'], ['address2', 'address2'], ['address3', 'address3'],
     ['address4', 'address4'], ['phone', 'phone'], ['note', 'note'],
     ['remark2', 'remark2'], ['remark3', 'remark3'], ['remark4', 'remark4'],
@@ -5948,6 +5957,19 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
     updates['project_id'] = fairLink.project_id;
     updates['fair_match'] = fairLink.fair_match;
   }
+  /* The fair DAY is kept only as a day of the event in the same body
+     (fairDayOnSave). The screens send the event whole with its day
+     (so-header-diff TRAVEL_TOGETHER), so its start is there whenever the event
+     was picked or dropped (null for Others) — and then the day is re-derived,
+     cleared when none of it came. A bare fairDate names no event to check. */
+  if (body['fairStart'] !== undefined) {
+    const fairDay = fairDayOnSave(body, String(updates['so_date'] ?? beforeRecord.so_date ?? '').slice(0, 10) || null);
+    updates['fair_date'] = fairDay;
+    body['fairDate'] = fairDay;
+  } else {
+    delete updates['fair_date'];
+    delete body['fairDate'];
+  }
   for (const [from, to] of map) {
     if (!(to in updates) || norm(updates[to]) !== norm(beforeRecord[to])) continue;
     delete updates[to];
@@ -6042,6 +6064,8 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
     if (!fairLink) {
       updates['project_id'] = null;
       updates['fair_match'] = 'PENDING';
+      updates['fair_date'] = null;
+      body['fairDate'] = null;
     }
   }
 
