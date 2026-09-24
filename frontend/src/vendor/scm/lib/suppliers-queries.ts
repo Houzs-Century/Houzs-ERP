@@ -9,7 +9,7 @@
 import { useMemo } from 'react';
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
-import { poListParams } from './po-list-export';
+import { poListParams, type PoListFilterParams } from './po-list-export';
 import type { PoListLine } from './po-line-export-columns';
 import { applyListMrpEnrichment, type EnrichableMrpRow, type ListMrpEnrichment } from '../../../lib/listMrpEnrichment';
 import { writeFailed, writeFailedAs } from './mutation-error';
@@ -692,6 +692,20 @@ export function usePurchaseOrdersPaged(params: { page: number; pageSize: number;
     staleTime: 30_000,
     retry: retryUnlessClientError,
     retryDelay: 800,
+  });
+}
+
+/* The PO list's funnel option counts over EVERY matching order, not just the
+   loaded page (GET /mfg-purchase-orders/facets). Same filter params as the list. */
+export type PoListFacets = Record<'supplier' | 'creditor_code' | 'currency' | 'po_date', Array<[string, number]>>;
+export function usePoListFacets(f: PoListFilterParams) {
+  const usp = poListParams({ ...f, sort: undefined });
+  return useQuery({
+    queryKey: ['mfg-purchase-orders-facets', usp.toString()],
+    queryFn: ({ signal }) => authedFetch<{ facets: PoListFacets }>(`/mfg-purchase-orders/facets?${usp.toString()}`, { signal }),
+    placeholderData: (prev) => prev,
+    staleTime: 30_000,
+    retry: retryUnlessClientError,
   });
 }
 
