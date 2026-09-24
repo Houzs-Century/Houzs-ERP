@@ -103,6 +103,7 @@ import type { Env, Variables } from '../env';
 import { skuCategoryResolver, lineIdentityFields } from '../lib/sku-category';
 import { firstSoLinkCategoryMismatch, soLinkCategoryMismatch, hardBoundUnlinkRefusal, hardBoundSplitRefusal, editedLineGroup } from '../lib/hard-bound-po-line';
 import { pgrestIn } from '../lib/pgrest-in-list';
+import { withSoRefPoIds } from '../lib/so-ref-search';
 
 /* ── Supplier sofa-combo auto-pricing (Commander 2026-05-29) ─────────────────
    The supplier prices a sofa SET (a colour-matched bundle of modules) as a
@@ -422,7 +423,7 @@ mfgPurchaseOrders.get('/', async (c) => {
     const psRaw = Number(c.req.query('pageSize'));
     pageSize = Number.isFinite(psRaw) && psRaw > 0 ? Math.min(100, Math.max(1, Math.trunc(psRaw))) : 50;
 
-    const filters = readPoListFilters((k) => c.req.query(k));
+    const filters = await withSoRefPoIds(supabase, c, readPoListFilters((k) => c.req.query(k)));
     const q = filterPoList(
       orderPoList(supabase.from('purchase_orders').select(poListSelect(filters), { count: 'exact' }), filters.sort),
       filters,

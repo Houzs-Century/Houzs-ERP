@@ -22,7 +22,7 @@ const VALID = new Set(['SUBMITTED', 'PARTIALLY_RECEIVED', 'DRAFT', 'RECEIVED', '
 
 const base: PoListFilters = {
   status: null, supplierId: null, q: null, from: null, to: null, sort: null,
-  creditorNames: null, creditorCodes: null, currencies: null, docDates: null,
+  creditorNames: null, creditorCodes: null, currencies: null, docDates: null, soRefPoIds: [],
 };
 
 describe('readPoListFilters — server-filterable funnel params', () => {

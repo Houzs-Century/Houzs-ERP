@@ -14,7 +14,7 @@ function recorder() {
 }
 
 const ctx = { get: (k: string) => (k === 'companyId' ? 1 : undefined) } as { get(key: string): unknown };
-const base: SiListFilters = { status: null, q: null, from: null, to: null, sort: null, debtorNames: null, currencies: null };
+const base: SiListFilters = { status: null, q: null, from: null, to: null, sort: null, debtorNames: null, currencies: null, soRefDocNos: [] };
 
 describe('readSiListFilters — server-filterable funnel params', () => {
   it('parses debtorNames / currencies as JSON arrays, commas in names survive', () => {

@@ -115,6 +115,7 @@ import { advanceSoGeneration } from '../lib/so-generation';
 import { recordEntityAudit, diffFields, compactChanges, fieldChange } from '../lib/entity-audit';
 import { markIdempotencyNoWrite } from '../../middleware/idempotency';
 import { pgrestIn } from '../lib/pgrest-in-list';
+import { withSoRefDocNos } from '../lib/so-ref-search';
 
 export const deliveryOrdersMfg = new Hono<{ Bindings: Env; Variables: Variables }>();
 deliveryOrdersMfg.use('*', supabaseAuth);
@@ -2709,7 +2710,7 @@ deliveryOrdersMfg.get('/', async (c) => {
     /* Tab + search + sort + company + sales scope: the ONE filter the list and
        the line export share (lib/do-list-read.ts), so the two cannot match
        different delivery orders. */
-    const listParams = readDoListParams((k) => c.req.query(k));
+    const listParams = await withSoRefDocNos(sb, c, readDoListParams((k) => c.req.query(k)));
     let q = filterDoList(orderDoList(fromDoList(sb, HEADER, { count: 'exact' }), listParams.sort), listParams, c, scopeIds);
     q = q.range(page * pageSize, page * pageSize + pageSize - 1);
     const res = await q;
