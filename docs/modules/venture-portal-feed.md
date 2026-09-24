@@ -4,7 +4,8 @@ Pushes every changed Houzs sales order — lines, **their costs**, payments,
 and cancellations — to the Venture Portal, which pays Revenue Department
 commission from it. Replaces a monthly hand-exported `.xlsx`. Used by whoever
 administers sync connections (Settings) and read by Finance/Revenue ops
-checking delivery status.
+checking delivery status. The same switch and key also push the product
+catalogue, **items only** — see [Catalogue push](#catalogue-push-items-only).
 
 ## Statuses and flow
 
@@ -72,6 +73,12 @@ non-2xx"):
 - The PII/cost strip list must be applied **in SQL** before anything leaves
   the database (minimum privilege) — widening it is safe (the portal reads a
   fixed column list and ignores extras), narrowing it is not.
+- A line travels as its row EXCEPT `variants`, which is cut to `fabricCode`,
+  `seatHeight`, `legHeight`, `divanHeight`, `gap`, `totalHeight`, `size`,
+  `specials` (string elements only; an object value is dropped) and omitted
+  when the line has none of them. `extraAddonAmountRM`, `remark`,
+  `extraAddonNote` and every other variant key stay here — the portal parses a
+  line by those eight and falls back to `description2` without them.
 - `vp_build_payloads` takes an array and answers the whole batch in **one**
   round trip — never recompose per-document in a Worker loop (subrequest
   budget).
@@ -113,10 +120,60 @@ non-2xx"):
   applied via an actual `pg-migrate` run. Check the deploy log rather than
   assuming the objects exist before relying on them.
 
+## Catalogue push (items only)
+
+Each in-scope company's catalogue — SKU master (`mfg_products`, inactive rows
+too), Modular models with `allowed_options`, the six Bedframe/Sofa maintenance
+pools, special add-ons, fabrics, and master sofa combos (soft-deleted ones
+too) — goes to `POST <portal>/api/erp/v1/products` (contract v2). Same switch,
+company scope, `vp.url` and `vp.secret` as the orders; `vp.since` does not
+apply.
+
+- **No price or cost ever leaves.** `scm.vp_build_catalogue` names every
+  column it sends, so a column added to a source table adds nothing.
+  Maintenance entries become a string or `{value, active}` (no `priceSen`);
+  combos send the KEYS of `prices_by_height` as `heights`, never a value;
+  `allowed_options` and `modules` pass `scm.vp_strip_money_keys`. The fabric
+  `*_price_tier` fields are PRICE_1/2/3 labels, not money.
+- **Receiver**: `vp.url` (https) with its trailing `/sales-orders` replaced by
+  `/products`. Any other `vp.url` → nothing is sent and `GET /status` shows
+  `catalogue.urlProblem`. Never guess another URL.
+- **Cadence**: the `*/5` cron, started only after the order drain has settled
+  and caught on its own, so it can never delay or break the orders. Each run
+  asks `scm.vp_catalogue_digest` (md5 of the body) and builds and sends only
+  when it differs from `delivered_digest` in `scm.venture_portal_catalogue_state`.
+  The body is fetched with `scm.vp_catalogue_snapshot`, which returns the
+  digest of that same build — record that one, never the digest asked first.
+- **Split by section only.** One POST unless the body exceeds
+  `VP_CATALOGUE_MAX_POST_BYTES` (the portal's host refuses a body over 4.5 MB);
+  then whole sections are packed into several POSTs, each with `full: true`.
+  Never split one section across two posts: `full` retires every row of a
+  carried section the post does not mention. Posts stop at the first refusal.
+
+| answer | `last_outcome` | `delivered_digest` | next run |
+|---|---|---|---|
+| 2xx on every post | `sent` | this digest | skipped until the catalogue changes |
+| 401 / 503 on the first post | `retry` | kept | sends again |
+| 400 / 413 / 422 on the first post | `failed` | kept | skipped until the digest changes or somebody forces a send |
+| 500 / 502 / 504 / timeout / transport | `retry` | cleared | sends again |
+| a refusal after an earlier post of the run was accepted | as above | cleared | as above |
+
+`delivered_digest` must only describe what the portal holds, so it is cleared
+whenever the portal MAY now hold something else; a cleared record re-sends
+whatever the digest. Permissions: `POST /catalogue/send` (send now, even when
+unchanged) needs the manage keys; `GET /status` → `catalogue` shows each
+company's row.
+
 ## Where the code is
 
 - `backend/src/db/migrations-pg/20260912T1800_scm_venture_portal_outbox.sql`
   — table, triggers, `vp_build_payloads`, `vp_requeue_undelivered`.
+- `backend/src/db/migrations-pg/20260923T1843_scm_vp_catalogue_feed.sql` —
+  the catalogue builder, digest, snapshot and money guard, the state table, and
+  `vp_build_payloads` with the `variants` allowlist.
+- `backend/src/scm/lib/venture-portal-catalogue.ts` — the catalogue sender
+  (URL, digest decision, section split, response verdict); its SQL is
+  executed by `backend/tests-pg/vpCatalogueFeed.pg.test.ts`.
 - `backend/src/scm/lib/venture-portal-outbox.ts` — sender, response
   taxonomy, reconcile, secret minting.
 - `backend/src/scm/lib/venture-portal-kick.ts` — the request-triggered drain

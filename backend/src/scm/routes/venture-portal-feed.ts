@@ -52,6 +52,12 @@ import {
   probeVenturePortal,
   reconcileVenturePortalOutbox,
 } from '../lib/venture-portal-outbox';
+import {
+  VP_CATALOGUE_MAX_POST_BYTES,
+  VP_CATALOGUE_URL_PROBLEM,
+  pushVenturePortalCatalogue,
+  vpCatalogueUrl,
+} from '../lib/venture-portal-catalogue';
 import { writeAudit } from '../../services/audit';
 import { resolveCallerStaffId } from '../lib/salesScope';
 
@@ -218,6 +224,18 @@ venturePortalFeed.get('/status', async (c) => {
     return c.json({ error: 'queue_read_failed', message: oldestErr.message }, 500);
   }
 
+  /* The catalogue push (items only): per company, what the portal last
+     accepted and how the latest attempt went. Bound like every read above —
+     an unreadable state must not render as "nothing to report". */
+  const { data: catalogueRows, error: catalogueErr } = await sb
+    .from('venture_portal_catalogue_state')
+    .select('company_id, delivered_digest, delivered_at, portal_result, last_digest, last_outcome, last_attempt_at, last_http_status, last_error, last_bytes, last_parts')
+    .order('company_id', { ascending: true });
+  if (catalogueErr) {
+    return c.json({ error: 'catalogue_read_failed', message: catalogueErr.message }, 500);
+  }
+  const catalogueUrl = vpCatalogueUrl(cfg.get('vp.url')?.v ?? '');
+
   return c.json({
     feed: {
       enabled: scope !== 'off',
@@ -238,6 +256,14 @@ venturePortalFeed.get('/status', async (c) => {
       lastSent: lastSent?.[0] ?? null,
       lastError: lastError?.[0] ?? null,
       oldestPending: oldestPending?.[0] ?? null,
+    },
+    catalogue: {
+      /* Null with a vp.url set means the catalogue is NOT being sent — see
+         venture-portal-catalogue.ts. */
+      url: catalogueUrl,
+      urlProblem: cfg.get('vp.url')?.v && !catalogueUrl ? VP_CATALOGUE_URL_PROBLEM : null,
+      maxPostBytes: VP_CATALOGUE_MAX_POST_BYTES,
+      companies: (catalogueRows as unknown[] | null) ?? [],
     },
     canManage: MANAGE_KEYS.some((k) => hasHouzsPerm(c, k)),
   });
@@ -510,6 +536,22 @@ venturePortalFeed.post('/drain', async (c) => {
   const raw = Number(body.limit ?? VP_DRAIN_BATCH);
   const limit = Math.min(Math.max(Number.isFinite(raw) ? raw : VP_DRAIN_BATCH, 1), 200);
   const result = await drainVenturePortalOutbox(c.env, limit);
+  return c.json(result);
+});
+
+/**
+ * Send the catalogue now, whether or not it changed.
+ *
+ * The five-minute sweep only sends a catalogue whose digest moved; this is the
+ * button for "the portal lost its copy" and for a catalogue the portal refused
+ * (400/422), which the sweep does not retry until the catalogue changes. It is
+ * the same gates as the sweep: switch, company scope, vp.url and vp.secret.
+ * Items only, like every catalogue delivery — there is no price to send.
+ */
+venturePortalFeed.post('/catalogue/send', async (c) => {
+  const denied = denyManage(c);
+  if (denied) return denied;
+  const result = await pushVenturePortalCatalogue(c.env, { force: true });
   return c.json(result);
 });
 

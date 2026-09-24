@@ -92,6 +92,7 @@ import {
   drainVenturePortalOutbox,
   reconcileVenturePortalOutbox,
 } from "./scm/lib/venture-portal-outbox";
+import { pushVenturePortalCatalogue } from "./scm/lib/venture-portal-catalogue";
 import { reconcilePendingFairs } from "./scm/lib/fair-reconcile";
 import { relinkHeldBackSweep } from "./scm/lib/autocount-relink-sweep";
 import { deliveryDateSweep } from "./scm/lib/autocount-delivery-date-sweep";
@@ -648,16 +649,40 @@ export default {
          and its NULL are in the migration header), and a pg_cron job would be
          invisible to every gate this repo runs. Commission is settled monthly,
          so five minutes and ten seconds are the same number to it. */
+      const vpOrderDrain = drainVenturePortalOutbox(env)
+        .then((r) => {
+          /* A FAILED row means a sales order exists here and the portal has
+             not got it — somebody's commission is computed from a document
+             the portal cannot see. It can never read as routine. */
+          if (r.failed) console.error(`[cron vp-feed] FAILED ${JSON.stringify(r)}`);
+          else if (r.processed) console.log(`[cron vp-feed] ${JSON.stringify(r)}`);
+        })
+        .catch((e) => console.error("[cron vp-feed]", e));
+      ctx.waitUntil(vpOrderDrain);
+      /* The CATALOGUE push (items only, mig 20260923T1843), same switch, same
+         key. It starts only once the order drain has SETTLED — vpOrderDrain
+         never rejects — so a megabyte upload can never hold a connection the
+         orders are waiting for, and its own failure is caught here, never
+         there. The unchanged case is one md5 round trip. */
       ctx.waitUntil(
-        drainVenturePortalOutbox(env)
+        vpOrderDrain
+          .then(() => pushVenturePortalCatalogue(env, { force: false }))
           .then((r) => {
-            /* A FAILED row means a sales order exists here and the portal has
-               not got it — somebody's commission is computed from a document
-               the portal cannot see. It can never read as routine. */
-            if (r.failed) console.error(`[cron vp-feed] FAILED ${JSON.stringify(r)}`);
-            else if (r.processed) console.log(`[cron vp-feed] ${JSON.stringify(r)}`);
+            /* failed = the portal refused the catalogue (400/413/422) and it
+               will not be sent again until it changes or a person forces it;
+               build_failed = the SQL did not answer. A catalogue already
+               parked (refused_unchanged) is on the status page, not re-logged
+               every five minutes. */
+            if (
+              r.skipped === "catalogue_url_unknown"
+              || r.companies.some((x) => x.action === "failed" || x.action === "build_failed")
+            ) {
+              console.error(`[cron vp-catalogue] FAILED ${JSON.stringify(r)}`);
+            } else if (r.companies.some((x) => x.action === "sent" || x.action === "retry")) {
+              console.log(`[cron vp-catalogue] ${JSON.stringify(r)}`);
+            }
           })
-          .catch((e) => console.error("[cron vp-feed]", e))
+          .catch((e) => console.error("[cron vp-catalogue]", e))
       );
       /* Keyless-conversion backlog sweep. Ships DARK: no-op unless
          scm.app_config 'scm.autocount_relink_sweep' is 'plan' (report only) or
