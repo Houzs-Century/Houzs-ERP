@@ -86,3 +86,20 @@ describe("facetedFilterValues", () => {
     expect(new Map(v).get("—")).toBe(1);
   });
 });
+
+/* DEV-13: a server-filtered column's counts come from the server over every
+   matching row, so the Doc Date option said 34 (the loaded page) before a click
+   and 42 after. filterCounts replaces the page count; 0-count options drop. */
+describe("facetedFilterValues — server counts (filterCounts)", () => {
+  test("uses the server's counts, not the loaded page's", () => {
+    const serverDate: RowRuleColumn<Po> = { key: "date", getValue: (r) => r.date, filterCounts: [["23/9", 42], ["22/9", 16]] };
+    const v = facetedFilterValues(rows, {}, serverDate, columns);
+    expect(new Map(v)).toEqual(new Map([["23/9", 42], ["22/9", 16]]));
+  });
+
+  test("drops a 0-count server option unless it is ticked", () => {
+    const serverCreditor: RowRuleColumn<Po> = { key: "creditor", getValue: (r) => r.creditor, filterCounts: [["DIGLANT", 2], ["ARMANI", 0]] };
+    expect(facetedFilterValues(rows, {}, serverCreditor, columns).map(([k]) => k)).toEqual(["DIGLANT"]);
+    expect(facetedFilterValues(rows, { creditor: ["ARMANI"] }, serverCreditor, columns).map(([k]) => k)).toEqual(["ARMANI", "DIGLANT"]);
+  });
+});
