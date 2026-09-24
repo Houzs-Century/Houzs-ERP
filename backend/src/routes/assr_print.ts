@@ -353,8 +353,18 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
     ? supplierTargetDateIso((cs as any).stage_entered_at, (cs as any).stage_target_days)
     : null;
 
+  /* One factory trip's own paper (owner 2026-09-24): ?round=<trip id> on the
+     supplier copy prints that trip as a Supplier Return Note headed by its
+     SVC-RTN number, so three trips of one case are three distinct documents. */
+  const roundId = isSupplier ? parseInt(c.req.query("round") || "", 10) : NaN;
+  const trip = Number.isFinite(roundId)
+    ? ((detail as any).supplier_returns ?? []).find((r: any) => Number(r.id) === roundId) ?? null
+    : null;
+  if (Number.isFinite(roundId) && !trip) return c.text("Not found", 404);
+
   const docTitle =
-    isSupplier ? "Supplier Service Order" : "After-Sales Service Request";
+    trip ? "Supplier Return Note"
+    : isSupplier ? "Supplier Service Order" : "After-Sales Service Request";
 
   const docSubtitle =
     isCustomer ? "Customer Copy"
@@ -443,7 +453,7 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>${esc(docTitle)} — ${esc(cs.assr_no)}</title>
+  <title>${esc(docTitle)} — ${esc(trip?.ref_no || cs.assr_no)}</title>
   <!-- Which letterhead this copy actually resolved to. With no ?entity the
        answer is the CASE's company, which nothing else on the page records, so
        a saved copy can still be traced back to the entity that headed it.
@@ -979,7 +989,8 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
           <div class="row lead"><span class="cap mono">Service</span><span class="val">${esc(servicePillLabel)}</span></div>` : ""}
         </div>
       </div>
-      <div class="ref mono">
+      <div class="ref mono">${trip?.ref_no ? `
+        <span class="cap">Return No.</span><b>${esc(trip.ref_no)}</b><span class="sep">·</span>` : ""}
         <span class="cap">ASSR No.</span><b>${esc(cs.assr_no)}</b>${cs.ref_no ? `
         <span class="sep">·</span><span class="cap">Ref No.</span><b>${esc(cs.ref_no)}</b>` : ""}
       </div>
@@ -1128,9 +1139,18 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
       <div class="lc">Category</div><div class="vc">${cs.service_category || cs.issue_category ? `<span class="pill-cat">${esc(cs.service_category || cs.issue_category)}</span>` : `<span class="dim">—</span>`}</div>
     </div>
 
+    ${trip ? `
+    <!-- this trip -->
+    <div class="mgrid cols-8">
+      <div class="lc">Return</div><div class="vc mono">#${esc(trip.round_no)}</div>
+      <div class="lc">Sent Out</div><div class="vc mono">${fmtDate(trip.pickup_at)}</div>
+      <div class="lc">Back</div><div class="vc mono">${fmtDate(trip.returned_at)}</div>
+      <div class="lc">Reason</div><div class="vc">${esc(trip.reason || "—")}</div>
+    </div>` : ""}
+
     <!-- creditor box -->
     <div class="credit-box">
-      <div class="cell"><div class="k">Supplier (Creditor)</div><div class="v">${esc((cs as any).creditor_name || (cs as any).creditor_code || "—")}</div></div>
+      <div class="cell"><div class="k">Supplier (Creditor)</div><div class="v">${esc(trip?.creditor_name || trip?.creditor_code || (cs as any).creditor_name || (cs as any).creditor_code || "—")}</div></div>
       <div class="cell"><div class="k">PO Number</div><div class="v">${esc(cs.po_no || "—")}</div></div>
       <div class="cell"><div class="k">Target Completion</div><div class="v">${supplierTargetIso ? fmtDate(supplierTargetIso) : "—"}</div></div>
     </div>
