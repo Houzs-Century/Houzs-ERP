@@ -26,6 +26,7 @@ import type { Env, Variables } from '../env';
 import { supabaseAuth } from '../middleware/auth';
 import { readPoListFilters } from '../lib/po-list-read';
 import { buildPoExportRows } from '../lib/po-line-export';
+import { buildPoFacets } from '../lib/po-list-facets';
 import { VALID_STATUSES } from './mfg-purchase-orders';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
@@ -37,6 +38,16 @@ export async function poExportRowsHandler(c: Ctx) {
   return c.json(out);
 }
 
+/* GET /mfg-purchase-orders/facets?<list params> -> { facets, truncated }
+   The funnel option counts over every matching order (lib/po-list-facets.ts). */
+export async function poFacetsHandler(c: Ctx) {
+  const filters = readPoListFilters((k) => c.req.query(k));
+  const out = await buildPoFacets(c.get('supabase'), c, filters, VALID_STATUSES);
+  if (out.error !== null) return c.json({ error: 'facets_failed', reason: out.error }, 500);
+  return c.json(out);
+}
+
 export const purchaseOrderExports = new Hono<{ Bindings: Env; Variables: Variables }>();
 purchaseOrderExports.use('*', supabaseAuth);
 purchaseOrderExports.get('/export/rows', poExportRowsHandler);
+purchaseOrderExports.get('/facets', poFacetsHandler);

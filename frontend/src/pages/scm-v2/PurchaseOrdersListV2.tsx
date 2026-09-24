@@ -63,7 +63,7 @@ import { SearchScopeHint } from "../../components/SearchScopeHint";
 import { useDebouncedSearchTerm, useSearchResultTransition } from "../../hooks/useServerSearch";
 import {
   usePurchaseOrdersPaged,
-  useSuppliers,
+  usePoListFacets,
   useEnrichedPoListRows,
   usePurchaseOrderDetail,
   fetchPurchaseOrderDetail,
@@ -807,18 +807,6 @@ export function PurchaseOrdersListV2() {
      client-side on the loaded page — those columns are line- or MRP-level and
      the list query cannot express them cheaply. */
   const [serverFunnels, setServerFunnels] = useState<{ creditorNames?: string[]; creditorCodes?: string[]; currencies?: string[]; docDates?: string[] }>({});
-  /* Seed the Creditor Name / Code funnel checklists with EVERY supplier (not
-     only those on the loaded page), so a creditor whose POs are all on a later
-     page is still pickable — the point of pushing the filter server-side. */
-  const suppliersQ = useSuppliers();
-  const supplierNames = useMemo(
-    () => [...new Set((suppliersQ.data ?? []).map((s) => s.name).filter((n): n is string => !!n))],
-    [suppliersQ.data],
-  );
-  const supplierCodes = useMemo(
-    () => [...new Set((suppliersQ.data ?? []).map((s) => s.code).filter((c): c is string => !!c))],
-    [suppliersQ.data],
-  );
   const { requestTerm: debouncedSearch } = useDebouncedSearchTerm(search);
 
   // Send the active tab's BUCKET NAME as `status`; the backend resolves each
@@ -835,6 +823,9 @@ export function PurchaseOrdersListV2() {
     sort,
     ...serverFunnels,
   });
+  /* The server-filtered funnels list and count EVERY matching order, so an
+     option's count before the click equals the rows after it (DEV-13). */
+  const facets = usePoListFacets({ status: apiStatus, q: debouncedSearch, ...serverFunnels }).data?.facets;
   const searchTransition = useSearchResultTransition({
     inputTerm: search,
     requestTerm: debouncedSearch,
@@ -1213,9 +1204,7 @@ export function PurchaseOrdersListV2() {
       width: "120px",
       disableSort: true,
       getValue: (r) => r.supplier?.code ?? "",
-      // Server-filterable: the funnel is pushed into the list query, so seed the
-      // checklist with every creditor code (not just the loaded page's).
-      filterSeedValues: supplierCodes,
+      filterCounts: facets?.creditor_code,
       render: (r) => <span className="font-mono text-[11.5px] text-ink-secondary">{r.supplier?.code || "—"}</span>,
     },
     {
@@ -1226,9 +1215,7 @@ export function PurchaseOrdersListV2() {
       label: PO_LINE_LABELS.creditorName,
       disableSort: true,
       getValue: (r) => supplierNameOf(r),
-      // Server-filterable: seed with every creditor name so one not on the
-      // loaded page is still pickable (the point of the server-side push).
-      filterSeedValues: supplierNames,
+      filterCounts: facets?.supplier,
       render: (r) => (
         <div className="min-w-0 truncate text-[13px] font-semibold text-ink">
           {supplierNameOf(r)}
@@ -1245,6 +1232,8 @@ export function PurchaseOrdersListV2() {
       label: PO_LINE_LABELS.docDate,
       width: "108px",
       getValue: (r) => r.po_date,
+      filterCounts: facets?.po_date,
+      filterLabel: (v) => (v === "—" ? v : fmtDate(v)),
       exportFormat: "date",
       render: (r) => <span className="text-[12.5px] text-ink-secondary">{fmtDate(r.po_date)}</span>,
     },
@@ -1305,6 +1294,7 @@ export function PurchaseOrdersListV2() {
       defaultHidden: true,
       disableSort: true,
       getValue: (r) => r.currency ?? "MYR",
+      filterCounts: facets?.currency,
       render: (r) => (
         <span className="text-[12.5px] text-ink-secondary">{r.currency ?? "MYR"}</span>
       ),
