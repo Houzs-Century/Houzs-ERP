@@ -40,6 +40,8 @@ const cancel = (over: Partial<CancelRequestRow> = {}): CancelRequestRow => ({
   doc_status_at_request: 'CONFIRMED',
   status: 'REQUESTED',
   reason: 'Customer no longer wants the order',
+  doc_ref: 'MR TAN / SUNWAY',
+  doc_customer_so_no: null,
   requested_by: 7,
   requested_by_name: 'Farra',
   requested_at: '2026-09-21T08:00:00Z',
@@ -120,6 +122,7 @@ describe('buildAmendmentQueueRows', () => {
       soDocNo: 'HC-SO-000002',
       numberLabel: 'Cancel',
       requestedByName: 'Farra',
+      reference: 'MR TAN / SUNWAY',
       requestedByStaffId: null,
       reason: 'Customer no longer wants the order',
       approverKey: 'CANCEL_L1',
@@ -139,6 +142,19 @@ describe('buildAmendmentQueueRows', () => {
       approverLabel: 'Purchaser',
       statusLabel: 'Requested',
     });
+  });
+
+  /* Owner 2026-09-24: 「为什么 ref 不会出现?每个 SO 都会有的」 — the column was
+     blank on every cancellation row. It now resolves through customerRefOf, the
+     SAME rule the amendment rows and the Sales Order list use, so one order
+     cannot show two references. */
+  it("shows the Sales Order's reference, by the Sales Order list's own rule", () => {
+    const [withRef] = build([], [cancel({ doc_ref: 'MR TAN / SUNWAY', doc_customer_so_no: 'IGNORED' })]);
+    expect(withRef!.reference).toBe('MR TAN / SUNWAY');
+    const [fallback] = build([], [cancel({ doc_ref: null, doc_customer_so_no: 'CUST-PO-7' })]);
+    expect(fallback!.reference).toBe('CUST-PO-7');
+    const [neither] = build([], [cancel({ doc_ref: null, doc_customer_so_no: null })]);
+    expect(neither!.reference).toBe('');
   });
 
   it('gives a cancellation the SO it names, so the row can open that order', () => {

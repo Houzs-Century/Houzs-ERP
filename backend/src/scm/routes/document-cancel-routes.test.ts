@@ -90,9 +90,9 @@ const get = (who: Who, path: string) => app(who).request(path, undefined, ENV);
 beforeEach(() => {
   tables = {
     mfg_sales_orders: [
-      { doc_no: 'SO-1', status: 'CONFIRMED', company_id: CO, salesperson_id: 11 },
+      { doc_no: 'SO-1', status: 'CONFIRMED', company_id: CO, salesperson_id: 11, ref: 'MR TAN / SUNWAY', customer_so_no: null },
       { doc_no: 'SO-DRAFT', status: 'DRAFT', company_id: CO, salesperson_id: 11 },
-      { doc_no: 'SO-DONE', status: 'CANCELLED', company_id: CO, salesperson_id: 11 },
+      { doc_no: 'SO-DONE', status: 'CANCELLED', company_id: CO, salesperson_id: 11, ref: null, customer_so_no: 'CUST-PO-7' },
       { doc_no: 'SO-OTHER', status: 'CONFIRMED', company_id: 2, salesperson_id: 11 },
     ],
     purchase_orders: [
@@ -238,6 +238,20 @@ describe('the two signatures', () => {
     await post(REQUESTER, '/mfg-sales-orders/SO-1/cancel-request/withdraw');
     expect((await body(await get(NOBODY, '/cancel-requests'))).requests).toHaveLength(0);
     expect((await body(await get(NOBODY, '/cancel-requests?scope=all'))).requests).toHaveLength(2);
+  });
+
+  /* Owner 2026-09-24, on the SO Amendment queue: 「为什么 ref 不会出现?每个 SO 都
+     会有的」 — the queue lists cancellation requests beside the amendments, so the
+     inbox has to send the Sales Order's reference the way GET /so-amendments
+     does. RAW, both columns: the frontend picks between them with one rule. */
+  it('carries the Sales Order reference — raw, and only for SO rows', async () => {
+    await post(REQUESTER, '/mfg-sales-orders/SO-1/cancel-request', { reason: 'Customer cancelled the order' });
+    await patch(NOBODY, '/mfg-purchase-orders/po-1/cancel', { reason: 'Supplier cannot deliver' });
+    const { requests } = await body(await get(NOBODY, '/cancel-requests?scope=all'));
+    const byDoc = Object.fromEntries(requests.map((r: { doc_number: string }) => [r.doc_number, r]));
+    expect(byDoc['SO-1']).toMatchObject({ doc_ref: 'MR TAN / SUNWAY', doc_customer_so_no: null });
+    // A purchase order has no such field — null, never another document's ref.
+    expect(byDoc['PO-1']).toMatchObject({ doc_ref: null, doc_customer_so_no: null });
   });
 });
 

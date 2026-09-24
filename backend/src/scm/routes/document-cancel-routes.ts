@@ -88,6 +88,7 @@ import {
   scopeToCompanyId,
 } from '../lib/companyScope';
 import { doHasDownstream, poHasDownstream, soHasDownstream } from '../lib/downstream-lock';
+import { chunkIn } from '../lib/paginate-all';
 import { recordSoAudit } from '../lib/so-audit';
 import { recordEntityAudit } from '../lib/entity-audit';
 import { notifyCancelRequest } from '../../services/cancelRequestNotify';
@@ -481,7 +482,35 @@ export const listCancelRequestsHandler = async (c: AnyCtx) => {
   if (scope !== 'all') q = q.in('status', [...OPEN_CANCEL_STATUSES]);
   const { data, error } = await scopeToCompany(q, c).order('requested_at', { ascending: false }).limit(500);
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  return c.json({ requests: data ?? [] });
+  const rows = (data ?? []) as Array<{ doc_type: string; doc_key: string }>;
+  /* The Sales Order's own customer reference (owner 2026-09-24: 「为什么 ref 不会
+     出现?每个 SO 都会有的」). A cancellation request shows in the SO Amendment
+     queue beside the amendments, and that queue's Reference column was blank on
+     every cancellation row because this endpoint sent the document NUMBER and
+     nothing else about the order.
+
+     Sent RAW (`ref`, `customer_so_no`) exactly as GET /so-amendments sends it,
+     so the frontend resolves both kinds of row through the one display rule
+     (customerRefOf) and two rows for the same order can never disagree. SO rows
+     only — a PO / DO cancellation has no such field. A failed read FAILS the
+     list, like the main read: a blank column would claim the order has no
+     reference, which a failed read does not know. */
+  const soDocNos = [...new Set(rows.filter((r) => r.doc_type === 'SO').map((r) => r.doc_key))];
+  const refBySo = new Map<string, { ref: string | null; customer_so_no: string | null }>();
+  if (soDocNos.length > 0) {
+    const { data: soRows, error: soErr } = await chunkIn(soDocNos, (batch, from, to) =>
+      scopeToCompany(sb.from('mfg_sales_orders').select('doc_no, ref, customer_so_no').in('doc_no', batch), c)
+        .range(from, to));
+    if (soErr) return c.json({ error: 'load_failed', reason: soErr.message }, 500);
+    for (const so of (soRows ?? []) as Array<{ doc_no: string; ref: string | null; customer_so_no: string | null }>) {
+      refBySo.set(so.doc_no, so);
+    }
+  }
+  const requests = rows.map((r) => {
+    const so = r.doc_type === 'SO' ? refBySo.get(r.doc_key) : undefined;
+    return { ...r, doc_ref: so?.ref ?? null, doc_customer_so_no: so?.customer_so_no ?? null };
+  });
+  return c.json({ requests });
 };
 
 /* ── Routers ─────────────────────────────────────────────────────────────── */
