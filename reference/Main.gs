@@ -5,16 +5,21 @@
  * Triggered automatically when the spreadsheet is opened.
  */
 function onOpen() {
-  SpreadsheetApp.getUi().createMenu('AutoCount Sync')
-    .addItem('Pull Latest FROM AUTOCOUNT', 'manualPull')
-    .addItem('Push Changes TO AUTOCOUNT', 'manualPush')
+  SpreadsheetApp.getUi().createMenu('ERP Sync')
+    .addItem('Pull Latest FROM Houzs ERP', 'manualErpPull')
+    .addItem('Push Changes TO Houzs ERP', 'manualErpPush')
+    .addItem('Restore Orders by Doc No', 'manualErpRestoreByDocNos')
     .addItem('Sync EM Sheet with Transporter Sheet', 'syncEmWithTransporter')
     .addSeparator()
-    .addItem('Refresh Overdue Sheet', 'manualOverdue')
-    .addItem('Refresh Balance Sheet', 'manualBalance')
+    .addItem('Refresh Overdue Sheet', 'manualErpOverdue')
+    .addItem('Refresh Balance Sheet', 'manualErpBalance')
     .addSeparator()
-    .addItem('Refresh PO Outstanding Listing', 'manualPO')
-    .addItem('Sync Selected PO Dates', 'syncSelectedRowToAutoCount')
+    .addItem('Refresh PO Outstanding Listing', 'manualErpPoPull')
+    .addItem('Sync Selected PO Dates TO Houzs ERP', 'erpSyncSelectedPoDates')
+    .addItem('Push All PO Dates TO Houzs ERP', 'manualErpPoPush')
+    .addSeparator()
+    .addItem('Preview 2990 Sync (no write)', 'preview2990Sync')
+    .addItem('Sync 2990 FROM ERP', 'sync2990FromErp')
     .addToUi();
 }
 
