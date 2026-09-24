@@ -27,7 +27,7 @@ import {
   type TriggerLine,
 } from '../shared';
 import { loadProductsByCodes, loadModelDefaultGifts } from './mfg-pricing-recompute';
-import { activeCompanyId } from './companyScope';
+import { activeCompanyId, scopeToCompanyId } from './companyScope';
 // recomputeTotals is the route's authoritative header roll-up. The route<->lib
 // reference is a function-level cycle (route imports this file, this file
 // imports recomputeTotals) — safe with esbuild because neither is called at
@@ -191,7 +191,10 @@ export async function reconcileFreeGiftLinesForSo(sb: any, docNo: string, c: any
          SO's OWN header — never from a sibling line — via lib/so-warehouse.ts.
          Fail-soft: an unresolvable header yields null, i.e. exactly the previous
          behaviour, so a gift line is never blocked by a missing mapping. */
-      const giftWarehouseId = resolveSoWarehouseId(header, await loadSoWarehouseMasters(sb));
+      const giftCompanyId = header.company_id ?? null;
+      const giftWarehouseId = giftCompanyId == null
+        ? null
+        : resolveSoWarehouseId(header, await loadSoWarehouseMasters(sb, (q) => scopeToCompanyId(q, giftCompanyId)));
 
       // Continue the doc's line numbering (max + 1, incrementing) when the doc
       // is already numbered; pre-0165 docs (max NULL) keep gift lines un-numbered.

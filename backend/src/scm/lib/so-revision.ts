@@ -609,7 +609,7 @@ export async function applySoAmendment(
          line, which would pool stock across a warehouse boundary. Fail-soft: an
          unresolvable header yields null, the previous behaviour, so an amendment
          is never blocked by a missing state mapping. */
-      const addLineWarehouseId = await soWarehouseIdForDoc(sb, docNo);
+      const addLineWarehouseId = await soWarehouseIdForDoc(sb, docNo, soCompanyId);
 
       // Multi-company (mig 0083/0091): company_id is NOT NULL with a HOUZS
       // DEFAULT — an unstamped insert silently books the line to HOUZS, so the
