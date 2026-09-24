@@ -780,7 +780,7 @@ describe('kicking the drain', () => {
     resetVpKick({ sleep: async (ms) => { waited = ms; } });
     const { ctx, settle, count } = fakeCtx();
 
-    expect(kickVenturePortalDrain(env, ctx)).toBe('scheduled');
+    expect(kickVenturePortalDrain(env, ctx, null)).toBe('scheduled');
     expect(count()).toBe(1);
     /* Nothing has happened YET — the work is queued, not run, which is the
        property that keeps it off the request's critical path. */
@@ -801,17 +801,17 @@ describe('kicking the drain', () => {
     resetVpKick({ now: () => clock, sleep: async () => {} });
     const { ctx, settle, count } = fakeCtx();
 
-    expect(kickVenturePortalDrain(env, ctx)).toBe('scheduled');
+    expect(kickVenturePortalDrain(env, ctx, null)).toBe('scheduled');
     clock += 200;
-    expect(kickVenturePortalDrain(env, ctx)).toBe('debounced');
+    expect(kickVenturePortalDrain(env, ctx, null)).toBe('debounced');
     clock += 200;
-    expect(kickVenturePortalDrain(env, ctx)).toBe('debounced');
+    expect(kickVenturePortalDrain(env, ctx, null)).toBe('debounced');
     expect(count()).toBe(1);
 
     /* And a write AFTER the window gets its own drain — the debounce is a
        collapse, not a rate limit that drops work. */
     clock += VP_KICK_DELAY_MS;
-    expect(kickVenturePortalDrain(env, ctx)).toBe('scheduled');
+    expect(kickVenturePortalDrain(env, ctx, null)).toBe('scheduled');
     expect(count()).toBe(2);
     await settle();
   });
@@ -819,7 +819,7 @@ describe('kicking the drain', () => {
   test('a context with no waitUntil is reported, not silently ignored', () => {
     currentSb = outOfScopeQueue(1);
     resetVpKick({ sleep: async () => {} });
-    expect(kickVenturePortalDrain(env, null)).toBe('no_execution_context');
+    expect(kickVenturePortalDrain(env, null, null)).toBe('no_execution_context');
     expect(outbox(currentSb)[0].status).toBe('pending');
   });
 
@@ -832,10 +832,10 @@ describe('kicking the drain', () => {
     resetVpKick({ sleep: async () => {} });
     const angry = { waitUntil: () => { throw new Error('this context is dead'); } };
 
-    expect(kickVenturePortalDrain(env, angry)).toBe('no_execution_context');
+    expect(kickVenturePortalDrain(env, angry, null)).toBe('no_execution_context');
 
     const { ctx } = fakeCtx();
-    expect(kickVenturePortalDrain(env, ctx)).toBe('scheduled');
+    expect(kickVenturePortalDrain(env, ctx, null)).toBe('scheduled');
   });
 
   /* NEVER INTO THE REQUEST. The person who pressed Save already has their 200;
@@ -846,9 +846,64 @@ describe('kicking the drain', () => {
     resetVpKick({ sleep: async () => { throw new Error('boom'); } });
     const { ctx, settle } = fakeCtx();
 
-    expect(kickVenturePortalDrain(env, ctx)).toBe('scheduled');
+    expect(kickVenturePortalDrain(env, ctx, null)).toBe('scheduled');
     await expect(settle()).resolves.toBeDefined();
     expect(outbox(currentSb)[0].status).toBe('pending');
+  });
+
+  /* THE CATALOGUE RIDES THE SAME TASK (owner 2026-09-24: live, not five
+     minutes). One task per window, the orders first, and neither half can stop
+     the other. */
+  test('the step after the drain runs once the sweeps are done, in the same task', async () => {
+    currentSb = outOfScopeQueue(1);
+    resetVpKick({ sleep: async () => {} });
+    const { ctx, settle, count } = fakeCtx();
+    const seen: string[] = [];
+    const after = vi.fn(async () => { seen.push(String(outbox(currentSb)[0].status)); });
+
+    expect(kickVenturePortalDrain(env, ctx, after)).toBe('scheduled');
+    expect(count()).toBe(1);
+    expect(after).not.toHaveBeenCalled();
+
+    await settle();
+    expect(after).toHaveBeenCalledTimes(1);
+    /* The drain had already cleared the row when the step ran. */
+    expect(seen).toEqual(['skipped']);
+  });
+
+  test('writes inside the window run the step ONCE, with the one drain', async () => {
+    currentSb = outOfScopeQueue(1);
+    let clock = 1_000_000;
+    resetVpKick({ now: () => clock, sleep: async () => {} });
+    const { ctx, settle } = fakeCtx();
+    const after = vi.fn(async () => {});
+
+    expect(kickVenturePortalDrain(env, ctx, after)).toBe('scheduled');
+    clock += 200;
+    expect(kickVenturePortalDrain(env, ctx, after)).toBe('debounced');
+    await settle();
+    expect(after).toHaveBeenCalledTimes(1);
+  });
+
+  test('a drain that fails still runs the step after it', async () => {
+    currentSb = outOfScopeQueue(1);
+    resetVpKick({ sleep: async () => { throw new Error('boom'); } });
+    const { ctx, settle } = fakeCtx();
+    const after = vi.fn(async () => {});
+
+    expect(kickVenturePortalDrain(env, ctx, after)).toBe('scheduled');
+    await expect(settle()).resolves.toBeDefined();
+    expect(after).toHaveBeenCalledTimes(1);
+  });
+
+  test('a step that throws never rejects either', async () => {
+    currentSb = outOfScopeQueue(1);
+    resetVpKick({ sleep: async () => {} });
+    const { ctx, settle } = fakeCtx();
+
+    expect(kickVenturePortalDrain(env, ctx, async () => { throw new Error('catalogue down'); })).toBe('scheduled');
+    await expect(settle()).resolves.toBeDefined();
+    expect(outbox(currentSb)[0].status).toBe('skipped');
   });
 
   /* THE BACKFILL, which is why one kick sweeps more than once: 30 waiting
@@ -858,7 +913,7 @@ describe('kicking the drain', () => {
     resetVpKick({ sleep: async () => {} });
     const { ctx, settle } = fakeCtx();
 
-    expect(kickVenturePortalDrain(env, ctx)).toBe('scheduled');
+    expect(kickVenturePortalDrain(env, ctx, null)).toBe('scheduled');
     await settle();
 
     /* A single sweep is capped at VP_DRAIN_BATCH, so all 30 being cleared is the
@@ -876,7 +931,7 @@ describe('kicking the drain', () => {
     resetVpKick({ sleep: async () => {} });
     const { ctx, settle } = fakeCtx();
 
-    expect(kickVenturePortalDrain(env, ctx)).toBe('scheduled');
+    expect(kickVenturePortalDrain(env, ctx, null)).toBe('scheduled');
     await settle();
 
     expect(outbox(currentSb).filter((r) => r.status === 'skipped'))

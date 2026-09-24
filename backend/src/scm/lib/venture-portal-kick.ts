@@ -35,10 +35,17 @@
 // request — a migration backfill, a repair script, a hand-written UPDATE — is
 // captured by the trigger but kicked by nothing, and leaves on the five-minute
 // sweep. That is the accepted limit, recorded in the module guide.
+//
+// THE CATALOGUE RIDES THE SAME KICK (owner 2026-09-24: live, not five minutes).
+// After the drain, the scheduled task sends the catalogue when a catalogue table
+// was marked changed (pushVenturePortalCatalogueOnChange) — the marks are
+// statement triggers, so a Modular save, a new SKU on the Products page and a
+// one-shot SKU minted by a sales-order save all count, whichever route did it.
 // ----------------------------------------------------------------------------
 import type { Context, Next } from 'hono';
 import type { Env } from '../env';
 import { kickVenturePortalDrain } from './venture-portal-outbox';
+import { pushVenturePortalCatalogueOnChange } from './venture-portal-catalogue';
 
 /**
  * Hono middleware — mount once, ahead of the SCM sub-routers.
@@ -77,7 +84,7 @@ export function venturePortalKick() {
         ctx = null;
       }
 
-      kickVenturePortalDrain(c.env, ctx);
+      kickVenturePortalDrain(c.env, ctx, (env) => pushVenturePortalCatalogueOnChange(env));
     } catch (e) {
       console.error('[vp-kick] middleware', String((e as Error | undefined)?.message ?? e));
     }

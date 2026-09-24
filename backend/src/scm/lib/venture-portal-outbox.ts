@@ -688,10 +688,18 @@ export function vpKickSweepAgain(summary: VpDrainSummary): boolean {
  * anything is scheduled at all, so every call site has to say which case it is
  * in. A Hono context with no ExecutionContext passes null and gets a truthful
  * answer back instead of a silent no-op.
+ *
+ * `afterDrain` runs in the SAME scheduled task once the sweeps are done — the
+ * catalogue push (venture-portal-catalogue.ts), which the owner also asked to be
+ * live (2026-09-24). One task, not two: the orders always go first, a debounced
+ * write is covered by the task already scheduled, and a failed drain never
+ * stops the step after it (nor the other way round). `| null` for the same
+ * reason as `ctx`.
  */
 export function kickVenturePortalDrain(
   env: Env,
   ctx: { waitUntil(p: Promise<unknown>): void } | null,
+  afterDrain: ((env: Env) => Promise<unknown>) | null,
 ): VpKickOutcome {
   if (ctx == null) return 'no_execution_context';
 
@@ -699,7 +707,7 @@ export function kickVenturePortalDrain(
   if (now - vpLastKickAt < VP_KICK_DELAY_MS) return 'debounced';
 
   try {
-    ctx.waitUntil(runVpKick(env));
+    ctx.waitUntil(runVpKick(env, afterDrain));
     /* Stamped only once something IS scheduled. Stamped before the call, a
        waitUntil that refused would debounce the next 1.5 s of writes into a
        drain that does not exist. */
@@ -712,16 +720,22 @@ export function kickVenturePortalDrain(
 }
 
 /** The scheduled work. Swallows everything — see kickVenturePortalDrain. */
-async function runVpKick(env: Env): Promise<void> {
+async function runVpKick(env: Env, afterDrain: ((env: Env) => Promise<unknown>) | null): Promise<void> {
   try {
     await vpKickSeams.sleep(VP_KICK_DELAY_MS);
     for (let sweep = 0; sweep < VP_KICK_MAX_SWEEPS; sweep += 1) {
       const summary = await drainVenturePortalOutbox(env);
-      if (!vpKickSweepAgain(summary)) return;
+      if (!vpKickSweepAgain(summary)) break;
     }
   } catch (e) {
     /* [vp-kick] is the string to alert on. A burst of these means the drain is
        failing for every save, which the page's own verdict will also be saying. */
     console.error('[vp-kick] drain failed', String((e as Error | undefined)?.message ?? e));
+  }
+  if (afterDrain == null) return;
+  try {
+    await afterDrain(env);
+  } catch (e) {
+    console.error('[vp-kick] the step after the drain failed', String((e as Error | undefined)?.message ?? e));
   }
 }
