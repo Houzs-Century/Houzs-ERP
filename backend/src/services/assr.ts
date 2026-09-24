@@ -1838,12 +1838,12 @@ export async function listAssrCases(env: Env, f: ListAssrFilters) {
     // user types with dashes/spaces is cleanPhone'd the SAME way before the
     // LIKE; the raw predicate still catches an exact-format substring.
     where.push(
-      "(LOWER(c.assr_no) LIKE ? OR LOWER(c.doc_no) LIKE ? OR LOWER(c.ref_no) LIKE ? OR LOWER(c.customer_name) LIKE ? OR LOWER(c.sales_agent) LIKE ? OR LOWER(c.complaint_issue) LIKE ? OR LOWER(c.item_code) LIKE ? OR LOWER(c.phone) LIKE ? OR LOWER(c.phone) LIKE ? OR EXISTS (SELECT 1 FROM assr_items i WHERE i.assr_id = c.id AND (LOWER(i.item_code) LIKE ? OR LOWER(i.item_description) LIKE ?)))"
+      "(LOWER(c.assr_no) LIKE ? OR LOWER(c.doc_no) LIKE ? OR LOWER(c.ref_no) LIKE ? OR LOWER(c.customer_name) LIKE ? OR LOWER(c.sales_agent) LIKE ? OR LOWER(c.complaint_issue) LIKE ? OR LOWER(c.item_code) LIKE ? OR LOWER(c.phone) LIKE ? OR LOWER(c.phone) LIKE ? OR EXISTS (SELECT 1 FROM assr_items i WHERE i.assr_id = c.id AND (LOWER(i.item_code) LIKE ? OR LOWER(i.item_description) LIKE ?)) OR EXISTS (SELECT 1 FROM assr_supplier_returns sr WHERE sr.assr_id = c.id AND LOWER(sr.ref_no) LIKE ?))"
     );
     const like = `%${f.search.toLowerCase()}%`;
     const digits = cleanPhone(f.search);
     const phoneLike = digits ? `%${digits.toLowerCase()}%` : like;
-    binds.push(like, like, like, like, like, like, like, like, phoneLike, like, like);
+    binds.push(like, like, like, like, like, like, like, like, phoneLike, like, like, like);
   }
   // Calendar date-window bound (perf/servicecase-board-calendar-bound):
   // the Cases Calendar passes the viewed month grid as from/to so it pulls
@@ -2148,12 +2148,12 @@ export async function exportAssrCases(
     // user types with dashes/spaces is cleanPhone'd the SAME way before the
     // LIKE; the raw predicate still catches an exact-format substring.
     where.push(
-      "(LOWER(c.assr_no) LIKE ? OR LOWER(c.doc_no) LIKE ? OR LOWER(c.ref_no) LIKE ? OR LOWER(c.customer_name) LIKE ? OR LOWER(c.sales_agent) LIKE ? OR LOWER(c.complaint_issue) LIKE ? OR LOWER(c.item_code) LIKE ? OR LOWER(c.phone) LIKE ? OR LOWER(c.phone) LIKE ? OR EXISTS (SELECT 1 FROM assr_items i WHERE i.assr_id = c.id AND (LOWER(i.item_code) LIKE ? OR LOWER(i.item_description) LIKE ?)))"
+      "(LOWER(c.assr_no) LIKE ? OR LOWER(c.doc_no) LIKE ? OR LOWER(c.ref_no) LIKE ? OR LOWER(c.customer_name) LIKE ? OR LOWER(c.sales_agent) LIKE ? OR LOWER(c.complaint_issue) LIKE ? OR LOWER(c.item_code) LIKE ? OR LOWER(c.phone) LIKE ? OR LOWER(c.phone) LIKE ? OR EXISTS (SELECT 1 FROM assr_items i WHERE i.assr_id = c.id AND (LOWER(i.item_code) LIKE ? OR LOWER(i.item_description) LIKE ?)) OR EXISTS (SELECT 1 FROM assr_supplier_returns sr WHERE sr.assr_id = c.id AND LOWER(sr.ref_no) LIKE ?))"
     );
     const like = `%${f.search.toLowerCase()}%`;
     const digits = cleanPhone(f.search);
     const phoneLike = digits ? `%${digits.toLowerCase()}%` : like;
-    binds.push(like, like, like, like, like, like, like, like, phoneLike, like, like);
+    binds.push(like, like, like, like, like, like, like, like, phoneLike, like, like, like);
   }
   pushVisibilityScope(where, f.visible_to_user_ids);
   pushAllowedCompanies(where, f.allowed_company_ids);
