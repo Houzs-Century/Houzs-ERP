@@ -134,7 +134,7 @@ type SoHeader = {
   /* venue = the free-text name (on PDFs); venue_id = the master FK (mig 0086); fair = the linked event. */
   venue: string | null;
   venue_id: string | null;
-  fair?: LinkedFair | null;
+  fair?: LinkedFair | null; fair_date?: string | null; // + the day of it the order was written on
   note: string | null;
   /* Delivery address columns — the desktop SO form maps these to labelled
      lines (address1/2 = free-text; address3 = city fallback; address4 =
@@ -1033,7 +1033,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
 
             {/* Order info */}
             <div className="card"><div className="card-h"><span className="card-t">Order info</span></div><div className="card-b">
-              <div style={{ display: "flex", gap: 9 }}><div style={{ flex: 1, minWidth: 0 }}><RoField label="Building type" value={val(h.building_type)} /></div><div style={{ flex: 1, minWidth: 0 }}><RoField label="Fair" value={h.fair && linkedEvent(h.venue, h.fair) ? fairLabel(h.fair) : val(h.venue ?? h.venue_id)} /></div></div>
+              <div style={{ display: "flex", gap: 9 }}><div style={{ flex: 1, minWidth: 0 }}><RoField label="Building type" value={val(h.building_type)} /></div><div style={{ flex: 1, minWidth: 0 }}><RoField label="Fair" value={h.fair && linkedEvent(h.venue, h.fair, null) ? fairLabel(h.fair) : val(h.venue ?? h.venue_id)} /></div></div>{h.fair_date ? <RoField label="Fair day" value={dl(h.fair_date)} mono /> : null}
               <div style={{ display: "flex", gap: 9 }}><div style={{ flex: 1, minWidth: 0 }}><RoField label="Processing Date" value={dl(h.processing_date)} mono /></div><div style={{ flex: 1, minWidth: 0 }}><RoField label="Delivery Date" value={dl(h.customer_delivery_date)} mono /></div></div>
               <RoField label="Sales location" value={val(h.sales_location ?? h.customer_state)} />
               {/* Note — a non-empty note is emphasised as an amber callout (desktop

@@ -73,6 +73,9 @@ export interface SoSubmitFacts {
   hasVenue: boolean;
   /** Resolved salesperson — false when none. Confirm-only. */
   hasSalesperson: boolean;
+  /** An EVENT was picked with no day of it (owner 2026-09-24,
+   *  `fair-options.ts::fairDayMissing`). Confirm-only, like the venue. */
+  fairDayMissing: boolean;
   /** Whether to run the stock-location gate at all. False for a draft, an edit,
    *  or while the mappings are still loading (an in-flight mapping table makes
    *  every State look unmapped, and refusing an order because a read is in flight
@@ -128,6 +131,7 @@ export function collectSoSubmitProblems(facts: SoSubmitFacts): SaveProblem[] {
   if (!facts.hasNamedLine) out.push(requiredFieldProblem('At least one line item with a product'));
   if (!facts.asDraft) {
     if (!facts.hasVenue) out.push(requiredFieldProblem('Venue'));
+    if (facts.fairDayMissing) out.push(requiredFieldProblem('Fair day'));
     if (!facts.hasSalesperson) out.push(requiredFieldProblem('Salesperson'));
   }
 

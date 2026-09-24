@@ -602,4 +602,59 @@ describe('an edit that picks a fair EVENT records that event', () => {
     expect(response.status).toBe(200);
     expect(row).toMatchObject({ project_id: null, fair_match: 'UNMATCHED' });
   });
+
+  /* Owner 2026-09-24: the event runs 7-9, 「他一选完那个 event，这边下拉菜单就要拉出来
+     7、8、9 三天给他选」 — the DAY of the event rides with it. */
+  test('the day picked with the event is recorded with it', async () => {
+    const { app, row } = harness();
+    onFair(row, { fair_date: null });
+
+    const response = await patchWithFairs(app, { venue: 'MID VALLEY', ...MLE, fairDate: '2026-08-09', version: 1 });
+
+    expect(response.status).toBe(200);
+    expect(row).toMatchObject({ project_id: 500, fair_date: '2026-08-09', version: 2 });
+  });
+
+  test('changing only the day saves the day and leaves the link alone', async () => {
+    const { app, row } = harness();
+    onFair(row, { project_id: 500, fair_date: '2026-08-08' });
+
+    const response = await patchWithFairs(app, { ...MLE, fairDate: '2026-08-09', version: 1 });
+
+    expect(response.status).toBe(200);
+    expect(row).toMatchObject({ project_id: 500, fair_match: 'PICKED', fair_date: '2026-08-09', version: 2 });
+  });
+
+  test('a day that is not a day of the picked event is not recorded', async () => {
+    const { app, row } = harness();
+    onFair(row, { project_id: 500, fair_date: '2026-08-08' });
+
+    const response = await patchWithFairs(app, { ...MLE, fairDate: '2026-08-10', version: 1 });
+
+    expect(response.status).toBe(200);
+    expect(row).toMatchObject({ project_id: 500, fair_date: null });
+  });
+
+  test('a day sent without its event names nothing to check it against, so it is ignored', async () => {
+    const { app, row } = harness();
+    onFair(row, { project_id: 500, fair_date: '2026-08-08' });
+
+    const response = await patchWithFairs(app, { fairDate: '2026-08-09', version: 1 });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ ok: true, changed: 0 });
+    expect(row).toMatchObject({ fair_date: '2026-08-08', version: 1 });
+  });
+
+  test('a new place with no event clears the day, whether or not the fair keys came along', async () => {
+    const withKeys = harness();
+    onFair(withKeys.row, { project_id: 500, fair_date: '2026-08-08' });
+    await patchWithFairs(withKeys.app, { venue: 'IOI CITY MALL', fairVenue: null, fairOrganizer: null, fairStart: null, fairEnd: null, fairDate: null, version: 1 });
+    expect(withKeys.row).toMatchObject({ venue: 'IOI CITY MALL', project_id: null, fair_match: 'PENDING', fair_date: null });
+
+    const placeOnly = harness();
+    onFair(placeOnly.row, { project_id: 500, fair_date: '2026-08-08' });
+    await patchWithFairs(placeOnly.app, { venue: 'IOI CITY MALL', version: 1 });
+    expect(placeOnly.row).toMatchObject({ venue: 'IOI CITY MALL', project_id: null, fair_match: 'PENDING', fair_date: null });
+  });
 });

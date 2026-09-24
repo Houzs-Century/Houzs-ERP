@@ -62,10 +62,17 @@
 //     seed the organizer and dates from the order's fair link (`fairPick.ts`), so
 //     the row that was picked is the row shown; the edit save sends the picked
 //     event and the server links exactly that one.
+//  8. THE DAY IS PART OF THE PICK (owner 2026-09-24): the event runs 7-9, and
+//     「他一选完那个 event，这边下拉菜单就要拉出来 7、8、9 三天给他选」, so the order
+//     records which day it was written on, not just which event. `FairDayPicker`
+//     below is that second column. Picking another event, Others or a clear
+//     empties the day; nothing guesses it from today's date.
 // ----------------------------------------------------------------------------
 
 import { useState, type ReactNode } from 'react';
 import { useFairOptions, fairLabel, type FairOption } from '../vendor/scm/lib/fair-options-queries';
+import { fmtDayMonth } from '../vendor/shared/format';
+import { fairDaysOf, soleFairDay } from './fairPick';
 
 /** What the SO form stores. `organizer` is null whenever the form holds a place
  *  but no fair row: a pick through Others, an order with no fair link, or an
@@ -85,6 +92,9 @@ export type FairPickValue = {
    *  reads as a decision rather than an omission. */
   startDate: string | null;
   endDate: string | null;
+  /** The DAY of the picked event the order was written on (rule 8), `YYYY-MM-DD`.
+   *  Null until one is picked, and for any value that is not an event. */
+  day: string | null;
 };
 
 export type FairPickerProps = {
@@ -163,7 +173,7 @@ export function FairPicker(props: FairPickerProps) {
     if (next === PLACE) return setChoosingPlace(false);
     if (next === '') {
       setChoosingPlace(false);
-      return onChange({ venue: null, organizer: null, startDate: null, endDate: null });
+      return onChange({ venue: null, organizer: null, startDate: null, endDate: null, day: null });
     }
     if (next === OTHERS) {
       setChoosingPlace(true);
@@ -171,7 +181,7 @@ export function FairPicker(props: FairPickerProps) {
          "the list did not have my fair", not "clear the venue". The PERIOD goes,
          because Others means no event was chosen and a stale period would tell
          the server to match an occurrence the operator just rejected. */
-      return onChange({ venue: value.venue ?? null, organizer: null, startDate: null, endDate: null });
+      return onChange({ venue: value.venue ?? null, organizer: null, startDate: null, endDate: null, day: null });
     }
     const key = next.slice('fair:'.length);
     const hit = all.find((o) => o.key === key);
@@ -185,6 +195,8 @@ export function FairPicker(props: FairPickerProps) {
         organizer: hit.organizer,
         startDate: hit.startDate,
         endDate: hit.endDate,
+        /* A new event starts with no day unless it has only one to give. */
+        day: soleFairDay(hit, q.data?.date ?? null),
       });
     }
   }
@@ -235,7 +247,7 @@ export function FairPicker(props: FairPickerProps) {
           value={place}
           disabled={disabled}
           onChange={(e) =>
-            onChange({ venue: e.target.value || null, organizer: null, startDate: null, endDate: null })
+            onChange({ venue: e.target.value || null, organizer: null, startDate: null, endDate: null, day: null })
           }
           aria-label="Place"
           style={{ marginTop: '6px' }}
@@ -249,6 +261,48 @@ export function FairPicker(props: FairPickerProps) {
       )}
 
       {hint}
+    </span>
+  );
+}
+
+export type FairDayPickerProps = {
+  value: FairPickValue;
+  /** The ORDER's date, exactly as `FairPicker` takes it: the days stop at the
+   *  date the fair list was built for, never later. */
+  soDate: string | null;
+  onChange: (next: FairPickValue) => void;
+  disabled?: boolean;
+  selectClassName?: string;
+  wrapClassName?: string;
+  id?: string;
+};
+
+/** The second column (rule 8): which DAY of the picked event. Renders nothing
+ *  until an event is picked — a place alone has no days — so a caller shows its
+ *  labelled field only while `fairEventOf(value)` is set. */
+export function FairDayPicker(props: FairDayPickerProps) {
+  const { value, soDate, onChange, disabled, selectClassName, wrapClassName, id } = props;
+  const q = useFairOptions(soDate);
+  if (!value.organizer || !value.startDate) return null;
+  const days = fairDaysOf(value, q.data?.date ?? null);
+  /* A saved day the list no longer offers (the order re-dated, the fair
+     re-planned) is still the order's answer, so it is shown as itself. */
+  const options = value.day && !days.includes(value.day) ? [value.day, ...days] : days;
+  return (
+    <span className={wrapClassName}>
+      <select
+        id={id}
+        className={selectClassName}
+        value={value.day ?? ''}
+        disabled={disabled}
+        onChange={(e) => onChange({ ...value, day: e.target.value || null })}
+        aria-label="Fair day"
+      >
+        <option value="">—</option>
+        {options.map((d) => (
+          <option key={d} value={d}>{fmtDayMonth(d)}</option>
+        ))}
+      </select>
     </span>
   );
 }
