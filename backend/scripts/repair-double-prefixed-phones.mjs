@@ -85,7 +85,7 @@ async function main() {
   }
 
   for (const c of changes) {
-    await sql`UPDATE scm.customers SET phone = ${c.next}, updated_at = now()
+    await sql`UPDATE scm.customers SET phone = ${c.next}
               WHERE id = ${c.id} AND phone = ${c.old}`;
   }
   note(`APPLIED ${changes.length} phone repairs.`);
