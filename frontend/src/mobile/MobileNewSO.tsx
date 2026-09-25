@@ -2314,7 +2314,7 @@ export function MobileNewSO({
                     />
                   </Field>
                 </div>
-                <Field label="Customer SO Ref" scanned={scanned("custRef", custRef)}>
+                <Field label="Ref No." scanned={scanned("custRef", custRef)}>
                   <input className="fld-i" value={custRef} disabled={identityLocked} onChange={(e) => setCustRef(e.target.value)} placeholder="Their PO / SO number" />
                 </Field>
               </div>

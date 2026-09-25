@@ -222,7 +222,7 @@ export function MobileDoHeaderEdit({ id, onBack, onSaved }: {
             classes={{ list: "z-50 m-0 max-h-[260px] list-none overflow-auto rounded-lg border border-border bg-surface py-1 text-[13px] shadow-lg", item: "cursor-pointer px-3 py-2 text-ink hover:bg-canvas", code: "text-[11px] text-ink-muted" }} />
         </>
       ))}
-      {text("Customer SO ref", "customerSoRef", "customerSoNo", { placeholder: "Their PO / SO number" })}
+      {text("Ref No.", "customerSoRef", "customerSoNo", { placeholder: "Their PO / SO number" })}
       {field("Phone", <PhoneInput aria-label="Phone" value={form.phone} disabled={lockedKey("phone")} onChange={(v) => set({ phone: v })} />)}
       {text("Email", "email", "email", { inputMode: "email" })}
       {choice("Customer type", "customerType", "customerType", customerTypeOpts.map((o) => [o.value, o.label]))}

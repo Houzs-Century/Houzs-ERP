@@ -1264,7 +1264,7 @@ export function DeliveryOrderNewV2() {
               />
             </div>
             <div>
-              <Label text="Customer SO ref" />
+              <Label text="Ref No." />
               <TextInput
                 value={customerSoRef}
                 onChange={setCustomerSoRef}

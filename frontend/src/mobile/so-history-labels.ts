@@ -20,7 +20,7 @@ export const HIST_FIELD_LABEL: Record<string, string> = {
   debtorName: "Customer", debtorCode: "Customer code", agent: "Agent",
   phone: "Phone", email: "Email", soDate: "SO date", status: "Status",
   paymentMethod: "Payment method", depositSen: "Deposit",
-  processingDate: "Processing Date", customerSoNo: "Customer SO ref",
+  processingDate: "Processing Date", customerSoNo: "Ref No.",
   customerPo: "Customer PO", customerDeliveryDate: "Delivery Date",
   amendedDeliveryDate: "Amended delivery date",
   amendDateFromCustomer: "Amend date (customer)", amendReason: "Amend reason",

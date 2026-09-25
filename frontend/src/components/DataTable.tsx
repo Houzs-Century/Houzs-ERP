@@ -79,6 +79,9 @@ import { MobileVirtualList } from "../mobile/MobileVirtualList";
 export interface Column<T, L = never> {
   key: string;
   label: string;
+  /** The exported header when it must differ from the on-screen label (an
+   *  export that keeps AutoCount's caption, e.g. the SO list's "Ref."). */
+  exportLabel?: string;
   width?: string;
   align?: "left" | "right" | "center";
   className?: string;
@@ -1890,7 +1893,7 @@ function DataTableInner<T, L>({
       .filter((c) => typeof c.getValue === "function" || typeof c.exportValue === "function")
       .map((c) => ({
         key: c.key,
-        label: c.label || c.key,
+        label: c.exportLabel || c.label || c.key,
         getValue: (r: T) => (c.exportValue ? c.exportValue(r) : isoForExport(c.getValue!(r) as string | number | null)),
       }));
     if (onExport) { onExport(csvCols); return; }

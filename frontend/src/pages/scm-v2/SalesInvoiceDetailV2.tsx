@@ -1479,7 +1479,7 @@ export function SalesInvoiceDetailV2() {
                   muted={soOf(salesInvoice) === "—"}
                 />
                 <Field
-                  label="Customer ref"
+                  label="Ref No."
                   value={refOf(salesInvoice)}
                   mono={refOf(salesInvoice) !== "—"}
                   muted={refOf(salesInvoice) === "—"}

@@ -373,7 +373,7 @@ const DOC_MODULES: Record<string, DocMap> = {
       ["Delivery", dmy(h.customer_delivery_date ?? h.expected_delivery_at)],
       ["Phone", formatPhone(firstOf(h.phone))],
       ["Ship-from", firstOf(h.sales_location)], // the BRANCH (owner 2026-09-07, header-level); the customer_state fallback was a different concept under one label
-      ["Reference", firstOf(h.ref, h.po_doc_no)],
+      ["Ref No.", firstOf(h.ref, h.po_doc_no)],
       ["Salesperson", firstOf(h.agent)],
     ],
     /* Owner 2026-07-17: Cost + Margin stat tiles removed from the mobile DO
@@ -407,7 +407,7 @@ const DOC_MODULES: Record<string, DocMap> = {
       ["Due Date", dmy(h.due_date)],
       ["Phone", formatPhone(firstOf(h.phone))],
       ["Location", firstOf(h.sales_location, h.customer_state, h.state)],
-      ["Reference", firstOf(h.ref, h.po_doc_no)],
+      ["Ref No.", firstOf(h.ref, h.po_doc_no)],
       ["Salesperson", firstOf(h.agent)],
     ],
     stats: (h) => {
@@ -636,7 +636,7 @@ const DOC_MODULES: Record<string, DocMap> = {
       ["Received", dmy(h.received_at)],
       ["Inspected", dmy(h.inspected_at)],
       ["Refunded", dmy(h.refunded_at)],
-      ["Reference", firstOf(h.ref)],
+      ["Ref No.", firstOf(h.ref)],
     ],
     stats: (h) => [
       ["Total", money(h.local_total_sen), "var(--ink)"],
@@ -681,7 +681,7 @@ const DOC_MODULES: Record<string, DocMap> = {
       ["Delivery", dmy(h.customer_delivery_date ?? h.processing_date)],
       ["Phone", formatPhone(firstOf(h.phone))],
       ["Location", firstOf(h.sales_location, h.customer_state, h.customer_country)],
-      ["Reference", firstOf(h.ref, h.po_doc_no)],
+      ["Ref No.", firstOf(h.ref, h.po_doc_no)],
       ["Salesperson", firstOf(h.agent)],
     ],
     stats: (h) => {
@@ -725,7 +725,7 @@ const DOC_MODULES: Record<string, DocMap> = {
       ["Delivery", dmy(h.customer_delivery_date ?? h.expected_delivery_at)],
       ["Phone", formatPhone(firstOf(h.phone))],
       ["Location", firstOf(h.sales_location, h.customer_state, h.state)],
-      ["Reference", firstOf(h.ref, h.po_doc_no)],
+      ["Ref No.", firstOf(h.ref, h.po_doc_no)],
       ["Driver", firstOf(h.driver_name)],
     ],
     stats: (h) => [

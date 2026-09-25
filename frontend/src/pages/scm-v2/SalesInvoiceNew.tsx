@@ -510,7 +510,7 @@ export const SalesInvoiceNew = () => {
                 onChange={(e) => setDebtorName(e.target.value)} placeholder="e.g. Lim Mei Hua" required />
             </label>
             <label className={styles.field}>
-              <span className={styles.fieldLabel}>Customer SO Ref</span>
+              <span className={styles.fieldLabel}>Ref No.</span>
               <input className={styles.fieldInput} value={customerSoNo}
                 placeholder="Their PO / SO number" onChange={(e) => setCustomerSoNo(e.target.value)} />
             </label>

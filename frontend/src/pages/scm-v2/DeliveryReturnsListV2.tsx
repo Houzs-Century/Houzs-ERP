@@ -496,7 +496,7 @@ function DetailDrawer({
 
               <dl className="mt-5 grid grid-cols-2 gap-x-4 gap-y-3 rounded-lg border border-border bg-surface-2 px-4 py-4">
                 <MetaItem k={transferFromColumnLabel('do')} v={doOf(row)} mono />
-                <MetaItem k="Customer ref" v={refOf(row)} mono />
+                <MetaItem k="Ref No." v={refOf(row)} mono />
                 <MetaItem k="Location" v={row.sales_location || "—"} />
                 <MetaItem k="Salesperson" v={salespersonName} />
                 <MetaItem k="Venue" v={row.venue || "—"} />

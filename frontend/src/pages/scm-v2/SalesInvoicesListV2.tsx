@@ -512,7 +512,7 @@ function DetailDrawer({
               <dl className="mt-5 grid grid-cols-2 gap-x-4 gap-y-3 rounded-lg border border-border bg-surface-2 px-4 py-4">
                 <MetaItem k={transferFromColumnLabel('so')} v={soOf(row)} mono />
                 <MetaItem k={transferFromColumnLabel('do')} v={doOf(row)} mono />
-                <MetaItem k="Customer ref" v={refOf(row)} mono />
+                <MetaItem k="Ref No." v={refOf(row)} mono />
                 <MetaItem k="Due date" v={fmtDate(row.due_date)} />
                 {/* Owner 2026-07-24 — Processing (linked SO's
                     processing_date) + Delivery must be visible in every
@@ -1249,7 +1249,7 @@ export function SalesInvoicesListV2() {
     },
     {
       key: "reference",
-      label: "Customer ref",
+      label: "Ref No.",
       width: "132px",
       disableSort: true,
       getValue: (r) => refOf(r),

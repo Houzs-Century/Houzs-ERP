@@ -216,7 +216,7 @@ export function MobileMyCaseDetail({ id, onBack }: { id: number; onBack: () => v
             <Section title="Overview">
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px 14px" }}>
                 <Field label="SO" value={field(c, "docNo", "doc_no")} />
-                <Field label="Ref" value={field(c, "refNo", "ref_no")} />
+                <Field label="Ref No." value={field(c, "refNo", "ref_no")} />
                 <Field label="Priority" value={cap(field(c, "priority") || "normal")} />
                 <Field label="Reported" value={formatDate(field(c, "complainedDate", "complained_date"))} />
               </div>

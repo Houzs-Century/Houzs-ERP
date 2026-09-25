@@ -553,7 +553,7 @@ function DetailDrawer({
               <dl className="mt-5 grid grid-cols-2 gap-x-4 gap-y-3 rounded-lg border border-border bg-surface-2 px-4 py-4">
                 <MetaItem k="Salesperson" v={salespersonName} />
                 <MetaItem k="Location" v={<LocationText row={row} />} />
-                <MetaItem k="Reference" v={refOf(row)} mono />
+                <MetaItem k="Ref No." v={refOf(row)} mono />
                 <MetaItem k="Branding" v={brandOf(row)} />
                 <MetaItem k="Order date" v={fmtDate(row.so_date)} />
                 {/* Owner 2026-07-24 — the quick view showed only the order
@@ -1484,7 +1484,8 @@ export function MfgSalesOrdersListV2() {
     {
       key: "reference",
       group: "Basic",
-      label: SO_LABELS.ref,
+      label: "Ref No.",
+      exportLabel: SO_LABELS.ref,
       width: "132px",
       disableSort: true,
       getValue: (r) => refOf(r),
