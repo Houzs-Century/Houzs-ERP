@@ -88,7 +88,7 @@ import {
   scopeToCompanyId,
 } from '../lib/companyScope';
 import { doHasDownstream, poHasDownstream, soHasDownstream } from '../lib/downstream-lock';
-import { chunkIn } from '../lib/paginate-all';
+import { readSoRefs, readSoRefsByDoId } from '../lib/so-ref-lookup';
 import { recordSoAudit } from '../lib/so-audit';
 import { recordEntityAudit } from '../lib/entity-audit';
 import { notifyCancelRequest } from '../../services/cancelRequestNotify';
@@ -491,23 +491,18 @@ export const listCancelRequestsHandler = async (c: AnyCtx) => {
 
      Sent RAW (`ref`, `customer_so_no`) exactly as GET /so-amendments sends it,
      so the frontend resolves both kinds of row through the one display rule
-     (customerRefOf) and two rows for the same order can never disagree. SO rows
-     only — a PO / DO cancellation has no such field. A failed read FAILS the
+     (customerRefOf) and two rows for the same order can never disagree. SO rows,
+     and a DO's source order below; a PO has no single order. A failed read FAILS the
      list, like the main read: a blank column would claim the order has no
      reference, which a failed read does not know. */
-  const soDocNos = [...new Set(rows.filter((r) => r.doc_type === 'SO').map((r) => r.doc_key))];
-  const refBySo = new Map<string, { ref: string | null; customer_so_no: string | null }>();
-  if (soDocNos.length > 0) {
-    const { data: soRows, error: soErr } = await chunkIn(soDocNos, (batch, from, to) =>
-      scopeToCompany(sb.from('mfg_sales_orders').select('doc_no, ref, customer_so_no').in('doc_no', batch), c)
-        .range(from, to));
-    if (soErr) return c.json({ error: 'load_failed', reason: soErr.message }, 500);
-    for (const so of (soRows ?? []) as Array<{ doc_no: string; ref: string | null; customer_so_no: string | null }>) {
-      refBySo.set(so.doc_no, so);
-    }
-  }
+  const inCompany = (sq: Parameters<typeof scopeToCompany>[0]) => scopeToCompany(sq, c);
+  const soRefs = await readSoRefs(sb, rows.filter((r) => r.doc_type === 'SO').map((r) => r.doc_key), inCompany);
+  if (soRefs.error) return c.json({ error: 'load_failed', reason: soRefs.error }, 500);
+  /* Owner 2026-09-25: every search finds a record by its SO's reference. */
+  const doRefs = await readSoRefsByDoId(sb, rows.filter((r) => r.doc_type === 'DO').map((r) => r.doc_key), inCompany);
+  if (doRefs.error) return c.json({ error: 'load_failed', reason: doRefs.error }, 500);
   const requests = rows.map((r) => {
-    const so = r.doc_type === 'SO' ? refBySo.get(r.doc_key) : undefined;
+    const so = r.doc_type === 'SO' ? soRefs.byDoc.get(r.doc_key) : r.doc_type === 'DO' ? doRefs.byDoId.get(r.doc_key) : undefined;
     return { ...r, doc_ref: so?.ref ?? null, doc_customer_so_no: so?.customer_so_no ?? null };
   });
   return c.json({ requests });

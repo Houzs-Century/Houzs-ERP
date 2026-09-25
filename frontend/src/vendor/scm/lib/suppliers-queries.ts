@@ -859,6 +859,9 @@ export type OutstandingSoItem = {
      the line can't be converted to a PO until it's assigned a supplier). */
   mainSupplierCode: string | null;
   mainSupplierName: string | null;
+  /** The order's raw reference pair (resolve with soRefOfCamelStamp). */
+  soRef?: string | null;
+  soCustomerSoNo?: string | null;
 };
 
 export function useOutstandingSoItems() {

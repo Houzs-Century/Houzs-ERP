@@ -56,6 +56,7 @@ import { canViewAllSales } from '../lib/houzs-perms';
 import { resolveSalesScopeIds } from '../lib/salesScope';
 import { doLineRemaining } from '../lib/do-line-remaining';
 import { todayMyt } from '../lib/my-time';
+import { stampSoRefs } from '../lib/so-ref-lookup';
 
 export const unbilledDeliveries = new Hono<{ Bindings: Env; Variables: Variables }>();
 unbilledDeliveries.use('*', supabaseAuth);
@@ -158,6 +159,9 @@ type Row = {
   lines_total: number;
   lines_pending: number;
   partly_invoiced: boolean;
+  /** The SO's raw reference pair (lib/so-ref-lookup), stamped after assembly. */
+  so_ref?: string | null;
+  so_customer_so_no?: string | null;
 };
 
 /**
@@ -374,6 +378,9 @@ unbilledDeliveries.get('/', async (c) => {
       r.salesperson = (sid ? nameById.get(sid) : null) ?? r.salesperson ?? null;
     }
   }
+
+  // The order's customer reference, so the page's search finds a DO by it.
+  await stampSoRefs(sb, rows as unknown as Array<Record<string, unknown>>, 'so_doc_no', (q) => scopeToCompany(q, c), 'unbilled-deliveries');
 
   // Oldest money first — the tail is the finding, the current month is the noise.
   rows.sort((x, y) => y.age_days - x.age_days || y.unbilled_sen - x.unbilled_sen);

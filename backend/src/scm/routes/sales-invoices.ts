@@ -43,6 +43,7 @@ import type { Env, Variables } from '../env';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   isCrossCompanySource, crossCompanyConversionBlocked,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
+import { stampDoLineSoRefs } from '../lib/so-ref-lookup';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { postUnpostedSiPayments, reverseSiPayment } from '../../acc/payments';
@@ -525,6 +526,8 @@ salesInvoices.get('/invoiceable-do-lines', async (c) => {
   const remaining = await doLineRemaining(sb, candidates.doIds, 'invoiceable');
   if (!remaining.ok) return c.json({ error: 'load_failed', reason: remaining.reason }, 500);
   const lines = [...remaining.lines.values()].filter((l) => l.remaining > 0);
+  // The DO's order reference, for the picker's search (owner 2026-09-25).
+  await stampDoLineSoRefs(sb, lines, (q) => scopeToCompany(q, c), 'invoiceable-do-lines');
   return c.json({ lines });
 });
 

@@ -42,6 +42,7 @@ import { useSaveHotkey, SAVE_HOTKEY_HINT } from '../../vendor/scm/lib/use-save-h
 import { DateField } from '../../vendor/scm/components/DateField';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
 import { todayMyt } from '../../vendor/scm/lib/dates';
+import { soRefOfCamelStamp } from '../../lib/so-ref-search';
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
@@ -94,8 +95,10 @@ const buildReceiptColumns = (h: {
             : r.number}
       </span>
     ),
-    searchValue: (r) => r.number,
+    /* A customer receipt is also found by its order's reference. */
+    searchValue: (r) => `${r.number} ${soRefOfCamelStamp(r)}`,
     filterValue: (r) => r.number,
+    exportValue: (r) => r.number,
     filterType: 'numbering',
     sortFn: (a, b) => a.number.localeCompare(b.number),
   },
