@@ -388,12 +388,13 @@ describe("DataTable column width persistence", () => {
     // operator, not to a table, so it is a single global key. Anything else
     // appearing outside the family is a regression.
     const perTable = keys.filter((key) => key !== "dt:cols-drawer-az");
-    // hidden, shown, order, sort, mview, widths, pinned, pinnedr, groups.
+    // hidden, shown, order, sort, mview, widths, pinned, pinnedr, groups, groupby.
+    // `groupby` is the group-banner column list (DataGrid parity, 2026-09-25).
     // `pinnedr` is the right-freeze list (owner 2026-08-03) — a second flat list
     // rather than a reshaped `pinned`, so every layout already on disk keeps
     // reading. Funnel filters are NO LONGER here (owner 2026-09-16): they live in
     // in-visit memory (dataTableColFilterMemory), never localStorage.
-    expect(perTable).toHaveLength(9);
+    expect(perTable).toHaveLength(10);
     expect(perTable.every((key) => key.endsWith(":sales-order-lines"))).toBe(true);
   });
 

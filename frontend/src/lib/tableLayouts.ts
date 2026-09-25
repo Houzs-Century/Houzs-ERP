@@ -42,8 +42,8 @@ export interface StoredLayout {
    *  than a reshaped `pinned`: every stored layout and every browser already
    *  holds the flat one. */
   pinnedRight: string[];
-  /** Group-by columns — vendored SCM DataGrid only, where grouping a list by
-   *  supplier is part of its shape. Always empty for a DataTable. */
+  /** Group-by columns, outermost first — dragged onto the group banner (a
+   *  DataTable with `groupBanner`, or the vendored SCM DataGrid). */
   groupBy: string[];
 }
 
@@ -185,7 +185,7 @@ export function dataGridIdKey(storageKey: string, companyId: number | null): str
   return companyId != null ? `${storageKey}::c${companyId}` : storageKey;
 }
 
-const PARTS = ["order", "hidden", "shown", "widths", "pinned", "pinnedr"] as const;
+const PARTS = ["order", "hidden", "shown", "widths", "pinned", "pinnedr", "groupby"] as const;
 
 /** Marker holding the layout we last pushed for this table. Its absence means
  *  "never pushed"; a mismatch against localStorage means there are local edits
@@ -236,6 +236,7 @@ function readLocal(tableKey: string, companyId: number | null): StoredLayout {
     widths: read<Record<string, number>>("widths", {}),
     pinned: read<string[]>("pinned", []),
     pinnedRight: read<string[]>("pinnedr", []),
+    groupBy: read<string[]>("groupby", []),
   };
 }
 
@@ -258,7 +259,8 @@ function writeLocal(tableKey: string, companyId: number | null, layout: StoredLa
       return;
     }
     for (const part of PARTS) {
-      const value = part === "pinnedr" ? layout.pinnedRight : layout[part];
+      const value =
+        part === "pinnedr" ? layout.pinnedRight : part === "groupby" ? layout.groupBy : layout[part];
       localStorage.setItem(`dt:${part}:${target.idKey}`, JSON.stringify(value));
     }
   } catch {

@@ -187,6 +187,14 @@ export interface DataTableProps<T, L = never> {
   getRowStyle?: (row: T) => CSSProperties | undefined;
   /** The order rows open in while no header sort is active (client-side). */
   defaultSort?: (a: T, b: T) => number;
+  /** Show the "drag a column header here to group" banner (SCM DataGrid
+   *  parity): the user groups by any number of columns, outermost first, and
+   *  the grouping is saved with the layout. Overrides `groupBy` while set. */
+  groupBanner?: boolean;
+  /** The `storageKey` this list had as an SCM DataGrid. Its saved layout (the
+   *  user's own, and each company's default) is carried over the first time
+   *  the DataTable opens. Set it on every page moved off DataGrid. */
+  legacyGridKey?: string;
   /** Compact grid inside another table's expanded row: no toolbar, no card
    *  view, tighter cells. Header menus still work. */
   embedded?: boolean;
