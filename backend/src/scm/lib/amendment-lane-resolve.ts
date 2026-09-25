@@ -39,7 +39,7 @@ export async function resolveAmendmentLaneSplit<L extends LaneResolvableLine>(
   companyId: number | null | undefined,
   headerChanges: Record<string, string | null>,
   lines: L[],
-  /** True only on PRICE_LANE_COMPANY_CODE (owner 2026-09-21). Required so the
+  /** True only on a PRICE_LANE_COMPANY_CODES company. Required so the
    *  price carve-out is never a silent default — the caller reads the ACTIVE
    *  company code and decides. */
   priceLaneEnabled: boolean,

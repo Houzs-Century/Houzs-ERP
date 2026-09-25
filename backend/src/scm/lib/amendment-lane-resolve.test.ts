@@ -132,7 +132,7 @@ describe('resolveAmendmentLaneSplit — PRICE lane (2990, owner 2026-09-21)', ()
     expect(split!.lanes).toEqual(['DELIVERY']);
   });
 
-  it('is OFF when the price lane is not enabled (HOUZS): a price-only change stays LINES', async () => {
+  it('is OFF when the price lane is not enabled: a price-only change stays LINES', async () => {
     const split = await resolveAmendmentLaneSplit(makeSb(rows()), 'HC-SO-1', 1, {}, [
       { salesOrderItemId: 'li-bed', changeType: 'SPEC', newUnitPriceSen: 0 },
     ], false);

@@ -3,7 +3,7 @@
 // gives it today.
 //
 // WHY THIS EXISTS. The lane (LINES = Purchaser, DELIVERY = Logistic, PRICE =
-// Finance on 2990's price-only carve-out) is decided ONCE, at submit, and stored
+// Sales Director on a price-only carve-out) is decided ONCE, at submit, and stored
 // on scm.so_amendments.lane. A rule fix therefore
 // reaches only amendments raised AFTER it deploys: HC-SO-012757/A1 added
 // TRANSPORTATION CHARGES (catalogue category SERVICE) on 2026-09-14 and was
@@ -24,10 +24,10 @@
 //     item_group 'service' on an existing SO line;
 //   - moving to LINES when every line IS a service line (that would recreate
 //     the exact mis-route 0816 / 0895 fixed).
-//   - moving to PRICE on any company but 2990, or when any line is NOT a
-//     price-only product change (unit price and/or discount moved; SKU, quantity,
-//     colour/fabric and remark unchanged) — the PRICE lane is 2990's price-only
-//     carve-out (shared/amendment-lane.ts, owner 2026-09-21), Finance's to sign.
+//   - moving to PRICE on a company without a PRICE lane, or when any line is NOT
+//     a price-only product change (unit price and/or discount moved; SKU,
+//     quantity, colour/fabric and remark unchanged) — the PRICE lane is the
+//     price-only carve-out (shared/amendment-lane.ts), the Sales Director's to sign.
 //
 // WHAT IT WRITES (APPLY=1 only), in ONE transaction: the lane on the amendment
 // row, and one mfg_so_audit_log row (action AMENDMENT_RELANED) so the order's
@@ -59,9 +59,9 @@ const AMENDMENT_NO = (process.env.AMENDMENT_NO || "").trim();
 const TO_LANE = (process.env.TO_LANE || "").trim().toUpperCase();
 const APPLY = process.env.APPLY === "1";
 const CONFIRM_PHRASE = "I HAVE REVIEWED THE DRY-RUN";
-/* The ONE company whose amendments carry a PRICE lane (shared/amendment-lane.ts
-   PRICE_LANE_COMPANY_CODE). Keyed on companies.code, never the numeric id. */
-const PRICE_LANE_COMPANY_CODE = "2990";
+/* Companies whose amendments carry a PRICE lane (shared/amendment-lane.ts
+   PRICE_LANE_COMPANY_CODES). Keyed on companies.code, never the numeric id. */
+const PRICE_LANE_COMPANY_CODES = new Set(["2990", "HOUZS"]);
 
 if (!AMENDMENT_NO) {
   console.error("AMENDMENT_NO is required (e.g. HC-SO-012757/A1). Aborting.");
@@ -218,11 +218,10 @@ async function main() {
     return;
   }
   if (TO_LANE === "PRICE") {
-    /* The PRICE lane is 2990's alone (owner 2026-09-21). Read the company CODE,
-       not the id — ids drift between environments. */
+    /* Read the company CODE, not the id — ids drift between environments. */
     const [co] = await pg`SELECT code FROM public.companies WHERE id = ${row.company_id}`;
-    if ((co?.code ?? null) !== PRICE_LANE_COMPANY_CODE) {
-      log(`REFUSED: the PRICE lane is ${PRICE_LANE_COMPANY_CODE}'s only; this order's company is ${co?.code ?? row.company_id}.`);
+    if (!PRICE_LANE_COMPANY_CODES.has(co?.code ?? "")) {
+      log(`REFUSED: this order's company (${co?.code ?? row.company_id}) has no PRICE lane.`);
       return;
     }
     /* Mirror the split: PRICE takes a NON-service line whose only move is the
@@ -230,7 +229,7 @@ async function main() {
        Purchaser's. */
     const wrong = lines.filter((l) => isServiceLine(l) || !isPriceOnly(l)).length;
     if (wrong > 0) {
-      log(`REFUSED: ${wrong} line(s) are not a price-only product change; only a pure price/discount change is Finance's.`);
+      log(`REFUSED: ${wrong} line(s) are not a price-only product change; only a pure price/discount change goes to the price approver.`);
       return;
     }
   }

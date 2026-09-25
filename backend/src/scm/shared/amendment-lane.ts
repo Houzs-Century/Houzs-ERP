@@ -10,12 +10,12 @@
 //              charges). Approved by Logistics
 //              (scm.amendment.approve_delivery); applying never touches a PO.
 //   PRICE    — a PRICE-ONLY product-line change (only unit price and/or discount
-//              moved; SKU/colour/qty/remark unchanged) on the 2990 company only.
-//              Owner 2026-09-21: the sell price is Finance's (Kris), not the
-//              Purchaser's — it changes what the CUSTOMER pays and carries
-//              nothing for the PO to follow. Approved by
-//              scm.amendment.approve_price; applying never touches a PO. HOUZS
-//              keeps a price change on LINES. See PRICE_LANE_COMPANY_CODE.
+//              moved; SKU/colour/qty/remark unchanged). Owner 2026-09-21 (2990)
+//              and 2026-09-25 (HOUZS): the sell price is the Sales Director's,
+//              not the Purchaser's — it changes what the CUSTOMER pays and
+//              carries nothing for the PO to follow. Approved by
+//              scm.amendment.approve_price; applying never touches a PO. See
+//              PRICE_LANE_COMPANY_CODES.
 //
 // A submission that mixes lanes is SPLIT at create time into one amendment
 // document per lane, each with its own approver and lifecycle
@@ -51,11 +51,11 @@ import { isServiceLine } from './service-sku';
 
 export type AmendmentLane = 'LINES' | 'DELIVERY' | 'PRICE';
 
-/** The ONE company whose SO amendments carve a price-only line into the PRICE
- *  lane (owner 2026-09-21). Keyed on companies.code, never the numeric id — ids
- *  drift between prod / staging / test, the code does not (mig 0216 grants target
- *  roles by name for the same reason). HOUZS keeps a price change on LINES. */
-export const PRICE_LANE_COMPANY_CODE = '2990';
+/** Companies whose SO amendments carve a price-only line into the PRICE lane.
+ *  Keyed on companies.code, never the numeric id — ids drift between prod /
+ *  staging / test, the code does not (mig 0216 grants target roles by name for
+ *  the same reason). */
+export const PRICE_LANE_COMPANY_CODES: ReadonlySet<string> = new Set(['2990', 'HOUZS']);
 
 /** Flat permission key that approves a given lane (services/permissions.ts). */
 export const LANE_APPROVE_KEY: Record<AmendmentLane, string> = {
@@ -162,8 +162,8 @@ export type LaneSplit<L> = {
  *
  * `linePriceOnly` answers, for a line the caller resolved as a product line,
  * whether the ONLY thing it moves is the sell price / discount (SKU / colour /
- * qty / remark unchanged); `priceLaneEnabled` is true only on
- * PRICE_LANE_COMPANY_CODE. When both hold, that product line carves off into
+ * qty / remark unchanged); `priceLaneEnabled` is true only on a
+ * PRICE_LANE_COMPANY_CODES company. When both hold, that product line carves off into
  * the PRICE lane instead of LINES. Both are REQUIRED so the price carve-out is
  * never a silent default — a caller with no price lane passes `() => false` and
  * `false`, and the split is exactly the two-lane behaviour it always had.
