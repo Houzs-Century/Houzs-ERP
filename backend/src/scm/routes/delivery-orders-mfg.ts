@@ -3355,7 +3355,10 @@ deliveryOrdersMfg.post('/', async (c) => {
     branding: (body.branding as string) ?? null,
     venue: (body.venue as string) ?? null,
     venue_id: (body.venueId as string) ?? null,
-    ref: (body.ref as string) ?? null,
+    /* The Create-DO form sends the reference as customerSoNo only; without
+       this the stored ref stayed empty on every form-made DO (230 / 474 on
+       2026-09-25) while screens read ref || customer_so_no. */
+    ref: (body.ref as string) || (body.customerSoNo as string) || null,
     customer_so_no: (body.customerSoNo as string) ?? null,
     po_doc_no: (body.poDocNo as string) ?? null,
     sales_location: (body.salesLocation as string) ?? null,
