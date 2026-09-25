@@ -12,6 +12,7 @@ import {
   laneActionTarget,
   laneIsOpen,
   LANE_APPROVE_KEY,
+  PRICE_LANE_COMPANY_CODES,
 } from './amendment-lane';
 import { soAmendableHeaderKeys } from './so-field-policy';
 
@@ -175,7 +176,7 @@ describe('splitAmendmentByLane', () => {
     expect(split.perLane.PRICE.lines.map((l) => l.id)).toEqual(['p']);
   });
 
-  it('keeps a price-only line on LINES when the price lane is OFF (HOUZS)', () => {
+  it('keeps a price-only line on LINES when the price lane is OFF', () => {
     const split = splitAmendmentByLane<L>(
       {},
       [{ id: 'p', code: 'JAGER-(K)' }],
@@ -240,5 +241,11 @@ describe('lane state machine', () => {
     expect(LANE_APPROVE_KEY.LINES).toBe('scm.amendment.approve_lines');
     expect(LANE_APPROVE_KEY.DELIVERY).toBe('scm.amendment.approve_delivery');
     expect(LANE_APPROVE_KEY.PRICE).toBe('scm.amendment.approve_price');
+  });
+});
+
+describe('PRICE_LANE_COMPANY_CODES', () => {
+  it('routes a price-only change to the price approver on BOTH companies (owner 2026-09-25: HOUZS joins 2990)', () => {
+    expect([...PRICE_LANE_COMPANY_CODES].sort()).toEqual(['2990', 'HOUZS']);
   });
 });

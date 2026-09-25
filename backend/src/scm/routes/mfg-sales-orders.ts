@@ -20,7 +20,7 @@ import {
   resolveFabricTierOverride,
   type RuleLineInput,
   passesRefinementColumns,
-  LANE_LABEL, PRICE_LANE_COMPANY_CODE, type AmendmentLane,
+  LANE_LABEL, PRICE_LANE_COMPANY_CODES, type AmendmentLane,
   laneSelfApproves, SELF_APPROVE_KEY,
 } from '../shared';
 import { computeSoDeliveryFee, type SoDeliveryFeeResult } from '../shared/pricing';
@@ -11081,7 +11081,7 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
      requester was shown is the desk the row lands on. */
   // Price-lane carve-out is 2990's alone (owner 2026-09-21). Read the ACTIVE
   // company code, not the id — ids drift between environments.
-  const priceLaneEnabled = c.get('companyCode') === PRICE_LANE_COMPANY_CODE;
+  const priceLaneEnabled = PRICE_LANE_COMPANY_CODES.has(c.get('companyCode') ?? '');
   const split = await resolveAmendmentLaneSplit(sb, docNo, activeCompanyId(c), headerChanges, submittedLines, priceLaneEnabled);
   if (!split) return c.json(LINE_BUILD_ERRORS.unreadable, 500);
 
