@@ -765,7 +765,7 @@ function SalesOrderDetailV2ReadOnly() {
   const closeHistory = useCallback(() => setHistoryOpen(false), []);
   const auditQ = useSalesOrderAuditLog(docNo ?? null);
   const auditEntries = auditQ.data ?? [];
-  const history = useSoHistoryWithRelated(historyOpen ? docNo ?? null : null, auditQ.data);
+  const history = useSoHistoryWithRelated(historyOpen ? docNo ?? null : null, auditQ);
   const slipImageKey =
     (salesOrder as unknown as { slipImageKey?: string | null; slip_image_key?: string | null } | null)?.slipImageKey
     ?? (salesOrder as unknown as { slip_image_key?: string | null } | null)?.slip_image_key
@@ -1699,11 +1699,9 @@ function SalesOrderDetailV2ReadOnly() {
         <AuditHistoryPanel
           recordLabel={salesOrder.doc_no}
           entityName="Sales order"
-          entries={history.entries}
-          isLoading={auditQ.isLoading || history.isLoading}
-          error={auditQ.error ?? history.error}
+          {...history.panel}
+          error={history.error}
           labels={SO_AUDIT_LABELS}
-          labelsFor={history.labelsFor}
           renderBadge={history.renderDocTag}
           onClose={closeHistory}
         />

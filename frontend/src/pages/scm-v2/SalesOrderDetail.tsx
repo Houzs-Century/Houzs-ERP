@@ -3896,13 +3896,10 @@ const HistoryPanel = memo(({
   onClose: () => void;
 }) => {
   const q = useSalesOrderAuditLog(docNo);
-  const history = useSoHistoryWithRelated(docNo, q.data);
-  const { renderDocTag } = history;
+  const { panel, error, renderDocTag } = useSoHistoryWithRelated(docNo, q);
 
   const renderBadge = useCallback((entry: AuditLogEntry, changes: AuditFieldChange[]) => {
-    const docTag = renderDocTag(entry);
-    if (docTag) return docTag;
-    if (entry.action !== 'UPDATE_STATUS') return null;
+    if (entry.action !== 'UPDATE_STATUS') return renderDocTag(entry);
     const status = changes.find((f) => f.field === 'status')?.to as string | undefined;
     if (!status) return null;
     return (
@@ -3919,11 +3916,9 @@ const HistoryPanel = memo(({
     <AuditHistoryPanel
       recordLabel={docNo}
       entityName="Sales order"
-      entries={history.entries}
-      isLoading={q.isLoading || history.isLoading}
-      error={q.error ?? history.error}
+      {...panel}
+      error={error}
       labels={SO_AUDIT_LABELS}
-      labelsFor={history.labelsFor}
       onClose={onClose}
       renderBadge={renderBadge}
     />

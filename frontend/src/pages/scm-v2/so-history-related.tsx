@@ -49,17 +49,23 @@ const relatedOf = (e: AuditLogEntry): RelatedFields | null => {
     : null;
 };
 
-export function useSoHistoryWithRelated(docNo: string | null, own: SoAuditEntry[] | undefined) {
+type OwnAuditQuery = { data?: SoAuditEntry[]; isLoading: boolean; error: unknown };
+
+/* `panel` spreads onto AuditHistoryPanel; `error` stays out of it so every
+   mount still writes error= where auditHistoryPanelError.test.tsx can see it.
+   A failure on either read is the drawer's error: a trail missing its PO rows
+   is not a complete trail. */
+export function useSoHistoryWithRelated(docNo: string | null, own: OwnAuditQuery) {
   const q = useSalesOrderRelatedAuditLog(docNo);
 
   const entries = useMemo<SoHistoryEntry[]>(() => {
     /* Prefixed ids: the two tables number their rows independently, and the
        drawer keys its expand state on the id. */
     const related = (q.data ?? []).map((e) => ({ ...e, id: `${e.entity_type}:${e.id}` }));
-    return [...(own ?? []), ...related].sort(
+    return [...(own.data ?? []), ...related].sort(
       (a, b) => Date.parse(b.created_at) - Date.parse(a.created_at),
     );
-  }, [own, q.data]);
+  }, [own.data, q.data]);
 
   const labelsFor = useCallback((e: AuditLogEntry): AuditLabelDictionary => {
     const r = relatedOf(e);
@@ -76,5 +82,9 @@ export function useSoHistoryWithRelated(docNo: string | null, own: SoAuditEntry[
     );
   }, []);
 
-  return { entries, isLoading: q.isLoading, error: q.error, labelsFor, renderDocTag };
+  return {
+    panel: { entries, isLoading: own.isLoading || q.isLoading, labelsFor },
+    error: own.error ?? q.error,
+    renderDocTag,
+  };
 }
