@@ -28,7 +28,7 @@ import {
   type FabricTierField,
   type FabricTrackingRow,
 } from '../lib/fabric-queries';
-import { DataGrid, type DataGridColumn } from './DataGrid';
+import { DataGridCompat, type GridColumn } from '../../../components/DataGridCompat';
 import { useConfirm } from './ConfirmDialog';
 import styles from '../../../pages/scm-v2/FabricTracking.module.css';
 
@@ -143,7 +143,7 @@ const DeleteCell = ({ row }: { row: FabricTrackingRow }) => {
 const sofaTier = (r: FabricTrackingRow): FabricTier | null => r.sofa_price_tier ?? r.price_tier;
 const bedTier = (r: FabricTrackingRow): FabricTier | null => r.bedframe_price_tier ?? r.price_tier;
 
-const FABRIC_COLUMNS: DataGridColumn<FabricTrackingRow>[] = [
+const FABRIC_COLUMNS: GridColumn<FabricTrackingRow>[] = [
   {
     key: 'code',
     label: 'Code',
@@ -249,7 +249,7 @@ export const FabricsTable = ({
       </div>
     )}
 
-    <DataGrid
+    <DataGridCompat
       rows={rows}
       columns={FABRIC_COLUMNS}
       storageKey="dg-fabrics-converter"

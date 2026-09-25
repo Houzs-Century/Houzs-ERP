@@ -36,7 +36,7 @@ import {
   SupplyCategoryPicker,
   useSupplierCategoryPool,
 } from '../../vendor/scm/components/SupplyCategoryPicker';
-import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
+import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
 import { SearchProgress } from '../../components/SearchProgress';
 import { ListPager } from '../../components/ListPager';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
@@ -159,7 +159,7 @@ export const Suppliers = () => {
      the grid adds sort, per-column filters, column show-hide / reorder / pin.
      Row click still opens the supplier detail page. Payment Terms ships
      default-hidden (low-value) — re-enable via the Columns popover. */
-  const columns = useMemo<DataGridColumn<SupplierRow>[]>(() => [
+  const columns = useMemo<GridColumn<SupplierRow>[]>(() => [
     {
       key: 'code',
       label: 'Code',
@@ -307,7 +307,7 @@ export const Suppliers = () => {
             hidden (`hideSearch`) — it would otherwise only filter the loaded page
             and silently hide matches on other pages. Column sort / filters /
             show-hide still operate on the loaded page. */}
-        <DataGrid
+        <DataGridCompat
           rows={searchTransition.resultsAreStale ? [] : rows}
           columns={columns}
           storageKey="dg-suppliers"

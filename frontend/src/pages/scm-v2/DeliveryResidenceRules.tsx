@@ -30,7 +30,7 @@ import {
   minutesToHours,
   type ResidenceRuleRow,
 } from '../../vendor/scm/lib/delivery-residence-rules-queries';
-import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
+import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import styles from './Suppliers.module.css';
@@ -117,7 +117,7 @@ export const DeliveryResidenceRules = ({ embedded = false }: { embedded?: boolea
     });
   };
 
-  const columns = useMemo<DataGridColumn<ResidenceRuleRow>[]>(() => [
+  const columns = useMemo<GridColumn<ResidenceRuleRow>[]>(() => [
     {
       key: 'buildingType',
       label: 'Residence Type',
@@ -322,7 +322,7 @@ export const DeliveryResidenceRules = ({ embedded = false }: { embedded?: boolea
         <p className={styles.eyebrow}>{rules.data?.length ?? 0} residence types</p>
       </div>
 
-      <DataGrid
+      <DataGridCompat
         rows={rules.data ?? []}
         columns={columns}
         storageKey="dg-delivery-residence-rules"
