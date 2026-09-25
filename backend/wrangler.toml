@@ -24,7 +24,13 @@ AUTOCOUNT_API_URL = "https://it-houzs.dev/"
 # AutoCount. The ERP -> AutoCount write-back is a SEPARATE control and stays ON,
 # so the ERP still MIRRORS its documents into AutoCount; only the reverse pull is
 # halted. Flip back to "false" + redeploy to resume inbound sync.
-AUTOCOUNT_SYNC_DISABLED = "true"
+# RE-ENABLED "false" 2026-09-25 at owner request — the Service Case feature must be
+# able to pull an SO that is missing from the local mirror (a valid SO the
+# incremental sync gap left out); that on-demand pull, POST /assr/resync-so, is
+# gated by this flag and was returning 503 ("AutoCount sync is currently off").
+# This re-opens INBOUND READS only. Write-back stays OFF (separate control
+# AUTOCOUNT_WRITES_DISABLED = true in services/autocount.ts) — no ERP -> AutoCount.
+AUTOCOUNT_SYNC_DISABLED = "false"
 # ERP -> AutoCount WRITE-BACK (outbound; the opposite direction to the two
 # settings above, which are the legacy inbound pull). Base URL of AcSyncService,
 # the service that runs ON the AutoCount host and drives the licensed 2.2 SDK.
