@@ -27,6 +27,7 @@ import {
   EyeOff,
   MoveHorizontal,
   Filter,
+  Rows3,
 } from "lucide-react";
 import { cn } from "../lib/utils";
 import { ResetFiltersButton } from "./ResetFiltersButton";
@@ -59,6 +60,8 @@ import {
   saveCompanyDefault,
   saveMyLayout,
   serializeLayout,
+  dataGridIdKey,
+  dataGridTableKey,
   subscribeTableLayouts,
   type StoredLayout,
 } from "../lib/tableLayouts";
@@ -75,6 +78,8 @@ import {
 } from "./dataTableLineExport";
 import { SearchScopeHint } from "./SearchScopeHint";
 import { DataTableConditionSection } from "./DataTableConditionSection";
+import { DataTableGroupBanner } from "./DataTableGroupBanner";
+import { gridLayoutToTableLayout, readLegacyGridLayout } from "./dataTableLegacyGridLayout";
 import { buildSearchBlob, conditionToken, isConditionToken, parseCondition } from "./dataTableConditionFilters";
 import { MobileVirtualList } from "../mobile/MobileVirtualList";
 
@@ -134,6 +139,8 @@ function DataTableInner<T, L>({
   getRowStyle,
   defaultSort,
   embedded = false,
+  groupBanner = false,
+  legacyGridKey,
   exportName,
   exportLabel = "Export",
   onExport,
@@ -483,6 +490,14 @@ function DataTableInner<T, L>({
     legacyStorageKey("groups"),
     sanitizeStringList,
   );
+  /* Columns the user dragged onto the group banner, outermost first. Part of
+     the saved layout (`groupBy`), unlike the code-set `groupBy` prop. */
+  const [userGroups, setUserGroups] = useLocalStorage<string[]>(
+    `dt:groupby:${idKey}`,
+    [],
+    legacyStorageKey("groupby"),
+    sanitizeStringList,
+  );
   const collapsedGroupSet = useMemo(
     () => new Set(collapsedGroups),
     [collapsedGroups]
@@ -564,11 +579,20 @@ function DataTableInner<T, L>({
       /** Set only for a company-default row — renaming it goes to /default. */
       companyId?: number;
     }> = [];
+    // Typed as possibly-missing: a company with no saved default has no entry.
+    type ByKey<V> = Record<string, Record<string, V | undefined> | undefined>;
+    const defaults = layoutStore.defaults as ByKey<StoredLayout>;
+    const names = layoutStore.defaultNames as ByKey<string>;
+    const legacyTableKey = legacyGridKey ? dataGridTableKey(legacyGridKey) : null;
     for (const co of layoutStore.companies) {
-      const saved = layoutStore.defaults[String(co.id)]?.[baseIdKey];
+      const own = defaults[String(co.id)]?.[baseIdKey];
+      const legacy = legacyTableKey ? defaults[String(co.id)]?.[legacyTableKey] : undefined;
+      const saved = own ?? (legacy ? gridLayoutToTableLayout(legacy, rawColumns) : undefined);
       const seed = seedByCode.get(co.code.toUpperCase());
       if (!saved && !seed) continue;
-      const savedName = layoutStore.defaultNames[String(co.id)]?.[baseIdKey];
+      const savedName =
+        names[String(co.id)]?.[baseIdKey] ??
+        (legacyTableKey ? names[String(co.id)]?.[legacyTableKey] : undefined);
       out.push({
         id: `company:${co.id}`,
         // Named by an admin, or called after the company until one does.
@@ -611,7 +635,7 @@ function DataTableInner<T, L>({
       });
     }
     return out;
-  }, [layoutPresets, layoutStore, baseIdKey]);
+  }, [layoutPresets, layoutStore, baseIdKey, legacyGridKey, rawColumns]);
 
   /* Turn a preset into the same shape a saved layout has, so ONE rule renders
      both: a column list means "show exactly these, in this order" — which for
@@ -944,6 +968,7 @@ function DataTableInner<T, L>({
     setPinned(keep(layout.pinned).filter((k) => !hiddenSet.has(k)));
     setPinnedRight(keep(layout.pinnedRight).filter((k) => !hiddenSet.has(k)));
     if (Object.keys(layout.widths).length > 0) updateWidths(layout.widths, true);
+    if (groupBanner) setUserGroups(keep(layout.groupBy));
   }
 
   /* ── Sync this table's layout to the account ──────────────────────────────
@@ -960,11 +985,9 @@ function DataTableInner<T, L>({
       widths: storedWidths,
       pinned,
       pinnedRight,
-      // DataTable has no grouping of its own; the field exists for the
-      // vendored DataGrid, which shares this store.
-      groupBy: [],
+      groupBy: userGroups,
     }),
-    [order, hiddenList, shownList, storedWidths, pinned, pinnedRight],
+    [order, hiddenList, shownList, storedWidths, pinned, pinnedRight, userGroups],
   );
   const myLayoutSignature = serializeLayout(myLayout);
   const syncedRef = useRef<{ key: string; signature: string } | null>(null);
@@ -976,6 +999,43 @@ function DataTableInner<T, L>({
     if (previous.signature === myLayoutSignature) return;
     saveMyLayout(baseIdKey, myLayout);
   }, [baseIdKey, myLayoutSignature, myLayout]);
+
+  /* A page that moved off the SCM DataGrid opens with the layout its user left
+     there, once per table key. Boot hydration writes the account's DataGrid
+     layout into the grid's own local blob, so reading that blob covers both
+     browsers and accounts; the state change then syncs it under THIS key. */
+  useEffect(() => {
+    if (!legacyGridKey) return;
+    const marker = `dt:legacy:${idKey}`;
+    try {
+      if (localStorage.getItem(marker)) return;
+    } catch {
+      return;
+    }
+    const mark = () => {
+      try {
+        localStorage.setItem(marker, "1");
+      } catch {
+        // storage unavailable: the import simply re-checks next mount
+      }
+    };
+    const own =
+      order.length + hiddenList.length + shownList.length + pinned.length + pinnedRight.length +
+      userGroups.length + Object.keys(storedWidths).length;
+    if (own > 0) return mark();
+    const grid = readLegacyGridLayout(dataGridIdKey(legacyGridKey, activeCompany));
+    if (!grid) return;
+    const layout = gridLayoutToTableLayout(grid, rawColumns);
+    setOrder(layout.order);
+    setHiddenList(layout.hidden);
+    setShownList(layout.shown);
+    setPinned(layout.pinned);
+    if (Object.keys(layout.widths).length > 0) updateWidths(layout.widths, true);
+    if (groupBanner) setUserGroups(layout.groupBy);
+    if (grid.sort && persistSort && rawColumns.some((c) => c.key === grid.sort!.key)) setSort(grid.sort);
+    mark();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per table key; state read is the mount snapshot
+  }, [idKey, legacyGridKey]);
 
   /* Admin-only: publish the arrangement on screen as this company's default
      view — the thing that used to be a code constant and a deploy. Reaches
@@ -1014,9 +1074,9 @@ function DataTableInner<T, L>({
       widths: storedWidths,
       pinned,
       pinnedRight,
-      groupBy: [],
+      groupBy: userGroups,
     };
-  }, [allColumns, effectiveHidden, storedWidths, pinned, pinnedRight]);
+  }, [allColumns, effectiveHidden, storedWidths, pinned, pinnedRight, userGroups]);
 
   const defaultManager = useMemo(() => {
     if (!layoutStore.ready || !layoutStore.canManageDefaults) return undefined;
@@ -1586,58 +1646,67 @@ function DataTableInner<T, L>({
   // `{ kind: "row" }` stream so the tbody map below is identical to the old
   // flat render. Grouping needs a `getValue` on the target column for a
   // stable bucket key; if that's missing we silently fall back to flat.
+  const headerText = (c: Column<T>) => c.label || c.key;
   type RenderItem =
-    | { kind: "group"; value: string; label: string; count: number; collapsed: boolean }
+    | { kind: "group"; path: string; level: number; label: string; count: number; collapsed: boolean }
     | { kind: "row"; row: T; rowIdx: number };
-  const groupCol = useMemo(
-    () =>
-      groupBy ? allColumns.find((c) => c.key === groupBy.key) ?? null : null,
-    [groupBy, allColumns]
-  );
+  /* Banner groups (user-dragged, any depth) win over the code-set single
+     `groupBy`. A column without `getValue` has no stable bucket and is skipped. */
+  const groupLevels = useMemo(() => {
+    const byKey = new Map(allColumns.map((c) => [c.key, c]));
+    if (groupBanner && userGroups.length > 0) {
+      return userGroups
+        .map((k) => byKey.get(k))
+        .filter((c): c is Column<T> => !!c?.getValue)
+        .map((c) => ({ col: c, label: (v: string) => `${headerText(c)}: ${v || "(blank)"}` }));
+    }
+    const code = groupBy ? byKey.get(groupBy.key) : undefined;
+    if (!groupBy || !code?.getValue) return [];
+    const fmt = groupBy.label;
+    return [{ col: code, label: (v: string) => (fmt ? fmt(v) : v || "(blank)") }];
+  }, [allColumns, groupBanner, userGroups, groupBy]);
   const renderList = useMemo<RenderItem[]>(() => {
     if (!sortedRows) return [];
-    if (!groupBy || !groupCol || !groupCol.getValue) {
+    if (groupLevels.length === 0) {
       return sortedRows.map((row, rowIdx) => ({ kind: "row", row, rowIdx }));
-    }
-    const getter = groupCol.getValue;
-    // Preserve first-seen group order (sortedRows already reflects any active
-    // sort), bucketing rows by their stringified group value.
-    const order: string[] = [];
-    const buckets = new Map<string, T[]>();
-    for (const row of sortedRows) {
-      const raw = getter(row);
-      const val = raw == null || raw === "" ? "" : String(raw);
-      if (!buckets.has(val)) {
-        buckets.set(val, []);
-        order.push(val);
-      }
-      buckets.get(val)!.push(row);
     }
     const out: RenderItem[] = [];
     let rowIdx = 0;
-    for (const val of order) {
-      const bucket = buckets.get(val)!;
-      const collapsed = collapsedGroupSet.has(val);
-      out.push({
-        kind: "group",
-        value: val,
-        label: groupBy.label ? groupBy.label(val) : val || "(blank)",
-        count: bucket.length,
-        collapsed,
-      });
-      if (!collapsed) {
-        for (const row of bucket) {
-          out.push({ kind: "row", row, rowIdx });
-          rowIdx++;
+    // First-seen bucket order at every level, so an active sort still reads
+    // top to bottom. The level-0 path is the bare value: collapse state saved
+    // before nesting existed keeps working.
+    const walk = (rowsIn: T[], level: number, parentPath: string) => {
+      const { col, label } = groupLevels[level];
+      const order: string[] = [];
+      const buckets = new Map<string, T[]>();
+      for (const row of rowsIn) {
+        const raw = col.getValue!(row);
+        const val = raw == null || raw === "" ? "" : String(raw);
+        if (!buckets.has(val)) {
+          buckets.set(val, []);
+          order.push(val);
         }
-      } else {
-        // Keep the zebra index advancing past collapsed rows so re-expanding
-        // doesn't shift the stripe pattern of later rows.
-        rowIdx += bucket.length;
+        buckets.get(val)!.push(row);
       }
-    }
+      for (const val of order) {
+        const bucket = buckets.get(val)!;
+        const path = level === 0 ? val : `${parentPath}${val}`;
+        const collapsed = collapsedGroupSet.has(path);
+        out.push({ kind: "group", path, level, label: label(val), count: bucket.length, collapsed });
+        if (collapsed) {
+          // Keep the zebra index advancing past collapsed rows so re-expanding
+          // doesn't shift the stripe pattern of later rows.
+          rowIdx += bucket.length;
+        } else if (level + 1 < groupLevels.length) {
+          walk(bucket, level + 1, path);
+        } else {
+          for (const row of bucket) out.push({ kind: "row", row, rowIdx: rowIdx++ });
+        }
+      }
+    };
+    walk(sortedRows, 0, "");
     return out;
-  }, [sortedRows, groupBy, groupCol, collapsedGroupSet]);
+  }, [sortedRows, groupLevels, collapsedGroupSet]);
 
   // Density-aware cell padding. Tightened on 2026-05-08 — every row
   // is one line of data, full stop. Old comfy (py-3.5) and old
@@ -1702,7 +1771,7 @@ function DataTableInner<T, L>({
   // risky state is simply never the windowed one. Collapsing the last row
   // returns it to the windowed path.
   const canVirtualize =
-    showTable && !effectiveLoading && !error && !groupBy &&
+    showTable && !effectiveLoading && !error && groupLevels.length === 0 &&
     (!expandable || expandedRowsEffective.size === 0) &&
     renderList.length > VIRTUAL_ROW_THRESHOLD;
   const tbodyRef = useRef<HTMLTableSectionElement>(null);
@@ -1923,6 +1992,22 @@ function DataTableInner<T, L>({
             outer wrapper drops `overflow-hidden` when forced on mobile
             so the rounded corners don't clip the horizontal scroll
             shadow at the right edge. */}
+      {showTable && groupBanner && !embedded && (
+        <DataTableGroupBanner
+          groups={userGroups}
+          labelOf={(k) => {
+            const c = allColumns.find((x) => x.key === k);
+            return c ? headerText(c) : k;
+          }}
+          dragKey={dragCol}
+          canGroup={(k) => !!allColumns.find((x) => x.key === k)?.getValue}
+          onAdd={(k) => {
+            setUserGroups((prev) => (prev.includes(k) ? prev : [...prev, k]));
+            endHeaderDrag();
+          }}
+          onRemove={(k) => setUserGroups((prev) => prev.filter((x) => x !== k))}
+        />
+      )}
       {showTable && (
         <div
           className="rounded-lg border border-border bg-surface shadow-stone sm:block sm:overflow-hidden"
@@ -2245,8 +2330,8 @@ function DataTableInner<T, L>({
                   if (item.kind === "group") {
                     return (
                       <tr
-                        key={`grp:${item.value}`}
-                        onClick={() => toggleGroup(item.value)}
+                        key={`grp:${item.path}`}
+                        onClick={() => toggleGroup(item.path)}
                         className="cursor-pointer select-none bg-surface-dim/70 transition-colors hover:bg-surface-dim"
                       >
                         <td
@@ -2256,7 +2341,7 @@ function DataTableInner<T, L>({
                             cellPad
                           )}
                         >
-                          <span className="inline-flex items-center gap-1.5 pl-5">
+                          <span className="inline-flex items-center gap-1.5" style={{ paddingLeft: 20 + item.level * 16 }}>
                             <ChevronRight
                               size={12}
                               className={cn(
@@ -2924,6 +3009,21 @@ function DataTableInner<T, L>({
                 <MoveHorizontal size={13} className="shrink-0 text-ink-muted" />
                 Auto-fit width
               </button>
+              {groupBanner && col.getValue && (
+                <button
+                  type="button"
+                  className={itemCls}
+                  onClick={() => {
+                    setUserGroups((prev) =>
+                      prev.includes(col.key) ? prev.filter((k) => k !== col.key) : [...prev, col.key],
+                    );
+                    setHeaderMenu(null);
+                  }}
+                >
+                  <Rows3 size={13} className="shrink-0 text-ink-muted" />
+                  {userGroups.includes(col.key) ? "Stop grouping by this column" : "Group by this column"}
+                </button>
+              )}
               <div className="my-1 border-t border-border-subtle" />
               <button
                 type="button"
