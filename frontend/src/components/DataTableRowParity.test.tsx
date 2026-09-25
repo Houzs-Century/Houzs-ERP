@@ -117,7 +117,10 @@ describe("DataTable DataGrid-parity row behaviours", () => {
     ];
     render(<DataTable tableId="parity-date" persistFilters={false} columns={dCols} rows={dRows} getRowKey={(r) => r.id} />);
     fireEvent.click(screen.getByRole("button", { name: /Filter & sort Date/ }));
-    fireEvent.change(screen.getByLabelText("From date"), { target: { value: "2026-09-10" } });
+    const from = screen.getByLabelText("From date");
+    fireEvent.focus(from);
+    fireEvent.change(from, { target: { value: "2026/09/10" } });
+    fireEvent.blur(from);
     fireEvent.click(screen.getByRole("button", { name: "Apply Range" }));
     expect(bodyCodes()).toEqual(["2026-09-20"]);
   });

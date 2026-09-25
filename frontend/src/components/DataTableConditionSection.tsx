@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { cn } from "../lib/utils";
+import { DateField } from "../vendor/scm/components/DateField";
 import { DATE_PRESETS, type Condition } from "./dataTableConditionFilters";
 
 /**
@@ -71,9 +72,9 @@ export function DataTableConditionSection({
         ))}
       </div>
       <div className="mt-2 flex items-center gap-1.5">
-        <input type="date" aria-label="From date" value={from} onChange={(e) => setFrom(e.target.value)} className={input} />
+        <DateField aria-label="From date" value={from} onChange={setFrom} fullWidth />
         <span className="text-[11px] text-ink-muted">to</span>
-        <input type="date" aria-label="To date" value={to} onChange={(e) => setTo(e.target.value)} className={input} />
+        <DateField aria-label="To date" value={to} onChange={setTo} fullWidth />
       </div>
       <button type="button" className={cn(applyBtn, "mt-1.5 w-full")} disabled={!from && !to}
         onClick={() => onChange({ kind: "dateRange", from: from || null, to: to || null })}>
