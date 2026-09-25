@@ -74,6 +74,8 @@ import {
   type ExportFormat,
 } from "./dataTableLineExport";
 import { SearchScopeHint } from "./SearchScopeHint";
+import { DataTableConditionSection } from "./DataTableConditionSection";
+import { buildSearchBlob, conditionToken, isConditionToken, parseCondition } from "./dataTableConditionFilters";
 import { MobileVirtualList } from "../mobile/MobileVirtualList";
 
 import type { Column, DataTableProps, SortDir, SortState } from "./dataTableTypes";
@@ -128,17 +130,24 @@ function DataTableInner<T, L>({
   onRowClick,
   getRowKey,
   getRowClassName,
+  onRowDoubleClick,
+  getRowStyle,
+  defaultSort,
+  embedded = false,
   exportName,
   exportLabel = "Export",
   onExport,
   exportLines,
+  exportXlsx,
   toolbarExtra,
   onColFiltersChange,
   onImport,
   caption,
   udfTable,
   udfTableLabel,
-  search,
+  search: searchProp,
+  clientSearch,
+  focusSearchNonce,
   resetFilters,
   serverSort,
   onSortChange,
@@ -151,6 +160,19 @@ function DataTableInner<T, L>({
   onFilteredRowsChange,
 }: Props<T, L>) {
   const isSmallViewport = useSmallViewport();
+  /* `clientSearch`: the grid owns the box and filters the loaded rows itself
+     (SCM DataGrid parity). A page-controlled `search` always wins. */
+  const [clientQuery, setClientQuery] = useState("");
+  const clientSearching = !!clientSearch && !searchProp;
+  const search: Props<T, L>["search"] =
+    searchProp ??
+    (clientSearch
+      ? { value: clientQuery, onChange: setClientQuery, placeholder: clientSearch.placeholder, debounceMs: 150 }
+      : undefined);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (focusSearchNonce != null) searchInputRef.current?.focus();
+  }, [focusSearchNonce]);
   const [searchDraftPending, setSearchDraftPending] = useState(false);
   const searchBusy = Boolean(
     search?.searching || (search?.searching !== undefined && searchDraftPending),
@@ -240,8 +262,8 @@ function DataTableInner<T, L>({
     legacyStorageKey("mview"),
     sanitizeMobileView,
   );
-  const showTable = !isSmallViewport || mobileView === "table";
-  const showMobileCards = isSmallViewport && mobileView === "cards";
+  const showTable = embedded || !isSmallViewport || mobileView === "table";
+  const showMobileCards = !embedded && isSmallViewport && mobileView === "cards";
   // Per-column user widths (px). Overrides the column's `width` default.
   // Keyed by column key; absent = use the column default. Desktop-only —
   // the mobile card branch ignores widths entirely.
@@ -1322,7 +1344,7 @@ function DataTableInner<T, L>({
       const cols = exportableColumns(visibleColumns as Column<T, L>[]);
       const filterKeys = Object.entries(colFilters).filter(([, v]) => v.length > 0).map(([k]) => k);
       const fetched = await spec.fetchRows({ exportKeys: cols.map((c) => c.key), filterKeys });
-      const kept = sortTableRows(applyColumnFilters(fetched, colFilters, allColumns), sort, allColumns, Boolean(serverSort));
+      const kept = sortTableRows(applyColumnFilters(fetched, colFilters, allColumns), sort, allColumns, Boolean(serverSort), defaultSort ?? null);
       const matrix = buildLineExportMatrix(kept, spec.linesOf, cols);
       const date = new Date().toISOString().slice(0, 10);
       await writeLineExportFile(matrix, spec.sheetName, `${exportName || tableId || "export"}-${date}.xlsx`);
@@ -1348,6 +1370,12 @@ function DataTableInner<T, L>({
     if (onExport) { onExport(csvCols); return; }
     if (!sortedRows || sortedRows.length === 0 || csvCols.length === 0) return;
     const date = new Date().toISOString().slice(0, 10);
+    if (exportXlsx) {
+      // No lines: one sheet row per list row, keeping each column's exportFormat.
+      const matrix = buildLineExportMatrix(sortedRows, () => [], exportableColumns(visibleColumns as Column<T, L>[]));
+      void writeLineExportFile(matrix, "Sheet1", `${exportName || tableId || "export"}-${date}.xlsx`);
+      return;
+    }
     downloadCSV(`${exportName || tableId || "export"}-${date}.csv`, toCSV(sortedRows, csvCols));
   }
 
@@ -1376,7 +1404,7 @@ function DataTableInner<T, L>({
   // out entirely; on server tables it only demotes the column to the
   // client-side fallback (see above).
   const canSortColumn = useCallback(
-    (col: Column<T>) => !!col.getValue && (!col.disableSort || !!serverSort),
+    (col: Column<T>) => !!col.sortCompare || (!!col.getValue && (!col.disableSort || !!serverSort)),
     [serverSort]
   );
 
@@ -1386,7 +1414,7 @@ function DataTableInner<T, L>({
     (s: SortState | null): SortState | null => {
       if (!s) return null;
       const col = allColumns.find((c) => c.key === s.key);
-      return col?.getValue && !col.disableSort ? s : null;
+      return col?.getValue && !col.disableSort && !col.sortCompare ? s : null;
     },
     [allColumns]
   );
@@ -1507,14 +1535,20 @@ function DataTableInner<T, L>({
   // Per-column filters apply first (client-side, loaded rows only), then
   // sort — the SAME functions the line export runs over every fetched row
   // (dataTableRows.ts).
-  const filteredRows = useMemo(
-    () => (rows ? applyColumnFilters(rows, colFilters, allColumns) : rows),
-    [rows, colFilters, allColumns],
+  const searchBlobs = useMemo(
+    () => (clientSearching && rows ? new Map(rows.map((r) => [r, buildSearchBlob(r, allColumns)])) : null),
+    [clientSearching, rows, allColumns],
   );
+  const filteredRows = useMemo(() => {
+    if (!rows) return rows;
+    const q = clientQuery.trim().toLowerCase();
+    const searched = searchBlobs && q ? rows.filter((r) => (searchBlobs.get(r) ?? "").includes(q)) : rows;
+    return applyColumnFilters(searched, colFilters, allColumns);
+  }, [rows, colFilters, allColumns, searchBlobs, clientQuery]);
 
   const sortedRows = useMemo(
-    () => (filteredRows ? sortTableRows(filteredRows, sort, allColumns, Boolean(serverSort)) : filteredRows),
-    [filteredRows, sort, allColumns, serverSort],
+    () => (filteredRows ? sortTableRows(filteredRows, sort, allColumns, Boolean(serverSort), defaultSort ?? null) : filteredRows),
+    [filteredRows, sort, allColumns, serverSort, defaultSort],
   );
 
   /* Report what the operator can actually see (owner 2026-08-12) — see the
@@ -1611,8 +1645,8 @@ function DataTableInner<T, L>({
   // collapse to a single 13px line + minimal cushion on each side.
   // Headers stay one notch taller so the column boundary still reads.
   // Permanently comfy (density toggle removed 2026-06).
-  const cellPad = "px-3 py-1.5 leading-tight";
-  const headPad = "px-3 py-2 leading-tight";
+  const cellPad = embedded ? "px-2 py-1 leading-tight" : "px-3 py-1.5 leading-tight";
+  const headPad = embedded ? "px-2 py-1.5 leading-tight" : "px-3 py-2 leading-tight";
 
   // Common toolbar button class — used by Import / Export / Density / Columns.
   // 44 px on mobile (touch-target floor), compresses to 32 px on sm+ where
@@ -1626,9 +1660,15 @@ function DataTableInner<T, L>({
   // ── Row selection (opt-in `selection`) ─────────────────────────────────────
   // Select-all operates over the currently-rendered rows (post filter + sort).
   const selectableKeys = useMemo(
-    () => (selection && sortedRows ? sortedRows.map((r) => String(getRowKey(r))) : []),
+    () =>
+      selection && sortedRows
+        ? sortedRows
+            .map((r) => String(getRowKey(r)))
+            .filter((k) => !selection.isDisabled?.(k))
+        : [],
     [selection, sortedRows, getRowKey]
   );
+  const rowClickTicks = !!selection?.toggleOnRowClick;
   const allRowsSelected =
     !!selection &&
     selectableKeys.length > 0 &&
@@ -1716,8 +1756,8 @@ function DataTableInner<T, L>({
 
   return (
     <div ref={freezeRootRef}>
-      {/* ── Toolbar (always rendered) ──────────────────────── */}
-      <div className="mb-2.5 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+      {/* ── Toolbar (always rendered; an embedded grid has none) ── */}
+      <div className={cn("mb-2.5 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between", embedded && "hidden")}>
         <div className="flex flex-1 flex-wrap items-center gap-2 sm:gap-3">
           {search && (
             <div className="w-full sm:w-72 sm:max-w-full">
@@ -1727,6 +1767,7 @@ function DataTableInner<T, L>({
                   className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-muted"
                 />
                 <DebouncedSearchInput
+                  inputRef={searchInputRef}
                   value={search.value}
                   onChange={search.onChange}
                   placeholder={search.placeholder || "Search…"}
@@ -2254,7 +2295,18 @@ function DataTableInner<T, L>({
                     <Fragment key={getRowKey(row)}>
                       <tr
                         data-vrow=""
-                        onClick={onRowClick ? () => onRowClick(row) : undefined}
+                        style={getRowStyle?.(row)}
+                        onClick={
+                          onRowClick || rowClickTicks
+                            ? () => {
+                                if (rowClickTicks && selKey != null && !selection.isDisabled?.(selKey)) {
+                                  selection.onToggle(selKey);
+                                }
+                                onRowClick?.(row);
+                              }
+                            : undefined
+                        }
+                        onDoubleClick={onRowDoubleClick ? () => onRowDoubleClick(row) : undefined}
                         onContextMenu={
                           contextMenu
                             ? (e) => {
@@ -2274,7 +2326,7 @@ function DataTableInner<T, L>({
                           isRowSelected ? "bg-primary/10"
                             : customClass && /(^|\s)!?bg-/.test(customClass) ? null
                             : rowIdx % 2 === 0 ? "bg-surface" : "bg-surface-dim/35",
-                          onRowClick && "cursor-pointer",
+                          (onRowClick || onRowDoubleClick || rowClickTicks) && "cursor-pointer",
                           customClass
                         )}
                       >
@@ -2294,10 +2346,11 @@ function DataTableInner<T, L>({
                               type="checkbox"
                               aria-label="Select row"
                               checked={isRowSelected}
+                              disabled={selKey != null && !!selection.isDisabled?.(selKey)}
                               onChange={() => {
                                 if (selKey != null) selection.onToggle(selKey);
                               }}
-                              className="cursor-pointer accent-primary"
+                              className="cursor-pointer accent-primary disabled:cursor-not-allowed disabled:opacity-40"
                             />
                           </td>
                         )}
@@ -2626,7 +2679,10 @@ function DataTableInner<T, L>({
              See facetedFilterValues for the exact rule (0-count options drop
              unless they are fixed vocabulary or currently ticked). */
           const values = facetedFilterValues(rows ?? [], colFilters, col, allColumns);
-          const selected = new Set(colFilters[col.key] ?? []);
+          const allTokens = colFilters[col.key] ?? [];
+          const conditionTokens = allTokens.filter(isConditionToken);
+          const selected = new Set(allTokens.filter((v) => !isConditionToken(v)));
+          const currentCondition = conditionTokens.length > 0 ? parseCondition(conditionTokens[0]) : null;
           const q = filterQuery.trim().toLowerCase();
           const shown = q
             ? values.filter(([v]) => (col.filterLabel?.(v) ?? v).toLowerCase().includes(q))
@@ -2640,12 +2696,12 @@ function DataTableInner<T, L>({
           // search untouched — so you can search "KL", tick those, clear the
           // search, search "Selangor", tick those, and keep both.
           const selectAll = () =>
-            setColumnFilter(col.key, [...selected, ...shownValues]);
+            setColumnFilter(col.key, [...conditionTokens, ...selected, ...shownValues]);
           const invert = () => {
             const shownSet = new Set(shownValues);
             const keptOutsideSearch = [...selected].filter((v) => !shownSet.has(v));
             const flippedWithinSearch = shownValues.filter((v) => !selected.has(v));
-            setColumnFilter(col.key, [...keptOutsideSearch, ...flippedWithinSearch]);
+            setColumnFilter(col.key, [...conditionTokens, ...keptOutsideSearch, ...flippedWithinSearch]);
           };
 
           const sortBtn =
@@ -2718,6 +2774,17 @@ function DataTableInner<T, L>({
                 )}
               </div>
 
+              {col.filterType && (
+                <DataTableConditionSection
+                  key={col.key}
+                  filterType={col.filterType}
+                  current={currentCondition}
+                  onChange={(next) =>
+                    setColumnFilter(col.key, [...(next ? [conditionToken(next)] : []), ...selected])
+                  }
+                />
+              )}
+
               {/* Search */}
               <div className="shrink-0 border-b border-border-subtle px-3 py-1.5">
                 <input
@@ -2752,7 +2819,7 @@ function DataTableInner<T, L>({
                 <button
                   type="button"
                   onClick={() => setColumnFilter(col.key, [])}
-                  disabled={selected.size === 0}
+                  disabled={allTokens.length === 0}
                   className="rounded px-1.5 py-0.5 text-accent hover:bg-surface-dim disabled:text-ink-muted/50 disabled:hover:bg-transparent"
                 >
                   Clear

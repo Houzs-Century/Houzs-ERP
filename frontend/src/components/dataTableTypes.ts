@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import type { CSVColumn } from "../lib/csv";
 import type { DataTableLineExport, ExportCell, ExportFormat } from "./dataTableLineExport";
 
@@ -19,6 +19,19 @@ export interface Column<T, L = never> {
   /** Raw value for CSV export, the funnel and sorting; without it a column is skipped by export and cannot be sorted. `sortValue` overrides the ORDER only, where alphabetical is the wrong priority (Stock Status) — CSV and the funnel stay on `getValue`, so omitting it sorts exactly as it did before `sortValue` existed. */
   getValue?: (row: T) => string | number | boolean | null | undefined;
   sortValue?: (row: T) => string | number | boolean | null | undefined;
+  /** A comparator, for an order no single key expresses (the SCM DataGrid's
+   *  `sortFn`). Wins over `sortValue`/`getValue` for ORDER only, and makes a
+   *  column sortable even without `getValue`. Client-side only. */
+  sortCompare?: (a: T, b: T) => number;
+  /** The funnel shape (SCM DataGrid parity): "date" adds presets (Today, This
+   *  Week, Overdue, ...) and a from/to range over `dateValue` (raw ISO); "number"
+   *  adds a min/max over `numberValue`. The value checklist stays below either. */
+  filterType?: "date" | "number";
+  dateValue?: (row: T) => string | null | undefined;
+  numberValue?: (row: T) => number | null | undefined;
+  /** Text the toolbar's `clientSearch` matches, when `getValue` is not what the
+   *  operator types (a doc number plus its customer name). */
+  searchValue?: (row: T) => string | null | undefined;
   /** The value this column EXPORTS, when it differs from `getValue` (money in
    *  ringgit where getValue holds sen for sorting). Repeats on every line of a
    *  line export. See dataTableLineExport.ts. */
@@ -165,8 +178,18 @@ export interface DataTableProps<T, L = never> {
   error?: string | null;
   emptyLabel?: string;
   onRowClick?: (row: T) => void;
+  /** Double-click opens the document where a single click only selects. */
+  onRowDoubleClick?: (row: T) => void;
   getRowKey: (row: T) => string | number;
   getRowClassName?: (row: T) => string | undefined;
+  /** Inline row style, for a colour computed per row (a status tint). Prefer
+   *  `getRowClassName` for a fixed set of tones. */
+  getRowStyle?: (row: T) => CSSProperties | undefined;
+  /** The order rows open in while no header sort is active (client-side). */
+  defaultSort?: (a: T, b: T) => number;
+  /** Compact grid inside another table's expanded row: no toolbar, no card
+   *  view, tighter cells. Header menus still work. */
+  embedded?: boolean;
   /** Filename stem for CSV export, e.g. "orders". A date suffix is appended automatically. */
   exportName?: string;
   /** Toolbar button text, default "Export" — override when a second export
@@ -180,6 +203,9 @@ export interface DataTableProps<T, L = never> {
    *  visible columns, funnels and sort (dataTableLineExport.ts). When set, the
    *  toolbar Export writes an .xlsx this way and `onExport` is not called. */
   exportLines?: DataTableLineExport<T, L>;
+  /** Export the on-screen rows as .xlsx (each column's `exportFormat` kept)
+   *  instead of CSV — what the SCM DataGrid lists always wrote. */
+  exportXlsx?: boolean;
   /** Extra toolbar button(s) rendered beside Export/Columns, for a caller that
    *  needs a second export variant (e.g. MRP's per-tab export) without a whole
    *  second toolbar. */
@@ -247,6 +273,13 @@ export interface DataTableProps<T, L = never> {
      */
     debounceMs?: number;
   };
+  /** The grid renders its own search box and filters the LOADED rows by each
+   *  column's `searchValue` (else `getValue`, else a plain-text cell). For a
+   *  list with no server search (SCM DataGrid parity). Ignored when `search`
+   *  is set. */
+  clientSearch?: { placeholder?: string };
+  /** Bump to put the cursor in the search box (a page's "Find" button). */
+  focusSearchNonce?: number;
   /**
    * When provided, renders a "Reset" button next to the search input
    * that is visible only while `filtersActive` is true. The page owns
@@ -341,6 +374,11 @@ export interface DataTableProps<T, L = never> {
      *  `allSelected` = whether they are all already selected (so the parent
      *  clears vs selects the batch). */
     onToggleAll: (keys: string[], allSelected: boolean) => void;
+    /** A row that cannot be ticked (already converted, wrong status). Its box
+     *  is disabled and select-all skips it. */
+    isDisabled?: (id: string) => boolean;
+    /** Clicking anywhere on the row ticks it (pickers). Default: only the box. */
+    toggleOnRowClick?: boolean;
   };
   /**
    * Opt-in row right-click menu (2990 DataGrid parity). Receives the row

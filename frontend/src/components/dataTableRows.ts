@@ -8,6 +8,8 @@
  * funnel rule in an export helper would be the next "the file does not match
  * the screen" bug. */
 
+import { isConditionToken, parseCondition, rowMatchesCondition, type Condition } from "./dataTableConditionFilters";
+
 export type CellValue = string | number | boolean | null | undefined;
 
 /** The part of a column these rules read. */
@@ -15,6 +17,9 @@ export type RowRuleColumn<T> = {
   key: string;
   getValue?: (row: T) => CellValue;
   sortValue?: (row: T) => CellValue;
+  sortCompare?: (a: T, b: T) => number;
+  dateValue?: (row: T) => string | null | undefined;
+  numberValue?: (row: T) => number | null | undefined;
   getFilterValues?: (row: T) => (string | number | null | undefined)[];
   /* A fixed vocabulary the funnel always offers (e.g. a status set), listed even
      when no row currently carries the value. `readonly` + widened element so the
@@ -75,15 +80,22 @@ export function applyColumnFilters<T>(
   const getters = active
     .map(([key, vals]) => {
       const col = columns.find((c) => c.key === key);
-      if (!col?.getValue) return null;
+      if (!col || (!col.getValue && !col.dateValue && !col.numberValue)) return null;
+      const plain = vals.filter((v) => !isConditionToken(v));
+      const conditions = vals
+        .map(parseCondition)
+        .filter((c): c is Condition => c !== null);
       const values = col.getFilterValues
         ? (r: T) => filterKeysOf(col.getFilterValues!(r))
-        : (r: T) => [filterKeyOf(col.getValue!(r))];
-      return { values, allowed: new Set(vals) };
+        : (r: T) => [filterKeyOf(col.getValue?.(r))];
+      const allowed = new Set(plain);
+      return (r: T) =>
+        (allowed.size === 0 || values(r).some((v) => allowed.has(v))) &&
+        conditions.every((c) => rowMatchesCondition(r, c, col));
     })
-    .filter((g): g is { values: (r: T) => string[]; allowed: Set<string> } => g !== null);
+    .filter((g): g is (r: T) => boolean => g !== null);
   if (getters.length === 0) return rows;
-  return rows.filter((r) => getters.every((g) => g.values(r).some((v) => g.allowed.has(v))));
+  return rows.filter((r) => getters.every((g) => g(r)));
 }
 
 /** The FACETED value list for one column's funnel, as `[value, count]` sorted
@@ -104,7 +116,7 @@ export function facetedFilterValues<T>(
   if (!col.getValue) return [];
   const getter = col.getValue;
   const multi = col.getFilterValues;
-  const selected = new Set(colFilters[col.key] ?? []);
+  const selected = new Set((colFilters[col.key] ?? []).filter((v) => !isConditionToken(v)));
   const otherFilters: Record<string, string[]> = {};
   for (const [k, v] of Object.entries(colFilters)) {
     if (k !== col.key && v.length > 0) otherFilters[k] = [...v];
@@ -137,12 +149,18 @@ export function sortTableRows<T>(
   sort: { key: string; dir: "asc" | "desc" } | null,
   columns: readonly RowRuleColumn<T>[],
   serverSort: boolean,
+  defaultSort: ((a: T, b: T) => number) | null,
 ): T[] {
-  if (!sort) return rows;
+  const fallback = () => (defaultSort ? rows.slice().sort(defaultSort) : rows);
+  if (!sort) return fallback();
   const col = columns.find((c) => c.key === sort.key);
-  if (!col || !col.getValue) return rows;
-  if (serverSort && !col.disableSort) return rows;
-  const getter = col.sortValue ?? col.getValue;  // display order != priority order
+  if (!col || (!col.getValue && !col.sortCompare)) return fallback();
   const mul = sort.dir === "asc" ? 1 : -1;
+  if (col.sortCompare) {
+    const cmp = col.sortCompare;
+    return rows.slice().sort((a, b) => cmp(a, b) * mul);
+  }
+  if (serverSort && !col.disableSort) return rows;
+  const getter = (col.sortValue ?? col.getValue)!;  // display order != priority order
   return rows.slice().sort((a, b) => compareValues(getter(a), getter(b)) * mul);
 }

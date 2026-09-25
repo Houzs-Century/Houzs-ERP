@@ -103,6 +103,7 @@ export function DebouncedSearchInput({
   delayMs,
   className,
   onPendingChange,
+  inputRef,
 }: {
   value: string;
   onChange: (next: string) => void;
@@ -110,6 +111,7 @@ export function DebouncedSearchInput({
   delayMs: number;
   className: string;
   onPendingChange?: (pending: boolean) => void;
+  inputRef?: React.Ref<HTMLInputElement>;
 }) {
   const [draft, setDraft] = useState(value);
   const lastSentRef = useRef(value);
@@ -166,6 +168,7 @@ export function DebouncedSearchInput({
 
   return (
     <input
+      ref={inputRef}
       value={draft}
       onChange={(e) => {
         const next = e.target.value;
