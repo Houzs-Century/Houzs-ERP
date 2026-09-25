@@ -14,8 +14,9 @@ describe('routeField (backend)', () => {
     expect(routeField('DELIVERY').type).toBe('DELIVERY_COMMERCIAL');
     expect(routeField('DELIVERY').department).toBe('Logistics');
   });
-  it('price -> Finance, supplier -> Purchasing', () => {
-    expect(routeField('PRICE').department).toBe('Finance');
+  it('SO sell price -> Sales Director, PO unit cost -> Finance, supplier -> Purchasing', () => {
+    expect(routeField('PRICE').department).toBe('Sales Director');
+    expect(routeField('COST').department).toBe('Finance');
     expect(routeField('SUPPLIER').department).toBe('Purchasing');
   });
 });

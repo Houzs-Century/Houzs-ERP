@@ -81,7 +81,7 @@ export const poLineFieldKinds = (l: PoAmendmentLine): AmendmentFieldKind[] => {
   const spec = amendmentVariantSummaries({ change_type: l.change_type, new_variants: l.new_variants, old_snapshot: l.old_snapshot });
   if (l.new_variants != null && spec.from !== spec.to) kinds.push('VARIANT');
   if (l.new_qty != null && l.new_qty !== (old.qty ?? null)) kinds.push('QTY');
-  if (l.new_unit_price_sen != null && l.new_unit_price_sen !== (old.unit_price_sen ?? null)) kinds.push('PRICE');
+  if (l.new_unit_price_sen != null && l.new_unit_price_sen !== (old.unit_price_sen ?? null)) kinds.push('COST');
   if (l.new_delivery_date != null && l.new_delivery_date !== (old.delivery_date ?? null)) kinds.push('DELIVERY');
   return kinds;
 };

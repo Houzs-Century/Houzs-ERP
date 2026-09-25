@@ -41,7 +41,7 @@ export const SO_AMENDMENT_LANE_APPROVE_PERM: Record<'LINES' | 'DELIVERY' | 'PRIC
 export const AMENDMENT_APPROVER_LABEL: Record<AmendmentApprover, string> = {
   PURCHASER: 'Purchaser',
   LOGISTIC: 'Logistic',
-  FINANCE: 'Finance',
+  FINANCE: 'Sales Director',
   LEGACY: 'Legacy',
 };
 

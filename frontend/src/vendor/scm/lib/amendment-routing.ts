@@ -11,8 +11,9 @@
 //   • PROCESSING       — WHAT is made: SKU / colour-fabric / quantity / add-remove
 //                        line. Responsible group: Production / Design.
 //   • DELIVERY/COMMERCIAL — WHEN and on what TERMS: delivery date, unit price,
-//                        supplier. Split per field: price -> Finance, delivery
-//                        date -> Logistics, supplier -> Purchasing.
+//                        supplier. Split per field: SO sell price -> Sales Director,
+//                        PO unit cost -> Finance, delivery date -> Logistics,
+//                        supplier -> Purchasing.
 // A single amendment can carry BOTH (a colour swap that also moves the delivery
 // date) — it is then MIXED and shows both type badges.
 //
@@ -30,6 +31,7 @@ export type AmendmentType = 'PROCESSING' | 'DELIVERY_COMMERCIAL';
 export type ResponsibleDept =
   | 'Production / Design'
   | 'Finance'
+  | 'Sales Director'
   | 'Logistics'
   | 'Purchasing';
 
@@ -41,7 +43,8 @@ export type AmendmentFieldKind =
   | 'VARIANT'   // colour / fabric / variant spec
   | 'QTY'       // quantity
   | 'LINE'      // add / remove a whole line
-  | 'PRICE'     // unit price (SO) / unit cost (PO)
+  | 'PRICE'     // sell price / discount (SO)
+  | 'COST'      // unit cost (PO)
   | 'DELIVERY'  // per-line or header delivery date
   | 'SUPPLIER'; // supplier change (PO header)
 
@@ -59,7 +62,8 @@ const FIELD_ROUTING: Record<AmendmentFieldKind, { type: AmendmentType; departmen
   VARIANT:  { type: 'PROCESSING',          department: 'Production / Design' },
   QTY:      { type: 'PROCESSING',          department: 'Production / Design' },
   LINE:     { type: 'PROCESSING',          department: 'Production / Design' },
-  PRICE:    { type: 'DELIVERY_COMMERCIAL', department: 'Finance' },
+  PRICE:    { type: 'DELIVERY_COMMERCIAL', department: 'Sales Director' },
+  COST:     { type: 'DELIVERY_COMMERCIAL', department: 'Finance' },
   DELIVERY: { type: 'DELIVERY_COMMERCIAL', department: 'Logistics' },
   SUPPLIER: { type: 'DELIVERY_COMMERCIAL', department: 'Purchasing' },
 };
@@ -71,6 +75,7 @@ export const FIELD_KIND_LABEL: Record<AmendmentFieldKind, string> = {
   QTY: 'Quantity',
   LINE: 'Line',
   PRICE: 'Price',
+  COST: 'Unit cost',
   DELIVERY: 'Delivery date',
   SUPPLIER: 'Supplier',
 };
@@ -83,7 +88,7 @@ export const TYPE_LABEL: Record<AmendmentType, string> = {
 /** The responsible GROUP for a whole type — the badge subtitle. */
 export const TYPE_RESPONSIBLE: Record<AmendmentType, string> = {
   PROCESSING: 'Production / Design',
-  DELIVERY_COMMERCIAL: 'Purchasing / Logistics / Finance',
+  DELIVERY_COMMERCIAL: 'Purchasing / Logistics / Finance / Sales Director',
 };
 
 /** Classify one field atom. Total over AmendmentFieldKind, so never null. */
@@ -107,9 +112,9 @@ const LABEL_TO_KIND: Record<string, AmendmentFieldKind> = {
   qty: 'QTY',
   line: 'LINE',
   'unit price': 'PRICE',
-  'unit cost': 'PRICE',
+  'unit cost': 'COST',
   price: 'PRICE',
-  cost: 'PRICE',
+  cost: 'COST',
   'delivery date': 'DELIVERY',
   delivery: 'DELIVERY',
   supplier: 'SUPPLIER',

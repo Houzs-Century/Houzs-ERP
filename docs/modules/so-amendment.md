@@ -53,7 +53,7 @@ State machine (a lane row lives inside the existing status enum): `REQUESTED -> 
 - Don't infer an amendment's lane from what changed — infer it from whether the line is a service line; a delivery/disposal/storage/transport line must route to `DELIVERY` even though it looks like a normal line item.
 - Don't hand-move a stored lane by editing the row — the approver's handover or the repair script are the only ways; the script refuses anything not cleanly `REQUESTED` and line-only, and posts no notice (the target desk's inbox re-reads by lane on its own).
 - A single click on the desktop queue opens a read-only quick-view drawer; approve/reject/withdraw only exist on the full job card. The drawer reuses the job card's own diff-card components — don't build a second renderer for the same diff.
-- The Approver badge (Purchaser / Logistic / Finance / Legacy) and the Reference column both read from shared helpers also used elsewhere (the SO list, the PO Amendments queue) — don't recompute either locally, or a document can show two different answers to the same question.
+- The Approver badge (Purchaser / Logistic / Sales Director / Legacy; the Department Routing card labels an SO sell-price change Sales Director and a PO unit-cost change Finance) and the Reference column both read from shared helpers also used elsewhere (the SO list, the PO Amendments queue) — don't recompute either locally, or a document can show two different answers to the same question.
 
 ## Where the code is
 

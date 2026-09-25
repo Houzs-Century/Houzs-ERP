@@ -22,7 +22,7 @@ describe('who signs an amendment', () => {
   });
 
   it('says the role names the approve keys are granted to', () => {
-    expect(AMENDMENT_APPROVER_LABEL).toEqual({ PURCHASER: 'Purchaser', LOGISTIC: 'Logistic', FINANCE: 'Finance', LEGACY: 'Legacy' });
+    expect(AMENDMENT_APPROVER_LABEL).toEqual({ PURCHASER: 'Purchaser', LOGISTIC: 'Logistic', FINANCE: 'Sales Director', LEGACY: 'Legacy' });
   });
 
   it('maps each lane to the flat key its gate checks (mirror of the backend)', () => {

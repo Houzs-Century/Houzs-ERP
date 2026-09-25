@@ -29,20 +29,21 @@ describe('routeField', () => {
     expect(routeField('QTY').type).toBe('PROCESSING');
     expect(routeField('LINE').type).toBe('PROCESSING');
     expect(routeField('PRICE').type).toBe('DELIVERY_COMMERCIAL');
-    expect(routeField('PRICE').department).toBe('Finance');
+    expect(routeField('PRICE').department).toBe('Sales Director');
+    expect(routeField('COST').department).toBe('Finance');
     expect(routeField('SUPPLIER').type).toBe('DELIVERY_COMMERCIAL');
     expect(routeField('SUPPLIER').department).toBe('Purchasing');
   });
 
   it('has a human label for every atom', () => {
-    (['SPEC', 'VARIANT', 'QTY', 'LINE', 'PRICE', 'DELIVERY', 'SUPPLIER'] as AmendmentFieldKind[])
+    (['SPEC', 'VARIANT', 'QTY', 'LINE', 'PRICE', 'COST', 'DELIVERY', 'SUPPLIER'] as AmendmentFieldKind[])
       .forEach((k) => expect(FIELD_KIND_LABEL[k]).toBeTruthy());
   });
 });
 
 describe('fieldKindFromLabel', () => {
   it('folds the PDF/UI field labels back to atoms, case-insensitively', () => {
-    expect(fieldKindFromLabel('Unit cost')).toBe('PRICE');
+    expect(fieldKindFromLabel('Unit cost')).toBe('COST');
     expect(fieldKindFromLabel('Unit price')).toBe('PRICE');
     expect(fieldKindFromLabel('Delivery date')).toBe('DELIVERY');
     expect(fieldKindFromLabel('Quantity')).toBe('QTY');
