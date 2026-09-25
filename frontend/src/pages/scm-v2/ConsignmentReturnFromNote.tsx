@@ -23,7 +23,7 @@ import { ArrowRight, X, CheckSquare, Square } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { VariantDescription } from '../../vendor/scm/components/VariantDescription';
 import { useReturnableNoteLines, type ReturnableNoteLine } from '../../vendor/scm/lib/consignment-return-queries';
-import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
+import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
 import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDialog';
 import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
@@ -125,7 +125,7 @@ export const ConsignmentReturnFromNote = () => {
   const picked = Object.entries(picks).filter(([, v]) => v.picked && v.qty > 0);
   const pickedCount = picked.length;
 
-  const columns = useMemo<DataGridColumn<ReturnableNoteLine>[]>(() => [
+  const columns = useMemo<GridColumn<ReturnableNoteLine>[]>(() => [
     {
       key: 'pick', label: '', width: 40, sortable: false, groupable: false,
       accessor: (r) => {
@@ -328,7 +328,7 @@ export const ConsignmentReturnFromNote = () => {
         </p>
       )}
 
-      <DataGrid<ReturnableNoteLine>
+      <DataGridCompat<ReturnableNoteLine>
         rows={rows}
         columns={columns}
         storageKey="cr-g.cr-from-note-lines.layout.v1"

@@ -22,7 +22,7 @@ import { writeScmHandoff } from '../../lib/scmHandoffStorage';
 import { ArrowRight, X, CheckSquare, Square } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { useReturnablePcReceiveLines, type ReturnablePcReceiveLine } from '../../vendor/scm/lib/purchase-consignment-return-queries';
-import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
+import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
 import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDialog';
 import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
 import { VariantDescription } from '../../vendor/scm/components/VariantDescription';
@@ -115,7 +115,7 @@ export const PurchaseConsignmentReturnFromReceive = () => {
   const picked = Object.entries(picks).filter(([, v]) => v.picked && v.qty > 0);
   const pickedCount = picked.length;
 
-  const columns = useMemo<DataGridColumn<ReturnablePcReceiveLine>[]>(() => [
+  const columns = useMemo<GridColumn<ReturnablePcReceiveLine>[]>(() => [
     {
       key: 'pick', label: '', width: 40, sortable: false, groupable: false,
       accessor: (r) => {
@@ -307,7 +307,7 @@ export const PurchaseConsignmentReturnFromReceive = () => {
         </p>
       )}
 
-      <DataGrid<ReturnablePcReceiveLine>
+      <DataGridCompat<ReturnablePcReceiveLine>
         rows={rows}
         columns={columns}
         storageKey="pcrn-g.pcrn-from-receive-lines.layout.v1"

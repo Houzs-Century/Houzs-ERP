@@ -33,7 +33,7 @@ import {
   usePurchaseOrderDetail,
   type OutstandingSoItem,
 } from '../../vendor/scm/lib/suppliers-queries';
-import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
+import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
 import { useIdempotencyKey } from '../../lib/idempotency';
 import { readScmHandoff, writeScmHandoff } from '../../lib/scmHandoffStorage';
 import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDialog';
@@ -284,7 +284,7 @@ export const PurchaseOrderFromSo = () => {
 
   // ── Columns — memoized on `picks` so the controlled checkbox + qty input
   //    re-render when pick state changes (DataGrid is React.memo'd). ───────
-  const columns = useMemo<DataGridColumn<OutstandingSoItem>[]>(() => [
+  const columns = useMemo<GridColumn<OutstandingSoItem>[]>(() => [
     {
       key: 'pick', label: '', width: 40, sortable: false, groupable: false,
       accessor: (r) => {
@@ -579,7 +579,7 @@ export const PurchaseOrderFromSo = () => {
         </p>
       )}
 
-      <DataGrid<OutstandingSoItem>
+      <DataGridCompat<OutstandingSoItem>
         rows={rows}
         columns={columns}
         storageKey={STORAGE_KEY}
