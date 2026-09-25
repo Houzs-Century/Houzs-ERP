@@ -40,6 +40,7 @@ import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDial
 import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
+import { soRefOfCamelStamp } from '../../lib/so-ref-search';
 import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
@@ -307,6 +308,12 @@ export const PurchaseOrderFromSo = () => {
       key: 'soDocNo', label: 'SO Doc No', width: 120, sortable: true, groupable: true,
       accessor: (r) => <span className={styles.codeCell}>{r.soDocNo}</span>,
       searchValue: (r) => r.soDocNo,
+    },
+    {
+      key: 'soRef', label: 'Ref No.', width: 150, sortable: true,
+      accessor: (r) => soRefOfCamelStamp(r) || '—',
+      searchValue: (r) => soRefOfCamelStamp(r),
+      sortFn: (a, b) => soRefOfCamelStamp(a).localeCompare(soRefOfCamelStamp(b)),
     },
     {
       key: 'debtorName', label: 'Customer', width: 180, sortable: true, groupable: true,

@@ -1255,7 +1255,7 @@ const buildAllColumns = (
        `customer_so_ref` column in the 2990 schema, so customer_so_no IS that
        field. Falls back to the customer's PO doc number, then the legacy
        free-text ref, then "—" when all are empty. Sortable + searchable. */
-    key: 'customer_so_no', label: 'Reference', width: 130, sortable: true,
+    key: 'customer_so_no', label: 'Ref No.', width: 130, sortable: true,
     accessor: (r) => r.customer_so_no ?? r.po_doc_no ?? r.ref ?? '—',
     searchValue: (r) => `${r.customer_so_no ?? ''} ${r.po_doc_no ?? ''} ${r.ref ?? ''}`,
     filterValue: (r) => r.customer_so_no ?? r.po_doc_no ?? r.ref ?? '—',

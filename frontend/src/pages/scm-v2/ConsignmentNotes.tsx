@@ -596,7 +596,7 @@ const buildColumns = (staffById: Map<string, string>, canFinance: boolean): Data
     filterType: 'date', dateValue: (r) => r.expected_delivery_at,
   },
   {
-    key: 'customer_so_no', label: 'Reference', width: 130, sortable: true,
+    key: 'customer_so_no', label: 'Ref No.', width: 130, sortable: true,
     accessor: (r) => r.customer_so_no ?? r.ref ?? '—',
     searchValue: (r) => `${r.customer_so_no ?? ''} ${r.ref ?? ''}`,
     sortFn: (a, b) => (a.customer_so_no ?? a.ref ?? '').localeCompare(b.customer_so_no ?? b.ref ?? ''),

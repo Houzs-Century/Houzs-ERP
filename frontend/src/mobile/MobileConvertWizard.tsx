@@ -13,6 +13,8 @@ import { outstandingEmptyReason, type OutstandingScope } from "../lib/outstandin
 import "./mobile.css";
 import { SI_TRANSFERABLE_DO_STATES } from '../vendor/shared/do-shipped-states';
 import { soCanRaiseDo } from '../vendor/shared/so-deliverable-states';
+import { customerRefOf } from '../lib/customer-ref';
+import { matchesSearch } from '../lib/so-ref-search';
 /* The word, from the desktop picker's own component, so the phone and the desk
    cannot drift into two names for one field. Mobile spells its field labels
    "Label: value" (see "Supplier SKU:" below), not uppercase — the WORD is
@@ -130,10 +132,13 @@ const clampQty = (raw: string, max: number): number => {
 type SoListRow = {
   doc_no: string; debtor_name: string | null; status: string | null; on_hold?: boolean | null;
   so_date: string | null; local_total_sen: number | null; total_revenue_sen: number | null;
+  ref?: string | null; customer_so_no?: string | null;
 };
 type DoListRow = {
   id: string; do_number: string; debtor_name: string | null; status: string | null;
   do_date: string | null; local_total_sen: number | null;
+  /** The DO's copy of its order's reference, as the DO list shows it. */
+  ref?: string | null; customer_so_no?: string | null;
 };
 type PoListRow = {
   id: string; po_number: string; status: string | null; po_date: string | null;
@@ -321,12 +326,12 @@ export function MobileConvertWizard({
     if (meta.source === "so") {
       return ((data?.salesOrders ?? []) as SoListRow[])
         .filter((r) => soCanRaiseDo(r.status, r.on_hold ?? null))
-        .filter((r) => !needle || `${str(r.debtor_name)} ${r.doc_no}`.toLowerCase().includes(needle));
+        .filter((r) => matchesSearch([r.debtor_name, r.doc_no, customerRefOf(r)], needle));
     }
     if (meta.source === "do") {
       return ((data?.deliveryOrders ?? []) as DoListRow[])
         .filter((r) => isTransferableDo(r.status))
-        .filter((r) => !needle || `${str(r.debtor_name)} ${r.do_number}`.toLowerCase().includes(needle));
+        .filter((r) => matchesSearch([r.debtor_name, r.do_number, customerRefOf(r)], needle));
     }
     // PO (GRN): filter to one supplier at a time so /grns/from-pos never 400s
     // on mixed_suppliers. Once a supplier is chosen, show only that supplier.

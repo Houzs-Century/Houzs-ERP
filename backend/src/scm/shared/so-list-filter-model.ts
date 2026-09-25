@@ -110,7 +110,7 @@ export const SO_FILTER_FIELDS: readonly SoFilterFieldDef[] = [
   { key: 'lastChangeDate', label: 'Last change date', group: 'when', kind: 'date', ops: DATE_OPS },
   { key: 'docNo', label: 'Sales order no.', group: 'order', kind: 'docRange', ops: ['between'] },
   { key: 'name', label: 'Name', group: 'order', kind: 'text', ops: TEXT_OPS },
-  { key: 'reference', label: 'Reference', group: 'order', kind: 'text', ops: TEXT_OPS },
+  { key: 'reference', label: 'Ref No.', group: 'order', kind: 'text', ops: TEXT_OPS },
   { key: 'balance', label: 'Balance', group: 'order', kind: 'money', ops: ['positive', 'eq', 'gt', 'lt', 'between'] },
   { key: 'total', label: 'Total', group: 'order', kind: 'money', ops: ['eq', 'gt', 'lt', 'between'] },
   { key: 'paymentStatus', label: 'Payment status', group: 'order', kind: 'choice', ops: ['is'],

@@ -163,6 +163,19 @@ describe('the general receipt — record and post, one motion', () => {
     expect((await app.request('/?month=2026-13')).status).toBe(400);
   });
 
+  /* Owner 2026-09-25: every search box finds a record by its SO's reference —
+     the customer row carries its order's raw pair, read in the caller's company. */
+  test("a customer row carries its order's reference; another company's same number is never borrowed", async () => {
+    const tables = baseTables();
+    tables.mfg_sales_orders = [
+      { doc_no: 'HC-SO-2609-004', company_id: CO, ref: 'PO-ACME-12', customer_so_no: 'OLD-9' },
+      { doc_no: 'HC-SO-2609-004', company_id: 2, ref: 'OTHER-CO', customer_so_no: null },
+    ];
+    const body = await (await harness(tables).request('/')).json() as { receipts: Array<Row> };
+    expect(body.receipts.find((r) => r.kind === 'CUSTOMER')).toMatchObject({ soRef: 'PO-ACME-12', soCustomerSoNo: 'OLD-9' });
+    expect(body.receipts.find((r) => r.kind === 'DEBTOR')?.soRef).toBeUndefined();
+  });
+
   test('a control-account line refuses; a non-money landing account refuses', async () => {
     const app = harness(baseTables());
     const control = await post(app, '/', {

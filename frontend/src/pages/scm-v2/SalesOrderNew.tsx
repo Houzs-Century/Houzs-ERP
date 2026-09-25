@@ -1816,7 +1816,7 @@ export const SalesOrderNew = () => {
               />
             </label>
             <label className={styles.field}>
-              <span className={styles.fieldLabel}>Customer SO Ref</span>
+              <span className={styles.fieldLabel}>Ref No.</span>
               <input
                 className={`${styles.fieldInput} ${editedClass('customerSoNo', customerSoNo)}`}
                 value={customerSoNo}

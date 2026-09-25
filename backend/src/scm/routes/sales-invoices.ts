@@ -43,6 +43,7 @@ import type { Env, Variables } from '../env';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   isCrossCompanySource, crossCompanyConversionBlocked,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
+import { stampDoLineSoRefs } from '../lib/so-ref-lookup';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { postUnpostedSiPayments, reverseSiPayment } from '../../acc/payments';
@@ -72,6 +73,7 @@ import { SI_LINE_AUDIT_FIELDS, SI_LINE_AUDIT_SELECT } from '../lib/entity-audit-
 import { enqueueConvert, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
 import { recordSiAutoCountSource } from '../lib/si-autocount-source';
 import { refuseMigratedSources } from '../lib/migrated-chain';
+import { withSoRefDocNos } from '../lib/so-ref-search';
 
 /* ERP -> AutoCount Sales Invoice edit. AutoCount calls it IV
    (AcSyncService.cs:443). See queueAcDoEdit for the shape. */
@@ -469,7 +471,7 @@ salesInvoices.get('/', async (c) => {
   /* Sales scope + tab + company + search + date range + sort: the SAME read the
      two exports build (lib/si-list-read.ts), so an export can never match
      different invoices than the tab it was pressed on. */
-  const filters = readSiListFilters((k) => c.req.query(k));
+  const filters = await withSoRefDocNos(sb, c, readSiListFilters((k) => c.req.query(k)));
   let q = orderSiList(filterSiList(sb.from('sales_invoices').select(SI_LIST_SELECT, { count: 'exact' }), filters, c, scopeIds), filters.sort);
   q = q.range(page * pageSize, page * pageSize + pageSize - 1);
   const { data, error, count } = await q;
@@ -525,6 +527,8 @@ salesInvoices.get('/invoiceable-do-lines', async (c) => {
   const remaining = await doLineRemaining(sb, candidates.doIds, 'invoiceable');
   if (!remaining.ok) return c.json({ error: 'load_failed', reason: remaining.reason }, 500);
   const lines = [...remaining.lines.values()].filter((l) => l.remaining > 0);
+  // The DO's order reference, for the picker's search (owner 2026-09-25).
+  await stampDoLineSoRefs(sb, lines, (q) => scopeToCompany(q, c), 'invoiceable-do-lines');
   return c.json({ lines });
 });
 

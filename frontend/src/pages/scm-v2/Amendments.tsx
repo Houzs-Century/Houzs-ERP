@@ -115,7 +115,7 @@ const buildAmendmentColumns = (
     },
     {
       // Owner 2026-09-14: 「要加上reference number」.
-      key: 'reference', label: 'Reference', width: 140, sortable: true,
+      key: 'reference', label: 'Ref No.', width: 140, sortable: true,
       accessor: (r) => r.reference || <span style={{ color: 'var(--fg-muted)' }}>—</span>,
       searchValue: (r) => r.reference,
       exportValue: (r) => r.reference || '—',

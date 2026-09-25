@@ -43,7 +43,7 @@ const LINE_MONEY = [
    inherit from the sales order. */
 const CUSTOMER_FIELDS: Record<string, string> = {
   debtorCode: 'Customer code', debtorName: 'Customer', agent: 'Agent',
-  salesLocation: 'Sales location', ref: 'Reference', poDocNo: 'Customer PO no',
+  salesLocation: 'Sales location', ref: 'Ref No.', poDocNo: 'Customer PO no',
   venue: 'Venue', venueId: 'Venue', branding: 'Branding',
   address1: 'Address line 1', address2: 'Address line 2',
   city: 'City', state: 'State', postcode: 'Postcode', phone: 'Phone',

@@ -44,6 +44,7 @@ import {
   summariseSiOutstanding, unavailableSiSummary, SI_SUMMARY_COLS,
 } from "../lib/si-outstanding-summary";
 import { reduceAgingSnapshot, type AgingMvRow } from "../lib/ar-aging";
+import { stampSoRefs } from "../lib/so-ref-lookup";
 
 export const outstanding = new Hono<{ Bindings: Env; Variables: Variables }>();
 outstanding.use("*", supabaseAuth);
@@ -58,6 +59,9 @@ const MODULES: Record<string, { view: string; dateCol: string }> = {
   do:  { view: "v_do_outstanding",  dateCol: "do_date" },
   si:  { view: "v_si_outstanding",  dateCol: "invoice_date" },
 };
+
+// Tabs whose rows name a Sales Order, and the column that holds its number.
+const SO_DOC_KEY: Record<string, string> = { so: "doc_no", do: "so_doc_no", si: "so_doc_no" };
 
 for (const [slug, { view, dateCol }] of Object.entries(MODULES)) {
   outstanding.get(`/${slug}`, async (c) => {
@@ -116,6 +120,13 @@ for (const [slug, { view, dateCol }] of Object.entries(MODULES)) {
         const dep = Number(r.so_deposit_applied_sen ?? 0);
         if (dep > 0) r.outstanding_sen = Math.max(0, Number(r.outstanding_sen ?? 0) - dep);
       }
+    }
+    /* The order's customer reference, so the tab's search finds a row by it
+       (owner 2026-09-25). The views carry no ref; reading it beside them
+       avoids recreating a view (see the SI note above on why that is avoided). */
+    const soKey = SO_DOC_KEY[slug];
+    if (soKey) {
+      await stampSoRefs(sb, (data ?? []) as Array<Record<string, unknown>>, soKey, (q) => scopeToCompany(q, c), `outstanding/${slug}`);
     }
     return c.json({ rows: data ?? [] });
   });

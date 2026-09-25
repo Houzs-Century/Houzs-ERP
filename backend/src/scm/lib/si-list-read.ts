@@ -12,6 +12,7 @@
 import { SI_STATUS_BUCKETS } from './si-status-buckets';
 import { escapeForOr, phoneSearchOrParts } from './postgrest-search';
 import { scopeToCompany, type CompanyScopeCtx } from './companyScope';
+import { inArm } from './so-ref-search';
 import { normalizePhone } from '../shared';
 
 /* Full SI header — mirrors the editable DO header shape. */
@@ -43,6 +44,9 @@ export type SiListFilters = {
      client-side on the loaded page. */
   debtorNames: string[] | null;
   currencies: string[] | null;
+  /** SOs whose reference matches `q` (lib/so-ref-search.ts): the SI's own ref
+      copy is empty on many rows, so the SO link is matched instead. */
+  soRefDocNos: string[];
 };
 
 const param = (v: string | undefined): string | null => (v === undefined || v === '' ? null : v);
@@ -70,6 +74,7 @@ export function readSiListFilters(query: (key: string) => string | undefined): S
     sort: param(query('sort')),
     debtorNames: jsonArrayParam(query('debtorNames')),
     currencies: jsonArrayParam(query('currencies')),
+    soRefDocNos: [],
   };
 }
 
@@ -123,6 +128,7 @@ export function filterSiList<Q>(q: Q, f: SiListFilters, c: CompanyScopeCtx, scop
       `invoice_number.ilike.%${s}%`, `so_doc_no.ilike.%${s}%`, `debtor_name.ilike.%${s}%`,
       `debtor_code.ilike.%${s}%`, `ref.ilike.%${s}%`, `branding.ilike.%${s}%`, `sales_location.ilike.%${s}%`,
       ...phoneSearchOrParts(s, f.q, normalizePhone),
+      ...inArm('so_doc_no', f.soRefDocNos),
     ].join(','));
   }
   if (f.from) out = out.gte('invoice_date', f.from);

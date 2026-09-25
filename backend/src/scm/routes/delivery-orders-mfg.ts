@@ -85,6 +85,7 @@ import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { scopeToCompany, scopeToAllowedCompanies, activeCompanyId, stampCompany, companyDocPrefix, docPrefixForCode, companyCodeMap,
   isCrossCompanySource, crossCompanyConversionBlocked,
   requireActiveCompanyId, scopeToCompanyId, scopeToCompanyIdOrOpen, NOT_THIS_COMPANY } from '../lib/companyScope';
+import { stampSoRefsCamel } from '../lib/so-ref-lookup';
 import type { getSupabaseService } from '../../db/supabase';
 import { SO_CONVERT_HEADER, soHeaderToDoSource, missingSourceFields } from '../lib/so-to-do-fields';
 import { canViewAllSales, canViewScmFinance } from '../lib/houzs-perms';
@@ -115,6 +116,7 @@ import { advanceSoGeneration } from '../lib/so-generation';
 import { recordEntityAudit, diffFields, compactChanges, fieldChange } from '../lib/entity-audit';
 import { markIdempotencyNoWrite } from '../../middleware/idempotency';
 import { pgrestIn } from '../lib/pgrest-in-list';
+import { withSoRefDocNos } from '../lib/so-ref-search';
 
 export const deliveryOrdersMfg = new Hono<{ Bindings: Env; Variables: Variables }>();
 deliveryOrdersMfg.use('*', supabaseAuth);
@@ -2709,7 +2711,7 @@ deliveryOrdersMfg.get('/', async (c) => {
     /* Tab + search + sort + company + sales scope: the ONE filter the list and
        the line export share (lib/do-list-read.ts), so the two cannot match
        different delivery orders. */
-    const listParams = readDoListParams((k) => c.req.query(k));
+    const listParams = await withSoRefDocNos(sb, c, readDoListParams((k) => c.req.query(k)));
     let q = filterDoList(orderDoList(fromDoList(sb, HEADER, { count: 'exact' }), listParams.sort), listParams, c, scopeIds);
     q = q.range(page * pageSize, page * pageSize + pageSize - 1);
     const res = await q;
@@ -2798,6 +2800,8 @@ deliveryOrdersMfg.get('/deliverable-so-lines', async (c) => {
 
   const remainingMap = await soDeliverableRemaining(sb, docNos);
   const lines = [...remainingMap.values()].filter((l) => l.remaining > 0);
+  // The order's customer reference, for the picker's search (owner 2026-09-25).
+  await stampSoRefsCamel(sb, lines, (l) => l.docNo, (q) => scopeToAllowedCompanies(q, c), 'deliverable-so-lines');
   return c.json({ lines });
 });
 

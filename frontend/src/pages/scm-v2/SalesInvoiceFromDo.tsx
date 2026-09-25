@@ -42,6 +42,7 @@ import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDial
 import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
+import { soRefOfCamelStamp } from '../../lib/so-ref-search';
 import { fmtMoneySen } from '@2990s/shared';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
@@ -231,6 +232,12 @@ export const SalesInvoiceFromDo = () => {
       accessor: (r) => <span className={styles.codeCell}>{r.doNumber}</span>,
       searchValue: (r) => r.doNumber,
       groupValue: (r) => r.doNumber,
+    },
+    {
+      key: 'soRef', label: 'Ref No.', width: 150, sortable: true,
+      accessor: (r) => soRefOfCamelStamp(r) || '—',
+      searchValue: (r) => soRefOfCamelStamp(r),
+      sortFn: (a, b) => soRefOfCamelStamp(a).localeCompare(soRefOfCamelStamp(b)),
     },
     {
       key: 'debtorName', label: 'Customer', width: 200, sortable: true, groupable: true,

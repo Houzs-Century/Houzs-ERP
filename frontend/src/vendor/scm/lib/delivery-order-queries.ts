@@ -48,6 +48,9 @@ export type DeliverableSoLine = {
   delivered: number;
   returned: number;
   remaining: number;
+  /** The order's raw reference pair (resolve with soRefOfCamelStamp). */
+  soRef?: string | null;
+  soCustomerSoNo?: string | null;
 };
 
 export const useDeliverableSoLines = () => useQuery({

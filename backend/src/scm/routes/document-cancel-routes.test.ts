@@ -253,6 +253,16 @@ describe('the two signatures', () => {
     // A purchase order has no such field — null, never another document's ref.
     expect(byDoc['PO-1']).toMatchObject({ doc_ref: null, doc_customer_so_no: null });
   });
+
+  /* Owner 2026-09-25: every search finds a record by its SO's reference — a
+     Delivery Order's cancellation carries its ORDER's pair, via so_doc_no. */
+  it("carries a Delivery Order's Sales Order reference", async () => {
+    tables.delivery_orders[0].so_doc_no = 'SO-DONE';
+    await patch(NOBODY, '/delivery-orders-mfg/do-1/status', { status: 'CANCELLED', reason: 'Customer postponed the delivery' });
+    const { requests } = await body(await get(NOBODY, '/cancel-requests?scope=all'));
+    const doRow = requests.find((r: { doc_type: string }) => r.doc_type === 'DO');
+    expect(doRow).toMatchObject({ doc_ref: null, doc_customer_so_no: 'CUST-PO-7' });
+  });
 });
 
 describe('the area-guard bypass for approvers', () => {
