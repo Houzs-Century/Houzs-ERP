@@ -18,7 +18,7 @@ import { usePrompt } from "../../vendor/scm/components/PromptDialog";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { humanApiError } from "../../vendor/scm/lib/authed-fetch";
 import { useChangeAmendmentLane } from "../../vendor/scm/lib/so-amendment-queries";
-import { soAmendmentApprover, AMENDMENT_APPROVER_LABEL } from "../../vendor/scm/lib/amendment-approver";
+import { soAmendmentApprover, AMENDMENT_APPROVER_LABEL, SO_AMENDMENT_LANE_APPROVE_PERM } from "../../vendor/scm/lib/amendment-approver";
 
 export type AmendmentLaneKey = "LINES" | "DELIVERY" | "PRICE";
 
@@ -29,7 +29,7 @@ export type ReassignableAmendment = {
   lane?: string | null;
 };
 
-const LANES: AmendmentLaneKey[] = ["LINES", "DELIVERY", "PRICE"];
+const LANES = Object.keys(SO_AMENDMENT_LANE_APPROVE_PERM) as AmendmentLaneKey[];
 
 export const CHANGE_APPROVER_NOTE_TOO_SHORT = "Say why the approver is changing — the new desk reads it.";
 
