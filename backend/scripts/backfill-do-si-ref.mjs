@@ -31,7 +31,7 @@
    RE-RUN: inert. Keyed on an empty ref, which the fill removes; conflicts are
    never written, so they are re-counted, not re-touched. */
 import postgres from 'postgres';
-import { DOC_TABLES, countSql, fillSql, mismatchSql } from './lib/backfill-doc-ref.mjs';
+import { DOC_TABLES, countSql, fillSql, idsParam, mismatchSql } from './lib/backfill-doc-ref.mjs';
 
 const DSN = process.env.DATABASE_URL;
 if (!DSN) { console.error('need DATABASE_URL'); process.exit(2); }
@@ -78,7 +78,7 @@ async function main() {
     note('=== VERIFIED ON A FRESH CONNECTION ===');
     const after = await counts(check);
     for (const t of DOC_TABLES) {
-      const [{ n }] = await check.unsafe(mismatchSql(t), [written[t]]);
+      const [{ n }] = await check.unsafe(mismatchSql(t), [idsParam(written[t])]);
       note(`  ${t}: written ${written[t].length}, now differing from their SO ${n}, fillable left ${after[t].fillable}, conflict ${after[t].conflict}`);
       if (n !== 0 || after[t].fillable !== 0) { bad(`  ${t}: fill did not hold`); failed = true; }
     }

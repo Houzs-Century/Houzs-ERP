@@ -34,10 +34,16 @@ export const fillSql = (t) => `
      AND ${agrees}
   RETURNING d.id::text AS id`;
 
-/** Written rows whose ref does not now equal their SO's ref: must be 0. */
+/** Written rows whose ref does not now equal their SO's ref: must be 0. Takes
+ *  the ids as ONE comma-joined text parameter (idsParam): a JS array bound to
+ *  `$1::text[]` reaches Postgres as "a,b,c" and fails as a malformed array
+ *  literal. Ids are uuids / text keys, never containing a comma. */
 export const mismatchSql = (t) => `
   SELECT count(*)::int AS n
     FROM scm.${t} d
     JOIN scm.mfg_sales_orders s ON s.doc_no = d.so_doc_no AND s.company_id = d.company_id
-   WHERE d.id::text = ANY($1::text[])
+   WHERE d.id::text = ANY(string_to_array($1::text, ','))
      AND d.ref IS DISTINCT FROM btrim(s.ref)`;
+
+/** The single parameter mismatchSql takes. */
+export const idsParam = (ids) => ids.join(',');

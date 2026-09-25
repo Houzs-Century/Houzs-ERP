@@ -1,6 +1,6 @@
 import postgres, { type Sql } from 'postgres';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
-import { countSql, fillSql, mismatchSql } from '../scripts/lib/backfill-doc-ref.mjs';
+import { countSql, fillSql, idsParam, mismatchSql } from '../scripts/lib/backfill-doc-ref.mjs';
 import { assertDisposableTestDatabase } from './lib/doc-no-fixture';
 
 /* The exact statements scripts/backfill-do-si-ref.mjs runs on production
@@ -56,7 +56,11 @@ describePg('backfill DO / SI ref from the Sales Order', () => {
       'do-blank': 'ZNT7', 'do-conflict': null, 'do-empty': 'HC100', 'do-has-ref': 'KEEP',
       'do-no-soref': null, 'do-other-co': null, 'do-same': 'HC100',
     });
-    expect((await sql.unsafe(mismatchSql('delivery_orders'), [ids]))[0]!.n).toBe(0);
+    expect((await sql.unsafe(mismatchSql('delivery_orders'), [idsParam(ids)]))[0]!.n).toBe(0);
+    // The check can fail: point one written row away from its SO and it is caught.
+    await sql`UPDATE scm.delivery_orders SET ref = 'WRONG' WHERE id = 'do-empty'`;
+    expect((await sql.unsafe(mismatchSql('delivery_orders'), [idsParam(ids)]))[0]!.n).toBe(1);
+    await sql`UPDATE scm.delivery_orders SET ref = 'HC100' WHERE id = 'do-empty'`;
   });
 
   test('a re-run writes nothing and leaves the conflict counted', async () => {
