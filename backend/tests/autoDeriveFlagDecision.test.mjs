@@ -13,14 +13,13 @@ describe('decideFlagWrite', () => {
     expect(call({ existing: { value: 'off', company_id: 1 } })).toEqual({ ok: true, action: 'update', from: 'off' });
   });
 
-  // The incident: one row, primary key (key) alone, read with no company
-  // predicate. Arming it over company 2 is the thing that erased 193 retail
-  // prices, so the write side refuses it outright rather than trusting a reader.
-  it('refuses to arm the mechanism over company 2', () => {
-    const out = call({ companyId: 2 });
-    expect(out.ok).toBe(false);
-    expect(out.reason).toMatch(/company 2/);
-    expect(out.reason).toMatch(/POS SKU Master/);
+  // Owner 2026-09-25: the switch is now global and retail is protected at write
+  // time (mergeRetailOntoDerivedSeatGrid + company 2's DB trigger), so arming
+  // company 2 is no longer forbidden. In practice the single (key) row is owned
+  // by company 1 and the global reader arms both; the re-point guard below still
+  // stops a second owner from being written.
+  it('no longer forbids company 2 (would own the row when none exists)', () => {
+    expect(call({ companyId: 2 })).toEqual({ ok: true, action: 'insert', from: null });
   });
 
   it('still lets company 2 be switched OFF', () => {

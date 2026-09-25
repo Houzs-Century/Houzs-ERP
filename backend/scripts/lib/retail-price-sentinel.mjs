@@ -31,9 +31,10 @@
 //                intervene, so some writer is STILL rewriting retail prices and
 //                only the database is stopping it. ALARM — the writer should be
 //                found and fixed, not left leaning on the guard.
-//   derive ON    `scm.auto_derive_product_cost` is on for company 2. Their
-//                catalogue must never be derived from our supplier prices.
-//                ALARM.
+//   derive ON    `scm.auto_derive_product_cost` state. NOT an alarm since
+//                2026-09-25: the switch is global (both companies derive cost)
+//                and retail is protected by the write-path merge and the trigger.
+//                Reported as a note so the flag state is still visible.
 //   unaudited    a live price with no history row behind it. NOT an alarm: a
 //                hand repair (the 2026-09-20 restore) and a price older than
 //                the audit trail both look like this. Reported so it can be
@@ -298,11 +299,15 @@ export function verdict({ companyId, seat, flat, guard, flags }) {
     );
   }
 
+  // Auto-derive being on is no longer an alarm (owner 2026-09-25: both companies
+  // derive cost; the switch is global). What still matters is whether retail was
+  // actually lost — the seat/flat/guard-log checks above — not the flag itself.
+  // Record the flag state as a NOTE so a reader can still see it.
   for (const f of flags) {
-    if (Number(f.company_id) === Number(companyId) && flagIsOn(f.value)) {
-      alarms.push(
-        `scm.auto_derive_product_cost is '${f.value}' for company ${companyId}. Their catalogue must never be derived ` +
-          'from our supplier prices.',
+    if (flagIsOn(f.value)) {
+      notes.push(
+        `scm.auto_derive_product_cost is '${f.value}' (row under company ${f.company_id}); the switch is global, ` +
+          'so cost derives for both companies. Retail stays protected by the write-path merge and this trigger.',
       );
     }
   }
