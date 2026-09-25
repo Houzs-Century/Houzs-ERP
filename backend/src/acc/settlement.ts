@@ -432,26 +432,37 @@ export async function findPaymentsForRow(
      of the things a person searches by. A read that fails is a refusal. */
   const nameOf = new Map<string, string>();
   const invoiceNoOf = new Map<string, string>();
-  const soDocs = [...new Set(soRows.map((r) => String(r.so_doc_no ?? '')).filter(Boolean))];
+  /* The order's customer reference, which a person may search by too (owner
+     2026-09-25) — an invoice's through its so_doc_no. */
+  const orderOfSi = new Map<string, string>();
+  const refsOf = new Map<string, string[]>();
+  const siIds = [...new Set(siRows.map((r) => String(r.sales_invoice_id ?? '')).filter(Boolean))];
+  for (let i = 0; i < siIds.length; i += 200) {
+    const { data, error } = await sb.from('sales_invoices').select('id, invoice_number, debtor_name, so_doc_no').eq('company_id', companyId).in('id', siIds.slice(i, i + 200));
+    if (error) return { ok: false, status: 'load_failed', reason: `SI customers: ${error.message}` };
+    for (const r of (data ?? []) as Array<{ id: string; invoice_number: string | null; debtor_name: string | null; so_doc_no: string | null }>) {
+      if (r.debtor_name) nameOf.set(`SI:${r.id}`, r.debtor_name);
+      if (r.invoice_number) invoiceNoOf.set(r.id, r.invoice_number);
+      if (r.so_doc_no) orderOfSi.set(r.id, r.so_doc_no);
+    }
+  }
+  const soPayDocs = new Set(soRows.map((r) => String(r.so_doc_no ?? '')).filter(Boolean));
+  const soDocs = [...new Set([...soPayDocs, ...orderOfSi.values()])];
   const cancelledDocs = new Set<string>();
   for (let i = 0; i < soDocs.length; i += 200) {
-    const { data, error } = await sb.from('mfg_sales_orders').select('doc_no, debtor_name, status').eq('company_id', companyId).in('doc_no', soDocs.slice(i, i + 200));
+    const { data, error } = await sb.from('mfg_sales_orders').select('doc_no, debtor_name, status, ref, customer_so_no').eq('company_id', companyId).in('doc_no', soDocs.slice(i, i + 200));
     if (error) return { ok: false, status: 'load_failed', reason: `SO customers: ${error.message}` };
-    for (const r of (data ?? []) as Array<{ doc_no: string; debtor_name: string | null; status?: string | null }>) {
+    for (const r of (data ?? []) as Array<{ doc_no: string; debtor_name: string | null; status?: string | null; ref?: string | null; customer_so_no?: string | null }>) {
+      refsOf.set(r.doc_no, [r.ref, r.customer_so_no].filter((v): v is string => typeof v === 'string' && v !== ''));
+      if (!soPayDocs.has(r.doc_no)) continue;
       if (r.debtor_name) nameOf.set(`SO:${r.doc_no}`, r.debtor_name);
       /* A cancelled order's money is not offered here either (docs/bugs/0837). */
       if (String(r.status ?? '').toUpperCase() === 'CANCELLED') cancelledDocs.add(String(r.doc_no));
     }
   }
-  const siIds = [...new Set(siRows.map((r) => String(r.sales_invoice_id ?? '')).filter(Boolean))];
-  for (let i = 0; i < siIds.length; i += 200) {
-    const { data, error } = await sb.from('sales_invoices').select('id, invoice_number, debtor_name').eq('company_id', companyId).in('id', siIds.slice(i, i + 200));
-    if (error) return { ok: false, status: 'load_failed', reason: `SI customers: ${error.message}` };
-    for (const r of (data ?? []) as Array<{ id: string; invoice_number: string | null; debtor_name: string | null }>) {
-      if (r.debtor_name) nameOf.set(`SI:${r.id}`, r.debtor_name);
-      if (r.invoice_number) invoiceNoOf.set(r.id, r.invoice_number);
-    }
-  }
+  const refsByPayment = new Map<string, string[]>();
+  for (const r of soRows) refsByPayment.set(`SOPAY:${String(r.id)}`, refsOf.get(String(r.so_doc_no ?? '')) ?? []);
+  for (const r of siRows) refsByPayment.set(`SIPAY:${String(r.id)}`, refsOf.get(orderOfSi.get(String(r.sales_invoice_id ?? '')) ?? '') ?? []);
 
   const tagOf = (r: CardPaymentRow): string | null => {
     const p = r.merchant_provider == null ? '' : String(r.merchant_provider).trim();
@@ -475,14 +486,16 @@ export async function findPaymentsForRow(
     })),
   ];
 
-  /* The search: a document number, a customer's name, an approval code, or an
-     amount — whichever the person has in front of them. Empty lists everything. */
+  /* The search: a document number, the order's reference, a customer's name, an
+     approval code, or an amount — whichever the person has in front of them.
+     Empty lists everything. */
   const needle = q.trim().toLowerCase();
   const sen = senOfText(q.trim());
   const hit = needle === ''
     ? all
     : all.filter((p) =>
       p.docNo.toLowerCase().includes(needle)
+      || (refsByPayment.get(`${p.source}:${p.id}`) ?? []).some((ref) => ref.toLowerCase().includes(needle))
       || (p.customerName ?? '').toLowerCase().includes(needle)
       || (p.approvalCode ?? '').toLowerCase() === needle
       || (sen != null && p.amountSen === sen));

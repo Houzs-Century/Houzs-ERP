@@ -534,6 +534,7 @@ mfgPurchaseOrders.get('/outstanding-so-items', async (c) => {
       on_hold: boolean | null;
       so_date: string; customer_delivery_date: string | null;
       processing_date: string | null; sales_location: string | null;
+      ref: string | null; customer_so_no: string | null;
     };
   };
 
@@ -612,6 +613,8 @@ mfgPurchaseOrders.get('/outstanding-so-items', async (c) => {
         lineDeliveryDate: r.line_delivery_date,
         mainSupplierCode: mainSupplierByCode.get(r.item_code)?.code ?? null,
         mainSupplierName: mainSupplierByCode.get(r.item_code)?.name ?? null,
+        soRef:            r.so.ref ?? null,
+        soCustomerSoNo:   r.so.customer_so_no ?? null,
       };
     });
 

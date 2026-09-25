@@ -40,6 +40,7 @@ import { fmtSen } from "../../vendor/shared/format";
 import { formatPhone } from "../../vendor/shared/phone";
 import { retryUnlessClientError } from '../../lib/retryPolicy';
 import { fmtDate } from "../../vendor/shared/format";
+import { matchesSearch, soRefOfStamp, type SoRefStamp } from "../../lib/so-ref-search";
 
 // ─── Types — mirrors the endpoint's Row / buckets / totals ──────────────────
 
@@ -63,7 +64,7 @@ type UnbilledRow = {
   lines_total: number;
   lines_pending: number;
   partly_invoiced: boolean;
-};
+} & SoRefStamp;
 
 type UnbilledResponse = {
   as_of: string;
@@ -216,13 +217,8 @@ export function UnbilledDeliveriesV2() {
 
   const filtered = useMemo(() => {
     if (!search.trim()) return scopedByAge;
-    const q = search.toLowerCase();
     return scopedByAge.filter((r) =>
-      [r.do_number, r.debtor_name, r.debtor_code, r.so_doc_no, r.salesperson, r.phone]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase()
-        .includes(q)
+      matchesSearch([r.do_number, r.debtor_name, r.debtor_code, r.so_doc_no, soRefOfStamp(r), r.salesperson, r.phone], search)
     );
   }, [scopedByAge, search]);
 

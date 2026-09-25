@@ -64,6 +64,7 @@ import {
 } from '../../vendor/scm/lib/reports-queries';
 import { useAuth } from '../../auth/AuthContext';
 import styles from './SalesOrderDetailListing.module.css';
+import { customerRefOf } from '../../lib/customer-ref';
 
 /* Bump the storage key when migrating to the Houzs layout — the previous
    key (`so-detail-listing-grid`) held the AutoCount column order, which
@@ -191,6 +192,11 @@ const buildColumns = (canFinance: boolean): DataGridColumn<SoDetailListingRow>[]
       accessor: (r) => <span className={styles.codeCell}>{r.doc_no}</span>,
       searchValue: (r) => r.doc_no,
       filterType: 'numbering', filterValue: (r) => r.doc_no,
+    },
+    /* 1b */ {
+      key: 'reference', label: 'Ref No.', width: 150, sortable: true,
+      accessor: (r) => customerRefOf(r) || '—',
+      searchValue: (r) => customerRefOf(r),
     },
     /* 2 */ {
       key: 'so_date', label: 'Date', width: 110, sortable: true,

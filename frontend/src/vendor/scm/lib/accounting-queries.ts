@@ -525,6 +525,8 @@ export type ReceiptRow = {
   id: string; number: string; date: string; payer: string;
   moneyAccount: string; totalSen: number; status: string;
   debtorId?: string; notes?: string | null;
+  /** CUSTOMER rows: the order's raw reference pair (resolve with soRefOfCamelStamp). */
+  soRef?: string | null; soCustomerSoNo?: string | null;
 };
 /** No month = every month (owner 2026-09-08: 月份只是筛选); `month` echoes the
     filter, null when none. */

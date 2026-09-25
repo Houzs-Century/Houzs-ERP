@@ -43,6 +43,7 @@ import type { Env, Variables } from '../env';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { scopeToCompany, activeCompanyId } from '../lib/companyScope';
 import { stampOrderDeposit } from '../lib/si-list-stamps';
+import { stampSoRefs } from '../lib/so-ref-lookup';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { deriveDisplayBrandingByDoc } from '../lib/so-display-branding';
 import { isPlaceholderBrandText } from '../shared/so-branding-label';
@@ -433,6 +434,8 @@ reports.get('/delivery-order-detail-listing', async (c) => {
       if (dateTo   && (!d || d > dateTo))   return false;
       return true;
     });
+  // The order's customer reference, for the listing's row search.
+  await stampSoRefs(sb, rows, 'so_doc_no', (q) => scopeToCompany(q, c), 'do-detail-listing');
 
   return c.json({ rows });
 });
@@ -532,6 +535,8 @@ reports.get('/sales-invoice-detail-listing', async (c) => {
       if (dateTo   && (!d || d > dateTo))   return false;
       return true;
     });
+  // The order's customer reference, for the listing's row search.
+  await stampSoRefs(sb, rows, 'so_doc_no', (q) => scopeToCompany(q, c), 'si-detail-listing');
 
   return c.json({ rows });
 });
@@ -568,7 +573,7 @@ reports.get('/delivery-return-detail-listing', async (c) => {
         qty_returned, condition, unit_price_sen, refund_sen, notes, created_at,
         delivery_returns!inner (
           id, return_number, delivery_order_id, sales_invoice_id, debtor_code,
-          debtor_name, return_date, reason, status, refund_sen,
+          debtor_name, return_date, reason, status, refund_sen, ref, customer_so_no,
           received_at, inspected_at, refunded_at, inspection_notes, notes
         )
       `);

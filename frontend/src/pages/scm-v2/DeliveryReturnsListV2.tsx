@@ -72,6 +72,7 @@ import { usePrintDocument } from "../../components/scm-v2/PrintChainProvider";
 import { deliveryReturnPrintChain } from "../../lib/printChain";
 import { deliveryReturnPdfBundle } from "../../lib/printDocumentPdf";
 import { customerRefOf } from '../../lib/customer-ref';
+import { deliveryReturnMatchesSearch } from '../../lib/so-ref-search';
 import {
   DR_LINE_COLUMNS,
   returnCancelledWord,
@@ -814,25 +815,7 @@ export function DeliveryReturnsListV2() {
   function deliveryReturnsInView(rows: DrRow[], tab: StatusTab, term: string): DrRow[] {
     const inTab = tab === "all" ? rows : rows.filter((r) => statusFor(r.status).bucket === tab);
     if (!term.trim()) return inTab;
-    const q = term.toLowerCase();
-    return inTab.filter((r) => {
-      const hay = [
-        r.return_number,
-        r.do_doc_no,
-        r.debtor_name,
-        r.debtor_code,
-        r.salesperson_id,
-        refOf(r),
-        r.branding,
-        r.sales_location,
-        r.reason,
-        r.venue,
-      ]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
-      return hay.includes(q);
-    });
+    return inTab.filter((r) => deliveryReturnMatchesSearch(r, term));
   }
 
   const counts = useMemo(() => {

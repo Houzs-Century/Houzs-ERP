@@ -11,6 +11,7 @@ import { DetailListingShell } from '../../components/scm-v2/DetailListingShell';
 import { useDeliveryReturnDetailListing, type DetailListingRow } from '../../vendor/scm/lib/reports-queries';
 import type { DataGridColumn } from '../../vendor/scm/components/DataGrid';
 import styles from './SalesOrderDetailListing.module.css';
+import { customerRefOf } from '../../lib/customer-ref';
 
 type DrRow = DetailListingRow & {
   return_number?: string;
@@ -47,6 +48,11 @@ export const DeliveryReturnDetailListing = () => {
       key: 'doc_no', label: 'Return No.', width: 120, sortable: true,
       accessor: (r) => <span className={styles.codeCell}>{r.doc_no}</span>,
       searchValue: (r) => r.doc_no,
+    },
+    {
+      key: 'reference', label: 'Ref No.', width: 150, sortable: true,
+      accessor: (r) => customerRefOf(r) || '—',
+      searchValue: (r) => customerRefOf(r),
     },
     {
       key: 'return_date', label: 'Date', width: 100, sortable: true,

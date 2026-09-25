@@ -12,6 +12,7 @@
 import { todayMyt } from '../../vendor/scm/lib/dates';
 import { PO_ESTIMATE_DELIVERY_DATE_LABELS } from '../../vendor/scm/lib/po-line-export-columns';
 import { fmtSen } from '../../vendor/shared/format';
+import { soRefOfStamp, type SoRefStamp } from '../../lib/so-ref-search';
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ClipboardList, FileText, Receipt, Truck, Undo2, ScrollText, PackagePlus, PackageSearch } from 'lucide-react';
@@ -267,7 +268,7 @@ const MODULE_COLUMNS: Record<OutstandingModule, ColSpec[]> = {
   do: [
     { key: 'do_number',  label: 'DO No' },
     { key: 'do_date',    label: 'Date', kind: 'date' },
-    { key: 'so_doc_no',  label: 'SO Ref' },
+    { key: 'so_doc_no',  label: 'SO No.' },
     { key: 'debtor_name', label: 'Customer' },
     { key: 'status',     label: 'Status' },
   ],
@@ -350,8 +351,11 @@ const ModuleTable = ({
     const term = search.trim().toLowerCase();
     if (!term) return keyedRows;
     const specs = MODULE_COLUMNS[module];
+    /* The SO / DO / SI rows also carry their order's customer reference
+       (stamped server-side), which the search matches without a column. */
     return keyedRows.filter((r) =>
-      specs.some((spec) => cellText(spec, r).toLowerCase().includes(term)),
+      specs.some((spec) => cellText(spec, r).toLowerCase().includes(term))
+      || soRefOfStamp(r as SoRefStamp).toLowerCase().includes(term),
     );
   }, [keyedRows, search, module]);
 

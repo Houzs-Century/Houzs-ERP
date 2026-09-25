@@ -85,6 +85,7 @@ import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { scopeToCompany, scopeToAllowedCompanies, activeCompanyId, stampCompany, companyDocPrefix, docPrefixForCode, companyCodeMap,
   isCrossCompanySource, crossCompanyConversionBlocked,
   requireActiveCompanyId, scopeToCompanyId, scopeToCompanyIdOrOpen, NOT_THIS_COMPANY } from '../lib/companyScope';
+import { stampSoRefsCamel } from '../lib/so-ref-lookup';
 import type { getSupabaseService } from '../../db/supabase';
 import { SO_CONVERT_HEADER, soHeaderToDoSource, missingSourceFields } from '../lib/so-to-do-fields';
 import { canViewAllSales, canViewScmFinance } from '../lib/houzs-perms';
@@ -2799,6 +2800,8 @@ deliveryOrdersMfg.get('/deliverable-so-lines', async (c) => {
 
   const remainingMap = await soDeliverableRemaining(sb, docNos);
   const lines = [...remainingMap.values()].filter((l) => l.remaining > 0);
+  // The order's customer reference, for the picker's search (owner 2026-09-25).
+  await stampSoRefsCamel(sb, lines, (l) => l.docNo, (q) => scopeToAllowedCompanies(q, c), 'deliverable-so-lines');
   return c.json({ lines });
 });
 

@@ -11,6 +11,7 @@ import { useDeliveryOrderDetailListing, type DetailListingRow } from '../../vend
 import type { DataGridColumn } from '../../vendor/scm/components/DataGrid';
 import styles from './SalesOrderDetailListing.module.css';
 import { transferFromColumnLabel } from "../../lib/convertScope";
+import { soRefOfStamp } from "../../lib/so-ref-search";
 
 type DoRow = DetailListingRow & {
   do_number?: string;
@@ -66,6 +67,11 @@ export const DeliveryOrderDetailListing = () => {
       key: 'so_doc_no', label: transferFromColumnLabel('so'), width: 110, sortable: true, groupable: true,
       accessor: (r) => r.so_doc_no ?? '—',
       searchValue: (r) => r.so_doc_no ?? '',
+    },
+    {
+      key: 'so_ref', label: 'Ref No.', width: 150, sortable: true,
+      accessor: (r) => soRefOfStamp(r) || '—',
+      searchValue: (r) => soRefOfStamp(r),
     },
     {
       key: 'debtor_code', label: 'Customer', width: 110, sortable: true, groupable: true,
