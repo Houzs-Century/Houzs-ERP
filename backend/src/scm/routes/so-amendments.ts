@@ -1431,7 +1431,7 @@ soAmendments.patch('/:id/flag-lane', async (c) => {
   if (lane === 'PRICE') {
     return c.json({
       error: 'price_lane_no_handover',
-      reason: "A price amendment is Finance's to approve or reject — it cannot be passed to another desk.",
+      reason: "A price amendment is the Sales Director's to approve or reject — it cannot be passed to another desk.",
     }, 409);
   }
   if (!hasHouzsPerm(c, LANE_APPROVE_KEY[lane])) {

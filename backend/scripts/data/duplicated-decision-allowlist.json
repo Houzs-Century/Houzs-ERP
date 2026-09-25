@@ -457,7 +457,7 @@
     },
     {
       "check": "D1",
-      "key": "DELIVERY,LINE,PRICE,QTY,SPEC,SUPPLIER,VARIANT|backend/src/scm/shared/amendment-routing.ts frontend/src/vendor/scm/lib/amendment-routing.ts",
+      "key": "COST,DELIVERY,LINE,PRICE,QTY,SPEC,SUPPLIER,VARIANT|backend/src/scm/shared/amendment-routing.ts frontend/src/vendor/scm/lib/amendment-routing.ts",
       "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it. check-shared-mirrors.mjs compares this pair function-by-function and fails on DIVERGED. Symbols: FIELD_KIND_LABEL."
     },
     {

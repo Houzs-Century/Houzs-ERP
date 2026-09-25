@@ -51,7 +51,7 @@ function poAmendmentFieldKinds(
     const old = l.old_snapshot ?? {};
     if (l.new_item_code != null && String(l.new_item_code) !== String(old.item_code ?? '')) kinds.push('SPEC');
     if (l.new_qty != null && Number(l.new_qty) !== Number(old.qty ?? NaN)) kinds.push('QTY');
-    if (l.new_unit_price_sen != null && Number(l.new_unit_price_sen) !== Number(old.unit_price_sen ?? NaN)) kinds.push('PRICE');
+    if (l.new_unit_price_sen != null && Number(l.new_unit_price_sen) !== Number(old.unit_price_sen ?? NaN)) kinds.push('COST');
     if (l.new_delivery_date != null && String(l.new_delivery_date) !== String(old.delivery_date ?? '')) kinds.push('DELIVERY');
   }
   if (headerChanges) {
