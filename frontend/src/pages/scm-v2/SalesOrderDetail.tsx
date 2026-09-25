@@ -53,6 +53,7 @@ import { resolveSelfStaff } from '../../vendor/scm/lib/self-staff';
 import { AuditHistoryPanel } from '../../components/audit/AuditHistoryPanel';
 import type { AuditFieldChange, AuditLogEntry } from '../../components/audit/audit-labels';
 import { SO_AUDIT_LABELS } from './so-audit-labels';
+import { useSoHistoryWithRelated } from './so-history-related';
 import {
   LOCKED_STATUSES,
   CANCELLABLE_STATUSES,
@@ -3895,10 +3896,10 @@ const HistoryPanel = memo(({
   onClose: () => void;
 }) => {
   const q = useSalesOrderAuditLog(docNo);
-  const entries = q.data ?? [];
+  const { panel, error, renderDocTag } = useSoHistoryWithRelated(docNo, q);
 
   const renderBadge = useCallback((entry: AuditLogEntry, changes: AuditFieldChange[]) => {
-    if (entry.action !== 'UPDATE_STATUS') return null;
+    if (entry.action !== 'UPDATE_STATUS') return renderDocTag(entry);
     const status = changes.find((f) => f.field === 'status')?.to as string | undefined;
     if (!status) return null;
     return (
@@ -3909,15 +3910,14 @@ const HistoryPanel = memo(({
         {SO_STATUS_LABEL[status] ?? status.replace(/_/g, ' ')}
       </span>
     );
-  }, []);
+  }, [renderDocTag]);
 
   return (
     <AuditHistoryPanel
       recordLabel={docNo}
       entityName="Sales order"
-      entries={entries}
-      isLoading={q.isLoading}
-      error={q.error}
+      {...panel}
+      error={error}
       labels={SO_AUDIT_LABELS}
       onClose={onClose}
       renderBadge={renderBadge}
