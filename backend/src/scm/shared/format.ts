@@ -113,6 +113,11 @@ function dateParts(d: Date | string | number | null | undefined): DateParts | nu
   /* Already in house shape. Formatting a formatted string must be a no-op —
      a display helper that corrupts its own output is how "16/08/2026" became
      "Invalid Date" when a second caller wrapped a first. */
+  const ymd = /^(\d{4})\/(\d{2})\/(\d{2})$/.exec(s);
+  if (ymd) return { yyyy: ymd[1], mm: ymd[2], dd: ymd[3], hh: '00', mi: '00', ss: '00' };
+  /* Legacy day-first display (pre-2026-09-25) still parses, so any value that
+     round-tripped through the OLD fmtDate is CONVERTED to the new shape, never
+     read as an invalid date. */
   const dmy = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(s);
   if (dmy) return { yyyy: dmy[3], mm: dmy[2], dd: dmy[1], hh: '00', mi: '00', ss: '00' };
 
@@ -150,18 +155,19 @@ function dateParts(d: Date | string | number | null | undefined): DateParts | nu
   return mytParts(new Date(s));
 }
 
-/** THE date format: "16/08/2026". Null-safe, invalid-safe, idempotent.
- *  Display only — never feed this to a date input, an API or AutoCount. */
+/** THE date format: "2026/08/16" (year-first, owner 2026-09-25). Null-safe,
+ *  invalid-safe, idempotent. Display only — never feed this to a date input, an
+ *  API or AutoCount. */
 export const fmtDate = (d: Date | string | number | null | undefined): string => {
   const p = dateParts(d);
-  return p === null ? DASH : `${p.dd}/${p.mm}/${p.yyyy}`;
+  return p === null ? DASH : `${p.yyyy}/${p.mm}/${p.dd}`;
 };
 
 /** THE date+time format: "16/08/2026 14:30". 24-hour, no comma — the same
  *  numeric, unambiguous rule as {@link fmtDate}, one export further. */
 export const fmtDateTime = (d: Date | string | number | null | undefined): string => {
   const p = dateParts(d);
-  return p === null ? DASH : `${p.dd}/${p.mm}/${p.yyyy} ${p.hh}:${p.mi}`;
+  return p === null ? DASH : `${p.yyyy}/${p.mm}/${p.dd} ${p.hh}:${p.mi}`;
 };
 
 /** "13/08" — {@link fmtDate} with the YEAR trimmed, for a label that already
@@ -172,7 +178,7 @@ export const fmtDateTime = (d: Date | string | number | null | undefined): strin
  *  "—", exactly as {@link fmtDate}. */
 export const fmtDayMonth = (d: Date | string | number | null | undefined): string => {
   const p = dateParts(d);
-  return p === null ? DASH : `${p.dd}/${p.mm}`;
+  return p === null ? DASH : `${p.mm}/${p.dd}`;
 };
 
 /** A PERIOD as one label: "13/08 - 17/08", and just "13/08" when it is one day.
@@ -208,7 +214,7 @@ export const fmtTime = (d: Date | string | number | null | undefined): string =>
  *  the second is the evidence (activity log, attachment uploaded_at). */
 export const fmtTimestamp = (d: Date | string | number | null | undefined): string => {
   const p = dateParts(d);
-  return p === null ? DASH : `${p.dd}/${p.mm}/${p.yyyy} ${p.hh}:${p.mi}:${p.ss}`;
+  return p === null ? DASH : `${p.yyyy}/${p.mm}/${p.dd} ${p.hh}:${p.mi}:${p.ss}`;
 };
 
 /** The one rule, INVERTED — "16/08/2026" → "2026-08-16"; anything else is
@@ -225,8 +231,8 @@ export const fmtTimestamp = (d: Date | string | number | null | undefined): stri
  *  rendering `fmtDate` on screen and nobody has to remember this per column. */
 export const isoForExport = (v: string | number | null | undefined): string | number => {
   if (typeof v !== 'string') return v ?? '';
-  const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(v.trim());
-  return m ? `${m[3]}-${m[2]}-${m[1]}` : v;
+  const m = /^(\d{4})\/(\d{2})\/(\d{2})$/.exec(v.trim());
+  return m ? `${m[1]}-${m[2]}-${m[3]}` : v;
 };
 
 /** Null-safe date. Kept as the name 62 call sites already use; `fmtDate` is

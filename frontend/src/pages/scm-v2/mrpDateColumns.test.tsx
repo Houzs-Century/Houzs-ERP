@@ -55,7 +55,7 @@ describe('MRP date columns — selectable from the Columns drawer', () => {
     render(<MemoryRouter><Mrp /></MemoryRouter>);
 
     // Default view carries no date column, so the SO row's delivery date is absent.
-    expect(screen.queryByText('01/10/2026')).toBeNull();
+    expect(screen.queryByText('2026/10/01')).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: /columns/i }));
     const drawer = screen.getByRole('dialog', { name: 'Columns' });
@@ -73,6 +73,6 @@ describe('MRP date columns — selectable from the Columns drawer', () => {
     fireEvent.click(within(drawer).getByRole('button', { name: 'Delivery Date' }));
 
     // The column now renders in the table (value shows outside the drawer).
-    expect(screen.getAllByText('01/10/2026').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('2026/10/01').length).toBeGreaterThan(0);
   });
 });

@@ -81,8 +81,8 @@ describe("MOBILE_LANGS", () => {
 });
 
 describe("localizeAnnouncement", () => {
-  const base = { title: "Holiday notice", body: "Office closed 05/08/2026." };
-  const bnPair = { title: "ছুটির বিজ্ঞপ্তি", body: "অফিস বন্ধ ০৫/০৮/২০২৬।" };
+  const base = { title: "Holiday notice", body: "Office closed 2026/08/05." };
+  const bnPair = { title: "ছুটির বিজ্ঞপ্তি", body: "অফিস বন্ধ ২০২৬/০৮/০৫।" };
 
   it("returns the Bengali translation when one exists", () => {
     const r = localizeAnnouncement({ ...base, translations: { bn: bnPair } }, "bn");

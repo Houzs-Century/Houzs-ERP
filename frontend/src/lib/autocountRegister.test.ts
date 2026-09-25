@@ -63,7 +63,7 @@ const row = (over: Partial<AcOutboxRow> = {}): AcOutboxRow => ({
 
 const groupOf = (...rows: AcOutboxRow[]): AcDocGroup => acGroupByDocument(rows)[0]!;
 
-/** MYT noon on 21 August 2026 — so "today" is unambiguously 21/08/2026. */
+/** MYT noon on 21 August 2026 — so "today" is unambiguously 2026/08/21. */
 const NOW = Date.parse("2026-08-21T04:00:00.000Z");
 
 describe("the eight columns", () => {
@@ -211,9 +211,9 @@ describe("when a document landed", () => {
 
 describe("the day a run of rows happened on", () => {
   it("names today and yesterday, and dates everything else", () => {
-    expect(acDayLabel("21/08/2026", NOW)).toBe("Today · 21/08/2026");
-    expect(acDayLabel("20/08/2026", NOW)).toBe("Yesterday · 20/08/2026");
-    expect(acDayLabel("19/08/2026", NOW)).toBe("19/08/2026");
+    expect(acDayLabel("2026/08/21", NOW)).toBe("Today · 2026/08/21");
+    expect(acDayLabel("2026/08/20", NOW)).toBe("Yesterday · 2026/08/20");
+    expect(acDayLabel("2026/08/19", NOW)).toBe("2026/08/19");
   });
 
   /* THE SEPARATOR IS `fmtDate` AND NOTHING ELSE — no month-name list, which
@@ -221,7 +221,7 @@ describe("the day a run of rows happened on", () => {
      check-duplicated-decisions refused. The label a day older than the queue is
      the same rule as the label on a row from this morning. */
   it("dates a day from another year the same way as any other", () => {
-    expect(acDayLabel("19/08/2025", NOW)).toBe("19/08/2025");
+    expect(acDayLabel("2025/08/19", NOW)).toBe("2025/08/19");
   });
 
   /* THE SEPARATOR AND THE CELL ARE ONE RULE. Both come off `fmtDate`, so a row
@@ -229,7 +229,7 @@ describe("the day a run of rows happened on", () => {
   it("files a row under the day its own When cell shows", () => {
     const r = row({ sent_at: "2026-08-20T20:00:00.000Z" });
     expect(acWhenText(r)).toBe("21/08 04:00");
-    expect(acDayLabel(acDayKey(r), NOW)).toBe("Today · 21/08/2026");
+    expect(acDayLabel(acDayKey(r), NOW)).toBe("Today · 2026/08/21");
   });
 });
 
@@ -253,7 +253,7 @@ describe("the flat list of separators and documents", () => {
   it("labels the days from the same buckets it split on", () => {
     const days = acRegisterItems(three, NOW).filter((i) => i.kind === "day");
     expect(days.map((d) => (d as { label: string }).label))
-      .toEqual(["Today · 21/08/2026", "19/08/2026"]);
+      .toEqual(["Today · 2026/08/21", "2026/08/19"]);
   });
 
   /* A separator sharing a key with a document unmounts one of them, and a

@@ -45,8 +45,8 @@ describe('ledgerCsv — the rows the screen shows', () => {
     const rows = ledgerCsv(REPORT).split('\n');
     expect(rows[0]).toBe('Account,Date,Entry,Journal,Other side,Ref. 1,Ref. 2,Description,Debit,Credit,Balance,Reversal');
     expect(rows[1]).toBe('310-0010 CASH AT BANK - MAYBANK,,,,,,,BALANCE B/F,,,"1,000.00",');
-    expect(rows[2]).toBe('310-0010,10/08/2026,2990-JE-2608-0002,Bank,900-A001 ADVERTISEMENT,2990-HPV-2608-017,,"Facebook ads, ""August"" — LOO WEN WEI",,300.00,700.00,');
-    expect(rows[3]).toBe('310-0010,20/08/2026,2990-JE-2608-0004,Bank,300-0000 ACCOUNT RECEIVEABLE +2,2990-SO-2608-004,,keyed twice,"1,610.00",,700.00,reversed');
+    expect(rows[2]).toBe('310-0010,2026/08/10,2990-JE-2608-0002,Bank,900-A001 ADVERTISEMENT,2990-HPV-2608-017,,"Facebook ads, ""August"" — LOO WEN WEI",,300.00,700.00,');
+    expect(rows[3]).toBe('310-0010,2026/08/20,2990-JE-2608-0004,Bank,300-0000 ACCOUNT RECEIVEABLE +2,2990-SO-2608-004,,keyed twice,"1,610.00",,700.00,reversed');
     expect(rows[4]).toBe('310-0010,,,,,,,TOTAL,0.00,300.00,700.00,');
     expect(rows[5]).toBe(',,,,,,,GRAND TOTAL,0.00,300.00,,');
     expect(rows).toHaveLength(6);
@@ -60,7 +60,7 @@ describe('ledgerTable — the printed page', () => {
     expect(t.lines.map((l) => l.kind)).toEqual(['account', 'bf', 'line', 'line', 'total', 'grand']);
     expect(t.lines[0]!.cells[0]).toBe('310-0010  CASH AT BANK - MAYBANK');
     expect(t.lines[1]!.cells.slice(6)).toEqual(['BALANCE B/F', '', '', '1,000.00']);
-    expect(t.lines[2]!.cells).toEqual(['10/08/2026', '2990-JE-2608-0002', 'Bank', '900-A001 ADVERTISEMENT', '2990-HPV-2608-017', '', 'Facebook ads, "August" — LOO WEN WEI', '', '300.00', '700.00']);
+    expect(t.lines[2]!.cells).toEqual(['2026/08/10', '2990-JE-2608-0002', 'Bank', '900-A001 ADVERTISEMENT', '2990-HPV-2608-017', '', 'Facebook ads, "August" — LOO WEN WEI', '', '300.00', '700.00']);
     expect(t.lines[3]!.cells[6]).toBe('keyed twice [reversed]');
     expect(t.lines[4]!.cells.slice(6)).toEqual(['TOTAL', '0.00', '300.00', '700.00']);
     expect(t.lines[5]!.cells.slice(6)).toEqual(['GRAND TOTAL', '0.00', '300.00', '']);

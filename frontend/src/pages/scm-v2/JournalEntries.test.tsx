@@ -94,7 +94,7 @@ describe('the page', () => {
     const rows = group.querySelectorAll('tr');
     expect(rows).toHaveLength(3);
     const headRow = rows[0]!;
-    expect(headRow.textContent).toContain('10/08/2026');
+    expect(headRow.textContent).toContain('2026/08/10');
     expect(headRow.textContent).toContain('2990-JE-2608-0002');
     expect(headRow.textContent).toContain('Bank');
     expect(headRow.textContent).toContain('2990-HPV-2608-017');
@@ -166,8 +166,8 @@ describe('the CSV', () => {
   it('is one row per line, the head repeated in front, the reversal state on the status', () => {
     const rows = journalCsv(ENTRIES.slice(0, 1).concat(ENTRIES[2]!), nameOf).split('\n');
     expect(rows[0]).toBe('Date,Entry,Journal,Ref. 1,Ref. 2,Description,Debit,Credit,Status,Account,Account name,Party,Note,Line debit,Line credit');
-    expect(rows[1]).toBe('10/08/2026,2990-JE-2608-0002,Bank,2990-HPV-2608-017,,Facebook ads August,300.00,300.00,POSTED,900-A001,ADVERTISEMENT,LOO WEN WEI,Facebook ads,300.00,');
-    expect(rows[2]).toBe('10/08/2026,2990-JE-2608-0002,Bank,2990-HPV-2608-017,,Facebook ads August,300.00,300.00,POSTED,310-0010,CASH AT BANK - MAYBANK,,,,300.00');
+    expect(rows[1]).toBe('2026/08/10,2990-JE-2608-0002,Bank,2990-HPV-2608-017,,Facebook ads August,300.00,300.00,POSTED,900-A001,ADVERTISEMENT,LOO WEN WEI,Facebook ads,300.00,');
+    expect(rows[2]).toBe('2026/08/10,2990-JE-2608-0002,Bank,2990-HPV-2608-017,,Facebook ads August,300.00,300.00,POSTED,310-0010,CASH AT BANK - MAYBANK,,,,300.00');
     expect(rows[3]).toContain('POSTED contra,300-0000');
     expect(rows).toHaveLength(5);
   });

@@ -30,7 +30,7 @@ describe('the listing table', () => {
       row({ kind: 'PI', id: 'pi-1', invoiceNumber: '2990-PI-2607-005', supplierCode: '400-H004', supplierName: 'HOOKKA INDUSTRIES SDN. BHD.', supplierInvoiceRef: null, description: null, totalSen: 300_000, paidSen: 100_000, outstandingSen: 200_000, status: 'PARTIALLY_PAID' }),
     ]);
     expect(t.head).toEqual(['Kind', 'No.', 'Supplier', 'Ref', 'Date', 'Due', 'Description', 'Total', 'Paid', 'Outstanding', 'Status']);
-    expect(t.body[0]).toEqual(['AP Invoice', '2990-API-2609-001', 'HOUZS VENTURE HOLDING SDN BHD (405-H001)', 'HVH-0912', '01/09/2026', '30/09/2026', 'Rent September', 'MYR 4,200.00', 'MYR 0.00', 'MYR 4,200.00', 'POSTED']);
+    expect(t.body[0]).toEqual(['AP Invoice', '2990-API-2609-001', 'HOUZS VENTURE HOLDING SDN BHD (405-H001)', 'HVH-0912', '2026/09/01', '2026/09/30', 'Rent September', 'MYR 4,200.00', 'MYR 0.00', 'MYR 4,200.00', 'POSTED']);
     expect(t.body[1]![0]).toBe('Purchase Invoice');
     expect(t.body[1]![3]).toBe('');
     expect(t.body[1]![6]).toBe('');

@@ -134,7 +134,7 @@ describe('the unified money-in list', () => {
     fireEvent.focus(date);
     fireEvent.change(date, { target: { value: '02092026' } });
     fireEvent.blur(date);
-    expect(date.value).toBe('02/09/2026');
+    expect(date.value).toBe('2026/09/02');
     fireEvent.change(screen.getByLabelText(/Received from/), { target: { value: 'ALLIANZ INSURANCE' } });
     const combos = screen.getAllByRole('combobox');
     fireEvent.focus(combos[0]!); // Received into — money only
@@ -195,7 +195,7 @@ describe('edit a posted receipt and re-post (owner 2026-09-07: 收钱的日期�
     await waitFor(() => expect(screen.getByText('Edit HC-OR-2609-001 — 改了会重新过账')).toBeTruthy());
     expect((screen.getByLabelText(/Received from/) as HTMLInputElement).value).toBe('ALLIANZ INSURANCE');
     const date = screen.getByLabelText('Receipt date') as HTMLInputElement;
-    expect(date.value).toBe('03/09/2026');
+    expect(date.value).toBe('2026/09/03');
     expect((screen.getByLabelText('line 1 amount') as HTMLInputElement).value).toBe('888.00');
     fireEvent.focus(date);
     fireEvent.change(date, { target: { value: '28082026' } });

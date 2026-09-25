@@ -55,7 +55,7 @@ describe('an entry opened', () => {
     expect(first.querySelector('br')).toBeTruthy();
     const second = screen.getByText('410-0010').closest('td') as HTMLElement;
     expect(within(second).getByText('SALARY PAYABLE')).toBeTruthy();
-    expect(screen.getAllByText('30/06/2026')).toHaveLength(1);
+    expect(screen.getAllByText('2026/06/30')).toHaveLength(1);
     expect(screen.getByText("Salary - Jun'26")).toBeTruthy();
     expect(screen.getByText('POSTED')).toBeTruthy();
   });
