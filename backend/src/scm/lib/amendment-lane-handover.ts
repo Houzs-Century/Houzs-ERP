@@ -29,24 +29,37 @@ import { classifyHeaderKey, type AmendmentLane } from '../shared/amendment-lane'
 import { activeCompanyId, scopeToCompany } from './companyScope';
 import { catalogCategoriesByCode } from './validate-item-codes';
 import { poRelevant, serviceOnlyChange, type SoAmendLine, type SoLineIdentity } from './amendment-po-followup';
+import { amendmentLinePriceOnly, type StoredLine } from './amendment-noop-lines';
+import { isServiceLine } from '../shared/service-sku';
 
 export type LaneHandoverVerdict =
   | { ok: true; toLane: AmendmentLane }
   | { ok: false; status: 409 | 500; error: string; reason: string };
 
-// PRICE is here only for type-completeness: the flag-lane route refuses a
-// handover on a PRICE amendment (Finance approves or rejects it in place), so
-// judgeLaneHandover / otherLane never receive it.
-const DESK: Record<AmendmentLane, string> = { LINES: 'Purchaser', DELIVERY: 'Logistic', PRICE: 'Sales Director' };
+export const DESK: Record<AmendmentLane, string> = { LINES: 'Purchaser', DELIVERY: 'Logistic', PRICE: 'Sales Director' };
 
 export const otherLane = (lane: AmendmentLane): AmendmentLane => (lane === 'LINES' ? 'DELIVERY' : 'LINES');
 
-export async function judgeLaneHandover(
+type LaneMoveAmendment = { id: string; so_doc_no: string; lane: AmendmentLane; header_changes: Record<string, unknown> | null };
+
+/** The approver's "not mine" handover: LINES <-> DELIVERY only (the flag-lane
+ *  route refuses a PRICE row before it gets here). */
+export function judgeLaneHandover(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SCM PostgREST client and Hono context are untyped across this tree.
-  sb: any, c: Context<any>,
-  amendment: { id: string; so_doc_no: string; lane: AmendmentLane; header_changes: Record<string, unknown> | null },
+  sb: any, c: Context<any>, amendment: LaneMoveAmendment,
 ): Promise<LaneHandoverVerdict> {
-  const toLane = otherLane(amendment.lane);
+  return judgeLaneMove(sb, c, amendment, otherLane(amendment.lane));
+}
+
+/** May an open amendment move to `toLane`? Shared by the approver's handover and
+ *  the super admin's "change approver" (owner 2026-09-25). The same safety holds
+ *  for both: a change the PO must follow never leaves LINES, and only a pure
+ *  price/discount change on product lines may land on PRICE — the Sales
+ *  Director's approval raises no PO follow-up either. */
+export async function judgeLaneMove(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SCM PostgREST client and Hono context are untyped across this tree.
+  sb: any, c: Context<any>, amendment: LaneMoveAmendment, toLane: AmendmentLane,
+): Promise<LaneHandoverVerdict> {
   const readFailed = (what: string): LaneHandoverVerdict => ({
     ok: false, status: 500, error: 'handover_check_failed',
     reason: `Could not check ${what}, so the request was left where it is. Please try again.`,
@@ -69,6 +82,7 @@ export async function judgeLaneHandover(
   }
 
   if (toLane === 'LINES') return { ok: true, toLane };
+  if (toLane === 'PRICE') return judgePriceOnly(sb, c, amendment, readFailed);
 
   const poHeaderKeys = Object.keys(amendment.header_changes ?? {}).filter((k) => {
     try { return classifyHeaderKey(k) === 'LINES'; } catch { return true; }
@@ -107,4 +121,52 @@ export async function judgeLaneHandover(
     };
   }
   return { ok: true, toLane };
+}
+
+type PriceCheckRow = {
+  sales_order_item_id: string | null; change_type: string; new_item_code: string | null;
+  new_variants: unknown; new_qty: number | null; new_unit_price_sen: number | null;
+  new_discount_sen: number | null; new_remark: string | null;
+};
+
+async function judgePriceOnly(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SCM PostgREST client and Hono context are untyped across this tree.
+  sb: any, c: Context<any>, amendment: LaneMoveAmendment,
+  readFailed: (what: string) => LaneHandoverVerdict,
+): Promise<LaneHandoverVerdict> {
+  const notPriceOnly = (what: string): LaneHandoverVerdict => ({
+    ok: false, status: 409, error: 'not_price_only',
+    reason: `It has ${what}. Only a pure price or discount change can go to the Sales Director.`,
+  });
+  if (Object.keys(amendment.header_changes ?? {}).length > 0) return notPriceOnly('header changes');
+
+  const { data: lineRows, error: lineErr } = await sb.from('so_amendment_lines')
+    .select('sales_order_item_id, change_type, new_item_code, new_variants, new_qty, new_unit_price_sen, new_discount_sen, new_remark')
+    .eq('amendment_id', amendment.id);
+  if (lineErr) return readFailed("this amendment's lines");
+  const lines = (lineRows ?? []) as PriceCheckRow[];
+  if (lines.length === 0) return notPriceOnly('no line changes');
+
+  const { data: soItems, error: soItemErr } = await scopeToCompany(
+    sb.from('mfg_sales_order_items')
+      .select('id, item_code, item_group, qty, unit_price_sen, variants, remark, discount_sen')
+      .eq('doc_no', amendment.so_doc_no),
+    c,
+  );
+  if (soItemErr) return readFailed("the order's lines");
+  const byId = new Map<string, StoredLine & { item_group: string | null }>();
+  for (const r of (soItems ?? []) as Array<StoredLine & { item_group: string | null }>) byId.set(r.id, r);
+
+  const wrong = lines.filter((l) => {
+    const cur = l.sales_order_item_id ? byId.get(l.sales_order_item_id) : undefined;
+    if (!cur) return true;
+    if (isServiceLine({ itemGroup: cur.item_group, category: null, itemCode: cur.item_code })) return true;
+    return !amendmentLinePriceOnly({
+      salesOrderItemId: l.sales_order_item_id, changeType: l.change_type, newItemCode: l.new_item_code,
+      newVariants: l.new_variants, newQty: l.new_qty, newUnitPriceSen: l.new_unit_price_sen,
+      newRemark: l.new_remark, newDiscountSen: l.new_discount_sen,
+    }, cur);
+  }).length;
+  if (wrong > 0) return notPriceOnly(`${wrong} line change${wrong === 1 ? '' : 's'} that ${wrong === 1 ? 'is' : 'are'} not price-only`);
+  return { ok: true, toLane: 'PRICE' };
 }

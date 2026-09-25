@@ -196,16 +196,27 @@ describe('amendment notice audience', () => {
       actorName: 'Purchaser Pat',
       actorUserId: 41,
       requesterUserId: 77,
+      byAdmin: false,
     });
     const todo = posted.find((p) => p.title.includes('needs approval'))!;
     expect(todo.userIds).toEqual([43]);                  // the DELIVERY desk, not the LINES one
-    expect(todo.body).toContain('Purchaser Pat (product lines approver) passed amendment SO-12757/A1');
+    expect(todo.body).toContain('Purchaser Pat (product lines approver) passed amendment SO-12757/A1 on Sales Order SO-12757 to you as not theirs to approve: ');
     expect(todo.body).toContain('transport charge, Logistic approves these');
     expect(todo.body).toContain('waiting for delivery / customer info approval');
     expect(todo.source).toBe('so_amendment');
     const requester = posted.find((p) => p.title.includes('was passed to another approver'))!;
     expect(requester.userIds).toEqual([77]);
     expect(posted.flatMap((p) => p.userIds)).not.toContain(41);
+  });
+
+  it('an admin changing the approver is named as the admin, not as the desk that had it', async () => {
+    await notifySoAmendmentHandedOver(fakeEnv(), {
+      amendmentNo: 'SO-12757/A1', soDocNo: 'SO-12757', fromLane: 'LINES', toLane: 'DELIVERY', companyId: 1,
+      note: 'transport charge', actorName: 'Admin Ann', actorUserId: 1, requesterUserId: 77, byAdmin: true,
+    });
+    const todo = posted.find((p) => p.title.includes('needs approval'))!;
+    expect(todo.body).toContain('Admin Ann (admin) passed amendment SO-12757/A1 on Sales Order SO-12757 to you: transport charge');
+    expect(todo.body).not.toContain('not theirs');
   });
 
   it('carries the rejection reason to the requester and the salesperson', async () => {

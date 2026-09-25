@@ -27,7 +27,7 @@ import {
 import { applySoAmendment, reviseBoundPo, ReceivedFloorError } from '../lib/so-revision';
 import { chunkIn } from '../lib/paginate-all';
 import { raisePoFollowUps } from '../lib/amendment-po-followup';
-import { judgeLaneHandover } from '../lib/amendment-lane-handover';
+import { DESK, judgeLaneHandover, judgeLaneMove } from '../lib/amendment-lane-handover';
 import { countCancelRequestsAwaitingSigner } from '../lib/cancel-pending-count';
 import { approveKeysFor } from '../shared/document-cancel';
 import { CANCEL_REQUESTS_TABLE } from './document-cancel-routes';
@@ -1497,6 +1497,86 @@ soAmendments.patch('/:id/flag-lane', async (c) => {
     actorName: c.get('houzsUser')?.name ?? actorName(user),
     actorUserId: c.get('houzsUser')?.id ?? null,
     requesterUserId: await resolveUserIdByStaffId(sb, amendment.requested_by),
+    byAdmin: false,
+  });
+
+  return c.json({ amendment: updated });
+});
+
+/* ── PATCH /:id/lane ────────────────────────────────────────────────────────
+   A SUPER ADMIN (the * wildcard) choosing which desk signs an open request
+   (owner 2026-09-25: "super admin 直接在 SO amendment 修改 approver"). Any of
+   the three lanes, any number of times, but through the same safety judge as
+   the approver's handover (lib/amendment-lane-handover judgeLaneMove): a change
+   the Purchase Order must follow never leaves LINES, and only a pure
+   price/discount change lands on PRICE. A note is required — it is what the
+   receiving desk reads and what History keeps. */
+soAmendments.patch('/:id/lane', async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const sb = c.get('supabase'); const id = c.req.param('id'); const user = c.get('user');
+
+  if (!hasHouzsPerm(c, '*')) {
+    return c.json({ error: 'forbidden', message: 'Only a super admin can change who approves an amendment.' }, 403);
+  }
+  let body: { lane?: string; note?: string } = {};
+  try { body = (await c.req.json()) as typeof body; } catch { /* validated below */ }
+  const toLane = body.lane === 'LINES' || body.lane === 'DELIVERY' || body.lane === 'PRICE' ? body.lane : null;
+  if (!toLane) return c.json({ error: 'bad_lane', message: 'Choose Purchaser, Logistic or Sales Director.' }, 400);
+  const note = typeof body.note === 'string' ? body.note.trim().slice(0, 500) : '';
+  if (!note) return c.json({ error: 'note_required', message: 'Say why the approver is changing — the new desk reads it.' }, 400);
+
+  const loaded = await loadAmendmentForWrite(sb, id, c);
+  if (!loaded.ok) return c.json({ error: 'not_found' }, 404);
+  const lane = laneOf(loaded.amendment);
+  if (!lane) return c.json(LEGACY_HAS_NO_DESK, 409);
+  if (loaded.mirrored) return c.json(MIRRORED_SO_READONLY, 409);
+  const { amendment } = loaded;
+  if (amendment.status !== 'REQUESTED') {
+    return c.json({ error: 'bad_transition', reason: 'This amendment has already been acted on, so its approver can no longer change.' }, 409);
+  }
+  if (lane === toLane) return c.json({ error: 'same_lane', reason: `It is already waiting on the ${DESK[lane]} desk.` }, 409);
+
+  const verdict = await judgeLaneMove(sb, c, {
+    id: amendment.id, so_doc_no: amendment.so_doc_no, lane, header_changes: amendment.header_changes ?? null,
+  }, toLane);
+  if (!verdict.ok) return c.json({ error: verdict.error, reason: verdict.reason }, verdict.status);
+
+  const { data: updated, error: updErr } = await sb.from('so_amendments').update({
+    lane:       toLane,
+    version:    Number(amendment.version) + 1,
+    updated_at: new Date().toISOString(),
+  }).eq('id', id)
+    .eq('company_id', co.companyId)
+    .eq('status', 'REQUESTED')
+    .eq('lane', lane)
+    .eq('version', Number(amendment.version))
+    .select('id, so_doc_no, amendment_no, status, lane, lane_flag_note, version')
+    .maybeSingle();
+  if (updErr) return c.json({ error: 'update_failed', reason: updErr.message }, 500);
+  if (!updated) return c.json({ error: 'amendment_version_conflict' }, 409);
+
+  const who = c.get('houzsUser')?.name ?? actorName(user);
+  await recordSoAudit(sb, {
+    docNo: amendment.so_doc_no,
+    action: 'AMENDMENT_LANE_CHANGED',
+    actorId: user.id,
+    actorName: who,
+    fieldChanges: [{ field: 'lane', from: lane, to: toLane }],
+    note,
+  });
+
+  await notifySoAmendmentHandedOver(c.env, {
+    amendmentNo: amendment.amendment_no ?? '',
+    soDocNo: amendment.so_doc_no,
+    fromLane: lane,
+    toLane,
+    companyId: co.companyId,
+    note,
+    actorName: who,
+    actorUserId: c.get('houzsUser')?.id ?? null,
+    requesterUserId: await resolveUserIdByStaffId(sb, amendment.requested_by),
+    byAdmin: true,
   });
 
   return c.json({ amendment: updated });
