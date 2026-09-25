@@ -120,13 +120,6 @@ export function rowMatchesCondition<T>(row: T, c: Condition, col: ConditionColum
   return true;
 }
 
-/** How an active condition reads on its chip / in the funnel header. */
-export function conditionLabel(c: Condition): string {
-  if (c.kind === "preset") return DATE_PRESETS.find((p) => p.key === c.preset)?.label ?? c.preset;
-  if (c.kind === "dateRange") return `${c.from ?? "…"} to ${c.to ?? "…"}`;
-  return `${c.min ?? "…"} to ${c.max ?? "…"}`;
-}
-
 /* ── Toolbar text search over the loaded rows (DataGrid parity) ─────────── */
 
 export interface SearchColumn<T> {
