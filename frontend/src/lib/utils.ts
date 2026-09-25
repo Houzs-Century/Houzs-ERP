@@ -149,11 +149,10 @@ export function isExpired(d: string | null | undefined): boolean {
   // Audit timestamp — compare its GMT+8 calendar date.
   const date = parseDate(d);
   if (!date) return false;
-  const inTz = fmtDate(d); // DD/MM/YYYY
+  const inTz = fmtDate(d); // YYYY/MM/DD
   if (inTz === "—") return false;
-  // Convert DD/MM/YYYY → YYYY-MM-DD for lexicographic compare.
-  const [dd, mm, yyyy] = inTz.split("/");
-  return `${yyyy}-${mm}-${dd}` < today;
+  // Convert YYYY/MM/DD → YYYY-MM-DD for lexicographic compare.
+  return inTz.replace(/\//g, "-") < today;
 }
 
 export function isExpiringSoon(d: string | null | undefined, days = 3): boolean {
@@ -162,9 +161,8 @@ export function isExpiringSoon(d: string | null | undefined, days = 3): boolean 
   // Compute cutoff in GMT+8 by anchoring midnight at this calendar date.
   const cutoff = new Date(`${today}T00:00:00+08:00`);
   cutoff.setDate(cutoff.getDate() + days);
-  const cutoffStr = fmtDate(cutoff);
-  const [cd, cm, cy] = cutoffStr.split("/");
-  const cutoffIso = `${cy}-${cm}-${cd}`;
+  // fmtDate is year-first (YYYY/MM/DD), so YYYY-MM-DD is just a separator swap.
+  const cutoffIso = fmtDate(cutoff).replace(/\//g, "-");
 
   const datePart =
     isDateOnly(d) || isWallClockDateTime(d) ? d.slice(0, 10) : null;
@@ -172,8 +170,7 @@ export function isExpiringSoon(d: string | null | undefined, days = 3): boolean 
 
   const inTz = fmtDate(d);
   if (inTz === "—") return false;
-  const [dd, mm, yyyy] = inTz.split("/");
-  const iso = `${yyyy}-${mm}-${dd}`;
+  const iso = inTz.replace(/\//g, "-");
   return iso >= today && iso <= cutoffIso;
 }
 

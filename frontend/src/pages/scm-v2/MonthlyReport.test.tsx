@@ -158,14 +158,14 @@ describe('the monthly view', () => {
     const lineRows = () => Array.from(document.querySelectorAll('tr[data-line-of="900-A001"]')) as HTMLElement[];
     expect(lineRows()).toHaveLength(2);
     const august = lineRows()[0]!;
-    expect(within(august).getAllByRole('cell').map((c) => c.textContent)).toEqual(['05/08/2026 · Rent AugustPV-1', 'RM 1000.00', '-', 'RM 1000.00', '-']);
-    expect(within(lineRows()[1]!).getAllByRole('cell').map((c) => c.textContent)).toEqual(['02/09/2026 · Rent SeptemberPV-2', 'RM 1000.00', 'RM 1000.00', '-', '-']);
+    expect(within(august).getAllByRole('cell').map((c) => c.textContent)).toEqual(['2026/08/05 · Rent AugustPV-1', 'RM 1000.00', '-', 'RM 1000.00', '-']);
+    expect(within(lineRows()[1]!).getAllByRole('cell').map((c) => c.textContent)).toEqual(['2026/09/02 · Rent SeptemberPV-2', 'RM 1000.00', 'RM 1000.00', '-', '-']);
     const foot = () => document.querySelector('tr[data-lines-foot="900-A001"]') as HTMLElement;
     expect(within(foot()).getAllByRole('cell').map((c) => c.textContent)).toEqual(['共 2 笔在 GL 打开', 'RM 2000.00', 'RM 1000.00', 'RM 1000.00', '-']);
     /* The lines wear their own shade; the description is cut at the column, the whole text its tooltip; every figure keeps the % slot empty, so it sits under the amount, never under the % (owner 2026-09-19). */
     expect(august.className).toMatch(/lines/);
     expect(within(august).getAllByRole('cell')[0]!.className).toMatch(/clip/);
-    expect(within(august).getAllByRole('cell')[0]!.getAttribute('title')).toBe('05/08/2026 · Rent August · PV-1');
+    expect(within(august).getAllByRole('cell')[0]!.getAttribute('title')).toBe('2026/08/05 · Rent August · PV-1');
     expect(within(august).getAllByRole('cell').slice(1).map((c) => c.querySelector('span[data-pct]')?.textContent)).toEqual(['', '', '', '']);
     expect(within(foot()).getAllByRole('cell').slice(1).every((c) => c.querySelector('span[data-pct]') !== null)).toBe(true);
     /* August's figure: that month's line alone; the same figure again closes; the name reopens the range. */

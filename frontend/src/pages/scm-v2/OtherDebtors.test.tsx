@@ -248,7 +248,7 @@ describe('the Debtor Bill — a pop-out form whose lines pick their own account'
     expect(within(d).queryByText(/saving re-posts it/)).toBeNull();
     expect((within(d).getByRole('combobox') as HTMLInputElement).value).toBe('700-0000 · Other Income');
     expect((within(d).getByLabelText('line 1 amount') as HTMLInputElement).value).toBe('500.00');
-    expect((within(d).getByLabelText('Bill date') as HTMLInputElement).value).not.toBe('03/09/2026');
+    expect((within(d).getByLabelText('Bill date') as HTMLInputElement).value).not.toBe('2026/09/03');
     fireEvent.click(within(d).getByText('Post bill'));
     await waitFor(() => expect(createBillAsync).toHaveBeenCalledTimes(1));
     const sent = createBillAsync.mock.calls[0]![0] as { debtorId: string; billDate: string; notes?: string; lines: unknown[] };

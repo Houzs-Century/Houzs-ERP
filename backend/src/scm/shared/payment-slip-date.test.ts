@@ -28,7 +28,7 @@ describe('payment slip date window', () => {
     expect(v.ok).toBe(false);
     if (v.ok) return;
     expect(v.code).toBe('too_old');
-    expect(v.reason).toContain('09/09/2026');
+    expect(v.reason).toContain('2026/09/09');
   });
 
   test('tomorrow is refused as a future date, not as too old', () => {
@@ -36,7 +36,7 @@ describe('payment slip date window', () => {
     expect(v.ok).toBe(false);
     if (v.ok) return;
     expect(v.code).toBe('future');
-    expect(v.reason).toContain('23/09/2026');
+    expect(v.reason).toContain('2026/09/23');
   });
 
   test('every refusal stays a short sentence (SCM swaps long ones for a generic line)', () => {

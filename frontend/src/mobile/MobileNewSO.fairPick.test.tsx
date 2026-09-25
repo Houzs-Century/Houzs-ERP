@@ -90,7 +90,7 @@ const openOnMle = async () => {
 describe("phone SO editor — the fair EVENT is recorded, not just the place", () => {
   it("opens on the event the order is linked to", async () => {
     const { container } = await openOnMle();
-    expect(fairSelect(container).selectedOptions.item(0)?.textContent).toBe("MID VALLEY — MLE (08/08 - 09/08)");
+    expect(fairSelect(container).selectedOptions.item(0)?.textContent).toBe("MID VALLEY — MLE (08/08 - 08/09)");
   });
 
   it("saving another event sends that event whole — venue, organizer and both dates", async () => {

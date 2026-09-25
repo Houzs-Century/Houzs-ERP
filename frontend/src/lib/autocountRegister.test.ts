@@ -9,7 +9,7 @@
 // in two rendering tests that both pass.
 //
 // TIMEZONE. Every date below goes through `fmtDate`, which renders a zoned
-// instant in MYT (UTC+8). `2026-08-20T20:00:00Z` is therefore 21/08 in this
+// instant in MYT (UTC+8). `2026-08-20T20:00:00Z` is therefore 08/21 in this
 // app's own words, and the fixtures are written to say so out loud rather than
 // to look tidy in UTC.
 import { describe, expect, it } from "vitest";
@@ -63,7 +63,7 @@ const row = (over: Partial<AcOutboxRow> = {}): AcOutboxRow => ({
 
 const groupOf = (...rows: AcOutboxRow[]): AcDocGroup => acGroupByDocument(rows)[0]!;
 
-/** MYT noon on 21 August 2026 — so "today" is unambiguously 21/08/2026. */
+/** MYT noon on 21 August 2026 — so "today" is unambiguously 2026/08/21. */
 const NOW = Date.parse("2026-08-21T04:00:00.000Z");
 
 describe("the eight columns", () => {
@@ -200,7 +200,7 @@ describe("when a document landed", () => {
 
   /* The day separator above the row carries the year, so the cell does not. */
   it("prints the day and the time, without the year", () => {
-    expect(acWhenText(row({ sent_at: "2026-08-16T08:31:00.000Z" }))).toBe("16/08 16:31");
+    expect(acWhenText(row({ sent_at: "2026-08-16T08:31:00.000Z" }))).toBe("08/16 16:31");
   });
 
   it("says so rather than guessing when there is no timestamp to read", () => {
@@ -211,9 +211,9 @@ describe("when a document landed", () => {
 
 describe("the day a run of rows happened on", () => {
   it("names today and yesterday, and dates everything else", () => {
-    expect(acDayLabel("21/08/2026", NOW)).toBe("Today · 21/08/2026");
-    expect(acDayLabel("20/08/2026", NOW)).toBe("Yesterday · 20/08/2026");
-    expect(acDayLabel("19/08/2026", NOW)).toBe("19/08/2026");
+    expect(acDayLabel("2026/08/21", NOW)).toBe("Today · 2026/08/21");
+    expect(acDayLabel("2026/08/20", NOW)).toBe("Yesterday · 2026/08/20");
+    expect(acDayLabel("2026/08/19", NOW)).toBe("2026/08/19");
   });
 
   /* THE SEPARATOR IS `fmtDate` AND NOTHING ELSE — no month-name list, which
@@ -221,15 +221,15 @@ describe("the day a run of rows happened on", () => {
      check-duplicated-decisions refused. The label a day older than the queue is
      the same rule as the label on a row from this morning. */
   it("dates a day from another year the same way as any other", () => {
-    expect(acDayLabel("19/08/2025", NOW)).toBe("19/08/2025");
+    expect(acDayLabel("2025/08/19", NOW)).toBe("2025/08/19");
   });
 
   /* THE SEPARATOR AND THE CELL ARE ONE RULE. Both come off `fmtDate`, so a row
      can never be filed under a day the cell beside it does not print. */
   it("files a row under the day its own When cell shows", () => {
     const r = row({ sent_at: "2026-08-20T20:00:00.000Z" });
-    expect(acWhenText(r)).toBe("21/08 04:00");
-    expect(acDayLabel(acDayKey(r), NOW)).toBe("Today · 21/08/2026");
+    expect(acWhenText(r)).toBe("08/21 04:00");
+    expect(acDayLabel(acDayKey(r), NOW)).toBe("Today · 2026/08/21");
   });
 });
 
@@ -253,7 +253,7 @@ describe("the flat list of separators and documents", () => {
   it("labels the days from the same buckets it split on", () => {
     const days = acRegisterItems(three, NOW).filter((i) => i.kind === "day");
     expect(days.map((d) => (d as { label: string }).label))
-      .toEqual(["Today · 21/08/2026", "19/08/2026"]);
+      .toEqual(["Today · 2026/08/21", "2026/08/19"]);
   });
 
   /* A separator sharing a key with a document unmounts one of them, and a

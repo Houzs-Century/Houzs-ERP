@@ -1,13 +1,13 @@
-// DateField — controlled date input that ALWAYS displays DD/MM/YYYY,
+// DateField — controlled date input that ALWAYS displays YYYY/MM/DD,
 // regardless of the operating-system locale.
 //
 // Why this exists (Commander 2026-06-18): native <input type="date"> renders
-// its value in the browser/OS locale — so the same field showed DD/MM/YYYY on
-// one machine and MM/DD/YYYY on another. This is the literal "有时候 MMDDYYYY"
-// bug on the MRP / Proceed-PO date fields. A controlled text field fixes the
-// DISPLAY (always day-first) while a hidden native date input still provides
-// the OS calendar picker. The on-the-wire contract is unchanged: `value` is an
-// ISO `YYYY-MM-DD` string (or '') and `onChange` emits the same.
+// its value in the browser/OS locale — so the same field showed one order on
+// one machine and another elsewhere. A controlled text field fixes the DISPLAY
+// (house format is year-first YYYY/MM/DD since owner 2026-09-25) while a hidden
+// native date input still provides the OS calendar picker. The on-the-wire
+// contract is unchanged: `value` is an ISO `YYYY-MM-DD` string (or '') and
+// `onChange` emits the same.
 
 import { useState, useRef, useId, useEffect, type CSSProperties } from 'react';
 import { Calendar } from 'lucide-react';
@@ -49,13 +49,13 @@ export type DateFieldProps = {
   required?: boolean;
 };
 
-/** Digits → the DD/MM/YYYY mask as far as they reach: "3" → "3", "3103" →
- *  "31/03", "310320" → "31/03/20", "31032026" → "31/03/2026". */
+/** Digits → the YYYY/MM/DD mask as far as they reach: "2026" → "2026", "202603"
+ *  → "2026/03", "20260331" → "2026/03/31". */
 export function maskDmy(digits: string): string {
   const d = digits.slice(0, 8);
-  if (d.length <= 2) return d;
-  if (d.length <= 4) return `${d.slice(0, 2)}/${d.slice(2)}`;
-  return `${d.slice(0, 2)}/${d.slice(2, 4)}/${d.slice(4)}`;
+  if (d.length <= 4) return d;
+  if (d.length <= 6) return `${d.slice(0, 4)}/${d.slice(4)}`;
+  return `${d.slice(0, 4)}/${d.slice(4, 6)}/${d.slice(6)}`;
 }
 
 /** True when every `/` in `raw` sits where `maskDmy` itself would have written
@@ -76,7 +76,9 @@ export function maskDmy(digits: string): string {
  *  alone by the `^[\d/]*$` guard at the call site. */
 export function separatorsAreMaskOwn(raw: string): boolean {
   for (let i = 0; i < raw.length; i++) {
-    if (raw[i] === '/' && i !== 2 && i !== 5) return false;
+    // YYYY/MM/DD: the mask writes '/' after the year (index 4) and the month
+    // (index 7); a '/' anywhere else is the operator's own, so leave it alone.
+    if (raw[i] === '/' && i !== 4 && i !== 7) return false;
   }
   return true;
 }
@@ -131,29 +133,25 @@ function useCoarsePointer(): boolean {
   return coarse;
 }
 
-/** "2026-05-31" → "31/05/2026". Returns '' for empty/malformed. */
+/** "2026-05-31" → "2026/05/31". Returns '' for empty/malformed. */
 export function isoToDmy(iso: string | null | undefined): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso ?? ''));
-  return m ? `${m[3]}/${m[2]}/${m[1]}` : '';
+  return m ? `${m[1]}/${m[2]}/${m[3]}` : '';
 }
 
-/** "31/05/2026" → "2026-05-31". Returns null if not a real calendar date.
- *  Tolerates 1–2 digit day/month and `-`/`.` separators — and the digits
- *  typed straight through with no separator at all (31052026 / 310526),
- *  read day-first like the display: the owner types 06092026 and got a
- *  field that never accepted it (2026-09-06: 日期那边我要输入时会变这样). */
+/** "2026/05/31" → "2026-05-31". Returns null if not a real calendar date.
+ *  Tolerates 1–2 digit month/day and `-`/`.` separators, and the digits typed
+ *  straight through with no separator at all (20260531), read year-first like
+ *  the display. */
 export function parseDmy(text: string): string | null {
   const t = text.trim();
-  const compact = /^(\d{2})(\d{2})(\d{4}|\d{2})$/.exec(t);
-  /* A two-digit year after separators too (31/03/26): the mask below writes
-     the separators for the operator, so the six-digit shortcut must still
-     read the same way it does typed straight through. */
-  const spaced = compact ? null : /^(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{4}|\d{2})$/.exec(t);
+  const compact = /^(\d{4})(\d{2})(\d{2})$/.exec(t);
+  const spaced = compact ? null : /^(\d{4})[/\-.](\d{1,2})[/\-.](\d{1,2})$/.exec(t);
   const m = compact ?? spaced;
   if (!m) return null;
-  const dd = Number(m[1]);
+  const yyyy = Number(m[1]);
   const mm = Number(m[2]);
-  const yyyy = Number(String(m[3]).length === 2 ? `20${m[3]}` : m[3]);
+  const dd = Number(m[3]);
   if (mm < 1 || mm > 12 || dd < 1 || dd > 31) return null;
   // Reject overflow (e.g. 31/02) by round-tripping through a UTC date.
   const dt = new Date(Date.UTC(yyyy, mm - 1, dd));
@@ -171,7 +169,7 @@ export function DateField({
   max,
   disabled = false,
   fullWidth = false,
-  placeholder = 'dd/mm/yyyy',
+  placeholder = 'yyyy/mm/dd',
   title,
   'aria-label': ariaLabel,
   invalid = false,
@@ -260,7 +258,7 @@ export function DateField({
       />
       {draftInvalid && (
         <span id={errorId} className={styles.draftError} role="alert">
-          Not a date — use dd/mm/yyyy
+          Not a date — use yyyy/mm/dd
         </span>
       )}
       <button

@@ -113,7 +113,7 @@ describe('the Cash and Online rows', () => {
     expect(within(cash).getAllByText('0.0%')).toHaveLength(2);
     fireEvent.click(screen.getByLabelText('Show the payments of Cash for 2026-06'));
     expect(screen.getByText('2990-SO-2606-001')).toBeTruthy();
-    expect(screen.getByText(/03\/06\/2026/)).toBeTruthy();
+    expect(screen.getByText(/2026\/06\/03/)).toBeTruthy();
     fireEvent.click(screen.getByLabelText('Show the payments of Online for 2026-06'));
     expect(screen.getByText(/DuitNow/)).toBeTruthy();
   });

@@ -9,50 +9,50 @@ import { fmtDate, fmtDateTime, fmtDateOrDash, fmtTime, fmtDayMonth, fmtDayMonthR
 
 describe('fmtDate — DD/MM/YYYY, always', () => {
   test('a date-only column renders day-first', () => {
-    expect(fmtDate('2026-08-16')).toBe('16/08/2026');
+    expect(fmtDate('2026-08-16')).toBe('2026/08/16');
   });
 
   /* THE BUG THAT MADE THIS WORK NECESSARY, and the one a Malaysian developer
      cannot see locally. `new Date('2026-08-16')` is UTC midnight; the old body
      handed that to toLocaleDateString with no timeZone, so west of Greenwich it
-     rendered 15/08/2026. Malaysia is UTC+8, so the office always saw the right
+     rendered 2026/08/15. Malaysia is UTC+8, so the office always saw the right
      day and nobody could reproduce it. Asserted here by forcing the process
      into a negative-offset zone for the length of the test. */
   test('a date-only value does NOT shift a day in a negative-offset zone', () => {
     const before = process.env.TZ;
     try {
       process.env.TZ = 'America/Los_Angeles';
-      expect(fmtDate('2026-08-16')).toBe('16/08/2026');
-      expect(fmtDate('2026-01-01')).toBe('01/01/2026');
-      expect(fmtDate('2026-12-31')).toBe('31/12/2026');
+      expect(fmtDate('2026-08-16')).toBe('2026/08/16');
+      expect(fmtDate('2026-01-01')).toBe('2026/01/01');
+      expect(fmtDate('2026-12-31')).toBe('2026/12/31');
     } finally {
       process.env.TZ = before;
     }
   });
 
   test('an ISO datetime keeps the date half', () => {
-    expect(fmtDate('2026-08-16T14:30:00Z')).toBe('16/08/2026');
+    expect(fmtDate('2026-08-16T14:30:00Z')).toBe('2026/08/16');
   });
 
   /* A real instant is converted ONCE, to Malaysian time. 17:00 UTC on the 16th
      is 01:00 on the 17th in KL, and the ERP must say the 17th — this is the
      "late-night UTC creation rolls over correctly" case. */
   test('a zoned instant is shown in Malaysian time, not the viewer time', () => {
-    expect(fmtDate('2026-08-16T17:00:00Z')).toBe('17/08/2026');
-    expect(fmtDate('2026-08-16T15:59:59Z')).toBe('16/08/2026');
+    expect(fmtDate('2026-08-16T17:00:00Z')).toBe('2026/08/17');
+    expect(fmtDate('2026-08-16T15:59:59Z')).toBe('2026/08/16');
   });
 
   test('a wall-clock datetime-local value is shown exactly as typed', () => {
-    expect(fmtDate('2026-08-16T14:30')).toBe('16/08/2026');
+    expect(fmtDate('2026-08-16T14:30')).toBe('2026/08/16');
   });
 
   test('a bare SQL timestamp is read as UTC and shown in Malaysian time', () => {
-    expect(fmtDate('2026-08-16 17:30:00')).toBe('17/08/2026');
+    expect(fmtDate('2026-08-16 17:30:00')).toBe('2026/08/17');
   });
 
   test('an already-formatted string is returned unchanged (idempotent)', () => {
-    expect(fmtDate('16/08/2026')).toBe('16/08/2026');
-    expect(fmtDate(fmtDate('2026-08-16'))).toBe('16/08/2026');
+    expect(fmtDate('2026/08/16')).toBe('2026/08/16');
+    expect(fmtDate(fmtDate('2026-08-16'))).toBe('2026/08/16');
   });
 
   test('nothing to show renders as a dash, never "Invalid Date"', () => {
@@ -69,13 +69,13 @@ describe('fmtDate — DD/MM/YYYY, always', () => {
   });
 
   test('a Date and an epoch number are accepted', () => {
-    expect(fmtDate(new Date(Date.UTC(2026, 7, 16, 4, 0, 0)))).toBe('16/08/2026');
-    expect(fmtDate(Date.UTC(2026, 7, 16, 4, 0, 0))).toBe('16/08/2026');
+    expect(fmtDate(new Date(Date.UTC(2026, 7, 16, 4, 0, 0)))).toBe('2026/08/16');
+    expect(fmtDate(Date.UTC(2026, 7, 16, 4, 0, 0))).toBe('2026/08/16');
   });
 
   test('no month name ever appears — the owner ruled numeric', () => {
     const samples = ['2026-01-05', '2026-06-30', '2026-07-04T09:00:00Z', '2026-12-25'];
-    for (const s of samples) expect(fmtDate(s)).toMatch(/^\d{2}\/\d{2}\/\d{4}$/);
+    for (const s of samples) expect(fmtDate(s)).toMatch(/^\d{4}\/\d{2}\/\d{2}$/);
   });
 
   test('fmtDateOrDash is the same rule under its older name', () => {
@@ -87,7 +87,7 @@ describe('fmtDate — DD/MM/YYYY, always', () => {
 
 describe('fmtDateTime — the same rule, one export further', () => {
   test('24-hour, no comma, day-first', () => {
-    expect(fmtDateTime('2026-08-16T06:30:00Z')).toBe('16/08/2026 14:30');
+    expect(fmtDateTime('2026-08-16T06:30:00Z')).toBe('2026/08/16 14:30');
   });
 
   test('its date half is byte-identical to fmtDate', () => {
@@ -96,7 +96,7 @@ describe('fmtDateTime — the same rule, one export further', () => {
   });
 
   test('a date-only value gets midnight, not a shifted day', () => {
-    expect(fmtDateTime('2026-08-16')).toBe('16/08/2026 00:00');
+    expect(fmtDateTime('2026-08-16')).toBe('2026/08/16 00:00');
   });
 
   test('nothing to show renders as a dash', () => {
@@ -117,28 +117,28 @@ describe('fmtDayMonth / fmtDayMonthRange — the year dropped, the shape kept', 
      nothing in it. He was offered `Aug 13 - 17` and chose this instead, so the
      app still has exactly ONE date shape and `check-date-formatting.mjs` has
      nothing new to allow. */
-  test('day-first, zero-padded, no year', () => {
-    expect(fmtDayMonth('2026-08-13')).toBe('13/08');
-    expect(fmtDayMonth('2026-08-04')).toBe('04/08');
+  test('month-first, zero-padded, no year (the year-first rule with the year trimmed)', () => {
+    expect(fmtDayMonth('2026-08-13')).toBe('08/13');
+    expect(fmtDayMonth('2026-08-04')).toBe('08/04');
   });
 
   test('a range renders BOTH ends in full', () => {
-    /* "13/08 - 17" would save three characters and cost the reader the month on
+    /* "08/13 - 17" would save three characters and cost the reader the month on
        the end most likely to differ. */
-    expect(fmtDayMonthRange('2026-08-13', '2026-08-17')).toBe('13/08 - 17/08');
-    expect(fmtDayMonthRange('2026-08-30', '2026-09-02')).toBe('30/08 - 02/09');
+    expect(fmtDayMonthRange('2026-08-13', '2026-08-17')).toBe('08/13 - 08/17');
+    expect(fmtDayMonthRange('2026-08-30', '2026-09-02')).toBe('08/30 - 09/02');
     /* Across New Year, which a 28-day window reaches every December. */
-    expect(fmtDayMonthRange('2026-12-30', '2027-01-02')).toBe('30/12 - 02/01');
+    expect(fmtDayMonthRange('2026-12-30', '2027-01-02')).toBe('12/30 - 01/02');
   });
 
   test('one day is one date, not a range against itself', () => {
-    expect(fmtDayMonthRange('2026-08-13', '2026-08-13')).toBe('13/08');
-    expect(fmtDayMonthRange('2026-08-13', null)).toBe('13/08');
+    expect(fmtDayMonthRange('2026-08-13', '2026-08-13')).toBe('08/13');
+    expect(fmtDayMonthRange('2026-08-13', null)).toBe('08/13');
   });
 
-  test('an unreadable end falls back to the start, never "13/08 - —"', () => {
+  test('an unreadable end falls back to the start, never "08/13 - —"', () => {
     /* A dash on the end reads as a fair that never finished. */
-    expect(fmtDayMonthRange('2026-08-13', 'not-a-date')).toBe('13/08');
+    expect(fmtDayMonthRange('2026-08-13', 'not-a-date')).toBe('08/13');
     expect(fmtDayMonth(null)).toBe('—');
   });
 
@@ -148,7 +148,7 @@ describe('fmtDayMonth / fmtDayMonthRange — the year dropped, the shape kept', 
     const tz = process.env.TZ;
     try {
       process.env.TZ = 'America/Los_Angeles';
-      expect(fmtDayMonth('2026-08-16')).toBe('16/08');
+      expect(fmtDayMonth('2026-08-16')).toBe('08/16');
     } finally {
       process.env.TZ = tz;
     }

@@ -265,10 +265,10 @@ describe('amounts in two columns', () => {
     ];
     openStatement();
     const table = screen.getByText(/Outstanding items — in the books, not yet on the bank \(3\)/).closest('section') as HTMLElement;
-    expect(cellsOf(within(table).getByText('2990-JE-2608-0044').closest('tr') as HTMLElement).slice(1, 5)).toEqual(['2990-JE-2608-0044', '05/08/2026', '2990DraftOR-2608-001 · 2990-SO-2606-014', 'Ah Meng']);
-    expect(cellsOf(within(table).getByText('2990-JE-2608-0145').closest('tr') as HTMLElement).slice(2, 5)).toEqual(['12/08/2026', '2990-HPV-2608-017', 'LOO WEN WEI']);
+    expect(cellsOf(within(table).getByText('2990-JE-2608-0044').closest('tr') as HTMLElement).slice(1, 5)).toEqual(['2990-JE-2608-0044', '2026/08/05', '2990DraftOR-2608-001 · 2990-SO-2606-014', 'Ah Meng']);
+    expect(cellsOf(within(table).getByText('2990-JE-2608-0145').closest('tr') as HTMLElement).slice(2, 5)).toEqual(['2026/08/12', '2990-HPV-2608-017', 'LOO WEN WEI']);
     /* No reference from the server: the source, and the note for who. */
-    expect(cellsOf(within(table).getByText(/2990-JE-2607-0001/).closest('tr') as HTMLElement).slice(1, 5)).toEqual(['2990-JE-2607-0001 · earlier month', '01/07/2026', 'MANUAL', 'Opening']);
+    expect(cellsOf(within(table).getByText(/2990-JE-2607-0001/).closest('tr') as HTMLElement).slice(1, 5)).toEqual(['2990-JE-2607-0001 · earlier month', '2026/07/01', 'MANUAL', 'Opening']);
     expect(screen.queryByText('cacb0d35-8f9f-4a94-a156-d1b0f96b52d0')).toBeNull();
   });
 
@@ -299,7 +299,7 @@ describe('amounts in two columns', () => {
     expect(rows).toEqual(['Pick line 12', 'Pick line 15', 'Pick line 26', 'Pick line 46']);
     const cell = screen.getByText('JULY SALARY ENG SUI HOR 20260806HLBBMYKL010OCB64596966').closest('td') as HTMLElement;
     const linesOfCell = Array.from(cell.querySelectorAll(':scope > div')).map((d) => String(d.textContent).trim());
-    expect(linesOfCell).toEqual(['06/08/2026 · line 26', 'JULY SALARY ENG SUI HOR 20260806HLBBMYKL010OCB64596966', 'CIB Instant Transfer at DIO']);
+    expect(linesOfCell).toEqual(['2026/08/06 · line 26', 'JULY SALARY ENG SUI HOR 20260806HLBBMYKL010OCB64596966', 'CIB Instant Transfer at DIO']);
     expect(screen.queryByText('2026-08-06')).toBeNull();
   });
 });

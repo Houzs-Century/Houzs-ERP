@@ -106,7 +106,7 @@ describe("Register mode", () => {
     fireEvent.change(type, { target: { value: "WARN" } });
     await waitFor(() => expect(screen.getByTestId("ref-no-preview").textContent).toContain("OPS-WARN-2609-0001"));
     fireEvent.change(screen.getByLabelText("Document title"), { target: { value: "Late again" } });
-    fireEvent.change(screen.getByLabelText("Document date"), { target: { value: "10/09/2026" } });
+    fireEvent.change(screen.getByLabelText("Document date"), { target: { value: "2026/09/10" } });
     fireEvent.click(screen.getByRole("button", { name: "Register & number" }));
     await waitFor(() => expect(apiPost).toHaveBeenCalledWith("/api/memos", expect.objectContaining({ title: "Late again", docType: "WARN", departmentId: 7, memoDate: "2026-09-10" })));
     await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith("Registered as OPS-WARN-2609-0001"));

@@ -79,7 +79,7 @@ describe('resolveJournalRefs', () => {
     expect(at('JE-1')).toEqual({ reference: '2990-SO-2606-014', who: 'Ah Meng', doc: '2990-SO-2606-014', doc2: null });
     expect(at('JE-2')).toEqual({ reference: '2990DraftOR-2608-003 · 2990-SO-2608-067', who: 'NG KAH YEE', doc: '2990DraftOR-2608-003', doc2: '2990-SO-2608-067' });
     expect(at('JE-3')).toEqual({ reference: '2990-HPV-2608-017', who: 'LOO WEN WEI', doc: '2990-HPV-2608-017', doc2: null });
-    expect(at('JE-4')).toEqual({ reference: 'HLB payout 26/08/2026', who: 'HLB', doc: 'HLB payout 26/08/2026', doc2: 'HLB-77123' });
+    expect(at('JE-4')).toEqual({ reference: 'HLB payout 2026/08/26', who: 'HLB', doc: 'HLB payout 2026/08/26', doc2: 'HLB-77123' });
     /* A reversal reads as its original. */
     expect(at('JE-5')).toEqual({ reference: '2990-SO-2606-014', who: 'Ah Meng', doc: '2990-SO-2606-014', doc2: null });
     /* A payment the tables no longer hold keeps its key, and the note stands in for the who. */
@@ -101,9 +101,9 @@ describe('resolveJournalRefs', () => {
     expect(at('D-CN')).toEqual(['2990-CN-2609-001', '2990-SO-2608-067', 'NG KAH YEE']);
     /* A refund voucher: what it refunds is the second handle; the payee is the who. */
     expect(at('D-PVR')).toEqual(['2990-HPV-2606-025', '2990-HRF-2606-001', 'THE CONTS']);
-    expect(at('D-SET')).toEqual(['GHL settlement 02/06/2026', '615318040666', 'GHL']);
-    expect(at('D-MOVE')).toEqual(['GHL settlement 02/06/2026', '615318040666', 'GHL']);
-    expect(at('D-CHG')).toEqual(['GHL charge 06/06/2026', null, 'GHL']);
+    expect(at('D-SET')).toEqual(['GHL settlement 2026/06/02', '615318040666', 'GHL']);
+    expect(at('D-MOVE')).toEqual(['GHL settlement 2026/06/02', '615318040666', 'GHL']);
+    expect(at('D-CHG')).toEqual(['GHL charge 2026/06/06', null, 'GHL']);
     expect(at('D-STK')).toEqual(['Stock 07/2026', null, 'Closing stock 2026-07']);
     expect(at('D-STKR')).toEqual(['Stock 08/2026', null, null]);
     expect(at('D-CONV')).toEqual(['2990-SO-2608-067', '2990-SO-2607-010', 'NG KAH YEE']);
