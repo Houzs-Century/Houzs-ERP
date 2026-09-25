@@ -51,6 +51,11 @@ const CASES: Array<{ route: string; registration: string; mustContain: string }>
     mustContain: "from('mfg_so_audit_log')",
   },
   {
+    route: 'GET /:docNo/related-audit-log',
+    registration: "mfgSalesOrders.get('/:docNo/related-audit-log'",
+    mustContain: "from('entity_audit_log')",
+  },
+  {
     route: 'GET /:docNo/status-changes',
     registration: "mfgSalesOrders.get('/:docNo/status-changes'",
     mustContain: "from('mfg_so_status_changes')",

@@ -60,6 +60,7 @@ import {
    page uses, so History means one thing across both (owner 2026-08-13). */
 import { AuditHistoryPanel } from "../../components/audit/AuditHistoryPanel";
 import { SO_AUDIT_LABELS } from "./so-audit-labels";
+import { useSoHistoryWithRelated } from "./so-history-related";
 import { fmtDateTime } from "../../vendor/shared/format";
 import { brandingLabel } from "../../vendor/shared/so-branding-label";
 import { getBrandingCompanyCode } from "../../lib/branding";
@@ -764,6 +765,7 @@ function SalesOrderDetailV2ReadOnly() {
   const closeHistory = useCallback(() => setHistoryOpen(false), []);
   const auditQ = useSalesOrderAuditLog(docNo ?? null);
   const auditEntries = auditQ.data ?? [];
+  const history = useSoHistoryWithRelated(historyOpen ? docNo ?? null : null, auditQ.data);
   const slipImageKey =
     (salesOrder as unknown as { slipImageKey?: string | null; slip_image_key?: string | null } | null)?.slipImageKey
     ?? (salesOrder as unknown as { slip_image_key?: string | null } | null)?.slip_image_key
@@ -1690,16 +1692,19 @@ function SalesOrderDetailV2ReadOnly() {
         </div>
       </div>
 
-      {/* History drawer — the shared audit panel, same entries the Recent
-          activity card summarises above. */}
+      {/* History drawer — the shared audit panel over the SO's own entries
+          (the Recent activity card summarises those) plus the rows of the
+          POs / DOs / invoices raised from it. */}
       {historyOpen && (
         <AuditHistoryPanel
           recordLabel={salesOrder.doc_no}
           entityName="Sales order"
-          entries={auditEntries}
-          isLoading={auditQ.isLoading}
-          error={auditQ.error}
+          entries={history.entries}
+          isLoading={auditQ.isLoading || history.isLoading}
+          error={auditQ.error ?? history.error}
           labels={SO_AUDIT_LABELS}
+          labelsFor={history.labelsFor}
+          renderBadge={history.renderDocTag}
           onClose={closeHistory}
         />
       )}
