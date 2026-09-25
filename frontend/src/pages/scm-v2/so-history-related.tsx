@@ -44,7 +44,7 @@ export type SoHistoryEntry = AuditLogEntry & Partial<RelatedFields>;
 
 const relatedOf = (e: AuditLogEntry): RelatedFields | null => {
   const r = e as SoHistoryEntry;
-  return r.entity_type && r.entity_id && RELATED[r.entity_type]
+  return r.entity_type && r.entity_id
     ? { entity_type: r.entity_type, entity_id: r.entity_id, entity_doc_no: r.entity_doc_no ?? null }
     : null;
 };

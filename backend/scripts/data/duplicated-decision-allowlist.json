@@ -1424,6 +1424,11 @@
       "check": "D2",
       "key": "ARRIVAL_AT,ARRIVES_EM_WAREHOUSE_DATE,BS_DELIVERY_DATE,BS_REMARKS,COMPANY_CODE,CONSIGNMENT_NO,CTN,DEPARTURE_AT,DO_DATE,DRIVER,DRIVER_2,DRIVER_CONTACT,DRIVER_IC,EM_DELIVERY_STATUS,ESB_REMARKS,ETA_ARRIVING_PORT,ETD_PORT_KLANG,HELPER_1,HELPER_2,LORRY,SHIPOUT_DATE,TIME_CONFIRMED,TIME_RANGE,TRIP_NO,VENUE,VESSEL_VOYAGE,WAREHOUSE ~ ARRIVAL_AT,ARRIVES_EM_WAREHOUSE_DATE,BS_DELIVERY_DATE,BS_REMARKS,COMPANY_CODE,CONSIGNMENT_NO,CTN,DEPARTURE_AT,DO_DATE,DRIVER,DRIVER_2,DRIVER_CONTACT,DRIVER_IC,EM_DELIVERY_STATUS,ESB_REMARKS,ETA_ARRIVING_PORT,ETD_PORT_KLANG,HELPER_1,HELPER_2,LORRY,TIME_CONFIRMED,TIME_RANGE,TRIP_NO,VENUE,VESSEL_VOYAGE,WAREHOUSE",
       "why": "The Delivery Date and SG Order presets hide almost the same columns, differing only by SHIPOUT_DATE (SG shows the cross-border ship-out date) — both are the owner's 2026-09-24 per-layout choices in deliveryPlanningLayouts.ts, not one rule enforced at N-1 of N places."
+    },
+    {
+      "check": "D2",
+      "key": "AMENDMENT_PO_APPROVED,CANCEL,CREATE,DELETE,POST,REVERSE,SEND ~ CANCEL,CREATE,DELETE,POST,REVERSE,SEND,UPDATE",
+      "why": "TWO DIFFERENT QUESTIONS over the PO audit verbs. RELATED_AUDIT_ACTIONS (mfg-sales-orders/history.ts) picks which of a child PO / DO / SI trail surfaces on the SO History drawer: lifecycle moves only, so it drops UPDATE (line and date edits stay on the PO drawer) and keeps AMENDMENT_PO_APPROVED (the PO re-derived from this SO amendment, DEV-16). PO_ACTIONS is the PO drawer label map, which must name every verb it may render. They are not required to agree; a verb missing from the labels still renders through the lower-case fallback."
     }
   ]
 }
