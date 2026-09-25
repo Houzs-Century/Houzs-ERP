@@ -84,13 +84,27 @@ async function main() {
     return;
   }
 
+  // A corrected phone can collide with an EXISTING customer that already holds
+  // the right number under the same name (customers_name_phone_unique) — i.e. the
+  // bad-phone row is a DUPLICATE of that customer. We do not merge/delete here
+  // (that is the owner's call); we skip the collision and report it.
+  const done = [], collisions = [];
   for (const c of changes) {
-    await sql`UPDATE scm.customers SET phone = ${c.next}
-              WHERE id = ${c.id} AND phone = ${c.old}`;
+    try {
+      await sql`UPDATE scm.customers SET phone = ${c.next} WHERE id = ${c.id} AND phone = ${c.old}`;
+      done.push(c);
+    } catch (e) {
+      if (/unique/i.test(e instanceof Error ? e.message : String(e))) { collisions.push(c); continue; }
+      throw e;
+    }
   }
-  note(`APPLIED ${changes.length} phone repairs.`);
+  note(`APPLIED ${done.length} phone repairs; ${collisions.length} skipped as duplicates (a customer with that name+number already exists).`);
   note('REVERSAL source (id<TAB>old<TAB>new):');
-  changes.forEach((c) => note(`  ${c.id}\t${c.old}\t${c.next}`));
+  done.forEach((c) => note(`  ${c.id}\t${c.old}\t${c.next}`));
+  if (collisions.length > 0) {
+    note('DUPLICATES to dedup (id / name / bad-phone -> would-be):');
+    collisions.forEach((c) => note(`  DUP ${c.id}\t${c.name ?? ''}\t${c.old} -> ${c.next}`));
+  }
 
   await sql.end();
   const check = postgres(DSN, { ssl: 'require', prepare: false, max: 1 });
@@ -98,8 +112,10 @@ async function main() {
   let remaining = 0;
   for (const r of after) if (fixDoubledMyPhone(r.phone)) remaining++;
   await check.end();
-  if (remaining > 0) { bad(`INVARIANT FAILED: ${remaining} fixable double-prefixed phone(s) still stored.`); process.exit(1); }
-  note('Invariant holds on a fresh connection: no fixable double-prefixed phone remains.');
+  // The only fixable rows left standing must be the ones we deliberately skipped
+  // as duplicates; anything beyond that is a real failure.
+  if (remaining > collisions.length) { bad(`INVARIANT FAILED: ${remaining} fixable double-prefixed phone(s) still stored (only ${collisions.length} expected as duplicates).`); process.exit(1); }
+  note(`Invariant holds on a fresh connection: ${remaining} fixable phone(s) remain, all of them the reported duplicates.`);
 }
 
 main().catch((e) => { bad(e instanceof Error ? e.message : String(e)); process.exit(1); });
