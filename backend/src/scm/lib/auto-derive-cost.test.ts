@@ -8,18 +8,17 @@ import {
 } from './auto-derive-cost';
 import type { SupplierBindingCost } from './derive-product-cost-from-suppliers';
 
-// ── autoDeriveEnabled — the inert-by-default, PER-COMPANY flag ─────────────
-/** scm.app_config is keyed (key, company_id). The fake answers with `row` only
- *  when the read filtered on BOTH — a read that forgets company_id gets null,
- *  which is what makes the "another company's row" test below meaningful. */
-function fakeConfigSb(row: { value: unknown } | null, error = false, rowCompanyId = 1) {
-  const filters: Record<string, unknown> = {};
+// ── autoDeriveEnabled — the inert-by-default, SINGLE GLOBAL flag ───────────
+/** scm.app_config's primary key is (key) alone, so this flag is one row for the
+ *  whole database. The fake answers with `row` for the key regardless of company
+ *  (the reader no longer filters by company_id), which is what makes the "one ON
+ *  row arms both companies" test below meaningful. */
+function fakeConfigSb(row: { value: unknown } | null, error = false) {
   const chain: any = { // eslint-disable-line @typescript-eslint/no-explicit-any
-    eq: (col: string, val: unknown) => { filters[col] = val; return chain; },
+    eq: () => chain,
     maybeSingle: async () => {
       if (error) return { data: null, error: { message: 'boom' } };
-      const scoped = filters.company_id === rowCompanyId;
-      return { data: scoped ? row : null, error: null };
+      return { data: row, error: null };
     },
   };
   return { from: () => ({ select: () => chain }) };
@@ -42,16 +41,17 @@ describe('autoDeriveEnabled — OFF unless explicitly on', () => {
     expect(await autoDeriveEnabled(fakeConfigSb(null, true), 1)).toBe(false);
   });
 
-  /* The 2026-09-20 incident, as a test. ONE row was written, under company 1,
-     and the read carried no company predicate — so it switched the mechanism on
-     over company 2 (2990), whose catalogue another team maintains and who never
-     opted in. The derive then erased 193 of their retail prices. */
-  it("another company's ON row does NOT switch this company on", async () => {
-    const sb = fakeConfigSb({ value: 'on' }, false, 1); // company 1 opted in
+  /* Owner 2026-09-25: both companies must behave the same. The flag is one row
+     for the whole database (app_config PK is (key) alone), so one ON row arms
+     BOTH companies. This is safe now because retail is defended on the write
+     path (mergeRetailOntoDerivedSeatGrid) and by company 2's DB trigger
+     (trg_mfg_products_retail_price_lock) — not by hiding the switch. */
+  it('one ON row arms BOTH companies (single global switch)', async () => {
+    const sb = fakeConfigSb({ value: 'on' });
     expect(await autoDeriveEnabled(sb, 1)).toBe(true);
-    expect(await autoDeriveEnabled(sb, 2)).toBe(false); // company 2 never did
+    expect(await autoDeriveEnabled(sb, 2)).toBe(true);
   });
-  it('no company -> OFF (never guess which catalogue this is)', async () => {
+  it('no company -> OFF (no company context, no derive)', async () => {
     expect(await autoDeriveEnabled(fakeConfigSb({ value: 'on' }), null)).toBe(false);
     expect(await autoDeriveEnabled(fakeConfigSb({ value: 'on' }), undefined)).toBe(false);
   });
