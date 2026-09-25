@@ -336,6 +336,21 @@ export const useSalesOrderAuditLog = (docNo: string | null) => useQuery({
   retry: retryUnlessClientError,
 });
 
+/* Rows from entity_audit_log for the POs / DOs / invoices linked to one SO. */
+export type SoRelatedAuditEntry = Omit<SoAuditEntry, 'so_doc_no'> & {
+  entity_type: 'PURCHASE_ORDER' | 'DELIVERY_ORDER' | 'SALES_INVOICE';
+  entity_id: string;
+  entity_doc_no: string | null;
+};
+
+export const useSalesOrderRelatedAuditLog = (docNo: string | null) => useQuery({
+  queryKey: ['mfg-sales-order-related-audit-log', docNo],
+  queryFn: () => authedFetch<{ entries: SoRelatedAuditEntry[] }>(`/mfg-sales-orders/${docNo}/related-audit-log`).then((r) => r.entries),
+  enabled: Boolean(docNo),
+  staleTime: 60_000,
+  retry: retryUnlessClientError,
+});
+
 export type SoPayment = {
   id: string;
   so_doc_no: string;
