@@ -20,7 +20,7 @@
 // it reuses useScheduleDelivery / useDeliveryPlanningLines exactly as before.
 // ----------------------------------------------------------------------------
 
-import { useMemo, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
+import { useMemo, useState, useEffect, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { buildVariantSummary, fmtSen, fmtDate, fmtDateOrDash, fmtDateTime } from '@2990s/shared';
 import { formatPhone } from '@2990s/shared/phone';
 import { DataGrid, type DataGridColumn } from './DataGrid';
@@ -51,6 +51,7 @@ import { type LorryRow } from '../lib/lorries-queries';
 import { useStaffLookup } from '../../../hooks/useStaffLookup';
 import styles from './DeliveryPlanningBoard.module.css';
 import { DateField } from "./DateField";
+import { deliveryDateChange } from "../lib/delivery-date-edit";
 
 /* HC "Remark 4" delivery sub-status → a small pill class (reuse the cream
    palette; unknown/blank → muted). Default-shown column. */
@@ -266,6 +267,37 @@ function MessageStatusEditCell({ order, updateFields }: { order: PlanningOrder; 
         <option key={s} value={s}>{s}</option>
       ))}
     </select>
+  );
+}
+
+/* Delivery Date inline editor (owner 2026-09-25: 填写日期也能选日期) — the board's
+   "Delivery Date" column is editable in place again, both by typing dd/mm/yyyy and
+   by the calendar picker (the shared DateField does both). SO rows write
+   amended_delivery_date via useScheduleDelivery, committing on BLUR so a half-typed
+   year (31/03/20 → 31/03/2026) is never saved on the way. ASSR / DP / project rows
+   keep their own scheduling entry (drawer / DP Order / read-only mirror). */
+function DeliveryDateEditCell({ order, sched }: { order: PlanningOrder; sched: SchedMutation }) {
+  const current = (order.amended_delivery_date ?? '').slice(0, 10);
+  const [val, setVal] = useState(current);
+  // Follow the row when its date changes underneath (optimistic save, poll).
+  useEffect(() => { setVal(current); }, [current]);
+  if (isAssr(order) || isDp(order) || isProject(order)) {
+    return detail(fmtDateOrDash(order.amended_delivery_date));
+  }
+  return (
+    <span {...stopRow} style={{ display: 'inline-flex', minWidth: 128 }}>
+      <DateField
+        fullWidth
+        value={val}
+        disabled={sched.isPending}
+        aria-label="Delivery date"
+        onChange={setVal}
+        onBlur={() => {
+          const next = deliveryDateChange(current, val);
+          if (next.changed) sched.mutate({ type: 'so', id: order.so_doc_no, scheduleDate: next.value });
+        }}
+      />
+    </span>
   );
 }
 
@@ -1022,8 +1054,8 @@ export function DeliveryPlanningBoard({
        to. "Amend (Cust)" (the customer's requested new date) default-HIDES. The
        ORIGINAL "Delivery Date" column above is unchanged. */
     {
-      key: 'amended_delivery_date', label: 'Delivery Date', width: 140, sortable: true,
-      accessor: (o) => detail(fmtDateOrDash(o.amended_delivery_date)),
+      key: 'amended_delivery_date', label: 'Delivery Date', width: 150, sortable: true,
+      accessor: (o) => <DeliveryDateEditCell order={o} sched={sched} />,
       searchValue: (o) => o.amended_delivery_date ?? '',
       sortFn: (a, b) => String(a.amended_delivery_date ?? '').localeCompare(String(b.amended_delivery_date ?? '')),
       filterType: 'date', dateValue: (o) => o.amended_delivery_date,
@@ -1105,7 +1137,7 @@ export function DeliveryPlanningBoard({
        eta_arriving_port, arrives_em_warehouse_date) still default-SHOW when the
        active region is EM/SG. */
     {
-      key: 'delivery_substatus', label: 'Sub-status', width: 150, groupable: true, defaultHidden: true,
+      key: 'delivery_substatus', label: 'Remark 4', width: 150, groupable: true, defaultHidden: true,
       accessor: (o) => <SubstatusPill value={o.delivery_substatus} />,
       searchValue: (o) => o.delivery_substatus ?? '',
       groupValue: (o) => o.delivery_substatus ?? '(none)',

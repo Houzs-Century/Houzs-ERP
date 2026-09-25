@@ -190,8 +190,12 @@ const CJK_FETCH_FAILED =
 const CJK_GLYPH_MISSING =
   'This document has a character we cannot print yet, so the PDF was not created.';
 
+/* Scans the text as it will be PAINTED: the fold shim below turns these
+   symbols into ASCII at draw time, so an "→" in a line remark (BUG-28,
+   HC-PO-2609-266) must not send the document looking for a glyph that
+   neither subset carries. */
 const addCodepoints = (s: string, into: Set<number>): void => {
-  for (const ch of s) {
+  for (const ch of paperText(s)) {
     const cp = ch.codePointAt(0);
     if (cp != null && cp > 0xff && !WINANSI_ABOVE_LATIN1.has(cp)) into.add(cp);
   }
@@ -253,6 +257,31 @@ const loadTier = (tier: CjkTier): Promise<Record<'normal' | 'bold', string>> => 
    registering must not embed the same face twice or re-wrap setFont. */
 const docTiers = new WeakMap<object, Set<CjkTier>>();
 const docShimmed = new WeakSet<object>();
+const docFolded = new WeakSet<object>();
+
+/* Fold at the jsPDF instance, not per generator: ~20 generators and
+   jspdf-autotable (which paints and measures through this same instance) all
+   reach text through these four methods. Measure and paint are folded
+   together so a wrapped line is sized on the text that is actually drawn. */
+const foldPaperTextOnDoc = (doc: import('jspdf').jsPDF): void => {
+  if (docFolded.has(doc)) return;
+  const fold = <T>(t: T): T =>
+    (typeof t === 'string' ? paperText(t)
+      : Array.isArray(t) ? t.map((x) => (typeof x === 'string' ? paperText(x) : x))
+        : t) as T;
+  const text = doc.text.bind(doc);
+  doc.text = ((t: string | string[], ...rest: unknown[]) =>
+    (text as (...a: unknown[]) => unknown)(fold(t), ...rest)) as typeof doc.text;
+  const split = doc.splitTextToSize.bind(doc);
+  doc.splitTextToSize = ((t: string, ...rest: unknown[]) =>
+    (split as (...a: unknown[]) => unknown)(fold(t), ...rest)) as typeof doc.splitTextToSize;
+  const width = doc.getTextWidth.bind(doc);
+  doc.getTextWidth = (t: string) => width(fold(t));
+  const unitWidth = doc.getStringUnitWidth.bind(doc);
+  doc.getStringUnitWidth = ((t: string, ...rest: unknown[]) =>
+    (unitWidth as (...a: unknown[]) => number)(fold(t), ...rest)) as typeof doc.getStringUnitWidth;
+  docFolded.add(doc);
+};
 
 /**
  * Make `doc` safe for any non-WinAnsi text in `payload` (plus the branding
@@ -271,6 +300,7 @@ export async function ensurePdfCjkFont(
   for (const s of [COMPANY.name, COMPANY.reg, ...COMPANY.addressLines, COMPANY.phone,
     COMPANY.email, COMPANY.website, COMPANY.portalLabel]) addCodepoints(s, needed);
   collectCodepoints(payload, needed);
+  foldPaperTextOnDoc(doc);
   if (needed.size === 0) return;
 
   const tier: CjkTier = [...needed].some(isHanzi) ? 'hanzi' : 'punct';
