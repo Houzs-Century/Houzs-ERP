@@ -2843,11 +2843,13 @@ async function postProcessSlip(
   // 8-9 for landlines. Anything under 9 or over 10 very likely lost/gained a
   // digit — warn the operator so the form gets a second look.
   for (const p of parsed.phones) {
-    if (p.length < 9 || p.length > 10) {
+    if (!p.startsWith('+60')) continue; // the 9-10 rule is Malaysian; leave foreign numbers alone
+    const national = p.slice(3);
+    if (national.length < 9 || national.length > 10) {
       warnings.push({
         field: 'phones',
         value: p,
-        message: `Phone "+60${p}" has an unusual digit count — the scan may have dropped or doubled a digit; please verify against the slip.`,
+        message: `Phone "${p}" has an unusual digit count — the scan may have dropped or doubled a digit; please verify against the slip.`,
       });
     }
   }
@@ -3526,7 +3528,7 @@ function buildDraftSoBodyFromSlip(
   const missing: string[] = [];
   let customerName = (parsed.customerName ?? '').trim();
   if (!customerName) missing.push('customer name');
-  // parsed.phones are already national-significant digits (postProcessSlip).
+  // parsed.phones are already E.164 (postProcessSlip runs normalizePhone).
   let mainPhone = (parsed.phones[0] ?? '').trim();
   if (!mainPhone) missing.push('phone number');
   // Owner 2026-07-04: a scan missing the required name/phone must STILL land a
@@ -3685,7 +3687,12 @@ function buildDraftSoBodyFromSlip(
     customerName,
     debtorName: customerName,
     customerSoNo: (parsed.customerSoRef ?? '').trim() || null,
-    phone: mainPhone ? `+60${mainPhone.replace(/\s+/g, '')}` : SHELL_PHONE,
+    // mainPhone is already E.164 (postProcessSlip). Route it through the shared
+    // normalizePhone once more — idempotent for a +60 number — so it is NEVER
+    // re-prefixed to "+6060..." (the double-country-code bug), whatever form the
+    // slip carried. normalizePhone handles every writing style (+60 / 60 / 0 /
+    // bare / spaced / dashed) into one canonical +60 number.
+    phone: mainPhone ? (normalizePhone(mainPhone) ?? SHELL_PHONE) : SHELL_PHONE,
     customerType: parsed.customerTypeMatch?.value ?? null,
     buildingType: parsed.buildingTypeMatch?.value ?? null,
     note: noteParts.length > 0 ? noteParts.join(' | ') : null,
