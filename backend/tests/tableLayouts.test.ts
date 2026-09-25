@@ -602,4 +602,37 @@ describe("company-shared layouts", () => {
     }>();
     expect((body.sharedLayouts[SEED] ?? []).find((l) => l.name === "sg-order")?.layout.order).toEqual(["v2"]);
   });
+
+  test("a cross-company board's shared layout is ONE copy for both companies", async () => {
+    const manager = await seedManager();
+    const viewer = await seedActor(["sales_orders.read"]);
+
+    // Written with a 2990 window active …
+    expect(
+      (await req(manager, `/${SEED}/shared`, {
+        method: "PUT",
+        companyId: 2,
+        body: { name: "delivery-date", layout: layout({ order: ["one_for_all"] }) },
+      })).status,
+    ).toBe(200);
+
+    // … and seen, identically, by a viewer on the HOUZS window.
+    const inHouzs = await (await req(viewer, "", { companyId: 1 })).json<{
+      sharedLayouts: Record<string, Array<{ name: string; layout: { order: string[] } }>>;
+    }>();
+    expect((inHouzs.sharedLayouts[SEED] ?? []).find((l) => l.name === "delivery-date")?.layout.order).toEqual(["one_for_all"]);
+
+    // Stored as a single row across the group, not one per company.
+    const rows = await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM table_layouts WHERE table_key = ? AND user_id IS NULL AND is_shared = 1`,
+    )
+      .bind(SEED)
+      .first<{ n: number }>();
+    expect(Number(rows?.n)).toBe(1);
+
+    // A reset clears it for both.
+    expect((await req(manager, `/${SEED}/shared/delivery-date`, { method: "DELETE", companyId: 1 })).status).toBe(200);
+    const after = await (await req(viewer, "", { companyId: 2 })).json<{ sharedLayouts: Record<string, unknown[]> }>();
+    expect(after.sharedLayouts[SEED] ?? []).toHaveLength(0);
+  });
 });
