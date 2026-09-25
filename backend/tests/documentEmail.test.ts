@@ -251,9 +251,9 @@ describe("purchase order email builder", () => {
     expect(msg.html).toContain("PO-2607-014");
     expect(msg.html).toContain("Kilang Kayu Sdn Bhd");
     // The house date format, not the raw ISO this used to leak: a supplier was
-    // reading "2026-07-19" in the email and "19/07/2026" on the attached PDF
+    // reading "2026-07-19" in the email and "2026/07/19" on the attached PDF
     // for one PO. Both now come from fmtDate.
-    expect(msg.html).toContain("19/07/2026");
+    expect(msg.html).toContain("2026/07/19");
     // Money is integer SEN in this codebase; the email must show currency units.
     expect(msg.html).toContain("MYR 12345.00");
   });

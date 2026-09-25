@@ -187,7 +187,7 @@ describe("AckTrendCard", () => {
     const card = await screen.findByTestId("ack-trend");
     expect(card.textContent).toContain("Ack rate · last 30 days");
     expect(card.textContent).toContain("66%");
-    expect(card.textContent).toContain("07/08/2026"); // house DD/MM/YYYY, never a month name
+    expect(card.textContent).toContain("2026/08/07"); // house DD/MM/YYYY, never a month name
     expect(card.textContent).toContain("5 notices posted · 33 of 50 acknowledgements received (66%)");
     const bars = card.querySelectorAll("[title]");
     expect(bars).toHaveLength(6);

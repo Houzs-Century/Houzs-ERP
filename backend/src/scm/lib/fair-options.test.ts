@@ -58,13 +58,13 @@ describe('buildFairOptions — one row is a place plus an organizer', () => {
        saying WHICH occurrence — the label has to show it or the operator is
        guessing. The old `showDates` exception is gone, not widened. */
     const { running } = buildFairOptions(MID_VALLEY_REX, '2026-09-13');
-    expect(fairOptionLabel(running[0])).toBe('MID VALLEY — REX (11/09 - 13/09)');
+    expect(fairOptionLabel(running[0])).toBe('MID VALLEY — REX (09/11 - 09/13)');
   });
 
   it('renders a one-day fair as a single date, not a range', () => {
     const rows = [fair({ projectId: 1, startDate: '2026-09-13', endDate: '2026-09-13' })];
     const { running } = buildFairOptions(rows, '2026-09-13');
-    expect(fairOptionLabel(running[0])).toBe('MID VALLEY — REX (13/09)');
+    expect(fairOptionLabel(running[0])).toBe('MID VALLEY — REX (09/13)');
   });
 
   it('splits running-today from the fairs that have already closed', () => {
@@ -120,8 +120,8 @@ describe('buildFairOptions — one row is a place plus an organizer', () => {
     ];
     const { earlier } = buildFairOptions(rows, '2026-08-20');
     expect(earlier.map(fairOptionLabel)).toEqual([
-      'MVEC SOUTHKEY — REX (14/08 - 16/08)',
-      'MVEC SOUTHKEY — REX (08/08 - 10/08)',
+      'MVEC SOUTHKEY — REX (08/14 - 08/16)',
+      'MVEC SOUTHKEY — REX (08/08 - 08/10)',
     ]);
     expect(new Set(earlier.map((o) => o.key)).size).toBe(2);
   });
@@ -136,9 +136,9 @@ describe('buildFairOptions — one row is a place plus an organizer', () => {
     ];
     const { running } = buildFairOptions(rows, '2026-09-12');
     expect(running.map(fairOptionLabel)).toEqual([
-      'IOI MALL PUTRAJAYA — SOLO (11/09 - 13/09)',
-      'PAVILION BUKIT JALIL — MEGAHOME (11/09 - 13/09)',
-      'SETIA SPICE CONVENTION CENTRE — HOMELOVE (11/09 - 13/09)',
+      'IOI MALL PUTRAJAYA — SOLO (09/11 - 09/13)',
+      'PAVILION BUKIT JALIL — MEGAHOME (09/11 - 09/13)',
+      'SETIA SPICE CONVENTION CENTRE — HOMELOVE (09/11 - 09/13)',
     ]);
     /* The label changed, the identity did not: the save path still resolves the
        project from the real organizer. */
@@ -153,8 +153,8 @@ describe('buildFairOptions — one row is a place plus an organizer', () => {
     ];
     const { earlier } = buildFairOptions(rows, '2026-09-12');
     expect(earlier.map(fairOptionLabel)).toEqual([
-      'SUNWAY CARNIVAL — SOLO (09/09 - 10/09)',
-      'SUNWAY CARNIVAL — SOLO (04/09 - 06/09)',
+      'SUNWAY CARNIVAL — SOLO (09/09 - 09/10)',
+      'SUNWAY CARNIVAL — SOLO (09/04 - 09/06)',
     ]);
   });
 

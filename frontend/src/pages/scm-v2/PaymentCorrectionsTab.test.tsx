@@ -106,9 +106,9 @@ describe('the corrections tab', () => {
     /* Who first recorded the payment (docs/bugs/0888): Rachael's name and day
        beside the edit of her payment; a dash where nothing could be read. */
     expect(screen.getByText('Rachael')).toBeTruthy();
-    expect(screen.getByText('29/08/2026')).toBeTruthy();
+    expect(screen.getByText('2026/08/29')).toBeTruthy();
     /* The add: its own pill, what was recorded, booked once. */
-    expect(screen.getByText('Added — RM 1,500.00 (cash on 12/09/2026)')).toBeTruthy();
+    expect(screen.getByText('Added — RM 1,500.00 (cash on 2026/09/12)')).toBeTruthy();
     expect(screen.getByText('booked JE-2609-0070')).toBeTruthy();
     expect(screen.getByText('Balance collected on delivery')).toBeTruthy();
     /* The row from before the rule says so instead of showing a blank reason. */

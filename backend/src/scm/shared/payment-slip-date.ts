@@ -80,9 +80,10 @@ function isIsoDate(iso: string): boolean {
   return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d;
 }
 
-/** `2026-09-09` → `09/09/2026` — the day-first spelling every date field in this
- *  app shows, so the refusal names the bound the way the operator reads it. */
+/** `2026-09-09` → `2026/09/09` — the year-first spelling every date field in this
+ *  app shows (owner 2026-09-25), so the refusal names the bound the way the
+ *  operator reads it. */
 function dmy(iso: string): string {
   const [y, m, d] = iso.split('-');
-  return `${d}/${m}/${y}`;
+  return `${y}/${m}/${d}`;
 }

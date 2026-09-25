@@ -38,7 +38,7 @@ describe("DateRangeFilter", () => {
     expect(screen.getByRole("button", { name: "All dates" })).toBeTruthy();
 
     rerender(<DateRangeFilter from="2026-08-01" to="2026-08-31" onChange={onChange} />);
-    fireEvent.click(screen.getByRole("button", { name: "01/08/2026 – 31/08/2026" }));
+    fireEvent.click(screen.getByRole("button", { name: "2026/08/01 – 2026/08/31" }));
     fireEvent.click(screen.getByRole("button", { name: "Clear" }));
     expect(onChange).toHaveBeenCalledWith("", "");
   });

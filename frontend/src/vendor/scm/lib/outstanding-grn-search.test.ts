@@ -71,7 +71,7 @@ describe('filterOutstandingGrnLines', () => {
   it('finds a line by supplier code, PO number and the received date as the card prints it', () => {
     expect(ids('400-H002')).toEqual(['g70-1']);
     expect(ids('HC-PO-010068')).toEqual(['g65-1']);
-    expect(ids('13/09/2026')).toEqual(['g70-1']);
+    expect(ids('2026/09/13')).toEqual(['g70-1']);
   });
 
   it('finds a line by its Description 2', () => {

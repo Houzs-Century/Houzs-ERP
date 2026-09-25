@@ -30,9 +30,9 @@ describe('cashFlowSheet', () => {
   it('names the report, its period and its rows; Total alone when nothing is ticked, the ticked column before Total otherwise', () => {
     const s = cashFlowSheet(r);
     expect(s.title).toBe('Cash Flow');
-    expect(s.subtitle).toBe("01/07/2026 – 31/07/2026 · every bank and cash account · by the owner's accounts · % of the side's total");
+    expect(s.subtitle).toBe("2026/07/01 – 2026/07/31 · every bank and cash account · by the owner's accounts · % of the side's total");
     expect(s.meta).toEqual([
-      { label: 'Period', value: '01/07/2026 – 31/07/2026' },
+      { label: 'Period', value: '2026/07/01 – 2026/07/31' },
       { label: 'Accounts', value: '310-0010' },
       { label: 'Rows', value: "By the owner's accounts" },
     ]);

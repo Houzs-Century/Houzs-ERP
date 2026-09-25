@@ -68,7 +68,7 @@ describe('coverage / status / supplier / spec cells', () => {
     expect(poOutstandingText({ source: 'shortage', poNumber: null, poEta: null })).toBe('');
     // PO number, two spaces, U+00B7, two spaces, ETA dd/mm/yyyy.
     expect(poOutstandingText({ source: 'po', poNumber: 'HC-PO-2609-018', poEta: '2026-09-25' }))
-      .toBe('HC-PO-2609-018  ·  ETA 25/09/2026');
+      .toBe('HC-PO-2609-018  ·  ETA 2026/09/25');
     // A covering PO with no ETA is just the number.
     expect(poOutstandingText({ source: 'po', poNumber: 'HC-PO-009942', poEta: null })).toBe('HC-PO-009942');
   });
@@ -134,7 +134,7 @@ describe('buildSheetRows — SKU-grouped (non-sofa)', () => {
     expect(po.cells[idx('Delivery Date')]).toBe('2026-10-01');
     expect(po.cells[idx('Stock')]).toBeNull(); // SKU-level total lives on the header, not repeated per line
     expect(po.cells[idx('Coverage')]).toBe(''); // a PO-covered line leaves Coverage blank
-    expect(po.cells[idx('PO Outstanding')]).toBe('HC-PO-2609-018  ·  ETA 25/09/2026');
+    expect(po.cells[idx('PO Outstanding')]).toBe('HC-PO-2609-018  ·  ETA 2026/09/25');
     expect(po.cells[idx('Status')]).toBe('IN PRODUCTION');
     expect(po.cells[idx('Supplier')]).toBe('DIGLANT MANUFACTURING SDN BHD');
     expect(po.cells[idx('Shortage')]).toBeNull(); // a covered line leaves Shortage blank, not 0
@@ -185,7 +185,7 @@ describe('buildSheetRows — SO-grouped (sofa)', () => {
     expect(pieces.map((p) => p.cells[idx('Item Code')])).toEqual(['5535-L(LHF)', '5535-2A(RHF)']);
     expect(pieces[0]!.cells[idx('Item Description 2')]).toBe('BO315-21 PEARL / SEAT 32');
     expect(pieces[0]!.cells[idx('Coverage')]).toBe('');
-    expect(pieces[0]!.cells[idx('PO Outstanding')]).toBe('HC-PO-009942  ·  ETA 25/09/2026');
+    expect(pieces[0]!.cells[idx('PO Outstanding')]).toBe('HC-PO-009942  ·  ETA 2026/09/25');
     expect(pieces[0]!.cells[idx('Supplier')]).toBe('OHANA STUDIO SDN BHD');
   });
 

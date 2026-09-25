@@ -41,13 +41,13 @@ describe("EditProjectSheet — every event field is editable at once", () => {
     expect(field("Venue").value).toBe("SETIA SPICE CONVENTION CENTRE");
     expect(field("Organizer").value).toBe("HOMELOVE");
     // DateField shows the canonical ISO as dd/mm/yyyy.
-    expect(field("Start date").value).toBe("04/09/2026");
-    expect(field("End date").value).toBe("06/09/2026");
+    expect(field("Start date").value).toBe("2026/09/04");
+    expect(field("End date").value).toBe("2026/09/06");
   });
 
   it("saves a changed DATE — the field the old prompt flow never reached", () => {
     const { onSave } = renderSheet();
-    fireEvent.change(field("End date"), { target: { value: "08/09/2026" } });
+    fireEvent.change(field("End date"), { target: { value: "2026/09/08" } });
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
     expect(onSave).toHaveBeenCalledWith({ end_date: "2026-09-08" });
   });
@@ -62,7 +62,7 @@ describe("EditProjectSheet — every event field is editable at once", () => {
   it("edits the title AND a date in one save (the reported gap)", () => {
     const { onSave } = renderSheet();
     fireEvent.change(field("Event name"), { target: { value: "PENANG [AKEMI] HOMELOVE @ SETIA SPICE (REV)" } });
-    fireEvent.change(field("Start date"), { target: { value: "05/09/2026" } });
+    fireEvent.change(field("Start date"), { target: { value: "2026/09/05" } });
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
     expect(onSave).toHaveBeenCalledWith({
       name: "PENANG [AKEMI] HOMELOVE @ SETIA SPICE (REV)",
@@ -79,7 +79,7 @@ describe("EditProjectSheet — every event field is editable at once", () => {
 
   it("blocks an end date before the start date", () => {
     renderSheet();
-    fireEvent.change(field("End date"), { target: { value: "01/09/2026" } });
+    fireEvent.change(field("End date"), { target: { value: "2026/09/01" } });
     expect((screen.getByRole("button", { name: "Save changes" }) as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByText("End date must be on or after the start date.")).toBeTruthy();
   });
@@ -101,7 +101,7 @@ describe("EditProjectSheet — every event field is editable at once", () => {
     expect(screen.queryByLabelText("Organizer")).toBeNull();
     expect(screen.getByLabelText("Venue")).toBeTruthy();
     expect(screen.getByLabelText("Start date")).toBeTruthy();
-    fireEvent.change(screen.getByLabelText("End date"), { target: { value: "08/09/2026" } });
+    fireEvent.change(screen.getByLabelText("End date"), { target: { value: "2026/09/08" } });
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
     expect(onSave).toHaveBeenCalledWith({ end_date: "2026-09-08" });
   });
