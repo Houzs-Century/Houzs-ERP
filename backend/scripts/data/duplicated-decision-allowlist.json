@@ -1414,6 +1414,16 @@
       "check": "D1",
       "key": "CALENDAR_VIEWER,DRIVER_HELPER,STOREKEEPER,STOREKEEPER_SUPERVISOR|backend/src/services/positionPolicy.ts backend/src/services/positionPolicyRows.ts",
       "why": "ONE vocabulary with a TYPE-CHECKED second home, not a second decision: RESTRICTED_PROFILES (positionPolicyRows.ts) is the list a position_policy row may name, and PROFILE_ROWS (positionPolicy.ts) maps each name to its page whitelist as Record<RestrictedProfile, ...> — a profile added to one and not the other is a compile error (tsc), never a runtime drift. positionPolicyRows.ts cannot import positionPolicy.ts (cycle), which is why the map lives beside the whitelists it names."
+    },
+    {
+      "check": "D1",
+      "key": "ADDRESS,AMENDED_DELIVERY_DATE,AMEND_DATE_FROM_CUSTOMER,AMEND_REASON,ARRIVAL_AT,ARRIVES_EM_WAREHOUSE_DATE,BALANCE_SEN,BRANDING,BS_DELIVERY_DATE,BS_REMARKS,COMPANY_CODE,CONSIGNMENT_NO,CTN,CUSTOMER_DELIVERY_DATE,DEBTOR_NAME,DELIVERY_MESSAGE_STATUS,DELIVERY_SUBSTATUS,DEPARTURE_AT,DISPOSAL_REQUEST,DO,DO_DATE,DP_REMARK,DRIVER,DRIVER_2,DRIVER_CONTACT,DRIVER_IC,EM_DELIVERY_STATUS,ESB_REMARKS,ETA_ARRIVING_PORT,ETD_PORT_KLANG,HELPER_1,HELPER_2,HOUSE_TYPE,LORRY,PHONE,POSTCODE,PO_NOS,PROCESSING_DATE,REGION,REPLACEMENT_DISPOSAL,ROW_TYPE,SALESPERSON,SHIPOUT_DATE,SO_DATE,SO_DOC_NO,SO_REF,STOCK_REMARK,TIME_CONFIRMED,TIME_RANGE,TOTAL_AMOUNT,TRIP_NO,VENUE,VESSEL_VOYAGE,WAREHOUSE,WA_MESSAGE|frontend/src/vendor/scm/components/DeliveryPlanningBoard.tsx frontend/src/vendor/scm/lib/deliveryPlanningLayouts.ts",
+      "why": "DP_DEFAULT_ORDER (the board's pristine column order) and the layout presets (BASE_ORDER + EM_ORDER in deliveryPlanningLayouts.ts) list the SAME Delivery Planning column set in different orders on purpose; deliveryPlanningLayouts.test.ts asserts the presets cover exactly the board's columns, so the two cannot drift."
+    },
+    {
+      "check": "D2",
+      "key": "ARRIVAL_AT,ARRIVES_EM_WAREHOUSE_DATE,BS_DELIVERY_DATE,BS_REMARKS,COMPANY_CODE,CONSIGNMENT_NO,CTN,DEPARTURE_AT,DO_DATE,DRIVER,DRIVER_2,DRIVER_CONTACT,DRIVER_IC,EM_DELIVERY_STATUS,ESB_REMARKS,ETA_ARRIVING_PORT,ETD_PORT_KLANG,HELPER_1,HELPER_2,LORRY,SHIPOUT_DATE,TIME_CONFIRMED,TIME_RANGE,TRIP_NO,VENUE,VESSEL_VOYAGE,WAREHOUSE ~ ARRIVAL_AT,ARRIVES_EM_WAREHOUSE_DATE,BS_DELIVERY_DATE,BS_REMARKS,COMPANY_CODE,CONSIGNMENT_NO,CTN,DEPARTURE_AT,DO_DATE,DRIVER,DRIVER_2,DRIVER_CONTACT,DRIVER_IC,EM_DELIVERY_STATUS,ESB_REMARKS,ETA_ARRIVING_PORT,ETD_PORT_KLANG,HELPER_1,HELPER_2,LORRY,TIME_CONFIRMED,TIME_RANGE,TRIP_NO,VENUE,VESSEL_VOYAGE,WAREHOUSE",
+      "why": "The Delivery Date and SG Order presets hide almost the same columns, differing only by SHIPOUT_DATE (SG shows the cross-border ship-out date) — both are the owner's 2026-09-24 per-layout choices in deliveryPlanningLayouts.ts, not one rule enforced at N-1 of N places."
     }
   ]
 }

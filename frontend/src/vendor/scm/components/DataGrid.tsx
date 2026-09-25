@@ -43,32 +43,20 @@ import { useDebouncedValue } from '../lib/hooks';
 import { SkeletonRows } from './Skeleton';
 import { DateField } from './DateField';
 import {
-  DEFAULT_DATA_GRID_LAYOUT,
-  type DataGridLayout, isSharedDataGridStorageKey,
-  materializeDataGridLayout,
-  useCompanyScopedDataGridLayout,
-  writeDataGridLayout,
+  DEFAULT_DATA_GRID_LAYOUT, type DataGridLayout, isSharedDataGridStorageKey,
+  materializeDataGridLayout, useCompanyScopedDataGridLayout, writeDataGridLayout,
 } from './dataGridLayoutStorage';
 import { purgeStoredDataGridFilters, readDataGridFilters, writeDataGridFilters } from './dataGridFilterStorage';
 import { subscribeActiveCompany, getActiveCompanySnapshot } from '../../../lib/activeCompany';
 import {
-  EMPTY_LAYOUT,
-  createNamedLayout,
-  dataGridTableKey,
-  deleteNamedLayout,
-  renameCompanyDefault,
-  renameNamedLayout,
-  updateNamedLayout,
-  getTableLayoutsSnapshot,
-  saveCompanyDefault,
-  saveMyLayout,
-  serializeLayout,
-  subscribeTableLayouts,
-  type StoredLayout,
+  EMPTY_LAYOUT, createNamedLayout, dataGridTableKey, deleteNamedLayout, renameCompanyDefault,
+  renameNamedLayout, updateNamedLayout, getTableLayoutsSnapshot, saveCompanyDefault, saveMyLayout,
+  serializeLayout, subscribeTableLayouts, saveSharedLayout, deleteSharedLayout,
+  type StoredLayout, type LayoutSeed,
 } from '../../../lib/tableLayouts';
 import { shortCompanyName } from '../../../lib/branding';
 import { inferColumnGroup } from '../../../lib/columnGroups';
-import { withSingleActive, type LayoutPresetOption } from '../../../components/LayoutSection';
+import { withSingleActive, buildSeedPresetRows, resolveSeedLayout, type LayoutPresetOption } from '../../../components/LayoutSection';
 import { ColumnsDrawer, ColumnsButton, type DrawerColumn } from '../../../components/ColumnsDrawer';
 import { ResetFiltersButton } from '../../../components/ResetFiltersButton';
 import styles from './DataGrid.module.css';
@@ -292,6 +280,10 @@ export type DataGridProps<T> = {
    * the trigger, the key just names the row).
    */
   scrollToRow?: { key: string; nonce: number } | null;
+  /** Read-only, code-shipped layouts shown FIRST in the Columns > Layout picker
+   *  (page-defined, team-wide). Picking one copies it into the live arrangement,
+   *  same as a saved layout; they cannot be renamed / updated / deleted. */
+  layoutPresets?: LayoutSeed[];
 };
 
 type Layout = DataGridLayout;
@@ -309,12 +301,9 @@ const coerceSearchString = (v: ReactNode): string => {
    math via the getUTCDate / setUTCDate family is correct. */
 export type DatePreset = 'today' | 'tomorrow' | 'thisWeek' | 'thisMonth' | 'lastMonth' | 'overdue';
 const DATE_PRESETS: { key: DatePreset; label: string }[] = [
-  { key: 'today',     label: 'Today' },
-  { key: 'tomorrow',  label: 'Tomorrow' },
-  { key: 'thisWeek',  label: 'This week' },
-  { key: 'thisMonth', label: 'This month' },
-  { key: 'lastMonth', label: 'Last month' },
-  { key: 'overdue',   label: 'Overdue' },
+  { key: 'today', label: 'Today' }, { key: 'tomorrow', label: 'Tomorrow' },
+  { key: 'thisWeek', label: 'This week' }, { key: 'thisMonth', label: 'This month' },
+  { key: 'lastMonth', label: 'Last month' }, { key: 'overdue', label: 'Overdue' },
 ];
 const dateMatchesPreset = (iso: string | null | undefined, preset: DatePreset): boolean => {
   if (!iso) return false;
@@ -350,35 +339,11 @@ const dateMatchesPreset = (iso: string | null | undefined, preset: DatePreset): 
    sort/filter/group recompute pipeline. Each list page now memoizes its
    `columns` array + handlers so the memo actually hits. */
 function DataGridInner<T>({
-  rows,
-  columns,
-  storageKey,
-  rowKey,
-  searchPlaceholder = 'Search…',
-  loadedSearchCount,
-  exportName,
-  onRowDoubleClick,
-  onRowClick,
-  rowStyle,
-  onSelectionChange,
-  onFilteredRowsChange,
-  toolbar,
-  focusSearchNonce,
-  collapseAllNonce,
-  groupBanner = true,
-  emptyMessage = 'No data.',
-  isLoading = false,
-  contextMenu,
-  expandable,
-  selectable,
-  embedded = false,
-  hideSearch = false,
-  loadedSearchLimit,
-  defaultSort,
-  sortForSessionOnly = false,
-  overlayHidden,
-  onUserAdjustColumns,
-  scrollToRow,
+  rows, columns, storageKey, rowKey, searchPlaceholder = 'Search…', loadedSearchCount, exportName,
+  onRowDoubleClick, onRowClick, rowStyle, onSelectionChange, onFilteredRowsChange, toolbar,
+  focusSearchNonce, collapseAllNonce, groupBanner = true, emptyMessage = 'No data.', isLoading = false,
+  contextMenu, expandable, selectable, embedded = false, hideSearch = false, loadedSearchLimit,
+  defaultSort, sortForSessionOnly = false, overlayHidden, onUserAdjustColumns, scrollToRow, layoutPresets,
 }: DataGridProps<T>) {
   /* HOUZS-style inline expansion (PR so-list-houzs-port). Tracks the set of
      expanded row ids; rendering inserts a colSpan sub-<tr> directly under
@@ -793,6 +758,15 @@ function DataGridInner<T>({
       pinned: layout.pinned,
       groupBy: layout.groupBy,
     });
+    /* Code-shipped page seeds lead the picker (curated team-wide views), folding
+       in any admin company-shared override. A layout manager may edit them;
+       everyone else picks them read-only. */
+    if (layoutPresets?.length) {
+      rows.push(...buildSeedPresetRows(
+        layoutPresets, layoutStore.sharedLayouts[serverTableKey],
+        columns.length, currentSignature, layoutStore.canManageLayouts,
+      ));
+    }
     for (const co of layoutStore.companies) {
       const saved = layoutStore.defaults[String(co.id)]?.[serverTableKey];
       if (!saved) continue;
@@ -818,11 +792,14 @@ function DataGridInner<T>({
       });
     }
     return rows.length > 0 ? withSingleActive(rows) : undefined;
-  }, [layoutStore, serverTableKey, layout, columns.length]);
+  }, [layoutStore, serverTableKey, layout, columns.length, layoutPresets]);
 
   const applyGridPreset = useCallback((id: string) => {
     const [kind, rawId] = id.split(':');
-    const saved = kind === 'saved'
+    const seed = kind === 'seed' ? layoutPresets?.find((p) => p.id === rawId) : undefined;
+    const saved = seed
+      ? resolveSeedLayout(seed, layoutStore.sharedLayouts[serverTableKey])
+      : kind === 'saved'
       ? layoutStore.myLayouts[serverTableKey]?.find((l) => l.id === Number(rawId))?.layout
       : layoutStore.defaults[String(Number(rawId))]?.[serverTableKey];
     if (!saved) return;
@@ -836,7 +813,7 @@ function DataGridInner<T>({
       // Picking a layout must not re-sort the list under the operator.
       sort: l.sort,
     }));
-  }, [layoutStore, serverTableKey, setLayout, onUserAdjustColumns]);
+  }, [layoutStore, serverTableKey, setLayout, onUserAdjustColumns, layoutPresets]);
 
 
   const showAllColumns = useCallback(() => {
@@ -991,6 +968,11 @@ function DataGridInner<T>({
   );
   const updateGridLayout = useCallback(
     (id: string) => {
+      if (id.startsWith('seed:')) {
+        // A page seed: persist the on-screen columns as the company-shared
+        // override, so the whole team gets them.
+        return saveSharedLayout(serverTableKey, id.slice('seed:'.length), gridRenderedLayout());
+      }
       const target = gridLayoutPresets?.find((p) => p.id === id);
       if (target?.savedId != null) {
         return updateNamedLayout(serverTableKey, target.savedId, gridRenderedLayout());
@@ -1001,6 +983,15 @@ function DataGridInner<T>({
       return Promise.resolve();
     },
     [serverTableKey, gridLayoutPresets, gridRenderedLayout],
+  );
+
+  /** Drop a seed's company-shared override, reverting the whole team to the
+   *  page's code default. */
+  const resetGridLayout = useCallback(
+    (id: string) => id.startsWith('seed:')
+      ? deleteSharedLayout(serverTableKey, id.slice('seed:'.length))
+      : Promise.resolve(),
+    [serverTableKey],
   );
 
   const deleteGridLayout = useCallback(
@@ -1759,6 +1750,7 @@ function DataGridInner<T>({
               onRenameLayout={layoutStore.canManageLayouts ? renameGridLayout : undefined}
               onDeleteLayout={layoutStore.canManageLayouts ? deleteGridLayout : undefined}
               onUpdateLayout={layoutStore.canManageLayouts ? updateGridLayout : undefined}
+              onResetLayout={layoutStore.canManageLayouts ? resetGridLayout : undefined}
               defaultManager={gridDefaultManager}
               dirty={Boolean(gridLayoutPresets && !gridLayoutPresets.some((p) => p.active))}
               onExport={exportGridColumnConfig}

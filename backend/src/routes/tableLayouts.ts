@@ -211,6 +211,9 @@ app.get("/", async (c) => {
   const defaultNames: Record<string, Record<string, string>> = {};
   /** tableKey → this user's SAVED layouts (mig 0239), newest name order. */
   const myLayouts: Record<string, Array<{ id: number; name: string; layout: StoredLayout }>> = {};
+  /** tableKey → the ACTIVE company's SHARED layouts — the team-wide named views
+   *  a layout manager edits for everyone (user_id NULL, is_shared true). */
+  const sharedLayouts: Record<string, Array<{ id: number; name: string; layout: StoredLayout }>> = {};
 
   // Pre-activation (no companies master) there is nothing to key rows by —
   // return the empty shape and let every table fall back to its code preset,
@@ -226,7 +229,7 @@ app.get("/", async (c) => {
          filtered back to the active company in the loop below, so per-tenant
          lists behave exactly as before. */
       const rows = await c.env.DB.prepare(
-        `SELECT id, company_id, user_id, name, table_key, layout, updated_at
+        `SELECT id, company_id, user_id, name, is_shared, table_key, layout, updated_at
            FROM table_layouts
           WHERE (user_id IS NULL AND company_id IN (${placeholders}))
              OR (user_id = ? AND company_id IN (${placeholders}))`,
@@ -237,17 +240,37 @@ app.get("/", async (c) => {
           company_id: number;
           user_id: number | null;
           name: string | null;
+          is_shared: boolean | number | string | null;
           table_key: string;
           layout: string;
           updated_at: string | null;
         }>();
-      /* Newest-wins tracker for the shared keys' live rows (ISO timestamps —
-         lexicographic compare is chronological). */
+      /* Newest-wins trackers for shared keys (ISO timestamps — lexicographic
+         compare is chronological): one for the live rows, one per shared
+         layout name so a cross-company board serves a single copy. */
       const mineAt = new Map<string, string>();
+      const sharedAt = new Map<string, string>();
       for (const row of rows.results ?? []) {
         const layout = parseLayout(row.layout);
         if (!layout) continue;
-        if (row.user_id === null) {
+        const shared = Number(row.is_shared) === 1 || row.is_shared === true || row.is_shared === "t";
+        if (row.user_id === null && shared) {
+          // Team-wide named layout. A cross-company board (SHARED_TABLE_KEYS)
+          // shows ONE copy to everyone whichever company it was written under;
+          // a per-tenant list shows the active company's only.
+          if (!row.name) continue;
+          if (!SHARED_TABLE_KEYS.has(row.table_key) && row.company_id !== activeCompanyId) continue;
+          const dedupeKey = `${row.table_key}\u0000${row.name.toLowerCase()}`;
+          const at = row.updated_at ?? "";
+          const seen = sharedAt.get(dedupeKey);
+          if (seen !== undefined && seen >= at) continue;
+          sharedAt.set(dedupeKey, at);
+          const list = (sharedLayouts[row.table_key] ??= []);
+          const idx = list.findIndex((l) => l.name.toLowerCase() === row.name!.toLowerCase());
+          const entry = { id: Number(row.id), name: row.name, layout };
+          if (idx >= 0) list[idx] = entry;
+          else list.push(entry);
+        } else if (row.user_id === null) {
           const bucket = (defaults[String(row.company_id)] ??= {});
           bucket[row.table_key] = layout;
           if (row.name) {
@@ -293,6 +316,7 @@ app.get("/", async (c) => {
     defaultNames,
     mine,
     myLayouts,
+    sharedLayouts,
   });
 });
 
@@ -314,8 +338,10 @@ async function upsert(
   // uniques still make a lost race an error rather than a duplicate.
   const updated = await env.DB.prepare(
     userId === null
-      ? `UPDATE table_layouts SET layout = ?, updated_at = ?, updated_by = ?
-          WHERE company_id = ? AND table_key = ? AND user_id IS NULL`
+      ? /* AND is_shared = 0 — the company DEFAULT only; the shared named
+           layouts (mig 20260925) are user_id NULL too and must not be touched. */
+        `UPDATE table_layouts SET layout = ?, updated_at = ?, updated_by = ?
+          WHERE company_id = ? AND table_key = ? AND user_id IS NULL AND is_shared = 0`
       : /* AND name IS NULL — a user's saved layouts live in the same table
            now (mig 0239); this statement owns only their LIVE arrangement. */
         `UPDATE table_layouts SET layout = ?, updated_at = ?, updated_by = ?
@@ -452,7 +478,7 @@ app.patch("/:tableKey/default", requireLayoutManager, async (c) => {
   const name = cleanName(raw);
   const res = await c.env.DB.prepare(
     `UPDATE table_layouts SET name = ?, updated_at = ?, updated_by = ?
-      WHERE company_id = ? AND table_key = ? AND user_id IS NULL`,
+      WHERE company_id = ? AND table_key = ? AND user_id IS NULL AND is_shared = 0`,
   )
     .bind(name || null, nowIso(), userIdOf(c), target.companyId, target.tableKey)
     .run();
@@ -468,9 +494,87 @@ app.delete("/:tableKey/default", requirePermission(MANAGE_DEFAULTS_PERM), async 
   const target = readTarget(c);
   if ("error" in target) return c.json({ error: target.error }, 400);
   await c.env.DB.prepare(
-    "DELETE FROM table_layouts WHERE company_id = ? AND table_key = ? AND user_id IS NULL",
+    "DELETE FROM table_layouts WHERE company_id = ? AND table_key = ? AND user_id IS NULL AND is_shared = 0",
   )
     .bind(target.companyId, target.tableKey)
+    .run();
+  return c.json({ ok: true });
+});
+
+/* ── Company-SHARED named layouts (mig 20260925) ───────────────────────────
+   A team-wide named view (user_id NULL, is_shared = 1): a layout MANAGER edits
+   it, everyone in the company sees it. The Delivery Planning board uses it to
+   make its code-shipped presets editable for the whole team without a deploy —
+   the same "code constant -> DB-overridable" move mig 0236 made for the single
+   company default, extended to a NAMED set. Active company only (the request's
+   company), keyed by name (the preset's stable id). */
+
+/** PUT /api/table-layouts/:tableKey/shared — upsert a company-shared layout by
+ *  name. Manager only. The name is the preset's stable id, so the same call
+ *  both creates the override and later edits it. */
+app.put("/:tableKey/shared", requireLayoutManager, async (c) => {
+  const target = readTarget(c);
+  if ("error" in target) return c.json({ error: target.error }, 400);
+  const body = await c.req.json().catch(() => ({}));
+  const name = cleanName((body as { name?: unknown }).name);
+  if (!name) return c.json({ error: "Give the shared layout a name." }, 400);
+  const layout = sanitizeLayout((body as { layout?: unknown }).layout);
+  const payload = JSON.stringify(layout);
+  const at = nowIso();
+  const by = userIdOf(c);
+  // A cross-company board keeps ONE shared row for the whole group (like the
+  // user's live row): write it under the caller's pinned company, then collapse
+  // any copy the old scoping left under another company. A per-tenant list
+  // writes under its own company.
+  const crossCompany = SHARED_TABLE_KEYS.has(target.tableKey);
+  const writeCompany = crossCompany ? (pinnedCompanyIdFor(c) ?? target.companyId) : target.companyId;
+  // Update-then-insert: the partial unique is not a portable ON CONFLICT target
+  // (see upsert()). The unique still turns a lost race into an error, not a dup.
+  const updated = await c.env.DB.prepare(
+    `UPDATE table_layouts SET layout = ?, updated_at = ?, updated_by = ?
+      WHERE company_id = ? AND table_key = ? AND user_id IS NULL AND is_shared = 1
+        AND lower(name) = lower(?)`,
+  )
+    .bind(payload, at, by, writeCompany, target.tableKey, name)
+    .run();
+  if (Number(updated.meta?.changes ?? 0) === 0) {
+    await c.env.DB.prepare(
+      `INSERT INTO table_layouts (company_id, user_id, name, is_shared, table_key, layout, updated_at, updated_by)
+       VALUES (?, NULL, ?, 1, ?, ?, ?, ?)`,
+    )
+      .bind(writeCompany, name, target.tableKey, payload, at, by)
+      .run();
+  }
+  if (crossCompany) {
+    await c.env.DB.prepare(
+      `DELETE FROM table_layouts
+        WHERE table_key = ? AND user_id IS NULL AND is_shared = 1
+          AND lower(name) = lower(?) AND company_id <> ?`,
+    )
+      .bind(target.tableKey, name, writeCompany)
+      .run();
+  }
+  return c.json({ ok: true, name, layout });
+});
+
+/** DELETE /api/table-layouts/:tableKey/shared/:name — drop a company-shared
+ *  layout, falling the preset back to the page's code default. Manager only. */
+app.delete("/:tableKey/shared/:name", requireLayoutManager, async (c) => {
+  const target = readTarget(c);
+  if ("error" in target) return c.json({ error: target.error }, 400);
+  const name = cleanName(c.req.param("name"));
+  if (!name) return c.json({ error: "Invalid layout name." }, 400);
+  // A cross-company board's shared row is one for the group, so a reset clears
+  // it under every company; a per-tenant list clears its own.
+  const crossCompany = SHARED_TABLE_KEYS.has(target.tableKey);
+  await c.env.DB.prepare(
+    crossCompany
+      ? `DELETE FROM table_layouts
+           WHERE table_key = ? AND user_id IS NULL AND is_shared = 1 AND lower(name) = lower(?)`
+      : `DELETE FROM table_layouts
+           WHERE company_id = ? AND table_key = ? AND user_id IS NULL AND is_shared = 1 AND lower(name) = lower(?)`,
+  )
+    .bind(...(crossCompany ? [target.tableKey, name] : [target.companyId, target.tableKey, name]))
     .run();
   return c.json({ ok: true });
 });

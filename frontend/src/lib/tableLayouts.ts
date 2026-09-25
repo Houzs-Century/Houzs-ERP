@@ -91,6 +91,17 @@ export interface NamedLayout {
   layout: StoredLayout;
 }
 
+/** A read-only, code-shipped layout a page offers in the picker for everyone —
+ *  independent of the per-user saved layouts and the per-company default above.
+ *  Instances live with the page that defines them (e.g. the Delivery Planning
+ *  board); the grid renders them first and copies one into the live arrangement
+ *  when picked, exactly like a saved layout, but they cannot be edited. */
+export interface LayoutSeed {
+  id: string;
+  label: string;
+  layout: StoredLayout;
+}
+
 export interface TableLayoutsSnapshot {
   /** True once the boot fetch has succeeded. Everything below is empty until. */
   ready: boolean;
@@ -108,6 +119,11 @@ export interface TableLayoutsSnapshot {
   defaultNames: Record<string, Record<string, string>>;
   /** tableKey → this user's saved layouts, in the active company. */
   myLayouts: Record<string, NamedLayout[]>;
+  /** tableKey → the ACTIVE company's SHARED layouts (mig 20260925) — the
+   *  team-wide named views a layout manager edits for everyone. A layout
+   *  manager may write them; everyone reads them. Keyed by the preset id in
+   *  `name`, so a page's code seeds can adopt an admin's override. */
+  sharedLayouts: Record<string, NamedLayout[]>;
   /** Bumped whenever hydration changed stored prefs, so a mounted table can
    *  re-read localStorage (it is read once, at mount, by design). */
   epoch: number;
@@ -122,6 +138,7 @@ const EMPTY: TableLayoutsSnapshot = {
   defaults: {},
   defaultNames: {},
   myLayouts: {},
+  sharedLayouts: {},
   epoch: 0,
 };
 
@@ -291,6 +308,7 @@ interface LayoutsResponse {
   defaultNames?: Record<string, Record<string, string>>;
   mine?: Record<string, { layout: StoredLayout; updatedAt: string | null }>;
   myLayouts?: Record<string, Array<{ id: number; name: string; layout: StoredLayout }>>;
+  sharedLayouts?: Record<string, Array<{ id: number; name: string; layout: StoredLayout }>>;
 }
 
 function normalizeNamed(
@@ -389,6 +407,7 @@ export async function hydrateTableLayouts(): Promise<void> {
       canManageLayouts: Boolean(res.canManageLayouts),
       defaultNames: res.defaultNames ?? {},
       myLayouts: normalizeNamed(res.myLayouts),
+      sharedLayouts: normalizeNamed(res.sharedLayouts),
       defaults: Object.fromEntries(
         Object.entries(res.defaults ?? {}).map(([cid, tables]) => [
           cid,
@@ -549,4 +568,39 @@ export async function deleteNamedLayout(tableKey: string, id: number): Promise<v
     tableKey,
     (snapshot.myLayouts[tableKey] ?? []).filter((l) => l.id !== id),
   );
+}
+
+// ── Company-shared layouts (mig 20260925) ───────────────────────────────────
+// A layout MANAGER edits a team-wide named view; everyone in the company reads
+// it. Keyed by NAME (the preset id) so a page's code seed adopts the override.
+// Gated to canManageLayouts server-side; these calls are only wired for a
+// manager. The snapshot is updated from the call so the picker reflects it
+// without a refetch — same reason the named-layout CRUD does.
+
+/** Create or replace this company's shared layout for `name` (a preset id). */
+export async function saveSharedLayout(
+  tableKey: string,
+  name: string,
+  layout: StoredLayout,
+): Promise<void> {
+  await api.put(`/api/table-layouts/${encodeURIComponent(tableKey)}/shared`, { name, layout });
+  const list = (snapshot.sharedLayouts[tableKey] ?? []).filter((l) => l.name !== name);
+  emit({
+    ...snapshot,
+    sharedLayouts: { ...snapshot.sharedLayouts, [tableKey]: [...list, { id: 0, name, layout }] },
+  });
+}
+
+/** Drop this company's shared layout for `name`, reverting to the code default. */
+export async function deleteSharedLayout(tableKey: string, name: string): Promise<void> {
+  await api.del(
+    `/api/table-layouts/${encodeURIComponent(tableKey)}/shared/${encodeURIComponent(name)}`,
+  );
+  emit({
+    ...snapshot,
+    sharedLayouts: {
+      ...snapshot.sharedLayouts,
+      [tableKey]: (snapshot.sharedLayouts[tableKey] ?? []).filter((l) => l.name !== name),
+    },
+  });
 }
