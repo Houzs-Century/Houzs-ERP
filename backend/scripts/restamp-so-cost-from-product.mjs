@@ -12,9 +12,12 @@
    100% (cost 0) down to the real figure (revenue - real cost). That is the
    intended correction.
 
-   WHAT IT TOUCHES. Only lines with unit_cost_sen = 0/NULL whose product now
-   carries a cost, and only headers whose total_cost_sen = 0. A non-zero stamp is
-   never touched. Per line the cost is:
+   WHAT IT TOUCHES. Any line with unit_cost_sen = 0/NULL whose product now
+   carries a cost — whether the whole order was zero-cost or only a few of its
+   lines. A non-zero line stamp is never touched; the header cost is then
+   recomputed as the SUM of its line costs (the invariant already true for
+   189/190 costed 2990 orders), so an order's existing correct lines are left as
+   they are and only the newly-stamped cost is added. Per line the cost is:
      SOFA   seat grid PRICE_2 at the ordered height (variants.seatHeight)
             -> base_price_sen -> cost_price_sen
      other  base_price_sen -> cost_price_sen
@@ -97,10 +100,15 @@ async function main() {
                             FROM scm.mfg_products WHERE company_id = ${co}`;
     const prodBy = new Map(prods.map((p) => [p.code, p]));
 
-    const sos = await sql`SELECT doc_no, total_revenue_sen, total_cost_sen
-                          FROM scm.mfg_sales_orders
-                          WHERE company_id = ${co} AND coalesce(total_cost_sen,0) = 0
-                          ORDER BY doc_no`;
+    // Every order that has at least one zero-cost line — a fully-zero order OR a
+    // partly-costed one with a few kosong lines. Both show a gap in the report.
+    const sos = await sql`SELECT h.doc_no, h.total_revenue_sen, h.total_cost_sen
+                          FROM scm.mfg_sales_orders h
+                          WHERE h.company_id = ${co}
+                            AND EXISTS (SELECT 1 FROM scm.mfg_sales_order_items i
+                                        WHERE i.company_id = h.company_id AND i.doc_no = h.doc_no
+                                          AND coalesce(i.unit_cost_sen,0) = 0)
+                          ORDER BY h.doc_no`;
 
     let stamped = 0, noCost = 0, headers = 0, marginDrop = 0, deadlocks = 0;
     const now = new Date().toISOString();
@@ -124,24 +132,29 @@ async function main() {
         plan.agg[col] += uc * (l.qty || 1);
       }
       const total = plan.agg.mattress_sofa + plan.agg.bedframe + plan.agg.accessories + plan.agg.service + plan.agg.others;
-      const willHeader = Number(so.total_cost_sen) === 0 && total > 0;
-      if (willHeader) { headers++; marginDrop += total; if (shownDocs.length < LIST_LIMIT) shownDocs.push(`${so.doc_no} (cost ${rm(total)})`); }
+      const oldTotal = Number(so.total_cost_sen) || 0;
+      // Recompute the header whenever a line was stamped and the total moved. The
+      // header cost is the sum of the line costs (verified true for 189/190
+      // already-costed 2990 orders), so re-summing a partly-costed order does not
+      // disturb its existing correct lines — it only adds the newly-stamped ones.
+      const headerChanged = plan.anyStamp && total !== oldTotal;
+      if (headerChanged) { headers++; marginDrop += total - oldTotal; if (shownDocs.length < LIST_LIMIT) shownDocs.push(`${so.doc_no} (cost ${rm(oldTotal)} -> ${rm(total)})`); }
       if (plan.anyStamp) for (const w of plan.lineWrites) touchedLineIds.push(w.id);
-      if (willHeader) touchedDocNos.push(so.doc_no);
+      if (headerChanged) touchedDocNos.push(so.doc_no);
 
-      if (APPLY && (plan.anyStamp || willHeader)) {
+      if (APPLY && plan.anyStamp) {
         const runOne = async (tx) => {
           for (const w of plan.lineWrites) {
             await tx`UPDATE scm.mfg_sales_order_items SET unit_cost_sen = ${w.uc}, line_cost_sen = ${w.uc * w.qty}
                      WHERE id = ${w.id} AND coalesce(unit_cost_sen,0) = 0`;
           }
-          if (willHeader) {
+          if (headerChanged) {
             await tx`UPDATE scm.mfg_sales_orders SET
                 mattress_sofa_cost_sen = ${plan.agg.mattress_sofa}, bedframe_cost_sen = ${plan.agg.bedframe},
                 accessories_cost_sen = ${plan.agg.accessories}, service_cost_sen = ${plan.agg.service},
                 others_cost_sen = ${plan.agg.others}, total_cost_sen = ${total},
                 total_margin_sen = ${(Number(so.total_revenue_sen) || 0) - total}, updated_at = ${now}
-              WHERE doc_no = ${so.doc_no} AND company_id = ${co} AND coalesce(total_cost_sen,0) = 0`;
+              WHERE doc_no = ${so.doc_no} AND company_id = ${co}`;
           }
         };
         let attempts = 0;
