@@ -90,6 +90,9 @@ export type AuditHistoryPanelProps = {
      tree passes it. */
   error?: unknown;
   labels: AuditLabelDictionary;
+  /* Per-entry vocabulary for a drawer that mixes documents, e.g. the SO drawer
+     showing its POs' rows. Falls back to `labels`. */
+  labelsFor?: (entry: AuditLogEntry) => AuditLabelDictionary;
   onClose: () => void;
   /* Optional per-entry badge, e.g. the SO status pill on a status change.
      Returning null renders nothing. */
@@ -105,6 +108,7 @@ export const AuditHistoryPanel = memo(({
   isLoading = false,
   error = null,
   labels,
+  labelsFor,
   onClose,
   renderBadge,
 }: AuditHistoryPanelProps) => {
@@ -158,7 +162,8 @@ export const AuditHistoryPanel = memo(({
               const fc: AuditFieldChange[] = Array.isArray(e.field_changes) ? e.field_changes : [];
               const key = String(e.id);
               const isExpanded = !!expanded[key];
-              const label = auditActionLabel(e.action, labels);
+              const dict = labelsFor?.(e) ?? labels;
+              const label = auditActionLabel(e.action, dict);
               const badge = renderBadge?.(e, fc) ?? null;
               return (
                 <div key={key} className={styles.historyItem}>
@@ -201,16 +206,16 @@ export const AuditHistoryPanel = memo(({
                             {fc.map((ch, idx) => (
                               <div key={idx} className={styles.historyChange}>
                                 <span className={styles.historyChangeField}>
-                                  {auditFieldLabel(ch.field, labels)}
+                                  {auditFieldLabel(ch.field, dict)}
                                 </span>
                                 <span className={styles.historyChangeDiff}>
                                   {ch.from !== undefined && ch.from !== null && ch.from !== '' ? (
                                     <>
-                                      <span className={styles.historyChangeFrom}>{fmtValue(ch.field, ch.from, labels)}</span>
+                                      <span className={styles.historyChangeFrom}>{fmtValue(ch.field, ch.from, dict)}</span>
                                       <span className={styles.historyChangeArrow}>→</span>
                                     </>
                                   ) : null}
-                                  <span>{fmtValue(ch.field, ch.to, labels)}</span>
+                                  <span>{fmtValue(ch.field, ch.to, dict)}</span>
                                 </span>
                               </div>
                             ))}

@@ -17,9 +17,10 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const { detail, auditLog, payments, updateStatus } = vi.hoisted(() => ({
+const { detail, auditLog, relatedAuditLog, payments, updateStatus } = vi.hoisted(() => ({
   detail: vi.fn(),
   auditLog: vi.fn(),
+  relatedAuditLog: vi.fn(),
   payments: vi.fn(),
   updateStatus: vi.fn(),
 }));
@@ -27,6 +28,7 @@ const { detail, auditLog, payments, updateStatus } = vi.hoisted(() => ({
 vi.mock("../../vendor/scm/lib/sales-order-queries", () => ({
   useMfgSalesOrderDetail: detail,
   useSalesOrderAuditLog: auditLog,
+  useSalesOrderRelatedAuditLog: relatedAuditLog,
   useSalesOrderPayments: payments,
   useUpdateMfgSalesOrderStatus: updateStatus,
   useSoLineCoverage: () => ({ data: undefined }),
@@ -83,7 +85,10 @@ vi.mock("../../auth/AuthContext", () => ({ useAuth: () => ({ can: () => false })
 
 import SalesOrderDetailV2 from "./SalesOrderDetailV2";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  relatedAuditLog.mockReset();
+});
 
 const DOC = "2990-SO-2608-036";
 
@@ -122,6 +127,7 @@ function LocationProbe() {
 const mountPage = (so: Record<string, unknown> = header) => {
   detail.mockReturnValue(loaded({ salesOrder: so, items: [] }));
   payments.mockReturnValue(loaded([]));
+  if (!relatedAuditLog.getMockImplementation()) relatedAuditLog.mockReturnValue(loaded([]));
   updateStatus.mockReturnValue({ mutate: vi.fn(), isPending: false });
   return render(
     <MemoryRouter initialEntries={[`/scm/sales-orders/${DOC}`]}>
@@ -149,6 +155,44 @@ describe("SO V2 History button", () => {
     /* ... and we did NOT navigate to do it. The old code's only effect was to
        push the URL we were already on, which is why nothing happened. */
     expect(screen.getByTestId("loc").textContent).toBe(urlBefore);
+  });
+});
+
+/* Ticket DEV-16: "why history did not show the PO created date & time". The
+   PO's CREATE row lives in entity_audit_log against the PO, so the drawer has
+   to merge it in, in time order, tagged with a link to the PO. */
+describe("SO V2 History related documents", () => {
+  it("shows the PO raised from the order, in time order, linked to the PO", () => {
+    auditLog.mockReturnValue(loaded([auditEntry]));
+    relatedAuditLog.mockReturnValue(loaded([{
+      id: 7,
+      entity_type: "PURCHASE_ORDER",
+      entity_id: "po-uuid-1",
+      entity_doc_no: "HC-PO-2608-012",
+      action: "CREATE",
+      actor_id: null,
+      actor_name_snapshot: "Wei Pin",
+      field_changes: [],
+      status_snapshot: "DRAFT",
+      source: "web",
+      note: null,
+      created_at: "2026-08-14T10:30:00.000Z",
+    }]));
+    mountPage();
+
+    /* Not fetched until the drawer opens. */
+    expect(relatedAuditLog).toHaveBeenLastCalledWith(null);
+    fireEvent.click(screen.getByRole("button", { name: /^history$/i }));
+    expect(relatedAuditLog).toHaveBeenLastCalledWith(DOC);
+
+    const dialog = screen.getByRole("dialog", { name: /sales order history/i });
+    expect(dialog.textContent).toMatch(/\(2\)/);
+    const created = screen.getByText("Created purchase order");
+    const link = screen.getByRole("link", { name: "HC-PO-2608-012" });
+    expect(link.getAttribute("href")).toBe("/scm/purchase-orders/po-uuid-1");
+    /* Newest first: the PO (10:30) sits above the SO status change (09:53). */
+    const status = screen.getAllByText("Status changed").find((el) => dialog.contains(el))!;
+    expect(created.compareDocumentPosition(status) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });
 
