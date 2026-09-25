@@ -10,6 +10,7 @@ import {
 } from "../scm/lib/companyScope";
 // The ONE definition of ASSR's company scope — see the note above its use below.
 import { assrCompanySql } from "./assr";
+import { inArm, poIdsForSoDocNos, soDocNosByRef } from "../scm/lib/so-ref-search";
 
 /**
  * Global search across the workspace.
@@ -185,7 +186,7 @@ export async function runGlobalSearch(
          FROM assr_cases
         WHERE archived_at IS NULL
           AND (assr_no LIKE ?1 OR customer_name LIKE ?1 OR phone LIKE ?1
-               OR complaint_issue LIKE ?1 OR doc_no LIKE ?1 OR po_no LIKE ?1)${assrCoSql}
+               OR complaint_issue LIKE ?1 OR doc_no LIKE ?1 OR po_no LIKE ?1 OR ref_no LIKE ?1)${assrCoSql}
         ORDER BY complained_date DESC NULLS LAST, id DESC
         LIMIT ${PER_SOURCE_LIMIT}`
     )
@@ -312,6 +313,21 @@ async function appendScmHits(
     return;
   }
 
+  // Documents are found by their SO's reference too: the DO / SI copy of it is
+  // often empty and a PO has none (lib/so-ref-search.ts). A failed lookup only
+  // drops that extra arm; the direct matches still run. One-character terms
+  // are prefix searches and skip it.
+  let soRefDocNos: string[] = [];
+  let soRefPoIds: string[] = [];
+  if (wildcard.startsWith("%")) {
+    try {
+      soRefDocNos = await soDocNosByRef(sb, c, raw);
+      soRefPoIds = await poIdsForSoDocNos(sb, soRefDocNos);
+    } catch (e) {
+      console.warn("[search] SO reference lookup failed:", e instanceof Error ? e.message : e);
+    }
+  }
+
   // Multi-company: SOs + products are PER-COMPANY modules, so their search hits
   // follow the ACTIVE company via scopeToCompany — the same helper the SO /
   // product list routes use. Unresolved → no predicate (legacy single-company);
@@ -322,7 +338,7 @@ async function appendScmHits(
     .select("doc_no, debtor_name, phone, ref, so_date, branding")
     .or(
       `doc_no.ilike.${wildcard},debtor_name.ilike.${wildcard},` +
-        `ref.ilike.${wildcard},phone.ilike.${wildcard}`
+        `ref.ilike.${wildcard},customer_so_no.ilike.${wildcard},phone.ilike.${wildcard}`
     );
   const prodQuery = sb
     .from("mfg_products")
@@ -337,7 +353,7 @@ async function appendScmHits(
   const poQuery = sb
     .from("purchase_orders")
     .select("id, po_number, po_date, notes, supplier:suppliers(name)")
-    .or(`po_number.ilike.${wildcard},notes.ilike.${wildcard}`);
+    .or([`po_number.ilike.${wildcard}`, `notes.ilike.${wildcard}`, ...inArm("id", soRefPoIds)].join(","));
   const grnQuery = sb
     .from("grns")
     .select(
@@ -352,15 +368,15 @@ async function appendScmHits(
     .from("delivery_orders")
     .select("id, do_number, do_date, debtor_name, so_doc_no, ref")
     .or(
-      `do_number.ilike.${wildcard},so_doc_no.ilike.${wildcard},` +
-        `debtor_name.ilike.${wildcard},ref.ilike.${wildcard}`
+      [`do_number.ilike.${wildcard}`, `so_doc_no.ilike.${wildcard}`,
+        `debtor_name.ilike.${wildcard}`, `ref.ilike.${wildcard}`, ...inArm("so_doc_no", soRefDocNos)].join(",")
     );
   const siQuery = sb
     .from("sales_invoices")
     .select("id, invoice_number, invoice_date, debtor_name, so_doc_no, ref")
     .or(
-      `invoice_number.ilike.${wildcard},so_doc_no.ilike.${wildcard},` +
-        `debtor_name.ilike.${wildcard},ref.ilike.${wildcard}`
+      [`invoice_number.ilike.${wildcard}`, `so_doc_no.ilike.${wildcard}`,
+        `debtor_name.ilike.${wildcard}`, `ref.ilike.${wildcard}`, ...inArm("so_doc_no", soRefDocNos)].join(",")
     );
   const piQuery = sb
     .from("purchase_invoices")

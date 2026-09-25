@@ -469,7 +469,7 @@ function DetailDrawer({
 
               <dl className="mt-5 grid grid-cols-2 gap-x-4 gap-y-3 rounded-lg border border-border bg-surface-2 px-4 py-4">
                 <MetaItem k={transferFromColumnLabel('so')} v={soOf(row)} mono />
-                <MetaItem k="Customer ref" v={refOf(row)} mono />
+                <MetaItem k="Ref No." v={refOf(row)} mono />
                 {/* Owner 2026-07-24 — Processing date (linked SO's
                     processing_date) must be visible in every quick view. */}
                 <MetaItem k="Processing" v={fmtDate(row.so_processing_date ?? null)} />
@@ -1317,7 +1317,7 @@ export function MfgDeliveryOrdersListV2() {
     },
     {
       key: "reference",
-      label: "Customer ref",
+      label: "Ref No.",
       width: "132px",
       disableSort: true,
       getValue: (r) => refOf(r),

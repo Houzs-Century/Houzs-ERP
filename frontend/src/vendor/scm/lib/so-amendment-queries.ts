@@ -261,6 +261,69 @@ export const useAmendmentLanePreview = (args: AmendmentLanePreviewArgs | null) =
 /* ── Create (nested under the SO mount) ────────────────────────────────────
    POST /mfg-sales-orders/:docNo/amendments — the CREATE lives on the SO router
    so it can reuse the SO processing-lock / downstream guards. */
+/** What POST /mfg-sales-orders/:docNo/amendments answers, plus what the hook
+ *  then did with it. `autoApplied` counts the halves that applied on the spot. */
+export type CreateAmendmentResult = {
+  amendment: AmendmentRow;
+  amendments?: AmendmentRow[];
+  lanes?: string[];
+  selfApprovable?: string[];
+  autoApplied?: number;
+  /** Ids whose apply was REFUSED — still raised, still in the queue. */
+  notApplied?: string[];
+};
+
+/* THE SHORTCUT THE SERVER OFFERS (owner 2026-09-24: 「如果是 Logistic admin 修改
+   客户信息, Delivery Date - 无需 approver」). The create response lists the ids the
+   RAISER may apply themselves — a DELIVERY half, header-only, raised by someone
+   who holds that lane's approve key (backend shared/amendment-self-approve.ts
+   decides; the approve route re-checks, so this list is an invitation and never
+   an authorisation).
+
+   The apply runs through the ORDINARY approve route, exactly as the approver's
+   own click does, so every guard it carries stays where it is — the same reason
+   a cancellation's final approval runs the document's own cancel rather than
+   re-implementing it (vendor/scm/lib/use-cancel-request-actions.ts).
+
+   A refused apply is NOT an error for the submit: the amendment exists and sits
+   in the queue as REQUESTED, which is exactly where it sat before this existed,
+   and the desk that raised it can still sign it. So the failure is swallowed
+   here and reported as `autoApplied: 0` — the notice then says 'waiting for
+   Logistic' instead of 'applied', which is the truth in that case.
+
+   It lives in this ONE hook because all four surfaces that raise an amendment
+   (SO detail, MobileNewSO, MobileDeliveryPlanning, DeliveryFieldsDrawer) call
+   it — a chain written at the call sites would be four chains, and the one that
+   drifted would be the one that left the row pending. */
+async function createAmendmentThenApplyOwn(
+  docNo: string,
+  idempotencyKey: string | undefined,
+  body: unknown,
+): Promise<CreateAmendmentResult> {
+  const created = await authedFetch<CreateAmendmentResult>(
+    `/mfg-sales-orders/${docNo}/amendments`,
+    idempotentInit(idempotencyKey, { method: 'POST', body: JSON.stringify(body) }),
+  );
+  const ids = created.selfApprovable ?? [];
+  if (ids.length === 0) return { ...created, autoApplied: 0, notApplied: [] };
+  let autoApplied = 0;
+  const notApplied: string[] = [];
+  for (const id of ids) {
+    try {
+      await authedFetch(`/so-amendments/${id}/approve-so`, { method: 'PATCH' });
+      autoApplied += 1;
+    } catch {
+      /* RECORDED, not swallowed: the id rides back on the result, `autoApplied`
+         stays short of the halves raised, and the submit notice then says the
+         desk is waiting — which is true, because the row is sitting in the
+         queue as REQUESTED for that desk to sign. Nothing is lost and nobody is
+         told a change applied when it did not. */
+      notApplied.push(id);
+    }
+  }
+  return { ...created, autoApplied, notApplied };
+}
+
 export const useCreateAmendment = () => {
   const qc = useQueryClient();
   return useMutation({
@@ -284,10 +347,7 @@ export const useCreateAmendment = () => {
       lines: CreateAmendmentLine[];
       headerChanges?: SoAmendmentHeaderChanges;
     }) =>
-      authedFetch<{ amendment: AmendmentRow }>(
-        `/mfg-sales-orders/${docNo}/amendments`,
-        idempotentInit(idempotencyKey, { method: 'POST', body: JSON.stringify(body) }),
-      ),
+      createAmendmentThenApplyOwn(docNo, idempotencyKey, body),
     onSuccess: (_, vars) => {
       invalidateAmendmentSideEffects(qc);
       // The SO gains an open amendment → its detail flags (has_open_amendment,

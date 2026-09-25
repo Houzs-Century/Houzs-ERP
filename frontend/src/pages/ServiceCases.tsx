@@ -706,7 +706,7 @@ function CasesView({
     {
       key: "ref_no",
       filterable: true,
-      label: "Ref No",
+      label: "Ref No.",
       // The SO's customer reference (HC/ZNT/PG…) — what the branches and
       // suppliers quote back, so it sits default-visible next to SO No.
       render: (r) => <span className="font-mono text-xs">{r.ref_no || "—"}</span>,
@@ -3059,7 +3059,7 @@ function CreatePanel({
         <div className="space-y-3">
           <div>
             <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
-              Ref No
+              Ref No.
             </div>
             <input
               value={refNo}
@@ -4588,7 +4588,7 @@ function DetailContent({
               <div className="grid grid-cols-2 gap-2">
                 <SoNoSearchEdit value={c.doc_no} onSave={(v) => patch({ doc_no: v })} />
                 <InlineEdit
-                  label="Ref No"
+                  label="Ref No."
                   value={c.ref_no}
                   onSave={(v) => patch({ ref_no: v })}
                   placeholder="e.g. DLPG 0285"
@@ -4664,7 +4664,7 @@ function DetailContent({
                   <div className="mt-1 truncate font-mono text-[13px] font-semibold text-primary-ink">{c.doc_no || "—"}</div>
                 </div>
                 <div className="rounded-md border border-border-subtle bg-bg/60 px-2.5 py-2">
-                  <div className="font-mono text-[9px] font-semibold uppercase tracking-wider text-ink-muted">Ref No</div>
+                  <div className="font-mono text-[9px] font-semibold uppercase tracking-wider text-ink-muted">Ref No.</div>
                   <div className="mt-1 truncate font-mono text-[13px] font-semibold text-ink">{c.ref_no || "—"}</div>
                 </div>
               </div>
@@ -7006,7 +7006,7 @@ function PrintMenu({
              fixed. "Copy" stays because it is the one thing the menu chose. */
           rows={[
             { label: "Customer", value: customer || "—" },
-            ...(refNo ? [{ label: "Ref No", value: refNo }] : []),
+            ...(refNo ? [{ label: "Ref No.", value: refNo }] : []),
             { label: "Stage", value: caseStageLabel(stage ?? "") },
             {
               label: "Service",

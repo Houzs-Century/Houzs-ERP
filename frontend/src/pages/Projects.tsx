@@ -8353,7 +8353,7 @@ function ProjectSalesEntriesSection({
             <thead className="bg-bg/60">
               <tr className="text-left font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">
                 <th className="px-2 py-1.5">Date</th>
-                <th className="px-2 py-1.5">Ref No</th>
+                <th className="px-2 py-1.5">Ref No.</th>
                 <th className="px-2 py-1.5">Customer</th>
                 <th className="px-2 py-1.5 text-right">Amount</th>
                 <th className="px-2 py-1.5 text-right">Deposit</th>

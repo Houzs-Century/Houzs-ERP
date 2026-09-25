@@ -21,7 +21,7 @@ const FIELDS: Record<string, string> = {
   debtorCode: 'Customer code', debtorName: 'Customer', agent: 'Agent',
   phone: 'Phone', email: 'Email', soDate: 'SO date', status: 'Status',
   paymentMethod: 'Payment method', depositSen: 'Deposit',
-  processingDate: 'Processing date', customerSoNo: 'Customer SO ref',
+  processingDate: 'Processing date', customerSoNo: 'Ref No.',
   customerPo: 'Customer PO', customerState: 'State',
   customerDeliveryDate: 'Delivery Date', city: 'City', postcode: 'Postcode',
   buildingType: 'Building type', address1: 'Address 1', address2: 'Address 2',
@@ -39,7 +39,7 @@ const FIELDS: Record<string, string> = {
   emergencyContactName: 'Emergency name', emergencyContactPhone: 'Emergency phone',
   emergencyContactRelationship: 'Emergency relationship',
   targetDate: 'Target date', branding: 'Branding', venue: 'Venue', venueId: 'Venue (master)',
-  salesLocation: 'Sales location', ref: 'Ref', poDocNo: 'PO doc no',
+  salesLocation: 'Sales location', ref: 'Ref No.', poDocNo: 'PO doc no',
   /* Coverage-audit additions (2026-07) — keys emitted by the DO amend mirror,
      Delivery Planning /fields + /schedule and payment/automation entries. */
   amendDateFromCustomer: 'Amend date (customer)', amendedDeliveryDate: 'Amended delivery date',

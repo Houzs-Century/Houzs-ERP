@@ -101,6 +101,17 @@ just `completed`.
   `POST`/`PATCH`/`DELETE /api/assr/:id/supplier-returns` (`service_cases.write`,
   under the `enforceCaseScope` `/:id` guard). `qc_receipt_date` stays a
   Verification-stage field, NOT a supplier-return date.
+- **Each supplier return has its own document number** `ref_no` =
+  `SVC-RTN-YYMM-NNNN` (MYT month), minted through `services/documentRefs.ts`
+  (registry `document_refs`, `entity_type='assr_supplier_return'`) on the
+  shared `scm.next_doc_no_n` counter. Numbering never blocks saving a trip:
+  a trip left unnumbered is numbered on the next `listSupplierReturns` read.
+  Removing a trip VOIDs its number in the registry; it is never re-issued.
+  Its paper is the Supplier Return Note: `GET /api/assr-print/:id?variant=supplier&round=<trip id>`
+  (Print on each trip, desktop + mobile, path from `returnNotePath`).
+- **Case number** `ASSR/YYMM-NNN`: month in MYT, number from
+  `scm.next_doc_no_n` floored at the month's live max (`nextAssrNumber`); the
+  unique index on `assr_no` + the create retry stay as the backstop.
 - **Reopen for a DIFFERENT complaint** (`POST /api/assr/:id/reopen`,
   `service_cases.write`): a completed/voided case that comes back with a new
   problem keeps its number. The OLD `complaint_issue` is logged to the timeline

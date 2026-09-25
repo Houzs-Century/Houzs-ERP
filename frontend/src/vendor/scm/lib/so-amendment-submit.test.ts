@@ -95,6 +95,41 @@ describe('amendmentSubmittedNotice', () => {
       .toBe('It now needs approval before the order is revised.');
   });
 
+  /* Owner 2026-09-24: 「如果是 Logistic admin 修改客户信息, Delivery Date - 无需
+     approver」. When the Logistic desk raises its own header-only delivery
+     change the server offers it the shortcut, the hook applies it, and the
+     operator must be told it LANDED — 'waiting for Logistic' would send them
+     hunting for a queue row that is already signed. */
+  it('says APPLIED when every raised half applied on the spot', () => {
+    const n = amendmentSubmittedNotice('AMENDMENT', {
+      amendments: [{ amendment_no: 'A1', lane: 'DELIVERY' }],
+      autoApplied: 1,
+    });
+    expect(n.title).toBe('Change applied');
+    expect(n.body).toMatch(/straight away/);
+    expect(n.body).not.toMatch(/waiting/i);
+  });
+
+  it('still names the desks when only ONE half of a split applied', () => {
+    const n = amendmentSubmittedNotice('AMENDMENT', {
+      amendments: [
+        { amendment_no: 'A1', lane: 'LINES' },
+        { amendment_no: 'A2', lane: 'DELIVERY' },
+      ],
+      autoApplied: 1,
+    });
+    expect(n.title).toBe('Amendment split into two approvals');
+    expect(n.body).toContain('A1 → Purchaser');
+  });
+
+  /* The apply can be refused (the row is then REQUESTED, exactly where it sat
+     before this existed). The notice must not claim it applied. */
+  it('falls back to the waiting message when the apply did not land', () => {
+    expect(amendmentSubmittedNotice('AMENDMENT', {
+      amendments: [{ lane: 'DELIVERY' }], autoApplied: 0,
+    }).body).toBe('Waiting for Logistic — one signature applies it to the order.');
+  });
+
   it('survives a response shaped nothing like the contract', () => {
     expect(amendmentSubmittedNotice('AMENDMENT', undefined).title).toBe('Amendment submitted');
     expect(amendmentSubmittedNotice('AMENDMENT', { amendments: [] }).title).toBe('Amendment submitted');

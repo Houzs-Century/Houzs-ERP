@@ -1022,7 +1022,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
               {/* Only when actually shared — a field blank on almost every
                   order teaches people to stop reading it. */}
               {sharedWith && <RoField label="Shared with" value={sharedWith} />}
-              <RoField label="Customer SO ref" value={val(h.customer_so_no ?? h.ref)} mono />
+              <RoField label="Ref No." value={val(h.customer_so_no ?? h.ref)} mono />
               {/* Emergency contact — whole row HIDDEN when no phone on file
                   (Build Spec §6 + null-field rule: "hide the row"). Value =
                   "name · phone (relationship)" from the header's emergency_* cols. */}

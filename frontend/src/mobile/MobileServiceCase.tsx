@@ -1160,7 +1160,7 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
               options={[{ v: "own", label: "Own team" }, { v: "supplier", label: "Supplier" }]}
               onPick={(v) => patchCase({ delivery_by: v }, "Couldn't save delivery-by")} />
             <EditRow label="DO date" type="date" value={get(c, "doDate", "do_date")} busy={busy} disabled={dis} onSave={(v) => patchCase({ do_date: v }, "Couldn't save DO date")} />
-            <EditRow label="Ref No" value={get(c, "refNo", "ref_no")} mono busy={busy} disabled={dis} onSave={(v) => patchCase({ ref_no: v }, "Couldn't save Ref No")} />
+            <EditRow label="Ref No." value={get(c, "refNo", "ref_no")} mono busy={busy} disabled={dis} onSave={(v) => patchCase({ ref_no: v }, "Couldn't save Ref No")} />
           </>
         );
       case "completed":
@@ -1497,7 +1497,7 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
                     // SO re-matches customer info from the SO mirror
                     // server-side.
                     { key: "doc_no", label: "SO No", value: get(c, "docNo", "doc_no"), type: "so" },
-                    { key: "ref_no", label: "Ref No", value: get(c, "refNo", "ref_no"), type: "text" },
+                    { key: "ref_no", label: "Ref No.", value: get(c, "refNo", "ref_no"), type: "text" },
                     { key: "customer_name", label: "Customer", value: customer(c) === "—" ? "" : customer(c), type: "text" },
                     { key: "phone", label: "Phone", value: get(c, "phone", "customerPhone", "customer_phone"), type: "text" },
                     { key: "customer_email", label: "Email", value: get(c, "customerEmail", "customer_email"), type: "text" },
@@ -1526,7 +1526,7 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
                           <div className="money" style={{ fontSize: 12.5, fontWeight: 600, color: TEAL_DK, marginTop: 3, ...cellEllipsis }}>{String(get(c, "docNo", "doc_no") ?? "—")}</div>
                         </div>
                         <div style={{ background: FIELD_BG, border: `1px solid ${DIM}`, borderRadius: 9, padding: "7px 10px" }}>
-                          <div className="money" style={{ fontSize: 8.5, letterSpacing: ".1em", textTransform: "uppercase", color: GREY, fontWeight: 600 }}>Ref No</div>
+                          <div className="money" style={{ fontSize: 8.5, letterSpacing: ".1em", textTransform: "uppercase", color: GREY, fontWeight: 600 }}>Ref No.</div>
                           <div className="money" style={{ fontSize: 12.5, fontWeight: 600, color: INK, marginTop: 3, ...cellEllipsis }}>{String(get(c, "refNo", "ref_no") ?? "—")}</div>
                         </div>
                       </div>

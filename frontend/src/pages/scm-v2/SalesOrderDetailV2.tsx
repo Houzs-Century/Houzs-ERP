@@ -1309,7 +1309,7 @@ function SalesOrderDetailV2ReadOnly() {
                   muted={!salesOrder.customer_type}
                 />
                 <Field
-                  label="Customer SO ref"
+                  label="Ref No."
                   value={refOf(salesOrder)}
                   mono={refOf(salesOrder) !== "—"}
                   muted={refOf(salesOrder) === "—"}

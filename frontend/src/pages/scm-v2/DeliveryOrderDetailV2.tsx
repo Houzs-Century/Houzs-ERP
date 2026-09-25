@@ -1306,7 +1306,7 @@ export function DeliveryOrderDetailV2() {
                   value={deliveryOrder.debtor_name || "—"}
                 />
                 <Field
-                  label="Customer SO ref"
+                  label="Ref No."
                   value={refOf(deliveryOrder)}
                   mono={refOf(deliveryOrder) !== "—"}
                   accent={refOf(deliveryOrder) !== "—"}

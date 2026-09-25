@@ -361,7 +361,7 @@ export const ConsignmentNoteDetail = () => {
       <PageHeader back
         eyebrow="Supply Chain"
         title={`${header.do_number} — ${header.debtor_name}`}
-        description={`Date ${fmtDateOrDash(header.do_date)} · ${header.line_count} ${header.line_count === 1 ? 'line' : 'lines'}${header.customer_so_no ? ` · Customer Ref ${header.customer_so_no}` : ''}`}
+        description={`Date ${fmtDateOrDash(header.do_date)} · ${header.line_count} ${header.line_count === 1 ? 'line' : 'lines'}${header.customer_so_no ? ` · Ref No. ${header.customer_so_no}` : ''}`}
         actions={
           <>
           <div className={styles.actions}>
@@ -676,7 +676,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
                 disabled={inputsDisabled} onChange={(e) => set('customerName', e.target.value)} />
             </label>
             <label className={styles.field}>
-              <span className={styles.fieldLabel}>Customer Ref</span>
+              <span className={styles.fieldLabel}>Ref No.</span>
               <input className={styles.fieldInput} value={form.customerSoNo}
                 placeholder="Their PO / order number" disabled={inputsDisabled}
                 onChange={(e) => set('customerSoNo', e.target.value)} />

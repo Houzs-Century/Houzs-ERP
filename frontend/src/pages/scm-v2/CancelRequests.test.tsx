@@ -72,6 +72,16 @@ describe('CancelRequests', () => {
     expect(screen.getByText('Amy')).toBeTruthy();
   });
 
+  /* Owner 2026-09-25: every search box finds a record by its SO's reference. */
+  it("shows the order's reference and the search finds a request by it", async () => {
+    ROWS = [base({ id: 'r1', doc_ref: null, doc_customer_so_no: 'CUST-PO-7' }), freshRows()[1]];
+    mount();
+    expect(await screen.findByText('CUST-PO-7')).toBeTruthy();
+    fireEvent.change(screen.getByPlaceholderText(/Search document no, ref no./), { target: { value: 'cust-po' } });
+    await waitFor(() => expect(screen.queryByText('PO-7')).toBeNull());
+    expect(screen.getByText('SO-1')).toBeTruthy();
+  });
+
   it('offers no signature on a purchase order, wildcard or not', async () => {
     mount();
     expect(await screen.findByText('Approve (level 1)')).toBeTruthy();

@@ -20,6 +20,7 @@ import type { Env, Variables } from '../env';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   crossCompanySourceRefusal,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
+import { stampDoLineSoRefs } from '../lib/so-ref-lookup';
 import { writeMovements, defaultWarehouseId } from '../lib/inventory-movements';
 import { assertLinkedLineItemsMatch } from '../lib/line-link-item-identity';
 import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
@@ -819,6 +820,8 @@ deliveryReturns.get('/returnable-do-lines', async (c) => {
   if (!canViewScmFinance(c)) {
     for (const l of lines) delete (l as unknown as Record<string, unknown>).unitCostSen;
   }
+  // The DO's order reference, for the picker's search (owner 2026-09-25).
+  await stampDoLineSoRefs(sb, lines, (q) => scopeToCompany(q, c), 'returnable-do-lines');
   return c.json({ lines });
 });
 

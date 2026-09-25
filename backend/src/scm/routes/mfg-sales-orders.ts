@@ -21,6 +21,7 @@ import {
   type RuleLineInput,
   passesRefinementColumns,
   LANE_LABEL, PRICE_LANE_COMPANY_CODE, type AmendmentLane,
+  laneSelfApproves, SELF_APPROVE_KEY,
 } from '../shared';
 import { computeSoDeliveryFee, type SoDeliveryFeeResult } from '../shared/pricing';
 /* Special delivery fee rules (migration 0024, #691 RuleTarget) — the model |
@@ -11119,6 +11120,16 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
     }
   };
 
+  /* Owner 2026-09-24: 「如果是 Logistic admin 修改客户信息, Delivery Date - 无需
+     approver」. A DELIVERY half raised by someone who can already SIGN that lane,
+     and that touches no service line, takes the shortcut: the row is still
+     written (the revision, the audit, the write-back all hang off it) and the
+     client applies it through the ordinary approve route, with every guard that
+     route carries. The rule itself is shared/amendment-self-approve.ts — this
+     file only asks it. Nothing here applies anything. */
+  const holdsDeliveryKey = hasHouzsPerm(c, SELF_APPROVE_KEY);
+  const selfApprovable: string[] = [];
+
   for (const [i, laneKey] of split.lanes.entries()) {
     const half = split.perLane[laneKey];
     const laneHasHeader = half.headerKeys.length > 0;
@@ -11181,6 +11192,10 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
       }
     }
 
+    if (laneSelfApproves(laneKey, { holdsLaneKey: holdsDeliveryKey, hasLineChanges: half.lines.length > 0 })) {
+      selfApprovable.push(amendment.id);
+    }
+
     /* History row now, per lane; the notice after the loop, once every half has
        landed. Both live in lib/amendment-raised-effects. */
     await recordAmendmentRequested(sb, {
@@ -11191,8 +11206,12 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
     });
   }
 
+  /* A half that applies on submit needs no "waiting for your signature" notice —
+     the desk it would call is the desk that raised it. The approve route still
+     posts its own APPROVED notice when the apply lands. */
   await notifyAmendmentsRaised(c, sb, {
-    docNo, reason: body.reason, created: createdAmendments,
+    docNo, reason: body.reason,
+    created: createdAmendments.filter((a) => !selfApprovable.includes(a.id)),
     salespersonStaffId: (soRow as { salesperson_id?: string | null }).salesperson_id,
   });
 
@@ -11203,5 +11222,9 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
     amendment: createdAmendments[0],
     amendments: createdAmendments,
     lanes: split.lanes,
+    /* Ids the caller may apply straight away through PATCH /so-amendments/:id/
+       approve-so — the gate there re-checks the key, so this is an invitation,
+       never an authorisation. Empty for everyone else. */
+    selfApprovable,
   }, 201);
 });

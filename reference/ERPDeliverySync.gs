@@ -197,6 +197,38 @@ function erpRestoreDeletedOrders() {
   return erpRestoreByDocNos_(["SO-007223", "SO-007718", "SO-012654", "SO-012596", "SO-013020", "SO-012319"]);
 }
 
+// Menu "Restore Orders by Doc No" (owner 2026-09-25): staff type the numbers
+// instead of copy-pasting ERP exports, which landed raw HC-SO-/SRW WAREHOUSE
+// rows on the wrong regional tab. SO-xxxxxx and HC-SO-xxxxxx both resolve.
+function manualErpRestoreByDocNos() {
+  var ui = SpreadsheetApp.getUi();
+  var resp = ui.prompt(
+    "Restore Orders by Doc No",
+    "Doc. No. of each order to put back on its tab (SO-013417 or HC-SO-013417).\n" +
+      "Separate several with a comma, space or new line. Orders already on their tab are skipped.",
+    ui.ButtonSet.OK_CANCEL
+  );
+  if (resp.getSelectedButton() !== ui.Button.OK) return;
+  var seen = {};
+  var docNos = resp.getResponseText().split(/[\s,;]+/)
+    .map(function (s) { return s.trim().toUpperCase(); })
+    .filter(function (s) { if (!s || seen[s]) return false; seen[s] = true; return true; });
+  if (!docNos.length) { ui.alert("No Doc. No. entered."); return; }
+
+  var ss = getTargetSs();
+  var rid = Utilities.getUuid();
+  var start = new Date();
+  var user = Session.getActiveUser().getEmail();
+  try {
+    var msg = erpRestoreByDocNos_(docNos);
+    recordExecutionLog(ss, rid, "ERP_RESTORE_MANUAL", start, new Date(), "SYNCED", docNos.join(", ") + " | " + msg, user);
+    ui.alert("Restore Orders\n\n" + msg);
+  } catch (e) {
+    recordExecutionLog(ss, rid, "ERP_RESTORE_MANUAL", start, new Date(), "FAILED", docNos.join(", ") + " | " + e.message, user);
+    ui.alert("Restore Orders FAILED\n" + e.message);
+  }
+}
+
 /**
  * The ERP only overwrites a cell when it KNOWS the value. For every field the
  * writer touches, a null from the ERP keeps what the sheet already holds — so

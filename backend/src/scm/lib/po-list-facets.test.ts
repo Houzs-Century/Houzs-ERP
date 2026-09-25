@@ -8,7 +8,7 @@ import type { PoListFilters } from './po-list-read';
 
 const base: PoListFilters = {
   status: null, supplierId: null, q: null, from: null, to: null, sort: null,
-  creditorNames: null, creditorCodes: null, currencies: null, docDates: null,
+  creditorNames: null, creditorCodes: null, currencies: null, docDates: null, soRefPoIds: [],
 };
 const ctx = { get: (k: string) => (k === 'companyId' ? 1 : undefined) } as { get(key: string): unknown };
 const VALID = new Set(['SUBMITTED']);

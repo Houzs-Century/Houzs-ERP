@@ -15,6 +15,9 @@
 export interface SupplierReturn {
   id: number;
   round_no: number;
+  /** The trip's own document number, SVC-RTN-YYMM-NNNN. Null only until the
+   *  server has numbered it. */
+  ref_no?: string | null;
   /** YYYY-MM-DD — sent to the factory/supplier. */
   pickup_at: string | null;
   /** YYYY-MM-DD — back from the factory/supplier. */
@@ -55,6 +58,11 @@ export function nextRoundNo(rows: readonly { round_no: number }[]): number {
 /** Card / chip title for a trip, e.g. "Return to Supplier #2". */
 export function roundLabel(roundNo: number): string {
   return `Return to Supplier #${roundNo}`;
+}
+
+/** The trip's printable Supplier Return Note (supplier copy, this trip only). */
+export function returnNotePath(caseId: number, roundId: number): string {
+  return `/api/assr-print/${caseId}?variant=supplier&round=${roundId}`;
 }
 
 /** QC-on-receipt outcomes, shared by both surfaces' selects. */

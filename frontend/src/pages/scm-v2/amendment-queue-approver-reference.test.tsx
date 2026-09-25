@@ -79,14 +79,14 @@ describe('desktop Sales Order Amendment queue', () => {
     expect(gridBadges(container)).toEqual(['PURCHASER:Purchaser', 'LOGISTIC:Logistic', 'LEGACY:Legacy']);
   });
 
-  test('a Reference column shows the Sales Order reference, by the Sales Order list rule', () => {
+  test('a Ref No. column shows the Sales Order reference, by the Sales Order list rule', () => {
     soRows = [
       row('a', 14, { so_ref: 'MR TAN / SUNWAY', so_customer_so_no: 'IGNORED WHEN REF IS SET' }),
       row('b', 13, { so_ref: null, so_customer_so_no: 'CUST-PO-7' }),
       row('c', 12, { so_ref: null, so_customer_so_no: null }),
     ];
     const { container } = render(<MemoryRouter><Amendments /></MemoryRouter>);
-    expect(screen.getByRole('button', { name: 'Reference' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Ref No.' })).toBeTruthy();
     const rows = [...container.querySelectorAll('tr[data-vrow]')].map((tr) => tr.textContent);
     expect(rows[0]).toContain('MR TAN / SUNWAY');
     expect(rows[0]).not.toContain('IGNORED WHEN REF IS SET');

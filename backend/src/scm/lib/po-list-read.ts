@@ -17,6 +17,7 @@ import { PO_STATUS_BUCKETS } from './po-status-buckets';
 import { HELD_OR_TERM, HOLD_COLUMNS } from './document-hold';
 import { escapeForOr } from './postgrest-search';
 import { scopeToCompany, type CompanyScopeCtx } from './companyScope';
+import { inArm } from './so-ref-search';
 import { chunkIn } from './paginate-all';
 
 export const PO_HEADER_COLS =
@@ -61,6 +62,9 @@ export type PoListFilters = {
   currencies: string[] | null;
   /** Doc Date funnel: exact `po_date` values (YYYY-MM-DD). */
   docDates: string[] | null;
+  /** POs with a line bought for an SO whose reference matches `q`
+      (lib/so-ref-search.ts); a PO carries no ref of its own. */
+  soRefPoIds: string[];
 };
 
 const param = (v: string | undefined): string | null => (v === undefined || v === '' ? null : v);
@@ -99,6 +103,7 @@ export function readPoListFilters(query: (key: string) => string | undefined): P
     creditorCodes: jsonArrayParam(query('creditorCodes')),
     currencies: jsonArrayParam(query('currencies')),
     docDates: isoDates(jsonArrayParam(query('docDates'))),
+    soRefPoIds: [],
   };
 }
 
@@ -180,7 +185,7 @@ export function filterPoList<Q>(q: Q, f: PoListFilters, c: CompanyScopeCtx, vali
      ilike'd here. */
   if (f.q) {
     const s = escapeForOr(f.q);
-    if (s) out = out.or(`po_number.ilike.%${s}%,notes.ilike.%${s}%`);
+    if (s) out = out.or([`po_number.ilike.%${s}%`, `notes.ilike.%${s}%`, ...inArm('id', f.soRefPoIds)].join(','));
   }
   if (f.from) out = out.gte('po_date', f.from);
   if (f.to) out = out.lte('po_date', f.to);

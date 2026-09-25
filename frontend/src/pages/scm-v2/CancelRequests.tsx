@@ -22,6 +22,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { fmtDateTime } from '../../vendor/shared/format';
 import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
 import { STATUS_TONES } from '../../vendor/scm/lib/status-pill';
+import { cancelRequestReferenceOf } from '../../vendor/scm/lib/amendment-queue-rows';
 import {
   cancelRequestLine,
   docTypeOfRow,
@@ -116,6 +117,12 @@ export const CancelRequests = () => {
       exportValue: (r) => `${r.doc_type} ${r.doc_number}`,
       groupValue: (r) => DOC_LABEL[r.doc_type],
       sortFn: (a, b) => a.doc_number.localeCompare(b.doc_number),
+    },
+    {
+      key: 'reference', label: 'Ref No.', width: 170, sortable: true,
+      accessor: (r) => cancelRequestReferenceOf(r) || '—',
+      searchValue: (r) => cancelRequestReferenceOf(r),
+      sortFn: (a, b) => cancelRequestReferenceOf(a).localeCompare(cancelRequestReferenceOf(b)),
     },
     {
       key: 'requested_by', label: 'Requested by', width: 170, sortable: true, groupable: true,
@@ -214,7 +221,7 @@ export const CancelRequests = () => {
           storageKey={STORAGE_KEY}
           exportName="Cancellation Requests"
           rowKey={(r) => r.id}
-          searchPlaceholder="Search document no, requested by, reason…"
+          searchPlaceholder="Search document no, ref no., requested by, reason…"
           loadedSearchLimit={500}
           groupBanner={false}
           onRowDoubleClick={(r) => openRow(r)}

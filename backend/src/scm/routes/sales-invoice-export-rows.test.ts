@@ -89,7 +89,7 @@ describe('GET /sales-invoices/export/rows', () => {
     const other = si({ salesperson_id: 'staff-9' });
     const sb = fakeSb(tables({ sis: [mine, other], lines: [line(mine), line(other)] }));
     const ctx = { get: (k: string) => (k === 'companyId' ? 1 : undefined) };
-    const out = await readSiExportRows(sb, ctx, { status: null, q: null, from: null, to: null, sort: null, debtorNames: null, currencies: null }, ['staff-1']);
+    const out = await readSiExportRows(sb, ctx, { status: null, q: null, from: null, to: null, sort: null, debtorNames: null, currencies: null, soRefDocNos: [] }, ['staff-1']);
     if (out.error !== null) throw new Error(out.error);
     expect(out.rows.map((r) => r.id)).toEqual([mine.id]);
   });

@@ -17,6 +17,16 @@
 import type { Context } from "hono";
 import type { Env } from "../types";
 import { transitionStage, logActivity, type Stage } from "./assr";
+import { mintDocumentRef, voidDocumentRef } from "./documentRefs";
+
+// Each trip's own document number, SVC-RTN-YYMM-NNNN (owner 2026-09-24): the
+// company-wide registry, so it is unique, restarts monthly (MYT) and is voided,
+// never re-issued, when the trip is removed.
+export const SUPPLIER_RETURN_REF = {
+  deptCode: "SVC",
+  typeCode: "RTN",
+  entityType: "assr_supplier_return",
+} as const;
 
 export interface SupplierReturnInput {
   pickup_at?: string | null;
@@ -45,6 +55,26 @@ export function nextSupplierReturnRoundNo(
   return rows.reduce((m, r) => Math.max(m, r.round_no), 0) + 1;
 }
 
+/** Mint (or re-read — the registry is keyed by the trip) the trip's number and
+ *  store it. Never throws: a trip must not fail to save because numbering did;
+ *  listSupplierReturns retries any live trip still without one. */
+async function assignSupplierReturnRef(env: Env, roundId: number, createdBy: number | null): Promise<string | null> {
+  try {
+    const ref = await mintDocumentRef(env, {
+      ...SUPPLIER_RETURN_REF,
+      entityId: String(roundId),
+      createdBy,
+    });
+    await env.DB.prepare(`UPDATE assr_supplier_returns SET ref_no = ? WHERE id = ? AND ref_no IS NULL`)
+      .bind(ref.refNo, roundId)
+      .run();
+    return ref.refNo;
+  } catch (e) {
+    console.warn(`[assr.supplier-return] could not number trip ${roundId}:`, e instanceof Error ? e.message : e);
+    return null;
+  }
+}
+
 export async function listSupplierReturns(env: Env, assrId: number) {
   const r = await env.DB.prepare(
     `SELECT sr.*, u.name AS created_by_name, cr.company_name AS creditor_name
@@ -56,7 +86,12 @@ export async function listSupplierReturns(env: Env, assrId: number) {
   )
     .bind(assrId)
     .all();
-  return r.results ?? [];
+  const rows = (r.results ?? []) as Array<Record<string, unknown>>;
+  for (const row of rows) {
+    if (row.ref_no) continue;
+    row.ref_no = await assignSupplierReturnRef(env, Number(row.id), (row.created_by as number | null) ?? null);
+  }
+  return rows;
 }
 
 // Re-point the case's summary columns at the current (latest) round so the
@@ -141,11 +176,13 @@ export async function openSupplierReturn(
     input.reason ? `第 ${roundNo} 次返厂 — ${input.reason}` : `第 ${roundNo} 次返厂`,
     userId, { category: "supplier" },
   );
-  return (await env.DB.prepare(
+  const round = await env.DB.prepare(
     `SELECT * FROM assr_supplier_returns WHERE assr_id = ? AND round_no = ? AND archived_at IS NULL`
   )
     .bind(assrId, roundNo)
-    .first<Record<string, unknown>>()) ?? null;
+    .first<Record<string, unknown>>();
+  if (round && !round.ref_no) round.ref_no = await assignSupplierReturnRef(env, Number(round.id), userId);
+  return round ?? null;
 }
 
 // Edit one trip's recorded fields. Re-mirrors so the case columns follow the
@@ -184,6 +221,11 @@ export async function archiveSupplierReturn(
   roundId: number,
   userId: number,
 ): Promise<boolean> {
+  const trip = await env.DB.prepare(
+    `SELECT ref_no FROM assr_supplier_returns WHERE id = ? AND assr_id = ? AND archived_at IS NULL`
+  )
+    .bind(roundId, assrId)
+    .first<{ ref_no: string | null }>();
   const r = await env.DB.prepare(
     `UPDATE assr_supplier_returns SET archived_at = datetime('now'), updated_at = datetime('now')
       WHERE id = ? AND assr_id = ? AND archived_at IS NULL`
@@ -191,6 +233,11 @@ export async function archiveSupplierReturn(
     .bind(roundId, assrId)
     .run();
   if (r.meta.changes > 0) {
+    if (trip?.ref_no) {
+      await voidDocumentRef(env, trip.ref_no, userId, "Supplier return removed").catch((e) =>
+        console.warn(`[assr.supplier-return] could not void ${trip.ref_no}:`, e instanceof Error ? e.message : e),
+      );
+    }
     await reprojectLatestSupplierReturn(env, assrId);
     await logActivity(env, assrId, "supplier_return_archived", `round ${roundId}`, null, null, userId, { category: "supplier" });
   }

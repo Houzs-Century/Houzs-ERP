@@ -978,7 +978,7 @@ export function DeliveryReturnDetailV2() {
                   muted={doOf(deliveryReturn) === "—"}
                 />
                 <Field
-                  label="Customer ref"
+                  label="Ref No."
                   value={refOf(deliveryReturn)}
                   mono={refOf(deliveryReturn) !== "—"}
                   muted={refOf(deliveryReturn) === "—"}

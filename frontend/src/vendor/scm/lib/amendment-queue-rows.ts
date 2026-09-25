@@ -123,12 +123,17 @@ export const amendmentQueueRowOf = (a: AmendmentRow, reference: string): Amendme
   cancel: null,
 });
 
+/** The customer reference of the order behind a cancellation request (the
+ *  server sends the raw pair for SO rows and for a DO's order). */
+export const cancelRequestReferenceOf = (r: Pick<CancelRequestRow, 'doc_ref' | 'doc_customer_so_no'>): string =>
+  customerRefOf({ ref: r.doc_ref ?? null, customer_so_no: r.doc_customer_so_no ?? null });
+
 export const cancelQueueRowOf = (r: CancelRequestRow): AmendmentQueueRow => ({
   key: `cancel:${r.id}`,
   kind: 'CANCEL',
   kindLabel: 'Cancellation',
   soDocNo: r.doc_number || r.doc_key,
-  reference: customerRefOf({ ref: r.doc_ref ?? null, customer_so_no: r.doc_customer_so_no ?? null }),
+  reference: cancelRequestReferenceOf(r),
   numberLabel: 'Cancel',
   approverKey: cancelApproverKey(r),
   approverLabel: cancelApproverLabel(r),

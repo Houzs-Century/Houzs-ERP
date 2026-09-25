@@ -88,7 +88,7 @@ async function seriesFloor(env: Env, series: string): Promise<number> {
  *  floor + 1 guarded by the registry's primary key. Any other failure throws:
  *  a fallback taken on a real error would mint against a database that just
  *  refused the atomic path. */
-async function claimFromCounter(env: Env, series: string, floor: number): Promise<number | null> {
+export async function claimFromCounter(env: Env, series: string, floor: number): Promise<number | null> {
   try {
     // company-scope: the counter is the same company-wide authority the SCM document numbers use (mig 0316).
     const row = await env.DB.prepare("SELECT scm.next_doc_no_n(?, ?) AS n")
