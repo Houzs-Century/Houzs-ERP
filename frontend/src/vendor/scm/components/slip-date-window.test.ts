@@ -32,7 +32,7 @@ describe("slipDateProblem — the rule plus the two things the rule must not kno
     expect(slipDateProblem({ paidAt: TODAY, methodLabel: "Cash" }, TODAY, false)).toBeNull();
     const problem = slipDateProblem({ paidAt: OUT, methodLabel: "Cash" }, TODAY, false);
     expect(problem).toContain("14 days");
-    expect(problem).toContain("09/09/2026");
+    expect(problem).toContain("2026/09/09");
   });
 
   test("the backdate right clears it — that is the whole exception", () => {
@@ -86,15 +86,15 @@ describe("the server's refusal survives the client's error filter", () => {
   test("the too-old sentence renders verbatim, not as the generic 400 line", () => {
     const body = JSON.stringify({
       error: "slip_date_out_of_window",
-      reason: "Slip date is more than 14 days old. The earliest you can key in is 09/09/2026.",
+      reason: "Slip date is more than 14 days old. The earliest you can key in is 2026/09/09.",
     });
-    expect(humanApiError(400, body)).toContain("earliest you can key in is 09/09/2026");
+    expect(humanApiError(400, body)).toContain("earliest you can key in is 2026/09/09");
   });
 
   test("the future sentence too", () => {
     const body = JSON.stringify({
       error: "slip_date_out_of_window",
-      reason: "Slip date cannot be in the future. The latest you can key in is 23/09/2026.",
+      reason: "Slip date cannot be in the future. The latest you can key in is 2026/09/23.",
     });
     expect(humanApiError(400, body)).toContain("cannot be in the future");
   });

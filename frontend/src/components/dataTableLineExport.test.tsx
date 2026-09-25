@@ -96,8 +96,8 @@ describe("applyColumnFilters / sortTableRows — the grid's own rules", () => {
   });
 
   it("a server-sorted column is left in server order; a disableSort column sorts here", () => {
-    expect(sortTableRows(docs, { key: "no", dir: "desc" }, columns, true).map((d) => d.id)).toEqual(["a", "b", "c"]);
-    expect(sortTableRows(docs, { key: "no", dir: "desc" }, columns, false).map((d) => d.id)).toEqual(["c", "b", "a"]);
+    expect(sortTableRows(docs, { key: "no", dir: "desc" }, columns, true, null).map((d) => d.id)).toEqual(["a", "b", "c"]);
+    expect(sortTableRows(docs, { key: "no", dir: "desc" }, columns, false, null).map((d) => d.id)).toEqual(["c", "b", "a"]);
   });
 });
 
@@ -108,8 +108,8 @@ describe("the grid keeps its rows' identity when nothing filters or sorts", () =
      looped — every frontend test shard hung. */
   it("returns the same array for no funnel and no sort", () => {
     expect(applyColumnFilters(docs, {}, columns)).toBe(docs);
-    expect(sortTableRows(docs, null, columns, false)).toBe(docs);
-    expect(sortTableRows(docs, { key: "no", dir: "asc" }, columns, true)).toBe(docs);
+    expect(sortTableRows(docs, null, columns, false, null)).toBe(docs);
+    expect(sortTableRows(docs, { key: "no", dir: "asc" }, columns, true, null)).toBe(docs);
   });
 
   it("a parent that stores the reported rows and rebuilds its columns settles", () => {

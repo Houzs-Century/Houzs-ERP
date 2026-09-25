@@ -101,7 +101,7 @@ describe('the AP Payment (?type=ap)', () => {
        a supplier in (owner: 我也要看invoice 的日期). */
     const numbers = screen.getAllByText(/2990-PI-26/).map((el) => el.textContent);
     expect(numbers).toEqual(['2990-PI-2609-002', '2990-PI-2609-001']);
-    expect(screen.getByText('15/08/2026')).toBeTruthy();
+    expect(screen.getByText('2026/08/15')).toBeTruthy();
 
     /* Tick the first invoice — the amount becomes its full outstanding, and
        the footer spells out the entry it will book. */
@@ -342,8 +342,8 @@ describe('the plain Payment Voucher (/new)', () => {
     );
     const [y, m, d] = todayMyt().split('-');
     const date = screen.getByLabelText(/Voucher Date/) as HTMLInputElement;
-    expect(date.value).toBe(`${d}/${m}/${y}`);
-    expect(date.value).not.toBe('25/08/2026');
+    expect(date.value).toBe(`${y}/${m}/${d}`);
+    expect(date.value).not.toBe('2026/08/25');
     expect((screen.getByLabelText('Notes') as HTMLTextAreaElement).value).toBe('BILL T0012 · DATED 2026-08-25 · DUE 2026-09-15');
   });
 

@@ -192,7 +192,7 @@ describe("MobileAnnouncements — a phone-posted notice can expire", () => {
     // DateField's visible box is a DD/MM/YYYY text input (owner-locked format);
     // the time half is a native <input type="time">.
     fireEvent.change(screen.getByLabelText(/Hide automatically after date/i), {
-      target: { value: "01/09/2026" },
+      target: { value: "2026/09/01" },
     });
     fireEvent.change(screen.getByLabelText(/Hide automatically after time/i), {
       target: { value: "18:00" },

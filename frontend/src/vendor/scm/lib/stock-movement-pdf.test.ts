@@ -99,7 +99,7 @@ describe('the money matcher these tests depend on', () => {
   });
 
   test('it does not match what a stock document legitimately draws', () => {
-    for (const v of ['20/08/2026', 'TOTAL QTY', '10', '-1', '+2', '2 of 3',
+    for (const v of ['2026/08/20', 'TOTAL QTY', '10', '-1', '+2', '2 of 3',
       'HC-ST-2608-001', 'WH-BLK', 'Page 1 of 1', 'fabriccode bf-16 · gap 16']) {
       expect(MONEY.test(v), v).toBe(false);
     }
@@ -188,7 +188,7 @@ describe('Stock Transfer PDF', () => {
     const { draws } = await renderTransfer(TRANSFER_HEADER, TRANSFER_LINES);
     const text = draws.map((d) => d.text);
     expect(text).toContain('ST No: HC-ST-2608-001');
-    expect(text).toContain('Date: 20/08/2026');
+    expect(text).toContain('Date: 2026/08/20');
     /* Right-hand detail rail: drawInfoColumns paints the value as ": <value>".
        The word is CONFIRMED, not the stored `POSTED`: since 2026-08-26 the
        status comes from statusLabel('stockTransfer', …), the same map the
@@ -396,7 +396,7 @@ describe('Stock Take PDF', () => {
     const { draws } = await renderTake(TAKE_HEADER, TAKE_LINES);
     const text = draws.map((d) => d.text);
     expect(text).toContain('STK No: HC-STK-2608-004');
-    expect(text).toContain('Date: 21/08/2026');
+    expect(text).toContain('Date: 2026/08/21');
     expect(text).toContain('WH-BLK · Balakong Warehouse');
     expect(text).toContain('All SKUs');
     // Resolved by the page, never a uuid.

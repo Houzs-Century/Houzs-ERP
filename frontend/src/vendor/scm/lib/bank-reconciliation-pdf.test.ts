@@ -96,7 +96,7 @@ describe('a month that reconciles', () => {
       },
     }));
     const said = r.provenance.join(' ');
-    expect(said).toContain('Closing MYR 10,900.00 as typed for the end of 2026-09 by Chew on 13/09/2026');
+    expect(said).toContain('Closing MYR 10,900.00 as typed for the end of 2026-09 by Chew on 2026/09/13');
     expect(said).toContain('per the September e-statement');
     expect(said).toContain('no file uploaded prints it');
     expect(said).not.toContain('per null');

@@ -66,7 +66,7 @@ describe('the Other Debtor bill sheet', () => {
     const draws = await render();
     expect(has(draws, 'INVOICE')).toBe(true);
     expect(has(draws, 'HC-ODB-2609-001')).toBe(true);
-    expect(has(draws, '03/09/2026')).toBe(true);
+    expect(has(draws, '2026/09/03')).toBe(true);
     expect(has(draws, 'AHMAD BIN ALI')).toBe(true);
     expect(has(draws, '012-345 6789')).toBe(true);
     /* BILL TO carries the party's address as the registry holds it (owner 2026-09-21). */
