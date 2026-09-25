@@ -99,6 +99,9 @@ interface Props {
   /** Replace the named layout's columns with what is on screen. Works for the
    *  company default too — the caller routes it. */
   onUpdateLayout?: (id: string) => Promise<void>;
+  /** Drop a page seed's company-shared override, reverting it to the code
+   *  default (only offered on an overridden seed). */
+  onResetLayout?: (id: string) => Promise<void>;
   defaultManager?: LayoutDefaultManager;
   /** True when the columns no longer match the active layout. */
   dirty?: boolean;
@@ -144,6 +147,7 @@ export function ColumnsDrawer({
   onRenameLayout,
   onDeleteLayout,
   onUpdateLayout,
+  onResetLayout,
   defaultManager,
   dirty,
   udf,
@@ -658,7 +662,10 @@ export function ColumnsDrawer({
               {[l.hint, `${l.count} columns`].filter(Boolean).join(" · ")}
             </span>
           </span>
-          {(onDuplicateLayout || onRenameLayout) && !l.readOnly && (
+          {!l.readOnly &&
+            (l.seed
+              ? Boolean(onUpdateLayout || (l.overridden && onResetLayout))
+              : Boolean(onDuplicateLayout || onRenameLayout)) && (
             <span
               role="button"
               tabIndex={0}
@@ -699,15 +706,18 @@ export function ColumnsDrawer({
                       close();
                       await runLayoutAction(
                         onUpdateLayout(target.id),
-                        `“${target.label}” now matches these columns`,
+                        target.seed
+                          ? `“${target.label}” updated for everyone`
+                          : `“${target.label}” now matches these columns`,
                       );
                     }}
                     className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] font-semibold text-ink-secondary hover:bg-surface-2"
                   >
-                    <Check size={13} /> Update with current columns
+                    <Check size={13} />
+                    {target.seed ? " Update for everyone (current columns)" : " Update with current columns"}
                   </button>
                 )}
-                {onRenameLayout && (
+                {onRenameLayout && !target.seed && (
                   <button
                     type="button"
                     onClick={async () => {
@@ -720,7 +730,7 @@ export function ColumnsDrawer({
                     <Pencil size={13} /> Rename
                   </button>
                 )}
-                {onDuplicateLayout && (
+                {onDuplicateLayout && !target.seed && (
                   <button
                     type="button"
                     onClick={async () => {
@@ -743,6 +753,28 @@ export function ColumnsDrawer({
                 >
                   <Download size={13} /> Export config
                 </button>
+                {target.seed && target.overridden && onResetLayout && (
+                  <>
+                    <div className="mx-2 my-1 h-px bg-border-subtle" />
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const ok = await dialog?.confirm({
+                          title: `Reset “${target.label}” for everyone?`,
+                          message:
+                            "Drops your team's saved version of this layout and restores the built-in one. Columns on screen stay as they are.",
+                          danger: true,
+                          confirmLabel: "Reset",
+                        });
+                        close();
+                        if (ok) await runLayoutAction(onResetLayout(target.id), "Layout reset to default");
+                      }}
+                      className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] font-semibold text-ink-secondary hover:bg-err/10 hover:text-err"
+                    >
+                      <Trash2 size={13} /> Reset to default
+                    </button>
+                  </>
+                )}
                 {target.savedId != null && onDeleteLayout && (
                   <>
                     <div className="mx-2 my-1 h-px bg-border-subtle" />
