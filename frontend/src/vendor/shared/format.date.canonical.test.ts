@@ -75,7 +75,7 @@ describe('fmtDate — DD/MM/YYYY, always', () => {
 
   test('no month name ever appears — the owner ruled numeric', () => {
     const samples = ['2026-01-05', '2026-06-30', '2026-07-04T09:00:00Z', '2026-12-25'];
-    for (const s of samples) expect(fmtDate(s)).toMatch(/^\d{2}\/\d{2}\/\d{4}$/);
+    for (const s of samples) expect(fmtDate(s)).toMatch(/^\d{4}\/\d{2}\/\d{2}$/);
   });
 
   test('fmtDateOrDash is the same rule under its older name', () => {

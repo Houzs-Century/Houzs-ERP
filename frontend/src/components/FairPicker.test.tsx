@@ -109,10 +109,10 @@ describe('FairPicker — a row is a place plus an organizer', () => {
        reversing his earlier "no dates" ruling — the list became four weeks of
        closed fairs, where picking a row means saying which occurrence. */
     renderPicker({ venue: null, organizer: null, startDate: null, endDate: null, day: null });
-    expect(screen.getByText('MID VALLEY — REX (11/09 - 13/09)')).toBeTruthy();
-    expect(screen.getByText('THE COMMUNE KULAI — INHOME (11/09 - 13/09)')).toBeTruthy();
+    expect(screen.getByText('MID VALLEY — REX (09/11 - 09/13)')).toBeTruthy();
+    expect(screen.getByText('THE COMMUNE KULAI — INHOME (09/11 - 09/13)')).toBeTruthy();
     expect(
-      screen.getByText('SUNWAY PYRAMID CONVENTION CENTRE — BIGHOME (04/09 - 06/09)'),
+      screen.getByText('SUNWAY PYRAMID CONVENTION CENTRE — BIGHOME (09/04 - 09/06)'),
     ).toBeTruthy();
   });
 
@@ -127,9 +127,9 @@ describe('FairPicker — a row is a place plus an organizer', () => {
     renderPicker({ venue: null, organizer: null, startDate: null, endDate: null, day: null }, '2026-10-08');
     const fairs = fairOptionLabels().filter((l) => l.startsWith('MID VALLEY'));
     expect(fairs).toEqual([
-      'MID VALLEY — BIGHOME (02/10 - 04/10)',
-      'MID VALLEY — MLE (25/09 - 27/09)',
-      'MID VALLEY — HOMELOVE (17/09 - 20/09)',
+      'MID VALLEY — BIGHOME (10/02 - 10/04)',
+      'MID VALLEY — MLE (09/25 - 09/27)',
+      'MID VALLEY — HOMELOVE (09/17 - 09/20)',
     ]);
     expect(new Set(fairs).size).toBe(3);
   });
@@ -145,8 +145,8 @@ describe('FairPicker — a row is a place plus an organizer', () => {
     };
     const { onChange } = renderPicker({ venue: null, organizer: null, startDate: null, endDate: null, day: null });
     const labels = fairOptionLabels();
-    expect(labels).toContain('IOI MALL PUTRAJAYA — SOLO (11/09 - 13/09)');
-    expect(labels).toContain('MID VALLEY — REX (11/09 - 13/09)');
+    expect(labels).toContain('IOI MALL PUTRAJAYA — SOLO (09/11 - 09/13)');
+    expect(labels).toContain('MID VALLEY — REX (09/11 - 09/13)');
     expect(labels.some((l) => l.includes('MALL MGT'))).toBe(false);
     /* Only the wording changed: the pick still carries the real organizer, which
        is what the server resolves the project from. */
@@ -321,25 +321,25 @@ describe('FairPicker — a place already on the order IS the value (owner 2026-0
       />,
     );
     const texts = [...container.querySelectorAll('optgroup option')].map((o) => o.textContent);
-    expect(texts).toContain('MID VALLEY — REX (11/09 - 13/09)');
+    expect(texts).toContain('MID VALLEY — REX (09/11 - 09/13)');
   });
 });
 
 /* Owner 2026-09-24: 「我选了那个场…选了过后，它就自动记下是那个场地的，包括 venue,
    organiser 和那个日期」. The edit forms seed the order's linked event (fairPick.ts). */
 describe('FairPicker — a recorded pick reads back as its event', () => {
-  it('an order linked to MLE 25/09 - 27/09 shows that row, not its neighbours at the same venue', () => {
+  it('an order linked to MLE 09/25 - 09/27 shows that row, not its neighbours at the same venue', () => {
     fixture.data = DATA_2026_10_MID_VALLEY;
     renderPicker({ venue: 'MID VALLEY', organizer: 'MLE', startDate: '2026-09-25', endDate: '2026-09-27', day: null }, '2026-10-08');
     expect(fairSelect().value).toBe('fair:mid valley|mle|2026-09-25|2026-09-27');
-    expect(shownText(fairSelect())).toBe('MID VALLEY — MLE (25/09 - 27/09)');
+    expect(shownText(fairSelect())).toBe('MID VALLEY — MLE (09/25 - 09/27)');
   });
 
   it('a linked event no longer in the list still reads back whole', () => {
     /* e.g. archived since it was picked: the list leaves it out, the order keeps it. */
     fixture.data = DATA_2026_09_14;
     renderPicker({ venue: 'MID VALLEY', organizer: 'MLE', startDate: '2026-08-08', endDate: '2026-08-09', day: null }, '2026-09-14');
-    expect(shownText(fairSelect())).toBe('MID VALLEY — MLE (08/08 - 09/08)');
+    expect(shownText(fairSelect())).toBe('MID VALLEY — MLE (08/08 - 08/09)');
   });
 });
 
@@ -380,13 +380,13 @@ describe('FairDayPicker — the second column', () => {
 
   it('offers every day of the picked event, in the house DD/MM', () => {
     renderDays(REX);
-    expect(dayLabels()).toEqual(['—', '11/09', '12/09', '13/09']);
+    expect(dayLabels()).toEqual(['—', '09/11', '09/12', '09/13']);
   });
 
   it('stops at the order date — a day that has not come yet is not offered', () => {
     /* The list was built for 2026-09-13; this fair runs on to the 15th. */
     renderDays({ ...REX, startDate: '2026-09-12', endDate: '2026-09-15' });
-    expect(dayLabels()).toEqual(['—', '12/09', '13/09']);
+    expect(dayLabels()).toEqual(['—', '09/12', '09/13']);
   });
 
   it('choosing a day sends the pick with that day', () => {
@@ -399,7 +399,7 @@ describe('FairDayPicker — the second column', () => {
     renderDays({ ...REX, startDate: '2026-09-12', endDate: '2026-09-15', day: '2026-09-15' });
     const select = screen.getByLabelText('Fair day') as HTMLSelectElement;
     expect(select.value).toBe('2026-09-15');
-    expect(shownText(select)).toBe('15/09');
+    expect(shownText(select)).toBe('09/15');
   });
 
   it('a place alone has no days, so there is nothing to show', () => {

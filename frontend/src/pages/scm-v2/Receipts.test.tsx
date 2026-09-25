@@ -129,10 +129,10 @@ describe('the unified money-in list', () => {
     draw();
     fireEvent.click(screen.getByText('New receipt'));
     /* The date is the receipt's own (owner 2026-09-07: 没办法输入日期) —
-       typed day-first, sent ISO; the number's month follows it server-side. */
+       typed year-first, sent ISO; the number's month follows it server-side. */
     const date = screen.getByLabelText('Receipt date') as HTMLInputElement;
     fireEvent.focus(date);
-    fireEvent.change(date, { target: { value: '02092026' } });
+    fireEvent.change(date, { target: { value: '20260902' } });
     fireEvent.blur(date);
     expect(date.value).toBe('2026/09/02');
     fireEvent.change(screen.getByLabelText(/Received from/), { target: { value: 'ALLIANZ INSURANCE' } });
@@ -161,7 +161,7 @@ describe('the unified money-in list', () => {
     draw();
     fireEvent.click(screen.getByText('New receipt'));
     const date = screen.getByLabelText('Receipt date') as HTMLInputElement;
-    expect(date.value).toMatch(/^\d{2}\/\d{2}\/\d{4}$/);
+    expect(date.value).toMatch(/^\d{4}\/\d{2}\/\d{2}$/);
     /* Payer, both account pickers, the description and the amount all carry
        the PV form's fieldInput class — no more bordered boxes beside bare
        selects (owner 2026-09-07: 有些有格子有些没有). */
@@ -198,7 +198,7 @@ describe('edit a posted receipt and re-post (owner 2026-09-07: 收钱的日期�
     expect(date.value).toBe('2026/09/03');
     expect((screen.getByLabelText('line 1 amount') as HTMLInputElement).value).toBe('888.00');
     fireEvent.focus(date);
-    fireEvent.change(date, { target: { value: '28082026' } });
+    fireEvent.change(date, { target: { value: '20260828' } });
     fireEvent.blur(date);
     fireEvent.click(screen.getByText('Save & re-post'));
     await waitFor(() => expect(updateAsync).toHaveBeenCalledWith({

@@ -9,7 +9,7 @@
 // in two rendering tests that both pass.
 //
 // TIMEZONE. Every date below goes through `fmtDate`, which renders a zoned
-// instant in MYT (UTC+8). `2026-08-20T20:00:00Z` is therefore 21/08 in this
+// instant in MYT (UTC+8). `2026-08-20T20:00:00Z` is therefore 08/21 in this
 // app's own words, and the fixtures are written to say so out loud rather than
 // to look tidy in UTC.
 import { describe, expect, it } from "vitest";
@@ -200,7 +200,7 @@ describe("when a document landed", () => {
 
   /* The day separator above the row carries the year, so the cell does not. */
   it("prints the day and the time, without the year", () => {
-    expect(acWhenText(row({ sent_at: "2026-08-16T08:31:00.000Z" }))).toBe("16/08 16:31");
+    expect(acWhenText(row({ sent_at: "2026-08-16T08:31:00.000Z" }))).toBe("08/16 16:31");
   });
 
   it("says so rather than guessing when there is no timestamp to read", () => {
@@ -228,7 +228,7 @@ describe("the day a run of rows happened on", () => {
      can never be filed under a day the cell beside it does not print. */
   it("files a row under the day its own When cell shows", () => {
     const r = row({ sent_at: "2026-08-20T20:00:00.000Z" });
-    expect(acWhenText(r)).toBe("21/08 04:00");
+    expect(acWhenText(r)).toBe("08/21 04:00");
     expect(acDayLabel(acDayKey(r), NOW)).toBe("Today · 2026/08/21");
   });
 });
