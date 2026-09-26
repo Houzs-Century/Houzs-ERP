@@ -4,7 +4,11 @@
 // migration. The write route rejects anything off this list, so a value outside
 // the palette can never reach the table.
 
-export const ROW_MARK_COLOURS = ['red', 'amber', 'green', 'blue', 'grey'] as const;
+// The tokens mirror the categories the HC Delivery sheet already colour-codes
+// (owner 2026-09-26): red=Fell Delivery, orange=Supplier Pickup, yellow=Lorry
+// Service, green=SERVICE Delivery, cyan=Fair Setup/Dismantle, blue=SERVICE
+// Inspection, purple=Transfer PG/SG + SERVICE Pickup, grey=No Outstation.
+export const ROW_MARK_COLOURS = ['red', 'orange', 'yellow', 'green', 'cyan', 'blue', 'purple', 'grey'] as const;
 
 export type RowMarkColour = (typeof ROW_MARK_COLOURS)[number];
 

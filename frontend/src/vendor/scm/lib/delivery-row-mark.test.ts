@@ -10,11 +10,11 @@ describe('rowMarkTint', () => {
     expect(rowMarkTint(null)).toBeUndefined();
     expect(rowMarkTint(undefined)).toBeUndefined();
     expect(rowMarkTint('')).toBeUndefined();
-    expect(rowMarkTint('purple')).toBeUndefined();
+    expect(rowMarkTint('magenta')).toBeUndefined();
   });
 
-  it('offers exactly the five tokens the backend allow-list stores', () => {
+  it('offers exactly the eight tokens the backend allow-list stores', () => {
     // Must match backend/src/scm/lib/row-mark-colours.ts ROW_MARK_COLOURS.
-    expect(ROW_MARK_PALETTE.map((p) => p.token)).toEqual(['red', 'amber', 'green', 'blue', 'grey']);
+    expect(ROW_MARK_PALETTE.map((p) => p.token)).toEqual(['red', 'orange', 'yellow', 'green', 'cyan', 'blue', 'purple', 'grey']);
   });
 });

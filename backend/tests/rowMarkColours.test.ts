@@ -7,12 +7,12 @@ describe('row-mark-colours — the write route allow-list', () => {
   });
 
   test('rejects anything off the palette so a bad colour can never be stored', () => {
-    for (const bad of ['purple', 'RED', '', 'red ', '#d64545', 'green;']) {
+    for (const bad of ['magenta', 'RED', '', 'red ', '#d64545', 'green;']) {
       expect(isRowMarkColour(bad)).toBe(false);
     }
   });
 
-  test('is the five tokens the frontend palette mirrors', () => {
-    expect([...ROW_MARK_COLOURS]).toEqual(['red', 'amber', 'green', 'blue', 'grey']);
+  test('is the eight delivery-sheet category tokens the frontend palette mirrors', () => {
+    expect([...ROW_MARK_COLOURS]).toEqual(['red', 'orange', 'yellow', 'green', 'cyan', 'blue', 'purple', 'grey']);
   });
 });
