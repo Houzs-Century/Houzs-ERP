@@ -56,6 +56,7 @@ import { DateField } from "./DateField";
 import { deliveryDateChange } from "../lib/delivery-date-edit";
 import { SearchCombo } from "./SearchCombo";
 import { crewComboOptions, crewComboValue, latestDoId, KEEP_CURRENT } from "../lib/dispatch-cell";
+import { useDeliveryRowMarks, rowMarkTint } from "../lib/delivery-row-mark";
 
 /* HC "Remark 4" delivery sub-status → a small pill class (reuse the cream
    palette; unknown/blank → muted). Default-shown column. */
@@ -760,6 +761,9 @@ export function DeliveryPlanningBoard({
     return true;
   };
   const crewPending = assignCrew.isPending || sched.isPending;
+  /* Manual colour marks (owner 2026-09-26): a Map<rowKey, colour token>, painted
+     from the row context menu on the main page and tinted onto the row below. */
+  const rowMarks = useDeliveryRowMarks().data;
 
   /* EM/SG nicety: when the active region is EM or SG, the cross-border columns
      (shipout date, port ref, customer-delivered date) default-SHOW; elsewhere
@@ -1652,7 +1656,11 @@ export function DeliveryPlanningBoard({
           /* Falsy key suppresses the expand chevron for non-SO rows. */
           rowExpansionKey: (row) => (isAssr(row) || isDp(row) || isProject(row) ? '' : row.so_doc_no),
         }}
-        rowStyle={(o) => (o.region === 'SG' ? { boxShadow: 'inset 3px 0 0 #2f5d4f' } : undefined)}
+        rowStyle={(o) => {
+          const base = o.region === 'SG' ? { boxShadow: 'inset 3px 0 0 #2f5d4f' } : undefined;
+          const tint = rowMarkTint(rowMarks?.get(rowIdOf(o)));
+          return tint ? { ...(base ?? {}), background: tint } : base;
+        }}
         contextMenu={contextMenu}
         defaultSort={defaultSort}
         onRowClick={onRowClick}

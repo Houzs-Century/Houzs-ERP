@@ -47,9 +47,12 @@ import {
   isAssr,
   isProject,
   dpLabel,
+  rowIdOf,
   soDocNosFromSelection,
 } from '../../vendor/scm/components/DeliveryPlanningBoard';
 import { DELIVERY_PLANNING_LAYOUT_PRESETS } from '../../vendor/scm/lib/deliveryPlanningLayouts';
+import { RowColorModal } from './RowColorModal';
+import { useDeliveryRowMarks, type RowMarkColour } from '../../vendor/scm/lib/delivery-row-mark';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { transferToLabel } from '../../lib/convertScope';
@@ -87,6 +90,10 @@ export const DeliveryPlanning = () => {
 
   /* The order whose HC fields are being edited (drawer open when non-null). */
   const [editing, setEditing] = useState<PlanningOrder | null>(null);
+  /* Manual colour marks (owner 2026-09-26): a row's context menu opens the
+     palette; the board tints the row from the same shared query. */
+  const [coloringRow, setColoringRow] = useState<PlanningOrder | null>(null);
+  const rowMarks = useDeliveryRowMarks().data;
   const [showNewDp, setShowNewDp] = useState(false);
   /* The DP job being scheduled (Schedule drawer open when non-null). */
   const [schedulingDp, setSchedulingDp] = useState<PlanningOrder | null>(null);
@@ -390,27 +397,32 @@ export const DeliveryPlanning = () => {
             )}
           </>
         }
-        contextMenu={(row) => (isProject(row) ? [] : isDp(row)
-          ? [
-              ...(!row.dp_no ? [{ label: 'Schedule…', onClick: () => setSchedulingDp(row) }] : []),
-              { label: 'Cancel job', onClick: () => void cancelDpRow(row) },
-            ]
-          : isAssr(row)
-          ? [
-              { label: 'Set job date…', onClick: () => setDatingAssr(row) },
-              { divider: true },
-              { label: 'Open Service Case', onClick: () => openRow(row) },
-            ]
-          : [
-              { label: 'Schedule…', onClick: () => setSchedulingOne(row) },
-              { label: 'Edit HC fields…', onClick: () => setEditing(row) },
-              { label: 'Send WhatsApp…', onClick: () => { setSendKind('delivery'); setSendingRows([row]); } },
-              ...(canConvertToDo
-                ? [{ label: transferToLabel('do'), onClick: () => convertOne(row) }]
-                : []),
-              { divider: true },
-              { label: 'Open Sales Order', onClick: () => openRow(row) },
-            ])}
+        contextMenu={(row) => {
+          if (isProject(row)) return [];
+          const mark = { label: 'Mark colour…', onClick: () => setColoringRow(row) };
+          const rest = isDp(row)
+            ? [
+                ...(!row.dp_no ? [{ label: 'Schedule…', onClick: () => setSchedulingDp(row) }] : []),
+                { label: 'Cancel job', onClick: () => void cancelDpRow(row) },
+              ]
+            : isAssr(row)
+            ? [
+                { label: 'Set job date…', onClick: () => setDatingAssr(row) },
+                { divider: true },
+                { label: 'Open Service Case', onClick: () => openRow(row) },
+              ]
+            : [
+                { label: 'Schedule…', onClick: () => setSchedulingOne(row) },
+                { label: 'Edit HC fields…', onClick: () => setEditing(row) },
+                { label: 'Send WhatsApp…', onClick: () => { setSendKind('delivery'); setSendingRows([row]); } },
+                ...(canConvertToDo
+                  ? [{ label: transferToLabel('do'), onClick: () => convertOne(row) }]
+                  : []),
+                { divider: true },
+                { label: 'Open Sales Order', onClick: () => openRow(row) },
+              ];
+          return [mark, { divider: true }, ...rest];
+        }}
       />
 
       {/* Per-row HC fields editor (right-click → Edit HC fields). SO-context
@@ -448,6 +460,15 @@ export const DeliveryPlanning = () => {
 
       {editing && (
         <DeliveryFieldsDrawer order={editing} onClose={() => setEditing(null)} />
+      )}
+
+      {coloringRow && (
+        <RowColorModal
+          rowKey={rowIdOf(coloringRow)}
+          title={rowIdOf(coloringRow)}
+          currentColour={(rowMarks?.get(rowIdOf(coloringRow)) as RowMarkColour | undefined) ?? null}
+          onClose={() => setColoringRow(null)}
+        />
       )}
     </div>
   );
