@@ -1,5 +1,6 @@
 import type { CSSProperties, ReactNode } from "react";
 import type { CSVColumn } from "../lib/csv";
+import type { LayoutSeed } from "../lib/tableLayouts";
 import type { DataTableLineExport, ExportCell, ExportFormat } from "./dataTableLineExport";
 
 export interface Column<T, L = never> {
@@ -195,6 +196,18 @@ export interface DataTableProps<T, L = never> {
    *  user's own, and each company's default) is carried over the first time
    *  the DataTable opens. Set it on every page moved off DataGrid. */
   legacyGridKey?: string;
+  /** Code-shipped FULL layouts (widths, frozen columns included) offered first
+   *  in the Columns picker, team-wide. A layout manager may overwrite one for
+   *  everyone ("Update with current columns") and reset it back. */
+  layoutSeeds?: LayoutSeed[];
+  /** Column keys hidden on screen only, never saved (a board narrowing itself
+   *  while its map is open). */
+  overlayHidden?: readonly string[];
+  /** Fired on every explicit column-visibility choice (toggle, show all, reset,
+   *  picking a layout), so a page can drop an `overlayHidden` it imposed. */
+  onUserAdjustColumns?: () => void;
+  /** Bump `nonce` to scroll the row with this key into view and highlight it. */
+  scrollToRow?: { key: string; nonce: number } | null;
   /** Compact grid inside another table's expanded row: no toolbar, no card
    *  view, tighter cells. Header menus still work. */
   embedded?: boolean;

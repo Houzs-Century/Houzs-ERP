@@ -203,29 +203,35 @@ describe("table layouts", () => {
      save collapses the rows the old scoping left behind. */
   const SHARED = "dg:dg-delivery-planning";
 
-  test("a shared board's layout follows the user across company windows, pinned to one row", async () => {
-    const user = await seedActor(["sales_orders.read"]);
+  /* The boards moved onto DataTable (2026-09-26), which keeps the old storageKey
+     as its table id WITHOUT the "dg:" prefix: that key must stay shared too, or
+     the board forks per company the day it moves. */
+  test.each([SHARED, "dg-delivery-planning-v2"])(
+    "a shared board's layout follows the user across company windows, pinned to one row (%s)",
+    async (key) => {
+      const user = await seedActor(["sales_orders.read"]);
 
-    // Saved from a 2990 window …
-    expect(
-      (await req(user, `/${SHARED}`, { method: "PUT", companyId: 2, body: { layout: layout({ order: ["board"] }) } }))
-        .status,
-    ).toBe(200);
+      // Saved from a 2990 window …
+      expect(
+        (await req(user, `/${key}`, { method: "PUT", companyId: 2, body: { layout: layout({ order: ["board"] }) } }))
+          .status,
+      ).toBe(200);
 
-    // … and read back identically from a HOUZS window.
-    const inHouzs = await (await req(user, "", { companyId: 1 })).json<{
-      mine: Record<string, { layout: { order: string[] } }>;
-    }>();
-    expect(inHouzs.mine[SHARED]?.layout.order).toEqual(["board"]);
+      // … and read back identically from a HOUZS window.
+      const inHouzs = await (await req(user, "", { companyId: 1 })).json<{
+        mine: Record<string, { layout: { order: string[] } }>;
+      }>();
+      expect(inHouzs.mine[key]?.layout.order).toEqual(["board"]);
 
-    // The row is pinned to the lowest visible company, not the window's.
-    const row = await env.DB.prepare(
-      `SELECT company_id FROM table_layouts WHERE table_key = ? AND user_id = ?`,
-    )
-      .bind(SHARED, user.id)
-      .first<{ company_id: number }>();
-    expect(Number(row?.company_id)).toBe(1);
-  });
+      // The row is pinned to the lowest visible company, not the window's.
+      const row = await env.DB.prepare(
+        `SELECT company_id FROM table_layouts WHERE table_key = ? AND user_id = ?`,
+      )
+        .bind(key, user.id)
+        .first<{ company_id: number }>();
+      expect(Number(row?.company_id)).toBe(1);
+    },
+  );
 
   test("a shared board serves the NEWEST forked row, and the next save collapses the fork", async () => {
     const user = await seedActor(["sales_orders.read"]);

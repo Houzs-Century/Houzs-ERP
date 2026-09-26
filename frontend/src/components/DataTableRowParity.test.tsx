@@ -125,6 +125,25 @@ describe("DataTable DataGrid-parity row behaviours", () => {
     expect(bodyCodes()).toEqual(["2026-09-20"]);
   });
 
+  it("the header menu lists hidden columns to show again, and scrolls when long", () => {
+    // #4290 on the old grid: ~20 hidden columns on the Delivery Planning board
+    // ran the Show list off the screen.
+    const many: Column<Row>[] = [
+      columns[0],
+      ...Array.from({ length: 20 }, (_, i) => ({
+        key: `x${i}`, label: `Extra ${i}`, defaultHidden: true, render: () => "x", getValue: () => "x",
+      })),
+    ];
+    render(<DataTable tableId="parity-hidden" columns={many} rows={rows} getRowKey={(r) => r.id} />);
+    fireEvent.contextMenu(screen.getByRole("columnheader", { name: /^Code/ }));
+    const show = screen.getByRole("button", { name: "Show Extra 19" });
+    const menu = show.parentElement!;
+    expect(menu.className).toContain("overflow-y-auto");
+    expect(menu.style.maxHeight).toBe("calc(100vh - 16px)");
+    fireEvent.click(show);
+    expect(screen.getByRole("columnheader", { name: /^Extra 19/ })).toBeTruthy();
+  });
+
   it("an embedded grid renders no toolbar", () => {
     render(
       <DataTable tableId="parity-embed" columns={columns} rows={rows} getRowKey={(r) => r.id}

@@ -203,7 +203,8 @@ function localTarget(tableKey: string, companyId: number | null) {
       marker: `dt:sync:dg:${dataGridIdKey(storageKey, companyId)}`,
     };
   }
-  const idKey = layoutIdKey(tableKey, companyId);
+  // A cross-company board's DataTable keeps one unscoped local copy, as its grid did.
+  const idKey = isSharedDataGridStorageKey(tableKey) ? tableKey : layoutIdKey(tableKey, companyId);
   return { family: "dt" as const, idKey, marker: syncKey(idKey) };
 }
 

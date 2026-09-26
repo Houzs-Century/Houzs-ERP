@@ -885,15 +885,6 @@
       "@typescript-eslint/no-floating-promises": 1,
       "@typescript-eslint/no-unnecessary-condition": 1
     },
-    "src/vendor/scm/components/DataGrid.test.tsx": {
-      "@typescript-eslint/no-unnecessary-condition": 2
-    },
-    "src/vendor/scm/components/DataGrid.tsx": {
-      "@typescript-eslint/no-unnecessary-condition": 32
-    },
-    "src/vendor/scm/components/DataGridLayoutSync.test.tsx": {
-      "@typescript-eslint/no-unnecessary-condition": 1
-    },
     "src/vendor/scm/components/DeliveryFieldsDrawer.tsx": {
       "@typescript-eslint/no-floating-promises": 2,
       "@typescript-eslint/no-unnecessary-condition": 1

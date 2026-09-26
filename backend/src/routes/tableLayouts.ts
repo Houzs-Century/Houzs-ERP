@@ -89,6 +89,13 @@ const SHARED_TABLE_KEYS = new Set([
   "dg:dg-date-arrangement-v2",
   "dg:dg-trips-time-arrangement-v2",
   "dg:dg-last-mile",
+  // The same boards after they moved onto DataTable (2026-09-26): DataTable
+  // keeps the old storageKey as its table id, without the "dg:" family prefix.
+  "dg-delivery-planning",
+  "dg-delivery-planning-v2",
+  "dg-date-arrangement-v2",
+  "dg-trips-time-arrangement-v2",
+  "dg-last-mile",
 ]);
 
 /** Bounds. A layout is a handful of column keys, never a document. */
