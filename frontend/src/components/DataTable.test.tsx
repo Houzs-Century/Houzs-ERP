@@ -1656,3 +1656,43 @@ describe("persistSort={false} sorts for this visit only", () => {
     expect(names(second.container)).toEqual(["Order 1", "Order 2", "Order 3"]);
   });
 });
+
+describe("DataTable initialRowLimit — first page + Load more (owner 2026-09-26)", () => {
+  const fewRows: Row[] = Array.from({ length: 10 }, (_, i) => ({
+    id: i + 1, name: `Order ${i + 1}`, status: "Open",
+  }));
+
+  it("renders the first N, reveals another N on Load more, and reports the FULL set", () => {
+    setViewport(1280);
+    const seen: Row[][] = [];
+    render(
+      <DataTable
+        tableId="orders-limit"
+        rows={fewRows}
+        columns={columns}
+        getRowKey={(row) => row.id}
+        initialRowLimit={3}
+        onFilteredRowsChange={(r) => seen.push(r)}
+      />,
+    );
+    // First page: 1-3 shown, 4 hidden behind the limit.
+    expect(screen.getByText("Order 1")).toBeTruthy();
+    expect(screen.queryByText("Order 4")).toBeNull();
+    // The button counts the rest of the whole set, and the parent still saw all 10.
+    expect(seen.at(-1)?.length).toBe(10);
+    const more = screen.getByRole("button", { name: /7 more rows/ });
+
+    fireEvent.click(more);
+    // Second page: up to 6 shown now, 7 still hidden.
+    expect(screen.getByText("Order 6")).toBeTruthy();
+    expect(screen.queryByText("Order 7")).toBeNull();
+    expect(screen.getByRole("button", { name: /4 more rows/ })).toBeTruthy();
+  });
+
+  it("shows no Load more when the prop is omitted — the whole set renders", () => {
+    setViewport(1280);
+    render(<DataTable tableId="orders-nolimit" rows={fewRows} columns={columns} getRowKey={(row) => row.id} />);
+    expect(screen.queryByRole("button", { name: /more rows/ })).toBeNull();
+    expect(screen.getByText("Order 10")).toBeTruthy();
+  });
+});

@@ -33,6 +33,7 @@ import {
   type ControlCheckRow,
   type UnbookedPayments,
   type PaymentDryRun,
+  type PaymentDryRunRow,
   type PaymentDrift,
   type PaymentDriftRow,
 } from './accounting-phase1-queries';
@@ -430,23 +431,18 @@ export const UnbookedPaymentsCard = ({ p }: { p: UnbookedPayments }) => {
       )}
 
       {p.rows.length > 0 && (
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
-          <thead>
-            <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--c-line, rgba(34,31,32,0.18))' }}>
-              <th>Document</th><th>Paid on</th><th>How</th><th style={{ textAlign: 'right' }}>Amount</th>
-            </tr>
-          </thead>
-          <tbody>
-            {p.rows.map((r) => (
-              <tr key={`${r.source}:${r.id}`} style={{ borderBottom: '1px solid var(--c-line, rgba(34,31,32,0.10))' }}>
-                <td>{r.docNo}</td>
-                <td>{r.paidOn}</td>
-                <td>{r.method}</td>
-                <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmt(r.amountSen)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <DataTable<UnbookedPayments['rows'][number]>
+          tableId="acc-unbooked-payments"
+          embedded
+          columns={[
+            { key: 'document', label: 'Document', getValue: (r) => r.docNo, render: (r) => r.docNo },
+            { key: 'paidOn', label: 'Paid on', getValue: (r) => r.paidOn, render: (r) => r.paidOn },
+            { key: 'how', label: 'How', getValue: (r) => r.method, render: (r) => r.method },
+            { key: 'amount', label: 'Amount', align: 'right', getValue: (r) => r.amountSen, exportValue: (r) => r.amountSen / 100, exportFormat: 'money', render: (r) => fmt(r.amountSen) },
+          ]}
+          rows={p.rows}
+          getRowKey={(r) => `${r.source}:${r.id}`}
+        />
       )}
     </div>
   );
@@ -498,6 +494,8 @@ export const PaymentDriftCard = ({ d }: { d: PaymentDrift }) => {
             + 'Editing a payment does not re-post its entry, so a change made after the day it was keyed leaves the books behind.'}
       </div>
 
+      {/* Stays a plain table on purpose: this card reads and offers no button
+          at all (PaymentDriftCard.test), and a list grid brings its own. */}
       {d.rows.length > 0 && (
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
           <thead>
@@ -553,25 +551,23 @@ const DryRunResult = ({ r }: { r: PaymentDryRun }) => {
         {r.remaining > r.rows.length ? ` Showing the first ${r.rows.length}.` : ''}
       </div>
       {r.rows.length > 0 && (
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
-          <thead>
-            <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--c-line, rgba(34,31,32,0.18))' }}>
-              <th>Document</th><th>Paid on</th><th>How</th><th style={{ textAlign: 'right' }}>Amount</th><th>Verdict</th><th>Reason</th>
-            </tr>
-          </thead>
-          <tbody>
-            {r.rows.map((row) => (
-              <tr key={row.id} style={{ borderBottom: '1px solid var(--c-line, rgba(34,31,32,0.10))' }}>
-                <td>{row.docNo}</td>
-                <td>{row.paidOn}</td>
-                <td>{row.method}</td>
-                <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmt(row.amountSen)}</td>
-                <td style={{ fontWeight: 600, color: row.status === 'would_post' ? good : bad }}>{row.status === 'would_post' ? 'would post' : row.status}</td>
-                <td>{row.reason ?? '—'}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <DataTable<PaymentDryRunRow>
+          tableId="acc-payment-dry-run"
+          embedded
+          columns={[
+            { key: 'document', label: 'Document', getValue: (row) => row.docNo, render: (row) => row.docNo },
+            { key: 'paidOn', label: 'Paid on', getValue: (row) => row.paidOn, render: (row) => row.paidOn },
+            { key: 'how', label: 'How', getValue: (row) => row.method, render: (row) => row.method },
+            { key: 'amount', label: 'Amount', align: 'right', getValue: (row) => row.amountSen, render: (row) => fmt(row.amountSen) },
+            {
+              key: 'verdict', label: 'Verdict', getValue: (row) => (row.status === 'would_post' ? 'would post' : row.status),
+              render: (row) => <span style={{ fontWeight: 600, color: row.status === 'would_post' ? good : bad }}>{row.status === 'would_post' ? 'would post' : row.status}</span>,
+            },
+            { key: 'reason', label: 'Reason', getValue: (row) => row.reason ?? '', render: (row) => row.reason ?? '—' },
+          ]}
+          rows={r.rows}
+          getRowKey={(row) => row.id}
+        />
       )}
     </div>
   );
@@ -605,28 +601,19 @@ const ControlCheckCard = ({ check }: { check: ControlCheckRow }) => {
       </div>
 
       {check.driftDocs.length > 0 && (
-        <table style={{ width: '100%', fontSize: 'var(--fs-13)', borderCollapse: 'collapse' }}>
-          <thead>
-            <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--c-line, rgba(34,31,32,0.12))' }}>
-              <th style={{ padding: '4px 8px' }}>Document</th>
-              <th style={{ padding: '4px 8px', textAlign: 'right' }}>Document total</th>
-              <th style={{ padding: '4px 8px', textAlign: 'right' }}>Journal total</th>
-              <th style={{ padding: '4px 8px', textAlign: 'right' }}>Difference</th>
-              <th style={{ padding: '4px 8px' }}>What is wrong</th>
-            </tr>
-          </thead>
-          <tbody>
-            {check.driftDocs.map((d) => (
-              <tr key={d.docNo} style={{ borderBottom: '1px solid var(--c-line, rgba(34,31,32,0.06))' }}>
-                <td style={{ padding: '4px 8px' }}><span className={styles.codeChip}>{d.docNo}</span></td>
-                <td style={{ padding: '4px 8px', textAlign: 'right' }}>{fmt(d.docTotalSen)}</td>
-                <td style={{ padding: '4px 8px', textAlign: 'right' }}>{fmt(d.jeTotalSen)}</td>
-                <td style={{ padding: '4px 8px', textAlign: 'right', fontWeight: 700 }}>{fmt(d.diffSen)}</td>
-                <td style={{ padding: '4px 8px' }}>{d.note}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <DataTable<(typeof check.driftDocs)[number]>
+          tableId="acc-control-drift"
+          embedded
+          columns={[
+            { key: 'document', label: 'Document', getValue: (d) => d.docNo, render: (d) => <span className={styles.codeChip}>{d.docNo}</span> },
+            { key: 'docTotal', label: 'Document total', align: 'right', getValue: (d) => d.docTotalSen, render: (d) => fmt(d.docTotalSen) },
+            { key: 'jeTotal', label: 'Journal total', align: 'right', getValue: (d) => d.jeTotalSen, render: (d) => fmt(d.jeTotalSen) },
+            { key: 'diff', label: 'Difference', align: 'right', getValue: (d) => d.diffSen, render: (d) => <span style={{ fontWeight: 700 }}>{fmt(d.diffSen)}</span> },
+            { key: 'wrong', label: 'What is wrong', getValue: (d) => d.note, render: (d) => d.note },
+          ]}
+          rows={check.driftDocs}
+          getRowKey={(d) => d.docNo}
+        />
       )}
 
       {check.foreignLines.length > 0 && (

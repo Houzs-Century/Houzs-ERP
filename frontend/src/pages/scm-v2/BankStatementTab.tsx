@@ -33,6 +33,7 @@ import styles from './Suppliers.module.css';
 import grid from './MerchantRecon.module.css';
 import { BankAccountTabs, currentAccount } from './BankAccountTabs';
 import { fmtDateOrDash } from '../../vendor/shared/format';
+import { DataTable } from '../../components/DataTable';
 import { ReconcilePickProvider, byDateThenLine, useReconcilePick } from './bank-reconcile-pick';
 
 export const BankStatementTab = () => {
@@ -209,36 +210,38 @@ const UploadAndList = ({ onOpen }: { onOpen: (id: number) => void }) => {
         )}
         <BankAccountTabs codes={codes} value={current} onChange={setAccount} ariaLabel="Bank account of the files listed" />
         {shown.length > 0 && (
-          <table className={grid.grid}>
-            <thead>
-              <tr>
-                <th>File</th><th>Period</th>
-                <th className={grid.num}>In</th><th className={grid.num}>Out</th>
-                <th>Still to decide</th><th />
-              </tr>
-            </thead>
-            <tbody>
-              {shown.map((s) => (
-                <tr key={s.id}>
-                  <td style={{ wordBreak: 'break-all' }}>{s.file_name}</td>
-                  <td>{s.period_from} → {s.period_to}</td>
-                  <td className={grid.num}>{fmt(s.in_sen)}</td>
-                  <td className={grid.num}>{fmt(s.out_sen)}</td>
-                  <td className={(s.open_count ?? 0) === 0 ? grid.good : undefined}>
+          <DataTable<BankStatement>
+            tableId="bank-statements-read"
+            exportName="bank-statements"
+            exportXlsx
+            columns={[
+              { key: 'file', label: 'File', getValue: (s) => s.file_name, render: (s) => <span style={{ wordBreak: 'break-all' }}>{s.file_name}</span> },
+              { key: 'period', label: 'Period', getValue: (s) => s.period_from, render: (s) => `${s.period_from} → ${s.period_to}` },
+              { key: 'in', label: 'In', align: 'right', getValue: (s) => s.in_sen, exportValue: (s) => s.in_sen / 100, exportFormat: 'money', render: (s) => fmt(s.in_sen) },
+              { key: 'out', label: 'Out', align: 'right', getValue: (s) => s.out_sen, exportValue: (s) => s.out_sen / 100, exportFormat: 'money', render: (s) => fmt(s.out_sen) },
+              {
+                key: 'open', label: 'Still to decide', getValue: (s) => s.open_count ?? 0,
+                render: (s) => (
+                  <span className={(s.open_count ?? 0) === 0 ? grid.good : undefined}>
                     {(s.open_count ?? 0) === 0
                       ? 'nothing'
                       : `${s.open_count} of ${s.line_count}`
                         + ((s.open_payout_count ?? 0) > 0 ? ` · ${s.open_payout_count} card payout(s)` : '')}
-                  </td>
-                  <td>
-                    <button type="button" style={btn((s.open_count ?? 0) > 0)} onClick={() => onOpen(s.id)}>
-                      {(s.open_count ?? 0) > 0 ? 'Reconcile' : 'Open'}
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                  </span>
+                ),
+              },
+              {
+                key: 'action', label: '', exportLabel: 'Action',
+                render: (s) => (
+                  <button type="button" style={btn((s.open_count ?? 0) > 0)} onClick={() => onOpen(s.id)}>
+                    {(s.open_count ?? 0) > 0 ? 'Reconcile' : 'Open'}
+                  </button>
+                ),
+              },
+            ]}
+            rows={shown}
+            getRowKey={(s) => s.id}
+          />
         )}
       </section>
     </div>

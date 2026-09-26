@@ -29,7 +29,8 @@ import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 /* Venues are maintained centrally in Project Maintenance; this section is a
    read-only view sourced from /api/projects/venues. */
-import { useVenues } from '../../vendor/scm/lib/venues-queries';
+import { useVenues, type VenueRow } from '../../vendor/scm/lib/venues-queries';
+import { DataTable } from '../../components/DataTable';
 import {
   useStateWarehouseMappings,
   useUpsertStateWarehouseMapping,
@@ -556,31 +557,20 @@ const MaintenanceBody = ({ canEdit, open }: { canEdit: boolean; open: ReturnType
           ) : localityGroups.countries.length === 0 ? (
             <div className={styles.empty}>No localities yet — add a country below.</div>
           ) : (
-            <table className={styles.table}>
-              <thead>
-                <tr>
-                  <th>Country</th>
-                  <th style={{ width: 110, textAlign: 'right' }}>States</th>
-                  <th style={{ width: 110, textAlign: 'right' }}>Cities</th>
-                  <th style={{ width: 130, textAlign: 'right' }}>Postcodes</th>
-                </tr>
-              </thead>
-              <tbody>
-                {localityGroups.countries.map((c) => (
-                  <tr
-                    key={c.country}
-                    onDoubleClick={() => drillIntoCountry(c.country)}
-                    title="Double-click to drill into states"
-                    style={{ cursor: 'pointer' }}
-                  >
-                    <td><strong>{c.country}</strong></td>
-                    <td style={{ textAlign: 'right' }}>{c.states.size}</td>
-                    <td style={{ textAlign: 'right' }}>{c.cities.size}</td>
-                    <td style={{ textAlign: 'right' }}>{c.postcodeCount}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <DataTable<(typeof localityGroups.countries)[number]>
+              tableId="so-maint-countries"
+              exportName="countries"
+              exportXlsx
+              columns={[
+                { key: 'country', label: 'Country', getValue: (c) => c.country, render: (c) => <strong title="Double-click to drill into states">{c.country}</strong> },
+                { key: 'states', label: 'States', align: 'right', width: '110px', getValue: (c) => c.states.size, render: (c) => c.states.size },
+                { key: 'cities', label: 'Cities', align: 'right', width: '110px', getValue: (c) => c.cities.size, render: (c) => c.cities.size },
+                { key: 'postcodes', label: 'Postcodes', align: 'right', width: '130px', getValue: (c) => c.postcodeCount, render: (c) => c.postcodeCount },
+              ]}
+              rows={localityGroups.countries}
+              getRowKey={(c) => c.country}
+              onRowDoubleClick={(c) => drillIntoCountry(c.country)}
+            />
           )}
         </div>
       )}
@@ -1495,63 +1485,47 @@ const VenuesSection = (_props: { canEdit: boolean }) => {
 
       {venues.isError && <LoadError what="the venue list" error={venues.error} />}
 
-      <div className={styles.venuesCard}>
-        <table className={styles.table}>
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Origin</th>
-              <th>State</th>
-              <th>Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {venues.isLoading && (
-              <tr><td colSpan={4} className={styles.empty}>Loading…</td></tr>
-            )}
-            {!venues.isLoading && (venues.data ?? []).length === 0 && (
-              <tr><td colSpan={4} className={styles.empty}>No venues yet — add exhibition venues in Project Maintenance, or mark a warehouse as a Showroom and give it a Venue name.</td></tr>
-            )}
-            {(venues.data ?? []).map((v) => (
-              <tr key={v.id}>
-                <td><strong className="font-semibold text-ink">{v.name}</strong></td>
-                <td>
-                  {/* Origin is shown as its own column, not folded into the
-                      name, so the owner can tell a showroom from an exhibition
-                      venue at a glance — they are maintained in different
-                      places and mean different things in the fair P&L. */}
-                  <span
-                    className={`inline-flex items-center rounded-full px-2 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider ${
-                      v.origin === 'SHOWROOM'
-                        ? 'bg-surface-2 text-ink-secondary'
-                        : 'bg-primary-soft text-primary-ink'
-                    }`}
-                    title={
-                      v.origin === 'SHOWROOM'
-                        ? 'From a warehouse marked as a Showroom'
-                        : 'From the Project Maintenance venue master'
-                    }
-                  >
-                    {v.origin === 'SHOWROOM' ? 'Showroom' : 'Exhibition'}
-                  </span>
-                </td>
-                <td>{v.state ?? '—'}</td>
-                <td>
-                  <span
-                    className={`inline-flex items-center rounded-full px-2 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider ${
-                      v.active
-                        ? 'bg-primary-soft text-primary-ink'
-                        : 'bg-surface-2 text-ink-muted'
-                    }`}
-                  >
-                    {v.active ? 'Active' : 'Inactive'}
-                  </span>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <DataTable<VenueRow>
+        tableId="so-maint-venues"
+        exportName="venues"
+        exportXlsx
+        columns={[
+          { key: 'name', label: 'Name', getValue: (v) => v.name, render: (v) => <strong className="font-semibold text-ink">{v.name}</strong> },
+          {
+            key: 'origin', label: 'Origin', getValue: (v) => (v.origin === 'SHOWROOM' ? 'Showroom' : 'Exhibition'),
+            /* Its own column, not folded into the name, so the owner can tell a
+               showroom from an exhibition venue at a glance: they are maintained
+               in different places and mean different things in the fair P&L. */
+            render: (v) => (
+              <span
+                className={`inline-flex items-center rounded-full px-2 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider ${
+                  v.origin === 'SHOWROOM' ? 'bg-surface-2 text-ink-secondary' : 'bg-primary-soft text-primary-ink'
+                }`}
+                title={v.origin === 'SHOWROOM' ? 'From a warehouse marked as a Showroom' : 'From the Project Maintenance venue master'}
+              >
+                {v.origin === 'SHOWROOM' ? 'Showroom' : 'Exhibition'}
+              </span>
+            ),
+          },
+          { key: 'state', label: 'State', getValue: (v) => v.state ?? '', render: (v) => v.state ?? '—' },
+          {
+            key: 'status', label: 'Status', getValue: (v) => (v.active ? 'Active' : 'Inactive'),
+            render: (v) => (
+              <span
+                className={`inline-flex items-center rounded-full px-2 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider ${
+                  v.active ? 'bg-primary-soft text-primary-ink' : 'bg-surface-2 text-ink-muted'
+                }`}
+              >
+                {v.active ? 'Active' : 'Inactive'}
+              </span>
+            ),
+          },
+        ]}
+        rows={venues.data ?? (venues.isError ? [] : null)}
+        loading={venues.isLoading}
+        emptyLabel="No venues yet — add exhibition venues in Project Maintenance, or mark a warehouse as a Showroom and give it a Venue name."
+        getRowKey={(v) => v.id}
+      />
     </section>
   );
 };

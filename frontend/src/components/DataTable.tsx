@@ -144,6 +144,7 @@ function DataTableInner<T, L>({
   getRowClassName,
   onRowDoubleClick,
   getRowStyle,
+  initialRowLimit,
   defaultSort,
   embedded = false,
   groupBanner = false,
@@ -1733,6 +1734,19 @@ function DataTableInner<T, L>({
     [filteredRows, sort, allColumns, serverSort, defaultSort],
   );
 
+  /* "Load more" (owner 2026-09-26): render only the first `rowLimit` of the
+     sorted set, revealing another `initialRowLimit` per click. `null` = show all
+     (the default and what "Load more" builds up to). Search / filters / sort and
+     the reported count below still run over the WHOLE set — only the render is
+     capped. State, so it resets to the first page each time the table remounts. */
+  const [rowLimit, setRowLimit] = useState<number | null>(initialRowLimit ?? null);
+  const limitedRows = useMemo(
+    () => (sortedRows && rowLimit != null && sortedRows.length > rowLimit ? sortedRows.slice(0, rowLimit) : sortedRows),
+    [sortedRows, rowLimit],
+  );
+  const hiddenByLimit = (sortedRows?.length ?? 0) - (limitedRows?.length ?? 0);
+  const loadMore = () => setRowLimit((n) => (n ?? 0) + (initialRowLimit ?? 200));
+
   /* Report what the operator can actually see (owner 2026-08-12) — see the
      onFilteredRowsChange prop doc. In an effect, not during render, so a parent
      that stores these in state cannot re-enter this render pass. `rows` is
@@ -1807,9 +1821,9 @@ function DataTableInner<T, L>({
     return [{ col: code, label: (v: string) => (fmt ? fmt(v) : v || "(blank)") }];
   }, [allColumns, groupBanner, userGroups, groupBy]);
   const renderList = useMemo<RenderItem[]>(() => {
-    if (!sortedRows) return [];
+    if (!limitedRows) return [];
     if (groupLevels.length === 0) {
-      return sortedRows.map((row, rowIdx) => ({ kind: "row", row, rowIdx }));
+      return limitedRows.map((row, rowIdx) => ({ kind: "row", row, rowIdx }));
     }
     const out: RenderItem[] = [];
     let rowIdx = 0;
@@ -1845,9 +1859,9 @@ function DataTableInner<T, L>({
         }
       }
     };
-    walk(sortedRows, 0, "");
+    walk(limitedRows, 0, "");
     return out;
-  }, [sortedRows, groupLevels, collapsedGroupSet]);
+  }, [limitedRows, groupLevels, collapsedGroupSet]);
 
   // Density-aware cell padding. Tightened on 2026-05-08 — every row
   // is one line of data, full stop. Old comfy (py-3.5) and old
@@ -2797,6 +2811,19 @@ function DataTableInner<T, L>({
               {canVirtualize && vEnd < renderList.length && (
                 <tr aria-hidden>
                   <td colSpan={totalColSpan} style={{ height: (renderList.length - vEnd) * rowHeightRef.current, padding: 0, border: 0 }} />
+                </tr>
+              )}
+              {hiddenByLimit > 0 && (
+                <tr>
+                  <td colSpan={totalColSpan} className="p-0">
+                    <button
+                      type="button"
+                      onClick={loadMore}
+                      className="w-full border-t border-border py-2.5 text-[12px] font-semibold uppercase tracking-wider text-primary transition-colors hover:bg-primary-soft"
+                    >
+                      Load more — {hiddenByLimit} more row{hiddenByLimit === 1 ? "" : "s"}
+                    </button>
+                  </td>
                 </tr>
               )}
             </tbody>

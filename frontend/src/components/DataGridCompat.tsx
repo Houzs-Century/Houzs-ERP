@@ -64,6 +64,9 @@ export type DataGridCompatProps<T> = {
   onRowClick?: (row: T) => void;
   onRowDoubleClick?: (row: T) => void;
   rowStyle?: (row: T) => CSSProperties | undefined;
+  /** Show the first N rows with a "Load more" affordance instead of the whole
+   *  set (search / filters / sort still run over everything). */
+  initialRowLimit?: number;
   onFilteredRowsChange?: (rows: T[]) => void;
   toolbar?: ReactNode;
   focusSearchNonce?: number;
@@ -184,6 +187,7 @@ export function DataGridCompat<T>({
   overlayHidden,
   onUserAdjustColumns,
   scrollToRow,
+  initialRowLimit,
 }: DataGridCompatProps<T>) {
   const tableColumns = useMemo(() => columns.map(gridColumnToTableColumn), [columns]);
   const layoutSeeds = useMemo(
@@ -202,6 +206,7 @@ export function DataGridCompat<T>({
       onRowClick={onRowClick}
       onRowDoubleClick={onRowDoubleClick}
       getRowStyle={rowStyle}
+      initialRowLimit={initialRowLimit}
       onFilteredRowsChange={onFilteredRowsChange}
       toolbarExtra={toolbar}
       clientSearch={
