@@ -33,6 +33,7 @@ import {
   useDeliveryPlanningLines,
   useScheduleDelivery,
   useUpdateDeliveryFields,
+  useAssignDoCrew,
   DELIVERY_STATES,
   DELIVERY_STATE_LABEL,
   MESSAGE_STATUSES,
@@ -48,10 +49,13 @@ import {
 import type { LayoutSeed } from '../../../lib/tableLayouts';
 import { type DriverRow } from '../lib/drivers-queries';
 import { type LorryRow } from '../lib/lorries-queries';
+import { useHelpers, type HelperRow } from '../lib/helpers-queries';
 import { useStaffLookup } from '../../../hooks/useStaffLookup';
 import styles from './DeliveryPlanningBoard.module.css';
 import { DateField } from "./DateField";
 import { deliveryDateChange } from "../lib/delivery-date-edit";
+import { SearchCombo } from "./SearchCombo";
+import { crewComboOptions, crewComboValue, latestDoId, KEEP_CURRENT } from "../lib/dispatch-cell";
 
 /* HC "Remark 4" delivery sub-status → a small pill class (reuse the cream
    palette; unknown/blank → muted). Default-shown column. */
@@ -356,83 +360,116 @@ function TextEditCell({ order, value, onCommit, placeholder }: {
    lands on the SO's amended_delivery_date — the customer's ORIGINAL
    customer_delivery_date is never overwritten. */
 
-/* Sentinel for an existing crew assignment whose name/plate is NOT in the active
-   master list — shown as a selected option so the cell never blanks an existing
-   assignment; picking it is a no-op (guarded in onChange). */
-const KEEP_CURRENT = '__current__';
+/* Write ONE crew seat on the row's latest DO (owner 2026-09-26). Returns false
+   when the order has no DO yet — crew lives on delivery_order_crew, so there is
+   nothing to write and the caller reverts its picker and prompts to open a DO. */
+type CrewSeatWrite = (order: PlanningOrder, seat: {
+  driver1Id?: string | null; driver2Id?: string | null;
+  helper1Id?: string | null; helper2Id?: string | null; lorryId?: string | null;
+}) => boolean;
 
-function DriverEditCell({ order, sched, drivers }: { order: PlanningOrder; sched: SchedMutation; drivers: DriverRow[] }) {
-  /* DP rows carry no crew until scheduled from the DP Order → non-applicable. */
+/* Driver — a type-to-search picker (owner 2026-09-26: 可以输入搜索). SO rows write
+   the DO crew (delivery_order_crew) via useAssignDoCrew, which snapshots the
+   driver's IC + contact from the master so the neighbouring Driver IC / Driver
+   Contact columns fill in on the refetch. ASSR legs keep the trip-crew write
+   (type:'assr') so the leg still consumes fleet capacity. DP → n/a; project →
+   read-only mirror (edit in Projects). */
+function DriverPickCell({ order, drivers, sched, writeSeat, pending }: {
+  order: PlanningOrder; drivers: DriverRow[]; sched: SchedMutation; writeSeat: CrewSeatWrite; pending: boolean;
+}) {
+  const items = drivers.map((d) => ({ id: d.id, label: d.name }));
+  const currentName = order.crew?.driver_1_name ?? null;
+  const chosen = crewComboValue(items, currentName);
+  const [val, setVal] = useState(chosen);
+  useEffect(() => { setVal(chosen); }, [chosen]);
   if (isDp(order)) return <NotApplicable />;
-  /* PMS project rows are a read-only mirror — show the crew PMS assigned (edit in Projects). */
   if (isProject(order)) return <span style={{ color: '#767b6e' }}>{order.crew?.driver_1_name || '—'}</span>;
-  /* SO rows write type:'so'; ASSR legs write type:'assr' (+ jobKind) — the backend
-     wires the leg onto a trip so it consumes fleet capacity (P3). No driver_id on
-     the row (crew carries names only) → preselect by matching driver_1_name. */
   const assrLeg = isAssr(order);
-  const currentName = order.crew?.driver_1_name ?? '';
-  const matchedId = drivers.find((d) => d.name === currentName)?.id ?? '';
-  const offList = currentName !== '' && matchedId === '';
   return (
-    <select
-      className={styles.inlineEdit}
-      value={offList ? KEEP_CURRENT : matchedId}
-      disabled={sched.isPending}
-      {...stopRow}
-      onChange={(e) => {
-        const picked = e.target.value;
-        if (picked === KEEP_CURRENT) return;   // re-picking the off-list current = no-op
-        const driverId = picked || null;
-        const driverNameOptimistic = driverId ? (drivers.find((d) => d.id === driverId)?.name ?? null) : null;
-        sched.mutate(assrLeg
-          ? { type: 'assr', id: String(order.assr_id ?? ''), jobKind: order.job_kind, driverId, driverNameOptimistic }
-          : { type: 'so', id: order.so_doc_no, driverId, driverNameOptimistic });
-      }}
-    >
-      <option value="">—</option>
-      {/* Keep the current name selectable even if it's not (or no longer) in the
-          active driver master, so an existing assignment never silently blanks. */}
-      {offList && <option value={KEEP_CURRENT}>{currentName}</option>}
-      {drivers.map((d) => (
-        <option key={d.id} value={d.id}>{d.name}</option>
-      ))}
-    </select>
+    <span {...stopRow} style={{ display: 'inline-flex', minWidth: 150 }}>
+      <SearchCombo
+        fill aria-label="Driver" placeholder="— pick a driver —"
+        options={crewComboOptions(items, currentName)}
+        value={val}
+        disabled={pending}
+        onChange={(picked) => {
+          if (picked === KEEP_CURRENT) return;   // re-picking the off-list current = no-op
+          const driverId = picked || null;
+          if (assrLeg) {
+            setVal(picked);
+            const driverNameOptimistic = driverId ? (drivers.find((d) => d.id === driverId)?.name ?? null) : null;
+            sched.mutate({ type: 'assr', id: String(order.assr_id ?? ''), jobKind: order.job_kind, driverId, driverNameOptimistic });
+            return;
+          }
+          setVal(writeSeat(order, { driver1Id: driverId }) ? picked : chosen);
+        }}
+      />
+    </span>
   );
 }
 
-function LorryEditCell({ order, sched, lorries }: { order: PlanningOrder; sched: SchedMutation; lorries: LorryRow[] }) {
-  /* DP rows carry no crew until scheduled from the DP Order → non-applicable. */
+/* Lorry Plate — same picker; SO writes the DO crew lorry, ASSR the trip lorry. */
+function LorryPickCell({ order, lorries, sched, writeSeat, pending }: {
+  order: PlanningOrder; lorries: LorryRow[]; sched: SchedMutation; writeSeat: CrewSeatWrite; pending: boolean;
+}) {
+  const items = lorries.map((l) => ({ id: l.id, label: l.plate }));
+  const currentPlate = order.crew?.lorry_plate ?? null;
+  const chosen = crewComboValue(items, currentPlate);
+  const [val, setVal] = useState(chosen);
+  useEffect(() => { setVal(chosen); }, [chosen]);
   if (isDp(order)) return <NotApplicable />;
-  /* PMS project rows are a read-only mirror — show the assigned lorry (edit in Projects). */
   if (isProject(order)) return <span style={{ color: '#767b6e' }}>{order.crew?.lorry_plate || '—'}</span>;
-  /* SO rows write type:'so'; ASSR legs write type:'assr' (+ jobKind) — wires the
-     leg onto a trip (P3) so a lorry is a real fleet commitment. */
   const assrLeg = isAssr(order);
-  const currentPlate = order.crew?.lorry_plate ?? '';
-  const matchedId = lorries.find((l) => l.plate === currentPlate)?.id ?? '';
-  const offList = currentPlate !== '' && matchedId === '';
   return (
-    <select
-      className={styles.inlineEdit}
-      value={offList ? KEEP_CURRENT : matchedId}
-      disabled={sched.isPending}
-      {...stopRow}
-      onChange={(e) => {
-        const picked = e.target.value;
-        if (picked === KEEP_CURRENT) return;
-        const lorryId = picked || null;
-        const lorryPlateOptimistic = lorryId ? (lorries.find((l) => l.id === lorryId)?.plate ?? null) : null;
-        sched.mutate(assrLeg
-          ? { type: 'assr', id: String(order.assr_id ?? ''), jobKind: order.job_kind, lorryId, lorryPlateOptimistic }
-          : { type: 'so', id: order.so_doc_no, lorryId, lorryPlateOptimistic });
-      }}
-    >
-      <option value="">—</option>
-      {offList && <option value={KEEP_CURRENT}>{currentPlate}</option>}
-      {lorries.map((l) => (
-        <option key={l.id} value={l.id}>{l.plate}</option>
-      ))}
-    </select>
+    <span {...stopRow} style={{ display: 'inline-flex', minWidth: 150 }}>
+      <SearchCombo
+        fill aria-label="Lorry plate" placeholder="— pick a lorry —"
+        options={crewComboOptions(items, currentPlate)}
+        value={val}
+        disabled={pending}
+        onChange={(picked) => {
+          if (picked === KEEP_CURRENT) return;
+          const lorryId = picked || null;
+          if (assrLeg) {
+            setVal(picked);
+            const lorryPlateOptimistic = lorryId ? (lorries.find((l) => l.id === lorryId)?.plate ?? null) : null;
+            sched.mutate({ type: 'assr', id: String(order.assr_id ?? ''), jobKind: order.job_kind, lorryId, lorryPlateOptimistic });
+            return;
+          }
+          setVal(writeSeat(order, { lorryId }) ? picked : chosen);
+        }}
+      />
+    </span>
+  );
+}
+
+/* Helper 1 / Helper 2 — a type-to-search picker that writes the DO crew helper
+   seat (owner 2026-09-26). SO rows only: helpers live on delivery_order_crew, so
+   ASSR / DP / project rows have no seat to write. */
+function HelperPickCell({ order, helpers, writeSeat, pending, slot }: {
+  order: PlanningOrder; helpers: HelperRow[]; writeSeat: CrewSeatWrite; pending: boolean; slot: 1 | 2;
+}) {
+  const items = helpers.map((h) => ({ id: h.id, label: h.name }));
+  const currentName = (slot === 1 ? order.crew?.helper_1_name : order.crew?.helper_2_name) ?? null;
+  const chosen = crewComboValue(items, currentName);
+  const [val, setVal] = useState(chosen);
+  useEffect(() => { setVal(chosen); }, [chosen]);
+  if (isAssr(order) || isDp(order) || isProject(order)) return <NotApplicable />;
+  return (
+    <span {...stopRow} style={{ display: 'inline-flex', minWidth: 150 }}>
+      <SearchCombo
+        fill aria-label={`Helper ${slot}`} placeholder="— pick a helper —"
+        options={crewComboOptions(items, currentName)}
+        value={val}
+        disabled={pending}
+        onChange={(picked) => {
+          if (picked === KEEP_CURRENT) return;
+          const helperId = picked || null;
+          const seat = slot === 1 ? { helper1Id: helperId } : { helper2Id: helperId };
+          setVal(writeSeat(order, seat) ? picked : chosen);
+        }}
+      />
+    </span>
   );
 }
 
@@ -701,6 +738,23 @@ export function DeliveryPlanningBoard({
   /* Writes the customer-message workflow status (delivery_message_status) from
      the "Delivery Status" column's inline select (owner 2026-09-22). */
   const updateFields = useUpdateDeliveryFields();
+  /* Crew (driver / lorry / helper) inline pickers write the DO crew snapshot —
+     the store the board reads and the one that captures the driver's IC/contact.
+     Helpers are fetched here (like updateFields) rather than threaded as a prop. */
+  const assignCrew = useAssignDoCrew();
+  const helpers = useHelpers().data ?? [];
+  /* One inline pick → one seat on the row's latest DO; the backend keeps the
+     other seats. No DO yet → nothing to write, so say so and leave the picker. */
+  const writeCrewSeat: CrewSeatWrite = (order, seat) => {
+    const doId = latestDoId(order.delivery_orders);
+    if (!doId) {
+      void notify({ title: 'Create a delivery order first', body: 'This order has no delivery order yet, so crew cannot be saved. Create a DO first.' });
+      return false;
+    }
+    assignCrew.mutate({ doId, ...seat });
+    return true;
+  };
+  const crewPending = assignCrew.isPending || sched.isPending;
 
   /* EM/SG nicety: when the active region is EM or SG, the cross-border columns
      (shipout date, port ref, customer-delivered date) default-SHOW; elsewhere
@@ -1144,8 +1198,17 @@ export function DeliveryPlanningBoard({
       exportValue: (o) => o.delivery_substatus ?? '',
     },
     {
-      key: 'time_range', label: 'Time Slot', width: 120, defaultHidden: true,
-      accessor: (o) => o.time_range ?? '—',
+      key: 'time_range', label: 'Time Slot', width: 130, defaultHidden: true,
+      /* Inline free-text (owner 2026-09-26: 可以输入文本) → the DO's time_range via
+         useUpdateDeliveryFields. SO rows only; no DO yet → the server saves nothing
+         and returns no_do_hint, which we surface. */
+      accessor: (o) => (
+        <TextEditCell order={o} value={o.time_range} placeholder="e.g. 2-4pm"
+          onCommit={(v) => updateFields.mutate(
+            { type: 'so', id: o.so_doc_no, timeRange: v },
+            { onSuccess: (res) => { if (res.no_do_hint) void notify({ title: 'Saved (partly)', body: res.no_do_hint }); } },
+          )} />
+      ),
       searchValue: (o) => o.time_range ?? '',
     },
     {
@@ -1242,10 +1305,11 @@ export function DeliveryPlanningBoard({
        owner's 2026-09-22 column pass (crew is assigned later, not at planning);
        re-show Driver / Lorry / helpers from the Columns drawer. */
     {
-      /* Inline-editable: assigns the trip driver (writes driverId; the backend
-         find-or-creates the trip + appends the stop). */
-      key: 'driver', label: 'Driver', width: 160, defaultHidden: true,
-      accessor: (o) => <DriverEditCell order={o} sched={sched} drivers={drivers} />,
+      /* Inline type-to-search (owner 2026-09-26). SO writes the DO crew (which
+         snapshots the driver's IC + contact into the next two columns); an ASSR
+         leg writes the trip crew so it still consumes fleet capacity. */
+      key: 'driver', label: 'Driver', width: 170, defaultHidden: true,
+      accessor: (o) => <DriverPickCell order={o} drivers={drivers} sched={sched} writeSeat={writeCrewSeat} pending={crewPending} />,
       searchValue: (o) => o.crew?.driver_1_name ?? '',
       exportValue: (o) => o.crew?.driver_1_name ?? '',
     },
@@ -1265,19 +1329,22 @@ export function DeliveryPlanningBoard({
       searchValue: (o) => o.crew?.driver_2_name ?? '',
     },
     {
-      key: 'helper_1', label: 'Helper 1', width: 150, defaultHidden: true,
-      accessor: (o) => o.crew?.helper_1_name || <span style={{ color: '#767b6e' }}>—</span>,
+      key: 'helper_1', label: 'Helper 1', width: 160, defaultHidden: true,
+      accessor: (o) => <HelperPickCell order={o} helpers={helpers} writeSeat={writeCrewSeat} pending={crewPending} slot={1} />,
       searchValue: (o) => o.crew?.helper_1_name ?? '',
+      exportValue: (o) => o.crew?.helper_1_name ?? '',
     },
     {
-      key: 'helper_2', label: 'Helper 2', width: 150, defaultHidden: true,
-      accessor: (o) => o.crew?.helper_2_name || <span style={{ color: '#767b6e' }}>—</span>,
+      key: 'helper_2', label: 'Helper 2', width: 160, defaultHidden: true,
+      accessor: (o) => <HelperPickCell order={o} helpers={helpers} writeSeat={writeCrewSeat} pending={crewPending} slot={2} />,
       searchValue: (o) => o.crew?.helper_2_name ?? '',
+      exportValue: (o) => o.crew?.helper_2_name ?? '',
     },
     {
-      /* Inline-editable: assigns the trip lorry (writes lorryId). */
-      key: 'lorry', label: 'Lorry Plate', width: 150, defaultHidden: true,
-      accessor: (o) => <LorryEditCell order={o} sched={sched} lorries={lorries} />,
+      /* Inline type-to-search (owner 2026-09-26). SO writes the DO crew lorry; an
+         ASSR leg writes the trip lorry. */
+      key: 'lorry', label: 'Lorry Plate', width: 160, defaultHidden: true,
+      accessor: (o) => <LorryPickCell order={o} lorries={lorries} sched={sched} writeSeat={writeCrewSeat} pending={crewPending} />,
       searchValue: (o) => o.crew?.lorry_plate ?? '',
       exportValue: (o) => o.crew?.lorry_plate ?? '',
     },
