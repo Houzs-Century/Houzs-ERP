@@ -36,7 +36,7 @@ import {
   type Account, type ReceiptRow, type DebtorBill,
 } from '../../vendor/scm/lib/accounting-queries';
 import { AccountSelect } from '../../vendor/scm/components/AccountSelect';
-import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
+import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
 import { Modal } from '../../vendor/scm/components/Modal';
 import { useSaveHotkey, SAVE_HOTKEY_HINT } from '../../vendor/scm/lib/use-save-hotkey';
 import { DateField } from '../../vendor/scm/components/DateField';
@@ -75,7 +75,7 @@ const iconButton = { background: 'none', border: 'none', cursor: 'pointer', colo
 const buildReceiptColumns = (h: {
   canEdit: boolean; canCancel: boolean;
   onEdit: (r: ReceiptRow) => void; onVoid: (r: ReceiptRow) => void;
-}): DataGridColumn<ReceiptRow>[] => [
+}): GridColumn<ReceiptRow>[] => [
   {
     key: 'kind', label: 'Kind', width: 110, sortable: true, groupable: true,
     accessor: (r) => <span style={{ fontSize: 'var(--fs-11)', fontWeight: 600 }}>{KIND_LABEL[r.kind]}</span>,
@@ -456,7 +456,7 @@ export const Receipts = () => {
         </Modal>
       )}
 
-      <DataGrid<ReceiptRow>
+      <DataGridCompat<ReceiptRow>
         rows={rows}
         columns={columns}
         storageKey={RECEIPTS_STORAGE_KEY}

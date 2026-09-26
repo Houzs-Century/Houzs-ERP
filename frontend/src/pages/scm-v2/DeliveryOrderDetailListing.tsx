@@ -8,7 +8,7 @@ import { useCallback } from 'react';
 import { fmtDateOrDash } from '../../vendor/shared/format';
 import { DetailListingShell } from '../../components/scm-v2/DetailListingShell';
 import { useDeliveryOrderDetailListing, type DetailListingRow } from '../../vendor/scm/lib/reports-queries';
-import type { DataGridColumn } from '../../vendor/scm/components/DataGrid';
+import type { GridColumn } from '../../components/DataGridCompat';
 import styles from './SalesOrderDetailListing.module.css';
 import { transferFromColumnLabel } from "../../lib/convertScope";
 import { soRefOfStamp } from "../../lib/so-ref-search";
@@ -38,7 +38,7 @@ const fmtM3 = (milli: number | null | undefined): string =>
   ((Number(milli ?? 0)) / 1000).toFixed(3);
 
 export const DeliveryOrderDetailListing = () => {
-  const buildColumns = useCallback((opts: { checked: Record<string, boolean>; onToggle: (id: string) => void }): DataGridColumn<DoRow>[] => [
+  const buildColumns = useCallback((opts: { checked: Record<string, boolean>; onToggle: (id: string) => void }): GridColumn<DoRow>[] => [
     {
       key: 'check', label: 'Check', width: 50, align: 'left', sortable: false, groupable: false,
       accessor: (r) => (

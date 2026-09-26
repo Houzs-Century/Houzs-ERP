@@ -53,6 +53,8 @@ export type DataGridCompatProps<T> = {
   storageKey: string;
   rowKey: (row: T) => string;
   searchPlaceholder?: string;
+  /** Known cap on the rows the page loaded (search hint). */
+  loadedSearchLimit?: number;
   hideSearch?: boolean;
   exportName?: string;
   onRowClick?: (row: T) => void;
@@ -151,6 +153,7 @@ export function DataGridCompat<T>({
   storageKey,
   rowKey,
   searchPlaceholder = "Search…",
+  loadedSearchLimit,
   hideSearch = false,
   exportName,
   onRowClick,
@@ -184,7 +187,9 @@ export function DataGridCompat<T>({
       getRowStyle={rowStyle}
       onFilteredRowsChange={onFilteredRowsChange}
       toolbarExtra={toolbar}
-      clientSearch={hideSearch || embedded ? undefined : { placeholder: searchPlaceholder }}
+      clientSearch={
+        hideSearch || embedded ? undefined : { placeholder: searchPlaceholder, loadedLimit: loadedSearchLimit }
+      }
       focusSearchNonce={focusSearchNonce}
       exportName={exportName ?? storageKey}
       exportXlsx

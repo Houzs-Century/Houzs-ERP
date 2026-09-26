@@ -9,7 +9,7 @@ import { useCallback } from 'react';
 import { fmtDateOrDash } from '../../vendor/shared/format';
 import { DetailListingShell } from '../../components/scm-v2/DetailListingShell';
 import { useDeliveryReturnDetailListing, type DetailListingRow } from '../../vendor/scm/lib/reports-queries';
-import type { DataGridColumn } from '../../vendor/scm/components/DataGrid';
+import type { GridColumn } from '../../components/DataGridCompat';
 import styles from './SalesOrderDetailListing.module.css';
 import { customerRefOf } from '../../lib/customer-ref';
 
@@ -34,7 +34,7 @@ const fmtRm = (centi: number | null | undefined): string => {
 };
 
 export const DeliveryReturnDetailListing = () => {
-  const buildColumns = useCallback((opts: { checked: Record<string, boolean>; onToggle: (id: string) => void }): DataGridColumn<DrRow>[] => [
+  const buildColumns = useCallback((opts: { checked: Record<string, boolean>; onToggle: (id: string) => void }): GridColumn<DrRow>[] => [
     {
       key: 'check', label: 'Check', width: 50, align: 'left', sortable: false, groupable: false,
       accessor: (r) => (

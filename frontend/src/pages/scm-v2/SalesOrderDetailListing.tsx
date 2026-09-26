@@ -55,7 +55,7 @@ import { Button } from '../../components/Button';
 import { PageHeader } from '../../components/Layout';
 import { StatCard } from '../../components/StatCard';
 import { buildVariantSummary } from '@2990s/shared'; // Commander 2026-05-28
-import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
+import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
 import { ItemGroupPill, BrandingPill, badgeFor } from '../../vendor/scm/lib/category-badges';
 import {
   useSalesOrderDetailListing,
@@ -176,7 +176,7 @@ const heightSortValue = (v: number | string | null): number =>
    total ex · plus 2990-extras (customer_delivery_date · processing_date ·
    customer_state · payment_method).
    ───────────────────────────────────────────────────────────────────────── */
-const buildColumns = (canFinance: boolean): DataGridColumn<SoDetailListingRow>[] => {
+const buildColumns = (canFinance: boolean): GridColumn<SoDetailListingRow>[] => {
   /* Read-out helper for the "may exist on the row but not on the type"
      fields — the API flattens the SO header onto every line, so anything
      in mfg_sales_orders is reachable via (r as Record<string, unknown>)[k]. */
@@ -338,7 +338,7 @@ const buildColumns = (canFinance: boolean): DataGridColumn<SoDetailListingRow>[]
           return aPct - bPct;
         },
       },
-    ] as DataGridColumn<SoDetailListingRow>[]) : []),
+    ] as GridColumn<SoDetailListingRow>[]) : []),
     /* 15 */ {
       key: 'balance', label: 'Balance', width: 110, align: 'right', sortable: true,
       accessor: (r) => fmtRm(r.balance_sen ?? 0),
@@ -610,8 +610,8 @@ const buildColumns = (canFinance: boolean): DataGridColumn<SoDetailListingRow>[]
    intact (a useMemo(buildColumns) would have been rebuilt on every mount). A
    layout saved while the finance columns were visible is safe — DataGrid drops
    saved order/hidden keys it can't resolve against the current column set. */
-const COLUMNS_FINANCE: DataGridColumn<SoDetailListingRow>[] = buildColumns(true);
-const COLUMNS_NO_FINANCE: DataGridColumn<SoDetailListingRow>[] = buildColumns(false);
+const COLUMNS_FINANCE: GridColumn<SoDetailListingRow>[] = buildColumns(true);
+const COLUMNS_NO_FINANCE: GridColumn<SoDetailListingRow>[] = buildColumns(false);
 
 export const SalesOrderDetailListing = () => {
   const navigate = useNavigate();
@@ -792,7 +792,7 @@ export const SalesOrderDetailListing = () => {
 
       {/* ── DataGrid — 33 visible columns + 14 hidden by default ───── */}
       <section className="overflow-hidden rounded-lg border border-border bg-surface shadow-stone">
-        <DataGrid<SoDetailListingRow>
+        <DataGridCompat<SoDetailListingRow>
           rows={baseRows}
           onFilteredRowsChange={setVisibleRows}
           columns={columns}

@@ -285,7 +285,12 @@ export interface DataTableProps<T, L = never> {
    *  column's `searchValue` (else `getValue`, else a plain-text cell). For a
    *  list with no server search (SCM DataGrid parity). Ignored when `search`
    *  is set. */
-  clientSearch?: { placeholder?: string };
+  clientSearch?: {
+    placeholder?: string;
+    /** Known cap on the rows the page loaded, so the hint says the search
+     *  covers only those (see `search.loadedLimit`). */
+    loadedLimit?: number;
+  };
   /** Bump to put the cursor in the search box (a page's "Find" button). */
   focusSearchNonce?: number;
   /**

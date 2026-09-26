@@ -7,7 +7,7 @@
 // call, not a 500-line copy-paste.
 //
 // Each module owns:
-//   - Columns (DataGridColumn<row>[])
+//   - Columns (GridColumn<row>[])
 //   - The TanStack Query hook that fetches the rows
 //   - Module-specific KPI tile labels (defaults sensible)
 //   - Identity strings (title, route, storage key)
@@ -34,7 +34,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { fmtMoneySen } from '../../vendor/shared/format';
 import { ArrowLeft, ClipboardList, Printer, Eye, Filter, X, SlidersHorizontal, FileSearch } from 'lucide-react';
 import { Button } from '@2990s/design-system';
-import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
+import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import type { UseQueryResult } from '@tanstack/react-query';
 import type { DetailListingFilters, DetailListingRow } from '../../vendor/scm/lib/reports-queries';
@@ -90,7 +90,7 @@ export interface DetailListingShellProps<R extends DetailListingRow> {
   useDetailQuery: (filters: DetailListingFilters) => UseQueryResult<{ rows: R[] }>;
   /** Columns built per module — passed as a factory so the page can inject
    *  selection state if needed (mirrors the SO L2 pattern). */
-  buildColumns: (state: { checked: Record<string, boolean>; onToggle: (id: string) => void }) => DataGridColumn<R>[];
+  buildColumns: (state: { checked: Record<string, boolean>; onToggle: (id: string) => void }) => GridColumn<R>[];
   /** Compute KPI values from the (already outstanding-filtered) row set.
    *  Default: revenue = sum(total_sen), outstanding = sum(balance_sen)
    *  deduped by doc_no, no cost/margin. */
@@ -453,7 +453,7 @@ export function DetailListingShell<R extends DetailListingRow>({
           </div>
         </header>
 
-        <DataGrid<R>
+        <DataGridCompat<R>
           rows={rows}
           columns={columns}
           storageKey={storageKey}

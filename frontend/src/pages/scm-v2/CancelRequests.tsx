@@ -20,7 +20,7 @@
 import { useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { fmtDateTime } from '../../vendor/shared/format';
-import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
+import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
 import { STATUS_TONES } from '../../vendor/scm/lib/status-pill';
 import { cancelRequestReferenceOf } from '../../vendor/scm/lib/amendment-queue-rows';
 import {
@@ -104,7 +104,7 @@ export const CancelRequests = () => {
     navigate(DOC_PATH[row.doc_type](row.doc_key));
   };
 
-  const columns = useMemo<DataGridColumn<CancelRequestRow>[]>(() => [
+  const columns = useMemo<GridColumn<CancelRequestRow>[]>(() => [
     {
       key: 'doc', label: 'Document', width: 200, sortable: true, groupable: true,
       accessor: (r) => (
@@ -215,7 +215,7 @@ export const CancelRequests = () => {
           onChange={(v) => setScope(v)}
         />
 
-        <DataGrid<CancelRequestRow>
+        <DataGridCompat<CancelRequestRow>
           rows={rows}
           columns={columns}
           storageKey={STORAGE_KEY}

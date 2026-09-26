@@ -100,7 +100,7 @@ describe('desktop SO amendment queue', () => {
 
   test('clicking Status sorts by the same order, not by the bucket names A-Z', () => {
     const { container } = render(<MemoryRouter><Amendments /></MemoryRouter>);
-    fireEvent.click(screen.getByRole('button', { name: 'Status' }));
+    fireEvent.click(screen.getByRole('columnheader', { name: /^Status/ }));
     const ids = gridIds(container, 'SO');
     const bucketOf = (id: string) => ({ a: 1, b: 2, c: 1, d: 0, e: 0, f: 2 } as Record<string, number>)[id];
     expect(ids.map(bucketOf)).toEqual([0, 0, 1, 1, 2, 2]);
@@ -112,7 +112,7 @@ describe('desktop SO amendment queue', () => {
   test('a Status sort left from an earlier visit does not decide the order the next time it opens', () => {
     const bucketOf = (id: string) => ({ a: 1, b: 2, c: 1, d: 0, e: 0, f: 2 } as Record<string, number>)[id];
     const first = render(<MemoryRouter><Amendments /></MemoryRouter>);
-    const status = screen.getByRole('button', { name: 'Status' });
+    const status = screen.getByRole('columnheader', { name: /^Status/ });
     fireEvent.click(status); // ascending
     fireEvent.click(status); // descending: Requested at the bottom for THIS visit
     expect(gridIds(first.container, 'SO').map(bucketOf)).toEqual([2, 2, 1, 1, 0, 0]);
@@ -144,7 +144,7 @@ describe('desktop PO amendment queue', () => {
       row('r', 'REJECTED', '2026-09-13T08:00:00Z'),
     ];
     const first = render(<MemoryRouter><PoAmendments /></MemoryRouter>);
-    const created = screen.getByRole('button', { name: 'Created' });
+    const created = screen.getByRole('columnheader', { name: /^Created/ });
     fireEvent.click(created); // oldest first
     fireEvent.click(created); // newest first: the Rejected row leads this visit
     expect(gridIds(first.container, 'PO')[0]).toBe('r');

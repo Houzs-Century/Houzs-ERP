@@ -26,7 +26,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { AmendmentQuickView, amendmentJobCardPath, type AmendmentQuickViewTarget } from './AmendmentQuickView';
 import { fmtDateTime } from '../../vendor/shared/format';
 import { useAmendments, type AmendmentRow } from '../../vendor/scm/lib/so-amendment-queries';
-import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
+import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
 import { TonedPill } from '../../vendor/scm/components/StatusPill';
 import { QueueApproverBadge } from '../../vendor/scm/components/AmendmentApproverBadge';
 import {
@@ -100,7 +100,7 @@ const badge = (tone: { bg: string; fg: string }): React.CSSProperties => ({
 const buildAmendmentColumns = (
   actorNameOf: (id: string | null | undefined, empty?: string) => string,
   actions: (r: AmendmentQueueRow) => React.ReactNode,
-): DataGridColumn<AmendmentQueueRow>[] => {
+): GridColumn<AmendmentQueueRow>[] => {
   const requesterOf = (r: AmendmentQueueRow, empty = '—'): string =>
     r.requestedByName ?? actorNameOf(r.requestedByStaffId, empty);
   return [
@@ -324,7 +324,7 @@ export const Amendments = () => {
           onChange={(v) => setStatusChip(v)}
         />
 
-        <DataGrid<AmendmentQueueRow>
+        <DataGridCompat<AmendmentQueueRow>
           rows={rows}
           columns={columns}
           storageKey={AMENDMENT_LIST_STORAGE_KEY}
