@@ -114,11 +114,23 @@ async function main() {
     const now = new Date().toISOString();
     const shownDocs = [];
 
+    // Read every line for the affected orders in ONE query, grouped by doc_no —
+    // a per-SO query would be thousands of round-trips on company 1.
+    const linesByDoc = new Map();
+    const docNos = sos.map((s) => s.doc_no);
+    if (docNos.length > 0) {
+      const allLines = await sql`SELECT id, doc_no, item_code, qty, variants, unit_cost_sen
+                                 FROM scm.mfg_sales_order_items
+                                 WHERE company_id = ${co} AND doc_no = ANY(${docNos})`;
+      for (const l of allLines) {
+        if (!linesByDoc.has(l.doc_no)) linesByDoc.set(l.doc_no, []);
+        linesByDoc.get(l.doc_no).push(l);
+      }
+    }
+
     for (const so of sos) {
       const plan = { lineWrites: [], agg: { mattress_sofa: 0, bedframe: 0, accessories: 0, service: 0, others: 0 }, anyStamp: false };
-      const lines = await sql`SELECT id, item_code, qty, variants, unit_cost_sen
-                              FROM scm.mfg_sales_order_items
-                              WHERE company_id = ${co} AND doc_no = ${so.doc_no}`;
+      const lines = linesByDoc.get(so.doc_no) ?? [];
       for (const l of lines) {
         let uc = Number(l.unit_cost_sen) || 0;
         if (uc === 0) {
