@@ -683,6 +683,10 @@ export type DeliveryPlanningBoardProps = {
      by the full Delivery Planning board (the date/time/crew sub-pages have their
      own storage keys and narrower views). */
   layoutPresets?: LayoutSeed[];
+  /* First-page row cap (owner 2026-09-26): the full board renders this many rows
+     with a "Load more" for the rest; passed only by the main Delivery Planning
+     page. Omitted on the sub-pages (they render their whole, narrower queue). */
+  initialRowLimit?: number;
 
   /* Default ordering while NO column sort is active — forwarded to the
      DataGrid. The two arrangement queues pass arrangementQueueCompare
@@ -729,6 +733,7 @@ export function DeliveryPlanningBoard({
   emptyMessage = 'No orders need delivering in this view.',
   defaultSort,
   layoutPresets,
+  initialRowLimit,
 }: DeliveryPlanningBoardProps) {
   const askConfirm = useConfirm();
   const notify = useNotify();
@@ -1626,6 +1631,7 @@ export function DeliveryPlanningBoard({
         columns={columns}
         storageKey={storageKey}
         layoutPresets={layoutPresets}
+        initialRowLimit={initialRowLimit}
         exportName={exportName}
         rowKey={rowIdOf}
         searchPlaceholder={searchPlaceholder}

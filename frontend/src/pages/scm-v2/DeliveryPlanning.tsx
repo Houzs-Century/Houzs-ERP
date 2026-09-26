@@ -342,6 +342,7 @@ export const DeliveryPlanning = () => {
       <DeliveryPlanningBoard
         orders={allOrders}
         layoutPresets={DELIVERY_PLANNING_LAYOUT_PRESETS}
+        initialRowLimit={200}
         counts={counts}
         regionTabs={regionTabs}
         activeRegion={activeRegion}
