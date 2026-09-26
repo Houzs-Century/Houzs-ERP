@@ -26,6 +26,7 @@ import { orderSofaModuleRowsWithinBuilds, sortSoLinesByGroupRank } from '../shar
 import { supabaseAuth } from '../middleware/auth';
 import { statusCapabilityRefusal, POD_STATES } from '../lib/do-status-capability';
 import { resolveDeliveryScope, scopeMatchesAssignment } from '../lib/deliveryScope';
+import { resolveCrewSeats } from '../lib/crew-seats';
 import { fetchDoCrewAssignment } from './delivery-planning';
 import { revertDeliveryOrderHandler } from './delivery-order-revert';
 import type { Env, Variables } from '../env';
@@ -4075,16 +4076,11 @@ deliveryOrdersMfg.put('/:id/crew', async (c) => {
     .eq('do_id', id).maybeSingle();
   const crewBefore = (crewBeforeRow ?? {}) as Record<string, unknown>;
 
-  const str = (v: unknown): string | null => {
-    if (v === undefined || v === null) return null;
-    const s = String(v).trim();
-    return s === '' ? null : s;
-  };
-  const driver1Id = str(body.driver1Id);
-  const driver2Id = str(body.driver2Id);
-  const helper1Id = str(body.helper1Id);
-  const helper2Id = str(body.helper2Id);
-  const lorryId   = str(body.lorryId);
+  /* Partial re-assign (owner 2026-09-26): a seat named in the body is set (an
+     explicit null / '' clears it); a seat the body omits keeps who was on it, so a
+     single-seat board edit never wipes the rest, while FleetDay — which sends all
+     five — re-assigns fully. Pure + tested in crew-seats.test.ts. */
+  const { driver1Id, driver2Id, helper1Id, helper2Id, lorryId } = resolveCrewSeats(body, crewBefore);
 
   // Load the chosen master rows so the snapshot captures what's true at assign
   // time. Batched per master (PostgREST returns snake_case columns directly).
