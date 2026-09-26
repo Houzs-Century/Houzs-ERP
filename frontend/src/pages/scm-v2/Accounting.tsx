@@ -494,36 +494,35 @@ export const PaymentDriftCard = ({ d }: { d: PaymentDrift }) => {
             + 'Editing a payment does not re-post its entry, so a change made after the day it was keyed leaves the books behind.'}
       </div>
 
+      {/* Stays a plain table on purpose: this card reads and offers no button
+          at all (PaymentDriftCard.test), and a list grid brings its own. */}
       {d.rows.length > 0 && (
-        <DataTable<PaymentDriftRow>
-          tableId="acc-payment-drift"
-          embedded
-          columns={[
-            { key: 'document', label: 'Document', getValue: (r) => r.docNo, render: (r) => r.docNo },
-            { key: 'entry', label: 'Entry', getValue: (r) => r.jeNo, render: (r) => r.jeNo },
-            { key: 'moved', label: 'What moved', getValue: (r) => r.fields.map((f) => driftWords[f]).join(', '), render: (r) => r.fields.map((f) => driftWords[f]).join(', ') },
-            {
-              key: 'payment', label: 'Payment says', align: 'right', getValue: (r) => r.paymentAmountSen,
-              render: (r) => (
-                <>
-                  {fmt(r.paymentAmountSen)}
-                  <div style={{ color: soft, fontSize: 'var(--fs-12)' }}>{r.paidOn || 'no date'} · {r.paymentMethod}</div>
-                </>
-              ),
-            },
-            {
-              key: 'entrySays', label: 'Entry says', align: 'right', getValue: (r) => r.entryAmountSen,
-              render: (r) => (
-                <>
-                  {fmt(r.entryAmountSen)}
-                  <div style={{ color: soft, fontSize: 'var(--fs-12)' }}>{r.entryDate} · {r.entryMethod ?? 'not stated'}</div>
-                </>
-              ),
-            },
-          ]}
-          rows={d.rows}
-          getRowKey={(r) => `${r.source}:${r.id}`}
-        />
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
+          <thead>
+            <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--c-line, rgba(34,31,32,0.18))' }}>
+              <th>Document</th><th>Entry</th><th>What moved</th>
+              <th style={{ textAlign: 'right' }}>Payment says</th>
+              <th style={{ textAlign: 'right' }}>Entry says</th>
+            </tr>
+          </thead>
+          <tbody>
+            {d.rows.map((r) => (
+              <tr key={`${r.source}:${r.id}`} style={{ borderBottom: '1px solid var(--c-line, rgba(34,31,32,0.10))' }}>
+                <td>{r.docNo}</td>
+                <td>{r.jeNo}</td>
+                <td>{r.fields.map((f) => driftWords[f]).join(', ')}</td>
+                <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                  {fmt(r.paymentAmountSen)}<br />
+                  <span style={{ color: soft, fontSize: 'var(--fs-12)' }}>{r.paidOn || 'no date'} · {r.paymentMethod}</span>
+                </td>
+                <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                  {fmt(r.entryAmountSen)}<br />
+                  <span style={{ color: soft, fontSize: 'var(--fs-12)' }}>{r.entryDate} · {r.entryMethod ?? 'not stated'}</span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       )}
 
       {d.rows.length > 0 && (
