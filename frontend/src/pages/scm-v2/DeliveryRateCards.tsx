@@ -22,13 +22,15 @@ import { Button } from '@2990s/design-system';
 import {
   useRateCards, useRateCard, useRateCardMeta,
   useCreateRateCard, useUpdateRateCard, useDeleteRateCard,
-  useCreateRateRule, useDeleteRateRule, useComputeCost, useReconcile,
+  useCreateRateRule, useDeleteRateRule, useComputeCost, useReconcile, type ReconcileRow,
   type RateCard, type RateRule, type RateRuleType, type DeliveryFacts, type RateAggregation,
 } from '../../vendor/scm/lib/delivery-rate-card-queries';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import styles from './Suppliers.module.css';
 import { PageHeader } from '../../components/Layout';
+import { DataTable, type Column } from '../../components/DataTable';
+import { fmtDate } from '@2990s/shared';
 import {
   RULE_LABEL, RULE_CATEGORY, CATEGORY_LABEL, CATEGORY_HINT,
   RATE_RULE_CATEGORIES, rulesByCategory, type RateRuleCategory, type RateRuleTypeT,
@@ -604,6 +606,44 @@ const CalculatorPanel = ({ cardId, basis, zones, rules }: { cardId: string; basi
 };
 
 // ── Reconciliation view ────────────────────────────────────────────────────────
+const muted = { color: 'var(--fg-muted)' };
+const reconStatus = (r: ReconcileRow): string => (!r.matched ? 'unmatched' : r.flagged ? 'mismatch' : 'match');
+const RECON_COLUMNS: Column<ReconcileRow>[] = [
+  { key: 'trip', label: 'Trip', render: (r) => r.tripNo ?? r.tripId.slice(0, 8), getValue: (r) => r.tripNo ?? r.tripId },
+  { key: 'date', label: 'Date', render: (r) => (r.tripDate ? fmtDate(r.tripDate) : '—'), getValue: (r) => r.tripDate, exportFormat: 'date' },
+  { key: 'card', label: 'Card', render: (r) => (r.matched ? r.cardName : <span style={muted}>no card</span>), getValue: (r) => (r.matched ? r.cardName ?? '' : '') },
+  { key: 'drops', label: 'Drops', align: 'right', render: (r) => r.dropCount, getValue: (r) => r.dropCount },
+  { key: 'zone', label: 'Zone', render: (r) => r.derivedZone ?? '—', getValue: (r) => r.derivedZone ?? '' },
+  {
+    key: 'expected', label: 'Expected', align: 'right', render: (r) => (r.expectedSen == null ? '—' : `RM ${centiToRM(r.expectedSen)}`),
+    getValue: (r) => r.expectedSen, exportValue: (r) => (r.expectedSen == null ? null : r.expectedSen / 100), exportFormat: 'money',
+  },
+  {
+    key: 'billed', label: 'Billed', align: 'right', render: (r) => `RM ${centiToRM(r.billedSen)}`,
+    getValue: (r) => r.billedSen, exportValue: (r) => r.billedSen / 100, exportFormat: 'money',
+  },
+  {
+    key: 'delta', label: 'Delta', align: 'right',
+    render: (r) => (
+      <span style={{ color: r.flagged ? 'var(--c-danger, #dc2626)' : 'var(--fg-muted)' }}>
+        {r.deltaSen == null ? '—' : `${r.deltaSen > 0 ? '+' : r.deltaSen < 0 ? '−' : ''}RM ${centiToRM(Math.abs(r.deltaSen))}`}
+      </span>
+    ),
+    getValue: (r) => r.deltaSen, exportValue: (r) => (r.deltaSen == null ? null : r.deltaSen / 100), exportFormat: 'money',
+  },
+  {
+    key: 'status', label: 'Status',
+    render: (r) => (
+      <>
+        {!r.matched ? <span style={muted}>unmatched</span>
+          : r.flagged ? <span style={{ color: 'var(--c-danger, #dc2626)', fontWeight: 600 }}>mismatch</span>
+          : <span style={{ color: 'var(--c-secondary-a, #16a34a)' }}>match</span>}
+        {r.matched && !r.factsComplete && <span style={{ ...muted, fontSize: 'var(--fs-11)' }}> · facts partial</span>}
+      </>
+    ),
+    getValue: reconStatus,
+  },
+];
 const ReconcileView = () => {
   const [range, setRange] = useState<{ from: string; to: string }>({ from: '', to: '' });
   const recon = useReconcile(range);
@@ -618,43 +658,18 @@ const ReconcileView = () => {
         <RMLikeInput label="From" value={range.from} onChange={(v) => setRange((s) => ({ ...s, from: v }))} type="date" width={150} />
         <RMLikeInput label="To" value={range.to} onChange={(v) => setRange((s) => ({ ...s, to: v }))} type="date" width={150} />
       </div>
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
-        <thead>
-          <tr style={{ textAlign: 'left', color: 'var(--fg-muted)', fontSize: 'var(--fs-11)' }}>
-            <th style={{ padding: '4px 8px' }}>Trip</th><th style={{ padding: '4px 8px' }}>Date</th>
-            <th style={{ padding: '4px 8px' }}>Card</th><th style={{ padding: '4px 8px' }}>Drops</th>
-            <th style={{ padding: '4px 8px' }}>Zone</th>
-            <th style={{ padding: '4px 8px', textAlign: 'right' }}>Expected</th>
-            <th style={{ padding: '4px 8px', textAlign: 'right' }}>Billed</th>
-            <th style={{ padding: '4px 8px', textAlign: 'right' }}>Delta</th>
-            <th style={{ padding: '4px 8px' }}>Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          {recon.isLoading && <tr><td colSpan={9} style={{ padding: 12, color: 'var(--fg-muted)' }}>Loading…</td></tr>}
-          {!recon.isLoading && rows.length === 0 && <tr><td colSpan={9} style={{ padding: 12, color: 'var(--fg-muted)' }}>No 3PL trips with a captured billed cost in range.</td></tr>}
-          {rows.map((r) => (
-            <tr key={r.tripId} style={{ borderTop: '1px solid var(--border, rgba(0,0,0,0.06))', background: r.flagged ? 'rgba(220,38,38,0.06)' : undefined }}>
-              <td style={{ padding: '6px 8px' }}>{r.tripNo ?? r.tripId.slice(0, 8)}</td>
-              <td style={{ padding: '6px 8px' }}>{r.tripDate ?? '—'}</td>
-              <td style={{ padding: '6px 8px' }}>{r.matched ? r.cardName : <span style={{ color: 'var(--fg-muted)' }}>no card</span>}</td>
-              <td style={{ padding: '6px 8px' }}>{r.dropCount}</td>
-              <td style={{ padding: '6px 8px' }}>{r.derivedZone ?? '—'}</td>
-              <td style={{ padding: '6px 8px', textAlign: 'right' }}>{r.expectedSen == null ? '—' : `RM ${centiToRM(r.expectedSen)}`}</td>
-              <td style={{ padding: '6px 8px', textAlign: 'right' }}>RM {centiToRM(r.billedSen)}</td>
-              <td style={{ padding: '6px 8px', textAlign: 'right', color: r.flagged ? 'var(--c-danger, #dc2626)' : 'var(--fg-muted)' }}>
-                {r.deltaSen == null ? '—' : `${r.deltaSen > 0 ? '+' : r.deltaSen < 0 ? '−' : ''}RM ${centiToRM(Math.abs(r.deltaSen))}`}
-              </td>
-              <td style={{ padding: '6px 8px' }}>
-                {!r.matched ? <span style={{ color: 'var(--fg-muted)' }}>unmatched</span>
-                  : r.flagged ? <span style={{ color: 'var(--c-danger, #dc2626)', fontWeight: 600 }}>mismatch</span>
-                  : <span style={{ color: 'var(--c-secondary-a, #16a34a)' }}>match</span>}
-                {r.matched && !r.factsComplete && <span style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-11)' }}> · facts partial</span>}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <DataTable<ReconcileRow>
+        tableId="rate-card-reconcile"
+        exportName="rate-card-reconcile"
+        exportXlsx
+        columns={RECON_COLUMNS}
+        rows={recon.data ? rows : null}
+        loading={recon.isLoading}
+        error={recon.isError ? 'The reconciliation did not load.' : null}
+        emptyLabel="No 3PL trips with a captured billed cost in range."
+        getRowKey={(r) => r.tripId}
+        getRowStyle={(r) => (r.flagged ? { background: 'rgba(220,38,38,0.06)' } : undefined)}
+      />
     </div>
   );
 };
