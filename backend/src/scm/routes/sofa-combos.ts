@@ -57,7 +57,7 @@ async function requireWriteRole(c: AppContext): Promise<{ ok: true } | { ok: fal
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const todayIso = () => todayMyt();
-const TIERS = new Set(['PRICE_1', 'PRICE_2', 'PRICE_3']);
+export const TIERS = new Set(['PRICE_1', 'PRICE_2', 'PRICE_3']);
 
 type Tier = 'PRICE_1' | 'PRICE_2' | 'PRICE_3' | null;
 
@@ -115,7 +115,7 @@ function rowToWire(r: Row) {
  * Returns null on a malformed payload (non-array, empty after trim, or a
  * slot with no codes).
  */
-function validateComboModules(v: unknown): ComboSlots | null {
+export function validateComboModules(v: unknown): ComboSlots | null {
   if (!Array.isArray(v) || v.length === 0) return null;
   // Reject mixed/garbage entries up front; the canonicalizer handles the
   // string vs string[] coercion + trimming + intra-slot/slot sort.
@@ -129,7 +129,7 @@ function validateComboModules(v: unknown): ComboSlots | null {
   return canonicalizeComboModulesForStorage(v);
 }
 
-function validatePricesByHeight(v: unknown): Record<string, number | null> | null {
+export function validatePricesByHeight(v: unknown): Record<string, number | null> | null {
   if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
   const out: Record<string, number | null> = {};
   for (const [k, raw] of Object.entries(v as Record<string, unknown>)) {

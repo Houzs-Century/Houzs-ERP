@@ -133,12 +133,16 @@
       "reads": 3,
       "catches": 0
     },
+    "backend/src/scm/lib/pos-sofa-combos.ts": {
+      "reads": 1,
+      "catches": 0
+    },
     "backend/src/scm/lib/product-pricing-history.ts": {
       "reads": 2,
       "catches": 0
     },
     "backend/src/scm/lib/pwp-claim-single.ts": {
-      "reads": 3,
+      "reads": 2,
       "catches": 0
     },
     "backend/src/scm/lib/reaper.ts": {
@@ -314,7 +318,7 @@
       "catches": 0
     },
     "backend/src/scm/routes/mfg-sales-orders.ts": {
-      "reads": 75,
+      "reads": 73,
       "catches": 2
     },
     "backend/src/scm/routes/mfg-sales-orders/cross-category.ts": {
@@ -370,7 +374,7 @@
       "catches": 0
     },
     "backend/src/scm/routes/pwp-codes.ts": {
-      "reads": 6,
+      "reads": 5,
       "catches": 0
     },
     "backend/src/scm/routes/reports.ts": {
