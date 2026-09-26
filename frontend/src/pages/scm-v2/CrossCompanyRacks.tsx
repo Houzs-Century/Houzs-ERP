@@ -14,6 +14,7 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { Search } from 'lucide-react';
 import { SearchInput } from '../../components/Button';
+import { DataTable, type Column } from '../../components/DataTable';
 import { fmtDate, fmtQty } from '@2990s/shared';
 import { useCrossCompanyRacks, type CrossCompanyRack } from '../../vendor/scm/lib/warehouse-queries';
 import {
@@ -25,6 +26,40 @@ import {
    in (the floor-plan slot model carries neither, since that view is already
    pinned to one company + one warehouse). */
 type CcSlot = Slot & { companyCode: string; warehouseCode: string };
+
+const productText = (s: CcSlot): string =>
+  s.itemCount === 0 ? '—' : s.itemCount === 1 ? itemDescription(s.items[0]) : `${s.itemCount} items`;
+const zoneText = (s: CcSlot): string => {
+  const zone = resolvedZoneLabel(s);
+  return `${zone ?? '—'}${s.rack.zone ? '' : zone ? ' (auto)' : ''}`;
+};
+
+const CC_COLUMNS: Column<CcSlot>[] = [
+  {
+    key: 'company', label: 'Company',
+    render: (s) => <span className="rounded-full bg-accent-soft px-2 py-0.5 text-[11px] font-semibold text-accent-ink">{s.companyCode}</span>,
+    getValue: (s) => s.companyCode,
+  },
+  { key: 'warehouse', label: 'Warehouse', render: (s) => s.warehouseCode, getValue: (s) => s.warehouseCode },
+  {
+    key: 'slot', label: 'Slot', render: (s) => <span className="font-semibold text-ink">{s.id}</span>, getValue: (s) => s.id,
+    sortCompare: (a, b) => compareRackLabels(a.rack.rack, b.rack.rack),
+  },
+  {
+    key: 'status', label: 'Status',
+    render: (s) => <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${statusPill(s.status)}`}>{STATUS_LABEL[s.status]}</span>,
+    getValue: (s) => STATUS_LABEL[s.status],
+  },
+  { key: 'product', label: 'Product', render: productText, getValue: productText },
+  { key: 'customer', label: 'Customer', render: (s) => s.customer || '—', getValue: (s) => s.customer || '' },
+  {
+    key: 'qty', label: 'Qty', align: 'right', render: (s) => (s.itemCount === 0 ? '—' : fmtQty(s.qty)),
+    getValue: (s) => (s.itemCount === 0 ? null : s.qty), exportFormat: 'number',
+  },
+  { key: 'inDate', label: 'In Date', render: (s) => (s.inDate ? fmtDate(s.inDate) : '—'), getValue: (s) => s.inDate || null, exportFormat: 'date' },
+  { key: 'document', label: 'Document', render: (s) => s.doc || '—', getValue: (s) => s.doc || '' },
+  { key: 'zone', label: 'Zone', render: zoneText, getValue: zoneText },
+];
 
 const STATUS_LABEL: Record<SlotStatus, string> = { occupied: 'Occupied', reserved: 'Reserved', empty: 'Empty' };
 
@@ -118,40 +153,15 @@ export function CrossCompanyRacks() {
         </div>
       </div>
 
-      <div className="overflow-x-auto rounded-xl border border-border-subtle bg-surface">
-        <table className="w-full border-collapse text-[12.5px]">
-          <thead>
-            <tr className="border-b border-border-subtle text-left">
-              {['Company', 'Warehouse', 'Slot', 'Status', 'Product', 'Customer', 'Qty', 'In date', 'Document', 'Zone'].map((h) => (
-                <th key={h} className="whitespace-nowrap px-3 py-2 font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-ink-muted">{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((s) => {
-              const zone = resolvedZoneLabel(s);
-              return (
-                <tr key={s.rack.id} className="border-b border-border-subtle/60 hover:bg-surface-2">
-                  <td className="whitespace-nowrap px-3 py-2">
-                    <span className="rounded-full bg-accent-soft px-2 py-0.5 text-[11px] font-semibold text-accent-ink">{s.companyCode}</span>
-                  </td>
-                  <td className="whitespace-nowrap px-3 py-2 text-ink-secondary">{s.warehouseCode}</td>
-                  <td className="whitespace-nowrap px-3 py-2 font-semibold text-ink">{s.id}</td>
-                  <td className="whitespace-nowrap px-3 py-2">
-                    <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${statusPill(s.status)}`}>{STATUS_LABEL[s.status]}</span>
-                  </td>
-                  <td className="px-3 py-2 text-ink">{s.itemCount === 0 ? '—' : s.itemCount === 1 ? itemDescription(s.items[0]) : `${s.itemCount} items`}</td>
-                  <td className="px-3 py-2 text-ink-secondary">{s.customer || '—'}</td>
-                  <td className="whitespace-nowrap px-3 py-2 tabular-nums text-ink-secondary">{s.itemCount === 0 ? '—' : fmtQty(s.qty)}</td>
-                  <td className="whitespace-nowrap px-3 py-2 tabular-nums text-ink-secondary">{s.inDate ? fmtDate(s.inDate) : '—'}</td>
-                  <td className="whitespace-nowrap px-3 py-2 text-ink-secondary">{s.doc || '—'}</td>
-                  <td className="whitespace-nowrap px-3 py-2 text-ink-secondary">{zone ?? '—'}{s.rack.zone ? '' : zone ? ' (auto)' : ''}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+      <DataTable<CcSlot>
+        tableId="cross-company-racks"
+        exportName="cross-company-racks"
+        exportXlsx
+        columns={CC_COLUMNS}
+        rows={rows}
+        emptyLabel="No rack matches these filters."
+        getRowKey={(s) => s.rack.id}
+      />
     </div>
   );
 }

@@ -8,7 +8,8 @@
 
 import { useState } from 'react';
 import { fmtSen } from '../../vendor/shared/format';
-import { useStockClose, useRunStockClose } from './accounting-phase1-queries';
+import { useStockClose, useRunStockClose, type StockCloseRun } from './accounting-phase1-queries';
+import { DataTable, type Column } from '../../components/DataTable';
 
 const cardStyle: React.CSSProperties = {
   padding: 'var(--space-4)',
@@ -34,6 +35,30 @@ const ACTION_LABEL: Record<string, { text: string; color?: string }> = {
   unchanged: { text: 'no change' },
   failed: { text: 'FAILED', color: 'var(--c-danger, #a33)' },
 };
+
+const RUN_COLUMNS: Column<StockCloseRun>[] = [
+  { key: 'month', label: 'Month', render: (r) => <b>{r.month}</b>, getValue: (r) => r.month },
+  {
+    key: 'checkedAt', label: 'Checked At',
+    render: (r) => String(r.ran_at).replace('T', ' ').slice(0, 16),
+    getValue: (r) => String(r.ran_at),
+  },
+  { key: 'by', label: 'By', render: (r) => r.trigger, getValue: (r) => r.trigger },
+  {
+    key: 'value', label: 'Stock Value', align: 'right', render: (r) => fmtSen(r.stock_value_sen),
+    getValue: (r) => r.stock_value_sen, exportValue: (r) => r.stock_value_sen / 100, exportFormat: 'money',
+  },
+  {
+    key: 'result', label: 'Result',
+    render: (r) => { const a = ACTION_LABEL[r.action] ?? { text: r.action }; return <span style={{ color: a.color }}>{a.text}</span>; },
+    getValue: (r) => (ACTION_LABEL[r.action] ?? { text: r.action }).text,
+  },
+  {
+    key: 'entries', label: 'Entries', render: (r) => [r.je_no, r.rev_je_no].filter(Boolean).join(' / ') || '—',
+    getValue: (r) => [r.je_no, r.rev_je_no].filter(Boolean).join(' / '),
+  },
+  { key: 'note', label: 'Note', render: (r) => r.note ?? '', getValue: (r) => r.note ?? '' },
+];
 
 export const StockCloseTab = () => {
   const q = useStockClose();
@@ -80,40 +105,15 @@ export const StockCloseTab = () => {
         </div>
       </div>
 
-      <div style={{ ...cardStyle, padding: 0, overflowX: 'auto' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
-          <thead>
-            <tr>
-              <th style={{ textAlign: 'left', padding: '8px 10px' }}>Month</th>
-              <th style={{ textAlign: 'left', padding: '8px 10px' }}>Checked at</th>
-              <th style={{ textAlign: 'left', padding: '8px 10px' }}>By</th>
-              <th style={{ textAlign: 'right', padding: '8px 10px' }}>Stock value</th>
-              <th style={{ textAlign: 'left', padding: '8px 10px' }}>Result</th>
-              <th style={{ textAlign: 'left', padding: '8px 10px' }}>Entries</th>
-              <th style={{ textAlign: 'left', padding: '8px 10px' }}>Note</th>
-            </tr>
-          </thead>
-          <tbody>
-            {q.data.runs.length === 0 && (
-              <tr><td colSpan={7} style={{ padding: '10px', ...softText }}>No runs yet — the first close fires the night this month ends, or press Run now.</td></tr>
-            )}
-            {q.data.runs.map((r, i) => {
-              const a = ACTION_LABEL[r.action] ?? { text: r.action };
-              return (
-                <tr key={`${r.month}-${r.ran_at}-${i}`} style={{ borderTop: '1px solid var(--border-weak, #e3e1da)' }}>
-                  <td style={{ padding: '6px 10px', whiteSpace: 'nowrap' }}><b>{r.month}</b></td>
-                  <td style={{ padding: '6px 10px', whiteSpace: 'nowrap' }}>{String(r.ran_at).replace('T', ' ').slice(0, 16)}</td>
-                  <td style={{ padding: '6px 10px' }}>{r.trigger}</td>
-                  <td style={{ padding: '6px 10px', textAlign: 'right' }}>{fmtSen(r.stock_value_sen)}</td>
-                  <td style={{ padding: '6px 10px', color: a.color }}>{a.text}</td>
-                  <td style={{ padding: '6px 10px', whiteSpace: 'nowrap' }}>{[r.je_no, r.rev_je_no].filter(Boolean).join(' / ') || '—'}</td>
-                  <td style={{ padding: '6px 10px' }}>{r.note ?? ''}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+      <DataTable<StockCloseRun>
+        tableId="stock-close-runs"
+        exportName="stock-close-runs"
+        exportXlsx
+        columns={RUN_COLUMNS}
+        rows={q.data.runs}
+        emptyLabel="No runs yet — the first close fires the night this month ends, or press Run now."
+        getRowKey={(r) => `${r.month}-${r.ran_at}-${r.action}`}
+      />
     </div>
   );
 };
