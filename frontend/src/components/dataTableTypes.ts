@@ -186,6 +186,11 @@ export interface DataTableProps<T, L = never> {
   /** Inline row style, for a colour computed per row (a status tint). Prefer
    *  `getRowClassName` for a fixed set of tones. */
   getRowStyle?: (row: T) => CSSProperties | undefined;
+  /** Show only the first N rows (after search / filter / sort) with a "Load more"
+   *  affordance that reveals another N, instead of rendering the whole set at
+   *  once. `undefined` renders everything (the default). The full filtered count
+   *  is unchanged — search, filters and `onFilteredRowsChange` still see them all. */
+  initialRowLimit?: number;
   /** The order rows open in while no header sort is active (client-side). */
   defaultSort?: (a: T, b: T) => number;
   /** Show the "drag a column header here to group" banner (SCM DataGrid
