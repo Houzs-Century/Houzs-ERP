@@ -1046,6 +1046,13 @@ export const SalesOrderNew = () => {
   const [fairPick, setFairPick] = useState<FairPickValue>({
     venue: null, organizer: null, startDate: null, endDate: null, day: null,
   });
+  /* Fair is compulsory on submit (owner 2026-09-26): the operator must pick a
+     fair OR tick No-fair (showroom). Picking a fair clears the No-fair mark. */
+  const [noFair, setNoFair] = useState(false);
+  const onFairChange = useCallback((next: FairPickValue) => {
+    setFairPick(next);
+    if (next.organizer) setNoFair(false);
+  }, []);
   const effectiveVenueName: string = useMemo(() => {
     if (fairPick.venue) return fairPick.venue;
     const id = pickedVenueId ?? resolvedVenueId;
@@ -1396,6 +1403,7 @@ export const SalesOrderNew = () => {
     asDraft: asDraftFlag,
     hasVenue: !!effectiveVenueId,
     ...fairDayCheck(fairEditPatch(fairEventOf(fairPick)), {}),
+    noFair,
     hasSalesperson: !!salespersonId,
     companyCode: branding.companyCode,
     salesLocation,
@@ -1413,7 +1421,7 @@ export const SalesOrderNew = () => {
       convertedFromDocNo: d.convertedFromDocNo,
       amountSen: d.amountSen,
     })),
-  }), [debtorName, phone, lines, effectiveVenueId, fairPick, salespersonId, branding.companyCode, salesLocation, state, processingDate, deliveryDate, fillAddressLater, address1, postcode, paymentDrafts]);
+  }), [debtorName, phone, lines, effectiveVenueId, fairPick, noFair, salespersonId, branding.companyCode, salesLocation, state, processingDate, deliveryDate, fillAddressLater, address1, postcode, paymentDrafts]);
 
   /* Live "Can't save — N to fix" list, asked of the backend as the operator
      types (debounced). Based on the CONFIRMED create (asDraft:false), which is
@@ -1587,6 +1595,7 @@ export const SalesOrderNew = () => {
         /* The picked event's ORGANIZER. Together with the venue, the order date
            and the brand derived from the lines, this is what identifies one
            fair; the server never trusts a project id from here. */
+        noFair: noFair || undefined,
         fairOrganizer: fairPick.organizer ?? undefined,
         /* The picked event's PERIOD. Venue + organizer + period is what names
            ONE occurrence; the order date cannot stand in for it, because this
@@ -1936,7 +1945,7 @@ export const SalesOrderNew = () => {
                 /* The create form has no SO-date field — the server stamps today in
                    MYT — so null is the honest value here, not a browser date. */
                 soDate={null}
-                onChange={setFairPick}
+                onChange={onFairChange}
                 wrapClassName={styles.selectWrap}
                 selectClassName={`${styles.fieldSelect} ${editedClass('venueId', effectiveVenueId ?? '')}`}
               />
@@ -1951,6 +1960,16 @@ export const SalesOrderNew = () => {
                     ? `Auto-filled from ${autoVenue.source === 'PMS' ? (autoVenue.projectName ?? 'your fair') : `your showroom${autoVenue.showroomName ? ` (${autoVenue.showroomName})` : ''}`} — change it if you are somewhere else today`
                     : `${autoVenue.venueName} is not in the venue list yet — it still saves on the order; add it in Project Maintenance to show it here.`}
                 </span>
+              )}
+              {/* Fair is compulsory (owner 2026-09-26): when no fair is picked
+                  the operator must tick this to attribute the sale as No-fair
+                  (showroom); otherwise the submit is blocked. Hidden once a fair
+                  is picked, since the two are mutually exclusive. */}
+              {!fairEventOf(fairPick) && (
+                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', marginTop: '6px', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={noFair} onChange={(e) => setNoFair(e.target.checked)} />
+                  <span>No fair (showroom / direct sale)</span>
+                </label>
               )}
             </label>
             {/* Which DAY of the picked event (owner 2026-09-24) — shown once an
