@@ -28,7 +28,7 @@
    MODE=plan (default) reports what it WOULD stamp, per company, incl. the total
    margin reduction, and writes nothing. MODE=apply needs
    CONFIRM="I HAVE REVIEWED THE DRY-RUN", writes one SO per short transaction
-   (deadlock-retried), prints every touched line id + header doc_no for reversal,
+   prints every touched line id + header doc_no for reversal,
    then RE-READS on a fresh connection and asserts no target line still reads 0
    where its product has a cost.
 
@@ -93,7 +93,7 @@ async function main() {
 
   const touchedLineIds = [];
   const touchedDocNos = [];
-  let grandStamp = 0, grandNoCost = 0, grandHeaders = 0, grandMarginDrop = 0, grandDeadlocks = 0;
+  let grandStamp = 0, grandNoCost = 0, grandHeaders = 0, grandMarginDrop = 0;
 
   for (const co of companies) {
     const prods = await sql`SELECT code, category, base_price_sen, cost_price_sen, seat_height_prices
@@ -110,9 +110,15 @@ async function main() {
                                           AND coalesce(i.unit_cost_sen,0) = 0)
                           ORDER BY h.doc_no`;
 
-    let stamped = 0, noCost = 0, headers = 0, marginDrop = 0, deadlocks = 0;
+    let stamped = 0, noCost = 0, headers = 0, marginDrop = 0;
     const now = new Date().toISOString();
     const shownDocs = [];
+    // Accumulate every write, then flush as TWO bulk UPDATEs per company (below).
+    // Company 1 has thousands of orders; a per-SO transaction each timed the job
+    // out at 30 min. AutoCount is disconnected, so the deadlock guard that forced
+    // per-SO transactions is no longer needed.
+    const wIds = [], wUc = [], wLc = [];
+    const hDoc = [], hMs = [], hBf = [], hAcc = [], hSvc = [], hOth = [], hTot = [], hMar = [];
 
     // Read every line for the affected orders in ONE query, grouped by doc_no —
     // a per-SO query would be thousands of round-trips on company 1.
@@ -155,36 +161,37 @@ async function main() {
       if (headerChanged) touchedDocNos.push(so.doc_no);
 
       if (APPLY && plan.anyStamp) {
-        const runOne = async (tx) => {
-          for (const w of plan.lineWrites) {
-            await tx`UPDATE scm.mfg_sales_order_items SET unit_cost_sen = ${w.uc}, line_cost_sen = ${w.uc * w.qty}
-                     WHERE id = ${w.id} AND coalesce(unit_cost_sen,0) = 0`;
-          }
-          if (headerChanged) {
-            await tx`UPDATE scm.mfg_sales_orders SET
-                mattress_sofa_cost_sen = ${plan.agg.mattress_sofa}, bedframe_cost_sen = ${plan.agg.bedframe},
-                accessories_cost_sen = ${plan.agg.accessories}, service_cost_sen = ${plan.agg.service},
-                others_cost_sen = ${plan.agg.others}, total_cost_sen = ${total},
-                total_margin_sen = ${(Number(so.total_revenue_sen) || 0) - total}, updated_at = ${now}
-              WHERE doc_no = ${so.doc_no} AND company_id = ${co}`;
-          }
-        };
-        let attempts = 0;
-        for (;;) {
-          try { await sql.begin(runOne); break; }
-          catch (e) {
-            if (/deadlock detected/i.test(e.message) && ++attempts <= 3) { deadlocks++; await new Promise((r) => setTimeout(r, 250 * attempts)); continue; }
-            throw e;
-          }
+        for (const w of plan.lineWrites) { wIds.push(w.id); wUc.push(w.uc); wLc.push(w.uc * w.qty); }
+        if (headerChanged) {
+          hDoc.push(so.doc_no); hMs.push(plan.agg.mattress_sofa); hBf.push(plan.agg.bedframe);
+          hAcc.push(plan.agg.accessories); hSvc.push(plan.agg.service); hOth.push(plan.agg.others);
+          hTot.push(total); hMar.push((Number(so.total_revenue_sen) || 0) - total);
         }
       }
+    }
+
+    if (APPLY && wIds.length > 0) {
+      // Bulk line stamp — one statement for the whole company. The
+      // coalesce(...)=0 guard keeps it idempotent and never overwrites a real cost.
+      await sql`UPDATE scm.mfg_sales_order_items AS t
+                SET unit_cost_sen = d.uc, line_cost_sen = d.lc
+                FROM unnest(${wIds}::uuid[], ${wUc}::bigint[], ${wLc}::bigint[]) AS d(id, uc, lc)
+                WHERE t.id = d.id AND coalesce(t.unit_cost_sen,0) = 0`;
+    }
+    if (APPLY && hDoc.length > 0) {
+      await sql`UPDATE scm.mfg_sales_orders AS t SET
+                  mattress_sofa_cost_sen = d.ms, bedframe_cost_sen = d.bf, accessories_cost_sen = d.acc,
+                  service_cost_sen = d.svc, others_cost_sen = d.oth, total_cost_sen = d.tot,
+                  total_margin_sen = d.mar, updated_at = ${now}
+                FROM unnest(${hDoc}::text[], ${hMs}::bigint[], ${hBf}::bigint[], ${hAcc}::bigint[], ${hSvc}::bigint[], ${hOth}::bigint[], ${hTot}::bigint[], ${hMar}::bigint[]) AS d(doc_no, ms, bf, acc, svc, oth, tot, mar)
+                WHERE t.doc_no = d.doc_no AND t.company_id = ${co}`;
     }
 
     note(`===== Company ${co} =====`);
     note(`zero-cost headers: ${sos.length}; lines to stamp: ${stamped}; product-has-no-cost: ${noCost}; headers to fill: ${headers}; margin reduction: RM ${rm(marginDrop)}`);
     shownDocs.forEach((d) => note(`  ${d}`));
     if (headers > shownDocs.length) note(`  ... ${headers - shownDocs.length} more.`);
-    grandStamp += stamped; grandNoCost += noCost; grandHeaders += headers; grandMarginDrop += marginDrop; grandDeadlocks += deadlocks;
+    grandStamp += stamped; grandNoCost += noCost; grandHeaders += headers; grandMarginDrop += marginDrop;
   }
 
   if (!APPLY) {
@@ -193,7 +200,7 @@ async function main() {
     return;
   }
 
-  note(`APPLIED: ${grandStamp} lines stamped across ${grandHeaders} orders; margin reduced by RM ${rm(grandMarginDrop)}; deadlock-retries ${grandDeadlocks}.`);
+  note(`APPLIED: ${grandStamp} lines stamped across ${grandHeaders} orders; margin reduced by RM ${rm(grandMarginDrop)}.`);
   note(`Touched line ids (${touchedLineIds.length}) — REVERSAL source:`);
   touchedLineIds.forEach((id) => note(`  L ${id}`));
   note(`Touched header doc_nos (${touchedDocNos.length}):`);
