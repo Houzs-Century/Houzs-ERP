@@ -42,6 +42,7 @@ import { BankAccountTabs, currentAccount } from './BankAccountTabs';
 import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import grid from './MerchantRecon.module.css';
+import { DataTable, type Column } from '../../components/DataTable';
 
 /** 2026-09 → 09/2026 — a month in the house's own numeric, unambiguous shape,
     one field shorter than fmtDate's 16/08/2026.
@@ -121,66 +122,67 @@ const MonthList = ({ account, onAccount, onOpen }: {
       <BankAccountTabs codes={codes} value={current} onChange={onAccount} ariaLabel="Bank account" />
 
       {shown.length > 0 && (
-        <table className={grid.grid}>
-          <thead>
-            <tr>
-              <th>Month</th><th>Files</th><th>Days covered</th>
-              <th className={grid.num}>In</th><th className={grid.num}>Out</th>
-              <th>Still to decide</th><th>The month itself</th><th />
-            </tr>
-          </thead>
-          <tbody>
-            {shown.map((m) => <MonthRow key={`${m.accountCode}|${m.month}`} m={m} onOpen={onOpen} />)}
-          </tbody>
-        </table>
+        <DataTable<BankMonth>
+          tableId="bank-months"
+          exportName="bank-months"
+          exportXlsx
+          columns={monthColumns(onOpen)}
+          rows={shown}
+          getRowKey={(m) => `${m.accountCode}|${m.month}`}
+        />
       )}
     </div>
   );
 };
 
-const MonthRow = ({ m, onOpen }: { m: BankMonth; onOpen: (p: Picked) => void }) => (
-  <tr>
-    <td><b>{monthLabel(m.month)}</b></td>
-    <td>
-      {m.statementCount} file{m.statementCount === 1 ? '' : 's'}
-      <div className={grid.sub}>{m.lineCount} movement{m.lineCount === 1 ? '' : 's'}</div>
-    </td>
-    <td>
-      {m.periodFrom === m.periodTo ? m.periodFrom : `${m.periodFrom} → ${m.periodTo}`}
-    </td>
-    <td className={grid.num}>{fmt(m.inSen)}</td>
-    <td className={grid.num}>{fmt(m.outSen)}</td>
-    <td className={m.openCount === 0 ? grid.good : undefined}>
-      {m.openCount === 0
-        ? 'nothing'
-        : `${m.openCount} of ${m.lineCount}`
-          + (m.openPayoutCount > 0 ? ` · ${m.openPayoutCount} card payout(s)` : '')}
-    </td>
-    <td>
-      {/* Whether the month can be trusted, before he opens it. A month missing
-          a day is not a month that is nearly right — its closing figure is
-          somebody else's. */}
-      {/* CLOSED replaces the verdict rather than sitting beside it: a closed
-          month's answer is fixed, so how clean it looks today is no longer the
-          thing to tell somebody about it. */}
-      {m.locked
-        ? <span style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-            <Lock {...ICON} /> closed by {m.locked.lockedBy ?? 'somebody'} on {m.locked.lockedAt.slice(0, 10)}
-          </span>
-        : m.complete
-          ? <span className={grid.good}>covered end to end</span>
-          : <span className={grid.bad}>
-              {m.gapCount} thing{m.gapCount === 1 ? '' : 's'} missing
-            </span>}
-    </td>
-    <td>
+const monthColumns = (onOpen: (p: Picked) => void): Column<BankMonth>[] => [
+  { key: 'month', label: 'Month', getValue: (m) => m.month, render: (m) => <b>{monthLabel(m.month)}</b> },
+  {
+    key: 'files', label: 'Files', getValue: (m) => m.statementCount,
+    render: (m) => (
+      <>
+        {m.statementCount} file{m.statementCount === 1 ? '' : 's'}
+        <div className={grid.sub}>{m.lineCount} movement{m.lineCount === 1 ? '' : 's'}</div>
+      </>
+    ),
+  },
+  { key: 'days', label: 'Days covered', getValue: (m) => m.periodFrom, render: (m) => (m.periodFrom === m.periodTo ? m.periodFrom : `${m.periodFrom} → ${m.periodTo}`) },
+  { key: 'in', label: 'In', align: 'right', getValue: (m) => m.inSen, exportValue: (m) => m.inSen / 100, exportFormat: 'money', render: (m) => fmt(m.inSen) },
+  { key: 'out', label: 'Out', align: 'right', getValue: (m) => m.outSen, exportValue: (m) => m.outSen / 100, exportFormat: 'money', render: (m) => fmt(m.outSen) },
+  {
+    key: 'open', label: 'Still to decide', getValue: (m) => m.openCount,
+    render: (m) => (
+      <span className={m.openCount === 0 ? grid.good : undefined}>
+        {m.openCount === 0
+          ? 'nothing'
+          : `${m.openCount} of ${m.lineCount}` + (m.openPayoutCount > 0 ? ` · ${m.openPayoutCount} card payout(s)` : '')}
+      </span>
+    ),
+  },
+  {
+    key: 'itself', label: 'The month itself',
+    getValue: (m) => (m.locked ? 'closed' : m.complete ? 'covered end to end' : `${m.gapCount} missing`),
+    /* Whether the month can be trusted, before he opens it: a month missing a
+       day is not nearly right, its closing figure is somebody else's. CLOSED
+       replaces the verdict: a closed month's answer is fixed. */
+    render: (m) => (m.locked
+      ? <span style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+          <Lock {...ICON} /> closed by {m.locked.lockedBy ?? 'somebody'} on {m.locked.lockedAt.slice(0, 10)}
+        </span>
+      : m.complete
+        ? <span className={grid.good}>covered end to end</span>
+        : <span className={grid.bad}>{m.gapCount} thing{m.gapCount === 1 ? '' : 's'} missing</span>),
+  },
+  {
+    key: 'action', label: '', exportLabel: 'Action',
+    render: (m) => (
       <button type="button" style={btn(!m.locked && m.openCount > 0)}
         onClick={() => onOpen({ accountCode: m.accountCode, month: m.month })}>
         <CalendarDays {...ICON} /> {m.locked ? 'Open' : m.openCount > 0 ? 'Reconcile' : 'Open'}
       </button>
-    </td>
-  </tr>
-);
+    ),
+  },
+];
 
 /* ── One month ────────────────────────────────────────────────────────────── */
 
