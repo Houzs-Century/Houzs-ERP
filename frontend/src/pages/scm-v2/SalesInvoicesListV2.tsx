@@ -77,6 +77,7 @@ import { PrintPreviewBatchModal, usePrintPreview } from "../../components/scm-v2
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { salesInvoicePrintChain } from "../../lib/printChain";
 import { customerRefOf } from '../../lib/customer-ref';
+import { OVERDUE_CLASS, isPastDue } from '../../lib/tableHighlight';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 // Subset of the full SiRow (see SalesInvoicesList.tsx for the 40-field shape).
@@ -1174,9 +1175,15 @@ export function SalesInvoicesListV2() {
       width: "108px",
       disableSort: true,
       getValue: (r) => r.due_date ?? "",
-      render: (r) => (
-        <span className="text-[12.5px] text-ink-secondary">{fmtDate(r.due_date)}</span>
-      ),
+      render: (r) => {
+        const bucket = (STATUS_TONE[r.status.toLowerCase()] as (typeof STATUS_TONE)[string] | undefined)?.bucket;
+        const late = isPastDue(r.due_date, bucket !== "paid" && bucket !== "cancelled");
+        return (
+          <span className={cn("text-[12.5px]", late ? OVERDUE_CLASS : "text-ink-secondary")} title={late ? "Past due and not paid" : undefined}>
+            {fmtDate(r.due_date)}
+          </span>
+        );
+      },
     },
     {
       key: "so_doc_no",

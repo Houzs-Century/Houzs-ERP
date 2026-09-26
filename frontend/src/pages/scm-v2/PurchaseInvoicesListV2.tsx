@@ -74,6 +74,7 @@ import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 import { StatusWithHold, rowIsHeld, type HoldFields } from "../../vendor/scm/components/HoldChip";
 import { usePrintDocument } from "../../components/scm-v2/PrintChainProvider";
 import { purchaseInvoicePrintChain } from "../../lib/printChain";
+import { OVERDUE_CLASS, isPastDue } from "../../lib/tableHighlight";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -1023,7 +1024,14 @@ export function PurchaseInvoicesListV2() {
       width: "108px",
       disableSort: true,
       getValue: (r) => r.due_date ?? "",
-      render: (r) => <span className="text-[12.5px] text-ink-secondary">{fmtDate(r.due_date)}</span>,
+      render: (r) => {
+        const late = isPastDue(r.due_date, !isCancelledDocStatus(r.status) && outstandingOf(r) > 0);
+        return (
+          <span className={cn("text-[12.5px]", late ? OVERDUE_CLASS : "text-ink-secondary")} title={late ? "Past due and not paid" : undefined}>
+            {fmtDate(r.due_date)}
+          </span>
+        );
+      },
     },
     source: {
       key: "source",
