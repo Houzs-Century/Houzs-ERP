@@ -313,3 +313,34 @@ describe("DataGrid overlay narrowing yields to explicit column choices", () => {
     }
   });
 });
+
+describe("DataGrid column menu — a long Hidden list stays reachable (owner 2026-09-26)", () => {
+  test("the header menu caps its height to the viewport and scrolls, so the last Show item is reachable", () => {
+    // Most columns ship hidden, so the Hidden: list is far taller than a screen.
+    const manyColumns: DataGridColumn<Row>[] = [
+      { key: "name", label: "Name", accessor: (row) => row.name },
+      ...Array.from({ length: 20 }, (_, i) => ({
+        key: `extra${i}`,
+        label: `Extra ${i}`,
+        accessor: () => "x",
+        defaultHidden: true,
+      })),
+    ];
+    render(
+      <DataGrid rows={rows} columns={manyColumns} storageKey="ctx-menu-scroll" rowKey={(row) => row.id} />,
+    );
+
+    // Right-click the one visible header to open the column menu.
+    fireEvent.contextMenu(screen.getByText("Name").closest("th")!);
+
+    // Every default-hidden column is offered, so the list runs long...
+    expect(screen.getByText("Show Extra 0")).toBeTruthy();
+    expect(screen.getByText("Show Extra 19")).toBeTruthy();
+
+    // ...and the menu scrolls within the viewport instead of running off the
+    // bottom, where those last Show items used to be unclickable.
+    const menu = screen.getByText("Hide column").closest("div")!;
+    expect(menu.style.overflowY).toBe("auto");
+    expect(menu.style.maxHeight).toContain("100vh");
+  });
+});
