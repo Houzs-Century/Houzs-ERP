@@ -12,7 +12,12 @@ let poQ: Q = { data: undefined, isLoading: false, error: null };
 vi.mock('../../vendor/scm/lib/so-amendment-queries', async (orig) => ({
   ...(await orig<typeof import('../../vendor/scm/lib/so-amendment-queries')>()),
   useAmendmentDetail: () => soQ,
+  useChangeAmendmentLane: () => ({ isPending: false, mutateAsync: async () => {} }),
 }));
+let superAdmin = false;
+vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ can: (p: string) => superAdmin && p === '*' }) }));
+vi.mock('../../vendor/scm/components/PromptDialog', () => ({ usePrompt: () => async () => null }));
+vi.mock('../../vendor/scm/components/NotifyDialog', () => ({ useNotify: () => async () => undefined }));
 vi.mock('../../vendor/scm/lib/po-amendment-queries', async (orig) => ({
   ...(await orig<typeof import('../../vendor/scm/lib/po-amendment-queries')>()),
   usePoAmendmentDetail: () => poQ,
@@ -65,10 +70,24 @@ const mount = (target: Target | null) => render(
 beforeEach(() => {
   soQ = { data: undefined, isLoading: false, error: null };
   poQ = { data: undefined, isLoading: false, error: null };
+  superAdmin = false;
   try { window.localStorage.clear(); } catch { /* jsdom without storage */ }
 });
 
 describe('AmendmentQuickView — a Sales Order amendment', () => {
+  it('offers a super admin, and only a super admin, the change-approver control (owner 2026-09-25)', () => {
+    soQ = { data: soData(), isLoading: false, error: null };
+    const first = mount({ kind: 'so', id: 'amd-1', label: 'HC-SO-012757/A1' });
+    expect(screen.queryByText('Change approver (admin)')).toBeNull();
+    first.unmount();
+    superAdmin = true;
+    mount({ kind: 'so', id: 'amd-1', label: 'HC-SO-012757/A1' });
+    fireEvent.click(screen.getByText('Change approver (admin)'));
+    expect(screen.getByText('Move to Purchaser')).toBeTruthy();
+    expect(screen.getByText('Move to Sales Director')).toBeTruthy();
+    expect(screen.queryByText('Move to Logistic')).toBeNull();
+  });
+
   it('says who asked, why, who signs, and shows the line with the job card\'s own card', () => {
     soQ = { data: soData(), isLoading: false, error: null };
     mount({ kind: 'so', id: 'amd-1', label: 'HC-SO-012757/A1' });

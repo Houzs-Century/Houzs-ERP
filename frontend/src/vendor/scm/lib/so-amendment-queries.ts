@@ -448,6 +448,20 @@ export const useFlagAmendmentLane = () => {
   });
 };
 
+/* Change approver — a SUPER ADMIN (the * wildcard) choosing which desk signs an
+   open request. The server applies the same safety as the flag above and says
+   why when it refuses. */
+export const useChangeAmendmentLane = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, lane, note }: { id: string; lane: 'LINES' | 'DELIVERY' | 'PRICE'; note: string }) =>
+      authedFetch<{ amendment: AmendmentRow }>(`/so-amendments/${id}/lane`, {
+        method: 'PATCH', body: JSON.stringify({ lane, note }),
+      }),
+    onSuccess: (_, vars) => invalidateAmendmentSideEffects(qc, vars.id),
+  });
+};
+
 /* Withdraw — the REQUESTER pulling their own request back, which reject cannot
    express (reject is gated to scm.amendment.approve_po, which a salesperson does
    not hold). REQUESTED only; the server refuses once anyone has acted on it. */
