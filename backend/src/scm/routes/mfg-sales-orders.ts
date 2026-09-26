@@ -10,7 +10,7 @@ import { normalizePhone } from '../shared/phone';
 import { checkPaymentSlipDate } from '../shared/payment-slip-date';
 import {
   pickComboMatch, spreadComboTotal, splitSofaCode, sofaHeightKey,
-  buildVariantSummary, comboChargedPrices, matchComboSubset, type SofaComboRow, type SofaPriceTier,
+  buildVariantSummary, matchComboSubset, type SofaPriceTier,
   oneShotSofaCode, oneShotSimpleCode, remarkSlug,
   fabricTierAddon,
   validateFreeGiftClaims, buildFreeGiftTriggers,
@@ -124,6 +124,7 @@ import {
   MIRRORED_SO_READONLY, MIRRORED_SO_CREATE_BLOCKED,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY,
 } from '../lib/companyScope';
+import { loadComboModulesById, loadMasterSofaCombos, loadSellingSofaCombos } from '../lib/pos-sofa-combos';
 import { supabaseAuth } from '../middleware/auth';
 import { escapeForOr } from '../lib/postgrest-search';
 import { effectiveStatusFilter, isRangeNotSatisfiable } from '../lib/so-list-filters';
@@ -816,47 +817,6 @@ function unexplainedExtraAddonResponse(
     itemCode: String(itemCode ?? ''),
     extraAddonAmountRM: amountRM,
   };
-}
-
-/* PR — Commander 2026-05-28 — Server-side combo recompute.
-   Fetches all active sofa_combo_pricing rows once (small table; ~64 rows
-   in steady state) and returns them as SofaComboRow[] for the pure
-   pickComboPrice() picker. Called by POST / and PATCH /:docNo/items/:itemId
-   before the line is persisted; if a sofa line's variants.cells match a
-   combo's modules at the line's seat-height tier, the combo price OVERRIDES
-   the client-submitted unit_price (anti-tamper). */
-async function loadActiveSofaCombos(sb: any, c: any): Promise<SofaComboRow[]> {
-  const { data } = await scopeToCompany(
-    sb
-      .from('sofa_combo_pricing')
-      .select('id, base_model, modules, tier, customer_id, prices_by_height, selling_prices_by_height, pwp_prices_by_height, label, effective_from, created_at, deleted_at, default_free_gifts'),
-    c,
-  )
-    .is('deleted_at', null)
-    .is('customer_id', null)   // 2990 B2C — default-scope rows only
-    .is('supplier_id', null);  // sales-side only — never auto-price a SO from a supplier's purchasing combos
-  return ((data ?? []) as Array<{
-    id: string; base_model: string; modules: string[][]; tier: SofaPriceTier | null;
-    customer_id: string | null; prices_by_height: Record<string, number | null>;
-    selling_prices_by_height: Record<string, number | null>;
-    pwp_prices_by_height: Record<string, number | null> | null;
-    label: string | null; effective_from: string; created_at: string; deleted_at: string | null;
-    default_free_gifts: unknown;
-  }>).map((r) => ({
-    id: r.id, baseModel: r.base_model, modules: r.modules ?? [],
-    tier: r.tier, customerId: r.customer_id,
-    // Combo cost/sell split — the engine charges SELLING merged over cost.
-    pricesByHeight: comboChargedPrices(r.selling_prices_by_height, r.prices_by_height),
-    // PWP (换购) selling price per height (Phase 2) — used INSTEAD of the above
-    // only when a sofa-reward line redeems a valid PWP code (see recompute).
-    pwpPricesByHeight: r.pwp_prices_by_height ?? {},
-    // created_at feeds the picker's duplicate tie-break (equal effective_from
-    // → newest row wins, matching the GET /sofa-combos admin list).
-    label: r.label, effectiveFrom: r.effective_from, createdAt: r.created_at, deletedAt: r.deleted_at,
-    // Default Free Gift (migration 0170, D9) — passthrough jsonb; the SO-create
-    // handler parses it to build the per-combo free-gift trigger.
-    defaultFreeGifts: r.default_free_gifts ?? [],
-  }));
 }
 
 /* Extract module ids + seat-height from a sofa line's `variants` blob.
@@ -2679,7 +2639,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
       return c.json({ ...err, lineIdx: i, itemCode: code }, 400);
     }
   }
-  const cachedCombos = await loadActiveSofaCombos(sb, c);  // Phase 4b — sofa selling recompute
+  const cachedCombos = await loadSellingSofaCombos(sb, c);  // Phase 4b — sofa selling recompute
   const cachedFabricAddonConfig = await loadFabricTierAddonConfig(sb, companyId);  // migration 0124 — fabric-tier Δ (SoCreateContext → local companyId)
   const cachedModelOverrides = await loadModelFabricTierOverrides(sb);  // migration 0175 — per-Model Δ
   const cachedCompartmentOverrides = await loadCompartmentFabricTierOverrides(sb);  // migration 0025 — per-compartment Δ
@@ -5666,14 +5626,7 @@ async function recomputeDeliveryFeeAttempt(
         };
       }),
     );
-    const { data: comboRows } = await scopeToCompany(
-      sb.from('sofa_combo_pricing').select('id, modules'),
-      c,
-    );
-    const comboModulesById = new Map<string, string[][]>(
-      ((comboRows ?? []) as Array<{ id: string; modules: string[][] | null }>)
-        .map((cb) => [cb.id, cb.modules ?? []]),
-    );
+    const comboModulesById = await loadComboModulesById(sb, c);
     specialModels = await specialDeliveryFeesForLines(sb, deliveryRuleLines, comboModulesById);
   }
 
@@ -6657,7 +6610,7 @@ export async function recomputeTotals(sb: any, docNo: string, c: any) {
      spreadComboTotal re-normalises an already-spread group to the same total. */
   const sofaRows = rows.filter((r) => (r.item_group ?? '').toLowerCase() === 'sofa');
   if (sofaRows.length > 0) {
-    const combos = await loadActiveSofaCombos(sb, c); // master scope only
+    const combos = await loadMasterSofaCombos(sb, c); // Houzs master rows: COST spread, every company
     if (combos.length > 0) {
       const fabricCodes = [...new Set(sofaRows.map((r) => String((r.variants ?? {} as Record<string, unknown>).fabricCode ?? '')).filter(Boolean))];
       const tierByFabric = new Map<string, SofaPriceTier>();
@@ -6996,7 +6949,7 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
     loadMaintenanceConfig(sb),
     loadProductByCode(sb, itemCodeStr, activeCompanyId(c)),
     loadFabricByCode(sb, variantsObj?.fabricCode ?? null),
-    loadActiveSofaCombos(sb, c),
+    loadSellingSofaCombos(sb, c),
     loadFabricSellingTiers(sb, (variantsObj as { fabricId?: string } | null)?.fabricId ?? null),
     loadFabricTierAddonConfig(sb, activeCompanyId(c)),
     loadSpecialAddons(sb),
@@ -7665,7 +7618,7 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
       loadMaintenanceConfig(sb),
       loadProductByCode(sb, itemCodeAfter, activeCompanyId(c)),
       loadFabricByCode(sb, variantsAfter?.fabricCode ?? null),
-      loadActiveSofaCombos(sb, c),
+      loadSellingSofaCombos(sb, c),
       loadFabricSellingTiers(sb, (variantsAfter as { fabricId?: string } | null)?.fabricId ?? null),
       loadFabricTierAddonConfig(sb, activeCompanyId(c)),
       loadSpecialAddons(sb),
@@ -8844,7 +8797,7 @@ async function planSofaRewardRevert(
     loadMaintenanceConfig(sb),
     loadProductByCode(sb, lead.item_code, activeCompanyId(c)),
     loadFabricByCode(sb, (leadV.fabricCode as string | undefined) ?? null),
-    loadActiveSofaCombos(sb, c),
+    loadSellingSofaCombos(sb, c),
     loadFabricSellingTiers(sb, (leadV.fabricId as string | undefined) ?? null),
     loadFabricTierAddonConfig(sb, activeCompanyId(c)),
     loadSpecialAddons(sb),
@@ -9028,7 +8981,7 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
   const [cfg, fabLite, combos, sellingTiers, fabricAddonCfg, specialDefs, modulePrices, moduleCostRows, modelOverridesSwap, compartmentOverridesSwap] = await Promise.all([
     loadMaintenanceConfig(sb),
     loadFabricByCode(sb, (newVariants.fabricCode as string | undefined) ?? null),
-    loadActiveSofaCombos(sb, c),
+    loadSellingSofaCombos(sb, c),
     loadFabricSellingTiers(sb, (newVariants.fabricId as string | undefined) ?? null),
     loadFabricTierAddonConfig(sb, activeCompanyId(c)),
     loadSpecialAddons(sb),
