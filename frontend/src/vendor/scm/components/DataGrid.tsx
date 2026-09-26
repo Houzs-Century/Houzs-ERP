@@ -1937,7 +1937,7 @@ function DataGridInner<T>({
         const hidden = layout.hidden.includes(ctx.colKey);
         const grouped = layout.groupBy.includes(ctx.colKey);
         return (
-          <div className={styles.ctxMenu} style={{ top: ctx.y, left: ctx.x }} onClick={(e) => e.stopPropagation()}>
+          <div className={styles.ctxMenu} style={{ top: ctx.y, left: ctx.x, maxHeight: `calc(100vh - ${ctx.y}px - 12px)`, overflowY: 'auto' }} onClick={(e) => e.stopPropagation()}>
             <button className={styles.ctxItem} onClick={() => { hideColumn(ctx.colKey); setCtx(null); }}>Hide column</button>
             <button className={styles.ctxItem} onClick={() => { pinLeft(ctx.colKey); setCtx(null); }}>Pin left</button>
             <button className={styles.ctxItem} onClick={() => { autoFit(ctx.colKey); setCtx(null); }}>Auto-fit width</button>
