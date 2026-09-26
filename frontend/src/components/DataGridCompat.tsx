@@ -12,6 +12,8 @@
 import { useMemo, type CSSProperties, type ReactNode } from "react";
 import { DataTable, type Column } from "./DataTable";
 import type { ExportCell } from "./dataTableLineExport";
+import { gridLayoutToTableLayout } from "./dataTableLegacyGridLayout";
+import type { LayoutSeed } from "../lib/tableLayouts";
 import { isoForExport } from "../vendor/shared/format";
 
 export type GridColumn<T> = {
@@ -83,6 +85,11 @@ export type DataGridCompatProps<T> = {
   embedded?: boolean;
   defaultSort?: (a: T, b: T) => number;
   sortForSessionOnly?: boolean;
+  /** Page seeds written in DataGrid's layout rules; converted here. */
+  layoutPresets?: LayoutSeed[];
+  overlayHidden?: readonly string[];
+  onUserAdjustColumns?: () => void;
+  scrollToRow?: { key: string; nonce: number } | null;
 };
 
 /** A ReactNode cell as text: strings and numbers only, as DataGrid read it. */
@@ -173,8 +180,16 @@ export function DataGridCompat<T>({
   embedded = false,
   defaultSort,
   sortForSessionOnly = false,
+  layoutPresets,
+  overlayHidden,
+  onUserAdjustColumns,
+  scrollToRow,
 }: DataGridCompatProps<T>) {
   const tableColumns = useMemo(() => columns.map(gridColumnToTableColumn), [columns]);
+  const layoutSeeds = useMemo(
+    () => layoutPresets?.map((s) => ({ ...s, layout: gridLayoutToTableLayout(s.layout, columns) })),
+    [layoutPresets, columns],
+  );
   return (
     <DataTable<T>
       tableId={storageKey}
@@ -199,6 +214,10 @@ export function DataGridCompat<T>({
       embedded={embedded}
       defaultSort={defaultSort}
       persistSort={!sortForSessionOnly}
+      layoutSeeds={layoutSeeds}
+      overlayHidden={overlayHidden}
+      onUserAdjustColumns={onUserAdjustColumns}
+      scrollToRow={scrollToRow}
       contextMenu={
         contextMenu
           ? (row) =>

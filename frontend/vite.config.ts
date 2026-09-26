@@ -117,15 +117,6 @@ export default defineConfig(({ mode }) => {
         // in node_modules as react-router-dom's own dependency and re-exports
         // those same hooks. (An earlier alias to react-router-dom broke the
         // build by rewriting react-router-dom's INTERNAL self-imports.)
-        // DataGrid imports useVirtualizer from @tanstack/react-virtual, which
-        // is NOT installed here (no npm install allowed). A dependency-free
-        // shim reimplements the exact slice DataGrid uses.
-        {
-          find: /^@tanstack\/react-virtual$/,
-          replacement: fileURLToPath(
-            new URL("./src/vendor/scm/lib/react-virtual-shim.ts", import.meta.url)
-          ),
-        },
       ],
       // Force a single React/ReactDOM instance. The vendored 2990 modules
       // import router bits from the bare 'react-router' specifier, and as the

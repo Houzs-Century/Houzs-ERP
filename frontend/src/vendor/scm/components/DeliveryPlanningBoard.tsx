@@ -23,7 +23,7 @@
 import { useMemo, useState, useEffect, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { buildVariantSummary, fmtSen, fmtDate, fmtDateOrDash, fmtDateTime } from '@2990s/shared';
 import { formatPhone } from '@2990s/shared/phone';
-import { DataGrid, type DataGridColumn } from './DataGrid';
+import { DataGridCompat, type GridColumn, type GridContextMenuItem } from '../../../components/DataGridCompat';
 import { useConfirm } from './ConfirmDialog';
 import { useNotify } from './NotifyDialog';
 import { Button } from '../../../components/Button';
@@ -491,7 +491,7 @@ const CategoryPill = ({ group }: { group: string | null | undefined }) => {
 /* Four drill-down columns — Group · Item Code · Description · Description 2.
    Matches the SO list's accessors/markup verbatim. Shared layout key so the
    operator's column prefs persist across every SO they expand. */
-const DRILLDOWN_COLUMNS: DataGridColumn<DrillItem>[] = [
+const DRILLDOWN_COLUMNS: GridColumn<DrillItem>[] = [
   {
     key: 'group', label: 'Group', width: 90, groupable: true,
     accessor: (it) => <CategoryPill group={it.item_group} />,
@@ -563,7 +563,7 @@ const PlanningExpandedLines = ({ docNo }: { docNo: string }) => {
       padding: 'var(--space-2) var(--space-3) var(--space-2) 40px',
       background: '#fff',
     }}>
-      <DataGrid<DrillItem>
+      <DataGridCompat<DrillItem>
         rows={items}
         columns={DRILLDOWN_COLUMNS}
         storageKey="delivery-planning-drilldown-grid.v1"
@@ -576,7 +576,7 @@ const PlanningExpandedLines = ({ docNo }: { docNo: string }) => {
 };
 
 /* Row-context-menu item shape (mirrors DataGrid's contextMenu return). */
-type ContextMenuItems = ReturnType<NonNullable<Parameters<typeof DataGrid<PlanningOrder>>[0]['contextMenu']>>;
+type ContextMenuItems = GridContextMenuItem[];
 
 export type DeliveryBoardStateTabs = {
   activeState: string;               // 'ALL' | DeliveryState
@@ -812,7 +812,7 @@ export function DeliveryPlanningBoard({
     });
   };
 
-  const columns = useMemo<DataGridColumn<PlanningOrder>[]>(() => {
+  const columns = useMemo<GridColumn<PlanningOrder>[]>(() => {
     /* The DEFAULT header order (owner 2026-07-22 header tidy): identity →
        status → dates → fleet → documents → money, with every default-hidden
        HC / crew-detail column grouped after, so the Columns drawer reads in
@@ -853,7 +853,7 @@ export function DeliveryPlanningBoard({
       'wa_message', 'delivery_substatus',
     ];
     const pos = new Map(DP_DEFAULT_ORDER.map((k, i) => [k, i] as const));
-    const cols: DataGridColumn<PlanningOrder>[] = [
+    const cols: GridColumn<PlanningOrder>[] = [
     {
       /* Row type — SO delivery vs ASSR (service-case) job. A chip per row so the
          two kinds read apart at a glance. */
@@ -1554,7 +1554,7 @@ export function DeliveryPlanningBoard({
         </div>
       )}
 
-      <DataGrid
+      <DataGridCompat
         rows={rows}
         columns={columns}
         storageKey={storageKey}

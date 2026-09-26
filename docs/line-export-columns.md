@@ -152,7 +152,8 @@ LIKELY (read in code, not clicked):
   AutoCount placeholders that always print a constant (Inclusive? "Yes",
   Detail Tax Code "SR", Creditor Code "—").
 - The six consignment lists export `.xlsx` through
-  `frontend/src/vendor/scm/components/DataGrid.tsx`, one row per document.
+  `frontend/src/components/DataGridCompat.tsx` (DataTable's plain `.xlsx`
+  export), one row per document.
 
 ### 0.3 Which columns the import may change (owner's ruling)
 

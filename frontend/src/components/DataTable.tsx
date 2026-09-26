@@ -25,6 +25,7 @@ import {
   Pin,
   PinOff,
   EyeOff,
+  Eye,
   MoveHorizontal,
   Filter,
   Rows3,
@@ -59,12 +60,16 @@ import {
   updateNamedLayout,
   saveCompanyDefault,
   saveMyLayout,
+  saveSharedLayout,
+  deleteSharedLayout,
   serializeLayout,
   dataGridIdKey,
   dataGridTableKey,
   subscribeTableLayouts,
+  type NamedLayout,
   type StoredLayout,
 } from "../lib/tableLayouts";
+import { isSharedDataGridStorageKey } from "../vendor/scm/components/dataGridLayoutStorage";
 import { useUdf, type UseUdfResult } from "../hooks/useUdf";
 import { downloadCSV, isoForExport, toCSV, type CSVColumn } from "../lib/csv";
 import { applyColumnFilters, facetedFilterValues, sortTableRows } from "./dataTableRows";
@@ -141,6 +146,10 @@ function DataTableInner<T, L>({
   embedded = false,
   groupBanner = false,
   legacyGridKey,
+  layoutSeeds,
+  overlayHidden,
+  onUserAdjustColumns,
+  scrollToRow,
   exportName,
   exportLabel = "Export",
   onExport,
@@ -216,7 +225,11 @@ function DataTableInner<T, L>({
   /* When a company is resolved, prefix it. When NONE is (single-company Houzs,
      the historical default) the key is byte-identical to before — those installs
      are unchanged, and the layoutFamily/tableId migration below still applies. */
-  const idKey = activeCompany != null ? `c${activeCompany}:${baseIdKey}` : baseIdKey;
+  /* A cross-company queue board keeps ONE layout whatever company the window is
+     on (the server keeps these rows unscoped too: SHARED_TABLE_KEYS). */
+  const sharedAcrossCompanies = isSharedDataGridStorageKey(baseIdKey);
+  const idKey =
+    activeCompany != null && !sharedAcrossCompanies ? `c${activeCompany}:${baseIdKey}` : baseIdKey;
   /* Company-scoped keys fall back to the pre-scoping UNSCOPED key, so a user's
      existing columns carry over on first load instead of resetting to defaults
      (both tenants start from the shared value, then diverge as each writes its
@@ -565,7 +578,7 @@ function DataTableInner<T, L>({
      page-declared list, `isDefault` and all. */
   const resolvedPresets = useMemo(() => {
     const declared = layoutPresets ?? [];
-    if (declared.length === 0 && layoutStore.companies.length === 0) return [];
+    if (declared.length === 0 && layoutStore.companies.length === 0 && !layoutSeeds?.length) return [];
     const seedByCode = new Map(
       declared
         .filter((p) => p.companyCode)
@@ -585,12 +598,38 @@ function DataTableInner<T, L>({
       savedId?: number;
       /** Set only for a company-default row — renaming it goes to /default. */
       companyId?: number;
+      /** The server table a saved row lives under, when not this table's own
+       *  (a named layout saved while the page was still a DataGrid). */
+      tableKey?: string;
+      /** A code-shipped page seed; `overridden` = a manager's team-wide copy. */
+      seed?: boolean;
+      overridden?: boolean;
     }> = [];
+    const legacyTableKey = legacyGridKey ? dataGridTableKey(legacyGridKey) : null;
+    const sharedLayouts = layoutStore.sharedLayouts as Record<string, NamedLayout[] | undefined>;
+    /* Page seeds lead the picker (curated team-wide views). A layout manager's
+       company-shared override wins; one written while the page was a DataGrid is
+       read through the DataGrid rules until someone saves over it. */
+    for (const seed of layoutSeeds ?? []) {
+      const own = sharedLayouts[baseIdKey]?.find((l) => l.name === seed.id)?.layout;
+      const legacy = legacyTableKey
+        ? sharedLayouts[legacyTableKey]?.find((l) => l.name === seed.id)?.layout
+        : undefined;
+      const override = own ?? (legacy ? gridLayoutToTableLayout(legacy, rawColumns) : undefined);
+      out.push({
+        id: `seed:${seed.id}`,
+        label: seed.label,
+        layout: override ?? seed.layout,
+        isDefault: false,
+        fromServer: override != null,
+        seed: true,
+        overridden: override != null,
+      });
+    }
     // Typed as possibly-missing: a company with no saved default has no entry.
     type ByKey<V> = Record<string, Record<string, V | undefined> | undefined>;
     const defaults = layoutStore.defaults as ByKey<StoredLayout>;
     const names = layoutStore.defaultNames as ByKey<string>;
-    const legacyTableKey = legacyGridKey ? dataGridTableKey(legacyGridKey) : null;
     for (const co of layoutStore.companies) {
       const own = defaults[String(co.id)]?.[baseIdKey];
       const legacy = legacyTableKey ? defaults[String(co.id)]?.[legacyTableKey] : undefined;
@@ -617,7 +656,8 @@ function DataTableInner<T, L>({
     }
     /* The user's OWN saved layouts (mig 0239) — offered after the company
        rows, and the only ones that can be renamed or deleted. */
-    for (const saved of layoutStore.myLayouts[baseIdKey] ?? []) {
+    const myLayouts = layoutStore.myLayouts as Record<string, NamedLayout[] | undefined>;
+    for (const saved of myLayouts[baseIdKey] ?? []) {
       out.push({
         id: `saved:${saved.id}`,
         label: saved.name,
@@ -626,6 +666,18 @@ function DataTableInner<T, L>({
         isDefault: false,
         fromServer: true,
         savedId: saved.id,
+      });
+    }
+    for (const saved of legacyTableKey ? myLayouts[legacyTableKey] ?? [] : []) {
+      out.push({
+        id: `saved:${saved.id}`,
+        label: saved.name,
+        hint: "Saved by you",
+        layout: gridLayoutToTableLayout(saved.layout, rawColumns),
+        isDefault: false,
+        fromServer: true,
+        savedId: saved.id,
+        tableKey: legacyTableKey!,
       });
     }
     // Page presets that aren't about a company (and, when there is no company
@@ -642,7 +694,7 @@ function DataTableInner<T, L>({
       });
     }
     return out;
-  }, [layoutPresets, layoutStore, baseIdKey, legacyGridKey, rawColumns]);
+  }, [layoutPresets, layoutSeeds, layoutStore, baseIdKey, legacyGridKey, rawColumns]);
 
   /* Turn a preset into the same shape a saved layout has, so ONE rule renders
      both: a column list means "show exactly these, in this order" — which for
@@ -770,23 +822,31 @@ function DataTableInner<T, L>({
   // columns slot in directly after them (preserving each group's relative
   // order). Everything else follows. When nothing is pinned this is
   // identical to `visibleColumns`, so the default render is unchanged.
+  /* `overlayHidden` narrows what is DRAWN (the delivery boards while their map
+     is open) without touching the user's saved choice; the Columns drawer keeps
+     showing their real prefs. */
+  const onScreenColumns = useMemo(() => {
+    if (!overlayHidden?.length) return visibleColumns;
+    const off = new Set(overlayHidden);
+    return visibleColumns.filter((c) => c.alwaysVisible || !off.has(c.key));
+  }, [visibleColumns, overlayHidden]);
   const displayColumns = useMemo(() => {
-    if (pinnedSet.size === 0 && pinnedRightSet.size === 0) return visibleColumns;
-    const always = visibleColumns.filter((c) => c.alwaysVisible);
-    const pinnedCols = visibleColumns.filter(
+    if (pinnedSet.size === 0 && pinnedRightSet.size === 0) return onScreenColumns;
+    const always = onScreenColumns.filter((c) => c.alwaysVisible);
+    const pinnedCols = onScreenColumns.filter(
       (c) => !c.alwaysVisible && pinnedSet.has(c.key)
     );
-    const rightCols = visibleColumns.filter(
+    const rightCols = onScreenColumns.filter(
       (c) => !c.alwaysVisible && !pinnedSet.has(c.key) && pinnedRightSet.has(c.key)
     );
-    const rest = visibleColumns.filter(
+    const rest = onScreenColumns.filter(
       (c) =>
         !c.alwaysVisible && !pinnedSet.has(c.key) && !pinnedRightSet.has(c.key)
     );
     // Left run · the scrolling middle · right run. A column pinned to both
     // sides cannot exist — the cycle moves it, it never adds.
     return [...always, ...pinnedCols, ...rest, ...rightCols];
-  }, [visibleColumns, pinnedSet, pinnedRightSet]);
+  }, [onScreenColumns, pinnedSet, pinnedRightSet]);
 
   // Display index of the header being dragged — decides which side of the drop
   // target the insertion bar is drawn on. -1 when no drag is in flight.
@@ -918,13 +978,16 @@ function DataTableInner<T, L>({
         isDefault: p.isDefault,
         savedId: p.savedId,
         companyId: p.companyId,
+        seed: p.seed,
+        overridden: p.overridden,
+        readOnly: p.seed ? !layoutStore.canManageLayouts : undefined,
         active:
           wouldShow.length === current.length &&
           wouldShow.every((k, i) => current[i] === k),
       };
     });
     return withSingleActive(rows);
-  }, [resolvedPresets, presetLayout, allColumns, visibleColumns]);
+  }, [resolvedPresets, presetLayout, allColumns, visibleColumns, layoutStore.canManageLayouts]);
 
   /* Visibility gestures live in dataTableColumnPrefs: under a default layout the
      two lists below are read PAST, so a gesture that edits only them can write
@@ -936,6 +999,7 @@ function DataTableInner<T, L>({
   }
 
   function toggleColumn(key: string) {
+    onUserAdjustColumns?.();
     const seen = { hidden: hiddenList, shown: shownList };
     writeColumnPrefs(toggleColumnPrefs(allColumns, effectiveHidden, key, seen, !!baselineLayout));
   }
@@ -954,6 +1018,7 @@ function DataTableInner<T, L>({
      snap the table to the OTHER company's default — precisely the cross-company
      pick this feature exists to allow. */
   function applyPreset(id: string) {
+    onUserAdjustColumns?.();
     const preset = resolvedPresets.find((p) => p.id === id);
     if (!preset) return;
     const layout = presetLayout(preset);
@@ -1145,11 +1210,13 @@ function DataTableInner<T, L>({
   );
 
   function showAllColumns() {
+    onUserAdjustColumns?.();
     writeColumnPrefs(showAllColumnPrefs(allColumns, effectiveHidden, Boolean(baselineLayout)));
   }
 
   /** Back to the active layout: its columns, its order, its widths. */
   function resetLayout() {
+    onUserAdjustColumns?.();
     resetVisibility();
     resetOrder();
     /* Sort is persisted per table in `dt:sort:<id>` and replayed on every mount,
@@ -1198,7 +1265,7 @@ function DataTableInner<T, L>({
   const renameLayout = useCallback(
     (id: string, name: string) => {
       const target = resolvedPresets.find((p) => p.id === id);
-      if (target?.savedId != null) return renameNamedLayout(baseIdKey, target.savedId, name);
+      if (target?.savedId != null) return renameNamedLayout(target.tableKey ?? baseIdKey, target.savedId, name);
       if (target?.companyId != null) return renameCompanyDefault(baseIdKey, name);
       return Promise.resolve();
     },
@@ -1208,8 +1275,14 @@ function DataTableInner<T, L>({
      handler, two destinations again: a saved layout is replaced by id, the
      COMPANY row goes through the same publish path the footer button uses. */
   const updateLayout = useCallback(
-    (id: string) => {
+    async (id: string) => {
+      if (id.startsWith("seed:")) return saveSharedLayout(baseIdKey, id.slice("seed:".length), renderedLayout);
       const target = resolvedPresets.find((p) => p.id === id);
+      if (target?.savedId != null && target.tableKey) {
+        // A DataGrid-era layout moves to this table on its first edit.
+        await createNamedLayout(baseIdKey, target.label, renderedLayout);
+        return deleteNamedLayout(target.tableKey, target.savedId);
+      }
       if (target?.savedId != null) {
         return updateNamedLayout(baseIdKey, target.savedId, renderedLayout);
       }
@@ -1220,8 +1293,21 @@ function DataTableInner<T, L>({
   );
 
   const deleteSavedLayout = useCallback(
-    (savedId: number) => deleteNamedLayout(baseIdKey, savedId),
-    [baseIdKey]
+    (savedId: number) =>
+      deleteNamedLayout(resolvedPresets.find((p) => p.savedId === savedId)?.tableKey ?? baseIdKey, savedId),
+    [baseIdKey, resolvedPresets]
+  );
+  /** Drop a seed's team-wide override (and a DataGrid-era one), back to the code seed. */
+  const resetSeedLayout = useCallback(
+    async (id: string) => {
+      if (!id.startsWith("seed:")) return;
+      const name = id.slice("seed:".length);
+      const shared = layoutStore.sharedLayouts as Record<string, NamedLayout[] | undefined>;
+      if (shared[baseIdKey]?.some((l) => l.name === name)) await deleteSharedLayout(baseIdKey, name);
+      const legacyKey = legacyGridKey ? dataGridTableKey(legacyGridKey) : null;
+      if (legacyKey && shared[legacyKey]?.some((l) => l.name === name)) await deleteSharedLayout(legacyKey, name);
+    },
+    [baseIdKey, legacyGridKey, layoutStore.sharedLayouts]
   );
 
   /** Download the arrangement as JSON — the drawer's "Export column config".
@@ -1787,6 +1873,35 @@ function DataTableInner<T, L>({
     start: 0,
     end: VIRTUAL_ROW_THRESHOLD * 2,
   });
+
+  /* Scroll-to-row (map pin -> board row, DataGrid parity). The nonce is the
+     trigger, so the same pin clicked twice scrolls again. A windowed row may not
+     be in the DOM yet: jump to its estimated offset first, then settle on it. */
+  const [highlightKey, setHighlightKey] = useState<string | null>(null);
+  useEffect(() => {
+    if (!scrollToRow) return;
+    const key = scrollToRow.key;
+    setHighlightKey(key);
+    const idx = renderList.findIndex((it) => it.kind === "row" && String(getRowKey(it.row)) === key);
+    if (idx < 0) return;
+    const find = () => tbodyRef.current?.querySelector<HTMLElement>(`tr[data-rowkey="${CSS.escape(key)}"]`);
+    const settle = () => find()?.scrollIntoView({ block: "center" });
+    if (find()) return settle();
+    const offset = idx * (rowHeightRef.current || ROW_HEIGHT_ESTIMATE);
+    const wrap = scrollWrapRef.current;
+    // A programmatic scroll does not always emit `scroll` (a background tab never
+    // does), and the row window only moves on that event: send it ourselves.
+    if (wrap && wrap.scrollHeight > wrap.clientHeight) {
+      wrap.scrollTop = offset;
+      wrap.dispatchEvent(new Event("scroll"));
+    } else if (tbodyRef.current) {
+      window.scrollTo({ top: window.scrollY + tbodyRef.current.getBoundingClientRect().top + offset - window.innerHeight / 2 });
+      window.dispatchEvent(new Event("scroll"));
+    }
+    const raf = requestAnimationFrame(() => requestAnimationFrame(settle));
+    return () => cancelAnimationFrame(raf);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fires per nonce, not per render
+  }, [scrollToRow?.nonce]);
   useEffect(() => {
     if (!canVirtualize) return;
     let raf = 0;
@@ -1987,6 +2102,7 @@ function DataTableInner<T, L>({
         onRenameLayout={layoutStore.canManageLayouts ? renameLayout : undefined}
         onDeleteLayout={layoutStore.canManageLayouts ? deleteSavedLayout : undefined}
         onUpdateLayout={layoutStore.canManageLayouts ? updateLayout : undefined}
+        onResetLayout={layoutStore.canManageLayouts ? resetSeedLayout : undefined}
         defaultManager={defaultManager}
         dirty={layoutDirty}
         onExport={exportColumnConfig}
@@ -2378,7 +2494,8 @@ function DataTableInner<T, L>({
                   // white surface, pre-blended so there's no visible seam.
                   const stickyBg =
                     rowIdx % 2 === 0 ? "#ffffff" : "#f8f8f5";
-                  const expId = expandable ? expansionId(row) : null;
+                  // A falsy key means this row has nothing to drill into: no chevron.
+                  const expId = expandable ? expansionId(row) || null : null;
                   const isExpanded = expId != null && expandedRowsEffective.has(expId);
                   const selKey = selection ? String(getRowKey(row)) : null;
                   const isRowSelected =
@@ -2387,6 +2504,7 @@ function DataTableInner<T, L>({
                     <Fragment key={getRowKey(row)}>
                       <tr
                         data-vrow=""
+                        data-rowkey={String(getRowKey(row))}
                         style={getRowStyle?.(row)}
                         onClick={
                           onRowClick || rowClickTicks
@@ -2415,7 +2533,7 @@ function DataTableInner<T, L>({
                           /* The zebra only where the row has no colour of its own: the built
                              CSS emits .bg-surface AFTER .bg-primary/10 / .bg-err-bg, so on one
                              <tr> the zebra won and a ticked or toned row never painted. */
-                          isRowSelected ? "bg-primary/10"
+                          isRowSelected || highlightKey === String(getRowKey(row)) ? "bg-primary/10"
                             : customClass && /(^|\s)!?bg-/.test(customClass) ? null
                             : rowIdx % 2 === 0 ? "bg-surface" : "bg-surface-dim/35",
                           (onRowClick || onRowDoubleClick || rowClickTicks) && "cursor-pointer",
@@ -2458,13 +2576,14 @@ function DataTableInner<T, L>({
                               cellPad
                             )}
                           >
+                            {expId != null && (
                             <button
                               type="button"
                               aria-label={isExpanded ? "Collapse row" : "Expand row"}
                               aria-expanded={isExpanded}
                               onClick={(e) => {
                                 e.stopPropagation();
-                                if (expId != null) toggleExpand(expId);
+                                toggleExpand(expId);
                               }}
                               className="inline-flex items-center justify-center rounded text-ink-muted transition-colors hover:text-primary"
                             >
@@ -2477,6 +2596,7 @@ function DataTableInner<T, L>({
                                 aria-hidden
                               />
                             </button>
+                            )}
                           </td>
                         )}
                         {displayColumns.map((c, i) => {
@@ -2960,8 +3080,10 @@ function DataTableInner<T, L>({
           return createPortal(
             <div
               ref={headerMenuRef}
-              className="fixed z-[120] min-w-[176px] overflow-hidden rounded-md border border-border bg-surface py-1 shadow-slab"
-              style={{ top: pos.top, left: pos.left }}
+              className="fixed z-[120] min-w-[176px] overflow-y-auto overscroll-contain rounded-md border border-border bg-surface py-1 shadow-slab"
+              // A board with ~20 hidden columns lists them all below: cap to the
+              // viewport and scroll (#4290, the same bug on the old grid).
+              style={{ top: pos.top, left: pos.left, maxHeight: "calc(100vh - 16px)" }}
               onClick={(e) => e.stopPropagation()}
               onContextMenu={(e) => e.preventDefault()}
             >
@@ -3044,6 +3166,30 @@ function DataTableInner<T, L>({
                 <EyeOff size={13} className="shrink-0 text-ink-muted" />
                 Hide column
               </button>
+              {/* Bring a hidden column back from the header (SCM DataGrid parity:
+                  staff use this on the Delivery Planning board). */}
+              {chooserOptions.some((o) => effectiveHidden.has(o.key)) && (
+                <>
+                  <div className="my-1 border-t border-border-subtle" />
+                  <div className="px-3 py-1 text-[10px] font-bold uppercase tracking-brand text-ink-muted">Hidden</div>
+                  {chooserOptions
+                    .filter((o) => effectiveHidden.has(o.key))
+                    .map((o) => (
+                      <button
+                        key={o.key}
+                        type="button"
+                        className={itemCls}
+                        onClick={() => {
+                          toggleColumn(o.key);
+                          setHeaderMenu(null);
+                        }}
+                      >
+                        <Eye size={13} className="shrink-0 text-ink-muted" />
+                        Show {o.label}
+                      </button>
+                    ))}
+                </>
+              )}
             </div>,
             document.body
           );

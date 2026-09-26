@@ -108,7 +108,7 @@ Desktop / mobile parity
 Board UI
 - Option B map (`DeliveryMapPanel.tsx`, model `delivery-map-model.ts`): open/closed per page; compact columns are a render-time overlay (`visibleColumnsOverride` -> `overlayHidden`), never written to `layout.hidden`; any explicit column choice turns compact off. Geo read (`useDeliveryGeo` -> `GET /delivery-planning/geo`) is disabled while the panel is closed.
 - Arrangement queues default-sort with `arrangementQueueCompare` only while no column sort is active; the main board keeps server order.
-- Grid funnels are in-visit only (module memory in `dataGridFilterStorage`): kept across route changes, clean on a fresh page load / F5, never localStorage. Board state/region via `useStickyFilters` (URL wins).
+- Grid funnels are in-visit only (module memory in `components/dataTableColFilterMemory.ts`): kept across route changes, clean on a fresh page load / F5, never localStorage. Board state/region via `useStickyFilters` (URL wins).
 
 ## Gotchas
 
