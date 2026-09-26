@@ -95,6 +95,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
 import { convertToLink, transferToLabel } from "../../lib/convertScope";
 import { isCancelledDocStatus } from "../../lib/scm";
+import { OVERDUE_CLASS, OWING_CLASS, isDeliveredOwing, isPastDue } from "../../lib/tableHighlight";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 import { ItemGroupPill } from "../../vendor/scm/lib/category-badges";
 import { resolveSoLocation } from "../../lib/soLocation";
@@ -228,6 +229,12 @@ const SO_AUTOCOUNT_KEYS = [
 // Customer's PO / Ref number — spec: "Every list must show the customer SO
 // Ref number". Resolution order is the ONE rule in lib/customer-ref.ts.
 const refOf = (r: SoRow): string => customerRefOf(r) || "—";
+/** Still owes a delivery: not delivered in full, not closed or cancelled. */
+const soAwaitingDelivery = (r: SoRow): boolean =>
+  r.delivery_state !== "full" &&
+  !["delivered", "invoiced", "returned"].includes(r.lifecycle_state ?? "") &&
+  !isCancelledDocStatus(r.status) &&
+  r.status.toUpperCase() !== "CLOSED";
 
 // Branding badge tone. Spec: 2990 SOFA = success (green), AKEMI = neutral,
 // BEDFRAME = accent, other brands = warning (amber). brandOf's old `|| "—"`
@@ -1703,7 +1710,17 @@ export function MfgSalesOrdersListV2() {
       exportValue: (r) => senToRinggit(r.balance_sen_live ?? r.balance_sen, 2),
       exportFormat: "money",
       render: (r) => ( // negative = over-collected → text-err, the app's negative-money convention (owner 2026-08-16)
-        <span className={cn("font-money text-[13px]", (r.balance_sen_live ?? r.balance_sen) < 0 ? "text-err" : "text-ink")}>{fmtRm(r.balance_sen_live ?? r.balance_sen)}</span>
+        <span
+          className={cn(
+            "font-money text-[13px]",
+            (r.balance_sen_live ?? r.balance_sen) < 0
+              ? "text-err"
+              : isDeliveredOwing(r.balance_sen_live ?? r.balance_sen, r.delivery_state ?? null) ? OWING_CLASS : "text-ink",
+          )}
+          title={isDeliveredOwing(r.balance_sen_live ?? r.balance_sen, r.delivery_state ?? null) ? "Delivered, still owing" : undefined}
+        >
+          {fmtRm(r.balance_sen_live ?? r.balance_sen)}
+        </span>
       ),
     },
     // ── Re-added columns (Phase 2) — NON-finance fields that already travel on
@@ -1772,11 +1789,14 @@ export function MfgSalesOrdersListV2() {
       exportFormat: "date",
       getValue: (r) => r.customer_delivery_date ?? "",
       lineValue: (_r, l) => l.delivery_date, // the file: the line's own date, else the order's
-      render: (r) => (
-        <span className="text-[12.5px] text-ink-secondary">
-          {fmtDate(r.customer_delivery_date)}
-        </span>
-      ),
+      render: (r) => {
+        const late = isPastDue(r.customer_delivery_date, soAwaitingDelivery(r));
+        return (
+          <span className={cn("text-[12.5px]", late ? OVERDUE_CLASS : "text-ink-secondary")} title={late ? "Delivery date passed, not delivered yet" : undefined}>
+            {fmtDate(r.customer_delivery_date)}
+          </span>
+        );
+      },
     },
     {
       key: "note",
