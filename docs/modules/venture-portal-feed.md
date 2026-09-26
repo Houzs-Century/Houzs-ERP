@@ -22,7 +22,10 @@ Ships **off** behind three gates, all of which must be set from the
 a same-transaction `AFTER` trigger on `mfg_sales_orders` / `_items` /
 `_payments` queues an outbox row regardless of the switch; the switch and
 config gate only the **drain**, so turning the feed off leaves the queue
-intact and turning it on later delivers what accumulated.
+intact and turning it on later delivers what accumulated. Re-picking the
+event (`project_id`, `fair_match`, `fair_date`) or editing `venue` /
+`venue_id` is a change; so is a project whose venue, organizer, dates or
+status change — `trg_vp_outbox_project` queues every order pointing at it.
 
 Outbox row: `pending → sent | failed | skipped`; parked `failed` at 6
 attempts. Three drain paths: (1) the saving request itself schedules a drain
@@ -79,6 +82,15 @@ non-2xx"):
   when the line has none of them. `extraAddonAmountRM`, `remark`,
   `extraAddonNote` and every other variant key stay here — the portal parses a
   line by those eight and falls back to `description2` without them.
+- Each delivery carries `fair`: the picked project (`project_id` →
+  `public.projects`) as `projectId`, `code`, `name`, `venue`, `organizer`,
+  `brand`, `startDate`, `endDate`, `status`, `eventType` (the event type's
+  slug), plus the order's own `match` (`fair_match`) and `fairDate`
+  (`fair_date`); `null` when the order has no project. Built from the BASE
+  table joined to `projects` — the header view's column list predates
+  `project_id` — with named keys only. The portal keeps it as the bill's fair
+  and takes its organizer and days over anything typed there, so a wrong
+  project on an order is fixed HERE.
 - `vp_build_payloads` takes an array and answers the whole batch in **one**
   round trip — never recompose per-document in a Worker loop (subrequest
   budget).
@@ -180,6 +192,9 @@ company's row.
   `vp_build_payloads` with the `variants` allowlist.
 - `backend/src/db/migrations-pg/20260924T1100_scm_vp_catalogue_live.sql` —
   the change marks and the statement triggers that write them.
+- `backend/src/db/migrations-pg/*_scm_vp_order_fair.sql` — the `fair` key,
+  the capture trigger's event columns and `trg_vp_outbox_project`; executed
+  by `backend/tests-pg/vpOrderFair.pg.test.ts`.
 - `backend/src/scm/lib/venture-portal-catalogue.ts` — the catalogue sender
   (URL, digest decision, section split, response verdict); its SQL is
   executed by `backend/tests-pg/vpCatalogueFeed.pg.test.ts`.
