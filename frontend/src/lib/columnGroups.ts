@@ -47,22 +47,22 @@ const RULES: Rule[] = [
   // ── Cost & margin — BEFORE money, because "Total Cost" is a cost first. ──
   {
     group: COLUMN_GROUPS.costs,
-    any: /\b(cost|cogs|margin|gp|profit|commission|variance|markup)\b|\bnp \(rm\)|cost_sen|_cost\b/,
+    any: /\b(tier|override|cost|cogs|margin|gp|profit|commission|variance|markup)\b|\bnp \(rm\)|cost_sen|_cost\b/,
   },
   // ── Money on the document ────────────────────────────────────────────────
   {
     group: COLUMN_GROUPS.amounts,
-    any: /\b(amount|total|subtotal|tax|discount|disc|paid|balance|deposit|refund|refunded|credit|debit|price|rate|currency|curr|value|revenue|sales|income|outstanding|owed|payment|billed|invoice|invoiced|rental|rent|due|overdue|aging|age|bucket|finances|account|merchandise|mattress|sofa|bedframe|accessories|specials)\b|_sen\b|\(rm\)/,
+    any: /\b(net|gross|fee|merchant|acquirer|statement|method|symbol|inclusive|others?|amount|total|subtotal|tax|discount|disc|paid|balance|deposit|refund|refunded|credit|debit|price|rate|currency|curr|value|revenue|sales|income|outstanding|owed|payment|billed|invoice|invoiced|rental|rent|due|overdue|aging|age|bucket|finances|account|merchandise|mattress|sofa|bedframe|accessories|specials)\b|_sen\b|\(rm\)/,
   },
   // ── Getting it made, moved and delivered ─────────────────────────────────
   {
     group: COLUMN_GROUPS.logistics,
-    any: /\b(delivery|deliveries|deliver|delivered|dispatch|shipout|carrier|tracking|eta|arrival|arrives|departure|driver|helper|lorry|vehicle|plate|fleet|registration|trip|route|zone|warehouse|whse|rack|shelf|venue|location|transport|pickup|pickups|scheduled|unscheduled|sched|processing date|collected|setup|dismantle|lift booking|do|transfer to|transfer from|stock status|expected|earliest|latest|when|time|days left|work days|repair days|utilisation|covers|areas)\b/,
+    any: /\bm3\b|\b(mileage|insurance|puspakom|downtime|problem|drops|stops|dos|volume|sets|dispose|disposal|inspection|services?|duration|transfer|ctn|etd|vessel|voyage|port|slot|replacement|consignment|card|delivery|deliveries|deliver|delivered|dispatch|shipout|carrier|tracking|eta|arrival|arrives|departure|driver|helper|lorry|vehicle|plate|fleet|registration|trip|route|zone|warehouse|whse|rack|shelf|venue|location|transport|pickup|pickups|scheduled|unscheduled|sched|processing date|collected|setup|dismantle|lift booking|do|transfer to|transfer from|stock status|expected|earliest|latest|when|time|days left|work days|repair days|utilisation|covers|areas)\b/,
   },
   // ── What there is, and how much of it ────────────────────────────────────
   {
     group: COLUMN_GROUPS.stock,
-    any: /\b(qty|quantity|uom|stock|on hand|available|reserved|remaining|ordered|incoming|received|returned|moq|batch|lot|barcode|sku|item|items|product|model|allocations|condition|serial|components|fabrics|size|dimension|divan height|leg height|unit|spare|categories|brands|brandings)\b/,
+    any: /\b(units|shortage|attributes|running|qty|quantity|uom|stock|on hand|available|reserved|remaining|ordered|incoming|received|returned|moq|batch|lot|barcode|sku|item|items|product|model|allocations|condition|serial|components|fabrics|size|dimension|divan height|leg height|unit|spare|categories|brands|brandings)\b/,
   },
   // ── Who it is for, and how to reach them ─────────────────────────────────
   {
@@ -72,12 +72,12 @@ const RULES: Rule[] = [
   // ── Staff, roles, the org ────────────────────────────────────────────────
   {
     group: COLUMN_GROUPS.people,
-    any: /\b(salesperson|agent|pic|assignee|assigned|owner|approver|requested by|created by|invited|member|role|position|department|division|reports to|direct reports|joined|last seen|presence|team|organizer|in house|outsourced|lead|by)\b/,
+    any: /\b(approval|level 1|level 2|recipients|last login|people|audience|salesperson|agent|pic|assignee|assigned|owner|approver|requested by|created by|invited|member|role|position|department|division|reports to|direct reports|joined|last seen|presence|team|organizer|in house|outsourced|lead|by)\b/,
   },
   // ── The document itself ──────────────────────────────────────────────────
   {
     group: COLUMN_GROUPS.basic,
-    any: /\b(doc|no\.?|number|ref|reference|date|dates|status|stage|type|kind|code|name|title|label|description|remark|remarks|note|notes|reason|created|updated|company|brand|branding|project|category|group|series|source|progress|priority|rating|active|enabled|default|id|photo|photos|lines|case|cases|closed|breached|follow up|message|emailed|expires|scope|from|to|check|accepted|gaps|main|actions|history|metrics|maintenance|calendar|month|custom|all)\b/,
+    any: /\b(journal|je|ledger|entries|result|what|done|posted|registered|requested|consumed at|reopened|period|rev|file|line|document|parent|delta|actual|where it is|avg resolution|completion|doc|no\.?|number|ref|reference|date|dates|status|stage|type|kind|code|name|title|label|description|remark|remarks|note|notes|reason|created|updated|company|brand|branding|project|category|group|series|source|progress|priority|rating|active|enabled|default|id|photo|photos|lines|case|cases|closed|breached|follow up|message|emailed|expires|scope|from|to|check|accepted|gaps|main|actions|history|metrics|maintenance|calendar|month|custom|all)\b/,
   },
 ];
 
