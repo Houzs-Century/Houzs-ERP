@@ -565,7 +565,37 @@ function runErpAssrPull(triggerType) {
 function scheduledErpSync() {
   pushUpdatesToErp("SCHEDULED");
   runErpPullProcess("SCHEDULED");
-  runErpAssrPull("SCHEDULED");
+}
+
+/**
+ * The ASSR legs, on the DAILY batch instead of the 15-minute sync (owner
+ * 2026-09-24). The ERP's counter measured what the 15-minute cadence actually
+ * carried: 16 calls in an afternoon, 0 rows. The feed is cursor-driven, so an
+ * empty answer is the normal state - only 9 open cases carry an own-team leg at
+ * all - and re-asking every quarter hour buys nothing. The checkpoint
+ * (ERP_ASSR_CHECKPOINT) makes the cadence free to change: one run a day picks
+ * up everything the day changed, and ERP_MAX_PAGES_PER_RUN x 300 CASES is far
+ * above a day of movement.
+ *
+ * THE COST, so nobody is surprised: a leg confirmed at 09:00 now reaches the
+ * sheet the NEXT morning, not within 15 minutes. Install a second daily trigger
+ * if the service desk needs it the same day.
+ */
+function scheduledErpAssrPull() { runErpAssrPull("SCHEDULED"); }
+
+/**
+ * Install the daily ASSR pull, and remove any older one for the same handler so
+ * a re-run cannot leave two. Safe to re-run; run it ONCE after pasting this
+ * file. The 15-minute scheduledErpSync trigger is left exactly as it is - it
+ * still carries the SO pull and push, which do move every quarter hour.
+ */
+function setupErpAssrDailyTrigger() {
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === "scheduledErpAssrPull") ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger("scheduledErpAssrPull").timeBased().everyDays(1).atHour(7).create();
+  Log.info("setup", "scheduledErpAssrPull installed daily at 07:00; the ASSR legs no longer ride the 15-minute sync.");
+  try { SpreadsheetApp.getUi().alert("ASSR legs now pull once a day at 07:00."); } catch (e) {}
 }
 function manualErpPull() { runErpPullProcess("MANUAL"); }
 function manualErpPush() { pushUpdatesToErp("MANUAL"); }
