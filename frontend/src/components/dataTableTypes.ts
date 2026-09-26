@@ -93,6 +93,12 @@ export interface Column<T, L = never> {
    * list page at once. UDF columns are grouped as "Custom fields" for free.
    */
   group?: string;
+  /**
+   * Footer total (owner 2026-09-25). Called with the rows on screen after
+   * search and filters, or only the ticked rows while any are ticked; returns
+   * the formatted figure. A table with no `total` column has no footer.
+   */
+  total?: (rows: T[]) => ReactNode;
 }
 
 /**

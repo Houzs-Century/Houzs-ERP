@@ -29,8 +29,10 @@ import {
   MoveHorizontal,
   Filter,
   Rows3,
+  WrapText,
 } from "lucide-react";
 import { cn } from "../lib/utils";
+import { headerLabel } from "../lib/columnHeaderLabel";
 import { ResetFiltersButton } from "./ResetFiltersButton";
 import { TableSkeleton } from "./Skeleton";
 import {
@@ -328,6 +330,18 @@ function DataTableInner<T, L>({
     },
     [setStoredWidths],
   );
+  /* Every table is fixed-layout once it has rows (owner 2026-09-25: resizing
+     one column must never move the others). The first paint uses the auto
+     layout so columns open at their natural size; the header widths read off
+     that paint become the fixed baseline. Not persisted (a user drag is), and
+     keyed by idKey so a company switch measures again. */
+  const [measured, setMeasured] = useState<{ idKey: string; widths: Record<string, number> } | null>(null);
+  const measuredWidths = measured?.idKey === idKey ? measured.widths : null;
+  const layoutFixed = !!fixedColumnWidths || measuredWidths !== null;
+  /* Wrap long text onto more lines instead of clipping it (owner 2026-09-25).
+     A personal preference per table, like the other dt:* keys. */
+  const [wrapText, setWrapText] = useLocalStorage<boolean>(`dt:wrap:${idKey}`, false, undefined, (v) => v === true);
+  const wrapOn = wrapText && layoutFixed;
   // Pinned (frozen-left) column keys. Pinned columns render at the front
   // (after any alwaysVisible columns) and stick during horizontal scroll.
   const [pinned, setPinned] = useLocalStorage<string[]>(
@@ -882,10 +896,12 @@ function DataTableInner<T, L>({
     (col: Column<T>): number => {
       const user = widths[col.key];
       if (typeof user === "number" && user > 0) return user;
+      const seen = measuredWidths?.[col.key];
+      if (typeof seen === "number" && seen > 0) return seen;
       const parsed = parsePxWidth(col.width);
       return parsed ?? DEFAULT_COL_WIDTH;
     },
-    [widths]
+    [widths, measuredWidths]
   );
 
   /* Total table width for the fixed-width layout (opt-in `fixedColumnWidths`):
@@ -893,10 +909,10 @@ function DataTableInner<T, L>({
      width. Recomputes as a drag mutates `widths` (via resolveWidth), so the
      table grows live while a column is resized. undefined when the flag is off. */
   const fixedTableWidth = useMemo(() => {
-    if (!fixedColumnWidths) return undefined;
+    if (!layoutFixed) return undefined;
     const lead = (selection ? 36 : 0) + (expandable ? 32 : 0);
     return lead + displayColumns.reduce((acc, c) => acc + resolveWidth(c), 0);
-  }, [fixedColumnWidths, selection, expandable, displayColumns, resolveWidth]);
+  }, [layoutFixed, selection, expandable, displayColumns, resolveWidth]);
 
   /* How many TRAILING display columns are frozen to the right. Mirror image
      of stickyCount: a contiguous run, because a gap in it would let an
@@ -1194,7 +1210,7 @@ function DataTableInner<T, L>({
         .filter((c) => !c.alwaysVisible)
         .map((c) => ({
           key: c.key,
-          label: c.label || c.key,
+          label: headerLabel(c.label || c.key),
           /* Explicit beats inferred: a page that sorted its columns by hand
              (Sales Orders) keeps that sort; every other list gets the shared
              classifier rather than one flat scroll. */
@@ -1405,10 +1421,23 @@ function DataTableInner<T, L>({
     window.addEventListener("blur", onBlur);
   }
 
-  // Auto-fit = clear the stored width so the column falls back to its
-  // natural / default size. (We don't measure the DOM; clearing is the
-  // predictable, persistence-friendly behaviour.)
+  /* Auto-fit (double-click the edge, or the header menu): the widest of the
+     header and the cells drawn now, measured on one line. With nothing drawn
+     to measure, fall back to the column's natural size. */
   function autoFitColumn(key: string) {
+    const cells = scrollWrapRef.current?.querySelectorAll<HTMLElement>(`[data-col-key="${CSS.escape(key)}"]`);
+    let widest = 0;
+    cells?.forEach((cell) => {
+      const was = cell.style.whiteSpace;
+      cell.style.whiteSpace = "nowrap";
+      widest = Math.max(widest, cell.scrollWidth);
+      cell.style.whiteSpace = was;
+    });
+    if (widest > 0) {
+      const fit = Math.min(800, Math.max(MIN_COL_WIDTH, Math.ceil(widest) + 8));
+      updateWidths((prev) => ({ ...prev, [key]: fit }), true);
+      return;
+    }
     updateWidths((prev) => {
       if (!(key in prev)) return prev;
       const next = { ...prev };
@@ -1716,6 +1745,15 @@ function DataTableInner<T, L>({
     [sortedRows, rowLimit],
   );
   const hiddenByLimit = (sortedRows?.length ?? 0) - (limitedRows?.length ?? 0);
+  const footerTotals = useMemo(() => {
+    if (!sortedRows?.length || !displayColumns.some((c) => c.total)) return null;
+    if (selection && selection.selectedIds.size > 0) {
+      const picked = sortedRows.filter((r) => selection.selectedIds.has(String(getRowKey(r))));
+      if (picked.length > 0) return { rows: picked, picked: true };
+    }
+    return { rows: sortedRows, picked: false };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- getRowKey is an inline prop; keys are stable per row
+  }, [sortedRows, displayColumns, selection?.selectedIds]);
   const loadMore = () => setRowLimit((n) => (n ?? 0) + (initialRowLimit ?? 200));
 
   /* Report what the operator can actually see (owner 2026-08-12) — see the
@@ -1744,7 +1782,26 @@ function DataTableInner<T, L>({
   // `displayColumns.length`, so non-expandable callers are unchanged.
   const expandColCount = expandable ? 1 : 0;
   const selectColCount = selection ? 1 : 0;
-  const totalColSpan = displayColumns.length + expandColCount + selectColCount;
+  /* In the fixed layout a blank last column takes the slack, so a column made
+     narrower gives its space to the blank instead of to its neighbours. It
+     sits before any right-frozen run, which stays at the right edge. */
+  const fillerCount = layoutFixed ? 1 : 0;
+  const fillerAt = displayColumns.length - stickyRightCount;
+  const totalColSpan = displayColumns.length + expandColCount + selectColCount + fillerCount;
+  useLayoutEffect(() => {
+    if (layoutFixed || !showTable || effectiveLoading || !sortedRows?.length) return;
+    const heads = scrollWrapRef.current?.querySelectorAll<HTMLElement>("thead th[data-col-key]");
+    if (!heads?.length) return;
+    const next: Record<string, number> = {};
+    for (const th of heads) {
+      const w = th.getBoundingClientRect().width;
+      // Not laid out (a hidden tab): measure on a later paint instead.
+      if (w <= 0) return;
+      next[th.dataset.colKey!] = Math.max(MIN_COL_WIDTH, Math.round(w));
+    }
+    setMeasured({ idKey, widths: next });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- scrollWrapRef is a ref
+  }, [layoutFixed, showTable, effectiveLoading, sortedRows, idKey]);
 
   // ── Group-by (opt-in) ──────────────────────────────────────
   // Flatten the sorted rows into a list of render instructions — a group
@@ -1923,8 +1980,12 @@ function DataTableInner<T, L>({
       raf = 0;
       const el = tbodyRef.current;
       if (!el) return;
-      const firstRow = el.querySelector<HTMLElement>("tr[data-vrow]");
-      if (firstRow && firstRow.offsetHeight > 0) rowHeightRef.current = firstRow.offsetHeight;
+      /* The average of the rows drawn, not the first one: with text wrapped the
+         rows are no longer one height. */
+      const drawn = el.querySelectorAll<HTMLElement>("tr[data-vrow]");
+      let sum = 0;
+      drawn.forEach((tr) => { sum += tr.offsetHeight; });
+      if (drawn.length > 0 && sum > 0) rowHeightRef.current = sum / drawn.length;
       const rh = rowHeightRef.current || ROW_HEIGHT_ESTIMATE;
       const top = el.getBoundingClientRect().top; // tbody top relative to viewport
       const vh = window.innerHeight;
@@ -2085,6 +2146,16 @@ function DataTableInner<T, L>({
             )}
             {mobileView === "cards" ? "Table" : "Cards"}
           </button>
+          <button
+            type="button"
+            onClick={() => setWrapText(!wrapText)}
+            aria-pressed={wrapText}
+            title={wrapText ? "Show each row on one line" : "Wrap long text onto more lines"}
+            className={cn(toolbarBtn, "hidden sm:inline-flex", wrapText && "border-primary/40 bg-primary-soft text-primary")}
+          >
+            <WrapText size={13} />
+            Wrap
+          </button>
           <ColumnsButton
             visibleCount={visibleCount}
             totalCount={chooserOptions.length}
@@ -2134,7 +2205,7 @@ function DataTableInner<T, L>({
           groups={userGroups}
           labelOf={(k) => {
             const c = allColumns.find((x) => x.key === k);
-            return c ? headerText(c) : k;
+            return c ? headerLabel(headerText(c)) : k;
           }}
           dragKey={dragCol}
           canGroup={(k) => !!allColumns.find((x) => x.key === k)?.getValue}
@@ -2156,13 +2227,10 @@ function DataTableInner<T, L>({
             style={freezeScrollStyle}
           >
           <table
-            className={cn(
-              "border-separate border-spacing-0 text-sm",
-              // Fixed layout sizes the table to the sum of its columns (below);
-              // otherwise fill the container and let the auto layout distribute.
-              !fixedColumnWidths && "w-full",
-            )}
-            style={fixedColumnWidths ? { tableLayout: "fixed", width: fixedTableWidth } : undefined}
+            className="w-full border-separate border-spacing-0 text-sm"
+            // Fixed: every column holds its width; the table is at least their
+            // sum (it scrolls) and at least the container (the filler takes it).
+            style={layoutFixed ? { tableLayout: "fixed", minWidth: fixedTableWidth } : undefined}
           >
             <thead className="sticky top-0 z-10">
               <tr>
@@ -2218,7 +2286,7 @@ function DataTableInner<T, L>({
                   // actually holds the size instead of the browser
                   // redistributing free space.
                   const cellStyle: React.CSSProperties = {};
-                  if (fixedColumnWidths) {
+                  if (layoutFixed) {
                     // Fixed layout: pin every column to its resolved width so the
                     // table-layout:fixed grid honours it exactly (widths come from
                     // this header row) and a resize grows ONLY this column, never
@@ -2254,8 +2322,10 @@ function DataTableInner<T, L>({
                     cellStyle.zIndex = 30;
                   }
                   return (
+                    <Fragment key={c.key}>
+                    {i === fillerAt && fillerCount > 0 && <th aria-hidden className="border-b-2 border-border bg-surface-dim p-0" />}
                     <th
-                      key={c.key}
+                      data-col-key={c.key}
                       style={cellStyle}
                       /* Drag the header itself to reorder. HTML5 DnD, same as
                          the Columns drawer. The resize strip preventDefaults
@@ -2310,7 +2380,9 @@ function DataTableInner<T, L>({
                         // overflow-hidden: a header must never paint over its
                         // neighbour either — crop the label when the column is
                         // narrower than it (same clip rule as body cells).
-                        "group/th relative overflow-hidden border-b-2 border-border bg-surface-dim text-[10px] font-bold uppercase tracking-brand text-ink",
+                        // English Title Case, not CSS capitals (owner 2026-09-25).
+                        "group/th relative overflow-hidden border-b-2 border-border bg-surface-dim text-[11.5px] font-semibold text-ink",
+                        wrapOn ? "whitespace-normal align-bottom" : "whitespace-nowrap",
                         headPad,
                         c.align === "right" && "text-right",
                         c.align === "center" && "text-center",
@@ -2343,7 +2415,7 @@ function DataTableInner<T, L>({
                                 aria-label="Pinned"
                               />
                             )}
-                            {c.label}
+                            {headerLabel(c.label)}
                             {sortable && (
                               <span
                                 className={cn(
@@ -2427,8 +2499,12 @@ function DataTableInner<T, L>({
                         />
                       )}
                     </th>
+                    </Fragment>
                   );
                 })}
+                {fillerAt === displayColumns.length && fillerCount > 0 && (
+                  <th aria-hidden className="border-b-2 border-border bg-surface-dim p-0" />
+                )}
               </tr>
             </thead>
             <tbody ref={tbodyRef}>
@@ -2672,8 +2748,10 @@ function DataTableInner<T, L>({
                               ? rawVal
                               : undefined;
                           return (
+                            <Fragment key={c.key}>
+                            {i === fillerAt && fillerCount > 0 && <td aria-hidden className="border-b border-border-subtle p-0 group-hover:bg-[#3f6b53]/25" />}
                             <td
-                              key={c.key}
+                              data-col-key={c.key}
                               style={cellStyle}
                               title={cellTitle}
                               className={cn(
@@ -2689,7 +2767,9 @@ function DataTableInner<T, L>({
                                 // multi-line wrap via an inner block element
                                 // or `c.className` ("whitespace-normal") —
                                 // still overflow-hidden within the column.
-                                "overflow-hidden text-ellipsis whitespace-nowrap",
+                                wrapOn
+                                  ? "whitespace-normal break-words align-top"
+                                  : "overflow-hidden text-ellipsis whitespace-nowrap",
                                 // Pine-green tint on hover (matches the
                                 // calendar's "on track" green). Reads clearly
                                 // on both zebra shades. (Was a pale brass
@@ -2710,8 +2790,12 @@ function DataTableInner<T, L>({
                             >
                               {c.render(row)}
                             </td>
+                            </Fragment>
                           );
                         })}
+                        {fillerAt === displayColumns.length && fillerCount > 0 && (
+                          <td aria-hidden className="border-b border-border-subtle p-0 group-hover:bg-[#3f6b53]/25" />
+                        )}
                       </tr>
                       {/* Inline expanded sub-row (opt-in `expandable`). Spans
                           the full width; renders the caller's drill-down.
@@ -2752,6 +2836,53 @@ function DataTableInner<T, L>({
                 </tr>
               )}
             </tbody>
+            {footerTotals && (
+              <tfoot className="sticky bottom-0 z-10">
+                <tr title={footerTotals.picked ? "Total of the ticked rows" : "Total of the rows shown"}>
+                  {selectColCount + expandColCount > 0 && (
+                    <td colSpan={selectColCount + expandColCount} className="border-t-2 border-border bg-surface-dim" />
+                  )}
+                  {displayColumns.map((c, i) => {
+                    const cellStyle: React.CSSProperties = { width: resolveWidth(c) };
+                    if (i < stickyCount) {
+                      cellStyle.position = "sticky";
+                      cellStyle.left = stickyLeft[i];
+                      cellStyle.zIndex = 20;
+                    } else if (stickyRight[i] !== undefined) {
+                      cellStyle.position = "sticky";
+                      cellStyle.right = stickyRight[i];
+                      cellStyle.zIndex = 20;
+                    }
+                    const label =
+                      i === 0 && !c.total
+                        ? `${footerTotals.picked ? "Selected" : "Total"} · ${footerTotals.rows.length} row${footerTotals.rows.length === 1 ? "" : "s"}`
+                        : null;
+                    return (
+                      <Fragment key={c.key}>
+                        {i === fillerAt && fillerCount > 0 && <td aria-hidden className="border-t-2 border-border bg-surface-dim p-0" />}
+                        <td
+                          data-total-key={c.key}
+                          style={cellStyle}
+                          className={cn(
+                            "overflow-hidden text-ellipsis whitespace-nowrap border-t-2 border-border bg-surface-dim text-[13px] font-semibold tabular-nums text-ink",
+                            cellPad,
+                            c.align === "right" && "text-right",
+                            c.align === "center" && "text-center",
+                            i === 0 && !expandable && !selection && "pl-5",
+                            i === displayColumns.length - 1 && "pr-5",
+                          )}
+                        >
+                          {c.total ? c.total(footerTotals.rows) : label}
+                        </td>
+                      </Fragment>
+                    );
+                  })}
+                  {fillerAt === displayColumns.length && fillerCount > 0 && (
+                    <td aria-hidden className="border-t-2 border-border bg-surface-dim p-0" />
+                  )}
+                </tr>
+              </tfoot>
+            )}
           </table>
           </div>
         </div>
@@ -2973,7 +3104,7 @@ function DataTableInner<T, L>({
             >
               <div className="shrink-0 border-b border-border-subtle px-3 py-2">
                 <span className="text-[10px] font-bold uppercase tracking-brand text-ink-secondary">
-                  {col.label || col.key}
+                  {headerLabel(col.label || col.key)}
                 </span>
               </div>
 

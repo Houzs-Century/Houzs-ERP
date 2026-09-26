@@ -106,7 +106,7 @@ describe('the statements waiting for money', () => {
     expect(screen.getAllByText('RM 4,227.87')).toHaveLength(2);
     /* The money columns, once each — what he came here to check (owner:
        我应该是需要核对 net 的数据罢了哦). */
-    expect(screen.getByText('Net it should pay')).toBeTruthy();
+    expect(screen.getByText('Net It Should Pay')).toBeTruthy(); // headers read as Title Case
     expect(screen.getByText('RM 7,046.45')).toBeTruthy();       // the net
     expect(screen.getByText('RM 2,818.58')).toBeTruthy();       // received
     expect(screen.getByText('hlb-aug.csv')).toBeTruthy();
