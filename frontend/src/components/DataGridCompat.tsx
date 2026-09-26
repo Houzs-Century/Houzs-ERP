@@ -26,12 +26,14 @@ export type GridColumn<T> = {
   sortable?: boolean;
   groupable?: boolean;
   sortFn?: (a: T, b: T) => number;
-  groupValue?: (row: T) => string;
-  searchValue?: (row: T) => string;
+  /* Nullable on purpose: DataGrid pages were found returning undefined for
+     some rows, and a crash here takes the whole list down. */
+  groupValue?: (row: T) => string | null | undefined;
+  searchValue?: (row: T) => string | null | undefined;
   exportValue?: (row: T) => string | number;
   exportFormat?: "money" | "rate";
   exportLabel?: string;
-  filterValue?: (row: T) => string;
+  filterValue?: (row: T) => string | null | undefined;
   filterType?: "date" | "number" | "numbering" | "enum" | "text";
   dateValue?: (row: T) => string | null | undefined;
   numberValue?: (row: T) => number | null | undefined;
@@ -89,8 +91,8 @@ const cellText = (v: ReactNode): string =>
 
 /** DataGrid's value for grouping/sorting: groupValue, then searchValue, then text. */
 function sortText<T>(c: GridColumn<T>, row: T): string {
-  if (c.groupValue) return c.groupValue(row);
-  if (c.searchValue) return c.searchValue(row);
+  if (c.groupValue) return c.groupValue(row) ?? "";
+  if (c.searchValue) return c.searchValue(row) ?? "";
   return cellText(c.accessor(row));
 }
 
@@ -119,10 +121,10 @@ function defaultCompare<T>(c: GridColumn<T>): (a: T, b: T) => number {
  *  Never searchValue, which bundles several tokens. Dates leave as ISO. */
 function exportCell<T>(c: GridColumn<T>, row: T): ExportCell {
   if (c.exportValue) return isoForExport(c.exportValue(row));
-  if (c.filterValue) return isoForExport(c.filterValue(row));
+  if (c.filterValue) return isoForExport(c.filterValue(row) ?? "");
   const rendered = cellText(c.accessor(row)).trim();
   if (rendered) return isoForExport(rendered);
-  if (c.groupValue) return isoForExport(c.groupValue(row));
+  if (c.groupValue) return isoForExport(c.groupValue(row) ?? "");
   return "";
 }
 
