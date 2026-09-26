@@ -10,9 +10,13 @@
 // WHY THIS SCRIPT EXISTS. The flag was switched on by hand on 2026-09-16 and
 // the mechanism erased 193 of company 2's RETAIL prices over four days, because
 // the reader carried no company predicate and the single app_config row lives
-// under company 1. The reader is fixed (PR #4173). This script is the write
-// half: it names the company out loud, refuses to re-point another company's
-// row, and refuses to arm the mechanism over company 2 at all.
+// under company 1. Retail is now defended where it is WRITTEN (every derive path
+// merges via mergeRetailOntoDerivedSeatGrid, and company 2 has the DB trigger
+// trg_mfg_products_retail_price_lock), and the owner asked (2026-09-25) for both
+// companies to behave the same, so the switch is now GLOBAL: autoDeriveEnabled
+// reads the one (key) row regardless of company. This script is the write half:
+// it names the company out loud and refuses to re-point the single row at a
+// different company (which would move the switch out from under its owner).
 //
 // TWO GATES, because this ends in a switch over a live catalogue:
 //   MODE     plan (DEFAULT) shows what it WOULD write and writes nothing;

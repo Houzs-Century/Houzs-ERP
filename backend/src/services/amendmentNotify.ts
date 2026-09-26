@@ -194,12 +194,16 @@ export async function notifySoAmendmentHandedOver(
     actorName: string | null;
     actorUserId: number | null;
     requesterUserId: number | null;
+    /** A super admin changed the approver (owner 2026-09-25), not the desk's own approver. */
+    byAdmin: boolean;
   },
 ): Promise<void> {
   try {
     const actor = Number(opts.actorUserId) || 0;
     const by = (opts.actorName ?? "").trim();
-    const passedBy = by ? `${by} (${LANE_NOTICE_LABEL[opts.fromLane]} approver)` : `The ${LANE_NOTICE_LABEL[opts.fromLane]} approver`;
+    const role = opts.byAdmin ? "admin" : `${LANE_NOTICE_LABEL[opts.fromLane]} approver`;
+    const passedBy = by ? `${by} (${role})` : `The ${role}`;
+    const why = opts.byAdmin ? "" : " as not theirs to approve";
     const note = shortReason(opts.note);
 
     const approvers = await usersHoldingPermission(env, LANE_APPROVE_PERM[opts.toLane], {
@@ -212,8 +216,8 @@ export async function notifySoAmendmentHandedOver(
         category: "GENERAL",
         title: `SO amendment ${opts.amendmentNo} needs approval`,
         body:
-          `${passedBy} passed amendment ${opts.amendmentNo} on Sales Order ${opts.soDocNo} to you ` +
-          `as not theirs to approve: ${note} It is now waiting for ${LANE_NOTICE_LABEL[opts.toLane]} approval.`,
+          `${passedBy} passed amendment ${opts.amendmentNo} on Sales Order ${opts.soDocNo} to you` +
+          `${why}: ${note} It is now waiting for ${LANE_NOTICE_LABEL[opts.toLane]} approval.`,
         source: SO_SOURCE,
       });
     }

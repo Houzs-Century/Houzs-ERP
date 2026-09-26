@@ -25,7 +25,10 @@ vi.mock('../../vendor/scm/components/PromptDialog', () => ({
 vi.mock('../../vendor/scm/components/NotifyDialog', () => ({
   useNotify: () => async (n: { title: string; body?: string; tone?: string }) => { state.notices.push(n); },
 }));
+// Not a super admin: the admin's "change approver" stays hidden in these tests.
+vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ can: () => false }) }));
 vi.mock('../../vendor/scm/lib/so-amendment-queries', () => ({
+  useChangeAmendmentLane: () => ({ isPending: false, mutateAsync: async () => {} }),
   useFlagAmendmentLane: () => ({
     isPending: false,
     mutateAsync: async (v: { id: string; note: string }) => {

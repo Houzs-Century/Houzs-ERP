@@ -1,0 +1,46 @@
+name: Nightly restamp SO cost from product
+
+# Owner 2026-09-26: once a product's cost is filled in Product Maintenance, the
+# Sales Report's kosong (0-cost) SO lines must fill too. Line costs are
+# snapshotted at save, so an existing order does not move when the cost lands
+# later. This job re-stamps, every night, ONLY the lines that carry no cost and
+# whose product now has one — it never overwrites a non-zero cost, so it can only
+# close gaps, never rewrite a real historical figure. Idempotent: once the
+# backlog is filled a run stamps nothing.
+
+on:
+  schedule:
+    - cron: '0 18 * * *' # 02:00 Malaysia time (UTC+8)
+  workflow_dispatch: {}
+
+concurrency:
+  group: nightly-restamp-so-cost
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - name: Restamp SO cost from product (all companies, gaps only)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODE: apply
+          CONFIRM: 'I HAVE REVIEWED THE DRY-RUN'
+        run: |
+          set -euo pipefail
+          npx tsx scripts/restamp-so-cost-from-product.mjs

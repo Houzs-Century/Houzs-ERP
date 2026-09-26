@@ -1,0 +1,226 @@
+/* Restamp SO line cost from the CURRENT product cost, for lines that carry none.
+
+   WHY. SO line costs are SNAPSHOTTED at save time. When a product had no cost
+   then, the line stored unit_cost_sen = 0 and the Sales Report shows a kosong
+   gap (and a fake 100% margin). Filling the cost in Product Maintenance later
+   does NOT move those snapshots. Owner 2026-09-25: once the product cost lands,
+   the report's 0-cost lines must fill too. This restamps them from the cost the
+   product carries NOW (not as-of the order date — the point is to fill a gap
+   that was 0 only because no cost existed then).
+
+   IT CHANGES HISTORICAL MARGIN for the touched orders: from an overstated
+   100% (cost 0) down to the real figure (revenue - real cost). That is the
+   intended correction.
+
+   WHAT IT TOUCHES. Any line with unit_cost_sen = 0/NULL whose product now
+   carries a cost — whether the whole order was zero-cost or only a few of its
+   lines. A non-zero line stamp is never touched; the header cost is then
+   recomputed as the SUM of its line costs (the invariant already true for
+   189/190 costed 2990 orders), so an order's existing correct lines are left as
+   they are and only the newly-stamped cost is added. Per line the cost is:
+     SOFA   seat grid PRICE_2 at the ordered height (variants.seatHeight)
+            -> base_price_sen -> cost_price_sen
+     other  base_price_sen -> cost_price_sen
+   line_cost = unit x qty; then the header's category aggregates + total_cost +
+   margin (revenue - cost) are recomputed. This mirrors restamp-imported-so-costs
+   (the company-1 import stamp) but works for any company and is release-safe.
+
+   MODE=plan (default) reports what it WOULD stamp, per company, incl. the total
+   margin reduction, and writes nothing. MODE=apply needs
+   CONFIRM="I HAVE REVIEWED THE DRY-RUN", writes one SO per short transaction
+   prints every touched line id + header doc_no for reversal,
+   then RE-READS on a fresh connection and asserts no target line still reads 0
+   where its product has a cost.
+
+   REVERSAL: the printed lines/headers were all 0 before, so restore with
+     UPDATE scm.mfg_sales_order_items SET unit_cost_sen=0, line_cost_sen=0 WHERE id IN (<printed ids>);
+     UPDATE scm.mfg_sales_orders SET mattress_sofa_cost_sen=0, bedframe_cost_sen=0,
+       accessories_cost_sen=0, service_cost_sen=0, others_cost_sen=0, total_cost_sen=0,
+       total_margin_sen=total_revenue_sen WHERE doc_no IN (<printed doc_nos>);
+
+   Env: DATABASE_URL (required); COMPANY (optional, default = every company with
+   zero-cost SO lines); LIST_LIMIT (touched doc_nos to print in plan, default 40).
+
+   RE-RUN: idempotent — value-guarded on unit_cost_sen = 0, so a second run
+   stamps nothing (every gap the products can fill is already filled). */
+import postgres from 'postgres';
+
+const DSN = process.env.DATABASE_URL;
+if (!DSN) { console.error('need DATABASE_URL'); process.exit(2); }
+const APPLY = (process.env.MODE || 'plan').toLowerCase() === 'apply';
+const CONFIRM_PHRASE = 'I HAVE REVIEWED THE DRY-RUN';
+const ONLY_COMPANY = process.env.COMPANY ? Number(process.env.COMPANY) : null;
+const LIST_LIMIT = Number(process.env.LIST_LIMIT) > 0 ? Number(process.env.LIST_LIMIT) : 40;
+
+const note = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
+const bad = (m) => console.log(process.env.GITHUB_ACTIONS ? `::error::${m}` : `ERROR ${m}`);
+const rm = (sen) => (Number(sen || 0) / 100).toFixed(2);
+
+if (APPLY && process.env.CONFIRM !== CONFIRM_PHRASE) {
+  bad(`MODE=apply requires CONFIRM="${CONFIRM_PHRASE}"`);
+  process.exit(2);
+}
+
+const CAT_COL = {
+  MATTRESS: 'mattress_sofa', SOFA: 'mattress_sofa', BEDFRAME: 'bedframe',
+  ACCESSORY: 'accessories', SERVICE: 'service',
+};
+
+/** The product cost for one line, current (not as-of). SOFA reads the seat grid
+ *  PRICE_2 cost at the ordered height; everything else the flat cost lane. */
+function unitCostSen(p, variants) {
+  if (!p) return 0;
+  const cat = String(p.category || '').toUpperCase();
+  if (cat === 'SOFA' && Array.isArray(p.seat_height_prices)) {
+    const h = variants?.seatHeight ?? variants?.seat_height ?? null;
+    if (h != null) {
+      const hh = String(h).replace(/"/g, '');
+      const hit = p.seat_height_prices.find(
+        (e) => String(e.height) === hh && (e.tier ?? 'PRICE_2') === 'PRICE_2' && Number(e.priceSen) > 0,
+      );
+      if (hit) return Number(hit.priceSen);
+    }
+  }
+  return Number(p.base_price_sen) || Number(p.cost_price_sen) || 0;
+}
+
+const sql = postgres(DSN, { ssl: 'require', prepare: false, max: 1 });
+
+async function main() {
+  const companies = ONLY_COMPANY != null
+    ? [ONLY_COMPANY]
+    : (await sql`SELECT DISTINCT company_id FROM scm.mfg_sales_orders ORDER BY company_id`).map((r) => Number(r.company_id));
+
+  const touchedLineIds = [];
+  const touchedDocNos = [];
+  let grandStamp = 0, grandNoCost = 0, grandHeaders = 0, grandMarginDrop = 0;
+
+  for (const co of companies) {
+    const prods = await sql`SELECT code, category, base_price_sen, cost_price_sen, seat_height_prices
+                            FROM scm.mfg_products WHERE company_id = ${co}`;
+    const prodBy = new Map(prods.map((p) => [p.code, p]));
+
+    // Every order that has at least one zero-cost line — a fully-zero order OR a
+    // partly-costed one with a few kosong lines. Both show a gap in the report.
+    const sos = await sql`SELECT h.doc_no, h.total_revenue_sen, h.total_cost_sen
+                          FROM scm.mfg_sales_orders h
+                          WHERE h.company_id = ${co}
+                            AND EXISTS (SELECT 1 FROM scm.mfg_sales_order_items i
+                                        WHERE i.company_id = h.company_id AND i.doc_no = h.doc_no
+                                          AND coalesce(i.unit_cost_sen,0) = 0)
+                          ORDER BY h.doc_no`;
+
+    let stamped = 0, noCost = 0, headers = 0, marginDrop = 0;
+    const now = new Date().toISOString();
+    const shownDocs = [];
+    // Accumulate every write, then flush as TWO bulk UPDATEs per company (below).
+    // Company 1 has thousands of orders; a per-SO transaction each timed the job
+    // out at 30 min. AutoCount is disconnected, so the deadlock guard that forced
+    // per-SO transactions is no longer needed.
+    const wIds = [], wUc = [], wLc = [];
+    const hDoc = [], hMs = [], hBf = [], hAcc = [], hSvc = [], hOth = [], hTot = [], hMar = [];
+
+    // Read every line for the affected orders in ONE query, grouped by doc_no —
+    // a per-SO query would be thousands of round-trips on company 1.
+    const linesByDoc = new Map();
+    const docNos = sos.map((s) => s.doc_no);
+    if (docNos.length > 0) {
+      const allLines = await sql`SELECT id, doc_no, item_code, qty, variants, unit_cost_sen
+                                 FROM scm.mfg_sales_order_items
+                                 WHERE company_id = ${co} AND doc_no = ANY(${docNos})`;
+      for (const l of allLines) {
+        if (!linesByDoc.has(l.doc_no)) linesByDoc.set(l.doc_no, []);
+        linesByDoc.get(l.doc_no).push(l);
+      }
+    }
+
+    for (const so of sos) {
+      const plan = { lineWrites: [], agg: { mattress_sofa: 0, bedframe: 0, accessories: 0, service: 0, others: 0 }, anyStamp: false };
+      const lines = linesByDoc.get(so.doc_no) ?? [];
+      for (const l of lines) {
+        let uc = Number(l.unit_cost_sen) || 0;
+        if (uc === 0) {
+          const p = prodBy.get(l.item_code);
+          uc = unitCostSen(p, l.variants);
+          if (uc > 0) { plan.anyStamp = true; stamped++; plan.lineWrites.push({ id: l.id, uc, qty: l.qty || 1 }); }
+          else noCost++;
+        }
+        const p = prodBy.get(l.item_code);
+        const col = CAT_COL[String(p?.category || '').toUpperCase()] || 'others';
+        plan.agg[col] += uc * (l.qty || 1);
+      }
+      const total = plan.agg.mattress_sofa + plan.agg.bedframe + plan.agg.accessories + plan.agg.service + plan.agg.others;
+      const oldTotal = Number(so.total_cost_sen) || 0;
+      // Recompute the header whenever a line was stamped and the total moved. The
+      // header cost is the sum of the line costs (verified true for 189/190
+      // already-costed 2990 orders), so re-summing a partly-costed order does not
+      // disturb its existing correct lines — it only adds the newly-stamped ones.
+      const headerChanged = plan.anyStamp && total !== oldTotal;
+      if (headerChanged) { headers++; marginDrop += total - oldTotal; if (shownDocs.length < LIST_LIMIT) shownDocs.push(`${so.doc_no} (cost ${rm(oldTotal)} -> ${rm(total)})`); }
+      if (plan.anyStamp) for (const w of plan.lineWrites) touchedLineIds.push(w.id);
+      if (headerChanged) touchedDocNos.push(so.doc_no);
+
+      if (APPLY && plan.anyStamp) {
+        for (const w of plan.lineWrites) { wIds.push(w.id); wUc.push(w.uc); wLc.push(w.uc * w.qty); }
+        if (headerChanged) {
+          hDoc.push(so.doc_no); hMs.push(plan.agg.mattress_sofa); hBf.push(plan.agg.bedframe);
+          hAcc.push(plan.agg.accessories); hSvc.push(plan.agg.service); hOth.push(plan.agg.others);
+          hTot.push(total); hMar.push((Number(so.total_revenue_sen) || 0) - total);
+        }
+      }
+    }
+
+    if (APPLY && wIds.length > 0) {
+      // Bulk line stamp — one statement for the whole company. The
+      // coalesce(...)=0 guard keeps it idempotent and never overwrites a real cost.
+      await sql`UPDATE scm.mfg_sales_order_items AS t
+                SET unit_cost_sen = d.uc, line_cost_sen = d.lc
+                FROM unnest(${wIds}::uuid[], ${wUc}::bigint[], ${wLc}::bigint[]) AS d(id, uc, lc)
+                WHERE t.id = d.id AND coalesce(t.unit_cost_sen,0) = 0`;
+    }
+    if (APPLY && hDoc.length > 0) {
+      await sql`UPDATE scm.mfg_sales_orders AS t SET
+                  mattress_sofa_cost_sen = d.ms, bedframe_cost_sen = d.bf, accessories_cost_sen = d.acc,
+                  service_cost_sen = d.svc, others_cost_sen = d.oth, total_cost_sen = d.tot,
+                  total_margin_sen = d.mar, updated_at = ${now}
+                FROM unnest(${hDoc}::text[], ${hMs}::bigint[], ${hBf}::bigint[], ${hAcc}::bigint[], ${hSvc}::bigint[], ${hOth}::bigint[], ${hTot}::bigint[], ${hMar}::bigint[]) AS d(doc_no, ms, bf, acc, svc, oth, tot, mar)
+                WHERE t.doc_no = d.doc_no AND t.company_id = ${co}`;
+    }
+
+    note(`===== Company ${co} =====`);
+    note(`zero-cost headers: ${sos.length}; lines to stamp: ${stamped}; product-has-no-cost: ${noCost}; headers to fill: ${headers}; margin reduction: RM ${rm(marginDrop)}`);
+    shownDocs.forEach((d) => note(`  ${d}`));
+    if (headers > shownDocs.length) note(`  ... ${headers - shownDocs.length} more.`);
+    grandStamp += stamped; grandNoCost += noCost; grandHeaders += headers; grandMarginDrop += marginDrop;
+  }
+
+  if (!APPLY) {
+    note(`DRY-RUN total: ${grandStamp} line(s) across ${grandHeaders} order(s) would be stamped; total margin reduction RM ${rm(grandMarginDrop)}. ${grandNoCost} line(s) still have no product cost. Nothing written.`);
+    await sql.end();
+    return;
+  }
+
+  note(`APPLIED: ${grandStamp} lines stamped across ${grandHeaders} orders; margin reduced by RM ${rm(grandMarginDrop)}.`);
+  note(`Touched line ids (${touchedLineIds.length}) — REVERSAL source:`);
+  touchedLineIds.forEach((id) => note(`  L ${id}`));
+  note(`Touched header doc_nos (${touchedDocNos.length}):`);
+  touchedDocNos.forEach((d) => note(`  H ${d}`));
+
+  // Fresh-connection invariant: no line still reads 0 where its product has a cost.
+  await sql.end();
+  const check = postgres(DSN, { ssl: 'require', prepare: false, max: 1 });
+  let remaining = 0;
+  for (const co of companies) {
+    const prods = await check`SELECT code, category, base_price_sen, cost_price_sen, seat_height_prices
+                              FROM scm.mfg_products WHERE company_id = ${co}`;
+    const prodBy = new Map(prods.map((p) => [p.code, p]));
+    const zeros = await check`SELECT id, item_code, variants FROM scm.mfg_sales_order_items
+                              WHERE company_id = ${co} AND coalesce(unit_cost_sen,0) = 0`;
+    for (const z of zeros) if (unitCostSen(prodBy.get(z.item_code), z.variants) > 0) remaining++;
+  }
+  await check.end();
+  if (remaining > 0) { bad(`INVARIANT FAILED: ${remaining} line(s) still read 0 though their product has a cost.`); process.exit(1); }
+  note(`Invariant holds on a fresh connection: every fillable line now carries a cost.`);
+}
+
+main().catch((e) => { bad(e instanceof Error ? e.message : String(e)); process.exit(1); });

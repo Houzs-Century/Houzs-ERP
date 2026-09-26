@@ -46,6 +46,7 @@ const AMENDMENT_ACTION_LABEL: Record<string, string> = {
   AMENDMENT_SENT:               'Sent to supplier',
   AMENDMENT_REJECTED:           'Rejected',
   AMENDMENT_LANE_FLAGGED:       'Passed to the other approver',
+  AMENDMENT_LANE_CHANGED:       'Approver changed by admin',
   AMENDMENT_CMD_SUPPLIER_CONFIRM: 'Supplier confirm sent to 2990',
   AMENDMENT_CMD_APPROVE_SO:       'SO approval sent to 2990',
   AMENDMENT_CMD_APPROVE_PO:       'PO approval sent to 2990',

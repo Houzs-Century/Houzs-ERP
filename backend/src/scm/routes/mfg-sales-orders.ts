@@ -4592,11 +4592,15 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
       soDate: soDateForVenue,
       brand: effectiveBrand,
     });
-    const linkedId = fair.projectId ?? projectIdToStamp;
+    // Owner 2026-09-26: an explicit No-fair / showroom sale is a DECIDED state,
+    // not an unresolved blank — record it as NO_FAIR with no project link so the
+    // Sales Report can tell "deliberately no fair" from "not yet attributed".
+    const linkedId = body.noFair === true ? null : (fair.projectId ?? projectIdToStamp);
+    const fairMatch = body.noFair === true ? 'NO_FAIR' : (linkedId != null ? 'PICKED' : fair.match);
     await scopeToCompany(
       sb
         .from('mfg_sales_orders')
-        .update({ project_id: linkedId, fair_match: linkedId != null ? 'PICKED' : fair.match })
+        .update({ project_id: linkedId, fair_match: fairMatch })
         .eq('doc_no', docNo),
       c,
     );
@@ -4814,6 +4818,12 @@ mfgSalesOrders.post('/validate', async (c) => {
     asDraft,
     hasVenue: str(body.venueId).trim() !== '' || body.hasVenue === true,
     hasSalesperson: str(body.salespersonId).trim() !== '' || body.hasSalesperson === true,
+    // Fair compulsory on CREATE (owner 2026-09-26): a picked/auto-filled fair
+    // sets fairOrganizer; the operator can instead mark No-fair (showroom). Edits
+    // are exempt (isEdit) so the change never blocks editing a legacy order that
+    // pre-dates the rule.
+    fairChosen: str(body.fairOrganizer).trim() !== '' || isEdit,
+    noFair: body.noFair === true,
     /* The surfaces send the fair keys only when this draft picks or changes an
        event (components/fairPick.ts), so an old order's untouched pick never
        asks for a day it was saved without. */
