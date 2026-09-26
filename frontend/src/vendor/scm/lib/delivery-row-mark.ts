@@ -7,6 +7,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
+import { writeFailed } from './mutation-error';
 
 export type RowMarkColour = 'red' | 'amber' | 'green' | 'blue' | 'grey';
 
@@ -49,6 +50,7 @@ export function useSetRowMark() {
     mutationFn: (v: { rowKey: string; colour: RowMarkColour }) =>
       authedFetch<{ ok: true }>('/delivery-planning-row-marks', { method: 'PUT', body: JSON.stringify(v) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['delivery-row-marks'] }),
+    onError: writeFailed,
   });
 }
 
@@ -58,5 +60,33 @@ export function useClearRowMark() {
     mutationFn: (rowKey: string) =>
       authedFetch<{ ok: true }>(`/delivery-planning-row-marks/${encodeURIComponent(rowKey)}`, { method: 'DELETE' }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['delivery-row-marks'] }),
+    onError: writeFailed,
+  });
+}
+
+/* Paint / clear MANY rows at once from the bulk bar (owner 2026-09-26: 勾选几行
+   → 点上方色块). Fans out to the single-row endpoints — a handful of selected
+   rows, not a mass import — and reports any failure through the shared onError. */
+export function useBulkSetRowMark() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ rowKeys, colour }: { rowKeys: string[]; colour: RowMarkColour }) =>
+      Promise.all(rowKeys.map((rowKey) =>
+        authedFetch<{ ok: true }>('/delivery-planning-row-marks', { method: 'PUT', body: JSON.stringify({ rowKey, colour }) }),
+      )),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['delivery-row-marks'] }),
+    onError: writeFailed,
+  });
+}
+
+export function useBulkClearRowMark() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (rowKeys: string[]) =>
+      Promise.all(rowKeys.map((rowKey) =>
+        authedFetch<{ ok: true }>(`/delivery-planning-row-marks/${encodeURIComponent(rowKey)}`, { method: 'DELETE' }),
+      )),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['delivery-row-marks'] }),
+    onError: writeFailed,
   });
 }

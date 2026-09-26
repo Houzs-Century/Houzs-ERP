@@ -56,7 +56,7 @@ import { DateField } from "./DateField";
 import { deliveryDateChange } from "../lib/delivery-date-edit";
 import { SearchCombo } from "./SearchCombo";
 import { crewComboOptions, crewComboValue, latestDoId, KEEP_CURRENT } from "../lib/dispatch-cell";
-import { useDeliveryRowMarks, rowMarkTint } from "../lib/delivery-row-mark";
+import { useDeliveryRowMarks, rowMarkTint, useBulkSetRowMark, useBulkClearRowMark, ROW_MARK_PALETTE } from "../lib/delivery-row-mark";
 
 /* HC "Remark 4" delivery sub-status → a small pill class (reuse the cream
    palette; unknown/blank → muted). Default-shown column. */
@@ -764,6 +764,9 @@ export function DeliveryPlanningBoard({
   /* Manual colour marks (owner 2026-09-26): a Map<rowKey, colour token>, painted
      from the row context menu on the main page and tinted onto the row below. */
   const rowMarks = useDeliveryRowMarks().data;
+  const bulkSetMark = useBulkSetRowMark();
+  const bulkClearMark = useBulkClearRowMark();
+  const markBusy = bulkSetMark.isPending || bulkClearMark.isPending;
 
   /* EM/SG nicety: when the active region is EM or SG, the cross-border columns
      (shipout date, port ref, customer-delivered date) default-SHOW; elsewhere
@@ -1621,6 +1624,32 @@ export function DeliveryPlanningBoard({
           >
             {bulkBusy ? 'Applying…' : 'Apply'}
           </Button>
+
+          {/* Colour marks (owner 2026-09-26): paint every selected row a palette
+              colour, or clear it. Shared with the per-row right-click palette. */}
+          <span className={styles.bulkSep}>·</span>
+          <span className={styles.bulkLabel}>Colour</span>
+          {ROW_MARK_PALETTE.map((p) => (
+            <button
+              key={p.token}
+              type="button"
+              title={`Mark ${p.label}`}
+              aria-label={`Mark ${p.label}`}
+              disabled={markBusy}
+              onClick={() => bulkSetMark.mutate({ rowKeys: [...selectedKeys], colour: p.token })}
+              style={{ width: 22, height: 22, borderRadius: '50%', background: p.swatch, border: '2px solid rgba(0,0,0,0.15)', cursor: 'pointer', padding: 0 }}
+            />
+          ))}
+          <button
+            type="button"
+            title="Clear colour from the selected rows"
+            aria-label="Clear colour"
+            disabled={markBusy}
+            onClick={() => bulkClearMark.mutate([...selectedKeys])}
+            style={{ background: 'transparent', border: 'none', color: 'var(--fg-soft, #9a9a9a)', cursor: 'pointer', fontSize: 'var(--fs-12)', textDecoration: 'underline' }}
+          >
+            Clear
+          </button>
 
           <span className={styles.bulkSpacer} />
 
