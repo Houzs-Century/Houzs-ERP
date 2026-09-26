@@ -68,6 +68,7 @@ import {
   loadModelFabricTierOverrides, loadCompartmentFabricTierOverrides,
 } from '../lib/mfg-pricing-recompute';
 import { pgrestIn } from '../lib/pgrest-in-list';
+import { loadSellingSofaCombos, posOwnsSellingCombos } from '../lib/pos-sofa-combos';
 
 export const salesAnalysis = new Hono<{ Bindings: Env; Variables: Variables }>();
 salesAnalysis.use('*', supabaseAuth);
@@ -99,6 +100,12 @@ async function loadCompanyActiveSofaCombos(
   sb: any,
   c: any,
 ): Promise<{ combos: SofaComboRow[]; error: { message?: string } | null }> {
+  // 2990's selling combos live in its POS-owned table (owner ruling 2026-09-26).
+  try {
+    if (await posOwnsSellingCombos(sb, c)) return { combos: await loadSellingSofaCombos(sb, c), error: null };
+  } catch (e) {
+    return { combos: [], error: { message: e instanceof Error ? e.message : String(e) } };
+  }
   let q = sb
     .from('sofa_combo_pricing')
     .select('id, base_model, modules, tier, customer_id, prices_by_height, selling_prices_by_height, pwp_prices_by_height, label, effective_from, created_at, deleted_at, default_free_gifts')

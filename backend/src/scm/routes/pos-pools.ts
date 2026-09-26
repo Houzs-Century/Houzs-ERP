@@ -27,6 +27,9 @@
 //   GET /pos-pools/bedframe-colours
 //   GET /pos-pools/product-bedframe-colours?productId=
 //   GET /pos-pools/bedframe-options
+//   GET|POST /pos-pools/sofa-combos, GET /sofa-combos/history, PUT|DELETE /sofa-combos/:id
+//     — 2990's own selling combos (scm.pos_sofa_combos, pos-sofa-combos.ts). POS
+//       call sites: apps/pos/src/lib/products/sofa-combos-queries.ts, lib/queries.ts
 //
 // mfg-catalog is the live path (mfg_products + product_models embed); the eight
 // pools back the legacy-retail configurator. Everything here is SELLING-only:
@@ -42,9 +45,17 @@
 import { Hono, type Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import { paginateAll } from '../lib/paginate-all';
-import { scopeToCompany } from '../lib/companyScope';
+import { requireActiveCompanyId, scopeToCompany } from '../lib/companyScope';
 import { comboSlotsKey, type ComboSlots } from '../shared';
 import { todayMyt } from '../lib/my-time';
+import { posOwnsSellingCombos } from '../lib/pos-sofa-combos';
+import {
+  listPosCombos,
+  posSofaCombosCreateHandler,
+  posSofaCombosEditHandler,
+  posSofaCombosHistoryHandler,
+  posSofaCombosRetireHandler,
+} from './pos-sofa-combos';
 import type { Env, Variables } from '../env';
 
 export const posPools = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -316,6 +327,13 @@ function comboChargedByHeight(
 
 export const sofaCombosPosHandler = async (c: AppContext) => {
   const supabase = c.get('supabase');
+  // 2990 prices from its own POS-owned table (owner ruling 2026-09-26); the
+  // sofa_combo_pricing read below is company 1's and unchanged.
+  if (await posOwnsSellingCombos(supabase, c)) {
+    const co = requireActiveCompanyId(c);
+    if (!co.ok) return c.json(co.refusal, 409);
+    return listPosCombos(c, co.companyId);
+  }
   const baseModel = (c.req.query('baseModel') ?? '').trim();
   const customerIdRaw = c.req.query('customerId');
 
@@ -376,3 +394,7 @@ export const sofaCombosPosHandler = async (c: AppContext) => {
   return c.json({ rules });
 };
 posPools.get('/sofa-combos', sofaCombosPosHandler);
+posPools.get('/sofa-combos/history', posSofaCombosHistoryHandler);
+posPools.post('/sofa-combos', posSofaCombosCreateHandler);
+posPools.put('/sofa-combos/:id', posSofaCombosEditHandler);
+posPools.delete('/sofa-combos/:id', posSofaCombosRetireHandler);

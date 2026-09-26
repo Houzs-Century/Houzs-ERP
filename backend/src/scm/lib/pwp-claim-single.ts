@@ -30,6 +30,7 @@
 
 import { matchComboSubset } from '../shared';
 import type { SofaComboRow } from '../shared/sofa-build';
+import { loadLiveCombosByIds } from './pos-sofa-combos';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -312,20 +313,13 @@ export async function claimPwpForSingleLine(
   let sofaCombos: SofaComboRow[] = [];
   const prodCat = String(args.product.category ?? '').toUpperCase();
   if (prodCat === 'SOFA') {
-    const { data: comboRows } = await sb
-      .from('sofa_combo_pricing')
-      .select('id, base_model, modules, tier, customer_id, prices_by_height, selling_prices_by_height, pwp_prices_by_height, label, effective_from, deleted_at, default_free_gifts')
-      .is('deleted_at', null)
-      .is('customer_id', null)
-      .is('supplier_id', null);
-    // Mirror the SofaComboRow shape from loadActiveSofaCombos.
-    // For PWP combo matching we only need id, baseModel, modules.
-    sofaCombos = ((comboRows ?? []) as Array<{
-      id: string; base_model: string; modules: string[][];
-    }>).map((r) => ({
-      id: r.id,
+    // Both tables: a POS combo created after the 2026-09-26 split lives only in
+    // scm.pos_sofa_combos. For PWP combo matching we only need id, baseModel, modules.
+    const combosById = await loadLiveCombosByIds(sb, null);
+    sofaCombos = [...combosById.entries()].map(([id, r]) => ({
+      id,
       baseModel: r.base_model,
-      modules: r.modules ?? [],
+      modules: r.modules,
       tier: null,
       customerId: null,
       pricesByHeight: {},
