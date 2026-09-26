@@ -1176,13 +1176,9 @@ export function MobileNewSO({
   const [fairPick, setFairPick] = useState<FairPickValue>({
     venue: null, organizer: null, startDate: null, endDate: null, day: null,
   });
-  /* Fair compulsory on create (owner 2026-09-26): pick a fair OR tick No-fair
-     (showroom). Picking a fair clears the mark. */
+  // Fair compulsory on create (owner 2026-09-26): pick a fair OR tick No-fair.
   const [noFair, setNoFair] = useState(false);
-  const onFairChange = useCallback((next: FairPickValue) => {
-    setFairPick(next);
-    if (next.organizer) setNoFair(false);
-  }, []);
+  const onFairChange = useCallback((n: FairPickValue) => { setFairPick(n); if (n.organizer) setNoFair(false); }, []);
   useEffect(() => {
     /* Seeds a BLANK only — a human pick is a decision and is never overwritten.
        A place, plus the order's linked event when it has one (fairPick.ts).
@@ -2380,8 +2376,7 @@ export function MobileNewSO({
                     />
                   </Field>
                 </div>
-                {/* Fair compulsory on create (owner 2026-09-26): when no fair is
-                    picked, tick No-fair to attribute the sale, else submit blocks. */}
+                {/* Fair compulsory (owner 2026-09-26): tick when no fair is picked, else submit blocks. */}
                 {!isEdit && !fairEventOf(fairPick) && (
                   <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, marginTop: 6 }}>
                     <input type="checkbox" checked={noFair} disabled={identityLocked} onChange={(e) => setNoFair(e.target.checked)} />
