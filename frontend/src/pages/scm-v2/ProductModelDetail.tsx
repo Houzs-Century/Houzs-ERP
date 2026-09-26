@@ -30,8 +30,9 @@ import { maintActiveValues, fmtSen } from '@2990s/shared';
 import {
   useProductModel, useUpdateProductModel, useDeleteProductModel, useGenerateModelSkus,
   useActivateOneShot, useBrandingPool, useUploadProductModelPhoto,
-  type AllowedOptions, type AllowedOptions as AOpts,
+  type AllowedOptions, type AllowedOptions as AOpts, type ModelSkuRow,
 } from '../../vendor/scm/lib/product-models-queries';
+import { DataTable } from '../../components/DataTable';
 import { useMaintenanceConfig, useUpdateMfgProductStatus, useSpecialAddons, mfgCategoryLabel } from '../../vendor/scm/lib/mfg-products-queries';
 import { useFabricLibrary } from '../../vendor/scm/lib/queries';
 import { CategorySwapSelect } from '../../vendor/scm/components/CategorySwapSelect';
@@ -729,82 +730,71 @@ export const ProductModelDetail = ({
             then click "Add codes…" to materialise the variants you want.
           </p>
         ) : (
-          <table className={styles.skuTable}>
-            <thead>
-              <tr>
-                <th>Code</th>
-                <th>Name</th>
-                <th>Size</th>
-                <th>Status</th>
-                <th>POS</th>
-                {showCost && <th style={{ textAlign: 'right' }}>Cost</th>}
-                <th style={{ textAlign: 'right' }}>Price 2</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.skus.map((sku) => (
-                <tr key={sku.id}>
-                  <td>
-                    <code>{sku.code}</code>
-                  </td>
-                  <td>{sku.name}</td>
-                  <td>{sku.size_label ?? sku.size_code ?? '—'}</td>
-                  <td>
-                    {/* PR #87 — Status pill is now a button. One click flips
-                        ACTIVE↔INACTIVE via PATCH /mfg-products/:id. Disabled
-                        while a bulk toggle is in flight to avoid racing the
-                        per-row mutation against bulk fan-out. */}
+          <DataTable<ModelSkuRow>
+            tableId="product-model-skus"
+            exportName={`${model.model_code}-skus`}
+            exportXlsx
+            columns={[
+              { key: 'code', label: 'Code', render: (sku) => <code>{sku.code}</code>, getValue: (sku) => sku.code },
+              { key: 'name', label: 'Name', render: (sku) => sku.name, getValue: (sku) => sku.name },
+              { key: 'size', label: 'Size', render: (sku) => sku.size_label ?? sku.size_code ?? '—', getValue: (sku) => sku.size_label ?? sku.size_code ?? '' },
+              {
+                key: 'status', label: 'Status', getValue: (sku) => sku.status,
+                /* PR #87 — the pill is a button: one click flips ACTIVE<->INACTIVE
+                   via PATCH /mfg-products/:id, disabled while a bulk toggle runs so
+                   the per-row mutation never races the fan-out. */
+                render: (sku) => (
+                  <button
+                    type="button"
+                    className={`${styles.statusPill} ${sku.status === 'ACTIVE' ? styles.active : styles.inactive}`}
+                    style={{ cursor: 'pointer', border: '1px solid #d6d9d2' }}
+                    disabled={statusMut.isPending}
+                    onClick={() => statusMut.mutate({ id: sku.id, status: sku.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE' })}
+                    title={sku.status === 'ACTIVE'
+                      ? 'Click to deactivate · removes from SO/PO picker'
+                      : 'Click to activate · returns to SO/PO picker'}
+                  >
+                    {sku.status}
+                  </button>
+                ),
+              },
+              {
+                key: 'pos', label: 'POS',
+                getValue: (sku) => (sku.one_shot ? (sku.pos_active === false ? 'Not in POS' : 'Active in POS') : ''),
+                /* One-shot SKUs start with pos_active=false and need an explicit
+                   Activate to surface in the POS catalog. */
+                render: (sku) => (sku.one_shot ? (
+                  sku.pos_active === false ? (
                     <button
                       type="button"
-                      className={`${styles.statusPill} ${sku.status === 'ACTIVE' ? styles.active : styles.inactive}`}
-                      /* border hex-pinned — var(--line) resolved to #d6d9d2
-                         only via the removed .page cascade (:root has it as
-                         rgba(34,31,32,.12)). */
+                      className={`${styles.statusPill} ${styles.inactive}`}
                       style={{ cursor: 'pointer', border: '1px solid #d6d9d2' }}
-                      disabled={statusMut.isPending}
-                      onClick={() => statusMut.mutate({
-                        id: sku.id,
-                        status: sku.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE',
-                      })}
-                      title={sku.status === 'ACTIVE'
-                        ? 'Click to deactivate · removes from SO/PO picker'
-                        : 'Click to activate · returns to SO/PO picker'}
+                      disabled={activateOneShotMut.isPending}
+                      onClick={() => activateOneShotMut.mutate({ id: sku.id })}
+                      title="Activate this one-shot SKU in POS"
                     >
-                      {sku.status}
+                      Activate
                     </button>
-                  </td>
-                  <td>
-                    {/* One-shot SKUs start with pos_active=false and need an
-                        explicit Activate to surface in the POS catalog. */}
-                    {sku.one_shot ? (
-                      sku.pos_active === false ? (
-                        <button
-                          type="button"
-                          className={`${styles.statusPill} ${styles.inactive}`}
-                          style={{ cursor: 'pointer', border: '1px solid #d6d9d2' }}
-                          disabled={activateOneShotMut.isPending}
-                          onClick={() => activateOneShotMut.mutate({ id: sku.id })}
-                          title="Activate this one-shot SKU in POS"
-                        >
-                          Activate
-                        </button>
-                      ) : (
-                        <span className={`${styles.statusPill} ${styles.active}`}>
-                          Active in POS
-                        </span>
-                      )
-                    ) : (
-                      <span className={styles.statusPill}>—</span>
-                    )}
-                  </td>
-                  {showCost && (
-                    <td style={{ textAlign: 'right' }}>{formatRM(sku.cost_price_sen)}</td>
-                  )}
-                  <td style={{ textAlign: 'right' }}>{formatRM(sku.base_price_sen ?? 0)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                  ) : (
+                    <span className={`${styles.statusPill} ${styles.active}`}>Active in POS</span>
+                  )
+                ) : (
+                  <span className={styles.statusPill}>—</span>
+                )),
+              },
+              ...(showCost ? [{
+                key: 'cost', label: 'Cost', align: 'right' as const, render: (sku: ModelSkuRow) => formatRM(sku.cost_price_sen),
+                getValue: (sku: ModelSkuRow) => sku.cost_price_sen, exportValue: (sku: ModelSkuRow) => sku.cost_price_sen / 100,
+                exportFormat: 'money' as const,
+              }] : []),
+              {
+                key: 'price2', label: 'Price 2', align: 'right', render: (sku) => formatRM(sku.base_price_sen ?? 0),
+                getValue: (sku) => sku.base_price_sen ?? 0, exportValue: (sku) => (sku.base_price_sen ?? 0) / 100, exportFormat: 'money',
+              },
+            ]}
+            rows={data.skus}
+            getRowKey={(sku) => sku.id}
+          />
         )}
       </section>
       {/* + Add codes picker modal ------------------------------------- */}

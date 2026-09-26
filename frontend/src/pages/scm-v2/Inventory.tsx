@@ -1626,34 +1626,34 @@ const ProductBreakdownDrawer = ({
         </button>
         {cogsOpen && (
           <div className={`${styles.tableCard} ${styles.drawerScroll}`}>
-            <table className={`${styles.table} ${styles.compactTable}`}>
-              <thead>
-                <tr>
-                  <th>Consumed at</th>
-                  <th>Source Doc</th>
-                  <th style={{ textAlign: 'right' }}>Qty</th>
-                  <th style={{ textAlign: 'right' }}>Unit Cost</th>
-                  <th style={{ textAlign: 'right' }}>Total Cost</th>
-                  <th>From Lot</th>
-                </tr>
-              </thead>
-              <tbody>
-                {cogs.isLoading && <tr><td colSpan={6} className={styles.emptyRow}>Loading…</td></tr>}
-                {!cogs.isLoading && (cogs.data ?? []).length === 0 && (
-                  <tr><td colSpan={6} className={styles.emptyRow}>No COGS entries yet for this SKU.</td></tr>
-                )}
-                {(cogs.data ?? []).map((c) => (
-                  <tr key={c.id}>
-                    <td className={styles.numCellZero}>{fmtDateTime(c.consumed_at)}</td>
-                    <td><span className={styles.docLink}>{c.source_doc_no ?? '—'}</span></td>
-                    <td className={`${styles.numCell} ${styles.numCellNeg}`}>−{fmtQty(c.qty_consumed)}</td>
-                    <td className={`${styles.numCell} ${styles.numCellZero}`}>{fmtRm(c.unit_cost_sen)}</td>
-                    <td className={styles.numCell} style={{ fontWeight: 700 }}>{fmtRm(c.total_cost_sen)}</td>
-                    <td className={styles.numCellZero}>{c.lot_source_doc_no ?? '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <DataTable
+              tableId="inventory-sku-cogs"
+              exportName="sku-cogs"
+              exportXlsx
+              rows={cogs.data ?? (cogs.isError ? [] : null)}
+              loading={cogs.isLoading}
+              emptyLabel="No COGS entries yet for this SKU."
+              getRowKey={(c) => c.id}
+              columns={[
+                { key: 'consumed_at', label: 'Consumed at', getValue: (c) => c.consumed_at, render: (c) => <span className={styles.numCellZero}>{fmtDateTime(c.consumed_at)}</span> },
+                { key: 'source_doc', label: 'Source Doc', getValue: (c) => c.source_doc_no ?? '', render: (c) => <span className={styles.docLink}>{c.source_doc_no ?? '—'}</span> },
+                {
+                  key: 'qty', label: 'Qty', align: 'right', getValue: (c) => c.qty_consumed, exportFormat: 'number',
+                  render: (c) => <span className={`${styles.numCell} ${styles.numCellNeg}`}>−{fmtQty(c.qty_consumed)}</span>,
+                },
+                {
+                  key: 'unit_cost', label: 'Unit Cost', align: 'right', getValue: (c) => c.unit_cost_sen,
+                  exportValue: (c) => c.unit_cost_sen / 100, exportFormat: 'money',
+                  render: (c) => <span className={`${styles.numCell} ${styles.numCellZero}`}>{fmtRm(c.unit_cost_sen)}</span>,
+                },
+                {
+                  key: 'total_cost', label: 'Total Cost', align: 'right', getValue: (c) => c.total_cost_sen,
+                  exportValue: (c) => c.total_cost_sen / 100, exportFormat: 'money',
+                  render: (c) => <span className={styles.numCell} style={{ fontWeight: 700 }}>{fmtRm(c.total_cost_sen)}</span>,
+                },
+                { key: 'lot', label: 'From Lot', getValue: (c) => c.lot_source_doc_no ?? '', render: (c) => <span className={styles.numCellZero}>{c.lot_source_doc_no ?? '—'}</span> },
+              ] satisfies Column<NonNullable<typeof cogs.data>[number]>[]}
+            />
           </div>
         )}
       </div>

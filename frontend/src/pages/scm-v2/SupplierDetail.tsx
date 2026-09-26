@@ -82,6 +82,7 @@ import { composeSupplierSku, looksAmbiguous } from '../../vendor/scm/lib/supplie
 import { parseSupplierCategories, displaySupplierCategories } from '../../vendor/scm/lib/supplier-categories';
 import { SupplyCategoryPicker, useSupplierCategoryPool } from '../../vendor/scm/components/SupplyCategoryPicker';
 import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
+import { DataTable, type Column } from '../../components/DataTable';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
@@ -1859,65 +1860,33 @@ type LastPo = {
   receivedQty: number;
 };
 
-const LastTenPOsTable = ({ rows }: { rows: LastPo[] }) => {
-  if (rows.length === 0) {
-    return (
-      <div className={styles.cardBody}>
-        <p className={styles.emptyRow}>No purchase orders found for this supplier.</p>
-      </div>
-    );
-  }
+const deltaClass = (tone: string) => (tone === 'ok' ? styles.deltaOk : tone === 'late' ? styles.deltaLate : styles.deltaNeutral);
+const LAST_PO_COLUMNS: Column<LastPo>[] = [
+  { key: 'po', label: 'PO No.', render: (po) => <Link to={`/scm/purchase-orders?focus=${po.id}`} style={{ color: 'inherit' }}>{po.poNo}</Link>, getValue: (po) => po.poNo },
+  { key: 'status', label: 'Status', render: (po) => po.status, getValue: (po) => po.status },
+  { key: 'ordered', label: 'Ordered', align: 'right', render: (po) => fmtQty(po.orderedQty), getValue: (po) => po.orderedQty, exportFormat: 'number' },
+  { key: 'received', label: 'Received', align: 'right', render: (po) => fmtQty(po.receivedQty), getValue: (po) => po.receivedQty, exportFormat: 'number' },
+  { key: 'total', label: 'Total', align: 'right', render: (po) => fmtSen(po.totalSen), getValue: (po) => po.totalSen, exportValue: (po) => po.totalSen / 100, exportFormat: 'money' },
+  { key: 'expected', label: 'Expected', render: (po) => fmtDateOrDash(po.expectedDate), getValue: (po) => po.expectedDate, exportFormat: 'date' },
+  { key: 'actual', label: 'Actual', render: (po) => fmtDateOrDash(po.receivedDate), getValue: (po) => po.receivedDate, exportFormat: 'date' },
+  {
+    key: 'delta', label: 'Delta',
+    render: (po) => { const d = deliveryDelta(po.expectedDate, po.receivedDate); return <span className={deltaClass(d.tone)}>{d.label}</span>; },
+    getValue: (po) => deliveryDelta(po.expectedDate, po.receivedDate).label,
+  },
+];
 
-  return (
-    <table className={styles.table}>
-      <thead>
-        <tr>
-          <th>PO No.</th>
-          <th>Status</th>
-          <th className={styles.tableRight}>Ordered</th>
-          <th className={styles.tableRight}>Received</th>
-          <th className={styles.tableRight}>Total</th>
-          <th>Expected</th>
-          <th>Actual</th>
-          <th>Delta</th>
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((po) => {
-          const delta = deliveryDelta(po.expectedDate, po.receivedDate);
-          return (
-            <tr key={po.id}>
-              <td className={styles.codeCell}>
-                <Link to={`/scm/purchase-orders?focus=${po.id}`} style={{ color: 'inherit' }}>
-                  {po.poNo}
-                </Link>
-              </td>
-              <td className={styles.muted}>{po.status}</td>
-              <td className={`${styles.tableRight} ${styles.muted}`}>{fmtQty(po.orderedQty)}</td>
-              <td className={`${styles.tableRight} ${styles.muted}`}>{fmtQty(po.receivedQty)}</td>
-              <td className={styles.priceCell}>{fmtSen(po.totalSen)}</td>
-              <td className={styles.muted}>{fmtDateOrDash(po.expectedDate)}</td>
-              <td className={styles.muted}>{fmtDateOrDash(po.receivedDate)}</td>
-              <td>
-                <span
-                  className={
-                    delta.tone === 'ok'
-                      ? styles.deltaOk
-                      : delta.tone === 'late'
-                        ? styles.deltaLate
-                        : styles.deltaNeutral
-                  }
-                >
-                  {delta.label}
-                </span>
-              </td>
-            </tr>
-          );
-        })}
-      </tbody>
-    </table>
-  );
-};
+const LastTenPOsTable = ({ rows }: { rows: LastPo[] }) => (
+  <DataTable<LastPo>
+    tableId="supplier-last-pos"
+    exportName="supplier-last-pos"
+    exportXlsx
+    columns={LAST_PO_COLUMNS}
+    rows={rows}
+    emptyLabel="No purchase orders found for this supplier."
+    getRowKey={(po) => po.id}
+  />
+);
 
 // SKU form modal — create or edit a supplier_material_binding.
 

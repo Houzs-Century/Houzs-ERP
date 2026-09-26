@@ -9,7 +9,7 @@
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, test, vi } from 'vitest';
 
 vi.mock('../../vendor/scm/lib/authed-fetch', () => ({ authedFetch: vi.fn() }));
@@ -82,6 +82,9 @@ const draw = () => render(
   </QueryClientProvider>,
 );
 
+/* The month's summary card; the list below has its own row count. */
+const summaryCard = () => screen.getByText(/^Payment actions in/).parentElement!;
+
 describe('the corrections tab', () => {
   test('asks for the current month and shows the summary and every column of each row', async () => {
     mockedFetch.mockReset();
@@ -89,7 +92,7 @@ describe('the corrections tab', () => {
     draw();
     await waitFor(() => expect(mockedFetch).toHaveBeenCalledWith(expect.stringMatching(/^\/accounting\/payment-corrections\?month=\d{4}-\d{2}$/)));
 
-    await waitFor(() => expect(screen.getByText('4')).toBeTruthy());
+    await waitFor(() => expect(within(summaryCard()).getByText('4')).toBeTruthy());
     expect(screen.getByText('2 added · 1 edited · 1 deleted · 0 proof')).toBeTruthy();
     expect(screen.getByText('+RM 1,201.00')).toBeTruthy();
     expect(screen.getByText(/1 · RM 500\.00/)).toBeTruthy();
@@ -123,7 +126,7 @@ describe('the corrections tab', () => {
     fireEvent.change(screen.getByLabelText('Done by'), { target: { value: 'Mei Ling' } });
     expect(screen.queryByText('Sales keyed RM 1,990 — receipt shows RM 1,991')).toBeNull();
     expect(screen.getByText('Keyed twice')).toBeTruthy();
-    expect(screen.getByText('4')).toBeTruthy();
+    expect(within(summaryCard()).getByText('4')).toBeTruthy();
   });
 
   test('an empty month says so in a sentence, with no table', async () => {

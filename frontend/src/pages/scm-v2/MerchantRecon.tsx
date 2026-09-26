@@ -33,7 +33,9 @@ import {
   useUploadStatement, useConfirmSettlementRow, useConfirmMatched, useIgnoreSettlementRow,
   useSettlementWatchlist, useUnconfirmSettlementRow, useFindPayments,
   type AcquirerSetup, type SettlementRow, type SettlementBucket, type SettlementBatch, type BankAccount, type SettlementCandidate,
+  type Watchlist,
 } from './settlement-queries';
+import { DataTable, type Column } from '../../components/DataTable';
 import {
   ICON, fmt, btn, cell, num, table, headRow, rowLine, softText, danger, good, panel,
   BUCKET_LABEL, refusalText, payableOf,
@@ -360,41 +362,39 @@ const ReconcileTab = () => {
           Keyed in by the sales team; the merchant has not put them on a report. {fmt(waitingSen)} in total.
           {untagged > 0 && ` ${untagged} keyed in without a bank (未标): shown once here, offered to each merchant's report, and named by the one that confirms it.`}
         </div>
-        {watchlist.isLoading && <div style={{ fontSize: 'var(--fs-13)' }}>Loading…</div>}
-        {!watchlist.isLoading && waiting.length === 0 && (
-          <div style={{ fontSize: 'var(--fs-13)', color: good }}>
-            Every card payment recorded is on a merchant report.
-          </div>
-        )}
-        {waiting.length > 0 && (
-          <table className={grid.grid}>
-            <thead>
-              <tr>
-                <th>Merchant</th><th>Document</th><th>Salesperson</th><th>Customer paid on</th>
-                <th className={grid.num}>Days</th><th className={grid.num}>Amount</th><th>Approval</th>
-              </tr>
-            </thead>
-            <tbody>
-              {waiting.map((p) => (
-                <tr key={`${p.source}:${p.id}`}>
-                  <td><span className={styles.codeChip}>{p.acquirerCode ?? '未标'}</span></td>
-                  <td>{p.docNo}</td>
-                  <td>{p.salespersonName ?? '—'}</td>
-                  <td>{p.paidOn}</td>
-                  <td className={grid.num} style={{ color: p.ageDays > 14 ? danger : undefined, fontWeight: p.ageDays > 14 ? 700 : undefined }}>
-                    {p.ageDays}
-                  </td>
-                  <td className={grid.num}>{fmt(p.amountSen)}</td>
-                  <td>{p.approvalCode ?? '—'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+        <DataTable<WaitingCard>
+          tableId="merchant-recon-waiting"
+          exportName="card-payments-not-reported"
+          exportXlsx
+          columns={WAITING_COLUMNS}
+          rows={watchlist.data ? waiting : null}
+          loading={watchlist.isLoading}
+          error={watchlist.isError ? 'The watch list did not load.' : null}
+          emptyLabel="Every card payment recorded is on a merchant report."
+          getRowKey={(p) => `${p.source}:${p.id}`}
+        />
       </section>
     </div>
   );
 };
+
+type WaitingCard = Watchlist['recordedNotArrived'][number];
+const WAITING_COLUMNS: Column<WaitingCard>[] = [
+  { key: 'merchant', label: 'Merchant', render: (p) => <span className={styles.codeChip}>{p.acquirerCode ?? '未标'}</span>, getValue: (p) => p.acquirerCode ?? '未标' },
+  { key: 'document', label: 'Document', render: (p) => p.docNo, getValue: (p) => p.docNo },
+  { key: 'salesperson', label: 'Salesperson', render: (p) => p.salespersonName ?? '—', getValue: (p) => p.salespersonName ?? '' },
+  { key: 'paidOn', label: 'Customer paid on', render: (p) => p.paidOn, getValue: (p) => p.paidOn, exportFormat: 'date' },
+  {
+    key: 'days', label: 'Days', align: 'right',
+    render: (p) => <span style={{ color: p.ageDays > 14 ? danger : undefined, fontWeight: p.ageDays > 14 ? 700 : undefined }}>{p.ageDays}</span>,
+    getValue: (p) => p.ageDays, exportFormat: 'number',
+  },
+  {
+    key: 'amount', label: 'Amount', align: 'right', render: (p) => fmt(p.amountSen),
+    getValue: (p) => p.amountSen, exportValue: (p) => p.amountSen / 100, exportFormat: 'money',
+  },
+  { key: 'approval', label: 'Approval', render: (p) => p.approvalCode ?? '—', getValue: (p) => p.approvalCode ?? '' },
+];
 
 /* ── What the upload found ────────────────────────────────────────────────────
    The owner uploads a month of reports in one go, and asked for one answer for
