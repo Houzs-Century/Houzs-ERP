@@ -26,8 +26,9 @@ import {
   useAccounts, useOtherDebtors, useDebtorDetail, useCreateDebtor, useUpdateDebtor,
   useCreateDebtorBill, useUpdateDebtorBill, useCancelDebtorBill, useCreateDebtorReceipt, useDebtorReceiptAction,
   postableAccounts,
-  type Account, type DebtorBill, type DebtorReceipt,
+  type Account, type DebtorBill, type DebtorReceipt, type OtherDebtor,
 } from '../../vendor/scm/lib/accounting-queries';
+import { DataTable, type Column } from '../../components/DataTable';
 import { AccountSelect } from '../../vendor/scm/components/AccountSelect';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
 import { Modal } from '../../vendor/scm/components/Modal';
@@ -42,6 +43,25 @@ import { DebtorPartyForm } from './DebtorPartyForm';
 import { debtorPartyBody, debtorPartyFrom, emptyDebtorParty, partyAddressLines, type DebtorPartyValues } from '../../vendor/scm/lib/debtor-party';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
+
+const DEBTOR_COLUMNS: Column<OtherDebtor>[] = [
+  { key: 'name', label: 'Name', render: (d) => <span style={{ fontWeight: 600 }}>{d.name}</span>, getValue: (d) => d.name },
+  { key: 'phone', label: 'Phone', render: (d) => d.phone ?? '—', getValue: (d) => d.phone ?? '' },
+  {
+    key: 'outstanding', label: 'Outstanding', align: 'right',
+    render: (d) => <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(d.outstanding_sen)}</span>,
+    getValue: (d) => d.outstanding_sen, exportValue: (d) => d.outstanding_sen / 100, exportFormat: 'money',
+  },
+  {
+    key: 'status', label: 'Status',
+    render: (d) => (
+      <span style={{ fontSize: 'var(--fs-11)', color: d.is_active ? 'var(--c-secondary-a, #2F5D4F)' : 'var(--fg-muted)' }}>
+        {d.is_active ? 'ACTIVE' : 'INACTIVE'}
+      </span>
+    ),
+    getValue: (d) => (d.is_active ? 'ACTIVE' : 'INACTIVE'),
+  },
+];
 const myt = (): string => new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
 
 const fmtRm = (sen: number | null | undefined): string => {
@@ -221,36 +241,19 @@ export const OtherDebtors = () => {
           </span>
         </div>
         <div className={styles.cardBody} style={{ overflowX: 'auto' }}>
-          {listQ.isLoading && <div style={{ fontSize: 'var(--fs-13)' }}>Loading…</div>}
-          {!listQ.isLoading && debtors.length === 0 && (
-            <div style={{ fontSize: 'var(--fs-13)', color: 'var(--fg-muted)' }}>No debtors yet — add the first with "New debtor".</div>
-          )}
-          {debtors.length > 0 && (
-            <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 'var(--fs-13)' }}>
-              <thead>
-                <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--border-weak, #e3e1da)' }}>
-                  <th style={{ padding: '6px 8px' }}>Name</th>
-                  <th style={{ padding: '6px 8px' }}>Phone</th>
-                  <th style={{ padding: '6px 8px', textAlign: 'right' }}>Outstanding</th>
-                  <th style={{ padding: '6px 8px' }}>Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {debtors.map((d) => (
-                  <tr key={d.id}
-                    onClick={() => setSelectedId(d.id)}
-                    style={{ borderBottom: '1px solid var(--border-weak, #f0eee8)', cursor: 'pointer', background: selectedId === d.id ? 'var(--c-cream, #faf7f0)' : undefined }}>
-                    <td style={{ padding: '6px 8px', fontWeight: 600 }}>{d.name}</td>
-                    <td style={{ padding: '6px 8px' }}>{d.phone ?? '—'}</td>
-                    <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{fmtRm(d.outstanding_sen)}</td>
-                    <td style={{ padding: '6px 8px', fontSize: 'var(--fs-11)', color: d.is_active ? 'var(--c-secondary-a, #2F5D4F)' : 'var(--fg-muted)' }}>
-                      {d.is_active ? 'ACTIVE' : 'INACTIVE'}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
+          <DataTable<OtherDebtor>
+            tableId="other-debtors"
+            exportName="other-debtors"
+            exportXlsx
+            columns={DEBTOR_COLUMNS}
+            rows={listQ.data ? debtors : null}
+            loading={listQ.isLoading}
+            error={listQ.isError ? 'The debtors did not load.' : null}
+            emptyLabel='No debtors yet — add the first with "New debtor".'
+            getRowKey={(d) => d.id}
+            onRowClick={(d) => setSelectedId(d.id)}
+            getRowStyle={(d) => (selectedId === d.id ? { background: 'var(--c-cream, #faf7f0)' } : undefined)}
+          />
         </div>
       </section>
 

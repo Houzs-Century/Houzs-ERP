@@ -2554,7 +2554,7 @@ function DataTableInner<T, L>({
                           >
                             <input
                               type="checkbox"
-                              aria-label="Select row"
+                              aria-label={selection.rowLabel?.(row) ?? "Select row"}
                               checked={isRowSelected}
                               disabled={selKey != null && !!selection.isDisabled?.(selKey)}
                               onChange={() => {

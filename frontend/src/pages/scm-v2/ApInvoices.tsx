@@ -53,6 +53,7 @@ import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { fmtSen, fmtDateOrDash } from '../../vendor/shared/format';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
+import { DataTable, type Column } from '../../components/DataTable';
 import { ApInvoiceForm, emptyApForm, formFromExtraction, scanNoteFor, type ApFormMode, type ApFormSubmit, type ApFormValues } from './ApInvoiceForm';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
@@ -126,6 +127,8 @@ export const ApInvoices = () => {
     return [{ value: '', label: 'All suppliers' }, ...named];
   }, [rows]);
   const visibleRows = useMemo(() => (supplierFilter ? rows.filter((r) => r.supplierId === supplierFilter) : rows), [rows, supplierFilter]);
+  /* What the table shows after its own funnels: the listing prints exactly that. */
+  const [shownRows, setShownRows] = useState<ApListRow[] | null>(null);
   const filteredSupplierName = supplierFilter ? (rows.find((r) => r.supplierId === supplierFilter)?.supplierName ?? null) : null;
 
   const suppliersQ = useSuppliers({ status: 'ACTIVE' });
@@ -249,10 +252,40 @@ export const ApInvoices = () => {
   /* Print listing (owner: print listing 功能我也想要) — exactly the rows on
      screen, kind and supplier filters applied, totalled. */
   const printListing = () => {
-    void generateApListingPdf(visibleRows, { kind, supplierName: filteredSupplierName }).catch((e: unknown) => {
+    void generateApListingPdf(shownRows ?? visibleRows, { kind, supplierName: filteredSupplierName }).catch((e: unknown) => {
       void notify({ title: 'Listing not printed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
     });
   };
+
+  const apColumns = useMemo<Column<ApListRow>[]>(() => [
+    { key: 'kind', label: 'Kind', render: (r) => <span style={{ fontSize: 'var(--fs-11)', fontWeight: 600 }}>{KIND_LABEL[r.kind]}</span>, getValue: (r) => KIND_LABEL[r.kind] },
+    {
+      key: 'number', label: 'No.',
+      render: (r) => r.kind === 'PI'
+        ? <Link to={`/scm/purchase-invoices/${r.id}`} style={{ color: 'inherit', ...mono }}>{r.invoiceNumber}</Link>
+        : <button type="button" onClick={() => setDetailId(r.id)} style={{ ...linkBtn, ...mono }}>{r.invoiceNumber}</button>,
+      getValue: (r) => r.invoiceNumber,
+    },
+    {
+      key: 'supplier', label: 'Supplier',
+      render: (r) => <>{r.supplierName ?? '—'}{r.supplierCode ? <span style={soft}> · {r.supplierCode}</span> : null}</>,
+      getValue: (r) => r.supplierName ?? '',
+    },
+    { key: 'ref', label: 'Ref', render: (r) => r.supplierInvoiceRef ?? '—', getValue: (r) => r.supplierInvoiceRef ?? '' },
+    { key: 'description', label: 'Description', width: '260px', render: (r) => r.description ?? '—', getValue: (r) => r.description ?? '' },
+    { key: 'date', label: 'Date', render: (r) => fmtDateOrDash(r.invoiceDate), getValue: (r) => r.invoiceDate, exportFormat: 'date' },
+    { key: 'due', label: 'Due', render: (r) => fmtDateOrDash(r.dueDate), getValue: (r) => r.dueDate, exportFormat: 'date' },
+    {
+      key: 'total', label: 'Total', align: 'right', render: (r) => fmtSen(r.totalSen),
+      getValue: (r) => r.totalSen, exportValue: (r) => r.totalSen / 100, exportFormat: 'money',
+    },
+    {
+      key: 'outstanding', label: 'Outstanding', align: 'right',
+      render: (r) => <span style={{ fontWeight: r.outstandingSen > 0 ? 700 : 400 }}>{fmtSen(r.outstandingSen)}</span>,
+      getValue: (r) => r.outstandingSen, exportValue: (r) => r.outstandingSen / 100, exportFormat: 'money',
+    },
+    { key: 'status', label: 'Status', render: (r) => <span style={{ fontSize: 'var(--fs-11)' }}>{r.status}</span>, getValue: (r) => r.status },
+  ], []);
 
   const formTitle = form?.mode === 'edit'
     ? `Edit ${form.invoiceNumber ?? 'AP invoice'}`
@@ -289,63 +322,29 @@ export const ApInvoices = () => {
               <SearchCombo options={supplierOptions} value={supplierFilter} onChange={setSupplierFilter}
                 className={styles.fieldInput} aria-label="Filter by supplier" placeholder="All suppliers" />
             </div>
-            <Button variant="secondary" size="sm" onClick={printListing} disabled={visibleRows.length === 0}>
+            <Button variant="secondary" size="sm" onClick={printListing} disabled={(shownRows ?? visibleRows).length === 0}>
               <Printer {...ICON} /> Print listing
             </Button>
           </div>
         </div>
         <div className={styles.cardBody} style={{ overflowX: 'auto' }}>
-          {listQ.isLoading && <div style={{ fontSize: 'var(--fs-13)' }}>Loading…</div>}
           {/* A refused or failed read says so — an empty sentence over a 403 hid
              docs/bugs/0648 for an afternoon. */}
-          {listQ.isError && (
-            <div style={{ fontSize: 'var(--fs-13)', color: 'var(--c-red, #b3261e)' }}>The list could not be loaded — {listQ.error instanceof Error ? listQ.error.message : 'something went wrong.'}</div>
-          )}
-          {!listQ.isLoading && !listQ.isError && visibleRows.length === 0 && (
-            <div style={{ fontSize: 'var(--fs-13)', color: 'var(--fg-muted)' }}>
-              {rows.length > 0
-                ? 'No supplier invoices match this filter — pick another supplier or kind.'
-                : 'No supplier invoices here yet — purchase invoices show once posted on the Procurement side; raise an AP invoice for a non-stock bill.'}
-            </div>
-          )}
-          {visibleRows.length > 0 && (
-            <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 'var(--fs-13)' }}>
-              <thead>
-                <tr>
-                  <th style={th}>Kind</th>
-                  <th style={th}>No.</th>
-                  <th style={th}>Supplier</th>
-                  <th style={th}>Ref</th>
-                  <th style={th}>Description</th>
-                  <th style={th}>Date</th>
-                  <th style={th}>Due</th>
-                  <th style={{ ...th, textAlign: 'right' }}>Total</th>
-                  <th style={{ ...th, textAlign: 'right' }}>Outstanding</th>
-                  <th style={th}>Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {visibleRows.map((r) => (
-                  <tr key={`${r.kind}-${r.id}`} style={{ borderBottom: '1px solid var(--border-weak, #f0eee8)', opacity: r.status === 'CANCELLED' ? 0.55 : 1 }}>
-                    <td style={{ ...td, fontSize: 'var(--fs-11)', fontWeight: 600, whiteSpace: 'nowrap' }}>{KIND_LABEL[r.kind]}</td>
-                    <td style={{ ...td, ...mono, whiteSpace: 'nowrap' }}>
-                      {r.kind === 'PI'
-                        ? <Link to={`/scm/purchase-invoices/${r.id}`} style={{ color: 'inherit' }}>{r.invoiceNumber}</Link>
-                        : <button type="button" onClick={() => setDetailId(r.id)} style={{ ...linkBtn, ...mono }}>{r.invoiceNumber}</button>}
-                    </td>
-                    <td style={td}>{r.supplierName ?? '—'}{r.supplierCode ? <span style={soft}> · {r.supplierCode}</span> : null}</td>
-                    <td style={td}>{r.supplierInvoiceRef ?? '—'}</td>
-                    <td style={{ ...td, maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.description ?? undefined}>{r.description ?? '—'}</td>
-                    <td style={{ ...td, whiteSpace: 'nowrap' }}>{fmtDateOrDash(r.invoiceDate)}</td>
-                    <td style={{ ...td, whiteSpace: 'nowrap' }}>{fmtDateOrDash(r.dueDate)}</td>
-                    <td style={{ ...td, ...right }}>{fmtSen(r.totalSen)}</td>
-                    <td style={{ ...td, ...right, fontWeight: r.outstandingSen > 0 ? 700 : 400 }}>{fmtSen(r.outstandingSen)}</td>
-                    <td style={{ ...td, fontSize: 'var(--fs-11)' }}>{r.status}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
+          <DataTable<ApListRow>
+            tableId="ap-invoices"
+            exportName="ap-invoices"
+            exportXlsx
+            columns={apColumns}
+            rows={listQ.data ? visibleRows : null}
+            loading={listQ.isLoading}
+            error={listQ.isError ? `The list could not be loaded — ${listQ.error instanceof Error ? listQ.error.message : 'something went wrong.'}` : null}
+            emptyLabel={rows.length > 0
+              ? 'No supplier invoices match this filter — pick another supplier or kind.'
+              : 'No supplier invoices here yet — purchase invoices show once posted on the Procurement side; raise an AP invoice for a non-stock bill.'}
+            getRowKey={(r) => `${r.kind}-${r.id}`}
+            getRowStyle={(r) => (r.status === 'CANCELLED' ? { opacity: 0.55 } : undefined)}
+            onFilteredRowsChange={setShownRows}
+          />
         </div>
       </section>
 
