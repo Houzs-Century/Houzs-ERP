@@ -73,6 +73,13 @@ export interface SoSubmitFacts {
   hasVenue: boolean;
   /** Resolved salesperson — false when none. Confirm-only. */
   hasSalesperson: boolean;
+  /** A fair EVENT was picked/auto-filled (its organizer is set). Confirm-only.
+   *  Owner 2026-09-26: fair is compulsory so the Sales Report can attribute every
+   *  order — a submit must EITHER pick a fair OR mark `noFair`. */
+  fairChosen: boolean;
+  /** The operator explicitly marked this a No-fair / showroom sale (the escape
+   *  hatch that keeps the compulsory rule from blocking a genuine non-fair sale). */
+  noFair: boolean;
   /** An EVENT was picked with no day of it (owner 2026-09-24,
    *  `fair-options.ts::fairDayMissing`). Confirm-only, like the venue. */
   fairDayMissing: boolean;
@@ -131,6 +138,11 @@ export function collectSoSubmitProblems(facts: SoSubmitFacts): SaveProblem[] {
   if (!facts.hasNamedLine) out.push(requiredFieldProblem('At least one line item with a product'));
   if (!facts.asDraft) {
     if (!facts.hasVenue) out.push(requiredFieldProblem('Venue'));
+    // Fair is compulsory (owner 2026-09-26): a fair must be picked, or the sale
+    // explicitly marked No-fair / showroom. Blocks the ambiguous "left blank".
+    if (!facts.fairChosen && !facts.noFair) {
+      out.push({ code: 'fair_required', message: 'Pick the Fair, or mark it No fair (showroom).', field: 'Fair' });
+    }
     if (facts.fairDayMissing) out.push(requiredFieldProblem('Fair day'));
     if (!facts.hasSalesperson) out.push(requiredFieldProblem('Salesperson'));
   }

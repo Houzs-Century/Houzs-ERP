@@ -1176,6 +1176,8 @@ export function MobileNewSO({
   const [fairPick, setFairPick] = useState<FairPickValue>({
     venue: null, organizer: null, startDate: null, endDate: null, day: null,
   });
+  const [noFair, setNoFair] = useState(false); // fair compulsory on create (owner 2026-09-26)
+  const onFairChange = useCallback((n: FairPickValue) => { setFairPick(n); if (n.organizer) setNoFair(false); }, []);
   useEffect(() => {
     /* Seeds a BLANK only — a human pick is a decision and is never overwritten.
        A place, plus the order's linked event when it has one (fairPick.ts).
@@ -1395,6 +1397,7 @@ export function MobileNewSO({
     isEdit,
     hasVenue: isEdit || !!outgoingVenueName || !!outgoingVenueId,
     ...fairDayCheck(fairEditPatch(fairEventOf(fairPick)), fairEditPatch(linkedEvent(resolvedVenueName, linkedFair, linkedDay))),
+    noFair,
     hasSalesperson: isEdit || !canChangeSalesperson || !!outgoingSalespersonId || !!selfStaffMatch,
     companyCode: branding.companyCode,
     salesLocation,
@@ -1415,7 +1418,7 @@ export function MobileNewSO({
       convertedFromDocNo: p.convertedFromDocNo ?? "",
       amountSen: toSen(p.amount),
     })),
-  }), [name, phone, namedLines, isEdit, outgoingVenueName, outgoingVenueId, fairPick, resolvedVenueName, linkedFair, linkedDay, canChangeSalesperson, outgoingSalespersonId, selfStaffMatch, branding.companyCode, salesLocation, state, procDate, delivDate, addr1, postcode, origProcDate, origDelivDate, origItems, pays]);
+  }), [name, phone, namedLines, isEdit, outgoingVenueName, outgoingVenueId, fairPick, noFair, resolvedVenueName, linkedFair, linkedDay, canChangeSalesperson, outgoingSalespersonId, selfStaffMatch, branding.companyCode, salesLocation, state, procDate, delivDate, addr1, postcode, origProcDate, origDelivDate, origItems, pays]);
 
   /* The payment rows whose slip date falls outside the window (owner 2026-09-23).
      A blocker rather than a post-create failure: the payments are posted AFTER
@@ -2114,6 +2117,7 @@ export function MobileNewSO({
         /* The picked event's ORGANIZER — CREATE only. On an EDIT the server
            re-derives the fair whenever the venue changes, so the patch must not
            carry it (soHeaderPatchFrom feeds the edit diff as well). */
+        noFair: noFair || undefined,
         fairOrganizer: fairPick.organizer ?? undefined,
         /* The picked event's PERIOD — same contract as the desktop form. */
         fairStart: fairPick.startDate ?? undefined,
@@ -2366,11 +2370,17 @@ export function MobileNewSO({
                       id="mob-so-fair"
                       value={fairPick}
                       soDate={orderDate}
-                      onChange={setFairPick} disabled={identityLocked}
+                      onChange={onFairChange} disabled={identityLocked}
                       selectClassName="fld-i"
                     />
                   </Field>
                 </div>
+                {!isEdit && !fairEventOf(fairPick) && (
+                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, marginTop: 6 }}>
+                    <input type="checkbox" checked={noFair} disabled={identityLocked} onChange={(e) => setNoFair(e.target.checked)} />
+                    <span>No fair (showroom / direct sale)</span>
+                  </label>
+                )}
                 {fairEventOf(fairPick) && ( // which DAY of the picked event (owner 2026-09-24)
                   <Field label="Fair Day"><FairDayPicker id="mob-so-fair-day" value={fairPick} soDate={orderDate} onChange={setFairPick} disabled={identityLocked} selectClassName="fld-i" /></Field>
                 )}
